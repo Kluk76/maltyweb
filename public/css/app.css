@@ -1,0 +1,77 @@
+/* ---------- base ---------- */
+body {
+  font-family: ui-monospace, Menlo, monospace;
+  color: #222;
+  margin: 3em auto;
+}
+
+body.auth      { max-width: 360px; margin-top: 5em; }
+body.dashboard { max-width: 720px; }
+
+h1 { font-size: 1.3em; }
+body.auth h1 { font-size: 1.2em; margin-bottom: 1.5em; }
+
+a { color: #06c; text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* ---------- topbar (dashboard) ---------- */
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 0.5em;
+  margin-bottom: 1.5em;
+}
+.topbar a { font-size: 0.9em; }
+.topbar .role { color: #888; font-size: 0.85em; }
+
+/* ---------- table (dashboard) ---------- */
+table { border-collapse: collapse; }
+td { padding: 4px 12px; border-bottom: 1px solid #eee; }
+td:first-child { color: #888; }
+
+/* ---------- panda ---------- */
+.panda { text-align: center; margin: 0.5em 0; }
+
+/* ---------- form (login) ---------- */
+form { display: grid; gap: 0.75em; }
+label { display: grid; gap: 0.25em; font-size: 0.85em; color: #555; }
+input[type=text],
+input[type=password] {
+  padding: 0.5em;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  font: inherit;
+}
+button {
+  padding: 0.6em;
+  background: #222;
+  color: #fff;
+  border: none;
+  border-radius: 3px;
+  font: inherit;
+  cursor: pointer;
+}
+button:hover { background: #000; }
+
+/* ---------- status messages ---------- */
+.err {
+  color: #a00;
+  padding: 0.5em;
+  background: #fee;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+.warn {
+  color: #a60;
+  font-size: 0.8em;
+  padding: 0.5em;
+  background: #fef6e0;
+  border-radius: 3px;
+  margin-bottom: 1em;
+}
+
+/* ---------- status pills ---------- */
+.ok  { color: #0a0; }
+.bad { color: #a00; }
