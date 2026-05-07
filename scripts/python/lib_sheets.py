@@ -31,3 +31,26 @@ class SheetsClient:
         )
         # values can be missing entirely if the range is empty
         return res.get("values", [])
+
+    def read_range_serial(self, spreadsheet_id: str, range_a1: str) -> list[list]:
+        """
+        Like read_range() but uses SERIAL_NUMBER for dateTimeRenderOption so that
+        date/datetime cells come back as numeric serials (float) instead of
+        formatted strings.
+
+        Use this for a targeted side-channel fetch of timestamp columns only —
+        the main read_range() call must remain FORMATTED_STRING so that row_hash
+        values are stable (idempotency guarantee).
+        """
+        res = (
+            self._service.spreadsheets()
+            .values()
+            .get(
+                spreadsheetId=spreadsheet_id,
+                range=range_a1,
+                valueRenderOption="UNFORMATTED_VALUE",
+                dateTimeRenderOption="SERIAL_NUMBER",
+            )
+            .execute()
+        )
+        return res.get("values", [])

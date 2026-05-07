@@ -20,6 +20,7 @@ import tab_brewing
 import tab_fermenting
 import tab_racking
 import tab_packaging
+from lib_yeast import load_yeast_canonical_map
 
 
 TAB_HANDLERS = {
@@ -38,10 +39,12 @@ def _ingest_simple(name: str, mod, sheets: SheetsClient, conn, *, apply_writes: 
     """Used for fermenting + racking (single table)."""
     _print_header(name)
     raw = sheets.read_range(_spreadsheet_id(), mod.RANGE)
+    ts_serials = sheets.read_range_serial(_spreadsheet_id(), mod.RANGE_TIMESTAMP)
     if limit is not None:
         raw = raw[:limit]
+        ts_serials = ts_serials[:limit]
     print(f"  fetched     {len(raw):>5} rows")
-    parsed = mod.process(raw)
+    parsed = mod.process(raw, timestamp_serials=ts_serials)
     table = mod.TABLE
     rows = parsed[table]
     print(f"  parsed      {len(rows):>5} rows → {table}")
@@ -67,10 +70,13 @@ _BREWING_TABLES = (
 def _ingest_brewing(sheets: SheetsClient, conn, *, apply_writes: bool, limit: int | None):
     _print_header(f"brewing ({len(_BREWING_TABLES)} tables)")
     raw = sheets.read_range(_spreadsheet_id(), tab_brewing.RANGE)
+    ts_serials = sheets.read_range_serial(_spreadsheet_id(), tab_brewing.RANGE_TIMESTAMP)
     if limit is not None:
         raw = raw[:limit]
+        ts_serials = ts_serials[:limit]
     print(f"  fetched     {len(raw):>5} rows")
-    parsed = tab_brewing.process(raw)
+    yeast_map = load_yeast_canonical_map(conn)
+    parsed = tab_brewing.process(raw, timestamp_serials=ts_serials, yeast_map=yeast_map)
     for table in _BREWING_TABLES:
         rows = parsed[table]
         print(f"  parsed      {len(rows):>5} rows → {table}")
@@ -96,10 +102,12 @@ def _ingest_brewing(sheets: SheetsClient, conn, *, apply_writes: bool, limit: in
 def _ingest_packaging(sheets: SheetsClient, conn, *, apply_writes: bool, limit: int | None):
     _print_header("packaging (parent + readings)")
     raw = sheets.read_range(_spreadsheet_id(), tab_packaging.RANGE)
+    ts_serials = sheets.read_range_serial(_spreadsheet_id(), tab_packaging.RANGE_TIMESTAMP)
     if limit is not None:
         raw = raw[:limit]
+        ts_serials = ts_serials[:limit]
     print(f"  fetched     {len(raw):>5} rows")
-    parents, readings = tab_packaging.process(raw)
+    parents, readings = tab_packaging.process(raw, timestamp_serials=ts_serials)
     print(f"  parsed      {len(parents):>5} rows → bd_packaging")
     total_reads = sum(len(rs) for _, rs in readings)
     print(f"  parsed      {total_reads:>5} O2/CO2 readings → bd_packaging_readings")

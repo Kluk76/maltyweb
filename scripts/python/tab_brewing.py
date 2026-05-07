@@ -13,11 +13,13 @@ Discovered event_types in live data:
 """
 from __future__ import annotations
 
-from lib_coerce import s, n, d, dt
+from lib_coerce import s, n, d, dt, dt_serial
 from lib_hashing import row_hash
 
 TAB = "BrewingData"
 RANGE = f"{TAB}!A2:AY"
+# Side-channel range for submitted_at (col A) with SERIAL_NUMBER rendering.
+RANGE_TIMESTAMP = f"{TAB}!A2:A"
 WIDTH = 51
 
 GRAVITY_STAGES = {
@@ -49,16 +51,28 @@ def _trail(cells) -> dict:
     }
 
 
-def _row_brewday(cells, h, idx) -> dict:
+def _row_brewday(cells, h, idx, *, yeast_map: dict[str, str] | None = None) -> dict:
+    raw_col_i = s(cells[8])
+    raw_col_k = s(cells[10])
+
+    # Step 1: fold "New Yeast" placeholder — real strain name is in col K.
+    col_k_folded = raw_col_i == "New Yeast" and bool(raw_col_k)
+    raw = raw_col_k if col_k_folded else raw_col_i
+
+    # Step 2: canonicalize via alias map (pass-through when no match).
+    canonical = (yeast_map or {}).get(raw, raw) if raw else raw
+
     return _common(cells, h, idx) | {
         "bd_beer":          s(cells[3]),
         "bd_batch":         s(cells[4]),
         "bd_cct":           s(cells[5]),
         "bd_cct_cip":       s(cells[6]),
         "bd_cct_cip_date":  s(cells[7]),
-        "bd_yeast":         s(cells[8]),
+        "bd_yeast":         canonical,
         "bd_yeast_gen":     s(cells[9]),
-        "bd_yeast_new":     s(cells[10]),
+        # Clear bd_yeast_new once we've successfully folded the placeholder,
+        # so the col-K value is not double-stored.
+        "bd_yeast_new":     None if col_k_folded else raw_col_k,
         "bd_pitched_from":  s(cells[11]),
         "bd_yt":            s(cells[12]),
         "bd_yt_cip_date":   s(cells[13]),
@@ -127,7 +141,7 @@ def _row_ingredients(cells, h, idx) -> dict:
     } | _trail(cells)
 
 
-def process(raw_rows: list[list], *, sheet_offset: int = 2) -> dict[str, list[dict]]:
+def process(raw_rows: list[list], *, sheet_offset: int = 2, timestamp_serials: list | None = None, yeast_map: dict[str, str] | None = None) -> dict[str, list[dict]]:
     out: dict[str, list[dict]] = {
         "bd_brewing_brewday":     [],
         "bd_brewing_gravity":     [],
@@ -146,17 +160,35 @@ def process(raw_rows: list[list], *, sheet_offset: int = 2) -> dict[str, list[di
         ev = (s(cells[2]) or "").strip()
 
         if ev == "Brewday":
-            out["bd_brewing_brewday"].append(_row_brewday(cells, h, sheet_idx))
+            rec = _row_brewday(cells, h, sheet_idx, yeast_map=yeast_map)
         elif ev in GRAVITY_STAGES:
-            out["bd_brewing_gravity"].append(
-                _row_gravity(cells, h, sheet_idx, stage=GRAVITY_STAGES[ev])
-            )
+            rec = _row_gravity(cells, h, sheet_idx, stage=GRAVITY_STAGES[ev])
         elif ev == "Cooling":
-            out["bd_brewing_cooling"].append(_row_cooling(cells, h, sheet_idx))
+            rec = _row_cooling(cells, h, sheet_idx)
         elif ev == "Timings":
-            out["bd_brewing_timings"].append(_row_timings(cells, h, sheet_idx))
+            rec = _row_timings(cells, h, sheet_idx)
         elif ev == "Ingredients & Lot Numbers":
-            out["bd_brewing_ingredients"].append(_row_ingredients(cells, h, sheet_idx))
+            rec = _row_ingredients(cells, h, sheet_idx)
         else:
             out["_unmatched"].append({"sheet_row_index": sheet_idx, "event_type": ev})
+            continue
+
+        # Override submitted_at with the high-precision serial value when available.
+        if timestamp_serials is not None and i_row < len(timestamp_serials):
+            serial_row = timestamp_serials[i_row]
+            serial_val = serial_row[0] if serial_row else None
+            parsed_ts = dt_serial(serial_val)
+            if parsed_ts is not None:
+                rec["submitted_at"] = parsed_ts
+
+        if ev == "Brewday":
+            out["bd_brewing_brewday"].append(rec)
+        elif ev in GRAVITY_STAGES:
+            out["bd_brewing_gravity"].append(rec)
+        elif ev == "Cooling":
+            out["bd_brewing_cooling"].append(rec)
+        elif ev == "Timings":
+            out["bd_brewing_timings"].append(rec)
+        elif ev == "Ingredients & Lot Numbers":
+            out["bd_brewing_ingredients"].append(rec)
     return out

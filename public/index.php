@@ -21,14 +21,8 @@ try {
     $statusText  = "DB ERROR: " . $e->getMessage();
 }
 
-$modules = [
-    ["01", "Procurement",     "Sourcing & receiving",        "#mod-procurement"],
-    ["02", "Wort Production", "Brewhouse & cooling",         "#mod-wort"],
-    ["03", "Fermentation",    "CCT, BBT, dry-hop, racking",  "#mod-fermentation"],
-    ["04", "Packaging",       "Bottle, can, keg, cuv",       "#mod-packaging"],
-    ["05", "Fulfilment",      "Logistics & dispatch",        "#mod-fulfilment"],
-    ["06", "QA / QC",         "Lab, sensory, audit",         "#mod-qa"],
-];
+$active_module = "home";
+$crumbs        = ["Accueil"];
 ?><!doctype html>
 <html lang="fr">
 <head>
@@ -42,52 +36,13 @@ $modules = [
 </head>
 <body class="home">
 
-<aside class="side" aria-label="Navigation principale">
-  <div class="side__brand">
-    <span class="mark">M<span class="mark__t">T</span></span>
-    <span class="mark__sub">MaltyTask</span>
-  </div>
+<?php require __DIR__ . "/../app/partials/sidebar.php" ?>
 
-  <nav class="nav" aria-label="Modules">
-    <div class="nav__label">— modules</div>
-    <ul>
-      <?php foreach ($modules as [$idx, $name, $sub, $href]): ?>
-        <li>
-          <a class="nav__item" href="<?= htmlspecialchars($href) ?>">
-            <span class="nav__idx"><?= htmlspecialchars($idx) ?></span>
-            <span class="nav__body">
-              <span class="nav__name"><?= htmlspecialchars($name) ?></span>
-              <span class="nav__sub"><?= htmlspecialchars($sub) ?></span>
-            </span>
-            <span class="nav__chev" aria-hidden="true">→</span>
-          </a>
-        </li>
-      <?php endforeach ?>
-    </ul>
-  </nav>
-
-  <footer class="side__foot">
-    <span class="side__org">la nébuleuse</span>
-    <span class="side__ver">v0.1 · 2026</span>
-  </footer>
-</aside>
-
-<header class="top">
-  <div class="top__crumbs">
-    <span class="top__here">Accueil</span>
-  </div>
-  <div class="top__user">
-    <span class="user__name"><?= htmlspecialchars($me["display_name"]) ?></span>
-    <span class="user__sep">·</span>
-    <span class="user__role"><?= htmlspecialchars($me["role"]) ?></span>
-    <span class="user__sep">·</span>
-    <a class="user__out" href="/logout.php">Déconnexion</a>
-  </div>
-</header>
+<?php require __DIR__ . "/../app/partials/topbar.php" ?>
 
 <main class="main">
   <section class="hero">
-    <div class="hero__eyebrow">brewery operations · est. 2017</div>
+    <div class="hero__eyebrow">La Nébuleuse Operations · Est. 2014</div>
     <h1 class="hero__mark">
       <span class="hero__a">Malty</span><span class="hero__b">Task</span>
     </h1>
@@ -105,7 +60,7 @@ $modules = [
       </svg>
       <span></span>
     </div>
-    <p class="hero__tag">Une plateforme unique pour la brasserie — du grain au fût.</p>
+    <p class="hero__tag">La Fête est plus Folle avec la Compagnie Glycol</p>
   </section>
 
   <section class="status" aria-label="État du système">

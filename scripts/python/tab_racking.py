@@ -3,11 +3,13 @@ tab_racking — RackingData (A2:AF, 32 cols).
 """
 from __future__ import annotations
 
-from lib_coerce import s, n, d, dt
+from lib_coerce import s, n, d, dt, dt_serial
 from lib_hashing import row_hash
 
 TAB = "RackingData"
 RANGE = f"{TAB}!A2:AF"
+# Side-channel range for submitted_at (col A) with SERIAL_NUMBER rendering.
+RANGE_TIMESTAMP = f"{TAB}!A2:A"
 WIDTH = 32
 TABLE = "bd_racking"
 
@@ -55,12 +57,22 @@ def _row(cells, h, idx) -> dict:
     }
 
 
-def process(raw_rows: list[list], *, sheet_offset: int = 2) -> dict[str, list[dict]]:
+def process(raw_rows: list[list], *, sheet_offset: int = 2, timestamp_serials: list | None = None) -> dict[str, list[dict]]:
     out = {TABLE: []}
     for i_row, row in enumerate(raw_rows):
         cells = _pad(row, WIDTH)
         if all((c is None or str(c).strip() == "") for c in cells):
             continue
         h = row_hash(row, WIDTH)
-        out[TABLE].append(_row(cells, h, sheet_offset + i_row))
+        rec = _row(cells, h, sheet_offset + i_row)
+
+        # Override submitted_at with the high-precision serial value when available.
+        if timestamp_serials is not None and i_row < len(timestamp_serials):
+            serial_row = timestamp_serials[i_row]
+            serial_val = serial_row[0] if serial_row else None
+            parsed_ts = dt_serial(serial_val)
+            if parsed_ts is not None:
+                rec["submitted_at"] = parsed_ts
+
+        out[TABLE].append(rec)
     return out

@@ -5,11 +5,14 @@ Col 0 (header empty) is skipped semantically but still counted in width for hash
 """
 from __future__ import annotations
 
-from lib_coerce import s, n, i, d, dt
+from lib_coerce import s, n, i, d, dt, dt_serial
 from lib_hashing import row_hash
 
 TAB = "PackagingData"
 RANGE = f"{TAB}!A2:CN"
+# Side-channel range for submitted_at (col B) with SERIAL_NUMBER rendering.
+# Col A is an unnamed/empty column; col B (index 1) holds the form timestamp.
+RANGE_TIMESTAMP = f"{TAB}!B2:B"
 WIDTH = 92
 TABLE_PARENT = "bd_packaging"
 TABLE_READINGS = "bd_packaging_readings"
@@ -112,12 +115,15 @@ def _readings(cells) -> list[dict]:
     return readings
 
 
-def process(raw_rows: list[list], *, sheet_offset: int = 2) -> tuple[list[dict], list[tuple[str, list[dict]]]]:
+def process(raw_rows: list[list], *, sheet_offset: int = 2, timestamp_serials: list | None = None) -> tuple[list[dict], list[tuple[str, list[dict]]]]:
     """
     Returns:
       parents:  list of dicts ready for INSERT IGNORE into bd_packaging
       readings: list of (parent_row_hash, [reading_dicts]) — the parent_row_hash
                 is the lookup key the caller uses to resolve the FK after insert.
+    timestamp_serials: optional list from a SERIAL_NUMBER fetch of col B (the
+                       submitted_at column). When supplied, submitted_at is
+                       overridden with the full datetime including time-of-day.
     """
     parents: list[dict] = []
     readings: list[tuple[str, list[dict]]] = []
@@ -128,7 +134,17 @@ def process(raw_rows: list[list], *, sheet_offset: int = 2) -> tuple[list[dict],
             continue
         h = row_hash(row, WIDTH)
         sheet_idx = sheet_offset + i_row
-        parents.append(_parent(cells, h, sheet_idx))
+        rec = _parent(cells, h, sheet_idx)
+
+        # Override submitted_at with the high-precision serial value when available.
+        if timestamp_serials is not None and i_row < len(timestamp_serials):
+            serial_row = timestamp_serials[i_row]
+            serial_val = serial_row[0] if serial_row else None
+            parsed_ts = dt_serial(serial_val)
+            if parsed_ts is not None:
+                rec["submitted_at"] = parsed_ts
+
+        parents.append(rec)
         rs = _readings(cells)
         if rs:
             readings.append((h, rs))

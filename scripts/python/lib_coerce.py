@@ -8,8 +8,32 @@ strict MySQL columns (DATETIME, DATE, DECIMAL).
 from __future__ import annotations
 
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
+
+
+# Google Sheets date serial epoch: day 1 = 1899-12-31, but Sheets uses a
+# Lotus-compatible off-by-one so the epoch base is 1899-12-30.
+SHEETS_EPOCH = datetime(1899, 12, 30)
+
+
+def dt_serial(v) -> datetime | None:
+    """
+    Convert a Google Sheets date-serial number to a Python datetime.
+
+    Google Sheets stores datetimes as a float where the integer part is the
+    number of days since 1899-12-30 and the fractional part is the time of day.
+    Example: 46148.49559496528 → 2026-05-06 11:53:39
+
+    Returns None if v is None, empty, or cannot be parsed as float.
+    """
+    if v is None or v == "":
+        return None
+    try:
+        fval = float(v)
+    except (TypeError, ValueError):
+        return None
+    return SHEETS_EPOCH + timedelta(days=fval)
 
 
 def s(v) -> str | None:
