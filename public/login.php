@@ -14,6 +14,7 @@ if (current_user() !== null) {
 
 $error = null;
 $username = "";
+$expired = (($_GET["reason"] ?? "") === "expired");
 
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
     $posted = $_POST["csrf"] ?? null;
@@ -31,6 +32,13 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             $error = "Identifiants invalides.";
             // Mild throttle to slow brute force
             usleep(500_000);
+
+            // Structured log for fail2ban (filter: maltytask-auth)
+            $logUser = preg_replace('/[^a-zA-Z0-9_@.\-]/', '?', (string) $username);
+            if (strlen($logUser) > 64) $logUser = substr($logUser, 0, 64);
+            $logIp = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+            $logLine = sprintf("%s auth-fail user=%s ip=%s\n", date('c'), $logUser, $logIp);
+            @file_put_contents('/var/log/maltytask/auth.log', $logLine, FILE_APPEND | LOCK_EX);
         } else {
             auth_login($user);
             $next = $_GET["next"] ?? "/";
@@ -98,6 +106,9 @@ $insecure = empty($_SERVER["HTTPS"]) || $_SERVER["HTTPS"] === "off";
 
     <?php if ($insecure): ?>
       <div class="auth__warn">⚠ Connexion non chiffrée (HTTP). À traiter dès qu'un nom de domaine + Let's Encrypt sont en place.</div>
+    <?php endif ?>
+    <?php if ($expired): ?>
+      <div class="auth__warn">Session expirée. Reconnecte-toi pour continuer.</div>
     <?php endif ?>
     <?php if ($error): ?>
       <div class="auth__err"><?= htmlspecialchars($error) ?></div>

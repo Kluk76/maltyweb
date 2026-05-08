@@ -4,6 +4,20 @@ declare(strict_types=1);
 require_once __DIR__ . "/db.php";
 
 /**
+ * Idle timeout for authenticated sessions. After this many seconds without
+ * activity, current_user() destroys the session and require_login() redirects
+ * to /login.php?reason=expired. PHP gc_maxlifetime is also pinned to this
+ * value so server-side session files are garbage-collected eventually.
+ */
+const MALTYTASK_SESSION_IDLE_MAX = 1800; // 30 min
+
+/**
+ * Periodic session-id rotation interval. Mitigates session-fixation /
+ * stolen-cookie windows by issuing a fresh id every N seconds of activity.
+ */
+const MALTYTASK_SESSION_REGEN_INTERVAL = 900; // 15 min
+
+/**
  * Bootstraps a hardened PHP session.
  * - HttpOnly cookies (no JS access)
  * - SameSite=Strict (no cross-site sends)
@@ -17,6 +31,12 @@ function maltytask_session_start(): void
     if (session_status() === PHP_SESSION_ACTIVE) return;
 
     $secure = !empty($_SERVER["HTTPS"]) && $_SERVER["HTTPS"] !== "off";
+
+    // Server-side garbage collection: clean up expired session files.
+    // Probability 1/100 keeps the sweep cheap while bounding stale-file age.
+    ini_set('session.gc_maxlifetime', (string) MALTYTASK_SESSION_IDLE_MAX);
+    ini_set('session.gc_probability', '1');
+    ini_set('session.gc_divisor', '100');
 
     session_name("maltytask_sid");
     session_set_cookie_params([
@@ -76,6 +96,8 @@ function auth_login(array $user): void
         "display_name" => $user["display_name"] ?? $user["username"],
         "role"         => $user["role"],
     ];
+    $_SESSION["last_activity"] = time();
+    $_SESSION["regen_at"] = time();
 }
 
 /**
@@ -84,7 +106,31 @@ function auth_login(array $user): void
 function current_user(): ?array
 {
     maltytask_session_start();
-    return $_SESSION["user"] ?? null;
+    $user = $_SESSION["user"] ?? null;
+    if ($user === null) return null;
+
+    $now = time();
+    $last = $_SESSION["last_activity"] ?? $now;
+
+    // Idle timeout: destroy session, signal expiry to require_login()
+    if ($now - $last > MALTYTASK_SESSION_IDLE_MAX) {
+        $_SESSION = [];
+        session_destroy();
+        $GLOBALS["_maltytask_session_expired"] = true;
+        return null;
+    }
+
+    // Touch activity timestamp
+    $_SESSION["last_activity"] = $now;
+
+    // Periodic session-id rotation
+    $regen = $_SESSION["regen_at"] ?? $now;
+    if ($now - $regen > MALTYTASK_SESSION_REGEN_INTERVAL) {
+        session_regenerate_id(true);
+        $_SESSION["regen_at"] = $now;
+    }
+
+    return $user;
 }
 
 /**
@@ -96,7 +142,11 @@ function require_login(): void
     if (current_user() !== null) return;
 
     $next = $_SERVER["REQUEST_URI"] ?? "/";
-    $qs = http_build_query(["next" => $next]);
+    $params = ["next" => $next];
+    if (!empty($GLOBALS["_maltytask_session_expired"])) {
+        $params["reason"] = "expired";
+    }
+    $qs = http_build_query($params);
     header("Location: /login.php?{$qs}", true, 302);
     exit;
 }
