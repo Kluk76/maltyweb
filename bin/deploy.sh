@@ -39,6 +39,7 @@ if [[ -z "$DRY" ]]; then
   ssh -o BatchMode=yes "$VPS_HOST" \
     "sudo chown -R maltytask:www-data $VPS_PATH/public $VPS_PATH/app $VPS_PATH/db $VPS_PATH/scripts && \
      sudo find $VPS_PATH/public $VPS_PATH/app $VPS_PATH/db $VPS_PATH/scripts -type d -exec chmod 2755 {} \; && \
-     sudo find $VPS_PATH/public $VPS_PATH/app $VPS_PATH/db $VPS_PATH/scripts -type f -exec chmod 644 {} \;"
+     sudo find $VPS_PATH/public $VPS_PATH/app $VPS_PATH/db $VPS_PATH/scripts -type f -exec chmod 644 {} \; && \
+     sudo find $VPS_PATH/scripts/db -type f -name '*.sh' -exec chmod 755 {} \;"
   echo "✓ deploy complete"
 fi
