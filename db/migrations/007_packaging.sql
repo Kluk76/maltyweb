@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS bd_packaging (
   -- cols 14-43 (15 paired O2/CO2 readings) → bd_packaging_readings child table
 
   -- Form continues at col AS (idx 44)
-  format                   VARCHAR(16)     NULL,                   -- col AS: Bot | Can | Keg | Cuv
+  format                   VARCHAR(16)     NULL,                   -- col AS: Bot | Can | Keg | Cuve de service
   sel_can                  VARCHAR(64)     NULL,                   -- col AT
   sel_pack_can             VARCHAR(64)     NULL,                   -- col AU
   sel_bottle               VARCHAR(64)     NULL,                   -- col AV

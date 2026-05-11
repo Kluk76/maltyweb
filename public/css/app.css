@@ -3312,6 +3312,360 @@ body.auth::after {
   border: 1px solid rgba(94, 98, 102, 0.28);
 }
 
+.home .tank-badge--rack-future {
+  color: var(--steel);
+  background: rgba(184, 188, 192, 0.14);
+  border: 1px solid rgba(184, 188, 192, 0.30);
+}
+
+.home .tank-badge--rack-overdue {
+  color: var(--ember);
+  background: rgba(197, 102, 74, 0.16);
+  border: 1px solid rgba(197, 102, 74, 0.38);
+}
+
+/* ── Metrics view: .tank-card__info--metrics + .metric-list ── */
+
+/* The info wrapper in metrics mode keeps the same base layout,
+   but we override the gap to seat the dl tightly below the batch line */
+.home .tank-card__info--metrics {
+  gap: 3px;
+}
+
+/* 2×2 grid: OG+pH top row, Levure+Gén bottom row */
+.home .metric-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 10px;
+  margin: 6px 0 0;
+  padding: 0;
+  width: 100%;
+  list-style: none;
+  border-top: 1px solid var(--hairline);
+  padding-top: 6px;
+}
+
+/* Each metric cell: label stacked above value */
+.home .metric {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+}
+
+/* Yeast strain spans the full width (long text needs more room) */
+.home .metric--yeast-full {
+  grid-column: 1 / -1;
+  align-items: center;
+}
+
+/* <dt> labels: small-caps monospace, muted */
+.home .metric dt {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  line-height: 1;
+}
+
+/* <dd> values: monospace, default ink */
+.home .metric dd {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--ink);
+  line-height: 1.1;
+  margin: 0;
+}
+
+/* Yeast strain value: slightly smaller to fit */
+.home .metric--yeast-full dd {
+  font-size: 11.5px;
+}
+
+/* Trailing unit glyph (°P) */
+.home .metric__unit {
+  font-size: 10px;
+  color: var(--ink-mute);
+}
+
+/* OG: no color — monochrome reference value */
+.home .metric--og dd {
+  color: var(--ink);
+}
+
+/* Band: healthy (pH 4.0–4.6 / Gen 1–4) */
+.home .metric--good dd {
+  color: var(--hop-soft);
+}
+
+/* Band: middling (pH 4.7–4.8 / Gen 5–8) */
+.home .metric--mid dd {
+  color: var(--ink);
+}
+
+/* Band: caution (pH <4.0 or >4.8 / Gen 9+) */
+.home .metric--warn dd {
+  color: var(--ember);
+}
+
+/* Band: orange warning (yeast gen 8–15) */
+.home .metric--caution dd {
+  color: #c97b3a;
+}
+
+/* Avg reference values — neutral, no color emphasis */
+.home .metric--avg dd {
+  color: var(--ink-mute);
+}
+
+/* Re-pitch count — neutral */
+.home .metric--repitch dd {
+  color: var(--ink);
+}
+
+/* Target / reference cells (FG cible, pH cible) — muted so they read as reference, not signal */
+.home .metric--target dt,
+.home .metric--target dd {
+  color: var(--ink-mute);
+  font-style: normal;
+}
+
+/* Achieved FG at cold-crash — normal ink weight */
+.home .metric--fg dd {
+  color: var(--ink);
+}
+
+/* ── Ferm-stats intermediate table ── */
+.home .ferm-stats {
+  margin-bottom: 44px;
+}
+
+.home .ferm-stats__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--hairline);
+  margin-bottom: 0;
+}
+
+.home .ferm-stats__year-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.home .ferm-stats__year-label {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+.home .ferm-stats__year-form select {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline-2);
+  border-radius: 2px;
+  color: var(--ink);
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.home .cct-view-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+.home .cct-view-toggle__label {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  margin-right: 4px;
+}
+.home .cct-view-toggle__btn {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline-2);
+  color: var(--ink-mute);
+  padding: 4px 10px;
+  border-radius: 2px;
+  cursor: pointer;
+  transition: color .12s, border-color .12s, background .12s;
+}
+.home .cct-view-toggle__btn:hover {
+  color: var(--ink);
+  border-color: var(--hairline);
+}
+.home .cct-view-toggle__btn--active {
+  color: var(--oak);
+  border-color: var(--oak);
+  background: rgba(160, 122, 72, 0.08);
+}
+
+.home .ferm-stats__empty {
+  font-family: "Fraunces", serif;
+  font-style: italic;
+  font-size: 15px;
+  color: var(--ink-mute);
+  padding: 32px 0;
+  margin: 0;
+}
+
+.home .ferm-stats__wrap {
+  overflow-x: auto;
+  margin-top: 0;
+  /* Hairline top-border already on thead first row */
+}
+
+.home .ferm-stats__table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+}
+
+.home .ferm-stats__caption {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  text-align: left;
+  padding: 14px 0 10px;
+}
+
+.home .ferm-stats__th {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  padding: 10px 14px;
+  border-top: 1px solid var(--hairline-2);
+  border-bottom: 1px solid var(--hairline-2);
+  white-space: nowrap;
+  text-align: left;
+}
+
+.home .ferm-stats__th--avg,
+.home .ferm-stats__th--n {
+  text-align: right;
+}
+
+.home .ferm-stats__row {
+  border-bottom: 1px solid var(--hairline);
+  transition: background .15s;
+}
+
+.home .ferm-stats__row:last-child {
+  border-bottom: none;
+}
+
+.home .ferm-stats__row:hover {
+  background: rgba(160, 122, 72, 0.06);
+}
+
+.home .ferm-stats__td {
+  padding: 11px 14px;
+  vertical-align: middle;
+}
+
+.home .ferm-stats__td--beer {
+  font-family: "Fraunces", "Times New Roman", serif;
+  font-variation-settings: "opsz" 72;
+  font-size: 15px;
+  font-weight: 400;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.home .ferm-stats__td--n {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--ink-mute);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.home .ferm-stats__td--avg {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--oak);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.home .ferm-stats__unit {
+  font-size: 10px;
+  color: var(--ink-mute);
+  margin-left: 1px;
+}
+
+.home .ferm-stats__td--range {
+  min-width: 180px;
+  width: 40%;
+}
+
+/* Range bar: a horizontal track with a dot at the avg position */
+.home .ferm-stats__bar-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.home .ferm-stats__bar-track {
+  display: block;
+  position: relative;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.07);
+  border-radius: 2px;
+  overflow: visible;
+}
+
+/* Avg marker: a vertical tick on the track */
+.home .ferm-stats__bar-fill {
+  display: block;
+  position: absolute;
+  top: -3px;
+  left: var(--avg-pct);
+  width: 2px;
+  height: 9px;
+  background: var(--oak);
+  border-radius: 1px;
+  transform: translateX(-50%);
+}
+
+.home .ferm-stats__bar-labels {
+  display: flex;
+  justify-content: space-between;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px;
+  color: var(--ink-mute);
+}
+
+.home .ferm-stats__bar-min,
+.home .ferm-stats__bar-max {
+  line-height: 1;
+}
+
+@media (max-width: 640px) {
+  .home .ferm-stats__td--range { display: none; }
+  .home .ferm-stats__th--range { display: none; }
+}
+
 /* ── Tanks as-of date filter ── */
 .home .tanks-filters {
   width: 100%;
@@ -3373,6 +3727,236 @@ body.auth::after {
 
 @media (max-width: 880px) {
   .home .tanks-filters { padding: 14px 16px; }
+}
+
+/* ── Packaging stats section head ── */
+.home .pkg-stats__head {
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+/* KPI grid override for packaging (3-up, slightly narrower than 4-up) */
+.home .pkg-kpis {
+  margin-bottom: 28px;
+}
+
+/* ── Packaging format stacked bar ── */
+.home .pkg-format-bar {
+  margin-top: 4px;
+  padding: 18px 20px;
+  background: linear-gradient(135deg, rgba(25, 20, 15, 0.55), rgba(12, 10, 7, 0.35));
+  border: 1px solid var(--hairline-2);
+  border-radius: 2px;
+}
+
+.home .pkg-format-bar__label-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  gap: 12px;
+}
+
+.home .pkg-format-bar__title {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+.home .pkg-format-bar__total {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+}
+
+/* The horizontal stacked bar track */
+.home .pkg-format-bar__track {
+  display: flex;
+  height: 8px;
+  border-radius: 2px;
+  overflow: hidden;
+  gap: 1px;
+  background: rgba(255,255,255,0.04);
+  margin-bottom: 14px;
+}
+
+/* Each segment: width driven by --seg-pct custom property */
+.home .pkg-format-bar__segment {
+  display: block;
+  width: var(--seg-pct, 0%);
+  background: var(--seg-color, var(--steel-mid));
+  opacity: 0.82;
+  border-radius: 1px;
+  transition: opacity .15s;
+  flex-shrink: 0;
+}
+
+.home .pkg-format-bar__segment:hover {
+  opacity: 1;
+}
+
+/* Legend row: one item per format */
+.home .pkg-format-bar__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 24px;
+}
+
+.home .pkg-format-bar__item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+/* Color swatch */
+.home .pkg-format-bar__swatch {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 1px;
+  background: var(--seg-color, var(--steel-mid));
+  opacity: 0.82;
+  flex-shrink: 0;
+  position: relative;
+  top: -1px;
+}
+
+.home .pkg-format-bar__item-label {
+  font-family: "Fraunces", "Times New Roman", serif;
+  font-variation-settings: "opsz" 36;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+.home .pkg-format-bar__item-hl {
+  font-size: 11px;
+  color: var(--ink-soft);
+  letter-spacing: 0.04em;
+}
+
+.home .pkg-format-bar__item-pct {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+/* ---- Format-bar popup (hover / focus-within, CSS-only) ---- */
+
+.home .pkg-format-bar__item {
+  position: relative;
+  cursor: default;
+}
+
+.home .pkg-format-bar__popup {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 50;
+  min-width: 280px;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .12s, visibility .12s;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px;
+  padding: 12px 14px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+}
+
+.home .pkg-format-bar__item:hover .pkg-format-bar__popup,
+.home .pkg-format-bar__item:focus-within .pkg-format-bar__popup {
+  visibility: visible;
+  opacity: 1;
+}
+
+/* Anchor the last two legend items to the right so the popup doesn't overflow */
+.home .pkg-format-bar__legend .pkg-format-bar__item:nth-last-child(-n+2) .pkg-format-bar__popup {
+  left: auto;
+  right: 0;
+}
+
+.home .pkg-format-bar__popup-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--hairline-2);
+}
+
+.home .pkg-format-bar__popup-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 1px;
+  background: var(--seg-color, var(--steel-mid));
+  opacity: 0.82;
+  flex-shrink: 0;
+}
+
+.home .pkg-format-bar__popup-title {
+  font-family: "Fraunces", "Times New Roman", serif;
+  font-variation-settings: "opsz" 36;
+  font-size: 13px;
+  color: var(--ink);
+  font-weight: 400;
+}
+
+.home .pkg-format-bar__popup-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.home .pkg-format-bar__popup-row {
+  display: grid;
+  grid-template-columns: 16px auto 1fr auto;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.home .pkg-format-bar__popup-rank {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  color: var(--ink-faint, var(--ink-soft));
+  text-align: right;
+}
+
+.home .pkg-format-bar__popup-sku {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.home .pkg-format-bar__popup-hl {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  color: var(--oak);
+  text-align: right;
+}
+
+.home .pkg-format-bar__popup-unit {
+  font-size: 10px;
+  color: var(--ink-soft);
+}
+
+.home .pkg-format-bar__popup-events {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  color: var(--ink-soft);
+}
+
+@media (max-width: 640px) {
+  .home .pkg-format-bar__legend { gap: 12px 16px; }
+  .home .pkg-format-bar__item-label { font-size: 12px; }
 }
 
 /* ============== INGEST FAILURES ============== */

@@ -19,7 +19,7 @@ $filterClassification = null;
 if (isset($_GET['recipe']) && $_GET['recipe'] !== '') {
     $filterRecipe = (string) $_GET['recipe'];
 }
-if (!empty($_GET['format']) && in_array($_GET['format'], ['Bot', 'Can', 'Keg', 'Cuv'], true)) {
+if (!empty($_GET['format']) && in_array($_GET['format'], ['Bot', 'Can', 'Keg', 'Cuve de service'], true)) {
     $filterFormat = $_GET['format'];
 }
 if (!empty($_GET['classification']) && in_array($_GET['classification'], ['Neb', 'Contract'], true)) {
@@ -128,7 +128,7 @@ try {
         {$whereSql}
         GROUP BY s.id
         ORDER BY rr.recipe_short_name,
-                 FIELD(s.format, 'Bot', 'Can', 'Keg', 'Cuv'),
+                 FIELD(s.format, 'Bot', 'Can', 'Keg', 'Cuve de service'),
                  s.sku_code
         LIMIT {$rowLimit}
     ";
@@ -263,7 +263,7 @@ unset($r);
         <span class="wort-filters__label">Format</span>
         <select name="format" onchange="this.form.submit()">
           <option value="">Tous</option>
-          <?php foreach (['Bot', 'Can', 'Keg', 'Cuv'] as $fmt): ?>
+          <?php foreach (['Bot', 'Can', 'Keg', 'Cuve de service'] as $fmt): ?>
             <option value="<?= htmlspecialchars($fmt) ?>"<?= ($filterFormat === $fmt) ? ' selected' : '' ?>>
               <?= htmlspecialchars($fmt) ?>
             </option>

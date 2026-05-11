@@ -43,7 +43,7 @@ def _parent(cells, h, idx) -> dict:
 
         # cols 14..43 → readings child
 
-        "format":                s(cells[44]),
+        "format":                ("Cuve de service" if (s(cells[44]) or "").strip().lower() == "cuv" else s(cells[44])),
         "sel_can":               s(cells[45]),
         "sel_pack_can":          s(cells[46]),
         "sel_bottle":            s(cells[47]),

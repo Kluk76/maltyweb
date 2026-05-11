@@ -5,7 +5,7 @@ Source: BSF spreadsheet, tab SKU_BOM, range A2:N (14 columns, row 1 is header).
 Column map (0-based):
   0  SKU           A  SKU code (ZEPF, ZEP4, ZEPC, …)
   1  BEER          B  recipe name (matched against ref_recipes.name)
-  2  FORMAT        C  "Bot" | "Can" | "Keg" | "Cuv"
+  2  FORMAT        C  "Bot" | "Can" | "Keg" | "Cuve de service"
   3  UNIT_LABEL    D  "24-pack box (24 × 33cl)"
   4  HL_PER_UNIT   E  sellable unit volume in HL (e.g. 0.0792)
   5  SOURCE        F  "Brewing" | "Packaging"
@@ -143,7 +143,7 @@ def parse_row(row: list) -> dict | None:
         # SKU-level fields (stable across BOM lines for the same SKU)
         "sku_code":       sku_code,
         "beer_raw":       s(padded[1]),
-        "format":         s(padded[2]),
+        "format":         ("Cuve de service" if (s(padded[2]) or "").strip().lower() == "cuv" else s(padded[2])),
         "unit_label":     s(padded[3]),
         "hl_per_unit":    n(padded[4]),
         "sku_hash":       row_hash(sku_hash_cells, SKU_HASH_FIELDS),
