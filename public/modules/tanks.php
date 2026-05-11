@@ -1104,14 +1104,13 @@ $today = $asOfDT;
               ? fmt_date_fr_tanks($lastGravDate, $monthsFR)
               : null;
 
-          // Cold crash badge: J+N days since brewday
+          // Cold crash badge: J+N = days in garde (since cold crash started)
           $ccDate    = $occ['last_cc_date'] ?? null;
           $ccDays    = null;
           $ccDateFmt = null;
-          if ($ccDate && !empty($occ['brewday_date'])) {
-              $brewDT   = new DateTimeImmutable($occ['brewday_date']);
-              $ccDT     = new DateTimeImmutable($ccDate);
-              $ccDays   = (int)$brewDT->diff($ccDT)->days;
+          if ($ccDate) {
+              $ccDT      = new DateTimeImmutable($ccDate);
+              $ccDays    = (int)$ccDT->diff($asOfDT)->days;
               $ccDateFmt = fmt_date_fr_tanks($ccDate, $monthsFR);
           }
         ?>
