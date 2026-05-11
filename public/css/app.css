@@ -3308,6 +3308,69 @@ body.auth::after {
   border: 1px solid rgba(94, 98, 102, 0.28);
 }
 
+/* ── Tanks as-of date filter ── */
+.home .tanks-filters {
+  width: 100%;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline-2);
+  border-radius: 2px;
+  padding: 16px 18px;
+  margin-bottom: 20px;
+  box-sizing: border-box;
+}
+
+/* Reuse wort-filters__row / wort-filters__field / wort-filters__label /
+   wort-filters__field select — all already defined in the WORT section.
+   Only the reset link needs a tanks-specific alias for clarity. */
+
+.home .tanks-filters__reset {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-end;
+  padding: 7px 10px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  font-variant: small-caps;
+  color: var(--ink-mute);
+  text-decoration: none;
+  border: 1px solid var(--hairline);
+  border-radius: 2px;
+  transition: color .2s, border-color .2s;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.home .tanks-filters__reset:hover {
+  color: var(--hop);
+  border-color: var(--hop-deep);
+}
+
+/* ── As-of date banner ── */
+.home .tanks-asof-banner {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--hop);
+  background: rgba(158, 176, 96, 0.07);
+  border: 1px solid rgba(158, 176, 96, 0.22);
+  border-radius: 2px;
+  padding: 7px 14px;
+  margin-bottom: 24px;
+  display: inline-block;
+}
+.home .tanks-asof-banner--current {
+  color: var(--ink-mute);
+  background: transparent;
+  border-color: var(--hairline-2);
+}
+
+@media (max-width: 880px) {
+  .home .tanks-filters { padding: 14px 16px; }
+}
+
 /* ============== INGEST FAILURES ============== */
 
 /* Admin table shared styles */

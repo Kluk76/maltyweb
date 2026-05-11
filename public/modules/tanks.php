@@ -18,6 +18,51 @@ $monthsFR = [
     9 => "sep", 10 => "oct", 11 => "nov", 12 => "déc",
 ];
 
+$monthsFRFull = [
+    1  => "janvier",   2  => "février",   3  => "mars",
+    4  => "avril",     5  => "mai",        6  => "juin",
+    7  => "juillet",   8  => "août",       9  => "septembre",
+    10 => "octobre",   11 => "novembre",   12 => "décembre",
+];
+
+// --- As-of filter -----------------------------------------------------------
+$todayDT      = new DateTimeImmutable('today');
+$minDate      = new DateTimeImmutable('2023-10-01');
+$currentYear  = (int)$todayDT->format('Y');
+
+// Parse GET params (strict: ctype_digit + range)
+$asOfDT       = $todayDT; // default = today
+$filterActive = false;
+
+$_gy = $_GET['year']  ?? '';
+$_gm = $_GET['month'] ?? '';
+$_gd = $_GET['day']   ?? '';
+
+if (ctype_digit($_gy) && ctype_digit($_gm) && ctype_digit($_gd)) {
+    $py = (int)$_gy;
+    $pm = (int)$_gm;
+    $pd = (int)$_gd;
+    if ($py >= 2023 && $py <= $currentYear && $pm >= 1 && $pm <= 12 && $pd >= 1 && $pd <= 31) {
+        $parsed = DateTimeImmutable::createFromFormat('Y-n-j', "{$py}-{$pm}-{$pd}");
+        if ($parsed !== false) {
+            // Clamp to [minDate, today]
+            if ($parsed > $todayDT) $parsed = $todayDT;
+            if ($parsed < $minDate) $parsed = $minDate;
+            $asOfDT       = $parsed;
+            $filterActive = ($asOfDT->format('Y-m-d') !== $todayDT->format('Y-m-d'));
+        }
+    }
+}
+
+$selYear  = (int)$asOfDT->format('Y');
+$selMonth = (int)$asOfDT->format('n');
+$selDay   = (int)$asOfDT->format('j');
+
+// FR-formatted as-of date for display (e.g. "12 mars 2026")
+function fmt_date_fr_tanks_full(DateTimeImmutable $dt, array $monthsFull): string {
+    return sprintf('%d %s %s', (int)$dt->format('j'), $monthsFull[(int)$dt->format('n')], $dt->format('Y'));
+}
+
 function fmt_date_fr_tanks(string $dateStr, array $months): string {
     $ts = strtotime($dateStr);
     if ($ts === false) return htmlspecialchars($dateStr);
@@ -285,7 +330,7 @@ try {
     ")->fetchAll(PDO::FETCH_ASSOC);
 
     // ---- Run event-sourced simulation ----
-    $simState  = (new TankSimulator($pdo))->run();
+    $simState  = (new TankSimulator($pdo))->run($asOfDT);
     $cctSimMap = $simState['cct']; // int → state|null
     $bbtSimMap = $simState['bbt'];
 
@@ -449,7 +494,8 @@ try {
     $dbError     = $e->getMessage();
 }
 
-$today = new DateTimeImmutable('today');
+// $asOfDT already set above; use it as reference for "days in BBT" calculations.
+$today = $asOfDT;
 ?><!doctype html>
 <html lang="fr">
 <head>
@@ -472,6 +518,57 @@ $today = new DateTimeImmutable('today');
   <?php if ($dbError): ?>
     <div class="wort-error">
       Erreur base de données&nbsp;: <?= htmlspecialchars($dbError) ?>
+    </div>
+  <?php endif ?>
+
+  <!-- As-of date filter -->
+  <form class="tanks-filters" method="get" action="<?= htmlspecialchars($_SERVER['PHP_SELF']) ?>">
+    <div class="wort-filters__row">
+
+      <div class="wort-filters__field">
+        <label class="wort-filters__label" for="tf-year">Année</label>
+        <select id="tf-year" name="year" onchange="this.form.submit()">
+          <?php for ($y = 2023; $y <= $currentYear; $y++): ?>
+            <option value="<?= $y ?>"<?= $y === $selYear ? ' selected' : '' ?>><?= $y ?></option>
+          <?php endfor ?>
+        </select>
+      </div>
+
+      <div class="wort-filters__field">
+        <label class="wort-filters__label" for="tf-month">Mois</label>
+        <select id="tf-month" name="month" onchange="this.form.submit()">
+          <?php foreach ($monthsFRFull as $mn => $ml): ?>
+            <option value="<?= $mn ?>"<?= $mn === $selMonth ? ' selected' : '' ?>><?= htmlspecialchars($ml) ?></option>
+          <?php endforeach ?>
+        </select>
+      </div>
+
+      <div class="wort-filters__field">
+        <label class="wort-filters__label" for="tf-day">Jour</label>
+        <select id="tf-day" name="day" onchange="this.form.submit()">
+          <?php for ($d = 1; $d <= 31; $d++): ?>
+            <option value="<?= $d ?>"<?= $d === $selDay ? ' selected' : '' ?>><?= $d ?></option>
+          <?php endfor ?>
+        </select>
+      </div>
+
+      <?php if ($filterActive): ?>
+        <a href="<?= htmlspecialchars($_SERVER['PHP_SELF']) ?>" class="wort-filters__reset tanks-filters__reset">
+          Réinitialiser
+        </a>
+      <?php endif ?>
+
+    </div>
+  </form>
+
+  <!-- As-of banner -->
+  <?php if ($filterActive): ?>
+    <div class="tanks-asof-banner">
+      État au <?= htmlspecialchars(fmt_date_fr_tanks_full($asOfDT, $monthsFRFull)) ?>
+    </div>
+  <?php else: ?>
+    <div class="tanks-asof-banner tanks-asof-banner--current">
+      État actuel · <?= htmlspecialchars(fmt_date_fr_tanks_full($todayDT, $monthsFRFull)) ?>
     </div>
   <?php endif ?>
 

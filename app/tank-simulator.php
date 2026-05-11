@@ -108,19 +108,38 @@ class TankSimulator
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Run the full simulation and return current tank state.
+     * Run the full simulation and return tank state.
      *
+     * @param DateTimeImmutable|null $asOf  Point-in-time cutoff.
+     *                                       Null = current state (today).
      * @return array{cct: array<int, array|null>, bbt: array<int, array|null>}
      */
-    public function run(): array
+    public function run(?DateTimeImmutable $asOf = null): array
     {
-        $now        = new DateTimeImmutable('now');
-        $simStart   = new DateTimeImmutable(self::SIM_START_DATE);
+        // $now is the reference "today" throughout the simulation.
+        // When an as-of date is supplied we freeze it at midnight so that
+        // comparisons with date-only strings are consistent.
+        $now      = $asOf !== null
+            ? $asOf->setTime(23, 59, 59)   // include events on the cutoff day
+            : new DateTimeImmutable('now');
+        $simStart = new DateTimeImmutable(self::SIM_START_DATE);
         // Mirror JS: new Date(now.getFullYear(), now.getMonth() - N, 1)
-        // i.e. first day of the month N months ago — not "today minus N months"
+        // i.e. first day of the month N months ago — relative to $now so that
+        // an as-of date also shifts the recent-cooling window correctly.
         $recentCutoff = new DateTimeImmutable(
-            sprintf('first day of -%d months midnight', self::RECENT_COOLING_MONTHS)
+            sprintf(
+                'first day of -%d months midnight',
+                self::RECENT_COOLING_MONTHS
+            ),
+            $now->getTimezone()
         );
+        // Rebuild relative to $now when asOf is provided.
+        if ($asOf !== null) {
+            $recentCutoff = DateTimeImmutable::createFromFormat(
+                'Y-m-d H:i:s',
+                $now->modify(sprintf('first day of -%d months midnight', self::RECENT_COOLING_MONTHS))->format('Y-m-d H:i:s')
+            );
+        }
 
         // ── 1. Brewday → CCT map ──────────────────────────────────────────────
         $batchCCT = $this->loadBatchCCT($simStart);
@@ -143,9 +162,10 @@ class TankSimulator
         });
 
         // ── 4. Pre-build batch→BBT map (handles late racking forms) ──────────
+        // Only consider racking events up to $now (the as-of cutoff).
         $batchBBT = [];
         foreach ($events as $e) {
-            if ($e['type'] === 'RACKING') {
+            if ($e['type'] === 'RACKING' && $e['date'] <= $now) {
                 $batchBBT[$e['beer'] . '|' . $e['batch']] = $e['bbt'];
             }
         }
@@ -159,7 +179,10 @@ class TankSimulator
         $pendingDeductions = [];
 
         foreach ($events as $e) {
-            $eDate = $e['date']; // DateTimeImmutable
+            // As-of cutoff: skip any event after the reference date.
+            if ($e['date'] > $now) {
+                continue;
+            }
 
             $this->processEvent(
                 $e, $cctState, $bbtState, $batchBBT, $pendingDeductions
@@ -167,6 +190,7 @@ class TankSimulator
         }
 
         // ── 6. Force-expire stale contents ────────────────────────────────────
+        // Age is computed relative to $now (the as-of date), not real-now.
         foreach ($cctState as $k => $state) {
             if ($state !== null && $this->isExpired($state['filled_date'], $now)) {
                 $cctState[$k] = null;

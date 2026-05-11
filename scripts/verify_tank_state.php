@@ -15,6 +15,31 @@ $root = dirname(__DIR__);
 require_once $root . '/app/db.php';
 require_once $root . '/app/tank-simulator.php';
 
+// ── Parse --as-of YYYY-MM-DD flag ───────────────────────────────────────────
+$asOfDate = null;
+$args = $argv ?? [];
+for ($i = 1; $i < count($args); $i++) {
+    if ($args[$i] === '--as-of' && isset($args[$i + 1])) {
+        $raw = $args[$i + 1];
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $raw)) {
+            fwrite(STDERR, "Error: --as-of must be YYYY-MM-DD, got: {$raw}\n");
+            exit(1);
+        }
+        $asOfDate = DateTimeImmutable::createFromFormat('Y-m-d', $raw);
+        if ($asOfDate === false) {
+            fwrite(STDERR, "Error: invalid date: {$raw}\n");
+            exit(1);
+        }
+        break;
+    }
+}
+
+if ($asOfDate !== null) {
+    echo sprintf("=== As-of date: %s ===\n\n", $asOfDate->format('Y-m-d'));
+} else {
+    echo sprintf("=== As-of date: today (%s) ===\n\n", (new DateTimeImmutable('today'))->format('Y-m-d'));
+}
+
 $pdo = maltytask_pdo();
 
 // ── Event counts for data-shape sanity check ────────────────────────────────
@@ -36,7 +61,7 @@ echo sprintf("  Packaging:                %d\n", $counts['packaging_total']);
 echo "\n";
 
 // ── Run simulation ───────────────────────────────────────────────────────────
-$state = (new TankSimulator($pdo))->run();
+$state = (new TankSimulator($pdo))->run($asOfDate);
 
 $ccts = $state['cct'];
 $bbts = $state['bbt'];
