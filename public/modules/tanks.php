@@ -773,19 +773,21 @@ try {
     foreach ($cctSimMap as $num => $simRow) {
         if ($simRow === null) continue;
 
-        $beer  = $simRow['beer'];
-        $batch = $simRow['batch'];
+        $beer    = $simRow['beer'];
+        $rawBeer = $simRow['raw_beer'] ?? TankSimulator::rawBeerName($beer);
+        $batch   = $simRow['batch'];
 
         // Brewday date for this (beer, batch) → for "J+N days" display
+        // bd_brewing_brewday stores the operator-typed raw name, not the canonical one.
         $brewdayDate = $pdo->prepare(
             'SELECT event_date FROM bd_brewing_brewday
              WHERE bd_beer = :beer AND bd_batch = :batch
              ORDER BY event_date DESC LIMIT 1'
         );
-        $brewdayDate->execute([':beer' => $beer, ':batch' => $batch]);
+        $brewdayDate->execute([':beer' => $rawBeer, ':batch' => $batch]);
         $brewRow = $brewdayDate->fetch();
 
-        // Recipe short name
+        // Recipe short name — ref_recipes also stores raw operator names.
         $recipeStmt = $pdo->prepare(
             'SELECT COALESCE(rr.recipe_short_name, rr2.recipe_short_name) AS recipe_short_name,
                     COALESCE(rr.classification, rr2.classification)        AS classification,
@@ -802,7 +804,7 @@ try {
                  ON  rc.id = COALESCE(rr.client_id, rr2.client_id)
              LIMIT 1'
         );
-        $recipeStmt->execute([':beer' => $beer, ':batch_v' => $batch, ':beer2' => $beer]);
+        $recipeStmt->execute([':beer' => $rawBeer, ':batch_v' => $batch, ':beer2' => $rawBeer]);
         $recipeRow = $recipeStmt->fetch() ?: [];
 
         // Beer-specific prefix used in operator-typed fermenting cells.
@@ -860,8 +862,9 @@ try {
     foreach ($bbtSimMap as $num => $simRow) {
         if ($simRow === null) continue;
 
-        $beer  = $simRow['beer'];
-        $batch = $simRow['batch'];
+        $beer    = $simRow['beer'];
+        $rawBeer = TankSimulator::rawBeerName($beer);
+        $batch   = $simRow['batch'];
 
         $recipeStmt = $pdo->prepare(
             'SELECT COALESCE(rr.recipe_short_name, rr2.recipe_short_name) AS recipe_short_name,
@@ -878,7 +881,7 @@ try {
                  ON  rc.id = COALESCE(rr.client_id, rr2.client_id)
              LIMIT 1'
         );
-        $recipeStmt->execute([':beer' => $beer, ':batch_v' => $batch, ':beer2' => $beer]);
+        $recipeStmt->execute([':beer' => $rawBeer, ':batch_v' => $batch, ':beer2' => $rawBeer]);
         $recipeRow = $recipeStmt->fetch() ?: [];
 
         // Blend detail string (e.g. "#169: 50hl + #170: 44hl")

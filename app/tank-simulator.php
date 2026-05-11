@@ -24,7 +24,7 @@ declare(strict_types=1);
  *     'cct' => [ tankNumber => stateArray|null, ... ],
  *     'bbt' => [ tankNumber => stateArray|null, ... ],
  *   ]
- *   stateArray keys: beer, batch, volume_hl, filled_date (DateTimeImmutable),
+ *   stateArray keys: beer, raw_beer, batch, volume_hl, filled_date (DateTimeImmutable),
  *                    blend_info (array of {batch, vol} for BBTs only)
  */
 class TankSimulator
@@ -322,11 +322,15 @@ class TankSimulator
                 if (!isset($cctState[$cct]) || $cctState[$cct] === null) {
                     $cctState[$cct] = [
                         'beer'        => $e['beer'],
+                        'raw_beer'    => $e['raw_beer'],
                         'batch'       => $e['batch'],
                         'volume_hl'   => 0.0,
                         'filled_date' => $e['date'],
                         'blend_info'  => null,
                     ];
+                } else {
+                    // Update raw_beer from the latest cooling row for this batch
+                    $cctState[$cct]['raw_beer'] = $e['raw_beer'];
                 }
                 $cctState[$cct]['volume_hl'] += $e['vol'];
                 break;
@@ -503,7 +507,8 @@ class TankSimulator
 
         $events = [];
         foreach ($stmt->fetchAll() as $row) {
-            $beer  = $this->normalizeBeerName($row['cool_beer'] ?? '');
+            $rawBeer = trim($row['cool_beer'] ?? '');
+            $beer  = $this->normalizeBeerName($rawBeer);
             $batch = trim($row['cool_batch'] ?? '');
             $vol   = (float)($row['cool_final_volume_hl'] ?? 0);
             $date  = $this->parseDate($row['event_date'] ?? '');
@@ -522,6 +527,7 @@ class TankSimulator
                 'type'          => 'COOLING',
                 'date'          => $date,
                 'beer'          => $beer,
+                'raw_beer'      => $rawBeer,
                 'batch'         => $batch,
                 'cct'           => $cct,
                 'vol'           => $vol,
@@ -640,6 +646,16 @@ class TankSimulator
         $trimmed = trim($raw);
         if ($trimmed === '') return '';
         return self::BEER_NAME_MAP[$trimmed] ?? $trimmed;
+    }
+
+    /** Reverse lookup: canonical → raw operator name (or canonical if no mapping exists). */
+    public static function rawBeerName(string $canonical): string
+    {
+        static $reverse = null;
+        if ($reverse === null) {
+            $reverse = array_flip(self::BEER_NAME_MAP);
+        }
+        return $reverse[$canonical] ?? $canonical;
     }
 
     public static function getBeerType(string $beer): string
