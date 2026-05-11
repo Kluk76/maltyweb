@@ -110,10 +110,14 @@ function svg_cct(float $fillRatio, string $stateClass = '', int $number = 0): st
     $uid = 'cct' . $number . '_' . substr(md5((string)microtime(true) . $number), 0, 6);
     $clipId    = 'clip_' . $uid;
     $gradId    = 'grad_' . $uid;
-    $maskId    = 'mask_' . $uid;
+    $legGradId = 'leggrad_' . $uid;
+    $pipeGradId = 'pipegrad_' . $uid;
+
+    // Leg & accessory opacity — dimmed for maintenance state
+    $accOp = $isMaint ? '0.55' : '1';
 
     ob_start(); ?>
-<svg class="tank-svg" viewBox="0 0 80 140" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="CCT <?= $number ?>">
+<svg class="tank-svg" viewBox="0 0 80 155" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="CCT <?= $number ?>">
   <defs>
     <!-- Shape clip: cylinder + cone -->
     <clipPath id="<?= $clipId ?>">
@@ -126,15 +130,74 @@ function svg_cct(float $fillRatio, string $stateClass = '', int $number = 0): st
         <?= $cylLeft ?>,<?= $cylBot ?>
       "/>
     </clipPath>
-    <!-- Highlight gradient -->
+    <!-- Body highlight gradient -->
     <linearGradient id="<?= $gradId ?>" x1="0" y1="0" x2="1" y2="0">
       <stop offset="0%" stop-color="rgba(255,255,255,0.13)"/>
       <stop offset="12%" stop-color="rgba(255,255,255,0.04)"/>
       <stop offset="100%" stop-color="rgba(255,255,255,0)"/>
     </linearGradient>
+    <!-- Cylindrical-pipe shading for legs (highlight band on left) -->
+    <linearGradient id="<?= $legGradId ?>" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"  stop-color="var(--steel-shadow)"/>
+      <stop offset="35%" stop-color="var(--steel-light)" stop-opacity="0.35"/>
+      <stop offset="55%" stop-color="var(--steel-mid)"/>
+      <stop offset="100%" stop-color="var(--steel-shadow)"/>
+    </linearGradient>
+    <!-- CIP pipe shading (thinner, softer) -->
+    <linearGradient id="<?= $pipeGradId ?>" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"  stop-color="var(--steel-shadow)"/>
+      <stop offset="40%" stop-color="var(--steel)"/>
+      <stop offset="65%" stop-color="var(--steel-mid)"/>
+      <stop offset="100%" stop-color="var(--steel-shadow)"/>
+    </linearGradient>
   </defs>
 
-  <!-- Tank body: cylinder + cone outline (empty state fill) -->
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <!-- CIP arm (drawn first, behind tank, so the tank body covers entry)   -->
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <g opacity="<?= $accOp ?>">
+    <!-- 90° elbow at top: thin curved path entering the cap -->
+    <path d="M 73,8 Q 73,3 68,3 L 60,3"
+      fill="none"
+      stroke="url(#<?= $pipeGradId ?>)"
+      stroke-width="2.2"
+      stroke-linecap="round"
+    />
+    <!-- Elbow shadow stroke for definition -->
+    <path d="M 73,8 Q 73,3 68,3 L 60,3"
+      fill="none"
+      stroke="var(--steel-shadow)"
+      stroke-width="0.5"
+      stroke-linecap="round"
+      opacity="0.6"
+    />
+    <!-- Vertical pipe -->
+    <rect x="72" y="6" width="2" height="86"
+      fill="url(#<?= $pipeGradId ?>)"
+      stroke="var(--steel-shadow)"
+      stroke-width="0.3"
+    />
+    <!-- Mounting bracket (connects pipe to cylinder around 1/3 down) -->
+    <line x1="68" y1="42" x2="72" y2="42"
+      stroke="var(--steel-mid)" stroke-width="0.7" opacity="0.85"/>
+    <line x1="68" y1="42.8" x2="72" y2="42.8"
+      stroke="var(--steel-shadow)" stroke-width="0.4" opacity="0.6"/>
+    <!-- Bottom valve/diverter flange -->
+    <rect x="70.5" y="88" width="5" height="4"
+      fill="var(--steel-mid)"
+      stroke="var(--steel-shadow)" stroke-width="0.3"
+      rx="0.5"
+    />
+    <!-- Spraybar tip below flange (small protrusion) -->
+    <rect x="72.4" y="92" width="1.2" height="3"
+      fill="var(--steel-shadow)"
+    />
+  </g>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <!-- Tank body                                                            -->
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <!-- Cylinder + cone outline -->
   <polygon
     points="<?= $cylLeft ?>,<?= $cylTop ?> <?= $cylRight ?>,<?= $cylTop ?> <?= $cylRight ?>,<?= $cylBot ?> <?= $conePoint + 6 ?>,<?= $coneBot ?> <?= $conePoint - 6 ?>,<?= $coneBot ?> <?= $cylLeft ?>,<?= $cylBot ?>"
     fill="var(--steel-deep)"
@@ -142,7 +205,7 @@ function svg_cct(float $fillRatio, string $stateClass = '', int $number = 0): st
     stroke-width="1.2"
   />
 
-  <!-- Top cap rectangle -->
+  <!-- Top cap rectangle (manhole) -->
   <rect x="<?= $cylLeft ?>" y="<?= $cylTop - 8 ?>" width="<?= $cylRight - $cylLeft ?>" height="8"
     fill="var(--steel-deep)"
     stroke="var(--steel-mid)"
@@ -177,7 +240,54 @@ function svg_cct(float $fillRatio, string $stateClass = '', int $number = 0): st
   <line x1="<?= $cylLeft + 1 ?>" y1="72" x2="<?= $cylRight - 1 ?>" y2="72"
     stroke="var(--steel-mid)" stroke-width="0.5" opacity="0.4"/>
 
-  <!-- Tank number overlay -->
+  <!-- Racking valve at cone tip -->
+  <rect x="38" y="130" width="4" height="3.5"
+    fill="var(--steel-mid)"
+    stroke="var(--steel-shadow)" stroke-width="0.3"
+  />
+  <rect x="39" y="133.5" width="2" height="2"
+    fill="var(--steel-shadow)"
+  />
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <!-- Support legs (3 visible, splayed)                                    -->
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <g opacity="<?= $accOp ?>">
+    <!-- Structural ring around cone where legs attach -->
+    <rect x="<?= $cylLeft - 0.5 ?>" y="108" width="<?= $cylRight - $cylLeft + 1 ?>" height="3"
+      fill="var(--steel-mid)"
+      stroke="var(--steel-shadow)" stroke-width="0.4"
+    />
+    <line x1="<?= $cylLeft ?>" y1="108.6" x2="<?= $cylRight ?>" y2="108.6"
+      stroke="var(--steel-light)" stroke-width="0.4" opacity="0.45"/>
+
+    <!-- LEFT leg: splayed outward -->
+    <path d="M 19,111 L 21,111 L 16.5,147 L 13.5,147 Z"
+      fill="url(#<?= $legGradId ?>)"
+      stroke="var(--steel-shadow)" stroke-width="0.35"
+    />
+    <!-- CENTER leg: straight down behind cone -->
+    <path d="M 39,111 L 41,111 L 41.2,147 L 38.8,147 Z"
+      fill="url(#<?= $legGradId ?>)"
+      stroke="var(--steel-shadow)" stroke-width="0.35"
+    />
+    <!-- RIGHT leg: splayed outward -->
+    <path d="M 59,111 L 61,111 L 66.5,147 L 63.5,147 Z"
+      fill="url(#<?= $legGradId ?>)"
+      stroke="var(--steel-shadow)" stroke-width="0.35"
+    />
+
+    <!-- Foot pads -->
+    <rect x="11" y="146.5" width="7"  height="2.2" fill="var(--steel-shadow)"/>
+    <rect x="36.5" y="146.5" width="7" height="2.2" fill="var(--steel-shadow)"/>
+    <rect x="62" y="146.5" width="7"  height="2.2" fill="var(--steel-shadow)"/>
+
+    <!-- Subtle ground shadow -->
+    <ellipse cx="40" cy="151" rx="32" ry="1.8"
+      fill="var(--steel-shadow)" opacity="0.35"/>
+  </g>
+
+  <!-- Tank number overlay (kept last to stay on top) -->
   <text
     x="40" y="30"
     text-anchor="middle"
@@ -217,14 +327,18 @@ function svg_bbt(float $fillRatio, string $stateClass = '', int $number = 0): st
     $fillY  = $cylTop + $emptyH;
     $fillH  = $cylBot - $fillY;
 
-    $uid    = 'bbt' . $number . '_' . substr(md5((string)microtime(true) . 'b' . $number), 0, 6);
-    $clipId = 'clip_' . $uid;
-    $gradId = 'grad_' . $uid;
-    $rx     = 28; // half-width of ellipse for top/bottom caps
-    $ry     = 5;  // ellipse height (shallow dome)
+    $uid       = 'bbt' . $number . '_' . substr(md5((string)microtime(true) . 'b' . $number), 0, 6);
+    $clipId    = 'clip_' . $uid;
+    $gradId    = 'grad_' . $uid;
+    $legGradId = 'leggrad_' . $uid;
+    $pipeGradId = 'pipegrad_' . $uid;
+    $rx        = 28; // half-width of ellipse for top/bottom caps
+    $ry        = 5;  // ellipse height (shallow dome)
+
+    $accOp = $isMaint ? '0.55' : '1';
 
     ob_start(); ?>
-<svg class="tank-svg" viewBox="0 0 80 140" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="BBT <?= $number ?>">
+<svg class="tank-svg" viewBox="0 0 80 155" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="BBT <?= $number ?>">
   <defs>
     <clipPath id="<?= $clipId ?>">
       <rect x="<?= $cylLeft ?>" y="<?= $cylTop ?>" width="<?= $cylRight - $cylLeft ?>" height="<?= $cylH ?>"/>
@@ -234,8 +348,71 @@ function svg_bbt(float $fillRatio, string $stateClass = '', int $number = 0): st
       <stop offset="12%" stop-color="rgba(255,255,255,0.04)"/>
       <stop offset="100%" stop-color="rgba(255,255,255,0)"/>
     </linearGradient>
+    <!-- Cylindrical-pipe shading for legs -->
+    <linearGradient id="<?= $legGradId ?>" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"  stop-color="var(--steel-shadow)"/>
+      <stop offset="35%" stop-color="var(--steel-light)" stop-opacity="0.35"/>
+      <stop offset="55%" stop-color="var(--steel-mid)"/>
+      <stop offset="100%" stop-color="var(--steel-shadow)"/>
+    </linearGradient>
+    <!-- CIP pipe shading (softer than legs) -->
+    <linearGradient id="<?= $pipeGradId ?>" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"  stop-color="var(--steel-shadow)"/>
+      <stop offset="40%" stop-color="var(--steel)"/>
+      <stop offset="65%" stop-color="var(--steel-mid)"/>
+      <stop offset="100%" stop-color="var(--steel-shadow)"/>
+    </linearGradient>
   </defs>
 
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <!-- CIP arm (drawn first, behind tank)                                   -->
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <g opacity="<?= $accOp ?>">
+    <!-- 90° elbow at top: curves down and enters the dome from above -->
+    <path d="M 73,12 Q 73,7 68,7 L 60,7"
+      fill="none"
+      stroke="url(#<?= $pipeGradId ?>)"
+      stroke-width="2.2"
+      stroke-linecap="round"
+    />
+    <path d="M 73,12 Q 73,7 68,7 L 60,7"
+      fill="none"
+      stroke="var(--steel-shadow)"
+      stroke-width="0.5"
+      stroke-linecap="round"
+      opacity="0.6"
+    />
+    <!-- Vertical pipe -->
+    <rect x="72" y="10" width="2" height="92"
+      fill="url(#<?= $pipeGradId ?>)"
+      stroke="var(--steel-shadow)"
+      stroke-width="0.3"
+    />
+    <!-- Mid-tank mounting bracket -->
+    <line x1="68" y1="48" x2="72" y2="48"
+      stroke="var(--steel-mid)" stroke-width="0.7" opacity="0.85"/>
+    <line x1="68" y1="48.8" x2="72" y2="48.8"
+      stroke="var(--steel-shadow)" stroke-width="0.4" opacity="0.6"/>
+    <!-- Lower mounting bracket -->
+    <line x1="68" y1="85" x2="72" y2="85"
+      stroke="var(--steel-mid)" stroke-width="0.7" opacity="0.85"/>
+    <line x1="68" y1="85.8" x2="72" y2="85.8"
+      stroke="var(--steel-shadow)" stroke-width="0.4" opacity="0.6"/>
+    <!-- Bottom valve/diverter flange -->
+    <rect x="70.5" y="98" width="5" height="4"
+      fill="var(--steel-mid)"
+      stroke="var(--steel-shadow)" stroke-width="0.3"
+      rx="0.5"
+    />
+    <!-- Spraybar tip -->
+    <rect x="72.4" y="102" width="1.2" height="3"
+      fill="var(--steel-shadow)"
+    />
+  </g>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <!-- Tank body                                                            -->
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
   <!-- Cylinder body -->
   <rect
     x="<?= $cylLeft ?>" y="<?= $cylTop ?>"
@@ -290,6 +467,53 @@ function svg_bbt(float $fillRatio, string $stateClass = '', int $number = 0): st
     stroke="var(--steel-mid)" stroke-width="0.5" opacity="0.4"/>
   <line x1="<?= $cylLeft + 1 ?>" y1="90" x2="<?= $cylRight - 1 ?>" y2="90"
     stroke="var(--steel-mid)" stroke-width="0.5" opacity="0.4"/>
+
+  <!-- Bottom outlet (centred under the dome) -->
+  <rect x="38" y="129" width="4" height="3"
+    fill="var(--steel-mid)"
+    stroke="var(--steel-shadow)" stroke-width="0.3"
+  />
+  <rect x="39" y="132" width="2" height="2"
+    fill="var(--steel-shadow)"
+  />
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <!-- Support legs                                                         -->
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <g opacity="<?= $accOp ?>">
+    <!-- Structural ring just below cylinder bottom -->
+    <rect x="<?= $cylLeft - 0.5 ?>" y="128" width="<?= $cylRight - $cylLeft + 1 ?>" height="3"
+      fill="var(--steel-mid)"
+      stroke="var(--steel-shadow)" stroke-width="0.4"
+    />
+    <line x1="<?= $cylLeft ?>" y1="128.6" x2="<?= $cylRight ?>" y2="128.6"
+      stroke="var(--steel-light)" stroke-width="0.4" opacity="0.45"/>
+
+    <!-- LEFT leg: splayed outward -->
+    <path d="M 19,131 L 21,131 L 16.5,147 L 13.5,147 Z"
+      fill="url(#<?= $legGradId ?>)"
+      stroke="var(--steel-shadow)" stroke-width="0.35"
+    />
+    <!-- CENTER leg: straight down (behind outlet) -->
+    <path d="M 39,131 L 41,131 L 41.2,147 L 38.8,147 Z"
+      fill="url(#<?= $legGradId ?>)"
+      stroke="var(--steel-shadow)" stroke-width="0.35"
+    />
+    <!-- RIGHT leg: splayed outward -->
+    <path d="M 59,131 L 61,131 L 66.5,147 L 63.5,147 Z"
+      fill="url(#<?= $legGradId ?>)"
+      stroke="var(--steel-shadow)" stroke-width="0.35"
+    />
+
+    <!-- Foot pads -->
+    <rect x="11" y="146.5" width="7"  height="2.2" fill="var(--steel-shadow)"/>
+    <rect x="36.5" y="146.5" width="7" height="2.2" fill="var(--steel-shadow)"/>
+    <rect x="62" y="146.5" width="7"  height="2.2" fill="var(--steel-shadow)"/>
+
+    <!-- Subtle ground shadow -->
+    <ellipse cx="40" cy="151" rx="32" ry="1.8"
+      fill="var(--steel-shadow)" opacity="0.35"/>
+  </g>
 
   <!-- Tank number overlay -->
   <text

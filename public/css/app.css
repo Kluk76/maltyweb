@@ -3163,7 +3163,7 @@ body.auth::after {
   background: linear-gradient(160deg, rgba(30, 24, 17, 0.75), rgba(14, 12, 9, 0.55));
 }
 
-/* SVG wrapper */
+/* SVG wrapper — extended height accommodates legs + CIP arm overhang */
 .home .tank-card__svg {
   display: flex;
   justify-content: center;
@@ -3172,7 +3172,7 @@ body.auth::after {
 }
 .home .tank-card__svg .tank-svg {
   width: 80px;
-  height: 140px;
+  height: 155px;
 }
 
 /* Info block below SVG */
