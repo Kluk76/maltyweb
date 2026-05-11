@@ -1,11 +1,11 @@
 # /etc/cron.d/maltytask-backups
 #
-# Automated backup schedule for maltytask DB.
+# Automated backup + test-restore schedule for maltytask DB.
 #
 # Source of truth: db/cron/maltytask-backups.cron in the maltyweb repo.
-# Deployed via bin/deploy.sh from the maltyweb repo (sudo cp + chmod 644).
+# Deployed via bin/deploy.sh from the maltyweb repo (sudo install → /etc/cron.d/).
 #
-# Each tier has a matching check on healthchecks.io. If cron drifts or the
+# Each entry has a matching check on healthchecks.io. If cron drifts or the
 # script fails to ping, healthchecks.io alerts via email.
 #
 # Note: cron syntax requires the user column for /etc/cron.d/* fragments
@@ -28,3 +28,8 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # Monthly: 1st of the month at 04:00 UTC
 0  4  1  *  *   ubuntu  /var/www/maltytask/scripts/db/backup.sh monthly > /dev/null 2>&1
+
+# Monthly test-restore: 15th of the month at 06:00 UTC
+# Picks the most recent monthly backup, restores to a temp DB, sanity-checks, then drops.
+# Validates the FULL recovery path, not just dump integrity at creation time.
+0  6  15 *  *   ubuntu  /var/www/maltytask/scripts/db/test-restore.sh > /dev/null 2>&1
