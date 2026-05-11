@@ -88,6 +88,19 @@ class TankSimulator
         'Chien Bleu - Moût Froid',
     ];
 
+    // ── SKU prefix → canonical beer (ported from lib/beer.js _SKU_BEER_MAP) ────
+    // bd_packaging.beer holds SKU codes like "STI4", "SPYF" — not canonical names.
+    // deriveBeerFromSku() strips the format suffix and looks up the prefix here.
+    private const SKU_BEER_MAP = [
+        'ZEP'  => 'Zepp',          'EMB'  => 'Embuscade',     'MOO'  => 'Moonshine',
+        'STI'  => 'Stirling',      'SPY'  => 'Speakeasy',     'DIV'  => 'Diversion',
+        'DOA'  => 'Double Oat',    'EST'  => 'Estafette',     'ALT'  => 'Alternative',
+        'DIB'  => 'Div.Blanche',   'DIG'  => 'Div.Gose',      'DIP'  => 'Div.Panaché',
+        'DGD'  => 'DrunkBeard - Galactic Drift',              'QDG'  => 'Qrew - Diversion Gose',
+        'BLO'  => 'Blonde des Romands', 'BLA' => 'Div.Blanche', 'DOC' => 'Dockeuse',
+        'EPH1' => 'EPH1', 'EPH2' => 'EPH2', 'EPH3' => 'EPH3', 'EPH4' => 'EPH4',
+    ];
+
     public function __construct(private readonly PDO $pdo) {}
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -291,14 +304,25 @@ class TankSimulator
                 $bbt = $batchBBT[$key] ?? null;
 
                 if ($bbt !== null && !empty($bbtState[$bbt])) {
-                    $deduct = $e['hl'] + self::PACKAGING_LOSS_HL;
-                    $bbtState[$bbt]['volume_hl'] = max(
-                        0.0,
-                        $bbtState[$bbt]['volume_hl'] - $deduct
-                    );
-                    if ($bbtState[$bbt]['volume_hl'] < self::BBT_EMPTY_THRESHOLD_HL) {
-                        $bbtState[$bbt] = null;
+                    // Guard against cross-recipe drain: form submission timestamps
+                    // can put a same-day packaging AFTER a same-day racking that
+                    // physically replaced the packaged content (e.g. operator
+                    // submits Jasper rack form before submitting earlier Bamse
+                    // packaging form — physically Bamse was emptied first, then
+                    // Jasper filled).  If the BBT's current beer differs, the
+                    // packaged content is gone — skip the deduction.
+                    if ($bbtState[$bbt]['beer'] === $e['beer']) {
+                        $deduct = $e['hl'] + self::PACKAGING_LOSS_HL;
+                        $bbtState[$bbt]['volume_hl'] = max(
+                            0.0,
+                            $bbtState[$bbt]['volume_hl'] - $deduct
+                        );
+                        if ($bbtState[$bbt]['volume_hl'] < self::BBT_EMPTY_THRESHOLD_HL) {
+                            $bbtState[$bbt] = null;
+                        }
                     }
+                    // else: BBT now holds a different recipe; the packaged batch
+                    // already drained off the floor before this BBT was re-filled.
                 } elseif ($bbt !== null && empty($bbtState[$bbt])) {
                     // Racking form not yet seen — defer
                     $pendingDeductions[$bbt][] = $e['hl'] + self::PACKAGING_LOSS_HL;
@@ -404,13 +428,19 @@ class TankSimulator
     /** Build RACKING events. */
     private function loadRackingEvents(array $batchCCT): array
     {
+        // blend_text holds BSF col Q ("Blend" = the leftover-from-previous-batch
+        // volume in HL, mostly "0", sometimes a real value like "42").  It is the
+        // ONLY signal that a true blend should happen.  blend_volume_hl maps to
+        // BSF col W which is a formula = racked_vol + blend_leftover (total post-
+        // rack) — NOT the blend leftover.  Reading col W as blendVol caused every
+        // rack to be treated as a blend and inflated BBT volumes 2-3x.
         $rows = $this->pdo->query(
             'SELECT COALESCE(neb_beer, contract_beer)   AS beer,
                     COALESCE(neb_batch, contract_batch) AS batch,
                     bbt,
                     bbt_old,
                     racked_vol_hl,
-                    blend_volume_hl,
+                    blend_text,
                     COALESCE(start_time, submitted_at)  AS rack_date
              FROM bd_racking
              WHERE COALESCE(start_time, submitted_at) IS NOT NULL'
@@ -422,7 +452,9 @@ class TankSimulator
             $batch    = trim($row['batch'] ?? '');
             $bbt      = $this->extractBbtNumber($row['bbt'] ?? null, $row['bbt_old'] ?? null);
             $rackedVol = (float)($row['racked_vol_hl'] ?? 0);
-            $blendVol  = (float)($row['blend_volume_hl'] ?? 0);
+            // blend_text is stored as VARCHAR — coerce to float, falling back to 0
+            // for non-numeric content (e.g. operator wrote text instead of a number).
+            $blendVol  = is_numeric($row['blend_text'] ?? '') ? (float)$row['blend_text'] : 0.0;
             $date      = $this->parseDate($row['rack_date'] ?? '');
 
             if ($beer === '' || $batch === '' || $bbt === null || $date === null) continue;
@@ -462,7 +494,16 @@ class TankSimulator
 
         $events = [];
         foreach ($rows as $row) {
-            $beer          = $this->normalizeBeerName($row['beer'] ?? '');
+            // bd_packaging.beer holds SKU codes like "SPYF" / "STI4" — strip the
+            // format suffix to recover the prefix then map to canonical beer.
+            // Without this, packaging events never match the canonical-named
+            // batchBBT entries set by racking and BBT volumes never drain.
+            $rawBeer       = trim($row['beer'] ?? '');
+            $beer          = $this->deriveBeerFromSku($rawBeer);
+            if ($beer === '') {
+                // Fallback: maybe the col already holds a canonical name (older rows).
+                $beer = $this->normalizeBeerName($rawBeer);
+            }
             $batch         = trim($row['batch'] ?? '');
             $vendableHl    = (float)($row['vendable_hl'] ?? 0);
             $lossLiquidL   = (float)($row['loss_liquid_l'] ?? 0);
@@ -505,6 +546,24 @@ class TankSimulator
     private function isWortSale(string $beer): bool
     {
         return in_array($beer, self::WORT_SALES, true);
+    }
+
+    /**
+     * Derive canonical beer name from an SKU code (e.g. "SPYF" → "Speakeasy",
+     * "EMB4" → "Embuscade", "EPH2B" → "EPH2"). Returns '' if no prefix matches.
+     * Tries the 4-char prefix first to catch EPH1..4, then falls back to 3-char.
+     */
+    private function deriveBeerFromSku(string $sku): string
+    {
+        if ($sku === '') return '';
+        $s = strtoupper($sku);
+        // EPH1..4 are 4-char prefixes; try longest first
+        if (preg_match('/^EPH[1-4]/', $s)) {
+            return self::SKU_BEER_MAP[substr($s, 0, 4)] ?? '';
+        }
+        return self::SKU_BEER_MAP[substr($s, 0, 4)]
+            ?? self::SKU_BEER_MAP[substr($s, 0, 3)]
+            ?? '';
     }
 
     // ─────────────────────────────────────────────────────────────────────────
