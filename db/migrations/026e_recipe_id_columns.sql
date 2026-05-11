@@ -21,7 +21,7 @@ ALTER TABLE bd_brewing_brewday
 -- Pass 1: name + vintage = YEAR(event_date)
 UPDATE bd_brewing_brewday b
   JOIN ref_recipes r ON r.name = b.bd_beer
-    AND r.vintage = CAST(YEAR(b.event_date) AS CHAR)
+    AND r.vintage = CAST(YEAR(b.event_date) AS CHAR) COLLATE utf8mb4_unicode_ci
   SET b.bd_beer_recipe_id = r.id
   WHERE b.bd_beer IS NOT NULL AND b.bd_beer_recipe_id IS NULL AND b.event_date IS NOT NULL;
 
@@ -49,7 +49,7 @@ ALTER TABLE bd_brewing_cooling
   ADD COLUMN cool_beer_recipe_id INT UNSIGNED NULL AFTER cool_beer;
 
 UPDATE bd_brewing_cooling b
-  JOIN ref_recipes r ON r.name = b.cool_beer AND r.vintage = CAST(YEAR(b.event_date) AS CHAR)
+  JOIN ref_recipes r ON r.name = b.cool_beer AND r.vintage = CAST(YEAR(b.event_date) AS CHAR) COLLATE utf8mb4_unicode_ci
   SET b.cool_beer_recipe_id = r.id
   WHERE b.cool_beer IS NOT NULL AND b.cool_beer_recipe_id IS NULL AND b.event_date IS NOT NULL;
 
@@ -75,7 +75,7 @@ ALTER TABLE bd_brewing_gravity
   ADD COLUMN beer_recipe_id INT UNSIGNED NULL AFTER beer;
 
 UPDATE bd_brewing_gravity b
-  JOIN ref_recipes r ON r.name = b.beer AND r.vintage = CAST(YEAR(b.event_date) AS CHAR)
+  JOIN ref_recipes r ON r.name = b.beer AND r.vintage = CAST(YEAR(b.event_date) AS CHAR) COLLATE utf8mb4_unicode_ci
   SET b.beer_recipe_id = r.id
   WHERE b.beer IS NOT NULL AND b.beer_recipe_id IS NULL AND b.event_date IS NOT NULL;
 
@@ -101,7 +101,7 @@ ALTER TABLE bd_brewing_timings
   ADD COLUMN beer_recipe_id INT UNSIGNED NULL AFTER beer;
 
 UPDATE bd_brewing_timings b
-  JOIN ref_recipes r ON r.name = b.beer AND r.vintage = CAST(YEAR(b.event_date) AS CHAR)
+  JOIN ref_recipes r ON r.name = b.beer AND r.vintage = CAST(YEAR(b.event_date) AS CHAR) COLLATE utf8mb4_unicode_ci
   SET b.beer_recipe_id = r.id
   WHERE b.beer IS NOT NULL AND b.beer_recipe_id IS NULL AND b.event_date IS NOT NULL;
 
@@ -127,7 +127,7 @@ ALTER TABLE bd_brewing_ingredients
   ADD COLUMN ing_beer_recipe_id INT UNSIGNED NULL AFTER ing_beer;
 
 UPDATE bd_brewing_ingredients b
-  JOIN ref_recipes r ON r.name = b.ing_beer AND r.vintage = CAST(YEAR(b.event_date) AS CHAR)
+  JOIN ref_recipes r ON r.name = b.ing_beer AND r.vintage = CAST(YEAR(b.event_date) AS CHAR) COLLATE utf8mb4_unicode_ci
   SET b.ing_beer_recipe_id = r.id
   WHERE b.ing_beer IS NOT NULL AND b.ing_beer_recipe_id IS NULL AND b.event_date IS NOT NULL;
 
