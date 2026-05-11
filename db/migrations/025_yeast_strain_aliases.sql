@@ -23,6 +23,19 @@ CREATE TABLE IF NOT EXISTS ref_yeast_strain_aliases (
   FOREIGN KEY (strain_id) REFERENCES ref_yeast_strains(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Seed the canonical strains referenced by the alias rows below.
+-- On a fresh DB, seed_references.py runs AFTER migrations, so the SELECT
+-- subqueries in the alias INSERT would resolve to NULL and INSERT IGNORE
+-- would silently swallow the FK violation. Pre-seeding here makes the
+-- migration self-sufficient regardless of ingest/seed ordering.
+INSERT IGNORE INTO ref_yeast_strains (name) VALUES
+  ('Pomona'),
+  ('Farmhouse'),
+  ('Diamond'),
+  ('Pinnacle NA'),
+  ('WLP001'),
+  ('WLP080-O');
+
 -- Seed the 9 known aliases.
 -- SELECT subqueries resolve canonical IDs at migration time, so this works
 -- regardless of auto_increment state in ref_yeast_strains.
