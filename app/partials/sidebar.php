@@ -23,7 +23,8 @@ if ($showAdminBlock) {
     $adminEntries[] = ["S",  "Paramètres", "Recettes, SKU, cuves, suppliers", "/admin/settings.php",   "settings"];
 }
 if (is_admin($me)) {
-    $adminEntries[] = ["DB", "DB Browser", "Inspection lecture seule",        "/admin/db-browser.php", "db-browser"];
+    $adminEntries[] = ["DB", "DB Browser",      "Inspection lecture seule",        "/admin/db-browser.php",       "db-browser"];
+    $adminEntries[] = ["IF", "Ingest Failures", "Rows rejetés par contraintes FK", "/admin/ingest-failures.php",  "ingest-failures"];
 }
 ?>
 <aside class="side" aria-label="Navigation principale">

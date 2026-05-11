@@ -1,0 +1,32 @@
+# /etc/cron.d/maltytask-bsf-ingest
+#
+# Periodic ingest from BSF Google Sheets → MySQL.
+# Required while operators still submit forms to BSF (not yet internalized to
+# maltyweb input forms). Idempotent via row_hash UNIQUE — re-runs only INSERT
+# rows whose row_hash isn't already present.
+#
+# Source of truth: db/cron/maltytask-bsf-ingest.cron in the maltyweb repo.
+# Deployed via bin/deploy.sh from the maltyweb repo (sudo install → /etc/cron.d/).
+#
+# Note: cron syntax for /etc/cron.d/* requires the user column
+# (m h dom mon dow user command). Times are UTC (VPS timezone is Etc/UTC).
+#
+# Manual edits will be overwritten on next deploy. Edit the source file
+# in the repo, commit, then run bin/deploy.sh --apply.
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# m   h  dom mon dow  user        command
+
+# Every 30 min: brewing / fermenting / racking / packaging — transactional tables
+# driven by operator form submissions. No-op when nothing new (INSERT IGNORE).
+*/30  *   *   *   *   maltytask   cd /var/www/maltytask && .venv/bin/python scripts/python/ingest.py --tab=all --apply >> /var/log/maltytask/ingest.log 2>&1
+
+# Daily at 04:30 UTC: reference tables (MI, suppliers, supplier-aliases, deliveries, SKU BOM).
+# Lower cadence — these change rarely vs transactional data.
+30   4   *   *   *   maltytask   cd /var/www/maltytask && .venv/bin/python scripts/python/ingest_mi.py        --apply >> /var/log/maltytask/ingest-refs.log 2>&1
+35   4   *   *   *   maltytask   cd /var/www/maltytask && .venv/bin/python scripts/python/ingest_suppliers.py --apply >> /var/log/maltytask/ingest-refs.log 2>&1
+40   4   *   *   *   maltytask   cd /var/www/maltytask && .venv/bin/python scripts/python/import_overrides.py --apply >> /var/log/maltytask/ingest-refs.log 2>&1
+45   4   *   *   *   maltytask   cd /var/www/maltytask && .venv/bin/python scripts/python/ingest_deliveries.py --apply >> /var/log/maltytask/ingest-refs.log 2>&1
+50   4   *   *   *   maltytask   cd /var/www/maltytask && .venv/bin/python scripts/python/ingest_sku_bom.py   --apply >> /var/log/maltytask/ingest-refs.log 2>&1

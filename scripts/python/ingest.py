@@ -13,7 +13,7 @@ import argparse
 import sys
 
 from lib_config import load as load_config
-from lib_db import connect, insert_ignore
+from lib_db import connect, insert_ignore, insert_with_failure_log, auto_resolve_failures
 from lib_sheets import SheetsClient
 
 import tab_brewing
@@ -35,8 +35,8 @@ def _print_header(tab_name: str):
     print(f"\n══ {tab_name} ".ljust(60, "═"))
 
 
-def _ingest_simple(name: str, mod, sheets: SheetsClient, conn, *, apply_writes: bool, limit: int | None):
-    """Used for fermenting + racking (single table)."""
+def _ingest_simple(name: str, mod, sheets: SheetsClient, conn, *, apply_writes: bool, limit: int | None) -> int:
+    """Used for fermenting + racking (single table). Returns FK failure count."""
     _print_header(name)
     raw = sheets.read_range(_spreadsheet_id(), mod.RANGE)
     ts_serials = sheets.read_range_serial(_spreadsheet_id(), mod.RANGE_TIMESTAMP)
@@ -49,13 +49,16 @@ def _ingest_simple(name: str, mod, sheets: SheetsClient, conn, *, apply_writes: 
     rows = parsed[table]
     print(f"  parsed      {len(rows):>5} rows → {table}")
     if apply_writes and rows:
-        ins = insert_ignore(conn, table, rows)
+        ins, dups, fk_fail = insert_with_failure_log(conn, table, rows, source_tab=name)
+        auto_resolve_failures(conn, table)
         conn.commit()
-        print(f"  inserted    {ins:>5} (skipped {len(rows) - ins} duplicates)")
+        print(f"  inserted    {ins:>5} → {table} (skipped {dups} duplicates, {fk_fail} FK failures logged)")
+        return fk_fail
     elif apply_writes:
         print(f"  inserted    {0:>5} (no rows)")
     else:
-        print(f"  [dry-run] would INSERT IGNORE up to {len(rows)} rows")
+        print(f"  [dry-run] would INSERT up to {len(rows)} rows")
+    return 0
 
 
 _BREWING_TABLES = (
@@ -67,7 +70,8 @@ _BREWING_TABLES = (
 )
 
 
-def _ingest_brewing(sheets: SheetsClient, conn, *, apply_writes: bool, limit: int | None):
+def _ingest_brewing(sheets: SheetsClient, conn, *, apply_writes: bool, limit: int | None) -> int:
+    """Returns total FK failure count across all brewing tables."""
     _print_header(f"brewing ({len(_BREWING_TABLES)} tables)")
     raw = sheets.read_range(_spreadsheet_id(), tab_brewing.RANGE)
     ts_serials = sheets.read_range_serial(_spreadsheet_id(), tab_brewing.RANGE_TIMESTAMP)
@@ -87,19 +91,24 @@ def _ingest_brewing(sheets: SheetsClient, conn, *, apply_writes: bool, limit: in
         for et in sorted(seen_types):
             cnt = sum(1 for u in unmatched if u['event_type'] == et)
             print(f"     · {et!r:30s} {cnt}")
+    total_fk_failures = 0
     if apply_writes:
         for table in _BREWING_TABLES:
             rows = parsed[table]
             if rows:
-                ins = insert_ignore(conn, table, rows)
-                print(f"  inserted    {ins:>5} → {table} (skipped {len(rows) - ins} duplicates)")
+                ins, dups, fk_fail = insert_with_failure_log(conn, table, rows, source_tab="brewing")
+                auto_resolve_failures(conn, table)
+                total_fk_failures += fk_fail
+                print(f"  inserted    {ins:>5} → {table} (skipped {dups} duplicates, {fk_fail} FK failures logged)")
         conn.commit()
     else:
         total = sum(len(parsed[t]) for t in _BREWING_TABLES)
-        print(f"  [dry-run] would INSERT IGNORE up to {total} rows across {len(_BREWING_TABLES)} tables")
+        print(f"  [dry-run] would INSERT up to {total} rows across {len(_BREWING_TABLES)} tables")
+    return total_fk_failures
 
 
-def _ingest_packaging(sheets: SheetsClient, conn, *, apply_writes: bool, limit: int | None):
+def _ingest_packaging(sheets: SheetsClient, conn, *, apply_writes: bool, limit: int | None) -> int:
+    """Returns total FK failure count across packaging tables."""
     _print_header("packaging (parent + readings)")
     raw = sheets.read_range(_spreadsheet_id(), tab_packaging.RANGE)
     ts_serials = sheets.read_range_serial(_spreadsheet_id(), tab_packaging.RANGE_TIMESTAMP)
@@ -113,20 +122,24 @@ def _ingest_packaging(sheets: SheetsClient, conn, *, apply_writes: bool, limit: 
     print(f"  parsed      {total_reads:>5} O2/CO2 readings → bd_packaging_readings")
 
     if not apply_writes:
-        print(f"  [dry-run] would INSERT IGNORE up to {len(parents)} parents + {total_reads} readings")
-        return
+        print(f"  [dry-run] would INSERT up to {len(parents)} parents + {total_reads} readings")
+        return 0
 
     if not parents:
-        return
+        return 0
+
+    total_fk_failures = 0
 
     # Insert parents first
-    ins = insert_ignore(conn, "bd_packaging", parents)
-    print(f"  inserted    {ins:>5} → bd_packaging (skipped {len(parents) - ins} duplicates)")
+    ins, dups, fk_fail = insert_with_failure_log(conn, "bd_packaging", parents, source_tab="packaging")
+    auto_resolve_failures(conn, "bd_packaging")
+    total_fk_failures += fk_fail
+    print(f"  inserted    {ins:>5} → bd_packaging (skipped {dups} duplicates, {fk_fail} FK failures logged)")
     conn.commit()
 
     # Resolve packaging_id for each parent_hash (whether newly inserted or pre-existing)
     if not readings:
-        return
+        return total_fk_failures
     hashes = [h for h, _ in readings]
     placeholders = ", ".join(["%s"] * len(hashes))
     with conn.cursor() as cur:
@@ -149,9 +162,13 @@ def _ingest_packaging(sheets: SheetsClient, conn, *, apply_writes: bool, limit: 
                 "co2": r["co2"],
             })
     if reading_rows:
+        # bd_packaging_readings has no external FKs beyond packaging_id (already resolved above)
+        # so use insert_ignore for simplicity; packaging_id is an internal FK we just resolved.
         rins = insert_ignore(conn, "bd_packaging_readings", reading_rows)
         print(f"  inserted    {rins:>5} → bd_packaging_readings (skipped {len(reading_rows) - rins} duplicates)")
         conn.commit()
+
+    return total_fk_failures
 
 
 def _spreadsheet_id() -> str:
@@ -175,16 +192,19 @@ def main() -> int:
 
     try:
         tabs = list(TAB_HANDLERS.keys()) if args.tab == "all" else [args.tab]
+        total_fk_failures = 0
         for t in tabs:
             if t == "brewing":
-                _ingest_brewing(sheets, conn, apply_writes=args.apply, limit=args.limit)
+                total_fk_failures += _ingest_brewing(sheets, conn, apply_writes=args.apply, limit=args.limit)
             elif t == "packaging":
-                _ingest_packaging(sheets, conn, apply_writes=args.apply, limit=args.limit)
+                total_fk_failures += _ingest_packaging(sheets, conn, apply_writes=args.apply, limit=args.limit)
             else:
                 _, mod = TAB_HANDLERS[t]
-                _ingest_simple(t, mod, sheets, conn, apply_writes=args.apply, limit=args.limit)
+                total_fk_failures += _ingest_simple(t, mod, sheets, conn, apply_writes=args.apply, limit=args.limit)
         if not args.apply:
             print("\n[dry-run] no rows written. Re-run with --apply to commit.")
+        elif total_fk_failures > 0:
+            print(f"\n⚠ {total_fk_failures} rows logged to ingest_failures — review at /admin/ingest-failures.php")
     finally:
         conn.close()
     return 0
