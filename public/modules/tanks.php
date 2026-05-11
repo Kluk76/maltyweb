@@ -73,7 +73,7 @@ function fmt_date_fr_tanks(string $dateStr, array $months): string {
 }
 
 // --- SVG helper: cylindro-conical CCT ---
-function svg_cct(float $fillRatio, string $stateClass = '', int $number = 0): string {
+function svg_cct(float $fillRatio, string $stateClass = '', int $number = 0, string $beer = ''): string {
     $fillRatio = max(0.0, min(1.0, $fillRatio));
 
     // Geometry
@@ -85,19 +85,29 @@ function svg_cct(float $fillRatio, string $stateClass = '', int $number = 0): st
     $conePoint = 40;   // x-centre for cone tip (width 12: 34..46)
     $cylH      = $cylBot - $cylTop;  // 90
 
-    // Fill colour based on state
+    // State-driven colour palette:
+    //   green   — active fermentation, near-full (normal state)
+    //   red     — fermentation but tank is unexpectedly under-filled (anomaly)
+    //   blue    — cold crash (cool, dormant)
+    //   grey    — maintenance / retired
+    //   none    — empty
     $isMaint = str_contains($stateClass, 'maint');
+    $isCold  = str_contains($stateClass, 'cold');
+    $isFerm  = str_contains($stateClass, 'ferment');
+    // Threshold for "full enough" — below this, fermenting tank flags red.
+    $fullThreshold = 0.85;
+    $isUnderfilled = $isFerm && $fillRatio > 0 && $fillRatio < $fullThreshold;
     if ($isMaint) {
-        $fillColour = '#3a3a3c';
+        $fillColour  = '#3a3a3c';
         $fillOpacity = '0.5';
-    } elseif (str_contains($stateClass, 'cold')) {
-        $fillColour = 'var(--hop-deep)';
-        $fillOpacity = '0.85';
-    } elseif (str_contains($stateClass, 'ferment')) {
-        $fillColour = 'var(--oak)';
+    } elseif ($isCold) {
+        $fillColour  = 'var(--cold)';
+        $fillOpacity = '0.82';
+    } elseif ($isFerm) {
+        $fillColour  = $isUnderfilled ? 'var(--ember)' : 'var(--hop)';
         $fillOpacity = '0.82';
     } else {
-        $fillColour = 'none';
+        $fillColour  = 'none';
         $fillOpacity = '0';
     }
 
@@ -226,6 +236,34 @@ function svg_cct(float $fillRatio, string $stateClass = '', int $number = 0): st
   />
   <?php endif ?>
 
+  <!-- ─── Glycol cooling jacket on cone — the defining feature of a CCT ─── -->
+  <!-- Darker band wrapping the upper cone with subtle vertical coil seams -->
+  <g opacity="<?= $accOp ?>">
+    <path d="M <?= $cylLeft ?>,<?= $cylBot ?> L <?= $cylRight ?>,<?= $cylBot ?> L <?= $conePoint + 4 ?>,<?= $coneBot - 8 ?> L <?= $conePoint - 4 ?>,<?= $coneBot - 8 ?> Z"
+      fill="var(--steel-shadow)" opacity="0.6"
+      clip-path="url(#<?= $clipId ?>)"
+    />
+    <!-- Cooling coil seams (vertical lines hinting at wrap) -->
+    <line x1="22" y1="100" x2="34" y2="121" stroke="var(--steel-mid)" stroke-width="0.4" opacity="0.45"/>
+    <line x1="32" y1="100" x2="36.5" y2="121" stroke="var(--steel-mid)" stroke-width="0.4" opacity="0.45"/>
+    <line x1="48" y1="100" x2="43.5" y2="121" stroke="var(--steel-mid)" stroke-width="0.4" opacity="0.45"/>
+    <line x1="58" y1="100" x2="46" y2="121" stroke="var(--steel-mid)" stroke-width="0.4" opacity="0.45"/>
+    <!-- Top jacket band (thin metal strip) -->
+    <line x1="<?= $cylLeft ?>" y1="100" x2="<?= $cylRight ?>" y2="100"
+      stroke="var(--steel-mid)" stroke-width="0.7" opacity="0.75"/>
+    <line x1="<?= $cylLeft ?>" y1="100.8" x2="<?= $cylRight ?>" y2="100.8"
+      stroke="var(--steel-light)" stroke-width="0.3" opacity="0.4"/>
+    <!-- Bottom jacket band -->
+    <line x1="<?= $conePoint - 4 ?>" y1="121.5" x2="<?= $conePoint + 4 ?>" y2="121.5"
+      stroke="var(--steel-mid)" stroke-width="0.5" opacity="0.65"/>
+    <!-- Glycol IN port: small pipe stub on right side of jacket -->
+    <rect x="<?= $cylRight ?>" y="105" width="3" height="1.4"
+      fill="var(--steel-mid)" stroke="var(--steel-shadow)" stroke-width="0.2"/>
+    <!-- Glycol OUT port: lower on right -->
+    <rect x="<?= $cylRight - 1 ?>" y="116" width="3" height="1.4"
+      fill="var(--steel-mid)" stroke="var(--steel-shadow)" stroke-width="0.2"/>
+  </g>
+
   <!-- Highlight stripe (stainless reflection) -->
   <rect
     x="<?= $cylLeft ?>" y="<?= $cylTop ?>"
@@ -240,6 +278,74 @@ function svg_cct(float $fillRatio, string $stateClass = '', int $number = 0): st
   <line x1="<?= $cylLeft + 1 ?>" y1="72" x2="<?= $cylRight - 1 ?>" y2="72"
     stroke="var(--steel-mid)" stroke-width="0.5" opacity="0.4"/>
 
+  <!-- ─── PRV (pressure relief valve) on top cap, left of CIP entry ─── -->
+  <g opacity="<?= $accOp ?>">
+    <!-- Mushroom dome on a short stem -->
+    <rect x="22" y="-1" width="1.6" height="3.5"
+      fill="var(--steel-mid)" stroke="var(--steel-shadow)" stroke-width="0.2"/>
+    <ellipse cx="22.8" cy="-1.5" rx="2.6" ry="1.4"
+      fill="var(--steel)" stroke="var(--steel-shadow)" stroke-width="0.3"/>
+    <ellipse cx="22.8" cy="-1.8" rx="1.6" ry="0.7"
+      fill="none" stroke="var(--steel-light)" stroke-width="0.3" opacity="0.55"/>
+  </g>
+
+  <!-- ─── Temperature probe + cable (left side, mid-cylinder) ─── -->
+  <g opacity="<?= $accOp ?>">
+    <!-- Probe body protruding from cylinder wall -->
+    <rect x="6" y="55" width="6" height="3"
+      fill="var(--steel-mid)" stroke="var(--steel-shadow)" stroke-width="0.3"/>
+    <circle cx="7.4" cy="56.5" r="0.7" fill="var(--steel-shadow)"/>
+    <!-- Cable: smooth curve trailing down -->
+    <path d="M 6,57.5 Q 3,68 4.5,90 Q 5.5,108 9,128"
+      fill="none"
+      stroke="var(--steel-shadow)"
+      stroke-width="0.7"
+      opacity="0.75"
+    />
+    <!-- Cable highlight -->
+    <path d="M 6,57.5 Q 3,68 4.5,90 Q 5.5,108 9,128"
+      fill="none"
+      stroke="var(--steel-light)"
+      stroke-width="0.25"
+      opacity="0.25"
+    />
+  </g>
+
+  <!-- ─── Side hublot (sight glass) on cylinder face ─── -->
+  <g opacity="<?= $accOp ?>">
+    <!-- Outer ring (mounting flange) -->
+    <circle cx="40" cy="64" r="4.6"
+      fill="var(--steel-mid)"
+      stroke="var(--steel-shadow)" stroke-width="0.4"/>
+    <!-- Inner glass disc — slightly darker (shows beer through) -->
+    <?php if ($fillRatio > 0 && !$isMaint): ?>
+    <circle cx="40" cy="64" r="3.2"
+      fill="<?= $fillColour ?>" opacity="<?= (float)$fillOpacity * 0.9 ?>"/>
+    <?php else: ?>
+    <circle cx="40" cy="64" r="3.2"
+      fill="var(--steel-shadow)" opacity="0.85"/>
+    <?php endif ?>
+    <!-- Glass highlight (curved reflection) -->
+    <path d="M 38,62 Q 39,61.3 40.5,61.5"
+      fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="0.4"/>
+    <!-- Tiny bolts around flange -->
+    <circle cx="40"   cy="59.6" r="0.4" fill="var(--steel-shadow)"/>
+    <circle cx="44.2" cy="64"   r="0.4" fill="var(--steel-shadow)"/>
+    <circle cx="40"   cy="68.4" r="0.4" fill="var(--steel-shadow)"/>
+    <circle cx="35.8" cy="64"   r="0.4" fill="var(--steel-shadow)"/>
+  </g>
+
+  <!-- ─── Sample port (lower right cylinder, just above cone) ─── -->
+  <g opacity="<?= $accOp ?>">
+    <rect x="<?= $cylRight ?>" y="88" width="4" height="1.6"
+      fill="var(--steel-mid)" stroke="var(--steel-shadow)" stroke-width="0.25"/>
+    <!-- Small handle wheel -->
+    <circle cx="<?= $cylRight + 4.5 ?>" cy="88.8" r="1.1"
+      fill="var(--steel-mid)" stroke="var(--steel-shadow)" stroke-width="0.3"/>
+    <circle cx="<?= $cylRight + 4.5 ?>" cy="88.8" r="0.4"
+      fill="var(--steel-shadow)"/>
+  </g>
+
   <!-- Racking valve at cone tip -->
   <rect x="38" y="130" width="4" height="3.5"
     fill="var(--steel-mid)"
@@ -248,6 +354,12 @@ function svg_cct(float $fillRatio, string $stateClass = '', int $number = 0): st
   <rect x="39" y="133.5" width="2" height="2"
     fill="var(--steel-shadow)"
   />
+  <!-- Tiny handle wheel on racking valve -->
+  <circle cx="44.5" cy="131.6" r="1.1"
+    fill="var(--steel-mid)" stroke="var(--steel-shadow)" stroke-width="0.3"
+    opacity="<?= $accOp ?>"/>
+  <circle cx="44.5" cy="131.6" r="0.4"
+    fill="var(--steel-shadow)" opacity="<?= $accOp ?>"/>
 
   <!-- ═══════════════════════════════════════════════════════════════════ -->
   <!-- Support legs (3 visible, splayed)                                    -->
@@ -305,7 +417,7 @@ function svg_cct(float $fillRatio, string $stateClass = '', int $number = 0): st
 }
 
 // --- SVG helper: cylindrical BBT ---
-function svg_bbt(float $fillRatio, string $stateClass = '', int $number = 0): string {
+function svg_bbt(float $fillRatio, string $stateClass = '', int $number = 0, string $beer = ''): string {
     $fillRatio = max(0.0, min(1.0, $fillRatio));
 
     $cylTop   = 15;
@@ -319,8 +431,10 @@ function svg_bbt(float $fillRatio, string $stateClass = '', int $number = 0): st
         $fillColour  = '#3a3a3c';
         $fillOpacity = '0.5';
     } else {
-        $fillColour  = 'var(--oak)';
-        $fillOpacity = '0.80';
+        // BBT = clarified, conditioned beer in a pressurised vessel.
+        // Brighter blue tone, distinct from the deeper cold-crash blue used in CCT.
+        $fillColour  = 'var(--bbt)';
+        $fillOpacity = '0.82';
     }
 
     $emptyH = (int) round($cylH * (1.0 - $fillRatio));
@@ -454,6 +568,22 @@ function svg_bbt(float $fillRatio, string $stateClass = '', int $number = 0): st
   />
   <?php endif ?>
 
+  <!-- ─── Insulation jacket — vertical panel seams on the cylinder face ─── -->
+  <!-- Subtle hatching that hints at insulated panels (BBT stores cold beer) -->
+  <g opacity="<?= $accOp ?>">
+    <line x1="24" y1="<?= $cylTop + 2 ?>" x2="24" y2="<?= $cylBot - 2 ?>"
+      stroke="var(--steel-mid)" stroke-width="0.35" opacity="0.32"/>
+    <line x1="40" y1="<?= $cylTop + 2 ?>" x2="40" y2="<?= $cylBot - 2 ?>"
+      stroke="var(--steel-mid)" stroke-width="0.35" opacity="0.32"/>
+    <line x1="56" y1="<?= $cylTop + 2 ?>" x2="56" y2="<?= $cylBot - 2 ?>"
+      stroke="var(--steel-mid)" stroke-width="0.35" opacity="0.32"/>
+    <!-- Top and bottom jacket trim bands -->
+    <line x1="<?= $cylLeft ?>" y1="<?= $cylTop + 2 ?>" x2="<?= $cylRight ?>" y2="<?= $cylTop + 2 ?>"
+      stroke="var(--steel-mid)" stroke-width="0.5" opacity="0.55"/>
+    <line x1="<?= $cylLeft ?>" y1="<?= $cylBot - 2 ?>" x2="<?= $cylRight ?>" y2="<?= $cylBot - 2 ?>"
+      stroke="var(--steel-mid)" stroke-width="0.5" opacity="0.55"/>
+  </g>
+
   <!-- Highlight stripe -->
   <rect
     x="<?= $cylLeft ?>" y="<?= $cylTop ?>"
@@ -468,6 +598,77 @@ function svg_bbt(float $fillRatio, string $stateClass = '', int $number = 0): st
   <line x1="<?= $cylLeft + 1 ?>" y1="90" x2="<?= $cylRight - 1 ?>" y2="90"
     stroke="var(--steel-mid)" stroke-width="0.5" opacity="0.4"/>
 
+  <!-- ─── PRV (pressure relief valve) on top dome ─── -->
+  <g opacity="<?= $accOp ?>">
+    <rect x="22" y="3" width="1.6" height="4"
+      fill="var(--steel-mid)" stroke="var(--steel-shadow)" stroke-width="0.2"/>
+    <ellipse cx="22.8" cy="2.5" rx="2.8" ry="1.6"
+      fill="var(--steel)" stroke="var(--steel-shadow)" stroke-width="0.3"/>
+    <ellipse cx="22.8" cy="2.2" rx="1.7" ry="0.8"
+      fill="none" stroke="var(--steel-light)" stroke-width="0.3" opacity="0.55"/>
+  </g>
+
+  <!-- ─── CO₂ inlet stub on top dome ─── -->
+  <g opacity="<?= $accOp ?>">
+    <rect x="32" y="2" width="1.5" height="6"
+      fill="var(--steel-mid)" stroke="var(--steel-shadow)" stroke-width="0.2"/>
+    <!-- Small flange at base where it joins the dome -->
+    <rect x="30.5" y="6.5" width="4.5" height="1.4"
+      fill="var(--steel-mid)" stroke="var(--steel-shadow)" stroke-width="0.25"/>
+    <!-- Tiny cap on top of stub -->
+    <rect x="31.5" y="0.8" width="3" height="1.4"
+      fill="var(--steel-shadow)"/>
+  </g>
+
+  <!-- ─── Pressure gauge dial (lower-left cylinder) ─── -->
+  <g opacity="<?= $accOp ?>">
+    <!-- Mounting stub -->
+    <rect x="<?= $cylLeft - 1 ?>" y="100" width="3" height="1.4"
+      fill="var(--steel-mid)" stroke="var(--steel-shadow)" stroke-width="0.2"/>
+    <!-- Gauge body -->
+    <circle cx="<?= $cylLeft - 3.5 ?>" cy="100.7" r="3"
+      fill="var(--steel)" stroke="var(--steel-shadow)" stroke-width="0.4"/>
+    <!-- Gauge face -->
+    <circle cx="<?= $cylLeft - 3.5 ?>" cy="100.7" r="2.2"
+      fill="rgba(245,235,220,0.9)" stroke="var(--steel-mid)" stroke-width="0.2"/>
+    <!-- Tick marks at cardinal positions -->
+    <line x1="<?= $cylLeft - 3.5 ?>" y1="99.0" x2="<?= $cylLeft - 3.5 ?>" y2="99.5"
+      stroke="var(--steel-shadow)" stroke-width="0.3"/>
+    <line x1="<?= $cylLeft - 1.8 ?>" y1="100.7" x2="<?= $cylLeft - 2.3 ?>" y2="100.7"
+      stroke="var(--steel-shadow)" stroke-width="0.3"/>
+    <line x1="<?= $cylLeft - 5.2 ?>" y1="100.7" x2="<?= $cylLeft - 4.7 ?>" y2="100.7"
+      stroke="var(--steel-shadow)" stroke-width="0.3"/>
+    <!-- Needle pointing to ~2 o'clock when occupied; flat at empty -->
+    <?php $needleAngle = $fillRatio > 0 ? -40 : -90; ?>
+    <line
+      x1="<?= $cylLeft - 3.5 ?>" y1="100.7"
+      x2="<?= $cylLeft - 3.5 + 1.6 * cos(deg2rad($needleAngle)) ?>"
+      y2="<?= 100.7 + 1.6 * sin(deg2rad($needleAngle)) ?>"
+      stroke="var(--ember)" stroke-width="0.45"
+    />
+    <circle cx="<?= $cylLeft - 3.5 ?>" cy="100.7" r="0.4"
+      fill="var(--steel-shadow)"/>
+  </g>
+
+  <!-- ─── Side hublot (sight glass) on cylinder face ─── -->
+  <g opacity="<?= $accOp ?>">
+    <circle cx="40" cy="72" r="4.6"
+      fill="var(--steel-mid)" stroke="var(--steel-shadow)" stroke-width="0.4"/>
+    <?php if ($fillRatio > 0 && !$isMaint): ?>
+    <circle cx="40" cy="72" r="3.2"
+      fill="<?= $fillColour ?>" opacity="<?= (float)$fillOpacity * 0.9 ?>"/>
+    <?php else: ?>
+    <circle cx="40" cy="72" r="3.2"
+      fill="var(--steel-shadow)" opacity="0.85"/>
+    <?php endif ?>
+    <path d="M 38,70 Q 39,69.3 40.5,69.5"
+      fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="0.4"/>
+    <circle cx="40"   cy="67.6" r="0.4" fill="var(--steel-shadow)"/>
+    <circle cx="44.2" cy="72"   r="0.4" fill="var(--steel-shadow)"/>
+    <circle cx="40"   cy="76.4" r="0.4" fill="var(--steel-shadow)"/>
+    <circle cx="35.8" cy="72"   r="0.4" fill="var(--steel-shadow)"/>
+  </g>
+
   <!-- Bottom outlet (centred under the dome) -->
   <rect x="38" y="129" width="4" height="3"
     fill="var(--steel-mid)"
@@ -476,6 +677,14 @@ function svg_bbt(float $fillRatio, string $stateClass = '', int $number = 0): st
   <rect x="39" y="132" width="2" height="2"
     fill="var(--steel-shadow)"
   />
+  <!-- Sample valve handle wheel beside outlet -->
+  <circle cx="46" cy="130.5" r="1.2"
+    fill="var(--steel-mid)" stroke="var(--steel-shadow)" stroke-width="0.3"
+    opacity="<?= $accOp ?>"/>
+  <line x1="44.8" y1="130.5" x2="47.2" y2="130.5"
+    stroke="var(--steel-shadow)" stroke-width="0.3" opacity="<?= $accOp ?>"/>
+  <line x1="46" y1="129.3" x2="46" y2="131.7"
+    stroke="var(--steel-shadow)" stroke-width="0.3" opacity="<?= $accOp ?>"/>
 
   <!-- ═══════════════════════════════════════════════════════════════════ -->
   <!-- Support legs                                                         -->
@@ -596,16 +805,25 @@ try {
         $recipeStmt->execute([':beer' => $beer, ':batch_v' => $batch, ':beer2' => $beer]);
         $recipeRow = $recipeStmt->fetch() ?: [];
 
+        // Beer-specific prefix used in operator-typed fermenting cells.
+        // Matches "<PREFIX> <BATCH>" exactly (or "<PREFIX> <BATCH> <trail>")
+        // — avoids cross-matching batch numbers across different beers
+        // (e.g. DIB 6 vs ALT 6 vs EST 6 all sharing batch number "6").
+        $beerPrefix = TankSimulator::beerPrefix($beer);
+        $exactMatch = $beerPrefix . ' ' . $batch;
+        $withTrail  = $beerPrefix . ' ' . $batch . ' %';
+
         // Last gravity
         $gravStmt = $pdo->prepare(
             'SELECT gravity AS last_gravity, event_date AS last_gravity_date
              FROM bd_fermenting
-             WHERE (beers_to_read LIKE :batchPct OR beers_to_read LIKE :pctBatch)
+             WHERE (beers_to_read = :exact OR beers_to_read LIKE :withTrail)
+               AND gravity IS NOT NULL
              ORDER BY event_date DESC LIMIT 1'
         );
         $gravStmt->execute([
-            ':batchPct' => '% ' . $batch,
-            ':pctBatch' => $batch . '%',
+            ':exact'     => $exactMatch,
+            ':withTrail' => $withTrail,
         ]);
         $gravRow = $gravStmt->fetch() ?: [];
 
@@ -613,12 +831,12 @@ try {
         $ccStmt = $pdo->prepare(
             'SELECT MAX(event_date) AS last_cc_date
              FROM bd_fermenting
-             WHERE (beers_to_cold_crash LIKE :batchPct OR beers_to_cold_crash LIKE :pctBatch)
+             WHERE (beers_to_cold_crash = :exact OR beers_to_cold_crash LIKE :withTrail)
                AND beers_to_cold_crash IS NOT NULL AND beers_to_cold_crash != \'\''
         );
         $ccStmt->execute([
-            ':batchPct' => '% ' . $batch,
-            ':pctBatch' => $batch . '%',
+            ':exact'     => $exactMatch,
+            ':withTrail' => $withTrail,
         ]);
         $ccRow = $ccStmt->fetch() ?: [];
 
@@ -850,7 +1068,7 @@ $today = $asOfDT;
       ?>
       <div class="tank-card <?= $stateClass ?>">
         <div class="tank-card__svg">
-          <?= svg_cct($fillRatio, $svgState, $num) ?>
+          <?= svg_cct($fillRatio, $svgState, $num, (string)($occ['bd_beer'] ?? '')) ?>
         </div>
 
         <?php if ($isMaint): ?>
@@ -949,7 +1167,7 @@ $today = $asOfDT;
       ?>
       <div class="tank-card <?= $stateClass ?>">
         <div class="tank-card__svg">
-          <?= svg_bbt($fillRatio, $svgState, $num) ?>
+          <?= svg_bbt($fillRatio, $svgState, $num, (string)($occ['beer'] ?? '')) ?>
         </div>
 
         <?php if ($isMaint): ?>

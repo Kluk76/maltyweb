@@ -101,6 +101,88 @@ class TankSimulator
         'EPH1' => 'EPH1', 'EPH2' => 'EPH2', 'EPH3' => 'EPH3', 'EPH4' => 'EPH4',
     ];
 
+    // ── Beer → SRM-realistic fill colour for tank visualisation ──────────────
+    // Hex strings (not CSS vars) so they can be used inside SVG defs/gradients.
+    // Order roughly by SRM colour scale: pale gold → amber → mahogany → black.
+    // Operator can tweak any value here — these become the canonical visual
+    // identity of each recipe on the tank board.
+    private const BEER_COLOUR_MAP = [
+        'Zepp'                        => '#e0b94a',  // Czech-style lager, pale gold
+        'Moonshine'                   => '#d8c478',  // wit (coriander/orange peel), pale wheat cloudy
+        'Div.Blanche'                 => '#d6c993',  // witbier white, very pale
+        'Div.Gose'                    => '#e3c98a',  // gose, pale with slight salt cast
+        'Div.Panaché'                 => '#ebd9a6',  // radler-style, very pale
+        'Blonde des Romands'          => '#dfbd4d',  // blonde lager
+        'Diversion'                   => '#cf9c2c',  // IPA, golden-amber
+        'Alternative'                 => '#cd902f',  // hazy IPA
+        'Dockeuse'                    => '#d2a13e',  // NEIPA contract, hazy gold
+        'Embuscade'                   => '#a8651e',  // amber IPA / pale ale
+        'Estafette'                   => '#b86d22',  // saison, orange-amber
+        'Stirling'                    => '#7d4218',  // Scotch ale / darker amber
+        'DrunkBeard - Galactic Drift' => '#9c5320',  // collab IPA, amber
+        'EPH1'                        => '#b87a30',  // ephémère default (operator overrides per vintage)
+        'EPH2'                        => '#b87a30',
+        'EPH3'                        => '#b87a30',
+        'EPH4'                        => '#b87a30',
+        'Speakeasy'                   => '#3a1809',  // dark stout / porter
+        'Double Oat'                  => '#1a0c06',  // very dark oat stout
+        'Qrew - Diversion Gose'       => '#e3c98a',  // gose collab
+        // Contract beers (default amber unless overridden)
+        'Brasserie 28 - Blonde'       => '#dfbd4d',
+        'Brasserie 28 - IPA'          => '#c08428',
+        'Brasserie 28 - Triple'       => '#c79938',
+    ];
+
+    // Fallback for unknown beers / contract beers not in the map.
+    public const DEFAULT_BEER_COLOUR = '#a06030';  // oak amber
+
+    /** Resolve a canonical beer name to its tank-fill colour (hex string). */
+    public static function beerColour(string $beer): string
+    {
+        if (isset(self::BEER_COLOUR_MAP[$beer])) return self::BEER_COLOUR_MAP[$beer];
+        // Contract beers with " - " separator get a slightly cooler default
+        // so they read as visually distinct from the Neb core range.
+        if (str_contains($beer, ' - ')) return '#8c5530';
+        return self::DEFAULT_BEER_COLOUR;
+    }
+
+    // ── Canonical beer → short prefix used in fermenting "beers_to_*" cells ──
+    // Operators type "<PREFIX> <BATCH>" in cold-crash / gravity-read columns
+    // (e.g. "DIB 6", "EMB 232", "EPH2 26"). For Neb beers the prefix is a
+    // 3- or 4-letter SKU code; for contract beers the operator types the full
+    // canonical name as the prefix (e.g. "Chien Bleu - Jasper 28").
+    // Without this, a batch-only LIKE match cross-matches batch numbers across
+    // different beers (e.g. DIB 6 vs ALT 6) and the most recent wins.
+    private const BEER_TO_PREFIX = [
+        'Zepp'               => 'ZEP',
+        'Embuscade'          => 'EMB',
+        'Moonshine'          => 'MOO',
+        'Stirling'           => 'STI',
+        'Speakeasy'          => 'SPY',
+        'Diversion'          => 'DIV',
+        'Double Oat'         => 'DOA',
+        'Estafette'          => 'EST',
+        'Alternative'        => 'ALT',
+        'Div.Blanche'        => 'DIB',
+        'Div.Gose'           => 'DIG',
+        'Div.Panaché'        => 'DIP',
+        'Blonde des Romands' => 'BLO',
+        'Dockeuse'           => 'DOC',
+        'EPH1' => 'EPH1', 'EPH2' => 'EPH2', 'EPH3' => 'EPH3', 'EPH4' => 'EPH4',
+        'DrunkBeard - Galactic Drift' => 'DGD',
+        'Qrew - Diversion Gose'       => 'QDG',
+    ];
+
+    /**
+     * Return the short prefix operators type alongside the batch number in
+     * fermenting cells. Falls back to the full canonical name for contract
+     * beers that the operator references by full name.
+     */
+    public static function beerPrefix(string $beer): string
+    {
+        return self::BEER_TO_PREFIX[$beer] ?? $beer;
+    }
+
     public function __construct(private readonly PDO $pdo) {}
 
     // ─────────────────────────────────────────────────────────────────────────

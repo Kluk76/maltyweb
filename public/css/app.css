@@ -100,6 +100,10 @@ body.home {
   --oak-deep:  #6e4e26;
   --ember:     #c5664a;   /* toasted brick — danger only */
 
+  /* Tank-state palette — used by the fermentation tank board */
+  --cold:      #2f5575;   /* cold-crash — deep cool blue */
+  --bbt:       #6593b8;   /* BBT clarified beer — brighter mid-blue */
+
   --ok:  #a8b97a;
   --bad: #c5664a;
 
