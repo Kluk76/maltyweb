@@ -498,9 +498,9 @@ try {
                                 && str_starts_with($vintage, "20" . $batch));
 
                 // --- CCT column ---
-                $rawCct     = $r["bd_cct"] ?? "";
+                // bd_cct is INT UNSIGNED NULL since migration 026d — cast to string before regex.
+                $rawCct     = (string) ($r["bd_cct"] ?? "");
                 $cctCap     = $r["cct_capacity_hl"] ?? null;
-                // Extract leading number for display
                 $cctNum     = preg_replace('/[^0-9].*$/', '', $rawCct);
                 if ($cctNum !== "" && $cctCap !== null) {
                     $cctDisplay = $cctNum . " · " . $cctCap . " HL";
@@ -515,7 +515,8 @@ try {
                 $yeastGen = $r["bd_yeast_gen"] ?? "";
 
                 // --- YT column ---
-                $rawYt  = $r["bd_yt"] ?? "";
+                // bd_yt is INT UNSIGNED NULL since migration 026d — cast to string before regex.
+                $rawYt  = (string) ($r["bd_yt"] ?? "");
                 $ytCap  = $r["yt_capacity_hl"] ?? null;
                 $ytNum  = preg_replace('/[^0-9].*$/', '', $rawYt);
                 if ($ytNum !== "" && $ytCap !== null) {
