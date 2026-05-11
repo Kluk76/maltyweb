@@ -8,7 +8,7 @@ $me            = $me ?? current_user() ?? [];
 $modules = [
     ["01", "Procurement",     "Sourcing & receiving",        "#",                 "procurement"],
     ["02", "Wort Production", "Brewhouse & cooling",         "/modules/wort.php", "wort"],
-    ["03", "Fermentation",    "CCT, BBT, dry-hop, racking",  "#",                 "fermentation"],
+    ["03", "Fermentation",    "CCT, BBT, dry-hop, racking",  "/modules/tanks.php", "fermentation"],
     ["04", "Packaging",       "Bottle, can, keg, cuv",       "#",                 "packaging"],
     ["05", "Fulfilment",      "Logistics & dispatch",        "#",                 "fulfilment"],
     ["06", "QA / QC",         "Lab, sensory, audit",         "#",                 "qa"],

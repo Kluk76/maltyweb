@@ -3053,3 +3053,258 @@ body.auth::after {
     padding: 48px 0 36px;
   }
 }
+
+
+/* ============== TANKS PAGE ============== */
+
+/* Main layout — matches wort-main padding */
+.home .tanks-main {
+  align-items: flex-start;
+  padding: 52px 56px 72px;
+  width: 100%;
+  max-width: none;
+  box-sizing: border-box;
+}
+
+/* KPI denom (e.g. "/ 18") — smaller, muted next to big number */
+.home .wort-kpi__denom {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 18px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  color: var(--ink-mute);
+}
+
+/* Section wrapper */
+.home .tanks-section {
+  width: 100%;
+  margin-bottom: 52px;
+}
+
+/* Section header title */
+.home .tanks-section__title {
+  font-family: "Fraunces", "Times New Roman", serif;
+  font-variation-settings: "opsz" 72;
+  font-weight: 400;
+  font-size: 20px;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  margin: 0;
+  line-height: 1.2;
+}
+
+/* Section title tag (CCT / BBT) */
+.home .tanks-section__tag {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--hop);
+  vertical-align: middle;
+  margin-left: 8px;
+  padding: 2px 7px;
+  border: 1px solid rgba(158, 176, 96, 0.3);
+  border-radius: 2px;
+  background: rgba(158, 176, 96, 0.06);
+}
+
+/* Grid of tank cards */
+.home .tanks-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 16px;
+  padding-top: 20px;
+}
+
+/* Individual tank card */
+.home .tank-card {
+  border: 1px solid var(--hairline-2);
+  background: linear-gradient(160deg, rgba(25, 20, 15, 0.65), rgba(10, 9, 8, 0.42));
+  border-radius: 2px;
+  padding: 18px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  position: relative;
+  overflow: hidden;
+  transition: border-color .2s, background .2s;
+}
+
+.home .tank-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: transparent;
+  transition: background .2s;
+}
+
+/* State-specific top accent */
+.home .tank-card--ferment::before {
+  background: linear-gradient(90deg, var(--oak), transparent 70%);
+}
+.home .tank-card--cold::before {
+  background: linear-gradient(90deg, var(--hop-deep), transparent 70%);
+}
+.home .tank-card--bbt-occ::before {
+  background: linear-gradient(90deg, var(--oak-deep), transparent 70%);
+}
+.home .tank-card--maint::before {
+  background: linear-gradient(90deg, var(--steel-mid), transparent 70%);
+}
+
+/* Hover state */
+.home .tank-card:hover {
+  border-color: var(--hairline);
+  background: linear-gradient(160deg, rgba(30, 24, 17, 0.75), rgba(14, 12, 9, 0.55));
+}
+
+/* SVG wrapper */
+.home .tank-card__svg {
+  display: flex;
+  justify-content: center;
+  width: 80px;
+  flex-shrink: 0;
+}
+.home .tank-card__svg .tank-svg {
+  width: 80px;
+  height: 140px;
+}
+
+/* Info block below SVG */
+.home .tank-card__info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  text-align: center;
+}
+
+/* Beer name */
+.home .tank-card__beer {
+  font-family: "Fraunces", "Times New Roman", serif;
+  font-variation-settings: "opsz" 36;
+  font-weight: 400;
+  font-size: 14px;
+  color: var(--ink);
+  letter-spacing: 0.01em;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* Batch number */
+.home .tank-card__batch {
+  font-size: 11px;
+  color: var(--ink-soft);
+  letter-spacing: 0.06em;
+}
+
+/* Volume HL */
+.home .tank-card__vol {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--hop-soft);
+  letter-spacing: 0.04em;
+}
+
+/* Sub line (e.g. racked - packaged) */
+.home .tank-card__sub {
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  line-height: 1.3;
+}
+
+/* Capacity */
+.home .tank-card__cap {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+}
+
+/* Brew/rack date */
+.home .tank-card__brewdate {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  line-height: 1.4;
+}
+
+/* Gravity reading */
+.home .tank-card__grav {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10.5px;
+  color: var(--ink-soft);
+  letter-spacing: 0.04em;
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+/* Empty state label */
+.home .tank-card__empty-label {
+  font-family: "Fraunces", serif;
+  font-style: italic;
+  font-size: 18px;
+  color: var(--ink-faint);
+  line-height: 1;
+}
+
+/* Muted / mono utility classes */
+.home .tanks-mute {
+  color: var(--ink-mute);
+}
+.home .tanks-mono {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+}
+
+/* Empty card visual fade */
+.home .tank-card--empty {
+  opacity: 0.52;
+}
+.home .tank-card--maint {
+  opacity: 0.38;
+}
+
+/* Badge pills */
+.home .tank-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 2px;
+  white-space: nowrap;
+  margin-top: 2px;
+}
+
+.home .tank-badge--cold {
+  color: var(--hop-soft);
+  background: rgba(107, 122, 62, 0.18);
+  border: 1px solid rgba(107, 122, 62, 0.35);
+}
+
+.home .tank-badge--days {
+  color: var(--oak);
+  background: rgba(160, 122, 72, 0.12);
+  border: 1px solid rgba(160, 122, 72, 0.28);
+}
+
+.home .tank-badge--maint {
+  color: var(--steel);
+  background: rgba(94, 98, 102, 0.15);
+  border: 1px solid rgba(94, 98, 102, 0.28);
+}
+

@@ -1,0 +1,681 @@
+<?php
+declare(strict_types=1);
+
+require __DIR__ . "/../../app/auth.php";
+
+require_login();
+$me = current_user();
+
+header("Content-Type: text/html; charset=utf-8");
+
+$active_module = "fermentation";
+$crumbs        = ["Accueil", "Fermentation", "Tank Board"];
+
+// --- Date helpers (FR locale, consistent with wort.php) ---
+$monthsFR = [
+    1 => "jan", 2 => "fév", 3 => "mar", 4 => "avr",
+    5 => "mai", 6 => "jun", 7 => "jul", 8 => "aoû",
+    9 => "sep", 10 => "oct", 11 => "nov", 12 => "déc",
+];
+
+function fmt_date_fr_tanks(string $dateStr, array $months): string {
+    $ts = strtotime($dateStr);
+    if ($ts === false) return htmlspecialchars($dateStr);
+    $d = (int) date("j", $ts);
+    $m = (int) date("n", $ts);
+    $y = date("Y", $ts);
+    return sprintf("%d %s %s", $d, $months[$m], $y);
+}
+
+// --- SVG helper: cylindro-conical CCT ---
+function svg_cct(float $fillRatio, string $stateClass = '', int $number = 0): string {
+    $fillRatio = max(0.0, min(1.0, $fillRatio));
+
+    // Geometry
+    $cylTop    = 10;   // top of cylinder body
+    $cylBot    = 100;  // bottom of cylinder body (start of cone)
+    $coneBot   = 130;  // cone tip
+    $cylLeft   = 12;
+    $cylRight  = 68;
+    $conePoint = 40;   // x-centre for cone tip (width 12: 34..46)
+    $cylH      = $cylBot - $cylTop;  // 90
+
+    // Fill colour based on state
+    $isMaint = str_contains($stateClass, 'maint');
+    if ($isMaint) {
+        $fillColour = '#3a3a3c';
+        $fillOpacity = '0.5';
+    } elseif (str_contains($stateClass, 'cold')) {
+        $fillColour = 'var(--hop-deep)';
+        $fillOpacity = '0.85';
+    } elseif (str_contains($stateClass, 'ferment')) {
+        $fillColour = 'var(--oak)';
+        $fillOpacity = '0.82';
+    } else {
+        $fillColour = 'none';
+        $fillOpacity = '0';
+    }
+
+    // Fill level: empty at top, beer from bottom
+    // fillRatio 1.0 = full cylinder; we clip fill rect to cylinder+cone polygon
+    $emptyH    = (int) round($cylH * (1.0 - $fillRatio));
+    $fillY     = $cylTop + $emptyH;
+    $fillH     = $cylBot - $fillY; // height of fill within cylinder rect
+
+    $uid = 'cct' . $number . '_' . substr(md5((string)microtime(true) . $number), 0, 6);
+    $clipId    = 'clip_' . $uid;
+    $gradId    = 'grad_' . $uid;
+    $maskId    = 'mask_' . $uid;
+
+    ob_start(); ?>
+<svg class="tank-svg" viewBox="0 0 80 140" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="CCT <?= $number ?>">
+  <defs>
+    <!-- Shape clip: cylinder + cone -->
+    <clipPath id="<?= $clipId ?>">
+      <polygon points="
+        <?= $cylLeft ?>,<?= $cylTop ?>
+        <?= $cylRight ?>,<?= $cylTop ?>
+        <?= $cylRight ?>,<?= $cylBot ?>
+        <?= $conePoint + 6 ?>,<?= $coneBot ?>
+        <?= $conePoint - 6 ?>,<?= $coneBot ?>
+        <?= $cylLeft ?>,<?= $cylBot ?>
+      "/>
+    </clipPath>
+    <!-- Highlight gradient -->
+    <linearGradient id="<?= $gradId ?>" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="rgba(255,255,255,0.13)"/>
+      <stop offset="12%" stop-color="rgba(255,255,255,0.04)"/>
+      <stop offset="100%" stop-color="rgba(255,255,255,0)"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Tank body: cylinder + cone outline (empty state fill) -->
+  <polygon
+    points="<?= $cylLeft ?>,<?= $cylTop ?> <?= $cylRight ?>,<?= $cylTop ?> <?= $cylRight ?>,<?= $cylBot ?> <?= $conePoint + 6 ?>,<?= $coneBot ?> <?= $conePoint - 6 ?>,<?= $coneBot ?> <?= $cylLeft ?>,<?= $cylBot ?>"
+    fill="var(--steel-deep)"
+    stroke="var(--steel-mid)"
+    stroke-width="1.2"
+  />
+
+  <!-- Top cap rectangle -->
+  <rect x="<?= $cylLeft ?>" y="<?= $cylTop - 8 ?>" width="<?= $cylRight - $cylLeft ?>" height="8"
+    fill="var(--steel-deep)"
+    stroke="var(--steel-mid)"
+    stroke-width="1.2"
+  />
+  <!-- Cap top line (bright edge) -->
+  <line x1="<?= $cylLeft ?>" y1="<?= $cylTop - 8 ?>" x2="<?= $cylRight ?>" y2="<?= $cylTop - 8 ?>"
+    stroke="var(--steel-light)" stroke-width="0.8" opacity="0.5"/>
+
+  <!-- Beer fill (clipped to shape) -->
+  <?php if ($fillRatio > 0 && !$isMaint): ?>
+  <rect
+    x="<?= $cylLeft ?>" y="<?= $fillY ?>"
+    width="<?= $cylRight - $cylLeft ?>" height="<?= $fillH + ($coneBot - $cylBot) ?>"
+    fill="<?= $fillColour ?>"
+    opacity="<?= $fillOpacity ?>"
+    clip-path="url(#<?= $clipId ?>)"
+  />
+  <?php endif ?>
+
+  <!-- Highlight stripe (stainless reflection) -->
+  <rect
+    x="<?= $cylLeft ?>" y="<?= $cylTop ?>"
+    width="5" height="<?= $cylH ?>"
+    fill="url(#<?= $gradId ?>)"
+    clip-path="url(#<?= $clipId ?>)"
+  />
+
+  <!-- Seam lines (horizontal bands suggest tank segments) -->
+  <line x1="<?= $cylLeft + 1 ?>" y1="44" x2="<?= $cylRight - 1 ?>" y2="44"
+    stroke="var(--steel-mid)" stroke-width="0.5" opacity="0.4"/>
+  <line x1="<?= $cylLeft + 1 ?>" y1="72" x2="<?= $cylRight - 1 ?>" y2="72"
+    stroke="var(--steel-mid)" stroke-width="0.5" opacity="0.4"/>
+
+  <!-- Tank number overlay -->
+  <text
+    x="40" y="30"
+    text-anchor="middle"
+    font-family="'JetBrains Mono', ui-monospace, monospace"
+    font-size="14"
+    font-weight="500"
+    fill="rgba(255,255,255,0.9)"
+    stroke="rgba(0,0,0,0.5)"
+    stroke-width="0.4"
+    paint-order="stroke"
+  ><?= $number ?></text>
+</svg>
+<?php
+    return ob_get_clean();
+}
+
+// --- SVG helper: cylindrical BBT ---
+function svg_bbt(float $fillRatio, string $stateClass = '', int $number = 0): string {
+    $fillRatio = max(0.0, min(1.0, $fillRatio));
+
+    $cylTop   = 15;
+    $cylBot   = 125;
+    $cylLeft  = 12;
+    $cylRight = 68;
+    $cylH     = $cylBot - $cylTop; // 110
+
+    $isMaint = str_contains($stateClass, 'maint');
+    if ($isMaint) {
+        $fillColour  = '#3a3a3c';
+        $fillOpacity = '0.5';
+    } else {
+        $fillColour  = 'var(--oak)';
+        $fillOpacity = '0.80';
+    }
+
+    $emptyH = (int) round($cylH * (1.0 - $fillRatio));
+    $fillY  = $cylTop + $emptyH;
+    $fillH  = $cylBot - $fillY;
+
+    $uid    = 'bbt' . $number . '_' . substr(md5((string)microtime(true) . 'b' . $number), 0, 6);
+    $clipId = 'clip_' . $uid;
+    $gradId = 'grad_' . $uid;
+    $rx     = 28; // half-width of ellipse for top/bottom caps
+    $ry     = 5;  // ellipse height (shallow dome)
+
+    ob_start(); ?>
+<svg class="tank-svg" viewBox="0 0 80 140" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="BBT <?= $number ?>">
+  <defs>
+    <clipPath id="<?= $clipId ?>">
+      <rect x="<?= $cylLeft ?>" y="<?= $cylTop ?>" width="<?= $cylRight - $cylLeft ?>" height="<?= $cylH ?>"/>
+    </clipPath>
+    <linearGradient id="<?= $gradId ?>" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="rgba(255,255,255,0.13)"/>
+      <stop offset="12%" stop-color="rgba(255,255,255,0.04)"/>
+      <stop offset="100%" stop-color="rgba(255,255,255,0)"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Cylinder body -->
+  <rect
+    x="<?= $cylLeft ?>" y="<?= $cylTop ?>"
+    width="<?= $cylRight - $cylLeft ?>" height="<?= $cylH ?>"
+    fill="var(--steel-deep)"
+    stroke="var(--steel-mid)"
+    stroke-width="1.2"
+  />
+
+  <!-- Domed top cap -->
+  <ellipse cx="40" cy="<?= $cylTop ?>" rx="<?= $rx ?>" ry="<?= $ry ?>"
+    fill="var(--steel-deep)"
+    stroke="var(--steel-mid)"
+    stroke-width="1.2"
+  />
+  <!-- Highlight on top dome -->
+  <ellipse cx="40" cy="<?= $cylTop ?>" rx="<?= $rx - 4 ?>" ry="<?= $ry - 1 ?>"
+    fill="none"
+    stroke="var(--steel-light)"
+    stroke-width="0.6"
+    opacity="0.35"
+  />
+
+  <!-- Domed bottom cap -->
+  <ellipse cx="40" cy="<?= $cylBot ?>" rx="<?= $rx ?>" ry="<?= $ry ?>"
+    fill="var(--steel-deep)"
+    stroke="var(--steel-mid)"
+    stroke-width="1.2"
+  />
+
+  <!-- Beer fill (clipped to cylinder rect) -->
+  <?php if ($fillRatio > 0 && !$isMaint): ?>
+  <rect
+    x="<?= $cylLeft ?>" y="<?= $fillY ?>"
+    width="<?= $cylRight - $cylLeft ?>" height="<?= $fillH ?>"
+    fill="<?= $fillColour ?>"
+    opacity="<?= $fillOpacity ?>"
+    clip-path="url(#<?= $clipId ?>)"
+  />
+  <?php endif ?>
+
+  <!-- Highlight stripe -->
+  <rect
+    x="<?= $cylLeft ?>" y="<?= $cylTop ?>"
+    width="5" height="<?= $cylH ?>"
+    fill="url(#<?= $gradId ?>)"
+    clip-path="url(#<?= $clipId ?>)"
+  />
+
+  <!-- Seam lines -->
+  <line x1="<?= $cylLeft + 1 ?>" y1="55" x2="<?= $cylRight - 1 ?>" y2="55"
+    stroke="var(--steel-mid)" stroke-width="0.5" opacity="0.4"/>
+  <line x1="<?= $cylLeft + 1 ?>" y1="90" x2="<?= $cylRight - 1 ?>" y2="90"
+    stroke="var(--steel-mid)" stroke-width="0.5" opacity="0.4"/>
+
+  <!-- Tank number overlay -->
+  <text
+    x="40" y="37"
+    text-anchor="middle"
+    font-family="'JetBrains Mono', ui-monospace, monospace"
+    font-size="14"
+    font-weight="500"
+    fill="rgba(255,255,255,0.9)"
+    stroke="rgba(0,0,0,0.5)"
+    stroke-width="0.4"
+    paint-order="stroke"
+  ><?= $number ?></text>
+</svg>
+<?php
+    return ob_get_clean();
+}
+
+// -------------------------------------------------------------------
+// Database queries + event-sourced simulation
+// -------------------------------------------------------------------
+require __DIR__ . "/../../app/tank-simulator.php";
+
+try {
+    $pdo = maltytask_pdo();
+
+    // ---- Reference tables (capacity + status) ----
+    $cctRef = $pdo->query("
+        SELECT number, capacity_hl, status
+        FROM ref_cct
+        ORDER BY number ASC
+    ")->fetchAll(PDO::FETCH_ASSOC);
+
+    $bbtRef = $pdo->query("
+        SELECT number, capacity_hl, status
+        FROM ref_bbt
+        ORDER BY number ASC
+    ")->fetchAll(PDO::FETCH_ASSOC);
+
+    // ---- Run event-sourced simulation ----
+    $simState  = (new TankSimulator($pdo))->run();
+    $cctSimMap = $simState['cct']; // int → state|null
+    $bbtSimMap = $simState['bbt'];
+
+    // ---- Per-CCT supplemental queries (gravity + cold crash) ----
+    // Only for occupied CCTs — at most 18 small queries per page load.
+    $cctOccMap = [];
+    foreach ($cctSimMap as $num => $simRow) {
+        if ($simRow === null) continue;
+
+        $beer  = $simRow['beer'];
+        $batch = $simRow['batch'];
+
+        // Brewday date for this (beer, batch) → for "J+N days" display
+        $brewdayDate = $pdo->prepare(
+            'SELECT event_date FROM bd_brewing_brewday
+             WHERE bd_beer = :beer AND bd_batch = :batch
+             ORDER BY event_date DESC LIMIT 1'
+        );
+        $brewdayDate->execute([':beer' => $beer, ':batch' => $batch]);
+        $brewRow = $brewdayDate->fetch();
+
+        // Recipe short name
+        $recipeStmt = $pdo->prepare(
+            'SELECT COALESCE(rr.recipe_short_name, rr2.recipe_short_name) AS recipe_short_name,
+                    COALESCE(rr.classification, rr2.classification)        AS classification,
+                    COALESCE(rc.name, \'\')                                AS client_name
+             FROM (SELECT 1) dummy
+             LEFT JOIN ref_recipes rr
+                 ON  rr.name    = :beer
+                 AND rr.vintage = CONCAT(\'20\', LPAD(REGEXP_REPLACE(:batch_v, \'[^0-9].*$\', \'\'), 2, \'0\'))
+                 AND rr.vintage <> \'20\'
+             LEFT JOIN ref_recipes rr2
+                 ON  rr2.name    = :beer2
+                 AND rr2.vintage = \'\'
+             LEFT JOIN ref_clients rc
+                 ON  rc.id = COALESCE(rr.client_id, rr2.client_id)
+             LIMIT 1'
+        );
+        $recipeStmt->execute([':beer' => $beer, ':batch_v' => $batch, ':beer2' => $beer]);
+        $recipeRow = $recipeStmt->fetch() ?: [];
+
+        // Last gravity
+        $gravStmt = $pdo->prepare(
+            'SELECT gravity AS last_gravity, event_date AS last_gravity_date
+             FROM bd_fermenting
+             WHERE (beers_to_read LIKE :batchPct OR beers_to_read LIKE :pctBatch)
+             ORDER BY event_date DESC LIMIT 1'
+        );
+        $gravStmt->execute([
+            ':batchPct' => '% ' . $batch,
+            ':pctBatch' => $batch . '%',
+        ]);
+        $gravRow = $gravStmt->fetch() ?: [];
+
+        // Last cold-crash date
+        $ccStmt = $pdo->prepare(
+            'SELECT MAX(event_date) AS last_cc_date
+             FROM bd_fermenting
+             WHERE (beers_to_cold_crash LIKE :batchPct OR beers_to_cold_crash LIKE :pctBatch)
+               AND beers_to_cold_crash IS NOT NULL AND beers_to_cold_crash != \'\''
+        );
+        $ccStmt->execute([
+            ':batchPct' => '% ' . $batch,
+            ':pctBatch' => $batch . '%',
+        ]);
+        $ccRow = $ccStmt->fetch() ?: [];
+
+        $cctOccMap[$num] = [
+            'cct_number'       => $num,
+            'bd_beer'          => $beer,
+            'bd_batch'         => $batch,
+            'volume_hl'        => $simRow['volume_hl'],
+            'brewday_date'     => $brewRow['event_date'] ?? null,
+            'recipe_short_name'=> $recipeRow['recipe_short_name'] ?? null,
+            'classification'   => $recipeRow['classification'] ?? null,
+            'client_name'      => $recipeRow['client_name'] ?? null,
+            'last_gravity'     => $gravRow['last_gravity'] ?? null,
+            'last_gravity_date'=> $gravRow['last_gravity_date'] ?? null,
+            'last_cc_date'     => $ccRow['last_cc_date'] ?? null,
+        ];
+    }
+
+    // ---- Per-BBT supplemental: recipe short name ----
+    $bbtOccMap = [];
+    foreach ($bbtSimMap as $num => $simRow) {
+        if ($simRow === null) continue;
+
+        $beer  = $simRow['beer'];
+        $batch = $simRow['batch'];
+
+        $recipeStmt = $pdo->prepare(
+            'SELECT COALESCE(rr.recipe_short_name, rr2.recipe_short_name) AS recipe_short_name,
+                    COALESCE(rc.name, \'\')                                AS client_name
+             FROM (SELECT 1) dummy
+             LEFT JOIN ref_recipes rr
+                 ON  rr.name    = :beer
+                 AND rr.vintage = CONCAT(\'20\', LPAD(REGEXP_REPLACE(:batch_v, \'[^0-9].*$\', \'\'), 2, \'0\'))
+                 AND rr.vintage <> \'20\'
+             LEFT JOIN ref_recipes rr2
+                 ON  rr2.name    = :beer2
+                 AND rr2.vintage = \'\'
+             LEFT JOIN ref_clients rc
+                 ON  rc.id = COALESCE(rr.client_id, rr2.client_id)
+             LIMIT 1'
+        );
+        $recipeStmt->execute([':beer' => $beer, ':batch_v' => $batch, ':beer2' => $beer]);
+        $recipeRow = $recipeStmt->fetch() ?: [];
+
+        // Blend detail string (e.g. "#169: 50hl + #170: 44hl")
+        $blendStr = '';
+        if (!empty($simRow['blend_info']) && count($simRow['blend_info']) > 1) {
+            $parts = array_map(
+                fn($bi) => '#' . $bi['batch'] . ': ' . round((float)$bi['vol']) . 'hl',
+                $simRow['blend_info']
+            );
+            $blendStr = implode(' + ', $parts);
+        }
+
+        $bbtOccMap[$num] = [
+            'bbt_number'       => $num,
+            'beer'             => $beer,
+            'batch'            => $batch,
+            'remaining_hl'     => $simRow['volume_hl'],
+            'rack_date'        => $simRow['filled_date']->format('Y-m-d'),
+            'recipe_short_name'=> $recipeRow['recipe_short_name'] ?? null,
+            'client_name'      => $recipeRow['client_name'] ?? null,
+            'blend_str'        => $blendStr,
+        ];
+    }
+
+    // ---- KPI aggregates ----
+    $activeCcts  = array_filter($cctRef, fn($r) => $r['status'] === 'active');
+    $activeBbts  = array_filter($bbtRef, fn($r) => $r['status'] === 'active');
+    $totalCct    = count($activeCcts);
+    $totalBbt    = count($activeBbts);
+    $occupiedCct = count($cctOccMap);
+    $occupiedBbt = count($bbtOccMap);
+
+    $hlInCcts = 0.0;
+    foreach ($cctOccMap as $row) {
+        $hlInCcts += (float)($row['volume_hl'] ?? 0);
+    }
+    $hlInBbts = 0.0;
+    foreach ($bbtOccMap as $row) {
+        $hlInBbts += (float)($row['remaining_hl'] ?? 0);
+    }
+
+    $dbError = null;
+
+} catch (Throwable $e) {
+    $cctRef      = [];
+    $bbtRef      = [];
+    $cctOccMap   = [];
+    $bbtOccMap   = [];
+    $totalCct    = 0;
+    $totalBbt    = 0;
+    $occupiedCct = 0;
+    $occupiedBbt = 0;
+    $hlInCcts    = 0.0;
+    $hlInBbts    = 0.0;
+    $dbError     = $e->getMessage();
+}
+
+$today = new DateTimeImmutable('today');
+?><!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tank Board — MaltyTask</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/app.css?v=<?= @filemtime(__DIR__ . '/../css/app.css') ?: time() ?>">
+</head>
+<body class="home">
+
+<?php require __DIR__ . "/../../app/partials/sidebar.php" ?>
+
+<?php require __DIR__ . "/../../app/partials/topbar.php" ?>
+
+<main class="main tanks-main">
+
+  <?php if ($dbError): ?>
+    <div class="wort-error">
+      Erreur base de données&nbsp;: <?= htmlspecialchars($dbError) ?>
+    </div>
+  <?php endif ?>
+
+  <!-- KPI bar -->
+  <section class="wort-kpis" aria-label="État des cuves">
+    <div class="wort-kpi">
+      <span class="wort-kpi__num"><?= $occupiedCct ?><span class="wort-kpi__denom"> / <?= $totalCct ?></span></span>
+      <span class="wort-kpi__label">Fermenteurs occupés</span>
+    </div>
+    <div class="wort-kpi">
+      <span class="wort-kpi__num"><?= $occupiedBbt ?><span class="wort-kpi__denom"> / <?= $totalBbt ?></span></span>
+      <span class="wort-kpi__label">Tanks de garde occupés</span>
+    </div>
+    <div class="wort-kpi">
+      <span class="wort-kpi__num"><?= $hlInCcts > 0 ? number_format($hlInCcts, 1) : '—' ?></span>
+      <span class="wort-kpi__label">HL en fermentation</span>
+    </div>
+    <div class="wort-kpi">
+      <span class="wort-kpi__num"><?= $hlInBbts > 0 ? number_format($hlInBbts, 1) : '—' ?></span>
+      <span class="wort-kpi__label">HL en garde</span>
+    </div>
+  </section>
+
+  <!-- CCT Section -->
+  <section class="tanks-section" aria-label="Fermenteurs CCT">
+    <div class="wort-section__head">
+      <h2 class="tanks-section__title">Fermenteurs <span class="tanks-section__tag">CCT</span></h2>
+      <span class="wort-section__label">— <?= $occupiedCct ?> occupé<?= $occupiedCct !== 1 ? 's' : '' ?> sur <?= $totalCct ?> actifs</span>
+    </div>
+
+    <div class="tanks-grid">
+      <?php foreach ($cctRef as $cct):
+        $num      = (int)$cct['number'];
+        $capHl    = (float)$cct['capacity_hl'];
+        $status   = $cct['status'];
+        $occ      = $cctOccMap[$num] ?? null;
+        $isMaint  = ($status === 'maintenance' || $status === 'retired');
+
+        // Determine state
+        if ($isMaint) {
+            $stateClass = 'tank-card--maint';
+            $svgState   = 'maint';
+            $fillRatio  = 0.0;
+        } elseif ($occ === null) {
+            $stateClass = 'tank-card--empty';
+            $svgState   = '';
+            $fillRatio  = 0.0;
+        } else {
+            $hasColdCrash = !empty($occ['last_cc_date']);
+            $stateClass   = $hasColdCrash ? 'tank-card--cold' : 'tank-card--ferment';
+            $svgState     = $hasColdCrash ? 'cold' : 'ferment';
+            $volHl        = (float)($occ['volume_hl'] ?? 0);
+            $fillRatio    = $capHl > 0 ? min(1.0, $volHl / $capHl) : 0.0;
+        }
+      ?>
+      <div class="tank-card <?= $stateClass ?>">
+        <div class="tank-card__svg">
+          <?= svg_cct($fillRatio, $svgState, $num) ?>
+        </div>
+
+        <?php if ($isMaint): ?>
+          <div class="tank-card__info">
+            <span class="tank-card__cap tanks-mute"><?= htmlspecialchars(number_format($capHl, 0)) ?> HL</span>
+            <span class="tank-badge tank-badge--maint"><?= htmlspecialchars($status) ?></span>
+          </div>
+
+        <?php elseif ($occ === null): ?>
+          <div class="tank-card__info">
+            <span class="tank-card__empty-label">—</span>
+            <span class="tank-card__cap tanks-mute"><?= htmlspecialchars(number_format($capHl, 0)) ?> HL</span>
+          </div>
+
+        <?php else:
+          $beerLabel  = htmlspecialchars($occ['recipe_short_name'] ?? $occ['bd_beer'] ?? '');
+          $batch      = htmlspecialchars($occ['bd_batch'] ?? '');
+          $volHlFmt   = $occ['volume_hl'] !== null ? number_format((float)$occ['volume_hl'], 1) . ' HL' : '—';
+          $brewDate   = !empty($occ['brewday_date'])
+              ? fmt_date_fr_tanks($occ['brewday_date'], $monthsFR)
+              : '—';
+
+          // Last gravity
+          $lastGrav     = $occ['last_gravity']      ?? null;
+          $lastGravDate = $occ['last_gravity_date'] ?? null;
+          $gravFmt      = $lastGrav !== null
+              ? number_format((float)$lastGrav, 1) . '°P'
+              : null;
+          $gravDateFmt  = $lastGravDate
+              ? fmt_date_fr_tanks($lastGravDate, $monthsFR)
+              : null;
+
+          // Cold crash badge: J+N days since brewday
+          $ccDate    = $occ['last_cc_date'] ?? null;
+          $ccDays    = null;
+          $ccDateFmt = null;
+          if ($ccDate && !empty($occ['brewday_date'])) {
+              $brewDT   = new DateTimeImmutable($occ['brewday_date']);
+              $ccDT     = new DateTimeImmutable($ccDate);
+              $ccDays   = (int)$brewDT->diff($ccDT)->days;
+              $ccDateFmt = fmt_date_fr_tanks($ccDate, $monthsFR);
+          }
+        ?>
+          <div class="tank-card__info">
+            <span class="tank-card__beer"><?= $beerLabel ?></span>
+            <span class="tank-card__batch tanks-mono"><?= $batch ?></span>
+            <span class="tank-card__vol tanks-mute"><?= htmlspecialchars($volHlFmt) ?></span>
+            <span class="tank-card__brewdate tanks-mute"><?= htmlspecialchars($brewDate) ?></span>
+            <?php if ($gravFmt): ?>
+              <span class="tank-card__grav tanks-mono">
+                <?= htmlspecialchars($gravFmt) ?>
+                <?php if ($gravDateFmt): ?>
+                  <span class="tanks-mute"><?= htmlspecialchars($gravDateFmt) ?></span>
+                <?php endif ?>
+              </span>
+            <?php endif ?>
+            <?php if ($ccDays !== null): ?>
+              <span class="tank-badge tank-badge--cold">❄ J+<?= $ccDays ?> · <?= htmlspecialchars($ccDateFmt ?? '') ?></span>
+            <?php endif ?>
+          </div>
+        <?php endif ?>
+      </div>
+      <?php endforeach ?>
+    </div>
+  </section>
+
+  <!-- BBT Section -->
+  <section class="tanks-section" aria-label="Tanks de garde BBT">
+    <div class="wort-section__head">
+      <h2 class="tanks-section__title">Tanks de garde <span class="tanks-section__tag">BBT</span></h2>
+      <span class="wort-section__label">— <?= $occupiedBbt ?> occupé<?= $occupiedBbt !== 1 ? 's' : '' ?> sur <?= $totalBbt ?> actifs</span>
+    </div>
+
+    <div class="tanks-grid">
+      <?php foreach ($bbtRef as $bbt):
+        $num      = (int)$bbt['number'];
+        $capHl    = (float)$bbt['capacity_hl'];
+        $status   = $bbt['status'];
+        $occ      = $bbtOccMap[$num] ?? null;
+        $isMaint  = ($status === 'maintenance' || $status === 'retired');
+
+        if ($isMaint) {
+            $stateClass = 'tank-card--maint';
+            $svgState   = 'maint';
+            $fillRatio  = 0.0;
+        } elseif ($occ === null) {
+            $stateClass = 'tank-card--empty';
+            $svgState   = '';
+            $fillRatio  = 0.0;
+        } else {
+            $stateClass = 'tank-card--bbt-occ';
+            $svgState   = 'bbt';
+            $remainHl   = (float)($occ['remaining_hl'] ?? 0);
+            $fillRatio  = $capHl > 0 ? min(1.0, $remainHl / $capHl) : 0.0;
+        }
+      ?>
+      <div class="tank-card <?= $stateClass ?>">
+        <div class="tank-card__svg">
+          <?= svg_bbt($fillRatio, $svgState, $num) ?>
+        </div>
+
+        <?php if ($isMaint): ?>
+          <div class="tank-card__info">
+            <span class="tank-card__cap tanks-mute"><?= htmlspecialchars(number_format($capHl, 0)) ?> HL</span>
+            <span class="tank-badge tank-badge--maint"><?= htmlspecialchars($status) ?></span>
+          </div>
+
+        <?php elseif ($occ === null): ?>
+          <div class="tank-card__info">
+            <span class="tank-card__empty-label">—</span>
+            <span class="tank-card__cap tanks-mute"><?= htmlspecialchars(number_format($capHl, 0)) ?> HL</span>
+          </div>
+
+        <?php else:
+          $beerLabel = htmlspecialchars($occ['recipe_short_name'] ?? $occ['beer'] ?? '');
+          $batch     = htmlspecialchars($occ['batch'] ?? '');
+          $remainHl  = (float)($occ['remaining_hl'] ?? 0);
+          $blendStr  = $occ['blend_str'] ?? '';
+          $rackDate  = !empty($occ['rack_date'])
+              ? fmt_date_fr_tanks($occ['rack_date'], $monthsFR)
+              : '—';
+
+          // Days in BBT
+          $daysInBbt = 0;
+          if (!empty($occ['rack_date'])) {
+              $rackDT    = new DateTimeImmutable($occ['rack_date']);
+              $daysInBbt = (int)$rackDT->diff($today)->days;
+          }
+        ?>
+          <div class="tank-card__info">
+            <span class="tank-card__beer"><?= $beerLabel ?></span>
+            <span class="tank-card__batch tanks-mono"><?= $batch ?></span>
+            <span class="tank-card__vol"><?= htmlspecialchars(number_format($remainHl, 1)) ?> HL</span>
+            <?php if ($blendStr !== ''): ?>
+              <span class="tank-card__sub tanks-mute"><?= htmlspecialchars($blendStr) ?></span>
+            <?php endif ?>
+            <span class="tank-card__brewdate tanks-mute"><?= htmlspecialchars($rackDate) ?></span>
+            <span class="tank-badge tank-badge--days">J+<?= $daysInBbt ?></span>
+          </div>
+        <?php endif ?>
+      </div>
+      <?php endforeach ?>
+    </div>
+  </section>
+
+</main>
+
+</body>
+</html>
