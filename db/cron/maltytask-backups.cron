@@ -1,0 +1,30 @@
+# /etc/cron.d/maltytask-backups
+#
+# Automated backup schedule for maltytask DB.
+#
+# Source of truth: db/cron/maltytask-backups.cron in the maltyweb repo.
+# Deployed via bin/deploy.sh from the maltyweb repo (sudo cp + chmod 644).
+#
+# Each tier has a matching check on healthchecks.io. If cron drifts or the
+# script fails to ping, healthchecks.io alerts via email.
+#
+# Note: cron syntax requires the user column for /etc/cron.d/* fragments
+# (m h dom mon dow user command). Times are UTC (VPS timezone is Etc/UTC).
+#
+# Manual edits will be overwritten on next deploy. Edit the source file
+# in the repo, commit, then run bin/deploy.sh --apply.
+
+# Cron-safe environment (cron's $PATH is minimal)
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# m  h  dom mon dow  user    command
+
+# Hourly: 4×/day (00:00, 06:00, 12:00, 18:00 UTC)
+0  0,6,12,18  *  *  *   ubuntu  /var/www/maltytask/scripts/db/backup.sh hourly > /dev/null 2>&1
+
+# Daily: every day at 03:00 UTC (night, low activity)
+0  3  *  *  *   ubuntu  /var/www/maltytask/scripts/db/backup.sh daily > /dev/null 2>&1
+
+# Monthly: 1st of the month at 04:00 UTC
+0  4  1  *  *   ubuntu  /var/www/maltytask/scripts/db/backup.sh monthly > /dev/null 2>&1

@@ -41,5 +41,14 @@ if [[ -z "$DRY" ]]; then
      sudo find $VPS_PATH/public $VPS_PATH/app $VPS_PATH/db $VPS_PATH/scripts -type d -exec chmod 2755 {} \; && \
      sudo find $VPS_PATH/public $VPS_PATH/app $VPS_PATH/db $VPS_PATH/scripts -type f -exec chmod 644 {} \; && \
      sudo find $VPS_PATH/scripts/db -type f -name '*.sh' -exec chmod 755 {} \;"
+
+  echo "→ installing cron schedules from db/cron/*.cron"
+  ssh -o BatchMode=yes "$VPS_HOST" \
+    "for f in $VPS_PATH/db/cron/*.cron; do \
+       name=\$(basename \"\$f\" .cron); \
+       sudo install -o root -g root -m 0644 \"\$f\" \"/etc/cron.d/\$name\"; \
+       echo \"   - installed /etc/cron.d/\$name\"; \
+     done"
+
   echo "✓ deploy complete"
 fi
