@@ -28,5 +28,11 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 30   4   *   *   *   maltytask   cd /var/www/maltytask && .venv/bin/python scripts/python/ingest_mi.py        --apply >> /var/log/maltytask/ingest-refs.log 2>&1
 35   4   *   *   *   maltytask   cd /var/www/maltytask && .venv/bin/python scripts/python/ingest_suppliers.py --apply >> /var/log/maltytask/ingest-refs.log 2>&1
 40   4   *   *   *   maltytask   cd /var/www/maltytask && .venv/bin/python scripts/python/import_overrides.py --apply >> /var/log/maltytask/ingest-refs.log 2>&1
-45   4   *   *   *   maltytask   cd /var/www/maltytask && .venv/bin/python scripts/python/ingest_deliveries.py --apply >> /var/log/maltytask/ingest-refs.log 2>&1
+# ingest_deliveries.py DISABLED 2026-05-12 (Phase C cutover).
+# Reason: maltytask scripts/ingest-documents.js now writes inv_deliveries directly
+# (source_origin='node-ingest'). Re-enabling this line would race with Node writes
+# on the same logical invoice and produce duplicate inv_deliveries rows under
+# different source_origin values. The 442 legacy bsf-mirror rows stay intact.
+# Script kept in the repo for audit/historical replay only.
+# 45   4   *   *   *   maltytask   cd /var/www/maltytask && .venv/bin/python scripts/python/ingest_deliveries.py --apply >> /var/log/maltytask/ingest-refs.log 2>&1
 50   4   *   *   *   maltytask   cd /var/www/maltytask && .venv/bin/python scripts/python/ingest_sku_bom.py   --apply >> /var/log/maltytask/ingest-refs.log 2>&1
