@@ -1,28 +1,163 @@
 <?php
 declare(strict_types=1);
-// $crumbs — array of breadcrumb label strings, e.g. ["Accueil", "Wort Production"]
-// $me     — current_user() array, must be set by including page
-$crumbs = $crumbs ?? ["Accueil"];
-$me     = $me     ?? [];
+/**
+ * topbar.php — horizontal nav topbar (Option F redesign)
+ *
+ * Variables expected before require:
+ *   $active_module  string  — key of the active module (e.g. "triage", "wort")
+ *   $me             array   — current_user() result
+ */
+$active_module = $active_module ?? "";
+$me            = $me ?? current_user() ?? [];
+
+$modules = [
+    ["00", "Triage",          "/modules/triage.php",   "triage"],
+    ["01", "Procurement",     "#",                     "procurement"],
+    ["02", "Wort Production", "/modules/wort.php",     "wort"],
+    ["03", "Fermentation",    "/modules/tanks.php",    "fermentation"],
+    ["04", "Packaging",       "/modules/packaging.php","packaging"],
+    ["05", "Fulfilment",      "#",                     "fulfilment"],
+    ["06", "QA / QC",         "#",                     "qa"],
+    ["07", "SKU Costs",       "/modules/sku-costs.php","sku-costs"],
+];
+
+$showAdminBlock = is_admin($me) || is_manager($me);
+$adminEntries   = [];
+if ($showAdminBlock) {
+    $adminEntries[] = ["Paramètres",  "/admin/settings.php",  "settings"];
+}
+if (is_admin($me)) {
+    $adminEntries[] = ["DB Browser",  "/admin/db-browser.php","db-browser"];
+}
+
+$userName = htmlspecialchars($me["display_name"] ?? $me["username"] ?? "");
+$userRole = htmlspecialchars($me["role"] ?? "");
 ?>
-<header class="top">
-  <div class="top__crumbs">
-    <?php
-    $last = count($crumbs) - 1;
-    foreach ($crumbs as $i => $crumb):
-      if ($i < $last): ?>
-        <a class="top__crumb" href="/"><?= htmlspecialchars($crumb) ?></a>
-        <span class="top__sep" aria-hidden="true"> / </span>
-      <?php else: ?>
-        <span class="top__here"><?= htmlspecialchars($crumb) ?></span>
-      <?php endif;
-    endforeach ?>
-  </div>
-  <div class="top__user">
-    <span class="user__name"><?= htmlspecialchars($me["display_name"] ?? "") ?></span>
-    <span class="user__sep">·</span>
-    <span class="user__role"><?= htmlspecialchars($me["role"] ?? "") ?></span>
-    <span class="user__sep">·</span>
-    <a class="user__out" href="/logout.php">Déconnexion</a>
-  </div>
+<header class="tb" id="topbar" role="banner" aria-label="Navigation principale">
+
+  <!-- ── Mobile burger ── -->
+  <button class="tb__burger" id="tb-burger" aria-label="Ouvrir le menu" aria-expanded="false" aria-controls="tb-drawer">
+    <span></span><span></span><span></span>
+  </button>
+
+  <!-- ── Brand ── -->
+  <a class="tb__brand" href="/modules/triage.php" aria-label="MaltyTask — Tableau de bord">
+    <span class="tb-mark">M<span class="tb-mark__t">T</span></span>
+  </a>
+
+  <!-- ── Module nav (desktop) ── -->
+  <nav class="tb__nav" aria-label="Modules" id="tb-nav">
+    <ul>
+      <?php foreach ($modules as [$idx, $name, $href, $key]): ?>
+        <?php $active = ($key === $active_module); ?>
+        <li>
+          <a class="tb__module<?= $active ? ' tb__module--active' : '' ?>"
+             href="<?= htmlspecialchars($href) ?>"
+             <?= $active ? 'aria-current="page"' : '' ?>>
+            <span class="tb__midx"><?= htmlspecialchars($idx) ?></span><span class="tb__mname"><?= htmlspecialchars($name) ?></span>
+          </a>
+        </li>
+      <?php endforeach ?>
+    </ul>
+  </nav>
+
+  <!-- ── Right cluster ── -->
+  <div class="tb__right">
+
+    <?php if ($showAdminBlock): ?>
+    <!-- Admin overflow -->
+    <div class="tb__admin-wrap" id="tb-admin-wrap">
+      <button class="tb__admin-btn" id="tb-admin-btn" aria-label="Menu admin" aria-expanded="false" aria-controls="tb-admin-panel">
+        <svg viewBox="0 0 16 12" width="16" height="12" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <rect y="0"  width="16" height="1.5" rx="0.75" fill="currentColor"/>
+          <rect y="5"  width="16" height="1.5" rx="0.75" fill="currentColor"/>
+          <rect y="10" width="16" height="1.5" rx="0.75" fill="currentColor"/>
+        </svg>
+      </button>
+      <div class="tb__admin-panel" id="tb-admin-panel" role="menu" hidden>
+        <?php foreach ($adminEntries as [$label, $href, $key]): ?>
+          <a class="tb__admin-item<?= ($key === $active_module) ? ' tb__admin-item--active' : '' ?>"
+             href="<?= htmlspecialchars($href) ?>"
+             role="menuitem"><?= htmlspecialchars($label) ?></a>
+        <?php endforeach ?>
+        <div class="tb__admin-sep" role="separator"></div>
+        <a class="tb__admin-item tb__admin-item--out" href="/logout.php" role="menuitem">Déconnexion</a>
+      </div>
+    </div>
+    <?php endif ?>
+
+    <!-- User chip -->
+    <div class="tb__user-wrap" id="tb-user-wrap">
+      <button class="tb__user-btn" id="tb-user-btn" aria-label="Menu utilisateur" aria-expanded="false" aria-controls="tb-user-panel">
+        <span class="tb__uname"><?= $userName ?></span>
+        <svg class="tb__ucaret" viewBox="0 0 10 6" width="10" height="6" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M1 1L5 5L9 1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+      <div class="tb__user-panel" id="tb-user-panel" role="menu" hidden>
+        <?php if ($userRole): ?>
+          <div class="tb__user-role"><?= $userRole ?></div>
+        <?php endif ?>
+        <?php if (!$showAdminBlock): ?>
+          <div class="tb__admin-sep" role="separator"></div>
+          <a class="tb__admin-item tb__admin-item--out" href="/logout.php" role="menuitem">Déconnexion</a>
+        <?php endif ?>
+      </div>
+    </div>
+
+  </div><!-- /.tb__right -->
+
 </header>
+
+<!-- ── Mobile drawer ── -->
+<div class="tb-drawer" id="tb-drawer" aria-label="Menu mobile" aria-hidden="true">
+  <div class="tb-drawer__backdrop" id="tb-backdrop" aria-hidden="true"></div>
+  <nav class="tb-drawer__panel" role="dialog" aria-modal="true" aria-label="Navigation">
+
+    <div class="tb-drawer__head">
+      <span class="tb-mark tb-mark--drawer">M<span class="tb-mark__t">T</span></span>
+      <button class="tb-drawer__close" id="tb-drawer-close" aria-label="Fermer le menu">
+        <svg viewBox="0 0 14 14" width="14" height="14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M1 1L13 13M13 1L1 13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+      </button>
+    </div>
+
+    <div class="tb-drawer__section-label">— modules</div>
+    <ul class="tb-drawer__list">
+      <?php foreach ($modules as [$idx, $name, $href, $key]): ?>
+        <?php $active = ($key === $active_module); ?>
+        <li>
+          <a class="tb-drawer__item<?= $active ? ' tb-drawer__item--active' : '' ?>"
+             href="<?= htmlspecialchars($href) ?>"
+             <?= $active ? 'aria-current="page"' : '' ?>>
+            <span class="tb-drawer__idx"><?= htmlspecialchars($idx) ?></span>
+            <span class="tb-drawer__name"><?= htmlspecialchars($name) ?></span>
+          </a>
+        </li>
+      <?php endforeach ?>
+    </ul>
+
+    <?php if ($showAdminBlock): ?>
+    <div class="tb-drawer__section-label tb-drawer__section-label--admin">— admin</div>
+    <ul class="tb-drawer__list">
+      <?php foreach ($adminEntries as [$label, $href, $key]): ?>
+        <li>
+          <a class="tb-drawer__item<?= ($key === $active_module) ? ' tb-drawer__item--active' : '' ?>"
+             href="<?= htmlspecialchars($href) ?>">
+            <span class="tb-drawer__name"><?= htmlspecialchars($label) ?></span>
+          </a>
+        </li>
+      <?php endforeach ?>
+    </ul>
+    <?php endif ?>
+
+    <div class="tb-drawer__foot">
+      <a class="tb-drawer__logout" href="/logout.php">Déconnexion</a>
+      <span class="tb-drawer__org">la nébuleuse · v0.1</span>
+    </div>
+
+  </nav>
+</div>
+
+<script defer src="/js/topbar.js?v=<?= @filemtime(__DIR__ . '/../../public/js/topbar.js') ?: time() ?>"></script>
