@@ -265,26 +265,37 @@ function ta_count_open_lines(array $unresolvedLines): int
  * Mark a specific line index as resolved in the context string.
  * Returns the updated context string.
  *
- * Line index is 0-based over the unresolved-line array only.
+ * Line index is 0-based over the FULL line array as built by
+ * triage_parse_context()['unresolved'] — which includes both still-unresolved
+ * lines AND lines already prefixed with [RESOLVED]. The UI iterates that array
+ * with foreach($ctx["unresolved"] as $lineIdx => ...), so a stable array
+ * index is the contract.
+ *
+ * Earlier version counted only still-unresolved lines, which drifted on
+ * subsequent submissions: line N became (N - resolved-count) and the function
+ * silently returned context unchanged — alias/reject/create endpoints
+ * committed their DB writes but the RQ row stayed open with no marker.
  */
 function ta_mark_line_resolved(string $context, int $lineIndex): string
 {
     $lines    = explode("\n", $context);
-    $uIdx     = 0;
+    $arrayIdx = 0;
     $modified = false;
 
     foreach ($lines as &$line) {
-        $trimmed = trim($line);
-        // Match unresolved line format (NOT already marked resolved)
-        if (preg_match('/^\s*-\s*"[^"]+"\s*\(/', $line) && !str_contains($line, '[RESOLVED]')) {
-            if ($uIdx === $lineIndex) {
-                // Prefix with [RESOLVED] marker inside the "- " list item
+        $isUnresolvedForm = (bool) preg_match('/^\s*-\s*"[^"]+"\s*\(/', $line);
+        $isResolvedForm   = (bool) preg_match('/^\s*-\s*\[RESOLVED\]\s*"/', $line);
+        if (!$isUnresolvedForm && !$isResolvedForm) {
+            continue;
+        }
+        if ($arrayIdx === $lineIndex) {
+            if ($isUnresolvedForm) {
                 $line     = preg_replace('/^(\s*-\s*)/', '$1[RESOLVED] ', $line);
                 $modified = true;
-                break;
             }
-            $uIdx++;
+            break;
         }
+        $arrayIdx++;
     }
     unset($line);
 
