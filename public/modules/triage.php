@@ -663,11 +663,11 @@ function stock_qs(array $extra): string
                   <?= triage_type_glyph((string)$row["type"]) ?>
                 </span>
                 <span class="inbox-row__body">
-                  <span class="inbox-row__supplier">
+                  <span class="inbox-row__supplier"<?= $supplierDisp ? ' title="' . htmlspecialchars($supplierDisp) . '"' : '' ?>>
                     <?= $supplierDisp ? htmlspecialchars($supplierDisp) : '<em class="inbox-row__unknown">—</em>' ?>
                   </span>
                   <?php if ($refDisp !== ""): ?>
-                    <span class="inbox-row__ref"><?= htmlspecialchars($refDisp) ?></span>
+                    <span class="inbox-row__ref" title="<?= htmlspecialchars($refDisp) ?>"><?= htmlspecialchars($refDisp) ?></span>
                   <?php endif ?>
                 </span>
                 <span class="inbox-row__meta">

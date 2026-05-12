@@ -4424,8 +4424,8 @@ body.auth::after {
    ───────────────────────────────────────────────────────────────────────────── */
 
 .home.triage .inbox-list {
-  flex: 0 0 38%;
-  max-width: 38%;
+  flex: 0 0 300px;
+  max-width: 300px;
   border-right: 1px solid var(--hairline-2);
   overflow-y: auto;
   max-height: calc(100vh - 240px);
