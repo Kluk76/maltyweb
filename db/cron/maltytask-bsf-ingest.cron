@@ -23,16 +23,23 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # driven by operator form submissions. No-op when nothing new (INSERT IGNORE).
 */30  *   *   *   *   maltytask   cd /var/www/maltytask && .venv/bin/python scripts/python/ingest.py --tab=all --apply >> /var/log/maltytask/ingest.log 2>&1
 
-# Daily at 04:30 UTC: reference tables (MI, suppliers, supplier-aliases, deliveries, SKU BOM).
-# Lower cadence — these change rarely vs transactional data.
-30   4   *   *   *   maltytask   cd /var/www/maltytask && .venv/bin/python scripts/python/ingest_mi.py        --apply >> /var/log/maltytask/ingest-refs.log 2>&1
-35   4   *   *   *   maltytask   cd /var/www/maltytask && .venv/bin/python scripts/python/ingest_suppliers.py --apply >> /var/log/maltytask/ingest-refs.log 2>&1
-40   4   *   *   *   maltytask   cd /var/www/maltytask && .venv/bin/python scripts/python/import_overrides.py --apply >> /var/log/maltytask/ingest-refs.log 2>&1
-# ingest_deliveries.py DISABLED 2026-05-12 (Phase C cutover).
-# Reason: maltytask scripts/ingest-documents.js now writes inv_deliveries directly
-# (source_origin='node-ingest'). Re-enabling this line would race with Node writes
-# on the same logical invoice and produce duplicate inv_deliveries rows under
-# different source_origin values. The 442 legacy bsf-mirror rows stay intact.
-# Script kept in the repo for audit/historical replay only.
-# 45   4   *   *   *   maltytask   cd /var/www/maltytask && .venv/bin/python scripts/python/ingest_deliveries.py --apply >> /var/log/maltytask/ingest-refs.log 2>&1
-50   4   *   *   *   maltytask   cd /var/www/maltytask && .venv/bin/python scripts/python/ingest_sku_bom.py   --apply >> /var/log/maltytask/ingest-refs.log 2>&1
+# Daily at 04:30 UTC: reference-table sync from BSF.
+#
+# ALL REFERENCE-DATA INGESTERS DISABLED 2026-05-12 (Source-of-truth flip).
+# MySQL is now the canonical store for ref_mi / ref_suppliers / ref_sku_bom /
+# entity overrides. BSF MasterIngredients + Suppliers tabs are read-only legacy
+# views — they remain visible but no longer drive MySQL. Operator MI/supplier
+# edits go directly via maltyweb (PHP UI, future) or `lib/repos/mysql-*.ts`.
+#
+# Why disabled: running these would silently overwrite curated MySQL state
+# (e.g. the Cautions/1302 routing applied 2026-05-12, the forwarder import-VAT
+# decomposition, future Cautions category additions) every 24h.
+#
+# Scripts remain in the repo for one-shot audit/replay use. To re-run manually:
+#   ssh maltyweb 'cd /var/www/maltytask && sudo -u maltytask .venv/bin/python scripts/python/ingest_mi.py --dry-run'
+#
+# 30   4   *   *   *   maltytask   cd /var/www/maltytask && .venv/bin/python scripts/python/ingest_mi.py        --apply >> /var/log/maltytask/ingest-refs.log 2>&1
+# 35   4   *   *   *   maltytask   cd /var/www/maltytask && .venv/bin/python scripts/python/ingest_suppliers.py --apply >> /var/log/maltytask/ingest-refs.log 2>&1
+# 40   4   *   *   *   maltytask   cd /var/www/maltytask && .venv/bin/python scripts/python/import_overrides.py --apply >> /var/log/maltytask/ingest-refs.log 2>&1
+# 45   4   *   *   *   maltytask   cd /var/www/maltytask && .venv/bin/python scripts/python/ingest_deliveries.py --apply >> /var/log/maltytask/ingest-refs.log 2>&1  [also disabled 2026-05-12 Phase C]
+# 50   4   *   *   *   maltytask   cd /var/www/maltytask && .venv/bin/python scripts/python/ingest_sku_bom.py   --apply >> /var/log/maltytask/ingest-refs.log 2>&1
