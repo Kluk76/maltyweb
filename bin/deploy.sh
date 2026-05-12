@@ -53,7 +53,9 @@ if [[ "${1:-}" == "--apply-pipeline" ]]; then
   ssh -o BatchMode=yes "$VPS_HOST" \
     "sudo chown -R maltytask:www-data $PIPELINE_DST && \
      sudo find $PIPELINE_DST -type d -exec chmod 755 {} \; && \
-     sudo find $PIPELINE_DST -type f -exec chmod 644 {} \;"
+     sudo find $PIPELINE_DST -type f -exec chmod 644 {} \; && \
+     sudo chown root:root $PIPELINE_DST/ingest-one-local.sh $PIPELINE_DST/ingest-one.sh && \
+     sudo chmod 755 $PIPELINE_DST/ingest-one-local.sh $PIPELINE_DST/ingest-one.sh"
 
   echo "→ running npm ci on VPS (as maltytask, includes devDeps for tsx)"
   ssh -o BatchMode=yes "$VPS_HOST" \

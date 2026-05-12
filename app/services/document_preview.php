@@ -19,8 +19,16 @@ const DP_DOCUMENTS_BASE = DP_STORAGE_BASE . '/documents';
 const DP_PREVIEW_CACHE  = DP_STORAGE_BASE . '/preview-cache';
 const DP_SERVICE_ACCOUNT = '/var/www/maltytask/config/service-account.json';
 const DP_TOKEN_CACHE    = '/tmp/maltyweb-google-token.json';
+const DP_TOKEN_WRITE_CACHE = '/tmp/maltyweb-google-token-write.json';
 const DP_TOKEN_TTL      = 3300; // 55 min — just under Google's 1 h
 const DP_FILE_ID_REGEX  = '/^[A-Za-z0-9_\-]{10,200}$/';
+
+/**
+ * Drive inbox folder ID — canonical source: maltytask/lib/config.js DRIVE_INBOX_FOLDER.
+ * TODO: future cleanup — pull from a shared env file / YAML so Node + PHP stay in sync
+ *       without manual duplication. For now this is the only PHP caller.
+ */
+const DOC_DRIVE_INBOX_FOLDER = '1vtWVPJRmY7s4shMY79Rp2FZLiToRBFwY';
 
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -231,6 +239,171 @@ function dp_drive_download_to_file(
         return false;
     }
     return true;
+}
+
+/**
+ * Returns a Google OAuth2 access token with drive.file write scope.
+ * Separate cache file from the read-only token so both can coexist.
+ * Returns null on failure (unreadable SA key, JWT sign error, HTTP error).
+ */
+function dp_google_access_token_write(): ?string
+{
+    // Check file cache
+    if (is_file(DP_TOKEN_WRITE_CACHE)) {
+        $data = @json_decode((string) file_get_contents(DP_TOKEN_WRITE_CACHE), true);
+        if (is_array($data)
+            && isset($data['access_token'], $data['expires_at'])
+            && time() < (int) $data['expires_at']
+        ) {
+            return (string) $data['access_token'];
+        }
+    }
+
+    $sa_raw = @file_get_contents(DP_SERVICE_ACCOUNT);
+    if ($sa_raw === false) return null;
+
+    $sa = json_decode($sa_raw, true);
+    if (!is_array($sa) || empty($sa['private_key']) || empty($sa['client_email'])) {
+        return null;
+    }
+
+    $now = time();
+    $claims = [
+        'iss'   => $sa['client_email'],
+        // Full Drive scope — same as used by the Node.js ingest pipeline (lib/sheets.js).
+        // drive.file is insufficient: service accounts have no quota for new files
+        // unless the folder is a shared drive. The inbox is a personal Drive folder
+        // shared with the SA as editor, which requires the broader drive scope.
+        'scope' => 'https://www.googleapis.com/auth/drive',
+        'aud'   => 'https://oauth2.googleapis.com/token',
+        'iat'   => $now,
+        'exp'   => $now + 3600,
+    ];
+
+    $jwt = dp_build_jwt($sa['private_key'], $claims);
+    if ($jwt === null) return null;
+
+    $ch = curl_init('https://oauth2.googleapis.com/token');
+    curl_setopt_array($ch, [
+        CURLOPT_POST           => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT        => 15,
+        CURLOPT_POSTFIELDS     => http_build_query([
+            'grant_type' => 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+            'assertion'  => $jwt,
+        ]),
+        CURLOPT_HTTPHEADER => ['Content-Type: application/x-www-form-urlencoded'],
+    ]);
+    $resp      = curl_exec($ch);
+    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($resp === false || $http_code !== 200) return null;
+
+    $token_data = json_decode((string) $resp, true);
+    if (!is_array($token_data) || empty($token_data['access_token'])) return null;
+
+    $access_token = (string) $token_data['access_token'];
+
+    @file_put_contents(DP_TOKEN_WRITE_CACHE, json_encode([
+        'access_token' => $access_token,
+        'expires_at'   => $now + DP_TOKEN_TTL,
+    ]));
+
+    return $access_token;
+}
+
+/**
+ * Uploads a local file to a Drive folder using the multipart upload API.
+ *
+ * NOTE: no longer used by upload-document.php — see Option B local-path flow
+ *       (scripts/ingest-one-local.ts + ingest-one-local.sh). Kept here for
+ *       potential future callers (batch re-ingest, admin tools, etc.).
+ *
+ * Drive API v3 multipart upload:
+ *   POST https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart
+ *   Content-Type: multipart/related; boundary=<boundary>
+ *   Part 1: JSON metadata  (application/json; charset=UTF-8)
+ *   Part 2: File binary    ($mime_type)
+ *
+ * @param string $local_path      Absolute path to the file to upload
+ * @param string $drive_filename  Name to assign the file on Drive
+ * @param string $mime_type       MIME type of the file content
+ * @param string $drive_folder_id Drive folder ID to place the file in
+ * @return string                 The new Drive fileId
+ * @throws RuntimeException       On auth failure, HTTP error, or malformed response
+ */
+function dp_drive_upload(
+    string $local_path,
+    string $drive_filename,
+    string $mime_type,
+    string $drive_folder_id
+): string {
+    $access_token = dp_google_access_token_write();
+    if ($access_token === null) {
+        throw new RuntimeException('dp_drive_upload: could not obtain write-scope access token');
+    }
+
+    $file_data = @file_get_contents($local_path);
+    if ($file_data === false) {
+        throw new RuntimeException("dp_drive_upload: cannot read local file: {$local_path}");
+    }
+
+    $boundary = '-------maltyweb_upload_' . bin2hex(random_bytes(8));
+
+    // Part 1: JSON metadata
+    $metadata = json_encode([
+        'name'    => $drive_filename,
+        'parents' => [$drive_folder_id],
+    ]);
+
+    // Assemble multipart/related body manually — PHP has no built-in helper
+    $body  = "--{$boundary}\r\n";
+    $body .= "Content-Type: application/json; charset=UTF-8\r\n\r\n";
+    $body .= $metadata . "\r\n";
+    $body .= "--{$boundary}\r\n";
+    $body .= "Content-Type: {$mime_type}\r\n\r\n";
+    $body .= $file_data . "\r\n";
+    $body .= "--{$boundary}--";
+
+    $ch = curl_init(
+        'https://www.googleapis.com/upload/drive/v3/files'
+        . '?uploadType=multipart&fields=id&supportsAllDrives=true'
+    );
+    curl_setopt_array($ch, [
+        CURLOPT_POST           => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT        => 120,
+        CURLOPT_POSTFIELDS     => $body,
+        CURLOPT_HTTPHEADER     => [
+            'Authorization: Bearer ' . $access_token,
+            'Content-Type: multipart/related; boundary=' . $boundary,
+            'Content-Length: ' . strlen($body),
+        ],
+    ]);
+
+    $resp      = curl_exec($ch);
+    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curl_err  = curl_error($ch);
+    curl_close($ch);
+
+    if ($resp === false || $curl_err !== '') {
+        throw new RuntimeException("dp_drive_upload: curl error: {$curl_err}");
+    }
+    if ($http_code !== 200) {
+        throw new RuntimeException(
+            "dp_drive_upload: Drive API returned HTTP {$http_code}: " . substr((string)$resp, 0, 300)
+        );
+    }
+
+    $result = json_decode((string) $resp, true);
+    if (!is_array($result) || empty($result['id'])) {
+        throw new RuntimeException(
+            'dp_drive_upload: unexpected Drive API response: ' . substr((string)$resp, 0, 300)
+        );
+    }
+
+    return (string) $result['id'];
 }
 
 /**
