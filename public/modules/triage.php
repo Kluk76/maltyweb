@@ -56,6 +56,19 @@ const TRIAGE_PAGE_SIZE = 50;
 $page   = max(0, (int) ($_GET["page"] ?? 0));
 $offset = $page * TRIAGE_PAGE_SIZE;
 
+// Stock tab pagination + filter defaults (initialized before try block — const can't be inside try)
+const STOCK_PAGE_SIZE = 50;
+$stockFilterType     = "";
+$stockFilterPriority = 0;
+$stockFilterStatus   = "open";
+$stockRows           = [];
+$stockTotal          = 0;
+$stockKpi            = ["total" => 0, "rm-stale" => 0, "rm-negative" => 0,
+                        "rm-orphan-mi" => 0, "dynamic-vs-take-drift" => 0];
+$stockPage           = max(0, (int) ($_GET["stock_page"] ?? 0));
+$stockOffset         = $stockPage * STOCK_PAGE_SIZE;
+$stockLastPage       = 0;
+
 // Selected rq row
 $rqId    = isset($_GET["rq_id"]) ? (int) $_GET["rq_id"] : 0;
 $rqRow   = null;   // selected doc_review_queue row
@@ -93,6 +106,74 @@ try {
     if (is_admin($me)) {
         $stmtF   = $pdo->query("SELECT COUNT(*) FROM ingest_failures WHERE resolved_at IS NULL");
         $countForm = (int) $stmtF->fetchColumn();
+    }
+
+    // ── Stock tab: filters + data ─────────────────────────────────────────────
+    if ($activeTab === "stock") {
+        $stockFilterType     = in_array($_GET["type"] ?? "", array_merge([""], $stockTypes), true)
+                               ? ($_GET["type"] ?? "") : "";
+        $stockFilterPriority = in_array((int)($_GET["min_priority"] ?? 0), [0, 50, 100], true)
+                               ? (int)($_GET["min_priority"] ?? 0) : 0;
+        $stockFilterStatus   = in_array($_GET["status"] ?? "open", ["open", "all", "resolved"], true)
+                               ? ($_GET["status"] ?? "open") : "open";
+
+        // KPI counts (always over full open set, no type filter)
+        $inStk = implode(",", array_fill(0, count($stockTypes), "?"));
+        $kpiPerTypeStmt = $pdo->prepare(
+            "SELECT type, COUNT(*) AS cnt
+               FROM doc_review_queue
+              WHERE status = 'open' AND type IN ($inStk)
+              GROUP BY type"
+        );
+        $kpiPerTypeStmt->execute($stockTypes);
+        foreach ($kpiPerTypeStmt->fetchAll() as $kr) {
+            $t = (string)$kr["type"];
+            if (isset($stockKpi[$t])) {
+                $stockKpi[$t] = (int)$kr["cnt"];
+            }
+            $stockKpi["total"] += (int)$kr["cnt"];
+        }
+
+        // Build WHERE for filtered query
+        $stkWhere  = ["rq.type IN ($inStk)"];
+        $stkParams = $stockTypes;
+
+        if ($stockFilterStatus === "open") {
+            $stkWhere[] = "rq.status = 'open'";
+        } elseif ($stockFilterStatus === "resolved") {
+            $stkWhere[] = "rq.status IN ('resolved', 'rejected')";
+        }
+        // "all" = no status filter
+
+        if ($stockFilterType !== "") {
+            $stkWhere[]  = "rq.type = ?";
+            $stkParams[] = $stockFilterType;
+        }
+
+        if ($stockFilterPriority > 0) {
+            $stkWhere[]  = "rq.priority >= ?";
+            $stkParams[] = $stockFilterPriority;
+        }
+
+        $stkWhereSql = "WHERE " . implode(" AND ", $stkWhere);
+
+        // Count
+        $stkCntStmt = $pdo->prepare("SELECT COUNT(*) FROM doc_review_queue rq $stkWhereSql");
+        $stkCntStmt->execute($stkParams);
+        $stockTotal    = (int) $stkCntStmt->fetchColumn();
+        $stockLastPage = $stockTotal > 0 ? (int) floor(($stockTotal - 1) / STOCK_PAGE_SIZE) : 0;
+
+        // Rows
+        $stkStmt = $pdo->prepare(
+            "SELECT rq.id, rq.type, rq.value, rq.context, rq.priority,
+                    rq.created_at, rq.status, rq.decision
+               FROM doc_review_queue rq
+               $stkWhereSql
+              ORDER BY rq.priority DESC, rq.created_at ASC
+              LIMIT " . STOCK_PAGE_SIZE . " OFFSET $stockOffset"
+        );
+        $stkStmt->execute($stkParams);
+        $stockRows = $stkStmt->fetchAll();
     }
 
     // ── Docs tab: inbox list ──────────────────────────────────────────────────
@@ -272,6 +353,98 @@ function triage_type_label(string $type): string
 function triage_age_days(string $ts): int
 {
     return (int) floor((time() - strtotime($ts)) / 86400);
+}
+
+/**
+ * Type glyph + label for stock alert types.
+ * Single letter glyphs to match Documents tab density.
+ *   S = rm-Stale
+ *   N = rm-Negative
+ *   O = rm-Orphan-mi
+ *   D = Dynamic-vs-take-Drift
+ */
+function stock_type_glyph(string $type): string
+{
+    return match ($type) {
+        "rm-stale"               => "S",
+        "rm-negative"            => "N",
+        "rm-orphan-mi"           => "O",
+        "dynamic-vs-take-drift"  => "D",
+        default                  => "?",
+    };
+}
+
+function stock_type_label(string $type): string
+{
+    return match ($type) {
+        "rm-stale"               => "Stock dormant",
+        "rm-negative"            => "Stock négatif",
+        "rm-orphan-mi"           => "MI orphelin",
+        "dynamic-vs-take-drift"  => "Dérive inventaire",
+        default                  => $type,
+    };
+}
+
+/**
+ * Parse stock-specific context fields from a Key: Value context string.
+ * Returns a string for the "Context" column, gracefully emitting — for missing keys.
+ */
+function stock_parse_context(string $type, string $context): string
+{
+    // Helper: extract value for a given key prefix
+    $get = static function (string $key, string $ctx): ?string {
+        foreach (explode("\n", $ctx) as $line) {
+            $line = trim($line);
+            if (stripos($line, $key . ":") === 0) {
+                return trim(substr($line, strlen($key) + 1));
+            }
+        }
+        return null;
+    };
+
+    $dash = "—";
+
+    return match ($type) {
+        "rm-stale" => sprintf(
+            "Dormant depuis : %s j | Qté : %s",
+            $get("DaysSinceLastMovement", $context) ?? $dash,
+            $get("LastQty", $context) ?? $dash
+        ),
+
+        "rm-negative" => sprintf(
+            "Qté actuelle : %s | Dernier mouvement : %s",
+            $get("CurrentQty", $context) ?? $dash,
+            $get("LastMovement", $context) ?? $dash
+        ),
+
+        "rm-orphan-mi" => sprintf(
+            "Référencé dans : %s",
+            $get("Source", $context) ?? $dash
+        ),
+
+        "dynamic-vs-take-drift" => (static function () use ($get, $context, $dash): string {
+            $take    = $get("Take", $context) ?? $dash;
+            $dynamic = $get("Dynamic", $context) ?? $dash;
+            $delta   = $get("DeltaPct", $context) ?? ($get("Delta", $context) ?? $dash);
+            return "Inventaire : {$take} | Dynamique : {$dynamic} | Δ : {$delta}";
+        })(),
+
+        default => substr($context, 0, 120),
+    };
+}
+
+/**
+ * Build a stock-tab URL, preserving current stock filters.
+ */
+function stock_qs(array $extra): string
+{
+    $base = ["tab" => "stock"];
+    foreach (["type", "min_priority", "status", "stock_page"] as $k) {
+        if (isset($_GET[$k]) && $_GET[$k] !== "") {
+            $base[$k] = $_GET[$k];
+        }
+    }
+    return "?" . http_build_query(array_merge($base, $extra));
 }
 
 ?><!doctype html>
@@ -945,15 +1118,193 @@ function triage_age_days(string $ts): int
 
     <!-- ═══════════════════════ STOCK TAB ═══════════════════════ -->
     <?php elseif ($activeTab === "stock"): ?>
-      <div class="triage-placeholder">
-        Stock tab — coming in step 5
+
+      <!-- ── KPI bar ── -->
+      <div class="stock-kpi-bar">
+        <div class="stock-kpi stock-kpi--<?= $stockKpi['total'] > 0 ? 'alert' : 'ok' ?>">
+          <span class="stock-kpi__value"><?= $stockKpi['total'] ?></span>
+          <span class="stock-kpi__label">total open</span>
+        </div>
+        <?php foreach (["rm-stale" => "dormant", "rm-negative" => "négatif",
+                         "rm-orphan-mi" => "orphelin", "dynamic-vs-take-drift" => "dérive"] as $t => $lbl): ?>
+          <div class="stock-kpi stock-kpi--<?= $stockKpi[$t] > 0 ? 'alert' : 'ok' ?>">
+            <span class="stock-kpi__value"><?= $stockKpi[$t] ?></span>
+            <span class="stock-kpi__label"><?= $lbl ?></span>
+          </div>
+        <?php endforeach ?>
       </div>
+
+      <!-- ── Filters ── -->
+      <form class="stock-filters" method="get" action="">
+        <input type="hidden" name="tab" value="stock">
+
+        <label class="stock-filters__field">
+          Type
+          <select name="type">
+            <option value=""<?= $stockFilterType === "" ? " selected" : "" ?>>— tous —</option>
+            <option value="rm-stale"<?=              $stockFilterType === "rm-stale"              ? " selected" : "" ?>>rm-stale</option>
+            <option value="rm-negative"<?=           $stockFilterType === "rm-negative"           ? " selected" : "" ?>>rm-negative</option>
+            <option value="rm-orphan-mi"<?=          $stockFilterType === "rm-orphan-mi"          ? " selected" : "" ?>>rm-orphan-mi</option>
+            <option value="dynamic-vs-take-drift"<?= $stockFilterType === "dynamic-vs-take-drift" ? " selected" : "" ?>>dynamic-vs-take-drift</option>
+          </select>
+        </label>
+
+        <label class="stock-filters__field">
+          Priorité min.
+          <select name="min_priority">
+            <option value="0"<?=   $stockFilterPriority === 0   ? " selected" : "" ?>>— toutes —</option>
+            <option value="50"<?=  $stockFilterPriority === 50  ? " selected" : "" ?>>≥ 50</option>
+            <option value="100"<?= $stockFilterPriority === 100 ? " selected" : "" ?>>≥ 100</option>
+          </select>
+        </label>
+
+        <label class="stock-filters__field">
+          Statut
+          <select name="status">
+            <option value="open"<?=     $stockFilterStatus === "open"     ? " selected" : "" ?>>Ouverts</option>
+            <option value="all"<?=      $stockFilterStatus === "all"      ? " selected" : "" ?>>Tous</option>
+            <option value="resolved"<?= $stockFilterStatus === "resolved" ? " selected" : "" ?>>Résolus</option>
+          </select>
+        </label>
+
+        <button type="submit" class="stock-filters__submit">Filtrer</button>
+      </form>
+
+      <?php if (empty($stockRows) && $dbError === null): ?>
+        <!-- Empty state -->
+        <div class="triage-empty">
+          <span class="triage-empty__icon">✓</span>
+          <p class="triage-empty__headline">Aucune alerte stock — RAS.</p>
+          <p class="triage-empty__sub">
+            <?php if ($stockFilterType !== "" || $stockFilterPriority > 0 || $stockFilterStatus !== "open"): ?>
+              Aucun résultat pour ces filtres.
+            <?php else: ?>
+              Le pipeline RM n'a signalé aucun écart.
+            <?php endif ?>
+          </p>
+        </div>
+
+      <?php else: ?>
+
+        <div class="alert-table-wrap">
+          <table class="alert-table">
+            <thead>
+              <tr>
+                <th>Type</th>
+                <th>MI_ID</th>
+                <th>Contexte</th>
+                <th>Âge</th>
+                <th>Priorité</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <?php foreach ($stockRows as $sr):
+                  $sType    = (string)$sr["type"];
+                  $sValue   = (string)$sr["value"];
+                  $sCtx     = (string)($sr["context"] ?? "");
+                  $sPrio    = (int)$sr["priority"];
+                  $sAge     = triage_age_days((string)$sr["created_at"]);
+                  $sStatus  = (string)$sr["status"];
+                  $sIsOpen  = ($sStatus === "open");
+                  $sPrioCls = $sPrio >= 100 ? "stock-prio--high"
+                            : ($sPrio >= 50 ? "stock-prio--mid" : "stock-prio--low");
+                  $sCtxText = stock_parse_context($sType, $sCtx);
+              ?>
+                <tr class="<?= $sIsOpen ? "" : "alert-row--resolved" ?>">
+                  <td>
+                    <span class="stock-glyph stock-glyph--<?= htmlspecialchars($sType) ?>">
+                      <?= stock_type_glyph($sType) ?>
+                    </span>
+                  </td>
+                  <td>
+                    <span class="stock-mi-id"><?= htmlspecialchars($sValue) ?></span>
+                  </td>
+                  <td>
+                    <span class="stock-context"><?= htmlspecialchars($sCtxText) ?></span>
+                  </td>
+                  <td>
+                    <span class="stock-age"><?= $sAge ?>j</span>
+                  </td>
+                  <td>
+                    <span class="stock-prio <?= $sPrioCls ?>"><?= $sPrio ?></span>
+                  </td>
+                  <td>
+                    <?php if ($sIsOpen): ?>
+                      <div class="stock-actions">
+
+                        <!-- Acknowledge button -->
+                        <details>
+                          <summary class="stock-btn stock-btn--accept">Accuser réception ▾</summary>
+                          <div class="stock-note-form">
+                            <form method="post" action="/api/triage/accept.php"
+                                  style="display:contents">
+                              <input type="hidden" name="csrf"  value="<?= htmlspecialchars(csrf_token()) ?>">
+                              <input type="hidden" name="rq_id" value="<?= (int)$sr["id"] ?>">
+                              <input class="stock-note-input" type="text" name="note"
+                                     placeholder="Note (optionnel)">
+                              <button type="submit" class="stock-btn stock-btn--accept">
+                                Confirmer
+                              </button>
+                            </form>
+                          </div>
+                        </details>
+
+                        <!-- Reopen / reject button -->
+                        <details>
+                          <summary class="stock-btn stock-btn--reject">Rouvrir ▾</summary>
+                          <div class="stock-note-form">
+                            <form method="post" action="/api/triage/reject.php"
+                                  style="display:contents">
+                              <input type="hidden" name="csrf"  value="<?= htmlspecialchars(csrf_token()) ?>">
+                              <input type="hidden" name="rq_id" value="<?= (int)$sr["id"] ?>">
+                              <input class="stock-note-input" type="text" name="reason"
+                                     placeholder="Raison (requis)" required>
+                              <button type="submit" class="stock-btn stock-btn--reject">
+                                Confirmer
+                              </button>
+                            </form>
+                          </div>
+                        </details>
+
+                      </div><!-- /stock-actions -->
+                    <?php else: ?>
+                      <span class="if-action--none">
+                        <?= htmlspecialchars($sr["decision"] ?? "—") ?>
+                      </span>
+                    <?php endif ?>
+                  </td>
+                </tr>
+              <?php endforeach ?>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Pagination -->
+        <?php if ($stockLastPage > 0): ?>
+          <nav class="stock-pagination" aria-label="Pagination stock">
+            <?php if ($stockPage > 0): ?>
+              <a class="stock-pagination__link"
+                 href="<?= htmlspecialchars(stock_qs(["stock_page" => $stockPage - 1])) ?>">← précédent</a>
+            <?php else: ?>
+              <span class="stock-pagination__link stock-pagination__link--off">← précédent</span>
+            <?php endif ?>
+            <span class="stock-pagination__pos"><?= $stockPage + 1 ?>/<?= $stockLastPage + 1 ?></span>
+            <?php if ($stockPage < $stockLastPage): ?>
+              <a class="stock-pagination__link"
+                 href="<?= htmlspecialchars(stock_qs(["stock_page" => $stockPage + 1])) ?>">suivant →</a>
+            <?php else: ?>
+              <span class="stock-pagination__link stock-pagination__link--off">suivant →</span>
+            <?php endif ?>
+          </nav>
+        <?php endif ?>
+
+      <?php endif; // empty stockRows ?>
 
     <!-- ═══════════════════════ FORM-INGEST TAB ═══════════════════════ -->
     <?php elseif ($activeTab === "form" && is_admin($me)): ?>
-      <div class="triage-placeholder">
-        Form-ingest tab — coming in step 6
-      </div>
+
+      <?php require __DIR__ . "/triage_form_ingest_partial.php" ?>
 
     <?php endif ?>
 
