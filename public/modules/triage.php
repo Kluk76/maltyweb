@@ -280,10 +280,21 @@ function triage_age_days(string $ts): int
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Triage — MaltyTask</title>
+  <meta name="csrf-token" content="<?= htmlspecialchars(csrf_token()) ?>">
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#15100a">
+  <link rel="apple-touch-icon" href="/img/icon-192.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/app.css?v=<?= @filemtime(__DIR__ . '/../css/app.css') ?: time() ?>">
+  <script>
+    // Register service worker — must be at root scope
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js', { scope: '/' })
+        .catch(function(e) { /* non-fatal — PWA install just won't work */ });
+    }
+  </script>
 </head>
 <body class="home triage">
 
@@ -324,6 +335,71 @@ function triage_age_days(string $ts): int
       <?php endif ?>
     </form>
   </div>
+
+  <!-- ── Upload zone (Documents tab) ─────────────────────────────────────── -->
+  <div class="upload-zone" id="upload-zone" aria-label="Zone de dépôt de documents">
+    <!-- Hidden file inputs -->
+    <input type="file" id="upload-browse"
+           multiple
+           accept=".pdf,.png,.jpg,.jpeg,.heic,.heif,.webp"
+           class="upload-browse-input"
+           aria-label="Parcourir les fichiers">
+
+    <!-- Drag-drop label (desktop only, hidden on touch) -->
+    <div class="upload-zone__drop-target">
+      <span class="upload-zone__icon" aria-hidden="true">↑</span>
+      <span class="upload-zone__hint">Déposer ou coller un PDF / image ici</span>
+      <span class="upload-zone__sep">—</span>
+      <button class="upload-zone__browse-btn" id="upload-browse-btn" type="button">
+        Parcourir
+      </button>
+    </div>
+
+    <!-- Status box — hidden when idle -->
+    <div class="upload-status" id="upload-status" hidden aria-live="polite" aria-atomic="true"></div>
+  </div>
+
+  <!-- ── Multi-shot camera panel (slides up on mobile) ────────────────────── -->
+  <div class="multishot-panel" id="multishot-panel" role="dialog" aria-label="Capturer des pages" aria-modal="true">
+    <div class="multishot-panel__inner">
+      <div class="multishot-panel__header">
+        <span class="multishot-panel__title">
+          Scanner un document
+          <span class="multishot-panel__count" id="multishot-count"></span>
+        </span>
+        <button class="multishot-panel__close" id="multishot-cancel" type="button" aria-label="Annuler">×</button>
+      </div>
+
+      <!-- Page thumbnail strip -->
+      <div class="multishot-thumbstrip" id="thumb-strip" aria-label="Pages capturées"></div>
+
+      <!-- Camera capture inputs (open via JS, not shown) -->
+      <input type="file" id="fab-camera-input"
+             accept="image/*"
+             capture="environment"
+             class="upload-browse-input"
+             aria-label="Prendre une photo">
+      <input type="file" id="add-page-input"
+             accept="image/*"
+             capture="environment"
+             class="upload-browse-input"
+             aria-label="Ajouter une page">
+
+      <div class="multishot-panel__actions">
+        <button class="multishot-add-btn" id="add-page-btn" type="button" style="display:none">
+          + Ajouter une page
+        </button>
+        <button class="multishot-submit-btn" id="multishot-submit" type="button" disabled>
+          Envoyer
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Capture FAB (touch devices only, fixed bottom-right) ─────────────── -->
+  <button class="capture-fab" id="capture-fab" type="button" aria-label="Nouveau document">
+    <span class="capture-fab__icon" aria-hidden="true">+</span>
+  </button>
 
   <!-- ── Tab strip ── -->
   <nav class="triage-tabs" aria-label="Onglets Triage">
@@ -884,6 +960,8 @@ function triage_age_days(string $ts): int
   </div><!-- /triage-content -->
 
 </main>
+
+<script src="/js/triage-upload.js?v=<?= @filemtime(__DIR__ . '/../js/triage-upload.js') ?: time() ?>"></script>
 
 </body>
 </html>

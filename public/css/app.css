@@ -5675,3 +5675,518 @@ body.auth::after {
     z-index: 10;
   }
 }
+
+
+/* ============================================================
+   TRIAGE — Upload zone (drag-drop + browse, desktop)
+   ============================================================ */
+
+/* Hidden file inputs */
+.upload-browse-input {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.home.triage .upload-zone {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0 0 0;
+  padding: 0 56px;
+  position: relative;
+  z-index: 3;
+}
+
+.home.triage .upload-zone__drop-target {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 20px;
+  border: 1px dashed var(--hairline-2);
+  border-radius: 2px;
+  background: linear-gradient(135deg, rgba(25, 20, 15, 0.5), rgba(15, 12, 8, 0.3));
+  cursor: default;
+  transition: border-color .20s, background .20s;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Faint hop-green glow on the left edge */
+.home.triage .upload-zone__drop-target::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: linear-gradient(180deg, transparent, var(--hop-deep), transparent);
+  opacity: 0.6;
+}
+
+.home.triage .upload-zone--dragover .upload-zone__drop-target {
+  border-color: var(--hop-deep);
+  background: linear-gradient(135deg, rgba(158, 176, 96, 0.06), rgba(107, 122, 62, 0.04));
+}
+
+.home.triage .upload-zone--dragover .upload-zone__drop-target::before {
+  opacity: 1;
+  background: linear-gradient(180deg, transparent, var(--hop), transparent);
+}
+
+.home.triage .upload-zone__icon {
+  font-size: 18px;
+  color: var(--ink-mute);
+  line-height: 1;
+  flex-shrink: 0;
+  transition: color .20s, transform .20s;
+}
+
+.home.triage .upload-zone--dragover .upload-zone__icon {
+  color: var(--hop);
+  transform: translateY(-2px);
+}
+
+.home.triage .upload-zone__hint {
+  font-family: "DM Sans", sans-serif;
+  font-size: 13px;
+  color: var(--ink-mute);
+}
+
+.home.triage .upload-zone__sep {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--ink-faint);
+  flex-shrink: 0;
+}
+
+.home.triage .upload-zone__browse-btn {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  background: transparent;
+  color: var(--hop);
+  border: 1px solid var(--hop-deep);
+  padding: 5px 14px;
+  border-radius: 1px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background .15s, color .15s;
+  margin-left: auto;
+}
+
+.home.triage .upload-zone__browse-btn:hover {
+  background: var(--hop-deep);
+  color: var(--bg);
+}
+
+
+/* ============================================================
+   TRIAGE — Upload status indicator
+   ============================================================ */
+
+.home.triage .upload-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 16px;
+  border-radius: 2px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  margin: 0;
+}
+
+.home.triage .upload-status--busy {
+  background: rgba(25, 20, 15, 0.60);
+  border: 1px solid var(--hairline-2);
+  color: var(--ink-soft);
+}
+
+.home.triage .upload-status--done {
+  background: rgba(158, 176, 96, 0.06);
+  border: 1px solid rgba(158, 176, 96, 0.30);
+  color: var(--ok);
+}
+
+.home.triage .upload-status--warn {
+  background: rgba(160, 122, 72, 0.06);
+  border: 1px solid rgba(160, 122, 72, 0.30);
+  color: var(--oak);
+}
+
+.home.triage .upload-status--err {
+  background: rgba(197, 102, 74, 0.06);
+  border: 1px solid rgba(197, 102, 74, 0.30);
+  color: var(--ember);
+}
+
+.home.triage .upload-status__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.home.triage .upload-status__elapsed {
+  color: var(--ink-mute);
+}
+
+.home.triage .upload-status__check,
+.home.triage .upload-status__warn-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.home.triage .upload-status__retry {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  background: transparent;
+  color: inherit;
+  border: 1px solid currentColor;
+  padding: 4px 10px;
+  border-radius: 1px;
+  cursor: pointer;
+  flex-shrink: 0;
+  opacity: 0.75;
+  transition: opacity .15s;
+}
+
+.home.triage .upload-status__retry:hover { opacity: 1; }
+
+/* Spinner — pure CSS keyframe */
+@keyframes upload-spin {
+  to { transform: rotate(360deg); }
+}
+
+.home.triage .upload-spin {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid var(--hairline-2);
+  border-top-color: var(--hop);
+  border-radius: 50%;
+  animation: upload-spin 0.75s linear infinite;
+  flex-shrink: 0;
+}
+
+
+/* ============================================================
+   TRIAGE — Capture FAB (mobile-only, fixed bottom-right)
+   ============================================================ */
+
+/* FAB — hidden by default on desktop; shown via @media (hover:none) below */
+.home.triage .capture-fab {
+  display: none;
+  position: fixed;
+  bottom: 1.5rem;
+  right: 1.5rem;
+  z-index: 50; /* above action footer (z:10) but below modals */
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--hop-deep);
+  color: var(--bg);
+  border: none;
+  cursor: pointer;
+  box-shadow:
+    0 4px 16px rgba(0, 0, 0, 0.5),
+    0 1px 3px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  transition: background .15s, transform .15s, box-shadow .15s;
+}
+
+.home.triage .capture-fab:hover {
+  background: var(--hop);
+  transform: scale(1.05);
+  box-shadow:
+    0 6px 24px rgba(0, 0, 0, 0.55),
+    0 2px 6px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.15);
+}
+
+.home.triage .capture-fab:active {
+  transform: scale(0.97);
+}
+
+.home.triage .capture-fab__icon {
+  font-size: 28px;
+  font-weight: 300;
+  line-height: 1;
+  color: var(--bg);
+}
+
+/* Show FAB only on touch devices, hide drag-drop zone */
+@media (hover: none) and (pointer: coarse) {
+  .home.triage .capture-fab {
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Collapse drag-drop affordance on touch (only browse btn remains) */
+  .home.triage .upload-zone__hint,
+  .home.triage .upload-zone__sep {
+    display: none;
+  }
+
+  .home.triage .upload-zone__icon {
+    display: none;
+  }
+
+  /* On touch, the upload zone is minimal — just a thin status strip */
+  .home.triage .upload-zone__drop-target {
+    padding: 10px 16px;
+    justify-content: center;
+  }
+
+  .home.triage .upload-zone__browse-btn {
+    margin: 0;
+  }
+}
+
+
+/* ============================================================
+   TRIAGE — Multi-shot camera panel
+   ============================================================ */
+
+.home.triage .multishot-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  display: flex;
+  align-items: flex-end;
+  /* Scrim */
+  background: transparent;
+  transition: background .25s;
+}
+
+.home.triage .multishot-panel--open {
+  pointer-events: all;
+  background: rgba(10, 8, 5, 0.70);
+  backdrop-filter: blur(3px);
+}
+
+.home.triage .multishot-panel__inner {
+  width: 100%;
+  max-width: 640px;
+  margin: 0 auto;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline-2);
+  border-radius: 10px 10px 0 0;
+  padding: 20px 20px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+
+  transform: translateY(100%);
+  transition: transform .30s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.home.triage .multishot-panel--open .multishot-panel__inner {
+  transform: translateY(0);
+}
+
+/* Desktop: show as centered modal instead of bottom sheet */
+@media (hover: hover) and (pointer: fine) {
+  .home.triage .multishot-panel {
+    align-items: center;
+    justify-content: center;
+  }
+
+  .home.triage .multishot-panel__inner {
+    border-radius: 4px;
+    max-width: 560px;
+    width: calc(100% - 48px);
+    transform: scale(0.95) translateY(8px);
+    opacity: 0;
+    transition: transform .25s cubic-bezier(0.22, 1, 0.36, 1), opacity .20s;
+  }
+
+  .home.triage .multishot-panel--open .multishot-panel__inner {
+    transform: scale(1) translateY(0);
+    opacity: 1;
+  }
+}
+
+.home.triage .multishot-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--hairline);
+  padding-bottom: 12px;
+}
+
+.home.triage .multishot-panel__title {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 36;
+  font-weight: 400;
+  font-size: 18px;
+  color: var(--ink);
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.home.triage .multishot-panel__count {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--hop);
+  letter-spacing: 0.06em;
+}
+
+.home.triage .multishot-panel__close {
+  font-size: 22px;
+  line-height: 1;
+  background: transparent;
+  border: none;
+  color: var(--ink-mute);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 2px;
+  transition: color .15s, background .15s;
+}
+
+.home.triage .multishot-panel__close:hover {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* Thumbnail strip */
+.home.triage .multishot-thumbstrip {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 4px 2px 8px;
+  min-height: 90px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--hairline-2) transparent;
+}
+
+.home.triage .multishot-thumbstrip:empty::after {
+  content: "Aucune page capturée";
+  font-family: "Fraunces", serif;
+  font-style: italic;
+  font-size: 13px;
+  color: var(--ink-faint);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+
+.home.triage .thumb-item {
+  position: relative;
+  flex-shrink: 0;
+  width: 72px;
+  height: 96px;
+  border-radius: 3px;
+  overflow: hidden;
+  border: 1px solid var(--hairline-2);
+  background: var(--bg);
+}
+
+.home.triage .thumb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.home.triage .thumb-del {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(10, 8, 5, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: var(--ink-soft);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background .12s, color .12s;
+}
+
+.home.triage .thumb-del:hover {
+  background: var(--ember);
+  color: var(--bg);
+  border-color: transparent;
+}
+
+.home.triage .thumb-num {
+  position: absolute;
+  bottom: 3px;
+  left: 5px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.7);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+  letter-spacing: 0.04em;
+}
+
+/* Panel action row */
+.home.triage .multishot-panel__actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.home.triage .multishot-add-btn {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  background: transparent;
+  color: var(--ink-mute);
+  border: 1px dashed var(--hairline-2);
+  padding: 8px 16px;
+  border-radius: 1px;
+  cursor: pointer;
+  flex: 1;
+  max-width: 200px;
+  transition: color .15s, border-color .15s;
+}
+
+.home.triage .multishot-add-btn:hover {
+  color: var(--ink-soft);
+  border-color: var(--ink-mute);
+}
+
+.home.triage .multishot-submit-btn {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.20em;
+  text-transform: uppercase;
+  background: var(--hop-deep);
+  color: var(--bg);
+  border: 1px solid var(--hop-deep);
+  padding: 10px 24px;
+  border-radius: 1px;
+  cursor: pointer;
+  transition: background .15s;
+  min-width: 120px;
+}
+
+.home.triage .multishot-submit-btn:hover:not(:disabled) {
+  background: var(--hop);
+  border-color: var(--hop);
+}
+
+.home.triage .multishot-submit-btn:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
