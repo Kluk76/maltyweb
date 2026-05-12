@@ -6,6 +6,7 @@ $active_module = $active_module ?? "";
 $me            = $me ?? current_user() ?? [];
 
 $modules = [
+    ["00", "Triage",          "Documents, alertes, ingest",  "/modules/triage.php", "triage"],
     ["01", "Procurement",     "Sourcing & receiving",        "#",                 "procurement"],
     ["02", "Wort Production", "Brewhouse & cooling",         "/modules/wort.php", "wort"],
     ["03", "Fermentation",    "CCT, BBT, dry-hop, racking",  "/modules/tanks.php", "fermentation"],
@@ -24,7 +25,6 @@ if ($showAdminBlock) {
 }
 if (is_admin($me)) {
     $adminEntries[] = ["DB", "DB Browser",      "Inspection lecture seule",        "/admin/db-browser.php",       "db-browser"];
-    $adminEntries[] = ["IF", "Ingest Failures", "Rows rejetés par contraintes FK", "/admin/ingest-failures.php",  "ingest-failures"];
 }
 ?>
 <aside class="side" aria-label="Navigation principale">
