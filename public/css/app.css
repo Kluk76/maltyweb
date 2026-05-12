@@ -5338,22 +5338,25 @@ body.auth::after {
 
 .home.triage .row-action-bar {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 10px;
 }
 
 .home.triage .row-action-details {
-  flex: 1 1 240px;
+  width: 100%;
   min-width: 0;
 }
 
 .home.triage .row-action-details > summary {
   cursor: pointer;
   list-style: none;
+  display: block;
   width: 100%;
   text-align: center;
+  box-sizing: border-box;
 }
 .home.triage .row-action-details > summary::-webkit-details-marker { display: none; }
+.home.triage .row-action-details > summary::marker { display: none; content: ""; }
 
 .home.triage .row-action-form {
   margin-top: 8px;
