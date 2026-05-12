@@ -1,0 +1,45 @@
+# /etc/cron.d/maltytask-document-ingest
+#
+# Periodic ingest of invoice + delivery-note PDFs from Drive inbox → MySQL.
+# Runs scripts/ingest-documents.js from the maltytask pipeline (Node.js).
+# Drains the Drive inbox in batches of 50; idempotent (Drive fileId dedup).
+#
+# Source of truth: db/cron/maltytask-document-ingest.cron in the maltyweb repo.
+# Deployed via bin/deploy.sh --apply (sudo install → /etc/cron.d/).
+#
+# NOTE: CRON IS DISABLED PENDING MANUAL SMOKE TEST.
+# Steps to enable after smoke test passes:
+#   1. ssh maltyweb
+#   2. Uncomment the active line below (remove the leading #)
+#   3. sudo cp /var/www/maltytask/db/cron/maltytask-document-ingest.cron \
+#             /etc/cron.d/maltytask-document-ingest
+#   OR redeploy via bin/deploy.sh --apply (which installs all cron/*.cron).
+#
+# Pre-flight checklist before enabling:
+#   - Smoke test passed: node scripts/ingest-documents.js --dry-run --limit 1
+#   - MySQL connection verified: SELECT 1 from pipeline succeeds
+#   - secrets/ symlink confirmed: /opt/maltytask-pipeline/secrets/service-account.json
+#   - /var/log/maltytask/ingest-documents.log writable by maltytask user
+#   - Claude CLI auth: first manual run of a --no-llm pass recommended
+#     (claude CLI requires interactive auth on first use; cannot run in cron
+#      until operator has authenticated once via `claude` on the VPS)
+#
+# Timing: every 5 min is appropriate for a manual-upload inbox workflow.
+# --limit 50 caps Drive API calls per tick; queue drains across ticks.
+# --no-llm prevents runaway LLM calls in unattended mode until LLM fallback
+# is validated in production. Remove --no-llm once operator confirms the
+# LLM fallback is authenticated and working.
+#
+# Note: cron syntax for /etc/cron.d/* requires the user column
+# (m h dom mon dow user command). Times are UTC (VPS timezone is Etc/UTC).
+#
+# Manual edits will be overwritten on next deploy. Edit the source file
+# in the repo, commit, then run bin/deploy.sh --apply.
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# m   h  dom mon dow  user        command
+
+# DISABLED — remove this '#' to activate after smoke test:
+# */5  *   *   *   *   maltytask   cd /opt/maltytask-pipeline && HOME=/var/www/maltytask NVM_DIR=/var/www/maltytask/.nvm bash -c '. $NVM_DIR/nvm.sh && node_modules/.bin/tsx scripts/ingest-documents.js --limit 50 --no-llm' >> /var/log/maltytask/ingest-documents.log 2>&1

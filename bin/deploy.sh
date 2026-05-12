@@ -5,8 +5,11 @@
 # Excludes: config/ (server-side secret), .git/, venvs, caches
 #
 # Usage:
-#   bin/deploy.sh             # dry-run (default — prints what would change)
-#   bin/deploy.sh --apply     # actually transfer
+#   bin/deploy.sh                    # dry-run maltyweb app (default)
+#   bin/deploy.sh --apply            # apply maltyweb app changes
+#   bin/deploy.sh --apply-pipeline   # sync maltytask Node pipeline to VPS
+#                                    # (scripts/ lib/ package*.json → /opt/maltytask-pipeline/)
+#                                    # then runs npm ci on VPS as maltytask user
 
 set -euo pipefail
 
@@ -14,6 +17,55 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VPS_HOST="ubuntu@83.228.215.243"
 VPS_PATH="/var/www/maltytask"
 
+# ── maltytask Node pipeline deploy ────────────────────────────────────────────
+# Source repo lives at a sibling path on the operator's workstation.
+# Target on VPS: /opt/maltytask-pipeline/  (Node scripts + lib, no secrets/data)
+PIPELINE_SRC="$(cd "$ROOT/../maltytask" 2>/dev/null && pwd || true)"
+PIPELINE_DST="/opt/maltytask-pipeline"
+
+if [[ "${1:-}" == "--apply-pipeline" ]]; then
+  if [[ -z "$PIPELINE_SRC" || ! -d "$PIPELINE_SRC" ]]; then
+    echo "ERROR: maltytask source not found at $(dirname "$ROOT")/maltytask" >&2
+    exit 1
+  fi
+  echo "→ APPLYING pipeline changes: $PIPELINE_SRC → $VPS_HOST:$PIPELINE_DST"
+
+  for dir in scripts lib; do
+    rsync -avz \
+      --exclude '.git/' \
+      --exclude 'node_modules/' \
+      --exclude '*.js.map' \
+      --rsync-path="sudo rsync" \
+      -e "ssh -o BatchMode=yes" \
+      "$PIPELINE_SRC/$dir/" \
+      "$VPS_HOST:$PIPELINE_DST/$dir/"
+  done
+
+  for file in package.json package-lock.json; do
+    rsync -avz \
+      --rsync-path="sudo rsync" \
+      -e "ssh -o BatchMode=yes" \
+      "$PIPELINE_SRC/$file" \
+      "$VPS_HOST:$PIPELINE_DST/$file"
+  done
+
+  echo "→ fixing ownership on $PIPELINE_DST"
+  ssh -o BatchMode=yes "$VPS_HOST" \
+    "sudo chown -R maltytask:www-data $PIPELINE_DST && \
+     sudo find $PIPELINE_DST -type d -exec chmod 755 {} \; && \
+     sudo find $PIPELINE_DST -type f -exec chmod 644 {} \;"
+
+  echo "→ running npm ci on VPS (as maltytask, includes devDeps for tsx)"
+  ssh -o BatchMode=yes "$VPS_HOST" \
+    "sudo -u maltytask bash -c 'HOME=/var/www/maltytask NVM_DIR=/var/www/maltytask/.nvm \
+       . /var/www/maltytask/.nvm/nvm.sh && \
+       cd $PIPELINE_DST && npm ci' 2>&1"
+
+  echo "✓ pipeline deploy complete"
+  exit 0
+fi
+
+# ── maltyweb PHP app deploy ────────────────────────────────────────────────────
 DRY="--dry-run"
 if [[ "${1:-}" == "--apply" ]]; then
   DRY=""
