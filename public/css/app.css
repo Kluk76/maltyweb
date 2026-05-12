@@ -4413,7 +4413,8 @@ body.auth::after {
   display: flex;
   gap: 0;
   width: 100%;
-  min-height: 600px;
+  height: calc(100vh - 220px);
+  min-height: 500px;
   border: 1px solid var(--hairline-2);
   border-radius: 2px;
   overflow: hidden;
@@ -4428,7 +4429,6 @@ body.auth::after {
   max-width: 300px;
   border-right: 1px solid var(--hairline-2);
   overflow-y: auto;
-  max-height: calc(100vh - 240px);
   display: flex;
   flex-direction: column;
 }
@@ -4627,7 +4627,6 @@ body.auth::after {
   flex: 1 1 62%;
   min-width: 0;
   overflow-y: auto;
-  max-height: calc(100vh - 240px);
   display: flex;
   flex-direction: column;
 }
