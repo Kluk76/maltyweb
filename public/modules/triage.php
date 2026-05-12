@@ -987,6 +987,92 @@ function stock_qs(array $extra): string
                     <div class="detail-action-hint"><?= htmlspecialchars($ctx["action"]) ?></div>
                   <?php endif ?>
 
+                  <!-- ══ Manual line builder — primary action ══════════════════════════════ -->
+                  <?php
+                  // Prepare MI list for datalist (reuse $allMisForAlias if already loaded,
+                  // otherwise load it now — covers the "0 lines extracted" branch)
+                  if (!isset($allMisForAlias)) {
+                      $allMisForAlias = [];
+                      try {
+                          $misStmt2 = $pdo->query(
+                              "SELECT mi_id, name FROM ref_mi WHERE is_active=1 ORDER BY mi_id"
+                          );
+                          $allMisForAlias = $misStmt2->fetchAll();
+                      } catch (Throwable $_e2) {}
+                  }
+                  $manualInvTotalHt = $rqInv !== null && $rqInv['total_ht'] !== null
+                      ? (float)$rqInv['total_ht'] : null;
+                  ?>
+
+                  <div class="manual-lines-section">
+                    <div class="detail-section__head">Saisir les lignes manuellement</div>
+
+                    <!-- Invoice total reference -->
+                    <p class="manual-ref-line">
+                      <?php if ($manualInvTotalHt !== null): ?>
+                        Référence facture :
+                        <strong><?= number_format($manualInvTotalHt, 2, '.', "'") ?>
+                        <?= htmlspecialchars((string)($rqInv['currency'] ?? 'CHF')) ?> HT</strong>
+                      <?php else: ?>
+                        Référence facture : —
+                      <?php endif ?>
+                    </p>
+
+                    <!-- One shared datalist for MI typeahead — all 261+ MIs -->
+                    <datalist id="mi-options">
+                      <?php foreach ($allMisForAlias as $miOpt): ?>
+                        <option value="<?= htmlspecialchars($miOpt['mi_id']) ?>">
+                          <?= htmlspecialchars($miOpt['mi_id']) ?> — <?= htmlspecialchars((string)$miOpt['name']) ?>
+                        </option>
+                      <?php endforeach ?>
+                    </datalist>
+
+                    <form id="manual-lines-form"
+                          method="post"
+                          action="/api/triage/manual-lines.php"
+                          data-invoice-total-ht="<?= $manualInvTotalHt !== null ? htmlspecialchars((string)$manualInvTotalHt) : '' ?>">
+                      <input type="hidden" name="csrf"  value="<?= htmlspecialchars(csrf_token()) ?>">
+                      <input type="hidden" name="rq_id" value="<?= (int)$rqRow['id'] ?>">
+
+                      <div class="manual-lines-table-wrap">
+                        <table class="manual-lines-table">
+                          <thead>
+                            <tr>
+                              <th class="ml-th ml-th--num">#</th>
+                              <th class="ml-th ml-th--desc">Description</th>
+                              <th class="ml-th ml-th--mi">MI</th>
+                              <th class="ml-th ml-th--qty">Qté</th>
+                              <th class="ml-th ml-th--price">Prix unit.</th>
+                              <th class="ml-th ml-th--total">Total</th>
+                              <th class="ml-th ml-th--remove"></th>
+                            </tr>
+                          </thead>
+                          <tbody id="manual-lines-tbody">
+                            <!-- Rows injected by triage-manual-lines.js -->
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <button type="button" id="manual-lines-add"
+                              class="manual-add-line">
+                        + Ajouter une ligne
+                      </button>
+
+                      <div class="manual-totals">
+                        <span class="manual-totals__label">Total lignes :</span>
+                        <span id="manual-lines-total" class="manual-totals__value">0.00 CHF</span>
+                        <span id="manual-lines-delta" class="manual-delta"></span>
+                      </div>
+
+                      <div class="manual-submit-row">
+                        <button type="submit" id="manual-lines-submit"
+                                class="manual-submit" disabled>
+                          Sauvegarder
+                        </button>
+                      </div>
+                    </form>
+                  </div><!-- /manual-lines-section -->
+
                   <!-- Row-level escape hatch: always available for invoice-line-items-needed.
                        Use when per-line actions don't apply (SIL/SIE utility invoices with no
                        lines, scans we can't parse, decisions to handle the invoice outside
@@ -1367,6 +1453,7 @@ function stock_qs(array $extra): string
 </main>
 
 <script src="/js/triage-upload.js?v=<?= @filemtime(__DIR__ . '/../js/triage-upload.js') ?: time() ?>"></script>
+<script defer src="/js/triage-manual-lines.js?v=<?= @filemtime(__DIR__ . '/../js/triage-manual-lines.js') ?: time() ?>"></script>
 
 </body>
 </html>

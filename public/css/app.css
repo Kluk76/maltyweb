@@ -5423,6 +5423,282 @@ body.auth::after {
   }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════════
+   MANUAL LINE BUILDER — saisie manuelle des lignes de facture
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+/* Primary action panel — hop-green left accent to stand out from the dashed footer */
+.home.triage .manual-lines-section {
+  margin: 16px 22px 20px;
+  padding: 14px 16px 18px;
+  border-left: 2px solid var(--hop);
+  background: rgba(158, 176, 96, 0.04);
+  border-radius: 0 2px 2px 0;
+}
+
+.home.triage .manual-lines-section > .detail-section__head {
+  margin: 0 0 10px;
+  padding: 0;
+  border: 0;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+  color: var(--hop);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.home.triage .manual-ref-line {
+  font-size: 11px;
+  color: var(--ink-soft);
+  margin: 0 0 12px;
+}
+
+.home.triage .manual-ref-line strong {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  color: var(--ink);
+}
+
+/* Table wrapper */
+.home.triage .manual-lines-table-wrap {
+  overflow-x: auto;
+  margin-bottom: 8px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.home.triage .manual-lines-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.home.triage .manual-lines-table .ml-th {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  padding: 0 6px 6px;
+  text-align: left;
+  border-bottom: 1px solid var(--hairline-2);
+  white-space: nowrap;
+}
+
+.home.triage .manual-lines-table .ml-th--num    { width: 28px;  text-align: center; }
+.home.triage .manual-lines-table .ml-th--qty    { width: 80px;  }
+.home.triage .manual-lines-table .ml-th--price  { width: 100px; }
+.home.triage .manual-lines-table .ml-th--total  { width: 80px;  text-align: right; }
+.home.triage .manual-lines-table .ml-th--remove { width: 28px;  }
+
+/* Row cells */
+.home.triage .manual-lines-table .ml-cell {
+  padding: 4px 6px;
+  vertical-align: middle;
+}
+.home.triage .manual-lines-table .ml-cell--num {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+  color: var(--ink-mute);
+  text-align: center;
+}
+.home.triage .manual-lines-table .ml-cell--total {
+  text-align: right;
+}
+
+/* Inputs */
+.home.triage .manual-line-input,
+.home.triage .manual-line-mi {
+  font-family: "DM Sans", sans-serif;
+  font-size: 11px;
+  padding: 4px 7px;
+  border: 1px solid var(--hairline-2);
+  border-radius: 1px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--ink);
+  width: 100%;
+  box-sizing: border-box;
+}
+.home.triage .manual-line-input { min-width: 140px; }
+.home.triage .manual-line-mi    { min-width: 110px; font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 10px; }
+
+.home.triage .manual-line-num {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px;
+  padding: 4px 7px;
+  border: 1px solid var(--hairline-2);
+  border-radius: 1px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--ink);
+  width: 100%;
+  box-sizing: border-box;
+  text-align: right;
+}
+
+.home.triage .manual-line-input:focus,
+.home.triage .manual-line-mi:focus,
+.home.triage .manual-line-num:focus {
+  outline: 1px solid var(--hop);
+  border-color: var(--hop);
+}
+
+/* Computed line total */
+.home.triage .manual-line-total {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--ink-soft);
+  display: block;
+  text-align: right;
+  white-space: nowrap;
+  min-width: 60px;
+}
+
+/* Remove × button */
+.home.triage .manual-line-remove {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--ink-mute);
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 2px;
+  display: block;
+  margin: auto;
+}
+.home.triage .manual-line-remove:hover {
+  color: #a02020;
+  background: rgba(160, 40, 40, 0.08);
+}
+
+/* Add-line button */
+.home.triage .manual-add-line {
+  display: block;
+  width: 100%;
+  margin: 6px 0 14px;
+  padding: 7px 12px;
+  background: transparent;
+  border: 1px dashed var(--hairline-2);
+  border-radius: 2px;
+  color: var(--ink-mute);
+  font-size: 11px;
+  cursor: pointer;
+  text-align: center;
+  letter-spacing: 0.04em;
+}
+.home.triage .manual-add-line:hover {
+  border-color: var(--hop);
+  color: var(--hop);
+  background: rgba(158, 176, 96, 0.05);
+}
+
+/* Totals summary bar */
+.home.triage .manual-totals {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0 10px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px;
+  border-top: 1px solid var(--hairline-2);
+}
+
+.home.triage .manual-totals__label {
+  color: var(--ink-mute);
+}
+
+.home.triage .manual-totals__value {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* Delta indicator */
+.home.triage .manual-delta {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 2px;
+  margin-left: auto;
+}
+.home.triage .manual-delta--ok   { color: #1a6e3a; background: rgba(30, 140, 70, 0.08); }
+.home.triage .manual-delta--warn { color: #8a6000; background: rgba(200, 150, 0, 0.10); }
+.home.triage .manual-delta--err  { color: #a02020; background: rgba(160, 40, 40, 0.08); }
+
+/* Submit button */
+.home.triage .manual-submit-row {
+  text-align: right;
+  margin-top: 4px;
+}
+
+.home.triage .manual-submit {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px;
+  padding: 7px 18px;
+  background: var(--hop);
+  border: none;
+  border-radius: 2px;
+  color: #1a1a1a;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+.home.triage .manual-submit:hover:not(:disabled) {
+  background: var(--hop-deep);
+  color: #f0f0f0;
+}
+.home.triage .manual-submit:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* ── Mobile: each row becomes a card ─────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .home.triage .manual-lines-table thead { display: none; }
+
+  .home.triage .manual-lines-table,
+  .home.triage .manual-lines-table tbody,
+  .home.triage .manual-lines-table tr,
+  .home.triage .manual-lines-table td {
+    display: block;
+  }
+
+  .home.triage .manual-line-row {
+    border: 1px solid var(--hairline-2);
+    border-radius: 3px;
+    padding: 8px 10px;
+    margin-bottom: 8px;
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  .home.triage .manual-lines-table .ml-cell {
+    padding: 3px 0;
+    width: 100% !important;
+  }
+
+  .home.triage .manual-lines-table .ml-cell--num { display: none; }
+
+  .home.triage .manual-line-input,
+  .home.triage .manual-line-mi,
+  .home.triage .manual-line-num {
+    width: 100%;
+  }
+
+  .home.triage .manual-lines-table .ml-cell--total {
+    text-align: left;
+    font-size: 10px;
+    color: var(--ink-mute);
+  }
+  .home.triage .manual-line-total { text-align: left; }
+
+  .home.triage .manual-lines-table .ml-cell--remove {
+    text-align: right;
+  }
+
+  .home.triage .manual-totals {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .home.triage .manual-delta { margin-left: 0; }
+}
+
 /* ── MI Create Modal ─────────────────────────────────────────────────────────── */
 .home.triage .mi-create-modal {
   padding: 20px 22px 32px;
