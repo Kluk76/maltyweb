@@ -1,10 +1,10 @@
 <?php
 declare(strict_types=1);
 
-require __DIR__ . "/../../../app/auth.php";
-require __DIR__ . "/../../../app/csrf.php";
-require __DIR__ . "/../../../app/settings-helpers.php";
-require __DIR__ . "/../../../app/services/remember_token.php";
+require_once __DIR__ . "/../../../app/auth.php";
+require_once __DIR__ . "/../../../app/csrf.php";
+require_once __DIR__ . "/../../../app/settings-helpers.php";
+require_once __DIR__ . "/../../../app/services/remember_token.php";
 
 // Available to ALL logged-in operators — not admin-gated.
 require_login();
