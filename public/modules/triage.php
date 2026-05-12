@@ -848,7 +848,16 @@ function stock_qs(array $extra): string
                   <?php endif ?>
 
                   <!-- Unresolved line items -->
-                  <?php if (!empty($ctx["unresolved"])):
+                  <?php if (empty($ctx["unresolved"])): ?>
+                    <div class="detail-section__head detail-section__head--warn">
+                      Aucune ligne extraite
+                    </div>
+                    <p class="detail-no-lines">
+                      Le parser a accepté la facture mais n'a pu extraire aucune ligne d'item
+                      (fréquent pour les factures utilitaires SIE/SIL ou les scans dégradés).
+                      Utilise les actions ci-dessous pour clore ou rejeter cette entrée.
+                    </p>
+                  <?php else:
                       $openLineCount = ta_count_open_lines($ctx["unresolved"]);
                   ?>
                     <div class="detail-section__head detail-section__head--warn">
@@ -977,6 +986,51 @@ function stock_qs(array $extra): string
                   <?php if ($ctx["action"] !== null): ?>
                     <div class="detail-action-hint"><?= htmlspecialchars($ctx["action"]) ?></div>
                   <?php endif ?>
+
+                  <!-- Row-level escape hatch: always available for invoice-line-items-needed.
+                       Use when per-line actions don't apply (SIL/SIE utility invoices with no
+                       lines, scans we can't parse, decisions to handle the invoice outside
+                       the triage UI entirely). -->
+                  <div class="detail-row-footer">
+                    <div class="detail-section__head">Action sur la facture entière</div>
+
+                    <div class="row-action-bar">
+                      <details class="row-action-details">
+                        <summary class="detail-btn detail-btn--accept">Clore — traité hors triage ▾</summary>
+                        <form class="row-action-form" method="post" action="/api/triage/accept.php">
+                          <input type="hidden" name="csrf"  value="<?= htmlspecialchars(csrf_token()) ?>">
+                          <input type="hidden" name="rq_id" value="<?= (int)$rqRow["id"] ?>">
+                          <div class="row-action-form__row">
+                            <input class="row-action-form__text"
+                                   type="text" name="note"
+                                   placeholder="Raison (ex: facture utilitaire SIE/SIL → routée vers EnergyData)"
+                                   required>
+                            <button type="submit" class="detail-btn detail-btn--accept row-action-form__btn">
+                              Confirmer
+                            </button>
+                          </div>
+                        </form>
+                      </details>
+
+                      <details class="row-action-details">
+                        <summary class="detail-btn detail-btn--reject">Rejeter la facture ▾</summary>
+                        <form class="row-action-form" method="post" action="/api/triage/reject.php">
+                          <input type="hidden" name="csrf"   value="<?= htmlspecialchars(csrf_token()) ?>">
+                          <input type="hidden" name="rq_id"  value="<?= (int)$rqRow["id"] ?>">
+                          <!-- no line_index → whole-row reject path in reject.php -->
+                          <div class="row-action-form__row">
+                            <input class="row-action-form__text"
+                                   type="text" name="reason"
+                                   placeholder="Raison du rejet"
+                                   required>
+                            <button type="submit" class="detail-btn detail-btn--reject row-action-form__btn">
+                              Confirmer
+                            </button>
+                          </div>
+                        </form>
+                      </details>
+                    </div>
+                  </div>
 
                 <?php elseif ($type === "doc-classify-ambiguous"): ?>
                   <div class="detail-section__head">Signaux classifier</div>

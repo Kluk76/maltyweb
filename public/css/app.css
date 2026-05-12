@@ -5304,6 +5304,98 @@ body.auth::after {
   padding: 4px 10px;
 }
 
+/* ── Empty unresolved-lines state (e.g. SIL/SIE invoices, parser=0 lines) ────── */
+.home.triage .detail-no-lines {
+  margin: 8px 22px 14px;
+  padding: 10px 14px;
+  background: rgba(197, 102, 74, 0.05);
+  border-left: 2px solid var(--ember);
+  font-size: 12px;
+  color: var(--ink-soft);
+  line-height: 1.55;
+  border-radius: 1px;
+}
+
+/* ── Row-level escape hatch (whole-invoice close/reject) ─────────────────────── */
+.home.triage .detail-row-footer {
+  margin: 20px 22px 24px;
+  padding: 14px 16px 16px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px dashed var(--hairline-2);
+  border-radius: 2px;
+}
+
+.home.triage .detail-row-footer .detail-section__head {
+  margin: 0 0 10px;
+  padding: 0;
+  border: 0;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+  color: var(--ink-mute);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.home.triage .row-action-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.home.triage .row-action-details {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.home.triage .row-action-details > summary {
+  cursor: pointer;
+  list-style: none;
+  width: 100%;
+  text-align: center;
+}
+.home.triage .row-action-details > summary::-webkit-details-marker { display: none; }
+
+.home.triage .row-action-form {
+  margin-top: 8px;
+}
+
+.home.triage .row-action-form__row {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+
+.home.triage .row-action-form__text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: "DM Sans", sans-serif;
+  font-size: 12px;
+  padding: 6px 10px;
+  border: 1px solid var(--hairline-2);
+  border-radius: 1px;
+  background: rgba(255,255,255,0.05);
+  color: var(--ink);
+}
+.home.triage .row-action-form__text:focus {
+  outline: 1px solid var(--hop);
+  border-color: var(--hop);
+}
+
+.home.triage .row-action-form__btn {
+  font-size: 10px;
+  padding: 6px 14px;
+  flex-shrink: 0;
+}
+
+@media (max-width: 768px) {
+  .home.triage .row-action-form__row {
+    flex-direction: column;
+  }
+  .home.triage .row-action-details {
+    flex: 1 1 100%;
+  }
+}
+
 /* ── MI Create Modal ─────────────────────────────────────────────────────────── */
 .home.triage .mi-create-modal {
   padding: 20px 22px 32px;
