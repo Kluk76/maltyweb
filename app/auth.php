@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . "/db.php";
+require_once __DIR__ . "/services/remember_token.php";
 
 /**
  * Idle timeout for authenticated sessions. After this many seconds without
@@ -102,35 +103,67 @@ function auth_login(array $user): void
 
 /**
  * Returns the current logged-in user (associative array) or null.
+ *
+ * Order of precedence:
+ *   1. Active PHP session (fast path, 30-min idle timeout).
+ *   2. Remember-me cookie mt_remember (90-day persistent, token-rotation on use).
  */
 function current_user(): ?array
 {
     maltytask_session_start();
     $user = $_SESSION["user"] ?? null;
-    if ($user === null) return null;
 
-    $now = time();
-    $last = $_SESSION["last_activity"] ?? $now;
+    // ── 1. Session path ─────────────────────────────────────────────────────
+    if ($user !== null) {
+        $now  = time();
+        $last = $_SESSION["last_activity"] ?? $now;
 
-    // Idle timeout: destroy session, signal expiry to require_login()
-    if ($now - $last > MALTYTASK_SESSION_IDLE_MAX) {
-        $_SESSION = [];
-        session_destroy();
-        $GLOBALS["_maltytask_session_expired"] = true;
-        return null;
+        // Idle timeout: destroy session, signal expiry to require_login()
+        if ($now - $last > MALTYTASK_SESSION_IDLE_MAX) {
+            $_SESSION = [];
+            session_destroy();
+            $GLOBALS["_maltytask_session_expired"] = true;
+            // Fall through to remember-me check below
+        } else {
+            // Touch activity timestamp
+            $_SESSION["last_activity"] = $now;
+
+            // Periodic session-id rotation
+            $regen = $_SESSION["regen_at"] ?? $now;
+            if ($now - $regen > MALTYTASK_SESSION_REGEN_INTERVAL) {
+                session_regenerate_id(true);
+                $_SESSION["regen_at"] = $now;
+            }
+
+            return $user;
+        }
     }
 
-    // Touch activity timestamp
-    $_SESSION["last_activity"] = $now;
+    // ── 2. Remember-me cookie path ──────────────────────────────────────────
+    $raw_token = $_COOKIE[RT_COOKIE_NAME] ?? null;
+    if ($raw_token !== null && $raw_token !== '') {
+        $pdo        = maltytask_pdo();
+        $ip         = $_SERVER["REMOTE_ADDR"] ?? null;
+        $ua         = $_SERVER["HTTP_USER_AGENT"] ?? null;
+        $remembered = rt_lookup($raw_token, $ip, $ua, $pdo);
 
-    // Periodic session-id rotation
-    $regen = $_SESSION["regen_at"] ?? $now;
-    if ($now - $regen > MALTYTASK_SESSION_REGEN_INTERVAL) {
-        session_regenerate_id(true);
-        $_SESSION["regen_at"] = $now;
+        if ($remembered !== null) {
+            // Rebuild session from remembered user
+            maltytask_session_start();
+            session_regenerate_id(true);
+            $_SESSION["user"] = [
+                "id"           => $remembered["id"],
+                "username"     => $remembered["username"],
+                "display_name" => $remembered["display_name"],
+                "role"         => $remembered["role"],
+            ];
+            $_SESSION["last_activity"] = time();
+            $_SESSION["regen_at"]      = time();
+            return $_SESSION["user"];
+        }
     }
 
-    return $user;
+    return null;
 }
 
 /**
@@ -152,11 +185,30 @@ function require_login(): void
 }
 
 /**
- * Destroys the session entirely.
+ * Destroys the session entirely and revokes any active remember-me token.
  */
 function auth_logout(): void
 {
     maltytask_session_start();
+
+    // Revoke the remember-me token for this device (if any)
+    $raw_token = $_COOKIE[RT_COOKIE_NAME] ?? null;
+    if ($raw_token !== null && $raw_token !== '') {
+        $hash = hash('sha256', $raw_token);
+        try {
+            $pdo  = maltytask_pdo();
+            $stmt = $pdo->prepare(
+                "UPDATE user_remember_tokens
+                    SET revoked_at = CURRENT_TIMESTAMP
+                  WHERE token_hash = ? AND revoked_at IS NULL"
+            );
+            $stmt->execute([$hash]);
+        } catch (\Throwable $e) {
+            // Non-fatal: session still destroyed below
+        }
+        rt_clear_cookie();
+    }
+
     $_SESSION = [];
     if (ini_get("session.use_cookies")) {
         $params = session_get_cookie_params();

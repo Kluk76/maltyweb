@@ -21,6 +21,7 @@ $entities = [
     ["yeasts",      "Levures",          "ref_yeast_strains",  "Souches de levure et fournisseurs",                  null,      "/admin/settings/yeasts.php"],
     ["suppliers",   "Suppliers",        "ref_suppliers",      "Suppliers — un par paire (supplier, GL)",            null,      "/admin/settings/suppliers.php"],
     ["ingredients", "Ingrédients (MI)", "ref_mi",             "MasterIngredients — catégories, prix, alias",        null,      "/admin/settings/ingredients.php"],
+    ["devices",     "Mes appareils",    "user_remember_tokens", "Sessions persistantes — révoquer un appareil perdu", null,  "/admin/settings/devices.php"],
 ];
 ?><!doctype html>
 <html lang="fr">

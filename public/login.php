@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require __DIR__ . "/../app/auth.php";
 require __DIR__ . "/../app/csrf.php";
+require __DIR__ . "/../app/services/remember_token.php";
 
 maltytask_session_start();
 
@@ -41,6 +42,15 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             @file_put_contents('/var/log/maltytask/auth.log', $logLine, FILE_APPEND | LOCK_EX);
         } else {
             auth_login($user);
+
+            // ── Remember this device? ──────────────────────────────────────
+            if (!empty($_POST["remember_me"])) {
+                $pdo = maltytask_pdo();
+                $ip  = $_SERVER['REMOTE_ADDR'] ?? null;
+                $ua  = $_SERVER['HTTP_USER_AGENT'] ?? null;
+                rt_create((int)$user["id"], null, $ip, $ua, $pdo);
+            }
+
             $next = $_GET["next"] ?? "/";
             // Reject open-redirects: must be a same-origin path
             if (!is_string($next) || !str_starts_with($next, "/") || str_starts_with($next, "//")) {
@@ -123,6 +133,10 @@ $insecure = empty($_SERVER["HTTPS"]) || $_SERVER["HTTPS"] === "off";
       <label class="auth__field">
         <span class="auth__field-label">Password</span>
         <input type="password" name="password" required>
+      </label>
+      <label class="auth__field auth__field--check">
+        <input type="checkbox" name="remember_me" value="1" checked>
+        <span class="auth__field-label">Se souvenir de cet appareil (90 jours)</span>
       </label>
       <button class="auth__submit" type="submit">
         <span>Connexion</span>
