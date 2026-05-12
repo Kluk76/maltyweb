@@ -5298,6 +5298,30 @@ body.auth::after {
   max-width: 260px;
 }
 
+/* Force readable contrast in native <option> popups across all triage selects.
+   The popup is OS-rendered (white-ish background) but inherits no theme, so
+   without an explicit option color the text comes through near-white = invisible. */
+.home.triage select option,
+.home.triage select optgroup {
+  color: #1a1a1a;
+  background: #fff;
+}
+.home.triage select option:checked {
+  color: #0a4520;
+  background: rgba(158, 176, 96, 0.20);
+  font-weight: 600;
+}
+.home.triage select option:disabled {
+  color: #888;
+}
+
+/* Placeholder contrast on all text inputs in the triage page */
+.home.triage input::placeholder,
+.home.triage textarea::placeholder {
+  color: var(--ink-mute);
+  opacity: 0.75;
+}
+
 .home.triage .line-alias-form__btn,
 .home.triage .line-reject-form__btn {
   font-size: 9px;
