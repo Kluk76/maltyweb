@@ -4374,7 +4374,40 @@ body.auth::after {
 
 .if-action--none { color: var(--ink-mute); font-size: 12px; }
 
+/* Per-row action group: retry (primary) + resolve (secondary) stacked */
+.if-action-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.if-retry-form { display: contents; }
+.if-retry-btn {
+  padding: 4px 10px;
+  font-size: 11.5px;
+  border: 1px solid rgba(30, 100, 60, 0.5);
+  border-radius: 2px;
+  background: rgba(30, 140, 70, 0.10);
+  color: #1a6e3a;
+  cursor: pointer;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.if-retry-btn:hover {
+  background: rgba(30, 140, 70, 0.20);
+  border-color: rgba(30, 100, 60, 0.75);
+}
+
 /* Flash messages (reuse db-flash pattern) */
+.db-flash--warn {
+  background: rgba(180, 130, 30, 0.08);
+  border: 1px solid rgba(180, 130, 30, 0.35);
+  color: #7a5a10;
+  padding: 10px 16px;
+  border-radius: 3px;
+  margin-bottom: 16px;
+  font-size: 13px;
+}
+
 .db-flash--err {
   background: rgba(200, 60, 60, 0.08);
   border: 1px solid rgba(200, 60, 60, 0.35);
@@ -7562,6 +7595,16 @@ body.auth::after {
 
 .home.triage .if-resolve-btn:hover {
   background: var(--hop-deep);
+  color: var(--bg);
+}
+
+.home.triage .if-retry-btn {
+  background: transparent;
+  color: var(--malt-gold, #c8a84e);
+  border: 1px solid var(--malt-gold, #c8a84e);
+}
+.home.triage .if-retry-btn:hover {
+  background: var(--malt-gold, #c8a84e);
   color: var(--bg);
 }
 

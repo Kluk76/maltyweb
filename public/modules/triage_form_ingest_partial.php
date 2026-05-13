@@ -32,12 +32,28 @@ if (!isset($pdo)) {
     }
 }
 
-// ── Flash from redirect (resolve action) ─────────────────────────────────────
+// ── Flash from redirect (resolve or retry action) ────────────────────────────
 $ifFlash     = null;
 $ifFlashType = "ok";
 if (($_GET["resolved"] ?? "") === "1") {
     $ifFlash     = "Failure marquée résolue.";
     $ifFlashType = "ok";
+} elseif (isset($_GET["retry"])) {
+    $retryStatus = $_GET["retry"];
+    $retryMsg    = urldecode($_GET["msg"] ?? "");
+    if ($retryStatus === "ok") {
+        $ifFlash     = htmlspecialchars($retryMsg);
+        $ifFlashType = "ok";
+    } elseif ($retryStatus === "warn") {
+        $ifFlash     = htmlspecialchars($retryMsg);
+        $ifFlashType = "warn";
+    } elseif ($retryStatus === "already_resolved") {
+        $ifFlash     = "Ligne déjà résolue.";
+        $ifFlashType = "ok";
+    } else {
+        $ifFlash     = htmlspecialchars($retryMsg !== "" ? $retryMsg : "Erreur lors du retry.");
+        $ifFlashType = "err";
+    }
 }
 
 // ── Filters ───────────────────────────────────────────────────────────────────
@@ -136,17 +152,31 @@ function if_partial_qs(array $extra): string
     return "?" . http_build_query(array_merge($base, $extra));
 }
 
-// BSF link helper
+// BSF link helper — maps source_tab to real BSF tab gids
 $ifBsfBase = "https://docs.google.com/spreadsheets/d/1zTgfTJrLd_kQfwQxfS9SjQ5MLkUYK-CyXX13TKRMJiE/edit";
-function if_bsf_row_url(string $base, int $row): string {
-    return $base . "#gid=0&range=A" . $row;
+const BSF_TAB_GIDS = [
+    "brewing"    => 1713216169,  // BrewingData
+    "fermenting" => 2027136070,  // FermentingData
+    "racking"    => 691659511,   // RackingData
+    "packaging"  => 1345768392,  // PackagingData
+];
+function if_bsf_row_url(string $base, int $row, string $source_tab = ""): string {
+    $gid = BSF_TAB_GIDS[$source_tab] ?? 0;
+    return $base . "#gid=" . $gid . "&range=A" . $row;
 }
 
 ?>
 
 <?php if ($ifFlash !== null): ?>
-  <div class="db-flash db-flash--<?= $ifFlashType === "ok" ? "ok" : "err" ?>">
-    <?= htmlspecialchars($ifFlash) ?>
+  <?php
+  $ifFlashClass = match($ifFlashType) {
+      "ok"   => "ok",
+      "warn" => "warn",
+      default => "err",
+  };
+  ?>
+  <div class="db-flash db-flash--<?= $ifFlashClass ?>">
+    <?= $ifFlash /* already htmlspecialchars'd at assignment or is a hardcoded string */ ?>
   </div>
 <?php endif ?>
 
@@ -248,7 +278,7 @@ function if_bsf_row_url(string $base, int $row): string {
             <td class="if-td--mono"><?= htmlspecialchars($r["target_table"]) ?></td>
             <td class="if-td--mono">
               <a class="if-row-link"
-                 href="<?= htmlspecialchars(if_bsf_row_url($ifBsfBase, (int)$r["sheet_row_index"])) ?>"
+                 href="<?= htmlspecialchars(if_bsf_row_url($ifBsfBase, (int)$r["sheet_row_index"], (string)$r["source_tab"])) ?>"
                  target="_blank" rel="noopener">
                 #<?= (int)$r["sheet_row_index"] ?>
               </a>
@@ -284,22 +314,39 @@ function if_bsf_row_url(string $base, int $row): string {
             </td>
             <td>
               <?php if (!$resolved): ?>
-                <!-- POST always targets /admin/ingest-failures.php?action=resolve
-                     (canonical handler); redirect lands on /admin/ingest-failures.php.
-                     Known limitation when accessed via triage tab — redirect lands
-                     on standalone page, not back to ?tab=form. -->
-                <form class="if-resolve-form" method="post"
-                      action="/admin/ingest-failures.php?<?= htmlspecialchars(http_build_query(["action" => "resolve"])) ?>">
-                  <input type="hidden" name="csrf"          value="<?= htmlspecialchars(csrf_token()) ?>">
-                  <input type="hidden" name="id"            value="<?= (int)$r["id"] ?>">
-                  <input type="hidden" name="source_tab"    value="<?= htmlspecialchars($ifFilterTab) ?>">
-                  <input type="hidden" name="status_filter" value="<?= htmlspecialchars($ifFilterStatus) ?>">
-                  <input type="hidden" name="q"             value="<?= htmlspecialchars($ifFilterQ) ?>">
-                  <input type="text"   name="resolution_note"
-                         class="if-resolve-note"
-                         placeholder="Note (optionnel)">
-                  <button type="submit" class="if-resolve-btn">Marquer résolu</button>
-                </form>
+                <div class="if-action-group">
+                  <!-- Retry: POST to retry-row.php, redirect back to current page -->
+                  <?php
+                  $returnUrl = strtok($_SERVER["REQUEST_URI"] ?? "/admin/ingest-failures.php", "?");
+                  $returnQs  = http_build_query(array_filter([
+                      "source_tab" => $ifFilterTab,
+                      "status"     => $ifFilterStatus,
+                      "q"          => $ifFilterQ,
+                      "page"       => $ifPage > 0 ? (string)$ifPage : null,
+                  ]));
+                  $returnFull = $returnUrl . ($returnQs ? "?" . $returnQs : "");
+                  ?>
+                  <form class="if-retry-form" method="post"
+                        action="/admin/ingest/retry-row.php">
+                    <input type="hidden" name="csrf"       value="<?= htmlspecialchars(csrf_token()) ?>">
+                    <input type="hidden" name="id"         value="<?= (int)$r["id"] ?>">
+                    <input type="hidden" name="return_url" value="<?= htmlspecialchars($returnFull) ?>">
+                    <button type="submit" class="if-retry-btn">Re-essayer maintenant</button>
+                  </form>
+                  <!-- Resolve: POST always targets /admin/ingest-failures.php?action=resolve -->
+                  <form class="if-resolve-form" method="post"
+                        action="/admin/ingest-failures.php?<?= htmlspecialchars(http_build_query(["action" => "resolve"])) ?>">
+                    <input type="hidden" name="csrf"          value="<?= htmlspecialchars(csrf_token()) ?>">
+                    <input type="hidden" name="id"            value="<?= (int)$r["id"] ?>">
+                    <input type="hidden" name="source_tab"    value="<?= htmlspecialchars($ifFilterTab) ?>">
+                    <input type="hidden" name="status_filter" value="<?= htmlspecialchars($ifFilterStatus) ?>">
+                    <input type="hidden" name="q"             value="<?= htmlspecialchars($ifFilterQ) ?>">
+                    <input type="text"   name="resolution_note"
+                           class="if-resolve-note"
+                           placeholder="Note (optionnel)">
+                    <button type="submit" class="if-resolve-btn">Marquer résolu</button>
+                  </form>
+                </div>
               <?php else: ?>
                 <span class="if-action--none">—</span>
               <?php endif ?>
