@@ -291,9 +291,12 @@ function triage_parse_context(string $context): array
         if ($line === "") continue;
 
         if (str_starts_with($line, "Supplier:")) {
-            $result["supplier"] = trim(substr($line, 9));
+            $val = trim(substr($line, 9));
+            // Treat literal "?" and "(none)" as not-extracted so the fallback can fire.
+            $result["supplier"] = ($val === "" || $val === "?" || $val === "(none)") ? null : $val;
         } elseif (str_starts_with($line, "InvoiceRef:")) {
-            $result["ref"] = trim(substr($line, 11));
+            $val = trim(substr($line, 11));
+            $result["ref"] = ($val === "" || $val === "?" || $val === "(none)") ? null : $val;
         } elseif (str_starts_with($line, "Date:")) {
             $result["date"] = trim(substr($line, 5));
         } elseif (str_starts_with($line, "TotalHT:")) {
@@ -1513,14 +1516,15 @@ function stock_qs(array $extra): string
  */
 function triage_extract_supplier_from_value(string $value): ?string
 {
-    // Pattern: "something: NNNN - SUPPLIER.pdf"
-    if (preg_match('/\d+\s*-\s*([^.]+)\.pdf$/i', $value, $m)) {
-        return trim($m[1]);
+    // Strip "(prefix): " marker (e.g. "(no-parser): " or "<parser-name>: ") if present.
+    $clean = preg_replace('/^\([^)]*\)\s*:\s*|^[^:]+:\s*/', '', $value) ?? $value;
+    // Common filename pattern: "NNNN_-_SUPPLIER.pdf" or "NNNN - SUPPLIER.pdf" or "NC_NNN_-_SUPPLIER.pdf"
+    if (preg_match('/^(?:NC_)?\d+[_\s]*-[_\s]*([^.]+)\.pdf$/i', $clean, $m)) {
+        return trim(str_replace('_', ' ', $m[1]));
     }
-    // Plain text after colon
-    if (str_contains($value, ":")) {
-        $part = trim(substr($value, strrpos($value, ":") + 1));
-        if ($part !== "") return $part;
+    // Fallback: any *.pdf → supplier = basename without extension, underscores → spaces
+    if (preg_match('/^([^.]+)\.pdf$/i', $clean, $m)) {
+        return trim(str_replace('_', ' ', $m[1]));
     }
-    return $value !== "" ? $value : null;
+    return $clean !== "" ? $clean : null;
 }
