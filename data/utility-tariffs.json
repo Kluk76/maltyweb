@@ -1,0 +1,76 @@
+{
+  "_comment": "Tariffs extracted from Feb 2026 SIE (#8666) + SIL (#8701) invoices. Effective 2026-01-01 (no earlier version captured yet — historical accuracy caveat applies). Update `effectiveFrom` / add new entries when a tariff change arrives.",
+  "versions": [
+    {
+      "effectiveFrom": "2026-01-01",
+
+      "gas": {
+        "_source": "SIL invoice #8701, Feb 2026 consumption",
+        "meterCoefficient_kWhPerM3": 10.6078559580,
+        "subscriptionCHFPerMonth": 60.00,
+        "powerClauseCHFPerKWPerMonth": 1.50,
+        "subscribedCapacityKW": 400,
+        "consumptionCHFPerKWh": 0.10840,
+        "co2TaxCHFPerKWh": 0.02158,
+        "tvaRate": 0.081
+      },
+
+      "water": {
+        "_source": "SIL invoice #8701",
+        "taxeBaseCHFPerMonth": 7.00,
+        "meterRentalCHFPerMonth": 29.00,
+        "antiReturnValveCHFPerMonth": 3.00,
+        "flowFeeCHFPerM3hPerYear": 40.00,
+        "meterCapacityM3h": 63,
+        "consumptionCHFPerM3": 1.62000,
+        "solidarityFundCHFPerM3": 0.01000,
+        "tvaRate": 0.026
+      },
+
+      "sewage": {
+        "_source": "SIL invoice #8701",
+        "baseRateCHFPerM3": 1.50000,
+        "nonDrinkingRebate": 0.07,
+        "tvaRate": 0.081
+      },
+
+      "electricity": {
+        "_source": "SIE invoice #8666, Feb 2026 consumption",
+        "meterCoefficient": 15,
+        "energy": {
+          "hpCHFPerKWh": 0.1778,
+          "hcCHFPerKWh": 0.1177
+        },
+        "achemRegional": {
+          "subscriptionCHFPerMonth": 60.00,
+          "hpCHFPerKWh": 0.0990,
+          "hcCHFPerKWh": 0.0522,
+          "peakPowerCHFPerKWPerMonth": 8.7100,
+          "reactiveFranchiseKVArh": 779.84,
+          "reactiveChargeCHFPerKVArh": 0.0400,
+          "measuringSubscriptionCHFPerMonth": 14.00
+        },
+        "achemNational": {
+          "hpCHFPerKWh": 0.0151,
+          "hcCHFPerKWh": 0.0091,
+          "peakPowerCHFPerKWPerMonth": 1.1800,
+          "winterReserveCHFPerKWh": 0.0041,
+          "systemServicesCHFPerKWh": 0.0027,
+          "solidarityCostsCHFPerKWh": 0.0005
+        },
+        "taxes": {
+          "federalesLEneCHFPerKWh": 0.0230,
+          "emolumentCantonalCHFPerKWh": 0.0002,
+          "emolumentCommunalCHFPerKWh": 0.0070,
+          "_tvaApplicableAbove": "federal + emolument cantonal + emolument communal are TVA-taxed",
+          "cantonalLVLEneCHFPerKWh": 0.0060,
+          "taxeCommunaleSpecifiqueCHFPerKWh": 0.0160,
+          "_tvaExemptAbove": "cantonal + taxe communale spécifique are NOT TVA-taxed"
+        },
+        "tvaRate": 0.081,
+        "defaultPeakPowerKW": 70.5,
+        "_defaults_note": "Peak power and reactive-within-franchise are seeded from Feb 2026 measurements. Override monthly if actual differs (peak demand varies with production intensity)."
+      }
+    }
+  ]
+}
