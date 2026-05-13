@@ -25,10 +25,73 @@ $showAdminBlock = is_admin($me) || is_manager($me);
 $adminEntries   = [];
 if ($showAdminBlock) {
     $adminEntries[] = ["Paramètres",  "/admin/settings.php",  "settings"];
+    $adminEntries[] = ["Ingest",      "/admin/ingest.php",    "ingest"];
 }
 if (is_admin($me)) {
     $adminEntries[] = ["DB Browser",  "/admin/db-browser.php","db-browser"];
 }
+
+// ── Ingest badge (cheap 1-row query) ─────────────────────────────────────────
+$ingestBadge = null;  // null → table empty / not yet available
+if ($showAdminBlock) {
+    try {
+        $ibPdo  = maltytask_pdo();
+        $ibStmt = $ibPdo->query(
+            "SELECT id, started_at, finished_at, status,
+                    TIMESTAMPDIFF(SECOND, started_at, NOW()) AS age_sec,
+                    (SELECT COUNT(*) FROM ingest_failures
+                      WHERE run_id = ir.id) AS failure_count
+               FROM ingest_runs ir
+              ORDER BY started_at DESC
+              LIMIT 1"
+        );
+        $ingestBadge = $ibStmt->fetch() ?: null;
+    } catch (Throwable $e) {
+        // Table may not exist yet (migration pending) — degrade gracefully.
+        $ingestBadge = false;  // false = table unavailable
+    }
+}
+
+// Compute badge state from the row.
+// Returns one of: 'green' | 'orange' | 'red' | 'grey' | null (hidden)
+function _ingest_badge_state(?array $row): string
+{
+    if ($row === null) return 'grey';   // no runs yet
+    $status   = $row['status']   ?? 'unknown';
+    $age      = (int)($row['age_sec'] ?? PHP_INT_MAX);
+    $failures = (int)($row['failure_count'] ?? 0);
+
+    if ($status === 'failed')                            return 'red';
+    if ($age > 10800)                                    return 'red';   // > 3 h
+    if ($status === 'partial')                           return 'orange';
+    if ($status === 'running' && $age > 3600)            return 'orange'; // stuck > 1 h
+    if ($status === 'ok'      && $age > 5400 && $age <= 10800) return 'orange'; // 90–180 min stale
+    if ($status === 'ok'      && $age <= 5400)           return 'green';
+    return 'orange'; // everything else: cautious
+}
+
+function _ingest_badge_tooltip(?array $row): string
+{
+    if ($row === null) return 'Aucune exécution d\'ingest enregistrée';
+    $age    = (int)($row['age_sec'] ?? 0);
+    $mins   = (int)round($age / 60);
+    $status = $row['status'] ?? '?';
+    $fail   = (int)($row['failure_count'] ?? 0);
+
+    if ($status === 'ok' && $fail === 0) {
+        return "Dernier ingest il y a {$mins}m — OK";
+    } elseif ($status === 'partial') {
+        return "Dernier ingest il y a {$mins}m — PARTIEL ({$fail} ligne" . ($fail > 1 ? 's' : '') . " rejetée" . ($fail > 1 ? 's' : '') . ")";
+    } elseif ($status === 'failed') {
+        return "Dernier ingest il y a {$mins}m — ERREUR";
+    } elseif ($status === 'running') {
+        return "Ingest en cours depuis {$mins}m";
+    }
+    return "Dernier ingest il y a {$mins}m — {$status}";
+}
+
+$ibState   = ($ingestBadge === false) ? null : _ingest_badge_state($ingestBadge ?: null);
+$ibTooltip = ($ingestBadge === false) ? 'Table ingest_runs indisponible' : _ingest_badge_tooltip($ingestBadge ?: null);
 
 $userName = htmlspecialchars($me["display_name"] ?? $me["username"] ?? "");
 $userRole = htmlspecialchars($me["role"] ?? "");
@@ -63,6 +126,17 @@ $userRole = htmlspecialchars($me["role"] ?? "");
 
   <!-- ── Right cluster ── -->
   <div class="tb__right">
+
+    <?php if ($showAdminBlock && $ibState !== null): ?>
+    <!-- Ingest status badge -->
+    <a class="tb__ingest-badge tb__ingest-badge--<?= htmlspecialchars($ibState) ?>"
+       href="/admin/ingest.php"
+       title="<?= htmlspecialchars($ibTooltip) ?>"
+       aria-label="<?= htmlspecialchars($ibTooltip) ?>">
+      <span class="tb__ingest-dot" aria-hidden="true"></span>
+      <span class="tb__ingest-label"><?= $ibState === 'grey' ? '—' : strtoupper($ibState === 'green' ? 'ok' : ($ibState === 'orange' ? 'warn' : 'err')) ?></span>
+    </a>
+    <?php endif ?>
 
     <?php if ($showAdminBlock): ?>
     <!-- Admin overflow -->
