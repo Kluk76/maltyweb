@@ -6,6 +6,60 @@ from __future__ import annotations
 from lib_coerce import s, n, d, dt, dt_serial
 from lib_hashing import row_hash
 
+# ---------------------------------------------------------------------------
+# QA/QC thresholds — adjustable constants, not magic numbers.
+# Outliers are IMPORTED and flagged; KPI calculators downstream filter on flags.
+# ---------------------------------------------------------------------------
+
+# O2 in ppb (dissolved oxygen pickup into BBT post-rack).
+# Healthy fermentation target: ≤ 50 ppb. Above 500 ppb = process incident.
+O2_NORMAL_MAX   = 50.0
+O2_ELEVATED_MAX = 500.0
+
+# CO2 in g/L (carbonation level in BBT post-rack).
+# Normal lager/ale range: 2.5–5.0 g/L. Outside 1.0–7.0 = outlier / unit error.
+CO2_NORMAL_MIN   = 2.5
+CO2_NORMAL_MAX   = 5.0
+CO2_OUTLIER_MIN  = 1.0
+CO2_OUTLIER_MAX  = 7.0
+
+
+def _flag_o2(v) -> str:
+    """
+    Classify an O2 pickup value (ppb) into a QA/QC flag.
+    Accepts Decimal, float, int, or None. Returns ENUM string.
+    """
+    if v is None:
+        return "missing"
+    try:
+        fv = float(v)
+    except (TypeError, ValueError):
+        return "missing"
+    if fv <= O2_NORMAL_MAX:
+        return "normal"
+    if fv <= O2_ELEVATED_MAX:
+        return "elevated"
+    return "outlier"
+
+
+def _flag_co2(v) -> str:
+    """
+    Classify a CO2 level (g/L) into a QA/QC flag.
+    Accepts Decimal, float, int, or None. Returns ENUM string.
+    """
+    if v is None:
+        return "missing"
+    try:
+        fv = float(v)
+    except (TypeError, ValueError):
+        return "missing"
+    if CO2_NORMAL_MIN <= fv <= CO2_NORMAL_MAX:
+        return "normal"
+    if CO2_OUTLIER_MIN <= fv <= CO2_OUTLIER_MAX:
+        return "elevated"
+    return "outlier"
+
+
 TAB = "RackingData"
 RANGE = f"{TAB}!A2:AF"
 # Side-channel range for submitted_at (col A) with SERIAL_NUMBER rendering.
@@ -36,7 +90,9 @@ def _row(cells, h, idx) -> dict:
         "end_time":          dt(cells[11]),
         "bbt_old":           s(cells[12]),
         "bbt_co2":           n(cells[13]),
+        "bbt_co2_flag":      _flag_co2(n(cells[13])),
         "bbt_o2":            n(cells[14]),
+        "bbt_o2_flag":       _flag_o2(n(cells[14])),
         "racked_vol_hl":     n(cells[15]),
         "blend_text":        s(cells[16]),
         "avg_turbidity":     n(cells[17]),
