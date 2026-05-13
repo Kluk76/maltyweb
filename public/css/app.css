@@ -3634,6 +3634,179 @@ body.auth::after {
   color: var(--ink);
 }
 
+/* ── Metrics-view card: pair SVG with attenuation gauge ─────────────── */
+
+/* Slightly wider footprint for metrics cards so the side gauge breathes.
+   Cards in fill/levure views keep the default 180px minimum. */
+.home .tanks-grid:has(.tank-card--metrics) {
+  grid-template-columns: repeat(auto-fill, minmax(212px, 1fr));
+}
+
+/* Top section: SVG + atten gauge sit on a single row */
+.home .tank-card__metrics-top {
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+}
+
+/* SVG stops self-centering in metrics view; flexes to the left of the gauge */
+.home .tank-card--metrics .tank-card__svg {
+  margin: 0;
+  flex: 0 0 80px;
+}
+
+/* The atten gauge: instrument-readout aesthetic.
+   Vertically centered to the tank, baseline tick suggests an analog dial. */
+.home .atten-gauge {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 6px 4px 8px;
+  border-left: 1px solid var(--hairline-2);
+}
+
+.home .atten-gauge__label {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  line-height: 1;
+}
+
+/* Hero number: dialed, monospace, sized to read across the brewery floor */
+.home .atten-gauge__value {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+  font-size: 30px;
+  font-weight: 400;
+  line-height: 1;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+  display: inline-flex;
+  align-items: baseline;
+}
+
+.home .atten-gauge__unit {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--ink-mute);
+  margin-left: 2px;
+  letter-spacing: 0;
+}
+
+/* Band colours at the gauge level (atten-gauge__value has no nested dd) */
+.home .atten-gauge__value.metric--good    { color: var(--hop-soft); }
+.home .atten-gauge__value.metric--mid     { color: var(--ink); }
+.home .atten-gauge__value.metric--caution { color: #c97b3a; }
+.home .atten-gauge__value.metric--warn    { color: var(--ember); }
+
+/* Tiny gauge tick — analog-instrument cue under the value */
+.home .atten-gauge__tick {
+  display: block;
+  width: 22px;
+  height: 1px;
+  background: var(--hairline);
+  opacity: 0.85;
+}
+
+/* Meta line: OG context for the attenuation read */
+.home .atten-gauge__meta {
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  color: var(--ink-mute);
+  line-height: 1;
+}
+
+/* ── Reads ledger (bottom of metrics card): two facing pages ─────────── */
+.home .reads-ledger {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 12px;
+  width: 100%;
+  margin: 8px 0 0;
+  padding: 8px 0 0;
+  border-top: 1px solid var(--hairline);
+  list-style: none;
+}
+
+.home .reads-ledger__col {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 0 6px;
+  position: relative;
+}
+
+/* Hairline divider between the two pages of the ledger */
+.home .reads-ledger__col + .reads-ledger__col::before {
+  content: "";
+  position: absolute;
+  left: -6px;
+  top: 4px;
+  bottom: 4px;
+  width: 1px;
+  background: var(--hairline);
+  opacity: 0.7;
+}
+
+/* Column header: small caps, left-aligned — ledger entry title */
+.home .reads-ledger__head {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 8.5px;
+  font-weight: 500;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  line-height: 1;
+  margin-bottom: 3px;
+  text-align: left;
+}
+
+/* Each row: label left, value right — ledger entry line */
+.home .reads-ledger__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.home .reads-ledger__row dt {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  line-height: 1;
+}
+
+.home .reads-ledger__row dd {
+  margin: 0;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+  font-size: 12px;
+  color: var(--ink);
+  line-height: 1.1;
+}
+
+/* Averages column: muted — reference, not signal */
+.home .reads-ledger__col--avg .reads-ledger__row dd {
+  color: var(--ink-mute);
+}
+
+/* pH band colours apply to the value cell when row carries the band class */
+.home .reads-ledger__row.metric--good dd { color: var(--hop-soft); }
+.home .reads-ledger__row.metric--mid  dd { color: var(--ink); }
+.home .reads-ledger__row.metric--warn dd { color: var(--ember); }
+
 /* ── Ferm-stats intermediate table ── */
 .home .ferm-stats {
   margin-bottom: 44px;

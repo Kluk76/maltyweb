@@ -325,10 +325,9 @@ try {
 
         // Original gravity — latest cooling row of this batch
         $ogStmt = $pdo->prepare(
-            'SELECT cool_final_gravity AS og
+            'SELECT MAX(cool_final_gravity) AS og
              FROM bd_brewing_cooling
-             WHERE cool_beer = :beer AND cool_batch = :batch AND cool_final_gravity IS NOT NULL
-             ORDER BY event_date DESC LIMIT 1'
+             WHERE cool_beer = :beer AND cool_batch = :batch'
         );
         $ogStmt->execute([':beer' => $rawBeer, ':batch' => $batch]);
         $ogRow = $ogStmt->fetch() ?: [];
@@ -543,52 +542,75 @@ $today = $asOfDT;
             $fillRatio    = $capHl > 0 ? min(1.0, $volHl / $capHl) : 0.0;
         }
 
-        // Mesures view: override fill to fermentation-progress indicator
+        // ── Metrics-view computation: fill ratio + side metrics ──
         $displayFillRatio = $fillRatio;
+        $attenPct  = null;
+        $attenBand = '';
+        $phBand    = '';
+        $ogMVal    = null;
+        $phMVal    = null;
+        $lastGMVal = null;
+        $avgFGVal  = null;
+        $avgPHVal  = null;
+
         if ($cctView === 'metrics' && $occ) {
-            $rawBeer = $occ['bd_beer_raw'] ?? ($occ['bd_beer'] ?? '');
+            $rawBeer   = $occ['bd_beer_raw'] ?? ($occ['bd_beer'] ?? '');
+            $ogMVal    = $occ['og']           ?? null;
+            $lastGMVal = $occ['last_gravity'] ?? null;
+            $phMVal    = $occ['last_ph']      ?? null;
+            $avgF      = $avgFinalsByBeer[$rawBeer] ?? null;
+            $avgFGVal  = $avgF['grav'] ?? null;
+            $avgPHVal  = $avgF['ph']   ?? null;
+
+            // Tank fill = % fermentation atteint (progress toward recipe target FG).
+            // CC state: fermentation considered complete → cuve pleine.
             if (!empty($occ['last_cc_date'])) {
-                $displayFillRatio = 1.0;  // CC: cuve shown full
+                $displayFillRatio = 1.0;
+            } elseif ($ogMVal !== null && $lastGMVal !== null && $avgFGVal !== null
+                      && (float)$ogMVal > (float)$avgFGVal) {
+                $progress = ((float)$ogMVal - (float)$lastGMVal) / ((float)$ogMVal - (float)$avgFGVal);
+                $displayFillRatio = max(0.0, min(1.0, $progress));
             } else {
-                $ogV    = $occ['og']           ?? null;
-                $lgV    = $occ['last_gravity'] ?? null;
-                $avgFV  = $avgFinalsByBeer[$rawBeer] ?? null;
-                $tgtFGV = $avgFV['grav'] ?? null;
-                if ($ogV !== null && $lgV !== null && $tgtFGV !== null
-                    && (float)$ogV > (float)$tgtFGV) {
-                    $progress = ((float)$ogV - (float)$lgV) / ((float)$ogV - (float)$tgtFGV);
-                    $displayFillRatio = max(0.0, min(1.0, $progress));
-                } else {
-                    $displayFillRatio = 0.0;
-                }
+                $displayFillRatio = 0.0;
+            }
+
+            // Atténuation apparente = sucres consommés / sucres initiaux.
+            // Distinct du fill: une cuve "pleine" (100 % à la cible) ≈ 78 % atténuée
+            // car les dextrines sont non-fermentescibles (plafond ~75–82 %).
+            if ($ogMVal !== null && $lastGMVal !== null && (float)$ogMVal > 0) {
+                $attenPct = max(0.0, min(100.0,
+                    ((float)$ogMVal - (float)$lastGMVal) / (float)$ogMVal * 100.0));
+            }
+            if ($attenPct !== null) {
+                if      ($attenPct >= 75) $attenBand = 'metric--good';
+                elseif  ($attenPct >= 65) $attenBand = 'metric--mid';
+                else                       $attenBand = 'metric--caution';
+            }
+
+            if ($phMVal !== null) {
+                $phF = (float)$phMVal;
+                if      ($phF >= 4.0 && $phF <= 4.6) $phBand = 'metric--good';
+                elseif  ($phF > 4.6  && $phF <= 4.8) $phBand = 'metric--mid';
+                else                                  $phBand = 'metric--warn';
             }
         }
-      ?>
-      <div class="tank-card <?= $stateClass ?>">
-        <div class="tank-card__svg">
-          <?= svg_cct(
-            $displayFillRatio,
-            $svgState,
-            $num,
-            (string)($occ['bd_beer'] ?? ''),
-            $cctView,
-            $occ ? [
-                'og'           => $occ['og']            ?? null,
-                'ph'           => $occ['last_ph']       ?? null,
-                'yeast'        => $occ['yeast']         ?? null,
-                'yeast_gen'    => $occ['yeast_gen']     ?? null,
-                'repitch_count'=> $occ['repitch_count'] ?? 0,
-            ] : []
-          ) ?>
-        </div>
 
+        $isMetricsOcc = ($cctView === 'metrics' && $occ !== null && !$isMaint);
+      ?>
+      <div class="tank-card <?= $stateClass ?><?= $isMetricsOcc ? ' tank-card--metrics' : '' ?>">
         <?php if ($isMaint): ?>
+          <div class="tank-card__svg">
+            <?= svg_cct(0.0, 'maint', $num, '', $cctView, []) ?>
+          </div>
           <div class="tank-card__info">
             <span class="tank-card__cap tanks-mute"><?= htmlspecialchars(number_format($capHl, 0)) ?> HL</span>
             <span class="tank-badge tank-badge--maint"><?= htmlspecialchars($status) ?></span>
           </div>
 
         <?php elseif ($occ === null): ?>
+          <div class="tank-card__svg">
+            <?= svg_cct(0.0, '', $num, '', $cctView, []) ?>
+          </div>
           <div class="tank-card__info">
             <span class="tank-card__empty-label">—</span>
             <span class="tank-card__cap tanks-mute"><?= htmlspecialchars(number_format($capHl, 0)) ?> HL</span>
@@ -599,88 +621,97 @@ $today = $asOfDT;
           $batch     = htmlspecialchars($occ['bd_batch'] ?? '');
         ?>
 
+          <?php if ($isMetricsOcc): ?>
+            <div class="tank-card__metrics-top">
+              <div class="tank-card__svg">
+                <?= svg_cct(
+                  $displayFillRatio,
+                  $svgState,
+                  $num,
+                  (string)($occ['bd_beer'] ?? ''),
+                  $cctView,
+                  [
+                      'og'           => $ogMVal,
+                      'ph'           => $phMVal,
+                      'yeast'        => $occ['yeast']         ?? null,
+                      'yeast_gen'    => $occ['yeast_gen']     ?? null,
+                      'repitch_count'=> $occ['repitch_count'] ?? 0,
+                  ]
+                ) ?>
+              </div>
+              <aside class="atten-gauge">
+                <span class="atten-gauge__label">Atténuation</span>
+                <span class="atten-gauge__value tanks-mono <?= $attenBand ?>">
+                  <?php if ($attenPct !== null): ?>
+                    <?= round($attenPct) ?><span class="atten-gauge__unit">%</span>
+                  <?php else: ?>—<?php endif ?>
+                </span>
+                <span class="atten-gauge__tick" aria-hidden="true"></span>
+                <span class="atten-gauge__meta tanks-mono">
+                  <?php if ($ogMVal !== null): ?>OG&nbsp;<?= number_format((float)$ogMVal, 1) ?>&thinsp;°P<?php else: ?>OG&nbsp;—<?php endif ?>
+                </span>
+              </aside>
+            </div>
+          <?php else: ?>
+            <div class="tank-card__svg">
+              <?= svg_cct(
+                $displayFillRatio,
+                $svgState,
+                $num,
+                (string)($occ['bd_beer'] ?? ''),
+                $cctView,
+                $occ ? [
+                    'og'           => $occ['og']            ?? null,
+                    'ph'           => $occ['last_ph']       ?? null,
+                    'yeast'        => $occ['yeast']         ?? null,
+                    'yeast_gen'    => $occ['yeast_gen']     ?? null,
+                    'repitch_count'=> $occ['repitch_count'] ?? 0,
+                ] : []
+              ) ?>
+            </div>
+          <?php endif ?>
+
           <?php if ($cctView === 'metrics'): ?>
-          <?php
-            $og       = $occ['og']           ?? null;
-            $ph       = $occ['last_ph']      ?? null;
-            $lastGrav = $occ['last_gravity'] ?? null;
-            $rawBeer  = $occ['bd_beer_raw']  ?? ($occ['bd_beer'] ?? '');
-            $avgF     = $avgFinalsByBeer[$rawBeer] ?? null;
-            $targetFG = $avgF['grav'] ?? null;
-            $targetPH = $avgF['ph']   ?? null;
-            $isCCBatch = !empty($occ['last_cc_date']);
-
-            // Attenuation % (fermenting only)
-            $attenPct = null;
-            if (!$isCCBatch && $og !== null && $lastGrav !== null && $targetFG !== null
-                && (float)$og > (float)$targetFG) {
-                $progress = ((float)$og - (float)$lastGrav) / ((float)$og - (float)$targetFG);
-                $attenPct = max(0.0, min(1.0, $progress)) * 100.0;
-            }
-
-            $attenBand = '';
-            if ($attenPct !== null) {
-                if      ($attenPct >= 95) $attenBand = 'metric--good';
-                elseif  ($attenPct >= 80) $attenBand = 'metric--mid';
-                else                       $attenBand = 'metric--caution';
-            }
-
-            // pH band class
-            // 4.0–4.6 = healthy end-ferm range (good)
-            // 4.7–4.8 = still fermenting / slightly high (mid)
-            // <4.0 or >4.8 = unusual (warn)
-            $phBand = '';
-            if ($ph !== null) {
-                $phF = (float)$ph;
-                if ($phF >= 4.0 && $phF <= 4.6)    $phBand = 'metric--good';
-                elseif ($phF > 4.6 && $phF <= 4.8) $phBand = 'metric--mid';
-                else                                $phBand = 'metric--warn';
-            }
-          ?>
             <div class="tank-card__info tank-card__info--metrics">
               <span class="tank-card__beer"><?= $beerLabel ?></span>
               <span class="tank-card__batch tanks-mono"><?= $batch ?></span>
-              <?php if ($isCCBatch): ?>
-              <!-- CC state: OG / pH fin / FG fin / pH cible -->
-              <dl class="metric-list">
-                <div class="metric metric--og">
-                  <dt>OG</dt>
-                  <dd class="tanks-mono"><?= $og !== null ? number_format((float)$og, 1) . '<span class="metric__unit"> °P</span>' : '—' ?></dd>
+
+              <dl class="reads-ledger">
+                <div class="reads-ledger__col">
+                  <span class="reads-ledger__head">Derniers</span>
+                  <div class="reads-ledger__row">
+                    <dt>FG</dt>
+                    <dd class="tanks-mono">
+                      <?= $lastGMVal !== null
+                          ? number_format((float)$lastGMVal, 1) . '<span class="metric__unit"> °P</span>'
+                          : '—' ?>
+                    </dd>
+                  </div>
+                  <div class="reads-ledger__row <?= $phBand ?>">
+                    <dt>pH</dt>
+                    <dd class="tanks-mono">
+                      <?= $phMVal !== null ? number_format((float)$phMVal, 2) : '—' ?>
+                    </dd>
+                  </div>
                 </div>
-                <div class="metric <?= $phBand ?>">
-                  <dt>pH fin</dt>
-                  <dd class="tanks-mono"><?= $ph !== null ? number_format((float)$ph, 2) : '—' ?></dd>
-                </div>
-                <div class="metric metric--fg">
-                  <dt>FG fin</dt>
-                  <dd class="tanks-mono"><?= $lastGrav !== null ? number_format((float)$lastGrav, 1) . '<span class="metric__unit"> °P</span>' : '—' ?></dd>
-                </div>
-                <div class="metric metric--target">
-                  <dt>pH cible</dt>
-                  <dd class="tanks-mono"><?= $targetPH !== null ? number_format((float)$targetPH, 2) : '—' ?></dd>
-                </div>
-              </dl>
-              <?php else: ?>
-              <!-- Fermenting state: OG / pH / Atténuation / FG cible -->
-              <dl class="metric-list">
-                <div class="metric metric--og">
-                  <dt>OG</dt>
-                  <dd class="tanks-mono"><?= $og !== null ? number_format((float)$og, 1) . '<span class="metric__unit"> °P</span>' : '—' ?></dd>
-                </div>
-                <div class="metric <?= $phBand ?>">
-                  <dt>pH</dt>
-                  <dd class="tanks-mono"><?= $ph !== null ? number_format((float)$ph, 2) : '—' ?></dd>
-                </div>
-                <div class="metric <?= $attenBand ?>">
-                  <dt>Atténuation</dt>
-                  <dd class="tanks-mono"><?= $attenPct !== null ? round($attenPct) . '<span class="metric__unit"> %</span>' : '—' ?></dd>
-                </div>
-                <div class="metric metric--target">
-                  <dt>FG cible</dt>
-                  <dd class="tanks-mono"><?= $targetFG !== null ? number_format((float)$targetFG, 1) . '<span class="metric__unit"> °P</span>' : '—' ?></dd>
+                <div class="reads-ledger__col reads-ledger__col--avg">
+                  <span class="reads-ledger__head">Moyennes&nbsp;fin.</span>
+                  <div class="reads-ledger__row">
+                    <dt>FG</dt>
+                    <dd class="tanks-mono">
+                      <?= $avgFGVal !== null
+                          ? number_format((float)$avgFGVal, 1) . '<span class="metric__unit"> °P</span>'
+                          : '—' ?>
+                    </dd>
+                  </div>
+                  <div class="reads-ledger__row">
+                    <dt>pH</dt>
+                    <dd class="tanks-mono">
+                      <?= $avgPHVal !== null ? number_format((float)$avgPHVal, 2) : '—' ?>
+                    </dd>
+                  </div>
                 </div>
               </dl>
-              <?php endif ?>
             </div>
 
           <?php elseif ($cctView === 'levure'): ?>
