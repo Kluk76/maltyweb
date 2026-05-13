@@ -227,8 +227,10 @@ function ta_parse_unresolved_line(string $line): array
         $line     = trim(substr($stripped, 10));
     }
 
-    // Extract quoted raw text
-    if (preg_match('/"([^"]+)"/', $line, $m)) {
+    // Extract quoted raw text. Greedy ".+" so embedded quotes
+    // (e.g. 1/2" inch marker) survive — non-greedy [^"]+ would
+    // truncate at the first inner quote.
+    if (preg_match('/"(.+)"/', $line, $m)) {
         $raw = $m[1];
     }
 
@@ -283,7 +285,12 @@ function ta_mark_line_resolved(string $context, int $lineIndex): string
     $modified = false;
 
     foreach ($lines as &$line) {
-        $isUnresolvedForm = (bool) preg_match('/^\s*-\s*"[^"]+"\s*\(/', $line);
+        // Greedy ".+" + "[" alternative — must stay aligned with
+        // triage_parse_context() so the array index from the foreach
+        // in the UI matches the walk here. Embedded quotes (e.g. 1/2"
+        // for inch) require greedy; the "[" suffix appears on some
+        // resolved-style lines.
+        $isUnresolvedForm = (bool) preg_match('/^\s*-\s*".+"\s*[\(\[]/', $line);
         $isResolvedForm   = (bool) preg_match('/^\s*-\s*\[RESOLVED\]\s*"/', $line);
         if (!$isUnresolvedForm && !$isResolvedForm) {
             continue;
