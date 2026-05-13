@@ -55,7 +55,7 @@
       +   '<input class="manual-line-num" type="number"'
       +     ' name="lines[' + idx + '][qty]"'
       +     ' placeholder="0"'
-      +     ' min="0.0001" step="0.01">'
+      +     ' min="0" step="any">'
       + '</td>'
       + '<td class="ml-cell ml-cell--price">'
       +   '<input class="manual-line-num" type="number"'
