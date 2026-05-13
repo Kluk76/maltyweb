@@ -43,7 +43,11 @@ def _print_header(tab_name: str):
 
 
 def _make_tab_summary() -> dict:
-    return {"fetched": 0, "parsed": 0, "inserted": 0, "duplicates": 0, "failed": 0}
+    # 'updated' counts rows where INSERT ON DUPLICATE KEY UPDATE fired on an
+    # existing sheet_row_index (either content changed → rowcount=2, or content
+    # identical → rowcount=0).  Replaces the former 'duplicates' key which only
+    # covered the INSERT IGNORE skip path.
+    return {"fetched": 0, "parsed": 0, "inserted": 0, "updated": 0, "failed": 0}
 
 
 def _ingest_simple(
@@ -75,13 +79,13 @@ def _ingest_simple(
     print(f"  parsed      {len(rows):>5} rows → {table}")
 
     if apply_writes and rows:
-        ins, dups, fk_fail = insert_with_failure_log(conn, table, rows, source_tab=name, run_id=run_id)
+        ins, upd, fk_fail = insert_with_failure_log(conn, table, rows, source_tab=name, run_id=run_id)
         auto_resolve_failures(conn, table)
         conn.commit()
         tab_sum["inserted"] = ins
-        tab_sum["duplicates"] = dups
+        tab_sum["updated"] = upd
         tab_sum["failed"] = fk_fail
-        print(f"  inserted    {ins:>5} → {table} (skipped {dups} duplicates, {fk_fail} FK failures logged)")
+        print(f"  inserted    {ins:>5} → {table} (updated {upd}, {fk_fail} FK failures logged)")
         return fk_fail, tab_sum
     elif apply_writes:
         print(f"  inserted    {0:>5} (no rows)")
@@ -141,15 +145,15 @@ def _ingest_brewing(
         for table in _BREWING_TABLES:
             rows = parsed[table]
             if rows:
-                ins, dups, fk_fail = insert_with_failure_log(
+                ins, upd, fk_fail = insert_with_failure_log(
                     conn, table, rows, source_tab="brewing", run_id=run_id
                 )
                 auto_resolve_failures(conn, table)
                 total_fk_failures += fk_fail
                 tab_sum["inserted"] += ins
-                tab_sum["duplicates"] += dups
+                tab_sum["updated"] += upd
                 tab_sum["failed"] += fk_fail
-                print(f"  inserted    {ins:>5} → {table} (skipped {dups} duplicates, {fk_fail} FK failures logged)")
+                print(f"  inserted    {ins:>5} → {table} (updated {upd}, {fk_fail} FK failures logged)")
         conn.commit()
     else:
         total = sum(len(parsed[t]) for t in _BREWING_TABLES)
@@ -193,15 +197,15 @@ def _ingest_packaging(
     total_fk_failures = 0
 
     # Insert parents first
-    ins, dups, fk_fail = insert_with_failure_log(
+    ins, upd, fk_fail = insert_with_failure_log(
         conn, "bd_packaging", parents, source_tab="packaging", run_id=run_id
     )
     auto_resolve_failures(conn, "bd_packaging")
     total_fk_failures += fk_fail
     tab_sum["inserted"] += ins
-    tab_sum["duplicates"] += dups
+    tab_sum["updated"] += upd
     tab_sum["failed"] += fk_fail
-    print(f"  inserted    {ins:>5} → bd_packaging (skipped {dups} duplicates, {fk_fail} FK failures logged)")
+    print(f"  inserted    {ins:>5} → bd_packaging (updated {upd}, {fk_fail} FK failures logged)")
     conn.commit()
 
     # Resolve packaging_id for each parent_hash (whether newly inserted or pre-existing)
@@ -231,7 +235,7 @@ def _ingest_packaging(
     if reading_rows:
         rins = insert_ignore(conn, "bd_packaging_readings", reading_rows)
         tab_sum["inserted"] += rins
-        tab_sum["duplicates"] += len(reading_rows) - rins
+        tab_sum["updated"] += len(reading_rows) - rins
         print(f"  inserted    {rins:>5} → bd_packaging_readings (skipped {len(reading_rows) - rins} duplicates)")
         conn.commit()
 

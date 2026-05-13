@@ -242,44 +242,49 @@ def main() -> int:
             _emit({"status": "dry_run", "would_insert": row_dict, "target_table": target_table, "failure_id": args.failure_id})
             return 0
 
-        # ── 6. Apply: INSERT IGNORE ───────────────────────────────────────────
+        # ── 6. Apply: INSERT ... ON DUPLICATE KEY UPDATE (mirrors lib_db.py) ──
         cols = list(row_dict.keys())
         placeholders = ", ".join(["%s"] * len(cols))
         col_list = ", ".join(f"`{c}`" for c in cols)
-        insert_sql = f"INSERT IGNORE INTO `{target_table}` ({col_list}) VALUES ({placeholders})"
+        _excluded = frozenset({"imported_at", "updated_at", "sheet_row_index"})
+        update_cols = [c for c in cols if c not in _excluded]
+        update_set = (
+            ",\n            ".join(f"`{c}` = VALUES(`{c}`)" for c in update_cols)
+            if update_cols else "sheet_row_index = sheet_row_index"
+        )
+        insert_sql = (
+            f"INSERT INTO `{target_table}` ({col_list}) VALUES ({placeholders})\n"
+            f"ON DUPLICATE KEY UPDATE\n"
+            f"            {update_set}"
+        )
 
         try:
             with conn.cursor() as cur:
                 cur.execute(insert_sql, [row_dict[c] for c in cols])
                 affected = cur.rowcount
-
-            if affected > 0:
-                # Inserted successfully
-                with conn.cursor() as cur:
-                    cur.execute(
-                        "UPDATE ingest_failures "
-                        "SET resolved_at = NOW(6), resolution_note = %s "
-                        "WHERE id = %s",
-                        ("auto: retried successfully", args.failure_id),
-                    )
-                conn.commit()
-                _emit({"status": "ok", "outcome": "inserted", "failure_id": args.failure_id,
-                       "target_table": target_table})
-                return 0
+            # MySQL rowcount: 1=inserted, 2=updated (content changed), 0=unchanged
+            if affected == 1:
+                outcome = "inserted"
+                resolution = "auto: retried successfully"
+            elif affected == 2:
+                outcome = "updated"
+                resolution = "auto: retried — row updated in place via sri"
             else:
-                # INSERT IGNORE: row already in target (duplicate row_hash)
-                with conn.cursor() as cur:
-                    cur.execute(
-                        "UPDATE ingest_failures "
-                        "SET resolved_at = NOW(6), "
-                        "    resolution_note = %s "
-                        "WHERE id = %s",
-                        ("auto: row already in target table (duplicate row_hash)", args.failure_id),
-                    )
-                conn.commit()
-                _emit({"status": "ok", "outcome": "duplicate", "failure_id": args.failure_id,
-                       "target_table": target_table})
-                return 0
+                # affected == 0: sri exists, content identical — still resolves.
+                outcome = "unchanged"
+                resolution = "auto: row already in target table (content identical)"
+
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE ingest_failures "
+                    "SET resolved_at = NOW(6), resolution_note = %s "
+                    "WHERE id = %s",
+                    (resolution, args.failure_id),
+                )
+            conn.commit()
+            _emit({"status": "ok", "outcome": outcome, "failure_id": args.failure_id,
+                   "target_table": target_table})
+            return 0
 
         except (pymysql.err.DataError, pymysql.err.IntegrityError) as e:
             code = str(e.args[0])

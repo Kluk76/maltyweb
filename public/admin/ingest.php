@@ -143,7 +143,10 @@ function ia_summary_table(?string $jsonStr): string
     $data = json_decode($jsonStr, true);
     if (!is_array($data)) return '<span class="ia-muted">—</span>';
 
-    $cols = ['fetched','parsed','inserted','duplicates','failed'];
+    // 'updated' replaced 'duplicates' after migration 046b (UPSERT pattern).
+    // Legacy run rows in summary_json may still carry 'duplicates' — fall back
+    // gracefully so old run history remains readable.
+    $cols = ['fetched','parsed','inserted','updated','failed'];
     $out  = '<table class="ia-summary-table">';
     $out .= '<thead><tr><th>tab</th>';
     foreach ($cols as $c) $out .= '<th>' . htmlspecialchars($c) . '</th>';
@@ -151,7 +154,12 @@ function ia_summary_table(?string $jsonStr): string
     foreach ($data as $tab => $counts) {
         $out .= '<tr><td class="ia-summary-tab">' . htmlspecialchars($tab) . '</td>';
         foreach ($cols as $c) {
-            $v   = (int)($counts[$c] ?? 0);
+            // Backward-compat: if 'updated' is absent, try 'duplicates' (pre-046b runs).
+            if ($c === 'updated' && !array_key_exists('updated', $counts) && array_key_exists('duplicates', $counts)) {
+                $v = (int)$counts['duplicates'];
+            } else {
+                $v = (int)($counts[$c] ?? 0);
+            }
             $cls = ($c === 'failed' && $v > 0) ? ' class="ia-cell--bad"' : '';
             $out .= "<td{$cls}>" . $v . '</td>';
         }

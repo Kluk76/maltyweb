@@ -1,7 +1,11 @@
 """
-lib_db — PyMySQL connection helper. INSERT IGNORE pattern for idempotence.
-Also provides insert_with_failure_log for FK-aware insertion into transactional tabs,
+lib_db — PyMySQL connection helper.
+Provides insert_with_failure_log for FK-aware upsert into transactional tabs,
 and run-level tracking helpers (open_ingest_run / close_ingest_run).
+
+Since migration 046b, bd_* tables have UNIQUE KEY uq_sri (sheet_row_index).
+insert_with_failure_log uses INSERT ... ON DUPLICATE KEY UPDATE so in-place BSF
+cell corrections update the existing row rather than creating a phantom duplicate.
 """
 from __future__ import annotations
 
@@ -55,18 +59,34 @@ def insert_with_failure_log(
     run_id: int | None = None,
 ) -> tuple[int, int, int]:
     """
-    INSERT each row individually, with explicit handling of:
-      - 1062 (Duplicate entry on row_hash UNIQUE) → silent skip (expected idempotency)
+    Upsert each row individually using INSERT ... ON DUPLICATE KEY UPDATE,
+    keyed on the UNIQUE KEY uq_sri (sheet_row_index) added in migration 046b.
+
+    When an operator corrects a BSF cell, sheet_row_index stays the same but
+    row_hash changes.  The UPSERT detects the sri collision and updates all
+    mutable columns in place, so the old (wrong-value) row is overwritten
+    rather than left as a phantom duplicate.
+
+    imported_at is preserved on duplicate-update (records first-ever-import
+    timestamp).  updated_at auto-advances via ON UPDATE CURRENT_TIMESTAMP.
+
+    Outcome accounting:
+      inserted  — brand-new row (rowcount == 1 from pure INSERT path)
+      updated   — existing row replaced in place (rowcount == 2, MySQL convention
+                  for ON DUPLICATE KEY UPDATE that actually changed data)
+      unchanged — sri already present, content identical (rowcount == 0,
+                  MySQL skips the update when no column value changed)
+      These map to the returned tuple: (inserted, updated_or_unchanged, fk_failures).
+      The caller's "duplicates" counter now reflects updated+unchanged rows.
+
+    Error handling:
       - 1216 / 1452 (FK constraint violation) → log to ingest_failures
       - 1264 / 1406 (DataError — value out of range / data too long) → log to ingest_failures
       - other IntegrityError / DataError → log to ingest_failures (do NOT re-raise)
+      Each caught exception writes a row to ingest_failures and continues; the loop
+      never aborts due to a single row error.
 
-    Each caught exception writes a row to ingest_failures and continues; the loop
-    never aborts due to a single row error. If writing to ingest_failures itself
-    fails (e.g. DB connection lost mid-run), the error is printed to stderr and
-    we continue — the cron must always terminate.
-
-    Returns (inserted, duplicates_skipped, fk_failures).
+    Returns (inserted, upserted_or_unchanged, fk_failures).
     """
     if not rows:
         return (0, 0, 0)
@@ -74,10 +94,30 @@ def insert_with_failure_log(
     cols = list(rows[0].keys())
     placeholders = ", ".join(["%s"] * len(cols))
     col_list = ", ".join(f"`{c}`" for c in cols)
-    insert_sql = f"INSERT INTO `{table}` ({col_list}) VALUES ({placeholders})"
 
-    # ON DUPLICATE KEY: re-runs touching the same (target_table, row_hash) pair
-    # update last_seen_at instead of inserting a duplicate row.
+    # Build SET clause for ON DUPLICATE KEY UPDATE.
+    # - imported_at is deliberately excluded: it must not change on update
+    #   (first-ever-import timestamp is meaningful for audit).
+    # - updated_at is excluded: it self-updates via ON UPDATE CURRENT_TIMESTAMP.
+    # - sheet_row_index is excluded: it is the key being matched.
+    _excluded = frozenset({"imported_at", "updated_at", "sheet_row_index"})
+    update_cols = [c for c in cols if c not in _excluded]
+    if not update_cols:
+        # Degenerate case: all columns excluded.  Fall back to a no-op update.
+        update_set = "sheet_row_index = sheet_row_index"
+    else:
+        update_set = ",\n            ".join(
+            f"`{c}` = VALUES(`{c}`)" for c in update_cols
+        )
+
+    insert_sql = (
+        f"INSERT INTO `{table}` ({col_list}) VALUES ({placeholders})\n"
+        f"ON DUPLICATE KEY UPDATE\n"
+        f"            {update_set}"
+    )
+
+    # Failure logging: ON DUPLICATE KEY UPDATE on (target_table, row_hash) keeps
+    # the existing failure row fresh rather than re-inserting.
     failure_sql = """
         INSERT INTO ingest_failures
             (run_id, source_tab, target_table, sheet_row_index, row_hash,
@@ -89,27 +129,32 @@ def insert_with_failure_log(
             reason_text   = VALUES(reason_text)
     """
 
-    inserted = 0
-    duplicates = 0
+    inserted    = 0
+    upserted    = 0   # includes both 'updated' and 'unchanged' (rowcount 2 and 0)
     fk_failures = 0
 
     with conn.cursor() as cur:
         for r in rows:
             try:
                 cur.execute(insert_sql, [r[c] for c in cols])
-                inserted += cur.rowcount
+                rc = cur.rowcount
+                # MySQL rowcount semantics for INSERT ... ON DUPLICATE KEY UPDATE:
+                #   1  → INSERT path (new row)
+                #   2  → UPDATE path (existing row, data changed)
+                #   0  → UPDATE path (existing row, no data changed — identical content)
+                if rc == 1:
+                    inserted += 1
+                else:
+                    upserted += 1
             except (pymysql.IntegrityError, pymysql.err.IntegrityError) as e:
                 code = e.args[0]
-                if code == 1062:
-                    # Duplicate row_hash — expected idempotency, skip silently.
-                    duplicates += 1
-                elif code in (1216, 1452):
-                    # FK violation — log and continue.
+                # 1062 can still fire on secondary UNIQUE keys (e.g. row_hash if
+                # a separate UNIQUE index on row_hash were added in future), or on
+                # FK violations that manifest as integrity errors on some MySQL versions.
+                if code in (1216, 1452):
                     fk_failures += 1
                     _write_failure(cur, failure_sql, run_id, source_tab, table, r, str(code), e)
                 else:
-                    # Other integrity error — log and continue rather than re-raising
-                    # so the cron always completes.
                     fk_failures += 1
                     _write_failure(cur, failure_sql, run_id, source_tab, table, r, str(code), e)
             except (pymysql.DataError, pymysql.err.DataError) as e:
@@ -118,7 +163,7 @@ def insert_with_failure_log(
                 fk_failures += 1
                 _write_failure(cur, failure_sql, run_id, source_tab, table, r, str(code), e)
 
-    return (inserted, duplicates, fk_failures)
+    return (inserted, upserted, fk_failures)
 
 
 def _write_failure(
@@ -152,21 +197,50 @@ def _write_failure(
 
 def auto_resolve_failures(conn, target_table: str) -> int:
     """
-    Marks ingest_failures.resolved_at = NOW() for any unresolved rows whose
-    row_hash now exists in the target table (i.e., a later ingest succeeded
-    where an earlier one failed, e.g. operator added a yeast alias).
-    Returns count of rows marked resolved.
+    Two-pass resolver: marks ingest_failures.resolved_at = NOW() for unresolved
+    failure rows where the target row is now present in the target table.
+
+    Pass 1 — row_hash match (original path):
+      Resolves failures where the exact same row_hash now exists in the target
+      table.  This covers the case where the BSF cell was never changed — the
+      row just needed its FK parent to appear (e.g. a new yeast alias).
+
+    Pass 2 — sheet_row_index match (new path, added for UPSERT pattern):
+      Resolves failures where the same sheet_row_index now has a successful row
+      in the target table, regardless of hash.  This covers the case where an
+      operator corrected a BSF cell (changing the hash), triggering an UPSERT
+      that wrote the corrected row under a new hash.  The old failure row's hash
+      no longer exists, but the sri does — it's resolved.
+
+    Pass 2 only fires for rows not already resolved by Pass 1.
+
+    Resolution notes distinguish the two paths:
+      'auto: row inserted on later run'           (Pass 1)
+      'auto: row updated in target table via sri' (Pass 2)
+
+    Returns total count of rows marked resolved across both passes.
     """
-    sql = f"""
+    pass1_sql = f"""
         UPDATE ingest_failures f
         JOIN `{target_table}` t ON t.row_hash = f.row_hash
-        SET f.resolved_at = CURRENT_TIMESTAMP,
-            f.resolution_note = 'auto: row inserted on later run'
+        SET f.resolved_at      = CURRENT_TIMESTAMP,
+            f.resolution_note  = 'auto: row inserted on later run'
         WHERE f.target_table = %s AND f.resolved_at IS NULL
     """
+    pass2_sql = f"""
+        UPDATE ingest_failures f
+        JOIN `{target_table}` t ON t.sheet_row_index = f.sheet_row_index
+        SET f.resolved_at      = CURRENT_TIMESTAMP,
+            f.resolution_note  = 'auto: row updated in target table via sri'
+        WHERE f.target_table = %s AND f.resolved_at IS NULL
+    """
+    resolved = 0
     with conn.cursor() as cur:
-        cur.execute(sql, (target_table,))
-        return cur.rowcount
+        cur.execute(pass1_sql, (target_table,))
+        resolved += cur.rowcount
+        cur.execute(pass2_sql, (target_table,))
+        resolved += cur.rowcount
+    return resolved
 
 
 # ── Run-level tracking ────────────────────────────────────────────────────────
