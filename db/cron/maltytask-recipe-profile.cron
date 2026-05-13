@@ -1,0 +1,39 @@
+# /etc/cron.d/maltytask-recipe-profile
+#
+# Nightly recipe-profile rebuild: parses BrewingData ingredients then
+# refreshes the aggregated recipe_profile table in MySQL.
+# Step 2 only runs if step 1 succeeds (chained with &&).
+#
+# Source of truth: db/cron/maltytask-recipe-profile.cron in the maltyweb repo.
+# Deployed via bin/deploy.sh --apply (sudo install → /etc/cron.d/).
+#
+# NOTE: CRON IS DISABLED PENDING MANUAL SMOKE TEST.
+# Steps to enable after smoke test passes:
+#   1. ssh maltyweb
+#   2. Uncomment the active line below (remove the leading #)
+#   3. sudo cp /var/www/maltytask/db/cron/maltytask-recipe-profile.cron \
+#             /etc/cron.d/maltytask-recipe-profile
+#   OR redeploy via bin/deploy.sh --apply (which installs all cron/*.cron).
+#
+# Pre-flight checklist before enabling:
+#   - Smoke test passed: python3 scripts/python/parse_bd_ingredients.py --dry-run
+#   - Smoke test passed: python3 scripts/python/refresh_recipe_profile.py --dry-run
+#   - MySQL connection verified: SELECT 1 from pipeline succeeds
+#   - /var/log/maltytask/recipe-profile.log writable by maltytask user
+#
+# Timing: nightly at 03:00 UTC is appropriate — BrewingData rows are
+# entered during the day; overnight rebuild keeps recipe profiles current
+# for the morning review.
+#
+# Note: cron syntax for /etc/cron.d/* requires the user column
+# (m h dom mon dow user command). Times are UTC (VPS timezone is Etc/UTC).
+#
+# Manual edits will be overwritten on next deploy. Edit the source file
+# in the repo, commit, then run bin/deploy.sh --apply.
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# m   h  dom mon dow  user        command
+
+0    3   *   *   *   maltytask   cd /var/www/maltytask && /var/www/maltytask/.venv/bin/python3 scripts/python/parse_bd_ingredients.py --apply && /var/www/maltytask/.venv/bin/python3 scripts/python/refresh_recipe_profile.py --apply >> /var/log/maltytask/recipe-profile.log 2>&1
