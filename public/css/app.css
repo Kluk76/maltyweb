@@ -1757,12 +1757,50 @@ body.home::after {
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 11.5px;
   letter-spacing: 0.04em;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  opacity: 1;
+  transition: opacity .5s ease;
 }
+.home .db-flash.db-flash--fading { opacity: 0; }
 .home .db-flash--ok {
-  border: 1px solid rgba(168, 185, 122, 0.35);
-  background: rgba(168, 185, 122, 0.06);
-  color: var(--ok);
+  border: 1px solid rgba(158, 176, 96, 0.55);
+  background: rgba(158, 176, 96, 0.12);
+  color: var(--hop-deep);
 }
+.home .db-flash--warn {
+  border: 1px solid rgba(200, 150, 0, 0.45);
+  background: rgba(200, 150, 0, 0.10);
+  color: #7a5500;
+}
+.home .db-flash--err {
+  border: 1px solid rgba(197, 100, 74, 0.45);
+  background: rgba(197, 100, 74, 0.10);
+  color: var(--ember);
+}
+.home .db-flash__msg {
+  flex: 1;
+}
+.home .db-flash__dismiss {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  border-radius: 3px;
+  font-size: 15px;
+  line-height: 1;
+  opacity: 0.55;
+  color: inherit;
+  transition: opacity .15s;
+  padding: 0;
+}
+.home .db-flash__dismiss:hover { opacity: 1; }
 .home .db-flash code {
   color: var(--ink-soft);
   font-size: 11px;
@@ -6743,6 +6781,136 @@ body.auth::after {
   opacity: 0.38;
   cursor: not-allowed;
 }
+
+
+/* ============================================================
+   TRIAGE — Bulk upload progress list
+   ============================================================ */
+
+/* Container reuses upload-status box; add bulk-specific overrides */
+.home.triage .upload-status--bulk {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
+  background: rgba(25, 20, 15, 0.60);
+  border: 1px solid var(--hairline-2);
+  overflow: hidden;
+}
+
+/* Header bar */
+.home.triage .bulk-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  border-bottom: 1px solid var(--hairline-2);
+}
+
+.home.triage .bulk-header--busy  { color: var(--ink-soft); }
+.home.triage .bulk-header--done  { color: var(--ok); }
+.home.triage .bulk-header--warn  { color: var(--oak); }
+.home.triage .bulk-header--err   { color: var(--ember); }
+
+.home.triage .bulk-header__text {
+  flex: 1;
+}
+
+/* Per-file list */
+.home.triage .bulk-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.home.triage .bulk-item {
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10.5px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.home.triage .bulk-item:last-child {
+  border-bottom: none;
+}
+
+/* Status-dependent row tints */
+.home.triage .bulk-item--done    { background: rgba(158, 176, 96, 0.03); }
+.home.triage .bulk-item--failed  { background: rgba(197, 102, 74, 0.04); }
+.home.triage .bulk-item--timeout { background: rgba(160, 122, 72, 0.04); }
+
+.home.triage .bulk-item__indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.home.triage .bulk-item__icon {
+  font-size: 12px;
+}
+.home.triage .bulk-item__icon--done { color: var(--ok); }
+.home.triage .bulk-item__icon--err  { color: var(--ember); }
+.home.triage .bulk-item__icon--warn { color: var(--oak); }
+
+.home.triage .bulk-item__name {
+  color: var(--ink-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  font-size: 10px;
+}
+
+.home.triage .bulk-item__label {
+  color: var(--ink-mute);
+  font-size: 10px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.home.triage .bulk-item--done    .bulk-item__label { color: var(--ok); }
+.home.triage .bulk-item--failed  .bulk-item__label { color: var(--ember); }
+.home.triage .bulk-item--timeout .bulk-item__label { color: var(--oak); }
+
+/* "voir dans triage" link per row */
+.home.triage .bulk-item__link {
+  color: var(--hop);
+  text-decoration: none;
+  font-size: 10px;
+}
+.home.triage .bulk-item__link:hover {
+  text-decoration: underline;
+}
+
+/* "Tout voir dans triage" footer button */
+.home.triage .bulk-triage-btn {
+  display: block;
+  text-align: center;
+  padding: 8px 14px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--hop);
+  text-decoration: none;
+  border-top: 1px solid var(--hairline-2);
+  transition: background .15s;
+}
+.home.triage .bulk-triage-btn:hover {
+  background: rgba(158, 176, 96, 0.06);
+  text-decoration: none;
+}
+
 
 /* ─────────────────────────────────────────────────────────────────────────────
    TRIAGE — Stock tab

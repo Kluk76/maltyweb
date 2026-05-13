@@ -98,6 +98,13 @@ if (!csrf_verify($_POST['csrf'] ?? null)) {
     $fail(400, 'Token CSRF invalide.');
 }
 
+// ── Detect upload mode: 'bulk' | 'multipage' | 'single' (legacy default) ─────
+// Clients send mode= explicitly; no-mode clients keep legacy behavior unchanged.
+$upload_mode_raw = trim($_POST['mode'] ?? '');
+$upload_mode     = in_array($upload_mode_raw, ['bulk', 'multipage', 'single'], true)
+                   ? $upload_mode_raw
+                   : 'single'; // backward-compat default
+
 // ── Step 3: File presence — accept single 'file' OR multi 'files[]' ──────────
 $is_multi = isset($_FILES['files']) && is_array($_FILES['files']['name'] ?? null)
             && count(array_filter((array)($_FILES['files']['error'] ?? []), fn($e) => $e !== UPLOAD_ERR_NO_FILE)) > 0;
@@ -181,6 +188,204 @@ $validate_and_convert = static function (
 };
 
 $cleanup_tmp = null; // extra temp file to delete at end (single-file path)
+
+// ── Bulk mode: each file becomes its own ingest job ───────────────────────────
+// Triggered when client sends mode=bulk (desktop drag-drop / browse / paste with N files).
+// PDFs are allowed; images stay as separate invoices (no stitching).
+// One bad file fails just that entry, not the whole request.
+// Guard: max 20 files per bulk upload.
+if ($upload_mode === 'bulk') {
+    // Re-parse files list (same logic as is_multi pre-check)
+    $raw_names  = (array) $_FILES['files']['name'];
+    $raw_tmps   = (array) $_FILES['files']['tmp_name'];
+    $raw_errors = (array) $_FILES['files']['error'];
+
+    $inputs = [];
+    foreach ($raw_names as $i => $rname) {
+        $rerr = (int) ($raw_errors[$i] ?? UPLOAD_ERR_NO_FILE);
+        if ($rerr === UPLOAD_ERR_NO_FILE) continue;
+        $inputs[] = ['name' => $rname, 'tmp' => (string)$raw_tmps[$i], 'error' => $rerr];
+    }
+
+    if (count($inputs) === 0) {
+        $fail(400, 'Aucun fichier reçu.');
+    }
+
+    // Max 20 files guard
+    if (count($inputs) > 20) {
+        $fail(400, 'Maximum 20 fichiers par envoi groupé. Veuillez réduire la sélection.');
+    }
+
+    // Single-file downgrade: treat as regular single upload but wrap in uploads[] response
+    if (count($inputs) === 1) {
+        // Fall through to the single-file path below, then re-wrap response at step 12.
+        // Set a flag so step 12 knows to emit uploads[] shape.
+        $bulk_single_downgrade = true;
+        $_FILES['file'] = [
+            'name'     => $inputs[0]['name'],
+            'tmp_name' => $inputs[0]['tmp'],
+            'error'    => $inputs[0]['error'],
+            'size'     => is_file($inputs[0]['tmp']) ? (int) filesize($inputs[0]['tmp']) : 0,
+            'type'     => '',
+        ];
+        $upload_mode = 'single';
+        $is_single   = true;
+        $is_multi    = false;
+        // Continue below into the single path; response wrapping handled at step 12.
+    } else {
+        // ── True bulk: process each file independently ──────────────────────
+        $upload_results = [];
+
+        // Determine source value
+        $source_raw = trim($_POST['source'] ?? 'maltyweb-web');
+        $source     = in_array($source_raw, ['maltyweb-web', 'maltyweb-mobile'], true)
+                      ? $source_raw : 'maltyweb-web';
+
+        $packed_ip = null;
+        if ($ip !== null && $ip !== '') {
+            $packed = @inet_pton($ip);
+            if ($packed !== false) $packed_ip = $packed;
+        }
+
+        if (!is_dir(UPLOAD_INBOX_DIR)) {
+            if (!@mkdir(UPLOAD_INBOX_DIR, 0755, true)) {
+                $fail(500, 'Impossible de créer le répertoire inbox : ' . UPLOAD_INBOX_DIR);
+            }
+        }
+
+        foreach ($inputs as $inp) {
+            $entry = ['file_name' => $inp['name']];
+
+            // Validate + convert (HEIC → JPEG; PDF stays as-is)
+            $result = $validate_and_convert($inp['tmp'], $inp['error'], $inp['name']);
+            if (!$result['ok']) {
+                $entry['status'] = 'failed';
+                $entry['error']  = $result['error'];
+                $upload_results[] = $entry;
+                continue;
+            }
+
+            // Image files: if not a PDF, convert single image to PDF via img2pdf
+            $img_cleanup = null;
+            $file_tmp    = $result['tmp_path'];
+            $file_mime   = $result['mime'];
+            $file_ext    = $result['ext'];
+            $file_name   = $result['orig_name'];
+            $file_size   = $result['byte_size'];
+
+            if ($file_ext !== 'pdf') {
+                // Single-image-to-PDF (same path as the single-file upload would take
+                // after img2pdf; image stays as-image here — ingest pipeline handles it).
+                // Actually: we pass image files straight to inbox; ingest-one-local.sh
+                // wraps single images just as it would from a single upload.
+                // No action needed — fall through with original image file.
+            }
+
+            // Generate storage filename
+            $storage_filename = uv_make_storage_filename($file_name, $file_ext);
+            $inbox_path_file  = UPLOAD_INBOX_DIR . '/' . $storage_filename;
+
+            // Path pattern guard
+            if (!preg_match(
+                '#^/var/www/maltytask/storage/documents/inbox/\d{4}-\d{2}-\d{2}_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z]{2,5}$#',
+                $inbox_path_file
+            )) {
+                if ($result['cleanup']) @unlink($result['cleanup']);
+                $entry['status'] = 'failed';
+                $entry['error']  = 'Chemin inbox invalide — ingest annulé par sécurité.';
+                $upload_results[] = $entry;
+                continue;
+            }
+
+            // Write file to inbox
+            $moved = false;
+            if ($result['cleanup'] !== null && $file_tmp === $result['cleanup']) {
+                if (@copy($file_tmp, $inbox_path_file)) {
+                    @unlink($result['cleanup']);
+                    $moved = true;
+                }
+            } else {
+                if (move_uploaded_file($file_tmp, $inbox_path_file)) {
+                    $moved = true;
+                } elseif ($result['cleanup'] !== null) {
+                    if (@copy($file_tmp, $inbox_path_file)) {
+                        @unlink($result['cleanup']);
+                        $moved = true;
+                    }
+                }
+            }
+
+            if (!$moved) {
+                if ($result['cleanup']) @unlink($result['cleanup']);
+                $entry['status'] = 'failed';
+                $entry['error']  = 'Impossible d\'écrire le fichier dans le répertoire inbox.';
+                $upload_results[] = $entry;
+                continue;
+            }
+
+            // Extract UUID from storage filename
+            $file_id = preg_replace('/^\d{4}-\d{2}-\d{2}_/', '', pathinfo($storage_filename, PATHINFO_FILENAME)) ?? '';
+
+            // INSERT doc_uploads
+            $bulk_upload_id = null;
+            try {
+                $ins = $pdo->prepare(
+                    "INSERT INTO doc_uploads
+                        (user_id, source, original_filename, storage_filename,
+                         mime_type, byte_size, pipeline_status, drive_file_id, client_ip, client_ua)
+                     VALUES (?, ?, ?, ?, ?, ?, 'uploaded', ?, ?, ?)"
+                );
+                $ins->execute([
+                    $userId, $source, $file_name, $storage_filename,
+                    $file_mime, $file_size, $file_id !== '' ? $file_id : null,
+                    $packed_ip, $ua !== '' ? $ua : null,
+                ]);
+                $bulk_upload_id = (int) $pdo->lastInsertId();
+            } catch (Throwable $e) {
+                @unlink($inbox_path_file);
+                $entry['status']    = 'failed';
+                $entry['error']     = 'Erreur base de données : ' . $e->getMessage();
+                $upload_results[]   = $entry;
+                continue;
+            }
+
+            // Fire background ingest
+            $cmd_bulk = sprintf(UPLOAD_INGEST_CMD, escapeshellarg($inbox_path_file));
+            exec($cmd_bulk);
+
+            // UPDATE → triggered
+            try {
+                $upd = $pdo->prepare(
+                    "UPDATE doc_uploads
+                        SET pipeline_status     = 'triggered',
+                            pipeline_started_at = NOW()
+                      WHERE id = ?"
+                );
+                $upd->execute([$bulk_upload_id]);
+            } catch (Throwable $e) {
+                error_log("upload-document.php bulk: failed to update doc_uploads id={$bulk_upload_id}: " . $e->getMessage());
+            }
+
+            $entry['status']    = 'queued';
+            $entry['upload_id'] = $bulk_upload_id;
+            $entry['file_id']   = $file_id;
+            $entry['status_url'] = '/api/upload-status.php?upload_id=' . $bulk_upload_id;
+            $upload_results[] = $entry;
+        }
+
+        // Respond with bulk result array
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode([
+            'ok'      => true,
+            'mode'    => 'bulk',
+            'uploads' => $upload_results,
+        ]);
+        exit;
+    }
+}
+
+// Note: if bulk downgraded to single above, $bulk_single_downgrade=true is set;
+// step 12 uses it to wrap the response in uploads[] shape.
 
 if ($is_multi) {
     // ── Multi-file path ────────────────────────────────────────────────────
@@ -440,12 +645,27 @@ $status_url = '/api/upload-status.php?upload_id=' . $upload_id;
 
 if ($wants_json) {
     header('Content-Type: application/json; charset=utf-8');
-    echo json_encode([
-        'ok'         => true,
-        'upload_id'  => $upload_id,
-        'file_id'    => $file_id,    // UUID — canonical identifier for doc_files lookup
-        'status_url' => $status_url,
-    ]);
+    // Bulk single-downgrade: wrap in uploads[] array for stable response shape
+    if (!empty($bulk_single_downgrade)) {
+        echo json_encode([
+            'ok'      => true,
+            'mode'    => 'bulk',
+            'uploads' => [[
+                'file_name'  => $orig_name,
+                'upload_id'  => $upload_id,
+                'file_id'    => $file_id,
+                'status'     => 'queued',
+                'status_url' => $status_url,
+            ]],
+        ]);
+    } else {
+        echo json_encode([
+            'ok'         => true,
+            'upload_id'  => $upload_id,
+            'file_id'    => $file_id,    // UUID — canonical identifier for doc_files lookup
+            'status_url' => $status_url,
+        ]);
+    }
 } else {
     // Plain form post — redirect to status page
     header('Location: ' . $status_url, true, 303);

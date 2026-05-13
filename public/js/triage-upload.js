@@ -2,11 +2,13 @@
  * triage-upload.js — Upload UI for MaltyTask triage page
  *
  * Handles:
- *  - Desktop drag-drop + browse single/multi file
- *  - Mobile multi-shot camera capture panel
+ *  - Desktop drag-drop + browse single/multi file (bulk mode: N files = N separate ingest jobs)
+ *  - Mobile multi-shot camera capture panel (stitch-as-one-document, unchanged)
  *  - FormData POST to /api/upload-document.php
  *  - Polling /api/upload-status.php with backoff
- *  - State machine: idle → capturing → uploading → polling → done/timeout/error
+ *  - State machine:
+ *      Single/multishot: idle → capturing → uploading → polling → done/timeout/error
+ *      Bulk:             idle → uploading → bulk-progress (per-file polling)
  *
  * Requires: <meta name="csrf-token" content="..."> in the page head.
  * No external dependencies.
@@ -22,8 +24,8 @@
   const UPLOAD_ENDPOINT    = '/api/upload-document.php';
   const STATUS_ENDPOINT    = '/api/upload-status.php';
 
-  // ─── State ──────────────────────────────────────────────────────────────────
-  /** @type {'idle'|'capturing'|'uploading'|'polling'|'done'|'timeout'|'error'} */
+  // ─── State (single/multishot path) ──────────────────────────────────────────
+  /** @type {'idle'|'capturing'|'uploading'|'polling'|'done'|'timeout'|'error'|'bulk-progress'} */
   let state       = 'idle';
   let pollCount   = 0;
   let pollTimer   = null;
@@ -31,6 +33,15 @@
   let capturedFiles = []; // File[] collected in multi-shot mode
   let startedAt   = 0;    // Date.now() when upload POST fired
   let elapsedTimer = null;
+
+  // ─── Bulk upload state ───────────────────────────────────────────────────────
+  /**
+   * Per-file entry:
+   *   { fileName, uploadId, statusUrl, status: 'uploading'|'queued'|'ingest'|'done'|'failed'|'timeout',
+   *     pollCount, pollTimer, error, redirectUrl }
+   * @type {Array<Object>}
+   */
+  let bulkItems = [];
 
   // ─── Element refs ─────────────────────────────────────────────────────────
   const zone       = document.getElementById('upload-zone');
@@ -74,7 +85,7 @@
     zone.classList.remove('upload-zone--dragover');
     if (state !== 'idle') return;
     const files = Array.from(e.dataTransfer.files);
-    if (files.length > 0) handleFilesSelected(files);
+    if (files.length > 0) handleFilesSelected(files, 'desktop');
   });
 
   // Paste support (e.g. Ctrl+V a screenshot)
@@ -87,7 +98,7 @@
     const imageItems = Array.from(items).filter(i => i.type.startsWith('image/'));
     if (imageItems.length === 0) return;
     const files = imageItems.map(i => i.getAsFile()).filter(Boolean);
-    if (files.length > 0) handleFilesSelected(files);
+    if (files.length > 0) handleFilesSelected(files, 'desktop');
   });
 
   // ─── Browse button ──────────────────────────────────────────────────────────
@@ -100,7 +111,7 @@
 
     browseInput.addEventListener('change', () => {
       if (!browseInput.files || browseInput.files.length === 0) return;
-      handleFilesSelected(Array.from(browseInput.files));
+      handleFilesSelected(Array.from(browseInput.files), 'desktop');
       browseInput.value = ''; // reset so same file can be re-selected
     });
   }
@@ -161,7 +172,7 @@
     });
   }
 
-  // Submit multi-shot
+  // Submit multi-shot — source='multishot' keeps stitch-as-one behavior
   if (submitBtn) {
     submitBtn.addEventListener('click', () => {
       if (capturedFiles.length === 0) return;
@@ -169,7 +180,7 @@
       const files = capturedFiles.slice();
       capturedFiles = [];
       renderThumbs();
-      handleFilesSelected(files);
+      handleFilesSelected(files, 'multishot');
     });
   }
 
@@ -229,9 +240,31 @@
   }
 
   // ─── File → upload ──────────────────────────────────────────────────────────
-  /** Called with 1+ File objects. Builds FormData, POSTs, starts polling. */
-  function handleFilesSelected(files) {
+  /**
+   * Called with 1+ File objects.
+   * @param {File[]} files
+   * @param {'desktop'|'multishot'} source
+   */
+  function handleFilesSelected(files, source) {
     if (files.length === 0) return;
+
+    if (source === 'multishot') {
+      // Mobile multi-shot: always stitch-as-one (existing behavior)
+      handleSingleOrMultipage(files, 'multipage');
+    } else {
+      // Desktop (drag-drop / browse / paste):
+      // - 1 file  → mode=single  → existing single path
+      // - N files → mode=bulk    → N separate ingest jobs
+      if (files.length === 1) {
+        handleSingleOrMultipage(files, 'single');
+      } else {
+        handleBulk(files);
+      }
+    }
+  }
+
+  // ─── Single / multipage upload (original path) ───────────────────────────────
+  function handleSingleOrMultipage(files, mode) {
     setState('uploading');
     startedAt = Date.now();
     stopElapsedTimer();
@@ -239,12 +272,13 @@
     const fd = new FormData();
     fd.append('csrf', getCsrf());
     fd.append('source', 'maltyweb-web');
+    fd.append('mode', mode);
 
-    if (files.length === 1) {
+    if (mode === 'single') {
       // Single-file path — field name must be 'file' for backward compat
       fd.append('file', files[0], files[0].name);
     } else {
-      // Multi-file path — field name 'files[]'
+      // multipage — field name 'files[]', server stitches via img2pdf
       files.forEach((f, i) => {
         fd.append('files[]', f, f.name || `page-${i + 1}.jpg`);
       });
@@ -277,7 +311,145 @@
       });
   }
 
-  // ─── Polling ────────────────────────────────────────────────────────────────
+  // ─── Bulk upload: N files = N separate ingest jobs ──────────────────────────
+  function handleBulk(files) {
+    setState('uploading');
+    startedAt = Date.now();
+
+    const fd = new FormData();
+    fd.append('csrf', getCsrf());
+    fd.append('source', 'maltyweb-web');
+    fd.append('mode', 'bulk');
+    files.forEach((f, i) => {
+      fd.append('files[]', f, f.name || `document-${i + 1}.pdf`);
+    });
+
+    uploadCtrl = new AbortController();
+
+    fetch(UPLOAD_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Accept': 'application/json' },
+      body: fd,
+      signal: uploadCtrl.signal,
+    })
+      .then(res => res.json().then(data => ({ ok: res.ok, status: res.status, data })))
+      .then(({ ok, status, data }) => {
+        if (!ok) {
+          const msg = data.error || `Erreur HTTP ${status}`;
+          showError(msg);
+          return;
+        }
+        if (!data.uploads || !Array.isArray(data.uploads)) {
+          showError('Réponse serveur inattendue.');
+          return;
+        }
+
+        // Build per-file tracking state
+        bulkItems = data.uploads.map(u => ({
+          fileName:   u.file_name || '(inconnu)',
+          uploadId:   u.upload_id || null,
+          statusUrl:  u.status_url || null,
+          status:     u.status === 'queued' ? 'ingest' : 'failed',
+          pollCount:  0,
+          pollTimer:  null,
+          error:      u.error || null,
+          redirectUrl: null,
+        }));
+
+        setState('bulk-progress');
+
+        // Start polling for each queued item
+        bulkItems.forEach((item, idx) => {
+          if (item.status === 'ingest' && item.statusUrl) {
+            scheduleBulkPoll(idx);
+          }
+        });
+      })
+      .catch(err => {
+        if (err && err.name === 'AbortError') return;
+        showError('Connexion interrompue. Réessayer.');
+      });
+  }
+
+  // ─── Bulk polling ───────────────────────────────────────────────────────────
+  function scheduleBulkPoll(idx) {
+    const item = bulkItems[idx];
+    if (!item) return;
+    const interval = item.pollCount < 10 ? POLL_INTERVAL_FAST : POLL_INTERVAL_SLOW;
+    item.pollTimer = setTimeout(() => doBulkPoll(idx), interval);
+  }
+
+  function doBulkPoll(idx) {
+    const item = bulkItems[idx];
+    if (!item || state !== 'bulk-progress') return;
+    if (item.status !== 'ingest') return;
+
+    item.pollCount++;
+    if (item.pollCount > POLL_MAX) {
+      item.status = 'timeout';
+      renderStatus();
+      checkBulkAllDone();
+      return;
+    }
+
+    const url = item.statusUrl;
+    fetch(url, { headers: { 'Accept': 'application/json' } })
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then(data => {
+        if (state !== 'bulk-progress') return;
+        if (item.status !== 'ingest') return;
+
+        const ps = data.pipeline_status;
+
+        if (ps === 'processed') {
+          item.status = 'done';
+          item.redirectUrl = data.redirect_url || null;
+          renderStatus();
+          checkBulkAllDone();
+          return;
+        }
+
+        if (ps === 'failed') {
+          item.status = 'failed';
+          item.error  = data.error_text || 'Le traitement a échoué.';
+          renderStatus();
+          checkBulkAllDone();
+          return;
+        }
+
+        if (ps === 'timeout') {
+          item.status = 'timeout';
+          renderStatus();
+          checkBulkAllDone();
+          return;
+        }
+
+        // Still in-progress — re-render elapsed and keep polling
+        renderStatus();
+        scheduleBulkPoll(idx);
+      })
+      .catch(() => {
+        if (state !== 'bulk-progress') return;
+        if (item.status !== 'ingest') return;
+        // Network blip — keep polling
+        scheduleBulkPoll(idx);
+      });
+  }
+
+  function checkBulkAllDone() {
+    const allSettled = bulkItems.every(
+      item => item.status === 'done' || item.status === 'failed' || item.status === 'timeout'
+    );
+    if (allSettled) {
+      // Leave in bulk-progress state so list stays visible; retry button resets to idle.
+      renderStatus();
+    }
+  }
+
+  // ─── Polling (single/multipage path) ────────────────────────────────────────
   function schedulePoll(uploadId) {
     const interval = pollCount < 10 ? POLL_INTERVAL_FAST : POLL_INTERVAL_SLOW;
     pollTimer = setTimeout(() => doPoll(uploadId), interval);
@@ -356,6 +528,10 @@
     stopElapsedTimer();
     if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
     if (uploadCtrl) { uploadCtrl.abort(); uploadCtrl = null; }
+    // Cancel any in-flight bulk poll timers
+    bulkItems.forEach(item => {
+      if (item.pollTimer) { clearTimeout(item.pollTimer); item.pollTimer = null; }
+    });
   });
 
   // ─── Error helpers ──────────────────────────────────────────────────────────
@@ -363,6 +539,38 @@
     stopElapsedTimer();
     state = 'error';
     renderStatus(msg);
+  }
+
+  // ─── Bulk progress list helpers ─────────────────────────────────────────────
+  function bulkStatusIcon(item) {
+    switch (item.status) {
+      case 'uploading': return '<span class="upload-spin" aria-hidden="true"></span>';
+      case 'ingest':    return '<span class="upload-spin" aria-hidden="true"></span>';
+      case 'done':      return '<span class="bulk-item__icon bulk-item__icon--done" aria-hidden="true">✓</span>';
+      case 'failed':    return '<span class="bulk-item__icon bulk-item__icon--err" aria-hidden="true">✕</span>';
+      case 'timeout':   return '<span class="bulk-item__icon bulk-item__icon--warn" aria-hidden="true">⚠</span>';
+      default:          return '';
+    }
+  }
+
+  function bulkStatusLabel(item) {
+    switch (item.status) {
+      case 'uploading': return 'envoi…';
+      case 'ingest':    return 'traitement…';
+      case 'done':
+        if (item.redirectUrl) {
+          const safe = item.redirectUrl.replace(/"/g, '&quot;');
+          return `<a class="bulk-item__link" href="${safe}">voir dans triage →</a>`;
+        }
+        return 'reçu';
+      case 'failed':    return escHtml(item.error || 'échec');
+      case 'timeout':   return 'délai dépassé';
+      default:          return item.status;
+    }
+  }
+
+  function escHtml(str) {
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 
   // ─── Render status box ───────────────────────────────────────────────────────
@@ -430,6 +638,63 @@
         const retryBtn = statusBox.querySelector('.upload-status__retry');
         if (retryBtn) {
           retryBtn.addEventListener('click', () => {
+            setState('idle');
+          });
+        }
+        break;
+      }
+      case 'bulk-progress': {
+        statusBox.hidden = false;
+        statusBox.className += ' upload-status--bulk';
+
+        const allSettled = bulkItems.every(
+          item => item.status === 'done' || item.status === 'failed' || item.status === 'timeout'
+        );
+        const doneCount    = bulkItems.filter(i => i.status === 'done').length;
+        const failedCount  = bulkItems.filter(i => i.status === 'failed' || i.status === 'timeout').length;
+
+        let headerClass = allSettled
+          ? (failedCount === 0 ? 'bulk-header--done' : (doneCount === 0 ? 'bulk-header--err' : 'bulk-header--warn'))
+          : 'bulk-header--busy';
+
+        let headerText = allSettled
+          ? `${doneCount} reçu${doneCount !== 1 ? 's' : ''}`
+            + (failedCount > 0 ? `, ${failedCount} échec${failedCount !== 1 ? 's' : ''}` : '')
+          : `${doneCount}/${bulkItems.length} traités…`;
+
+        let rows = bulkItems.map(item => {
+          const iconHtml  = bulkStatusIcon(item);
+          const labelHtml = bulkStatusLabel(item);
+          const rowClass  = `bulk-item bulk-item--${item.status}`;
+          const safeName  = escHtml(item.fileName);
+          return `<li class="${rowClass}">
+            <span class="bulk-item__indicator">${iconHtml}</span>
+            <span class="bulk-item__name" title="${safeName}">${safeName}</span>
+            <span class="bulk-item__label">${labelHtml}</span>
+          </li>`;
+        }).join('');
+
+        let retryHtml = allSettled
+          ? '<button class="upload-status__retry" type="button">↩ Nouveau</button>'
+          : '';
+
+        let triageBtn = (allSettled && doneCount > 0)
+          ? '<a class="bulk-triage-btn" href="/modules/triage.php?tab=docs">Tout voir dans triage →</a>'
+          : '';
+
+        statusBox.innerHTML =
+          `<div class="bulk-header ${headerClass}">
+            <span class="bulk-header__text">${headerText}</span>
+            ${retryHtml}
+          </div>
+          <ul class="bulk-list">${rows}</ul>
+          ${triageBtn}`;
+
+        // Wire retry button
+        const retryBtn = statusBox.querySelector('.upload-status__retry');
+        if (retryBtn) {
+          retryBtn.addEventListener('click', () => {
+            bulkItems = [];
             setState('idle');
           });
         }

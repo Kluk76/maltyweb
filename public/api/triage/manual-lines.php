@@ -320,9 +320,10 @@ try {
 
     $pdo->commit();
 
+    $flashRef = ($invRef !== null && $invRef !== '') ? " · {$invRef}" : '';
     $_SESSION['triage_flash'] = [
         'type' => 'ok',
-        'msg'  => "Saisie enregistrée : {$lineCount} ligne" . ($lineCount > 1 ? 's' : '')
+        'msg'  => "✓ Facture enregistrée{$flashRef} : {$lineCount} ligne" . ($lineCount > 1 ? 's' : '')
                   . ", total {$totalFormatted} CHF."
                   . ($deltaNote !== '' ? ' ⚠ Écart avec le total facture — vérifier.' : ''),
     ];

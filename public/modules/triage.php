@@ -478,9 +478,28 @@ function stock_qs(array $extra): string
 <main class="main admin__main">
 
   <?php if ($triageFlash !== null): ?>
-    <div class="db-flash db-flash--<?= $triageFlash['type'] === 'ok' ? 'ok' : 'err' ?>">
-      <?= htmlspecialchars((string)$triageFlash['msg']) ?>
+    <?php
+      $flashType = match($triageFlash['type']) {
+          'ok'   => 'ok',
+          'warn' => 'warn',
+          default => 'err',
+      };
+    ?>
+    <div class="db-flash db-flash--<?= $flashType ?>" id="triage-flash-banner" role="alert" aria-live="polite">
+      <span class="db-flash__msg"><?= htmlspecialchars((string)$triageFlash['msg']) ?></span>
+      <button type="button" class="db-flash__dismiss" aria-label="Fermer"
+              onclick="(function(el){el.style.display='none';})(this.closest('.db-flash'))">×</button>
     </div>
+    <script>
+      (function () {
+        var banner = document.getElementById('triage-flash-banner');
+        if (!banner) return;
+        setTimeout(function () {
+          banner.classList.add('db-flash--fading');
+          setTimeout(function () { banner.style.display = 'none'; }, 520);
+        }, 6000);
+      })();
+    </script>
   <?php endif ?>
 
   <?php if ($dbError !== null): ?>
