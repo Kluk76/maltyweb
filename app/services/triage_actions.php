@@ -29,9 +29,12 @@ function triage_parse_context(string $context): array
         if ($line === "") continue;
 
         if (str_starts_with($line, "Supplier:")) {
-            $result["supplier"] = trim(substr($line, 9));
+            $val = trim(substr($line, 9));
+            // Treat literal "?" and "(none)" as not-extracted so the fallback can fire.
+            $result["supplier"] = ($val === "" || $val === "?" || $val === "(none)") ? null : $val;
         } elseif (str_starts_with($line, "InvoiceRef:")) {
-            $result["ref"] = trim(substr($line, 11));
+            $val = trim(substr($line, 11));
+            $result["ref"] = ($val === "" || $val === "?" || $val === "(none)") ? null : $val;
         } elseif (str_starts_with($line, "Date:")) {
             $result["date"] = trim(substr($line, 5));
         } elseif (str_starts_with($line, "TotalHT:")) {

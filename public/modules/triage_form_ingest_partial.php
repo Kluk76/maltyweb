@@ -36,7 +36,7 @@ if (!isset($pdo)) {
 $ifFlash     = null;
 $ifFlashType = "ok";
 if (($_GET["resolved"] ?? "") === "1") {
-    $ifFlash     = "Failure marquée résolue.";
+    $ifFlash     = "Failure marquée traitée.";
     $ifFlashType = "ok";
 } elseif (isset($_GET["retry"])) {
     $retryStatus = $_GET["retry"];
@@ -344,7 +344,7 @@ function if_bsf_row_url(string $base, int $row, string $source_tab = ""): string
                     <input type="text"   name="resolution_note"
                            class="if-resolve-note"
                            placeholder="Note (optionnel)">
-                    <button type="submit" class="if-resolve-btn">Marquer résolu</button>
+                    <button type="submit" class="if-resolve-btn">Marquer traité</button>
                   </form>
                 </div>
               <?php else: ?>

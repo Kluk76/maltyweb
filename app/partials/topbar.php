@@ -31,24 +31,60 @@ if (is_admin($me)) {
     $adminEntries[] = ["DB Browser",  "/admin/db-browser.php","db-browser"];
 }
 
-// ── Ingest badge (cheap 1-row query) ─────────────────────────────────────────
+// ── Ingest badge (1-row query, 60-second file-transient cache) ───────────────
+// Cache is skipped when the last run status is 'failed' or 'partial' so the
+// operator always sees the latest alert state immediately.
 $ingestBadge = null;  // null → table empty / not yet available
 if ($showAdminBlock) {
-    try {
-        $ibPdo  = maltytask_pdo();
-        $ibStmt = $ibPdo->query(
-            "SELECT id, started_at, finished_at, status,
-                    TIMESTAMPDIFF(SECOND, started_at, NOW()) AS age_sec,
-                    (SELECT COUNT(*) FROM ingest_failures
-                      WHERE run_id = ir.id) AS failure_count
-               FROM ingest_runs ir
-              ORDER BY started_at DESC
-              LIMIT 1"
-        );
-        $ingestBadge = $ibStmt->fetch() ?: null;
-    } catch (Throwable $e) {
-        // Table may not exist yet (migration pending) — degrade gracefully.
-        $ingestBadge = false;  // false = table unavailable
+    $ibCacheDir  = '/var/www/maltytask/storage/cache';
+    $ibCacheFile = $ibCacheDir . '/ingest_badge.json';
+    $ibCacheTTL  = 60; // seconds
+    $ibCached    = false;
+
+    // Attempt to read from cache.
+    if (is_readable($ibCacheFile)) {
+        $ibRaw = @file_get_contents($ibCacheFile);
+        if ($ibRaw !== false) {
+            $ibEntry = json_decode($ibRaw, true);
+            if (
+                is_array($ibEntry)
+                && isset($ibEntry['ts'], $ibEntry['row'])
+                && (time() - (int)$ibEntry['ts']) < $ibCacheTTL
+            ) {
+                $ingestBadge = $ibEntry['row'];  // may be null (no runs) or array
+                $ibCached    = true;
+            }
+        }
+    }
+
+    if (!$ibCached) {
+        try {
+            $ibPdo  = maltytask_pdo();
+            $ibStmt = $ibPdo->query(
+                "SELECT id, started_at, finished_at, status,
+                        TIMESTAMPDIFF(SECOND, started_at, NOW()) AS age_sec,
+                        (SELECT COUNT(*) FROM ingest_failures
+                          WHERE run_id = ir.id) AS failure_count
+                   FROM ingest_runs ir
+                  ORDER BY started_at DESC
+                  LIMIT 1"
+            );
+            $ingestBadge = $ibStmt->fetch() ?: null;
+
+            // Only cache successful runs — failures/partial must always be fresh.
+            $ibStatus = $ingestBadge['status'] ?? null;
+            if (!in_array($ibStatus, ['failed', 'partial'], true)) {
+                @mkdir($ibCacheDir, 0775, true);
+                @file_put_contents(
+                    $ibCacheFile,
+                    json_encode(['ts' => time(), 'row' => $ingestBadge]),
+                    LOCK_EX
+                );
+            }
+        } catch (Throwable $e) {
+            // Table may not exist yet (migration pending) — degrade gracefully.
+            $ingestBadge = false;  // false = table unavailable
+        }
     }
 }
 

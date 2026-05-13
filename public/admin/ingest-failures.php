@@ -54,7 +54,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && ($_GET["action"] ?? "") === "resolv
 
 // ── Flash from redirect ───────────────────────────────────────────────────────
 if ($flashMsg === null && ($_GET["resolved"] ?? "") === "1") {
-    $flashMsg  = "Failure marquée résolue.";
+    $flashMsg  = "Failure marquée traitée.";
     $flashType = "ok";
 }
 

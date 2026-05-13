@@ -1,0 +1,26 @@
+# /etc/cron.d/maltytask-trim
+#
+# Periodic maintenance for ingest_runs / ingest_failures tables.
+# Prevents unbounded table growth from 30-min cron ingest runs (~17K rows/year).
+#
+# Source of truth: db/cron/maltytask-trim.cron in the maltyweb repo.
+# Deployed via bin/deploy.sh --apply (sudo install → /etc/cron.d/).
+#
+# Note: cron syntax for /etc/cron.d/* requires the user column
+# (m h dom mon dow user command). Times are UTC (VPS timezone is Etc/UTC).
+#
+# Manual edits will be overwritten on next deploy. Edit the source file
+# in the repo, commit, then run bin/deploy.sh --apply.
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# m   h  dom mon dow  user        command
+
+# Weekly on Sunday at 03:00 UTC: trim ingest_runs rows older than 90 days.
+# Cascade-cleans resolved failures; detaches (nullifies run_id on) unresolved ones.
+0   3   *   *   0   maltytask   cd /var/www/maltytask && .venv/bin/python scripts/python/maintenance/trim_ingest_runs.py --apply >> /var/log/maltytask/trim.log 2>&1
+
+# Hourly: reap any ingest_runs row stuck in status='running' for > 3 hours.
+# Guards against hard crashes (kill -9, OOM) that leave the topbar badge stuck red.
+0   *   *   *   *   maltytask   cd /var/www/maltytask && .venv/bin/python scripts/python/maintenance/reap_stuck_runs.py --apply >> /var/log/maltytask/trim.log 2>&1
