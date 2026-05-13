@@ -211,9 +211,9 @@ if ($upload_mode === 'bulk') {
         $fail(400, 'Aucun fichier reçu.');
     }
 
-    // Max 20 files guard
-    if (count($inputs) > 20) {
-        $fail(400, 'Maximum 20 fichiers par envoi groupé. Veuillez réduire la sélection.');
+    // Max 50 files guard
+    if (count($inputs) > 50) {
+        $fail(400, 'Maximum 50 fichiers par envoi groupé. Veuillez réduire la sélection.');
     }
 
     // Single-file downgrade: treat as regular single upload but wrap in uploads[] response
