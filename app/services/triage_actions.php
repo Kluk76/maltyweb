@@ -310,6 +310,142 @@ function ta_mark_line_resolved(string $context, int $lineIndex): string
 }
 
 /**
+ * Insert one inv_deliveries row from a triage action.
+ *
+ * Single source of truth used by alias.php, create.php, and manual-lines.php.
+ * INSERT IGNORE + unique index on row_hash guarantees idempotency.
+ *
+ * Required params:
+ *   rq_id           int     — doc_review_queue.id
+ *   line_index      int     — 0-based line index (use 0 for whole-row)
+ *   mi_internal_id  int     — ref_mi.id FK
+ *   mi_id_str       string  — ref_mi.mi_id (stored in mi_id_raw)
+ *   description     string  — written to ingredient_raw + details suffix
+ *   qty             float   — > 0
+ *   unit_price      float   — ≥ 0
+ *   source          string  — 'triage-alias'|'triage-create'|'manual-triage'
+ *
+ * Optional params (nullable):
+ *   invoice_id      int|null
+ *   invoice_ref     string|null
+ *   invoice_date    string|null
+ *   supplier_raw    string|null
+ *   supplier_fk     int|null
+ *   currency        string    (default 'CHF')
+ *   source_origin   string    (default 'web')
+ *
+ * Returns: ['inserted' => bool, 'row_hash' => string, 'reason' => string|null]
+ */
+function ta_materialize_delivery(PDO $pdo, array $p): array
+{
+    $source      = $p['source']       ?? 'manual-triage';
+    $rqId        = (int)($p['rq_id']  ?? 0);
+    $lineIndex   = (int)($p['line_index'] ?? 0);
+    $miIdStr     = (string)($p['mi_id_str'] ?? '');
+    $qty         = (float)($p['qty']  ?? 0);
+    $unitPrice   = (float)($p['unit_price'] ?? 0);
+
+    $rowHash     = hash('sha256', implode('|', [
+        $source, $rqId, $lineIndex, $miIdStr, $qty, $unitPrice,
+    ]));
+
+    $total       = round($qty * $unitPrice, 2);
+    $description = (string)($p['description'] ?? '');
+    $invoiceId   = isset($p['invoice_id'])  ? (int)$p['invoice_id']  : null;
+    $invoiceRef  = $p['invoice_ref']  ?? null;
+    $invoiceDate = $p['invoice_date'] ?? null;
+    $supplierRaw = $p['supplier_raw'] ?? null;
+    $supplierFk  = isset($p['supplier_fk']) && $p['supplier_fk'] !== null
+                   ? (int)$p['supplier_fk'] : null;
+    $currency    = $p['currency']      ?? 'CHF';
+    $srcOrigin   = $p['source_origin'] ?? 'web';
+    $miIntId     = (int)($p['mi_internal_id'] ?? 0);
+
+    $details = ucfirst(str_replace('-', ' ', $source)) . " — RQ #{$rqId} line "
+             . ($lineIndex + 1) . " — {$description}";
+
+    $stmt = $pdo->prepare(
+        "INSERT IGNORE INTO inv_deliveries
+            (row_hash, date_received, supplier_raw, ingredient_raw,
+             mi_id_raw, qty_delivered, qty_remaining, unit_price,
+             currency, total_original, total_chf,
+             status, invoice_ref, source, source_origin,
+             submitted_at, details, supplier_fk, ingredient_fk, resolution)
+         VALUES
+            (?, ?, ?, ?,
+             ?, ?, ?, ?,
+             ?, ?, ?,
+             'Active', ?, ?, ?,
+             NOW(6), ?, ?, ?, 'resolved')"
+    );
+    $stmt->execute([
+        $rowHash,
+        $invoiceDate,
+        $supplierRaw,
+        $description,
+        $miIdStr,
+        $qty,
+        $qty,        // qty_remaining = qty at creation
+        $unitPrice,
+        $currency,
+        $total,
+        $total,      // total_chf — same as original when CHF; operator corrects EUR later
+        $invoiceRef,
+        $source,
+        $srcOrigin,
+        $details,
+        $supplierFk,
+        $miIntId ?: null,
+    ]);
+
+    $inserted = $stmt->rowCount() === 1;
+    return [
+        'inserted'  => $inserted,
+        'row_hash'  => $rowHash,
+        'reason'    => $inserted ? null : 'duplicate (row_hash already exists)',
+    ];
+}
+
+/**
+ * Update doc_invoice_lines after a triage alias/create action.
+ *
+ * Sets mi_id_fk only when currently NULL (never overwrites a prior resolution).
+ * qty / unit_price / line_total updated only when $qty / $unitPrice are provided.
+ * name_confidence and price_confidence always set to 1.000 (human-confirmed).
+ */
+function ta_update_invoice_line(
+    PDO    $pdo,
+    int    $invoiceId,
+    int    $lineIndex,
+    int    $miInternalId,
+    ?float $qty,
+    ?float $unitPrice
+): void {
+    $lineTotal = ($qty !== null && $unitPrice !== null)
+                 ? round($qty * $unitPrice, 2)
+                 : null;
+
+    $pdo->prepare(
+        "UPDATE doc_invoice_lines
+            SET mi_id_fk        = COALESCE(mi_id_fk, ?),
+                qty             = COALESCE(?, qty),
+                unit_price      = COALESCE(?, unit_price),
+                line_total      = COALESCE(?, line_total),
+                name_confidence = 1.000,
+                price_confidence = 1.000,
+                updated_at      = NOW()
+          WHERE invoice_id = ? AND line_index = ?"
+    )->execute([
+        $miInternalId,
+        $qty,
+        $unitPrice,
+        $lineTotal,
+        $invoiceId,
+        $lineIndex,
+    ]);
+}
+
+/**
  * Build the return URL after a triage action.
  * If the current row was closed, tries to find the next open row.
  */

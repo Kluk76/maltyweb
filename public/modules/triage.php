@@ -943,10 +943,36 @@ function stock_qs(array $extra): string
                                       </option>
                                     <?php endforeach ?>
                                   </select>
+                                  <?php
+                                  // qty / unit_price: prefill from parsed context if present
+                                  $aliasQtyVal   = $lineParsed["qty"]       !== null ? (string)$lineParsed["qty"]       : '';
+                                  $aliasPriceVal = $lineParsed["unitPrice"]  !== null ? (string)$lineParsed["unitPrice"] : '';
+                                  $aliasBothKnown = $aliasQtyVal !== '' && $aliasPriceVal !== '';
+                                  ?>
+                                  <input class="line-alias-form__num<?= $aliasBothKnown ? '' : ' line-alias-form__num--required' ?>"
+                                         type="number" name="qty" step="any" min="0.0001"
+                                         value="<?= htmlspecialchars($aliasQtyVal) ?>"
+                                         placeholder="Qté<?= $aliasBothKnown ? '' : ' *' ?>"
+                                         <?= $aliasBothKnown ? '' : 'required' ?>>
+                                  <input class="line-alias-form__num<?= $aliasBothKnown ? '' : ' line-alias-form__num--required' ?>"
+                                         type="number" name="unit_price" step="any" min="0"
+                                         value="<?= htmlspecialchars($aliasPriceVal) ?>"
+                                         placeholder="PU<?= $aliasBothKnown ? '' : ' *' ?>"
+                                         <?= $aliasBothKnown ? '' : 'required' ?>>
+                                  <label class="line-alias-form__skip">
+                                    <input type="checkbox" name="skip_delivery" value="1"
+                                           class="alias-skip-delivery-cb">
+                                    Alias seul
+                                  </label>
                                   <button type="submit" class="detail-btn detail-btn--alias line-alias-form__btn">
                                     Sauvegarder
                                   </button>
                                 </div>
+                                <?php if (!$aliasBothKnown): ?>
+                                  <p class="line-alias-form__hint">
+                                    OCR n'a pas extrait qty/prix — saisir manuellement, ou cocher «&nbsp;Alias seul&nbsp;».
+                                  </p>
+                                <?php endif ?>
                               </form>
                             </details>
 
@@ -1473,6 +1499,7 @@ function stock_qs(array $extra): string
 
 <script src="/js/triage-upload.js?v=<?= @filemtime(__DIR__ . '/../js/triage-upload.js') ?: time() ?>"></script>
 <script defer src="/js/triage-manual-lines.js?v=<?= @filemtime(__DIR__ . '/../js/triage-manual-lines.js') ?: time() ?>"></script>
+<script defer src="/js/triage-skip-delivery.js?v=<?= @filemtime(__DIR__ . '/../js/triage-skip-delivery.js') ?: time() ?>"></script>
 
 </body>
 </html>

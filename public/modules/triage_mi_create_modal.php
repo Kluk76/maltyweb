@@ -125,9 +125,35 @@ $backUrl = '/modules/triage.php?tab=docs&rq_id=' . (int)$rqRow['id'];
   </div>
 
   <!-- Similar MIs — alias shortcut chips -->
+  <?php
+  // Pre-resolve qty/price from context for delivery materialization in chips + all-MIs list
+  $modalQtyVal   = $lineParsed !== null && $lineParsed['qty']       !== null ? (string)$lineParsed['qty']       : '';
+  $modalPriceVal = $lineParsed !== null && $lineParsed['unitPrice']  !== null ? (string)$lineParsed['unitPrice'] : '';
+  $modalBothKnown = $modalQtyVal !== '' && $modalPriceVal !== '';
+  ?>
   <?php if (!empty($similar)): ?>
     <div class="mi-modal-similar">
       <div class="mi-modal-similar__label">MI similaires — cliquez pour créer un alias plutôt</div>
+      <?php if (!$modalBothKnown): ?>
+        <p class="mi-modal-similar__hint">
+          OCR n'a pas extrait qty/prix — saisissez-les ci-dessous avant de choisir un MI,
+          ou cochez «&nbsp;Alias seul&nbsp;» (pas de ligne Livraisons).
+        </p>
+        <div class="mi-modal-similar__qp-row">
+          <label class="mi-modal-similar__qp-label">Qté&nbsp;*
+            <input id="modal-chip-qty"   type="number" step="any" min="0.0001" placeholder="Qté"
+                   class="mi-modal-similar__qp-input" required>
+          </label>
+          <label class="mi-modal-similar__qp-label">Prix unit.&nbsp;*
+            <input id="modal-chip-price" type="number" step="any" min="0" placeholder="PU"
+                   class="mi-modal-similar__qp-input" required>
+          </label>
+          <label class="mi-modal-similar__skip-label">
+            <input id="modal-chip-skip" type="checkbox" class="modal-chip-skip-cb">
+            Alias seul
+          </label>
+        </div>
+      <?php endif ?>
       <div class="mi-modal-similar__chips">
         <?php foreach ($similar as $simId): ?>
           <form class="mi-modal-similar__chip-form" method="post"
@@ -137,6 +163,15 @@ $backUrl = '/modules/triage.php?tab=docs&rq_id=' . (int)$rqRow['id'];
             <input type="hidden" name="line_index"   value="<?= $lineIndex ?>">
             <input type="hidden" name="alias_text"   value="<?= htmlspecialchars($rawLineText) ?>">
             <input type="hidden" name="target_mi_id" value="<?= htmlspecialchars($simId) ?>">
+            <?php if ($modalBothKnown): ?>
+              <input type="hidden" name="qty"        value="<?= htmlspecialchars($modalQtyVal) ?>">
+              <input type="hidden" name="unit_price" value="<?= htmlspecialchars($modalPriceVal) ?>">
+            <?php else: ?>
+              <!-- Filled by JS from #modal-chip-qty / #modal-chip-price -->
+              <input type="hidden" name="qty"        class="chip-qty-hidden">
+              <input type="hidden" name="unit_price" class="chip-price-hidden">
+              <input type="hidden" name="skip_delivery" class="chip-skip-hidden" value="">
+            <?php endif ?>
             <button type="submit" class="mi-modal-chip">
               <?= htmlspecialchars($simId) ?>
             </button>
@@ -178,6 +213,37 @@ $backUrl = '/modules/triage.php?tab=docs&rq_id=' . (int)$rqRow['id'];
     <input type="hidden" name="proposition_confidence" value="<?= htmlspecialchars((string)$conf) ?>">
     <input type="hidden" name="similar_mi_ids_json"
            value="<?= htmlspecialchars(json_encode($similar, JSON_UNESCAPED_UNICODE)) ?>">
+
+    <!-- Delivery qty / price / skip ─────────────────────────────────────── -->
+    <div class="mi-modal-delivery-row">
+      <label class="mi-modal-label" for="mi_create_qty">
+        Qté<?= !$modalBothKnown ? ' <span class="mi-modal-req">*</span>' : '' ?>
+        <?php if (!$modalBothKnown): ?>
+          <span class="mi-modal-hint">OCR n'a pas extrait — saisir manuellement</span>
+        <?php endif ?>
+      </label>
+      <input class="mi-modal-input mi-modal-input--num"
+             type="number" id="mi_create_qty" name="qty" step="any" min="0.0001"
+             value="<?= htmlspecialchars($modalQtyVal) ?>"
+             placeholder="Qté"
+             <?= !$modalBothKnown ? 'required id="mi_create_qty"' : '' ?>>
+
+      <label class="mi-modal-label" for="mi_create_price">
+        Prix unitaire<?= !$modalBothKnown ? ' <span class="mi-modal-req">*</span>' : '' ?>
+      </label>
+      <input class="mi-modal-input mi-modal-input--num"
+             type="number" id="mi_create_price" name="unit_price" step="any" min="0"
+             value="<?= htmlspecialchars($modalPriceVal) ?>"
+             placeholder="PU"
+             <?= !$modalBothKnown ? 'required' : '' ?>>
+
+      <label class="mi-modal-delivery-skip">
+        <input type="checkbox" name="skip_delivery" value="1"
+               class="create-skip-delivery-cb" id="mi_create_skip">
+        Ne pas créer de ligne Livraisons
+        <span class="mi-modal-hint">(alias seul — immobilisation, TVA récupérable, taproom)</span>
+      </label>
+    </div>
 
     <div class="mi-modal-fields">
 
@@ -296,6 +362,22 @@ $backUrl = '/modules/triage.php?tab=docs&rq_id=' . (int)$rqRow['id'];
     <summary class="mi-modal-milist__toggle">
       Tous les MIs actifs (<?= count($allMis) ?>) — pour alias manuel
     </summary>
+    <?php if (!$modalBothKnown): ?>
+      <div class="mi-modal-milist__qp-row">
+        <label>Qté *
+          <input id="milist-qty"   type="number" step="any" min="0.0001"
+                 class="mi-modal-milist__qp-input" placeholder="Qté" required>
+        </label>
+        <label>Prix unit. *
+          <input id="milist-price" type="number" step="any" min="0"
+                 class="mi-modal-milist__qp-input" placeholder="PU" required>
+        </label>
+        <label class="mi-modal-milist__skip-label">
+          <input id="milist-skip" type="checkbox" class="milist-skip-cb">
+          Alias seul
+        </label>
+      </div>
+    <?php endif ?>
     <div class="mi-modal-milist__body">
       <?php foreach ($allMis as $mi): ?>
         <form class="mi-modal-milist__row-form" method="post"
@@ -305,6 +387,14 @@ $backUrl = '/modules/triage.php?tab=docs&rq_id=' . (int)$rqRow['id'];
           <input type="hidden" name="line_index"   value="<?= $lineIndex ?>">
           <input type="hidden" name="alias_text"   value="<?= htmlspecialchars($rawLineText) ?>">
           <input type="hidden" name="target_mi_id" value="<?= htmlspecialchars($mi['mi_id']) ?>">
+          <?php if ($modalBothKnown): ?>
+            <input type="hidden" name="qty"        value="<?= htmlspecialchars($modalQtyVal) ?>">
+            <input type="hidden" name="unit_price" value="<?= htmlspecialchars($modalPriceVal) ?>">
+          <?php else: ?>
+            <input type="hidden" name="qty"        class="milist-qty-hidden">
+            <input type="hidden" name="unit_price" class="milist-price-hidden">
+            <input type="hidden" name="skip_delivery" class="milist-skip-hidden" value="">
+          <?php endif ?>
           <button type="submit" class="mi-modal-milist__btn">
             <span class="mi-modal-milist__id"><?= htmlspecialchars($mi['mi_id']) ?></span>
             <span class="mi-modal-milist__name"><?= htmlspecialchars((string)$mi['name']) ?></span>

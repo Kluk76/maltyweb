@@ -5526,6 +5526,175 @@ body.auth::after {
   padding: 4px 10px;
 }
 
+/* ── Alias form: qty/price numeric inputs ─────────────────────────────────── */
+.home.triage .line-alias-form__num {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px;
+  padding: 4px 6px;
+  border: 1px solid var(--hairline-2);
+  border-radius: 1px;
+  background: rgba(255,255,255,0.05);
+  color: var(--ink);
+  width: 76px;
+  text-align: right;
+}
+
+.home.triage .line-alias-form__num--required {
+  border-color: var(--ember);
+}
+
+.home.triage .line-alias-form__num--disabled,
+.home.triage .line-alias-form__num:disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+/* Skip-delivery checkbox label */
+.home.triage .line-alias-form__skip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--ink-mute);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+/* Helper note below the alias form row */
+.home.triage .line-alias-form__hint {
+  margin: 4px 0 0;
+  font-size: 10px;
+  color: var(--ink-mute);
+  line-height: 1.4;
+}
+
+/* ── Create modal: delivery row ───────────────────────────────────────────── */
+.home.triage .mi-modal-delivery-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  margin: 0 0 16px;
+  padding: 10px 14px;
+  background: rgba(255,255,255,0.025);
+  border: 1px solid var(--hairline-2);
+  border-radius: 2px;
+}
+
+.home.triage .mi-modal-input--num {
+  width: 100px;
+  text-align: right;
+}
+
+.home.triage .mi-modal-input--disabled,
+.home.triage .mi-modal-input:disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.home.triage .mi-modal-delivery-skip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--ink-soft);
+  cursor: pointer;
+  flex-basis: 100%;
+}
+
+/* ── Create modal: similar chips shared qty/price row ─────────────────────── */
+.home.triage .mi-modal-similar__hint {
+  font-size: 11px;
+  color: var(--ink-mute);
+  margin: 4px 0 6px;
+  line-height: 1.4;
+}
+
+.home.triage .mi-modal-similar__qp-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  margin-bottom: 8px;
+}
+
+.home.triage .mi-modal-similar__qp-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+
+.home.triage .mi-modal-similar__qp-input {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px;
+  padding: 3px 6px;
+  border: 1px solid var(--ember);
+  border-radius: 1px;
+  background: rgba(255,255,255,0.05);
+  color: var(--ink);
+  width: 80px;
+  text-align: right;
+}
+
+.home.triage .mi-modal-similar__qp-input--disabled,
+.home.triage .mi-modal-similar__qp-input:disabled {
+  opacity: 0.35;
+  pointer-events: none;
+  border-color: var(--hairline-2);
+}
+
+.home.triage .mi-modal-similar__skip-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--ink-mute);
+  cursor: pointer;
+}
+
+/* ── All-MIs list shared qty/price row ────────────────────────────────────── */
+.home.triage .mi-modal-milist__qp-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  padding: 8px 14px;
+  background: rgba(255,255,255,0.02);
+  border-bottom: 1px solid var(--hairline-2);
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+
+.home.triage .mi-modal-milist__qp-input {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px;
+  padding: 3px 6px;
+  border: 1px solid var(--ember);
+  border-radius: 1px;
+  background: rgba(255,255,255,0.05);
+  color: var(--ink);
+  width: 80px;
+  text-align: right;
+}
+
+.home.triage .mi-modal-milist__qp-input--disabled,
+.home.triage .mi-modal-milist__qp-input:disabled {
+  opacity: 0.35;
+  pointer-events: none;
+  border-color: var(--hairline-2);
+}
+
+.home.triage .mi-modal-milist__skip-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--ink-mute);
+  cursor: pointer;
+}
+
 /* ── Empty unresolved-lines state (e.g. SIL/SIE invoices, parser=0 lines) ────── */
 .home.triage .detail-no-lines {
   margin: 8px 22px 14px;
@@ -6247,6 +6416,19 @@ body.auth::after {
   .home.triage .line-reject-form__text {
     width: 100%;
     max-width: 100%;
+  }
+
+  .home.triage .line-alias-form__num {
+    width: 100%;
+  }
+
+  .home.triage .mi-modal-delivery-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .home.triage .mi-modal-input--num {
+    width: 100%;
   }
 
   .home.triage .detail-note-form__row {

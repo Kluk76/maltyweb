@@ -257,52 +257,30 @@ try {
             ]);
         }
 
-        // 2. INSERT into inv_deliveries
-        // row_hash = SHA-256 of immutable identity fields
-        $delivHashInput = implode('|', [
-            'manual-triage',
-            (string)$rqId,
-            (string)$lineIdx,
-            $vl['mi_id'],
-            (string)$vl['qty'],
-            (string)$vl['unit_price'],
+        // 2. INSERT into inv_deliveries via shared helper (idempotent)
+        ta_materialize_delivery($pdo, [
+            'rq_id'          => $rqId,
+            'line_index'     => $lineIdx,
+            'mi_internal_id' => $vl['mi_internal_id'],
+            'mi_id_str'      => $vl['mi_id'],
+            'description'    => $vl['description'],
+            'qty'            => $vl['qty'],
+            'unit_price'     => $vl['unit_price'],
+            'invoice_id'     => $invDbId,
+            'invoice_ref'    => $invRef,
+            'invoice_date'   => $invDate,
+            'supplier_raw'   => $supplierRaw,
+            'supplier_fk'    => $supplierFk,
+            'currency'       => $currency,
+            'source'         => 'manual-triage',
+            'source_origin'  => 'web',
         ]);
-        $delivRowHash = hash('sha256', $delivHashInput);
 
-        $details = "Manual triage entry — RQ #{$rqId} line " . ($lineIdx + 1)
-                   . " — {$vl['description']}";
-
-        $delStmt = $pdo->prepare(
-            "INSERT IGNORE INTO inv_deliveries
-                (row_hash, date_received, supplier_raw, ingredient_raw,
-                 mi_id_raw, qty_delivered, qty_remaining, unit_price,
-                 currency, total_original, total_chf,
-                 status, invoice_ref, source, source_origin,
-                 submitted_at, details, supplier_fk, ingredient_fk, resolution)
-             VALUES
-                (?, ?, ?, ?,
-                 ?, ?, ?, ?,
-                 ?, ?, ?,
-                 'Active', ?, 'manual-triage', 'web',
-                 NOW(6), ?, ?, ?, 'resolved')"
+        // 3. Register alias for future matching (idempotent — INSERT IGNORE)
+        $aliasIns = $pdo->prepare(
+            "INSERT IGNORE INTO ref_mi_aliases (alias, mi_id_fk) VALUES (?, ?)"
         );
-        $delStmt->execute([
-            $delivRowHash,
-            $invDate,
-            $supplierRaw,
-            $vl['description'],
-            $vl['mi_id'],
-            $vl['qty'],
-            $vl['qty'],       // qty_remaining = qty at creation
-            $vl['unit_price'],
-            $currency,
-            $vl['line_total'],
-            $vl['line_total'], // total_chf — same as original when CHF; operator can correct EUR later
-            $invRef,
-            $details,
-            $supplierFk,
-            $vl['mi_internal_id'],
-        ]);
+        $aliasIns->execute([$vl['description'], $vl['mi_internal_id']]);
     }
 
     // 3. Close the RQ row

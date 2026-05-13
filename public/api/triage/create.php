@@ -24,12 +24,17 @@ declare(strict_types=1);
  *   proposition_confidence — (optional, float)
  *   similar_mi_ids_json    — JSON-encoded list (optional)
  *   raw_line_text          — original invoice line text (for alias + audit)
+ *   qty                    — optional decimal; operator-provided qty for delivery row
+ *   unit_price             — optional decimal; operator-provided unit price
+ *   skip_delivery          — optional bool (1/true); create MI + alias only, no inv_deliveries
  *
  * Writes (in a transaction):
  *   1. INSERT ref_mi (new MI row)
  *   2. INSERT mi_proposals_audit
  *   3. INSERT IGNORE ref_mi_aliases (raw_line → new mi_id)
- *   4. Mark line resolved in context / close row if all lines done
+ *   4. UPDATE doc_invoice_lines.mi_id_fk (if invoice_id resolvable and line_index ≥ 0)
+ *   5. INSERT IGNORE inv_deliveries (unless skip_delivery or qty/price unresolvable)
+ *   6. Mark line resolved in context / close row if all lines done
  */
 
 require __DIR__ . '/../../../app/auth.php';
@@ -73,7 +78,12 @@ $subcategory = trim($_POST['subcategory'] ?? '');
 $account    = trim($_POST['account']     ?? '');
 $miName     = trim($_POST['name']        ?? '');
 $notes      = trim($_POST['notes']       ?? '');
-$rawLineText = trim($_POST['raw_line_text'] ?? '');
+$rawLineText  = trim($_POST['raw_line_text'] ?? '');
+$skipDelivery = !empty($_POST['skip_delivery']) && $_POST['skip_delivery'] !== '0';
+$postQty      = isset($_POST['qty'])        && $_POST['qty'] !== ''
+                ? filter_var($_POST['qty'],        FILTER_VALIDATE_FLOAT) : null;
+$postPrice    = isset($_POST['unit_price']) && $_POST['unit_price'] !== ''
+                ? filter_var($_POST['unit_price'], FILTER_VALIDATE_FLOAT) : null;
 
 // Proposition fields (for audit — may be empty)
 $propMiId   = trim($_POST['proposed_mi_id']       ?? '') ?: null;
@@ -162,6 +172,67 @@ try {
         exit;
     }
 
+    // ── Resolve parent invoice ────────────────────────────────────────────────
+    $invRow = null;
+    if (!empty($rqRow['file_id_fk'])) {
+        $invStmt = $pdo->prepare(
+            "SELECT di.id         AS inv_id,
+                    di.supplier_name,
+                    di.supplier_fk,
+                    di.invoice_ref,
+                    di.invoice_date,
+                    di.currency
+               FROM doc_invoices di
+               JOIN doc_files df ON df.id = di.file_id
+              WHERE df.id = ?
+              LIMIT 1"
+        );
+        $invStmt->execute([(int)$rqRow['file_id_fk']]);
+        $invRow = $invStmt->fetch() ?: null;
+    }
+
+    // ── Resolve qty/price for delivery (pre-transaction validation) ───────────
+    $delivQty   = null;
+    $delivPrice = null;
+    $delivError = null;
+    $ctxParsedForDelivery = triage_parse_context((string)($rqRow['context'] ?? ''));
+
+    if ($lineIndex >= 0 && $rqRow['type'] === 'invoice-line-items-needed' && !$skipDelivery) {
+        // Try: POST > doc_invoice_lines > context-parsed values
+        $ilRow = null;
+        if ($invRow !== null) {
+            $ilStmt = $pdo->prepare(
+                "SELECT qty, unit_price FROM doc_invoice_lines
+                  WHERE invoice_id = ? AND line_index = ? LIMIT 1"
+            );
+            $ilStmt->execute([(int)$invRow['inv_id'], $lineIndex]);
+            $ilRow = $ilStmt->fetch() ?: null;
+        }
+
+        $resolvedQty   = $postQty   ?? ($ilRow !== null && $ilRow['qty']        !== null ? (float)$ilRow['qty']        : null);
+        $resolvedPrice = $postPrice ?? ($ilRow !== null && $ilRow['unit_price']  !== null ? (float)$ilRow['unit_price'] : null);
+
+        if (($resolvedQty === null || $resolvedPrice === null) && isset($ctxParsedForDelivery['unresolved'][$lineIndex])) {
+            $lp = ta_parse_unresolved_line($ctxParsedForDelivery['unresolved'][$lineIndex]);
+            $resolvedQty   = $resolvedQty   ?? $lp['qty'];
+            $resolvedPrice = $resolvedPrice ?? $lp['unitPrice'];
+        }
+
+        if ($resolvedQty === null || $resolvedQty <= 0 || $resolvedPrice === null) {
+            $delivError = "Renseignez qty et prix unitaire pour cette ligne avant la création.";
+        } else {
+            $delivQty   = $resolvedQty;
+            $delivPrice = $resolvedPrice;
+        }
+    }
+
+    if ($delivError !== null) {
+        $_SESSION['triage_flash'] = ['type' => 'err', 'msg' => $delivError];
+        header('Location: /modules/triage.php?tab=docs&rq_id=' . $rqId
+               . '&action=create&line=' . $lineIndex, true, 303);
+        exit;
+    }
+
     // ── Transaction ───────────────────────────────────────────────────────────
     $pdo->beginTransaction();
 
@@ -217,10 +288,11 @@ try {
     ]);
 
     // 3. INSERT alias: raw_line_text → new mi_id
+    $newMiInternalId = null;
     if ($rawLineText !== '' && $rawLineText !== $miId) {
         $newMiInternal = $pdo->prepare("SELECT id FROM ref_mi WHERE mi_id = ? LIMIT 1");
         $newMiInternal->execute([$miId]);
-        $newMiInternalId = $newMiInternal->fetchColumn();
+        $newMiInternalId = $newMiInternal->fetchColumn() ?: null;
 
         if ($newMiInternalId) {
             $aliasStmt = $pdo->prepare(
@@ -229,8 +301,62 @@ try {
             $aliasStmt->execute([$rawLineText, (int)$newMiInternalId]);
         }
     }
+    // Ensure we have the internal ID even when rawLineText === miId
+    if ($newMiInternalId === null) {
+        $fallbackStmt = $pdo->prepare("SELECT id FROM ref_mi WHERE mi_id = ? LIMIT 1");
+        $fallbackStmt->execute([$miId]);
+        $newMiInternalId = $fallbackStmt->fetchColumn() ?: null;
+    }
 
-    // 4. Mark line resolved / close row
+    // 4. Materialize delivery + update doc_invoice_lines
+    $delivInserted = false;
+    if ($lineIndex >= 0 && $rqRow['type'] === 'invoice-line-items-needed' && $newMiInternalId !== null) {
+        if (!$skipDelivery && $delivQty !== null && $delivPrice !== null) {
+            // 4a. Update doc_invoice_lines
+            if ($invRow !== null) {
+                ta_update_invoice_line(
+                    $pdo,
+                    (int)$invRow['inv_id'],
+                    $lineIndex,
+                    (int)$newMiInternalId,
+                    $delivQty,
+                    $delivPrice
+                );
+            }
+
+            // 4b. INSERT inv_deliveries
+            $result = ta_materialize_delivery($pdo, [
+                'rq_id'          => $rqId,
+                'line_index'     => $lineIndex,
+                'mi_internal_id' => (int)$newMiInternalId,
+                'mi_id_str'      => $miId,
+                'description'    => $rawLineText !== '' ? $rawLineText : $miName,
+                'qty'            => $delivQty,
+                'unit_price'     => $delivPrice,
+                'invoice_id'     => $invRow !== null ? (int)$invRow['inv_id'] : null,
+                'invoice_ref'    => $invRow['invoice_ref']   ?? null,
+                'invoice_date'   => $invRow['invoice_date']  ?? null,
+                'supplier_raw'   => $invRow['supplier_name'] ?? null,
+                'supplier_fk'    => $invRow !== null && !empty($invRow['supplier_fk'])
+                                    ? (int)$invRow['supplier_fk'] : null,
+                'currency'       => $invRow['currency'] ?? 'CHF',
+                'source'         => 'triage-create',
+                'source_origin'  => 'web',
+            ]);
+            $delivInserted = $result['inserted'];
+        } elseif ($skipDelivery && $invRow !== null) {
+            ta_update_invoice_line(
+                $pdo,
+                (int)$invRow['inv_id'],
+                $lineIndex,
+                (int)$newMiInternalId,
+                null,
+                null
+            );
+        }
+    }
+
+    // 5. Mark line resolved / close row
     $rowClosed = false;
     if ($lineIndex >= 0 && $rqRow['type'] === 'invoice-line-items-needed') {
         $newContext = ta_mark_line_resolved((string)$rqRow['context'], $lineIndex);
@@ -272,10 +398,12 @@ try {
 
     $pdo->commit();
 
+    $delivNote = $skipDelivery ? ' (livraison ignorée)' : ($delivInserted ? ' Livraison créée.' : '');
     $_SESSION['triage_flash'] = [
         'type' => 'ok',
         'msg'  => "MI «{$miId}» créé."
                   . ($rawLineText !== '' ? " Alias «{$rawLineText}» enregistré." : '')
+                  . $delivNote
                   . ($rowClosed ? ' Ligne fermée.' : ''),
     ];
     $redirectUrl = ta_redirect_url($rqId, $rowClosed, $pdo);
