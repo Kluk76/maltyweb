@@ -410,7 +410,9 @@ function ta_materialize_delivery(PDO $pdo, array $p): array
  * Update doc_invoice_lines after a triage alias/create action.
  *
  * Sets mi_id_fk only when currently NULL (never overwrites a prior resolution).
- * qty / unit_price / line_total updated only when $qty / $unitPrice are provided.
+ * qty / unit_price / line_total are preserved when already non-null — operator-
+ * submitted values only fill gaps. To force an overwrite (e.g. operator
+ * correction), update directly via SQL.
  * name_confidence and price_confidence always set to 1.000 (human-confirmed).
  */
 function ta_update_invoice_line(
@@ -428,9 +430,9 @@ function ta_update_invoice_line(
     $pdo->prepare(
         "UPDATE doc_invoice_lines
             SET mi_id_fk        = COALESCE(mi_id_fk, ?),
-                qty             = COALESCE(?, qty),
-                unit_price      = COALESCE(?, unit_price),
-                line_total      = COALESCE(?, line_total),
+                qty             = COALESCE(qty, ?),
+                unit_price      = COALESCE(unit_price, ?),
+                line_total      = CASE WHEN line_total IS NULL THEN ? * ? ELSE line_total END,
                 name_confidence = 1.000,
                 price_confidence = 1.000,
                 updated_at      = NOW()
@@ -439,7 +441,8 @@ function ta_update_invoice_line(
         $miInternalId,
         $qty,
         $unitPrice,
-        $lineTotal,
+        $qty,
+        $unitPrice,
         $invoiceId,
         $lineIndex,
     ]);
