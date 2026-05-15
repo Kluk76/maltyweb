@@ -112,9 +112,12 @@ try {
     // ── Determine alias text ──────────────────────────────────────────────────
     $ctx = triage_parse_context((string)($rqRow['context'] ?? ''));
 
-    if ($aliasText === '' && $lineIndex >= 0 && isset($ctx['unresolved'][$lineIndex])) {
-        $parsed    = ta_parse_unresolved_line($ctx['unresolved'][$lineIndex]);
-        $aliasText = $parsed['raw'] ?? '';
+    $parsedLine = null;
+    if ($lineIndex >= 0 && isset($ctx['unresolved'][$lineIndex])) {
+        $parsedLine = ta_parse_unresolved_line($ctx['unresolved'][$lineIndex]);
+        if ($aliasText === '') {
+            $aliasText = $parsedLine['raw'] ?? '';
+        }
     }
 
     if ($aliasText === '') {
@@ -122,6 +125,13 @@ try {
         header('Location: /modules/triage.php?tab=docs&rq_id=' . $rqId, true, 303);
         exit;
     }
+
+    // For doc_invoice_lines lookups: use the parser's original line_index (dbLineIndex)
+    // when present (new ingest-one-local.ts format), otherwise fall back to the
+    // array-position lineIndex (legacy ingest-documents.js format).
+    $dbLineIdx = ($parsedLine !== null && $parsedLine['dbLineIndex'] !== null)
+                 ? $parsedLine['dbLineIndex']
+                 : $lineIndex;
 
     // ── Resolve parent invoice (needed for delivery + doc_invoice_lines update) ──
     $invRow = null;
@@ -148,14 +158,14 @@ try {
     $delivError = null;
 
     if ($lineIndex >= 0 && $rqRow['type'] === 'invoice-line-items-needed' && !$skipDelivery) {
-        // Try: POST > doc_invoice_lines > context parsed values
+        // Try: POST > doc_invoice_lines (using dbLineIdx) > context parsed values
         $ilRow = null;
         if ($invRow !== null) {
             $ilStmt = $pdo->prepare(
                 "SELECT qty, unit_price FROM doc_invoice_lines
                   WHERE invoice_id = ? AND line_index = ? LIMIT 1"
             );
-            $ilStmt->execute([(int)$invRow['inv_id'], $lineIndex]);
+            $ilStmt->execute([(int)$invRow['inv_id'], $dbLineIdx]);
             $ilRow = $ilStmt->fetch() ?: null;
         }
 
@@ -193,6 +203,8 @@ try {
     $aliasStmt->execute([$aliasText, (int)$miInternalId]);
 
     // 2. Materialize delivery + update doc_invoice_lines (if applicable)
+    // Use $dbLineIdx (parser's original line_index) for doc_invoice_lines lookups;
+    // use $lineIndex (array position) for row_hash dedup in inv_deliveries.
     $delivInserted = false;
     if ($lineIndex >= 0 && $rqRow['type'] === 'invoice-line-items-needed') {
         if (!$skipDelivery && $delivQty !== null && $delivPrice !== null) {
@@ -201,7 +213,7 @@ try {
                 ta_update_invoice_line(
                     $pdo,
                     (int)$invRow['inv_id'],
-                    $lineIndex,
+                    $dbLineIdx,
                     (int)$miInternalId,
                     $delivQty,
                     $delivPrice
@@ -234,7 +246,7 @@ try {
             ta_update_invoice_line(
                 $pdo,
                 (int)$invRow['inv_id'],
-                $lineIndex,
+                $dbLineIdx,
                 (int)$miInternalId,
                 null,
                 null

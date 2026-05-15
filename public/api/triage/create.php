@@ -197,15 +197,26 @@ try {
     $delivError = null;
     $ctxParsedForDelivery = triage_parse_context((string)($rqRow['context'] ?? ''));
 
+    // Determine the parser's original line_index for doc_invoice_lines lookups.
+    // New format (ingest-one-local.ts) embeds it as [line N]; legacy format uses
+    // array position which equals $lineIndex.
+    $dbLineIdx = $lineIndex;
+    if ($lineIndex >= 0 && isset($ctxParsedForDelivery['unresolved'][$lineIndex])) {
+        $lpCheck = ta_parse_unresolved_line($ctxParsedForDelivery['unresolved'][$lineIndex]);
+        if ($lpCheck['dbLineIndex'] !== null) {
+            $dbLineIdx = $lpCheck['dbLineIndex'];
+        }
+    }
+
     if ($lineIndex >= 0 && $rqRow['type'] === 'invoice-line-items-needed' && !$skipDelivery) {
-        // Try: POST > doc_invoice_lines > context-parsed values
+        // Try: POST > doc_invoice_lines (using dbLineIdx) > context-parsed values
         $ilRow = null;
         if ($invRow !== null) {
             $ilStmt = $pdo->prepare(
                 "SELECT qty, unit_price FROM doc_invoice_lines
                   WHERE invoice_id = ? AND line_index = ? LIMIT 1"
             );
-            $ilStmt->execute([(int)$invRow['inv_id'], $lineIndex]);
+            $ilStmt->execute([(int)$invRow['inv_id'], $dbLineIdx]);
             $ilRow = $ilStmt->fetch() ?: null;
         }
 
@@ -309,15 +320,17 @@ try {
     }
 
     // 4. Materialize delivery + update doc_invoice_lines
+    // Use $dbLineIdx (parser's original line_index) for doc_invoice_lines;
+    // use $lineIndex (array position) for inv_deliveries row_hash dedup.
     $delivInserted = false;
     if ($lineIndex >= 0 && $rqRow['type'] === 'invoice-line-items-needed' && $newMiInternalId !== null) {
         if (!$skipDelivery && $delivQty !== null && $delivPrice !== null) {
-            // 4a. Update doc_invoice_lines
+            // 4a. Update doc_invoice_lines (use dbLineIdx — parser's original index)
             if ($invRow !== null) {
                 ta_update_invoice_line(
                     $pdo,
                     (int)$invRow['inv_id'],
-                    $lineIndex,
+                    $dbLineIdx,
                     (int)$newMiInternalId,
                     $delivQty,
                     $delivPrice
@@ -348,7 +361,7 @@ try {
             ta_update_invoice_line(
                 $pdo,
                 (int)$invRow['inv_id'],
-                $lineIndex,
+                $dbLineIdx,
                 (int)$newMiInternalId,
                 null,
                 null

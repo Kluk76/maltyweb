@@ -14,7 +14,15 @@ declare(strict_types=1);
  * Context format is freeform "Key: Value" text lines.
  *
  * Keys parsed: Supplier, InvoiceRef, Date, TotalHT, Drive,
- *              Reason, Action, unresolved line items (- "..." (...))
+ *              Reason, Action, unresolved line items (two formats):
+ *
+ *   Legacy (ingest-documents.js):
+ *     - "raw text" (qty=N, lineTotal=N, invoiceUnitPrice=N, MI.currentPrice=N)
+ *     - [RESOLVED] "raw text" (...)
+ *
+ *   New (ingest-one-local.ts):
+ *     [line N] "raw text" miId=null conf=0.00
+ *     [RESOLVED][line N] "raw text" miId=null conf=0.00
  */
 if (!function_exists('triage_parse_context')) {
 function triage_parse_context(string $context): array
@@ -45,8 +53,15 @@ function triage_parse_context(string $context): array
             $result["reason"] = trim(substr($line, 7));
         } elseif (str_starts_with($line, "Action:")) {
             $result["action"] = trim(substr($line, 7));
-        } elseif (preg_match('/^\s*-\s*"(.+)"\s*[\(\[]/', $line)
-                  || preg_match('/^\s*-\s*\[RESOLVED\]\s*"/', $line)) {
+        } elseif (
+            // Legacy format: - "text" (...) or - [RESOLVED] "text" (...)
+            preg_match('/^\s*-\s*"(.+)"\s*[\(\[]/', $line)
+            || preg_match('/^\s*-\s*\[RESOLVED\]\s*"/', $line)
+            // New format (ingest-one-local.ts): [line N] "text" miId=...
+            // or already resolved: [RESOLVED][line N] "text" miId=...
+            || preg_match('/^\s*\[line\s*\d+\]\s*"/', $line)
+            || preg_match('/^\s*\[RESOLVED\]\[line\s*\d+\]\s*"/', $line)
+        ) {
             $result["unresolved"][] = $line;
         } elseif (str_starts_with($line, "OCR preview")) {
             $result["ocr_preview"] = "";
@@ -208,47 +223,74 @@ function ta_actions_for_type(string $rq_type): array
 /**
  * Parse an unresolved line string from context into structured fields.
  *
- * Format: - "raw text" (qty=N, lineTotal=N, invoiceUnitPrice=N, MI.currentPrice=N)
- * Returns an array with 'raw', 'qty', 'line_total', 'unit_price' keys.
- * 'resolved' is true if the line has already been actioned in a previous submission.
+ * Two supported formats:
+ *
+ *   Legacy (ingest-documents.js):
+ *     - "raw text" (qty=N, lineTotal=N, invoiceUnitPrice=N, MI.currentPrice=N)
+ *     - [RESOLVED] "raw text" (...)
+ *
+ *   New (ingest-one-local.ts):
+ *     [line N] "raw text" miId=null conf=0.00
+ *     [RESOLVED][line N] "raw text" miId=null conf=0.00
+ *
+ * Returns an array with keys:
+ *   raw        — the quoted description text (string|null)
+ *   qty        — decimal qty from legacy context (float|null); null for new format
+ *   lineTotal  — decimal line total from legacy context (float|null); null for new format
+ *   unitPrice  — decimal unit price from legacy context (float|null); null for new format
+ *   resolved   — bool: true if [RESOLVED] prefix present
+ *   db_line_index — int|null: the parser's original line_index embedded in new-format lines
+ *                   ([line N] → N). Null for legacy format. Used for doc_invoice_lines lookups.
  */
 function ta_parse_unresolved_line(string $line): array
 {
-    $raw        = null;
-    $qty        = null;
-    $lineTotal  = null;
-    $unitPrice  = null;
-    $resolved   = false;
+    $raw          = null;
+    $qty          = null;
+    $lineTotal    = null;
+    $unitPrice    = null;
+    $resolved     = false;
+    $dbLineIndex  = null;
 
-    // Strip leading "- " list marker if present (triage_parse_context trims spaces
-    // but leaves the "- " prefix)
-    $stripped = preg_replace('/^\s*-\s*/', '', $line);
+    // Detect and strip [RESOLVED] prefix (both legacy and new format)
+    // Legacy resolved: "- [RESOLVED] ..."
+    // New resolved:    "[RESOLVED][line N] ..."
+    $trimmed = ltrim($line);
 
-    // Check resolved marker: lines prefixed with [RESOLVED] are done
-    if (str_starts_with($stripped, '[RESOLVED]')) {
+    if (preg_match('/^\[RESOLVED\]/', $trimmed)) {
         $resolved = true;
-        $line     = trim(substr($stripped, 10));
+        $trimmed  = ltrim(substr($trimmed, 10));
+    } elseif (preg_match('/^-\s*\[RESOLVED\]/', $trimmed)) {
+        $resolved = true;
+        $trimmed  = preg_replace('/^-\s*\[RESOLVED\]\s*/', '', $trimmed);
     }
 
-    // Extract quoted raw text. Greedy ".+" so embedded quotes
-    // (e.g. 1/2" inch marker) survive — non-greedy [^"]+ would
-    // truncate at the first inner quote.
-    if (preg_match('/"(.+)"/', $line, $m)) {
+    // New format: [line N] "text" miId=... conf=...
+    // Extract embedded line index, then strip prefix.
+    if (preg_match('/^\[line\s*(\d+)\]\s*/', $trimmed, $m)) {
+        $dbLineIndex = (int) $m[1];
+        $trimmed     = preg_replace('/^\[line\s*\d+\]\s*/', '', $trimmed);
+    }
+
+    // Legacy format: strip leading "- " marker
+    $trimmed = preg_replace('/^-\s*/', '', $trimmed);
+
+    // Extract quoted raw text. Greedy ".+" so embedded quotes survive.
+    if (preg_match('/"(.+)"/', $trimmed, $m)) {
         $raw = $m[1];
     }
 
-    // Extract numeric fields
-    if (preg_match('/qty=([0-9.]+)/', $line, $m)) {
+    // Extract numeric fields (legacy format only — new format has no qty/price in context)
+    if (preg_match('/qty=([0-9.]+)/', $trimmed, $m)) {
         $qty = (float) $m[1];
     }
-    if (preg_match('/lineTotal=([0-9.]+)/', $line, $m)) {
+    if (preg_match('/lineTotal=([0-9.]+)/', $trimmed, $m)) {
         $lineTotal = (float) $m[1];
     }
-    if (preg_match('/invoiceUnitPrice=([0-9.]+)/', $line, $m)) {
+    if (preg_match('/invoiceUnitPrice=([0-9.]+)/', $trimmed, $m)) {
         $unitPrice = (float) $m[1];
     }
 
-    return compact('raw', 'qty', 'lineTotal', 'unitPrice', 'resolved');
+    return compact('raw', 'qty', 'lineTotal', 'unitPrice', 'resolved', 'dbLineIndex');
 }
 
 /**
@@ -288,19 +330,35 @@ function ta_mark_line_resolved(string $context, int $lineIndex): string
     $modified = false;
 
     foreach ($lines as &$line) {
-        // Greedy ".+" + "[" alternative — must stay aligned with
-        // triage_parse_context() so the array index from the foreach
-        // in the UI matches the walk here. Embedded quotes (e.g. 1/2"
-        // for inch) require greedy; the "[" suffix appears on some
-        // resolved-style lines.
-        $isUnresolvedForm = (bool) preg_match('/^\s*-\s*".+"\s*[\(\[]/', $line);
-        $isResolvedForm   = (bool) preg_match('/^\s*-\s*\[RESOLVED\]\s*"/', $line);
-        if (!$isUnresolvedForm && !$isResolvedForm) {
+        // Must stay aligned with triage_parse_context() so the array index
+        // from the UI foreach matches the walk here.
+        //
+        // Legacy format (ingest-documents.js):
+        //   - "text" (qty=...)        → unresolved
+        //   - [RESOLVED] "text" (...)  → already resolved
+        //
+        // New format (ingest-one-local.ts):
+        //   [line N] "text" miId=...        → unresolved
+        //   [RESOLVED][line N] "text" ...   → already resolved
+        $isLegacyUnresolved  = (bool) preg_match('/^\s*-\s*".+"\s*[\(\[]/', $line);
+        $isLegacyResolved    = (bool) preg_match('/^\s*-\s*\[RESOLVED\]\s*"/', $line);
+        $isNewFormatUnresolved = (bool) preg_match('/^\s*\[line\s*\d+\]\s*"/', $line);
+        $isNewFormatResolved   = (bool) preg_match('/^\s*\[RESOLVED\]\[line\s*\d+\]\s*"/', $line);
+
+        $isAny = $isLegacyUnresolved || $isLegacyResolved
+               || $isNewFormatUnresolved || $isNewFormatResolved;
+
+        if (!$isAny) {
             continue;
         }
         if ($arrayIdx === $lineIndex) {
-            if ($isUnresolvedForm) {
+            if ($isLegacyUnresolved) {
+                // Prepend [RESOLVED] after the leading "- "
                 $line     = preg_replace('/^(\s*-\s*)/', '$1[RESOLVED] ', $line);
+                $modified = true;
+            } elseif ($isNewFormatUnresolved) {
+                // Prepend [RESOLVED] at the start of the trimmed line
+                $line     = preg_replace('/^(\s*)(\[line\s*\d+\])/', '$1[RESOLVED]$2', $line);
                 $modified = true;
             }
             break;
