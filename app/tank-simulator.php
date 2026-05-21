@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/recipe-resolver.php';
+
 /**
  * TankSimulator — event-sourced tank occupancy model.
  *
@@ -36,21 +38,35 @@ class TankSimulator
     private const SIM_START_DATE         = '2023-10-01';
     private const RECENT_COOLING_MONTHS  = 3;
 
-    // ── Beer-name normalisation (ported from lib/beer.js _BEER_NAME_MAP) ──────
+    // ── Beer-name normalisation ───────────────────────────────────────────────
+    //
+    // WHY THIS MAP STAYS (not replaced by recipe-resolver):
+    //   bd_racking stores abbreviated canonical names (e.g. "Div.Blanche",
+    //   "Div.Gose") while bd_brewing_brewday stores full canonical names
+    //   ("Diversion Blanche", "Diversion Gose"). The simulator uses a single
+    //   internal key space (keyed by beer name) across both tables, so it needs
+    //   to normalise both sides to the SAME string. recipe-resolver.php would
+    //   return "Diversion Blanche" (the ref_recipes canonical), which would fail
+    //   to match the bd_racking rows that store "Div.Blanche". Until the DB data
+    //   is normalised (a separate migration), this map is the source-of-truth
+    //   for the simulator's internal canonical. See also: BEER_TO_PREFIX below.
+    //
+    // Additionally, TM-BLO/TM-IPA/TM-TR appear in bd_brewing_brewday with those
+    // exact codes, so we do NOT remap them — mapping to 'Brasserie 28 - *' would
+    // break the brewday→racking key join. Those three entries have been removed.
+    // NYL appears in bd_brewing_brewday as 'NYL' (not 'NYL (Hard Seltzer)'), so
+    // it too has been removed from this map.
     private const BEER_NAME_MAP = [
-        'DGD'                 => 'DrunkBeard - Galactic Drift',
-        'QDG'                 => 'Qrew - Diversion Gose',
-        'docf'                => 'Dockeuse',
-        'docb'                => 'Dockeuse',
-        'Les Docks - NEIPA'   => 'Dockeuse',
-        'Diversion Blanche'   => 'Div.Blanche',
-        'Diversion Gose'      => 'Div.Gose',
-        'Diversion Panaché'   => 'Div.Panaché',
-        'MeltingPote - IPA'   => 'MeltingPote - Cropette',
-        'TM-BLO'              => 'Brasserie 28 - Blonde',
-        'TM-IPA'              => 'Brasserie 28 - IPA',
-        'TM-TR'               => 'Brasserie 28 - Triple',
-        'NYL'                 => 'NYL (Hard Seltzer)',
+        'DGD'               => 'DrunkBeard - Galactic Drift',
+        'QDG'               => 'Qrew - Diversion Gose',
+        'docf'              => 'Docks - NEIPA',
+        'docb'              => 'Docks - NEIPA',
+        'Les Docks - NEIPA' => 'Docks - NEIPA',
+        'Dockeuse'          => 'Docks - NEIPA',
+        'Diversion Blanche' => 'Div.Blanche',
+        'Diversion Gose'    => 'Div.Gose',
+        'Diversion Panaché' => 'Div.Panaché',
+        'MeltingPote - IPA' => 'MeltingPote - Cropette',
     ];
 
     // ── Beer-type map (ported from lib/beer.js BEER_TYPE_MAP) ─────────────────
@@ -65,7 +81,7 @@ class TankSimulator
         'Div.Blanche'                 => 'Core',
         'Alternative'                 => 'Core',
         'Estafette'                   => 'Core',
-        'Dockeuse'                    => 'Contract',
+        'Docks - NEIPA'               => 'Contract',
         'EPH1'                        => 'Ephémère',
         'EPH2'                        => 'Ephémère',
         'EPH3'                        => 'Ephémère',
@@ -74,10 +90,10 @@ class TankSimulator
         'Div.Gose'                    => 'Collab',
         'Div.Panaché'                 => 'Archive',
         'Blonde des Romands'          => 'Archive',
-        'NYL (Hard Seltzer)'          => 'Archive',
-        'Brasserie 28 - Blonde'       => 'Contract',
-        'Brasserie 28 - IPA'          => 'Contract',
-        'Brasserie 28 - Triple'       => 'Contract',
+        'NYL'                         => 'Archive',
+        'TM-BLO'                      => 'Contract',
+        'TM-IPA'                      => 'Contract',
+        'TM-TR'                       => 'Contract',
         'Chien Bleu - Moût Chaud'     => 'Wort Sale',
         'Chien Bleu - Moût Froid'     => 'Wort Sale',
     ];
@@ -88,16 +104,24 @@ class TankSimulator
         'Chien Bleu - Moût Froid',
     ];
 
-    // ── SKU prefix → canonical beer (ported from lib/beer.js _SKU_BEER_MAP) ────
-    // bd_packaging.beer holds SKU codes like "STI4", "SPYF" — not canonical names.
-    // deriveBeerFromSku() strips the format suffix and looks up the prefix here.
+    // ── SKU prefix → simulator-internal canonical beer name ──────────────────
+    //
+    // WHY THIS MAP STAYS (not replaced by recipe-resolver):
+    //   bd_packaging.beer holds SKU codes like "STI4", "SPYF". deriveBeerFromSku()
+    //   strips the format suffix and maps the prefix to the simulator's INTERNAL
+    //   canonical name. This must match BEER_NAME_MAP's output space — e.g. DIB
+    //   must resolve to 'Div.Blanche' (not 'Diversion Blanche') so packaging
+    //   events join correctly to racking events that used 'Div.Blanche'.
+    //   recipe-resolver returns 'Diversion Blanche' (the ref_recipes canonical),
+    //   which would create a mismatch. Fix path: normalise bd_racking.neb_beer
+    //   to use full canonical names, then drop both maps and use the resolver.
     private const SKU_BEER_MAP = [
         'ZEP'  => 'Zepp',          'EMB'  => 'Embuscade',     'MOO'  => 'Moonshine',
         'STI'  => 'Stirling',      'SPY'  => 'Speakeasy',     'DIV'  => 'Diversion',
         'DOA'  => 'Double Oat',    'EST'  => 'Estafette',     'ALT'  => 'Alternative',
         'DIB'  => 'Div.Blanche',   'DIG'  => 'Div.Gose',      'DIP'  => 'Div.Panaché',
         'DGD'  => 'DrunkBeard - Galactic Drift',              'QDG'  => 'Qrew - Diversion Gose',
-        'BLO'  => 'Blonde des Romands', 'BLA' => 'Div.Blanche', 'DOC' => 'Dockeuse',
+        'BLO'  => 'Blonde des Romands', 'BLA' => 'Div.Blanche', 'DOC' => 'Docks - NEIPA',
         'EPH1' => 'EPH1', 'EPH2' => 'EPH2', 'EPH3' => 'EPH3', 'EPH4' => 'EPH4',
     ];
 
@@ -115,7 +139,7 @@ class TankSimulator
         'Blonde des Romands'          => '#dfbd4d',  // blonde lager
         'Diversion'                   => '#cf9c2c',  // IPA, golden-amber
         'Alternative'                 => '#cd902f',  // hazy IPA
-        'Dockeuse'                    => '#d2a13e',  // NEIPA contract, hazy gold
+        'Docks - NEIPA'               => '#d2a13e',  // NEIPA contract, hazy gold
         'Embuscade'                   => '#a8651e',  // amber IPA / pale ale
         'Estafette'                   => '#b86d22',  // saison, orange-amber
         'Stirling'                    => '#7d4218',  // Scotch ale / darker amber
@@ -128,9 +152,9 @@ class TankSimulator
         'Double Oat'                  => '#1a0c06',  // very dark oat stout
         'Qrew - Diversion Gose'       => '#e3c98a',  // gose collab
         // Contract beers (default amber unless overridden)
-        'Brasserie 28 - Blonde'       => '#dfbd4d',
-        'Brasserie 28 - IPA'          => '#c08428',
-        'Brasserie 28 - Triple'       => '#c79938',
+        'TM-BLO'                      => '#dfbd4d',
+        'TM-IPA'                      => '#c08428',
+        'TM-TR'                       => '#c79938',
     ];
 
     // Fallback for unknown beers / contract beers not in the map.
@@ -146,13 +170,19 @@ class TankSimulator
         return self::DEFAULT_BEER_COLOUR;
     }
 
-    // ── Canonical beer → short prefix used in fermenting "beers_to_*" cells ──
-    // Operators type "<PREFIX> <BATCH>" in cold-crash / gravity-read columns
-    // (e.g. "DIB 6", "EMB 232", "EPH2 26"). For Neb beers the prefix is a
-    // 3- or 4-letter SKU code; for contract beers the operator types the full
-    // canonical name as the prefix (e.g. "Chien Bleu - Jasper 28").
-    // Without this, a batch-only LIKE match cross-matches batch numbers across
-    // different beers (e.g. DIB 6 vs ALT 6) and the most recent wins.
+    // ── Simulator-internal canonical → short prefix used in fermenting cells ──
+    //
+    // Operators type "<PREFIX> <BATCH>" in bd_fermenting columns like
+    // beers_to_cold_crash / beers_to_read (e.g. "DIB 6", "EMB 232", "EPH2 26").
+    // For Neb beers the prefix is a 3-or-4-letter SKU code; for contract beers
+    // the operator types the full canonical name (e.g. "Chien Bleu - Jasper 28").
+    // Without this, a batch-only LIKE match cross-matches across beers.
+    //
+    // AUTHORITATIVE equivalent in recipe-resolver.php: canonical_to_short_code().
+    // Note: that function maps ref_recipes canonical names (e.g. "Diversion Blanche")
+    // whereas this map uses simulator-internal names (e.g. "Div.Blanche"). Both
+    // produce the same short code (DIB). tanks.php uses canonical_to_short_code()
+    // directly; this map remains for the static beerPrefix() method.
     private const BEER_TO_PREFIX = [
         'Zepp'               => 'ZEP',
         'Embuscade'          => 'EMB',
@@ -167,7 +197,7 @@ class TankSimulator
         'Div.Gose'           => 'DIG',
         'Div.Panaché'        => 'DIP',
         'Blonde des Romands' => 'BLO',
-        'Dockeuse'           => 'DOC',
+        'Docks - NEIPA'      => 'DOC',
         'EPH1' => 'EPH1', 'EPH2' => 'EPH2', 'EPH3' => 'EPH3', 'EPH4' => 'EPH4',
         'DrunkBeard - Galactic Drift' => 'DGD',
         'Qrew - Diversion Gose'       => 'QDG',
@@ -177,6 +207,10 @@ class TankSimulator
      * Return the short prefix operators type alongside the batch number in
      * fermenting cells. Falls back to the full canonical name for contract
      * beers that the operator references by full name.
+     *
+     * Note: tanks.php now calls canonical_to_short_code($pdo, $beer) from
+     * recipe-resolver.php directly (which works on ref_recipes canonical names).
+     * This static method is kept for callers that have no PDO in scope.
      */
     public static function beerPrefix(string $beer): string
     {

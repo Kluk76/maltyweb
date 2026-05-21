@@ -121,6 +121,14 @@ $wipMiRows    = [];   // MI breakdown rows
 $wipGlRecap   = [];   // GL recap rows
 $wipKpis      = ['hl_total' => 0.0, 'cct_count' => 0, 'bbt_count' => 0, 'wip_value' => 0.0];
 
+// FG tab data
+$fgPeriods    = [];
+$fgPeriod     = '';
+$fgRows       = [];   // each entry: sku, beer, format, unit_label, qty, hl_equiv, liquid_per_unit,
+                      // packaging_per_unit, total_per_unit, total_chf, gl_breakdown, cost_source_month, no_cost_basis
+$fgKpis       = ['valeur_fg' => 0.0, 'hl_total' => 0.0, 'sku_count' => 0, 'valeur_liquide' => 0.0, 'valeur_emballage' => 0.0];
+$fgGlRecap    = [];   // GL account => total CHF
+
 try {
 
     // Categories for filter dropdown (always needed)
@@ -471,10 +479,344 @@ try {
         $kpis['carried'] = (int) ($carriedRow['cnt'] ?? 0);
     }
 
+    if ($view === 'fg') {
+
+        // ── FG: rolling 6-month period picker ─────────────────────────────────
+        $today = new DateTimeImmutable('today');
+        $defaultPeriodDT = $today->modify('first day of last month');
+        for ($i = 0; $i < 6; $i++) {
+            $fgPeriods[] = $defaultPeriodDT->modify("-$i months")->format('Y-m');
+        }
+        $fgPeriod = (in_array($period, $fgPeriods, true)) ? $period : $fgPeriods[0];
+
+        // ── Step 3a — fetch FG counts joined to ref_skus + ref_recipes ────────
+        $fgSt = $pdo->prepare("
+            SELECT fg.sku                    AS sku_code,
+                   fg.qty                    AS qty,
+                   s.id                      AS sku_id,
+                   ANY_VALUE(s.recipe_id)    AS recipe_id,
+                   ANY_VALUE(s.beer_raw)     AS beer_raw,
+                   ANY_VALUE(s.format)       AS format,
+                   ANY_VALUE(s.unit_label)   AS unit_label,
+                   ANY_VALUE(s.hl_per_unit)  AS hl_per_unit,
+                   ANY_VALUE(r.name)         AS canonical_beer
+              FROM inv_fg_stocktake fg
+              LEFT JOIN ref_skus    s ON s.sku_code = fg.sku
+              LEFT JOIN ref_recipes r ON r.id = s.recipe_id
+             WHERE fg.month_closed = ?
+               AND fg.qty > 0
+             GROUP BY fg.sku, fg.qty, s.id
+             ORDER BY ANY_VALUE(r.name), ANY_VALUE(s.format), fg.sku
+        ");
+        $fgSt->execute([$fgPeriod]);
+        $fgRaw = $fgSt->fetchAll();
+
+        if (!empty($fgRaw)) {
+            // ── Step 3b — walk-back liquid cost lookup per beer ────────────────
+            // For April FG we want month_key strictly before fgPeriod (brew in N-1).
+            $prevPeriod = (new DateTime($fgPeriod . '-01'))->modify('-1 month')->format('Y-m');
+
+            // TEMPORARY: composite-pack liquid composition.
+            // Remove once ref_sku_bom / a dedicated composites table holds this.
+            $COMPOSITE_PACK_LIQUID = [
+                // PD8 = Pack Découverte: 8 × 33cl, 1 bottle of each of 8 core beers (0.0264 HL)
+                // Source: BSF CompositePacks tab. PAD was the old BSF header; PD8 is canonical (inv_fg_stocktake renamed 2026-05-21).
+                'PD8' => ['Zepp' => 1, 'Diversion' => 1, 'Double Oat' => 1, 'Embuscade' => 1,
+                          'Moonshine' => 1, 'Speakeasy' => 1, 'Stirling' => 1, 'Alternative' => 1],
+                // PAL = Pack Louis: 12 × 33cl, 2 bottles each of 6 beers (0.396 HL)
+                'PAL' => ['Speakeasy' => 2, 'Alternative' => 2, 'Diversion Blanche' => 2,
+                          'Double Oat' => 2, 'Embuscade' => 2, 'Moonshine' => 2],
+            ];
+            $BOTTLE_HL = 0.0033;  // 33cl = 0.33 L = 0.0033 HL (1 HL = 100 L)
+
+            $beerCostMap = [];   // canonical_beer => ['month'=>'YYYY-MM','cost_per_hl'=>float,'gl_split'=>[GL=>cost/hl]]
+
+            $uniqueBeers = array_values(array_unique(array_filter(
+                array_column($fgRaw, 'canonical_beer')
+            )));
+
+            // Also ensure constituent beers from composite packs are walked back
+            // so $beerCostMap is populated for them even if they have no FG row of their own.
+            foreach ($COMPOSITE_PACK_LIQUID as $compSku => $constituents) {
+                foreach (array_keys($constituents) as $constituentBeer) {
+                    if (!in_array($constituentBeer, $uniqueBeers, true)) {
+                        $uniqueBeers[] = $constituentBeer;
+                    }
+                }
+            }
+
+            foreach ($uniqueBeers as $beer) {
+                // Walk back: most recent month_key <= prevPeriod with non-null brew_cost_per_hl
+                // Volume-weighted average across tanks for that month
+                $costSt = $pdo->prepare("
+                    SELECT month_key,
+                           SUM(volume_hl * brew_cost_per_hl) / NULLIF(SUM(volume_hl), 0) AS cost_per_hl
+                      FROM inv_tank_balances
+                     WHERE beer_name COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci
+                       AND month_key <= ?
+                       AND brew_cost_per_hl IS NOT NULL
+                     GROUP BY month_key
+                    HAVING cost_per_hl IS NOT NULL
+                     ORDER BY month_key DESC
+                     LIMIT 1
+                ");
+                $costSt->execute([$beer, $prevPeriod]);
+                $costRow = $costSt->fetch();
+
+                if (!$costRow || $costRow['cost_per_hl'] === null) {
+                    $beerCostMap[$beer] = ['month' => null, 'cost_per_hl' => null, 'gl_split' => []];
+                    continue;
+                }
+
+                $costMonth = (string) $costRow['month_key'];
+                $costPerHl = (float)  $costRow['cost_per_hl'];
+
+                // GL split: derive ratio of each GL's ingredient cost in that brew month
+                // Uses bd_brewing_ingredients_parsed for the (beer, month) pair.
+                // ANY_VALUE(c.default_gl_account) groups by gl text (sql #1 ONLY_FULL_GROUP_BY).
+                // COLLATE on JOIN across bd_* (0900) and ref_* (unicode_ci) tables (sql #2).
+                $glSt = $pdo->prepare("
+                    SELECT c.default_gl_account AS gl,
+                           SUM(bip.qty * IF(bip.unit='g', 0.001, 1)
+                               * COALESCE(ws.wac_chf, m.price * IF(m.currency='EUR', 0.945, 1))) AS gl_cost
+                      FROM bd_brewing_ingredients_parsed bip
+                      JOIN ref_mi m ON m.id = bip.mi_id_fk
+                      LEFT JOIN ref_mi_categories c ON c.id = m.category_id
+                      LEFT JOIN wac_snapshots ws ON ws.mi_id_fk = m.id AND ws.period = ?
+                     WHERE bip.beer  COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci
+                       AND bip.mi_id_fk IS NOT NULL
+                       AND EXISTS (
+                         SELECT 1 FROM bd_brewing_cooling bc
+                          WHERE bc.cool_beer  COLLATE utf8mb4_unicode_ci = bip.beer  COLLATE utf8mb4_unicode_ci
+                            AND bc.cool_batch COLLATE utf8mb4_unicode_ci = bip.batch COLLATE utf8mb4_unicode_ci
+                            AND DATE_FORMAT(bc.event_date, '%Y-%m') = ?
+                       )
+                     GROUP BY c.default_gl_account
+                ");
+                $glSt->execute([$costMonth, $beer, $costMonth]);
+                $glTotalRows  = $glSt->fetchAll();
+                $totalGlCost  = (float) array_sum(array_column($glTotalRows, 'gl_cost'));
+                $glSplit = [];
+                foreach ($glTotalRows as $glr) {
+                    $gl = (string) ($glr['gl'] ?? '');
+                    if ($totalGlCost > 0 && $gl !== '') {
+                        // Store cost/HL for this GL (proportional to total brew cost/HL)
+                        $glSplit[$gl] = $costPerHl * ((float) $glr['gl_cost'] / $totalGlCost);
+                    }
+                }
+
+                $beerCostMap[$beer] = [
+                    'month'       => $costMonth,
+                    'cost_per_hl' => $costPerHl,
+                    'gl_split'    => $glSplit,
+                ];
+            }
+
+            // ── Step 3c — packaging BOM per SKU ───────────────────────────────
+            // Aggregate packaging cost per SKU, split by GL account.
+            // All packaging MIs currently share GL 4200 but query dynamically
+            // so future subcategories (4201/4202/etc.) are auto-handled.
+            $skuIds = array_values(array_unique(array_filter(array_column($fgRaw, 'sku_id'))));
+            $bomMap = [];   // sku_id => ['total_chf_per_unit'=>float, 'gl_split'=>[GL=>float]]
+
+            if (!empty($skuIds)) {
+                $phBom = implode(',', array_fill(0, count($skuIds), '?'));
+                $bomSt = $pdo->prepare("
+                    SELECT b.sku_id,
+                           COALESCE(c.default_gl_account, '4200') AS gl,
+                           SUM(b.cost) AS gl_cost
+                      FROM ref_sku_bom b
+                      JOIN ref_mi m ON m.id = b.mi_id
+                      LEFT JOIN ref_mi_categories c ON c.id = m.category_id
+                     WHERE b.sku_id IN ($phBom)
+                       AND m.mi_id LIKE 'PKG\\_%' ESCAPE '\\\\'
+                     GROUP BY b.sku_id, COALESCE(c.default_gl_account, '4200')
+                ");
+                $bomSt->execute($skuIds);
+                foreach ($bomSt->fetchAll() as $br) {
+                    $sid = (int) $br['sku_id'];
+                    $gl  = (string) $br['gl'];
+                    $glCost = (float) $br['gl_cost'];
+                    $bomMap[$sid]['gl_split'][$gl]        = ($bomMap[$sid]['gl_split'][$gl] ?? 0.0) + $glCost;
+                    $bomMap[$sid]['total_chf_per_unit']    = ($bomMap[$sid]['total_chf_per_unit'] ?? 0.0) + $glCost;
+                }
+            }
+
+            // ── Step 3d — build display rows + KPIs + GL recap ────────────────
+            foreach ($fgRaw as $r) {
+                $skuCode    = (string) $r['sku_code'];
+                $beer       = (string) ($r['canonical_beer'] ?? $r['beer_raw'] ?? '—');
+                $qty        = (int)   $r['qty'];
+                $hlPerUnit  = (float) ($r['hl_per_unit'] ?? 0.0);
+                $hlEquiv    = $qty * $hlPerUnit;
+                $skuId      = (int)   ($r['sku_id'] ?? 0);
+
+                // Composite-pack override: sum constituent liquid costs instead of
+                // single-recipe walk-back.
+                if (isset($COMPOSITE_PACK_LIQUID[$skuCode])) {
+                    $liquidPerUnit = 0.0;
+                    $glBreakdown   = [];
+                    $noCostBasis   = false;
+                    foreach ($COMPOSITE_PACK_LIQUID[$skuCode] as $constituentBeer => $bottles) {
+                        $cbc = $beerCostMap[$constituentBeer] ?? null;
+                        if (!$cbc || $cbc['cost_per_hl'] === null) {
+                            $noCostBasis = true;
+                            $liquidPerUnit = null;
+                            break;
+                        }
+                        $constituentHl   = $bottles * $BOTTLE_HL;
+                        $liquidPerUnit  += $constituentHl * $cbc['cost_per_hl'];
+                        foreach ($cbc['gl_split'] as $gl => $costPerHlGl) {
+                            $glBreakdown[$gl] = ($glBreakdown[$gl] ?? 0.0) + ($qty * $constituentHl * $costPerHlGl);
+                        }
+                    }
+                    $packagingPerUnit = $bomMap[$skuId]['total_chf_per_unit'] ?? 0.0;
+                    if ($skuId > 0 && !empty($bomMap[$skuId]['gl_split'])) {
+                        foreach ($bomMap[$skuId]['gl_split'] as $gl => $costPerUnitGl) {
+                            $glBreakdown[$gl] = ($glBreakdown[$gl] ?? 0.0) + ($qty * $costPerUnitGl);
+                        }
+                    }
+                    $totalPerUnit = ($liquidPerUnit ?? 0.0) + $packagingPerUnit;
+                    $totalChf     = $qty * $totalPerUnit;
+                    foreach ($glBreakdown as $gl => $chf) {
+                        $fgGlRecap[$gl] = ($fgGlRecap[$gl] ?? 0.0) + $chf;
+                    }
+                    $fgRows[] = [
+                        'sku_code'           => $skuCode,
+                        'beer'               => $beer,
+                        'format'             => (string) ($r['format']     ?? '—'),
+                        'unit_label'         => (string) ($r['unit_label'] ?? '—'),
+                        'qty'                => $qty,
+                        'hl_equiv'           => $hlEquiv,
+                        'liquid_per_unit'    => $liquidPerUnit,
+                        'packaging_per_unit' => $packagingPerUnit,
+                        'total_per_unit'     => $totalPerUnit,
+                        'total_chf'          => $totalChf,
+                        'gl_breakdown'       => $glBreakdown,
+                        'cost_source_month'  => null,
+                        'no_cost_basis'      => $noCostBasis ?? false,
+                    ];
+                    $fgKpis['valeur_fg']        += $totalChf;
+                    $fgKpis['hl_total']          += $hlEquiv;
+                    $fgKpis['valeur_liquide']    += ($liquidPerUnit !== null) ? $qty * $liquidPerUnit : 0.0;
+                    $fgKpis['valeur_emballage']  += $qty * $packagingPerUnit;
+                    continue;
+                }
+
+                $bc = $beerCostMap[$beer] ?? null;
+                $liquidPerUnit  = ($bc && $bc['cost_per_hl'] !== null)
+                    ? $hlPerUnit * $bc['cost_per_hl']
+                    : null;
+                $packagingPerUnit = $bomMap[$skuId]['total_chf_per_unit'] ?? 0.0;
+                $totalPerUnit   = ($liquidPerUnit ?? 0.0) + $packagingPerUnit;
+                $totalChf       = $qty * $totalPerUnit;
+
+                // GL breakdown for this SKU row
+                $glBreakdown = [];
+                if ($bc && !empty($bc['gl_split'])) {
+                    foreach ($bc['gl_split'] as $gl => $costPerHlGl) {
+                        $glBreakdown[$gl] = ($glBreakdown[$gl] ?? 0.0) + ($qty * $hlPerUnit * $costPerHlGl);
+                    }
+                }
+                if ($skuId > 0 && !empty($bomMap[$skuId]['gl_split'])) {
+                    foreach ($bomMap[$skuId]['gl_split'] as $gl => $costPerUnitGl) {
+                        $glBreakdown[$gl] = ($glBreakdown[$gl] ?? 0.0) + ($qty * $costPerUnitGl);
+                    }
+                }
+
+                // Accumulate GL recap
+                foreach ($glBreakdown as $gl => $chf) {
+                    $fgGlRecap[$gl] = ($fgGlRecap[$gl] ?? 0.0) + $chf;
+                }
+
+                $fgRows[] = [
+                    'sku_code'           => (string) $r['sku_code'],
+                    'beer'               => $beer,
+                    'format'             => (string) ($r['format']     ?? '—'),
+                    'unit_label'         => (string) ($r['unit_label'] ?? '—'),
+                    'qty'                => $qty,
+                    'hl_equiv'           => $hlEquiv,
+                    'liquid_per_unit'    => $liquidPerUnit,
+                    'packaging_per_unit' => $packagingPerUnit,
+                    'total_per_unit'     => $totalPerUnit,
+                    'total_chf'          => $totalChf,
+                    'gl_breakdown'       => $glBreakdown,
+                    'cost_source_month'  => $bc['month'] ?? null,
+                    'no_cost_basis'      => ($bc === null || $bc['cost_per_hl'] === null),
+                ];
+
+                $fgKpis['valeur_fg']       += $totalChf;
+                $fgKpis['hl_total']        += $hlEquiv;
+                $fgKpis['valeur_liquide']  += ($liquidPerUnit !== null) ? $qty * $liquidPerUnit : 0.0;
+                $fgKpis['valeur_emballage'] += $qty * $packagingPerUnit;
+            }
+            $fgKpis['sku_count'] = count($fgRows);
+        }
+    }
+
     if ($view === 'wip') {
 
         // ── WIP: use the proven TankSimulator (same engine as /modules/tanks.php) ──
         require_once __DIR__ . '/../../app/tank-simulator.php';
+
+        /* TEMPORARY HARDCODE — remove when maltyweb-native ingredient form ships */
+        // Patches a gap where bd_brewing_ingredients_parsed.category ENUM only covers
+        // malt/hops_kettle/hops_dry — no slot for adjuncts, process aids, or microbial
+        // stabilizers — so GL 4104 ingredients are never captured via the form.
+        // REMOVE this entire block once the native inputting form writes these directly
+        // to bd_brewing_ingredients_parsed.
+        $HARDCODED_INGREDIENT_RULES = [
+            // per-brew rules keyed by canonical beer name
+            'Moonshine' => [
+                ['mi_id' => 'ADJ_CORIANDER',   'qty_per_brew_kg' => 2.2],
+                ['mi_id' => 'ADJ_ORANGE_PEEL',  'qty_per_brew_kg' => 3.3],
+            ],
+            'Stirling' => [
+                // skip_if_in_parsed: true → omit if PROC_DEHAZE already appears in
+                // bd_brewing_ingredients_parsed for this (beer, batch) to avoid double-count
+                ['mi_id' => 'PROC_DEHAZE', 'qty_per_brew_kg' => 0.150, 'skip_if_in_parsed' => true],
+            ],
+            'Diversion Blanche' => [
+                ['mi_id' => 'ADJ_PEACH_TEA', 'qty_per_brew_kg' => 4.0],
+            ],
+        ];
+        // Yeast vitalizer: all Neb beers EXCEPT the three below.
+        // $HC_YEASTVIT_EXCLUDE: canonical names of beers where PROC_YEASTVIT is NOT added.
+        $HC_YEASTVIT_EXCLUDE = ['Diversion', 'Diversion Blanche', 'Alternative'];
+        $HC_YEASTVIT_RULE    = ['mi_id' => 'PROC_YEASTVIT', 'qty_per_brew_kg' => 0.240];
+        // Nagardo: 2 g/HL of BBT volume only for Diversion + Diversion Blanche.
+        // qty_per_hl_kg = 0.002 (2 g = 0.002 kg per HL).
+        $HC_NAGARDO_BEERS = ['Diversion', 'Diversion Blanche'];
+        $HC_NAGARDO_RULE  = ['mi_id' => 'PROC_NAGARDO', 'qty_per_hl_kg' => 0.002];
+
+        // Collect all unique MI IDs across all rules (for the batched price query below).
+        // PROC_YEASTVIT and PROC_NAGARDO are included unconditionally — they'll only be
+        // applied to qualifying beers at runtime.
+        $HC_ALL_MI_IDS = array_unique(array_merge(
+            ['PROC_YEASTVIT', 'PROC_NAGARDO'],
+            ...array_values(array_map(fn($rules) => array_column($rules, 'mi_id'), $HARDCODED_INGREDIENT_RULES))
+        ));
+
+        // Query Neb beer names once (PROC_YEASTVIT scope).
+        // Result used during the per-tank loop to decide whether to apply the rule.
+        $HC_NEB_BEERS = [];   // flat list of canonical Neb beer names
+        {
+            $nebStmt = $pdo->query(
+                "SELECT name FROM ref_recipes WHERE classification = 'Neb'"
+            );
+            foreach ($nebStmt->fetchAll(PDO::FETCH_COLUMN) as $n) {
+                $HC_NEB_BEERS[] = (string) $n;
+            }
+        }
+        $HC_YEASTVIT_BEERS = array_values(array_filter(
+            $HC_NEB_BEERS,
+            fn(string $n) => !in_array($n, $HC_YEASTVIT_EXCLUDE, true)
+        ));
+        /* END TEMPORARY HARDCODE */
+
+        // Price lookup ($hardcodedMiPrices) is populated after $wipPeriod is resolved below.
+        $hardcodedMiPrices   = [];   // mi_id_string => ['id'=>int,'name'=>str,'gl'=>str,'unit'=>str,'unit_price_chf'=>float]
+        $hardcodedMiWarnings = [];   // mi_id_string => warning message
 
         // Period dropdown: rolling 6 months ending at last closed month.
         // "Closed month" = last full calendar month (today's month-1).
@@ -490,6 +832,48 @@ try {
         } else {
             $wipPeriod = $wipPeriods[0];
         }
+
+        /* TEMPORARY HARDCODE — resolve MI unit prices (CHF/kg) for all hardcoded rules */
+        // Effective price = COALESCE(ws.wac_chf, m.price * IF(m.currency='EUR', 0.945, 1)).
+        // Keyed by mi_id string. Missing MIs emit a warning and are skipped — no crash.
+        {
+            if (!empty($HC_ALL_MI_IDS)) {
+                $hcPlaceholders  = implode(',', array_fill(0, count($HC_ALL_MI_IDS), '?'));
+                // param order: $wipPeriod first (for ws.period = ?), then mi_id list
+                $hcParamsOrdered = [$wipPeriod];
+                foreach ($HC_ALL_MI_IDS as $hcMid) { $hcParamsOrdered[] = $hcMid; }
+                $hcSql = "
+                    SELECT m.mi_id,
+                           m.id,
+                           m.name,
+                           ANY_VALUE(c.default_gl_account) AS default_gl_account,
+                           m.pricing_unit,
+                           COALESCE(ws.wac_chf, m.price * IF(m.currency='EUR', 0.945, 1)) AS unit_price_chf
+                      FROM ref_mi m
+                      LEFT JOIN ref_mi_categories c ON c.id = m.category_id
+                      LEFT JOIN wac_snapshots ws ON ws.mi_id_fk = m.id AND ws.period = ?
+                     WHERE m.mi_id IN ($hcPlaceholders)
+                     GROUP BY m.id, m.mi_id, m.name, m.pricing_unit, ws.wac_chf, m.price, m.currency
+                ";
+                $hcStmt = $pdo->prepare($hcSql);
+                $hcStmt->execute($hcParamsOrdered);
+                foreach ($hcStmt->fetchAll() as $hcRow) {
+                    $hardcodedMiPrices[(string) $hcRow['mi_id']] = [
+                        'id'             => (int)    $hcRow['id'],
+                        'name'           => (string) $hcRow['name'],
+                        'gl'             => (string) ($hcRow['default_gl_account'] ?? '4104'),
+                        'unit'           => (string) ($hcRow['pricing_unit'] ?? 'kg'),
+                        'unit_price_chf' => (float)  ($hcRow['unit_price_chf'] ?? 0),
+                    ];
+                }
+                foreach ($HC_ALL_MI_IDS as $hcMid) {
+                    if (!isset($hardcodedMiPrices[$hcMid])) {
+                        $hardcodedMiWarnings[$hcMid] = "MI '$hcMid' introuvable dans ref_mi — ligne ignorée";
+                    }
+                }
+            }
+        }
+        /* END TEMPORARY HARDCODE — price lookup */
 
         // As-of date = last day of selected month
         [$y, $m] = array_map('intval', explode('-', $wipPeriod));
@@ -522,6 +906,7 @@ try {
 
         // ── Per-batch brew cost map (single query, per-GL breakdown) ─────────
         $brewCostByKeyGl = [];   // "beer|batch" → ['4101'=>x,'4102'=>y,'4104'=>z,'other'=>w,'total'=>t] CHF/HL
+        $batchBrewMeta   = [];   // "beer|batch" → ['n'=>int,'hl'=>float] — populated inside TEMPORARY block
         $uniqueBatches = [];
         foreach ($tankTuples as $t) {
             $key = $t['beer'] . '|' . $t['batch'];
@@ -620,14 +1005,214 @@ try {
                     ];
                 }
             }
+
+            /* TEMPORARY HARDCODE — merge all hardcoded ingredient costs into $brewCostByKeyGl */
+            // Covers: per-brew rules (HARDCODED_INGREDIENT_RULES), Neb-wide PROC_YEASTVIT,
+            // and BBT-only per-HL PROC_NAGARDO. Skipped when total_brewed_hl = 0 (sql #15).
+            $batchBrewMeta = [];   // "beer|batch" => ['n'=>int,'hl'=>float]
+            {
+                // Collect (beer, batch) pairs that need n_brews + total_hl metadata.
+                // Includes: beers with per-brew rules, YEASTVIT beers, NAGARDO beers.
+                $batchMetaParams = [];
+                $batchMetaTuples = [];
+                foreach ($tankTuples as $t) {
+                    if ($t['batch'] === '') continue;
+                    $beerName = $t['beer'];
+                    $needsMeta = isset($HARDCODED_INGREDIENT_RULES[$beerName])
+                        || in_array($beerName, $HC_YEASTVIT_BEERS, true)
+                        || in_array($beerName, $HC_NAGARDO_BEERS, true);
+                    if (!$needsMeta) continue;
+                    $bk = $beerName . '|' . $t['batch'];
+                    if (!isset($batchBrewMeta[$bk])) {
+                        $batchMetaTuples[] = 'ROW(?, ?)';
+                        $batchMetaParams[] = $beerName;
+                        $batchMetaParams[] = $t['batch'];
+                        $batchBrewMeta[$bk] = null; // placeholder — filled below
+                    }
+                }
+                if (!empty($batchMetaTuples)) {
+                    $bmSql = "
+                        WITH wanted AS (
+                          SELECT * FROM (VALUES " . implode(',', $batchMetaTuples) . ") AS v(beer, batch)
+                        )
+                        SELECT w.beer COLLATE utf8mb4_unicode_ci  AS beer,
+                               w.batch COLLATE utf8mb4_unicode_ci AS batch,
+                               (SELECT COUNT(*) FROM bd_brewing_cooling bc
+                                 WHERE bc.cool_beer  COLLATE utf8mb4_unicode_ci = w.beer  COLLATE utf8mb4_unicode_ci
+                                   AND bc.cool_batch COLLATE utf8mb4_unicode_ci = w.batch COLLATE utf8mb4_unicode_ci
+                                   AND bc.cool_final_volume_hl > 0) AS n_brews,
+                               (SELECT SUM(bc.cool_final_volume_hl) FROM bd_brewing_cooling bc
+                                 WHERE bc.cool_beer  COLLATE utf8mb4_unicode_ci = w.beer  COLLATE utf8mb4_unicode_ci
+                                   AND bc.cool_batch COLLATE utf8mb4_unicode_ci = w.batch COLLATE utf8mb4_unicode_ci
+                                   AND bc.cool_final_volume_hl > 0) AS total_hl
+                          FROM wanted w
+                    ";
+                    $bmStmt = $pdo->prepare($bmSql);
+                    $bmStmt->execute($batchMetaParams);
+                    foreach ($bmStmt->fetchAll() as $bmRow) {
+                        $bk = $bmRow['beer'] . '|' . $bmRow['batch'];
+                        $batchBrewMeta[$bk] = [
+                            'n'  => (int)   ($bmRow['n_brews']  ?? 0),
+                            'hl' => (float) ($bmRow['total_hl'] ?? 0),
+                        ];
+                    }
+                }
+
+                // Pre-fetch skip_if_in_parsed flags for PROC_DEHAZE / Stirling.
+                // Query bd_brewing_ingredients_parsed for any Stirling batch in batchBrewMeta.
+                // Result: set of "beer|batch" keys where PROC_DEHAZE is already present.
+                $HC_DEHAZE_PARSED_BATCHES = [];
+                {
+                    $stirBatches = [];
+                    foreach ($batchBrewMeta as $bk => $meta) {
+                        if ($meta === null) continue;
+                        $parts = explode('|', $bk, 2);
+                        if (($parts[0] ?? '') === 'Stirling') {
+                            $stirBatches[] = $bk;
+                        }
+                    }
+                    if (!empty($stirBatches)) {
+                        $stirParams  = [];
+                        $stirTuples  = [];
+                        foreach ($stirBatches as $bk) {
+                            [$b, $bt] = explode('|', $bk, 2);
+                            $stirTuples[] = 'ROW(?, ?)';
+                            $stirParams[] = $b;
+                            $stirParams[] = $bt;
+                        }
+                        // Get ref_mi.id for PROC_DEHAZE — use a subquery to stay parameterised.
+                        $dehazeSql = "
+                            SELECT DISTINCT bip.beer COLLATE utf8mb4_unicode_ci AS beer,
+                                            bip.batch COLLATE utf8mb4_unicode_ci AS batch
+                              FROM bd_brewing_ingredients_parsed bip
+                              JOIN ref_mi m ON m.id = bip.mi_id_fk
+                                           AND m.mi_id = 'PROC_DEHAZE'
+                             WHERE (bip.beer, bip.batch) IN (
+                               SELECT * FROM (VALUES " . implode(',', $stirTuples) . ") AS v(beer, batch)
+                             )
+                        ";
+                        // Note: (beer, batch) IN (VALUES ...) requires COLLATE on the CTE values side.
+                        // Simpler: use explicit OR pairs for small sets.
+                        if (count($stirBatches) === 1) {
+                            [$sb, $sbt] = explode('|', $stirBatches[0], 2);
+                            $dehazeSql2 = "
+                                SELECT DISTINCT bip.beer  COLLATE utf8mb4_unicode_ci AS beer,
+                                                bip.batch COLLATE utf8mb4_unicode_ci AS batch
+                                  FROM bd_brewing_ingredients_parsed bip
+                                  JOIN ref_mi m ON m.id = bip.mi_id_fk
+                                 WHERE m.mi_id = 'PROC_DEHAZE'
+                                   AND bip.beer  COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci
+                                   AND bip.batch COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci
+                            ";
+                            $dhStmt = $pdo->prepare($dehazeSql2);
+                            $dhStmt->execute([$sb, $sbt]);
+                        } else {
+                            $orClauses = implode(' OR ', array_fill(0, count($stirBatches),
+                                '(bip.beer COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci AND bip.batch COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci)'));
+                            $dehazeSqlFull = "
+                                SELECT DISTINCT bip.beer  COLLATE utf8mb4_unicode_ci AS beer,
+                                                bip.batch COLLATE utf8mb4_unicode_ci AS batch
+                                  FROM bd_brewing_ingredients_parsed bip
+                                  JOIN ref_mi m ON m.id = bip.mi_id_fk
+                                 WHERE m.mi_id = 'PROC_DEHAZE'
+                                   AND ($orClauses)
+                            ";
+                            $dhStmt = $pdo->prepare($dehazeSqlFull);
+                            $dhStmt->execute($stirParams);
+                        }
+                        foreach ($dhStmt->fetchAll() as $dhRow) {
+                            $HC_DEHAZE_PARSED_BATCHES[$dhRow['beer'] . '|' . $dhRow['batch']] = true;
+                        }
+                    }
+                }
+            }
+
+            // Apply per-brew hardcoded rules (HARDCODED_INGREDIENT_RULES + YEASTVIT) to $brewCostByKeyGl.
+            foreach ($batchBrewMeta as $bk => $meta) {
+                if ($meta === null || $meta['n'] <= 0 || $meta['hl'] <= 0) continue;
+                $bkParts  = explode('|', $bk, 2);
+                $beerName = $bkParts[0] ?? '';
+
+                $hcDelta4104 = 0.0;
+
+                // Per-beer rules from $HARDCODED_INGREDIENT_RULES
+                foreach (($HARDCODED_INGREDIENT_RULES[$beerName] ?? []) as $rule) {
+                    if (isset($hardcodedMiWarnings[$rule['mi_id']])) continue;
+                    // skip_if_in_parsed: omit when the MI is already in bd_brewing_ingredients_parsed
+                    if (!empty($rule['skip_if_in_parsed']) && isset($HC_DEHAZE_PARSED_BATCHES[$bk])) continue;
+                    $miPrice = $hardcodedMiPrices[$rule['mi_id']]['unit_price_chf'] ?? 0.0;
+                    $hcDelta4104 += $rule['qty_per_brew_kg'] * $miPrice;
+                }
+
+                // PROC_YEASTVIT: all Neb beers except $HC_YEASTVIT_EXCLUDE
+                if (in_array($beerName, $HC_YEASTVIT_BEERS, true)
+                    && !isset($hardcodedMiWarnings[$HC_YEASTVIT_RULE['mi_id']])) {
+                    $yvPrice = $hardcodedMiPrices[$HC_YEASTVIT_RULE['mi_id']]['unit_price_chf'] ?? 0.0;
+                    $hcDelta4104 += $HC_YEASTVIT_RULE['qty_per_brew_kg'] * $yvPrice;
+                }
+
+                if ($hcDelta4104 <= 0.0) continue;  // nothing to add for this batch
+
+                // hcDelta4104 = CHF for ONE brew; scale to CHF/HL
+                $perHlDelta = ($hcDelta4104 * $meta['n']) / $meta['hl'];
+                if (isset($brewCostByKeyGl[$bk])) {
+                    $brewCostByKeyGl[$bk]['4104']  += $perHlDelta;
+                    $brewCostByKeyGl[$bk]['total'] += $perHlDelta;
+                } else {
+                    $brewCostByKeyGl[$bk] = [
+                        '4101'  => 0.0, '4102'  => 0.0, '4104'  => $perHlDelta,
+                        'other' => 0.0, 'total' => $perHlDelta,
+                    ];
+                }
+            }
+
+            // PROC_NAGARDO: per-HL of BBT volume (not per-brew). Applied per-tank below.
+            // We inject the delta tank-by-tank in the foreach ($tankTuples) loop that
+            // builds $wipCcts/$wipBbts, so the GL split already carries the BBT-specific cost.
+            // Here we only pre-compute the per-HL price so it's ready for that loop.
+            $HC_NAGARDO_PRICE_PER_HL = 0.0;
+            if (!isset($hardcodedMiWarnings[$HC_NAGARDO_RULE['mi_id']])) {
+                $HC_NAGARDO_PRICE_PER_HL =
+                    ($hardcodedMiPrices[$HC_NAGARDO_RULE['mi_id']]['unit_price_chf'] ?? 0.0)
+                    * $HC_NAGARDO_RULE['qty_per_hl_kg'];
+            }
+            /* END TEMPORARY HARDCODE — batchBrewMeta + cost merge */
         }
 
         // ── Build $wipCcts / $wipBbts rows + KPIs ─────────────────────────────
         foreach ($tankTuples as $t) {
             $key    = $t['beer'] . '|' . $t['batch'];
             $glData = $brewCostByKeyGl[$key] ?? null;
+            $vol    = $t['volume_hl'];
+
+            /* TEMPORARY HARDCODE — PROC_NAGARDO BBT per-HL injection */
+            // Nagardo is applied to the BBT volume directly (2 g/HL),
+            // not per-brew. We add it to this tank's cost only when:
+            //   - tank is BBT
+            //   - beer is Diversion or Diversion Blanche
+            //   - PROC_NAGARDO price resolved without warning
+            $nagarDeltaPerHl = 0.0;
+            if ($t['type'] === 'BBT'
+                && in_array($t['beer'], $HC_NAGARDO_BEERS, true)
+                && $HC_NAGARDO_PRICE_PER_HL > 0.0) {
+                $nagarDeltaPerHl = $HC_NAGARDO_PRICE_PER_HL;
+            }
+            /* END TEMPORARY HARDCODE — NAGARDO */
+
+            // Merge NAGARDO delta into per-HL cost (may create entry from scratch)
+            if ($nagarDeltaPerHl > 0.0) {
+                if ($glData !== null) {
+                    $glData['4104']  += $nagarDeltaPerHl;
+                    $glData['total'] += $nagarDeltaPerHl;
+                } else {
+                    $glData = [
+                        '4101'  => 0.0, '4102'  => 0.0, '4104'  => $nagarDeltaPerHl,
+                        'other' => 0.0, 'total' => $nagarDeltaPerHl,
+                    ];
+                }
+            }
+
             $costPerHl = $glData !== null ? $glData['total'] : null;
-            $vol       = $t['volume_hl'];
             $row = [
                 'tank_id'          => (string) $t['tank'],
                 'tank_type'        => $t['type'],
@@ -703,6 +1288,97 @@ try {
             $mb = $pdo->prepare($miSql);
             $mb->execute($miParams);
             $wipMiRows = $mb->fetchAll();
+
+            /* TEMPORARY HARDCODE — inject synthetic MI rows for hardcoded ingredients */
+            // The MI breakdown SQL above only joins bd_brewing_ingredients_parsed,
+            // so hardcoded ingredients won't appear. Build synthetic rows with the same
+            // shape and append them. REMOVE once the native inputting form writes these.
+            $hcSyntheticAccum = [];   // mi_id_string => ['qty_kg'=>float,'total_chf'=>float]
+
+            foreach ($tankTuples as $t) {
+                if ($t['batch'] === '') continue;
+                $beerName = $t['beer'];
+                $bk       = $beerName . '|' . $t['batch'];
+
+                // Per-brew rules from $HARDCODED_INGREDIENT_RULES
+                $perBrewRules = $HARDCODED_INGREDIENT_RULES[$beerName] ?? [];
+                if (!empty($perBrewRules)) {
+                    $meta = $batchBrewMeta[$bk] ?? null;
+                    if ($meta !== null && $meta['n'] > 0 && $meta['hl'] > 0) {
+                        foreach ($perBrewRules as $rule) {
+                            $miCode = $rule['mi_id'];
+                            if (isset($hardcodedMiWarnings[$miCode])) continue;
+                            if (!empty($rule['skip_if_in_parsed']) && isset($HC_DEHAZE_PARSED_BATCHES[$bk])) continue;
+                            $priceInfo = $hardcodedMiPrices[$miCode] ?? null;
+                            if ($priceInfo === null) continue;
+                            // qty for this tank = qty_per_brew × n_brews × (tank_vol / total_brewed_hl)
+                            $tankQty = $rule['qty_per_brew_kg'] * $meta['n'] * ($t['volume_hl'] / $meta['hl']);
+                            if (!isset($hcSyntheticAccum[$miCode])) {
+                                $hcSyntheticAccum[$miCode] = ['qty_kg' => 0.0, 'total_chf' => 0.0];
+                            }
+                            $hcSyntheticAccum[$miCode]['qty_kg']    += $tankQty;
+                            $hcSyntheticAccum[$miCode]['total_chf'] += $tankQty * $priceInfo['unit_price_chf'];
+                        }
+                    }
+                }
+
+                // PROC_YEASTVIT: per-brew, all qualifying Neb beers
+                if (in_array($beerName, $HC_YEASTVIT_BEERS, true)
+                    && !isset($hardcodedMiWarnings[$HC_YEASTVIT_RULE['mi_id']])) {
+                    $meta = $batchBrewMeta[$bk] ?? null;
+                    if ($meta !== null && $meta['n'] > 0 && $meta['hl'] > 0) {
+                        $miCode    = $HC_YEASTVIT_RULE['mi_id'];
+                        $priceInfo = $hardcodedMiPrices[$miCode] ?? null;
+                        if ($priceInfo !== null) {
+                            $tankQty = $HC_YEASTVIT_RULE['qty_per_brew_kg'] * $meta['n'] * ($t['volume_hl'] / $meta['hl']);
+                            if (!isset($hcSyntheticAccum[$miCode])) {
+                                $hcSyntheticAccum[$miCode] = ['qty_kg' => 0.0, 'total_chf' => 0.0];
+                            }
+                            $hcSyntheticAccum[$miCode]['qty_kg']    += $tankQty;
+                            $hcSyntheticAccum[$miCode]['total_chf'] += $tankQty * $priceInfo['unit_price_chf'];
+                        }
+                    }
+                }
+
+                // PROC_NAGARDO: per-HL of BBT volume, Diversion + Diversion Blanche only
+                if ($t['type'] === 'BBT'
+                    && in_array($beerName, $HC_NAGARDO_BEERS, true)
+                    && !isset($hardcodedMiWarnings[$HC_NAGARDO_RULE['mi_id']])) {
+                    $miCode    = $HC_NAGARDO_RULE['mi_id'];
+                    $priceInfo = $hardcodedMiPrices[$miCode] ?? null;
+                    if ($priceInfo !== null) {
+                        $tankQty = $HC_NAGARDO_RULE['qty_per_hl_kg'] * $t['volume_hl'];
+                        if (!isset($hcSyntheticAccum[$miCode])) {
+                            $hcSyntheticAccum[$miCode] = ['qty_kg' => 0.0, 'total_chf' => 0.0];
+                        }
+                        $hcSyntheticAccum[$miCode]['qty_kg']    += $tankQty;
+                        $hcSyntheticAccum[$miCode]['total_chf'] += $tankQty * $priceInfo['unit_price_chf'];
+                    }
+                }
+            }
+
+            foreach ($hcSyntheticAccum as $miCode => $accum) {
+                $priceInfo = $hardcodedMiPrices[$miCode];
+                $wipMiRows[] = [
+                    'mi_id'              => $miCode,
+                    'mi_name'            => $priceInfo['name'],
+                    'category'           => 'Ingrédients',   // GL 4104
+                    'default_gl_account' => $priceInfo['gl'],
+                    'pricing_unit'       => $priceInfo['unit'],
+                    'qty_total_kg'       => $accum['qty_kg'],
+                    'unit_price_chf'     => $priceInfo['unit_price_chf'],
+                    'total_chf'          => $accum['total_chf'],
+                ];
+            }
+            // Re-sort $wipMiRows by default_gl_account, category, mi_id — matches SQL ORDER BY
+            usort($wipMiRows, function (array $a, array $b): int {
+                $glCmp  = strcmp((string) ($a['default_gl_account'] ?? ''), (string) ($b['default_gl_account'] ?? ''));
+                if ($glCmp !== 0) return $glCmp;
+                $catCmp = strcmp((string) ($a['category'] ?? ''), (string) ($b['category'] ?? ''));
+                if ($catCmp !== 0) return $catCmp;
+                return strcmp((string) ($a['mi_id'] ?? ''), (string) ($b['mi_id'] ?? ''));
+            });
+            /* END TEMPORARY HARDCODE — synthetic MI rows */
         }
 
         // ── GL recap (4101 / 4102 / 4104 only) ───────────────────────────────
@@ -749,25 +1425,190 @@ try {
     </div>
   <?php endif ?>
 
-  <!-- Sub-tab switcher -->
-  <nav class="wh-tabs" aria-label="Vue entrepôt">
-    <a class="wh-tab<?= $view === 'rm' ? ' wh-tab--active' : '' ?>"
-       href="?view=rm"
-       <?= $view === 'rm' ? 'aria-current="page"' : '' ?>>Matières premières</a>
-    <a class="wh-tab<?= $view === 'fg' ? ' wh-tab--active' : '' ?>"
-       href="?view=fg"
-       <?= $view === 'fg' ? 'aria-current="page"' : '' ?>>Produits finis</a>
-    <a class="wh-tab<?= $view === 'wip' ? ' wh-tab--active' : '' ?>"
-       href="?view=wip"
-       <?= $view === 'wip' ? 'aria-current="page"' : '' ?>>En cours de fermentation</a>
-  </nav>
+  <!-- Sub-tab switcher + export button -->
+  <div class="wh-tabs-bar">
+    <nav class="wh-tabs" aria-label="Vue entrepôt">
+      <a class="wh-tab<?= $view === 'rm' ? ' wh-tab--active' : '' ?>"
+         href="?view=rm"
+         <?= $view === 'rm' ? 'aria-current="page"' : '' ?>>Matières premières</a>
+      <a class="wh-tab<?= $view === 'fg' ? ' wh-tab--active' : '' ?>"
+         href="?view=fg"
+         <?= $view === 'fg' ? 'aria-current="page"' : '' ?>>Produits finis</a>
+      <a class="wh-tab<?= $view === 'wip' ? ' wh-tab--active' : '' ?>"
+         href="?view=wip"
+         <?= $view === 'wip' ? 'aria-current="page"' : '' ?>>En cours de fermentation</a>
+    </nav>
+    <?php
+      // CSV export covers all 3 tabs (RM live + WIP @ period + FG @ period) in one file.
+      // For RM (live stock, no period selector) default to last closed month so the
+      // WIP/FG snapshot portions are sensible.
+      if ($view === 'fg' && !empty($fgPeriod)) {
+          $exportPeriod = $fgPeriod;
+      } elseif ($view === 'wip' && !empty($wipPeriod)) {
+          $exportPeriod = $wipPeriod;
+      } else {
+          $exportPeriod = (new DateTimeImmutable('first day of last month'))->format('Y-m');
+      }
+    ?>
+    <a class="wh-export-btn"
+       href="warehouse-export.php?period=<?= htmlspecialchars($exportPeriod) ?>&amp;view=<?= htmlspecialchars($view) ?>"
+       title="Export RM + WIP + FG en un seul CSV">Télécharger CSV</a>
+  </div>
 
   <?php if ($view === 'fg'): ?>
 
-    <!-- FG placeholder -->
-    <div class="wh-placeholder" role="status">
-      <span class="wh-placeholder__msg">Vue FG — à venir</span>
-    </div>
+    <!-- ── FG VIEW ──────────────────────────────────────────────────────── -->
+
+    <!-- Period selector -->
+    <form class="wh-wip-date" method="get" action="">
+      <input type="hidden" name="view" value="fg">
+      <label class="wh-wip-date__label">Période&nbsp;:
+        <select class="wh-wip-date__select" name="period" onchange="this.form.submit()">
+          <?php foreach ($fgPeriods as $pk): ?>
+            <option value="<?= htmlspecialchars($pk) ?>"<?= ($pk === $fgPeriod) ? ' selected' : '' ?>>
+              <?= htmlspecialchars(wh_period_label($pk, $GLOBALS['monthsFRLong'])) ?>
+            </option>
+          <?php endforeach ?>
+        </select>
+      </label>
+    </form>
+
+    <?php if (empty($fgRows)): ?>
+
+      <div class="wh-placeholder" role="status">
+        <span class="wh-placeholder__msg">Aucune donnée FG disponible pour cette période.</span>
+      </div>
+
+    <?php else: ?>
+
+      <!-- KPI strip (5 tiles) -->
+      <section class="wort-kpis wh-kpis--5" aria-label="Indicateurs produits finis">
+        <div class="wort-kpi">
+          <span class="wort-kpi__num"><?= wh_num_smart($fgKpis['valeur_fg'], 0, 0, '0') ?></span>
+          <span class="wort-kpi__label">Valeur FG (CHF)</span>
+        </div>
+        <div class="wort-kpi">
+          <span class="wort-kpi__num"><?= wh_num_smart($fgKpis['hl_total'], 1, 1, '0') ?></span>
+          <span class="wort-kpi__label">HL équivalent total</span>
+        </div>
+        <div class="wort-kpi">
+          <span class="wort-kpi__num"><?= $fgKpis['sku_count'] ?></span>
+          <span class="wort-kpi__label">SKUs en stock</span>
+        </div>
+        <div class="wort-kpi">
+          <span class="wort-kpi__num"><?= wh_num_smart($fgKpis['valeur_liquide'], 0, 0, '0') ?></span>
+          <span class="wort-kpi__label">Valeur liquide (CHF)</span>
+        </div>
+        <div class="wort-kpi">
+          <span class="wort-kpi__num"><?= wh_num_smart($fgKpis['valeur_emballage'], 0, 0, '0') ?></span>
+          <span class="wort-kpi__label">Valeur emballage (CHF)</span>
+        </div>
+      </section>
+
+      <!-- Per-SKU table -->
+      <section class="wort-section" aria-label="Stock produits finis">
+        <div class="wort-section__head">
+          <span class="wort-section__label">— produits finis (<?= htmlspecialchars($fgPeriod) ?>)</span>
+          <span class="wort-filters__count"><?= count($fgRows) ?> SKU<?= count($fgRows) !== 1 ? 's' : '' ?></span>
+        </div>
+        <div class="wort-table-wrap">
+          <table class="wort-table wh-fg-table">
+            <thead>
+              <tr>
+                <th scope="col">SKU</th>
+                <th scope="col">Bière</th>
+                <th scope="col">Format</th>
+                <th scope="col">Conditionnement</th>
+                <th scope="col">Qté</th>
+                <th scope="col">HL équiv.</th>
+                <th scope="col">Coût liquide/u</th>
+                <th scope="col">Coût emb./u</th>
+                <th scope="col">Total/u (CHF)</th>
+                <th scope="col">Total CHF</th>
+              </tr>
+            </thead>
+            <tbody>
+              <?php foreach ($fgRows as $fr): ?>
+                <?php
+                  $showFallbackLabel = (
+                    $fr['cost_source_month'] !== null &&
+                    $fr['cost_source_month'] !== (new DateTime($fgPeriod . '-01'))->modify('-1 month')->format('Y-m')
+                  );
+                ?>
+                <tr class="<?= $fr['no_cost_basis'] ? 'wh-fg-row--no-cost-basis' : '' ?>">
+                  <td class="wort-td"><span class="wort-mono"><?= htmlspecialchars($fr['sku_code']) ?></span></td>
+                  <td class="wort-td"><?= htmlspecialchars($fr['beer']) ?></td>
+                  <td class="wort-td"><?= htmlspecialchars($fr['format']) ?></td>
+                  <td class="wort-td"><?= htmlspecialchars($fr['unit_label']) ?></td>
+                  <td class="wort-td wh-td--num"><?= wh_num_smart($fr['qty'], 0, 0) ?></td>
+                  <td class="wort-td wh-td--num"><?= wh_num_smart($fr['hl_equiv'], 2, 3) ?></td>
+                  <td class="wort-td wh-td--num">
+                    <?php if ($fr['no_cost_basis']): ?>
+                      <span class="wh-no-basis">—</span>
+                    <?php else: ?>
+                      <?= wh_num_smart($fr['liquid_per_unit'], 2, 4) ?>
+                      <?php if ($showFallbackLabel): ?>
+                        <sup class="wh-fg-cost-source">(coût de <?= htmlspecialchars($fr['cost_source_month']) ?>)</sup>
+                      <?php endif ?>
+                    <?php endif ?>
+                  </td>
+                  <td class="wort-td wh-td--num"><?= wh_num_smart($fr['packaging_per_unit'], 2, 4, '—') ?></td>
+                  <td class="wort-td wh-td--num"><?= wh_num_smart($fr['total_per_unit'], 2, 4, '—') ?></td>
+                  <td class="wort-td wh-td--num"><?= wh_num_smart($fr['total_chf'], 2, 2, '—') ?></td>
+                </tr>
+              <?php endforeach ?>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- GL recap -->
+      <section class="wort-section wh-section--mt" aria-label="Récapitulatif GL produits finis">
+        <div class="wort-section__head">
+          <span class="wort-section__label">— récap GL</span>
+        </div>
+        <div class="wort-table-wrap">
+          <?php
+            $glLabelsFG = [
+                '4101' => 'Malt',
+                '4102' => 'Houblon',
+                '4103' => 'Levure',
+                '4104' => 'Ingrédients',
+                '4200' => 'Emballage',
+            ];
+            $fgGlGrandTotal = 0.0;
+            ksort($fgGlRecap);
+          ?>
+          <table class="wort-table wh-fg-gl-recap wh-gl-recap">
+            <thead>
+              <tr>
+                <th scope="col">GL</th>
+                <th scope="col">Catégorie</th>
+                <th scope="col">Total CHF</th>
+              </tr>
+            </thead>
+            <tbody>
+              <?php foreach ($fgGlRecap as $gl => $total):
+                    $fgGlGrandTotal += $total;
+                    $glStr = (string) $gl; ?>
+                <tr>
+                  <td class="wort-td"><span class="wort-mono"><?= htmlspecialchars($glStr) ?></span></td>
+                  <td class="wort-td"><?= htmlspecialchars((string) ($glLabelsFG[$glStr] ?? $glLabelsFG[$gl] ?? $glStr)) ?></td>
+                  <td class="wort-td wh-td--num"><?= wh_num_smart($total, 2, 2, '0.00') ?></td>
+                </tr>
+              <?php endforeach ?>
+            </tbody>
+            <tfoot>
+              <tr class="wh-gl-recap__total">
+                <td class="wort-td" colspan="2">TOTAL</td>
+                <td class="wort-td wh-td--num"><?= wh_num_smart($fgGlGrandTotal, 2, 2, '0.00') ?></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </section>
+
+    <?php endif ?>
 
   <?php elseif ($view === 'wip'): ?>
 
@@ -794,6 +1635,15 @@ try {
           </select>
         </label>
       </form>
+
+      <?php if (!empty($hardcodedMiWarnings)): ?>
+        <!-- TEMPORARY: warning strip for missing hardcoded MIs -->
+        <div class="wort-error" role="alert">
+          <?php foreach ($hardcodedMiWarnings as $warnMsg): ?>
+            <div><?= htmlspecialchars($warnMsg) ?></div>
+          <?php endforeach ?>
+        </div>
+      <?php endif ?>
 
       <!-- KPI strip (4 tiles) -->
       <section class="wort-kpis wh-kpis--4" aria-label="Indicateurs WIP">

@@ -28,6 +28,7 @@ import tab_fermenting
 import tab_racking
 import tab_packaging
 from lib_yeast import load_yeast_canonical_map
+from lib_normalize import load_beer_alias_map, normalize_beer_field
 
 
 TAB_HANDLERS = {
@@ -59,6 +60,7 @@ def _ingest_simple(
     apply_writes: bool,
     limit: int | None,
     run_id: int,
+    beer_aliases: dict[str, str] | None = None,
 ) -> tuple[int, dict]:
     """Used for fermenting + racking (single table). Returns (fk_failure_count, tab_summary)."""
     _print_header(name)
@@ -77,6 +79,15 @@ def _ingest_simple(
     rows = parsed[table]
     tab_sum["parsed"] = len(rows)
     print(f"  parsed      {len(rows):>5} rows → {table}")
+
+    # Canonicalize abbreviated beer names via ref_recipe_aliases.
+    # Only racking carries the issue today; if a future tab introduces
+    # the same pattern, add its beer fields here.
+    if beer_aliases and name == "racking":
+        for field in ("neb_beer", "contract_beer"):
+            n = normalize_beer_field(rows, field, beer_aliases)
+            if n:
+                print(f"  normalized  {n:>5} {field} via ref_recipe_aliases")
 
     if apply_writes and rows:
         ins, upd, fk_fail = insert_with_failure_log(conn, table, rows, source_tab=name, run_id=run_id)
@@ -279,6 +290,13 @@ def main() -> int:
     sheets = SheetsClient(_CFG.service_account_path)
     conn = connect(_CFG)
 
+    # Load beer alias map once per run — single source of truth lives in
+    # ref_recipe_aliases (migration 065). Tab modules that need it
+    # (today: racking) receive this dict and normalize beer columns
+    # in-memory before upsert, so row_hash dedup still works.
+    with conn.cursor() as _cur:
+        beer_aliases = load_beer_alias_map(_cur)
+
     trigger_source = _detect_trigger(args.trigger)
 
     # Open a run record (0 = db write failed, non-fatal).
@@ -308,6 +326,7 @@ def main() -> int:
                     fk, tab_sum = _ingest_simple(
                         t, mod, sheets, conn,
                         apply_writes=args.apply, limit=args.limit, run_id=run_id,
+                        beer_aliases=beer_aliases,
                     )
                 total_fk_failures += fk
                 summary[t] = tab_sum

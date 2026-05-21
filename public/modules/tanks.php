@@ -124,15 +124,19 @@ try {
           GROUP BY prefix, batch
         ),
         cc_canon AS (
+          -- Prefix → canonical recipe name via ref_recipe_aliases (single source of truth).
+          -- JOIN is on alias column; only aliases that match a Core active recipe are used.
           SELECT
-            CASE prefix
-              WHEN 'ZEP' THEN 'Zepp' WHEN 'EMB' THEN 'Embuscade' WHEN 'MOO' THEN 'Moonshine'
-              WHEN 'STI' THEN 'Stirling' WHEN 'SPY' THEN 'Speakeasy' WHEN 'DIV' THEN 'Diversion'
-              WHEN 'DOA' THEN 'Double Oat' WHEN 'ALT' THEN 'Alternative' WHEN 'DIB' THEN 'Diversion Blanche'
-            END AS beer,
-            batch, cc_date
+            rr.name AS beer,
+            cc.batch, cc.cc_date
           FROM cc
-          WHERE prefix IN ('ZEP','EMB','MOO','STI','SPY','DIV','DOA','ALT','DIB')
+          JOIN ref_recipe_aliases ra
+            ON ra.alias COLLATE utf8mb4_unicode_ci = cc.prefix COLLATE utf8mb4_unicode_ci
+          JOIN ref_recipes rr
+            ON rr.id = ra.recipe_id
+           AND rr.subtype = 'Core'
+           AND rr.is_active = 1
+           AND rr.vintage = ''
         )
         SELECT
           rr.name              AS beer,
@@ -202,11 +206,16 @@ try {
           GROUP BY prefix
         ),
         prefix_to_recipe AS (
-          SELECT * FROM (VALUES
-            ROW('ZEP','Zepp'), ROW('EMB','Embuscade'), ROW('MOO','Moonshine'),
-            ROW('STI','Stirling'), ROW('SPY','Speakeasy'), ROW('DIV','Diversion'),
-            ROW('DOA','Double Oat'), ROW('ALT','Alternative'), ROW('DIB','Diversion Blanche')
-          ) AS t(prefix, beer)
+          -- Derive prefix→canonical mapping from ref_recipe_aliases (single source of truth).
+          -- Scope: Core active recipes with a non-empty vintage='' row (base recipe).
+          SELECT ra.alias AS prefix, rr.name AS beer
+            FROM ref_recipe_aliases ra
+            JOIN ref_recipes rr
+              ON rr.id = ra.recipe_id
+             AND rr.subtype = 'Core'
+             AND rr.is_active = 1
+             AND rr.vintage = ''
+           WHERE ra.alias REGEXP '^[A-Z]{2,4}[0-9]?$'
         )
         SELECT
           p.beer AS beer,
@@ -217,9 +226,6 @@ try {
         FROM prefix_to_recipe p
         LEFT JOIN grav_avg g ON g.prefix = p.prefix
         LEFT JOIN ph_avg ph ON ph.prefix = p.prefix
-        WHERE EXISTS (
-          SELECT 1 FROM ref_recipes rr WHERE rr.name = p.beer AND rr.subtype = 'Core' AND rr.is_active = 1
-        )
     ");
     $avgFinalsByBeer = [];
     foreach ($avgFinalsStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
@@ -267,7 +273,13 @@ try {
         $recipeStmt->execute([':beer' => $rawBeer, ':batch_v' => $batch, ':beer2' => $rawBeer]);
         $recipeRow = $recipeStmt->fetch() ?: [];
 
-        $beerPrefix = TankSimulator::beerPrefix($beer);
+        // Use centralised resolver (recipe-resolver.php) for the canonical → short-code
+        // reverse lookup so the prefix is always in sync with ref_recipe_aliases.
+        // Falls back to TankSimulator::beerPrefix for simulator-internal names
+        // (Div.Blanche etc.) that differ from ref_recipes canonical names.
+        $beerPrefix = canonical_to_short_code($pdo, $beer)
+            ?? canonical_to_short_code($pdo, $simRow['raw_beer'] ?? $beer)
+            ?? TankSimulator::beerPrefix($beer);
         $exactMatch = $beerPrefix . ' ' . $batch;
         $withTrail  = $beerPrefix . ' ' . $batch . ' %';
 
