@@ -39,6 +39,35 @@ function wh_num(mixed $v, int $dec = 2, string $fallback = '—'): string {
     return number_format($f, $dec, '.', ' ');
 }
 
+/**
+ * Format a number with smart trailing-zero trimming.
+ * - Always shows at least $min decimals.
+ * - Shows up to $max decimals.
+ * - Trims trailing zeros once past $min.
+ * Example: wh_num_smart(5,   1, 3) → "5.0"
+ *          wh_num_smart(5.5, 1, 3) → "5.5"
+ *          wh_num_smart(5.123456, 1, 3) → "5.123"
+ *          wh_num_smart(5.10000, 0, 2) → "5.1"
+ */
+function wh_num_smart(mixed $v, int $min = 0, int $max = 4, string $fallback = '—'): string {
+    if ($v === null || $v === '') return $fallback;
+    $f = (float) $v;
+    // round to $max decimals
+    $s = number_format($f, $max, '.', ' ');
+    // strip trailing zeros but keep at least $min decimals
+    if ($max > $min && strpos($s, '.') !== false) {
+        $s = preg_replace('/(\.\d*?)0+$/', '$1', $s);
+        $s = rtrim($s, '.');
+        // re-add minimum decimals if we went below
+        $dotPos = strpos($s, '.');
+        $currentDec = $dotPos === false ? 0 : strlen($s) - $dotPos - 1;
+        if ($currentDec < $min) {
+            $s = number_format((float) str_replace(' ', '', $s), $min, '.', ' ');
+        }
+    }
+    return $s;
+}
+
 function wh_sort_href(string $col, string $currentCol, string $currentDir, string $baseView, ?int $miId, string $cat, string $q): string {
     $nextDir = ($col === $currentCol && $currentDir === 'asc') ? 'desc' : 'asc';
     $params = ['view' => $baseView, 'sort' => $col, 'dir' => $nextDir];
@@ -106,16 +135,34 @@ try {
                   AND d.exclusion_class IS NULL
               ),
               consumption_since AS (
-                SELECT SUM(c.qty) AS qty_out
+                SELECT SUM(
+                  c.qty * COALESCE(
+                    CASE WHEN cu.dimension = su.dimension AND su.to_base_factor > 0
+                         THEN cu.to_base_factor / su.to_base_factor
+                         ELSE 1
+                    END, 1)
+                ) AS qty_out
                 FROM inv_consumption c
                 JOIN anchor a ON a.mi_id_fk = c.mi_id_fk
+                JOIN ref_mi m ON m.id = c.mi_id_fk
+                LEFT JOIN ref_units cu ON cu.code = c.unit
+                LEFT JOIN ref_units su ON su.code = m.pricing_unit
                 WHERE c.consumed_at > a.anchor_at
               ),
               consumption_13w AS (
-                SELECT SUM(qty) / 13 AS avg_weekly_qty
-                FROM inv_consumption
-                WHERE mi_id_fk = :mid2
-                  AND consumed_at >= DATE_SUB(CURDATE(), INTERVAL 91 DAY)
+                SELECT SUM(
+                  c.qty * COALESCE(
+                    CASE WHEN cu.dimension = su.dimension AND su.to_base_factor > 0
+                         THEN cu.to_base_factor / su.to_base_factor
+                         ELSE 1
+                    END, 1)
+                ) / 13 AS avg_weekly_qty
+                FROM inv_consumption c
+                JOIN ref_mi m ON m.id = c.mi_id_fk
+                LEFT JOIN ref_units cu ON cu.code = c.unit
+                LEFT JOIN ref_units su ON su.code = m.pricing_unit
+                WHERE c.mi_id_fk = :mid2
+                  AND c.consumed_at >= DATE_SUB(CURDATE(), INTERVAL 91 DAY)
               )
             SELECT m.id, m.mi_id, m.name AS mi_name,
                    c.name AS category, s.name AS subcategory,
@@ -145,6 +192,7 @@ try {
               LEFT JOIN wac_snapshots        w  ON w.mi_id_fk = m.id
                 AND w.period = (SELECT MAX(period) FROM wac_snapshots WHERE mi_id_fk = :mid3)
              WHERE m.id = :mid4
+               AND m.is_inventoried = 1
         ";
         $hdrStmt = $pdo->prepare($hdrSql);
         $hdrStmt->execute([':mid' => $miId, ':mid2' => $miId, ':mid3' => $miId, ':mid4' => $miId]);
@@ -205,12 +253,21 @@ try {
 
             // Consumption since anchor
             $spCStmt = $pdo->prepare("
-                SELECT consumed_at AS evt_date, SUM(qty) AS delta
-                  FROM inv_consumption
-                 WHERE mi_id_fk = :mid
-                   AND consumed_at > :adate
-                 GROUP BY consumed_at
-                 ORDER BY consumed_at ASC
+                SELECT c.consumed_at AS evt_date, SUM(
+                  c.qty * COALESCE(
+                    CASE WHEN cu.dimension = su.dimension AND su.to_base_factor > 0
+                         THEN cu.to_base_factor / su.to_base_factor
+                         ELSE 1
+                    END, 1)
+                ) AS delta
+                  FROM inv_consumption c
+                  JOIN ref_mi m ON m.id = c.mi_id_fk
+                  LEFT JOIN ref_units cu ON cu.code = c.unit
+                  LEFT JOIN ref_units su ON su.code = m.pricing_unit
+                 WHERE c.mi_id_fk = :mid
+                   AND c.consumed_at > :adate
+                 GROUP BY c.consumed_at
+                 ORDER BY c.consumed_at ASC
             ");
             $spCStmt->execute([':mid' => $miId, ':adate' => $anchorDate]);
             $spConsumptions = $spCStmt->fetchAll();
@@ -281,17 +338,35 @@ try {
                  GROUP BY d.ingredient_fk
               ),
               consumption_since AS (
-                SELECT c.mi_id_fk, SUM(c.qty) AS qty_out
+                SELECT c.mi_id_fk, SUM(
+                  c.qty * COALESCE(
+                    CASE WHEN cu.dimension = su.dimension AND su.to_base_factor > 0
+                         THEN cu.to_base_factor / su.to_base_factor
+                         ELSE 1
+                    END, 1)
+                ) AS qty_out
                   FROM inv_consumption c
                   JOIN anchor a ON a.mi_id_fk = c.mi_id_fk
+                  JOIN ref_mi m ON m.id = c.mi_id_fk
+                  LEFT JOIN ref_units cu ON cu.code = c.unit
+                  LEFT JOIN ref_units su ON su.code = m.pricing_unit
                  WHERE c.consumed_at > a.anchor_at
                  GROUP BY c.mi_id_fk
               ),
               consumption_13w AS (
-                SELECT mi_id_fk, SUM(qty) / 13 AS avg_weekly_qty
-                  FROM inv_consumption
-                 WHERE consumed_at >= DATE_SUB(CURDATE(), INTERVAL 91 DAY)
-                 GROUP BY mi_id_fk
+                SELECT c.mi_id_fk, SUM(
+                  c.qty * COALESCE(
+                    CASE WHEN cu.dimension = su.dimension AND su.to_base_factor > 0
+                         THEN cu.to_base_factor / su.to_base_factor
+                         ELSE 1
+                    END, 1)
+                ) / 13 AS avg_weekly_qty
+                  FROM inv_consumption c
+                  JOIN ref_mi m ON m.id = c.mi_id_fk
+                  LEFT JOIN ref_units cu ON cu.code = c.unit
+                  LEFT JOIN ref_units su ON su.code = m.pricing_unit
+                 WHERE c.consumed_at >= DATE_SUB(CURDATE(), INTERVAL 91 DAY)
+                 GROUP BY c.mi_id_fk
               )
             SELECT m.id, m.mi_id, m.name AS mi_name,
                    c.name AS category, s.name AS subcategory,
@@ -322,7 +397,8 @@ try {
               LEFT JOIN consumption_13w      cw ON cw.mi_id_fk = m.id
               LEFT JOIN wac_snapshots        w  ON w.mi_id_fk = m.id
                 AND w.period = (SELECT MAX(period) FROM wac_snapshots WHERE mi_id_fk = m.id)
-             WHERE (a.anchor_qty IS NOT NULL
+             WHERE m.is_inventoried = 1
+               AND (a.anchor_qty IS NOT NULL
                     OR (COALESCE(a.anchor_qty,0)+COALESCE(ds.qty_in,0)-COALESCE(cs.qty_out,0)) > 0)
                AND (:cat = '' OR c.name = :cat2)
                AND (:q = ''
@@ -463,7 +539,7 @@ try {
         </div>
         <div class="sku-header-card__costs">
           <div class="sku-header-cost sku-header-cost--focus">
-            <span class="sku-header-cost__val"><?= wh_num($liveQty, 3) ?></span>
+            <span class="sku-header-cost__val"><?= wh_num_smart($liveQty, 0, 2) ?></span>
             <span class="sku-header-cost__label">Qté live (<?= htmlspecialchars($miRow['unit'] ?? '—') ?>)</span>
           </div>
           <div class="sku-header-cost">
@@ -472,25 +548,25 @@ try {
             <?php elseif ($wac < 0): ?>
               <span class="sku-header-cost__val wh-no-basis">&#9888; net credit</span>
             <?php else: ?>
-              <span class="sku-header-cost__val"><?= wh_num($wac, 4) ?> CHF</span>
+              <span class="sku-header-cost__val"><?= wh_num_smart($wac, 2, 2) ?> CHF</span>
             <?php endif ?>
             <span class="sku-header-cost__label">WAC</span>
           </div>
           <?php if ($sv !== null): ?>
           <div class="sku-header-cost">
-            <span class="sku-header-cost__val"><?= wh_num($sv, 2) ?> CHF</span>
+            <span class="sku-header-cost__val"><?= wh_num_smart($sv, 0, 0) ?> CHF</span>
             <span class="sku-header-cost__label">Valeur CHF</span>
           </div>
           <?php endif ?>
           <?php if ($wr !== null): ?>
           <div class="sku-header-cost">
-            <span class="sku-header-cost__val <?= htmlspecialchars($burnClass) ?>"><?= wh_num($wr, 1) ?></span>
+            <span class="sku-header-cost__val <?= htmlspecialchars($burnClass) ?>"><?= wh_num_smart($wr, 1, 1) ?></span>
             <span class="sku-header-cost__label">Semaines restantes</span>
           </div>
           <?php endif ?>
           <?php if ($hl !== null): ?>
           <div class="sku-header-cost">
-            <span class="sku-header-cost__val"><?= wh_num($hl, 3) ?></span>
+            <span class="sku-header-cost__val"><?= wh_num_smart($hl, 1, 2) ?></span>
             <span class="sku-header-cost__label">HL équivalent</span>
           </div>
           <?php endif ?>
@@ -522,9 +598,9 @@ try {
                 <?php foreach ($delivH as $d): ?>
                   <tr>
                     <td class="wort-td wort-td--date"><?= $d['date_received'] ? wh_date_fr($d['date_received'], $monthsFR) : '—' ?></td>
-                    <td class="wort-td wh-td--num"><?= wh_num($d['qty_delivered'], 4) ?></td>
+                    <td class="wort-td wh-td--num"><?= wh_num_smart($d['qty_delivered'], 0, 2) ?></td>
                     <td class="wort-td"><?= htmlspecialchars($d['pricing_unit'] ?? '—') ?></td>
-                    <td class="wort-td wh-td--num"><?= wh_num($d['unit_price'], 4, '—') ?></td>
+                    <td class="wort-td wh-td--num"><?= wh_num_smart($d['unit_price'], 2, 2, '—') ?></td>
                     <td class="wort-td"><?= htmlspecialchars($d['currency'] ?? '—') ?></td>
                     <td class="wort-td"><?= htmlspecialchars($d['supplier_raw'] ?? '—') ?></td>
                     <td class="wort-td"><span class="wort-mono"><?= htmlspecialchars($d['invoice_ref'] ?? '—') ?></span></td>
@@ -560,11 +636,11 @@ try {
                 <?php foreach ($consH as $c): ?>
                   <tr>
                     <td class="wort-td wort-td--date"><?= $c['consumed_at'] ? wh_date_fr($c['consumed_at'], $monthsFR) : '—' ?></td>
-                    <td class="wort-td wh-td--num"><?= wh_num($c['qty'], 4) ?></td>
+                    <td class="wort-td wh-td--num"><?= wh_num_smart($c['qty'], 0, 2) ?></td>
                     <td class="wort-td"><?= htmlspecialchars($c['unit'] ?? '—') ?></td>
                     <td class="wort-td"><span class="wort-mono"><?= htmlspecialchars($c['source_event'] ?? '—') ?></span></td>
                     <td class="wort-td"><?= htmlspecialchars($c['beer_name'] ?? '—') ?></td>
-                    <td class="wort-td wh-td--num"><?= $c['hl_packaged'] !== null ? wh_num($c['hl_packaged'], 3) : '—' ?></td>
+                    <td class="wort-td wh-td--num"><?= $c['hl_packaged'] !== null ? wh_num_smart($c['hl_packaged'], 1, 2) : '—' ?></td>
                   </tr>
                 <?php endforeach ?>
               </tbody>
@@ -597,7 +673,7 @@ try {
     <!-- KPI strip -->
     <section class="wort-kpis wh-kpis--5" aria-label="Indicateurs entrepôt">
       <div class="wort-kpi">
-        <span class="wort-kpi__num"><?= wh_num($kpis['stock_value'], 0, '—') ?></span>
+        <span class="wort-kpi__num"><?= wh_num_smart($kpis['stock_value'], 0, 0, '—') ?></span>
         <span class="wort-kpi__label">Valeur stock (CHF) <span class="wort-kpi__sublabel">— bases connues</span></span>
       </div>
       <div class="wort-kpi">
@@ -609,7 +685,7 @@ try {
         <span class="wort-kpi__label">Burn critique (&lt;4&nbsp;sem.)</span>
       </div>
       <div class="wort-kpi">
-        <span class="wort-kpi__num"><?= wh_num($kpis['hl_total'], 1, '—') ?></span>
+        <span class="wort-kpi__num"><?= wh_num_smart($kpis['hl_total'], 1, 1, '—') ?></span>
         <span class="wort-kpi__label">HL équivalent total</span>
       </div>
       <div class="wort-kpi">
@@ -698,7 +774,7 @@ try {
                   <td class="wort-td"><?= htmlspecialchars($r['mi_name'] ?? '—') ?></td>
                   <td class="wort-td"><?= htmlspecialchars($r['category'] ?? '—') ?></td>
                   <td class="wort-td"><?= htmlspecialchars($r['subcategory'] ?? '—') ?></td>
-                  <td class="wort-td wh-td--num"><?= wh_num($rLq, 3) ?></td>
+                  <td class="wort-td wh-td--num"><?= wh_num_smart($rLq, 0, 2) ?></td>
                   <td class="wort-td"><?= htmlspecialchars($r['unit'] ?? '—') ?></td>
                   <td class="wort-td wh-td--num">
                     <?php if ($rWac === null): ?>
@@ -706,10 +782,10 @@ try {
                     <?php elseif ($rWac < 0): ?>
                       <span class="wh-no-basis">&#9888; net credit</span>
                     <?php else: ?>
-                      <?= wh_num($rWac, 4) ?>
+                      <?= wh_num_smart($rWac, 2, 2) ?>
                     <?php endif ?>
                   </td>
-                  <td class="wort-td wh-td--num"><?= $rSv !== null ? wh_num($rSv, 2) : '—' ?></td>
+                  <td class="wort-td wh-td--num"><?= $rSv !== null ? wh_num_smart($rSv, 0, 0) : '—' ?></td>
                   <td class="wort-td wh-td--num">
                     <?php if ($rWr !== null): ?>
                       <?php
@@ -719,10 +795,10 @@ try {
                             default   => number_format($rWr, 1) . ' semaines',
                         };
                       ?>
-                      <span class="<?= htmlspecialchars($rBurnClass) ?>" aria-label="<?= htmlspecialchars($rBurnLabel) ?>"><?= wh_num($rWr, 1) ?></span>
+                      <span class="<?= htmlspecialchars($rBurnClass) ?>" aria-label="<?= htmlspecialchars($rBurnLabel) ?>"><?= wh_num_smart($rWr, 1, 1) ?></span>
                     <?php else: ?>—<?php endif ?>
                   </td>
-                  <td class="wort-td wh-td--num"><?= $rHl !== null ? wh_num($rHl, 3) : '' ?></td>
+                  <td class="wort-td wh-td--num"><?= $rHl !== null ? wh_num_smart($rHl, 1, 2) : '' ?></td>
                   <td class="wort-td wort-td--date"><?= $r['last_delivery'] ? wh_date_fr($r['last_delivery'], $monthsFR) : '—' ?></td>
                 </tr>
               <?php endforeach ?>
