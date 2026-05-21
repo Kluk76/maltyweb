@@ -19,16 +19,16 @@
 START TRANSACTION;
 
 ALTER TABLE ref_sku_bom
-  ADD COLUMN IF NOT EXISTS compiled_at    TIMESTAMP NULL
+  ADD COLUMN compiled_at    TIMESTAMP NULL
     COMMENT 'Set when row is written by SKU builder compiler; NULL = legacy row',
-  ADD COLUMN IF NOT EXISTS bom_source     ENUM('liquid','packaging','composite_liquid','composite_packaging') NULL
+  ADD COLUMN bom_source     ENUM('liquid','packaging','composite_liquid','composite_packaging') NULL
     COMMENT 'Line category for UI grouping: liquid=recipe ingredient, packaging=consumable, composite_*=from constituent beer',
-  ADD COLUMN IF NOT EXISTS effective_from DATE NULL
+  ADD COLUMN effective_from DATE NULL
     COMMENT 'v1 dormant; v2 SCD2 activation: date from which this BOM version is valid',
-  ADD COLUMN IF NOT EXISTS effective_until DATE NULL
+  ADD COLUMN effective_until DATE NULL
     COMMENT 'v1 dormant; v2 SCD2 close-out: date from which this BOM version is superseded';
 
 ALTER TABLE ref_sku_bom
-  ADD KEY IF NOT EXISTS idx_bom_effective (effective_from, effective_until);
+  ADD KEY idx_bom_effective (effective_from, effective_until);
 
 COMMIT;

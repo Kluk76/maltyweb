@@ -16,7 +16,7 @@
 START TRANSACTION;
 
 ALTER TABLE ref_skus
-  ADD COLUMN IF NOT EXISTS format_id BIGINT UNSIGNED NULL
+  ADD COLUMN format_id BIGINT UNSIGNED NULL
     COMMENT 'FK to ref_packaging_formats; NULL until SKU builder backfill' AFTER format;
 
 ALTER TABLE ref_skus

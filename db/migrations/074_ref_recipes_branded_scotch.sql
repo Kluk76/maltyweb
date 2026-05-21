@@ -15,7 +15,7 @@
 START TRANSACTION;
 
 ALTER TABLE ref_recipes
-  ADD COLUMN IF NOT EXISTS uses_branded_scotch BOOL NOT NULL DEFAULT 0
+  ADD COLUMN uses_branded_scotch BOOL NOT NULL DEFAULT 0
     COMMENT 'When 1, -B SKUs default to PKG_SCOTCH_{BEER} branded; when 0, use PKG_SCOTCH_TRANSP + PKG_STICKER_{BEER}';
 
 -- Operator-confirmed branded scotch beers (reference_v_liner_and_yeastvit_in_recipes.md)
