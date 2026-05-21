@@ -1974,6 +1974,53 @@ body.home::after {
   margin: 0;
 }
 
+/* Schema-meta class badges (table list) */
+.home .db-class-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 2px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+  font-style: normal;
+  letter-spacing: 0.04em;
+  vertical-align: middle;
+  line-height: 1.5;
+}
+.home .db-class-badge.db-class-reference,
+.home .db-class-badge.db-class-lookup,
+.home .db-class-badge.db-class-config {
+  background: rgba(122, 102, 71, 0.18);
+  color: var(--ink-mute);
+  border: 1px solid rgba(122, 102, 71, 0.25);
+}
+.home .db-class-badge.db-class-source {
+  background: rgba(158, 176, 96, 0.14);
+  color: var(--hop-deep);
+  border: 1px solid rgba(158, 176, 96, 0.28);
+}
+.home .db-class-badge.db-class-derived {
+  background: rgba(200, 150, 0, 0.12);
+  color: #7a5500;
+  border: 1px solid rgba(200, 150, 0, 0.28);
+}
+.home .db-class-badge.db-class-audit {
+  background: rgba(74, 130, 197, 0.12);
+  color: #3a6a9a;
+  border: 1px solid rgba(74, 130, 197, 0.25);
+}
+.home .db-class-badge.db-class-system {
+  background: rgba(197, 100, 74, 0.12);
+  color: var(--ember);
+  border: 1px solid rgba(197, 100, 74, 0.25);
+}
+
+/* Blocked policy — heavier disabled style */
+.home .db-correct__disabled--blocked {
+  border-color: rgba(197, 100, 74, 0.35);
+  color: var(--ember);
+  background: rgba(197, 100, 74, 0.06);
+}
 
 /* ----- Settings ----- */
 

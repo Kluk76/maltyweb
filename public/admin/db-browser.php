@@ -4,6 +4,7 @@ declare(strict_types=1);
 require __DIR__ . "/../../app/auth.php";
 require __DIR__ . "/../../app/csrf.php";
 require __DIR__ . "/../../app/db-correct.php";
+require __DIR__ . "/../../app/schema-meta.php";
 
 require_admin();
 $me = current_user();
@@ -19,6 +20,7 @@ const TEXT_TRUNCATE = 200;
 $dbError = null;
 $tables  = [];
 $rowCounts = [];
+$schemaMeta = [];
 $selected   = null;
 $columns    = [];
 $rows       = [];
@@ -29,6 +31,7 @@ $filterVal  = null;
 $pkColumn   = null;
 $editableCols = [];
 $writableTables = [];
+$selectedMeta = null;
 
 // Flash message after a successful correction (set by db-correct-apply.php redirect).
 $appliedAction    = $_GET["applied_action"]    ?? null;
@@ -55,6 +58,9 @@ try {
         $rowCounts[$t] = (int) $pdo->query($countSql)->fetchColumn();
     }
 
+    // Bulk-load schema_meta for class badges and policy enforcement.
+    $schemaMeta = schema_meta_bulk($pdo, $tables);
+
     // Resolve ?table= against the whitelist.
     $reqTable = $_GET["table"] ?? null;
     if ($reqTable !== null && in_array($reqTable, $tables, true)) {
@@ -64,6 +70,7 @@ try {
     $writableTables = dbcorrect_writable_tables($pdo);
 
     if ($selected !== null) {
+        $selectedMeta = $schemaMeta[$selected] ?? null;
         $tableQuoted = "`" . str_replace("`", "``", $selected) . "`";
 
         // Discover columns + correction-tool metadata.
@@ -124,6 +131,20 @@ function build_qs(array $extra): string {
         }
     }
     return http_build_query(array_merge($base, $extra));
+}
+
+function db_class_badge(?array $meta): string
+{
+    if ($meta === null) return "";
+    $class = htmlspecialchars($meta["table_class"]);
+    $policy = $meta["corrections_policy"];
+    $icon = match($policy) {
+        "blocked_with_redirect" => " &#x1F6D1;",
+        "blocked"               => " &#x1F512;",
+        "allowed_with_side_effect" => " &#x26A0;&#xFE0F;",
+        default                 => "",
+    };
+    return "<span class=\"db-class-badge db-class-{$class}\">{$class}{$icon}</span>";
 }
 
 function fmt_cell($v): string {
@@ -191,7 +212,10 @@ $lastPage = $selected !== null && $totalRows > 0
           <li>
             <a class="db-browser__table-link<?= $active ? ' db-browser__table-link--active' : '' ?>"
                href="?<?= htmlspecialchars(http_build_query(["table" => $t])) ?>">
-              <span class="db-browser__table-name"><?= htmlspecialchars($t) ?></span>
+              <span class="db-browser__table-name">
+                <?= htmlspecialchars($t) ?>
+                <?= db_class_badge($schemaMeta[$t] ?? null) ?>
+              </span>
               <span class="db-browser__table-count"><?= number_format($rowCounts[$t] ?? 0, 0, ',', ' ') ?></span>
             </a>
           </li>
@@ -249,9 +273,11 @@ $lastPage = $selected !== null && $totalRows > 0
         </form>
 
         <?php
+        $policy = $selectedMeta["corrections_policy"] ?? "allowed";
         $correctionEnabled = ($pkColumn !== null)
                           && in_array($selected, $writableTables, true)
-                          && !empty($editableCols);
+                          && !empty($editableCols)
+                          && ($policy === "allowed" || $policy === "allowed_with_side_effect");
         ?>
 
         <?php if (empty($rows)): ?>
@@ -331,8 +357,15 @@ $lastPage = $selected !== null && $totalRows > 0
                 </div>
               </fieldset>
             <?php else: ?>
-              <p class="db-correct__disabled">
-                <?php if ($pkColumn === null): ?>
+              <p class="db-correct__disabled<?= in_array($policy, ["blocked", "blocked_with_redirect"], true) ? " db-correct__disabled--blocked" : "" ?>">
+                <?php if ($policy === "blocked_with_redirect"): ?>
+                  &#x26D4; Table dérivée — modifications désactivées.
+                  <?php if (!empty($selectedMeta["upstream_hint"])): ?>
+                    Pour corriger : <?= htmlspecialchars($selectedMeta["upstream_hint"]) ?>
+                  <?php endif ?>
+                <?php elseif ($policy === "blocked"): ?>
+                  &#x26D4; Lecture seule (table <?= htmlspecialchars($selectedMeta["table_class"] ?? "") ?>).
+                <?php elseif ($pkColumn === null): ?>
                   Correction non disponible : table sans clé primaire à colonne unique.
                 <?php elseif (!in_array($selected, $writableTables, true)): ?>
                   Table système — modifications interdites.

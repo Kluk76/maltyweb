@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require __DIR__ . "/../../app/auth.php";
 require __DIR__ . "/../../app/db-correct.php";
+require __DIR__ . "/../../app/schema-meta.php";
 
 require_admin();
 $me = current_user();
@@ -17,14 +18,30 @@ header("Content-Type: text/html; charset=utf-8");
 $active_module = "db-browser";
 $crumbs        = ["Accueil", "Admin", "DB Browser", "Confirmer"];
 
-$error    = null;
-$payload  = null;
-$preview  = [];
-$token    = null;
+$error     = null;
+$payload   = null;
+$preview   = [];
+$token     = null;
+$tableMeta = null;
 
 try {
-    $pdo     = maltytask_pdo();
-    $payload = dbcorrect_validate($pdo, $_POST);
+    $pdo       = maltytask_pdo();
+    $payload   = dbcorrect_validate($pdo, $_POST);
+    $tableMeta = schema_meta_for_table($pdo, $payload["table"]);
+    $policy    = $tableMeta["corrections_policy"] ?? "allowed";
+    if ($policy === "blocked" || $policy === "blocked_with_redirect") {
+        $hint = $tableMeta["upstream_hint"] ?? null;
+        $class = $tableMeta["table_class"] ?? "";
+        if ($policy === "blocked_with_redirect") {
+            $msg = "Table dérivée — modifications désactivées.";
+            if ($hint !== null && $hint !== "") {
+                $msg .= " Pour corriger : " . $hint;
+            }
+        } else {
+            $msg = "Lecture seule (table {$class}).";
+        }
+        throw new RuntimeException("⛔ " . $msg);
+    }
     $preview = dbcorrect_preview($pdo, $payload);
     if (count($preview) === 0) {
         throw new RuntimeException("Aucune ligne ne correspond aux IDs sélectionnés "
@@ -138,16 +155,20 @@ $csrf = csrf_token();
       <?php endif ?>
     </section>
 
-    <?php if ($payload["action"] === "update" && dbcorrect_is_alias_trigger($payload)):
-        $aliasPreview = dbcorrect_alias_preview($pdo, $payload);
-        if (!empty($aliasPreview)): ?>
+    <?php
+    $sideEffectPolicy = ($tableMeta !== null && $tableMeta["corrections_policy"] === "allowed_with_side_effect");
+    if ($sideEffectPolicy):
+        $sideEffectHint = $tableMeta["upstream_hint"] ?? null;
+        $aliasPreview = dbcorrect_is_alias_trigger($payload)
+            ? dbcorrect_alias_preview($pdo, $payload)
+            : [];
+    ?>
       <section class="db-confirm__side-effect">
-        <h2 class="db-confirm__side-effect-title">&#9888;&#65039; Effet de bord — alias durable</h2>
-        <p class="db-confirm__side-effect-intro">
-          Cette correction crée ou met à jour des entrées dans <code>ref_mi_aliases</code>
-          pour que le mapping survive aux re-runs de <code>parse_bd_ingredients.py</code>.
-          Sans cet effet de bord, ta correction serait silencieusement écrasée au prochain re-parse.
-        </p>
+        <h2 class="db-confirm__side-effect-title">&#9888;&#65039; Effet de bord</h2>
+        <?php if ($sideEffectHint !== null && $sideEffectHint !== ""): ?>
+          <p class="db-confirm__side-effect-intro"><?= htmlspecialchars($sideEffectHint) ?></p>
+        <?php endif ?>
+        <?php if (!empty($aliasPreview)): ?>
         <table class="db-table db-confirm__side-effect-table">
           <thead>
             <tr>
@@ -166,8 +187,9 @@ $csrf = csrf_token();
             <?php endforeach ?>
           </tbody>
         </table>
+        <?php endif ?>
       </section>
-    <?php endif; endif ?>
+    <?php endif ?>
 
     <form class="db-confirm__form" method="post" action="/admin/db-correct-apply.php">
       <input type="hidden" name="csrf"  value="<?= htmlspecialchars($csrf) ?>">

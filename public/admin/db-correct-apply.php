@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require __DIR__ . "/../../app/auth.php";
 require __DIR__ . "/../../app/db-correct.php";
+require __DIR__ . "/../../app/schema-meta.php";
 
 require_admin();
 $me = current_user();
@@ -41,6 +42,30 @@ if ($payload === null) {
 }
 
 $pdo = maltytask_pdo();
+
+// Hard policy guard — schema_meta wins regardless of how the payload was constructed.
+$tableMeta = schema_meta_for_table($pdo, $payload["table"]);
+$policy    = $tableMeta["corrections_policy"] ?? "allowed";
+if ($policy === "blocked" || $policy === "blocked_with_redirect") {
+    $hint  = $tableMeta["upstream_hint"] ?? null;
+    $class = $tableMeta["table_class"] ?? "";
+    if ($policy === "blocked_with_redirect") {
+        $msg = "Table dérivée — modifications désactivées.";
+        if ($hint !== null && $hint !== "") {
+            $msg .= " Pour corriger : " . htmlspecialchars($hint);
+        }
+    } else {
+        $msg = "Lecture seule (table " . htmlspecialchars($class) . ").";
+    }
+    http_response_code(403);
+    header("Content-Type: text/html; charset=utf-8");
+    echo "<!doctype html><meta charset=utf-8>"
+       . "<link rel=stylesheet href=/css/app.css>"
+       . "<body class=auth><h1>403 — ⛔ " . htmlspecialchars($msg) . "</h1>"
+       . "<p><a href=\"/admin/db-browser.php?table=" . urlencode($payload["table"]) . "\">Retour</a></p></body>";
+    exit;
+}
+
 try {
     $result = dbcorrect_apply($pdo, $payload, $me);
 } catch (Throwable $e) {
