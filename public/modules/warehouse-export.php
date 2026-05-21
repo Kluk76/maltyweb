@@ -184,6 +184,7 @@ try {
 $wipByGl = [];
 try {
     require_once __DIR__ . '/../../app/tank-simulator.php';
+    require_once __DIR__ . '/../../app/recipe-ingredients-loader.php';
 
     $asOfDT = (new DateTimeImmutable())->setDate($py, $pm, 1)
                 ->modify('last day of this month')
@@ -273,188 +274,120 @@ try {
             if ($gl !== '') $wipByGl[$gl] = (float) ($r['wip_value'] ?? 0);
         }
 
-        /* TEMPORARY HARDCODE — remove when maltyweb-native ingredient form ships */
-        // Mirrors the hardcoded 4104 ingredient logic from warehouse.php WIP block.
-        // Covers: per-brew recipe adjuncts (Moonshine/Stirling/DIB), PROC_YEASTVIT
-        // (all Neb except Diversion/Diversion Blanche/Alternative), and PROC_NAGARDO
-        // (Diversion + Diversion Blanche, BBT per-HL only). Result added to $wipByGl['4104'].
-        $HC_RULES_EXPORT = [
-            'Moonshine'        => [
-                ['mi_id' => 'ADJ_CORIANDER',   'qty_per_brew_kg' => 2.2],
-                ['mi_id' => 'ADJ_ORANGE_PEEL',  'qty_per_brew_kg' => 3.3],
-            ],
-            'Stirling'         => [
-                ['mi_id' => 'PROC_DEHAZE', 'qty_per_brew_kg' => 0.150, 'skip_if_in_parsed' => true],
-            ],
-            'Diversion Blanche' => [
-                ['mi_id' => 'ADJ_PEACH_TEA', 'qty_per_brew_kg' => 4.0],
-            ],
-        ];
-        $HC_YV_EXCLUDE_EXPORT = ['Diversion', 'Diversion Blanche', 'Alternative'];
-        $HC_YV_RULE_EXPORT    = ['mi_id' => 'PROC_YEASTVIT', 'qty_per_brew_kg' => 0.240];
-        $HC_NG_BEERS_EXPORT   = ['Diversion', 'Diversion Blanche'];
-        $HC_NG_RULE_EXPORT    = ['mi_id' => 'PROC_NAGARDO', 'qty_per_hl_kg' => 0.002];
-
-        $HC_ALL_MI_EXPORT = array_unique(array_merge(
-            ['PROC_YEASTVIT', 'PROC_NAGARDO'],
-            ...array_values(array_map(fn(array $rules) => array_column($rules, 'mi_id'), $HC_RULES_EXPORT))
-        ));
-
-        // Fetch Neb beer names for PROC_YEASTVIT scope
-        $HC_NEB_EXPORT = [];
-        {
-            $nebSt = $pdo->query("SELECT name FROM ref_recipes WHERE classification = 'Neb'");
-            foreach ($nebSt->fetchAll(PDO::FETCH_COLUMN) as $n) { $HC_NEB_EXPORT[] = (string) $n; }
-        }
-        $HC_YV_BEERS_EXPORT = array_values(array_filter(
-            $HC_NEB_EXPORT,
-            fn(string $n) => !in_array($n, $HC_YV_EXCLUDE_EXPORT, true)
-        ));
-
-        // Fetch unit prices for all hardcoded MIs (WAC for period, fallback ref_mi.price)
-        $hcPricesExport = [];
-        {
-            $ph   = implode(',', array_fill(0, count($HC_ALL_MI_EXPORT), '?'));
-            $prms = [$period];
-            foreach ($HC_ALL_MI_EXPORT as $mid) { $prms[] = $mid; }
-            $pSt  = $pdo->prepare("
-                SELECT m.mi_id,
-                       ANY_VALUE(c.default_gl_account) AS gl,
-                       COALESCE(ws.wac_chf, m.price * IF(m.currency='EUR', 0.945, 1)) AS unit_price_chf
-                  FROM ref_mi m
-                  LEFT JOIN ref_mi_categories c  ON c.id = m.category_id
-                  LEFT JOIN wac_snapshots ws ON ws.mi_id_fk = m.id AND ws.period = ?
-                 WHERE m.mi_id IN ($ph)
-                 GROUP BY m.id, m.mi_id, ws.wac_chf, m.price, m.currency
-            ");
-            $pSt->execute($prms);
-            foreach ($pSt->fetchAll() as $pr) {
-                $hcPricesExport[(string) $pr['mi_id']] = [
-                    'unit_price_chf' => (float) ($pr['unit_price_chf'] ?? 0),
-                    'gl'             => (string) ($pr['gl'] ?? '4104'),
-                ];
+        // ── Recipe-ingredients gap-fill (loader leg) ────────────────────────────
+        // Collect total brewed HL per batch (needed by loader to compute qty = qty_per_hl × brew_hl)
+        $exportBatchBrewHl = [];   // "beer|batch" => float
+        $expBatchTuples    = [];
+        $expBatchParams    = [];
+        foreach ($tankTuples as $t) {
+            if ($t['batch'] === '') continue;
+            $bk = $t['beer'] . '|' . $t['batch'];
+            if (!isset($exportBatchBrewHl[$bk])) {
+                $exportBatchBrewHl[$bk] = 0.0;   // placeholder; filled below
+                $expBatchTuples[] = 'ROW(?, ?)';
+                $expBatchParams[] = $t['beer'];
+                $expBatchParams[] = $t['batch'];
             }
         }
-
-        // Fetch n_brews + total_hl for batches that need per-brew rules
-        $batchMetaExport = [];   // "beer|batch" => ['n'=>int,'hl'=>float]
-        {
-            $bmTuples = [];
-            $bmParams = [];
-            foreach ($tankTuples as $t) {
-                if ($t['batch'] === '') continue;
-                $beerName = $t['beer'];
-                $needsMeta = isset($HC_RULES_EXPORT[$beerName])
-                    || in_array($beerName, $HC_YV_BEERS_EXPORT, true);
-                if (!$needsMeta) continue;
-                $bk = $beerName . '|' . $t['batch'];
-                if (!isset($batchMetaExport[$bk])) {
-                    $bmTuples[] = 'ROW(?, ?)';
-                    $bmParams[] = $beerName;
-                    $bmParams[] = $t['batch'];
-                    $batchMetaExport[$bk] = null;
+        if (!empty($expBatchTuples)) {
+            $ebSt = $pdo->prepare("
+                WITH wanted AS (
+                  SELECT * FROM (VALUES " . implode(',', $expBatchTuples) . ") AS v(beer, batch)
+                )
+                SELECT w.beer  COLLATE utf8mb4_unicode_ci AS beer,
+                       w.batch COLLATE utf8mb4_unicode_ci AS batch,
+                       (SELECT SUM(bc.cool_final_volume_hl) FROM bd_brewing_cooling bc
+                         WHERE bc.cool_beer  COLLATE utf8mb4_unicode_ci = w.beer  COLLATE utf8mb4_unicode_ci
+                           AND bc.cool_batch COLLATE utf8mb4_unicode_ci = w.batch COLLATE utf8mb4_unicode_ci
+                           AND bc.cool_final_volume_hl > 0) AS total_hl
+                  FROM wanted w
+            ");
+            $ebSt->execute($expBatchParams);
+            foreach ($ebSt->fetchAll() as $ebRow) {
+                $hl = (float) ($ebRow['total_hl'] ?? 0);
+                if ($hl > 0) {
+                    $exportBatchBrewHl[(string) $ebRow['beer'] . '|' . (string) $ebRow['batch']] = $hl;
                 }
             }
-            if (!empty($bmTuples)) {
-                $bmSt = $pdo->prepare("
-                    WITH wanted AS (
-                      SELECT * FROM (VALUES " . implode(',', $bmTuples) . ") AS v(beer, batch)
-                    )
-                    SELECT w.beer  COLLATE utf8mb4_unicode_ci AS beer,
-                           w.batch COLLATE utf8mb4_unicode_ci AS batch,
-                           (SELECT COUNT(*) FROM bd_brewing_cooling bc
-                             WHERE bc.cool_beer  COLLATE utf8mb4_unicode_ci = w.beer  COLLATE utf8mb4_unicode_ci
-                               AND bc.cool_batch COLLATE utf8mb4_unicode_ci = w.batch COLLATE utf8mb4_unicode_ci
-                               AND bc.cool_final_volume_hl > 0) AS n_brews,
-                           (SELECT SUM(bc.cool_final_volume_hl) FROM bd_brewing_cooling bc
-                             WHERE bc.cool_beer  COLLATE utf8mb4_unicode_ci = w.beer  COLLATE utf8mb4_unicode_ci
-                               AND bc.cool_batch COLLATE utf8mb4_unicode_ci = w.batch COLLATE utf8mb4_unicode_ci
-                               AND bc.cool_final_volume_hl > 0) AS total_hl
-                      FROM wanted w
+        }
+
+        $asofStr      = (new DateTimeImmutable())->setDate($py, $pm, 1)
+                            ->modify('last day of this month')
+                            ->format('Y-m-d');
+        $expLoaderBatches = [];
+        foreach ($exportBatchBrewHl as $bk => $brewHl) {
+            if ($brewHl <= 0.0) continue;
+            [$beerN, $batchN] = explode('|', $bk, 2);
+            $expLoaderBatches[] = [
+                'beer_name' => $beerN,
+                'batch'     => $batchN,
+                'brew_hl'   => $brewHl,
+            ];
+        }
+
+        if (!empty($expLoaderBatches)) {
+            $expLoaderResults = load_recipe_ingredients_batched($pdo, $expLoaderBatches, $asofStr);
+
+            // Collect MI IDs for price lookup
+            $expMiFkSet = [];
+            foreach ($expLoaderResults as $rows) {
+                foreach ($rows as $lr) { $expMiFkSet[(int) $lr['mi_id_fk']] = true; }
+            }
+
+            $expMiPrices = [];   // mi_id_fk(int) => ['gl'=>str,'pricing_unit'=>str,'unit_price_chf'=>float]
+            if (!empty($expMiFkSet)) {
+                $expFkList = array_keys($expMiFkSet);
+                $expFkPh   = implode(',', array_fill(0, count($expFkList), '?'));
+                $expPrPs   = [$period];
+                foreach ($expFkList as $fk) { $expPrPs[] = $fk; }
+                $epSt = $pdo->prepare("
+                    SELECT m.id,
+                           ANY_VALUE(c.default_gl_account) AS gl,
+                           m.pricing_unit,
+                           COALESCE(ws.wac_chf, m.price * IF(m.currency='EUR', 0.945, 1)) AS unit_price_chf
+                      FROM ref_mi m
+                      LEFT JOIN ref_mi_categories c  ON c.id = m.category_id
+                      LEFT JOIN wac_snapshots ws     ON ws.mi_id_fk = m.id AND ws.period = ?
+                     WHERE m.id IN ($expFkPh)
+                     GROUP BY m.id, m.pricing_unit, ws.wac_chf, m.price, m.currency
                 ");
-                $bmSt->execute($bmParams);
-                foreach ($bmSt->fetchAll() as $bm) {
-                    $batchMetaExport[$bm['beer'] . '|' . $bm['batch']] = [
-                        'n'  => (int)   ($bm['n_brews']  ?? 0),
-                        'hl' => (float) ($bm['total_hl'] ?? 0),
+                $epSt->execute($expPrPs);
+                foreach ($epSt->fetchAll() as $ep) {
+                    $expMiPrices[(int) $ep['id']] = [
+                        'gl'             => (string) ($ep['gl'] ?? ''),
+                        'pricing_unit'   => (string) ($ep['pricing_unit'] ?? 'kg'),
+                        'unit_price_chf' => (float)  ($ep['unit_price_chf'] ?? 0),
                     ];
                 }
             }
 
-            // Pre-fetch skip_if_in_parsed for PROC_DEHAZE / Stirling batches
-            $HC_DEHAZE_BATCHES_EXPORT = [];
-            $stirBks = array_values(array_filter(
-                array_keys($batchMetaExport),
-                fn(string $k) => strncmp($k, 'Stirling|', 9) === 0
-            ));
-            if (!empty($stirBks)) {
-                $orClauses = implode(' OR ', array_fill(0, count($stirBks),
-                    '(bip.beer COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci '
-                    . 'AND bip.batch COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci)'));
-                $dhParams = [];
-                foreach ($stirBks as $sbk) {
-                    [$sb, $sbt] = explode('|', $sbk, 2);
-                    $dhParams[] = $sb;
-                    $dhParams[] = $sbt;
-                }
-                $dhSt = $pdo->prepare("
-                    SELECT DISTINCT bip.beer  COLLATE utf8mb4_unicode_ci AS beer,
-                                    bip.batch COLLATE utf8mb4_unicode_ci AS batch
-                      FROM bd_brewing_ingredients_parsed bip
-                      JOIN ref_mi m ON m.id = bip.mi_id_fk
-                     WHERE m.mi_id = 'PROC_DEHAZE'
-                       AND ($orClauses)
-                ");
-                $dhSt->execute($dhParams);
-                foreach ($dhSt->fetchAll() as $dh) {
-                    $HC_DEHAZE_BATCHES_EXPORT[$dh['beer'] . '|' . $dh['batch']] = true;
+            foreach ($expLoaderResults as $bk => $rows) {
+                $brewHl = $exportBatchBrewHl[$bk] ?? 0.0;
+                if ($brewHl <= 0.0) continue;
+                foreach ($rows as $lr) {
+                    $miFk      = (int) $lr['mi_id_fk'];
+                    $priceInfo = $expMiPrices[$miFk] ?? null;
+                    if ($priceInfo === null) continue;
+
+                    $riUnit   = strtolower((string) $lr['unit']);
+                    $pricingU = strtolower($priceInfo['pricing_unit']);
+                    if ($riUnit === $pricingU || ($riUnit === 'kg' && $pricingU === 'kg') || ($riUnit === 'l' && $pricingU === 'l')) {
+                        $unitFactor = 1.0;
+                    } elseif ($riUnit === 'g' && $pricingU === 'kg') {
+                        $unitFactor = 0.001;
+                    } elseif ($riUnit === 'ml' && ($pricingU === 'l' || $pricingU === 'kg')) {
+                        $unitFactor = 0.001;
+                    } else {
+                        error_log("recipe-loader export unit mismatch: ri.unit=$riUnit pricing_unit=$pricingU mi_id_fk=$miFk — row skipped");
+                        continue;
+                    }
+
+                    $chf = (float) $lr['qty'] * $unitFactor * $priceInfo['unit_price_chf'];
+                    $gl  = $priceInfo['gl'] !== '' ? $priceInfo['gl'] : '4104';
+                    $wipByGl[$gl] = ($wipByGl[$gl] ?? 0.0) + $chf;
                 }
             }
         }
-
-        // Sum up all hardcoded GL 4104 deltas
-        $hc4104Delta  = 0.0;
-        $hcNagarDelta = 0.0;
-
-        foreach ($tankTuples as $t) {
-            if ($t['batch'] === '') continue;
-            $beerName = $t['beer'];
-            $bk       = $beerName . '|' . $t['batch'];
-
-            // Per-brew rules from $HC_RULES_EXPORT
-            foreach (($HC_RULES_EXPORT[$beerName] ?? []) as $rule) {
-                if (!isset($hcPricesExport[$rule['mi_id']])) continue;
-                if (!empty($rule['skip_if_in_parsed']) && isset($HC_DEHAZE_BATCHES_EXPORT[$bk])) continue;
-                $meta = $batchMetaExport[$bk] ?? null;
-                if ($meta === null || $meta['n'] <= 0 || $meta['hl'] <= 0) continue;
-                $tankQty     = $rule['qty_per_brew_kg'] * $meta['n'] * ($t['volume_hl'] / $meta['hl']);
-                $hc4104Delta += $tankQty * $hcPricesExport[$rule['mi_id']]['unit_price_chf'];
-            }
-
-            // PROC_YEASTVIT: all qualifying Neb beers, per-brew
-            if (in_array($beerName, $HC_YV_BEERS_EXPORT, true)
-                && isset($hcPricesExport[$HC_YV_RULE_EXPORT['mi_id']])) {
-                $meta = $batchMetaExport[$bk] ?? null;
-                if ($meta !== null && $meta['n'] > 0 && $meta['hl'] > 0) {
-                    $tankQty     = $HC_YV_RULE_EXPORT['qty_per_brew_kg'] * $meta['n'] * ($t['volume_hl'] / $meta['hl']);
-                    $hc4104Delta += $tankQty * $hcPricesExport[$HC_YV_RULE_EXPORT['mi_id']]['unit_price_chf'];
-                }
-            }
-
-            // PROC_NAGARDO: BBT per-HL, Diversion + Diversion Blanche only
-            if ($t['type'] === 'BBT'
-                && in_array($beerName, $HC_NG_BEERS_EXPORT, true)
-                && isset($hcPricesExport[$HC_NG_RULE_EXPORT['mi_id']])) {
-                $tankQty      = $HC_NG_RULE_EXPORT['qty_per_hl_kg'] * $t['volume_hl'];
-                $hcNagarDelta += $tankQty * $hcPricesExport[$HC_NG_RULE_EXPORT['mi_id']]['unit_price_chf'];
-            }
-        }
-
-        $totalHcDelta = $hc4104Delta + $hcNagarDelta;
-        if ($totalHcDelta > 0.0) {
-            $wipByGl['4104'] = ($wipByGl['4104'] ?? 0.0) + $totalHcDelta;
-        }
-        /* END TEMPORARY HARDCODE */
     }
 } catch (Throwable $e) {
     // Leave $wipByGl empty
@@ -512,116 +445,6 @@ if (!$fgUnavailable) {
     } catch (Throwable $e) {
         $fgUnavailable = true;
         $fgNotice = '# NOTE: FG query failed (' . $e->getMessage() . ') — FG column shows 0';
-    }
-}
-
-// ── Query 3b: FG composite-pack supplement ───────────────────────────────────
-// TEMPORARY: composite packs (PD8, PAL) have no ref_sku_bom rows yet for liquid cost.
-// Compute their liquid value using constituent beer walk-back costs.
-// Remove this block once ref_sku_bom / a dedicated composites table holds this.
-if (!$fgUnavailable) {
-    try {
-        $COMPOSITE_PACK_LIQUID = [
-            // PD8 = Pack Découverte: 8 × 33cl, 1 bottle of each of 8 core beers (0.0264 HL)
-            // Source: BSF CompositePacks tab. PAD was the old BSF header; PD8 is canonical (inv_fg_stocktake renamed 2026-05-21).
-            'PD8' => ['Zepp' => 1, 'Diversion' => 1, 'Double Oat' => 1, 'Embuscade' => 1,
-                      'Moonshine' => 1, 'Speakeasy' => 1, 'Stirling' => 1, 'Alternative' => 1],
-            // PAL = Pack Louis: 12 × 33cl, 2 bottles each of 6 beers (0.396 HL)
-            'PAL' => ['Speakeasy' => 2, 'Alternative' => 2, 'Diversion Blanche' => 2,
-                      'Double Oat' => 2, 'Embuscade' => 2, 'Moonshine' => 2],
-        ];
-        $BOTTLE_HL = 0.0033;  // 33cl = 0.33 L = 0.0033 HL (1 HL = 100 L)
-
-        // Collect all unique constituent beers
-        $constituentBeers = [];
-        foreach ($COMPOSITE_PACK_LIQUID as $constituents) {
-            foreach (array_keys($constituents) as $beerName) {
-                $constituentBeers[] = $beerName;
-            }
-        }
-        $constituentBeers = array_values(array_unique($constituentBeers));
-
-        // Compute prevPeriod relative to the requested period
-        $prevPeriod = (new DateTime($period . '-01'))->modify('-1 month')->format('Y-m');
-
-        // Walk-back cost per constituent beer (mirrors warehouse.php Step 3b)
-        $constituentCostMap = [];
-        foreach ($constituentBeers as $cBeer) {
-            $wcSt = $pdo->prepare("
-                SELECT SUM(volume_hl * brew_cost_per_hl) / NULLIF(SUM(volume_hl), 0) AS cost_per_hl,
-                       ANY_VALUE(month_key) AS month_key
-                  FROM (
-                    SELECT month_key, volume_hl, brew_cost_per_hl,
-                           ROW_NUMBER() OVER (ORDER BY month_key DESC) AS rn
-                      FROM inv_tank_balances
-                     WHERE beer_name COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci
-                       AND month_key <= ?
-                       AND brew_cost_per_hl IS NOT NULL
-                  ) ranked
-                 WHERE rn = 1
-            ");
-            $wcSt->execute([$cBeer, $prevPeriod]);
-            $wcRow = $wcSt->fetch();
-            if ($wcRow && $wcRow['cost_per_hl'] !== null) {
-                // GL split for this constituent
-                $glSt = $pdo->prepare("
-                    SELECT c.default_gl_account AS gl,
-                           SUM(bip.qty * IF(bip.unit='g', 0.001, 1)
-                               * COALESCE(ws.wac_chf, m.price * IF(m.currency='EUR', 0.945, 1))) AS gl_cost
-                      FROM bd_brewing_ingredients_parsed bip
-                      JOIN ref_mi m ON m.id = bip.mi_id_fk
-                      LEFT JOIN ref_mi_categories c ON c.id = m.category_id
-                      LEFT JOIN wac_snapshots ws ON ws.mi_id_fk = m.id AND ws.period = ?
-                     WHERE bip.beer COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci
-                       AND bip.mi_id_fk IS NOT NULL
-                       AND EXISTS (
-                         SELECT 1 FROM bd_brewing_cooling bc
-                          WHERE bc.cool_beer  COLLATE utf8mb4_unicode_ci = bip.beer  COLLATE utf8mb4_unicode_ci
-                            AND bc.cool_batch COLLATE utf8mb4_unicode_ci = bip.batch COLLATE utf8mb4_unicode_ci
-                            AND DATE_FORMAT(bc.event_date, '%Y-%m') = ?
-                       )
-                     GROUP BY c.default_gl_account
-                ");
-                $glSt->execute([$wcRow['month_key'], $cBeer, $wcRow['month_key']]);
-                $glRows    = $glSt->fetchAll();
-                $totalGlCost = (float) array_sum(array_column($glRows, 'gl_cost'));
-                $glSplit = [];
-                foreach ($glRows as $glr) {
-                    $gl = (string) ($glr['gl'] ?? '');
-                    if ($totalGlCost > 0 && $gl !== '') {
-                        $glSplit[$gl] = (float) $wcRow['cost_per_hl'] * ((float) $glr['gl_cost'] / $totalGlCost);
-                    }
-                }
-                $constituentCostMap[$cBeer] = [
-                    'cost_per_hl' => (float) $wcRow['cost_per_hl'],
-                    'gl_split'    => $glSplit,
-                ];
-            }
-        }
-
-        // For each composite SKU present in the period, compute GL contribution
-        $phComp = implode(',', array_map(fn($c) => '?', array_keys($COMPOSITE_PACK_LIQUID)));
-        $compSt = $pdo->prepare(
-            "SELECT fgs.sku, fgs.qty
-               FROM inv_fg_stocktake fgs
-              WHERE fgs.month_closed = ? AND fgs.sku IN ($phComp) AND fgs.qty > 0"
-        );
-        $compSt->execute(array_merge([$period], array_keys($COMPOSITE_PACK_LIQUID)));
-        foreach ($compSt->fetchAll() as $cr) {
-            $compSku  = (string) $cr['sku'];
-            $compQty  = (int)    $cr['qty'];
-            $constituents = $COMPOSITE_PACK_LIQUID[$compSku] ?? [];
-            foreach ($constituents as $cBeer => $bottles) {
-                $cbc = $constituentCostMap[$cBeer] ?? null;
-                if (!$cbc) continue;
-                $constituentHl = $bottles * $BOTTLE_HL;
-                foreach ($cbc['gl_split'] as $gl => $costPerHlGl) {
-                    $fgByGl[$gl] = ($fgByGl[$gl] ?? 0.0) + ($compQty * $constituentHl * $costPerHlGl);
-                }
-            }
-        }
-    } catch (Throwable $e) {
-        // Non-fatal — composite packs will show 0 in the export
     }
 }
 
