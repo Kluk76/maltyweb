@@ -9,8 +9,10 @@ $view    = in_array($_GET['view'] ?? 'rm', ['rm', 'fg'], true) ? $_GET['view'] :
 $miId    = isset($_GET['mi_id']) && ctype_digit((string) $_GET['mi_id']) ? (int) $_GET['mi_id'] : null;
 $cat     = $_GET['cat'] ?? '';
 $q       = trim($_GET['q'] ?? '');
-$sortCol = in_array($_GET['sort'] ?? 'mi_id', ['mi_id', 'mi_name', 'category', 'live_qty', 'wac_chf', 'stock_value', 'weeks_remaining', 'hl_equivalent', 'last_delivery'], true)
-    ? $_GET['sort'] : 'mi_id';
+$sortCol = $_GET['sort'] ?? 'mi_id';
+if (!in_array($sortCol, ['mi_id', 'mi_name', 'category', 'live_qty', 'wac_chf', 'stock_value', 'weeks_remaining', 'hl_equivalent', 'last_delivery'], true)) {
+    $sortCol = 'mi_id';
+}
 $sortDir = ($_GET['dir'] ?? 'asc') === 'desc' ? 'desc' : 'asc';
 
 $pdo = maltytask_pdo();
