@@ -473,93 +473,252 @@ try {
 
     if ($view === 'wip') {
 
-        // ── WIP: available periods ────────────────────────────────────────────
-        $wipPeriods = $pdo->query(
-            "SELECT DISTINCT month_key FROM inv_tank_balances ORDER BY month_key DESC"
-        )->fetchAll(PDO::FETCH_COLUMN);
+        // ── WIP: use the proven TankSimulator (same engine as /modules/tanks.php) ──
+        require_once __DIR__ . '/../../app/tank-simulator.php';
 
-        // Resolve period: use query param if valid and present, else latest available
+        // Period dropdown: rolling 6 months ending at last closed month.
+        // "Closed month" = last full calendar month (today's month-1).
+        $today = new DateTimeImmutable('today');
+        $defaultPeriodDT = $today->modify('first day of last month');
+        $wipPeriods = [];
+        for ($i = 0; $i < 6; $i++) {
+            $wipPeriods[] = $defaultPeriodDT->modify("-$i months")->format('Y-m');
+        }
+
         if ($period !== '' && in_array($period, $wipPeriods, true)) {
             $wipPeriod = $period;
-        } elseif (!empty($wipPeriods)) {
+        } else {
             $wipPeriod = $wipPeriods[0];
         }
 
-        if ($wipPeriod !== '') {
+        // As-of date = last day of selected month
+        [$y, $m] = array_map('intval', explode('-', $wipPeriod));
+        $asOfDT  = (new DateTimeImmutable())->setDate($y, $m, 1)->modify('last day of this month')->setTime(23, 59, 59);
 
-            // ── Tank rows ─────────────────────────────────────────────────────
-            $tankStmt = $pdo->prepare("
-                SELECT tank_id, tank_type, beer_name, batch, volume_hl, brew_cost_per_hl,
-                       volume_hl * brew_cost_per_hl AS total_chf
-                  FROM inv_tank_balances
-                 WHERE month_key = :m
-                 ORDER BY tank_type, tank_id
-            ");
-            $tankStmt->execute([':m' => $wipPeriod]);
-            $allTanks = $tankStmt->fetchAll();
+        // ── Run the canonical tank simulator ──────────────────────────────────
+        $sim     = new TankSimulator($pdo);
+        $simRes  = $sim->run($asOfDT);
 
-            foreach ($allTanks as $tr) {
-                $tt = strtoupper((string) ($tr['tank_type'] ?? ''));
-                if ($tt === 'CCT') {
-                    $wipCcts[] = $tr;
-                    $wipKpis['cct_count']++;
-                } elseif ($tt === 'BBT') {
-                    $wipBbts[] = $tr;
-                    $wipKpis['bbt_count']++;
-                }
-                $wipKpis['hl_total']    += (float) ($tr['volume_hl'] ?? 0);
-                $wipKpis['wip_value']   += (float) ($tr['total_chf'] ?? 0);
+        // Collect (beer, batch, volume_hl) tuples from CCT + BBT
+        $tankTuples = [];   // array of ['type'=>'CCT'|'BBT', 'tank'=>num, 'beer'=>'raw', 'batch'=>'N', 'volume_hl'=>X]
+        foreach (($simRes['cct'] ?? []) as $num => $st) {
+            if ($st === null) continue;
+            $tankTuples[] = [
+                'type' => 'CCT', 'tank' => (int) $num,
+                'beer' => $st['raw_beer'] ?? $st['beer'] ?? '',
+                'batch' => (string) ($st['batch'] ?? ''),
+                'volume_hl' => (float) ($st['volume_hl'] ?? 0),
+            ];
+        }
+        foreach (($simRes['bbt'] ?? []) as $num => $st) {
+            if ($st === null) continue;
+            $tankTuples[] = [
+                'type' => 'BBT', 'tank' => (int) $num,
+                'beer' => $st['raw_beer'] ?? $st['beer'] ?? '',
+                'batch' => (string) ($st['batch'] ?? ''),
+                'volume_hl' => (float) ($st['volume_hl'] ?? 0),
+            ];
+        }
+
+        // ── Per-batch brew cost map (single query, per-GL breakdown) ─────────
+        $brewCostByKeyGl = [];   // "beer|batch" → ['4101'=>x,'4102'=>y,'4104'=>z,'other'=>w,'total'=>t] CHF/HL
+        $uniqueBatches = [];
+        foreach ($tankTuples as $t) {
+            $key = $t['beer'] . '|' . $t['batch'];
+            if ($t['batch'] !== '' && !isset($uniqueBatches[$key])) {
+                $uniqueBatches[$key] = ['beer' => $t['beer'], 'batch' => $t['batch']];
             }
-
-            // ── MI breakdown ──────────────────────────────────────────────────
-            $miBreakStmt = $pdo->prepare("
-                WITH tank_batches AS (
-                  SELECT itb.beer_name, itb.batch, itb.volume_hl,
-                         (SELECT MAX(bc.cool_final_volume_hl)
-                            FROM bd_brewing_cooling bc
-                           WHERE bc.cool_beer  = itb.beer_name
-                             AND bc.cool_batch = itb.batch) AS brewed_hl
-                    FROM inv_tank_balances itb
-                   WHERE itb.month_key = :m
+        }
+        if (!empty($uniqueBatches)) {
+            $params = [];
+            foreach ($uniqueBatches as $ub) {
+                $params[] = $ub['beer']; $params[] = $ub['batch'];
+            }
+            // One $wipPeriod per correlated subquery (4101, 4102, 4104, other)
+            $params[] = $wipPeriod;
+            $params[] = $wipPeriod;
+            $params[] = $wipPeriod;
+            $params[] = $wipPeriod;
+            $batchCostSql = "
+                WITH wanted AS (
+                  SELECT * FROM (VALUES " . implode(',', array_fill(0, count($uniqueBatches), 'ROW(?, ?)')) . ") AS v(beer, batch)
                 )
-                SELECT m.mi_id, m.name AS mi_name, c.name AS category,
-                       c.default_gl_account,
-                       m.pricing_unit,
-                       SUM(bip.qty * IF(bip.unit='g', 0.001, 1)
-                           * tb.volume_hl / NULLIF(tb.brewed_hl, 0)) AS qty_total_kg,
-                       COALESCE(w.wac_chf, m.price * IF(m.currency='EUR', 0.945, 1)) AS unit_price_chf,
-                       SUM(bip.qty * IF(bip.unit='g', 0.001, 1)
-                           * tb.volume_hl / NULLIF(tb.brewed_hl, 0))
-                         * COALESCE(w.wac_chf, m.price * IF(m.currency='EUR', 0.945, 1)) AS total_chf
+                SELECT w.beer COLLATE utf8mb4_unicode_ci AS beer,
+                       w.batch COLLATE utf8mb4_unicode_ci AS batch,
+                       (SELECT COUNT(*) FROM bd_brewing_cooling bc
+                         WHERE bc.cool_beer  COLLATE utf8mb4_unicode_ci = w.beer COLLATE utf8mb4_unicode_ci
+                           AND bc.cool_batch COLLATE utf8mb4_unicode_ci = w.batch COLLATE utf8mb4_unicode_ci
+                           AND bc.cool_final_volume_hl > 0) AS n_brews,
+                       (SELECT SUM(bc.cool_final_volume_hl) FROM bd_brewing_cooling bc
+                         WHERE bc.cool_beer  COLLATE utf8mb4_unicode_ci = w.beer COLLATE utf8mb4_unicode_ci
+                           AND bc.cool_batch COLLATE utf8mb4_unicode_ci = w.batch COLLATE utf8mb4_unicode_ci
+                           AND bc.cool_final_volume_hl > 0) AS total_hl,
+                       (SELECT SUM(CASE WHEN c.default_gl_account = '4101'
+                                        THEN bip.qty * IF(bip.unit='g', 0.001, 1)
+                                             * COALESCE(ws.wac_chf, mi.price * IF(mi.currency='EUR', 0.945, 1))
+                                        ELSE 0 END)
+                          FROM bd_brewing_ingredients_parsed bip
+                          JOIN ref_mi mi ON mi.id = bip.mi_id_fk
+                          LEFT JOIN ref_mi_categories c ON c.id = mi.category_id
+                          LEFT JOIN wac_snapshots ws ON ws.mi_id_fk = mi.id AND ws.period = ?
+                         WHERE bip.beer  COLLATE utf8mb4_unicode_ci = w.beer COLLATE utf8mb4_unicode_ci
+                           AND bip.batch COLLATE utf8mb4_unicode_ci = w.batch COLLATE utf8mb4_unicode_ci
+                           AND bip.mi_id_fk IS NOT NULL) AS one_brew_4101_chf,
+                       (SELECT SUM(CASE WHEN c.default_gl_account = '4102'
+                                        THEN bip.qty * IF(bip.unit='g', 0.001, 1)
+                                             * COALESCE(ws.wac_chf, mi.price * IF(mi.currency='EUR', 0.945, 1))
+                                        ELSE 0 END)
+                          FROM bd_brewing_ingredients_parsed bip
+                          JOIN ref_mi mi ON mi.id = bip.mi_id_fk
+                          LEFT JOIN ref_mi_categories c ON c.id = mi.category_id
+                          LEFT JOIN wac_snapshots ws ON ws.mi_id_fk = mi.id AND ws.period = ?
+                         WHERE bip.beer  COLLATE utf8mb4_unicode_ci = w.beer COLLATE utf8mb4_unicode_ci
+                           AND bip.batch COLLATE utf8mb4_unicode_ci = w.batch COLLATE utf8mb4_unicode_ci
+                           AND bip.mi_id_fk IS NOT NULL) AS one_brew_4102_chf,
+                       (SELECT SUM(CASE WHEN c.default_gl_account = '4104'
+                                        THEN bip.qty * IF(bip.unit='g', 0.001, 1)
+                                             * COALESCE(ws.wac_chf, mi.price * IF(mi.currency='EUR', 0.945, 1))
+                                        ELSE 0 END)
+                          FROM bd_brewing_ingredients_parsed bip
+                          JOIN ref_mi mi ON mi.id = bip.mi_id_fk
+                          LEFT JOIN ref_mi_categories c ON c.id = mi.category_id
+                          LEFT JOIN wac_snapshots ws ON ws.mi_id_fk = mi.id AND ws.period = ?
+                         WHERE bip.beer  COLLATE utf8mb4_unicode_ci = w.beer COLLATE utf8mb4_unicode_ci
+                           AND bip.batch COLLATE utf8mb4_unicode_ci = w.batch COLLATE utf8mb4_unicode_ci
+                           AND bip.mi_id_fk IS NOT NULL) AS one_brew_4104_chf,
+                       (SELECT SUM(CASE WHEN c.default_gl_account NOT IN ('4101','4102','4104')
+                                             OR c.default_gl_account IS NULL
+                                        THEN bip.qty * IF(bip.unit='g', 0.001, 1)
+                                             * COALESCE(ws.wac_chf, mi.price * IF(mi.currency='EUR', 0.945, 1))
+                                        ELSE 0 END)
+                          FROM bd_brewing_ingredients_parsed bip
+                          JOIN ref_mi mi ON mi.id = bip.mi_id_fk
+                          LEFT JOIN ref_mi_categories c ON c.id = mi.category_id
+                          LEFT JOIN wac_snapshots ws ON ws.mi_id_fk = mi.id AND ws.period = ?
+                         WHERE bip.beer  COLLATE utf8mb4_unicode_ci = w.beer COLLATE utf8mb4_unicode_ci
+                           AND bip.batch COLLATE utf8mb4_unicode_ci = w.batch COLLATE utf8mb4_unicode_ci
+                           AND bip.mi_id_fk IS NOT NULL) AS one_brew_other_chf
+                  FROM wanted w
+            ";
+            $cs = $pdo->prepare($batchCostSql);
+            $cs->execute($params);
+            foreach ($cs->fetchAll() as $row) {
+                $n    = (int)   ($row['n_brews']  ?? 0);
+                $hl   = (float) ($row['total_hl'] ?? 0);
+                if ($n > 0 && $hl > 0) {
+                    $gl4101 = (float) ($row['one_brew_4101_chf'] ?? 0);
+                    $gl4102 = (float) ($row['one_brew_4102_chf'] ?? 0);
+                    $gl4104 = (float) ($row['one_brew_4104_chf'] ?? 0);
+                    $other  = (float) ($row['one_brew_other_chf'] ?? 0);
+                    $total  = $gl4101 + $gl4102 + $gl4104 + $other;
+                    $brewCostByKeyGl[$row['beer'] . '|' . $row['batch']] = [
+                        '4101'  => ($gl4101 * $n) / $hl,
+                        '4102'  => ($gl4102 * $n) / $hl,
+                        '4104'  => ($gl4104 * $n) / $hl,
+                        'other' => ($other  * $n) / $hl,
+                        'total' => ($total  * $n) / $hl,
+                    ];
+                }
+            }
+        }
+
+        // ── Build $wipCcts / $wipBbts rows + KPIs ─────────────────────────────
+        foreach ($tankTuples as $t) {
+            $key    = $t['beer'] . '|' . $t['batch'];
+            $glData = $brewCostByKeyGl[$key] ?? null;
+            $costPerHl = $glData !== null ? $glData['total'] : null;
+            $vol       = $t['volume_hl'];
+            $row = [
+                'tank_id'          => (string) $t['tank'],
+                'tank_type'        => $t['type'],
+                'beer_name'        => $t['beer'],
+                'batch'            => $t['batch'],
+                'volume_hl'        => $vol,
+                'brew_cost_per_hl' => $costPerHl,
+                'cost_4101_chf'    => $glData !== null ? $vol * $glData['4101']  : null,
+                'cost_4102_chf'    => $glData !== null ? $vol * $glData['4102']  : null,
+                'cost_4104_chf'    => $glData !== null ? $vol * $glData['4104']  : null,
+                'cost_other_chf'   => $glData !== null ? $vol * $glData['other'] : null,
+                'total_chf'        => $glData !== null ? $vol * $glData['total'] : null,
+            ];
+            if ($t['type'] === 'CCT') { $wipCcts[] = $row; $wipKpis['cct_count']++; }
+            else                       { $wipBbts[] = $row; $wipKpis['bbt_count']++; }
+            $wipKpis['hl_total']  += $vol;
+            $wipKpis['wip_value'] += $row['total_chf'] ?? 0;
+        }
+
+        // ── MI breakdown via VALUES list of (beer, batch, volume_hl) ──────────
+        if (!empty($tankTuples)) {
+            $miParams = [];
+            $miTuples = [];
+            foreach ($tankTuples as $t) {
+                $miTuples[] = "ROW(?, ?, ?)";
+                $miParams[] = $t['beer']; $miParams[] = $t['batch']; $miParams[] = $t['volume_hl'];
+            }
+            $miParams[] = $wipPeriod;  // ws.period
+            $miSql = "
+                WITH tanks AS (
+                  SELECT * FROM (VALUES " . implode(',', $miTuples) . ") AS v(beer_name, batch, volume_hl)
+                ),
+                tank_batches AS (
+                  SELECT t.beer_name COLLATE utf8mb4_unicode_ci AS beer_name,
+                         t.batch     COLLATE utf8mb4_unicode_ci AS batch,
+                         t.volume_hl,
+                         (SELECT SUM(bc.cool_final_volume_hl) FROM bd_brewing_cooling bc
+                           WHERE bc.cool_beer  COLLATE utf8mb4_unicode_ci = t.beer_name COLLATE utf8mb4_unicode_ci
+                             AND bc.cool_batch COLLATE utf8mb4_unicode_ci = t.batch     COLLATE utf8mb4_unicode_ci
+                             AND bc.cool_final_volume_hl > 0) AS total_brewed_hl,
+                         (SELECT COUNT(*) FROM bd_brewing_cooling bc
+                           WHERE bc.cool_beer  COLLATE utf8mb4_unicode_ci = t.beer_name COLLATE utf8mb4_unicode_ci
+                             AND bc.cool_batch COLLATE utf8mb4_unicode_ci = t.batch     COLLATE utf8mb4_unicode_ci
+                             AND bc.cool_final_volume_hl > 0) AS n_brews
+                    FROM tanks t
+                )
+                -- ANY_VALUE wraps per-mi attributes that are functionally
+                -- dependent on m.id but MySQL's ONLY_FULL_GROUP_BY can't infer
+                -- the dependency across LEFT JOINs. The unit_price expression
+                -- is constant per row so it's safe to pull a single value.
+                SELECT ANY_VALUE(m.mi_id)                AS mi_id,
+                       ANY_VALUE(m.name)                 AS mi_name,
+                       ANY_VALUE(c.name)                 AS category,
+                       ANY_VALUE(c.default_gl_account)   AS default_gl_account,
+                       ANY_VALUE(m.pricing_unit)         AS pricing_unit,
+                       SUM(bip.qty * IF(bip.unit='g', 0.001, 1) * COALESCE(tb.n_brews, 1)
+                           * tb.volume_hl / NULLIF(tb.total_brewed_hl, 0)) AS qty_total_kg,
+                       ANY_VALUE(COALESCE(w.wac_chf, m.price * IF(m.currency='EUR', 0.945, 1))) AS unit_price_chf,
+                       SUM(bip.qty * IF(bip.unit='g', 0.001, 1) * COALESCE(tb.n_brews, 1)
+                           * tb.volume_hl / NULLIF(tb.total_brewed_hl, 0)
+                           * COALESCE(w.wac_chf, m.price * IF(m.currency='EUR', 0.945, 1))) AS total_chf
                   FROM tank_batches tb
                   JOIN bd_brewing_ingredients_parsed bip
-                    ON bip.beer = tb.beer_name AND bip.batch = tb.batch
+                    ON bip.beer  COLLATE utf8mb4_unicode_ci = tb.beer_name COLLATE utf8mb4_unicode_ci
+                   AND bip.batch COLLATE utf8mb4_unicode_ci = tb.batch     COLLATE utf8mb4_unicode_ci
                    AND bip.mi_id_fk IS NOT NULL
                   JOIN ref_mi m ON m.id = bip.mi_id_fk
                   LEFT JOIN ref_mi_categories c ON c.id = m.category_id
-                  LEFT JOIN wac_snapshots w
-                    ON w.mi_id_fk = m.id AND w.period = :m2
+                  LEFT JOIN wac_snapshots w ON w.mi_id_fk = m.id AND w.period = ?
                  GROUP BY m.id
-                 ORDER BY c.default_gl_account, c.name, m.mi_id
-            ");
-            $miBreakStmt->execute([':m' => $wipPeriod, ':m2' => $wipPeriod]);
-            $wipMiRows = $miBreakStmt->fetchAll();
+                 ORDER BY ANY_VALUE(c.default_gl_account), ANY_VALUE(c.name), ANY_VALUE(m.mi_id)
+            ";
+            $mb = $pdo->prepare($miSql);
+            $mb->execute($miParams);
+            $wipMiRows = $mb->fetchAll();
+        }
 
-            // ── GL recap (4101 / 4102 / 4104 only) ───────────────────────────
-            $glTotals = [];
-            foreach ($wipMiRows as $mr) {
-                $gl = (string) ($mr['default_gl_account'] ?? '');
-                if (!in_array($gl, ['4101', '4102', '4104'], true)) continue;
-                $glTotals[$gl] = ($glTotals[$gl] ?? 0.0) + (float) ($mr['total_chf'] ?? 0);
-            }
-            $glLabels = ['4101' => 'Malt', '4102' => 'Houblon', '4104' => 'Autres'];
-            foreach (['4101', '4102', '4104'] as $gl) {
-                $wipGlRecap[] = [
-                    'gl'    => $gl,
-                    'label' => $glLabels[$gl],
-                    'total' => $glTotals[$gl] ?? 0.0,
-                ];
-            }
+        // ── GL recap (4101 / 4102 / 4104 only) ───────────────────────────────
+        $glTotals = [];
+        foreach ($wipMiRows as $mr) {
+            $gl = (string) ($mr['default_gl_account'] ?? '');
+            if (!in_array($gl, ['4101', '4102', '4104'], true)) continue;
+            $glTotals[$gl] = ($glTotals[$gl] ?? 0.0) + (float) ($mr['total_chf'] ?? 0);
+        }
+        $glLabels = ['4101' => 'Malt', '4102' => 'Houblon', '4104' => 'Ingrédients'];
+        foreach (['4101', '4102', '4104'] as $gl) {
+            $wipGlRecap[] = [
+                'gl'    => $gl,
+                'label' => $glLabels[$gl],
+                'total' => $glTotals[$gl] ?? 0.0,
+            ];
         }
     }
 
@@ -656,6 +815,14 @@ try {
         </div>
       </section>
 
+      <?php
+        // Emit "Autres CHF" column only when at least one row has a non-zero other cost
+        $showAutresCol = (
+            array_sum(array_column($wipCcts, 'cost_other_chf')) +
+            array_sum(array_column($wipBbts, 'cost_other_chf'))
+        ) > 0.01;
+      ?>
+
       <!-- CCT table -->
       <section class="wort-section" aria-label="Fermenteurs CCT">
         <div class="wort-section__head">
@@ -673,6 +840,10 @@ try {
                   <th scope="col">Batch</th>
                   <th scope="col">HL</th>
                   <th scope="col">Coût brew / HL</th>
+                  <th scope="col">4101 Malt CHF</th>
+                  <th scope="col">4102 Houblon CHF</th>
+                  <th scope="col">4104 Ingrédients CHF</th>
+                  <?php if ($showAutresCol): ?><th scope="col">Autres CHF</th><?php endif ?>
                   <th scope="col">Total CHF</th>
                 </tr>
               </thead>
@@ -684,6 +855,10 @@ try {
                     <td class="wort-td"><span class="wort-mono"><?= htmlspecialchars($t['batch'] ?? '—') ?></span></td>
                     <td class="wort-td wh-td--num"><?= wh_num_smart($t['volume_hl'], 1, 1) ?></td>
                     <td class="wort-td wh-td--num"><?= wh_num_smart($t['brew_cost_per_hl'], 2, 2, '—') ?></td>
+                    <td class="wort-td wh-td--num"><?= wh_num_smart($t['cost_4101_chf'], 2, 2, '—') ?></td>
+                    <td class="wort-td wh-td--num"><?= wh_num_smart($t['cost_4102_chf'], 2, 2, '—') ?></td>
+                    <td class="wort-td wh-td--num"><?= wh_num_smart($t['cost_4104_chf'], 2, 2, '—') ?></td>
+                    <?php if ($showAutresCol): ?><td class="wort-td wh-td--num"><?= wh_num_smart($t['cost_other_chf'], 2, 2, '—') ?></td><?php endif ?>
                     <td class="wort-td wh-td--num"><?= wh_num_smart($t['total_chf'], 2, 2, '—') ?></td>
                   </tr>
                 <?php endforeach ?>
@@ -710,6 +885,10 @@ try {
                   <th scope="col">Batch</th>
                   <th scope="col">HL</th>
                   <th scope="col">Coût brew / HL</th>
+                  <th scope="col">4101 Malt CHF</th>
+                  <th scope="col">4102 Houblon CHF</th>
+                  <th scope="col">4104 Ingrédients CHF</th>
+                  <?php if ($showAutresCol): ?><th scope="col">Autres CHF</th><?php endif ?>
                   <th scope="col">Total CHF</th>
                 </tr>
               </thead>
@@ -721,6 +900,10 @@ try {
                     <td class="wort-td"><span class="wort-mono"><?= htmlspecialchars($t['batch'] ?? '—') ?></span></td>
                     <td class="wort-td wh-td--num"><?= wh_num_smart($t['volume_hl'], 1, 1) ?></td>
                     <td class="wort-td wh-td--num"><?= wh_num_smart($t['brew_cost_per_hl'], 2, 2, '—') ?></td>
+                    <td class="wort-td wh-td--num"><?= wh_num_smart($t['cost_4101_chf'], 2, 2, '—') ?></td>
+                    <td class="wort-td wh-td--num"><?= wh_num_smart($t['cost_4102_chf'], 2, 2, '—') ?></td>
+                    <td class="wort-td wh-td--num"><?= wh_num_smart($t['cost_4104_chf'], 2, 2, '—') ?></td>
+                    <?php if ($showAutresCol): ?><td class="wort-td wh-td--num"><?= wh_num_smart($t['cost_other_chf'], 2, 2, '—') ?></td><?php endif ?>
                     <td class="wort-td wh-td--num"><?= wh_num_smart($t['total_chf'], 2, 2, '—') ?></td>
                   </tr>
                 <?php endforeach ?>
