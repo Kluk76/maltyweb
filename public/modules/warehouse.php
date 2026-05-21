@@ -168,13 +168,14 @@ try {
                    COALESCE(a.anchor_qty, 0)
                      + COALESCE(ds.qty_in, 0)
                      - COALESCE(cs.qty_out, 0) AS live_qty,
-                   -- Display WAC: prefer computed (wac_snapshots), fall back to legacy ref_mi.price.
-                   -- wac_is_legacy flag lets the UI mark legacy values distinctly.
-                   COALESCE(w.wac_chf, m.price) AS wac_chf,
+                   -- Display WAC: prefer computed (wac_snapshots, always CHF). Fall back to
+                   -- legacy ref_mi.price converted to CHF when currency='EUR' (0.945 rate matches
+                   -- all existing inv_deliveries.eur_to_chf entries).
+                   COALESCE(w.wac_chf, m.price * IF(m.currency='EUR', 0.945, 1)) AS wac_chf,
                    CASE WHEN w.wac_chf IS NULL AND m.price IS NOT NULL AND m.price > 0
                         THEN 1 ELSE 0 END AS wac_is_legacy,
                    (COALESCE(a.anchor_qty, 0) + COALESCE(ds.qty_in, 0) - COALESCE(cs.qty_out, 0))
-                     * COALESCE(w.wac_chf, m.price) AS stock_value,
+                     * COALESCE(w.wac_chf, m.price * IF(m.currency='EUR', 0.945, 1)) AS stock_value,
                    CASE WHEN cw.avg_weekly_qty > 0
                         THEN (COALESCE(a.anchor_qty, 0) + COALESCE(ds.qty_in, 0) - COALESCE(cs.qty_out, 0))
                              / cw.avg_weekly_qty
@@ -303,7 +304,7 @@ try {
             'mi_name'         => 'm.name',
             'category'        => 'c.name',
             'live_qty'        => 'live_qty',
-            'wac_chf'         => 'COALESCE(w.wac_chf, m.price)',
+            'wac_chf'         => "COALESCE(w.wac_chf, m.price * IF(m.currency='EUR', 0.945, 1))",
             'stock_value'     => 'stock_value',
             'weeks_remaining' => 'weeks_remaining',
             'hl_equivalent'   => 'hl_equivalent',
@@ -372,12 +373,13 @@ try {
                    COALESCE(a.anchor_qty, 0)
                      + COALESCE(ds.qty_in, 0)
                      - COALESCE(cs.qty_out, 0) AS live_qty,
-                   -- Display WAC: prefer computed (wac_snapshots), fall back to legacy ref_mi.price.
-                   COALESCE(w.wac_chf, m.price) AS wac_chf,
+                   -- Display WAC: prefer computed (wac_snapshots, always CHF). Fall back to
+                   -- legacy ref_mi.price converted to CHF when currency='EUR' (0.945 rate).
+                   COALESCE(w.wac_chf, m.price * IF(m.currency='EUR', 0.945, 1)) AS wac_chf,
                    CASE WHEN w.wac_chf IS NULL AND m.price IS NOT NULL AND m.price > 0
                         THEN 1 ELSE 0 END AS wac_is_legacy,
                    (COALESCE(a.anchor_qty, 0) + COALESCE(ds.qty_in, 0) - COALESCE(cs.qty_out, 0))
-                     * COALESCE(w.wac_chf, m.price) AS stock_value,
+                     * COALESCE(w.wac_chf, m.price * IF(m.currency='EUR', 0.945, 1)) AS stock_value,
                    CASE WHEN cw.avg_weekly_qty > 0
                         THEN (COALESCE(a.anchor_qty, 0) + COALESCE(ds.qty_in, 0) - COALESCE(cs.qty_out, 0))
                              / cw.avg_weekly_qty
