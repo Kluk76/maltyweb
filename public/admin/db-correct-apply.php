@@ -42,7 +42,7 @@ if ($payload === null) {
 
 $pdo = maltytask_pdo();
 try {
-    $rowsAffected = dbcorrect_apply($pdo, $payload, $me);
+    $result = dbcorrect_apply($pdo, $payload, $me);
 } catch (Throwable $e) {
     http_response_code(500);
     header("Content-Type: text/html; charset=utf-8");
@@ -57,10 +57,11 @@ try {
 
 // Build redirect back to the same table view with a flash message in the URL.
 $qs = http_build_query([
-    "table"          => $payload["table"],
-    "applied_action" => $payload["action"],
-    "applied_rows"   => $rowsAffected,
-    "applied_col"    => $payload["column"] ?? "",
+    "table"            => $payload["table"],
+    "applied_action"   => $payload["action"],
+    "applied_rows"     => $result["rows_affected"],
+    "applied_col"      => $payload["column"] ?? "",
+    "aliases_upserted" => $result["aliases_upserted"],
 ]);
 header("Location: /admin/db-browser.php?{$qs}", true, 303);
 exit;

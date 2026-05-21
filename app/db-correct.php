@@ -253,13 +253,96 @@ function dbcorrect_pop_pending(string $token): ?array
 }
 
 /**
+ * Returns true when the payload matches the special case that triggers an
+ * automatic alias upsert into ref_mi_aliases.
+ *
+ * Trigger conditions (ALL must hold):
+ *   - table  = "bd_brewing_ingredients_parsed"
+ *   - column = "mi_id_fk"
+ *   - action = "update"
+ *   - set_null = false
+ *   - new_value is a string of decimal digits representing a positive integer
+ */
+function dbcorrect_is_alias_trigger(array $payload): bool
+{
+    return $payload["table"]   === "bd_brewing_ingredients_parsed"
+        && $payload["column"]  === "mi_id_fk"
+        && $payload["action"]  === "update"
+        && $payload["set_null"] === false
+        && is_string($payload["new_value"])
+        && ctype_digit($payload["new_value"])
+        && (int) $payload["new_value"] > 0;
+}
+
+/**
+ * For the alias-trigger special case, returns an array of preview items
+ * showing which raw_names would be upserted and to which MI.
+ *
+ * Returns:
+ *   [
+ *     ["alias" => "incognito mosaic", "mi_id_fk" => 55, "mi_name" => "Incognito Mosaic"],
+ *     ...
+ *   ]
+ *
+ * Returns an empty array if the trigger conditions are not met or no raw_names are found.
+ */
+function dbcorrect_alias_preview(PDO $pdo, array $payload): array
+{
+    if (!dbcorrect_is_alias_trigger($payload)) {
+        return [];
+    }
+
+    $miId = (int) $payload["new_value"];
+    $ids  = $payload["ids"];
+    $place = implode(",", array_fill(0, count($ids), "?"));
+
+    // Fetch distinct raw_names for the affected rows.
+    $stmt = $pdo->prepare(
+        "SELECT DISTINCT raw_name FROM bd_brewing_ingredients_parsed "
+      . "WHERE id IN ({$place}) AND raw_name IS NOT NULL AND raw_name <> ''"
+    );
+    $stmt->execute($ids);
+    $rawNames = $stmt->fetchAll(PDO::FETCH_COLUMN);
+
+    if (empty($rawNames)) {
+        return [];
+    }
+
+    // Fetch canonical MI name for display.
+    $miStmt = $pdo->prepare("SELECT name FROM ref_mi WHERE id = ?");
+    $miStmt->execute([$miId]);
+    $miName = $miStmt->fetchColumn();
+    if ($miName === false) {
+        $miName = "(id {$miId})";
+    }
+
+    $items = [];
+    foreach ($rawNames as $raw) {
+        $alias = strtolower(trim((string) $raw));
+        if ($alias === "") continue;
+        $items[] = [
+            "alias"    => $alias,
+            "mi_id_fk" => $miId,
+            "mi_name"  => (string) $miName,
+        ];
+    }
+    return $items;
+}
+
+/**
  * Executes a validated payload inside a transaction. Writes one
  * debug_corrections row with the captured old values, then runs the
  * UPDATE/DELETE. Returns the number of affected rows.
  *
+ * When the payload matches the alias-trigger special case, also upserts
+ * ref_mi_aliases rows within the same transaction, and stores the
+ * structured side-effects record in debug_corrections.side_effects.
+ *
  * Throws on any DB error — the transaction will have been rolled back.
+ *
+ * @return array{rows_affected: int, aliases_upserted: int}
  */
-function dbcorrect_apply(PDO $pdo, array $payload, array $user): int
+function dbcorrect_apply(PDO $pdo, array $payload, array $user): array
 {
     $table  = $payload["table"];
     $pk     = $payload["pk_column"];
@@ -307,12 +390,65 @@ function dbcorrect_apply(PDO $pdo, array $payload, array $user): int
             $rowsAffected = $delStmt->rowCount();
         }
 
-        // 2. Audit row.
+        // 2. Alias upsert (special case: bd_brewing_ingredients_parsed.mi_id_fk update).
+        $sideEffects    = null;
+        $aliasesUpserted = 0;
+        if (dbcorrect_is_alias_trigger($payload)) {
+            $miId = (int) $payload["new_value"];
+
+            // Verify the target MI actually exists (gives a better error than FK violation).
+            $miCheck = $pdo->prepare("SELECT id FROM ref_mi WHERE id = ?");
+            $miCheck->execute([$miId]);
+            if ($miCheck->fetchColumn() === false) {
+                throw new RuntimeException(
+                    "ref_mi.id = {$miId} n'existe pas — alias non créé."
+                );
+            }
+
+            // Fetch distinct raw_names for the affected rows (inside transaction).
+            $rawStmt = $pdo->prepare(
+                "SELECT DISTINCT raw_name FROM bd_brewing_ingredients_parsed "
+              . "WHERE id IN ({$place}) AND raw_name IS NOT NULL AND raw_name <> ''"
+            );
+            $rawStmt->execute($ids);
+            $rawNames = $rawStmt->fetchAll(PDO::FETCH_COLUMN);
+
+            $aliasStmt = $pdo->prepare(
+                "INSERT INTO ref_mi_aliases (mi_id_fk, alias) VALUES (?, ?) "
+              . "ON DUPLICATE KEY UPDATE mi_id_fk = VALUES(mi_id_fk)"
+            );
+
+            $aliasLog = [];
+            foreach ($rawNames as $raw) {
+                $alias = strtolower(trim((string) $raw));
+                if ($alias === "") continue;
+
+                $aliasStmt->execute([$miId, $alias]);
+                $rc = $aliasStmt->rowCount();
+                // rowCount: 1 = inserted, 2 = updated (alias pointed elsewhere), 0 = noop
+                $aliasAction = match($rc) {
+                    1       => "inserted",
+                    2       => "updated",
+                    default => "noop",
+                };
+                $aliasLog[] = ["alias" => $alias, "mi_id_fk" => $miId, "action" => $aliasAction];
+                if ($rc > 0) {
+                    $aliasesUpserted++;
+                }
+            }
+
+            $sideEffects = json_encode(
+                ["aliases_upserted" => $aliasLog],
+                JSON_UNESCAPED_UNICODE
+            );
+        }
+
+        // 3. Audit row.
         $logStmt = $pdo->prepare(
             "INSERT INTO debug_corrections "
           . "(user_id, username, table_name, action, pk_column, "
-          . " affected_ids, column_name, new_value, set_null, old_values, rows_affected) "
-          . "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+          . " affected_ids, column_name, new_value, set_null, old_values, side_effects, rows_affected) "
+          . "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         );
         $logStmt->execute([
             (int) $user["id"],
@@ -325,11 +461,12 @@ function dbcorrect_apply(PDO $pdo, array $payload, array $user): int
             $payload["set_null"] ? null : $payload["new_value"],
             $payload["set_null"] ? 1 : 0,
             $oldJson,
+            $sideEffects,
             $rowsAffected,
         ]);
 
         $pdo->commit();
-        return $rowsAffected;
+        return ["rows_affected" => $rowsAffected, "aliases_upserted" => $aliasesUpserted];
     } catch (Throwable $e) {
         $pdo->rollBack();
         throw $e;

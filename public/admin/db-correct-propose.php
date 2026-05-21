@@ -138,6 +138,37 @@ $csrf = csrf_token();
       <?php endif ?>
     </section>
 
+    <?php if ($payload["action"] === "update" && dbcorrect_is_alias_trigger($payload)):
+        $aliasPreview = dbcorrect_alias_preview($pdo, $payload);
+        if (!empty($aliasPreview)): ?>
+      <section class="db-confirm__side-effect">
+        <h2 class="db-confirm__side-effect-title">&#9888;&#65039; Effet de bord — alias durable</h2>
+        <p class="db-confirm__side-effect-intro">
+          Cette correction crée ou met à jour des entrées dans <code>ref_mi_aliases</code>
+          pour que le mapping survive aux re-runs de <code>parse_bd_ingredients.py</code>.
+          Sans cet effet de bord, ta correction serait silencieusement écrasée au prochain re-parse.
+        </p>
+        <table class="db-table db-confirm__side-effect-table">
+          <thead>
+            <tr>
+              <th>raw_name (alias normalisé)</th>
+              <th>→ mi_id_fk</th>
+              <th>Master Ingredient</th>
+            </tr>
+          </thead>
+          <tbody>
+            <?php foreach ($aliasPreview as $item): ?>
+              <tr>
+                <td class="db-td db-td--mono"><?= htmlspecialchars($item["alias"]) ?></td>
+                <td class="db-td db-td--mono"><?= (int) $item["mi_id_fk"] ?></td>
+                <td class="db-td"><?= htmlspecialchars($item["mi_name"]) ?></td>
+              </tr>
+            <?php endforeach ?>
+          </tbody>
+        </table>
+      </section>
+    <?php endif; endif ?>
+
     <form class="db-confirm__form" method="post" action="/admin/db-correct-apply.php">
       <input type="hidden" name="csrf"  value="<?= htmlspecialchars($csrf) ?>">
       <input type="hidden" name="token" value="<?= htmlspecialchars($token) ?>">

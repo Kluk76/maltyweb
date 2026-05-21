@@ -1941,6 +1941,40 @@ body.home::after {
 }
 .home .db-confirm__submit--delete:hover { background: var(--ember); color: var(--bg); }
 
+.home .db-confirm__side-effect {
+  margin: 22px 0;
+  padding: 16px 20px;
+  background: rgba(160, 122, 72, 0.08);
+  border-left: 3px solid var(--oak);
+  border-radius: 0 2px 2px 0;
+}
+.home .db-confirm__side-effect-title {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 72;
+  font-weight: 400;
+  font-size: 15px;
+  color: var(--oak);
+  margin: 0 0 8px;
+}
+.home .db-confirm__side-effect-intro {
+  margin: 0 0 16px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink-soft);
+}
+.home .db-confirm__side-effect-intro code {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11.5px;
+  color: var(--oak);
+  background: rgba(160, 122, 72, 0.12);
+  padding: 1px 5px;
+  border-radius: 1px;
+}
+.home .db-confirm__side-effect-table {
+  margin: 0;
+}
+
+
 /* ----- Settings ----- */
 
 .home .settings__main {

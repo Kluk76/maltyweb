@@ -31,15 +31,18 @@ $editableCols = [];
 $writableTables = [];
 
 // Flash message after a successful correction (set by db-correct-apply.php redirect).
-$appliedAction = $_GET["applied_action"] ?? null;
-$appliedRows   = $_GET["applied_rows"]   ?? null;
-$appliedCol    = $_GET["applied_col"]    ?? null;
+$appliedAction    = $_GET["applied_action"]    ?? null;
+$appliedRows      = $_GET["applied_rows"]      ?? null;
+$appliedCol       = $_GET["applied_col"]       ?? null;
+$appliedAliases   = $_GET["aliases_upserted"]  ?? null;
 if ($appliedAction !== null && in_array($appliedAction, ["update", "delete"], true)
     && is_numeric($appliedRows)) {
-    $appliedRows = (int) $appliedRows;
+    $appliedRows    = (int) $appliedRows;
+    $appliedAliases = is_numeric($appliedAliases) ? (int) $appliedAliases : 0;
 } else {
-    $appliedAction = null;
-    $appliedRows   = null;
+    $appliedAction  = null;
+    $appliedRows    = null;
+    $appliedAliases = null;
 }
 
 try {
