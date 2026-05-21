@@ -8013,6 +8013,25 @@ body.auth::after {
   font-style: italic;
 }
 
+/* Legacy WAC indicator — value sourced from ref_mi.price (BSF carry-over),
+   not from wac_snapshots. Renders the value normally with a faint "réf." tag. */
+.home .wh-wac--legacy {
+  color: var(--ink-soft);
+}
+.home .wh-wac-tag {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 4px;
+  font-size: 0.72em;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+  color: var(--ink-mute);
+  background: var(--hairline-2);
+  border-radius: 2px;
+  vertical-align: 1px;
+}
+
 /* FG / future-feature placeholder panel */
 .home .wh-placeholder {
   width: 100%;

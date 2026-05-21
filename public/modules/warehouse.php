@@ -168,9 +168,13 @@ try {
                    COALESCE(a.anchor_qty, 0)
                      + COALESCE(ds.qty_in, 0)
                      - COALESCE(cs.qty_out, 0) AS live_qty,
-                   w.wac_chf,
+                   -- Display WAC: prefer computed (wac_snapshots), fall back to legacy ref_mi.price.
+                   -- wac_is_legacy flag lets the UI mark legacy values distinctly.
+                   COALESCE(w.wac_chf, m.price) AS wac_chf,
+                   CASE WHEN w.wac_chf IS NULL AND m.price IS NOT NULL AND m.price > 0
+                        THEN 1 ELSE 0 END AS wac_is_legacy,
                    (COALESCE(a.anchor_qty, 0) + COALESCE(ds.qty_in, 0) - COALESCE(cs.qty_out, 0))
-                     * w.wac_chf AS stock_value,
+                     * COALESCE(w.wac_chf, m.price) AS stock_value,
                    CASE WHEN cw.avg_weekly_qty > 0
                         THEN (COALESCE(a.anchor_qty, 0) + COALESCE(ds.qty_in, 0) - COALESCE(cs.qty_out, 0))
                              / cw.avg_weekly_qty
@@ -299,7 +303,7 @@ try {
             'mi_name'         => 'm.name',
             'category'        => 'c.name',
             'live_qty'        => 'live_qty',
-            'wac_chf'         => 'w.wac_chf',
+            'wac_chf'         => 'COALESCE(w.wac_chf, m.price)',
             'stock_value'     => 'stock_value',
             'weeks_remaining' => 'weeks_remaining',
             'hl_equivalent'   => 'hl_equivalent',
@@ -368,9 +372,12 @@ try {
                    COALESCE(a.anchor_qty, 0)
                      + COALESCE(ds.qty_in, 0)
                      - COALESCE(cs.qty_out, 0) AS live_qty,
-                   w.wac_chf,
+                   -- Display WAC: prefer computed (wac_snapshots), fall back to legacy ref_mi.price.
+                   COALESCE(w.wac_chf, m.price) AS wac_chf,
+                   CASE WHEN w.wac_chf IS NULL AND m.price IS NOT NULL AND m.price > 0
+                        THEN 1 ELSE 0 END AS wac_is_legacy,
                    (COALESCE(a.anchor_qty, 0) + COALESCE(ds.qty_in, 0) - COALESCE(cs.qty_out, 0))
-                     * w.wac_chf AS stock_value,
+                     * COALESCE(w.wac_chf, m.price) AS stock_value,
                    CASE WHEN cw.avg_weekly_qty > 0
                         THEN (COALESCE(a.anchor_qty, 0) + COALESCE(ds.qty_in, 0) - COALESCE(cs.qty_out, 0))
                              / cw.avg_weekly_qty
@@ -542,7 +549,10 @@ try {
             <?php elseif ($wac < 0): ?>
               <span class="sku-header-cost__val wh-no-basis">&#9888; net credit</span>
             <?php else: ?>
-              <span class="sku-header-cost__val"><?= wh_num_smart($wac, 2, 5) ?> CHF</span>
+              <span class="sku-header-cost__val<?= !empty($miRow['wac_is_legacy']) ? ' wh-wac--legacy' : '' ?>"
+                    <?php if (!empty($miRow['wac_is_legacy'])): ?>title="Prix de référence (ref_mi.price) — pas de facture MySQL"<?php endif ?>>
+                <?= wh_num_smart($wac, 2, 5) ?> CHF<?= !empty($miRow['wac_is_legacy']) ? ' <span class="wh-wac-tag">réf.</span>' : '' ?>
+              </span>
             <?php endif ?>
             <span class="sku-header-cost__label">WAC</span>
           </div>
@@ -776,7 +786,9 @@ try {
                     <?php elseif ($rWac < 0): ?>
                       <span class="wh-no-basis">&#9888; net credit</span>
                     <?php else: ?>
-                      <?= wh_num_smart($rWac, 2, 5) ?>
+                      <span<?= !empty($r['wac_is_legacy']) ? ' class="wh-wac--legacy" title="Prix de référence — pas de facture MySQL"' : '' ?>>
+                        <?= wh_num_smart($rWac, 2, 5) ?><?= !empty($r['wac_is_legacy']) ? ' <span class="wh-wac-tag">réf.</span>' : '' ?>
+                      </span>
                     <?php endif ?>
                   </td>
                   <td class="wort-td wh-td--num"><?= $rSv !== null ? wh_num_smart($rSv, 2, 2) : '—' ?></td>
