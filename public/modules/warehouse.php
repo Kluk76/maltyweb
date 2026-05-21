@@ -548,7 +548,7 @@ try {
             <?php elseif ($wac < 0): ?>
               <span class="sku-header-cost__val wh-no-basis">&#9888; net credit</span>
             <?php else: ?>
-              <span class="sku-header-cost__val"><?= wh_num_smart($wac, 2, 2) ?> CHF</span>
+              <span class="sku-header-cost__val"><?= wh_num_smart($wac, 2, 5) ?> CHF</span>
             <?php endif ?>
             <span class="sku-header-cost__label">WAC</span>
           </div>
@@ -600,7 +600,7 @@ try {
                     <td class="wort-td wort-td--date"><?= $d['date_received'] ? wh_date_fr($d['date_received'], $monthsFR) : '—' ?></td>
                     <td class="wort-td wh-td--num"><?= wh_num_smart($d['qty_delivered'], 0, 2) ?></td>
                     <td class="wort-td"><?= htmlspecialchars($d['pricing_unit'] ?? '—') ?></td>
-                    <td class="wort-td wh-td--num"><?= wh_num_smart($d['unit_price'], 2, 2, '—') ?></td>
+                    <td class="wort-td wh-td--num"><?= wh_num_smart($d['unit_price'], 2, 5, '—') ?></td>
                     <td class="wort-td"><?= htmlspecialchars($d['currency'] ?? '—') ?></td>
                     <td class="wort-td"><?= htmlspecialchars($d['supplier_raw'] ?? '—') ?></td>
                     <td class="wort-td"><span class="wort-mono"><?= htmlspecialchars($d['invoice_ref'] ?? '—') ?></span></td>
@@ -782,7 +782,7 @@ try {
                     <?php elseif ($rWac < 0): ?>
                       <span class="wh-no-basis">&#9888; net credit</span>
                     <?php else: ?>
-                      <?= wh_num_smart($rWac, 2, 2) ?>
+                      <?= wh_num_smart($rWac, 2, 5) ?>
                     <?php endif ?>
                   </td>
                   <td class="wort-td wh-td--num"><?= $rSv !== null ? wh_num_smart($rSv, 0, 0) : '—' ?></td>

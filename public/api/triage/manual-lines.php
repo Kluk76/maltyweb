@@ -274,6 +274,7 @@ try {
             'currency'       => $currency,
             'source'         => 'manual-triage',
             'source_origin'  => 'web',
+            'file_id_fk'     => !empty($rqRow['file_id_fk']) ? (int)$rqRow['file_id_fk'] : null,
         ]);
 
         // 3. Register alias for future matching (idempotent — INSERT IGNORE)

@@ -198,14 +198,30 @@ try {
     $ctxParsedForDelivery = triage_parse_context((string)($rqRow['context'] ?? ''));
 
     // Determine the parser's original line_index for doc_invoice_lines lookups.
-    // New format (ingest-one-local.ts) embeds it as [line N]; legacy format uses
-    // array position which equals $lineIndex.
+    // Prefer parser-embedded [line N] marker; when absent (legacy ingest-documents.js
+    // format), fall back to smart resolver that matches by ingredient_name/description,
+    // then line_total proximity.
     $dbLineIdx = $lineIndex;
+    $lpCheck = null;
     if ($lineIndex >= 0 && isset($ctxParsedForDelivery['unresolved'][$lineIndex])) {
         $lpCheck = ta_parse_unresolved_line($ctxParsedForDelivery['unresolved'][$lineIndex]);
         if ($lpCheck['dbLineIndex'] !== null) {
             $dbLineIdx = $lpCheck['dbLineIndex'];
         }
+    }
+
+    if ($lpCheck !== null && $lpCheck['dbLineIndex'] === null && $invRow !== null && $lineIndex >= 0) {
+        // Use the operator-typed MI name as the search needle (description on create.php).
+        // Falls back to ingredient_name from context if no description was typed.
+        $needle = $miName !== '' ? $miName : ($lpCheck['raw'] ?? '');
+        $dbLineIdx = ta_resolve_db_line_index(
+            $pdo,
+            (int)$invRow['inv_id'],
+            $lineIndex,
+            $needle,
+            $lpCheck['lineTotal'] ?? null,
+            $rqId
+        );
     }
 
     if ($lineIndex >= 0 && $rqRow['type'] === 'invoice-line-items-needed' && !$skipDelivery) {
@@ -337,26 +353,69 @@ try {
                 );
             }
 
-            // 4b. INSERT inv_deliveries
-            $result = ta_materialize_delivery($pdo, [
-                'rq_id'          => $rqId,
-                'line_index'     => $lineIndex,
-                'mi_internal_id' => (int)$newMiInternalId,
-                'mi_id_str'      => $miId,
-                'description'    => $rawLineText !== '' ? $rawLineText : $miName,
-                'qty'            => $delivQty,
-                'unit_price'     => $delivPrice,
-                'invoice_id'     => $invRow !== null ? (int)$invRow['inv_id'] : null,
-                'invoice_ref'    => $invRow['invoice_ref']   ?? null,
-                'invoice_date'   => $invRow['invoice_date']  ?? null,
-                'supplier_raw'   => $invRow['supplier_name'] ?? null,
-                'supplier_fk'    => $invRow !== null && !empty($invRow['supplier_fk'])
-                                    ? (int)$invRow['supplier_fk'] : null,
-                'currency'       => $invRow['currency'] ?? 'CHF',
-                'source'         => 'triage-create',
-                'source_origin'  => 'web',
-            ]);
-            $delivInserted = $result['inserted'];
+            // 4b. Resolve Pending row to Active (new "write-everything" path).
+            // Try UPDATE first; INSERT-fallback for legacy rows without a Pending anchor.
+            $delivInserted = false;
+            $fileIdFkForRow = !empty($rqRow['file_id_fk']) ? (int)$rqRow['file_id_fk'] : null;
+
+            if ($fileIdFkForRow !== null) {
+                $resolveResult = ta_resolve_pending_delivery($pdo, [
+                    'file_id_fk'      => $fileIdFkForRow,
+                    'db_line_index'   => $dbLineIdx,
+                    'mi_internal_id'  => (int)$newMiInternalId,
+                    'mi_id_str'       => $miId,
+                    'unit_price'      => $delivPrice,
+                    'qty'             => $delivQty,
+                    'alias_text'      => $rawLineText !== '' ? $rawLineText : $miName,
+                    'last_modified_by' => 'web',
+                ]);
+                $delivInserted = $resolveResult['updated'];
+                if (!$delivInserted) {
+                    error_log('TRIAGE_FALLBACK_INSERT: no pending row found for file_id_fk=' . $fileIdFkForRow . ' line_index=' . $dbLineIdx . ' (rq_id=' . $rqId . ')');
+                    $result = ta_materialize_delivery($pdo, [
+                        'rq_id'          => $rqId,
+                        'line_index'     => $lineIndex,
+                        'mi_internal_id' => (int)$newMiInternalId,
+                        'mi_id_str'      => $miId,
+                        'description'    => $rawLineText !== '' ? $rawLineText : $miName,
+                        'qty'            => $delivQty,
+                        'unit_price'     => $delivPrice,
+                        'invoice_id'     => $invRow !== null ? (int)$invRow['inv_id'] : null,
+                        'invoice_ref'    => $invRow['invoice_ref']   ?? null,
+                        'invoice_date'   => $invRow['invoice_date']  ?? null,
+                        'supplier_raw'   => $invRow['supplier_name'] ?? null,
+                        'supplier_fk'    => $invRow !== null && !empty($invRow['supplier_fk'])
+                                            ? (int)$invRow['supplier_fk'] : null,
+                        'currency'       => $invRow['currency'] ?? 'CHF',
+                        'source'         => 'triage-create',
+                        'source_origin'  => 'web',
+                        'file_id_fk'     => !empty($rqRow['file_id_fk']) ? (int)$rqRow['file_id_fk'] : null,
+                    ]);
+                    $delivInserted = $result['inserted'];
+                }
+            } else {
+                // No file_id_fk — pure legacy INSERT path
+                $result = ta_materialize_delivery($pdo, [
+                    'rq_id'          => $rqId,
+                    'line_index'     => $lineIndex,
+                    'mi_internal_id' => (int)$newMiInternalId,
+                    'mi_id_str'      => $miId,
+                    'description'    => $rawLineText !== '' ? $rawLineText : $miName,
+                    'qty'            => $delivQty,
+                    'unit_price'     => $delivPrice,
+                    'invoice_id'     => $invRow !== null ? (int)$invRow['inv_id'] : null,
+                    'invoice_ref'    => $invRow['invoice_ref']   ?? null,
+                    'invoice_date'   => $invRow['invoice_date']  ?? null,
+                    'supplier_raw'   => $invRow['supplier_name'] ?? null,
+                    'supplier_fk'    => $invRow !== null && !empty($invRow['supplier_fk'])
+                                        ? (int)$invRow['supplier_fk'] : null,
+                    'currency'       => $invRow['currency'] ?? 'CHF',
+                    'source'         => 'triage-create',
+                    'source_origin'  => 'web',
+                    'file_id_fk'     => !empty($rqRow['file_id_fk']) ? (int)$rqRow['file_id_fk'] : null,
+                ]);
+                $delivInserted = $result['inserted'];
+            }
         } elseif ($skipDelivery && $invRow !== null) {
             ta_update_invoice_line(
                 $pdo,

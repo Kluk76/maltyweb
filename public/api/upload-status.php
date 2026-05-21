@@ -158,6 +158,8 @@ if ($drive_file_id !== '' && !in_array($pipeline_status, ['failed', 'processed']
 }
 
 // ── Look up doc_review_queue row if processed ─────────────────────────────────
+$summary = null; // invoice summary; populated below when processed
+
 if ($new_status === 'processed' && $drive_file_id !== '') {
     // Prefer file_id_fk join (reliable). Fall back to value=driveFileId
     // for ambiguous rows where file_id_fk may not be set.
@@ -175,6 +177,53 @@ if ($new_status === 'processed' && $drive_file_id !== '') {
     if ($rq_row) {
         $review_queue_rq_id = (int) $rq_row['id'];
         $redirect_url = '/modules/triage.php?rq_id=' . $review_queue_rq_id;
+    }
+
+    // ── Invoice summary (lines + deliveries counts, totals) ──────────────
+    // Join: doc_files → doc_invoices → doc_invoice_lines + inv_deliveries
+    // Only populated when a doc_invoices row exists for this file.
+    if ($doc_invoice_id !== null) {
+        try {
+            // Lines summary: count total, count by resolved status
+            // active = inv_deliveries row with status='Active' for this invoice
+            // pending = inv_deliveries row with status='Pending'
+            // excluded = inv_deliveries rows with exclusion_class IS NOT NULL
+            // unresolved = doc_invoice_lines with mi_id_fk IS NULL AND accounting IS NULL
+            $sum_stmt = $pdo->prepare(
+                "SELECT
+                     COUNT(il.id)                                                AS lines_total,
+                     SUM(CASE WHEN d.status = 'Active'
+                                   AND (d.exclusion_class IS NULL)              THEN 1 ELSE 0 END) AS lines_active,
+                     SUM(CASE WHEN d.status = 'Pending'                         THEN 1 ELSE 0 END) AS lines_pending,
+                     SUM(CASE WHEN d.exclusion_class IS NOT NULL                THEN 1 ELSE 0 END) AS lines_excluded,
+                     COALESCE(inv.total_ht, 0)                                  AS total_ht,
+                     COALESCE(inv.currency, 'CHF')                              AS currency,
+                     inv.supplier_name,
+                     inv.invoice_ref
+                   FROM doc_invoices inv
+                   LEFT JOIN doc_invoice_lines il ON il.invoice_id = inv.id
+                   LEFT JOIN inv_deliveries d
+                          ON d.invoice_ref   = inv.invoice_ref
+                         AND d.supplier_raw  = inv.supplier_name
+                  WHERE inv.id = ?
+                  GROUP BY inv.id"
+            );
+            $sum_stmt->execute([$doc_invoice_id]);
+            $sum_row = $sum_stmt->fetch();
+
+            if ($sum_row) {
+                $summary = [
+                    'lines_total'    => (int)   ($sum_row['lines_total']    ?? 0),
+                    'lines_active'   => (int)   ($sum_row['lines_active']   ?? 0),
+                    'lines_pending'  => (int)   ($sum_row['lines_pending']  ?? 0),
+                    'lines_excluded' => (int)   ($sum_row['lines_excluded'] ?? 0),
+                    'total_ht'       => (float) ($sum_row['total_ht']       ?? 0),
+                    'currency'       => (string)($sum_row['currency']       ?? 'CHF'),
+                    'supplier_name'  => $sum_row['supplier_name'] !== '' ? $sum_row['supplier_name'] : null,
+                    'invoice_ref'    => $sum_row['invoice_ref']   !== '' ? $sum_row['invoice_ref']   : null,
+                ];
+            }
+        } catch (Throwable) { /* non-fatal — summary simply omitted */ }
     }
 }
 
@@ -210,6 +259,13 @@ if ($doc_invoice_id !== null) {
 }
 if ($redirect_url !== null) {
     $payload['redirect_url'] = $redirect_url;
+}
+if ($summary !== null) {
+    $payload['summary'] = $summary;
+}
+// Expose error_text for failed status so the UI can display a meaningful message
+if ($pipeline_status === 'failed') {
+    $payload['error_text'] = $row['error_text'] ?? null;
 }
 
 echo json_encode($payload);

@@ -33,6 +33,8 @@
   let capturedFiles = []; // File[] collected in multi-shot mode
   let startedAt   = 0;    // Date.now() when upload POST fired
   let elapsedTimer = null;
+  let lastPollData = null; // last JSON payload from upload-status (for summary + error_text)
+  let lastUploadId = null; // upload_id for timeout message
 
   // ─── Bulk upload state ───────────────────────────────────────────────────────
   /**
@@ -299,6 +301,7 @@
           showError(msg);
           return;
         }
+        lastUploadId = data.upload_id;
         pollCount = 0;
         startedAt = Date.now();
         startElapsedTimer();
@@ -478,8 +481,11 @@
 
         if (ps === 'processed') {
           stopElapsedTimer();
+          lastPollData = data;
           setState('done');
-          if (data.redirect_url) {
+          // Only auto-redirect when there is NO summary to show (ambiguous/DN docs
+          // that have no invoice lines; redirect_url may still be set).
+          if (data.redirect_url && !data.summary) {
             // Brief pause so operator sees the "Done" state before redirect
             setTimeout(() => {
               window.location.href = data.redirect_url;
@@ -490,6 +496,7 @@
 
         if (ps === 'failed') {
           stopElapsedTimer();
+          lastPollData = data;
           showError(data.error_text || 'Le traitement a échoué. Vérifier le journal.');
           return;
         }
@@ -605,19 +612,82 @@
       }
       case 'done': {
         statusBox.hidden = false;
-        statusBox.className += ' upload-status--done';
-        statusBox.innerHTML =
-          '<span class="upload-status__check" aria-hidden="true">✓</span>'
-          + '<span class="upload-status__text">Document reçu — redirection en cours…</span>';
+        const d = lastPollData || {};
+        const s = d.summary || null;
+
+        if (s) {
+          // Rich summary card
+          statusBox.className += ' upload-status--done upload-status--summary';
+
+          const fmtHT = typeof s.total_ht === 'number'
+            ? s.total_ht.toLocaleString('fr-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+            : '—';
+
+          const supplierHtml = s.supplier_name
+            ? escHtml(s.supplier_name)
+            : '<span class="upload-sum__unknown">?</span>';
+
+          const refHtml = s.invoice_ref
+            ? escHtml(s.invoice_ref)
+            : '<span class="upload-sum__unknown">—</span>';
+
+          // "Trier" button shown when there are pending lines
+          let triageHtml = '';
+          if (s.lines_pending > 0 && d.redirect_url) {
+            const safeUrl = d.redirect_url.replace(/"/g, '&quot;');
+            triageHtml = `<a class="upload-sum__triage-btn" href="${safeUrl}">`
+              + `Trier maintenant (${s.lines_pending} ligne${s.lines_pending !== 1 ? 's' : ''}) →</a>`;
+          } else if (d.redirect_url) {
+            const safeUrl = d.redirect_url.replace(/"/g, '&quot;');
+            triageHtml = `<a class="upload-sum__triage-btn upload-sum__triage-btn--sec" href="${safeUrl}">Voir dans triage →</a>`;
+          }
+
+          statusBox.innerHTML =
+            `<div class="upload-sum__header">`
+            + `<span class="upload-status__check" aria-hidden="true">✓</span>`
+            + `<span class="upload-sum__title">Ingéré avec succès</span>`
+            + `<button class="upload-status__retry upload-sum__close" type="button" aria-label="Fermer">✕</button>`
+            + `</div>`
+            + `<div class="upload-sum__body">`
+            + `<div class="upload-sum__row"><span class="upload-sum__label">Fournisseur</span><span class="upload-sum__val">${supplierHtml}</span></div>`
+            + `<div class="upload-sum__row"><span class="upload-sum__label">Réf. facture</span><span class="upload-sum__val">${refHtml}</span></div>`
+            + `<div class="upload-sum__row"><span class="upload-sum__label">Total HT</span><span class="upload-sum__val">${fmtHT} ${escHtml(s.currency || 'CHF')}</span></div>`
+            + `<div class="upload-sum__row upload-sum__row--counts">`
+            + `<span class="upload-sum__label">Lignes</span>`
+            + `<span class="upload-sum__val">`
+            + `<span class="upload-sum__badge upload-sum__badge--total">${s.lines_total} parsées</span>`
+            + (s.lines_active   > 0 ? `<span class="upload-sum__badge upload-sum__badge--ok">  ${s.lines_active} active${s.lines_active   !== 1 ? 's' : ''}</span>`   : '')
+            + (s.lines_pending  > 0 ? `<span class="upload-sum__badge upload-sum__badge--warn">${s.lines_pending} en attente</span>`  : '')
+            + (s.lines_excluded > 0 ? `<span class="upload-sum__badge upload-sum__badge--mute">${s.lines_excluded} exclue${s.lines_excluded !== 1 ? 's' : ''}</span>` : '')
+            + `</span>`
+            + `</div>`
+            + `</div>`
+            + (triageHtml ? `<div class="upload-sum__footer">${triageHtml}</div>` : '');
+
+          const closeBtn = statusBox.querySelector('.upload-sum__close');
+          if (closeBtn) {
+            closeBtn.addEventListener('click', () => setState('idle'));
+          }
+        } else {
+          // No invoice summary (DN / ambiguous) — simple confirmation
+          statusBox.className += ' upload-status--done';
+          const hasRedirect = !!d.redirect_url;
+          statusBox.innerHTML =
+            '<span class="upload-status__check" aria-hidden="true">✓</span>'
+            + '<span class="upload-status__text">Document reçu'
+            + (hasRedirect ? ' — redirection en cours…' : ' — traitement terminé.')
+            + '</span>';
+        }
         break;
       }
       case 'timeout': {
         statusBox.hidden = false;
         statusBox.className += ' upload-status--warn';
+        const uploadIdNote = lastUploadId ? ` (ID upload : ${lastUploadId})` : '';
         statusBox.innerHTML =
           '<span class="upload-status__warn-icon" aria-hidden="true">⚠</span>'
-          + '<span class="upload-status__text">Délai dépassé — vérifier le Triage manuellement</span>'
-          + '<button class="upload-status__retry" type="button">↩ Actualiser</button>';
+          + `<span class="upload-status__text">Timeout après 3 minutes. Le worker pipeline est peut-être bloqué.${uploadIdNote}</span>`
+          + '<button class="upload-status__retry upload-status__refresh" type="button">↺ Rafraîchir l\'état</button>';
         const retryBtn = statusBox.querySelector('.upload-status__retry');
         if (retryBtn) {
           retryBtn.addEventListener('click', () => {

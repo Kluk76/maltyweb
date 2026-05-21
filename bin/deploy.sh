@@ -63,7 +63,20 @@ if [[ "${1:-}" == "--apply-pipeline" ]]; then
        . /var/www/maltytask/.nvm/nvm.sh && \
        cd $PIPELINE_DST && npm ci' 2>&1"
 
-  echo "✓ pipeline deploy complete"
+  echo "→ restoring exec bits on node_modules/.bin and platform binaries"
+  ssh -o BatchMode=yes "$VPS_HOST" \
+    "sudo find $PIPELINE_DST/node_modules/.bin -type l | while read l; do \
+       t=\$(readlink -f \"\$l\"); [ -f \"\$t\" ] && sudo chmod +x \"\$t\"; \
+     done && \
+     sudo find $PIPELINE_DST/node_modules/@esbuild -name 'esbuild' -type f -exec chmod +x {} \;"
+
+  echo "→ setting group-write + sgid on data/"
+  ssh -o BatchMode=yes "$VPS_HOST" \
+    "sudo chmod -R g+w $PIPELINE_DST/data && \
+     sudo chmod g+s $PIPELINE_DST/data && \
+     sudo chmod g+s $PIPELINE_DST/data/ocr-cache 2>/dev/null || true"
+
+  echo "✓ pipeline deploy complete (exec bits + data/ perms restored)"
   exit 0
 fi
 

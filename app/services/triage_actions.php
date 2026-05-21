@@ -250,6 +250,7 @@ function ta_parse_unresolved_line(string $line): array
     $unitPrice    = null;
     $resolved     = false;
     $dbLineIndex  = null;
+    $droppedByLlm = false;
 
     // Detect and strip [RESOLVED] prefix (both legacy and new format)
     // Legacy resolved: "- [RESOLVED] ..."
@@ -262,6 +263,14 @@ function ta_parse_unresolved_line(string $line): array
     } elseif (preg_match('/^-\s*\[RESOLVED\]/', $trimmed)) {
         $resolved = true;
         $trimmed  = preg_replace('/^-\s*\[RESOLVED\]\s*/', '', $trimmed);
+    }
+
+    // LLM-dropped lines: [LLM-DROPPED] "sourceText" dropReason="..." suggestedMiId=...
+    // These lines have no doc_invoice_lines.line_index (never written to that table).
+    // ta_materialize_delivery will INSERT inv_deliveries when the operator resolves them.
+    if (preg_match('/^\[LLM-DROPPED\]\s*/', $trimmed)) {
+        $droppedByLlm = true;
+        $trimmed      = preg_replace('/^\[LLM-DROPPED\]\s*/', '', $trimmed);
     }
 
     // New format: [line N] "text" miId=... conf=...
@@ -290,7 +299,7 @@ function ta_parse_unresolved_line(string $line): array
         $unitPrice = (float) $m[1];
     }
 
-    return compact('raw', 'qty', 'lineTotal', 'unitPrice', 'resolved', 'dbLineIndex');
+    return compact('raw', 'qty', 'lineTotal', 'unitPrice', 'resolved', 'dbLineIndex', 'droppedByLlm');
 }
 
 /**
@@ -418,6 +427,8 @@ function ta_materialize_delivery(PDO $pdo, array $p): array
     $supplierRaw = $p['supplier_raw'] ?? null;
     $supplierFk  = isset($p['supplier_fk']) && $p['supplier_fk'] !== null
                    ? (int)$p['supplier_fk'] : null;
+    $fileIdFk    = isset($p['file_id_fk']) && $p['file_id_fk'] !== null
+                   ? (int)$p['file_id_fk'] : null;
     $currency    = $p['currency']      ?? 'CHF';
     $srcOrigin   = $p['source_origin'] ?? 'web';
     $miIntId     = (int)($p['mi_internal_id'] ?? 0);
@@ -431,13 +442,15 @@ function ta_materialize_delivery(PDO $pdo, array $p): array
              mi_id_raw, qty_delivered, qty_remaining, unit_price,
              currency, total_original, total_chf,
              status, invoice_ref, source, source_origin,
-             submitted_at, details, supplier_fk, ingredient_fk, resolution)
+             submitted_at, details, supplier_fk, ingredient_fk, resolution,
+             file_id_fk)
          VALUES
             (?, ?, ?, ?,
              ?, ?, ?, ?,
              ?, ?, ?,
              'Active', ?, ?, ?,
-             NOW(6), ?, ?, ?, 'resolved')"
+             NOW(6), ?, ?, ?, 'resolved',
+             ?)"
     );
     $stmt->execute([
         $rowHash,
@@ -457,6 +470,7 @@ function ta_materialize_delivery(PDO $pdo, array $p): array
         $details,
         $supplierFk,
         $miIntId ?: null,
+        $fileIdFk,
     ]);
 
     $inserted = $stmt->rowCount() === 1;
@@ -464,6 +478,112 @@ function ta_materialize_delivery(PDO $pdo, array $p): array
         'inserted'  => $inserted,
         'row_hash'  => $rowHash,
         'reason'    => $inserted ? null : 'duplicate (row_hash already exists)',
+    ];
+}
+
+/**
+ * Resolve (promote) an existing Pending inv_deliveries row to Active.
+ *
+ * This is the new triage write path for invoice-origin Pending rows.
+ * Instead of INSERTing a new row (ta_materialize_delivery legacy path),
+ * this UPDATEs the existing Pending row written at ingest time.
+ *
+ * Idempotent: the WHERE status='Pending' guard prevents double-promotion.
+ * If the row is already Active (second alias submission, race), rowCount=0
+ * and $result['updated']=false without an error.
+ *
+ * Required params:
+ *   file_id_fk    int    — doc_files.id FK (the document anchor from migration 048)
+ *   db_line_index int    — 0-based parser line_index (from [line N] context tag)
+ *   mi_internal_id int   — ref_mi.id FK to set on the resolved row
+ *   mi_id_str      string — ref_mi.mi_id string (stored in mi_id_raw)
+ *
+ * Optional params:
+ *   unit_price  float|null  — override unit_price on the Pending row
+ *   qty         float|null  — override qty_delivered on the Pending row
+ *   alias_text  string      — human-readable alias for the details suffix
+ *   (audit identity of the operator is captured in audit-log.jsonl, not on the row)
+ *
+ * Returns:
+ *   ['updated' => bool, 'rows_affected' => int, 'reason' => string|null]
+ *
+ * If updated===false and rows_affected===0, the caller MUST fall back to
+ * ta_materialize_delivery() (handles legacy rows with no Pending anchor).
+ */
+function ta_resolve_pending_delivery(PDO $pdo, array $p): array
+{
+    $fileIdFk     = isset($p['file_id_fk'])     ? (int)$p['file_id_fk']     : null;
+    $dbLineIndex  = isset($p['db_line_index'])   ? (int)$p['db_line_index']  : null;
+    $miInternalId = isset($p['mi_internal_id'])  ? (int)$p['mi_internal_id'] : null;
+    $miIdStr      = (string)($p['mi_id_str']     ?? '');
+    $unitPrice    = isset($p['unit_price'])  && $p['unit_price']  !== null ? (float)$p['unit_price']  : null;
+    $qty          = isset($p['qty'])         && $p['qty']         !== null ? (float)$p['qty']         : null;
+    $aliasText    = (string)($p['alias_text'] ?? '');
+
+    if ($fileIdFk === null || $dbLineIndex === null || $miInternalId === null) {
+        return [
+            'updated'       => false,
+            'rows_affected' => 0,
+            'reason'        => 'missing required params (file_id_fk, db_line_index, mi_internal_id)',
+        ];
+    }
+
+    // Build SET clause dynamically (only override qty/price when provided)
+    // inv_deliveries has no last_modified_by column — actor identity lives in audit-log.jsonl
+    $setClauses = [
+        'ingredient_fk    = ?',
+        'mi_id_raw        = ?',
+        'status           = \'Active\'',
+        'resolution       = \'resolved\'',
+        'last_seen_at     = NOW()',
+        'details          = CONCAT(COALESCE(details, \'\'), \' | resolved via triage: \', ?)',
+    ];
+    $params = [$miInternalId, $miIdStr, $aliasText ?: 'triage'];
+
+    if ($unitPrice !== null) {
+        $setClauses[] = 'unit_price = ?';
+        $params[]     = $unitPrice;
+        // Recompute totals when price is overridden
+        $setClauses[] = 'total_original = qty_delivered * ?';
+        $params[]     = $unitPrice;
+        $setClauses[] = 'total_chf = qty_delivered * ? * COALESCE(eur_to_chf, 1.0)';
+        $params[]     = $unitPrice;
+    }
+    if ($qty !== null) {
+        $setClauses[] = 'qty_delivered = ?';
+        $params[]     = $qty;
+        $setClauses[] = 'qty_remaining = ?';
+        $params[]     = $qty;
+        if ($unitPrice !== null) {
+            // Already added total_original/total_chf above — no duplicate
+        } else {
+            $setClauses[] = 'total_original = ? * COALESCE(unit_price, 0)';
+            $params[]     = $qty;
+            $setClauses[] = 'total_chf = ? * COALESCE(unit_price, 0) * COALESCE(eur_to_chf, 1.0)';
+            $params[]     = $qty;
+        }
+    }
+
+    // WHERE clause params
+    $params[] = $fileIdFk;
+    $params[] = $dbLineIndex;
+
+    $sql = "UPDATE inv_deliveries
+               SET " . implode(', ', $setClauses) . "
+             WHERE file_id_fk = ?
+               AND line_index = ?
+               AND status = 'Pending'";
+
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    $rowsAffected = $stmt->rowCount();
+
+    return [
+        'updated'       => $rowsAffected > 0,
+        'rows_affected' => $rowsAffected,
+        'reason'        => $rowsAffected === 0
+            ? 'no Pending row found at (file_id_fk, line_index) — may already be Active or row was never written'
+            : null,
     ];
 }
 
@@ -507,6 +627,75 @@ function ta_update_invoice_line(
         $invoiceId,
         $lineIndex,
     ]);
+}
+
+/**
+ * Resolve the doc_invoice_lines.line_index when context parsing left dbLineIndex null
+ * (legacy ingest-documents.js format, or malformed context). Tries 4 strategies in order:
+ *
+ *  1. Match an UNRESOLVED row (mi_id_fk IS NULL) whose ingredient_name or description
+ *     matches the alias/description text the operator typed.
+ *  2. Match ANY row (resolved or not) whose ingredient_name/description matches —
+ *     handles pack-size variant case where ingest resolved a different MI.
+ *  3. Match an UNRESOLVED row by line_total proximity (±0.05) against the parsed
+ *     context's lineTotal hint.
+ *  4. Fall back to the array-position lineIndex; log a warning via error_log.
+ *
+ * Returns the resolved int line_index. Never returns null — fallback always supplies a value.
+ */
+function ta_resolve_db_line_index(
+    PDO    $pdo,
+    int    $invoiceId,
+    int    $arrayLineIndex,
+    string $aliasText,
+    ?float $contextLineTotal,
+    int    $rqId
+): int {
+    $needle = trim($aliasText);
+
+    // Strategy 1: unresolved row, exact-ish text match
+    if ($needle !== '') {
+        $stmt = $pdo->prepare(
+            "SELECT line_index FROM doc_invoice_lines
+              WHERE invoice_id = ? AND mi_id_fk IS NULL
+                AND (ingredient_name = ? OR description = ?)
+              ORDER BY line_index ASC LIMIT 1"
+        );
+        $stmt->execute([$invoiceId, $needle, $needle]);
+        $r = $stmt->fetchColumn();
+        if ($r !== false) return (int)$r;
+
+        // Strategy 2: any row, exact-ish text match
+        $stmt = $pdo->prepare(
+            "SELECT line_index FROM doc_invoice_lines
+              WHERE invoice_id = ?
+                AND (ingredient_name = ? OR description = ?)
+              ORDER BY line_index ASC LIMIT 1"
+        );
+        $stmt->execute([$invoiceId, $needle, $needle]);
+        $r = $stmt->fetchColumn();
+        if ($r !== false) return (int)$r;
+    }
+
+    // Strategy 3: unresolved row, line_total proximity ±0.05
+    if ($contextLineTotal !== null) {
+        $stmt = $pdo->prepare(
+            "SELECT line_index FROM doc_invoice_lines
+              WHERE invoice_id = ? AND mi_id_fk IS NULL
+                AND ABS(line_total - ?) < 0.05
+              ORDER BY ABS(line_total - ?) ASC, line_index ASC LIMIT 1"
+        );
+        $stmt->execute([$invoiceId, $contextLineTotal, $contextLineTotal]);
+        $r = $stmt->fetchColumn();
+        if ($r !== false) return (int)$r;
+    }
+
+    // Strategy 4: array-position fallback with warning
+    error_log(sprintf(
+        'TRIAGE_LINE_IDX_FALLBACK: rq_id=%d invoice_id=%d aliasText=%s contextLineTotal=%s — using arrayLineIndex=%d',
+        $rqId, $invoiceId, json_encode($needle), $contextLineTotal === null ? 'null' : (string)$contextLineTotal, $arrayLineIndex
+    ));
+    return $arrayLineIndex;
 }
 
 /**
