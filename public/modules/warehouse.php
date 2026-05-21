@@ -548,7 +548,7 @@ try {
           </div>
           <?php if ($sv !== null): ?>
           <div class="sku-header-cost">
-            <span class="sku-header-cost__val"><?= wh_num_smart($sv, 0, 0) ?> CHF</span>
+            <span class="sku-header-cost__val"><?= wh_num_smart($sv, 2, 2) ?> CHF</span>
             <span class="sku-header-cost__label">Valeur CHF</span>
           </div>
           <?php endif ?>
@@ -779,7 +779,7 @@ try {
                       <?= wh_num_smart($rWac, 2, 5) ?>
                     <?php endif ?>
                   </td>
-                  <td class="wort-td wh-td--num"><?= $rSv !== null ? wh_num_smart($rSv, 0, 0) : '—' ?></td>
+                  <td class="wort-td wh-td--num"><?= $rSv !== null ? wh_num_smart($rSv, 2, 2) : '—' ?></td>
                   <td class="wort-td wh-td--num">
                     <?php if ($rWr !== null): ?>
                       <?php
