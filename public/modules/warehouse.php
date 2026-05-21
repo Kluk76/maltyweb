@@ -110,18 +110,15 @@ try {
         $hdrSql = "
             WITH
               anchor AS (
+                -- Use ONLY counted_qty (operator's physical count = col G in BSF form).
+                -- expected_qty (col F) is a system-predicted guess (sometimes negative) and
+                -- must never leak into live_qty when source='carried' (operator didn't count).
                 SELECT mi_id_fk,
                        MAX(counted_at) AS anchor_at,
-                       COALESCE(
-                         (SELECT counted_qty FROM inv_rm_stocktake rm2
-                          WHERE rm2.mi_id_fk = rm1.mi_id_fk
-                            AND rm2.counted_at = MAX(rm1.counted_at)
-                          LIMIT 1),
-                         (SELECT expected_qty FROM inv_rm_stocktake rm3
-                          WHERE rm3.mi_id_fk = rm1.mi_id_fk
-                            AND rm3.counted_at = MAX(rm1.counted_at)
-                          LIMIT 1)
-                       ) AS anchor_qty
+                       (SELECT counted_qty FROM inv_rm_stocktake rm2
+                         WHERE rm2.mi_id_fk = rm1.mi_id_fk
+                           AND rm2.counted_at = MAX(rm1.counted_at)
+                         LIMIT 1) AS anchor_qty
                 FROM inv_rm_stocktake rm1
                 WHERE mi_id_fk = :mid
                 GROUP BY mi_id_fk
@@ -224,7 +221,7 @@ try {
         // Sparkline: full history — anchor + all deliveries + all consumptions for this MI
         // We build time-ordered events and compute running balance
         $anchorStmt = $pdo->prepare("
-            SELECT COALESCE(counted_qty, expected_qty) AS qty, counted_at
+            SELECT counted_qty AS qty, counted_at
               FROM inv_rm_stocktake
              WHERE mi_id_fk = :mid
                AND counted_at = (SELECT MAX(counted_at) FROM inv_rm_stocktake WHERE mi_id_fk = :mid2)
@@ -313,18 +310,15 @@ try {
         $listSql = "
             WITH
               anchor AS (
+                -- Use ONLY counted_qty (operator's physical count = col G in BSF form).
+                -- expected_qty (col F) is a system-predicted guess (sometimes negative) and
+                -- must never leak into live_qty when source='carried' (operator didn't count).
                 SELECT rm1.mi_id_fk,
                        MAX(rm1.counted_at) AS anchor_at,
-                       COALESCE(
-                         (SELECT rm2.counted_qty FROM inv_rm_stocktake rm2
-                          WHERE rm2.mi_id_fk = rm1.mi_id_fk
-                            AND rm2.counted_at = MAX(rm1.counted_at)
-                          LIMIT 1),
-                         (SELECT rm3.expected_qty FROM inv_rm_stocktake rm3
-                          WHERE rm3.mi_id_fk = rm1.mi_id_fk
-                            AND rm3.counted_at = MAX(rm1.counted_at)
-                          LIMIT 1)
-                       ) AS anchor_qty
+                       (SELECT rm2.counted_qty FROM inv_rm_stocktake rm2
+                         WHERE rm2.mi_id_fk = rm1.mi_id_fk
+                           AND rm2.counted_at = MAX(rm1.counted_at)
+                         LIMIT 1) AS anchor_qty
                 FROM inv_rm_stocktake rm1
                 GROUP BY rm1.mi_id_fk
               ),
