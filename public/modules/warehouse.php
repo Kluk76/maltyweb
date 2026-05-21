@@ -5,7 +5,9 @@ require_login();
 $me = current_user();
 $active_module = "warehouse";
 
-$view    = in_array($_GET['view'] ?? 'rm', ['rm', 'fg'], true) ? $_GET['view'] : 'rm';
+$view    = in_array($_GET['view'] ?? 'rm', ['rm', 'fg', 'wip'], true) ? $_GET['view'] : 'rm';
+$periodRaw = $_GET['period'] ?? '';
+$period    = (preg_match('/^\d{4}-(?:0[1-9]|1[0-2])$/', $periodRaw) ? $periodRaw : '');
 $miId    = isset($_GET['mi_id']) && ctype_digit((string) $_GET['mi_id']) ? (int) $_GET['mi_id'] : null;
 $cat     = $_GET['cat'] ?? '';
 $q       = trim($_GET['q'] ?? '');
@@ -25,6 +27,12 @@ $monthsFR = [
     1 => "jan", 2 => "fév", 3 => "mar", 4 => "avr",
     5 => "mai", 6 => "jun", 7 => "jul", 8 => "aoû",
     9 => "sep", 10 => "oct", 11 => "nov", 12 => "déc",
+];
+
+$monthsFRLong = [
+    1 => "janvier", 2 => "février", 3 => "mars", 4 => "avril",
+    5 => "mai", 6 => "juin", 7 => "juillet", 8 => "août",
+    9 => "septembre", 10 => "octobre", 11 => "novembre", 12 => "décembre",
 ];
 
 function wh_date_fr(string $d, array $months): string {
@@ -84,6 +92,15 @@ function wh_sort_indicator(string $col, string $currentCol, string $currentDir):
     return ' <span aria-hidden="true">' . $arrow . '</span><span class="sr-only">(' . $label . ')</span>';
 }
 
+/**
+ * Last day of YYYY-MM as a long French string: "30 avril 2026"
+ */
+function wh_period_label(string $ym, array $longMonths): string {
+    if (!preg_match('/^(\d{4})-(0[1-9]|1[0-2])$/', $ym, $m)) return htmlspecialchars($ym);
+    $lastDay = (int) date('t', mktime(0, 0, 0, (int) $m[2], 1, (int) $m[1]));
+    return $lastDay . ' ' . $longMonths[(int) $m[2]] . ' ' . $m[1];
+}
+
 // ── data layer ───────────────────────────────────────────────────────────────
 
 $dbError  = null;
@@ -94,6 +111,15 @@ $consH    = [];
 $kpis     = ['stock_value' => 0.0, 'mis_in_stock' => 0, 'burn_critique' => 0, 'hl_total' => 0.0, 'carried' => 0, 'no_basis_count' => 0];
 $catRows  = [];
 $sparkPts = [];
+
+// WIP tab data
+$wipPeriods   = [];   // array of available month_keys
+$wipPeriod    = '';   // resolved period
+$wipCcts      = [];   // CCT tank rows
+$wipBbts      = [];   // BBT tank rows
+$wipMiRows    = [];   // MI breakdown rows
+$wipGlRecap   = [];   // GL recap rows
+$wipKpis      = ['hl_total' => 0.0, 'cct_count' => 0, 'bbt_count' => 0, 'wip_value' => 0.0];
 
 try {
 
@@ -445,6 +471,98 @@ try {
         $kpis['carried'] = (int) ($carriedRow['cnt'] ?? 0);
     }
 
+    if ($view === 'wip') {
+
+        // ── WIP: available periods ────────────────────────────────────────────
+        $wipPeriods = $pdo->query(
+            "SELECT DISTINCT month_key FROM inv_tank_balances ORDER BY month_key DESC"
+        )->fetchAll(PDO::FETCH_COLUMN);
+
+        // Resolve period: use query param if valid and present, else latest available
+        if ($period !== '' && in_array($period, $wipPeriods, true)) {
+            $wipPeriod = $period;
+        } elseif (!empty($wipPeriods)) {
+            $wipPeriod = $wipPeriods[0];
+        }
+
+        if ($wipPeriod !== '') {
+
+            // ── Tank rows ─────────────────────────────────────────────────────
+            $tankStmt = $pdo->prepare("
+                SELECT tank_id, tank_type, beer_name, batch, volume_hl, brew_cost_per_hl,
+                       volume_hl * brew_cost_per_hl AS total_chf
+                  FROM inv_tank_balances
+                 WHERE month_key = :m
+                 ORDER BY tank_type, tank_id
+            ");
+            $tankStmt->execute([':m' => $wipPeriod]);
+            $allTanks = $tankStmt->fetchAll();
+
+            foreach ($allTanks as $tr) {
+                $tt = strtoupper((string) ($tr['tank_type'] ?? ''));
+                if ($tt === 'CCT') {
+                    $wipCcts[] = $tr;
+                    $wipKpis['cct_count']++;
+                } elseif ($tt === 'BBT') {
+                    $wipBbts[] = $tr;
+                    $wipKpis['bbt_count']++;
+                }
+                $wipKpis['hl_total']    += (float) ($tr['volume_hl'] ?? 0);
+                $wipKpis['wip_value']   += (float) ($tr['total_chf'] ?? 0);
+            }
+
+            // ── MI breakdown ──────────────────────────────────────────────────
+            $miBreakStmt = $pdo->prepare("
+                WITH tank_batches AS (
+                  SELECT itb.beer_name, itb.batch, itb.volume_hl,
+                         (SELECT MAX(bc.cool_final_volume_hl)
+                            FROM bd_brewing_cooling bc
+                           WHERE bc.cool_beer  = itb.beer_name
+                             AND bc.cool_batch = itb.batch) AS brewed_hl
+                    FROM inv_tank_balances itb
+                   WHERE itb.month_key = :m
+                )
+                SELECT m.mi_id, m.name AS mi_name, c.name AS category,
+                       c.default_gl_account,
+                       m.pricing_unit,
+                       SUM(bip.qty * IF(bip.unit='g', 0.001, 1)
+                           * tb.volume_hl / NULLIF(tb.brewed_hl, 0)) AS qty_total_kg,
+                       COALESCE(w.wac_chf, m.price * IF(m.currency='EUR', 0.945, 1)) AS unit_price_chf,
+                       SUM(bip.qty * IF(bip.unit='g', 0.001, 1)
+                           * tb.volume_hl / NULLIF(tb.brewed_hl, 0))
+                         * COALESCE(w.wac_chf, m.price * IF(m.currency='EUR', 0.945, 1)) AS total_chf
+                  FROM tank_batches tb
+                  JOIN bd_brewing_ingredients_parsed bip
+                    ON bip.beer = tb.beer_name AND bip.batch = tb.batch
+                   AND bip.mi_id_fk IS NOT NULL
+                  JOIN ref_mi m ON m.id = bip.mi_id_fk
+                  LEFT JOIN ref_mi_categories c ON c.id = m.category_id
+                  LEFT JOIN wac_snapshots w
+                    ON w.mi_id_fk = m.id AND w.period = :m2
+                 GROUP BY m.id
+                 ORDER BY c.default_gl_account, c.name, m.mi_id
+            ");
+            $miBreakStmt->execute([':m' => $wipPeriod, ':m2' => $wipPeriod]);
+            $wipMiRows = $miBreakStmt->fetchAll();
+
+            // ── GL recap (4101 / 4102 / 4104 only) ───────────────────────────
+            $glTotals = [];
+            foreach ($wipMiRows as $mr) {
+                $gl = (string) ($mr['default_gl_account'] ?? '');
+                if (!in_array($gl, ['4101', '4102', '4104'], true)) continue;
+                $glTotals[$gl] = ($glTotals[$gl] ?? 0.0) + (float) ($mr['total_chf'] ?? 0);
+            }
+            $glLabels = ['4101' => 'Malt', '4102' => 'Houblon', '4104' => 'Autres'];
+            foreach (['4101', '4102', '4104'] as $gl) {
+                $wipGlRecap[] = [
+                    'gl'    => $gl,
+                    'label' => $glLabels[$gl],
+                    'total' => $glTotals[$gl] ?? 0.0,
+                ];
+            }
+        }
+    }
+
 } catch (Throwable $e) {
     $dbError = $e->getMessage();
 }
@@ -480,6 +598,9 @@ try {
     <a class="wh-tab<?= $view === 'fg' ? ' wh-tab--active' : '' ?>"
        href="?view=fg"
        <?= $view === 'fg' ? 'aria-current="page"' : '' ?>>Produits finis</a>
+    <a class="wh-tab<?= $view === 'wip' ? ' wh-tab--active' : '' ?>"
+       href="?view=wip"
+       <?= $view === 'wip' ? 'aria-current="page"' : '' ?>>En cours de fermentation</a>
   </nav>
 
   <?php if ($view === 'fg'): ?>
@@ -488,6 +609,204 @@ try {
     <div class="wh-placeholder" role="status">
       <span class="wh-placeholder__msg">Vue FG — à venir</span>
     </div>
+
+  <?php elseif ($view === 'wip'): ?>
+
+    <!-- ── WIP VIEW ──────────────────────────────────────────────────────── -->
+
+    <?php if (empty($wipPeriods)): ?>
+
+      <div class="wh-placeholder" role="status">
+        <span class="wh-placeholder__msg">Aucune donnée WIP disponible pour le moment.<br>Les cuves seront visibles après la première clôture mensuelle.</span>
+      </div>
+
+    <?php else: ?>
+
+      <!-- Date picker -->
+      <form class="wh-wip-date" method="get" action="">
+        <input type="hidden" name="view" value="wip">
+        <label class="wh-wip-date__label">Période&nbsp;:
+          <select class="wh-wip-date__select" name="period" onchange="this.form.submit()">
+            <?php foreach ($wipPeriods as $pk): ?>
+              <option value="<?= htmlspecialchars($pk) ?>"<?= ($pk === $wipPeriod) ? ' selected' : '' ?>>
+                <?= htmlspecialchars(wh_period_label($pk, $GLOBALS['monthsFRLong'])) ?>
+              </option>
+            <?php endforeach ?>
+          </select>
+        </label>
+      </form>
+
+      <!-- KPI strip (4 tiles) -->
+      <section class="wort-kpis wh-kpis--4" aria-label="Indicateurs WIP">
+        <div class="wort-kpi">
+          <span class="wort-kpi__num"><?= wh_num_smart($wipKpis['hl_total'], 1, 1, '0') ?></span>
+          <span class="wort-kpi__label">Total HL en cuve</span>
+        </div>
+        <div class="wort-kpi">
+          <span class="wort-kpi__num"><?= $wipKpis['cct_count'] ?></span>
+          <span class="wort-kpi__label">Tanks CCT actifs</span>
+        </div>
+        <div class="wort-kpi">
+          <span class="wort-kpi__num"><?= $wipKpis['bbt_count'] ?></span>
+          <span class="wort-kpi__label">Tanks BBT actifs</span>
+        </div>
+        <div class="wort-kpi">
+          <span class="wort-kpi__num"><?= wh_num_smart($wipKpis['wip_value'], 0, 0, '0') ?></span>
+          <span class="wort-kpi__label">Valeur WIP (CHF)</span>
+        </div>
+      </section>
+
+      <!-- CCT table -->
+      <section class="wort-section" aria-label="Fermenteurs CCT">
+        <div class="wort-section__head">
+          <span class="wort-section__label">— CCT (fermenteurs)</span>
+        </div>
+        <?php if (empty($wipCcts)): ?>
+          <div class="empty">Aucun fermenteur CCT pour cette période.</div>
+        <?php else: ?>
+          <div class="wort-table-wrap">
+            <table class="wort-table">
+              <thead>
+                <tr>
+                  <th scope="col">Tank</th>
+                  <th scope="col">Bière</th>
+                  <th scope="col">Batch</th>
+                  <th scope="col">HL</th>
+                  <th scope="col">Coût brew / HL</th>
+                  <th scope="col">Total CHF</th>
+                </tr>
+              </thead>
+              <tbody>
+                <?php foreach ($wipCcts as $t): ?>
+                  <tr>
+                    <td class="wort-td"><span class="wort-mono"><?= htmlspecialchars($t['tank_id'] ?? '—') ?></span></td>
+                    <td class="wort-td"><?= htmlspecialchars($t['beer_name'] ?? '—') ?></td>
+                    <td class="wort-td"><span class="wort-mono"><?= htmlspecialchars($t['batch'] ?? '—') ?></span></td>
+                    <td class="wort-td wh-td--num"><?= wh_num_smart($t['volume_hl'], 1, 1) ?></td>
+                    <td class="wort-td wh-td--num"><?= wh_num_smart($t['brew_cost_per_hl'], 2, 2, '—') ?></td>
+                    <td class="wort-td wh-td--num"><?= wh_num_smart($t['total_chf'], 2, 2, '—') ?></td>
+                  </tr>
+                <?php endforeach ?>
+              </tbody>
+            </table>
+          </div>
+        <?php endif ?>
+      </section>
+
+      <!-- BBT table -->
+      <section class="wort-section wh-section--mt" aria-label="Tanks BBT">
+        <div class="wort-section__head">
+          <span class="wort-section__label">— BBT (tanks brillants)</span>
+        </div>
+        <?php if (empty($wipBbts)): ?>
+          <div class="empty">Aucun tank BBT pour cette période.</div>
+        <?php else: ?>
+          <div class="wort-table-wrap">
+            <table class="wort-table">
+              <thead>
+                <tr>
+                  <th scope="col">Tank</th>
+                  <th scope="col">Bière</th>
+                  <th scope="col">Batch</th>
+                  <th scope="col">HL</th>
+                  <th scope="col">Coût brew / HL</th>
+                  <th scope="col">Total CHF</th>
+                </tr>
+              </thead>
+              <tbody>
+                <?php foreach ($wipBbts as $t): ?>
+                  <tr>
+                    <td class="wort-td"><span class="wort-mono"><?= htmlspecialchars($t['tank_id'] ?? '—') ?></span></td>
+                    <td class="wort-td"><?= htmlspecialchars($t['beer_name'] ?? '—') ?></td>
+                    <td class="wort-td"><span class="wort-mono"><?= htmlspecialchars($t['batch'] ?? '—') ?></span></td>
+                    <td class="wort-td wh-td--num"><?= wh_num_smart($t['volume_hl'], 1, 1) ?></td>
+                    <td class="wort-td wh-td--num"><?= wh_num_smart($t['brew_cost_per_hl'], 2, 2, '—') ?></td>
+                    <td class="wort-td wh-td--num"><?= wh_num_smart($t['total_chf'], 2, 2, '—') ?></td>
+                  </tr>
+                <?php endforeach ?>
+              </tbody>
+            </table>
+          </div>
+        <?php endif ?>
+      </section>
+
+      <!-- MI breakdown -->
+      <section class="wort-section wh-section--mt" aria-label="Décomposition MI">
+        <div class="wort-section__head">
+          <span class="wort-section__label">— décomposition par MI</span>
+        </div>
+        <?php if (empty($wipMiRows)): ?>
+          <div class="empty">Aucune donnée MI disponible (bd_brewing_ingredients_parsed vide ou batch non résolu).</div>
+        <?php else: ?>
+          <div class="wort-table-wrap">
+            <table class="wort-table">
+              <thead>
+                <tr>
+                  <th scope="col">GL</th>
+                  <th scope="col">Catégorie</th>
+                  <th scope="col">MI</th>
+                  <th scope="col">Nom</th>
+                  <th scope="col">Qté totale</th>
+                  <th scope="col">Unité</th>
+                  <th scope="col">CHF total</th>
+                </tr>
+              </thead>
+              <tbody>
+                <?php foreach ($wipMiRows as $mr): ?>
+                  <tr>
+                    <td class="wort-td"><span class="wort-mono"><?= htmlspecialchars($mr['default_gl_account'] ?? '—') ?></span></td>
+                    <td class="wort-td"><?= htmlspecialchars($mr['category'] ?? '—') ?></td>
+                    <td class="wort-td"><span class="wort-mono"><?= htmlspecialchars($mr['mi_id'] ?? '—') ?></span></td>
+                    <td class="wort-td"><?= htmlspecialchars($mr['mi_name'] ?? '—') ?></td>
+                    <td class="wort-td wh-td--num"><?= wh_num_smart($mr['qty_total_kg'], 1, 3, '—') ?></td>
+                    <td class="wort-td">kg</td>
+                    <td class="wort-td wh-td--num"><?= wh_num_smart($mr['total_chf'], 2, 2, '—') ?></td>
+                  </tr>
+                <?php endforeach ?>
+              </tbody>
+            </table>
+          </div>
+        <?php endif ?>
+      </section>
+
+      <!-- GL recap -->
+      <section class="wort-section wh-section--mt" aria-label="Récapitulatif GL">
+        <div class="wort-section__head">
+          <span class="wort-section__label">— récap GL</span>
+        </div>
+        <div class="wort-table-wrap">
+          <table class="wort-table wh-gl-recap">
+            <thead>
+              <tr>
+                <th scope="col">GL</th>
+                <th scope="col">Catégorie</th>
+                <th scope="col">Total CHF</th>
+              </tr>
+            </thead>
+            <tbody>
+              <?php
+                $glGrandTotal = 0.0;
+                foreach ($wipGlRecap as $gr):
+                    $glGrandTotal += $gr['total'];
+              ?>
+                <tr>
+                  <td class="wort-td"><span class="wort-mono"><?= htmlspecialchars($gr['gl']) ?></span></td>
+                  <td class="wort-td"><?= htmlspecialchars($gr['label']) ?></td>
+                  <td class="wort-td wh-td--num"><?= wh_num_smart($gr['total'], 2, 2, '0.00') ?></td>
+                </tr>
+              <?php endforeach ?>
+            </tbody>
+            <tfoot>
+              <tr class="wh-gl-recap__total">
+                <td class="wort-td" colspan="2">TOTAL</td>
+                <td class="wort-td wh-td--num"><?= wh_num_smart($glGrandTotal, 2, 2, '0.00') ?></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </section>
+
+    <?php endif ?>
 
   <?php elseif ($view === 'rm' && $miId !== null): ?>
 
