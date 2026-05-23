@@ -1,0 +1,52 @@
+-- db/migrations/095_bd_brewing_v2_upload_tracking.sql
+-- What: Tracking migration — records that ingest_bd_brewing_v2.py was run
+--       and successfully populated bd_brewing_brewday_v2, bd_brewing_gravity_v2,
+--       bd_brewing_timings_v2, bd_brewing_ingredients_v2, and
+--       bd_brewing_ingredients_parsed_v2.
+-- Why:  schema_migrations tracks all phase-boundary events including Python-driven
+--       uploads, not just SQL DDL. Mirrors the pattern of 088_bd_packaging_v2_upload.
+-- How:  Run the Python script first, verify row counts, then apply this migration:
+--
+--   Step 1: SCP the xlsx to VPS
+--     scp /home/kluk/projects/maltytask/data/RawDB-normalized.xlsx \
+--         maltyweb:/var/www/maltytask/data/RawDB-normalized.xlsx
+--
+--   Step 2: Dry-run
+--     cd /var/www/maltytask && python3 scripts/python/ingest_bd_brewing_v2.py
+--
+--   Step 3: Verify dry-run output looks correct (row counts match expected):
+--     BrewingData_Brewday:    ~830 rows → bd_brewing_brewday_v2
+--     BrewingData_FirstWort:  ~2135 rows ┐
+--     BrewingData_Pfannevoll: ~2175 rows ├→ bd_brewing_gravity_v2 (~8813 total)
+--     BrewingData_Kochwurze:  ~2199 rows │
+--     BrewingData_Cooling:    ~2304 rows ┘
+--     BrewingData_Timings:    ~2288 rows → bd_brewing_timings_v2
+--     BrewingData_Ingredients:~1550 lines → ~N headers + 1550 parsed lines
+--
+--   Step 4: Live upload
+--     cd /var/www/maltytask && python3 scripts/python/ingest_bd_brewing_v2.py --apply --verify
+--
+--   Step 5: Apply this migration to record completion
+--     php scripts/migrate.php
+--
+-- Risk: Zero — this file only writes to schema_migrations (via migrate.php INSERT).
+--       The actual table writes were done by the Python script in Step 4.
+-- Rollback: DELETE FROM schema_migrations WHERE filename='095_bd_brewing_v2_upload_tracking.sql';
+--           TRUNCATE TABLE bd_brewing_brewday_v2;
+--           TRUNCATE TABLE bd_brewing_gravity_v2;
+--           TRUNCATE TABLE bd_brewing_timings_v2;
+--           TRUNCATE TABLE bd_brewing_ingredients_parsed_v2;
+--           TRUNCATE TABLE bd_brewing_ingredients_v2;
+
+-- This migration is intentionally a no-op SQL body.
+-- The upload was performed by scripts/python/ingest_bd_brewing_v2.py --apply.
+-- Row counts verified post-upload:
+--   bd_brewing_brewday_v2:             830 rows
+--   bd_brewing_gravity_v2:            8811 rows (FirstWort=2135, Pfannevoll=2174, Kochwurze=2198, Cooling=2304)
+--   bd_brewing_timings_v2:            2288 rows
+--   bd_brewing_ingredients_v2:         363 headers
+--   bd_brewing_ingredients_parsed_v2: 1007 rows (1550 after NK fix in migration 099)
+-- NK bug in bd_brewing_ingredients_parsed_v2 discovered and fixed in migration 099.
+
+-- No-op: tracking migration only. PHP migrate.php exec() cannot handle SELECT result sets.
+SET @migration_095_noop = 1;
