@@ -1,0 +1,23 @@
+-- db/migrations/107_bd_racking_v2_upload_tracking.sql
+-- What: Tracking migration — records that ingest_bd_racking_v2.py ran and populated
+--       bd_racking_v2 from the RackingData sheet.
+-- Why:  schema_migrations tracks phase-boundary events including Python-driven uploads.
+--       Mirrors 088 / 095 / 102 upload-tracking migrations.
+-- How:  scp xlsx → dry-run → --apply --verify → php scripts/migrate.php
+--
+-- Verified row counts post-upload (2026-05-24):
+--   total: 399
+--   destination: BBT=395, CCT=1, none=3 (3 rows had no tank entered — legitimately NULL)
+--   seq>0: 1 (Malt Capone #1 racked twice — Centri→BBT4 + KZE→BBT1 — same submitted_at second;
+--             the seq disambiguator preserved both rather than collapsing them)
+--   start_time/end_time populated: 399/399 (the export carries the form Start/End Time that
+--     the legacy bd_racking table never captured — see reference_bd_racking_date_columns)
+-- Residuals (flagged, NOT errors):
+--   1 row no_beer_identity — racking logged without a beer selected (carries real CO2/comment data, kept)
+--   1 row co2_unparseable — a date was typed into the CO2 field (bbt_co2 NULL + flagged; "import then flag")
+--
+-- Risk: Zero — no-op SQL body. Upload performed by the Python script.
+-- Rollback: DELETE FROM schema_migrations WHERE filename='107_bd_racking_v2_upload_tracking.sql';
+--           TRUNCATE TABLE bd_racking_v2;
+
+SET @migration_107_noop = 1;
