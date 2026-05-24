@@ -67,13 +67,16 @@ function load_recipe_ingredients_for_batch(
     $beer_name = canonical_beer_name_for_loader($beer_name);
     $asof = $asof_date ?? date('Y-m-d');
 
-    // Step 1: observed mi_id_fks for this batch (excluded from gap-fill)
+    // Step 1: observed mi_id_fks for this batch (excluded from gap-fill).
+    // bd_brewing_ingredients_parsed_v2 is normalized: beer/batch live on the header
+    // (bd_brewing_ingredients_v2), joined via header_id.
     $observed = [];
     $stmt = $pdo->prepare("
         SELECT DISTINCT bip.mi_id_fk
-          FROM bd_brewing_ingredients_parsed bip
-         WHERE bip.beer  COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci
-           AND bip.batch COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci
+          FROM bd_brewing_ingredients_parsed_v2 bip
+          JOIN bd_brewing_ingredients_v2 bih ON bih.id = bip.header_id
+         WHERE bih.beer  COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci
+           AND bih.batch COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci
            AND bip.mi_id_fk IS NOT NULL
     ");
     $stmt->execute([$beer_name, $batch]);

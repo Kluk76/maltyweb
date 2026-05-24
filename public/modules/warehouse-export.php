@@ -233,16 +233,18 @@ try {
               SELECT t.beer_name COLLATE utf8mb4_unicode_ci AS beer_name,
                      t.batch     COLLATE utf8mb4_unicode_ci AS batch,
                      t.volume_hl,
-                     (SELECT SUM(bc.cool_final_volume_hl)
-                        FROM bd_brewing_cooling bc
-                       WHERE bc.cool_beer  COLLATE utf8mb4_unicode_ci = t.beer_name COLLATE utf8mb4_unicode_ci
-                         AND bc.cool_batch COLLATE utf8mb4_unicode_ci = t.batch     COLLATE utf8mb4_unicode_ci
-                         AND bc.cool_final_volume_hl > 0) AS total_brewed_hl,
+                     (SELECT SUM(bc.final_volume)
+                        FROM bd_brewing_gravity_v2 bc
+                       WHERE bc.event_type = 'Cooling'
+                         AND bc.beer  COLLATE utf8mb4_unicode_ci = t.beer_name COLLATE utf8mb4_unicode_ci
+                         AND bc.batch COLLATE utf8mb4_unicode_ci = t.batch     COLLATE utf8mb4_unicode_ci
+                         AND bc.final_volume > 0) AS total_brewed_hl,
                      (SELECT COUNT(*)
-                        FROM bd_brewing_cooling bc
-                       WHERE bc.cool_beer  COLLATE utf8mb4_unicode_ci = t.beer_name COLLATE utf8mb4_unicode_ci
-                         AND bc.cool_batch COLLATE utf8mb4_unicode_ci = t.batch     COLLATE utf8mb4_unicode_ci
-                         AND bc.cool_final_volume_hl > 0) AS n_brews
+                        FROM bd_brewing_gravity_v2 bc
+                       WHERE bc.event_type = 'Cooling'
+                         AND bc.beer  COLLATE utf8mb4_unicode_ci = t.beer_name COLLATE utf8mb4_unicode_ci
+                         AND bc.batch COLLATE utf8mb4_unicode_ci = t.batch     COLLATE utf8mb4_unicode_ci
+                         AND bc.final_volume > 0) AS n_brews
                 FROM tanks t
             )
             SELECT COALESCE(
@@ -256,9 +258,11 @@ try {
                      * COALESCE(w.wac_chf, m.price * IF(m.currency='EUR', 0.945, 1))
                    ) AS wip_value
               FROM tank_batches tb
-              JOIN bd_brewing_ingredients_parsed bip
-                ON bip.beer  COLLATE utf8mb4_unicode_ci = tb.beer_name COLLATE utf8mb4_unicode_ci
-               AND bip.batch COLLATE utf8mb4_unicode_ci = tb.batch     COLLATE utf8mb4_unicode_ci
+              JOIN bd_brewing_ingredients_v2 bih
+                ON bih.beer  COLLATE utf8mb4_unicode_ci = tb.beer_name COLLATE utf8mb4_unicode_ci
+               AND bih.batch COLLATE utf8mb4_unicode_ci = tb.batch     COLLATE utf8mb4_unicode_ci
+              JOIN bd_brewing_ingredients_parsed_v2 bip
+                ON bip.header_id = bih.id
                AND bip.mi_id_fk IS NOT NULL
               JOIN ref_mi m ON m.id = bip.mi_id_fk
               LEFT JOIN ref_mi_categories c ON c.id = m.category_id
@@ -296,10 +300,11 @@ try {
                 )
                 SELECT w.beer  COLLATE utf8mb4_unicode_ci AS beer,
                        w.batch COLLATE utf8mb4_unicode_ci AS batch,
-                       (SELECT SUM(bc.cool_final_volume_hl) FROM bd_brewing_cooling bc
-                         WHERE bc.cool_beer  COLLATE utf8mb4_unicode_ci = w.beer  COLLATE utf8mb4_unicode_ci
-                           AND bc.cool_batch COLLATE utf8mb4_unicode_ci = w.batch COLLATE utf8mb4_unicode_ci
-                           AND bc.cool_final_volume_hl > 0) AS total_hl
+                       (SELECT SUM(bc.final_volume) FROM bd_brewing_gravity_v2 bc
+                         WHERE bc.event_type = 'Cooling'
+                           AND bc.beer  COLLATE utf8mb4_unicode_ci = w.beer  COLLATE utf8mb4_unicode_ci
+                           AND bc.batch COLLATE utf8mb4_unicode_ci = w.batch COLLATE utf8mb4_unicode_ci
+                           AND bc.final_volume > 0) AS total_hl
                   FROM wanted w
             ");
             $ebSt->execute($expBatchParams);

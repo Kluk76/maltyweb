@@ -1,0 +1,1116 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Le Cockpit — Commercial · preview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..600;1,9..144,400..500&family=DM+Sans:opsz,wght@9..40,300..600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+/* ═══════════════════════════════════════════════════════════
+   ROOT PALETTE — verbatim from salle-des-machines.html
+   ═══════════════════════════════════════════════════════════ */
+:root{
+  --bg:#15100a; --bg-elev:#1d160d; --ink:#ede0c4; --ink-soft:#c8b894;
+  --ink-mute:#7a6647; --ink-faint:#3a2e1d; --hairline:#261d11; --hairline-2:#342818;
+  --hop:#9eb060; --hop-deep:#6b7a3e; --ember:#c5664a; --oak:#a07a48; --oak-deep:#6e4e26;
+  --cold:#2f5575; --bbt:#6593b8;
+  --pkg:#7a5fa0; --pkg-deep:#503d6e; --pkg-band:#9b7cc8;
+  --steel:#b8bcc0; --steel-mid:#5e6266; --steel-deep:#2c2e30; --steel-shadow:#15171a;
+  --line:#caa86e; --line-soft:#7a6647;
+  /* cockpit-specific commercial accent */
+  --comm:#7a9860;    /* commerce leaf-green */
+  --comm-deep:#4e6240;
+  --comm-glow:rgba(122,152,96,.18);
+  --ledger-1:#1a1308;
+  --ledger-2:#201810;
+  --paper:#f5ead0;
+  --paper-2:#ede0bb;
+  --ink-on-paper:#2c1d08;
+  --ink-mute-paper:#8a6a3a;
+  --rule:#c4a87055;
+  --rule-strong:#c4a87088;
+  /* client type colors */
+  --ct-active:#6593b8;
+  --ct-active-bg:rgba(47,85,117,.12);
+  --ct-procure:#9eb060;
+  --ct-procure-bg:rgba(110,122,62,.12);
+  --ct-supply:#c5664a;
+  --ct-supply-bg:rgba(197,100,74,.1);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden}
+body{
+  font-family:"DM Sans",system-ui,sans-serif;
+  color:var(--ink); background:var(--bg);
+  height:100vh;
+}
+
+/* ── drafting board ground (verbatim) ── */
+.board{
+  position:fixed; inset:0;
+  background:
+    radial-gradient(130% 90% at 50% -20%, rgba(160,122,72,.13), transparent 55%),
+    radial-gradient(100% 120% at 50% 130%, rgba(0,0,0,.55), transparent 60%),
+    var(--bg);
+}
+.board::before{
+  content:""; position:absolute; inset:0; opacity:.5;
+  background-image:
+    linear-gradient(rgba(122,102,71,.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(122,102,71,.07) 1px, transparent 1px),
+    linear-gradient(rgba(122,102,71,.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(122,102,71,.04) 1px, transparent 1px);
+  background-size:120px 120px,120px 120px,24px 24px,24px 24px;
+  mask-image:radial-gradient(120% 100% at 50% 40%, #000 55%, transparent 92%);
+}
+.board::after{
+  content:""; position:absolute; inset:0; pointer-events:none; opacity:.5;
+  background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .03 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+/* corner registration marks */
+.mark{ position:fixed; width:26px; height:26px; border:1px solid var(--hairline-2); z-index:3; opacity:.7 }
+.mark.tl{top:18px;left:18px;border-right:0;border-bottom:0}
+.mark.tr{top:18px;right:18px;border-left:0;border-bottom:0}
+.mark.bl{bottom:18px;left:18px;border-right:0;border-top:0}
+.mark.br{bottom:18px;right:18px;border-left:0;border-top:0}
+
+/* ═══════════════════════════════════════════════════════════
+   TOP CHROME
+   ═══════════════════════════════════════════════════════════ */
+.chrome{
+  position:fixed; top:0; left:0; right:0; z-index:20;
+  display:flex; align-items:center; gap:16px; padding:22px 44px;
+}
+.brandmark{
+  font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.4em; color:var(--ink-mute); text-transform:uppercase;
+}
+.brandmark b{ color:var(--ink-soft); font-weight:500 }
+
+/* ── Family switcher ── */
+.family-switcher{
+  display:flex; align-items:center; gap:0;
+  border:1px solid var(--hairline-2); border-radius:8px; overflow:hidden;
+  font-family:"JetBrains Mono",monospace; font-size:10px; letter-spacing:.12em;
+  text-transform:uppercase; background:rgba(10,7,4,.5); backdrop-filter:blur(6px);
+}
+.family-btn{
+  display:flex; align-items:center; gap:8px;
+  padding:8px 14px; border:none; background:none; cursor:pointer;
+  font-family:"JetBrains Mono",monospace; font-size:10px; letter-spacing:.12em;
+  text-transform:uppercase; color:var(--ink-mute); text-decoration:none;
+  transition:all .22s; position:relative; white-space:nowrap;
+}
+.family-btn:not(:last-child)::after{
+  content:""; position:absolute; right:0; top:15%; bottom:15%;
+  width:1px; background:var(--hairline-2);
+}
+.family-btn .fam-dot{
+  width:6px; height:6px; border-radius:50%; flex:0 0 6px;
+  transition:box-shadow .22s;
+}
+/* Salle des Machines — inert */
+.family-btn.fam-sdm .fam-dot{ background:var(--steel-mid) }
+.family-btn.fam-sdm:hover{ color:var(--steel); background:rgba(44,46,48,.15) }
+.family-btn.fam-sdm:hover .fam-dot{ box-shadow:0 0 8px var(--steel-mid) }
+/* Le Cockpit — active */
+.family-btn.fam-cockpit{
+  background:var(--comm-glow); color:var(--comm); cursor:default; pointer-events:none;
+}
+.family-btn.fam-cockpit .fam-dot{
+  background:var(--comm); box-shadow:0 0 10px var(--comm);
+}
+/* arrow glue between families */
+.family-arrow{
+  padding:0 4px; color:var(--ink-faint);
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:0;
+  user-select:none; flex:0 0 auto;
+}
+
+/* ── Role switcher ── */
+.role-switcher{
+  margin-left:auto; display:flex; align-items:center;
+  border:1px solid var(--hairline-2); border-radius:30px;
+  background:rgba(26,16,8,.6); overflow:hidden;
+  backdrop-filter:blur(4px);
+}
+.role-btn{
+  padding:7px 14px; border:none; background:none; cursor:pointer;
+  font-family:"JetBrains Mono",monospace; font-size:9.5px; letter-spacing:.14em;
+  color:var(--ink-mute); text-transform:uppercase; transition:all .22s;
+  position:relative; white-space:nowrap;
+}
+.role-btn:not(:last-child)::after{
+  content:""; position:absolute; right:0; top:20%; bottom:20%;
+  width:1px; background:var(--hairline-2);
+}
+.role-btn.active{ background:rgba(160,122,72,.18); color:var(--ink-soft); }
+.role-btn.active .rpip{ display:inline-block; }
+.rpip{
+  display:none; width:6px; height:6px; border-radius:50%;
+  margin-right:6px; vertical-align:middle; position:relative; top:-1px;
+}
+.role-btn[data-role="operateur"].active{ background:rgba(94,98,102,.18); color:var(--steel) }
+.role-btn[data-role="operateur"].active .rpip{ background:var(--steel); box-shadow:0 0 7px var(--steel) }
+.role-btn[data-role="manager"].active{ background:rgba(47,85,117,.2); color:var(--bbt) }
+.role-btn[data-role="manager"].active .rpip{ background:var(--bbt); box-shadow:0 0 7px var(--bbt) }
+.role-btn[data-role="admin"].active{ background:rgba(158,176,96,.16); color:var(--hop) }
+.role-btn[data-role="admin"].active .rpip{ background:var(--hop); box-shadow:0 0 7px var(--hop) }
+
+/* ── Role banner ── */
+.role-banner{
+  display:none; align-items:center; gap:10px;
+  padding:9px 16px; border:1px solid; border-radius:9px;
+  font-size:12px; font-family:"DM Sans",sans-serif;
+  position:fixed; top:76px; left:50%; transform:translateX(-50%);
+  white-space:nowrap; z-index:25; backdrop-filter:blur(4px);
+}
+.role-banner.visible{ display:flex }
+.role-banner.ban-operateur{
+  border-color:rgba(94,98,102,.35); background:rgba(44,46,48,.45); color:var(--steel);
+}
+.role-banner.ban-manager{
+  border-color:rgba(47,85,117,.4); background:rgba(24,42,58,.5); color:var(--bbt);
+}
+.role-banner.ban-admin{
+  border-color:rgba(110,122,62,.35); background:rgba(22,28,12,.5); color:var(--hop);
+}
+.role-banner .ban-pip{ width:7px; height:7px; border-radius:50%; flex:0 0 7px; }
+.ban-operateur .ban-pip{ background:var(--steel); box-shadow:0 0 7px var(--steel) }
+.ban-manager .ban-pip{ background:var(--bbt); box-shadow:0 0 7px var(--bbt) }
+.ban-admin .ban-pip{ background:var(--hop); box-shadow:0 0 7px var(--hop) }
+
+/* ── Toast ── */
+.toast{
+  position:fixed; bottom:48px; left:50%; transform:translateX(-50%) translateY(20px);
+  z-index:40; padding:10px 20px; background:var(--bg-elev);
+  border:1px solid var(--oak-deep); border-radius:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  color:var(--ink-soft); opacity:0; pointer-events:none;
+  transition:opacity .3s, transform .3s; text-transform:uppercase;
+}
+.toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
+
+/* ── Confirm modal ── */
+.modal-overlay{
+  display:none; position:fixed; inset:0; z-index:50;
+  background:rgba(0,0,0,.65); align-items:center; justify-content:center;
+  backdrop-filter:blur(3px);
+}
+.modal-overlay.open{ display:flex }
+.modal-box{
+  background:var(--bg-elev); border:1px solid var(--oak-deep);
+  border-radius:14px; padding:28px 30px; min-width:340px; max-width:440px;
+  box-shadow:0 40px 80px -20px rgba(0,0,0,.8);
+  animation:modalIn .25s cubic-bezier(.2,.8,.2,1);
+}
+@keyframes modalIn{
+  from{opacity:0;transform:scale(.95) translateY(12px)}
+  to{opacity:1;transform:none}
+}
+.modal-box h4{
+  font-family:"Fraunces",serif; font-weight:440; font-size:20px;
+  color:var(--ink); margin-bottom:8px;
+}
+.modal-box p{
+  font-size:13px; color:var(--ink-soft); margin-bottom:20px; line-height:1.5;
+}
+.modal-actions{ display:flex; gap:10px; justify-content:flex-end; }
+.btn-cancel{
+  padding:9px 18px; border:1px solid var(--hairline-2); border-radius:8px;
+  background:none; color:var(--ink-mute); cursor:pointer;
+  font-family:"JetBrains Mono",monospace; font-size:10px; letter-spacing:.1em;
+  text-transform:uppercase; transition:.2s;
+}
+.btn-cancel:hover{ border-color:var(--oak-deep); color:var(--ink) }
+.btn-confirm{
+  padding:9px 18px; border:1px solid var(--oak); border-radius:8px;
+  background:rgba(160,122,72,.2); color:var(--oak); cursor:pointer;
+  font-family:"JetBrains Mono",monospace; font-size:10px; letter-spacing:.1em;
+  text-transform:uppercase; transition:.2s;
+}
+.btn-confirm:hover{ background:rgba(160,122,72,.35) }
+
+/* ═══════════════════════════════════════════════════════════
+   MAIN LAYOUT
+   ═══════════════════════════════════════════════════════════ */
+.cockpit-stage{
+  position:fixed; inset:0; display:flex;
+  padding-top:76px; /* below chrome */
+  animation:stageIn .8s cubic-bezier(.2,.8,.2,1) both;
+}
+@keyframes stageIn{
+  from{opacity:0;transform:translateY(18px)}
+  to{opacity:1;transform:none}
+}
+
+/* ── Left nav rail ── */
+.nav-rail{
+  flex:0 0 200px; border-right:1px solid var(--hairline);
+  display:flex; flex-direction:column; padding:24px 0 24px;
+  position:relative;
+}
+/* subtle ambient from top */
+.nav-rail::before{
+  content:""; position:absolute; top:0; left:0; right:0; height:120px;
+  background:linear-gradient(180deg, var(--comm-glow), transparent);
+  pointer-events:none;
+}
+.nav-section-label{
+  font-family:"JetBrains Mono",monospace; font-size:9px; letter-spacing:.32em;
+  color:var(--ink-faint); text-transform:uppercase;
+  padding:0 22px 10px; margin-top:6px;
+}
+.nav-item{
+  display:flex; align-items:center; gap:12px;
+  padding:11px 22px; cursor:pointer; position:relative;
+  font-family:"DM Sans",sans-serif; font-size:13.5px; color:var(--ink-mute);
+  transition:color .18s, background .18s; user-select:none;
+}
+.nav-item:hover{ color:var(--ink-soft); background:rgba(160,122,72,.05) }
+.nav-item.active{
+  color:var(--comm); background:rgba(122,152,96,.1);
+}
+.nav-item.active::before{
+  content:""; position:absolute; left:0; top:20%; bottom:20%;
+  width:2px; border-radius:0 2px 2px 0;
+  background:var(--comm); box-shadow:0 0 8px var(--comm);
+}
+.nav-item .nav-icon{
+  flex:0 0 20px; display:flex; align-items:center; justify-content:center;
+}
+.nav-item .nav-badge{
+  margin-left:auto;
+  font-family:"JetBrains Mono",monospace; font-size:9px; letter-spacing:.06em;
+  background:rgba(101,147,184,.15); color:var(--bbt);
+  padding:2px 7px; border-radius:10px;
+}
+.nav-coming{
+  font-family:"JetBrains Mono",monospace; font-size:9px; letter-spacing:.12em;
+  text-transform:uppercase; color:var(--ink-faint); margin-left:auto;
+}
+
+/* ── Content area ── */
+.content-area{
+  flex:1; overflow:hidden; display:flex; flex-direction:column; min-width:0;
+}
+
+/* ── Section panels ── */
+.section-panel{ display:none; flex:1; min-height:0; overflow:hidden; flex-direction:column; }
+.section-panel.active{ display:flex; }
+
+/* ═══════════════════════════════════════════════════════════
+   VENTE / CLIENTS section
+   ═══════════════════════════════════════════════════════════ */
+.vente-layout{
+  display:flex; flex:1; min-height:0; overflow:hidden;
+}
+
+/* ── Client list column ── */
+.client-list-col{
+  flex:0 0 300px; border-right:1px solid var(--hairline);
+  display:flex; flex-direction:column; overflow:hidden;
+}
+.col-header{
+  flex:0 0 auto; padding:20px 22px 14px;
+  border-bottom:1px solid var(--hairline);
+}
+.col-title{
+  font-family:"Fraunces",serif; font-variation-settings:"opsz" 72; font-weight:400;
+  font-size:18px; color:var(--ink); margin-bottom:4px;
+}
+.col-title em{ font-style:italic; color:var(--oak) }
+.col-subtitle{
+  font-family:"JetBrains Mono",monospace; font-size:9px; letter-spacing:.2em;
+  color:var(--ink-mute); text-transform:uppercase;
+}
+.col-search{
+  flex:0 0 auto; padding:10px 14px; border-bottom:1px solid var(--hairline);
+  position:relative;
+}
+.search-input{
+  width:100%; background:rgba(0,0,0,.25); border:1px solid var(--hairline-2);
+  border-radius:8px; padding:8px 12px 8px 32px;
+  font-family:"DM Sans",sans-serif; font-size:12.5px; color:var(--ink);
+  outline:none; transition:border-color .2s;
+}
+.search-input::placeholder{ color:var(--ink-mute) }
+.search-input:focus{ border-color:var(--comm-deep) }
+.search-icon{
+  position:absolute; left:24px; top:50%; transform:translateY(-50%);
+  color:var(--ink-mute);
+}
+.client-scroll{
+  flex:1; overflow-y:auto;
+  scrollbar-width:thin; scrollbar-color:rgba(160,120,60,.3) transparent;
+}
+.client-scroll::-webkit-scrollbar{ width:4px }
+.client-scroll::-webkit-scrollbar-thumb{ background:rgba(160,120,60,.3); border-radius:2px }
+
+.client-item{
+  display:flex; align-items:center; gap:10px;
+  padding:12px 16px; border-bottom:1px solid var(--hairline);
+  cursor:pointer; transition:background .15s;
+  position:relative;
+}
+.client-item:hover{ background:rgba(160,120,60,.06) }
+.client-item.sel{
+  background:rgba(122,152,96,.08);
+  border-left:2px solid var(--comm);
+}
+.client-item.sel .ci-name{ color:var(--comm) }
+.ci-avatar{
+  flex:0 0 32px; height:32px; border-radius:8px;
+  display:flex; align-items:center; justify-content:center;
+  font-family:"Fraunces",serif; font-size:14px; font-weight:600;
+  color:var(--oak); background:rgba(160,122,72,.15);
+  border:1px solid rgba(160,122,72,.2); text-transform:uppercase;
+}
+.ci-body{ flex:1; min-width:0 }
+.ci-name{
+  font-family:"DM Sans",sans-serif; font-weight:500; font-size:13.5px;
+  color:var(--ink-soft); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.ci-meta{
+  font-family:"JetBrains Mono",monospace; font-size:9px; letter-spacing:.06em;
+  color:var(--ink-mute); margin-top:2px;
+}
+.ci-pill{
+  flex:0 0 auto; font-family:"JetBrains Mono",monospace; font-size:8.5px;
+  letter-spacing:.08em; text-transform:uppercase; padding:3px 8px; border-radius:10px;
+}
+.ci-pill.active{ background:var(--ct-active-bg); color:var(--ct-active); border:1px solid rgba(101,147,184,.2) }
+.ci-pill.archive{ background:rgba(58,46,29,.35); color:var(--ink-mute); border:1px solid var(--hairline-2) }
+
+/* ── Contract detail column ── */
+.contract-detail-col{
+  flex:1; display:flex; flex-direction:column; overflow:hidden; min-width:0;
+}
+
+/* Detail header */
+.detail-header{
+  flex:0 0 auto; padding:20px 28px 16px;
+  border-bottom:1px solid var(--hairline);
+  display:flex; align-items:flex-end; gap:16px;
+}
+.dh-title{
+  font-family:"Fraunces",serif; font-variation-settings:"opsz" 144; font-weight:400;
+  font-size:38px; line-height:1; color:var(--ink); flex:1;
+}
+.dh-title em{ font-style:italic; color:var(--comm) }
+.dh-stats{ display:flex; gap:22px }
+.dh-stat .dsv{
+  font-family:"Fraunces",serif; font-variation-settings:"opsz" 72;
+  font-size:22px; color:var(--ink);
+}
+.dh-stat .dsv span{ font-size:12px; color:var(--comm) }
+.dh-stat .dsk{
+  font-family:"JetBrains Mono",monospace; font-size:9px;
+  letter-spacing:.12em; color:var(--ink-mute); text-transform:uppercase;
+}
+
+/* Contract grid */
+.contract-grid{
+  flex:1; overflow-y:auto; padding:20px 28px;
+  display:grid; grid-template-columns:repeat(auto-fill, minmax(300px, 1fr));
+  gap:14px; align-content:start;
+  scrollbar-width:thin; scrollbar-color:rgba(160,120,60,.3) transparent;
+}
+.contract-grid::-webkit-scrollbar{ width:4px }
+.contract-grid::-webkit-scrollbar-thumb{ background:rgba(160,120,60,.3); border-radius:2px }
+
+/* Contract card */
+.contract-card{
+  border:1px solid var(--hairline-2); border-radius:12px;
+  background:linear-gradient(160deg, rgba(29,22,13,.7), rgba(12,9,5,.6));
+  padding:16px 18px;
+  box-shadow:0 8px 28px -10px rgba(0,0,0,.5);
+  transition:border-color .25s, transform .25s, box-shadow .25s;
+  animation:cardIn .4s cubic-bezier(.2,.7,.2,1) both;
+  position:relative; overflow:hidden;
+}
+.contract-card:hover{
+  border-color:var(--comm-deep); transform:translateY(-3px);
+  box-shadow:0 16px 40px -10px rgba(0,0,0,.6);
+}
+@keyframes cardIn{
+  from{opacity:0;transform:translateY(10px)}
+  to{opacity:1;transform:none}
+}
+.cc-gutter{
+  position:absolute; top:0; left:0; bottom:0; width:3px; border-radius:12px 0 0 12px;
+}
+.cc-gutter.procure{ background:linear-gradient(180deg, var(--comm), var(--comm-deep)) }
+.cc-gutter.supply{ background:linear-gradient(180deg, var(--ember), #8a4030) }
+.cc-top{ display:flex; align-items:flex-start; gap:10px; margin-bottom:12px; }
+.cc-name{
+  font-family:"Fraunces",serif; font-variation-settings:"opsz" 72; font-weight:500;
+  font-size:17px; color:var(--ink); flex:1; line-height:1.2;
+}
+.cc-name em{ font-style:italic; color:var(--oak) }
+.cc-matbadge{
+  font-family:"JetBrains Mono",monospace; font-size:8px; letter-spacing:.1em;
+  text-transform:uppercase; padding:4px 9px; border-radius:20px;
+  display:flex; align-items:center; gap:5px; flex:0 0 auto; margin-top:2px;
+}
+.cc-matbadge.procure{
+  background:var(--ct-procure-bg); color:var(--ct-procure);
+  border:1px solid rgba(110,122,62,.25);
+}
+.cc-matbadge.supply{
+  background:var(--ct-supply-bg); color:var(--ct-supply);
+  border:1px solid rgba(197,100,74,.25);
+}
+.cc-matbadge svg{ flex:0 0 10px }
+.cc-skus{ display:flex; flex-wrap:wrap; gap:5px; margin-bottom:10px }
+.cc-sku{
+  font-family:"JetBrains Mono",monospace; font-size:9px; letter-spacing:.06em;
+  background:rgba(0,0,0,.25); border:1px solid var(--hairline-2);
+  color:var(--ink-mute); padding:3px 8px; border-radius:6px;
+}
+.cc-divider{ border:none; border-top:1px solid var(--hairline); margin:10px 0 }
+.cc-footer{ display:flex; align-items:center; gap:10px; }
+.cc-note{
+  font-family:"DM Sans",sans-serif; font-size:11.5px; color:var(--ink-mute);
+  flex:1; font-style:italic; line-height:1.3;
+}
+.cc-action{
+  font-family:"JetBrains Mono",monospace; font-size:9px; letter-spacing:.1em;
+  text-transform:uppercase; padding:6px 12px; border-radius:7px;
+  border:1px solid var(--hairline-2); background:none;
+  color:var(--ink-mute); cursor:pointer; transition:.2s;
+}
+.cc-action:hover{ border-color:var(--comm-deep); color:var(--comm) }
+/* manager: request mode */
+body[data-role="manager"] .cc-action{
+  border-color:rgba(101,147,184,.3); color:var(--bbt);
+}
+body[data-role="manager"] .cc-action:hover{ background:rgba(101,147,184,.12) }
+/* operator: no actions */
+body[data-role="operateur"] .cc-action{ opacity:.35; pointer-events:none }
+body[data-role="operateur"] .add-contract-btn{ display:none }
+
+/* Add contract button */
+.add-contract-btn{
+  width:100%; min-height:90px;
+  border:1px dashed var(--hairline-2); border-radius:12px;
+  background:none; color:var(--ink-mute); cursor:pointer;
+  display:flex; align-items:center; justify-content:center; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; transition:.2s;
+}
+.add-contract-btn:hover{ border-color:var(--comm-deep); color:var(--comm) }
+body[data-role="manager"] .add-contract-btn{
+  border-color:rgba(101,147,184,.2); color:var(--bbt);
+}
+body[data-role="manager"] .add-contract-btn:hover{ background:rgba(101,147,184,.07) }
+
+/* Empty state for no client selected */
+.client-empty{
+  flex:1; display:flex; flex-direction:column;
+  align-items:center; justify-content:center;
+  gap:16px; opacity:.45; padding:60px 40px;
+}
+.client-empty svg{ opacity:.5 }
+.client-empty p{
+  font-family:"Fraunces",serif; font-variation-settings:"opsz" 72;
+  font-style:italic; font-size:18px; color:var(--ink-mute);
+  text-align:center; line-height:1.5;
+}
+.client-empty small{
+  font-family:"JetBrains Mono",monospace; font-size:10px; letter-spacing:.1em;
+  color:var(--ink-faint); text-transform:uppercase;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   PLACEHOLDER SECTIONS (Marketing, Finances)
+   ═══════════════════════════════════════════════════════════ */
+.placeholder-section{
+  flex:1; display:flex; flex-direction:column;
+  align-items:center; justify-content:center;
+  gap:20px; padding:60px;
+}
+.placeholder-ornament{
+  width:120px; height:120px; border-radius:50%;
+  border:1px solid var(--hairline-2);
+  display:flex; align-items:center; justify-content:center;
+  position:relative;
+}
+.placeholder-ornament::before{
+  content:""; position:absolute; inset:-8px; border-radius:50%;
+  border:1px dashed rgba(160,122,72,.15);
+}
+.placeholder-ornament::after{
+  content:""; position:absolute; inset:-18px; border-radius:50%;
+  border:1px dashed rgba(160,122,72,.07);
+}
+.ph-label{
+  font-family:"JetBrains Mono",monospace; font-size:9px; letter-spacing:.32em;
+  color:var(--ink-faint); text-transform:uppercase; margin-bottom:-6px;
+}
+.ph-title{
+  font-family:"Fraunces",serif; font-variation-settings:"opsz" 144; font-weight:400;
+  font-size:36px; color:var(--ink-soft); font-style:italic; line-height:1;
+}
+.ph-avenir{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.28em;
+  color:var(--comm-deep); text-transform:uppercase;
+  padding:8px 18px; border:1px solid rgba(122,152,96,.2);
+  border-radius:20px; background:rgba(122,152,96,.05);
+}
+.ph-desc{
+  font-family:"DM Sans",sans-serif; font-size:13px; color:var(--ink-mute);
+  max-width:340px; text-align:center; line-height:1.6;
+}
+
+/* ── Stats bar at bottom of content area ── */
+.stats-bar{
+  flex:0 0 auto; border-top:1px solid var(--hairline);
+  display:flex; align-items:center; gap:0;
+  padding:0; background:rgba(10,7,4,.4);
+}
+.stat-cell{
+  flex:1; padding:10px 22px; display:flex; align-items:center; gap:12px;
+  border-right:1px solid var(--hairline);
+}
+.stat-cell:last-child{ border-right:none }
+.sc-val{
+  font-family:"Fraunces",serif; font-variation-settings:"opsz" 72;
+  font-size:20px; color:var(--ink);
+}
+.sc-val span{ font-size:11px; color:var(--comm) }
+.sc-key{
+  font-family:"JetBrains Mono",monospace; font-size:9px; letter-spacing:.1em;
+  color:var(--ink-mute); text-transform:uppercase;
+}
+
+/* role-gated: admin-only edit affordances */
+.admin-only{ display:none }
+body[data-role="admin"] .admin-only{ display:flex }
+</style>
+</head>
+<body data-role="admin">
+
+<!-- board + grain -->
+<div class="board"></div>
+
+<!-- corner marks -->
+<div class="mark tl"></div>
+<div class="mark tr"></div>
+<div class="mark bl"></div>
+<div class="mark br"></div>
+
+<!-- ═══ TOP CHROME ═══ -->
+<header class="chrome">
+  <div class="brandmark"><b>La Nébuleuse</b> · Le Zeppelin</div>
+
+  <!-- Family switcher: the two families of the control page -->
+  <div class="family-switcher" role="navigation" aria-label="Famille de module">
+    <a href="salle-des-machines.html" class="family-btn fam-sdm" title="Production · Capacités, Recettes…">
+      <span class="fam-dot"></span>
+      Salle des Machines
+    </a>
+    <span class="family-arrow">⇄</span>
+    <button class="family-btn fam-cockpit" aria-current="page" title="Commercial · Ventes, Clients…">
+      <span class="fam-dot"></span>
+      Le Cockpit
+    </button>
+  </div>
+
+  <!-- Role switcher -->
+  <div class="role-switcher" role="group" aria-label="Rôle actif">
+    <button class="role-btn" data-role="operateur" onclick="setRole('operateur')">
+      <span class="rpip"></span>Opérateur
+    </button>
+    <button class="role-btn" data-role="manager" onclick="setRole('manager')">
+      <span class="rpip"></span>Manager
+    </button>
+    <button class="role-btn active" data-role="admin" onclick="setRole('admin')">
+      <span class="rpip"></span>Admin
+    </button>
+  </div>
+</header>
+
+<!-- Role banner -->
+<div class="role-banner ban-admin visible" id="roleBanner">
+  <span class="ban-pip"></span>
+  <span id="roleBannerText">Admin — modifications directes actives</span>
+</div>
+
+<!-- ═══ MAIN STAGE ═══ -->
+<div class="cockpit-stage">
+
+  <!-- ── Left nav rail ── -->
+  <nav class="nav-rail">
+    <div class="nav-section-label">Le Cockpit</div>
+
+    <div class="nav-item active" data-section="vente" onclick="switchSection('vente')">
+      <span class="nav-icon">
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M3 5h12M3 9h8M3 13h5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+          <circle cx="14" cy="13" r="2.5" stroke="currentColor" stroke-width="1.2"/>
+        </svg>
+      </span>
+      Vente
+      <span class="nav-badge">16</span>
+    </div>
+
+    <div class="nav-item" data-section="marketing" onclick="switchSection('marketing')">
+      <span class="nav-icon">
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M9 2 L14 7 L9 16 L4 7 Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+          <path d="M4 7 h10" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
+        </svg>
+      </span>
+      Marketing
+      <span class="nav-coming">À venir</span>
+    </div>
+
+    <div class="nav-item" data-section="finances" onclick="switchSection('finances')">
+      <span class="nav-icon">
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="2.5" y="4" width="13" height="10" rx="2" stroke="currentColor" stroke-width="1.3"/>
+          <path d="M2.5 7.5 h13" stroke="currentColor" stroke-width="1.1"/>
+          <path d="M6 11 h2M10 11 h2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+        </svg>
+      </span>
+      Finances / Admin
+      <span class="nav-coming">À venir</span>
+    </div>
+  </nav>
+
+  <!-- ── Content area ── -->
+  <div class="content-area">
+
+    <!-- ══ SECTION: Vente ══ -->
+    <div class="section-panel active" id="section-vente">
+      <div class="vente-layout">
+
+        <!-- Client list column -->
+        <div class="client-list-col">
+          <div class="col-header">
+            <div class="col-title"><em>Clients</em> &amp; contrats</div>
+            <div class="col-subtitle">ref_clients · 16 actifs</div>
+          </div>
+          <div class="col-search">
+            <svg class="search-icon" width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="6" cy="6" r="4" stroke="currentColor" stroke-width="1.3"/>
+              <path d="M9.5 9.5 L12 12" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+            </svg>
+            <input class="search-input" type="text" placeholder="Rechercher un client…" id="clientSearch" oninput="filterClients(this.value)">
+          </div>
+          <div class="client-scroll" id="clientScroll">
+            <!-- rendered by JS -->
+          </div>
+        </div>
+
+        <!-- Contract detail column -->
+        <div class="contract-detail-col" id="contractDetailCol">
+          <!-- Empty state (shown when no client selected) -->
+          <div class="client-empty" id="clientEmpty">
+            <svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="32" cy="32" r="28" stroke="currentColor" stroke-width="1.5" stroke-dasharray="4 4"/>
+              <path d="M20 32 h24M32 20 v24" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity=".5"/>
+            </svg>
+            <p>Sélectionner un client<br>pour voir ses contrats</p>
+            <small>16 clients · packaging sous-traité</small>
+          </div>
+
+          <!-- Detail view (shown when client selected) -->
+          <div id="clientDetail" style="display:none;flex-direction:column;flex:1;overflow:hidden;">
+            <div class="detail-header" id="detailHeader">
+              <div class="dh-title" id="detailClientName">—</div>
+              <div class="dh-stats">
+                <div class="dh-stat">
+                  <div class="dsv" id="detailContractCount">—</div>
+                  <div class="dsk">contrats</div>
+                </div>
+                <div class="dh-stat">
+                  <div class="dsv" id="detailBrewCount">—</div>
+                  <div class="dsk">brassin / an</div>
+                </div>
+              </div>
+            </div>
+            <div class="contract-grid" id="contractGrid">
+              <!-- rendered by JS -->
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /vente-layout -->
+
+      <!-- Stats bar -->
+      <div class="stats-bar">
+        <div class="stat-cell">
+          <div>
+            <div class="sc-val">16 <span>clients</span></div>
+            <div class="sc-key">contrats actifs</div>
+          </div>
+        </div>
+        <div class="stat-cell">
+          <div>
+            <div class="sc-val">48 <span>recettes</span></div>
+            <div class="sc-key">contrat packaging</div>
+          </div>
+        </div>
+        <div class="stat-cell">
+          <div>
+            <div class="sc-val">9 <span>clients</span></div>
+            <div class="sc-key">on procure packaging</div>
+          </div>
+        </div>
+        <div class="stat-cell">
+          <div>
+            <div class="sc-val">7 <span>clients</span></div>
+            <div class="sc-key">supply own packaging</div>
+          </div>
+        </div>
+      </div>
+    </div><!-- /section-vente -->
+
+    <!-- ══ SECTION: Marketing ══ -->
+    <div class="section-panel" id="section-marketing">
+      <div class="placeholder-section">
+        <div class="ph-label">Section</div>
+        <div class="ph-title">Marketing</div>
+        <div class="ph-avenir">À venir</div>
+        <p class="ph-desc">
+          Suivi des campagnes, gestion des assets visuels, calendrier promotionnel
+          et analytics de vente par canal.
+        </p>
+        <div class="placeholder-ornament">
+          <svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M20 4 L30 14 L20 36 L10 14 Z" stroke="var(--oak)" stroke-width="1.3" stroke-linejoin="round"/>
+            <path d="M10 14 h20" stroke="var(--oak)" stroke-width="1.1" stroke-linecap="round"/>
+            <circle cx="20" cy="4" r="2" fill="var(--oak)" opacity=".5"/>
+          </svg>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ SECTION: Finances / Admin ══ -->
+    <div class="section-panel" id="section-finances">
+      <div class="placeholder-section">
+        <div class="ph-label">Section</div>
+        <div class="ph-title">Finances &amp; Admin</div>
+        <div class="ph-avenir">À venir</div>
+        <p class="ph-desc">
+          Récapitulatif financier par client, facturation sous-traitance,
+          suivi des encours et rapports comptables de production contractuelle.
+        </p>
+        <div class="placeholder-ornament">
+          <svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="6" y="10" width="28" height="22" rx="3" stroke="var(--oak)" stroke-width="1.3"/>
+            <path d="M6 16 h28" stroke="var(--oak)" stroke-width="1.1"/>
+            <path d="M13 23 h5M22 23 h5M13 27 h3" stroke="var(--oak)" stroke-width="1.2" stroke-linecap="round"/>
+            <path d="M20 6 v4" stroke="var(--oak)" stroke-width="1.2" stroke-linecap="round" opacity=".5"/>
+          </svg>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /content-area -->
+</div><!-- /cockpit-stage -->
+
+<!-- Confirm modal -->
+<div class="modal-overlay" id="confirmModal">
+  <div class="modal-box">
+    <h4 id="modalTitle">Confirmer la modification</h4>
+    <p id="modalBody">Cette action sera appliquée immédiatement.</p>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal()">Annuler</button>
+      <button class="btn-confirm" id="modalConfirmBtn">Confirmer</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════
+   DATA — verbatim CLIENTS + buildContract logic from salle-recettes.html
+   with material_responsibility flag added per cockpit spec
+   ═══════════════════════════════════════════════════════════ */
+const CLIENTS = [
+  { id:1,  name:'Abbaye de St-Maurice', material_responsibility:'supply', notes:'Client fournit ses propres bouteilles et étiquettes', brassin_per_an: 6, active:true },
+  { id:2,  name:'BLZ Company',          material_responsibility:'procure', notes:'Nous procurons + refacturons le packaging', brassin_per_an: 8, active:true },
+  { id:3,  name:'BadFish',              material_responsibility:'procure', notes:'Canettes fournies par NEB, refacturées', brassin_per_an: 5, active:true },
+  { id:4,  name:'Brasserie du Château', material_responsibility:'supply', notes:'Client fournit fûts et étiquettes personnalisées', brassin_per_an: 4, active:true },
+  { id:5,  name:'Brasserie du Fennek',  material_responsibility:'procure', notes:'Packaging intégral procuré et refacturé', brassin_per_an: 3, active:true },
+  { id:6,  name:'Brasserie du Singe',   material_responsibility:'supply', notes:'Client apporte son propre matériel de conditionnement', brassin_per_an: 2, active:true },
+  { id:7,  name:'Brasserie28',          material_responsibility:'procure', notes:'4 recettes — packaging bouteilles NEB', brassin_per_an: 12, active:true },
+  { id:8,  name:'Chien Bleu',           material_responsibility:'procure', notes:'5 bières — canettes + étiquettes procurées', brassin_per_an: 10, active:true },
+  { id:9,  name:"L'Improbable",         material_responsibility:'supply', notes:'Client livre son packaging en avance de brassage', brassin_per_an: 3, active:true },
+  { id:10, name:'Le Traquenard',        material_responsibility:'procure', notes:'Collaboration long terme — packaging inclus', brassin_per_an: 4, active:true },
+  { id:11, name:'Les Combières',        material_responsibility:'supply', notes:'Petite structure, fournit son propre matériel', brassin_per_an: 2, active:true },
+  { id:12, name:'MeltingPote',          material_responsibility:'procure', notes:'3 recettes urbaines — packaging NEB refacturé', brassin_per_an: 6, active:true },
+  { id:13, name:'Moutonoir',            material_responsibility:'supply', notes:'Fûts propriétaires client', brassin_per_an: 2, active:true },
+  { id:14, name:'Nylo',                 material_responsibility:'procure', notes:'NYL — canettes format unique, procurées', brassin_per_an: 4, active:true },
+  { id:15, name:'Obrist',               material_responsibility:'supply', notes:'Viniculteur — fournit ses propres contenants', brassin_per_an: 1, active:true },
+  { id:16, name:'Septentrion',          material_responsibility:'procure', notes:'3 références — étiquettes + canettes refacturées', brassin_per_an: 8, active:true },
+];
+
+const CONTRACT_BEERS = {
+  1:  ['Candide','DXV','Febris','Lumen','Vox'],
+  2:  ['Lager','Mosaic IPA','Red Ale','WestCoast Pale Ale'],
+  3:  ['915','Cryo IPA','Witshark'],
+  4:  ['4.4','Faya','Ginger'],
+  5:  ['Hoppy Wheat'],
+  6:  ['Wheat IPA'],
+  7:  ['Blonde','IPA','ST','Triple'],
+  8:  ['Bamse','Jasper','Moût Chaud','Moût Froid','Pomelo'],
+  9:  ['Kinzan','Pale Ale','White Trash'],
+  10: ['Pale Ale','Session IPA'],
+  11: ['La Grande à Meylan',"La P'tite à Piguet"],
+  12: ['Cropette','Jonx','Plainpal'],
+  13: ['Pura Vida'],
+  14: ['NYL'],
+  15: ['Grape Ale'],
+  16: ['Boréale','Minami','Mistral'],
+};
+
+const CONTRACT_FORMATS = {
+  1:  ['33cl bouteille','75cl bouteille'],
+  2:  ['33cl canette','50cl fût'],
+  3:  ['33cl canette'],
+  4:  ['33cl bouteille','20L fût'],
+  5:  ['33cl bouteille'],
+  6:  ['33cl bouteille'],
+  7:  ['33cl bouteille','50cl fût','20L fût'],
+  8:  ['33cl canette','20L fût'],
+  9:  ['33cl canette','50cl bouteille'],
+  10: ['33cl canette','20L fût'],
+  11: ['75cl bouteille'],
+  12: ['33cl canette','20L fût'],
+  13: ['20L fût'],
+  14: ['33cl canette'],
+  15: ['75cl bouteille'],
+  16: ['33cl canette','50cl fût'],
+};
+
+/* ═══════════════════════════════════════════════════════════
+   STATE
+   ═══════════════════════════════════════════════════════════ */
+let currentRole = 'admin';
+let selectedClientId = null;
+let filterQuery = '';
+let pendingAction = null;
+
+/* ═══════════════════════════════════════════════════════════
+   ROLE
+   ═══════════════════════════════════════════════════════════ */
+function setRole(role) {
+  currentRole = role;
+  document.body.setAttribute('data-role', role);
+  document.querySelectorAll('.role-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.role === role);
+  });
+  // Update banner
+  const banner = document.getElementById('roleBanner');
+  banner.className = 'role-banner visible ban-' + role;
+  const texts = {
+    operateur: 'Opérateur — lecture seule',
+    manager:   'Manager — modifications sur demande',
+    admin:     'Admin — modifications directes actives',
+  };
+  document.getElementById('roleBannerText').textContent = texts[role] || '';
+  showToast('Rôle : ' + role.charAt(0).toUpperCase() + role.slice(1));
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SECTION SWITCHER
+   ═══════════════════════════════════════════════════════════ */
+function switchSection(id) {
+  document.querySelectorAll('.section-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('section-' + id).classList.add('active');
+  document.querySelector('[data-section="' + id + '"]').classList.add('active');
+}
+
+/* ═══════════════════════════════════════════════════════════
+   CLIENT LIST RENDER
+   ═══════════════════════════════════════════════════════════ */
+function initials(name) {
+  const w = name.split(/\s+/);
+  if (w.length >= 2) return (w[0][0] + w[1][0]).toUpperCase();
+  return name.slice(0, 2).toUpperCase();
+}
+
+function renderClientList(filter) {
+  const q = (filter || '').toLowerCase();
+  const scroll = document.getElementById('clientScroll');
+  let html = '';
+  CLIENTS.forEach(c => {
+    if (q && !c.name.toLowerCase().includes(q)) return;
+    const isSel = c.id === selectedClientId;
+    const matClass = c.material_responsibility === 'procure' ? 'active' : 'archive';
+    const matLabel = c.material_responsibility === 'procure' ? 'On procure' : 'Client fournit';
+    const contracts = CONTRACT_BEERS[c.id] || [];
+    html += `
+      <div class="client-item${isSel ? ' sel' : ''}" onclick="selectClient(${c.id})">
+        <div class="ci-avatar">${initials(c.name)}</div>
+        <div class="ci-body">
+          <div class="ci-name">${c.name}</div>
+          <div class="ci-meta">${contracts.length} contrat${contracts.length > 1 ? 's' : ''}</div>
+        </div>
+        <div class="ci-pill ${matClass}">${matLabel}</div>
+      </div>`;
+  });
+  scroll.innerHTML = html;
+}
+
+function filterClients(val) {
+  filterQuery = val;
+  renderClientList(val);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   CLIENT DETAIL RENDER
+   ═══════════════════════════════════════════════════════════ */
+function selectClient(id) {
+  selectedClientId = id;
+  renderClientList(filterQuery);
+
+  const client = CLIENTS.find(c => c.id === id);
+  if (!client) return;
+
+  document.getElementById('clientEmpty').style.display = 'none';
+  const detail = document.getElementById('clientDetail');
+  detail.style.display = 'flex';
+
+  const beers = CONTRACT_BEERS[id] || [];
+  const formats = CONTRACT_FORMATS[id] || [];
+  const matClass = client.material_responsibility === 'procure' ? 'procure' : 'supply';
+  const matLabel = client.material_responsibility === 'procure'
+    ? 'NEB procure packaging'
+    : 'Client fournit packaging';
+  const matIcon = client.material_responsibility === 'procure'
+    ? `<svg width="10" height="10" viewBox="0 0 10 10" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M2 8 L5 2 L8 8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 6 h4" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>`
+    : `<svg width="10" height="10" viewBox="0 0 10 10" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M2 2 L8 8M8 2 L2 8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>`;
+
+  // title
+  const nm = client.name;
+  document.getElementById('detailClientName').innerHTML =
+    `<em>${nm.split(' ')[0]}</em> ${nm.split(' ').slice(1).join(' ')}`;
+  document.getElementById('detailContractCount').textContent = beers.length;
+  document.getElementById('detailBrewCount').textContent = client.brassin_per_an;
+
+  // action label varies by role
+  const actionLabel = currentRole === 'admin'
+    ? 'Modifier'
+    : currentRole === 'manager'
+    ? 'Demander modif.'
+    : '—';
+
+  // build contract cards
+  let gridHtml = '';
+  beers.forEach((beer, i) => {
+    const fmt = formats[i % formats.length] || formats[0] || '33cl bouteille';
+    const fmt2 = formats[(i + 1) % formats.length];
+    const skuBadges = fmt
+      ? `<span class="cc-sku">${fmt}</span>${fmt2 && fmt2 !== fmt ? `<span class="cc-sku">${fmt2}</span>` : ''}`
+      : '';
+    const delay = (i * 0.05).toFixed(2) + 's';
+    gridHtml += `
+      <div class="contract-card" style="animation-delay:${delay}">
+        <div class="cc-gutter ${matClass}"></div>
+        <div class="cc-top">
+          <div class="cc-name">${beer}</div>
+          <div class="cc-matbadge ${matClass}">
+            ${matIcon}
+            ${matLabel}
+          </div>
+        </div>
+        <div class="cc-skus">${skuBadges}</div>
+        <hr class="cc-divider">
+        <div class="cc-footer">
+          <div class="cc-note">${client.notes}</div>
+          <button class="cc-action" onclick="handleAction('${beer}', '${client.name}')">${actionLabel}</button>
+        </div>
+      </div>`;
+  });
+
+  // add contract button
+  gridHtml += `
+    <button class="add-contract-btn" onclick="handleAddContract('${client.name}')">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M8 3 v10M3 8 h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+      Ajouter un contrat
+    </button>`;
+
+  document.getElementById('contractGrid').innerHTML = gridHtml;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   ACTIONS (role-gated)
+   ═══════════════════════════════════════════════════════════ */
+function handleAction(beer, clientName) {
+  if (currentRole === 'admin') {
+    openModal(
+      `Modifier le contrat — ${beer}`,
+      `Vous êtes sur le point de modifier le contrat "${beer}" pour ${clientName}. Cette action est immédiate (rôle Admin).`,
+      () => { showToast(`Contrat "${beer}" modifié`); }
+    );
+  } else if (currentRole === 'manager') {
+    showToast(`Demande envoyée pour "${beer}" · en attente validation`);
+  }
+}
+
+function handleAddContract(clientName) {
+  if (currentRole === 'admin') {
+    openModal(
+      `Nouveau contrat — ${clientName}`,
+      `Créer un nouveau contrat de brassage pour ${clientName} dans ref_clients.`,
+      () => { showToast(`Contrat ajouté pour ${clientName}`); }
+    );
+  } else if (currentRole === 'manager') {
+    showToast(`Demande de nouveau contrat envoyée`);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   MODAL
+   ═══════════════════════════════════════════════════════════ */
+function openModal(title, body, onConfirm) {
+  document.getElementById('modalTitle').textContent = title;
+  document.getElementById('modalBody').textContent = body;
+  pendingAction = onConfirm;
+  document.getElementById('confirmModal').classList.add('open');
+  document.getElementById('modalConfirmBtn').onclick = () => {
+    closeModal();
+    if (pendingAction) pendingAction();
+    pendingAction = null;
+  };
+}
+function closeModal() {
+  document.getElementById('confirmModal').classList.remove('open');
+}
+document.getElementById('confirmModal').addEventListener('click', function(e) {
+  if (e.target === this) closeModal();
+});
+
+/* ═══════════════════════════════════════════════════════════
+   TOAST
+   ═══════════════════════════════════════════════════════════ */
+let _toastTimer = null;
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  if (_toastTimer) clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => t.classList.remove('show'), 2800);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   INIT
+   ═══════════════════════════════════════════════════════════ */
+renderClientList('');
+// pre-select first client for demo
+selectClient(1);
+</script>
+</body>
+</html>

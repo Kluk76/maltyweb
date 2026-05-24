@@ -156,7 +156,14 @@ try {
         $hlInBbts += (float)($row['remaining_hl'] ?? 0);
     }
 
-    // Packaging KPIs — year-filtered totals
+    // Packaging KPIs — year-filtered totals.
+    // LEGACY-ONLY (v2 cutover blocker, 2026-05-24): bd_packaging_v2 has NO `format`
+    // or `year` column (now run_type enum + nebuleuse_format_suffix; year via
+    // YEAR(submitted_at)) AND vendable_hl is 100% NULL — the per-row HL valuation
+    // has not been computed/backfilled into v2 yet. All three packaging HL queries
+    // below (totals, by-format, top-5) sum vendable_hl, so repointing to v2 now
+    // would zero out the entire dashboard. Stays on bd_packaging until v2.vendable_hl
+    // is populated and the format→run_type/suffix remap is wired.
     $pkgTotalsStmt = $pdo->prepare("
         SELECT
           COALESCE(SUM(vendable_hl), 0)   AS hl_total,

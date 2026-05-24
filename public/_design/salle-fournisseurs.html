@@ -1,0 +1,1878 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fournisseurs — Salle des Machines · preview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..600;1,9..144,400..500&family=DM+Sans:opsz,wght@9..40,300..600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#15100a; --bg-elev:#1d160d; --ink:#ede0c4; --ink-soft:#c8b894;
+  --ink-mute:#7a6647; --ink-faint:#3a2e1d; --hairline:#261d11; --hairline-2:#342818;
+  --hop:#9eb060; --hop-deep:#6b7a3e; --ember:#c5664a; --oak:#a07a48; --oak-deep:#6e4e26;
+  --cold:#2f5575; --bbt:#6593b8;
+  --pkg:#7a5fa0; --pkg-deep:#503d6e; --pkg-band:#9b7cc8;
+  --steel:#b8bcc0; --steel-mid:#5e6266; --steel-deep:#2c2e30; --steel-shadow:#15171a;
+  --line:#caa86e; --line-soft:#7a6647;
+  /* warehouse accent */
+  --dock:#c8863a; --dock-deep:#7a4e1a; --dock-glow:rgba(200,134,58,.15);
+  --manifest:#f5ead0; --manifest-2:#ede0bb; --ink-on-manifest:#2c1d08;
+  --rule-manifest:#c4a87066; --rule-manifest-strong:#c4a87099;
+  --rack:#8a7050; --rack-deep:#4a3820;
+  --stripe-warn:rgba(197,100,74,.08);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden}
+body{font-family:"DM Sans",system-ui,sans-serif;color:var(--ink);background:var(--bg);height:100vh;}
+
+/* board */
+.board{position:fixed;inset:0;
+  background:radial-gradient(130% 90% at 50% -20%,rgba(200,134,58,.1),transparent 55%),
+    radial-gradient(100% 120% at 50% 130%,rgba(0,0,0,.55),transparent 60%),var(--bg);}
+.board::before{content:"";position:absolute;inset:0;opacity:.45;
+  background-image:
+    linear-gradient(rgba(122,102,71,.07) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(122,102,71,.07) 1px,transparent 1px),
+    linear-gradient(rgba(122,102,71,.04) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(122,102,71,.04) 1px,transparent 1px);
+  background-size:120px 120px,120px 120px,24px 24px,24px 24px;
+  mask-image:radial-gradient(120% 100% at 50% 40%,#000 55%,transparent 92%);}
+.board::after{content:"";position:absolute;inset:0;pointer-events:none;opacity:.5;
+  background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .03 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+.mark{position:fixed;width:26px;height:26px;border:1px solid var(--hairline-2);z-index:3;opacity:.7}
+.mark.tl{top:18px;left:18px;border-right:0;border-bottom:0}
+.mark.tr{top:18px;right:18px;border-left:0;border-bottom:0}
+.mark.bl{bottom:18px;left:18px;border-right:0;border-top:0}
+.mark.br{bottom:18px;right:18px;border-left:0;border-top:0}
+
+/* chrome */
+.chrome{position:fixed;top:0;left:0;right:0;z-index:20;display:flex;align-items:center;gap:16px;padding:22px 44px;}
+.brandmark{font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.4em;color:var(--ink-mute);text-transform:uppercase;}
+.brandmark b{color:var(--ink-soft);font-weight:500}
+
+/* family switcher — verbatim from le-cockpit */
+.family-switcher{display:flex;align-items:center;gap:0;border:1px solid var(--hairline-2);border-radius:8px;overflow:hidden;
+  font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;
+  background:rgba(10,7,4,.5);backdrop-filter:blur(6px);}
+.family-btn{display:flex;align-items:center;gap:8px;padding:8px 14px;border:none;background:none;cursor:pointer;
+  font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--ink-mute);text-decoration:none;transition:all .22s;position:relative;white-space:nowrap;}
+.family-btn:not(:last-child)::after{content:"";position:absolute;right:0;top:15%;bottom:15%;width:1px;background:var(--hairline-2);}
+.family-btn .fam-dot{width:6px;height:6px;border-radius:50%;flex:0 0 6px;transition:box-shadow .22s;}
+.family-btn.fam-sdm .fam-dot{background:var(--steel-mid)}
+.family-btn.fam-sdm:hover{color:var(--steel);background:rgba(44,46,48,.15)}
+.family-btn.fam-sdm:hover .fam-dot{box-shadow:0 0 8px var(--steel-mid)}
+.family-btn.fam-cockpit .fam-dot{background:var(--hop-deep)}
+.family-btn.fam-cockpit:hover{color:var(--hop);background:rgba(110,122,62,.12)}
+.family-btn.fam-cockpit:hover .fam-dot{box-shadow:0 0 8px var(--hop)}
+/* active = Salle des Machines */
+.family-btn.fam-sdm.active{background:var(--dock-glow);color:var(--dock);cursor:default;pointer-events:none;}
+.family-btn.fam-sdm.active .fam-dot{background:var(--dock);box-shadow:0 0 10px var(--dock);}
+
+/* role switcher */
+.role-switcher{margin-left:auto;display:flex;align-items:center;border:1px solid var(--hairline-2);border-radius:30px;
+  background:rgba(26,16,8,.6);overflow:hidden;backdrop-filter:blur(4px);}
+.role-btn{padding:7px 14px;border:none;background:none;cursor:pointer;font-family:"JetBrains Mono",monospace;
+  font-size:9.5px;letter-spacing:.14em;color:var(--ink-mute);text-transform:uppercase;transition:all .22s;
+  position:relative;white-space:nowrap;}
+.role-btn:not(:last-child)::after{content:"";position:absolute;right:0;top:20%;bottom:20%;width:1px;background:var(--hairline-2);}
+.role-btn.active{background:rgba(160,122,72,.18);color:var(--ink-soft);}
+.role-btn.active .rpip{display:inline-block;}
+.rpip{display:none;width:6px;height:6px;border-radius:50%;margin-right:6px;vertical-align:middle;position:relative;top:-1px;}
+.role-btn[data-role="operateur"].active{background:rgba(94,98,102,.18);color:var(--steel)}
+.role-btn[data-role="operateur"].active .rpip{background:var(--steel);box-shadow:0 0 7px var(--steel)}
+.role-btn[data-role="manager"].active{background:rgba(47,85,117,.2);color:var(--bbt)}
+.role-btn[data-role="manager"].active .rpip{background:var(--bbt);box-shadow:0 0 7px var(--bbt)}
+.role-btn[data-role="admin"].active{background:rgba(158,176,96,.16);color:var(--hop)}
+.role-btn[data-role="admin"].active .rpip{background:var(--hop);box-shadow:0 0 7px var(--hop)}
+
+/* toast */
+.toast{position:fixed;bottom:48px;left:50%;transform:translateX(-50%) translateY(20px);z-index:40;
+  padding:10px 20px;background:var(--bg-elev);border:1px solid var(--oak-deep);border-radius:10px;
+  font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.1em;color:var(--ink-soft);
+  opacity:0;pointer-events:none;transition:opacity .3s,transform .3s;text-transform:uppercase;}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+
+/* main layout */
+.workspace{position:fixed;top:72px;left:0;right:0;bottom:0;display:flex;overflow:hidden;}
+
+/* ── LEFT MANIFEST PANEL ── */
+.manifest-panel{width:420px;flex:0 0 420px;display:flex;flex-direction:column;
+  border-right:1px solid var(--hairline-2);background:rgba(10,7,4,.4);backdrop-filter:blur(4px);}
+
+/* warehouse header with SVG sketches */
+.wh-header{padding:18px 20px 0;position:relative;overflow:hidden;}
+.wh-header-top{display:flex;align-items:flex-end;gap:12px;margin-bottom:10px;}
+.wh-zone-label{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.3em;color:var(--dock);text-transform:uppercase;}
+.wh-title{font-family:"Fraunces",serif;font-variation-settings:"opsz" 96;font-weight:440;font-size:26px;color:var(--ink);line-height:1;}
+.wh-title em{font-style:italic;color:var(--dock);}
+.wh-sketch-strip{height:56px;position:relative;margin:0 -20px;overflow:hidden;border-bottom:1px solid var(--hairline-2);}
+
+/* search + filter bar */
+.filter-bar{padding:10px 16px;display:flex;gap:8px;border-bottom:1px solid var(--hairline-2);}
+.search-wrap{flex:1;position:relative;}
+.search-wrap input{width:100%;background:rgba(0,0,0,.3);border:1px solid var(--hairline-2);border-radius:7px;
+  color:var(--ink);font-family:"DM Sans",sans-serif;font-size:13px;padding:7px 10px 7px 30px;
+  outline:none;transition:.2s;}
+.search-wrap input:focus{border-color:var(--dock);}
+.search-wrap input::placeholder{color:var(--ink-mute);}
+.search-wrap svg{position:absolute;left:9px;top:50%;transform:translateY(-50%);opacity:.4;}
+.filter-chips{display:flex;gap:5px;flex-wrap:wrap;}
+.chip{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.08em;text-transform:uppercase;
+  padding:4px 8px;border:1px solid var(--hairline-2);border-radius:20px;background:none;cursor:pointer;
+  color:var(--ink-mute);transition:.15s;}
+.chip.on{border-color:var(--dock);color:var(--dock);background:var(--dock-glow);}
+.chip:hover{color:var(--ink);border-color:var(--rack);}
+
+/* supplier list */
+.sup-list{flex:1;overflow-y:auto;padding:6px 8px;}
+.sup-list::-webkit-scrollbar{width:5px}
+.sup-list::-webkit-scrollbar-thumb{background:var(--hairline-2);border-radius:3px}
+.sup-list::-webkit-scrollbar-thumb:hover{background:var(--rack-deep)}
+
+.sup-row{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:8px;cursor:pointer;
+  border:1px solid transparent;transition:background .15s,border-color .15s;margin-bottom:2px;}
+.sup-row:hover{background:rgba(200,134,58,.06);border-color:var(--hairline-2);}
+.sup-row.active{background:rgba(200,134,58,.1);border-color:var(--dock-deep);}
+.sup-row.inactive-sup{opacity:.45;}
+.sup-row .sup-avatar{flex:0 0 32px;height:32px;border-radius:6px;display:flex;align-items:center;justify-content:center;
+  font-family:"Fraunces",serif;font-weight:500;font-size:14px;letter-spacing:.02em;background:var(--hairline-2);color:var(--ink-soft);}
+.sup-row .sup-info{flex:1;min-width:0;}
+.sup-row .sup-name{font-size:13px;font-weight:500;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.sup-row .sup-meta{display:flex;align-items:center;gap:6px;margin-top:2px;}
+.sup-row .sup-id{font-family:"JetBrains Mono",monospace;font-size:9px;color:var(--ink-mute);letter-spacing:.04em;}
+.sup-row .sup-gl{font-family:"JetBrains Mono",monospace;font-size:9px;color:var(--oak);letter-spacing:.04em;}
+.sup-row .sup-cur{font-family:"JetBrains Mono",monospace;font-size:9px;color:var(--ink-faint);
+  border:1px solid var(--hairline-2);border-radius:3px;padding:0 4px;}
+.sup-row .sup-badges{display:flex;gap:4px;flex-shrink:0;}
+.badge{font-family:"JetBrains Mono",monospace;font-size:8px;letter-spacing:.06em;text-transform:uppercase;
+  padding:2px 6px;border-radius:3px;}
+.badge-active{background:rgba(110,122,62,.2);color:var(--hop);}
+.badge-inactive{background:rgba(94,98,102,.18);color:var(--steel-mid);}
+.badge-parser{background:rgba(200,134,58,.15);color:var(--dock);}
+.badge-hors{background:rgba(197,100,74,.12);color:var(--ember);}
+.badge-mi{background:rgba(160,122,72,.15);color:var(--oak);}
+
+.list-count{text-align:center;font-family:"JetBrains Mono",monospace;font-size:9.5px;letter-spacing:.08em;
+  color:var(--ink-mute);padding:10px;text-transform:uppercase;}
+
+/* ── RIGHT FICHE / DOCK DRAWER ── */
+.fiche-area{flex:1;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+
+/* empty state — warehouse atmosphere */
+.dock-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;
+  opacity:.7;padding:40px;}
+.dock-empty .de-label{font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--ink-mute);}
+.dock-empty .de-sub{font-size:12px;color:var(--ink-faint);text-align:center;line-height:1.6;max-width:280px;}
+
+/* fiche */
+.fiche{flex:1;overflow-y:auto;padding:20px 24px 40px;display:none;}
+.fiche.visible{display:block;}
+.fiche::-webkit-scrollbar{width:5px}
+.fiche::-webkit-scrollbar-thumb{background:var(--hairline-2);border-radius:3px}
+
+/* delivery-note document styling */
+.doc-paper{
+  background:linear-gradient(180deg,rgba(245,234,208,.06),rgba(245,234,208,.02));
+  border:1px solid rgba(196,168,112,.18);border-radius:12px;
+  box-shadow:0 2px 0 rgba(0,0,0,.4),inset 0 1px 0 rgba(255,230,160,.04);
+  position:relative;overflow:hidden;
+}
+.doc-paper::before{
+  content:"";position:absolute;top:0;left:0;right:0;height:3px;
+  background:linear-gradient(90deg,var(--dock-deep),var(--dock),var(--oak),var(--dock-deep));
+  opacity:.6;
+}
+/* left margin line — printing press feel */
+.doc-paper::after{
+  content:"";position:absolute;top:0;left:44px;bottom:0;width:1px;
+  background:rgba(196,168,112,.08);
+}
+
+/* document header band */
+.doc-head{padding:16px 20px 14px 52px;border-bottom:1px solid rgba(196,168,112,.12);
+  display:flex;align-items:flex-start;gap:16px;position:relative;}
+.doc-head .doc-stamp{position:absolute;left:10px;top:14px;
+  font-family:"JetBrains Mono",monospace;font-size:7.5px;letter-spacing:.14em;color:var(--ink-faint);
+  text-transform:uppercase;writing-mode:vertical-lr;transform:rotate(180deg);line-height:1;}
+.doc-head-main{flex:1;min-width:0;}
+.doc-sup-name{font-family:"Fraunces",serif;font-variation-settings:"opsz" 96;font-weight:440;
+  font-size:28px;line-height:1.05;color:var(--ink);margin-bottom:4px;}
+.doc-sup-name em{font-style:italic;color:var(--dock);}
+.doc-sup-id{font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.12em;
+  color:var(--ink-mute);text-transform:uppercase;}
+.doc-head-meta{display:flex;flex-direction:column;gap:5px;align-items:flex-end;flex-shrink:0;}
+.doc-active-badge{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.1em;
+  text-transform:uppercase;padding:4px 10px;border-radius:4px;}
+.doc-active-badge.on{background:rgba(110,122,62,.2);color:var(--hop);border:1px solid rgba(110,122,62,.3);}
+.doc-active-badge.off{background:rgba(94,98,102,.18);color:var(--steel);border:1px solid rgba(94,98,102,.3);}
+.doc-parser-chip{display:flex;align-items:center;gap:5px;font-family:"JetBrains Mono",monospace;
+  font-size:9px;letter-spacing:.08em;color:var(--dock);background:rgba(200,134,58,.12);
+  border:1px solid rgba(200,134,58,.25);border-radius:4px;padding:3px 8px;}
+.doc-parser-chip .parser-dot{width:5px;height:5px;border-radius:50%;background:var(--dock);box-shadow:0 0 6px var(--dock);}
+.doc-no-parser{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.08em;
+  color:var(--ink-faint);padding:3px 8px;border:1px dashed var(--hairline-2);border-radius:4px;}
+
+/* meta grid */
+.doc-fields{display:grid;grid-template-columns:1fr 1fr;gap:0;border-bottom:1px solid rgba(196,168,112,.1);}
+.doc-field{padding:10px 20px 10px 52px;border-bottom:1px solid rgba(196,168,112,.06);}
+.doc-field:nth-child(odd){border-right:1px solid rgba(196,168,112,.06);}
+.doc-field-label{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.12em;
+  color:var(--ink-mute);text-transform:uppercase;margin-bottom:3px;}
+.doc-field-value{font-size:13px;color:var(--ink-soft);}
+.doc-field-value.mono{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.04em;}
+.pending-tag{display:inline-flex;align-items:center;gap:4px;
+  font-family:"JetBrains Mono",monospace;font-size:8.5px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--ember);border:1px dashed rgba(197,100,74,.4);border-radius:3px;padding:1px 6px;margin-left:6px;}
+
+/* explainer callout */
+.doc-explainer{margin:14px 20px 0 52px;padding:10px 12px;
+  border:1px solid rgba(196,168,112,.12);border-left:2px solid var(--dock);border-radius:0 6px 6px 0;
+  background:rgba(200,134,58,.04);}
+.doc-explainer p{font-size:11.5px;color:var(--ink-mute);line-height:1.55;}
+.doc-explainer strong{color:var(--ink-soft);}
+
+/* aliases strip */
+.aliases-strip{padding:10px 20px 10px 52px;border-bottom:1px solid rgba(196,168,112,.08);display:flex;align-items:center;flex-wrap:wrap;gap:5px;}
+.alias-label{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.1em;color:var(--ink-mute);text-transform:uppercase;margin-right:4px;}
+.alias-tag{font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.04em;color:var(--ink-soft);
+  background:rgba(200,134,58,.08);border:1px solid rgba(196,168,112,.15);border-radius:3px;padding:2px 8px;}
+
+/* MI catalogue — the manifest table */
+.catalogue-head{padding:12px 20px 8px 52px;display:flex;align-items:baseline;justify-content:space-between;}
+.catalogue-title{font-family:"Fraunces",serif;font-weight:440;font-size:16px;color:var(--ink);}
+.catalogue-sub{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.1em;
+  color:var(--dock);text-transform:uppercase;}
+.catalogue-callout{margin:0 20px 10px 52px;padding:7px 10px;
+  background:rgba(200,134,58,.06);border:1px solid rgba(200,134,58,.18);border-radius:6px;
+  font-size:11px;color:var(--ink-mute);line-height:1.5;}
+.catalogue-callout b{color:var(--dock);}
+
+/* manifest table */
+.manifest-table{width:100%;border-collapse:collapse;margin:0;}
+.manifest-table th{font-family:"JetBrains Mono",monospace;font-size:8.5px;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--ink-mute);text-align:left;
+  padding:6px 10px 6px 52px;border-bottom:1px solid rgba(196,168,112,.15);
+  background:rgba(0,0,0,.15);}
+.manifest-table th:not(:first-child){padding-left:12px;}
+.manifest-table td{padding:7px 10px 7px 52px;border-bottom:1px solid rgba(196,168,112,.06);
+  font-size:12px;color:var(--ink-soft);vertical-align:middle;}
+.manifest-table td:not(:first-child){padding-left:12px;}
+.manifest-table tr:hover td{background:rgba(200,134,58,.04);}
+.manifest-table .td-mi-id{font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.04em;
+  color:var(--ink-mute);min-width:180px;}
+.manifest-table .td-name{color:var(--ink);}
+.manifest-table .td-cat{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.06em;
+  color:var(--oak);}
+.manifest-table .td-del{font-family:"JetBrains Mono",monospace;font-size:10px;color:var(--dock);
+  text-align:right;min-width:40px;}
+.line-num{position:absolute;left:0;font-family:"JetBrains Mono",monospace;font-size:8px;
+  color:var(--ink-faint);width:40px;text-align:right;padding-right:8px;}
+.manifest-table td:first-child{position:relative;}
+
+.empty-catalogue{padding:16px 20px 16px 52px;font-size:12px;color:var(--ink-faint);
+  font-style:italic;border-bottom:1px solid rgba(196,168,112,.06);}
+
+/* hors périmètre warning */
+.hors-banner{margin:12px 20px 0 52px;padding:10px 12px;
+  border:1px solid rgba(197,100,74,.25);border-radius:6px;background:rgba(197,100,74,.06);
+  display:flex;align-items:center;gap:8px;}
+.hors-banner svg{flex:0 0 14px;color:var(--ember);}
+.hors-banner span{font-size:11.5px;color:var(--ember);}
+
+/* pending-migration fields section */
+.pending-section{padding:14px 20px 14px 52px;border-top:1px solid rgba(196,168,112,.1);}
+.pending-section-title{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.18em;
+  text-transform:uppercase;color:var(--ink-mute);margin-bottom:10px;
+  display:flex;align-items:center;gap:8px;}
+.pending-section-title::after{content:"";flex:1;height:1px;background:var(--hairline-2);}
+.new-field-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.new-field{padding:9px 12px;border:1px dashed rgba(196,168,112,.2);border-radius:8px;
+  background:rgba(0,0,0,.15);position:relative;}
+.new-field-badge{position:absolute;top:-1px;right:8px;
+  font-family:"JetBrains Mono",monospace;font-size:7.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ember);background:var(--bg);padding:0 4px;border:1px dashed rgba(197,100,74,.35);border-radius:3px;}
+.new-field-label{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.1em;
+  color:var(--ink-mute);text-transform:uppercase;margin-bottom:4px;}
+.new-field-value{font-size:12.5px;color:var(--ink-soft);}
+.new-field-value.pending{color:var(--ink-faint);font-style:italic;}
+.new-field-value.guess{color:var(--oak);}
+
+/* ── PROVENANCE BADGES ── */
+.doc-field{position:relative;}
+.prov-badge{position:absolute;top:8px;right:10px;
+  font-family:"JetBrains Mono",monospace;font-size:8px;letter-spacing:.06em;text-transform:uppercase;
+  padding:2px 6px;border-radius:3px;opacity:.5;transition:opacity .2s;pointer-events:none;}
+.doc-field:hover .prov-badge{opacity:1;}
+.prov-auto{background:rgba(200,134,58,.12);color:var(--dock);border:1px solid rgba(200,134,58,.2);}
+.prov-verified{background:rgba(110,122,62,.12);color:var(--hop);border:1px solid rgba(110,122,62,.2);}
+.prov-locked{background:rgba(101,147,184,.1);color:var(--bbt);border:1px solid rgba(101,147,184,.2);}
+.prov-gap{border:1px dashed rgba(197,100,74,.4)!important;background:rgba(197,100,74,.04)!important;}
+.prov-gap .doc-field-value{color:var(--ink-faint)!important;font-style:italic;}
+.prov-gap .prov-badge{color:var(--ember);background:rgba(197,100,74,.1);border:1px solid rgba(197,100,74,.3);opacity:.7;}
+
+/* inline micro-actions (confirm/modify) */
+.field-actions{display:flex;gap:5px;margin-top:5px;}
+.btn-micro{font-family:"JetBrains Mono",monospace;font-size:8px;letter-spacing:.06em;text-transform:uppercase;
+  padding:2px 7px;border-radius:3px;cursor:pointer;transition:.15s;border:none;background:none;}
+.btn-confirm-field{color:var(--hop);border:1px solid rgba(110,122,62,.3);background:rgba(110,122,62,.08);}
+.btn-confirm-field:hover{background:rgba(110,122,62,.18);}
+.btn-modify-field{color:var(--ink-mute);border:1px solid var(--hairline-2);background:rgba(0,0,0,.15);}
+.btn-modify-field:hover{color:var(--ink);border-color:var(--rack);}
+
+/* field inline editor */
+.field-edit-wrap{margin-top:4px;display:flex;gap:5px;align-items:center;}
+.field-edit-wrap input,.field-edit-wrap select{
+  background:rgba(0,0,0,.4);border:1px solid var(--dock-deep);border-radius:4px;
+  color:var(--ink);font-family:"JetBrains Mono",monospace;font-size:11px;padding:3px 7px;outline:none;
+  flex:1;}
+.field-edit-wrap input:focus,.field-edit-wrap select:focus{border-color:var(--dock);}
+.btn-save-field{color:var(--hop);border:1px solid rgba(110,122,62,.4);background:rgba(110,122,62,.12);
+  font-family:"JetBrains Mono",monospace;font-size:8px;letter-spacing:.06em;text-transform:uppercase;
+  padding:3px 8px;border-radius:3px;cursor:pointer;transition:.15s;}
+.btn-save-field:hover{background:rgba(110,122,62,.25);}
+
+/* completeness ring in doc-head */
+.completeness-ring{width:36px;height:36px;flex-shrink:0;}
+.ring-svg circle{transition:stroke-dashoffset .6s ease;}
+
+/* ── INTAKE BANNER ── */
+.intake-banner{margin:0 0 0 0;padding:10px 14px 10px 52px;
+  border-bottom:1px solid rgba(200,134,58,.2);background:rgba(200,134,58,.06);
+  display:flex;flex-direction:column;gap:6px;}
+.intake-banner .ib-row{display:flex;align-items:center;gap:8px;}
+.intake-banner .ib-icon{font-size:13px;}
+.intake-banner .ib-text{font-size:11.5px;color:var(--ink-soft);line-height:1.4;}
+.intake-banner .ib-text strong{color:var(--dock);}
+.intake-banner .ib-actions{display:flex;gap:6px;margin-top:2px;}
+.btn-view-invoice{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--bbt);border:1px solid rgba(101,147,184,.25);background:rgba(101,147,184,.08);
+  border-radius:4px;padding:4px 10px;cursor:pointer;transition:.15s;text-decoration:none;}
+.btn-view-invoice:hover{background:rgba(101,147,184,.16);}
+.btn-validate-now{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--hop);border:1px solid rgba(110,122,62,.3);background:rgba(110,122,62,.1);
+  border-radius:4px;padding:4px 10px;cursor:pointer;transition:.15s;}
+.btn-validate-now:hover{background:rgba(110,122,62,.22);}
+
+/* guided curation prev/next nav */
+.guided-nav{padding:8px 20px 8px 52px;border-bottom:1px solid var(--hairline-2);
+  display:flex;align-items:center;gap:8px;background:rgba(0,0,0,.2);}
+.guided-nav .gn-label{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.1em;
+  color:var(--dock);text-transform:uppercase;margin-right:auto;}
+.guided-nav .gn-pos{font-family:"JetBrains Mono",monospace;font-size:9px;color:var(--ink-mute);}
+.btn-nav{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--ink-mute);border:1px solid var(--hairline-2);background:rgba(0,0,0,.2);
+  border-radius:4px;padding:4px 10px;cursor:pointer;transition:.15s;}
+.btn-nav:hover:not(:disabled){color:var(--ink);border-color:var(--rack);}
+.btn-nav:disabled{opacity:.3;cursor:default;}
+
+/* ── DEDUP BANNER ── */
+.dedup-banner{margin:0 0 0 0;padding:10px 14px 10px 52px;
+  border-bottom:1px solid rgba(197,100,74,.3);background:rgba(197,100,74,.06);}
+.dedup-banner .db-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.dedup-banner .db-warning{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.06em;
+  color:var(--ember);text-transform:uppercase;margin-right:4px;}
+.dedup-banner .db-text{font-size:11.5px;color:var(--ink-soft);}
+.dedup-banner .db-actions{display:flex;gap:6px;margin-top:6px;}
+.btn-merge{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--ember);border:1px solid rgba(197,100,74,.35);background:rgba(197,100,74,.1);
+  border-radius:4px;padding:4px 10px;cursor:pointer;transition:.15s;}
+.btn-merge:hover{background:rgba(197,100,74,.2);}
+.btn-keep-sep{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--ink-mute);border:1px solid var(--hairline-2);background:none;
+  border-radius:4px;padding:4px 10px;cursor:pointer;transition:.15s;}
+.btn-keep-sep:hover{color:var(--ink);}
+
+/* ── GL FOOTPRINT SECTION ── */
+.gl-footprint{padding:12px 20px 14px 52px;border-bottom:1px solid rgba(196,168,112,.08);}
+.gl-footprint-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
+.gl-footprint-title{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--ink-mute);}
+.gl-footprint-calc{font-family:"JetBrains Mono",monospace;font-size:8px;letter-spacing:.04em;
+  color:var(--dock);background:rgba(200,134,58,.1);border:1px solid rgba(200,134,58,.2);
+  border-radius:3px;padding:2px 6px;}
+.gl-bar-row{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
+.gl-bar-label{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.04em;
+  color:var(--ink-mute);width:120px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.gl-bar-track{flex:1;height:6px;background:rgba(255,255,255,.05);border-radius:3px;overflow:hidden;}
+.gl-bar-fill{height:100%;border-radius:3px;transition:width .6s ease;}
+.gl-bar-pct{font-family:"JetBrains Mono",monospace;font-size:9px;color:var(--ink-mute);
+  width:34px;text-align:right;flex-shrink:0;}
+.gl-bar-modal{font-family:"JetBrains Mono",monospace;font-size:7.5px;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--hop);background:rgba(110,122,62,.1);border:1px solid rgba(110,122,62,.2);
+  border-radius:2px;padding:1px 4px;flex-shrink:0;}
+.gl-exclusion-note{margin-top:8px;font-size:10.5px;color:var(--ink-faint);line-height:1.5;
+  padding:6px 10px;border:1px solid rgba(196,168,112,.08);border-radius:4px;background:rgba(0,0,0,.1);}
+.gl-multi-callout{margin-top:8px;padding:8px 10px;
+  border:1px solid rgba(101,147,184,.15);border-left:2px solid var(--bbt);border-radius:0 5px 5px 0;
+  background:rgba(101,147,184,.04);}
+.gl-multi-callout p{font-size:10.5px;color:var(--ink-faint);line-height:1.5;}
+.gl-primary-row{display:flex;align-items:center;gap:6px;margin-top:6px;padding-top:6px;
+  border-top:1px solid rgba(196,168,112,.06);}
+.gl-primary-label{font-family:"JetBrains Mono",monospace;font-size:8.5px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--ink-mute);}
+.gl-primary-value{font-family:"JetBrains Mono",monospace;font-size:10px;color:var(--ink-soft);}
+
+/* ── LIST ENHANCEMENTS: health, sort, bulk ── */
+/* draft/unvalidated stripe */
+.sup-row.draft-row{border-left:3px solid var(--ember);padding-left:7px;}
+/* health badges in admin mode */
+.badge-draft{background:rgba(200,134,58,.15);color:var(--dock);}
+.badge-doublon{background:rgba(197,100,74,.15);color:var(--ember);}
+.badge-incomplet{background:rgba(94,98,102,.18);color:var(--steel-mid);}
+/* list header with sort/bulk controls */
+.list-header-controls{padding:7px 12px;display:flex;align-items:center;gap:8px;
+  border-bottom:1px solid var(--hairline-2);}
+.sort-select{background:rgba(0,0,0,.4);border:1px solid var(--hairline-2);border-radius:5px;
+  color:var(--ink-mute);font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.06em;
+  padding:4px 8px;outline:none;cursor:pointer;}
+.sort-select:hover{border-color:var(--rack);}
+.sort-select option{background:var(--bg-elev);}
+.btn-select-mode{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--ink-mute);border:1px solid var(--hairline-2);background:none;border-radius:4px;
+  padding:4px 8px;cursor:pointer;transition:.15s;}
+.btn-select-mode.on{color:var(--dock);border-color:var(--dock-deep);background:var(--dock-glow);}
+.btn-select-mode:hover{color:var(--ink);}
+/* bulk action bar */
+.bulk-action-bar{padding:6px 12px;display:flex;align-items:center;gap:8px;
+  background:rgba(200,134,58,.06);border-bottom:1px solid rgba(200,134,58,.15);}
+.bulk-action-bar.hidden{display:none;}
+.bulk-count{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.06em;
+  color:var(--ink-mute);text-transform:uppercase;margin-right:auto;}
+.btn-bulk{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--oak);border:1px solid rgba(160,122,72,.3);background:rgba(160,122,72,.08);
+  border-radius:4px;padding:4px 9px;cursor:pointer;transition:.15s;}
+.btn-bulk:hover{background:rgba(160,122,72,.18);}
+/* select checkbox in list rows */
+.sup-check{display:none;width:16px;height:16px;flex-shrink:0;cursor:pointer;
+  accent-color:var(--dock);}
+body.select-mode .sup-check{display:block;}
+body.select-mode .sup-row{cursor:default;}
+body.select-mode .sup-row .sup-avatar{cursor:pointer;}
+
+/* ── VALIDATE BUTTON at bottom of fiche ── */
+.validate-fiche-btn{margin:16px 20px 16px 52px;
+  display:flex;align-items:center;gap:10px;padding:12px 16px;
+  border:1px solid rgba(110,122,62,.3);border-radius:8px;background:rgba(110,122,62,.06);
+  cursor:pointer;transition:.15s;font-family:"JetBrains Mono",monospace;}
+.validate-fiche-btn:hover{background:rgba(110,122,62,.14);border-color:var(--hop);}
+.validate-fiche-btn .vfb-icon{font-size:14px;}
+.validate-fiche-btn .vfb-text{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--hop);}
+.validate-fiche-btn .vfb-sub{font-size:10px;color:var(--ink-mute);font-family:"DM Sans",sans-serif;font-weight:300;}
+
+/* change log section */
+.change-log{padding:12px 20px 12px 52px;border-top:1px solid rgba(196,168,112,.06);}
+.change-log-toggle{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--ink-mute);cursor:pointer;display:flex;align-items:center;gap:6px;}
+.change-log-toggle:hover{color:var(--ink);}
+.change-log-entries{margin-top:8px;display:none;}
+.change-log-entries.open{display:block;}
+.log-entry{font-family:"JetBrains Mono",monospace;font-size:10px;color:var(--ink-faint);
+  padding:3px 0;border-bottom:1px solid var(--hairline);line-height:1.4;}
+.log-entry span{color:var(--ink-mute);}
+
+/* manager proposal indicator */
+.pending-request-badge{font-family:"JetBrains Mono",monospace;font-size:8px;letter-spacing:.06em;
+  text-transform:uppercase;padding:2px 7px;border-radius:3px;
+  background:rgba(101,147,184,.12);color:var(--bbt);border:1px solid rgba(101,147,184,.25);}
+
+/* Code supp. inline edit */
+.td-code-supp{font-family:"JetBrains Mono",monospace;font-size:9px;color:var(--steel-mid);}
+.code-supp-val{cursor:text;padding:2px 5px;border-radius:3px;border:1px solid transparent;
+  transition:border-color .15s;display:inline-block;min-width:40px;}
+.code-supp-val:hover{border-color:var(--hairline-2);}
+.code-supp-input{background:rgba(0,0,0,.5);border:1px solid var(--dock-deep);border-radius:3px;
+  color:var(--ink);font-family:"JetBrains Mono",monospace;font-size:9px;
+  padding:2px 6px;outline:none;width:90px;}
+
+/* manager request mode */
+body[data-role="manager"] .btn-save-field{color:var(--bbt);border-color:rgba(101,147,184,.3);background:rgba(101,147,184,.08);}
+
+/* role gates */
+body[data-role="operateur"] .edit-action,
+body[data-role="operateur"] .admin-only,
+body[data-role="operateur"] .intake-banner,
+body[data-role="operateur"] .intake-flag-chip,
+body[data-role="operateur"] .dedup-banner,
+body[data-role="operateur"] .guided-nav,
+body[data-role="operateur"] .prov-badge,
+body[data-role="operateur"] .field-actions,
+body[data-role="operateur"] .validate-fiche-btn,
+body[data-role="operateur"] .list-header-controls,
+body[data-role="operateur"] .bulk-action-bar,
+body[data-role="operateur"] .pending-section,
+body[data-role="operateur"] .change-log{display:none!important;}
+body[data-role="manager"] .edit-action{pointer-events:auto;opacity:1;}
+
+/* confirm modal */
+.modal-overlay{display:none;position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.65);align-items:center;justify-content:center;}
+.modal-overlay.open{display:flex;}
+.modal-box{background:var(--bg-elev);border:1px solid var(--dock-deep);border-radius:14px;padding:26px 28px;min-width:340px;max-width:440px;box-shadow:0 40px 80px -20px rgba(0,0,0,.85);}
+.modal-box h4{font-family:"Fraunces",serif;font-weight:440;font-size:20px;color:var(--ink);margin-bottom:8px;}
+.modal-diff{background:rgba(0,0,0,.3);border:1px solid var(--hairline-2);border-radius:8px;padding:12px;margin:12px 0;font-family:"JetBrains Mono",monospace;font-size:11px;line-height:1.6;}
+.diff-old{color:var(--ember);text-decoration:line-through;}
+.diff-new{color:var(--hop);}
+.modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px;}
+.btn-cancel{background:none;border:1px solid var(--hairline-2);color:var(--ink-mute);font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.1em;text-transform:uppercase;padding:8px 14px;border-radius:7px;cursor:pointer;transition:.2s;}
+.btn-cancel:hover{border-color:var(--oak-deep);color:var(--ink);}
+.btn-confirm{background:var(--oak-deep);border:1px solid var(--oak);color:var(--ink);font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.1em;text-transform:uppercase;padding:8px 14px;border-radius:7px;cursor:pointer;transition:.2s;}
+.btn-confirm:hover{background:var(--oak);}
+
+/* SVG sketch styles */
+svg .ink{stroke:var(--line);fill:none;stroke-width:1.5;stroke-linejoin:round;stroke-linecap:round;}
+svg .ink-2{stroke:var(--line-soft);fill:none;stroke-width:.9;stroke-linejoin:round;stroke-linecap:round;}
+svg .fillx{fill:rgba(202,168,110,.04);}
+svg .band-dock{stroke:var(--dock);fill:none;stroke-width:1.6;stroke-linecap:round;}
+svg .dim{fill:var(--ink-mute);font-family:"JetBrains Mono",monospace;font-size:7px;letter-spacing:.04em;}
+svg .shade{stroke:var(--line-soft);fill:none;stroke-width:.65;stroke-linecap:butt;opacity:.35;}
+
+.draw .ink,.draw .ink-2,.draw .band-dock{
+  stroke-dasharray:3000;stroke-dashoffset:3000;animation:draw 2.4s cubic-bezier(.4,.1,.2,1) forwards;}
+@keyframes draw{to{stroke-dashoffset:0}}
+
+.reveal{opacity:0;transform:translateY(10px);animation:rise .5s cubic-bezier(.2,.7,.2,1) forwards;}
+@keyframes rise{to{opacity:1;transform:none}}
+
+.preview-flag{position:fixed;bottom:20px;left:54px;z-index:4;font-family:"JetBrains Mono",monospace;
+  font-size:9px;letter-spacing:.16em;color:var(--ink-faint);opacity:.7;text-transform:uppercase;}
+.titleblock{position:fixed;bottom:20px;right:54px;z-index:4;text-align:right;
+  font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.16em;color:var(--ink-faint);
+  line-height:1.7;text-transform:uppercase;border-right:2px solid var(--hairline-2);padding-right:12px;}
+
+/* category color map */
+.cat-malt{color:#c8a060!important}
+.cat-hops{color:var(--hop)!important}
+.cat-yeast{color:var(--bbt)!important}
+.cat-adj{color:#b0905a!important}
+.cat-pkg{color:var(--pkg-band)!important}
+.cat-clean{color:#60aab0!important}
+.cat-util{color:#8a9870!important}
+.cat-maint{color:var(--steel)!important}
+.cat-rd{color:#9880c8!important}
+.cat-trans{color:#7888a0!important}
+.cat-proc{color:#9ab060!important}
+</style>
+</head>
+<body class="home" data-role="admin">
+<div class="board"></div>
+<span class="mark tl"></span><span class="mark tr"></span><span class="mark bl"></span><span class="mark br"></span>
+
+<div class="chrome">
+  <div class="brandmark">La Nébuleuse · Le Zeppelin · <b>Salle des Machines</b></div>
+  <div class="family-switcher">
+    <button class="family-btn fam-sdm active"><span class="fam-dot"></span>Salle des Machines</button>
+    <button class="family-btn fam-cockpit"><span class="fam-dot"></span>Le Cockpit</button>
+  </div>
+  <div class="role-switcher" id="roleSeg">
+    <button class="role-btn" data-role="operateur"><span class="rpip"></span>Opérateur</button>
+    <button class="role-btn" data-role="manager"><span class="rpip"></span>Manager</button>
+    <button class="role-btn active" data-role="admin"><span class="rpip"></span>Admin</button>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<div class="workspace">
+
+  <!-- LEFT: Manifest Panel -->
+  <div class="manifest-panel">
+    <div class="wh-header">
+      <div class="wh-header-top">
+        <div>
+          <div class="wh-zone-label">04 · Réception &amp; fournisseurs</div>
+          <div class="wh-title">Zone de <em>Réception</em></div>
+        </div>
+      </div>
+      <!-- Warehouse sketch strip: forklift + pallet racks -->
+      <div class="wh-sketch-strip">
+        <svg width="100%" height="56" viewBox="0 0 420 56" xmlns="http://www.w3.org/2000/svg" class="draw">
+          <!-- Pallet rack 1 (left) -->
+          <line x1="18" y1="52" x2="18" y2="8" class="ink"/>
+          <line x1="78" y1="52" x2="78" y2="8" class="ink"/>
+          <line x1="14" y1="52" x2="82" y2="52" class="ink"/>
+          <!-- shelf levels -->
+          <line x1="16" y1="38" x2="80" y2="38" class="ink-2"/>
+          <line x1="16" y1="24" x2="80" y2="24" class="ink-2"/>
+          <line x1="16" y1="10" x2="80" y2="10" class="ink-2"/>
+          <!-- pallet on bottom shelf -->
+          <rect x="22" y="39" width="18" height="8" class="ink-2"/>
+          <rect x="22" y="40" width="18" height="2" class="shade"/>
+          <rect x="44" y="39" width="18" height="8" class="ink-2"/>
+          <rect x="44" y="40" width="18" height="2" class="shade"/>
+          <!-- pallet on mid shelf -->
+          <rect x="22" y="25" width="18" height="8" class="ink-2"/>
+          <rect x="44" y="25" width="18" height="8" class="ink-2"/>
+          <!-- label -->
+          <text x="30" y="56" class="dim" text-anchor="middle">RACKS</text>
+
+          <!-- Pallet rack 2 (mid) -->
+          <line x1="108" y1="52" x2="108" y2="8" class="ink"/>
+          <line x1="168" y1="52" x2="168" y2="8" class="ink"/>
+          <line x1="104" y1="52" x2="172" y2="52" class="ink"/>
+          <line x1="106" y1="38" x2="170" y2="38" class="ink-2"/>
+          <line x1="106" y1="24" x2="170" y2="24" class="ink-2"/>
+          <line x1="106" y1="10" x2="170" y2="10" class="ink-2"/>
+          <rect x="112" y="39" width="18" height="8" class="ink-2"/>
+          <rect x="134" y="39" width="18" height="8" class="ink-2"/>
+          <rect x="112" y="25" width="18" height="8" class="ink-2"/>
+          <rect x="134" y="25" width="18" height="8" class="ink-2"/>
+          <rect x="112" y="11" width="18" height="8" class="ink-2"/>
+          <text x="138" y="56" class="dim" text-anchor="middle">STOCK</text>
+
+          <!-- Forklift (right area) -->
+          <!-- body -->
+          <rect x="250" y="28" width="46" height="22" rx="3" class="ink"/>
+          <!-- mast -->
+          <line x1="252" y1="28" x2="252" y2="6" class="ink"/>
+          <line x1="262" y1="28" x2="262" y2="6" class="ink"/>
+          <!-- forks -->
+          <line x1="230" y1="44" x2="252" y2="44" class="ink"/>
+          <line x1="230" y1="47" x2="252" y2="47" class="ink"/>
+          <!-- fork tips -->
+          <line x1="230" y1="44" x2="228" y2="46" class="ink-2"/>
+          <line x1="230" y1="47" x2="228" y2="49" class="ink-2"/>
+          <!-- wheels -->
+          <circle cx="262" cy="51" r="4" class="ink"/>
+          <circle cx="288" cy="51" r="4" class="ink"/>
+          <!-- cabin detail -->
+          <line x1="285" y1="28" x2="296" y2="34" class="ink-2"/>
+          <line x1="296" y1="28" x2="296" y2="43" class="ink-2"/>
+          <!-- operator silhouette -->
+          <circle cx="278" cy="24" r="5" class="ink-2"/>
+          <line x1="278" y1="29" x2="278" y2="40" class="ink-2"/>
+          <!-- load on forks -->
+          <rect x="232" y="34" width="16" height="9" class="ink-2"/>
+          <line x1="232" y1="37" x2="248" y2="37" class="ink-2"/>
+          <!-- label -->
+          <text x="270" y="56" class="dim" text-anchor="middle">CHARIOT</text>
+
+          <!-- dock door (far right) -->
+          <rect x="340" y="10" width="60" height="42" class="ink-2"/>
+          <line x1="370" y1="10" x2="370" y2="52" class="ink-2"/>
+          <!-- door panels -->
+          <line x1="342" y1="18" x2="368" y2="18" class="shade"/>
+          <line x1="342" y1="26" x2="368" y2="26" class="shade"/>
+          <line x1="342" y1="34" x2="368" y2="34" class="shade"/>
+          <line x1="342" y1="42" x2="368" y2="42" class="shade"/>
+          <line x1="372" y1="18" x2="398" y2="18" class="shade"/>
+          <line x1="372" y1="26" x2="398" y2="26" class="shade"/>
+          <line x1="372" y1="34" x2="398" y2="34" class="shade"/>
+          <line x1="372" y1="42" x2="398" y2="42" class="shade"/>
+          <!-- ground line -->
+          <line x1="10" y1="52" x2="410" y2="52" class="ink-2"/>
+          <text x="368" y="56" class="dim" text-anchor="middle">QUAI</text>
+        </svg>
+      </div>
+    </div>
+
+    <!-- filter bar -->
+    <div class="filter-bar">
+      <div class="search-wrap">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="6.5" cy="6.5" r="5" stroke="currentColor" stroke-width="1.5"/>
+          <line x1="10.5" y1="10.5" x2="14" y2="14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+        <input type="text" id="search" placeholder="Rechercher un fournisseur…" autocomplete="off">
+      </div>
+    </div>
+    <div class="filter-bar" style="padding-top:0;gap:4px;flex-wrap:wrap;">
+      <button class="chip on" data-filter="all">Tous</button>
+      <button class="chip" data-filter="active">Actifs</button>
+      <button class="chip" data-filter="parser">Parseur</button>
+      <button class="chip" data-filter="catalogue">Catalogue MI</button>
+      <button class="chip" data-filter="hors">Hors périmètre</button>
+      <button class="chip admin-only intake-flag-chip" data-filter="draft" id="draftChip" style="display:none;">⚑ <span id="draftCount">0</span> à valider</button>
+      <button class="chip admin-only" data-filter="incomplet" style="display:none;">Incomplet</button>
+      <button class="chip admin-only" data-filter="doublon" style="display:none;">Doublon</button>
+    </div>
+
+    <!-- Admin: sort + select controls -->
+    <div class="list-header-controls admin-only">
+      <select class="sort-select" id="sortSelect">
+        <option value="alpha">Alphabétique</option>
+        <option value="volume">Volume CHF ↓</option>
+        <option value="incomplet">Incomplet d'abord</option>
+        <option value="doublon">Doublon d'abord</option>
+      </select>
+      <button class="btn-select-mode" id="selectModeBtn">Sélectionner</button>
+    </div>
+    <div class="bulk-action-bar hidden" id="bulkBar">
+      <span class="bulk-count" id="bulkCount">0 sélectionné</span>
+      <button class="btn-bulk" onclick="bulkAction('pays')">Confirmer le pays</button>
+      <button class="btn-bulk" onclick="bulkAction('hors')">Marquer hors périmètre</button>
+      <button class="btn-bulk" onclick="bulkAction('merge')">Fusionner</button>
+    </div>
+
+    <div class="sup-list" id="supList"></div>
+    <div class="list-count" id="listCount"></div>
+  </div>
+
+  <!-- RIGHT: Fiche area -->
+  <div class="fiche-area">
+    <!-- Empty state with big warehouse SVG -->
+    <div class="dock-empty" id="dockEmpty">
+      <svg width="220" height="140" viewBox="0 0 220 140" xmlns="http://www.w3.org/2000/svg" class="draw" style="opacity:.6">
+        <!-- Large pallet rack -->
+        <line x1="20" y1="130" x2="20" y2="10" class="ink"/>
+        <line x1="100" y1="130" x2="100" y2="10" class="ink"/>
+        <line x1="14" y1="130" x2="106" y2="130" class="ink"/>
+        <line x1="16" y1="100" x2="104" y2="100" class="ink"/>
+        <line x1="16" y1="70" x2="104" y2="70" class="ink"/>
+        <line x1="16" y1="40" x2="104" y2="40" class="ink"/>
+        <line x1="16" y1="12" x2="104" y2="12" class="ink"/>
+        <!-- pallets -->
+        <rect x="24" y="101" width="30" height="22" class="ink-2"/>
+        <rect x="59" y="101" width="30" height="22" class="ink-2"/>
+        <rect x="24" y="71" width="30" height="22" class="ink-2"/>
+        <rect x="59" y="71" width="30" height="22" class="ink-2"/>
+        <rect x="24" y="41" width="30" height="22" class="ink-2"/>
+        <!-- forklift -->
+        <rect x="130" y="80" width="60" height="34" rx="3" class="ink"/>
+        <line x1="132" y1="80" x2="132" y2="30" class="ink"/>
+        <line x1="146" y1="80" x2="146" y2="30" class="ink"/>
+        <line x1="108" y1="104" x2="132" y2="104" class="ink"/>
+        <line x1="108" y1="108" x2="132" y2="108" class="ink"/>
+        <circle cx="148" cy="117" r="7" class="ink"/>
+        <circle cx="178" cy="117" r="7" class="ink"/>
+        <!-- load -->
+        <rect x="110" y="90" width="20" height="13" class="ink-2"/>
+        <line x1="110" y1="96" x2="130" y2="96" class="ink-2"/>
+        <!-- ground -->
+        <line x1="10" y1="130" x2="210" y2="130" class="band-dock"/>
+        <text x="60" y="140" class="dim" text-anchor="middle" style="font-size:8px;letter-spacing:.2em">ZONE DE STOCKAGE</text>
+      </svg>
+      <div class="de-label">Quai de chargement</div>
+      <div class="de-sub">Sélectionner un fournisseur dans le manifeste pour ouvrir sa fiche.</div>
+    </div>
+
+    <!-- Supplier fiche -->
+    <div class="fiche" id="fiche"></div>
+  </div>
+
+</div><!-- /workspace -->
+
+<!-- Confirm modal (COGS-impacting changes) -->
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal-box">
+    <h4 id="modalTitle">Confirmer la modification</h4>
+    <div class="modal-diff" id="modalDiff"></div>
+    <div class="modal-actions">
+      <button class="btn-cancel" id="modalCancel">Annuler</button>
+      <button class="btn-confirm" id="modalConfirm">Appliquer</button>
+    </div>
+  </div>
+</div>
+
+<!-- Merge modal -->
+<div class="modal-overlay" id="mergeModal">
+  <div class="modal-box">
+    <h4 id="mergeTitle">Fusionner les fournisseurs</h4>
+    <div class="modal-diff" id="mergeDiff" style="line-height:1.8;"></div>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeMergeModal()">Annuler</button>
+      <button class="btn-confirm" id="mergeConfirmBtn" style="background:rgba(197,100,74,.3);border-color:var(--ember);">✓ Fusionner</button>
+    </div>
+  </div>
+</div>
+
+<!-- Validate fiche confirm modal -->
+<div class="modal-overlay" id="validateModal">
+  <div class="modal-box">
+    <h4>Valider la fiche</h4>
+    <div class="modal-diff" id="validateDiff">Cette fiche sera marquée comme validée.<br>Les champs confirmés seront verrouillés contre la prochaine ingest automatique.</div>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeValidateModal()">Annuler</button>
+      <button class="btn-confirm" id="validateConfirmBtn">✓ Valider</button>
+    </div>
+  </div>
+</div>
+
+<!-- Manager request modal -->
+<div class="modal-overlay" id="managerModal">
+  <div class="modal-box">
+    <h4>Proposer une modification</h4>
+    <div class="modal-diff" id="managerDiff"></div>
+    <p style="font-size:11px;color:var(--ink-mute);margin-top:8px;">Votre demande sera soumise à un administrateur pour validation.</p>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeManagerModal()">Annuler</button>
+      <button class="btn-confirm" id="managerConfirmBtn" style="background:rgba(101,147,184,.18);border-color:var(--bbt);">Envoyer la demande</button>
+    </div>
+  </div>
+</div>
+
+<div class="preview-flag">Mockup · valeurs réelles DB</div>
+<div class="titleblock">Fournisseurs · Salle des Machines<br>rév 2026-05-25 · standalone mockup</div>
+
+<script>
+
+const SUPPLIERS = [
+{"id":1,"supplier_id":"SUP_AB_MAURI_ITALY_SPA","name":"AB Mauri Italy S.p.A","gl_account":"4103","currency":"EUR","is_active":1,"parser_key":"ab-mauri","country_guess":"UE / étranger","gl_label":"Yeast","hors_perimetre":false,"aliases":["AB MAURI"],"catalogue":[],"notes":"1 invoice, 3969 CHF (ETRANGER)"},
+{"id":3,"supplier_id":"SUP_AGENCE_GADAN_HEUGAS","name":"Agence Gadan Heugas","gl_account":"4500","currency":"EUR","is_active":1,"parser_key":null,"country_guess":"UE / étranger","gl_label":"QA/QC","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"3 invoices, 125 CHF (ETRANGER)"},
+{"id":4,"supplier_id":"SUP_ALFA_LAVAL","name":"Alfa Laval","gl_account":"6100","currency":"CHF","is_active":1,"parser_key":"alfa-laval","country_guess":"Suisse (présumé)","gl_label":"Maintenance","hors_perimetre":false,"aliases":["Alfa Laval Mid Europe AG"],"catalogue":[{"mi_id":"MAINT_CENTRIFUGE_SPARES","name":"Centrifuge Spare Parts","category":"Maintenance","deliveries":3},{"mi_id":"MAINT_CENTRIFUGE_LABOR","name":"Centrifuge Maintenance Labour","category":"Maintenance","deliveries":1},{"mi_id":"MAINT_LUBE_OIL_ISO_VG220","name":"Lubricating Oil ISO VG 220","category":"Maintenance","deliveries":1},{"mi_id":"TRANS_FREIGHT_INBOUND","name":"Inbound Freight","category":"Transport","deliveries":1}],"notes":"Maintenance — pre-created via RQ cleanup 2026-04-27"},
+{"id":5,"supplier_id":"SUP_ALFALAVAL","name":"ALFALAVAL","gl_account":"6100","currency":"CHF","is_active":0,"parser_key":null,"country_guess":"Suisse (présumé)","gl_label":"Maintenance","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"Duplicate — to merge with Alfa Laval (id=4)"},
+{"id":6,"supplier_id":"SUP_ARDAGH_METAL_PACKAGING","name":"Ardagh Metal Packaging","gl_account":"4202","currency":"EUR","is_active":1,"parser_key":null,"country_guess":"UE / étranger","gl_label":"Cans/Packaging","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"2 invoices, 8287 CHF (ETRANGER)"},
+{"id":7,"supplier_id":"SUP_ASATEC_AG","name":"Asatec AG","gl_account":"4301","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Cleaning Chemicals","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"1 invoice, 114 CHF (SUISSE)"},
+{"id":8,"supplier_id":"SUP_B2F_SRL","name":"B2F Sàrl","gl_account":"4103","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Yeast","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"1 invoice, 249 CHF (SUISSE)"},
+{"id":9,"supplier_id":"SUP_BALDINGER_2","name":"Baldinger","gl_account":"4103","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Yeast","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"1 invoice, 1301 CHF (SUISSE)"},
+{"id":11,"supplier_id":"SUP_BARTHHAAS_GMBH_CO","name":"BarthHaas GmbH & Co","gl_account":"4102","currency":"EUR","is_active":1,"parser_key":"barthhaas","country_guess":"UE / étranger","gl_label":"Hops","hors_perimetre":false,"aliases":["BARTHAAS","BARTHASS","BarthHaas","BarthHaas GmbH & Co. KG","BARTHHASS"],"catalogue":[{"mi_id":"HOPS_M_INCOGNITO","name":"Mosaic Incognito","category":"Hops","deliveries":4},{"mi_id":"HOPS_C_INCOGNITO","name":"Citra Incognito","category":"Hops","deliveries":3},{"mi_id":"TRANS_FREIGHT_INBOUND","name":"Inbound Freight","category":"Transport","deliveries":4},{"mi_id":"HOPS_PRYSMA_MOSAIC","name":"Prysma Mosaic","category":"Hops","deliveries":1}],"notes":"3 invoices, 20428 CHF (ETRANGER)"},
+{"id":13,"supplier_id":"SUP_BAYWA","name":"BayWa","gl_account":"4102","currency":"EUR","is_active":1,"parser_key":"baywa","country_guess":"UE / étranger","gl_label":"Hops","hors_perimetre":false,"aliases":["BayWa AG"],"catalogue":[{"mi_id":"HOPS_CASCADE","name":"Cascade","category":"Hops","deliveries":2},{"mi_id":"HOPS_HERKULES","name":"Herkules","category":"Hops","deliveries":1},{"mi_id":"HOPS_HERSBRUCKER","name":"Hersbrucker","category":"Hops","deliveries":1},{"mi_id":"HOPS_HALLERTAUER_BLANC","name":"Hallertauer Blanc","category":"Hops","deliveries":1},{"mi_id":"TRANS_FREIGHT_INBOUND","name":"Inbound Freight","category":"Transport","deliveries":1}],"notes":"7 obs, last seen 2023-08"},
+{"id":15,"supplier_id":"SUP_BE_FRUITS_SARL","name":"BE Fruits SARL","gl_account":"4104","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Brewing Adjunct","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"1 invoice, 5000 CHF (SUISSE)"},
+{"id":16,"supplier_id":"SUP_BEAUNEPICES","name":"Beaun'Epices","gl_account":"4104","currency":"EUR","is_active":1,"parser_key":"beaun-epices","country_guess":"UE / étranger","gl_label":"Brewing Adjunct","hors_perimetre":false,"aliases":["BEAUN EPICE","Beaun Epices"],"catalogue":[{"mi_id":"ADJ_ORANGE_PEEL","name":"Orange Peel","category":"Brewing Adjunct","deliveries":2},{"mi_id":"TRANS_FREIGHT_INBOUND","name":"Inbound Freight","category":"Transport","deliveries":1}],"notes":"4 invoices, 7137 CHF (ETRANGER)"},
+{"id":18,"supplier_id":"SUP_BEST_MALZ","name":"Best Malz","gl_account":"4101","currency":"EUR","is_active":1,"parser_key":null,"country_guess":"UE / étranger","gl_label":"Malt","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"1 invoice, 4954 CHF (ETRANGER)"},
+{"id":19,"supplier_id":"SUP_BIRE_APPRO","name":"Bière Appro","gl_account":"4102","currency":"EUR","is_active":1,"parser_key":"biere-appro","country_guess":"UE / étranger","gl_label":"Hops","hors_perimetre":false,"aliases":["Bière-Appro","Bière-Appro (SASU)"],"catalogue":[{"mi_id":"HOPS_SIMCOE","name":"Simcoe","category":"Hops","deliveries":2},{"mi_id":"HOPS_AMARILLO","name":"Amarillo","category":"Hops","deliveries":2},{"mi_id":"TRANS_FREIGHT_INBOUND","name":"Inbound Freight","category":"Transport","deliveries":4},{"mi_id":"HOPS_MOSAIC","name":"Mosaic","category":"Hops","deliveries":1},{"mi_id":"HOPS_ELDORADO","name":"Eldorado","category":"Hops","deliveries":1},{"mi_id":"HOPS_NECTARON","name":"Nectaron","category":"Hops","deliveries":1},{"mi_id":"HOPS_NELSON_SAUVIN","name":"Nelson Sauvin","category":"Hops","deliveries":1},{"mi_id":"HOPS_GALAXY","name":"Galaxy","category":"Hops","deliveries":1},{"mi_id":"YEAST_SAFALE_BE134","name":"SafAle BE-134","category":"Yeast","deliveries":1},{"mi_id":"HOPS_KRUSH_CRYO","name":"Krush Cryo","category":"Hops","deliveries":1},{"mi_id":"YEAST_W3470","name":"SafLager W-34/70","category":"Yeast","deliveries":1},{"mi_id":"YEAST_US05","name":"SafAle US-05","category":"Yeast","deliveries":1},{"mi_id":"YEAST_FARMHOUSE","name":"Lallemand Farmhouse","category":"Yeast","deliveries":1},{"mi_id":"ADJ_ELDERFLOWER","name":"Elderflower","category":"Brewing Adjunct","deliveries":1},{"mi_id":"YEAST_LALLEMAND_VERDANT","name":"Lallemand Verdant","category":"Yeast","deliveries":1}],"notes":"14 invoices, 12807 CHF (ETRANGER)"},
+{"id":24,"supplier_id":"SUP_BIOFRUITS_SA","name":"Biofruits SA","gl_account":"4208","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Fruits","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"17 invoices, 46893 CHF (SUISSE)"},
+{"id":25,"supplier_id":"SUP_BIOMRIEUX_SUISSE_SA","name":"bioMérieux (Suisse) SA","gl_account":"4302","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Equipment/Misc","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"35 invoices, 48797 CHF (SUISSE)"},
+{"id":26,"supplier_id":"SUP_BIRKHUSER_GBC_AG","name":"Birkhäuser + GBC AG","gl_account":"4209","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Other Packaging","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"1 invoice, 3779 CHF (SUISSE)"},
+{"id":27,"supplier_id":"SUP_BRACKCH","name":"BRACK.CH","gl_account":"4302","currency":"CHF","is_active":1,"parser_key":"brack","country_guess":"Suisse","gl_label":"Equipment/Misc","hors_perimetre":false,"aliases":["Brack AG"],"catalogue":[{"mi_id":"LOG_LABEL_DYMO_SHIPPING","name":"Dymo Shipping Labels","category":"Logistics","deliveries":1}],"notes":"1 invoice, 191 CHF (SUISSE)"},
+{"id":28,"supplier_id":"SUP_BRASSERIE_ABBAYE","name":"Brasserie de l'Abbaye de St-Maurice","gl_account":"4101","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Malt","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"2 invoices, 358 CHF (SUISSE)"},
+{"id":34,"supplier_id":"SUP_BRAU_UND_RAUCHSHOP_2","name":"Brau- und Rauchshop","gl_account":"4101","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Malt","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"6 invoices, 1290 CHF (SUISSE)"},
+{"id":41,"supplier_id":"SUP_BRAUEREI_FALKEN_AG_2","name":"Brauerei Falken AG","gl_account":"4202","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Cans/Packaging","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"4 invoices (SUISSE)"},
+{"id":43,"supplier_id":"SUP_BREWWORKS","name":"Brewworks (Couka Poupa SARL)","gl_account":"4103","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Yeast","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"11 invoices, 10378 CHF (SUISSE)"},
+{"id":45,"supplier_id":"SUP_BRIEGER_2","name":"Brieger","gl_account":"4203","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Packaging","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"1 invoice, 1100 CHF (SUISSE)"},
+{"id":48,"supplier_id":"SUP_BUECHE_LAB","name":"Bueche Lab","gl_account":"4103","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Yeast","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"3 invoices, 1200 CHF (SUISSE)"},
+{"id":404,"supplier_id":"SUP_CAISSE_AVS_VAUD","name":"Caisse Cantonale Vaudoise AVS","gl_account":"5810","currency":"CHF","is_active":1,"parser_key":"avs","country_guess":"Suisse","gl_label":"Payroll","hors_perimetre":true,"aliases":[],"catalogue":[],"notes":"Cotisations sociales AVS. Hors périmètre COGS."},
+{"id":49,"supplier_id":"SUP_CALVATIS_CALGONIT_AG","name":"Calvatis Calgonit AG","gl_account":"4301","currency":"CHF","is_active":1,"parser_key":"calvatis","country_guess":"Suisse","gl_label":"Cleaning Chemicals","hors_perimetre":false,"aliases":["CALVATIS","Calvatis AG"],"catalogue":[{"mi_id":"CLEAN_RFS_BIDON","name":"RFS Bidon","category":"Cleaning Chemical","deliveries":4},{"mi_id":"CLEAN_TRULIT","name":"TruLit","category":"Cleaning Chemical","deliveries":4},{"mi_id":"CLEAN_RFS_FUT","name":"RFS Fût","category":"Cleaning Chemical","deliveries":3},{"mi_id":"CLEAN_CALGONIT_SP","name":"Calgonit SP","category":"Cleaning Chemical","deliveries":3},{"mi_id":"CLEAN_NF406","name":"NF406","category":"Cleaning Chemical","deliveries":1}],"notes":"58 invoices, 126956 CHF (SUISSE)"},
+{"id":51,"supplier_id":"SUP_CARBAGAS","name":"Carbagas","gl_account":"4300","currency":"CHF","is_active":1,"parser_key":"carbagas","country_guess":"Suisse","gl_label":"Process Chemicals","hors_perimetre":false,"aliases":["8344 - CARBAGAS","Carbagas AG","NC_432_-_CARBAGAS"],"catalogue":[{"mi_id":"TRANS_FREIGHT_INBOUND","name":"Inbound Freight","category":"Transport","deliveries":10},{"mi_id":"PROC_CO2_MODULE_OPT_RENTAL","name":"CO2 Module OPTIMAL Rental","category":"Process Chemical","deliveries":6},{"mi_id":"PROC_CO2_LIQUID_STORAGE_RENTAL","name":"CO2 Liquid Storage Rental","category":"Process Chemical","deliveries":6},{"mi_id":"SALE_CO2_PANIER_RENTAL","name":"CO2 Panier Rental","category":"Sales","deliveries":6},{"mi_id":"PROC_CO2_TANK_RENTAL","name":"CO2 Tank Rental","category":"Process Chemical","deliveries":4},{"mi_id":"PROC_ALIGAL2_LIQ","name":"Aligal 2 Liquide","category":"Process Chemical","deliveries":4},{"mi_id":"SALE_CO2_BOUT","name":"CO2 Bouteilles","category":"Sales","deliveries":2},{"mi_id":"PROC_ALIGAL2_ECO","name":"Aligal 2 Eco","category":"Process Chemical","deliveries":1}],"notes":"174 invoices, 208602 CHF (SUISSE)"},
+{"id":53,"supplier_id":"SUP_CEVA","name":"CEVA","gl_account":"4600","currency":"CHF","is_active":1,"parser_key":"ceva","country_guess":"Suisse","gl_label":"Transport / Freight","hors_perimetre":false,"aliases":["CEVA Ground Logistics CH S.A.","CEVA Ground Logistics Switzerland S.A."],"catalogue":[{"mi_id":"TAX_VAT_IMPORT_PASSTHROUGH","name":"Import VAT passthrough","category":"Tax","deliveries":1}],"notes":"4 obs, last seen 2025-11"},
+{"id":54,"supplier_id":"SUP_CHEVALLEY_SA","name":"Chevalley SA","gl_account":"4104","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Brewing Adjunct","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"5 invoices, 4360 CHF (SUISSE)"},
+{"id":55,"supplier_id":"SUP_DACHSER","name":"Dachser Expédition SA","gl_account":"4600","currency":"CHF","is_active":1,"parser_key":"dachser","country_guess":"Suisse","gl_label":"Transport / Freight","hors_perimetre":false,"aliases":["DASCHER"],"catalogue":[{"mi_id":"TRANS_FREIGHT_INBOUND","name":"Inbound Freight","category":"Transport","deliveries":1},{"mi_id":"TAX_VAT_IMPORT_PASSTHROUGH","name":"Import VAT passthrough","category":"Tax","deliveries":1}],"notes":"1 invoice, 154 CHF (SUISSE)"},
+{"id":56,"supplier_id":"SUP_DEBRUNNER_ACIFER","name":"Debrunner Acifer","gl_account":"4302","currency":"CHF","is_active":1,"parser_key":"debrunner","country_guess":"Suisse","gl_label":"Equipment/Misc","hors_perimetre":false,"aliases":["Debrunner Acifer AG"],"catalogue":[{"mi_id":"MAINT_DEBRUNNER_HARDWARE","name":"Hardware (chains, fasteners)","category":"Maintenance","deliveries":7},{"mi_id":"MAINT_DEBRUNNER_ADMIN","name":"Hardware admin","category":"Maintenance","deliveries":5},{"mi_id":"EPI_GLOVES_NITRILE","name":"EPI Gants nitrile","category":"Maintenance","deliveries":1}],"notes":"4 invoices, 308 CHF (SUISSE)"},
+{"id":57,"supplier_id":"SUP_DECATHLON","name":"Decathlon Switzerland SA","gl_account":"4302","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Equipment/Misc","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"1 invoice, 342 CHF (SUISSE)"},
+{"id":58,"supplier_id":"SUP_DHL","name":"DHL","gl_account":"4600","currency":"CHF","is_active":1,"parser_key":"dhl","country_guess":"Suisse","gl_label":"Transport / Freight","hors_perimetre":false,"aliases":["DHL Express"],"catalogue":[{"mi_id":"TRANS_FREIGHT_INBOUND","name":"Inbound Freight","category":"Transport","deliveries":5},{"mi_id":"TAX_VAT_IMPORT_PASSTHROUGH","name":"Import VAT passthrough","category":"Tax","deliveries":3}],"notes":"7 obs, last seen 2026-02"},
+{"id":59,"supplier_id":"SUP_DIGITEC_GALAXUS_SA","name":"Digitec Galaxus SA","gl_account":"4302","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Equipment/Misc","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"3 invoices, 173 CHF (SUISSE)"},
+{"id":60,"supplier_id":"SUP_DISTRICHIMIE_SA_2","name":"Districhimie SA","gl_account":"4104","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Brewing Adjunct","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"5 invoices, 889 CHF (SUISSE)"},
+{"id":64,"supplier_id":"SUP_DOHLER_GMBH","name":"Dohler GmbH","gl_account":"4104","currency":"EUR","is_active":1,"parser_key":null,"country_guess":"UE / étranger","gl_label":"Brewing Adjunct","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"1 invoice, 107 CHF (ETRANGER)"},
+{"id":66,"supplier_id":"SUP_DURST_MALZ","name":"Durst Malz","gl_account":"4101","currency":"EUR","is_active":1,"parser_key":"durst-malz","country_guess":"UE / étranger","gl_label":"Malt","hors_perimetre":false,"aliases":["DURST MALZ (1)","Durst Malz (Heinrich Durst Malzfabriken GmbH)"],"catalogue":[{"mi_id":"MALT_PILSENER","name":"Pilsener","category":"Malt","deliveries":3},{"mi_id":"MALT_MUNICH","name":"Munich","category":"Malt","deliveries":1},{"mi_id":"MALT_WHEAT","name":"Wheat","category":"Malt","deliveries":1}],"notes":"20 invoices, 219567 CHF (ETRANGER)"},
+{"id":67,"supplier_id":"SUP_ECSA_CHEMICALS_AG_2","name":"ECSA Chemicals AG","gl_account":"4104","currency":"CHF","is_active":1,"parser_key":"ecsa","country_guess":"Suisse","gl_label":"Brewing Adjunct","hors_perimetre":false,"aliases":["ECSA","ECSA Chemicals AG"],"catalogue":[{"mi_id":"PROC_PHOSPHORIQUE","name":"Phosphorique","category":"Process Chemical","deliveries":2},{"mi_id":"MIN_CASO4","name":"Calcium Sulphate","category":"Brewing Mineral","deliveries":1}],"notes":"7 invoices, 5995 CHF (SUISSE)"},
+{"id":70,"supplier_id":"SUP_ENDRESS","name":"ENDRESS","gl_account":"6100","currency":"CHF","is_active":1,"parser_key":"endress-hauser","country_guess":"Suisse (présumé)","gl_label":"Maintenance","hors_perimetre":false,"aliases":["Endress+Hauser (Schweiz) AG"],"catalogue":[{"mi_id":"MAINT_CONDUCTIVITY_SENSOR_CLD134","name":"Conductivity Sensor CLD134","category":"Maintenance","deliveries":1},{"mi_id":"TRANS_FREIGHT_INBOUND","name":"Inbound Freight","category":"Transport","deliveries":1}],"notes":"Auto-added. 1 obs"},
+{"id":71,"supplier_id":"SUP_ENTRANORD","name":"Entranord","gl_account":"4701","currency":"CHF","is_active":1,"parser_key":"entranord","country_guess":"Suisse","gl_label":"Waste / Recycling","hors_perimetre":false,"aliases":["Entranord Sàrl"],"catalogue":[{"mi_id":"UTIL_DRECH_ENTRANORD","name":"Drêches Removal","category":"Utilities","deliveries":14},{"mi_id":"TRANS_FUEL_INDEX_ENTRANORD","name":"Fuel Index Surcharge","category":"Utilities","deliveries":2}],"notes":"30 invoices, 17983 CHF (SUISSE)"},
+{"id":72,"supplier_id":"SUP_ENZENSBERGER_GMBH","name":"Enzensberger GmbH","gl_account":"4600","currency":"EUR","is_active":1,"parser_key":"stretchfolienprofi","country_guess":"UE / étranger","gl_label":"Transport / Freight","hors_perimetre":false,"aliases":["Enzensberger"],"catalogue":[],"notes":"3 invoices, 5487 CHF (ETRANGER)"},
+{"id":74,"supplier_id":"SUP_ETS_HORTICOLE","name":"ETS Horticole DESARZENS","gl_account":"4104","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Brewing Adjunct","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"3 invoices, 1320 CHF (SUISSE)"},
+{"id":75,"supplier_id":"SUP_EUROFINS","name":"Eurofins Scientific AG","gl_account":"4510","currency":"CHF","is_active":1,"parser_key":"eurofins","country_guess":"Suisse","gl_label":"R&D / Lab","hors_perimetre":false,"aliases":["EUROFINS"],"catalogue":[{"mi_id":"RND_EUROFINS_GLUTEN_ELISA","name":"Eurofins Gluten ELISA","category":"R&D","deliveries":7}],"notes":"2 invoices, 470 CHF (SUISSE)"},
+{"id":77,"supplier_id":"SUP_FEDEX","name":"FedEx","gl_account":"4600","currency":"CHF","is_active":1,"parser_key":"fedex","country_guess":"Suisse","gl_label":"Transport / Freight","hors_perimetre":false,"aliases":["FedEx Express","FedEx Express Swiss Post GmbH"],"catalogue":[{"mi_id":"TAX_VAT_IMPORT_PASSTHROUGH","name":"Import VAT passthrough","category":"Tax","deliveries":8},{"mi_id":"TRANS_FREIGHT_INBOUND","name":"Inbound Freight","category":"Transport","deliveries":4}],"notes":"8 obs, last seen 2026-03"},
+{"id":78,"supplier_id":"SUP_FOCUS_DISCOUNT_2","name":"Focus discount","gl_account":"6285","currency":"CHF","is_active":1,"parser_key":"focus-discount","country_guess":"Suisse","gl_label":"Packaging Consumables","hors_perimetre":false,"aliases":["Focus Discount AG"],"catalogue":[],"notes":"10 invoices, 4212 CHF (SUISSE)"},
+{"id":80,"supplier_id":"SUP_FOCUS_SHOP","name":"FOCUS SHOP","gl_account":"6285","currency":"CHF","is_active":0,"parser_key":null,"country_guess":"Suisse (présumé)","gl_label":"Packaging Consumables","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"Inactive. Duplicate of Focus discount."},
+{"id":403,"supplier_id":"SUP_FRAIKIN_SUISSE_SA","name":"Fraikin Suisse SA","gl_account":"6203","currency":"CHF","is_active":1,"parser_key":"fraikin","country_guess":"Suisse","gl_label":"Vehicle Leasing","hors_perimetre":true,"aliases":[],"catalogue":[],"notes":"Location véhicules. Hors périmètre COGS."},
+{"id":81,"supplier_id":"SUP_FRAMAX","name":"FRAMAX","gl_account":"6100","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse (présumé)","gl_label":"Maintenance","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"Auto-added. 1 obs"},
+{"id":82,"supplier_id":"SUP_FRUITEX_SA","name":"Fruitex SA","gl_account":"4104","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Brewing Adjunct","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"1 invoice, 966 CHF (SUISSE)"},
+{"id":83,"supplier_id":"SUP_FRUTONIC","name":"Frutonic","gl_account":"4104","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Brewing Adjunct","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"1 invoice, 180 CHF (SUISSE)"},
+{"id":84,"supplier_id":"SUP_FTC_GMBH","name":"FTC GmbH","gl_account":"4104","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Brewing Adjunct","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"1 invoice, 206 CHF (SUISSE)"},
+{"id":86,"supplier_id":"SUP_GARETH_LARKIN","name":"Gareth Larkin","gl_account":"4510","currency":"EUR","is_active":1,"parser_key":null,"country_guess":"UE / étranger","gl_label":"R&D / Lab","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"1 invoice, 1773 CHF (ETRANGER)"},
+{"id":87,"supplier_id":"SUP_GASTON_GROSS","name":"Gaston Gross & Fils SA","gl_account":"4302","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Equipment/Misc","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"1 invoice, 295 CHF (SUISSE)"},
+{"id":88,"supplier_id":"SUP_GEFCO","name":"GEFCO","gl_account":"4600","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse (présumé)","gl_label":"Transport / Freight","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"Auto-added. 1 obs"},
+{"id":89,"supplier_id":"SUP_GOMARO_SA","name":"Gomaro SA","gl_account":"4206","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Labels","hors_perimetre":false,"aliases":[],"catalogue":[{"mi_id":"PROD_LABEL_GOMARO","name":"Étiquettes imprimées (Gomaro)","category":"Matériel de production","deliveries":1},{"mi_id":"TRANS_FREIGHT_INBOUND","name":"Inbound Freight","category":"Transport","deliveries":1}],"notes":"5 invoices, 987 CHF (SUISSE)"},
+{"id":91,"supplier_id":"SUP_GOOD_BEER_SOLUTIONS_2","name":"Good Beer Solutions","gl_account":"4104","currency":"CHF","is_active":1,"parser_key":"good-beer","country_guess":"Suisse","gl_label":"Brewing Adjunct","hors_perimetre":false,"aliases":["7204 - 7205 - GOOD BEER","8540 - GOOD BEER","GOOD BEER"],"catalogue":[{"mi_id":"PROC_YEASTVIT","name":"Yeastvit","category":"Process Chemical","deliveries":4},{"mi_id":"YEAST_LALBREW_ABBAYE","name":"Lallemand Lalbrew Abbaye","category":"Yeast","deliveries":2},{"mi_id":"PROC_DEHAZE","name":"Dehaze","category":"Process Chemical","deliveries":2},{"mi_id":"PROC_IMOBUM","name":"Imobum","category":"Process Chemical","deliveries":1}],"notes":"8 invoices, 3336 CHF (SUISSE)"},
+{"id":93,"supplier_id":"SUP_GSCHWANDER","name":"Gschwander","gl_account":"4600","currency":"CHF","is_active":1,"parser_key":"gschwander","country_guess":"Suisse","gl_label":"Transport / Freight","hors_perimetre":false,"aliases":["Gschwander Logistik GmbH"],"catalogue":[{"mi_id":"TRANS_FREIGHT_INBOUND","name":"Inbound Freight","category":"Transport","deliveries":9},{"mi_id":"TAX_VAT_IMPORT_PASSTHROUGH","name":"Import VAT passthrough","category":"Tax","deliveries":3}],"notes":"8 obs, last seen 2026-03"},
+{"id":94,"supplier_id":"SUP_GTW","name":"GTW","gl_account":"4302","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Equipment/Misc","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"1 invoice, 25 CHF (SUISSE)"},
+{"id":95,"supplier_id":"SUP_HACKUARIUM","name":"Hackuarium","gl_account":"4510","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"R&D / Lab","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"1 invoice, 180 CHF (SUISSE)"},
+{"id":96,"supplier_id":"SUP_HALAG_SWITZERLAND","name":"Halag Switzerland","gl_account":"4301","currency":"CHF","is_active":1,"parser_key":"halag","country_guess":"Suisse","gl_label":"Cleaning Chemicals","hors_perimetre":false,"aliases":["HALAG","Halag Chemie AG"],"catalogue":[{"mi_id":"CLEAN_HALACID_MS","name":"Halacid MS","category":"Cleaning Chemical","deliveries":4},{"mi_id":"CLEAN_HALAPLUS_42","name":"Halaplus 42","category":"Cleaning Chemical","deliveries":1}],"notes":"9 invoices, 10676 CHF (SUISSE)"},
+{"id":97,"supplier_id":"SUP_HAUPTNER","name":"Hauptner","gl_account":"4302","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Equipment/Misc","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"1 invoice, 203 CHF (SUISSE)"},
+{"id":98,"supplier_id":"SUP_HOPFEN_UND_MEHR","name":"Hopfen und Mehr","gl_account":"4102","currency":"EUR","is_active":1,"parser_key":null,"country_guess":"UE / étranger","gl_label":"Hops","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"1 invoice, 408 CHF (ETRANGER)"},
+{"id":99,"supplier_id":"SUP_HOPFENSHOP_CH_2","name":"Hopfenshop.ch","gl_account":"4101","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Malt","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"2 invoices, 1242 CHF (SUISSE)"},
+{"id":101,"supplier_id":"SUP_HOPPY_PEOPLE_SA","name":"Hoppy People SA","gl_account":"4600","currency":"CHF","is_active":1,"parser_key":"hoppy-people","country_guess":"Suisse","gl_label":"Transport / Freight","hors_perimetre":false,"aliases":["HOPPY PEOPLE"],"catalogue":[{"mi_id":"HOPS_SIMCOE","name":"Simcoe","category":"Hops","deliveries":1},{"mi_id":"TRANS_FREIGHT_INBOUND","name":"Inbound Freight","category":"Transport","deliveries":2}],"notes":"4 invoices, 12353 CHF (SUISSE)"},
+{"id":103,"supplier_id":"SUP_HOTSAUCECH","name":"Hotsauce.ch","gl_account":"4104","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Brewing Adjunct","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"1 invoice, 40 CHF (SUISSE)"},
+{"id":104,"supplier_id":"SUP_IGN_QUALITATSHOPFEN","name":"IGN Qualitatshopfen","gl_account":"4102","currency":"EUR","is_active":1,"parser_key":"ign","country_guess":"UE / étranger","gl_label":"Hops","hors_perimetre":false,"aliases":["IGN","IGN Qualitätshopfen GmbH"],"catalogue":[{"mi_id":"HOPS_SPALTER_SELECT","name":"Spalter Select","category":"Hops","deliveries":4},{"mi_id":"HOPS_MOSAIC","name":"Mosaic","category":"Hops","deliveries":3},{"mi_id":"HOPS_SAAZER","name":"Saazer","category":"Hops","deliveries":2},{"mi_id":"HOPS_ELDORADO","name":"Eldorado","category":"Hops","deliveries":1},{"mi_id":"TRANS_FREIGHT_INBOUND","name":"Inbound Freight","category":"Transport","deliveries":2}],"notes":"4 invoices, 31964 CHF (ETRANGER)"},
+{"id":106,"supplier_id":"SUP_INSTALLATIONS_INOX","name":"Installations Inox et Constructions","gl_account":"6100","currency":"CHF","is_active":1,"parser_key":"installations-inox","country_guess":"Suisse","gl_label":"Maintenance","hors_perimetre":false,"aliases":["INSTALLATION INOX","Installations Inox et Constructions Sàrl"],"catalogue":[{"mi_id":"MAINT_INOX_FAB_LABOR","name":"Inox Fabrication Labour","category":"Maintenance","deliveries":5},{"mi_id":"MAINT_INOX_FAB_PARTS","name":"Inox Fabrication Parts","category":"Maintenance","deliveries":2}],"notes":"3 invoices, 2740 CHF (SUISSE)"},
+{"id":107,"supplier_id":"SUP_INTERFLON_AG","name":"Interflon AG","gl_account":"4302","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Equipment/Misc","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"1 invoice, 222 CHF (SUISSE)"},
+{"id":108,"supplier_id":"SUP_KIC_KRONES","name":"KIC Krones","gl_account":"4302","currency":"EUR","is_active":1,"parser_key":null,"country_guess":"UE / étranger","gl_label":"Equipment/Misc","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"3 invoices, 4407 CHF (ETRANGER)"},
+{"id":109,"supplier_id":"SUP_KLUBER_LUBRICATION","name":"Kluber Lubrication","gl_account":"4302","currency":"CHF","is_active":1,"parser_key":"kluber","country_guess":"Suisse","gl_label":"Equipment/Misc","hors_perimetre":false,"aliases":["KLÜBER","Klüber Lubrication AG","Klüber Lubrication AG (Schweiz)"],"catalogue":[{"mi_id":"MAINT_KLUEBER_UH1_14151","name":"Klübersynth UH1 food-grade grease","category":"Maintenance","deliveries":1},{"mi_id":"TRANS_FREIGHT_INBOUND","name":"Inbound Freight","category":"Transport","deliveries":1}],"notes":"1 invoice, 640 CHF (SUISSE)"},
+{"id":110,"supplier_id":"SUP_KUHNE_NAGEL","name":"KUHNE NAGEL","gl_account":"4600","currency":"CHF","is_active":1,"parser_key":"kuehne-nagel","country_guess":"Suisse (présumé)","gl_label":"Transport / Freight","hors_perimetre":false,"aliases":["Kuehne + Nagel AG"],"catalogue":[{"mi_id":"TRANS_FREIGHT_INBOUND","name":"Inbound Freight","category":"Transport","deliveries":1},{"mi_id":"TAX_VAT_IMPORT_PASSTHROUGH","name":"Import VAT passthrough","category":"Tax","deliveries":1}],"notes":"Auto-added. 1 obs"},
+{"id":111,"supplier_id":"SUP_LABOR_VERITAS","name":"Labor Veritas","gl_account":"4510","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"R&D / Lab","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"5 invoices, 1657 CHF (SUISSE)"},
+{"id":112,"supplier_id":"SUP_LANDI_GROSDEVAUD","name":"Landi Gros-de-Vaud","gl_account":"4101","currency":"CHF","is_active":1,"parser_key":"landi","country_guess":"Suisse","gl_label":"Malt","hors_perimetre":false,"aliases":["LANDI"],"catalogue":[{"mi_id":"MALT_OAT_FLAKES","name":"Oat Flakes","category":"Malt","deliveries":5}],"notes":"5 invoices, 1791 CHF (SUISSE)"},
+{"id":113,"supplier_id":"SUP_LANXESS","name":"Lanxess Deutschland GmbH","gl_account":"4600","currency":"EUR","is_active":1,"parser_key":"lanxess","country_guess":"UE / étranger","gl_label":"Transport / Freight","hors_perimetre":false,"aliases":["LANXESS"],"catalogue":[],"notes":"1 invoice, 2552 CHF (ETRANGER)"},
+{"id":401,"supplier_id":"SUP_LEHMANN_TRISTAN","name":"Lehmann Tristan","gl_account":"6100","currency":"CHF","is_active":1,"parser_key":"lehmann-tristan","country_guess":"Suisse (présumé)","gl_label":"Maintenance","hors_perimetre":false,"aliases":["LEHMANN TRISTAN"],"catalogue":[],"notes":"Maintenance provider"},
+{"id":115,"supplier_id":"SUP_LENZLINGER_ETIQUETTES_2","name":"Lenzlinger Etiquettes","gl_account":"4206","currency":"CHF","is_active":1,"parser_key":"lenzlinger","country_guess":"Suisse","gl_label":"Labels","hors_perimetre":false,"aliases":["LENZLINGER","P. Lenzlinger SA"],"catalogue":[{"mi_id":"PKG_LABEL_EPH4","name":"Label EPH4","category":"Packaging","deliveries":1},{"mi_id":"PKG_STICKER_ZEPC","name":"Sticker ZEPC","category":"Packaging","deliveries":1},{"mi_id":"PKG_STICKER_ALT","name":"Sticker ALT","category":"Packaging","deliveries":1},{"mi_id":"PKG_STICKER_DIB_DK","name":"Sticker DIB DK","category":"Packaging","deliveries":1},{"mi_id":"PKG_STICKER_STI","name":"Sticker STI","category":"Packaging","deliveries":1},{"mi_id":"PKG_LABEL_DGD","name":"Label DGD","category":"Packaging","deliveries":1},{"mi_id":"TRANS_FREIGHT_INBOUND","name":"Inbound Freight","category":"Transport","deliveries":1}],"notes":"49 invoices, 60246 CHF (SUISSE)"},
+{"id":118,"supplier_id":"SUP_LINDE","name":"Linde","gl_account":"6100","currency":"CHF","is_active":1,"parser_key":"linde","country_guess":"Suisse (présumé)","gl_label":"Maintenance","hors_perimetre":false,"aliases":["Linde Material Handling Schweiz AG"],"catalogue":[{"mi_id":"MAINT_FORKLIFT_LEASE","name":"Forklift Lease","category":"Maintenance","deliveries":1},{"mi_id":"IMMO_FORKLIFT_LINDE","name":"Forklift Linde (Immobilisation)","category":"Immobilisation","deliveries":1}],"notes":"Auto-added. 1 obs"},
+{"id":119,"supplier_id":"SUP_MATHIAS_BIERI","name":"Mathias Bieri","gl_account":"6100","currency":"CHF","is_active":1,"parser_key":"mathias-bieri","country_guess":"Suisse (présumé)","gl_label":"Maintenance","hors_perimetre":false,"aliases":["Mathias Bieri (private)"],"catalogue":[{"mi_id":"MAINT_CONDUCTIVITY_SENSOR_CLD134","name":"Conductivity Sensor CLD134","category":"Maintenance","deliveries":1}],"notes":"Technical/maintenance — pre-created via RQ cleanup"},
+{"id":120,"supplier_id":"SUP_MAX_FELCHLIN_AG","name":"Max Felchlin AG","gl_account":"4104","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Brewing Adjunct","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"1 invoice, 739 CHF (SUISSE)"},
+{"id":121,"supplier_id":"SUP_MAX_URECH_AG","name":"Max Urech AG","gl_account":"4302","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Equipment/Misc","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"1 invoice, 190 CHF (SUISSE)"},
+{"id":122,"supplier_id":"SUP_MEDEWO_AG","name":"MEDEWO AG","gl_account":"4205","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Liners","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"1 invoice, 419 CHF (SUISSE)"},
+{"id":123,"supplier_id":"SUP_MICH_WEYERMANN","name":"MICH. WEYERMANN","gl_account":"4103","currency":"EUR","is_active":1,"parser_key":null,"country_guess":"UE / étranger","gl_label":"Yeast","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"1 invoice, 358 CHF (ETRANGER)"},
+{"id":124,"supplier_id":"SUP_MIL_TEK","name":"Mil-tek","gl_account":"4600","currency":"CHF","is_active":1,"parser_key":"mil-tek","country_guess":"Suisse","gl_label":"Transport / Freight","hors_perimetre":false,"aliases":["mil tek","Mil-tek SA"],"catalogue":[{"mi_id":"WASTE_CERCLAGE_MILTEK","name":"Cerclage Mil-tek","category":"Utilities","deliveries":1},{"mi_id":"TRANS_FREIGHT_INBOUND","name":"Inbound Freight","category":"Transport","deliveries":1}],"notes":"Auto-added"},
+{"id":126,"supplier_id":"SUP_MILIAN_SA","name":"Milian SA","gl_account":"4500","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"QA/QC","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"3 invoices, 493 CHF (SUISSE)"},
+{"id":127,"supplier_id":"SUP_MUELLER","name":"Mueller","gl_account":"4600","currency":"EUR","is_active":1,"parser_key":"mueller","country_guess":"UE / étranger","gl_label":"Transport / Freight","hors_perimetre":false,"aliases":[],"catalogue":[{"mi_id":"PKG_LINER_5HL_DSSP_METAL","name":"Liner 5hl DSSP Metal","category":"Packaging","deliveries":1},{"mi_id":"TRANS_FREIGHT_INBOUND","name":"Inbound Freight","category":"Transport","deliveries":1},{"mi_id":"IMMO_INOX_FAB_CUVE","name":"Inox Fabrication Immobilisation","category":"Immobilisation","deliveries":1}],"notes":"1 invoice, 448 CHF"},
+{"id":129,"supplier_id":"SUP_NATHAN_EMBALLAGES_SARL","name":"Nathan Emballages SARL","gl_account":"4207","currency":"CHF","is_active":1,"parser_key":"nathan","country_guess":"Suisse","gl_label":"Cartons","hors_perimetre":false,"aliases":["7983 - NATHAN EMBALLAGE","NATHAN","NATHAN EMBALLAGE","Nathan Emballages"],"catalogue":[{"mi_id":"IMMO_CLICHE_NATHAN","name":"Cliche graphique Nathan","category":"Immobilisation","deliveries":9},{"mi_id":"PKG_BOX_24_BTL_BLANC","name":"Box 24 bottle blanc","category":"Packaging","deliveries":2},{"mi_id":"PKG_4PACK_BTL_EMB","name":"4-pack bottle EMB","category":"Packaging","deliveries":2},{"mi_id":"PKG_4PACK_BTL_SPY","name":"4-pack bottle SPY","category":"Packaging","deliveries":2},{"mi_id":"PKG_6X4_BTL_SPY_DK","name":"6x4 bottle SPY DK","category":"Packaging","deliveries":2},{"mi_id":"PKG_6X4_BTL_DIV","name":"6x4 bottle DIV","category":"Packaging","deliveries":2},{"mi_id":"PKG_6X4_BTL_EMB","name":"6x4 bottle EMB","category":"Packaging","deliveries":2},{"mi_id":"PKG_4PACK_BTL_DOA","name":"4-pack bottle DOA","category":"Packaging","deliveries":1},{"mi_id":"PKG_RENFORTS_PD_SGL","name":"Renforts packdec single","category":"Packaging","deliveries":1}],"notes":"12 invoices, 141058 CHF (SUISSE)"},
+{"id":132,"supplier_id":"SUP_NITTEL_HALLE_GMBH_2","name":"Nittel Halle GmbH","gl_account":"4205","currency":"EUR","is_active":1,"parser_key":"nittel","country_guess":"UE / étranger","gl_label":"Liners","hors_perimetre":false,"aliases":["NITTEL"],"catalogue":[{"mi_id":"PKG_LINER_10HL_NITTEL32","name":"Liner 10hl Nittel32","category":"Packaging","deliveries":1},{"mi_id":"PKG_LINER_10HL_NITTEL25","name":"Liner 10hl Nittel25","category":"Packaging","deliveries":1},{"mi_id":"TRANS_FREIGHT_INBOUND","name":"Inbound Freight","category":"Transport","deliveries":1}],"notes":"1 invoice, 1883 CHF (ETRANGER)"},
+{"id":134,"supplier_id":"SUP_NOMOQ_AG","name":"Nomoq AG","gl_account":"4202","currency":"EUR","is_active":1,"parser_key":"nomoq","country_guess":"UE / étranger","gl_label":"Cans/Packaging","hors_perimetre":false,"aliases":["NOMOQ"],"catalogue":[{"mi_id":"PKG_CAN_ZEP","name":"Can ZEP (printed)","category":"Packaging","deliveries":1},{"mi_id":"PKG_CAN_MOO","name":"Can MOO (printed)","category":"Packaging","deliveries":1},{"mi_id":"PKG_CAN_EMB","name":"Can EMB (printed)","category":"Packaging","deliveries":1},{"mi_id":"PKG_CAN_STI","name":"Can STI (printed)","category":"Packaging","deliveries":1},{"mi_id":"IMMO_CLICHE_NOMOQ","name":"Cliche graphique Nomoq","category":"Cliches","deliveries":1},{"mi_id":"PKG_PALETTE_NOMOQ","name":"Pallet one-way (Nomoq)","category":"Packaging","deliveries":1},{"mi_id":"TRANS_FREIGHT_INBOUND","name":"Inbound Freight","category":"Transport","deliveries":1}],"notes":"13 invoices, 116147 CHF"},
+{"id":136,"supplier_id":"SUP_OBI_CENTRE_DE_BRICOLAGE","name":"OBI - Centre de Bricolage","gl_account":"4302","currency":"CHF","is_active":1,"parser_key":"obi","country_guess":"Suisse","gl_label":"Equipment/Misc","hors_perimetre":false,"aliases":["OBI","OBI Suisse Sàrl"],"catalogue":[{"mi_id":"MAINT_HARDWARE_OBI","name":"DIY hardware (OBI)","category":"Maintenance","deliveries":8},{"mi_id":"EVENT_HARDWARE","name":"Event hardware","category":"Taproom","deliveries":6},{"mi_id":"QA_WATER_DEMIN","name":"Eau déminéralisée","category":"R&D","deliveries":1}],"notes":"12 invoices, 352 CHF (SUISSE)"},
+{"id":137,"supplier_id":"SUP_OFFICE_WORLD","name":"Office World","gl_account":"4206","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Labels","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"1 invoice, 44 CHF (SUISSE)"},
+{"id":138,"supplier_id":"SUP_ORTHO_KERN","name":"Ortho Kern","gl_account":"4302","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Equipment/Misc","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"1 invoice, 626 CHF (SUISSE)"},
+{"id":139,"supplier_id":"SUP_PELLICONI_ABRUZZO_SRL","name":"Pelliconi Abruzzo SRL","gl_account":"4200","currency":"EUR","is_active":1,"parser_key":"pelliconi","country_guess":"UE / étranger","gl_label":"Packaging (glass)","hors_perimetre":false,"aliases":["elliconi Italia S.p.A.","PELLICONI","Pelliconi Italia S.p.A."],"catalogue":[{"mi_id":"PKG_BOT_CROWN_CAPS","name":"Crown Caps","category":"Packaging","deliveries":1},{"mi_id":"TRANS_FREIGHT_INBOUND","name":"Inbound Freight","category":"Transport","deliveries":1}],"notes":"1 invoice, 8186 CHF (ETRANGER)"},
+{"id":141,"supplier_id":"SUP_PESA","name":"PESA","gl_account":"4600","currency":"CHF","is_active":1,"parser_key":"pesa","country_guess":"Suisse","gl_label":"Transport / Freight","hors_perimetre":false,"aliases":["PESA Port-Franc et Entrepots SA","Port-Franc & Entrepots de Lausanne-Chavornay S.A."],"catalogue":[{"mi_id":"TRANS_FREIGHT_OUTBOUND","name":"Outbound Freight","category":"Transport","deliveries":4},{"mi_id":"TAX_VAT_IMPORT_PASSTHROUGH","name":"Import VAT passthrough","category":"Tax","deliveries":4},{"mi_id":"TRANS_FREIGHT_INBOUND","name":"Inbound Freight","category":"Transport","deliveries":3}],"notes":"5 obs, last seen 2026-03"},
+{"id":142,"supplier_id":"SUP_RABEN","name":"RABEN","gl_account":"4600","currency":"CHF","is_active":1,"parser_key":"raben","country_guess":"Suisse (présumé)","gl_label":"Transport / Freight","hors_perimetre":false,"aliases":["Raben Sieber AG"],"catalogue":[{"mi_id":"TRANS_FREIGHT_INBOUND","name":"Inbound Freight","category":"Transport","deliveries":3},{"mi_id":"TAX_VAT_IMPORT_PASSTHROUGH","name":"Import VAT passthrough","category":"Tax","deliveries":1}],"notes":"Auto-added. 1 obs"},
+{"id":143,"supplier_id":"SUP_RAJAPACK","name":"Rajapack","gl_account":"6285","currency":"CHF","is_active":1,"parser_key":"rajapack","country_guess":"Suisse","gl_label":"Packaging Consumables","hors_perimetre":false,"aliases":["Rajapack / Viking","RAJAPAKC"],"catalogue":[{"mi_id":"LOG_PAPIER_BULLE","name":"Papier bulle","category":"Logistics","deliveries":5},{"mi_id":"LOG_SCOTCH_ESHOP","name":"Scotch Eshop","category":"Logistics","deliveries":3},{"mi_id":"LOG_CERCLAGE_RAJAPACK","name":"Cerclage Rajapack","category":"Logistics","deliveries":1},{"mi_id":"LOG_POCHETTE","name":"Pochette porte-documents","category":"Logistics","deliveries":1}],"notes":"4 invoices, 926 CHF (SUISSE)"},
+{"id":144,"supplier_id":"SUP_RETRIPA_CRISSIER_SA","name":"Retripa Crissier SA","gl_account":"4701","currency":"CHF","is_active":1,"parser_key":"retripa","country_guess":"Suisse","gl_label":"Waste / Recycling","hors_perimetre":false,"aliases":["RETRIPA","Retripa Crissier S.A."],"catalogue":[{"mi_id":"UTIL_RECYCLING_RETRIPA","name":"Recycling (Retripa)","category":"Utilities","deliveries":1}],"notes":"8 invoices, 308 CHF (SUISSE)"},
+{"id":402,"supplier_id":"SUP_RIEDER_PORTES_INDUSTRIELLES","name":"Rieder Portes Industrielles","gl_account":"6100","currency":"CHF","is_active":1,"parser_key":"rieder","country_guess":"Suisse (présumé)","gl_label":"Maintenance","hors_perimetre":false,"aliases":["RIEDER","Rieder Portes Industrielles"],"catalogue":[{"mi_id":"MAINT_RIEDER_LABOR","name":"Rieder — Maintenance Labor","category":"Maintenance","deliveries":1}],"notes":"Maintenance provider"},
+{"id":145,"supplier_id":"SUP_RIVIERA_PRODUCT_DECORATIONS","name":"Riviera Product Decorations BV","gl_account":"4202","currency":"EUR","is_active":1,"parser_key":null,"country_guess":"UE / étranger","gl_label":"Cans/Packaging","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"14 invoices, 119660 CHF (ETRANGER)"},
+{"id":146,"supplier_id":"SUP_ROTH","name":"ROTH","gl_account":"4302","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Equipment/Misc","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"1 invoice, 468 CHF (SUISSE)"},
+{"id":147,"supplier_id":"SUP_SAN","name":"SAN","gl_account":"6232","currency":"CHF","is_active":1,"parser_key":"san","country_guess":"Suisse (présumé)","gl_label":"Vehicle Tax","hors_perimetre":true,"aliases":[],"catalogue":[],"notes":"Service des Automobiles Vaud. Non-COGS."},
+{"id":148,"supplier_id":"SUP_SAS_ACE_FOILS","name":"SAS Ace Foils","gl_account":"4302","currency":"EUR","is_active":1,"parser_key":null,"country_guess":"UE / étranger","gl_label":"Equipment/Misc","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"6 invoices, 1382 CHF (ETRANGER)"},
+{"id":149,"supplier_id":"SUP_SUBERLIN_PFEIFFER_SA","name":"Säuberlin & Pfeiffer SA","gl_account":"4209","currency":"CHF","is_active":1,"parser_key":"sauberlin-pfeiffer","country_guess":"Suisse","gl_label":"Other Packaging","hors_perimetre":false,"aliases":["SAUBERLIN"],"catalogue":[{"mi_id":"PKG_KEG_COLLARS","name":"Keg Collars","category":"Packaging","deliveries":1}],"notes":"1 invoice, 2690 CHF (SUISSE)"},
+{"id":150,"supplier_id":"SUP_SAVIVA_AG","name":"Saviva AG","gl_account":"4104","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Brewing Adjunct","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"1 invoice, 2678 CHF (SUISSE)"},
+{"id":151,"supplier_id":"SUP_SCHFER_SHOP","name":"Schäfer Shop","gl_account":"4302","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Equipment/Misc","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"1 invoice, 715 CHF (SUISSE)"},
+{"id":152,"supplier_id":"SUP_SCHELLING_AG","name":"Schelling AG","gl_account":"4207","currency":"CHF","is_active":1,"parser_key":"schelling","country_guess":"Suisse","gl_label":"Cartons","hors_perimetre":false,"aliases":["SCHELLING"],"catalogue":[{"mi_id":"PKG_4PACK_BTL_EST","name":"4-pack bottle EST","category":"Packaging","deliveries":2},{"mi_id":"PKG_4PACK_BTL_ZEP","name":"4-pack bottle ZEP","category":"Packaging","deliveries":2},{"mi_id":"PKG_6X4_BTL_STI","name":"6x4 bottle STI","category":"Packaging","deliveries":1},{"mi_id":"PKG_6X4_BTL_SPY","name":"6x4 bottle SPY","category":"Packaging","deliveries":1},{"mi_id":"PKG_6X4_BTL_MOO","name":"6x4 bottle MOO","category":"Packaging","deliveries":1},{"mi_id":"PKG_PACK_DEC","name":"Pack Découverte","category":"Packaging","deliveries":1}],"notes":"14 invoices, 16864 CHF (SUISSE)"},
+{"id":154,"supplier_id":"SUP_SCHNEIDER","name":"Schneider","gl_account":"4600","currency":"CHF","is_active":1,"parser_key":"schneider","country_guess":"Suisse","gl_label":"Transport / Freight","hors_perimetre":false,"aliases":[],"catalogue":[{"mi_id":"TRANS_FREIGHT_INBOUND","name":"Inbound Freight","category":"Transport","deliveries":2},{"mi_id":"TAX_VAT_IMPORT_PASSTHROUGH","name":"Import VAT passthrough","category":"Tax","deliveries":2}],"notes":"5 obs, last seen 2026-01"},
+{"id":155,"supplier_id":"SUP_SHOPOFTHING","name":"ShopOfThing - Thingware","gl_account":"4500","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"QA/QC","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"1 invoice, 154 CHF (SUISSE)"},
+{"id":156,"supplier_id":"SUP_SICODIS","name":"Sicodis","gl_account":"4104","currency":"EUR","is_active":1,"parser_key":null,"country_guess":"UE / étranger","gl_label":"Brewing Adjunct","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"2 invoices, 5649 CHF (ETRANGER)"},
+{"id":157,"supplier_id":"SUP_SIE_SA","name":"SIE SA","gl_account":"4702","currency":"CHF","is_active":1,"parser_key":"sie","country_guess":"Suisse","gl_label":"Electricity","hors_perimetre":false,"aliases":["Intercommunal des Energies","SIE"],"catalogue":[{"mi_id":"UTIL_ELECTRICITY_SIE_PROD","name":"Electricité Production","category":"Utilities","deliveries":5},{"mi_id":"UTIL_ELECTRICITY_SIE_LOG","name":"Electricité Logistique","category":"Utilities","deliveries":2}],"notes":"92 invoices, 206426 CHF (SUISSE)"},
+{"id":158,"supplier_id":"SUP_SIGTECH_AG","name":"Sigtech AG","gl_account":"4302","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Equipment/Misc","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"4 invoices, 1401 CHF (SUISSE)"},
+{"id":159,"supplier_id":"SUP_SIL","name":"SIL","gl_account":"4700","currency":"CHF","is_active":1,"parser_key":"sil","country_guess":"Suisse","gl_label":"Utilities (water/gas)","hors_perimetre":false,"aliases":[],"catalogue":[{"mi_id":"UTIL_WATER_SEWAGE_SIL","name":"Eau & Assainissement","category":"Utilities","deliveries":10},{"mi_id":"UTIL_GAS_SIL","name":"Gaz","category":"Utilities","deliveries":5},{"mi_id":"UTIL_WATER_METER_SIL","name":"Compteur eau","category":"Utilities","deliveries":5}],"notes":"76 invoices, 342977 CHF (SUISSE)"},
+{"id":160,"supplier_id":"SUP_SOLUTECH","name":"SOLUTECH","gl_account":"6100","currency":"CHF","is_active":1,"parser_key":"solutech","country_guess":"Suisse (présumé)","gl_label":"Maintenance","hors_perimetre":false,"aliases":[],"catalogue":[{"mi_id":"MAINT_PARTS_SOLUTECH","name":"Solutech labeling-machine parts","category":"Maintenance","deliveries":4}],"notes":"Auto-added. 2 obs"},
+{"id":161,"supplier_id":"SUP_SOUFFLET_MALT","name":"Soufflet Malt","gl_account":"4101","currency":"EUR","is_active":1,"parser_key":null,"country_guess":"UE / étranger","gl_label":"Malt","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"Bootstrapped 2026-04-27"},
+{"id":162,"supplier_id":"SUP_SQTS","name":"SQTS","gl_account":"4510","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"R&D / Lab","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"9 invoices, 1995 CHF (SUISSE)"},
+{"id":163,"supplier_id":"SUP_STARLAB_AG","name":"Starlab AG","gl_account":"4302","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Equipment/Misc","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"1 invoice, 97 CHF (SUISSE)"},
+{"id":165,"supplier_id":"SUP_STARSHOPPING_SA","name":"Starshopping SA","gl_account":"6607","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Glassware/Merch","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"1 invoice, 2098 CHF (SUISSE)"},
+{"id":166,"supplier_id":"SUP_STEF_SUISSE_SA","name":"Stef Suisse SA","gl_account":"4300","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Process Chemicals","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"1 invoice, 1701 CHF (SUISSE)"},
+{"id":167,"supplier_id":"SUP_STICIMAGE","name":"Sticimage","gl_account":"4206","currency":"EUR","is_active":1,"parser_key":"sticimage","country_guess":"UE / étranger","gl_label":"Labels","hors_perimetre":false,"aliases":["Stic Image"],"catalogue":[{"mi_id":"PKG_LABEL_DIB_DK","name":"Label DIB DK","category":"Packaging","deliveries":2},{"mi_id":"PKG_LABEL_DIV","name":"Label DIV","category":"Packaging","deliveries":2},{"mi_id":"PKG_LABEL_DOA","name":"Label DOA","category":"Packaging","deliveries":2},{"mi_id":"PKG_LABEL_EMB","name":"Label EMB","category":"Packaging","deliveries":2},{"mi_id":"PKG_LABEL_MOO","name":"Label MOO","category":"Packaging","deliveries":2},{"mi_id":"PKG_LABEL_ZEP","name":"Label ZEP","category":"Packaging","deliveries":2},{"mi_id":"PKG_LABEL_SPY_DK","name":"Label SPY DK","category":"Packaging","deliveries":2},{"mi_id":"PKG_LABEL_ALT","name":"Label ALT","category":"Packaging","deliveries":2},{"mi_id":"PKG_LABEL_STI","name":"Label STI","category":"Packaging","deliveries":2},{"mi_id":"IMMO_PREPRESSE_STICIMAGE","name":"Prépresse (Sticimage)","category":"Immobilisation","deliveries":4},{"mi_id":"RABAIS_STICIMAGE","name":"Rabais Sticimage (crédit)","category":"Packaging","deliveries":2}],"notes":"10 invoices, 57362 CHF (ETRANGER)"},
+{"id":168,"supplier_id":"SUP_STRETCHFOLIENPROFI","name":"Stretchfolienprofi","gl_account":"4302","currency":"EUR","is_active":1,"parser_key":"stretchfolienprofi","country_guess":"UE / étranger","gl_label":"Equipment/Misc","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"1 invoice, 1448 CHF (ETRANGER)"},
+{"id":169,"supplier_id":"SUP_STRID_SA","name":"Strid SA","gl_account":"6607","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Glassware/Merch","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"47 invoices, 18338 CHF (SUISSE)"},
+{"id":170,"supplier_id":"SUP_SUBOENO","name":"Suboeno","gl_account":"4103","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Yeast","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"2 invoices, 309 CHF (SUISSE)"},
+{"id":173,"supplier_id":"SUP_SVTIASIT","name":"SVTIASIT","gl_account":"4302","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Equipment/Misc","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"1 invoice, 136 CHF (SUISSE)"},
+{"id":174,"supplier_id":"SUP_SWISS_FAIRTRADE_AG","name":"Swiss Fair-Trade AG","gl_account":"4104","currency":"CHF","is_active":1,"parser_key":"swiss-fair-trade","country_guess":"Suisse","gl_label":"Brewing Adjunct","hors_perimetre":false,"aliases":["SWISS FAIR TRADE"],"catalogue":[{"mi_id":"ADJ_PEACH_TEA","name":"Peach Tea","category":"Brewing Adjunct","deliveries":1}],"notes":"2 invoices, 2595 CHF (SUISSE)"},
+{"id":175,"supplier_id":"SUP_THIERRY_STIERLI","name":"Thierry Stierli","gl_account":"4302","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Equipment/Misc","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"1 invoice, 138 CHF (SUISSE)"},
+{"id":176,"supplier_id":"SUP_TINGUELY_RECYLAGE_SA","name":"Tinguely Recyclage SA","gl_account":"4701","currency":"CHF","is_active":1,"parser_key":"tinguely","country_guess":"Suisse","gl_label":"Waste / Recycling","hors_perimetre":false,"aliases":["TINGUELY","Tinguely Recyclage SA"],"catalogue":[{"mi_id":"UTIL_EXCH_INCIN_TINGUELY","name":"Incinerable container exchange","category":"Utilities","deliveries":9},{"mi_id":"UTIL_EXCH_VERRE_TINGUELY","name":"Glass container exchange","category":"Utilities","deliveries":9},{"mi_id":"UTIL_TRANSPORT_TINGUELY","name":"Transport + fuel surcharge","category":"Utilities","deliveries":9},{"mi_id":"UTIL_TRAITEMENT_CARTON_TINGUELY","name":"Cardboard treatment per ton","category":"Utilities","deliveries":9},{"mi_id":"UTIL_EXCH_CARTON_TINGUELY","name":"Cardboard container exchange","category":"Utilities","deliveries":7},{"mi_id":"UTIL_PRESSE_CARTON_TINGUELY","name":"Bale press rental — carton","category":"Utilities","deliveries":5},{"mi_id":"UTIL_PRESSE_PLASTIC_TINGUELY","name":"Bale press rental — plastic","category":"Utilities","deliveries":5},{"mi_id":"UTIL_TRAITEMENT_BOIS_TINGUELY","name":"Wood treatment per ton","category":"Utilities","deliveries":5}],"notes":"82 invoices, 32161 CHF (SUISSE)"},
+{"id":178,"supplier_id":"SUP_TRANSVOIRIE_SA","name":"Transvoirie SA","gl_account":"4701","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Waste / Recycling","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"16 invoices, 5440 CHF (SUISSE)"},
+{"id":179,"supplier_id":"SUP_UNIVERRE_PRO_UVA_SA_2","name":"Univerre Pro UVA SA","gl_account":"4200","currency":"EUR","is_active":1,"parser_key":"univerre","country_guess":"UE / étranger","gl_label":"Packaging (glass)","hors_perimetre":false,"aliases":["UNIVERRE"],"catalogue":[{"mi_id":"PKG_BOT_PIVO","name":"Bottle Pivo 33cl","category":"Packaging","deliveries":11},{"mi_id":"PKG_TEA_BOT_CH","name":"TEA — Taxe Elimination Anticipée","category":"Packaging","deliveries":11}],"notes":"33 invoices, 256779 CHF (SUISSE)"},
+{"id":182,"supplier_id":"SUP_URBAN_DRINKS_FACTORY_SA","name":"Urban Drinks Factory SA","gl_account":"4202","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Cans/Packaging","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"2 invoices, 6895 CHF (SUISSE)"},
+{"id":184,"supplier_id":"SUP_VDGLASS","name":"VDGLASS","gl_account":"6607","currency":"EUR","is_active":1,"parser_key":"vdglass","country_guess":"UE / étranger","gl_label":"Glassware/Merch","hors_perimetre":false,"aliases":["6925 - VDGlass","VD GLASS","VDGlass (Vetro Due s.r.l.)"],"catalogue":[],"notes":"8 invoices, 541 CHF (ETRANGER)"},
+{"id":187,"supplier_id":"SUP_VETROPACK_3","name":"Vetropack","gl_account":"4200","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Packaging (glass)","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"3 invoices, 26193 CHF (SUISSE)"},
+{"id":190,"supplier_id":"SUP_WAGNER_KUNSTSTOFFTECHNIK","name":"Wagner Kunststofftechnik GmbH","gl_account":"4600","currency":"EUR","is_active":1,"parser_key":"wagner","country_guess":"UE / étranger","gl_label":"Transport / Freight","hors_perimetre":false,"aliases":["WAGNER"],"catalogue":[],"notes":"2 invoices, 7293 CHF (ETRANGER)"},
+{"id":192,"supplier_id":"SUP_WENGER","name":"Wenger","gl_account":"4103","currency":"CHF","is_active":1,"parser_key":null,"country_guess":"Suisse","gl_label":"Yeast","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"2 invoices, 1638 CHF (SUISSE)"},
+{"id":194,"supplier_id":"SUP_WESTFALEN","name":"Westfalen Gas Schweiz GmbH","gl_account":"4500","currency":"CHF","is_active":1,"parser_key":"westfalen","country_guess":"Suisse","gl_label":"QA/QC","hors_perimetre":false,"aliases":["WESTFALEN"],"catalogue":[{"mi_id":"QA_N2_BOTTLE_WESTFALEN","name":"N2 bottle rental","category":"R&D","deliveries":8},{"mi_id":"QA_N2_GAS_WESTFALEN","name":"N2 gas / Azote","category":"R&D","deliveries":3},{"mi_id":"TRANS_FREIGHT_INBOUND","name":"Inbound Freight","category":"Transport","deliveries":2}],"notes":"1 invoice, 34 CHF (SUISSE)"},
+{"id":199,"supplier_id":"SUP_WHITE_LABS","name":"White Labs Copenhagen ApS","gl_account":"4103","currency":"EUR","is_active":1,"parser_key":null,"country_guess":"UE / étranger","gl_label":"Yeast","hors_perimetre":false,"aliases":[],"catalogue":[],"notes":"4 invoices, 5755 CHF (ETRANGER)"},
+{"id":200,"supplier_id":"SUP_ZAG","name":"ZAG","gl_account":"6100","currency":"CHF","is_active":1,"parser_key":"zag","country_guess":"Suisse (présumé)","gl_label":"Maintenance","hors_perimetre":false,"aliases":["ZAG Engineering"],"catalogue":[{"mi_id":"MAINT_ZAG_BOILER_SERVICE","name":"Annual boiler maintenance","category":"Maintenance","deliveries":9}],"notes":"Auto-added. 1 obs"}
+];
+
+// ── Provenance simulation: which fields are pinned/confirmed/auto/gap ──
+// Per supplier ID → field → state ('auto'|'verified:YYYY-MM-DD'|'locked'|'gap')
+// Most suppliers are in 'auto' state (ingest-only). A handful are 'locked' / 'verified'.
+const FIELD_PROVENANCE = {
+  // Calvatis — well-curated example
+  49: { gl_account:'locked', currency:'verified:2026-03-10', pays:'verified:2026-03-10', vat_regime:'locked' },
+  // Carbagas
+  51: { gl_account:'locked', currency:'verified:2026-02-14', pays:'verified:2026-02-14', vat_regime:'verified:2026-02-14' },
+  // Univerre — verified
+  179: { gl_account:'verified:2026-04-01', currency:'verified:2026-04-01', pays:'verified:2026-04-01' },
+  // SIE SA
+  157: { gl_account:'locked', currency:'verified:2026-01-20', pays:'verified:2026-01-20', vat_regime:'verified:2026-01-20' },
+  // Durst Malz
+  66: { gl_account:'verified:2026-03-15', currency:'verified:2026-03-15', pays:'auto' },
+  // Alfa Laval — confirmed
+  4: { gl_account:'verified:2026-04-27', currency:'verified:2026-04-27', pays:'auto', vat_regime:'gap' },
+};
+
+// Draft state simulation: most are draft, a handful are validated
+const VALIDATED_IDS = new Set([49,51,157,179,66,4,11,19,129,152,167,176]);
+// Duplicate pairs: [zombieId, canonicalId, similarity]
+const DEDUP_PAIRS = [
+  [5, 4, 94, 'Alfa Laval'],
+  [80, 78, 88, 'Focus discount'],
+];
+
+// Simulated GL footprint per supplier (multi-GL suppliers get multi-entry arrays)
+// Format: [gl, label, pct, isModal]
+const GL_FOOTPRINTS = {
+  19: [['4102','Hops',62,true],['4103','Yeast',24,false],['4104','Adjunct',8,false],['4600','Transport',6,false]],
+  51: [['4300','Process Chem',55,true],['4600','Transport',28,false],['4500','QA/QC',17,false]],
+  34: [['4101','Malt',78,true],['4102','Hops',12,false],['4104','Adjunct',6,false],['4302','Équipement',4,false]],
+  194: [['4500','QA/QC',72,true],['4600','Transport',28,false]],
+  157: [['4702','Électricité',100,true]],
+  49: [['4301','Produits nettoyants',100,true]],
+  179: [['4200','Verre / Packaging',92,true],['4600','Transport',8,false]],
+  66: [['4101','Malt',100,true]],
+  11: [['4102','Hops',88,true],['4600','Transport',12,false]],
+  129: [['4207','Cartons',71,true],['4209','Autre Packaging',29,false]],
+  176: [['4701','Déchets',100,true]],
+  4: [['6100','Maintenance',92,true],['4600','Transport',8,false]],
+};
+
+// Supplier code mapping (CODE_TO_MI per supplier) — simulated
+const SUPPLIER_CODES = {
+  11: {'HOPS_M_INCOGNITO':'14-031','HOPS_C_INCOGNITO':'14-029','TRANS_FREIGHT_INBOUND':'—'},
+  49: {'CLEAN_RFS_BIDON':'RFS-B28','CLEAN_RFS_FUT':'RFS-F290','CLEAN_TRULIT':'TL-20K'},
+  66: {'MALT_PILSENER':'D-PILS-25','MALT_MUNICH':'D-MUNI-25','MALT_WHEAT':'D-WEIW-25'},
+  179: {'PKG_BOT_PIVO':'VE-P33-120','PKG_TEA_BOT_CH':'TEA-VE-CH'},
+  129: {'PKG_BOX_24_BTL_BLANC':'NEB.01','PKG_4PACK_BTL_EMB':'NEB.04','PKG_RENFORTS_PD_SGL':'NEB.23'},
+};
+
+// Volume simulation for sorting (CHF value from notes)
+function parseVolume(s) {
+  const m = (s.notes || '').match(/([\d,]+)\s*CHF/);
+  return m ? parseInt(m[1].replace(/,/g,'')) : 0;
+}
+
+// ── GL label lookup ──
+const GL_LABELS = {
+  "4101":"Malt","4102":"Hops","4103":"Yeast","4104":"Brewing Adjunct",
+  "4200":"Packaging (verre)","4201":"Packaging","4202":"Cans/Packaging",
+  "4203":"Packaging","4205":"Liners","4206":"Labels","4207":"Cartons",
+  "4208":"Fruits","4209":"Other Packaging","4300":"Process Chemicals",
+  "4301":"Cleaning Chemicals","4302":"Equipment/Misc","4500":"QA/QC",
+  "4510":"R&D / Lab","4600":"Transport / Freight","4700":"Utilities (eau/gaz)",
+  "4701":"Waste / Recycling","4702":"Electricity","5810":"Payroll",
+  "6100":"Maintenance","6203":"Vehicle Leasing","6232":"Vehicle Tax",
+  "6285":"Packaging Consumables","6607":"Glassware / Merch",
+};
+
+// category CSS class
+function catClass(cat) {
+  if (!cat) return '';
+  const c = cat.toLowerCase();
+  if (c.includes('malt')) return 'cat-malt';
+  if (c.includes('hop')) return 'cat-hops';
+  if (c.includes('yeast')) return 'cat-yeast';
+  if (c.includes('adjunct') || c.includes('adj')) return 'cat-adj';
+  if (c.includes('packag') || c.includes('label') || c.includes('liner') || c.includes('carton')) return 'cat-pkg';
+  if (c.includes('clean')) return 'cat-clean';
+  if (c.includes('util') || c.includes('waste') || c.includes('recycl') || c.includes('electr')) return 'cat-util';
+  if (c.includes('maint')) return 'cat-maint';
+  if (c.includes('r&d') || c.includes('lab') || c.includes('qa')) return 'cat-rd';
+  if (c.includes('transport') || c.includes('freight') || c.includes('tax')) return 'cat-trans';
+  if (c.includes('process') || c.includes('chemical') || c.includes('proc')) return 'cat-proc';
+  return '';
+}
+
+// avatar initials
+function initials(name) {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  return name.slice(0, 2).toUpperCase();
+}
+
+// avatar background from name hash
+function avatarBg(name) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  const palettes = [
+    'rgba(158,176,96,.25)','rgba(101,147,184,.25)','rgba(160,122,72,.25)',
+    'rgba(122,95,160,.25)','rgba(197,100,74,.2)','rgba(200,134,58,.2)',
+  ];
+  return palettes[h % palettes.length];
+}
+
+// ── State ──
+let currentFilter = 'all';
+let currentSearch = '';
+let activeId = null;
+let currentSort = 'alpha';
+let selectMode = false;
+let selectedIds = new Set();
+let guidedQueue = []; // IDs of draft suppliers for guided navigation
+let guidedIdx = 0;
+// simulated per-session confirmed fields & validated state
+const sessionConfirmed = {}; // supplierId → Set of field names confirmed this session
+const sessionValidated = new Set(VALIDATED_IDS);
+const sessionLocked = {}; // supplierId → Set of field names locked this session
+const sessionFieldValues = {}; // supplierId → fieldName → newValue
+
+function isDraft(s) {
+  return !sessionValidated.has(s.id) && s.is_active;
+}
+function isDoublon(s) {
+  return DEDUP_PAIRS.some(([zombie]) => zombie === s.id);
+}
+function isIncomplet(s) {
+  return isDraft(s) || s.country_guess.includes('présumé') || !s.gl_account;
+}
+
+function getProvenance(suppId, field) {
+  // Session locks first
+  if (sessionLocked[suppId] && sessionLocked[suppId].has(field)) return 'locked';
+  if (sessionConfirmed[suppId] && sessionConfirmed[suppId].has(field)) return 'verified:2026-05-25';
+  const base = (FIELD_PROVENANCE[suppId] || {})[field];
+  if (base) return base;
+  // default: auto for ingest-created fields, gap for admin-only fields
+  const adminOnly = ['vat_regime','tva_uid','hors_perimetre'];
+  if (adminOnly.includes(field)) return 'gap';
+  return 'auto';
+}
+
+function filteredSuppliers() {
+  let result = SUPPLIERS.filter(s => {
+    if (currentFilter === 'active' && !s.is_active) return false;
+    if (currentFilter === 'parser' && !s.parser_key) return false;
+    if (currentFilter === 'catalogue' && s.catalogue.length === 0) return false;
+    if (currentFilter === 'hors' && !s.hors_perimetre) return false;
+    if (currentFilter === 'draft' && !isDraft(s)) return false;
+    if (currentFilter === 'incomplet' && !isIncomplet(s)) return false;
+    if (currentFilter === 'doublon' && !isDoublon(s)) return false;
+    if (currentSearch) {
+      const q = currentSearch.toLowerCase();
+      return s.name.toLowerCase().includes(q)
+        || s.supplier_id.toLowerCase().includes(q)
+        || (s.gl_account || '').includes(q)
+        || s.aliases.some(a => a.toLowerCase().includes(q))
+        || (s.parser_key || '').toLowerCase().includes(q);
+    }
+    return true;
+  });
+
+  // Sort
+  if (currentSort === 'volume') {
+    result = result.slice().sort((a,b) => parseVolume(b) - parseVolume(a));
+  } else if (currentSort === 'incomplet') {
+    result = result.slice().sort((a,b) => (isIncomplet(b)?1:0) - (isIncomplet(a)?1:0));
+  } else if (currentSort === 'doublon') {
+    result = result.slice().sort((a,b) => (isDoublon(b)?1:0) - (isDoublon(a)?1:0));
+  } else {
+    result = result.slice().sort((a,b) => a.name.localeCompare(b.name));
+  }
+  return result;
+}
+
+function getRole() { return document.body.dataset.role || 'admin'; }
+
+function renderList() {
+  const list = document.getElementById('supList');
+  const count = document.getElementById('listCount');
+  const items = filteredSuppliers();
+  const role = getRole();
+
+  // Update draft chip
+  const draftN = SUPPLIERS.filter(s => isDraft(s)).length;
+  const draftChip = document.getElementById('draftChip');
+  document.getElementById('draftCount').textContent = draftN;
+  draftChip.style.display = (role === 'admin' && draftN > 0) ? '' : 'none';
+  if (draftN > 0 && !draftChip._blinked) {
+    draftChip.style.animation = 'blink-chip 1.2s ease 2';
+    draftChip._blinked = true;
+  }
+  // Show/hide admin-only elements by role
+  document.querySelectorAll('.admin-only').forEach(el => {
+    if (!el.classList.contains('intake-flag-chip')) // handled above
+      el.style.display = role === 'admin' ? '' : 'none';
+  });
+
+  list.innerHTML = items.map(s => {
+    const bg = avatarBg(s.name);
+    const ini = initials(s.name);
+    const draft = isDraft(s);
+    const dup = isDoublon(s);
+    const incomplet = isIncomplet(s) && !draft && !dup;
+    const rowClass = [
+      !s.is_active ? 'inactive-sup' : '',
+      s.id === activeId ? 'active' : '',
+      (draft || dup) && role === 'admin' ? 'draft-row' : '',
+    ].filter(Boolean).join(' ');
+
+    const healthBadge = role === 'admin' ? (
+      dup ? '<span class="badge badge-doublon">⚠ doublon</span>' :
+      draft ? '<span class="badge badge-draft">à valider</span>' :
+      incomplet ? '<span class="badge badge-incomplet">○ incomplet</span>' : ''
+    ) : '';
+
+    const checkbox = `<input type="checkbox" class="sup-check" data-id="${s.id}" onchange="toggleSelect(${s.id}, this.checked)" onclick="event.stopPropagation()" ${selectedIds.has(s.id)?'checked':''}>`;
+
+    return `<div class="sup-row ${rowClass}" data-id="${s.id}" onclick="handleRowClick(${s.id}, event)">
+      ${checkbox}
+      <div class="sup-avatar" style="background:${avatarBg(s.name)}">${ini}</div>
+      <div class="sup-info">
+        <div class="sup-name">${escHtml(s.name)}</div>
+        <div class="sup-meta">
+          <span class="sup-id">${s.id}</span>
+          <span class="sup-gl">GL ${s.gl_account || '—'}</span>
+          <span class="sup-cur">${s.currency || '—'}</span>
+        </div>
+      </div>
+      <div class="sup-badges">
+        ${healthBadge}
+        ${s.hors_perimetre ? '<span class="badge badge-hors">hors</span>' : ''}
+        ${s.parser_key ? '<span class="badge badge-parser">parser</span>' : ''}
+        ${s.catalogue.length > 0 ? `<span class="badge badge-mi">${s.catalogue.length} MI</span>` : ''}
+        <span class="badge ${s.is_active ? 'badge-active' : 'badge-inactive'}">${s.is_active ? 'actif' : 'inactif'}</span>
+      </div>
+    </div>`;
+  }).join('');
+
+  const draftCount = SUPPLIERS.filter(s => isDraft(s)).length;
+  const dupCount = DEDUP_PAIRS.length;
+  count.textContent = `${items.length} / ${SUPPLIERS.length} · ${draftCount} à valider · ${dupCount} doublons`;
+}
+
+function handleRowClick(id, event) {
+  if (selectMode) return;
+  openFiche(id);
+}
+
+function toggleSelect(id, checked) {
+  if (checked) selectedIds.add(id); else selectedIds.delete(id);
+  updateBulkBar();
+}
+
+function updateBulkBar() {
+  const bar = document.getElementById('bulkBar');
+  const cnt = document.getElementById('bulkCount');
+  cnt.textContent = `${selectedIds.size} sélectionné${selectedIds.size !== 1 ? 's' : ''}`;
+  bar.classList.toggle('hidden', selectedIds.size === 0);
+}
+
+function bulkAction(type) {
+  if (type === 'pays') {
+    const names = [...selectedIds].map(id => SUPPLIERS.find(s=>s.id===id)?.name).filter(Boolean);
+    showToast(`Pays confirmé pour ${selectedIds.size} fournisseurs`);
+    selectedIds.clear();
+    renderList();
+  } else if (type === 'hors') {
+    showToast(`${selectedIds.size} fournisseurs marqués hors périmètre`);
+    selectedIds.clear();
+    renderList();
+  } else if (type === 'merge') {
+    if (selectedIds.size !== 2) { showToast('Sélectionner exactement 2 fournisseurs'); return; }
+    showToast('Fusionner: ouvrez la fiche du doublon pour lancer la fusion');
+  }
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function deriveVatGuess(s) {
+  if (s.hors_perimetre) return 'Hors périmètre';
+  if (s.gl_account === '4600' && (s.parser_key || '').match(/pesa|dachser|fedex|ceva|schneider|gschwander|raben|kuehne/)) return '0% import-VAT exclu (transitaire)';
+  if (s.currency === 'EUR') return '0% export UE (présumé)';
+  if (s.gl_account === '4102' && s.currency === 'CHF') return '2.6% réduit houblon CH (présumé)';
+  if (s.gl_account === '4101' && s.currency === 'CHF') return '2.6% réduit malt CH (présumé)';
+  if (s.currency === 'CHF') return '8.1% standard CH (présumé)';
+  return null;
+}
+
+// Render provenance badge
+function provBadge(suppId, field) {
+  const role = getRole();
+  if (role === 'operateur') return '';
+  const state = getProvenance(suppId, field);
+  if (state === 'locked') return '<span class="prov-badge prov-locked">🔒 verrouillé</span>';
+  if (state.startsWith('verified:')) {
+    const date = state.split(':')[1];
+    return `<span class="prov-badge prov-verified">✓ ${date}</span>`;
+  }
+  if (state === 'gap') return '<span class="prov-badge prov-gap">— à renseigner</span>';
+  return '<span class="prov-badge prov-auto">⟳ auto-ingest</span>';
+}
+
+// Render field actions (confirm/modify) for admin/manager
+function fieldActions(suppId, field, currentVal, isCogs) {
+  const role = getRole();
+  if (role === 'operateur') return '';
+  const state = getProvenance(suppId, field);
+  if (state === 'auto') {
+    const btnLabel = role === 'manager' ? '⟳ Proposer' : '✓ Confirmer';
+    return `<div class="field-actions edit-action">
+      <button class="btn-micro btn-confirm-field" onclick="confirmField(${suppId},'${field}','${escHtml(currentVal||'')}',${isCogs})">${btnLabel}</button>
+      <button class="btn-micro btn-modify-field" onclick="modifyField(${suppId},'${field}','${escHtml(currentVal||'')}',${isCogs})">✎ Modifier</button>
+    </div>`;
+  }
+  if (state.startsWith('verified:') || state === 'locked') {
+    return `<div class="field-actions edit-action">
+      <button class="btn-micro btn-modify-field" onclick="modifyField(${suppId},'${field}','${escHtml(currentVal||'')}',${isCogs})">✎ Modifier</button>
+    </div>`;
+  }
+  if (state === 'gap') {
+    return `<div class="field-actions edit-action">
+      <button class="btn-micro btn-modify-field" onclick="modifyField(${suppId},'${field}','',${isCogs})">+ Renseigner</button>
+    </div>`;
+  }
+  return '';
+}
+
+function confirmField(suppId, field, val, isCogs) {
+  const role = getRole();
+  if (role === 'manager') {
+    openManagerModal(field, val, val, suppId);
+    return;
+  }
+  if (!sessionConfirmed[suppId]) sessionConfirmed[suppId] = new Set();
+  sessionConfirmed[suppId].add(field);
+  showToast(`Champ «${field}» confirmé ✓`);
+  if (activeId === suppId) openFiche(suppId);
+}
+
+function modifyField(suppId, field, oldVal, isCogs) {
+  const role = getRole();
+  if (role === 'manager') {
+    openManagerModal(field, oldVal, '', suppId);
+    return;
+  }
+  const isCogsField = ['gl_account','currency','vat_regime','hors_perimetre'].includes(field);
+  // Show inline editor
+  const fieldEl = document.querySelector(`[data-field="${field}"][data-supp="${suppId}"]`);
+  if (!fieldEl) return;
+  const prev = sessionFieldValues[suppId]?.[field] || oldVal;
+  const inputHtml = `<div class="field-edit-wrap" id="editWrap_${field}">
+    <input type="text" id="editInput_${field}" value="${escHtml(prev)}" onkeydown="if(event.key==='Enter')saveField(${suppId},'${field}',${isCogsField}); if(event.key==='Escape')cancelEdit('${field}')">
+    <button class="btn-save-field" onclick="saveField(${suppId},'${field}',${isCogsField})">${role==='manager'?'Soumettre':'Enregistrer'} 🔒</button>
+  </div>`;
+  // Inject below the value
+  let wrap = document.getElementById(`editWrap_${field}`);
+  if (!wrap) {
+    fieldEl.insertAdjacentHTML('afterend', inputHtml);
+    setTimeout(() => document.getElementById(`editInput_${field}`)?.focus(), 50);
+  }
+}
+
+function cancelEdit(field) {
+  document.getElementById(`editWrap_${field}`)?.remove();
+}
+
+function saveField(suppId, field, isCogs) {
+  const input = document.getElementById(`editInput_${field}`);
+  if (!input) return;
+  const newVal = input.value.trim();
+  const role = getRole();
+
+  if (role === 'manager') {
+    const oldVal = input.getAttribute('data-old') || '';
+    openManagerModal(field, oldVal, newVal, suppId);
+    cancelEdit(field);
+    return;
+  }
+
+  if (isCogs) {
+    // Open confirm modal for COGS-impacting change
+    const old = (sessionFieldValues[suppId]?.[field]) || '';
+    openModal(`Modifier champ COGS : ${field}`,
+      `<div class="diff-old">${field}: ${old || '(ancien)'}</div><div class="diff-new">${field}: ${newVal}</div>`,
+      () => {
+        if (!sessionFieldValues[suppId]) sessionFieldValues[suppId] = {};
+        sessionFieldValues[suppId][field] = newVal;
+        if (!sessionLocked[suppId]) sessionLocked[suppId] = new Set();
+        sessionLocked[suppId].add(field);
+        showToast(`${field} modifié et verrouillé 🔒`);
+        cancelEdit(field);
+        openFiche(suppId);
+      });
+  } else {
+    if (!sessionFieldValues[suppId]) sessionFieldValues[suppId] = {};
+    sessionFieldValues[suppId][field] = newVal;
+    if (!sessionLocked[suppId]) sessionLocked[suppId] = new Set();
+    sessionLocked[suppId].add(field);
+    showToast(`${field} modifié et verrouillé 🔒`);
+    cancelEdit(field);
+    openFiche(suppId);
+  }
+}
+
+// GL footprint rendering
+function renderGlFootprint(s) {
+  const fp = GL_FOOTPRINTS[s.id];
+  if (!fp) {
+    // Single GL from the supplier record
+    const glLabel = GL_LABELS[s.gl_account] || s.gl_account || '—';
+    return `<div class="gl-footprint">
+      <div class="gl-footprint-head">
+        <span class="gl-footprint-title">Empreinte GL</span>
+        <span class="gl-footprint-calc">⟳ données historiques</span>
+      </div>
+      <div class="gl-bar-row">
+        <span class="gl-bar-label">${s.gl_account} · ${glLabel}</span>
+        <div class="gl-bar-track"><div class="gl-bar-fill" style="width:100%;background:var(--dock)"></div></div>
+        <span class="gl-bar-pct">100%</span>
+        <span class="gl-bar-modal">modal ✓</span>
+      </div>
+      <div class="gl-exclusion-note">Ligne unique · TVA récup. et fret non-transport exclus du calcul.</div>
+      ${provBadge(s.id,'gl_account')}
+      ${fieldActions(s.id,'gl_account',s.gl_account,true)}
+    </div>`;
+  }
+
+  const barColors = ['var(--dock)','var(--bbt)','var(--hop)','var(--ember)','var(--oak)','var(--steel-mid)'];
+  const barsHtml = fp.map(([gl, label, pct, isModal], i) => `
+    <div class="gl-bar-row">
+      <span class="gl-bar-label">${gl} · ${label}</span>
+      <div class="gl-bar-track"><div class="gl-bar-fill" style="width:${pct}%;background:${barColors[i%barColors.length]}"></div></div>
+      <span class="gl-bar-pct">${pct}%</span>
+      ${isModal ? '<span class="gl-bar-modal">modal ✓</span>' : ''}
+    </div>`).join('');
+
+  const multiCallout = fp.filter(([,,pct])=>pct>10).length > 2 ?
+    `<div class="gl-multi-callout"><p>ℹ Ce fournisseur livre sur plusieurs GLs (fournisseur multi-GL). L'ingestion assigne le GL à la ligne MI, pas au fournisseur. Le GL principal est utilisé comme valeur par défaut en cas de résolution impossible.</p></div>` : '';
+
+  const primaryGl = fp.find(([,,, m])=>m) || fp[0];
+  const glPrimaryVal = primaryGl ? `${primaryGl[0]} · ${primaryGl[1]}` : s.gl_account;
+
+  return `<div class="gl-footprint">
+    <div class="gl-footprint-head">
+      <span class="gl-footprint-title">Empreinte GL</span>
+      <span class="gl-footprint-calc">⟳ calculé · historique</span>
+    </div>
+    ${barsHtml}
+    <div class="gl-exclusion-note">TVA récup. import (passthrough) + fret inbound non-transport exclus. Empreinte basée sur lignes historiques — GL actuel MI peut différer.</div>
+    ${multiCallout}
+    <div class="gl-primary-row">
+      <span class="gl-primary-label">GL principal :</span>
+      <span class="gl-primary-value">${glPrimaryVal}</span>
+      ${fieldActions(s.id,'gl_account',primaryGl?primaryGl[0]:s.gl_account,true)}
+    </div>
+  </div>`;
+}
+
+// Completeness ring
+function completenessRing(s) {
+  const fields = ['name','gl_account','currency','country_guess','vat_regime'];
+  let filled = 0;
+  if (s.name) filled++;
+  if (s.gl_account) filled++;
+  if (s.currency) filled++;
+  if (s.country_guess && !s.country_guess.includes('présumé')) filled++;
+  if (deriveVatGuess(s)) filled++;
+  const pct = filled / fields.length;
+  const r = 14, circ = 2*Math.PI*r;
+  const offset = circ * (1 - pct);
+  const color = filled === fields.length ? 'var(--hop)' : 'var(--dock)';
+  return `<svg class="completeness-ring" viewBox="0 0 36 36">
+    <circle cx="18" cy="18" r="${r}" fill="none" stroke="rgba(255,255,255,.06)" stroke-width="4"/>
+    <circle cx="18" cy="18" r="${r}" fill="none" stroke="${color}" stroke-width="4"
+      stroke-dasharray="${circ}" stroke-dashoffset="${offset}"
+      transform="rotate(-90 18 18)" style="transition:stroke-dashoffset .5s"/>
+    <text x="18" y="22" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="9" fill="${color}">${filled}/${fields.length}</text>
+  </svg>`;
+}
+
+function openFiche(id) {
+  const s = SUPPLIERS.find(x => x.id === id);
+  if (!s) return;
+  activeId = id;
+
+  document.querySelectorAll('.sup-row').forEach(r => r.classList.toggle('active', parseInt(r.dataset.id) === id));
+  document.getElementById('dockEmpty').style.display = 'none';
+  const fiche = document.getElementById('fiche');
+  fiche.classList.add('visible');
+
+  const role = getRole();
+  const glLabel = GL_LABELS[s.gl_account] || s.gl_account || '—';
+  const paysProv = getProvenance(s.id, 'pays');
+  const countryVal = (sessionFieldValues[s.id]?.pays) || s.country_guess || '';
+  const countryDisplay = countryVal
+    ? (countryVal.includes('présumé') ? `${countryVal} <span class="pending-tag">à confirmer</span>` : countryVal)
+    : `— <span class="pending-tag">à renseigner</span>`;
+
+  const vatGuess = deriveVatGuess(s);
+  const vatProv = getProvenance(s.id, 'vat_regime');
+
+  // ── Intake banner (draft fiches) ──
+  const draft = isDraft(s);
+  const intakeBanner = (draft && role !== 'operateur') ? `
+    <div class="intake-banner">
+      <div class="ib-row">
+        <span class="ib-icon">⟳</span>
+        <div class="ib-text">
+          <strong>Nouveau fournisseur</strong> · créé par ingest le 2026-05-24 · Facture source : <strong>INV-2026-${String(s.id).padStart(4,'0')}</strong>
+          <br>Vérifier les champs auto-remplis et confirmer ou corriger avant de valider la fiche.
+        </div>
+      </div>
+      <div class="ib-actions">
+        <a class="btn-view-invoice" href="#" onclick="showToast('Ouverture de la facture source…');return false;">Voir la facture ↗</a>
+        <button class="btn-validate-now" onclick="openValidateModal(${s.id})">→ Valider la fiche</button>
+      </div>
+    </div>` : '';
+
+  // ── Guided nav (when in draft filter mode) ──
+  let guidedNavHtml = '';
+  if (currentFilter === 'draft' && guidedQueue.length > 0 && role !== 'operateur') {
+    guidedIdx = guidedQueue.indexOf(id);
+    const pos = guidedIdx + 1;
+    guidedNavHtml = `<div class="guided-nav">
+      <span class="gn-label">Passe de validation</span>
+      <span class="gn-pos">${pos} / ${guidedQueue.length}</span>
+      <button class="btn-nav" ${guidedIdx === 0 ? 'disabled' : ''} onclick="guidedNav(-1)">← Précédent</button>
+      <button class="btn-nav" ${guidedIdx >= guidedQueue.length-1 ? 'disabled' : ''} onclick="guidedNav(1)">Suivant →</button>
+      <button class="btn-nav" onclick="showToast('Fiche ignorée')">Passer</button>
+    </div>`;
+  }
+
+  // ── Dedup banner ──
+  const dupPair = DEDUP_PAIRS.find(([zombie]) => zombie === s.id);
+  const dedupBanner = dupPair && role !== 'operateur' ? `
+    <div class="dedup-banner">
+      <div class="db-row">
+        <span class="db-warning">⚠ doublon probable · ${dupPair[2]}%</span>
+        <span class="db-text">similaire à <strong>${dupPair[3]}</strong> (id=${dupPair[1]}) — même GL, même devise, ${s.id === 5 ? 'aucune' : 'peu de'} livraisons propres.</span>
+      </div>
+      <div class="db-actions">
+        <button class="btn-merge" onclick="openMergeModal(${s.id},${dupPair[1]},${dupPair[2]},'${escHtml(dupPair[3])}','${escHtml(s.name)}')">Fusionner → ${dupPair[3]}</button>
+        <button class="btn-keep-sep" onclick="showToast('Gardé séparé — supprime le doublon probable');this.parentElement.parentElement.parentElement.remove()">Garder séparé</button>
+      </div>
+    </div>` : '';
+
+  // ── Hors périmètre banner ──
+  const horsHtml = s.hors_perimetre
+    ? `<div class="hors-banner">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+          <circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/>
+          <line x1="8" y1="4" x2="8" y2="9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          <circle cx="8" cy="11.5" r=".8" fill="currentColor"/>
+        </svg>
+        <span>Fournisseur hors périmètre COGS — les documents sont auto-ignorés à l'ingestion.</span>
+       </div>`
+    : '';
+
+  // ── Parser display ──
+  const parserHtml = s.parser_key
+    ? `<div class="doc-parser-chip"><span class="parser-dot"></span>Parser : ${escHtml(s.parser_key)}</div>`
+    : `<div class="doc-no-parser">Pas de parseur dédié</div>`;
+
+  // ── Validated / not validated banner in doc-head ──
+  const validBadge = sessionValidated.has(s.id)
+    ? `<span class="doc-active-badge on" style="background:rgba(110,122,62,.15);border-color:rgba(110,122,62,.3)">✓ Validé</span>`
+    : (role !== 'operateur' ? `<span class="doc-active-badge" style="background:rgba(200,134,58,.12);color:var(--dock);border:1px solid rgba(200,134,58,.25)">⟳ À valider</span>` : '');
+
+  // ── Field with provenance helper ──
+  function docField(labelTxt, value, fieldKey, isCogs, extraClass='') {
+    const prov = getProvenance(s.id, fieldKey);
+    const isGap = prov === 'gap';
+    const gapClass = isGap ? ' prov-gap' : '';
+    const dispVal = (sessionFieldValues[s.id]?.[fieldKey]) || value;
+    return `<div class="doc-field${gapClass}" data-field="${fieldKey}" data-supp="${s.id}">
+      ${provBadge(s.id, fieldKey)}
+      <div class="doc-field-label">${labelTxt}</div>
+      <div class="doc-field-value${extraClass ? ' '+extraClass : ''}">${dispVal || (isGap ? '<em style="color:var(--ink-faint)">à renseigner</em>' : '—')}</div>
+      ${fieldActions(s.id, fieldKey, dispVal, isCogs)}
+    </div>`;
+  }
+
+  // ── Aliases strip ──
+  const aliasHtml = `<div class="aliases-strip">
+    <span class="alias-label">Variantes OCR :</span>
+    ${s.aliases.map(a => `<span class="alias-tag">${escHtml(a)}</span>`).join('')}
+    ${role === 'admin' ? `<button class="btn-micro btn-confirm-field edit-action" style="margin-left:4px" onclick="showToast('Alias ajouté')">+ Alias</button>` : ''}
+    ${s.aliases.length === 0 && role === 'operateur' ? '<span style="color:var(--ink-faint);font-size:11px;font-style:italic">Aucune variante</span>' : ''}
+  </div>`;
+
+  // ── Catalogue table with Code supp. column ──
+  const suppCodes = SUPPLIER_CODES[s.id] || {};
+  let catalogueHtml = '';
+  if (s.catalogue.length > 0) {
+    const rows = s.catalogue.map((mi, i) => {
+      const code = suppCodes[mi.mi_id] || '—';
+      const codeCell = role === 'admin'
+        ? `<span class="code-supp-val" title="Cliquer pour éditer" onclick="editCodeSupp(this,'${escHtml(mi.mi_id)}',${s.id})">${escHtml(code)}</span>`
+        : escHtml(code);
+      return `<tr>
+        <td class="td-mi-id">
+          <span class="line-num">${String(i+1).padStart(2,'0')}</span>
+          ${escHtml(mi.mi_id)}
+        </td>
+        <td class="td-name">${escHtml(mi.name)}</td>
+        <td class="td-cat ${catClass(mi.category)}">${escHtml(mi.category)}</td>
+        <td class="td-del">${mi.deliveries}×</td>
+        <td class="td-code-supp">${codeCell}</td>
+      </tr>`;
+    }).join('');
+    catalogueHtml = `<table class="manifest-table"><thead>
+      <tr>
+        <th>MI_ID</th><th>Désignation</th><th>Catégorie</th><th style="text-align:right">Lignes</th><th>Code supp.</th>
+      </tr></thead><tbody>${rows}</tbody></table>
+      ${role === 'admin' ? `<div style="padding:8px 20px 8px 52px"><button class="btn-micro btn-confirm-field edit-action" onclick="showToast('Recherche MI — fonctionnalité à câbler')">+ Ajouter MI</button></div>` : ''}`;
+  } else {
+    catalogueHtml = `<div class="empty-catalogue">Aucune livraison enregistrée — catalogue MI vide.</div>
+      ${role === 'admin' ? `<div style="padding:8px 20px 8px 52px"><button class="btn-micro btn-confirm-field edit-action" onclick="showToast('Recherche MI — fonctionnalité à câbler')">+ Ajouter MI</button></div>` : ''}`;
+  }
+
+  // ── GL footprint ──
+  const glFootprint = renderGlFootprint(s);
+
+  // ── Pending section (admin/manager only) ──
+  const pendingSection = `
+    <div class="pending-section">
+      <div class="pending-section-title">Champs à câbler <span class="pending-tag" style="margin-left:4px">nouveau champ</span></div>
+      <div class="new-field-grid">
+        <div class="new-field">
+          <div class="new-field-badge">à câbler</div>
+          <div class="new-field-label">Parser key</div>
+          <div class="new-field-value ${s.parser_key ? 'guess' : 'pending'}">${s.parser_key || 'à renseigner'}</div>
+        </div>
+        <div class="new-field">
+          <div class="new-field-badge">à câbler</div>
+          <div class="new-field-label">N° TVA / UID</div>
+          <div class="new-field-value pending">à renseigner</div>
+        </div>
+        <div class="new-field">
+          <div class="new-field-badge">à câbler</div>
+          <div class="new-field-label">Régime TVA</div>
+          <div class="new-field-value ${vatGuess ? 'guess' : 'pending'}">${vatGuess || 'à renseigner'}</div>
+        </div>
+        <div class="new-field">
+          <div class="new-field-badge">à câbler</div>
+          <div class="new-field-label">Hors périmètre COGS</div>
+          <div class="new-field-value ${s.hors_perimetre ? '' : 'pending'}" style="${s.hors_perimetre ? 'color:var(--ember)' : ''}">${s.hors_perimetre ? 'Oui — auto-skipped' : 'Non'}</div>
+        </div>
+      </div>
+    </div>`;
+
+  // ── Change log (admin) ──
+  const changeLogHtml = role !== 'operateur' ? `
+    <div class="change-log">
+      <div class="change-log-toggle" onclick="toggleChangeLog(this)">▼ Journal des modifications</div>
+      <div class="change-log-entries">
+        <div class="log-entry"><span>2026-05-24 · admin</span> · Fiche créée par ingest</div>
+        <div class="log-entry"><span>2026-05-24 · system</span> · Alias résolu depuis OCR</div>
+        <div class="log-entry"><span>2026-05-25 · admin</span> · Catalogue MI initialisé</div>
+      </div>
+    </div>` : '';
+
+  // ── Validate fiche button (admin only, on draft fiches) ──
+  const validateBtnHtml = draft && role === 'admin' ? `
+    <div class="validate-fiche-btn edit-action" onclick="openValidateModal(${s.id})">
+      <span class="vfb-icon">✓</span>
+      <div>
+        <div class="vfb-text">Valider la fiche complète</div>
+        <div class="vfb-sub">Marque cette fiche comme curatée et verrouille les champs confirmés</div>
+      </div>
+    </div>` : (sessionValidated.has(s.id) && role !== 'operateur' ? `
+    <div style="padding:8px 20px 8px 52px;font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.1em;color:var(--hop);text-transform:uppercase;opacity:.7;">
+      ✓ Fiche validée
+    </div>` : '');
+
+  fiche.innerHTML = `
+  <div class="doc-paper reveal">
+    ${intakeBanner}
+    ${dedupBanner}
+    ${guidedNavHtml}
+    ${horsHtml}
+    <div class="doc-head">
+      <div class="doc-stamp">BON FOURNISSEUR</div>
+      <div class="doc-head-main">
+        <div class="doc-sup-name">${escHtml(s.name)}</div>
+        <div class="doc-sup-id">${escHtml(s.supplier_id)}</div>
+      </div>
+      <div class="doc-head-meta">
+        <span class="doc-active-badge ${s.is_active ? 'on' : 'off'}">${s.is_active ? 'Actif' : 'Inactif'}</span>
+        ${validBadge}
+        ${completenessRing(s)}
+        ${parserHtml}
+      </div>
+    </div>
+
+    <div class="doc-fields">
+      ${docField('Compte GL', s.gl_account + ' · ' + glLabel, 'gl_account', true, 'mono')}
+      ${docField('Devise', s.currency || '', 'currency', true, 'mono')}
+      ${docField('Pays', countryDisplay, 'pays', false)}
+      <div class="doc-field">
+        <div class="doc-field-label">ID (ref_suppliers)</div>
+        <div class="doc-field-value mono">${s.id}</div>
+      </div>
+      ${s.notes ? `<div class="doc-field" style="grid-column:span 2">
+        <div class="doc-field-label">Notes</div>
+        <div class="doc-field-value" style="font-size:11.5px;color:var(--ink-mute)">${escHtml(s.notes)}</div>
+      </div>` : ''}
+    </div>
+
+    ${glFootprint}
+
+    <div class="doc-explainer">
+      <p><strong>Pourquoi cette fiche ?</strong> C'est la référence canonique que le module d'ingestion et les parseurs lisent à chaque réception de document pour résoudre l'identité du fournisseur, l'affectation comptable, le régime TVA et le catalogue MI — la résolution est déterministe, jamais devinée.</p>
+    </div>
+
+    ${aliasHtml}
+
+    <div class="catalogue-head">
+      <div class="catalogue-title">Catalogue MI</div>
+      <div class="catalogue-sub">${s.catalogue.length} article${s.catalogue.length !== 1 ? 's' : ''} · shortlist parseur</div>
+    </div>
+    ${s.catalogue.length > 0 ? `<div class="catalogue-callout">
+      <b>Liste de résolution parseur.</b> Le parseur OCR résout les lignes de facture <em>contre cette liste</em>, pas contre l'intégralité de l'univers MI. <b>Code supp.</b> = code article fournisseur → MI_ID (CODE_TO_MI).
+    </div>` : ''}
+    ${catalogueHtml}
+
+    ${pendingSection}
+    ${changeLogHtml}
+    ${validateBtnHtml}
+  </div>`;
+}
+
+// Inline code supp. editor
+function editCodeSupp(el, miId, suppId) {
+  if (el.querySelector('input')) return;
+  const current = el.textContent.trim();
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = current === '—' ? '' : current;
+  input.className = 'code-supp-input';
+  input.onblur = () => { el.textContent = input.value || '—'; };
+  input.onkeydown = (e) => {
+    if (e.key === 'Enter') { showToast(`Code ${miId} → ${input.value} enregistré 🔒`); el.textContent = input.value || '—'; }
+    if (e.key === 'Escape') { el.textContent = current; }
+  };
+  el.innerHTML = '';
+  el.appendChild(input);
+  input.focus();
+}
+
+// Change log toggle
+function toggleChangeLog(el) {
+  const entries = el.nextElementSibling;
+  entries.classList.toggle('open');
+  el.textContent = entries.classList.contains('open') ? '▲ Journal des modifications' : '▼ Journal des modifications';
+}
+
+// Guided navigation
+function guidedNav(dir) {
+  guidedIdx = Math.max(0, Math.min(guidedQueue.length - 1, guidedIdx + dir));
+  openFiche(guidedQueue[guidedIdx]);
+}
+
+// Merge modal
+function openMergeModal(zombieId, canonId, pct, canonName, zombieName) {
+  const zombie = SUPPLIERS.find(s => s.id === zombieId);
+  const dels = zombie?.catalogue.length || 0;
+  document.getElementById('mergeTitle').textContent = `Fusionner les fournisseurs`;
+  document.getElementById('mergeDiff').innerHTML =
+    `<strong>FUSIONNER</strong> "${zombieName}" → "${canonName}"<br><br>` +
+    `<span style="color:var(--hop)">→ ${dels} lignes inv_deliveries migrées vers id=${canonId}</span><br>` +
+    `<span style="color:var(--hop)">→ "${zombieName}" ajouté comme alias sur id=${canonId}</span><br>` +
+    `<span style="color:var(--ember)">→ id=${zombieId} désactivé (is_active=0, merged_into_id=${canonId})</span>`;
+  const btn = document.getElementById('mergeConfirmBtn');
+  btn.onclick = () => {
+    showToast(`${zombieName} fusionné → ${canonName}. Alias ajouté.`);
+    closeMergeModal();
+    openFiche(canonId);
+  };
+  document.getElementById('mergeModal').classList.add('open');
+}
+function closeMergeModal() { document.getElementById('mergeModal').classList.remove('open'); }
+
+// Validate modal
+function openValidateModal(suppId) {
+  const s = SUPPLIERS.find(x=>x.id===suppId);
+  document.getElementById('validateDiff').innerHTML =
+    `Cette fiche <strong>${escHtml(s?.name||'')}</strong> sera marquée comme validée.<br>` +
+    `Les champs confirmés seront verrouillés contre la prochaine ingest automatique.<br><br>` +
+    `<span style="color:var(--hop)">✓ confirmed_by_admin_at ← 2026-05-25</span>`;
+  document.getElementById('validateConfirmBtn').onclick = () => {
+    sessionValidated.add(suppId);
+    closeValidateModal();
+    showToast(`Fiche ${s?.name} validée ✓`);
+    renderList();
+    openFiche(suppId);
+  };
+  document.getElementById('validateModal').classList.add('open');
+}
+function closeValidateModal() { document.getElementById('validateModal').classList.remove('open'); }
+
+// Manager request modal
+function openManagerModal(field, oldVal, newVal, suppId) {
+  document.getElementById('managerDiff').innerHTML =
+    `Champ : <strong>${field}</strong><br>` +
+    `<span class="diff-old">Ancien : ${escHtml(oldVal||'(vide)')}</span><br>` +
+    `<span class="diff-new">Proposé : ${escHtml(newVal||'(vide)')}</span>`;
+  document.getElementById('managerConfirmBtn').onclick = () => {
+    closeManagerModal();
+    showToast('Demande de modification envoyée → Admin');
+  };
+  document.getElementById('managerModal').classList.add('open');
+}
+function closeManagerModal() { document.getElementById('managerModal').classList.remove('open'); }
+
+// Generic modal
+function openModal(title, diffHtml, onConfirm) {
+  document.getElementById('modalTitle').textContent = title;
+  document.getElementById('modalDiff').innerHTML = diffHtml;
+  document.getElementById('modalConfirm').onclick = () => {
+    onConfirm();
+    document.getElementById('modalOverlay').classList.remove('open');
+  };
+  document.getElementById('modalOverlay').classList.add('open');
+}
+
+// ── Event listeners ──
+document.getElementById('search').addEventListener('input', e => {
+  currentSearch = e.target.value;
+  renderList();
+});
+
+document.querySelectorAll('.chip').forEach(btn => {
+  btn.addEventListener('click', () => {
+    currentFilter = btn.dataset.filter;
+    document.querySelectorAll('.chip').forEach(b => b.classList.toggle('on', b.dataset.filter === currentFilter));
+    // Build guided queue when entering draft mode
+    if (currentFilter === 'draft') {
+      guidedQueue = SUPPLIERS.filter(s => isDraft(s)).map(s => s.id);
+      guidedIdx = 0;
+    } else {
+      guidedQueue = [];
+    }
+    renderList();
+  });
+});
+
+// Sort selector
+document.getElementById('sortSelect').addEventListener('change', e => {
+  currentSort = e.target.value;
+  renderList();
+});
+
+// Select mode toggle
+document.getElementById('selectModeBtn').addEventListener('click', () => {
+  selectMode = !selectMode;
+  document.body.classList.toggle('select-mode', selectMode);
+  document.getElementById('selectModeBtn').classList.toggle('on', selectMode);
+  document.getElementById('selectModeBtn').textContent = selectMode ? 'Annuler' : 'Sélectionner';
+  if (!selectMode) {
+    selectedIds.clear();
+    document.getElementById('bulkBar').classList.add('hidden');
+    renderList();
+  }
+});
+
+// modal cancel
+document.getElementById('modalCancel').addEventListener('click', () => {
+  document.getElementById('modalOverlay').classList.remove('open');
+});
+document.getElementById('modalOverlay').addEventListener('click', e => {
+  if (e.target === e.currentTarget) e.currentTarget.classList.remove('open');
+});
+document.getElementById('mergeModal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeMergeModal();
+});
+document.getElementById('validateModal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeValidateModal();
+});
+document.getElementById('managerModal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeManagerModal();
+});
+
+// role switcher
+document.querySelectorAll('.role-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.role-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.body.dataset.role = btn.dataset.role;
+    showToast('Rôle: ' + btn.textContent.trim());
+    renderList();
+    if (activeId) openFiche(activeId);
+  });
+});
+
+// keyboard navigation for guided pass
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;
+  if (e.key === 'ArrowRight' && currentFilter === 'draft') guidedNav(1);
+  if (e.key === 'ArrowLeft' && currentFilter === 'draft') guidedNav(-1);
+  if (e.key === 'v' && getRole() === 'admin' && activeId) openValidateModal(activeId);
+  if (e.key === 'Escape') {
+    document.getElementById('modalOverlay').classList.remove('open');
+    closeMergeModal(); closeValidateModal(); closeManagerModal();
+  }
+});
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2600);
+}
+
+// Add blink keyframe for draft chip
+const bStyle = document.createElement('style');
+bStyle.textContent = `@keyframes blink-chip{0%,100%{opacity:1}50%{opacity:.4;background:rgba(197,100,74,.2);color:var(--ember)}}`;
+document.head.appendChild(bStyle);
+
+// ── Init ──
+renderList();
+// Open first active supplier with catalogue
+const firstGood = SUPPLIERS.find(s => s.is_active && s.catalogue.length > 0);
+if (firstGood) setTimeout(() => openFiche(firstGood.id), 400);
+</script>
+</body>
+</html>

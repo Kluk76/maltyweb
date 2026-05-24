@@ -1,0 +1,1347 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Salle de contrôle — Qualité · preview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..600;1,9..144,400..500&family=DM+Sans:opsz,wght@9..40,300..600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+/* Salle de contrôle — v1.0 — 2026-05-25 */
+:root{
+  --bg:#15100a; --bg-elev:#1d160d; --ink:#ede0c4; --ink-soft:#c8b894;
+  --ink-mute:#7a6647; --ink-faint:#3a2e1d; --hairline:#261d11; --hairline-2:#342818;
+  --hop:#9eb060; --hop-deep:#6b7a3e; --ember:#c5664a; --oak:#a07a48; --oak-deep:#6e4e26;
+  --cold:#2f5575; --bbt:#6593b8;
+  --pkg:#7a5fa0; --pkg-deep:#503d6e; --pkg-band:#9b7cc8;
+  --steel:#b8bcc0; --steel-mid:#5e6266; --steel-deep:#2c2e30; --steel-shadow:#15171a;
+  --line:#caa86e; --line-soft:#7a6647;
+  /* Salle de contrôle — lab accent */
+  --lab:#4a8c78;       /* teal-green, lab instrument color */
+  --lab-deep:#2e5c4e;
+  --lab-glow:rgba(74,140,120,.16);
+  --lab-scan:rgba(74,140,120,.06);
+  --xray:#1a2e2a;      /* X-ray lightbox dark */
+  --xray-lit:#243830;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden}
+body{font-family:"DM Sans",system-ui,sans-serif;color:var(--ink);background:var(--bg);height:100vh;}
+
+/* ── board ── */
+.board{position:fixed;inset:0;background:radial-gradient(130% 90% at 50% -20%,rgba(74,140,120,.09),transparent 55%),radial-gradient(100% 120% at 50% 130%,rgba(0,0,0,.55),transparent 60%),var(--bg);}
+.board::before{content:"";position:absolute;inset:0;opacity:.5;background-image:linear-gradient(rgba(74,120,102,.06) 1px,transparent 1px),linear-gradient(90deg,rgba(74,120,102,.06) 1px,transparent 1px),linear-gradient(rgba(74,120,102,.03) 1px,transparent 1px),linear-gradient(90deg,rgba(74,120,102,.03) 1px,transparent 1px);background-size:120px 120px,120px 120px,24px 24px,24px 24px;mask-image:radial-gradient(120% 100% at 50% 40%,#000 55%,transparent 92%);}
+.board::after{content:"";position:absolute;inset:0;pointer-events:none;opacity:.4;background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .03 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+/* scan-line texture — lab feel */
+.board .scanlines{position:absolute;inset:0;pointer-events:none;opacity:.018;background:repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(74,140,120,.4) 3px,rgba(74,140,120,.4) 4px);}
+
+.mark{position:fixed;width:26px;height:26px;border:1px solid var(--hairline-2);z-index:3;opacity:.7}
+.mark.tl{top:18px;left:18px;border-right:0;border-bottom:0}
+.mark.tr{top:18px;right:18px;border-left:0;border-bottom:0}
+.mark.bl{bottom:18px;left:18px;border-right:0;border-top:0}
+.mark.br{bottom:18px;right:18px;border-left:0;border-top:0}
+
+/* ── chrome ── */
+.chrome{position:fixed;top:0;left:0;right:0;z-index:20;display:flex;align-items:center;gap:16px;padding:22px 44px;}
+.brandmark{font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.4em;color:var(--ink-mute);text-transform:uppercase;}
+.brandmark b{color:var(--ink-soft);font-weight:500}
+
+/* ── 3-family switcher ── */
+.family-switcher{display:flex;align-items:center;gap:0;border:1px solid var(--hairline-2);border-radius:8px;overflow:hidden;font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;background:rgba(10,7,4,.5);backdrop-filter:blur(6px);}
+.family-btn{display:flex;align-items:center;gap:8px;padding:8px 14px;border:none;background:none;cursor:pointer;font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-mute);text-decoration:none;transition:all .22s;position:relative;white-space:nowrap;}
+.family-btn:not(:last-child)::after{content:"";position:absolute;right:0;top:15%;bottom:15%;width:1px;background:var(--hairline-2);}
+.family-btn .fam-dot{width:6px;height:6px;border-radius:50%;flex:0 0 6px;transition:box-shadow .22s;}
+.family-btn.fam-sdm .fam-dot{background:var(--steel-mid)}
+.family-btn.fam-sdm:hover{color:var(--steel);background:rgba(44,46,48,.15)}
+.family-btn.fam-sdm:hover .fam-dot{box-shadow:0 0 8px var(--steel-mid)}
+.family-btn.fam-cockpit .fam-dot{background:#7a9860}
+.family-btn.fam-cockpit:hover{color:#7a9860;background:rgba(122,152,96,.1)}
+.family-btn.fam-cockpit:hover .fam-dot{box-shadow:0 0 8px #7a9860}
+/* Salle de contrôle — ACTIVE */
+.family-btn.fam-sdc{background:var(--lab-glow);color:var(--lab);cursor:default;pointer-events:none;}
+.family-btn.fam-sdc .fam-dot{background:var(--lab);box-shadow:0 0 10px var(--lab);animation:labPulse 2.4s ease-in-out infinite;}
+
+/* ── role switcher ── */
+.role-switcher{margin-left:auto;display:flex;align-items:center;border:1px solid var(--hairline-2);border-radius:30px;background:rgba(26,16,8,.6);overflow:hidden;backdrop-filter:blur(4px);}
+.role-btn{padding:7px 14px;border:none;background:none;cursor:pointer;font-family:"JetBrains Mono",monospace;font-size:9.5px;letter-spacing:.14em;color:var(--ink-mute);text-transform:uppercase;transition:all .22s;position:relative;white-space:nowrap;}
+.role-btn:not(:last-child)::after{content:"";position:absolute;right:0;top:20%;bottom:20%;width:1px;background:var(--hairline-2);}
+.role-btn.active{background:rgba(160,122,72,.18);color:var(--ink-soft);}
+.role-btn.active .rpip{display:inline-block;}
+.rpip{display:none;width:6px;height:6px;border-radius:50%;margin-right:6px;vertical-align:middle;position:relative;top:-1px;}
+.role-btn[data-role="operateur"].active{background:rgba(94,98,102,.18);color:var(--steel)}
+.role-btn[data-role="operateur"].active .rpip{background:var(--steel);box-shadow:0 0 7px var(--steel)}
+.role-btn[data-role="manager"].active{background:rgba(47,85,117,.2);color:var(--bbt)}
+.role-btn[data-role="manager"].active .rpip{background:var(--bbt);box-shadow:0 0 7px var(--bbt)}
+.role-btn[data-role="admin"].active{background:rgba(158,176,96,.16);color:var(--hop)}
+.role-btn[data-role="admin"].active .rpip{background:var(--hop);box-shadow:0 0 7px var(--hop)}
+
+/* ── role banner ── */
+.role-banner{display:none;align-items:center;gap:10px;padding:9px 16px;border:1px solid;border-radius:9px;font-size:12px;font-family:"DM Sans",sans-serif;position:fixed;top:76px;left:50%;transform:translateX(-50%);white-space:nowrap;z-index:25;backdrop-filter:blur(4px);}
+.role-banner.visible{display:flex}
+.role-banner.ban-operateur{border-color:rgba(94,98,102,.35);background:rgba(44,46,48,.45);color:var(--steel);}
+.role-banner.ban-manager{border-color:rgba(47,85,117,.4);background:rgba(24,42,58,.5);color:var(--bbt);}
+.role-banner.ban-admin{border-color:rgba(110,122,62,.35);background:rgba(22,28,12,.5);color:var(--hop);}
+.role-banner .ban-pip{width:7px;height:7px;border-radius:50%;flex:0 0 7px;}
+.ban-operateur .ban-pip{background:var(--steel);box-shadow:0 0 7px var(--steel)}
+.ban-manager .ban-pip{background:var(--bbt);box-shadow:0 0 7px var(--bbt)}
+.ban-admin .ban-pip{background:var(--hop);box-shadow:0 0 7px var(--hop)}
+
+/* toast */
+.toast{position:fixed;bottom:48px;left:50%;transform:translateX(-50%) translateY(20px);z-index:40;padding:10px 20px;background:var(--bg-elev);border:1px solid var(--lab-deep);border-radius:10px;font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.1em;color:var(--ink-soft);opacity:0;pointer-events:none;transition:opacity .3s,transform .3s;text-transform:uppercase;}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+
+/* ═══════════════════════════════════════════════
+   MAIN LAYOUT — left nav + content
+   ═══════════════════════════════════════════════ */
+.sdc-stage{position:fixed;inset:0;display:flex;padding-top:76px;animation:stageIn .8s cubic-bezier(.2,.8,.2,1) both;}
+@keyframes stageIn{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:none}}
+
+/* left nav */
+.nav-rail{flex:0 0 220px;border-right:1px solid var(--hairline);display:flex;flex-direction:column;padding:20px 0;position:relative;overflow:hidden;}
+.nav-rail::before{content:"";position:absolute;top:0;left:0;right:0;height:140px;background:linear-gradient(180deg,var(--lab-glow),transparent);pointer-events:none;}
+.nav-section-label{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.32em;color:var(--ink-faint);text-transform:uppercase;padding:0 20px 8px;margin-top:4px;}
+.nav-item{display:flex;align-items:center;gap:12px;padding:11px 20px;cursor:pointer;position:relative;font-family:"DM Sans",sans-serif;font-size:13.5px;color:var(--ink-mute);transition:color .18s,background .18s;user-select:none;}
+.nav-item:hover{color:var(--ink-soft);background:rgba(74,140,120,.06)}
+.nav-item.active{color:var(--lab);background:rgba(74,140,120,.1);}
+.nav-item.active::before{content:"";position:absolute;left:0;top:20%;bottom:20%;width:2px;border-radius:0 2px 2px 0;background:var(--lab);box-shadow:0 0 8px var(--lab);}
+.nav-item .nav-icon{flex:0 0 20px;display:flex;align-items:center;justify-content:center;opacity:.75;}
+.nav-item.active .nav-icon{opacity:1;}
+.nav-badge{margin-left:auto;font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.06em;background:rgba(74,140,120,.15);color:var(--lab);padding:2px 7px;border-radius:10px;}
+
+/* content area */
+.content-area{flex:1;overflow:hidden;display:flex;flex-direction:column;min-width:0;}
+.section-panel{display:none;flex:1;min-height:0;overflow:hidden;flex-direction:column;}
+.section-panel.active{display:flex;}
+
+/* ═══════════════════════════════════════════════
+   RECETTES section — book ledger layout
+   ═══════════════════════════════════════════════ */
+.recettes-layout{display:flex;flex:1;min-height:0;overflow:hidden;}
+
+/* ── recipe list column ── */
+.recipe-list-col{flex:0 0 260px;border-right:1px solid var(--hairline);display:flex;flex-direction:column;overflow:hidden;}
+.col-header{flex:0 0 auto;padding:20px 20px 14px;border-bottom:1px solid var(--hairline);}
+.col-title{font-family:"Fraunces",serif;font-variation-settings:"opsz" 72;font-weight:400;font-size:18px;color:var(--ink);margin-bottom:3px;}
+.col-title em{font-style:italic;color:var(--lab)}
+.col-subtitle{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.2em;color:var(--ink-mute);text-transform:uppercase;}
+.recipe-scroll{flex:1;overflow-y:auto;scrollbar-width:thin;scrollbar-color:rgba(74,140,120,.25) transparent;}
+.recipe-scroll::-webkit-scrollbar{width:4px}
+.recipe-scroll::-webkit-scrollbar-thumb{background:rgba(74,140,120,.25);border-radius:2px}
+.recipe-group-label{font-family:"JetBrains Mono",monospace;font-size:8px;letter-spacing:.28em;color:var(--ink-faint);text-transform:uppercase;padding:10px 16px 6px;border-bottom:1px solid var(--hairline);}
+.recipe-item{display:flex;align-items:center;gap:10px;padding:11px 16px;border-bottom:1px solid var(--hairline);cursor:pointer;transition:background .15s;position:relative;}
+.recipe-item:hover{background:rgba(74,140,120,.06)}
+.recipe-item.sel{background:rgba(74,140,120,.1);border-left:2px solid var(--lab);}
+.recipe-item.sel .ri-name{color:var(--lab);}
+.ri-dot{width:8px;height:8px;border-radius:50%;flex:0 0 8px;}
+.ri-dot.core{background:var(--lab);box-shadow:0 0 6px var(--lab);}
+.ri-dot.eph{background:var(--oak);}
+.ri-dot.collab{background:var(--pkg-band);}
+.ri-dot.archive{background:var(--ink-faint);}
+.ri-body{flex:1;min-width:0}
+.ri-name{font-family:"DM Sans",sans-serif;font-weight:500;font-size:13px;color:var(--ink-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ri-meta{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.06em;color:var(--ink-mute);margin-top:1px;}
+.ri-sku{flex:0 0 auto;font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.1em;color:var(--ink-faint);background:rgba(0,0,0,.2);padding:2px 7px;border-radius:5px;}
+
+/* ── recipe detail area ── */
+.recipe-detail-col{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0;}
+.recipe-detail-header{flex:0 0 auto;padding:18px 28px 0;border-bottom:1px solid var(--hairline);display:flex;align-items:flex-end;gap:0;}
+.rdh-title{font-family:"Fraunces",serif;font-variation-settings:"opsz" 144;font-weight:400;font-size:28px;color:var(--ink);line-height:1;}
+.rdh-title em{font-style:italic;color:var(--lab)}
+.rdh-meta{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.15em;color:var(--ink-mute);text-transform:uppercase;margin-left:16px;margin-bottom:5px;}
+.rdh-abv{margin-left:auto;font-family:"Fraunces",serif;font-variation-settings:"opsz" 72;font-size:22px;font-weight:400;color:var(--lab);margin-bottom:4px;}
+.rdh-abv-label{font-family:"JetBrains Mono",monospace;font-size:8px;letter-spacing:.2em;color:var(--ink-mute);text-align:right;margin-bottom:6px;}
+
+/* sub-tabs */
+.subtabs{display:flex;gap:0;padding:0 28px;border-bottom:1px solid var(--hairline);flex:0 0 auto;}
+.subtab{padding:12px 18px 11px;font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-mute);cursor:pointer;border-bottom:2px solid transparent;transition:color .18s,border-color .18s;position:relative;top:1px;}
+.subtab:hover{color:var(--ink-soft)}
+.subtab.active{color:var(--lab);border-bottom-color:var(--lab);}
+
+/* sub-tab content panes */
+.subtab-pane{display:none;flex:1;overflow:hidden;}
+.subtab-pane.active{display:flex;}
+
+/* ═══════════════════════════════════════════
+   INGRÉDIENTS sub-tab — ingredient ledger
+   ═══════════════════════════════════════════ */
+.ingr-pane{flex:1;overflow-y:auto;padding:20px 28px;scrollbar-width:thin;scrollbar-color:rgba(74,140,120,.2) transparent;}
+.ingr-pane::-webkit-scrollbar{width:5px}.ingr-pane::-webkit-scrollbar-thumb{background:rgba(74,140,120,.2);border-radius:3px;}
+
+.ingr-section-head{display:flex;align-items:center;gap:10px;margin:16px 0 8px;}
+.ingr-section-head:first-child{margin-top:4px;}
+.ish-dot{width:10px;height:10px;border-radius:50%;}
+.ish-label{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.28em;text-transform:uppercase;color:var(--ink-mute);}
+.ish-rule{flex:1;height:1px;background:var(--hairline);}
+.ish-total{font-family:"JetBrains Mono",monospace;font-size:9px;color:var(--ink-mute);}
+
+.ingr-row{display:flex;align-items:center;gap:12px;padding:7px 10px;border-radius:7px;margin-bottom:3px;transition:background .15s;}
+.ingr-row:hover{background:rgba(255,255,255,.025)}
+.ingr-name{font-family:"DM Sans",sans-serif;font-size:13px;color:var(--ink-soft);flex:1;}
+.ingr-mid{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.06em;color:var(--ink-faint);flex:0 0 120px;}
+.ingr-qty{font-family:"JetBrains Mono",monospace;font-size:12px;color:var(--ink);flex:0 0 80px;text-align:right;}
+.ingr-unit{font-family:"JetBrains Mono",monospace;font-size:10px;color:var(--oak);width:28px;}
+.ingr-bar-wrap{flex:0 0 80px;height:4px;background:rgba(255,255,255,.06);border-radius:2px;overflow:hidden;}
+.ingr-bar{height:4px;border-radius:2px;transition:width .5s cubic-bezier(.2,.8,.2,1);}
+
+/* ═══════════════════════════════════════════
+   PROCESS sub-tab — diagnostic fiche / X-ray
+   ═══════════════════════════════════════════ */
+.process-pane{flex:1;overflow-y:auto;padding:20px 28px;scrollbar-width:thin;scrollbar-color:rgba(74,140,120,.2) transparent;}
+
+/* X-ray lightbox panel */
+.xray-panel{background:linear-gradient(135deg,var(--xray) 0%,#1e332d 60%,var(--xray-lit) 100%);border:1px solid rgba(74,140,120,.25);border-radius:12px;padding:22px 24px;margin-bottom:16px;position:relative;overflow:hidden;}
+.xray-panel::before{content:"";position:absolute;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 5px,rgba(74,140,120,.025) 5px,rgba(74,140,120,.025) 6px);pointer-events:none;}
+.xray-panel::after{content:"";position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,rgba(74,140,120,.5),transparent);pointer-events:none;}
+.xp-label{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.3em;color:var(--lab);text-transform:uppercase;margin-bottom:12px;display:flex;align-items:center;gap:8px;}
+.xp-label::before{content:"";width:4px;height:4px;border-radius:50%;background:var(--lab);flex:0 0 4px;animation:labPulse 2.4s ease-in-out infinite;}
+.xp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:12px;}
+.xp-field{background:rgba(0,0,0,.3);border:1px solid rgba(74,140,120,.15);border-radius:8px;padding:11px 13px;position:relative;}
+.xp-field.override{border-color:rgba(202,168,110,.4);background:rgba(160,122,72,.08);}
+.xp-field.inherited{border-color:rgba(74,140,120,.2);background:rgba(74,140,120,.04);}
+.xp-field.pending{border-color:rgba(197,100,74,.3);background:rgba(197,100,74,.05);}
+.xf-k{font-family:"JetBrains Mono",monospace;font-size:8px;letter-spacing:.18em;color:var(--ink-mute);text-transform:uppercase;margin-bottom:6px;}
+.xf-v{font-family:"Fraunces",serif;font-variation-settings:"opsz" 72;font-size:20px;font-weight:400;color:var(--ink);line-height:1;}
+.xf-v.lab-color{color:var(--lab);}
+.xf-v input{background:none;border:none;border-bottom:1px dashed rgba(74,140,120,.4);color:var(--ink);font:inherit;font-family:"Fraunces",serif;font-variation-settings:"opsz" 72;font-size:20px;font-weight:400;width:80px;padding:0;outline:none;}
+.xf-v input:focus{border-bottom-color:var(--lab);}
+.xf-unit{font-family:"JetBrains Mono",monospace;font-size:9px;color:var(--oak);margin-left:3px;}
+.xf-badge{position:absolute;top:7px;right:8px;font-family:"JetBrains Mono",monospace;font-size:7.5px;letter-spacing:.1em;text-transform:uppercase;padding:2px 5px;border-radius:4px;}
+.badge-inherited{background:rgba(74,140,120,.15);color:var(--lab);}
+.badge-override{background:rgba(202,168,110,.15);color:var(--oak);}
+.badge-pending{background:rgba(197,100,74,.15);color:var(--ember);}
+
+/* yeast family selector */
+.yeast-family-row{display:flex;align-items:center;gap:10px;margin-bottom:16px;}
+.yf-label{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.24em;text-transform:uppercase;color:var(--ink-mute);}
+.yf-options{display:flex;gap:6px;flex:1;}
+.yf-btn{padding:7px 14px;border:1px solid var(--hairline-2);border-radius:20px;background:none;color:var(--ink-mute);font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;transition:.2s;}
+.yf-btn:hover{border-color:var(--lab-deep);color:var(--ink-soft);}
+.yf-btn.active{background:rgba(74,140,120,.15);border-color:var(--lab);color:var(--lab);}
+
+/* pending-migration tag */
+.new-field-tag{display:inline-flex;align-items:center;gap:5px;font-family:"JetBrains Mono",monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--ember);background:rgba(197,100,74,.1);border:1px solid rgba(197,100,74,.25);border-radius:4px;padding:2px 7px;margin-left:6px;}
+
+/* ABV display — shared across sub-tabs */
+.abv-display{display:flex;align-items:baseline;gap:6px;margin-bottom:4px;}
+.abv-big{font-family:"Fraunces",serif;font-variation-settings:"opsz" 144;font-size:32px;color:var(--lab);font-weight:300;line-height:1;}
+.abv-pct{font-family:"JetBrains Mono",monospace;font-size:14px;color:var(--lab);opacity:.7;}
+.abv-calc-note{font-family:"JetBrains Mono",monospace;font-size:8px;letter-spacing:.1em;color:var(--ink-faint);text-transform:uppercase;}
+
+/* SVG lab sketch */
+svg.lab-sketch .ground{stroke:var(--line);fill:none;stroke-width:2;stroke-linecap:round}
+svg.lab-sketch .ink{stroke:var(--line);fill:none;stroke-width:1.5;stroke-linejoin:round;stroke-linecap:round}
+svg.lab-sketch .ink-2{stroke:var(--line-soft);fill:none;stroke-width:.95;stroke-linejoin:round;stroke-linecap:round}
+svg.lab-sketch .fillx{fill:rgba(74,140,120,.04)}
+svg.lab-sketch .band-lab{stroke:var(--lab);fill:none;stroke-width:1.6;stroke-linecap:round}
+svg.lab-sketch .band-oak{stroke:var(--oak);fill:none;stroke-width:1.6;stroke-linecap:round}
+svg.lab-sketch .dim{fill:var(--ink-mute);font-family:"JetBrains Mono",monospace;font-size:7px;letter-spacing:.04em}
+svg.lab-sketch .dim-lab{fill:var(--lab);font-family:"JetBrains Mono",monospace;font-size:7px;letter-spacing:.04em}
+svg.lab-sketch .shade{stroke:var(--line-soft);fill:none;stroke-width:.65;stroke-linecap:butt;opacity:.35}
+.draw-lab [class^="ink"], .draw-lab .ground, .draw-lab [class^="band-"]{stroke-dasharray:1800;stroke-dashoffset:1800;animation:drawLab 1.8s cubic-bezier(.4,.1,.2,1) forwards;}
+@keyframes drawLab{to{stroke-dashoffset:0}}
+
+/* ═══════════════════════════════════════════
+   BIOCHIMIE section
+   ═══════════════════════════════════════════ */
+.biochem-layout{flex:1;overflow-y:auto;padding:24px 32px;scrollbar-width:thin;scrollbar-color:rgba(74,140,120,.2) transparent;}
+.biochem-header{margin-bottom:24px;}
+.biochem-header h2{font-family:"Fraunces",serif;font-variation-settings:"opsz" 144;font-weight:400;font-size:28px;color:var(--ink);}
+.biochem-header h2 em{font-style:italic;color:var(--lab)}
+.biochem-header .bh-sub{font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.15em;color:var(--ink-mute);text-transform:uppercase;margin-top:4px;}
+
+.yf-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;}
+.yf-card{background:linear-gradient(135deg,var(--bg-elev),rgba(10,8,5,.8));border:1px solid var(--hairline-2);border-radius:12px;padding:20px 22px;transition:border-color .2s,box-shadow .2s;position:relative;overflow:hidden;}
+.yf-card::before{content:"";position:absolute;top:0;left:0;right:0;height:2px;opacity:.5;}
+.yf-card.ale::before{background:linear-gradient(90deg,var(--oak),transparent)}
+.yf-card.lager::before{background:linear-gradient(90deg,var(--bbt),transparent)}
+.yf-card.spontane::before{background:linear-gradient(90deg,var(--ember),transparent)}
+.yf-card.mixte::before{background:linear-gradient(90deg,var(--pkg-band),transparent)}
+.yf-card:hover{border-color:rgba(74,140,120,.3);box-shadow:0 8px 32px -8px rgba(0,0,0,.5);}
+.yf-card-head{display:flex;align-items:baseline;gap:10px;margin-bottom:16px;}
+.yf-family-name{font-family:"Fraunces",serif;font-variation-settings:"opsz" 72;font-size:20px;font-weight:400;color:var(--ink);}
+.yf-family-name em{font-style:italic;}
+.yf-family-name.ale em{color:var(--oak)}
+.yf-family-name.lager em{color:var(--bbt)}
+.yf-family-name.spontane em{color:var(--ember)}
+.yf-family-name.mixte em{color:var(--pkg-band)}
+.yf-recipe-count{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.1em;color:var(--ink-mute);margin-left:auto;}
+.yf-defaults{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.yf-def-row{background:rgba(0,0,0,.25);border:1px solid var(--hairline);border-radius:7px;padding:9px 11px;}
+.yf-def-row.pending-field{border-color:rgba(197,100,74,.25);background:rgba(197,100,74,.04);}
+.yf-def-k{font-family:"JetBrains Mono",monospace;font-size:8px;letter-spacing:.15em;color:var(--ink-mute);text-transform:uppercase;margin-bottom:4px;display:flex;align-items:center;gap:5px;}
+.yf-def-v{font-family:"Fraunces",serif;font-variation-settings:"opsz" 48;font-size:17px;color:var(--ink);}
+.yf-def-v input{background:none;border:none;border-bottom:1px dashed var(--hairline-2);color:var(--ink);font:inherit;font-family:"Fraunces",serif;font-variation-settings:"opsz" 48;font-size:17px;width:60px;padding:0;outline:none;transition:border-color .2s;}
+.yf-def-v input:focus{border-bottom-color:var(--lab);}
+.yf-def-unit{font-family:"JetBrains Mono",monospace;font-size:9px;color:var(--oak);margin-left:3px;}
+.yf-card-note{font-size:11.5px;color:var(--ink-mute);margin-top:14px;border-top:1px solid var(--hairline);padding-top:12px;line-height:1.5;}
+
+/* pulsing lab indicator */
+@keyframes labPulse{0%,100%{box-shadow:0 0 6px var(--lab)}50%{box-shadow:0 0 16px var(--lab),0 0 32px rgba(74,140,120,.3)}}
+.lab-pulse{animation:labPulse 2.4s ease-in-out infinite;}
+
+/* x-ray ambient glow */
+.xray-panel{box-shadow:inset 0 0 40px rgba(0,0,0,.4),0 4px 20px rgba(0,0,0,.4);}
+
+/* pending block */
+.pending-block{background:rgba(197,100,74,.05);border:1px solid rgba(197,100,74,.2);border-radius:10px;padding:14px 18px;margin-top:20px;}
+.pending-block-head{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:var(--ember);margin-bottom:8px;display:flex;align-items:center;gap:7px;}
+.pending-block-head::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--ember);box-shadow:0 0 8px var(--ember);flex:0 0 5px;}
+.pending-field-list{display:flex;flex-wrap:wrap;gap:7px;}
+.pf-pill{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.08em;color:var(--ember);background:rgba(197,100,74,.1);border:1px solid rgba(197,100,74,.3);padding:4px 10px;border-radius:12px;}
+
+/* titleblock */
+.titleblock{position:fixed;bottom:20px;right:54px;z-index:4;text-align:right;font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.16em;color:var(--ink-faint);line-height:1.7;text-transform:uppercase;border-right:2px solid var(--hairline-2);padding-right:12px}
+.preview-flag{position:fixed;bottom:20px;left:54px;z-index:4;font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.16em;color:var(--ink-faint);opacity:.7;text-transform:uppercase}
+
+/* role gates */
+body[data-role="operateur"] .yf-def-v input,
+body[data-role="operateur"] .xf-v input{pointer-events:none;}
+body[data-role="manager"] .yf-def-v input,
+body[data-role="manager"] .xf-v input{cursor:pointer;}
+
+/* confirm modal */
+.modal-overlay{display:none;position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.65);align-items:center;justify-content:center;backdrop-filter:blur(3px);}
+.modal-overlay.open{display:flex}
+.modal-box{background:var(--bg-elev);border:1px solid var(--lab-deep);border-radius:14px;padding:28px 30px;min-width:340px;max-width:460px;box-shadow:0 40px 80px -20px rgba(0,0,0,.8);animation:modalIn .25s cubic-bezier(.2,.8,.2,1);}
+@keyframes modalIn{from{opacity:0;transform:scale(.95) translateY(12px)}to{opacity:1;transform:none}}
+.modal-box h4{font-family:"Fraunces",serif;font-weight:440;font-size:20px;color:var(--ink);margin-bottom:8px;}
+.modal-box p{font-size:13px;color:var(--ink-soft);margin-bottom:20px;line-height:1.5;}
+.modal-diff{background:rgba(0,0,0,.3);border-radius:8px;padding:12px 14px;margin-bottom:16px;font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--ink-mute);}
+.modal-diff .old{color:var(--ember)}
+.modal-diff .new{color:var(--lab)}
+.modal-actions{display:flex;gap:10px;justify-content:flex-end;}
+.btn-cancel{padding:9px 18px;border:1px solid var(--hairline-2);border-radius:8px;background:none;color:var(--ink-mute);cursor:pointer;font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;transition:.2s;}
+.btn-cancel:hover{border-color:var(--oak-deep);color:var(--ink)}
+.btn-confirm{padding:9px 18px;border:1px solid var(--lab-deep);border-radius:8px;background:rgba(74,140,120,.18);color:var(--lab);cursor:pointer;font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;transition:.2s;}
+.btn-confirm:hover{background:rgba(74,140,120,.28)}
+
+/* ── style field under recipe name ── */
+.rdh-style-row{display:flex;align-items:center;gap:8px;margin-top:5px;margin-bottom:4px;}
+.rdh-style-input{font-family:"Fraunces",serif;font-variation-settings:"opsz" 72;font-size:14px;font-style:italic;color:var(--lab);background:none;border:none;border-bottom:1px dashed rgba(74,140,120,.3);outline:none;padding:0 2px;min-width:160px;max-width:260px;transition:border-color .2s;}
+.rdh-style-input:focus{border-bottom-color:var(--lab);}
+.rdh-style-input::placeholder{color:var(--ink-faint);font-style:italic;}
+body[data-role="operateur"] .rdh-style-input{pointer-events:none;border-bottom-color:transparent;}
+body[data-role="manager"] .rdh-style-input{cursor:pointer;}
+
+/* ── + Nouvelle recette button ── */
+.btn-new-recipe{display:flex;align-items:center;gap:6px;margin:10px 16px 6px;padding:7px 12px;border:1px dashed rgba(158,176,96,.35);border-radius:7px;background:none;color:var(--ink-mute);font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;cursor:pointer;transition:all .2s;width:calc(100% - 32px);}
+.btn-new-recipe:hover{border-color:var(--hop);color:var(--hop);background:rgba(158,176,96,.07);}
+.btn-new-recipe .btn-plus{font-size:14px;line-height:1;opacity:.8;}
+/* manager sees it as a request action */
+body[data-role="manager"] .btn-new-recipe{border-color:rgba(101,147,184,.35);color:var(--ink-faint);}
+body[data-role="manager"] .btn-new-recipe:hover{border-color:var(--bbt);color:var(--bbt);background:rgba(101,147,184,.07);}
+/* operateur: hidden */
+body[data-role="operateur"] .btn-new-recipe{display:none;}
+
+/* new-recipe modal */
+.modal-new-recipe .modal-box{min-width:380px;}
+.modal-form-row{margin-bottom:16px;}
+.modal-form-label{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-mute);margin-bottom:6px;display:flex;align-items:center;gap:6px;}
+.modal-form-input{width:100%;background:rgba(0,0,0,.3);border:1px solid var(--hairline-2);border-radius:7px;padding:9px 12px;color:var(--ink);font-family:"DM Sans",sans-serif;font-size:14px;outline:none;transition:border-color .2s;}
+.modal-form-input:focus{border-color:var(--lab);}
+.modal-form-select{width:100%;background:rgba(21,16,10,.9);border:1px solid var(--hairline-2);border-radius:7px;padding:9px 12px;color:var(--ink);font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.08em;outline:none;cursor:pointer;transition:border-color .2s;appearance:none;-webkit-appearance:none;}
+.modal-form-select:focus{border-color:var(--lab);}
+.modal-form-select option{background:var(--bg-elev);}
+
+/* ── Ingrédients toggle (per brassin / per hl) ── */
+.ingr-scale-toggle{display:flex;align-items:center;border:1px solid var(--hairline-2);border-radius:20px;background:rgba(26,16,8,.55);overflow:hidden;margin-left:auto;}
+.ist-btn{padding:5px 13px;border:none;background:none;cursor:pointer;font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-mute);transition:all .2s;white-space:nowrap;}
+.ist-btn.active{background:rgba(74,140,120,.18);color:var(--lab);}
+.ist-btn:not(.active):hover{color:var(--ink-soft);}
+</style>
+</head>
+<body data-role="admin">
+<div class="board"><div class="scanlines"></div></div>
+<span class="mark tl"></span><span class="mark tr"></span><span class="mark bl"></span><span class="mark br"></span>
+
+<!-- CHROME -->
+<div class="chrome">
+  <div class="brandmark">La Nébuleuse · Le Zeppelin · <b>Salle de contrôle</b></div>
+  <div class="family-switcher">
+    <a class="family-btn fam-sdm" href="salle-des-machines.html">
+      <span class="fam-dot"></span>Machines
+    </a>
+    <span class="family-btn fam-sdc">
+      <span class="fam-dot"></span>Contrôle
+    </span>
+    <a class="family-btn fam-cockpit" href="le-cockpit.html">
+      <span class="fam-dot"></span>Cockpit
+    </a>
+  </div>
+  <div class="role-switcher" id="roleSeg">
+    <button class="role-btn" data-role="operateur"><span class="rpip"></span>Opérateur</button>
+    <button class="role-btn" data-role="manager"><span class="rpip"></span>Manager</button>
+    <button class="role-btn active" data-role="admin"><span class="rpip"></span>Admin</button>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<div class="role-banner" id="roleBanner">
+  <span class="ban-pip"></span><span id="roleBannerText"></span>
+</div>
+
+<!-- MAIN STAGE -->
+<div class="sdc-stage">
+
+  <!-- LEFT NAV -->
+  <nav class="nav-rail">
+    <div class="nav-section-label">Salle de contrôle</div>
+
+    <!-- lab sketch in nav header -->
+    <div style="padding:0 12px 12px;display:flex;justify-content:center;">
+      <svg class="lab-sketch draw-lab" width="160" height="80" viewBox="0 0 160 80">
+        <!-- beaker -->
+        <path class="ink" d="M44 14 L44 44 Q44 58 56 60 L72 60 Q84 58 84 44 L84 14"/>
+        <path class="ink-2" d="M38 14 L90 14"/>
+        <path class="ink-2" d="M44 36 Q64 32 84 36"/>
+        <path class="fillx" d="M44 36 Q64 32 84 36 L84 44 Q84 58 72 60 L56 60 Q44 58 44 44 Z"/>
+        <path class="band-lab" d="M44 36 Q64 32 84 36"/>
+        <!-- flask neck -->
+        <path class="ink" d="M110 56 L116 34 L118 18 M122 18 L124 34 L130 56"/>
+        <path class="ink-2" d="M113 56 Q120 60 127 56"/>
+        <path class="ink-2" d="M116 18 L124 18"/>
+        <path class="fillx" d="M116 34 L110 56 Q120 62 130 56 L124 34 Z"/>
+        <!-- temp gauge -->
+        <circle class="ink-2" cx="148" cy="34" r="12"/>
+        <path class="band-lab" d="M148 34 L148 28"/>
+        <path class="ink-2" d="M142 34 L136 34"/>
+        <path class="ink-2" d="M154 34 L160 34"/>
+        <path class="shade" d="M146 28 L148 34 L150 28"/>
+        <text class="dim-lab" x="143" y="50">pH</text>
+      </svg>
+    </div>
+
+    <div class="nav-section-label" style="margin-top:4px;">Sections</div>
+    <div class="nav-item active" data-sec="recettes" onclick="switchSection('recettes')">
+      <span class="nav-icon">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <rect x="2" y="2" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.2"/>
+          <path d="M5 6h6M5 8.5h4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+        </svg>
+      </span>
+      Recettes
+      <span class="nav-badge">9</span>
+    </div>
+    <div class="nav-item" data-sec="biochem" onclick="switchSection('biochem')">
+      <span class="nav-icon">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <path d="M5 2v5L2 13h12L11 7V2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M5 2h6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+          <circle cx="8" cy="10" r="1.5" fill="currentColor" opacity=".5"/>
+        </svg>
+      </span>
+      Biochimie
+    </div>
+
+    <div class="nav-section-label" style="margin-top:16px;">À venir</div>
+    <div class="nav-item" style="opacity:.4;pointer-events:none;">
+      <span class="nav-icon">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.2"/>
+          <path d="M8 5v3l2 1.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+        </svg>
+      </span>
+      QA / Contrôles
+      <span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-faint);">Q3</span>
+    </div>
+    <div class="nav-item" style="opacity:.4;pointer-events:none;">
+      <span class="nav-icon">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <path d="M3 3h10v10H3z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+          <path d="M6 8h4M8 6v4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+        </svg>
+      </span>
+      Jalons process
+      <span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-faint);">Q4</span>
+    </div>
+  </nav>
+
+  <!-- CONTENT AREA -->
+  <div class="content-area">
+
+    <!-- ══════════════════════════════════════ RECETTES SECTION -->
+    <div class="section-panel active" id="sec-recettes">
+      <div class="recettes-layout">
+
+        <!-- recipe list -->
+        <div class="recipe-list-col">
+          <div class="col-header">
+            <div class="col-title">Recettes <em>actives</em></div>
+            <div class="col-subtitle">Nébuleuse · core + EPH</div>
+          </div>
+          <div class="recipe-scroll" id="recipeScroll"></div>
+          <button class="btn-new-recipe" id="btnNewRecipe" onclick="openNewRecipeModal()">
+            <span class="btn-plus">+</span>
+            <span id="newRecipeBtnLabel">Nouvelle recette</span>
+          </button>
+        </div>
+
+        <!-- recipe detail -->
+        <div class="recipe-detail-col" id="recipeDetailCol">
+          <!-- header injected by JS -->
+          <div class="recipe-detail-header" id="recipeDetailHeader">
+            <div>
+              <div class="rdh-title" id="rdh-title">Sélectionner <em>une recette</em></div>
+              <div class="rdh-style-row">
+                <input class="rdh-style-input" id="rdh-style" type="text" placeholder="style — à renseigner" maxlength="80"
+                  onblur="onStyleBlur(this)" autocomplete="off">
+                <span class="new-field-tag">nouveau champ · à câbler</span>
+              </div>
+              <div class="rdh-meta" id="rdh-meta">—</div>
+            </div>
+            <div style="margin-left:auto;text-align:right;">
+              <div class="rdh-abv" id="rdh-abv">—</div>
+              <div class="rdh-abv-label">ABV estimé</div>
+            </div>
+          </div>
+
+          <!-- sub-tabs -->
+          <div class="subtabs">
+            <div class="subtab active" onclick="switchSubtab('ingr')">Ingrédients</div>
+            <div class="subtab" onclick="switchSubtab('process')">Process</div>
+          </div>
+
+          <!-- sub-tab panes -->
+          <div class="subtab-pane active" id="pane-ingr" style="flex-direction:column;">
+            <div style="display:flex;align-items:center;padding:8px 28px 6px;border-bottom:1px solid var(--hairline);flex:0 0 auto;gap:10px;">
+              <span style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:var(--ink-faint);">Quantités</span>
+              <div class="ingr-scale-toggle">
+                <button class="ist-btn active" id="istBrassin" onclick="setIngrScale('brassin')">Par brassin · 30 hl</button>
+                <button class="ist-btn" id="istHl" onclick="setIngrScale('hl')">Par hl</button>
+              </div>
+            </div>
+            <div class="ingr-pane" id="ingrPaneContent" style="flex:1;">
+              <div style="padding:40px;text-align:center;color:var(--ink-faint);font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.15em;text-transform:uppercase;">Sélectionner une recette</div>
+            </div>
+          </div>
+
+          <div class="subtab-pane" id="pane-process">
+            <div class="process-pane" id="processPaneContent">
+              <div style="padding:40px;text-align:center;color:var(--ink-faint);font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.15em;text-transform:uppercase;">Sélectionner une recette</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════ BIOCHIMIE SECTION -->
+    <div class="section-panel" id="sec-biochem">
+      <div class="biochem-layout">
+        <div class="biochem-header">
+          <h2>Paramètres <em>Biochimie</em></h2>
+          <div class="bh-sub">Valeurs par défaut par famille levurienne · source des héritages Process</div>
+        </div>
+
+        <div class="yf-cards" id="yfCards"></div>
+
+        <div class="pending-block" style="margin-top:24px;">
+          <div class="pending-block-head">Nouveaux champs · à câbler en DB</div>
+          <div class="pending-field-list">
+            <span class="pf-pill">yeast_family (ref_recipes)</span>
+            <span class="pf-pill">default_ferm_temp_min (ref_biochem_defaults)</span>
+            <span class="pf-pill">default_ferm_temp_max (ref_biochem_defaults)</span>
+            <span class="pf-pill">default_garde_days_min (ref_biochem_defaults)</span>
+            <span class="pf-pill">target_co2_vol (ref_recipe_profile)</span>
+            <span class="pf-pill">recipe_ferm_temp_override (ref_recipe_profile)</span>
+            <span class="pf-pill">recipe_garde_days_override (ref_recipe_profile)</span>
+          </div>
+        </div>
+
+        <!-- inheritance explanation -->
+        <div style="margin-top:20px;background:rgba(74,140,120,.05);border:1px solid rgba(74,140,120,.15);border-radius:10px;padding:16px 20px;">
+          <div style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:var(--lab);margin-bottom:8px;">Modèle d'héritage</div>
+          <div style="font-size:12.5px;color:var(--ink-mute);line-height:1.7;">
+            <b style="color:var(--ink-soft);">Biochimie</b> définit les valeurs par défaut de la famille.<br>
+            <b style="color:var(--ink-soft);">Process fiche</b> hérite et peut surcharger par recette.<br>
+            Badge <span style="background:rgba(74,140,120,.15);color:var(--lab);padding:1px 5px;border-radius:3px;font-family:'JetBrains Mono',monospace;font-size:8px;">défaut famille</span> = valeur héritée non modifiée.<br>
+            Badge <span style="background:rgba(202,168,110,.15);color:var(--oak);padding:1px 5px;border-radius:3px;font-family:'JetBrains Mono',monospace;font-size:8px;">override recette</span> = surcharge spécifique recette.
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /content-area -->
+</div><!-- /sdc-stage -->
+
+<!-- CONFIRM MODAL -->
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal-box">
+    <h4>Confirmer la modification</h4>
+    <p>Paramètre de <span id="modalContext" style="color:var(--lab);">—</span></p>
+    <div class="modal-diff">
+      <span class="old" id="modalOld">—</span> → <span class="new" id="modalNew">—</span>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal()">Annuler</button>
+      <button class="btn-confirm" onclick="applyModal()">Confirmer</button>
+    </div>
+  </div>
+</div>
+
+<!-- NEW RECIPE MODAL -->
+<div class="modal-overlay modal-new-recipe" id="newRecipeOverlay">
+  <div class="modal-box">
+    <h4>Nouvelle <em style="color:var(--lab);">recette</em></h4>
+    <p style="margin-bottom:18px;">Création d'une fiche vierge — les ingrédients et paramètres process sont à renseigner.</p>
+    <div class="modal-form-row">
+      <div class="modal-form-label">Nom de la recette</div>
+      <input class="modal-form-input" id="nr-name" type="text" placeholder="ex. Estafette" autocomplete="off">
+    </div>
+    <div class="modal-form-row">
+      <div class="modal-form-label">Style <span class="new-field-tag">nouveau champ · à câbler</span></div>
+      <input class="modal-form-input" id="nr-style" type="text" placeholder="ex. West Coast IPA" autocomplete="off">
+    </div>
+    <div class="modal-form-row">
+      <div class="modal-form-label">Famille de levure <span class="new-field-tag">à câbler</span></div>
+      <select class="modal-form-select" id="nr-yeast">
+        <option value="ale">Ale</option>
+        <option value="lager">Lager</option>
+        <option value="spontane">Spontané</option>
+        <option value="mixte">Mixte</option>
+      </select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeNewRecipeModal()">Annuler</button>
+      <button class="btn-confirm" onclick="createRecipe()">Créer la fiche</button>
+    </div>
+  </div>
+</div>
+
+<div class="titleblock">Salle de contrôle · Qualité<br>Recettes · Process · Biochimie<br>Standalone mockup · 2026-05-25</div>
+<div class="preview-flag">preview · données réelles DB</div>
+
+<script>
+/* ═══════════════════════════════════════════
+   DATA — baked from live DB queries 2026-05-25
+   ref_mi name column = `name` (VARCHAR 128) — confirmed via DESCRIBE ref_mi
+   ref_recipe_profile tables: ref_recipe_profile (main), ref_recipe_profile_hops, ref_recipe_profile_malt
+   ref_recipe_profile cols used: avg_og, avg_fg, avg_apparent_atten_pct, avg_cooling_ph, avg_end_ferm_ph,
+     avg_ferm_days, avg_cc_days, batch_count — all °Plato for gravity
+   median_packaged_co2_vol = NULL for all core recipes (not yet collected)
+   avg_garde_days = NULL for all (field present but not populated)
+   yeast_family, co2 target, ferm_temp_override = NOT in DB — shown as pending-migration
+   ═══════════════════════════════════════════ */
+
+const RECIPES = [
+  {id:57,name:"Zepp",sku:"ZEP",subtype:"Core",vintage:""},
+  {id:32,name:"Embuscade",sku:"EMB",subtype:"Core",vintage:""},
+  {id:44,name:"Moonshine",sku:"MOO",subtype:"Core",vintage:""},
+  {id:51,name:"Speakeasy",sku:"SPY",subtype:"Core",vintage:""},
+  {id:52,name:"Stirling",sku:"STI",subtype:"Core",vintage:""},
+  {id:30,name:"Double Oat",sku:"DOA",subtype:"Core",vintage:""},
+  {id:25,name:"Diversion",sku:"DIV",subtype:"Core",vintage:""},
+  {id:26,name:"Diversion Blanche",sku:"DIB",subtype:"Core",vintage:""},
+  {id:6,name:"Alternative",sku:"ALT",subtype:"Core",vintage:""},
+];
+
+const INGREDIENTS = {
+  57:[
+    {mi:"MALT_PILSENER",name:"Pilsener",cat:"Malt",qty:15.833,unit:"kg"},
+    {mi:"HOPS_HERKULES",name:"Herkules",cat:"Hops",qty:13.333,unit:"g"},
+    {mi:"HOPS_SAAZER",name:"Saazer",cat:"Hops",qty:83.333,unit:"g"},
+    {mi:"HOPS_SPALTER_SELECT",name:"Spalter Select",cat:"Hops",qty:83.333,unit:"g"},
+    {mi:"PROC_PHOSPHORIQUE",name:"Phosphorique",cat:"Proc/Chem",qty:23.333,unit:"ml"},
+    {mi:"PROC_YEASTVIT",name:"Yeastvit",cat:"Proc/Chem",qty:8.0,unit:"g"},
+    {mi:"MIN_CACL2",name:"Calcium Chloride",cat:"Minéraux",qty:5.833,unit:"g"},
+    {mi:"MIN_MGCL2",name:"Magnesium Chloride",cat:"Minéraux",qty:5.833,unit:"g"},
+    {mi:"MIN_MGSO4",name:"Magnesium Sulphate",cat:"Minéraux",qty:3.5,unit:"g"},
+    {mi:"MIN_NACL",name:"Sodium Chloride",cat:"Minéraux",qty:4.667,unit:"g"},
+  ],
+  32:[
+    {mi:"MALT_MUNICH",name:"Munich",cat:"Malt",qty:8.0,unit:"kg"},
+    {mi:"MALT_PILSENER",name:"Pilsener",cat:"Malt",qty:14.833,unit:"kg"},
+    {mi:"HOPS_AMARILLO",name:"Amarillo",cat:"Hops",qty:333.333,unit:"g"},
+    {mi:"HOPS_CASCADE",name:"Cascade",cat:"Hops",qty:166.667,unit:"g"},
+    {mi:"HOPS_HERKULES",name:"Herkules",cat:"Hops",qty:33.333,unit:"g"},
+    {mi:"HOPS_SIMCOE",name:"Simcoe",cat:"Hops",qty:166.667,unit:"g"},
+    {mi:"PROC_PHOSPHORIQUE",name:"Phosphorique",cat:"Proc/Chem",qty:45.0,unit:"ml"},
+    {mi:"PROC_YEASTVIT",name:"Yeastvit",cat:"Proc/Chem",qty:8.0,unit:"g"},
+    {mi:"MIN_CACL2",name:"Calcium Chloride",cat:"Minéraux",qty:10.0,unit:"g"},
+    {mi:"MIN_CASO4",name:"Calcium Sulphate",cat:"Minéraux",qty:6.667,unit:"g"},
+  ],
+  44:[
+    {mi:"MALT_PILSENER",name:"Pilsener",cat:"Malt",qty:10.333,unit:"kg"},
+    {mi:"MALT_WHEAT",name:"Wheat",cat:"Malt",qty:8.333,unit:"kg"},
+    {mi:"HOPS_CASCADE",name:"Cascade",cat:"Hops",qty:166.667,unit:"g"},
+    {mi:"ADJ_CORIANDER",name:"Coriander",cat:"Adjunct",qty:73.333,unit:"g"},
+    {mi:"ADJ_ORANGE_PEEL",name:"Orange Peel",cat:"Adjunct",qty:110.0,unit:"g"},
+    {mi:"PROC_PHOSPHORIQUE",name:"Phosphorique",cat:"Proc/Chem",qty:26.667,unit:"ml"},
+    {mi:"PROC_YEASTVIT",name:"Yeastvit",cat:"Proc/Chem",qty:8.0,unit:"g"},
+    {mi:"MIN_CACL2",name:"Calcium Chloride",cat:"Minéraux",qty:5.933,unit:"g"},
+    {mi:"MIN_CASO4",name:"Calcium Sulphate",cat:"Minéraux",qty:5.933,unit:"g"},
+    {mi:"MIN_MGCL2",name:"Magnesium Chloride",cat:"Minéraux",qty:3.567,unit:"g"},
+  ],
+  51:[
+    {mi:"MALT_OAT_FLAKES",name:"Oat Flakes",cat:"Malt",qty:2.0,unit:"kg"},
+    {mi:"MALT_PILSENER",name:"Pilsener",cat:"Malt",qty:8.667,unit:"kg"},
+    {mi:"MALT_WHEAT",name:"Wheat",cat:"Malt",qty:4.667,unit:"kg"},
+    {mi:"HOPS_C_INCOGNITO",name:"Citra Incognito",cat:"Hops",qty:66.667,unit:"g"},
+    {mi:"HOPS_EL_DORADO",name:"El Dorado",cat:"Hops",qty:166.667,unit:"g"},
+    {mi:"HOPS_MOSAIC",name:"Mosaic",cat:"Hops",qty:333.333,unit:"g"},
+    {mi:"PROC_PHOSPHORIQUE",name:"Phosphorique",cat:"Proc/Chem",qty:28.333,unit:"ml"},
+    {mi:"PROC_YEASTVIT",name:"Yeastvit",cat:"Proc/Chem",qty:8.0,unit:"g"},
+    {mi:"MIN_CACL2",name:"Calcium Chloride",cat:"Minéraux",qty:19.667,unit:"g"},
+  ],
+  52:[
+    {mi:"MALT_CRYSTAL",name:"Cara Crystal",cat:"Malt",qty:0.277,unit:"kg"},
+    {mi:"MALT_MUNICH",name:"Munich",cat:"Malt",qty:4.167,unit:"kg"},
+    {mi:"MALT_PILSENER",name:"Pilsener",cat:"Malt",qty:13.667,unit:"kg"},
+    {mi:"HOPS_CASCADE",name:"Cascade",cat:"Hops",qty:166.667,unit:"g"},
+    {mi:"HOPS_HERKULES",name:"Herkules",cat:"Hops",qty:16.667,unit:"g"},
+    {mi:"HOPS_SIMCOE",name:"Simcoe",cat:"Hops",qty:266.667,unit:"g"},
+    {mi:"PROC_DEHAZE",name:"Dehaze",cat:"Proc/Chem",qty:5.0,unit:"ml"},
+    {mi:"PROC_PHOSPHORIQUE",name:"Phosphorique",cat:"Proc/Chem",qty:40.0,unit:"ml"},
+    {mi:"PROC_YEASTVIT",name:"Yeastvit",cat:"Proc/Chem",qty:8.0,unit:"g"},
+    {mi:"MIN_CACL2",name:"Calcium Chloride",cat:"Minéraux",qty:4.867,unit:"g"},
+    {mi:"MIN_CASO4",name:"Calcium Sulphate",cat:"Minéraux",qty:2.433,unit:"g"},
+    {mi:"MIN_MGSO4",name:"Magnesium Sulphate",cat:"Minéraux",qty:4.867,unit:"g"},
+    {mi:"MIN_NACL",name:"Sodium Chloride",cat:"Minéraux",qty:6.083,unit:"g"},
+  ],
+  30:[
+    {mi:"MALT_OAT_FLAKES",name:"Oat Flakes",cat:"Malt",qty:4.667,unit:"kg"},
+    {mi:"MALT_PILSENER",name:"Pilsener",cat:"Malt",qty:25.0,unit:"kg"},
+    {mi:"MALT_WHEAT",name:"Wheat",cat:"Malt",qty:3.333,unit:"kg"},
+    {mi:"HOPS_MOSAIC",name:"Mosaic",cat:"Hops",qty:500.0,unit:"g"},
+    {mi:"HOPS_M_INCOGNITO",name:"Mosaic Incognito",cat:"Hops",qty:66.667,unit:"g"},
+    {mi:"PROC_PHOSPHORIQUE",name:"Phosphorique",cat:"Proc/Chem",qty:53.333,unit:"ml"},
+    {mi:"PROC_YEASTVIT",name:"Yeastvit",cat:"Proc/Chem",qty:8.0,unit:"g"},
+    {mi:"MIN_CACL2",name:"Calcium Chloride",cat:"Minéraux",qty:8.867,unit:"g"},
+    {mi:"MIN_CASO4",name:"Calcium Sulphate",cat:"Minéraux",qty:34.2,unit:"g"},
+    {mi:"MIN_MGSO4",name:"Magnesium Sulphate",cat:"Minéraux",qty:12.667,unit:"g"},
+  ],
+  25:[
+    {mi:"MALT_MUNICH",name:"Munich",cat:"Malt",qty:1.667,unit:"kg"},
+    {mi:"MALT_PILSENER",name:"Pilsener",cat:"Malt",qty:6.333,unit:"kg"},
+    {mi:"HOPS_MOSAIC",name:"Mosaic",cat:"Hops",qty:166.667,unit:"g"},
+    {mi:"HOPS_M_INCOGNITO",name:"Mosaic Incognito",cat:"Hops",qty:66.667,unit:"g"},
+    {mi:"PROC_NAGARDO",name:"Nagardo",cat:"Proc/Chem",qty:2.0,unit:"g"},
+    {mi:"PROC_PHOSPHORIQUE",name:"Phosphorique",cat:"Proc/Chem",qty:41.667,unit:"ml"},
+    {mi:"MIN_CACL2",name:"Calcium Chloride",cat:"Minéraux",qty:4.867,unit:"g"},
+    {mi:"MIN_CASO4",name:"Calcium Sulphate",cat:"Minéraux",qty:2.433,unit:"g"},
+    {mi:"MIN_MGSO4",name:"Magnesium Sulphate",cat:"Minéraux",qty:4.867,unit:"g"},
+  ],
+  26:[
+    {mi:"MALT_PILSENER",name:"Pilsener",cat:"Malt",qty:5.667,unit:"kg"},
+    {mi:"MALT_WHEAT",name:"Wheat",cat:"Malt",qty:5.333,unit:"kg"},
+    {mi:"HOPS_CASCADE",name:"Cascade",cat:"Hops",qty:40.0,unit:"g"},
+    {mi:"ADJ_PEACH_TEA",name:"Peach Tea",cat:"Adjunct",qty:133.333,unit:"g"},
+    {mi:"PROC_ISYENHANCE",name:"IsyEnhance",cat:"Proc/Chem",qty:40.0,unit:"g"},
+    {mi:"PROC_NAGARDO",name:"Nagardo",cat:"Proc/Chem",qty:2.0,unit:"g"},
+    {mi:"PROC_PHOSPHORIQUE",name:"Phosphorique",cat:"Proc/Chem",qty:43.333,unit:"ml"},
+  ],
+  6:[
+    {mi:"MALT_MUNICH",name:"Munich",cat:"Malt",qty:1.833,unit:"kg"},
+    {mi:"MALT_OAT_FLAKES",name:"Oat Flakes",cat:"Malt",qty:0.667,unit:"kg"},
+    {mi:"MALT_PILSENER",name:"Pilsener",cat:"Malt",qty:4.667,unit:"kg"},
+    {mi:"MALT_WHEAT",name:"Wheat",cat:"Malt",qty:1.0,unit:"kg"},
+    {mi:"HOPS_C_INCOGNITO",name:"Citra Incognito",cat:"Hops",qty:66.667,unit:"g"},
+    {mi:"HOPS_MOSAIC",name:"Mosaic",cat:"Hops",qty:333.333,unit:"g"},
+    {mi:"PROC_PHOSPHORIQUE",name:"Phosphorique",cat:"Proc/Chem",qty:23.333,unit:"ml"},
+  ],
+};
+
+// From ref_recipe_profile (rolling_12mo) — all in °Plato
+const PROFILES = {
+  57:{og:10.09,fg:2.08,atten:79.37,phCool:4.98,phFerm:4.41,fermDays:13.43,ccDays:28.25,gardeDays:null,co2:null,batches:37},
+  32:{og:14.10,fg:2.20,atten:84.40,phCool:4.99,phFerm:4.59,fermDays:12.70,ccDays:25.58,gardeDays:null,co2:null,batches:21},
+  44:{og:12.24,fg:2.25,atten:81.56,phCool:5.04,phFerm:4.19,fermDays:7.84,ccDays:35.50,gardeDays:null,co2:null,batches:20},
+  51:{og:9.07,fg:1.74,atten:80.70,phCool:4.96,phFerm:4.04,fermDays:6.92,ccDays:10.23,gardeDays:null,co2:null,batches:14},
+  52:{og:11.84,fg:2.75,atten:76.83,phCool:5.02,phFerm:4.39,fermDays:8.89,ccDays:17.11,gardeDays:null,co2:null,batches:11},
+  30:{og:17.06,fg:3.62,atten:78.75,phCool:5.05,phFerm:4.45,fermDays:13.75,ccDays:13.13,gardeDays:null,co2:null,batches:9},
+  25:{og:5.10,fg:4.54,atten:8.89,phCool:4.60,phFerm:4.31,fermDays:2.57,ccDays:42.90,gardeDays:null,co2:null,batches:14},
+  26:{og:7.05,fg:5.20,atten:22.30,phCool:4.65,phFerm:4.37,fermDays:3.75,ccDays:20.0,gardeDays:null,co2:null,batches:4},
+  6:{og:6.07,fg:1.26,atten:78.23,phCool:4.86,phFerm:4.06,fermDays:7.50,ccDays:19.67,gardeDays:null,co2:null,batches:7},
+};
+
+// Yeast family defaults (pending migration — mock sensible defaults)
+const YEAST_DEFAULTS = {
+  ale:{fermTempMin:18,fermTempMax:22,gardeMin:14,gardeMax:28,typical:"Saccharomyces cerevisiae — ale top-fermenting. Température ambiante, développe esters fruités."},
+  lager:{fermTempMin:9,fermTempMax:13,gardeMin:28,gardeMax:56,typical:"Saccharomyces pastorianus — fermentation basse. Cave froide, profil propre, garde longue."},
+  spontane:{fermTempMin:14,fermTempMax:20,gardeMin:90,gardeMax:365,typical:"Levures et bactéries sauvages — lambic, gueuze. Fermentation longue et complexe."},
+  mixte:{fermTempMin:18,fermTempMax:22,gardeMin:21,gardeMax:60,typical:"Mix Saccharomyces + Brettanomyces / bactéries. Profil fruité-acide, garde variable."},
+};
+
+// Mock yeast family per recipe (pending DB field)
+const RECIPE_YEAST = {57:"lager",32:"ale",44:"ale",51:"ale",52:"ale",30:"ale",25:"spontane",26:"ale",6:"ale"};
+
+/* ═══════════════════════════════════════════
+   ABV calc — Plato-based (Balling / Terrill)
+   OG, FG in °Plato → ABV %
+   ═══════════════════════════════════════════ */
+function calcAbv(og, fg){
+  if(!og || !fg) return null;
+  // Plato to SG: SG ≈ 1 + P/(258.6 - P/258.2 * 227.1)
+  const sgOG = 1 + og/(258.6 - og/258.2*227.1);
+  const sgFG = 1 + fg/(258.6 - fg/258.2*227.1);
+  return ((sgOG - sgFG) * 131.25).toFixed(1);
+}
+
+/* ═══════════════════════════════════════════
+   STATE
+   ═══════════════════════════════════════════ */
+let selectedRecipeId = null;
+let currentSubtab = 'ingr';
+let pendingModal = null;
+let ingrScale = 'brassin'; // 'brassin' (×30) or 'hl'
+const BRASSIN_HL = 30;
+const RECIPE_STYLES = {}; // id → style string (client-side mock store)
+
+/* ═══════════════════════════════════════════
+   ROLE SWITCHER
+   ═══════════════════════════════════════════ */
+document.getElementById('roleSeg').addEventListener('click', e=>{
+  const btn = e.target.closest('[data-role]');
+  if(!btn) return;
+  const role = btn.dataset.role;
+  document.body.dataset.role = role;
+  document.querySelectorAll('.role-btn').forEach(b=>b.classList.toggle('active',b.dataset.role===role));
+  updateRoleBanner(role);
+  updateNewRecipeBtnLabel(role);
+  showToast('Mode: '+role);
+});
+function updateRoleBanner(role){
+  const banner = document.getElementById('roleBanner');
+  const text = document.getElementById('roleBannerText');
+  banner.className = 'role-banner';
+  if(role==='operateur'){banner.classList.add('visible','ban-operateur');text.textContent='Lecture seule — aucune modification possible';}
+  else if(role==='manager'){banner.classList.add('visible','ban-manager');text.textContent='Manager — modifications soumises à approbation';}
+  else{banner.classList.remove('visible');}
+}
+
+/* ═══════════════════════════════════════════
+   SECTION SWITCHER
+   ═══════════════════════════════════════════ */
+function switchSection(sec){
+  document.querySelectorAll('.section-panel').forEach(p=>p.classList.toggle('active',p.id==='sec-'+sec));
+  document.querySelectorAll('.nav-item[data-sec]').forEach(n=>n.classList.toggle('active',n.dataset.sec===sec));
+}
+
+/* ═══════════════════════════════════════════
+   SUB-TAB SWITCHER
+   ═══════════════════════════════════════════ */
+function switchSubtab(tab){
+  currentSubtab = tab;
+  document.querySelectorAll('.subtab').forEach((el,i)=>{
+    const tabs = ['ingr','process'];
+    el.classList.toggle('active',tabs[i]===tab);
+  });
+  document.querySelectorAll('.subtab-pane').forEach(p=>p.classList.toggle('active',p.id==='pane-'+tab));
+}
+
+/* ═══════════════════════════════════════════
+   RECIPE LIST RENDER
+   ═══════════════════════════════════════════ */
+function buildRecipeList(){
+  const scroll = document.getElementById('recipeScroll');
+  scroll.innerHTML = '';
+  const label = document.createElement('div');
+  label.className = 'recipe-group-label';
+  label.textContent = 'Core — Nébuleuse';
+  scroll.appendChild(label);
+  RECIPES.forEach(r=>{
+    const p = PROFILES[r.id];
+    const abv = p ? calcAbv(p.og,p.fg) : null;
+    const div = document.createElement('div');
+    div.className = 'recipe-item';
+    div.dataset.id = r.id;
+    const dotClass = {Core:'core',EPH:'eph',CollabIn:'collab',Archive:'archive'}[r.subtype]||'archive';
+    div.innerHTML = `<span class="ri-dot ${dotClass}"></span>
+      <div class="ri-body">
+        <div class="ri-name">${r.name}</div>
+        <div class="ri-meta">${p?p.batches+' brassin(s) · OG '+p.og+'°P':'—'}</div>
+      </div>
+      <div>
+        ${r.sku?`<div class="ri-sku">${r.sku}</div>`:''}
+        ${abv?`<div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--lab);text-align:right;margin-top:3px;">${abv}%</div>`:''}
+      </div>`;
+    div.addEventListener('click',()=>selectRecipe(r.id));
+    scroll.appendChild(div);
+  });
+}
+
+/* ═══════════════════════════════════════════
+   SELECT RECIPE
+   ═══════════════════════════════════════════ */
+function selectRecipe(id){
+  selectedRecipeId = id;
+  document.querySelectorAll('.recipe-item').forEach(el=>el.classList.toggle('sel',+el.dataset.id===id));
+  const rec = RECIPES.find(r=>r.id===id);
+  const p = PROFILES[id];
+  const abv = p ? calcAbv(p.og,p.fg) : null;
+  // header
+  document.getElementById('rdh-title').innerHTML = `<em>${rec.name}</em>`;
+  // style field — load from mock store (empty by default — operator fills it)
+  const styleInp = document.getElementById('rdh-style');
+  styleInp.value = RECIPE_STYLES[id] || '';
+  styleInp.defaultValue = styleInp.value;
+  document.getElementById('rdh-meta').textContent = (rec.sku||'—') + ' · ' + rec.subtype + (p?' · '+p.batches+' brassins':'');
+  document.getElementById('rdh-abv').textContent = abv ? abv+'%' : '—';
+  // render panes
+  renderIngrPane(id, p);
+  renderProcessPane(id, p);
+}
+
+/* ═══════════════════════════════════════════
+   INGRÉDIENTS PANE
+   ═══════════════════════════════════════════ */
+const CAT_COLORS = {Malt:'#a07a48',Hops:'#9eb060',Adjunct:'#9b7cc8',Proc_Chem:'#6593b8',Proc:'#6593b8',Minéraux:'#4a8c78'};
+const CAT_ORDER = ['Malt','Hops','Adjunct','Proc/Chem','Minéraux'];
+
+/* ── scale helpers ── */
+function scaledQty(qty, unit){
+  const factor = ingrScale === 'brassin' ? BRASSIN_HL : 1;
+  const scaled = qty * factor;
+  // smart display: keep kg if result ≥ 1 kg, else g; same logic for ml
+  if(unit === 'kg'){
+    if(scaled >= 1) return {val: scaled, unit: 'kg'};
+    return {val: scaled * 1000, unit: 'g'};
+  }
+  if(unit === 'g'){
+    if(scaled >= 1000) return {val: scaled / 1000, unit: 'kg'};
+    return {val: scaled, unit: 'g'};
+  }
+  if(unit === 'ml'){
+    if(scaled >= 1000) return {val: scaled / 1000, unit: 'L'};
+    return {val: scaled, unit: 'ml'};
+  }
+  return {val: scaled, unit};
+}
+function fmtVal(v, unit){
+  if(unit==='kg') return v < 1 ? v.toFixed(3) : v.toFixed(2);
+  if(unit==='g') return v < 10 ? v.toFixed(1) : Math.round(v);
+  if(unit==='L') return v.toFixed(2);
+  return v%1===0 ? v : v.toFixed(1);
+}
+
+function setIngrScale(scale){
+  ingrScale = scale;
+  document.getElementById('istBrassin').classList.toggle('active', scale==='brassin');
+  document.getElementById('istHl').classList.toggle('active', scale==='hl');
+  if(selectedRecipeId !== null) renderIngrPane(selectedRecipeId, PROFILES[selectedRecipeId]);
+}
+
+function renderIngrPane(id, profile){
+  const container = document.getElementById('ingrPaneContent');
+  const items = INGREDIENTS[id]||[];
+  if(!items.length){container.innerHTML='<div style="padding:40px;text-align:center;color:var(--ink-faint);">Aucun ingrédient.</div>';return;}
+  // group by cat
+  const groups = {};
+  items.forEach(it=>{
+    const c = it.cat;
+    if(!groups[c]) groups[c]=[];
+    groups[c].push(it);
+  });
+  // compute max per cat for bar — normalize to grams in per-hl space for proportional comparison
+  const toGRaw = (qty, unit) => unit==='kg' ? qty*1000 : qty;
+  const maxPerCat = {};
+  Object.entries(groups).forEach(([c,rows])=>{
+    maxPerCat[c] = Math.max(...rows.map(r=>toGRaw(r.qty,r.unit)));
+  });
+  let html = '';
+  const abv = profile ? calcAbv(profile.og, profile.fg) : null;
+  if(abv){
+    html += `<div style="margin-bottom:16px;padding:12px 14px;background:rgba(74,140,120,.07);border:1px solid rgba(74,140,120,.2);border-radius:8px;display:flex;align-items:baseline;gap:12px;">
+      <span class="abv-big">${abv}</span><span class="abv-pct">% ABV</span>
+      <span class="abv-calc-note" style="margin-left:auto;">Estimé Plato · OG ${profile.og}°P · FG ${profile.fg}°P · ${profile.batches} brassins</span>
+    </div>`;
+  }
+  const scaleLabel = ingrScale === 'brassin' ? `/ brassin · ${BRASSIN_HL} hl` : '/ hl';
+  CAT_ORDER.forEach(cat=>{
+    const rows = groups[cat];
+    if(!rows) return;
+    const color = CAT_COLORS[cat.replace('/','_')]||'var(--oak)';
+    // compute section total in scaled units
+    const totalKgScaled = rows.filter(r=>r.unit==='kg').reduce((s,r)=>s+r.qty*(ingrScale==='brassin'?BRASSIN_HL:1),0);
+    const totalGScaled = rows.filter(r=>r.unit==='g').reduce((s,r)=>s+r.qty*(ingrScale==='brassin'?BRASSIN_HL:1),0);
+    let total = '';
+    if(totalKgScaled>0){
+      if(totalKgScaled>=1) total = totalKgScaled.toFixed(2)+' kg '+scaleLabel;
+      else total = (totalKgScaled*1000).toFixed(0)+' g '+scaleLabel;
+    } else if(totalGScaled>0){
+      if(totalGScaled>=1000) total = (totalGScaled/1000).toFixed(2)+' kg '+scaleLabel;
+      else total = totalGScaled.toFixed(0)+' g '+scaleLabel;
+    }
+    html += `<div class="ingr-section-head">
+      <span class="ish-dot" style="background:${color}"></span>
+      <span class="ish-label">${cat}</span>
+      <span class="ish-rule"></span>
+      <span class="ish-total">${total}</span>
+    </div>`;
+    rows.forEach(it=>{
+      const pct = toGRaw(it.qty,it.unit) / maxPerCat[cat] * 100;
+      const s = scaledQty(it.qty, it.unit);
+      html += `<div class="ingr-row">
+        <div class="ingr-name">${it.name}</div>
+        <div class="ingr-mid">${it.mi}</div>
+        <div class="ingr-qty">${fmtVal(s.val, s.unit)}</div>
+        <div class="ingr-unit">${s.unit}</div>
+        <div class="ingr-bar-wrap"><div class="ingr-bar" style="width:${pct}%;background:${color};opacity:.7;"></div></div>
+      </div>`;
+    });
+  });
+  container.innerHTML = html;
+}
+
+/* ═══════════════════════════════════════════
+   PROCESS PANE
+   ═══════════════════════════════════════════ */
+function renderProcessPane(id, profile){
+  const container = document.getElementById('processPaneContent');
+  const rec = RECIPES.find(r=>r.id===id);
+  const yf = RECIPE_YEAST[id]||'ale';
+  const yd = YEAST_DEFAULTS[yf];
+  const abv = profile ? calcAbv(profile.og, profile.fg) : null;
+
+  let html = '';
+
+  // ABV linked display
+  if(abv){
+    html += `<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+      <div class="abv-display">
+        <span class="abv-big" id="proc-abv">${abv}</span>
+        <span class="abv-pct">% ABV</span>
+      </div>
+      <div>
+        <div class="abv-calc-note">Lié à l'onglet Ingrédients</div>
+        <div class="abv-calc-note" style="margin-top:2px;">OG/FG en °Plato → formule Balling/Terrill</div>
+      </div>
+    </div>`;
+  }
+
+  // yeast family row
+  html += `<div class="yeast-family-row">
+    <span class="yf-label">Famille levurienne</span>
+    <span class="new-field-tag">nouveau champ · à câbler</span>
+    <div class="yf-options">
+      ${['ale','lager','spontane','mixte'].map(f=>`<button class="yf-btn${f===yf?' active':''}" onclick="changeYeastFamily(${id},'${f}')">${f}</button>`).join('')}
+    </div>
+  </div>`;
+
+  // x-ray panel — biometric targets (real DB values)
+  if(profile){
+    html += `<div class="xray-panel">
+      <div class="xp-label">Cibles mesurées · <span style="color:var(--ink-mute);font-weight:normal;">${profile.batches} brassins rolling 12 mois · °Plato</span></div>
+      <div class="xp-grid">
+        <div class="xp-field">
+          <div class="xf-k">OG cible</div>
+          <div class="xf-v">${profile.og}<span class="xf-unit">°P</span></div>
+          <span class="xf-badge badge-inherited">DB réel</span>
+        </div>
+        <div class="xp-field">
+          <div class="xf-k">FG cible</div>
+          <div class="xf-v">${profile.fg}<span class="xf-unit">°P</span></div>
+          <span class="xf-badge badge-inherited">DB réel</span>
+        </div>
+        <div class="xp-field">
+          <div class="xf-k">Atténuation app.</div>
+          <div class="xf-v lab-color">${profile.atten}<span class="xf-unit">%</span></div>
+          <span class="xf-badge badge-inherited">DB réel</span>
+        </div>
+        <div class="xp-field">
+          <div class="xf-k">pH refroid.</div>
+          <div class="xf-v">${profile.phCool}</div>
+          <span class="xf-badge badge-inherited">DB réel</span>
+        </div>
+        <div class="xp-field">
+          <div class="xf-k">pH post-ferm.</div>
+          <div class="xf-v">${profile.phFerm}</div>
+          <span class="xf-badge badge-inherited">DB réel</span>
+        </div>
+        <div class="xp-field">
+          <div class="xf-k">Ferm. (jours)</div>
+          <div class="xf-v">${profile.fermDays}<span class="xf-unit">j</span></div>
+          <span class="xf-badge badge-inherited">DB réel</span>
+        </div>
+        <div class="xp-field">
+          <div class="xf-k">CC / garde (jours)</div>
+          <div class="xf-v">${profile.ccDays}<span class="xf-unit">j</span></div>
+          <span class="xf-badge badge-inherited">DB réel</span>
+        </div>
+        <div class="xp-field">
+          <div class="xf-k">ABV calculé</div>
+          <div class="xf-v lab-color" id="process-abv-xp">${abv||'—'}<span class="xf-unit">%</span></div>
+          <span class="xf-badge badge-inherited">Calculé</span>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  // x-ray panel — inherited yeast family defaults (pending fields)
+  html += `<div class="xray-panel">
+    <div class="xp-label">
+      Héritage famille <em style="color:var(--ink)">${yf}</em>
+      <span class="new-field-tag">champs en attente de migration</span>
+    </div>
+    <div class="xp-grid" id="yf-inherit-grid-${id}">
+      <div class="xp-field inherited">
+        <div class="xf-k">Temp. fermentation</div>
+        <div class="xf-v" style="font-size:16px;">${yd.fermTempMin}–${yd.fermTempMax}<span class="xf-unit">°C</span></div>
+        <span class="xf-badge badge-inherited">défaut famille</span>
+      </div>
+      <div class="xp-field inherited">
+        <div class="xf-k">Garde min. (jours)</div>
+        <div class="xf-v"><input type="number" id="inp-garde-${id}" value="${yd.gardeMin}" onblur="onFieldBlur(this,'garde_min','${id}')"><span class="xf-unit">j</span></div>
+        <span class="xf-badge badge-inherited" id="badge-garde-${id}">défaut famille</span>
+      </div>
+      <div class="xp-field pending">
+        <div class="xf-k">CO₂ cible BBT</div>
+        <div class="xf-v"><input type="number" id="inp-co2-${id}" value="2.5" onblur="onFieldBlur(this,'co2_bbt','${id}')"><span class="xf-unit">vol</span></div>
+        <span class="xf-badge badge-pending">à câbler</span>
+      </div>
+    </div>
+  </div>`;
+
+  // sketch — radiograph style
+  html += `<div style="display:flex;justify-content:center;margin-top:8px;">
+    <svg class="lab-sketch draw-lab" width="400" height="120" viewBox="0 0 400 120" style="opacity:.6;">
+      <!-- fermentation temp gauge -->
+      <rect class="ink-2" x="20" y="20" width="70" height="80" rx="4"/>
+      <path class="ink-2" d="M30 90 L30 35"/>
+      <rect class="fillx" x="26" y="${90 - (yd.fermTempMax/40*55)}" width="8" height="${yd.fermTempMax/40*55}" rx="2"/>
+      <rect style="fill:var(--lab);opacity:.5" x="26" y="${90 - (yd.fermTempMin/40*55)}" width="8" height="${(yd.fermTempMax-yd.fermTempMin)/40*55}" rx="2"/>
+      <text class="dim-lab" x="40" y="32">${yd.fermTempMax}°C</text>
+      <text class="dim" x="40" y="${90 - (yd.fermTempMin/40*55)+4}">${yd.fermTempMin}°C</text>
+      <text class="dim" x="22" y="112">Temp.</text>
+      <!-- timeline bar -->
+      <rect class="ink-2" x="110" y="40" width="180" height="20" rx="3"/>
+      <rect class="fillx" x="110" y="40" width="180" height="20" rx="3"/>
+      <rect style="fill:var(--oak);opacity:.4" x="110" y="40" width="${Math.min(profile?profile.fermDays/60*180:40,180)}" height="20" rx="3 0 0 3"/>
+      <rect style="fill:var(--lab);opacity:.4" x="${110 + Math.min(profile?profile.fermDays/60*180:40,180)}" y="40" width="${Math.min(profile?profile.ccDays/60*180:60,180) - Math.min(profile?profile.fermDays/60*180:40,180)}" height="20"/>
+      <text class="dim" x="110" y="35">Fermentation</text>
+      <text class="dim-lab" x="113" y="54">${profile?profile.fermDays.toFixed(1):'—'} j</text>
+      <text class="dim" x="${120+(profile?profile.fermDays/60*180:40)}" y="54">${profile?profile.ccDays.toFixed(1):'—'} j CC</text>
+      <text class="dim" x="110" y="75">0j</text>
+      <text class="dim" x="270" y="75">60j</text>
+      <!-- pH probe sketch -->
+      <path class="ink" d="M330 25 L330 75 Q330 82 337 82 Q344 82 344 75 L344 25"/>
+      <path class="ink-2" d="M326 25 L348 25"/>
+      <path class="band-lab" d="M330 68 Q337 65 344 68"/>
+      <text class="dim-lab" x="326" y="95">pH ${profile?profile.phCool:'—'}</text>
+      <text class="dim" x="322" y="106">Refroid.</text>
+      <!-- microscope eyepiece -->
+      <circle class="ink-2" cx="383" cy="50" r="18"/>
+      <circle class="ink-2" cx="383" cy="50" r="10"/>
+      <circle class="fillx" cx="383" cy="50" r="10"/>
+      <path class="ink-2" d="M375 25 L383 40"/>
+      <path class="ink-2" d="M391 25 L383 40"/>
+      <text class="dim-lab" x="370" y="82">QC</text>
+    </svg>
+  </div>`;
+
+  container.innerHTML = html;
+}
+
+/* ═══════════════════════════════════════════
+   INTERACTIVE — yeast family change
+   ═══════════════════════════════════════════ */
+function changeYeastFamily(id, family){
+  RECIPE_YEAST[id] = family;
+  renderProcessPane(id, PROFILES[id]);
+  showToast('Famille: '+family+' · champ à câbler en DB');
+}
+
+/* ═══════════════════════════════════════════
+   INTERACTIVE — field edit
+   ═══════════════════════════════════════════ */
+function onFieldBlur(inp, field, id){
+  const role = document.body.dataset.role;
+  if(role==='operateur') return;
+  const oldVal = inp.defaultValue;
+  const newVal = inp.value;
+  if(oldVal===newVal) return;
+  if(role==='admin'){
+    pendingModal = {inp, oldVal, newVal, field, id};
+    document.getElementById('modalContext').textContent = field + ' (recette #'+id+')';
+    document.getElementById('modalOld').textContent = oldVal;
+    document.getElementById('modalNew').textContent = newVal;
+    document.getElementById('modalOverlay').classList.add('open');
+    // mark badge as override
+    const badge = inp.closest('.xp-field')?.querySelector('.xf-badge');
+    if(badge){badge.className='xf-badge badge-override';badge.textContent='override recette';}
+  } else {
+    // manager — just toast
+    inp.value = oldVal;
+    showToast('Modification soumise pour approbation');
+  }
+}
+
+function closeModal(){
+  if(pendingModal) pendingModal.inp.value = pendingModal.oldVal;
+  pendingModal = null;
+  document.getElementById('modalOverlay').classList.remove('open');
+}
+function applyModal(){
+  if(pendingModal){
+    pendingModal.inp.defaultValue = pendingModal.newVal;
+    if(pendingModal.isStyle && selectedRecipeId !== null){
+      RECIPE_STYLES[selectedRecipeId] = pendingModal.newVal;
+    }
+    const badge = pendingModal.inp.closest('.xp-field')?.querySelector('.xf-badge');
+    if(badge){badge.className='xf-badge badge-override';badge.textContent='override recette';}
+    showToast('Enregistré: '+pendingModal.field+' = '+pendingModal.newVal);
+  }
+  pendingModal = null;
+  document.getElementById('modalOverlay').classList.remove('open');
+}
+
+/* ═══════════════════════════════════════════
+   BIOCHIMIE PAGE BUILD
+   ═══════════════════════════════════════════ */
+function buildBiochemPage(){
+  const container = document.getElementById('yfCards');
+  const families = [
+    {key:'ale',label:'Ale',color:'var(--oak)',recipes:['Zepp','Embuscade','Moonshine','Speakeasy','Stirling','Double Oat','Diversion Blanche','Alternative']},
+    {key:'lager',label:'Lager',color:'var(--bbt)',recipes:['Zepp']},
+    {key:'spontane',label:'Spontanée',color:'var(--ember)',recipes:['Diversion']},
+    {key:'mixte',label:'Mixte',color:'var(--pkg-band)',recipes:[]},
+  ];
+  families.forEach(f=>{
+    const d = YEAST_DEFAULTS[f.key];
+    const div = document.createElement('div');
+    div.className = 'yf-card '+f.key;
+    div.innerHTML = `
+      <div class="yf-card-head">
+        <div class="yf-family-name ${f.key}"><em>${f.label}</em></div>
+        <div class="yf-recipe-count">${f.recipes.length} recette(s) assignée(s) <span class="new-field-tag">mock</span></div>
+      </div>
+      <div class="yf-defaults">
+        <div class="yf-def-row pending-field">
+          <div class="yf-def-k">Temp. ferm. min <span class="new-field-tag">à câbler</span></div>
+          <div class="yf-def-v"><input type="number" value="${d.fermTempMin}" min="0" max="40" onblur="onBiochemBlur(this,'${f.key}','fermTempMin')"><span class="yf-def-unit">°C</span></div>
+        </div>
+        <div class="yf-def-row pending-field">
+          <div class="yf-def-k">Temp. ferm. max <span class="new-field-tag">à câbler</span></div>
+          <div class="yf-def-v"><input type="number" value="${d.fermTempMax}" min="0" max="40" onblur="onBiochemBlur(this,'${f.key}','fermTempMax')"><span class="yf-def-unit">°C</span></div>
+        </div>
+        <div class="yf-def-row pending-field">
+          <div class="yf-def-k">Garde min. <span class="new-field-tag">à câbler</span></div>
+          <div class="yf-def-v"><input type="number" value="${d.gardeMin}" min="0" onblur="onBiochemBlur(this,'${f.key}','gardeMin')"><span class="yf-def-unit">j</span></div>
+        </div>
+        <div class="yf-def-row pending-field">
+          <div class="yf-def-k">Garde max. <span class="new-field-tag">à câbler</span></div>
+          <div class="yf-def-v"><input type="number" value="${d.gardeMax}" min="0" onblur="onBiochemBlur(this,'${f.key}','gardeMax')"><span class="yf-def-unit">j</span></div>
+        </div>
+      </div>
+      <div class="yf-card-note">${f.typical}</div>`;
+    container.appendChild(div);
+  });
+}
+
+function onBiochemBlur(inp, family, field){
+  const role = document.body.dataset.role;
+  if(role==='operateur'){inp.value=inp.defaultValue;return;}
+  const oldVal = inp.defaultValue;
+  const newVal = inp.value;
+  if(oldVal===newVal) return;
+  if(role==='admin'){
+    pendingModal = {inp,oldVal,newVal,field,id:family};
+    document.getElementById('modalContext').textContent = 'famille '+family+' · '+field;
+    document.getElementById('modalOld').textContent = oldVal;
+    document.getElementById('modalNew').textContent = newVal;
+    document.getElementById('modalOverlay').classList.add('open');
+  } else {
+    inp.value = oldVal;
+    showToast('Modification soumise pour approbation');
+  }
+}
+
+/* ═══════════════════════════════════════════
+   STYLE FIELD
+   ═══════════════════════════════════════════ */
+function onStyleBlur(inp){
+  const role = document.body.dataset.role;
+  if(role === 'operateur') return;
+  const oldVal = inp.defaultValue;
+  const newVal = inp.value.trim();
+  if(oldVal === newVal) return;
+  if(role === 'admin'){
+    pendingModal = {inp, oldVal, newVal, field:'style', id:selectedRecipeId, isStyle:true};
+    document.getElementById('modalContext').textContent = 'style · recette #' + selectedRecipeId;
+    document.getElementById('modalOld').textContent = oldVal || '(vide)';
+    document.getElementById('modalNew').textContent = newVal || '(vide)';
+    document.getElementById('modalOverlay').classList.add('open');
+  } else {
+    // manager — submit as request, revert
+    inp.value = oldVal;
+    showToast('Style soumis pour approbation');
+  }
+}
+
+/* ═══════════════════════════════════════════
+   NEW RECIPE MODAL
+   ═══════════════════════════════════════════ */
+function updateNewRecipeBtnLabel(role){
+  const lbl = document.getElementById('newRecipeBtnLabel');
+  if(!lbl) return;
+  lbl.textContent = role === 'manager' ? 'Demander nouvelle recette' : 'Nouvelle recette';
+}
+
+function openNewRecipeModal(){
+  const role = document.body.dataset.role;
+  if(role === 'operateur') return;
+  document.getElementById('nr-name').value = '';
+  document.getElementById('nr-style').value = '';
+  document.getElementById('nr-yeast').value = 'ale';
+  document.getElementById('newRecipeOverlay').classList.add('open');
+  setTimeout(()=>document.getElementById('nr-name').focus(), 80);
+}
+
+function closeNewRecipeModal(){
+  document.getElementById('newRecipeOverlay').classList.remove('open');
+}
+
+function createRecipe(){
+  const role = document.body.dataset.role;
+  const name = document.getElementById('nr-name').value.trim();
+  const style = document.getElementById('nr-style').value.trim();
+  const yeast = document.getElementById('nr-yeast').value;
+  if(!name){
+    document.getElementById('nr-name').focus();
+    showToast('Nom de recette requis');
+    return;
+  }
+  if(role === 'manager'){
+    closeNewRecipeModal();
+    showToast('Demande soumise: '+name+' · en attente admin');
+    return;
+  }
+  // admin — create client-side entry
+  const newId = Date.now(); // mock id
+  const newRec = {id:newId, name, sku:'', subtype:'Core', vintage:''};
+  RECIPES.push(newRec);
+  INGREDIENTS[newId] = [];
+  PROFILES[newId] = null;
+  RECIPE_YEAST[newId] = yeast;
+  if(style) RECIPE_STYLES[newId] = style;
+  // update badge count
+  const badge = document.querySelector('.nav-badge');
+  if(badge) badge.textContent = RECIPES.length;
+  closeNewRecipeModal();
+  buildRecipeList();
+  selectRecipe(newId);
+  showToast('Recette créée: '+name+(style?' · '+style:''));
+}
+
+/* ═══════════════════════════════════════════
+   TOAST
+   ═══════════════════════════════════════════ */
+let toastTimer;
+function showToast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>t.classList.remove('show'), 2800);
+}
+
+/* ═══════════════════════════════════════════
+   INIT
+   ═══════════════════════════════════════════ */
+buildRecipeList();
+buildBiochemPage();
+updateNewRecipeBtnLabel(document.body.dataset.role);
+// auto-select first recipe
+selectRecipe(RECIPES[0].id);
+</script>
+</body>
+</html>

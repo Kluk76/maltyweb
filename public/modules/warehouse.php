@@ -552,21 +552,26 @@ try {
                 // Uses bd_brewing_ingredients_parsed for the (beer, month) pair.
                 // ANY_VALUE(c.default_gl_account) groups by gl text (sql #1 ONLY_FULL_GROUP_BY).
                 // COLLATE on JOIN across bd_* (0900) and ref_* (unicode_ci) tables (sql #2).
+                // bd_brewing_ingredients_parsed → _v2 (beer/batch now on header bih).
+                // bd_brewing_cooling → bd_brewing_gravity_v2 WHERE event_type='Cooling'
+                // (event_date folded into DATE(submitted_at); cool_* → bare cols).
                 $glSt = $pdo->prepare("
                     SELECT c.default_gl_account AS gl,
                            SUM(bip.qty * IF(bip.unit='g', 0.001, 1)
                                * COALESCE(ws.wac_chf, m.price * IF(m.currency='EUR', 0.945, 1))) AS gl_cost
-                      FROM bd_brewing_ingredients_parsed bip
+                      FROM bd_brewing_ingredients_parsed_v2 bip
+                      JOIN bd_brewing_ingredients_v2 bih ON bih.id = bip.header_id
                       JOIN ref_mi m ON m.id = bip.mi_id_fk
                       LEFT JOIN ref_mi_categories c ON c.id = m.category_id
                       LEFT JOIN wac_snapshots ws ON ws.mi_id_fk = m.id AND ws.period = ?
-                     WHERE bip.beer  COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci
+                     WHERE bih.beer  COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci
                        AND bip.mi_id_fk IS NOT NULL
                        AND EXISTS (
-                         SELECT 1 FROM bd_brewing_cooling bc
-                          WHERE bc.cool_beer  COLLATE utf8mb4_unicode_ci = bip.beer  COLLATE utf8mb4_unicode_ci
-                            AND bc.cool_batch COLLATE utf8mb4_unicode_ci = bip.batch COLLATE utf8mb4_unicode_ci
-                            AND DATE_FORMAT(bc.event_date, '%Y-%m') = ?
+                         SELECT 1 FROM bd_brewing_gravity_v2 bc
+                          WHERE bc.event_type = 'Cooling'
+                            AND bc.beer  COLLATE utf8mb4_unicode_ci = bih.beer  COLLATE utf8mb4_unicode_ci
+                            AND bc.batch COLLATE utf8mb4_unicode_ci = bih.batch COLLATE utf8mb4_unicode_ci
+                            AND DATE_FORMAT(bc.submitted_at, '%Y-%m') = ?
                        )
                      GROUP BY c.default_gl_account
                 ");
@@ -795,58 +800,64 @@ try {
                 )
                 SELECT w.beer COLLATE utf8mb4_unicode_ci AS beer,
                        w.batch COLLATE utf8mb4_unicode_ci AS batch,
-                       (SELECT COUNT(*) FROM bd_brewing_cooling bc
-                         WHERE bc.cool_beer  COLLATE utf8mb4_unicode_ci = w.beer COLLATE utf8mb4_unicode_ci
-                           AND bc.cool_batch COLLATE utf8mb4_unicode_ci = w.batch COLLATE utf8mb4_unicode_ci
-                           AND bc.cool_final_volume_hl > 0) AS n_brews,
-                       (SELECT SUM(bc.cool_final_volume_hl) FROM bd_brewing_cooling bc
-                         WHERE bc.cool_beer  COLLATE utf8mb4_unicode_ci = w.beer COLLATE utf8mb4_unicode_ci
-                           AND bc.cool_batch COLLATE utf8mb4_unicode_ci = w.batch COLLATE utf8mb4_unicode_ci
-                           AND bc.cool_final_volume_hl > 0) AS total_hl,
+                       (SELECT COUNT(*) FROM bd_brewing_gravity_v2 bc
+                         WHERE bc.event_type = 'Cooling'
+                           AND bc.beer  COLLATE utf8mb4_unicode_ci = w.beer COLLATE utf8mb4_unicode_ci
+                           AND bc.batch COLLATE utf8mb4_unicode_ci = w.batch COLLATE utf8mb4_unicode_ci
+                           AND bc.final_volume > 0) AS n_brews,
+                       (SELECT SUM(bc.final_volume) FROM bd_brewing_gravity_v2 bc
+                         WHERE bc.event_type = 'Cooling'
+                           AND bc.beer  COLLATE utf8mb4_unicode_ci = w.beer COLLATE utf8mb4_unicode_ci
+                           AND bc.batch COLLATE utf8mb4_unicode_ci = w.batch COLLATE utf8mb4_unicode_ci
+                           AND bc.final_volume > 0) AS total_hl,
                        (SELECT SUM(CASE WHEN c.default_gl_account = '4101'
                                         THEN bip.qty * IF(bip.unit='g', 0.001, 1)
                                              * COALESCE(ws.wac_chf, mi.price * IF(mi.currency='EUR', 0.945, 1))
                                         ELSE 0 END)
-                          FROM bd_brewing_ingredients_parsed bip
+                          FROM bd_brewing_ingredients_parsed_v2 bip
+                          JOIN bd_brewing_ingredients_v2 bih ON bih.id = bip.header_id
                           JOIN ref_mi mi ON mi.id = bip.mi_id_fk
                           LEFT JOIN ref_mi_categories c ON c.id = mi.category_id
                           LEFT JOIN wac_snapshots ws ON ws.mi_id_fk = mi.id AND ws.period = ?
-                         WHERE bip.beer  COLLATE utf8mb4_unicode_ci = w.beer COLLATE utf8mb4_unicode_ci
-                           AND bip.batch COLLATE utf8mb4_unicode_ci = w.batch COLLATE utf8mb4_unicode_ci
+                         WHERE bih.beer  COLLATE utf8mb4_unicode_ci = w.beer COLLATE utf8mb4_unicode_ci
+                           AND bih.batch COLLATE utf8mb4_unicode_ci = w.batch COLLATE utf8mb4_unicode_ci
                            AND bip.mi_id_fk IS NOT NULL) AS one_brew_4101_chf,
                        (SELECT SUM(CASE WHEN c.default_gl_account = '4102'
                                         THEN bip.qty * IF(bip.unit='g', 0.001, 1)
                                              * COALESCE(ws.wac_chf, mi.price * IF(mi.currency='EUR', 0.945, 1))
                                         ELSE 0 END)
-                          FROM bd_brewing_ingredients_parsed bip
+                          FROM bd_brewing_ingredients_parsed_v2 bip
+                          JOIN bd_brewing_ingredients_v2 bih ON bih.id = bip.header_id
                           JOIN ref_mi mi ON mi.id = bip.mi_id_fk
                           LEFT JOIN ref_mi_categories c ON c.id = mi.category_id
                           LEFT JOIN wac_snapshots ws ON ws.mi_id_fk = mi.id AND ws.period = ?
-                         WHERE bip.beer  COLLATE utf8mb4_unicode_ci = w.beer COLLATE utf8mb4_unicode_ci
-                           AND bip.batch COLLATE utf8mb4_unicode_ci = w.batch COLLATE utf8mb4_unicode_ci
+                         WHERE bih.beer  COLLATE utf8mb4_unicode_ci = w.beer COLLATE utf8mb4_unicode_ci
+                           AND bih.batch COLLATE utf8mb4_unicode_ci = w.batch COLLATE utf8mb4_unicode_ci
                            AND bip.mi_id_fk IS NOT NULL) AS one_brew_4102_chf,
                        (SELECT SUM(CASE WHEN c.default_gl_account = '4104'
                                         THEN bip.qty * IF(bip.unit='g', 0.001, 1)
                                              * COALESCE(ws.wac_chf, mi.price * IF(mi.currency='EUR', 0.945, 1))
                                         ELSE 0 END)
-                          FROM bd_brewing_ingredients_parsed bip
+                          FROM bd_brewing_ingredients_parsed_v2 bip
+                          JOIN bd_brewing_ingredients_v2 bih ON bih.id = bip.header_id
                           JOIN ref_mi mi ON mi.id = bip.mi_id_fk
                           LEFT JOIN ref_mi_categories c ON c.id = mi.category_id
                           LEFT JOIN wac_snapshots ws ON ws.mi_id_fk = mi.id AND ws.period = ?
-                         WHERE bip.beer  COLLATE utf8mb4_unicode_ci = w.beer COLLATE utf8mb4_unicode_ci
-                           AND bip.batch COLLATE utf8mb4_unicode_ci = w.batch COLLATE utf8mb4_unicode_ci
+                         WHERE bih.beer  COLLATE utf8mb4_unicode_ci = w.beer COLLATE utf8mb4_unicode_ci
+                           AND bih.batch COLLATE utf8mb4_unicode_ci = w.batch COLLATE utf8mb4_unicode_ci
                            AND bip.mi_id_fk IS NOT NULL) AS one_brew_4104_chf,
                        (SELECT SUM(CASE WHEN c.default_gl_account NOT IN ('4101','4102','4104')
                                              OR c.default_gl_account IS NULL
                                         THEN bip.qty * IF(bip.unit='g', 0.001, 1)
                                              * COALESCE(ws.wac_chf, mi.price * IF(mi.currency='EUR', 0.945, 1))
                                         ELSE 0 END)
-                          FROM bd_brewing_ingredients_parsed bip
+                          FROM bd_brewing_ingredients_parsed_v2 bip
+                          JOIN bd_brewing_ingredients_v2 bih ON bih.id = bip.header_id
                           JOIN ref_mi mi ON mi.id = bip.mi_id_fk
                           LEFT JOIN ref_mi_categories c ON c.id = mi.category_id
                           LEFT JOIN wac_snapshots ws ON ws.mi_id_fk = mi.id AND ws.period = ?
-                         WHERE bip.beer  COLLATE utf8mb4_unicode_ci = w.beer COLLATE utf8mb4_unicode_ci
-                           AND bip.batch COLLATE utf8mb4_unicode_ci = w.batch COLLATE utf8mb4_unicode_ci
+                         WHERE bih.beer  COLLATE utf8mb4_unicode_ci = w.beer COLLATE utf8mb4_unicode_ci
+                           AND bih.batch COLLATE utf8mb4_unicode_ci = w.batch COLLATE utf8mb4_unicode_ci
                            AND bip.mi_id_fk IS NOT NULL) AS one_brew_other_chf
                   FROM wanted w
             ";
@@ -1033,14 +1044,16 @@ try {
                   SELECT t.beer_name COLLATE utf8mb4_unicode_ci AS beer_name,
                          t.batch     COLLATE utf8mb4_unicode_ci AS batch,
                          t.volume_hl,
-                         (SELECT SUM(bc.cool_final_volume_hl) FROM bd_brewing_cooling bc
-                           WHERE bc.cool_beer  COLLATE utf8mb4_unicode_ci = t.beer_name COLLATE utf8mb4_unicode_ci
-                             AND bc.cool_batch COLLATE utf8mb4_unicode_ci = t.batch     COLLATE utf8mb4_unicode_ci
-                             AND bc.cool_final_volume_hl > 0) AS total_brewed_hl,
-                         (SELECT COUNT(*) FROM bd_brewing_cooling bc
-                           WHERE bc.cool_beer  COLLATE utf8mb4_unicode_ci = t.beer_name COLLATE utf8mb4_unicode_ci
-                             AND bc.cool_batch COLLATE utf8mb4_unicode_ci = t.batch     COLLATE utf8mb4_unicode_ci
-                             AND bc.cool_final_volume_hl > 0) AS n_brews
+                         (SELECT SUM(bc.final_volume) FROM bd_brewing_gravity_v2 bc
+                           WHERE bc.event_type = 'Cooling'
+                             AND bc.beer  COLLATE utf8mb4_unicode_ci = t.beer_name COLLATE utf8mb4_unicode_ci
+                             AND bc.batch COLLATE utf8mb4_unicode_ci = t.batch     COLLATE utf8mb4_unicode_ci
+                             AND bc.final_volume > 0) AS total_brewed_hl,
+                         (SELECT COUNT(*) FROM bd_brewing_gravity_v2 bc
+                           WHERE bc.event_type = 'Cooling'
+                             AND bc.beer  COLLATE utf8mb4_unicode_ci = t.beer_name COLLATE utf8mb4_unicode_ci
+                             AND bc.batch COLLATE utf8mb4_unicode_ci = t.batch     COLLATE utf8mb4_unicode_ci
+                             AND bc.final_volume > 0) AS n_brews
                     FROM tanks t
                 )
                 -- ANY_VALUE wraps per-mi attributes that are functionally
@@ -1059,9 +1072,11 @@ try {
                            * tb.volume_hl / NULLIF(tb.total_brewed_hl, 0)
                            * COALESCE(w.wac_chf, m.price * IF(m.currency='EUR', 0.945, 1))) AS total_chf
                   FROM tank_batches tb
-                  JOIN bd_brewing_ingredients_parsed bip
-                    ON bip.beer  COLLATE utf8mb4_unicode_ci = tb.beer_name COLLATE utf8mb4_unicode_ci
-                   AND bip.batch COLLATE utf8mb4_unicode_ci = tb.batch     COLLATE utf8mb4_unicode_ci
+                  JOIN bd_brewing_ingredients_v2 bih
+                    ON bih.beer  COLLATE utf8mb4_unicode_ci = tb.beer_name COLLATE utf8mb4_unicode_ci
+                   AND bih.batch COLLATE utf8mb4_unicode_ci = tb.batch     COLLATE utf8mb4_unicode_ci
+                  JOIN bd_brewing_ingredients_parsed_v2 bip
+                    ON bip.header_id = bih.id
                    AND bip.mi_id_fk IS NOT NULL
                   JOIN ref_mi m ON m.id = bip.mi_id_fk
                   LEFT JOIN ref_mi_categories c ON c.id = m.category_id

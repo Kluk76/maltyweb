@@ -69,12 +69,6 @@ if (ctype_digit($_gfy)) {
     if ($py >= $fermYearMin && $py <= $fermYearMax) $fermYear = $py;
 }
 
-// --- CCT view toggle (fill = liquid + state color | metrics = OG/pH/avgs | levure = yeast/gen/repitch) ---
-$cctView = 'fill';
-if (isset($_GET['cct_view']) && in_array($_GET['cct_view'], ['fill', 'metrics', 'levure'], true)) {
-    $cctView = $_GET['cct_view'];
-}
-
 function fmt_date_fr_tanks_full(DateTimeImmutable $dt, array $monthsFull): string {
     return sprintf('%d %s %s', (int)$dt->format('j'), $monthsFull[(int)$dt->format('n')], $dt->format('Y'));
 }
@@ -108,20 +102,31 @@ try {
     // ---- Per-beer fermentation stats ----
     $fermStmt = $pdo->prepare("
         WITH fer_end AS (
+          -- LEGACY-ONLY (v2 cutover blocker, 2026-05-24): bd_brewing_timings_v2.start_ferm
+          -- is 100% NULL — the fermentation-start timestamp was not carried into v2
+          -- (v2 populates brew_start/brew_end, a DIFFERENT event). Every fermentation
+          -- duration / CC-offset calc on this page keys off start_ferm, so these timings
+          -- reads stay on bd_brewing_timings until start_ferm is populated in v2.
           SELECT beer, batch, MAX(STR_TO_DATE(start_ferm, '%d.%m.%Y %H:%i:%s')) AS ferm_start_dt
           FROM bd_brewing_timings
           WHERE start_ferm IS NOT NULL AND beer IS NOT NULL AND batch IS NOT NULL
           GROUP BY beer, batch
         ),
         cc AS (
+          -- bd_fermenting → bd_fermenting_v2: ColdCrash rows carry the "PREFIX BATCH"
+          -- text in beer_raw (event_type discriminator replaces the beers_to_cold_crash col).
+          -- GROUP BY the full derived expressions, NOT the aliases: bd_fermenting_v2 has
+          -- a physical `batch` column, so GROUP BY batch would bind to it and trip
+          -- ONLY_FULL_GROUP_BY on the beer_raw-derived prefix.
           SELECT
-            TRIM(SUBSTRING_INDEX(beers_to_cold_crash, ' ', -1)) AS batch,
-            TRIM(SUBSTRING(beers_to_cold_crash, 1, LENGTH(beers_to_cold_crash) - LENGTH(SUBSTRING_INDEX(beers_to_cold_crash, ' ', -1)) - 1)) AS prefix,
+            TRIM(SUBSTRING_INDEX(beer_raw, ' ', -1)) AS batch,
+            TRIM(SUBSTRING(beer_raw, 1, LENGTH(beer_raw) - LENGTH(SUBSTRING_INDEX(beer_raw, ' ', -1)) - 1)) AS prefix,
             MIN(event_date) AS cc_date
-          FROM bd_fermenting
-          WHERE beers_to_cold_crash IS NOT NULL AND beers_to_cold_crash != ''
+          FROM bd_fermenting_v2
+          WHERE event_type = 'ColdCrash' AND beer_raw IS NOT NULL AND beer_raw != ''
             AND event_date IS NOT NULL
-          GROUP BY prefix, batch
+          GROUP BY TRIM(SUBSTRING(beer_raw, 1, LENGTH(beer_raw) - LENGTH(SUBSTRING_INDEX(beer_raw, ' ', -1)) - 1)),
+                   TRIM(SUBSTRING_INDEX(beer_raw, ' ', -1))
         ),
         cc_canon AS (
           -- Prefix → canonical recipe name via ref_recipe_aliases (single source of truth).
@@ -164,22 +169,26 @@ try {
     // ---- Per-recipe averages of last gravity + last pH before cold-crash ----
     $avgFinalsStmt = $pdo->query("
         WITH cc_per_batch AS (
+          -- bd_fermenting → bd_fermenting_v2: ColdCrash rows, "PREFIX BATCH" in beer_raw.
+          -- GROUP BY full expressions (physical `batch` column collides with the alias).
           SELECT
-            TRIM(SUBSTRING(beers_to_cold_crash, 1, LENGTH(beers_to_cold_crash) - LENGTH(SUBSTRING_INDEX(beers_to_cold_crash, ' ', -1)) - 1)) AS prefix,
-            TRIM(SUBSTRING_INDEX(beers_to_cold_crash, ' ', -1)) AS batch,
+            TRIM(SUBSTRING(beer_raw, 1, LENGTH(beer_raw) - LENGTH(SUBSTRING_INDEX(beer_raw, ' ', -1)) - 1)) AS prefix,
+            TRIM(SUBSTRING_INDEX(beer_raw, ' ', -1)) AS batch,
             MIN(event_date) AS cc_date
-          FROM bd_fermenting
-          WHERE beers_to_cold_crash IS NOT NULL AND beers_to_cold_crash != ''
+          FROM bd_fermenting_v2
+          WHERE event_type = 'ColdCrash' AND beer_raw IS NOT NULL AND beer_raw != ''
             AND event_date IS NOT NULL
-          GROUP BY prefix, batch
+          GROUP BY TRIM(SUBSTRING(beer_raw, 1, LENGTH(beer_raw) - LENGTH(SUBSTRING_INDEX(beer_raw, ' ', -1)) - 1)),
+                   TRIM(SUBSTRING_INDEX(beer_raw, ' ', -1))
         ),
         reads_with_parse AS (
+          -- Reads rows, "PREFIX BATCH" in beer_raw (event_type='Reads').
           SELECT
-            TRIM(SUBSTRING(beers_to_read, 1, LENGTH(beers_to_read) - LENGTH(SUBSTRING_INDEX(beers_to_read, ' ', -1)) - 1)) AS prefix,
-            TRIM(SUBSTRING_INDEX(beers_to_read, ' ', -1)) AS batch,
+            TRIM(SUBSTRING(beer_raw, 1, LENGTH(beer_raw) - LENGTH(SUBSTRING_INDEX(beer_raw, ' ', -1)) - 1)) AS prefix,
+            TRIM(SUBSTRING_INDEX(beer_raw, ' ', -1)) AS batch,
             event_date, gravity, ph
-          FROM bd_fermenting
-          WHERE beers_to_read IS NOT NULL AND beers_to_read != ''
+          FROM bd_fermenting_v2
+          WHERE event_type = 'Reads' AND beer_raw IS NOT NULL AND beer_raw != ''
         ),
         last_grav_before_cc AS (
           SELECT r.prefix, r.batch, r.gravity,
@@ -247,8 +256,8 @@ try {
         $batch   = $simRow['batch'];
 
         $brewdayDate = $pdo->prepare(
-            'SELECT event_date FROM bd_brewing_brewday
-             WHERE bd_beer = :beer AND bd_batch = :batch
+            'SELECT event_date FROM bd_brewing_brewday_v2
+             WHERE beer = :beer AND batch = :batch
              ORDER BY event_date DESC LIMIT 1'
         );
         $brewdayDate->execute([':beer' => $rawBeer, ':batch' => $batch]);
@@ -285,8 +294,9 @@ try {
 
         $gravStmt = $pdo->prepare(
             'SELECT gravity AS last_gravity, event_date AS last_gravity_date
-             FROM bd_fermenting
-             WHERE (beers_to_read = :exact OR beers_to_read LIKE :withTrail)
+             FROM bd_fermenting_v2
+             WHERE event_type = "Reads"
+               AND (beer_raw = :exact OR beer_raw LIKE :withTrail)
                AND gravity IS NOT NULL
              ORDER BY event_date DESC LIMIT 1'
         );
@@ -298,9 +308,10 @@ try {
 
         $ccStmt = $pdo->prepare(
             'SELECT MAX(event_date) AS last_cc_date
-             FROM bd_fermenting
-             WHERE (beers_to_cold_crash = :exact OR beers_to_cold_crash LIKE :withTrail)
-               AND beers_to_cold_crash IS NOT NULL AND beers_to_cold_crash != \'\''
+             FROM bd_fermenting_v2
+             WHERE event_type = "ColdCrash"
+               AND (beer_raw = :exact OR beer_raw LIKE :withTrail)
+               AND beer_raw IS NOT NULL AND beer_raw != \'\''
         );
         $ccStmt->execute([
             ':exact'     => $exactMatch,
@@ -308,6 +319,7 @@ try {
         ]);
         $ccRow = $ccStmt->fetch() ?: [];
 
+        // LEGACY-ONLY: bd_brewing_timings_v2.start_ferm is 100% NULL (see fer_end note).
         $fermStartStmt = $pdo->prepare(
             'SELECT MAX(STR_TO_DATE(start_ferm, \'%d.%m.%Y %H:%i:%s\')) AS ferm_start_dt
              FROM bd_brewing_timings
@@ -319,9 +331,9 @@ try {
 
         // Yeast + generation (from brewday)
         $yeastStmt = $pdo->prepare(
-            'SELECT bd_yeast, bd_yeast_gen
-             FROM bd_brewing_brewday
-             WHERE bd_beer = :beer AND bd_batch = :batch
+            'SELECT yeast AS bd_yeast, yeast_gen AS bd_yeast_gen
+             FROM bd_brewing_brewday_v2
+             WHERE beer = :beer AND batch = :batch
              ORDER BY event_date DESC LIMIT 1'
         );
         $yeastStmt->execute([':beer' => $rawBeer, ':batch' => $batch]);
@@ -330,16 +342,17 @@ try {
         // Re-pitch count: how many times this batch's yeast has been used to pitch another batch
         $pitchKey     = $beerPrefix . ' ' . $batch;
         $repitchStmt  = $pdo->prepare(
-            'SELECT COUNT(*) FROM bd_brewing_brewday WHERE bd_pitched_from = :src'
+            'SELECT COUNT(*) FROM bd_brewing_brewday_v2 WHERE pitched_from = :src'
         );
         $repitchStmt->execute([':src' => $pitchKey]);
         $repitchCount = (int)$repitchStmt->fetchColumn();
 
-        // Original gravity — latest cooling row of this batch
+        // Original gravity — latest cooling row of this batch.
+        // bd_brewing_cooling folded into bd_brewing_gravity_v2 WHERE event_type='Cooling'.
         $ogStmt = $pdo->prepare(
-            'SELECT MAX(cool_final_gravity) AS og
-             FROM bd_brewing_cooling
-             WHERE cool_beer = :beer AND cool_batch = :batch'
+            'SELECT MAX(final_gravity) AS og
+             FROM bd_brewing_gravity_v2
+             WHERE event_type = "Cooling" AND beer = :beer AND batch = :batch'
         );
         $ogStmt->execute([':beer' => $rawBeer, ':batch' => $batch]);
         $ogRow = $ogStmt->fetch() ?: [];
@@ -347,8 +360,9 @@ try {
         // Latest pH from fermenting reads
         $phStmt = $pdo->prepare(
             'SELECT ph, event_date AS ph_date
-             FROM bd_fermenting
-             WHERE (beers_to_read = :exact OR beers_to_read LIKE :withTrail)
+             FROM bd_fermenting_v2
+             WHERE event_type = "Reads"
+               AND (beer_raw = :exact OR beer_raw LIKE :withTrail)
                AND ph IS NOT NULL
              ORDER BY event_date DESC LIMIT 1'
         );
@@ -398,6 +412,253 @@ try {
         $hlInCcts += (float)($row['volume_hl'] ?? 0);
     }
 
+
+    // ---- Per-CCT detail bundles for modal popup ----
+    $cctDetails = [];
+    foreach ($cctOccMap as $num => $occ) {
+        try {
+            $rawBeer    = $occ['bd_beer_raw'] ?? ($occ['bd_beer'] ?? '');
+            $batch      = $occ['bd_batch'] ?? '';
+            $beerCanon  = $occ['bd_beer']  ?? '';
+
+            $beerPrefix = canonical_to_short_code($pdo, $beerCanon)
+                ?? canonical_to_short_code($pdo, $rawBeer)
+                ?? TankSimulator::beerPrefix($beerCanon);
+            $exactMatch = $beerPrefix . ' ' . $batch;
+            $withTrail  = $beerPrefix . ' ' . $batch . ' %';
+
+            $hasColdCrash = !empty($occ['last_cc_date']);
+            $state        = $hasColdCrash ? 'cold' : 'ferment';
+            $capHl        = 0.0;
+            foreach ($cctRef as $r) {
+                if ((int)$r['number'] === $num) {
+                    $capHl = (float)$r['capacity_hl'];
+                    break;
+                }
+            }
+            $volHl = (float)($occ['volume_hl'] ?? 0);
+
+            // Days in fermentation
+            $daysIn = null;
+            $fermStartDT = $occ['ferm_start_dt'] ?? null;
+            if ($fermStartDT === null) {
+                // fetch from DB
+                // LEGACY-ONLY: bd_brewing_timings_v2.start_ferm is 100% NULL (see fer_end note).
+                $fsStmt = $pdo->prepare(
+                    'SELECT MAX(STR_TO_DATE(start_ferm, \'%d.%m.%Y %H:%i:%s\')) AS fsd
+                     FROM bd_brewing_timings
+                     WHERE beer = :beer AND batch = :batch AND start_ferm IS NOT NULL'
+                );
+                $fsStmt->execute([':beer' => $rawBeer, ':batch' => $batch]);
+                $fsRow = $fsStmt->fetch();
+                $fermStartDT = $fsRow['fsd'] ?? null;
+            }
+            if ($fermStartDT !== null) {
+                $daysIn = (int)(new DateTimeImmutable($fermStartDT))->diff($asOfDT)->days;
+            }
+
+            // CC offsets
+            $ccEstimated = null;
+            $avgDays     = $avgFermDaysByBeer[$rawBeer] ?? null;
+            if ($fermStartDT !== null && $avgDays !== null) {
+                $ccEstimated = $avgDays;
+            }
+            $ccActual = null;
+            if (!empty($occ['last_cc_date']) && $fermStartDT !== null) {
+                $ccActual = (int)(new DateTimeImmutable($fermStartDT))
+                    ->diff(new DateTimeImmutable($occ['last_cc_date']))->days;
+            }
+
+            // Metrics
+            $ogVal      = $occ['og']           ?? null;
+            $fgCurrent  = $occ['last_gravity'] ?? null;
+            $phCurrent  = $occ['last_ph']      ?? null;
+            $avgFinR    = $avgFinalsByBeer[$rawBeer] ?? null;
+            $targetFg   = $avgFinR['grav'] ?? null;
+            $targetPh   = $avgFinR['ph']   ?? null;
+            $attenPct   = null;
+            $progressPct = null;
+            if ($ogVal !== null && $fgCurrent !== null && (float)$ogVal > 0) {
+                $attenPct = (int)round(((float)$ogVal - (float)$fgCurrent) / (float)$ogVal * 100.0);
+            }
+            if ($ogVal !== null && $fgCurrent !== null && $targetFg !== null
+                && (float)$ogVal > (float)$targetFg) {
+                $progressPct = (int)round(
+                    min(1.0, ((float)$ogVal - (float)$fgCurrent) / ((float)$ogVal - (float)$targetFg)) * 100.0
+                );
+            }
+
+            // Yeast
+            $pitchedFromStmt = $pdo->prepare(
+                'SELECT pitched_from AS bd_pitched_from FROM bd_brewing_brewday_v2
+                 WHERE beer = :beer AND batch = :batch
+                 ORDER BY event_date DESC LIMIT 1'
+            );
+            $pitchedFromStmt->execute([':beer' => $rawBeer, ':batch' => $batch]);
+            $pitchedFromRow = $pitchedFromStmt->fetch() ?: [];
+
+            // Current reads
+            $readsStmt = $pdo->prepare(
+                'SELECT event_date, gravity, ph
+                 FROM bd_fermenting_v2
+                 WHERE event_type = "Reads"
+                   AND (beer_raw = :exact OR beer_raw LIKE :trail)
+                   AND (gravity IS NOT NULL OR ph IS NOT NULL)
+                 ORDER BY event_date ASC'
+            );
+            $readsStmt->execute([':exact' => $exactMatch, ':trail' => $withTrail]);
+            $rawReads = $readsStmt->fetchAll(PDO::FETCH_ASSOC);
+
+            $currentReads = [];
+            if ($fermStartDT !== null) {
+                // Day-0 read from cooling OG
+                if ($ogVal !== null) {
+                    $currentReads[] = ['day' => 0, 'fg' => (float)$ogVal, 'ph' => null];
+                }
+                foreach ($rawReads as $rr) {
+                    $day = (int)(new DateTimeImmutable($fermStartDT))
+                        ->diff(new DateTimeImmutable($rr['event_date']))->days;
+                    $entry = ['day' => $day];
+                    $entry['fg'] = $rr['gravity'] !== null ? (float)$rr['gravity'] : null;
+                    $entry['ph'] = $rr['ph']      !== null ? (float)$rr['ph']      : null;
+                    if ($entry['fg'] !== null || $entry['ph'] !== null) {
+                        $currentReads[] = $entry;
+                    }
+                }
+                // Deduplicate by day (keep last)
+                $dedupReads = [];
+                foreach ($currentReads as $cr) {
+                    $dedupReads[$cr['day']] = $cr;
+                }
+                ksort($dedupReads);
+                $currentReads = array_values($dedupReads);
+            }
+
+            // Historical batches (up to 5 prior)
+            $histBatchStmt = $pdo->prepare(
+                'SELECT batch AS bd_batch FROM bd_brewing_brewday_v2
+                 WHERE beer = :beer AND batch != :cur
+                 ORDER BY event_date DESC LIMIT 5'
+            );
+            $histBatchStmt->execute([':beer' => $rawBeer, ':cur' => $batch]);
+            $histBatches = $histBatchStmt->fetchAll(PDO::FETCH_COLUMN);
+
+            $historical = [];
+            foreach ($histBatches as $hb) {
+                $hPrefix    = $beerPrefix . ' ' . $hb;
+                $hWithTrail = $hPrefix . ' %';
+
+                // LEGACY-ONLY: bd_brewing_timings_v2.start_ferm is 100% NULL (see fer_end note).
+                $hFermStmt = $pdo->prepare(
+                    'SELECT MAX(STR_TO_DATE(start_ferm, \'%d.%m.%Y %H:%i:%s\')) AS fsd
+                     FROM bd_brewing_timings
+                     WHERE beer = :beer AND batch = :batch AND start_ferm IS NOT NULL'
+                );
+                $hFermStmt->execute([':beer' => $rawBeer, ':batch' => $hb]);
+                $hFermRow = $hFermStmt->fetch();
+                $hFermStart = $hFermRow['fsd'] ?? null;
+                if ($hFermStart === null) continue;
+
+                $hReadsStmt = $pdo->prepare(
+                    'SELECT event_date, gravity, ph
+                     FROM bd_fermenting_v2
+                     WHERE event_type = "Reads"
+                       AND (beer_raw = :exact OR beer_raw LIKE :trail)
+                       AND (gravity IS NOT NULL OR ph IS NOT NULL)
+                     ORDER BY event_date ASC'
+                );
+                $hReadsStmt->execute([':exact' => $hPrefix, ':trail' => $hWithTrail]);
+                $hRawReads = $hReadsStmt->fetchAll(PDO::FETCH_ASSOC);
+
+                $hReads = [];
+                foreach ($hRawReads as $hr) {
+                    $day = (int)(new DateTimeImmutable($hFermStart))
+                        ->diff(new DateTimeImmutable($hr['event_date']))->days;
+                    $entry = ['day' => $day];
+                    $entry['fg'] = $hr['gravity'] !== null ? (float)$hr['gravity'] : null;
+                    $entry['ph'] = $hr['ph']      !== null ? (float)$hr['ph']      : null;
+                    if ($entry['fg'] !== null || $entry['ph'] !== null) {
+                        $hReads[] = $entry;
+                    }
+                }
+                $dedupH = [];
+                foreach ($hReads as $hr) { $dedupH[$hr['day']] = $hr; }
+                ksort($dedupH);
+                $hReads = array_values($dedupH);
+
+                // CC day
+                $hCcStmt = $pdo->prepare(
+                    'SELECT MIN(event_date) AS cc_date
+                     FROM bd_fermenting_v2
+                     WHERE event_type = "ColdCrash"
+                       AND (beer_raw = :exact OR beer_raw LIKE :trail)
+                       AND beer_raw IS NOT NULL AND beer_raw != \'\''
+                );
+                $hCcStmt->execute([':exact' => $hPrefix, ':trail' => $hWithTrail]);
+                $hCcRow    = $hCcStmt->fetch();
+                $hCcDay    = null;
+                if (!empty($hCcRow['cc_date'])) {
+                    $hCcDay = (int)(new DateTimeImmutable($hFermStart))
+                        ->diff(new DateTimeImmutable($hCcRow['cc_date']))->days;
+                }
+
+                if (!empty($hReads)) {
+                    $historical[] = [
+                        'batch'  => $hb,
+                        'cc_day' => $hCcDay,
+                        'reads'  => $hReads,
+                    ];
+                }
+            }
+
+            // Brewdate formatted
+            $brewdateFormatted = !empty($occ['brewday_date'])
+                ? sprintf('%d %s', (int)(new DateTimeImmutable($occ['brewday_date']))->format('j'),
+                    $monthsFR[(int)(new DateTimeImmutable($occ['brewday_date']))->format('n')])
+                : null;
+
+            // Beer classification display
+            $beerClassification = $occ['classification'] ?? null;
+            $clientName         = $occ['client_name']    ?? null;
+            $classificationDisplay = $clientName ?: $beerClassification;
+
+            $cctDetails[$num] = [
+                'cct'                  => $num,
+                'capacity_hl'          => $capHl,
+                'volume_hl'            => $volHl,
+                'state'                => $state,
+                'beer'                 => $occ['recipe_short_name'] ?? $beerCanon,
+                'beer_classification'  => $classificationDisplay,
+                'batch'                => $batch,
+                'brewdate'             => $brewdateFormatted,
+                'days_in'              => $daysIn,
+                'cc_estimated'         => $ccEstimated,
+                'cc_actual'            => $ccActual,
+                'metrics'              => [
+                    'og'              => $ogVal !== null ? (float)$ogVal : null,
+                    'fg_current'      => $fgCurrent !== null ? (float)$fgCurrent : null,
+                    'ph_current'      => $phCurrent !== null ? (float)$phCurrent : null,
+                    'target_fg'       => $targetFg  !== null ? (float)$targetFg  : null,
+                    'target_ph'       => $targetPh  !== null ? (float)$targetPh  : null,
+                    'attenuation_pct' => $attenPct,
+                    'progress_pct'    => $progressPct,
+                ],
+                'yeast'                => [
+                    'strain'        => $occ['yeast']         ?? null,
+                    'generation'    => $occ['yeast_gen'] !== null ? (int)$occ['yeast_gen'] : null,
+                    'repitch_count' => (int)($occ['repitch_count'] ?? 0),
+                    'pitched_from'  => $pitchedFromRow['bd_pitched_from'] ?? null,
+                    'pitched_into'  => null,
+                    'pcr'           => null,
+                ],
+                'current_reads'        => $currentReads,
+                'historical'           => $historical,
+            ];
+        } catch (Throwable $detailEx) {
+            // A bad CCT doesn't break the page — skip its detail bundle silently
+        }
+    }
+
     $dbError = null;
 
 } catch (Throwable $e) {
@@ -409,6 +670,7 @@ try {
     $occupiedCct     = 0;
     $hlInCcts        = 0.0;
     $dbError         = $e->getMessage();
+    $cctDetails      = [];
 }
 
 $today = $asOfDT;
@@ -422,6 +684,7 @@ $today = $asOfDT;
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/app.css?v=<?= @filemtime(__DIR__ . '/../css/app.css') ?: time() ?>">
+  <script src="/js/cct-detail-modal.js?v=<?= @filemtime(__DIR__ . '/../js/cct-detail-modal.js') ?: time() ?>" defer></script>
 </head>
 <body class="home">
 
@@ -439,9 +702,6 @@ $today = $asOfDT;
 
   <!-- As-of date filter -->
   <form class="tanks-filters" method="get" action="<?= htmlspecialchars($_SERVER['PHP_SELF']) ?>">
-    <?php if (isset($_GET['cct_view'])): ?>
-      <input type="hidden" name="cct_view" value="<?= htmlspecialchars($_GET['cct_view']) ?>">
-    <?php endif ?>
     <div class="wort-filters__row">
 
       <div class="wort-filters__field">
@@ -508,26 +768,6 @@ $today = $asOfDT;
     <div class="wort-section__head">
       <h2 class="tanks-section__title">Fermenteurs <span class="tanks-section__tag">CCT</span></h2>
       <span class="wort-section__label">— <?= $occupiedCct ?> occupé<?= $occupiedCct !== 1 ? 's' : '' ?> sur <?= $totalCct ?> actifs</span>
-      <form class="cct-view-toggle" method="get" action="<?= htmlspecialchars($_SERVER['PHP_SELF']) ?>">
-        <?php foreach (['year','month','day','ferm_year'] as $k): ?>
-          <?php if (isset($_GET[$k]) && $_GET[$k] !== ''): ?>
-            <input type="hidden" name="<?= $k ?>" value="<?= htmlspecialchars($_GET[$k]) ?>">
-          <?php endif ?>
-        <?php endforeach ?>
-        <span class="cct-view-toggle__label">Vue</span>
-        <button type="submit" name="cct_view" value="fill"
-                class="cct-view-toggle__btn<?= $cctView === 'fill' ? ' cct-view-toggle__btn--active' : '' ?>">
-          Niveau
-        </button>
-        <button type="submit" name="cct_view" value="metrics"
-                class="cct-view-toggle__btn<?= $cctView === 'metrics' ? ' cct-view-toggle__btn--active' : '' ?>">
-          Mesures
-        </button>
-        <button type="submit" name="cct_view" value="levure"
-                class="cct-view-toggle__btn<?= $cctView === 'levure' ? ' cct-view-toggle__btn--active' : '' ?>">
-          Levure
-        </button>
-      </form>
     </div>
 
     <div class="tanks-grid">
@@ -554,65 +794,15 @@ $today = $asOfDT;
             $fillRatio    = $capHl > 0 ? min(1.0, $volHl / $capHl) : 0.0;
         }
 
-        // ── Metrics-view computation: fill ratio + side metrics ──
-        $displayFillRatio = $fillRatio;
-        $attenPct  = null;
-        $attenBand = '';
-        $phBand    = '';
-        $ogMVal    = null;
-        $phMVal    = null;
-        $lastGMVal = null;
-        $avgFGVal  = null;
-        $avgPHVal  = null;
-
-        if ($cctView === 'metrics' && $occ) {
-            $rawBeer   = $occ['bd_beer_raw'] ?? ($occ['bd_beer'] ?? '');
-            $ogMVal    = $occ['og']           ?? null;
-            $lastGMVal = $occ['last_gravity'] ?? null;
-            $phMVal    = $occ['last_ph']      ?? null;
-            $avgF      = $avgFinalsByBeer[$rawBeer] ?? null;
-            $avgFGVal  = $avgF['grav'] ?? null;
-            $avgPHVal  = $avgF['ph']   ?? null;
-
-            // Tank fill = % fermentation atteint (progress toward recipe target FG).
-            // CC state: fermentation considered complete → cuve pleine.
-            if (!empty($occ['last_cc_date'])) {
-                $displayFillRatio = 1.0;
-            } elseif ($ogMVal !== null && $lastGMVal !== null && $avgFGVal !== null
-                      && (float)$ogMVal > (float)$avgFGVal) {
-                $progress = ((float)$ogMVal - (float)$lastGMVal) / ((float)$ogMVal - (float)$avgFGVal);
-                $displayFillRatio = max(0.0, min(1.0, $progress));
-            } else {
-                $displayFillRatio = 0.0;
-            }
-
-            // Atténuation apparente = sucres consommés / sucres initiaux.
-            // Distinct du fill: une cuve "pleine" (100 % à la cible) ≈ 78 % atténuée
-            // car les dextrines sont non-fermentescibles (plafond ~75–82 %).
-            if ($ogMVal !== null && $lastGMVal !== null && (float)$ogMVal > 0) {
-                $attenPct = max(0.0, min(100.0,
-                    ((float)$ogMVal - (float)$lastGMVal) / (float)$ogMVal * 100.0));
-            }
-            if ($attenPct !== null) {
-                if      ($attenPct >= 75) $attenBand = 'metric--good';
-                elseif  ($attenPct >= 65) $attenBand = 'metric--mid';
-                else                       $attenBand = 'metric--caution';
-            }
-
-            if ($phMVal !== null) {
-                $phF = (float)$phMVal;
-                if      ($phF >= 4.0 && $phF <= 4.6) $phBand = 'metric--good';
-                elseif  ($phF > 4.6  && $phF <= 4.8) $phBand = 'metric--mid';
-                else                                  $phBand = 'metric--warn';
-            }
-        }
-
-        $isMetricsOcc = ($cctView === 'metrics' && $occ !== null && !$isMaint);
       ?>
-      <div class="tank-card <?= $stateClass ?><?= $isMetricsOcc ? ' tank-card--metrics' : '' ?>">
+      <?php if ($occ !== null && !$isMaint): ?>
+        <button class="tank-card-btn tank-card <?= $stateClass ?>" data-cct="<?= $num ?>" type="button" aria-label="Détails CCT <?= $num ?>">
+      <?php else: ?>
+        <div class="tank-card <?= $stateClass ?>">
+      <?php endif ?>
         <?php if ($isMaint): ?>
           <div class="tank-card__svg">
-            <?= svg_cct(0.0, 'maint', $num, '', $cctView, []) ?>
+            <?= svg_cct(0.0, 'maint', $num, '', 'fill', []) ?>
           </div>
           <div class="tank-card__info">
             <span class="tank-card__cap tanks-mute"><?= htmlspecialchars(number_format($capHl, 0)) ?> HL</span>
@@ -621,7 +811,7 @@ $today = $asOfDT;
 
         <?php elseif ($occ === null): ?>
           <div class="tank-card__svg">
-            <?= svg_cct(0.0, '', $num, '', $cctView, []) ?>
+            <?= svg_cct(0.0, '', $num, '', 'fill', []) ?>
           </div>
           <div class="tank-card__info">
             <span class="tank-card__empty-label">—</span>
@@ -629,144 +819,30 @@ $today = $asOfDT;
           </div>
 
         <?php else:
-          $beerLabel = htmlspecialchars($occ['recipe_short_name'] ?? $occ['bd_beer'] ?? '');
-          $batch     = htmlspecialchars($occ['bd_batch'] ?? '');
+          $beerLabel  = htmlspecialchars($occ['recipe_short_name'] ?? $occ['bd_beer'] ?? '');
+          $batchLabel = htmlspecialchars($occ['bd_batch'] ?? '');
         ?>
-
-          <?php if ($isMetricsOcc): ?>
-            <div class="tank-card__metrics-top">
-              <div class="tank-card__svg">
-                <?= svg_cct(
-                  $displayFillRatio,
-                  $svgState,
-                  $num,
-                  (string)($occ['bd_beer'] ?? ''),
-                  $cctView,
-                  [
-                      'og'           => $ogMVal,
-                      'ph'           => $phMVal,
-                      'yeast'        => $occ['yeast']         ?? null,
-                      'yeast_gen'    => $occ['yeast_gen']     ?? null,
-                      'repitch_count'=> $occ['repitch_count'] ?? 0,
-                  ]
-                ) ?>
-              </div>
-              <aside class="atten-gauge">
-                <span class="atten-gauge__label">Atténuation</span>
-                <span class="atten-gauge__value tanks-mono <?= $attenBand ?>">
-                  <?php if ($attenPct !== null): ?>
-                    <?= round($attenPct) ?><span class="atten-gauge__unit">%</span>
-                  <?php else: ?>—<?php endif ?>
-                </span>
-                <span class="atten-gauge__tick" aria-hidden="true"></span>
-                <span class="atten-gauge__meta tanks-mono">
-                  <?php if ($ogMVal !== null): ?>OG&nbsp;<?= number_format((float)$ogMVal, 1) ?>&thinsp;°P<?php else: ?>OG&nbsp;—<?php endif ?>
-                </span>
-              </aside>
-            </div>
-          <?php else: ?>
-            <div class="tank-card__svg">
-              <?= svg_cct(
-                $displayFillRatio,
-                $svgState,
-                $num,
-                (string)($occ['bd_beer'] ?? ''),
-                $cctView,
-                $occ ? [
-                    'og'           => $occ['og']            ?? null,
-                    'ph'           => $occ['last_ph']       ?? null,
-                    'yeast'        => $occ['yeast']         ?? null,
-                    'yeast_gen'    => $occ['yeast_gen']     ?? null,
-                    'repitch_count'=> $occ['repitch_count'] ?? 0,
-                ] : []
-              ) ?>
-            </div>
-          <?php endif ?>
-
-          <?php if ($cctView === 'metrics'): ?>
-            <div class="tank-card__info tank-card__info--metrics">
-              <span class="tank-card__beer"><?= $beerLabel ?></span>
-              <span class="tank-card__batch tanks-mono"><?= $batch ?></span>
-
-              <dl class="reads-ledger">
-                <div class="reads-ledger__col">
-                  <span class="reads-ledger__head">Derniers</span>
-                  <div class="reads-ledger__row">
-                    <dt>FG</dt>
-                    <dd class="tanks-mono">
-                      <?= $lastGMVal !== null
-                          ? number_format((float)$lastGMVal, 1) . '<span class="metric__unit"> °P</span>'
-                          : '—' ?>
-                    </dd>
-                  </div>
-                  <div class="reads-ledger__row <?= $phBand ?>">
-                    <dt>pH</dt>
-                    <dd class="tanks-mono">
-                      <?= $phMVal !== null ? number_format((float)$phMVal, 2) : '—' ?>
-                    </dd>
-                  </div>
-                </div>
-                <div class="reads-ledger__col reads-ledger__col--avg">
-                  <span class="reads-ledger__head">Moyennes&nbsp;fin.</span>
-                  <div class="reads-ledger__row">
-                    <dt>FG</dt>
-                    <dd class="tanks-mono">
-                      <?= $avgFGVal !== null
-                          ? number_format((float)$avgFGVal, 1) . '<span class="metric__unit"> °P</span>'
-                          : '—' ?>
-                    </dd>
-                  </div>
-                  <div class="reads-ledger__row">
-                    <dt>pH</dt>
-                    <dd class="tanks-mono">
-                      <?= $avgPHVal !== null ? number_format((float)$avgPHVal, 2) : '—' ?>
-                    </dd>
-                  </div>
-                </div>
-              </dl>
-            </div>
-
-          <?php elseif ($cctView === 'levure'): ?>
-          <?php
-            $yeast        = $occ['yeast']         ?? null;
-            $yeastGen     = $occ['yeast_gen']     ?? null;
-            $repitchCount = $occ['repitch_count'] ?? 0;
-
-            // Color band for yeast generation — orange from 8, red from 16
-            $genBand = '';
-            if ($yeastGen !== null) {
-                $g = (int)$yeastGen;
-                if      ($g >= 16) $genBand = 'metric--warn';
-                elseif  ($g >=  8) $genBand = 'metric--caution';
-                else               $genBand = 'metric--good';
-            }
-          ?>
-            <div class="tank-card__info tank-card__info--metrics">
-              <span class="tank-card__beer"><?= $beerLabel ?></span>
-              <span class="tank-card__batch tanks-mono"><?= $batch ?></span>
-              <dl class="metric-list">
-                <div class="metric metric--yeast-full">
-                  <dt>Souche</dt>
-                  <dd class="tanks-mono"><?= $yeast !== null ? htmlspecialchars((string)$yeast) : '—' ?></dd>
-                </div>
-                <div class="metric <?= $genBand ?>">
-                  <dt>Gén</dt>
-                  <dd class="tanks-mono"><?= $yeastGen !== null ? (int)$yeastGen : '—' ?></dd>
-                </div>
-                <div class="metric metric--repitch">
-                  <dt>Re-pitch</dt>
-                  <dd class="tanks-mono"><?= $repitchCount ?><span class="metric__unit"> ×</span></dd>
-                </div>
-              </dl>
-            </div>
-
-          <?php else: ?>
+          <div class="tank-card__svg">
+            <?= svg_cct(
+              $fillRatio,
+              $svgState,
+              $num,
+              (string)($occ['bd_beer'] ?? ''),
+              'fill',
+              [
+                  'og'            => $occ['og']            ?? null,
+                  'ph'            => $occ['last_ph']       ?? null,
+                  'yeast'         => $occ['yeast']         ?? null,
+                  'yeast_gen'     => $occ['yeast_gen']     ?? null,
+                  'repitch_count' => $occ['repitch_count'] ?? 0,
+              ]
+            ) ?>
+          </div>
           <?php
             $volHlFmt   = $occ['volume_hl'] !== null ? number_format((float)$occ['volume_hl'], 1) . ' HL' : '—';
             $brewDate   = !empty($occ['brewday_date'])
                 ? fmt_date_fr_tanks($occ['brewday_date'], $monthsFR)
                 : '—';
-
             $lastGrav     = $occ['last_gravity']      ?? null;
             $lastGravDate = $occ['last_gravity_date'] ?? null;
             $gravFmt      = $lastGrav !== null
@@ -775,7 +851,6 @@ $today = $asOfDT;
             $gravDateFmt  = $lastGravDate
                 ? fmt_date_fr_tanks($lastGravDate, $monthsFR)
                 : null;
-
             $ccDate    = $occ['last_cc_date'] ?? null;
             $ccDays    = null;
             $ccDateFmt = null;
@@ -785,36 +860,39 @@ $today = $asOfDT;
                 $ccDateFmt = fmt_date_fr_tanks($ccDate, $monthsFR);
             }
           ?>
-            <div class="tank-card__info">
-              <span class="tank-card__beer"><?= $beerLabel ?></span>
-              <span class="tank-card__batch tanks-mono"><?= $batch ?></span>
-              <span class="tank-card__vol tanks-mute"><?= htmlspecialchars($volHlFmt) ?></span>
-              <span class="tank-card__brewdate tanks-mute"><?= htmlspecialchars($brewDate) ?></span>
-              <?php if ($gravFmt): ?>
-                <span class="tank-card__grav tanks-mono">
-                  <?= htmlspecialchars($gravFmt) ?>
-                  <?php if ($gravDateFmt): ?>
-                    <span class="tanks-mute"><?= htmlspecialchars($gravDateFmt) ?></span>
-                  <?php endif ?>
-                </span>
-              <?php endif ?>
-              <?php if ($ccDays !== null): ?>
-                <span class="tank-badge tank-badge--cold">❄ J+<?= $ccDays ?> · <?= htmlspecialchars($ccDateFmt ?? '') ?></span>
-              <?php endif ?>
-              <?php if (empty($ccDate) && !empty($occ['est_cc_date'])):
-                  $estCcFmt       = fmt_date_fr_tanks($occ['est_cc_date'], $monthsFR);
-                  $rackBadgeClass = $occ['cc_overdue'] ? 'tank-badge--rack-overdue' : 'tank-badge--rack-future';
-                  $rackBadgeLabel = $occ['cc_overdue'] ? '❄ CC prévu' : '❄ CC ~';
-              ?>
-                <span class="tank-badge <?= $rackBadgeClass ?>" title="Moyenne <?= (int)$occ['avg_ferm_days'] ?> j de fermentation pour cette bière">
-                  <?= $rackBadgeLabel ?> <?= htmlspecialchars($estCcFmt) ?>
-                </span>
-              <?php endif ?>
-            </div>
-          <?php endif ?>
-
+          <div class="tank-card__info">
+            <span class="tank-card__beer"><?= $beerLabel ?></span>
+            <span class="tank-card__batch tanks-mono"><?= $batchLabel ?></span>
+            <span class="tank-card__vol tanks-mute"><?= htmlspecialchars($volHlFmt) ?></span>
+            <span class="tank-card__brewdate tanks-mute"><?= htmlspecialchars($brewDate) ?></span>
+            <?php if ($gravFmt): ?>
+              <span class="tank-card__grav tanks-mono">
+                <?= htmlspecialchars($gravFmt) ?>
+                <?php if ($gravDateFmt): ?>
+                  <span class="tanks-mute"><?= htmlspecialchars($gravDateFmt) ?></span>
+                <?php endif ?>
+              </span>
+            <?php endif ?>
+            <?php if ($ccDays !== null): ?>
+              <span class="tank-badge tank-badge--cold">❄ J+<?= $ccDays ?> · <?= htmlspecialchars($ccDateFmt ?? '') ?></span>
+            <?php endif ?>
+            <?php if (empty($ccDate) && !empty($occ['est_cc_date'])):
+                $estCcFmt       = fmt_date_fr_tanks($occ['est_cc_date'], $monthsFR);
+                $rackBadgeClass = $occ['cc_overdue'] ? 'tank-badge--rack-overdue' : 'tank-badge--rack-future';
+                $rackBadgeLabel = $occ['cc_overdue'] ? '❄ CC prévu' : '❄ CC ~';
+            ?>
+              <span class="tank-badge <?= $rackBadgeClass ?>" title="Moyenne <?= (int)$occ['avg_ferm_days'] ?> j de fermentation pour cette bière">
+                <?= $rackBadgeLabel ?> <?= htmlspecialchars($estCcFmt) ?>
+              </span>
+            <?php endif ?>
+          </div>
         <?php endif ?>
-      </div>
+
+      <?php if ($occ !== null && !$isMaint): ?>
+        </button>
+      <?php else: ?>
+        </div>
+      <?php endif ?>
       <?php endforeach ?>
     </div>
   </section>
@@ -827,10 +905,9 @@ $today = $asOfDT;
         <span class="tanks-section__tag">Core actifs</span>
       </h2>
       <form class="ferm-stats__year-form" method="get" action="<?= htmlspecialchars($_SERVER['PHP_SELF']) ?>">
-        <?php if (isset($_GET['year']))     : ?><input type="hidden" name="year"     value="<?= htmlspecialchars($_GET['year'])     ?>"><?php endif ?>
-        <?php if (isset($_GET['month']))    : ?><input type="hidden" name="month"    value="<?= htmlspecialchars($_GET['month'])    ?>"><?php endif ?>
-        <?php if (isset($_GET['day']))      : ?><input type="hidden" name="day"      value="<?= htmlspecialchars($_GET['day'])      ?>"><?php endif ?>
-        <?php if (isset($_GET['cct_view'])): ?><input type="hidden" name="cct_view" value="<?= htmlspecialchars($_GET['cct_view']) ?>"><?php endif ?>
+        <?php if (isset($_GET['year']))  : ?><input type="hidden" name="year"  value="<?= htmlspecialchars($_GET['year'])  ?>"><?php endif ?>
+        <?php if (isset($_GET['month'])) : ?><input type="hidden" name="month" value="<?= htmlspecialchars($_GET['month']) ?>"><?php endif ?>
+        <?php if (isset($_GET['day']))   : ?><input type="hidden" name="day"   value="<?= htmlspecialchars($_GET['day'])   ?>"><?php endif ?>
         <label class="ferm-stats__year-label" for="fs-year">Année</label>
         <select id="fs-year" name="ferm_year" onchange="this.form.submit()">
           <?php for ($y = $fermYearMin; $y <= $fermYearMax; $y++): ?>
@@ -888,6 +965,28 @@ $today = $asOfDT;
     <?php endif ?>
   </section>
 
+
+  <!-- CCT Detail Modal -->
+  <dialog class="cct-modal" id="cct-detail-modal">
+    <div class="cct-modal__overlay" data-close></div>
+    <div class="cct-modal__card" id="cct-modal-card">
+      <!-- populated by JS -->
+    </div>
+  </dialog>
+
+  <!-- Per-CCT SVG templates for modal (pre-rendered server-side) -->
+  <?php foreach ($cctDetails as $tNum => $td): ?>
+  <template id="cct-svg-<?= $tNum ?>"><?= svg_cct(
+    $td['capacity_hl'] > 0 ? min(1.0, $td['volume_hl'] / $td['capacity_hl']) : 0.0,
+    $td['state'],
+    $tNum,
+    $td['beer'],
+    'fill',
+    []
+  ) ?></template>
+  <?php endforeach ?>
+
+  <script>window.CCT_DETAILS = <?= json_encode($cctDetails, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE) ?>;</script>
 </main>
 
 </body>

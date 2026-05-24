@@ -1,0 +1,47 @@
+=== SNAPSHOT: pre-migration 118-119 (2026-05-24) ===
+
+ref_packaging_formats (id, format_code, display_name, run_type):
+1  | B        | 24-pack bottle box (24×33cl)                | bot
+2  | B12      | 12-pack bottle box (12×33cl)                | bot
+3  | 4        | 6×4-pack carton (24×33cl bottles)           | bot
+4  | 4PB      | 4-pack loose bottles (4×33cl)               | bot
+5  | BU       | Bottle unit (single 33cl)                   | bot
+6  | X        | Pallet crate (1027×33cl bottles)            | bot
+7  | C        | 24-pack can box (24×50cl)                   | can
+8  | BC       | 24-pack can box B variant (24×50cl)         | can
+9  | 4C       | 6×4-pack can carton (24×50cl)               | can
+10 | 6C       | 6-pack tray of cans (24×50cl)               | can
+11 | 12C      | 12-pack can box (12×50cl)                   | can
+12 | 4PC      | 4-pack loose cans (4×50cl)                  | can
+13 | 33C      | Single 33cl can                             | can33
+14 | CU       | Can unit (single 50cl)                      | can
+15 | F        | Fût 20L keg                                 | keg
+16 | P25      | Draft pour 25cl                             | NULL
+17 | P50      | Draft pour 50cl                             | NULL
+18 | V        | Cuve de service (1L liner)                  | cuv
+19 | PD8      | Pack Découverte 8 (8×33cl composite)        | NULL
+20 | XMASPACK | Xmas Pack (3×33cl composite)                | NULL
+21 | PAL      | Pack Louis (12×33cl composite)              | NULL
+22 | PAD      | Pack Découverte large (80×33cl)[VERIFY]     | NULL
+
+ref_mi PKG_CAN*/PKG_BOT_PIVO/PKG_KEG_*/PKG_BOT_CROWN_CAPS/PKG_CAN_LIDS:
+id  | mi_id              | category_id | subcategory_id | gl_account | is_inventoried | currency | price
+93  | PKG_BOT_CROWN_CAPS | 8           | 13             | 4200       | 1              | EUR      | 0.007500
+91  | PKG_BOT_PIVO       | 8           | 13             | 4200       | 1              | EUR      | 0.168400
+94  | PKG_CAN_EMB        | 8           | 13             | 4202       | 1              | EUR      | 0.302000
+95  | PKG_CAN_LIDS       | 8           | 13             | 4202       | 1              | EUR      | 0.025000
+96  | PKG_CAN_MOO        | 8           | 13             | 4202       | 1              | EUR      | 0.302000
+97  | PKG_CAN_SPY        | 8           | 13             | 4202       | 1              | EUR      | 0.302000
+98  | PKG_CAN_STI        | 8           | 13             | 4202       | 1              | EUR      | 0.302000
+99  | PKG_CAN_ZEP        | 8           | 13             | 4202       | 1              | EUR      | 0.302000
+100 | PKG_KEG_COLLARS    | 8           | (keg subcat)   | 4209       | 1              | CHF      | 0.102000
+101 | PKG_KEG_SAFE       | 8           | (keg subcat)   | 4209       | 1              | EUR      | 0.069400
+
+PKG_CAN_LIDS: category_id=8 (Packaging), subcategory_id=13 (Can), gl_account=4202
+
+ref_sku_bom baseline COUNT(*) = 1749
+ref_mi total COUNT(*) = 334
+
+NOTE: ref_packaging_formats.id is BIGINT UNSIGNED (known drift from 116_instance_tables.sql)
+NOTE: ref_mi.id is INT UNSIGNED
+NOTE: dbc_container_types does NOT exist yet (migrations 114-119 all pending)

@@ -483,9 +483,9 @@ class TankSimulator
     private function loadBatchCCT(DateTimeImmutable $simStart): array
     {
         $stmt = $this->pdo->prepare(
-            'SELECT bd_beer, bd_batch, bd_cct
-             FROM bd_brewing_brewday
-             WHERE bd_cct IS NOT NULL
+            'SELECT beer AS bd_beer, batch AS bd_batch, cct AS bd_cct
+             FROM bd_brewing_brewday_v2
+             WHERE cct IS NOT NULL
                AND event_date >= :start'
         );
         $stmt->execute([':start' => $simStart->format('Y-m-d')]);
@@ -506,11 +506,11 @@ class TankSimulator
     private function loadRackedBatches(): array
     {
         $rows = $this->pdo->query(
-            'SELECT COALESCE(neb_beer, contract_beer)   AS beer,
-                    COALESCE(neb_batch, contract_batch) AS batch
-             FROM bd_racking
-             WHERE COALESCE(neb_beer, contract_beer)   IS NOT NULL
-               AND COALESCE(neb_batch, contract_batch) IS NOT NULL'
+            'SELECT COALESCE(NULLIF(neb_beer, ""), contract_beer)   AS beer,
+                    COALESCE(NULLIF(neb_batch, ""), contract_batch) AS batch
+             FROM bd_racking_v2
+             WHERE COALESCE(NULLIF(neb_beer, ""), contract_beer)   IS NOT NULL
+               AND COALESCE(NULLIF(neb_batch, ""), contract_batch) IS NOT NULL'
         )->fetchAll();
 
         $set = [];
@@ -531,11 +531,15 @@ class TankSimulator
         array             $rackedBatches,
         array             $batchCCT
     ): array {
+        // bd_brewing_cooling folded into bd_brewing_gravity_v2 WHERE event_type='Cooling'.
+        // gravity_v2 has no event_date column — derive it from DATE(submitted_at).
         $stmt = $this->pdo->prepare(
-            'SELECT cool_beer, cool_batch, cool_final_volume_hl, event_date
-             FROM bd_brewing_cooling
-             WHERE event_date >= :start
-               AND cool_final_volume_hl > 0'
+            'SELECT beer AS cool_beer, batch AS cool_batch,
+                    final_volume AS cool_final_volume_hl, DATE(submitted_at) AS event_date
+             FROM bd_brewing_gravity_v2
+             WHERE event_type = "Cooling"
+               AND DATE(submitted_at) >= :start
+               AND final_volume > 0'
         );
         $stmt->execute([':start' => $simStart->format('Y-m-d')]);
 
@@ -580,15 +584,20 @@ class TankSimulator
         // BSF col W which is a formula = racked_vol + blend_leftover (total post-
         // rack) — NOT the blend leftover.  Reading col W as blendVol caused every
         // rack to be treated as a blend and inflated BBT volumes 2-3x.
+        // bd_racking → bd_racking_v2. The leftover-blend signal (legacy blend_text /
+        // BSF col Q) is now the typed DECIMAL column blend_hl. The destination-tank
+        // text (legacy bbt / "BBT 7") is now target_tank_raw; bbt_old is the legacy
+        // int fallback. neb_* columns are NOT NULL DEFAULT '' in v2, so NULLIF the
+        // empties before falling through to contract_*.
         $rows = $this->pdo->query(
-            'SELECT COALESCE(neb_beer, contract_beer)   AS beer,
-                    COALESCE(neb_batch, contract_batch) AS batch,
-                    bbt,
+            'SELECT COALESCE(NULLIF(neb_beer, ""), contract_beer)   AS beer,
+                    COALESCE(NULLIF(neb_batch, ""), contract_batch) AS batch,
+                    target_tank_raw                     AS bbt,
                     bbt_old,
                     racked_vol_hl,
-                    blend_text,
+                    blend_hl                            AS blend_text,
                     COALESCE(start_time, submitted_at)  AS rack_date
-             FROM bd_racking
+             FROM bd_racking_v2
              WHERE COALESCE(start_time, submitted_at) IS NOT NULL'
         )->fetchAll();
 
@@ -627,6 +636,11 @@ class TankSimulator
     /** Build PACKAGING events. */
     private function loadPackagingEvents(): array
     {
+        // LEGACY-ONLY (v2 cutover blocker, 2026-05-24): bd_packaging_v2.vendable_hl
+        // is 100% NULL — the per-row HL valuation has not yet been computed/backfilled
+        // into v2. This loader drives BBT volume depletion; repointing it to v2 now
+        // would silently zero out every packaging-out event and BBT tanks would never
+        // drain. Stays on bd_packaging until vendable_hl is populated in v2.
         $rows = $this->pdo->query(
             'SELECT beer,
                     batch,

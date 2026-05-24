@@ -76,20 +76,20 @@ if ($filterMonth !== null) {
     $params[':month'] = $filterMonth;
 }
 if ($filterRecipe !== null) {
-    $where[]          = "bb.bd_beer = :recipe";
+    $where[]          = "bb.beer = :recipe";
     $params[':recipe'] = $filterRecipe;
 }
 if ($filterYeast !== null) {
-    $where[]         = "bb.bd_yeast = :yeast";
+    $where[]         = "bb.yeast = :yeast";
     $params[':yeast'] = $filterYeast;
 }
 if ($filterGen !== null) {
-    $where[]       = "bb.bd_yeast_gen = :gen";
+    $where[]       = "bb.yeast_gen = :gen";
     $params[':gen'] = $filterGen;
 }
 if ($filterCct !== null) {
-    // Match leading numeric portion of bd_cct against the filter value
-    $where[]       = "NULLIF(REGEXP_REPLACE(COALESCE(bb.bd_cct, ''), '[^0-9].*$', ''), '') + 0 = :cct";
+    // Match leading numeric portion of cct against the filter value
+    $where[]       = "NULLIF(REGEXP_REPLACE(COALESCE(bb.cct, ''), '[^0-9].*$', ''), '') + 0 = :cct";
     $params[':cct'] = $filterCct;
 }
 if ($filterClassification !== null) {
@@ -134,17 +134,17 @@ function best_date(array $row): string {
 
 // Shared JOIN fragment (reused by both KPI and row queries)
 $joinsSql = "
-    FROM bd_brewing_brewday bb
+    FROM bd_brewing_brewday_v2 bb
 
-    -- EPH join: name + vintage derived from bd_batch ('24' -> '2024')
+    -- EPH join: name + vintage derived from batch ('24' -> '2024')
     LEFT JOIN ref_recipes rr
-        ON  rr.name    = bb.bd_beer
-        AND rr.vintage = CONCAT('20', LPAD(REGEXP_REPLACE(COALESCE(bb.bd_batch,''), '[^0-9].*$', ''), 2, '0'))
+        ON  rr.name    = bb.beer
+        AND rr.vintage = CONCAT('20', LPAD(REGEXP_REPLACE(COALESCE(bb.batch,''), '[^0-9].*$', ''), 2, '0'))
         AND rr.vintage <> '20'
 
     -- Non-EPH / no-vintage fallback join
     LEFT JOIN ref_recipes rr2
-        ON  rr2.name    = bb.bd_beer
+        ON  rr2.name    = bb.beer
         AND rr2.vintage = ''
 
     -- Client from whichever recipe joined
@@ -154,14 +154,14 @@ $joinsSql = "
     -- CCT: extract leading digits from raw string, cast to int, join
     LEFT JOIN ref_cct cct
         ON  cct.number = NULLIF(
-                REGEXP_REPLACE(COALESCE(bb.bd_cct, ''), '[^0-9].*$', ''),
+                REGEXP_REPLACE(COALESCE(bb.cct, ''), '[^0-9].*$', ''),
                 ''
             ) + 0
 
     -- YT: same extraction
     LEFT JOIN ref_yt yt
         ON  yt.number = NULLIF(
-                REGEXP_REPLACE(COALESCE(bb.bd_yt, ''), '[^0-9].*$', ''),
+                REGEXP_REPLACE(COALESCE(bb.yt_number, ''), '[^0-9].*$', ''),
                 ''
             ) + 0
 ";
@@ -172,48 +172,51 @@ try {
     // --- Dropdown data: years ---
     $yearRows = $pdo->query("
         SELECT DISTINCT YEAR(COALESCE(event_date, DATE(submitted_at))) AS yr
-        FROM bd_brewing_brewday
+        FROM bd_brewing_brewday_v2
         WHERE event_date IS NOT NULL OR submitted_at IS NOT NULL
         ORDER BY yr DESC
     ")->fetchAll(PDO::FETCH_COLUMN);
 
     // --- Dropdown data: recipes ---
     $recipeRows = $pdo->query("
-        SELECT DISTINCT bd_beer
-        FROM bd_brewing_brewday
-        WHERE bd_beer IS NOT NULL AND bd_beer != ''
-        ORDER BY bd_beer
+        SELECT DISTINCT beer
+        FROM bd_brewing_brewday_v2
+        WHERE beer IS NOT NULL AND beer != ''
+        ORDER BY beer
     ")->fetchAll(PDO::FETCH_COLUMN);
 
     // --- Dropdown data: yeasts ---
     $yeastRows = $pdo->query("
-        SELECT DISTINCT bd_yeast
-        FROM bd_brewing_brewday
-        WHERE bd_yeast IS NOT NULL AND bd_yeast != ''
-        ORDER BY bd_yeast
+        SELECT DISTINCT yeast
+        FROM bd_brewing_brewday_v2
+        WHERE yeast IS NOT NULL AND yeast != ''
+        ORDER BY yeast
     ")->fetchAll(PDO::FETCH_COLUMN);
 
     // --- Dropdown data: generations (numeric-aware sort) ---
     $genRows = $pdo->query("
-        SELECT DISTINCT bd_yeast_gen
-        FROM bd_brewing_brewday
-        WHERE bd_yeast_gen IS NOT NULL AND bd_yeast_gen != ''
-        ORDER BY CAST(bd_yeast_gen AS UNSIGNED), bd_yeast_gen
+        SELECT DISTINCT yeast_gen
+        FROM bd_brewing_brewday_v2
+        WHERE yeast_gen IS NOT NULL AND yeast_gen != ''
+        ORDER BY CAST(yeast_gen AS UNSIGNED), yeast_gen
     ")->fetchAll(PDO::FETCH_COLUMN);
 
-    // Cooling join (1 brewday row → N brew/cooling rows for same beer+batch+date)
+    // Cooling join (1 brewday row → N brew/cooling rows for same beer+batch+date).
+    // bd_brewing_cooling folded into bd_brewing_gravity_v2 WHERE event_type='Cooling'.
+    // gravity_v2 has no event_date column — only submitted_at — so match on DATE(submitted_at).
     $coolingJoinSql = "
-        LEFT JOIN bd_brewing_cooling cl
-            ON  cl.cool_beer  = bb.bd_beer
-            AND cl.cool_batch = bb.bd_batch
-            AND COALESCE(cl.event_date, DATE(cl.submitted_at)) = COALESCE(bb.event_date, DATE(bb.submitted_at))
+        LEFT JOIN bd_brewing_gravity_v2 cl
+            ON  cl.event_type = 'Cooling'
+            AND cl.beer  = bb.beer
+            AND cl.batch = bb.batch
+            AND DATE(cl.submitted_at) = COALESCE(bb.event_date, DATE(bb.submitted_at))
     ";
 
     // --- KPI query (filtered) ---
     $kpiSql  = "SELECT
             COUNT(DISTINCT bb.id)                                           AS brewday_count,
             COUNT(cl.id)                                                    AS brew_count,
-            COUNT(DISTINCT bb.bd_beer)                                      AS distinct_beers,
+            COUNT(DISTINCT bb.beer)                                         AS distinct_beers,
             MAX(COALESCE(bb.event_date, DATE(bb.submitted_at)))             AS latest_date
         " . $joinsSql . $coolingJoinSql . $whereSql;
     $kpiStmt = $pdo->prepare($kpiSql);
@@ -228,9 +231,9 @@ try {
             ? $whereSql . " AND COALESCE(bb.event_date, DATE(bb.submitted_at)) = :latest_date"
             : "WHERE COALESCE(bb.event_date, DATE(bb.submitted_at)) = :latest_date";
         $lbSql = "SELECT
-                GROUP_CONCAT(DISTINCT bb.bd_beer SEPARATOR ' / ') AS recipes,
-                GROUP_CONCAT(DISTINCT NULLIF(REGEXP_REPLACE(COALESCE(bb.bd_cct,''),'[^0-9].*$',''),'') SEPARATOR ' / ') AS ccts,
-                SUM(cl.cool_final_volume_hl) AS total_vol_hl
+                GROUP_CONCAT(DISTINCT bb.beer SEPARATOR ' / ') AS recipes,
+                GROUP_CONCAT(DISTINCT NULLIF(REGEXP_REPLACE(COALESCE(bb.cct,''),'[^0-9].*$',''),'') SEPARATOR ' / ') AS ccts,
+                SUM(cl.final_volume) AS total_vol_hl
             " . $joinsSql . $coolingJoinSql . $lbWhereSql;
         $lbStmt = $pdo->prepare($lbSql);
         $lbStmt->execute(array_merge($params, [':latest_date' => $latestDate]));
@@ -248,12 +251,12 @@ try {
             bb.id,
             bb.event_date,
             bb.submitted_at,
-            bb.bd_beer,
-            bb.bd_batch,
-            bb.bd_cct,
-            bb.bd_yeast,
-            bb.bd_yeast_gen,
-            bb.bd_yt,
+            bb.beer       AS bd_beer,
+            bb.batch      AS bd_batch,
+            bb.cct        AS bd_cct,
+            bb.yeast      AS bd_yeast,
+            bb.yeast_gen  AS bd_yeast_gen,
+            bb.yt_number  AS bd_yt,
 
             COALESCE(rr.recipe_short_name,  rr2.recipe_short_name)  AS recipe_short_name,
             COALESCE(rr.classification,     rr2.classification)      AS classification,
