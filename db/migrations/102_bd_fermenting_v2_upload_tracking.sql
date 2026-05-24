@@ -1,0 +1,26 @@
+-- db/migrations/102_bd_fermenting_v2_upload_tracking.sql
+-- What: Tracking migration — records that ingest_bd_fermenting_v2.py ran and populated
+--       bd_fermenting_v2 from the 4 FermentationData xlsx sheets.
+-- Why:  schema_migrations tracks phase-boundary events including Python-driven uploads.
+--       Mirrors 088_bd_packaging_v2_upload and 095_bd_brewing_v2_upload_tracking.
+-- How:  Run the Python script first, verify counts, then apply this migration:
+--   1. scp xlsx to VPS (if not already present)
+--   2. dry-run:  cd /var/www/maltytask && sudo -u www-data .venv/bin/python3 scripts/python/ingest_bd_fermenting_v2.py
+--   3. live:     ... ingest_bd_fermenting_v2.py --apply --verify
+--   4. php scripts/migrate.php
+--
+-- Verified row counts post-upload (2026-05-24):
+--   DryHop:    279
+--   Reads:    5257   (NO collapse — line_idx sequenced within minute-collision groups; see migration 101 NK + finalize logic)
+--   Purge:     325
+--   ColdCrash: 820
+--   TOTAL:    6681
+-- Residuals (flagged in migration 103, NOT errors):
+--   4 rows recipe_id_fk NULL — blank beer_raw/batch (empty Purge/ColdCrash submissions)
+--   2 DryHop rows dh_mi_id_fk NULL — lot number landed in dh_raw_name (normalizer mis-parse, operator review)
+--
+-- Risk: Zero — no-op SQL body. Upload performed by the Python script.
+-- Rollback: DELETE FROM schema_migrations WHERE filename='102_bd_fermenting_v2_upload_tracking.sql';
+--           TRUNCATE TABLE bd_fermenting_v2;
+
+SET @migration_102_noop = 1;
