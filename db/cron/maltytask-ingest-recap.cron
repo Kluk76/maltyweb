@@ -1,0 +1,38 @@
+# /etc/cron.d/maltytask-ingest-recap
+#
+# Post-ingestion email recap: once per batch of PDFs, sends a detailed summary
+# to kouros@lanebuleuse.ch covering every parsed line, auto-written delivery,
+# confidence score, and anomaly flag — so the operator can sanity-check even
+# invoices that were auto-written and never went to triage.
+#
+# Logic: the script itself is the debounce gate.  It exits 0 silently when:
+#   - Nothing to report (no new terminals since last recap_sent_at)
+#   - A batch is still in-flight (uploaded rows < 30 min old still in uploaded/triggered)
+#   - The last completed file finished < 120 s ago (quiet-window)
+# So running every minute is safe — it almost always does nothing.
+#
+# Source of truth: db/cron/maltytask-ingest-recap.cron in the maltyweb repo.
+# Deployed via bin/deploy.sh --apply (sudo install → /etc/cron.d/).
+#
+# Pre-flight checklist before enabling:
+#   - /var/www/maltytask/config/smtp.env exists and credentials are set
+#     (copy from config/smtp.env.example in the maltytask repo)
+#   - Dry-run validated:
+#       cd /opt/maltytask-pipeline && HOME=/var/www/maltytask NVM_DIR=/var/www/maltytask/.nvm \
+#         bash -c '. $NVM_DIR/nvm.sh && node_modules/.bin/tsx scripts/send-ingest-recap.ts --dry-run'
+#   - Output HTML previewed at /tmp/ingest-recap-preview.html
+#   - At least one upload in processed/failed state to verify recap content
+#
+# Note: cron syntax for /etc/cron.d/* requires the user column
+# (m h dom mon dow user command). Times are UTC (VPS timezone is Etc/UTC).
+#
+# Manual edits will be overwritten on next deploy. Edit the source file
+# in the repo, commit, then run bin/deploy.sh --apply.
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# m   h  dom mon dow  user        command
+
+# DISABLED — remove this '#' to activate after pre-flight checklist is complete:
+# *   *   *   *   *   maltytask   flock -n /tmp/maltytask-ingest-recap.lock -c 'cd /opt/maltytask-pipeline && HOME=/var/www/maltytask NVM_DIR=/var/www/maltytask/.nvm bash -c ". $NVM_DIR/nvm.sh && node_modules/.bin/tsx scripts/send-ingest-recap.ts"' >> /var/log/maltytask/ingest-recap.log 2>&1
