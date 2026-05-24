@@ -1,0 +1,1608 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CCT 07 — Zepp 2503 · MaltyTask design preview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<style>
+/* =========================================================
+   Design tokens — match maltyweb palette + type stack
+   ========================================================= */
+:root {
+  --ink:           #1c1815;
+  --ink-soft:      #3a342e;
+  --ink-mute:      #8b8278;
+  --paper:         #f5efe6;
+  --paper-deep:    #ebe3d6;
+  --paper-deeper:  #ddd1ba;
+  --paper-deepest: #c9bda3;
+  --hop:           #9eb060;
+  --hop-deep:      #6f8235;
+  --copper:        #b56a3a;
+  --copper-deep:   #8e4d22;
+  --ice:           #6792a8;
+  --ice-deep:      #466b80;
+  --hairline:      rgba(28, 24, 21, 0.08);
+  --hairline-2:    rgba(28, 24, 21, 0.16);
+  --hairline-3:    rgba(28, 24, 21, 0.28);
+
+  /* — stainless palette (matches production svg_cct) — */
+  --steel:         #b8bcc0;
+  --steel-light:   #d8dce0;
+  --steel-mid:     #5e6266;
+  --steel-deep:    #2c2e30;
+  --steel-shadow:  #15171a;
+
+  /* — fluid palette (matches production state colors) — */
+  --ember:         #c5664a;   /* underfilled ferment / active wort */
+  --cold-fluid:    #2f5575;   /* cold-crash liquid */
+  --oak:           #a07a48;
+  --oak-deep:      #6e4e26;
+}
+
+* { box-sizing: border-box; }
+*::selection { background: var(--hop); color: var(--ink); }
+
+html, body { margin: 0; padding: 0; }
+
+body {
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-feature-settings: "ss01", "cv11";
+  background: var(--paper);
+  color: var(--ink);
+  min-height: 100vh;
+  position: relative;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* paper grain overlay — same recipe as maltyweb app.css */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.95  0 0 0 0 0.85  0 0 0 0 0.65  0 0 0 1 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  opacity: 0.06;
+  pointer-events: none;
+  z-index: 200;
+  mix-blend-mode: multiply;
+}
+
+/* =========================================================
+   BACKGROUND CONTEXT
+   Faded tank board so the modal floats over context
+   ========================================================= */
+.bg-context {
+  padding: 36px 40px 60px;
+  min-height: 100vh;
+  filter: blur(3px) saturate(0.7);
+  opacity: 0.32;
+  user-select: none;
+  pointer-events: none;
+}
+
+.bg-context__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 28px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--hairline-2);
+}
+
+.bg-context__h1 {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 144;
+  font-weight: 400;
+  font-size: 30px;
+  margin: 0;
+  letter-spacing: -0.02em;
+}
+
+.bg-context__h1 .tag {
+  display: inline-block;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  border: 1px solid var(--hairline-2);
+  padding: 4px 10px;
+  border-radius: 2px;
+  vertical-align: middle;
+  margin-left: 14px;
+  font-weight: 500;
+}
+
+.bg-context__sub {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.20em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+.bg-context__grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 14px;
+}
+
+.bg-tank {
+  aspect-ratio: 3/5;
+  border: 1px solid var(--hairline-2);
+  border-radius: 3px 3px 50% 50% / 3px 3px 10% 10%;
+  position: relative;
+  background: var(--paper-deep);
+  overflow: hidden;
+}
+
+.bg-tank::before {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  background: linear-gradient(180deg,
+    rgba(181, 106, 58, 0.6) 0%,
+    rgba(142, 77, 34, 0.85) 100%);
+  height: var(--fill, 0%);
+}
+
+.bg-tank.ferment { --fill: 65%; }
+.bg-tank.ferment-hi { --fill: 80%; }
+.bg-tank.cold::before {
+  background: linear-gradient(180deg,
+    rgba(103, 146, 168, 0.6) 0%,
+    rgba(70, 107, 128, 0.85) 100%);
+}
+.bg-tank.cold { --fill: 70%; }
+.bg-tank.empty::before { display: none; }
+.bg-tank.maint::before { display: none; }
+.bg-tank.maint { background: repeating-linear-gradient(45deg, var(--paper-deep) 0 6px, var(--paper-deeper) 6px 12px); }
+
+.bg-tank::after {
+  content: attr(data-num);
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: "Fraunces", serif;
+  font-weight: 500;
+  font-size: 11px;
+  color: var(--ink);
+  background: var(--paper);
+  padding: 1px 5px;
+  border-radius: 2px;
+}
+
+/* =========================================================
+   MODAL — dialog open over the page
+   ========================================================= */
+dialog.cct-modal {
+  border: none;
+  padding: 0;
+  background: transparent;
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  display: grid;
+  place-items: center;
+  z-index: 1000;
+  overflow: hidden;
+}
+
+.cct-modal__overlay {
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at center, rgba(28, 24, 21, 0.30) 0%, rgba(28, 24, 21, 0.55) 100%);
+  backdrop-filter: blur(6px) saturate(1.1);
+  -webkit-backdrop-filter: blur(6px) saturate(1.1);
+  animation: backdropIn 0.32s ease-out;
+}
+
+@keyframes backdropIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes cardIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.cct-modal__card {
+  width: min(920px, 94vw);
+  max-height: 92vh;
+  overflow-y: auto;
+  background: var(--paper);
+  border-radius: 4px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    0 1px 0 rgba(255, 255, 255, 0.4) inset,
+    0 40px 90px -20px rgba(28, 24, 21, 0.55),
+    0 8px 24px -8px rgba(28, 24, 21, 0.35),
+    0 0 0 1px var(--hairline-2);
+  position: relative;
+  z-index: 1;
+  animation: cardIn 0.42s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* state-colored top accent strip */
+.cct-modal__card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg,
+    var(--copper) 0%,
+    var(--copper-deep) 50%,
+    var(--copper) 100%);
+  border-radius: 4px 4px 0 0;
+}
+
+.cct-modal__card--cold::before {
+  background: linear-gradient(90deg, var(--ice) 0%, var(--ice-deep) 50%, var(--ice) 100%);
+}
+
+/* dotted corner accents — a tiny editorial flourish */
+.cct-modal__card::after {
+  content: '';
+  position: absolute;
+  top: 14px; right: 14px;
+  width: 22px; height: 22px;
+  border-top: 1px solid var(--hairline-2);
+  border-right: 1px solid var(--hairline-2);
+  opacity: 0;
+}
+
+/* scrollbar */
+.cct-modal__card::-webkit-scrollbar { width: 10px; }
+.cct-modal__card::-webkit-scrollbar-track { background: transparent; }
+.cct-modal__card::-webkit-scrollbar-thumb {
+  background: var(--paper-deeper);
+  border: 2px solid var(--paper);
+  border-radius: 5px;
+}
+.cct-modal__card::-webkit-scrollbar-thumb:hover { background: var(--paper-deepest); }
+
+/* =========================================================
+   HEADER
+   ========================================================= */
+.cct-modal__head {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 32px;
+  padding: 30px 36px 24px;
+  border-bottom: 1px solid var(--hairline);
+  position: relative;
+}
+
+.cct-modal__id {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1;
+}
+
+.cct-modal__id-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  margin-bottom: 10px;
+  font-weight: 500;
+}
+
+.cct-modal__id-num {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 144;
+  font-weight: 300;
+  font-size: 64px;
+  color: var(--ink);
+  letter-spacing: -0.05em;
+  line-height: 0.85;
+  position: relative;
+}
+
+.cct-modal__id-num::after {
+  content: '';
+  position: absolute;
+  bottom: -8px;
+  left: 0;
+  width: 28px;
+  height: 1px;
+  background: var(--copper);
+}
+
+.cct-modal__card--cold .cct-modal__id-num::after { background: var(--ice); }
+
+.cct-modal__title {
+  border-left: 1px solid var(--hairline-2);
+  padding-left: 30px;
+  min-width: 0;
+}
+
+.cct-modal__beer {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 96;
+  font-style: italic;
+  font-weight: 400;
+  font-size: 30px;
+  color: var(--ink);
+  margin: 0 0 8px;
+  letter-spacing: -0.015em;
+  line-height: 1.05;
+}
+
+.cct-modal__beer .batch {
+  font-style: normal;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 20px;
+  font-weight: 400;
+  color: var(--ink-soft);
+  letter-spacing: 0.04em;
+  margin-left: 10px;
+  padding: 1px 8px;
+  background: var(--paper-deep);
+  border-radius: 2px;
+  vertical-align: 4px;
+}
+
+.cct-modal__meta {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--ink-mute);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.cct-modal__meta .sep {
+  color: var(--hairline-3);
+  font-size: 10px;
+}
+
+.cct-modal__meta .style {
+  font-style: italic;
+}
+
+.cct-modal__meta .days {
+  font-family: "JetBrains Mono", monospace;
+  font-weight: 500;
+  font-size: 11.5px;
+  color: var(--copper-deep);
+  background: rgba(181, 106, 58, 0.10);
+  padding: 3px 9px;
+  border-radius: 2px;
+  letter-spacing: 0.04em;
+}
+
+.cct-modal__card--cold .cct-modal__meta .days {
+  color: var(--ice-deep);
+  background: rgba(103, 146, 168, 0.10);
+}
+
+/* state pill */
+.cct-modal__state {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 13px 7px 11px;
+  border: 1px solid var(--copper);
+  background: rgba(181, 106, 58, 0.06);
+  border-radius: 2px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--copper-deep);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.cct-modal__state--cold {
+  border-color: var(--ice);
+  background: rgba(103, 146, 168, 0.08);
+  color: var(--ice-deep);
+}
+
+.cct-modal__pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 0 currentColor;
+  animation: pulse 2.2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes pulse {
+  0%   { box-shadow: 0 0 0 0 currentColor;   opacity: 1; }
+  70%  { box-shadow: 0 0 0 7px transparent;  opacity: 0.55; }
+  100% { box-shadow: 0 0 0 0 transparent;    opacity: 1; }
+}
+
+/* close button */
+.cct-modal__close {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--hairline-2);
+  background: var(--paper);
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--ink-soft);
+  display: grid;
+  place-items: center;
+  transition: all 0.18s ease;
+  z-index: 2;
+}
+
+.cct-modal__close:hover {
+  background: var(--paper-deep);
+  border-color: var(--hairline-3);
+  color: var(--ink);
+  transform: rotate(90deg);
+}
+
+/* =========================================================
+   DATA BLOCK — 3 columns: Tank · Mesures · Levure
+   ========================================================= */
+.cct-modal__data {
+  display: grid;
+  grid-template-columns: 150px 1fr 1fr;
+  gap: 30px;
+  padding: 28px 36px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+/* — tank column */
+.cct-modal__tankcol {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding-top: 0;
+}
+
+/* dark display-case background — same warm brown as production tank-card,
+   so the steel rendering reads the way it does on the main board. */
+.cct-modal__stage {
+  width: 100%;
+  padding: 14px 8px 10px;
+  position: relative;
+  background:
+    radial-gradient(ellipse 120% 80% at 50% 30%,
+      rgba(80, 56, 36, 0.32) 0%,
+      rgba(0, 0, 0, 0) 70%),
+    linear-gradient(160deg,
+      rgba(25, 20, 15, 0.96) 0%,
+      rgba(10, 9, 8, 0.92) 100%);
+  border-radius: 3px;
+  border: 1px solid rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    inset 0 -10px 24px -10px rgba(0, 0, 0, 0.5),
+    0 4px 14px -6px rgba(28, 24, 21, 0.32);
+}
+
+/* state-colored top hairline (ferment = ember, cold = cold-fluid) */
+.cct-modal__stage::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--ember), transparent 70%);
+}
+
+.cct-modal__card--cold .cct-modal__stage::before {
+  background: linear-gradient(90deg, var(--cold-fluid), transparent 70%);
+}
+
+/* faint cabinet floor — reads as a shelf the tank sits on */
+.cct-modal__stage::after {
+  content: '';
+  position: absolute;
+  bottom: 0; left: 8px; right: 8px;
+  height: 1px;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.08) 50%,
+    transparent 100%);
+}
+
+.cct-modal__stage-tag {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 8.5px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(216, 220, 224, 0.55);
+  font-weight: 500;
+  margin-bottom: 2px;
+}
+
+.cct-modal__stage .tank-svg {
+  width: 90px;
+  height: auto;
+  display: block;
+  filter:
+    drop-shadow(0 2px 0 rgba(0, 0, 0, 0.40))
+    drop-shadow(0 6px 10px rgba(0, 0, 0, 0.30));
+}
+
+.cct-modal__tankcol .vol {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 72;
+  font-weight: 400;
+  font-size: 22px;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+  line-height: 1;
+}
+
+.cct-modal__tankcol .vol .unit {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--ink-mute);
+  margin-left: 3px;
+  font-weight: 400;
+}
+
+.cct-modal__tankcol .cap {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  color: var(--ink-mute);
+  letter-spacing: 0.05em;
+  margin-top: -8px;
+}
+
+.cct-modal__tankcol .cap-bar {
+  width: 90px;
+  height: 2px;
+  background: var(--paper-deeper);
+  border-radius: 1px;
+  position: relative;
+  overflow: hidden;
+  margin-top: 2px;
+}
+
+.cct-modal__tankcol .cap-bar::after {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--pct, 70%);
+  background: linear-gradient(90deg, var(--ember), var(--copper-deep));
+}
+
+.cct-modal__card--cold .cct-modal__tankcol .cap-bar::after {
+  background: linear-gradient(90deg, var(--cold-fluid), var(--ice-deep));
+}
+
+/* — column shell (Mesures / Levure) */
+.cct-modal__col {
+  border-left: 1px solid var(--hairline);
+  padding-left: 28px;
+  min-width: 0;
+}
+
+.cct-modal__col-head {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  font-weight: 500;
+  margin: 0 0 18px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.cct-modal__col-head::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--hairline);
+}
+
+.cct-modal__col dl {
+  margin: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.cct-modal__row {
+  display: grid;
+  grid-template-columns: 56px 1fr auto;
+  align-items: baseline;
+  gap: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px dashed var(--hairline);
+}
+
+.cct-modal__row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.cct-modal__row dt {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  font-weight: 500;
+}
+
+.cct-modal__row dd {
+  margin: 0;
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 72;
+  font-weight: 400;
+  font-size: 22px;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+  line-height: 1;
+}
+
+.cct-modal__row dd .unit {
+  font-size: 11px;
+  color: var(--ink-mute);
+  font-family: "JetBrains Mono", monospace;
+  margin-left: 3px;
+  font-variation-settings: normal;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+}
+
+.cct-modal__row .target {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  color: var(--ink-mute);
+  text-align: right;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.cct-modal__row .target strong {
+  font-weight: 500;
+  color: var(--ink-soft);
+}
+
+.cct-modal__row--mono dd {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 15px;
+  letter-spacing: 0.04em;
+  font-variation-settings: normal;
+}
+
+.cct-modal__row--placeholder dd {
+  color: var(--ink-mute);
+  font-size: 18px;
+}
+
+.cct-modal__row--placeholder dd::before {
+  content: '—';
+}
+
+/* pillrow — Atténuation + Progression bars */
+.cct-modal__pillrow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 4px;
+  padding-top: 18px;
+  border-top: 1px solid var(--hairline);
+}
+
+.cct-modal__pill {
+  background:
+    linear-gradient(180deg, var(--paper-deep) 0%, var(--paper-deeper) 100%);
+  padding: 11px 13px 12px;
+  border-radius: 3px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  position: relative;
+}
+
+.cct-modal__pill-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  font-weight: 500;
+}
+
+.cct-modal__pill-value {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 72;
+  font-size: 24px;
+  font-weight: 400;
+  line-height: 1;
+  color: var(--hop-deep);
+  letter-spacing: -0.02em;
+}
+
+.cct-modal__pill-value .unit {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--ink-mute);
+  font-weight: 400;
+  font-variation-settings: normal;
+  margin-left: 2px;
+  letter-spacing: 0.04em;
+}
+
+.cct-modal__pill-bar {
+  margin-top: 8px;
+  height: 3px;
+  background: rgba(28, 24, 21, 0.08);
+  border-radius: 2px;
+  overflow: hidden;
+  position: relative;
+}
+
+.cct-modal__pill-bar::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, var(--hop), var(--hop-deep));
+  width: var(--pct, 75%);
+  animation: fillIn 0.85s cubic-bezier(0.22, 1, 0.36, 1) 0.2s backwards;
+}
+
+@keyframes fillIn {
+  from { width: 0%; }
+  to   { width: var(--pct); }
+}
+
+/* =========================================================
+   CHART SECTION
+   ========================================================= */
+.cct-modal__chart-section {
+  padding: 26px 36px 32px;
+}
+
+.cct-modal__chart-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  gap: 16px;
+}
+
+.cct-modal__chart-title {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  font-weight: 500;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
+.cct-modal__chart-title::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--hairline);
+}
+
+.cct-modal__chart-sub {
+  font-family: "DM Sans", sans-serif;
+  font-size: 12px;
+  color: var(--ink-mute);
+  margin: 0;
+  white-space: nowrap;
+  font-style: italic;
+}
+
+.cct-modal__legend {
+  display: flex;
+  gap: 22px;
+  margin-bottom: 14px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.cct-modal__legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10.5px;
+  color: var(--ink-soft);
+  letter-spacing: 0.04em;
+  font-weight: 500;
+}
+
+.cct-modal__legend-swatch {
+  width: 22px;
+  height: 2px;
+  border-radius: 1px;
+  flex-shrink: 0;
+}
+
+.cct-modal__legend-swatch--ph {
+  background-image: linear-gradient(90deg, var(--hop-deep) 50%, transparent 50%);
+  background-size: 5px 100%;
+  height: 2px;
+}
+
+.cct-modal__legend-note {
+  margin-left: auto;
+  color: var(--ink-mute);
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0.06em;
+}
+
+.cct-modal__chart-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  background:
+    linear-gradient(180deg, var(--paper) 0%, var(--paper-deep) 100%);
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  overflow: visible;
+}
+
+/* batch chips */
+.cct-modal__chips-row {
+  margin-top: 22px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.cct-modal__chips-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.cct-modal__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.batch-chip {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  padding: 6px 11px;
+  border: 1px solid var(--hairline-3);
+  background: var(--paper);
+  color: var(--ink-soft);
+  border-radius: 2px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  transition: all 0.16s ease;
+  font-weight: 500;
+}
+
+.batch-chip__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ink-mute);
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+
+.batch-chip:hover {
+  border-color: var(--ink-soft);
+  color: var(--ink);
+  background: var(--paper-deep);
+}
+
+.batch-chip--inactive {
+  color: var(--ink-mute);
+  background: transparent;
+  border-style: dashed;
+  border-color: var(--hairline-2);
+}
+
+.batch-chip--inactive .batch-chip__dot {
+  opacity: 0.2;
+  background: var(--ink-mute);
+}
+
+.batch-chip--current {
+  color: var(--copper-deep);
+  border-color: var(--copper);
+  background: rgba(181, 106, 58, 0.08);
+  font-weight: 500;
+  cursor: default;
+}
+
+.batch-chip--current .batch-chip__dot {
+  background: var(--copper);
+  opacity: 1;
+  box-shadow: 0 0 0 2px rgba(181, 106, 58, 0.15);
+}
+
+/* =========================================================
+   PREVIEW WRAPPER (just for this preview file)
+   ========================================================= */
+.preview-note {
+  position: fixed;
+  bottom: 14px;
+  left: 14px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+  background: rgba(28, 24, 21, 0.45);
+  padding: 6px 11px;
+  border-radius: 2px;
+  z-index: 9999;
+  pointer-events: none;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+}
+</style>
+</head>
+<body>
+
+<!-- ───────────────── BACKGROUND CONTEXT ───────────────── -->
+<div class="bg-context">
+  <div class="bg-context__head">
+    <h1 class="bg-context__h1">Fermenteurs <span class="tag">CCT</span></h1>
+    <span class="bg-context__sub">5 occupés · 9 actifs</span>
+  </div>
+  <div class="bg-context__grid">
+    <div class="bg-tank ferment"     data-num="01"></div>
+    <div class="bg-tank cold"        data-num="02"></div>
+    <div class="bg-tank ferment-hi"  data-num="03"></div>
+    <div class="bg-tank empty"       data-num="04"></div>
+    <div class="bg-tank ferment"     data-num="05"></div>
+    <div class="bg-tank empty"       data-num="06"></div>
+    <div class="bg-tank ferment"     data-num="07"></div>
+    <div class="bg-tank cold"        data-num="08"></div>
+    <div class="bg-tank empty"       data-num="09"></div>
+    <div class="bg-tank ferment-hi"  data-num="10"></div>
+    <div class="bg-tank empty"       data-num="11"></div>
+    <div class="bg-tank maint"       data-num="12"></div>
+  </div>
+</div>
+
+<!-- ───────────────── MODAL ───────────────── -->
+<dialog class="cct-modal" open id="cct-modal">
+  <div class="cct-modal__overlay"></div>
+  <div class="cct-modal__card">
+
+    <button class="cct-modal__close" aria-label="Fermer">✕</button>
+
+    <!-- HEADER -->
+    <header class="cct-modal__head">
+      <div class="cct-modal__id">
+        <span class="cct-modal__id-label">Fermenteur</span>
+        <span class="cct-modal__id-num">07</span>
+      </div>
+      <div class="cct-modal__title">
+        <h2 class="cct-modal__beer">Zepp<span class="batch">2503</span></h2>
+        <p class="cct-modal__meta">
+          <span class="style">Lager-style Pale Ale</span>
+          <span class="sep">·</span>
+          <span>brassé le 17 mai</span>
+          <span class="sep">·</span>
+          <span class="days">J+5</span>
+          <span class="sep">·</span>
+          <span>CC estimé J+9</span>
+        </p>
+      </div>
+      <span class="cct-modal__state">
+        <span class="cct-modal__pulse"></span>
+        Fermentation
+      </span>
+    </header>
+
+    <!-- DATA BLOCK -->
+    <section class="cct-modal__data">
+
+      <!-- Tank visual — production-detail SVG inside dark display-case -->
+      <div class="cct-modal__tankcol">
+        <div class="cct-modal__stage">
+          <span class="cct-modal__stage-tag">Vue technique</span>
+          <svg class="tank-svg" viewBox="0 0 80 155" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="CCT 07 — 35 HL / 50 HL en fermentation">
+            <defs>
+              <clipPath id="clip_cct7">
+                <polygon points="12,10 68,10 68,100 46,130 34,130 12,100"/>
+              </clipPath>
+              <linearGradient id="grad_cct7" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%"  stop-color="rgba(255,255,255,0.13)"/>
+                <stop offset="12%" stop-color="rgba(255,255,255,0.04)"/>
+                <stop offset="100%" stop-color="rgba(255,255,255,0)"/>
+              </linearGradient>
+              <linearGradient id="leggrad_cct7" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%"   stop-color="var(--steel-shadow)"/>
+                <stop offset="35%"  stop-color="var(--steel-light)" stop-opacity="0.35"/>
+                <stop offset="55%"  stop-color="var(--steel-mid)"/>
+                <stop offset="100%" stop-color="var(--steel-shadow)"/>
+              </linearGradient>
+              <linearGradient id="pipegrad_cct7" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%"   stop-color="var(--steel-shadow)"/>
+                <stop offset="40%"  stop-color="var(--steel)"/>
+                <stop offset="65%"  stop-color="var(--steel-mid)"/>
+                <stop offset="100%" stop-color="var(--steel-shadow)"/>
+              </linearGradient>
+            </defs>
+
+            <!-- CO2 outlet pipe (top-right curl + vertical run + flange + butterfly fitting) -->
+            <g>
+              <path d="M 73,8 Q 73,3 68,3 L 60,3"
+                fill="none" stroke="url(#pipegrad_cct7)" stroke-width="2.2" stroke-linecap="round"/>
+              <path d="M 73,8 Q 73,3 68,3 L 60,3"
+                fill="none" stroke="var(--steel-shadow)" stroke-width="0.5" stroke-linecap="round" opacity="0.6"/>
+              <rect x="72" y="6" width="2" height="86"
+                fill="url(#pipegrad_cct7)" stroke="var(--steel-shadow)" stroke-width="0.3"/>
+              <line x1="68" y1="42" x2="72" y2="42"
+                stroke="var(--steel-mid)" stroke-width="0.7" opacity="0.85"/>
+              <line x1="68" y1="42.8" x2="72" y2="42.8"
+                stroke="var(--steel-shadow)" stroke-width="0.4" opacity="0.6"/>
+              <rect x="70.5" y="88" width="5" height="4"
+                fill="var(--steel-mid)" stroke="var(--steel-shadow)" stroke-width="0.3" rx="0.5"/>
+              <rect x="72.4" y="92" width="1.2" height="3" fill="var(--steel-shadow)"/>
+            </g>
+
+            <!-- Vessel body (cylinder + cone) -->
+            <polygon points="12,10 68,10 68,100 46,130 34,130 12,100"
+              fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/>
+
+            <!-- Top skirt (manway ring) -->
+            <rect x="12" y="2" width="56" height="8"
+              fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/>
+            <line x1="12" y1="2" x2="68" y2="2"
+              stroke="var(--steel-light)" stroke-width="0.8" opacity="0.5"/>
+
+            <!-- Liquid fill (ember, ~70% — underfilled fermenter) -->
+            <rect x="12" y="37" width="56" height="93"
+              fill="var(--ember)" opacity="0.82" clip-path="url(#clip_cct7)"/>
+
+            <!-- Cone shading + hatching + welded seam -->
+            <g>
+              <path d="M 12,100 L 68,100 L 44,122 L 36,122 Z"
+                fill="var(--steel-shadow)" opacity="0.6" clip-path="url(#clip_cct7)"/>
+              <line x1="22" y1="100" x2="34" y2="121" stroke="var(--steel-mid)" stroke-width="0.4" opacity="0.45"/>
+              <line x1="32" y1="100" x2="36.5" y2="121" stroke="var(--steel-mid)" stroke-width="0.4" opacity="0.45"/>
+              <line x1="48" y1="100" x2="43.5" y2="121" stroke="var(--steel-mid)" stroke-width="0.4" opacity="0.45"/>
+              <line x1="58" y1="100" x2="46" y2="121" stroke="var(--steel-mid)" stroke-width="0.4" opacity="0.45"/>
+              <line x1="12" y1="100" x2="68" y2="100" stroke="var(--steel-mid)" stroke-width="0.7" opacity="0.75"/>
+              <line x1="12" y1="100.8" x2="68" y2="100.8" stroke="var(--steel-light)" stroke-width="0.3" opacity="0.4"/>
+              <line x1="36" y1="121.5" x2="44" y2="121.5" stroke="var(--steel-mid)" stroke-width="0.5" opacity="0.65"/>
+              <rect x="68" y="105" width="3" height="1.4"
+                fill="var(--steel-mid)" stroke="var(--steel-shadow)" stroke-width="0.2"/>
+              <rect x="67" y="116" width="3" height="1.4"
+                fill="var(--steel-mid)" stroke="var(--steel-shadow)" stroke-width="0.2"/>
+            </g>
+
+            <!-- Left-edge vertical highlight gradient (brushed-steel sheen) -->
+            <rect x="12" y="10" width="5" height="90"
+              fill="url(#grad_cct7)" clip-path="url(#clip_cct7)"/>
+
+            <!-- Horizontal weld seams on cylinder -->
+            <line x1="13" y1="44" x2="67" y2="44"
+              stroke="var(--steel-mid)" stroke-width="0.5" opacity="0.4"/>
+            <line x1="13" y1="72" x2="67" y2="72"
+              stroke="var(--steel-mid)" stroke-width="0.5" opacity="0.4"/>
+
+            <!-- Top manway pipe stub + cap -->
+            <g>
+              <rect x="22" y="-1" width="1.6" height="3.5"
+                fill="var(--steel-mid)" stroke="var(--steel-shadow)" stroke-width="0.2"/>
+              <ellipse cx="22.8" cy="-1.5" rx="2.6" ry="1.4"
+                fill="var(--steel)" stroke="var(--steel-shadow)" stroke-width="0.3"/>
+              <ellipse cx="22.8" cy="-1.8" rx="1.6" ry="0.7"
+                fill="none" stroke="var(--steel-light)" stroke-width="0.3" opacity="0.55"/>
+            </g>
+
+            <!-- Side sample-valve assembly + curl pipe down the side -->
+            <g>
+              <rect x="6" y="55" width="6" height="3"
+                fill="var(--steel-mid)" stroke="var(--steel-shadow)" stroke-width="0.3"/>
+              <circle cx="7.4" cy="56.5" r="0.7" fill="var(--steel-shadow)"/>
+              <path d="M 6,57.5 Q 3,68 4.5,90 Q 5.5,108 9,128"
+                fill="none" stroke="var(--steel-shadow)" stroke-width="0.7" opacity="0.75"/>
+              <path d="M 6,57.5 Q 3,68 4.5,90 Q 5.5,108 9,128"
+                fill="none" stroke="var(--steel-light)" stroke-width="0.25" opacity="0.25"/>
+            </g>
+
+            <!-- CIP spray ball (centered) -->
+            <g>
+              <circle cx="40" cy="64" r="4.6"
+                fill="var(--steel-mid)" stroke="var(--steel-shadow)" stroke-width="0.4"/>
+              <circle cx="40" cy="64" r="3.2"
+                fill="var(--ember)" opacity="0.74"/>
+              <path d="M 38,62 Q 39,61.3 40.5,61.5"
+                fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="0.4"/>
+              <circle cx="40"   cy="59.6" r="0.4" fill="var(--steel-shadow)"/>
+              <circle cx="44.2" cy="64"   r="0.4" fill="var(--steel-shadow)"/>
+              <circle cx="40"   cy="68.4" r="0.4" fill="var(--steel-shadow)"/>
+              <circle cx="35.8" cy="64"   r="0.4" fill="var(--steel-shadow)"/>
+            </g>
+
+            <!-- Pressure-relief valve, right side -->
+            <g>
+              <rect x="68" y="88" width="4" height="1.6"
+                fill="var(--steel-mid)" stroke="var(--steel-shadow)" stroke-width="0.25"/>
+              <circle cx="72.5" cy="88.8" r="1.1"
+                fill="var(--steel-mid)" stroke="var(--steel-shadow)" stroke-width="0.3"/>
+              <circle cx="72.5" cy="88.8" r="0.4" fill="var(--steel-shadow)"/>
+            </g>
+
+            <!-- Bottom racking valve + side handle -->
+            <rect x="38" y="130" width="4" height="3.5"
+              fill="var(--steel-mid)" stroke="var(--steel-shadow)" stroke-width="0.3"/>
+            <rect x="39" y="133.5" width="2" height="2" fill="var(--steel-shadow)"/>
+            <circle cx="44.5" cy="131.6" r="1.1"
+              fill="var(--steel-mid)" stroke="var(--steel-shadow)" stroke-width="0.3"/>
+            <circle cx="44.5" cy="131.6" r="0.4" fill="var(--steel-shadow)"/>
+
+            <!-- Skirt + 3 splayed legs + footplates + ground shadow -->
+            <g>
+              <rect x="11.5" y="108" width="57" height="3"
+                fill="var(--steel-mid)" stroke="var(--steel-shadow)" stroke-width="0.4"/>
+              <line x1="12" y1="108.6" x2="68" y2="108.6"
+                stroke="var(--steel-light)" stroke-width="0.4" opacity="0.45"/>
+              <path d="M 19,111 L 21,111 L 16.5,147 L 13.5,147 Z"
+                fill="url(#leggrad_cct7)" stroke="var(--steel-shadow)" stroke-width="0.35"/>
+              <path d="M 39,111 L 41,111 L 41.2,147 L 38.8,147 Z"
+                fill="url(#leggrad_cct7)" stroke="var(--steel-shadow)" stroke-width="0.35"/>
+              <path d="M 59,111 L 61,111 L 66.5,147 L 63.5,147 Z"
+                fill="url(#leggrad_cct7)" stroke="var(--steel-shadow)" stroke-width="0.35"/>
+              <rect x="11"   y="146.5" width="7" height="2.2" fill="var(--steel-shadow)"/>
+              <rect x="36.5" y="146.5" width="7" height="2.2" fill="var(--steel-shadow)"/>
+              <rect x="62"   y="146.5" width="7" height="2.2" fill="var(--steel-shadow)"/>
+              <ellipse cx="40" cy="151" rx="32" ry="1.8" fill="var(--steel-shadow)" opacity="0.35"/>
+            </g>
+
+            <!-- Engraved tank number, centered on cylinder -->
+            <text x="40" y="30" text-anchor="middle"
+              font-family="'JetBrains Mono', ui-monospace, monospace"
+              font-size="14" font-weight="500"
+              fill="rgba(255,255,255,0.9)" stroke="rgba(0,0,0,0.5)" stroke-width="0.4" paint-order="stroke">07</text>
+
+            <!-- Liquid-level tick on the sight side (mirrors current fill) -->
+            <g>
+              <line x1="6" y1="37" x2="3" y2="37"
+                stroke="var(--ember)" stroke-width="0.8" opacity="0.9"/>
+              <text x="0.5" y="39.5" font-family="'JetBrains Mono', monospace"
+                font-size="3.6" fill="var(--ember)" letter-spacing="0.2" opacity="0.85">35</text>
+            </g>
+          </svg>
+        </div>
+        <span class="vol">35.0<span class="unit">HL</span></span>
+        <span class="cap">sur 50 HL · 70%</span>
+        <div class="cap-bar" style="--pct: 70%"></div>
+      </div>
+
+      <!-- Mesures -->
+      <div class="cct-modal__col">
+        <h3 class="cct-modal__col-head">Mesures</h3>
+        <dl>
+          <div class="cct-modal__row">
+            <dt>OG</dt>
+            <dd>14.2<span class="unit">°P</span></dd>
+            <span class="target">au cooling</span>
+          </div>
+          <div class="cct-modal__row">
+            <dt>FG</dt>
+            <dd>3.6<span class="unit">°P</span></dd>
+            <span class="target">cible <strong>3.2</strong></span>
+          </div>
+          <div class="cct-modal__row">
+            <dt>pH</dt>
+            <dd>4.36</dd>
+            <span class="target">cible <strong>4.30</strong></span>
+          </div>
+        </dl>
+        <div class="cct-modal__pillrow">
+          <div class="cct-modal__pill" style="--pct: 75%">
+            <span class="cct-modal__pill-label">Atténuation</span>
+            <span class="cct-modal__pill-value">75<span class="unit">%</span></span>
+            <span class="cct-modal__pill-bar"></span>
+          </div>
+          <div class="cct-modal__pill" style="--pct: 92%">
+            <span class="cct-modal__pill-label">Progression</span>
+            <span class="cct-modal__pill-value">92<span class="unit">%</span></span>
+            <span class="cct-modal__pill-bar"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Levure -->
+      <div class="cct-modal__col">
+        <h3 class="cct-modal__col-head">Levure</h3>
+        <dl>
+          <div class="cct-modal__row cct-modal__row--mono">
+            <dt>Souche</dt>
+            <dd>WLP001</dd>
+            <span class="target">California Ale</span>
+          </div>
+          <div class="cct-modal__row">
+            <dt>Gén</dt>
+            <dd>4</dd>
+            <span class="target">re-pitch <strong>2×</strong></span>
+          </div>
+          <div class="cct-modal__row cct-modal__row--mono">
+            <dt>De</dt>
+            <dd>ZEPP 2502</dd>
+            <span class="target">pitched from</span>
+          </div>
+          <div class="cct-modal__row cct-modal__row--placeholder">
+            <dt>Vers</dt>
+            <dd></dd>
+            <span class="target">pitched into</span>
+          </div>
+          <div class="cct-modal__row cct-modal__row--placeholder">
+            <dt>PCR</dt>
+            <dd></dd>
+            <span class="target">contrôle ADN</span>
+          </div>
+        </dl>
+      </div>
+    </section>
+
+    <!-- CHART SECTION -->
+    <section class="cct-modal__chart-section">
+
+      <div class="cct-modal__chart-head">
+        <h3 class="cct-modal__chart-title">Courbe de fermentation</h3>
+        <p class="cct-modal__chart-sub">FG &amp; pH dans le temps · 6 lots</p>
+      </div>
+
+      <div class="cct-modal__legend">
+        <span class="cct-modal__legend-item">
+          <span class="cct-modal__legend-swatch" style="background: var(--copper);"></span>
+          FG &nbsp;<span style="color: var(--ink-mute); font-weight: 400;">°Plato</span>
+        </span>
+        <span class="cct-modal__legend-item">
+          <span class="cct-modal__legend-swatch cct-modal__legend-swatch--ph"></span>
+          pH
+        </span>
+        <span class="cct-modal__legend-note">
+          ─── lot 2503 (en cours) &nbsp;·&nbsp; ┄ ┄ ┄ &nbsp;5 lots précédents
+        </span>
+      </div>
+
+      <svg class="cct-modal__chart-svg" viewBox="0 0 800 340" id="ferm-chart" preserveAspectRatio="xMidYMid meet"></svg>
+
+      <div class="cct-modal__chips-row">
+        <span class="cct-modal__chips-label">Lots affichés</span>
+        <div class="cct-modal__chips" id="batch-chips"></div>
+      </div>
+
+    </section>
+
+  </div>
+</dialog>
+
+<div class="preview-note">design preview · cct detail modal</div>
+
+<script>
+// =========================================================
+//  DATA — current batch + 5 historical comparators
+//  (mock data shaped like what the real endpoint will return)
+// =========================================================
+const DATA = {
+  current: {
+    batch: '2503',
+    color: '#b56a3a',
+    cc_day: null,                 // not yet cold-crashed
+    cc_day_estimated: 9,
+    reads: [
+      { day: 0, fg: 14.2, ph: 5.20 },
+      { day: 1, fg: 13.6, ph: 5.05 },
+      { day: 2, fg: 11.0, ph: 4.75 },
+      { day: 3, fg: 7.5,  ph: 4.55 },
+      { day: 4, fg: 5.0,  ph: 4.42 },
+      { day: 5, fg: 3.6,  ph: 4.36 },
+    ],
+  },
+  historical: [
+    { batch: '2502', cc_day: 7, reads: [
+      {day:0,fg:14.0,ph:5.18},{day:1,fg:13.3,ph:5.00},{day:2,fg:10.4,ph:4.70},
+      {day:3,fg:6.9,ph:4.50},{day:4,fg:4.5,ph:4.38},{day:5,fg:3.5,ph:4.32},
+      {day:6,fg:3.2,ph:4.30},{day:7,fg:3.1,ph:4.30},
+    ]},
+    { batch: '2501', cc_day: 8, reads: [
+      {day:0,fg:14.5,ph:5.22},{day:1,fg:14.0,ph:5.10},{day:2,fg:12.1,ph:4.85},
+      {day:3,fg:9.0,ph:4.62},{day:4,fg:5.8,ph:4.45},{day:5,fg:4.2,ph:4.36},
+      {day:6,fg:3.6,ph:4.32},{day:7,fg:3.4,ph:4.30},{day:8,fg:3.4,ph:4.30},
+    ]},
+    { batch: '2412', cc_day: 6, reads: [
+      {day:0,fg:13.8,ph:5.15},{day:1,fg:13.0,ph:4.95},{day:2,fg:9.8,ph:4.65},
+      {day:3,fg:6.2,ph:4.45},{day:4,fg:4.0,ph:4.36},{day:5,fg:3.2,ph:4.30},
+      {day:6,fg:3.0,ph:4.28},
+    ]},
+    { batch: '2411', cc_day: 7, reads: [
+      {day:0,fg:14.3,ph:5.20},{day:1,fg:13.7,ph:5.04},{day:2,fg:11.4,ph:4.78},
+      {day:3,fg:8.0,ph:4.58},{day:4,fg:5.3,ph:4.42},{day:5,fg:3.8,ph:4.34},
+      {day:6,fg:3.4,ph:4.31},{day:7,fg:3.3,ph:4.30},
+    ]},
+    { batch: '2410', cc_day: 7, reads: [
+      {day:0,fg:14.1,ph:5.19},{day:1,fg:13.4,ph:5.02},{day:2,fg:10.8,ph:4.73},
+      {day:3,fg:7.4,ph:4.52},{day:4,fg:4.7,ph:4.40},{day:5,fg:3.5,ph:4.34},
+      {day:6,fg:3.2,ph:4.31},{day:7,fg:3.2,ph:4.30},
+    ]},
+  ],
+};
+
+// active-toggle state per batch
+const VISIBLE = { current: true };
+DATA.historical.forEach(b => VISIBLE[b.batch] = true);
+
+// =========================================================
+//  CHART
+// =========================================================
+const CHART = {
+  w: 800, h: 340,
+  pad: { top: 28, right: 64, bottom: 50, left: 56 },
+  fgMin: 0, fgMax: 16,
+  phMin: 4.0, phMax: 5.4,
+  dayMin: 0, dayMax: 12,
+};
+
+const plotW = () => CHART.w - CHART.pad.left - CHART.pad.right;
+const plotH = () => CHART.h - CHART.pad.top - CHART.pad.bottom;
+
+const xPos = (day) => CHART.pad.left + (day - CHART.dayMin) / (CHART.dayMax - CHART.dayMin) * plotW();
+const yFG  = (fg)  => CHART.pad.top  + (1 - (fg - CHART.fgMin) / (CHART.fgMax - CHART.fgMin)) * plotH();
+const yPH  = (ph)  => CHART.pad.top  + (1 - (ph - CHART.phMin) / (CHART.phMax - CHART.phMin)) * plotH();
+
+function pathFrom(points) {
+  if (!points.length) return '';
+  // smooth via cardinal spline — visually softer than polyline
+  if (points.length < 3) return points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+  const t = 0.35;
+  let d = `M ${points[0].x} ${points[0].y}`;
+  for (let i = 0; i < points.length - 1; i++) {
+    const p0 = points[Math.max(0, i - 1)];
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    const p3 = points[Math.min(points.length - 1, i + 2)];
+    const c1x = p1.x + (p2.x - p0.x) * t / 2;
+    const c1y = p1.y + (p2.y - p0.y) * t / 2;
+    const c2x = p2.x - (p3.x - p1.x) * t / 2;
+    const c2y = p2.y - (p3.y - p1.y) * t / 2;
+    d += ` C ${c1x} ${c1y}, ${c2x} ${c2y}, ${p2.x} ${p2.y}`;
+  }
+  return d;
+}
+
+function renderChart() {
+  const svg = document.getElementById('ferm-chart');
+  const out = [];
+
+  // === GRID + AXES ===
+
+  // horizontal grid (every 4 °P on FG scale)
+  for (let v = CHART.fgMin; v <= CHART.fgMax; v += 4) {
+    const y = yFG(v);
+    out.push(`<line x1="${CHART.pad.left}" y1="${y}" x2="${CHART.w - CHART.pad.right}" y2="${y}" stroke="rgba(28,24,21,0.06)" stroke-width="1"/>`);
+    out.push(`<text x="${CHART.pad.left - 10}" y="${y + 3.5}" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="9.5" fill="#8b8278" font-weight="500">${v}</text>`);
+  }
+
+  // pH right-axis labels — share the grid (no separate horizontal lines, just labels)
+  for (let v = 4.0; v <= 5.4 + 0.001; v += 0.4) {
+    out.push(`<text x="${CHART.w - CHART.pad.right + 10}" y="${yPH(v) + 3.5}" text-anchor="start" font-family="JetBrains Mono, monospace" font-size="9.5" fill="#8b8278" font-weight="500">${v.toFixed(1)}</text>`);
+  }
+
+  // vertical day grid (subtle, every 2 days)
+  for (let d = 2; d <= 12; d += 2) {
+    const x = xPos(d);
+    out.push(`<line x1="${x}" y1="${CHART.pad.top}" x2="${x}" y2="${CHART.h - CHART.pad.bottom}" stroke="rgba(28,24,21,0.04)" stroke-width="1"/>`);
+  }
+
+  // X axis line
+  out.push(`<line x1="${CHART.pad.left}" y1="${CHART.h - CHART.pad.bottom}" x2="${CHART.w - CHART.pad.right}" y2="${CHART.h - CHART.pad.bottom}" stroke="rgba(28,24,21,0.20)" stroke-width="1"/>`);
+
+  // X-axis labels
+  for (let d = 0; d <= 12; d += 2) {
+    const x = xPos(d);
+    out.push(`<text x="${x}" y="${CHART.h - CHART.pad.bottom + 18}" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9.5" fill="#8b8278" font-weight="500">J+${d}</text>`);
+  }
+
+  // axis titles
+  out.push(`<text x="${CHART.pad.left - 10}" y="${CHART.pad.top - 10}" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="8.5" fill="#8b8278" letter-spacing="1.6" font-weight="500">FG · °P</text>`);
+  out.push(`<text x="${CHART.w - CHART.pad.right + 10}" y="${CHART.pad.top - 10}" text-anchor="start" font-family="JetBrains Mono, monospace" font-size="8.5" fill="#8b8278" letter-spacing="1.6" font-weight="500">pH</text>`);
+  out.push(`<text x="${CHART.w / 2}" y="${CHART.h - 10}" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="8.5" fill="#8b8278" letter-spacing="2.5" font-weight="500">JOURS DEPUIS DÉBUT FERMENTATION</text>`);
+
+  // === HISTORICAL BATCHES (faded ghosts) ===
+  for (const batch of DATA.historical) {
+    if (!VISIBLE[batch.batch]) continue;
+    const fgPts = batch.reads.map(r => ({ x: xPos(r.day), y: yFG(r.fg) }));
+    const phPts = batch.reads.map(r => ({ x: xPos(r.day), y: yPH(r.ph) }));
+    out.push(`<path d="${pathFrom(fgPts)}" fill="none" stroke="#b56a3a" stroke-width="1.2" opacity="0.20" stroke-linecap="round" data-batch="${batch.batch}" data-series="fg"/>`);
+    out.push(`<path d="${pathFrom(phPts)}" fill="none" stroke="#6f8235" stroke-width="1.2" opacity="0.22" stroke-dasharray="4 3" stroke-linecap="round" data-batch="${batch.batch}" data-series="ph"/>`);
+
+    // cold-crash marker on each historical batch
+    if (batch.cc_day != null) {
+      const ccx = xPos(batch.cc_day);
+      // small "❄" dot at the FG endpoint where CC happened
+      const lastFg = batch.reads.find(r => r.day === batch.cc_day);
+      if (lastFg) {
+        out.push(`<circle cx="${ccx}" cy="${yFG(lastFg.fg)}" r="2.5" fill="#6792a8" opacity="0.4"/>`);
+      }
+    }
+  }
+
+  // === CURRENT BATCH (bold) ===
+  if (VISIBLE.current) {
+    const fgPts = DATA.current.reads.map(r => ({ x: xPos(r.day), y: yFG(r.fg) }));
+    const phPts = DATA.current.reads.map(r => ({ x: xPos(r.day), y: yPH(r.ph) }));
+
+    // soft shadow under FG line
+    out.push(`<path d="${pathFrom(fgPts)}" fill="none" stroke="#b56a3a" stroke-width="5" opacity="0.10" stroke-linecap="round" stroke-linejoin="round"/>`);
+
+    out.push(`<path d="${pathFrom(fgPts)}" fill="none" stroke="#b56a3a" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>`);
+    out.push(`<path d="${pathFrom(phPts)}" fill="none" stroke="#6f8235" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="6 3"/>`);
+
+    // data points
+    for (const r of DATA.current.reads) {
+      out.push(`<circle cx="${xPos(r.day)}" cy="${yFG(r.fg)}" r="3.2" fill="#b56a3a" stroke="#f5efe6" stroke-width="1.6"/>`);
+      out.push(`<circle cx="${xPos(r.day)}" cy="${yPH(r.ph)}" r="2.6" fill="#6f8235" stroke="#f5efe6" stroke-width="1.4"/>`);
+    }
+
+    // current-day vertical hairline
+    const latest = DATA.current.reads[DATA.current.reads.length - 1];
+    const cx = xPos(latest.day);
+    out.push(`<line x1="${cx}" y1="${CHART.pad.top}" x2="${cx}" y2="${CHART.h - CHART.pad.bottom}" stroke="#1c1815" stroke-width="0.8" stroke-dasharray="2 3" opacity="0.35"/>`);
+
+    // === LATEST READOUTS ===
+    // pH pill goes ABOVE its dot, FG pill goes BELOW its dot, with curved leader
+    // lines back to each curve endpoint. Clamped so neither pill leaves the plot.
+    const lyFg = yFG(latest.fg);
+    const lyPh = yPH(latest.ph);
+
+    const pillW = 60, pillH = 21;
+    const pillX = cx + 16;          // anchor right of the data column
+    const minGap = 8;               // min vertical gap between pills
+
+    // pH pill: anchor ABOVE the pH dot, clamped to top of plot
+    let phPillY = Math.max(lyPh - 30, CHART.pad.top + 2);
+    // FG pill: anchor BELOW the FG dot, clamped to bottom of plot AND below the pH pill
+    let fgPillY = Math.min(lyFg + 12, CHART.h - CHART.pad.bottom - pillH - 4);
+    if (fgPillY < phPillY + pillH + minGap) fgPillY = phPillY + pillH + minGap;
+
+    const phMidY = phPillY + pillH / 2;
+    const fgMidY = fgPillY + pillH / 2;
+
+    // hairline leader lines — quadratic curves from dot to pill left edge
+    out.push(`<path d="M ${cx + 3.5} ${lyPh - 1.5} Q ${cx + 9} ${(lyPh + phMidY) / 2}, ${pillX} ${phMidY}" fill="none" stroke="#6f8235" stroke-width="0.9" opacity="0.55"/>`);
+    out.push(`<path d="M ${cx + 3.5} ${lyFg + 1.5} Q ${cx + 9} ${(lyFg + fgMidY) / 2}, ${pillX} ${fgMidY}" fill="none" stroke="#b56a3a" stroke-width="0.9" opacity="0.55"/>`);
+
+    // pH pill (anchor up)
+    out.push(`
+      <g transform="translate(${pillX}, ${phPillY})">
+        <rect x="0" y="0" width="${pillW}" height="${pillH}" rx="2" fill="#6f8235"/>
+        <text x="${pillW / 2}" y="13.5" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10.5" font-weight="500" fill="white" letter-spacing="0.4">pH ${latest.ph.toFixed(2)}</text>
+      </g>
+    `);
+
+    // FG pill (anchor down)
+    out.push(`
+      <g transform="translate(${pillX}, ${fgPillY})">
+        <rect x="0" y="0" width="${pillW}" height="${pillH}" rx="2" fill="#b56a3a"/>
+        <text x="${pillW / 2}" y="13.5" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10.5" font-weight="500" fill="white" letter-spacing="0.4">${latest.fg.toFixed(1)} °P</text>
+      </g>
+    `);
+
+    // estimated CC marker
+    if (DATA.current.cc_day_estimated) {
+      const ex = xPos(DATA.current.cc_day_estimated);
+      out.push(`<line x1="${ex}" y1="${CHART.pad.top + 14}" x2="${ex}" y2="${CHART.h - CHART.pad.bottom}" stroke="#6792a8" stroke-width="1" stroke-dasharray="3 4" opacity="0.55"/>`);
+      out.push(`
+        <g transform="translate(${ex}, ${CHART.pad.top + 6})">
+          <text text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" fill="#466b80" font-weight="500" letter-spacing="0.8">❄ CC ~J+${DATA.current.cc_day_estimated}</text>
+        </g>
+      `);
+    }
+
+    // ▶ "AUJOURD'HUI" tag at top of current-day line
+    out.push(`
+      <g transform="translate(${cx}, ${CHART.pad.top - 18})">
+        <text text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="8.5" fill="#1c1815" font-weight="500" letter-spacing="1.4">AUJOURD'HUI</text>
+      </g>
+    `);
+  }
+
+  svg.innerHTML = out.join('');
+}
+
+// =========================================================
+//  BATCH CHIPS
+// =========================================================
+function renderChips() {
+  const wrap = document.getElementById('batch-chips');
+  const out = [];
+
+  // current chip
+  out.push(`
+    <button class="batch-chip batch-chip--current" aria-pressed="true" disabled>
+      <span class="batch-chip__dot"></span>
+      ${DATA.current.batch}
+    </button>
+  `);
+
+  for (const b of DATA.historical) {
+    const active = VISIBLE[b.batch];
+    out.push(`
+      <button class="batch-chip ${active ? '' : 'batch-chip--inactive'}" data-batch="${b.batch}" aria-pressed="${active}">
+        <span class="batch-chip__dot"></span>
+        ${b.batch}
+      </button>
+    `);
+  }
+
+  wrap.innerHTML = out.join('');
+
+  wrap.querySelectorAll('button[data-batch]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const k = btn.dataset.batch;
+      VISIBLE[k] = !VISIBLE[k];
+      renderChips();
+      renderChart();
+    });
+  });
+}
+
+// initial render
+renderChart();
+renderChips();
+
+// close button + ESC + backdrop click
+const modal = document.getElementById('cct-modal');
+modal.querySelector('.cct-modal__close').addEventListener('click', () => modal.close());
+modal.querySelector('.cct-modal__overlay').addEventListener('click', () => modal.close());
+document.addEventListener('keydown', e => { if (e.key === 'Escape') modal.close(); });
+
+</script>
+
+</body>
+</html>

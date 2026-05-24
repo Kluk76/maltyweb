@@ -1,0 +1,1325 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Croquis — propositions · vaisselle de brasserie</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..600;1,9..144,400..500&family=DM+Sans:opsz,wght@9..40,300..600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#15100a; --bg-elev:#1d160d; --ink:#ede0c4; --ink-soft:#c8b894;
+  --ink-mute:#7a6647; --ink-faint:#3a2e1d; --hairline:#261d11; --hairline-2:#342818;
+  /* — required stroke tokens (must match the app) — */
+  --line:#caa86e;            /* primary draughting ink */
+  --line-soft:#7a6647;       /* secondary / fine detail ink */
+  --oak:#a07a48;             /* CCT accent band */
+  --bbt:#6593b8;             /* bright-beer accent band */
+  --hop:#9eb060;             /* yeast / accent band */
+  --oak-deep:#6e4e26;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{min-height:100%}
+body{
+  font-family:"DM Sans",system-ui,sans-serif; color:var(--ink); background:var(--bg);
+  padding:0 0 120px;
+}
+/* — drafting board ground — */
+.board{
+  position:fixed; inset:0; z-index:-1;
+  background:
+    radial-gradient(130% 90% at 50% -10%, rgba(160,122,72,.13), transparent 55%),
+    radial-gradient(100% 130% at 50% 120%, rgba(0,0,0,.55), transparent 60%),
+    var(--bg);
+}
+.board::before{ /* blueprint grid */
+  content:""; position:absolute; inset:0; opacity:.5;
+  background-image:
+    linear-gradient(rgba(122,102,71,.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(122,102,71,.07) 1px, transparent 1px),
+    linear-gradient(rgba(122,102,71,.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(122,102,71,.04) 1px, transparent 1px);
+  background-size:120px 120px,120px 120px,24px 24px,24px 24px;
+  mask-image:radial-gradient(150% 130% at 50% 30%, #000 60%, transparent 96%);
+}
+.board::after{ /* fine grain */
+  content:""; position:absolute; inset:0; pointer-events:none; opacity:.5;
+  background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .03 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+/* corner registration marks */
+.mark{ position:fixed; width:26px; height:26px; border:1px solid var(--hairline-2); z-index:3; opacity:.7 }
+.mark.tl{top:18px;left:18px;border-right:0;border-bottom:0}
+.mark.tr{top:18px;right:18px;border-left:0;border-bottom:0}
+.mark.bl{bottom:18px;left:18px;border-right:0;border-top:0}
+.mark.br{bottom:18px;right:18px;border-left:0;border-top:0}
+
+/* — header / title block — */
+.sheet-head{ max-width:1280px; margin:0 auto; padding:64px 56px 8px; }
+.sheet-head .k{ font-family:"JetBrains Mono",monospace; font-size:10px; letter-spacing:.36em; color:var(--ink-mute); text-transform:uppercase }
+.sheet-head h1{ font-family:"Fraunces",serif; font-variation-settings:"opsz" 144; font-weight:400; font-size:48px; line-height:1; color:var(--ink); margin:8px 0 0 }
+.sheet-head h1 em{ font-style:italic; color:var(--oak) }
+.sheet-head .lede{ font-size:14.5px; color:var(--ink-soft); max-width:680px; margin-top:14px; line-height:1.6 }
+.legend{ display:flex; flex-wrap:wrap; gap:22px; margin-top:22px; padding-top:18px; border-top:1px solid var(--hairline-2); }
+.legend .item{ display:flex; align-items:center; gap:9px; font-family:"JetBrains Mono",monospace; font-size:10px; letter-spacing:.08em; color:var(--ink-mute); text-transform:uppercase }
+.legend svg{ flex:0 0 34px }
+
+/* — section bands — */
+.band{ max-width:1280px; margin:54px auto 0; padding:0 56px; }
+.band .bh{ display:flex; align-items:baseline; gap:16px; margin-bottom:6px; border-bottom:1px solid var(--hairline-2); padding-bottom:10px }
+.band .bh .num{ font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.3em; color:var(--oak) }
+.band .bh h2{ font-family:"Fraunces",serif; font-variation-settings:"opsz" 144; font-weight:430; font-size:26px; color:var(--ink) }
+.band .bh h2 em{ font-style:italic; color:var(--oak) }
+.band .bh .meta{ margin-left:auto; font-family:"JetBrains Mono",monospace; font-size:10px; letter-spacing:.1em; color:var(--ink-mute); text-transform:uppercase }
+
+/* — grid of vessel cards — */
+.grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:22px; margin-top:26px }
+.grid.three{ grid-template-columns:repeat(3,1fr) }
+.grid.two{ grid-template-columns:repeat(2,1fr) }
+.card{
+  position:relative; border:1px solid var(--hairline-2); border-radius:14px;
+  background:linear-gradient(165deg, rgba(29,22,13,.6), rgba(12,9,5,.55));
+  box-shadow:0 26px 60px -34px rgba(0,0,0,.8), inset 0 1px 0 rgba(255,220,160,.04);
+  padding:14px 18px 18px; display:flex; flex-direction:column;
+  transition:transform .3s cubic-bezier(.2,.7,.2,1), border-color .3s, box-shadow .3s;
+}
+.card:hover{ transform:translateY(-5px); border-color:var(--oak-deep);
+  box-shadow:0 38px 76px -34px rgba(0,0,0,.85), inset 0 1px 0 rgba(255,220,160,.08); }
+.card .canvas{ height:248px; display:flex; align-items:flex-end; justify-content:center; padding-bottom:4px }
+.card.hero .canvas{ height:330px }
+.card .tag{ position:absolute; top:14px; left:18px; font-family:"JetBrains Mono",monospace; font-size:9px; letter-spacing:.24em; color:var(--ink-faint); text-transform:uppercase }
+.card .cap{ font-family:"Fraunces",serif; font-variation-settings:"opsz" 96; font-weight:460; font-size:18px; color:var(--ink); margin-top:8px }
+.card .cap em{ font-style:italic; color:var(--oak) }
+.card .spec{ font-family:"JetBrains Mono",monospace; font-size:10px; letter-spacing:.04em; color:var(--ink-mute); margin-top:5px; line-height:1.5 }
+.card .note{ font-size:12px; color:var(--ink-soft); line-height:1.5; margin-top:9px;
+  border-left:2px solid var(--oak-deep); padding-left:11px }
+
+/* — hero comparison row — */
+.hero-row{ display:grid; grid-template-columns:1fr 1fr; gap:26px; margin-top:26px }
+.hero-row .card.hero{ padding:18px 24px 22px }
+.hero-row .pick{ position:absolute; top:14px; right:18px; font-family:"JetBrains Mono",monospace;
+  font-size:9px; letter-spacing:.18em; text-transform:uppercase; color:var(--oak);
+  border:1px solid var(--oak-deep); border-radius:20px; padding:4px 10px }
+.hero-row .card.hero.rec{ border-color:var(--oak-deep); box-shadow:0 0 0 1px rgba(160,122,72,.25) inset, 0 38px 76px -34px rgba(0,0,0,.85) }
+
+/* — scene panel (inspired by SETTLING framed card) — */
+.scene{ max-width:1280px; margin:26px auto 0; padding:0 56px }
+.scene .panel{
+  border:1.5px solid var(--hairline-2); border-radius:18px; overflow:hidden;
+  background:radial-gradient(130% 110% at 50% 0%, rgba(40,30,18,.4), rgba(10,8,5,.55));
+  padding:12px 12px 0;
+}
+.scene .panel .inner-frame{
+  border:1px solid var(--ink-faint); border-radius:12px; overflow:hidden;
+  padding:16px 16px 0;
+}
+.scene-caption{
+  font-family:"Fraunces",serif; font-variation-settings:"opsz" 96; font-weight:400;
+  font-size:13px; letter-spacing:.18em; text-transform:uppercase;
+  color:var(--ink-mute); text-align:center; padding:14px 0 16px;
+}
+.scene-caption em{ font-style:italic; color:var(--oak); letter-spacing:.12em }
+.scene .note{ font-size:12.5px; color:var(--ink-soft); line-height:1.55; margin-top:14px;
+  border-left:2px solid var(--oak-deep); padding-left:12px; max-width:880px }
+
+/* — frieze (full-width scene) — */
+.frieze{ max-width:1280px; margin:26px auto 0; padding:0 56px }
+.frieze .panel{ border:1px solid var(--hairline-2); border-radius:16px; overflow:hidden;
+  background:radial-gradient(130% 110% at 50% 0%, rgba(40,30,18,.4), rgba(10,8,5,.55));
+  padding:8px }
+.frieze .floorlabel{ font-family:"JetBrains Mono",monospace; font-size:9px; letter-spacing:.2em;
+  color:var(--ink-faint); text-transform:uppercase; padding:6px 14px 0 }
+.frieze .note{ font-size:12.5px; color:var(--ink-soft); line-height:1.55; margin-top:14px;
+  border-left:2px solid var(--oak-deep); padding-left:12px; max-width:880px }
+
+/* — closing note — */
+.colophon{ max-width:1280px; margin:60px auto 0; padding:0 56px; }
+.colophon .box{ border:1px solid var(--hairline-2); border-radius:14px; padding:24px 28px;
+  background:rgba(12,9,5,.4); display:grid; grid-template-columns:1.4fr 1fr; gap:32px }
+.colophon h3{ font-family:"Fraunces",serif; font-weight:460; font-size:20px; color:var(--ink); margin-bottom:10px }
+.colophon h3 em{ font-style:italic; color:var(--oak) }
+.colophon p{ font-size:13px; color:var(--ink-soft); line-height:1.65; margin-bottom:10px }
+.colophon .deci{ font-family:"JetBrains Mono",monospace; font-size:11px; color:var(--ink-mute);
+  line-height:1.8; letter-spacing:.04em }
+.colophon .deci b{ color:var(--hop) }
+
+.titleblock{ position:fixed; bottom:20px; right:54px; z-index:4; text-align:right;
+  font-family:"JetBrains Mono",monospace; font-size:9px; letter-spacing:.16em; color:var(--ink-faint);
+  line-height:1.7; text-transform:uppercase; border-right:2px solid var(--hairline-2); padding-right:12px }
+.preview-flag{ position:fixed; bottom:20px; left:54px; z-index:4; font-family:"JetBrains Mono",monospace;
+  font-size:9px; letter-spacing:.16em; color:var(--ink-faint); opacity:.7; text-transform:uppercase }
+
+/* — SVG monoline language — */
+svg .ground{ stroke:var(--line); fill:none; stroke-width:2; stroke-linecap:round }
+svg .ink{ stroke:var(--line); fill:none; stroke-width:1.5; stroke-linejoin:round; stroke-linecap:round }
+svg .ink-2{ stroke:var(--line-soft); fill:none; stroke-width:.95; stroke-linejoin:round; stroke-linecap:round }
+svg .fillx{ fill:rgba(202,168,110,.04) }
+svg .band-oak{ stroke:var(--oak); fill:none; stroke-width:1.6; stroke-linecap:round }
+svg .band-bbt{ stroke:var(--bbt); fill:none; stroke-width:1.6; stroke-linecap:round }
+svg .band-hop{ stroke:var(--hop); fill:none; stroke-width:1.6; stroke-linecap:round }
+svg .dim{ fill:var(--ink-mute); font-family:"JetBrains Mono",monospace; font-size:7px; letter-spacing:.04em }
+svg .dim-o{ fill:var(--oak); font-family:"JetBrains Mono",monospace; font-size:7px; letter-spacing:.04em }
+svg .steam{ stroke:var(--ink-mute); fill:none; stroke-width:1.1; stroke-linecap:round; opacity:.5 }
+svg .dimline{ stroke:var(--line-soft); fill:none; stroke-width:.6; opacity:.7 }
+/* restrained cylindrical shading — evenly-spaced vertical lines, BBNo clean */
+svg .shade{ stroke:var(--line-soft); fill:none; stroke-width:.65; stroke-linecap:butt; opacity:.35 }
+
+/* draw-in on scroll-into-view (subtle) */
+.draw [class^="ink"], .draw .ground, .draw [class^="band-"]{
+  stroke-dasharray:2200; stroke-dashoffset:2200; animation:draw 2s cubic-bezier(.4,.1,.2,1) forwards;
+}
+@keyframes draw{ to{ stroke-dashoffset:0 } }
+
+@media (max-width:1100px){ .grid{grid-template-columns:repeat(2,1fr)} .hero-row,.colophon .box{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+<div class="board"></div>
+<span class="mark tl"></span><span class="mark tr"></span><span class="mark bl"></span><span class="mark br"></span>
+
+<header class="sheet-head">
+  <div class="k">La Nébuleuse · Salle des Machines · planche de croquis</div>
+  <h1>Vaisselle de brasserie — <em>propositions</em></h1>
+  <p class="lede">Refonte monoline de chaque cuve : encre chaude sur planche à dessin, un seul poids de trait par famille, anatomie correcte et lisible par un brasseur. Variation de poids de trait pour la profondeur, glyphes de raccord tri-clamp partagés, ticks de soudure et clichés d'isolation cohérents — un langage visuel unique, imprimable sur t-shirt.</p>
+
+  <div class="legend">
+    <span class="item">
+      <svg viewBox="0 0 34 18" width="34" height="18"><line class="ground" x1="2" y1="9" x2="32" y2="9"/></svg>
+      trait sol / silhouette · 2,0
+    </span>
+    <span class="item">
+      <svg viewBox="0 0 34 18" width="34" height="18"><line class="ink" x1="2" y1="9" x2="32" y2="9"/></svg>
+      trait primaire · 1,5
+    </span>
+    <span class="item">
+      <svg viewBox="0 0 34 18" width="34" height="18"><line class="ink-2" x1="2" y1="9" x2="32" y2="9"/></svg>
+      détail fin · 0,95
+    </span>
+    <span class="item">
+      <svg viewBox="0 0 34 18" width="34" height="18"><line class="shade" x1="2" y1="9" x2="32" y2="9"/></svg>
+      ombrage cylindrique · 0,65
+    </span>
+    <span class="item">
+      <svg viewBox="0 0 34 18" width="34" height="18"><g transform="translate(8,9)"><line class="ink" x1="-6" y1="0" x2="6" y2="0"/><line class="ink" x1="-4" y1="-2.5" x2="-4" y2="2.5"/><line class="ink" x1="4" y1="-2.5" x2="4" y2="2.5"/><circle class="ink-2" cx="0" cy="0" r="1.6"/></g></svg>
+      raccord tri-clamp
+    </span>
+    <span class="item">
+      <svg viewBox="0 0 34 18" width="34" height="18"><g transform="translate(17,9)"><path class="ink" d="M-4 -3 L4 3 M-4 3 L4 -3"/><circle class="ink" cx="0" cy="0" r="4.5"/><line class="ink" x1="0" y1="-4.5" x2="0" y2="-8"/></g></svg>
+      vanne papillon
+    </span>
+    <span class="item">
+      <svg viewBox="0 0 34 18" width="34" height="18"><line class="band-oak" x1="2" y1="9" x2="32" y2="9"/></svg>
+      bande accent (oak / bbt / hop)
+    </span>
+  </div>
+</header>
+
+<!-- ════════════════ 00 · SCÈNE — CÔTÉ CHAUD (hero scene) ════════════════ -->
+<section class="band">
+  <div class="bh"><span class="num">00</span><h2>Scène <em>côté chaud</em> — tableau d'ensemble</h2><span class="meta">composition reliée · inspiration ref. 1</span></div>
+</section>
+<div class="scene">
+  <div class="panel">
+    <div class="inner-frame">
+      <div id="brewSceneMount"></div>
+      <div class="scene-caption"><em>Brassin</em></div>
+    </div>
+  </div>
+  <p class="note">Cinq cuves au trait, reliées par la tuyauterie du moût, sur un plancher commun avec attache de gantry. Composition inspirée de la mise en tableau du croquis de référence (vaisseau haut · colonne · cuve trapue), traduite en vocabulaire BBNo : silhouettes au trait fort, raccords tri-clamp identiques, vapeur de la cuite comme seul mouvement.</p>
+</div>
+
+<!-- ════════════════ 01 · CÔTÉ CHAUD ════════════════ -->
+<section class="band">
+  <div class="bh"><span class="num">01</span><h2>Côté <em>chaud</em> — production du moût</h2><span class="meta">HLT · maische · filtre · cuite · whirlpool</span></div>
+  <div class="grid" id="hotGrid"></div>
+</section>
+
+<!-- ════════════════ 02 · LE FERMENTEUR — HÉROS ════════════════ -->
+<section class="band">
+  <div class="bh"><span class="num">02</span><h2>Le <em>fermenteur</em> conique — pièce maîtresse</h2><span class="meta">deux directions · choisir une</span></div>
+  <div class="hero-row" id="heroRow"></div>
+</section>
+
+<!-- ════════════════ 03 · CÔTÉ FROID ════════════════ -->
+<section class="band">
+  <div class="bh"><span class="num">03</span><h2>Côté <em>froid</em> — la famille des cuves</h2><span class="meta">CCT · BBT · cuve à levure</span></div>
+  <div class="grid three" id="coldGrid"></div>
+</section>
+
+<!-- ════════════════ 03B · SCÈNE FERMENTATION (SETTLING style) ════════════════ -->
+<section class="band">
+  <div class="bh"><span class="num">03B</span><h2>Scène <em>fermentation</em> — tableau côté froid</h2><span class="meta">CCT + BBT + YT · composition reliée · style « Settling »</span></div>
+</section>
+<div class="scene">
+  <div class="panel">
+    <div class="inner-frame">
+      <div id="cellarSceneMount"></div>
+      <div class="scene-caption"><em>Fermentation</em></div>
+    </div>
+  </div>
+  <p class="note">Trio côté froid en scène reliée : CCT conique, BBT à fond bombé (dôme torosphérique proéminent), cuve à levure compacte. Ombrage cylindrique en fines lignes verticales espacées, inspiré du traitement du croquis de référence CCT/BBT — traduit en propre (pas de hachures), BBNo strict. Cadre intérieur fin + caption en Fraunces italique, direct hommage au traitement « SETTLING ».</p>
+</div>
+
+<!-- ════════════════ 04 · FRISE ════════════════ -->
+<section class="band">
+  <div class="bh"><span class="num">04</span><h2>La ligne <em>côté chaud</em> — frise d'en-tête</h2><span class="meta">HLT → maische → filtre → cuite → whirlpool</span></div>
+</section>
+<div class="frieze">
+  <div class="panel">
+    <div class="floorlabel">Élévation · ligne de brassage sur gantry · échelle relative</div>
+    <div id="friezeMount"></div>
+  </div>
+  <p class="note">Cinq cuves alignées sur une plateforme à caillebotis, reliées par le parcours du moût (collecteur haut + descentes), garde-corps et échelle de gantry. Composition horizontale pensée pour un bandeau d'en-tête : silhouettes au trait épais, tuyauterie au trait fin, vapeur de la cuite comme seul mouvement.</p>
+</div>
+
+<!-- ════════════════ COLOPHON ════════════════ -->
+<section class="colophon">
+  <div class="box">
+    <div>
+      <h3>Direction de <em>style</em></h3>
+      <p>Famille monoline unique : silhouette extérieure au trait fort (2,0) pour asseoir chaque cuve, corps et tôlerie au trait primaire (1,5), détail (soudures, jauges, raccords) au trait fin (0,95). Un ombrage cylindrique discret en lignes verticales espacées (0,65, opacité 35 %) suggère le volume sans imiter la gravure. Une bande accent colorée par type de cuve la situe d'un coup d'œil.</p>
+      <p>Signatures récurrentes : glyphe tri-clamp identique sur chaque piquage, vanne papillon dessinée pareil partout, ticks de soudure régulièrement espacés, doubles lignes d'isolation sur les cuves calorifugées. Cotation Ø / HL en JetBrains Mono.</p>
+      <p>Nouvelles scènes reliées (00 + 03B) : les cuves ne flottent plus en isolation — elles sont jointes par la tuyauterie dans un tableau cohérent, inspiré des compositions de référence. Le BBT reçoit un fond bombé plus proéminent (dôme torosphérique), anatomiquement correct pour une cuve sous pression.</p>
+    </div>
+    <div>
+      <h3>Recommandation</h3>
+      <p class="deci">
+        Héros → <b>ISOMÉTRIQUE 3/4</b><br>
+        ··········· · · · · · · ·<br>
+        L'élévation orthographique est juste, propre, idéale en icône de configuration (la rangée de gauche dans l'app).<br><br>
+        Mais pour l'image signature « merch » — en-tête, t-shirt — la vue 3/4 isométrique donne du volume, lit la conicité, et reste lisible petit. <b>Garder les deux</b> : iso pour les héros, élévation pour les listes.<br><br>
+        Les scènes 00 et 03B (tableaux reliés) sont les nouvelles pièces <b>signature</b> — t-shirt et header candidats directs.
+      </p>
+    </div>
+  </div>
+</section>
+
+<div class="titleblock">La Nébuleuse — Lausanne<br>Croquis · planche de propositions<br>rév. 2026-05-24 · monoline v2</div>
+<div class="preview-flag">_design preview · sketch-proposals</div>
+
+<script>
+/* ════════════════════════════════════════════════════════════════
+   MONOLINE BREWING-VESSEL ART LIBRARY
+   Warm draughting ink on a dark board — Brew-By-Numbers register.
+   Shared glyph vocabulary so every vessel reads as one family.
+   v2: hero scenes, cylindrical shading, improved BBT dome anatomy.
+   ════════════════════════════════════════════════════════════════ */
+
+/* ---- shared signature glyphs (local coords, caller positions/rotates) ---- */
+
+function triClamp(x,y,s=1){
+  return `<g transform="translate(${x} ${y}) scale(${s})">
+    <line class="ink" x1="-4.5" y1="0" x2="4.5" y2="0"/>
+    <line class="ink" x1="-3.3" y1="-2.4" x2="-3.3" y2="2.4"/>
+    <line class="ink" x1="3.3" y1="-2.4" x2="3.3" y2="2.4"/>
+    <ellipse class="ink-2" cx="0" cy="0" rx="2" ry="1"/>
+  </g>`;
+}
+
+function valve(x,y,dir='down',s=1){
+  const rot = dir==='side' ? -90 : 0;
+  return `<g transform="translate(${x} ${y}) rotate(${rot}) scale(${s})">
+    <circle class="ink" cx="0" cy="0" r="4.4"/>
+    <path class="ink" d="M-3.1 -3.1 L3.1 3.1 M-3.1 3.1 L3.1 -3.1"/>
+    <line class="ink" x1="0" y1="-4.4" x2="0" y2="-8"/>
+    <line class="ink" x1="-2.4" y1="-8" x2="2.4" y2="-8"/>
+  </g>`;
+}
+
+function sampleCurl(x,y,s=1){
+  return `<g transform="translate(${x} ${y}) scale(${s})">
+    <path class="ink" d="M0 0 h5 q3 0 3 3 q0 3 -3 3 q-2.4 0 -2.4 2.4"/>
+    <circle class="ink-2" cx="5" cy="0" r="1.4"/>
+  </g>`;
+}
+
+function weldSeam(x1,x2,y,n=7){
+  let t='',step=(x2-x1)/(n+1);
+  for(let i=1;i<=n;i++){ const x=x1+step*i; t+=`<line class="ink-2" x1="${x}" y1="${y-1.1}" x2="${x}" y2="${y+1.1}"/>`; }
+  return `<line class="ink-2" x1="${x1}" y1="${y}" x2="${x2}" y2="${y}"/>${t}`;
+}
+
+function dim(x,y,t,cls='dim'){ return `<text class="${cls}" x="${x}" y="${y}">${t}</text>`; }
+
+function diaCallout(cx,topY,w,label){
+  const l=cx-w/2,r=cx+w/2;
+  return `<g>
+    <line class="dimline" x1="${l}" y1="${topY}" x2="${r}" y2="${topY}"/>
+    <path class="dimline" d="M${l} ${topY} l3 -2 M${l} ${topY} l3 2"/>
+    <path class="dimline" d="M${r} ${topY} l-3 -2 M${r} ${topY} l-3 2"/>
+    ${dim(cx-9, topY-3, label,'dim-o')}
+  </g>`;
+}
+
+/* cylindrical body shading: n evenly-spaced vertical lines between x1..x2, from y1 to y2.
+   Fades toward edges (outer lines lighter — simulated by fewer lines there). Clean BBNo, not hatching. */
+function cylShade(x1,x2,y1,y2,n=5){
+  let d='';
+  const step=(x2-x1)/(n+1);
+  for(let i=1;i<=n;i++){
+    const x=x1+step*i;
+    // outer lines get lower opacity to suggest round highlight
+    const op = (i===1||i===n) ? .18 : (i===2||i===n-1) ? .28 : .38;
+    d+=`<line class="shade" x1="${x}" y1="${y1}" x2="${x}" y2="${y2}" opacity="${op}"/>`;
+  }
+  return d;
+}
+
+/* ════════════ 1 · HLT — hot liquor tank ════════════ */
+function hlt(){
+  return `<svg viewBox="0 0 150 240" width="auto" height="100%" class="draw" xmlns="http://www.w3.org/2000/svg">
+    <line class="ink" x1="75" y1="18" x2="75" y2="34"/>
+    <path class="ink" d="M60 18 h30"/>
+    <path class="ink" d="M52 18 q8 -10 23 -10 q15 0 23 10"/>
+    ${triClamp(75,34,1)}
+    <path class="ink" d="M38 56 Q75 28 112 56"/>
+    <ellipse class="ink-2" cx="75" cy="56" rx="37" ry="6"/>
+    <path class="ground" d="M38 56 V196"/>
+    <path class="ground" d="M112 56 V196"/>
+    <path class="ink-2" d="M42 60 V194"/>
+    <path class="ink-2" d="M108 60 V194"/>
+    ${cylShade(42,108,62,192,6)}
+    <path class="ink" d="M38 196 Q75 210 112 196"/>
+    <ellipse class="ink-2" cx="75" cy="196" rx="37" ry="6"/>
+    ${weldSeam(42,108,104,6)}
+    ${weldSeam(42,108,150,6)}
+    <line class="ink-2" x1="60" y1="70" x2="60" y2="190"/>
+    <line class="ink-2" x1="64" y1="70" x2="64" y2="190"/>
+    ${triClamp(62,70,.7)}${triClamp(62,190,.7)}
+    <circle class="ink-2" cx="92" cy="92" r="3.2"/><line class="ink-2" x1="95" y1="92" x2="101" y2="92"/>
+    <line class="ink" x1="75" y1="208" x2="75" y2="216"/>
+    ${valve(75,220,'down',1)}
+    <path class="ground" d="M52 200 L42 234"/>
+    <path class="ground" d="M98 200 L108 234"/>
+    <line class="ink-2" x1="42" y1="234" x2="49" y2="234"/>
+    <line class="ink-2" x1="101" y1="234" x2="108" y2="234"/>
+    <line class="ground" x1="20" y1="234" x2="130" y2="234"/>
+    ${diaCallout(75,46,74,'Ø 1100')}
+    ${dim(116,130,'35 HL','dim-o')}${dim(116,142,'eau ~80°C')}
+  </svg>`;
+}
+
+/* ════════════ 2 · MASH TUN ════════════ */
+function mashTun(){
+  return `<svg viewBox="0 0 180 240" width="auto" height="100%" class="draw" xmlns="http://www.w3.org/2000/svg">
+    <rect class="ink" x="78" y="14" width="24" height="16" rx="2"/>
+    <rect class="ink-2" x="82" y="8" width="16" height="6" rx="1"/>
+    <line class="ink-2" x1="84" y1="14" x2="84" y2="8"/><line class="ink-2" x1="96" y1="14" x2="96" y2="8"/>
+    <path class="ink" d="M84 30 h12 v8 h-12 z"/>
+    <line class="ink" x1="90" y1="38" x2="90" y2="64"/>
+    <path class="ink" d="M40 78 Q90 56 140 78"/>
+    <ellipse class="ink-2" cx="90" cy="78" rx="50" ry="7"/>
+    <path class="ground" d="M40 78 V172"/>
+    <path class="ground" d="M140 78 V172"/>
+    <path class="ink-2" d="M45 82 V170"/>
+    <path class="ink-2" d="M135 82 V170"/>
+    ${cylShade(45,135,84,168,7)}
+    <path class="ink" d="M40 172 Q90 188 140 172"/>
+    <ellipse class="ink-2" cx="90" cy="172" rx="50" ry="7"/>
+    <line class="ink-2" x1="48" y1="160" x2="132" y2="160"/>
+    ${(()=>{let d='';for(let x=54;x<=126;x+=8)d+=`<line class="ink-2" x1="${x}" y1="158.5" x2="${x}" y2="161.5"/>`;return d;})()}
+    <ellipse class="ink" cx="90" cy="118" rx="13" ry="16"/>
+    <ellipse class="ink-2" cx="90" cy="118" rx="9.5" ry="12.5"/>
+    <line class="ink-2" x1="103" y1="118" x2="108" y2="118"/><circle class="ink-2" cx="110" cy="118" r="2"/>
+    <line class="ink-2" x1="56" y1="92" x2="56" y2="166"/><line class="ink-2" x1="60" y1="92" x2="60" y2="166"/>
+    ${triClamp(58,92,.7)}
+    ${weldSeam(45,135,140,7)}
+    <path class="ink" d="M104 168 l16 6 l0 12 l-16 -4 z"/>
+    <line class="ink-2" x1="108" y1="172" x2="118" y2="176"/>
+    <line class="ink" x1="90" y1="184" x2="90" y2="192"/>
+    ${valve(90,196,'down',1)}
+    <path class="ground" d="M56 176 L48 214"/>
+    <path class="ground" d="M124 176 L132 214"/>
+    <line class="ground" x1="22" y1="214" x2="158" y2="214"/>
+    <line class="ink-2" x1="48" y1="214" x2="55" y2="214"/><line class="ink-2" x1="125" y1="214" x2="132" y2="214"/>
+    ${diaCallout(90,70,100,'Ø 1800')}
+    ${dim(146,116,'30 HL','dim-o')}${dim(146,128,'entraînement')}${dim(146,138,'des rateaux')}
+  </svg>`;
+}
+
+/* ════════════ 3 · LAUTER TUN ════════════ */
+function lauterTun(){
+  return `<svg viewBox="0 0 200 240" width="auto" height="100%" class="draw" xmlns="http://www.w3.org/2000/svg">
+    <rect class="ink" x="88" y="22" width="24" height="14" rx="2"/>
+    <line class="ink-2" x1="100" y1="14" x2="100" y2="22"/><circle class="ink-2" cx="100" cy="12" r="3"/>
+    <line class="ink" x1="100" y1="36" x2="100" y2="60"/>
+    <path class="ink" d="M30 84 Q100 68 170 84"/>
+    <ellipse class="ink-2" cx="100" cy="84" rx="70" ry="7"/>
+    <path class="ground" d="M30 84 V156"/>
+    <path class="ground" d="M170 84 V156"/>
+    <path class="ink-2" d="M35 88 V154"/>
+    <path class="ink-2" d="M165 88 V154"/>
+    ${cylShade(35,165,90,152,9)}
+    <line class="ink" x1="36" y1="146" x2="164" y2="146"/>
+    ${(()=>{let d='';for(let x=44;x<=156;x+=7)d+=`<line class="ink-2" x1="${x}" y1="144.5" x2="${x}" y2="147.5"/>`;return d;})()}
+    <path class="ink" d="M30 156 Q100 170 170 156"/>
+    <ellipse class="ink-2" cx="100" cy="156" rx="70" ry="6"/>
+    <line class="ink" x1="62" y1="132" x2="138" y2="132"/>
+    ${[70,86,102,118,134].map(x=>`<path class="ink-2" d="M${x} 132 v8 l3 3"/>`).join('')}
+    <circle class="ink-2" cx="100" cy="132" r="3"/>
+    ${[60,82,118,140].map(x=>`<line class="ink-2" x1="${x}" y1="160" x2="${x}" y2="174"/>`).join('')}
+    <path class="ink" d="M52 174 h96 v12 q0 4 -4 4 h-88 q-4 0 -4 -4 z"/>
+    ${weldSeam(56,144,182,6)}
+    <line class="ink" x1="100" y1="190" x2="100" y2="198"/>
+    ${valve(100,202,'down',1)}
+    <line class="ink-2" x1="44" y1="96" x2="44" y2="152"/><line class="ink-2" x1="48" y1="96" x2="48" y2="152"/>
+    ${triClamp(46,96,.7)}
+    <path class="ground" d="M40 160 L30 214"/>
+    <path class="ground" d="M160 160 L170 214"/>
+    <line class="ground" x1="18" y1="214" x2="182" y2="214"/>
+    <line class="ink-2" x1="30" y1="214" x2="37" y2="214"/><line class="ink-2" x1="163" y1="214" x2="170" y2="214"/>
+    ${diaCallout(100,76,140,'Ø 2400')}
+    ${dim(174,110,'30 HL','dim-o')}${dim(174,122,'cuve-filtre')}${dim(174,132,'rateaux + socs')}
+  </svg>`;
+}
+
+/* ════════════ 4 · BOIL KETTLE ════════════ */
+function kettle(){
+  return `<svg viewBox="0 0 160 240" width="auto" height="100%" class="draw" xmlns="http://www.w3.org/2000/svg">
+    <path class="steam" d="M76 6 q-5 -7 1 -13 M84 8 q6 -7 -1 -14 M80 2 q-2 -8 3 -13"/>
+    <line class="ink" x1="74" y1="22" x2="74" y2="8"/>
+    <line class="ink" x1="86" y1="22" x2="86" y2="8"/>
+    <path class="ink" d="M70 8 q10 -7 20 0"/>
+    <path class="ink" d="M58 46 L74 22 H86 L102 46"/>
+    <path class="ink" d="M34 62 Q80 38 126 62"/>
+    <ellipse class="ink-2" cx="80" cy="62" rx="46" ry="6"/>
+    <path class="ground" d="M34 62 V184"/>
+    <path class="ground" d="M126 62 V184"/>
+    <path class="ink-2" d="M39 66 V182"/>
+    <path class="ink-2" d="M121 66 V182"/>
+    ${cylShade(39,121,68,180,7)}
+    <path class="ink" d="M34 184 Q80 200 126 184"/>
+    <ellipse class="ink-2" cx="80" cy="184" rx="46" ry="6"/>
+    <line class="ink-2" x1="80" y1="80" x2="80" y2="172" stroke-dasharray="3 4"/>
+    <ellipse class="ink-2" cx="80" cy="120" rx="14" ry="34"/>
+    <line class="ink-2" x1="70" y1="100" x2="90" y2="100"/>
+    <line class="ink-2" x1="70" y1="140" x2="90" y2="140"/>
+    <path class="ink" d="M126 150 h18 q5 0 5 5" />
+    ${triClamp(149,155,.7)}
+    <line class="ink-2" x1="52" y1="74" x2="52" y2="178"/><line class="ink-2" x1="56" y1="74" x2="56" y2="178"/>
+    ${triClamp(54,74,.7)}${triClamp(54,178,.7)}
+    ${weldSeam(39,121,116,6)}
+    ${weldSeam(39,121,156,6)}
+    <line class="ink" x1="80" y1="196" x2="80" y2="204"/>
+    ${valve(80,208,'down',1)}
+    <path class="ground" d="M50 188 L42 224"/>
+    <path class="ground" d="M110 188 L118 224"/>
+    <line class="ground" x1="20" y1="224" x2="140" y2="224"/>
+    <line class="ink-2" x1="42" y1="224" x2="49" y2="224"/><line class="ink-2" x1="111" y1="224" x2="118" y2="224"/>
+    ${diaCallout(80,54,90,'Ø 1900')}
+    ${dim(132,104,'35 HL','dim-o')}${dim(132,116,'ébullition')}${dim(132,126,'calandre int.')}
+  </svg>`;
+}
+
+/* ════════════ 5 · WHIRLPOOL ════════════ */
+function whirlpool(){
+  return `<svg viewBox="0 0 170 240" width="auto" height="100%" class="draw" xmlns="http://www.w3.org/2000/svg">
+    <line class="ink" x1="36" y1="70" x2="124" y2="70"/>
+    <ellipse class="ink-2" cx="80" cy="70" rx="44" ry="6"/>
+    <line class="ink" x1="80" y1="70" x2="80" y2="56"/><path class="ink" d="M74 56 h12"/>
+    <path class="ground" d="M36 70 V178"/>
+    <path class="ground" d="M124 70 V178"/>
+    <path class="ink-2" d="M41 74 V176"/>
+    <path class="ink-2" d="M119 74 V176"/>
+    ${cylShade(41,119,76,174,6)}
+    <path class="ink" d="M150 96 L124 104"/>
+    <path class="ink" d="M150 100 L128 107"/>
+    ${triClamp(149,98,.8)}
+    <path class="ink-2" d="M62 120 q18 -10 36 0 q-18 10 -36 0" opacity=".7"/>
+    <path class="ink-2" d="M66 132 q14 -8 28 0 q-14 8 -28 0" opacity=".5"/>
+    <path class="ink" d="M36 178 H124"/>
+    <path class="ink" d="M60 178 L80 196 L100 178"/>
+    <line class="ink-2" x1="80" y1="196" x2="80" y2="204"/>
+    ${valve(80,208,'down',1)}
+    <line class="ink" x1="124" y1="168" x2="138" y2="168"/>
+    ${triClamp(141,168,.7)}
+    <line class="ink-2" x1="52" y1="82" x2="52" y2="172"/><line class="ink-2" x1="56" y1="82" x2="56" y2="172"/>
+    ${triClamp(54,82,.7)}
+    ${weldSeam(41,119,124,6)}
+    <path class="ground" d="M52 178 L44 224"/>
+    <path class="ground" d="M108 178 L116 224"/>
+    <line class="ground" x1="22" y1="224" x2="148" y2="224"/>
+    <line class="ink-2" x1="44" y1="224" x2="51" y2="224"/><line class="ink-2" x1="109" y1="224" x2="116" y2="224"/>
+    ${diaCallout(80,62,90,'Ø 1900')}
+    ${dim(144,118,'32 HL','dim-o')}${dim(144,130,'entrée')}${dim(144,140,'tangentielle')}
+  </svg>`;
+}
+
+/* ════════════ 6A · CCT — FRONT ELEVATION ════════════
+   v2: subtle cylindrical shading on body + cone */
+function cctElevation(){
+  return `<svg viewBox="0 0 150 330" width="auto" height="100%" class="draw" xmlns="http://www.w3.org/2000/svg">
+    <line class="ink" x1="75" y1="22" x2="75" y2="38"/>
+    <path class="ink" d="M75 22 q-9 0 -9 -8 q0 -7 9 -7 q9 0 9 7 q0 8 -9 8"/>
+    <circle class="ink-2" cx="75" cy="14" r="2"/>
+    ${triClamp(75,40,.85)}
+    <path class="ink" d="M60 40 q-18 2 -22 18" />
+    <circle class="ink-2" cx="38" cy="60" r="3.2"/>
+    ${[ -1,0,1 ].map(i=>`<line class="ink-2" x1="38" y1="63" x2="${38+i*5}" y2="70"/>`).join('')}
+    <path class="ink" d="M40 64 Q75 38 110 64"/>
+    <ellipse class="ink-2" cx="75" cy="64" rx="35" ry="6"/>
+    <path class="ground" d="M40 64 V214"/>
+    <path class="ground" d="M110 64 V214"/>
+    <path class="ink-2" d="M45 68 V212"/>
+    <path class="ink-2" d="M105 68 V212"/>
+    ${cylShade(45,105,70,210,5)}
+    <line class="band-oak" x1="45" y1="98" x2="105" y2="98"/>
+    <line class="band-oak" x1="45" y1="106" x2="105" y2="106"/>
+    <path class="ground" d="M40 214 L75 300"/>
+    <path class="ground" d="M110 214 L75 300"/>
+    <path class="ink-2" d="M45 214 L75 292"/>
+    <path class="ink-2" d="M105 214 L75 292"/>
+    <ellipse class="ink-2" cx="75" cy="214" rx="35" ry="6"/>
+    ${weldSeam(50,100,150,5)}
+    ${weldSeam(45,105,140,6)}
+    ${weldSeam(45,105,180,6)}
+    <line class="ink-2" x1="60" y1="120" x2="60" y2="208"/><line class="ink-2" x1="64" y1="120" x2="64" y2="208"/>
+    ${triClamp(62,120,.7)}${triClamp(62,208,.7)}
+    <line class="ink" x1="62" y1="248" x2="50" y2="252"/>${triClamp(47,253,.7)}
+    <line class="ink" x1="88" y1="248" x2="100" y2="252"/>${triClamp(103,253,.7)}
+    <line class="ink" x1="75" y1="300" x2="75" y2="306"/>
+    ${valve(75,310,'down',.95)}
+    ${sampleCurl(80,276,.85)}
+    <circle class="ink-2" cx="92" cy="140" r="3"/><line class="ink-2" x1="95" y1="140" x2="101" y2="140"/>
+    <path class="ground" d="M44 210 L30 322"/>
+    <path class="ground" d="M106 210 L120 322"/>
+    <line class="ground" x1="14" y1="322" x2="136" y2="322"/>
+    <line class="ink-2" x1="30" y1="322" x2="38" y2="322"/><line class="ink-2" x1="112" y1="322" x2="120" y2="322"/>
+    <line class="ink-2" x1="40" y1="290" x2="110" y2="290"/>
+    ${diaCallout(75,54,72,'Ø 1600')}
+    ${dim(116,150,'90 HL','dim-o')}${dim(116,162,'cône 60°')}${dim(116,174,'2× soutirage')}
+  </svg>`;
+}
+
+/* ════════════ 6B · CCT — 3/4 ISOMETRIC ════════════
+   v2: cylindrical shading on body + cone faces */
+function cctIso(){
+  return `<svg viewBox="0 0 180 330" width="auto" height="100%" class="draw" xmlns="http://www.w3.org/2000/svg">
+    <line class="ink" x1="92" y1="26" x2="92" y2="42"/>
+    <path class="ink" d="M92 26 q-8 0 -8 -7 q0 -6 8 -6 q8 0 8 6 q0 7 -8 7"/>
+    ${triClamp(92,44,.85)}
+    <path class="ink" d="M78 46 q-16 0 -22 14"/>
+    <circle class="ink-2" cx="56" cy="60" r="3"/>
+    <ellipse class="ink" cx="92" cy="66" rx="48" ry="15"/>
+    <path class="ink-2" d="M44 66 Q92 52 140 66"/>
+    <path class="ground" d="M44 66 V210"/>
+    <path class="ground" d="M140 66 V210"/>
+    <path class="ink-2" d="M128 72 V206" opacity=".8"/>
+    <path class="ink-2" d="M52 72 V206" opacity=".55"/>
+    ${cylShade(52,128,74,206,5)}
+    <path class="band-oak" d="M44 104 Q92 118 140 104"/>
+    <path class="band-oak" d="M44 96 Q92 110 140 96"/>
+    <path class="band-oak" d="M140 96 V104" opacity=".7"/><path class="band-oak" d="M44 96 V104" opacity=".7"/>
+    <path class="ink" d="M44 210 Q92 228 140 210"/>
+    <path class="ground" d="M44 210 L92 304"/>
+    <path class="ground" d="M140 210 L92 304"/>
+    <path class="ink-2" d="M92 228 L92 300" opacity=".7"/>
+    <path class="ink-2" d="M68 219 L92 296" opacity=".5"/>
+    <path class="ink-2" d="M116 219 L92 296" opacity=".5"/>
+    ${weldSeam(58,126,170,5)}
+    <line class="ink-2" x1="74" y1="120" x2="74" y2="206"/><line class="ink-2" x1="78" y1="120" x2="78" y2="206"/>
+    ${triClamp(76,120,.7)}
+    <line class="ink" x1="78" y1="250" x2="64" y2="256"/>${triClamp(61,257,.7)}
+    <line class="ink" x1="106" y1="250" x2="120" y2="256"/>${triClamp(123,257,.7)}
+    ${sampleCurl(98,278,.85)}
+    <line class="ink" x1="92" y1="304" x2="92" y2="310"/>${valve(92,314,'down',.95)}
+    <path class="ground" d="M50 206 L34 322"/>
+    <path class="ground" d="M134 206 L150 322"/>
+    <path class="ink-2" d="M92 224 L92 322" opacity=".55"/>
+    <line class="ground" x1="18" y1="322" x2="166" y2="322"/>
+    <line class="ink-2" x1="34" y1="322" x2="42" y2="322"/><line class="ink-2" x1="142" y1="322" x2="150" y2="322"/>
+    ${diaCallout(92,52,96,'Ø 1600')}
+    ${dim(146,160,'90 HL','dim-o')}${dim(146,172,'iso 3/4')}
+  </svg>`;
+}
+
+/* ════════════ 7 · BBT — bright beer tank ════════════
+   v2: more pronounced torispherical dome (taller, clearly convex pressure-vessel head),
+   inspired by reference image CCTandBBTsketch where the settling tank has a very prominent dome.
+   Cylindrical shading added. */
+function bbt(){
+  return `<svg viewBox="0 0 150 300" width="auto" height="100%" class="draw" xmlns="http://www.w3.org/2000/svg">
+    <!-- prominent torispherical dished top — taller crown than v1 -->
+    <path class="ink" d="M40 74 Q75 36 110 74"/>
+    <ellipse class="ink-2" cx="75" cy="74" rx="35" ry="6"/>
+    <!-- top fitting: PRV + inlet -->
+    <line class="ink" x1="75" y1="46" x2="75" y2="28"/>
+    <circle class="ink" cx="75" cy="24" r="5"/>
+    <line class="ink-2" x1="75" y1="19" x2="75" y2="14"/>
+    <line class="ink-2" x1="71" y1="14" x2="79" y2="14"/>
+    ${triClamp(58,54,.7)}
+    <!-- PRESSURE GAUGE on top shoulder — larger, more prominent -->
+    <circle class="ink" cx="98" cy="60" r="7"/>
+    <line class="ink-2" x1="98" y1="60" x2="101" y2="55"/>
+    <line class="ink-2" x1="98" y1="53" x2="98" y2="55"/>
+    <line class="ink-2" x1="103" y1="60" x2="105" y2="60"/>
+    <!-- body -->
+    <path class="ground" d="M40 74 V218"/>
+    <path class="ground" d="M110 74 V218"/>
+    <path class="ink-2" d="M45 78 V216"/>
+    <path class="ink-2" d="M105 78 V216"/>
+    ${cylShade(45,105,80,214,5)}
+    <!-- ACCENT BAND (bbt blue) -->
+    <line class="band-bbt" x1="45" y1="106" x2="105" y2="106"/>
+    <line class="band-bbt" x1="45" y1="114" x2="105" y2="114"/>
+    <!-- SHALLOW dished bottom — gently convex outward (pressure vessel convention) -->
+    <path class="ground" d="M40 218 Q75 250 110 218"/>
+    <ellipse class="ink-2" cx="75" cy="218" rx="35" ry="6"/>
+    <!-- carbonation stone port low on the side -->
+    <line class="ink" x1="40" y1="208" x2="26" y2="212"/>
+    ${triClamp(23,213,.7)}
+    ${(()=>{let d='';for(let i=0;i<4;i++)d+=`<circle class="ink-2" cx="${28+i*2}" cy="${209-i}" r=".8"/>`;return d;})()}
+    <!-- weld seams -->
+    ${weldSeam(45,105,138,6)}
+    ${weldSeam(45,105,178,6)}
+    <!-- sight glass -->
+    <line class="ink-2" x1="60" y1="122" x2="60" y2="212"/><line class="ink-2" x1="64" y1="122" x2="64" y2="212"/>
+    ${triClamp(62,122,.7)}${triClamp(62,212,.7)}
+    <!-- bottom outlet (centre of dish) -->
+    <line class="ink" x1="75" y1="240" x2="75" y2="248"/>
+    ${valve(75,252,'down',.95)}
+    <!-- racking arm -->
+    <line class="ink" x1="88" y1="228" x2="100" y2="232"/>${triClamp(103,233,.7)}
+    <!-- legs -->
+    <path class="ground" d="M48 220 L36 288"/>
+    <path class="ground" d="M102 220 L114 288"/>
+    <line class="ground" x1="16" y1="288" x2="134" y2="288"/>
+    <line class="ink-2" x1="36" y1="288" x2="44" y2="288"/><line class="ink-2" x1="106" y1="288" x2="114" y2="288"/>
+    ${diaCallout(75,62,72,'Ø 1500')}
+    ${dim(116,148,'120 HL','dim-o')}${dim(116,160,'fond bombé')}${dim(116,172,'+ carbo')}
+  </svg>`;
+}
+
+/* ════════════ 8 · YEAST TANK ════════════ */
+function yeastTank(){
+  return `<svg viewBox="0 0 130 270" width="auto" height="100%" class="draw" xmlns="http://www.w3.org/2000/svg">
+    <line class="ink" x1="65" y1="44" x2="65" y2="30"/><path class="ink" d="M60 30 h10"/>
+    ${triClamp(65,46,.75)}
+    <path class="ink" d="M34 64 Q65 44 96 64"/>
+    <ellipse class="ink-2" cx="65" cy="64" rx="31" ry="5"/>
+    <path class="ground" d="M34 64 V176"/>
+    <path class="ground" d="M96 64 V176"/>
+    <path class="ink-2" d="M38 68 V174"/>
+    <path class="ink-2" d="M92 68 V174"/>
+    <path class="ink-2" d="M31 76 V168" opacity=".7"/>
+    <path class="ink-2" d="M99 76 V168" opacity=".7"/>
+    ${cylShade(38,92,70,172,4)}
+    <line class="band-hop" x1="38" y1="92" x2="92" y2="92"/>
+    <line class="band-hop" x1="38" y1="99" x2="92" y2="99"/>
+    <path class="ground" d="M34 176 L65 234"/>
+    <path class="ground" d="M96 176 L65 234"/>
+    <ellipse class="ink-2" cx="65" cy="176" rx="31" ry="5"/>
+    <path class="ink-2" d="M38 176 L65 228" opacity=".6"/>
+    <path class="ink-2" d="M92 176 L65 228" opacity=".6"/>
+    <line class="ink" x1="65" y1="234" x2="65" y2="240"/>
+    ${valve(65,244,'down',.85)}
+    ${sampleCurl(70,214,.75)}
+    <line class="ink-2" x1="52" y1="106" x2="52" y2="170"/><line class="ink-2" x1="56" y1="106" x2="56" y2="170"/>
+    ${triClamp(54,106,.65)}
+    ${weldSeam(38,92,140,5)}
+    <path class="ground" d="M42 172 L32 258"/>
+    <path class="ground" d="M88 172 L98 258"/>
+    <line class="ground" x1="16" y1="258" x2="114" y2="258"/>
+    <line class="ink-2" x1="32" y1="258" x2="39" y2="258"/><line class="ink-2" x1="91" y1="258" x2="98" y2="258"/>
+    ${diaCallout(65,54,64,'Ø 900')}
+    ${dim(102,124,'12 HL','dim-o')}${dim(102,136,'double')}${dim(102,146,'paroi')}
+  </svg>`;
+}
+
+/* ════════════ BREWHOUSE SCENE — hero connected composition ════════════
+   Inspired by ref 1 (brewhousesketch): vessels at staggered heights on a shared
+   floor plane, joined by wort piping at multiple levels.
+   Pure BBNo monoline — NO roughen filters, NO hand-drawn wobble.
+   Left to right: HLT (tall) · Mash (squat) · Lauter (wide, lowest) · Kettle (steam) · Whirlpool
+   All vessels share the same floor line. Interconnecting pipework above + pump on floor. */
+function brewScene(){
+  return `<svg viewBox="0 0 980 400" width="100%" height="auto" class="draw" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
+
+    <!-- ═══ FLOOR / GANTRY PLATFORM ═══ -->
+    <line class="ground" x1="18" y1="368" x2="962" y2="368"/>
+    <!-- gantry grating ticks -->
+    ${(()=>{let d='';for(let x=36;x<950;x+=18)d+=`<line class="ink-2" x1="${x}" y1="365" x2="${x}" y2="368" opacity=".45"/>`;return d;})()}
+    <!-- platform underside strapping -->
+    <line class="ink-2" x1="18" y1="374" x2="962" y2="374" opacity=".5"/>
+    <!-- support columns -->
+    ${[90,260,470,680,880].map(x=>`
+      <line class="ink-2" x1="${x}" y1="374" x2="${x}" y2="392" opacity=".5"/>
+      <line class="ink-2" x1="${x+40}" y1="374" x2="${x+40}" y2="392" opacity=".5"/>
+      <line class="ink-2" x1="${x-4}" y1="392" x2="${x+44}" y2="392" opacity=".4"/>
+    `).join('')}
+
+    <!-- ═══ HLT — tall, leftmost ═══ -->
+    <g transform="translate(44,18)">
+      <!-- water inlet top -->
+      <line class="ink" x1="60" y1="16" x2="60" y2="30"/>
+      <path class="ink" d="M44 16 h32 M36 16 q8 -9 24 -9 q16 0 24 9"/>
+      ${triClamp(60,32,.85)}
+      <!-- domed top -->
+      <path class="ink" d="M28 50 Q60 24 92 50"/>
+      <ellipse class="ink-2" cx="60" cy="50" rx="32" ry="5.5"/>
+      <!-- insulated body -->
+      <path class="ground" d="M28 50 V232"/>
+      <path class="ground" d="M92 50 V232"/>
+      <path class="ink-2" d="M32 54 V230"/>
+      <path class="ink-2" d="M88 54 V230"/>
+      ${cylShade(32,88,56,228,4)}
+      <!-- dished bottom -->
+      <path class="ink" d="M28 232 Q60 246 92 232"/>
+      <ellipse class="ink-2" cx="60" cy="232" rx="32" ry="5"/>
+      ${weldSeam(32,88,130,5)}
+      ${weldSeam(32,88,180,5)}
+      <!-- sight glass -->
+      <line class="ink-2" x1="46" y1="64" x2="46" y2="226"/>
+      <line class="ink-2" x1="50" y1="64" x2="50" y2="226"/>
+      ${triClamp(48,64,.65)}${triClamp(48,226,.65)}
+      <!-- temp probe -->
+      <circle class="ink-2" cx="78" cy="100" r="2.8"/>
+      <line class="ink-2" x1="80.8" y1="100" x2="86" y2="100"/>
+      <!-- bottom outlet + valve -->
+      <line class="ink" x1="60" y1="244" x2="60" y2="252"/>
+      ${valve(60,256,'down',.9)}
+      <!-- legs -->
+      <path class="ground" d="M38 236 L28 348"/>
+      <path class="ground" d="M82 236 L92 348"/>
+      <line class="ink-2" x1="28" y1="348" x2="35" y2="348"/>
+      <line class="ink-2" x1="85" y1="348" x2="92" y2="348"/>
+      <!-- label -->
+      ${dim(38,42,'HLT')}
+    </g>
+
+    <!-- ═══ MASH TUN — squat, 2nd ═══ -->
+    <g transform="translate(200,68)">
+      <!-- motor + gearbox -->
+      <rect class="ink" x="68" y="12" width="22" height="14" rx="2"/>
+      <rect class="ink-2" x="72" y="6" width="14" height="6" rx="1"/>
+      <path class="ink" d="M72 26 h14 v7 h-14 z"/>
+      <line class="ink" x1="79" y1="33" x2="79" y2="54"/>
+      <!-- low dome lid -->
+      <path class="ink" d="M28 68 Q79 48 130 68"/>
+      <ellipse class="ink-2" cx="79" cy="68" rx="51" ry="6.5"/>
+      <!-- squat body -->
+      <path class="ground" d="M28 68 V166"/>
+      <path class="ground" d="M130 68 V166"/>
+      <path class="ink-2" d="M33 72 V164"/>
+      <path class="ink-2" d="M125 72 V164"/>
+      ${cylShade(33,125,74,162,6)}
+      <!-- dished bottom -->
+      <path class="ink" d="M28 166 Q79 182 130 166"/>
+      <ellipse class="ink-2" cx="79" cy="166" rx="51" ry="6.5"/>
+      <!-- false bottom -->
+      <line class="ink-2" x1="36" y1="154" x2="122" y2="154"/>
+      ${(()=>{let d='';for(let x=42;x<=118;x+=8)d+=`<line class="ink-2" x1="${x}" y1="152.5" x2="${x}" y2="155.5"/>`;return d;})()}
+      <!-- manway -->
+      <ellipse class="ink" cx="79" cy="114" rx="12" ry="15"/>
+      <ellipse class="ink-2" cx="79" cy="114" rx="8.5" ry="11"/>
+      <line class="ink-2" x1="91" y1="114" x2="96" y2="114"/>
+      <circle class="ink-2" cx="98" cy="114" r="1.8"/>
+      ${weldSeam(33,125,128,6)}
+      <!-- grain-out chute -->
+      <path class="ink" d="M96 162 l14 5 l0 10 l-14 -4 z"/>
+      <!-- bottom wort valve -->
+      <line class="ink" x1="79" y1="178" x2="79" y2="186"/>
+      ${valve(79,190,'down',.9)}
+      <!-- legs -->
+      <path class="ground" d="M44 170 L36 298"/>
+      <path class="ground" d="M114 170 L122 298"/>
+      <line class="ink-2" x1="36" y1="298" x2="43" y2="298"/>
+      <line class="ink-2" x1="115" y1="298" x2="122" y2="298"/>
+      ${dim(50,60,'MAISCHE')}
+    </g>
+
+    <!-- ═══ LAUTER TUN — wide + shallow ═══ -->
+    <g transform="translate(390,100)">
+      <!-- gearbox -->
+      <rect class="ink" x="77" y="18" width="20" height="12" rx="2"/>
+      <line class="ink" x1="87" y1="30" x2="87" y2="52"/>
+      <!-- very shallow lid -->
+      <path class="ink" d="M18 76 Q87 60 156 76"/>
+      <ellipse class="ink-2" cx="87" cy="76" rx="69" ry="6"/>
+      <!-- wide shallow body -->
+      <path class="ground" d="M18 76 V150"/>
+      <path class="ground" d="M156 76 V150"/>
+      <path class="ink-2" d="M23 80 V148"/>
+      <path class="ink-2" d="M151 80 V148"/>
+      ${cylShade(23,151,82,146,9)}
+      <!-- flat false-bottom plate -->
+      <line class="ink" x1="24" y1="140" x2="150" y2="140"/>
+      ${(()=>{let d='';for(let x=30;x<=146;x+=7)d+=`<line class="ink-2" x1="${x}" y1="138.5" x2="${x}" y2="141.5"/>`;return d;})()}
+      <!-- dished bottom -->
+      <path class="ink" d="M18 150 Q87 165 156 150"/>
+      <ellipse class="ink-2" cx="87" cy="150" rx="69" ry="5.5"/>
+      <!-- rake arms -->
+      <line class="ink" x1="52" y1="126" x2="122" y2="126"/>
+      ${[58,72,87,102,116].map(x=>`<path class="ink-2" d="M${x} 126 v7 l2.5 2.5"/>`).join('')}
+      <circle class="ink-2" cx="87" cy="126" r="2.5"/>
+      <!-- wort run-offs to grant -->
+      ${[46,68,106,128].map(x=>`<line class="ink-2" x1="${x}" y1="154" x2="${x}" y2="166"/>`).join('')}
+      <!-- grant trough -->
+      <path class="ink" d="M38 166 h98 v11 q0 3 -3 3 h-92 q-3 0 -3 -3 z"/>
+      ${weldSeam(44,130,174,5)}
+      <line class="ink" x1="87" y1="180" x2="87" y2="188"/>
+      ${valve(87,192,'down',.9)}
+      <!-- legs -->
+      <path class="ground" d="M28 154 L18 266"/>
+      <path class="ground" d="M146 154 L156 266"/>
+      <line class="ink-2" x1="18" y1="266" x2="25" y2="266"/>
+      <line class="ink-2" x1="149" y1="266" x2="156" y2="266"/>
+      ${dim(58,68,'FILTRE')}
+    </g>
+
+    <!-- ═══ BOIL KETTLE — with steam, 4th ═══ -->
+    <g transform="translate(620,48)">
+      <!-- steam wisps -->
+      <path class="steam" d="M68 6 q-4 -6 1 -12 M76 8 q5 -6 -1 -12 M72 2 q-2 -7 3 -12"/>
+      <!-- vapour stack -->
+      <line class="ink" x1="66" y1="20" x2="66" y2="8"/>
+      <line class="ink" x1="78" y1="20" x2="78" y2="8"/>
+      <path class="ink" d="M62 8 q10 -6 20 0"/>
+      <path class="ink" d="M52 42 L66 20 H78 L92 42"/>
+      <!-- domed lid -->
+      <path class="ink" d="M28 58 Q72 36 116 58"/>
+      <ellipse class="ink-2" cx="72" cy="58" rx="44" ry="5.5"/>
+      <!-- body -->
+      <path class="ground" d="M28 58 V178"/>
+      <path class="ground" d="M116 58 V178"/>
+      <path class="ink-2" d="M33 62 V176"/>
+      <path class="ink-2" d="M111 62 V176"/>
+      ${cylShade(33,111,64,174,6)}
+      <!-- dished bottom -->
+      <path class="ink" d="M28 178 Q72 194 116 178"/>
+      <ellipse class="ink-2" cx="72" cy="178" rx="44" ry="5.5"/>
+      <!-- calandria (internal heater, dashed) -->
+      <line class="ink-2" x1="72" y1="76" x2="72" y2="166" stroke-dasharray="3 4"/>
+      <ellipse class="ink-2" cx="72" cy="118" rx="13" ry="32"/>
+      <line class="ink-2" x1="62" y1="98" x2="82" y2="98"/>
+      <line class="ink-2" x1="62" y1="138" x2="82" y2="138"/>
+      <!-- sight glass -->
+      <line class="ink-2" x1="44" y1="70" x2="44" y2="172"/>
+      <line class="ink-2" x1="48" y1="70" x2="48" y2="172"/>
+      ${triClamp(46,70,.65)}${triClamp(46,172,.65)}
+      ${weldSeam(33,111,112,5)}
+      ${weldSeam(33,111,150,5)}
+      <!-- bottom outlet -->
+      <line class="ink" x1="72" y1="190" x2="72" y2="198"/>
+      ${valve(72,202,'down',.9)}
+      <!-- legs -->
+      <path class="ground" d="M42 182 L34 318"/>
+      <path class="ground" d="M102 182 L110 318"/>
+      <line class="ink-2" x1="34" y1="318" x2="41" y2="318"/>
+      <line class="ink-2" x1="103" y1="318" x2="110" y2="318"/>
+      ${dim(50,50,'CUITE')}
+    </g>
+
+    <!-- ═══ WHIRLPOOL — rightmost ═══ -->
+    <g transform="translate(826,80)">
+      <!-- flat lid -->
+      <line class="ink" x1="24" y1="62" x2="112" y2="62"/>
+      <ellipse class="ink-2" cx="68" cy="62" rx="44" ry="5.5"/>
+      <line class="ink" x1="68" y1="62" x2="68" y2="48"/>
+      <path class="ink" d="M62 48 h12"/>
+      <!-- body -->
+      <path class="ground" d="M24 62 V170"/>
+      <path class="ground" d="M112 62 V170"/>
+      <path class="ink-2" d="M29 66 V168"/>
+      <path class="ink-2" d="M107 66 V168"/>
+      ${cylShade(29,107,68,166,5)}
+      <!-- tangential inlet -->
+      <path class="ink" d="M136 88 L112 96"/>
+      <path class="ink" d="M136 92 L116 98"/>
+      ${triClamp(135,90,.75)}
+      <!-- swirl -->
+      <path class="ink-2" d="M50 114 q18 -9 36 0 q-18 9 -36 0" opacity=".65"/>
+      <path class="ink-2" d="M54 126 q14 -7 28 0 q-14 7 -28 0" opacity=".45"/>
+      <!-- flat bottom + trub cone -->
+      <path class="ink" d="M24 170 H112"/>
+      <path class="ink" d="M50 170 L68 188 L86 170"/>
+      <!-- dump valve -->
+      <line class="ink-2" x1="68" y1="188" x2="68" y2="196"/>
+      ${valve(68,200,'down',.9)}
+      <!-- side draw-off -->
+      <line class="ink" x1="112" y1="160" x2="126" y2="160"/>
+      ${triClamp(129,160,.65)}
+      ${weldSeam(29,107,118,5)}
+      <!-- legs -->
+      <path class="ground" d="M38 170 L30 288"/>
+      <path class="ground" d="M98 170 L106 288"/>
+      <line class="ink-2" x1="30" y1="288" x2="37" y2="288"/>
+      <line class="ink-2" x1="99" y1="288" x2="106" y2="288"/>
+      ${dim(44,54,'WHIRLPOOL')}
+    </g>
+
+    <!-- ═══ WORT PIPING — top collector + descents ═══ -->
+    <!-- Horizontal collector runs high, connecting HLT→Mash, Mash→Lauter, Lauter→Kettle, Kettle→Whirl -->
+    <!-- HLT outlet → Mash top pipe -->
+    <path class="ink" d="M164 276 h28 V118 h40" opacity=".85"/>
+    <!-- Mash wort → Lauter inlet -->
+    <path class="ink" d="M360 264 h24 V212 h28" opacity=".85"/>
+    <!-- Lauter grant → Kettle -->
+    <path class="ink" d="M580 302 h18 V256 h46" opacity=".85"/>
+    <!-- Kettle → Whirlpool (tangential) -->
+    <path class="ink" d="M790 254 h28 V172 h32" opacity=".85"/>
+
+    <!-- tri-clamps on the run connections -->
+    ${triClamp(192,276,.75)}
+    ${triClamp(388,212,.75)}
+    ${triClamp(620,256,.75)}
+    ${triClamp(810,172,.75)}
+
+    <!-- pump motif between Lauter and Kettle -->
+    <circle class="ink" cx="608" cy="346" r="9"/>
+    <path class="ink-2" d="M601 346 h14 M608 339 v14"/>
+    <line class="ink-2" x1="608" y1="337" x2="608" y2="314"/>
+
+  </svg>`;
+}
+
+/* ════════════ CELLAR SCENE — CCT + BBT + YT connected (SETTLING style) ════════════
+   Inspired by CCTandBBTsketch: tall CCT + domed BBT + small YT on a shared floor,
+   with connecting piping. Cylindrical shading on all three bodies.
+   Clean BBNo — no cross-hatching. */
+function cellarScene(){
+  return `<svg viewBox="0 0 860 440" width="100%" height="auto" class="draw" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
+
+    <!-- ═══ FLOOR LINE ═══ -->
+    <line class="ground" x1="18" y1="418" x2="842" y2="418"/>
+    ${(()=>{let d='';for(let x=36;x<830;x+=20)d+=`<line class="ink-2" x1="${x}" y1="415" x2="${x}" y2="418" opacity=".4"/>`;return d;})()}
+
+    <!-- ═══ CCT — tall conical fermenter, left ═══ -->
+    <g transform="translate(70,14)">
+      <!-- airlock + blow-off -->
+      <line class="ink" x1="110" y1="22" x2="110" y2="38"/>
+      <path class="ink" d="M110 22 q-9 0 -9 -8 q0 -7 9 -7 q9 0 9 7 q0 8 -9 8"/>
+      <circle class="ink-2" cx="110" cy="14" r="2"/>
+      ${triClamp(110,40,.85)}
+      <!-- CIP arm -->
+      <path class="ink" d="M94 42 q-18 2 -22 18"/>
+      <circle class="ink-2" cx="72" cy="62" r="3.2"/>
+      ${[-1,0,1].map(i=>`<line class="ink-2" x1="72" y1="65" x2="${72+i*5}" y2="72"/>`).join('')}
+      <!-- domed top -->
+      <path class="ink" d="M72 68 Q110 42 148 68"/>
+      <ellipse class="ink-2" cx="110" cy="68" rx="38" ry="6"/>
+      <!-- cylindrical body -->
+      <path class="ground" d="M72 68 V224"/>
+      <path class="ground" d="M148 68 V224"/>
+      <path class="ink-2" d="M77 72 V222"/>
+      <path class="ink-2" d="M143 72 V222"/>
+      ${cylShade(77,143,74,220,5)}
+      <!-- accent band oak -->
+      <line class="band-oak" x1="77" y1="104" x2="143" y2="104"/>
+      <line class="band-oak" x1="77" y1="112" x2="143" y2="112"/>
+      <!-- weld seams -->
+      ${weldSeam(77,143,146,6)}
+      ${weldSeam(77,143,188,6)}
+      <!-- cone bottom (60°) -->
+      <path class="ground" d="M72 224 L110 318"/>
+      <path class="ground" d="M148 224 L110 318"/>
+      <path class="ink-2" d="M77 224 L110 310"/>
+      <path class="ink-2" d="M143 224 L110 310"/>
+      <ellipse class="ink-2" cx="110" cy="224" rx="38" ry="6"/>
+      <!-- jacket dimples on cone -->
+      ${weldSeam(84,136,160,5)}
+      <!-- sight glass -->
+      <line class="ink-2" x1="93" y1="124" x2="93" y2="218"/>
+      <line class="ink-2" x1="97" y1="124" x2="97" y2="218"/>
+      ${triClamp(95,124,.7)}${triClamp(95,218,.7)}
+      <!-- dual racking ports on cone -->
+      <line class="ink" x1="98" y1="258" x2="86" y2="262"/>${triClamp(83,263,.7)}
+      <line class="ink" x1="122" y1="258" x2="134" y2="262"/>${triClamp(137,263,.7)}
+      <!-- sample curl -->
+      ${sampleCurl(116,282,.85)}
+      <!-- temp probe -->
+      <circle class="ink-2" cx="130" cy="148" r="3"/>
+      <line class="ink-2" x1="133" y1="148" x2="139" y2="148"/>
+      <!-- dump valve -->
+      <line class="ink" x1="110" y1="318" x2="110" y2="324"/>
+      ${valve(110,328,'down',.95)}
+      <!-- splayed legs -->
+      <path class="ground" d="M78 220 L58 402"/>
+      <path class="ground" d="M142 220 L162 402"/>
+      <line class="ground" x1="42" y1="402" x2="178" y2="402"/>
+      <line class="ink-2" x1="42" y1="402" x2="58" y2="402"/>
+      <line class="ink-2" x1="155" y1="402" x2="172" y2="402"/>
+      <!-- cross-brace -->
+      <line class="ink-2" x1="68" y1="370" x2="152" y2="370"/>
+      ${dim(64,60,'CCT','dim-o')}
+      ${dim(154,158,'90 HL','dim')}
+    </g>
+
+    <!-- ═══ BBT — domed settling tank, centre ═══
+         Inspired by ref 2: prominent torispherical dome, rounder than CCT top.
+         Tall body, shallow dish base. Cylindrical shading. -->
+    <g transform="translate(336,46)">
+      <!-- prominent torispherical domed top — high crown radius -->
+      <path class="ink" d="M38 72 Q110 20 182 72"/>
+      <ellipse class="ink-2" cx="110" cy="72" rx="72" ry="10"/>
+      <!-- PRV + top fitting -->
+      <line class="ink" x1="110" y1="38" x2="110" y2="20"/>
+      <circle class="ink" cx="110" cy="16" r="5.5"/>
+      <line class="ink-2" x1="110" y1="10.5" x2="110" y2="6"/>
+      <line class="ink-2" x1="105" y1="6" x2="115" y2="6"/>
+      ${triClamp(80,52,.7)}
+      <!-- PRESSURE GAUGE -->
+      <circle class="ink" cx="148" cy="58" r="8"/>
+      <line class="ink-2" x1="148" y1="58" x2="152" y2="52"/>
+      <line class="ink-2" x1="148" y1="50" x2="148" y2="53"/>
+      <line class="ink-2" x1="154" y1="58" x2="157" y2="58"/>
+      <!-- body -->
+      <path class="ground" d="M38 72 V240"/>
+      <path class="ground" d="M182 72 V240"/>
+      <path class="ink-2" d="M43 76 V238"/>
+      <path class="ink-2" d="M177 76 V238"/>
+      ${cylShade(43,177,78,236,9)}
+      <!-- accent band bbt -->
+      <line class="band-bbt" x1="43" y1="108" x2="177" y2="108"/>
+      <line class="band-bbt" x1="43" y1="117" x2="177" y2="117"/>
+      <!-- weld seams -->
+      ${weldSeam(43,177,148,8)}
+      ${weldSeam(43,177,194,8)}
+      <!-- sight glass -->
+      <line class="ink-2" x1="64" y1="126" x2="64" y2="234"/>
+      <line class="ink-2" x1="68" y1="126" x2="68" y2="234"/>
+      ${triClamp(66,126,.7)}${triClamp(66,234,.7)}
+      <!-- carbonation stone port -->
+      <line class="ink" x1="38" y1="228" x2="22" y2="234"/>
+      ${triClamp(19,235,.7)}
+      ${(()=>{let d='';for(let i=0;i<5;i++)d+=`<circle class="ink-2" cx="${25+i*2}" cy="${229-i*.5}" r=".8"/>`;return d;})()}
+      <!-- SHALLOW dished bottom — gentle curve outward -->
+      <path class="ground" d="M38 240 Q110 268 182 240"/>
+      <ellipse class="ink-2" cx="110" cy="240" rx="72" ry="9"/>
+      <!-- bottom outlet -->
+      <line class="ink" x1="110" y1="258" x2="110" y2="266"/>
+      ${valve(110,270,'down',.95)}
+      <!-- racking arm -->
+      <line class="ink" x1="132" y1="250" x2="148" y2="255"/>
+      ${triClamp(151,256,.7)}
+      <!-- legs -->
+      <path class="ground" d="M52 244 L36 402"/>
+      <path class="ground" d="M168 244 L184 402"/>
+      <line class="ground" x1="20" y1="402" x2="200" y2="402"/>
+      <line class="ink-2" x1="20" y1="402" x2="36" y2="402"/>
+      <line class="ink-2" x1="177" y1="402" x2="194" y2="402"/>
+      ${dim(64,64,'BBT','dim-o')}
+      ${dim(188,158,'120 HL','dim')}
+    </g>
+
+    <!-- ═══ YEAST TANK — compact conical, right ═══ -->
+    <g transform="translate(674,96)">
+      <!-- vent top -->
+      <line class="ink" x1="72" y1="36" x2="72" y2="22"/>
+      <path class="ink" d="M66 22 h12"/>
+      ${triClamp(72,38,.75)}
+      <!-- domed top -->
+      <path class="ink" d="M38 58 Q72 36 106 58"/>
+      <ellipse class="ink-2" cx="72" cy="58" rx="34" ry="5.5"/>
+      <!-- jacketed body -->
+      <path class="ground" d="M38 58 V172"/>
+      <path class="ground" d="M106 58 V172"/>
+      <path class="ink-2" d="M42 62 V170"/>
+      <path class="ink-2" d="M102 62 V170"/>
+      <!-- jacket outer hint -->
+      <path class="ink-2" d="M34 70 V164" opacity=".65"/>
+      <path class="ink-2" d="M110 70 V164" opacity=".65"/>
+      ${cylShade(42,102,64,168,4)}
+      <!-- accent hop green -->
+      <line class="band-hop" x1="42" y1="86" x2="102" y2="86"/>
+      <line class="band-hop" x1="42" y1="93" x2="102" y2="93"/>
+      <!-- cone -->
+      <path class="ground" d="M38 172 L72 232"/>
+      <path class="ground" d="M106 172 L72 232"/>
+      <ellipse class="ink-2" cx="72" cy="172" rx="34" ry="5.5"/>
+      <path class="ink-2" d="M42 172 L72 226" opacity=".55"/>
+      <path class="ink-2" d="M102 172 L72 226" opacity=".55"/>
+      ${weldSeam(42,102,130,5)}
+      <!-- sample curl -->
+      ${sampleCurl(78,210,.75)}
+      <!-- harvest valve -->
+      <line class="ink" x1="72" y1="232" x2="72" y2="238"/>
+      ${valve(72,242,'down',.85)}
+      <!-- sight glass -->
+      <line class="ink-2" x1="57" y1="100" x2="57" y2="166"/>
+      <line class="ink-2" x1="61" y1="100" x2="61" y2="166"/>
+      ${triClamp(59,100,.65)}
+      <!-- legs -->
+      <path class="ground" d="M46 168 L36 322"/>
+      <path class="ground" d="M98 168 L108 322"/>
+      <line class="ground" x1="20" y1="322" x2="124" y2="322"/>
+      <line class="ink-2" x1="20" y1="322" x2="36" y2="322"/>
+      <line class="ink-2" x1="100" y1="322" x2="116" y2="322"/>
+      ${dim(44,50,'YT','dim-o')}
+      ${dim(112,128,'12 HL','dim')}
+    </g>
+
+    <!-- ═══ CONNECTING PIPING ═══ -->
+    <!-- CCT racking port → BBT inlet -->
+    <path class="ink" d="M290 326 h20 V134 h50" opacity=".85"/>
+    ${triClamp(310,276,.75)}
+    ${triClamp(340,134,.75)}
+    <!-- BBT → YT transfer -->
+    <path class="ink" d="M556 300 h48 V192 h96" opacity=".85"/>
+    ${triClamp(580,300,.75)}
+    ${triClamp(690,192,.75)}
+    <!-- YT yeast return line (low, back to CCT) -->
+    <path class="ink-2" d="M694 388 H290 V370 H220" opacity=".55"/>
+    ${triClamp(694,388,.65)}
+    ${triClamp(220,370,.65)}
+
+  </svg>`;
+}
+
+/* ════════════ FRIEZE — full hot-side line on a gantry ════════════ */
+function frieze(){
+  return `<svg viewBox="0 0 1180 300" width="100%" height="auto" class="draw" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
+    <!-- gantry platform -->
+    <line class="ground" x1="20" y1="264" x2="1160" y2="264"/>
+    ${(()=>{let d='';for(let x=40;x<1150;x+=22)d+=`<line class="ink-2" x1="${x}" y1="261" x2="${x}" y2="264" opacity=".5"/>`;return d;})()}
+    <line class="ink-2" x1="20" y1="270" x2="1160" y2="270" opacity=".6"/>
+    ${[80,300,560,800,1040].map(x=>`<line class="ink-2" x1="${x}" y1="270" x2="${x}" y2="288" opacity=".5"/><line class="ink-2" x1="${x+60}" y1="270" x2="${x+60}" y2="288" opacity=".5"/>`).join('')}
+    <line class="ink-2" x1="20" y1="208" x2="1160" y2="208" opacity=".5"/>
+    ${(()=>{let d='';for(let x=40;x<1150;x+=70)d+=`<line class="ink-2" x1="${x}" y1="208" x2="${x}" y2="232" opacity=".4"/>`;return d;})()}
+    <line class="ink-2" x1="20" y1="220" x2="1160" y2="220" opacity=".35"/>
+    <line class="ink-2" x1="1130" y1="208" x2="1130" y2="264"/>
+    <line class="ink-2" x1="1140" y1="208" x2="1140" y2="264"/>
+    ${(()=>{let d='';for(let y=216;y<262;y+=8)d+=`<line class="ink-2" x1="1130" y1="${y}" x2="1140" y2="${y}"/>`;return d;})()}
+
+    <!-- HLT (tall) -->
+    <g transform="translate(70,40) scale(.86)">
+      <line class="ink" x1="68" y1="20" x2="68" y2="36"/><path class="ink" d="M53 20 h30"/><path class="ink" d="M45 20 q8 -9 23 -9 q15 0 23 9"/>
+      <path class="ink" d="M34 54 Q68 28 102 54"/><ellipse class="ink-2" cx="68" cy="54" rx="34" ry="5"/>
+      <path class="ground" d="M34 54 V192"/><path class="ground" d="M102 54 V192"/>
+      <path class="ink-2" d="M38 58 V190"/><path class="ink-2" d="M98 58 V190"/>
+      <path class="ink" d="M34 192 Q68 206 102 192"/>
+      <line class="ink-2" x1="55" y1="68" x2="55" y2="186"/><line class="ink-2" x1="59" y1="68" x2="59" y2="186"/>
+      <path class="ground" d="M48 196 L40 250"/><path class="ground" d="M88 196 L96 250"/>
+      ${dim(48,20,'HLT')}
+    </g>
+    <!-- MASH (squat) -->
+    <g transform="translate(245,70) scale(.78)">
+      <rect class="ink" x="78" y="14" width="22" height="14" rx="2"/><path class="ink" d="M82 28 h14 v8 h-14z"/><line class="ink" x1="89" y1="36" x2="89" y2="58"/>
+      <path class="ink" d="M40 70 Q89 50 138 70"/><ellipse class="ink-2" cx="89" cy="70" rx="49" ry="6"/>
+      <path class="ground" d="M40 70 V164"/><path class="ground" d="M138 70 V164"/>
+      <path class="ink-2" d="M45 74 V162"/><path class="ink-2" d="M133 74 V162"/>
+      <path class="ink" d="M40 164 Q89 180 138 164"/>
+      <ellipse class="ink" cx="89" cy="116" rx="12" ry="15"/>
+      <path class="ground" d="M55 168 L47 220"/><path class="ground" d="M123 168 L131 220"/>
+      ${dim(64,62,'MAISCHE')}
+    </g>
+    <!-- LAUTER (wide shallow) -->
+    <g transform="translate(450,86) scale(.74)">
+      <rect class="ink" x="86" y="20" width="22" height="12" rx="2"/><line class="ink" x1="97" y1="32" x2="97" y2="58"/>
+      <path class="ink" d="M28 82 Q97 66 166 82"/><ellipse class="ink-2" cx="97" cy="82" rx="69" ry="6"/>
+      <path class="ground" d="M28 82 V152"/><path class="ground" d="M166 82 V152"/>
+      <path class="ink-2" d="M33 86 V150"/><path class="ink-2" d="M161 86 V150"/>
+      <line class="ink" x1="34" y1="142" x2="160" y2="142"/>
+      <path class="ink" d="M28 152 Q97 166 166 152"/>
+      <line class="ink" x1="60" y1="128" x2="134" y2="128"/>
+      ${[68,84,100,116,130].map(x=>`<path class="ink-2" d="M${x} 128 v7"/>`).join('')}
+      <path class="ground" d="M40 156 L30 218"/><path class="ground" d="M154 156 L164 218"/>
+      ${dim(70,74,'FILTRE')}
+    </g>
+    <!-- KETTLE (w/ steam) -->
+    <g transform="translate(700,52) scale(.82)">
+      <path class="steam" d="M74 6 q-5 -7 1 -13 M84 8 q6 -7 -1 -14"/>
+      <line class="ink" x1="73" y1="22" x2="73" y2="8"/><line class="ink" x1="85" y1="22" x2="85" y2="8"/><path class="ink" d="M69 8 q10 -7 20 0"/>
+      <path class="ink" d="M58 46 L73 22 H85 L100 46"/>
+      <path class="ink" d="M34 62 Q79 38 124 62"/><ellipse class="ink-2" cx="79" cy="62" rx="45" ry="6"/>
+      <path class="ground" d="M34 62 V184"/><path class="ground" d="M124 62 V184"/>
+      <path class="ink-2" d="M39 66 V182"/><path class="ink-2" d="M119 66 V182"/>
+      <path class="ink" d="M34 184 Q79 200 124 184"/>
+      <ellipse class="ink-2" cx="79" cy="120" rx="13" ry="32"/>
+      <path class="ground" d="M50 188 L42 240"/><path class="ground" d="M108 188 L116 240"/>
+      ${dim(64,54,'CUITE')}
+    </g>
+    <!-- WHIRLPOOL -->
+    <g transform="translate(950,66) scale(.78)">
+      <line class="ink" x1="36" y1="70" x2="124" y2="70"/><ellipse class="ink-2" cx="80" cy="70" rx="44" ry="6"/>
+      <line class="ink" x1="80" y1="70" x2="80" y2="56"/>
+      <path class="ground" d="M36 70 V178"/><path class="ground" d="M124 70 V178"/>
+      <path class="ink-2" d="M41 74 V176"/><path class="ink-2" d="M119 74 V176"/>
+      <path class="ink" d="M150 96 L124 104"/><path class="ink" d="M150 100 L128 107"/>
+      <path class="ink-2" d="M62 120 q18 -10 36 0 q-18 10 -36 0" opacity=".6"/>
+      <path class="ink" d="M36 178 H124"/><path class="ink" d="M60 178 L80 196 L100 178"/>
+      <path class="ground" d="M52 178 L44 232"/><path class="ground" d="M108 178 L116 232"/>
+      ${dim(56,62,'WHIRLPOOL')}
+    </g>
+
+    <!-- WORT-PATH PIPING -->
+    <path class="ink" d="M150 96 H300" opacity=".9"/>
+    <path class="ink" d="M150 120 V96" opacity=".9"/>
+    <path class="ink" d="M335 118 H470 M520 130 H640 M740 128 H910 M900 150 H1070"/>
+    <path class="ink-2" d="M300 118 V150 M470 134 V164 M640 140 V120 M910 134 V150"/>
+    <circle class="ink" cx="660" cy="248" r="9"/><path class="ink-2" d="M654 248 h12 M660 242 v12"/>
+    <line class="ink-2" x1="660" y1="239" x2="660" y2="220"/>
+  </svg>`;
+}
+
+/* ── render cards ─────────────────────────────────────────────── */
+function card(tag,svg,cap,spec,note,extraClass=''){
+  return `<div class="card ${extraClass}">
+    <div class="tag">${tag}</div>
+    <div class="canvas">${svg}</div>
+    <div class="cap">${cap}</div>
+    <div class="spec">${spec}</div>
+    <div class="note">${note}</div>
+  </div>`;
+}
+
+document.getElementById('brewSceneMount').innerHTML = brewScene();
+document.getElementById('cellarSceneMount').innerHTML = cellarScene();
+
+document.getElementById('hotGrid').innerHTML =
+  card('01 / HLT', hlt(), 'Cuve d\'<em>eau chaude</em>',
+       'HLT · Ø 1100 · 35 HL · calorifugée',
+       'Cylindre haut et fin, arrivée d\'eau cintrée au sommet, colonne de niveau verre-regard pleine hauteur, vanne papillon en pied. Ombrage cylindrique discret suggère le volume.')
++ card('02 / MASH', mashTun(), 'Cuve de <em>maische</em>',
+       'MASH · Ø 1800 · 30 HL · rateaux',
+       'Trapue et large : motoréducteur d\'entraînement des rateaux sur le couvercle, arbre central, manway latéral, faux-fond perforé, trappe à drêches.')
++ card('03 / LAUTER', lauterTun(), 'Cuve-<em>filtre</em>',
+       'LAUT · Ø 2400 · 30 HL · socs',
+       'Plus large et basse : bras de rateaux porteurs de socs (le mécanisme est montré), faux-fond plat, multiples soutirages vers un grant collecteur.')
++ card('04 / KETTLE', kettle(), 'Cuve d\'<em>ébullition</em>',
+       'KETT · Ø 1900 · 35 HL · calandre',
+       'Cheminée à vapeur avec volute de vapeur, calandre interne en pointillé, verre-regard, entrée tangentielle whirlpool optionnelle sur le flanc.')
++ card('05 / WHIRL', whirlpool(), '<em>Whirlpool</em>',
+       'WHIR · Ø 1900 · 32 HL · tangentiel',
+       'Entrée tangentielle haute qui crée le tourbillon, fond plat avec cône à trub central, soutirage latéral du moût clarifié au-dessus du dépôt.');
+
+document.getElementById('heroRow').innerHTML =
+  `<div class="card hero">
+     <span class="pick">Direction A</span>
+     <div class="tag">06A / CCT · ÉLÉVATION</div>
+     <div class="canvas">${cctElevation()}</div>
+     <div class="cap">Fermenteur conique — <em>élévation</em></div>
+     <div class="spec">CCT · Ø 1600 · 90 HL · cône 60° · vue orthographique</div>
+     <div class="note">Vue de face orthographique : proportions justes (haute + élancée), cône 60°, dôme, airlock, bras CIP, double soutirage, vanne d'échantillon à volute, pieds écartés, bande accent <span style="color:var(--oak)">oak</span>. Ombrage cylindrique en lignes verticales espacées. Idéale en icône de liste de configuration.</div>
+   </div>`
++ `<div class="card hero rec">
+     <span class="pick">Direction B · recommandée</span>
+     <div class="tag">06B / CCT · ISOMÉTRIQUE 3/4</div>
+     <div class="canvas">${cctIso()}</div>
+     <div class="cap">Fermenteur conique — <em>isométrique</em></div>
+     <div class="spec">CCT · Ø 1600 · 90 HL · vue 3/4 technique</div>
+     <div class="note">Même anatomie, en volume : dôme et bande en ellipses, cône raccourci en perspective, légère ligne d'ombre côté droit + ombrage volumétrique. Plus dimensionnel, plus « merch » — recommandé pour l'en-tête et le t-shirt.</div>
+   </div>`;
+
+document.getElementById('coldGrid').innerHTML =
+  card('07 / BBT', bbt(), 'Cuve de <em>garde</em> (BBT)',
+       'BBT · Ø 1500 · 120 HL · fond bombé',
+       'v2 : dôme torosphérique nettement plus proéminent (rayon de couronne augmenté), anatomiquement correct pour une cuve sous pression. Bande accent <span style="color:var(--bbt)">bbt</span>. Ombrage cylindrique discret.', '')
++ card('08 / YT', yeastTank(), 'Cuve à <em>levure</em>',
+       'YT · Ø 900 · 12 HL · double paroi',
+       'Petit vase conique à double paroi (chemise de refroidissement esquissée à l\'extérieur), vanne de récolte en pointe, bande accent <span style="color:var(--hop)">hop</span>.', '')
++ card('— / FAMILLE', `<svg viewBox="0 0 320 260" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
+       <g transform="translate(10,-6) scale(.62)">${cctElevation()}</g>
+       <g transform="translate(120,30) scale(.5)">${bbt()}</g>
+       <g transform="translate(228,60) scale(.42)">${yeastTank()}</g>
+       <line class="dimline" x1="20" y1="248" x2="300" y2="248"/>
+       ${dim(20,258,'CCT 90 HL')}${dim(148,258,'BBT 120 HL')}${dim(250,258,'YT 12 HL')}
+     </svg>`,
+       'Une <em>famille</em>',
+       'Échelle relative · même langage',
+       'Les trois cuves froides côte à côte : même vocabulaire de trait, mêmes glyphes, seule la bande accent et la silhouette changent. Le BBT montre désormais son dôme torosphérique caractéristique.');
+
+document.getElementById('friezeMount').innerHTML = frieze();
+</script>
+</body>
+</html>

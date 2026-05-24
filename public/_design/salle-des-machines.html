@@ -1,0 +1,1656 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Salle des Machines — Plan · preview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..600;1,9..144,400..500&family=DM+Sans:opsz,wght@9..40,300..600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#15100a; --bg-elev:#1d160d; --ink:#ede0c4; --ink-soft:#c8b894;
+  --ink-mute:#7a6647; --ink-faint:#3a2e1d; --hairline:#261d11; --hairline-2:#342818;
+  --hop:#9eb060; --hop-deep:#6b7a3e; --ember:#c5664a; --oak:#a07a48; --oak-deep:#6e4e26;
+  --cold:#2f5575; --bbt:#6593b8;
+  --pkg:#7a5fa0; --pkg-deep:#503d6e; --pkg-band:#9b7cc8; /* packaging accent */
+  --steel:#b8bcc0; --steel-mid:#5e6266; --steel-deep:#2c2e30; --steel-shadow:#15171a;
+  --line:#caa86e;            /* warm draughting ink — shared with sketch-proposals */
+  --line-soft:#7a6647;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  font-family:"DM Sans",system-ui,sans-serif; color:var(--ink); background:var(--bg);
+  overflow:hidden; height:100vh;
+}
+/* drafting board ground */
+.board{
+  position:fixed; inset:0;
+  background:
+    radial-gradient(130% 90% at 50% -20%, rgba(160,122,72,.13), transparent 55%),
+    radial-gradient(100% 120% at 50% 130%, rgba(0,0,0,.55), transparent 60%),
+    var(--bg);
+}
+.board::before{ /* blueprint grid */
+  content:""; position:absolute; inset:0; opacity:.5;
+  background-image:
+    linear-gradient(rgba(122,102,71,.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(122,102,71,.07) 1px, transparent 1px),
+    linear-gradient(rgba(122,102,71,.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(122,102,71,.04) 1px, transparent 1px);
+  background-size:120px 120px,120px 120px,24px 24px,24px 24px;
+  mask-image:radial-gradient(120% 100% at 50% 40%, #000 55%, transparent 92%);
+}
+.board::after{ /* grain — CSS background only, no vessel SVG filter */
+  content:""; position:absolute; inset:0; pointer-events:none; opacity:.5;
+  background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .03 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+/* corner registration marks */
+.mark{ position:fixed; width:26px; height:26px; border:1px solid var(--hairline-2); z-index:3; opacity:.7 }
+.mark.tl{top:18px;left:18px;border-right:0;border-bottom:0}
+.mark.tr{top:18px;right:18px;border-left:0;border-bottom:0}
+.mark.bl{bottom:18px;left:18px;border-right:0;border-top:0}
+.mark.br{bottom:18px;right:18px;border-left:0;border-top:0}
+
+/* ── top chrome ─────────────────────────────────────────────── */
+.chrome{ position:fixed; top:0; left:0; right:0; z-index:6; display:flex; align-items:center; gap:18px; padding:26px 44px; }
+.brandmark{ font-family:"JetBrains Mono",monospace; font-size:10px; letter-spacing:.4em; color:var(--ink-mute); text-transform:uppercase }
+.brandmark b{ color:var(--ink-soft); font-weight:500 }
+.crumbs{ display:flex; align-items:center; gap:10px; font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.12em; color:var(--ink-mute); text-transform:uppercase }
+.crumbs .here{ color:var(--oak) }
+.crumbs i{ font-style:normal; opacity:.4 }
+/* role switcher */
+.role-seg{ margin-left:auto; display:flex; border:1px solid var(--hairline-2); border-radius:30px; overflow:hidden; font-family:"JetBrains Mono",monospace; font-size:10px; letter-spacing:.12em; text-transform:uppercase; }
+.role-seg button{ background:none; border:none; color:var(--ink-mute); padding:7px 14px; cursor:pointer; transition:.2s; position:relative; }
+.role-seg button:not(:last-child)::after{ content:""; position:absolute; right:0; top:20%; height:60%; width:1px; background:var(--hairline-2); }
+.role-seg button.active{ background:rgba(160,122,72,.15); color:var(--oak); }
+.role-seg button[data-role="operateur"].active{ color:var(--ink-mute); background:rgba(58,46,29,.4); }
+.role-seg button[data-role="manager"].active{ color:var(--bbt); background:rgba(47,85,117,.15); }
+.role-seg button[data-role="admin"].active{ color:var(--hop); background:rgba(110,122,62,.13); }
+/* toast */
+.toast{ position:fixed; bottom:48px; left:50%; transform:translateX(-50%) translateY(20px); z-index:20; padding:10px 20px; background:var(--bg-elev); border:1px solid var(--oak-deep); border-radius:10px; font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em; color:var(--ink-soft); opacity:0; pointer-events:none; transition:opacity .3s, transform .3s; text-transform:uppercase; }
+.toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
+
+/* ── sliding stage ──────────────────────────────────────────── */
+.stage{ position:fixed; inset:0; display:flex; width:400%; transition:transform .62s cubic-bezier(.55,.05,.2,1); }
+.room{ width:25%; height:100vh; display:flex; align-items:center; justify-content:center; padding:96px 56px 64px; position:relative; }
+
+/* ── overview: two zones ───────────────────────────────────── */
+.overview{ display:flex; gap:46px; align-items:stretch; max-width:1180px; width:100%; }
+.zone{ flex:1; position:relative; border:1px solid var(--hairline-2); border-radius:14px; padding:30px 32px 26px; cursor:pointer;
+  background:linear-gradient(165deg, rgba(29,22,13,.86), rgba(12,9,5,.7));
+  box-shadow:0 30px 70px -34px rgba(0,0,0,.8), inset 0 1px 0 rgba(255,220,160,.05);
+  transition:transform .3s cubic-bezier(.2,.7,.2,1), border-color .3s, box-shadow .3s; overflow:hidden; }
+.zone:hover{ transform:translateY(-6px); border-color:var(--oak-deep); box-shadow:0 40px 80px -34px rgba(0,0,0,.85), inset 0 1px 0 rgba(255,220,160,.08); }
+.zone .znum{ font-family:"JetBrains Mono",monospace; font-size:10px; letter-spacing:.3em; color:var(--ink-mute) }
+.zone h2{ font-family:"Fraunces",serif; font-variation-settings:"opsz" 144; font-weight:430; font-size:34px; line-height:1; margin:5px 0 2px; color:var(--ink) }
+.zone h2 em{ font-style:italic; color:var(--oak) }
+.zone .sub{ font-size:13px; color:var(--ink-soft); margin-bottom:6px }
+.zone .scene{ height:300px; display:flex; align-items:center; justify-content:center; margin:6px 0 12px }
+.zone .stats{ display:flex; gap:22px; border-top:1px solid var(--hairline); padding-top:14px }
+.zone .stat .v{ font-family:"Fraunces",serif; font-variation-settings:"opsz" 96; font-size:26px; color:var(--ink) }
+.zone .stat .v span{ font-size:13px; color:var(--oak) }
+.zone .stat .k{ font-family:"JetBrains Mono",monospace; font-size:9px; letter-spacing:.12em; color:var(--ink-mute); text-transform:uppercase }
+.zone .enter{ position:absolute; top:30px; right:30px; font-family:"JetBrains Mono",monospace; font-size:10px; letter-spacing:.14em; color:var(--ink-mute); text-transform:uppercase; transition:.3s }
+.zone:hover .enter{ color:var(--oak); transform:translateX(3px) }
+.ovh{ position:absolute; top:-46px; left:2px; }
+.ovh .k{ font-family:"JetBrains Mono",monospace; font-size:10px; letter-spacing:.34em; color:var(--ink-mute); text-transform:uppercase }
+.ovh h1{ font-family:"Fraunces",serif; font-variation-settings:"opsz" 144; font-weight:400; font-size:30px; color:var(--ink); margin-top:3px }
+.ovh h1 em{ font-style:italic; color:var(--oak) }
+
+/* ── detail room ───────────────────────────────────────────── */
+.detail{ flex-direction:column; align-items:stretch; }
+.detail .head{ display:flex; align-items:flex-end; gap:18px; margin-bottom:18px; max-width:1180px; width:100%; margin-inline:auto }
+.back{ display:inline-flex; align-items:center; gap:8px; font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.12em; color:var(--ink-mute); background:none; border:1px solid var(--hairline-2); border-radius:8px; padding:9px 14px; cursor:pointer; text-transform:uppercase; transition:.2s }
+.back:hover{ color:var(--ink); border-color:var(--oak) }
+.detail h1{ font-family:"Fraunces",serif; font-variation-settings:"opsz" 144; font-weight:420; font-size:42px; line-height:.9; color:var(--ink) }
+.detail h1 em{ font-style:italic; color:var(--oak) }
+.detail .htag{ margin-left:auto; font-family:"JetBrains Mono",monospace; font-size:10px; letter-spacing:.1em; color:var(--ink-mute) }
+.panel{ display:grid; grid-template-columns:1.15fr .85fr; gap:30px; max-width:1180px; width:100%; margin-inline:auto; flex:1; min-height:0 }
+.croqui{ position:relative; border:1px solid var(--hairline-2); border-radius:14px; background:radial-gradient(120% 100% at 50% 0%, rgba(40,30,18,.4), rgba(10,8,5,.5)); display:flex; align-items:center; justify-content:center; overflow:hidden }
+.croqui .floorlabel{ position:absolute; bottom:14px; left:18px; font-family:"JetBrains Mono",monospace; font-size:9px; letter-spacing:.2em; color:var(--ink-faint); text-transform:uppercase }
+.config{ overflow:auto; padding-right:4px }
+.config::-webkit-scrollbar{width:6px} .config::-webkit-scrollbar-thumb{background:var(--hairline-2);border-radius:3px}
+
+/* vessel config rows */
+.vrow{ display:flex; align-items:center; gap:14px; padding:13px 14px; border:1px solid var(--hairline); border-radius:10px; margin-bottom:9px; background:rgba(12,9,5,.35); transition:border-color .2s, background .2s }
+.vrow:hover{ border-color:var(--oak-deep); background:rgba(29,22,13,.55) }
+.vrow.sel{ border-color:var(--oak); box-shadow:0 0 0 1px var(--oak-deep) inset }
+.vrow .ico{ flex:0 0 38px; height:46px; display:flex; align-items:center; justify-content:center }
+.vrow .meta{ flex:1; min-width:0 }
+.vrow .nm{ font-family:"DM Sans"; font-weight:500; font-size:14px; color:var(--ink) }
+.vrow .nm input{ background:none; border:none; border-bottom:1px dashed var(--hairline-2); color:var(--ink); font:inherit; font-weight:500; width:140px; padding:1px 0 }
+.vrow .nm input:focus{ outline:none; border-bottom-color:var(--oak) }
+.vrow .kv{ font-family:"JetBrains Mono",monospace; font-size:10px; letter-spacing:.06em; color:var(--ink-mute); margin-top:2px }
+.stepper{ display:flex; align-items:center; gap:0; border:1px solid var(--hairline-2); border-radius:7px; overflow:hidden }
+.stepper button{ width:26px; height:30px; background:rgba(0,0,0,.25); border:none; color:var(--ink-soft); cursor:pointer; font-size:15px; transition:.15s }
+.stepper button:hover{ background:var(--oak-deep); color:#120c06 }
+.stepper .val{ min-width:34px; text-align:center; font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--ink); font-weight:600 }
+.szpick{ display:flex; gap:5px }
+.szpick button{ font-family:"JetBrains Mono",monospace; font-size:10px; padding:5px 8px; border:1px solid var(--hairline-2); background:rgba(0,0,0,.2); color:var(--ink-mute); border-radius:6px; cursor:pointer; transition:.15s }
+.szpick button:hover{ color:var(--ink); border-color:var(--oak-deep) }
+.szpick button.on{ background:var(--oak); color:#120c06; border-color:var(--oak); font-weight:700 }
+.addrow{ width:100%; padding:12px; border:1px dashed var(--hairline-2); border-radius:10px; background:none; color:var(--ink-mute); font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em; cursor:pointer; text-transform:uppercase; transition:.2s; margin-top:4px }
+.addrow:hover{ color:var(--oak); border-color:var(--oak-deep) }
+/* delete button per row */
+.del-vessel,.del-machine{ background:none; border:1px solid transparent; border-radius:6px; color:var(--ink-faint); font-size:13px; cursor:pointer; width:26px; height:26px; flex:0 0 26px; display:flex; align-items:center; justify-content:center; transition:.2s; }
+.del-vessel:hover,.del-machine:hover{ color:var(--ember); border-color:var(--ember); background:rgba(197,100,74,.08); }
+/* role gates for add/delete */
+body[data-role="operateur"] .del-vessel,
+body[data-role="operateur"] .del-machine,
+body[data-role="operateur"] .admin-addrow{ display:none; }
+body[data-role="manager"] .del-vessel,
+body[data-role="manager"] .del-machine,
+body[data-role="manager"] .admin-addrow{ opacity:.45; pointer-events:none; filter:grayscale(.6); }
+/* add modal overlay */
+.add-modal-overlay{ position:fixed; inset:0; z-index:30; background:rgba(0,0,0,.62); display:flex; align-items:center; justify-content:center; }
+.add-modal{ background:var(--bg-elev); border:1px solid var(--oak-deep); border-radius:14px; padding:28px 30px; min-width:340px; max-width:440px; box-shadow:0 40px 80px -20px rgba(0,0,0,.8); }
+.add-modal h4{ font-family:"Fraunces",serif; font-weight:440; font-size:20px; color:var(--ink); margin-bottom:16px; }
+.add-modal label{ display:block; font-family:"JetBrains Mono",monospace; font-size:10px; letter-spacing:.1em; color:var(--ink-mute); text-transform:uppercase; margin-bottom:4px; margin-top:12px; }
+.add-modal select,.add-modal input[type=number]{ width:100%; background:rgba(0,0,0,.3); border:1px solid var(--hairline-2); border-radius:7px; color:var(--ink); font-family:"DM Sans",sans-serif; font-size:14px; padding:8px 10px; outline:none; transition:.2s; color-scheme:dark; }
+.add-modal select:focus,.add-modal input[type=number]:focus{ border-color:var(--oak); }
+.add-modal .modal-note{ font-size:11px; color:var(--ink-mute); margin-top:14px; line-height:1.5; border-left:2px solid var(--oak-deep); padding-left:10px; }
+.add-modal .modal-actions{ display:flex; gap:10px; margin-top:20px; justify-content:flex-end; }
+.add-modal .btn-cancel{ background:none; border:1px solid var(--hairline-2); color:var(--ink-mute); font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em; text-transform:uppercase; padding:9px 16px; border-radius:8px; cursor:pointer; transition:.2s; }
+.add-modal .btn-cancel:hover{ border-color:var(--oak-deep); color:var(--ink); }
+.add-modal .btn-confirm{ background:var(--oak-deep); border:1px solid var(--oak); color:var(--ink); font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em; text-transform:uppercase; padding:9px 16px; border-radius:8px; cursor:pointer; transition:.2s; }
+.add-modal .btn-confirm:hover{ background:var(--oak); color:#120c06; }
+.cfg-head{ display:flex; align-items:baseline; justify-content:space-between; margin-bottom:14px }
+.cfg-head h3{ font-family:"Fraunces",serif; font-weight:440; font-size:18px; color:var(--ink) }
+.cfg-head .tot{ font-family:"JetBrains Mono",monospace; font-size:11px; color:var(--ink-mute) } .cfg-head .tot b{ color:var(--hop) }
+.cfg-note{ margin-top:16px; font-size:12px; color:var(--ink-mute); line-height:1.5; border-left:2px solid var(--oak-deep); padding-left:12px }
+
+/* read-only: Opérateur — controls frozen */
+body[data-role="operateur"] .stepper button,
+body[data-role="operateur"] .szpick button,
+body[data-role="operateur"] .addrow{ filter:grayscale(.5) opacity(.55); pointer-events:none }
+body[data-role="operateur"] .vrow .nm input,
+body[data-role="manager"] .vrow .nm input{ pointer-events:none; border-bottom-style:dotted }
+body[data-role="manager"] .stepper button,
+body[data-role="manager"] .szpick button,
+body[data-role="manager"] .addrow{ cursor:pointer; }
+/* role banner */
+.req-banner{ display:none; align-items:center; gap:10px; margin:0 auto 14px; max-width:1180px; padding:10px 16px; border:1px solid var(--oak-deep); border-radius:9px; background:rgba(160,122,72,.08); font-size:12.5px; color:var(--ink-soft) }
+body[data-role="operateur"] .req-banner{ display:flex }
+body[data-role="manager"] .req-banner{ display:flex; border-color:var(--cold); background:rgba(47,85,117,.09) }
+.req-banner .rq{ margin-left:auto; font-family:"JetBrains Mono",monospace; font-size:10px; letter-spacing:.1em; text-transform:uppercase; padding:7px 12px; border:1px solid var(--oak); border-radius:7px; color:var(--ink); cursor:pointer; pointer-events:auto }
+/* packaging zone accent on overview */
+.zone.pkg{ border-color:rgba(122,95,160,.3); }
+.zone.pkg:hover{ border-color:var(--pkg); }
+.zone.pkg h2 em{ color:var(--pkg-band); }
+.zone.pkg .enter{ }
+.zone.pkg:hover .enter{ color:var(--pkg-band); }
+svg .band-pkg{ stroke:var(--pkg-band); fill:none; stroke-width:1.6; stroke-linecap:round }
+
+/* ── SVG monoline language (ported from sketch-proposals) ───── */
+svg .ground{ stroke:var(--line); fill:none; stroke-width:2; stroke-linecap:round }
+svg .ink{ stroke:var(--line); fill:none; stroke-width:1.5; stroke-linejoin:round; stroke-linecap:round }
+svg .ink-2{ stroke:var(--line-soft); fill:none; stroke-width:.95; stroke-linejoin:round; stroke-linecap:round }
+svg .fillx{ fill:rgba(202,168,110,.04) }
+svg .band-oak{ stroke:var(--oak); fill:none; stroke-width:1.6; stroke-linecap:round }
+svg .band-bbt{ stroke:var(--bbt); fill:none; stroke-width:1.6; stroke-linecap:round }
+svg .band-hop{ stroke:var(--hop); fill:none; stroke-width:1.6; stroke-linecap:round }
+svg .dim{ fill:var(--ink-mute); font-family:"JetBrains Mono",monospace; font-size:7px; letter-spacing:.04em }
+svg .dim-o{ fill:var(--oak); font-family:"JetBrains Mono",monospace; font-size:7px; letter-spacing:.04em }
+svg .steam{ stroke:var(--ink-mute); fill:none; stroke-width:1.1; stroke-linecap:round; opacity:.5 }
+svg .dimline{ stroke:var(--line-soft); fill:none; stroke-width:.6; opacity:.7 }
+svg .shade{ stroke:var(--line-soft); fill:none; stroke-width:.65; stroke-linecap:butt; opacity:.35 }
+
+/* draw-in stroke animation */
+.draw [class^="ink"], .draw .ground, .draw [class^="band-"]{
+  stroke-dasharray:2200; stroke-dashoffset:2200; animation:draw 2s cubic-bezier(.4,.1,.2,1) forwards;
+}
+@keyframes draw{ to{ stroke-dashoffset:0 } }
+.reveal{ opacity:0; transform:translateY(12px); animation:rise .55s cubic-bezier(.2,.7,.2,1) forwards }
+@keyframes rise{ to{opacity:1;transform:none} }
+
+.titleblock{ position:fixed; bottom:20px; right:54px; z-index:4; text-align:right; font-family:"JetBrains Mono",monospace; font-size:9px; letter-spacing:.16em; color:var(--ink-faint); line-height:1.7; text-transform:uppercase; border-right:2px solid var(--hairline-2); padding-right:12px }
+.preview-flag{ position:fixed; bottom:20px; left:54px; z-index:4; font-family:"JetBrains Mono",monospace; font-size:9px; letter-spacing:.16em; color:var(--ink-faint); opacity:.7; text-transform:uppercase }
+</style>
+</head>
+<body class="home" data-role="admin">
+<div class="board"></div>
+<span class="mark tl"></span><span class="mark tr"></span><span class="mark bl"></span><span class="mark br"></span>
+
+<div class="chrome">
+  <div class="brandmark">La Nébuleuse · <b>Salle des Machines</b></div>
+  <div class="crumbs" id="crumbs"><span class="here">Plan</span></div>
+  <div class="role-seg" id="roleSeg">
+    <button data-role="operateur">Opérateur</button>
+    <button data-role="manager">Manager</button>
+    <button data-role="admin" class="active">Admin</button>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<div class="stage" id="stage">
+
+  <!-- OVERVIEW -->
+  <section class="room">
+    <div class="overview" style="flex-wrap:wrap;gap:32px;max-width:1280px;">
+      <div class="ovh" style="flex:0 0 100%;position:static;margin-bottom:4px;">
+        <div class="k">Capacités · racine de commissioning + override · valeurs illustratives (MOCK)</div>
+        <h1>Croquis des <em>installations</em></h1>
+        <div style="font-size:11.5px;color:var(--ink-mute);margin-top:6px;font-family:'JetBrains Mono',monospace;letter-spacing:.04em;">Mapping champ ↔ table DB conçu avec le DBA · standalone mockup</div>
+      </div>
+
+      <div class="zone" data-go="1" style="flex:1 1 28%;min-width:260px;">
+        <span class="enter">entrer ↦</span>
+        <div class="znum">01 · EAU &amp; BRASSAGE</div>
+        <h2>Salle de <em>Brassage</em></h2>
+        <div class="sub">HLT · CLT · Maische · Lauter · Buffer · Cuite · Whirlpool · YT</div>
+        <div class="scene" id="sceneBrew"></div>
+        <div class="stats">
+          <div class="stat"><div class="v">30<span> HL</span></div><div class="k">Brassin nominal</div></div>
+          <div class="stat"><div class="v">8</div><div class="k">Cuves côté chaud</div></div>
+        </div>
+      </div>
+
+      <div class="zone" data-go="2" style="flex:1 1 28%;min-width:260px;">
+        <span class="enter">entrer ↦</span>
+        <div class="znum">02 · CAVE</div>
+        <h2>Cave de <em>Fermentation</em></h2>
+        <div class="sub">CCT · BBT · Centrifugeuse · KZE (pasteurisateur flash)</div>
+        <div class="scene" id="sceneCellar"></div>
+        <div class="stats">
+          <div class="stat"><div class="v">29</div><div class="k">Cuves</div></div>
+          <div class="stat"><div class="v">2 582<span> HL</span></div><div class="k">Capacité</div></div>
+        </div>
+      </div>
+
+      <div class="zone pkg" data-go="3" style="flex:1 1 28%;min-width:260px;">
+        <span class="enter">entrer ↦</span>
+        <div class="znum">03 · CONDITIONNEMENT</div>
+        <h2>Ligne de <em>Conditionnement</em></h2>
+        <div class="sub">Soutireuse bouteille · Ligne canettes · Soutireuse fûts · Encartonneuse</div>
+        <div class="scene" id="scenePkg"></div>
+        <div class="stats">
+          <div class="stat"><div class="v">4</div><div class="k">Machines</div></div>
+          <div class="stat"><div class="v">3<span> formats</span></div><div class="k">Contenants</div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- BRASSAGE DETAIL -->
+  <section class="room detail" id="roomBrew">
+    <div class="head">
+      <button class="back" data-back="0">↤ Plan</button>
+      <h1>Salle de <em>Brassage</em></h1>
+      <span class="htag">eau &amp; brassage · rév 2026-05-24</span>
+    </div>
+    <div class="req-banner" id="bannerBrew">
+      <span id="bannerBrewTxt">Lecture seule.</span>
+      <button class="rq" id="bannerBrewBtn">Proposer ▸</button>
+    </div>
+    <div class="panel">
+      <div class="croqui" id="croquiBrew"><span class="floorlabel">Élévation — côté chaud</span></div>
+      <div class="config" id="cfgBrew"></div>
+    </div>
+  </section>
+
+  <!-- CAVE DETAIL -->
+  <section class="room detail" id="roomCellar">
+    <div class="head">
+      <button class="back" data-back="0">↤ Plan</button>
+      <h1>Cave de <em>Fermentation</em></h1>
+      <span class="htag">cave · rév 2026-05-24</span>
+    </div>
+    <div class="req-banner" id="bannerCellar">
+      <span id="bannerCellarTxt">Lecture seule.</span>
+      <button class="rq" id="bannerCellarBtn">Proposer ▸</button>
+    </div>
+    <div class="panel">
+      <div class="croqui" id="croquiCellar"><span class="floorlabel">Plan — hall de fermentation</span></div>
+      <div class="config" id="cfgCellar"></div>
+    </div>
+  </section>
+
+  <!-- CONDITIONNEMENT DETAIL -->
+  <section class="room detail" id="roomPkg">
+    <div class="head">
+      <button class="back" data-back="0">↤ Plan</button>
+      <h1>Ligne de <em>Conditionnement</em></h1>
+      <span class="htag">packaging · rév 2026-05-24</span>
+    </div>
+    <div class="req-banner" id="bannerPkg">
+      <span id="bannerPkgTxt">Lecture seule.</span>
+      <button class="rq" id="bannerPkgBtn">Proposer ▸</button>
+    </div>
+    <div class="panel">
+      <div class="croqui" id="croquiPkg"><span class="floorlabel">Plan — conditionnement</span></div>
+      <div class="config" id="cfgPkg"></div>
+    </div>
+  </section>
+
+</div>
+
+<div class="titleblock">La Nébuleuse — Lausanne<br>Salle des Machines · Plan №01<br>rév. 2026-05-24 · éch. n/a</div>
+<div class="preview-flag">_design preview · croqui v2</div>
+
+<script>
+/* ════════════════════════════════════════════════════════════════
+   MONOLINE BREWING-VESSEL ART LIBRARY — ported from sketch-proposals
+   Warm draughting ink on a dark board — Brew-By-Numbers register.
+   Shared glyph vocabulary: triClamp, valve, sampleCurl, weldSeam,
+   cylShade — same functions, same output, adapted for 3 size contexts:
+     • overview zones  → scene SVGs at viewBox 980×400 / 860×440, fit in 300px height
+     • detail croquis  → same scene SVGs, ~85-90% container width
+     • config icons    → individual mini vessel SVGs at ~38×46px container (scale ~0.22)
+   ════════════════════════════════════════════════════════════════ */
+
+/* ── shared signature glyphs ─────────────────────────────────── */
+function triClamp(x,y,s=1){
+  return `<g transform="translate(${x} ${y}) scale(${s})">
+    <line class="ink" x1="-4.5" y1="0" x2="4.5" y2="0"/>
+    <line class="ink" x1="-3.3" y1="-2.4" x2="-3.3" y2="2.4"/>
+    <line class="ink" x1="3.3" y1="-2.4" x2="3.3" y2="2.4"/>
+    <ellipse class="ink-2" cx="0" cy="0" rx="2" ry="1"/>
+  </g>`;
+}
+
+function valve(x,y,dir='down',s=1){
+  const rot = dir==='side' ? -90 : 0;
+  return `<g transform="translate(${x} ${y}) rotate(${rot}) scale(${s})">
+    <circle class="ink" cx="0" cy="0" r="4.4"/>
+    <path class="ink" d="M-3.1 -3.1 L3.1 3.1 M-3.1 3.1 L3.1 -3.1"/>
+    <line class="ink" x1="0" y1="-4.4" x2="0" y2="-8"/>
+    <line class="ink" x1="-2.4" y1="-8" x2="2.4" y2="-8"/>
+  </g>`;
+}
+
+function sampleCurl(x,y,s=1){
+  return `<g transform="translate(${x} ${y}) scale(${s})">
+    <path class="ink" d="M0 0 h5 q3 0 3 3 q0 3 -3 3 q-2.4 0 -2.4 2.4"/>
+    <circle class="ink-2" cx="5" cy="0" r="1.4"/>
+  </g>`;
+}
+
+function weldSeam(x1,x2,y,n=7){
+  let t='',step=(x2-x1)/(n+1);
+  for(let i=1;i<=n;i++){ const x=x1+step*i; t+=`<line class="ink-2" x1="${x}" y1="${y-1.1}" x2="${x}" y2="${y+1.1}"/>`; }
+  return `<line class="ink-2" x1="${x1}" y1="${y}" x2="${x2}" y2="${y}"/>${t}`;
+}
+
+function dim(x,y,t,cls='dim'){ return `<text class="${cls}" x="${x}" y="${y}">${t}</text>`; }
+
+function diaCallout(cx,topY,w,label){
+  const l=cx-w/2,r=cx+w/2;
+  return `<g>
+    <line class="dimline" x1="${l}" y1="${topY}" x2="${r}" y2="${topY}"/>
+    <path class="dimline" d="M${l} ${topY} l3 -2 M${l} ${topY} l3 2"/>
+    <path class="dimline" d="M${r} ${topY} l-3 -2 M${r} ${topY} l-3 2"/>
+    ${dim(cx-9, topY-3, label,'dim-o')}
+  </g>`;
+}
+
+/* cylindrical body shading: n evenly-spaced vertical lines, outer lighter */
+function cylShade(x1,x2,y1,y2,n=5){
+  let d='';
+  const step=(x2-x1)/(n+1);
+  for(let i=1;i<=n;i++){
+    const x=x1+step*i;
+    const op = (i===1||i===n) ? .18 : (i===2||i===n-1) ? .28 : .38;
+    d+=`<line class="shade" x1="${x}" y1="${y1}" x2="${x}" y2="${y2}" opacity="${op}"/>`;
+  }
+  return d;
+}
+
+/* ════════════ Individual vessel generators ════════════
+   Each returns a self-contained SVG string.
+   Used both by scene compositions (via <g transform>) and
+   directly as config-panel icons (wrapped in a tiny container SVG). */
+
+function hlt(){
+  return `<svg viewBox="0 0 150 240" width="auto" height="100%" class="draw" xmlns="http://www.w3.org/2000/svg">
+    <line class="ink" x1="75" y1="18" x2="75" y2="34"/>
+    <path class="ink" d="M60 18 h30"/>
+    <path class="ink" d="M52 18 q8 -10 23 -10 q15 0 23 10"/>
+    ${triClamp(75,34,1)}
+    <path class="ink" d="M38 56 Q75 28 112 56"/>
+    <ellipse class="ink-2" cx="75" cy="56" rx="37" ry="6"/>
+    <path class="ground" d="M38 56 V196"/>
+    <path class="ground" d="M112 56 V196"/>
+    <path class="ink-2" d="M42 60 V194"/>
+    <path class="ink-2" d="M108 60 V194"/>
+    ${cylShade(42,108,62,192,6)}
+    <path class="ink" d="M38 196 Q75 210 112 196"/>
+    <ellipse class="ink-2" cx="75" cy="196" rx="37" ry="6"/>
+    ${weldSeam(42,108,104,6)}
+    ${weldSeam(42,108,150,6)}
+    <line class="ink-2" x1="60" y1="70" x2="60" y2="190"/>
+    <line class="ink-2" x1="64" y1="70" x2="64" y2="190"/>
+    ${triClamp(62,70,.7)}${triClamp(62,190,.7)}
+    <circle class="ink-2" cx="92" cy="92" r="3.2"/><line class="ink-2" x1="95" y1="92" x2="101" y2="92"/>
+    <line class="ink" x1="75" y1="208" x2="75" y2="216"/>
+    ${valve(75,220,'down',1)}
+    <path class="ground" d="M52 200 L42 234"/>
+    <path class="ground" d="M98 200 L108 234"/>
+    <line class="ink-2" x1="42" y1="234" x2="49" y2="234"/>
+    <line class="ink-2" x1="101" y1="234" x2="108" y2="234"/>
+    <line class="ground" x1="20" y1="234" x2="130" y2="234"/>
+    ${diaCallout(75,46,74,'Ø 1100')}
+    ${dim(116,130,'35 HL','dim-o')}${dim(116,142,'eau ~80°C')}
+  </svg>`;
+}
+
+function mashTun(){
+  return `<svg viewBox="0 0 180 240" width="auto" height="100%" class="draw" xmlns="http://www.w3.org/2000/svg">
+    <rect class="ink" x="78" y="14" width="24" height="16" rx="2"/>
+    <rect class="ink-2" x="82" y="8" width="16" height="6" rx="1"/>
+    <line class="ink-2" x1="84" y1="14" x2="84" y2="8"/><line class="ink-2" x1="96" y1="14" x2="96" y2="8"/>
+    <path class="ink" d="M84 30 h12 v8 h-12 z"/>
+    <line class="ink" x1="90" y1="38" x2="90" y2="64"/>
+    <path class="ink" d="M40 78 Q90 56 140 78"/>
+    <ellipse class="ink-2" cx="90" cy="78" rx="50" ry="7"/>
+    <path class="ground" d="M40 78 V172"/>
+    <path class="ground" d="M140 78 V172"/>
+    <path class="ink-2" d="M45 82 V170"/>
+    <path class="ink-2" d="M135 82 V170"/>
+    ${cylShade(45,135,84,168,7)}
+    <path class="ink" d="M40 172 Q90 188 140 172"/>
+    <ellipse class="ink-2" cx="90" cy="172" rx="50" ry="7"/>
+    <line class="ink-2" x1="48" y1="160" x2="132" y2="160"/>
+    ${(()=>{let d='';for(let x=54;x<=126;x+=8)d+=`<line class="ink-2" x1="${x}" y1="158.5" x2="${x}" y2="161.5"/>`;return d;})()}
+    <ellipse class="ink" cx="90" cy="118" rx="13" ry="16"/>
+    <ellipse class="ink-2" cx="90" cy="118" rx="9.5" ry="12.5"/>
+    <line class="ink-2" x1="103" y1="118" x2="108" y2="118"/><circle class="ink-2" cx="110" cy="118" r="2"/>
+    <line class="ink-2" x1="56" y1="92" x2="56" y2="166"/><line class="ink-2" x1="60" y1="92" x2="60" y2="166"/>
+    ${triClamp(58,92,.7)}
+    ${weldSeam(45,135,140,7)}
+    <path class="ink" d="M104 168 l16 6 l0 12 l-16 -4 z"/>
+    <line class="ink-2" x1="108" y1="172" x2="118" y2="176"/>
+    <line class="ink" x1="90" y1="184" x2="90" y2="192"/>
+    ${valve(90,196,'down',1)}
+    <path class="ground" d="M56 176 L48 214"/>
+    <path class="ground" d="M124 176 L132 214"/>
+    <line class="ground" x1="22" y1="214" x2="158" y2="214"/>
+    <line class="ink-2" x1="48" y1="214" x2="55" y2="214"/><line class="ink-2" x1="125" y1="214" x2="132" y2="214"/>
+    ${diaCallout(90,70,100,'Ø 1800')}
+    ${dim(146,116,'30 HL','dim-o')}${dim(146,128,'entraînement')}${dim(146,138,'des rateaux')}
+  </svg>`;
+}
+
+function lauterTun(){
+  return `<svg viewBox="0 0 200 240" width="auto" height="100%" class="draw" xmlns="http://www.w3.org/2000/svg">
+    <rect class="ink" x="88" y="22" width="24" height="14" rx="2"/>
+    <line class="ink-2" x1="100" y1="14" x2="100" y2="22"/><circle class="ink-2" cx="100" cy="12" r="3"/>
+    <line class="ink" x1="100" y1="36" x2="100" y2="60"/>
+    <path class="ink" d="M30 84 Q100 68 170 84"/>
+    <ellipse class="ink-2" cx="100" cy="84" rx="70" ry="7"/>
+    <path class="ground" d="M30 84 V156"/>
+    <path class="ground" d="M170 84 V156"/>
+    <path class="ink-2" d="M35 88 V154"/>
+    <path class="ink-2" d="M165 88 V154"/>
+    ${cylShade(35,165,90,152,9)}
+    <line class="ink" x1="36" y1="146" x2="164" y2="146"/>
+    ${(()=>{let d='';for(let x=44;x<=156;x+=7)d+=`<line class="ink-2" x1="${x}" y1="144.5" x2="${x}" y2="147.5"/>`;return d;})()}
+    <path class="ink" d="M30 156 Q100 170 170 156"/>
+    <ellipse class="ink-2" cx="100" cy="156" rx="70" ry="6"/>
+    <line class="ink" x1="62" y1="132" x2="138" y2="132"/>
+    ${[70,86,102,118,134].map(x=>`<path class="ink-2" d="M${x} 132 v8 l3 3"/>`).join('')}
+    <circle class="ink-2" cx="100" cy="132" r="3"/>
+    ${[60,82,118,140].map(x=>`<line class="ink-2" x1="${x}" y1="160" x2="${x}" y2="174"/>`).join('')}
+    <path class="ink" d="M52 174 h96 v12 q0 4 -4 4 h-88 q-4 0 -4 -4 z"/>
+    ${weldSeam(56,144,182,6)}
+    <line class="ink" x1="100" y1="190" x2="100" y2="198"/>
+    ${valve(100,202,'down',1)}
+    <line class="ink-2" x1="44" y1="96" x2="44" y2="152"/><line class="ink-2" x1="48" y1="96" x2="48" y2="152"/>
+    ${triClamp(46,96,.7)}
+    <path class="ground" d="M40 160 L30 214"/>
+    <path class="ground" d="M160 160 L170 214"/>
+    <line class="ground" x1="18" y1="214" x2="182" y2="214"/>
+    <line class="ink-2" x1="30" y1="214" x2="37" y2="214"/><line class="ink-2" x1="163" y1="214" x2="170" y2="214"/>
+    ${diaCallout(100,76,140,'Ø 2400')}
+    ${dim(174,110,'30 HL','dim-o')}${dim(174,122,'cuve-filtre')}${dim(174,132,'rateaux + socs')}
+  </svg>`;
+}
+
+function kettle(){
+  return `<svg viewBox="0 0 160 240" width="auto" height="100%" class="draw" xmlns="http://www.w3.org/2000/svg">
+    <path class="steam" d="M76 6 q-5 -7 1 -13 M84 8 q6 -7 -1 -14 M80 2 q-2 -8 3 -13"/>
+    <line class="ink" x1="74" y1="22" x2="74" y2="8"/>
+    <line class="ink" x1="86" y1="22" x2="86" y2="8"/>
+    <path class="ink" d="M70 8 q10 -7 20 0"/>
+    <path class="ink" d="M58 46 L74 22 H86 L102 46"/>
+    <path class="ink" d="M34 62 Q80 38 126 62"/>
+    <ellipse class="ink-2" cx="80" cy="62" rx="46" ry="6"/>
+    <path class="ground" d="M34 62 V184"/>
+    <path class="ground" d="M126 62 V184"/>
+    <path class="ink-2" d="M39 66 V182"/>
+    <path class="ink-2" d="M121 66 V182"/>
+    ${cylShade(39,121,68,180,7)}
+    <path class="ink" d="M34 184 Q80 200 126 184"/>
+    <ellipse class="ink-2" cx="80" cy="184" rx="46" ry="6"/>
+    <line class="ink-2" x1="80" y1="80" x2="80" y2="172" stroke-dasharray="3 4"/>
+    <ellipse class="ink-2" cx="80" cy="120" rx="14" ry="34"/>
+    <line class="ink-2" x1="70" y1="100" x2="90" y2="100"/>
+    <line class="ink-2" x1="70" y1="140" x2="90" y2="140"/>
+    <path class="ink" d="M126 150 h18 q5 0 5 5" />
+    ${triClamp(149,155,.7)}
+    <line class="ink-2" x1="52" y1="74" x2="52" y2="178"/><line class="ink-2" x1="56" y1="74" x2="56" y2="178"/>
+    ${triClamp(54,74,.7)}${triClamp(54,178,.7)}
+    ${weldSeam(39,121,116,6)}
+    ${weldSeam(39,121,156,6)}
+    <line class="ink" x1="80" y1="196" x2="80" y2="204"/>
+    ${valve(80,208,'down',1)}
+    <path class="ground" d="M50 188 L42 224"/>
+    <path class="ground" d="M110 188 L118 224"/>
+    <line class="ground" x1="20" y1="224" x2="140" y2="224"/>
+    <line class="ink-2" x1="42" y1="224" x2="49" y2="224"/><line class="ink-2" x1="111" y1="224" x2="118" y2="224"/>
+    ${diaCallout(80,54,90,'Ø 1900')}
+    ${dim(132,104,'35 HL','dim-o')}${dim(132,116,'ébullition')}${dim(132,126,'calandre int.')}
+  </svg>`;
+}
+
+function whirlpool(){
+  return `<svg viewBox="0 0 170 240" width="auto" height="100%" class="draw" xmlns="http://www.w3.org/2000/svg">
+    <line class="ink" x1="36" y1="70" x2="124" y2="70"/>
+    <ellipse class="ink-2" cx="80" cy="70" rx="44" ry="6"/>
+    <line class="ink" x1="80" y1="70" x2="80" y2="56"/><path class="ink" d="M74 56 h12"/>
+    <path class="ground" d="M36 70 V178"/>
+    <path class="ground" d="M124 70 V178"/>
+    <path class="ink-2" d="M41 74 V176"/>
+    <path class="ink-2" d="M119 74 V176"/>
+    ${cylShade(41,119,76,174,6)}
+    <path class="ink" d="M150 96 L124 104"/>
+    <path class="ink" d="M150 100 L128 107"/>
+    ${triClamp(149,98,.8)}
+    <path class="ink-2" d="M62 120 q18 -10 36 0 q-18 10 -36 0" opacity=".7"/>
+    <path class="ink-2" d="M66 132 q14 -8 28 0 q-14 8 -28 0" opacity=".5"/>
+    <path class="ink" d="M36 178 H124"/>
+    <path class="ink" d="M60 178 L80 196 L100 178"/>
+    <line class="ink-2" x1="80" y1="196" x2="80" y2="204"/>
+    ${valve(80,208,'down',1)}
+    <line class="ink" x1="124" y1="168" x2="138" y2="168"/>
+    ${triClamp(141,168,.7)}
+    <line class="ink-2" x1="52" y1="82" x2="52" y2="172"/><line class="ink-2" x1="56" y1="82" x2="56" y2="172"/>
+    ${triClamp(54,82,.7)}
+    ${weldSeam(41,119,124,6)}
+    <path class="ground" d="M52 178 L44 224"/>
+    <path class="ground" d="M108 178 L116 224"/>
+    <line class="ground" x1="22" y1="224" x2="148" y2="224"/>
+    <line class="ink-2" x1="44" y1="224" x2="51" y2="224"/><line class="ink-2" x1="109" y1="224" x2="116" y2="224"/>
+    ${diaCallout(80,62,90,'Ø 1900')}
+    ${dim(144,118,'32 HL','dim-o')}${dim(144,130,'entrée')}${dim(144,140,'tangentielle')}
+  </svg>`;
+}
+
+function cctElevation(){
+  return `<svg viewBox="0 0 150 330" width="auto" height="100%" class="draw" xmlns="http://www.w3.org/2000/svg">
+    <line class="ink" x1="75" y1="22" x2="75" y2="38"/>
+    <path class="ink" d="M75 22 q-9 0 -9 -8 q0 -7 9 -7 q9 0 9 7 q0 8 -9 8"/>
+    <circle class="ink-2" cx="75" cy="14" r="2"/>
+    ${triClamp(75,40,.85)}
+    <path class="ink" d="M60 40 q-18 2 -22 18" />
+    <circle class="ink-2" cx="38" cy="60" r="3.2"/>
+    ${[ -1,0,1 ].map(i=>`<line class="ink-2" x1="38" y1="63" x2="${38+i*5}" y2="70"/>`).join('')}
+    <path class="ink" d="M40 64 Q75 38 110 64"/>
+    <ellipse class="ink-2" cx="75" cy="64" rx="35" ry="6"/>
+    <path class="ground" d="M40 64 V214"/>
+    <path class="ground" d="M110 64 V214"/>
+    <path class="ink-2" d="M45 68 V212"/>
+    <path class="ink-2" d="M105 68 V212"/>
+    ${cylShade(45,105,70,210,5)}
+    <line class="band-oak" x1="45" y1="98" x2="105" y2="98"/>
+    <line class="band-oak" x1="45" y1="106" x2="105" y2="106"/>
+    <path class="ground" d="M40 214 L75 300"/>
+    <path class="ground" d="M110 214 L75 300"/>
+    <path class="ink-2" d="M45 214 L75 292"/>
+    <path class="ink-2" d="M105 214 L75 292"/>
+    <ellipse class="ink-2" cx="75" cy="214" rx="35" ry="6"/>
+    ${weldSeam(50,100,150,5)}
+    ${weldSeam(45,105,140,6)}
+    ${weldSeam(45,105,180,6)}
+    <line class="ink-2" x1="60" y1="120" x2="60" y2="208"/><line class="ink-2" x1="64" y1="120" x2="64" y2="208"/>
+    ${triClamp(62,120,.7)}${triClamp(62,208,.7)}
+    <line class="ink" x1="62" y1="248" x2="50" y2="252"/>${triClamp(47,253,.7)}
+    <line class="ink" x1="88" y1="248" x2="100" y2="252"/>${triClamp(103,253,.7)}
+    <line class="ink" x1="75" y1="300" x2="75" y2="306"/>
+    ${valve(75,310,'down',.95)}
+    ${sampleCurl(80,276,.85)}
+    <circle class="ink-2" cx="92" cy="140" r="3"/><line class="ink-2" x1="95" y1="140" x2="101" y2="140"/>
+    <path class="ground" d="M44 210 L30 322"/>
+    <path class="ground" d="M106 210 L120 322"/>
+    <line class="ground" x1="14" y1="322" x2="136" y2="322"/>
+    <line class="ink-2" x1="30" y1="322" x2="38" y2="322"/><line class="ink-2" x1="112" y1="322" x2="120" y2="322"/>
+    <line class="ink-2" x1="40" y1="290" x2="110" y2="290"/>
+    ${diaCallout(75,54,72,'Ø 1600')}
+    ${dim(116,150,'90 HL','dim-o')}${dim(116,162,'cône 60°')}${dim(116,174,'2× soutirage')}
+  </svg>`;
+}
+
+function bbt(){
+  return `<svg viewBox="0 0 150 300" width="auto" height="100%" class="draw" xmlns="http://www.w3.org/2000/svg">
+    <path class="ink" d="M40 74 Q75 36 110 74"/>
+    <ellipse class="ink-2" cx="75" cy="74" rx="35" ry="6"/>
+    <line class="ink" x1="75" y1="46" x2="75" y2="28"/>
+    <circle class="ink" cx="75" cy="24" r="5"/>
+    <line class="ink-2" x1="75" y1="19" x2="75" y2="14"/>
+    <line class="ink-2" x1="71" y1="14" x2="79" y2="14"/>
+    ${triClamp(58,54,.7)}
+    <circle class="ink" cx="98" cy="60" r="7"/>
+    <line class="ink-2" x1="98" y1="60" x2="101" y2="55"/>
+    <line class="ink-2" x1="98" y1="53" x2="98" y2="55"/>
+    <line class="ink-2" x1="103" y1="60" x2="105" y2="60"/>
+    <path class="ground" d="M40 74 V218"/>
+    <path class="ground" d="M110 74 V218"/>
+    <path class="ink-2" d="M45 78 V216"/>
+    <path class="ink-2" d="M105 78 V216"/>
+    ${cylShade(45,105,80,214,5)}
+    <line class="band-bbt" x1="45" y1="106" x2="105" y2="106"/>
+    <line class="band-bbt" x1="45" y1="114" x2="105" y2="114"/>
+    <path class="ground" d="M40 218 Q75 250 110 218"/>
+    <ellipse class="ink-2" cx="75" cy="218" rx="35" ry="6"/>
+    <line class="ink" x1="40" y1="208" x2="26" y2="212"/>
+    ${triClamp(23,213,.7)}
+    ${(()=>{let d='';for(let i=0;i<4;i++)d+=`<circle class="ink-2" cx="${28+i*2}" cy="${209-i}" r=".8"/>`;return d;})()}
+    ${weldSeam(45,105,138,6)}
+    ${weldSeam(45,105,178,6)}
+    <line class="ink-2" x1="60" y1="122" x2="60" y2="212"/><line class="ink-2" x1="64" y1="122" x2="64" y2="212"/>
+    ${triClamp(62,122,.7)}${triClamp(62,212,.7)}
+    <line class="ink" x1="75" y1="240" x2="75" y2="248"/>
+    ${valve(75,252,'down',.95)}
+    <line class="ink" x1="88" y1="228" x2="100" y2="232"/>${triClamp(103,233,.7)}
+    <path class="ground" d="M48 220 L36 288"/>
+    <path class="ground" d="M102 220 L114 288"/>
+    <line class="ground" x1="16" y1="288" x2="134" y2="288"/>
+    <line class="ink-2" x1="36" y1="288" x2="44" y2="288"/><line class="ink-2" x1="106" y1="288" x2="114" y2="288"/>
+    ${diaCallout(75,62,72,'Ø 1500')}
+    ${dim(116,148,'120 HL','dim-o')}${dim(116,160,'fond bombé')}${dim(116,172,'+ carbo')}
+  </svg>`;
+}
+
+function yeastTank(){
+  return `<svg viewBox="0 0 130 270" width="auto" height="100%" class="draw" xmlns="http://www.w3.org/2000/svg">
+    <line class="ink" x1="65" y1="44" x2="65" y2="30"/><path class="ink" d="M60 30 h10"/>
+    ${triClamp(65,46,.75)}
+    <path class="ink" d="M34 64 Q65 44 96 64"/>
+    <ellipse class="ink-2" cx="65" cy="64" rx="31" ry="5"/>
+    <path class="ground" d="M34 64 V176"/>
+    <path class="ground" d="M96 64 V176"/>
+    <path class="ink-2" d="M38 68 V174"/>
+    <path class="ink-2" d="M92 68 V174"/>
+    <path class="ink-2" d="M31 76 V168" opacity=".7"/>
+    <path class="ink-2" d="M99 76 V168" opacity=".7"/>
+    ${cylShade(38,92,70,172,4)}
+    <line class="band-hop" x1="38" y1="92" x2="92" y2="92"/>
+    <line class="band-hop" x1="38" y1="99" x2="92" y2="99"/>
+    <path class="ground" d="M34 176 L65 234"/>
+    <path class="ground" d="M96 176 L65 234"/>
+    <ellipse class="ink-2" cx="65" cy="176" rx="31" ry="5"/>
+    <path class="ink-2" d="M38 176 L65 228" opacity=".6"/>
+    <path class="ink-2" d="M92 176 L65 228" opacity=".6"/>
+    <line class="ink" x1="65" y1="234" x2="65" y2="240"/>
+    ${valve(65,244,'down',.85)}
+    ${sampleCurl(70,214,.75)}
+    <line class="ink-2" x1="52" y1="106" x2="52" y2="170"/><line class="ink-2" x1="56" y1="106" x2="56" y2="170"/>
+    ${triClamp(54,106,.65)}
+    ${weldSeam(38,92,140,5)}
+    <path class="ground" d="M42 172 L32 258"/>
+    <path class="ground" d="M88 172 L98 258"/>
+    <line class="ground" x1="16" y1="258" x2="114" y2="258"/>
+    <line class="ink-2" x1="32" y1="258" x2="39" y2="258"/><line class="ink-2" x1="91" y1="258" x2="98" y2="258"/>
+    ${diaCallout(65,54,64,'Ø 900')}
+    ${dim(102,124,'12 HL','dim-o')}${dim(102,136,'double')}${dim(102,146,'paroi')}
+  </svg>`;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   SCENE GENERATORS — connected compositions
+   These return full SVG strings with viewBox sized for the composition.
+   The same function is used at all three scales:
+     • overview zone  → inserted directly, SVG has width="100%" height="100%"
+                        and preserveAspectRatio="xMidYMid meet", container is 300px tall
+     • detail croqui  → wrapped in a div style="width:90%; max-height:90%"
+     • config icons   → NOT these scenes; individual vessel functions used instead
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* ════════ HOT-SIDE SCENE — Brassin ════════
+   HLT · Mash · Lauter · Kettle · Whirlpool on shared gantry, joined by piping.
+   viewBox 980×400. Overview: fits in 300px-tall .scene container.
+   Detail croqui: same SVG at wider container shows more detail. */
+function brewScene(){
+  return `<svg viewBox="0 0 980 400" width="100%" height="100%" class="draw" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
+
+    <!-- ═══ FLOOR / GANTRY PLATFORM ═══ -->
+    <line class="ground" x1="18" y1="368" x2="962" y2="368"/>
+    ${(()=>{let d='';for(let x=36;x<950;x+=18)d+=`<line class="ink-2" x1="${x}" y1="365" x2="${x}" y2="368" opacity=".45"/>`;return d;})()}
+    <line class="ink-2" x1="18" y1="374" x2="962" y2="374" opacity=".5"/>
+    ${[90,260,470,680,880].map(x=>`
+      <line class="ink-2" x1="${x}" y1="374" x2="${x}" y2="392" opacity=".5"/>
+      <line class="ink-2" x1="${x+40}" y1="374" x2="${x+40}" y2="392" opacity=".5"/>
+      <line class="ink-2" x1="${x-4}" y1="392" x2="${x+44}" y2="392" opacity=".4"/>
+    `).join('')}
+
+    <!-- ═══ HLT — tall, leftmost ═══ -->
+    <g transform="translate(44,18)">
+      <line class="ink" x1="60" y1="16" x2="60" y2="30"/>
+      <path class="ink" d="M44 16 h32 M36 16 q8 -9 24 -9 q16 0 24 9"/>
+      ${triClamp(60,32,.85)}
+      <path class="ink" d="M28 50 Q60 24 92 50"/>
+      <ellipse class="ink-2" cx="60" cy="50" rx="32" ry="5.5"/>
+      <path class="ground" d="M28 50 V232"/>
+      <path class="ground" d="M92 50 V232"/>
+      <path class="ink-2" d="M32 54 V230"/>
+      <path class="ink-2" d="M88 54 V230"/>
+      ${cylShade(32,88,56,228,4)}
+      <path class="ink" d="M28 232 Q60 246 92 232"/>
+      <ellipse class="ink-2" cx="60" cy="232" rx="32" ry="5"/>
+      ${weldSeam(32,88,130,5)}
+      ${weldSeam(32,88,180,5)}
+      <line class="ink-2" x1="46" y1="64" x2="46" y2="226"/>
+      <line class="ink-2" x1="50" y1="64" x2="50" y2="226"/>
+      ${triClamp(48,64,.65)}${triClamp(48,226,.65)}
+      <circle class="ink-2" cx="78" cy="100" r="2.8"/>
+      <line class="ink-2" x1="80.8" y1="100" x2="86" y2="100"/>
+      <line class="ink" x1="60" y1="244" x2="60" y2="252"/>
+      ${valve(60,256,'down',.9)}
+      <path class="ground" d="M38 236 L28 348"/>
+      <path class="ground" d="M82 236 L92 348"/>
+      <line class="ink-2" x1="28" y1="348" x2="35" y2="348"/>
+      <line class="ink-2" x1="85" y1="348" x2="92" y2="348"/>
+      ${dim(38,42,'HLT')}
+    </g>
+
+    <!-- ═══ MASH TUN — squat, 2nd ═══ -->
+    <g transform="translate(200,68)">
+      <rect class="ink" x="68" y="12" width="22" height="14" rx="2"/>
+      <rect class="ink-2" x="72" y="6" width="14" height="6" rx="1"/>
+      <path class="ink" d="M72 26 h14 v7 h-14 z"/>
+      <line class="ink" x1="79" y1="33" x2="79" y2="54"/>
+      <path class="ink" d="M28 68 Q79 48 130 68"/>
+      <ellipse class="ink-2" cx="79" cy="68" rx="51" ry="6.5"/>
+      <path class="ground" d="M28 68 V166"/>
+      <path class="ground" d="M130 68 V166"/>
+      <path class="ink-2" d="M33 72 V164"/>
+      <path class="ink-2" d="M125 72 V164"/>
+      ${cylShade(33,125,74,162,6)}
+      <path class="ink" d="M28 166 Q79 182 130 166"/>
+      <ellipse class="ink-2" cx="79" cy="166" rx="51" ry="6.5"/>
+      <line class="ink-2" x1="36" y1="154" x2="122" y2="154"/>
+      ${(()=>{let d='';for(let x=42;x<=118;x+=8)d+=`<line class="ink-2" x1="${x}" y1="152.5" x2="${x}" y2="155.5"/>`;return d;})()}
+      <ellipse class="ink" cx="79" cy="114" rx="12" ry="15"/>
+      <ellipse class="ink-2" cx="79" cy="114" rx="8.5" ry="11"/>
+      <line class="ink-2" x1="91" y1="114" x2="96" y2="114"/>
+      <circle class="ink-2" cx="98" cy="114" r="1.8"/>
+      ${weldSeam(33,125,128,6)}
+      <path class="ink" d="M96 162 l14 5 l0 10 l-14 -4 z"/>
+      <line class="ink" x1="79" y1="178" x2="79" y2="186"/>
+      ${valve(79,190,'down',.9)}
+      <path class="ground" d="M44 170 L36 298"/>
+      <path class="ground" d="M114 170 L122 298"/>
+      <line class="ink-2" x1="36" y1="298" x2="43" y2="298"/>
+      <line class="ink-2" x1="115" y1="298" x2="122" y2="298"/>
+      ${dim(50,60,'MAISCHE')}
+    </g>
+
+    <!-- ═══ LAUTER TUN — wide + shallow ═══ -->
+    <g transform="translate(390,100)">
+      <rect class="ink" x="77" y="18" width="20" height="12" rx="2"/>
+      <line class="ink" x1="87" y1="30" x2="87" y2="52"/>
+      <path class="ink" d="M18 76 Q87 60 156 76"/>
+      <ellipse class="ink-2" cx="87" cy="76" rx="69" ry="6"/>
+      <path class="ground" d="M18 76 V150"/>
+      <path class="ground" d="M156 76 V150"/>
+      <path class="ink-2" d="M23 80 V148"/>
+      <path class="ink-2" d="M151 80 V148"/>
+      ${cylShade(23,151,82,146,9)}
+      <line class="ink" x1="24" y1="140" x2="150" y2="140"/>
+      ${(()=>{let d='';for(let x=30;x<=146;x+=7)d+=`<line class="ink-2" x1="${x}" y1="138.5" x2="${x}" y2="141.5"/>`;return d;})()}
+      <path class="ink" d="M18 150 Q87 165 156 150"/>
+      <ellipse class="ink-2" cx="87" cy="150" rx="69" ry="5.5"/>
+      <line class="ink" x1="52" y1="126" x2="122" y2="126"/>
+      ${[58,72,87,102,116].map(x=>`<path class="ink-2" d="M${x} 126 v7 l2.5 2.5"/>`).join('')}
+      <circle class="ink-2" cx="87" cy="126" r="2.5"/>
+      ${[46,68,106,128].map(x=>`<line class="ink-2" x1="${x}" y1="154" x2="${x}" y2="166"/>`).join('')}
+      <path class="ink" d="M38 166 h98 v11 q0 3 -3 3 h-92 q-3 0 -3 -3 z"/>
+      ${weldSeam(44,130,174,5)}
+      <line class="ink" x1="87" y1="180" x2="87" y2="188"/>
+      ${valve(87,192,'down',.9)}
+      <path class="ground" d="M28 154 L18 266"/>
+      <path class="ground" d="M146 154 L156 266"/>
+      <line class="ink-2" x1="18" y1="266" x2="25" y2="266"/>
+      <line class="ink-2" x1="149" y1="266" x2="156" y2="266"/>
+      ${dim(58,68,'FILTRE')}
+    </g>
+
+    <!-- ═══ BOIL KETTLE — with steam, 4th ═══ -->
+    <g transform="translate(620,48)">
+      <path class="steam" d="M68 6 q-4 -6 1 -12 M76 8 q5 -6 -1 -12 M72 2 q-2 -7 3 -12"/>
+      <line class="ink" x1="66" y1="20" x2="66" y2="8"/>
+      <line class="ink" x1="78" y1="20" x2="78" y2="8"/>
+      <path class="ink" d="M62 8 q10 -6 20 0"/>
+      <path class="ink" d="M52 42 L66 20 H78 L92 42"/>
+      <path class="ink" d="M28 58 Q72 36 116 58"/>
+      <ellipse class="ink-2" cx="72" cy="58" rx="44" ry="5.5"/>
+      <path class="ground" d="M28 58 V178"/>
+      <path class="ground" d="M116 58 V178"/>
+      <path class="ink-2" d="M33 62 V176"/>
+      <path class="ink-2" d="M111 62 V176"/>
+      ${cylShade(33,111,64,174,6)}
+      <path class="ink" d="M28 178 Q72 194 116 178"/>
+      <ellipse class="ink-2" cx="72" cy="178" rx="44" ry="5.5"/>
+      <line class="ink-2" x1="72" y1="76" x2="72" y2="166" stroke-dasharray="3 4"/>
+      <ellipse class="ink-2" cx="72" cy="118" rx="13" ry="32"/>
+      <line class="ink-2" x1="62" y1="98" x2="82" y2="98"/>
+      <line class="ink-2" x1="62" y1="138" x2="82" y2="138"/>
+      <line class="ink-2" x1="44" y1="70" x2="44" y2="172"/>
+      <line class="ink-2" x1="48" y1="70" x2="48" y2="172"/>
+      ${triClamp(46,70,.65)}${triClamp(46,172,.65)}
+      ${weldSeam(33,111,112,5)}
+      ${weldSeam(33,111,150,5)}
+      <line class="ink" x1="72" y1="190" x2="72" y2="198"/>
+      ${valve(72,202,'down',.9)}
+      <path class="ground" d="M42 182 L34 318"/>
+      <path class="ground" d="M102 182 L110 318"/>
+      <line class="ink-2" x1="34" y1="318" x2="41" y2="318"/>
+      <line class="ink-2" x1="103" y1="318" x2="110" y2="318"/>
+      ${dim(50,50,'CUITE')}
+    </g>
+
+    <!-- ═══ WHIRLPOOL — rightmost ═══ -->
+    <g transform="translate(826,80)">
+      <line class="ink" x1="24" y1="62" x2="112" y2="62"/>
+      <ellipse class="ink-2" cx="68" cy="62" rx="44" ry="5.5"/>
+      <line class="ink" x1="68" y1="62" x2="68" y2="48"/>
+      <path class="ink" d="M62 48 h12"/>
+      <path class="ground" d="M24 62 V170"/>
+      <path class="ground" d="M112 62 V170"/>
+      <path class="ink-2" d="M29 66 V168"/>
+      <path class="ink-2" d="M107 66 V168"/>
+      ${cylShade(29,107,68,166,5)}
+      <path class="ink" d="M136 88 L112 96"/>
+      <path class="ink" d="M136 92 L116 98"/>
+      ${triClamp(135,90,.75)}
+      <path class="ink-2" d="M50 114 q18 -9 36 0 q-18 9 -36 0" opacity=".65"/>
+      <path class="ink-2" d="M54 126 q14 -7 28 0 q-14 7 -28 0" opacity=".45"/>
+      <path class="ink" d="M24 170 H112"/>
+      <path class="ink" d="M50 170 L68 188 L86 170"/>
+      <line class="ink-2" x1="68" y1="188" x2="68" y2="196"/>
+      ${valve(68,200,'down',.9)}
+      <line class="ink" x1="112" y1="160" x2="126" y2="160"/>
+      ${triClamp(129,160,.65)}
+      ${weldSeam(29,107,118,5)}
+      <path class="ground" d="M38 170 L30 288"/>
+      <path class="ground" d="M98 170 L106 288"/>
+      <line class="ink-2" x1="30" y1="288" x2="37" y2="288"/>
+      <line class="ink-2" x1="99" y1="288" x2="106" y2="288"/>
+      ${dim(44,54,'WHIRLPOOL')}
+    </g>
+
+    <!-- ═══ WORT PIPING — top collector + descents ═══ -->
+    <path class="ink" d="M164 276 h28 V118 h40" opacity=".85"/>
+    <path class="ink" d="M360 264 h24 V212 h28" opacity=".85"/>
+    <path class="ink" d="M580 302 h18 V256 h46" opacity=".85"/>
+    <path class="ink" d="M790 254 h28 V172 h32" opacity=".85"/>
+    ${triClamp(192,276,.75)}
+    ${triClamp(388,212,.75)}
+    ${triClamp(620,256,.75)}
+    ${triClamp(810,172,.75)}
+    <circle class="ink" cx="608" cy="346" r="9"/>
+    <path class="ink-2" d="M601 346 h14 M608 339 v14"/>
+    <line class="ink-2" x1="608" y1="337" x2="608" y2="314"/>
+
+  </svg>`;
+}
+
+/* ════════ COLD-SIDE SCENE — Fermentation ════════
+   CCT + BBT + YT on shared floor, joined by racking / transfer piping.
+   viewBox 860×440. Same multi-scale approach as brewScene(). */
+function cellarScene(){
+  return `<svg viewBox="0 0 860 440" width="100%" height="100%" class="draw" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
+
+    <!-- ═══ FLOOR LINE ═══ -->
+    <line class="ground" x1="18" y1="418" x2="842" y2="418"/>
+    ${(()=>{let d='';for(let x=36;x<830;x+=20)d+=`<line class="ink-2" x1="${x}" y1="415" x2="${x}" y2="418" opacity=".4"/>`;return d;})()}
+
+    <!-- ═══ CCT — tall conical fermenter, left ═══ -->
+    <g transform="translate(70,14)">
+      <line class="ink" x1="110" y1="22" x2="110" y2="38"/>
+      <path class="ink" d="M110 22 q-9 0 -9 -8 q0 -7 9 -7 q9 0 9 7 q0 8 -9 8"/>
+      <circle class="ink-2" cx="110" cy="14" r="2"/>
+      ${triClamp(110,40,.85)}
+      <path class="ink" d="M94 42 q-18 2 -22 18"/>
+      <circle class="ink-2" cx="72" cy="62" r="3.2"/>
+      ${[-1,0,1].map(i=>`<line class="ink-2" x1="72" y1="65" x2="${72+i*5}" y2="72"/>`).join('')}
+      <path class="ink" d="M72 68 Q110 42 148 68"/>
+      <ellipse class="ink-2" cx="110" cy="68" rx="38" ry="6"/>
+      <path class="ground" d="M72 68 V224"/>
+      <path class="ground" d="M148 68 V224"/>
+      <path class="ink-2" d="M77 72 V222"/>
+      <path class="ink-2" d="M143 72 V222"/>
+      ${cylShade(77,143,74,220,5)}
+      <line class="band-oak" x1="77" y1="104" x2="143" y2="104"/>
+      <line class="band-oak" x1="77" y1="112" x2="143" y2="112"/>
+      ${weldSeam(77,143,146,6)}
+      ${weldSeam(77,143,188,6)}
+      <path class="ground" d="M72 224 L110 318"/>
+      <path class="ground" d="M148 224 L110 318"/>
+      <path class="ink-2" d="M77 224 L110 310"/>
+      <path class="ink-2" d="M143 224 L110 310"/>
+      <ellipse class="ink-2" cx="110" cy="224" rx="38" ry="6"/>
+      ${weldSeam(84,136,160,5)}
+      <line class="ink-2" x1="93" y1="124" x2="93" y2="218"/>
+      <line class="ink-2" x1="97" y1="124" x2="97" y2="218"/>
+      ${triClamp(95,124,.7)}${triClamp(95,218,.7)}
+      <line class="ink" x1="98" y1="258" x2="86" y2="262"/>${triClamp(83,263,.7)}
+      <line class="ink" x1="122" y1="258" x2="134" y2="262"/>${triClamp(137,263,.7)}
+      ${sampleCurl(116,282,.85)}
+      <circle class="ink-2" cx="130" cy="148" r="3"/>
+      <line class="ink-2" x1="133" y1="148" x2="139" y2="148"/>
+      <line class="ink" x1="110" y1="318" x2="110" y2="324"/>
+      ${valve(110,328,'down',.95)}
+      <path class="ground" d="M78 220 L58 402"/>
+      <path class="ground" d="M142 220 L162 402"/>
+      <line class="ground" x1="42" y1="402" x2="178" y2="402"/>
+      <line class="ink-2" x1="42" y1="402" x2="58" y2="402"/>
+      <line class="ink-2" x1="155" y1="402" x2="172" y2="402"/>
+      <line class="ink-2" x1="68" y1="370" x2="152" y2="370"/>
+      ${dim(64,60,'CCT','dim-o')}
+      ${dim(154,158,'90 HL','dim')}
+    </g>
+
+    <!-- ═══ BBT — domed settling tank, centre ═══ -->
+    <g transform="translate(336,46)">
+      <path class="ink" d="M38 72 Q110 20 182 72"/>
+      <ellipse class="ink-2" cx="110" cy="72" rx="72" ry="10"/>
+      <line class="ink" x1="110" y1="38" x2="110" y2="20"/>
+      <circle class="ink" cx="110" cy="16" r="5.5"/>
+      <line class="ink-2" x1="110" y1="10.5" x2="110" y2="6"/>
+      <line class="ink-2" x1="105" y1="6" x2="115" y2="6"/>
+      ${triClamp(80,52,.7)}
+      <circle class="ink" cx="148" cy="58" r="8"/>
+      <line class="ink-2" x1="148" y1="58" x2="152" y2="52"/>
+      <line class="ink-2" x1="148" y1="50" x2="148" y2="53"/>
+      <line class="ink-2" x1="154" y1="58" x2="157" y2="58"/>
+      <path class="ground" d="M38 72 V240"/>
+      <path class="ground" d="M182 72 V240"/>
+      <path class="ink-2" d="M43 76 V238"/>
+      <path class="ink-2" d="M177 76 V238"/>
+      ${cylShade(43,177,78,236,9)}
+      <line class="band-bbt" x1="43" y1="108" x2="177" y2="108"/>
+      <line class="band-bbt" x1="43" y1="117" x2="177" y2="117"/>
+      ${weldSeam(43,177,148,8)}
+      ${weldSeam(43,177,194,8)}
+      <line class="ink-2" x1="64" y1="126" x2="64" y2="234"/>
+      <line class="ink-2" x1="68" y1="126" x2="68" y2="234"/>
+      ${triClamp(66,126,.7)}${triClamp(66,234,.7)}
+      <line class="ink" x1="38" y1="228" x2="22" y2="234"/>
+      ${triClamp(19,235,.7)}
+      ${(()=>{let d='';for(let i=0;i<5;i++)d+=`<circle class="ink-2" cx="${25+i*2}" cy="${229-i*.5}" r=".8"/>`;return d;})()}
+      <path class="ground" d="M38 240 Q110 268 182 240"/>
+      <ellipse class="ink-2" cx="110" cy="240" rx="72" ry="9"/>
+      <line class="ink" x1="110" y1="258" x2="110" y2="266"/>
+      ${valve(110,270,'down',.95)}
+      <line class="ink" x1="132" y1="250" x2="148" y2="255"/>
+      ${triClamp(151,256,.7)}
+      <path class="ground" d="M52 244 L36 402"/>
+      <path class="ground" d="M168 244 L184 402"/>
+      <line class="ground" x1="20" y1="402" x2="200" y2="402"/>
+      <line class="ink-2" x1="20" y1="402" x2="36" y2="402"/>
+      <line class="ink-2" x1="177" y1="402" x2="194" y2="402"/>
+      ${dim(64,64,'BBT','dim-o')}
+      ${dim(188,158,'120 HL','dim')}
+    </g>
+
+    <!-- ═══ YEAST TANK — compact conical, right ═══ -->
+    <g transform="translate(674,96)">
+      <line class="ink" x1="72" y1="36" x2="72" y2="22"/>
+      <path class="ink" d="M66 22 h12"/>
+      ${triClamp(72,38,.75)}
+      <path class="ink" d="M38 58 Q72 36 106 58"/>
+      <ellipse class="ink-2" cx="72" cy="58" rx="34" ry="5.5"/>
+      <path class="ground" d="M38 58 V172"/>
+      <path class="ground" d="M106 58 V172"/>
+      <path class="ink-2" d="M42 62 V170"/>
+      <path class="ink-2" d="M102 62 V170"/>
+      <path class="ink-2" d="M34 70 V164" opacity=".65"/>
+      <path class="ink-2" d="M110 70 V164" opacity=".65"/>
+      ${cylShade(42,102,64,168,4)}
+      <line class="band-hop" x1="42" y1="86" x2="102" y2="86"/>
+      <line class="band-hop" x1="42" y1="93" x2="102" y2="93"/>
+      <path class="ground" d="M38 172 L72 232"/>
+      <path class="ground" d="M106 172 L72 232"/>
+      <ellipse class="ink-2" cx="72" cy="172" rx="34" ry="5.5"/>
+      <path class="ink-2" d="M42 172 L72 226" opacity=".55"/>
+      <path class="ink-2" d="M102 172 L72 226" opacity=".55"/>
+      ${weldSeam(42,102,130,5)}
+      ${sampleCurl(78,210,.75)}
+      <line class="ink" x1="72" y1="232" x2="72" y2="238"/>
+      ${valve(72,242,'down',.85)}
+      <line class="ink-2" x1="57" y1="100" x2="57" y2="166"/>
+      <line class="ink-2" x1="61" y1="100" x2="61" y2="166"/>
+      ${triClamp(59,100,.65)}
+      <path class="ground" d="M46 168 L36 322"/>
+      <path class="ground" d="M98 168 L108 322"/>
+      <line class="ground" x1="20" y1="322" x2="124" y2="322"/>
+      <line class="ink-2" x1="20" y1="322" x2="36" y2="322"/>
+      <line class="ink-2" x1="100" y1="322" x2="116" y2="322"/>
+      ${dim(44,50,'YT','dim-o')}
+      ${dim(112,128,'12 HL','dim')}
+    </g>
+
+    <!-- ═══ CONNECTING PIPING ═══ -->
+    <path class="ink" d="M290 326 h20 V134 h50" opacity=".85"/>
+    ${triClamp(310,276,.75)}
+    ${triClamp(340,134,.75)}
+    <path class="ink" d="M556 300 h48 V192 h96" opacity=".85"/>
+    ${triClamp(580,300,.75)}
+    ${triClamp(690,192,.75)}
+    <path class="ink-2" d="M694 388 H290 V370 H220" opacity=".55"/>
+    ${triClamp(694,388,.65)}
+    ${triClamp(220,370,.65)}
+
+  </svg>`;
+}
+
+/* ════════ MINI VESSEL ICONS for config rows ════════
+   Each returns a mini SVG string (~38px wide × 46px tall container).
+   Full vessel viewBox is preserved; preserveAspectRatio="xMidYMid meet"
+   scales the drawing to the icon box cleanly.
+   No stroke-dasharray/draw class on icons — they render instantly. */
+
+function icoHlt(){
+  return `<svg viewBox="0 0 150 240" width="38" height="46" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+    <line class="ink" x1="75" y1="18" x2="75" y2="34"/>
+    <path class="ink" d="M52 18 q8 -10 23 -10 q15 0 23 10"/>
+    <path class="ink" d="M38 56 Q75 28 112 56"/>
+    <ellipse class="ink-2" cx="75" cy="56" rx="37" ry="6"/>
+    <path class="ground" d="M38 56 V196"/>
+    <path class="ground" d="M112 56 V196"/>
+    ${cylShade(42,108,62,192,4)}
+    <path class="ink" d="M38 196 Q75 210 112 196"/>
+    ${valve(75,220,'down',.9)}
+    <path class="ground" d="M52 200 L42 234"/>
+    <path class="ground" d="M98 200 L108 234"/>
+    <line class="ground" x1="20" y1="234" x2="130" y2="234"/>
+  </svg>`;
+}
+
+function icoMash(){
+  return `<svg viewBox="0 0 180 240" width="38" height="46" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+    <rect class="ink" x="78" y="14" width="24" height="16" rx="2"/>
+    <line class="ink" x1="90" y1="30" x2="90" y2="64"/>
+    <path class="ink" d="M40 78 Q90 56 140 78"/>
+    <ellipse class="ink-2" cx="90" cy="78" rx="50" ry="7"/>
+    <path class="ground" d="M40 78 V172"/>
+    <path class="ground" d="M140 78 V172"/>
+    ${cylShade(45,135,84,168,5)}
+    <path class="ink" d="M40 172 Q90 188 140 172"/>
+    <ellipse class="ink" cx="90" cy="118" rx="13" ry="16"/>
+    ${valve(90,196,'down',.9)}
+    <path class="ground" d="M56 176 L48 214"/>
+    <path class="ground" d="M124 176 L132 214"/>
+    <line class="ground" x1="22" y1="214" x2="158" y2="214"/>
+  </svg>`;
+}
+
+function icoLauter(){
+  return `<svg viewBox="0 0 200 240" width="38" height="46" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+    <rect class="ink" x="88" y="22" width="24" height="14" rx="2"/>
+    <line class="ink" x1="100" y1="36" x2="100" y2="60"/>
+    <path class="ink" d="M30 84 Q100 68 170 84"/>
+    <ellipse class="ink-2" cx="100" cy="84" rx="70" ry="7"/>
+    <path class="ground" d="M30 84 V156"/>
+    <path class="ground" d="M170 84 V156"/>
+    ${cylShade(35,165,90,152,6)}
+    <line class="ink" x1="36" y1="146" x2="164" y2="146"/>
+    <path class="ink" d="M30 156 Q100 170 170 156"/>
+    <line class="ink" x1="62" y1="132" x2="138" y2="132"/>
+    ${valve(100,202,'down',.9)}
+    <path class="ground" d="M40 160 L30 214"/>
+    <path class="ground" d="M160 160 L170 214"/>
+    <line class="ground" x1="18" y1="214" x2="182" y2="214"/>
+  </svg>`;
+}
+
+function icoKettle(){
+  return `<svg viewBox="0 0 160 240" width="38" height="46" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+    <path class="steam" d="M76 6 q-5 -7 1 -13 M84 8 q6 -7 -1 -14"/>
+    <path class="ink" d="M58 46 L74 22 H86 L102 46"/>
+    <path class="ink" d="M34 62 Q80 38 126 62"/>
+    <ellipse class="ink-2" cx="80" cy="62" rx="46" ry="6"/>
+    <path class="ground" d="M34 62 V184"/>
+    <path class="ground" d="M126 62 V184"/>
+    ${cylShade(39,121,68,180,5)}
+    <path class="ink" d="M34 184 Q80 200 126 184"/>
+    ${valve(80,208,'down',.9)}
+    <path class="ground" d="M50 188 L42 224"/>
+    <path class="ground" d="M110 188 L118 224"/>
+    <line class="ground" x1="20" y1="224" x2="140" y2="224"/>
+  </svg>`;
+}
+
+function icoWhirlpool(){
+  return `<svg viewBox="0 0 170 240" width="38" height="46" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+    <line class="ink" x1="36" y1="70" x2="124" y2="70"/>
+    <ellipse class="ink-2" cx="80" cy="70" rx="44" ry="6"/>
+    <path class="ground" d="M36 70 V178"/>
+    <path class="ground" d="M124 70 V178"/>
+    ${cylShade(41,119,76,174,4)}
+    <path class="ink-2" d="M62 120 q18 -10 36 0 q-18 10 -36 0" opacity=".7"/>
+    <path class="ink" d="M36 178 H124"/>
+    <path class="ink" d="M60 178 L80 196 L100 178"/>
+    ${valve(80,208,'down',.9)}
+    <path class="ground" d="M52 178 L44 224"/>
+    <path class="ground" d="M108 178 L116 224"/>
+    <line class="ground" x1="22" y1="224" x2="148" y2="224"/>
+  </svg>`;
+}
+
+function icoCct(){
+  return `<svg viewBox="0 0 150 330" width="28" height="46" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+    <path class="ink" d="M40 64 Q75 38 110 64"/>
+    <ellipse class="ink-2" cx="75" cy="64" rx="35" ry="6"/>
+    <path class="ground" d="M40 64 V214"/>
+    <path class="ground" d="M110 64 V214"/>
+    ${cylShade(45,105,70,210,4)}
+    <line class="band-oak" x1="45" y1="98" x2="105" y2="98"/>
+    <line class="band-oak" x1="45" y1="106" x2="105" y2="106"/>
+    <path class="ground" d="M40 214 L75 300"/>
+    <path class="ground" d="M110 214 L75 300"/>
+    ${valve(75,310,'down',.9)}
+    <path class="ground" d="M44 210 L30 322"/>
+    <path class="ground" d="M106 210 L120 322"/>
+    <line class="ground" x1="14" y1="322" x2="136" y2="322"/>
+  </svg>`;
+}
+
+function icoBbt(){
+  return `<svg viewBox="0 0 150 300" width="28" height="46" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+    <path class="ink" d="M40 74 Q75 36 110 74"/>
+    <ellipse class="ink-2" cx="75" cy="74" rx="35" ry="6"/>
+    <path class="ground" d="M40 74 V218"/>
+    <path class="ground" d="M110 74 V218"/>
+    ${cylShade(45,105,80,214,4)}
+    <line class="band-bbt" x1="45" y1="106" x2="105" y2="106"/>
+    <line class="band-bbt" x1="45" y1="114" x2="105" y2="114"/>
+    <path class="ground" d="M40 218 Q75 250 110 218"/>
+    ${valve(75,252,'down',.9)}
+    <path class="ground" d="M48 220 L36 288"/>
+    <path class="ground" d="M102 220 L114 288"/>
+    <line class="ground" x1="16" y1="288" x2="134" y2="288"/>
+  </svg>`;
+}
+
+function icoYt(){
+  return `<svg viewBox="0 0 130 270" width="26" height="46" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+    <path class="ink" d="M34 64 Q65 44 96 64"/>
+    <ellipse class="ink-2" cx="65" cy="64" rx="31" ry="5"/>
+    <path class="ground" d="M34 64 V176"/>
+    <path class="ground" d="M96 64 V176"/>
+    ${cylShade(38,92,70,172,3)}
+    <line class="band-hop" x1="38" y1="92" x2="92" y2="92"/>
+    <line class="band-hop" x1="38" y1="99" x2="92" y2="99"/>
+    <path class="ground" d="M34 176 L65 234"/>
+    <path class="ground" d="M96 176 L65 234"/>
+    ${valve(65,244,'down',.85)}
+    <path class="ground" d="M42 172 L32 258"/>
+    <path class="ground" d="M88 172 L98 258"/>
+    <line class="ground" x1="16" y1="258" x2="114" y2="258"/>
+  </svg>`;
+}
+
+/* ════════ BUFFER TANK icon (cuve tampon — cylindre sans cône, simple) ════════ */
+function icoBuffer(){
+  return `<svg viewBox="0 0 130 220" width="34" height="46" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+    <path class="ink" d="M28 54 Q65 38 102 54"/>
+    <ellipse class="ink-2" cx="65" cy="54" rx="37" ry="6"/>
+    <path class="ground" d="M28 54 V172"/>
+    <path class="ground" d="M102 54 V172"/>
+    ${cylShade(32,98,58,168,4)}
+    <path class="ink" d="M28 172 Q65 186 102 172"/>
+    <ellipse class="ink-2" cx="65" cy="172" rx="37" ry="6"/>
+    ${valve(65,190,'down',.9)}
+    <path class="ground" d="M36 176 L26 210"/><path class="ground" d="M94 176 L104 210"/>
+    <line class="ground" x1="14" y1="210" x2="116" y2="210"/>
+  </svg>`;
+}
+
+/* ════════ CENTRIFUGEUSE placeholder icon (disc separator) ════════ */
+function icoCentrifuge(){
+  return `<svg viewBox="0 0 100 100" width="38" height="38" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+    <circle class="ink" cx="50" cy="50" r="34"/>
+    <circle class="ink-2" cx="50" cy="50" r="22"/>
+    <circle class="ink-2" cx="50" cy="50" r="5"/>
+    <line class="ink-2" x1="50" y1="28" x2="50" y2="16"/>
+    <line class="ink-2" x1="50" y1="72" x2="50" y2="84"/>
+    <line class="ink-2" x1="28" y1="50" x2="16" y2="50"/>
+    <line class="ink-2" x1="72" y1="50" x2="84" y2="50"/>
+    <path class="ink-2" d="M34 34 l-8 -8 M66 34 l8 -8 M34 66 l-8 8 M66 66 l8 8" opacity=".5"/>
+  </svg>`;
+}
+
+/* ════════ KZE (pasteurisateur flash) placeholder icon ════════ */
+function icoKze(){
+  return `<svg viewBox="0 0 100 80" width="42" height="34" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+    <rect class="ink" x="8" y="20" width="84" height="40" rx="4"/>
+    <line class="ink-2" x1="8" y1="40" x2="92" y2="40"/>
+    ${[20,32,44,56,68,80].map(x=>`<line class="ink-2" x1="${x}" y1="22" x2="${x}" y2="58" opacity=".4"/>`).join('')}
+    <path class="steam" d="M30 18 q-3 -5 1 -9 M50 16 q4 -5 -1 -10 M70 18 q-3 -5 1 -9"/>
+    <line class="ink" x1="8" y1="60" x2="8" y2="70"/><line class="ink" x1="92" y1="60" x2="92" y2="70"/>
+    ${valve(50,72,'down',.75)}
+  </svg>`;
+}
+
+/* ════════ SOUTIREUSE BOUTEILLE placeholder icon ════════ */
+function icoBottleFiller(){
+  return `<svg viewBox="0 0 100 100" width="38" height="38" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+    <rect class="ink" x="22" y="10" width="56" height="14" rx="3"/>
+    <line class="ink" x1="50" y1="24" x2="50" y2="32"/>
+    ${[35,50,65].map(x=>`<line class="ink-2" x1="${x}" y1="32" x2="${x}" y2="52" opacity=".8"/>`).join('')}
+    ${[35,50,65].map(x=>`<path class="ink" d="M${x-5} 52 q0 -2 5 -2 q5 0 5 2 v24 q0 3 -5 3 q-5 0 -5 -3 z"/>`).join('')}
+    <line class="ground" x1="14" y1="90" x2="86" y2="90"/>
+  </svg>`;
+}
+
+/* ════════ LIGNE DE CANETTES placeholder icon ════════ */
+function icoCanLine(){
+  return `<svg viewBox="0 0 110 100" width="42" height="38" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+    <rect class="ink" x="8" y="12" width="94" height="22" rx="3"/>
+    ${[22,42,62,82].map(x=>`<ellipse class="ink-2" cx="${x}" cy="56" rx="7" ry="18"/>`).join('')}
+    ${[22,42,62,82].map(x=>`<ellipse class="ink-2" cx="${x}" cy="40" rx="7" ry="3"/>`).join('')}
+    ${[22,42,62,82].map(x=>`<line class="ink-2" x1="${x-7}" y1="34" x2="${x+7}" y2="34" opacity=".5"/>`).join('')}
+    <line class="ground" x1="8" y1="84" x2="102" y2="84"/>
+  </svg>`;
+}
+
+/* ════════ SOUTIREUSE FÛTS placeholder icon ════════ */
+function icoKegFiller(){
+  return `<svg viewBox="0 0 100 100" width="38" height="38" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+    <path class="ink" d="M28 32 Q50 18 72 32 V68 Q50 82 28 68 Z"/>
+    <ellipse class="ink-2" cx="50" cy="32" rx="22" ry="5"/>
+    <ellipse class="ink-2" cx="50" cy="68" rx="22" ry="5"/>
+    <line class="ink" x1="50" y1="18" x2="50" y2="10"/>
+    <path class="ink" d="M44 10 h12"/>
+    ${triClamp(50,10,.65)}
+    <line class="ink-2" x1="36" y1="44" x2="64" y2="44"/><line class="ink-2" x1="36" y1="56" x2="64" y2="56"/>
+    <line class="ground" x1="16" y1="90" x2="84" y2="90"/>
+    <path class="ground" d="M34 68 L28 90"/><path class="ground" d="M66 68 L72 90"/>
+  </svg>`;
+}
+
+/* ════════ ENCARTONNEUSE placeholder icon ════════ */
+function icoCartoner(){
+  return `<svg viewBox="0 0 110 100" width="42" height="38" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+    <rect class="ink" x="10" y="14" width="90" height="58" rx="4"/>
+    <path class="ink-2" d="M10 40 h90"/>
+    <path class="ink-2" d="M10 56 h90"/>
+    <path class="ink" d="M30 14 L22 8 H88 L80 14"/>
+    <path class="ink-2" d="M42 40 v16 M68 40 v16"/>
+    <rect class="ink-2" x="46" y="44" width="18" height="10" rx="2"/>
+  </svg>`;
+}
+
+/* ════════ PACKAGING SCENE — overview thumbnail ════════ */
+function pkgScene(){
+  return `<svg viewBox="0 0 760 280" width="100%" height="100%" class="draw" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
+    <line class="ground" x1="18" y1="258" x2="742" y2="258"/>
+
+    <!-- Soutireuse bouteille -->
+    <g transform="translate(40,40)">
+      <rect class="ink" x="20" y="8" width="100" height="22" rx="3"/>
+      ${[40,70,100].map(x=>`<line class="ink-2" x1="${x}" y1="30" x2="${x}" y2="44"/>`).join('')}
+      ${[40,70,100].map(x=>`<path class="ink" d="M${x-7} 44 q0 -3 7 -3 q7 0 7 3 v36 q0 4 -7 4 q-7 0 -7 -4 z"/>`).join('')}
+      <line class="ground" x1="10" y1="200" x2="130" y2="200"/>
+      <path class="ground" d="M22 84 L16 200"/><path class="ground" d="M118 84 L124 200"/>
+      ${dim(34,0,'BOUTEILLE','dim-o')}
+    </g>
+
+    <!-- Ligne canettes -->
+    <g transform="translate(218,50)">
+      <rect class="ink" x="8" y="8" width="140" height="28" rx="3"/>
+      ${[28,56,84,112,132].map(x=>`<ellipse class="ink-2" cx="${x}" cy="72" rx="10" ry="26"/>`).join('')}
+      ${[28,56,84,112,132].map(x=>`<ellipse class="ink-2" cx="${x}" cy="48" rx="10" ry="4"/>`).join('')}
+      <line class="ground" x1="6" y1="200" x2="150" y2="200"/>
+      <path class="ground" d="M16 36 L8 200"/><path class="ground" d="M140 36 L148 200"/>
+      ${dim(28,0,'CANETTES','dim-o')}
+    </g>
+
+    <!-- Soutireuse fûts -->
+    <g transform="translate(438,56)">
+      <path class="ink" d="M20 36 Q70 18 120 36 V134 Q70 152 20 134 Z"/>
+      <ellipse class="ink-2" cx="70" cy="36" rx="50" ry="9"/>
+      <ellipse class="ink-2" cx="70" cy="134" rx="50" ry="9"/>
+      <line class="ink" x1="70" y1="18" x2="70" y2="8"/><path class="ink" d="M62 8 h16"/>
+      ${triClamp(70,8,.75)}
+      <line class="ink-2" x1="42" y1="70" x2="98" y2="70"/><line class="ink-2" x1="42" y1="100" x2="98" y2="100"/>
+      <line class="ground" x1="8" y1="200" x2="132" y2="200"/>
+      <path class="ground" d="M26 134 L16 200"/><path class="ground" d="M114 134 L124 200"/>
+      ${dim(32,4,'FÛTS','dim-o')}
+    </g>
+
+    <!-- Encartonneuse -->
+    <g transform="translate(602,46)">
+      <rect class="ink" x="10" y="12" width="110" height="76" rx="4"/>
+      <path class="ink-2" d="M10 52 h110"/>
+      <path class="ink-2" d="M10 74 h110"/>
+      <path class="ink" d="M32 12 L22 4 H108 L98 12"/>
+      <path class="ink-2" d="M52 52 v22 M78 52 v22"/>
+      <rect class="ink-2" x="56" y="58" width="24" height="12" rx="2"/>
+      <line class="ground" x1="6" y1="200" x2="124" y2="200"/>
+      <path class="ground" d="M18 88 L10 200"/><path class="ground" d="M112 88 L120 200"/>
+      ${dim(26,4,'ENCART.','dim-o')}
+    </g>
+
+    <!-- conveyor line -->
+    <path class="ink-2" d="M170 228 H218" opacity=".6"/>
+    <path class="ink-2" d="M368 228 H438" opacity=".6"/>
+    <path class="ink-2" d="M568 228 H602" opacity=".6"/>
+    ${[180,200,228,248,278,298,328,348,378,398,448,468,498,518,548,568,612,632,662,682,712].map(x=>`<line class="ink-2" x1="${x}" y1="226" x2="${x}" y2="230" opacity=".35"/>`).join('')}
+  </svg>`;
+}
+
+/* ── data ────────────────────────────────────────────────────── */
+/* WATER sub-group (part of Brassage category) */
+const WATER=[
+  {nm:"Hot Liquor Tank (HLT)",   code:"HLT",  n:1, vol:100, ico:()=>icoHlt()},
+  {nm:"Cold Liquor Tank (CLT)",  code:"CLT",  n:1, vol:80,  ico:()=>icoHlt()},
+];
+/* Brewhouse vessels */
+const HOT=[
+  {nm:"Cuve de maische (MashTun)",code:"MASH",n:1, sz:30, ico:()=>icoMash()},
+  {nm:"Cuve-filtre (LauterTun)",  code:"LAUT",n:1, sz:30, ico:()=>icoLauter()},
+  {nm:"Cuve tampon (BufferTank)", code:"BUF",  n:1, sz:30, ico:()=>icoBuffer()},
+  {nm:"Cuve d'ébullition",        code:"KETT", n:1, sz:30, ico:()=>icoKettle()},
+  {nm:"Whirlpool / Refroidissement",code:"WHIR",n:1, sz:30, ico:()=>icoWhirlpool()},
+  {nm:"Cuve à levure 1",          code:"YT-1", n:1, sz:12, ico:()=>icoYt()},
+  {nm:"Cuve à levure 2",          code:"YT-2", n:1, sz:12, ico:()=>icoYt()},
+  {nm:"Cuve à levure 3",          code:"YT-3", n:1, sz:12, ico:()=>icoYt()},
+];
+/* Fermentation */
+const CCT=[90,90,90,90,30,30,30,30,90,90,120,120,120,120,150,150,120,120];
+const BBT=[30,90,90,90,90,120,120,240];
+/* Cellar process machines */
+const CELLAR_MACHINES=[
+  {nm:"Centrifugeuse",  code:"CENTRI", debit:30, ico:()=>icoCentrifuge()},
+  {nm:"KZE (pasteurisateur flash)", code:"KZE", debit:20, ico:()=>icoKze()},
+];
+/* Packaging machines */
+const PKG_MACHINES=[
+  {nm:"Soutireuse bouteille",code:"BOT",  vitesse:2000, contenants:["verre 33cl"], ico:()=>icoBottleFiller()},
+  {nm:"Ligne de canettes",   code:"CAN",  vitesse:3000, contenants:["alu 50cl","alu 33cl"], ico:()=>icoCanLine()},
+  // catalogue futur (DBCommissioning) : PET 20L — type de fût non utilisé par La Nébuleuse pour l'instant
+  {nm:"Soutireuse fûts",     code:"FUT",  vitesse:40,   contenants:["Inox 20L"], ico:()=>icoKegFiller()},
+  {nm:"Encartonneuse",       code:"CART", formats:[
+    {label:"Carton 24 bouteilles 33cl",   code:"B"},
+    {label:"Carton 12 bouteilles 33cl",   code:"B12"},
+    {label:"Carton 6×4 bouteilles 33cl",  code:"4"},
+    {label:"Pack 4 bouteilles 33cl",      code:"4PB"},
+    {label:"Carton 24 canettes 50cl",     code:"C"},
+    {label:"Carton 24 canettes 50cl (variante)", code:"BC"},
+    {label:"Carton 6×4 canettes 50cl",   code:"4C"},
+    {label:"Tray 6 canettes 50cl",        code:"6C"},
+    {label:"Carton 12 canettes 50cl",     code:"12C"},
+    {label:"Pack 4 canettes 50cl",        code:"4PC"},
+  ], ico:()=>icoCartoner()},
+];
+const SIZES_F=[30,90,120,150,240];
+
+/* ── render config panels ───────────────────────────────────── */
+function waterRows(){
+  return WATER.map((v,i)=>`<div class="vrow reveal" style="animation-delay:${.08+i*.05}s" data-vessel="${v.code}">
+    <div class="ico">${v.ico()}</div>
+    <div class="meta"><div class="nm"><input value="${v.nm}"></div><div class="kv">${v.code} · eau</div></div>
+    <div class="szpick">${[80,100,120].map(s=>`<button class="${s===v.vol?'on':''}">${s}HL</button>`).join('')}</div>
+    <button class="del-vessel" data-vessel="${v.code}" title="Supprimer" style="margin-left:6px;">✕</button>
+  </div>`).join('');
+}
+function hotRows(){
+  return HOT.map((v,i)=>`<div class="vrow reveal" style="animation-delay:${.2+i*.05}s" data-vessel="${v.code}">
+    <div class="ico">${v.ico()}</div>
+    <div class="meta"><div class="nm"><input value="${v.nm}"></div><div class="kv">${v.code} · brassin 30 HL</div></div>
+    <div class="szpick">${[20,25,30,35,40].map(s=>`<button class="${s===v.sz?'on':''}">${s}HL</button>`).join('')}</div>
+    <button class="del-vessel" data-vessel="${v.code}" title="Supprimer" style="margin-left:6px;">✕</button>
+  </div>`).join('');
+}
+function cfgBrew(){
+  document.getElementById('cfgBrew').innerHTML=`
+    <div class="cfg-head"><h3>Eau — HLT &amp; CLT</h3><span class="tot"><b>180 HL</b> eau totale (mock)</span></div>
+    ${waterRows()}
+    <button class="addrow admin-addrow" data-zone="water">+ Ajouter</button>
+    <div class="cfg-head" style="margin-top:18px"><h3>Brassage — 30 HL</h3><span class="tot"><b>8</b> cuves</span></div>
+    ${hotRows()}
+    <button class="addrow admin-addrow" data-zone="hot">+ Ajouter</button>
+    <div class="cfg-note">Valeurs illustratives (MOCK). Le volume de brassin nominal (30 HL) sert de base à la normalisation des recettes. HLT = eau chaude &gt;80°C · CLT = eau froide réfrigérée.</div>`;
+}
+function fermSection(title,arr,prefix,total){
+  const icoFn = prefix==='BBT' ? icoBbt : icoCct;
+  const rows=arr.map((c,i)=>`<div class="vrow reveal" style="animation-delay:${.08+i*.025}s" data-vessel="${prefix}-${i+1}">
+    <div class="ico">${icoFn()}</div>
+    <div class="meta"><div class="nm"><input value="${prefix} ${i+1}"></div><div class="kv">${prefix} · cuve N°${i+1}</div></div>
+    <div class="szpick">${SIZES_F.map(s=>`<button class="${s===c?'on':''}">${s}</button>`).join('')}</div>
+    <button class="del-vessel" data-vessel="${prefix}-${i+1}" title="Supprimer" style="margin-left:6px;">✕</button>
+  </div>`).join('');
+  const zone = prefix==='BBT' ? 'bbt' : 'cct';
+  return `<div class="cfg-head" style="margin-top:18px"><h3>${title}</h3><span class="tot"><b>${total} HL</b> · ${arr.length} cuves</span></div>${rows}<button class="addrow admin-addrow" data-zone="${zone}">+ Ajouter ${prefix}</button>`;
+}
+function machineRows(arr){
+  return arr.map((m,i)=>`<div class="vrow reveal" style="animation-delay:${.08+i*.07}s" data-machine="${m.code}">
+    <div class="ico">${m.ico()}</div>
+    <div class="meta"><div class="nm">${m.nm}</div><div class="kv">${m.code} · débit : <b>${m.debit} HL/h</b> (mock)</div></div>
+    <div class="stepper"><button onclick="this.nextElementSibling.textContent=Math.max(0,+this.nextElementSibling.textContent-5)">−</button><span class="val">${m.debit}</span><button onclick="this.previousElementSibling.textContent=+this.previousElementSibling.textContent+5">+</button></div>
+    <button class="del-vessel" data-machine="${m.code}" title="Supprimer" style="margin-left:6px;">✕</button>
+  </div>`).join('');
+}
+function cfgCellar(){
+  document.getElementById('cfgCellar').innerHTML=
+    fermSection("Fermenteurs · CCT",CCT,"CCT",CCT.reduce((a,b)=>a+b,0).toLocaleString('fr'))+
+    fermSection("Cuves de garde · BBT",BBT,"BBT",BBT.reduce((a,b)=>a+b,0))+
+    `<div class="cfg-head" style="margin-top:18px"><h3>Machines de process</h3></div>`+
+    machineRows(CELLAR_MACHINES)+
+    `<button class="addrow admin-addrow" data-zone="cellar-machines">+ Ajouter</button>`+
+    `<div class="cfg-note">Valeurs illustratives (MOCK). La capacité totale détermine le nombre de brassins simultanés. Centrifugeuse + KZE = séparation clarification + pasteurisation flash.</div>`;
+}
+function pkgContRow(m,i){
+  if(m.formats){
+    // encartonneuse — multi-select formats
+    const fmtBtns = m.formats.map((f,j)=>`<button data-code="${f.code}" class="fmt-toggle${j<3?' on':''}" style="font-size:9px;padding:4px 7px;">${f.label}</button>`).join('');
+    return `<div class="vrow reveal" style="animation-delay:${.08+i*.07}s;flex-wrap:wrap;gap:10px;" data-machine="${m.code}">
+      <div class="ico">${m.ico()}</div>
+      <div class="meta"><div class="nm">${m.nm}</div><div class="kv">${m.code} · formats actifs (multi-select)</div></div>
+      <div class="szpick" style="flex:0 0 100%;flex-wrap:wrap;gap:4px;">${fmtBtns}</div>
+      <button class="del-machine" data-machine="${m.code}" title="Supprimer cette machine" style="margin-left:auto;align-self:flex-start;">✕</button>
+    </div>`;
+  }
+  const cBadges = m.contenants.map(c=>`<span style="font-family:'JetBrains Mono',monospace;font-size:9px;padding:3px 7px;border:1px solid var(--hairline-2);border-radius:5px;color:var(--ink-soft);">${c}</span>`).join(' ');
+  return `<div class="vrow reveal" style="animation-delay:${.08+i*.07}s;" data-machine="${m.code}">
+    <div class="ico">${m.ico()}</div>
+    <div class="meta"><div class="nm">${m.nm}</div><div class="kv">${m.code} · ${cBadges}</div></div>
+    <div class="stepper"><button onclick="this.nextElementSibling.textContent=Math.max(0,+this.nextElementSibling.textContent-100)">−</button><span class="val">${m.vitesse}</span><button onclick="this.previousElementSibling.textContent=+this.previousElementSibling.textContent+100">+</button></div>
+    <button class="del-machine" data-machine="${m.code}" title="Supprimer cette machine" style="margin-left:6px;">✕</button>
+  </div>`;
+}
+function cfgPkg(){
+  document.getElementById('cfgPkg').innerHTML=`
+    <div class="cfg-head"><h3>Machines de conditionnement</h3><span class="tot"><b>4</b> machines</span></div>
+    ${PKG_MACHINES.map((m,i)=>pkgContRow(m,i)).join('')}
+    <button class="addrow admin-addrow" data-zone="pkg">+ Ajouter</button>
+    <div class="cfg-note">Valeurs illustratives (MOCK). Vitesse en u/h pour remplisseuses, formats pour encartonneuse. Contenants compatibles reflètent les SKU actifs.</div>`;
+}
+
+/* ── slide navigation (4 rooms: 0 overview, 1 brew, 2 cellar, 3 pkg) ── */
+const stage=document.getElementById('stage'), crumbs=document.getElementById('crumbs');
+const ROOM_NAMES=['Plan','Salle de Brassage','Cave de Fermentation','Conditionnement'];
+function paintScenes(){
+  document.getElementById('sceneBrew').innerHTML=brewScene();
+  document.getElementById('sceneCellar').innerHTML=cellarScene();
+  document.getElementById('scenePkg').innerHTML=pkgScene();
+}
+function paintCroquis(){
+  document.getElementById('croquiBrew').insertAdjacentHTML('afterbegin',`<div style="width:90%;max-height:90%">${brewScene()}</div>`);
+  document.getElementById('croquiCellar').insertAdjacentHTML('afterbegin',`<div style="width:90%;max-height:90%">${cellarScene()}</div>`);
+  document.getElementById('croquiPkg').insertAdjacentHTML('afterbegin',`<div style="width:92%;max-height:88%">${pkgScene()}</div>`);
+}
+let croquiPainted=[false,false,false];
+function go(room){ // 0=overview,1=brassage,2=cave,3=pkg
+  stage.style.transform=`translateX(-${room*25}%)`;
+  crumbs.innerHTML = room===0 ? `<span class="here">Plan</span>`
+    : `<span>Plan</span><i>↦</i><span class="here">${ROOM_NAMES[room]}</span>`;
+  if(room===1 && !croquiPainted[0]){ cfgBrew(); croquiPainted[0]=true; }
+  if(room===2 && !croquiPainted[1]){ cfgCellar(); croquiPainted[1]=true; }
+  if(room===3 && !croquiPainted[2]){ cfgPkg(); croquiPainted[2]=true; }
+}
+document.querySelectorAll('.zone').forEach(z=>z.onclick=()=>go(+z.dataset.go));
+document.querySelectorAll('[data-back]').forEach(b=>b.onclick=()=>go(+b.dataset.back));
+
+/* ── 3-role switcher ────────────────────────────────────────────
+   Opérateur  = lecture seule (settings statiques, bannière "Lecture seule")
+   Manager    = edit → "Demande de modification" confirm → toast "Demande envoyée", valeur inchangée
+   Admin      = edit → double-vérification confirm → valeur mise à jour en direct
+   Journal des modifications + Valider/Refuser queue = passe ultérieure
+   (pattern éprouvé dans salle-recettes.html) */
+const toast=document.getElementById('toast');
+function showToast(msg){ toast.textContent=msg; toast.classList.add('show'); setTimeout(()=>toast.classList.remove('show'),2800); }
+function getRole(){ return document.body.dataset.role; }
+document.getElementById('roleSeg').querySelectorAll('button').forEach(btn=>{
+  btn.onclick=()=>{
+    document.querySelectorAll('#roleSeg button').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    document.body.dataset.role=btn.dataset.role;
+    const labels={operateur:'Lecture seule · Opérateur',manager:'Demandes de modification · Manager',admin:'Édition directe · Admin'};
+    showToast(labels[btn.dataset.role]);
+  };
+});
+
+/* Intercept stepper/szpick/addrow clicks based on role */
+document.addEventListener('click',function(e){
+  const role=getRole();
+  if(role==='operateur') return; // already frozen by CSS
+  if(e.target.closest('.admin-addrow,.del-vessel,.del-machine')) return; // handled by separate listeners
+  const isControl=e.target.closest('.stepper button,.szpick button,.addrow');
+  if(!isControl) return;
+  if(role==='manager'){
+    e.stopImmediatePropagation(); e.preventDefault();
+    showToast('Demande de modification envoyée à l\'administrateur');
+    return;
+  }
+  if(role==='admin'){
+      // encartonneuse — formats multi-sélectionnables (toggle indépendant)
+      const fmtBtn=e.target.closest('.fmt-toggle');
+      if(fmtBtn){
+        const lbl=fmtBtn.textContent;
+        const turningOn=!fmtBtn.classList.contains('on');
+        if(confirm(`${turningOn?'Activer':'Désactiver'} le format « ${lbl} » ?`)){
+          fmtBtn.classList.toggle('on');
+        }
+        e.stopImmediatePropagation(); e.preventDefault();
+        return;
+      }
+    // double-vérification simple
+    if(!e.target.closest('.szpick button')) return; // steppers act freely; szpick needs confirm
+    const btn=e.target.closest('.szpick button');
+    if(!btn) return;
+    const val=btn.textContent;
+    if(confirm(`Confirmer le changement de taille → ${val} ?`)){
+      btn.closest('.szpick').querySelectorAll('button').forEach(b=>b.classList.remove('on'));
+      btn.classList.add('on');
+    }
+    e.stopImmediatePropagation(); e.preventDefault();
+  }
+},true);
+
+/* ── Add / Remove vessel/machine — Admin only ───────────────────
+   Types catalogue: foreshadows DBCommissioning catalogue.
+   Mock only — no persistence. */
+const CATALOGUE_TYPES=[
+  {val:'HLT',  label:'Cuve d\'eau chaude (HLT)',     zone:'water', attr:'vol'},
+  {val:'CLT',  label:'Cuve d\'eau froide (CLT)',      zone:'water', attr:'vol'},
+  {val:'MASH', label:'Cuve de maische',               zone:'hot',   attr:'sz'},
+  {val:'LAUT', label:'Cuve-filtre',                   zone:'hot',   attr:'sz'},
+  {val:'BUF',  label:'Cuve tampon',                   zone:'hot',   attr:'sz'},
+  {val:'KETT', label:'Cuve d\'ébullition',            zone:'hot',   attr:'sz'},
+  {val:'WHIR', label:'Whirlpool',                     zone:'hot',   attr:'sz'},
+  {val:'YT',   label:'Cuve de levure (YT)',           zone:'hot',   attr:'sz'},
+  {val:'CCT',  label:'CCT (fermenteur conique)',      zone:'cct',   attr:'vol'},
+  {val:'BBT',  label:'BBT (cuve de garde)',           zone:'bbt',   attr:'vol'},
+  {val:'CENTRI',label:'Centrifugeuse',                zone:'cellar-machines', attr:'debit'},
+  {val:'KZE',  label:'KZE (pasteurisateur flash)',    zone:'cellar-machines', attr:'debit'},
+  {val:'BOT',  label:'Soutireuse bouteille',          zone:'pkg',   attr:'vitesse'},
+  {val:'CAN',  label:'Ligne de canettes',             zone:'pkg',   attr:'vitesse'},
+  {val:'FUT',  label:'Soutireuse fûts',               zone:'pkg',   attr:'vitesse'},
+  {val:'CART', label:'Encartonneuse',                 zone:'pkg',   attr:''},
+];
+const ATTR_LABELS={vol:'Volume (HL)',sz:'Taille (HL)',debit:'Débit (HL/h)',vitesse:'Vitesse (u/h)','':(null)};
+
+function openAddModal(zone){
+  // Remove any existing modal
+  document.querySelector('.add-modal-overlay')?.remove();
+  const filtered = CATALOGUE_TYPES.filter(t=>t.zone===zone || zone===undefined);
+  const opts = filtered.map(t=>`<option value="${t.val}" data-zone="${t.zone}" data-attr="${t.attr}">${t.label}</option>`).join('');
+  const overlay = document.createElement('div');
+  overlay.className='add-modal-overlay';
+  overlay.innerHTML=`<div class="add-modal">
+    <h4>Ajouter un équipement</h4>
+    <label>Type</label>
+    <select id="addModalType">${opts}</select>
+    <div id="addModalAttrWrap"></div>
+    <p class="modal-note">Types issus du catalogue de commissioning (DBCommissioning).<br>Mock uniquement — aucune persistance.</p>
+    <div class="modal-actions">
+      <button class="btn-cancel" id="addModalCancel">Annuler</button>
+      <button class="btn-confirm" id="addModalConfirm">Ajouter ↦</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+
+  const sel=document.getElementById('addModalType');
+  const attrWrap=document.getElementById('addModalAttrWrap');
+  function updateAttrField(){
+    const opt=sel.options[sel.selectedIndex];
+    const attr=opt.dataset.attr;
+    const lbl=ATTR_LABELS[attr];
+    attrWrap.innerHTML = lbl ? `<label>${lbl}</label><input type="number" id="addModalAttrVal" min="0" value="30">` : '';
+  }
+  sel.addEventListener('change', updateAttrField);
+  updateAttrField();
+
+  document.getElementById('addModalCancel').onclick=()=>overlay.remove();
+  overlay.addEventListener('click',e=>{ if(e.target===overlay) overlay.remove(); });
+  document.getElementById('addModalConfirm').onclick=()=>{
+    const opt=sel.options[sel.selectedIndex];
+    const typeLabel=opt.label;
+    const attrVal=document.getElementById('addModalAttrVal')?.value??'';
+    overlay.remove();
+    showToast(`Ajouté : ${typeLabel}${attrVal?' · '+attrVal:''}  (mock)`);
+  };
+}
+
+/* Handle admin-addrow clicks */
+document.addEventListener('click',function(e){
+  const role=getRole();
+  const addBtn=e.target.closest('.admin-addrow');
+  if(!addBtn) return;
+  e.stopImmediatePropagation(); e.preventDefault();
+  if(role==='admin'){
+    openAddModal(addBtn.dataset.zone);
+  } else if(role==='manager'){
+    showToast('Demande de modification envoyée à l\'administrateur');
+  }
+  // operateur: button is hidden by CSS, no action
+},true);
+
+/* Handle delete vessel/machine clicks */
+document.addEventListener('click',function(e){
+  const role=getRole();
+  const delBtn=e.target.closest('.del-vessel,.del-machine');
+  if(!delBtn) return;
+  e.stopImmediatePropagation(); e.preventDefault();
+  if(role==='admin'){
+    const row=delBtn.closest('.vrow');
+    const nm=row?.querySelector('.nm input')?.value || row?.querySelector('.nm')?.textContent || 'cet élément';
+    if(confirm(`Supprimer « ${nm.trim()} » ?\n\nMock uniquement — aucune persistance.`)){
+      row?.remove();
+      showToast('Élément supprimé (mock)');
+    }
+  } else if(role==='manager'){
+    showToast('Demande de suppression envoyée à l\'administrateur');
+  }
+  // operateur: button hidden by CSS
+},true);
+
+paintScenes(); paintCroquis();
+</script>
+</body>
+</html>

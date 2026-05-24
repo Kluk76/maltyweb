@@ -1,0 +1,4748 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Salle des Machines — Recettes · preview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..700;1,9..144,300..700&family=DM+Sans:opsz,wght@9..40,300..600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+/* ═══════════════════════════════════════════════════════════
+   ROOT PALETTE — verbatim from salle-des-machines.html
+   ═══════════════════════════════════════════════════════════ */
+:root{
+  --bg:#15100a; --bg-elev:#1d160d; --ink:#ede0c4; --ink-soft:#c8b894;
+  --ink-mute:#7a6647; --ink-faint:#3a2e1d; --hairline:#261d11; --hairline-2:#342818;
+  --hop:#9eb060; --hop-deep:#6b7a3e; --ember:#c5664a; --oak:#a07a48; --oak-deep:#6e4e26;
+  --cold:#2f5575; --bbt:#6593b8;
+  --steel:#b8bcc0; --steel-mid:#5e6266; --steel-deep:#2c2e30; --steel-shadow:#15171a;
+  --line:#caa86e; --line-soft:#7a6647;
+
+  /* ledger-specific */
+  --paper:#f5ead0;       /* aged paper face */
+  --paper-2:#ede0bb;     /* slightly darker, verso */
+  --paper-shadow:#b8a070;/* paper edge shadow */
+  --ink-on-paper:#2c1d08;/* dark sepia ink on paper */
+  --ink-mute-paper:#8a6a3a;
+  --rule:#c4a87055;      /* horizontal ledger rule */
+  --rule-strong:#c4a87088;
+  --spine-shadow:rgba(0,0,0,.55);
+  --cat-malt:#7a5c28;
+  --cat-hop:#4a6a22;
+  --cat-min:#285c6a;
+  --cat-proc:#5a2868;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden}
+body{
+  font-family:"DM Sans",system-ui,sans-serif;
+  color:var(--ink); background:var(--bg);
+  height:100vh;
+}
+
+/* ── drafting board (same as salle-des-machines) ── */
+.board{
+  position:fixed; inset:0;
+  background:
+    radial-gradient(130% 90% at 50% -20%, rgba(160,122,72,.13), transparent 55%),
+    radial-gradient(100% 120% at 50% 130%, rgba(0,0,0,.55), transparent 60%),
+    var(--bg);
+}
+.board::before{
+  content:""; position:absolute; inset:0; opacity:.5;
+  background-image:
+    linear-gradient(rgba(122,102,71,.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(122,102,71,.07) 1px, transparent 1px),
+    linear-gradient(rgba(122,102,71,.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(122,102,71,.04) 1px, transparent 1px);
+  background-size:120px 120px,120px 120px,24px 24px,24px 24px;
+  mask-image:radial-gradient(120% 100% at 50% 40%, #000 55%, transparent 92%);
+}
+.board::after{
+  content:""; position:absolute; inset:0; pointer-events:none; opacity:.5;
+  background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .03 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+/* corner marks */
+.mark{ position:fixed; width:26px; height:26px; border:1px solid var(--hairline-2); z-index:3; opacity:.7 }
+.mark.tl{top:18px;left:18px;border-right:0;border-bottom:0}
+.mark.tr{top:18px;right:18px;border-left:0;border-bottom:0}
+.mark.bl{bottom:18px;left:18px;border-right:0;border-top:0}
+.mark.br{bottom:18px;right:18px;border-left:0;border-top:0}
+
+/* ── top chrome ── */
+.chrome{
+  position:fixed; top:0; left:0; right:0; z-index:20;
+  display:flex; align-items:center; gap:18px; padding:26px 44px;
+}
+.brandmark{ font-family:"JetBrains Mono",monospace; font-size:10px; letter-spacing:.4em; color:var(--ink-mute); text-transform:uppercase }
+.brandmark b{ color:var(--ink-soft); font-weight:500 }
+.crumbs{ display:flex; align-items:center; gap:10px; font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.12em; color:var(--ink-mute); text-transform:uppercase }
+.crumbs .here{ color:var(--oak) }
+.crumbs i{ font-style:normal; opacity:.4 }
+.mode{
+  margin-left:auto; display:flex; align-items:center; gap:9px;
+  font-family:"JetBrains Mono",monospace; font-size:10px; letter-spacing:.12em;
+  color:var(--ink-soft); padding:7px 13px; border:1px solid var(--hop-deep);
+  border-radius:30px; background:rgba(110,122,62,.1); text-transform:uppercase; cursor:pointer;
+}
+.mode .pip{ width:7px;height:7px;border-radius:50%;background:var(--hop);box-shadow:0 0 9px var(--hop) }
+.mode.ro{ border-color:var(--oak-deep); background:rgba(160,122,72,.08); color:var(--ink-mute) }
+.mode.ro .pip{ background:var(--oak); box-shadow:0 0 9px var(--oak) }
+
+/* ── ROLE SWITCHER (replaces binary mode toggle) ── */
+.role-switcher{
+  margin-left:auto; display:flex; align-items:center;
+  border:1px solid var(--hairline-2); border-radius:30px;
+  background:rgba(26,16,8,.6); overflow:hidden;
+  backdrop-filter:blur(4px);
+}
+.role-btn{
+  padding:7px 14px; border:none; background:none; cursor:pointer;
+  font-family:"JetBrains Mono",monospace; font-size:9.5px; letter-spacing:.14em;
+  color:var(--ink-mute); text-transform:uppercase; transition:all .22s;
+  position:relative; white-space:nowrap;
+}
+.role-btn:not(:last-child)::after{
+  content:""; position:absolute; right:0; top:20%; bottom:20%;
+  width:1px; background:var(--hairline-2);
+}
+.role-btn.active{
+  background:rgba(160,122,72,.18); color:var(--ink-soft);
+}
+.role-btn.active .rpip{
+  display:inline-block;
+}
+.rpip{
+  display:none; width:6px; height:6px; border-radius:50%;
+  margin-right:6px; vertical-align:middle; position:relative; top:-1px;
+}
+.role-btn[data-role="operateur"].active{ background:rgba(94,98,102,.18); color:var(--steel) }
+.role-btn[data-role="operateur"].active .rpip{ background:var(--steel); box-shadow:0 0 7px var(--steel) }
+.role-btn[data-role="manager"].active{ background:rgba(47,85,117,.2); color:var(--bbt) }
+.role-btn[data-role="manager"].active .rpip{ background:var(--bbt); box-shadow:0 0 7px var(--bbt) }
+.role-btn[data-role="admin"].active{ background:rgba(158,176,96,.16); color:var(--hop) }
+.role-btn[data-role="admin"].active .rpip{ background:var(--hop); box-shadow:0 0 7px var(--hop) }
+
+/* ── Journal button ── */
+.journal-btn{
+  padding:7px 14px; border:1px solid var(--hairline-2); border-radius:30px;
+  background:rgba(26,16,8,.6); cursor:pointer;
+  font-family:"JetBrains Mono",monospace; font-size:9.5px; letter-spacing:.14em;
+  color:var(--ink-mute); text-transform:uppercase; transition:all .22s;
+  backdrop-filter:blur(4px); display:flex; align-items:center; gap:7px;
+}
+.journal-btn:hover{ border-color:var(--oak-deep); color:var(--ink-soft) }
+.journal-badge{
+  display:none; width:16px; height:16px; border-radius:50%;
+  background:var(--ember); color:#fff;
+  font-size:8px; font-family:"JetBrains Mono",monospace; font-weight:700;
+  align-items:center; justify-content:center; line-height:1;
+}
+.journal-badge.visible{ display:flex }
+
+/* ── role banner (replaces req-banner) ── */
+.role-banner{
+  display:none; align-items:center; gap:10px;
+  padding:9px 16px; border:1px solid; border-radius:9px;
+  font-size:12px; font-family:"DM Sans",sans-serif;
+  position:absolute; top:76px; left:50%; transform:translateX(-50%);
+  white-space:nowrap; z-index:25; backdrop-filter:blur(4px);
+}
+.role-banner.visible{ display:flex }
+.role-banner.ban-operateur{
+  border-color:rgba(94,98,102,.35); background:rgba(44,46,48,.45); color:var(--steel);
+}
+.role-banner.ban-manager{
+  border-color:rgba(47,85,117,.4); background:rgba(24,42,58,.5); color:var(--bbt);
+}
+.role-banner.ban-admin{
+  border-color:rgba(110,122,62,.35); background:rgba(22,28,12,.5); color:var(--hop);
+}
+.role-banner .ban-pip{
+  width:7px; height:7px; border-radius:50%; flex:0 0 7px;
+}
+.ban-operateur .ban-pip{ background:var(--steel); box-shadow:0 0 7px var(--steel) }
+.ban-manager .ban-pip{ background:var(--bbt); box-shadow:0 0 7px var(--bbt) }
+.ban-admin .ban-pip{ background:var(--hop); box-shadow:0 0 7px var(--hop) }
+
+/* keep old req-banner rule harmless */
+.req-banner{ display:none !important }
+
+/* ══════════════════════════════════════════════════════════
+   LEDGER STAGE — the open-book spread
+   ══════════════════════════════════════════════════════════ */
+.ledger-stage{
+  position:fixed; inset:0;
+  display:flex; align-items:center; justify-content:center;
+  padding:88px 52px 52px;
+  z-index:10;
+}
+
+/* The open book wrapper */
+.book{
+  display:flex; align-items:stretch;
+  width:100%; max-width:1480px; height:100%;
+  max-height:860px;
+  filter:drop-shadow(0 40px 80px rgba(0,0,0,.7)) drop-shadow(0 8px 20px rgba(0,0,0,.5));
+  animation:bookOpen .9s cubic-bezier(.2,.8,.2,1) both;
+}
+@keyframes bookOpen{
+  from{ opacity:0; transform:perspective(1400px) rotateX(6deg) scale(.96) translateY(16px); }
+  to{ opacity:1; transform:perspective(1400px) rotateX(0deg) scale(1) translateY(0); }
+}
+
+/* paper grain overlay (shared CSS bg, no filter on glyphs) */
+.page-grain{
+  position:absolute; inset:0; pointer-events:none; z-index:2; border-radius:inherit;
+  background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeBlend in='SourceGraphic' mode='overlay' result='blend'/%3E%3CfeComposite in='blend' in2='SourceGraphic' operator='in'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)' opacity='0.04'/%3E%3C/svg%3E");
+  mix-blend-mode:multiply; opacity:.6;
+}
+
+/* ── LEFT PAGE — index ── */
+.page-left{
+  flex:0 0 38%;
+  background:
+    linear-gradient(108deg, #f7edd4 0%, var(--paper) 30%, #ede2c0 70%, #e8d8b0 100%);
+  border-radius:4px 0 0 4px;
+  position:relative; overflow:hidden;
+  display:flex; flex-direction:column;
+}
+/* page edge illusion */
+.page-left::before{
+  content:""; position:absolute; left:0; top:0; bottom:0; width:18px;
+  background:linear-gradient(90deg, #d4b87a 0%, transparent 100%);
+  z-index:3; border-radius:4px 0 0 4px; opacity:.6;
+}
+/* top age-stain */
+.page-left::after{
+  content:""; position:absolute; top:0; left:0; right:0; height:60px;
+  background:linear-gradient(180deg, rgba(160,120,60,.12), transparent);
+  z-index:3; pointer-events:none;
+}
+
+/* ── SPINE ── */
+.spine{
+  flex:0 0 32px; position:relative;
+  background:linear-gradient(90deg, #1a1008 0%, #2e1e0a 18%, #251509 50%, #2e1e0a 82%, #1a1008 100%);
+  box-shadow:
+    inset 2px 0 8px rgba(0,0,0,.6),
+    inset -2px 0 8px rgba(0,0,0,.6),
+    0 0 30px rgba(0,0,0,.7);
+  z-index:5;
+  display:flex; align-items:center; justify-content:center;
+  overflow:hidden;
+}
+.spine::before{
+  content:""; position:absolute; inset:0;
+  background:
+    linear-gradient(180deg,
+      rgba(202,168,110,.04) 0%,
+      rgba(202,168,110,.08) 15%,
+      rgba(202,168,110,.03) 30%,
+      rgba(202,168,110,.06) 50%,
+      rgba(202,168,110,.03) 70%,
+      rgba(202,168,110,.07) 85%,
+      rgba(202,168,110,.04) 100%
+    );
+}
+.spine-text{
+  writing-mode:vertical-rl; transform:rotate(180deg);
+  font-family:"Fraunces",serif; font-variation-settings:"opsz" 72; font-weight:400; font-style:italic;
+  font-size:10px; letter-spacing:.24em; color:rgba(202,168,110,.45);
+  text-transform:uppercase; user-select:none; position:relative; z-index:2;
+}
+
+/* ── RIGHT PAGE — recipe detail ── */
+.page-right{
+  flex:1;
+  background:
+    linear-gradient(252deg, #f7edd4 0%, var(--paper) 25%, #ede2c0 60%, #e6d9b4 100%);
+  border-radius:0 4px 4px 0;
+  position:relative; overflow:hidden;
+  display:flex; flex-direction:column;
+}
+.page-right::before{
+  content:""; position:absolute; right:0; top:0; bottom:0; width:18px;
+  background:linear-gradient(270deg, #c8a560 0%, transparent 100%);
+  z-index:3; border-radius:0 4px 4px 0; opacity:.55;
+}
+.page-right::after{
+  content:""; position:absolute; top:0; left:0; right:0; height:60px;
+  background:linear-gradient(180deg, rgba(160,120,60,.1), transparent);
+  z-index:3; pointer-events:none;
+}
+
+/* ════ LEFT PAGE CONTENTS ════ */
+.index-header{
+  padding:36px 32px 0 36px; position:relative; z-index:4; flex:0 0 auto;
+}
+.index-label{
+  font-family:"JetBrains Mono",monospace; font-size:9px; letter-spacing:.3em;
+  color:var(--ink-mute-paper); text-transform:uppercase; margin-bottom:6px;
+}
+.index-title{
+  font-family:"Fraunces",serif; font-variation-settings:"opsz" 144; font-weight:500;
+  font-size:28px; line-height:1; color:var(--ink-on-paper);
+}
+.index-title em{ font-style:italic; color:var(--cat-malt) }
+.index-rule{
+  margin:14px 0 0;
+  border:none; border-top:1.5px solid var(--rule-strong);
+}
+
+/* bookmark tabs — outer edge of left page */
+.bookmarks{
+  position:absolute; right:-1px; top:50%; transform:translateY(-50%);
+  display:flex; flex-direction:column; gap:3px; z-index:15;
+}
+.bm{
+  width:28px; padding:18px 0; writing-mode:vertical-rl; transform:rotate(180deg);
+  font-family:"JetBrains Mono",monospace; font-size:8.5px; letter-spacing:.18em;
+  color:rgba(242,232,208,.75); text-transform:uppercase; text-align:center;
+  border-radius:0 5px 5px 0; cursor:pointer; position:relative;
+  transition:width .2s, color .2s, box-shadow .2s;
+  background:var(--bm-color,var(--oak-deep));
+  box-shadow:2px 0 8px rgba(0,0,0,.35);
+  user-select:none;
+}
+.bm:hover, .bm.active{
+  width:34px; color:rgba(242,232,208,1);
+  box-shadow:3px 0 14px rgba(0,0,0,.5);
+}
+.bm.active::after{
+  content:""; position:absolute; left:0; top:0; bottom:0; width:2px;
+  background:rgba(255,220,140,.6);
+}
+
+/* index scroll area */
+.index-scroll{
+  flex:1; overflow-y:auto; padding:10px 28px 24px 36px;
+  position:relative; z-index:4;
+  scrollbar-width:thin; scrollbar-color:rgba(160,120,60,.3) transparent;
+}
+.index-scroll::-webkit-scrollbar{width:4px}
+.index-scroll::-webkit-scrollbar-thumb{background:rgba(160,120,60,.35);border-radius:2px}
+
+/* group headings */
+.idx-group{
+  margin-top:18px; margin-bottom:4px;
+}
+.idx-group:first-child{ margin-top:10px }
+.idx-group-label{
+  font-family:"JetBrains Mono",monospace; font-size:8px; letter-spacing:.28em;
+  color:var(--ink-mute-paper); text-transform:uppercase;
+  padding-bottom:4px; border-bottom:1px solid var(--rule);
+}
+
+/* recipe index rows */
+.idx-row{
+  display:flex; align-items:baseline; gap:6px;
+  padding:5px 0; border-bottom:1px solid var(--rule);
+  cursor:pointer; position:relative;
+  transition:background .15s;
+  opacity:0; animation:fadeSlide .4s cubic-bezier(.2,.7,.2,1) forwards;
+}
+.idx-row:hover{ background:rgba(160,120,60,.06) }
+.idx-row.sel{ background:rgba(110,78,38,.08) }
+.idx-row.sel .idx-name{ color:var(--cat-malt); font-weight:600 }
+.idx-row.sel::before{
+  content:"▸"; position:absolute; left:-14px;
+  color:var(--cat-malt); font-size:8px;
+}
+.idx-name{
+  font-family:"Fraunces",serif; font-variation-settings:"opsz" 48; font-weight:400;
+  font-size:13.5px; color:var(--ink-on-paper); flex:1; min-width:0;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.idx-vintage{
+  font-family:"JetBrains Mono",monospace; font-size:9px; color:var(--ink-mute-paper);
+  flex:0 0 auto;
+}
+.idx-dots{
+  flex:1; border-bottom:1px dotted rgba(160,120,60,.3); margin-bottom:2px; min-width:12px;
+}
+.idx-page{
+  font-family:"JetBrains Mono",monospace; font-size:9px; color:var(--ink-mute-paper);
+  flex:0 0 18px; text-align:right;
+}
+@keyframes fadeSlide{
+  from{opacity:0; transform:translateX(-8px)}
+  to{opacity:1; transform:none}
+}
+
+/* nouvelle recette button */
+.btn-new{
+  margin:12px 36px 20px; flex:0 0 auto; position:relative; z-index:4;
+  display:flex; align-items:center; gap:9px;
+  padding:10px 16px; border:1px dashed rgba(110,78,38,.45); border-radius:8px;
+  background:rgba(110,78,38,.04); cursor:pointer;
+  font-family:"DM Sans",sans-serif; font-size:13px; color:var(--ink-mute-paper);
+  transition:border-color .2s, background .2s, color .2s;
+}
+.btn-new:hover{ border-color:rgba(110,78,38,.7); background:rgba(110,78,38,.08); color:var(--ink-on-paper) }
+.btn-new .quill{ font-size:16px; opacity:.8 }
+body[data-role="operateur"] .btn-new{ display:none !important }
+
+/* ════ RIGHT PAGE CONTENTS ════ */
+.recipe-view{
+  flex:1; display:flex; flex-direction:column; overflow:hidden;
+  position:relative; z-index:4; padding:32px 36px 24px 36px;
+}
+
+/* page-turn animation */
+.recipe-view.turning{
+  animation:pageTurn .38s cubic-bezier(.4,.0,.6,1) forwards;
+}
+@keyframes pageTurn{
+  0%{opacity:1;transform:none}
+  50%{opacity:0;transform:perspective(900px) rotateY(-8deg) translateX(12px) scale(.98)}
+  51%{opacity:0;transform:perspective(900px) rotateY(4deg) translateX(-6px) scale(.98)}
+  100%{opacity:1;transform:none}
+}
+
+/* recipe header */
+.recipe-header{ flex:0 0 auto; margin-bottom:18px }
+.recipe-label{
+  font-family:"JetBrains Mono",monospace; font-size:9px; letter-spacing:.3em;
+  color:var(--ink-mute-paper); text-transform:uppercase; margin-bottom:6px;
+}
+.recipe-name-row{
+  display:flex; align-items:flex-end; gap:16px; flex-wrap:wrap;
+}
+.recipe-name{
+  font-family:"Fraunces",serif; font-variation-settings:"opsz" 144; font-weight:600;
+  font-size:44px; line-height:1; color:var(--ink-on-paper);
+}
+.recipe-name::first-letter{
+  font-size:1.35em; float:left; line-height:.78; margin-right:.06em;
+  color:var(--cat-malt); font-variation-settings:"opsz" 144; font-weight:700;
+}
+.recipe-badge-row{ display:flex; align-items:center; gap:9px; margin-top:8px; flex-wrap:wrap }
+.badge{
+  font-family:"JetBrains Mono",monospace; font-size:9px; letter-spacing:.2em; text-transform:uppercase;
+  padding:4px 10px; border-radius:20px;
+}
+.badge-maison{ background:rgba(110,78,38,.15); color:var(--cat-malt); border:1px solid rgba(110,78,38,.3) }
+.badge-contrat{ background:rgba(42,90,130,.12); color:var(--cold); border:1px solid rgba(42,90,130,.28) }
+.badge-subtype{ background:rgba(160,120,60,.1); color:var(--ink-mute-paper); border:1px solid rgba(160,120,60,.22) }
+.badge-vintage{ background:rgba(90,40,104,.1); color:var(--cat-proc); border:1px solid rgba(90,40,104,.25) }
+.badge-client{ background:rgba(42,90,130,.08); color:var(--cold); border:1px solid rgba(42,90,130,.2) }
+.badge-note{ background:rgba(80,80,60,.08); color:#6a5a3a; border:1px solid rgba(120,100,60,.2) }
+
+/* wax-seal brassin badge */
+.brassin-seal{
+  margin-left:auto; flex:0 0 auto; display:flex; flex-direction:column;
+  align-items:center; justify-content:center;
+  width:74px; height:74px; border-radius:50%;
+  background:radial-gradient(circle at 38% 36%, #8a6028, #5a3a10 55%, #3a2008);
+  box-shadow:0 3px 14px rgba(0,0,0,.35), inset 0 1px 3px rgba(255,200,80,.2), 0 1px 0 rgba(255,200,80,.15);
+  border:1.5px solid rgba(202,168,110,.35);
+  position:relative; overflow:visible;
+}
+.brassin-seal::before{
+  content:""; position:absolute; inset:-4px; border-radius:50%;
+  border:1px solid rgba(202,168,110,.15);
+}
+.brassin-seal .seal-label{
+  font-family:"JetBrains Mono",monospace; font-size:7.5px; letter-spacing:.18em;
+  color:rgba(202,168,110,.65); text-transform:uppercase; line-height:1;
+}
+.brassin-seal .seal-hl{
+  font-family:"Fraunces",serif; font-variation-settings:"opsz" 96; font-weight:700;
+  font-size:22px; line-height:1; color:rgba(242,220,160,.92); margin:2px 0 0;
+}
+.brassin-seal .seal-hl span{ font-size:11px; opacity:.7 }
+.brassin-seal .seal-sub{
+  font-family:"JetBrains Mono",monospace; font-size:6.5px; letter-spacing:.1em;
+  color:rgba(202,168,110,.45); text-transform:uppercase; margin-top:1px;
+}
+
+/* rule under header */
+.recipe-rule{ border:none; border-top:1.5px solid var(--rule-strong); margin-bottom:14px }
+
+/* scale toggle */
+.scale-toggle{
+  display:flex; align-items:center; gap:0; border:1px solid rgba(110,78,38,.35);
+  border-radius:7px; overflow:hidden; flex:0 0 auto; height:28px;
+  margin-left:auto;
+}
+.scale-btn{
+  padding:0 12px; height:100%;
+  font-family:"JetBrains Mono",monospace; font-size:9.5px; letter-spacing:.1em; text-transform:uppercase;
+  background:none; border:none; color:var(--ink-mute-paper); cursor:pointer; transition:.15s;
+  white-space:nowrap;
+}
+.scale-btn.on{
+  background:rgba(110,78,38,.18); color:var(--ink-on-paper); font-weight:700;
+}
+.scale-sep{ width:1px; height:100%; background:rgba(110,78,38,.3); flex:0 0 1px }
+body[data-role="operateur"] .scale-toggle{ opacity:.6; pointer-events:none }
+
+.ctrl-row{
+  display:flex; align-items:center; gap:10px; margin-bottom:14px; flex-wrap:wrap;
+}
+.scale-label{
+  font-family:"JetBrains Mono",monospace; font-size:9px; letter-spacing:.15em;
+  color:var(--ink-mute-paper); text-transform:uppercase;
+}
+.scale-label b{ color:var(--ink-on-paper) }
+
+/* ledger body */
+.ledger-body{
+  flex:1; overflow-y:auto; position:relative;
+  scrollbar-width:thin; scrollbar-color:rgba(160,120,60,.3) transparent;
+}
+.ledger-body::-webkit-scrollbar{width:4px}
+.ledger-body::-webkit-scrollbar-thumb{background:rgba(160,120,60,.35);border-radius:2px}
+
+/* ruled lines baseline */
+.ledger-body::before{
+  content:""; position:absolute; inset:0; pointer-events:none;
+  background-image:repeating-linear-gradient(
+    to bottom,
+    transparent 0px,
+    transparent 31px,
+    var(--rule) 31px,
+    var(--rule) 32px
+  );
+  z-index:0;
+}
+
+/* ingredient category section */
+.cat-section{
+  position:relative; z-index:1; margin-bottom:6px;
+}
+.cat-head{
+  display:flex; align-items:center; gap:10px;
+  padding:7px 0 5px; border-bottom:1.5px solid;
+  margin-bottom:0;
+}
+.cat-head svg{ flex:0 0 20px }
+.cat-head-label{
+  font-family:"Fraunces",serif; font-variation-settings:"opsz" 48; font-weight:500;
+  font-size:13px; letter-spacing:.04em;
+}
+.cat-malt .cat-head{ border-color:rgba(122,92,40,.45); }
+.cat-malt .cat-head-label{ color:var(--cat-malt) }
+.cat-malt .cat-head svg path, .cat-malt .cat-head svg rect,
+.cat-malt .cat-head svg ellipse, .cat-malt .cat-head svg line{ stroke:var(--cat-malt) }
+.cat-hop .cat-head{ border-color:rgba(74,106,34,.4) }
+.cat-hop .cat-head-label{ color:var(--cat-hop) }
+.cat-hop .cat-head svg path, .cat-hop .cat-head svg circle,
+.cat-hop .cat-head svg line, .cat-hop .cat-head svg ellipse{ stroke:var(--cat-hop) }
+.cat-min .cat-head{ border-color:rgba(40,92,106,.4) }
+.cat-min .cat-head-label{ color:var(--cat-min) }
+.cat-min .cat-head svg path, .cat-min .cat-head svg polygon,
+.cat-min .cat-head svg line{ stroke:var(--cat-min) }
+.cat-proc .cat-head{ border-color:rgba(90,40,104,.35) }
+.cat-proc .cat-head-label{ color:var(--cat-proc) }
+.cat-proc .cat-head svg path, .cat-proc .cat-head svg circle,
+.cat-proc .cat-head svg line, .cat-proc .cat-head svg ellipse{ stroke:var(--cat-proc) }
+
+/* ingredient lines */
+.ing-row{
+  display:flex; align-items:baseline; gap:8px;
+  padding:4px 0; height:32px;
+  position:relative; z-index:1;
+  opacity:0; animation:rowIn .35s cubic-bezier(.2,.7,.2,1) forwards;
+}
+@keyframes rowIn{
+  from{opacity:0;transform:translateX(10px)}
+  to{opacity:1;transform:none}
+}
+.ing-num{
+  flex:0 0 28px; font-family:"JetBrains Mono",monospace; font-size:9px;
+  color:rgba(122,92,40,.4); text-align:right;
+}
+.ing-name{
+  flex:1; font-family:"DM Sans",sans-serif; font-size:13px;
+  color:var(--ink-on-paper); padding-left:4px;
+}
+.ing-dots{
+  flex:1; border-bottom:1px dotted rgba(160,120,60,.28); margin-bottom:3px; min-width:16px;
+}
+.ing-qty{
+  flex:0 0 90px; font-family:"JetBrains Mono",monospace; font-size:13px; font-weight:500;
+  text-align:right; color:var(--ink-on-paper);
+  transition:color .25s;
+}
+.ing-unit{
+  flex:0 0 36px; font-family:"JetBrains Mono",monospace; font-size:10px;
+  color:var(--ink-mute-paper); padding-left:4px;
+}
+
+/* empty / placeholder state */
+.recipe-empty{
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  flex:1; gap:14px; opacity:.55; padding:40px 0;
+}
+.recipe-empty .empty-icon{ opacity:.4 }
+.recipe-empty p{
+  font-family:"Fraunces",serif; font-variation-settings:"opsz" 72; font-style:italic;
+  font-size:16px; color:var(--ink-mute-paper); text-align:center; line-height:1.5;
+}
+
+/* page footer */
+.page-footer{
+  flex:0 0 auto; padding:10px 8px 0;
+  display:flex; align-items:center; justify-content:space-between;
+  border-top:1px solid var(--rule); position:relative; z-index:4;
+}
+.footer-note{
+  font-family:"JetBrains Mono",monospace; font-size:8.5px; letter-spacing:.12em;
+  color:var(--ink-mute-paper); text-transform:uppercase;
+}
+.page-num{
+  font-family:"Fraunces",serif; font-variation-settings:"opsz" 48;
+  font-size:13px; color:rgba(122,92,40,.45);
+}
+
+/* ════ CREATION FORM (right page overlay) ════ */
+.creation-form{
+  position:absolute; inset:0; z-index:10;
+  background:
+    linear-gradient(252deg, #f7edd4 0%, var(--paper) 25%, #ede2c0 60%, #e6d9b4 100%);
+  display:none; flex-direction:column;
+  padding:32px 36px 24px; overflow-y:auto;
+  animation:fadeIn .3s ease;
+}
+.creation-form.open{ display:flex }
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+.form-title{
+  font-family:"Fraunces",serif; font-variation-settings:"opsz" 144; font-weight:600;
+  font-size:34px; color:var(--ink-on-paper); margin-bottom:4px;
+}
+.form-title em{ color:var(--cat-malt); font-style:italic }
+.form-rule{ border:none; border-top:1.5px solid var(--rule-strong); margin:14px 0 18px }
+.form-fields{ display:flex; flex-direction:column; gap:14px; flex:1 }
+.form-row{
+  display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap;
+}
+.form-field{ display:flex; flex-direction:column; gap:5px; flex:1 }
+.form-field.narrow{ flex:0 0 160px }
+.form-label{
+  font-family:"JetBrains Mono",monospace; font-size:9px; letter-spacing:.22em;
+  text-transform:uppercase; color:var(--ink-mute-paper);
+}
+.form-input{
+  background:none; border:none; border-bottom:1.5px solid rgba(110,78,38,.4);
+  color:var(--ink-on-paper); font-family:"Fraunces",serif; font-variation-settings:"opsz" 48;
+  font-size:18px; padding:4px 0; width:100%; outline:none;
+  transition:border-color .2s;
+}
+.form-input:focus{ border-bottom-color:rgba(110,78,38,.85) }
+.form-select{
+  background:rgba(110,78,38,.06); border:1px solid rgba(110,78,38,.3); border-radius:6px;
+  color:var(--ink-on-paper); font-family:"DM Sans",sans-serif; font-size:13px;
+  padding:7px 10px; width:100%; outline:none;
+}
+.form-select:focus{ border-color:rgba(110,78,38,.65) }
+
+/* ingredient add table */
+.ing-table-head{
+  display:flex; gap:8px; padding:6px 0; border-bottom:1.5px solid var(--rule-strong);
+  font-family:"JetBrains Mono",monospace; font-size:9px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--ink-mute-paper);
+}
+.ing-table-head .th-cat{ flex:0 0 130px }
+.ing-table-head .th-name{ flex:1 }
+.ing-table-head .th-qty{ flex:0 0 90px; text-align:right }
+.ing-table-head .th-unit{ flex:0 0 70px }
+.ing-table-head .th-del{ flex:0 0 24px }
+.form-ing-row{
+  display:flex; gap:8px; align-items:center; padding:5px 0;
+  border-bottom:1px solid var(--rule);
+}
+.form-ing-row .fi-cat{
+  flex:0 0 130px; background:rgba(110,78,38,.06); border:1px solid rgba(110,78,38,.25);
+  border-radius:5px; color:var(--ink-on-paper); font-family:"DM Sans",sans-serif;
+  font-size:12px; padding:5px 7px; outline:none;
+}
+.form-ing-row .fi-name{
+  flex:1; background:none; border:none; border-bottom:1px solid rgba(110,78,38,.3);
+  color:var(--ink-on-paper); font-family:"DM Sans",sans-serif; font-size:13px;
+  padding:3px 0; outline:none;
+}
+.form-ing-row .fi-qty{
+  flex:0 0 90px; background:none; border:none; border-bottom:1px solid rgba(110,78,38,.3);
+  color:var(--ink-on-paper); font-family:"JetBrains Mono",monospace; font-size:13px;
+  text-align:right; padding:3px 4px; outline:none;
+}
+.form-ing-row .fi-unit{
+  flex:0 0 70px; background:rgba(110,78,38,.06); border:1px solid rgba(110,78,38,.25);
+  border-radius:5px; color:var(--ink-on-paper); font-family:"JetBrains Mono",monospace;
+  font-size:11px; padding:5px 6px; outline:none;
+}
+.form-ing-row .fi-del{
+  flex:0 0 24px; background:none; border:none; color:rgba(160,80,60,.5);
+  font-size:15px; cursor:pointer; line-height:1; padding:0;
+  transition:color .15s;
+}
+.form-ing-row .fi-del:hover{ color:var(--ember) }
+.btn-add-ing{
+  display:flex; align-items:center; gap:7px;
+  padding:8px 14px; border:1px dashed rgba(110,78,38,.35); border-radius:7px;
+  background:none; color:var(--ink-mute-paper); cursor:pointer; font-size:12.5px;
+  font-family:"DM Sans",sans-serif; transition:all .2s; margin-top:6px;
+  width:fit-content;
+}
+.btn-add-ing:hover{ border-color:rgba(110,78,38,.65); color:var(--ink-on-paper) }
+
+/* preview below form */
+.form-preview{
+  margin-top:12px; padding:10px 14px; border:1px solid rgba(110,78,38,.2);
+  border-radius:8px; background:rgba(110,78,38,.04);
+}
+.form-preview-label{
+  font-family:"JetBrains Mono",monospace; font-size:8.5px; letter-spacing:.2em;
+  text-transform:uppercase; color:var(--ink-mute-paper); margin-bottom:6px;
+}
+.form-preview-row{
+  display:flex; justify-content:space-between; padding:2px 0;
+  font-family:"DM Sans",sans-serif; font-size:12px; color:var(--ink-on-paper);
+  border-bottom:1px dotted rgba(160,120,60,.2);
+}
+.form-preview-row .pqty{
+  font-family:"JetBrains Mono",monospace; font-size:12px; font-weight:500;
+}
+
+/* form actions */
+.form-actions{
+  display:flex; gap:10px; margin-top:16px; flex:0 0 auto;
+}
+.btn-primary{
+  padding:10px 22px; background:rgba(110,78,38,.2); border:1px solid rgba(110,78,38,.5);
+  border-radius:8px; color:var(--ink-on-paper); font-family:"DM Sans",sans-serif;
+  font-size:13.5px; font-weight:600; cursor:pointer; transition:.2s;
+}
+.btn-primary:hover{ background:rgba(110,78,38,.32); border-color:rgba(110,78,38,.8) }
+.btn-cancel{
+  padding:10px 18px; background:none; border:1px solid rgba(110,78,38,.25);
+  border-radius:8px; color:var(--ink-mute-paper); font-family:"DM Sans",sans-serif;
+  font-size:13.5px; cursor:pointer; transition:.2s;
+}
+.btn-cancel:hover{ color:var(--ink-on-paper); border-color:rgba(110,78,38,.45) }
+body[data-role="operateur"] .creation-form{ display:none !important }
+
+/* ══════════════════════════════════════════════════════════
+   EDITABLE RECIPE HEADER FIELDS
+   ══════════════════════════════════════════════════════════ */
+
+/* editable field wrapper — inline for name, flex for badges */
+.hdr-editable{
+  position:relative; display:inline-block;
+  border-radius:3px; transition:background .15s, box-shadow .15s;
+}
+/* only Admin + Manager get the cursor + hover affordance */
+body[data-role="admin"] .hdr-editable,
+body[data-role="manager"] .hdr-editable{
+  cursor:text;
+}
+body[data-role="admin"] .hdr-editable:hover,
+body[data-role="manager"] .hdr-editable:hover{
+  background:rgba(110,78,38,.08);
+  box-shadow:0 0 0 2px rgba(110,78,38,.18), inset 0 -1.5px 0 rgba(110,78,38,.5);
+}
+/* pencil hint on hover */
+body[data-role="admin"] .hdr-editable::after,
+body[data-role="manager"] .hdr-editable::after{
+  content:"✎";
+  position:absolute; top:-6px; right:-14px;
+  font-size:9px; color:var(--ink-mute-paper); opacity:0;
+  pointer-events:none; transition:opacity .15s;
+  font-family:"DM Sans",sans-serif;
+}
+body[data-role="admin"] .hdr-editable:hover::after,
+body[data-role="manager"] .hdr-editable:hover::after{
+  opacity:.65;
+}
+
+/* text input that overlays the header field during edit */
+.hdr-edit-input{
+  background:rgba(255,245,220,.9); border:none;
+  border-bottom:2px solid var(--cat-malt);
+  outline:none; border-radius:3px 3px 0 0;
+  color:var(--ink-on-paper); font-family:"Fraunces",serif;
+  font-variation-settings:"opsz" 144; font-weight:600;
+  box-shadow:0 2px 12px rgba(0,0,0,.15);
+  padding:2px 6px;
+}
+/* small variant for badges */
+.hdr-edit-input.hdr-edit-sm{
+  font-family:"JetBrains Mono",monospace; font-size:9px;
+  letter-spacing:.2em; font-weight:600; font-variation-settings:normal;
+  text-transform:uppercase; padding:2px 5px;
+}
+/* select variant for badges */
+.hdr-edit-select{
+  background:rgba(255,245,220,.9); border:none;
+  border-bottom:2px solid var(--cat-malt);
+  outline:none; border-radius:3px 3px 0 0;
+  color:var(--ink-on-paper); font-family:"JetBrains Mono",monospace;
+  font-size:9px; letter-spacing:.2em; text-transform:uppercase; font-weight:600;
+  padding:2px 5px; cursor:pointer;
+  box-shadow:0 2px 12px rgba(0,0,0,.15);
+  appearance:none; -webkit-appearance:none;
+  min-width:80px;
+}
+
+/* ── MASTER-DATA WARNING RIBBON (inside modal) ── */
+.modal-masterdata-warn{
+  display:flex; align-items:flex-start; gap:12px;
+  background:linear-gradient(108deg, rgba(197,102,74,.12), rgba(160,60,30,.08));
+  border:1px solid rgba(197,102,74,.45); border-radius:6px;
+  padding:12px 14px; margin-bottom:16px;
+  position:relative; overflow:hidden;
+}
+/* ember stripe on left */
+.modal-masterdata-warn::before{
+  content:""; position:absolute; left:0; top:0; bottom:0; width:3px;
+  background:linear-gradient(180deg, var(--ember), rgba(197,102,74,.4));
+  border-radius:6px 0 0 6px;
+}
+.warn-icon{
+  font-size:18px; flex:0 0 auto; line-height:1; padding-top:1px;
+}
+.warn-body{
+  flex:1; min-width:0;
+}
+.warn-title{
+  font-family:"JetBrains Mono",monospace; font-size:8.5px; letter-spacing:.22em;
+  text-transform:uppercase; color:var(--ember); margin-bottom:5px;
+}
+.warn-text{
+  font-family:"DM Sans",sans-serif; font-size:12px; line-height:1.55;
+  color:var(--ink-on-paper); opacity:.85;
+}
+.warn-text code{
+  font-family:"JetBrains Mono",monospace; font-size:10px;
+  background:rgba(197,102,74,.12); padding:1px 5px; border-radius:3px;
+  color:var(--ember); letter-spacing:.05em;
+}
+
+/* ══════════════════════════════════════════════════════════
+   INLINE EDIT on ingredient qty
+   ══════════════════════════════════════════════════════════ */
+body[data-role="admin"] .ing-row .ing-qty,
+body[data-role="manager"] .ing-row .ing-qty{
+  cursor:text; border-bottom:1px dashed rgba(110,78,38,.35);
+  transition:border-color .15s, background .15s, color .15s;
+  border-radius:3px 3px 0 0; padding:0 3px;
+}
+body[data-role="admin"] .ing-row:hover .ing-qty,
+body[data-role="manager"] .ing-row:hover .ing-qty{
+  border-bottom-color:rgba(110,78,38,.75); background:rgba(110,78,38,.06);
+}
+.ing-qty-input{
+  flex:0 0 90px; font-family:"JetBrains Mono",monospace; font-size:13px; font-weight:500;
+  text-align:right; color:var(--ink-on-paper);
+  background:rgba(255,245,220,.85); border:none; border-bottom:2px solid var(--cat-malt);
+  border-radius:3px 3px 0 0; padding:0 3px; outline:none;
+  box-shadow:0 2px 8px rgba(0,0,0,.12);
+}
+
+/* ══════════════════════════════════════════════════════════
+   MODAL OVERLAY + PARCHMENT PANEL
+   ══════════════════════════════════════════════════════════ */
+.modal-overlay{
+  position:fixed; inset:0; z-index:100;
+  background:rgba(10,6,2,.72);
+  display:none; align-items:center; justify-content:center;
+  backdrop-filter:blur(3px);
+  animation:overlayIn .2s ease;
+}
+.modal-overlay.open{ display:flex }
+@keyframes overlayIn{from{opacity:0}to{opacity:1}}
+
+.modal-parch{
+  position:relative; width:min(520px, 90vw);
+  background:
+    linear-gradient(162deg, #f7edd4 0%, var(--paper) 35%, #ede2c0 70%, #e8d8b0 100%);
+  border-radius:6px;
+  box-shadow:
+    0 32px 80px rgba(0,0,0,.65),
+    0 8px 24px rgba(0,0,0,.4),
+    inset 0 1px 0 rgba(255,240,200,.6);
+  overflow:hidden;
+  animation:modalIn .28s cubic-bezier(.2,.8,.2,1);
+}
+@keyframes modalIn{
+  from{opacity:0;transform:scale(.94) translateY(10px)}
+  to{opacity:1;transform:none}
+}
+.modal-parch::before{
+  content:""; position:absolute; inset:0; pointer-events:none;
+  background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeBlend in='SourceGraphic' mode='overlay' result='blend'/%3E%3CfeComposite in='blend' in2='SourceGraphic' operator='in'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)' opacity='0.04'/%3E%3C/svg%3E");
+  mix-blend-mode:multiply; opacity:.5; z-index:0; border-radius:inherit;
+}
+/* wax-seal accent top-left */
+.modal-parch::after{
+  content:""; position:absolute; top:-18px; left:-18px;
+  width:64px; height:64px; border-radius:50%;
+  background:radial-gradient(circle at 40% 38%, rgba(160,100,40,.28), rgba(100,60,20,.0) 70%);
+  pointer-events:none; z-index:0;
+}
+
+.modal-inner{ position:relative; z-index:1; padding:28px 32px 24px }
+
+.modal-seal-row{
+  display:flex; align-items:center; gap:14px; margin-bottom:18px;
+}
+.modal-seal{
+  width:38px; height:38px; border-radius:50%; flex:0 0 38px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:16px; box-shadow:0 2px 8px rgba(0,0,0,.25);
+}
+.modal-seal.confirm-seal{
+  background:radial-gradient(circle at 38% 36%, #7a5c28, #4a3010 55%);
+  border:1px solid rgba(202,168,110,.4);
+}
+.modal-seal.request-seal{
+  background:radial-gradient(circle at 38% 36%, #2a5a7a, #162a3a 55%);
+  border:1px solid rgba(101,147,184,.35);
+}
+
+.modal-title{
+  font-family:"Fraunces",serif; font-variation-settings:"opsz" 96; font-weight:600;
+  font-size:22px; line-height:1.1; color:var(--ink-on-paper);
+}
+.modal-title em{ font-style:italic; color:var(--cat-malt) }
+.modal-title.req-title em{ color:var(--cold) }
+
+.modal-rule{ border:none; border-top:1px solid var(--rule-strong); margin:14px 0 16px }
+
+/* diff block */
+.modal-diff{
+  background:rgba(110,78,38,.06); border:1px solid rgba(110,78,38,.18);
+  border-radius:6px; padding:12px 14px; margin-bottom:16px;
+}
+.diff-label{
+  font-family:"JetBrains Mono",monospace; font-size:8.5px; letter-spacing:.22em;
+  text-transform:uppercase; color:var(--ink-mute-paper); margin-bottom:8px;
+}
+.diff-row{
+  display:flex; align-items:center; gap:10px;
+  font-family:"DM Sans",sans-serif; font-size:13px; color:var(--ink-on-paper);
+  margin-bottom:4px;
+}
+.diff-field{ font-weight:600; color:var(--cat-malt); flex:0 0 auto; max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+.diff-from{ font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--ember); text-decoration:line-through; opacity:.8 }
+.diff-arrow{ color:var(--ink-mute-paper); font-size:14px; opacity:.5 }
+.diff-to{ font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--hop-deep); font-weight:700 }
+.diff-sub{
+  font-family:"JetBrains Mono",monospace; font-size:10px; color:var(--ink-mute-paper);
+  margin-top:4px; padding-top:4px; border-top:1px dashed rgba(160,120,60,.2);
+}
+
+.modal-actions{ display:flex; gap:10px; justify-content:flex-end; margin-top:4px }
+.btn-modal-confirm{
+  padding:9px 20px; background:rgba(110,78,38,.22); border:1px solid rgba(110,78,38,.55);
+  border-radius:7px; color:var(--ink-on-paper); font-family:"DM Sans",sans-serif;
+  font-size:13px; font-weight:600; cursor:pointer; transition:.18s;
+}
+.btn-modal-confirm:hover{ background:rgba(110,78,38,.35); border-color:rgba(110,78,38,.85) }
+.btn-modal-request{
+  padding:9px 20px; background:rgba(47,85,117,.22); border:1px solid rgba(47,85,117,.5);
+  border-radius:7px; color:var(--bbt); font-family:"DM Sans",sans-serif;
+  font-size:13px; font-weight:600; cursor:pointer; transition:.18s;
+}
+.btn-modal-request:hover{ background:rgba(47,85,117,.35); border-color:var(--bbt) }
+.btn-modal-cancel{
+  padding:9px 16px; background:none; border:1px solid rgba(110,78,38,.22);
+  border-radius:7px; color:var(--ink-mute-paper); font-family:"DM Sans",sans-serif;
+  font-size:13px; cursor:pointer; transition:.18s;
+}
+.btn-modal-cancel:hover{ color:var(--ink-on-paper); border-color:rgba(110,78,38,.4) }
+
+/* ── Toast ── */
+.toast{
+  position:fixed; bottom:36px; left:50%; transform:translateX(-50%) translateY(12px);
+  z-index:200; opacity:0; pointer-events:none;
+  padding:11px 22px; border-radius:30px;
+  background:rgba(24,36,52,.92); border:1px solid rgba(101,147,184,.4);
+  color:var(--bbt); font-family:"JetBrains Mono",monospace; font-size:11px;
+  letter-spacing:.1em; text-transform:uppercase;
+  box-shadow:0 8px 32px rgba(0,0,0,.5);
+  transition:opacity .28s, transform .28s;
+  backdrop-filter:blur(6px);
+}
+.toast.show{ opacity:1; transform:translateX(-50%) translateY(0) }
+
+/* ══════════════════════════════════════════════════════════
+   JOURNAL DRAWER
+   ══════════════════════════════════════════════════════════ */
+.journal-overlay{
+  position:fixed; inset:0; z-index:80;
+  background:rgba(10,6,2,.5);
+  display:none; backdrop-filter:blur(2px);
+}
+.journal-overlay.open{ display:block }
+
+.journal-drawer{
+  position:fixed; top:0; right:0; bottom:0; z-index:81;
+  width:min(580px, 95vw);
+  background:linear-gradient(172deg, #1a1208 0%, #120e06 60%, #0e0a04 100%);
+  border-left:1px solid var(--hairline-2);
+  box-shadow:-16px 0 60px rgba(0,0,0,.7);
+  display:flex; flex-direction:column;
+  transform:translateX(100%); transition:transform .34s cubic-bezier(.2,.8,.2,1);
+}
+.journal-drawer.open{ transform:none }
+
+/* grain on drawer */
+.journal-drawer::before{
+  content:""; position:absolute; inset:0; pointer-events:none; opacity:.4;
+  background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .025 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+.journal-header{
+  flex:0 0 auto; padding:28px 28px 0;
+  border-bottom:1px solid var(--hairline-2);
+  position:relative; z-index:2;
+}
+.journal-header-row{ display:flex; align-items:center; gap:14px; margin-bottom:16px }
+.journal-header-title{
+  font-family:"Fraunces",serif; font-variation-settings:"opsz" 96; font-weight:500;
+  font-style:italic; font-size:22px; color:var(--ink-soft); flex:1;
+}
+.journal-close{
+  width:32px; height:32px; border:1px solid var(--hairline-2); border-radius:50%;
+  background:none; color:var(--ink-mute); cursor:pointer; font-size:16px;
+  display:flex; align-items:center; justify-content:center; transition:all .18s;
+}
+.journal-close:hover{ border-color:var(--oak-deep); color:var(--ink-soft) }
+
+/* journal tabs */
+.journal-tabs{
+  display:flex; gap:0; border-top:1px solid var(--hairline-2);
+}
+.jtab{
+  padding:10px 18px; font-family:"JetBrains Mono",monospace; font-size:9.5px;
+  letter-spacing:.14em; text-transform:uppercase; color:var(--ink-mute);
+  background:none; border:none; cursor:pointer; transition:.18s;
+  border-bottom:2px solid transparent; position:relative; top:1px;
+}
+.jtab.active{ color:var(--oak); border-bottom-color:var(--oak) }
+.jtab.hidden{ display:none }
+.jtab .jtab-badge{
+  display:inline-flex; align-items:center; justify-content:center;
+  width:15px; height:15px; border-radius:50%;
+  background:var(--ember); color:#fff;
+  font-size:7.5px; font-weight:700; margin-left:6px;
+  vertical-align:middle; position:relative; top:-1px;
+}
+
+/* journal scroll */
+.journal-body{
+  flex:1; overflow-y:auto; padding:0 28px 24px;
+  scrollbar-width:thin; scrollbar-color:rgba(160,120,60,.2) transparent;
+  position:relative; z-index:2;
+}
+.journal-body::-webkit-scrollbar{width:3px}
+.journal-body::-webkit-scrollbar-thumb{background:rgba(160,120,60,.25);border-radius:2px}
+
+.journal-panel{ display:none }
+.journal-panel.active{ display:block }
+
+/* ruled ledger lines */
+.journal-body{
+  background-image:repeating-linear-gradient(
+    to bottom, transparent 0px, transparent 39px,
+    rgba(160,120,60,.06) 39px, rgba(160,120,60,.06) 40px
+  );
+}
+
+/* journal entry */
+.jentry{
+  border-bottom:1px solid rgba(160,120,60,.1);
+  padding:13px 0; position:relative;
+  animation:jEntryIn .3s ease both;
+}
+@keyframes jEntryIn{from{opacity:0;transform:translateX(8px)}to{opacity:1;transform:none}}
+.jentry-top{
+  display:flex; align-items:flex-start; gap:10px; margin-bottom:5px;
+}
+.jentry-ts{
+  font-family:"JetBrains Mono",monospace; font-size:9px; color:var(--ink-mute);
+  flex:0 0 108px;
+}
+.jentry-author{
+  font-family:"DM Sans",sans-serif; font-size:12px; font-weight:600;
+  color:var(--ink-soft); flex:0 0 auto;
+}
+.jentry-role-chip{
+  font-family:"JetBrains Mono",monospace; font-size:8px; letter-spacing:.12em;
+  text-transform:uppercase; padding:2px 7px; border-radius:10px; flex:0 0 auto;
+}
+.chip-admin{ background:rgba(110,122,62,.2); color:var(--hop); border:1px solid rgba(110,122,62,.3) }
+.chip-manager{ background:rgba(47,85,117,.2); color:var(--bbt); border:1px solid rgba(47,85,117,.3) }
+.chip-operateur{ background:rgba(94,98,102,.18); color:var(--steel); border:1px solid rgba(94,98,102,.25) }
+
+.jentry-stat{
+  margin-left:auto; flex:0 0 auto;
+  font-family:"JetBrains Mono",monospace; font-size:8px; letter-spacing:.1em;
+  text-transform:uppercase; padding:3px 9px; border-radius:10px;
+}
+.stat-applied{ background:rgba(110,122,62,.18); color:var(--hop); border:1px solid rgba(110,122,62,.28) }
+.stat-pending{ background:rgba(197,102,74,.18); color:var(--ember); border:1px solid rgba(197,102,74,.28) }
+.stat-validated{ background:rgba(47,85,117,.18); color:var(--bbt); border:1px solid rgba(47,85,117,.28) }
+.stat-refused{ background:rgba(90,40,40,.25); color:#b06060; border:1px solid rgba(160,80,80,.25) }
+
+.jentry-detail{
+  padding-left:118px;
+  font-family:"DM Sans",sans-serif; font-size:12px; color:var(--ink-mute);
+  line-height:1.5;
+}
+.jentry-section{ color:var(--ink-mute); font-size:11px }
+.jentry-champ{ color:var(--ink-soft); font-weight:500 }
+.jentry-diff{
+  display:inline-flex; align-items:center; gap:6px;
+  font-family:"JetBrains Mono",monospace; font-size:11px;
+  background:rgba(0,0,0,.18); border-radius:4px; padding:2px 7px; margin-top:3px;
+}
+.jd-from{ color:var(--ember); text-decoration:line-through; opacity:.8 }
+.jd-arr{ color:var(--ink-faint) }
+.jd-to{ color:var(--hop) }
+
+.jentry-decision{
+  margin-top:4px; padding-left:118px;
+  font-family:"JetBrains Mono",monospace; font-size:9px; color:var(--ink-mute);
+  letter-spacing:.06em;
+}
+
+/* pending queue actions */
+.jentry-queue-actions{
+  padding-left:118px; margin-top:8px; display:flex; gap:8px;
+}
+.btn-valider{
+  padding:6px 14px; background:rgba(110,122,62,.2); border:1px solid rgba(110,122,62,.4);
+  border-radius:6px; color:var(--hop); font-family:"JetBrains Mono",monospace;
+  font-size:9px; letter-spacing:.1em; text-transform:uppercase; cursor:pointer; transition:.18s;
+}
+.btn-valider:hover{ background:rgba(110,122,62,.35) }
+.btn-refuser{
+  padding:6px 14px; background:rgba(90,40,40,.18); border:1px solid rgba(160,80,80,.28);
+  border-radius:6px; color:#b06060; font-family:"JetBrains Mono",monospace;
+  font-size:9px; letter-spacing:.1em; text-transform:uppercase; cursor:pointer; transition:.18s;
+}
+.btn-refuser:hover{ background:rgba(120,60,60,.28) }
+
+.journal-empty{
+  padding:40px 0; text-align:center;
+  font-family:"Fraunces",serif; font-style:italic;
+  font-size:15px; color:var(--ink-mute); opacity:.6;
+}
+
+/* ── decorative page numbers ── */
+.pg-left{ position:absolute; bottom:14px; left:28px; z-index:4;
+  font-family:"Fraunces",serif; font-variation-settings:"opsz" 48; font-size:13px;
+  color:rgba(122,92,40,.4); }
+.pg-right{ position:absolute; bottom:14px; right:28px; z-index:4;
+  font-family:"Fraunces",serif; font-variation-settings:"opsz" 48; font-size:13px;
+  color:rgba(122,92,40,.4); }
+
+/* ══════════════════════════════════════════════════════════
+   CLIENT DIVIDERS — collapsible groups in Contrat tab
+   ══════════════════════════════════════════════════════════ */
+.client-group{ margin-top:10px; margin-bottom:2px; }
+.client-group:first-child{ margin-top:6px }
+
+.client-divider{
+  display:flex; align-items:center; gap:8px;
+  padding:6px 0 5px; margin-bottom:0;
+  border-bottom:1px solid var(--rule-strong);
+  cursor:pointer; user-select:none;
+  transition:opacity .15s;
+  position:relative;
+}
+.client-divider:hover{ opacity:.85 }
+
+/* ruled hairline above each client except first */
+.client-group:not(:first-child) .client-divider{
+  border-top:1px solid rgba(160,120,60,.18);
+  padding-top:9px;
+}
+
+.client-divider-name{
+  font-family:"Fraunces",serif; font-variation-settings:"opsz" 72; font-weight:500;
+  font-size:12px; color:var(--cat-malt); flex:1;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.client-divider-count{
+  font-family:"JetBrains Mono",monospace; font-size:8px; letter-spacing:.18em;
+  color:var(--ink-mute-paper); flex:0 0 auto;
+}
+.client-divider-chevron{
+  flex:0 0 14px; color:var(--ink-mute-paper); font-size:8px;
+  transition:transform .22s cubic-bezier(.2,.8,.2,1);
+  display:flex; align-items:center; justify-content:center;
+}
+.client-group.collapsed .client-divider-chevron{ transform:rotate(-90deg) }
+.client-group.collapsed .client-beers{ display:none }
+
+/* Admin/Manager: client name shows edit affordance */
+body[data-role="admin"] .client-divider-name,
+body[data-role="manager"] .client-divider-name{
+  cursor:text;
+}
+body[data-role="admin"] .client-divider:hover .client-divider-name,
+body[data-role="manager"] .client-divider:hover .client-divider-name{
+  text-decoration:underline; text-decoration-style:dotted;
+  text-decoration-color:rgba(110,78,38,.5);
+}
+
+.client-beers{
+  padding-left:10px;
+  transition:opacity .2s;
+}
+
+/* client recipe rows are indented under the divider */
+.client-beers .idx-row{
+  padding-left:4px;
+}
+.client-beers .idx-name{
+  font-size:12.5px;
+}
+
+/* recipe header client subtitle */
+.recipe-client-sub{
+  font-family:"Fraunces",serif; font-variation-settings:"opsz" 48; font-style:italic;
+  font-size:16px; color:var(--ink-mute-paper); margin-top:3px; margin-bottom:0;
+  letter-spacing:.01em;
+}
+
+/* ══════════════════════════════════════════════════════════
+   CREATION FLOW STEPS (Maison / Contrat chooser)
+   ══════════════════════════════════════════════════════════ */
+.form-step{ display:none; flex-direction:column; gap:14px; }
+.form-step.active{ display:flex }
+
+/* Type chooser cards */
+.type-chooser{
+  display:flex; gap:14px; margin-top:6px;
+}
+.type-card{
+  flex:1; padding:16px 18px; border:1.5px solid rgba(110,78,38,.3); border-radius:10px;
+  background:rgba(110,78,38,.04); cursor:pointer;
+  font-family:"DM Sans",sans-serif; text-align:left;
+  transition:border-color .2s, background .2s, box-shadow .2s;
+  position:relative; overflow:hidden;
+}
+.type-card:hover{
+  border-color:rgba(110,78,38,.65); background:rgba(110,78,38,.09);
+  box-shadow:0 3px 14px rgba(0,0,0,.1);
+}
+.type-card.selected{
+  border-color:var(--cat-malt); background:rgba(110,78,38,.13);
+  box-shadow:0 0 0 1.5px rgba(122,92,40,.22);
+}
+.type-card-icon{ font-size:22px; margin-bottom:6px; line-height:1 }
+.type-card-title{
+  font-family:"Fraunces",serif; font-variation-settings:"opsz" 72; font-size:16px;
+  color:var(--ink-on-paper); font-weight:600; margin-bottom:3px;
+}
+.type-card-desc{
+  font-size:11.5px; color:var(--ink-mute-paper); line-height:1.45;
+}
+
+/* Client selector for Contrat step */
+.client-selector{
+  background:rgba(110,78,38,.06); border:1px solid rgba(110,78,38,.3); border-radius:6px;
+  color:var(--ink-on-paper); font-family:"DM Sans",sans-serif; font-size:13px;
+  padding:7px 10px; width:100%; outline:none;
+}
+.client-selector:focus{ border-color:rgba(110,78,38,.65) }
+
+/* Mini new-client form (inline, within the creation flow) */
+.new-client-form{
+  display:none;
+  background:rgba(110,78,38,.06); border:1px solid rgba(110,78,38,.22);
+  border-radius:8px; padding:14px 16px; gap:12px; flex-direction:column;
+  margin-top:4px;
+}
+.new-client-form.open{ display:flex }
+.new-client-form-title{
+  font-family:"Fraunces",serif; font-variation-settings:"opsz" 72; font-weight:500;
+  font-size:14px; color:var(--cat-malt); margin-bottom:2px;
+}
+.new-client-note{
+  font-family:"JetBrains Mono",monospace; font-size:8.5px; letter-spacing:.16em;
+  color:var(--ink-mute-paper); text-transform:uppercase; margin-bottom:6px;
+}
+
+/* step breadcrumb in form header */
+.form-step-crumb{
+  display:flex; align-items:center; gap:7px;
+  font-family:"JetBrains Mono",monospace; font-size:8.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--ink-mute-paper); margin-bottom:10px;
+}
+.step-crumb-item{ color:var(--ink-mute-paper); }
+.step-crumb-item.done{ color:var(--ink-mute-paper); text-decoration:line-through; opacity:.5 }
+.step-crumb-item.active{ color:var(--cat-malt) }
+.step-crumb-sep{ opacity:.35 }
+
+/* ══════════════════════════════════════════════════════════
+   FORMATS DE CONDITIONNEMENT SECTION
+   ══════════════════════════════════════════════════════════ */
+.fmt-section{
+  position:relative; z-index:1;
+  margin-top:18px; padding-top:14px;
+  border-top:1.5px solid var(--rule-strong);
+}
+.fmt-section-head{
+  display:flex; align-items:center; gap:10px; margin-bottom:4px;
+}
+.fmt-section-title{
+  font-family:"Fraunces",serif; font-variation-settings:"opsz" 48; font-weight:500;
+  font-size:13px; letter-spacing:.03em; color:var(--cat-malt);
+}
+.fmt-section-gate{
+  font-family:"JetBrains Mono",monospace; font-size:8px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--ink-mute-paper);
+  padding:2px 8px; border:1px solid rgba(160,120,60,.2); border-radius:10px;
+  flex:0 0 auto;
+}
+.fmt-pkg-icon{
+  flex:0 0 20px;
+}
+
+/* container groups */
+.fmt-container-group{
+  margin-bottom:10px;
+}
+.fmt-container-label{
+  display:flex; align-items:center; gap:6px;
+  font-family:"JetBrains Mono",monospace; font-size:8.5px; letter-spacing:.2em;
+  text-transform:uppercase; color:var(--ink-mute-paper);
+  padding:5px 0 4px; border-bottom:1px solid var(--rule);
+  margin-bottom:0;
+}
+.fmt-container-label-icon{ opacity:.55; font-size:11px; }
+
+/* format toggle rows */
+.fmt-row{
+  display:flex; align-items:center; gap:8px;
+  padding:4px 0 4px 2px; height:30px;
+  border-bottom:1px solid var(--rule);
+  position:relative; z-index:1;
+}
+.fmt-row:last-child{ border-bottom:none }
+
+/* checkbox */
+.fmt-toggle{
+  flex:0 0 16px; height:16px;
+  appearance:none; -webkit-appearance:none;
+  border:1.5px solid rgba(110,78,38,.4); border-radius:3px;
+  background:none; cursor:pointer; position:relative;
+  transition:border-color .15s, background .15s;
+}
+.fmt-toggle:checked{
+  background:rgba(110,78,38,.22); border-color:rgba(110,78,38,.75);
+}
+.fmt-toggle:checked::after{
+  content:""; position:absolute; left:3px; top:1px; width:4px; height:7px;
+  border-right:1.5px solid var(--cat-malt); border-bottom:1.5px solid var(--cat-malt);
+  transform:rotate(40deg);
+}
+/* Opérateur: toggles disabled */
+body[data-role="operateur"] .fmt-toggle{
+  cursor:not-allowed; opacity:.45; pointer-events:none;
+}
+/* Manager/Admin: hover affordance */
+body[data-role="manager"] .fmt-toggle:not(:disabled):hover,
+body[data-role="admin"] .fmt-toggle:not(:disabled):hover{
+  border-color:rgba(110,78,38,.8);
+}
+
+.fmt-display{
+  font-family:"DM Sans",sans-serif; font-size:12.5px; color:var(--ink-on-paper);
+  flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.fmt-hl{
+  font-family:"JetBrains Mono",monospace; font-size:10px; color:var(--ink-mute-paper);
+  flex:0 0 60px; text-align:right;
+}
+
+/* SKU chip — shown when selected */
+.fmt-sku{
+  flex:0 0 auto;
+  font-family:"JetBrains Mono",monospace; font-size:9.5px; font-weight:700;
+  letter-spacing:.08em; text-transform:uppercase;
+  padding:2px 9px; border-radius:12px;
+  background:rgba(110,78,38,.12); color:var(--cat-malt);
+  border:1px solid rgba(110,78,38,.3);
+  display:none; /* shown when checked */
+  white-space:nowrap;
+}
+.fmt-cogs-note{
+  font-family:"JetBrains Mono",monospace; font-size:8px;
+  color:var(--ink-mute-paper); opacity:.7;
+  display:none; /* shown when checked */
+  flex:0 0 auto; white-space:nowrap;
+}
+.fmt-row.selected .fmt-sku{ display:inline-block }
+.fmt-row.selected .fmt-cogs-note{ display:inline-block }
+
+/* no-sku state (recipe has no sku_prefix) */
+.fmt-no-prefix{
+  padding:12px 0; text-align:center;
+  font-family:"Fraunces",serif; font-style:italic;
+  font-size:13px; color:var(--ink-mute-paper); opacity:.7;
+}
+
+/* fixed footnotes (like the original) */
+.titleblock{
+  position:fixed; bottom:20px; right:54px; z-index:4; text-align:right;
+  font-family:"JetBrains Mono",monospace; font-size:9px; letter-spacing:.16em;
+  color:var(--ink-faint); line-height:1.7; text-transform:uppercase;
+  border-right:2px solid var(--hairline-2); padding-right:12px;
+}
+.preview-flag{
+  position:fixed; bottom:20px; left:54px; z-index:4;
+  font-family:"JetBrains Mono",monospace; font-size:9px; letter-spacing:.16em;
+  color:var(--ink-faint); opacity:.7; text-transform:uppercase;
+}
+
+/* ══════════════════════════════════════════════════════════
+   MULTIPACKS BUILDER — right-page overlay
+   ══════════════════════════════════════════════════════════ */
+.multipack-form{
+  position:absolute; inset:0; z-index:10;
+  background:
+    linear-gradient(252deg, #f7edd4 0%, var(--paper) 25%, #ede2c0 60%, #e6d9b4 100%);
+  display:none; flex-direction:column;
+  padding:32px 36px 24px; overflow-y:auto;
+  animation:fadeIn .3s ease;
+}
+.multipack-form.open{ display:flex }
+
+/* Multipack bookmark tab */
+.bm.bm-multipacks{
+  --bm-color:#3a5a4a;
+}
+body.bm-multipacks-active .bm[data-group="multipacks"],
+.bm[data-group="multipacks"].active{
+  width:34px; color:rgba(242,232,208,1);
+  box-shadow:3px 0 14px rgba(0,0,0,.5);
+}
+
+/* Section title */
+.mp-title{
+  font-family:"Fraunces",serif; font-variation-settings:"opsz" 144; font-weight:600;
+  font-size:32px; color:var(--ink-on-paper); margin-bottom:2px;
+}
+.mp-title em{ color:#3a6a50; font-style:italic }
+.mp-subtitle{
+  font-family:"JetBrains Mono",monospace; font-size:9px; letter-spacing:.28em;
+  text-transform:uppercase; color:var(--ink-mute-paper); margin-bottom:14px;
+}
+
+/* Preset quick-start strip */
+.mp-presets-label{
+  font-family:"JetBrains Mono",monospace; font-size:8.5px; letter-spacing:.22em;
+  text-transform:uppercase; color:var(--ink-mute-paper); margin-bottom:7px;
+}
+.mp-presets{
+  display:flex; gap:8px; flex-wrap:wrap; margin-bottom:18px;
+}
+.mp-preset-btn{
+  padding:6px 14px; border:1px solid rgba(58,90,74,.35); border-radius:20px;
+  background:rgba(58,90,74,.07); color:var(--ink-on-paper);
+  font-family:"DM Sans",sans-serif; font-size:12px; cursor:pointer;
+  transition:border-color .18s, background .18s;
+}
+.mp-preset-btn:hover{
+  border-color:rgba(58,90,74,.7); background:rgba(58,90,74,.13);
+}
+/* disabled for operateur */
+body[data-role="operateur"] .mp-preset-btn{
+  opacity:.45; cursor:not-allowed; pointer-events:none;
+}
+
+/* Step 1 — Carton type */
+.mp-carton-chooser{
+  display:flex; gap:12px; margin-bottom:18px;
+}
+.mp-carton-card{
+  flex:1; padding:13px 16px; border:1.5px solid rgba(58,90,74,.28); border-radius:9px;
+  background:rgba(58,90,74,.04); cursor:pointer;
+  font-family:"DM Sans",sans-serif; transition:border-color .18s, background .18s, box-shadow .18s;
+}
+.mp-carton-card:hover{
+  border-color:rgba(58,90,74,.6); background:rgba(58,90,74,.09);
+}
+.mp-carton-card.selected{
+  border-color:#3a6a50; background:rgba(58,90,74,.13);
+  box-shadow:0 0 0 1.5px rgba(58,90,74,.2);
+}
+.mp-carton-icon{ font-size:20px; margin-bottom:5px; line-height:1 }
+.mp-carton-title{
+  font-family:"Fraunces",serif; font-variation-settings:"opsz" 72; font-size:14.5px;
+  font-weight:600; color:var(--ink-on-paper); margin-bottom:2px;
+}
+.mp-carton-desc{
+  font-size:11px; color:var(--ink-mute-paper); line-height:1.4;
+}
+body[data-role="operateur"] .mp-carton-card{
+  cursor:not-allowed; pointer-events:none; opacity:.7;
+}
+
+/* Step 2 — Units */
+.mp-row{ display:flex; gap:14px; align-items:flex-end; margin-bottom:16px; flex-wrap:wrap }
+.mp-field{ display:flex; flex-direction:column; gap:5px }
+.mp-field.narrow{ flex:0 0 120px }
+.mp-field.grow{ flex:1 }
+.mp-label{
+  font-family:"JetBrains Mono",monospace; font-size:9px; letter-spacing:.22em;
+  text-transform:uppercase; color:var(--ink-mute-paper);
+}
+.mp-input{
+  background:none; border:none; border-bottom:1.5px solid rgba(58,90,74,.4);
+  color:var(--ink-on-paper); font-family:"Fraunces",serif; font-variation-settings:"opsz" 48;
+  font-size:18px; padding:4px 0; width:100%; outline:none; transition:border-color .2s;
+}
+.mp-input:focus{ border-bottom-color:rgba(58,90,74,.85) }
+body[data-role="operateur"] .mp-input{
+  pointer-events:none; opacity:.6;
+}
+
+/* Step 3 — Slots */
+.mp-slots-head{
+  display:flex; gap:8px; padding:6px 0; border-bottom:1.5px solid var(--rule-strong);
+  font-family:"JetBrains Mono",monospace; font-size:9px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--ink-mute-paper); margin-bottom:0;
+}
+.mp-slots-head .th-recipe{ flex:1 }
+.mp-slots-head .th-count{ flex:0 0 80px; text-align:right }
+.mp-slots-head .th-del{ flex:0 0 24px }
+
+.mp-slot-row{
+  display:flex; gap:8px; align-items:center; padding:5px 0;
+  border-bottom:1px solid var(--rule);
+}
+.mp-slot-recipe{
+  flex:1; background:rgba(58,90,74,.06); border:1px solid rgba(58,90,74,.25);
+  border-radius:5px; color:var(--ink-on-paper); font-family:"DM Sans",sans-serif;
+  font-size:12.5px; padding:5px 8px; outline:none;
+}
+.mp-slot-recipe:focus{ border-color:rgba(58,90,74,.65) }
+.mp-slot-count{
+  flex:0 0 80px; background:none; border:none; border-bottom:1px solid rgba(58,90,74,.3);
+  color:var(--ink-on-paper); font-family:"JetBrains Mono",monospace; font-size:13px;
+  text-align:right; padding:3px 4px; outline:none;
+}
+.mp-slot-del{
+  flex:0 0 24px; background:none; border:none; color:rgba(160,80,60,.5);
+  font-size:15px; cursor:pointer; line-height:1; padding:0; transition:color .15s;
+}
+.mp-slot-del:hover{ color:var(--ember) }
+body[data-role="operateur"] .mp-slot-recipe,
+body[data-role="operateur"] .mp-slot-count{ pointer-events:none; opacity:.6 }
+body[data-role="operateur"] .mp-slot-del{ display:none }
+
+/* Sum indicator */
+.mp-sum-row{
+  display:flex; align-items:center; gap:10px; margin-top:6px; padding:6px 0;
+  border-top:1px dashed rgba(58,90,74,.3);
+}
+.mp-sum-indicator{
+  font-family:"JetBrains Mono",monospace; font-size:11px; font-weight:700;
+  padding:3px 10px; border-radius:12px; transition:background .2s, color .2s;
+}
+.mp-sum-ok{ background:rgba(58,90,74,.2); color:#3a6a50; border:1px solid rgba(58,90,74,.35) }
+.mp-sum-warn{ background:rgba(197,102,74,.18); color:var(--ember); border:1px solid rgba(197,102,74,.3) }
+.mp-sum-label{
+  font-family:"DM Sans",sans-serif; font-size:12px; color:var(--ink-mute-paper);
+}
+.btn-add-slot{
+  display:flex; align-items:center; gap:7px;
+  padding:7px 13px; border:1px dashed rgba(58,90,74,.35); border-radius:7px;
+  background:none; color:var(--ink-mute-paper); cursor:pointer; font-size:12px;
+  font-family:"DM Sans",sans-serif; transition:all .2s; margin-top:6px; width:fit-content;
+}
+.btn-add-slot:hover{ border-color:rgba(58,90,74,.65); color:var(--ink-on-paper) }
+body[data-role="operateur"] .btn-add-slot{ display:none }
+
+/* Step 4 — Aperçu (preview) */
+.mp-preview{
+  margin-top:16px; padding:14px 16px; border:1px solid rgba(58,90,74,.22);
+  border-radius:9px; background:rgba(58,90,74,.05);
+}
+.mp-preview-label{
+  font-family:"JetBrains Mono",monospace; font-size:8.5px; letter-spacing:.22em;
+  text-transform:uppercase; color:#3a6a50; margin-bottom:8px;
+}
+.mp-preview-name{
+  font-family:"Fraunces",serif; font-variation-settings:"opsz" 96; font-weight:600;
+  font-style:italic; font-size:19px; color:var(--ink-on-paper); margin-bottom:4px;
+}
+.mp-preview-carton{
+  font-family:"DM Sans",sans-serif; font-size:12.5px; color:var(--ink-mute-paper);
+  margin-bottom:8px;
+}
+.mp-preview-slots{
+  font-family:"DM Sans",sans-serif; font-size:13px; color:var(--ink-on-paper);
+  line-height:1.7;
+}
+.mp-preview-slot-item::before{ content:"·  "; color:var(--ink-mute-paper) }
+.mp-preview-empty{
+  font-family:"Fraunces",serif; font-style:italic;
+  font-size:13px; color:var(--ink-mute-paper); opacity:.7;
+}
+
+/* Role-gated actions in multipack builder */
+.mp-actions{
+  display:flex; gap:10px; margin-top:16px; flex:0 0 auto;
+}
+body[data-role="operateur"] .mp-actions .btn-primary,
+body[data-role="operateur"] .mp-actions .btn-modal-request{
+  display:none;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   BOM PANEL — read-only, computed view
+   Prefix: .bom-*
+   ═══════════════════════════════════════════════════════════ */
+.bom-section{
+  position:relative; z-index:1;
+  margin-top:18px; padding-top:14px;
+  border-top:1.5px solid var(--rule-strong);
+}
+.bom-section-head{
+  display:flex; align-items:center; gap:10px; margin-bottom:10px;
+}
+.bom-section-icon{ flex:0 0 20px; opacity:.75 }
+.bom-section-title{
+  font-family:"Fraunces",serif; font-variation-settings:"opsz" 48; font-weight:500;
+  font-size:13px; letter-spacing:.03em; color:var(--ink-on-paper);
+}
+.bom-readonly-tag{
+  font-family:"JetBrains Mono",monospace; font-size:7.5px; letter-spacing:.2em;
+  text-transform:uppercase; color:var(--ink-mute-paper);
+  padding:2px 8px; border:1px solid rgba(160,120,60,.2); border-radius:10px;
+  background:rgba(160,120,60,.05); flex:0 0 auto;
+}
+
+/* sub-panels */
+.bom-part{
+  margin-bottom:14px;
+  background:rgba(160,120,60,.04);
+  border:1px solid rgba(160,120,60,.14);
+  border-radius:7px;
+  padding:10px 12px;
+}
+.bom-part-label{
+  font-family:"JetBrains Mono",monospace; font-size:8.5px; letter-spacing:.22em;
+  text-transform:uppercase; color:var(--ink-mute-paper);
+  padding-bottom:6px; border-bottom:1px solid var(--rule);
+  margin-bottom:6px; display:flex; align-items:center; gap:8px;
+}
+.bom-scale-hint{
+  font-family:"JetBrains Mono",monospace; font-size:7.5px; letter-spacing:.12em;
+  color:var(--ink-faint); margin-left:auto; opacity:.75;
+}
+
+/* ingredient summary rows */
+.bom-ing-row{
+  display:flex; align-items:baseline; gap:6px;
+  padding:3px 0; border-bottom:1px dotted rgba(160,120,60,.18);
+  font-family:"DM Sans",sans-serif; font-size:12px;
+}
+.bom-ing-row:last-child{ border-bottom:none }
+.bom-ing-cat{
+  flex:0 0 68px;
+  font-family:"JetBrains Mono",monospace; font-size:8px; letter-spacing:.12em;
+  text-transform:uppercase; color:var(--ink-mute-paper); opacity:.8;
+}
+.bom-ing-name{ flex:1; color:var(--ink-on-paper) }
+.bom-ing-qty{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px;
+  color:var(--ink-on-paper); font-weight:500; flex:0 0 auto; min-width:52px; text-align:right;
+}
+.bom-ing-unit{
+  font-family:"JetBrains Mono",monospace; font-size:9px; color:var(--ink-mute-paper);
+  flex:0 0 28px;
+}
+
+/* packaging rows */
+.bom-pkg-block{ margin-bottom:8px }
+.bom-pkg-sku{
+  font-family:"JetBrains Mono",monospace; font-size:9px; font-weight:700;
+  letter-spacing:.08em; text-transform:uppercase;
+  padding:2px 8px; border-radius:10px;
+  background:rgba(110,78,38,.1); color:var(--cat-malt);
+  border:1px solid rgba(110,78,38,.25);
+  display:inline-block; margin-bottom:5px;
+}
+.bom-pkg-row{
+  display:flex; align-items:baseline; gap:6px;
+  padding:2px 0 2px 10px; border-bottom:1px dotted rgba(160,120,60,.15);
+  font-family:"DM Sans",sans-serif; font-size:12px;
+}
+.bom-pkg-row:last-child{ border-bottom:none }
+.bom-pkg-role{
+  flex:0 0 88px;
+  font-family:"JetBrains Mono",monospace; font-size:7.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--ink-mute-paper); opacity:.8;
+}
+.bom-pkg-name{ flex:1; color:var(--ink-on-paper) }
+.bom-pkg-qty{
+  font-family:"JetBrains Mono",monospace; font-size:11px;
+  color:var(--ink-on-paper); flex:0 0 auto; min-width:42px; text-align:right;
+}
+.bom-pkg-unit{
+  font-family:"JetBrains Mono",monospace; font-size:9px; color:var(--ink-mute-paper);
+  flex:0 0 24px;
+}
+.bom-mock-caption{
+  margin-top:8px; padding:6px 10px;
+  background:rgba(47,85,117,.06); border:1px solid rgba(47,85,117,.18); border-radius:5px;
+  font-family:"JetBrains Mono",monospace; font-size:7.5px; letter-spacing:.1em;
+  color:var(--ink-mute-paper); line-height:1.55;
+}
+.bom-no-formats{
+  font-family:"Fraunces",serif; font-style:italic;
+  font-size:12px; color:var(--ink-mute-paper); opacity:.65;
+  padding:8px 0;
+}
+</style>
+</head>
+<body class="home">
+<div class="board"></div>
+<span class="mark tl"></span><span class="mark tr"></span>
+<span class="mark bl"></span><span class="mark br"></span>
+
+<!-- TOP CHROME -->
+<div class="chrome">
+  <div class="brandmark">La Nébuleuse · <b>Salle des Machines</b></div>
+  <div class="crumbs" id="crumbs">
+    <span>Plan</span><i>↦</i><span class="here">Recettes</span>
+  </div>
+  <!-- Multipacks button -->
+  <button class="journal-btn" id="multipacksBtn" onclick="openMultipackBuilder()" style="border-color:rgba(58,90,74,.45);color:var(--ink-mute)">
+    <svg width="13" height="13" viewBox="0 0 13 13" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x="1" y="4" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.1"/>
+      <rect x="7" y="4" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.1"/>
+      <rect x="4" y="1" width="5" height="5" rx="1" stroke="#3a9a6a" stroke-width="1.1"/>
+    </svg>
+    Multipacks
+  </button>
+  <!-- Journal button -->
+  <button class="journal-btn" id="journalBtn">
+    <svg width="13" height="13" viewBox="0 0 13 13" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x="1.5" y="1.5" width="10" height="10" rx="1.5" stroke="currentColor" stroke-width="1.1"/>
+      <line x1="3.5" y1="4.5" x2="9.5" y2="4.5" stroke="currentColor" stroke-width="1"/>
+      <line x1="3.5" y1="6.5" x2="9.5" y2="6.5" stroke="currentColor" stroke-width="1"/>
+      <line x1="3.5" y1="8.5" x2="7" y2="8.5" stroke="currentColor" stroke-width="1"/>
+    </svg>
+    Journal
+    <span class="journal-badge" id="journalBadge"></span>
+  </button>
+  <!-- Three-role switcher -->
+  <div class="role-switcher" id="roleSwitcher">
+    <button class="role-btn" data-role="operateur" onclick="setRole('operateur')">
+      <span class="rpip"></span>Opérateur
+    </button>
+    <button class="role-btn" data-role="manager" onclick="setRole('manager')">
+      <span class="rpip"></span>Manager
+    </button>
+    <button class="role-btn active" data-role="admin" onclick="setRole('admin')">
+      <span class="rpip"></span>Admin
+    </button>
+  </div>
+</div>
+
+<!-- ROLE BANNER -->
+<div class="role-banner" id="roleBanner">
+  <span class="ban-pip"></span>
+  <span id="roleBannerTxt"></span>
+</div>
+
+<!-- REQ BANNER (legacy, hidden) -->
+<div class="req-banner"></div>
+
+<!-- ════════════════════════════════
+     MODAL OVERLAY
+     ════════════════════════════════ -->
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal-parch" id="modalParch">
+    <div class="modal-inner">
+      <div class="modal-seal-row">
+        <div class="modal-seal" id="modalSeal">⚖</div>
+        <div class="modal-title" id="modalTitle">Confirmer la modification</div>
+      </div>
+      <hr class="modal-rule">
+      <div class="modal-diff" id="modalDiff"></div>
+      <div class="modal-actions" id="modalActions"></div>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<!-- JOURNAL DRAWER -->
+<div class="journal-overlay" id="journalOverlay" onclick="closeJournal()"></div>
+<div class="journal-drawer" id="journalDrawer">
+  <div class="journal-header">
+    <div class="journal-header-row">
+      <div class="journal-header-title">Journal des modifications</div>
+      <button class="journal-close" onclick="closeJournal()">✕</button>
+    </div>
+    <div class="journal-tabs">
+      <button class="jtab active" data-jtab="all" onclick="switchJTab('all')">Toutes</button>
+      <button class="jtab" id="jtabPending" data-jtab="pending" onclick="switchJTab('pending')">
+        Demandes <span class="jtab-badge" id="jtabPendingBadge">0</span>
+      </button>
+    </div>
+  </div>
+  <div class="journal-body">
+    <div class="journal-panel active" id="jpanelAll"></div>
+    <div class="journal-panel" id="jpanelPending"></div>
+  </div>
+</div>
+
+<!-- LEDGER STAGE -->
+<div class="ledger-stage">
+  <div class="book">
+
+    <!-- ════ LEFT PAGE — RECIPE INDEX ════ -->
+    <div class="page-left" id="pageLeft">
+      <div class="page-grain"></div>
+
+      <div class="index-header">
+        <div class="index-label">La Nébuleuse · Registre des recettes</div>
+        <div class="index-title">Index des <em>Recettes</em></div>
+        <hr class="index-rule">
+      </div>
+
+      <!-- recipe index (rendered by JS) -->
+      <div class="index-scroll" id="indexScroll"></div>
+
+      <!-- nouvelle recette (hidden for operateur via JS) -->
+      <button class="btn-new" id="btnNew">
+        <span class="quill">✎</span> Nouvelle recette
+      </button>
+
+      <!-- BOOKMARK TABS -->
+      <div class="bookmarks" id="bookmarks"></div>
+
+      <div class="pg-left">II</div>
+    </div>
+
+    <!-- ════ SPINE ════ -->
+    <div class="spine">
+      <div class="spine-text">Recettes · La Nébuleuse · Lausanne</div>
+    </div>
+
+    <!-- ════ RIGHT PAGE — RECIPE DETAIL ════ -->
+    <div class="page-right" id="pageRight">
+      <div class="page-grain"></div>
+
+      <!-- RECIPE VIEW -->
+      <div class="recipe-view" id="recipeView">
+
+        <div class="recipe-header" id="recipeHeader">
+          <div class="recipe-label" id="recipeLabelTop"></div>
+          <div class="recipe-name-row">
+            <div id="recipeName" class="recipe-name"></div>
+            <!-- brassin seal -->
+            <div class="brassin-seal" id="brassinSeal">
+              <div class="seal-label">Brassin</div>
+              <div class="seal-hl" id="sealHl">30 <span>hl</span></div>
+              <div class="seal-sub">Ref. brewhouse</div>
+            </div>
+          </div>
+          <div class="recipe-badge-row" id="recipeBadgeRow"></div>
+        </div>
+
+        <hr class="recipe-rule">
+
+        <div class="ctrl-row">
+          <div class="scale-label">Affichage : <b id="scaleLabel">par brassin (30 hl)</b></div>
+          <div class="scale-toggle" id="scaleToggle">
+            <button class="scale-btn" id="btnPerHl" onclick="setScale('hl')">par hl</button>
+            <div class="scale-sep"></div>
+            <button class="scale-btn on" id="btnPerBrassin" onclick="setScale('brassin')">par brassin · 30 hl</button>
+          </div>
+        </div>
+
+        <div class="ledger-body" id="ledgerBody"></div>
+
+      </div>
+
+      <!-- CREATION FORM -->
+      <div class="creation-form" id="creationForm">
+        <div class="form-title">Nouvelle <em>Recette</em></div>
+        <div class="recipe-label" style="color:var(--ink-mute-paper);margin-bottom:2px">
+          Maquette — les données ne sont pas persistées
+        </div>
+        <hr class="form-rule">
+
+        <!-- STEP 0 — choose Maison or Contrat -->
+        <div class="form-step active" id="formStep0">
+          <div class="form-step-crumb">
+            <span class="step-crumb-item active">Type</span>
+            <span class="step-crumb-sep">›</span>
+            <span class="step-crumb-item">Client</span>
+            <span class="step-crumb-sep">›</span>
+            <span class="step-crumb-item">Recette</span>
+          </div>
+          <div class="form-label" style="margin-bottom:2px">Quelle catégorie de recette ?</div>
+          <div class="type-chooser">
+            <div class="type-card" id="typeCardMaison" onclick="chooseType('Maison')">
+              <div class="type-card-icon">🏠</div>
+              <div class="type-card-title">Maison</div>
+              <div class="type-card-desc">Core, EPH, Collab, Archives — recettes brassées sous la marque La Nébuleuse</div>
+            </div>
+            <div class="type-card" id="typeCardContrat" onclick="chooseType('Contrat')">
+              <div class="type-card-icon">🤝</div>
+              <div class="type-card-title">Contrat</div>
+              <div class="type-card-desc">White label ou sous-traitance pour un client externe (ref_clients)</div>
+            </div>
+          </div>
+          <div class="form-actions" style="margin-top:8px">
+            <button class="btn-cancel" onclick="closeForm()">Annuler</button>
+          </div>
+        </div>
+
+        <!-- STEP 1 — Contrat: choose or create client -->
+        <div class="form-step" id="formStep1Client">
+          <div class="form-step-crumb">
+            <span class="step-crumb-item done">Type · Contrat</span>
+            <span class="step-crumb-sep">›</span>
+            <span class="step-crumb-item active">Client</span>
+            <span class="step-crumb-sep">›</span>
+            <span class="step-crumb-item">Recette</span>
+          </div>
+          <div class="form-row">
+            <div class="form-field">
+              <div class="form-label">Sélectionner un client</div>
+              <select class="client-selector" id="fClientSelect" onchange="onClientSelectChange()">
+                <!-- populated by JS -->
+              </select>
+            </div>
+          </div>
+          <!-- new client mini-form -->
+          <div class="new-client-form" id="newClientForm">
+            <div class="new-client-form-title">Nouveau client</div>
+            <div class="new-client-note">Le client sera ajouté à ref_clients (maquette)</div>
+            <div class="form-row">
+              <div class="form-field">
+                <div class="form-label">Nom du client</div>
+                <input class="form-input" type="text" placeholder="ex. Brasserie du Nord" id="fNewClientName">
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-field">
+                <div class="form-label">Notes (optionnel)</div>
+                <input class="form-input" type="text" placeholder="Région, contact, remarques…" id="fNewClientNotes" style="font-size:14px">
+              </div>
+            </div>
+            <div class="form-actions" style="margin-top:4px">
+              <button class="btn-primary" onclick="createNewClient()">Créer le client</button>
+              <button class="btn-cancel" onclick="cancelNewClient()">Annuler</button>
+            </div>
+          </div>
+          <!-- actions shown when a real client is selected -->
+          <div class="form-actions" id="clientStepActions">
+            <button class="btn-primary" onclick="proceedToRecipeForm()">Continuer →</button>
+            <button class="btn-cancel" onclick="goToStep(0)">← Retour</button>
+          </div>
+        </div>
+
+        <!-- STEP 2 — Recipe form (shared Maison + Contrat) -->
+        <div class="form-step" id="formStep2Recipe">
+          <div class="form-step-crumb" id="recipeCrumb">
+            <!-- filled by JS -->
+          </div>
+          <div class="form-fields">
+            <div class="form-row">
+              <div class="form-field">
+                <div class="form-label">Nom de la recette</div>
+                <input class="form-input" type="text" placeholder="ex. Zepp, EPH1, Pale Ale…" id="fName">
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-field narrow">
+                <div class="form-label">Sous-type</div>
+                <select class="form-select" id="fSubtype">
+                  <option>Core</option>
+                  <option>EPH</option>
+                  <option>CollabIn</option>
+                  <option>CollabOut</option>
+                  <option selected>WhiteLabel</option>
+                  <option>Archive</option>
+                </select>
+              </div>
+              <div class="form-field narrow">
+                <div class="form-label">Millésime</div>
+                <input class="form-input" type="text" placeholder="2026" id="fVintage" style="font-size:16px">
+              </div>
+              <!-- Client display (readonly, set by step 1 or Maison) -->
+              <div class="form-field" id="fClientReadonlyWrap">
+                <div class="form-label">Client</div>
+                <div id="fClientReadonly" style="font-family:'Fraunces',serif;font-variation-settings:'opsz' 48;font-size:16px;color:var(--cat-malt);padding:4px 0;border-bottom:1px solid rgba(110,78,38,.25)"></div>
+              </div>
+            </div>
+
+            <!-- ingredient add table -->
+            <div>
+              <div class="form-label" style="margin-bottom:8px">Ingrédients (quantités par hl)</div>
+              <div class="ing-table-head">
+                <div class="th-cat">Catégorie</div>
+                <div class="th-name">Ingrédient</div>
+                <div class="th-qty">Qté / hl</div>
+                <div class="th-unit">Unité</div>
+                <div class="th-del"></div>
+              </div>
+              <div id="ingRowsContainer"></div>
+              <button class="btn-add-ing" id="btnAddIng" onclick="addIngRow()">
+                + Ajouter un ingrédient
+              </button>
+            </div>
+
+            <!-- live preview -->
+            <div class="form-preview" id="formPreview">
+              <div class="form-preview-label">Aperçu par brassin · 30 hl</div>
+              <div id="formPreviewRows"><em style="font-family:'DM Sans';font-size:12px;color:var(--ink-mute-paper)">Aucun ingrédient</em></div>
+            </div>
+          </div>
+
+          <div class="form-actions">
+            <button class="btn-primary" id="btnFormSave" onclick="saveNewRecipe()">Enregistrer</button>
+            <button class="btn-cancel" onclick="goBackFromRecipeForm()">← Retour</button>
+            <button class="btn-cancel" onclick="closeForm()" style="margin-left:auto">Annuler</button>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- MULTIPACK BUILDER FORM -->
+      <div class="multipack-form" id="multipackForm">
+        <div class="mp-title">Constructeur de <em>Multipacks</em></div>
+        <div class="mp-subtitle">Pack composite multi-recettes · maquette — données non persistées</div>
+        <hr class="form-rule">
+
+        <!-- PRESETS -->
+        <div class="mp-presets-label">Démarrage rapide</div>
+        <div class="mp-presets">
+          <button class="mp-preset-btn" onclick="loadMpPreset('PD8')">Pack Découverte · 8×33cl</button>
+          <button class="mp-preset-btn" onclick="loadMpPreset('XMASPACK')">Pack de Noël · 3×33cl</button>
+          <button class="mp-preset-btn" onclick="loadMpPreset('PAL')">Pack Louis · 12×33cl</button>
+          <button class="mp-preset-btn" onclick="loadMpPreset('PAD')">Pack Découverte large · 8×33cl</button>
+        </div>
+
+        <!-- STEP 1 — Type de carton -->
+        <div class="mp-label" style="margin-bottom:8px">Type de carton <span style="opacity:.5;font-size:9px">(selon contenants activés en Capacités)</span></div>
+        <div class="mp-carton-chooser">
+          <div class="mp-carton-card" id="mpCartonVerre" onclick="selectMpCarton('verre33', this)">
+            <div class="mp-carton-icon">🍺</div>
+            <div class="mp-carton-title">Carton bouteille verre 33cl</div>
+            <div class="mp-carton-desc">Bouteilles 33cl · formats B, 4, BU, X</div>
+          </div>
+          <div class="mp-carton-card" id="mpCartonAlu" onclick="selectMpCarton('alu50', this)">
+            <div class="mp-carton-icon">🥤</div>
+            <div class="mp-carton-title">Carton canette alu 50cl</div>
+            <div class="mp-carton-desc">Canettes 50cl · formats C, 4C, 6C, 12C</div>
+          </div>
+        </div>
+
+        <!-- STEP 2 — Nombre d'unités + Nom -->
+        <div class="mp-row">
+          <div class="mp-field narrow">
+            <div class="mp-label">Nombre d'unités</div>
+            <input class="mp-input" type="number" id="mpUnits" min="1" max="48" placeholder="8" oninput="updateMpPreview()">
+          </div>
+          <div class="mp-field grow">
+            <div class="mp-label">Nom du multipack</div>
+            <input class="mp-input" type="text" id="mpName" placeholder="ex. Pack Découverte" oninput="updateMpPreview()">
+          </div>
+        </div>
+
+        <!-- STEP 3 — Slots recettes -->
+        <div class="mp-label" style="margin-bottom:7px">Composition des slots</div>
+        <div class="mp-slots-head">
+          <div class="th-recipe">Recette (nom complet)</div>
+          <div class="th-count">Quantité</div>
+          <div class="th-del"></div>
+        </div>
+        <div id="mpSlotsContainer"></div>
+
+        <!-- Sum indicator -->
+        <div class="mp-sum-row">
+          <span class="mp-sum-indicator mp-sum-warn" id="mpSumIndicator">0 / ?</span>
+          <span class="mp-sum-label" id="mpSumLabel">Saisir le nombre d'unités et les slots</span>
+        </div>
+
+        <button class="btn-add-slot" id="btnAddSlot" onclick="addMpSlot()">+ Ajouter une recette</button>
+
+        <!-- STEP 4 — Aperçu -->
+        <div class="mp-preview" id="mpPreview">
+          <div class="mp-preview-label">Aperçu du multipack</div>
+          <div id="mpPreviewBody"><div class="mp-preview-empty">Remplir les champs ci-dessus pour prévisualiser</div></div>
+        </div>
+
+        <!-- Actions -->
+        <div class="mp-actions">
+          <button class="btn-primary" id="btnMpSave" onclick="saveMpPack()">Enregistrer le multipack</button>
+          <button class="btn-cancel" onclick="closeMpBuilder()">Fermer</button>
+        </div>
+      </div><!-- /multipack-form -->
+
+      <div class="pg-right">III</div>
+    </div><!-- /page-right -->
+  </div><!-- /book -->
+</div><!-- /ledger-stage -->
+
+<div class="titleblock">
+  La Nébuleuse — Lausanne<br>
+  Salle des Machines · Recettes №02<br>
+  rév. 2026-05-24 · maquette
+</div>
+<div class="preview-flag">_design preview · recettes v1</div>
+
+<script>
+/* ════════════════════════════════════════════════════════════════
+   VISUAL MOCKUP — state not persisted (session memory only).
+   ════════════════════════════════════════════════════════════════
+   DATA — exact per-hl bases from the brief. No fabrication.
+   Per-brassin = qty_per_hl × BRASSIN_HL (30).
+   ════════════════════════════════════════════════════════════════ */
+const BRASSIN_HL = 30;
+let currentScale = 'brassin'; // 'hl' | 'brassin'
+let currentRole  = 'admin';   // 'operateur' | 'manager' | 'admin'
+
+/* ════ FORMAT / SKU DATA ════
+   Canonical format list grouped by container.
+   SKU = sku_prefix + code  (concat; palette 'X' renders with a dash: ZEP-X).
+   Composite SKUs (PD8, XMASPACK, PAL, PAD) are NOT included here.
+   ════════════════════════════════════════════════════════════ */
+const SKU_PREFIXES = {
+  'zepp':      'ZEP',
+  'stirling':  'STI',
+  'diversion': 'DIV',
+};
+
+/* Format containers — display order preserved */
+const FORMAT_CONTAINERS = [
+  {
+    key: 'verre33',
+    label: 'Bouteille verre 33cl',
+    icon: '🍺',
+    formats: [
+      { code:'B',   display:'24-pack bouteille',       hl_per_unit:0.0792  },
+      { code:'B12', display:'12-pack bouteille',        hl_per_unit:0.0396  },
+      { code:'4',   display:'6×4 wraparound 24×33cl',  hl_per_unit:0.0792  },
+      { code:'4PB', display:'4-pack bouteille',         hl_per_unit:0.0132  },
+      { code:'BU',  display:'Unité bouteille',          hl_per_unit:0.0033  },
+      { code:'X',   display:'Palette 1027×33cl',        hl_per_unit:3.3891  },
+    ],
+  },
+  {
+    key: 'alu50',
+    label: 'Canette alu 50cl',
+    icon: '🥤',
+    formats: [
+      { code:'C',   display:'24-pack canette 50cl',     hl_per_unit:0.12    },
+      { code:'BC',  display:'24-pack variante',          hl_per_unit:0.12    },
+      { code:'4C',  display:'6×4 canette',               hl_per_unit:0.12    },
+      { code:'6C',  display:'6-pack tray',               hl_per_unit:0.12    },
+      { code:'12C', display:'12-pack canette',            hl_per_unit:0.06    },
+      { code:'4PC', display:'4-pack canette',             hl_per_unit:0.02    },
+      { code:'CU',  display:'Unité canette 50cl',        hl_per_unit:0.005   },
+    ],
+  },
+  {
+    key: 'alu33',
+    label: 'Canette alu 33cl',
+    icon: '🥤',
+    formats: [
+      { code:'33C', display:'Unité canette 33cl',        hl_per_unit:0.0033  },
+    ],
+  },
+  {
+    key: 'fut',
+    label: 'Fût 20L',
+    icon: '🛢',
+    formats: [
+      { code:'F',   display:'Fût 20 L',                  hl_per_unit:0.20    },
+    ],
+  },
+  {
+    key: 'cuv',
+    label: 'Cuve de service',
+    icon: '⚗',
+    formats: [
+      { code:'V',   display:'Liner (cuve de service)',    hl_per_unit:0.01    },
+    ],
+  },
+  {
+    key: 'pression',
+    label: 'Tirage pression',
+    icon: '🍻',
+    formats: [
+      { code:'P25', display:'Pression 25cl',              hl_per_unit:0.0025  },
+      { code:'P50', display:'Pression 50cl',              hl_per_unit:0.005   },
+    ],
+  },
+];
+
+/* Build a flat lookup: code → container key  */
+const FORMAT_BY_CODE = {};
+FORMAT_CONTAINERS.forEach(c => c.formats.forEach(f => { FORMAT_BY_CODE[f.code] = f; }));
+
+/* Pre-selected formats per recipe id (real data, no speculation) */
+const RECIPE_FORMATS_PRESELECT = {
+  'zepp': new Set(['X','B12','4','4C','4PB','4PC','6C','12C','B','BU','C','CU','F','P25','P50','V']),
+  // Stirling and Diversion: operator picks — no pre-selection
+};
+
+/* Per-recipe format selection state: Map<recipeId, Set<code>> */
+const RECIPE_FORMAT_SELECTIONS = {};
+
+function getFormatSelections(recipeId){
+  if(!RECIPE_FORMAT_SELECTIONS[recipeId]){
+    RECIPE_FORMAT_SELECTIONS[recipeId] = new Set(
+      RECIPE_FORMATS_PRESELECT[recipeId] || []
+    );
+  }
+  return RECIPE_FORMAT_SELECTIONS[recipeId];
+}
+
+/* Compute the displayed SKU code for a format code + recipe */
+function skuCode(prefix, code){
+  /* Palette uses a dash separator: ZEP-X */
+  if(code === 'X') return prefix + '-X';
+  return prefix + code;
+}
+
+/* ════ CLIENTS (mirrors ref_clients) ════ */
+let CLIENTS = [
+  { id:1,  name:'Abbaye de St-Maurice', notes:'' },
+  { id:2,  name:'BLZ Company',          notes:'' },
+  { id:3,  name:'BadFish',              notes:'' },
+  { id:4,  name:'Brasserie du Château', notes:'' },
+  { id:5,  name:'Brasserie du Fennek',  notes:'' },
+  { id:6,  name:'Brasserie du Singe',   notes:'' },
+  { id:7,  name:'Brasserie28',          notes:'' },
+  { id:8,  name:'Chien Bleu',           notes:'' },
+  { id:9,  name:"L'Improbable",         notes:'' },
+  { id:10, name:'Le Traquenard',        notes:'' },
+  { id:11, name:'Les Combières',        notes:'' },
+  { id:12, name:'MeltingPote',          notes:'' },
+  { id:13, name:'Moutonoir',            notes:'' },
+  { id:14, name:'Nylo',                 notes:'' },
+  { id:15, name:'Obrist',               notes:'' },
+  { id:16, name:'Septentrion',          notes:'' },
+];
+let _nextClientId = 17;
+
+function clientById(id){ return CLIENTS.find(c=>c.id===id)||null }
+function clientByName(name){ return CLIENTS.find(c=>c.name===name)||null }
+
+/* ── new-recipe creation state ── */
+let _formType = null;    // 'Maison' | 'Contrat'
+let _formClientId = null; // numeric id for Contrat
+
+const RECIPES = [
+  /* ─── Maison · Core ─── */
+  { id:'zepp', name:'Zepp', class:'Maison', subtype:'Core', client:null, vintage:null,
+    ingredients:[
+      { cat:'Malts', name:'Pilsener', qty_per_hl:15.833333, unit:'kg' },
+      { cat:'Houblons', name:'Herkules', qty_per_hl:13.333333, unit:'g' },
+      { cat:'Houblons', name:'Saazer', qty_per_hl:83.333333, unit:'g' },
+      { cat:'Houblons', name:'Spalter Select', qty_per_hl:83.333333, unit:'g' },
+      { cat:'Minéraux', name:'CaCl₂', qty_per_hl:5.833333, unit:'g' },
+      { cat:'Minéraux', name:'MgCl₂', qty_per_hl:5.833333, unit:'g' },
+      { cat:'Minéraux', name:'MgSO₄', qty_per_hl:3.5, unit:'g' },
+      { cat:'Minéraux', name:'NaCl', qty_per_hl:4.666667, unit:'g' },
+      { cat:'Process', name:'Phosphorique', qty_per_hl:23.333333, unit:'ml' },
+      { cat:'Process', name:'Yeastvit', qty_per_hl:8, unit:'g' },
+    ]
+  },
+  { id:'stirling', name:'Stirling', class:'Maison', subtype:'Core', client:null, vintage:null,
+    ingredients:[
+      { cat:'Malts', name:'Cara Crystal', qty_per_hl:0.276667, unit:'kg' },
+      { cat:'Malts', name:'Munich', qty_per_hl:4.166667, unit:'kg' },
+      { cat:'Malts', name:'Pilsener', qty_per_hl:13.666667, unit:'kg' },
+      { cat:'Houblons', name:'Cascade', qty_per_hl:166.666667, unit:'g' },
+      { cat:'Houblons', name:'Herkules', qty_per_hl:16.666667, unit:'g' },
+      { cat:'Houblons', name:'Simcoe', qty_per_hl:266.666667, unit:'g' },
+      { cat:'Minéraux', name:'CaCl₂', qty_per_hl:4.866667, unit:'g' },
+      { cat:'Minéraux', name:'CaSO₄', qty_per_hl:2.433333, unit:'g' },
+      { cat:'Minéraux', name:'MgSO₄', qty_per_hl:4.866667, unit:'g' },
+      { cat:'Minéraux', name:'NaCl', qty_per_hl:6.083333, unit:'g' },
+      { cat:'Process', name:'Dehaze', qty_per_hl:5, unit:'ml' },
+      { cat:'Process', name:'Phosphorique', qty_per_hl:40, unit:'ml' },
+      { cat:'Process', name:'Yeastvit', qty_per_hl:8, unit:'g' },
+    ]
+  },
+  { id:'diversion', name:'Diversion', class:'Maison', subtype:'Core', client:null, vintage:null,
+    note:'sans alcool',
+    ingredients:[
+      { cat:'Malts', name:'Munich', qty_per_hl:1.666667, unit:'kg' },
+      { cat:'Malts', name:'Pilsener', qty_per_hl:6.333333, unit:'kg' },
+      { cat:'Houblons', name:'Mosaic Incognito', qty_per_hl:66.666667, unit:'g' },
+      { cat:'Houblons', name:'Mosaic', qty_per_hl:166.666667, unit:'g' },
+      { cat:'Minéraux', name:'CaCl₂', qty_per_hl:4.866667, unit:'g' },
+      { cat:'Minéraux', name:'CaSO₄', qty_per_hl:2.433333, unit:'g' },
+      { cat:'Minéraux', name:'MgSO₄', qty_per_hl:4.866667, unit:'g' },
+      { cat:'Process', name:'Nagardo', qty_per_hl:2, unit:'g' },
+      { cat:'Process', name:'Phosphorique', qty_per_hl:41.666667, unit:'ml' },
+    ]
+  },
+  /* Core stubs */
+  { id:'alternative', name:'Alternative', class:'Maison', subtype:'Core', client:null, vintage:null, ingredients:[] },
+  { id:'div-blanche', name:'Diversion Blanche', class:'Maison', subtype:'Core', client:null, vintage:null, ingredients:[] },
+  { id:'double-oat', name:'Double Oat', class:'Maison', subtype:'Core', client:null, vintage:null, ingredients:[] },
+  { id:'embuscade', name:'Embuscade', class:'Maison', subtype:'Core', client:null, vintage:null, ingredients:[] },
+  { id:'moonshine', name:'Moonshine', class:'Maison', subtype:'Core', client:null, vintage:null, ingredients:[] },
+  { id:'speakeasy', name:'Speakeasy', class:'Maison', subtype:'Core', client:null, vintage:null, ingredients:[] },
+  /* EPH millésimes */
+  ...[
+    {id:'eph1',name:'EPH1',millesimes:[2022,2023,2024,2025,2026]},
+    {id:'eph2',name:'EPH2',millesimes:[2021,2022,2023,2024,2025,2026]},
+    {id:'eph3',name:'EPH3',millesimes:[2021,2022,2023,2024]},
+    {id:'eph4',name:'EPH4',millesimes:[2021,2022,2023,2025]},
+  ].flatMap(e => e.millesimes.map(v=>({
+    id:`${e.id}-${v}`, name:e.name, class:'Maison', subtype:'EPH',
+    vintage:String(v), client:null, ingredients:[]
+  }))),
+  /* Collab */
+  { id:'div-gose', name:'Diversion Gose', class:'Maison', subtype:'CollabIn', client:null, vintage:null, ingredients:[] },
+  { id:'docks-neipa', name:'Docks — NEIPA', class:'Maison', subtype:'CollabIn', client:null, vintage:null, ingredients:[] },
+  { id:'drunkbeard', name:'DrunkBeard — Galactic Drift', class:'Maison', subtype:'CollabIn', client:null, vintage:null, ingredients:[] },
+  { id:'qrew-gose', name:'Qrew — Diversion Gose', class:'Maison', subtype:'CollabOut', client:null, vintage:null, ingredients:[] },
+  /* Archives */
+  { id:'blonde-rom', name:'Blonde des Romands', class:'Maison', subtype:'Archive', client:null, vintage:null, ingredients:[] },
+  { id:'div-panache', name:'Diversion Panaché', class:'Maison', subtype:'Archive', client:null, vintage:null, ingredients:[] },
+  { id:'estafette', name:'Estafette', class:'Maison', subtype:'Archive', client:null, vintage:null, ingredients:[] },
+  /* Contrat — client_id references CLIENTS array */
+  ...buildContract(1, 'Abbaye de St-Maurice',['Candide','DXV','Febris','Lumen','Vox']),
+  ...buildContract(2, 'BLZ Company',          ['Lager','Mosaic IPA','Red Ale','WestCoast Pale Ale']),
+  ...buildContract(3, 'BadFish',              ['915','Cryo IPA','Witshark']),
+  ...buildContract(4, 'Brasserie du Château', ['4.4','Faya','Ginger']),
+  ...buildContract(5, 'Brasserie du Fennek',  ['Hoppy Wheat']),
+  ...buildContract(6, 'Brasserie du Singe',   ['Wheat IPA']),
+  ...buildContract(7, 'Brasserie28',          ['Blonde','IPA','ST','Triple']),
+  ...buildContract(8, 'Chien Bleu',           ['Bamse','Jasper','Moût Chaud','Moût Froid','Pomelo']),
+  ...buildContract(9, "L'Improbable",         ['Kinzan','Pale Ale','White Trash']),
+  ...buildContract(10,'Le Traquenard',        ['Pale Ale','Session IPA']),
+  ...buildContract(11,'Les Combières',        ['La Grande à Meylan',"La P'tite à Piguet"]),
+  ...buildContract(12,'MeltingPote',          ['Cropette','Jonx','Plainpal']),
+  ...buildContract(13,'Moutonoir',            ['Pura Vida']),
+  ...buildContract(14,'Nylo',                 ['NYL']),
+  ...buildContract(15,'Obrist',               ['Grape Ale']),
+  ...buildContract(16,'Septentrion',          ['Boréale','Minami','Mistral']),
+];
+
+/* client_id + client (name string) both stored on each recipe for easy access */
+function buildContract(clientId, clientName, beers){
+  return beers.map(b=>({
+    id: `contrat-${slugify(clientName)}-${slugify(b)}`,
+    name: b,
+    recipe_short_name: b,
+    class:'Contrat', subtype:'WhiteLabel',
+    client: clientName,   // display string (updated on rename)
+    client_id: clientId,  // FK → CLIENTS[].id
+    vintage:null, ingredients:[]
+  }));
+}
+function slugify(s){ return s.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'') }
+
+/* ════ Category config ════ */
+const CATS = {
+  'Malts':   { color:'var(--cat-malt)',  bm:'#7a5c28', icon: maltIcon },
+  'Houblons':{ color:'var(--cat-hop)',   bm:'#4a6a22', icon: hopIcon },
+  'Minéraux':{ color:'var(--cat-min)',   bm:'#285c6a', icon: mineralIcon },
+  'Process': { color:'var(--cat-proc)',  bm:'#5a2868', icon: processIcon },
+};
+const CAT_ORDER = ['Malts','Houblons','Minéraux','Process'];
+
+/* ════ Bookmark groups ════ */
+const GROUPS = [
+  { id:'core',     label:'Core',     color:'#7a5c28', match: r=>r.class==='Maison'&&r.subtype==='Core' },
+  { id:'eph',      label:'EPH',      color:'#4a6a22', match: r=>r.subtype==='EPH' },
+  { id:'collab',   label:'Collab',   color:'#285c6a', match: r=>['CollabIn','CollabOut'].includes(r.subtype) },
+  { id:'archives', label:'Archives', color:'#5a2868', match: r=>r.subtype==='Archive' },
+  { id:'contrat',  label:'Contrat',  color:'#8a4422', match: r=>r.class==='Contrat' },
+];
+
+/* ════ SVG glyphs (hand-authored, no NaN/undefined) ════ */
+function maltIcon(){
+  return `<svg viewBox="0 0 20 20" width="20" height="20" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"
+      d="M10 3 C6 3 3 6 3 10 C3 14 6 17 10 17 C14 17 17 14 17 10 C17 6 14 3 10 3Z"/>
+    <path stroke-width="1.1" stroke-linecap="round"
+      d="M7 8 Q10 5 13 8 M7 11 Q10 8 13 11 M8 14 Q10 12 12 14"/>
+    <line stroke-width="1.1" stroke-linecap="round" x1="10" y1="3" x2="10" y2="1"/>
+    <line stroke-width="1.1" stroke-linecap="round" x1="8" y1="2" x2="12" y2="2"/>
+  </svg>`;
+}
+function hopIcon(){
+  return `<svg viewBox="0 0 20 20" width="20" height="20" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <line stroke-width="1.2" stroke-linecap="round" x1="10" y1="2" x2="10" y2="18"/>
+    <ellipse stroke-width="1.1" cx="10" cy="7" rx="4" ry="3"/>
+    <ellipse stroke-width="1.1" cx="10" cy="12" rx="4" ry="3"/>
+    <path stroke-width="1" stroke-linecap="round"
+      d="M6 7 C3 7 3 11 6 11 M14 7 C17 7 17 11 14 11"/>
+    <circle stroke-width="1" cx="10" cy="2" r="1.5"/>
+  </svg>`;
+}
+function mineralIcon(){
+  return `<svg viewBox="0 0 20 20" width="20" height="20" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <polygon stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"
+      points="10,2 17,7 17,14 10,18 3,14 3,7"/>
+    <polygon stroke-width="1" stroke-linecap="round" stroke-linejoin="round" opacity=".55"
+      points="10,6 14,9 14,13 10,15 6,13 6,9"/>
+    <line stroke-width=".9" stroke-linecap="round" opacity=".4" x1="10" y1="2" x2="10" y2="6"/>
+    <line stroke-width=".9" stroke-linecap="round" opacity=".4" x1="17" y1="7" x2="14" y2="9"/>
+    <line stroke-width=".9" stroke-linecap="round" opacity=".4" x1="3" y1="7" x2="6" y2="9"/>
+    <line stroke-width=".9" stroke-linecap="round" opacity=".4" x1="17" y1="14" x2="14" y2="13"/>
+    <line stroke-width=".9" stroke-linecap="round" opacity=".4" x1="3" y1="14" x2="6" y2="13"/>
+    <line stroke-width=".9" stroke-linecap="round" opacity=".4" x1="10" y1="18" x2="10" y2="15"/>
+  </svg>`;
+}
+function processIcon(){
+  return `<svg viewBox="0 0 20 20" width="20" height="20" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"
+      d="M8 2 L8 5 Q5 6 4 9 L2 9 L2 12 L4 12 Q5 15 8 16 L8 18 L12 18 L12 16 Q15 15 16 12 L18 12 L18 9 L16 9 Q15 6 12 5 L12 2 Z"/>
+    <circle stroke-width="1.1" cx="10" cy="10" r="3"/>
+    <circle stroke-width=".9" cx="10" cy="10" r="1.2"/>
+  </svg>`;
+}
+
+/* ════ Quantity formatting ════ */
+function fmtQty(val, unit, scale){
+  const q = scale === 'brassin' ? val * BRASSIN_HL : val;
+  if (unit === 'kg') {
+    return q.toFixed(2);
+  } else if (unit === 'g') {
+    return q.toFixed(2);
+  } else {
+    return q.toFixed(2);
+  }
+}
+
+/* ════ INDEX BUILD ════ */
+let activeGroup = null;
+let selectedId = 'zepp';
+/* Track expanded/collapsed state per client id */
+const _clientCollapsed = {}; // clientId → bool
+
+function buildIndex(){
+  const container = document.getElementById('indexScroll');
+  container.innerHTML = '';
+
+  // Core
+  renderGroup(container, 'Maison · Core', RECIPES.filter(r=>r.class==='Maison'&&r.subtype==='Core'), 'core');
+  // EPH — group by beer name
+  const ephNames = [...new Set(RECIPES.filter(r=>r.subtype==='EPH').map(r=>r.name))];
+  const ephSection = document.createElement('div');
+  ephSection.className = 'idx-group';
+  ephSection.dataset.group = 'eph';
+  ephSection.innerHTML = `<div class="idx-group-label">Maison · EPH · par millésime</div>`;
+  let rowNum = RECIPES.filter(r=>r.class==='Maison'&&r.subtype==='Core').length + 1;
+  ephNames.forEach(nm=>{
+    const vins = RECIPES.filter(r=>r.name===nm&&r.subtype==='EPH');
+    vins.forEach((r,i)=>{
+      const row = buildIndexRow(r, rowNum++, i===0 ? nm : null, r.vintage);
+      ephSection.appendChild(row);
+    });
+  });
+  container.appendChild(ephSection);
+
+  // Collab
+  renderGroup(container, 'Maison · Collab', RECIPES.filter(r=>['CollabIn','CollabOut'].includes(r.subtype)), 'collab');
+  // Archives
+  renderGroup(container, 'Maison · Archives', RECIPES.filter(r=>r.subtype==='Archive'), 'archives');
+  // Contrat — two-level: section header + collapsible client groups
+  renderContratIndex(container);
+
+  // animate rows staggered
+  container.querySelectorAll('.idx-row').forEach((el,i)=>{
+    el.style.animationDelay = `${0.05 + i*0.012}s`;
+  });
+}
+
+/* Render the full Contrat section as collapsible client groups */
+function renderContratIndex(container){
+  const contratSection = document.createElement('div');
+  contratSection.className = 'idx-group';
+  contratSection.dataset.group = 'contrat';
+  contratSection.innerHTML = `<div class="idx-group-label">Contrat · par client</div>`;
+
+  // Use CLIENTS order, skip clients with no recipes
+  CLIENTS.forEach(cli=>{
+    const beers = RECIPES.filter(r=>r.class==='Contrat' && r.client_id===cli.id);
+    if(!beers.length) return;
+    const cg = buildClientGroup(cli, beers);
+    contratSection.appendChild(cg);
+  });
+
+  // Also include any orphan recipes whose client_id is not in CLIENTS
+  // (shouldn't happen in practice; safety net)
+  const knownIds = new Set(CLIENTS.map(c=>c.id));
+  const orphans = RECIPES.filter(r=>r.class==='Contrat' && !knownIds.has(r.client_id));
+  if(orphans.length){
+    const fakeCli = { id:-1, name:'Autres' };
+    contratSection.appendChild(buildClientGroup(fakeCli, orphans));
+  }
+
+  container.appendChild(contratSection);
+}
+
+/* Build a collapsible client group element */
+function buildClientGroup(cli, beers){
+  const isCollapsed = !!_clientCollapsed[cli.id];
+
+  const cg = document.createElement('div');
+  cg.className = 'client-group' + (isCollapsed ? ' collapsed' : '');
+  cg.dataset.clientId = cli.id;
+
+  // ── Divider (heading) ──
+  const divider = document.createElement('div');
+  divider.className = 'client-divider';
+  divider.dataset.clientId = cli.id;
+  divider.innerHTML = `
+    <span class="client-divider-name" data-client-id="${cli.id}">${escHtml(cli.name)}</span>
+    <span class="client-divider-count">${beers.length} bière${beers.length>1?'s':''}</span>
+    <span class="client-divider-chevron">▾</span>
+  `;
+
+  // Toggle collapse on click — but only on the chevron / non-editable area
+  // Admin/Manager: clicking the name starts edit
+  divider.addEventListener('click', (e)=>{
+    // If click was on the name span and role allows editing → start edit
+    if(e.target.closest('.client-divider-name') && (currentRole==='admin'||currentRole==='manager')){
+      startClientNameEdit(e.target.closest('.client-divider-name'), cli);
+      return;
+    }
+    // Otherwise: toggle collapse
+    const collapsed = cg.classList.toggle('collapsed');
+    _clientCollapsed[cli.id] = collapsed;
+  });
+
+  cg.appendChild(divider);
+
+  // ── Beer list ──
+  const beerList = document.createElement('div');
+  beerList.className = 'client-beers';
+  beerList.dataset.clientId = cli.id;
+  beers.forEach((r,i)=>{
+    const row = buildIndexRow(r, i+1, r.recipe_short_name || r.name, null);
+    beerList.appendChild(row);
+  });
+  cg.appendChild(beerList);
+  return cg;
+}
+
+function renderGroup(container, label, recipes, groupKey){
+  if(!recipes.length) return;
+  const grpEl = document.createElement('div');
+  grpEl.className = 'idx-group';
+  grpEl.dataset.group = groupKey || (label.toLowerCase().split(' ')[1] || label.toLowerCase());
+  grpEl.innerHTML = `<div class="idx-group-label">${label}</div>`;
+  recipes.forEach((r,i) => grpEl.appendChild(buildIndexRow(r, i+1, r.name, r.vintage)));
+  container.appendChild(grpEl);
+}
+
+function escHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') }
+
+function buildIndexRow(recipe, num, displayName, vintage){
+  const row = document.createElement('div');
+  row.className = 'idx-row' + (recipe.id === selectedId ? ' sel' : '');
+  row.dataset.id = recipe.id;
+  row.style.animationDelay = '0s'; // overwritten by buildIndex
+
+  const nameSpan = document.createElement('span');
+  nameSpan.className = 'idx-name';
+  nameSpan.textContent = displayName !== null ? displayName : recipe.name;
+
+  const dots = document.createElement('span');
+  dots.className = 'idx-dots';
+
+  const vinEl = document.createElement('span');
+  vinEl.className = 'idx-vintage';
+  if(vintage) vinEl.textContent = vintage;
+
+  const pgEl = document.createElement('span');
+  pgEl.className = 'idx-page';
+  pgEl.textContent = String(num).padStart(2,'0');
+
+  row.appendChild(nameSpan);
+  row.appendChild(dots);
+  if(vintage) row.appendChild(vinEl);
+  row.appendChild(pgEl);
+
+  row.addEventListener('click', () => openRecipe(recipe.id));
+  return row;
+}
+
+/* ════ BOOKMARK TABS ════ */
+function buildBookmarks(){
+  const bm = document.getElementById('bookmarks');
+  GROUPS.forEach(g=>{
+    const el = document.createElement('div');
+    el.className = 'bm';
+    el.style.setProperty('--bm-color', g.color);
+    el.textContent = g.label;
+    el.dataset.group = g.id;
+    el.addEventListener('click', ()=>filterGroup(g.id, el));
+    bm.appendChild(el);
+  });
+}
+
+function filterGroup(groupId, bmEl){
+  const allBm = document.querySelectorAll('.bm');
+  if(activeGroup === groupId){
+    activeGroup = null;
+    allBm.forEach(b=>b.classList.remove('active'));
+    document.querySelectorAll('.idx-group').forEach(g=>g.style.display='');
+    return;
+  }
+  activeGroup = groupId;
+  allBm.forEach(b=>b.classList.remove('active'));
+  bmEl.classList.add('active');
+  document.querySelectorAll('.idx-group').forEach(g=>{
+    const gd = g.dataset.group;
+    let show = false;
+    if(groupId==='core'     && gd==='core')     show=true;
+    if(groupId==='eph'      && gd==='eph')      show=true;
+    if(groupId==='collab'   && gd==='collab')   show=true;
+    if(groupId==='archives' && gd==='archives') show=true;
+    if(groupId==='contrat'  && gd==='contrat')  show=true;
+    g.style.display = show ? '' : 'none';
+  });
+}
+
+/* ════ RECIPE OPEN ════ */
+function openRecipe(id){
+  selectedId = id;
+  // update index selection
+  document.querySelectorAll('.idx-row').forEach(r=>{
+    r.classList.toggle('sel', r.dataset.id===id);
+  });
+  // close form / multipack builder if open
+  document.getElementById('creationForm').classList.remove('open');
+  document.getElementById('multipackForm').classList.remove('open');
+
+  // page-turn animation
+  const view = document.getElementById('recipeView');
+  view.classList.add('turning');
+  setTimeout(()=>{
+    view.classList.remove('turning');
+    renderRecipe(id);
+  }, 200);
+}
+
+function renderRecipe(id){
+  const r = RECIPES.find(x=>x.id===id);
+  if(!r) return;
+
+  // header label — show client name for Contrat
+  let labelTop = `${r.class} · ${r.subtype}`;
+  if(r.vintage) labelTop += ' · ' + r.vintage;
+  document.getElementById('recipeLabelTop').textContent = labelTop;
+
+  // recipe name — editable for admin/manager
+  // For Contrat recipes, show recipe_short_name (the beer's clean name)
+  const nameEl = document.getElementById('recipeName');
+  nameEl.innerHTML = '';
+
+  // Client subtitle for Contrat
+  const existingClientSub = document.getElementById('recipeClientSub');
+  if(existingClientSub) existingClientSub.remove();
+  if(r.class === 'Contrat' && r.client){
+    const cSub = document.createElement('div');
+    cSub.id = 'recipeClientSub';
+    cSub.className = 'recipe-client-sub';
+    cSub.textContent = r.client;
+    nameEl.parentNode.insertBefore(cSub, nameEl);
+  }
+
+  const nameEditable = document.createElement('span');
+  nameEditable.className = 'hdr-editable';
+  nameEditable.textContent = r.recipe_short_name || r.name;
+  nameEditable.dataset.hdrField = 'name';
+  nameEditable.dataset.recipeId = r.id;
+  nameEditable.addEventListener('click', ()=>startHeaderEdit(nameEditable, r));
+  nameEl.appendChild(nameEditable);
+
+  // badges
+  const badgeRow = document.getElementById('recipeBadgeRow');
+  badgeRow.innerHTML = '';
+
+  // Classification badge (editable)
+  const clsBadge = document.createElement('span');
+  clsBadge.className = `badge badge-${r.class.toLowerCase()} hdr-editable`;
+  clsBadge.textContent = r.class;
+  clsBadge.dataset.hdrField = 'class';
+  clsBadge.dataset.recipeId = r.id;
+  clsBadge.addEventListener('click', ()=>startHeaderEdit(clsBadge, r));
+  badgeRow.appendChild(clsBadge);
+
+  // Subtype badge (editable)
+  const stBadge = document.createElement('span');
+  stBadge.className = 'badge badge-subtype hdr-editable';
+  stBadge.textContent = r.subtype;
+  stBadge.dataset.hdrField = 'subtype';
+  stBadge.dataset.recipeId = r.id;
+  stBadge.addEventListener('click', ()=>startHeaderEdit(stBadge, r));
+  badgeRow.appendChild(stBadge);
+
+  // Vintage badge (editable — always shown as editable affordance for admin/manager)
+  const vinBadge = document.createElement('span');
+  vinBadge.className = 'badge badge-vintage hdr-editable';
+  vinBadge.textContent = r.vintage ? `Millésime ${r.vintage}` : 'Millésime —';
+  vinBadge.dataset.hdrField = 'vintage';
+  vinBadge.dataset.recipeId = r.id;
+  vinBadge.addEventListener('click', ()=>startHeaderEdit(vinBadge, r));
+  badgeRow.appendChild(vinBadge);
+
+  // Client badge (static display for Contrat — name edit happens on client divider)
+  if(r.class === 'Contrat' && r.client){
+    const cliBadge = document.createElement('span');
+    cliBadge.className = 'badge badge-client';
+    cliBadge.textContent = r.client;
+    badgeRow.appendChild(cliBadge);
+  }
+
+  // note badge (static)
+  if(r.note){
+    const noteBadge = document.createElement('span');
+    noteBadge.className = 'badge badge-note';
+    noteBadge.textContent = r.note;
+    badgeRow.appendChild(noteBadge);
+  }
+
+  // ledger body
+  renderLedger(r);
+}
+
+function renderLedger(r){
+  const body = document.getElementById('ledgerBody');
+  if(!r.ingredients || r.ingredients.length === 0){
+    body.innerHTML = `
+      <div class="recipe-empty">
+        <div class="empty-icon">${maltIcon()}</div>
+        <p>Recette non saisie dans la maquette</p>
+      </div>`;
+    renderFormatsSection(r);
+    return;
+  }
+
+  const grouped = {};
+  CAT_ORDER.forEach(c=>{ grouped[c]=[] });
+  r.ingredients.forEach(ing => {
+    if(grouped[ing.cat]) grouped[ing.cat].push(ing);
+    else grouped[ing.cat] = [ing];
+  });
+
+  let html = '';
+  let globalIdx = 1;
+
+  CAT_ORDER.forEach(cat=>{
+    const ings = grouped[cat];
+    if(!ings || !ings.length) return;
+    const catClass = cat==='Malts'?'cat-malt':cat==='Houblons'?'cat-hop':cat==='Minéraux'?'cat-min':'cat-proc';
+    const cfg = CATS[cat];
+
+    html += `<div class="cat-section ${catClass}">
+      <div class="cat-head">${cfg.icon()}<span class="cat-head-label">${cat}</span></div>`;
+
+    ings.forEach(ing=>{
+      const delay = (globalIdx * 0.045).toFixed(3);
+      const qty = fmtQty(ing.qty_per_hl, ing.unit, currentScale);
+      const qid = `qty-${r.id}-${slugify(ing.name)}`;
+      html += `<div class="ing-row" style="animation-delay:${delay}s" data-id="${r.id}" data-ing="${ing.name}" data-hl="${ing.qty_per_hl}" data-unit="${ing.unit}">
+        <span class="ing-num">${String(globalIdx).padStart(2,'0')}</span>
+        <span class="ing-name">${ing.name}</span>
+        <span class="ing-dots"></span>
+        <span class="ing-qty" id="${qid}" data-recipe="${r.id}" data-ing="${ing.name}">${qty}</span>
+        <span class="ing-unit">${ing.unit}</span>
+      </div>`;
+      globalIdx++;
+    });
+    html += `</div>`;
+  });
+
+  body.innerHTML = html;
+
+  // bind click-to-edit on qty spans (Manager + Admin only — CSS cursor handles Operateur)
+  body.querySelectorAll('.ing-qty').forEach(span=>{
+    span.addEventListener('click', ()=>startInlineEdit(span));
+  });
+
+  // Formats de conditionnement section (appended after ingredient table)
+  renderFormatsSection(r);
+}
+
+/* ════ FORMATS DE CONDITIONNEMENT SECTION ════ */
+function renderFormatsSection(r){
+  /* Remove existing section if any */
+  const existing = document.getElementById('fmtSection');
+  if(existing) existing.remove();
+
+  const prefix = SKU_PREFIXES[r.id] || null;
+  const body   = document.getElementById('ledgerBody');
+  if(!body) return;
+
+  const section = document.createElement('div');
+  section.className = 'fmt-section';
+  section.id = 'fmtSection';
+
+  /* ── Section header ── */
+  section.innerHTML = `
+    <div class="fmt-section-head">
+      <svg class="fmt-pkg-icon" viewBox="0 0 20 20" width="20" height="20" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path stroke="var(--cat-malt)" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"
+          d="M3 6 L10 3 L17 6 L17 15 L10 18 L3 15 Z"/>
+        <path stroke="var(--cat-malt)" stroke-width="1" stroke-linecap="round" opacity=".6"
+          d="M10 3 L10 18 M3 6 L17 6"/>
+        <path stroke="var(--cat-malt)" stroke-width=".9" stroke-linecap="round" opacity=".4"
+          d="M10 3 L17 6 M3 6 L10 9 L17 6"/>
+      </svg>
+      <span class="fmt-section-title">Formats de conditionnement</span>
+      <span class="fmt-section-gate">Formats disponibles selon les Capacités activées</span>
+    </div>`;
+
+  if(!prefix){
+    /* No SKU prefix → show a graceful placeholder */
+    const placeholder = document.createElement('div');
+    placeholder.className = 'fmt-no-prefix';
+    placeholder.textContent = 'Aucun préfixe SKU défini pour cette recette — formats non disponibles';
+    section.appendChild(placeholder);
+    body.appendChild(section);
+    return;
+  }
+
+  const selections = getFormatSelections(r.id);
+
+  FORMAT_CONTAINERS.forEach(container => {
+    const group = document.createElement('div');
+    group.className = 'fmt-container-group';
+
+    /* Container label */
+    const lbl = document.createElement('div');
+    lbl.className = 'fmt-container-label';
+    lbl.innerHTML = `<span class="fmt-container-label-icon">${container.icon}</span>${escHtml(container.label)}`;
+    group.appendChild(lbl);
+
+    container.formats.forEach(fmt => {
+      const isSelected = selections.has(fmt.code);
+      const sku = skuCode(prefix, fmt.code);
+
+      const row = document.createElement('div');
+      row.className = 'fmt-row' + (isSelected ? ' selected' : '');
+      row.dataset.code = fmt.code;
+
+      /* Checkbox */
+      const chk = document.createElement('input');
+      chk.type = 'checkbox';
+      chk.className = 'fmt-toggle';
+      chk.checked = isSelected;
+      chk.disabled = (currentRole === 'operateur');
+      chk.addEventListener('change', () => onFormatToggle(r, fmt.code, sku, chk, row));
+
+      const dispSpan = document.createElement('span');
+      dispSpan.className = 'fmt-display';
+      dispSpan.textContent = fmt.display;
+
+      const hlSpan = document.createElement('span');
+      hlSpan.className = 'fmt-hl';
+      hlSpan.textContent = fmt.hl_per_unit + ' hl';
+
+      const skuSpan = document.createElement('span');
+      skuSpan.className = 'fmt-sku';
+      skuSpan.textContent = sku;
+
+      const cogsNote = document.createElement('span');
+      cogsNote.className = 'fmt-cogs-note';
+      cogsNote.textContent = '→ COGS via SKU_BOM';
+
+      row.appendChild(chk);
+      row.appendChild(dispSpan);
+      row.appendChild(hlSpan);
+      row.appendChild(skuSpan);
+      row.appendChild(cogsNote);
+
+      group.appendChild(row);
+    });
+
+    section.appendChild(group);
+  });
+
+  body.appendChild(section);
+
+  /* BOM panel follows the formats section */
+  renderBomSection(r);
+}
+
+function onFormatToggle(recipe, code, sku, chk, row){
+  if(currentRole === 'operateur'){ chk.checked = !chk.checked; return; }
+
+  const willBeSelected = chk.checked;
+  const oldState = willBeSelected ? 'Désactivé' : 'Activé';
+  const newState = willBeSelected ? 'Activé'    : 'Désactivé';
+
+  /* Optimistically revert checkbox while modal is shown */
+  chk.checked = !willBeSelected;
+  row.classList.toggle('selected', !willBeSelected);
+
+  const prefix    = SKU_PREFIXES[recipe.id] || '???';
+  const skuFull   = sku;
+
+  if(currentRole === 'admin'){
+    /* Admin → confirm modal → apply */
+    const overlay = document.getElementById('modalOverlay');
+    const seal    = document.getElementById('modalSeal');
+    const title   = document.getElementById('modalTitle');
+    const diff    = document.getElementById('modalDiff');
+    const actions = document.getElementById('modalActions');
+
+    seal.innerHTML = '⊞'; seal.className = 'modal-seal confirm-seal';
+    title.innerHTML = 'Confirmer le <em>format / SKU</em>'; title.className = 'modal-title';
+    diff.innerHTML = `
+      <div class="diff-label">Résumé de la modification</div>
+      <div class="diff-row">
+        <span class="diff-field">${escHtml(recipe.name)} · Formats/SKU</span>
+      </div>
+      <div class="diff-row">
+        <span class="diff-from">${skuFull} · ${oldState}</span>
+        <span class="diff-arrow">→</span>
+        <span class="diff-to">${skuFull} · ${newState}</span>
+      </div>
+      <div class="diff-sub">SKU <code>${skuFull}</code> · maquette uniquement (pas de persistance)</div>`;
+
+    actions.innerHTML = '';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'btn-modal-cancel'; cancelBtn.textContent = 'Annuler';
+    cancelBtn.onclick = ()=>{ overlay.classList.remove('open'); };
+
+    const confirmBtn = document.createElement('button');
+    confirmBtn.className = 'btn-modal-confirm'; confirmBtn.textContent = 'Confirmer la sélection';
+    confirmBtn.onclick = ()=>{
+      overlay.classList.remove('open');
+      applyFormatToggle(recipe, code, skuFull, chk, row, willBeSelected);
+    };
+    actions.appendChild(cancelBtn);
+    actions.appendChild(confirmBtn);
+    overlay.classList.add('open');
+
+  } else {
+    /* Manager → request modal → journal pending */
+    const overlay = document.getElementById('modalOverlay');
+    const seal    = document.getElementById('modalSeal');
+    const title   = document.getElementById('modalTitle');
+    const diff    = document.getElementById('modalDiff');
+    const actions = document.getElementById('modalActions');
+
+    seal.innerHTML = '✉'; seal.className = 'modal-seal request-seal';
+    title.innerHTML = 'Demande de <em>modification</em>'; title.className = 'modal-title req-title';
+    diff.innerHTML = `
+      <div class="diff-label">Résumé de la demande</div>
+      <div class="diff-row">
+        <span class="diff-field">${escHtml(recipe.name)} · Formats/SKU</span>
+      </div>
+      <div class="diff-row">
+        <span class="diff-from">${skuFull} · ${oldState}</span>
+        <span class="diff-arrow">→</span>
+        <span class="diff-to">${skuFull} · ${newState}</span>
+      </div>
+      <div class="diff-sub">La demande sera soumise à l'administrateur</div>`;
+
+    actions.innerHTML = '';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'btn-modal-cancel'; cancelBtn.textContent = 'Annuler';
+    cancelBtn.onclick = ()=>{ overlay.classList.remove('open'); };
+
+    const sendBtn = document.createElement('button');
+    sendBtn.className = 'btn-modal-request'; sendBtn.textContent = 'Envoyer la demande';
+    sendBtn.onclick = ()=>{
+      overlay.classList.remove('open');
+      addJournalEntry({
+        ts:nowStr(), auteur:'Manager', role:'manager',
+        section:'Recettes', champ:'Recettes · Formats/SKU',
+        oldVal: skuFull + ' · ' + oldState,
+        newVal: skuFull + ' · ' + newState,
+        recipeId:recipe.id, ingName:null,
+        statut:'En attente', isMasterData:false,
+      });
+      showToast('Demande envoyée à l\'administrateur');
+    };
+    actions.appendChild(cancelBtn);
+    actions.appendChild(sendBtn);
+    overlay.classList.add('open');
+  }
+}
+
+function applyFormatToggle(recipe, code, sku, chk, row, willBeSelected){
+  const selections = getFormatSelections(recipe.id);
+  if(willBeSelected) selections.add(code);
+  else               selections.delete(code);
+
+  chk.checked = willBeSelected;
+  row.classList.toggle('selected', willBeSelected);
+
+  const newState = willBeSelected ? 'Activé' : 'Désactivé';
+  const oldState = willBeSelected ? 'Désactivé' : 'Activé';
+
+  addJournalEntry({
+    ts:nowStr(), auteur:'Kouros', role:'admin',
+    section:'Recettes', champ:'Recettes · Formats/SKU',
+    oldVal: sku + ' · ' + oldState,
+    newVal: sku + ' · ' + newState,
+    recipeId:recipe.id, ingName:null,
+    statut:'Appliquée', isMasterData:false,
+  });
+  showToast(sku + ' — ' + newState.toLowerCase());
+  // refresh BOM packaging part when format selection changes
+  const r = RECIPES.find(x=>x.id===recipe.id);
+  if(r) renderBomSection(r);
+}
+
+/* ════ NOMENCLATURE (BOM) SECTION — read-only computed view ════ */
+/*
+  Part 1 · Liquide  — recipe ingredients grouped by category, at current scale.
+  Part 2 · Conditionnement — per selected format, mock packaging MI rows by role.
+  Illustrative mock data; real binding (ref_packaging_format_mis) pending validation.
+*/
+
+/* Illustrative packaging MI rows per container key.
+   Each entry: { role, name, qty, unit }
+   qty = qty per unit of that format (e.g. per single bottle/can/keg). */
+const BOM_PKG_MOCK = {
+  verre33: [
+    { role:'Contenant',         name:'Bouteille verre 33cl',          qty:1,    unit:'pc'  },
+    { role:'Capsule/bouchon',   name:'Capsule couronne 26mm',         qty:1,    unit:'pc'  },
+    { role:'Étiquette',         name:'Étiquette face 90×65mm',        qty:1,    unit:'pc'  },
+    { role:'Étiquette',         name:'Étiquette dos 85×50mm',         qty:1,    unit:'pc'  },
+  ],
+  alu50: [
+    { role:'Contenant',         name:'Canette alu 50cl',              qty:1,    unit:'pc'  },
+    { role:'Fond/couvercle',    name:'Couvercle alu 50cl Ø52',        qty:1,    unit:'pc'  },
+    { role:'Étiquette',         name:'Sleeve canette 50cl (optionnel)',qty:1,    unit:'pc'  },
+  ],
+  alu33: [
+    { role:'Contenant',         name:'Canette alu 33cl',              qty:1,    unit:'pc'  },
+    { role:'Fond/couvercle',    name:'Couvercle alu 33cl Ø52',        qty:1,    unit:'pc'  },
+  ],
+  fut: [
+    { role:'Contenant',         name:'Fût KeyKeg 20L',                qty:1,    unit:'pc'  },
+    { role:'Gaz',               name:'CO₂ / Aligal 2 (rinçage)',      qty:0.02, unit:'kg'  },
+  ],
+  cuv: [
+    { role:'Contenant',         name:'Liner cuve de service',         qty:1,    unit:'pc'  },
+  ],
+  pression: [
+    { role:'Verre',             name:'Verre pression (service)',      qty:1,    unit:'pc'  },
+  ],
+};
+
+/* Per-format packaging add-ons (on top of the container base above).
+   Key = format code. */
+const BOM_FMT_EXTRA = {
+  'B':   [
+    { role:'Carton',    name:'Carton 24 bouteilles 33cl',  qty:1,  unit:'pc' },
+    { role:'Intercalaire', name:'Intercalaire carton 24x', qty:1,  unit:'pc' },
+  ],
+  'B12': [
+    { role:'Carton',    name:'Carton 12 bouteilles 33cl',  qty:1,  unit:'pc' },
+  ],
+  '4':   [
+    { role:'Carton',    name:'Wraparound 6×4 33cl',        qty:1,  unit:'pc' },
+  ],
+  '4PB': [
+    { role:'Film',      name:'Film rétractable 4-pack bot',qty:1,  unit:'pc' },
+  ],
+  'X':   [
+    { role:'Palette',   name:'Palette bois 80×120cm',      qty:1,  unit:'pc' },
+    { role:'Film palet.','name':'Film étirable palette',   qty:1,  unit:'pc' },
+  ],
+  'C':   [
+    { role:'Carton',    name:'Carton 24 canettes 50cl',    qty:1,  unit:'pc' },
+  ],
+  '4C':  [
+    { role:'Carton',    name:'Wraparound 6×4 canettes',    qty:1,  unit:'pc' },
+  ],
+  '6C':  [
+    { role:'Carton',    name:'Tray 6 canettes 50cl',       qty:1,  unit:'pc' },
+  ],
+  '12C': [
+    { role:'Carton',    name:'Carton 12 canettes 50cl',    qty:1,  unit:'pc' },
+  ],
+  '4PC': [
+    { role:'Film',      name:'Film rétractable 4-pack can',qty:1,  unit:'pc' },
+  ],
+};
+
+function renderBomSection(r){
+  /* Remove existing BOM section */
+  const existing = document.getElementById('bomSection');
+  if(existing) existing.remove();
+
+  const body = document.getElementById('ledgerBody');
+  if(!body) return;
+
+  const section = document.createElement('div');
+  section.className = 'bom-section';
+  section.id = 'bomSection';
+
+  /* ── Section header ── */
+  const head = document.createElement('div');
+  head.className = 'bom-section-head';
+  head.innerHTML = `
+    <svg class="bom-section-icon" viewBox="0 0 20 20" width="20" height="20" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x="3" y="3" width="14" height="14" rx="2" stroke="var(--ink-mute-paper)" stroke-width="1.2"/>
+      <line x1="3" y1="7" x2="17" y2="7" stroke="var(--ink-mute-paper)" stroke-width=".9" opacity=".5"/>
+      <line x1="3" y1="11" x2="17" y2="11" stroke="var(--ink-mute-paper)" stroke-width=".9" opacity=".5"/>
+      <line x1="3" y1="15" x2="17" y2="15" stroke="var(--ink-mute-paper)" stroke-width=".9" opacity=".3"/>
+      <line x1="7" y1="3" x2="7" y2="17" stroke="var(--ink-mute-paper)" stroke-width=".9" opacity=".35"/>
+    </svg>
+    <span class="bom-section-title">Nomenclature <em style="font-style:italic;color:var(--cat-malt)">BOM</em></span>
+    <span class="bom-readonly-tag">lecture seule · vue calculée</span>`;
+  section.appendChild(head);
+
+  /* ── Part 1 : Liquide ── */
+  const liqPart = document.createElement('div');
+  liqPart.className = 'bom-part';
+  liqPart.id = 'bomLiquidPart';
+
+  const scaleHint = currentScale === 'brassin'
+    ? 'par brassin · ' + BRASSIN_HL + ' hl'
+    : 'par hl';
+  liqPart.innerHTML = `<div class="bom-part-label">
+    Liquide — ingrédients recette
+    <span class="bom-scale-hint" id="bomScaleHint">${escHtml(scaleHint)}</span>
+  </div>`;
+
+  if(!r.ingredients || !r.ingredients.length){
+    const empty = document.createElement('div');
+    empty.className = 'bom-no-formats';
+    empty.textContent = 'Aucun ingrédient saisi pour cette recette.';
+    liqPart.appendChild(empty);
+  } else {
+    const grouped = {};
+    CAT_ORDER.forEach(c=>{ grouped[c]=[] });
+    r.ingredients.forEach(ing=>{
+      if(grouped[ing.cat]) grouped[ing.cat].push(ing);
+      else grouped[ing.cat] = [ing];
+    });
+
+    const rows = document.createDocumentFragment();
+    CAT_ORDER.forEach(cat=>{
+      const ings = grouped[cat];
+      if(!ings || !ings.length) return;
+      ings.forEach(ing=>{
+        const div = document.createElement('div');
+        div.className = 'bom-ing-row';
+        div.dataset.hl  = ing.qty_per_hl;
+        div.dataset.unit = ing.unit;
+        div.dataset.bomRow = '1';
+        const qtyVal = fmtQty(ing.qty_per_hl, ing.unit, currentScale);
+        div.innerHTML = `
+          <span class="bom-ing-cat">${escHtml(cat)}</span>
+          <span class="bom-ing-name">${escHtml(ing.name)}</span>
+          <span class="bom-ing-qty">${escHtml(qtyVal)}</span>
+          <span class="bom-ing-unit">${escHtml(ing.unit)}</span>`;
+        rows.appendChild(div);
+      });
+    });
+    liqPart.appendChild(rows);
+  }
+  section.appendChild(liqPart);
+
+  /* ── Part 2 : Conditionnement ── */
+  const pkgPart = document.createElement('div');
+  pkgPart.className = 'bom-part';
+  pkgPart.id = 'bomPkgPart';
+
+  pkgPart.innerHTML = `<div class="bom-part-label">Conditionnement — par format sélectionné</div>`;
+
+  const prefix   = SKU_PREFIXES[r.id] || null;
+  const sels     = getFormatSelections(r.id);
+  const selCodes = [...sels];
+
+  if(!prefix || !selCodes.length){
+    const empty = document.createElement('div');
+    empty.className = 'bom-no-formats';
+    empty.textContent = prefix
+      ? 'Aucun format sélectionné pour cette recette.'
+      : 'Aucun préfixe SKU — formats non disponibles.';
+    pkgPart.appendChild(empty);
+  } else {
+    FORMAT_CONTAINERS.forEach(container=>{
+      const containerCodes = container.formats.map(f=>f.code).filter(c=>sels.has(c));
+      if(!containerCodes.length) return;
+
+      const baseRows = BOM_PKG_MOCK[container.key] || [];
+
+      containerCodes.forEach(code=>{
+        const fmt = FORMAT_BY_CODE[code];
+        if(!fmt) return;
+        const sku = skuCode(prefix, code);
+        const extraRows = BOM_FMT_EXTRA[code] || [];
+        const allRows = [...baseRows, ...extraRows];
+
+        const block = document.createElement('div');
+        block.className = 'bom-pkg-block';
+
+        const skuChip = document.createElement('div');
+        skuChip.className = 'bom-pkg-sku';
+        skuChip.textContent = sku + ' — ' + fmt.display;
+        block.appendChild(skuChip);
+
+        allRows.forEach(pr=>{
+          const row = document.createElement('div');
+          row.className = 'bom-pkg-row';
+          row.innerHTML = `
+            <span class="bom-pkg-role">${escHtml(pr.role)}</span>
+            <span class="bom-pkg-name">${escHtml(pr.name)}</span>
+            <span class="bom-pkg-qty">${pr.qty % 1 === 0 ? pr.qty : pr.qty.toFixed(3)}</span>
+            <span class="bom-pkg-unit">${escHtml(pr.unit)}</span>`;
+          block.appendChild(row);
+        });
+
+        pkgPart.appendChild(block);
+      });
+    });
+  }
+
+  /* mock data caption */
+  const caption = document.createElement('div');
+  caption.className = 'bom-mock-caption';
+  caption.textContent = 'Vue calculée (illustrative) — dérive des ingrédients recette + formats × Capacités · liaison MI en attente de validation.';
+  pkgPart.appendChild(caption);
+
+  section.appendChild(pkgPart);
+  body.appendChild(section);
+}
+
+/* ════ SCALE TOGGLE ════ */
+function setScale(s){
+  currentScale = s;
+  document.getElementById('btnPerHl').classList.toggle('on', s==='hl');
+  document.getElementById('btnPerBrassin').classList.toggle('on', s==='brassin');
+  document.getElementById('scaleLabel').textContent =
+    s==='hl' ? 'par hl' : 'par brassin (30 hl)';
+
+  // recompute all visible qty spans without re-rendering
+  document.querySelectorAll('.ing-row[data-hl]').forEach(row=>{
+    const hl = parseFloat(row.dataset.hl);
+    const unit = row.dataset.unit;
+    const id = row.dataset.id;
+    const ingName = row.dataset.ing;
+    const span = row.querySelector('.ing-qty');
+    if(span){
+      span.textContent = fmtQty(hl, unit, s);
+    }
+  });
+  // also update form preview if open
+  updateFormPreview();
+
+  // update BOM liquid qty rows and scale hint
+  const scaleHint = s === 'brassin'
+    ? 'par brassin · ' + BRASSIN_HL + ' hl'
+    : 'par hl';
+  const bomHintEl = document.getElementById('bomScaleHint');
+  if(bomHintEl) bomHintEl.textContent = scaleHint;
+  document.querySelectorAll('.bom-ing-row[data-bom-row]').forEach(row=>{
+    const hl   = parseFloat(row.dataset.hl);
+    const unit = row.dataset.unit;
+    const qtySpan = row.querySelector('.bom-ing-qty');
+    if(qtySpan && !isNaN(hl)) qtySpan.textContent = fmtQty(hl, unit, s);
+  });
+}
+
+/* ════ NOUVELLE RECETTE FORM — multi-step ════ */
+document.getElementById('btnNew').addEventListener('click', ()=>{
+  openNewRecipeForm();
+});
+
+function openNewRecipeForm(){
+  _formType = null;
+  _formClientId = null;
+  document.getElementById('typeCardMaison').classList.remove('selected');
+  document.getElementById('typeCardContrat').classList.remove('selected');
+  // close multipack builder if open
+  document.getElementById('multipackForm').classList.remove('open');
+  goToStep(0);
+  document.getElementById('creationForm').classList.add('open');
+}
+
+function closeForm(){
+  document.getElementById('creationForm').classList.remove('open');
+  _formType = null;
+  _formClientId = null;
+}
+
+function goToStep(n){
+  document.querySelectorAll('.form-step').forEach(s=>s.classList.remove('active'));
+  let id;
+  if(n === 0) id = 'formStep0';
+  else if(n === '1client') id = 'formStep1Client';
+  else if(n === '2recipe') id = 'formStep2Recipe';
+  else id = 'formStep' + n;
+  const el = document.getElementById(id);
+  if(el) el.classList.add('active');
+}
+
+function chooseType(type){
+  _formType = type;
+  document.getElementById('typeCardMaison').classList.toggle('selected', type==='Maison');
+  document.getElementById('typeCardContrat').classList.toggle('selected', type==='Contrat');
+  if(type === 'Maison'){
+    _formClientId = null;
+    showRecipeFormStep(null);
+  } else {
+    populateClientSelector();
+    goToStep('1client');
+  }
+}
+
+function populateClientSelector(){
+  const sel = document.getElementById('fClientSelect');
+  sel.innerHTML = '';
+  CLIENTS.forEach(cli=>{
+    const o = document.createElement('option');
+    o.value = cli.id; o.textContent = cli.name;
+    sel.appendChild(o);
+  });
+  const newOpt = document.createElement('option');
+  newOpt.value = '__new__'; newOpt.textContent = '+ Nouveau client…';
+  sel.appendChild(newOpt);
+  if(_formClientId){
+    sel.value = _formClientId;
+  } else {
+    sel.value = CLIENTS[0].id;
+    _formClientId = CLIENTS[0].id;
+  }
+  onClientSelectChange();
+}
+
+function onClientSelectChange(){
+  const sel = document.getElementById('fClientSelect');
+  const v = sel.value;
+  const newClientForm = document.getElementById('newClientForm');
+  const clientStepActions = document.getElementById('clientStepActions');
+  if(v === '__new__'){
+    newClientForm.classList.add('open');
+    clientStepActions.style.display = 'none';
+    document.getElementById('fNewClientName').value = '';
+    document.getElementById('fNewClientNotes').value = '';
+    setTimeout(()=>{ document.getElementById('fNewClientName').focus(); }, 50);
+  } else {
+    newClientForm.classList.remove('open');
+    clientStepActions.style.display = '';
+    _formClientId = parseInt(v, 10);
+  }
+}
+
+function cancelNewClient(){
+  const sel = document.getElementById('fClientSelect');
+  sel.value = CLIENTS[0].id;
+  document.getElementById('newClientForm').classList.remove('open');
+  document.getElementById('clientStepActions').style.display = '';
+  _formClientId = CLIENTS[0].id;
+}
+
+function createNewClient(){
+  const name = document.getElementById('fNewClientName').value.trim();
+  if(!name){ showToast('Indiquer le nom du client'); return; }
+  const notes = document.getElementById('fNewClientNotes').value.trim();
+
+  const doCreate = ()=>{
+    const newCli = { id:_nextClientId++, name, notes };
+    CLIENTS.push(newCli);
+    _formClientId = newCli.id;
+    addJournalEntry({
+      ts:nowStr(), auteur:currentRole==='admin'?'Kouros':'Manager', role:currentRole,
+      section:'Clients', champ:'Clients \xb7 Nom',
+      oldVal:'—', newVal:name,
+      recipeId:null, ingName:null,
+      statut: currentRole==='admin' ? 'Appliqu\xe9e' : 'En attente',
+      isMasterData:false,
+    });
+    populateClientSelector();
+    document.getElementById('fClientSelect').value = newCli.id;
+    document.getElementById('newClientForm').classList.remove('open');
+    document.getElementById('clientStepActions').style.display = '';
+    showToast('Client "' + name + '" cr\xe9\xe9');
+  };
+
+  if(currentRole === 'admin'){
+    const overlay = document.getElementById('modalOverlay');
+    const seal    = document.getElementById('modalSeal');
+    const title   = document.getElementById('modalTitle');
+    const diff    = document.getElementById('modalDiff');
+    const actions = document.getElementById('modalActions');
+    seal.innerHTML = '⊕'; seal.className = 'modal-seal confirm-seal';
+    title.innerHTML = 'Cr\xe9er le <em>nouveau client</em>'; title.className = 'modal-title';
+    diff.innerHTML = '<div class="diff-label">Nouveau client</div>'
+      + '<div class="diff-row"><span class="diff-field">' + escHtml(name) + '</span></div>'
+      + (notes ? '<div class="diff-row"><span style="font-size:12px;color:var(--ink-mute-paper)">' + escHtml(notes) + '</span></div>' : '')
+      + '<div class="diff-sub">Ajout\xe9 \xe0 ref_clients avec le prochain id disponible</div>';
+    actions.innerHTML = '';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'btn-modal-cancel'; cancelBtn.textContent = 'Annuler';
+    cancelBtn.onclick = ()=>{ overlay.classList.remove('open'); };
+    const okBtn = document.createElement('button');
+    okBtn.className = 'btn-modal-confirm'; okBtn.textContent = 'Cr\xe9er le client';
+    okBtn.onclick = ()=>{ overlay.classList.remove('open'); doCreate(); };
+    actions.appendChild(cancelBtn); actions.appendChild(okBtn);
+    overlay.classList.add('open');
+  } else {
+    // Manager: optimistic local create + pending journal entry
+    const newCli = { id:_nextClientId++, name, notes };
+    CLIENTS.push(newCli);
+    _formClientId = newCli.id;
+    addJournalEntry({
+      ts:nowStr(), auteur:'Manager', role:'manager',
+      section:'Clients', champ:'Clients \xb7 Nom',
+      oldVal:'—', newVal:name,
+      recipeId:null, ingName:null,
+      statut:'En attente', isMasterData:false,
+    });
+    populateClientSelector();
+    document.getElementById('fClientSelect').value = newCli.id;
+    document.getElementById('newClientForm').classList.remove('open');
+    document.getElementById('clientStepActions').style.display = '';
+    showToast('Demande envoy\xe9e — client cr\xe9\xe9 localement');
+  }
+}
+
+function proceedToRecipeForm(){
+  const sel = document.getElementById('fClientSelect');
+  _formClientId = parseInt(sel.value, 10);
+  if(isNaN(_formClientId)){ showToast('S\xe9lectionner un client'); return; }
+  const cli = clientById(_formClientId);
+  if(!cli){ showToast('Client introuvable'); return; }
+  showRecipeFormStep(cli);
+}
+
+function showRecipeFormStep(cli){
+  const crumb = document.getElementById('recipeCrumb');
+  if(_formType === 'Contrat' && cli){
+    crumb.innerHTML = '<span class="step-crumb-item done">Contrat</span>'
+      + '<span class="step-crumb-sep">›</span>'
+      + '<span class="step-crumb-item done">' + escHtml(cli.name) + '</span>'
+      + '<span class="step-crumb-sep">›</span>'
+      + '<span class="step-crumb-item active">Recette</span>';
+  } else {
+    crumb.innerHTML = '<span class="step-crumb-item done">Maison</span>'
+      + '<span class="step-crumb-sep">›</span>'
+      + '<span class="step-crumb-item active">Recette</span>';
+  }
+
+  const fSubtype = document.getElementById('fSubtype');
+  fSubtype.innerHTML = '';
+  const maisonOpts = ['Core','EPH','CollabIn','CollabOut','Archive'];
+  const contratOpts = ['WhiteLabel','CollabOut','CollabIn'];
+  const opts = (_formType === 'Maison') ? maisonOpts : contratOpts;
+  opts.forEach(o=>{
+    const opt = document.createElement('option');
+    opt.value = opt.textContent = o;
+    fSubtype.appendChild(opt);
+  });
+
+  const clientReadonlyWrap = document.getElementById('fClientReadonlyWrap');
+  if(_formType === 'Contrat' && cli){
+    clientReadonlyWrap.style.display = '';
+    document.getElementById('fClientReadonly').textContent = cli.name;
+  } else {
+    clientReadonlyWrap.style.display = 'none';
+  }
+
+  document.getElementById('fName').value = '';
+  document.getElementById('fVintage').value = '';
+  document.getElementById('ingRowsContainer').innerHTML = '';
+  ingRowCount = 0;
+  updateFormPreview();
+  goToStep('2recipe');
+  setTimeout(()=>{ document.getElementById('fName').focus(); }, 50);
+}
+
+function goBackFromRecipeForm(){
+  if(_formType === 'Contrat'){
+    goToStep('1client');
+  } else {
+    goToStep(0);
+  }
+}
+
+let ingRowCount = 0;
+function addIngRow(){
+  const container = document.getElementById('ingRowsContainer');
+  const n = ingRowCount++;
+  const row = document.createElement('div');
+  row.className = 'form-ing-row';
+  row.innerHTML = `
+    <select class="fi-cat" onchange="updateFormPreview()">
+      <option>Malts</option>
+      <option>Houblons</option>
+      <option>Minéraux</option>
+      <option>Process</option>
+    </select>
+    <input class="fi-name" type="text" placeholder="Ingrédient" oninput="updateFormPreview()">
+    <input class="fi-qty" type="number" step="any" placeholder="0.000" oninput="updateFormPreview()">
+    <select class="fi-unit" onchange="updateFormPreview()">
+      <option>kg</option>
+      <option>g</option>
+      <option>ml</option>
+      <option>L</option>
+    </select>
+    <button class="fi-del" onclick="this.closest('.form-ing-row').remove(); updateFormPreview()">×</button>`;
+  container.appendChild(row);
+  row.querySelector('.fi-name').focus();
+}
+
+function updateFormPreview(){
+  const rows = document.querySelectorAll('.form-ing-row');
+  const previewEl = document.getElementById('formPreviewRows');
+  if(!rows.length){
+    previewEl.innerHTML = '<em style="font-family:\'DM Sans\';font-size:12px;color:var(--ink-mute-paper)">Aucun ingrédient</em>';
+    return;
+  }
+  let html = '';
+  rows.forEach(row=>{
+    const name = row.querySelector('.fi-name').value.trim();
+    const qhlStr = row.querySelector('.fi-qty').value;
+    const unit = row.querySelector('.fi-unit').value;
+    if(!name || !qhlStr) return;
+    const qhl = parseFloat(qhlStr);
+    if(isNaN(qhl)) return;
+    const qBrassin = (qhl * BRASSIN_HL).toFixed(2);
+    html += `<div class="form-preview-row">
+      <span>${name}</span>
+      <span class="pqty">${qBrassin} ${unit}</span>
+    </div>`;
+  });
+  previewEl.innerHTML = html || '<em style="font-family:\'DM Sans\';font-size:12px;color:var(--ink-mute-paper)">Saisir les quantités</em>';
+}
+
+/* ════ ROLE SYSTEM ════ */
+const ROLE_META = {
+  operateur: { label:'Lecture seule', banClass:'ban-operateur' },
+  manager:   { label:'Vos modifications sont soumises à validation de l\'administrateur', banClass:'ban-manager' },
+  admin:     { label:'Mode administrateur — modifications directes', banClass:'ban-admin' },
+};
+
+function setRole(role){
+  currentRole = role;
+  document.body.setAttribute('data-role', role);
+
+  // update switcher buttons
+  document.querySelectorAll('.role-btn').forEach(b=>{
+    b.classList.toggle('active', b.dataset.role === role);
+  });
+
+  // banner
+  const banner = document.getElementById('roleBanner');
+  const txt    = document.getElementById('roleBannerTxt');
+  const meta   = ROLE_META[role];
+  banner.className = 'role-banner visible ' + meta.banClass;
+  txt.textContent  = meta.label;
+  // hide banner for admin after 3s
+  clearTimeout(banner._t);
+  if(role === 'admin'){
+    banner._t = setTimeout(()=>{ banner.classList.remove('visible') }, 2800);
+  }
+
+  // show/hide nouvelle-recette button
+  document.getElementById('btnNew').style.display = role === 'operateur' ? 'none' : '';
+
+  // hide/show pending tab (admin only)
+  const pending = document.getElementById('jtabPending');
+  pending.classList.toggle('hidden', role !== 'admin');
+
+  // re-render ledger to rebind edit events (keeps current recipe)
+  if(selectedId){
+    const r = RECIPES.find(x=>x.id===selectedId);
+    if(r && r.ingredients && r.ingredients.length){
+      renderLedger(r);
+    } else if(r) {
+      // Even if no ingredients, re-render formats so toggle disabled state updates
+      renderFormatsSection(r);
+    }
+  }
+
+  // close form if operateur
+  if(role === 'operateur') closeForm();
+}
+
+/* ════ INLINE EDIT ════ */
+let pendingEdit = null; // { span, recipeId, ingName, oldHl, newHl, unit, scale }
+
+function startInlineEdit(span){
+  if(currentRole === 'operateur') return;
+  if(span.querySelector('input')) return; // already editing
+
+  const recipeId = span.dataset.recipe;
+  const ingName  = span.dataset.ing;
+  const row      = span.closest('.ing-row');
+  const hl       = parseFloat(row.dataset.hl);
+  const unit     = row.dataset.unit;
+  const displayed = fmtQty(hl, unit, currentScale);
+
+  const inp = document.createElement('input');
+  inp.type  = 'number';
+  inp.step  = 'any';
+  inp.value = displayed;
+  inp.className = 'ing-qty-input';
+
+  span.textContent = '';
+  span.appendChild(inp);
+  inp.focus();
+  inp.select();
+
+  function commit(){
+    const raw = parseFloat(inp.value);
+    if(isNaN(raw) || raw < 0){
+      // revert
+      span.textContent = displayed;
+      return;
+    }
+    const newHl = currentScale === 'brassin' ? raw / BRASSIN_HL : raw;
+    if(Math.abs(newHl - hl) < 1e-9){
+      span.textContent = displayed;
+      return;
+    }
+    span.textContent = '…';
+    pendingEdit = { span, recipeId, ingName, oldHl:hl, newHl, unit, scale:currentScale };
+    openEditModal(pendingEdit, displayed, raw);
+  }
+
+  inp.addEventListener('keydown', e=>{
+    if(e.key === 'Enter'){ e.preventDefault(); commit(); }
+    if(e.key === 'Escape'){ span.textContent = displayed; }
+  });
+  inp.addEventListener('blur', ()=>{ if(span.querySelector('input')) commit(); });
+}
+
+/* ════ HEADER FIELD EDIT ════ */
+/*
+  Fields: 'name' | 'class' | 'subtype' | 'vintage' | 'client'
+  'name', 'class', 'subtype' = identity fields → master-data warning in Admin confirm modal
+  'vintage', 'client' = metadata fields → standard confirm
+*/
+const HDR_FIELD_META = {
+  name:    { label:'Nom de la recette',  isMasterData:true,  inputType:'text',
+             champJournal:'Recettes · Nom' },
+  class:   { label:'Classification',     isMasterData:true,  inputType:'select',
+             options:['Maison','Contrat'], champJournal:'Recettes · Classification' },
+  subtype: { label:'Sous-type',          isMasterData:true,  inputType:'select',
+             options:['Core','EPH','CollabIn','CollabOut','WhiteLabel','Archive'],
+             champJournal:'Recettes · Sous-type' },
+  vintage: { label:'Millésime',          isMasterData:false, inputType:'text',
+             champJournal:'Recettes · Millésime' },
+  client:  { label:'Client',             isMasterData:false, inputType:'text',
+             champJournal:'Recettes · Client' },
+};
+
+let pendingHeaderEdit = null; // { el, recipe, field, meta, oldVal, newVal, oldDisplay }
+
+function startHeaderEdit(el, recipe){
+  if(currentRole === 'operateur') return;
+  if(el.querySelector('input,select')) return; // already editing
+
+  const field = el.dataset.hdrField;
+  const meta  = HDR_FIELD_META[field];
+  if(!meta) return;
+
+  // Read current value from recipe object
+  let curVal = recipe[field];
+  // For display fields that show "Millésime X" or "Client —" etc., curVal may be null
+  if(curVal === null || curVal === undefined) curVal = '';
+
+  const savedText = el.textContent;
+
+  let ctrl;
+  if(meta.inputType === 'select'){
+    ctrl = document.createElement('select');
+    ctrl.className = 'hdr-edit-select';
+    meta.options.forEach(opt=>{
+      const o = document.createElement('option');
+      o.value = opt; o.textContent = opt;
+      if(opt === curVal) o.selected = true;
+      ctrl.appendChild(o);
+    });
+  } else {
+    ctrl = document.createElement('input');
+    ctrl.type = 'text';
+    // Use big font only for name field
+    ctrl.className = field === 'name' ? 'hdr-edit-input' : 'hdr-edit-input hdr-edit-sm';
+    ctrl.value = curVal;
+    if(field === 'name'){
+      ctrl.style.fontSize = '38px';
+      ctrl.style.width = Math.max(160, curVal.length * 26 + 40) + 'px';
+    } else {
+      ctrl.style.width = Math.max(80, curVal.length * 9 + 40) + 'px';
+    }
+  }
+
+  el.textContent = '';
+  el.appendChild(ctrl);
+  ctrl.focus();
+  if(ctrl.select) ctrl.select();
+
+  function commitHdr(){
+    const rawVal = ctrl.value.trim();
+    // remove control
+    if(!el.querySelector('input,select')){ return; }
+
+    if(!rawVal || rawVal === curVal){
+      // no change — revert display
+      restoreHeaderDisplay(el, recipe, field, savedText);
+      return;
+    }
+
+    // store pending
+    pendingHeaderEdit = {
+      el, recipe, field, meta,
+      oldVal: curVal,
+      newVal: rawVal,
+      oldDisplay: savedText,
+    };
+
+    // show "…" while modal is open
+    el.textContent = '…';
+    openHeaderModal(pendingHeaderEdit);
+  }
+
+  ctrl.addEventListener('keydown', e=>{
+    if(e.key === 'Enter'){ e.preventDefault(); commitHdr(); }
+    if(e.key === 'Escape'){ restoreHeaderDisplay(el, recipe, field, savedText); }
+  });
+  ctrl.addEventListener('blur', ()=>{ if(el.querySelector('input,select')) commitHdr(); });
+}
+
+function restoreHeaderDisplay(el, recipe, field, savedText){
+  el.textContent = savedText;
+}
+
+function openHeaderModal(edit){
+  const { el, recipe, field, meta, oldVal, newVal } = edit;
+
+  const overlay = document.getElementById('modalOverlay');
+  const seal    = document.getElementById('modalSeal');
+  const title   = document.getElementById('modalTitle');
+  const diff    = document.getElementById('modalDiff');
+  const actions = document.getElementById('modalActions');
+
+  const isIdentity = meta.isMasterData;
+
+  if(currentRole === 'admin'){
+    seal.innerHTML = isIdentity ? '⚠' : '⚖';
+    seal.className = 'modal-seal confirm-seal';
+    title.innerHTML = `Confirmer la <em>modification</em>`;
+    title.className = 'modal-title';
+  } else {
+    seal.innerHTML = '✉';
+    seal.className = 'modal-seal request-seal';
+    title.innerHTML = 'Demande de <em>modification</em>';
+    title.className = 'modal-title req-title';
+  }
+
+  // Build diff HTML
+  let warnHTML = '';
+  if(isIdentity && currentRole === 'admin'){
+    warnHTML = `
+      <div class="modal-masterdata-warn">
+        <span class="warn-icon">⚠</span>
+        <div class="warn-body">
+          <div class="warn-title">Master data — propagation système</div>
+          <div class="warn-text">
+            Modifier <strong>${meta.label.toLowerCase()}</strong> met à jour cette recette
+            <strong>partout dans le système</strong> par clé étrangère <code>recipe_id_fk</code> —
+            brassins, livraisons, SKU BOM, rapports COGS et dashboards refléteront
+            immédiatement la nouvelle valeur.
+          </div>
+        </div>
+      </div>`;
+  }
+
+  const oldDisplay = oldVal || '—';
+  const newDisplay = newVal;
+
+  diff.innerHTML = `
+    ${warnHTML}
+    <div class="diff-label">Résumé de la modification</div>
+    <div class="diff-row">
+      <span class="diff-field">${recipe.name} · ${meta.label}</span>
+    </div>
+    <div class="diff-row">
+      <span class="diff-from">${oldDisplay}</span>
+      <span class="diff-arrow">→</span>
+      <span class="diff-to">${newDisplay}</span>
+    </div>
+    ${isIdentity ? `<div class="diff-sub">Impact : tous les enregistrements liés à <code>${recipe.id}</code></div>` : ''}
+  `;
+
+  actions.innerHTML = '';
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'btn-modal-cancel';
+  cancelBtn.textContent = 'Annuler';
+  cancelBtn.onclick = ()=>cancelHeaderModal(edit);
+
+  if(currentRole === 'admin'){
+    const confirmBtn = document.createElement('button');
+    confirmBtn.className = 'btn-modal-confirm';
+    confirmBtn.textContent = isIdentity ? 'Confirmer — propager partout' : 'Confirmer la modification';
+    confirmBtn.onclick = ()=>applyHeaderAdminEdit(edit);
+    actions.appendChild(cancelBtn);
+    actions.appendChild(confirmBtn);
+  } else {
+    const sendBtn = document.createElement('button');
+    sendBtn.className = 'btn-modal-request';
+    sendBtn.textContent = 'Envoyer la demande';
+    sendBtn.onclick = ()=>applyHeaderManagerRequest(edit);
+    actions.appendChild(cancelBtn);
+    actions.appendChild(sendBtn);
+  }
+
+  overlay.classList.add('open');
+}
+
+function cancelHeaderModal(edit){
+  document.getElementById('modalOverlay').classList.remove('open');
+  restoreHeaderDisplay(edit.el, edit.recipe, edit.field, edit.oldDisplay);
+  pendingHeaderEdit = null;
+}
+
+function applyHeaderAdminEdit(edit){
+  document.getElementById('modalOverlay').classList.remove('open');
+  const { recipe, field, meta, oldVal, newVal } = edit;
+
+  // 1. Update RECIPES data
+  recipe[field] = newVal;
+
+  // 2. Re-render header to reflect new values (also re-binds edit handlers)
+  renderRecipe(recipe.id);
+
+  // 3. Propagation: if name changed, update ALL left-index entries for this recipe
+  if(field === 'name'){
+    updateIndexName(recipe.id, newVal);
+  }
+
+  // 4. Journal entry
+  const oldDisplay = oldVal || '—';
+  addJournalEntry({
+    ts: nowStr(), auteur:'Kouros', role:'admin',
+    section:'Recettes',
+    champ: meta.champJournal,
+    oldVal: oldDisplay,
+    newVal: newVal,
+    recipeId: recipe.id, ingName: null,
+    statut:'Appliquée',
+    isMasterData: meta.isMasterData,
+  });
+
+  if(meta.isMasterData){
+    showToast(`"${newVal}" — modification propagée dans le système`);
+  }
+  pendingHeaderEdit = null;
+}
+
+function applyHeaderManagerRequest(edit){
+  document.getElementById('modalOverlay').classList.remove('open');
+  const { recipe, field, meta, oldVal, newVal } = edit;
+
+  // Revert display (not applied yet)
+  restoreHeaderDisplay(edit.el, recipe, field, edit.oldDisplay);
+
+  addJournalEntry({
+    ts: nowStr(), auteur:'Manager', role:'manager',
+    section:'Recettes',
+    champ: meta.champJournal,
+    oldVal: oldVal || '—',
+    newVal: newVal,
+    recipeId: recipe.id, ingName: null,
+    statut:'En attente',
+    isMasterData: meta.isMasterData,
+  });
+  showToast('Demande envoyée à l\'administrateur');
+  pendingHeaderEdit = null;
+}
+
+/* Update every left-index row that has data-id matching recipeId */
+function updateIndexName(recipeId, newName){
+  const recipe = RECIPES.find(x=>x.id===recipeId);
+  // Also update recipe_short_name
+  if(recipe){ recipe.recipe_short_name = newName; }
+
+  document.querySelectorAll('.idx-row[data-id="' + recipeId + '"]').forEach(row=>{
+    const nameSpan = row.querySelector('.idx-name');
+    if(nameSpan){ nameSpan.textContent = newName; }
+    row.style.transition = 'background .25s';
+    row.style.background = 'rgba(197,102,74,.14)';
+    setTimeout(()=>{ row.style.background = ''; }, 1200);
+  });
+}
+
+/* ════ CLIENT NAME INLINE EDIT ════ */
+let _pendingClientEdit = null;
+
+function startClientNameEdit(nameSpan, cli){
+  if(currentRole === 'operateur') return;
+  if(nameSpan.querySelector('input')) return;
+
+  const oldName = cli.name;
+  const savedText = nameSpan.textContent;
+
+  const inp = document.createElement('input');
+  inp.type = 'text';
+  inp.value = oldName;
+  inp.className = 'hdr-edit-input hdr-edit-sm';
+  inp.style.fontSize = '12px';
+  inp.style.width = Math.max(120, oldName.length * 8 + 40) + 'px';
+  inp.style.fontFamily = '"Fraunces",serif';
+  inp.style.fontVariationSettings = '"opsz" 72';
+  inp.style.color = 'var(--cat-malt)';
+
+  nameSpan.textContent = '';
+  nameSpan.appendChild(inp);
+  inp.focus(); inp.select();
+
+  function commit(){
+    if(!nameSpan.querySelector('input')) return;
+    const rawVal = inp.value.trim();
+    if(!rawVal || rawVal === oldName){
+      nameSpan.textContent = savedText;
+      return;
+    }
+    nameSpan.textContent = '…';
+    _pendingClientEdit = { nameSpan, cli, oldName, newName:rawVal };
+    openClientNameModal(_pendingClientEdit);
+  }
+
+  inp.addEventListener('keydown', e=>{
+    if(e.key === 'Enter'){ e.preventDefault(); commit(); }
+    if(e.key === 'Escape'){ nameSpan.textContent = savedText; }
+  });
+  inp.addEventListener('blur', ()=>{ if(nameSpan.querySelector('input')) commit(); });
+}
+
+function openClientNameModal(edit){
+  const { cli, oldName, newName } = edit;
+  const overlay = document.getElementById('modalOverlay');
+  const seal    = document.getElementById('modalSeal');
+  const title   = document.getElementById('modalTitle');
+  const diff    = document.getElementById('modalDiff');
+  const actions = document.getElementById('modalActions');
+
+  const warnHTML = currentRole === 'admin' ? `
+    <div class="modal-masterdata-warn">
+      <span class="warn-icon">⚠</span>
+      <div class="warn-body">
+        <div class="warn-title">Master data — propagation client</div>
+        <div class="warn-text">
+          Renommer ce client met à jour <strong>toutes ses recettes</strong> liées par
+          <code>client_id = ${cli.id}</code>, ainsi que toutes les occurrences affichées
+          (en-têtes, badges, index). La clé <code>ref_clients.id</code> reste inchangée.
+        </div>
+      </div>
+    </div>` : '';
+
+  if(currentRole === 'admin'){
+    seal.innerHTML = '⚠'; seal.className = 'modal-seal confirm-seal';
+    title.innerHTML = 'Renommer le <em>client</em>'; title.className = 'modal-title';
+  } else {
+    seal.innerHTML = '✉'; seal.className = 'modal-seal request-seal';
+    title.innerHTML = 'Demande de <em>renommage</em>'; title.className = 'modal-title req-title';
+  }
+
+  diff.innerHTML = warnHTML
+    + '<div class="diff-label">Résumé de la modification</div>'
+    + '<div class="diff-row"><span class="diff-field">Clients · Nom</span></div>'
+    + '<div class="diff-row">'
+    + '<span class="diff-from">' + escHtml(oldName) + '</span>'
+    + '<span class="diff-arrow">→</span>'
+    + '<span class="diff-to">' + escHtml(newName) + '</span>'
+    + '</div>'
+    + '<div class="diff-sub">Impact : toutes les recettes de ce client (client_id = ' + cli.id + ')</div>';
+
+  actions.innerHTML = '';
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'btn-modal-cancel'; cancelBtn.textContent = 'Annuler';
+  cancelBtn.onclick = ()=>{ overlay.classList.remove('open'); edit.nameSpan.textContent = oldName; _pendingClientEdit = null; };
+
+  if(currentRole === 'admin'){
+    const confirmBtn = document.createElement('button');
+    confirmBtn.className = 'btn-modal-confirm'; confirmBtn.textContent = 'Confirmer — propager partout';
+    confirmBtn.onclick = ()=>{ overlay.classList.remove('open'); applyClientRename(edit); };
+    actions.appendChild(cancelBtn); actions.appendChild(confirmBtn);
+  } else {
+    const sendBtn = document.createElement('button');
+    sendBtn.className = 'btn-modal-request'; sendBtn.textContent = 'Envoyer la demande';
+    sendBtn.onclick = ()=>{ overlay.classList.remove('open'); requestClientRename(edit); };
+    actions.appendChild(cancelBtn); actions.appendChild(sendBtn);
+  }
+  overlay.classList.add('open');
+}
+
+function applyClientRename(edit){
+  const { cli, oldName, newName, nameSpan } = edit;
+  // 1. Update CLIENTS array
+  cli.name = newName;
+  // 2. Update all RECIPES that belong to this client
+  RECIPES.forEach(r=>{
+    if(r.client_id === cli.id){ r.client = newName; }
+  });
+  // 3. Update all displayed client-divider names for this client
+  document.querySelectorAll('.client-divider-name[data-client-id="' + cli.id + '"]').forEach(el=>{
+    el.textContent = newName;
+  });
+  // 4. Update open recipe client subtitle if it belongs to this client
+  const openR = RECIPES.find(r=>r.id===selectedId);
+  if(openR && openR.client_id === cli.id){
+    const sub = document.getElementById('recipeClientSub');
+    if(sub) sub.textContent = newName;
+    // Also update the badge-client badge if present
+    const badgeRow = document.getElementById('recipeBadgeRow');
+    if(badgeRow){
+      badgeRow.querySelectorAll('.badge-client').forEach(b=>{
+        if(b.textContent === oldName) b.textContent = newName;
+      });
+    }
+  }
+  // 5. Journal
+  addJournalEntry({
+    ts:nowStr(), auteur:'Kouros', role:'admin',
+    section:'Clients', champ:'Clients · Nom',
+    oldVal:oldName, newVal:newName,
+    recipeId:null, ingName:null,
+    statut:'Appliquée', isMasterData:true,
+  });
+  showToast('"' + newName + '" — renommage propagé');
+  _pendingClientEdit = null;
+}
+
+function requestClientRename(edit){
+  const { cli, oldName, newName, nameSpan } = edit;
+  nameSpan.textContent = oldName; // revert display
+  addJournalEntry({
+    ts:nowStr(), auteur:'Manager', role:'manager',
+    section:'Clients', champ:'Clients · Nom',
+    oldVal:oldName, newVal:newName,
+    recipeId:null, ingName:null,
+    statut:'En attente', isMasterData:true,
+  });
+  showToast('Demande envoyée à l\'administrateur');
+  _pendingClientEdit = null;
+}
+
+/* ════ MODAL ════ */
+let _modalCancel = null;
+
+function openEditModal(edit, oldDisplayed, newDisplayed){
+  const overlay = document.getElementById('modalOverlay');
+  const seal    = document.getElementById('modalSeal');
+  const title   = document.getElementById('modalTitle');
+  const diff    = document.getElementById('modalDiff');
+  const actions = document.getElementById('modalActions');
+  const oldHlStr = edit.oldHl.toFixed(6);
+  const newHlStr = edit.newHl.toFixed(6);
+
+  const recipeObj = RECIPES.find(x=>x.id===edit.recipeId);
+  const recipeName = recipeObj ? recipeObj.name : edit.recipeId;
+  const scaleLabel = edit.scale === 'brassin' ? 'par brassin' : 'par hl';
+
+  if(currentRole === 'admin'){
+    seal.innerHTML = '⚖';
+    seal.className = 'modal-seal confirm-seal';
+    title.innerHTML = 'Confirmer la <em>modification</em>';
+    title.className = 'modal-title';
+  } else {
+    seal.innerHTML = '✉';
+    seal.className = 'modal-seal request-seal';
+    title.innerHTML = 'Demande de <em class="req-title">modification</em>';
+    title.className = 'modal-title req-title';
+  }
+
+  diff.innerHTML = `
+    <div class="diff-label">Résumé de la modification</div>
+    <div class="diff-row">
+      <span class="diff-field">${recipeName} · ${edit.ingName}</span>
+    </div>
+    <div class="diff-row">
+      <span style="font-family:'DM Sans';font-size:12px;color:var(--ink-mute-paper)">Valeur (${scaleLabel})</span>
+    </div>
+    <div class="diff-row">
+      <span class="diff-from">${oldDisplayed} ${edit.unit}</span>
+      <span class="diff-arrow">→</span>
+      <span class="diff-to">${newDisplayed.toFixed ? newDisplayed.toFixed(2) : newDisplayed} ${edit.unit}</span>
+    </div>
+    <div class="diff-sub">Base par hl : ${oldHlStr} → ${newHlStr} ${edit.unit}</div>
+  `;
+
+  actions.innerHTML = '';
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'btn-modal-cancel';
+  cancelBtn.textContent = 'Annuler';
+  cancelBtn.onclick = ()=>cancelEditModal(edit);
+
+  if(currentRole === 'admin'){
+    const confirmBtn = document.createElement('button');
+    confirmBtn.className = 'btn-modal-confirm';
+    confirmBtn.textContent = 'Confirmer la modification';
+    confirmBtn.onclick = ()=>applyAdminEdit(edit, newDisplayed);
+    actions.appendChild(cancelBtn);
+    actions.appendChild(confirmBtn);
+  } else {
+    const sendBtn = document.createElement('button');
+    sendBtn.className = 'btn-modal-request';
+    sendBtn.textContent = 'Envoyer la demande';
+    sendBtn.onclick = ()=>applyManagerRequest(edit, newDisplayed);
+    actions.appendChild(cancelBtn);
+    actions.appendChild(sendBtn);
+  }
+
+  overlay.classList.add('open');
+}
+
+function cancelEditModal(edit){
+  document.getElementById('modalOverlay').classList.remove('open');
+  if(edit && edit.span){
+    const row  = edit.span.closest('.ing-row');
+    const hl   = parseFloat(row.dataset.hl);
+    const unit = row.dataset.unit;
+    edit.span.textContent = fmtQty(hl, unit, currentScale);
+  }
+  pendingEdit = null;
+}
+
+function applyAdminEdit(edit, newDisplayed){
+  document.getElementById('modalOverlay').classList.remove('open');
+  // update RECIPES data
+  const recipe = RECIPES.find(x=>x.id===edit.recipeId);
+  if(recipe){
+    const ing = recipe.ingredients.find(i=>i.name===edit.ingName);
+    if(ing) ing.qty_per_hl = edit.newHl;
+  }
+  // update span
+  if(edit.span){
+    const row   = edit.span.closest('.ing-row');
+    row.dataset.hl = String(edit.newHl);
+    edit.span.textContent = fmtQty(edit.newHl, edit.unit, currentScale);
+  }
+  // journal entry
+  addJournalEntry({
+    ts: nowStr(), auteur:'Kouros', role:'admin',
+    section:'Recettes',
+    champ:`${RECIPES.find(x=>x.id===edit.recipeId)?.name||edit.recipeId} · ${edit.ingName}`,
+    oldVal: `${fmtQty(edit.oldHl,edit.unit,edit.scale)} ${edit.unit}`,
+    newVal: `${(edit.scale==='brassin'?edit.newHl*BRASSIN_HL:edit.newHl).toFixed(2)} ${edit.unit}`,
+    oldHl:edit.oldHl, newHl:edit.newHl, unit:edit.unit,
+    recipeId:edit.recipeId, ingName:edit.ingName,
+    statut:'Appliquée',
+  });
+  pendingEdit = null;
+}
+
+function applyManagerRequest(edit, newDisplayed){
+  document.getElementById('modalOverlay').classList.remove('open');
+  // revert displayed value (not changed)
+  if(edit.span){
+    const row = edit.span.closest('.ing-row');
+    const hl  = parseFloat(row.dataset.hl);
+    edit.span.textContent = fmtQty(hl, edit.unit, currentScale);
+  }
+  addJournalEntry({
+    ts: nowStr(), auteur:'Manager', role:'manager',
+    section:'Recettes',
+    champ:`${RECIPES.find(x=>x.id===edit.recipeId)?.name||edit.recipeId} · ${edit.ingName}`,
+    oldVal: `${fmtQty(edit.oldHl,edit.unit,edit.scale)} ${edit.unit}`,
+    newVal: `${(edit.scale==='brassin'?edit.newHl*BRASSIN_HL:edit.newHl).toFixed(2)} ${edit.unit}`,
+    oldHl:edit.oldHl, newHl:edit.newHl, unit:edit.unit,
+    recipeId:edit.recipeId, ingName:edit.ingName,
+    statut:'En attente',
+  });
+  showToast('Demande envoyée à l\'administrateur');
+  pendingEdit = null;
+}
+
+/* ════ NEW RECIPE via form ════ */
+function saveNewRecipe(){
+  const name = document.getElementById('fName').value.trim();
+  if(!name){ showToast('Indiquer un nom de recette'); return; }
+  const cls     = _formType || 'Maison';
+  const subtype = document.getElementById('fSubtype').value;
+  const vintage = document.getElementById('fVintage').value.trim()||null;
+  const clientId = _formClientId || null;
+  const cli = clientId ? clientById(clientId) : null;
+  const clientName = cli ? cli.name : null;
+
+  const rows = document.querySelectorAll('.form-ing-row');
+  const ings = [];
+  rows.forEach(row=>{
+    const n = row.querySelector('.fi-name').value.trim();
+    const q = parseFloat(row.querySelector('.fi-qty').value);
+    const u = row.querySelector('.fi-unit').value;
+    const c = row.querySelector('.fi-cat').value;
+    if(n && !isNaN(q)) ings.push({cat:c, name:n, qty_per_hl:q, unit:u});
+  });
+
+  const newId = cls==='Contrat' && clientName
+    ? 'contrat-' + slugify(clientName) + '-' + slugify(name)
+    : slugify(name);
+
+  const newRecipe = {
+    id: newId, name, recipe_short_name: name,
+    class: cls, subtype, vintage,
+    client: clientName, client_id: clientId,
+    ingredients: ings,
+  };
+
+  const champStr = cls==='Contrat' && clientName
+    ? 'Nouvelle recette : ' + clientName + ' \xb7 ' + name
+    : 'Nouvelle recette : ' + name;
+
+  const journalEntry = {
+    section:'Recettes', champ: champStr,
+    oldVal:'—',
+    newVal: name + ' (' + cls + ' \xb7 ' + subtype + (vintage ? ' \xb7 ' + vintage : '') + ')',
+    recipeId: newId, ingName: null,
+  };
+
+  const doSave = ()=>{
+    // Deduplicate id
+    if(RECIPES.find(r=>r.id===newId)){
+      newRecipe.id = newId + '-' + Date.now();
+    }
+    RECIPES.push(newRecipe);
+    buildIndex(); // full rebuild to show new recipe in index
+    openRecipe(newRecipe.id);
+    addJournalEntry({ts:nowStr(), auteur:'Kouros', role:'admin', ...journalEntry, statut:'Appliqu\xe9e'});
+    closeForm();
+    showToast('"' + name + '" ajout\xe9 au registre');
+  };
+
+  if(currentRole === 'admin'){
+    pendingEdit = null;
+    const overlay = document.getElementById('modalOverlay');
+    const seal    = document.getElementById('modalSeal');
+    const title   = document.getElementById('modalTitle');
+    const diff    = document.getElementById('modalDiff');
+    const actions = document.getElementById('modalActions');
+    seal.innerHTML = '⚖'; seal.className = 'modal-seal confirm-seal';
+    title.innerHTML = 'Confirmer la <em>nouvelle recette</em>'; title.className = 'modal-title';
+    diff.innerHTML = '<div class="diff-label">R\xe9sum\xe9</div>'
+      + '<div class="diff-row"><span class="diff-field">' + escHtml(name) + '</span></div>'
+      + (cls==='Contrat' && clientName ? '<div class="diff-row"><span style="font-size:12px;color:var(--ink-mute-paper)">Client : ' + escHtml(clientName) + '</span></div>' : '')
+      + '<div class="diff-row"><span style="font-family:\'DM Sans\';font-size:12px;color:var(--ink-mute-paper)">' + cls + ' \xb7 ' + subtype + (vintage ? ' \xb7 ' + vintage : '') + ' — ' + ings.length + ' ingr\xe9dient(s)</span></div>';
+    actions.innerHTML = '';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'btn-modal-cancel'; cancelBtn.textContent = 'Annuler';
+    cancelBtn.onclick = ()=>{ overlay.classList.remove('open'); };
+    const okBtn = document.createElement('button');
+    okBtn.className = 'btn-modal-confirm'; okBtn.textContent = 'Confirmer — ajouter au registre';
+    okBtn.onclick = ()=>{ overlay.classList.remove('open'); doSave(); };
+    actions.appendChild(cancelBtn); actions.appendChild(okBtn);
+    overlay.classList.add('open');
+  } else {
+    addJournalEntry({ts:nowStr(), auteur:'Manager', role:'manager', ...journalEntry, statut:'En attente'});
+    showToast('Demande envoy\xe9e \xe0 l\'administrateur');
+    closeForm();
+  }
+}
+
+/* ════ JOURNAL ════ */
+/* Seed entries (clearly mock historical data) */
+const JOURNAL = [
+  {
+    id: 'j-seed-1',
+    ts:'2026-05-22 09:14', auteur:'Kouros', role:'admin',
+    section:'Recettes', champ:'Stirling · Simcoe',
+    oldVal:'8000.00 g', newVal:'8500.00 g',
+    oldHl:266.666667, newHl:283.333333, unit:'g',
+    recipeId:'stirling', ingName:'Simcoe',
+    statut:'Appliquée',
+  },
+  {
+    id: 'j-seed-2',
+    ts:'2026-05-21 16:47', auteur:'Chloé (Manager)', role:'manager',
+    section:'Recettes', champ:'Zepp · Phosphorique',
+    oldVal:'700.00 ml', newVal:'600.00 ml',
+    oldHl:23.333333, newHl:20.0, unit:'ml',
+    recipeId:'zepp', ingName:'Phosphorique',
+    statut:'En attente',
+  },
+  {
+    id: 'j-seed-3',
+    ts:'2026-05-20 11:03', auteur:'Chloé (Manager)', role:'manager',
+    section:'Recettes', champ:'Diversion · Nagardo',
+    oldVal:'60.00 g', newVal:'72.00 g',
+    oldHl:2.0, newHl:2.4, unit:'g',
+    recipeId:'diversion', ingName:'Nagardo',
+    statut:'Validée', decision:'Kouros · 2026-05-20 14:28',
+  },
+  {
+    id: 'j-seed-4',
+    ts:'2026-05-18 08:55', auteur:'Chloé (Manager)', role:'manager',
+    section:'Recettes', champ:'Stirling · Dehaze',
+    oldVal:'150.00 ml', newVal:'120.00 ml',
+    oldHl:5.0, newHl:4.0, unit:'ml',
+    recipeId:'stirling', ingName:'Dehaze',
+    statut:'Refusée', decision:'Kouros · 2026-05-18 17:01',
+  },
+  {
+    id: 'j-seed-5',
+    ts:'2026-05-15 10:22', auteur:'Kouros', role:'admin',
+    section:'Recettes', champ:'Recettes · Nom',
+    oldVal:'Diversion SA', newVal:'Diversion',
+    recipeId:'diversion', ingName:null,
+    statut:'Appliquée', isMasterData:true,
+  },
+  {
+    id: 'j-seed-6',
+    ts:'2026-05-14 14:38', auteur:'Chloé (Manager)', role:'manager',
+    section:'Recettes', champ:'Recettes · Millésime',
+    oldVal:'2025', newVal:'2026',
+    recipeId:'eph1-2026', ingName:null,
+    statut:'En attente', isMasterData:false,
+  },
+];
+
+function nowStr(){
+  const d = new Date();
+  const ymd = d.getFullYear()+'-'
+    +String(d.getMonth()+1).padStart(2,'0')+'-'
+    +String(d.getDate()).padStart(2,'0');
+  const hm  = String(d.getHours()).padStart(2,'0')+':'
+    +String(d.getMinutes()).padStart(2,'0');
+  return ymd+' '+hm;
+}
+
+function addJournalEntry(e){
+  e.id = 'j-'+Date.now();
+  JOURNAL.unshift(e);
+  renderJournal();
+  updateJournalBadge();
+}
+
+function renderJournal(){
+  const panelAll     = document.getElementById('jpanelAll');
+  const panelPending = document.getElementById('jpanelPending');
+
+  function entryHTML(e, showActions){
+    const chipClass = e.role==='admin'?'chip-admin':e.role==='manager'?'chip-manager':'chip-operateur';
+    const statClass = {
+      'Appliquée':'stat-applied','En attente':'stat-pending',
+      'Validée':'stat-validated','Refusée':'stat-refused'
+    }[e.statut]||'stat-pending';
+    let decisionHTML = '';
+    if(e.decision) decisionHTML = `<div class="jentry-decision">Décidé par ${e.decision}</div>`;
+    let actionsHTML = '';
+    if(showActions && e.statut==='En attente'){
+      actionsHTML = `<div class="jentry-queue-actions">
+        <button class="btn-valider" onclick="journalValider('${e.id}')">Valider ✓</button>
+        <button class="btn-refuser" onclick="journalRefuser('${e.id}')">Refuser ✗</button>
+      </div>`;
+    }
+    return `<div class="jentry" id="jentry-${e.id}">
+      <div class="jentry-top">
+        <span class="jentry-ts">${e.ts}</span>
+        <span class="jentry-author">${e.auteur}</span>
+        <span class="jentry-role-chip ${chipClass}">${e.role}</span>
+        <span class="jentry-stat ${statClass}">${e.statut}</span>
+      </div>
+      <div class="jentry-detail">
+        <span class="jentry-section">${e.section}</span> ·
+        <span class="jentry-champ">${e.champ}</span><br>
+        <span class="jentry-diff">
+          <span class="jd-from">${e.oldVal}</span>
+          <span class="jd-arr">→</span>
+          <span class="jd-to">${e.newVal}</span>
+        </span>
+      </div>
+      ${decisionHTML}
+      ${actionsHTML}
+    </div>`;
+  }
+
+  panelAll.innerHTML = JOURNAL.length
+    ? JOURNAL.map(e=>entryHTML(e, false)).join('')
+    : '<div class="journal-empty">Aucune modification enregistrée</div>';
+
+  const pending = JOURNAL.filter(e=>e.statut==='En attente');
+  panelPending.innerHTML = pending.length
+    ? pending.map(e=>entryHTML(e, true)).join('')
+    : '<div class="journal-empty">Aucune demande en attente</div>';
+
+  // update badge counts
+  const n = pending.length;
+  const badge = document.getElementById('jtabPendingBadge');
+  badge.textContent = n;
+  badge.style.display = n ? 'inline-flex' : 'none';
+}
+
+function updateJournalBadge(){
+  const n = JOURNAL.filter(e=>e.statut==='En attente').length;
+  const b = document.getElementById('journalBadge');
+  b.textContent = n;
+  b.classList.toggle('visible', n > 0);
+  document.getElementById('jtabPendingBadge').textContent = n;
+}
+
+function journalValider(id){
+  const e = JOURNAL.find(x=>x.id===id);
+  if(!e) return;
+  e.statut = 'Validée';
+  e.decision = 'Admin · ' + nowStr();
+
+  // apply ingredient qty change if recipe currently loaded
+  if(e.recipeId && e.ingName){
+    const recipe = RECIPES.find(x=>x.id===e.recipeId);
+    if(recipe){
+      const ing = recipe.ingredients.find(i=>i.name===e.ingName);
+      if(ing && e.newHl !== undefined){ ing.qty_per_hl = e.newHl; }
+      if(e.recipeId === selectedId) renderLedger(recipe);
+    }
+  }
+
+  // apply header field change (ingName is null for header edits, field stored in champ)
+  if(!e.ingName && e.champ){
+    // Client rename
+    if(e.section === 'Clients' && e.champ === 'Clients \xb7 Nom'){
+      // Find client by old name
+      const cli = CLIENTS.find(c=>c.name===e.oldVal || c.name===e.newVal);
+      if(cli && cli.name === e.oldVal){
+        // Apply rename
+        cli.name = e.newVal;
+        RECIPES.forEach(r=>{ if(r.client_id===cli.id) r.client = e.newVal; });
+        document.querySelectorAll('.client-divider-name[data-client-id="' + cli.id + '"]').forEach(el=>{
+          el.textContent = e.newVal;
+        });
+        const openR = RECIPES.find(r=>r.id===selectedId);
+        if(openR && openR.client_id === cli.id){
+          const sub = document.getElementById('recipeClientSub');
+          if(sub) sub.textContent = e.newVal;
+        }
+        showToast('Renommage client valid\xe9 — "' + e.newVal + '" propag\xe9');
+      }
+    } else if(e.recipeId) {
+      // Recipe header field
+      const fieldMap = {
+        'Recettes \xb7 Nom':'name','Recettes \xb7 Classification':'class',
+        'Recettes \xb7 Sous-type':'subtype','Recettes \xb7 Mill\xe9sime':'vintage',
+      };
+      const field = fieldMap[e.champ];
+      if(field){
+        const recipe = RECIPES.find(x=>x.id===e.recipeId);
+        if(recipe){
+          recipe[field] = e.newVal;
+          if(field === 'name') updateIndexName(e.recipeId, e.newVal);
+          if(e.recipeId === selectedId) renderRecipe(e.recipeId);
+          if(e.isMasterData) showToast('Valid\xe9 — "' + e.newVal + '" propag\xe9 dans le syst\xe8me');
+        }
+      }
+    }
+  }
+
+  renderJournal();
+  updateJournalBadge();
+}
+
+function journalRefuser(id){
+  const e = JOURNAL.find(x=>x.id===id);
+  if(!e) return;
+  e.statut = 'Refusée';
+  e.decision = 'Admin · ' + nowStr();
+  renderJournal();
+  updateJournalBadge();
+}
+
+function switchJTab(tab){
+  document.querySelectorAll('.jtab').forEach(t=>t.classList.toggle('active', t.dataset.jtab===tab));
+  document.querySelectorAll('.journal-panel').forEach(p=>p.classList.toggle('active', p.id==='jpanel'+cap(tab)));
+}
+function cap(s){ return s.charAt(0).toUpperCase()+s.slice(1) }
+
+function openJournal(){
+  document.getElementById('journalOverlay').classList.add('open');
+  document.getElementById('journalDrawer').classList.add('open');
+}
+function closeJournal(){
+  document.getElementById('journalOverlay').classList.remove('open');
+  document.getElementById('journalDrawer').classList.remove('open');
+}
+
+document.getElementById('journalBtn').addEventListener('click', openJournal);
+
+/* ════ TOAST ════ */
+let _toastTimer;
+function showToast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(()=>t.classList.remove('show'), 2800);
+}
+
+/* ════ MULTIPACKS BUILDER ════ */
+
+/* Presets — internal code stays hidden; full names shown to operator */
+const MP_PRESETS = {
+  PD8:      { name:'Pack Découverte',        carton:'verre33', units:8  },
+  XMASPACK: { name:'Pack de Noël',           carton:'verre33', units:3  },
+  PAL:      { name:'Pack Louis',             carton:'verre33', units:12 },
+  PAD:      { name:'Pack Découverte large',  carton:'verre33', units:8  },
+};
+
+/* Carton full labels (for preview display) */
+const MP_CARTON_LABELS = {
+  verre33: 'Carton bouteille verre 33cl',
+  alu50:   'Carton canette alu 50cl',
+};
+
+let mpCartonKey = null; // 'verre33' | 'alu50'
+let mpSlotCount = 0;
+
+function openMultipackBuilder(){
+  // Close recipe view form if open
+  document.getElementById('creationForm').classList.remove('open');
+  // Open multipack form
+  document.getElementById('multipackForm').classList.add('open');
+  // Reset if empty
+  if(!document.getElementById('mpSlotsContainer').children.length){
+    resetMpBuilder();
+  }
+  updateMpPreview();
+}
+
+function closeMpBuilder(){
+  document.getElementById('multipackForm').classList.remove('open');
+}
+
+function resetMpBuilder(){
+  mpCartonKey = null;
+  mpSlotCount = 0;
+  document.getElementById('mpCartonVerre').classList.remove('selected');
+  document.getElementById('mpCartonAlu').classList.remove('selected');
+  document.getElementById('mpUnits').value = '';
+  document.getElementById('mpName').value = '';
+  document.getElementById('mpSlotsContainer').innerHTML = '';
+  updateMpPreview();
+}
+
+function selectMpCarton(key, cardEl){
+  if(currentRole === 'operateur') return;
+  mpCartonKey = key;
+  document.getElementById('mpCartonVerre').classList.toggle('selected', key === 'verre33');
+  document.getElementById('mpCartonAlu').classList.toggle('selected', key === 'alu50');
+  updateMpPreview();
+}
+
+function loadMpPreset(code){
+  if(currentRole === 'operateur') return;
+  const p = MP_PRESETS[code];
+  if(!p) return;
+  // carton
+  mpCartonKey = p.carton;
+  document.getElementById('mpCartonVerre').classList.toggle('selected', p.carton === 'verre33');
+  document.getElementById('mpCartonAlu').classList.toggle('selected', p.carton === 'alu50');
+  // units
+  document.getElementById('mpUnits').value = p.units;
+  // name
+  document.getElementById('mpName').value = p.name;
+  // clear slots — let operator fill
+  document.getElementById('mpSlotsContainer').innerHTML = '';
+  mpSlotCount = 0;
+  // pre-add some empty slots equal to units / 2 (capped at 4)
+  const slotCount = Math.min(4, Math.max(2, Math.floor(p.units / 2)));
+  for(let i=0; i<slotCount; i++) addMpSlot();
+  updateMpPreview();
+}
+
+function addMpSlot(){
+  if(currentRole === 'operateur') return;
+  const container = document.getElementById('mpSlotsContainer');
+  const n = mpSlotCount++;
+  const row = document.createElement('div');
+  row.className = 'mp-slot-row';
+  row.dataset.slot = n;
+
+  // Build recipe select with full names from RECIPES (Maison only for preview)
+  const maissonRecipes = RECIPES.filter(r => r.class === 'Maison' && r.ingredients && r.ingredients.length > 0);
+  // Include all named recipes (stubs too)
+  const allMaison = RECIPES.filter(r => r.class === 'Maison');
+  const uniqueNames = [];
+  const seenNames = new Set();
+  allMaison.forEach(r => {
+    const nm = r.name;
+    if(!seenNames.has(nm)){ seenNames.add(nm); uniqueNames.push({ name:nm, id:r.id }); }
+  });
+
+  let opts = uniqueNames.map(u =>
+    `<option value="${escHtml(u.name)}">${escHtml(u.name)}</option>`
+  ).join('');
+
+  row.innerHTML = `
+    <select class="mp-slot-recipe" onchange="updateMpPreview()">
+      <option value="">— Choisir une recette —</option>
+      ${opts}
+    </select>
+    <input class="mp-slot-count" type="number" min="1" max="48" placeholder="1" oninput="updateMpPreview()">
+    <button class="mp-slot-del" onclick="this.closest('.mp-slot-row').remove(); updateMpPreview()">×</button>`;
+
+  container.appendChild(row);
+  updateMpPreview();
+}
+
+function getMpSlots(){
+  const rows = document.getElementById('mpSlotsContainer').querySelectorAll('.mp-slot-row');
+  const slots = [];
+  rows.forEach(row => {
+    const recipe = row.querySelector('.mp-slot-recipe').value;
+    const countStr = row.querySelector('.mp-slot-count').value;
+    const count = parseInt(countStr, 10);
+    if(recipe && !isNaN(count) && count > 0){
+      slots.push({ recipe, count });
+    }
+  });
+  return slots;
+}
+
+function updateMpPreview(){
+  const units = parseInt(document.getElementById('mpUnits').value, 10) || 0;
+  const name  = document.getElementById('mpName').value.trim();
+  const slots = getMpSlots();
+  const sumSlots = slots.reduce((a,s) => a + s.count, 0);
+
+  // Update sum indicator
+  const indicator = document.getElementById('mpSumIndicator');
+  const sumLabel  = document.getElementById('mpSumLabel');
+  const ok = units > 0 && sumSlots === units;
+  indicator.textContent = units > 0 ? `${sumSlots} / ${units}` : `${sumSlots} / ?`;
+  indicator.className = 'mp-sum-indicator ' + (ok ? 'mp-sum-ok' : 'mp-sum-warn');
+  sumLabel.textContent = ok
+    ? 'Composition validée ✓'
+    : sumSlots < units
+      ? `Il manque ${units - sumSlots} unité(s)`
+      : `Excès de ${sumSlots - units} unité(s)`;
+
+  // Update preview
+  const previewBody = document.getElementById('mpPreviewBody');
+  if(!name && !slots.length && !units){
+    previewBody.innerHTML = '<div class="mp-preview-empty">Remplir les champs ci-dessus pour prévisualiser</div>';
+    return;
+  }
+
+  const cartonLabel = mpCartonKey ? MP_CARTON_LABELS[mpCartonKey] : '(carton non sélectionné)';
+  const unitWord = units === 1 ? 'bouteille' : (mpCartonKey === 'alu50' ? 'canettes' : 'bouteilles');
+  const unitSize = mpCartonKey === 'alu50' ? '50cl' : '33cl';
+  const previewName = name || '(nom non défini)';
+
+  let slotsHtml = '';
+  if(slots.length){
+    slotsHtml = slots.map(s =>
+      `<div class="mp-preview-slot-item">${escHtml(s.recipe)} ×${s.count}</div>`
+    ).join('');
+  } else {
+    slotsHtml = '<div class="mp-preview-empty" style="font-size:12px">Aucun slot défini</div>';
+  }
+
+  previewBody.innerHTML = `
+    <div class="mp-preview-name">${escHtml(previewName)}</div>
+    <div class="mp-preview-carton">${units > 0 ? units + ' ' + unitWord + ' ' + unitSize + ' · ' : ''}${escHtml(cartonLabel)}</div>
+    <div class="mp-preview-slots">${slotsHtml}</div>
+  `;
+}
+
+function saveMpPack(){
+  const name    = document.getElementById('mpName').value.trim();
+  const units   = parseInt(document.getElementById('mpUnits').value, 10);
+  const slots   = getMpSlots();
+  const sumSlots = slots.reduce((a,s) => a + s.count, 0);
+
+  if(!name){ showToast('Indiquer le nom du multipack'); return; }
+  if(!mpCartonKey){ showToast('Sélectionner un type de carton'); return; }
+  if(!units || units < 1){ showToast('Indiquer le nombre d\'unités'); return; }
+  if(!slots.length){ showToast('Ajouter au moins une recette dans les slots'); return; }
+  if(sumSlots !== units){ showToast(`La somme des slots (${sumSlots}) doit être égale au nombre d'unités (${units})`); return; }
+
+  const cartonLabel = MP_CARTON_LABELS[mpCartonKey];
+  const unitWord    = mpCartonKey === 'alu50' ? 'canettes 50cl' : 'bouteilles 33cl';
+  const slotsStr    = slots.map(s => s.recipe + ' ×' + s.count).join(', ');
+  const summaryStr  = name + ' — ' + units + ' ' + unitWord + ' · ' + slotsStr;
+
+  const doSave = () => {
+    addJournalEntry({
+      ts:nowStr(), auteur: currentRole === 'admin' ? 'Kouros' : 'Manager', role:currentRole,
+      section:'Recettes', champ:'Recettes · Multipack',
+      oldVal:'—', newVal: summaryStr,
+      recipeId:null, ingName:null,
+      statut: currentRole === 'admin' ? 'Appliquée' : 'En attente',
+      isMasterData:false,
+    });
+    showToast(currentRole === 'admin' ? '"' + name + '" créé (maquette)' : 'Demande envoyée à l\'administrateur');
+    if(currentRole === 'admin') closeMpBuilder();
+  };
+
+  if(currentRole === 'admin'){
+    const overlay = document.getElementById('modalOverlay');
+    const seal    = document.getElementById('modalSeal');
+    const title   = document.getElementById('modalTitle');
+    const diff    = document.getElementById('modalDiff');
+    const actions = document.getElementById('modalActions');
+    seal.innerHTML = '⊞'; seal.className = 'modal-seal confirm-seal';
+    title.innerHTML = 'Créer le <em>multipack</em>'; title.className = 'modal-title';
+    diff.innerHTML = `
+      <div class="diff-label">Résumé du multipack</div>
+      <div class="diff-row"><span class="diff-field">${escHtml(name)}</span></div>
+      <div class="diff-row"><span style="font-family:'DM Sans';font-size:12px;color:var(--ink-mute-paper)">${units} ${unitWord} · ${escHtml(cartonLabel)}</span></div>
+      <div class="diff-row"><span style="font-family:'DM Sans';font-size:12.5px;color:var(--ink-on-paper)">${slots.map(s=>escHtml(s.recipe)+' ×'+s.count).join('<br>')}</span></div>
+      <div class="diff-sub">Maquette uniquement — pas de persistance</div>`;
+    actions.innerHTML = '';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'btn-modal-cancel'; cancelBtn.textContent = 'Annuler';
+    cancelBtn.onclick = () => { overlay.classList.remove('open'); };
+    const okBtn = document.createElement('button');
+    okBtn.className = 'btn-modal-confirm'; okBtn.textContent = 'Confirmer la création';
+    okBtn.onclick = () => { overlay.classList.remove('open'); doSave(); };
+    actions.appendChild(cancelBtn); actions.appendChild(okBtn);
+    overlay.classList.add('open');
+
+  } else if(currentRole === 'manager'){
+    const overlay = document.getElementById('modalOverlay');
+    const seal    = document.getElementById('modalSeal');
+    const title   = document.getElementById('modalTitle');
+    const diff    = document.getElementById('modalDiff');
+    const actions = document.getElementById('modalActions');
+    seal.innerHTML = '✉'; seal.className = 'modal-seal request-seal';
+    title.innerHTML = 'Demande de <em>multipack</em>'; title.className = 'modal-title req-title';
+    diff.innerHTML = `
+      <div class="diff-label">Résumé de la demande</div>
+      <div class="diff-row"><span class="diff-field">${escHtml(name)}</span></div>
+      <div class="diff-row"><span style="font-family:'DM Sans';font-size:12px;color:var(--ink-mute-paper)">${units} ${unitWord} · ${escHtml(cartonLabel)}</span></div>
+      <div class="diff-row"><span style="font-family:'DM Sans';font-size:12.5px;color:var(--ink-on-paper)">${slots.map(s=>escHtml(s.recipe)+' ×'+s.count).join('<br>')}</span></div>
+      <div class="diff-sub">La demande sera soumise à l'administrateur</div>`;
+    actions.innerHTML = '';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'btn-modal-cancel'; cancelBtn.textContent = 'Annuler';
+    cancelBtn.onclick = () => { overlay.classList.remove('open'); };
+    const sendBtn = document.createElement('button');
+    sendBtn.className = 'btn-modal-request'; sendBtn.textContent = 'Envoyer la demande';
+    sendBtn.onclick = () => { overlay.classList.remove('open'); doSave(); };
+    actions.appendChild(cancelBtn); actions.appendChild(sendBtn);
+    overlay.classList.add('open');
+
+  } else {
+    // Opérateur: builder is view-only; save button is hidden via CSS
+    showToast('Mode lecture seule — modification impossible');
+  }
+}
+
+/* ════ INIT ════ */
+buildIndex();
+buildBookmarks();
+setRole('admin');      // default: Admin (Kouros)
+renderJournal();
+updateJournalBadge();
+openRecipe('zepp');    // default open
+</script>
+</body>
+</html>

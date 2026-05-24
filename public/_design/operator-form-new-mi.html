@@ -1,0 +1,861 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Créer MI — Nouvel Ingrédient · MaltyTask</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,600;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:         #15100a;
+  --bg-elev:    #1d160d;
+  --bg-elev2:   #251c10;
+  --ink:        #ede0c4;
+  --ink-soft:   #c8b894;
+  --ink-mute:   #7a6647;
+  --ink-faint:  #3a2e1d;
+  --hairline:   #261d11;
+  --hairline-2: #342818;
+  --hop:        #9eb060;
+  --hop-deep:   #6b7a3e;
+  --hop-glow:   rgba(158,176,96,0.15);
+  --ember:      #c5664a;
+  --oak:        #a07a48;
+  --bbt:        #6593b8;
+
+  --cat-malt:    #d4923c;
+  --cat-hops:    #9eb060;
+  --cat-yeast:   #6593b8;
+  --cat-adjunct: #a07a48;
+  --cat-process: #8b7ab8;
+  --cat-mineral: #5aa8b8;
+  --cat-cleaning:#b85a8b;
+  --cat-pkg:     #b8bcc0;
+  --cat-logistics:#c5664a;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+*::selection { background: var(--hop); color: var(--bg); }
+
+html { font-size: 16px; }
+
+body.home {
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-feature-settings: "ss01";
+  background: var(--bg);
+  color: var(--ink);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+  position: relative;
+}
+
+/* Grain texture */
+body.home::before {
+  content: '';
+  position: fixed; inset: 0;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.08  0 0 0 0 0.05  0 0 0 0 0.02  0 0 0 1.2 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  opacity: 0.4;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ============================================================
+   LAYOUT
+   ============================================================ */
+.page-wrap {
+  position: relative; z-index: 1;
+  max-width: 640px; margin: 0 auto;
+  padding: 0 0 120px;
+}
+
+/* ============================================================
+   HEADER
+   ============================================================ */
+.page-header {
+  border-bottom: 1px solid var(--hairline-2);
+  padding: 20px 28px;
+  display: flex; align-items: flex-start;
+  justify-content: space-between; gap: 16px;
+}
+
+.header-left { display: flex; align-items: center; gap: 12px; }
+
+.header-icon {
+  width: 36px; height: 36px;
+  background: var(--bg-elev); border: 1px solid var(--hairline-2);
+  border-radius: 4px; display: flex; align-items: center; justify-content: center;
+}
+
+.header-brand-name {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.68rem; letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--ink-mute);
+}
+
+.header-brand-module { font-size: 0.95rem; font-weight: 600; color: var(--oak); }
+
+.header-back {
+  background: none; border: 1px solid var(--hairline-2); border-radius: 3px;
+  padding: 8px 14px; color: var(--ink-mute);
+  font-family: "DM Sans", sans-serif; font-size: 0.82rem;
+  cursor: pointer; transition: border-color 0.15s, color 0.15s;
+  display: flex; align-items: center; gap: 6px;
+}
+
+.header-back:hover { border-color: var(--ink-mute); color: var(--ink-soft); }
+
+/* ============================================================
+   FORM BODY
+   ============================================================ */
+.form-body {
+  padding: 28px 28px 0;
+  animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; } }
+
+.form-intro {
+  margin-bottom: 24px;
+}
+
+.form-intro-title {
+  font-family: "Fraunces", serif; font-variation-settings: "opsz" 36;
+  font-size: 1.4rem; font-weight: 400; color: var(--ink);
+  margin-bottom: 6px;
+}
+
+.form-intro-sub {
+  font-size: 0.875rem; color: var(--ink-mute); line-height: 1.5;
+}
+
+/* ============================================================
+   FIELDS
+   ============================================================ */
+.field-group { display: flex; flex-direction: column; gap: 6px; margin-bottom: 20px; }
+
+.field-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.65rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-mute);
+}
+
+.field-label .field-req {
+  color: var(--ember); margin-left: 4px;
+}
+
+.field-input {
+  background: var(--bg-elev); border: 1px solid var(--hairline-2);
+  border-radius: 4px; padding: 12px 14px; color: var(--ink);
+  font-family: "DM Sans", sans-serif; font-size: 0.95rem;
+  min-height: 50px; transition: border-color 0.15s, box-shadow 0.15s;
+  outline: none; width: 100%;
+}
+
+.field-input:focus {
+  border-color: var(--hop); box-shadow: 0 0 0 3px var(--hop-glow);
+}
+
+.field-input::placeholder { color: var(--ink-mute); }
+
+/* ============================================================
+   CATEGORY GRID — 4×2 visual radio cards
+   ============================================================ */
+.cat-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
+}
+
+.cat-card {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 14px 8px 12px; background: var(--bg);
+  border: 1px solid var(--hairline-2); border-radius: 4px;
+  cursor: pointer; transition: border-color 0.15s, background 0.15s;
+  text-align: center; user-select: none;
+}
+
+.cat-card:hover { background: var(--bg-elev); }
+
+.cat-card.selected {
+  border-color: currentColor;
+  background: var(--bg-elev);
+  box-shadow: 0 0 0 1px currentColor inset;
+}
+
+.cat-icon {
+  width: 36px; height: 36px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 6px;
+  transition: background 0.15s;
+}
+
+.cat-card:hover .cat-icon, .cat-card.selected .cat-icon {
+  background: rgba(255,255,255,0.06);
+}
+
+.cat-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem; letter-spacing: 0.06em; text-transform: uppercase;
+  line-height: 1.2;
+}
+
+/* Color assignments */
+.cat-card.malt     { color: var(--cat-malt); }
+.cat-card.hops     { color: var(--cat-hops); }
+.cat-card.yeast    { color: var(--cat-yeast); }
+.cat-card.adjunct  { color: var(--cat-adjunct); }
+.cat-card.process  { color: var(--cat-process); }
+.cat-card.mineral  { color: var(--cat-mineral); }
+.cat-card.cleaning { color: var(--cat-cleaning); }
+.cat-card.pkg      { color: var(--cat-pkg); }
+.cat-card.logistics { color: var(--cat-logistics); }
+.cat-card.maintenance { color: var(--oak); }
+
+/* ============================================================
+   MI_ID PREVIEW — THE MEMORABLE DETAIL
+   Character-by-character construction animation
+   ============================================================ */
+.mi-preview-section {
+  margin-bottom: 20px;
+}
+
+.mi-preview-card {
+  background: var(--bg); border: 1px solid var(--hairline-2);
+  border-radius: 4px; padding: 18px 18px;
+  position: relative; overflow: hidden;
+}
+
+/* Subtle left-edge accent that animates color based on category */
+.mi-preview-card::before {
+  content: '';
+  position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  background: var(--mi-accent, var(--hairline-2));
+  transition: background 0.4s ease;
+}
+
+.mi-preview-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--ink-mute); margin-bottom: 10px;
+}
+
+.mi-id-display {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 1.35rem; font-weight: 500; letter-spacing: 0.06em;
+  min-height: 36px;
+  display: flex; align-items: center; gap: 0;
+  flex-wrap: wrap;
+}
+
+.mi-prefix {
+  color: var(--mi-color, var(--ink-faint));
+  transition: color 0.3s;
+}
+
+.mi-sep {
+  color: var(--ink-mute);
+}
+
+.mi-suffix {
+  color: var(--ink);
+}
+
+.mi-cursor {
+  display: inline-block; width: 2px; height: 1.2em;
+  background: var(--hop); margin-left: 1px;
+  animation: blink 1s step-end infinite;
+  vertical-align: middle;
+}
+
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+.mi-empty-hint {
+  color: var(--ink-faint); font-style: italic; font-size: 1rem;
+  font-family: "DM Sans", sans-serif; font-weight: 400;
+}
+
+.mi-preview-meta {
+  margin-top: 10px;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+
+.mi-preview-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: var(--bg-elev); border: 1px solid var(--hairline-2);
+  border-radius: 12px; padding: 4px 10px;
+  font-family: "JetBrains Mono", monospace; font-size: 0.68rem;
+  letter-spacing: 0.05em; color: var(--ink-mute);
+}
+
+.mi-preview-badge.cat-badge {
+  color: var(--mi-color, var(--ink-mute));
+  border-color: var(--mi-color, var(--hairline-2));
+  opacity: 0.8;
+}
+
+/* ============================================================
+   OPTIONAL FIELDS (collapsible)
+   ============================================================ */
+.optional-toggle {
+  background: none; border: none; padding: 0;
+  display: flex; align-items: center; gap: 8px;
+  color: var(--ink-mute); font-size: 0.85rem; cursor: pointer;
+  margin-bottom: 14px; transition: color 0.15s;
+}
+.optional-toggle:hover { color: var(--ink-soft); }
+
+.optional-chevron { transition: transform 0.2s; }
+.optional-fields-section.open .optional-chevron { transform: rotate(180deg); }
+
+.optional-fields {
+  display: none; animation: fadeIn 0.2s ease;
+}
+.optional-fields-section.open .optional-fields { display: block; }
+
+.optional-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+.field-select {
+  background: var(--bg-elev); border: 1px solid var(--hairline-2);
+  border-radius: 4px; padding: 12px 14px; color: var(--ink-soft);
+  font-family: "DM Sans", sans-serif; font-size: 0.9rem;
+  min-height: 50px; outline: none; cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0l5 6 5-6z' fill='%237a6647'/></svg>");
+  background-repeat: no-repeat; background-position: right 14px center; padding-right: 32px;
+  width: 100%; transition: border-color 0.15s;
+}
+
+.field-select:focus { border-color: var(--hop); }
+
+/* ============================================================
+   VALIDATION NOTE
+   ============================================================ */
+.validation-note {
+  background: rgba(158,176,96,0.07); border: 1px solid rgba(158,176,96,0.2);
+  border-radius: 4px; padding: 12px 14px; margin-bottom: 20px;
+  font-size: 0.82rem; color: var(--ink-mute); line-height: 1.5;
+}
+
+.validation-note strong { color: var(--hop); }
+
+/* ============================================================
+   ACTION BAR
+   ============================================================ */
+.action-bar {
+  position: fixed; bottom: 0; left: 0; right: 0;
+  background: linear-gradient(to top, var(--bg) 0%, var(--bg) 72%, transparent 100%);
+  padding: 20px 28px 28px; z-index: 50;
+}
+
+.action-bar-inner {
+  max-width: 640px; margin: 0 auto;
+  display: flex; align-items: center; gap: 12px;
+}
+
+.btn-cancel {
+  background: none; border: 1px solid var(--hairline-2); border-radius: 4px;
+  padding: 14px 22px; color: var(--ink-mute);
+  font-family: "DM Sans", sans-serif; font-size: 0.9rem; font-weight: 500;
+  cursor: pointer; min-height: 52px; transition: border-color 0.15s, color 0.15s;
+}
+.btn-cancel:hover { border-color: var(--ink-mute); color: var(--ink-soft); }
+
+.btn-create {
+  flex: 1; border: none; border-radius: 4px;
+  padding: 16px 32px; color: var(--bg);
+  font-family: "DM Sans", sans-serif; font-size: 1rem; font-weight: 600;
+  cursor: pointer; min-height: 56px;
+  transition: background 0.15s, transform 0.1s;
+  background: var(--hop);
+}
+.btn-create:hover { background: #b3c96a; }
+.btn-create:active { transform: scale(0.99); }
+.btn-create:disabled { background: var(--bg-elev2); color: var(--ink-mute); cursor: not-allowed; }
+
+/* ============================================================
+   SUCCESS STATE
+   ============================================================ */
+.success-overlay {
+  display: none;
+  position: fixed; inset: 0;
+  background: rgba(21,16,10,0.92);
+  backdrop-filter: blur(4px);
+  z-index: 200;
+  place-items: center;
+}
+
+.success-overlay.show { display: grid; }
+
+.success-card {
+  background: var(--bg-elev); border: 1px solid rgba(158,176,96,0.3);
+  border-radius: 6px; padding: 40px 36px; text-align: center;
+  max-width: 360px; width: calc(100vw - 48px);
+  animation: successPop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes successPop {
+  from { opacity: 0; transform: scale(0.88); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.success-icon {
+  width: 56px; height: 56px; border-radius: 50%;
+  background: rgba(158,176,96,0.15); border: 2px solid var(--hop);
+  display: flex; align-items: center; justify-content: center;
+  margin: 0 auto 20px;
+}
+
+.success-mi-id {
+  font-family: "JetBrains Mono", monospace; font-size: 1.1rem;
+  letter-spacing: 0.06em; color: var(--hop); margin-bottom: 8px;
+}
+
+.success-mi-name {
+  font-family: "Fraunces", serif; font-variation-settings: "opsz" 36;
+  font-size: 1.2rem; font-style: italic; color: var(--ink); margin-bottom: 4px;
+}
+
+.success-detail {
+  font-size: 0.82rem; color: var(--ink-mute); margin-bottom: 24px;
+}
+
+.btn-success-use {
+  background: var(--hop); border: none; border-radius: 4px;
+  padding: 14px 32px; color: var(--bg);
+  font-family: "DM Sans", sans-serif; font-size: 0.95rem; font-weight: 600;
+  cursor: pointer; min-height: 52px; transition: background 0.15s; width: 100%;
+}
+.btn-success-use:hover { background: #b3c96a; }
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+@media (max-width: 520px) {
+  .cat-grid { grid-template-columns: repeat(3, 1fr); }
+  .optional-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body class="home">
+
+<div class="page-wrap">
+
+  <!-- HEADER -->
+  <header class="page-header">
+    <div class="header-left">
+      <div class="header-icon">
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+          <circle cx="10" cy="10" r="7" stroke="#a07a48" stroke-width="1.3"/>
+          <line x1="10" y1="5" x2="10" y2="15" stroke="#a07a48" stroke-width="1.5" stroke-linecap="round"/>
+          <line x1="5" y1="10" x2="15" y2="10" stroke="#a07a48" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <div>
+        <div class="header-brand-name">La Nébuleuse · MaltyTask</div>
+        <div class="header-brand-module">Nouvel Ingrédient MI</div>
+      </div>
+    </div>
+    <button class="header-back" onclick="goBack()">
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+        <path d="M8 2L4 6l4 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      Retour
+    </button>
+  </header>
+
+  <!-- FORM BODY -->
+  <div class="form-body">
+
+    <div class="form-intro">
+      <h1 class="form-intro-title">Créer un ingrédient</h1>
+      <p class="form-intro-sub">
+        L'identifiant MI sera généré automatiquement à partir du nom et de la catégorie.
+        Il sera immédiatement disponible dans le formulaire de saisie.
+      </p>
+    </div>
+
+    <!-- Name -->
+    <div class="field-group">
+      <label class="field-label">
+        Nom de l'ingrédient
+        <span class="field-req">*</span>
+      </label>
+      <input type="text" class="field-input" id="mi-name"
+        placeholder="ex. Pilsener, Herkules 2024, US-05, CaCl2…"
+        oninput="updatePreview()" autocomplete="off" autocorrect="off" autocapitalize="words">
+    </div>
+
+    <!-- Category -->
+    <div class="field-group">
+      <label class="field-label">
+        Catégorie
+        <span class="field-req">*</span>
+      </label>
+      <div class="cat-grid" id="cat-grid">
+
+        <div class="cat-card malt" data-cat="Malt" data-prefix="MALT" data-gl="4101" onclick="selectCat(this)">
+          <div class="cat-icon">
+            <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
+              <path d="M13 3 Q18 5.5 18 13 Q18 20.5 13 23 Q8 20.5 8 13 Q8 5.5 13 3Z" stroke="currentColor" stroke-width="1.3" fill="none"/>
+              <line x1="13" y1="3" x2="13" y2="23" stroke="currentColor" stroke-width="1.2"/>
+              <line x1="8" y1="11" x2="18" y2="11" stroke="currentColor" stroke-width="0.9" opacity="0.6"/>
+              <line x1="8" y1="15.5" x2="18" y2="15.5" stroke="currentColor" stroke-width="0.9" opacity="0.6"/>
+            </svg>
+          </div>
+          <span class="cat-label">Malt</span>
+        </div>
+
+        <div class="cat-card hops" data-cat="Hops" data-prefix="HOPS" data-gl="4101" onclick="selectCat(this)">
+          <div class="cat-icon">
+            <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
+              <path d="M13 3 Q18 5 18 13 Q18 21 13 23 Q8 21 8 13 Q8 5 13 3Z" stroke="currentColor" stroke-width="1.3" fill="none"/>
+              <path d="M9 9 Q13 8 17 10" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+              <path d="M9 13 Q13 12 17 14" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+              <path d="M9 17 Q13 16 17 18" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+              <line x1="13" y1="23" x2="13" y2="26" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <span class="cat-label">Houblon</span>
+        </div>
+
+        <div class="cat-card yeast" data-cat="Yeast" data-prefix="YEAST" data-gl="4101" onclick="selectCat(this)">
+          <div class="cat-icon">
+            <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
+              <circle cx="13" cy="13" r="4.5" stroke="currentColor" stroke-width="1.3"/>
+              <circle cx="7" cy="9" r="3" stroke="currentColor" stroke-width="1"/>
+              <circle cx="19" cy="9" r="3" stroke="currentColor" stroke-width="1"/>
+              <circle cx="7" cy="17" r="2.5" stroke="currentColor" stroke-width="0.9"/>
+              <circle cx="19" cy="17" r="2.5" stroke="currentColor" stroke-width="0.9"/>
+            </svg>
+          </div>
+          <span class="cat-label">Levure</span>
+        </div>
+
+        <div class="cat-card adjunct" data-cat="Brewing Adjunct" data-prefix="ADJ" data-gl="4101" onclick="selectCat(this)">
+          <div class="cat-icon">
+            <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
+              <path d="M13 3 C9 3 6 6 6 11 C6 16 8 22 13 23 C18 22 20 16 20 11 C20 6 17 3 13 3Z" stroke="currentColor" stroke-width="1.3" fill="none"/>
+              <path d="M13 3 L13 12" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <span class="cat-label">Adjuvant</span>
+        </div>
+
+        <div class="cat-card process" data-cat="Process Chemical" data-prefix="PROC" data-gl="4101" onclick="selectCat(this)">
+          <div class="cat-icon">
+            <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
+              <path d="M10 3 L10 9 L5.5 18 Q5 22 13 22 Q21 22 20.5 18 L16 9 L16 3 Z" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linejoin="round"/>
+              <line x1="9" y1="7" x2="17" y2="7" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+              <ellipse cx="13" cy="18" rx="3.5" ry="1.8" stroke="currentColor" stroke-width="0.9" opacity="0.6"/>
+            </svg>
+          </div>
+          <span class="cat-label">Process</span>
+        </div>
+
+        <div class="cat-card mineral" data-cat="Brewing Mineral" data-prefix="MIN" data-gl="4101" onclick="selectCat(this)">
+          <div class="cat-icon">
+            <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
+              <polygon points="13,3 21,9 19,20 7,20 5,9" stroke="currentColor" stroke-width="1.3" fill="none"/>
+              <polygon points="13,8 17,11 16,17 10,17 9,11" stroke="currentColor" stroke-width="0.9" fill="none" opacity="0.5"/>
+              <line x1="13" y1="3" x2="13" y2="8" stroke="currentColor" stroke-width="0.9" opacity="0.4"/>
+            </svg>
+          </div>
+          <span class="cat-label">Minéral</span>
+        </div>
+
+        <div class="cat-card cleaning" data-cat="Cleaning Chemical" data-prefix="CLEAN" data-gl="4102" onclick="selectCat(this)">
+          <div class="cat-icon">
+            <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
+              <circle cx="13" cy="16" r="6" stroke="currentColor" stroke-width="1.3" fill="none"/>
+              <path d="M10 14 C10 11 16 11 16 14" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+              <circle cx="9" cy="7" r="1.2" fill="currentColor" opacity="0.7"/>
+              <circle cx="17" cy="6" r="1.8" fill="currentColor" opacity="0.5"/>
+              <circle cx="13" cy="5" r="1.2" fill="currentColor" opacity="0.6"/>
+            </svg>
+          </div>
+          <span class="cat-label">Nettoyage</span>
+        </div>
+
+        <div class="cat-card pkg" data-cat="Packaging" data-prefix="PKG" data-gl="4201" onclick="selectCat(this)">
+          <div class="cat-icon">
+            <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
+              <rect x="4" y="10" width="18" height="13" rx="1" stroke="currentColor" stroke-width="1.3"/>
+              <path d="M4 14 L22 14" stroke="currentColor" stroke-width="1"/>
+              <path d="M10 10 L10 7 Q13 5 16 7 L16 10" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" fill="none"/>
+            </svg>
+          </div>
+          <span class="cat-label">Packaging</span>
+        </div>
+
+        <div class="cat-card logistics" data-cat="Logistics" data-prefix="TRANS" data-gl="6281" onclick="selectCat(this)">
+          <div class="cat-icon">
+            <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
+              <rect x="3" y="9" width="16" height="10" rx="1" stroke="currentColor" stroke-width="1.3"/>
+              <path d="M19 12 L23 14 L23 19 L19 19" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+              <circle cx="7" cy="21" r="2" stroke="currentColor" stroke-width="1.2"/>
+              <circle cx="20" cy="21" r="2" stroke="currentColor" stroke-width="1.2"/>
+            </svg>
+          </div>
+          <span class="cat-label">Logistique</span>
+        </div>
+
+        <div class="cat-card maintenance" data-cat="Maintenance" data-prefix="MAINT" data-gl="6100" onclick="selectCat(this)">
+          <div class="cat-icon">
+            <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
+              <circle cx="13" cy="13" r="3" stroke="currentColor" stroke-width="1.3"/>
+              <path d="M13 4 L13 7 M13 19 L13 22 M4 13 L7 13 M19 13 L22 13 M6.5 6.5 L8.6 8.6 M17.4 17.4 L19.5 19.5 M6.5 19.5 L8.6 17.4 M17.4 8.6 L19.5 6.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <span class="cat-label">Maintenance</span>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- MI_ID PREVIEW (the memorable detail) -->
+    <div class="mi-preview-section">
+      <div class="mi-preview-card" id="mi-preview-card">
+        <div class="mi-preview-label">Identifiant MI généré automatiquement</div>
+        <div class="mi-id-display" id="mi-id-display">
+          <span class="mi-empty-hint" id="mi-empty-hint">Saisir le nom + catégorie pour générer l'ID</span>
+        </div>
+        <div class="mi-preview-meta" id="mi-preview-meta" style="display:none;">
+          <span class="mi-preview-badge cat-badge" id="mi-cat-badge">—</span>
+          <span class="mi-preview-badge" id="mi-gl-badge">GL —</span>
+          <span class="mi-preview-badge" id="mi-unit-badge">— / kg</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Optional fields -->
+    <div class="optional-fields-section" id="optional-section">
+      <button class="optional-toggle" onclick="toggleOptional()">
+        <svg class="optional-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none">
+          <path d="M2 4l4 4 4-4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+        </svg>
+        Champs optionnels (fournisseur, unité, sous-catégorie)
+      </button>
+      <div class="optional-fields">
+        <div class="optional-grid" style="margin-bottom:12px;">
+          <div class="field-group" style="margin-bottom:0;">
+            <label class="field-label">Fournisseur hint</label>
+            <input type="text" class="field-input" placeholder="ex. Schilling, Hopsteiner…" style="min-height:44px;">
+          </div>
+          <div class="field-group" style="margin-bottom:0;">
+            <label class="field-label">Unité par défaut</label>
+            <select class="field-select" id="mi-unit-select" onchange="updatePreview()">
+              <option value="kg">kg</option>
+              <option value="g">g</option>
+              <option value="L">L</option>
+              <option value="mL">mL</option>
+              <option value="u">unité</option>
+            </select>
+          </div>
+        </div>
+        <div class="optional-grid">
+          <div class="field-group" style="margin-bottom:0;">
+            <label class="field-label">Sous-catégorie</label>
+            <input type="text" class="field-input" id="mi-subcategory"
+              placeholder="ex. Base Malt, Aroma Hop, Top-fermenting…" style="min-height:44px;">
+          </div>
+          <div class="field-group" style="margin-bottom:0;">
+            <label class="field-label">Prix indicatif (CHF/kg)</label>
+            <input type="number" class="field-input" placeholder="0.00" step="0.01" min="0" style="min-height:44px; font-family:'JetBrains Mono',monospace;">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="validation-note">
+      Le MI sera immédiatement inséré dans <strong>ref_mi</strong> et disponible dans tous les formulaires de saisie.
+      L'identifiant généré peut être ajusté manuellement par un administrateur après création si nécessaire.
+    </div>
+
+  </div><!-- form-body -->
+
+</div><!-- page-wrap -->
+
+<!-- ACTION BAR -->
+<div class="action-bar">
+  <div class="action-bar-inner">
+    <button class="btn-cancel" onclick="goBack()">Annuler</button>
+    <button class="btn-create" id="btn-create" onclick="createMi()" disabled>
+      Créer l'ingrédient &rarr;
+    </button>
+  </div>
+</div>
+
+<!-- SUCCESS OVERLAY -->
+<div class="success-overlay" id="success-overlay">
+  <div class="success-card">
+    <div class="success-icon">
+      <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+        <path d="M7 14l5 5 9-9" stroke="#9eb060" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
+    <div class="success-mi-id" id="success-mi-id">MALT_PILSENER</div>
+    <div class="success-mi-name" id="success-mi-name">Pilsener</div>
+    <div class="success-detail" id="success-detail">Ingrédient créé · Catégorie Malt · GL 4101</div>
+    <button class="btn-success-use" onclick="useNewMi()">
+      Utiliser dans le brassin &rarr;
+    </button>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   STATE
+   ============================================================ */
+let selectedCat = null;
+let selectedPrefix = null;
+let selectedGl = null;
+let generatedId = null;
+
+const CAT_COLORS = {
+  MALT:    '#d4923c',
+  HOPS:    '#9eb060',
+  YEAST:   '#6593b8',
+  ADJ:     '#a07a48',
+  PROC:    '#8b7ab8',
+  MIN:     '#5aa8b8',
+  CLEAN:   '#b85a8b',
+  PKG:     '#b8bcc0',
+  TRANS:   '#c5664a',
+  MAINT:   '#a07a48',
+};
+
+/* ============================================================
+   CATEGORY SELECTION
+   ============================================================ */
+function selectCat(el) {
+  document.querySelectorAll('#cat-grid .cat-card').forEach(c => c.classList.remove('selected'));
+  el.classList.add('selected');
+  selectedCat = el.dataset.cat;
+  selectedPrefix = el.dataset.prefix;
+  selectedGl = el.dataset.gl;
+  updatePreview();
+}
+
+/* ============================================================
+   MI_ID PREVIEW — LIVE TYPING TRANSFORM
+   ============================================================ */
+function updatePreview() {
+  const name = document.getElementById('mi-name').value.trim();
+  const unit = document.getElementById('mi-unit-select')?.value || 'kg';
+  const displayEl = document.getElementById('mi-id-display');
+  const emptyHint = document.getElementById('mi-empty-hint');
+  const previewMeta = document.getElementById('mi-preview-meta');
+  const catBadge = document.getElementById('mi-cat-badge');
+  const glBadge = document.getElementById('mi-gl-badge');
+  const unitBadge = document.getElementById('mi-unit-badge');
+  const previewCard = document.getElementById('mi-preview-card');
+  const btnCreate = document.getElementById('btn-create');
+
+  const suffix = name
+    .toUpperCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^A-Z0-9\s]/g, '')
+    .trim()
+    .replace(/\s+/g, '_');
+
+  if (!name && !selectedPrefix) {
+    // fully empty
+    displayEl.innerHTML = '<span class="mi-empty-hint">Saisir le nom + catégorie pour générer l\'ID</span>';
+    previewMeta.style.display = 'none';
+    previewCard.style.setProperty('--mi-accent', 'var(--hairline-2)');
+    previewCard.style.setProperty('--mi-color', 'var(--ink-faint)');
+    btnCreate.disabled = true;
+    generatedId = null;
+    return;
+  }
+
+  const color = selectedPrefix ? (CAT_COLORS[selectedPrefix] || 'var(--ink-mute)') : 'var(--ink-mute)';
+  previewCard.style.setProperty('--mi-accent', color);
+  previewCard.style.setProperty('--mi-color', color);
+
+  if (selectedPrefix && suffix) {
+    const id = `${selectedPrefix}_${suffix}`;
+    generatedId = id;
+    displayEl.innerHTML = `
+      <span class="mi-prefix" style="color:${color};">${selectedPrefix}</span>
+      <span class="mi-sep">_</span>
+      <span class="mi-suffix">${suffix}</span>
+      <span class="mi-cursor"></span>
+    `;
+    previewMeta.style.display = 'flex';
+    catBadge.textContent = selectedCat || '—';
+    catBadge.style.color = color;
+    catBadge.style.borderColor = color;
+    glBadge.textContent = `GL ${selectedGl || '—'}`;
+    unitBadge.textContent = `par ${unit}`;
+    btnCreate.disabled = false;
+  } else if (selectedPrefix && !suffix) {
+    displayEl.innerHTML = `
+      <span class="mi-prefix" style="color:${color};">${selectedPrefix}</span>
+      <span class="mi-sep">_</span>
+      <span class="mi-cursor"></span>
+    `;
+    previewMeta.style.display = 'none';
+    btnCreate.disabled = true;
+    generatedId = null;
+  } else if (!selectedPrefix && suffix) {
+    displayEl.innerHTML = `
+      <span style="color:var(--ink-mute);">…</span>
+      <span class="mi-sep">_</span>
+      <span class="mi-suffix">${suffix}</span>
+      <span class="mi-cursor"></span>
+    `;
+    previewMeta.style.display = 'none';
+    btnCreate.disabled = true;
+    generatedId = null;
+  }
+}
+
+/* ============================================================
+   OPTIONAL TOGGLE
+   ============================================================ */
+function toggleOptional() {
+  document.getElementById('optional-section').classList.toggle('open');
+}
+
+/* ============================================================
+   CREATE
+   ============================================================ */
+function createMi() {
+  if (!generatedId) return;
+  const name = document.getElementById('mi-name').value.trim();
+
+  // Show success
+  document.getElementById('success-mi-id').textContent = generatedId;
+  document.getElementById('success-mi-name').textContent = name;
+  document.getElementById('success-detail').textContent =
+    `Ingrédient créé · Catégorie ${selectedCat} · GL ${selectedGl || '—'}`;
+  document.getElementById('success-overlay').classList.add('show');
+}
+
+function useNewMi() {
+  // In real app: returns to parent form with new MI pre-selected
+  // In mockup: close overlay + show confirmation
+  document.getElementById('success-overlay').classList.remove('show');
+  window.history.back();
+}
+
+function goBack() {
+  window.history.back();
+}
+
+/* ============================================================
+   LIVE CLOCK
+   ============================================================ */
+function updateClock() {
+  const now = new Date();
+  const h = String(now.getHours()).padStart(2,'0');
+  const m = String(now.getMinutes()).padStart(2,'0');
+  document.title = `Créer MI — ${h}:${m} · MaltyTask`;
+}
+setInterval(updateClock, 30000);
+</script>
+</body>
+</html>

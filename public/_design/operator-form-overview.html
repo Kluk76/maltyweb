@@ -1,0 +1,764 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Saisie Opérateur · MaltyTask — La Nébuleuse</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,200;0,9..144,300;0,9..144,400;0,9..144,600;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:         #15100a;
+  --bg-elev:    #1d160d;
+  --bg-elev2:   #251c10;
+  --ink:        #ede0c4;
+  --ink-soft:   #c8b894;
+  --ink-mute:   #7a6647;
+  --ink-faint:  #3a2e1d;
+  --hairline:   #261d11;
+  --hairline-2: #342818;
+  --hop:        #9eb060;
+  --hop-deep:   #6b7a3e;
+  --ember:      #c5664a;
+  --oak:        #a07a48;
+  --oak-deep:   #6e4e26;
+  --cold:       #2f5575;
+  --bbt:        #6593b8;
+  --steel:      #b8bcc0;
+  --steel-mid:  #5e6266;
+  --steel-deep: #2c2e30;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+*::selection { background: var(--hop); color: var(--bg); }
+
+html { font-size: 16px; }
+
+body.home {
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-feature-settings: "ss01";
+  background: var(--bg);
+  color: var(--ink);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+  position: relative;
+}
+
+/* Grain texture */
+body.home::before {
+  content: '';
+  position: fixed; inset: 0;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.07  0 0 0 0 0.05  0 0 0 0 0.02  0 0 0 1.2 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  opacity: 0.45;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ============================================================
+   LAYOUT
+   ============================================================ */
+.page-wrap {
+  position: relative; z-index: 1;
+  max-width: 900px; margin: 0 auto;
+  padding: 0 0 64px;
+  min-height: 100vh;
+  display: flex; flex-direction: column;
+}
+
+/* ============================================================
+   HEADER
+   ============================================================ */
+.page-header {
+  padding: 28px 32px 20px;
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  border-bottom: 1px solid var(--hairline);
+  animation: fadeSlideDown 0.4s ease;
+}
+
+@keyframes fadeSlideDown {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.header-wordmark {
+  display: flex; flex-direction: column; gap: 2px;
+}
+
+.wordmark-brewery {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 96;
+  font-size: 1.45rem; font-weight: 300; letter-spacing: -0.01em;
+  color: var(--ink);
+  line-height: 1;
+}
+
+.wordmark-brewery em {
+  font-style: italic; color: var(--ink-soft);
+}
+
+.wordmark-sub {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.65rem; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+.header-right {
+  display: flex; flex-direction: column; align-items: flex-end; gap: 3px;
+}
+
+.header-operator {
+  display: flex; align-items: center; gap: 8px;
+}
+
+.operator-avatar {
+  width: 32px; height: 32px; border-radius: 50%;
+  background: var(--bg-elev); border: 1px solid var(--hairline-2);
+  display: flex; align-items: center; justify-content: center;
+  font-family: "JetBrains Mono", monospace; font-size: 0.72rem;
+  color: var(--ink-mute); font-weight: 600; letter-spacing: 0;
+}
+
+.operator-name {
+  font-family: "DM Sans", sans-serif; font-size: 0.875rem;
+  color: var(--ink-soft);
+}
+
+.header-time {
+  font-family: "JetBrains Mono", monospace; font-size: 0.72rem;
+  letter-spacing: 0.06em; color: var(--ink-mute);
+}
+
+/* ============================================================
+   HERO SECTION
+   ============================================================ */
+.hero {
+  padding: 44px 32px 28px;
+  animation: fadeIn 0.5s ease 0.1s both;
+}
+
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+.hero-eyebrow {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.68rem; letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--hop); margin-bottom: 10px;
+}
+
+.hero-title {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 144;
+  font-size: clamp(2rem, 6vw, 3.2rem);
+  font-weight: 300; line-height: 1.1; letter-spacing: -0.02em;
+  color: var(--ink); margin-bottom: 14px;
+}
+
+.hero-title em {
+  font-style: italic; color: var(--ink-soft);
+}
+
+.hero-sub {
+  font-size: 0.95rem; color: var(--ink-mute); line-height: 1.6;
+  max-width: 480px;
+}
+
+/* Status bar */
+.status-bar {
+  margin: 24px 32px 0;
+  background: var(--bg-elev); border: 1px solid var(--hairline-2);
+  border-radius: 4px; padding: 12px 16px;
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  animation: fadeIn 0.5s ease 0.2s both;
+}
+
+.status-item {
+  display: flex; align-items: center; gap: 8px;
+  font-family: "JetBrains Mono", monospace; font-size: 0.72rem;
+  letter-spacing: 0.04em; color: var(--ink-mute);
+}
+
+.status-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+}
+
+.status-dot.active { background: var(--hop); }
+.status-dot.warning { background: var(--ember); }
+.status-dot.idle { background: var(--ink-faint); }
+
+.status-val { color: var(--ink-soft); }
+
+.status-sep { color: var(--hairline-2); flex-shrink: 0; }
+
+/* ============================================================
+   CARDS GRID — THE FLAGSHIP SECTION
+   ============================================================ */
+.cards-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  padding: 28px 32px 0;
+  flex: 1;
+}
+
+.event-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline-2);
+  border-radius: 6px;
+  overflow: hidden;
+  cursor: pointer;
+  position: relative;
+  text-decoration: none;
+  color: inherit;
+  display: flex; flex-direction: column;
+  transition: border-color 0.2s, transform 0.15s, box-shadow 0.2s;
+  animation: cardSlideUp 0.4s ease both;
+}
+
+.event-card:nth-child(1) { animation-delay: 0.15s; }
+.event-card:nth-child(2) { animation-delay: 0.22s; }
+.event-card:nth-child(3) { animation-delay: 0.29s; }
+.event-card:nth-child(4) { animation-delay: 0.36s; }
+
+@keyframes cardSlideUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.event-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 40px rgba(0,0,0,0.4);
+}
+
+.event-card.brewing:hover  { border-color: var(--ember); }
+.event-card.fermenting:hover { border-color: var(--bbt); }
+.event-card.packaging:hover { border-color: var(--hop); }
+.event-card.racking:hover  { border-color: var(--oak); }
+
+/* Top accent hairline */
+.event-card::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  opacity: 0; transition: opacity 0.2s;
+}
+
+.event-card.brewing::before  { background: linear-gradient(90deg, var(--ember), transparent 70%); }
+.event-card.fermenting::before { background: linear-gradient(90deg, var(--bbt), transparent 70%); }
+.event-card.packaging::before { background: linear-gradient(90deg, var(--hop), transparent 70%); }
+.event-card.racking::before  { background: linear-gradient(90deg, var(--oak), transparent 70%); }
+
+.event-card:hover::before { opacity: 1; }
+
+/* SVG illustration area */
+.card-visual {
+  flex-shrink: 0;
+  height: 160px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg);
+  position: relative; overflow: hidden;
+  border-bottom: 1px solid var(--hairline);
+}
+
+/* Subtle grid lines behind SVG illustrations */
+.card-visual::before {
+  content: '';
+  position: absolute; inset: 0;
+  background-image:
+    linear-gradient(var(--hairline) 1px, transparent 1px),
+    linear-gradient(90deg, var(--hairline) 1px, transparent 1px);
+  background-size: 32px 32px;
+  opacity: 0.5;
+}
+
+.card-svg {
+  position: relative; z-index: 1;
+}
+
+/* Card body */
+.card-body {
+  padding: 18px 20px 20px;
+  flex: 1; display: flex; flex-direction: column;
+}
+
+.card-type {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem; letter-spacing: 0.12em; text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.card-type.brewing  { color: var(--ember); }
+.card-type.fermenting { color: var(--bbt); }
+.card-type.packaging { color: var(--hop); }
+.card-type.racking  { color: var(--oak); }
+
+.card-title {
+  font-family: "Fraunces", serif; font-variation-settings: "opsz" 36;
+  font-size: 1.15rem; font-weight: 400; color: var(--ink);
+  margin-bottom: 6px; line-height: 1.2;
+}
+
+.card-desc {
+  font-size: 0.82rem; color: var(--ink-mute); line-height: 1.5; flex: 1;
+}
+
+.card-footer {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-top: 14px; padding-top: 12px;
+  border-top: 1px solid var(--hairline);
+}
+
+.card-count {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem; letter-spacing: 0.05em; color: var(--ink-mute);
+  display: flex; align-items: center; gap: 6px;
+}
+
+.count-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+}
+
+.count-dot.has-data { background: var(--hop); }
+.count-dot.empty    { background: var(--ink-faint); }
+
+.card-arrow {
+  color: var(--ink-faint); transition: color 0.2s, transform 0.2s;
+}
+
+.event-card:hover .card-arrow { color: var(--ink-mute); transform: translateX(3px); }
+
+/* ============================================================
+   BREWING CARD SVG — kettle silhouette
+   ============================================================ */
+.kettle-group {
+  transition: transform 0.4s ease;
+}
+.event-card.brewing:hover .kettle-group {
+  transform: translateY(-3px);
+}
+
+/* ============================================================
+   RECENT ACTIVITY
+   ============================================================ */
+.recent-section {
+  padding: 28px 32px 0;
+  animation: fadeIn 0.5s ease 0.4s both;
+}
+
+.recent-title {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.65rem; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--ink-mute); margin-bottom: 12px;
+}
+
+.recent-list {
+  display: flex; flex-direction: column; gap: 1px;
+}
+
+.recent-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 14px; background: var(--bg-elev);
+  border: 1px solid var(--hairline); border-radius: 3px;
+  transition: background 0.15s;
+}
+
+.recent-item:hover { background: var(--bg-elev2); }
+
+.recent-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+}
+
+.recent-body { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+
+.recent-main {
+  font-size: 0.85rem; color: var(--ink-soft);
+}
+
+.recent-main strong { color: var(--ink); }
+
+.recent-meta {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.68rem; letter-spacing: 0.04em; color: var(--ink-mute);
+}
+
+.recent-time {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem; color: var(--ink-mute); white-space: nowrap;
+}
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+@media (max-width: 600px) {
+  .cards-grid { grid-template-columns: 1fr; }
+  .hero-title { font-size: 1.8rem; }
+  .page-header { padding: 20px 20px 16px; }
+  .hero { padding: 28px 20px 20px; }
+  .status-bar { margin: 16px 20px 0; }
+  .cards-grid { padding: 20px 20px 0; }
+  .recent-section { padding: 20px 20px 0; }
+}
+
+@media (max-width: 360px) {
+  .wordmark-brewery { font-size: 1.2rem; }
+}
+</style>
+</head>
+<body class="home">
+
+<div class="page-wrap">
+
+  <!-- HEADER -->
+  <header class="page-header">
+    <div class="header-wordmark">
+      <div class="wordmark-brewery">La <em>Nébuleuse</em></div>
+      <div class="wordmark-sub">MaltyTask · Saisie Opérateur</div>
+    </div>
+    <div class="header-right">
+      <div class="header-operator">
+        <div class="operator-avatar">TM</div>
+        <span class="operator-name">T. Moreau</span>
+      </div>
+      <div class="header-time" id="live-clock">SAM 23.05.26 · 14:32</div>
+    </div>
+  </header>
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="hero-eyebrow">Quoi faire aujourd'hui ?</div>
+    <h1 class="hero-title">Saisie <em>brasserie</em></h1>
+    <p class="hero-sub">
+      Choisissez le type d'événement à enregistrer.
+      Les données sont normalisées à la saisie — plus de corrections en aval.
+    </p>
+  </section>
+
+  <!-- STATUS BAR -->
+  <div class="status-bar">
+    <div class="status-item">
+      <div class="status-dot active"></div>
+      <span>DB</span>
+      <span class="status-val">En ligne</span>
+    </div>
+    <div class="status-sep">·</div>
+    <div class="status-item">
+      <div class="status-dot warning"></div>
+      <span>CCT 04</span>
+      <span class="status-val">EMB B2501 · J+4</span>
+    </div>
+    <div class="status-sep">·</div>
+    <div class="status-item">
+      <div class="status-dot active"></div>
+      <span>CCT 07</span>
+      <span class="status-val">ZEPP B2503 · Fermentation</span>
+    </div>
+    <div class="status-sep">·</div>
+    <div class="status-item">
+      <div class="status-dot idle"></div>
+      <span>BBT 01-03</span>
+      <span class="status-val">Disponibles</span>
+    </div>
+  </div>
+
+  <!-- CARDS GRID -->
+  <main class="cards-grid">
+
+    <!-- BREWING -->
+    <a class="event-card brewing" href="operator-form-brewing.html">
+      <div class="card-visual">
+        <!-- Kettle SVG illustration -->
+        <svg class="card-svg" width="140" height="130" viewBox="0 0 140 130" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <g class="kettle-group">
+            <!-- Kettle body -->
+            <path d="M28 48 L28 96 Q28 108 70 108 Q112 108 112 96 L112 48 Q112 40 70 40 Q28 40 28 48Z"
+              fill="none" stroke="#5e6266" stroke-width="1.5"/>
+            <path d="M28 58 Q28 50 70 50 Q112 50 112 58"
+              fill="none" stroke="#5e6266" stroke-width="1.2" opacity="0.5"/>
+            <!-- Kettle top / rim -->
+            <ellipse cx="70" cy="48" rx="42" ry="8" fill="none" stroke="#b8bcc0" stroke-width="1.3" opacity="0.7"/>
+            <!-- False bottom line -->
+            <line x1="38" y1="98" x2="102" y2="98" stroke="#5e6266" stroke-width="0.8" opacity="0.5"/>
+            <!-- Sight glass -->
+            <rect x="114" y="60" width="5" height="30" rx="2.5" fill="none" stroke="#5e6266" stroke-width="0.9"/>
+            <rect x="115" y="74" width="3" height="10" rx="1.5" fill="#c5664a" opacity="0.5"/>
+            <!-- Heating element indicator -->
+            <path d="M42 95 Q55 90 62 95 Q69 100 76 95 Q83 90 96 95"
+              fill="none" stroke="#c5664a" stroke-width="1.2" stroke-linecap="round" opacity="0.4"/>
+            <!-- Whirlpool indicator (active) -->
+            <path d="M62 72 A8 8 0 1 1 74 72" fill="none" stroke="#c5664a" stroke-width="1.2" stroke-linecap="round" opacity="0.7"/>
+            <polygon points="74,68 74,76 79,72" fill="#c5664a" opacity="0.7"/>
+            <!-- Outlet pipe -->
+            <path d="M112 82 L124 82 L124 94" fill="none" stroke="#5e6266" stroke-width="1.5" stroke-linecap="round"/>
+            <circle cx="124" cy="97" r="3" fill="none" stroke="#5e6266" stroke-width="1.2"/>
+            <!-- Steam puffs (brewing active) -->
+            <path d="M50 36 Q52 28 54 36" fill="none" stroke="#c5664a" stroke-width="1" stroke-linecap="round" opacity="0.4"/>
+            <path d="M68 30 Q70 20 72 30" fill="none" stroke="#c5664a" stroke-width="1" stroke-linecap="round" opacity="0.3"/>
+            <path d="M86 36 Q88 28 90 36" fill="none" stroke="#c5664a" stroke-width="1" stroke-linecap="round" opacity="0.4"/>
+            <!-- Wort level fill (ember colored) -->
+            <clipPath id="kettle-clip">
+              <rect x="29" y="56" width="82" height="50"/>
+            </clipPath>
+            <path d="M29 72 L29 96 Q29 106 70 106 Q111 106 111 96 L111 72 Q90 78 70 78 Q50 78 29 72Z"
+              fill="#c5664a" opacity="0.12"/>
+          </g>
+        </svg>
+      </div>
+      <div class="card-body">
+        <div class="card-type brewing">Brassage</div>
+        <div class="card-title">Brewing</div>
+        <div class="card-desc">Ingrédients, lots, OG et rendement d'un brassin. Chaque ingrédient normalisé vers le catalogue MI.</div>
+        <div class="card-footer">
+          <div class="card-count">
+            <div class="count-dot has-data"></div>
+            2 brassin aujourd'hui
+          </div>
+          <svg class="card-arrow" width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+      </div>
+    </a>
+
+    <!-- FERMENTING -->
+    <a class="event-card fermenting" href="operator-form-fermenting.html">
+      <div class="card-visual">
+        <!-- CCT silhouette SVG -->
+        <svg class="card-svg" width="90" height="130" viewBox="0 0 90 130" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <!-- CCT cylindrical body -->
+          <path d="M22 28 L22 90 Q22 108 45 108 Q68 108 68 90 L68 28 Q68 20 45 20 Q22 20 22 28Z"
+            fill="none" stroke="#5e6266" stroke-width="1.5"/>
+          <!-- Cone bottom -->
+          <path d="M22 90 Q22 108 45 108 Q68 108 68 90 L45 120 Z"
+            fill="none" stroke="#5e6266" stroke-width="1.3"/>
+          <!-- Manway top -->
+          <ellipse cx="45" cy="28" rx="23" ry="4" fill="none" stroke="#b8bcc0" stroke-width="1.3" opacity="0.7"/>
+          <!-- CIP spray ball -->
+          <circle cx="45" cy="35" r="2.5" fill="none" stroke="#5e6266" stroke-width="0.9" opacity="0.5"/>
+          <line x1="45" y1="32" x2="45" y2="28" stroke="#5e6266" stroke-width="0.8" opacity="0.5"/>
+          <!-- Pressure valve top -->
+          <rect x="41" y="16" width="8" height="5" rx="1" fill="none" stroke="#5e6266" stroke-width="0.9"/>
+          <line x1="45" y1="16" x2="45" y2="13" stroke="#5e6266" stroke-width="1" stroke-linecap="round"/>
+          <!-- Weld seams -->
+          <line x1="23" y1="50" x2="67" y2="50" stroke="#5e6266" stroke-width="0.7" opacity="0.4"/>
+          <line x1="23" y1="70" x2="67" y2="70" stroke="#5e6266" stroke-width="0.7" opacity="0.4"/>
+          <!-- Fermentation fill (bbt blue, ~70%) -->
+          <clipPath id="cct-clip">
+            <rect x="23" y="40" width="44" height="60"/>
+          </clipPath>
+          <path d="M23 55 L23 90 Q23 106 45 106 Q67 106 67 90 L67 55 Q58 60 45 60 Q32 60 23 55Z"
+            fill="#2f5575" opacity="0.35"/>
+          <!-- Bubbles in beer (fermentation active) -->
+          <circle cx="38" cy="80" r="1.5" fill="#6593b8" opacity="0.3"/>
+          <circle cx="50" cy="72" r="1" fill="#6593b8" opacity="0.25"/>
+          <circle cx="44" cy="85" r="1.8" fill="#6593b8" opacity="0.2"/>
+          <!-- Sample valve -->
+          <path d="M68 68 L76 68" stroke="#5e6266" stroke-width="1.3" stroke-linecap="round"/>
+          <circle cx="76" cy="68" r="2.5" fill="none" stroke="#5e6266" stroke-width="0.9"/>
+          <!-- 3 legs -->
+          <path d="M35 120 L28 130" stroke="#5e6266" stroke-width="1.5" stroke-linecap="round"/>
+          <path d="M45 122 L45 130" stroke="#5e6266" stroke-width="1.5" stroke-linecap="round"/>
+          <path d="M55 120 L62 130" stroke="#5e6266" stroke-width="1.5" stroke-linecap="round"/>
+          <!-- Ground shadow -->
+          <ellipse cx="45" cy="130" rx="16" ry="2" fill="#5e6266" opacity="0.2"/>
+          <!-- CCT number -->
+          <text x="37" y="64" font-family="JetBrains Mono" font-size="7" fill="#6593b8" opacity="0.7" font-weight="600">CCT 04</text>
+        </svg>
+      </div>
+      <div class="card-body">
+        <div class="card-type fermenting">Fermentation</div>
+        <div class="card-title">Fermenting</div>
+        <div class="card-desc">Mesures densité (°Plato), pH, température, dry-hop, pression CO2, cold-crash.</div>
+        <div class="card-footer">
+          <div class="card-count">
+            <div class="count-dot has-data"></div>
+            CCT 04 · J+4 en cours
+          </div>
+          <svg class="card-arrow" width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+      </div>
+    </a>
+
+    <!-- PACKAGING -->
+    <a class="event-card packaging" href="#packaging">
+      <div class="card-visual">
+        <!-- Packaging line SVG — conveyor + bottles -->
+        <svg class="card-svg" width="200" height="110" viewBox="0 0 200 110" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <!-- Conveyor belt -->
+          <rect x="10" y="80" width="180" height="12" rx="2" fill="none" stroke="#5e6266" stroke-width="1.3"/>
+          <line x1="10" y1="86" x2="190" y2="86" stroke="#5e6266" stroke-width="0.6" opacity="0.4"/>
+          <!-- Belt rollers -->
+          <circle cx="20" cy="86" r="5" fill="none" stroke="#5e6266" stroke-width="1.2"/>
+          <circle cx="180" cy="86" r="5" fill="none" stroke="#5e6266" stroke-width="1.2"/>
+          <!-- Belt tension line -->
+          <line x1="20" y1="92" x2="180" y2="92" stroke="#5e6266" stroke-width="0.8" opacity="0.3"/>
+          <!-- Bottle 1 (full, on belt) -->
+          <g transform="translate(40,44)">
+            <path d="M6 0 Q6 0 9 6 L12 36 Q12 38 8 38 L4 38 Q0 38 0 36 L3 6 Q6 0 6 0Z" fill="none" stroke="#9eb060" stroke-width="1.2" opacity="0.8"/>
+            <rect x="3" y="30" width="6" height="4" rx="0.5" fill="#9eb060" opacity="0.3"/>
+            <ellipse cx="6" cy="36" rx="4" ry="1.5" fill="none" stroke="#9eb060" stroke-width="0.7" opacity="0.4"/>
+          </g>
+          <!-- Bottle 2 -->
+          <g transform="translate(66,44)" opacity="0.75">
+            <path d="M6 0 Q6 0 9 6 L12 36 Q12 38 8 38 L4 38 Q0 38 0 36 L3 6 Q6 0 6 0Z" fill="none" stroke="#9eb060" stroke-width="1.2"/>
+            <rect x="3" y="30" width="6" height="4" rx="0.5" fill="#9eb060" opacity="0.3"/>
+          </g>
+          <!-- Bottle 3 -->
+          <g transform="translate(92,44)" opacity="0.6">
+            <path d="M6 0 Q6 0 9 6 L12 36 Q12 38 8 38 L4 38 Q0 38 0 36 L3 6 Q6 0 6 0Z" fill="none" stroke="#9eb060" stroke-width="1.2"/>
+          </g>
+          <!-- Capping head -->
+          <rect x="110" y="25" width="18" height="30" rx="2" fill="none" stroke="#5e6266" stroke-width="1.3"/>
+          <line x1="119" y1="55" x2="119" y2="65" stroke="#5e6266" stroke-width="1.5" stroke-linecap="round"/>
+          <rect x="113" y="20" width="12" height="6" rx="1" fill="none" stroke="#5e6266" stroke-width="1"/>
+          <!-- Case packer suggestion -->
+          <rect x="145" y="50" width="30" height="26" rx="1" fill="none" stroke="#9eb060" stroke-width="1" opacity="0.4"/>
+          <line x1="145" y1="60" x2="175" y2="60" stroke="#9eb060" stroke-width="0.7" opacity="0.3"/>
+          <!-- CO2 line -->
+          <path d="M30 50 Q30 40 40 38" fill="none" stroke="#5e6266" stroke-width="0.9" opacity="0.4" stroke-dasharray="2,2"/>
+          <!-- Counter label -->
+          <text x="152" y="45" font-family="JetBrains Mono" font-size="8" fill="#9eb060" opacity="0.6">×24</text>
+        </svg>
+      </div>
+      <div class="card-body">
+        <div class="card-type packaging">Conditionnement</div>
+        <div class="card-title">Packaging</div>
+        <div class="card-desc">Événements d'embouteillage, mise en fût, mise en boîte. Volumes, format, lot, SKU.</div>
+        <div class="card-footer">
+          <div class="card-count">
+            <div class="count-dot empty"></div>
+            Aucune saisie aujourd'hui
+          </div>
+          <svg class="card-arrow" width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+      </div>
+    </a>
+
+    <!-- RACKING -->
+    <a class="event-card racking" href="#racking">
+      <div class="card-visual">
+        <!-- BBT + transfer pipe SVG -->
+        <svg class="card-svg" width="190" height="120" viewBox="0 0 190 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <!-- CCT (source) - smaller left -->
+          <path d="M18 22 L18 72 Q18 84 32 84 Q46 84 46 72 L46 22 Q46 16 32 16 Q18 16 18 22Z"
+            fill="none" stroke="#5e6266" stroke-width="1.2"/>
+          <path d="M18 72 L18 84 Q18 92 32 92 L32 102" fill="none" stroke="#5e6266" stroke-width="1.2"/>
+          <!-- CCT fill (cold, partial) -->
+          <clipPath id="cct2-clip">
+            <rect x="19" y="22" width="26" height="52"/>
+          </clipPath>
+          <path d="M19 38 L19 72 Q19 83 32 83 Q45 83 45 72 L45 38 Q38 42 32 42 Q26 42 19 38Z"
+            fill="#2f5575" opacity="0.3"/>
+          <text x="24" y="56" font-family="JetBrains Mono" font-size="6" fill="#7a6647" opacity="0.6">CCT</text>
+          <!-- Transfer pipe (center) -->
+          <path d="M46 58 Q70 58 80 58 Q90 58 90 64 L90 78"
+            fill="none" stroke="#a07a48" stroke-width="2" stroke-linecap="round"/>
+          <!-- Butterfly valve on pipe -->
+          <circle cx="68" cy="58" r="6" fill="none" stroke="#a07a48" stroke-width="1.2"/>
+          <path d="M64 55 L72 61 M64 61 L72 55" stroke="#a07a48" stroke-width="1" stroke-linecap="round"/>
+          <!-- Flow arrows -->
+          <path d="M80 56 L86 56" stroke="#a07a48" stroke-width="1" stroke-linecap="round" marker-end="url(#arrow)" opacity="0.6"/>
+          <!-- Filter / plate HX symbol -->
+          <rect x="90" y="74" width="16" height="16" rx="1" fill="none" stroke="#5e6266" stroke-width="1.2"/>
+          <line x1="93" y1="74" x2="93" y2="90" stroke="#5e6266" stroke-width="0.7" opacity="0.5"/>
+          <line x1="98" y1="74" x2="98" y2="90" stroke="#5e6266" stroke-width="0.7" opacity="0.5"/>
+          <line x1="102" y1="74" x2="102" y2="90" stroke="#5e6266" stroke-width="0.7" opacity="0.5"/>
+          <!-- Transfer line continuing to BBT -->
+          <path d="M106 82 Q120 82 128 72"
+            fill="none" stroke="#a07a48" stroke-width="2" stroke-linecap="round"/>
+          <!-- BBT (destination) - right -->
+          <path d="M128 22 L128 72 Q128 84 156 84 Q184 84 184 72 L184 22 Q184 16 156 16 Q128 16 128 22Z"
+            fill="none" stroke="#6593b8" stroke-width="1.5"/>
+          <ellipse cx="156" cy="22" rx="28" ry="5" fill="none" stroke="#b8bcc0" stroke-width="1.2" opacity="0.6"/>
+          <!-- BBT fill (bright beer, bbt blue - rising) -->
+          <clipPath id="bbt-clip">
+            <rect x="129" y="22" width="54" height="63"/>
+          </clipPath>
+          <path d="M129 56 L129 72 Q129 83 156 83 Q183 83 183 72 L183 56 Q170 62 156 62 Q142 62 129 56Z"
+            fill="#6593b8" opacity="0.2"/>
+          <!-- BBT sight glass ports -->
+          <circle cx="184" cy="52" r="3" fill="none" stroke="#6593b8" stroke-width="0.9" opacity="0.6"/>
+          <circle cx="184" cy="68" r="3" fill="none" stroke="#6593b8" stroke-width="0.9" opacity="0.6"/>
+          <line x1="184" y1="52" x2="184" y2="68" stroke="#6593b8" stroke-width="0.8" opacity="0.3"/>
+          <text x="143" y="48" font-family="JetBrains Mono" font-size="7" fill="#6593b8" opacity="0.7" font-weight="600">BBT 01</text>
+          <!-- Legs BBT -->
+          <path d="M140 92 L136 104" stroke="#5e6266" stroke-width="1.3" stroke-linecap="round"/>
+          <path d="M156 94 L156 104" stroke="#5e6266" stroke-width="1.3" stroke-linecap="round"/>
+          <path d="M172 92 L176 104" stroke="#5e6266" stroke-width="1.3" stroke-linecap="round"/>
+          <!-- Ground shadows -->
+          <ellipse cx="32" cy="104" rx="10" ry="1.5" fill="#5e6266" opacity="0.15"/>
+          <ellipse cx="156" cy="104" rx="18" ry="2" fill="#5e6266" opacity="0.15"/>
+        </svg>
+      </div>
+      <div class="card-body">
+        <div class="card-type racking">Soutirage</div>
+        <div class="card-title">Racking</div>
+        <div class="card-desc">Transfert CCT → BBT. Volume transféré, tank source/destination, filtre, date, opérateur.</div>
+        <div class="card-footer">
+          <div class="card-count">
+            <div class="count-dot empty"></div>
+            Aucune saisie aujourd'hui
+          </div>
+          <svg class="card-arrow" width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+      </div>
+    </a>
+
+  </main><!-- cards-grid -->
+
+  <!-- RECENT ACTIVITY -->
+  <section class="recent-section">
+    <div class="recent-title">Saisies récentes</div>
+    <div class="recent-list">
+      <div class="recent-item">
+        <div class="recent-dot" style="background:var(--ember);"></div>
+        <div class="recent-body">
+          <div class="recent-main"><strong>Brewing — B2503</strong> · Zepp Lager · 5 ingrédients</div>
+          <div class="recent-meta">T. Moreau · 6 MI normalisés → catalogue · 31.2 HL</div>
+        </div>
+        <div class="recent-time">14:08</div>
+      </div>
+      <div class="recent-item">
+        <div class="recent-dot" style="background:var(--bbt);"></div>
+        <div class="recent-body">
+          <div class="recent-main"><strong>Fermenting — B2501</strong> · Embuscade · Densité J+3</div>
+          <div class="recent-meta">T. Moreau · OG 15.2°P · FG 4.1°P · pH 4.35</div>
+        </div>
+        <div class="recent-time">12:15</div>
+      </div>
+      <div class="recent-item">
+        <div class="recent-dot" style="background:var(--ember);"></div>
+        <div class="recent-body">
+          <div class="recent-main"><strong>Brewing — B2502</strong> · Moonshine IPA · 8 ingrédients</div>
+          <div class="recent-meta">C. Villard · 1 MI créé (ADJ_HIBISCUS) · 32.0 HL</div>
+        </div>
+        <div class="recent-time">Hier · 09:42</div>
+      </div>
+    </div>
+  </section>
+
+</div><!-- page-wrap -->
+
+<script>
+/* Live clock */
+function updateClock() {
+  const now = new Date();
+  const days = ['DIM','LUN','MAR','MER','JEU','VEN','SAM'];
+  const day = days[now.getDay()];
+  const h = String(now.getHours()).padStart(2,'0');
+  const m = String(now.getMinutes()).padStart(2,'0');
+  const d = String(now.getDate()).padStart(2,'0');
+  const mo = String(now.getMonth()+1).padStart(2,'0');
+  const y = String(now.getFullYear()).slice(2);
+  const el = document.getElementById('live-clock');
+  if (el) el.textContent = `${day} ${d}.${mo}.${y} · ${h}:${m}`;
+}
+setInterval(updateClock, 10000);
+updateClock();
+</script>
+</body>
+</html>

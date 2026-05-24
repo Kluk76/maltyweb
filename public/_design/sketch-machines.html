@@ -1,0 +1,834 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Croquis — propositions · machines de cave & conditionnement</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..600;1,9..144,400..500&family=DM+Sans:opsz,wght@9..40,300..600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#15100a; --bg-elev:#1d160d; --ink:#ede0c4; --ink-soft:#c8b894;
+  --ink-mute:#7a6647; --ink-faint:#3a2e1d; --hairline:#261d11; --hairline-2:#342818;
+  /* — required stroke tokens — */
+  --line:#caa86e;
+  --line-soft:#7a6647;
+  --oak:#a07a48;
+  --bbt:#6593b8;
+  --hop:#9eb060;
+  --oak-deep:#6e4e26;
+  /* — new machine accents — */
+  --sep:#8a7ab8;          /* centrifuge / séparateur — violet industriel */
+  --kze:#5aa8a0;          /* pasteurisateur flash KZE — sarcelle froide */
+  --pkg:#c46a3a;          /* conditionnement — orange forge */
+  --pkg-deep:#7a3a18;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{min-height:100%}
+body{
+  font-family:"DM Sans",system-ui,sans-serif; color:var(--ink); background:var(--bg);
+  padding:0 0 120px;
+}
+.board{
+  position:fixed; inset:0; z-index:-1;
+  background:
+    radial-gradient(130% 90% at 50% -10%, rgba(160,122,72,.13), transparent 55%),
+    radial-gradient(100% 130% at 50% 120%, rgba(0,0,0,.55), transparent 60%),
+    var(--bg);
+}
+.board::before{
+  content:""; position:absolute; inset:0; opacity:.5;
+  background-image:
+    linear-gradient(rgba(122,102,71,.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(122,102,71,.07) 1px, transparent 1px),
+    linear-gradient(rgba(122,102,71,.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(122,102,71,.04) 1px, transparent 1px);
+  background-size:120px 120px,120px 120px,24px 24px,24px 24px;
+  mask-image:radial-gradient(150% 130% at 50% 30%, #000 60%, transparent 96%);
+}
+.board::after{
+  content:""; position:absolute; inset:0; pointer-events:none; opacity:.5;
+  background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .03 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+.mark{ position:fixed; width:26px; height:26px; border:1px solid var(--hairline-2); z-index:3; opacity:.7 }
+.mark.tl{top:18px;left:18px;border-right:0;border-bottom:0}
+.mark.tr{top:18px;right:18px;border-left:0;border-bottom:0}
+.mark.bl{bottom:18px;left:18px;border-right:0;border-top:0}
+.mark.br{bottom:18px;right:18px;border-left:0;border-top:0}
+
+.sheet-head{ max-width:1280px; margin:0 auto; padding:64px 56px 8px; }
+.sheet-head .k{ font-family:"JetBrains Mono",monospace; font-size:10px; letter-spacing:.36em; color:var(--ink-mute); text-transform:uppercase }
+.sheet-head h1{ font-family:"Fraunces",serif; font-variation-settings:"opsz" 144; font-weight:400; font-size:48px; line-height:1; color:var(--ink); margin:8px 0 0 }
+.sheet-head h1 em{ font-style:italic; color:var(--oak) }
+.sheet-head .lede{ font-size:14.5px; color:var(--ink-soft); max-width:680px; margin-top:14px; line-height:1.6 }
+.legend{ display:flex; flex-wrap:wrap; gap:22px; margin-top:22px; padding-top:18px; border-top:1px solid var(--hairline-2); }
+.legend .item{ display:flex; align-items:center; gap:9px; font-family:"JetBrains Mono",monospace; font-size:10px; letter-spacing:.08em; color:var(--ink-mute); text-transform:uppercase }
+.legend svg{ flex:0 0 34px }
+
+.band{ max-width:1280px; margin:54px auto 0; padding:0 56px; }
+.band .bh{ display:flex; align-items:baseline; gap:16px; margin-bottom:6px; border-bottom:1px solid var(--hairline-2); padding-bottom:10px }
+.band .bh .num{ font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.3em; color:var(--oak) }
+.band .bh h2{ font-family:"Fraunces",serif; font-variation-settings:"opsz" 144; font-weight:430; font-size:26px; color:var(--ink) }
+.band .bh h2 em{ font-style:italic; color:var(--oak) }
+.band .bh .meta{ margin-left:auto; font-family:"JetBrains Mono",monospace; font-size:10px; letter-spacing:.1em; color:var(--ink-mute); text-transform:uppercase }
+
+.grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:22px; margin-top:26px }
+.grid.three{ grid-template-columns:repeat(3,1fr) }
+.grid.two{ grid-template-columns:repeat(2,1fr) }
+.card{
+  position:relative; border:1px solid var(--hairline-2); border-radius:14px;
+  background:linear-gradient(165deg, rgba(29,22,13,.6), rgba(12,9,5,.55));
+  box-shadow:0 26px 60px -34px rgba(0,0,0,.8), inset 0 1px 0 rgba(255,220,160,.04);
+  padding:14px 18px 18px; display:flex; flex-direction:column;
+  transition:transform .3s cubic-bezier(.2,.7,.2,1), border-color .3s, box-shadow .3s;
+}
+.card:hover{ transform:translateY(-5px); border-color:var(--oak-deep);
+  box-shadow:0 38px 76px -34px rgba(0,0,0,.85), inset 0 1px 0 rgba(255,220,160,.08); }
+.card .canvas{ height:248px; display:flex; align-items:flex-end; justify-content:center; padding-bottom:4px }
+.card.hero .canvas{ height:330px }
+.card .tag{ position:absolute; top:14px; left:18px; font-family:"JetBrains Mono",monospace; font-size:9px; letter-spacing:.24em; color:var(--ink-faint); text-transform:uppercase }
+.card .cap{ font-family:"Fraunces",serif; font-variation-settings:"opsz" 96; font-weight:460; font-size:18px; color:var(--ink); margin-top:8px }
+.card .cap em{ font-style:italic; color:var(--oak) }
+.card .cap em.pkg{ color:var(--pkg) }
+.card .spec{ font-family:"JetBrains Mono",monospace; font-size:10px; letter-spacing:.04em; color:var(--ink-mute); margin-top:5px; line-height:1.5 }
+.card .note{ font-size:12px; color:var(--ink-soft); line-height:1.5; margin-top:9px;
+  border-left:2px solid var(--oak-deep); padding-left:11px }
+
+.colophon{ max-width:1280px; margin:60px auto 0; padding:0 56px; }
+.colophon .box{ border:1px solid var(--hairline-2); border-radius:14px; padding:24px 28px;
+  background:rgba(12,9,5,.4); display:grid; grid-template-columns:1.4fr 1fr; gap:32px }
+.colophon h3{ font-family:"Fraunces",serif; font-weight:460; font-size:20px; color:var(--ink); margin-bottom:10px }
+.colophon h3 em{ font-style:italic; color:var(--oak) }
+.colophon p{ font-size:13px; color:var(--ink-soft); line-height:1.65; margin-bottom:10px }
+.colophon .deci{ font-family:"JetBrains Mono",monospace; font-size:11px; color:var(--ink-mute);
+  line-height:1.8; letter-spacing:.04em }
+.colophon .deci b{ color:var(--pkg) }
+.colophon .deci b.kze{ color:var(--kze) }
+
+.titleblock{ position:fixed; bottom:20px; right:54px; z-index:4; text-align:right;
+  font-family:"JetBrains Mono",monospace; font-size:9px; letter-spacing:.16em; color:var(--ink-faint);
+  line-height:1.7; text-transform:uppercase; border-right:2px solid var(--hairline-2); padding-right:12px }
+.preview-flag{ position:fixed; bottom:20px; left:54px; z-index:4; font-family:"JetBrains Mono",monospace;
+  font-size:9px; letter-spacing:.16em; color:var(--ink-faint); opacity:.7; text-transform:uppercase }
+
+/* — SVG monoline language — identical to approved set — */
+svg .ground{ stroke:var(--line); fill:none; stroke-width:2; stroke-linecap:round }
+svg .ink{ stroke:var(--line); fill:none; stroke-width:1.5; stroke-linejoin:round; stroke-linecap:round }
+svg .ink-2{ stroke:var(--line-soft); fill:none; stroke-width:.95; stroke-linejoin:round; stroke-linecap:round }
+svg .fillx{ fill:rgba(202,168,110,.04) }
+svg .band-oak{ stroke:var(--oak); fill:none; stroke-width:1.6; stroke-linecap:round }
+svg .band-bbt{ stroke:var(--bbt); fill:none; stroke-width:1.6; stroke-linecap:round }
+svg .band-hop{ stroke:var(--hop); fill:none; stroke-width:1.6; stroke-linecap:round }
+svg .band-sep{ stroke:var(--sep); fill:none; stroke-width:1.6; stroke-linecap:round }
+svg .band-kze{ stroke:var(--kze); fill:none; stroke-width:1.6; stroke-linecap:round }
+svg .band-pkg{ stroke:var(--pkg); fill:none; stroke-width:1.6; stroke-linecap:round }
+svg .dim{ fill:var(--ink-mute); font-family:"JetBrains Mono",monospace; font-size:7px; letter-spacing:.04em }
+svg .dim-o{ fill:var(--oak); font-family:"JetBrains Mono",monospace; font-size:7px; letter-spacing:.04em }
+svg .dim-pkg{ fill:var(--pkg); font-family:"JetBrains Mono",monospace; font-size:7px; letter-spacing:.04em }
+svg .steam{ stroke:var(--ink-mute); fill:none; stroke-width:1.1; stroke-linecap:round; opacity:.5 }
+svg .dimline{ stroke:var(--line-soft); fill:none; stroke-width:.6; opacity:.7 }
+svg .shade{ stroke:var(--line-soft); fill:none; stroke-width:.65; stroke-linecap:butt; opacity:.35 }
+
+.draw [class^="ink"], .draw .ground, .draw [class^="band-"]{
+  stroke-dasharray:2200; stroke-dashoffset:2200; animation:draw 2s cubic-bezier(.4,.1,.2,1) forwards;
+}
+@keyframes draw{ to{ stroke-dashoffset:0 } }
+
+@media (max-width:1100px){ .grid{grid-template-columns:repeat(2,1fr)} .colophon .box{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+<div class="board"></div>
+<span class="mark tl"></span><span class="mark tr"></span><span class="mark bl"></span><span class="mark br"></span>
+
+<header class="sheet-head">
+  <div class="k">La Nébuleuse · Salle des Machines · planche de croquis · vol. 2</div>
+  <h1>Machines de cave &amp; conditionnement — <em>propositions</em></h1>
+  <p class="lede">Six nouvelles machines dans le même registre monoline BBNo : centrifugeuse, pasteurisateur flash, soutireuses, ligne canettes, encartonneuse. Même vocabulaire de trait, mêmes glyphes tri-clamp et vannes papillon, mêmes poids de ligne (sol 2,0 / primaire 1,5 / fin 0,95). Deux nouvelles familles d'accent : <span style="color:var(--sep)">violet industriel</span> pour la cave (séparateur + KZE) et <span style="color:var(--pkg)">orange forge</span> pour le conditionnement.</p>
+  <div class="legend">
+    <span class="item">
+      <svg viewBox="0 0 34 18" width="34" height="18"><line class="ground" x1="2" y1="9" x2="32" y2="9"/></svg>
+      trait sol · 2,0
+    </span>
+    <span class="item">
+      <svg viewBox="0 0 34 18" width="34" height="18"><line class="ink" x1="2" y1="9" x2="32" y2="9"/></svg>
+      trait primaire · 1,5
+    </span>
+    <span class="item">
+      <svg viewBox="0 0 34 18" width="34" height="18"><line class="ink-2" x1="2" y1="9" x2="32" y2="9"/></svg>
+      détail fin · 0,95
+    </span>
+    <span class="item">
+      <svg viewBox="0 0 34 18" width="34" height="18"><line class="band-sep" x1="2" y1="9" x2="32" y2="9"/></svg>
+      accent cave (séparateur + KZE)
+    </span>
+    <span class="item">
+      <svg viewBox="0 0 34 18" width="34" height="18"><line class="band-pkg" x1="2" y1="9" x2="32" y2="9"/></svg>
+      accent conditionnement
+    </span>
+  </div>
+</header>
+
+<!-- ════════════ 04 · CAVE — centrifugeuse + KZE ════════════ -->
+<section class="band">
+  <div class="bh"><span class="num">04</span><h2>Cave — <em>séparation &amp; stabilisation</em></h2><span class="meta">centrifugeuse · pasteurisateur flash</span></div>
+  <div class="grid two" id="caveGrid"></div>
+</section>
+
+<!-- ════════════ 05 · CONDITIONNEMENT ════════════ -->
+<section class="band">
+  <div class="bh"><span class="num">05</span><h2>Conditionnement — <em>la ligne de mise en boîte</em></h2><span class="meta">soutireuse bouteille · ligne canettes · soutireuse fûts · encartonneuse</span></div>
+  <div class="grid" id="pkgGrid"></div>
+</section>
+
+<!-- ════════════ COLOPHON ════════════ -->
+<section class="colophon">
+  <div class="box">
+    <div>
+      <h3>Direction de <em>style</em> — vol. 2</h3>
+      <p>Même charte que la planche vol. 1 : silhouette extérieure au trait fort (2,0), corps au trait primaire (1,5), détail (soudures, boulonnerie, buses) au trait fin (0,95). Ombrage cylindrique en lignes verticales espacées sur tous les corps ronds.</p>
+      <p>Deux nouvelles couleurs d'accent thématiques, distinctes des bandes chaudes/froides vol. 1 : <span style="color:var(--sep)">violet industriel</span> pour la cave technique (séparateur + KZE), <span style="color:var(--pkg)">orange forge</span> pour la ligne de conditionnement. Les bandes d'accent restent au même poids de trait (1,6) et dans les mêmes positions anatomiques.</p>
+      <p>Silhouettes conditionnement : carousels traités comme des disques / dômes plats avec des buses ou des têtes rayonnantes — lecture immédiate comme une machine rotative. Convoyeurs en deux rails parallèles, avec des produits en V inversé (bouteilles) ou des cylindres aplatis (canettes).</p>
+    </div>
+    <div>
+      <h3>Palette d'accent</h3>
+      <p class="deci">
+        Vol. 1 accents conservés :<br>
+        oak <b style="color:var(--oak)">━━</b> CCT · chaud<br>
+        bbt <b style="color:var(--bbt)">━━</b> BBT · garde<br>
+        hop <b style="color:var(--hop)">━━</b> YT · levure<br>
+        ··········· · · · · · · ·<br>
+        Vol. 2 nouveaux accents :<br>
+        sep <b style="color:var(--sep)">━━</b> centrifuge + KZE<br>
+        pkg <b style="color:var(--pkg)">━━</b> conditionnement ×4<br>
+        ··········· · · · · · · ·<br>
+        Toutes les bandes = stroke-width 1.6<br>
+        Glyphes partagés: tri-clamp, valve papillon,<br>
+        volute d'échantillon, ticks de soudure.
+      </p>
+    </div>
+  </div>
+</section>
+
+<div class="titleblock">La Nébuleuse — Lausanne<br>Croquis · planche de propositions · vol. 2<br>rév. 2026-05-24 · monoline v2</div>
+<div class="preview-flag">_design preview · sketch-machines</div>
+
+<script>
+/* ════════════════════════════════════════════════════════════════
+   MONOLINE BREWING-MACHINES ART LIBRARY — vol. 2
+   Same vocabulary as sketch-proposals.html (triClamp, valve, weldSeam,
+   cylShade, dim, diaCallout) — 6 new machines: centrifuge, KZE skid,
+   bottle filler, can line, kegging head, case packer.
+   ════════════════════════════════════════════════════════════════ */
+
+/* ---- shared signature glyphs (copied verbatim from vol.1) ---- */
+function triClamp(x,y,s=1){
+  return `<g transform="translate(${x} ${y}) scale(${s})">
+    <line class="ink" x1="-4.5" y1="0" x2="4.5" y2="0"/>
+    <line class="ink" x1="-3.3" y1="-2.4" x2="-3.3" y2="2.4"/>
+    <line class="ink" x1="3.3" y1="-2.4" x2="3.3" y2="2.4"/>
+    <ellipse class="ink-2" cx="0" cy="0" rx="2" ry="1"/>
+  </g>`;
+}
+
+function valve(x,y,dir='down',s=1){
+  const rot = dir==='side' ? -90 : 0;
+  return `<g transform="translate(${x} ${y}) rotate(${rot}) scale(${s})">
+    <circle class="ink" cx="0" cy="0" r="4.4"/>
+    <path class="ink" d="M-3.1 -3.1 L3.1 3.1 M-3.1 3.1 L3.1 -3.1"/>
+    <line class="ink" x1="0" y1="-4.4" x2="0" y2="-8"/>
+    <line class="ink" x1="-2.4" y1="-8" x2="2.4" y2="-8"/>
+  </g>`;
+}
+
+function sampleCurl(x,y,s=1){
+  return `<g transform="translate(${x} ${y}) scale(${s})">
+    <path class="ink" d="M0 0 h5 q3 0 3 3 q0 3 -3 3 q-2.4 0 -2.4 2.4"/>
+    <circle class="ink-2" cx="5" cy="0" r="1.4"/>
+  </g>`;
+}
+
+function weldSeam(x1,x2,y,n=7){
+  let t='',step=(x2-x1)/(n+1);
+  for(let i=1;i<=n;i++){ const x=x1+step*i; t+=`<line class="ink-2" x1="${x}" y1="${y-1.1}" x2="${x}" y2="${y+1.1}"/>`; }
+  return `<line class="ink-2" x1="${x1}" y1="${y}" x2="${x2}" y2="${y}"/>${t}`;
+}
+
+function dim(x,y,t,cls='dim'){ return `<text class="${cls}" x="${x}" y="${y}">${t}</text>`; }
+
+function diaCallout(cx,topY,w,label){
+  const l=cx-w/2,r=cx+w/2;
+  return `<g>
+    <line class="dimline" x1="${l}" y1="${topY}" x2="${r}" y2="${topY}"/>
+    <path class="dimline" d="M${l} ${topY} l3 -2 M${l} ${topY} l3 2"/>
+    <path class="dimline" d="M${r} ${topY} l-3 -2 M${r} ${topY} l-3 2"/>
+    ${dim(cx-9, topY-3, label,'dim-o')}
+  </g>`;
+}
+
+function cylShade(x1,x2,y1,y2,n=5){
+  let d='';
+  const step=(x2-x1)/(n+1);
+  for(let i=1;i<=n;i++){
+    const x=x1+step*i;
+    const op = (i===1||i===n) ? .18 : (i===2||i===n-1) ? .28 : .38;
+    d+=`<line class="shade" x1="${x}" y1="${y1}" x2="${x}" y2="${y2}" opacity="${op}"/>`;
+  }
+  return d;
+}
+
+/* ════════════ 1 · CENTRIFUGEUSE — disc-stack separator ════════════
+   Squat cylindrical bowl on a frame/base, top-entry drive motor,
+   tangential feed inlet on the side, clarified-liquid outlet,
+   solids-discharge ports at bowl equator. */
+function centrifuge(){
+  return `<svg viewBox="0 0 200 260" width="auto" height="100%" class="draw" xmlns="http://www.w3.org/2000/svg">
+
+    <!-- DRIVE MOTOR — boxy, top-centre -->
+    <rect class="ink" x="74" y="10" width="52" height="34" rx="3"/>
+    <rect class="ink-2" x="80" y="16" width="40" height="22" rx="2"/>
+    <!-- cooling fins on motor housing -->
+    ${[86,92,98,104,110,116].map(x=>`<line class="ink-2" x1="${x}" y1="12" x2="${x}" y2="42" opacity=".45"/>`).join('')}
+    <!-- motor outlet shaft -->
+    <line class="ink" x1="100" y1="44" x2="100" y2="64"/>
+    <!-- spindle coupling box -->
+    <rect class="ink" x="88" y="56" width="24" height="16" rx="2"/>
+    <line class="ink-2" x1="92" y1="60" x2="108" y2="68"/>
+    <line class="ink-2" x1="108" y1="60" x2="92" y2="68"/>
+
+    <!-- BOWL TOP FLANGE -->
+    <path class="ink" d="M62 80 Q100 64 138 80"/>
+    <ellipse class="ink-2" cx="100" cy="80" rx="38" ry="6"/>
+
+    <!-- SQUAT CYLINDRICAL BOWL BODY -->
+    <path class="ground" d="M62 80 V168"/>
+    <path class="ground" d="M138 80 V168"/>
+    <path class="ink-2" d="M67 84 V166"/>
+    <path class="ink-2" d="M133 84 V166"/>
+    ${cylShade(67,133,86,164,6)}
+
+    <!-- ACCENT BAND sep (violet) — two lines -->
+    <line class="band-sep" x1="67" y1="110" x2="133" y2="110"/>
+    <line class="band-sep" x1="67" y1="118" x2="133" y2="118"/>
+
+    <!-- DISC-STACK interior hint — dashed disc traces -->
+    <ellipse class="ink-2" cx="100" cy="124" rx="22" ry="4" stroke-dasharray="3 3" opacity=".55"/>
+    <ellipse class="ink-2" cx="100" cy="134" rx="18" ry="3" stroke-dasharray="3 3" opacity=".45"/>
+    <ellipse class="ink-2" cx="100" cy="143" rx="14" ry="3" stroke-dasharray="3 3" opacity=".35"/>
+    <!-- centre spindle -->
+    <line class="ink-2" x1="100" y1="86" x2="100" y2="162" stroke-dasharray="2 4" opacity=".5"/>
+
+    <!-- WELD SEAMS on body -->
+    ${weldSeam(67,133,138,6)}
+
+    <!-- BOWL BOTTOM — flat with solids-discharge ports (nozzles) -->
+    <path class="ink" d="M62 168 Q100 182 138 168"/>
+    <ellipse class="ink-2" cx="100" cy="168" rx="38" ry="6"/>
+
+    <!-- SOLIDS-DISCHARGE nozzles — two symmetric ports at bowl equator -->
+    <line class="ink" x1="62" y1="142" x2="46" y2="148"/>
+    ${triClamp(43,149,.7)}
+    <line class="ink" x1="138" y1="142" x2="154" y2="148"/>
+    ${triClamp(157,149,.7)}
+    <!-- discharge lines going down -->
+    <line class="ink-2" x1="43" y1="152" x2="43" y2="166" opacity=".7"/>
+    <line class="ink-2" x1="157" y1="152" x2="157" y2="166" opacity=".7"/>
+
+    <!-- FEED INLET — tangential, right side mid-body -->
+    <line class="ink" x1="138" y1="98" x2="162" y2="98"/>
+    ${triClamp(165,98,.75)}
+    <path class="ink-2" d="M162 98 q6 0 6 6 q0 6 -6 6" opacity=".7"/>
+
+    <!-- CLARIFIED OUTLET — top, off-centre -->
+    <line class="ink" x1="76" y1="80" x2="66" y2="64"/>
+    ${triClamp(63,62,.7)}
+
+    <!-- FRAME / BASE — sturdy legs + base plate -->
+    <path class="ground" d="M72 172 L60 228"/>
+    <path class="ground" d="M128 172 L140 228"/>
+    <line class="ground" x1="40" y1="228" x2="160" y2="228"/>
+    <line class="ink-2" x1="40" y1="228" x2="60" y2="228"/>
+    <line class="ink-2" x1="132" y1="228" x2="152" y2="228"/>
+    <!-- cross-brace on frame -->
+    <line class="ink-2" x1="66" y1="200" x2="134" y2="200" opacity=".7"/>
+    <line class="ink-2" x1="64" y1="196" x2="66" y2="212" opacity=".5"/>
+    <line class="ink-2" x1="136" y1="196" x2="134" y2="212" opacity=".5"/>
+
+    ${diaCallout(100,70,76,'Ø 800')}
+    ${dim(144,124,'disc-stack','dim')}
+    ${dim(144,134,'séparateur','dim')}
+  </svg>`;
+}
+
+/* ════════════ 2 · PASTEURISATEUR FLASH (KZE) ════════════
+   Skid-mounted plate heat-exchanger stack on tie-bars,
+   a small buffer/balance tank, holding-tube loop, pump, pipework. */
+function kzeSkid(){
+  return `<svg viewBox="0 0 260 260" width="auto" height="100%" class="draw" xmlns="http://www.w3.org/2000/svg">
+
+    <!-- ═══ PLATE HEAT-EXCHANGER STACK — characteristic ribbed pack ═══ -->
+    <!-- tie-bars top + bottom -->
+    <line class="ground" x1="34" y1="50" x2="34" y2="200"/>
+    <line class="ground" x1="126" y1="50" x2="126" y2="200"/>
+    <!-- top/bottom end-plates -->
+    <rect class="ink" x="28" y="42" width="104" height="14" rx="2"/>
+    <rect class="ink" x="28" y="194" width="104" height="14" rx="2"/>
+    <!-- RIBBED PLATE PACK — closely spaced vertical fills suggest plates -->
+    ${(()=>{ let d='';
+      for(let y=60;y<=188;y+=9){
+        d+=`<line class="ink-2" x1="34" y1="${y}" x2="126" y2="${y}" opacity="${y%18===6?'.55':'.32'}"/>`;
+      }
+      return d;
+    })()}
+    <!-- plate-pack side fillers (gasket lines) -->
+    <line class="ink" x1="34" y1="56" x2="126" y2="56"/>
+    <line class="ink" x1="34" y1="192" x2="126" y2="192"/>
+    <!-- ACCENT band kze (teal) on PHE stack -->
+    <line class="band-kze" x1="36" y1="108" x2="124" y2="108"/>
+    <line class="band-kze" x1="36" y1="116" x2="124" y2="116"/>
+
+    <!-- PHE PORTS — 4 corners (hot in/out + cold in/out) -->
+    <!-- top-left: hot wort in -->
+    <line class="ink" x1="28" y1="56" x2="10" y2="56"/>
+    ${triClamp(7,56,.7)}
+    <!-- bottom-left: hot wort out -->
+    <line class="ink" x1="28" y1="190" x2="10" y2="190"/>
+    ${triClamp(7,190,.7)}
+    <!-- top-right: coolant in -->
+    <line class="ink" x1="126" y1="62" x2="144" y2="62"/>
+    ${triClamp(147,62,.7)}
+    <!-- bottom-right: coolant out -->
+    <line class="ink" x1="126" y1="186" x2="144" y2="186"/>
+    ${triClamp(147,186,.7)}
+
+    <!-- HOLDING TUBE LOOP — characteristic U-loop to the right of PHE -->
+    <path class="ink" d="M152 62 h16 q8 0 8 10 v90 q0 10 -8 10 h-16"/>
+    <!-- holding-tube support tabs -->
+    <line class="ink-2" x1="168" y1="100" x2="178" y2="100" opacity=".6"/>
+    <line class="ink-2" x1="168" y1="130" x2="178" y2="130" opacity=".6"/>
+    ${triClamp(152,62,.7)}
+    ${triClamp(152,172,.7)}
+
+    <!-- BALANCE / BUFFER TANK — small cylinder right side -->
+    <!-- tank body -->
+    <path class="ink" d="M194 88 Q218 76 242 88"/>
+    <ellipse class="ink-2" cx="218" cy="88" rx="24" ry="4"/>
+    <path class="ground" d="M194 88 V176"/>
+    <path class="ground" d="M242 88 V176"/>
+    <path class="ink-2" d="M198 92 V174"/>
+    <path class="ink-2" d="M238 92 V174"/>
+    ${cylShade(198,238,94,172,4)}
+    <path class="ink" d="M194 176 Q218 188 242 176"/>
+    <ellipse class="ink-2" cx="218" cy="176" rx="24" ry="4"/>
+    <!-- PRV on balance tank -->
+    <line class="ink" x1="218" y1="80" x2="218" y2="66"/>
+    <circle class="ink" cx="218" cy="63" r="4"/>
+    <line class="ink-2" x1="218" y1="59" x2="218" y2="55"/>
+    <line class="ink-2" x1="215" y1="55" x2="221" y2="55"/>
+    ${weldSeam(198,238,132,4)}
+
+    <!-- CONNECTION: PHE hot-out → pump → balance tank -->
+    <!-- pump motif -->
+    <circle class="ink" cx="72" cy="228" r="11"/>
+    <path class="ink-2" d="M63 228 h18 M72 219 v18"/>
+    <!-- pipe from PHE bottom to pump -->
+    <path class="ink" d="M28 190 h-14 V228 h45" opacity=".85"/>
+    ${triClamp(15,228,.7)}
+    <!-- pipe from pump to balance tank inlet -->
+    <path class="ink" d="M83 228 h120 V180" opacity=".85"/>
+    ${triClamp(190,180,.7)}
+    <!-- pipe from balance tank to PHE cold side return (holding tube entry) -->
+    <line class="ink-2" x1="194" y1="106" x2="176" y2="106" opacity=".7"/>
+    ${triClamp(193,106,.65)}
+
+    <!-- SKID BASE FRAME -->
+    <line class="ground" x1="8" y1="242" x2="250" y2="242"/>
+    <line class="ink-2" x1="8" y1="248" x2="250" y2="248" opacity=".5"/>
+    ${[40,100,160,218].map(x=>`<line class="ink-2" x1="${x}" y1="242" x2="${x}" y2="252" opacity=".4"/>`).join('')}
+
+    ${dim(44,40,'PHE stack','dim')}
+    ${dim(192,82,'ballon','dim')}
+  </svg>`;
+}
+
+/* ════════════ 3 · SOUTIREUSE BOUTEILLES (bottling line) ════════════
+   Rotary filler/monobloc carousel with filling heads, feeding a
+   bottle conveyor with 33cl bottles. */
+function bottlingLine(){
+  return `<svg viewBox="0 0 210 260" width="auto" height="100%" class="draw" xmlns="http://www.w3.org/2000/svg">
+
+    <!-- ROTARY CAROUSEL BODY — plan-view disc seen from slight elevation -->
+    <!-- outer ring -->
+    <ellipse class="ground" cx="105" cy="88" rx="74" ry="18"/>
+    <!-- inner ring (hub) -->
+    <ellipse class="ink" cx="105" cy="88" rx="28" ry="7"/>
+    <!-- spokes -->
+    ${[0,45,90,135,180,225,270,315].map(a=>{
+      const r=a*Math.PI/180;
+      const x1=105+28*Math.cos(r), y1=88+7*Math.sin(r);
+      const x2=105+74*Math.cos(r), y2=88+18*Math.sin(r);
+      return `<line class="ink-2" x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" opacity=".55"/>`;
+    }).join('')}
+    <!-- FILLING HEADS — 8 heads on outer ring perimeter (small circles + nozzle lines) -->
+    ${[0,45,90,135,180,225,270,315].map((a,i)=>{
+      const r=a*Math.PI/180;
+      const cx=105+74*Math.cos(r), cy=88+18*Math.sin(r);
+      const nx=105+84*Math.cos(r), ny=88+21*Math.sin(r);
+      return `<circle class="ink-2" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="3.2"/>
+              <line class="ink-2" x1="${cx.toFixed(1)}" y1="${cy.toFixed(1)}" x2="${nx.toFixed(1)}" y2="${ny.toFixed(1)}" opacity=".6"/>`;
+    }).join('')}
+
+    <!-- ACCENT BAND pkg (orange) on carousel rim top -->
+    <path class="band-pkg" d="M31 88 Q105 70 179 88" opacity=".9"/>
+
+    <!-- DRIVE SHAFT & MOTOR on top -->
+    <line class="ink" x1="105" y1="68" x2="105" y2="52"/>
+    <rect class="ink" x="90" y="36" width="30" height="18" rx="2"/>
+    <rect class="ink-2" x="94" y="40" width="22" height="10" rx="1"/>
+    <!-- motor cooling ribs -->
+    ${[98,103,108,113].map(x=>`<line class="ink-2" x1="${x}" y1="38" x2="${x}" y2="52" opacity=".4"/>`).join('')}
+
+    <!-- STAR-WHEEL infeed (left side) — simplified fork -->
+    <path class="ink" d="M31 88 h-14"/>
+    <line class="ink-2" x1="17" y1="80" x2="17" y2="96"/>
+    <path class="ink-2" d="M17 80 q-4 0 -4 4 q0 4 4 4"/>
+    <path class="ink-2" d="M17 96 q-4 0 -4 -4"/>
+
+    <!-- CONVEYOR RAILS — two parallel lines leading out right -->
+    <line class="ground" x1="156" y1="104" x2="202" y2="104"/>
+    <line class="ground" x1="156" y1="118" x2="202" y2="118"/>
+    <!-- conveyor cross-rollers -->
+    ${[166,176,186,196].map(x=>`<line class="ink-2" x1="${x}" y1="104" x2="${x}" y2="118" opacity=".5"/>`).join('')}
+
+    <!-- BOTTLES on conveyor — two 33cl bottle silhouettes -->
+    <!-- bottle 1 -->
+    <path class="ink" d="M164 118 h10 V98 q0 -4 -2 -6 V86 q0 -3 2 -3 q2 0 2 3 V92 q2 2 2 6 V118 z" opacity=".8"/>
+    <!-- bottle 2 -->
+    <path class="ink" d="M180 118 h10 V98 q0 -4 -2 -6 V86 q0 -3 2 -3 q2 0 2 3 V92 q2 2 2 6 V118 z" opacity=".8"/>
+    <!-- bottle caps -->
+    <path class="ink-2" d="M165 86 h8 v-3 h-8 z" opacity=".7"/>
+    <path class="ink-2" d="M181 86 h8 v-3 h-8 z" opacity=".7"/>
+
+    <!-- PRODUCT INLET pipe (top centre) -->
+    <line class="ink" x1="105" y1="70" x2="105" y2="88"/>
+    ${triClamp(105,90,.7)}
+
+    <!-- BASE FRAME -->
+    <line class="ground" x1="28" y1="240" x2="202" y2="240"/>
+    <!-- carousel legs -->
+    <path class="ground" d="M54 104 L44 240"/>
+    <path class="ground" d="M156 104 L166 240"/>
+    <line class="ink-2" x1="44" y1="240" x2="54" y2="240"/>
+    <line class="ink-2" x1="156" y1="240" x2="166" y2="240"/>
+    <!-- frame cross-brace -->
+    <line class="ink-2" x1="52" y1="200" x2="158" y2="200" opacity=".6"/>
+
+    ${dim(66,130,'soutireuse','dim-pkg')}
+    ${dim(68,140,'rotative · 33cl','dim')}
+  </svg>`;
+}
+
+/* ════════════ 4 · LIGNE DE CANETTES (canning line) ════════════
+   Rotary can filler + seamer turret, can conveyor with 50cl cans,
+   showing a seamed can. */
+function canningLine(){
+  return `<svg viewBox="0 0 220 260" width="auto" height="100%" class="draw" xmlns="http://www.w3.org/2000/svg">
+
+    <!-- FILLER CAROUSEL — slightly larger than seamer -->
+    <ellipse class="ground" cx="80" cy="78" rx="58" ry="14"/>
+    <ellipse class="ink" cx="80" cy="78" rx="22" ry="5.5"/>
+    ${[0,60,120,180,240,300].map(a=>{
+      const r=a*Math.PI/180;
+      const x1=80+22*Math.cos(r), y1=78+5.5*Math.sin(r);
+      const x2=80+58*Math.cos(r), y2=78+14*Math.sin(r);
+      return `<line class="ink-2" x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" opacity=".5"/>`;
+    }).join('')}
+    <!-- filler heads (6) — small circles -->
+    ${[0,60,120,180,240,300].map(a=>{
+      const r=a*Math.PI/180;
+      const cx=80+58*Math.cos(r), cy=78+14*Math.sin(r);
+      return `<circle class="ink-2" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="3"/>`;
+    }).join('')}
+    <!-- ACCENT filler pkg band -->
+    <path class="band-pkg" d="M22 78 Q80 64 138 78" opacity=".9"/>
+
+    <!-- filler drive motor -->
+    <line class="ink" x1="80" y1="63" x2="80" y2="50"/>
+    <rect class="ink" x="68" y="36" width="24" height="16" rx="2"/>
+    ${[73,78,83].map(x=>`<line class="ink-2" x1="${x}" y1="38" x2="${x}" y2="50" opacity=".4"/>`).join('')}
+
+    <!-- SEAMER TURRET — tighter disc, right side, connected by star-wheel transfer -->
+    <ellipse class="ground" cx="168" cy="92" rx="42" ry="11"/>
+    <ellipse class="ink" cx="168" cy="92" rx="16" ry="4"/>
+    ${[0,72,144,216,288].map(a=>{
+      const r=a*Math.PI/180;
+      const x1=168+16*Math.cos(r), y1=92+4*Math.sin(r);
+      const x2=168+42*Math.cos(r), y2=92+11*Math.sin(r);
+      return `<line class="ink-2" x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" opacity=".5"/>`;
+    }).join('')}
+    <!-- seamer heads (5) with seam-roll symbol -->
+    ${[0,72,144,216,288].map(a=>{
+      const r=a*Math.PI/180;
+      const cx=168+42*Math.cos(r), cy=92+11*Math.sin(r);
+      return `<circle class="ink-2" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="2.5"/>`;
+    }).join('')}
+    <!-- seamer accent -->
+    <path class="band-pkg" d="M126 92 Q168 81 210 92" opacity=".75"/>
+    <!-- seamer motor -->
+    <line class="ink" x1="168" y1="81" x2="168" y2="70"/>
+    <rect class="ink" x="158" y="58" width="20" height="13" rx="2"/>
+
+    <!-- TRANSFER STAR-WHEEL between filler and seamer -->
+    <path class="ink" d="M138 82 h14"/>
+    <path class="ink-2" d="M141 78 q4 4 4 4 q-4 4 -4 4"/>
+
+    <!-- CONVEYOR RAILS — below seamer, going right -->
+    <line class="ground" x1="128" y1="114" x2="210" y2="114"/>
+    <line class="ground" x1="128" y1="128" x2="210" y2="128"/>
+    ${[138,150,162,174,186,198].map(x=>`<line class="ink-2" x1="${x}" y1="114" x2="${x}" y2="128" opacity=".45"/>`).join('')}
+
+    <!-- CANS on conveyor — two 50cl cans (wider, shorter than bottles) -->
+    <!-- can 1 — showing flat seamed top -->
+    <rect class="ink" x="136" y="110" width="14" height="18" rx="1.5" opacity=".8"/>
+    <path class="ink" d="M136 110 Q143 107 150 110" opacity=".8"/>
+    <line class="ink-2" x1="136" y1="112" x2="150" y2="112" opacity=".6"/>
+    <!-- can 2 -->
+    <rect class="ink" x="156" y="110" width="14" height="18" rx="1.5" opacity=".8"/>
+    <path class="ink" d="M156 110 Q163 107 170 110" opacity=".8"/>
+    <line class="ink-2" x1="156" y1="112" x2="170" y2="112" opacity=".6"/>
+
+    <!-- lid feed chute — coming from top right to seamer -->
+    <path class="ink" d="M210 60 h-24 V92" opacity=".7"/>
+    ${triClamp(210,60,.65)}
+
+    <!-- BASE FRAMES -->
+    <line class="ground" x1="20" y1="240" x2="212" y2="240"/>
+    <path class="ground" d="M36 90 L26 240"/>
+    <path class="ground" d="M124 90 L118 240"/>
+    <path class="ground" d="M140 102 L136 240"/>
+    <path class="ground" d="M200 102 L206 240"/>
+    <line class="ink-2" x1="36" y1="200" x2="118" y2="200" opacity=".55"/>
+    <line class="ink-2" x1="140" y1="200" x2="206" y2="200" opacity=".55"/>
+
+    ${dim(44,136,'soutireuse','dim-pkg')}
+    ${dim(44,146,'+ sertisseuse · 50cl','dim')}
+  </svg>`;
+}
+
+/* ════════════ 5 · SOUTIREUSE FÛTS (kegging line) ════════════
+   A keg-filling head / racking station with a 20L Fût on it,
+   CIP/fill manifold above, purge manifold. */
+function keggingLine(){
+  return `<svg viewBox="0 0 190 260" width="auto" height="100%" class="draw" xmlns="http://www.w3.org/2000/svg">
+
+    <!-- OVERHEAD MANIFOLD — horizontal header with valves -->
+    <line class="ground" x1="30" y1="36" x2="162" y2="36"/>
+    <!-- manifold flanges -->
+    ${[46,78,114,148].map(x=>`<line class="ink" x1="${x}" y1="30" x2="${x}" y2="42"/>`).join('')}
+    <!-- CIP inlet left -->
+    <line class="ink" x1="30" y1="36" x2="16" y2="36"/>
+    ${triClamp(13,36,.7)}
+    <!-- beer fill inlet right -->
+    <line class="ink" x1="162" y1="36" x2="176" y2="36"/>
+    ${triClamp(179,36,.7)}
+    <!-- manifold label -->
+    ${dim(76,30,'CIP / FILL manifold','dim')}
+
+    <!-- DROP TUBES — two pipes dropping from manifold to filling head -->
+    <line class="ink" x1="78" y1="42" x2="78" y2="74"/>
+    <line class="ink" x1="114" y1="42" x2="114" y2="74"/>
+    ${triClamp(78,58,.65)}
+    ${triClamp(114,58,.65)}
+    <!-- valves on drop tubes -->
+    ${valve(78,68,'down',.75)}
+    ${valve(114,68,'down',.75)}
+
+    <!-- FILLING HEAD / RACKING ARM — horizontal bar with probes -->
+    <line class="ground" x1="52" y1="82" x2="140" y2="82"/>
+    <ellipse class="ink" cx="96" cy="82" rx="16" ry="3.5"/>
+    <!-- probe nozzles down from head -->
+    <line class="ink" x1="78" y1="82" x2="78" y2="96"/>
+    <line class="ink" x1="96" y1="85" x2="96" y2="100"/>
+    <line class="ink" x1="114" y1="82" x2="114" y2="96"/>
+    <!-- filling nozzle tip -->
+    <path class="ink" d="M74 96 h8 l2 6 l-12 0 z" opacity=".85"/>
+    <path class="ink" d="M110 96 h8 l2 6 l-12 0 z" opacity=".85"/>
+    <!-- pressure probe -->
+    <circle class="ink-2" cx="94" cy="100" r="2.8"/>
+    <line class="ink-2" x1="96.8" y1="100" x2="102" y2="100"/>
+    <!-- ACCENT band pkg -->
+    <line class="band-pkg" x1="52" y1="78" x2="140" y2="78"/>
+
+    <!-- 20L FÛT KEG — on filling platen -->
+    <!-- keg body: short squat cylinder with rounded ends -->
+    <!-- top dome (chime) -->
+    <path class="ink" d="M62 128 Q96 114 130 128"/>
+    <ellipse class="ink-2" cx="96" cy="128" rx="34" ry="5.5"/>
+    <!-- keg body -->
+    <path class="ground" d="M62 128 V186"/>
+    <path class="ground" d="M130 128 V186"/>
+    <path class="ink-2" d="M67 132 V184"/>
+    <path class="ink-2" d="M125 132 V184"/>
+    ${cylShade(67,125,134,182,5)}
+    <!-- keg mid-band / rolling ring -->
+    <line class="ink" x1="64" y1="156" x2="128" y2="156"/>
+    ${(()=>{let d='';for(let x=70;x<=124;x+=9)d+=`<line class="ink-2" x1="${x}" y1="154.5" x2="${x}" y2="157.5"/>`;return d;})()}
+    <!-- bottom dome (chime) -->
+    <path class="ink" d="M62 186 Q96 200 130 186"/>
+    <ellipse class="ink-2" cx="96" cy="186" rx="34" ry="5.5"/>
+    <!-- keg spear valve / coupler at top centre -->
+    <line class="ink" x1="96" y1="120" x2="96" y2="108"/>
+    <circle class="ink" cx="96" cy="106" r="5"/>
+    <circle class="ink-2" cx="96" cy="106" r="2.5"/>
+    ${weldSeam(67,125,166,5)}
+    <!-- keg label hint -->
+    ${dim(80,150,'20 L · fût','dim-pkg')}
+
+    <!-- FILLING PLATEN / SCALE PLATFORM -->
+    <line class="ground" x1="46" y1="212" x2="148" y2="212"/>
+    <line class="ink-2" x1="52" y1="218" x2="142" y2="218" opacity=".6"/>
+    <!-- scale legs -->
+    <path class="ground" d="M58 212 L50 236"/>
+    <path class="ground" d="M136 212 L144 236"/>
+    <line class="ground" x1="28" y1="236" x2="164" y2="236"/>
+    <line class="ink-2" x1="28" y1="236" x2="50" y2="236"/>
+    <line class="ink-2" x1="136" y1="236" x2="162" y2="236"/>
+
+    <!-- vertical support struts for manifold -->
+    <line class="ink-2" x1="52" y1="36" x2="52" y2="82" opacity=".55"/>
+    <line class="ink-2" x1="140" y1="36" x2="140" y2="82" opacity=".55"/>
+
+    ${diaCallout(96,118,68,'Ø 400')}
+  </svg>`;
+}
+
+/* ════════════ 6 · ENCARTONNEUSE (case packer / boxing) ════════════
+   A carton being filled: box with grid of bottles (24-pack) and a
+   6×4 wraparound former. Conveys "cartoning". */
+function casePacker(){
+  return `<svg viewBox="0 0 220 260" width="auto" height="100%" class="draw" xmlns="http://www.w3.org/2000/svg">
+
+    <!-- WRAPAROUND FORMER — left side: flat blank descending, fold guides -->
+    <!-- blank feed ramp -->
+    <path class="ink" d="M18 48 L52 80" opacity=".8"/>
+    <path class="ink" d="M14 52 L48 84" opacity=".5"/>
+    <!-- blank guide rails -->
+    <line class="ink-2" x1="14" y1="52" x2="18" y2="48" opacity=".7"/>
+    <!-- fold former block -->
+    <rect class="ink" x="50" y="72" width="36" height="28" rx="2"/>
+    <line class="ink-2" x1="56" y1="78" x2="80" y2="94" opacity=".6"/>
+    <line class="ink-2" x1="56" y1="88" x2="80" y2="88" opacity=".5"/>
+    <!-- former detail: fold score lines -->
+    <line class="ink-2" x1="68" y1="74" x2="68" y2="98" opacity=".6"/>
+    <!-- ACCENT band pkg on former -->
+    <line class="band-pkg" x1="50" y1="76" x2="86" y2="76"/>
+
+    <!-- CARTON BOX BODY — isometric-ish view, open top being filled -->
+    <!-- front face -->
+    <path class="ink" d="M86 100 h100 v110 h-100 z"/>
+    <!-- top-left lip (partial, open) -->
+    <path class="ink" d="M86 100 l22 -20 h100 l-22 20"/>
+    <!-- right face (side panel) -->
+    <path class="ink" d="M186 100 l22 -20 v110 l-22 20"/>
+    <!-- box bottom -->
+    <path class="ink-2" d="M86 210 l22 -20 h100 l-22 20" opacity=".5"/>
+    <!-- box interior shading -->
+    <path class="fillx" d="M87 101 h98 v108 h-98 z"/>
+
+    <!-- BOTTLE GRID inside box — 6 columns × 4 rows (24-pack) seen from top-ish -->
+    ${(()=>{
+      let d='';
+      const cols=6, rows=4;
+      const bx=94, by=108, stepx=16, stepy=23;
+      for(let r=0;r<rows;r++){
+        for(let c=0;c<cols;c++){
+          const cx=bx+c*stepx+7, cy=by+r*stepy+10;
+          // bottle as small ellipse + neck above
+          d+=`<ellipse class="ink-2" cx="${cx}" cy="${cy}" rx="4" ry="4.5" opacity=".75"/>`;
+          d+=`<line class="ink-2" x1="${cx}" y1="${cy-4.5}" x2="${cx}" y2="${cy-9}" opacity=".65"/>`;
+          d+=`<line class="ink-2" x1="${cx-1.5}" y1="${cy-9}" x2="${cx+1.5}" y2="${cy-9}" opacity=".6"/>`;
+        }
+      }
+      return d;
+    })()}
+
+    <!-- PARTITION GRID LINES inside box — horizontal + vertical dividers -->
+    <!-- verticals -->
+    ${[102,118,134,150,166].map(x=>`<line class="ink-2" x1="${x}" y1="103" x2="${x}" y2="208" opacity=".3"/>`).join('')}
+    <!-- horizontals -->
+    ${[126,149,172].map(y=>`<line class="ink-2" x1="88" y1="${y}" x2="184" y2="${y}" opacity=".3"/>`).join('')}
+
+    <!-- CONVEYOR INFEED — bottles arriving from left via two rails -->
+    <line class="ground" x1="16" y1="166" x2="86" y2="166"/>
+    <line class="ground" x1="16" y1="180" x2="86" y2="180"/>
+    ${[24,36,48,62,74].map(x=>`<line class="ink-2" x1="${x}" y1="166" x2="${x}" y2="180" opacity=".45"/>`).join('')}
+    <!-- bottle on infeed -->
+    <path class="ink" d="M22 180 h12 V162 q0 -4 -2 -6 V151 q0 -2.5 2 -2.5 q2 0 2 2.5 v5 q2 2 2 6 V180 z" opacity=".75"/>
+
+    <!-- CARTON CONVEYOR OUT — right side -->
+    <line class="ground" x1="186" y1="210" x2="210" y2="210"/>
+    <line class="ground" x1="186" y1="222" x2="210" y2="222"/>
+    ${[192,200,206].map(x=>`<line class="ink-2" x1="${x}" y1="210" x2="${x}" y2="222" opacity=".45"/>`).join('')}
+
+    <!-- BASE FRAME -->
+    <line class="ground" x1="14" y1="240" x2="210" y2="240"/>
+    <path class="ground" d="M86 218 L78 240"/>
+    <path class="ground" d="M186 218 L194 240"/>
+    <line class="ink-2" x1="78" y1="240" x2="88" y2="240"/>
+    <line class="ink-2" x1="186" y1="240" x2="196" y2="240"/>
+
+    <!-- ACCENT band pkg on carton top edge -->
+    <path class="band-pkg" d="M86 100 h100" opacity=".9"/>
+    <path class="band-pkg" d="M186 100 l22 -20" opacity=".7"/>
+
+    ${dim(90,238,'encartonneuse · 24×33cl','dim-pkg')}
+  </svg>`;
+}
+
+/* ── render card helper ─────────────────────────────────────────── */
+function card(tag,svg,cap,spec,note,extraClass=''){
+  return `<div class="card ${extraClass}">
+    <div class="tag">${tag}</div>
+    <div class="canvas">${svg}</div>
+    <div class="cap">${cap}</div>
+    <div class="spec">${spec}</div>
+    <div class="note">${note}</div>
+  </div>`;
+}
+
+/* ── mount ──────────────────────────────────────────────────────── */
+document.getElementById('caveGrid').innerHTML =
+  card('04 / CENT', centrifuge(),
+       '<em>Centrifugeuse</em>',
+       'CENT · séparateur à assiettes · disc-stack · clarification',
+       'Bol cylindrique trapu sur châssis soudé : moteur d\'entraînement boxy en tête avec nervures de refroidissement, accouplement, bol avec hint d\'assiettes en pointillé, deux buses de décharge de boue symétriques sur l\'équateur, entrée tangentielle à droite, sortie clarifiée en quart de coude haut-gauche. Bande accent <span style="color:var(--sep)">violet industriel</span>.')
+
++ card('05 / KZE', kzeSkid(),
+       'Pasteurisateur <em>flash</em> (KZE)',
+       'KZE · Kurzzeit-Erhitzung · échangeur à plaques · skid',
+       'Skid à trois composants : pack de plaques sur tirants avec nervures caractéristiques (PHE), boucle holding-tube en U à droite, ballon tampon vertical compact. Interconnexion tuyauterie + pompe centrifuge. Bande accent <span style="color:var(--kze)">sarcelle froide</span>.');
+
+document.getElementById('pkgGrid').innerHTML =
+  card('06 / SOUT-BOT', bottlingLine(),
+       'Soutireuse <em class="pkg">bouteille</em>',
+       'SOT-B · remplisseuse rotative · 8 têtes · 33 cl',
+       'Carousel monobloc vu de trois-quarts : disque porteur de 8 têtes de remplissage, roue d\'étoile en entrée, convoyeur à deux rails avec deux bouteilles 33 cl en sortie. Trait fort sur le disque, têtes en trait fin, bande accent <span style="color:var(--pkg)">orange forge</span> en arc sur le jante.')
+
++ card('07 / SOUT-CAN', canningLine(),
+       'Ligne de <em class="pkg">canettes</em>',
+       'SOT-C · remplisseuse + sertisseuse · 50 cl',
+       'Deux tourelles : grande remplisseuse (6 têtes) à gauche, sertisseuse plus petite (5 têtes) à droite, transfert par étoile. Convoyeur à deux rails avec deux canettes 50 cl montrant le couvercle sertissé. Alimentateur de couvercles depuis le haut-droite.')
+
++ card('08 / KEG', keggingLine(),
+       'Soutireuse <em class="pkg">fûts</em>',
+       'SOT-F · tête de soutirage · fût 20 L',
+       'Tête de remplissage / bras de soutirage sur manifold CIP/bière suspendu, avec deux tubes de descente à vanne papillon. Un fût 20 L cylindrique sur plateau de remplissage/pesage : bague de roulement centrale, couplet de tête de fût. Châssis balance en pied.')
+
++ card('09 / ENCAR', casePacker(),
+       '<em class="pkg">Encartonneuse</em>',
+       'ENCAR · encartonneuse wraparound · 24×33 cl',
+       'Formeur de caisse wraparound à gauche (rampe de flans + bloc de formage), carton ouvert vu en perspective semi-isométrique avec grille de 24 bouteilles (6×4) visibles depuis le dessus, convoyeur d\'alimentation bouteilles à gauche, convoyeur de sortie cartons à droite. Bande accent <span style="color:var(--pkg)">orange forge</span> sur l\'arête supérieure.');
+</script>
+</body>
+</html>

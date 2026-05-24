@@ -1,0 +1,1233 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Fermentation — Saisie Mesures · MaltyTask</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,600;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:         #15100a;
+  --bg-elev:    #1d160d;
+  --bg-elev2:   #251c10;
+  --ink:        #ede0c4;
+  --ink-soft:   #c8b894;
+  --ink-mute:   #7a6647;
+  --ink-faint:  #3a2e1d;
+  --hairline:   #261d11;
+  --hairline-2: #342818;
+  --hop:        #9eb060;
+  --hop-deep:   #6b7a3e;
+  --hop-glow:   rgba(158,176,96,0.15);
+  --ember:      #c5664a;
+  --ember-glow: rgba(197,102,74,0.15);
+  --oak:        #a07a48;
+  --cold:       #2f5575;
+  --bbt:        #6593b8;
+  --bbt-glow:   rgba(101,147,184,0.15);
+  --cat-hops:   #9eb060;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+*::selection { background: var(--bbt); color: var(--bg); }
+
+html { font-size: 16px; }
+
+body.home {
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-feature-settings: "ss01";
+  background: var(--bg);
+  color: var(--ink);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+  position: relative;
+}
+
+/* Grain texture */
+body.home::before {
+  content: '';
+  position: fixed; inset: 0;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.08  0 0 0 0 0.05  0 0 0 0 0.02  0 0 0 1.2 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  opacity: 0.4;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ============================================================
+   S-CURVE SPARKLINE WATERMARK — the memorable detail
+   Behind the form, faint fermentation S-curve in the corner.
+   ============================================================ */
+body.home::after {
+  content: '';
+  position: fixed;
+  top: 60px; right: -20px;
+  width: 280px; height: 220px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 280 220'><path d='M10 20 C30 20 40 30 60 50 C80 70 90 110 120 140 C150 170 170 190 200 195 C220 198 240 196 270 195' fill='none' stroke='%236593b8' stroke-width='1.5' opacity='0.12' stroke-linecap='round'/><circle cx='10' cy='20' r='3' fill='%236593b8' opacity='0.2'/><circle cx='270' cy='195' r='3' fill='%236593b8' opacity='0.2'/><text x='14' y='16' font-family='monospace' font-size='9' fill='%236593b8' opacity='0.2'>OG</text><text x='248' y='210' font-family='monospace' font-size='9' fill='%236593b8' opacity='0.2'>FG</text></svg>");
+  background-repeat: no-repeat;
+  background-size: contain;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ============================================================
+   LAYOUT
+   ============================================================ */
+.page-wrap {
+  position: relative; z-index: 1;
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 0 0 160px;
+}
+
+/* ============================================================
+   HEADER
+   ============================================================ */
+.page-header {
+  border-bottom: 1px solid var(--hairline-2);
+  padding: 20px 28px;
+  display: flex; align-items: flex-start;
+  justify-content: space-between; gap: 16px;
+}
+
+.header-left { display: flex; align-items: center; gap: 12px; }
+
+.header-icon {
+  width: 36px; height: 36px;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+
+.header-brand-name {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.68rem; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+.header-brand-module {
+  font-size: 0.95rem; font-weight: 600; color: var(--bbt);
+}
+
+.header-meta {
+  display: flex; flex-direction: column; align-items: flex-end; gap: 4px;
+}
+
+.header-meta-operator, .header-meta-time {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+.header-meta-time { font-size: 0.78rem; color: var(--ink-soft); text-transform: none; }
+
+/* ============================================================
+   BREW CONTEXT STRIP
+   ============================================================ */
+.brew-context {
+  padding: 24px 28px 0;
+  animation: fadeIn 0.35s ease;
+}
+
+@keyframes fadeIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+
+.brew-context-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 1fr;
+  gap: 10px;
+}
+
+.field-group { display: flex; flex-direction: column; gap: 5px; }
+
+.field-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.65rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-mute);
+}
+
+.field-display {
+  background: var(--bg-elev); border: 1px solid var(--hairline-2);
+  border-radius: 4px; padding: 10px 12px; min-height: 48px;
+  display: flex; align-items: center; gap: 8px;
+}
+
+.fd-beer {
+  font-family: "Fraunces", serif; font-variation-settings: "opsz" 36;
+  font-size: 1.05rem; font-weight: 400; font-style: italic; color: var(--ink);
+}
+
+.fd-sub {
+  font-family: "JetBrains Mono", monospace; font-size: 0.7rem; color: var(--ink-mute);
+}
+
+.fd-cct {
+  font-family: "JetBrains Mono", monospace; font-size: 0.88rem; color: var(--bbt);
+}
+
+.cct-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: rgba(101,147,184,0.12); border: 1px solid rgba(101,147,184,0.3);
+  border-radius: 3px; padding: 4px 8px;
+  font-family: "JetBrains Mono", monospace; font-size: 0.8rem; color: var(--bbt);
+}
+
+/* ============================================================
+   ACCORDION SECTIONS
+   ============================================================ */
+.section-sep {
+  margin: 24px 28px 0; height: 1px;
+  background: linear-gradient(90deg, var(--hairline-2) 0%, var(--hairline) 60%, transparent 100%);
+}
+
+.accordion {
+  margin: 8px 0 0;
+}
+
+.accordion-item {
+  border-bottom: 1px solid var(--hairline);
+  overflow: hidden;
+}
+
+.accordion-trigger {
+  width: 100%; background: none; border: none; cursor: pointer;
+  padding: 18px 28px;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  text-align: left;
+  transition: background 0.15s;
+}
+
+.accordion-trigger:hover { background: rgba(255,255,255,0.015); }
+
+.accordion-trigger-left { display: flex; align-items: center; gap: 12px; }
+
+.accordion-step {
+  font-family: "JetBrains Mono", monospace; font-size: 0.65rem;
+  letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-mute);
+  width: 24px; flex-shrink: 0;
+}
+
+.accordion-title {
+  font-size: 0.95rem; font-weight: 500; color: var(--ink);
+}
+
+.accordion-badge {
+  font-family: "JetBrains Mono", monospace; font-size: 0.7rem;
+  padding: 3px 8px; border-radius: 12px; letter-spacing: 0.05em;
+}
+
+.badge-done { background: rgba(158,176,96,0.15); color: var(--hop); }
+.badge-required { background: rgba(197,102,74,0.12); color: var(--ember); }
+.badge-optional { background: rgba(122,102,71,0.15); color: var(--ink-mute); }
+.badge-cold { background: rgba(47,85,117,0.2); color: var(--bbt); }
+
+.accordion-chevron {
+  color: var(--ink-mute); transition: transform 0.2s;
+  flex-shrink: 0;
+}
+
+.accordion-item.open .accordion-chevron { transform: rotate(180deg); }
+
+.accordion-body {
+  display: none;
+  padding: 0 28px 24px;
+  animation: accordionReveal 0.2s ease;
+}
+
+@keyframes accordionReveal {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.accordion-item.open .accordion-body { display: block; }
+
+/* ============================================================
+   GRAVITY SECTION — readings grid with sparkline
+   ============================================================ */
+.gravity-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.reading-card {
+  background: var(--bg-elev); border: 1px solid var(--hairline-2);
+  border-radius: 4px; overflow: hidden;
+}
+
+.reading-card-head {
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid var(--hairline);
+  display: flex; align-items: center; justify-content: space-between;
+}
+
+.reading-card-label {
+  font-family: "JetBrains Mono", monospace; font-size: 0.65rem;
+  letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-mute);
+}
+
+.reading-card-unit {
+  font-family: "JetBrains Mono", monospace; font-size: 0.7rem;
+  color: var(--bbt); letter-spacing: 0.05em;
+}
+
+.reading-card-body {
+  padding: 10px 12px 12px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+
+/* Numeric input with live sparkline hint */
+.reading-input-wrap { position: relative; }
+
+.reading-input {
+  width: 100%; background: transparent;
+  border: none; border-bottom: 1px solid var(--hairline-2);
+  padding: 6px 0; color: var(--ink);
+  font-family: "JetBrains Mono", monospace; font-size: 1.5rem;
+  font-weight: 500; letter-spacing: -0.02em;
+  outline: none; text-align: center;
+  transition: border-color 0.15s;
+}
+
+.reading-input:focus { border-color: var(--bbt); }
+.reading-input::placeholder { color: var(--ink-faint); font-size: 1.2rem; }
+
+.reading-input.warning { border-color: var(--ember); color: var(--ember); }
+.reading-input.ok { border-color: var(--hop-deep); }
+
+/* Mini range indicator */
+.range-bar {
+  height: 3px; border-radius: 2px; margin-top: 8px;
+  background: var(--bg-elev2);
+  position: relative; overflow: visible;
+}
+
+.range-bar-fill {
+  height: 100%; border-radius: 2px;
+  transition: width 0.3s ease, background 0.3s;
+}
+
+.range-bar-cursor {
+  position: absolute; top: -3px;
+  width: 3px; height: 9px;
+  border-radius: 1.5px;
+  background: var(--bbt);
+  transform: translateX(-50%);
+  transition: left 0.3s ease, background 0.3s;
+}
+
+.reading-hint {
+  font-family: "JetBrains Mono", monospace; font-size: 0.62rem;
+  letter-spacing: 0.04em; color: var(--ink-mute); text-align: center; margin-top: 4px;
+}
+
+.reading-hint.warning-hint { color: var(--ember); }
+
+/* ============================================================
+   SPARKLINE — inline mini gravity curve
+   ============================================================ */
+.sparkline-wrap {
+  margin: 4px 0 0;
+  display: flex; align-items: center; justify-content: center;
+}
+
+/* ============================================================
+   WARNING PANEL
+   ============================================================ */
+.warning-panel {
+  background: rgba(197,102,74,0.09); border: 1px solid rgba(197,102,74,0.28);
+  border-radius: 4px; padding: 14px 16px; margin-top: 12px;
+}
+
+.warning-panel-header {
+  display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px;
+}
+
+.warning-panel-title {
+  font-size: 0.88rem; font-weight: 600; color: var(--ember);
+  line-height: 1.3;
+}
+
+.warning-panel-body { font-size: 0.83rem; color: var(--ink-soft); line-height: 1.5; }
+.warning-panel-body strong { color: var(--ink); }
+
+.swap-detection {
+  background: rgba(197,102,74,0.06); border: 1px solid rgba(197,102,74,0.2);
+  border-radius: 3px; padding: 10px 12px; margin-top: 10px;
+  font-family: "JetBrains Mono", monospace; font-size: 0.75rem; color: var(--ink-mute);
+}
+
+.swap-detection .swap-label { color: var(--ember); margin-bottom: 6px; display: block; }
+
+.swap-pair {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 4px;
+}
+
+.swap-val { color: var(--ink); }
+.swap-arrow { color: var(--ink-mute); }
+
+.warning-actions {
+  display: flex; gap: 8px; margin-top: 12px;
+}
+
+.btn-confirm-warn {
+  background: rgba(197,102,74,0.15); border: 1px solid var(--ember);
+  border-radius: 3px; color: var(--ember);
+  font-family: "JetBrains Mono", monospace; font-size: 0.72rem;
+  letter-spacing: 0.08em; text-transform: uppercase; padding: 8px 14px;
+  cursor: pointer; transition: background 0.15s;
+}
+.btn-confirm-warn:hover { background: rgba(197,102,74,0.25); }
+
+.btn-dismiss-warn {
+  background: none; border: 1px solid var(--hairline-2); border-radius: 3px;
+  color: var(--ink-mute); font-family: "JetBrains Mono", monospace;
+  font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 8px 14px; cursor: pointer; transition: border-color 0.15s, color 0.15s;
+}
+.btn-dismiss-warn:hover { border-color: var(--ink-soft); color: var(--ink-soft); }
+
+.warning-comment-wrap {
+  margin-top: 10px; display: none;
+}
+
+.warning-comment-wrap.show { display: block; }
+
+.warning-comment {
+  width: 100%; background: rgba(197,102,74,0.06);
+  border: 1px solid rgba(197,102,74,0.2); border-radius: 3px;
+  padding: 8px 10px; color: var(--ink); font-family: "DM Sans", sans-serif;
+  font-size: 0.82rem; outline: none; resize: none; min-height: 56px;
+}
+
+.warning-comment::placeholder { color: rgba(197,102,74,0.45); }
+
+/* ============================================================
+   PH + TEMP inputs
+   ============================================================ */
+.measurements-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+}
+
+.meas-card {
+  background: var(--bg-elev); border: 1px solid var(--hairline-2);
+  border-radius: 4px; padding: 14px 14px 16px;
+}
+
+.meas-card-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.meas-label {
+  font-family: "JetBrains Mono", monospace; font-size: 0.65rem;
+  letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-mute);
+}
+
+.meas-unit {
+  font-family: "JetBrains Mono", monospace; font-size: 0.7rem; color: var(--bbt);
+}
+
+.meas-input {
+  width: 100%; background: transparent; border: none;
+  border-bottom: 1px solid var(--hairline-2); padding: 6px 0;
+  color: var(--ink); font-family: "JetBrains Mono", monospace;
+  font-size: 1.8rem; font-weight: 500; letter-spacing: -0.02em;
+  outline: none; text-align: center; transition: border-color 0.15s;
+}
+
+.meas-input:focus { border-color: var(--bbt); }
+.meas-input::placeholder { color: var(--ink-faint); font-size: 1.2rem; }
+.meas-input.warning { border-color: var(--ember); color: var(--ember); }
+
+.meas-range-text {
+  font-family: "JetBrains Mono", monospace; font-size: 0.62rem;
+  letter-spacing: 0.04em; color: var(--ink-mute); text-align: center;
+  margin-top: 6px;
+}
+
+/* ============================================================
+   DRY-HOP — reuses ingredients-table pattern
+   ============================================================ */
+.dh-table { margin-top: 4px; }
+
+.dh-row {
+  display: grid;
+  grid-template-columns: 1fr 80px 90px 130px 30px;
+  gap: 8px; align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--hairline);
+  animation: rowSlideIn 0.2s ease both;
+}
+
+@keyframes rowSlideIn {
+  from { opacity: 0; transform: translateX(-8px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.dh-row.dh-header { padding-bottom: 6px; animation: none; }
+
+.dh-col-header {
+  font-family: "JetBrains Mono", monospace; font-size: 0.62rem;
+  letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-mute);
+}
+
+.dh-input {
+  width: 100%; background: var(--bg-elev); border: 1px solid var(--hairline-2);
+  border-radius: 3px; padding: 8px 10px; color: var(--ink);
+  font-family: "DM Sans", sans-serif; font-size: 0.85rem;
+  min-height: 40px; outline: none; transition: border-color 0.15s;
+}
+
+.dh-input:focus { border-color: var(--hop); }
+.dh-input::placeholder { color: var(--ink-mute); font-size: 0.78rem; }
+
+.dh-input.mono {
+  font-family: "JetBrains Mono", monospace; font-size: 0.8rem;
+  text-align: right;
+}
+
+.dh-select {
+  width: 100%; background: var(--bg-elev); border: 1px solid var(--hairline-2);
+  border-radius: 3px; padding: 8px 6px; color: var(--ink-soft);
+  font-family: "JetBrains Mono", monospace; font-size: 0.78rem;
+  min-height: 40px; outline: none; cursor: pointer; appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='5'><path d='M0 0l4 5 4-5z' fill='%237a6647'/></svg>");
+  background-repeat: no-repeat; background-position: right 6px center;
+  padding-right: 20px;
+}
+
+.dh-remove-btn {
+  width: 28px; height: 28px; background: none; border: none; border-radius: 3px;
+  color: var(--ink-mute); cursor: pointer; display: flex; align-items: center;
+  justify-content: center; transition: color 0.15s, background 0.15s;
+}
+
+.dh-remove-btn:hover { color: var(--ember); background: rgba(197,102,74,0.1); }
+
+.btn-add-dh {
+  display: flex; align-items: center; gap: 8px;
+  background: none; border: 1px dashed var(--hairline-2);
+  border-radius: 3px; padding: 10px 14px; width: 100%; margin-top: 10px;
+  color: var(--ink-mute); font-family: "DM Sans", sans-serif; font-size: 0.85rem;
+  cursor: pointer; transition: border-color 0.2s, color 0.2s; min-height: 42px;
+}
+
+.btn-add-dh:hover { border-color: var(--hop-deep); color: var(--hop); }
+
+/* ============================================================
+   COLD-CRASH / PURGE section
+   ============================================================ */
+.checkbox-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 0; cursor: pointer;
+}
+
+.checkbox-custom {
+  width: 22px; height: 22px; flex-shrink: 0;
+  background: var(--bg); border: 2px solid var(--hairline-2);
+  border-radius: 4px; display: flex; align-items: center; justify-content: center;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.checkbox-custom.checked {
+  background: var(--cold); border-color: var(--bbt);
+}
+
+.checkbox-label {
+  font-size: 0.95rem; color: var(--ink-soft);
+}
+
+.cold-crash-details {
+  display: none; padding: 12px 0; animation: fadeIn 0.2s ease;
+}
+
+.cold-crash-details.visible { display: block; }
+
+.cold-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+.cold-input {
+  width: 100%; background: var(--bg-elev); border: 1px solid var(--hairline-2);
+  border-radius: 3px; padding: 12px 12px; color: var(--ink);
+  font-family: "JetBrains Mono", monospace; font-size: 0.95rem;
+  min-height: 44px; outline: none; transition: border-color 0.15s;
+}
+
+.cold-input:focus { border-color: var(--bbt); box-shadow: 0 0 0 3px var(--bbt-glow); }
+.cold-input::placeholder { color: var(--ink-mute); }
+
+/* ============================================================
+   STICKY ACTION BAR
+   ============================================================ */
+.action-bar {
+  position: fixed; bottom: 0; left: 0; right: 0;
+  background: linear-gradient(to top, var(--bg) 0%, var(--bg) 70%, transparent 100%);
+  padding: 20px 28px 28px; z-index: 50;
+}
+
+.action-bar-inner {
+  width: 100%; max-width: 860px; margin: 0 auto;
+  display: flex; align-items: center; gap: 12px;
+}
+
+.btn-draft {
+  background: var(--bg-elev); border: 1px solid var(--hairline-2);
+  border-radius: 4px; padding: 14px 22px; color: var(--ink-soft);
+  font-family: "DM Sans", sans-serif; font-size: 0.9rem; font-weight: 500;
+  cursor: pointer; transition: border-color 0.15s, color 0.15s; min-height: 52px;
+  white-space: nowrap;
+}
+
+.btn-draft:hover { border-color: var(--oak); color: var(--oak); }
+
+.btn-submit {
+  flex: 1; background: var(--bbt); border: none; border-radius: 4px;
+  padding: 16px 32px; color: var(--bg);
+  font-family: "DM Sans", sans-serif; font-size: 1rem; font-weight: 600;
+  cursor: pointer; min-height: 56px; transition: background 0.15s, transform 0.1s;
+}
+
+.btn-submit:hover { background: #7aaacc; }
+.btn-submit:active { transform: scale(0.99); }
+
+.hidden { display: none !important; }
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+@media (max-width: 640px) {
+  .brew-context-row { grid-template-columns: 1fr 1fr; }
+  .gravity-grid { grid-template-columns: 1fr; }
+  .measurements-grid { grid-template-columns: 1fr; }
+  .dh-row { grid-template-columns: 1fr 70px 30px; }
+  .dh-row .dh-col-unit, .dh-row .dh-col-lot { display: none; }
+  .cold-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body class="home">
+
+<div class="page-wrap">
+
+  <!-- HEADER -->
+  <header class="page-header">
+    <div class="header-left">
+      <div class="header-icon">
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+          <path d="M3 4 C3 4 5 8 5 12 C5 16 10 18 10 18 C10 18 15 16 15 12 C15 8 17 4 17 4" stroke="#6593b8" stroke-width="1.3" stroke-linecap="round"/>
+          <path d="M5 12 C6 10 8 10 10 11 C12 12 14 11 15 12" stroke="#6593b8" stroke-width="1" stroke-linecap="round" opacity="0.5"/>
+          <circle cx="10" cy="6" r="1.5" fill="#6593b8" opacity="0.6"/>
+        </svg>
+      </div>
+      <div>
+        <div class="header-brand-name">La Nébuleuse · MaltyTask</div>
+        <div class="header-brand-module">Fermentation — Saisie Mesures</div>
+      </div>
+    </div>
+    <div class="header-meta">
+      <span class="header-meta-operator">T. Moreau · Brasseur</span>
+      <span class="header-meta-time" id="live-clock">14:32 · 23.05.26</span>
+    </div>
+  </header>
+
+  <!-- BREW CONTEXT -->
+  <section class="brew-context">
+    <div class="brew-context-row">
+      <div class="field-group">
+        <label class="field-label">Bière</label>
+        <div class="field-display">
+          <div>
+            <div class="fd-beer">Embuscade Pale Ale</div>
+            <div class="fd-sub">EMB · Core</div>
+          </div>
+        </div>
+      </div>
+      <div class="field-group">
+        <label class="field-label">Brassin</label>
+        <div class="field-display"><div><div class="fd-cct">B2501</div><div class="fd-sub">30.5 HL</div></div></div>
+      </div>
+      <div class="field-group">
+        <label class="field-label">Tank</label>
+        <div class="field-display">
+          <span class="cct-badge">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+              <rect x="2" y="1" width="6" height="8" rx="1" stroke="currentColor" stroke-width="0.9"/>
+              <line x1="5" y1="1" x2="5" y2="3" stroke="currentColor" stroke-width="0.9"/>
+              <line x1="2" y1="5" x2="8" y2="5" stroke="currentColor" stroke-width="0.7" opacity="0.5"/>
+            </svg>
+            CCT 04
+          </span>
+        </div>
+      </div>
+      <div class="field-group">
+        <label class="field-label">Jour ferm.</label>
+        <div class="field-display"><div class="fd-cct" style="font-size:0.9rem;">J+4</div></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="section-sep"></div>
+
+  <!-- ACCORDION STEPS -->
+  <div class="accordion">
+
+    <!-- 1. GRAVITY READINGS -->
+    <div class="accordion-item open" id="acc-gravity">
+      <button class="accordion-trigger" onclick="toggleAcc('acc-gravity')">
+        <div class="accordion-trigger-left">
+          <span class="accordion-step">01</span>
+          <span class="accordion-title">Densité & Paramètres</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span class="accordion-badge badge-required">Requis</span>
+          <svg class="accordion-chevron" width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M2 5l5 5 5-5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+          </svg>
+        </div>
+      </button>
+      <div class="accordion-body">
+
+        <!-- Recipe reference bar -->
+        <div style="background:rgba(101,147,184,0.08); border:1px solid rgba(101,147,184,0.2); border-radius:4px; padding:10px 14px; margin-bottom:16px; display:flex; gap:20px; flex-wrap:wrap;">
+          <span style="font-family:'JetBrains Mono',monospace; font-size:0.7rem; color:var(--ink-mute);">RECETTE EMB:</span>
+          <span style="font-family:'JetBrains Mono',monospace; font-size:0.7rem; color:var(--bbt);">OG cible 15.5°P</span>
+          <span style="font-family:'JetBrains Mono',monospace; font-size:0.7rem; color:var(--hop);">FG cible 2.8°P</span>
+          <span style="font-family:'JetBrains Mono',monospace; font-size:0.7rem; color:var(--ink-mute);">Atténuation ~82%</span>
+          <span style="font-family:'JetBrains Mono',monospace; font-size:0.7rem; color:var(--ink-mute);">pH 4.2–4.6</span>
+          <span style="font-family:'JetBrains Mono',monospace; font-size:0.7rem; color:var(--ink-mute);">Temp 19–21°C</span>
+        </div>
+
+        <div class="gravity-grid">
+          <!-- OG -->
+          <div class="reading-card">
+            <div class="reading-card-head">
+              <span class="reading-card-label">Densité initiale (OG)</span>
+              <span class="reading-card-unit">°Plato</span>
+            </div>
+            <div class="reading-card-body">
+              <input type="number" class="reading-input" id="og-input" placeholder="–"
+                value="15.4" step="0.1" oninput="updateGravityUI()" title="Densité initiale en °Plato">
+              <div class="sparkline-wrap">
+                <svg id="og-spark" width="80" height="20" viewBox="0 0 80 20">
+                  <line x1="4" y1="10" x2="76" y2="10" stroke="#342818" stroke-width="1"/>
+                  <line x1="4" y1="4" x2="76" y2="4" stroke="#342818" stroke-width="0.5" stroke-dasharray="2,2"/>
+                  <line x1="4" y1="16" x2="76" y2="16" stroke="#342818" stroke-width="0.5" stroke-dasharray="2,2"/>
+                  <rect id="og-bar" x="36" y="5" width="8" height="10" rx="2" fill="#6593b8" opacity="0.7"/>
+                  <text x="4" y="18" font-family="JetBrains Mono" font-size="6" fill="#7a6647">10°P</text>
+                  <text x="54" y="18" font-family="JetBrains Mono" font-size="6" fill="#7a6647">22°P</text>
+                </svg>
+              </div>
+              <div class="range-bar">
+                <div class="range-bar-fill" id="og-fill" style="width:48%; background:var(--bbt);"></div>
+                <div class="range-bar-cursor" id="og-cursor" style="left:52%;"></div>
+              </div>
+              <div class="reading-hint" id="og-hint">Typique IPA: 13–17°P</div>
+            </div>
+          </div>
+
+          <!-- FG -->
+          <div class="reading-card">
+            <div class="reading-card-head">
+              <span class="reading-card-label">Densité finale (FG)</span>
+              <span class="reading-card-unit">°Plato</span>
+            </div>
+            <div class="reading-card-body">
+              <input type="number" class="reading-input" id="fg-input" placeholder="–"
+                step="0.1" oninput="updateGravityUI()" title="Densité finale en °Plato">
+              <div class="sparkline-wrap">
+                <svg width="80" height="20" viewBox="0 0 80 20">
+                  <line x1="4" y1="10" x2="76" y2="10" stroke="#342818" stroke-width="1"/>
+                  <rect x="26" y="4" width="28" height="12" rx="2" fill="#9eb060" opacity="0.12"/>
+                  <text x="26" y="18" font-family="JetBrains Mono" font-size="6" fill="#6b7a3e">1°P</text>
+                  <text x="44" y="18" font-family="JetBrains Mono" font-size="6" fill="#6b7a3e">5°P</text>
+                  <text x="4" y="8" font-family="JetBrains Mono" font-size="6" fill="#7a6647">Cible</text>
+                </svg>
+              </div>
+              <div class="range-bar">
+                <div class="range-bar-fill" id="fg-fill" style="width:0%; background:var(--hop);"></div>
+                <div class="range-bar-cursor" id="fg-cursor" style="left:0%;"></div>
+              </div>
+              <div class="reading-hint" id="fg-hint">Cible recette: ~2.8°P</div>
+            </div>
+          </div>
+
+          <!-- Attenuation -->
+          <div class="reading-card">
+            <div class="reading-card-head">
+              <span class="reading-card-label">Atténuation calc.</span>
+              <span class="reading-card-unit">%</span>
+            </div>
+            <div class="reading-card-body">
+              <div class="reading-input" id="att-display" style="display:flex;align-items:center;justify-content:center;font-size:1.5rem;font-family:'JetBrains Mono',monospace;color:var(--ink-mute);min-height:48px;">—</div>
+              <div class="sparkline-wrap">
+                <svg width="80" height="20" viewBox="0 0 80 20">
+                  <line x1="4" y1="10" x2="76" y2="10" stroke="#342818" stroke-width="1"/>
+                  <rect x="30" y="4" width="30" height="12" rx="2" fill="#9eb060" opacity="0.1"/>
+                  <text x="30" y="18" font-family="JetBrains Mono" font-size="6" fill="#6b7a3e">75%</text>
+                  <text x="50" y="18" font-family="JetBrains Mono" font-size="6" fill="#6b7a3e">85%</text>
+                </svg>
+              </div>
+              <div class="range-bar">
+                <div class="range-bar-fill" id="att-fill" style="width:0%;background:var(--hop);"></div>
+                <div class="range-bar-cursor" id="att-cursor" style="left:0%;"></div>
+              </div>
+              <div class="reading-hint" id="att-hint">Atténuation apparente typique Pale Ale</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- pH + Temperature -->
+        <div class="measurements-grid">
+          <div class="meas-card">
+            <div class="meas-card-header">
+              <span class="meas-label">pH</span>
+              <span class="meas-unit">pH</span>
+            </div>
+            <input type="number" class="meas-input" id="ph-input"
+              placeholder="–" step="0.1" oninput="updatePhUI()"
+              title="pH — Pale Ale typique 4.1–4.6">
+            <div class="meas-range-text" id="ph-hint">Pale Ale: 4.1–4.6</div>
+          </div>
+          <div class="meas-card">
+            <div class="meas-card-header">
+              <span class="meas-label">Température</span>
+              <span class="meas-unit">°C</span>
+            </div>
+            <input type="number" class="meas-input" id="temp-input"
+              placeholder="–" step="0.1" oninput="updateTempUI()"
+              title="Température fermentation — cible 19–21°C">
+            <div class="meas-range-text" id="temp-hint">Levure US-05: 18–22°C</div>
+          </div>
+        </div>
+
+        <!-- Warning panel — shown conditionally -->
+        <div class="warning-panel hidden" id="warn-panel">
+          <div class="warning-panel-header">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style="flex-shrink:0;margin-top:2px;">
+              <path d="M8 2L15 14H1L8 2Z" stroke="#c5664a" stroke-width="1.2" stroke-linejoin="round"/>
+              <line x1="8" y1="6" x2="8" y2="10" stroke="#c5664a" stroke-width="1.3" stroke-linecap="round"/>
+              <circle cx="8" cy="12" r="0.7" fill="#c5664a"/>
+            </svg>
+            <span class="warning-panel-title" id="warn-title">Valeur en dehors du range typique</span>
+          </div>
+          <div class="warning-panel-body" id="warn-body">
+            La valeur saisie est inhabituelle pour ce type de bière.
+          </div>
+          <div class="swap-detection hidden" id="swap-detection">
+            <span class="swap-label">Échange de colonnes possible détecté :</span>
+            <div class="swap-pair">
+              <span>FG saisi</span>
+              <span class="swap-arrow">→</span>
+              <span class="swap-val" id="swap-fg-val">–</span>
+              <span style="color:var(--ember);margin:0 4px;">?</span>
+              <span>ressemble à un pH</span>
+            </div>
+            <div class="swap-pair">
+              <span>pH saisi</span>
+              <span class="swap-arrow">→</span>
+              <span class="swap-val" id="swap-ph-val">–</span>
+              <span style="color:var(--ember);margin:0 4px;">?</span>
+              <span>ressemble à une densité</span>
+            </div>
+          </div>
+          <div class="warning-actions">
+            <button class="btn-confirm-warn" onclick="confirmWarning()">Confirmer ma mesure</button>
+            <button class="btn-dismiss-warn" onclick="dismissWarning()">Corriger</button>
+          </div>
+          <div class="warning-comment-wrap" id="warn-comment-wrap">
+            <textarea class="warning-comment" rows="2"
+              placeholder="Commentaire requis pour valider cette mesure hors range…"></textarea>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- 2. DRY HOP -->
+    <div class="accordion-item" id="acc-dryhop">
+      <button class="accordion-trigger" onclick="toggleAcc('acc-dryhop')">
+        <div class="accordion-trigger-left">
+          <span class="accordion-step">02</span>
+          <span class="accordion-title">Houblonnage à froid</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span class="accordion-badge badge-optional">Optionnel</span>
+          <svg class="accordion-chevron" width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M2 5l5 5 5-5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+          </svg>
+        </div>
+      </button>
+      <div class="accordion-body">
+        <div class="dh-table">
+          <div class="dh-row dh-header">
+            <div class="dh-col-header">Houblon (MI)</div>
+            <div class="dh-col-header dh-col-unit">Qté (kg)</div>
+            <div class="dh-col-header dh-col-lot">N° lot</div>
+            <div class="dh-col-header">Jour ajout</div>
+            <div></div>
+          </div>
+          <div id="dh-rows"></div>
+        </div>
+        <button class="btn-add-dh" onclick="addDhRow()">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+            <line x1="6" y1="1" x2="6" y2="11" stroke="#9eb060" stroke-width="1.4" stroke-linecap="round"/>
+            <line x1="1" y1="6" x2="11" y2="6" stroke="#9eb060" stroke-width="1.4" stroke-linecap="round"/>
+          </svg>
+          Ajouter une addition de houblon
+        </button>
+      </div>
+    </div>
+
+    <!-- 3. PURGE / CO2 -->
+    <div class="accordion-item" id="acc-purge">
+      <button class="accordion-trigger" onclick="toggleAcc('acc-purge')">
+        <div class="accordion-trigger-left">
+          <span class="accordion-step">03</span>
+          <span class="accordion-title">Purge & Pression CO2</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span class="accordion-badge badge-optional">Optionnel</span>
+          <svg class="accordion-chevron" width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M2 5l5 5 5-5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+          </svg>
+        </div>
+      </button>
+      <div class="accordion-body">
+        <div class="cold-grid">
+          <div class="field-group">
+            <label class="field-label">Pression (bar)</label>
+            <input type="number" class="cold-input" placeholder="1.2" step="0.1" min="0" max="4">
+          </div>
+          <div class="field-group">
+            <label class="field-label">CO2 dissous (g/L)</label>
+            <input type="number" class="cold-input" placeholder="4.5" step="0.1" min="0" max="12">
+          </div>
+        </div>
+        <div class="field-group" style="margin-top:12px;">
+          <label class="field-label">Remarques</label>
+          <textarea style="background:var(--bg-elev);border:1px solid var(--hairline-2);border-radius:4px;padding:10px 12px;color:var(--ink);font-family:'DM Sans',sans-serif;font-size:0.875rem;outline:none;resize:vertical;min-height:60px;width:100%;transition:border-color 0.15s;" placeholder="Fuites constatées, anomalies pression…" class="comments-ta"></textarea>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4. COLD CRASH -->
+    <div class="accordion-item" id="acc-cold">
+      <button class="accordion-trigger" onclick="toggleAcc('acc-cold')">
+        <div class="accordion-trigger-left">
+          <span class="accordion-step">04</span>
+          <span class="accordion-title">Refroidissement / Cold Crash</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span class="accordion-badge badge-cold">Cold</span>
+          <svg class="accordion-chevron" width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M2 5l5 5 5-5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+          </svg>
+        </div>
+      </button>
+      <div class="accordion-body">
+        <label class="checkbox-row" onclick="toggleColdDetails()">
+          <div class="checkbox-custom" id="cold-check">
+            <svg class="hidden" id="cold-check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <path d="M2 6l3 3 5-5" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <span class="checkbox-label">Refroidissement initié</span>
+        </label>
+        <div class="cold-crash-details" id="cold-crash-details">
+          <div class="cold-grid">
+            <div class="field-group">
+              <label class="field-label">Temp. cible (°C)</label>
+              <input type="number" class="cold-input" placeholder="2.0" step="0.5" value="">
+            </div>
+            <div class="field-group">
+              <label class="field-label">Temp. actuelle (°C)</label>
+              <input type="number" class="cold-input" placeholder="8.5" step="0.5">
+            </div>
+            <div class="field-group">
+              <label class="field-label">Date crash</label>
+              <input type="date" class="cold-input">
+            </div>
+            <div class="field-group">
+              <label class="field-label">Durée prévue (h)</label>
+              <input type="number" class="cold-input" placeholder="48" step="1">
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- accordion -->
+
+</div><!-- page-wrap -->
+
+<!-- STICKY ACTION BAR -->
+<div class="action-bar">
+  <div class="action-bar-inner">
+    <button class="btn-draft" onclick="saveDraft()">Brouillon</button>
+    <button class="btn-submit">Enregistrer mesures &rarr;</button>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   MOCK DRY-HOP DATA
+   ============================================================ */
+const HOPS_CATALOG = [
+  'Cascade', 'Citra', 'Mosaic', 'Amarillo', 'Simcoe', 'Centennial',
+  'Chinook', 'Hallertau', 'Saaz', 'El Dorado', 'Galaxy'
+];
+
+let dhRows = [
+  { id: 0, hop: 'Cascade', qty: '0.8', lot: 'CAS2403US', day: 'J+3' },
+  { id: 1, hop: 'Mosaic', qty: '0.4', lot: 'MOS2402US', day: 'J+3' },
+];
+let dhNextId = 2;
+
+function renderDhRows() {
+  const container = document.getElementById('dh-rows');
+  container.innerHTML = '';
+  dhRows.forEach((row, idx) => {
+    const el = document.createElement('div');
+    el.className = 'dh-row';
+    el.style.animationDelay = `${idx * 0.04}s`;
+    el.innerHTML = `
+      <input type="text" class="dh-input" placeholder="Houblon MI ou nom…"
+        value="${row.hop}" list="hops-list-${row.id}">
+      <datalist id="hops-list-${row.id}">
+        ${HOPS_CATALOG.map(h => `<option value="${h}">`).join('')}
+      </datalist>
+      <input type="number" class="dh-input mono" placeholder="kg" value="${row.qty}" step="0.05" min="0">
+      <input type="text" class="dh-input mono" placeholder="lot…" value="${row.lot}" style="font-size:0.72rem;">
+      <input type="text" class="dh-input" placeholder="J+X" value="${row.day}" style="font-size:0.82rem;">
+      <button class="dh-remove-btn" onclick="removeDhRow(${row.id})" title="Supprimer">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+          <path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+        </svg>
+      </button>
+    `;
+    container.appendChild(el);
+  });
+}
+
+function addDhRow() {
+  dhRows.push({ id: dhNextId++, hop: '', qty: '', lot: '', day: '' });
+  renderDhRows();
+  setTimeout(() => {
+    const inputs = document.querySelectorAll('.dh-input');
+    if (inputs.length >= 4) inputs[inputs.length - 4].focus();
+  }, 60);
+}
+
+function removeDhRow(id) {
+  dhRows = dhRows.filter(r => r.id !== id);
+  renderDhRows();
+}
+
+/* ============================================================
+   ACCORDION
+   ============================================================ */
+function toggleAcc(id) {
+  const item = document.getElementById(id);
+  item.classList.toggle('open');
+}
+
+/* ============================================================
+   GRAVITY UI
+   ============================================================ */
+// Ranges: EMB Pale Ale
+const BEER_RANGES = {
+  og:  { min: 13, max: 18, target: 15.5, warn_low: 11, warn_high: 20 },
+  fg:  { min: 1,  max: 5,  target: 2.8,  warn_low: 0.5, warn_high: 6 },
+  ph:  { min: 4.1, max: 4.6, warn_low: 3.5, warn_high: 5.5 },
+  temp:{ min: 18, max: 22, warn_low: 14, warn_high: 26 },
+  att: { min: 75, max: 85, warn_low: 65, warn_high: 90 },
+};
+
+let warningState = { active: false, confirmed: false };
+
+function updateGravityUI() {
+  const og = parseFloat(document.getElementById('og-input').value);
+  const fg = parseFloat(document.getElementById('fg-input').value);
+
+  // OG bar
+  if (!isNaN(og)) {
+    const range = BEER_RANGES.og;
+    const pct = Math.min(100, Math.max(0, (og - range.warn_low) / (range.warn_high - range.warn_low) * 100));
+    document.getElementById('og-fill').style.width = pct + '%';
+    document.getElementById('og-cursor').style.left = pct + '%';
+    const ok = og >= range.min && og <= range.max;
+    document.getElementById('og-input').className = 'reading-input ' + (ok ? 'ok' : 'warning');
+    document.getElementById('og-hint').textContent = ok
+      ? `OG ${og}°P — dans la cible (${range.min}–${range.max}°P)`
+      : `OG ${og}°P — HORS RANGE typique (${range.min}–${range.max}°P) !`;
+    document.getElementById('og-hint').className = 'reading-hint' + (ok ? '' : ' warning-hint');
+  }
+
+  // FG bar
+  if (!isNaN(fg)) {
+    const range = BEER_RANGES.fg;
+    const pct = Math.min(100, Math.max(0, (fg - range.warn_low) / (range.warn_high - range.warn_low) * 100));
+    document.getElementById('fg-fill').style.width = pct + '%';
+    document.getElementById('fg-cursor').style.left = pct + '%';
+    const ok = fg >= range.min && fg <= range.max;
+    document.getElementById('fg-input').className = 'reading-input ' + (ok ? 'ok' : 'warning');
+    document.getElementById('fg-hint').textContent = ok
+      ? `FG ${fg}°P — dans la cible (${range.min}–${range.max}°P)`
+      : `FG ${fg}°P — HORS RANGE typique (${range.min}–${range.max}°P) !`;
+    document.getElementById('fg-hint').className = 'reading-hint' + (ok ? '' : ' warning-hint');
+  }
+
+  // Attenuation
+  if (!isNaN(og) && !isNaN(fg) && og > 0) {
+    const att = ((og - fg) / og * 100);
+    const attEl = document.getElementById('att-display');
+    attEl.textContent = att.toFixed(1) + '%';
+    const ok = att >= BEER_RANGES.att.min && att <= BEER_RANGES.att.max;
+    attEl.style.color = ok ? 'var(--hop)' : 'var(--ember)';
+    const range = BEER_RANGES.att;
+    const pct = Math.min(100, Math.max(0, (att - range.warn_low) / (range.warn_high - range.warn_low) * 100));
+    document.getElementById('att-fill').style.width = pct + '%';
+    document.getElementById('att-cursor').style.left = pct + '%';
+    document.getElementById('att-fill').style.background = ok ? 'var(--hop)' : 'var(--ember)';
+    document.getElementById('att-hint').textContent = ok
+      ? `Atténuation ${att.toFixed(0)}% — plage normale Pale Ale`
+      : `Atténuation ${att.toFixed(0)}% — attention`;
+  }
+
+  checkSwapDetection();
+}
+
+function updatePhUI() {
+  const ph = parseFloat(document.getElementById('ph-input').value);
+  if (isNaN(ph)) return;
+  const range = BEER_RANGES.ph;
+  const ok = ph >= range.min && ph <= range.max;
+  document.getElementById('ph-input').className = 'meas-input' + (ok ? '' : ' warning');
+  document.getElementById('ph-hint').textContent = ok
+    ? `pH ${ph} — dans la norme (${range.min}–${range.max})`
+    : `pH ${ph} — HORS RANGE typique (${range.min}–${range.max}) !`;
+  if (!ok && !warningState.confirmed) showWarning('ph', ph);
+  checkSwapDetection();
+}
+
+function updateTempUI() {
+  const temp = parseFloat(document.getElementById('temp-input').value);
+  if (isNaN(temp)) return;
+  const range = BEER_RANGES.temp;
+  const ok = temp >= range.warn_low && temp <= range.warn_high;
+  document.getElementById('temp-input').className = 'meas-input' + (ok ? '' : ' warning');
+  document.getElementById('temp-hint').textContent = ok
+    ? `${temp}°C — plage fermentation normale`
+    : `${temp}°C — température inhabituelle !`;
+}
+
+/* Swap detection: if FG looks like pH (3.5–6) and pH looks like FG (10+) */
+function checkSwapDetection() {
+  const fg = parseFloat(document.getElementById('fg-input').value);
+  const ph = parseFloat(document.getElementById('ph-input').value);
+
+  if (!isNaN(fg) && !isNaN(ph)) {
+    const fgLooksLikePh = fg >= 3.5 && fg <= 7.5;
+    const phLooksLikeFg = ph > 8;
+
+    const swapEl = document.getElementById('swap-detection');
+    if (fgLooksLikePh && phLooksLikeFg) {
+      document.getElementById('swap-fg-val').textContent = fg + '°P';
+      document.getElementById('swap-ph-val').textContent = ph;
+      swapEl.classList.remove('hidden');
+      showWarning('swap', null);
+    } else {
+      swapEl.classList.add('hidden');
+    }
+  }
+}
+
+function showWarning(type, val) {
+  const panel = document.getElementById('warn-panel');
+  panel.classList.remove('hidden');
+  const titles = {
+    ph:   `pH ${val} — hors range Pale Ale (4.1–4.6)`,
+    fg:   `FG ${val}°P — hors range typique (1–5°P)`,
+    og:   `OG ${val}°P — hors range typique (13–18°P)`,
+    swap: 'Échange de colonnes probable',
+  };
+  const bodies = {
+    ph:   `Le pH <strong>${val}</strong> est en dehors du range typique pour ce style (Pale Ale: 4.1–4.6). Est-ce ta mesure réelle ou une erreur de saisie ?`,
+    fg:   `La densité finale <strong>${val}°P</strong> est inhabituelle pour ce style. Confirme ta mesure ou corrige.`,
+    og:   `La densité initiale <strong>${val}°P</strong> est inhabituelle. Confirme ta mesure ou corrige.`,
+    swap: `Les valeurs saisies ressemblent à un échange de colonnes. Vérifie FG ↔ pH avant de confirmer.`,
+  };
+  document.getElementById('warn-title').textContent = titles[type] || 'Valeur hors range';
+  document.getElementById('warn-body').innerHTML = bodies[type] || '';
+}
+
+function confirmWarning() {
+  warningState = { active: true, confirmed: true };
+  document.getElementById('warn-comment-wrap').classList.add('show');
+  document.getElementById('warn-panel').querySelector('.warning-actions').style.display = 'none';
+}
+
+function dismissWarning() {
+  document.getElementById('warn-panel').classList.add('hidden');
+  warningState = { active: false, confirmed: false };
+}
+
+/* ============================================================
+   COLD CRASH TOGGLE
+   ============================================================ */
+let coldEnabled = false;
+function toggleColdDetails() {
+  coldEnabled = !coldEnabled;
+  const check = document.getElementById('cold-check');
+  const icon = document.getElementById('cold-check-icon');
+  const details = document.getElementById('cold-crash-details');
+  check.classList.toggle('checked', coldEnabled);
+  icon.classList.toggle('hidden', !coldEnabled);
+  details.classList.toggle('visible', coldEnabled);
+}
+
+/* ============================================================
+   DRAFT
+   ============================================================ */
+function saveDraft() {
+  try {
+    const state = {
+      og: document.getElementById('og-input').value,
+      fg: document.getElementById('fg-input').value,
+      ph: document.getElementById('ph-input').value,
+      temp: document.getElementById('temp-input').value,
+      dhRows,
+    };
+    localStorage.setItem('ferm_draft_EMB2501', JSON.stringify(state));
+    const btn = document.querySelector('.btn-draft');
+    const orig = btn.textContent;
+    btn.textContent = 'Brouillon sauvé';
+    setTimeout(() => { btn.textContent = orig; }, 1500);
+  } catch(e) {}
+}
+
+/* ============================================================
+   LIVE CLOCK
+   ============================================================ */
+function updateClock() {
+  const now = new Date();
+  const h = String(now.getHours()).padStart(2,'0');
+  const m = String(now.getMinutes()).padStart(2,'0');
+  const d = String(now.getDate()).padStart(2,'0');
+  const mo = String(now.getMonth()+1).padStart(2,'0');
+  const y = String(now.getFullYear()).slice(2);
+  const el = document.getElementById('live-clock');
+  if (el) el.textContent = `${h}:${m} · ${d}.${mo}.${y}`;
+}
+setInterval(updateClock, 10000);
+updateClock();
+
+/* Initial render */
+renderDhRows();
+updateGravityUI();
+</script>
+</body>
+</html>

@@ -1,0 +1,1897 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Brewing — Saisie Ingrédients · MaltyTask</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,600;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<style>
+/* ============================================================
+   DESIGN TOKENS — Dark aged-oak palette (maltyweb canonical)
+   ============================================================ */
+:root {
+  --bg:            #15100a;
+  --bg-elev:       #1d160d;
+  --bg-elev2:      #251c10;
+  --ink:           #ede0c4;
+  --ink-soft:      #c8b894;
+  --ink-mute:      #7a6647;
+  --ink-faint:     #3a2e1d;
+  --hairline:      #261d11;
+  --hairline-2:    #342818;
+  --hop:           #9eb060;
+  --hop-deep:      #6b7a3e;
+  --hop-glow:      rgba(158,176,96,0.15);
+  --ember:         #c5664a;
+  --ember-glow:    rgba(197,102,74,0.15);
+  --oak:           #a07a48;
+  --oak-deep:      #6e4e26;
+  --cold:          #2f5575;
+  --bbt:           #6593b8;
+  --steel:         #b8bcc0;
+  --steel-mid:     #5e6266;
+  --steel-deep:    #2c2e30;
+
+  /* Category accent colors */
+  --cat-malt:      #d4923c;
+  --cat-hops:      #9eb060;
+  --cat-yeast:     #6593b8;
+  --cat-adjunct:   #a07a48;
+  --cat-process:   #8b7ab8;
+  --cat-mineral:   #5aa8b8;
+  --cat-cleaning:  #b85a8b;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+*::selection { background: var(--hop); color: var(--bg); }
+
+html { font-size: 16px; }
+
+body.home {
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-feature-settings: "ss01";
+  background: var(--bg);
+  color: var(--ink);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+  position: relative;
+}
+
+/* Grain texture overlay */
+body.home::before {
+  content: '';
+  position: fixed; inset: 0;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.08  0 0 0 0 0.05  0 0 0 0 0.02  0 0 0 1.2 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  opacity: 0.4;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Hop cone watermark — the memorable detail */
+body.home::after {
+  content: '';
+  position: fixed;
+  bottom: -40px; right: -40px;
+  width: 320px; height: 320px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 160'><g fill='none' stroke='%239eb060' stroke-width='1' opacity='0.12'><ellipse cx='60' cy='30' rx='18' ry='28'/><path d='M42 30 Q60 70 55 140'/><path d='M78 30 Q60 70 65 140'/><ellipse cx='60' cy='52' rx='14' ry='18'/><ellipse cx='60' cy='72' rx='10' ry='14'/><ellipse cx='60' cy='88' rx='7' ry='10'/><ellipse cx='60' cy='100' rx='5' ry='7'/><path d='M42 20 Q30 10 28 0'/><path d='M78 20 Q90 10 92 0'/><line x1='60' y1='140' x2='60' y2='160' stroke-width='2'/></g></svg>");
+  background-repeat: no-repeat;
+  background-size: contain;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.6;
+}
+
+/* ============================================================
+   LAYOUT SHELL
+   ============================================================ */
+.page-wrap {
+  position: relative;
+  z-index: 1;
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 0 0 160px;
+}
+
+/* ============================================================
+   TOP HEADER STRIP
+   ============================================================ */
+.page-header {
+  border-bottom: 1px solid var(--hairline-2);
+  padding: 20px 28px 20px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.header-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.header-brand-icon {
+  width: 36px; height: 36px;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+
+.header-brand-icon svg { width: 20px; height: 20px; }
+
+.header-brand-text {
+  display: flex; flex-direction: column; gap: 1px;
+}
+
+.header-brand-name {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+.header-brand-module {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--hop);
+}
+
+.header-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.header-meta-operator {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  color: var(--ink-mute);
+  text-transform: uppercase;
+}
+
+.header-meta-time {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+}
+
+/* ============================================================
+   SECTION: BREW CONTEXT
+   ============================================================ */
+.brew-context {
+  padding: 28px 28px 0;
+  animation: fadeSlideDown 0.4s ease both;
+}
+
+@keyframes fadeSlideDown {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.brew-context-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.brew-context-grid.three {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+
+.field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.65rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+.field-input {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px;
+  padding: 12px 14px;
+  color: var(--ink);
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.95rem;
+  min-height: 48px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  outline: none;
+  width: 100%;
+}
+
+.field-input:focus {
+  border-color: var(--hop);
+  box-shadow: 0 0 0 3px var(--hop-glow);
+}
+
+.field-input::placeholder { color: var(--ink-mute); }
+
+.field-input.with-icon {
+  padding-left: 38px;
+}
+
+.field-input-wrap {
+  position: relative;
+}
+
+.field-input-wrap .input-icon {
+  position: absolute;
+  left: 12px; top: 50%; transform: translateY(-50%);
+  color: var(--ink-mute);
+  pointer-events: none;
+}
+
+/* Selected display (non-editable after pick) */
+.field-display {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px;
+  padding: 10px 14px;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.field-display-name {
+  font-size: 0.95rem;
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.field-display-sub {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.72rem;
+  color: var(--ink-mute);
+}
+
+.brewday-display {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 36;
+  font-size: 1.35rem;
+  font-weight: 300;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+
+/* ============================================================
+   SECTION DIVIDER
+   ============================================================ */
+.section-sep {
+  margin: 28px 28px 0;
+  height: 1px;
+  background: linear-gradient(90deg, var(--hairline-2) 0%, var(--hairline) 60%, transparent 100%);
+}
+
+.section-heading {
+  margin: 20px 28px 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.section-heading-title {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+.section-heading-count {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem;
+  color: var(--hop);
+}
+
+/* ============================================================
+   INGREDIENTS TABLE
+   ============================================================ */
+.ingredients-area {
+  padding: 12px 28px 0;
+}
+
+.ingredient-row {
+  display: grid;
+  grid-template-columns: 36px 1fr 100px 90px 140px 36px;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--hairline);
+  animation: rowSlideIn 0.25s ease both;
+}
+
+@keyframes rowSlideIn {
+  from { opacity: 0; transform: translateX(-12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.ingredient-row.header-row {
+  padding: 0 0 8px;
+  border-bottom: 1px solid var(--hairline-2);
+  animation: none;
+}
+
+.col-header {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+.col-cat-chip {
+  width: 28px; height: 28px;
+  border-radius: 3px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.2s;
+}
+
+.col-cat-chip.malt   { background: rgba(212,146,60,0.18); color: var(--cat-malt); }
+.col-cat-chip.hops   { background: rgba(158,176,96,0.18); color: var(--cat-hops); }
+.col-cat-chip.yeast  { background: rgba(101,147,184,0.18); color: var(--cat-yeast); }
+.col-cat-chip.adjunct { background: rgba(160,122,72,0.18); color: var(--cat-adjunct); }
+.col-cat-chip.process { background: rgba(139,122,184,0.18); color: var(--cat-process); }
+.col-cat-chip.mineral { background: rgba(90,168,184,0.18); color: var(--cat-mineral); }
+.col-cat-chip.cleaning { background: rgba(184,90,139,0.18); color: var(--cat-cleaning); }
+.col-cat-chip.empty  { background: var(--bg-elev); color: var(--ink-faint); border: 1px dashed var(--hairline-2); }
+
+/* pop animation on MI pick */
+@keyframes catPop {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(1.35); }
+  100% { transform: scale(1); }
+}
+.col-cat-chip.popped { animation: catPop 0.3s ease; }
+
+/* MI typeahead */
+.mi-search-wrap {
+  position: relative;
+}
+
+.mi-search-input {
+  width: 100%;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px;
+  padding: 10px 12px;
+  color: var(--ink);
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.875rem;
+  min-height: 44px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.mi-search-input:focus {
+  border-color: var(--hop);
+  box-shadow: 0 0 0 3px var(--hop-glow);
+}
+
+.mi-search-input::placeholder { color: var(--ink-mute); font-size: 0.82rem; }
+
+.mi-selected-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-elev);
+  border: 1px solid var(--hop-deep);
+  border-radius: 4px;
+  padding: 8px 10px;
+  min-height: 44px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.mi-selected-chip:hover { border-color: var(--hop); }
+
+.mi-selected-id {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  color: var(--hop);
+}
+
+.mi-selected-name {
+  font-size: 0.875rem;
+  color: var(--ink);
+}
+
+.mi-clear-btn {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--ink-mute);
+  cursor: pointer;
+  padding: 2px;
+  display: flex; align-items: center;
+  transition: color 0.15s;
+}
+.mi-clear-btn:hover { color: var(--ember); }
+
+/* Dropdown */
+.mi-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0; right: 0;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.4);
+  max-height: 280px;
+  overflow-y: auto;
+  z-index: 100;
+  display: none;
+}
+
+.mi-dropdown.open { display: block; }
+
+.mi-dropdown::-webkit-scrollbar { width: 4px; }
+.mi-dropdown::-webkit-scrollbar-track { background: var(--bg); }
+.mi-dropdown::-webkit-scrollbar-thumb { background: var(--hairline-2); border-radius: 2px; }
+
+.mi-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: background 0.1s;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.mi-option:last-child { border-bottom: none; }
+.mi-option:hover, .mi-option.highlighted { background: var(--bg-elev2); }
+
+.mi-option-cat {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.mi-option-id {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  color: var(--ink-mute);
+  width: 140px;
+  flex-shrink: 0;
+}
+
+.mi-option-name {
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+}
+
+.mi-option-name .highlight {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.mi-option.create-new {
+  border-top: 1px solid var(--hairline-2);
+  background: var(--bg);
+}
+
+.mi-option.create-new:hover { background: rgba(158,176,96,0.08); }
+
+.mi-option-create-label {
+  font-size: 0.82rem;
+  color: var(--hop);
+  font-weight: 500;
+}
+
+/* Quantity */
+.qty-input {
+  width: 100%;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px;
+  padding: 10px 12px;
+  color: var(--ink);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.95rem;
+  min-height: 44px;
+  text-align: right;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.qty-input:focus {
+  border-color: var(--hop);
+  box-shadow: 0 0 0 3px var(--hop-glow);
+}
+
+.qty-input.outlier {
+  border-color: var(--ember);
+  box-shadow: 0 0 0 3px var(--ember-glow);
+  animation: pulseEmber 2s ease infinite;
+}
+
+@keyframes pulseEmber {
+  0%, 100% { box-shadow: 0 0 0 3px var(--ember-glow); }
+  50% { box-shadow: 0 0 0 6px rgba(197,102,74,0.08); }
+}
+
+/* Unit select */
+.unit-select {
+  width: 100%;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px;
+  padding: 10px 8px;
+  color: var(--ink-soft);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.8rem;
+  min-height: 44px;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.15s;
+  appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0l5 6 5-6z' fill='%237a6647'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 24px;
+}
+
+.unit-select:focus { border-color: var(--hop); }
+
+/* Lot */
+.lot-input {
+  width: 100%;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px;
+  padding: 10px 12px;
+  color: var(--ink);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  min-height: 44px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.lot-input:focus { border-color: var(--hop); }
+.lot-input::placeholder { color: var(--ink-mute); font-size: 0.72rem; letter-spacing: 0.02em; }
+
+/* Remove row button */
+.remove-row-btn {
+  width: 32px; height: 32px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--ink-mute);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+  flex-shrink: 0;
+}
+
+.remove-row-btn:hover {
+  color: var(--ember);
+  border-color: rgba(197,102,74,0.3);
+  background: rgba(197,102,74,0.08);
+}
+
+/* ============================================================
+   OUTLIER WARNING
+   ============================================================ */
+.outlier-warning {
+  grid-column: 2 / -2;
+  background: rgba(197,102,74,0.10);
+  border: 1px solid rgba(197,102,74,0.3);
+  border-radius: 3px;
+  padding: 8px 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 0.82rem;
+  color: var(--ember);
+  margin-top: -4px;
+  margin-bottom: 4px;
+}
+
+.outlier-warning svg { flex-shrink: 0; margin-top: 1px; }
+
+.outlier-comment {
+  margin-top: 6px;
+  width: 100%;
+  background: rgba(197,102,74,0.06);
+  border: 1px solid rgba(197,102,74,0.2);
+  border-radius: 3px;
+  padding: 8px 10px;
+  color: var(--ink);
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.82rem;
+  outline: none;
+  resize: none;
+  min-height: 56px;
+  placeholder-color: var(--ember);
+}
+
+.outlier-comment::placeholder { color: rgba(197,102,74,0.5); }
+
+.outlier-actions {
+  display: flex; gap: 8px; margin-top: 8px;
+}
+
+.btn-confirm-outlier {
+  background: rgba(197,102,74,0.15);
+  border: 1px solid var(--ember);
+  border-radius: 3px;
+  color: var(--ember);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 7px 14px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.btn-confirm-outlier:hover { background: rgba(197,102,74,0.25); }
+
+.btn-correct-outlier {
+  background: none;
+  border: 1px solid var(--hairline-2);
+  border-radius: 3px;
+  color: var(--ink-mute);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 7px 14px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.btn-correct-outlier:hover { border-color: var(--ink-soft); color: var(--ink-soft); }
+
+/* ============================================================
+   ADD INGREDIENT BUTTON
+   ============================================================ */
+.add-ingredient-area {
+  padding: 16px 28px 0;
+}
+
+.btn-add-ingredient {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: none;
+  border: 1px dashed var(--hairline-2);
+  border-radius: 4px;
+  padding: 14px 20px;
+  width: 100%;
+  color: var(--ink-mute);
+  cursor: pointer;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.9rem;
+  transition: border-color 0.2s, color 0.2s, background 0.2s;
+  min-height: 54px;
+}
+
+.btn-add-ingredient:hover {
+  border-color: var(--hop-deep);
+  color: var(--hop);
+  background: rgba(158,176,96,0.04);
+}
+
+.btn-add-ingredient:hover .add-icon-circle {
+  background: var(--hop);
+  color: var(--bg);
+}
+
+.add-icon-circle {
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  background: var(--bg-elev2);
+  border: 1px solid var(--hairline-2);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.2s, color 0.2s;
+  color: var(--ink-mute);
+}
+
+/* ============================================================
+   COMMENTS SECTION
+   ============================================================ */
+.comments-section {
+  padding: 24px 28px 0;
+}
+
+.comments-textarea {
+  width: 100%;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px;
+  padding: 14px 16px;
+  color: var(--ink);
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.875rem;
+  outline: none;
+  resize: vertical;
+  min-height: 80px;
+  line-height: 1.5;
+  transition: border-color 0.15s;
+}
+
+.comments-textarea:focus { border-color: var(--hop); }
+.comments-textarea::placeholder { color: var(--ink-mute); }
+
+/* ============================================================
+   STICKY ACTION BAR
+   ============================================================ */
+.action-bar {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  background: linear-gradient(to top, var(--bg) 0%, var(--bg) 70%, transparent 100%);
+  padding: 24px 28px 28px;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.action-bar-inner {
+  width: 100%;
+  max-width: 860px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.btn-draft {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px;
+  padding: 14px 22px;
+  color: var(--ink-soft);
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+  min-height: 52px;
+  white-space: nowrap;
+}
+
+.btn-draft:hover { border-color: var(--oak); color: var(--oak); }
+
+.btn-draft .draft-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.draft-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--oak);
+  flex-shrink: 0;
+}
+
+.btn-submit {
+  flex: 1;
+  background: var(--hop);
+  border: none;
+  border-radius: 4px;
+  padding: 16px 32px;
+  color: var(--bg);
+  font-family: "DM Sans", sans-serif;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  min-height: 56px;
+  transition: background 0.15s, transform 0.1s;
+  letter-spacing: 0.01em;
+}
+
+.btn-submit:hover { background: #b3c96a; }
+.btn-submit:active { transform: scale(0.99); }
+
+.btn-submit:disabled {
+  background: var(--bg-elev2);
+  color: var(--ink-mute);
+  cursor: not-allowed;
+}
+
+/* ============================================================
+   CONFIRMATION STRIP
+   ============================================================ */
+.confirmation-strip {
+  margin: 20px 28px 0;
+  background: rgba(158,176,96,0.1);
+  border: 1px solid rgba(158,176,96,0.3);
+  border-radius: 4px;
+  padding: 16px 18px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  animation: fadeSlideDown 0.3s ease;
+}
+
+.confirmation-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.confirmation-title {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--hop);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.confirmation-detail {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.72rem;
+  color: var(--ink-mute);
+  letter-spacing: 0.04em;
+}
+
+.confirmation-link {
+  font-size: 0.8rem;
+  color: var(--hop);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(158,176,96,0.3);
+  transition: border-color 0.15s;
+  white-space: nowrap;
+}
+
+.confirmation-link:hover { border-color: var(--hop); }
+
+/* ============================================================
+   CREATE-MI MODAL
+   ============================================================ */
+dialog.mi-create-modal {
+  border: 0; padding: 0; background: transparent; margin: 0;
+}
+
+dialog.mi-create-modal[open] {
+  position: fixed; inset: 0;
+  display: grid;
+  place-items: center;
+  z-index: 1000;
+  background: rgba(21,16,10,0.85);
+  backdrop-filter: blur(4px);
+}
+
+.modal-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline-2);
+  border-radius: 6px;
+  width: min(480px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  overflow-y: auto;
+  box-shadow: 0 24px 64px rgba(0,0,0,0.7);
+  animation: modalSlideUp 0.25s ease;
+}
+
+@keyframes modalSlideUp {
+  from { opacity: 0; transform: translateY(16px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.modal-card::-webkit-scrollbar { width: 4px; }
+.modal-card::-webkit-scrollbar-track { background: var(--bg-elev); }
+.modal-card::-webkit-scrollbar-thumb { background: var(--hairline-2); border-radius: 2px; }
+
+.modal-header {
+  padding: 20px 20px 16px;
+  border-bottom: 1px solid var(--hairline);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.modal-title {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 36;
+  font-size: 1.1rem;
+  font-weight: 400;
+  color: var(--ink);
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  color: var(--ink-mute);
+  cursor: pointer;
+  padding: 4px;
+  display: flex; align-items: center;
+  transition: color 0.15s;
+}
+
+.modal-close:hover { color: var(--ink); }
+
+.modal-body {
+  padding: 20px;
+}
+
+.modal-body .field-group { margin-bottom: 16px; }
+
+/* Category radio grid */
+.cat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.cat-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 8px;
+  background: var(--bg);
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  text-align: center;
+}
+
+.cat-card:hover {
+  background: var(--bg-elev2);
+  border-color: var(--hairline-2);
+}
+
+.cat-card.selected {
+  border-color: currentColor;
+  background: var(--bg-elev2);
+}
+
+.cat-card-icon {
+  width: 32px; height: 32px;
+  display: flex; align-items: center; justify-content: center;
+}
+
+.cat-card-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  line-height: 1.2;
+}
+
+.cat-card.malt   { color: var(--cat-malt); }
+.cat-card.hops   { color: var(--cat-hops); }
+.cat-card.yeast  { color: var(--cat-yeast); }
+.cat-card.adjunct { color: var(--cat-adjunct); }
+.cat-card.process { color: var(--cat-process); }
+.cat-card.mineral { color: var(--cat-mineral); }
+.cat-card.cleaning { color: var(--cat-cleaning); }
+.cat-card.pkg    { color: var(--steel); }
+
+/* MI_ID preview — the typographic transformation detail */
+.mi-id-preview {
+  background: var(--bg);
+  border: 1px solid var(--hairline-2);
+  border-radius: 3px;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+}
+
+.mi-id-preview-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.65rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  flex-shrink: 0;
+}
+
+.mi-id-preview-code {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.92rem;
+  letter-spacing: 0.06em;
+  color: var(--hop);
+  transition: all 0.15s;
+}
+
+.mi-id-preview-code .prefix { color: var(--cat-malt); }
+.mi-id-preview-code .sep { color: var(--ink-mute); }
+.mi-id-preview-code .suffix { color: var(--ink); }
+
+.mi-id-preview-code.empty { color: var(--ink-faint); font-style: italic; font-size: 0.78rem; }
+
+.modal-footer {
+  padding: 16px 20px;
+  border-top: 1px solid var(--hairline);
+  display: flex;
+  gap: 10px;
+}
+
+.btn-modal-cancel {
+  background: none;
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px;
+  padding: 12px 20px;
+  color: var(--ink-mute);
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+  min-height: 48px;
+}
+
+.btn-modal-cancel:hover { border-color: var(--ink-mute); color: var(--ink-soft); }
+
+.btn-modal-create {
+  flex: 1;
+  background: var(--hop);
+  border: none;
+  border-radius: 4px;
+  padding: 12px 20px;
+  color: var(--bg);
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  min-height: 48px;
+  transition: background 0.15s;
+}
+
+.btn-modal-create:hover { background: #b3c96a; }
+.btn-modal-create:disabled { background: var(--bg-elev2); color: var(--ink-mute); cursor: not-allowed; }
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+@media (max-width: 640px) {
+  .brew-context-grid { grid-template-columns: 1fr; }
+  .brew-context-grid.three { grid-template-columns: 1fr 1fr; }
+  .ingredient-row { grid-template-columns: 30px 1fr 80px; }
+  .ingredient-row .col-unit, .ingredient-row .col-lot { display: none; }
+  .cat-grid { grid-template-columns: repeat(3, 1fr); }
+}
+
+@media (max-width: 400px) {
+  .page-header { flex-direction: column; gap: 8px; }
+  .header-meta { align-items: flex-start; }
+}
+
+/* ============================================================
+   UTILITY CLASSES
+   ============================================================ */
+.hidden { display: none !important; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
+</style>
+</head>
+<body class="home">
+
+<div class="page-wrap">
+
+  <!-- PAGE HEADER -->
+  <header class="page-header">
+    <div class="header-brand">
+      <div class="header-brand-icon">
+        <svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M4 6h12M6 3v3M14 3v3M5 9h10l-1.5 8H6.5L5 9z" stroke="#9eb060" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M8 12h4" stroke="#9eb060" stroke-width="1.3" stroke-linecap="round" opacity="0.5"/>
+        </svg>
+      </div>
+      <div class="header-brand-text">
+        <span class="header-brand-name">La Nébuleuse · MaltyTask</span>
+        <span class="header-brand-module">Brewing — Saisie Ingrédients</span>
+      </div>
+    </div>
+    <div class="header-meta">
+      <span class="header-meta-operator">T. Moreau · Brasseur</span>
+      <span class="header-meta-time" id="live-clock">14:32 · 23.05.26</span>
+    </div>
+  </header>
+
+  <!-- BREW CONTEXT -->
+  <section class="brew-context">
+    <div class="brew-context-grid three">
+      <!-- Beer + Batch -->
+      <div class="field-group">
+        <label class="field-label">Bière</label>
+        <div class="field-display">
+          <div>
+            <div class="field-display-name" style="font-family:'Fraunces',serif; font-style:italic; font-size:1.05rem;">Zepp Lager</div>
+            <div class="field-display-sub">ZEPP · Core</div>
+          </div>
+        </div>
+      </div>
+      <div class="field-group">
+        <label class="field-label">Brassin</label>
+        <div class="field-display">
+          <div>
+            <div class="field-display-name" style="font-family:'JetBrains Mono',monospace;">B2503</div>
+            <div class="field-display-sub">31.2 HL</div>
+          </div>
+        </div>
+      </div>
+      <div class="field-group">
+        <label class="field-label">Date brassage</label>
+        <div class="field-display">
+          <div class="brewday-display">23 mai 2026</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION: INGREDIENTS -->
+  <div class="section-sep"></div>
+  <div class="section-heading">
+    <span class="section-heading-title">Ingrédients</span>
+    <span class="section-heading-count" id="ing-count">5 ingrédients</span>
+  </div>
+
+  <div class="ingredients-area" id="ingredients-area">
+    <!-- Column headers -->
+    <div class="ingredient-row header-row">
+      <div></div>
+      <div class="col-header">Ingrédient (MI)</div>
+      <div class="col-header">Qté</div>
+      <div class="col-header">Unité</div>
+      <div class="col-header col-lot">N° lot</div>
+      <div></div>
+    </div>
+    <!-- Rows rendered by JS -->
+  </div>
+
+  <div class="add-ingredient-area">
+    <button class="btn-add-ingredient" id="btn-add" onclick="addRow()">
+      <span class="add-icon-circle">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+          <line x1="6" y1="1" x2="6" y2="11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          <line x1="1" y1="6" x2="11" y2="6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+      </span>
+      Ajouter un ingrédient
+    </button>
+  </div>
+
+  <!-- COMMENTS -->
+  <div class="section-sep" style="margin-top:24px;"></div>
+  <div class="comments-section">
+    <div class="field-group">
+      <label class="field-label">Remarques brassage</label>
+      <textarea class="comments-textarea" placeholder="Observations générales, anomalies, écart de rendement…" rows="3"></textarea>
+    </div>
+  </div>
+
+  <!-- CONFIRMATION STRIP (shown after submit) -->
+  <div class="confirmation-strip hidden" id="confirmation-strip">
+    <div class="confirmation-body">
+      <div class="confirmation-title">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <circle cx="8" cy="8" r="7" stroke="#9eb060" stroke-width="1.3"/>
+          <path d="M5 8l2 2 4-4" stroke="#9eb060" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        Saisie enregistrée par T. Moreau à 14:38
+      </div>
+      <div class="confirmation-detail">B2503 · Zepp Lager · 6 ingrédients normalisés → catalogue MI</div>
+    </div>
+    <a href="#" class="confirmation-link">Voir / réviser &rarr;</a>
+  </div>
+
+</div><!-- page-wrap -->
+
+<!-- STICKY ACTION BAR -->
+<div class="action-bar">
+  <div class="action-bar-inner">
+    <button class="btn-draft" onclick="saveDraft()">
+      <span class="draft-indicator">
+        <span class="draft-dot"></span>
+        Brouillon
+      </span>
+    </button>
+    <button class="btn-submit" id="btn-submit" onclick="submitForm()">
+      Enregistrer le brassin &rarr;
+    </button>
+  </div>
+</div>
+
+<!-- CREATE-MI MODAL -->
+<dialog class="mi-create-modal" id="mi-modal">
+  <div class="modal-card">
+    <div class="modal-header">
+      <span class="modal-title">Créer un nouvel ingrédient</span>
+      <button class="modal-close" onclick="closeMiModal()" aria-label="Fermer">
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+          <path d="M4 4l10 10M14 4L4 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+      </button>
+    </div>
+    <div class="modal-body">
+
+      <!-- Name input -->
+      <div class="field-group">
+        <label class="field-label">Nom de l'ingrédient</label>
+        <input type="text" class="field-input" id="new-mi-name" placeholder="ex. Pilsener, Herkules 2024, US-05…" oninput="updateMiPreview()">
+      </div>
+
+      <!-- Category grid -->
+      <div class="field-group">
+        <label class="field-label">Catégorie</label>
+        <div class="cat-grid" id="cat-grid">
+          <div class="cat-card malt" data-cat="Malt" data-prefix="MALT" onclick="selectCat(this)">
+            <div class="cat-card-icon">
+              <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+                <path d="M11 3 Q16 5 16 11 Q16 17 11 19 Q6 17 6 11 Q6 5 11 3Z" stroke="currentColor" stroke-width="1.2" fill="none"/>
+                <line x1="11" y1="3" x2="11" y2="19" stroke="currentColor" stroke-width="1.2"/>
+                <line x1="6" y1="9" x2="16" y2="9" stroke="currentColor" stroke-width="0.9" opacity="0.6"/>
+                <line x1="6" y1="13" x2="16" y2="13" stroke="currentColor" stroke-width="0.9" opacity="0.6"/>
+              </svg>
+            </div>
+            <span class="cat-card-label">Malt</span>
+          </div>
+          <div class="cat-card hops" data-cat="Hops" data-prefix="HOPS" onclick="selectCat(this)">
+            <div class="cat-card-icon">
+              <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+                <path d="M11 4 Q15 6 15 11 Q15 16 11 18 Q7 16 7 11 Q7 6 11 4Z" stroke="currentColor" stroke-width="1.2" fill="none"/>
+                <path d="M8 8 Q11 7 14 9" stroke="currentColor" stroke-width="0.9" stroke-linecap="round"/>
+                <path d="M8 11 Q11 10 14 12" stroke="currentColor" stroke-width="0.9" stroke-linecap="round"/>
+                <path d="M8 14 Q11 13 14 15" stroke="currentColor" stroke-width="0.9" stroke-linecap="round"/>
+                <line x1="11" y1="18" x2="11" y2="21" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+              </svg>
+            </div>
+            <span class="cat-card-label">Houblon</span>
+          </div>
+          <div class="cat-card yeast" data-cat="Yeast" data-prefix="YEAST" onclick="selectCat(this)">
+            <div class="cat-card-icon">
+              <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+                <circle cx="11" cy="11" r="4" stroke="currentColor" stroke-width="1.2"/>
+                <circle cx="6" cy="8" r="2.5" stroke="currentColor" stroke-width="1"/>
+                <circle cx="16" cy="8" r="2.5" stroke="currentColor" stroke-width="1"/>
+                <circle cx="6" cy="14" r="2" stroke="currentColor" stroke-width="0.9"/>
+                <circle cx="16" cy="14" r="2" stroke="currentColor" stroke-width="0.9"/>
+              </svg>
+            </div>
+            <span class="cat-card-label">Levure</span>
+          </div>
+          <div class="cat-card adjunct" data-cat="Brewing Adjunct" data-prefix="ADJ" onclick="selectCat(this)">
+            <div class="cat-card-icon">
+              <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+                <path d="M11 3 C7 3 5 6 5 10 C5 14 7 18 11 19 C15 18 17 14 17 10 C17 6 15 3 11 3Z" stroke="currentColor" stroke-width="1.2" fill="none"/>
+                <path d="M11 3 L11 10" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+              </svg>
+            </div>
+            <span class="cat-card-label">Adjuvant</span>
+          </div>
+          <div class="cat-card process" data-cat="Process Chemical" data-prefix="PROC" onclick="selectCat(this)">
+            <div class="cat-card-icon">
+              <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+                <path d="M9 3 L9 8 L5 16 Q5 19 11 19 Q17 19 17 16 L13 8 L13 3 Z" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linejoin="round"/>
+                <line x1="8" y1="6" x2="14" y2="6" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+                <ellipse cx="11" cy="15" rx="3" ry="1.5" stroke="currentColor" stroke-width="0.9" opacity="0.6"/>
+              </svg>
+            </div>
+            <span class="cat-card-label">Process</span>
+          </div>
+          <div class="cat-card mineral" data-cat="Brewing Mineral" data-prefix="MIN" onclick="selectCat(this)">
+            <div class="cat-card-icon">
+              <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+                <polygon points="11,3 18,8 16,16 6,16 4,8" stroke="currentColor" stroke-width="1.2" fill="none"/>
+                <polygon points="11,7 15,10 14,14 8,14 7,10" stroke="currentColor" stroke-width="0.9" fill="none" opacity="0.5"/>
+              </svg>
+            </div>
+            <span class="cat-card-label">Minéral</span>
+          </div>
+          <div class="cat-card cleaning" data-cat="Cleaning Chemical" data-prefix="CLEAN" onclick="selectCat(this)">
+            <div class="cat-card-icon">
+              <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+                <circle cx="11" cy="13" r="5" stroke="currentColor" stroke-width="1.2" fill="none"/>
+                <path d="M9 11 C9 9 13 9 13 11" stroke="currentColor" stroke-width="0.9" stroke-linecap="round"/>
+                <circle cx="8" cy="7" r="1" fill="currentColor" opacity="0.7"/>
+                <circle cx="14" cy="6" r="1.5" fill="currentColor" opacity="0.5"/>
+                <circle cx="11" cy="5" r="1" fill="currentColor" opacity="0.6"/>
+              </svg>
+            </div>
+            <span class="cat-card-label">Nettoyage</span>
+          </div>
+          <div class="cat-card pkg" data-cat="Packaging" data-prefix="PKG" onclick="selectCat(this)">
+            <div class="cat-card-icon">
+              <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+                <rect x="4" y="8" width="14" height="11" rx="1" stroke="currentColor" stroke-width="1.2"/>
+                <path d="M4 11 L18 11" stroke="currentColor" stroke-width="0.9"/>
+                <path d="M8 8 L8 6 Q11 4 14 6 L14 8" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" fill="none"/>
+              </svg>
+            </div>
+            <span class="cat-card-label">Packaging</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- MI_ID preview (the typographic transformation) -->
+      <div class="field-group">
+        <label class="field-label">ID généré</label>
+        <div class="mi-id-preview">
+          <span class="mi-id-preview-label">MI_ID →</span>
+          <span class="mi-id-preview-code empty" id="mi-id-preview-code">saisir nom + catégorie</span>
+        </div>
+      </div>
+
+      <!-- Optional fields -->
+      <div class="brew-context-grid" style="margin-top:0;">
+        <div class="field-group">
+          <label class="field-label">Fournisseur (optionnel)</label>
+          <input type="text" class="field-input" placeholder="ex. Schilling, Hopsteiner…">
+        </div>
+        <div class="field-group">
+          <label class="field-label">Unité</label>
+          <select class="field-input" style="cursor:pointer; appearance:none; background-image:url('data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'10\' height=\'6\'><path d=\'M0 0l5 6 5-6z\' fill=\'%237a6647\'/></svg>'); background-repeat:no-repeat; background-position: right 14px center; padding-right:32px;">
+            <option value="kg">kg</option>
+            <option value="g">g</option>
+            <option value="L">L</option>
+            <option value="mL">mL</option>
+            <option value="u">unité</option>
+          </select>
+        </div>
+      </div>
+
+    </div>
+    <div class="modal-footer">
+      <button class="btn-modal-cancel" onclick="closeMiModal()">Annuler</button>
+      <button class="btn-modal-create" id="btn-modal-create" onclick="createMi()" disabled>Créer et utiliser</button>
+    </div>
+  </div>
+</dialog>
+
+<script>
+/* ============================================================
+   MOCK DATA — 30+ ingredients from real MI catalog
+   ============================================================ */
+const MI_CATALOG = [
+  { id: 'MALT_PILSENER',    name: 'Pilsener',          cat: 'malt',    unit: 'kg' },
+  { id: 'MALT_MUNICH',      name: 'Munich',             cat: 'malt',    unit: 'kg' },
+  { id: 'MALT_WHEAT',       name: 'Blé malté',          cat: 'malt',    unit: 'kg' },
+  { id: 'MALT_CRYSTAL_150', name: 'Crystal 150',        cat: 'malt',    unit: 'kg' },
+  { id: 'MALT_CRYSTAL_80',  name: 'Crystal 80',         cat: 'malt',    unit: 'kg' },
+  { id: 'MALT_CARAMALT',    name: 'Caramalt',           cat: 'malt',    unit: 'kg' },
+  { id: 'MALT_MELANOIDIN',  name: 'Malt Melanoidin',    cat: 'malt',    unit: 'kg' },
+  { id: 'MALT_CHOCOLATE',   name: 'Malt Chocolat',      cat: 'malt',    unit: 'kg' },
+  { id: 'MALT_ROASTED',     name: 'Black / Roasted',    cat: 'malt',    unit: 'kg' },
+  { id: 'HOPS_HERKULES',    name: 'Herkules',           cat: 'hops',    unit: 'kg' },
+  { id: 'HOPS_CASCADE',     name: 'Cascade',            cat: 'hops',    unit: 'kg' },
+  { id: 'HOPS_SAAZER',      name: 'Saaz',               cat: 'hops',    unit: 'kg' },
+  { id: 'HOPS_SPALTER_SELECT', name: 'Spalter Select',  cat: 'hops',    unit: 'kg' },
+  { id: 'HOPS_MOSAIC',      name: 'Mosaic',             cat: 'hops',    unit: 'kg' },
+  { id: 'HOPS_C_INCOGNITO', name: 'Incognito CO2',      cat: 'hops',    unit: 'kg' },
+  { id: 'HOPS_M_INCOGNITO', name: 'Incognito Mosaic',   cat: 'hops',    unit: 'kg' },
+  { id: 'HOPS_HALLERTAU',   name: 'Hallertau Tradition','cat': 'hops',  unit: 'kg' },
+  { id: 'HOPS_CELEIA',      name: 'Celeia',             cat: 'hops',    unit: 'kg' },
+  { id: 'YEAST_US05',       name: 'Fermentis US-05',    cat: 'yeast',   unit: 'g' },
+  { id: 'YEAST_S04',        name: 'Fermentis S-04',     cat: 'yeast',   unit: 'g' },
+  { id: 'YEAST_W34',        name: 'Fermentis W-34/70',  cat: 'yeast',   unit: 'g' },
+  { id: 'YEAST_BELLE',      name: 'Belle Saison',       cat: 'yeast',   unit: 'g' },
+  { id: 'ADJ_OATS',         name: 'Flocons d\'avoine',  cat: 'adjunct', unit: 'kg' },
+  { id: 'ADJ_VANILLA',      name: 'Vanille extrait',    cat: 'adjunct', unit: 'g' },
+  { id: 'ADJ_LACTOSE',      name: 'Lactose',            cat: 'adjunct', unit: 'kg' },
+  { id: 'PROC_NAGARDO',     name: 'Nagardo (stabilisant)', cat: 'process', unit: 'g' },
+  { id: 'PROC_ALIGAL2',     name: 'CO2 Aligal-2',       cat: 'process', unit: 'kg' },
+  { id: 'MIN_CACL2',        name: 'Chlorure de calcium', cat: 'mineral', unit: 'g' },
+  { id: 'MIN_CASO4',        name: 'Gypse (CaSO4)',       cat: 'mineral', unit: 'g' },
+  { id: 'MIN_MGSO4',        name: 'Sel d\'Epsom (MgSO4)','cat': 'mineral', unit: 'g' },
+  { id: 'MIN_NAOH',         name: 'Soude NaOH',          cat: 'mineral', unit: 'g' },
+  { id: 'PROC_WHIRLFLOC',   name: 'Whirlfloc (Irish Moss)','cat': 'process', unit: 'g' },
+  { id: 'PROC_BIOFINE',     name: 'Biofine Clear',       cat: 'process', unit: 'mL' },
+];
+
+const CAT_ICON_MAP = {
+  malt:    '▩',
+  hops:    '◈',
+  yeast:   '◎',
+  adjunct: '◉',
+  process: '▲',
+  mineral: '◆',
+  cleaning:'◐',
+};
+
+/* Initial seed rows */
+let rows = [
+  { id: 0, mi: MI_CATALOG.find(m => m.id === 'MALT_PILSENER'),    qty: '23.5', unit: 'kg', lot: '17289521' },
+  { id: 1, mi: MI_CATALOG.find(m => m.id === 'MALT_MUNICH'),      qty: '3.2',  unit: 'kg', lot: '17277762' },
+  { id: 2, mi: MI_CATALOG.find(m => m.id === 'HOPS_HERKULES'),    qty: '150',  unit: 'g',  lot: 'HER2402DE' },
+  { id: 3, mi: MI_CATALOG.find(m => m.id === 'YEAST_W34'),        qty: '800',  unit: 'g',  lot: 'W3426004' },
+  { id: 4, mi: MI_CATALOG.find(m => m.id === 'MIN_CACL2'),        qty: '12',   unit: 'g',  lot: '' },
+];
+let nextId = 5;
+let activeRowForModal = null;
+let pendingOutlierRow = null;
+
+/* Outlier thresholds (mock — real values from ref_mi.p99_qty) */
+const OUTLIER_THRESHOLDS = {
+  'MALT_PILSENER': 35,
+  'HOPS_HERKULES': 500,
+  'YEAST_W34': 1500,
+  'MIN_CACL2': 50,
+  default: 1000,
+};
+
+function getThreshold(mi) {
+  if (!mi) return OUTLIER_THRESHOLDS.default;
+  return OUTLIER_THRESHOLDS[mi.id] || OUTLIER_THRESHOLDS.default;
+}
+
+/* ============================================================
+   RENDER
+   ============================================================ */
+function renderRows() {
+  const area = document.getElementById('ingredients-area');
+  // keep header row, replace rest
+  const header = area.querySelector('.header-row');
+  area.innerHTML = '';
+  if (header) area.appendChild(header);
+
+  rows.forEach((row, idx) => {
+    const rowEl = document.createElement('div');
+    rowEl.className = 'ingredient-row';
+    rowEl.dataset.rowId = row.id;
+    rowEl.style.animationDelay = `${idx * 0.04}s`;
+
+    const catKey = row.mi ? row.mi.cat : 'empty';
+    const isOutlier = row.mi && row.qty && parseFloat(row.qty) > getThreshold(row.mi);
+
+    rowEl.innerHTML = `
+      <div class="col-cat-chip ${catKey}" id="cat-chip-${row.id}">
+        ${row.mi ? renderCatIcon(row.mi.cat) : renderEmptyIcon()}
+      </div>
+
+      <div class="mi-search-wrap col-mi" id="mi-col-${row.id}">
+        ${row.mi
+          ? `<div class="mi-selected-chip" onclick="clearMi(${row.id})">
+               <span class="mi-selected-id">${row.mi.id}</span>
+               <span class="mi-selected-name">${row.mi.name}</span>
+               <button class="mi-clear-btn" title="Changer">
+                 <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                   <path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                 </svg>
+               </button>
+             </div>`
+          : `<input type="text" class="mi-search-input" placeholder="Rechercher MI…"
+               data-row="${row.id}" oninput="onMiSearch(event)" onfocus="onMiSearch(event)"
+               onblur="closeDropdownDelay(${row.id})" autocomplete="off">
+             <div class="mi-dropdown" id="dropdown-${row.id}"></div>`
+        }
+      </div>
+
+      <input type="number" class="qty-input ${isOutlier ? 'outlier' : ''}"
+        placeholder="0.0" value="${row.qty || ''}"
+        min="0" step="any"
+        data-row="${row.id}"
+        onchange="onQtyChange(event)"
+        onblur="checkOutlier(${row.id})">
+
+      <select class="unit-select col-unit" data-row="${row.id}" onchange="onUnitChange(event)">
+        ${['kg','g','L','mL','u'].map(u => `<option value="${u}" ${row.unit===u?'selected':''}>${u}</option>`).join('')}
+      </select>
+
+      <input type="text" class="lot-input col-lot" placeholder="N° lot"
+        value="${row.lot || ''}" data-row="${row.id}" onchange="onLotChange(event)"
+        style="font-family:'JetBrains Mono',monospace; font-size:0.78rem;">
+
+      <button class="remove-row-btn" onclick="removeRow(${row.id})" aria-label="Supprimer" title="Supprimer cet ingrédient">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <path d="M2 2l10 10M12 2L2 12" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+        </svg>
+      </button>
+    `;
+
+    // If outlier, add warning row
+    if (isOutlier) {
+      rowEl.style.gridRowEnd = 'span 1';
+    }
+
+    area.appendChild(rowEl);
+
+    if (isOutlier && !row.outlierConfirmed) {
+      const warnEl = document.createElement('div');
+      warnEl.className = 'ingredient-row';
+      warnEl.style.gridTemplateColumns = '36px 1fr 36px';
+      warnEl.style.alignItems = 'start';
+      warnEl.innerHTML = `
+        <div></div>
+        <div class="outlier-warning">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;margin-top:1px;">
+            <path d="M7 2L13 12H1L7 2Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+            <line x1="7" y1="6" x2="7" y2="9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+            <circle cx="7" cy="10.5" r="0.6" fill="currentColor"/>
+          </svg>
+          <div style="flex:1;">
+            <div>Quantité supérieure au seuil typique (${getThreshold(row.mi)} ${row.unit}).
+              Valeur inhabituellement élevée — confirme ta mesure.</div>
+            <textarea class="outlier-comment" placeholder="Commentaire requis (ex. double brassin, reliquat lot précédent…)"
+              data-row="${row.id}" oninput="onOutlierComment(event)"></textarea>
+            <div class="outlier-actions">
+              <button class="btn-confirm-outlier" onclick="confirmOutlier(${row.id})">Confirmer ma mesure</button>
+              <button class="btn-correct-outlier" onclick="focusQty(${row.id})">Corriger</button>
+            </div>
+          </div>
+        </div>
+        <div></div>
+      `;
+      area.appendChild(warnEl);
+    }
+  });
+
+  document.getElementById('ing-count').textContent =
+    `${rows.length} ingrédient${rows.length > 1 ? 's' : ''}`;
+}
+
+function renderCatIcon(cat) {
+  const icons = {
+    malt: `<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1Q10 3 10 7Q10 11 7 13Q4 11 4 7Q4 3 7 1Z" stroke="currentColor" stroke-width="1.2" fill="none"/><line x1="7" y1="1" x2="7" y2="13" stroke="currentColor" stroke-width="1"/></svg>`,
+    hops: `<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 2Q10 4 10 7Q10 10 7 12Q4 10 4 7Q4 4 7 2Z" stroke="currentColor" stroke-width="1.2" fill="none"/><path d="M5 5Q7 4.5 9 6" stroke="currentColor" stroke-width="0.9" stroke-linecap="round"/><path d="M5 8Q7 7.5 9 9" stroke="currentColor" stroke-width="0.9" stroke-linecap="round"/></svg>`,
+    yeast: `<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="2.5" stroke="currentColor" stroke-width="1.2"/><circle cx="4" cy="5" r="1.5" stroke="currentColor" stroke-width="0.9"/><circle cx="10" cy="5" r="1.5" stroke="currentColor" stroke-width="0.9"/></svg>`,
+    adjunct: `<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 2C5 2 3 4 3 7C3 10 5 12 7 12C9 12 11 10 11 7C11 4 9 2 7 2Z" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>`,
+    process: `<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M5.5 2L5.5 5L3 9Q3 12 7 12Q11 12 11 9L8.5 5L8.5 2Z" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linejoin="round"/><line x1="4.5" y1="4" x2="9.5" y2="4" stroke="currentColor" stroke-width="0.9" stroke-linecap="round"/></svg>`,
+    mineral: `<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><polygon points="7,1 12,5 10,12 4,12 2,5" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>`,
+    cleaning: `<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="9" r="3.5" stroke="currentColor" stroke-width="1.2" fill="none"/><circle cx="5" cy="4" r="0.8" fill="currentColor"/><circle cx="9" cy="3" r="0.8" fill="currentColor"/><circle cx="7" cy="2" r="0.8" fill="currentColor"/></svg>`,
+  };
+  return icons[cat] || '';
+}
+
+function renderEmptyIcon() {
+  return `<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><line x1="6" y1="1" x2="6" y2="11" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><line x1="1" y1="6" x2="11" y2="6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>`;
+}
+
+/* ============================================================
+   INTERACTION HANDLERS
+   ============================================================ */
+function addRow() {
+  rows.push({ id: nextId++, mi: null, qty: '', unit: 'kg', lot: '' });
+  renderRows();
+  // focus the new search input
+  setTimeout(() => {
+    const inputs = document.querySelectorAll('.mi-search-input');
+    if (inputs.length) inputs[inputs.length - 1].focus();
+  }, 80);
+  saveDraftSilent();
+}
+
+function removeRow(rowId) {
+  rows = rows.filter(r => r.id !== rowId);
+  renderRows();
+  saveDraftSilent();
+}
+
+function onQtyChange(e) {
+  const rowId = parseInt(e.target.dataset.row);
+  const row = rows.find(r => r.id === rowId);
+  if (row) row.qty = e.target.value;
+}
+
+function onUnitChange(e) {
+  const rowId = parseInt(e.target.dataset.row);
+  const row = rows.find(r => r.id === rowId);
+  if (row) row.unit = e.target.value;
+}
+
+function onLotChange(e) {
+  const rowId = parseInt(e.target.dataset.row);
+  const row = rows.find(r => r.id === rowId);
+  if (row) row.lot = e.target.value;
+}
+
+function checkOutlier(rowId) {
+  const row = rows.find(r => r.id === rowId);
+  if (!row || !row.mi) return;
+  const threshold = getThreshold(row.mi);
+  const qty = parseFloat(row.qty);
+  if (qty > threshold && !row.outlierConfirmed) {
+    renderRows();
+  }
+}
+
+function confirmOutlier(rowId) {
+  const row = rows.find(r => r.id === rowId);
+  if (row) { row.outlierConfirmed = true; }
+  renderRows();
+}
+
+function focusQty(rowId) {
+  // find qty input for this row
+  const row = document.querySelector(`[data-row="${rowId}"].qty-input`);
+  if (row) { row.focus(); row.select(); }
+}
+
+function onOutlierComment(e) {
+  const rowId = parseInt(e.target.dataset.row);
+  const row = rows.find(r => r.id === rowId);
+  if (row) row.outlierComment = e.target.value;
+}
+
+function clearMi(rowId) {
+  const row = rows.find(r => r.id === rowId);
+  if (row) { row.mi = null; row.outlierConfirmed = false; }
+  renderRows();
+}
+
+/* ============================================================
+   MI TYPEAHEAD
+   ============================================================ */
+function onMiSearch(e) {
+  const rowId = parseInt(e.target.dataset.row);
+  const query = e.target.value.toLowerCase().trim();
+  const dropdown = document.getElementById(`dropdown-${rowId}`);
+  if (!dropdown) return;
+
+  const matches = query.length === 0
+    ? MI_CATALOG.slice(0, 12)
+    : MI_CATALOG.filter(m =>
+        m.id.toLowerCase().includes(query) ||
+        m.name.toLowerCase().includes(query) ||
+        m.cat.toLowerCase().includes(query)
+      ).slice(0, 10);
+
+  dropdown.innerHTML = '';
+
+  matches.forEach(mi => {
+    const opt = document.createElement('div');
+    opt.className = 'mi-option';
+    const catDotColor = getCatColor(mi.cat);
+    const nameHl = highlightMatch(mi.name, query);
+    opt.innerHTML = `
+      <div class="mi-option-cat" style="background:${catDotColor}"></div>
+      <span class="mi-option-id">${mi.id}</span>
+      <span class="mi-option-name">${nameHl}</span>
+    `;
+    opt.addEventListener('mousedown', (ev) => {
+      ev.preventDefault();
+      pickMi(rowId, mi);
+    });
+    dropdown.appendChild(opt);
+  });
+
+  // Create new option
+  const createOpt = document.createElement('div');
+  createOpt.className = 'mi-option create-new';
+  createOpt.innerHTML = `
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex-shrink:0;">
+      <line x1="7" y1="1" x2="7" y2="13" stroke="#9eb060" stroke-width="1.3" stroke-linecap="round"/>
+      <line x1="1" y1="7" x2="13" y2="7" stroke="#9eb060" stroke-width="1.3" stroke-linecap="round"/>
+    </svg>
+    <span class="mi-option-create-label">Créer « ${e.target.value || 'nouvel ingrédient'} »</span>
+  `;
+  createOpt.addEventListener('mousedown', (ev) => {
+    ev.preventDefault();
+    openMiModal(rowId, e.target.value);
+  });
+  dropdown.appendChild(createOpt);
+
+  dropdown.classList.add('open');
+}
+
+function closeDropdownDelay(rowId) {
+  setTimeout(() => {
+    const d = document.getElementById(`dropdown-${rowId}`);
+    if (d) d.classList.remove('open');
+  }, 120);
+}
+
+function pickMi(rowId, mi) {
+  const row = rows.find(r => r.id === rowId);
+  if (!row) return;
+  row.mi = mi;
+  row.unit = mi.unit;
+  row.outlierConfirmed = false;
+  renderRows();
+  // pop animation on chip
+  setTimeout(() => {
+    const chip = document.getElementById(`cat-chip-${rowId}`);
+    if (chip) { chip.classList.add('popped'); setTimeout(() => chip.classList.remove('popped'), 350); }
+  }, 20);
+  saveDraftSilent();
+}
+
+function getCatColor(cat) {
+  const colors = { malt:'#d4923c', hops:'#9eb060', yeast:'#6593b8', adjunct:'#a07a48',
+    process:'#8b7ab8', mineral:'#5aa8b8', cleaning:'#b85a8b', pkg:'#b8bcc0' };
+  return colors[cat] || '#7a6647';
+}
+
+function highlightMatch(text, query) {
+  if (!query) return text;
+  const idx = text.toLowerCase().indexOf(query.toLowerCase());
+  if (idx === -1) return text;
+  return text.slice(0, idx)
+    + `<span class="highlight">${text.slice(idx, idx + query.length)}</span>`
+    + text.slice(idx + query.length);
+}
+
+/* ============================================================
+   CREATE-MI MODAL
+   ============================================================ */
+function openMiModal(rowId, prefillName) {
+  activeRowForModal = rowId;
+  const modal = document.getElementById('mi-modal');
+  const nameInput = document.getElementById('new-mi-name');
+  nameInput.value = prefillName || '';
+  // reset category selection
+  document.querySelectorAll('#cat-grid .cat-card').forEach(c => c.classList.remove('selected'));
+  modal._selectedCat = null;
+  modal._selectedPrefix = null;
+  updateMiPreview();
+  modal.showModal();
+  setTimeout(() => nameInput.focus(), 100);
+}
+
+function closeMiModal() {
+  document.getElementById('mi-modal').close();
+  activeRowForModal = null;
+}
+
+function selectCat(el) {
+  document.querySelectorAll('#cat-grid .cat-card').forEach(c => c.classList.remove('selected'));
+  el.classList.add('selected');
+  const modal = document.getElementById('mi-modal');
+  modal._selectedCat = el.dataset.cat;
+  modal._selectedPrefix = el.dataset.prefix;
+  updateMiPreview();
+}
+
+function updateMiPreview() {
+  const nameInput = document.getElementById('new-mi-name');
+  const previewEl = document.getElementById('mi-id-preview-code');
+  const btnCreate = document.getElementById('btn-modal-create');
+  const modal = document.getElementById('mi-modal');
+
+  const name = nameInput.value.trim();
+  const prefix = modal._selectedPrefix;
+
+  if (!name && !prefix) {
+    previewEl.textContent = 'saisir nom + catégorie';
+    previewEl.className = 'mi-id-preview-code empty';
+    btnCreate.disabled = true;
+    return;
+  }
+
+  // Build suffix from name: uppercase, replace spaces/special chars with _, strip non-alnum
+  const suffix = name
+    .toUpperCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^A-Z0-9\s]/g, '')
+    .trim()
+    .replace(/\s+/g, '_');
+
+  if (!prefix || !suffix) {
+    previewEl.textContent = prefix ? `${prefix}_…` : suffix ? `…_${suffix}` : 'saisir nom + catégorie';
+    previewEl.className = 'mi-id-preview-code empty';
+    btnCreate.disabled = true;
+    return;
+  }
+
+  previewEl.innerHTML = `<span class="prefix">${prefix}</span><span class="sep">_</span><span class="suffix">${suffix}</span>`;
+  previewEl.className = 'mi-id-preview-code';
+  btnCreate.disabled = false;
+}
+
+function createMi() {
+  const nameInput = document.getElementById('new-mi-name');
+  const modal = document.getElementById('mi-modal');
+  const previewEl = document.getElementById('mi-id-preview-code');
+
+  const name = nameInput.value.trim();
+  const prefix = modal._selectedPrefix;
+  const cat = modal._selectedCat;
+
+  if (!name || !prefix || !cat) return;
+
+  const suffix = name.toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^A-Z0-9\s]/g, '').trim().replace(/\s+/g, '_');
+  const newId = `${prefix}_${suffix}`;
+
+  // Mock: add to catalog
+  const catKey = prefix.toLowerCase() === 'malt' ? 'malt'
+    : prefix.toLowerCase() === 'hops' ? 'hops'
+    : prefix.toLowerCase() === 'yeast' ? 'yeast'
+    : prefix.toLowerCase() === 'adj' ? 'adjunct'
+    : prefix.toLowerCase() === 'proc' ? 'process'
+    : prefix.toLowerCase() === 'min' ? 'mineral'
+    : prefix.toLowerCase() === 'clean' ? 'cleaning'
+    : 'adjunct';
+
+  const newMi = { id: newId, name: name, cat: catKey, unit: 'kg' };
+  MI_CATALOG.unshift(newMi);
+
+  if (activeRowForModal !== null) {
+    pickMi(activeRowForModal, newMi);
+  }
+  closeMiModal();
+}
+
+/* ============================================================
+   SAVE / SUBMIT
+   ============================================================ */
+function saveDraftSilent() {
+  try {
+    localStorage.setItem('brewing_draft_B2503', JSON.stringify(rows));
+  } catch(e) {}
+}
+
+function saveDraft() {
+  saveDraftSilent();
+  const btn = document.querySelector('.btn-draft');
+  const orig = btn.innerHTML;
+  btn.innerHTML = `<span class="draft-indicator"><span class="draft-dot" style="background:var(--hop)"></span>Enregistré</span>`;
+  setTimeout(() => { btn.innerHTML = orig; }, 1500);
+}
+
+function submitForm() {
+  const btn = document.getElementById('btn-submit');
+  btn.textContent = 'Enregistrement…';
+  btn.disabled = true;
+
+  // Mock submit delay
+  setTimeout(() => {
+    document.getElementById('confirmation-strip').classList.remove('hidden');
+    btn.textContent = 'Enregistrer le brassin →';
+    btn.disabled = false;
+    try { localStorage.removeItem('brewing_draft_B2503'); } catch(e) {}
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, 800);
+}
+
+/* ============================================================
+   LOAD DRAFT FROM LOCALSTORAGE
+   ============================================================ */
+(function loadDraft() {
+  try {
+    const saved = localStorage.getItem('brewing_draft_B2503');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      // Re-resolve MI objects from catalog
+      rows = parsed.map(r => ({
+        ...r,
+        mi: r.mi ? MI_CATALOG.find(m => m.id === r.mi.id) || r.mi : null,
+      }));
+      nextId = Math.max(...rows.map(r => r.id), nextId) + 1;
+    }
+  } catch(e) {}
+})();
+
+/* ============================================================
+   LIVE CLOCK
+   ============================================================ */
+function updateClock() {
+  const now = new Date();
+  const h = String(now.getHours()).padStart(2,'0');
+  const m = String(now.getMinutes()).padStart(2,'0');
+  const d = String(now.getDate()).padStart(2,'0');
+  const mo = String(now.getMonth()+1).padStart(2,'0');
+  const y = String(now.getFullYear()).slice(2);
+  const el = document.getElementById('live-clock');
+  if (el) el.textContent = `${h}:${m} · ${d}.${mo}.${y}`;
+}
+setInterval(updateClock, 10000);
+updateClock();
+
+/* Initial render */
+renderRows();
+</script>
+</body>
+</html>
