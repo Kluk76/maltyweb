@@ -99,7 +99,7 @@ function compile_sku_bom_packaging(
     $placeholders = implode(',', array_fill(0, count($skuIds), '?'));
     $stmt = $pdo->prepare(
         "SELECT s.id, s.sku_code, s.format_id, s.recipe_id, s.hl_per_unit,
-                f.format_code,
+                f.format_code, f.run_type AS fmt_run_type,
                 r.sku_prefix, r.uses_branded_scotch,
                 bt.decoration_integral, bt.supply
            FROM ref_skus s
@@ -170,6 +170,73 @@ function compile_sku_bom_packaging(
     // 24-box format IDs (B=1, C=7, BC=8 — verified live)
     $box24FormatIds = [1, 7, 8];
 
+    // ── Volume dimension pre-load ────────────────────────────────────────────
+    // Per-format: derived volume_hl + which slot_name carries the container role.
+    //
+    // Volume is derived from:
+    //   ref_packaging_formats.catalog_id
+    //   → dbc_packaging_format_templates.units_per_format + container_code
+    //   → dbc_container_types.hl_per_unit
+    //
+    // Container-role identification (in slot terms) — ONLY the real consumable
+    // container layers (bottle/can) own volume_hl on a BOM line:
+    //   run_type 'bot'           → slot_name 'bottle'     (consumed, appears in BOM)
+    //   run_type 'can'/'can33'   → slot_name 'can'        (consumed, appears in BOM)
+    //   run_type 'keg'           → NULL (keg reusable, no keg MI in BOM — only accessories
+    //                               keg_collars/keg_safe; SKU-level volume via v_sku_volume)
+    //   run_type 'cuv'           → NULL (liner reusable-container, CUV_LINER hl null; fill-event volume)
+    //   is_composite=1 OR catalog_id IS NULL → NULL (composites/draft-pours/6C/PAD; no static chain)
+    //
+    // volume_hl is set on the container-role line ONLY. All other lines get NULL.
+    // CARDINAL RULE: cost is additive across lines; volume is NOT. Summing volume_hl
+    // across all lines of one SKU would N×-count the liquid. One line owns it.
+    $formatVolumeMapStmt = $pdo->query(
+        "SELECT
+             f.id         AS format_id,
+             f.run_type,
+             t.is_composite,
+             t.units_per_format,
+             c.hl_per_unit AS container_hl,
+             CASE
+                 WHEN t.is_composite = 1     THEN NULL
+                 WHEN f.catalog_id  IS NULL   THEN NULL
+                 WHEN c.hl_per_unit  IS NULL   THEN NULL
+                 WHEN t.units_per_format IS NULL THEN NULL
+                 ELSE (t.units_per_format * c.hl_per_unit)
+             END AS volume_hl_derived
+           FROM ref_packaging_formats f
+           LEFT JOIN dbc_packaging_format_templates t ON t.id = f.catalog_id
+           LEFT JOIN dbc_container_types c ON c.container_code = t.container_code"
+    );
+    // format_id → ['volume_hl' => float|null, 'container_slot' => string|null]
+    $formatVolumeMap = [];
+    foreach ($formatVolumeMapStmt->fetchAll(\PDO::FETCH_ASSOC) as $fv) {
+        $runType    = $fv['run_type'];
+        $volDerived = $fv['volume_hl_derived'] !== null ? (float)$fv['volume_hl_derived'] : null;
+
+        // Map run_type → the slot_name of the real CONTAINER LAYER that carries volume.
+        // ONLY bottle/can are consumable container BOM lines → they own volume_hl.
+        // keg & cuv containers are REUSABLE — there is NO container MI line in the BOM,
+        // only accessories (keg_collars/keg_safe, liner_client/liner_transport). Their
+        // volume is a SKU-LEVEL fact via the v_sku_volume view, NOT forced onto an
+        // accessory line (a collar/liner is not the container). cuv volume is also
+        // fill-event-variable (CUV_LINER.volume_l is NULL by design).
+        if ($runType === 'bot') {
+            $containerSlot = 'bottle';
+        } elseif ($runType === 'can' || $runType === 'can33') {
+            $containerSlot = 'can';
+        } else {
+            // keg / cuv (reusable container — no consumable container line) / composite /
+            // draft pours → no BOM line owns volume; SKU-level volume lives in v_sku_volume.
+            $containerSlot = null;
+        }
+
+        $formatVolumeMap[(int)$fv['format_id']] = [
+            'volume_hl'      => $volDerived,
+            'container_slot' => $containerSlot,
+        ];
+    }
+
     // ── 4. Process each SKU ─────────────────────────────────────────────────
 
     $summary = [];
@@ -231,8 +298,39 @@ function compile_sku_bom_packaging(
 
         // ── 4c. Resolve each slot ────────────────────────────────────────
 
-        $pkgLines = [];   // rows to INSERT: ['mi_id_fk' => int, 'slot_name' => str, 'qty' => float]
+        // volume_hl for this SKU's format (NULL for cuv/composite/P25/P50/PAD/6C)
+        $formatVol = $formatVolumeMap[$formatId] ?? ['volume_hl' => null, 'container_slot' => null];
+        $skuVolumeHl     = $formatVol['volume_hl'];
+        $containerSlotName = $formatVol['container_slot'];
+
+        $pkgLines = [];   // rows to INSERT: ['mi_id_fk' => int, 'slot_name' => str, 'qty' => float, 'volume_hl' => float|null]
         $rqRows   = [];   // rows to emit in doc_review_queue
+
+        // Identify known-by-design NULL volume cases — these must NOT emit RQ rows.
+        // run_type='cuv': CUV_LINER has null hl_per_unit (volume comes from the fill event).
+        // is_composite=1 OR catalog_id NULL: composites/draft-pours/6C/PAD — no static chain.
+        $runTypeFmt = $sku['fmt_run_type'] ?? '';  // populated in step 2 via f.run_type
+        $isKnownNullVolume = (
+            $runTypeFmt === 'cuv'                                 // fill-event volume
+            || !in_array($runTypeFmt, ['bot','can','can33','keg'], true) // composite, draft, tray
+        );
+
+        // For a STANDARD format (bot/can/can33/keg) that UNEXPECTEDLY fails to resolve
+        // a container volume → emit a self-sufficient sku-bom-unresolved RQ row.
+        // In practice today all standard formats resolve cleanly; this guards future additions.
+        if ($skuVolumeHl === null && !$isKnownNullVolume) {
+            $rqRows[] = [
+                'queue_id'    => 'RQ_' . (int)(microtime(true) * 1000) . '_VOL_' . strtoupper(substr(md5($skuCode), 0, 6)),
+                'value'       => "{$skuCode} — volume resolution miss ({$formatCode} run_type={$runTypeFmt})",
+                'context'     => "SKU: {$skuCode}\nFormat: {$formatCode}\nrun_type: {$runTypeFmt}\n"
+                               . "container chain failed (catalog_id or hl_per_unit is NULL unexpectedly).\n"
+                               . "Action: verify dbc_packaging_format_templates + dbc_container_types for this format.",
+                'top_match'   => null,
+                'suggestions' => null,
+                'dedup_key'   => "sku-bom-unresolved|{$skuCode}|volume",
+                'priority'    => 50,
+            ];
+        }
 
         // Determine scotch resolution first (needed for box-sticker rule)
         $scotchResolved    = null;   // int|null: resolved MI id for scotch slot
@@ -292,6 +390,8 @@ function compile_sku_bom_packaging(
                         'mi_id_fk'  => $scotchResolved,
                         'slot_name' => $slotName,
                         'qty'       => $qty,
+                        // Scotch is a packaging accessory — volume is owned by the container line.
+                        'volume_hl' => null,
                     ];
                 } else {
                     // Unresolved — emit RQ
@@ -308,10 +408,16 @@ function compile_sku_bom_packaging(
             $resolved = _bom_resolve_slot($item, $skuId, $recipeId, $prefix, $bindings, $skuChoices, $miById);
 
             if ($resolved !== null) {
+                // Volume is OWNED by the container-role line only (additive-cost-vs-owned-volume rule).
+                // All other lines (closure, label, box, sticker, etc.) get NULL.
+                $lineVolumeHl = ($slotName === $containerSlotName && $skuVolumeHl !== null)
+                    ? $skuVolumeHl
+                    : null;
                 $pkgLines[] = [
                     'mi_id_fk'  => $resolved,
                     'slot_name' => $slotName,
                     'qty'       => $qty,
+                    'volume_hl' => $lineVolumeHl,
                 ];
             } else {
                 // Unresolved → emit RQ (never insert NULL mi_id)
@@ -359,11 +465,11 @@ function compile_sku_bom_packaging(
                 $ins = $pdo->prepare(
                     "INSERT INTO ref_sku_bom
                        (sku_id, mi_id, ingredient_raw, source, category_raw,
-                        qty_per_unit, ing_unit, pricing_unit, price, currency, cost,
+                        qty_per_unit, ing_unit, pricing_unit, price, currency, cost, volume_hl,
                         resolution, row_hash, compiled_at, bom_source, effective_from)
                      VALUES
                        (:sku_id, :mi_id, :ingredient_raw, :source, :category_raw,
-                        :qty_per_unit, :ing_unit, :pricing_unit, :price, :currency, :cost,
+                        :qty_per_unit, :ing_unit, :pricing_unit, :price, :currency, :cost, :volume_hl,
                         :resolution, :row_hash, :compiled_at, :bom_source, :effective_from)"
                 );
 
@@ -378,12 +484,14 @@ function compile_sku_bom_packaging(
                     // cost = price × qty (NULL if price unknown)
                     $cost = ($price !== null) ? round($price * $line['qty'], 6) : null;
 
-                    // row_hash: stable content key (sku_id, mi_id_fk, slot_name, qty, effective_from)
+                    // row_hash: stable content key (sku_id, mi_id_fk, slot_name, qty, volume_hl, effective_from)
                     $rowHash = hash('sha256', implode('|', [
                         $skuId,
                         $line['mi_id_fk'],
                         $line['slot_name'],
                         round($line['qty'], 6),
+                        isset($line['volume_hl']) && $line['volume_hl'] !== null
+                            ? round($line['volume_hl'], 6) : 'null',
                         $today,
                     ]));
 
@@ -399,6 +507,11 @@ function compile_sku_bom_packaging(
                         ':price'          => $price,
                         ':currency'       => $currency,
                         ':cost'           => $cost,
+                        // Set on the container-role line ONLY (bottle/can slot).
+                        // NULL on closure, label, box, sticker, accessories, AND keg/cuv lines
+                        // (reusable containers — their volume is SKU-level via v_sku_volume).
+                        // NOT additive across lines — one line owns the SKU's liquid volume.
+                        ':volume_hl'      => isset($line['volume_hl']) ? $line['volume_hl'] : null,
                         ':resolution'     => 'mi_match',
                         ':row_hash'       => $rowHash,
                         ':compiled_at'    => $compiledAt,
