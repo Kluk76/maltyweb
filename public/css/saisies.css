@@ -1,0 +1,137 @@
+/*
+ * saisies.css — Styles for /modules/saisies.php (Saisies hub)
+ *
+ * All rules scoped under body.saisies-hub to prevent leakage.
+ * Tokens: from app.css :root only — no custom tokens invented here.
+ */
+
+/* ── Page header ──────────────────────────────────────────────────────────── */
+body.saisies-hub .sh-header {
+  margin-bottom: 2rem;
+}
+
+body.saisies-hub .sh-eyebrow {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-mute, rgba(237,224,196,0.45));
+  margin-bottom: 0.4rem;
+}
+
+body.saisies-hub .sh-title {
+  font-family: 'Fraunces', serif;
+  font-size: clamp(1.6rem, 4vw, 2.2rem);
+  font-weight: 300;
+  color: var(--ink, #ede0c4);
+  margin: 0 0 0.5rem;
+}
+
+body.saisies-hub .sh-title em {
+  font-style: italic;
+  font-variation-settings: "opsz" 96;
+}
+
+body.saisies-hub .sh-sub {
+  font-size: 0.875rem;
+  color: var(--ink-soft, rgba(237,224,196,0.7));
+  max-width: 52ch;
+}
+
+/* ── Form cards grid ──────────────────────────────────────────────────────── */
+body.saisies-hub .sh-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 1rem;
+  margin-bottom: 2.5rem;
+}
+
+/* ── Active form card ─────────────────────────────────────────────────────── */
+body.saisies-hub .sh-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1.25rem 1.375rem 1.375rem;
+  background: var(--bg-elev, #1d160d);
+  border: 1.5px solid var(--hairline, rgba(237,224,196,0.12));
+  border-radius: 10px;
+  color: var(--ink, #ede0c4);
+  text-decoration: none;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+
+body.saisies-hub .sh-card:hover {
+  border-color: var(--oak, #c8913a);
+  background: color-mix(in srgb, var(--oak, #c8913a) 6%, var(--bg-elev, #1d160d));
+  box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+  text-decoration: none;
+}
+
+body.saisies-hub .sh-card__icon {
+  font-size: 1.5rem;
+  line-height: 1;
+  margin-bottom: 0.25rem;
+  color: var(--oak, #c8913a);
+}
+
+body.saisies-hub .sh-card__name {
+  font-family: 'Fraunces', serif;
+  font-size: 1.15rem;
+  font-weight: 300;
+  color: var(--ink, #ede0c4);
+}
+
+body.saisies-hub .sh-card__desc {
+  font-size: 0.8rem;
+  color: var(--ink-soft, rgba(237,224,196,0.7));
+  line-height: 1.45;
+}
+
+body.saisies-hub .sh-card__arrow {
+  margin-top: auto;
+  padding-top: 0.75rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  color: var(--oak, #c8913a);
+  text-transform: uppercase;
+}
+
+/* ── Disabled / "à venir" card ────────────────────────────────────────────── */
+body.saisies-hub .sh-card--soon {
+  opacity: 0.45;
+  cursor: default;
+  pointer-events: none;
+}
+
+body.saisies-hub .sh-card--soon .sh-card__icon {
+  color: var(--ink-mute, rgba(237,224,196,0.45));
+}
+
+body.saisies-hub .sh-card--soon .sh-card__arrow {
+  color: var(--ink-mute, rgba(237,224,196,0.45));
+}
+
+body.saisies-hub .sh-card--soon .sh-card__badge {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 0.1em 0.45em;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: color-mix(in srgb, var(--ink-mute, rgba(237,224,196,0.45)) 15%, transparent);
+  border: 1px solid var(--hairline, rgba(237,224,196,0.12));
+  border-radius: 4px;
+  vertical-align: middle;
+}
+
+/* ── Section label ────────────────────────────────────────────────────────── */
+body.saisies-hub .sh-section-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--ink-mute, rgba(237,224,196,0.45));
+  margin: 0 0 0.75rem;
+}
