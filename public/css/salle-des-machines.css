@@ -1,0 +1,539 @@
+/*
+ * salle-des-machines.css
+ * Scoped under body.salle-des-machines (sdm- prefix for components).
+ * Light kraft palette — matches the site-wide recolour direction.
+ * Tokens from app.css :root (--bg, --ink, --ink-soft, --oak, etc.)
+ */
+
+/* ── page-level layout ─────────────────────────────────────────── */
+body.salle-des-machines {
+  overflow: hidden;
+  height: 100vh;
+}
+
+body.salle-des-machines .main {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 56px); /* subtract topbar */
+  overflow: hidden;
+  padding: 0;
+  position: relative;
+}
+
+/* ── blueprint board ground ───────────────────────────────────── */
+body.salle-des-machines .sdm-board {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(130% 90% at 50% -20%, rgba(160,122,72,.08), transparent 55%),
+    var(--bg);
+}
+body.salle-des-machines .sdm-board::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: .4;
+  background-image:
+    linear-gradient(rgba(122,102,71,.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(122,102,71,.06) 1px, transparent 1px),
+    linear-gradient(rgba(122,102,71,.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(122,102,71,.03) 1px, transparent 1px);
+  background-size: 120px 120px, 120px 120px, 24px 24px, 24px 24px;
+  mask-image: radial-gradient(120% 100% at 50% 40%, #000 55%, transparent 92%);
+}
+
+/* registration marks */
+body.salle-des-machines .sdm-mark {
+  position: fixed;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--hairline-2, #342818);
+  z-index: 3;
+  opacity: .6;
+  pointer-events: none;
+}
+body.salle-des-machines .sdm-mark.tl { top: 12px; left: 12px; border-right: 0; border-bottom: 0; }
+body.salle-des-machines .sdm-mark.tr { top: 12px; right: 12px; border-left: 0; border-bottom: 0; }
+body.salle-des-machines .sdm-mark.bl { bottom: 12px; left: 12px; border-right: 0; border-top: 0; }
+body.salle-des-machines .sdm-mark.br { bottom: 12px; right: 12px; border-left: 0; border-top: 0; }
+
+/* ── sliding stage ────────────────────────────────────────────── */
+body.salle-des-machines .sdm-stage {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  width: 400%;
+  flex: 1;
+  min-height: 0;
+  transition: transform .62s cubic-bezier(.55,.05,.2,1);
+}
+body.salle-des-machines .sdm-room {
+  width: 25%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px 44px 32px;
+  position: relative;
+  flex-shrink: 0;
+  overflow-y: auto;
+}
+
+/* ── chrome (top bar inside the module page) ──────────────────── */
+body.salle-des-machines .sdm-chrome {
+  position: relative;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 44px 10px;
+  border-bottom: 1px solid var(--hairline, #261d11);
+  background: rgba(var(--bg-elev-rgb, 29,22,13), .92);
+  backdrop-filter: blur(6px);
+  flex-shrink: 0;
+}
+body.salle-des-machines .sdm-brandmark {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  letter-spacing: .38em;
+  color: var(--ink-mute);
+  text-transform: uppercase;
+}
+body.salle-des-machines .sdm-brandmark b { color: var(--ink-soft); font-weight: 500; }
+body.salle-des-machines .sdm-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  letter-spacing: .1em;
+  color: var(--ink-mute);
+  text-transform: uppercase;
+}
+body.salle-des-machines .sdm-crumbs .here { color: var(--oak); }
+body.salle-des-machines .sdm-crumbs i { font-style: normal; opacity: .4; }
+
+/* role badge */
+body.salle-des-machines .sdm-role-badge {
+  margin-left: auto;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  padding: 5px 12px;
+  border: 1px solid var(--hairline-2, #342818);
+  border-radius: 20px;
+  color: var(--ink-mute);
+}
+body.salle-des-machines .sdm-role-badge[data-role="admin"]   { color: var(--hop); border-color: var(--hop-deep, #6b7a3e); }
+body.salle-des-machines .sdm-role-badge[data-role="manager"] { color: var(--bbt); border-color: var(--cold); }
+
+/* toast */
+body.salle-des-machines .sdm-toast {
+  position: fixed;
+  bottom: 44px;
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  z-index: 20;
+  padding: 9px 18px;
+  background: var(--bg-elev);
+  border: 1px solid var(--oak-deep, #6e4e26);
+  border-radius: 10px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  letter-spacing: .08em;
+  color: var(--ink-soft);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .3s, transform .3s;
+  text-transform: uppercase;
+}
+body.salle-des-machines .sdm-toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* ── overview zones ────────────────────────────────────────────── */
+body.salle-des-machines .sdm-overview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 28px;
+  max-width: 1200px;
+  width: 100%;
+}
+body.salle-des-machines .sdm-overview-head {
+  flex: 0 0 100%;
+}
+body.salle-des-machines .sdm-overview-head .k {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  letter-spacing: .3em;
+  color: var(--ink-mute);
+  text-transform: uppercase;
+}
+body.salle-des-machines .sdm-overview-head h1 {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 144;
+  font-weight: 400;
+  font-size: 28px;
+  color: var(--ink);
+  margin-top: 4px;
+}
+body.salle-des-machines .sdm-overview-head h1 em { font-style: italic; color: var(--oak); }
+body.salle-des-machines .sdm-zone {
+  flex: 1 1 28%;
+  min-width: 240px;
+  position: relative;
+  border: 1px solid var(--hairline-2, #342818);
+  border-radius: 12px;
+  padding: 26px 28px 22px;
+  cursor: pointer;
+  background: linear-gradient(165deg, rgba(29,22,13,.85), rgba(12,9,5,.7));
+  box-shadow: 0 24px 60px -28px rgba(0,0,0,.75), inset 0 1px 0 rgba(255,220,160,.04);
+  transition: transform .28s cubic-bezier(.2,.7,.2,1), border-color .28s, box-shadow .28s;
+  overflow: hidden;
+  text-decoration: none;
+}
+body.salle-des-machines .sdm-zone:hover {
+  transform: translateY(-5px);
+  border-color: var(--oak-deep, #6e4e26);
+  box-shadow: 0 32px 72px -28px rgba(0,0,0,.85), inset 0 1px 0 rgba(255,220,160,.07);
+}
+body.salle-des-machines .sdm-zone.pkg { border-color: rgba(122,95,160,.3); }
+body.salle-des-machines .sdm-zone.pkg:hover { border-color: var(--pkg, #7a5fa0); }
+body.salle-des-machines .sdm-zone .znum {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  letter-spacing: .28em;
+  color: var(--ink-mute);
+  text-transform: uppercase;
+}
+body.salle-des-machines .sdm-zone h2 {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 144;
+  font-weight: 420;
+  font-size: 28px;
+  line-height: 1;
+  margin: 4px 0 2px;
+  color: var(--ink);
+}
+body.salle-des-machines .sdm-zone h2 em { font-style: italic; color: var(--oak); }
+body.salle-des-machines .sdm-zone.pkg h2 em { color: var(--pkg-band, #9b7cc8); }
+body.salle-des-machines .sdm-zone .sub { font-size: 12px; color: var(--ink-soft); margin-bottom: 6px; }
+body.salle-des-machines .sdm-zone .scene { height: 240px; display: flex; align-items: center; justify-content: center; margin: 6px 0 10px; }
+body.salle-des-machines .sdm-zone .stats { display: flex; gap: 18px; border-top: 1px solid var(--hairline, #261d11); padding-top: 12px; }
+body.salle-des-machines .sdm-zone .stat .v { font-family: "Fraunces", serif; font-variation-settings: "opsz" 96; font-size: 22px; color: var(--ink); }
+body.salle-des-machines .sdm-zone .stat .v span { font-size: 12px; color: var(--oak); }
+body.salle-des-machines .sdm-zone .stat .k { font-family: "JetBrains Mono", monospace; font-size: 9px; letter-spacing: .1em; color: var(--ink-mute); text-transform: uppercase; }
+body.salle-des-machines .sdm-zone .enter { position: absolute; top: 24px; right: 24px; font-family: "JetBrains Mono", monospace; font-size: 10px; letter-spacing: .12em; color: var(--ink-mute); text-transform: uppercase; transition: .28s; }
+body.salle-des-machines .sdm-zone:hover .enter { color: var(--oak); transform: translateX(3px); }
+body.salle-des-machines .sdm-zone.pkg:hover .enter { color: var(--pkg-band, #9b7cc8); }
+
+/* ── detail room ──────────────────────────────────────────────── */
+body.salle-des-machines .sdm-room.detail {
+  flex-direction: column;
+  align-items: stretch;
+  padding-top: 16px;
+}
+body.salle-des-machines .sdm-detail-head {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  margin-bottom: 14px;
+  max-width: 1180px;
+  width: 100%;
+  margin-inline: auto;
+}
+body.salle-des-machines .sdm-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  letter-spacing: .1em;
+  color: var(--ink-mute);
+  background: none;
+  border: 1px solid var(--hairline-2, #342818);
+  border-radius: 7px;
+  padding: 7px 12px;
+  cursor: pointer;
+  text-transform: uppercase;
+  transition: .2s;
+  text-decoration: none;
+}
+body.salle-des-machines .sdm-back:hover { color: var(--ink); border-color: var(--oak); }
+body.salle-des-machines .sdm-detail-head h1 {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 144;
+  font-weight: 420;
+  font-size: 34px;
+  line-height: .9;
+  color: var(--ink);
+}
+body.salle-des-machines .sdm-detail-head h1 em { font-style: italic; color: var(--oak); }
+body.salle-des-machines .sdm-detail-head .htag { margin-left: auto; font-family: "JetBrains Mono", monospace; font-size: 10px; letter-spacing: .08em; color: var(--ink-mute); }
+
+/* ── panel: croqui + config ───────────────────────────────────── */
+body.salle-des-machines .sdm-panel {
+  display: grid;
+  grid-template-columns: 1.1fr .9fr;
+  gap: 24px;
+  max-width: 1180px;
+  width: 100%;
+  margin-inline: auto;
+  flex: 1;
+  min-height: 0;
+}
+body.salle-des-machines .sdm-croqui {
+  position: relative;
+  border: 1px solid var(--hairline-2, #342818);
+  border-radius: 12px;
+  background: radial-gradient(120% 100% at 50% 0%, rgba(40,30,18,.4), rgba(10,8,5,.5));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  min-height: 340px;
+}
+body.salle-des-machines .sdm-croqui .floorlabel {
+  position: absolute;
+  bottom: 12px;
+  left: 16px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  letter-spacing: .18em;
+  color: var(--ink-faint, #3a2e1d);
+  text-transform: uppercase;
+}
+body.salle-des-machines .sdm-config {
+  overflow-y: auto;
+  padding-right: 4px;
+}
+body.salle-des-machines .sdm-config::-webkit-scrollbar { width: 5px; }
+body.salle-des-machines .sdm-config::-webkit-scrollbar-thumb { background: var(--hairline-2, #342818); border-radius: 3px; }
+
+/* ── req banner ───────────────────────────────────────────────── */
+body.salle-des-machines .sdm-req-banner {
+  display: none;
+  align-items: center;
+  gap: 10px;
+  margin: 0 auto 12px;
+  max-width: 1180px;
+  width: 100%;
+  padding: 9px 14px;
+  border: 1px solid var(--oak-deep, #6e4e26);
+  border-radius: 8px;
+  background: rgba(160,122,72,.07);
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+body.salle-des-machines[data-role="operateur"] .sdm-req-banner { display: flex; }
+body.salle-des-machines[data-role="manager"]   .sdm-req-banner { display: flex; border-color: var(--cold); background: rgba(47,85,117,.08); }
+
+/* ── config section head ──────────────────────────────────────── */
+body.salle-des-machines .sdm-cfg-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  margin-top: 4px;
+}
+body.salle-des-machines .sdm-cfg-head h3 {
+  font-family: "Fraunces", serif;
+  font-weight: 440;
+  font-size: 16px;
+  color: var(--ink);
+}
+body.salle-des-machines .sdm-cfg-head .tot {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--ink-mute);
+}
+body.salle-des-machines .sdm-cfg-head .tot b { color: var(--hop); }
+body.salle-des-machines .sdm-cfg-note {
+  margin-top: 14px;
+  font-size: 12px;
+  color: var(--ink-mute);
+  line-height: 1.55;
+  border-left: 2px solid var(--oak-deep, #6e4e26);
+  padding-left: 11px;
+}
+
+/* ── vessel / machine rows ────────────────────────────────────── */
+body.salle-des-machines .sdm-vrow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 12px;
+  border: 1px solid var(--hairline, #261d11);
+  border-radius: 9px;
+  margin-bottom: 8px;
+  background: rgba(12,9,5,.35);
+  transition: border-color .2s, background .2s;
+  flex-wrap: wrap;
+}
+body.salle-des-machines .sdm-vrow:hover { border-color: var(--oak-deep, #6e4e26); background: rgba(29,22,13,.55); }
+body.salle-des-machines .sdm-vrow .ico { flex: 0 0 36px; height: 44px; display: flex; align-items: center; justify-content: center; }
+body.salle-des-machines .sdm-vrow .meta { flex: 1; min-width: 0; }
+body.salle-des-machines .sdm-vrow .nm { font-family: "DM Sans"; font-weight: 500; font-size: 13.5px; color: var(--ink); }
+body.salle-des-machines .sdm-vrow .kv { font-family: "JetBrains Mono", monospace; font-size: 9.5px; letter-spacing: .05em; color: var(--ink-mute); margin-top: 2px; }
+
+/* stepper */
+body.salle-des-machines .sdm-stepper {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--hairline-2, #342818);
+  border-radius: 6px;
+  overflow: hidden;
+}
+body.salle-des-machines .sdm-stepper button {
+  width: 24px; height: 28px;
+  background: rgba(0,0,0,.25); border: none; color: var(--ink-soft); cursor: pointer; font-size: 14px; transition: .15s;
+}
+body.salle-des-machines .sdm-stepper button:hover { background: var(--oak-deep, #6e4e26); color: #120c06; }
+body.salle-des-machines .sdm-stepper .val {
+  min-width: 40px; text-align: center;
+  font-family: "JetBrains Mono", monospace; font-size: 12px; color: var(--ink); font-weight: 600; padding: 0 4px;
+}
+
+/* size picker */
+body.salle-des-machines .sdm-szpick { display: flex; gap: 4px; flex-wrap: wrap; }
+body.salle-des-machines .sdm-szpick button {
+  font-family: "JetBrains Mono", monospace; font-size: 10px; padding: 4px 7px;
+  border: 1px solid var(--hairline-2, #342818); background: rgba(0,0,0,.2); color: var(--ink-mute); border-radius: 5px; cursor: pointer; transition: .15s;
+}
+body.salle-des-machines .sdm-szpick button:hover { color: var(--ink); border-color: var(--oak-deep, #6e4e26); }
+body.salle-des-machines .sdm-szpick button.on { background: var(--oak); color: #120c06; border-color: var(--oak); font-weight: 700; }
+
+/* format toggle buttons (encartonneuse) */
+body.salle-des-machines .sdm-fmt-wrap { flex: 0 0 100%; display: flex; flex-wrap: wrap; gap: 4px; }
+body.salle-des-machines .sdm-fmt-btn {
+  font-family: "JetBrains Mono", monospace; font-size: 9px; padding: 4px 7px;
+  border: 1px solid var(--hairline-2, #342818); background: rgba(0,0,0,.2); color: var(--ink-mute); border-radius: 5px; cursor: pointer; transition: .15s;
+}
+body.salle-des-machines .sdm-fmt-btn.on { background: var(--pkg-deep, #503d6e); color: var(--pkg-band, #9b7cc8); border-color: var(--pkg, #7a5fa0); font-weight: 700; }
+body.salle-des-machines .sdm-fmt-btn:hover:not(.on) { color: var(--ink); border-color: var(--pkg-deep, #503d6e); }
+body.salle-des-machines .sdm-fmt-btn.gated { opacity: .38; cursor: not-allowed; }
+body.salle-des-machines .sdm-fmt-btn.gated::after { content: " ⊘"; }
+
+/* container badge */
+body.salle-des-machines .sdm-cont-badge {
+  font-family: "JetBrains Mono", monospace; font-size: 9.5px; padding: 2px 7px;
+  border: 1px solid var(--hairline-2, #342818); border-radius: 5px; color: var(--ink-soft);
+}
+
+/* delete btn */
+body.salle-des-machines .sdm-del {
+  background: none; border: 1px solid transparent; border-radius: 5px; color: var(--ink-faint, #3a2e1d);
+  font-size: 12px; cursor: pointer; width: 24px; height: 24px; flex: 0 0 24px;
+  display: flex; align-items: center; justify-content: center; transition: .2s;
+}
+body.salle-des-machines .sdm-del:hover { color: var(--ember); border-color: var(--ember); background: rgba(197,100,74,.08); }
+
+/* add row button */
+body.salle-des-machines .sdm-addrow {
+  width: 100%; padding: 10px; margin-top: 2px;
+  border: 1px dashed var(--hairline-2, #342818); border-radius: 9px;
+  background: none; color: var(--ink-mute);
+  font-family: "JetBrains Mono", monospace; font-size: 10px; letter-spacing: .1em;
+  cursor: pointer; text-transform: uppercase; transition: .2s;
+}
+body.salle-des-machines .sdm-addrow:hover { color: var(--oak); border-color: var(--oak-deep, #6e4e26); }
+
+/* ── error/notice ─────────────────────────────────────────────── */
+body.salle-des-machines .sdm-notice {
+  font-family: "JetBrains Mono", monospace; font-size: 11px; letter-spacing: .06em;
+  padding: 10px 14px; border-radius: 8px; margin-bottom: 12px;
+}
+body.salle-des-machines .sdm-notice.err { border: 1px solid var(--ember); color: var(--ember); background: rgba(197,100,74,.08); }
+body.salle-des-machines .sdm-notice.ok  { border: 1px solid var(--hop); color: var(--hop); background: rgba(110,122,62,.08); }
+
+/* ── role gates ───────────────────────────────────────────────── */
+body.salle-des-machines[data-role="operateur"] .sdm-del,
+body.salle-des-machines[data-role="operateur"] .sdm-addrow { display: none; }
+
+body.salle-des-machines[data-role="manager"] .sdm-del,
+body.salle-des-machines[data-role="manager"] .sdm-addrow { opacity: .45; pointer-events: none; filter: grayscale(.6); }
+
+body.salle-des-machines[data-role="operateur"] .sdm-stepper button,
+body.salle-des-machines[data-role="operateur"] .sdm-szpick button,
+body.salle-des-machines[data-role="operateur"] .sdm-fmt-btn { filter: grayscale(.5) opacity(.55); pointer-events: none; }
+
+/* ── add modal ────────────────────────────────────────────────── */
+body.salle-des-machines .sdm-modal-overlay {
+  position: fixed; inset: 0; z-index: 30;
+  background: rgba(0,0,0,.62);
+  display: flex; align-items: center; justify-content: center;
+}
+body.salle-des-machines .sdm-modal {
+  background: var(--bg-elev); border: 1px solid var(--oak-deep, #6e4e26);
+  border-radius: 12px; padding: 26px 28px; min-width: 320px; max-width: 420px;
+  box-shadow: 0 36px 72px -18px rgba(0,0,0,.8);
+}
+body.salle-des-machines .sdm-modal h4 {
+  font-family: "Fraunces", serif; font-weight: 440; font-size: 18px; color: var(--ink); margin-bottom: 14px;
+}
+body.salle-des-machines .sdm-modal label {
+  display: block; font-family: "JetBrains Mono", monospace; font-size: 10px; letter-spacing: .1em;
+  color: var(--ink-mute); text-transform: uppercase; margin-bottom: 4px; margin-top: 10px;
+}
+body.salle-des-machines .sdm-modal select,
+body.salle-des-machines .sdm-modal input[type="number"],
+body.salle-des-machines .sdm-modal input[type="text"] {
+  width: 100%; background: rgba(0,0,0,.3); border: 1px solid var(--hairline-2, #342818);
+  border-radius: 6px; color: var(--ink); font-family: "DM Sans", sans-serif; font-size: 13px;
+  padding: 7px 9px; outline: none; transition: .2s; color-scheme: dark;
+}
+body.salle-des-machines .sdm-modal select:focus,
+body.salle-des-machines .sdm-modal input:focus { border-color: var(--oak); }
+body.salle-des-machines .sdm-modal .modal-note {
+  font-size: 11px; color: var(--ink-mute); margin-top: 12px; line-height: 1.5;
+  border-left: 2px solid var(--oak-deep, #6e4e26); padding-left: 10px;
+}
+body.salle-des-machines .sdm-modal .modal-actions {
+  display: flex; gap: 9px; margin-top: 18px; justify-content: flex-end;
+}
+body.salle-des-machines .sdm-modal .btn-cancel {
+  background: none; border: 1px solid var(--hairline-2, #342818); color: var(--ink-mute);
+  font-family: "JetBrains Mono", monospace; font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+  padding: 8px 14px; border-radius: 7px; cursor: pointer; transition: .2s;
+}
+body.salle-des-machines .sdm-modal .btn-cancel:hover { border-color: var(--oak-deep, #6e4e26); color: var(--ink); }
+body.salle-des-machines .sdm-modal .btn-confirm {
+  background: var(--oak-deep, #6e4e26); border: 1px solid var(--oak); color: var(--ink);
+  font-family: "JetBrains Mono", monospace; font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+  padding: 8px 14px; border-radius: 7px; cursor: pointer; transition: .2s;
+}
+body.salle-des-machines .sdm-modal .btn-confirm:hover { background: var(--oak); color: #120c06; }
+
+/* ── SVG shared ──────────────────────────────────────────────── */
+body.salle-des-machines svg .ground { stroke: var(--line, #caa86e); fill: none; stroke-width: 2; stroke-linecap: round; }
+body.salle-des-machines svg .ink    { stroke: var(--line, #caa86e); fill: none; stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
+body.salle-des-machines svg .ink-2  { stroke: var(--line-soft, #7a6647); fill: none; stroke-width: .95; stroke-linejoin: round; stroke-linecap: round; }
+body.salle-des-machines svg .steam  { stroke: var(--ink-mute); fill: none; stroke-width: 1.1; stroke-linecap: round; opacity: .5; }
+body.salle-des-machines svg .shade  { stroke: var(--line-soft, #7a6647); fill: none; stroke-width: .65; stroke-linecap: butt; opacity: .35; }
+body.salle-des-machines svg .dimline { stroke: var(--line-soft, #7a6647); fill: none; stroke-width: .6; opacity: .7; }
+body.salle-des-machines svg .band-oak { stroke: var(--oak); fill: none; stroke-width: 1.6; stroke-linecap: round; }
+body.salle-des-machines svg .band-bbt { stroke: var(--bbt); fill: none; stroke-width: 1.6; stroke-linecap: round; }
+body.salle-des-machines svg .band-hop { stroke: var(--hop); fill: none; stroke-width: 1.6; stroke-linecap: round; }
+body.salle-des-machines svg .band-pkg { stroke: var(--pkg-band, #9b7cc8); fill: none; stroke-width: 1.6; stroke-linecap: round; }
+body.salle-des-machines svg .dim    { fill: var(--ink-mute); font-family: "JetBrains Mono", monospace; font-size: 7px; letter-spacing: .04em; }
+body.salle-des-machines svg .dim-o  { fill: var(--oak); font-family: "JetBrains Mono", monospace; font-size: 7px; letter-spacing: .04em; }
+
+/* ── footer label ─────────────────────────────────────────────── */
+body.salle-des-machines .sdm-titleblock {
+  position: fixed; bottom: 16px; right: 50px; z-index: 4;
+  text-align: right; font-family: "JetBrains Mono", monospace; font-size: 9px;
+  letter-spacing: .14em; color: var(--ink-faint, #3a2e1d); line-height: 1.7;
+  text-transform: uppercase; border-right: 2px solid var(--hairline-2, #342818); padding-right: 10px;
+}
+
+/* ── animation ────────────────────────────────────────────────── */
+.sdm-draw [class^="ink"], .sdm-draw .ground, .sdm-draw [class^="band-"] {
+  stroke-dasharray: 2200; stroke-dashoffset: 2200;
+  animation: sdmDraw 1.8s cubic-bezier(.4,.1,.2,1) forwards;
+}
+@keyframes sdmDraw { to { stroke-dashoffset: 0; } }
+.sdm-reveal { opacity: 0; transform: translateY(10px); animation: sdmRise .5s cubic-bezier(.2,.7,.2,1) forwards; }
+@keyframes sdmRise { to { opacity: 1; transform: none; } }

@@ -16,7 +16,9 @@ $crumbs        = ["Accueil", "Admin", "Paramètres"];
 $entities = [
     ["recipes",     "Recettes",         "ref_recipes",        "Recettes : classification, vintage, sous-type",     null,      "/admin/settings/recipes.php"],
     ["skus",        "SKU",              "ref_skus",           "Codes SKU + format + volume par unité",              null,      "/admin/settings/skus.php"],
-    ["vessels",     "Cuves",            "ref_cct / yt / bbt", "CCT, YT, BBT — capacités et statuts",                null,      "/admin/settings/vessels.php"],
+    // "Cuves" (CCT/YT/BBT) retired 2026-05-25 → now managed in Salle des Machines
+    // (/modules/salle-des-machines.php), writing the same canonical tables (ref_cct/yt/bbt
+    // + ref_brewhouse_vessels). Le Zeppelin is the SOT for commissioning/capacity.
     ["clients",     "Clients",          "ref_clients",        "Clients contract / collab",                          null,      "/admin/settings/clients.php"],
     ["yeasts",      "Levures",          "ref_yeast_strains",  "Souches de levure et fournisseurs",                  null,      "/admin/settings/yeasts.php"],
     ["suppliers",   "Suppliers",        "ref_suppliers",      "Suppliers — un par paire (supplier, GL)",            null,      "/admin/settings/suppliers.php"],
