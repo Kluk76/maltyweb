@@ -399,7 +399,6 @@ header("Content-Type: text/html; charset=utf-8");
     <div class="af-chips-bar" role="group" aria-label="Filtres">
       <button class="af-chip on" data-filter="all">Tous</button>
       <button class="af-chip" data-filter="active">Actifs</button>
-      <button class="af-chip" data-filter="parser">Parseur</button>
       <button class="af-chip" data-filter="catalogue">Catalogue MI</button>
       <button class="af-chip" data-filter="hors">Hors périmètre</button>
     </div>
