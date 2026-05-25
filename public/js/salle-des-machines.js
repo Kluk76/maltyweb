@@ -261,6 +261,18 @@ function icoCartoner() {
     <rect class="ink-2" x="46" y="44" width="18" height="10" rx="2"/>
   </svg>`;
 }
+function icoCuvFiller() {
+  /* Serving-tank filler icon: cylindrical serving tank with tap */
+  return `<svg viewBox="0 0 100 100" width="36" height="36" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+    <path class="ink" d="M22 28 Q50 14 78 28"/><ellipse class="ink-2" cx="50" cy="28" rx="28" ry="5"/>
+    <path class="ground" d="M22 28 V72"/><path class="ground" d="M78 28 V72"/>
+    ${cylShade(26,74,33,68,4)}
+    <path class="ink" d="M22 72 Q50 86 78 72"/>
+    <line class="ink" x1="50" y1="86" x2="50" y2="94"/>
+    <path class="ink" d="M42 94 h16"/><path class="ink" d="M58 94 v-5 l4 -3 h6"/>
+    ${triClamp(72,91,.75)}
+  </svg>`;
+}
 
 /* ── Scene generators (identical to mock, returns SVG string) ───── */
 function brewScene() {
@@ -559,14 +571,60 @@ function paintPkg() {
     ${machHtml || '<p class="sdm-cfg-note">Aucune machine configurée. Migration 140 non appliquée.</p>'}
     <button class="sdm-addrow" data-sdm-addzone="pkg-machine">+ Ajouter machine</button>
     ${cartonerHtml}
+    ${servingTanksCard()}
     <div class="sdm-cfg-note" style="margin-top:12px">Les formats encartonneuse sont gérés par contenants actifs. Un format ne s'active que si son contenant est supporté par une soutireuse active.</div>`;
+}
+
+/* ── Serving tanks capacity card ─────────────────────────────── */
+function servingTanksCard() {
+  const tanks = window.SDM_SERVING_TANKS || [];
+  const totalHl = window.SDM_SERVING_TANK_TOTAL || 0;
+
+  if (tanks.length === 0) return '';
+
+  // Group by capacity for compact display
+  const grouped = {};
+  tanks.forEach(t => {
+    const key = parseFloat(t.capacity_hl).toFixed(0);
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push(t);
+  });
+
+  let groupHtml = '';
+  Object.entries(grouped)
+    .sort((a, b) => Number(a[0]) - Number(b[0]))
+    .forEach(([cap, group]) => {
+      const statusBadges = group.map(t => {
+        const cls = t.status === 'active' ? 'sdm-stank-dot active' : (t.status === 'maintenance' ? 'sdm-stank-dot maint' : 'sdm-stank-dot ret');
+        return `<span class="${cls}" title="Cuve #${escHtml(String(t.number))} — ${escHtml(t.status)}"></span>`;
+      }).join('');
+      groupHtml += `<div class="sdm-stank-group">
+        <span class="sdm-stank-cap">${escHtml(cap)} HL</span>
+        <span class="sdm-stank-count">×${group.length}</span>
+        <span class="sdm-stank-dots">${statusBadges}</span>
+      </div>`;
+    });
+
+  return `<div class="sdm-cfg-head" style="margin-top:18px">
+    <h3>Cuves de service</h3>
+    <span class="tot"><b>${totalHl} HL</b> · ${tanks.length} cuves</span>
+  </div>
+  <div class="sdm-vrow sdm-reveal sdm-stank-card" style="animation-delay:.1s;flex-wrap:wrap;gap:8px;">
+    <div class="ico">${icoCuvFiller()}</div>
+    <div class="meta">
+      <div class="nm">Cuves de service — in-house</div>
+      <div class="kv">Format V (cuve de service) · capacité totale : ${totalHl} HL</div>
+    </div>
+    <div class="sdm-stank-groups">${groupHtml}</div>
+    <div class="sdm-stank-note">Registre des cuves en propre. Les cuves client sont gérées séparément. La disponibilité du format V dépend de la tireuse cuves de service — pas du registre des cuves.</div>
+  </div>`;
 }
 
 function pkgMachineRow(m, i, fillerContainers, activeContainerCodes, formats, containerMi) {
   const delay = 0.06 + i * 0.07;
-  const icoMap = { filler_bottle: icoBottleFiller, filler_can: icoCanLine, filler_keg: icoKegFiller, cartoner: icoCartoner, centrifuge: icoCentrifuge, kze: icoKze };
+  const icoMap = { filler_bottle: icoBottleFiller, filler_can: icoCanLine, filler_keg: icoKegFiller, filler_cuv: icoCuvFiller, cartoner: icoCartoner, centrifuge: icoCentrifuge, kze: icoKze };
   const icoFn  = icoMap[m.machine_type] || icoCartoner;
-  const typeLabel = { filler_bottle:'Soutireuse bouteilles', filler_can:'Ligne canettes', filler_keg:'Soutireuse fûts', cartoner:'Encartonneuse', centrifuge:'Centrifugeuse', kze:'KZE' }[m.machine_type] || m.machine_type;
+  const typeLabel = { filler_bottle:'Soutireuse bouteilles', filler_can:'Ligne canettes', filler_keg:'Soutireuse fûts', filler_cuv:'Tireuse cuves de service', cartoner:'Encartonneuse', centrifuge:'Centrifugeuse', kze:'KZE' }[m.machine_type] || m.machine_type;
 
   if (m.machine_type === 'cartoner') return ''; // rendered separately
 
@@ -744,7 +802,7 @@ const ADD_TYPES = {
   cct:            { label: 'CCT (fermenteur)', fields: [{ name:'capacity_hl', label:'Capacité (HL)', type:'number', min:1, val:90 }] },
   bbt:            { label: 'BBT (cuve de garde)', fields: [{ name:'capacity_hl', label:'Capacité (HL)', type:'number', min:1, val:120 }] },
   'cellar-machine':{ label: 'Machine de process (cave)', fields: [{ name:'machine_type', label:'Type', type:'select', opts:{centrifuge:'Centrifugeuse',kze:'KZE — pasteurisateur flash'} }, { name:'throughput_hl_h', label:'Débit (HL/h)', type:'number', min:1, val:30 }] },
-  'pkg-machine':  { label: 'Machine conditionnement', fields: [{ name:'machine_type', label:'Type', type:'select', opts:{filler_bottle:'Soutireuse bouteilles',filler_can:'Ligne canettes',filler_keg:'Soutireuse fûts'} }, { name:'speed_units_h', label:'Vitesse (u/h)', type:'number', min:1, val:2000 }] },
+  'pkg-machine':  { label: 'Machine conditionnement', fields: [{ name:'machine_type', label:'Type', type:'select', opts:{filler_bottle:'Soutireuse bouteilles',filler_can:'Ligne canettes',filler_keg:'Soutireuse fûts',filler_cuv:'Tireuse cuves de service'} }, { name:'speed_units_h', label:'Vitesse (u/h)', type:'number', min:0, val:0 }] },
 };
 
 function openAddModal(zone) {

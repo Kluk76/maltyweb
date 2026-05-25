@@ -529,6 +529,66 @@ body.salle-des-machines .sdm-titleblock {
   text-transform: uppercase; border-right: 2px solid var(--hairline-2, #342818); padding-right: 10px;
 }
 
+/* ── serving tanks card (migration 142) ───────────────────────── */
+body.salle-des-machines .sdm-stank-card {
+  flex-direction: column;
+  align-items: flex-start;
+}
+body.salle-des-machines .sdm-stank-card .ico { flex: 0 0 36px; }
+body.salle-des-machines .sdm-stank-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 0 2px;
+}
+body.salle-des-machines .sdm-stank-group {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--hairline-2, #342818);
+  border-radius: 6px;
+  padding: 4px 9px;
+  background: rgba(0,0,0,.18);
+}
+body.salle-des-machines .sdm-stank-cap {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: .04em;
+}
+body.salle-des-machines .sdm-stank-count {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  color: var(--ink-mute);
+  letter-spacing: .06em;
+}
+body.salle-des-machines .sdm-stank-dots {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+body.salle-des-machines .sdm-stank-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1px solid var(--hairline-2, #342818);
+}
+body.salle-des-machines .sdm-stank-dot.active      { background: var(--hop); border-color: var(--hop); }
+body.salle-des-machines .sdm-stank-dot.maint        { background: var(--ember); border-color: var(--ember); }
+body.salle-des-machines .sdm-stank-dot.ret          { background: transparent; opacity: .35; }
+body.salle-des-machines .sdm-stank-note {
+  width: 100%;
+  font-size: 11px;
+  color: var(--ink-mute);
+  line-height: 1.5;
+  padding-left: 11px;
+  border-left: 2px solid var(--oak-deep, #6e4e26);
+  margin-top: 2px;
+}
+
 /* ── animation ────────────────────────────────────────────────── */
 .sdm-draw [class^="ink"], .sdm-draw .ground, .sdm-draw [class^="band-"] {
   stroke-dasharray: 2200; stroke-dashoffset: 2200;

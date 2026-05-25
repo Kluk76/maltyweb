@@ -181,7 +181,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         } elseif ($action === 'add' && in_array($_POST['zone'] ?? '', ['cellar-machine','pkg-machine'], true)) {
             $machType = must_be_one_of('machine_type', $_POST['machine_type'] ?? '',
-                ['centrifuge','kze','filler_bottle','filler_can','filler_keg','cartoner']);
+                ['centrifuge','kze','filler_bottle','filler_can','filler_keg','cartoner','filler_cuv']);
             $thru  = post_decimal('throughput_hl_h');
             $speed = post_int('speed_units_h');
             /* resolve catalog_id */
@@ -226,7 +226,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 header('Content-Type: text/html; charset=utf-8');
 $dbError = null;
 
-/* defaults — page renders gracefully if tables are empty (migration 140 not applied) */
+/* defaults — page renders gracefully if tables are empty (migration 140/142 not applied) */
 $ccts         = [];
 $bbts         = [];
 $yts          = [];
@@ -237,6 +237,7 @@ $fillerConts  = []; // machine_id → [{container_code, display_name}]
 $containerMi  = []; // container_code → mi_id_fk
 $pkgFormats   = [];
 $cellarMachines = [];
+$servingTanks = []; // ref_serving_tanks (in-house), seeded by migration 142
 
 try {
     $pdo = maltytask_pdo();
@@ -317,6 +318,19 @@ try {
           ORDER BY FIELD(run_type,'bot','can','can33','keg','cuv',''), id"
     )->fetchAll(PDO::FETCH_ASSOC);
 
+    /* Serving tanks — in-house only (migration 142) */
+    try {
+        $servingTanks = $pdo->query(
+            "SELECT id, number, capacity_hl, status, notes
+               FROM ref_serving_tanks
+              WHERE location = 'in_house'
+              ORDER BY number"
+        )->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Throwable $_e) {
+        /* Table absent if migration 142 not yet applied — silently ignore */
+        $servingTanks = [];
+    }
+
 } catch (Throwable $e) {
     $dbError = $e->getMessage();
 }
@@ -345,6 +359,8 @@ $jsPkgMachines    = json_encode($pkgMachines, JSON_UNESCAPED_UNICODE | JSON_HEX_
 $jsFillerConts    = json_encode($fillerConts, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 $jsContainerMi    = json_encode($containerMi, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 $jsPkgFormats     = json_encode($pkgFormats, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
+$jsServingTanks   = json_encode($servingTanks, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
+$servingTankTotal = array_sum(array_column($servingTanks, 'capacity_hl'));
 ?><!doctype html>
 <html lang="fr">
 <head>
@@ -557,6 +573,8 @@ window.SDM_PKG_MACHINES    = <?= $jsPkgMachines ?>;
 window.SDM_FILLER_CONTAINERS = <?= $jsFillerConts ?>;
 window.SDM_CONTAINER_MI    = <?= $jsContainerMi ?>;
 window.SDM_PKG_FORMATS     = <?= $jsPkgFormats ?>;
+window.SDM_SERVING_TANKS   = <?= $jsServingTanks ?>;
+window.SDM_SERVING_TANK_TOTAL = <?= json_encode((float) $servingTankTotal) ?>;
 </script>
 <script src="/js/salle-des-machines.js?v=<?= @filemtime(__DIR__ . '/../js/salle-des-machines.js') ?: time() ?>"></script>
 
