@@ -5,12 +5,16 @@ declare(strict_types=1);
  * document-preview-png.php — streams page-1 PNG preview of a document.
  *
  * Auth-gated: must be logged in.
- * GET ?file_id=<drive-file-id>
+ * GET ?file_id=<drive-file-id>[&dpi=300|600]
+ *
+ * The ?dpi= param selects render resolution (default 300, on-demand 600 for
+ * hi-res zoom). Only values in DP_PREVIEW_DPIS_ALLOWED are accepted; anything
+ * else is silently clamped to DP_PREVIEW_DPI_DEFAULT — never arbitrary DPI.
  *
  * Delegates to dp_render_page1_png() which:
  *   - Locates local PDF or proxies from Drive
- *   - Runs pdftoppm to render page 1 at 120 dpi
- *   - Caches to /var/www/maltytask/storage/preview-cache/{file_id}-p1.png
+ *   - Runs pdftoppm to render page 1 at the requested DPI
+ *   - Caches to /var/www/maltytask/storage/preview-cache/{file_id}-p1-r{dpi}.png
  *   - Is idempotent — returns the cached PNG on repeat calls
  */
 
@@ -49,9 +53,16 @@ try {
     exit;
 }
 
+// ── Validate dpi param (two-step: read with default first, then validate) ──────
+
+$dpi = (int) ($_GET['dpi'] ?? DP_PREVIEW_DPI_DEFAULT);
+if (!in_array($dpi, DP_PREVIEW_DPIS_ALLOWED, true)) {
+    $dpi = DP_PREVIEW_DPI_DEFAULT;
+}
+
 // ── Serve from cache if available ─────────────────────────────────────────────
 
-$png_path = DP_PREVIEW_CACHE . '/' . $file_id . '-p1.png';
+$png_path = dp_preview_png_path($file_id, $dpi);
 
 if (is_file($png_path)) {
     $size = filesize($png_path);
@@ -66,7 +77,7 @@ if (is_file($png_path)) {
 
 // ── Generate and cache ────────────────────────────────────────────────────────
 
-$public_url = dp_render_page1_png($file_id);
+$public_url = dp_render_page1_png($file_id, $dpi);
 
 if ($public_url === null) {
     http_response_code(502);

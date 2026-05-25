@@ -1,0 +1,1260 @@
+/**
+ * salle-fournisseurs.css
+ * Scoped entirely under body.salle-fournisseurs — no leakage to other pages.
+ * Dark aged-oak palette reuses tokens from app.css :root.
+ * Do NOT append to app.css — linked separately with cache-bust ?v= mtime.
+ *
+ * New tokens used here (warehouse / governance accent):
+ *   --dock / --dock-deep / --dock-glow  already declared in app.css :root
+ *   --manifest / --manifest-2 / etc. were in the mockup but not canonical.
+ *   We map them to existing tokens:
+ *     --manifest      → var(--ink)
+ *     --manifest-2    → var(--ink-soft)
+ *     --rule-manifest → rgba(196,168,112,.12)
+ */
+
+/* ── board background ─────────────────────────────────────────────── */
+body.salle-fournisseurs {
+  font-family: "DM Sans", system-ui, sans-serif;
+  color: var(--ink);
+  background: var(--bg);
+  height: 100vh;
+  overflow: hidden;
+}
+
+body.salle-fournisseurs .sf-board {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background:
+    radial-gradient(130% 90% at 50% -20%, rgba(200,134,58,.1), transparent 55%),
+    radial-gradient(100% 120% at 50% 130%, rgba(0,0,0,.55), transparent 60%),
+    var(--bg);
+  pointer-events: none;
+}
+body.salle-fournisseurs .sf-board::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: .45;
+  background-image:
+    linear-gradient(rgba(122,102,71,.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(122,102,71,.07) 1px, transparent 1px),
+    linear-gradient(rgba(122,102,71,.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(122,102,71,.04) 1px, transparent 1px);
+  background-size: 120px 120px, 120px 120px, 24px 24px, 24px 24px;
+  mask-image: radial-gradient(120% 100% at 50% 40%, #000 55%, transparent 92%);
+}
+
+/* ── toast ─────────────────────────────────────────────────────────── */
+body.salle-fournisseurs .sf-toast {
+  position: fixed;
+  bottom: 48px;
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  z-index: 60;
+  padding: 10px 20px;
+  background: var(--bg-elev);
+  border: 1px solid var(--oak-deep);
+  border-radius: 10px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  letter-spacing: .1em;
+  color: var(--ink-soft);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .3s, transform .3s;
+  text-transform: uppercase;
+}
+body.salle-fournisseurs .sf-toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* ── main layout ────────────────────────────────────────────────────── */
+body.salle-fournisseurs .sf-workspace {
+  position: fixed;
+  top: 52px; /* topbar height */
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  overflow: hidden;
+  z-index: 1;
+}
+
+/* ── LEFT PANEL ─────────────────────────────────────────────────────── */
+body.salle-fournisseurs .sf-manifest {
+  width: 420px;
+  flex: 0 0 420px;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--hairline-2);
+  background: rgba(10,7,4,.4);
+  backdrop-filter: blur(4px);
+  overflow: hidden;
+}
+
+/* header */
+body.salle-fournisseurs .sf-header {
+  padding: 14px 18px 0;
+  flex-shrink: 0;
+}
+body.salle-fournisseurs .sf-header-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+body.salle-fournisseurs .sf-eyebrow {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  letter-spacing: .3em;
+  color: var(--dock);
+  text-transform: uppercase;
+  margin-bottom: 3px;
+}
+body.salle-fournisseurs .sf-module-title {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 96;
+  font-weight: 440;
+  font-size: 24px;
+  color: var(--ink);
+  line-height: 1;
+}
+body.salle-fournisseurs .sf-module-title em {
+  font-style: italic;
+  color: var(--dock);
+}
+body.salle-fournisseurs .sf-header-badges {
+  flex-shrink: 0;
+}
+body.salle-fournisseurs .sf-role-badge {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 4px;
+}
+body.salle-fournisseurs .sf-role-badge.admin {
+  background: rgba(158,176,96,.15);
+  color: var(--hop);
+  border: 1px solid rgba(158,176,96,.25);
+}
+body.salle-fournisseurs .sf-role-badge.manager {
+  background: rgba(101,147,184,.12);
+  color: var(--bbt);
+  border: 1px solid rgba(101,147,184,.22);
+}
+
+/* governance summary bar */
+body.salle-fournisseurs .sf-gov-bar {
+  display: flex;
+  gap: 14px;
+  padding: 6px 0 10px;
+  border-bottom: 1px solid var(--hairline-2);
+  margin-bottom: 4px;
+}
+body.salle-fournisseurs .sf-gov-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+}
+body.salle-fournisseurs .sf-gov-num {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--ink-soft);
+  line-height: 1;
+}
+body.salle-fournisseurs .sf-gov-lbl {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 8px;
+  letter-spacing: .08em;
+  color: var(--ink-mute);
+  text-transform: uppercase;
+}
+body.salle-fournisseurs .sf-gov-stat.warn .sf-gov-num { color: var(--ember); }
+body.salle-fournisseurs .sf-gov-stat.warn .sf-gov-lbl { color: var(--ember); }
+
+/* sketch strip */
+body.salle-fournisseurs .sf-sketch-strip {
+  height: 56px;
+  margin: 0 -18px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--hairline-2);
+}
+body.salle-fournisseurs svg .ink {
+  stroke: var(--line); fill: none; stroke-width: 1.5;
+  stroke-linejoin: round; stroke-linecap: round;
+}
+body.salle-fournisseurs svg .ink-2 {
+  stroke: var(--line-soft); fill: none; stroke-width: .9;
+  stroke-linejoin: round; stroke-linecap: round;
+}
+body.salle-fournisseurs svg .band-dock {
+  stroke: var(--dock); fill: none; stroke-width: 1.6; stroke-linecap: round;
+}
+body.salle-fournisseurs svg .dim {
+  fill: var(--ink-mute);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 7px;
+  letter-spacing: .04em;
+}
+body.salle-fournisseurs svg .shade {
+  stroke: var(--line-soft); fill: none; stroke-width: .65;
+  stroke-linecap: butt; opacity: .35;
+}
+body.salle-fournisseurs .draw .ink,
+body.salle-fournisseurs .draw .ink-2,
+body.salle-fournisseurs .draw .band-dock {
+  stroke-dasharray: 3000;
+  stroke-dashoffset: 3000;
+  animation: sf-draw 2.4s cubic-bezier(.4,.1,.2,1) forwards;
+}
+@keyframes sf-draw { to { stroke-dashoffset: 0; } }
+
+/* filter bar */
+body.salle-fournisseurs .sf-filter-bar {
+  padding: 8px 14px;
+  display: flex;
+  gap: 7px;
+  border-bottom: 1px solid var(--hairline-2);
+  flex-shrink: 0;
+}
+body.salle-fournisseurs .sf-search-wrap {
+  flex: 1;
+  position: relative;
+}
+body.salle-fournisseurs .sf-search-wrap svg {
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: .4;
+}
+body.salle-fournisseurs .sf-search-wrap input {
+  width: 100%;
+  background: rgba(0,0,0,.3);
+  border: 1px solid var(--hairline-2);
+  border-radius: 7px;
+  color: var(--ink);
+  font-family: "DM Sans", sans-serif;
+  font-size: 13px;
+  padding: 7px 10px 7px 30px;
+  outline: none;
+  transition: .2s;
+}
+body.salle-fournisseurs .sf-search-wrap input:focus { border-color: var(--dock); }
+body.salle-fournisseurs .sf-search-wrap input::placeholder { color: var(--ink-mute); }
+
+/* chips */
+body.salle-fournisseurs .sf-chips-bar {
+  padding: 6px 14px;
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--hairline-2);
+  flex-shrink: 0;
+}
+body.salle-fournisseurs .sf-chip {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border: 1px solid var(--hairline-2);
+  border-radius: 20px;
+  background: none;
+  cursor: pointer;
+  color: var(--ink-mute);
+  transition: .15s;
+}
+body.salle-fournisseurs .sf-chip.on {
+  border-color: var(--dock);
+  color: var(--dock);
+  background: rgba(200,134,58,.1);
+}
+body.salle-fournisseurs .sf-chip:hover { color: var(--ink); border-color: var(--oak); }
+body.salle-fournisseurs .sf-chip.warn {
+  border-color: rgba(197,100,74,.4);
+  color: var(--ember);
+  background: rgba(197,100,74,.06);
+}
+body.salle-fournisseurs .sf-chip.warn.on {
+  background: rgba(197,100,74,.14);
+}
+
+/* sort controls */
+body.salle-fournisseurs .sf-controls-bar {
+  padding: 6px 14px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border-bottom: 1px solid var(--hairline-2);
+  flex-shrink: 0;
+}
+body.salle-fournisseurs .sf-sort-select {
+  background: rgba(0,0,0,.4);
+  border: 1px solid var(--hairline-2);
+  border-radius: 5px;
+  color: var(--ink-mute);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  letter-spacing: .06em;
+  padding: 4px 8px;
+  outline: none;
+  cursor: pointer;
+}
+body.salle-fournisseurs .sf-sort-select option { background: var(--bg-elev); }
+
+/* supplier list */
+body.salle-fournisseurs .sf-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 5px 8px;
+}
+body.salle-fournisseurs .sf-list::-webkit-scrollbar { width: 5px; }
+body.salle-fournisseurs .sf-list::-webkit-scrollbar-thumb {
+  background: var(--hairline-2);
+  border-radius: 3px;
+}
+
+/* supplier row */
+body.salle-fournisseurs .sf-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background .15s, border-color .15s;
+  margin-bottom: 2px;
+  position: relative;
+}
+body.salle-fournisseurs .sf-row:hover {
+  background: rgba(200,134,58,.06);
+  border-color: var(--hairline-2);
+}
+body.salle-fournisseurs .sf-row.sf-active {
+  background: rgba(200,134,58,.1);
+  border-color: var(--dock-deep);
+}
+body.salle-fournisseurs .sf-row.sf-row-draft {
+  border-left: 3px solid var(--ember);
+  padding-left: 7px;
+}
+body.salle-fournisseurs .sf-row.sf-inactive { opacity: .45; }
+
+body.salle-fournisseurs .sf-avatar {
+  flex: 0 0 32px;
+  height: 32px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: "Fraunces", serif;
+  font-weight: 500;
+  font-size: 14px;
+  background: var(--hairline-2);
+  color: var(--ink-soft);
+  flex-shrink: 0;
+}
+body.salle-fournisseurs .sf-row-info { flex: 1; min-width: 0; }
+body.salle-fournisseurs .sf-row-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+body.salle-fournisseurs .sf-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+body.salle-fournisseurs .sf-row-id {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  color: var(--ink-mute);
+  letter-spacing: .04em;
+}
+body.salle-fournisseurs .sf-row-gl {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  color: var(--oak);
+}
+body.salle-fournisseurs .sf-row-cur {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  color: var(--ink-faint);
+  border: 1px solid var(--hairline-2);
+  border-radius: 3px;
+  padding: 0 3px;
+}
+body.salle-fournisseurs .sf-badges { display: flex; gap: 4px; flex-shrink: 0; flex-wrap: wrap; }
+
+/* badges */
+body.salle-fournisseurs .sf-badge {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 8px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  padding: 2px 5px;
+  border-radius: 3px;
+}
+body.salle-fournisseurs .sf-badge-active   { background: rgba(110,122,62,.2);  color: var(--hop); }
+body.salle-fournisseurs .sf-badge-inactive { background: rgba(94,98,102,.18); color: var(--steel-mid); }
+body.salle-fournisseurs .sf-badge-parser   { background: rgba(200,134,58,.15); color: var(--dock); }
+body.salle-fournisseurs .sf-badge-hors     { background: rgba(197,100,74,.12); color: var(--ember); }
+body.salle-fournisseurs .sf-badge-mi       { background: rgba(160,122,72,.15); color: var(--oak); }
+body.salle-fournisseurs .sf-badge-draft    { background: rgba(197,100,74,.15); color: var(--ember); border: 1px dashed rgba(197,100,74,.3); }
+body.salle-fournisseurs .sf-badge-incomplet{ background: rgba(94,98,102,.15); color: var(--steel-mid); }
+body.salle-fournisseurs .sf-badge-validated{ background: rgba(110,122,62,.15); color: var(--hop); }
+
+body.salle-fournisseurs .sf-list-count {
+  text-align: center;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  letter-spacing: .08em;
+  color: var(--ink-mute);
+  padding: 8px;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+/* ── RIGHT FICHE AREA ───────────────────────────────────────────────── */
+body.salle-fournisseurs .sf-fiche-area {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+/* empty state */
+body.salle-fournisseurs .sf-dock-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  opacity: .7;
+  padding: 40px;
+}
+body.salle-fournisseurs .sf-empty-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  letter-spacing: .2em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+body.salle-fournisseurs .sf-empty-sub {
+  font-size: 12px;
+  color: var(--ink-faint);
+  text-align: center;
+  line-height: 1.6;
+  max-width: 300px;
+}
+
+/* fiche scroll container */
+body.salle-fournisseurs .sf-fiche {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px 22px 40px;
+  display: none;
+}
+body.salle-fournisseurs .sf-fiche.sf-visible { display: block; }
+body.salle-fournisseurs .sf-fiche::-webkit-scrollbar { width: 5px; }
+body.salle-fournisseurs .sf-fiche::-webkit-scrollbar-thumb {
+  background: var(--hairline-2);
+  border-radius: 3px;
+}
+
+/* ── DOC PAPER (fiche card) ─────────────────────────────────────────── */
+body.salle-fournisseurs .sf-doc-paper {
+  background: linear-gradient(180deg, rgba(245,234,208,.06), rgba(245,234,208,.02));
+  border: 1px solid rgba(196,168,112,.18);
+  border-radius: 12px;
+  box-shadow: 0 2px 0 rgba(0,0,0,.4), inset 0 1px 0 rgba(255,230,160,.04);
+  position: relative;
+  overflow: hidden;
+}
+body.salle-fournisseurs .sf-doc-paper::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--dock-deep), var(--dock), var(--oak), var(--dock-deep));
+  opacity: .6;
+}
+body.salle-fournisseurs .sf-doc-paper::after {
+  content: "";
+  position: absolute;
+  top: 0; left: 44px; bottom: 0;
+  width: 1px;
+  background: rgba(196,168,112,.08);
+}
+
+/* reveal animation */
+body.salle-fournisseurs .sf-reveal {
+  opacity: 0;
+  transform: translateY(8px);
+  animation: sf-rise .45s cubic-bezier(.2,.7,.2,1) forwards;
+}
+@keyframes sf-rise { to { opacity: 1; transform: none; } }
+
+/* doc-head */
+body.salle-fournisseurs .sf-doc-head {
+  padding: 14px 18px 12px 52px;
+  border-bottom: 1px solid rgba(196,168,112,.12);
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  position: relative;
+}
+body.salle-fournisseurs .sf-doc-stamp {
+  position: absolute;
+  left: 10px;
+  top: 14px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 7px;
+  letter-spacing: .14em;
+  color: var(--ink-faint);
+  text-transform: uppercase;
+  writing-mode: vertical-lr;
+  transform: rotate(180deg);
+  line-height: 1;
+}
+body.salle-fournisseurs .sf-doc-head-main { flex: 1; min-width: 0; }
+body.salle-fournisseurs .sf-doc-sup-name {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 96;
+  font-weight: 440;
+  font-size: 26px;
+  line-height: 1.05;
+  color: var(--ink);
+  margin-bottom: 3px;
+}
+body.salle-fournisseurs .sf-doc-sup-id {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  letter-spacing: .1em;
+  color: var(--ink-mute);
+  text-transform: uppercase;
+}
+body.salle-fournisseurs .sf-doc-head-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  align-items: flex-end;
+  flex-shrink: 0;
+}
+
+/* commissioning / status badges in head */
+body.salle-fournisseurs .sf-state-badge {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  padding: 3px 9px;
+  border-radius: 4px;
+}
+body.salle-fournisseurs .sf-state-badge.active  { background: rgba(110,122,62,.18); color: var(--hop); border: 1px solid rgba(110,122,62,.28); }
+body.salle-fournisseurs .sf-state-badge.draft   { background: rgba(197,100,74,.12); color: var(--ember); border: 1px dashed rgba(197,100,74,.35); }
+body.salle-fournisseurs .sf-state-badge.retired { background: rgba(94,98,102,.18);  color: var(--steel-mid); border: 1px solid rgba(94,98,102,.28); }
+body.salle-fournisseurs .sf-state-badge.is-active-on  { background: rgba(110,122,62,.12); color: var(--hop); border: 1px solid rgba(110,122,62,.2); }
+body.salle-fournisseurs .sf-state-badge.is-active-off { background: rgba(94,98,102,.12);  color: var(--steel-mid); border: 1px solid rgba(94,98,102,.2); }
+
+/* parser chip */
+body.salle-fournisseurs .sf-parser-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  letter-spacing: .06em;
+  color: var(--dock);
+  background: rgba(200,134,58,.1);
+  border: 1px solid rgba(200,134,58,.22);
+  border-radius: 4px;
+  padding: 3px 8px;
+}
+body.salle-fournisseurs .sf-parser-dot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--dock);
+  box-shadow: 0 0 6px var(--dock);
+}
+body.salle-fournisseurs .sf-no-parser {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  letter-spacing: .06em;
+  color: var(--ink-faint);
+  padding: 3px 8px;
+  border: 1px dashed var(--hairline-2);
+  border-radius: 4px;
+}
+
+/* completeness ring */
+body.salle-fournisseurs .sf-ring { width: 36px; height: 36px; flex-shrink: 0; }
+body.salle-fournisseurs .sf-ring circle { transition: stroke-dashoffset .5s ease; }
+
+/* ── INTAKE BANNER (draft supplier) ─────────────────────────────────── */
+body.salle-fournisseurs .sf-intake-banner {
+  padding: 10px 14px 10px 52px;
+  border-bottom: 1px solid rgba(200,134,58,.2);
+  background: rgba(200,134,58,.05);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+body.salle-fournisseurs .sf-intake-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+body.salle-fournisseurs .sf-intake-text {
+  font-size: 11.5px;
+  color: var(--ink-soft);
+  line-height: 1.45;
+}
+body.salle-fournisseurs .sf-intake-text strong { color: var(--dock); }
+body.salle-fournisseurs .sf-intake-actions { display: flex; gap: 6px; margin-top: 4px; }
+body.salle-fournisseurs .sf-btn-validate-now {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--hop);
+  border: 1px solid rgba(110,122,62,.3);
+  background: rgba(110,122,62,.1);
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: .15s;
+}
+body.salle-fournisseurs .sf-btn-validate-now:hover { background: rgba(110,122,62,.22); }
+
+/* ── HORS PERIMETRE BANNER ──────────────────────────────────────────── */
+body.salle-fournisseurs .sf-hors-banner {
+  margin: 10px 18px 0 52px;
+  padding: 9px 12px;
+  border: 1px solid rgba(197,100,74,.25);
+  border-radius: 6px;
+  background: rgba(197,100,74,.05);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+body.salle-fournisseurs .sf-hors-banner span { font-size: 11.5px; color: var(--ember); }
+
+/* ── FIELD GRID ─────────────────────────────────────────────────────── */
+body.salle-fournisseurs .sf-doc-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  border-bottom: 1px solid rgba(196,168,112,.1);
+}
+body.salle-fournisseurs .sf-doc-field {
+  padding: 10px 18px 10px 52px;
+  border-bottom: 1px solid rgba(196,168,112,.06);
+  position: relative;
+}
+body.salle-fournisseurs .sf-doc-field:nth-child(odd) {
+  border-right: 1px solid rgba(196,168,112,.06);
+}
+body.salle-fournisseurs .sf-doc-field.sf-span2 {
+  grid-column: span 2;
+}
+body.salle-fournisseurs .sf-doc-field-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  letter-spacing: .1em;
+  color: var(--ink-mute);
+  text-transform: uppercase;
+  margin-bottom: 3px;
+}
+body.salle-fournisseurs .sf-doc-field-value {
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+body.salle-fournisseurs .sf-doc-field-value.mono {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  letter-spacing: .04em;
+}
+body.salle-fournisseurs .sf-doc-field-value.gap {
+  color: var(--ink-faint);
+  font-style: italic;
+}
+
+/* ── PROVENANCE BADGES ──────────────────────────────────────────────── */
+body.salle-fournisseurs .sf-prov {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 8px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 3px;
+  opacity: .5;
+  transition: opacity .2s;
+}
+body.salle-fournisseurs .sf-doc-field:hover .sf-prov { opacity: 1; }
+body.salle-fournisseurs .sf-prov-auto     { background: rgba(200,134,58,.12); color: var(--dock);  border: 1px solid rgba(200,134,58,.2); }
+body.salle-fournisseurs .sf-prov-verified { background: rgba(110,122,62,.12); color: var(--hop);   border: 1px solid rgba(110,122,62,.2); }
+body.salle-fournisseurs .sf-prov-locked   { background: rgba(101,147,184,.1); color: var(--bbt);   border: 1px solid rgba(101,147,184,.2); }
+body.salle-fournisseurs .sf-prov-gap      {
+  border: 1px dashed rgba(197,100,74,.4) !important;
+  background: rgba(197,100,74,.06) !important;
+  color: var(--ember); opacity: .8;
+}
+
+/* field-level gap class on parent */
+body.salle-fournisseurs .sf-doc-field.sf-field-gap {
+  border: 1px dashed rgba(197,100,74,.2) !important;
+  background: rgba(197,100,74,.03) !important;
+}
+body.salle-fournisseurs .sf-doc-field.sf-field-gap .sf-doc-field-value {
+  color: var(--ink-faint);
+  font-style: italic;
+}
+
+/* ── FIELD ACTIONS (stub — wired in step 3) ─────────────────────────── */
+body.salle-fournisseurs .sf-field-actions {
+  display: flex;
+  gap: 5px;
+  margin-top: 5px;
+}
+body.salle-fournisseurs .sf-btn-micro {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 8px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: .15s;
+  border: none;
+  background: none;
+  opacity: .6; /* visual stub — disabled state */
+}
+body.salle-fournisseurs .sf-btn-confirm-field {
+  color: var(--hop);
+  border: 1px solid rgba(110,122,62,.3) !important;
+  background: rgba(110,122,62,.08) !important;
+  border: none;
+}
+body.salle-fournisseurs .sf-btn-modify-field {
+  color: var(--ink-mute);
+  border: 1px solid var(--hairline-2) !important;
+  background: rgba(0,0,0,.12) !important;
+  border: none;
+}
+/* manager-mode style */
+body.salle-fournisseurs[data-role="manager"] .sf-btn-confirm-field {
+  color: var(--bbt);
+  border-color: rgba(101,147,184,.3) !important;
+  background: rgba(101,147,184,.08) !important;
+}
+
+/* ── ALIASES STRIP ───────────────────────────────────────────────────── */
+body.salle-fournisseurs .sf-aliases-strip {
+  padding: 9px 18px 9px 52px;
+  border-bottom: 1px solid rgba(196,168,112,.08);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+body.salle-fournisseurs .sf-alias-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  letter-spacing: .1em;
+  color: var(--ink-mute);
+  text-transform: uppercase;
+  margin-right: 4px;
+}
+body.salle-fournisseurs .sf-alias-tag {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  letter-spacing: .03em;
+  color: var(--ink-soft);
+  background: rgba(200,134,58,.08);
+  border: 1px solid rgba(196,168,112,.15);
+  border-radius: 3px;
+  padding: 2px 8px;
+}
+body.salle-fournisseurs .sf-alias-tag.manual { border-style: solid; }
+body.salle-fournisseurs .sf-alias-tag.observed {
+  border-style: dashed;
+  color: var(--ink-mute);
+}
+
+/* ── GL FOOTPRINT ────────────────────────────────────────────────────── */
+body.salle-fournisseurs .sf-gl-section {
+  padding: 12px 18px 14px 52px;
+  border-bottom: 1px solid rgba(196,168,112,.08);
+}
+body.salle-fournisseurs .sf-gl-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+body.salle-fournisseurs .sf-gl-title {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+body.salle-fournisseurs .sf-gl-source {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 8px;
+  letter-spacing: .04em;
+  color: var(--dock);
+  background: rgba(200,134,58,.1);
+  border: 1px solid rgba(200,134,58,.2);
+  border-radius: 3px;
+  padding: 2px 6px;
+}
+body.salle-fournisseurs .sf-gl-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+body.salle-fournisseurs .sf-gl-bar-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  color: var(--ink-mute);
+  width: 140px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+body.salle-fournisseurs .sf-gl-bar-track {
+  flex: 1;
+  height: 6px;
+  background: rgba(255,255,255,.05);
+  border-radius: 3px;
+  overflow: hidden;
+}
+body.salle-fournisseurs .sf-gl-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width .55s ease;
+}
+body.salle-fournisseurs .sf-gl-bar-pct {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  color: var(--ink-mute);
+  width: 36px;
+  text-align: right;
+  flex-shrink: 0;
+}
+body.salle-fournisseurs .sf-gl-modal-tag {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 7.5px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--hop);
+  background: rgba(110,122,62,.1);
+  border: 1px solid rgba(110,122,62,.2);
+  border-radius: 2px;
+  padding: 1px 4px;
+  flex-shrink: 0;
+}
+body.salle-fournisseurs .sf-gl-excluded-tag {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 7.5px;
+  color: var(--ember);
+  border: 1px dashed rgba(197,100,74,.3);
+  border-radius: 2px;
+  padding: 1px 4px;
+  flex-shrink: 0;
+}
+body.salle-fournisseurs .sf-gl-note {
+  margin-top: 8px;
+  font-size: 10.5px;
+  color: var(--ink-faint);
+  line-height: 1.5;
+  padding: 6px 10px;
+  border: 1px solid rgba(196,168,112,.08);
+  border-radius: 4px;
+  background: rgba(0,0,0,.1);
+}
+body.salle-fournisseurs .sf-gl-multi-note {
+  margin-top: 8px;
+  padding: 7px 10px;
+  border: 1px solid rgba(101,147,184,.15);
+  border-left: 2px solid var(--bbt);
+  border-radius: 0 5px 5px 0;
+  background: rgba(101,147,184,.04);
+}
+body.salle-fournisseurs .sf-gl-multi-note p { font-size: 10.5px; color: var(--ink-faint); line-height: 1.5; }
+
+/* ── CATALOGUE TABLE ─────────────────────────────────────────────────── */
+body.salle-fournisseurs .sf-cat-head {
+  padding: 10px 18px 8px 52px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+body.salle-fournisseurs .sf-cat-title {
+  font-family: "Fraunces", serif;
+  font-weight: 440;
+  font-size: 15px;
+  color: var(--ink);
+}
+body.salle-fournisseurs .sf-cat-sub {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  letter-spacing: .1em;
+  color: var(--dock);
+  text-transform: uppercase;
+}
+body.salle-fournisseurs .sf-cat-callout {
+  margin: 0 18px 8px 52px;
+  padding: 7px 10px;
+  background: rgba(200,134,58,.05);
+  border: 1px solid rgba(200,134,58,.16);
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--ink-mute);
+  line-height: 1.5;
+}
+body.salle-fournisseurs .sf-cat-callout b { color: var(--dock); }
+body.salle-fournisseurs .sf-manifest-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+body.salle-fournisseurs .sf-manifest-table th {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 8.5px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  text-align: left;
+  padding: 5px 10px 5px 52px;
+  border-bottom: 1px solid rgba(196,168,112,.15);
+  background: rgba(0,0,0,.15);
+}
+body.salle-fournisseurs .sf-manifest-table th:not(:first-child) { padding-left: 10px; }
+body.salle-fournisseurs .sf-manifest-table td {
+  padding: 6px 10px 6px 52px;
+  border-bottom: 1px solid rgba(196,168,112,.05);
+  font-size: 12px;
+  color: var(--ink-soft);
+  vertical-align: middle;
+}
+body.salle-fournisseurs .sf-manifest-table td:not(:first-child) { padding-left: 10px; }
+body.salle-fournisseurs .sf-manifest-table tr:hover td { background: rgba(200,134,58,.03); }
+body.salle-fournisseurs .sf-td-mi-id {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  letter-spacing: .03em;
+  color: var(--ink-mute);
+  position: relative;
+}
+body.salle-fournisseurs .sf-line-num {
+  position: absolute; left: 0;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 8px;
+  color: var(--ink-faint);
+  width: 40px;
+  text-align: right;
+  padding-right: 6px;
+}
+body.salle-fournisseurs .sf-td-cat {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  letter-spacing: .05em;
+  color: var(--oak);
+}
+body.salle-fournisseurs .sf-td-del {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  color: var(--dock);
+  text-align: right;
+}
+body.salle-fournisseurs .sf-empty-cat {
+  padding: 14px 18px 14px 52px;
+  font-size: 12px;
+  color: var(--ink-faint);
+  font-style: italic;
+  border-bottom: 1px solid rgba(196,168,112,.05);
+}
+
+/* category color classes */
+body.salle-fournisseurs .cat-malt  { color: #c8a060 !important; }
+body.salle-fournisseurs .cat-hops  { color: var(--hop) !important; }
+body.salle-fournisseurs .cat-yeast { color: var(--bbt) !important; }
+body.salle-fournisseurs .cat-adj   { color: #b0905a !important; }
+body.salle-fournisseurs .cat-pkg   { color: #9b7cc8 !important; }
+body.salle-fournisseurs .cat-clean { color: #60aab0 !important; }
+body.salle-fournisseurs .cat-util  { color: #8a9870 !important; }
+body.salle-fournisseurs .cat-maint { color: var(--steel) !important; }
+body.salle-fournisseurs .cat-rd    { color: #9880c8 !important; }
+body.salle-fournisseurs .cat-trans { color: #7888a0 !important; }
+body.salle-fournisseurs .cat-proc  { color: #9ab060 !important; }
+
+/* ── GOVERNANCE FIELDS SECTION ──────────────────────────────────────── */
+body.salle-fournisseurs .sf-gov-section {
+  padding: 12px 18px 14px 52px;
+  border-top: 1px solid rgba(196,168,112,.1);
+}
+body.salle-fournisseurs .sf-gov-section-title {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+body.salle-fournisseurs .sf-gov-section-title::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--hairline-2);
+}
+body.salle-fournisseurs .sf-gov-field-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+body.salle-fournisseurs .sf-gov-field {
+  padding: 9px 12px;
+  border: 1px solid rgba(196,168,112,.14);
+  border-radius: 8px;
+  background: rgba(0,0,0,.12);
+  position: relative;
+}
+body.salle-fournisseurs .sf-gov-field-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  letter-spacing: .1em;
+  color: var(--ink-mute);
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+body.salle-fournisseurs .sf-gov-field-value { font-size: 12.5px; color: var(--ink-soft); }
+body.salle-fournisseurs .sf-gov-field-value.sf-gap { color: var(--ink-faint); font-style: italic; }
+body.salle-fournisseurs .sf-gov-field-value.sf-guess { color: var(--oak); }
+body.salle-fournisseurs .sf-gov-field-value.sf-locked { color: var(--bbt); }
+
+/* pin detail */
+body.salle-fournisseurs .sf-pin-detail {
+  margin-top: 4px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  color: var(--ink-faint);
+  line-height: 1.4;
+}
+
+/* ── VALIDATE FICHE BUTTON ──────────────────────────────────────────── */
+body.salle-fournisseurs .sf-validate-btn {
+  margin: 14px 18px 14px 52px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid rgba(110,122,62,.28);
+  border-radius: 8px;
+  background: rgba(110,122,62,.05);
+  cursor: pointer;
+  transition: .15s;
+  font-family: "JetBrains Mono", monospace;
+  width: calc(100% - 70px);
+}
+body.salle-fournisseurs .sf-validate-btn:hover {
+  background: rgba(110,122,62,.13);
+  border-color: var(--hop);
+}
+body.salle-fournisseurs .sf-validate-btn[disabled] {
+  opacity: .45;
+  cursor: default;
+}
+body.salle-fournisseurs .sf-vfb-text {
+  font-size: 10px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--hop);
+}
+body.salle-fournisseurs .sf-vfb-sub {
+  font-size: 10px;
+  color: var(--ink-mute);
+  font-family: "DM Sans", sans-serif;
+  font-weight: 300;
+}
+
+/* ── STATS STRIP ─────────────────────────────────────────────────────── */
+body.salle-fournisseurs .sf-stats-strip {
+  padding: 10px 18px 10px 52px;
+  border-bottom: 1px solid rgba(196,168,112,.08);
+  display: flex;
+  gap: 20px;
+}
+body.salle-fournisseurs .sf-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+body.salle-fournisseurs .sf-stat-num {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--ink-soft);
+  line-height: 1;
+}
+body.salle-fournisseurs .sf-stat-lbl {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 8px;
+  letter-spacing: .08em;
+  color: var(--ink-mute);
+  text-transform: uppercase;
+}
+
+/* ── CHANGE LOG ──────────────────────────────────────────────────────── */
+body.salle-fournisseurs .sf-change-log {
+  padding: 10px 18px 10px 52px;
+  border-top: 1px solid rgba(196,168,112,.06);
+}
+body.salle-fournisseurs .sf-log-toggle {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  padding: 0;
+}
+body.salle-fournisseurs .sf-log-toggle:hover { color: var(--ink); }
+body.salle-fournisseurs .sf-log-entries { margin-top: 8px; display: none; }
+body.salle-fournisseurs .sf-log-entries.open { display: block; }
+body.salle-fournisseurs .sf-log-entry {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  color: var(--ink-faint);
+  padding: 3px 0;
+  border-bottom: 1px solid var(--hairline);
+  line-height: 1.4;
+}
+body.salle-fournisseurs .sf-log-entry span { color: var(--ink-mute); }
+
+/* ── EXPLAINER BOX ───────────────────────────────────────────────────── */
+body.salle-fournisseurs .sf-explainer {
+  margin: 12px 18px 0 52px;
+  padding: 9px 12px;
+  border: 1px solid rgba(196,168,112,.1);
+  border-left: 2px solid var(--dock);
+  border-radius: 0 6px 6px 0;
+  background: rgba(200,134,58,.03);
+}
+body.salle-fournisseurs .sf-explainer p {
+  font-size: 11.5px;
+  color: var(--ink-mute);
+  line-height: 1.55;
+}
+body.salle-fournisseurs .sf-explainer strong { color: var(--ink-soft); }
+
+/* ── MODALS ──────────────────────────────────────────────────────────── */
+body.salle-fournisseurs .sf-modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(0,0,0,.65);
+  align-items: center;
+  justify-content: center;
+}
+body.salle-fournisseurs .sf-modal-overlay.open { display: flex; }
+body.salle-fournisseurs .sf-modal-box {
+  background: var(--bg-elev);
+  border: 1px solid var(--dock-deep);
+  border-radius: 14px;
+  padding: 24px 26px;
+  min-width: 340px;
+  max-width: 460px;
+  box-shadow: 0 40px 80px -20px rgba(0,0,0,.85);
+}
+body.salle-fournisseurs .sf-modal-box h4 {
+  font-family: "Fraunces", serif;
+  font-weight: 440;
+  font-size: 20px;
+  color: var(--ink);
+  margin-bottom: 8px;
+}
+body.salle-fournisseurs .sf-modal-diff {
+  background: rgba(0,0,0,.3);
+  border: 1px solid var(--hairline-2);
+  border-radius: 8px;
+  padding: 12px;
+  margin: 12px 0;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--ink-soft);
+}
+body.salle-fournisseurs .sf-modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+body.salle-fournisseurs .sf-btn-cancel {
+  background: none;
+  border: 1px solid var(--hairline-2);
+  color: var(--ink-mute);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  padding: 8px 14px;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: .2s;
+}
+body.salle-fournisseurs .sf-btn-cancel:hover { border-color: var(--oak-deep); color: var(--ink); }
+body.salle-fournisseurs .sf-btn-confirm {
+  background: var(--oak-deep);
+  border: 1px solid var(--oak);
+  color: var(--ink);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  padding: 8px 14px;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: .2s;
+}
+body.salle-fournisseurs .sf-btn-confirm:hover:not([disabled]) { background: var(--oak); }
+body.salle-fournisseurs .sf-btn-confirm[disabled] {
+  opacity: .4;
+  cursor: default;
+  background: var(--oak-deep);
+}
+
+/* role-gating: operateur elements hidden by PHP redirect; manager sees
+   field actions in propose-only mode (stub). Admin sees everything. */
+body.salle-fournisseurs[data-role="manager"] .sf-admin-only { display: none !important; }

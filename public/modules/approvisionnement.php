@@ -137,6 +137,47 @@ try {
         ];
     }
 
+    /* ── Query 5b: invoice headers per supplier ─────────────────────────
+     * Plain SELECT — no GROUP BY, no fan-out risk.
+     * doc_invoices i LEFT JOIN doc_files f ON f.id = i.file_id
+     * Note the dual-key: i.file_id is BIGINT FK to doc_files.id;
+     * f.file_id is the UUID string used by the preview/document endpoints.
+     * has_pdf: true when a doc_files row exists (meaning a PDF was ingested).
+     */
+    $invoicesMap = [];
+    $invHdrStmt = $pdo->query(
+        "SELECT i.id              AS invoice_id,
+                i.supplier_fk,
+                i.invoice_ref,
+                i.invoice_date,
+                i.total_ht,
+                i.total_ttc,
+                i.currency,
+                i.parser_name,
+                f.file_id         AS drive_file_id,
+                (i.file_id IS NOT NULL AND f.id IS NOT NULL) AS has_pdf
+           FROM doc_invoices i
+           LEFT JOIN doc_files f ON f.id = i.file_id
+          WHERE i.is_active = 1
+            AND i.supplier_fk IS NOT NULL
+          ORDER BY i.supplier_fk, i.invoice_date DESC"
+    );
+    foreach ($invHdrStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $fk = (int) $row['supplier_fk'];
+        if (!isset($invoicesMap[$fk])) $invoicesMap[$fk] = [];
+        $invoicesMap[$fk][] = [
+            'id'            => (int)    $row['invoice_id'],
+            'ref'           => (string) ($row['invoice_ref']   ?? ''),
+            'date'          => (string) ($row['invoice_date']  ?? ''),
+            'total_ht'      => $row['total_ht']  !== null ? (float) $row['total_ht']  : null,
+            'total_ttc'     => $row['total_ttc'] !== null ? (float) $row['total_ttc'] : null,
+            'currency'      => (string) ($row['currency']      ?? 'CHF'),
+            'parser'        => $row['parser_name'] !== null ? (string) $row['parser_name'] : null,
+            'drive_file_id' => $row['drive_file_id'] !== null ? (string) $row['drive_file_id'] : null,
+            'has_pdf'       => (bool) $row['has_pdf'],
+        ];
+    }
+
     /* ── Query 5: stats per supplier ────────────────────────────────
      * Invoice count (doc_invoices) and total CHF (inv_deliveries) are
      * computed in TWO SEPARATE grouped queries, then merged in PHP.
@@ -227,6 +268,7 @@ try {
             'catalogue'          => $catalogueMap[$id] ?? [],
             'gl_footprint'       => $footprintMap[$id] ?? [],
             'stats'              => $statsMap[$id]     ?? ['invoices' => 0, 'total_chf' => null],
+            'invoices'           => $invoicesMap[$id]  ?? [],
         ];
     }
 

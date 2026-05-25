@@ -23,6 +23,19 @@ const DP_TOKEN_WRITE_CACHE = '/tmp/maltyweb-google-token-write.json';
 const DP_TOKEN_TTL      = 3300; // 55 min — just under Google's 1 h
 const DP_FILE_ID_REGEX  = '/^[A-Za-z0-9_\-]{10,200}$/';
 
+// Page-1 preview render DPI. Higher = crisper when the operator zooms the
+// in-app preview. Baked into the cache filename (dp_preview_png_path) so that
+// changing it auto-invalidates the cache instead of serving stale low-DPI PNGs.
+const DP_PREVIEW_DPI         = 300;                 // legacy alias — kept for external callers
+const DP_PREVIEW_DPI_DEFAULT = 300;                 // canonical default
+const DP_PREVIEW_DPIS_ALLOWED = [300, 600];         // whitelist — prevents DoS via huge -r values
+
+/** Absolute path of the cached page-1 PNG for a file_id, keyed by render DPI. */
+function dp_preview_png_path(string $file_id, int $dpi = DP_PREVIEW_DPI_DEFAULT): string
+{
+    return DP_PREVIEW_CACHE . '/' . $file_id . '-p1-r' . $dpi . '.png';
+}
+
 /**
  * Drive inbox folder ID — canonical source: maltytask/lib/config.js DRIVE_INBOX_FOLDER.
  * TODO: future cleanup — pull from a shared env file / YAML so Node + PHP stay in sync
@@ -62,18 +75,26 @@ function dp_drive_proxy_url(string $file_id): string
 
 /**
  * Generates page-1 PNG from a local or Drive PDF.
- * Caches at DP_PREVIEW_CACHE/{file_id}-p1.png; idempotent.
- * Returns public URL (/api/document-preview-png.php?file_id=X).
+ * Caches at DP_PREVIEW_CACHE/{file_id}-p1-r{dpi}.png; idempotent.
+ * Returns public URL (/api/document-preview-png.php?file_id=X&dpi=N).
+ *
+ * $dpi is clamped to DP_PREVIEW_DPIS_ALLOWED — callers should pre-validate,
+ * but this function is the last line of defense against arbitrary DPI renders.
  *
  * Returns null if the PDF cannot be located or pdftoppm fails.
  */
-function dp_render_page1_png(string $file_id): ?string
+function dp_render_page1_png(string $file_id, int $dpi = DP_PREVIEW_DPI_DEFAULT): ?string
 {
     if (!preg_match(DP_FILE_ID_REGEX, $file_id)) return null;
 
-    $png_path = DP_PREVIEW_CACHE . '/' . $file_id . '-p1.png';
+    // Clamp DPI to whitelist — prevents DoS via huge -r values
+    if (!in_array($dpi, DP_PREVIEW_DPIS_ALLOWED, true)) {
+        $dpi = DP_PREVIEW_DPI_DEFAULT;
+    }
+
+    $png_path = dp_preview_png_path($file_id, $dpi);
     if (is_file($png_path)) {
-        return '/api/document-preview-png.php?file_id=' . rawurlencode($file_id);
+        return '/api/document-preview-png.php?file_id=' . rawurlencode($file_id) . '&dpi=' . $dpi;
     }
 
     // Ensure cache dir exists
@@ -101,13 +122,23 @@ function dp_render_page1_png(string $file_id): ?string
         $cleanup = false;
     }
 
-    // pdftoppm -r 120 -png -l 1 <pdf> <output_prefix>
+    // pdftoppm -r <DPI> -png -l 1 <pdf> <output_prefix>
     // Produces: <output_prefix>-1.png  (page 1)
-    $out_prefix  = DP_PREVIEW_CACHE . '/' . $file_id . '-p1-raw';
+    // out_prefix is dpi-keyed to avoid cross-dpi temp-file collisions
+    $out_prefix  = DP_PREVIEW_CACHE . '/' . $file_id . '-p1-r' . $dpi . '-raw';
     $escaped_pdf = escapeshellarg($pdf_path);
     $escaped_out = escapeshellarg($out_prefix);
 
-    $cmd = "pdftoppm -r 120 -png -l 1 $escaped_pdf $escaped_out 2>&1";
+    // Resolve pdftoppm by absolute path — the php-fpm pool runs with an empty
+    // PATH (env[PATH] is not set), so a bare command name would not be found
+    // when rendering on-demand from the web context.
+    $bin = '';
+    foreach (['/usr/bin/pdftoppm', '/usr/local/bin/pdftoppm', '/bin/pdftoppm'] as $cand) {
+        if (is_executable($cand)) { $bin = $cand; break; }
+    }
+    if ($bin === '') { $bin = 'pdftoppm'; }
+
+    $cmd = "$bin -r $dpi -png -l 1 $escaped_pdf $escaped_out 2>&1";
     exec($cmd, $out_lines, $rc);
 
     if ($cleanup) @unlink($pdf_path);
@@ -122,7 +153,7 @@ function dp_render_page1_png(string $file_id): ?string
     foreach ($candidates as $candidate) {
         if (is_file($candidate)) {
             rename($candidate, $png_path);
-            return '/api/document-preview-png.php?file_id=' . rawurlencode($file_id);
+            return '/api/document-preview-png.php?file_id=' . rawurlencode($file_id) . '&dpi=' . $dpi;
         }
     }
 
