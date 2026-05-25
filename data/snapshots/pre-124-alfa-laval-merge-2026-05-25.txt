@@ -1,0 +1,25 @@
+Pre-merge snapshot for migration 124_merge_alfa_laval.sql — captured 2026-05-25.
+Migration 124 is NOT cleanly reversible; this file is the reconstruction record.
+
+== ref_suppliers (rows 4, 5) BEFORE merge ==
+id  supplier_id      name         gl_account  currency  is_active  last_modified_by
+4   SUP_ALFA_LAVAL   Alfa Laval   6100        CHF       1          ingest
+5   SUP_ALFALAVAL    ALFALAVAL    6100        CHF       0          ingest   <- deleted by 124
+
+== doc_invoices referencing id=5 BEFORE merge (reassigned to id=4) ==
+id   supplier_fk  invoice_ref  total_ht
+14   5            250001955    NULL
+135  5            263000071    NULL
+
+== ref_supplier_aliases for 4,5 BEFORE merge ==
+id  supplier_id_fk  alias                       source
+51  4               Alfa Laval Mid Europe AG    manual
+(none on id=5)
+124 ADDS: (supplier_id_fk=4, alias='ALFALAVAL', source='manual')
+
+== Reversal SQL (if ever needed) ==
+INSERT INTO ref_suppliers (id, supplier_id, name, gl_account, currency, is_active, last_modified_by)
+  VALUES (5, 'SUP_ALFALAVAL', 'ALFALAVAL', '6100', 'CHF', 0, 'ingest');
+UPDATE doc_invoices SET supplier_fk=5 WHERE id IN (14,135);
+DELETE FROM ref_supplier_aliases WHERE supplier_id_fk=4 AND alias='ALFALAVAL';
+-- (row_hash on the re-inserted ref_suppliers row would need recompute; id=5 AUTO_INCREMENT slot must be free)

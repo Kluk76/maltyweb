@@ -12,7 +12,7 @@ $me            = $me ?? current_user() ?? [];
 
 $modules = [
     ["00", "Triage",          "/modules/triage.php",   "triage"],
-    ["01", "Procurement",     "#",                     "procurement"],
+    ["01", "Approvisionnement", "/modules/approvisionnement.php", "approvisionnement"],
     ["02", "Wort Production", "/modules/wort.php",     "wort"],
     ["03", "Fermentation",    "/modules/tanks.php",    "fermentation"],
     ["04", "Packaging",       "/modules/packaging.php","packaging"],
