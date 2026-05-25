@@ -20,11 +20,16 @@
  *      - Update hors_process hidden field (1 when checked, 0 otherwise).
  *      - Show override banner with prominent warning.
  *      - Server enforces the role — this JS is defense-in-depth, not the gate.
+ *  10. SKU mosaic: when a tank is selected, render the recipe's activated formats
+ *      as clickable tiles above the format rows. Tile click pre-fills format row 0.
+ *      NULL-format SKUs land in an "à assigner" tray, never as tiles.
+ *      Reads: window.PF_RECIPE_SKUS, window.PF_RECIPE_UNASSIGNED
  *
  * No framework. Vanilla ES2020.
  * Reads: window.PF_CANDIDATES, window.PF_CANDIDATES_OVERRIDE, window.PF_CAN_OVERRIDE,
- *        window.PF_CLIENTS, window.RUN_TYPE_LABELS,
- *        window.FORMAT_SUFFIXES, window.MIN_DAYS_AFTER_RACKING
+ *        window.PF_CLIENTS, window.RUN_TYPE_LABELS, window.FORMAT_SUFFIXES,
+ *        window.MIN_DAYS_AFTER_RACKING, window.PF_RECIPE_SKUS,
+ *        window.PF_RECIPE_UNASSIGNED
  */
 
 'use strict';
@@ -58,6 +63,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
   const formatsContainer = document.getElementById('pf-formats-container');
   const addFormatBtn     = document.getElementById('pf-add-format');
+  const skuMosaic        = document.getElementById('pf-sku-mosaic');
 
   const kegSection         = document.getElementById('pf-keg-section');
   const wlSelect           = document.getElementById('is_white_label');
@@ -74,6 +80,115 @@ document.addEventListener('DOMContentLoaded', function () {
   let selectedCard = null;     // currently-selected tank card element
   let isContractBeer = false;  // whether the selected lot has a contract beer
   let formatRows = [];         // array of row-index values rendered
+
+  // ── SKU mosaic ────────────────────────────────────────────────────────────
+  //
+  // Renders activated format tiles for the recipe of the selected tank.
+  // Tile click fills the MAIN format row (row 0): run_type select, suffix
+  // select/field, and the hidden format_id input.
+  // NULL-format SKUs are shown in an "à assigner" tray below the tiles.
+
+  function renderSkuMosaic(recipeId) {
+    if (!skuMosaic) return;
+    skuMosaic.innerHTML = '';
+
+    const rid  = parseInt(recipeId, 10) || 0;
+    const skus = (window.PF_RECIPE_SKUS || {})[rid] || [];
+
+    if (rid === 0 || skus.length === 0) {
+      // No recipe or no activated SKUs — hide mosaic gracefully
+      skuMosaic.hidden = true;
+      return;
+    }
+
+    skuMosaic.hidden = false;
+
+    var html = '<div class="pf-sku-mosaic__label">Formats activés — cliquer pour pré-remplir le format principal</div>' +
+               '<div class="pf-sku-mosaic__grid">';
+
+    skus.forEach(function (sku) {
+      html +=
+        '<button type="button" class="pf-sku-tile"' +
+          ' data-run-type="' + escHtml(sku.run_type) + '"' +
+          ' data-format-code="' + escHtml(sku.format_code) + '"' +
+          ' data-format-id="' + escHtml(String(sku.format_id)) + '"' +
+          ' data-sku-code="' + escHtml(sku.sku_code) + '">' +
+          '<span class="pf-sku-tile__name">' + escHtml(sku.display_name) + '</span>' +
+          '<span class="pf-sku-tile__code">' + escHtml(sku.sku_code) + '</span>' +
+        '</button>';
+    });
+
+    html += '</div>';
+
+    // "À assigner" tray
+    var unassigned = (window.PF_RECIPE_UNASSIGNED || {})[rid] || [];
+    if (unassigned.length > 0) {
+      var codes = unassigned.map(function (u) { return escHtml(u.sku_code); }).join(', ');
+      html +=
+        '<div class="pf-sku-mosaic__tray">' +
+          '<span class="pf-sku-mosaic__tray-label">À assigner (format_id manquant) :</span> ' +
+          '<span class="pf-sku-mosaic__tray-codes">' + codes + '</span>' +
+        '</div>';
+    }
+
+    skuMosaic.innerHTML = html;
+
+    // Wire tile clicks
+    skuMosaic.querySelectorAll('.pf-sku-tile').forEach(function (tile) {
+      tile.addEventListener('click', function () {
+        applySkuTile(tile);
+      });
+    });
+  }
+
+  function clearSkuMosaic() {
+    if (!skuMosaic) return;
+    skuMosaic.hidden = true;
+    skuMosaic.innerHTML = '';
+  }
+
+  function applySkuTile(tile) {
+    var runType    = tile.dataset.runType    || '';
+    var formatCode = tile.dataset.formatCode || '';
+    var formatId   = tile.dataset.formatId   || '';
+
+    // Mark selected tile
+    skuMosaic.querySelectorAll('.pf-sku-tile').forEach(function (t) {
+      t.classList.remove('pf-sku-tile--selected');
+    });
+    tile.classList.add('pf-sku-tile--selected');
+
+    // Target: main format row (row 0)
+    var row0 = document.getElementById('pf-fmt-0');
+    if (!row0) return;
+
+    // Set run_type select
+    var runTypeSelect = row0.querySelector('select[name="formats[0][run_type]"]');
+    if (runTypeSelect) {
+      runTypeSelect.value = runType;
+      // Dispatch change so keg-section visibility updates
+      runTypeSelect.dispatchEvent(new Event('change'));
+    }
+
+    // Set format_suffix select — select existing option if present, otherwise add it
+    var suffixSelect = row0.querySelector('select[name="formats[0][format_suffix]"]');
+    if (suffixSelect) {
+      var existing = Array.from(suffixSelect.options).find(function (o) { return o.value === formatCode; });
+      if (!existing) {
+        var opt = document.createElement('option');
+        opt.value       = formatCode;
+        opt.textContent = formatCode;
+        suffixSelect.appendChild(opt);
+      }
+      suffixSelect.value = formatCode;
+    }
+
+    // Set hidden format_id
+    var formatIdInput = row0.querySelector('input[name="formats[0][format_id]"]');
+    if (formatIdInput) {
+      formatIdInput.value = formatId;
+    }
+  }
 
   // ── Tank card selection ───────────────────────────────────────────────────
 
@@ -99,6 +214,9 @@ document.addEventListener('DOMContentLoaded', function () {
     fldContractBeer.value= cBeer;
     fldContractBatch.value = cBatch;
     fldRecipeId.value    = recipeId;
+
+    // Render SKU mosaic for this recipe
+    renderSkuMosaic(recipeId);
 
     const beerDisplay  = nebBeer || cBeer || '?';
     const batchDisplay = nebBatch || cBatch || '?';
@@ -131,6 +249,7 @@ document.addEventListener('DOMContentLoaded', function () {
     selectedPanel.hidden  = true;
     selectedSummary.textContent = '';
     isContractBeer = false;
+    clearSkuMosaic();
     updateClientSection();
     submitBtn.disabled = true;
   }
@@ -237,6 +356,7 @@ document.addEventListener('DOMContentLoaded', function () {
         removeBtn +
       '</div>' +
       '<input type="hidden" name="' + prefix + '[row_origin]" value="' + origin + '">' +
+      '<input type="hidden" name="' + prefix + '[format_id]" value="">' +
       '<div class="op-form__grid--3 op-form__grid pf-format-top-grid">' +
         '<div class="op-form__field">' +
           '<label class="op-form__label" for="' + idPfx + '_run_type">Format conditionné</label>' +

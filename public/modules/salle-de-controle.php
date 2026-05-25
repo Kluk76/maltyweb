@@ -20,6 +20,7 @@ require __DIR__ . '/../../app/auth.php';
 require __DIR__ . '/../../app/csrf.php';
 require __DIR__ . '/../../app/settings-helpers.php';
 require __DIR__ . '/../../app/db-write-helpers.php';
+require_once __DIR__ . '/../../app/sku-bom-compile.php';
 
 require_login();
 $me = current_user();
@@ -76,6 +77,54 @@ function sdc_bom_template_for_format(PDO $pdo, int $formatId): ?int
     $tpl->execute([$formatId, $decInt]);
     $id = $tpl->fetchColumn();
     return $id !== false ? (int) $id : null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HELPER: recompile packaging BOM for all active SKUs belonging to a recipe.
+// Called AFTER commit() so a recompute failure never rolls back the saved binding.
+// Returns the compile_sku_bom_packaging result array (or a zero-result stub on
+// empty SKU set). Throws on hard PHP errors; the caller wraps in try/catch.
+// ─────────────────────────────────────────────────────────────────────────────
+function sdc_recompile_recipe_packaging(PDO $pdo, int $recipeId): array
+{
+    $stmt = $pdo->prepare(
+        "SELECT id FROM ref_skus WHERE recipe_id = ? AND is_active = 1"
+    );
+    $stmt->execute([$recipeId]);
+    $skuIds = array_map('intval', array_column($stmt->fetchAll(PDO::FETCH_ASSOC), 'id'));
+    if (empty($skuIds)) {
+        return [
+            'dry_run'            => false,
+            'skus'               => [],
+            'total_pkg_deleted'  => 0,
+            'total_pkg_inserted' => 0,
+            'total_rq_emitted'   => 0,
+            'parity_violations'  => 0,
+            'errors'             => 0,
+        ];
+    }
+    return compile_sku_bom_packaging($pdo, $skuIds, false, true);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HELPER: set the flash message after a BOM recompile attempt.
+// saveMsg = success label for the preceding write (e.g. "Format «ZEPF» activé.").
+// r       = result array from sdc_recompile_recipe_packaging().
+// Caller wraps the recompile + this call in try/catch; the catch block calls
+// flash_set('ok', $saveMsg . " · BOM recompilation échouée …") directly.
+// Never rethrows — a recompile failure keeps the saved record and flashes a note.
+// ─────────────────────────────────────────────────────────────────────────────
+function sdc_flash_bom_result(string $saveMsg, array $r): void
+{
+    if ($r['parity_violations'] > 0 || $r['errors'] > 0) {
+        flash_set('err', $saveMsg
+            . " · BOM recompilé avec avertissements"
+            . " ({$r['parity_violations']} violation(s) parité, {$r['errors']} erreur(s))."
+            . " La sauvegarde est conservée.");
+    } else {
+        flash_set('ok', $saveMsg
+            . " · BOM recompilé ({$r['total_pkg_inserted']} lignes, {$r['total_rq_emitted']} en file).");
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -179,6 +228,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // BOM template
             $bomTemplateId = $bomOverride ?? sdc_bom_template_for_format($pdo, $formatId);
 
+            $activateMsg = '';
             $pdo->beginTransaction();
             try {
                 if ($existRow) {
@@ -195,7 +245,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     log_revision($pdo, $me, 'ref_skus', (int) $existRow['id'],
                         $before, $after, 'normal',
                         "Salle de contrôle: réactivation format {$fmt['format_code']} / recette {$recipe['name']}");
-                    flash_set('ok', "Format «{$skuCode}» réactivé.");
+                    $activateMsg = "Format «{$skuCode}» réactivé.";
                 } else {
                     // Insert
                     $rowHash = hash('sha256',
@@ -217,12 +267,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                          'format_id' => $formatId, 'bom_template_id' => $bomTemplateId],
                         'normal',
                         "Salle de contrôle: activation format {$fmt['format_code']} / recette {$recipe['name']}");
-                    flash_set('ok', "Format «{$skuCode}» activé.");
+                    $activateMsg = "Format «{$skuCode}» activé.";
                 }
                 $pdo->commit();
             } catch (Throwable $e) {
                 $pdo->rollBack();
                 throw $e;
+            }
+            // Recompute packaging BOM — runs AFTER commit so a failure here never
+            // loses the saved activation. compile_sku_bom_packaging runs its own
+            // internal transaction and liquid-parity gate.
+            try {
+                $r = sdc_recompile_recipe_packaging($pdo, $recipeId);
+                sdc_flash_bom_result($activateMsg, $r);
+            } catch (Throwable $bomErr) {
+                // Recompute failed but the format activation is durable (already committed).
+                // Warn the operator; the nightly cron will retry.
+                flash_set('ok', $activateMsg
+                    . " · BOM recompilation échouée (la sauvegarde est conservée — relance en cron).");
             }
 
         // ── deactivate_format ────────────────────────────────────────────────
@@ -256,7 +318,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $pdo->rollBack();
                 throw $e;
             }
-            flash_set('ok', "Format «{$existRow['sku_code']}» désactivé.");
+            $deactivateMsg = "Format «{$existRow['sku_code']}» désactivé.";
+            // Recompute packaging BOM — runs AFTER commit so a failure here never
+            // loses the saved deactivation.
+            try {
+                $r = sdc_recompile_recipe_packaging($pdo, $recipeId);
+                sdc_flash_bom_result($deactivateMsg, $r);
+            } catch (Throwable $bomErr) {
+                flash_set('ok', $deactivateMsg
+                    . " · BOM recompilation échouée (la sauvegarde est conservée — relance en cron).");
+            }
 
         // ── set_binding ──────────────────────────────────────────────────────
         } elseif ($action === 'set_binding') {
@@ -353,7 +424,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $pdo->rollBack();
                 throw $e;
             }
-            flash_set('ok', "Liaison «{$role}» enregistrée.");
+            $bindingMsg = "Liaison «{$role}» enregistrée.";
+            // Recompute packaging BOM — runs AFTER commit so a failure here never
+            // loses the saved binding.
+            try {
+                $r = sdc_recompile_recipe_packaging($pdo, $recipeId);
+                sdc_flash_bom_result($bindingMsg, $r);
+            } catch (Throwable $bomErr) {
+                flash_set('ok', $bindingMsg
+                    . " · BOM recompilation échouée (la sauvegarde est conservée — relance en cron).");
+            }
 
         // ── update_min_days ──────────────────────────────────────────────────
         } elseif ($action === 'update_min_days') {

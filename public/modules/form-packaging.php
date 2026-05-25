@@ -658,6 +658,64 @@ try {
         }
     }
 
+    // ── Active SKUs per recipe (for the format mosaic) ───────────────────────
+    // Collect all candidate recipe_ids (non-null) across normal + override lists.
+    $allCandidateRecipeIds = [];
+    foreach (array_merge($candidates, $candidatesOverride) as $cand) {
+        $rid = (int)($cand['neb_recipe_id_fk'] ?? $cand['contract_recipe_id_fk'] ?? 0);
+        if ($rid > 0) {
+            $allCandidateRecipeIds[$rid] = true;
+        }
+    }
+    $pfRecipeSkus       = [];  // recipe_id → [{sku_id, sku_code, format_id, format_code, display_name, run_type}]
+    $pfRecipeUnassigned = [];  // recipe_id → [{sku_code}] (format_id IS NULL)
+    if (!empty($allCandidateRecipeIds)) {
+        $rids    = array_keys($allCandidateRecipeIds);
+        $inMarks = implode(',', array_fill(0, count($rids), '?'));
+
+        // Tiles: active, non-composite, run_type set
+        $skuStmt = $pdo->prepare(
+            "SELECT s.id AS sku_id, s.recipe_id, s.sku_code, s.format_id,
+                    f.format_code, f.display_name, f.run_type
+               FROM ref_skus s
+               JOIN ref_packaging_formats f ON f.id = s.format_id
+              WHERE s.is_active = 1
+                AND f.is_composite = 0
+                AND f.run_type <> ''
+                AND s.recipe_id IN ({$inMarks})
+              ORDER BY s.recipe_id, f.run_type, f.format_code"
+        );
+        $skuStmt->execute($rids);
+        foreach ($skuStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $rid = (int)$row['recipe_id'];
+            if (!isset($pfRecipeSkus[$rid])) $pfRecipeSkus[$rid] = [];
+            $pfRecipeSkus[$rid][] = [
+                'sku_id'       => (int)$row['sku_id'],
+                'sku_code'     => $row['sku_code'],
+                'format_id'    => (int)$row['format_id'],
+                'format_code'  => $row['format_code'],
+                'display_name' => $row['display_name'],
+                'run_type'     => $row['run_type'],
+            ];
+        }
+
+        // Tray: active SKUs with NULL format_id for these recipes
+        $unassignedStmt = $pdo->prepare(
+            "SELECT id AS sku_id, recipe_id, sku_code
+               FROM ref_skus
+              WHERE is_active = 1
+                AND format_id IS NULL
+                AND recipe_id IN ({$inMarks})
+              ORDER BY recipe_id, sku_code"
+        );
+        $unassignedStmt->execute($rids);
+        foreach ($unassignedStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $rid = (int)$row['recipe_id'];
+            if (!isset($pfRecipeUnassigned[$rid])) $pfRecipeUnassigned[$rid] = [];
+            $pfRecipeUnassigned[$rid][] = ['sku_code' => $row['sku_code']];
+        }
+    }
+
     // ── Clients for dropdown (decision 7) ─────────────────────────────────────
     $clients = $pdo->query(
         "SELECT id, name FROM ref_clients ORDER BY name ASC"
@@ -686,6 +744,8 @@ try {
 } catch (Throwable $e) {
     $candidates         = [];
     $candidatesOverride = [];
+    $pfRecipeSkus       = [];
+    $pfRecipeUnassigned = [];
     $clients            = [];
     $recipes            = [];
     $recentPackaging    = [];
@@ -701,6 +761,8 @@ $active_module = 'packaging';
 // Inject server-side data for JS
 $candidatesJson         = json_encode($candidates,         JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 $candidatesOverrideJson = json_encode($candidatesOverride, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
+$pfRecipeSkusJson       = json_encode($pfRecipeSkus,       JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
+$pfRecipeUnassignedJson = json_encode($pfRecipeUnassigned, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 $clientsJson            = json_encode($clients,            JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 $runTypeLabelJson       = json_encode(RUN_TYPE_LABELS,     JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 $suffixLabelJson        = json_encode(FORMAT_SUFFIXES,     JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
@@ -893,6 +955,9 @@ $suffixLabelJson        = json_encode(FORMAT_SUFFIXES,     JSON_UNESCAPED_UNICOD
         Ajouter une ligne par format. Le <strong>format principal</strong> porte
         <em>prod_total_units</em>; les formats parallèles portent <em>qte_unites</em> (additif).
       </p>
+
+      <!-- SKU mosaic (populated by JS when a tank is selected) -->
+      <div id="pf-sku-mosaic" hidden></div>
 
       <!-- Format rows container (populated by JS) -->
       <div id="pf-formats-container">
@@ -1186,6 +1251,8 @@ $suffixLabelJson        = json_encode(FORMAT_SUFFIXES,     JSON_UNESCAPED_UNICOD
 <script>
 window.PF_CANDIDATES          = <?= $candidatesJson ?>;
 window.PF_CANDIDATES_OVERRIDE = <?= $candidatesOverrideJson ?>;
+window.PF_RECIPE_SKUS         = <?= $pfRecipeSkusJson ?>;
+window.PF_RECIPE_UNASSIGNED   = <?= $pfRecipeUnassignedJson ?>;
 window.PF_CAN_OVERRIDE        = <?= $canOverride ? 'true' : 'false' ?>;
 window.PF_CLIENTS             = <?= $clientsJson ?>;
 window.RUN_TYPE_LABELS        = <?= $runTypeLabelJson ?>;
