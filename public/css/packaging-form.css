@@ -1,0 +1,456 @@
+/*
+ * packaging-form.css — Styles for /modules/form-packaging.php
+ *
+ * All rules scoped under body.op-form-packaging to prevent leakage.
+ * Tokens: all from app.css :root — NO custom tokens invented here.
+ * --bbt maps to --bbt (cyan); --cct maps to --cold (blue) defined in app.css.
+ */
+
+/* ── Write-guard banner ──────────────────────────────────────────────────── */
+body.op-form-packaging .pf-guard-banner {
+  margin: 0 0 var(--gap, 1.5rem);
+  padding: 0.75rem 1.25rem;
+  background: color-mix(in srgb, var(--ember, #c85a1a) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ember, #c85a1a) 40%, transparent);
+  border-radius: 6px;
+  font-size: 0.82rem;
+  color: var(--ink, #ede0c4);
+  line-height: 1.5;
+}
+body.op-form-packaging .pf-guard-banner code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+  color: var(--ember, #c85a1a);
+}
+
+/* ── Tank candidate grid (BBT + CCT) ────────────────────────────────────── */
+body.op-form-packaging .pf-tank-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+body.op-form-packaging .pf-tank-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.75rem 0.875rem 0.875rem;
+  background: var(--bg-elev, #1d160d);
+  border: 1.5px solid var(--hairline, rgba(237,224,196,0.12));
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+  position: relative;
+}
+
+/* BBT: cyan accent */
+body.op-form-packaging .pf-tank-card:hover:not([disabled]):not(.pf-tank-card--cct) {
+  border-color: var(--bbt, #5bc8d8);
+  background: color-mix(in srgb, var(--bbt, #5bc8d8) 8%, var(--bg-elev, #1d160d));
+}
+body.op-form-packaging .pf-tank-card--selected:not(.pf-tank-card--cct) {
+  border-color: var(--bbt, #5bc8d8);
+  background: color-mix(in srgb, var(--bbt, #5bc8d8) 12%, var(--bg-elev, #1d160d));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--bbt, #5bc8d8) 30%, transparent);
+}
+
+/* CCT: cold (blue) accent */
+body.op-form-packaging .pf-tank-card--cct:hover:not([disabled]) {
+  border-color: var(--cold, #5b9cd8);
+  background: color-mix(in srgb, var(--cold, #5b9cd8) 8%, var(--bg-elev, #1d160d));
+}
+body.op-form-packaging .pf-tank-card--cct.pf-tank-card--selected {
+  border-color: var(--cold, #5b9cd8);
+  background: color-mix(in srgb, var(--cold, #5b9cd8) 12%, var(--bg-elev, #1d160d));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--cold, #5b9cd8) 30%, transparent);
+}
+
+body.op-form-packaging .pf-tank-card--empty {
+  opacity: 0.45;
+  cursor: default;
+}
+body.op-form-packaging .pf-tank-card:focus-visible {
+  outline: 2px solid var(--bbt, #5bc8d8);
+  outline-offset: 2px;
+}
+
+body.op-form-packaging .pf-tank-card__label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--bbt, #5bc8d8);
+  font-weight: 600;
+}
+body.op-form-packaging .pf-tank-card--cct .pf-tank-card__label {
+  color: var(--cold, #5b9cd8);
+}
+body.op-form-packaging .pf-tank-card__cap {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.68rem;
+  color: var(--ink-mute, rgba(237,224,196,0.45));
+  margin-bottom: 0.25rem;
+}
+body.op-form-packaging .pf-tank-card__beer {
+  font-family: 'Fraunces', serif;
+  font-size: 0.92rem;
+  font-variation-settings: "opsz" 96;
+  color: var(--ink, #ede0c4);
+  line-height: 1.2;
+}
+body.op-form-packaging .pf-tank-card__batch {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  color: var(--ink-soft, rgba(237,224,196,0.7));
+}
+body.op-form-packaging .pf-tank-card__vol {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  color: var(--hop, #8fbc5a);
+  margin-top: 0.2rem;
+}
+body.op-form-packaging .pf-tank-card__date {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  color: var(--ink-mute, rgba(237,224,196,0.45));
+  margin-top: 0.1rem;
+}
+body.op-form-packaging .pf-tank-card__empty-label {
+  font-size: 0.75rem;
+  color: var(--ink-mute, rgba(237,224,196,0.45));
+  font-style: italic;
+}
+
+/* ── Selected tank summary strip ─────────────────────────────────────────── */
+body.op-form-packaging .pf-selected-tank {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.875rem;
+  background: color-mix(in srgb, var(--bbt, #5bc8d8) 10%, var(--bg-elev, #1d160d));
+  border: 1px solid color-mix(in srgb, var(--bbt, #5bc8d8) 30%, transparent);
+  border-radius: 6px;
+  font-size: 0.82rem;
+}
+body.op-form-packaging .pf-selected-tank__label {
+  color: var(--ink-mute, rgba(237,224,196,0.45));
+  white-space: nowrap;
+}
+body.op-form-packaging .pf-selected-tank__summary {
+  flex: 1;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.82rem;
+  color: var(--bbt, #5bc8d8);
+}
+body.op-form-packaging .pf-selected-tank__clear {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--ink-soft, rgba(237,224,196,0.7));
+  font-size: 0.8rem;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  transition: color 0.12s;
+}
+body.op-form-packaging .pf-selected-tank__clear:hover {
+  color: var(--ember, #c85a1a);
+}
+
+/* ── Formats intro hint ──────────────────────────────────────────────────── */
+body.op-form-packaging .pf-formats-intro {
+  font-size: 0.82rem;
+  color: var(--ink-soft, rgba(237,224,196,0.7));
+  margin-bottom: 0.75rem;
+}
+
+/* ── Format row block ───────────────────────────────────────────────────── */
+body.op-form-packaging .pf-format-row {
+  background: color-mix(in srgb, var(--bg-elev, #1d160d) 80%, var(--bg, #15100a));
+  border: 1px solid var(--hairline, rgba(237,224,196,0.12));
+  border-radius: 6px;
+  padding: 1rem;
+  margin-bottom: 0.75rem;
+}
+body.op-form-packaging .pf-format-row__header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+body.op-form-packaging .pf-format-row__badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  padding: 0.15rem 0.5rem;
+  border-radius: 3px;
+}
+body.op-form-packaging .pf-format-row__badge--main {
+  background: color-mix(in srgb, var(--hop, #8fbc5a) 18%, transparent);
+  color: var(--hop, #8fbc5a);
+}
+body.op-form-packaging .pf-format-row__badge--parallel {
+  background: color-mix(in srgb, var(--cold, #5b9cd8) 18%, transparent);
+  color: var(--cold, #5b9cd8);
+}
+
+body.op-form-packaging .op-form__btn--danger-sm {
+  background: none;
+  border: 1px solid color-mix(in srgb, var(--ember, #c85a1a) 40%, transparent);
+  color: var(--ember, #c85a1a);
+  font-size: 0.72rem;
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.12s;
+  margin-left: auto;
+}
+body.op-form-packaging .op-form__btn--danger-sm:hover {
+  background: color-mix(in srgb, var(--ember, #c85a1a) 14%, transparent);
+}
+
+/* ── Add-format button ───────────────────────────────────────────────────── */
+body.op-form-packaging .pf-add-format-btn {
+  margin-top: 0.25rem;
+  font-size: 0.82rem;
+}
+
+/* ── Losses: collapsible ─────────────────────────────────────────────────── */
+body.op-form-packaging .pf-losses-details {
+  margin-top: 0.75rem;
+  border-top: 1px solid var(--hairline, rgba(237,224,196,0.08));
+  padding-top: 0.75rem;
+}
+body.op-form-packaging .pf-losses-summary {
+  cursor: pointer;
+  font-size: 0.82rem;
+  color: var(--ink-soft, rgba(237,224,196,0.7));
+  user-select: none;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+body.op-form-packaging .pf-losses-summary::-webkit-details-marker { display: none; }
+body.op-form-packaging .pf-losses-summary::before {
+  content: '›';
+  font-size: 0.9rem;
+  transition: transform 0.15s;
+}
+body.op-form-packaging details[open] .pf-losses-summary::before { transform: rotate(90deg); }
+body.op-form-packaging .pf-losses-summary__hint {
+  font-size: 0.72rem;
+  color: var(--ink-mute, rgba(237,224,196,0.45));
+}
+body.op-form-packaging .pf-losses-grid,
+body.op-form-packaging .pf-qa-grid {
+  margin-top: 0.75rem;
+}
+body.op-form-packaging .pf-loss-label {
+  font-size: 0.76rem;
+}
+body.op-form-packaging .pf-loss-input {
+  font-size: 0.82rem;
+}
+
+/* ── Format top grid ─────────────────────────────────────────────────────── */
+body.op-form-packaging .pf-format-top-grid {
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+}
+
+/* ── CIP groups ──────────────────────────────────────────────────────────── */
+body.op-form-packaging .pf-cip-group {
+  margin-bottom: 1rem;
+}
+body.op-form-packaging .pf-cip-group + .pf-cip-group {
+  border-top: 1px solid var(--hairline, rgba(237,224,196,0.08));
+  padding-top: 0.875rem;
+}
+body.op-form-packaging .pf-cip-group__label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-mute, rgba(237,224,196,0.45));
+  margin-bottom: 0.5rem;
+}
+
+/* ── QA hint ─────────────────────────────────────────────────────────────── */
+body.op-form-packaging .pf-qa-hint {
+  font-size: 0.8rem;
+  color: var(--ink-mute, rgba(237,224,196,0.45));
+  margin-bottom: 0.75rem;
+}
+
+/* ── Client master-data gap warning ─────────────────────────────────────── */
+body.op-form-packaging .pf-hint--warn {
+  color: var(--ember, #c85a1a);
+}
+
+/* ── Recent table ─────────────────────────────────────────────────────────── */
+body.op-form-packaging .op-form__recent-table tr.pf-row--draft td {
+  opacity: 0.6;
+  font-style: italic;
+}
+
+/* ── Mode badge (test / live) ───────────────────────────────────────────── */
+body.op-form-packaging .pf-mode-badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.15rem 0.45rem;
+  border-radius: 3px;
+}
+body.op-form-packaging .pf-mode-badge--draft {
+  background: color-mix(in srgb, var(--ember, #c85a1a) 18%, transparent);
+  color: var(--ember, #c85a1a);
+}
+body.op-form-packaging .pf-mode-badge--live {
+  background: color-mix(in srgb, var(--hop, #8fbc5a) 18%, transparent);
+  color: var(--hop, #8fbc5a);
+}
+
+/* ── Row-origin badge (recent table) ────────────────────────────────────── */
+body.op-form-packaging .pf-origin-badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+}
+body.op-form-packaging .pf-origin-badge--main {
+  background: color-mix(in srgb, var(--hop, #8fbc5a) 14%, transparent);
+  color: var(--hop, #8fbc5a);
+}
+body.op-form-packaging .pf-origin-badge--parallel {
+  background: color-mix(in srgb, var(--cold, #5b9cd8) 14%, transparent);
+  color: var(--cold, #5b9cd8);
+}
+
+/* ── Choix Hors Process override block (manager/admin only) ──────────────── */
+body.op-form-packaging .pf-override-block {
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  background: color-mix(in srgb, var(--ember, #c85a1a) 7%, var(--bg-elev, #1d160d));
+  border: 1px solid color-mix(in srgb, var(--ember, #c85a1a) 28%, transparent);
+  border-radius: 6px;
+}
+body.op-form-packaging .pf-override-label {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  cursor: pointer;
+  user-select: none;
+}
+body.op-form-packaging .pf-override-checkbox {
+  width: 1.1rem;
+  height: 1.1rem;
+  accent-color: var(--ember, #c85a1a);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+body.op-form-packaging .pf-override-text {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--ember, #c85a1a);
+}
+body.op-form-packaging .pf-override-badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--ember, #c85a1a) 20%, transparent);
+  color: var(--ember, #c85a1a);
+}
+body.op-form-packaging .pf-override-desc {
+  font-size: 0.76rem;
+  color: var(--ink-soft, rgba(237,224,196,0.65));
+  margin: 0.4rem 0 0 1.7rem;
+  line-height: 1.5;
+}
+body.op-form-packaging .pf-override-desc code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  color: var(--ember, #c85a1a);
+}
+body.op-form-packaging .pf-override-reason-row {
+  margin-top: 0.6rem;
+  margin-left: 1.7rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+body.op-form-packaging .pf-override-reason-label {
+  font-size: 0.78rem;
+  color: var(--ink-soft, rgba(237,224,196,0.7));
+}
+body.op-form-packaging .pf-override-reason-input {
+  max-width: 32rem;
+}
+
+/* Active override banner (injected by JS when checkbox is checked) */
+body.op-form-packaging .pf-override-active-banner {
+  margin-bottom: 0.75rem;
+  padding: 0.65rem 1rem;
+  background: color-mix(in srgb, var(--ember, #c85a1a) 15%, transparent);
+  border: 1.5px solid color-mix(in srgb, var(--ember, #c85a1a) 50%, transparent);
+  border-radius: 6px;
+  font-size: 0.8rem;
+  color: var(--ink, #ede0c4);
+  line-height: 1.4;
+}
+body.op-form-packaging .pf-override-active-banner strong {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  color: var(--ember, #c85a1a);
+}
+body.op-form-packaging .pf-override-active-banner code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  color: var(--ember, #c85a1a);
+}
+
+/* Hors Process row in recent table */
+body.op-form-packaging .op-form__recent-table tr.pf-row--hors-process td {
+  background: color-mix(in srgb, var(--ember, #c85a1a) 5%, transparent);
+}
+
+/* Hors Process badge */
+body.op-form-packaging .pf-hp-badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--ember, #c85a1a) 20%, transparent);
+  color: var(--ember, #c85a1a);
+}
+body.op-form-packaging .pf-hp-badge--normal {
+  background: transparent;
+  color: var(--ink-mute, rgba(237,224,196,0.35));
+}
+
+/* ── Responsive ──────────────────────────────────────────────────────────── */
+@media (max-width: 480px) {
+  body.op-form-packaging .pf-tank-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  body.op-form-packaging .pf-format-top-grid {
+    grid-template-columns: 1fr;
+  }
+}

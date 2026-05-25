@@ -338,6 +338,9 @@ $fmtLabels = ['Keg' => 'Fût', 'Bot' => 'Bouteille', 'Can' => 'Canette', 'Cuve d
         Packaging
         <span class="tanks-section__tag">Conditionnement</span>
       </h2>
+      <a href="/modules/form-packaging.php" class="wort-filters__reset tanks-filters__reset">
+        + Saisir un conditionnement
+      </a>
       <form class="ferm-stats__year-form" method="get" action="<?= htmlspecialchars($_SERVER['PHP_SELF']) ?>">
         <?php if (isset($_GET['year']))  : ?><input type="hidden" name="year"  value="<?= htmlspecialchars($_GET['year'])  ?>"><?php endif ?>
         <?php if (isset($_GET['month'])) : ?><input type="hidden" name="month" value="<?= htmlspecialchars($_GET['month']) ?>"><?php endif ?>
