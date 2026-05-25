@@ -5,7 +5,10 @@
  * Do NOT append to app.css — linked separately with cache-bust ?v= mtime.
  *
  * New tokens used here (warehouse / governance accent):
- *   --dock / --dock-deep / --dock-glow  already declared in app.css :root
+ *   --dock / --dock-deep are declared SCOPED to body.approv-fournisseurs in
+ *   app.css (NOT in :root), so we re-declare them locally below — otherwise
+ *   var(--dock) resolves to nothing on this page (e.g. the GL-footprint primary
+ *   bar rendered invisible / "0%"). Keep values in sync with app.css.
  *   --manifest / --manifest-2 / etc. were in the mockup but not canonical.
  *   We map them to existing tokens:
  *     --manifest      → var(--ink)
@@ -15,6 +18,10 @@
 
 /* ── board background ─────────────────────────────────────────────── */
 body.salle-fournisseurs {
+  /* --dock/--dock-deep are scoped to body.approv-fournisseurs in app.css, not
+     :root — re-declare here so var(--dock) resolves on this page. */
+  --dock: #8b5e2a;
+  --dock-deep: #5a3a12;
   font-family: "DM Sans", system-ui, sans-serif;
   color: var(--ink);
   background: var(--bg);
