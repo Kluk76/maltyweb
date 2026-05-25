@@ -113,7 +113,7 @@ try {
           GROUP BY beer, batch
         ),
         cc AS (
-          -- bd_fermenting → bd_fermenting_v2: ColdCrash rows carry the "PREFIX BATCH"
+          -- bd_fermenting → bd_fermenting_v2: ColdCrash rows carry the 'PREFIX BATCH'
           -- text in beer_raw (event_type discriminator replaces the beers_to_cold_crash col).
           -- GROUP BY the full derived expressions, NOT the aliases: bd_fermenting_v2 has
           -- a physical `batch` column, so GROUP BY batch would bind to it and trip
@@ -169,7 +169,7 @@ try {
     // ---- Per-recipe averages of last gravity + last pH before cold-crash ----
     $avgFinalsStmt = $pdo->query("
         WITH cc_per_batch AS (
-          -- bd_fermenting → bd_fermenting_v2: ColdCrash rows, "PREFIX BATCH" in beer_raw.
+          -- bd_fermenting → bd_fermenting_v2: ColdCrash rows, 'PREFIX BATCH' in beer_raw.
           -- GROUP BY full expressions (physical `batch` column collides with the alias).
           SELECT
             TRIM(SUBSTRING(beer_raw, 1, LENGTH(beer_raw) - LENGTH(SUBSTRING_INDEX(beer_raw, ' ', -1)) - 1)) AS prefix,
@@ -182,7 +182,7 @@ try {
                    TRIM(SUBSTRING_INDEX(beer_raw, ' ', -1))
         ),
         reads_with_parse AS (
-          -- Reads rows, "PREFIX BATCH" in beer_raw (event_type='Reads').
+          -- Reads rows, 'PREFIX BATCH' in beer_raw (event_type='Reads').
           SELECT
             TRIM(SUBSTRING(beer_raw, 1, LENGTH(beer_raw) - LENGTH(SUBSTRING_INDEX(beer_raw, ' ', -1)) - 1)) AS prefix,
             TRIM(SUBSTRING_INDEX(beer_raw, ' ', -1)) AS batch,

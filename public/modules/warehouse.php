@@ -5,7 +5,10 @@ require_login();
 $me = current_user();
 $active_module = "warehouse";
 
-$view    = in_array($_GET['view'] ?? 'rm', ['rm', 'fg', 'wip'], true) ? $_GET['view'] : 'rm';
+$view    = $_GET['view'] ?? 'rm';
+if (!in_array($view, ['rm', 'fg', 'wip'], true)) {
+    $view = 'rm';
+}
 $periodRaw = $_GET['period'] ?? '';
 $period    = (preg_match('/^\d{4}-(?:0[1-9]|1[0-2])$/', $periodRaw) ? $periodRaw : '');
 $miId    = isset($_GET['mi_id']) && ctype_digit((string) $_GET['mi_id']) ? (int) $_GET['mi_id'] : null;
