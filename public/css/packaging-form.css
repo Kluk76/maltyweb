@@ -111,6 +111,12 @@ body.op-form-packaging .pf-tank-card__vol {
   color: var(--hop, #8fbc5a);
   margin-top: 0.2rem;
 }
+body.op-form-packaging .pf-tank-card__vol-racked {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.62rem;
+  color: var(--ink-mute, rgba(237,224,196,0.45));
+  margin-top: 0.05rem;
+}
 body.op-form-packaging .pf-tank-card__date {
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.65rem;

@@ -396,7 +396,9 @@ document.addEventListener('DOMContentLoaded', function () {
       const tankNum   = parseInt(cand.tank_number, 10) || 0;
       const tankFkId  = parseInt(cand.tank_fk_id, 10) || 0;
       const capHl     = cand.capacity_hl !== null ? Math.round(parseFloat(cand.capacity_hl)) : '—';
-      const rackedHl  = cand.racked_vol_hl !== null ? parseFloat(cand.racked_vol_hl).toFixed(1) + ' HL' : '—';
+      // Headline: simulator remaining volume; secondary: original racked volume.
+      const simVolHl  = cand.sim_vol_hl != null ? parseFloat(cand.sim_vol_hl).toFixed(1) + ' HL' : '—';
+      const rackedHl  = cand.racked_vol_hl != null ? parseFloat(cand.racked_vol_hl).toFixed(1) + ' HL' : '—';
       const rackedAt  = cand.racked_at || '—';
       const beerName  = escHtml(cand.beer || '');
       const batchNum  = escHtml(cand.batch_num || '');
@@ -412,7 +414,8 @@ document.addEventListener('DOMContentLoaded', function () {
         (hasBeer
           ? '<div class="pf-tank-card__beer">' + beerName + '</div>' +
             '<div class="pf-tank-card__batch">' + batchNum + '</div>' +
-            '<div class="pf-tank-card__vol">' + escHtml(rackedHl) + '</div>' +
+            '<div class="pf-tank-card__vol">' + escHtml(simVolHl) + '</div>' +
+            '<div class="pf-tank-card__vol-racked">raclé ' + escHtml(rackedHl) + '</div>' +
             '<div class="pf-tank-card__date">soutirée ' + escHtml(rackedAt) + '</div>'
           : '<div class="pf-tank-card__empty-label">— vide / inconnu —</div>');
 
@@ -427,7 +430,7 @@ document.addEventListener('DOMContentLoaded', function () {
       btn.dataset.contractBeer  = cand.contract_beer || '';
       btn.dataset.contractBatch = cand.contract_batch || '';
       btn.dataset.recipeId      = String(cand.neb_recipe_id_fk || cand.contract_recipe_id_fk || 0);
-      btn.dataset.vol           = String(cand.racked_vol_hl || '');
+      btn.dataset.vol           = String(cand.sim_vol_hl != null ? cand.sim_vol_hl : (cand.racked_vol_hl || ''));
       btn.innerHTML             = inner;
 
       if (!hasBeer) {

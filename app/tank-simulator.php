@@ -636,12 +636,30 @@ class TankSimulator
     /** Build PACKAGING events. */
     private function loadPackagingEvents(): array
     {
-        // LEGACY-ONLY (v2 cutover blocker, 2026-05-24): bd_packaging_v2.vendable_hl
-        // is 100% NULL — the per-row HL valuation has not yet been computed/backfilled
-        // into v2. This loader drives BBT volume depletion; repointing it to v2 now
-        // would silently zero out every packaging-out event and BBT tanks would never
-        // drain. Stays on bd_packaging until vendable_hl is populated in v2.
-        $rows = $this->pdo->query(
+        // SOURCE STRATEGY (2026-05-25):
+        //
+        // Historical depletion comes from bd_packaging, which holds the full
+        // packaging history and has vendable_hl populated throughout.
+        //
+        // New-form depletion (bd_packaging_v2 rows with audit_flags LIKE
+        // '%web_entry%' AND vendable_hl IS NOT NULL) must also be included,
+        // otherwise a packaging entered via the operator form will NOT drain its
+        // BBT — the operator would see a stale volume in their own loop.
+        //
+        // bd_packaging_v2 has no loss_liquid_l column; totalHl = vendable_hl
+        // only (processEvent adds PACKAGING_LOSS_HL = 0.15 on top regardless).
+        //
+        // Dedup: bd_packaging_v2 and bd_packaging share ALL their historical
+        // rows (both tables were populated from the same BSF sync). A submitted_at
+        // JOIN is many-to-many (multiple rows per timestamp across beers) and
+        // row_hash has 0 cross-table matches. The safe dedup key is
+        // (beer_canonical, batch, date_str): a packaging event for the same
+        // beer+batch on the same calendar day cannot legitimately appear twice
+        // from different sources (both rows represent the same physical run).
+        // This correctly dedupes legacy+v2 history while adding net-new web rows.
+
+        // 1. Load legacy rows from bd_packaging
+        $legacyRows = $this->pdo->query(
             'SELECT beer,
                     batch,
                     vendable_hl,
@@ -652,26 +670,51 @@ class TankSimulator
                AND (vendable_hl > 0 OR loss_liquid_l > 0)'
         )->fetchAll();
 
+        // 2. Load new web-form rows from bd_packaging_v2 (only rows with volume)
+        $v2Rows = $this->pdo->query(
+            'SELECT COALESCE(NULLIF(neb_beer, ""), contract_beer) AS beer,
+                    COALESCE(NULLIF(neb_batch, ""), contract_batch) AS batch,
+                    vendable_hl,
+                    NULL AS loss_liquid_l,
+                    submitted_at
+             FROM bd_packaging_v2
+             WHERE submitted_at IS NOT NULL
+               AND vendable_hl IS NOT NULL
+               AND CAST(vendable_hl AS DECIMAL(14,4)) > 0
+               AND is_tombstoned = 0'
+        )->fetchAll();
+
+        // 3. Parse all rows into a canonical event structure, dedup by (beer,batch,date)
+        $seen   = [];   // dedup set: 'beer|batch|YYYY-MM-DD' → true
         $events = [];
-        foreach ($rows as $row) {
-            // bd_packaging.beer holds SKU codes like "SPYF" / "STI4" — strip the
-            // format suffix to recover the prefix then map to canonical beer.
-            // Without this, packaging events never match the canonical-named
-            // batchBBT entries set by racking and BBT volumes never drain.
+
+        // $isSkuSource=true  → legacy bd_packaging: beer holds SKU codes (e.g. "SPYF"),
+        //                      so deriveBeerFromSku() is tried first.
+        // $isSkuSource=false → bd_packaging_v2: neb_beer/contract_beer hold racking-style
+        //                      names (e.g. "Div.Blanche"), identical to bd_racking_v2 —
+        //                      skip deriveBeerFromSku() so the key matches the racking key.
+        $processRow = function (array $row, bool $isSkuSource) use (&$seen, &$events): void {
             $rawBeer       = trim($row['beer'] ?? '');
-            $beer          = $this->deriveBeerFromSku($rawBeer);
-            if ($beer === '') {
-                // Fallback: maybe the col already holds a canonical name (older rows).
+            if ($isSkuSource) {
+                $beer = $this->deriveBeerFromSku($rawBeer);
+                if ($beer === '') {
+                    $beer = $this->normalizeBeerName($rawBeer);
+                }
+            } else {
                 $beer = $this->normalizeBeerName($rawBeer);
             }
             $batch         = trim($row['batch'] ?? '');
             $vendableHl    = (float)($row['vendable_hl'] ?? 0);
             $lossLiquidL   = (float)($row['loss_liquid_l'] ?? 0);
-            $totalHl       = $vendableHl + ($lossLiquidL / 100.0); // litres → HL
+            $totalHl       = $vendableHl + ($lossLiquidL / 100.0);
             $date          = $this->parseDate($row['submitted_at'] ?? '');
 
-            if ($beer === '' || $date === null || $totalHl <= 0) continue;
-            if ($this->isWortSale($beer)) continue;
+            if ($beer === '' || $date === null || $totalHl <= 0) return;
+            if ($this->isWortSale($beer)) return;
+
+            $dedupKey = $beer . '|' . $batch . '|' . $date->format('Y-m-d');
+            if (isset($seen[$dedupKey])) return;
+            $seen[$dedupKey] = true;
 
             $events[] = [
                 'type'          => 'PACKAGING',
@@ -681,7 +724,13 @@ class TankSimulator
                 'hl'            => $totalHl,
                 'sort_priority' => 2,
             ];
-        }
+        };
+
+        // Legacy first so that if there is a dedup collision the legacy row wins
+        // (legacy rows have vendable_hl + loss_liquid_l; v2 only has vendable_hl)
+        foreach ($legacyRows as $row) { $processRow($row, true); }
+        foreach ($v2Rows as $row)     { $processRow($row, false); }
+
         return $events;
     }
 

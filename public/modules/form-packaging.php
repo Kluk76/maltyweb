@@ -30,6 +30,7 @@ declare(strict_types=1);
 require __DIR__ . '/../../app/auth.php';
 require __DIR__ . '/../../app/settings-helpers.php';
 require __DIR__ . '/../../app/db-write-helpers.php';
+require_once __DIR__ . '/../../app/tank-simulator.php';
 
 require_login();
 $me = current_user();
@@ -407,12 +408,12 @@ try {
     // Both queries are built here; the override list is injected into window.* only
     // when the user has manager/admin role (server-enforced).
     //
-    // Note on future dates (2026-05-25): most BBT racking rows have event_date in the
-    // future (e.g. 2026-07 to 2026-12). This is NOT a data error — these are
-    // SCHEDULED future racking events. The gate correctly excludes them because the
-    // racking hasn't happened yet. The override is the intended escape hatch for
-    // packaging lots before the scheduled racking date when operationally justified.
-    // Operator should NOT change gate semantics to paper over future-dated rows.
+    // Note on dates (2026-05-25): an earlier read showed many "future" racking rows.
+    // That was NOT scheduling — it was a day<->month swap in bd_racking_v2 (corrected
+    // in place 2026-05-25, 147 rows; 0 future rows remain). The gate now runs on real
+    // racking dates. The override (Choix Hors Process) is the escape hatch for
+    // packaging a lot before $minDays has elapsed when operationally justified — it
+    // relaxes the TIME gate only, never the physical CCT-emptied guard below.
 
     $candidateBaseSql = "SELECT
            r.id                                                     AS racking_id,
@@ -450,6 +451,23 @@ try {
                AND r2.is_tombstoned = 0
              ORDER BY r2.submitted_at DESC
              LIMIT 1
+           )
+           -- CCT-emptied guard: a CCT is freed when a NEW beer is brewed into it
+           -- (bd_brewing_brewday_v2.cct), not by a racking. BBTs are freed by the
+           -- 'latest racking wins' subquery above; CCTs need this extra check or a
+           -- stale racked-into-CCT lot lingers forever (e.g. Speakeasy b57 racked
+           -- into CCT5 2025-10-20, but CCT5 re-brewed many times since). Applies to
+           -- both the dated and override lists — a physically-refilled tank no longer
+           -- holds the old lot regardless of the date gate.
+           AND NOT (
+             r.racking_destination_type = 'CCT'
+             AND EXISTS (
+               SELECT 1 FROM bd_brewing_brewday_v2 bb
+               WHERE bb.cct = r.cct_number
+                 AND bb.is_tombstoned = 0
+                 AND bb.event_date IS NOT NULL
+                 AND bb.event_date > r.event_date
+             )
            )";
 
     // Normal candidate query (with date gate)
@@ -461,16 +479,183 @@ try {
     $candStmt->execute([$minDays]);
     $candidates = $candStmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // Override candidate query (all lots in CCT/BBT — no date gate) — only loaded
-    // when the user has manager/admin role. Never sent to browser for operators.
+    // ── Apply TankSimulator volumes (replace racked_vol_hl with sim remaining) ─
+    // The simulator is the authoritative tank-state engine: it accounts for
+    // subsequent packaging depletion and blend adjustments, which racked_vol_hl
+    // does not. Candidates whose tank is null in the sim (empty/below threshold/
+    // expired) are dropped — the operator's form must be consistent with the
+    // packaging dashboard which uses the same sim.
+    //
+    // Keying: we join on (strtolower(tank_type), (int)tank_number) only.
+    // Beer-name normalisation in the sim is complex (Div.Blanche, etc.) so we
+    // do NOT compare beer strings. We trust the sim's tank-occupancy as truth.
+    $simState = (new TankSimulator($pdo))->run(new DateTimeImmutable('today'));
+
+    /**
+     * Filter a candidate list through the sim state:
+     *  - Drops candidates whose tank is null (empty/expired).
+     *  - Replaces the displayed volume with the sim remaining volume.
+     *  - Preserves racked_vol_hl as a secondary field for context.
+     *
+     * @param array[] $list
+     * @param array   $sim  ['bbt' => [...], 'cct' => [...]]
+     * @return array[]
+     */
+    $applySimVolumes = function (array $list, array $sim): array {
+        $out = [];
+        foreach ($list as $cand) {
+            $tankKey = strtolower((string)($cand['tank_type'] ?? ''));   // 'bbt' or 'cct'
+            $tankNum = (int)($cand['tank_number'] ?? 0);
+            $tankState = $sim[$tankKey][$tankNum] ?? null;
+
+            if ($tankState === null) {
+                // Tank is empty/expired in the sim — drop this candidate.
+                continue;
+            }
+
+            // Inject sim remaining volume; preserve racked_vol_hl as secondary.
+            $cand['sim_vol_hl']    = round((float)$tankState['volume_hl'], 2);
+            $cand['racked_vol_hl'] = $cand['racked_vol_hl'];  // unchanged
+            $out[] = $cand;
+        }
+        return $out;
+    };
+
+    $candidates = $applySimVolumes($candidates, $simState);
+
+    // ── Override candidate list: ALL sim-occupied tanks (BBT + CCT) ──────────
+    // Built from the TankSimulator, not from the racking query — so CCT-fermenting
+    // lots (brewed in, not yet racked → no bd_racking_v2 row) are included.
+    //
+    // Strategy:
+    //   1. Fetch the racking-derived override rows (no date gate) for identity richness.
+    //   2. Build a keyed index from them: (tank_type, tank_number) → candidate array.
+    //   3. For each sim-occupied tank, reuse the racking-derived candidate if one
+    //      exists (it has neb/contract split + recipe_id_fk from the racking event).
+    //      Otherwise (CCT-fermenting, no racking row), resolve from bd_brewing_brewday_v2.
+    //   4. Apply sim_vol_hl from the simulator state.
+    //
+    // Contract: recipe_id_fk is NULL when it cannot be cleanly resolved.  The form's
+    // recipe confirmation dropdown lets the operator pick the recipe in that case.
+    // NEVER guess neb/contract or recipe assignments.
     $candidatesOverride = [];
     if ($canOverride) {
-        $overrideStmt = $pdo->prepare(
+        // 1. Fetch racking-derived rows (no date gate) as an identity base
+        $overrideRackingStmt = $pdo->prepare(
             $candidateBaseSql .
             " ORDER BY r.racking_destination_type ASC, tank_number ASC"
         );
-        $overrideStmt->execute();
-        $candidatesOverride = $overrideStmt->fetchAll(PDO::FETCH_ASSOC);
+        $overrideRackingStmt->execute();
+        $rackingRows = $overrideRackingStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // 2. Key racking rows by (TYPE, number) — uppercase type matches sim keys
+        $rackingByTank = [];
+        foreach ($rackingRows as $rr) {
+            $key = strtoupper((string)($rr['tank_type'] ?? '')) . '|' . (int)($rr['tank_number'] ?? 0);
+            $rackingByTank[$key] = $rr;
+        }
+
+        // Prepare brewday lookup for CCT-fermenting lots (no racking row)
+        $brewdayStmt = $pdo->prepare(
+            "SELECT cct, batch, beer, recipe_id_fk
+               FROM bd_brewing_brewday_v2
+              WHERE cct = ? AND batch = ? AND is_tombstoned = 0
+              ORDER BY event_date DESC
+              LIMIT 1"
+        );
+
+        // 3. Walk every sim-occupied tank (BBT first, then CCT — by number)
+        $capCache = [];
+        foreach (['bbt', 'cct'] as $tankTypeKey) {
+            $tankTypeUC = strtoupper($tankTypeKey);  // 'BBT' or 'CCT'
+            $simTanks   = $simState[$tankTypeKey] ?? [];
+            ksort($simTanks);  // ascending by tank number
+
+            // Load ref_bbt / ref_cct capacity lookup once per type
+            if (!isset($capCache[$tankTypeKey])) {
+                $tbl = ($tankTypeKey === 'bbt') ? 'ref_bbt' : 'ref_cct';
+                $capRows = $pdo->query("SELECT number, id, capacity_hl FROM {$tbl} ORDER BY number")->fetchAll(PDO::FETCH_ASSOC);
+                $capCache[$tankTypeKey] = [];
+                foreach ($capRows as $cr) {
+                    $capCache[$tankTypeKey][(int)$cr['number']] = ['id' => (int)$cr['id'], 'cap' => $cr['capacity_hl']];
+                }
+            }
+
+            foreach ($simTanks as $tankNum => $simTank) {
+                if ($simTank === null) continue;
+
+                $tankNum  = (int)$tankNum;
+                $simVolHl = round((float)$simTank['volume_hl'], 2);
+                $simBatch = (int)$simTank['batch'];
+                $tankRef  = $capCache[$tankTypeKey][$tankNum] ?? null;
+                $tankFkId = $tankRef ? $tankRef['id']  : null;
+                $capHl    = $tankRef ? $tankRef['cap'] : null;
+
+                $rackingKey    = $tankTypeUC . '|' . $tankNum;
+                $existingRack  = $rackingByTank[$rackingKey] ?? null;
+
+                if ($existingRack !== null) {
+                    // Racking-derived candidate exists: reuse it, inject sim volume.
+                    $cand                = $existingRack;
+                    $cand['sim_vol_hl']  = $simVolHl;
+                    // Ensure tank_fk_id + capacity are from ref tables (racking may have it already)
+                    if ($tankFkId !== null) $cand['tank_fk_id'] = $tankFkId;
+                    if ($capHl    !== null) $cand['capacity_hl'] = $capHl;
+                } else {
+                    // CCT-fermenting: no racking row — resolve from bd_brewing_brewday_v2.
+                    $brewdayRow    = null;
+                    $recipeIdFk    = null;
+                    $nebBeer       = null;
+                    $nebBatch      = null;
+                    $contractBeer  = null;
+                    $contractBatch = null;
+                    $nebRecipeFk   = null;
+                    $contractRecipeFk = null;
+
+                    // Join on (cct number, batch) — reliable, no beer-string comparison.
+                    $brewdayStmt->execute([$tankNum, $simBatch]);
+                    $brewdayRow = $brewdayStmt->fetch(PDO::FETCH_ASSOC) ?: null;
+
+                    if ($brewdayRow !== null) {
+                        $recipeIdFk = $brewdayRow['recipe_id_fk'];  // may be null — keep it null
+                        $beerName   = (string)($brewdayRow['beer'] ?? '');
+                        // Deterministic neb/contract split: ' - ' in name = contract brewery name
+                        if (str_contains($beerName, ' - ')) {
+                            $contractBeer     = $beerName;
+                            $contractBatch    = (string)$simBatch;
+                            $contractRecipeFk = $recipeIdFk;
+                        } else {
+                            $nebBeer      = $beerName;
+                            $nebBatch     = (string)$simBatch;
+                            $nebRecipeFk  = $recipeIdFk;
+                        }
+                    }
+                    // If brewday lookup failed, beer/batch/recipe stay null —
+                    // the operator selects from the recipe dropdown on the form.
+
+                    $cand = [
+                        'racking_id'          => null,
+                        'tank_type'           => $tankTypeUC,
+                        'tank_number'         => $tankNum,
+                        'tank_fk_id'          => $tankFkId,
+                        'capacity_hl'         => $capHl,
+                        'beer'                => $nebBeer ?? $contractBeer,
+                        'batch_num'           => $nebBatch ?? $contractBatch,
+                        'racked_vol_hl'       => null,
+                        'racked_at'           => null,
+                        'neb_beer'            => $nebBeer,
+                        'neb_batch'           => $nebBatch,
+                        'neb_recipe_id_fk'    => $nebRecipeFk,
+                        'contract_beer'       => $contractBeer,
+                        'contract_batch'      => $contractBatch,
+                        'contract_recipe_id_fk' => $contractRecipeFk,
+                        'sim_vol_hl'          => $simVolHl,
+                    ];
+                }
+
+                $candidatesOverride[] = $cand;
+            }
+        }
     }
 
     // ── Clients for dropdown (decision 7) ─────────────────────────────────────
@@ -631,7 +816,14 @@ $suffixLabelJson        = json_encode(FORMAT_SUFFIXES,     JSON_UNESCAPED_UNICOD
             $tankNum   = (int)$cand['tank_number'];
             $tankFkId  = (int)($cand['tank_fk_id'] ?? 0);
             $capHl     = $cand['capacity_hl'] !== null ? number_format((float)$cand['capacity_hl'], 0) : '—';
-            $rackedHl  = $cand['racked_vol_hl'] !== null ? number_format((float)$cand['racked_vol_hl'], 1) . ' HL' : '—';
+            // Headline: simulator remaining volume (authoritative, accounts for packaging depletion).
+            // Secondary: original racked volume for operator context.
+            $simVolHl  = isset($cand['sim_vol_hl'])
+                            ? number_format((float)$cand['sim_vol_hl'], 1) . ' HL'
+                            : '—';
+            $rackedHl  = $cand['racked_vol_hl'] !== null
+                            ? number_format((float)$cand['racked_vol_hl'], 1) . ' HL'
+                            : '—';
             $rackedAt  = $cand['racked_at'] !== null ? htmlspecialchars($cand['racked_at']) : '—';
             $isCct     = $cand['tank_type'] === 'CCT';
           ?>
@@ -645,14 +837,15 @@ $suffixLabelJson        = json_encode(FORMAT_SUFFIXES,     JSON_UNESCAPED_UNICOD
                   data-contract-beer="<?= htmlspecialchars($cand['contract_beer'] ?? '') ?>"
                   data-contract-batch="<?= htmlspecialchars($cand['contract_batch'] ?? '') ?>"
                   data-recipe-id="<?= (int)($cand['neb_recipe_id_fk'] ?? $cand['contract_recipe_id_fk'] ?? 0) ?>"
-                  data-vol="<?= htmlspecialchars($cand['racked_vol_hl'] ?? '') ?>"
+                  data-vol="<?= htmlspecialchars((string)($cand['sim_vol_hl'] ?? '')) ?>"
                   <?= !$hasBeer ? 'disabled aria-disabled="true"' : '' ?>>
             <div class="pf-tank-card__label"><?= $tankType ?> <?= $tankNum ?></div>
             <div class="pf-tank-card__cap"><?= $capHl ?> HL</div>
             <?php if ($hasBeer): ?>
               <div class="pf-tank-card__beer"><?= $beerName ?></div>
               <div class="pf-tank-card__batch"><?= $batchNum ?></div>
-              <div class="pf-tank-card__vol"><?= $rackedHl ?></div>
+              <div class="pf-tank-card__vol"><?= $simVolHl ?></div>
+              <div class="pf-tank-card__vol-racked">raclé <?= $rackedHl ?></div>
               <div class="pf-tank-card__date">soutirée <?= $rackedAt ?></div>
             <?php else: ?>
               <div class="pf-tank-card__empty-label">— vide / inconnu —</div>
@@ -678,11 +871,15 @@ $suffixLabelJson        = json_encode(FORMAT_SUFFIXES,     JSON_UNESCAPED_UNICOD
         <div class="op-form__field">
           <label class="op-form__label" for="event_date">
             Date de conditionnement
+            <span class="op-form__opt">(modifiable)</span>
           </label>
-          <!-- Decision 3: defaults to today; operator can backdate -->
+          <!-- Decision 3: defaults to today; operator can freely backdate via calendar picker -->
           <input id="event_date" name="event_date" type="date" class="op-form__input"
                  value="<?= htmlspecialchars(date('Y-m-d')) ?>" required>
-          <span class="op-form__hint">Utilisé pour le month-close — vérifier si saisie rétrospective.</span>
+          <span class="op-form__hint">
+            Par défaut : aujourd'hui. Pour une saisie rétrospective, cliquer sur
+            la date et sélectionner la date réelle du conditionnement.
+          </span>
         </div>
 
       </div>
