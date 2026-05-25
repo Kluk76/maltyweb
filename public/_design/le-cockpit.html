@@ -19,6 +19,8 @@
   --pkg:#7a5fa0; --pkg-deep:#503d6e; --pkg-band:#9b7cc8;
   --steel:#b8bcc0; --steel-mid:#5e6266; --steel-deep:#2c2e30; --steel-shadow:#15171a;
   --line:#caa86e; --line-soft:#7a6647;
+  /* lab accent (Salle de contrôle) — for family-switcher dot */
+  --lab:#4a8c78;
   /* cockpit-specific commercial accent */
   --comm:#7a9860;    /* commerce leaf-green */
   --comm-deep:#4e6240;
@@ -115,6 +117,10 @@ body{
 .family-btn.fam-sdm .fam-dot{ background:var(--steel-mid) }
 .family-btn.fam-sdm:hover{ color:var(--steel); background:rgba(44,46,48,.15) }
 .family-btn.fam-sdm:hover .fam-dot{ box-shadow:0 0 8px var(--steel-mid) }
+/* Salle de contrôle — inert */
+.family-btn.fam-controle .fam-dot{ background:var(--lab) }
+.family-btn.fam-controle:hover{ color:var(--lab); background:rgba(74,140,120,.1) }
+.family-btn.fam-controle:hover .fam-dot{ box-shadow:0 0 8px var(--lab) }
 /* Le Cockpit — active */
 .family-btn.fam-cockpit{
   background:var(--comm-glow); color:var(--comm); cursor:default; pointer-events:none;
@@ -589,6 +595,9 @@ body[data-role="manager"] .add-contract-btn:hover{ background:rgba(101,147,184,.
 /* role-gated: admin-only edit affordances */
 .admin-only{ display:none }
 body[data-role="admin"] .admin-only{ display:flex }
+/* nav-item as <a> link — reset link styles so it renders like sibling divs */
+a.nav-item{ color:var(--ink-mute); }
+a.nav-item:hover{ color:var(--ink-soft) }
 </style>
 </head>
 <body data-role="admin">
@@ -606,13 +615,16 @@ body[data-role="admin"] .admin-only{ display:flex }
 <header class="chrome">
   <div class="brandmark"><b>La Nébuleuse</b> · Le Zeppelin</div>
 
-  <!-- Family switcher: the two families of the control page -->
+  <!-- Family switcher: three families of Le Zeppelin -->
   <div class="family-switcher" role="navigation" aria-label="Famille de module">
     <a href="salle-des-machines.html" class="family-btn fam-sdm" title="Production · Capacités, Recettes…">
       <span class="fam-dot"></span>
       Salle des Machines
     </a>
-    <span class="family-arrow">⇄</span>
+    <a href="/modules/salle-de-controle.php" class="family-btn fam-controle" title="Qualité · Recettes, Biochimie…">
+      <span class="fam-dot"></span>
+      Salle de contrôle
+    </a>
     <button class="family-btn fam-cockpit" aria-current="page" title="Commercial · Ventes, Clients…">
       <span class="fam-dot"></span>
       Le Cockpit
@@ -679,6 +691,19 @@ body[data-role="admin"] .admin-only{ display:flex }
       Finances / Admin
       <span class="nav-coming">À venir</span>
     </div>
+
+    <!-- Admin-only: Réglages généraux — system/org config, date format, sites, users -->
+    <div class="nav-section-label admin-only" style="margin-top:16px;">Administration</div>
+    <a href="/modules/reglages-generaux.php" class="nav-item admin-only" style="text-decoration:none;" title="Réglages système — formats, brasserie, sites, utilisateurs">
+      <span class="nav-icon">
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="9" cy="9" r="2.2" stroke="currentColor" stroke-width="1.2"/>
+          <path d="M9 1.5v2M9 14.5v2M1.5 9h2M14.5 9h2M3.6 3.6l1.4 1.4M13 13l1.4 1.4M3.6 14.4l1.4-1.4M13 5l1.4-1.4"
+                stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+        </svg>
+      </span>
+      Réglages généraux
+    </a>
   </nav>
 
   <!-- ── Content area ── -->

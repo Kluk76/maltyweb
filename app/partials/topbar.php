@@ -11,6 +11,7 @@ $active_module = $active_module ?? "";
 $me            = $me ?? current_user() ?? [];
 
 $modules = [
+    ["✦", "Le Zeppelin",      "/_design/le-cockpit.html", "zeppelin"],
     ["00", "Triage",          "/modules/triage.php",   "triage"],
     ["01", "Approvisionnement", "/modules/approvisionnement.php", "approvisionnement"],
     ["02", "Wort Production", "/modules/wort.php",     "wort"],

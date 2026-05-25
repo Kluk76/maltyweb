@@ -344,6 +344,53 @@ body[data-role="operateur"] .btn-new-recipe{display:none;}
 .modal-form-select:focus{border-color:var(--lab);}
 .modal-form-select option{background:var(--bg-elev);}
 
+/* ═══════════════════════════════════════════
+   CONDITIONNEMENT section
+   ═══════════════════════════════════════════ */
+.cond-layout{flex:1;overflow-y:auto;padding:24px 32px;scrollbar-width:thin;scrollbar-color:rgba(74,140,120,.2) transparent;}
+.cond-header{margin-bottom:24px;}
+.cond-header h2{font-family:"Fraunces",serif;font-variation-settings:"opsz" 144;font-weight:400;font-size:28px;color:var(--ink);}
+.cond-header h2 em{font-style:italic;color:var(--lab)}
+.cond-header .ch-sub{font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.15em;color:var(--ink-mute);text-transform:uppercase;margin-top:4px;}
+
+.cond-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;margin-bottom:24px;}
+.cond-card{background:linear-gradient(135deg,var(--bg-elev),rgba(10,8,5,.8));border:1px solid var(--hairline-2);border-radius:12px;padding:20px 22px;position:relative;overflow:hidden;transition:border-color .2s,box-shadow .2s;}
+.cond-card::before{content:"";position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--lab),transparent);opacity:.6;}
+.cond-card:hover{border-color:rgba(74,140,120,.3);box-shadow:0 8px 32px -8px rgba(0,0,0,.5);}
+.cc-head{display:flex;align-items:flex-start;gap:12px;margin-bottom:16px;}
+.cc-icon{flex:0 0 36px;height:36px;border-radius:8px;background:rgba(74,140,120,.12);border:1px solid rgba(74,140,120,.2);display:flex;align-items:center;justify-content:center;color:var(--lab);}
+.cc-title{font-family:"Fraunces",serif;font-variation-settings:"opsz" 72;font-size:18px;color:var(--ink);line-height:1.2;}
+.cc-sub{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.15em;color:var(--ink-mute);text-transform:uppercase;margin-top:3px;}
+
+.cond-setting-row{display:flex;align-items:center;gap:14px;padding:14px 0;border-top:1px solid var(--hairline);}
+.cond-setting-row:first-of-type{border-top:none;}
+.csr-label{font-family:"DM Sans",sans-serif;font-size:13px;color:var(--ink-soft);flex:1;line-height:1.4;}
+.csr-label small{display:block;font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.1em;color:var(--ink-mute);text-transform:uppercase;margin-top:3px;}
+.csr-value{font-family:"Fraunces",serif;font-variation-settings:"opsz" 72;font-size:26px;color:var(--lab);line-height:1;flex:0 0 auto;}
+.csr-unit{font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--oak);margin-left:2px;}
+
+.cond-note{font-family:"DM Sans",sans-serif;font-size:12px;color:var(--ink-mute);line-height:1.6;border-top:1px solid var(--hairline);padding-top:12px;margin-top:4px;}
+.cond-note b{color:var(--ink-soft);}
+
+/* override-gate card */
+.override-gate-card{background:rgba(197,100,74,.04);border:1px solid rgba(197,100,74,.2);border-radius:12px;padding:18px 22px;margin-bottom:16px;}
+.ogc-head{display:flex;align-items:center;gap:10px;margin-bottom:10px;}
+.ogc-pip{width:8px;height:8px;border-radius:50%;background:var(--ember);box-shadow:0 0 8px var(--ember);flex:0 0 8px;}
+.ogc-label{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:var(--ember);}
+.ogc-body{font-family:"DM Sans",sans-serif;font-size:12.5px;color:var(--ink-mute);line-height:1.65;}
+.ogc-body b{color:var(--ink-soft);}
+.ogc-body .role-pill{display:inline-block;font-family:"JetBrains Mono",monospace;font-size:8.5px;letter-spacing:.08em;text-transform:uppercase;padding:2px 7px;border-radius:10px;vertical-align:middle;}
+.ogc-body .role-pill.mgr{background:rgba(47,85,117,.2);color:var(--bbt);border:1px solid rgba(101,147,184,.2);}
+.ogc-body .role-pill.adm{background:rgba(158,176,96,.15);color:var(--hop);border:1px solid rgba(158,176,96,.2);}
+.ogc-body .role-pill.opr{background:rgba(94,98,102,.15);color:var(--steel);border:1px solid rgba(94,98,102,.2);}
+
+/* impl note */
+.impl-note{background:rgba(74,140,120,.05);border:1px solid rgba(74,140,120,.15);border-radius:10px;padding:14px 18px;}
+.impl-note-head{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:var(--lab);margin-bottom:8px;display:flex;align-items:center;gap:8px;}
+.impl-note-head::before{content:"";width:4px;height:4px;border-radius:50%;background:var(--lab);flex:0 0 4px;}
+.impl-note-body{font-family:"DM Sans",sans-serif;font-size:12px;color:var(--ink-mute);line-height:1.6;}
+.impl-note-body code{font-family:"JetBrains Mono",monospace;font-size:10px;color:var(--lab);background:rgba(74,140,120,.1);padding:1px 5px;border-radius:3px;}
+
 /* ── Ingrédients toggle (per brassin / per hl) ── */
 .ingr-scale-toggle{display:flex;align-items:center;border:1px solid var(--hairline-2);border-radius:20px;background:rgba(26,16,8,.55);overflow:hidden;margin-left:auto;}
 .ist-btn{padding:5px 13px;border:none;background:none;cursor:pointer;font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-mute);transition:all .2s;white-space:nowrap;}
@@ -431,6 +478,17 @@ body[data-role="operateur"] .btn-new-recipe{display:none;}
         </svg>
       </span>
       Biochimie
+    </div>
+    <div class="nav-item" data-sec="conditionnement" onclick="switchSection('conditionnement')">
+      <span class="nav-icon">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <rect x="2" y="6" width="12" height="8" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
+          <path d="M5 6V4a3 3 0 0 1 6 0v2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+          <path d="M8 9v2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+          <circle cx="8" cy="9" r=".8" fill="currentColor"/>
+        </svg>
+      </span>
+      Conditionnement
     </div>
 
     <div class="nav-section-label" style="margin-top:16px;">À venir</div>
@@ -555,6 +613,115 @@ body[data-role="operateur"] .btn-new-recipe{display:none;}
             <b style="color:var(--ink-soft);">Process fiche</b> hérite et peut surcharger par recette.<br>
             Badge <span style="background:rgba(74,140,120,.15);color:var(--lab);padding:1px 5px;border-radius:3px;font-family:'JetBrains Mono',monospace;font-size:8px;">défaut famille</span> = valeur héritée non modifiée.<br>
             Badge <span style="background:rgba(202,168,110,.15);color:var(--oak);padding:1px 5px;border-radius:3px;font-family:'JetBrains Mono',monospace;font-size:8px;">override recette</span> = surcharge spécifique recette.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════ CONDITIONNEMENT SECTION -->
+    <div class="section-panel" id="sec-conditionnement">
+      <div class="cond-layout">
+        <div class="cond-header">
+          <h2>Paramètres <em>Conditionnement</em></h2>
+          <div class="ch-sub">Seuils process · Soutirage → Conditionnement · commissioning_settings</div>
+        </div>
+
+        <div class="cond-cards">
+          <!-- Délai soutirage → conditionnement -->
+          <div class="cond-card">
+            <div class="cc-head">
+              <div class="cc-icon">
+                <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                  <circle cx="9" cy="9" r="7" stroke="currentColor" stroke-width="1.3"/>
+                  <path d="M9 5v4l2.5 2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                </svg>
+              </div>
+              <div>
+                <div class="cc-title">Délai soutirage</div>
+                <div class="cc-sub">Seuil d'éligibilité conditionnement</div>
+              </div>
+            </div>
+            <div class="cond-setting-row">
+              <div class="csr-label">
+                Conditionnement autorisé
+                <small>jours après soutirage (CC)</small>
+              </div>
+              <div>
+                <span class="csr-value">1</span><span class="csr-unit">j</span>
+              </div>
+            </div>
+            <div class="cond-note">
+              Un lot peut être conditionné dès qu'il a passé <b>au moins 1 jour</b> en CC/BBT après soutirage.
+              Le formulaire de conditionnement n'affiche que les lots dont le délai est atteint.
+              Ce seuil est configurable ici — la valeur courante de <b>1 jour</b> est lue depuis
+              <code>commissioning_settings</code>.
+            </div>
+          </div>
+
+          <!-- Grille de lecture rapide -->
+          <div class="cond-card">
+            <div class="cc-head">
+              <div class="cc-icon">
+                <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                  <path d="M3 5h12M3 9h8M3 13h5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                  <circle cx="14" cy="13" r="2.5" stroke="currentColor" stroke-width="1.2"/>
+                  <path d="M14 12v1l.6.6" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
+                </svg>
+              </div>
+              <div>
+                <div class="cc-title">Lots éligibles</div>
+                <div class="cc-sub">Logique de gate process</div>
+              </div>
+            </div>
+            <div class="cond-setting-row">
+              <div class="csr-label">
+                Lots affichés dans le formulaire
+                <small>état éligible uniquement</small>
+              </div>
+              <div>
+                <span style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.1em;color:var(--lab);background:rgba(74,140,120,.12);border:1px solid rgba(74,140,120,.2);border-radius:6px;padding:4px 10px;">soutirage ≥ seuil</span>
+              </div>
+            </div>
+            <div class="cond-note">
+              Le gate compare <b>DATE(submitted_at)</b> du soutirage avec la date courante.
+              Seuls les lots ayant passé le seuil sont proposés dans le menu déroulant —
+              les autres restent invisibles pour l'opérateur jusqu'à éligibilité.
+            </div>
+          </div>
+        </div>
+
+        <!-- Choix Hors Process / override gate -->
+        <div class="override-gate-card">
+          <div class="ogc-head">
+            <span class="ogc-pip"></span>
+            <span class="ogc-label">Choix Hors Process — gate d'override</span>
+          </div>
+          <div class="ogc-body">
+            <b>Managers</b> <span class="role-pill mgr">Manager</span> et <b>Admins</b> <span class="role-pill adm">Admin</span>
+            peuvent conditionner un lot avant que le délai réglementaire soit atteint
+            (urgence commerciale, erreur de planification, test). Ce choix est signalé
+            explicitement dans le formulaire et <b>marque le record</b> avec un flag
+            <code style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ember);background:rgba(197,100,74,.1);padding:1px 5px;border-radius:3px;">hors_process = 1</code>
+            persisté en DB pour audit.<br><br>
+            <b>Opérateurs</b> <span class="role-pill opr">Opérateur</span> ne voient
+            que les lots éligibles — le gate leur est opaque, aucune action hors process
+            n'est exposée dans leur interface.
+          </div>
+        </div>
+
+        <!-- Implémentation / lien admin -->
+        <div class="impl-note">
+          <div class="impl-note-head">Implémentation & emplacement admin</div>
+          <div class="impl-note-body">
+            Les seuils sont lus depuis la table <code>commissioning_settings</code>
+            (clé <code>packaging_racking_delay_days</code>, valeur courante <code>1</code>).
+            La page d'administration vit provisoirement sous
+            <code>/admin/settings/packaging.php</code> ; une fois la Salle de contrôle
+            activée en page live, ce panneau <em>Conditionnement</em> en devient
+            l'emplacement canonique — les settings seront éditables directement ici,
+            avec confirmation modale et audit log.
+            Le flag <code>hors_process</code> alimente le journal des lots et sera visible
+            dans la future section QA / Contrôles (Q3).
           </div>
         </div>
       </div>
