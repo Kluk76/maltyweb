@@ -4,11 +4,16 @@ declare(strict_types=1);
  * modules/salle-de-controle.php — Salle de contrôle (Qualité)
  *
  * Le Zeppelin family · Sections: Recettes, Biochimie, Conditionnement.
- * Recettes + Biochimie: presentational (TODO: data-wiring phase).
+ * Recettes + Biochimie: data-wired for Formats subtab (activate/deactivate SKU formats,
+ *   manage placeholder bindings label/can/sticker/holder/outer_tray/scotch).
  * Conditionnement: LIVE — reads/writes commissioning_settings (section='packaging').
  *
  * Auth: require_login() — all logged-in users can view; edit gated to is_admin().
- * POST: csrf_verify → validate int 0-365 → UPDATE commissioning_settings → log_revision → PRG.
+ * POST handlers:
+ *   update_min_days     — Conditionnement settings (admin only)
+ *   activate_format     — upsert ref_skus row for (recipe_id, format_id) (admin only)
+ *   deactivate_format   — soft-deactivate ref_skus row (admin only)
+ *   set_binding         — upsert ref_recipe_packaging_bindings row (admin only)
  */
 
 require __DIR__ . '/../../app/auth.php';
@@ -19,25 +24,339 @@ require __DIR__ . '/../../app/db-write-helpers.php';
 require_login();
 $me = current_user();
 
-// ── POST handler (Conditionnement settings — admin only) ──────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// HELPER: run the gated-format query and return format_ids that pass the gate
+// (cartoner gate applied in PHP — safe to call from both POST + GET)
+// ─────────────────────────────────────────────────────────────────────────────
+function sdc_gated_format_ids(PDO $pdo): array
+{
+    $cartoner = (int) $pdo->query(
+        "SELECT COUNT(*) FROM ref_process_machines
+          WHERE machine_type='cartoner' AND is_active=1"
+    )->fetchColumn();
+
+    $rows = $pdo->query(
+        "SELECT DISTINCT f.id, (t.units_per_format > 1) AS needs_cartoner
+         FROM ref_filler_containers fc
+         JOIN ref_process_machines m   ON m.id = fc.machine_id  AND m.is_active=1
+         JOIN dbc_container_types c    ON c.id = fc.container_id
+         JOIN dbc_packaging_format_templates t ON t.container_code = c.container_code
+         JOIN ref_packaging_formats f  ON f.catalog_id = t.id
+         WHERE fc.is_active=1 AND f.is_active=1 AND f.is_composite=0"
+    )->fetchAll(PDO::FETCH_ASSOC);
+
+    $ids = [];
+    foreach ($rows as $r) {
+        if ($r['needs_cartoner'] && !$cartoner) continue;
+        $ids[] = (int) $r['id'];
+    }
+    return $ids;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HELPER: compute bom_template_id from run_type
+// bottle→dec_int=0, can/can33→dec_int=1, keg/cuv→dec_int=0
+// ─────────────────────────────────────────────────────────────────────────────
+function sdc_bom_template_for_format(PDO $pdo, int $formatId): ?int
+{
+    $fmt = $pdo->prepare(
+        "SELECT f.run_type FROM ref_packaging_formats f WHERE f.id = ? LIMIT 1"
+    );
+    $fmt->execute([$formatId]);
+    $runType = $fmt->fetchColumn();
+    if (!$runType) return null;
+
+    $decInt = in_array($runType, ['can', 'can33'], true) ? 1 : 0;
+
+    $tpl = $pdo->prepare(
+        "SELECT id FROM ref_packaging_bom_templates
+          WHERE format_id = ? AND decoration_integral = ? AND supply = 'we_supply'
+          LIMIT 1"
+    );
+    $tpl->execute([$formatId, $decInt]);
+    $id = $tpl->fetchColumn();
+    return $id !== false ? (int) $id : null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST handler
+// ─────────────────────────────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    // Non-admins cannot POST here
     if (!is_admin($me)) {
         flash_set('err', 'Modification réservée aux administrateurs.');
-        redirect_to('/modules/salle-de-controle.php?sec=conditionnement');
+        redirect_to('/modules/salle-de-controle.php?sec=recettes');
     }
 
     if (!csrf_verify($_POST['csrf'] ?? null)) {
         flash_set('err', 'Session expirée — recharge la page.');
-        redirect_to('/modules/salle-de-controle.php?sec=conditionnement');
+        redirect_to('/modules/salle-de-controle.php?sec=recettes');
     }
 
     $action = post_str('action') ?? '';
 
+    // Redirect target depends on action
+    $redirectSec = in_array($action, ['activate_format','deactivate_format','set_binding'], true)
+        ? 'recettes' : 'conditionnement';
+
     try {
         $pdo = maltytask_pdo();
 
-        if ($action === 'update_min_days') {
+        // ── activate_format ──────────────────────────────────────────────────
+        if ($action === 'activate_format') {
+            $recipeId  = (int) ($_POST['recipe_id']  ?? 0);
+            $formatId  = (int) ($_POST['format_id']  ?? 0);
+            $bomOverride = isset($_POST['bom_template_id']) && $_POST['bom_template_id'] !== ''
+                ? (int) $_POST['bom_template_id'] : null;
+
+            if ($recipeId <= 0 || $formatId <= 0) {
+                throw new RuntimeException('recipe_id et format_id requis.');
+            }
+
+            // Re-run gate server-side
+            $gatedIds = sdc_gated_format_ids($pdo);
+            if (!in_array($formatId, $gatedIds, true)) {
+                throw new RuntimeException('Format non commissionné — activation refusée.');
+            }
+
+            // Fetch recipe, require sku_prefix
+            $recStmt = $pdo->prepare(
+                "SELECT id, sku_prefix, name FROM ref_recipes WHERE id = ? AND is_active=1 LIMIT 1"
+            );
+            $recStmt->execute([$recipeId]);
+            $recipe = $recStmt->fetch(PDO::FETCH_ASSOC);
+            if (!$recipe || empty($recipe['sku_prefix'])) {
+                throw new RuntimeException('Préfixe SKU manquant — à définir dans la fiche recette.');
+            }
+            $prefix = (string) $recipe['sku_prefix'];
+
+            // Fetch format_code and run_type
+            $fmtStmt = $pdo->prepare(
+                "SELECT format_code, run_type, hl_per_unit FROM ref_packaging_formats WHERE id = ? LIMIT 1"
+            );
+            $fmtStmt->execute([$formatId]);
+            $fmt = $fmtStmt->fetch(PDO::FETCH_ASSOC);
+            if (!$fmt) throw new RuntimeException('Format introuvable.');
+
+            // Compute sku_code
+            $skuCode = ($fmt['format_code'] === 'X')
+                ? $prefix . '-X'
+                : $prefix . $fmt['format_code'];
+
+            // run_type → format label
+            $runLabel = [
+                'bot'   => 'Bot',
+                'can'   => 'Can',
+                'can33' => 'Can33',
+                'keg'   => 'Keg',
+                'cuv'   => 'Cuv',
+            ][$fmt['run_type']] ?? $fmt['run_type'];
+
+            // Check for existing (recipe_id, format_id) row
+            $existStmt = $pdo->prepare(
+                "SELECT id, sku_code, is_active FROM ref_skus
+                  WHERE recipe_id = ? AND format_id = ? LIMIT 1"
+            );
+            $existStmt->execute([$recipeId, $formatId]);
+            $existRow = $existStmt->fetch(PDO::FETCH_ASSOC);
+
+            // Check for sku_code collision on DIFFERENT (recipe, format)
+            $collStmt = $pdo->prepare(
+                "SELECT id, recipe_id, format_id FROM ref_skus
+                  WHERE sku_code = ?
+                    AND NOT (recipe_id = ? AND format_id = ?)
+                  LIMIT 1"
+            );
+            $collStmt->execute([$skuCode, $recipeId, $formatId]);
+            $collision = $collStmt->fetch(PDO::FETCH_ASSOC);
+            if ($collision) {
+                throw new RuntimeException(
+                    "Code SKU «{$skuCode}» déjà utilisé par une autre combinaison "
+                    . "(recette #{$collision['recipe_id']}, format #{$collision['format_id']}) "
+                    . "— anomalie historique à traiter manuellement."
+                );
+            }
+
+            // BOM template
+            $bomTemplateId = $bomOverride ?? sdc_bom_template_for_format($pdo, $formatId);
+
+            $pdo->beginTransaction();
+            try {
+                if ($existRow) {
+                    // Re-activate
+                    $before = $existRow;
+                    $after  = ['is_active' => 1, 'last_modified_by' => 'web',
+                               'bom_template_id' => $bomTemplateId];
+                    $updStmt = $pdo->prepare(
+                        "UPDATE ref_skus SET is_active=1, last_modified_by='web',
+                                bom_template_id=?
+                          WHERE id=?"
+                    );
+                    $updStmt->execute([$bomTemplateId, (int) $existRow['id']]);
+                    log_revision($pdo, $me, 'ref_skus', (int) $existRow['id'],
+                        $before, $after, 'normal',
+                        "Salle de contrôle: réactivation format {$fmt['format_code']} / recette {$recipe['name']}");
+                    flash_set('ok', "Format «{$skuCode}» réactivé.");
+                } else {
+                    // Insert
+                    $rowHash = hash('sha256',
+                        implode('|', [(string)$recipeId, (string)$formatId, $skuCode]));
+                    $insStmt = $pdo->prepare(
+                        "INSERT INTO ref_skus
+                            (sku_code, recipe_id, format_id, format, hl_per_unit,
+                             is_active, row_hash, bom_template_id,
+                             last_modified_by, last_seen_at, imported_at)
+                         VALUES (?, ?, ?, ?, ?, 1, ?, ?, 'web', NOW(), NOW())"
+                    );
+                    $insStmt->execute([
+                        $skuCode, $recipeId, $formatId, $runLabel,
+                        $fmt['hl_per_unit'], $rowHash, $bomTemplateId,
+                    ]);
+                    $newId = (int) $pdo->lastInsertId();
+                    log_revision($pdo, $me, 'ref_skus', $newId, null,
+                        ['sku_code' => $skuCode, 'recipe_id' => $recipeId,
+                         'format_id' => $formatId, 'bom_template_id' => $bomTemplateId],
+                        'normal',
+                        "Salle de contrôle: activation format {$fmt['format_code']} / recette {$recipe['name']}");
+                    flash_set('ok', "Format «{$skuCode}» activé.");
+                }
+                $pdo->commit();
+            } catch (Throwable $e) {
+                $pdo->rollBack();
+                throw $e;
+            }
+
+        // ── deactivate_format ────────────────────────────────────────────────
+        } elseif ($action === 'deactivate_format') {
+            $recipeId = (int) ($_POST['recipe_id']  ?? 0);
+            $formatId = (int) ($_POST['format_id']  ?? 0);
+            if ($recipeId <= 0 || $formatId <= 0) {
+                throw new RuntimeException('recipe_id et format_id requis.');
+            }
+
+            $existStmt = $pdo->prepare(
+                "SELECT id, sku_code, is_active FROM ref_skus
+                  WHERE recipe_id = ? AND format_id = ? LIMIT 1"
+            );
+            $existStmt->execute([$recipeId, $formatId]);
+            $existRow = $existStmt->fetch(PDO::FETCH_ASSOC);
+            if (!$existRow) {
+                throw new RuntimeException('Aucun SKU trouvé pour cette combinaison.');
+            }
+
+            $pdo->beginTransaction();
+            try {
+                $before = $existRow;
+                $pdo->prepare("UPDATE ref_skus SET is_active=0, last_modified_by='web' WHERE id=?")
+                    ->execute([(int) $existRow['id']]);
+                log_revision($pdo, $me, 'ref_skus', (int) $existRow['id'],
+                    $before, ['is_active' => 0, 'last_modified_by' => 'web'], 'normal',
+                    "Salle de contrôle: désactivation SKU {$existRow['sku_code']}");
+                $pdo->commit();
+            } catch (Throwable $e) {
+                $pdo->rollBack();
+                throw $e;
+            }
+            flash_set('ok', "Format «{$existRow['sku_code']}» désactivé.");
+
+        // ── set_binding ──────────────────────────────────────────────────────
+        } elseif ($action === 'set_binding') {
+            $recipeId = (int) ($_POST['recipe_id'] ?? 0);
+            $miIdFk   = (int) ($_POST['mi_id_fk']  ?? 0);
+            $role     = post_str('role') ?? '';
+            if ($recipeId <= 0 || $miIdFk <= 0 || $role === '') {
+                throw new RuntimeException('recipe_id, role et mi_id_fk requis.');
+            }
+
+            $validRoles = ['label','can','sticker','holder','outer_tray','scotch'];
+            $role = must_be_one_of('role', $role, $validRoles);
+
+            // Validate MI exists
+            $miStmt = $pdo->prepare("SELECT id, mi_id FROM ref_mi WHERE id=? LIMIT 1");
+            $miStmt->execute([$miIdFk]);
+            $miRow = $miStmt->fetch(PDO::FETCH_ASSOC);
+            if (!$miRow) throw new RuntimeException('MI introuvable.');
+
+            // Validate MI matches the {beer} pattern for this role
+            $recStmt = $pdo->prepare(
+                "SELECT sku_prefix FROM ref_recipes WHERE id=? AND is_active=1 LIMIT 1"
+            );
+            $recStmt->execute([$recipeId]);
+            $prefix = $recStmt->fetchColumn();
+            if (!$prefix) throw new RuntimeException('Recette introuvable ou sans préfixe SKU.');
+
+            $patternStmt = $pdo->prepare(
+                "SELECT mi_filter_pattern FROM ref_packaging_items
+                  WHERE slot_name = ? AND mi_filter_pattern LIKE '%{beer}%' LIMIT 1"
+            );
+            $patternStmt->execute([$role]);
+            $rawPattern = $patternStmt->fetchColumn();
+            if ($rawPattern) {
+                // The scotch pattern is PKG_SCOTCH_(TRANSP|{beer})% — a LIKE alternation
+                // that MySQL cannot evaluate as regex. Detect this form and build two
+                // LIKE clauses OR'd: one for TRANSP (always valid), one for the branded MI.
+                // Other roles use simple substitution (PKG_LABEL_{beer}%, PKG_STICKER_{beer}%, etc.)
+                $rawPatternStr = (string) $rawPattern;
+                if (str_contains($rawPatternStr, '(TRANSP|{beer})')) {
+                    // Scotch: accept PKG_SCOTCH_TRANSP OR PKG_SCOTCH_{prefix}
+                    $brandedPattern = 'PKG_SCOTCH_' . (string) $prefix . '%';
+                    $checkStmt = $pdo->prepare(
+                        "SELECT COUNT(*) FROM ref_mi
+                          WHERE id = ?
+                            AND (mi_id LIKE 'PKG_SCOTCH_TRANSP%' OR mi_id LIKE ?)"
+                    );
+                    $checkStmt->execute([$miIdFk, $brandedPattern]);
+                } else {
+                    // Standard substitution: PKG_LABEL_{beer}%, PKG_STICKER_{beer}%, etc.
+                    $resolved = str_replace('{beer}', (string) $prefix, $rawPatternStr);
+                    $checkStmt = $pdo->prepare(
+                        "SELECT COUNT(*) FROM ref_mi WHERE id=? AND mi_id LIKE ?"
+                    );
+                    $checkStmt->execute([$miIdFk, $resolved]);
+                }
+                if ((int) $checkStmt->fetchColumn() === 0) {
+                    $displayPattern = str_contains($rawPatternStr, '(TRANSP|{beer})')
+                        ? "PKG_SCOTCH_TRANSP% OR PKG_SCOTCH_{$prefix}%"
+                        : str_replace('{beer}', (string) $prefix, $rawPatternStr);
+                    throw new RuntimeException(
+                        "L'ingrédient sélectionné ne correspond pas au pattern attendu "
+                        . "pour le rôle «{$role}» (pattern: {$displayPattern})."
+                    );
+                }
+            }
+
+            $pdo->beginTransaction();
+            try {
+                // Expire current active binding for same (recipe, role)
+                $pdo->prepare(
+                    "UPDATE ref_recipe_packaging_bindings
+                        SET effective_until = CURDATE()
+                      WHERE recipe_id=? AND role=?
+                        AND (effective_until IS NULL OR effective_until >= CURDATE())"
+                )->execute([$recipeId, $role]);
+
+                // Insert new binding
+                $todayStr = (new DateTimeImmutable())->format('Y-m-d');
+                $insStmt = $pdo->prepare(
+                    "INSERT INTO ref_recipe_packaging_bindings
+                        (recipe_id, role, mi_id_fk, effective_from, effective_until, notes)
+                     VALUES (?, ?, ?, ?, NULL, ?)"
+                );
+                $notes = "Défini via Salle de contrôle · recette #{$recipeId}";
+                $insStmt->execute([$recipeId, $role, $miIdFk, $todayStr, $notes]);
+                $newId = (int) $pdo->lastInsertId();
+                log_revision($pdo, $me, 'ref_recipe_packaging_bindings', $newId, null,
+                    ['recipe_id'=>$recipeId,'role'=>$role,'mi_id_fk'=>$miIdFk,
+                     'effective_from'=>$todayStr], 'normal',
+                    "Liaison packaging: rôle={$role}, recette={$recipeId}, MI={$miRow['mi_id']}");
+                $pdo->commit();
+            } catch (Throwable $e) {
+                $pdo->rollBack();
+                throw $e;
+            }
+            flash_set('ok', "Liaison «{$role}» enregistrée.");
+
+        // ── update_min_days ──────────────────────────────────────────────────
+        } elseif ($action === 'update_min_days') {
             $rawDays = post_decimal('min_days_after_racking');
             if ($rawDays === null) {
                 throw new RuntimeException('Valeur requise pour le délai minimum après soutirage.');
@@ -90,15 +409,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             throw new RuntimeException('Action inconnue.');
         }
     } catch (Throwable $e) {
-        flash_set('err', pdo_friendly_error($e, 'salle-de-controle-cond'));
+        flash_set('err', pdo_friendly_error($e, 'salle-de-controle'));
     }
 
-    redirect_to('/modules/salle-de-controle.php?sec=conditionnement');
+    redirect_to('/modules/salle-de-controle.php?sec=' . $redirectSec);
 }
 
-// ── GET — load commissioning_settings for Conditionnement section ─────────────
+// ── GET — load data for all sections ──────────────────────────────────────────
 header('Content-Type: text/html; charset=utf-8');
 
+// --- Conditionnement settings ------------------------------------------------
 try {
     $pdo = maltytask_pdo();
 
@@ -124,6 +444,226 @@ try {
     $loadErr           = $e->getMessage();
 }
 
+// --- Recettes / Formats data (SDC_FORMATS_DATA) ------------------------------
+$formatsData   = null;
+$formatsLoadErr = null;
+try {
+    $pdo = maltytask_pdo();
+
+    // Gated formats (all 14 non-composite, cartoner-gated)
+    $cartoner = (int) $pdo->query(
+        "SELECT COUNT(*) FROM ref_process_machines
+          WHERE machine_type='cartoner' AND is_active=1"
+    )->fetchColumn();
+
+    $gatedRows = $pdo->query(
+        "SELECT DISTINCT f.id, f.format_code, f.display_name, f.hl_per_unit, f.run_type,
+                t.units_per_format, (t.units_per_format > 1) AS needs_cartoner
+         FROM ref_filler_containers fc
+         JOIN ref_process_machines m   ON m.id = fc.machine_id  AND m.is_active=1
+         JOIN dbc_container_types c    ON c.id = fc.container_id
+         JOIN dbc_packaging_format_templates t ON t.container_code = c.container_code
+         JOIN ref_packaging_formats f  ON f.catalog_id = t.id
+         WHERE fc.is_active=1 AND f.is_active=1 AND f.is_composite=0
+         ORDER BY f.run_type, f.format_code"
+    )->fetchAll(PDO::FETCH_ASSOC);
+
+    // Apply cartoner gate
+    $gatedFormats = [];
+    foreach ($gatedRows as $r) {
+        if ($r['needs_cartoner'] && !$cartoner) continue;
+        $gatedFormats[] = [
+            'id'           => (int)   $r['id'],
+            'format_code'  => (string)$r['format_code'],
+            'display_name' => (string)$r['display_name'],
+            'hl_per_unit'  => (float) $r['hl_per_unit'],
+            'run_type'     => (string)$r['run_type'],
+            'units_per_format' => (int)$r['units_per_format'],
+        ];
+    }
+    $gatedFormatIds = array_column($gatedFormats, 'id');
+
+    // BOM templates indexed by format_id
+    $bomTplRows = $pdo->query(
+        "SELECT id, format_id, decoration_integral, supply FROM ref_packaging_bom_templates"
+    )->fetchAll(PDO::FETCH_ASSOC);
+    $bomByFormatKey = []; // key = "formatId:decInt:supply"
+    $bomByFormatId  = []; // simplest default lookup: format_id → we_supply
+    foreach ($bomTplRows as $r) {
+        $key = $r['format_id'] . ':' . $r['decoration_integral'] . ':' . $r['supply'];
+        $bomByFormatKey[$key] = (int) $r['id'];
+        if ($r['supply'] === 'we_supply') {
+            $bomByFormatId[(int)$r['format_id']] = (int) $r['id'];
+        }
+    }
+
+    // Activatable recipes (sku_prefix NOT NULL/empty)
+    $activatableRecs = $pdo->query(
+        "SELECT id, name, classification, subtype, sku_prefix
+           FROM ref_recipes
+          WHERE sku_prefix IS NOT NULL AND sku_prefix<>'' AND is_active=1
+          ORDER BY FIELD(subtype,'Core','EPH','CollabIn','Archive'), name"
+    )->fetchAll(PDO::FETCH_ASSOC);
+
+    // NULL-prefix recipes (read-only list)
+    $noPrefix = $pdo->query(
+        "SELECT id, name, classification, subtype
+           FROM ref_recipes
+          WHERE (sku_prefix IS NULL OR sku_prefix='') AND is_active=1
+          ORDER BY name"
+    )->fetchAll(PDO::FETCH_ASSOC);
+
+    // Collect recipe IDs for IN clause
+    $allRecipeIds = array_column($activatableRecs, 'id');
+    if (empty($allRecipeIds)) {
+        $allRecipeIds = [0];
+    }
+    $inPlace = implode(',', array_fill(0, count($allRecipeIds), '?'));
+
+    // Existing SKUs
+    $skuStmt = $pdo->prepare(
+        "SELECT id, recipe_id, format_id, sku_code, hl_per_unit, bom_template_id, is_active
+           FROM ref_skus
+          WHERE recipe_id IN ({$inPlace})"
+    );
+    $skuStmt->execute($allRecipeIds);
+    $skuRows = $skuStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Index by recipe_id → format_id
+    $skusByRecipe = [];
+    foreach ($skuRows as $r) {
+        $rid = (int) $r['recipe_id'];
+        $fid = (int) $r['format_id'];
+        $skusByRecipe[$rid][$fid] = [
+            'id'             => (int)    $r['id'],
+            'sku_code'       => (string) $r['sku_code'],
+            'hl_per_unit'    => (float)  $r['hl_per_unit'],
+            'bom_template_id'=> $r['bom_template_id'] !== null ? (int) $r['bom_template_id'] : null,
+            'is_active'      => (int)    $r['is_active'],
+        ];
+    }
+
+    // Existing bindings (active)
+    $bindStmt = $pdo->prepare(
+        "SELECT b.recipe_id, b.role, b.mi_id_fk, m.mi_id AS mi_code, m.name AS mi_name
+           FROM ref_recipe_packaging_bindings b
+           JOIN ref_mi m ON m.id = b.mi_id_fk
+          WHERE b.recipe_id IN ({$inPlace})
+            AND (b.effective_until IS NULL OR b.effective_until >= CURDATE())"
+    );
+    $bindStmt->execute($allRecipeIds);
+    $bindRows = $bindStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $bindingsByRecipe = [];
+    foreach ($bindRows as $r) {
+        $rid = (int) $r['recipe_id'];
+        $bindingsByRecipe[$rid][$r['role']] = [
+            'mi_id_fk' => (int)    $r['mi_id_fk'],
+            'mi_code'  => (string) $r['mi_code'],
+            'mi_name'  => (string) $r['mi_name'],
+        ];
+    }
+
+    // Beer-specific slot defs
+    $slotRows = $pdo->query(
+        "SELECT DISTINCT slot_name AS role, mi_filter_pattern, slot_scope
+           FROM ref_packaging_items
+          WHERE mi_filter_pattern LIKE '%{beer}%'"
+    )->fetchAll(PDO::FETCH_ASSOC);
+    $slotDefs = [];
+    foreach ($slotRows as $r) {
+        $role = $r['role'];
+        // Keep first occurrence per role+scope combination
+        if (!isset($slotDefs[$role])) {
+            $slotDefs[$role] = [
+                'role'    => $role,
+                'pattern' => $r['mi_filter_pattern'],
+                'scope'   => $r['slot_scope'],
+            ];
+        }
+    }
+
+    // Assemble per-recipe data
+    $recipeFormatsData = [];
+    foreach ($activatableRecs as $rec) {
+        $rid    = (int) $rec['id'];
+        $prefix = (string) $rec['sku_prefix'];
+
+        // Build candidate MIs per role for this recipe
+        $roleCandidates = [];
+        foreach ($slotDefs as $roleDef) {
+            $rawPat = (string) $roleDef['pattern'];
+            if (str_contains($rawPat, '(TRANSP|{beer})')) {
+                // Scotch alternation pattern: PKG_SCOTCH_(TRANSP|{beer})%
+                // Plain str_replace yields PKG_SCOTCH_(TRANSP|ZEP)% — parens/pipe are
+                // NOT LIKE wildcards and match nothing. Build two separate LIKE clauses
+                // OR'd so both PKG_SCOTCH_TRANSP and PKG_SCOTCH_{prefix} are returned.
+                $brandedPat = 'PKG_SCOTCH_' . $prefix . '%';
+                $miCandidateStmt = $pdo->prepare(
+                    "SELECT id, mi_id, name FROM ref_mi
+                      WHERE mi_id LIKE 'PKG_SCOTCH_TRANSP%' OR mi_id LIKE ?
+                      ORDER BY name LIMIT 20"
+                );
+                $miCandidateStmt->execute([$brandedPat]);
+            } else {
+                // Standard substitution: PKG_LABEL_{beer}%, PKG_STICKER_{beer}%, etc.
+                $pattern = str_replace('{beer}', $prefix, $rawPat);
+                $miCandidateStmt = $pdo->prepare(
+                    "SELECT id, mi_id, name FROM ref_mi WHERE mi_id LIKE ? ORDER BY name LIMIT 20"
+                );
+                $miCandidateStmt->execute([$pattern]);
+            }
+            $candidates = $miCandidateStmt->fetchAll(PDO::FETCH_ASSOC);
+            $roleCandidates[$roleDef['role']] = array_map(fn($m) => [
+                'id'   => (int)    $m['id'],
+                'code' => (string) $m['mi_id'],
+                'name' => (string) $m['name'],
+            ], $candidates);
+        }
+
+        // Compute expected sku_code per gated format for this recipe
+        $expectedSkus = [];
+        foreach ($gatedFormats as $f) {
+            $expectedSkus[$f['id']] = $f['format_code'] === 'X'
+                ? $prefix . '-X' : $prefix . $f['format_code'];
+        }
+
+        $recipeFormatsData[$rid] = [
+            'id'              => $rid,
+            'name'            => (string) $rec['name'],
+            'subtype'         => (string) $rec['subtype'],
+            'sku_prefix'      => $prefix,
+            'skus'            => $skusByRecipe[$rid] ?? [],
+            'bindings'        => $bindingsByRecipe[$rid] ?? [],
+            'role_candidates' => $roleCandidates,
+            'expected_skus'   => $expectedSkus,
+        ];
+    }
+
+    $formatsData = [
+        'gated_formats'       => $gatedFormats,
+        'gated_format_ids'    => $gatedFormatIds,
+        'bom_by_format_id'    => $bomByFormatId,
+        'activatable_recipes' => array_map(fn($r) => [
+            'id'        => (int)    $r['id'],
+            'name'      => (string) $r['name'],
+            'subtype'   => (string) $r['subtype'],
+            'sku_prefix'=> (string) $r['sku_prefix'],
+        ], $activatableRecs),
+        'no_prefix_recipes'   => array_map(fn($r) => [
+            'id'      => (int)    $r['id'],
+            'name'    => (string) $r['name'],
+            'subtype' => (string) $r['subtype'],
+        ], $noPrefix),
+        'slot_defs'           => array_values($slotDefs),
+        'recipe_data'         => $recipeFormatsData,
+    ];
+
+} catch (Throwable $e) {
+    $formatsLoadErr = $e->getMessage();
+    $formatsData    = null;
+}
+
 $minDaysSetting = $settingsByKey['min_days_after_racking'] ?? null;
 $minDaysCurrent = $minDaysSetting !== null
     ? (float) ($minDaysSetting['value_num'] ?? $minDaysSetting['default_num'] ?? 1)
@@ -133,9 +673,9 @@ $minDaysInt = (int) round($minDaysCurrent);
 $csrf = csrf_token();
 
 // Active section from query string (for PRG redirect after save)
-$initialSec = in_array($_GET['sec'] ?? '', ['recettes', 'biochem', 'conditionnement'], true)
-    ? ($_GET['sec'])
-    : 'recettes';
+$sec = $_GET['sec'] ?? '';
+$initialSec = in_array($sec, ['recettes', 'biochem', 'conditionnement'], true)
+    ? $sec : 'recettes';
 
 ?><!doctype html>
 <html lang="fr">
@@ -148,6 +688,15 @@ $initialSec = in_array($_GET['sec'] ?? '', ['recettes', 'biochem', 'conditionnem
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..600;1,9..144,400..500&family=DM+Sans:opsz,wght@9..40,300..600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/css/app.css?v=<?= @filemtime(__DIR__ . '/../css/app.css') ?: time() ?>">
 <link rel="stylesheet" href="/css/salle-de-controle.css?v=<?= @filemtime(__DIR__ . '/../css/salle-de-controle.css') ?: time() ?>">
+<script>
+<?php if ($formatsData !== null): ?>
+window.SDC_FORMATS_DATA = <?= json_encode($formatsData, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+<?php else: ?>
+window.SDC_FORMATS_DATA = null;
+window.SDC_FORMATS_ERR  = <?= json_encode($formatsLoadErr ?? 'Erreur inconnue', JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+<?php endif ?>
+window.SDC_CSRF = <?= json_encode($csrf ?? csrf_token(), JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+</script>
 </head>
 <body class="sdc-page" data-role="<?= htmlspecialchars($me['role'] ?? 'operateur') ?>">
 
@@ -266,6 +815,18 @@ $initialSec = in_array($_GET['sec'] ?? '', ['recettes', 'biochem', 'conditionnem
 
     <!-- ════════════════════════════════ RECETTES SECTION -->
     <div class="section-panel" id="sec-recettes">
+      <?php
+      // Flash for recettes (format activate/deactivate/binding actions)
+      if ($initialSec === 'recettes') {
+          $flashMsg = flash_pop();
+          if ($flashMsg): ?>
+          <div class="sdc-flash sdc-flash--<?= $flashMsg['type'] === 'ok' ? 'ok' : 'err' ?>"
+               style="position:absolute;top:76px;left:240px;right:20px;z-index:10;">
+            <?= $flashMsg['type'] === 'ok' ? '✓' : '⚠' ?> <?= htmlspecialchars($flashMsg['msg']) ?>
+          </div>
+          <?php endif;
+      }
+      ?>
       <div class="recettes-layout">
 
         <!-- recipe list column -->
@@ -305,6 +866,7 @@ $initialSec = in_array($_GET['sec'] ?? '', ['recettes', 'biochem', 'conditionnem
           <div class="subtabs">
             <div class="subtab active" onclick="switchSubtab('ingr')">Ingrédients</div>
             <div class="subtab" onclick="switchSubtab('process')">Process</div>
+            <div class="subtab sdc-formats-tab" onclick="switchSubtab('formats')">Formats</div>
           </div>
 
           <div class="subtab-pane active" id="pane-ingr" style="flex-direction:column;">
@@ -324,6 +886,21 @@ $initialSec = in_array($_GET['sec'] ?? '', ['recettes', 'biochem', 'conditionnem
             <div class="process-pane" id="processPaneContent">
               <div style="padding:40px;text-align:center;color:var(--ink-faint);font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.15em;text-transform:uppercase;">Sélectionner une recette</div>
             </div>
+          </div>
+
+          <!-- ── FORMATS SUBTAB (live-wired) ───────────────────────────────── -->
+          <div class="subtab-pane sdc-fmt-pane" id="pane-formats">
+            <?php if ($formatsLoadErr): ?>
+              <div class="fmt-err-banner">
+                Erreur chargement Formats : <?= htmlspecialchars($formatsLoadErr) ?>
+              </div>
+            <?php else: ?>
+              <div class="fmt-pane-inner" id="fmtPaneInner">
+                <div class="fmt-placeholder">
+                  <span>Sélectionner une recette</span>
+                </div>
+              </div>
+            <?php endif ?>
           </div>
         </div><!-- /recipe-detail-col -->
       </div><!-- /recettes-layout -->
@@ -671,10 +1248,13 @@ function switchSection(sec){
 function switchSubtab(tab){
   currentSubtab = tab;
   document.querySelectorAll('.subtab').forEach((el,i)=>{
-    const tabs=['ingr','process'];
+    const tabs=['ingr','process','formats'];
     el.classList.toggle('active',tabs[i]===tab);
   });
   document.querySelectorAll('.subtab-pane').forEach(p=>p.classList.toggle('active',p.id==='pane-'+tab));
+  if(tab==='formats' && selectedRecipeId!==null && window.sdcFormats){
+    window.sdcFormats.render(selectedRecipeId);
+  }
 }
 
 /* ═══════════════════════════════════════════
@@ -726,6 +1306,7 @@ function selectRecipe(id){
   document.getElementById('rdh-abv').textContent=abv?abv+'%':'—';
   renderIngrPane(id,p);
   renderProcessPane(id,p);
+  if(currentSubtab==='formats'&&window.sdcFormats){window.sdcFormats.render(id);}
 }
 
 /* ═══════════════════════════════════════════
@@ -954,5 +1535,6 @@ buildBiochemPage();
 switchSection(SDC_INITIAL);
 if(SDC_INITIAL==='recettes') selectRecipe(RECIPES[0].id);
 </script>
+<script src="/js/salle-de-controle.js?v=<?= @filemtime(__DIR__ . '/../js/salle-de-controle.js') ?: time() ?>"></script>
 </body>
 </html>
