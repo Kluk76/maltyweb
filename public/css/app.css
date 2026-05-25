@@ -2500,6 +2500,17 @@ body.home::after {
   white-space: nowrap;
 }
 
+/* ---- BOM freshness indicator ---- */
+.home .sku-freshness {
+  margin-left: auto;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  opacity: 0.7;
+}
+
 /* ---- Empty state (detail page not-found) ---- */
 .home .sku-detail-empty {
   padding: 64px 0 48px;

@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require __DIR__ . "/../../app/auth.php";
+require_once __DIR__ . "/../../app/settings.php";
 
 require_login();
 $me = current_user();
@@ -135,6 +136,22 @@ try {
     $rowStmt = $pdo->prepare($rowSql);
     $rowStmt->execute($params);
     $rows    = $rowStmt->fetchAll();
+
+    // Freshness: MAX(compiled_at) across active SKUs in the current filter scope
+    $freshSql = "
+        SELECT MAX(b.compiled_at) AS compiled_at
+        FROM ref_skus s
+        LEFT JOIN ref_sku_bom b  ON b.sku_id  = s.id
+        LEFT JOIN ref_recipes rr ON rr.id      = s.recipe_id
+        {$whereSql}
+    ";
+    $freshStmt = $pdo->prepare($freshSql);
+    $freshStmt->execute($params);
+    $freshRow  = $freshStmt->fetch();
+    $bomFreshness = (!empty($freshRow['compiled_at']))
+        ? (new DateTimeImmutable($freshRow['compiled_at']))->format(date_display_format())
+        : null;
+
     $dbError = null;
 
 } catch (Throwable $e) {
@@ -143,6 +160,7 @@ try {
     $dbError    = $e->getMessage();
     $recipeRows = [];
     $medianCHFperHL = 0.0;
+    $bomFreshness   = null;
 }
 
 // --- Anomaly detection (PHP, post-fetch) ---
@@ -299,6 +317,9 @@ unset($r);
       </span>
       <?php if ($anyFilter): ?>
         <span class="wort-filters__count"><?= count($rows) ?> résultat<?= count($rows) !== 1 ? 's' : '' ?></span>
+      <?php endif ?>
+      <?php if ($bomFreshness !== null): ?>
+        <span class="sku-freshness">Coûts BOM à jour au <?= htmlspecialchars($bomFreshness) ?></span>
       <?php endif ?>
     </div>
 

@@ -1,0 +1,41 @@
+# /etc/cron.d/maltytask-sku-bom-compile
+#
+# Nightly packaging-BOM RECONCILE BACKSTOP for ref_sku_bom.
+#
+# The authoritative recompute is on-save: editing a recipe's format activation
+# or a packaging binding in the Salle de contrôle "Formats" subtab calls
+# compile_sku_bom_packaging() immediately. This cron is the scheduled backstop
+# mandated by the computation-layer architecture (PM + DBA, decided 2026-05-25):
+# on-write gives freshness, the scheduled job gives CORRECTNESS. It catches the
+# failure modes on-write structurally cannot —
+#   - missed triggers / out-of-band edits (a direct SQL fix, a future edit page
+#     that forgets the hook, an ingest write),
+#   - late-arriving / past-dated source rows,
+#   - formula/version changes that must re-flow,
+#   - upstream drift (the liquid side's ref_recipe_profile refreshes nightly).
+#
+# Idempotent: a steady-state run is a NO-OP (pkg_deleted=0, inserted=0, rq=0,
+# parity_violations=0). If a run produces CHANGES when no binding was edited,
+# that delta IS the missed-trigger signal — review the log + any new
+# doc_review_queue (sku-bom-unresolved) rows.
+#
+# Source of truth: db/cron/maltytask-sku-bom-compile.cron in the maltyweb repo.
+# Deployed via bin/deploy.sh --apply (sudo install -m 0644 → /etc/cron.d/).
+# Manual edits to /etc/cron.d/* are overwritten on next deploy — edit here.
+#
+# Smoke-tested 2026-05-25: ran clean in cron context as the maltytask user
+#   sudo -u maltytask /usr/bin/php scripts/sku-bom-compile-cli.php --dry-run
+# → idempotent no-op confirmed → committed ENABLED (not disabled-pending-test).
+#
+# Timing: 03:30 UTC, AFTER the recipe-profile rebuild (03:00) so that — once the
+# liquid side of the BOM is wired through — it sees fresh recipe profiles.
+# Packaging-only today; the ordering is forward-safe.
+#
+# Note: /etc/cron.d/* requires the user column (m h dom mon dow user command).
+# Times are UTC (VPS timezone Etc/UTC). The maltytask user's primary group is
+# www-data, so it can read config/db.env (mode 640) — same cred path as the
+# recipe-profile cron. PHP at /usr/bin/php (absolute — cron PATH is minimal).
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# m   h  dom mon dow  user        command
+30   3   *   *   *   maltytask   cd /var/www/maltytask && /usr/bin/php scripts/sku-bom-compile-cli.php --apply >> /var/log/maltytask/sku-bom-compile.log 2>&1

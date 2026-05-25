@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require __DIR__ . "/../../app/auth.php";
+require_once __DIR__ . "/../../app/settings.php";
 
 require_login();
 $me = current_user();
@@ -24,6 +25,7 @@ $bomRows     = [];
 $dbError     = null;
 $notFound    = false;
 $anomalyFlags= [];
+$bomFreshness= null;
 
 try {
     $pdo = maltytask_pdo();
@@ -72,6 +74,18 @@ try {
             ");
             $bomStmt->execute([':sku_id' => $skuRow['id']]);
             $bomRows = $bomStmt->fetchAll();
+
+            // Freshness: MAX(compiled_at) for this specific SKU's BOM rows
+            $freshStmt = $pdo->prepare("
+                SELECT MAX(compiled_at) AS compiled_at
+                FROM ref_sku_bom
+                WHERE sku_id = :sku_id
+            ");
+            $freshStmt->execute([':sku_id' => $skuRow['id']]);
+            $freshRow     = $freshStmt->fetch();
+            $bomFreshness = (!empty($freshRow['compiled_at']))
+                ? (new DateTimeImmutable($freshRow['compiled_at']))->format(date_display_format())
+                : null;
 
             // --- Anomaly detection ---
             $chfHL = is_numeric($skuRow['chf_per_hl']) ? (float) $skuRow['chf_per_hl'] : 0.0;
@@ -140,7 +154,8 @@ try {
     }
 
 } catch (Throwable $e) {
-    $dbError = $e->getMessage();
+    $dbError      = $e->getMessage();
+    $bomFreshness = null;
 }
 
 $totalCost = is_numeric($skuRow['total_cost'] ?? null) ? (float) $skuRow['total_cost'] : 0.0;
@@ -252,6 +267,9 @@ $totalCost = is_numeric($skuRow['total_cost'] ?? null) ? (float) $skuRow['total_
     <section class="wort-section sku-bom-section" aria-label="BOM">
       <div class="wort-section__head">
         <span class="wort-section__label">— bill of materials</span>
+        <?php if (!empty($bomFreshness)): ?>
+          <span class="sku-freshness">Coûts BOM à jour au <?= htmlspecialchars($bomFreshness) ?></span>
+        <?php endif ?>
       </div>
 
       <?php if (empty($bomRows)): ?>
