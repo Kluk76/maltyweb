@@ -22,6 +22,7 @@ declare(strict_types=1);
  */
 
 require __DIR__ . "/../../app/auth.php";
+require __DIR__ . "/../../app/csrf.php";
 require_login();
 $me = current_user();
 
@@ -534,13 +535,9 @@ header("Content-Type: text/html; charset=utf-8");
   <div class="sf-modal-box">
     <h4 id="sf-validate-title">Valider la fiche fournisseur</h4>
     <div class="sf-modal-diff" id="sf-validate-diff"></div>
-    <p style="font-size:11px;color:var(--ink-mute);margin-top:8px;line-height:1.5;">
-      <strong style="color:var(--ember)">Fonctionnalité en cours de câblage.</strong><br>
-      Cette action appellera <code>POST /api/sf-validate-supplier.php</code> (step 3 — pas encore implémenté).
-    </p>
     <div class="sf-modal-actions">
       <button class="sf-btn-cancel" id="sf-validate-cancel">Annuler</button>
-      <button class="sf-btn-confirm" id="sf-validate-confirm" disabled title="Endpoint non câblé — step 3">✓ Valider (bientôt)</button>
+      <button class="sf-btn-confirm" id="sf-validate-confirm">✓ Valider</button>
     </div>
   </div>
 </div>
@@ -551,6 +548,7 @@ header("Content-Type: text/html; charset=utf-8");
 /* ── Data payload ── */
 window.SF_SUPPLIERS = <?= json_encode($suppliers, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
 window.SF_ROLE      = <?= json_encode($bodyRole,  JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+window.SF_CSRF      = <?= json_encode(csrf_token(), JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
 </script>
 <script src="/js/salle-fournisseurs.js?v=<?= @filemtime(__DIR__ . '/../../public/js/salle-fournisseurs.js') ?: time() ?>" defer></script>
 </body>

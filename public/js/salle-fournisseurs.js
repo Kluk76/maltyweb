@@ -23,6 +23,7 @@
   /* ── Payload ──────────────────────────────────────────────────────── */
   const SUPPLIERS = window.SF_SUPPLIERS || [];
   const ROLE      = window.SF_ROLE || 'manager';
+  const CSRF      = window.SF_CSRF || '';
 
   /* ── GL label map (static supplement — DB-driven preferred) ───────── */
   const GL_LABELS = {
@@ -152,19 +153,32 @@
     return `<span class="sf-prov sf-prov-auto">⟳ auto-ingest</span>`;
   }
 
-  /* Stub action buttons — wired in step 3 */
+  /* Field action buttons — wired to real endpoints */
   function fieldActions(s, field) {
     if (ROLE === 'operateur') return '';
     const p = getProvenance(s, field);
+    const isPinnable = ['gl_account','currency','country','vat_regime','vat_number',
+                        'parser_key','hors_perimetre_cogs','sporadique'].includes(field);
     const btnLabel = ROLE === 'manager' ? '⟳ Proposer' : '✓ Confirmer';
+    const id       = s.id;
+    const pinBtn   = (ROLE === 'admin' && isPinnable)
+      ? `<button class="sf-btn-micro sf-btn-pin-field"
+           onclick="sfPinField(${id},'${escHtml(field)}',${p.state === 'locked' ? 'true' : 'false'})"
+           title="${p.state === 'locked' ? 'Désépingler ce champ' : 'Épingler ce champ'}">
+           ${p.state === 'locked' ? '🔓 Désépingler' : '📌 Épingler'}
+         </button>`
+      : '';
+
     if (p.state === 'auto' || p.state === 'gap') {
       return `<div class="sf-field-actions">
-        <button class="sf-btn-micro sf-btn-confirm-field" onclick="sfStub('${escHtml(field)}')">${btnLabel}</button>
-        <button class="sf-btn-micro sf-btn-modify-field" onclick="sfStub('${escHtml(field)}')">✎ Modifier</button>
+        ${ROLE === 'admin' ? `<button class="sf-btn-micro sf-btn-confirm-field" onclick="sfConfirmField(${id},'${escHtml(field)}')">${btnLabel}</button>` : ''}
+        <button class="sf-btn-micro sf-btn-modify-field" onclick="sfEditField(${id},'${escHtml(field)}')">✎ Modifier</button>
+        ${pinBtn}
       </div>`;
     }
     return `<div class="sf-field-actions">
-      <button class="sf-btn-micro sf-btn-modify-field" onclick="sfStub('${escHtml(field)}')">✎ Modifier</button>
+      <button class="sf-btn-micro sf-btn-modify-field" onclick="sfEditField(${id},'${escHtml(field)}')">✎ Modifier</button>
+      ${pinBtn}
     </div>`;
   }
 
@@ -410,7 +424,7 @@
       <span class="sf-alias-label">Variantes OCR :</span>
       ${aliasItems || '<span style="color:var(--ink-faint);font-size:11px;font-style:italic">Aucune</span>'}
       ${isAdmin
-        ? `<button class="sf-btn-micro sf-btn-confirm-field" style="margin-left:4px" onclick="sfStub('alias')">+ Alias</button>`
+        ? `<button class="sf-btn-micro sf-btn-confirm-field" style="margin-left:4px" onclick="sfAddAlias(${s.id})">+ Alias</button>`
         : ''}
     </div>`;
 
@@ -476,18 +490,16 @@
       </div>
     </div>`;
 
-    /* ── Validate button (admin, draft only) ── */
-    const validateBtn = (isDraft && isAdmin)
+    /* ── Validate button (admin, draft or explicit re-curation) ── */
+    const validateBtn = isAdmin
       ? `<button class="sf-validate-btn" onclick="openValidateModal(${s.id})">
           <span>✓</span>
           <div>
-            <div class="sf-vfb-text">Valider la fiche complète</div>
-            <div class="sf-vfb-sub">Marque comme curatée · verrouille les champs confirmés</div>
+            <div class="sf-vfb-text">${isDraft ? 'Valider la fiche complète' : 'Re-valider / verrouiller des champs'}</div>
+            <div class="sf-vfb-sub">${isDraft ? 'Marque comme curatée · verrouille les champs confirmés' : 'Épingle les champs actuels — fiche déjà active'}</div>
           </div>
         </button>`
-      : (!isDraft && commState === 'active' && ROLE !== 'operateur')
-        ? `<div style="padding:8px 18px 8px 52px;font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.1em;color:var(--hop);text-transform:uppercase;opacity:.7;">✓ Fiche active</div>`
-        : '';
+      : '';
 
     ficheEl.innerHTML = `<div class="sf-doc-paper sf-reveal">
       ${intakeBanner}
@@ -669,30 +681,324 @@
     setTimeout(() => t.classList.remove('show'), 2800);
   }
 
-  /* ── Stub handler for write affordances ─────────────────────────── */
-  window.sfStub = function (field) {
-    sfToast(`Modification « ${field} » — endpoint en cours de câblage (step 3)`);
+  /* ── API helper ─────────────────────────────────────────────────── */
+  async function sfPost(endpoint, data) {
+    const body = new URLSearchParams({ csrf: CSRF, ...data });
+    const resp = await fetch(endpoint, { method: 'POST', body });
+    const ct   = resp.headers.get('content-type') || '';
+    if (ct.includes('application/json')) return resp.json();
+    // Non-JSON (e.g. 302/auth redirect) — treat as auth error
+    return { ok: false, error: 'Session expirée. Rechargez la page.' };
+  }
+
+  /* Update supplier in local SUPPLIERS array (optimistic UI) */
+  function sfLocalUpdate(id, patch) {
+    const idx = SUPPLIERS.findIndex(x => x.id === id);
+    if (idx >= 0) Object.assign(SUPPLIERS[idx], patch);
+  }
+
+  /* ── sfEditField — inline edit widget ──────────────────────────── */
+  window.sfEditField = function (id, field) {
+    const s = SUPPLIERS.find(x => x.id === id);
+    if (!s) return;
+
+    // Build the input element for the field
+    let inputHtml = '';
+    const VAT_REGIMES = [
+      ['','— vide —'],
+      ['ch_vat','8,1 % TVA CH standard'],
+      ['ch_reduced_vat','2,6 % TVA CH réduit'],
+      ['intra_eu_vat','0 % export intra-UE'],
+      ['third_country_0vat','0 % pays tiers'],
+      ['non_taxable','Hors périmètre TVA'],
+    ];
+    const currentVal = s[field] !== null && s[field] !== undefined ? String(s[field]) : '';
+
+    if (field === 'vat_regime') {
+      const opts = VAT_REGIMES.map(([v, l]) =>
+        `<option value="${escHtml(v)}" ${currentVal === v ? 'selected' : ''}>${escHtml(l)}</option>`
+      ).join('');
+      inputHtml = `<select id="sf-inline-input">${opts}</select>`;
+    } else if (field === 'hors_perimetre_cogs' || field === 'sporadique') {
+      inputHtml = `<select id="sf-inline-input">
+        <option value="0" ${currentVal !== '1' ? 'selected' : ''}>Non</option>
+        <option value="1" ${currentVal === '1'  ? 'selected' : ''}>Oui</option>
+      </select>`;
+    } else if (field === 'country') {
+      inputHtml = `<input id="sf-inline-input" type="text" value="${escHtml(currentVal)}"
+        maxlength="2" pattern="[A-Z]{2}" placeholder="CH" style="text-transform:uppercase;width:60px">`;
+    } else {
+      inputHtml = `<input id="sf-inline-input" type="text" value="${escHtml(currentVal)}"
+        maxlength="${field === 'notes' ? '1000' : '64'}" style="width:${field === 'notes' ? '280px' : '200px'}">`;
+    }
+
+    const isCogs = ['gl_account', 'currency'].includes(field);
+    const diffEl = document.getElementById('sf-modal-diff');
+    if (diffEl) {
+      diffEl.innerHTML = `
+        <div style="margin-bottom:10px">
+          <strong>${escHtml(field)}</strong> · Fournisseur <em>${escHtml(s.name)}</em>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <span style="color:var(--ink-mute)">Avant :</span>
+          <code style="color:var(--ember)">${escHtml(currentVal || '—')}</code>
+          <span style="color:var(--ink-mute)">→</span>
+          ${inputHtml}
+        </div>
+        ${isCogs ? '<div style="margin-top:8px;color:var(--ember);font-size:11px">⚠ Champ COGS-impacting — une confirmation supplémentaire sera demandée.</div>' : ''}
+        ${ROLE === 'manager' ? '<div style="margin-top:8px;color:var(--oak);font-size:11px">ℹ Votre modification sera soumise comme proposition en attente de validation admin.</div>' : ''}
+      `;
+    }
+
+    const overlay = document.getElementById('sf-modal-overlay');
+    const confirmBtn = document.getElementById('sf-modal-confirm');
+    if (overlay) overlay.classList.add('open');
+
+    // Focus the input after modal opens
+    setTimeout(() => {
+      const inp = document.getElementById('sf-inline-input');
+      if (inp) { inp.focus(); if (inp.select) inp.select(); }
+    }, 80);
+
+    // Bind confirm button
+    if (confirmBtn) {
+      confirmBtn.onclick = async () => {
+        const inp = document.getElementById('sf-inline-input');
+        const newVal = inp ? inp.value.trim() : '';
+        overlay.classList.remove('open');
+        await sfDoUpdateField(id, field, newVal, false);
+      };
+    }
+  };
+
+  /* ── sfConfirmField — confirm current value (set verified provenance) ── */
+  window.sfConfirmField = function (id, field) {
+    const s = SUPPLIERS.find(x => x.id === id);
+    if (!s) return;
+    const currentVal = s[field] !== null && s[field] !== undefined ? String(s[field]) : '';
+    // Confirming = updating to the same value — sets last_modified_by='web'
+    sfDoUpdateField(id, field, currentVal, false);
+  };
+
+  /* ── sfPinField — toggle pin for a field ──────────────────────── */
+  window.sfPinField = function (id, field, isCurrentlyPinned) {
+    const s = SUPPLIERS.find(x => x.id === id);
+    if (!s) return;
+    if (isCurrentlyPinned) {
+      // Unpin immediately
+      sfDoPin(id, field, 'unpin', null, null);
+    } else {
+      // Pin: use current value, optionally ask for reason
+      const currentVal = s[field] !== null && s[field] !== undefined ? String(s[field]) : '';
+      const reason = window.prompt(
+        `Raison de l'épingle pour « ${field} » (optionnel) :`, ''
+      );
+      if (reason === null) return; // cancelled
+      sfDoPin(id, field, 'pin', currentVal, reason);
+    }
+  };
+
+  async function sfDoPin(id, field, action, pinnedValue, pinReason) {
+    try {
+      const data = { supplier_fk: String(id), field_name: field, action };
+      if (action === 'pin') {
+        data.pinned_value = pinnedValue !== null ? pinnedValue : '';
+        data.pin_reason   = pinReason || '';
+      }
+      const res = await sfPost('/api/sf-pin-field.php', data);
+      if (!res.ok) {
+        sfToast('Erreur : ' + (res.error || 'inconnue'));
+        return;
+      }
+      // Update local state
+      const s = SUPPLIERS.find(x => x.id === id);
+      if (s) {
+        if (action === 'pin' && res.pin) {
+          s.pins = s.pins || {};
+          s.pins[field] = res.pin;
+        } else {
+          if (s.pins) delete s.pins[field];
+        }
+      }
+      sfToast(action === 'pin'
+        ? `Champ « ${field} » verrouillé.`
+        : `Champ « ${field} » désépinglé.`);
+      // Re-render fiche
+      openFiche(id);
+    } catch (e) {
+      sfToast('Erreur réseau : ' + e.message);
+    }
+  }
+
+  async function sfDoUpdateField(id, field, newValue, isConfirmedCogs) {
+    try {
+      const data = {
+        supplier_fk: String(id),
+        field_name:  field,
+        new_value:   newValue,
+      };
+      if (isConfirmedCogs) data.confirmed = '1';
+
+      const res = await sfPost('/api/sf-update-field.php', data);
+
+      if (!res.ok && res.needs_confirm) {
+        // COGS-impacting: show confirm dialog
+        const diffEl = document.getElementById('sf-modal-diff');
+        if (diffEl) {
+          diffEl.innerHTML = `
+            <div style="color:var(--ember);margin-bottom:10px">⚠ Modification COGS-impacting</div>
+            <strong>${escHtml(field)}</strong> · Fournisseur <em>${escHtml((SUPPLIERS.find(x=>x.id===id)||{}).name||'')}</em><br><br>
+            <span style="color:var(--ink-mute)">Avant :</span> <code style="color:var(--ember)">${escHtml(String(res.old_value ?? '—'))}</code>
+            &nbsp;→&nbsp;
+            <span style="color:var(--ink-mute)">Après :</span> <code style="color:var(--hop)">${escHtml(String(res.new_value ?? ''))}</code>
+            <div style="margin-top:10px;font-size:11px;color:var(--ink-mute)">Ce champ affecte le calcul COGS. Confirmez pour appliquer.</div>
+          `;
+        }
+        const overlay = document.getElementById('sf-modal-overlay');
+        const confirmBtn = document.getElementById('sf-modal-confirm');
+        if (overlay) overlay.classList.add('open');
+        if (confirmBtn) {
+          confirmBtn.onclick = async () => {
+            overlay.classList.remove('open');
+            await sfDoUpdateField(id, field, newValue, true);
+          };
+        }
+        return;
+      }
+
+      if (!res.ok) {
+        sfToast('Erreur : ' + (res.error || 'inconnue'));
+        return;
+      }
+
+      if (res.pending) {
+        sfToast(`Proposition pour « ${field} » soumise — en attente admin.`);
+        return;
+      }
+
+      // Success: update local supplier state
+      const s = SUPPLIERS.find(x => x.id === id);
+      if (s) {
+        s[field] = res.new_value;
+        s.last_modified_by = 'web';
+        // Update country_display if country changed
+        if (field === 'country') {
+          s.country_display = res.new_value || '';
+        }
+      }
+      sfToast(`Champ « ${field} » mis à jour.`);
+      openFiche(id);
+    } catch (e) {
+      sfToast('Erreur réseau : ' + e.message);
+    }
+  }
+
+  /* ── sfAddAlias — add an OCR alias ─────────────────────────────── */
+  window.sfAddAlias = function (id) {
+    const s = SUPPLIERS.find(x => x.id === id);
+    if (!s) return;
+
+    const aliasText = window.prompt(`Ajouter un alias OCR pour «${s.name}» :`);
+    if (!aliasText || !aliasText.trim()) return;
+
+    sfPost('/api/sf-add-alias.php', {
+      supplier_fk: String(id),
+      alias:       aliasText.trim(),
+      source:      'manual',
+    }).then(res => {
+      if (!res.ok) {
+        sfToast('Erreur : ' + (res.error || 'inconnue'));
+        return;
+      }
+      // Update local state
+      const s2 = SUPPLIERS.find(x => x.id === id);
+      if (s2) {
+        s2.aliases = s2.aliases || [];
+        s2.aliases.push({ alias: res.alias.alias, source: res.alias.source });
+      }
+      sfToast(`Alias «${aliasText.trim()}» ajouté.`);
+      openFiche(id);
+    }).catch(e => sfToast('Erreur réseau : ' + e.message));
   };
 
   /* ── Validate modal ─────────────────────────────────────────────── */
   window.openValidateModal = function (id) {
     const s = SUPPLIERS.find(x => x.id === id);
     if (!s) return;
+    const isDraft = s.commissioning_state === 'draft';
+
+    // Build a checklist of fields that have values to pin
+    const PINNABLE = ['gl_account','currency','country','vat_regime','vat_number','parser_key'];
+    const fieldsWithValues = PINNABLE.filter(f => {
+      const v = s[f];
+      return v !== null && v !== undefined && v !== '';
+    });
+
     const diffEl = document.getElementById('sf-validate-diff');
     if (diffEl) {
-      diffEl.innerHTML = `Fiche <strong>${escHtml(s.name)}</strong> (id ${s.id}) ·
-        commissioning_state : <span style="color:var(--ember)">draft</span> →
-        <span style="color:var(--hop)">active</span><br><br>
-        <span style="color:var(--ink-mute)">
-          Cette action écrira dans <code>ref_suppliers</code> et
-          <code>ref_supplier_field_pins</code> via
-          <code>POST /api/sf-validate-supplier.php</code>.<br>
-          Endpoint non encore câblé — sera implémenté en step 3.
-        </span>`;
+      const stateHtml = isDraft
+        ? `commissioning_state : <span style="color:var(--ember)">draft</span> → <span style="color:var(--hop)">active</span><br>`
+        : `<span style="color:var(--hop)">Fiche déjà active</span> — action : verrouiller les champs confirmés.<br>`;
+      const fieldList = fieldsWithValues.length > 0
+        ? `<br><strong>Champs qui seront verrouillés :</strong><ul style="margin:6px 0 0 16px;font-size:11px">` +
+          fieldsWithValues.map(f => `<li><code>${escHtml(f)}</code> = <em>${escHtml(String(s[f] || ''))}</em></li>`).join('') +
+          `</ul>`
+        : '<br><em style="color:var(--ink-mute)">Aucun champ renseigné à verrouiller.</em>';
+      diffEl.innerHTML = `Fiche <strong>${escHtml(s.name)}</strong> (id ${s.id})<br>${stateHtml}${fieldList}`;
     }
+
     const overlay = document.getElementById('sf-validate-modal');
+    const confirmBtn = document.getElementById('sf-validate-confirm');
     if (overlay) overlay.classList.add('open');
+
+    // Enable confirm button and bind click
+    if (confirmBtn) {
+      confirmBtn.disabled = false;
+      confirmBtn.title    = '';
+      confirmBtn.textContent = isDraft ? '✓ Valider' : '✓ Verrouiller';
+      confirmBtn.onclick = async () => {
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = '…';
+        overlay.classList.remove('open');
+        await sfDoValidate(id, fieldsWithValues);
+      };
+    }
   };
+
+  async function sfDoValidate(id, confirmedFields) {
+    try {
+      const res = await sfPost('/api/sf-validate-supplier.php', {
+        supplier_fk:      String(id),
+        confirmed_fields: JSON.stringify(confirmedFields),
+      });
+      if (!res.ok) {
+        sfToast('Erreur : ' + (res.error || 'inconnue'));
+        return;
+      }
+      // Update local state
+      const s = SUPPLIERS.find(x => x.id === id);
+      if (s) {
+        s.commissioning_state = 'active';
+        // Mark pinned fields
+        s.pins = s.pins || {};
+        confirmedFields.forEach(f => {
+          s.pins[f] = {
+            pinned_value: s[f] !== undefined ? String(s[f]) : null,
+            pinned_by:    'web',
+            pinned_at:    new Date().toISOString(),
+            pin_reason:   'Validé via fiche fournisseur',
+          };
+        });
+      }
+      sfToast(res.already_active
+        ? `Fiche validée — ${res.pins_created} champ(s) verrouillé(s).`
+        : `Fiche activée · ${res.pins_created} champ(s) verrouillé(s).`);
+      renderList();
+      openFiche(id);
+    } catch (e) {
+      sfToast('Erreur réseau : ' + e.message);
+    }
+  }
 
   /* ── Log toggle ─────────────────────────────────────────────────── */
   window.sfToggleLog = function (btn) {
