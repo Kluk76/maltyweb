@@ -11,8 +11,8 @@
 body.rg-page {
   --rg-accent:      var(--hop);
   --rg-accent-deep: var(--hop-deep);
-  --rg-accent-glow: rgba(158, 176, 96, .15);
-  --rg-accent-dim:  rgba(158, 176, 96, .07);
+  --rg-accent-glow: color-mix(in srgb, var(--hop) 28%, transparent);
+  --rg-accent-dim:  color-mix(in srgb, var(--hop) 14%, transparent);
 }
 
 /* ── Full-viewport board ─────────────────────────────────────────────────────── */
@@ -27,18 +27,18 @@ body.rg-page {
 body.rg-page .board {
   position: fixed; inset: 0;
   background:
-    radial-gradient(130% 90% at 50% -20%, rgba(110, 122, 62, .10), transparent 55%),
-    radial-gradient(100% 120% at 50% 130%, rgba(0, 0, 0, .55), transparent 60%),
+    radial-gradient(130% 90% at 50% -20%, color-mix(in srgb, var(--hop) 10%, transparent), transparent 55%),
+    radial-gradient(100% 120% at 50% 130%, color-mix(in srgb, var(--ink) 8%, transparent), transparent 60%),
     var(--bg);
 }
 
 body.rg-page .board::before {
   content: ""; position: absolute; inset: 0; opacity: .5;
   background-image:
-    linear-gradient(rgba(110, 122, 62, .06) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(110, 122, 62, .06) 1px, transparent 1px),
-    linear-gradient(rgba(110, 122, 62, .03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(110, 122, 62, .03) 1px, transparent 1px);
+    linear-gradient(rgba(74,56,32,.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(74,56,32,.06) 1px, transparent 1px),
+    linear-gradient(rgba(74,56,32,.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(74,56,32,.03) 1px, transparent 1px);
   background-size: 120px 120px, 120px 120px, 24px 24px, 24px 24px;
   mask-image: radial-gradient(120% 100% at 50% 40%, #000 55%, transparent 92%);
 }
@@ -71,7 +71,7 @@ body.rg-page .family-switcher {
   display: flex; align-items: center; gap: 0;
   border: 1px solid var(--hairline-2); border-radius: 8px; overflow: hidden;
   font-family: "JetBrains Mono", monospace; font-size: 10px; letter-spacing: .12em;
-  text-transform: uppercase; background: rgba(10, 7, 4, .5); backdrop-filter: blur(6px);
+  text-transform: uppercase; background: color-mix(in srgb, var(--bg-elev) 80%, transparent); backdrop-filter: blur(6px);
 }
 
 body.rg-page .family-btn {
@@ -92,12 +92,13 @@ body.rg-page .family-btn .fam-dot {
 }
 
 body.rg-page .family-btn.fam-sdm .fam-dot   { background: var(--steel-mid); }
-body.rg-page .family-btn.fam-sdm:hover      { color: var(--steel); background: rgba(44, 46, 48, .15); }
+body.rg-page .family-btn.fam-sdm:hover      { color: var(--steel); background: color-mix(in srgb, var(--steel) 14%, transparent); }
 body.rg-page .family-btn.fam-sdm:hover .fam-dot { box-shadow: 0 0 8px var(--steel-mid); }
 
-body.rg-page .family-btn.fam-sdc .fam-dot   { background: #4a8c78; }
-body.rg-page .family-btn.fam-sdc:hover      { color: #4a8c78; background: rgba(74, 140, 120, .1); }
-body.rg-page .family-btn.fam-sdc:hover .fam-dot { box-shadow: 0 0 8px #4a8c78; }
+/* #2e6b58 = salle-de-controle lab teal — cross-page indicator, intentional literal */
+body.rg-page .family-btn.fam-sdc .fam-dot   { background: #2e6b58; }
+body.rg-page .family-btn.fam-sdc:hover      { color: #2e6b58; background: color-mix(in srgb, #2e6b58 12%, transparent); }
+body.rg-page .family-btn.fam-sdc:hover .fam-dot { box-shadow: 0 0 8px #2e6b58; }
 
 body.rg-page .family-btn.fam-rg {
   background: var(--rg-accent-glow); color: var(--rg-accent);
@@ -112,8 +113,8 @@ body.rg-page .rg-user-info {
 body.rg-page .rg-role-pill {
   font-family: "JetBrains Mono", monospace; font-size: 9px; letter-spacing: .14em;
   text-transform: uppercase; padding: 5px 12px; border-radius: 20px;
-  background: rgba(158, 176, 96, .14); color: var(--hop);
-  border: 1px solid rgba(158, 176, 96, .25);
+  background: color-mix(in srgb, var(--hop) 18%, transparent); color: var(--hop);
+  border: 1px solid color-mix(in srgb, var(--hop) 30%, transparent);
 }
 
 body.rg-page .rg-username {
@@ -169,7 +170,7 @@ body.rg-page .nav-item {
   font-family: "DM Sans", sans-serif; font-size: 13.5px; color: var(--ink-mute);
   transition: color .18s, background .18s; user-select: none;
 }
-body.rg-page .nav-item:hover { color: var(--ink-soft); background: rgba(160, 122, 72, .05); }
+body.rg-page .nav-item:hover { color: var(--ink-soft); background: color-mix(in srgb, var(--oak) 8%, transparent); }
 body.rg-page .nav-item.active { color: var(--rg-accent); background: var(--rg-accent-dim); }
 body.rg-page .nav-item.active::before {
   content: ""; position: absolute; left: 0; top: 20%; bottom: 20%;
@@ -193,10 +194,10 @@ body.rg-page .section-panel.active { display: flex; }
 
 body.rg-page .section-scroll {
   flex: 1; overflow-y: auto; padding: 28px 36px;
-  scrollbar-width: thin; scrollbar-color: rgba(160, 120, 60, .3) transparent;
+  scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--oak) 35%, transparent) transparent;
 }
 body.rg-page .section-scroll::-webkit-scrollbar { width: 4px; }
-body.rg-page .section-scroll::-webkit-scrollbar-thumb { background: rgba(160, 120, 60, .3); border-radius: 2px; }
+body.rg-page .section-scroll::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--oak) 35%, transparent); border-radius: 2px; }
 
 /* Section title */
 body.rg-page .sec-title {
@@ -221,27 +222,27 @@ body.rg-page .rg-flash {
   from { opacity: 0; transform: translateY(-6px); }
   to   { opacity: 1; transform: none; }
 }
-body.rg-page .rg-flash--ok   { border-color: rgba(158, 176, 96, .35); background: rgba(158, 176, 96, .08); color: var(--hop); }
-body.rg-page .rg-flash--err  { border-color: rgba(197, 100, 74, .35); background: rgba(197, 100, 74, .08); color: var(--ember); }
+body.rg-page .rg-flash--ok   { border-color: color-mix(in srgb, var(--hop) 40%, transparent); background: color-mix(in srgb, var(--hop) 14%, transparent); color: var(--hop); }
+body.rg-page .rg-flash--err  { border-color: color-mix(in srgb, var(--ember) 38%, transparent); background: color-mix(in srgb, var(--ember) 12%, transparent); color: var(--ember); }
 
 /* ── Migration-pending banner ────────────────────────────────────────────────── */
 body.rg-page .rg-migration-banner {
   display: flex; align-items: flex-start; gap: 12px;
   padding: 14px 18px; border-radius: 10px; margin-bottom: 24px;
-  border: 1px solid rgba(160, 122, 72, .3); background: rgba(160, 122, 72, .07);
+  border: 1px solid color-mix(in srgb, var(--oak) 32%, transparent); background: color-mix(in srgb, var(--oak) 10%, transparent);
   font-family: "DM Sans", sans-serif; font-size: 13px; color: var(--oak); line-height: 1.5;
 }
 body.rg-page .rg-migration-banner code {
   font-family: "JetBrains Mono", monospace; font-size: 11px;
-  background: rgba(0, 0, 0, .25); padding: 1px 6px; border-radius: 4px;
+  background: color-mix(in srgb, var(--ink) 8%, transparent); padding: 1px 6px; border-radius: 4px;
 }
 
 /* ── Settings card ──────────────────────────────────────────────────────────── */
 body.rg-page .rg-card {
   border: 1px solid var(--hairline-2); border-radius: 12px;
-  background: linear-gradient(160deg, rgba(29, 22, 13, .75), rgba(12, 9, 5, .65));
+  background: linear-gradient(160deg, var(--bg-elev), var(--bg-side));
   padding: 22px 24px; margin-bottom: 18px;
-  box-shadow: 0 8px 28px -10px rgba(0, 0, 0, .45);
+  box-shadow: 0 8px 28px -10px color-mix(in srgb, var(--ink) 14%, transparent);
 }
 
 body.rg-page .rg-card-title {
@@ -272,7 +273,7 @@ body.rg-page .rg-field-desc {
 }
 
 body.rg-page .rg-input {
-  width: 100%; background: rgba(0, 0, 0, .3); border: 1px solid var(--hairline-2);
+  width: 100%; background: color-mix(in srgb, var(--bg) 80%, var(--bg-elev)); border: 1px solid var(--hairline-2);
   border-radius: 8px; padding: 9px 12px;
   font-family: "JetBrains Mono", monospace; font-size: 12px; color: var(--ink);
   outline: none; transition: border-color .2s;
@@ -280,18 +281,18 @@ body.rg-page .rg-input {
 body.rg-page .rg-input:focus { border-color: var(--rg-accent-deep); box-shadow: 0 0 0 2px var(--rg-accent-glow); }
 
 body.rg-page .rg-select {
-  width: 100%; background: rgba(0, 0, 0, .3); border: 1px solid var(--hairline-2);
+  width: 100%; background: color-mix(in srgb, var(--bg) 80%, var(--bg-elev)); border: 1px solid var(--hairline-2);
   border-radius: 8px; padding: 9px 12px;
   font-family: "JetBrains Mono", monospace; font-size: 12px; color: var(--ink);
   outline: none; cursor: pointer; transition: border-color .2s;
   appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2 4l4 4 4-4' stroke='%237a6647' stroke-width='1.4' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2 4l4 4 4-4' stroke='%234a3820' stroke-width='1.4' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 10px center;
   padding-right: 28px;
 }
 body.rg-page .rg-select:focus { border-color: var(--rg-accent-deep); box-shadow: 0 0 0 2px var(--rg-accent-glow); }
-body.rg-page .rg-select option { background: #1a130a; color: var(--ink); }
+body.rg-page .rg-select option { background: var(--bg-elev); color: var(--ink); }
 
 /* ── Toggle (boolean) ────────────────────────────────────────────────────────── */
 body.rg-page .rg-toggle-wrap {
@@ -303,7 +304,7 @@ body.rg-page .rg-toggle {
 body.rg-page .rg-toggle input { opacity: 0; width: 0; height: 0; }
 body.rg-page .rg-slider {
   position: absolute; cursor: pointer; inset: 0;
-  background: rgba(0, 0, 0, .4); border: 1px solid var(--hairline-2);
+  background: color-mix(in srgb, var(--hairline-2) 60%, transparent); border: 1px solid var(--hairline-2);
   border-radius: 22px; transition: .2s;
 }
 body.rg-page .rg-slider::before {
@@ -331,15 +332,15 @@ body.rg-page .rg-btn {
 body.rg-page .rg-btn-primary {
   border-color: var(--rg-accent-deep); background: var(--rg-accent-glow); color: var(--rg-accent);
 }
-body.rg-page .rg-btn-primary:hover { background: rgba(158, 176, 96, .25); }
+body.rg-page .rg-btn-primary:hover { background: color-mix(in srgb, var(--hop) 36%, transparent); }
 body.rg-page .rg-btn-secondary {
   border-color: var(--hairline-2); background: none; color: var(--ink-mute);
 }
 body.rg-page .rg-btn-secondary:hover { border-color: var(--oak-deep); color: var(--ink); }
 body.rg-page .rg-btn-danger {
-  border-color: rgba(197, 100, 74, .4); background: rgba(197, 100, 74, .08); color: var(--ember);
+  border-color: color-mix(in srgb, var(--ember) 42%, transparent); background: color-mix(in srgb, var(--ember) 12%, transparent); color: var(--ember);
 }
-body.rg-page .rg-btn-danger:hover { background: rgba(197, 100, 74, .18); }
+body.rg-page .rg-btn-danger:hover { background: color-mix(in srgb, var(--ember) 24%, transparent); }
 
 /* ── Field divider ───────────────────────────────────────────────────────────── */
 body.rg-page .rg-divider { border: none; border-top: 1px solid var(--hairline); margin: 20px 0; }
@@ -360,10 +361,10 @@ body.rg-page .rg-table td {
   vertical-align: middle;
 }
 body.rg-page .rg-table tr:last-child td { border-bottom: none; }
-body.rg-page .rg-table tr:hover td { background: rgba(160, 122, 72, .04); }
+body.rg-page .rg-table tr:hover td { background: color-mix(in srgb, var(--oak) 6%, transparent); }
 
-body.rg-page .rg-pill-active   { font-family:"JetBrains Mono",monospace;font-size:8.5px;letter-spacing:.08em;text-transform:uppercase;padding:3px 9px;border-radius:10px;background:rgba(158,176,96,.12);color:var(--hop);border:1px solid rgba(158,176,96,.2); }
-body.rg-page .rg-pill-inactive { font-family:"JetBrains Mono",monospace;font-size:8.5px;letter-spacing:.08em;text-transform:uppercase;padding:3px 9px;border-radius:10px;background:rgba(58,46,29,.35);color:var(--ink-mute);border:1px solid var(--hairline-2); }
+body.rg-page .rg-pill-active   { font-family:"JetBrains Mono",monospace;font-size:8.5px;letter-spacing:.08em;text-transform:uppercase;padding:3px 9px;border-radius:10px;background:color-mix(in srgb,var(--hop) 16%,transparent);color:var(--hop);border:1px solid color-mix(in srgb,var(--hop) 26%,transparent); }
+body.rg-page .rg-pill-inactive { font-family:"JetBrains Mono",monospace;font-size:8.5px;letter-spacing:.08em;text-transform:uppercase;padding:3px 9px;border-radius:10px;background:color-mix(in srgb,var(--hairline) 30%,transparent);color:var(--ink-mute);border:1px solid var(--hairline-2); }
 
 body.rg-page .rg-action-link {
   font-family: "JetBrains Mono", monospace; font-size: 9px; letter-spacing: .1em;
@@ -372,12 +373,12 @@ body.rg-page .rg-action-link {
   padding: 4px 10px; transition: .2s;
 }
 body.rg-page .rg-action-link:hover { border-color: var(--oak-deep); color: var(--oak); }
-body.rg-page .rg-action-link.danger:hover { border-color: rgba(197,100,74,.4); color: var(--ember); }
+body.rg-page .rg-action-link.danger:hover { border-color: color-mix(in srgb, var(--ember) 55%, transparent); color: var(--ember); }
 
 /* ── Inline site-add / edit form ─────────────────────────────────────────────── */
 body.rg-page .rg-inline-form {
-  border: 1px dashed rgba(158, 176, 96, .25); border-radius: 10px;
-  padding: 20px 22px; background: rgba(158, 176, 96, .04);
+  border: 1px dashed color-mix(in srgb, var(--hop) 28%, transparent); border-radius: 10px;
+  padding: 20px 22px; background: color-mix(in srgb, var(--hop) 8%, transparent);
   margin-top: 14px;
 }
 body.rg-page .rg-inline-form .rg-form-title {
@@ -399,15 +400,15 @@ body.rg-page .rg-role-badge {
   text-transform: uppercase; padding: 3px 9px; border-radius: 10px;
   border: 1px solid;
 }
-body.rg-page .rg-role-badge.admin   { background: rgba(158,176,96,.12); color: var(--hop);   border-color: rgba(158,176,96,.25); }
-body.rg-page .rg-role-badge.manager { background: rgba(101,147,184,.12); color: var(--bbt);  border-color: rgba(101,147,184,.25); }
-body.rg-page .rg-role-badge.operator { background: rgba(94,98,102,.12); color: var(--steel); border-color: rgba(94,98,102,.25); }
-body.rg-page .rg-role-badge.viewer  { background: rgba(160,122,72,.12); color: var(--oak);   border-color: rgba(160,122,72,.25); }
+body.rg-page .rg-role-badge.admin   { background: color-mix(in srgb,var(--hop) 16%,transparent);   color: var(--hop);      border-color: color-mix(in srgb,var(--hop) 28%,transparent); }
+body.rg-page .rg-role-badge.manager { background: color-mix(in srgb,var(--bbt) 14%,transparent);   color: var(--bbt);      border-color: color-mix(in srgb,var(--bbt) 28%,transparent); }
+body.rg-page .rg-role-badge.operator { background: color-mix(in srgb,var(--steel) 14%,transparent); color: var(--steel-mid); border-color: color-mix(in srgb,var(--steel) 28%,transparent); }
+body.rg-page .rg-role-badge.viewer  { background: color-mix(in srgb,var(--oak) 14%,transparent);   color: var(--oak);      border-color: color-mix(in srgb,var(--oak) 28%,transparent); }
 
 /* ── Create-user form ────────────────────────────────────────────────────────── */
 body.rg-page .rg-create-user {
-  border: 1px dashed rgba(101, 147, 184, .25); border-radius: 10px;
-  padding: 22px 24px; background: rgba(101, 147, 184, .04); margin-top: 18px;
+  border: 1px dashed color-mix(in srgb, var(--bbt) 28%, transparent); border-radius: 10px;
+  padding: 22px 24px; background: color-mix(in srgb, var(--bbt) 8%, transparent); margin-top: 18px;
 }
 body.rg-page .rg-create-user .rg-form-title {
   font-family: "JetBrains Mono", monospace; font-size: 9px; letter-spacing: .22em;

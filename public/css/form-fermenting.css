@@ -10,8 +10,8 @@
 body.form-fermenting .ferm-unwired-notice {
   margin-top: 14px;
   padding: 10px 14px;
-  background: rgba(197, 102, 74, 0.07);
-  border: 1px solid rgba(197, 102, 74, 0.25);
+  background: color-mix(in srgb, var(--ember)  7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ember) 25%, transparent);
   border-radius: 4px;
   font-size: 0.8rem;
   color: var(--ink-soft);
@@ -242,7 +242,7 @@ body.form-fermenting .ferm-dh__remove-btn {
 
 body.form-fermenting .ferm-dh__remove-btn:hover {
   color: var(--ember);
-  background: rgba(197, 102, 74, 0.1);
+  background: color-mix(in srgb, var(--ember) 10%, transparent);
 }
 
 /* ── Add-row button ──────────────────────────────────────────────────────── */
@@ -273,7 +273,7 @@ body.form-fermenting .ferm-dh-count {
   font-size: 0.7rem;
   padding: 2px 7px;
   border-radius: 10px;
-  background: rgba(158, 176, 96, 0.14);
+  background: color-mix(in srgb, var(--hop) 14%, transparent);
   color: var(--hop);
   letter-spacing: 0.04em;
   margin-left: 8px;
@@ -310,22 +310,22 @@ body.form-fermenting .ferm-event-badge {
 }
 
 body.form-fermenting .ferm-event-badge--reads {
-  background: rgba(101, 147, 184, 0.14);
+  background: color-mix(in srgb, var(--bbt)  14%, transparent);
   color: var(--bbt);
 }
 
 body.form-fermenting .ferm-event-badge--dryhop {
-  background: rgba(158, 176, 96, 0.14);
+  background: color-mix(in srgb, var(--hop)  14%, transparent);
   color: var(--hop);
 }
 
 body.form-fermenting .ferm-event-badge--purge {
-  background: rgba(160, 122, 72, 0.14);
+  background: color-mix(in srgb, var(--oak)  14%, transparent);
   color: var(--oak);
 }
 
 body.form-fermenting .ferm-event-badge--coldcrash {
-  background: rgba(47, 85, 117, 0.18);
+  background: color-mix(in srgb, var(--bbt)  18%, transparent);
   color: var(--bbt);
 }
 

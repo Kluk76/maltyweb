@@ -26,7 +26,7 @@ function svg_cct(
     $fullThreshold = 0.85;
     $isUnderfilled = $variant === 'fill' && $isFerm && $fillRatio > 0 && $fillRatio < $fullThreshold;
     if ($isMaint) {
-        $fillColour  = '#3a3a3c';
+        $fillColour  = '#cfc6b2';
         $fillOpacity = '0.5';
     } elseif ($isCold) {
         $fillColour  = 'var(--cold)';
@@ -65,9 +65,9 @@ function svg_cct(
       "/>
     </clipPath>
     <linearGradient id="<?= $gradId ?>" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%" stop-color="rgba(255,255,255,0.13)"/>
-      <stop offset="12%" stop-color="rgba(255,255,255,0.04)"/>
-      <stop offset="100%" stop-color="rgba(255,255,255,0)"/>
+      <stop offset="0%" stop-color="rgba(0,0,0,0.10)"/>
+      <stop offset="12%" stop-color="rgba(0,0,0,0.03)"/>
+      <stop offset="100%" stop-color="rgba(0,0,0,0)"/>
     </linearGradient>
     <linearGradient id="<?= $legGradId ?>" x1="0" y1="0" x2="1" y2="0">
       <stop offset="0%"  stop-color="var(--steel-shadow)"/>
@@ -177,7 +177,7 @@ function svg_cct(
     <circle cx="40" cy="64" r="3.2" fill="var(--steel-shadow)" opacity="0.85"/>
     <?php endif ?>
     <path d="M 38,62 Q 39,61.3 40.5,61.5"
-      fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="0.4"/>
+      fill="none" stroke="rgba(0,0,0,0.18)" stroke-width="0.4"/>
     <circle cx="40"   cy="59.6" r="0.4" fill="var(--steel-shadow)"/>
     <circle cx="44.2" cy="64"   r="0.4" fill="var(--steel-shadow)"/>
     <circle cx="40"   cy="68.4" r="0.4" fill="var(--steel-shadow)"/>
@@ -220,7 +220,7 @@ function svg_cct(
     x="40" y="30" text-anchor="middle"
     font-family="'JetBrains Mono', ui-monospace, monospace"
     font-size="14" font-weight="500"
-    fill="rgba(255,255,255,0.9)" stroke="rgba(0,0,0,0.5)" stroke-width="0.4" paint-order="stroke"
+    fill="rgba(0,0,0,0.75)" stroke="rgba(255,255,255,0.5)" stroke-width="0.4" paint-order="stroke"
   ><?= $number ?></text>
 
 </svg>
@@ -241,7 +241,7 @@ function svg_bbt(float $fillRatio, string $stateClass = '', int $number = 0, str
 
     $isMaint = str_contains($stateClass, 'maint');
     if ($isMaint) {
-        $fillColour  = '#3a3a3c';
+        $fillColour  = '#cfc6b2';
         $fillOpacity = '0.5';
     } else {
         $fillColour  = 'var(--bbt)';
@@ -269,9 +269,9 @@ function svg_bbt(float $fillRatio, string $stateClass = '', int $number = 0, str
       <rect x="<?= $cylLeft ?>" y="<?= $cylTop ?>" width="<?= $cylRight - $cylLeft ?>" height="<?= $cylH ?>"/>
     </clipPath>
     <linearGradient id="<?= $gradId ?>" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%" stop-color="rgba(255,255,255,0.13)"/>
-      <stop offset="12%" stop-color="rgba(255,255,255,0.04)"/>
-      <stop offset="100%" stop-color="rgba(255,255,255,0)"/>
+      <stop offset="0%" stop-color="rgba(0,0,0,0.10)"/>
+      <stop offset="12%" stop-color="rgba(0,0,0,0.03)"/>
+      <stop offset="100%" stop-color="rgba(0,0,0,0)"/>
     </linearGradient>
     <linearGradient id="<?= $legGradId ?>" x1="0" y1="0" x2="1" y2="0">
       <stop offset="0%"  stop-color="var(--steel-shadow)"/>
@@ -400,7 +400,7 @@ function svg_bbt(float $fillRatio, string $stateClass = '', int $number = 0, str
     <circle cx="40" cy="72" r="3.2" fill="var(--steel-shadow)" opacity="0.85"/>
     <?php endif ?>
     <path d="M 38,70 Q 39,69.3 40.5,69.5"
-      fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="0.4"/>
+      fill="none" stroke="rgba(0,0,0,0.18)" stroke-width="0.4"/>
     <circle cx="40"   cy="67.6" r="0.4" fill="var(--steel-shadow)"/>
     <circle cx="44.2" cy="72"   r="0.4" fill="var(--steel-shadow)"/>
     <circle cx="40"   cy="76.4" r="0.4" fill="var(--steel-shadow)"/>
@@ -438,7 +438,7 @@ function svg_bbt(float $fillRatio, string $stateClass = '', int $number = 0, str
     x="40" y="37" text-anchor="middle"
     font-family="'JetBrains Mono', ui-monospace, monospace"
     font-size="14" font-weight="500"
-    fill="rgba(255,255,255,0.9)" stroke="rgba(0,0,0,0.5)" stroke-width="0.4" paint-order="stroke"
+    fill="rgba(0,0,0,0.75)" stroke="rgba(255,255,255,0.5)" stroke-width="0.4" paint-order="stroke"
   ><?= $number ?></text>
 </svg>
 <?php

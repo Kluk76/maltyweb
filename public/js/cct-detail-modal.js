@@ -116,27 +116,38 @@
     if (!svgEl || !data) return;
     const out = [];
 
+    // Read CSS tokens once so SVG strings track the global theme automatically.
+    const css     = getComputedStyle(document.documentElement);
+    const ink     = css.getPropertyValue('--ink').trim();      // #241b10
+    const inkMute = css.getPropertyValue('--ink-mute').trim(); // #4a3820
+    const bg      = css.getPropertyValue('--bg').trim();       // #f1e8d4
+    const ember   = css.getPropertyValue('--ember').trim();    // #b34428
+    const hopDeep = css.getPropertyValue('--hop-deep').trim(); // #3f4d14
+    const oak     = css.getPropertyValue('--oak').trim();      // #8b5e2a
+    const cold    = css.getPropertyValue('--cold').trim();     // #2f5575
+    const bbt     = css.getPropertyValue('--bbt').trim();      // #2f6d99
+
     // Grid + axes
     for (let v = CHART.fgMin; v <= CHART.fgMax; v += 4) {
       const y = yFG(v);
-      out.push(`<line x1="${CHART.pad.left}" y1="${y}" x2="${CHART.w - CHART.pad.right}" y2="${y}" stroke="rgba(200,184,148,0.06)" stroke-width="1"/>`);
-      out.push(`<text x="${CHART.pad.left - 10}" y="${y + 3.5}" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="9.5" fill="#7a6647" font-weight="500">${v}</text>`);
+      out.push(`<line x1="${CHART.pad.left}" y1="${y}" x2="${CHART.w - CHART.pad.right}" y2="${y}" stroke="rgba(74,56,32,0.06)" stroke-width="1"/>`);
+      out.push(`<text x="${CHART.pad.left - 10}" y="${y + 3.5}" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="9.5" fill="${inkMute}" font-weight="500">${v}</text>`);
     }
     for (let v = 4.0; v <= 5.4 + 0.001; v += 0.4) {
-      out.push(`<text x="${CHART.w - CHART.pad.right + 10}" y="${yPH(v) + 3.5}" text-anchor="start" font-family="JetBrains Mono, monospace" font-size="9.5" fill="#7a6647" font-weight="500">${v.toFixed(1)}</text>`);
+      out.push(`<text x="${CHART.w - CHART.pad.right + 10}" y="${yPH(v) + 3.5}" text-anchor="start" font-family="JetBrains Mono, monospace" font-size="9.5" fill="${inkMute}" font-weight="500">${v.toFixed(1)}</text>`);
     }
     for (let d = 2; d <= 12; d += 2) {
       const x = xPos(d);
-      out.push(`<line x1="${x}" y1="${CHART.pad.top}" x2="${x}" y2="${CHART.h - CHART.pad.bottom}" stroke="rgba(200,184,148,0.03)" stroke-width="1"/>`);
+      out.push(`<line x1="${x}" y1="${CHART.pad.top}" x2="${x}" y2="${CHART.h - CHART.pad.bottom}" stroke="rgba(74,56,32,0.04)" stroke-width="1"/>`);
     }
-    out.push(`<line x1="${CHART.pad.left}" y1="${CHART.h - CHART.pad.bottom}" x2="${CHART.w - CHART.pad.right}" y2="${CHART.h - CHART.pad.bottom}" stroke="rgba(200,184,148,0.20)" stroke-width="1"/>`);
+    out.push(`<line x1="${CHART.pad.left}" y1="${CHART.h - CHART.pad.bottom}" x2="${CHART.w - CHART.pad.right}" y2="${CHART.h - CHART.pad.bottom}" stroke="rgba(74,56,32,0.20)" stroke-width="1"/>`);
     for (let d = 0; d <= 12; d += 2) {
       const x = xPos(d);
-      out.push(`<text x="${x}" y="${CHART.h - CHART.pad.bottom + 18}" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9.5" fill="#7a6647" font-weight="500">J+${d}</text>`);
+      out.push(`<text x="${x}" y="${CHART.h - CHART.pad.bottom + 18}" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9.5" fill="${inkMute}" font-weight="500">J+${d}</text>`);
     }
-    out.push(`<text x="${CHART.pad.left - 10}" y="${CHART.pad.top - 10}" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="8.5" fill="#7a6647" letter-spacing="1.6" font-weight="500">FG · °P</text>`);
-    out.push(`<text x="${CHART.w - CHART.pad.right + 10}" y="${CHART.pad.top - 10}" text-anchor="start" font-family="JetBrains Mono, monospace" font-size="8.5" fill="#7a6647" letter-spacing="1.6" font-weight="500">pH</text>`);
-    out.push(`<text x="${CHART.w / 2}" y="${CHART.h - 10}" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="8.5" fill="#7a6647" letter-spacing="2.5" font-weight="500">JOURS DEPUIS DÉBUT FERMENTATION</text>`);
+    out.push(`<text x="${CHART.pad.left - 10}" y="${CHART.pad.top - 10}" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="8.5" fill="${inkMute}" letter-spacing="1.6" font-weight="500">FG · °P</text>`);
+    out.push(`<text x="${CHART.w - CHART.pad.right + 10}" y="${CHART.pad.top - 10}" text-anchor="start" font-family="JetBrains Mono, monospace" font-size="8.5" fill="${inkMute}" letter-spacing="1.6" font-weight="500">pH</text>`);
+    out.push(`<text x="${CHART.w / 2}" y="${CHART.h - 10}" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="8.5" fill="${inkMute}" letter-spacing="2.5" font-weight="500">JOURS DEPUIS DÉBUT FERMENTATION</text>`);
 
     // Historical ghosts — each batch wrapped in a hover-able <g>
     const hist = data.historical || [];
@@ -152,18 +163,18 @@
       if (fgD) out.push(`<path d="${fgD}" fill="none" stroke="transparent" stroke-width="14" pointer-events="stroke" class="hit"/>`);
       if (phD) out.push(`<path d="${phD}" fill="none" stroke="transparent" stroke-width="14" pointer-events="stroke" class="hit"/>`);
       // visible (decorative; pointer-events off so hit overlay catches)
-      if (fgD) out.push(`<path d="${fgD}" fill="none" stroke="#c5664a" stroke-width="1.2" opacity="0.18" stroke-linecap="round" pointer-events="none" class="hist-fg"/>`);
-      if (phD) out.push(`<path d="${phD}" fill="none" stroke="#6b7a3e" stroke-width="1.2" opacity="0.20" stroke-dasharray="4 3" stroke-linecap="round" pointer-events="none" class="hist-ph"/>`);
+      if (fgD) out.push(`<path d="${fgD}" fill="none" stroke="${ember}" stroke-width="1.2" opacity="0.18" stroke-linecap="round" pointer-events="none" class="hist-fg"/>`);
+      if (phD) out.push(`<path d="${phD}" fill="none" stroke="${hopDeep}" stroke-width="1.2" opacity="0.20" stroke-dasharray="4 3" stroke-linecap="round" pointer-events="none" class="hist-ph"/>`);
       // small visible datapoints (faded; brighten on group hover via CSS)
       for (const r of reads) {
-        if (r.fg != null) out.push(`<circle cx="${xPos(r.day)}" cy="${yFG(r.fg)}" r="1.8" fill="#c5664a" opacity="0.35" pointer-events="none" class="hist-dot hist-dot--fg"/>`);
-        if (r.ph != null) out.push(`<circle cx="${xPos(r.day)}" cy="${yPH(r.ph)}" r="1.6" fill="#6b7a3e" opacity="0.40" pointer-events="none" class="hist-dot hist-dot--ph"/>`);
+        if (r.fg != null) out.push(`<circle cx="${xPos(r.day)}" cy="${yFG(r.fg)}" r="1.8" fill="${ember}" opacity="0.35" pointer-events="none" class="hist-dot hist-dot--fg"/>`);
+        if (r.ph != null) out.push(`<circle cx="${xPos(r.day)}" cy="${yPH(r.ph)}" r="1.6" fill="${hopDeep}" opacity="0.40" pointer-events="none" class="hist-dot hist-dot--ph"/>`);
       }
       if (batch.cc_day != null) {
         const ccx = xPos(batch.cc_day);
         const lastFg = reads.find(r => r.day === batch.cc_day);
         if (lastFg && lastFg.fg != null) {
-          out.push(`<circle cx="${ccx}" cy="${yFG(lastFg.fg)}" r="2.8" fill="none" stroke="#2f5575" stroke-width="1.2" opacity="0.55" pointer-events="none"/>`);
+          out.push(`<circle cx="${ccx}" cy="${yFG(lastFg.fg)}" r="2.8" fill="none" stroke="${cold}" stroke-width="1.2" opacity="0.55" pointer-events="none"/>`);
         }
       }
       out.push(`</g>`);
@@ -176,23 +187,23 @@
       const phPts = cur.filter(r => r.ph != null).map(r => ({ x: xPos(r.day), y: yPH(r.ph) }));
 
       if (fgPts.length > 1) {
-        out.push(`<path d="${pathFrom(fgPts)}" fill="none" stroke="#c5664a" stroke-width="5" opacity="0.10" stroke-linecap="round"/>`);
-        out.push(`<path d="${pathFrom(fgPts)}" fill="none" stroke="#c5664a" stroke-width="2.6" stroke-linecap="round"/>`);
+        out.push(`<path d="${pathFrom(fgPts)}" fill="none" stroke="${ember}" stroke-width="5" opacity="0.10" stroke-linecap="round"/>`);
+        out.push(`<path d="${pathFrom(fgPts)}" fill="none" stroke="${ember}" stroke-width="2.6" stroke-linecap="round"/>`);
       }
       if (phPts.length > 1) {
-        out.push(`<path d="${pathFrom(phPts)}" fill="none" stroke="#6b7a3e" stroke-width="2" stroke-linecap="round" stroke-dasharray="6 3"/>`);
+        out.push(`<path d="${pathFrom(phPts)}" fill="none" stroke="${hopDeep}" stroke-width="2" stroke-linecap="round" stroke-dasharray="6 3"/>`);
       }
       for (const r of cur) {
-        if (r.fg != null) out.push(`<circle cx="${xPos(r.day)}" cy="${yFG(r.fg)}" r="3.2" fill="#c5664a" stroke="#1d160d" stroke-width="1.6"/>`);
-        if (r.ph != null) out.push(`<circle cx="${xPos(r.day)}" cy="${yPH(r.ph)}" r="2.6" fill="#6b7a3e" stroke="#1d160d" stroke-width="1.4"/>`);
+        if (r.fg != null) out.push(`<circle cx="${xPos(r.day)}" cy="${yFG(r.fg)}" r="3.2" fill="${ember}" stroke="${ink}" stroke-width="1.6"/>`);
+        if (r.ph != null) out.push(`<circle cx="${xPos(r.day)}" cy="${yPH(r.ph)}" r="2.6" fill="${hopDeep}" stroke="${ink}" stroke-width="1.4"/>`);
       }
 
       // Current-day line
       const latest = [...cur].reverse().find(r => r.fg != null || r.ph != null);
       if (latest) {
         const cx = xPos(latest.day);
-        out.push(`<line x1="${cx}" y1="${CHART.pad.top}" x2="${cx}" y2="${CHART.h - CHART.pad.bottom}" stroke="#ede0c4" stroke-width="0.8" stroke-dasharray="2 3" opacity="0.25"/>`);
-        out.push(`<g transform="translate(${cx}, ${CHART.pad.top - 18})"><text text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="8.5" fill="#c8b894" font-weight="500" letter-spacing="1.4">AUJOURD'HUI</text></g>`);
+        out.push(`<line x1="${cx}" y1="${CHART.pad.top}" x2="${cx}" y2="${CHART.h - CHART.pad.bottom}" stroke="${oak}" stroke-width="0.8" stroke-dasharray="2 3" opacity="0.85"/>`);
+        out.push(`<g transform="translate(${cx}, ${CHART.pad.top - 18})"><text text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="8.5" fill="${inkMute}" font-weight="500" letter-spacing="1.4">AUJOURD'HUI</text></g>`);
 
         // Readout pills
         if (latest.fg != null && latest.ph != null) {
@@ -205,10 +216,10 @@
           if (fgPillY < phPillY + pillH + 8) fgPillY = phPillY + pillH + 8;
           const phMidY = phPillY + pillH / 2;
           const fgMidY = fgPillY + pillH / 2;
-          out.push(`<path d="M ${cx + 3.5} ${lyPh - 1.5} Q ${cx + 9} ${(lyPh + phMidY) / 2}, ${pillX} ${phMidY}" fill="none" stroke="#6b7a3e" stroke-width="0.9" opacity="0.55"/>`);
-          out.push(`<path d="M ${cx + 3.5} ${lyFg + 1.5} Q ${cx + 9} ${(lyFg + fgMidY) / 2}, ${pillX} ${fgMidY}" fill="none" stroke="#c5664a" stroke-width="0.9" opacity="0.55"/>`);
-          out.push(`<g transform="translate(${pillX}, ${phPillY})"><rect x="0" y="0" width="${pillW}" height="${pillH}" rx="2" fill="#6b7a3e"/><text x="${pillW / 2}" y="13.5" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10.5" font-weight="500" fill="#ede0c4" letter-spacing="0.4">pH ${latest.ph.toFixed(2)}</text></g>`);
-          out.push(`<g transform="translate(${pillX}, ${fgPillY})"><rect x="0" y="0" width="${pillW}" height="${pillH}" rx="2" fill="#c5664a"/><text x="${pillW / 2}" y="13.5" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10.5" font-weight="500" fill="#ede0c4" letter-spacing="0.4">${latest.fg.toFixed(1)} °P</text></g>`);
+          out.push(`<path d="M ${cx + 3.5} ${lyPh - 1.5} Q ${cx + 9} ${(lyPh + phMidY) / 2}, ${pillX} ${phMidY}" fill="none" stroke="${hopDeep}" stroke-width="0.9" opacity="0.55"/>`);
+          out.push(`<path d="M ${cx + 3.5} ${lyFg + 1.5} Q ${cx + 9} ${(lyFg + fgMidY) / 2}, ${pillX} ${fgMidY}" fill="none" stroke="${ember}" stroke-width="0.9" opacity="0.55"/>`);
+          out.push(`<g transform="translate(${pillX}, ${phPillY})"><rect x="0" y="0" width="${pillW}" height="${pillH}" rx="2" fill="${hopDeep}"/><text x="${pillW / 2}" y="13.5" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10.5" font-weight="500" fill="${bg}" letter-spacing="0.4">pH ${latest.ph.toFixed(2)}</text></g>`);
+          out.push(`<g transform="translate(${pillX}, ${fgPillY})"><rect x="0" y="0" width="${pillW}" height="${pillH}" rx="2" fill="${ember}"/><text x="${pillW / 2}" y="13.5" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10.5" font-weight="500" fill="${bg}" letter-spacing="0.4">${latest.fg.toFixed(1)} °P</text></g>`);
         }
       }
 
@@ -216,15 +227,15 @@
       const ccEst = data.cc_estimated;
       if (ccEst != null) {
         const ex = xPos(ccEst);
-        out.push(`<line x1="${ex}" y1="${CHART.pad.top + 14}" x2="${ex}" y2="${CHART.h - CHART.pad.bottom}" stroke="#2f5575" stroke-width="1" stroke-dasharray="3 4" opacity="0.55"/>`);
-        out.push(`<g transform="translate(${ex}, ${CHART.pad.top + 6})"><text text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" fill="#6593b8" font-weight="500" letter-spacing="0.8">❄ CC ~J+${ccEst}</text></g>`);
+        out.push(`<line x1="${ex}" y1="${CHART.pad.top + 14}" x2="${ex}" y2="${CHART.h - CHART.pad.bottom}" stroke="${cold}" stroke-width="1" stroke-dasharray="3 4" opacity="0.55"/>`);
+        out.push(`<g transform="translate(${ex}, ${CHART.pad.top + 6})"><text text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" fill="${bbt}" font-weight="500" letter-spacing="0.8">❄ CC ~J+${ccEst}</text></g>`);
       }
     }
 
     // Snap-point focus rings (toggled by JS during hover)
-    out.push(`<circle id="cct-hover-fg" class="cct-modal__hover-dot" r="5.5" fill="none" stroke="#c5664a" stroke-width="1.5" style="display:none" pointer-events="none"/>`);
-    out.push(`<circle id="cct-hover-ph" class="cct-modal__hover-dot" r="4.8" fill="none" stroke="#6b7a3e" stroke-width="1.5" style="display:none" pointer-events="none"/>`);
-    out.push(`<line   id="cct-hover-x"  class="cct-modal__hover-dot" x1="0" y1="${CHART.pad.top}" x2="0" y2="${CHART.h - CHART.pad.bottom}" stroke="#ede0c4" stroke-width="0.6" stroke-dasharray="2 3" opacity="0.35" style="display:none" pointer-events="none"/>`);
+    out.push(`<circle id="cct-hover-fg" class="cct-modal__hover-dot" r="5.5" fill="none" stroke="${ember}" stroke-width="1.5" style="display:none" pointer-events="none"/>`);
+    out.push(`<circle id="cct-hover-ph" class="cct-modal__hover-dot" r="4.8" fill="none" stroke="${hopDeep}" stroke-width="1.5" style="display:none" pointer-events="none"/>`);
+    out.push(`<line   id="cct-hover-x"  class="cct-modal__hover-dot" x1="0" y1="${CHART.pad.top}" x2="0" y2="${CHART.h - CHART.pad.bottom}" stroke="${oak}" stroke-width="0.6" stroke-dasharray="2 3" opacity="0.55" style="display:none" pointer-events="none"/>`);
 
     svgEl.innerHTML = out.join('');
   }
@@ -384,7 +395,7 @@
     </div>
     <div class="cct-modal__legend">
       <span class="cct-modal__legend-item">
-        <span class="cct-modal__legend-swatch" style="background: #c5664a;"></span>
+        <span class="cct-modal__legend-swatch" style="background: var(--ember);"></span>
         FG &nbsp;<span style="color: var(--ink-mute); font-weight: 400;">°Plato</span>
       </span>
       <span class="cct-modal__legend-item">

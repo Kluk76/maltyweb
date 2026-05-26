@@ -1010,7 +1010,7 @@ window.SDC_CSRF = <?= json_encode($csrf ?? csrf_token(), JSON_HEX_TAG | JSON_HEX
           </div>
         </div>
 
-        <div style="margin-top:20px;background:rgba(74,140,120,.05);border:1px solid rgba(74,140,120,.15);border-radius:10px;padding:16px 20px;">
+        <div style="margin-top:20px;background:rgba(74,140,120,.08);border:1px solid rgba(74,140,120,.20);border-radius:10px;padding:16px 20px;">
           <div style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:var(--lab);margin-bottom:8px;">Modèle d'héritage</div>
           <div style="font-size:12.5px;color:var(--ink-mute);line-height:1.7;">
             <b style="color:var(--ink-soft);">Biochimie</b> définit les valeurs par défaut de la famille.<br>
@@ -1427,7 +1427,7 @@ function renderIngrPane(id,profile){
   Object.entries(groups).forEach(([c,rows])=>{maxPerCat[c]=Math.max(...rows.map(r=>toGRaw(r.qty,r.unit)));});
   let html='';
   const abv=profile?calcAbv(profile.og,profile.fg):null;
-  if(abv){html+=`<div style="margin-bottom:16px;padding:12px 14px;background:rgba(74,140,120,.07);border:1px solid rgba(74,140,120,.2);border-radius:8px;display:flex;align-items:baseline;gap:12px;"><span class="abv-big">${escHtml(abv)}</span><span class="abv-pct">% ABV</span><span class="abv-calc-note" style="margin-left:auto;">Estimé Plato · OG ${profile.og}°P · FG ${profile.fg}°P · ${profile.batches} brassins</span></div>`;}
+  if(abv){html+=`<div style="margin-bottom:16px;padding:12px 14px;background:rgba(74,140,120,.10);border:1px solid rgba(74,140,120,.22);border-radius:8px;display:flex;align-items:baseline;gap:12px;"><span class="abv-big">${escHtml(abv)}</span><span class="abv-pct">% ABV</span><span class="abv-calc-note" style="margin-left:auto;">Estimé Plato · OG ${profile.og}°P · FG ${profile.fg}°P · ${profile.batches} brassins</span></div>`;}
   const scaleLabel=ingrScale==='brassin'?`/ brassin · ${BRASSIN_HL} hl`:'/ hl';
   CAT_ORDER.forEach(cat=>{
     const rows=groups[cat];if(!rows)return;

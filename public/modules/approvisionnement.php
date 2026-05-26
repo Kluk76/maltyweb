@@ -389,7 +389,7 @@ header("Content-Type: text/html; charset=utf-8");
           aria-label="Rechercher un fournisseur">
       </div>
       <select id="af-sort-select" aria-label="Trier par"
-        style="background:rgba(0,0,0,.4);border:1px solid var(--hairline-2);border-radius:5px;color:var(--ink-mute);font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.06em;padding:4px 8px;outline:none;cursor:pointer;">
+        style="background:rgba(60,40,20,0.08);border:1px solid var(--hairline-2);border-radius:5px;color:var(--ink-mute);font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.06em;padding:4px 8px;outline:none;cursor:pointer;">
         <option value="alpha">A–Z</option>
         <option value="volume">Volume CHF ↓</option>
       </select>

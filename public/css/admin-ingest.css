@@ -41,47 +41,47 @@
 /* Green — last run ok, < 90 min ago */
 .home .tb__ingest-badge--green {
   color: var(--hop);
-  border-color: rgba(158, 176, 96, 0.30);
-  background: rgba(158, 176, 96, 0.06);
+  border-color: color-mix(in srgb, var(--hop) 30%, transparent);
+  background: color-mix(in srgb, var(--hop) 6%, transparent);
 }
 .home .tb__ingest-badge--green .tb__ingest-dot {
   background: var(--hop);
-  box-shadow: 0 0 4px rgba(158, 176, 96, 0.55);
+  box-shadow: 0 0 4px color-mix(in srgb, var(--hop) 55%, transparent);
 }
 .home .tb__ingest-badge--green:hover {
-  background: rgba(158, 176, 96, 0.11);
-  border-color: rgba(158, 176, 96, 0.50);
+  background: color-mix(in srgb, var(--hop) 11%, transparent);
+  border-color: color-mix(in srgb, var(--hop) 50%, transparent);
 }
 
 /* Orange — partial / stale (90–180 min) / stuck running */
 .home .tb__ingest-badge--orange {
   color: var(--oak);
-  border-color: rgba(160, 122, 72, 0.30);
-  background: rgba(160, 122, 72, 0.06);
+  border-color: color-mix(in srgb, var(--oak) 30%, transparent);
+  background: color-mix(in srgb, var(--oak) 6%, transparent);
 }
 .home .tb__ingest-badge--orange .tb__ingest-dot {
   background: var(--oak);
-  box-shadow: 0 0 4px rgba(160, 122, 72, 0.50);
+  box-shadow: 0 0 4px color-mix(in srgb, var(--oak) 50%, transparent);
 }
 .home .tb__ingest-badge--orange:hover {
-  background: rgba(160, 122, 72, 0.11);
-  border-color: rgba(160, 122, 72, 0.50);
+  background: color-mix(in srgb, var(--oak) 11%, transparent);
+  border-color: color-mix(in srgb, var(--oak) 50%, transparent);
 }
 
 /* Red — failed / > 3 h stale */
 .home .tb__ingest-badge--red {
   color: var(--ember);
-  border-color: rgba(197, 102, 74, 0.32);
-  background: rgba(197, 102, 74, 0.07);
+  border-color: color-mix(in srgb, var(--ember) 32%, transparent);
+  background: color-mix(in srgb, var(--ember) 7%, transparent);
 }
 .home .tb__ingest-badge--red .tb__ingest-dot {
   background: var(--ember);
-  box-shadow: 0 0 4px rgba(197, 102, 74, 0.55);
+  box-shadow: 0 0 4px color-mix(in srgb, var(--ember) 55%, transparent);
   animation: ia-pulse 2s ease-in-out infinite;
 }
 .home .tb__ingest-badge--red:hover {
-  background: rgba(197, 102, 74, 0.12);
-  border-color: rgba(197, 102, 74, 0.55);
+  background: color-mix(in srgb, var(--ember) 12%, transparent);
+  border-color: color-mix(in srgb, var(--ember) 55%, transparent);
 }
 
 /* Grey — no runs ever recorded */
@@ -94,7 +94,7 @@
   background: var(--ink-faint);
 }
 .home .tb__ingest-badge--grey:hover {
-  background: rgba(255, 255, 255, 0.02);
+  background: rgba(0, 0, 0, 0.04);
   border-color: var(--hairline-2);
 }
 
@@ -241,7 +241,7 @@
   gap: 20px;
   padding: 20px 22px 18px;
   border: 1px solid var(--hairline-2);
-  background: linear-gradient(180deg, rgba(25, 20, 15, 0.55), rgba(10, 9, 8, 0.35));
+  background: color-mix(in srgb, var(--bg-side) 60%, var(--bg));
   border-radius: 2px;
   position: relative;
 }
@@ -282,8 +282,8 @@
 
 .home .ia-run-error {
   padding: 10px 14px;
-  border: 1px solid rgba(197, 102, 74, 0.32);
-  background: rgba(197, 102, 74, 0.06);
+  border: 1px solid color-mix(in srgb, var(--ember) 32%, transparent);
+  background: color-mix(in srgb, var(--ember) 6%, transparent);
   color: var(--ember);
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 11px;
@@ -369,7 +369,7 @@
   vertical-align: top;
 }
 .home .ia-table tbody tr:hover .ia-td {
-  background: rgba(158, 176, 96, 0.025);
+  background: color-mix(in srgb, var(--hop) 4%, transparent);
 }
 .home .ia-tr--resolved .ia-td {
   color: var(--ink-faint);
@@ -399,13 +399,13 @@
   border-radius: 1px;
   border: 1px solid;
 }
-.home .ia-pill--ok      { color: var(--hop);   border-color: rgba(158, 176, 96, 0.32); background: rgba(158, 176, 96, 0.06); }
-.home .ia-pill--partial { color: var(--oak);   border-color: rgba(160, 122, 72, 0.32); background: rgba(160, 122, 72, 0.06); }
-.home .ia-pill--failed  { color: var(--ember); border-color: rgba(197, 102, 74, 0.32); background: rgba(197, 102, 74, 0.06); }
+.home .ia-pill--ok      { color: var(--hop);   border-color: color-mix(in srgb, var(--hop)   32%, transparent); background: color-mix(in srgb, var(--hop)   6%, transparent); }
+.home .ia-pill--partial { color: var(--oak);   border-color: color-mix(in srgb, var(--oak)   32%, transparent); background: color-mix(in srgb, var(--oak)   6%, transparent); }
+.home .ia-pill--failed  { color: var(--ember); border-color: color-mix(in srgb, var(--ember) 32%, transparent); background: color-mix(in srgb, var(--ember) 6%, transparent); }
 .home .ia-pill--running {
   color: var(--bbt);
-  border-color: rgba(101, 147, 184, 0.32);
-  background: rgba(101, 147, 184, 0.06);
+  border-color: color-mix(in srgb, var(--bbt) 32%, transparent);
+  background: color-mix(in srgb, var(--bbt) 6%, transparent);
 }
 .home .ia-pill--unknown { color: var(--ink-mute); border-color: var(--hairline-2); background: transparent; }
 
@@ -427,7 +427,7 @@
 .home .ia-raw-btn:hover {
   color: var(--ink-soft);
   border-color: var(--hop-deep);
-  background: rgba(158, 176, 96, 0.05);
+  background: color-mix(in srgb, var(--hop) 8%, transparent);
 }
 
 /* ── Details / expand in run-history table ───────────────────────────────────*/
@@ -482,7 +482,7 @@
   background: var(--bg-elev);
   border: 1px solid var(--hairline-2);
   border-radius: 3px;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.7);
+  box-shadow: 0 20px 60px rgba(60,40,20,0.18);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -517,7 +517,7 @@
   justify-content: center;
   transition: color 0.14s, background 0.14s;
 }
-.home .ia-modal__close:hover { color: var(--ink); background: rgba(255,255,255,0.05); }
+.home .ia-modal__close:hover { color: var(--ink); background: rgba(0,0,0,0.04); }
 .home .ia-modal__body {
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 11.5px;

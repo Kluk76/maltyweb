@@ -396,7 +396,7 @@ $csrf = csrf_token();
         </svg>
       </span>
       Utilisateurs
-      <span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.06em;background:rgba(101,147,184,.15);color:var(--bbt);padding:2px 7px;border-radius:10px;"><?= count($users) ?></span>
+      <span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.06em;background:color-mix(in srgb, var(--bbt) 18%, transparent);color:var(--bbt);padding:2px 7px;border-radius:10px;"><?= count($users) ?></span>
     </div>
   </nav>
 
@@ -473,8 +473,8 @@ $csrf = csrf_token();
                   <div class="rg-field-label">Format de date (affichage)</div>
                   <div class="rg-field-desc">
                     Format PHP pour l'affichage des dates dans l'interface.<br>
-                    <code style="font-family:'JetBrains Mono',monospace;font-size:10px;background:rgba(0,0,0,.25);padding:1px 5px;border-radius:3px;">d/m/Y</code> = jj/mm/aaaa (Suisse/Europe) ·
-                    <code style="font-family:'JetBrains Mono',monospace;font-size:10px;background:rgba(0,0,0,.25);padding:1px 5px;border-radius:3px;">Y-m-d</code> = ISO
+                    <code style="font-family:'JetBrains Mono',monospace;font-size:10px;background:rgba(60,40,20,0.08);padding:1px 5px;border-radius:3px;">d/m/Y</code> = jj/mm/aaaa (Suisse/Europe) ·
+                    <code style="font-family:'JetBrains Mono',monospace;font-size:10px;background:rgba(60,40,20,0.08);padding:1px 5px;border-radius:3px;">Y-m-d</code> = ISO
                   </div>
                 </div>
                 <select class="rg-select" name="date_format">
@@ -514,8 +514,8 @@ $csrf = csrf_token();
                 <div>
                   <div class="rg-field-label">Format d'heure (affichage)</div>
                   <div class="rg-field-desc">
-                    <code style="font-family:'JetBrains Mono',monospace;font-size:10px;background:rgba(0,0,0,.25);padding:1px 5px;border-radius:3px;">H:i</code> = 14:30 (24h) ·
-                    <code style="font-family:'JetBrains Mono',monospace;font-size:10px;background:rgba(0,0,0,.25);padding:1px 5px;border-radius:3px;">h:i A</code> = 02:30 PM (12h)
+                    <code style="font-family:'JetBrains Mono',monospace;font-size:10px;background:rgba(60,40,20,0.08);padding:1px 5px;border-radius:3px;">H:i</code> = 14:30 (24h) ·
+                    <code style="font-family:'JetBrains Mono',monospace;font-size:10px;background:rgba(60,40,20,0.08);padding:1px 5px;border-radius:3px;">h:i A</code> = 02:30 PM (12h)
                   </div>
                 </div>
                 <select class="rg-select" name="time_format">

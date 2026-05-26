@@ -57,12 +57,12 @@ body.form-brewing .brew-ing__cat-chip {
   font-weight: 600;
 }
 
-body.form-brewing .brew-ing__cat-chip--malt    { background: rgba(212,146,60,0.18);  color: #d4923c; }
-body.form-brewing .brew-ing__cat-chip--hops    { background: rgba(158,176,96,0.18);  color: var(--hop); }
-body.form-brewing .brew-ing__cat-chip--yeast   { background: rgba(101,147,184,0.18); color: #6593b8; }
-body.form-brewing .brew-ing__cat-chip--adjunct { background: rgba(160,122,72,0.18);  color: var(--oak); }
-body.form-brewing .brew-ing__cat-chip--mineral { background: rgba(90,168,184,0.18);  color: #5aa8b8; }
-body.form-brewing .brew-ing__cat-chip--process { background: rgba(139,122,184,0.18); color: #8b7ab8; }
+body.form-brewing .brew-ing__cat-chip--malt    { background: color-mix(in srgb, var(--cat-malt)    18%, transparent); color: var(--cat-malt); }
+body.form-brewing .brew-ing__cat-chip--hops    { background: color-mix(in srgb, var(--hop)         18%, transparent); color: var(--hop); }
+body.form-brewing .brew-ing__cat-chip--yeast   { background: color-mix(in srgb, var(--cat-yeast)   18%, transparent); color: var(--cat-yeast); }
+body.form-brewing .brew-ing__cat-chip--adjunct { background: color-mix(in srgb, var(--oak)         18%, transparent); color: var(--oak); }
+body.form-brewing .brew-ing__cat-chip--mineral { background: color-mix(in srgb, var(--cat-mineral) 18%, transparent); color: var(--cat-mineral); }
+body.form-brewing .brew-ing__cat-chip--process { background: color-mix(in srgb, var(--cat-process) 18%, transparent); color: var(--cat-process); }
 body.form-brewing .brew-ing__cat-chip--unknown { background: var(--bg-elev); color: var(--ink-mute); }
 
 /* Inline inputs inside the table */
@@ -114,7 +114,7 @@ body.form-brewing .brew-ing__remove-btn {
 
 body.form-brewing .brew-ing__remove-btn:hover {
   color: var(--ember);
-  border-color: rgba(197,102,74,0.3);
+  border-color: color-mix(in srgb, var(--ember) 30%, transparent);
 }
 
 /* Add-ingredient button */
@@ -166,8 +166,8 @@ body.form-brewing .brew-note {
 
 /* ── FLAGGED / deferred section notice ─────────────────────────────────────── */
 body.form-brewing .brew-deferred-notice {
-  background: rgba(160,122,72,0.08);
-  border: 1px solid rgba(160,122,72,0.25);
+  background: color-mix(in srgb, var(--oak)  8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--oak) 25%, transparent);
   border-radius: 4px;
   padding: 12px 14px;
   font-size: 0.8rem;
