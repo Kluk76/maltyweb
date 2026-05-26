@@ -1,0 +1,337 @@
+/*
+ * form-fermenting.css — Operator fermentation entry form styles.
+ *
+ * Scoped under body.form-fermenting. Extends .op-form__* classes from app.css.
+ * No inline styles. Uses palette tokens from app.css body.home block
+ * (--bg, --bg-elev, --ink, --ink-soft, --ink-mute, --bbt, --hop, --ember, etc.).
+ */
+
+/* ── Schema-flag notice (unwired fields) ──────────────────────────────────── */
+body.form-fermenting .ferm-unwired-notice {
+  margin-top: 14px;
+  padding: 10px 14px;
+  background: rgba(197, 102, 74, 0.07);
+  border: 1px solid rgba(197, 102, 74, 0.25);
+  border-radius: 4px;
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  line-height: 1.55;
+}
+
+body.form-fermenting .ferm-unwired-notice strong {
+  color: var(--ember);
+}
+
+body.form-fermenting .ferm-unwired-notice code {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.75em;
+  color: var(--ink-mute);
+}
+
+/* ── Schema note in the readings section ──────────────────────────────────── */
+body.form-fermenting .ferm-readings-note {
+  font-size: 0.8rem;
+  color: var(--ink-mute);
+  margin-bottom: 14px;
+  line-height: 1.5;
+}
+
+body.form-fermenting .ferm-readings-note strong {
+  color: var(--ink-soft);
+}
+
+/* ── Readings grid (3 cards: gravity / pH / temp) ─────────────────────────── */
+body.form-fermenting .ferm-readings-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 640px) {
+  body.form-fermenting .ferm-readings-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Reading card ──────────────────────────────────────────────────────────── */
+body.form-fermenting .ferm-reading-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+body.form-fermenting .ferm-reading-card__head {
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid var(--hairline);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+body.form-fermenting .ferm-reading-card__label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.65rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+body.form-fermenting .ferm-reading-card__unit {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem;
+  color: var(--bbt);
+  letter-spacing: 0.05em;
+}
+
+/* ── Reading input (large numeric, inside the card) ───────────────────────── */
+body.form-fermenting .ferm-reading-input {
+  display: block;
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--hairline);
+  padding: 10px 12px 10px;
+  color: var(--ink);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 1.6rem;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  text-align: center;
+  outline: none;
+  transition: border-color 0.15s;
+  -moz-appearance: textfield;
+}
+
+body.form-fermenting .ferm-reading-input::-webkit-outer-spin-button,
+body.form-fermenting .ferm-reading-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+}
+
+body.form-fermenting .ferm-reading-input:focus {
+  border-color: var(--bbt);
+}
+
+body.form-fermenting .ferm-reading-input::placeholder {
+  color: var(--ink-faint);
+  font-size: 1.2rem;
+}
+
+body.form-fermenting .ferm-reading-input.warn {
+  border-color: var(--ember);
+  color: var(--ember);
+}
+
+body.form-fermenting .ferm-reading-input.ok {
+  border-color: var(--hop-deep, #6b7a3e);
+}
+
+/* ── Reading hint text below the large input ─────────────────────────────── */
+body.form-fermenting .ferm-reading-hint {
+  padding: 6px 12px 10px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  color: var(--ink-mute);
+  text-align: center;
+  min-height: 28px;
+}
+
+body.form-fermenting .ferm-reading-hint.warn {
+  color: var(--ember);
+}
+
+/* ── Dry-hop table ─────────────────────────────────────────────────────────── */
+body.form-fermenting .ferm-dh-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+  font-size: 0.875rem;
+}
+
+body.form-fermenting .ferm-dh-table thead th {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  padding: 0 8px 8px 0;
+  text-align: left;
+  border-bottom: 1px solid var(--hairline);
+}
+
+body.form-fermenting .ferm-dh-col--qty,
+body.form-fermenting .ferm-dh-col--unit,
+body.form-fermenting .ferm-dh-col--lot {
+  width: 90px;
+}
+
+body.form-fermenting .ferm-dh-col--del {
+  width: 32px;
+}
+
+body.form-fermenting .ferm-dh-table tbody tr {
+  border-bottom: 1px solid var(--hairline);
+}
+
+body.form-fermenting .ferm-dh-table tbody tr:last-child {
+  border-bottom: none;
+}
+
+body.form-fermenting .ferm-dh-table tbody td {
+  padding: 7px 8px 7px 0;
+  vertical-align: middle;
+}
+
+body.form-fermenting .ferm-dh-table tbody td:last-child {
+  padding-right: 0;
+}
+
+/* ── Inline inputs inside the dry-hop table ──────────────────────────────── */
+body.form-fermenting .ferm-dh__hop-select,
+body.form-fermenting .ferm-dh__qty-input,
+body.form-fermenting .ferm-dh__unit-select,
+body.form-fermenting .ferm-dh__lot-input {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  padding: 7px 10px;
+  color: var(--ink);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.82rem;
+  outline: none;
+  transition: border-color 0.15s;
+  width: 100%;
+}
+
+body.form-fermenting .ferm-dh__hop-select:focus,
+body.form-fermenting .ferm-dh__qty-input:focus,
+body.form-fermenting .ferm-dh__unit-select:focus,
+body.form-fermenting .ferm-dh__lot-input:focus {
+  border-color: var(--hop);
+}
+
+body.form-fermenting .ferm-dh__qty-input {
+  text-align: right;
+}
+
+body.form-fermenting .ferm-dh__qty-input::placeholder,
+body.form-fermenting .ferm-dh__lot-input::placeholder {
+  color: var(--ink-mute);
+}
+
+body.form-fermenting .ferm-dh__hop-select option,
+body.form-fermenting .ferm-dh__unit-select option {
+  background: var(--bg);
+}
+
+/* ── Remove button in dry-hop table ──────────────────────────────────────── */
+body.form-fermenting .ferm-dh__remove-btn {
+  width: 28px;
+  height: 28px;
+  background: none;
+  border: none;
+  border-radius: 3px;
+  color: var(--ink-mute);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, background 0.15s;
+}
+
+body.form-fermenting .ferm-dh__remove-btn:hover {
+  color: var(--ember);
+  background: rgba(197, 102, 74, 0.1);
+}
+
+/* ── Add-row button ──────────────────────────────────────────────────────── */
+body.form-fermenting .ferm-dh-add-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: 1px dashed var(--hairline);
+  border-radius: 3px;
+  padding: 9px 14px;
+  margin-top: 10px;
+  color: var(--ink-mute);
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: border-color 0.2s, color 0.2s;
+}
+
+body.form-fermenting .ferm-dh-add-btn:hover {
+  border-color: var(--hop);
+  color: var(--hop);
+}
+
+/* ── Dry-hop row count badge ─────────────────────────────────────────────── */
+body.form-fermenting .ferm-dh-count {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem;
+  padding: 2px 7px;
+  border-radius: 10px;
+  background: rgba(158, 176, 96, 0.14);
+  color: var(--hop);
+  letter-spacing: 0.04em;
+  margin-left: 8px;
+  vertical-align: middle;
+  display: none;
+}
+
+body.form-fermenting .ferm-dh-count.visible {
+  display: inline;
+}
+
+/* ── Dry-hop note text ──────────────────────────────────────────────────── */
+body.form-fermenting .ferm-dh-note {
+  font-size: 0.78rem;
+  color: var(--ink-mute);
+  margin-top: 10px;
+  line-height: 1.5;
+}
+
+body.form-fermenting .ferm-dh-note code {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.75em;
+}
+
+/* ── Event type badge in recent submissions table ─────────────────────────── */
+body.form-fermenting .ferm-event-badge {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.68rem;
+  padding: 2px 7px;
+  border-radius: 3px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+body.form-fermenting .ferm-event-badge--reads {
+  background: rgba(101, 147, 184, 0.14);
+  color: var(--bbt);
+}
+
+body.form-fermenting .ferm-event-badge--dryhop {
+  background: rgba(158, 176, 96, 0.14);
+  color: var(--hop);
+}
+
+body.form-fermenting .ferm-event-badge--purge {
+  background: rgba(160, 122, 72, 0.14);
+  color: var(--oak);
+}
+
+body.form-fermenting .ferm-event-badge--coldcrash {
+  background: rgba(47, 85, 117, 0.18);
+  color: var(--bbt);
+}
+
+/* ── Empty-state note ─────────────────────────────────────────────────────── */
+body.form-fermenting .ferm-empty-note {
+  font-size: 0.85rem;
+  color: var(--ink-mute);
+  padding: 12px 0;
+}
