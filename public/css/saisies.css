@@ -93,7 +93,7 @@ body.saisies-hub .sh-card__arrow {
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.72rem;
   letter-spacing: 0.08em;
-  color: var(--oak);
+  color: var(--oak-deep);
   text-transform: uppercase;
 }
 
