@@ -558,14 +558,15 @@ try {
                 // bd_brewing_ingredients_parsed → _v2 (beer/batch now on header bih).
                 // bd_brewing_cooling → bd_brewing_gravity_v2 WHERE event_type='Cooling'
                 // (event_date folded into DATE(submitted_at); cool_* → bare cols).
-                // NOTE: the IF(bip.unit='g', 0.001, 1) expressions below are safe for observed
-                // bd_brewing_ingredients_parsed_v2 data (g/kg only in that source). Do NOT
-                // extend them to handle 'ml' without routing through unit_to_canonical_factor().
+                // Unit conversion via v_bip_canonical (migration 161). qty_priced is
+                // density-aware (ml→kg uses ref_mi.density_g_per_ml). factor_unresolved=1
+                // rows produce NULL qty_priced — SUM skips them; surfaced via error log.
                 $glSt = $pdo->prepare("
                     SELECT c.default_gl_account AS gl,
-                           SUM(bip.qty * IF(bip.unit='g', 0.001, 1)
-                               * COALESCE(ws.wac_chf, m.price * IF(m.currency='EUR', 0.945, 1))) AS gl_cost
-                      FROM bd_brewing_ingredients_parsed_v2 bip
+                           SUM(bip.qty_priced
+                               * COALESCE(ws.wac_chf, m.price * IF(m.currency='EUR', 0.945, 1))) AS gl_cost,
+                           SUM(bip.factor_unresolved) AS unresolved_count
+                      FROM v_bip_canonical bip
                       JOIN bd_brewing_ingredients_v2 bih ON bih.id = bip.header_id
                       JOIN ref_mi m ON m.id = bip.mi_id_fk
                       LEFT JOIN ref_mi_categories c ON c.id = m.category_id
@@ -584,6 +585,9 @@ try {
                 $glSt->execute([$costMonth, $beer, $costMonth]);
                 $glTotalRows  = $glSt->fetchAll();
                 $totalGlCost  = (float) array_sum(array_column($glTotalRows, 'gl_cost'));
+                if (array_sum(array_column($glTotalRows, 'unresolved_count')) > 0) {
+                    error_log("[warehouse] GL-split: unresolved unit conversion for beer=$beer month=$costMonth — check v_bip_canonical.factor_unresolved");
+                }
                 $glSplit = [];
                 foreach ($glTotalRows as $glr) {
                     $gl = (string) ($glr['gl'] ?? '');
@@ -800,9 +804,9 @@ try {
             $params[] = $wipPeriod;
             $params[] = $wipPeriod;
             $params[] = $wipPeriod;
-            // NOTE: the IF(bip.unit='g', 0.001, 1) expressions in this query are safe for
-            // bd_brewing_ingredients_parsed_v2 (g/kg only). Do NOT extend to 'ml' without
-            // routing through unit_to_canonical_factor().
+            // Unit conversion via v_bip_canonical (migration 161). qty_priced is
+            // density-aware (ml→kg uses ref_mi.density_g_per_ml). factor_unresolved rows
+            // produce NULL qty_priced — SUM skips them; unresolved_count surfaces them.
             $batchCostSql = "
                 WITH wanted AS (
                   SELECT * FROM (VALUES " . implode(',', array_fill(0, count($uniqueBatches), 'ROW(?, ?)')) . ") AS v(beer, batch)
@@ -820,10 +824,10 @@ try {
                            AND bc.batch COLLATE utf8mb4_unicode_ci = w.batch COLLATE utf8mb4_unicode_ci
                            AND bc.final_volume > 0) AS total_hl,
                        (SELECT SUM(CASE WHEN c.default_gl_account = '4101'
-                                        THEN bip.qty * IF(bip.unit='g', 0.001, 1)
+                                        THEN bip.qty_priced
                                              * COALESCE(ws.wac_chf, mi.price * IF(mi.currency='EUR', 0.945, 1))
                                         ELSE 0 END)
-                          FROM bd_brewing_ingredients_parsed_v2 bip
+                          FROM v_bip_canonical bip
                           JOIN bd_brewing_ingredients_v2 bih ON bih.id = bip.header_id
                           JOIN ref_mi mi ON mi.id = bip.mi_id_fk
                           LEFT JOIN ref_mi_categories c ON c.id = mi.category_id
@@ -832,10 +836,10 @@ try {
                            AND bih.batch COLLATE utf8mb4_unicode_ci = w.batch COLLATE utf8mb4_unicode_ci
                            AND bip.mi_id_fk IS NOT NULL) AS one_brew_4101_chf,
                        (SELECT SUM(CASE WHEN c.default_gl_account = '4102'
-                                        THEN bip.qty * IF(bip.unit='g', 0.001, 1)
+                                        THEN bip.qty_priced
                                              * COALESCE(ws.wac_chf, mi.price * IF(mi.currency='EUR', 0.945, 1))
                                         ELSE 0 END)
-                          FROM bd_brewing_ingredients_parsed_v2 bip
+                          FROM v_bip_canonical bip
                           JOIN bd_brewing_ingredients_v2 bih ON bih.id = bip.header_id
                           JOIN ref_mi mi ON mi.id = bip.mi_id_fk
                           LEFT JOIN ref_mi_categories c ON c.id = mi.category_id
@@ -844,10 +848,10 @@ try {
                            AND bih.batch COLLATE utf8mb4_unicode_ci = w.batch COLLATE utf8mb4_unicode_ci
                            AND bip.mi_id_fk IS NOT NULL) AS one_brew_4102_chf,
                        (SELECT SUM(CASE WHEN c.default_gl_account = '4104'
-                                        THEN bip.qty * IF(bip.unit='g', 0.001, 1)
+                                        THEN bip.qty_priced
                                              * COALESCE(ws.wac_chf, mi.price * IF(mi.currency='EUR', 0.945, 1))
                                         ELSE 0 END)
-                          FROM bd_brewing_ingredients_parsed_v2 bip
+                          FROM v_bip_canonical bip
                           JOIN bd_brewing_ingredients_v2 bih ON bih.id = bip.header_id
                           JOIN ref_mi mi ON mi.id = bip.mi_id_fk
                           LEFT JOIN ref_mi_categories c ON c.id = mi.category_id
@@ -857,17 +861,23 @@ try {
                            AND bip.mi_id_fk IS NOT NULL) AS one_brew_4104_chf,
                        (SELECT SUM(CASE WHEN c.default_gl_account NOT IN ('4101','4102','4104')
                                              OR c.default_gl_account IS NULL
-                                        THEN bip.qty * IF(bip.unit='g', 0.001, 1)
+                                        THEN bip.qty_priced
                                              * COALESCE(ws.wac_chf, mi.price * IF(mi.currency='EUR', 0.945, 1))
                                         ELSE 0 END)
-                          FROM bd_brewing_ingredients_parsed_v2 bip
+                          FROM v_bip_canonical bip
                           JOIN bd_brewing_ingredients_v2 bih ON bih.id = bip.header_id
                           JOIN ref_mi mi ON mi.id = bip.mi_id_fk
                           LEFT JOIN ref_mi_categories c ON c.id = mi.category_id
                           LEFT JOIN wac_snapshots ws ON ws.mi_id_fk = mi.id AND ws.period = ?
                          WHERE bih.beer  COLLATE utf8mb4_unicode_ci = w.beer COLLATE utf8mb4_unicode_ci
                            AND bih.batch COLLATE utf8mb4_unicode_ci = w.batch COLLATE utf8mb4_unicode_ci
-                           AND bip.mi_id_fk IS NOT NULL) AS one_brew_other_chf
+                           AND bip.mi_id_fk IS NOT NULL) AS one_brew_other_chf,
+                       (SELECT SUM(bip.factor_unresolved)
+                          FROM v_bip_canonical bip
+                          JOIN bd_brewing_ingredients_v2 bih ON bih.id = bip.header_id
+                         WHERE bih.beer  COLLATE utf8mb4_unicode_ci = w.beer COLLATE utf8mb4_unicode_ci
+                           AND bih.batch COLLATE utf8mb4_unicode_ci = w.batch COLLATE utf8mb4_unicode_ci
+                           AND bip.mi_id_fk IS NOT NULL) AS unresolved_count
                   FROM wanted w
             ";
             $cs = $pdo->prepare($batchCostSql);
@@ -876,6 +886,9 @@ try {
             foreach ($cs->fetchAll() as $row) {
                 $n    = (int)   ($row['n_brews']  ?? 0);
                 $hl   = (float) ($row['total_hl'] ?? 0);
+                if ((int) ($row['unresolved_count'] ?? 0) > 0) {
+                    error_log("[warehouse] batch-cost: unresolved unit conversion for beer={$row['beer']} batch={$row['batch']} — check v_bip_canonical.factor_unresolved");
+                }
                 if ($n > 0 && $hl > 0) {
                     $batchKey2 = (string) $row['beer'] . '|' . (string) $row['batch'];
                     $batchBrewHl[$batchKey2] = $hl;
@@ -1067,24 +1080,26 @@ try {
                 -- dependent on m.id but MySQL's ONLY_FULL_GROUP_BY can't infer
                 -- the dependency across LEFT JOINs. The unit_price expression
                 -- is constant per row so it's safe to pull a single value.
-                -- NOTE: IF(bip.unit='g', 0.001, 1) below is safe for bd_brewing_ingredients_parsed_v2
-                -- (g/kg only). Do NOT extend to handle 'ml' without unit_to_canonical_factor().
+                -- Unit conversion via v_bip_canonical (migration 161): qty_priced is
+                -- density-aware (ml→kg via ref_mi.density_g_per_ml). factor_unresolved
+                -- rows yield NULL qty_priced — surfaced via unresolved_count, not silently dropped.
                 SELECT ANY_VALUE(m.mi_id)                AS mi_id,
                        ANY_VALUE(m.name)                 AS mi_name,
                        ANY_VALUE(c.name)                 AS category,
                        ANY_VALUE(c.default_gl_account)   AS default_gl_account,
                        ANY_VALUE(m.pricing_unit)         AS pricing_unit,
-                       SUM(bip.qty * IF(bip.unit='g', 0.001, 1) * COALESCE(tb.n_brews, 1)
+                       SUM(bip.qty_priced * COALESCE(tb.n_brews, 1)
                            * tb.volume_hl / NULLIF(tb.total_brewed_hl, 0)) AS qty_total_kg,
                        ANY_VALUE(COALESCE(w.wac_chf, m.price * IF(m.currency='EUR', 0.945, 1))) AS unit_price_chf,
-                       SUM(bip.qty * IF(bip.unit='g', 0.001, 1) * COALESCE(tb.n_brews, 1)
+                       SUM(bip.qty_priced * COALESCE(tb.n_brews, 1)
                            * tb.volume_hl / NULLIF(tb.total_brewed_hl, 0)
-                           * COALESCE(w.wac_chf, m.price * IF(m.currency='EUR', 0.945, 1))) AS total_chf
+                           * COALESCE(w.wac_chf, m.price * IF(m.currency='EUR', 0.945, 1))) AS total_chf,
+                       SUM(bip.factor_unresolved) AS unresolved_count
                   FROM tank_batches tb
                   JOIN bd_brewing_ingredients_v2 bih
                     ON bih.beer  COLLATE utf8mb4_unicode_ci = tb.beer_name COLLATE utf8mb4_unicode_ci
                    AND bih.batch COLLATE utf8mb4_unicode_ci = tb.batch     COLLATE utf8mb4_unicode_ci
-                  JOIN bd_brewing_ingredients_parsed_v2 bip
+                  JOIN v_bip_canonical bip
                     ON bip.header_id = bih.id
                    AND bip.mi_id_fk IS NOT NULL
                   JOIN ref_mi m ON m.id = bip.mi_id_fk
@@ -1096,6 +1111,10 @@ try {
             $mb = $pdo->prepare($miSql);
             $mb->execute($miParams);
             $wipMiRows = $mb->fetchAll();
+            $totalUnresolved = (int) array_sum(array_column($wipMiRows, 'unresolved_count'));
+            if ($totalUnresolved > 0) {
+                error_log("[warehouse] MI-breakdown WIP: $totalUnresolved unresolved unit conversion(s) — check v_bip_canonical.factor_unresolved");
+            }
 
             // Append loader gap-fill rows to the MI breakdown table
             if (!empty($loaderSyntheticAccum)) {

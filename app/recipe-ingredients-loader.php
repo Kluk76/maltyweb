@@ -48,12 +48,9 @@ declare(strict_types=1);
  * Pass $densityGPerMl from ref_mi.density_g_per_ml; it is NULL for MIs
  * that have no confirmed SDS value, which correctly triggers REFUSE.
  *
- * The six SQL `IF(bip.unit='g', 0.001, 1)` occurrences in warehouse.php
- * (lines ~563/817/829/841/854/1071) and the one in warehouse-export.php
- * (~line 255) read bd_brewing_ingredients_parsed_v2 which stores observed
- * brewing data — currently g/kg only for those rows — and are intentionally
- * left unchanged. Do NOT extend them to handle ml without first routing
- * through this function.
+ * warehouse.php and warehouse-export.php now use v_bip_canonical (migration 161)
+ * which applies this same logic in SQL via qty_priced. The old inline
+ * IF(bip.unit='g', 0.001, 1) expressions have been replaced.
  *
  * @param string     $fromUnit      Unit of the recipe line (e.g. 'ml', 'g', 'kg')
  * @param string     $pricingUnit   Unit of ref_mi.pricing_unit (e.g. 'kg', 'l')

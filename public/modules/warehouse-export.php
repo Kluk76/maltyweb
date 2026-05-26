@@ -247,23 +247,25 @@ try {
                          AND bc.final_volume > 0) AS n_brews
                 FROM tanks t
             )
-            -- NOTE: IF(bip.unit='g', 0.001, 1) below is safe for bd_brewing_ingredients_parsed_v2
-            -- (g/kg only in that source). Do NOT extend to 'ml' without unit_to_canonical_factor().
+            -- Unit conversion via v_bip_canonical (migration 161): qty_priced is
+            -- density-aware (ml→kg uses ref_mi.density_g_per_ml). factor_unresolved
+            -- rows yield NULL qty_priced (surfaced via unresolved_count, not dropped).
             SELECT COALESCE(
                      ANY_VALUE(m.gl_account),
                      ANY_VALUE(c.default_gl_account)
                    ) AS gl,
                    SUM(
-                     bip.qty * IF(bip.unit='g', 0.001, 1)
+                     bip.qty_priced
                      * COALESCE(tb.n_brews, 1)
                      * tb.volume_hl / NULLIF(tb.total_brewed_hl, 0)
                      * COALESCE(w.wac_chf, m.price * IF(m.currency='EUR', 0.945, 1))
-                   ) AS wip_value
+                   ) AS wip_value,
+                   SUM(bip.factor_unresolved) AS unresolved_count
               FROM tank_batches tb
               JOIN bd_brewing_ingredients_v2 bih
                 ON bih.beer  COLLATE utf8mb4_unicode_ci = tb.beer_name COLLATE utf8mb4_unicode_ci
                AND bih.batch COLLATE utf8mb4_unicode_ci = tb.batch     COLLATE utf8mb4_unicode_ci
-              JOIN bd_brewing_ingredients_parsed_v2 bip
+              JOIN v_bip_canonical bip
                 ON bip.header_id = bih.id
                AND bip.mi_id_fk IS NOT NULL
               JOIN ref_mi m ON m.id = bip.mi_id_fk
@@ -276,6 +278,9 @@ try {
         $wipStmt = $pdo->prepare($wipMiSql);
         $wipStmt->execute($miParams);
         foreach ($wipStmt->fetchAll() as $r) {
+            if ((int) ($r['unresolved_count'] ?? 0) > 0) {
+                error_log('[warehouse-export] WIP GL-split: unresolved unit conversion(s) for gl=' . ($r['gl'] ?? '?') . ' — check v_bip_canonical.factor_unresolved');
+            }
             $gl = (string) ($r['gl'] ?? '');
             if ($gl !== '') $wipByGl[$gl] = (float) ($r['wip_value'] ?? 0);
         }
