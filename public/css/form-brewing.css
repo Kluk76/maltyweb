@@ -1,0 +1,192 @@
+/*
+ * form-brewing.css — Operator brewing entry form styles.
+ *
+ * Scoped under body.form-brewing. Extends .op-form__* classes from app.css.
+ * No inline styles. No duplicate palette tokens — uses the existing :root
+ * vars (--bg, --bg-elev, --ink, --ink-soft, --ink-mute, --hop, etc.).
+ */
+
+/* ── Ingredient table ──────────────────────────────────────────────────────── */
+body.form-brewing .brew-ing__table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+  font-size: 0.875rem;
+}
+
+body.form-brewing .brew-ing__table thead th {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  padding: 0 8px 8px 0;
+  text-align: left;
+  border-bottom: 1px solid var(--hairline);
+}
+
+body.form-brewing .brew-ing__table tbody tr {
+  border-bottom: 1px solid var(--hairline);
+}
+
+body.form-brewing .brew-ing__table tbody tr:last-child {
+  border-bottom: none;
+}
+
+body.form-brewing .brew-ing__table tbody td {
+  padding: 7px 8px 7px 0;
+  vertical-align: middle;
+}
+
+body.form-brewing .brew-ing__table tbody td:last-child {
+  padding-right: 0;
+}
+
+/* Category chip */
+body.form-brewing .brew-ing__cat-chip {
+  width: 26px;
+  height: 26px;
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+body.form-brewing .brew-ing__cat-chip--malt    { background: rgba(212,146,60,0.18);  color: #d4923c; }
+body.form-brewing .brew-ing__cat-chip--hops    { background: rgba(158,176,96,0.18);  color: var(--hop); }
+body.form-brewing .brew-ing__cat-chip--yeast   { background: rgba(101,147,184,0.18); color: #6593b8; }
+body.form-brewing .brew-ing__cat-chip--adjunct { background: rgba(160,122,72,0.18);  color: var(--oak); }
+body.form-brewing .brew-ing__cat-chip--mineral { background: rgba(90,168,184,0.18);  color: #5aa8b8; }
+body.form-brewing .brew-ing__cat-chip--process { background: rgba(139,122,184,0.18); color: #8b7ab8; }
+body.form-brewing .brew-ing__cat-chip--unknown { background: var(--bg-elev); color: var(--ink-mute); }
+
+/* Inline inputs inside the table */
+body.form-brewing .brew-ing__qty-input,
+body.form-brewing .brew-ing__unit-select,
+body.form-brewing .brew-ing__lot-input,
+body.form-brewing .brew-ing__mi-select {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  padding: 7px 10px;
+  color: var(--ink);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.82rem;
+  outline: none;
+  transition: border-color 0.15s;
+  width: 100%;
+}
+
+body.form-brewing .brew-ing__qty-input:focus,
+body.form-brewing .brew-ing__unit-select:focus,
+body.form-brewing .brew-ing__lot-input:focus,
+body.form-brewing .brew-ing__mi-select:focus {
+  border-color: var(--hop);
+}
+
+body.form-brewing .brew-ing__qty-input { text-align: right; }
+body.form-brewing .brew-ing__qty-input::placeholder { color: var(--ink-mute); }
+body.form-brewing .brew-ing__lot-input::placeholder  { color: var(--ink-mute); }
+body.form-brewing .brew-ing__unit-select option { background: var(--bg); }
+body.form-brewing .brew-ing__mi-select   option { background: var(--bg); }
+
+/* Remove-row button */
+body.form-brewing .brew-ing__remove-btn {
+  width: 28px;
+  height: 28px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--ink-mute);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, border-color 0.15s;
+  flex-shrink: 0;
+  padding: 0;
+}
+
+body.form-brewing .brew-ing__remove-btn:hover {
+  color: var(--ember);
+  border-color: rgba(197,102,74,0.3);
+}
+
+/* Add-ingredient button */
+body.form-brewing .brew-ing__add-btn {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  background: none;
+  border: 1px dashed var(--hairline);
+  border-radius: 4px;
+  padding: 12px 16px;
+  width: 100%;
+  color: var(--ink-mute);
+  cursor: pointer;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.875rem;
+  margin-top: 10px;
+  transition: border-color 0.2s, color 0.2s;
+}
+
+body.form-brewing .brew-ing__add-btn:hover {
+  border-color: var(--hop-deep);
+  color: var(--hop);
+}
+
+/* Column width hints */
+body.form-brewing .brew-ing__col--cat  { width: 32px; }
+body.form-brewing .brew-ing__col--mi   { min-width: 160px; }
+body.form-brewing .brew-ing__col--qty  { width: 90px; }
+body.form-brewing .brew-ing__col--unit { width: 80px; }
+body.form-brewing .brew-ing__col--lot  { width: 130px; }
+body.form-brewing .brew-ing__col--del  { width: 32px; }
+
+/* Ingredient count badge */
+body.form-brewing .brew-ing__count {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem;
+  color: var(--hop);
+  margin-left: 6px;
+}
+
+/* Form section note text */
+body.form-brewing .brew-note {
+  font-size: 0.78rem;
+  color: var(--ink-mute);
+  margin-top: 4px;
+  line-height: 1.4;
+}
+
+/* ── FLAGGED / deferred section notice ─────────────────────────────────────── */
+body.form-brewing .brew-deferred-notice {
+  background: rgba(160,122,72,0.08);
+  border: 1px solid rgba(160,122,72,0.25);
+  border-radius: 4px;
+  padding: 12px 14px;
+  font-size: 0.8rem;
+  color: var(--ink-mute);
+  line-height: 1.4;
+  margin-top: 8px;
+}
+
+body.form-brewing .brew-deferred-notice strong {
+  color: var(--oak);
+}
+
+/* Empty-state note in recent table */
+body.form-brewing .brew-empty-note {
+  font-size: 0.82rem;
+}
+
+/* ── Responsive ─────────────────────────────────────────────────────────────── */
+@media (max-width: 600px) {
+  body.form-brewing .brew-ing__col--lot  { display: none; }
+  body.form-brewing .brew-ing__col--unit { width: 66px; }
+}
