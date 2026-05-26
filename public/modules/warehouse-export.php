@@ -247,6 +247,8 @@ try {
                          AND bc.final_volume > 0) AS n_brews
                 FROM tanks t
             )
+            -- NOTE: IF(bip.unit='g', 0.001, 1) below is safe for bd_brewing_ingredients_parsed_v2
+            -- (g/kg only in that source). Do NOT extend to 'ml' without unit_to_canonical_factor().
             SELECT COALESCE(
                      ANY_VALUE(m.gl_account),
                      ANY_VALUE(c.default_gl_account)
@@ -339,7 +341,7 @@ try {
                 foreach ($rows as $lr) { $expMiFkSet[(int) $lr['mi_id_fk']] = true; }
             }
 
-            $expMiPrices = [];   // mi_id_fk(int) => ['gl'=>str,'pricing_unit'=>str,'unit_price_chf'=>float]
+            $expMiPrices = [];   // mi_id_fk(int) => ['gl'=>str,'pricing_unit'=>str,'unit_price_chf'=>float,'density_g_per_ml'=>float|null]
             if (!empty($expMiFkSet)) {
                 $expFkList = array_keys($expMiFkSet);
                 $expFkPh   = implode(',', array_fill(0, count($expFkList), '?'));
@@ -349,19 +351,21 @@ try {
                     SELECT m.id,
                            ANY_VALUE(c.default_gl_account) AS gl,
                            m.pricing_unit,
+                           m.density_g_per_ml,
                            COALESCE(ws.wac_chf, m.price * IF(m.currency='EUR', 0.945, 1)) AS unit_price_chf
                       FROM ref_mi m
                       LEFT JOIN ref_mi_categories c  ON c.id = m.category_id
                       LEFT JOIN wac_snapshots ws     ON ws.mi_id_fk = m.id AND ws.period = ?
                      WHERE m.id IN ($expFkPh)
-                     GROUP BY m.id, m.pricing_unit, ws.wac_chf, m.price, m.currency
+                     GROUP BY m.id, m.pricing_unit, m.density_g_per_ml, ws.wac_chf, m.price, m.currency
                 ");
                 $epSt->execute($expPrPs);
                 foreach ($epSt->fetchAll() as $ep) {
                     $expMiPrices[(int) $ep['id']] = [
-                        'gl'             => (string) ($ep['gl'] ?? ''),
-                        'pricing_unit'   => (string) ($ep['pricing_unit'] ?? 'kg'),
-                        'unit_price_chf' => (float)  ($ep['unit_price_chf'] ?? 0),
+                        'gl'              => (string) ($ep['gl'] ?? ''),
+                        'pricing_unit'    => (string) ($ep['pricing_unit'] ?? 'kg'),
+                        'density_g_per_ml'=> $ep['density_g_per_ml'] !== null ? (float) $ep['density_g_per_ml'] : null,
+                        'unit_price_chf'  => (float)  ($ep['unit_price_chf'] ?? 0),
                     ];
                 }
             }
@@ -376,14 +380,11 @@ try {
 
                     $riUnit   = strtolower((string) $lr['unit']);
                     $pricingU = strtolower($priceInfo['pricing_unit']);
-                    if ($riUnit === $pricingU || ($riUnit === 'kg' && $pricingU === 'kg') || ($riUnit === 'l' && $pricingU === 'l')) {
-                        $unitFactor = 1.0;
-                    } elseif ($riUnit === 'g' && $pricingU === 'kg') {
-                        $unitFactor = 0.001;
-                    } elseif ($riUnit === 'ml' && ($pricingU === 'l' || $pricingU === 'kg')) {
-                        $unitFactor = 0.001;
-                    } else {
-                        error_log("recipe-loader export unit mismatch: ri.unit=$riUnit pricing_unit=$pricingU mi_id_fk=$miFk — row skipped");
+                    // Unit conversion via centralized helper — handles g→kg, ml→l, ml→kg (density-aware).
+                    // ml→kg requires ref_mi.density_g_per_ml; returns null (REFUSE) when absent.
+                    $unitFactor = unit_to_canonical_factor($riUnit, $pricingU, $priceInfo['density_g_per_ml']);
+                    if ($unitFactor === null) {
+                        error_log("recipe-loader export unit mismatch or missing density: ri.unit=$riUnit pricing_unit=$pricingU mi_id_fk=$miFk — row skipped (check ref_mi.density_g_per_ml)");
                         continue;
                     }
 

@@ -558,6 +558,9 @@ try {
                 // bd_brewing_ingredients_parsed → _v2 (beer/batch now on header bih).
                 // bd_brewing_cooling → bd_brewing_gravity_v2 WHERE event_type='Cooling'
                 // (event_date folded into DATE(submitted_at); cool_* → bare cols).
+                // NOTE: the IF(bip.unit='g', 0.001, 1) expressions below are safe for observed
+                // bd_brewing_ingredients_parsed_v2 data (g/kg only in that source). Do NOT
+                // extend them to handle 'ml' without routing through unit_to_canonical_factor().
                 $glSt = $pdo->prepare("
                     SELECT c.default_gl_account AS gl,
                            SUM(bip.qty * IF(bip.unit='g', 0.001, 1)
@@ -797,6 +800,9 @@ try {
             $params[] = $wipPeriod;
             $params[] = $wipPeriod;
             $params[] = $wipPeriod;
+            // NOTE: the IF(bip.unit='g', 0.001, 1) expressions in this query are safe for
+            // bd_brewing_ingredients_parsed_v2 (g/kg only). Do NOT extend to 'ml' without
+            // routing through unit_to_canonical_factor().
             $batchCostSql = "
                 WITH wanted AS (
                   SELECT * FROM (VALUES " . implode(',', array_fill(0, count($uniqueBatches), 'ROW(?, ?)')) . ") AS v(beer, batch)
@@ -913,7 +919,7 @@ try {
                     foreach ($rows as $lr) { $loaderMiFkSet[(int) $lr['mi_id_fk']] = true; }
                 }
 
-                $loaderMiPrices = [];   // mi_id_fk (int) => ['mi_id'=>str,'name'=>str,'gl'=>str,'pricing_unit'=>str,'unit_price_chf'=>float]
+                $loaderMiPrices = [];   // mi_id_fk (int) => ['mi_id'=>str,'name'=>str,'gl'=>str,'pricing_unit'=>str,'unit_price_chf'=>float,'density_g_per_ml'=>float|null]
                 if (!empty($loaderMiFkSet)) {
                     $loaderFkList  = array_keys($loaderMiFkSet);
                     $loaderFkPh    = implode(',', array_fill(0, count($loaderFkList), '?'));
@@ -925,21 +931,23 @@ try {
                                m.name,
                                ANY_VALUE(c.default_gl_account) AS gl,
                                m.pricing_unit,
+                               m.density_g_per_ml,
                                COALESCE(ws.wac_chf, m.price * IF(m.currency='EUR', 0.945, 1)) AS unit_price_chf
                           FROM ref_mi m
                           LEFT JOIN ref_mi_categories c  ON c.id = m.category_id
                           LEFT JOIN wac_snapshots ws     ON ws.mi_id_fk = m.id AND ws.period = ?
                          WHERE m.id IN ($loaderFkPh)
-                         GROUP BY m.id, m.mi_id, m.name, m.pricing_unit, ws.wac_chf, m.price, m.currency
+                         GROUP BY m.id, m.mi_id, m.name, m.pricing_unit, m.density_g_per_ml, ws.wac_chf, m.price, m.currency
                     ");
                     $lpStmt->execute($loaderPricePs);
                     foreach ($lpStmt->fetchAll() as $lp) {
                         $loaderMiPrices[(int) $lp['id']] = [
-                            'mi_id'          => (string) $lp['mi_id'],
-                            'name'           => (string) $lp['name'],
-                            'gl'             => (string) ($lp['gl'] ?? 'other'),
-                            'pricing_unit'   => (string) ($lp['pricing_unit'] ?? 'kg'),
-                            'unit_price_chf' => (float)  ($lp['unit_price_chf'] ?? 0),
+                            'mi_id'           => (string) $lp['mi_id'],
+                            'name'            => (string) $lp['name'],
+                            'gl'              => (string) ($lp['gl'] ?? 'other'),
+                            'pricing_unit'    => (string) ($lp['pricing_unit'] ?? 'kg'),
+                            'density_g_per_ml'=> $lp['density_g_per_ml'] !== null ? (float) $lp['density_g_per_ml'] : null,
+                            'unit_price_chf'  => (float)  ($lp['unit_price_chf'] ?? 0),
                         ];
                     }
                 }
@@ -955,16 +963,12 @@ try {
 
                         $riUnit     = strtolower((string) $lr['unit']);
                         $pricingU   = strtolower($priceInfo['pricing_unit']);
-                        // Unit normalization: g→kg and ml→L by ×0.001; same-unit ×1.
-                        // Any other combination is skipped with a log entry to avoid silent wrong math.
-                        if ($riUnit === $pricingU || ($riUnit === 'kg' && $pricingU === 'kg') || ($riUnit === 'l' && $pricingU === 'l')) {
-                            $unitFactor = 1.0;
-                        } elseif ($riUnit === 'g' && $pricingU === 'kg') {
-                            $unitFactor = 0.001;
-                        } elseif ($riUnit === 'ml' && ($pricingU === 'l' || $pricingU === 'kg')) {
-                            $unitFactor = 0.001;
-                        } else {
-                            error_log("recipe-loader unit mismatch: ri.unit=$riUnit pricing_unit=$pricingU mi_id={$priceInfo['mi_id']} — row skipped");
+                        // Unit conversion via centralized helper — handles g→kg, ml→l, ml→kg (density-aware).
+                        // ml→kg requires ref_mi.density_g_per_ml; returns null (REFUSE) when absent,
+                        // preventing silent under-costing of dense liquids (e.g. phosphoric acid ×1.685).
+                        $unitFactor = unit_to_canonical_factor($riUnit, $pricingU, $priceInfo['density_g_per_ml']);
+                        if ($unitFactor === null) {
+                            error_log("recipe-loader unit mismatch or missing density: ri.unit=$riUnit pricing_unit=$pricingU mi_id={$priceInfo['mi_id']} — row skipped (check ref_mi.density_g_per_ml)");
                             continue;
                         }
 
@@ -1063,6 +1067,8 @@ try {
                 -- dependent on m.id but MySQL's ONLY_FULL_GROUP_BY can't infer
                 -- the dependency across LEFT JOINs. The unit_price expression
                 -- is constant per row so it's safe to pull a single value.
+                -- NOTE: IF(bip.unit='g', 0.001, 1) below is safe for bd_brewing_ingredients_parsed_v2
+                -- (g/kg only). Do NOT extend to handle 'ml' without unit_to_canonical_factor().
                 SELECT ANY_VALUE(m.mi_id)                AS mi_id,
                        ANY_VALUE(m.name)                 AS mi_name,
                        ANY_VALUE(c.name)                 AS category,

@@ -29,6 +29,62 @@ declare(strict_types=1);
  */
 
 /**
+ * Convert a recipe-ingredient unit to the canonical (pricing) unit factor.
+ *
+ * Returns the multiplicative factor to apply to a qty in $fromUnit to obtain
+ * the equivalent qty in $pricingUnit. Returns null (REFUSE) when the conversion
+ * cannot be performed safely — the caller must skip the line and log it rather
+ * than silently applying a wrong cost.
+ *
+ * Supported conversions:
+ *   g  → kg : 0.001
+ *   ml → l  : 0.001
+ *   ml → kg : $densityGPerMl × 0.001   (requires a non-null $densityGPerMl)
+ *   same unit → same unit : 1.0
+ *   anything else : null (REFUSE)
+ *
+ * NEVER defaults ml→kg to 0.001 (water density) — doing so silently
+ * underestimates dense liquids by up to ×1.685 (phosphoric acid).
+ * Pass $densityGPerMl from ref_mi.density_g_per_ml; it is NULL for MIs
+ * that have no confirmed SDS value, which correctly triggers REFUSE.
+ *
+ * The six SQL `IF(bip.unit='g', 0.001, 1)` occurrences in warehouse.php
+ * (lines ~563/817/829/841/854/1071) and the one in warehouse-export.php
+ * (~line 255) read bd_brewing_ingredients_parsed_v2 which stores observed
+ * brewing data — currently g/kg only for those rows — and are intentionally
+ * left unchanged. Do NOT extend them to handle ml without first routing
+ * through this function.
+ *
+ * @param string     $fromUnit      Unit of the recipe line (e.g. 'ml', 'g', 'kg')
+ * @param string     $pricingUnit   Unit of ref_mi.pricing_unit (e.g. 'kg', 'l')
+ * @param float|null $densityGPerMl ref_mi.density_g_per_ml — null if not confirmed
+ * @return float|null factor, or null if conversion is not safe
+ */
+function unit_to_canonical_factor(string $fromUnit, string $pricingUnit, ?float $densityGPerMl): ?float
+{
+    $from = strtolower(trim($fromUnit));
+    $to   = strtolower(trim($pricingUnit));
+
+    if ($from === $to) {
+        return 1.0;
+    }
+    if ($from === 'g' && $to === 'kg') {
+        return 0.001;
+    }
+    if ($from === 'ml' && $to === 'l') {
+        return 0.001;
+    }
+    if ($from === 'ml' && $to === 'kg') {
+        // Require a confirmed SDS density — refuse if absent to avoid silent under-costing
+        if ($densityGPerMl === null) {
+            return null;
+        }
+        return $densityGPerMl * 0.001;
+    }
+    return null;
+}
+
+/**
  * Map simulator-short beer names to canonical (ref_recipes / bd_brewing) names.
  * Callers may pass either form; both downstream joins need canonical.
  */
