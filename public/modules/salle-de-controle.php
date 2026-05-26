@@ -793,7 +793,7 @@ window.SDC_CSRF = <?= json_encode($csrf ?? csrf_token(), JSON_HEX_TAG | JSON_HEX
     <span class="family-btn fam-sdc">
       <span class="fam-dot"></span>Contrôle
     </span>
-    <a class="family-btn fam-cockpit" href="/_design/le-cockpit.html" title="Cockpit commercial">
+    <a class="family-btn fam-cockpit" href="/modules/le-zeppelin.php" title="Le Zeppelin — hub">
       <span class="fam-dot"></span>Cockpit
     </a>
   </div>

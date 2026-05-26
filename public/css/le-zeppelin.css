@@ -1,0 +1,253 @@
+/*
+ * le-zeppelin.css — Styles for /modules/le-zeppelin.php (Le Zeppelin hub)
+ *
+ * All rules scoped under body.zeppelin-hub to prevent leakage.
+ * Tokens: inherited from app.css palette only — zero custom tokens,
+ *         zero hardcoded hex/rgba values.
+ */
+
+/* ── Chrome: family brandmark + switcher ─────────────────────────────────── */
+body.zeppelin-hub .lz-chrome {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.75rem;
+  flex-wrap: wrap;
+}
+
+body.zeppelin-hub .lz-brandmark {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.35em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+body.zeppelin-hub .lz-brandmark b {
+  color: var(--ink-soft);
+  font-weight: 500;
+}
+
+/* family-switcher chip row — mirrors salle-de-controle.php chrome style */
+body.zeppelin-hub .family-switcher {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  overflow: hidden;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.625rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  background: var(--bg-elev);
+}
+
+body.zeppelin-hub .family-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 13px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.625rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  text-decoration: none;
+  transition: color 0.18s, background 0.18s;
+  position: relative;
+  white-space: nowrap;
+}
+
+body.zeppelin-hub .family-btn:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 15%;
+  bottom: 15%;
+  width: 1px;
+  background: var(--hairline);
+}
+
+body.zeppelin-hub .family-btn .fam-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: 0 0 6px;
+  transition: box-shadow 0.22s;
+}
+
+/* Hub — active/current chip (non-link) */
+body.zeppelin-hub .family-btn.fam-hub {
+  background: color-mix(in srgb, var(--oak) 14%, transparent);
+  color: var(--oak-deep);
+  cursor: default;
+  pointer-events: none;
+}
+
+body.zeppelin-hub .family-btn.fam-hub .fam-dot {
+  background: var(--oak);
+  box-shadow: 0 0 7px var(--oak);
+}
+
+/* Machines chip */
+body.zeppelin-hub .family-btn.fam-sdm .fam-dot {
+  background: var(--steel-mid);
+}
+
+body.zeppelin-hub .family-btn.fam-sdm:hover {
+  color: var(--ink-soft);
+  background: color-mix(in srgb, var(--steel) 10%, transparent);
+}
+
+body.zeppelin-hub .family-btn.fam-sdm:hover .fam-dot {
+  box-shadow: 0 0 7px var(--steel-mid);
+}
+
+/* Contrôle chip */
+body.zeppelin-hub .family-btn.fam-sdc .fam-dot {
+  background: var(--cold);
+}
+
+body.zeppelin-hub .family-btn.fam-sdc:hover {
+  color: var(--ink-soft);
+  background: color-mix(in srgb, var(--bbt) 10%, transparent);
+}
+
+body.zeppelin-hub .family-btn.fam-sdc:hover .fam-dot {
+  box-shadow: 0 0 7px var(--cold);
+}
+
+/* Cockpit chip — disabled (à venir) */
+body.zeppelin-hub .family-btn.fam-cockpit {
+  opacity: 0.4;
+  cursor: default;
+  pointer-events: none;
+}
+
+body.zeppelin-hub .family-btn.fam-cockpit .fam-dot {
+  background: var(--ink-mute);
+}
+
+/* ── Page header ──────────────────────────────────────────────────────────── */
+body.zeppelin-hub .sh-header {
+  margin-bottom: 2rem;
+}
+
+body.zeppelin-hub .sh-eyebrow {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  margin-bottom: 0.4rem;
+}
+
+body.zeppelin-hub .sh-title {
+  font-family: 'Fraunces', serif;
+  font-size: clamp(1.6rem, 4vw, 2.2rem);
+  font-weight: 300;
+  color: var(--ink);
+  margin: 0 0 0.5rem;
+}
+
+body.zeppelin-hub .sh-title em {
+  font-style: italic;
+  font-variation-settings: "opsz" 96;
+}
+
+body.zeppelin-hub .sh-sub {
+  font-size: 0.875rem;
+  color: var(--ink-soft);
+  max-width: 52ch;
+}
+
+/* ── Family cards grid ────────────────────────────────────────────────────── */
+body.zeppelin-hub .sh-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 1rem;
+  margin-bottom: 2.5rem;
+}
+
+/* ── Active card ──────────────────────────────────────────────────────────── */
+body.zeppelin-hub .sh-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1.25rem 1.375rem 1.375rem;
+  background: var(--bg-elev);
+  border: 1.5px solid var(--hairline);
+  border-radius: 10px;
+  color: var(--ink);
+  text-decoration: none;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+
+body.zeppelin-hub .sh-card:hover {
+  border-color: var(--oak);
+  background: color-mix(in srgb, var(--oak) 6%, var(--bg-elev));
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--ink) 12%, transparent);
+  text-decoration: none;
+}
+
+body.zeppelin-hub .sh-card__icon {
+  color: var(--oak);
+  margin-bottom: 0.25rem;
+  line-height: 1;
+}
+
+body.zeppelin-hub .sh-card__name {
+  font-family: 'Fraunces', serif;
+  font-size: 1.15rem;
+  font-weight: 300;
+  color: var(--ink);
+}
+
+body.zeppelin-hub .sh-card__desc {
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  line-height: 1.45;
+}
+
+body.zeppelin-hub .sh-card__arrow {
+  margin-top: auto;
+  padding-top: 0.75rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  color: var(--oak-deep);
+  text-transform: uppercase;
+}
+
+/* ── Disabled / "à venir" card ────────────────────────────────────────────── */
+body.zeppelin-hub .sh-card--soon {
+  opacity: 0.45;
+  cursor: default;
+  pointer-events: none;
+}
+
+body.zeppelin-hub .sh-card--soon .sh-card__icon {
+  color: var(--ink-mute);
+}
+
+body.zeppelin-hub .sh-card--soon .sh-card__arrow {
+  color: var(--ink-mute);
+}
+
+body.zeppelin-hub .sh-card--soon .sh-card__badge {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 0.1em 0.45em;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: color-mix(in srgb, var(--ink-mute) 15%, transparent);
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  vertical-align: middle;
+}
