@@ -1,28 +1,35 @@
 <?php
 declare(strict_types=1);
 /**
- * form-racking.php — Operator racking entry form (bd_racking_v2).
+ * form-racking.php — Operator transfer (racking) entry form (bd_racking_v2).
  *
- * This is the REFERENCE FORM for the Phase-6 framework. Fan-out forms for
- * brewing/fermenting/packaging clone this pattern:
- *   1. require app/db-write-helpers.php
- *   2. POST handler: CSRF → coerce inputs → bd_qc_flag → bd_lookup_pk_by_nk
- *      → bd_fetch_before → bd_upsert → log_revision → flash_set → redirect
- *   3. GET: load ref data → render form with op-form__* CSS classes
- *   4. JS: FormFramework.init({ formId, draftKey, thresholds, diffFields })
+ * Deliverable A: renamed from "Soutirage" → "Transferts" in all user-facing labels.
+ *   File name, route (?m=racking / URL /modules/form-racking.php), and DB table
+ *   names are intentionally UNCHANGED.
+ *
+ * Deliverable B: Beer selection replaced from ungated dropdown to selectable
+ *   eligibility cards. A beer is eligible iff:
+ *     - It is currently in a CCT per TankSimulator (the authoritative state engine).
+ *       SQL is a coarse pre-filter only; the sim is the truth (mirrors form-packaging.php).
+ *     - Its latest ColdCrash event (bd_fermenting_v2) is ≥ effective_garde days ago.
+ *     - effective_garde comes from yeast-eligibility.php (COALESCE override→family).
+ *     - NULL effective_garde → NOT eligible (surfaces only under hors-process).
+ *
+ * Deliverable C: "Choix Hors Process" toggle (manager/admin only). Expands
+ *   candidate set to ALL beers physically in a CCT ignoring the time gate.
+ *   Server-side role enforcement: hors_process=1 from a non-manager is silently ignored.
+ *   Writes hors_process_flag + hors_process_reason to bd_racking_v2 (migration 174).
  *
  * Writes to: bd_racking_v2 + audit_row_revisions
  * Natural key: (submitted_at, neb_beer, neb_batch, contract_beer, contract_batch, seq)
- * NOTE: seq is always 0 from the web form (same-second double racking is a
- *       form-submission race condition; the ingest python handles it for backfill).
- *
- * NOT added to topbar nav yet — orchestrator will add when approved.
- * URL: /modules/form-racking.php
+ * URL: /modules/form-racking.php  (route unchanged)
  */
 
 require __DIR__ . '/../../app/auth.php';
 require __DIR__ . '/../../app/settings-helpers.php';
 require __DIR__ . '/../../app/db-write-helpers.php';
+require_once __DIR__ . '/../../app/yeast-eligibility.php';
+require_once __DIR__ . '/../../app/tank-simulator.php';
 
 require_login();
 $me = current_user();
@@ -45,10 +52,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $pdo = maltytask_pdo();
 
         // ── 1. Coerce + validate inputs ──────────────────────────────────
-        $nebBeer     = post_str('neb_beer')     ?? '';
-        $nebBatch    = post_str('neb_batch')    ?? '';
+
+        // ── Override: Choix Hors Process (manager/admin only) ───────────
+        // Server-side enforcement: silently ignore hors_process=1 from a
+        // non-manager/admin. Never trust the client-side gate alone.
+        $horsProcessRequested = (post_int('hors_process') === 1);
+        $horsProcessAllowed   = (is_admin($me) || is_manager($me));
+        $horsProcessFlag      = ($horsProcessRequested && $horsProcessAllowed) ? 1 : 0;
+        $horsProcessReason    = ($horsProcessFlag === 1) ? post_str('hors_process_reason') : null;
+
+        // Beer identity — populated by JS from card selection (hidden fields)
+        $nebBeer      = post_str('neb_beer')     ?? '';
+        $nebBatch     = post_str('neb_batch')    ?? '';
         $contractBeer  = post_str('contract_beer')  ?? '';
         $contractBatch = post_str('contract_batch') ?? '';
+        $sourceCct     = post_int('source_cct_number');   // which CCT the beer is coming from
 
         if ($nebBeer === '' && $contractBeer === '') {
             throw new RuntimeException("Au moins une bière (Nébuleuse ou contrat) est requise.");
@@ -122,6 +140,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // Build audit_flags
         $auditTokens = ['web_entry'];
         if ($qcFlag !== 'normal') $auditTokens[] = "qc_{$qcFlag}";
+        if ($horsProcessFlag === 1) $auditTokens[] = 'hors_process_override';
         $auditFlags = implode(',', $auditTokens);
 
         // ── 4. Canonical row for hash (exclude meta cols) ────────────────
@@ -137,6 +156,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $centriRinsed ?? '', $lastCipDate ?? '', $cipType ?? '',
             $cipBbtDone ?? '', $cipBbtType ?? '', $cipBbtDate ?? '',
             $comments ?? '',
+            $horsProcessFlag,
         ];
         $rowHash = bd_row_hash($hashCols);
 
@@ -176,13 +196,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'cip_bbt_type'             => $cipBbtType,
             'cip_bbt_date'             => $cipBbtDate,
             'comments'                 => $comments,
+            'hors_process_flag'        => $horsProcessFlag,
+            'hors_process_reason'      => $horsProcessReason,
         ];
 
         $nkCols = ['submitted_at', 'neb_beer', 'neb_batch', 'contract_beer', 'contract_batch', 'seq'];
 
         // ── 6. Before-snapshot (lookup by NK) ────────────────────────────
-        // For web-form inserts, submitted_at is always new — before is always null.
-        // Future edit endpoint would pass the existing row's PK.
+        // Web-form inserts always have a new submitted_at — before is always null.
         $beforeSnapshot = null;
 
         // ── 7. UPSERT ────────────────────────────────────────────────────
@@ -207,7 +228,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             default    => '',
         };
         $beerLabel = $nebBeer !== '' ? $nebBeer : $contractBeer;
-        flash_set('ok', "Soutirage enregistré : {$beerLabel}{$qcLabel}");
+        $hpLabel   = $horsProcessFlag ? ' [HORS PROCESS]' : '';
+        flash_set('ok', "Transfert enregistré : {$beerLabel}{$qcLabel}{$hpLabel}");
 
     } catch (Throwable $e) {
         flash_set('err', pdo_friendly_error($e, 'form-racking'));
@@ -222,29 +244,162 @@ header('Content-Type: text/html; charset=utf-8');
 try {
     $pdo = maltytask_pdo();
 
-    // Load ref data
-    $recipes = $pdo->query(
-        "SELECT id, name FROM ref_recipes WHERE is_active = 1 ORDER BY name ASC"
-    )->fetchAll();
+    // ── Current user role for override capability ─────────────────────────
+    $canOverride = (is_admin($me) || is_manager($me));
 
+    // ── Candidate lots: beers in a CCT that have cold-crashed ≥ effective_garde days ──
+    //
+    // Eligibility derivation:
+    //   1. Cold-crash day = latest bd_fermenting_v2.event_date WHERE event_type='ColdCrash'
+    //      for (recipe_id_fk, batch).
+    //   2. Source CCT = bd_brewing_brewday_v2.cct for that (recipe_id_fk, batch).
+    //   3. SQL occupancy guard (COARSE PRE-FILTER ONLY): no later brew into the same CCT.
+    //      The TankSimulator is the authoritative occupancy truth — see sim-filter below.
+    //      NOTE: bd_racking_v2 is the DESTINATION of racking (output); source-CCT occupancy
+    //      is owned by the TankSimulator (RACKING events clear the CCT there at ~L372-376).
+    //   4. Eligible = DATEDIFF(CURDATE(), cold_crash_date) >= effective_garde.
+    //      effective_garde from yeast_eligibility_join_fragment() +
+    //      yeast_eligibility_select_expressions() (single COALESCE source).
+    //      NULL effective_garde → NOT eligible (no strain classified → hors-process only).
+    //
+    // CCT→CCT blend limitation (OUT OF SCOPE / backlog):
+    //   A blended lot's bd_brewing_brewday_v2.cct points at its original brew CCT, not any
+    //   blend-destination CCT. Tracking current CCT after a blend needs a deliberate model
+    //   extension. Until then, blended lots are accessible via hors-process only.
+    //
+    // Base SQL fragment (occupancy guard + cold-crash join) — reused by both
+    // the normal query (with garde gate) and hors-process query (without garde gate).
+
+    $candidateBaseSql = "
+        SELECT
+          bfw.recipe_id_fk,
+          bfw.cct                                                      AS source_cct,
+          bfw.batch,
+          bfw.beer,
+          bfw.event_date                                               AS brew_date,
+          r.id                                                         AS recipe_id,
+          r.name                                                       AS recipe_name,
+          COALESCE(NULLIF(bfw.beer,''), r.name)                        AS beer_display,
+          MAX(f.event_date)                                            AS cold_crash_date,
+          DATEDIFF(CURDATE(), MAX(f.event_date))                       AS days_since_cold_crash,
+          " . implode(",\n          ", yeast_eligibility_select_expressions()) . "
+        FROM bd_brewing_brewday_v2 bfw
+        JOIN ref_recipes r ON r.id = bfw.recipe_id_fk
+        LEFT JOIN bd_fermenting_v2 f
+             ON f.recipe_id_fk = bfw.recipe_id_fk
+            AND f.batch = bfw.batch
+            AND f.event_type = 'ColdCrash'
+            AND f.is_tombstoned = 0
+        " . yeast_eligibility_join_fragment() . "
+        WHERE bfw.is_tombstoned = 0
+          AND bfw.cct IS NOT NULL
+          AND r.is_active = 1
+          AND NOT EXISTS (
+            SELECT 1 FROM bd_brewing_brewday_v2 b2
+            WHERE b2.cct = bfw.cct
+              AND b2.is_tombstoned = 0
+              AND b2.event_date IS NOT NULL
+              AND b2.event_date > bfw.event_date
+          )
+        GROUP BY
+          bfw.recipe_id_fk, bfw.cct, bfw.batch, bfw.beer, bfw.event_date,
+          r.id, r.name,
+          r.yeast_strain_id_fk, r.garde_days_min_override,
+          r.ferm_temp_min_override, r.ferm_temp_max_override,
+          ys.name, ys.family,
+          yfd.garde_days_min, yfd.ferm_temp_min, yfd.ferm_temp_max";
+
+    // Normal (gated) query: effective_garde must be non-NULL AND days >= effective_garde.
+    // Extra pre-filter: drop lots that already have a live racking row (cheap SQL guard).
+    // The TankSimulator (below) is the final authority; this NOT EXISTS clause just
+    // prunes the obvious cases before the sim runs, keeping the gated path conservative.
+    // NOT added to the hors-process path — a partial-rack edge case (CCT still partially
+    // occupied after a mid-process rack) must surface there for the operator to decide.
+    $candStmt = $pdo->prepare(
+        $candidateBaseSql .
+        " HAVING effective_garde IS NOT NULL
+               AND days_since_cold_crash >= effective_garde
+               AND NOT EXISTS (
+                     SELECT 1 FROM bd_racking_v2 rk
+                     WHERE rk.neb_recipe_id_fk = bfw.recipe_id_fk
+                       AND rk.neb_batch = bfw.batch
+                       AND rk.is_tombstoned = 0
+                   )
+          ORDER BY days_since_cold_crash DESC"
+    );
+    $candStmt->execute();
+    $candidates = $candStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Override (hors-process) query: all CCT-occupying beers, no time gate.
+    // Built only when current user has manager/admin role.
+    // No NOT EXISTS on racking here — hors-process is the deliberate escape hatch
+    // for partial-rack or edge-case lots that may still have a CCT presence.
+    $candidatesOverride = [];
+    if ($canOverride) {
+        $overrideStmt = $pdo->prepare(
+            $candidateBaseSql .
+            " ORDER BY bfw.event_date DESC"
+        );
+        $overrideStmt->execute();
+        $candidatesOverride = $overrideStmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    // ── TankSimulator: authoritative CCT occupancy filter ────────────────────
+    //
+    // The SQL occupancy guard (no-later-brew) is a COARSE pre-filter. It cannot detect
+    // racked-out lots: a CCT is only freed in SQL when a NEW brew enters it, not when
+    // the existing lot is racked out. The TankSimulator models the full event replay
+    // (COOLING fills CCT, RACKING empties CCT at ~L372-376 of tank-simulator.php) and
+    // is therefore the authoritative source of CCT state.
+    //
+    // We mirror form-packaging.php exactly:
+    //   - Instantiate once on page load.
+    //   - Key on (strtolower(tank_type), (int)tank_number) from the candidate's source_cct.
+    //   - Drop any candidate whose source CCT is null/empty in the sim.
+    //   - Do NOT compare beer strings — trust the sim's tank-occupancy as truth.
+    //   - Apply to BOTH the gated and hors-process lists: hors-process relaxes the TIME
+    //     gate (garde days), not physical reality — a racked-out lot is physically gone.
+    $simState = (new TankSimulator($pdo))->run(new DateTimeImmutable('today'));
+
+    /**
+     * Drop candidates whose source CCT is null/empty in the TankSimulator state.
+     *
+     * Keying: 'cct' + (int)source_cct matches $simState['cct'][N].
+     * We do NOT compare beer strings — the sim's occupancy is the truth.
+     *
+     * @param array[] $list       Candidate rows (each has 'source_cct' key)
+     * @param array   $simState   ['cct'=>[N=>state|null,...], 'bbt'=>[...]]
+     * @return array[]
+     */
+    $simFilterCct = function (array $list, array $simState): array {
+        $out = [];
+        foreach ($list as $cand) {
+            $cctNum   = (int)($cand['source_cct'] ?? 0);
+            $tankState = $simState['cct'][$cctNum] ?? null;
+            if ($tankState === null) {
+                // CCT is empty/expired in the sim — lot has been racked out. Drop it.
+                continue;
+            }
+            $out[] = $cand;
+        }
+        return $out;
+    };
+
+    $candidates         = $simFilterCct($candidates,         $simState);
+    $candidatesOverride = $simFilterCct($candidatesOverride, $simState);
+
+    // Ref data for destination dropdowns
     $bbts = $pdo->query("SELECT number FROM ref_bbt ORDER BY number ASC")->fetchAll();
     $ccts = $pdo->query("SELECT number FROM ref_cct ORDER BY number ASC")->fetchAll();
 
-    // Recent submissions (operator's last 10 racking entries)
+    // Recent submissions (last 10 racking entries from web)
     $recentRows = $pdo->prepare(
         "SELECT id, event_date, neb_beer, neb_batch, contract_beer, contract_batch,
-                rack_type, target_tank_raw, racked_vol_hl, qc_flag_col, audit_flags,
-                email, submitted_at
-         FROM (
-           SELECT r.*,
-                  CASE
-                    WHEN FIND_IN_SET('qc_outlier', REPLACE(audit_flags,',','|')) > 0 THEN 'outlier'
-                    WHEN FIND_IN_SET('qc_elevated', REPLACE(audit_flags,',','|')) > 0 THEN 'elevated'
-                    ELSE 'normal'
-                  END AS qc_flag_col
-           FROM bd_racking_v2 r
-           WHERE audit_flags LIKE '%web_entry%'
-         ) sub
+                rack_type, target_tank_raw, racked_vol_hl, audit_flags,
+                email, submitted_at, hors_process_flag, hors_process_reason
+         FROM bd_racking_v2
+         WHERE audit_flags LIKE '%web_entry%'
+           AND is_tombstoned = 0
          ORDER BY submitted_at DESC LIMIT 10"
     );
     $recentRows->execute();
@@ -252,25 +407,32 @@ try {
 
     $loadErr = null;
 } catch (Throwable $e) {
-    $recipes = [];
-    $bbts    = [];
-    $ccts    = [];
-    $recentRackings = [];
+    $candidates         = [];
+    $candidatesOverride = [];
+    $bbts               = [];
+    $ccts               = [];
+    $recentRackings     = [];
+    $canOverride        = false;
     $loadErr = $e->getMessage();
 }
 
 $csrf = csrf_token();
 $active_module = 'racking';
+
+// Inject server-side data for JS
+$candidatesJson         = json_encode($candidates,         JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
+$candidatesOverrideJson = json_encode($candidatesOverride, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 ?><!doctype html>
 <html lang="fr">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Saisie Soutirage — MaltyTask</title>
+  <title>Saisie Transferts — MaltyTask</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,200;0,9..144,300;0,9..144,400;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/app.css?v=<?= @filemtime(__DIR__ . '/../css/app.css') ?: time() ?>">
+  <link rel="stylesheet" href="/css/racking-form.css?v=<?= @filemtime(__DIR__ . '/../css/racking-form.css') ?: time() ?>">
 </head>
 <body class="home op-form-page op-form-racking">
 
@@ -287,11 +449,12 @@ $active_module = 'racking';
 
   <!-- Header -->
   <div class="op-form__header">
-    <div class="op-form__eyebrow">Soutirage · Racking</div>
-    <h1 class="op-form__title">Saisie <em>soutirage</em></h1>
+    <div class="op-form__eyebrow">Transferts · Racking</div>
+    <h1 class="op-form__title">Saisie <em>transferts</em></h1>
     <p class="op-form__sub">
-      Transfert CCT → BBT. Toutes les valeurs sont acceptées — des avertissements sont affichés
-      si une mesure est hors plage typique, jamais bloquants.
+      Transfert CCT → BBT (ou CCT). Sélectionner un lot éligible (cold crash ≥ garde minimum).
+      Toutes les mesures sont acceptées — des avertissements sont affichés si une valeur
+      est hors plage typique, jamais bloquants.
     </p>
   </div>
 
@@ -299,80 +462,167 @@ $active_module = 'racking';
   <form id="racking-form" method="post" action="/modules/form-racking.php" novalidate>
     <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
 
+    <!-- Hidden fields populated by JS from card selection -->
+    <input type="hidden" id="neb_beer"              name="neb_beer"              value="">
+    <input type="hidden" id="neb_batch"             name="neb_batch"             value="">
+    <input type="hidden" id="neb_recipe_id_fk"      name="neb_recipe_id_fk"      value="">
+    <input type="hidden" id="contract_beer"         name="contract_beer"         value="">
+    <input type="hidden" id="contract_batch"        name="contract_batch"        value="">
+    <input type="hidden" id="contract_recipe_id_fk" name="contract_recipe_id_fk" value="">
+    <input type="hidden" id="source_cct_number"     name="source_cct_number"     value="">
+    <!-- hors_process: set by JS to 1 when override checkbox is checked.
+         Server enforces role: if not manager/admin, this field is silently ignored. -->
+    <input type="hidden" id="hors_process" name="hors_process" value="0">
+
     <!-- Warning panel (populated by form-framework.js) -->
     <div id="racking-warnings" class="op-form__warnings" hidden aria-live="polite"></div>
 
-    <!-- ── Section: Identité bière ───────────────────────────────────── -->
+    <!-- ── Section: Sélection lot source (CCT) ───────────────────────── -->
     <div class="op-form__card">
-      <div class="op-form__card-title">— identité bière</div>
-      <div class="op-form__grid">
+      <div class="op-form__card-title">— sélection lot source (CCT)</div>
 
-        <!-- Nébuleuse beer -->
-        <div class="op-form__field">
-          <label class="op-form__label" for="neb_beer">Recette Nébuleuse</label>
-          <select id="neb_beer" name="neb_beer" class="op-form__select">
-            <option value="">— aucune (contrat) —</option>
-            <?php foreach ($recipes as $r): ?>
-              <option value="<?= htmlspecialchars($r['name']) ?>"
-                      data-recipe-id="<?= (int)$r['id'] ?>">
-                <?= htmlspecialchars($r['name']) ?>
-              </option>
+      <?php if ($canOverride): ?>
+      <!-- Choix Hors Process — MANAGER / ADMIN ONLY.
+           Operators never see this block (PHP-gated, not just CSS-hidden).
+           Server will silently ignore hors_process=1 if the role gate fails anyway. -->
+      <div class="rf-override-block" id="rf-override-block">
+        <label class="rf-override-label">
+          <input type="checkbox" id="rf-override-checkbox" class="rf-override-checkbox"
+                 aria-describedby="rf-override-desc">
+          <span class="rf-override-text">Choix Hors Process</span>
+          <span class="rf-override-badge">Manager / Admin</span>
+        </label>
+        <p class="rf-override-desc" id="rf-override-desc">
+          Bypasse la garde minimum (jours depuis cold crash). Affiche tous les lots
+          actuellement occupant une CCT, quelle que soit leur date de cold crash ou leur
+          classification levure. Toute saisie créée via cet override sera marquée
+          <code>hors_process_flag = 1</code> dans <code>bd_racking_v2</code>.
+        </p>
+        <div class="rf-override-reason-row" id="rf-override-reason-row" hidden>
+          <label class="op-form__label rf-override-reason-label" for="hors_process_reason">
+            Justification <span class="op-form__opt">(recommandé)</span>
+          </label>
+          <input id="hors_process_reason" name="hors_process_reason" type="text"
+                 class="op-form__input rf-override-reason-input"
+                 placeholder="ex. Transfert urgent — CCT8 nécessaire pour brassage suivant">
+        </div>
+      </div>
+      <?php endif ?>
+
+      <!-- Normal candidate cards (gated: cold crash ≥ effective_garde) -->
+      <div id="rf-normal-candidates">
+        <?php if (empty($candidates)): ?>
+          <div class="rf-empty-state">
+            <strong>Aucun lot éligible.</strong><br>
+            Un lot est éligible lorsqu'il est en CCT et que son cold crash date de plus
+            longtemps que la garde minimum de sa levure (COALESCE override recette →
+            défaut famille). Les recettes sans levure classifiée ne sont pas éligibles
+            (levure non liée ou famille sans garde définie → hors process uniquement).
+            <?php if ($canOverride): ?>
+              Utiliser <strong>Choix Hors Process</strong> ci-dessus pour accéder à tous
+              les lots en CCT indépendamment de la garde.
+            <?php endif ?>
+          </div>
+        <?php else: ?>
+          <div class="rf-cand-grid" id="rf-cand-grid-normal">
+            <?php foreach ($candidates as $cand): ?>
+              <?php
+                $beerDisp  = htmlspecialchars($cand['beer_display'] ?? $cand['beer'] ?? '—');
+                $batchDisp = htmlspecialchars($cand['batch'] ?? '—');
+                $cctNum    = (int)($cand['source_cct'] ?? 0);
+                $ccDate    = htmlspecialchars($cand['cold_crash_date'] ?? '—');
+                $daysCold  = (int)($cand['days_since_cold_crash'] ?? 0);
+                $effGarde  = $cand['effective_garde'] !== null ? (int)$cand['effective_garde'] : null;
+                $recipeName= htmlspecialchars($cand['recipe_name'] ?? '');
+                $recipeId  = (int)($cand['recipe_id'] ?? 0);
+                $nebBeerVal = htmlspecialchars($cand['beer'] ?? '');
+                $nebBatchVal= htmlspecialchars($cand['batch'] ?? '');
+              ?>
+              <button type="button"
+                      class="rf-cand-card"
+                      data-neb-beer="<?= $nebBeerVal ?>"
+                      data-neb-batch="<?= $nebBatchVal ?>"
+                      data-recipe-id="<?= $recipeId ?>"
+                      data-source-cct="<?= $cctNum ?>"
+                      data-hors-process="0">
+                <div class="rf-cand-card__label">CCT <?= $cctNum ?></div>
+                <div class="rf-cand-card__beer"><?= $beerDisp ?></div>
+                <div class="rf-cand-card__batch">Brassin <?= $batchDisp ?></div>
+                <div class="rf-cand-card__cc-date">Cold crash : <?= $ccDate ?> (<?= $daysCold ?>j)</div>
+                <?php if ($effGarde !== null): ?>
+                  <div class="rf-cand-card__garde">Garde : <?= $effGarde ?>j minimum</div>
+                <?php endif ?>
+              </button>
             <?php endforeach ?>
-          </select>
-        </div>
+          </div>
+        <?php endif ?>
+      </div>
 
-        <!-- Hidden recipe ID for Nébuleuse -->
-        <input type="hidden" id="neb_recipe_id_fk" name="neb_recipe_id_fk" value="">
-
-        <!-- Nébuleuse batch -->
-        <div class="op-form__field">
-          <label class="op-form__label" for="neb_batch">N° brassin Nébuleuse</label>
-          <input id="neb_batch" name="neb_batch" type="text" class="op-form__input"
-                 placeholder="ex. B2503" autocomplete="off">
-        </div>
-
-        <!-- Contract beer -->
-        <div class="op-form__field">
-          <label class="op-form__label" for="contract_beer">Recette contrat</label>
-          <select id="contract_beer" name="contract_beer" class="op-form__select">
-            <option value="">— aucune (Nébuleuse) —</option>
-            <?php foreach ($recipes as $r): ?>
-              <option value="<?= htmlspecialchars($r['name']) ?>"
-                      data-recipe-id="<?= (int)$r['id'] ?>">
-                <?= htmlspecialchars($r['name']) ?>
-              </option>
+      <!-- Override candidate cards (hors-process: ALL CCT-occupying beers) -->
+      <?php if ($canOverride): ?>
+      <div id="rf-override-candidates" hidden>
+        <?php if (empty($candidatesOverride)): ?>
+          <div class="rf-empty-state">
+            Aucun lot en CCT actuellement.
+          </div>
+        <?php else: ?>
+          <div class="rf-cand-grid" id="rf-cand-grid-override">
+            <?php foreach ($candidatesOverride as $cand): ?>
+              <?php
+                $beerDisp  = htmlspecialchars($cand['beer_display'] ?? $cand['beer'] ?? '—');
+                $batchDisp = htmlspecialchars($cand['batch'] ?? '—');
+                $cctNum    = (int)($cand['source_cct'] ?? 0);
+                $ccDate    = $cand['cold_crash_date'] !== null
+                               ? htmlspecialchars($cand['cold_crash_date'])
+                               : 'pas encore';
+                $daysCold  = $cand['days_since_cold_crash'] !== null
+                               ? (int)$cand['days_since_cold_crash'] . 'j'
+                               : '—';
+                $effGarde  = $cand['effective_garde'] !== null ? (int)$cand['effective_garde'] : null;
+                $recipeId  = (int)($cand['recipe_id'] ?? 0);
+                $nebBeerVal = htmlspecialchars($cand['beer'] ?? '');
+                $nebBatchVal= htmlspecialchars($cand['batch'] ?? '');
+              ?>
+              <button type="button"
+                      class="rf-cand-card rf-cand-card--hors-process"
+                      data-neb-beer="<?= $nebBeerVal ?>"
+                      data-neb-batch="<?= $nebBatchVal ?>"
+                      data-recipe-id="<?= $recipeId ?>"
+                      data-source-cct="<?= $cctNum ?>"
+                      data-hors-process="1">
+                <div class="rf-cand-card__label">CCT <?= $cctNum ?></div>
+                <div class="rf-cand-card__beer"><?= $beerDisp ?></div>
+                <div class="rf-cand-card__batch">Brassin <?= $batchDisp ?></div>
+                <div class="rf-cand-card__cc-date">Cold crash : <?= $ccDate ?> (<?= $daysCold ?>)</div>
+                <?php if ($effGarde !== null): ?>
+                  <div class="rf-cand-card__garde">Garde : <?= $effGarde ?>j (non atteinte)</div>
+                <?php else: ?>
+                  <div class="rf-cand-card__garde" style="color:var(--ink-mute)">Garde : non définie</div>
+                <?php endif ?>
+                <div class="rf-cand-card__badge-hp">HORS PROCESS</div>
+              </button>
             <?php endforeach ?>
-          </select>
-        </div>
+          </div>
+        <?php endif ?>
+      </div>
+      <?php endif ?>
 
-        <!-- Hidden recipe ID for contract -->
-        <input type="hidden" id="contract_recipe_id_fk" name="contract_recipe_id_fk" value="">
-
-        <!-- Contract batch -->
-        <div class="op-form__field">
-          <label class="op-form__label" for="contract_batch">N° brassin contrat</label>
-          <input id="contract_batch" name="contract_batch" type="text" class="op-form__input"
-                 placeholder="ex. B-002" autocomplete="off">
-        </div>
-
-        <!-- Client -->
-        <div class="op-form__field">
-          <label class="op-form__label" for="client">Client</label>
-          <input id="client" name="client" type="text" class="op-form__input"
-                 placeholder="Nébuleuse / nom client" autocomplete="off">
-        </div>
-
-      </div><!-- grid -->
-    </div><!-- card -->
+      <!-- Selected lot summary strip -->
+      <div id="rf-selected-lot" class="rf-selected-lot" hidden>
+        <span class="rf-selected-lot__label">Lot sélectionné :</span>
+        <span id="rf-selected-summary" class="rf-selected-lot__summary"></span>
+        <button type="button" id="rf-deselect" class="rf-selected-lot__clear">✕ changer</button>
+      </div>
+    </div><!-- card lot source -->
 
     <!-- ── Section: Opération ─────────────────────────────────────────── -->
     <div class="op-form__card">
-      <div class="op-form__card-title">— opération de soutirage</div>
+      <div class="op-form__card-title">— opération de transfert</div>
       <div class="op-form__grid">
 
         <!-- Date -->
         <div class="op-form__field">
-          <label class="op-form__label" for="event_date">Date soutirage</label>
+          <label class="op-form__label" for="event_date">Date transfert</label>
           <input id="event_date" name="event_date" type="date" class="op-form__input"
                  value="<?= htmlspecialchars(date('Y-m-d')) ?>" required>
         </div>
@@ -398,6 +648,13 @@ $active_module = 'racking';
         <div class="op-form__field">
           <label class="op-form__label" for="end_time">Heure fin <span class="op-form__unit">HH:MM</span></label>
           <input id="end_time" name="end_time" type="time" class="op-form__input">
+        </div>
+
+        <!-- Client (for contract brews — optional) -->
+        <div class="op-form__field">
+          <label class="op-form__label" for="client">Client <span class="op-form__opt">(contrat)</span></label>
+          <input id="client" name="client" type="text" class="op-form__input"
+                 placeholder="Nébuleuse / nom client" autocomplete="off">
         </div>
 
       </div>
@@ -430,9 +687,9 @@ $active_module = 'racking';
           </select>
         </div>
 
-        <!-- CCT number -->
+        <!-- CCT number (destination CCT — distinct from source CCT) -->
         <div class="op-form__field" id="cct-field">
-          <label class="op-form__label" for="cct_number">CCT n°</label>
+          <label class="op-form__label" for="cct_number">CCT destination n°</label>
           <select id="cct_number" name="cct_number" class="op-form__select">
             <option value="">—</option>
             <?php foreach ($ccts as $c): ?>
@@ -451,7 +708,7 @@ $active_module = 'racking';
 
         <div class="op-form__field">
           <label class="op-form__label" for="racked_vol_hl">
-            Volume soutiré <span class="op-form__unit">HL</span>
+            Volume transféré <span class="op-form__unit">HL</span>
           </label>
           <input id="racked_vol_hl" name="racked_vol_hl" type="text" inputmode="decimal"
                  class="op-form__input" placeholder="ex. 29.5">
@@ -586,8 +843,8 @@ $active_module = 'racking';
               onclick="if(confirm('Effacer le brouillon ?')){localStorage.removeItem('racking-draft');location.reload();}">
         Effacer brouillon
       </button>
-      <button type="submit" class="op-form__btn op-form__btn--primary">
-        Enregistrer le soutirage →
+      <button type="submit" id="rf-submit" class="op-form__btn op-form__btn--primary">
+        Enregistrer le transfert →
       </button>
     </div>
 
@@ -610,14 +867,20 @@ $active_module = 'racking';
             <th>Vol (HL)</th>
             <th>QC</th>
             <th>Opérateur</th>
+            <th>Override</th>
           </tr>
         </thead>
         <tbody>
           <?php foreach ($recentRackings as $r): ?>
             <?php
-              $beerLabel = $r['neb_beer'] !== '' ? $r['neb_beer'] : $r['contract_beer'];
-              $batchLabel = $r['neb_batch'] !== '' ? $r['neb_batch'] : $r['contract_batch'];
-              $qc = $r['qc_flag_col'] ?? 'normal';
+              $beerLabel  = ($r['neb_beer'] ?? '') !== '' ? $r['neb_beer'] : ($r['contract_beer'] ?? '—');
+              $batchLabel = ($r['neb_batch'] ?? '') !== '' ? $r['neb_batch'] : ($r['contract_batch'] ?? '—');
+              $flags      = $r['audit_flags'] ?? '';
+              $isHorsProc = str_contains($flags, 'hors_process_override');
+              $isOutlier  = str_contains($flags, 'qc_outlier');
+              $isElevated = str_contains($flags, 'qc_elevated');
+              $qc         = $isOutlier ? 'outlier' : ($isElevated ? 'elevated' : 'normal');
+              $hpFlag     = (bool)($r['hors_process_flag'] ?? false);
             ?>
             <tr>
               <td class="op-form__mono"><?= htmlspecialchars($r['event_date'] ?? '') ?></td>
@@ -625,9 +888,16 @@ $active_module = 'racking';
               <td class="op-form__mono"><?= htmlspecialchars($batchLabel) ?></td>
               <td><?= htmlspecialchars($r['rack_type'] ?? '—') ?></td>
               <td class="op-form__mono"><?= htmlspecialchars($r['target_tank_raw'] ?? '—') ?></td>
-              <td class="op-form__mono"><?= $r['racked_vol_hl'] !== null ? htmlspecialchars($r['racked_vol_hl']) : '—' ?></td>
+              <td class="op-form__mono"><?= $r['racked_vol_hl'] !== null ? htmlspecialchars((string)$r['racked_vol_hl']) : '—' ?></td>
               <td><span class="op-form__qc-badge op-form__qc-badge--<?= $qc ?>"><?= $qc ?></span></td>
               <td class="op-form__mono"><?= htmlspecialchars($r['email'] ?? '') ?></td>
+              <td>
+                <?php if ($hpFlag || $isHorsProc): ?>
+                  <span class="rf-hp-badge" title="<?= htmlspecialchars($r['hors_process_reason'] ?? '') ?>">HORS PROCESS</span>
+                <?php else: ?>
+                  <span class="rf-hp-badge rf-hp-badge--normal">—</span>
+                <?php endif ?>
+              </td>
             </tr>
           <?php endforeach ?>
         </tbody>
@@ -637,87 +907,15 @@ $active_module = 'racking';
 
 </main>
 
-<script src="/js/form-framework.js" defer></script>
+<!-- ── Inject server-side data for JS ────────────────────────────────────── -->
 <script>
-document.addEventListener('DOMContentLoaded', function () {
-
-  // ── Wire recipe ID hidden fields when select changes ──────────────────
-  document.getElementById('neb_beer').addEventListener('change', function () {
-    const opt = this.options[this.selectedIndex];
-    document.getElementById('neb_recipe_id_fk').value = opt.dataset.recipeId ?? '';
-  });
-  document.getElementById('contract_beer').addEventListener('change', function () {
-    const opt = this.options[this.selectedIndex];
-    document.getElementById('contract_recipe_id_fk').value = opt.dataset.recipeId ?? '';
-  });
-
-  // ── Show/hide BBT/CCT selects based on destination type ──────────────
-  const destSel = document.getElementById('racking_destination_type');
-  const bbtFld  = document.getElementById('bbt-field');
-  const cctFld  = document.getElementById('cct-field');
-
-  function updateDestFields() {
-    const v = destSel.value;
-    bbtFld.style.display = (v === 'BBT' || v === '') ? '' : 'none';
-    cctFld.style.display = (v === 'CCT') ? '' : 'none';
-    if (v !== 'BBT') document.getElementById('bbt_number').value = '';
-    if (v !== 'CCT') document.getElementById('cct_number').value = '';
-  }
-  destSel.addEventListener('change', updateDestFields);
-  updateDestFields();
-
-  // ── FormFramework init ────────────────────────────────────────────────
-  FormFramework.init({
-    formId:        'racking-form',
-    draftKey:      'racking-draft',
-    warningPanelId: 'racking-warnings',
-    thresholds: {
-      bbt_co2: {
-        label: 'CO₂ BBT', unit: ' g/L',
-        warn:    [3.5, 5.0],
-        outlier: [2.5, 6.0],
-      },
-      bbt_o2: {
-        label: 'O₂ BBT', unit: ' ppb',
-        warn:    [0, 50],
-        outlier: [0, 200],
-      },
-      racked_vol_hl: {
-        label: 'Volume soutiré', unit: ' HL',
-        warn:    [10, 100],
-        outlier: [1, 150],
-      },
-      bbt_pressure: {
-        label: 'Pression BBT', unit: ' bar',
-        warn:    [0.8, 2.5],
-        outlier: [0.0, 3.5],
-      },
-    },
-    diffFields: [
-      'neb_beer','neb_batch','contract_beer','contract_batch',
-      'rack_type','event_date','racking_destination_type',
-      'bbt_number','cct_number',
-      'racked_vol_hl','bbt_co2','bbt_o2','bbt_pressure','blend_hl',
-    ],
-    diffLabels: {
-      neb_beer:                  'Recette Nébuleuse',
-      neb_batch:                 'Brassin Nébuleuse',
-      contract_beer:             'Recette contrat',
-      contract_batch:            'Brassin contrat',
-      rack_type:                 'Type de rack',
-      event_date:                'Date',
-      racking_destination_type:  'Type destination',
-      bbt_number:                'BBT n°',
-      cct_number:                'CCT n°',
-      racked_vol_hl:             'Volume (HL)',
-      bbt_co2:                   'CO₂ (g/L)',
-      bbt_o2:                    'O₂ (ppb)',
-      bbt_pressure:              'Pression (bar)',
-      blend_hl:                  'Blend (HL)',
-    },
-  });
-});
+window.RF_CANDIDATES          = <?= $candidatesJson ?>;
+window.RF_CANDIDATES_OVERRIDE = <?= $candidatesOverrideJson ?>;
+window.RF_CAN_OVERRIDE        = <?= $canOverride ? 'true' : 'false' ?>;
 </script>
+
+<script src="/js/form-framework.js?v=<?= @filemtime(__DIR__ . '/../js/form-framework.js') ?: time() ?>" defer></script>
+<script src="/js/racking-form.js?v=<?= @filemtime(__DIR__ . '/../js/racking-form.js') ?: time() ?>" defer></script>
 
 </body>
 </html>

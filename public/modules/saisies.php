@@ -62,9 +62,9 @@ $active_module = 'saisies';
 
     <a class="sh-card" href="/modules/form-racking.php">
       <div class="sh-card__icon">🔀</div>
-      <div class="sh-card__name">Soutirage</div>
+      <div class="sh-card__name">Transferts</div>
       <div class="sh-card__desc">
-        Enregistrement d'un soutirage : transfert de bière depuis une CCT vers un BBT
+        Enregistrement d'un transfert : soutirage de bière depuis une CCT vers un BBT
         ou une autre CCT, avec volumes et mesures associés.
       </div>
       <div class="sh-card__arrow">Ouvrir →</div>

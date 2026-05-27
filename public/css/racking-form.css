@@ -1,0 +1,241 @@
+/*
+ * racking-form.css — Styles for /modules/form-racking.php (Saisie Transferts)
+ *
+ * All rules scoped under body.op-form-racking to prevent leakage.
+ * Tokens: all from app.css — NO custom tokens invented here.
+ * Mirrors packaging-form.css patterns for candidate cards and override block.
+ */
+
+/* ── Candidate beer card grid (CCTs eligible for transfer) ──────────────── */
+body.op-form-racking .rf-cand-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+body.op-form-racking .rf-cand-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.75rem 0.875rem 0.875rem;
+  background: var(--bg-elev);
+  border: 1.5px solid var(--hairline);
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+  position: relative;
+  width: 100%;
+}
+
+body.op-form-racking .rf-cand-card:hover:not([disabled]) {
+  border-color: var(--cold);
+  background: color-mix(in srgb, var(--cold) 8%, var(--bg-elev));
+}
+body.op-form-racking .rf-cand-card--selected {
+  border-color: var(--cold);
+  background: color-mix(in srgb, var(--cold) 12%, var(--bg-elev));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--cold) 30%, transparent);
+}
+body.op-form-racking .rf-cand-card--hors-process {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--ember) 50%, transparent);
+}
+body.op-form-racking .rf-cand-card--hors-process:hover:not([disabled]) {
+  border-color: var(--ember);
+  background: color-mix(in srgb, var(--ember) 6%, var(--bg-elev));
+}
+body.op-form-racking .rf-cand-card--hors-process.rf-cand-card--selected {
+  border-color: var(--ember);
+  border-style: solid;
+  background: color-mix(in srgb, var(--ember) 10%, var(--bg-elev));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ember) 25%, transparent);
+}
+
+body.op-form-racking .rf-cand-card:focus-visible {
+  outline: 2px solid var(--cold);
+  outline-offset: 2px;
+}
+
+body.op-form-racking .rf-cand-card__label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--cold);
+  font-weight: 600;
+}
+body.op-form-racking .rf-cand-card--hors-process .rf-cand-card__label {
+  color: var(--ember);
+}
+body.op-form-racking .rf-cand-card__beer {
+  font-family: 'Fraunces', serif;
+  font-size: 0.92rem;
+  font-variation-settings: "opsz" 96;
+  color: var(--ink);
+  line-height: 1.2;
+  margin-top: 0.15rem;
+}
+body.op-form-racking .rf-cand-card__batch {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  color: var(--ink-soft);
+}
+body.op-form-racking .rf-cand-card__cc-date {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  color: var(--ink-mute);
+  margin-top: 0.2rem;
+}
+body.op-form-racking .rf-cand-card__garde {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  color: var(--hop);
+  margin-top: 0.05rem;
+}
+body.op-form-racking .rf-cand-card__badge-hp {
+  display: inline-block;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.58rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--ember) 16%, transparent);
+  color: var(--ember);
+  margin-top: 0.3rem;
+  align-self: flex-start;
+}
+
+/* ── Empty eligible state ────────────────────────────────────────────────── */
+body.op-form-racking .rf-empty-state {
+  padding: 1.25rem 1rem;
+  background: color-mix(in srgb, var(--ink-faint) 40%, transparent);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  font-size: 0.84rem;
+  color: var(--ink-soft);
+  line-height: 1.6;
+}
+body.op-form-racking .rf-empty-state strong {
+  color: var(--ink);
+}
+
+/* ── Selected candidate summary strip ────────────────────────────────────── */
+body.op-form-racking .rf-selected-lot {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.875rem;
+  background: color-mix(in srgb, var(--cold) 10%, var(--bg-elev));
+  border: 1px solid color-mix(in srgb, var(--cold) 30%, transparent);
+  border-radius: 6px;
+  font-size: 0.82rem;
+  margin-top: 0.75rem;
+}
+body.op-form-racking .rf-selected-lot__label {
+  color: var(--ink-mute);
+  white-space: nowrap;
+}
+body.op-form-racking .rf-selected-lot__summary {
+  flex: 1;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.82rem;
+  color: var(--cold);
+}
+body.op-form-racking .rf-selected-lot__clear {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  transition: color 0.12s;
+}
+body.op-form-racking .rf-selected-lot__clear:hover {
+  color: var(--ember);
+}
+
+/* ── Choix Hors Process override block (manager/admin only) ─────────────── */
+body.op-form-racking .rf-override-block {
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  background: color-mix(in srgb, var(--ember) 7%, var(--bg-elev));
+  border: 1px solid color-mix(in srgb, var(--ember) 28%, transparent);
+  border-radius: 6px;
+}
+body.op-form-racking .rf-override-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  user-select: none;
+}
+body.op-form-racking .rf-override-checkbox {
+  accent-color: var(--ember);
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+}
+body.op-form-racking .rf-override-text {
+  font-weight: 600;
+  font-size: 0.88rem;
+  color: var(--ink);
+}
+body.op-form-racking .rf-override-badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--ember) 18%, transparent);
+  color: var(--ember);
+}
+body.op-form-racking .rf-override-desc {
+  margin: 0.5rem 0 0;
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  line-height: 1.5;
+}
+body.op-form-racking .rf-override-desc code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.76rem;
+  color: var(--ember);
+}
+body.op-form-racking .rf-override-reason-row {
+  margin-top: 0.75rem;
+}
+body.op-form-racking .rf-override-reason-label {
+  margin-bottom: 0.3rem;
+}
+body.op-form-racking .rf-override-reason-input {
+  width: 100%;
+  max-width: 520px;
+}
+
+/* ── Hors-process badge in recent table ─────────────────────────────────── */
+body.op-form-racking .rf-hp-badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--ember) 16%, transparent);
+  color: var(--ember);
+}
+body.op-form-racking .rf-hp-badge--normal {
+  background: transparent;
+  color: var(--ink-mute);
+}
+
+/* ── QC badge in recent table ───────────────────────────────────────────── */
+body.op-form-racking .op-form__qc-badge--normal   { color: var(--hop); font-size: 0.72rem; }
+body.op-form-racking .op-form__qc-badge--elevated { color: var(--ember); font-size: 0.72rem; }
+body.op-form-racking .op-form__qc-badge--outlier  { color: var(--ember); font-weight: 600; font-size: 0.72rem; }
