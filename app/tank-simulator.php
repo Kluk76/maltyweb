@@ -428,12 +428,17 @@ class TankSimulator
 
                 $batchBBT[$e['beer'] . '|' . $e['batch']] = $bbt;
 
-                // Apply deferred packaging deductions
+                // Apply deferred packaging deductions (racking form arrived late).
+                // Each deduction must also shrink blend_info pro-rata so that
+                // lot volumes stay consistent with the updated volume_hl.
                 if (!empty($pendingDeductions[$bbt])) {
                     foreach ($pendingDeductions[$bbt] as $deduct) {
-                        $bbtState[$bbt]['volume_hl'] = max(
-                            0.0,
-                            $bbtState[$bbt]['volume_hl'] - $deduct
+                        $prevVol = $bbtState[$bbt]['volume_hl'];
+                        $bbtState[$bbt]['volume_hl'] = max(0.0, $prevVol - $deduct);
+                        $this->_bbt_prorata_decrement(
+                            $bbtState[$bbt]['blend_info'],
+                            $prevVol,
+                            $deduct
                         );
                     }
                     unset($pendingDeductions[$bbt]);
@@ -456,10 +461,15 @@ class TankSimulator
                     // Jasper filled).  If the BBT's current beer differs, the
                     // packaged content is gone — skip the deduction.
                     if ($bbtState[$bbt]['beer'] === $e['beer']) {
-                        $deduct = $e['hl'] + self::PACKAGING_LOSS_HL;
-                        $bbtState[$bbt]['volume_hl'] = max(
-                            0.0,
-                            $bbtState[$bbt]['volume_hl'] - $deduct
+                        $deduct      = $e['hl'] + self::PACKAGING_LOSS_HL;
+                        $prevVol     = $bbtState[$bbt]['volume_hl'];
+                        $bbtState[$bbt]['volume_hl'] = max(0.0, $prevVol - $deduct);
+                        // Keep blend_info in sync: scale lots pro-rata so their
+                        // sum continues to equal the new volume_hl.
+                        $this->_bbt_prorata_decrement(
+                            $bbtState[$bbt]['blend_info'],
+                            $prevVol,
+                            $deduct
                         );
                         if ($bbtState[$bbt]['volume_hl'] < self::BBT_EMPTY_THRESHOLD_HL) {
                             $bbtState[$bbt] = null;
@@ -790,6 +800,48 @@ class TankSimulator
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
+     * Reduce every lot in $blendInfo proportionally so that the lot volumes
+     * continue to sum to (previous_total − $drawHl) after a draw-down.
+     *
+     * Invariant preserved: sum(lots[].vol) == new BBT volume_hl.
+     *
+     * Safe-guards:
+     *   - $previousTotalHl == 0  → clear all lots (avoids divide-by-zero).
+     *   - $drawHl >= $previousTotalHl → empty result (every lot goes to 0).
+     *   - Individual lot scaled below a float-noise floor (1e-6 HL) → zeroed
+     *     and omitted from the result so stale zero-vol lots don't accumulate.
+     *
+     * Called by: PACKAGING draw-down, deferred-deduction application.
+     * Will be reused by: WS1 destination-loss apportionment (per-lot racking loss).
+     *
+     * @param array $blendInfo  Array of ['batch'=>string, 'vol'=>float] entries.
+     *                          Passed by reference; replaced with the scaled result.
+     * @param float $previousTotalHl  BBT volume_hl BEFORE the draw (used as denominator).
+     * @param float $drawHl     HL to remove (packaging vol + loss).
+     */
+    private function _bbt_prorata_decrement(
+        array &$blendInfo,
+        float  $previousTotalHl,
+        float  $drawHl
+    ): void {
+        // Nothing to scale — clear everything.
+        if ($previousTotalHl <= 0.0 || $drawHl >= $previousTotalHl) {
+            $blendInfo = [];
+            return;
+        }
+
+        $scale    = ($previousTotalHl - $drawHl) / $previousTotalHl;
+        $newBlend = [];
+        foreach ($blendInfo as $bi) {
+            $newVol = $bi['vol'] * $scale;
+            if ($newVol > 1e-6) {
+                $newBlend[] = ['batch' => $bi['batch'], 'vol' => $newVol];
+            }
+        }
+        $blendInfo = $newBlend;
+    }
+
+    /**
      * Extract BBT number from the text column ("BBT 7" → 7) with
      * fallback to the legacy integer column.
      */
@@ -822,4 +874,71 @@ class TankSimulator
         $diffDays = (int)$filledDate->diff($now)->days;
         return $diffDays > self::MAX_TANK_AGE_DAYS;
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Read API — per-BBT lot composition
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Derive the lot-level composition of every non-empty BBT from the simulator's
+ * final state.  Pure read — no recompute, no DB access.
+ *
+ * Callers:
+ *   $sim   = new TankSimulator($pdo);
+ *   $state = $sim->run();
+ *   $comp  = tank_bbt_composition($state);
+ *
+ * Contract: does NOT modify $simState; the existing ->run() return shape is
+ * unchanged — this is an additive read API, not a replacement.
+ *
+ * @param array $simState  Return value of TankSimulator::run().
+ * @return array  Indexed array, one entry per occupied BBT (sorted by bbt ASC):
+ *   [
+ *     'bbt'      => int,          // tank number
+ *     'beer'     => string,       // canonical beer name
+ *     'total_hl' => float,        // volume_hl of this BBT
+ *     'lots'     => [             // one entry per lot in blend_info
+ *       ['batch' => string, 'vol_hl' => float, 'pct' => float],
+ *       ...
+ *     ],
+ *   ]
+ *   Empty if no BBT is occupied or blend_info is absent.
+ */
+function tank_bbt_composition(array $simState): array
+{
+    $result = [];
+
+    foreach ($simState['bbt'] ?? [] as $bbtNum => $state) {
+        if ($state === null || empty($state['blend_info'])) {
+            continue;
+        }
+
+        $totalHl = (float)($state['volume_hl'] ?? 0.0);
+        $lots    = [];
+
+        foreach ($state['blend_info'] as $bi) {
+            $volHl = (float)($bi['vol'] ?? 0.0);
+            $pct   = $totalHl > 0.0
+                ? round($volHl / $totalHl * 100.0, 1)
+                : 0.0;
+            $lots[] = [
+                'batch'  => (string)($bi['batch'] ?? ''),
+                'vol_hl' => $volHl,
+                'pct'    => $pct,
+            ];
+        }
+
+        $result[] = [
+            'bbt'      => (int)$bbtNum,
+            'beer'     => (string)($state['beer'] ?? ''),
+            'total_hl' => $totalHl,
+            'lots'     => $lots,
+        ];
+    }
+
+    // Sort by BBT number ascending for deterministic output.
+    usort($result, fn($a, $b) => $a['bbt'] <=> $b['bbt']);
+
+    return $result;
 }
