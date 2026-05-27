@@ -329,6 +329,48 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   }
 
+  // ── Machine CIP mandatory check — client-side submit guard ────────────
+  // Mirrors the server-side throw: at least one machine CIP (centri / KZE / pompe)
+  // must be active before submission. When none is active, rack_type cannot be derived
+  // server-side → the server rejects anyway, but blocking early gives instant feedback.
+  //
+  // Checks (in priority order):
+  //   1. cip_inline_combine (simultané) is checked — implies centri+KZE both present.
+  //   2. cip_machine_centri is checked (individual mode).
+  //   3. cip_machine_kze    is checked (individual mode).
+  //   4. cip_machine_pump   is checked (individual mode).
+  //
+  // The error banner reuses the existing #racking-warnings panel (aria-live="polite").
+  // Does NOT use hidden-required on the checkboxes — that deadlocks with the CIP partial's
+  // JS (consistent with existing KZE PU section discipline).
+  function cipMachineActive() {
+    var inlineCb = document.getElementById('cip_inline_combine');
+    var centriCb = document.getElementById('cip_machine_centri');
+    var kzeCb    = document.getElementById('cip_machine_kze');
+    var pumpCb   = document.getElementById('cip_machine_pump');
+    return (inlineCb && inlineCb.checked) ||
+           (centriCb && centriCb.checked) ||
+           (kzeCb    && kzeCb.checked)    ||
+           (pumpCb   && pumpCb.checked);
+  }
+
+  var rfForm = document.getElementById('racking-form');
+  if (rfForm) {
+    rfForm.addEventListener('submit', function (e) {
+      if (!cipMachineActive()) {
+        e.preventDefault();
+        var panel = document.getElementById('racking-warnings');
+        if (panel) {
+          panel.hidden = false;
+          panel.textContent =
+            'Au moins un équipement CIP (centri / KZE / pompe) doit être renseigné ' +
+            '— il détermine le type de transfert.';
+          panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      }
+    });
+  }
+
   // ── FormFramework init ────────────────────────────────────────────────
   if (typeof FormFramework !== 'undefined') {
     FormFramework.init({
@@ -359,7 +401,7 @@ document.addEventListener('DOMContentLoaded', function () {
       },
       diffFields: [
         'neb_beer', 'neb_batch', 'contract_beer', 'contract_batch',
-        'rack_type', 'event_date', 'racking_destination_type',
+        'event_date', 'racking_destination_type',
         'bbt_number', 'cct_number', 'yt_number',
         'racked_vol_hl', 'bbt_co2', 'bbt_o2', 'bbt_pressure', 'blend_hl',
       ],
@@ -368,7 +410,6 @@ document.addEventListener('DOMContentLoaded', function () {
         neb_batch:                 'Brassin Nébuleuse',
         contract_beer:             'Recette contrat',
         contract_batch:            'Brassin contrat',
-        rack_type:                 'Type de rack',
         event_date:                'Date',
         racking_destination_type:  'Type destination',
         bbt_number:                'BBT N°',

@@ -97,8 +97,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $nebRecipeId      = post_int('neb_recipe_id_fk');
         $contractRecipeId = post_int('contract_recipe_id_fk');
-        $rackType         = post_str('rack_type');
-        if ($rackType !== null) must_be_one_of('rack_type', $rackType, RACK_TYPES);
+        // rack_type is derived server-side from CIP machine events after cip_parse_post().
+        // (Removed: post_str('rack_type') + must_be_one_of guard — now set below.)
 
         $destType   = post_str('racking_destination_type');
         if ($destType !== null) must_be_one_of('racking_destination_type', $destType, DEST_TYPES);
@@ -172,6 +172,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         // #8 — CIP events via shared parser (old flat fields no longer read from POST)
         $cipEvents = cip_parse_post($_POST, 'racking');
+
+        // Derive rack_type from the machine CIP events.
+        // Centri+KZE (simultané) → two machine events, both present → 'Centri+KZE'.
+        // Pump is a fallback when neither centri nor kze was CIP'd.
+        // No machine event at all → null (column accepts NULL; hash uses '').
+        $machineCodes = [];
+        foreach ($cipEvents as $ev) {
+            if ($ev['target_kind'] === 'machine') {
+                $machineCodes[] = $ev['target_code'];
+            }
+        }
+        $hasCentri = in_array('centri', $machineCodes, true);
+        $hasKze    = in_array('kze',    $machineCodes, true);
+        $hasPump   = in_array('pump',   $machineCodes, true);
+        if ($hasCentri && $hasKze) {
+            $rackType = 'Centri+KZE';
+        } elseif ($hasCentri) {
+            $rackType = 'Centri';
+        } elseif ($hasKze) {
+            $rackType = 'KZE';
+        } elseif ($hasPump) {
+            $rackType = 'Pump';
+        } else {
+            $rackType = null;
+        }
+        // Defensive guard — derived values are all in RACK_TYPES, but verify.
+        if ($rackType !== null) must_be_one_of('rack_type', $rackType, RACK_TYPES);
+
+        // ── Mandatory machine CIP validation ─────────────────────────────
+        // At least one machine CIP (centri / KZE / pompe) must be present.
+        // This both guarantees rack_type is always derived (never NULL) and
+        // enforces the operational rule that every racking goes through equipment.
+        if ($rackType === null) {
+            throw new RuntimeException(
+                "Au moins un équipement CIP (centri / KZE / pompe) doit être renseigné " .
+                "— il détermine le type de transfert."
+            );
+        }
 
         // ── Conditional dest-CIP validation ─────────────────────────────
         // When residual (blend_hl) > 0, dest CIP is optional (blend into same beer).
@@ -843,16 +881,7 @@ $cipConfig = [
                  value="<?= htmlspecialchars(date('Y-m-d')) ?>" required>
         </div>
 
-        <!-- Rack type -->
-        <div class="op-form__field">
-          <label class="op-form__label" for="rack_type">Type de rack</label>
-          <select id="rack_type" name="rack_type" class="op-form__select">
-            <option value="">— sélectionner —</option>
-            <?php foreach (RACK_TYPES as $rt): ?>
-              <option value="<?= htmlspecialchars($rt) ?>"><?= htmlspecialchars($rt) ?></option>
-            <?php endforeach ?>
-          </select>
-        </div>
+        <!-- rack_type removed from form — derived server-side from CIP machine events -->
 
         <!-- Start time -->
         <div class="op-form__field">
