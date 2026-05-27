@@ -148,7 +148,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Redirect target depends on action
     $redirectSec = in_array($action, ['activate_format','deactivate_format','set_binding','update_recipe_yeast'], true)
         ? 'recettes'
-        : ($action === 'update_yeast_family' ? 'biochem' : 'conditionnement');
+        : ($action === 'update_yeast_family' ? 'biochem'
+        : (in_array($action, ['cip_type_add','cip_type_update','cip_type_deactivate','cip_type_reactivate'], true)
+            ? 'cip' : 'conditionnement'));
 
     try {
         $pdo = maltytask_pdo();
@@ -745,6 +747,177 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 . '.'
             );
 
+        // ── cip_type_add ─────────────────────────────────────────────────────
+        } elseif ($action === 'cip_type_add') {
+            // Step 1: read with defaults, then validate (two-step pattern)
+            $rawName = $_POST['cip_name'] ?? '';
+            $name    = trim((string) $rawName);
+            if ($name === '') {
+                throw new RuntimeException('Le nom du type CIP est requis.');
+            }
+            if (mb_strlen($name) > 64) {
+                throw new RuntimeException('Le nom du type CIP ne peut pas dépasser 64 caractères.');
+            }
+
+            $rawOrder  = isset($_POST['cip_sort_order']) ? trim((string) $_POST['cip_sort_order']) : '';
+            $sortOrder = 0;
+            if ($rawOrder !== '') {
+                if (!ctype_digit($rawOrder)) {
+                    throw new RuntimeException('L\'ordre de tri doit être un entier positif.');
+                }
+                $sortOrder = (int) $rawOrder;
+            }
+
+            $pdo->beginTransaction();
+            try {
+                $insStmt = $pdo->prepare(
+                    "INSERT INTO ref_cip_types (name, sort_order, is_active, updated_by)
+                     VALUES (?, ?, 1, ?)"
+                );
+                $insStmt->execute([$name, $sortOrder, $me['username']]);
+                $newId = (int) $pdo->lastInsertId();
+                log_revision($pdo, $me, 'ref_cip_types', $newId,
+                    null,
+                    ['name' => $name, 'sort_order' => $sortOrder, 'is_active' => 1],
+                    'normal',
+                    "Salle de contrôle: ajout type CIP «{$name}»");
+                $pdo->commit();
+            } catch (Throwable $e) {
+                $pdo->rollBack();
+                // Catch UNIQUE violation for friendly flash
+                if (str_contains($e->getMessage(), '1062')) {
+                    throw new RuntimeException(
+                        "Un type CIP nommé «" . htmlspecialchars($name) . "» existe déjà."
+                    );
+                }
+                throw $e;
+            }
+            flash_set('ok', "Type CIP «" . htmlspecialchars($name) . "» ajouté.");
+
+        // ── cip_type_update ──────────────────────────────────────────────────
+        } elseif ($action === 'cip_type_update') {
+            $cipId = (int) ($_POST['cip_id'] ?? 0);
+            if ($cipId <= 0) {
+                throw new RuntimeException('Identifiant type CIP invalide.');
+            }
+
+            $rawName = $_POST['cip_name'] ?? '';
+            $name    = trim((string) $rawName);
+            if ($name === '') {
+                throw new RuntimeException('Le nom du type CIP est requis.');
+            }
+            if (mb_strlen($name) > 64) {
+                throw new RuntimeException('Le nom du type CIP ne peut pas dépasser 64 caractères.');
+            }
+
+            $rawOrder  = isset($_POST['cip_sort_order']) ? trim((string) $_POST['cip_sort_order']) : '';
+            $sortOrder = 0;
+            if ($rawOrder !== '') {
+                if (!ctype_digit($rawOrder)) {
+                    throw new RuntimeException('L\'ordre de tri doit être un entier positif.');
+                }
+                $sortOrder = (int) $rawOrder;
+            }
+
+            // Fetch before-state
+            $beforeStmt = $pdo->prepare(
+                "SELECT id, name, sort_order, is_active FROM ref_cip_types WHERE id = ? LIMIT 1"
+            );
+            $beforeStmt->execute([$cipId]);
+            $beforeRow = $beforeStmt->fetch(PDO::FETCH_ASSOC);
+            if (!$beforeRow) {
+                throw new RuntimeException('Type CIP introuvable.');
+            }
+
+            $pdo->beginTransaction();
+            try {
+                $upStmt = $pdo->prepare(
+                    "UPDATE ref_cip_types SET name = ?, sort_order = ?, updated_by = ? WHERE id = ?"
+                );
+                $upStmt->execute([$name, $sortOrder, $me['username'], $cipId]);
+                log_revision($pdo, $me, 'ref_cip_types', $cipId,
+                    ['name' => $beforeRow['name'], 'sort_order' => $beforeRow['sort_order']],
+                    ['name' => $name, 'sort_order' => $sortOrder],
+                    'normal',
+                    "Salle de contrôle: modification type CIP id={$cipId}");
+                $pdo->commit();
+            } catch (Throwable $e) {
+                $pdo->rollBack();
+                if (str_contains($e->getMessage(), '1062')) {
+                    throw new RuntimeException(
+                        "Un type CIP nommé «" . htmlspecialchars($name) . "» existe déjà."
+                    );
+                }
+                throw $e;
+            }
+            flash_set('ok', "Type CIP «" . htmlspecialchars($name) . "» modifié.");
+
+        // ── cip_type_deactivate ──────────────────────────────────────────────
+        } elseif ($action === 'cip_type_deactivate') {
+            $cipId = (int) ($_POST['cip_id'] ?? 0);
+            if ($cipId <= 0) {
+                throw new RuntimeException('Identifiant type CIP invalide.');
+            }
+
+            $beforeStmt = $pdo->prepare(
+                "SELECT id, name, is_active FROM ref_cip_types WHERE id = ? LIMIT 1"
+            );
+            $beforeStmt->execute([$cipId]);
+            $beforeRow = $beforeStmt->fetch(PDO::FETCH_ASSOC);
+            if (!$beforeRow) {
+                throw new RuntimeException('Type CIP introuvable.');
+            }
+
+            $pdo->beginTransaction();
+            try {
+                $pdo->prepare(
+                    "UPDATE ref_cip_types SET is_active = 0, updated_by = ? WHERE id = ?"
+                )->execute([$me['username'], $cipId]);
+                log_revision($pdo, $me, 'ref_cip_types', $cipId,
+                    ['is_active' => 1],
+                    ['is_active' => 0],
+                    'normal',
+                    "Salle de contrôle: désactivation type CIP «{$beforeRow['name']}»");
+                $pdo->commit();
+            } catch (Throwable $e) {
+                $pdo->rollBack();
+                throw $e;
+            }
+            flash_set('ok', "Type CIP «" . htmlspecialchars((string) $beforeRow['name']) . "» désactivé.");
+
+        // ── cip_type_reactivate ──────────────────────────────────────────────
+        } elseif ($action === 'cip_type_reactivate') {
+            $cipId = (int) ($_POST['cip_id'] ?? 0);
+            if ($cipId <= 0) {
+                throw new RuntimeException('Identifiant type CIP invalide.');
+            }
+
+            $beforeStmt = $pdo->prepare(
+                "SELECT id, name, is_active FROM ref_cip_types WHERE id = ? LIMIT 1"
+            );
+            $beforeStmt->execute([$cipId]);
+            $beforeRow = $beforeStmt->fetch(PDO::FETCH_ASSOC);
+            if (!$beforeRow) {
+                throw new RuntimeException('Type CIP introuvable.');
+            }
+
+            $pdo->beginTransaction();
+            try {
+                $pdo->prepare(
+                    "UPDATE ref_cip_types SET is_active = 1, updated_by = ? WHERE id = ?"
+                )->execute([$me['username'], $cipId]);
+                log_revision($pdo, $me, 'ref_cip_types', $cipId,
+                    ['is_active' => 0],
+                    ['is_active' => 1],
+                    'normal',
+                    "Salle de contrôle: réactivation type CIP «{$beforeRow['name']}»");
+                $pdo->commit();
+            } catch (Throwable $e) {
+                $pdo->rollBack();
+                throw $e;
+            }
+            flash_set('ok', "Type CIP «" . htmlspecialchars((string) $beforeRow['name']) . "» réactivé.");
+
         } else {
             throw new RuntimeException('Action inconnue.');
         }
@@ -1065,6 +1238,21 @@ try {
     $recipeYeastError = $e->getMessage();
 }
 
+// --- CIP types (ref_cip_types) -----------------------------------------------
+$cipTypes    = [];
+$cipLoadErr  = null;
+try {
+    $pdo = maltytask_pdo();
+    $cipStmt = $pdo->query(
+        "SELECT id, name, sort_order, is_active, notes, updated_at, updated_by
+           FROM ref_cip_types
+          ORDER BY sort_order ASC, id ASC"
+    );
+    $cipTypes = $cipStmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (Throwable $e) {
+    $cipLoadErr = $e->getMessage();
+}
+
 $minDaysSetting = $settingsByKey['min_days_after_racking'] ?? null;
 $minDaysCurrent = $minDaysSetting !== null
     ? (float) ($minDaysSetting['value_num'] ?? $minDaysSetting['default_num'] ?? 1)
@@ -1075,7 +1263,7 @@ $csrf = csrf_token();
 
 // Active section from query string (for PRG redirect after save)
 $sec = $_GET['sec'] ?? '';
-$initialSec = in_array($sec, ['recettes', 'biochem', 'conditionnement'], true)
+$initialSec = in_array($sec, ['recettes', 'biochem', 'conditionnement', 'cip'], true)
     ? $sec : 'recettes';
 
 ?><!doctype html>
@@ -1108,6 +1296,17 @@ window.SDC_YEAST_STRAINS = <?= json_encode(
 ) ?>;
 window.SDC_RECIPE_YEAST = <?= json_encode($recipeYeastData, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
 window.SDC_YEAST_FAMILY_LABELS = <?= json_encode(YEAST_FAMILY_LABELS, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+window.SDC_CIP_TYPES = <?= json_encode(
+    array_map(fn($ct) => [
+        'id'         => (int)    $ct['id'],
+        'name'       => (string) $ct['name'],
+        'sort_order' => (int)    $ct['sort_order'],
+        'is_active'  => (int)    $ct['is_active'],
+        'notes'      => $ct['notes'] !== null ? (string) $ct['notes'] : null,
+        'updated_by' => $ct['updated_by'] !== null ? (string) $ct['updated_by'] : null,
+    ], $cipTypes),
+    JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP
+) ?>;
 </script>
 </head>
 <body class="sdc-page" data-role="<?= htmlspecialchars($me['role'] ?? 'operateur') ?>">
@@ -1197,6 +1396,16 @@ window.SDC_YEAST_FAMILY_LABELS = <?= json_encode(YEAST_FAMILY_LABELS, JSON_UNESC
         </svg>
       </span>
       Conditionnement
+    </div>
+    <div class="nav-item" data-sec="cip" onclick="switchSection('cip')">
+      <span class="nav-icon">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <circle cx="8" cy="8" r="5.5" stroke="currentColor" stroke-width="1.2"/>
+          <path d="M5.5 8c0-.7.3-1.3.8-1.7M10.5 8a2.5 2.5 0 0 1-5 0" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
+          <path d="M8 3.5v1M8 11.5v1M3.5 8h-1M13.5 8h-1" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
+        </svg>
+      </span>
+      CIP
     </div>
 
     <div class="nav-section-label" style="margin-top:16px;">À venir</div>
@@ -1842,6 +2051,160 @@ window.SDC_YEAST_FAMILY_LABELS = <?= json_encode(YEAST_FAMILY_LABELS, JSON_UNESC
         </div>
       </div>
     </div><!-- /sec-conditionnement -->
+
+    <!-- ════════════════════════════════ CIP SECTION (LIVE) -->
+    <div class="section-panel" id="sec-cip">
+      <div class="cip-layout">
+        <div class="cip-header">
+          <h2>Types <em>CIP</em></h2>
+          <div class="cip-header-sub">Liste de référence · Nettoyage En Place · ref_cip_types · utilisée dans les formulaires CIP</div>
+        </div>
+
+        <?php if ($initialSec === 'cip'): ?>
+          <?php $flashMsg = flash_pop(); if ($flashMsg): ?>
+          <div class="sdc-flash sdc-flash--<?= $flashMsg['type'] === 'ok' ? 'ok' : 'err' ?>">
+            <?= $flashMsg['type'] === 'ok' ? '✓' : '⚠' ?> <?= htmlspecialchars($flashMsg['msg']) ?>
+          </div>
+          <?php endif ?>
+        <?php endif ?>
+
+        <?php if ($cipLoadErr): ?>
+          <div class="sdc-flash sdc-flash--err">Erreur DB CIP : <?= htmlspecialchars($cipLoadErr) ?></div>
+        <?php else: ?>
+
+        <!-- ADD FORM (admin only) -->
+        <?php if (is_admin($me)): ?>
+        <div class="cip-add-card">
+          <div class="cip-add-head">
+            <span class="cip-add-title">Ajouter un type CIP</span>
+          </div>
+          <form method="post" action="/modules/salle-de-controle.php" class="cip-add-form" novalidate>
+            <input type="hidden" name="csrf"   value="<?= htmlspecialchars($csrf) ?>">
+            <input type="hidden" name="action" value="cip_type_add">
+            <div class="cip-form-row">
+              <div class="cip-form-field">
+                <label class="cip-form-label" for="cip_name_new">Nom</label>
+                <input type="text" name="cip_name" id="cip_name_new"
+                       class="cip-form-input" maxlength="64"
+                       placeholder="ex. Soude 2%" required autocomplete="off">
+              </div>
+              <div class="cip-form-field cip-form-field--narrow">
+                <label class="cip-form-label" for="cip_sort_new">Ordre</label>
+                <input type="number" name="cip_sort_order" id="cip_sort_new"
+                       class="cip-form-input" min="0" step="1" placeholder="0">
+              </div>
+              <button type="submit" class="cip-add-btn">Ajouter</button>
+            </div>
+          </form>
+        </div>
+        <?php endif ?>
+
+        <!-- LIST TABLE -->
+        <div class="cip-table-card">
+          <div class="cip-table-head">
+            <span class="cip-table-title">Types enregistrés</span>
+            <span class="cip-count"><?= count($cipTypes) ?> type<?= count($cipTypes) !== 1 ? 's' : '' ?></span>
+          </div>
+          <?php if (empty($cipTypes)): ?>
+            <div class="cip-empty">Aucun type CIP enregistré.</div>
+          <?php else: ?>
+          <table class="cip-table">
+            <thead>
+              <tr>
+                <th class="cip-th cip-th--order">Ordre</th>
+                <th class="cip-th">Nom</th>
+                <th class="cip-th cip-th--status">État</th>
+                <?php if (is_admin($me)): ?><th class="cip-th cip-th--actions">Actions</th><?php endif ?>
+              </tr>
+            </thead>
+            <tbody>
+            <?php foreach ($cipTypes as $ct):
+                $ctId      = (int)    $ct['id'];
+                $ctName    = (string) $ct['name'];
+                $ctOrder   = (int)    $ct['sort_order'];
+                $ctActive  = (bool)   $ct['is_active'];
+                $ctUpdBy   = $ct['updated_by'] !== null ? (string) $ct['updated_by'] : null;
+            ?>
+              <tr class="cip-row<?= !$ctActive ? ' cip-row--inactive' : '' ?>">
+                <td class="cip-td cip-td--order">
+                  <span class="cip-order-badge"><?= $ctOrder ?></span>
+                </td>
+                <td class="cip-td">
+                  <span class="cip-name"><?= htmlspecialchars($ctName) ?></span>
+                  <?php if ($ctUpdBy): ?>
+                    <span class="cip-by" title="Dernière modif par <?= htmlspecialchars($ctUpdBy) ?>">· <?= htmlspecialchars($ctUpdBy) ?></span>
+                  <?php endif ?>
+                </td>
+                <td class="cip-td cip-td--status">
+                  <?php if ($ctActive): ?>
+                    <span class="cip-badge cip-badge--active">Actif</span>
+                  <?php else: ?>
+                    <span class="cip-badge cip-badge--inactive">Inactif</span>
+                  <?php endif ?>
+                </td>
+                <?php if (is_admin($me)): ?>
+                <td class="cip-td cip-td--actions">
+                  <div class="cip-action-group">
+                    <!-- Edit inline form -->
+                    <details class="cip-edit-details">
+                      <summary class="cip-edit-toggle">Modifier</summary>
+                      <form method="post" action="/modules/salle-de-controle.php"
+                            class="cip-edit-form" novalidate>
+                        <input type="hidden" name="csrf"        value="<?= htmlspecialchars($csrf) ?>">
+                        <input type="hidden" name="action"      value="cip_type_update">
+                        <input type="hidden" name="cip_id"      value="<?= $ctId ?>">
+                        <div class="cip-edit-row">
+                          <input type="text" name="cip_name" class="cip-form-input cip-form-input--sm"
+                                 maxlength="64" value="<?= htmlspecialchars($ctName) ?>" required>
+                          <input type="number" name="cip_sort_order" class="cip-form-input cip-form-input--xs"
+                                 min="0" step="1" value="<?= $ctOrder ?>">
+                          <button type="submit" class="cip-edit-btn">OK</button>
+                        </div>
+                      </form>
+                    </details>
+                    <!-- Deactivate / Reactivate -->
+                    <?php if ($ctActive): ?>
+                    <form method="post" action="/modules/salle-de-controle.php" style="display:inline;">
+                      <input type="hidden" name="csrf"   value="<?= htmlspecialchars($csrf) ?>">
+                      <input type="hidden" name="action" value="cip_type_deactivate">
+                      <input type="hidden" name="cip_id" value="<?= $ctId ?>">
+                      <button type="submit" class="cip-deact-btn"
+                              onclick="return confirm('Désactiver «<?= htmlspecialchars(addslashes($ctName)) ?>» ?')">
+                        Désactiver
+                      </button>
+                    </form>
+                    <?php else: ?>
+                    <form method="post" action="/modules/salle-de-controle.php" style="display:inline;">
+                      <input type="hidden" name="csrf"   value="<?= htmlspecialchars($csrf) ?>">
+                      <input type="hidden" name="action" value="cip_type_reactivate">
+                      <input type="hidden" name="cip_id" value="<?= $ctId ?>">
+                      <button type="submit" class="cip-react-btn">Réactiver</button>
+                    </form>
+                    <?php endif ?>
+                  </div>
+                </td>
+                <?php endif ?>
+              </tr>
+            <?php endforeach ?>
+            </tbody>
+          </table>
+          <?php endif ?>
+        </div><!-- /cip-table-card -->
+
+        <div class="impl-note" style="margin-top:20px;">
+          <div class="impl-note-head">Persistance &amp; audit</div>
+          <div class="impl-note-body">
+            Les types CIP sont lus depuis <code>ref_cip_types</code>.
+            Les formulaires de saisie CIP (<code>bd_cip_events.cip_type_id_fk</code>) lisent cette
+            liste en filtrant <code>is_active = 1</code>. La désactivation est douce (soft) — les
+            historiques existants sont préservés par la contrainte FK RESTRICT.
+            Chaque modification est journalisée dans <code>audit_row_revisions</code>.
+          </div>
+        </div>
+
+        <?php endif ?><!-- /cipLoadErr -->
+      </div>
+    </div><!-- /sec-cip -->
 
   </div><!-- /content-area -->
 </div><!-- /sdc-stage -->
