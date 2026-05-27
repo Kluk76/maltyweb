@@ -31,8 +31,16 @@ require_once __DIR__ . '/recipe-resolver.php';
  */
 class TankSimulator
 {
+    // Default fallback values — used when commissioning_settings rows are absent.
+    // MUST match migration 184 seed values (0.9000 / 0.1500) byte-for-byte.
+    // These feed WIP and COGS calculations — any drift is a silent COGS bug.
     private const RACKING_LOSS_HL        = 0.9;
     private const PACKAGING_LOSS_HL      = 0.15;
+
+    // Instance props loaded from commissioning_settings in __construct().
+    // Coalesce to class consts when the DB row is absent (first-run safety).
+    private float $rackingLossHl;
+    private float $packagingLossHl;
     private const MAX_TANK_AGE_DAYS      = 180;
     private const BBT_EMPTY_THRESHOLD_HL = 2.5;
     private const SIM_START_DATE         = '2023-10-01';
@@ -217,7 +225,26 @@ class TankSimulator
         return self::BEER_TO_PREFIX[$beer] ?? $beer;
     }
 
-    public function __construct(private readonly PDO $pdo) {}
+    public function __construct(private readonly PDO $pdo)
+    {
+        // ONE read at construction time — no per-event DB hits.
+        // Fetches the two COGS-critical HL loss constants from commissioning_settings.
+        // Coalesces to class-const defaults when the DB row is absent (safe bootstrap).
+        $stmt = $this->pdo->prepare(
+            "SELECT key_name, value_num
+               FROM commissioning_settings
+              WHERE section = 'pertes'
+                AND key_name IN ('pertes_racking_loss_hl', 'pertes_packaging_loss_hl')
+                AND is_active = 1"
+        );
+        $stmt->execute();
+        $pertes = [];
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $pertes[$row['key_name']] = (float) $row['value_num'];
+        }
+        $this->rackingLossHl   = $pertes['pertes_racking_loss_hl']   ?? self::RACKING_LOSS_HL;
+        $this->packagingLossHl = $pertes['pertes_packaging_loss_hl'] ?? self::PACKAGING_LOSS_HL;
+    }
 
     // ─────────────────────────────────────────────────────────────────────────
     // Public entry point
@@ -375,7 +402,7 @@ class TankSimulator
                     $cctState[$e['cct']] = null;
                 }
 
-                $netRacked = max(0.0, $e['racked_vol'] - self::RACKING_LOSS_HL);
+                $netRacked = max(0.0, $e['racked_vol'] - $this->rackingLossHl);
                 $bbt       = $e['bbt'];
                 $existing  = $bbtState[$bbt] ?? null;
 
@@ -428,6 +455,34 @@ class TankSimulator
 
                 $batchBBT[$e['beer'] . '|' . $e['batch']] = $bbt;
 
+                // C3 — Apply loss_dest_hl AFTER the fill/blend-in.
+                // Semantics: operator-entered volume lost at/inside the destination tank
+                // (spillage, dead-leg, etc.). Draw-down is pro-rata across the newly blended
+                // lot composition so that sum(blend_info[].vol) == volume_hl is maintained.
+                // Order: fill/blend-in first (above), THEN loss_dest decrement — this is the
+                // correct physical sequence (liquid entered the tank, then some was lost).
+                //
+                // loss_source_hl: SELECT'd and carried on the event, but source-CCT occupancy
+                // is NOT reduced here. Normal racking already zeroes the source CCT (line
+                // `$cctState[$e['cct']] = null` above). The interrupted partial-decrement of
+                // the source CCT lands in C4. A comment is left here to make the gap explicit.
+                // (C4: interrupted_flag=1 → source CCT gets partial decrement = racked_vol_hl,
+                //  not full empty; loss_source_hl further reduces that partial remaining vol.)
+                $lossDestHl = (float)($e['loss_dest_hl'] ?? 0.0);
+                if ($lossDestHl > 0.0 && $bbtState[$bbt] !== null) {
+                    $prevVol = $bbtState[$bbt]['volume_hl'];
+                    $bbtState[$bbt]['volume_hl'] = max(0.0, $prevVol - $lossDestHl);
+                    $this->_bbt_prorata_decrement(
+                        $bbtState[$bbt]['blend_info'],
+                        $prevVol,
+                        $lossDestHl
+                    );
+                    // Null the BBT if it drops below the dead-volume threshold
+                    if ($bbtState[$bbt]['volume_hl'] < self::BBT_EMPTY_THRESHOLD_HL) {
+                        $bbtState[$bbt] = null;
+                    }
+                }
+
                 // Apply deferred packaging deductions (racking form arrived late).
                 // Each deduction must also shrink blend_info pro-rata so that
                 // lot volumes stay consistent with the updated volume_hl.
@@ -461,7 +516,7 @@ class TankSimulator
                     // Jasper filled).  If the BBT's current beer differs, the
                     // packaged content is gone — skip the deduction.
                     if ($bbtState[$bbt]['beer'] === $e['beer']) {
-                        $deduct      = $e['hl'] + self::PACKAGING_LOSS_HL;
+                        $deduct      = $e['hl'] + $this->packagingLossHl;
                         $prevVol     = $bbtState[$bbt]['volume_hl'];
                         $bbtState[$bbt]['volume_hl'] = max(0.0, $prevVol - $deduct);
                         // Keep blend_info in sync: scale lots pro-rata so their
@@ -479,7 +534,7 @@ class TankSimulator
                     // already drained off the floor before this BBT was re-filled.
                 } elseif ($bbt !== null && empty($bbtState[$bbt])) {
                     // Racking form not yet seen — defer
-                    $pendingDeductions[$bbt][] = $e['hl'] + self::PACKAGING_LOSS_HL;
+                    $pendingDeductions[$bbt][] = $e['hl'] + $this->packagingLossHl;
                 }
                 break;
         }
@@ -606,6 +661,8 @@ class TankSimulator
                     bbt_old,
                     racked_vol_hl,
                     blend_hl                            AS blend_text,
+                    loss_source_hl,
+                    loss_dest_hl,
                     COALESCE(start_time, submitted_at)  AS rack_date
              FROM bd_racking_v2
              WHERE COALESCE(start_time, submitted_at) IS NOT NULL'
@@ -628,16 +685,27 @@ class TankSimulator
             $key = $beer . '|' . $batch;
             $cct = $batchCCT[$key] ?? '?';
 
+            // C3 — carry loss columns on the event.
+            // loss_source_hl: SELECT'd and carried but source-CCT occupancy is NOT
+            // adjusted in this commit (normal racking already full-empties the CCT).
+            // Source occupancy handling for interrupted transfers lands in C4.
+            $lossSourceHl = isset($row['loss_source_hl']) && $row['loss_source_hl'] !== null
+                ? (float)$row['loss_source_hl'] : 0.0;
+            $lossDestHl = isset($row['loss_dest_hl']) && $row['loss_dest_hl'] !== null
+                ? (float)$row['loss_dest_hl'] : 0.0;
+
             $events[] = [
-                'type'          => 'RACKING',
-                'date'          => $date,
-                'beer'          => $beer,
-                'batch'         => $batch,
-                'cct'           => $cct,
-                'bbt'           => (string)$bbt,
-                'racked_vol'    => $rackedVol,
-                'blend_vol'     => $blendVol,
-                'sort_priority' => 0,
+                'type'           => 'RACKING',
+                'date'           => $date,
+                'beer'           => $beer,
+                'batch'          => $batch,
+                'cct'            => $cct,
+                'bbt'            => (string)$bbt,
+                'racked_vol'     => $rackedVol,
+                'blend_vol'      => $blendVol,
+                'loss_source_hl' => $lossSourceHl,
+                'loss_dest_hl'   => $lossDestHl,
+                'sort_priority'  => 0,
             ];
         }
         return $events;

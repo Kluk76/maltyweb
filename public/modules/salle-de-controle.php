@@ -7,10 +7,12 @@ declare(strict_types=1);
  * Recettes + Biochimie: data-wired for Formats subtab (activate/deactivate SKU formats,
  *   manage placeholder bindings label/can/sticker/holder/outer_tray/scotch).
  * Conditionnement: LIVE — reads/writes commissioning_settings (section='packaging').
+ * Pertes: LIVE — reads/writes commissioning_settings (section='pertes').
  *
  * Auth: require_login() — all logged-in users can view; edit gated to is_admin().
  * POST handlers:
  *   update_min_days     — Conditionnement settings (admin only)
+ *   update_pertes_config — Pertes constants + thresholds (admin/manager only)
  *   update_yeast_family — Biochimie yeast-family defaults (admin only)
  *   activate_format     — upsert ref_skus row for (recipe_id, format_id) (admin only)
  *   deactivate_format   — soft-deactivate ref_skus row (admin only)
@@ -150,8 +152,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $redirectSec = in_array($action, ['activate_format','deactivate_format','set_binding','update_recipe_yeast','update_recipe_qc'], true)
         ? 'recettes'
         : ($action === 'update_yeast_family' ? 'biochem'
+        : ($action === 'update_pertes_config' ? 'pertes'
         : (in_array($action, ['cip_type_add','cip_type_update','cip_type_deactivate','cip_type_reactivate'], true)
-            ? 'cip' : 'conditionnement'));
+            ? 'cip' : 'conditionnement')));
 
     try {
         $pdo = maltytask_pdo();
@@ -1048,6 +1051,88 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             flash_set('ok', "Type CIP «" . htmlspecialchars((string) $beforeRow['name']) . "» réactivé.");
 
+        // ── update_pertes_config ─────────────────────────────────────────────
+        // Edits commissioning_settings rows for section='pertes'.
+        // Role gate: admin or manager (HL constants are COGS-critical).
+        // Input: key_name (validated against allowed list) + value_num (float).
+        // Pattern: read-then-validate → UPDATE → log_revision audit (before/after).
+        } elseif ($action === 'update_pertes_config') {
+            if (!is_admin($me) && !is_manager($me)) {
+                flash_set('err', 'Modification réservée aux administrateurs et managers.');
+                redirect_to('/modules/salle-de-controle.php?sec=pertes');
+            }
+
+            // Allowed keys — whitelist prevents arbitrary key_name injection.
+            $allowedKeys = [
+                'pertes_racking_loss_hl',
+                'pertes_packaging_loss_hl',
+                'pertes_rack_warn_pct',
+                'pertes_packaging_warn_pct',
+                'pertes_brewing_warn_pct',
+                'pertes_total_effectif_warn_pct',
+                'pertes_total_nominal_warn_pct',
+            ];
+
+            // ── Step 1: read with defaults, then validate ────────────────────
+            $rawKey = post_str('key_name');
+            $keyName = must_be_one_of('key_name', (string) $rawKey, $allowedKeys);
+
+            $rawVal = post_decimal('value_num');
+            if ($rawVal === null) {
+                throw new RuntimeException('Valeur requise.');
+            }
+            $newVal = (float) $rawVal;
+            if ($newVal < 0.0) {
+                throw new RuntimeException('La valeur doit être ≥ 0.');
+            }
+            // % thresholds: 0–100
+            $isPctKey = str_ends_with($keyName, '_pct');
+            if ($isPctKey && $newVal > 100.0) {
+                throw new RuntimeException('Le seuil en % doit être compris entre 0 et 100.');
+            }
+
+            // ── Step 2: fetch current row for before-state ───────────────────
+            $fetchStmt = $pdo->prepare(
+                "SELECT id, value_num, label_fr
+                   FROM commissioning_settings
+                  WHERE section = 'pertes' AND key_name = ? AND is_active = 1
+                  LIMIT 1"
+            );
+            $fetchStmt->execute([$keyName]);
+            $existing = $fetchStmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$existing) {
+                throw new RuntimeException(
+                    'Paramètre introuvable — la migration 184 doit être appliquée.'
+                );
+            }
+
+            $before = ['value_num' => $existing['value_num']];
+            $after  = ['value_num' => $newVal];
+
+            // ── Step 3: UPDATE ───────────────────────────────────────────────
+            $upStmt = $pdo->prepare(
+                "UPDATE commissioning_settings
+                    SET value_num = ?, updated_by = ?
+                  WHERE section = 'pertes' AND key_name = ? AND is_active = 1"
+            );
+            $upStmt->execute([$newVal, $me['username'], $keyName]);
+
+            // ── Step 4: audit ────────────────────────────────────────────────
+            log_revision(
+                $pdo,
+                $me,
+                'commissioning_settings',
+                (int) $existing['id'],
+                $before,
+                $after,
+                'normal',
+                'Salle de contrôle: pertes.' . $keyName
+            );
+
+            $label = htmlspecialchars((string) $existing['label_fr']);
+            flash_set('ok', "Paramètre « {$label} » mis à jour : {$newVal}.");
+
         } else {
             throw new RuntimeException('Action inconnue.');
         }
@@ -1085,6 +1170,28 @@ try {
     $settingsByKey     = [];
     $migrationApplied  = false;
     $loadErr           = $e->getMessage();
+}
+
+// --- Pertes settings (section='pertes') --------------------------------------
+// Key order drives UI display order; fetched by id ASC (insertion order = migration order).
+$pertesSettings  = [];
+$pertesByKey     = [];
+$pertesLoadErr   = null;
+try {
+    $pdo = maltytask_pdo();
+    $pStmt = $pdo->prepare(
+        "SELECT key_name, label_fr, description_fr, value_num, default_num, unit_fr
+           FROM commissioning_settings
+          WHERE section = 'pertes' AND is_active = 1
+          ORDER BY id ASC"
+    );
+    $pStmt->execute();
+    $pertesSettings = $pStmt->fetchAll(PDO::FETCH_ASSOC);
+    foreach ($pertesSettings as $ps) {
+        $pertesByKey[$ps['key_name']] = $ps;
+    }
+} catch (Throwable $e) {
+    $pertesLoadErr = $e->getMessage();
 }
 
 // --- Biochimie data (ref_yeast_family_defaults) ------------------------------
@@ -1448,7 +1555,7 @@ $csrf = csrf_token();
 
 // Active section from query string (for PRG redirect after save)
 $sec = $_GET['sec'] ?? '';
-$initialSec = in_array($sec, ['recettes', 'biochem', 'conditionnement', 'cip'], true)
+$initialSec = in_array($sec, ['recettes', 'biochem', 'conditionnement', 'cip', 'pertes'], true)
     ? $sec : 'recettes';
 
 ?><!doctype html>
@@ -1592,6 +1699,17 @@ window.SDC_CIP_TYPES = <?= json_encode(
         </svg>
       </span>
       CIP
+    </div>
+
+    <div class="nav-item" data-sec="pertes" onclick="switchSection('pertes')">
+      <span class="nav-icon">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <path d="M8 2v4M8 2L6 4M8 2l2 2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M3 8h10M3 12h10" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" opacity=".5"/>
+          <path d="M5 8l3 4 3-4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </span>
+      Pertes
     </div>
 
     <div class="nav-section-label" style="margin-top:16px;">À venir</div>
@@ -2502,6 +2620,174 @@ window.SDC_CIP_TYPES = <?= json_encode(
         <?php endif ?><!-- /cipLoadErr -->
       </div>
     </div><!-- /sec-cip -->
+
+    <!-- ════════════════════════════════ PERTES SECTION (LIVE) -->
+    <div class="section-panel" id="sec-pertes">
+      <div class="cip-layout">
+        <div class="cip-header">
+          <h2>Constantes <em>Pertes</em></h2>
+          <div class="cip-header-sub">Pertes process · TankSimulator · commissioning_settings section='pertes'</div>
+        </div>
+
+        <?php if ($initialSec === 'pertes'): ?>
+          <?php $flashMsg = flash_pop(); if ($flashMsg): ?>
+          <div class="sdc-flash sdc-flash--<?= $flashMsg['type'] === 'ok' ? 'ok' : 'err' ?>">
+            <?= $flashMsg['type'] === 'ok' ? '✓' : '⚠' ?> <?= htmlspecialchars($flashMsg['msg']) ?>
+          </div>
+          <?php endif ?>
+        <?php endif ?>
+
+        <?php if ($pertesLoadErr): ?>
+          <div class="sdc-flash sdc-flash--err">Erreur DB Pertes : <?= htmlspecialchars($pertesLoadErr) ?></div>
+        <?php elseif (empty($pertesSettings)): ?>
+          <div class="sdc-flash sdc-flash--err">Migration 184 non appliquée — paramètres Pertes indisponibles.</div>
+        <?php else: ?>
+
+        <!-- COGS-CRITICAL BLOCK — HL losses fed into TankSimulator -->
+        <div class="cip-table-card" style="margin-bottom:20px;">
+          <div class="cip-table-head">
+            <span class="cip-table-title">Constantes fixes <abbr title="Ces valeurs alimentent le TankSimulator et affectent directement le calcul WIP et COGS">⚠ COGS/WIP</abbr></span>
+            <span class="cip-count">2 paramètres</span>
+          </div>
+          <div style="padding:12px 16px 4px;font-size:12px;line-height:1.5;color:var(--ember);background:rgba(180,100,40,.07);border-bottom:1px solid rgba(180,100,40,.15);">
+            <b>Ces deux valeurs alimentent directement le TankSimulator.</b>
+            Toute modification change les volumes en cuve simulés et les coûts COGS/WIP.
+            Valider avec le brasseur avant toute modification.
+          </div>
+          <?php
+          $hlKeys = ['pertes_racking_loss_hl', 'pertes_packaging_loss_hl'];
+          foreach ($hlKeys as $hk):
+            if (!isset($pertesByKey[$hk])) continue;
+            $ps = $pertesByKey[$hk];
+            $curVal  = (float) $ps['value_num'];
+            $defVal  = $ps['default_num'] !== null ? (float) $ps['default_num'] : null;
+            $isAdmin = is_admin($me) || is_manager($me);
+          ?>
+          <div style="padding:14px 16px;border-bottom:1px solid rgba(0,0,0,.06);">
+            <div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+              <div>
+                <span style="font-weight:600;color:var(--ink);"><?= htmlspecialchars($ps['label_fr']) ?></span>
+                <?php if ($defVal !== null): ?>
+                  <span class="csr-default-note" style="margin-left:8px;">(défaut : <?= number_format($defVal, 4) ?> <?= htmlspecialchars($ps['unit_fr'] ?? '') ?>)</span>
+                <?php endif ?>
+              </div>
+              <span style="font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:700;color:var(--ember);">
+                <?= number_format($curVal, 4) ?> <span style="font-size:11px;font-weight:400;"><?= htmlspecialchars($ps['unit_fr'] ?? '') ?></span>
+              </span>
+            </div>
+            <?php if ($ps['description_fr']): ?>
+            <p style="font-size:11px;color:var(--ink-soft);margin:0 0 10px;"><?= htmlspecialchars($ps['description_fr']) ?></p>
+            <?php endif ?>
+            <?php if ($isAdmin): ?>
+            <form method="post" action="/modules/salle-de-controle.php" class="cond-edit-form" novalidate>
+              <input type="hidden" name="csrf"       value="<?= htmlspecialchars($csrf) ?>">
+              <input type="hidden" name="action"     value="update_pertes_config">
+              <input type="hidden" name="key_name"   value="<?= htmlspecialchars($hk) ?>">
+              <div class="cond-edit-row">
+                <label class="cond-edit-label" for="pertes_val_<?= htmlspecialchars($hk) ?>">
+                  Nouvelle valeur
+                  <span class="cond-edit-unit">(<?= htmlspecialchars($ps['unit_fr'] ?? '') ?>)</span>
+                </label>
+                <input
+                  id="pertes_val_<?= htmlspecialchars($hk) ?>"
+                  name="value_num"
+                  type="number"
+                  min="0"
+                  step="0.0001"
+                  class="cond-edit-input"
+                  value="<?= htmlspecialchars(number_format($curVal, 4)) ?>"
+                  required
+                >
+                <button type="submit" class="cond-edit-btn"
+                        onclick="return confirm('⚠ Modifier une constante COGS/WIP — confirmer ?')">
+                  Enregistrer
+                </button>
+              </div>
+            </form>
+            <?php else: ?>
+            <p class="cond-readonly-note">Modification réservée aux administrateurs et managers.</p>
+            <?php endif ?>
+          </div>
+          <?php endforeach ?>
+        </div><!-- /HL loss constants card -->
+
+        <!-- ADVISORY THRESHOLDS BLOCK — % alert thresholds, no COGS impact -->
+        <div class="cip-table-card">
+          <div class="cip-table-head">
+            <span class="cip-table-title">Seuils d'alerte</span>
+            <span class="cip-count">5 seuils · informatifs · n'affectent pas COGS</span>
+          </div>
+          <?php
+          $pctKeys = [
+              'pertes_rack_warn_pct',
+              'pertes_packaging_warn_pct',
+              'pertes_brewing_warn_pct',
+              'pertes_total_effectif_warn_pct',
+              'pertes_total_nominal_warn_pct',
+          ];
+          foreach ($pctKeys as $pk):
+            if (!isset($pertesByKey[$pk])) continue;
+            $ps = $pertesByKey[$pk];
+            $curVal = (float) $ps['value_num'];
+            $defVal = $ps['default_num'] !== null ? (float) $ps['default_num'] : null;
+            $isAdmin = is_admin($me) || is_manager($me);
+          ?>
+          <div style="padding:12px 16px;border-bottom:1px solid rgba(0,0,0,.05);">
+            <div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
+              <div>
+                <span style="font-weight:500;color:var(--ink);"><?= htmlspecialchars($ps['label_fr']) ?></span>
+                <?php if ($defVal !== null): ?>
+                  <span class="csr-default-note" style="margin-left:6px;">(défaut : <?= number_format($defVal, 1) ?> %)</span>
+                <?php endif ?>
+              </div>
+              <span style="font-family:'JetBrains Mono',monospace;font-size:15px;font-weight:600;color:var(--hop);">
+                <?= number_format($curVal, 1) ?> <span style="font-size:10px;font-weight:400;">%</span>
+              </span>
+            </div>
+            <?php if ($isAdmin): ?>
+            <form method="post" action="/modules/salle-de-controle.php" class="cond-edit-form" novalidate>
+              <input type="hidden" name="csrf"       value="<?= htmlspecialchars($csrf) ?>">
+              <input type="hidden" name="action"     value="update_pertes_config">
+              <input type="hidden" name="key_name"   value="<?= htmlspecialchars($pk) ?>">
+              <div class="cond-edit-row">
+                <label class="cond-edit-label" for="pertes_val_<?= htmlspecialchars($pk) ?>">
+                  Nouveau seuil <span class="cond-edit-unit">(%)</span>
+                </label>
+                <input
+                  id="pertes_val_<?= htmlspecialchars($pk) ?>"
+                  name="value_num"
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.1"
+                  class="cond-edit-input"
+                  value="<?= htmlspecialchars(number_format($curVal, 1)) ?>"
+                  required
+                >
+                <button type="submit" class="cond-edit-btn">Enregistrer</button>
+              </div>
+            </form>
+            <?php else: ?>
+            <p class="cond-readonly-note">Modification réservée aux administrateurs et managers.</p>
+            <?php endif ?>
+          </div>
+          <?php endforeach ?>
+        </div><!-- /advisory thresholds card -->
+
+        <div class="impl-note" style="margin-top:20px;">
+          <div class="impl-note-head">Persistance &amp; audit</div>
+          <div class="impl-note-body">
+            Les constantes HL sont lues par <code>TankSimulator::__construct()</code> à chaque initialisation
+            (un seul SELECT au démarrage — aucun hit par événement). En l'absence de ligne active, le
+            simulateur retombe sur ses valeurs codées en dur (<code>RACKING_LOSS_HL=0.9</code>,
+            <code>PACKAGING_LOSS_HL=0.15</code>). Les seuils % sont purement informatifs.
+            Chaque modification est journalisée dans <code>audit_row_revisions</code>.
+          </div>
+        </div>
+
+        <?php endif ?><!-- /pertesSettings empty check -->
+      </div>
+    </div><!-- /sec-pertes -->
 
   </div><!-- /content-area -->
 </div><!-- /sdc-stage -->
