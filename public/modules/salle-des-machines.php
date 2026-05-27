@@ -343,7 +343,12 @@ $bbtTotal   = array_sum(array_column($bbts, 'capacity_hl'));
 $cellarCount = count($ccts) + count($bbts) + count($yts);
 $cellarCap   = $cctTotal + $bbtTotal + array_sum(array_column($yts, 'capacity_hl'));
 $pkgCount    = count($pkgMachines);
-$activeCont  = count(array_unique(array_merge(...array_values($fillerConts ?: [[]]))));
+/* distinct container codes across all fillers ($fillerConts: machine_id → [{container_code,…}]) */
+$activeContCodes = [];
+foreach ($fillerConts as $rowsForMachine) {
+    foreach ($rowsForMachine as $r) { $activeContCodes[$r['container_code']] = true; }
+}
+$activeCont  = count($activeContCodes);
 
 /* ── JSON blobs for JS hydration ────────────────────────────────── */
 $jsBrewVessels    = json_encode(
