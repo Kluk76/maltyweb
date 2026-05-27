@@ -423,4 +423,14 @@ document.addEventListener('DOMContentLoaded', function () {
       },
     });
   }
+
+  // Re-sync conditional UI after draft restoration.
+  // FormFramework.loadDraft() restores field values programmatically (no change event),
+  // so every JS-driven conditional UI needs a second pass here: the dest number-field
+  // show/hide, the resultant display, the conditional dest-CIP required, and the KZE PU
+  // section (keyed off CIP checkboxes the draft also restores silently).
+  updateDestFields();
+  updateResultant();
+  updateDestCipRequired();
+  togglePuSection();
 });
