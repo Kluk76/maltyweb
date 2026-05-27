@@ -158,6 +158,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $centriRinsed = post_str('centri_rinsed');
         if ($centriRinsed !== null) must_be_one_of('centri_rinsed', $centriRinsed, CENTRI_RINSED_YN);
 
+        // KZE pasteurisation data — only written when KZE is in the CIP set.
+        // post_decimal returns null when the field is empty (section was hidden → no input).
+        // Coerce and validate: value must be a non-negative decimal when provided.
+        $kzeTargetPu = post_decimal('kze_target_pu');
+        if ($kzeTargetPu !== null && (float)$kzeTargetPu < 0) {
+            throw new RuntimeException("kze_target_pu doit être ≥ 0.");
+        }
+        $kzeAvgPu = post_decimal('kze_avg_pu');
+        if ($kzeAvgPu !== null && (float)$kzeAvgPu < 0) {
+            throw new RuntimeException("kze_avg_pu doit être ≥ 0.");
+        }
+
         // #8 — CIP events via shared parser (old flat fields no longer read from POST)
         $cipEvents = cip_parse_post($_POST, 'racking');
 
@@ -221,6 +233,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $bbtCo2 ?? '', $bbtO2 ?? '', $rackedVolHl ?? '', $blendHl ?? '',
             $avgTurbidity ?? '', $bbtPressure ?? '',
             $centriRinsed ?? '',
+            $kzeTargetPu ?? '', $kzeAvgPu ?? '',
             $comments ?? '',
             $horsProcessFlag,
         ];
@@ -260,6 +273,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // avg_speed intentionally absent — column kept, form removed (#7)
             'bbt_pressure'             => $bbtPressure,
             'centri_rinsed'            => $centriRinsed,
+            'kze_target_pu'            => $kzeTargetPu,
+            'kze_avg_pu'               => $kzeAvgPu,
             'comments'                 => $comments,
             'hors_process_flag'        => $horsProcessFlag,
             'hors_process_reason'      => $horsProcessReason,
@@ -630,6 +645,37 @@ $cipConfig = [
 
     <!-- ── Section: CIP (FIRST — as per Round-2 #8) ─────────────────── -->
     <?php require __DIR__ . '/../../app/partials/cip-section.php' ?>
+
+    <!-- ── Section: Pasteurisation flash (KZE) ──────────────────────── -->
+    <!-- Hidden by default. JS shows it when KZE is in the CIP set:
+         cip_machine_kze checked OR cip_inline_combine checked.
+         IMPORTANT: no static `required` on the inputs — JS drives required
+         only while this section is visible (hidden-required deadlock prevention). -->
+    <div class="op-form__card rf-kze-pu-section" id="rf-kze-pu-section" hidden>
+      <div class="op-form__card-title">— pasteurisation flash (KZE)</div>
+      <div class="op-form__grid">
+
+        <div class="op-form__field">
+          <label class="op-form__label" for="kze_target_pu">
+            Target PU <span class="op-form__unit">PU</span>
+          </label>
+          <input id="kze_target_pu" name="kze_target_pu" type="text" inputmode="decimal"
+                 class="op-form__input" placeholder="ex. 25"
+                 data-pu-required="1">
+        </div>
+
+        <div class="op-form__field">
+          <label class="op-form__label" for="kze_avg_pu">
+            Moyenne PU <span class="op-form__unit">PU</span>
+            <span class="op-form__opt">(réalisé)</span>
+          </label>
+          <input id="kze_avg_pu" name="kze_avg_pu" type="text" inputmode="decimal"
+                 class="op-form__input" placeholder="ex. 26.1"
+                 data-pu-required="1">
+        </div>
+
+      </div>
+    </div>
 
     <!-- ── Section: Sélection lot source (CCT) ───────────────────────── -->
     <div class="op-form__card">

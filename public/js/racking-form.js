@@ -9,7 +9,10 @@
  *      dest-CIP required flag (#10 conditional), resultant display (#5).
  *   4. Residual (blend_hl) change → update resultant display (#5) and re-evaluate
  *      dest-CIP required client-side (#10 conditional).
- *   5. FormFramework init (draft save, diff-preview, QC thresholds).
+ *   5. KZE PU section visibility — shown when KZE is in the CIP set:
+ *      cip_inline_combine checked OR cip_machine_kze checked.
+ *      Drives data-pu-required → required attribute on the two PU inputs.
+ *   6. FormFramework init (draft save, diff-preview, QC thresholds).
  *
  * Data injected by PHP:
  *   window.RF_CANDIDATES          — normal (gated) candidate list
@@ -142,6 +145,48 @@ document.addEventListener('DOMContentLoaded', function () {
     }
   }
   updateDestCipRequired();
+
+  // ── KZE PU section toggle ──────────────────────────────────────────────
+  // The "Pasteurisation flash (KZE)" section is shown when KZE is in the CIP set:
+  //   - cip_inline_combine (simultané) is checked, OR
+  //   - cip_machine_kze (individual KZE done-checkbox) is checked.
+  // When simultané is on, the individual KZE row is hidden by the CIP partial's JS —
+  // so the effective trigger is either checkbox, checked via getElementById (survives DOM
+  // changes by the CIP partial).
+  //
+  // Required discipline: we do NOT put a static `required` on the PU inputs in the markup.
+  // Instead, inputs carry data-pu-required="1" and we set/remove `required` purely from JS,
+  // synced on DOMContentLoaded AND on every relevant checkbox change.
+  var kzePuSection    = document.getElementById('rf-kze-pu-section');
+  var kzeInlineCb     = document.getElementById('cip_inline_combine');   // simultané checkbox
+  var kzeMachineCb    = document.getElementById('cip_machine_kze');      // individual KZE done-checkbox
+
+  function cipKzeActive() {
+    var inlineChecked = kzeInlineCb ? kzeInlineCb.checked : false;
+    var kzeChecked    = kzeMachineCb ? kzeMachineCb.checked : false;
+    return inlineChecked || kzeChecked;
+  }
+
+  function togglePuSection() {
+    if (!kzePuSection) return;
+    var active = cipKzeActive();
+    kzePuSection.hidden = !active;
+    // Sync required attribute on all data-pu-required inputs.
+    kzePuSection.querySelectorAll('[data-pu-required]').forEach(function (el) {
+      if (active) {
+        el.setAttribute('required', '');
+      } else {
+        el.removeAttribute('required');
+      }
+    });
+  }
+
+  // Wire to both checkboxes. Attach by id so the listener works even when the CIP partial's
+  // JS re-hides/shows the individual KZE row (the checkbox itself is never removed from DOM).
+  if (kzeInlineCb) kzeInlineCb.addEventListener('change', togglePuSection);
+  if (kzeMachineCb) kzeMachineCb.addEventListener('change', togglePuSection);
+  // Initial state on DOMContentLoaded.
+  togglePuSection();
 
   // ── #6 — CO₂/O₂ label swap by destination type ─────────────────────────
   // Columns (bbt_co2 / bbt_o2) stay. Only the labels change.
