@@ -1,0 +1,617 @@
+<?php
+declare(strict_types=1);
+/**
+ * cip-events.php — Shared CIP infrastructure (parser / writer / reader).
+ *
+ * Used by all three operator forms: form-racking, form-brewing, form-packaging.
+ * Zero BSF writes. MySQL only (bd_cip_events + ref_cip_types).
+ *
+ * ══════════════════════════════════════════════════════════════════════════
+ * CIP FIELD-NAME CONTRACT (identical across all three forms)
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * Machine CIP fields (racking + packaging; brewing has no machines):
+ *   cip_machine_centri         = "1" when centri CIP was performed
+ *   cip_machine_centri_type_id = ref_cip_types.id (INT, required when centri=1)
+ *   cip_machine_centri_date    = VARCHAR date (required when centri=1)
+ *   cip_machine_centri_start   = HH:MM time start (required when centri=1)
+ *   cip_machine_centri_end     = HH:MM time end   (required when centri=1)
+ *
+ *   cip_machine_kze            = "1" when KZE CIP was performed
+ *   cip_machine_kze_type_id    = ref_cip_types.id
+ *   cip_machine_kze_date       = VARCHAR date
+ *   cip_machine_kze_start      = HH:MM
+ *   cip_machine_kze_end        = HH:MM
+ *
+ *   cip_machine_pump           = "1" when pump CIP was performed
+ *   cip_machine_pump_type_id   = ref_cip_types.id
+ *   cip_machine_pump_date      = VARCHAR date
+ *   cip_machine_pump_start     = HH:MM
+ *   cip_machine_pump_end       = HH:MM
+ *
+ *   cip_inline_combine         = "1" → centri + KZE share one inline_group id;
+ *                                "0" or absent → each machine gets NULL inline_group
+ *
+ * Vessel CIP fields (dynamic: racking has one destination vessel; brewing/packaging may
+ * show multiple rows but each uses an index suffix _0, _1, …):
+ *
+ *   cip_vessel_count           = INT (how many vessel rows the form submits; default 1)
+ *
+ * For vessel index N (0-based):
+ *   cip_vessel_{N}_code        = ENUM: cct|yt|bbt|tank
+ *   cip_vessel_{N}_number      = INT (tank number; nullable for yt)
+ *   cip_vessel_{N}_type_id     = ref_cip_types.id
+ *   cip_vessel_{N}_date        = VARCHAR date
+ *   cip_vessel_{N}_start       = HH:MM
+ *   cip_vessel_{N}_end         = HH:MM
+ *   cip_vessel_{N}_done        = "1" when vessel CIP was performed (gate; if absent, skip)
+ *
+ * Notes field (shared, optional):
+ *   cip_notes                  = VARCHAR(255) free text
+ *
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * Public API:
+ *   cip_parse_post(array $post, string $sourceForm): array   → events[]
+ *   cip_upsert(PDO $pdo, string $sourceForm, int $parentId,
+ *              array $events, array $meta): void
+ *   cip_events_for(PDO $pdo, string $sourceForm, int $parentId): array
+ *   cip_type_options(PDO $pdo): array
+ *   cip_dest_required(float|string|null $residual): bool
+ *
+ * Dependencies: app/db-write-helpers.php (bd_row_hash, log_revision), app/auth.php.
+ */
+
+require_once __DIR__ . '/db-write-helpers.php';  // bd_row_hash, log_revision
+require_once __DIR__ . '/auth.php';               // current_user
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+/** Valid machine target_codes. */
+const CIP_MACHINE_CODES = ['centri', 'kze', 'pump', 'unspecified'];
+
+/** Valid vessel target_codes. */
+const CIP_VESSEL_CODES  = ['cct', 'yt', 'bbt', 'tank'];
+
+/** Valid source_form values (mirrors bd_cip_events ENUM). */
+const CIP_SOURCE_FORMS  = ['racking', 'brewing', 'packaging'];
+
+// ─── 1. Parser ────────────────────────────────────────────────────────────────
+
+/**
+ * cip_parse_post — Turn raw $_POST data into a normalised events[] array.
+ *
+ * Each element of the returned array is one CIP event record:
+ *   [
+ *     'target_kind'   => 'machine'|'vessel',
+ *     'target_code'   => string (from CIP_MACHINE_CODES | CIP_VESSEL_CODES),
+ *     'target_number' => int|null,
+ *     'cip_type_id'   => int|null,
+ *     'cip_date'      => string|null,
+ *     'cip_started_at'=> string|null  (HH:MM:SS),
+ *     'cip_ended_at'  => string|null  (HH:MM:SS),
+ *     'inline_group'  => int|null,    (shared id for centri+kze inline pair)
+ *     'notes'         => string|null,
+ *   ]
+ *
+ * Rules:
+ *   - Machine rows whose "CIP done" checkbox is off are silently skipped.
+ *   - Vessel rows with cip_vessel_{N}_done != "1" are skipped.
+ *   - cip_inline_combine = "1": centri + kze events share inline_group = 1.
+ *   - Times are normalised to HH:MM:SS (or null when absent).
+ *   - sourceForm is validated against CIP_SOURCE_FORMS.
+ *
+ * @param array  $post       Raw POST array (pass $_POST or a slice thereof)
+ * @param string $sourceForm 'racking'|'brewing'|'packaging'
+ * @return array             Event records (may be empty)
+ * @throws InvalidArgumentException on invalid sourceForm
+ */
+function cip_parse_post(array $post, string $sourceForm): array
+{
+    if (!in_array($sourceForm, CIP_SOURCE_FORMS, true)) {
+        throw new InvalidArgumentException("cip_parse_post: unknown sourceForm '{$sourceForm}'");
+    }
+
+    $events = [];
+    $notes  = isset($post['cip_notes']) ? _cip_trim($post['cip_notes']) : null;
+
+    // ── Machine rows (centri / kze / pump) ───────────────────────────────────
+    // Only emitted by racking + packaging forms; brewing form passes no machine fields.
+    // When cip_inline_combine=1: centri + kze share inline_group=1.
+    $inlineCombine = (($post['cip_inline_combine'] ?? '0') === '1');
+
+    // Assign inline_group only when both centri AND kze are done AND combine=1.
+    // Compute first pass: which machines are done?
+    $machineDone = [];
+    foreach (['centri', 'kze', 'pump'] as $code) {
+        $machineDone[$code] = (($post["cip_machine_{$code}"] ?? '0') === '1');
+    }
+    $useInlineGroup = ($inlineCombine && $machineDone['centri'] && $machineDone['kze']);
+
+    foreach (['centri', 'kze', 'pump'] as $code) {
+        if (!$machineDone[$code]) {
+            continue;
+        }
+
+        $typeId  = _cip_int($post["cip_machine_{$code}_type_id"] ?? null);
+        $date    = _cip_trim($post["cip_machine_{$code}_date"] ?? null);
+        $start   = _cip_time($post["cip_machine_{$code}_start"] ?? null);
+        $end     = _cip_time($post["cip_machine_{$code}_end"] ?? null);
+
+        // inline_group: centri and kze share group 1 when inline combine is active
+        $group = null;
+        if ($useInlineGroup && in_array($code, ['centri', 'kze'], true)) {
+            $group = 1;
+        }
+
+        $events[] = [
+            'target_kind'    => 'machine',
+            'target_code'    => $code,
+            'target_number'  => null,
+            'cip_type_id'    => $typeId,
+            'cip_date'       => $date ?: null,
+            'cip_started_at' => $start,
+            'cip_ended_at'   => $end,
+            'inline_group'   => $group,
+            'notes'          => $notes,
+        ];
+    }
+
+    // ── Vessel rows ──────────────────────────────────────────────────────────
+    $vestCount = max(0, (int)($post['cip_vessel_count'] ?? 0));
+
+    for ($i = 0; $i < $vestCount; $i++) {
+        if (($post["cip_vessel_{$i}_done"] ?? '0') !== '1') {
+            continue;
+        }
+
+        $code   = _cip_trim($post["cip_vessel_{$i}_code"] ?? null);
+        if ($code === null || !in_array($code, CIP_VESSEL_CODES, true)) {
+            continue; // skip malformed vessel rows silently
+        }
+
+        $number = _cip_int($post["cip_vessel_{$i}_number"] ?? null);
+        $typeId = _cip_int($post["cip_vessel_{$i}_type_id"] ?? null);
+        $date   = _cip_trim($post["cip_vessel_{$i}_date"] ?? null);
+        $start  = _cip_time($post["cip_vessel_{$i}_start"] ?? null);
+        $end    = _cip_time($post["cip_vessel_{$i}_end"] ?? null);
+
+        $events[] = [
+            'target_kind'    => 'vessel',
+            'target_code'    => $code,
+            'target_number'  => $number,
+            'cip_type_id'    => $typeId,
+            'cip_date'       => $date ?: null,
+            'cip_started_at' => $start,
+            'cip_ended_at'   => $end,
+            'inline_group'   => null,
+            'notes'          => $notes,
+        ];
+    }
+
+    return $events;
+}
+
+// ─── 2. Writer ────────────────────────────────────────────────────────────────
+
+/**
+ * cip_upsert — Write CIP events for a parent row.
+ *
+ * Re-submit semantics (tombstone-resync):
+ *   1. SET is_tombstoned = 1 on all LIVE events for this (source_form, parentId).
+ *   2. INSERT each new event with a fresh row_hash.
+ *   3. Row-hash uniqueness means identical re-submits are idempotent: the INSERT
+ *      hits uq_row_hash and falls through ON DUPLICATE KEY UPDATE (no-op, since
+ *      we only update is_tombstoned back to 0 if it had been tombstoned).
+ *
+ * Row-hash discriminator ensures distinct events never collide:
+ *   sha256( sourceForm | parentId | submitted_at | event_index | target_code
+ *           | target_number | inline_group )
+ *
+ * @param PDO    $pdo        Live connection
+ * @param string $sourceForm 'racking'|'brewing'|'packaging'
+ * @param int    $parentId   PK in bd_racking_v2 / bd_brewing_brewday_v2 / bd_packaging_v2
+ * @param array  $events     Output of cip_parse_post()
+ * @param array  $meta       ['submitted_at' => string, 'email' => string]
+ * @throws InvalidArgumentException on bad sourceForm or kind↔code violation
+ * @throws RuntimeException on SQL error
+ */
+function cip_upsert(
+    PDO    $pdo,
+    string $sourceForm,
+    int    $parentId,
+    array  $events,
+    array  $meta
+): void {
+    if (!in_array($sourceForm, CIP_SOURCE_FORMS, true)) {
+        throw new InvalidArgumentException("cip_upsert: unknown sourceForm '{$sourceForm}'");
+    }
+
+    // Validate each event's kind↔code constraint BEFORE touching the DB.
+    foreach ($events as $idx => $ev) {
+        _cip_assert_kind_code($ev['target_kind'], $ev['target_code'], $idx);
+    }
+
+    $submittedAt = $meta['submitted_at'] ?? date('Y-m-d H:i:s');
+    $email       = $meta['email'] ?? null;
+
+    // ── Parent FK columns ─────────────────────────────────────────────────
+    $rackingId   = ($sourceForm === 'racking')   ? $parentId : null;
+    $brewingId   = ($sourceForm === 'brewing')   ? $parentId : null;
+    $packagingId = ($sourceForm === 'packaging') ? $parentId : null;
+
+    // ── Transaction guard: wrap tombstone + insert atomically ─────────────
+    // The calling form POST handler may already be inside a transaction.
+    // Use a SAVEPOINT when nested to avoid PDO "there is already an active
+    // transaction" exception.
+    $ownTransaction = !$pdo->inTransaction();
+    $savepoint = 'cip_upsert_sp_' . uniqid('', true);
+
+    if ($ownTransaction) {
+        $pdo->beginTransaction();
+    } else {
+        $pdo->exec("SAVEPOINT `{$savepoint}`");
+    }
+
+    try {
+        // ── Step 1: tombstone prior live events for this parent ───────────
+        $tsStmt = $pdo->prepare(
+            "UPDATE bd_cip_events
+                SET is_tombstoned = 1
+              WHERE source_form = ?
+                AND " . _cip_parent_col($sourceForm) . " = ?
+                AND is_tombstoned = 0"
+        );
+        $tsStmt->execute([$sourceForm, $parentId]);
+        $tombstonedCount = $tsStmt->rowCount();
+
+        if (empty($events)) {
+            // No events to insert; tombstoning was the entire operation.
+            if ($ownTransaction) {
+                $pdo->commit();
+            } else {
+                $pdo->exec("RELEASE SAVEPOINT `{$savepoint}`");
+            }
+            _cip_log_audit($pdo, $sourceForm, $parentId, $tombstonedCount, 0, $submittedAt);
+            return;
+        }
+
+        // ── Step 2: insert new events ─────────────────────────────────────
+        $insertStmt = $pdo->prepare(
+            "INSERT INTO bd_cip_events
+               (source_form, racking_id, brewing_id, packaging_id,
+                target_kind, target_code, target_number,
+                cip_type_id_fk, cip_date, cip_started_at, cip_ended_at,
+                inline_group, notes, row_hash, submitted_at, email,
+                is_tombstoned, imported_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NOW())
+             ON DUPLICATE KEY UPDATE
+               is_tombstoned = 0,
+               cip_type_id_fk  = VALUES(cip_type_id_fk),
+               cip_date         = VALUES(cip_date),
+               cip_started_at   = VALUES(cip_started_at),
+               cip_ended_at     = VALUES(cip_ended_at),
+               inline_group     = VALUES(inline_group),
+               notes            = VALUES(notes)"
+        );
+
+        $insertedCount = 0;
+        foreach ($events as $idx => $ev) {
+            $hash = _cip_row_hash(
+                $sourceForm,
+                $parentId,
+                $submittedAt,
+                $idx,
+                $ev['target_code'],
+                $ev['target_number'],
+                $ev['inline_group']
+            );
+
+            $insertStmt->execute([
+                $sourceForm,
+                $rackingId,
+                $brewingId,
+                $packagingId,
+                $ev['target_kind'],
+                $ev['target_code'],
+                $ev['target_number'],
+                $ev['cip_type_id'],
+                $ev['cip_date'],
+                $ev['cip_started_at'],
+                $ev['cip_ended_at'],
+                $ev['inline_group'],
+                $ev['notes'],
+                $hash,
+                $submittedAt,
+                $email,
+            ]);
+            $insertedCount++;
+        }
+
+        if ($ownTransaction) {
+            $pdo->commit();
+        } else {
+            $pdo->exec("RELEASE SAVEPOINT `{$savepoint}`");
+        }
+
+    } catch (Throwable $e) {
+        if ($ownTransaction) {
+            $pdo->rollBack();
+        } else {
+            $pdo->exec("ROLLBACK TO SAVEPOINT `{$savepoint}`");
+        }
+        throw $e;
+    }
+
+    // ── Step 3: audit log ─────────────────────────────────────────────────
+    _cip_log_audit($pdo, $sourceForm, $parentId, $tombstonedCount, $insertedCount, $submittedAt);
+}
+
+// ─── 3. Reader ────────────────────────────────────────────────────────────────
+
+/**
+ * cip_events_for — Read live CIP events for a parent, grouped for rendering.
+ *
+ * Returns:
+ *   [
+ *     'machines' => [
+ *       'centri' => event_row|null,
+ *       'kze'    => event_row|null,
+ *       'pump'   => event_row|null,
+ *     ],
+ *     'inline_groups' => [ group_id => [event_row, ...], ... ],
+ *     'vessels' => [ event_row, ... ],   (ordered by id ASC)
+ *     'inline_combine' => bool,          (true if any events share an inline_group)
+ *   ]
+ *
+ * Each event_row has all columns from bd_cip_events.
+ *
+ * @param PDO    $pdo
+ * @param string $sourceForm
+ * @param int    $parentId
+ * @return array
+ */
+function cip_events_for(PDO $pdo, string $sourceForm, int $parentId): array
+{
+    $parentCol = _cip_parent_col($sourceForm);
+
+    $stmt = $pdo->prepare(
+        "SELECT ce.id, ce.target_kind, ce.target_code, ce.target_number,
+                ce.cip_type_id_fk, ct.name AS cip_type_name,
+                ce.cip_date, ce.cip_started_at, ce.cip_ended_at,
+                ce.inline_group, ce.notes, ce.row_hash, ce.submitted_at, ce.email
+           FROM bd_cip_events ce
+           LEFT JOIN ref_cip_types ct ON ct.id = ce.cip_type_id_fk
+          WHERE ce.source_form = ?
+            AND ce.{$parentCol} = ?
+            AND ce.is_tombstoned = 0
+          ORDER BY ce.id ASC"
+    );
+    $stmt->execute([$sourceForm, $parentId]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $machines = ['centri' => null, 'kze' => null, 'pump' => null];
+    $vessels  = [];
+    $inlineGroups = [];
+
+    foreach ($rows as $row) {
+        if ($row['target_kind'] === 'machine') {
+            $code = $row['target_code'];
+            if (array_key_exists($code, $machines)) {
+                $machines[$code] = $row;
+            }
+            if ($row['inline_group'] !== null) {
+                $g = (int)$row['inline_group'];
+                $inlineGroups[$g][] = $row;
+            }
+        } else {
+            $vessels[] = $row;
+        }
+    }
+
+    $inlineCombine = !empty($inlineGroups);
+
+    // Surface submission-level notes (shared across all events in a submission).
+    // Take from the first live row; they all carry the same value.
+    $notes = null;
+    if (!empty($rows)) {
+        $notes = $rows[0]['notes'];
+    }
+
+    return [
+        'machines'      => $machines,
+        'inline_groups' => $inlineGroups,
+        'vessels'       => $vessels,
+        'inline_combine'=> $inlineCombine,
+        'notes'         => $notes,
+    ];
+}
+
+// ─── 4. Dropdown options ──────────────────────────────────────────────────────
+
+/**
+ * cip_type_options — Return active CIP types for <select> rendering.
+ *
+ * @param PDO $pdo
+ * @return array  [ ['id' => int, 'name' => string], ... ]
+ */
+function cip_type_options(PDO $pdo): array
+{
+    $stmt = $pdo->query(
+        "SELECT id, name FROM ref_cip_types WHERE is_active = 1 ORDER BY sort_order, name"
+    );
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+// ─── 5. Conditional dest-CIP predicate ───────────────────────────────────────
+
+/**
+ * cip_dest_required — TRUE when the destination vessel requires a CIP.
+ *
+ * Returns FALSE when residual > 0 (a blend means liquid is already in the destination,
+ * so destination CIP is optional — the vessel is not empty). TRUE otherwise.
+ *
+ * Used by racking with blend_hl; exposed shared for reuse.
+ *
+ * @param float|string|null $residual  blend_hl or similar residual volume
+ * @return bool
+ */
+function cip_dest_required(float|string|null $residual): bool
+{
+    if ($residual === null || $residual === '' || $residual === '0' || $residual === '0.0') {
+        return true;
+    }
+    $v = (float)$residual;
+    return !($v > 0);
+}
+
+// ─── Private helpers ──────────────────────────────────────────────────────────
+
+/**
+ * Compute the per-event row_hash.
+ * Discriminator: sourceForm|parentId|submittedAt|eventIndex|targetCode|targetNumber|inlineGroup
+ * The submitted_at + eventIndex pair ensures distinct events under one parent never collide,
+ * while re-inserting the SAME event (same submission) is idempotent (same hash → uq_row_hash
+ * triggers ON DUPLICATE KEY UPDATE).
+ */
+function _cip_row_hash(
+    string $sourceForm,
+    int    $parentId,
+    string $submittedAt,
+    int    $eventIdx,
+    string $targetCode,
+    ?int   $targetNumber,
+    ?int   $inlineGroup
+): string {
+    $parts = [
+        $sourceForm,
+        (string)$parentId,
+        $submittedAt,
+        (string)$eventIdx,
+        $targetCode,
+        $targetNumber !== null ? (string)$targetNumber : '',
+        $inlineGroup  !== null ? (string)$inlineGroup  : '',
+    ];
+    return hash('sha256', implode('|', $parts));
+}
+
+/**
+ * Assert that a target_kind / target_code combination satisfies the DB CHECK constraint.
+ * Throws InvalidArgumentException loudly — don't let the DB CHECK be the only guard.
+ */
+function _cip_assert_kind_code(string $kind, string $code, int $idx): void
+{
+    if ($kind === 'machine' && !in_array($code, CIP_MACHINE_CODES, true)) {
+        throw new InvalidArgumentException(
+            "cip_upsert: event[{$idx}] kind=machine but code='{$code}' is not in " .
+            implode('/', CIP_MACHINE_CODES)
+        );
+    }
+    if ($kind === 'vessel' && !in_array($code, CIP_VESSEL_CODES, true)) {
+        throw new InvalidArgumentException(
+            "cip_upsert: event[{$idx}] kind=vessel but code='{$code}' is not in " .
+            implode('/', CIP_VESSEL_CODES)
+        );
+    }
+    if (!in_array($kind, ['machine', 'vessel'], true)) {
+        throw new InvalidArgumentException(
+            "cip_upsert: event[{$idx}] invalid kind='{$kind}'"
+        );
+    }
+}
+
+/**
+ * Return the FK column name for this source form.
+ */
+function _cip_parent_col(string $sourceForm): string
+{
+    return match ($sourceForm) {
+        'racking'   => 'racking_id',
+        'brewing'   => 'brewing_id',
+        'packaging' => 'packaging_id',
+        default     => throw new InvalidArgumentException("_cip_parent_col: unknown form '{$sourceForm}'"),
+    };
+}
+
+/**
+ * Trim a string value; return null when empty.
+ */
+function _cip_trim(?string $v): ?string
+{
+    if ($v === null) {
+        return null;
+    }
+    $t = trim($v);
+    return $t === '' ? null : $t;
+}
+
+/**
+ * Cast a nullable string to int; return null when absent or non-numeric.
+ */
+function _cip_int(?string $v): ?int
+{
+    if ($v === null || $v === '') {
+        return null;
+    }
+    return is_numeric($v) ? (int)$v : null;
+}
+
+/**
+ * Normalise an HH:MM or HH:MM:SS time string to HH:MM:SS.
+ * Returns null when the input is absent or not a recognisable time.
+ */
+function _cip_time(?string $v): ?string
+{
+    if ($v === null || $v === '') {
+        return null;
+    }
+    $t = trim($v);
+    // Already HH:MM:SS
+    if (preg_match('/^\d{1,2}:\d{2}:\d{2}$/', $t)) {
+        return $t;
+    }
+    // HH:MM — append :00
+    if (preg_match('/^\d{1,2}:\d{2}$/', $t)) {
+        return $t . ':00';
+    }
+    return null;
+}
+
+/**
+ * Write an audit_row_revisions entry for a cip_upsert call.
+ * Uses log_revision() from db-write-helpers.php.
+ * We write against bd_cip_events (no single PK — use 0 to mean "bulk").
+ */
+function _cip_log_audit(
+    PDO    $pdo,
+    string $sourceForm,
+    int    $parentId,
+    int    $tombstonedCount,
+    int    $insertedCount,
+    string $submittedAt
+): void {
+    // Retrieve current_user() for audit metadata
+    $me = current_user();
+    if ($me === null) {
+        $me = ['id' => 0, 'username' => 'system'];
+    }
+
+    $after = [
+        'source_form'      => $sourceForm,
+        'parent_id'        => $parentId,
+        'tombstoned_count' => $tombstonedCount,
+        'inserted_count'   => $insertedCount,
+        'submitted_at'     => $submittedAt,
+    ];
+
+    log_revision(
+        $pdo,
+        $me,
+        'bd_cip_events',
+        $parentId,   // use parentId as the logical "PK" for this bulk operation
+        null,        // before: previous events were tombstoned, not captured inline
+        $after,
+        'normal',    // CIP writes don't have QC flags
+        null
+    );
+}

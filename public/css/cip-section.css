@@ -1,0 +1,139 @@
+/*
+ * cip-section.css — Shared CIP capture section styles.
+ *
+ * Included by form-racking, form-brewing, form-packaging.
+ * All rules scoped under .cip-section to prevent leakage.
+ * Tokens: all from app.css — NO custom tokens invented here.
+ * Mirrors op-form__* patterns from racking-form.css / packaging-form.css.
+ */
+
+/* ── Section card ──────────────────────────────────────────────────────── */
+.cip-section {
+  /* inherits op-form__card padding + border from app.css */
+}
+
+/* ── Block separators (machines vs vessels) ──────────────────────────── */
+.cip-section__block {
+  margin-bottom: 1.25rem;
+}
+
+.cip-section__machines + .cip-section__vessels {
+  border-top: 1px solid var(--hairline);
+  padding-top: 1.25rem;
+}
+
+/* ── Inline combine toggle ────────────────────────────────────────────── */
+.cip-section__inline-toggle {
+  margin-bottom: 1rem;
+  padding: 0.5rem 0.75rem;
+  background: color-mix(in srgb, var(--cold) 5%, var(--bg-elev));
+  border: 1px solid color-mix(in srgb, var(--cold) 20%, transparent);
+  border-radius: 6px;
+}
+
+/* ── Checkbox row pattern (shared by machines + vessels) ────────────── */
+.cip-section__checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.cip-section__checkbox {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--cold);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.cip-section__checkbox-label,
+.cip-section__machine-label,
+.cip-section__vessel-label {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.875rem;
+  color: var(--ink-soft);
+}
+
+.cip-section__badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--cold);
+  background: color-mix(in srgb, var(--cold) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--cold) 30%, transparent);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+
+/* ── Machine rows ─────────────────────────────────────────────────────── */
+.cip-section__machine-row {
+  margin-bottom: 0.875rem;
+  padding: 0.625rem 0.75rem;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  transition: border-color 0.15s;
+}
+
+.cip-section__machine-row:has(.cip-machine-toggle:checked) {
+  border-color: color-mix(in srgb, var(--cold) 35%, transparent);
+}
+
+.cip-section__machine-header {
+  margin-bottom: 0;
+}
+
+.cip-section__machine-fields {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--hairline);
+}
+
+/* ── Vessel rows ──────────────────────────────────────────────────────── */
+.cip-section__vessel-row {
+  margin-bottom: 0.875rem;
+  padding: 0.625rem 0.75rem;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  transition: border-color 0.15s;
+}
+
+.cip-section__vessel-row:has(.cip-vessel-toggle:checked) {
+  border-color: color-mix(in srgb, var(--oak) 40%, transparent);
+}
+
+.cip-section__vessel-header {
+  margin-bottom: 0;
+}
+
+.cip-section__vessel-fields {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--hairline);
+}
+
+/* Dynamic label: highlight the vessel label when type changes */
+.cip-vessel-dynamic-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+  letter-spacing: 0.04em;
+  color: var(--oak);
+  transition: color 0.2s;
+}
+
+/* ── Select sizing (keeps CIP selects consistent with other op-form selects) */
+.cip-section__select {
+  min-width: 0;
+  width: 100%;
+}
+
+/* ── Notes row ────────────────────────────────────────────────────────── */
+.cip-section__notes-row {
+  margin-top: 0.5rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--hairline);
+}
