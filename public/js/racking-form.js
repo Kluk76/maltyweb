@@ -253,6 +253,21 @@ document.addEventListener('DOMContentLoaded', function () {
   if (destSel) destSel.addEventListener('change', updateDestFields);
   updateDestFields(); // initial state
 
+  // ── Helper: apply per-recipe QC thresholds ────────────────────────────────
+  // Looks up window.QC_THRESHOLDS[recipeId] (or __global fallback) and calls
+  // FormFramework.setThresholds() to swap the active band immediately.
+  // No-op when QC_THRESHOLDS is null (resolver threw server-side — static init
+  // thresholds remain active, same as before this feature was added).
+  function applyQcThresholds(recipeId) {
+    if (typeof FormFramework === 'undefined' || typeof FormFramework.setThresholds !== 'function') return;
+    var map = window.QC_THRESHOLDS;
+    if (!map) return;
+    var bands = (recipeId && map[String(recipeId)]) ? map[String(recipeId)] : (map['__global'] || null);
+    if (bands) {
+      FormFramework.setThresholds(bands);
+    }
+  }
+
   // ── Card selection logic ────────────────────────────────────────────────
   function selectCard(card) {
     if (selectedCard) {
@@ -276,6 +291,9 @@ document.addEventListener('DOMContentLoaded', function () {
     hidContractRecipeId.value = '';
     hidSourceCct.value      = sourceCct;
     horsProcessInput.value  = hp;
+
+    // Switch QC threshold bands to this recipe's per-recipe values
+    applyQcThresholds(recipeId);
 
     // Summary strip — show tank label based on source type
     var tankLabel;
@@ -427,8 +445,17 @@ document.addEventListener('DOMContentLoaded', function () {
   // Re-sync conditional UI after draft restoration.
   // FormFramework.loadDraft() restores field values programmatically (no change event),
   // so every JS-driven conditional UI needs a second pass here: the dest number-field
-  // show/hide, the resultant display, the conditional dest-CIP required, and the KZE PU
-  // section (keyed off CIP checkboxes the draft also restores silently).
+  // show/hide, the resultant display, the conditional dest-CIP required, the KZE PU
+  // section, and the QC threshold bands (restored from the hidden neb_recipe_id_fk
+  // field that loadDraft populates — note: hidden fields are skipped by loadDraft, so
+  // the recipe id must be read from the card that matches the draft's neb_beer/batch
+  // values instead; fall back to __global if no card is re-selected).
+  //
+  // Draft restore does not auto-select a card (the card is a button, not a form field),
+  // so the threshold fallback is __global unless the operator manually re-clicks a card.
+  // That is acceptable: the draft is an unsubmitted WIP state; the operator must confirm
+  // the beer selection anyway. The global band is active until they do.
+  applyQcThresholds(null); // applies __global until a card is selected
   updateDestFields();
   updateResultant();
   updateDestCipRequired();

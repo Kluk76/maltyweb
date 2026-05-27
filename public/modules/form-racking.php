@@ -56,6 +56,7 @@ require __DIR__ . '/../../app/db-write-helpers.php';
 require_once __DIR__ . '/../../app/yeast-eligibility.php';
 require_once __DIR__ . '/../../app/tank-simulator.php';
 require_once __DIR__ . '/../../app/cip-events.php';
+require_once __DIR__ . '/../../app/qc-thresholds.php';
 
 require_login();
 $me = current_user();
@@ -613,6 +614,90 @@ $active_module = 'racking';
 $candidatesJson         = json_encode($candidates,         JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 $candidatesOverrideJson = json_encode($candidatesOverride, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 
+// ── Per-recipe QC thresholds for JS ──────────────────────────────────────────
+// Collect all recipe ids that appear on any eligible-beer card (both normal and
+// override lists), resolve per-recipe bands via the committed resolver, then
+// transform to a field-name-keyed map (metric key → form field name) so JS can
+// index directly by the form field name without any extra mapping.
+//
+// Metric key → form field name:
+//   racked_vol_hl → racked_vol_hl   (identity)
+//   co2           → bbt_co2
+//   o2            → bbt_o2
+//   pressure      → bbt_pressure
+//
+// A "__global" entry is included as a fallback (used when no card is selected
+// or when the selected card's recipe id has no per-recipe entry).
+$qcThresholdsJson = 'null';
+try {
+    $allQcRecipeIds = [];
+    foreach ($candidates as $c) {
+        $rid = (int) ($c['recipe_id'] ?? 0);
+        if ($rid > 0) $allQcRecipeIds[] = $rid;
+    }
+    foreach ($candidatesOverride as $c) {
+        // Override cards may carry recipe_id (CCT source) or neb/contract recipe id fks
+        $rid = (int) ($c['recipe_id'] ?? $c['neb_recipe_id_fk'] ?? $c['contract_recipe_id_fk'] ?? 0);
+        if ($rid > 0) $allQcRecipeIds[] = $rid;
+    }
+    $allQcRecipeIds = array_values(array_unique(array_filter($allQcRecipeIds)));
+
+    // Transform one metric_map entry to a field-name-keyed entry
+    $metricToField = static function (array $metricMap): array {
+        return [
+            'racked_vol_hl' => $metricMap['racked_vol_hl'],
+            'bbt_co2'       => $metricMap['co2'],
+            'bbt_o2'        => $metricMap['o2'],
+            'bbt_pressure'  => $metricMap['pressure'],
+        ];
+    };
+
+    $qcThresholds = [];
+
+    // Global fallback (always present)
+    $globalBands   = qc_global_bands($pdo);
+    $globalMetric  = [
+        'racked_vol_hl' => [
+            'label'   => 'Volume transféré',
+            'unit'    => ' HL',
+            'warn'    => $globalBands['vol']['warn'],
+            'outlier' => $globalBands['vol']['outlier'],
+        ],
+        'co2'      => [
+            'label'   => 'CO₂ destination',
+            'unit'    => ' g/L',
+            'warn'    => $globalBands['co2']['warn'],
+            'outlier' => $globalBands['co2']['outlier'],
+        ],
+        'o2'       => [
+            'label'   => 'O₂ destination',
+            'unit'    => ' ppb',
+            'warn'    => $globalBands['o2']['warn'],
+            'outlier' => $globalBands['o2']['outlier'],
+        ],
+        'pressure' => [
+            'label'   => 'Pression destination',
+            'unit'    => ' bar',
+            'warn'    => $globalBands['pressure']['warn'],
+            'outlier' => $globalBands['pressure']['outlier'],
+        ],
+    ];
+    $qcThresholds['__global'] = $metricToField($globalMetric);
+
+    // Per-recipe entries
+    if (!empty($allQcRecipeIds)) {
+        $perRecipe = qc_thresholds_for_recipes($pdo, $allQcRecipeIds);
+        foreach ($perRecipe as $recipeId => $metricMap) {
+            $qcThresholds[(string) $recipeId] = $metricToField($metricMap);
+        }
+    }
+
+    $qcThresholdsJson = json_encode($qcThresholds, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
+} catch (Throwable $qcErr) {
+    // Non-fatal: fall back to hardcoded thresholds in the JS init block.
+    $qcThresholdsJson = 'null';
+}
+
 // #8 — CIP partial config (new submission: no existing events)
 $cipConfig = [
     'machines'           => ['centri', 'kze', 'pump'],
@@ -1138,6 +1223,9 @@ $cipConfig = [
 window.RF_CANDIDATES          = <?= $candidatesJson ?>;
 window.RF_CANDIDATES_OVERRIDE = <?= $candidatesOverrideJson ?>;
 window.RF_CAN_OVERRIDE        = <?= $canOverride ? 'true' : 'false' ?>;
+// Per-recipe QC threshold bands (field-name-keyed). "__global" is the fallback.
+// null means the resolver threw — JS falls back to the static init() thresholds.
+window.QC_THRESHOLDS = <?= $qcThresholdsJson ?>;
 </script>
 
 <script src="/js/form-framework.js?v=<?= @filemtime(__DIR__ . '/../js/form-framework.js') ?: time() ?>" defer></script>

@@ -219,6 +219,14 @@ const FormFramework = (() => {
   }
 
   // ── Init ─────────────────────────────────────────────────────────────────
+  //
+  // activeThresholds: mutable reference so setThresholds() can swap the map
+  // at runtime without replacing the blur/submit closures.
+  let _activeForm        = null;
+  let _activeThresholds  = {};
+  let _activeSwapPairs   = [];
+  let _activeWarningPanel = null;
+
   function init({
     formId,
     draftKey,
@@ -231,7 +239,10 @@ const FormFramework = (() => {
     const form = document.getElementById(formId);
     if (!form) return;
 
-    const warningPanel = warningPanelId ? document.getElementById(warningPanelId) : null;
+    _activeForm         = form;
+    _activeThresholds   = thresholds;
+    _activeSwapPairs    = swapPairs;
+    _activeWarningPanel = warningPanelId ? document.getElementById(warningPanelId) : null;
 
     // Load draft on page load
     if (draftKey) loadDraft(form, draftKey);
@@ -248,13 +259,14 @@ const FormFramework = (() => {
       if (el) el.dataset.original = el.value;
     }
 
-    // Live soft-validation on blur
-    for (const [name, threshold] of Object.entries(thresholds)) {
+    // Live soft-validation on blur — reads _activeThresholds at call time
+    // so setThresholds() affects subsequent blur events automatically.
+    for (const name of Object.keys(thresholds)) {
       const el = form.elements.namedItem(name);
       if (!el) continue;
       el.addEventListener('blur', () => {
-        const allWarnings = collectWarnings(form, thresholds, swapPairs);
-        renderWarnings(warningPanel, allWarnings);
+        const allWarnings = collectWarnings(form, _activeThresholds, _activeSwapPairs);
+        renderWarnings(_activeWarningPanel, allWarnings);
       });
     }
 
@@ -262,7 +274,7 @@ const FormFramework = (() => {
     form.addEventListener('submit', (e) => {
       e.preventDefault();
 
-      const allWarnings = collectWarnings(form, thresholds, swapPairs);
+      const allWarnings = collectWarnings(form, _activeThresholds, _activeSwapPairs);
       const diffs = buildDiff(form, diffFields, diffLabels);
 
       if (allWarnings.length || diffs.length) {
@@ -289,6 +301,25 @@ const FormFramework = (() => {
     window.__fwClearDraft = () => { if (draftKey) clearDraft(draftKey); };
   }
 
+  /**
+   * Replace the active threshold map and immediately re-evaluate warnings.
+   * Called by racking-form.js when the operator selects a beer card, so the
+   * warning bands switch to per-recipe values without a page reload.
+   *
+   * Brewing and packaging forms never call this — they pass static thresholds
+   * to init() and are completely unaffected by this addition.
+   *
+   * @param {Object} map  Field-name-keyed threshold map (same shape as the
+   *                      `thresholds` option passed to init()).
+   */
+  function setThresholds(map) {
+    _activeThresholds = map || {};
+    if (_activeForm) {
+      const allWarnings = collectWarnings(_activeForm, _activeThresholds, _activeSwapPairs);
+      renderWarnings(_activeWarningPanel, allWarnings);
+    }
+  }
+
   function collectWarnings(form, thresholds, swapPairs) {
     const warnings = [];
     for (const [name, threshold] of Object.entries(thresholds)) {
@@ -301,5 +332,5 @@ const FormFramework = (() => {
     return warnings;
   }
 
-  return { init };
+  return { init, setThresholds };
 })();

@@ -23,6 +23,7 @@ require __DIR__ . '/../../app/settings-helpers.php';
 require __DIR__ . '/../../app/db-write-helpers.php';
 require_once __DIR__ . '/../../app/sku-bom-compile.php';
 require_once __DIR__ . '/../../app/yeast-eligibility.php';
+require_once __DIR__ . '/../../app/qc-thresholds.php';
 
 require_login();
 $me = current_user();
@@ -146,7 +147,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = post_str('action') ?? '';
 
     // Redirect target depends on action
-    $redirectSec = in_array($action, ['activate_format','deactivate_format','set_binding','update_recipe_yeast'], true)
+    $redirectSec = in_array($action, ['activate_format','deactivate_format','set_binding','update_recipe_yeast','update_recipe_qc'], true)
         ? 'recettes'
         : ($action === 'update_yeast_family' ? 'biochem'
         : (in_array($action, ['cip_type_add','cip_type_update','cip_type_deactivate','cip_type_reactivate'], true)
@@ -747,6 +748,135 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 . '.'
             );
 
+        // ── update_recipe_qc ─────────────────────────────────────────────────
+        // Editor for per-recipe CO₂ target/tolerance and optional racked_vol overrides.
+        // Role gate: admin or manager (mirrors update_recipe_yeast).
+        // Empty inputs → store NULL (falls back to history band / global).
+        // Negative values → rejected.
+        } elseif ($action === 'update_recipe_qc') {
+            if (!is_admin($me) && !is_manager($me)) {
+                flash_set('err', 'Modification réservée aux administrateurs et managers.');
+                redirect_to('/modules/salle-de-controle.php?sec=recettes');
+            }
+
+            // ── Step 1: read with defaults, then validate ────────────────────
+            $recipeId = post_int('recipe_id') ?? 0;
+            if ($recipeId <= 0) {
+                throw new RuntimeException('recipe_id requis.');
+            }
+
+            // co2_target: empty → NULL, else float ≥ 0
+            $rawCo2Target    = post_decimal('co2_target');
+            $co2Target       = $rawCo2Target !== null ? (float) $rawCo2Target : null;
+            if ($co2Target !== null && $co2Target < 0.0) {
+                throw new RuntimeException('co2_target doit être ≥ 0.');
+            }
+
+            // co2_tolerance: empty → NULL, else float ≥ 0
+            $rawCo2Tolerance = post_decimal('co2_tolerance');
+            $co2Tolerance    = $rawCo2Tolerance !== null ? (float) $rawCo2Tolerance : null;
+            if ($co2Tolerance !== null && $co2Tolerance < 0.0) {
+                throw new RuntimeException('co2_tolerance doit être ≥ 0.');
+            }
+
+            // racked_vol override cols: all four must be provided or all must be empty.
+            // Partial override is rejected — the resolver requires all four to be non-null.
+            $rawVolWarnLo    = post_decimal('racked_vol_warn_lo');
+            $rawVolWarnHi    = post_decimal('racked_vol_warn_hi');
+            $rawVolOutlierLo = post_decimal('racked_vol_outlier_lo');
+            $rawVolOutlierHi = post_decimal('racked_vol_outlier_hi');
+
+            $volProvidedCount = (int)($rawVolWarnLo !== null)
+                              + (int)($rawVolWarnHi !== null)
+                              + (int)($rawVolOutlierLo !== null)
+                              + (int)($rawVolOutlierHi !== null);
+
+            if ($volProvidedCount > 0 && $volProvidedCount < 4) {
+                throw new RuntimeException(
+                    'Les quatre bornes de volume (warn lo/hi, outlier lo/hi) '
+                    . 'doivent toutes être renseignées ou toutes laissées vides.'
+                );
+            }
+
+            $volWarnLo    = $rawVolWarnLo    !== null ? (float) $rawVolWarnLo    : null;
+            $volWarnHi    = $rawVolWarnHi    !== null ? (float) $rawVolWarnHi    : null;
+            $volOutlierLo = $rawVolOutlierLo !== null ? (float) $rawVolOutlierLo : null;
+            $volOutlierHi = $rawVolOutlierHi !== null ? (float) $rawVolOutlierHi : null;
+
+            // Basic ordering sanity when provided
+            if ($volWarnLo !== null) {
+                if ($volWarnLo < 0.0) throw new RuntimeException('racked_vol_warn_lo doit être ≥ 0.');
+                if ($volWarnHi <= $volWarnLo) throw new RuntimeException('racked_vol_warn_hi doit être > warn_lo.');
+                if ($volOutlierLo > $volWarnLo) throw new RuntimeException('racked_vol_outlier_lo doit être ≤ warn_lo.');
+                if ($volOutlierHi < $volWarnHi) throw new RuntimeException('racked_vol_outlier_hi doit être ≥ warn_hi.');
+            }
+
+            // ── Step 2: validate recipe exists ──────────────────────────────
+            $recStmt = $pdo->prepare(
+                "SELECT id, name FROM ref_recipes WHERE id = ? AND is_active = 1 LIMIT 1"
+            );
+            $recStmt->execute([$recipeId]);
+            $recRow = $recStmt->fetch(PDO::FETCH_ASSOC);
+            if (!$recRow) {
+                throw new RuntimeException("Recette introuvable ou inactive : id={$recipeId}");
+            }
+
+            // ── Step 3: fetch before-state for audit ─────────────────────────
+            $beforeStmt = $pdo->prepare(
+                "SELECT co2_target, co2_tolerance,
+                        racked_vol_warn_lo, racked_vol_warn_hi,
+                        racked_vol_outlier_lo, racked_vol_outlier_hi
+                   FROM ref_recipes WHERE id = ? LIMIT 1"
+            );
+            $beforeStmt->execute([$recipeId]);
+            $before = $beforeStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+            $after = [
+                'co2_target'           => $co2Target,
+                'co2_tolerance'        => $co2Tolerance,
+                'racked_vol_warn_lo'   => $volWarnLo,
+                'racked_vol_warn_hi'   => $volWarnHi,
+                'racked_vol_outlier_lo'=> $volOutlierLo,
+                'racked_vol_outlier_hi'=> $volOutlierHi,
+                'last_modified_by'     => 'web',
+            ];
+
+            // ── Step 4: write ─────────────────────────────────────────────────
+            $upStmt = $pdo->prepare(
+                "UPDATE ref_recipes
+                    SET co2_target            = ?,
+                        co2_tolerance         = ?,
+                        racked_vol_warn_lo    = ?,
+                        racked_vol_warn_hi    = ?,
+                        racked_vol_outlier_lo = ?,
+                        racked_vol_outlier_hi = ?,
+                        last_modified_by      = 'web'
+                  WHERE id = ?"
+            );
+            $upStmt->execute([
+                $co2Target, $co2Tolerance,
+                $volWarnLo, $volWarnHi, $volOutlierLo, $volOutlierHi,
+                $recipeId,
+            ]);
+
+            log_revision(
+                $pdo, $me, 'ref_recipes', $recipeId,
+                $before,
+                $after,
+                'normal',
+                "Salle de contrôle: QC seuils · recette {$recRow['name']}"
+            );
+
+            $parts = [];
+            if ($co2Target !== null) $parts[] = "CO₂ cible {$co2Target} ±{$co2Tolerance} g/L";
+            elseif ($co2Target === null) $parts[] = 'CO₂ → global';
+            if ($volWarnLo !== null) $parts[] = "vol [{$volWarnLo}–{$volWarnHi} HL]";
+            else $parts[] = 'vol → auto';
+
+            flash_set('ok',
+                "Seuils QC enregistrés — «{$recRow['name']}» · " . implode(', ', $parts) . '.'
+            );
+
         // ── cip_type_add ─────────────────────────────────────────────────────
         } elseif ($action === 'cip_type_add') {
             // Step 1: read with defaults, then validate (two-step pattern)
@@ -1238,6 +1368,61 @@ try {
     $recipeYeastError = $e->getMessage();
 }
 
+// --- Per-recipe QC data (co2_target, co2_tolerance, vol overrides + vol band) -----
+// Keyed by recipe id. Used to pre-populate the QC editor panel.
+$recipeQcData  = [];
+$recipeQcError = null;
+try {
+    $pdo = maltytask_pdo();
+    if (!empty($activatableRecs ?? [])) {
+        $allRecIds3 = array_column($activatableRecs, 'id');
+        $inPlace3   = implode(',', array_fill(0, count($allRecIds3), '?'));
+
+        // Load per-recipe QC override columns
+        $qcStmt = $pdo->prepare(
+            "SELECT id, co2_target, co2_tolerance,
+                    racked_vol_warn_lo, racked_vol_warn_hi,
+                    racked_vol_outlier_lo, racked_vol_outlier_hi
+               FROM ref_recipes
+              WHERE id IN ({$inPlace3})"
+        );
+        $qcStmt->execute($allRecIds3);
+        foreach ($qcStmt->fetchAll(PDO::FETCH_ASSOC) as $qcr) {
+            $recipeQcData[(int) $qcr['id']] = [
+                'co2_target'            => $qcr['co2_target'] !== null ? (float) $qcr['co2_target'] : null,
+                'co2_tolerance'         => $qcr['co2_tolerance'] !== null ? (float) $qcr['co2_tolerance'] : null,
+                'racked_vol_warn_lo'    => $qcr['racked_vol_warn_lo'] !== null ? (float) $qcr['racked_vol_warn_lo'] : null,
+                'racked_vol_warn_hi'    => $qcr['racked_vol_warn_hi'] !== null ? (float) $qcr['racked_vol_warn_hi'] : null,
+                'racked_vol_outlier_lo' => $qcr['racked_vol_outlier_lo'] !== null ? (float) $qcr['racked_vol_outlier_lo'] : null,
+                'racked_vol_outlier_hi' => $qcr['racked_vol_outlier_hi'] !== null ? (float) $qcr['racked_vol_outlier_hi'] : null,
+            ];
+        }
+
+        // Load history-derived volume bands (v_recipe_vol_band) — displayed read-only
+        $vbStmt = $pdo->prepare(
+            "SELECT recipe_id, n, mean_vol, stddev_vol, warn_lo, warn_hi, outlier_lo, outlier_hi
+               FROM v_recipe_vol_band
+              WHERE recipe_id IN ({$inPlace3})"
+        );
+        $vbStmt->execute($allRecIds3);
+        foreach ($vbStmt->fetchAll(PDO::FETCH_ASSOC) as $vbr) {
+            $rid = (int) $vbr['recipe_id'];
+            if (!isset($recipeQcData[$rid])) $recipeQcData[$rid] = [];
+            $recipeQcData[$rid]['vol_band'] = [
+                'n'          => (int)   $vbr['n'],
+                'mean_vol'   => (float) $vbr['mean_vol'],
+                'stddev_vol' => $vbr['stddev_vol'] !== null ? (float) $vbr['stddev_vol'] : null,
+                'warn_lo'    => (float) $vbr['warn_lo'],
+                'warn_hi'    => (float) $vbr['warn_hi'],
+                'outlier_lo' => (float) $vbr['outlier_lo'],
+                'outlier_hi' => (float) $vbr['outlier_hi'],
+            ];
+        }
+    }
+} catch (Throwable $e) {
+    $recipeQcError = $e->getMessage();
+}
+
 // --- CIP types (ref_cip_types) -----------------------------------------------
 $cipTypes    = [];
 $cipLoadErr  = null;
@@ -1295,6 +1480,7 @@ window.SDC_YEAST_STRAINS = <?= json_encode(
     JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP
 ) ?>;
 window.SDC_RECIPE_YEAST = <?= json_encode($recipeYeastData, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+window.SDC_RECIPE_QC = <?= json_encode($recipeQcData, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
 window.SDC_YEAST_FAMILY_LABELS = <?= json_encode(YEAST_FAMILY_LABELS, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
 window.SDC_CIP_TYPES = <?= json_encode(
     array_map(fn($ct) => [
@@ -1696,6 +1882,117 @@ window.SDC_CIP_TYPES = <?= json_encode(
             </div><!-- /yg-panel -->
 
             <?php endif ?><!-- /yeastLoadErr -->
+
+            <!-- ── QC THRESHOLDS PANEL (per-recipe CO₂ + vol bands) ─────── -->
+            <!-- Shown/hidden by JS alongside the yeast panel. Separate form,
+                 separate action (update_recipe_qc). Always inside pane-yeast
+                 so it appears in the same subtab view as Levure & garde. -->
+            <?php if ($recipeQcError): ?>
+              <div class="sdc-flash sdc-flash--err" style="margin:12px 20px;">
+                Erreur chargement seuils QC : <?= htmlspecialchars($recipeQcError) ?>
+              </div>
+            <?php endif ?>
+
+            <div class="yg-panel" id="qcPanel" style="display:none;margin-top:0;border-top:1px solid var(--hairline);">
+              <form method="post" action="/modules/salle-de-controle.php"
+                    class="yg-form" id="qcForm" novalidate>
+                <input type="hidden" name="csrf"      value="<?= htmlspecialchars($csrf) ?>">
+                <input type="hidden" name="action"    value="update_recipe_qc">
+                <input type="hidden" name="recipe_id" value="" id="qcRecipeId">
+
+                <div class="yg-section">
+                  <div class="yg-section-head">
+                    <span class="yg-section-title">Seuils QC <em>CO₂</em></span>
+                    <span class="yg-section-sub">Cible ± tolérance → bandes warn/outlier · ref_recipes.co2_target / co2_tolerance</span>
+                  </div>
+
+                  <!-- History-derived vol band: read-only context display -->
+                  <div class="yg-section" id="qcVolBandInfo" style="background:var(--bg);border:1px solid var(--hairline);border-radius:6px;padding:10px 14px;margin-bottom:10px;display:none;">
+                    <div class="yg-section-head" style="margin-bottom:6px;">
+                      <span class="yg-section-title" style="font-size:11px;">Volume historique <span style="font-weight:400;font-style:italic;">(auto-dérivé, lecture seule)</span></span>
+                    </div>
+                    <div id="qcVolBandDisplay" style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-soft);letter-spacing:.04em;">—</div>
+                  </div>
+
+                  <?php if (is_admin($me) || is_manager($me)): ?>
+                  <div class="yg-overrides-grid">
+                    <div class="yg-override-field">
+                      <label class="yg-label" for="qcCo2Target">CO₂ cible</label>
+                      <div class="yg-input-row">
+                        <input type="number" name="co2_target" id="qcCo2Target"
+                               class="yg-num-input" min="0" max="15" step="0.01" placeholder="—">
+                        <span class="yg-unit">g/L</span>
+                      </div>
+                      <div class="yg-resolved-line" style="font-size:10px;color:var(--ink-mute);">Vide = bandes globales commissioning</div>
+                    </div>
+                    <div class="yg-override-field">
+                      <label class="yg-label" for="qcCo2Tolerance">Tolérance</label>
+                      <div class="yg-input-row">
+                        <input type="number" name="co2_tolerance" id="qcCo2Tolerance"
+                               class="yg-num-input" min="0" max="5" step="0.01" placeholder="—">
+                        <span class="yg-unit">g/L</span>
+                      </div>
+                      <div class="yg-resolved-line" style="font-size:10px;color:var(--ink-mute);">Warn = ±1×tol · Outlier = ±2×tol</div>
+                    </div>
+                  </div>
+
+                  <!-- Derived band preview (read-only, updated by JS) -->
+                  <div id="qcCo2Preview" class="yg-effective-row" style="display:none;font-family:'JetBrains Mono',monospace;font-size:10px;padding:6px 0 2px;color:var(--ink-soft);"></div>
+
+                  <div class="yg-section-head" style="margin-top:14px;margin-bottom:4px;">
+                    <span class="yg-section-title">Seuils volume <em>override</em> <span style="font-weight:400;font-style:italic;font-size:10px;">(laisser vide = auto depuis historique)</span></span>
+                    <span class="yg-section-sub">Remplacement de la bande historique · les 4 champs doivent être remplis ou tous laissés vides</span>
+                  </div>
+                  <div class="yg-overrides-grid" style="grid-template-columns:repeat(4,1fr);">
+                    <div class="yg-override-field">
+                      <label class="yg-label" for="qcVolWarnLo">Warn lo</label>
+                      <div class="yg-input-row">
+                        <input type="number" name="racked_vol_warn_lo" id="qcVolWarnLo"
+                               class="yg-num-input" min="0" max="500" step="0.5" placeholder="—">
+                        <span class="yg-unit">HL</span>
+                      </div>
+                    </div>
+                    <div class="yg-override-field">
+                      <label class="yg-label" for="qcVolWarnHi">Warn hi</label>
+                      <div class="yg-input-row">
+                        <input type="number" name="racked_vol_warn_hi" id="qcVolWarnHi"
+                               class="yg-num-input" min="0" max="500" step="0.5" placeholder="—">
+                        <span class="yg-unit">HL</span>
+                      </div>
+                    </div>
+                    <div class="yg-override-field">
+                      <label class="yg-label" for="qcVolOutlierLo">Outlier lo</label>
+                      <div class="yg-input-row">
+                        <input type="number" name="racked_vol_outlier_lo" id="qcVolOutlierLo"
+                               class="yg-num-input" min="0" max="500" step="0.5" placeholder="—">
+                        <span class="yg-unit">HL</span>
+                      </div>
+                    </div>
+                    <div class="yg-override-field">
+                      <label class="yg-label" for="qcVolOutlierHi">Outlier hi</label>
+                      <div class="yg-input-row">
+                        <input type="number" name="racked_vol_outlier_hi" id="qcVolOutlierHi"
+                               class="yg-num-input" min="0" max="500" step="0.5" placeholder="—">
+                        <span class="yg-unit">HL</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="yg-actions">
+                    <button type="submit" class="yg-save-btn">Enregistrer seuils QC</button>
+                    <p class="yg-hint">
+                      CO₂ vide = hériter des bandes globales. Volume vide = auto (historique σ si ≥ 3 transferts, sinon global).
+                    </p>
+                  </div>
+                  <?php else: ?>
+                  <!-- Operator: read-only resolved values -->
+                  <div id="qcReadOnly" style="padding:16px;color:var(--ink-faint);font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;">Sélectionner une recette pour voir les seuils QC.</div>
+                  <?php endif ?>
+                </div>
+
+              </form>
+            </div><!-- /qcPanel -->
+
           </div><!-- /pane-yeast -->
 
         </div><!-- /recipe-detail-col -->
@@ -2357,6 +2654,7 @@ function switchSubtab(tab){
   }
   if(tab==='yeast' && selectedRecipeId!==null){
     ygRenderPanel(selectedRecipeId);
+    if(typeof window.qcRenderPanel==='function') window.qcRenderPanel(selectedRecipeId);
   }
 }
 
@@ -2410,7 +2708,10 @@ function selectRecipe(id){
   renderIngrPane(id,p);
   renderProcessPane(id,p);
   if(currentSubtab==='formats'&&window.sdcFormats){window.sdcFormats.render(id);}
-  if(currentSubtab==='yeast'){ygRenderPanel(id);}
+  if(currentSubtab==='yeast'){
+    ygRenderPanel(id);
+    if(typeof window.qcRenderPanel==='function') window.qcRenderPanel(id);
+  }
 }
 
 /* ═══════════════════════════════════════════
@@ -2701,6 +3002,97 @@ function renderProcessPane(id,profile){
     if(row) row.innerHTML=html;
     if(roRow) roRow.innerHTML=html;
   }
+})();
+
+/* ═══════════════════════════════════════════
+   QC PANEL — per-recipe CO₂ target + vol overrides editor
+   ═══════════════════════════════════════════ */
+(function(){
+  const SDC_RECIPE_QC = window.SDC_RECIPE_QC || {};
+
+  // Populate the QC editor panel for the given recipe id.
+  // Shows current co2_target / co2_tolerance / vol override values
+  // (from window.SDC_RECIPE_QC) plus the history-derived vol band for context.
+  window.qcRenderPanel = function(recipeId){
+    const panel = document.getElementById('qcPanel');
+    if(!panel) return;
+
+    const qc = SDC_RECIPE_QC[String(recipeId)] || null;
+
+    // Always show the panel when a recipe is selected
+    panel.style.display = '';
+
+    // Set hidden recipe_id
+    const ridEl = document.getElementById('qcRecipeId');
+    if(ridEl) ridEl.value = recipeId;
+
+    function setNum(id, val){
+      const el = document.getElementById(id);
+      if(!el) return;
+      el.value = (val !== null && val !== undefined) ? val : '';
+    }
+
+    // CO₂ fields
+    setNum('qcCo2Target',    qc ? qc.co2_target    : null);
+    setNum('qcCo2Tolerance', qc ? qc.co2_tolerance : null);
+
+    // Volume override fields
+    setNum('qcVolWarnLo',    qc ? qc.racked_vol_warn_lo    : null);
+    setNum('qcVolWarnHi',    qc ? qc.racked_vol_warn_hi    : null);
+    setNum('qcVolOutlierLo', qc ? qc.racked_vol_outlier_lo : null);
+    setNum('qcVolOutlierHi', qc ? qc.racked_vol_outlier_hi : null);
+
+    // Vol band info (history-derived, read-only)
+    const vbInfo = document.getElementById('qcVolBandInfo');
+    const vbDisp = document.getElementById('qcVolBandDisplay');
+    const vb = (qc && qc.vol_band) ? qc.vol_band : null;
+    if(vbInfo && vbDisp){
+      if(vb){
+        vbInfo.style.display = '';
+        const mean    = vb.mean_vol   != null ? parseFloat(vb.mean_vol).toFixed(1)   : '—';
+        const stddev  = vb.stddev_vol != null ? parseFloat(vb.stddev_vol).toFixed(1) : '—';
+        const warnLo  = vb.warn_lo    != null ? parseFloat(vb.warn_lo).toFixed(1)    : '—';
+        const warnHi  = vb.warn_hi    != null ? parseFloat(vb.warn_hi).toFixed(1)    : '—';
+        const outLo   = vb.outlier_lo != null ? parseFloat(vb.outlier_lo).toFixed(1) : '—';
+        const outHi   = vb.outlier_hi != null ? parseFloat(vb.outlier_hi).toFixed(1) : '—';
+        vbDisp.textContent =
+          'n=' + vb.n + '  ·  moy=' + mean + ' HL  σ=' + stddev + ' HL'
+          + '  ·  warn [' + warnLo + '–' + warnHi + ' HL]'
+          + '  outlier [' + outLo + '–' + outHi + ' HL]';
+      } else {
+        vbInfo.style.display = 'none';
+        vbDisp.textContent = '';
+      }
+    }
+
+    // Live CO₂ band preview
+    updateCo2Preview();
+  };
+
+  // Recompute the warn/outlier band from current co2_target / co2_tolerance inputs
+  // and display it read-only for operator context.
+  function updateCo2Preview(){
+    const previewEl = document.getElementById('qcCo2Preview');
+    if(!previewEl) return;
+    const tgt = parseFloat(document.getElementById('qcCo2Target')  ? document.getElementById('qcCo2Target').value  : '');
+    const tol = parseFloat(document.getElementById('qcCo2Tolerance')? document.getElementById('qcCo2Tolerance').value: '');
+    if(!isNaN(tgt) && !isNaN(tol) && tol >= 0){
+      const wLo = (tgt - tol).toFixed(2);
+      const wHi = (tgt + tol).toFixed(2);
+      const oLo = (tgt - 2*tol).toFixed(2);
+      const oHi = (tgt + 2*tol).toFixed(2);
+      previewEl.textContent = '→ warn [' + wLo + '–' + wHi + ' g/L]  outlier [' + oLo + '–' + oHi + ' g/L]';
+      previewEl.style.display = '';
+    } else {
+      previewEl.style.display = 'none';
+    }
+  }
+
+  // Wire live CO₂ preview to the two inputs
+  ['qcCo2Target','qcCo2Tolerance'].forEach(function(id){
+    const el = document.getElementById(id);
+    if(el) el.addEventListener('input', updateCo2Preview);
+  });
 })();
 
 /* ═══════════════════════════════════════════
