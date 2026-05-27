@@ -184,9 +184,37 @@
     });
   }
 
+  /* ── CIP vessel number sync ─────────────────────────────────────────────── */
+  // The CIP partial emits cip_vessel_0_number (CCT) and cip_vessel_1_number (YT)
+  // as hidden fields with null at render time. Keep them in sync with the
+  // operator's CCT and YT selections so cip_upsert stores the right target_number.
+  function wireCipVesselNumbers() {
+    const cctSel = document.getElementById('cct');
+    const ytInput = document.getElementById('yt_number');
+    const cctNumField = document.querySelector('[name="cip_vessel_0_number"]');
+    const ytNumField  = document.querySelector('[name="cip_vessel_1_number"]');
+
+    if (cctSel && cctNumField) {
+      const syncCct = function () {
+        cctNumField.value = cctSel.value || '';
+      };
+      cctSel.addEventListener('change', syncCct);
+      syncCct(); // seed on page load (empty until operator picks)
+    }
+
+    if (ytInput && ytNumField) {
+      const syncYt = function () {
+        ytNumField.value = ytInput.value || '';
+      };
+      ytInput.addEventListener('input', syncYt);
+      syncYt(); // seed on page load
+    }
+  }
+
   /* ── Init ───────────────────────────────────────────────────────────────── */
   document.addEventListener('DOMContentLoaded', function () {
     wireRecipeSelect();
+    wireCipVesselNumbers();
 
     // FormFramework integration — draft persistence only (no numeric thresholds
     // for the header fields that are all enums/free text; QC is on brew measurements

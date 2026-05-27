@@ -31,6 +31,7 @@ require __DIR__ . '/../../app/auth.php';
 require __DIR__ . '/../../app/settings-helpers.php';
 require __DIR__ . '/../../app/db-write-helpers.php';
 require_once __DIR__ . '/../../app/tank-simulator.php';
+require_once __DIR__ . '/../../app/cip-events.php';
 
 require_login();
 $me = current_user();
@@ -72,9 +73,6 @@ const FORMAT_SUFFIXES = [
     'BU'  => 'BU (single bottle)',
     'CU'  => 'CU (single can)',
 ];
-
-// CIP Yes/No options
-const CIP_YESNO = ['Oui' => 'Oui', 'Non' => 'Non'];
 
 // ── POST ──────────────────────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -136,13 +134,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $tankCo2 = post_decimal('tank_co2');
         $tankO2  = post_decimal('tank_o2');
 
-        // CIP fields (decision 4)
-        $cipTankDone     = post_str('cip_tank_done');
-        $cipTankType     = post_str('cip_tank_type');
-        $cipTankDate     = post_str('cip_tank_date');
-        $cipMachinesDone = post_str('cip_machines_done');
-        $cipMachinesType = post_str('cip_machines_type');
-        $cipMachinesDate = post_str('cip_machines_date');
+        // CIP events (decision 4) — parsed via shared infra; written to bd_cip_events after upsert
+        $cipEvents = cip_parse_post($_POST, 'packaging');
 
         // Keg / cuv specific (decision 1 fields carried over)
         $kegClientDelivered = post_str('keg_client_delivered');
@@ -299,13 +292,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'white_label_name'       => $whiteLabelName,
                     // Client FK (decision 7)
                     'client_fk'              => $clientFk,
-                    // CIP (decision 4; requires migration 127 — columns absent until applied)
-                    'cip_tank_done'          => $cipTankDone,
-                    'cip_tank_type'          => $cipTankType,
-                    'cip_tank_date'          => $cipTankDate,
-                    'cip_machines_done'      => $cipMachinesDone,
-                    'cip_machines_type'      => $cipMachinesType,
-                    'cip_machines_date'      => $cipMachinesDate,
+                    // CIP: flat cip_tank_*/cip_machines_* columns are intentionally NOT written
+                    // from the web form — CIP now goes to bd_cip_events via cip_upsert().
+                    // Historical flat columns remain in the table for legacy ingest rows only.
                     // QA
                     'tank_co2'               => $tankCo2,
                     'tank_o2'                => $tankO2,
@@ -323,18 +312,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $beerLabel = $nebBeer !== '' ? $nebBeer : $contractBeer;
 
+        $cipMeta = ['submitted_at' => $submittedAt, 'email' => $me['username']];
+
         if (PACKAGING_WRITE_ENABLED) {
-            // ── Live write path (disabled until operator confirms mapping + migration applied) ──
-            // NOTE: cip_tank_* / cip_machines_* / source_tank_type / bbt_source_fk /
-            //   cct_source_fk / event_date columns require migration 127 to be applied first.
+            // ── Live write path ──────────────────────────────────────────────────
+            // CIP events are written once per session to bd_cip_events, keyed to the
+            // MAIN row's packaging_id. Parallel rows share the same CIP session.
+            $mainPackagingId = null;
             foreach ($rows as $rSpec) {
-                // Strip CIP + new-schema columns from row if migration not yet applied
-                // (safety shim — remove this block after migration 127 is applied)
                 $safeRow = $rSpec['row'];
-                $result = bd_upsert($pdo, PACKAGING_LIVE_TABLE, $safeRow, $nkCols);
-                log_revision($pdo, $me, PACKAGING_LIVE_TABLE, $result['id'], null, $safeRow, $qcFlag,
+                $result  = bd_upsert($pdo, PACKAGING_LIVE_TABLE, $safeRow, $nkCols);
+                $rowId   = (int)$result['id'];
+                log_revision($pdo, $me, PACKAGING_LIVE_TABLE, $rowId, null, $safeRow, $qcFlag,
                     ($rSpec['origin'] === 'parallel' ? '[parallel] ' : '') . ($fwComment ?: null));
+                // Track the main row's ID for CIP attachment
+                if ($rSpec['origin'] === 'main' && $mainPackagingId === null) {
+                    $mainPackagingId = $rowId;
+                }
             }
+            // Write CIP events once, linked to the main packaging row.
+            if ($mainPackagingId !== null) {
+                cip_upsert($pdo, 'packaging', $mainPackagingId, $cipEvents, $cipMeta);
+            }
+
             $qcLabel = match($qcFlag) {
                 'elevated' => ' — valeurs à vérifier',
                 'outlier'  => ' — outlier enregistré',
@@ -345,6 +345,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         } else {
             // ── Draft write path (safe sandbox — no real bd_packaging_v2 rows) ──
+            // CIP events are logged to audit_row_revisions only (no bd_cip_events write).
             foreach ($rows as $i => $rSpec) {
                 log_revision(
                     $pdo,
@@ -356,6 +357,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $qcFlag,
                     '[DRAFT MODE] format_index=' . $i . ' origin=' . $rSpec['origin']
                     . ' — Write guard active. ' . ($fwComment ?: 'No real row created.')
+                );
+            }
+            // Log CIP event summary to audit only (no bd_cip_events write in draft mode)
+            if (!empty($cipEvents)) {
+                log_revision(
+                    $pdo,
+                    $me,
+                    '[DRAFT] bd_cip_events',
+                    0,
+                    null,
+                    ['cip_event_count' => count($cipEvents), 'events' => $cipEvents],
+                    'normal',
+                    '[DRAFT MODE] CIP events not written to bd_cip_events (no live packaging_id).'
                 );
             }
             $nFmt = count($rows);
@@ -740,6 +754,9 @@ try {
     $recentStmt->execute();
     $recentPackaging = $recentStmt->fetchAll(PDO::FETCH_ASSOC);
 
+    // ── CIP infra ─────────────────────────────────────────────────────────────
+    $cipTypes = cip_type_options($pdo);
+
     $loadErr = null;
 } catch (Throwable $e) {
     $candidates         = [];
@@ -749,6 +766,7 @@ try {
     $clients            = [];
     $recipes            = [];
     $recentPackaging    = [];
+    $cipTypes           = [];
     // Safe fallback: on DB error, disallow override display to avoid confusion
     $canOverride        = false;
     $minDays            = PACKAGING_MIN_DAYS_FALLBACK;
@@ -766,6 +784,28 @@ $pfRecipeUnassignedJson = json_encode($pfRecipeUnassigned, JSON_UNESCAPED_UNICOD
 $clientsJson            = json_encode($clients,            JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 $runTypeLabelJson       = json_encode(RUN_TYPE_LABELS,     JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 $suffixLabelJson        = json_encode(FORMAT_SUFFIXES,     JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
+
+// ── CIP partial config ────────────────────────────────────────────────────────
+// Packaging CIPs machines (centri/kze/pump) + a generic tank vessel.
+// The tank vessel uses code='tank' (no specific number — packaging CIPs
+// "the source tank" generically; the tank identity is already captured via
+// bbt_source_fk/cct_source_fk on the parent row, not repeated in CIP).
+// required=false: CIP is capturable but not mandated for packaging.
+$cipConfig = [
+    'machines'            => ['centri', 'kze', 'pump'],
+    'show_inline_combine' => true,
+    'vessels'             => [
+        [
+            'code'          => 'tank',
+            'number'        => null,
+            'label'         => 'CIP cuve',
+            'dynamic_label' => false,
+            'required'      => false,
+        ],
+    ],
+    'cip_types'           => $cipTypes,
+    'existing'            => null,  // new submission only (no edit path yet)
+];
 ?><!doctype html>
 <html lang="fr">
 <head>
@@ -776,6 +816,7 @@ $suffixLabelJson        = json_encode(FORMAT_SUFFIXES,     JSON_UNESCAPED_UNICOD
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,200;0,9..144,300;0,9..144,400;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/app.css?v=<?= @filemtime(__DIR__ . '/../css/app.css') ?: time() ?>">
+  <link rel="stylesheet" href="/css/cip-section.css?v=<?= @filemtime(__DIR__ . '/../css/cip-section.css') ?: time() ?>">
   <link rel="stylesheet" href="/css/packaging-form.css?v=<?= @filemtime(__DIR__ . '/../css/packaging-form.css') ?: time() ?>">
 </head>
 <body class="home op-form-page op-form-packaging">
@@ -829,6 +870,9 @@ $suffixLabelJson        = json_encode(FORMAT_SUFFIXES,     JSON_UNESCAPED_UNICOD
 
     <!-- Warning panel (populated by form-framework.js) -->
     <div id="packaging-warnings" class="op-form__warnings" hidden aria-live="polite"></div>
+
+    <!-- ── Section: CIP (FIRST — shared partial, mirrors racking form) ─── -->
+    <?php require __DIR__ . '/../../app/partials/cip-section.php' ?>
 
     <!-- ── Section: Sélection lot source (BBT / CCT) ──────────────── -->
     <div class="op-form__card">
@@ -989,76 +1033,6 @@ $suffixLabelJson        = json_encode(FORMAT_SUFFIXES,     JSON_UNESCAPED_UNICOD
 
       </div>
     </div><!-- card QA -->
-
-    <!-- ── Section: CIP (decision 4) ─────────────────────────────── -->
-    <div class="op-form__card">
-      <div class="op-form__card-title">— CIP (nettoyage en place)</div>
-      <p class="op-form__hint">
-        CIP de la cuve source (BBT/CCT) et de la ligne de conditionnement.
-        Colonnes <code>cip_tank_*</code> et <code>cip_machines_*</code> —
-        disponibles après migration 127.
-      </p>
-
-      <!-- CIP: source tank (BBT/CCT) -->
-      <div class="pf-cip-group">
-        <div class="pf-cip-group__label">Cuve source</div>
-        <div class="op-form__grid--3 op-form__grid">
-
-          <div class="op-form__field">
-            <label class="op-form__label" for="cip_tank_done">CIP cuve effectué ?</label>
-            <select id="cip_tank_done" name="cip_tank_done" class="op-form__select">
-              <option value="">—</option>
-              <?php foreach (CIP_YESNO as $v => $l): ?>
-                <option value="<?= htmlspecialchars($v) ?>"><?= htmlspecialchars($l) ?></option>
-              <?php endforeach ?>
-            </select>
-          </div>
-
-          <div class="op-form__field">
-            <label class="op-form__label" for="cip_tank_type">Type CIP cuve</label>
-            <input id="cip_tank_type" name="cip_tank_type" type="text" class="op-form__input"
-                   placeholder="ex. NaOH, PAA, Rinse">
-          </div>
-
-          <div class="op-form__field">
-            <label class="op-form__label" for="cip_tank_date">Date CIP cuve</label>
-            <input id="cip_tank_date" name="cip_tank_date" type="text" class="op-form__input"
-                   placeholder="ex. 2026-05-20">
-          </div>
-
-        </div>
-      </div>
-
-      <!-- CIP: machines / packaging line -->
-      <div class="pf-cip-group">
-        <div class="pf-cip-group__label">Machines / ligne</div>
-        <div class="op-form__grid--3 op-form__grid">
-
-          <div class="op-form__field">
-            <label class="op-form__label" for="cip_machines_done">CIP machines effectué ?</label>
-            <select id="cip_machines_done" name="cip_machines_done" class="op-form__select">
-              <option value="">—</option>
-              <?php foreach (CIP_YESNO as $v => $l): ?>
-                <option value="<?= htmlspecialchars($v) ?>"><?= htmlspecialchars($l) ?></option>
-              <?php endforeach ?>
-            </select>
-          </div>
-
-          <div class="op-form__field">
-            <label class="op-form__label" for="cip_machines_type">Type CIP machines</label>
-            <input id="cip_machines_type" name="cip_machines_type" type="text" class="op-form__input"
-                   placeholder="ex. NaOH rinse, PAA">
-          </div>
-
-          <div class="op-form__field">
-            <label class="op-form__label" for="cip_machines_date">Date CIP machines</label>
-            <input id="cip_machines_date" name="cip_machines_date" type="text" class="op-form__input"
-                   placeholder="ex. 2026-05-20">
-          </div>
-
-        </div>
-      </div>
-    </div><!-- card CIP -->
 
     <!-- ── Section: Fûts / cuves de service (visible pour keg/cuv) ── -->
     <div class="op-form__card" id="pf-keg-section" hidden>
@@ -1297,12 +1271,11 @@ window.MIN_DAYS_AFTER_RACKING = <?= $minDays ?>;
  * formats[N][loss_liquid_*]   → loss_liquid_other_units
  * tank_co2                    → tank_co2                          Shared across all format rows
  * tank_o2                     → tank_o2
- * cip_tank_done               → cip_tank_done                     NEW col (mig 127)
- * cip_tank_type               → cip_tank_type                     NEW col (mig 127)
- * cip_tank_date               → cip_tank_date                     NEW col (mig 127)
- * cip_machines_done           → cip_machines_done                 NEW col (mig 127)
- * cip_machines_type           → cip_machines_type                 NEW col (mig 127)
- * cip_machines_date           → cip_machines_date                 NEW col (mig 127)
+ * [CIP — not written to bd_packaging_v2]
+ * cip_machine_centri/kze/pump → bd_cip_events (source_form='packaging', target_kind='machine')
+ * cip_vessel_0 (tank)         → bd_cip_events (source_form='packaging', target_kind='vessel', target_code='tank')
+ * cip_tank_done/type/date     → NOT written (flat columns kept in table for legacy ingest only)
+ * cip_machines_done/type/date → NOT written (flat columns kept in table for legacy ingest only)
  * hors_process (hidden)       → hors_process_flag (TINYINT)       NEW col (mig 128) manager/admin only
  * hors_process_reason         → hors_process_reason (VARCHAR 255) NEW col (mig 128) optional justification
  * keg_client_delivered        → keg_client_delivered
@@ -1328,8 +1301,9 @@ window.MIN_DAYS_AFTER_RACKING = <?= $minDays ?>;
  *    - Creates commissioning_settings + seeds packaging.min_days_after_racking = 1
  *    - Adds hors_process_flag + hors_process_reason to bd_packaging_v2
  * 3. Verify bd_packaging_v2 SHOW COLUMNS includes:
- *    event_date, source_tank_type, bbt_source_fk, cct_source_fk, cip_tank_*,
- *    cip_machines_*, hors_process_flag, hors_process_reason.
+ *    event_date, source_tank_type, bbt_source_fk, cct_source_fk,
+ *    hors_process_flag, hors_process_reason.
+ *    (cip_tank_* and cip_machines_* remain in the table but are no longer written by this form.)
  * 4. In the live write path ($row array), ensure all new columns are included
  *    (hors_process_flag/reason are included — search 'hors_process' in the array above).
  * 5. Confirm candidate query returns expected lots (normal and override).

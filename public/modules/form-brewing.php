@@ -30,6 +30,7 @@ require __DIR__ . '/../../app/auth.php';
 require __DIR__ . '/../../app/settings.php';
 require __DIR__ . '/../../app/settings-helpers.php';
 require __DIR__ . '/../../app/db-write-helpers.php';
+require_once __DIR__ . '/../../app/cip-events.php';
 
 require_login();
 $me = current_user();
@@ -39,8 +40,6 @@ $me = current_user();
 const ING_CATEGORIES = ['malt','hops_kettle','hops_dry','adjunct','mineral','process'];
 // Mirrors db ENUM: enum('kg','g','ml')
 const ING_UNITS = ['kg','g','ml'];
-// Mirrors distinct cct_cip values in live db
-const CIP_TYPES = ['Full CIP','Acid'];
 
 // ── POST handler ──────────────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -72,10 +71,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // CCT number (integer 1–99)
         $cct = post_int('cct');
 
-        // CIP
-        $cctCip     = post_str('cct_cip');
-        if ($cctCip !== null) must_be_one_of('cct_cip', $cctCip, CIP_TYPES);
-        $cctCipDate = post_str('cct_cip_date');
+        // CIP events via shared parser (replaces old flat cct_cip/cct_cip_date/yt_cip_date)
+        $cipEvents = cip_parse_post($_POST, 'brewing');
 
         // Yeast
         $yeast       = post_str('yeast_select') ?? post_str('yeast_other');
@@ -83,7 +80,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $newYeast    = post_str('new_yeast');
         $pitchedFrom = post_str('pitched_from');
         $ytNumber    = post_int('yt_number');
-        $ytCipDate   = post_str('yt_cip_date');
 
         $brewComments = post_str('comments');
 
@@ -145,22 +141,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $auditFlags = 'web_entry';
 
         // ── 4. Brewday header row ─────────────────────────────────────────────
+        // CRITICAL: cct_cip / cct_cip_date / yt_cip_date intentionally absent.
+        // The web form no longer writes these flat columns — CIP now goes to
+        // bd_cip_events via cip_upsert. Including them after they stop being
+        // populated would cause hash drift → silent row re-insertion.
         $hashCols = [
             $beer, $batch, $recipeId ?? '',
             $eventDate,
             $cct ?? '',
-            $cctCip ?? '',
-            $cctCipDate ?? '',
             $yeast ?? '',
             $yeastGen ?? '',
             $newYeast ?? '',
             $pitchedFrom ?? '',
             $ytNumber ?? '',
-            $ytCipDate ?? '',
             $brewComments ?? '',
         ];
         $brewdayHash = bd_row_hash($hashCols);
 
+        // Note: cct_cip / cct_cip_date / yt_cip_date intentionally absent.
+        // The web form no longer writes these flat columns — CIP goes to
+        // bd_cip_events via cip_upsert. Legacy rows from the ingest path
+        // retain their values; the flat columns stay in the table.
         $brewdayRow = [
             'row_hash'     => $brewdayHash,
             'audit_flags'  => $auditFlags,
@@ -171,20 +172,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'recipe_id_fk' => $recipeId,
             'event_date'   => $eventDate,
             'cct'          => $cct,
-            'cct_cip'      => $cctCip,
-            'cct_cip_date' => $cctCipDate,
             'yeast'        => $yeast,
             'yeast_gen'    => $yeastGen,
             'new_yeast'    => $newYeast,
             'pitched_from' => $pitchedFrom,
             'yt_number'    => $ytNumber,
-            'yt_cip_date'  => $ytCipDate,
             'comments'     => $brewComments,
         ];
 
         $brewdayNk = ['submitted_at', 'beer', 'batch'];
         $brewdayResult = bd_upsert($pdo, 'bd_brewing_brewday_v2', $brewdayRow, $brewdayNk);
         $brewdayId = $brewdayResult['id'];
+
+        // Write CIP events to bd_cip_events (shared infra, replaces flat columns)
+        $cipMeta = ['submitted_at' => $submittedAt, 'email' => $me['username']];
+        cip_upsert($pdo, 'brewing', $brewdayId, $cipEvents, $cipMeta);
 
         log_revision(
             $pdo,
@@ -372,6 +374,9 @@ try {
         ];
     }
 
+    // CIP infra — types from ref_cip_types; no existing events on new submission
+    $cipTypes = cip_type_options($pdo);
+
     // Recent brewing submissions (last 10 web-entered)
     $recentRows = $pdo->prepare(
         "SELECT id, event_date, beer, batch, cct, yeast, email, submitted_at, audit_flags
@@ -390,6 +395,7 @@ try {
     $ccts         = [];
     $yeastStrains = [];
     $miJs         = [];
+    $cipTypes     = [];
     $recentBrews  = [];
     $loadErr = $e->getMessage();
 }
@@ -397,6 +403,34 @@ try {
 $csrf          = csrf_token();
 $active_module = 'saisies';
 $displayFmt    = date_display_format();   // e.g. 'd/m/Y'
+
+// CIP partial config (vessel-only: CCT + YT; no machines for brewing)
+// Vessel numbers are null at render time — form-brewing.js syncs
+// cip_vessel_0_number from the CCT select and cip_vessel_1_number from
+// yt_number when they change. The flat columns (cct_cip / cct_cip_date /
+// yt_cip_date) are no longer written from the web form.
+$cipConfig = [
+    'machines'           => [],           // no machine CIP for brewing
+    'show_inline_combine'=> false,
+    'vessels'            => [
+        [
+            'code'          => 'cct',
+            'number'        => null,      // populated client-side from #cct select
+            'label'         => 'CIP CCT',
+            'dynamic_label' => false,
+            'required'      => false,     // capturable, not mandated
+        ],
+        [
+            'code'          => 'yt',
+            'number'        => null,      // populated client-side from #yt_number input
+            'label'         => 'CIP YT',
+            'dynamic_label' => false,
+            'required'      => false,
+        ],
+    ],
+    'cip_types'          => $cipTypes,
+    'existing'           => null,         // new submission
+];
 ?><!doctype html>
 <html lang="fr">
 <head>
@@ -407,6 +441,7 @@ $displayFmt    = date_display_format();   // e.g. 'd/m/Y'
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,200;0,9..144,300;0,9..144,400;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/app.css?v=<?= @filemtime(__DIR__ . '/../css/app.css') ?: time() ?>">
+  <link rel="stylesheet" href="/css/cip-section.css?v=<?= @filemtime(__DIR__ . '/../css/cip-section.css') ?: time() ?>">
   <link rel="stylesheet" href="/css/form-brewing.css?v=<?= @filemtime(__DIR__ . '/../css/form-brewing.css') ?: time() ?>">
 </head>
 <body class="home op-form-page form-brewing">
@@ -441,6 +476,9 @@ $displayFmt    = date_display_format();   // e.g. 'd/m/Y'
 
     <!-- Warning panel (populated by form-framework.js) -->
     <div id="brewing-warnings" class="op-form__warnings" hidden aria-live="polite"></div>
+
+    <!-- ── Section: CIP (FIRST — shared partial, vessel-only) ───────────────── -->
+    <?php require __DIR__ . '/../../app/partials/cip-section.php' ?>
 
     <!-- ── Section: Identité bière ─────────────────────────────────────────── -->
     <div class="op-form__card">
@@ -489,7 +527,7 @@ $displayFmt    = date_display_format();   // e.g. 'd/m/Y'
     <!-- ── Section: Cuve de fermentation ───────────────────────────────────── -->
     <div class="op-form__card">
       <div class="op-form__card-title">— cuve de fermentation (CCT)</div>
-      <div class="op-form__grid--3 op-form__grid">
+      <div class="op-form__grid">
 
         <!-- CCT (state-gated: status = 'active') -->
         <div class="op-form__field">
@@ -502,23 +540,6 @@ $displayFmt    = date_display_format();   // e.g. 'd/m/Y'
               </option>
             <?php endforeach ?>
           </select>
-        </div>
-
-        <!-- CIP type -->
-        <div class="op-form__field">
-          <label class="op-form__label" for="cct_cip">Type de CIP CCT</label>
-          <select id="cct_cip" name="cct_cip" class="op-form__select">
-            <option value="">—</option>
-            <?php foreach (CIP_TYPES as $ct): ?>
-              <option value="<?= htmlspecialchars($ct) ?>"><?= htmlspecialchars($ct) ?></option>
-            <?php endforeach ?>
-          </select>
-        </div>
-
-        <!-- CIP date -->
-        <div class="op-form__field">
-          <label class="op-form__label" for="cct_cip_date">Date CIP CCT</label>
-          <input id="cct_cip_date" name="cct_cip_date" type="date" class="op-form__input">
         </div>
 
       </div>
@@ -570,12 +591,6 @@ $displayFmt    = date_display_format();   // e.g. 'd/m/Y'
           <label class="op-form__label" for="yt_number">YT n°</label>
           <input id="yt_number" name="yt_number" type="number" class="op-form__input"
                  placeholder="—" min="1">
-        </div>
-
-        <!-- YT CIP date -->
-        <div class="op-form__field">
-          <label class="op-form__label" for="yt_cip_date">Date CIP YT</label>
-          <input id="yt_cip_date" name="yt_cip_date" type="date" class="op-form__input">
         </div>
 
       </div>
