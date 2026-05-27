@@ -351,6 +351,7 @@ body.sdc-page .yf-card.ale::before { background: linear-gradient(90deg, var(--oa
 body.sdc-page .yf-card.lager::before { background: linear-gradient(90deg, var(--bbt), transparent); }
 body.sdc-page .yf-card.spontane::before { background: linear-gradient(90deg, var(--ember), transparent); }
 body.sdc-page .yf-card.mixte::before { background: linear-gradient(90deg, var(--pkg-band), transparent); }
+body.sdc-page .yf-card.non_alcool::before { background: linear-gradient(90deg, var(--lab), transparent); }
 body.sdc-page .yf-card:hover { border-color: color-mix(in srgb, var(--lab) 45%, transparent); box-shadow: 0 8px 32px -8px color-mix(in srgb, var(--ink) 18%, transparent); }
 body.sdc-page .yf-card-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 16px; }
 body.sdc-page .yf-family-name { font-family: "Fraunces", serif; font-variation-settings: "opsz" 72; font-size: 20px; font-weight: 400; color: var(--ink); }
@@ -359,6 +360,7 @@ body.sdc-page .yf-family-name.ale em { color: var(--oak); }
 body.sdc-page .yf-family-name.lager em { color: var(--bbt); }
 body.sdc-page .yf-family-name.spontane em { color: var(--ember); }
 body.sdc-page .yf-family-name.mixte em { color: var(--pkg-band); }
+body.sdc-page .yf-family-name.non_alcool em { color: var(--lab); }
 body.sdc-page .yf-recipe-count { font-family: "JetBrains Mono", monospace; font-size: 9px; letter-spacing: .1em; color: var(--ink-mute); margin-left: auto; }
 body.sdc-page .yf-defaults { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 body.sdc-page .yf-def-row { background: color-mix(in srgb, var(--ink) 5%, transparent); border: 1px solid var(--hairline); border-radius: 7px; padding: 9px 11px; }
@@ -464,6 +466,25 @@ body.sdc-page .modal-form-input:focus { border-color: var(--lab); }
 body.sdc-page .modal-form-select { width: 100%; background: color-mix(in srgb, var(--bg-elev) 95%, transparent); border: 1px solid var(--hairline-2); border-radius: 7px; padding: 9px 12px; color: var(--ink); font-family: "JetBrains Mono", monospace; font-size: 11px; letter-spacing: .08em; outline: none; cursor: pointer; transition: border-color .2s; appearance: none; -webkit-appearance: none; }
 body.sdc-page .modal-form-select:focus { border-color: var(--lab); }
 body.sdc-page .modal-form-select option { background: var(--bg-elev); }
+
+/* non-produite yeast family — de-emphasized */
+body.sdc-page .yf-card--non-produite { opacity: .65; }
+body.sdc-page .yf-card--non-produite:hover { opacity: 1; }
+body.sdc-page .yf-non-produite-badge { display: inline-block; font-family: "JetBrains Mono", monospace; font-size: 8px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-faint); background: color-mix(in srgb, var(--ink) 8%, transparent); border: 1px solid var(--hairline); padding: 2px 7px; border-radius: 10px; margin-left: 6px; vertical-align: middle; }
+
+/* biochem inline edit form — admin only (mirrors cond-edit-form pattern) */
+body.sdc-page .yf-edit-form { margin-top: 14px; border-top: 1px solid var(--hairline); padding-top: 14px; }
+body.sdc-page .yf-edit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+body.sdc-page .yf-edit-field { display: flex; flex-direction: column; gap: 4px; }
+body.sdc-page .yf-edit-label { font-family: "JetBrains Mono", monospace; font-size: 8px; letter-spacing: .15em; color: var(--ink-mute); text-transform: uppercase; }
+body.sdc-page .yf-edit-row { display: flex; align-items: center; gap: 5px; }
+body.sdc-page .yf-edit-input { width: 4.5rem; padding: 5px 8px; background: color-mix(in srgb, var(--ink) 5%, transparent); border: 1px solid color-mix(in srgb, var(--lab) 35%, transparent); border-radius: 6px; color: var(--ink); font-family: "JetBrains Mono", monospace; font-size: 14px; text-align: center; outline: none; transition: border-color .2s; }
+body.sdc-page .yf-edit-input:focus { border-color: var(--lab); box-shadow: 0 0 0 2px color-mix(in srgb, var(--lab) 22%, transparent); }
+body.sdc-page .yf-edit-unit { font-family: "JetBrains Mono", monospace; font-size: 9px; color: var(--oak); }
+body.sdc-page .yf-edit-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+body.sdc-page .yf-edit-btn { padding: 6px 16px; background: color-mix(in srgb, var(--lab) 26%, transparent); border: 1px solid var(--lab-deep); border-radius: 7px; color: var(--lab); font-family: "JetBrains Mono", monospace; font-size: 9px; letter-spacing: .1em; text-transform: uppercase; cursor: pointer; transition: background .2s; }
+body.sdc-page .yf-edit-btn:hover { background: color-mix(in srgb, var(--lab) 36%, transparent); }
+body.sdc-page .yf-edit-hint { font-size: 10.5px; color: var(--ink-faint); line-height: 1.5; margin: 0; flex: 1; }
 
 /* operateur: disable pointer events on inputs managed by role-gate CSS */
 body.sdc-page[data-role="operateur"] .yf-def-v input,
@@ -706,3 +727,89 @@ body.sdc-page .fmt-binding-readonly {
   font-family: "JetBrains Mono", monospace; font-size: 8px;
   color: var(--ink-faint); letter-spacing: .08em; text-transform: uppercase;
 }
+
+/* ── Levure & garde panel (pane-yeast) ───────────────────────────────────── */
+body.sdc-page .sdc-yeast-pane { overflow-y: auto; }
+body.sdc-page .yg-panel {
+  padding: 16px 20px 24px; display: flex; flex-direction: column; gap: 16px;
+}
+body.sdc-page .yg-section {
+  background: linear-gradient(135deg, var(--bg-elev), var(--bg-side));
+  border: 1px solid var(--hairline-2); border-radius: 12px; padding: 16px 18px;
+}
+body.sdc-page .yg-section-head {
+  margin-bottom: 14px; display: flex; flex-direction: column; gap: 4px;
+}
+body.sdc-page .yg-section-title {
+  font-family: "JetBrains Mono", monospace; font-size: 9px;
+  letter-spacing: .22em; text-transform: uppercase; color: var(--lab);
+}
+body.sdc-page .yg-section-sub {
+  font-family: "DM Sans", sans-serif; font-size: 11px; color: var(--ink-mute);
+}
+body.sdc-page .yg-field-row {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+}
+body.sdc-page .yg-label {
+  font-family: "JetBrains Mono", monospace; font-size: 9px;
+  letter-spacing: .14em; text-transform: uppercase; color: var(--ink-mute);
+  flex: 0 0 120px;
+}
+body.sdc-page .yg-input-wrap { flex: 1; min-width: 200px; }
+body.sdc-page .yg-select {
+  width: 100%; max-width: 320px;
+  background: color-mix(in srgb, var(--bg-elev) 90%, transparent);
+  border: 1px solid var(--hairline-2); border-radius: 8px;
+  color: var(--ink); font-family: "DM Sans", sans-serif; font-size: 13px;
+  padding: 7px 10px; outline: none; cursor: pointer;
+  transition: border-color .18s; appearance: none; -webkit-appearance: none;
+}
+body.sdc-page .yg-select:focus { border-color: var(--lab); }
+body.sdc-page .yg-select option,
+body.sdc-page .yg-select optgroup { background: var(--bg-elev); }
+body.sdc-page .yg-family-wrap { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+body.sdc-page .yg-global-notice {
+  font-family: "JetBrains Mono", monospace; font-size: 8px; letter-spacing: .1em;
+  color: var(--ember); text-transform: uppercase; flex: 0 0 auto;
+}
+body.sdc-page .yg-readval {
+  font-family: "DM Sans", sans-serif; font-size: 14px; color: var(--lab);
+}
+body.sdc-page .yg-overrides-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px;
+}
+body.sdc-page .yg-override-field { display: flex; flex-direction: column; gap: 6px; }
+body.sdc-page .yg-input-row {
+  display: flex; align-items: center; gap: 6px;
+}
+body.sdc-page .yg-num-input {
+  width: 80px; background: color-mix(in srgb, var(--bg-elev) 90%, transparent);
+  border: none; border-bottom: 1px dashed color-mix(in srgb, var(--lab) 55%, transparent);
+  color: var(--ink); font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 72; font-size: 20px; padding: 0; outline: none;
+  transition: border-bottom-color .15s;
+}
+body.sdc-page .yg-num-input:focus { border-bottom-color: var(--lab); }
+body.sdc-page .yg-unit {
+  font-family: "JetBrains Mono", monospace; font-size: 9px; color: var(--oak);
+}
+body.sdc-page .yg-resolved-line {
+  font-family: "JetBrains Mono", monospace; font-size: 8px; color: var(--ink-faint);
+  letter-spacing: .08em;
+}
+body.sdc-page .yg-effective-row { margin-top: 4px; }
+body.sdc-page .yg-actions {
+  margin-top: 14px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+}
+body.sdc-page .yg-save-btn {
+  padding: 8px 20px; border-radius: 8px; border: 1px solid var(--lab-deep);
+  background: color-mix(in srgb, var(--lab) 20%, transparent); color: var(--lab);
+  cursor: pointer; font-family: "JetBrains Mono", monospace; font-size: 10px;
+  letter-spacing: .1em; text-transform: uppercase; transition: background .18s; white-space: nowrap;
+}
+body.sdc-page .yg-save-btn:hover { background: color-mix(in srgb, var(--lab) 35%, transparent); }
+body.sdc-page .yg-hint {
+  font-family: "DM Sans", sans-serif; font-size: 11px; color: var(--ink-mute);
+  margin: 0; flex: 1; min-width: 200px;
+}
+body.sdc-page .sdc-yeast-tab { white-space: nowrap; }

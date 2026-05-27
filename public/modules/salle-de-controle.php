@@ -11,6 +11,7 @@ declare(strict_types=1);
  * Auth: require_login() — all logged-in users can view; edit gated to is_admin().
  * POST handlers:
  *   update_min_days     — Conditionnement settings (admin only)
+ *   update_yeast_family — Biochimie yeast-family defaults (admin only)
  *   activate_format     — upsert ref_skus row for (recipe_id, format_id) (admin only)
  *   deactivate_format   — soft-deactivate ref_skus row (admin only)
  *   set_binding         — upsert ref_recipe_packaging_bindings row (admin only)
@@ -21,6 +22,7 @@ require __DIR__ . '/../../app/csrf.php';
 require __DIR__ . '/../../app/settings-helpers.php';
 require __DIR__ . '/../../app/db-write-helpers.php';
 require_once __DIR__ . '/../../app/sku-bom-compile.php';
+require_once __DIR__ . '/../../app/yeast-eligibility.php';
 
 require_login();
 $me = current_user();
@@ -144,8 +146,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = post_str('action') ?? '';
 
     // Redirect target depends on action
-    $redirectSec = in_array($action, ['activate_format','deactivate_format','set_binding'], true)
-        ? 'recettes' : 'conditionnement';
+    $redirectSec = in_array($action, ['activate_format','deactivate_format','set_binding','update_recipe_yeast'], true)
+        ? 'recettes'
+        : ($action === 'update_yeast_family' ? 'biochem' : 'conditionnement');
 
     try {
         $pdo = maltytask_pdo();
@@ -435,6 +438,92 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     . " · BOM recompilation échouée (la sauvegarde est conservée — relance en cron).");
             }
 
+        // ── update_yeast_family ──────────────────────────────────────────────
+        } elseif ($action === 'update_yeast_family') {
+
+            // Step 1 — read with defaults, then validate (two-step pattern)
+            $rawFamily = $_POST['family'] ?? '';
+            $validFamilies = ['ale', 'lager', 'non_alcool', 'spontane', 'mixte'];
+            $family = must_be_one_of('family', $rawFamily, $validFamilies);
+
+            // garde_days_min: int 0–365 or empty → NULL
+            $rawGarde = isset($_POST['garde_days_min']) ? trim((string) $_POST['garde_days_min']) : '';
+            if ($rawGarde === '') {
+                $gardeDays = null;
+            } else {
+                if (!ctype_digit($rawGarde)) {
+                    throw new RuntimeException('garde_days_min doit être un entier positif (0–365) ou vide.');
+                }
+                $gardeDays = (int) $rawGarde;
+                if ($gardeDays > 365) {
+                    throw new RuntimeException('garde_days_min doit être entre 0 et 365.');
+                }
+            }
+
+            // ferm_temp_min / ferm_temp_max: decimal or empty → NULL
+            $rawTMin = post_decimal('ferm_temp_min');
+            $rawTMax = post_decimal('ferm_temp_max');
+            $tempMin = $rawTMin !== null ? (float) $rawTMin : null;
+            $tempMax = $rawTMax !== null ? (float) $rawTMax : null;
+
+            if ($tempMin !== null && ($tempMin < 0 || $tempMin > 50)) {
+                throw new RuntimeException('ferm_temp_min doit être entre 0 et 50 °C.');
+            }
+            if ($tempMax !== null && ($tempMax < 0 || $tempMax > 50)) {
+                throw new RuntimeException('ferm_temp_max doit être entre 0 et 50 °C.');
+            }
+            if ($tempMin !== null && $tempMax !== null && $tempMin > $tempMax) {
+                throw new RuntimeException('ferm_temp_min ne peut pas être supérieur à ferm_temp_max.');
+            }
+
+            // Fetch before-state for audit
+            $fetchStmt = $pdo->prepare(
+                "SELECT garde_days_min, ferm_temp_min, ferm_temp_max
+                   FROM ref_yeast_family_defaults
+                  WHERE family = ?
+                  LIMIT 1"
+            );
+            $fetchStmt->execute([$family]);
+            $existing = $fetchStmt->fetch(PDO::FETCH_ASSOC);
+            if (!$existing) {
+                throw new RuntimeException("Famille levurienne introuvable : {$family}");
+            }
+
+            $before = [
+                'garde_days_min' => $existing['garde_days_min'],
+                'ferm_temp_min'  => $existing['ferm_temp_min'],
+                'ferm_temp_max'  => $existing['ferm_temp_max'],
+            ];
+            $after = [
+                'garde_days_min' => $gardeDays,
+                'ferm_temp_min'  => $tempMin,
+                'ferm_temp_max'  => $tempMax,
+            ];
+
+            $upStmt = $pdo->prepare(
+                "UPDATE ref_yeast_family_defaults
+                    SET garde_days_min = ?,
+                        ferm_temp_min  = ?,
+                        ferm_temp_max  = ?,
+                        updated_by     = ?,
+                        updated_at     = NOW()
+                  WHERE family = ?"
+            );
+            $upStmt->execute([$gardeDays, $tempMin, $tempMax, $me['username'], $family]);
+
+            log_revision(
+                $pdo,
+                $me,
+                'ref_yeast_family_defaults',
+                0,
+                $before,
+                $after,
+                'normal',
+                "Salle de contrôle: biochimie.{$family}"
+            );
+
+            flash_set('ok', "Paramètres Biochimie mis à jour : famille {$family}.");
+
         // ── update_min_days ──────────────────────────────────────────────────
         } elseif ($action === 'update_min_days') {
             $rawDays = post_decimal('min_days_after_racking');
@@ -485,6 +574,177 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             );
 
             flash_set('ok', "Délai minimum mis à jour : {$days} jour(s).");
+        // ── update_recipe_yeast ──────────────────────────────────────────────
+        } elseif ($action === 'update_recipe_yeast') {
+            // Role gate: admin or manager only (silent reject for operateur)
+            if (!is_admin($me) && !is_manager($me)) {
+                flash_set('err', 'Modification réservée aux administrateurs et managers.');
+                redirect_to('/modules/salle-de-controle.php?sec=recettes');
+            }
+
+            // ── Step 1: read with defaults, then validate ────────────────────
+            $recipeId = post_int('recipe_id') ?? 0;
+            if ($recipeId <= 0) {
+                throw new RuntimeException('recipe_id requis.');
+            }
+
+            // yeast_strain_id_fk: empty string → NULL, else positive int
+            $rawStrainId = post_str('yeast_strain_id_fk');
+            $strainIdFk  = ($rawStrainId !== null && $rawStrainId !== '') ? (int) $rawStrainId : null;
+
+            // family for the strain: empty → leave unchanged, else validate ENUM
+            $rawFamily  = post_str('strain_family');
+            $newFamily  = null; // null means "don't update strain's family"
+            if ($rawFamily !== null && $rawFamily !== '') {
+                $newFamily = must_be_one_of('strain_family', $rawFamily, YEAST_FAMILIES);
+            }
+
+            // garde_days_min_override: empty → NULL, else int 0–365
+            $rawGardeOvr = isset($_POST['garde_days_min_override'])
+                ? trim((string) $_POST['garde_days_min_override']) : '';
+            if ($rawGardeOvr === '') {
+                $gardeOverride = null;
+            } else {
+                if (!ctype_digit($rawGardeOvr)) {
+                    throw new RuntimeException('garde_days_min_override doit être un entier 0–365 ou vide.');
+                }
+                $gardeOverride = (int) $rawGardeOvr;
+                if ($gardeOverride > 365) {
+                    throw new RuntimeException('garde_days_min_override doit être entre 0 et 365.');
+                }
+            }
+
+            // ferm_temp_min_override / ferm_temp_max_override: decimal 0–50 or NULL
+            $rawTMinOvr = post_decimal('ferm_temp_min_override');
+            $rawTMaxOvr = post_decimal('ferm_temp_max_override');
+            $tempMinOvr = $rawTMinOvr !== null ? (float) $rawTMinOvr : null;
+            $tempMaxOvr = $rawTMaxOvr !== null ? (float) $rawTMaxOvr : null;
+
+            if ($tempMinOvr !== null && ($tempMinOvr < 0 || $tempMinOvr > 50)) {
+                throw new RuntimeException('ferm_temp_min_override doit être entre 0 et 50 °C.');
+            }
+            if ($tempMaxOvr !== null && ($tempMaxOvr < 0 || $tempMaxOvr > 50)) {
+                throw new RuntimeException('ferm_temp_max_override doit être entre 0 et 50 °C.');
+            }
+            if ($tempMinOvr !== null && $tempMaxOvr !== null && $tempMinOvr > $tempMaxOvr) {
+                throw new RuntimeException('ferm_temp_min_override ne peut pas être supérieur à ferm_temp_max_override.');
+            }
+
+            // ── Step 2: validate recipe exists and is active ─────────────────
+            $recStmt = $pdo->prepare(
+                "SELECT id, name FROM ref_recipes WHERE id = ? AND is_active = 1 LIMIT 1"
+            );
+            $recStmt->execute([$recipeId]);
+            $recRow = $recStmt->fetch(PDO::FETCH_ASSOC);
+            if (!$recRow) {
+                throw new RuntimeException("Recette introuvable ou inactive : id={$recipeId}");
+            }
+
+            // ── Step 3: validate strain id exists (if provided) ──────────────
+            $strainRow = null;
+            if ($strainIdFk !== null) {
+                $strStmt = $pdo->prepare(
+                    "SELECT id, name, family FROM ref_yeast_strains WHERE id = ? LIMIT 1"
+                );
+                $strStmt->execute([$strainIdFk]);
+                $strainRow = $strStmt->fetch(PDO::FETCH_ASSOC);
+                if (!$strainRow) {
+                    throw new RuntimeException("Souche levurienne introuvable : id={$strainIdFk}");
+                }
+            }
+
+            // Validate that newFamily applies to the same strain as strainIdFk
+            if ($newFamily !== null && $strainIdFk === null) {
+                throw new RuntimeException(
+                    'Une souche doit être sélectionnée avant de définir sa famille.'
+                );
+            }
+
+            // ── Step 4: fetch before-states for audit ────────────────────────
+            $beforeRecStmt = $pdo->prepare(
+                "SELECT yeast_strain_id_fk, garde_days_min_override,
+                        ferm_temp_min_override, ferm_temp_max_override
+                   FROM ref_recipes WHERE id = ? LIMIT 1"
+            );
+            $beforeRecStmt->execute([$recipeId]);
+            $beforeRec = $beforeRecStmt->fetch(PDO::FETCH_ASSOC);
+
+            $beforeStrain = null;
+            if ($strainIdFk !== null && $newFamily !== null) {
+                $bsStmt = $pdo->prepare(
+                    "SELECT id, family FROM ref_yeast_strains WHERE id = ? LIMIT 1"
+                );
+                $bsStmt->execute([$strainIdFk]);
+                $beforeStrain = $bsStmt->fetch(PDO::FETCH_ASSOC);
+            }
+
+            // ── Step 5: write ────────────────────────────────────────────────
+            $pdo->beginTransaction();
+            try {
+                // 5a. Update ref_recipes
+                $upRecStmt = $pdo->prepare(
+                    "UPDATE ref_recipes
+                        SET yeast_strain_id_fk       = ?,
+                            garde_days_min_override  = ?,
+                            ferm_temp_min_override   = ?,
+                            ferm_temp_max_override   = ?,
+                            last_modified_by         = 'web'
+                      WHERE id = ?"
+                );
+                $upRecStmt->execute([
+                    $strainIdFk,
+                    $gardeOverride,
+                    $tempMinOvr,
+                    $tempMaxOvr,
+                    $recipeId,
+                ]);
+
+                $afterRec = [
+                    'yeast_strain_id_fk'     => $strainIdFk,
+                    'garde_days_min_override'=> $gardeOverride,
+                    'ferm_temp_min_override' => $tempMinOvr,
+                    'ferm_temp_max_override' => $tempMaxOvr,
+                    'last_modified_by'       => 'web',
+                ];
+                log_revision(
+                    $pdo, $me, 'ref_recipes', $recipeId,
+                    $beforeRec ?: [],
+                    $afterRec,
+                    'normal',
+                    "Salle de contrôle: yeast assignment · recette {$recRow['name']}"
+                );
+
+                // 5b. Update ref_yeast_strains.family if a new family was supplied
+                if ($newFamily !== null && $strainIdFk !== null) {
+                    $upStrainStmt = $pdo->prepare(
+                        "UPDATE ref_yeast_strains SET family = ? WHERE id = ?"
+                    );
+                    $upStrainStmt->execute([$newFamily, $strainIdFk]);
+
+                    log_revision(
+                        $pdo, $me, 'ref_yeast_strains', $strainIdFk,
+                        $beforeStrain ?: [],
+                        ['family' => $newFamily],
+                        'normal',
+                        "Salle de contrôle: strain family set to '{$newFamily}' for strain id={$strainIdFk}"
+                    );
+                }
+
+                $pdo->commit();
+            } catch (Throwable $e) {
+                $pdo->rollBack();
+                throw $e;
+            }
+
+            $strainLabel = $strainRow ? (string) $strainRow['name'] : 'aucune';
+            flash_set('ok',
+                "Levure & garde enregistrés — recette «{$recRow['name']}» "
+                . "· souche : {$strainLabel}"
+                . ($gardeOverride !== null ? " · garde override : {$gardeOverride}j" : '')
+                . ($newFamily !== null ? " · famille souche : {$newFamily}" : '')
+                . '.'
+            );
+
         } else {
             throw new RuntimeException('Action inconnue.');
         }
@@ -522,6 +782,22 @@ try {
     $settingsByKey     = [];
     $migrationApplied  = false;
     $loadErr           = $e->getMessage();
+}
+
+// --- Biochimie data (ref_yeast_family_defaults) ------------------------------
+$yeastFamilies  = [];
+$biochemLoadErr = null;
+try {
+    $pdo = maltytask_pdo();
+    $yfStmt = $pdo->query(
+        "SELECT family, label_fr, garde_days_min, ferm_temp_min, ferm_temp_max,
+                is_produced, is_active, updated_at, updated_by
+           FROM ref_yeast_family_defaults
+          ORDER BY is_produced DESC, family"
+    );
+    $yeastFamilies = $yfStmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (Throwable $e) {
+    $biochemLoadErr = $e->getMessage();
 }
 
 // --- Recettes / Formats data (SDC_FORMATS_DATA) ------------------------------
@@ -744,6 +1020,51 @@ try {
     $formatsData    = null;
 }
 
+// --- Yeast strains (for per-recipe assignment panel) -------------------------
+$yeastStrains    = [];
+$yeastLoadErr    = null;
+try {
+    $pdo = maltytask_pdo();
+    $ysStmt = $pdo->query(
+        "SELECT id, name, family, type, is_active
+           FROM ref_yeast_strains
+          WHERE is_active = 1
+          ORDER BY name"
+    );
+    $yeastStrains = $ysStmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (Throwable $e) {
+    $yeastLoadErr = $e->getMessage();
+}
+
+// --- Per-recipe yeast resolutions (for all activatable recipes) --------------
+// Keyed by recipe id. Silently skips on DB error (panel shows "no data" state).
+$recipeYeastData  = [];
+$recipeYeastError = null;
+try {
+    $pdo = maltytask_pdo();
+    if (!empty($activatableRecs ?? [])) {
+        $allRecIds = array_column($activatableRecs, 'id');
+        $inPlace2  = implode(',', array_fill(0, count($allRecIds), '?'));
+
+        // Build all recipe yeast resolutions in one query using the shared fragments.
+        // We SELECT r.id plus the eligibility expressions and join via the fragment.
+        $selExprs = yeast_eligibility_select_expressions();
+        $yeastSql =
+            "SELECT r.id AS recipe_id, r.garde_days_min_override, r.ferm_temp_min_override, r.ferm_temp_max_override, "
+            . implode(', ', $selExprs)
+            . " FROM ref_recipes r "
+            . yeast_eligibility_join_fragment()
+            . " WHERE r.id IN ({$inPlace2})";
+        $yeastStmt = $pdo->prepare($yeastSql);
+        $yeastStmt->execute($allRecIds);
+        foreach ($yeastStmt->fetchAll(PDO::FETCH_ASSOC) as $yr) {
+            $recipeYeastData[(int) $yr['recipe_id']] = $yr;
+        }
+    }
+} catch (Throwable $e) {
+    $recipeYeastError = $e->getMessage();
+}
+
 $minDaysSetting = $settingsByKey['min_days_after_racking'] ?? null;
 $minDaysCurrent = $minDaysSetting !== null
     ? (float) ($minDaysSetting['value_num'] ?? $minDaysSetting['default_num'] ?? 1)
@@ -776,6 +1097,17 @@ window.SDC_FORMATS_DATA = null;
 window.SDC_FORMATS_ERR  = <?= json_encode($formatsLoadErr ?? 'Erreur inconnue', JSON_HEX_TAG | JSON_HEX_AMP) ?>;
 <?php endif ?>
 window.SDC_CSRF = <?= json_encode($csrf ?? csrf_token(), JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+window.SDC_YEAST_STRAINS = <?= json_encode(
+    array_map(fn($s) => [
+        'id'     => (int)    $s['id'],
+        'name'   => (string) $s['name'],
+        'family' => $s['family'],
+        'type'   => (string) $s['type'],
+    ], $yeastStrains),
+    JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP
+) ?>;
+window.SDC_RECIPE_YEAST = <?= json_encode($recipeYeastData, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+window.SDC_YEAST_FAMILY_LABELS = <?= json_encode(YEAST_FAMILY_LABELS, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
 </script>
 </head>
 <body class="sdc-page" data-role="<?= htmlspecialchars($me['role'] ?? 'operateur') ?>">
@@ -947,6 +1279,7 @@ window.SDC_CSRF = <?= json_encode($csrf ?? csrf_token(), JSON_HEX_TAG | JSON_HEX
             <div class="subtab active" onclick="switchSubtab('ingr')">Ingrédients</div>
             <div class="subtab" onclick="switchSubtab('process')">Process</div>
             <div class="subtab sdc-formats-tab" onclick="switchSubtab('formats')">Formats</div>
+            <div class="subtab sdc-yeast-tab" onclick="switchSubtab('yeast')">Levure &amp; garde</div>
           </div>
 
           <div class="subtab-pane active" id="pane-ingr" style="flex-direction:column;">
@@ -982,43 +1315,367 @@ window.SDC_CSRF = <?= json_encode($csrf ?? csrf_token(), JSON_HEX_TAG | JSON_HEX
               </div>
             <?php endif ?>
           </div>
+
+          <!-- ── LEVURE & GARDE SUBTAB (live-wired) ────────────────────────── -->
+          <div class="subtab-pane sdc-yeast-pane" id="pane-yeast">
+            <div class="yg-placeholder" id="ygPlaceholder">
+              <span style="padding:40px;display:block;text-align:center;color:var(--ink-faint);font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.15em;text-transform:uppercase;">Sélectionner une recette</span>
+            </div>
+
+            <?php if ($yeastLoadErr): ?>
+              <div class="sdc-flash sdc-flash--err" style="margin:12px 20px;">
+                Erreur chargement souches : <?= htmlspecialchars($yeastLoadErr) ?>
+              </div>
+            <?php else: ?>
+
+            <!-- The actual panel — shown/hidden by JS; recipe_id set dynamically -->
+            <div class="yg-panel" id="ygPanel" style="display:none;">
+              <form method="post" action="/modules/salle-de-controle.php"
+                    class="yg-form" id="ygForm" novalidate>
+                <input type="hidden" name="csrf"      value="<?= htmlspecialchars($csrf) ?>">
+                <input type="hidden" name="action"    value="update_recipe_yeast">
+                <input type="hidden" name="recipe_id" value="" id="ygRecipeId">
+
+                <!-- ── Section 1: Strain picker ─────────────────────────── -->
+                <div class="yg-section">
+                  <div class="yg-section-head">
+                    <span class="yg-section-title">Souche levurienne</span>
+                    <span class="yg-section-sub">Liaison à la recette · ref_recipes.yeast_strain_id_fk</span>
+                  </div>
+
+                  <?php if (is_admin($me) || is_manager($me)): ?>
+                  <div class="yg-field-row">
+                    <label class="yg-label" for="ygStrainSelect">Souche active</label>
+                    <div class="yg-input-wrap">
+                      <select name="yeast_strain_id_fk" id="ygStrainSelect"
+                              class="yg-select" onchange="ygOnStrainChange(this.value)">
+                        <option value="">— aucune souche —</option>
+                        <?php
+                        // Group by family for readability
+                        $strainsByFamily = [];
+                        foreach ($yeastStrains as $s) {
+                            $fam = $s['family'] ?? '__unset';
+                            $strainsByFamily[$fam][] = $s;
+                        }
+                        $famOrder = ['ale','lager','non_alcool','spontane','mixte','__unset'];
+                        foreach ($famOrder as $fam):
+                            if (empty($strainsByFamily[$fam])) continue;
+                            $grpLabel = $fam === '__unset'
+                                ? 'Famille non classifiée'
+                                : (YEAST_FAMILY_LABELS[$fam] ?? $fam);
+                        ?>
+                        <optgroup label="<?= htmlspecialchars($grpLabel) ?>">
+                          <?php foreach ($strainsByFamily[$fam] as $s): ?>
+                          <option value="<?= (int) $s['id'] ?>"><?= htmlspecialchars($s['name']) ?></option>
+                          <?php endforeach ?>
+                        </optgroup>
+                        <?php endforeach ?>
+                      </select>
+                    </div>
+                  </div>
+                  <?php else: ?>
+                  <!-- Read-only for operators -->
+                  <div class="yg-field-row">
+                    <span class="yg-label">Souche</span>
+                    <span class="yg-readval" id="ygStrainReadOnly">—</span>
+                  </div>
+                  <?php endif ?>
+                </div>
+
+                <!-- ── Section 2: Family classifier ─────────────────────── -->
+                <div class="yg-section" id="ygFamilySection" style="display:none;">
+                  <div class="yg-section-head">
+                    <span class="yg-section-title">Famille de la souche</span>
+                    <span class="yg-section-sub">
+                      Attribut de la souche — s'applique à <em>toutes</em> les recettes utilisant cette souche
+                      · ref_yeast_strains.family
+                    </span>
+                  </div>
+
+                  <?php if (is_admin($me) || is_manager($me)): ?>
+                  <div class="yg-field-row">
+                    <label class="yg-label" for="ygFamilySelect">Famille</label>
+                    <div class="yg-input-wrap yg-family-wrap">
+                      <select name="strain_family" id="ygFamilySelect" class="yg-select">
+                        <option value="">— ne pas modifier —</option>
+                        <?php foreach (YEAST_FAMILIES as $fam): ?>
+                        <option value="<?= htmlspecialchars($fam) ?>">
+                          <?= htmlspecialchars(YEAST_FAMILY_LABELS[$fam] ?? $fam) ?>
+                        </option>
+                        <?php endforeach ?>
+                      </select>
+                      <span class="yg-global-notice">⚠ Modifie la souche globalement</span>
+                    </div>
+                  </div>
+                  <?php else: ?>
+                  <div class="yg-field-row">
+                    <span class="yg-label">Famille</span>
+                    <span class="yg-readval" id="ygFamilyReadOnly">—</span>
+                  </div>
+                  <?php endif ?>
+                </div>
+
+                <!-- ── Section 3: Family defaults (read-only pills) ──────── -->
+                <div class="yg-section" id="ygDefaultsSection" style="display:none;">
+                  <div class="yg-section-head">
+                    <span class="yg-section-title">Défauts famille</span>
+                    <span class="yg-section-sub">Lus depuis ref_yeast_family_defaults · non modifiables ici</span>
+                  </div>
+                  <div class="xp-grid" id="ygDefaultsGrid">
+                    <!-- Populated by JS from SDC_RECIPE_YEAST / SDC_YEAST_STRAINS -->
+                  </div>
+                </div>
+
+                <!-- ── Section 4: Per-recipe overrides ──────────────────── -->
+                <div class="yg-section" id="ygOverridesSection">
+                  <div class="yg-section-head">
+                    <span class="yg-section-title">Overrides recette</span>
+                    <span class="yg-section-sub">Vide = hériter de la famille · remplace le défaut famille si renseigné</span>
+                  </div>
+
+                  <?php if (is_admin($me) || is_manager($me)): ?>
+                  <div class="yg-overrides-grid">
+                    <div class="yg-override-field">
+                      <label class="yg-label" for="ygGardeOvr">Garde min. (j)</label>
+                      <div class="yg-input-row">
+                        <input type="number" name="garde_days_min_override" id="ygGardeOvr"
+                               class="yg-num-input" min="0" max="365" step="1" placeholder="—">
+                        <span class="yg-unit">j</span>
+                        <span class="xf-badge" id="ygGardeBadge"></span>
+                      </div>
+                      <div class="yg-resolved-line" id="ygGardeResolved">—</div>
+                    </div>
+                    <div class="yg-override-field">
+                      <label class="yg-label" for="ygTempMinOvr">Temp. ferm. min (°C)</label>
+                      <div class="yg-input-row">
+                        <input type="number" name="ferm_temp_min_override" id="ygTempMinOvr"
+                               class="yg-num-input" min="0" max="50" step="0.5" placeholder="—">
+                        <span class="yg-unit">°C</span>
+                        <span class="xf-badge" id="ygTempMinBadge"></span>
+                      </div>
+                    </div>
+                    <div class="yg-override-field">
+                      <label class="yg-label" for="ygTempMaxOvr">Temp. ferm. max (°C)</label>
+                      <div class="yg-input-row">
+                        <input type="number" name="ferm_temp_max_override" id="ygTempMaxOvr"
+                               class="yg-num-input" min="0" max="50" step="0.5" placeholder="—">
+                        <span class="yg-unit">°C</span>
+                        <span class="xf-badge" id="ygTempMaxBadge"></span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="yg-effective-row" id="ygEffectiveRow">
+                    <!-- Populated by JS: shows resolved effective values + source badges -->
+                  </div>
+
+                  <div class="yg-actions">
+                    <button type="submit" class="yg-save-btn">Enregistrer</button>
+                    <p class="yg-hint">
+                      Vide = NULL = hériter de la famille. Garde min. NULL = hors-process uniquement (souche non classifiée).
+                    </p>
+                  </div>
+                  <?php else: ?>
+                  <!-- Operator: read-only resolved values -->
+                  <div class="xp-grid" id="ygEffectiveReadOnly">
+                    <div style="padding:16px;color:var(--ink-faint);font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;">Sélectionner une recette pour voir les valeurs effectives.</div>
+                  </div>
+                  <?php endif ?>
+                </div>
+
+              </form>
+            </div><!-- /yg-panel -->
+
+            <?php endif ?><!-- /yeastLoadErr -->
+          </div><!-- /pane-yeast -->
+
         </div><!-- /recipe-detail-col -->
       </div><!-- /recettes-layout -->
     </div><!-- /sec-recettes -->
 
-    <!-- ════════════════════════════════ BIOCHIMIE SECTION -->
-    <!-- TODO: data-wiring phase — currently presentational -->
+    <!-- ════════════════════════════════ BIOCHIMIE SECTION (LIVE) -->
     <div class="section-panel" id="sec-biochem">
       <div class="biochem-layout">
         <div class="biochem-header">
           <h2>Paramètres <em>Biochimie</em></h2>
-          <div class="bh-sub">Valeurs par défaut par famille levurienne · source des héritages Process</div>
+          <div class="bh-sub">Valeurs par défaut par famille levurienne · ref_yeast_family_defaults · source des héritages Process</div>
         </div>
 
-        <div class="yf-cards" id="yfCards"></div>
+        <?php if ($initialSec === 'biochem'): ?>
+          <?php $flashMsg = flash_pop(); if ($flashMsg): ?>
+          <div class="sdc-flash sdc-flash--<?= $flashMsg['type'] === 'ok' ? 'ok' : 'err' ?>"
+               style="position:absolute;top:76px;left:240px;right:20px;z-index:10;">
+            <?= $flashMsg['type'] === 'ok' ? '✓' : '⚠' ?> <?= htmlspecialchars($flashMsg['msg']) ?>
+          </div>
+          <?php endif ?>
+        <?php endif ?>
 
+        <?php if ($biochemLoadErr): ?>
+          <div class="sdc-flash sdc-flash--err">Erreur DB Biochimie : <?= htmlspecialchars($biochemLoadErr) ?></div>
+        <?php else: ?>
+
+        <div class="yf-cards" id="yfCards">
+          <?php foreach ($yeastFamilies as $yf): ?>
+          <?php
+            $family       = (string) $yf['family'];
+            $labelFr      = (string) $yf['label_fr'];
+            $gardeDays    = $yf['garde_days_min'] !== null ? (int) $yf['garde_days_min'] : null;
+            $tempMin      = $yf['ferm_temp_min']  !== null ? (float) $yf['ferm_temp_min']  : null;
+            $tempMax      = $yf['ferm_temp_max']  !== null ? (float) $yf['ferm_temp_max']  : null;
+            $isProduced   = (bool) $yf['is_produced'];
+            $cardClass    = 'yf-card ' . htmlspecialchars($family) . ($isProduced ? '' : ' yf-card--non-produite');
+          ?>
+          <div class="<?= $cardClass ?>">
+            <div class="yf-card-head">
+              <div class="yf-family-name <?= htmlspecialchars($family) ?>">
+                <em><?= htmlspecialchars($labelFr) ?></em>
+              </div>
+              <?php if (!$isProduced): ?>
+                <span class="yf-non-produite-badge">non produite</span>
+              <?php endif ?>
+              <div class="yf-recipe-count" style="margin-left:auto;">
+                <?php if ($yf['updated_by']): ?>
+                  <span title="Mis à jour par <?= htmlspecialchars($yf['updated_by']) ?>">
+                    ref_yeast_family_defaults
+                  </span>
+                <?php else: ?>
+                  ref_yeast_family_defaults
+                <?php endif ?>
+              </div>
+            </div>
+
+            <div class="yf-defaults">
+              <!-- garde_days_min — lagering/cold-crash minimum threshold -->
+              <div class="yf-def-row">
+                <div class="yf-def-k">Garde min.
+                  <span style="font-size:7px;letter-spacing:.08em;opacity:.65;">(cold-crash)</span>
+                </div>
+                <div class="yf-def-v">
+                  <?= $gardeDays !== null ? htmlspecialchars((string) $gardeDays) : '<span style="color:var(--ink-faint);">—</span>' ?>
+                  <span class="yf-def-unit">j</span>
+                </div>
+              </div>
+
+              <!-- ferm_temp_min -->
+              <div class="yf-def-row">
+                <div class="yf-def-k">Temp. ferm. min</div>
+                <div class="yf-def-v">
+                  <?= $tempMin !== null ? htmlspecialchars(number_format($tempMin, 1)) : '<span style="color:var(--ink-faint);">—</span>' ?>
+                  <span class="yf-def-unit">°C</span>
+                </div>
+              </div>
+
+              <!-- ferm_temp_max -->
+              <div class="yf-def-row">
+                <div class="yf-def-k">Temp. ferm. max</div>
+                <div class="yf-def-v">
+                  <?= $tempMax !== null ? htmlspecialchars(number_format($tempMax, 1)) : '<span style="color:var(--ink-faint);">—</span>' ?>
+                  <span class="yf-def-unit">°C</span>
+                </div>
+              </div>
+
+              <?php if ($tempMin !== null && $tempMax !== null): ?>
+              <!-- temp range summary -->
+              <div class="yf-def-row" style="grid-column:1/-1;">
+                <div class="yf-def-k">Plage ferm.</div>
+                <div class="yf-def-v" style="font-size:14px;">
+                  <?= htmlspecialchars(number_format($tempMin, 1)) ?>–<?= htmlspecialchars(number_format($tempMax, 1)) ?>
+                  <span class="yf-def-unit">°C</span>
+                </div>
+              </div>
+              <?php endif ?>
+            </div>
+
+            <?php if (is_admin($me)): ?>
+            <!-- ADMIN EDIT FORM -->
+            <form method="post" action="/modules/salle-de-controle.php" class="yf-edit-form" novalidate>
+              <input type="hidden" name="csrf"   value="<?= htmlspecialchars($csrf) ?>">
+              <input type="hidden" name="action" value="update_yeast_family">
+              <input type="hidden" name="family" value="<?= htmlspecialchars($family) ?>">
+
+              <div class="yf-edit-grid">
+                <div class="yf-edit-field">
+                  <div class="yf-edit-label">Garde min. (j)</div>
+                  <div class="yf-edit-row">
+                    <input
+                      type="number"
+                      name="garde_days_min"
+                      class="yf-edit-input"
+                      min="0" max="365" step="1"
+                      value="<?= $gardeDays !== null ? htmlspecialchars((string) $gardeDays) : '' ?>"
+                      placeholder="—"
+                    >
+                    <span class="yf-edit-unit">j</span>
+                  </div>
+                </div>
+                <div style=""></div><!-- spacer for 2-col grid -->
+                <div class="yf-edit-field">
+                  <div class="yf-edit-label">Temp. min (°C)</div>
+                  <div class="yf-edit-row">
+                    <input
+                      type="number"
+                      name="ferm_temp_min"
+                      class="yf-edit-input"
+                      min="0" max="50" step="0.5"
+                      value="<?= $tempMin !== null ? htmlspecialchars(number_format($tempMin, 1)) : '' ?>"
+                      placeholder="—"
+                    >
+                    <span class="yf-edit-unit">°C</span>
+                  </div>
+                </div>
+                <div class="yf-edit-field">
+                  <div class="yf-edit-label">Temp. max (°C)</div>
+                  <div class="yf-edit-row">
+                    <input
+                      type="number"
+                      name="ferm_temp_max"
+                      class="yf-edit-input"
+                      min="0" max="50" step="0.5"
+                      value="<?= $tempMax !== null ? htmlspecialchars(number_format($tempMax, 1)) : '' ?>"
+                      placeholder="—"
+                    >
+                    <span class="yf-edit-unit">°C</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="yf-edit-actions">
+                <button type="submit" class="yf-edit-btn">Enregistrer</button>
+                <p class="yf-edit-hint">Vide = NULL (non défini). Garde min = jours min après cold-crash avant transfert.</p>
+              </div>
+            </form>
+            <?php else: ?>
+            <p class="cond-readonly-note">Modification réservée aux administrateurs.</p>
+            <?php endif ?>
+
+          </div>
+          <?php endforeach ?>
+        </div>
+
+        <?php endif ?><!-- /biochemLoadErr -->
+
+        <!-- Pending items still to wire -->
         <div class="pending-block" style="margin-top:24px;">
-          <div class="pending-block-head">Nouveaux champs · à câbler en DB</div>
+          <div class="pending-block-head">Champs encore en attente · à câbler</div>
           <div class="pending-field-list">
-            <span class="pf-pill">yeast_family (ref_recipes)</span>
-            <span class="pf-pill">default_ferm_temp_min (ref_biochem_defaults)</span>
-            <span class="pf-pill">default_ferm_temp_max (ref_biochem_defaults)</span>
-            <span class="pf-pill">default_garde_days_min (ref_biochem_defaults)</span>
             <span class="pf-pill">target_co2_vol (ref_recipe_profile)</span>
-            <span class="pf-pill">recipe_ferm_temp_override (ref_recipe_profile)</span>
-            <span class="pf-pill">recipe_garde_days_override (ref_recipe_profile)</span>
+          </div>
+          <div style="margin-top:8px;font-family:'JetBrains Mono',monospace;font-size:8px;color:var(--lab);letter-spacing:.08em;">
+            ✓ yeast_strain_id_fk, garde_days_min_override, ferm_temp_*_override — câblés dans Recettes → Levure &amp; garde
           </div>
         </div>
 
-        <div style="margin-top:20px;background:rgba(74,140,120,.08);border:1px solid rgba(74,140,120,.20);border-radius:10px;padding:16px 20px;">
-          <div style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:var(--lab);margin-bottom:8px;">Modèle d'héritage</div>
-          <div style="font-size:12.5px;color:var(--ink-mute);line-height:1.7;">
-            <b style="color:var(--ink-soft);">Biochimie</b> définit les valeurs par défaut de la famille.<br>
-            <b style="color:var(--ink-soft);">Process fiche</b> hérite et peut surcharger par recette.<br>
-            Badge <span style="background:rgba(74,140,120,.15);color:var(--lab);padding:1px 5px;border-radius:3px;font-family:'JetBrains Mono',monospace;font-size:8px;">défaut famille</span> = valeur héritée non modifiée.<br>
-            Badge <span style="background:rgba(202,168,110,.15);color:var(--oak);padding:1px 5px;border-radius:3px;font-family:'JetBrains Mono',monospace;font-size:8px;">override recette</span> = surcharge spécifique recette.
+        <div class="impl-note" style="margin-top:16px;">
+          <div class="impl-note-head">Persistance &amp; audit</div>
+          <div class="impl-note-body">
+            Les valeurs par famille sont lues depuis <code>ref_yeast_family_defaults</code>.
+            Chaque modification est journalisée dans <code>audit_row_revisions</code>
+            avec horodatage et auteur.
+            La garde min. est le seuil KPI : jours minimum après cold-crash avant que le transfert
+            soit autorisé par le formulaire de soutirage.
           </div>
         </div>
+
       </div>
     </div>
 
@@ -1328,12 +1985,15 @@ function switchSection(sec){
 function switchSubtab(tab){
   currentSubtab = tab;
   document.querySelectorAll('.subtab').forEach((el,i)=>{
-    const tabs=['ingr','process','formats'];
+    const tabs=['ingr','process','formats','yeast'];
     el.classList.toggle('active',tabs[i]===tab);
   });
   document.querySelectorAll('.subtab-pane').forEach(p=>p.classList.toggle('active',p.id==='pane-'+tab));
   if(tab==='formats' && selectedRecipeId!==null && window.sdcFormats){
     window.sdcFormats.render(selectedRecipeId);
+  }
+  if(tab==='yeast' && selectedRecipeId!==null){
+    ygRenderPanel(selectedRecipeId);
   }
 }
 
@@ -1387,6 +2047,7 @@ function selectRecipe(id){
   renderIngrPane(id,p);
   renderProcessPane(id,p);
   if(currentSubtab==='formats'&&window.sdcFormats){window.sdcFormats.render(id);}
+  if(currentSubtab==='yeast'){ygRenderPanel(id);}
 }
 
 /* ═══════════════════════════════════════════
@@ -1467,28 +2128,217 @@ function renderProcessPane(id,profile){
   container.innerHTML=html;
 }
 
+/* Biochimie cards are now server-rendered — no JS build needed. */
+
 /* ═══════════════════════════════════════════
-   BIOCHIMIE PAGE BUILD
+   LEVURE & GARDE PANEL
    ═══════════════════════════════════════════ */
-function buildBiochemPage(){
-  const container=document.getElementById('yfCards');
-  if(!container) return;
-  const canEdit=(SDC_ROLE==='admin'||SDC_ROLE==='manager');
-  const families=[
-    {key:'ale',label:'Ale',color:'var(--oak)',recipes:['Zepp','Embuscade','Moonshine','Speakeasy','Stirling','Double Oat','Diversion Blanche','Alternative']},
-    {key:'lager',label:'Lager',color:'var(--bbt)',recipes:['Zepp']},
-    {key:'spontane',label:'Spontanée',color:'var(--ember)',recipes:['Diversion']},
-    {key:'mixte',label:'Mixte',color:'var(--pkg-band)',recipes:[]},
-  ];
-  families.forEach(f=>{
-    const d=YEAST_DEFAULTS[f.key];
-    const div=document.createElement('div');
-    div.className='yf-card '+f.key;
-    const roAttr=canEdit?'':' readonly';
-    div.innerHTML=`<div class="yf-card-head"><div class="yf-family-name ${escHtml(f.key)}"><em>${escHtml(f.label)}</em></div><div class="yf-recipe-count">${f.recipes.length} recette(s) assignée(s) <span class="new-field-tag">mock</span></div></div><div class="yf-defaults"><div class="yf-def-row pending-field"><div class="yf-def-k">Temp. ferm. min <span class="new-field-tag">à câbler</span></div><div class="yf-def-v"><input type="number" value="${d.fermTempMin}" min="0" max="40"${roAttr} onblur="onBiochemBlur(this,'${escHtml(f.key)}','fermTempMin')"><span class="yf-def-unit">°C</span></div></div><div class="yf-def-row pending-field"><div class="yf-def-k">Temp. ferm. max <span class="new-field-tag">à câbler</span></div><div class="yf-def-v"><input type="number" value="${d.fermTempMax}" min="0" max="40"${roAttr} onblur="onBiochemBlur(this,'${escHtml(f.key)}','fermTempMax')"><span class="yf-def-unit">°C</span></div></div><div class="yf-def-row pending-field"><div class="yf-def-k">Garde min. <span class="new-field-tag">à câbler</span></div><div class="yf-def-v"><input type="number" value="${d.gardeMin}" min="0"${roAttr} onblur="onBiochemBlur(this,'${escHtml(f.key)}','gardeMin')"><span class="yf-def-unit">j</span></div></div><div class="yf-def-row pending-field"><div class="yf-def-k">Garde max. <span class="new-field-tag">à câbler</span></div><div class="yf-def-v"><input type="number" value="${d.gardeMax}" min="0"${roAttr} onblur="onBiochemBlur(this,'${escHtml(f.key)}','gardeMax')"><span class="yf-def-unit">j</span></div></div></div><div class="yf-card-note">${escHtml(d.typical)}</div>`;
-    container.appendChild(div);
-  });
-}
+(function(){
+  // Helper: find yeast strain by id from window.SDC_YEAST_STRAINS
+  function strainById(id){
+    return (window.SDC_YEAST_STRAINS||[]).find(s=>s.id===id)||null;
+  }
+  // Helper: find family defaults from window.SDC_RECIPE_YEAST
+  // SDC_RECIPE_YEAST is keyed by recipe_id (string keys from PHP json_encode)
+  function recipeYeastRow(recipeId){
+    const d=window.SDC_RECIPE_YEAST||{};
+    return d[recipeId]||d[String(recipeId)]||null;
+  }
+  function familyLabel(f){
+    const m=window.SDC_YEAST_FAMILY_LABELS||{};
+    return m[f]||f||'—';
+  }
+  function badgeHtml(source){
+    if(!source) return '';
+    const cls=source==='override'?'badge-override':'badge-inherited';
+    const txt=source==='override'?'override recette':'défaut famille';
+    return `<span class="xf-badge ${escHtml(cls)}">${escHtml(txt)}</span>`;
+  }
+  function fieldCls(source){
+    if(!source) return 'xp-field';
+    return source==='override'?'xp-field override':'xp-field inherited';
+  }
+
+  window.ygRenderPanel = function(recipeId){
+    const placeholder=document.getElementById('ygPlaceholder');
+    const panel=document.getElementById('ygPanel');
+    if(!panel) return;
+
+    const yr=recipeYeastRow(recipeId);
+
+    // Show placeholder if no data row (recipe not in the activatable list)
+    if(!yr){
+      if(placeholder) placeholder.style.display='';
+      panel.style.display='none';
+      return;
+    }
+    if(placeholder) placeholder.style.display='none';
+    panel.style.display='';
+
+    // Set hidden recipe_id
+    const ridEl=document.getElementById('ygRecipeId');
+    if(ridEl) ridEl.value=recipeId;
+
+    const canEdit=(SDC_ROLE==='admin'||SDC_ROLE==='manager');
+    const strainId=yr.yeast_strain_id!=null?parseInt(yr.yeast_strain_id):null;
+    const strainName=yr.strain_name||null;
+    const strainFamily=yr.strain_family||null;
+
+    // ── Strain select ────────────────────────────────────────────────────────
+    const sel=document.getElementById('ygStrainSelect');
+    if(sel){
+      sel.value=strainId!=null?String(strainId):'';
+    }
+    const roEl=document.getElementById('ygStrainReadOnly');
+    if(roEl) roEl.textContent=strainName||'— aucune souche —';
+
+    // ── Family section ───────────────────────────────────────────────────────
+    ygUpdateFamilySection(strainId, strainFamily, canEdit);
+
+    // ── Defaults grid ────────────────────────────────────────────────────────
+    ygUpdateDefaultsGrid(yr);
+
+    // ── Override inputs ──────────────────────────────────────────────────────
+    function setOvrInput(id, val){
+      const el=document.getElementById(id);
+      if(el) el.value=(val!==null&&val!==undefined&&val!=='')?val:'';
+    }
+    setOvrInput('ygGardeOvr',   yr.garde_days_min_override);
+    setOvrInput('ygTempMinOvr', yr.ferm_temp_min_override);
+    setOvrInput('ygTempMaxOvr', yr.ferm_temp_max_override);
+
+    // ── Override badges ──────────────────────────────────────────────────────
+    function setBadge(id, src){
+      const el=document.getElementById(id);
+      if(!el) return;
+      el.className='xf-badge'+(src?' badge-'+(src==='override'?'override':'inherited'):'');
+      el.textContent=src?(src==='override'?'override recette':'défaut famille'):'';
+    }
+    setBadge('ygGardeBadge',   yr.garde_source);
+    setBadge('ygTempMinBadge', yr.temp_source);
+    setBadge('ygTempMaxBadge', yr.temp_source);
+
+    // ── Effective resolved summary ────────────────────────────────────────────
+    ygUpdateEffective(yr);
+  };
+
+  window.ygOnStrainChange = function(strainIdStr){
+    const strainId=strainIdStr&&strainIdStr!==''?parseInt(strainIdStr):null;
+    const strain=strainId!=null?strainById(strainId):null;
+    const strainFamily=strain?strain.family:null;
+    const canEdit=(SDC_ROLE==='admin'||SDC_ROLE==='manager');
+    ygUpdateFamilySection(strainId, strainFamily, canEdit);
+  };
+
+  function ygUpdateFamilySection(strainId, strainFamily, canEdit){
+    const sec=document.getElementById('ygFamilySection');
+    if(!sec) return;
+
+    if(strainId==null){
+      sec.style.display='none';
+      return;
+    }
+    sec.style.display='';
+
+    const famSel=document.getElementById('ygFamilySelect');
+    const famRo=document.getElementById('ygFamilyReadOnly');
+
+    if(strainFamily){
+      // Already has a family — show current; admin can still edit (global change)
+      if(famSel){
+        famSel.value=strainFamily;
+      }
+      if(famRo) famRo.textContent=familyLabel(strainFamily);
+      // Show a note that it's already set
+      const notice=sec.querySelector('.yg-section-sub');
+      if(notice && canEdit){
+        notice.innerHTML='Famille actuelle&nbsp;: <em>' + escHtml(familyLabel(strainFamily))
+          + '</em> · modifier s\'applique à <em>toutes</em> les recettes utilisant cette souche';
+      }
+    } else {
+      // No family — invite classification
+      if(famSel) famSel.value='';
+      if(famRo) famRo.textContent='— non classifiée —';
+      const notice=sec.querySelector('.yg-section-sub');
+      if(notice){
+        notice.innerHTML='<span style="color:var(--ember)">⚠ Souche non classifiée</span>'
+          + ' — sans famille, la garde ne peut pas être résolue automatiquement';
+      }
+    }
+  }
+
+  function ygUpdateDefaultsGrid(yr){
+    const grid=document.getElementById('ygDefaultsGrid');
+    const defSec=document.getElementById('ygDefaultsSection');
+    if(!grid||!defSec) return;
+
+    // Pull family defaults from the yeast row (populated by SQL via eligibility fragments)
+    // The effective_* columns reflect COALESCE but we want the PURE family defaults here.
+    // We can derive them: if garde_source='family' → effective_garde = family default.
+    // But we don't have the raw family default stored separately.
+    // For display, show "effective" with source badge — this is the resolved value the operator cares about.
+    const gardeEffective = yr.effective_garde;
+    const tempMinEffective = yr.effective_temp_min;
+    const tempMaxEffective = yr.effective_temp_max;
+    const gardeSrc = yr.garde_source;
+    const tempSrc  = yr.temp_source;
+
+    if(yr.strain_family==null){
+      defSec.style.display='none';
+      return;
+    }
+    defSec.style.display='';
+
+    let html='';
+    // Garde
+    html+=`<div class="${escHtml(fieldCls(gardeSrc))}">`;
+    html+=`<div class="xf-k">Garde min.</div>`;
+    html+=`<div class="xf-v">${gardeEffective!=null?escHtml(String(gardeEffective)):'<span style="color:var(--ink-faint);">—</span>'}<span class="xf-unit">j</span></div>`;
+    html+=badgeHtml(gardeSrc);
+    html+=`</div>`;
+    // Temp min
+    html+=`<div class="${escHtml(fieldCls(tempSrc))}">`;
+    html+=`<div class="xf-k">Temp. ferm. min</div>`;
+    html+=`<div class="xf-v">${tempMinEffective!=null?escHtml(String(parseFloat(tempMinEffective).toFixed(1))):'<span style="color:var(--ink-faint);">—</span>'}<span class="xf-unit">°C</span></div>`;
+    html+=badgeHtml(tempSrc);
+    html+=`</div>`;
+    // Temp max
+    html+=`<div class="${escHtml(fieldCls(tempSrc))}">`;
+    html+=`<div class="xf-k">Temp. ferm. max</div>`;
+    html+=`<div class="xf-v">${tempMaxEffective!=null?escHtml(String(parseFloat(tempMaxEffective).toFixed(1))):'<span style="color:var(--ink-faint);">—</span>'}<span class="xf-unit">°C</span></div>`;
+    html+=badgeHtml(tempSrc);
+    html+=`</div>`;
+
+    grid.innerHTML=html;
+  }
+
+  function ygUpdateEffective(yr){
+    const row=document.getElementById('ygEffectiveRow');
+    const roRow=document.getElementById('ygEffectiveReadOnly');
+    const gardeEffective=yr.effective_garde;
+    const gardeSrc=yr.garde_source;
+    const tempMinEffective=yr.effective_temp_min;
+    const tempMaxEffective=yr.effective_temp_max;
+    const tempSrc=yr.temp_source;
+
+    function mkCell(label, val, unit, src){
+      return `<div class="${escHtml(fieldCls(src))}">
+        <div class="xf-k">${escHtml(label)}</div>
+        <div class="xf-v">${val!=null?escHtml(String(val)):'<span style="color:var(--ink-faint);">—</span>'}<span class="xf-unit">${escHtml(unit)}</span></div>
+        ${badgeHtml(src)}
+      </div>`;
+    }
+
+    const html=`<div class="xp-grid">
+      ${mkCell('Garde effective',gardeEffective,'j',gardeSrc)}
+      ${mkCell('Temp. min effective',tempMinEffective!=null?parseFloat(tempMinEffective).toFixed(1):null,'°C',tempSrc)}
+      ${mkCell('Temp. max effective',tempMaxEffective!=null?parseFloat(tempMaxEffective).toFixed(1):null,'°C',tempSrc)}
+    </div>`;
+
+    if(row) row.innerHTML=html;
+    if(roRow) roRow.innerHTML=html;
+  }
+})();
 
 /* ═══════════════════════════════════════════
    INTERACTIVE — yeast family change
@@ -1534,18 +2384,7 @@ function applyModal(){
   document.getElementById('modalOverlay').classList.remove('open');
 }
 
-function onBiochemBlur(inp,family,field){
-  if(SDC_ROLE==='operateur'){inp.value=inp.defaultValue;return;}
-  const oldVal=inp.defaultValue;const newVal=inp.value;
-  if(oldVal===newVal) return;
-  if(SDC_ROLE==='admin'){
-    pendingModal={inp,oldVal,newVal,field,id:family};
-    document.getElementById('modalContext').textContent='famille '+family+' · '+field;
-    document.getElementById('modalOld').textContent=oldVal;
-    document.getElementById('modalNew').textContent=newVal;
-    document.getElementById('modalOverlay').classList.add('open');
-  } else {inp.value=oldVal;showToast('Modification soumise pour approbation');}
-}
+/* onBiochemBlur removed — biochem edit is now a real POST form. */
 
 /* ═══════════════════════════════════════════
    STYLE FIELD
@@ -1611,7 +2450,6 @@ function showToast(msg){
    INIT
    ═══════════════════════════════════════════ */
 buildRecipeList();
-buildBiochemPage();
 switchSection(SDC_INITIAL);
 if(SDC_INITIAL==='recettes') selectRecipe(RECIPES[0].id);
 </script>
