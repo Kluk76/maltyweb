@@ -11,6 +11,12 @@ declare(strict_types=1);
  * ══════════════════════════════════════════════════════════════════════════
  *
  * Machine CIP fields (racking + packaging; brewing has no machines):
+ *
+ *   cip_inline_combine         = "1" → simultané mode: only the cip_combined_* fields
+ *                                are read for centri + kze; their individual fields are ignored.
+ *                                "0" or absent → individual mode (below).
+ *
+ * INDIVIDUAL mode (cip_inline_combine != "1"):
  *   cip_machine_centri         = "1" when centri CIP was performed
  *   cip_machine_centri_type_id = ref_cip_types.id (INT, required when centri=1)
  *   cip_machine_centri_date    = VARCHAR date (required when centri=1)
@@ -23,14 +29,20 @@ declare(strict_types=1);
  *   cip_machine_kze_start      = HH:MM
  *   cip_machine_kze_end        = HH:MM
  *
+ * SIMULTANÉ mode (cip_inline_combine = "1"):
+ *   cip_combined_type_id       = ref_cip_types.id (shared type for both centri + kze)
+ *   cip_combined_date          = VARCHAR date
+ *   cip_combined_start         = HH:MM
+ *   cip_combined_end           = HH:MM
+ *   → emits TWO events: target_code=centri and target_code=kze, both with inline_group=1
+ *     and identical date/type/start/end values. Individual centri/kze fields are NOT read.
+ *
+ * Pump is always parsed individually regardless of cip_inline_combine:
  *   cip_machine_pump           = "1" when pump CIP was performed
  *   cip_machine_pump_type_id   = ref_cip_types.id
  *   cip_machine_pump_date      = VARCHAR date
  *   cip_machine_pump_start     = HH:MM
  *   cip_machine_pump_end       = HH:MM
- *
- *   cip_inline_combine         = "1" → centri + KZE share one inline_group id;
- *                                "0" or absent → each machine gets NULL inline_group
  *
  * Vessel CIP fields (dynamic: racking has one destination vessel; brewing/packaging may
  * show multiple rows but each uses an index suffix _0, _1, …):
@@ -117,44 +129,67 @@ function cip_parse_post(array $post, string $sourceForm): array
 
     // ── Machine rows (centri / kze / pump) ───────────────────────────────────
     // Only emitted by racking + packaging forms; brewing form passes no machine fields.
-    // When cip_inline_combine=1: centri + kze share inline_group=1.
     $inlineCombine = (($post['cip_inline_combine'] ?? '0') === '1');
 
-    // Assign inline_group only when both centri AND kze are done AND combine=1.
-    // Compute first pass: which machines are done?
-    $machineDone = [];
-    foreach (['centri', 'kze', 'pump'] as $code) {
-        $machineDone[$code] = (($post["cip_machine_{$code}"] ?? '0') === '1');
-    }
-    $useInlineGroup = ($inlineCombine && $machineDone['centri'] && $machineDone['kze']);
+    if ($inlineCombine) {
+        // ── SIMULTANÉ mode ───────────────────────────────────────────────────
+        // Read the single combined block. Emit TWO events (centri + kze) sharing
+        // inline_group=1 and identical date/type/start/end values.
+        // Individual cip_machine_centri_* / cip_machine_kze_* fields are NOT read —
+        // the UI hides and clears them when simultané is checked.
+        $combinedTypeId = _cip_int($post['cip_combined_type_id'] ?? null);
+        $combinedDate   = _cip_trim($post['cip_combined_date'] ?? null);
+        $combinedStart  = _cip_time($post['cip_combined_start'] ?? null);
+        $combinedEnd    = _cip_time($post['cip_combined_end'] ?? null);
 
-    foreach (['centri', 'kze', 'pump'] as $code) {
-        if (!$machineDone[$code]) {
-            continue;
+        foreach (['centri', 'kze'] as $code) {
+            $events[] = [
+                'target_kind'    => 'machine',
+                'target_code'    => $code,
+                'target_number'  => null,
+                'cip_type_id'    => $combinedTypeId,
+                'cip_date'       => $combinedDate ?: null,
+                'cip_started_at' => $combinedStart,
+                'cip_ended_at'   => $combinedEnd,
+                'inline_group'   => 1,
+                'notes'          => $notes,
+            ];
         }
 
-        $typeId  = _cip_int($post["cip_machine_{$code}_type_id"] ?? null);
-        $date    = _cip_trim($post["cip_machine_{$code}_date"] ?? null);
-        $start   = _cip_time($post["cip_machine_{$code}_start"] ?? null);
-        $end     = _cip_time($post["cip_machine_{$code}_end"] ?? null);
-
-        // inline_group: centri and kze share group 1 when inline combine is active
-        $group = null;
-        if ($useInlineGroup && in_array($code, ['centri', 'kze'], true)) {
-            $group = 1;
+        // Pump is always independent — parsed regardless of simultané mode.
+        if (($post['cip_machine_pump'] ?? '0') === '1') {
+            $events[] = [
+                'target_kind'    => 'machine',
+                'target_code'    => 'pump',
+                'target_number'  => null,
+                'cip_type_id'    => _cip_int($post['cip_machine_pump_type_id'] ?? null),
+                'cip_date'       => _cip_trim($post['cip_machine_pump_date'] ?? null) ?: null,
+                'cip_started_at' => _cip_time($post['cip_machine_pump_start'] ?? null),
+                'cip_ended_at'   => _cip_time($post['cip_machine_pump_end'] ?? null),
+                'inline_group'   => null,
+                'notes'          => $notes,
+            ];
         }
+    } else {
+        // ── INDIVIDUAL mode ──────────────────────────────────────────────────
+        // Parse centri / kze / pump independently; inline_group stays NULL.
+        foreach (['centri', 'kze', 'pump'] as $code) {
+            if (($post["cip_machine_{$code}"] ?? '0') !== '1') {
+                continue;
+            }
 
-        $events[] = [
-            'target_kind'    => 'machine',
-            'target_code'    => $code,
-            'target_number'  => null,
-            'cip_type_id'    => $typeId,
-            'cip_date'       => $date ?: null,
-            'cip_started_at' => $start,
-            'cip_ended_at'   => $end,
-            'inline_group'   => $group,
-            'notes'          => $notes,
-        ];
+            $events[] = [
+                'target_kind'    => 'machine',
+                'target_code'    => $code,
+                'target_number'  => null,
+                'cip_type_id'    => _cip_int($post["cip_machine_{$code}_type_id"] ?? null),
+                'cip_date'       => _cip_trim($post["cip_machine_{$code}_date"] ?? null) ?: null,
+                'cip_started_at' => _cip_time($post["cip_machine_{$code}_start"] ?? null),
+                'cip_ended_at'   => _cip_time($post["cip_machine_{$code}_end"] ?? null),
+                'inline_group'   => null,
+                'notes'          => $notes,
+            ];
+        }
     }
 
     // ── Vessel rows ──────────────────────────────────────────────────────────

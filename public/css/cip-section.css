@@ -68,6 +68,21 @@
   padding: 1px 5px;
 }
 
+/* ── Combined block (Centri + KZE simultané) ─────────────────────────── */
+.cip-section__combined-block {
+  margin-bottom: 0.875rem;
+  padding: 0.625rem 0.75rem;
+  background: color-mix(in srgb, var(--cold) 8%, var(--bg-elev));
+  border: 1px solid color-mix(in srgb, var(--cold) 35%, transparent);
+  border-radius: 6px;
+}
+
+.cip-section__combined-header {
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--cold) 20%, transparent);
+}
+
 /* ── Machine rows ─────────────────────────────────────────────────────── */
 .cip-section__machine-row {
   margin-bottom: 0.875rem;

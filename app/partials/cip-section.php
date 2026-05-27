@@ -85,10 +85,16 @@ $exInline    = (bool)($cipExisting['inline_combine'] ?? false);
  * Note: never pass required=true here — required is managed exclusively by JS
  * (cipSyncRequired) based on each CIP-done checkbox state. Static required on
  * inputs inside a hidden field-group blocks form submission with no visible error.
+ *
+ * @param string      $name        POST field name
+ * @param int|null    $selectedId  Pre-selected ref_cip_types.id
+ * @param bool        $required    Ignored — JS owns required state (kept for call-site compat)
+ * @param string|null $extraClass  Additional CSS class(es) for the <select>
  */
-$cipTypeSelect = function (string $name, ?int $selectedId = null, bool $required = false) use ($cipTypes): void {
+$cipTypeSelect = function (string $name, ?int $selectedId = null, bool $required = false, ?string $extraClass = null) use ($cipTypes): void {
     // $required param intentionally ignored — JS owns required state; see Bug 1/2 fix.
-    echo '<select name="' . htmlspecialchars($name) . '" class="op-form__select cip-section__select">';
+    $cls = 'op-form__select cip-section__select' . ($extraClass ? ' ' . $extraClass : '');
+    echo '<select name="' . htmlspecialchars($name) . '" class="' . $cls . '">';
     echo '<option value="">— type CIP —</option>';
     foreach ($cipTypes as $t) {
         $sel = ((int)$t['id'] === $selectedId) ? ' selected' : '';
@@ -98,6 +104,15 @@ $cipTypeSelect = function (string $name, ?int $selectedId = null, bool $required
     }
     echo '</select>';
 };
+
+// For re-display of combined block: pick values from the first event in inline_group 1
+// (centri and kze share identical date/type/times when inline_combine is active).
+$exInlineGroup = $cipExisting['inline_groups'][1] ?? [];
+$exCombinedEvent = $exInlineGroup[0] ?? null;
+$exCombinedTypeId = $exCombinedEvent ? (int)$exCombinedEvent['cip_type_id_fk'] : null;
+$exCombinedDate   = $exCombinedEvent ? htmlspecialchars($exCombinedEvent['cip_date'] ?? '') : '';
+$exCombinedStart  = $exCombinedEvent ? htmlspecialchars(substr($exCombinedEvent['cip_started_at'] ?? '', 0, 5)) : '';
+$exCombinedEnd    = $exCombinedEvent ? htmlspecialchars(substr($exCombinedEvent['cip_ended_at']   ?? '', 0, 5)) : '';
 
 // Total vessel count for the hidden field (cip_parse_post reads cip_vessel_count)
 $vesselCount = count($cipVessels);
@@ -117,6 +132,7 @@ $vesselCount = count($cipVessels);
   <div class="cip-section__block cip-section__machines" id="cip-machines-block">
 
     <?php if ($cipShowInlineCombine && in_array('centri', $cipMachines, true) && in_array('kze', $cipMachines, true)): ?>
+    <!-- ── Simultané toggle checkbox ──────────────────────────────── -->
     <div class="cip-section__inline-toggle">
       <label class="cip-section__checkbox-row">
         <input type="checkbox"
@@ -129,6 +145,63 @@ $vesselCount = count($cipVessels);
         <span class="cip-section__badge">inline</span>
       </label>
     </div>
+
+    <!-- ── Combined block (shown when simultané is checked) ───────── -->
+    <div class="cip-section__combined-block" id="cip-combined-block"
+         <?= $exInline ? '' : 'hidden' ?>>
+      <div class="cip-section__combined-header">
+        <span class="cip-section__machine-label">Centri + KZE — CIP simultané</span>
+      </div>
+      <div class="cip-section__combined-fields" id="cip-combined-fields">
+        <div class="op-form__grid--3 op-form__grid">
+
+          <div class="op-form__field">
+            <label class="op-form__label" for="cip_combined_type_id">Type CIP</label>
+            <?php ($cipTypeSelect)(
+                'cip_combined_type_id',
+                $exCombinedTypeId,
+                true
+            ) ?>
+          </div>
+
+          <div class="op-form__field">
+            <label class="op-form__label" for="cip_combined_date">Date CIP</label>
+            <input id="cip_combined_date"
+                   name="cip_combined_date"
+                   type="date"
+                   class="op-form__input"
+                   value="<?= $exCombinedDate ?>"
+                   data-cip-required="1">
+          </div>
+
+          <div class="op-form__field">
+            <label class="op-form__label" for="cip_combined_start">
+              Heure début <span class="op-form__unit">HH:MM</span>
+            </label>
+            <input id="cip_combined_start"
+                   name="cip_combined_start"
+                   type="time"
+                   class="op-form__input"
+                   value="<?= $exCombinedStart ?>"
+                   data-cip-required="1">
+          </div>
+
+          <div class="op-form__field">
+            <label class="op-form__label" for="cip_combined_end">
+              Heure fin <span class="op-form__unit">HH:MM</span>
+            </label>
+            <input id="cip_combined_end"
+                   name="cip_combined_end"
+                   type="time"
+                   class="op-form__input"
+                   value="<?= $exCombinedEnd ?>"
+                   data-cip-required="1">
+          </div>
+
+        </div>
+      </div>
+    </div><!-- .cip-section__combined-block -->
+
     <?php else: ?>
     <input type="hidden" name="cip_inline_combine" value="0">
     <?php endif ?>
@@ -137,19 +210,26 @@ $vesselCount = count($cipVessels);
       $mc = htmlspecialchars($mc);
       // Re-display: existing event for this machine code
       $exEv = $exMachines[$mc] ?? null;
-      $isDone    = $exEv !== null;
-      $exTypeId  = $exEv ? (int)$exEv['cip_type_id_fk'] : null;
-      $exDate    = $exEv ? htmlspecialchars($exEv['cip_date'] ?? '') : '';
-      $exStart   = $exEv ? htmlspecialchars(substr($exEv['cip_started_at'] ?? '', 0, 5)) : '';
-      $exEnd     = $exEv ? htmlspecialchars(substr($exEv['cip_ended_at']   ?? '', 0, 5)) : '';
+      // When inline_combine is active, centri/kze exist in the DB as inline events.
+      // In that case their individual rows must start hidden; the combined block shows their data.
+      $isInlineMachine = $cipShowInlineCombine && in_array($mc, ['centri', 'kze'], true);
+      $isDone    = $exEv !== null && !$exInline;
+      $exTypeId  = ($exEv && !$exInline) ? (int)$exEv['cip_type_id_fk'] : null;
+      $exDate    = ($exEv && !$exInline) ? htmlspecialchars($exEv['cip_date'] ?? '') : '';
+      $exStart   = ($exEv && !$exInline) ? htmlspecialchars(substr($exEv['cip_started_at'] ?? '', 0, 5)) : '';
+      $exEnd     = ($exEv && !$exInline) ? htmlspecialchars(substr($exEv['cip_ended_at']   ?? '', 0, 5)) : '';
       $label = match($mc) {
           'centri' => 'Centrifugeuse',
           'kze'    => 'KZE',
           'pump'   => 'Pompe',
           default  => ucfirst($mc),
       };
+      // Centri and kze individual rows are hidden when simultané is active.
+      $rowHidden = ($isInlineMachine && $exInline);
     ?>
-    <div class="cip-section__machine-row" id="cip-machine-<?= $mc ?>-row">
+    <div class="cip-section__machine-row<?= $isInlineMachine ? ' cip-section__machine-row--inlineable' : '' ?>"
+         id="cip-machine-<?= $mc ?>-row"
+         <?= $rowHidden ? 'hidden' : '' ?>>
       <div class="cip-section__machine-header">
         <label class="cip-section__checkbox-row">
           <input type="checkbox"
@@ -338,15 +418,15 @@ $vesselCount = count($cipVessels);
 
   /**
    * Sync the `required` attribute on inputs that carry `data-cip-required="1"`
-   * inside a CIP field-group div.
+   * inside a CIP field-group div, and toggle the div's visibility.
    *
-   * Rule: required is set IFF the CIP-done checkbox is checked AND the fields
+   * Rule: required is set IFF the governing checkbox is checked AND the fields
    * div is visible. This prevents browser constraint validation from firing on
    * hidden inputs (the hidden-required deadlock) while still blocking submission
    * when the operator ticks the box but leaves a mandatory field empty.
    *
-   * @param {HTMLElement} fieldsEl  The .cip-section__*-fields div
-   * @param {boolean}     checked   Whether the governing CIP-done checkbox is checked
+   * @param {HTMLElement} fieldsEl  The .cip-section__*-fields div (or combined block)
+   * @param {boolean}     checked   Whether the governing checkbox is checked
    */
   function cipSyncRequired(fieldsEl, checked) {
     if (!fieldsEl) return;
@@ -358,7 +438,7 @@ $vesselCount = count($cipVessels);
         el.removeAttribute('required');
       }
     });
-    // Also cover the type <select> (no data-cip-required, but should be required when visible).
+    // Also cover type <select> elements (no data-cip-required attr, but required when visible).
     fieldsEl.querySelectorAll('select.cip-section__select').forEach(function (el) {
       if (checked) {
         el.setAttribute('required', '');
@@ -368,10 +448,83 @@ $vesselCount = count($cipVessels);
     });
   }
 
-  // ── Machine toggles ─────────────────────────────────────────────────────
+  /**
+   * Force-clear and disable all cip-required inputs inside a hidden row.
+   * Prevents stale values in the individual centri/kze rows from being
+   * submitted when simultané is active and those rows are hidden.
+   */
+  function cipClearRowInputs(rowEl) {
+    if (!rowEl) return;
+    rowEl.querySelectorAll('input[type="checkbox"].cip-machine-toggle').forEach(function (cb) {
+      cb.checked = false;
+    });
+    rowEl.querySelectorAll('input[type="date"], input[type="time"]').forEach(function (inp) {
+      inp.value = '';
+      inp.removeAttribute('required');
+    });
+    rowEl.querySelectorAll('select.cip-section__select').forEach(function (sel) {
+      sel.value = '';
+      sel.removeAttribute('required');
+    });
+    // Also hide the machine fields sub-div so cipSyncRequired starts fresh if re-shown.
+    var fieldsEl = rowEl.querySelector('.cip-section__machine-fields');
+    if (fieldsEl) {
+      fieldsEl.hidden = true;
+    }
+  }
+
+  // ── Simultané (inline combine) toggle ───────────────────────────────────
+  var inlineCb = document.getElementById('cip_inline_combine');
+  if (inlineCb) {
+    var combinedBlock = document.getElementById('cip-combined-block');
+    var combinedFields = document.getElementById('cip-combined-fields');
+    // Inlineable rows: centri + kze individual rows.
+    var inlineableRows = Array.prototype.slice.call(
+      document.querySelectorAll('.cip-section__machine-row--inlineable')
+    );
+
+    function cipApplySimultane(active) {
+      // Show/hide combined block and sync its required inputs.
+      if (combinedBlock) {
+        combinedBlock.hidden = !active;
+      }
+      if (combinedFields) {
+        cipSyncRequired(combinedFields, active);
+      }
+
+      // Show/hide individual centri + kze rows and clear them when hiding.
+      inlineableRows.forEach(function (row) {
+        if (active) {
+          // Hide individual row and clear it so no stray POST values are submitted.
+          row.hidden = true;
+          cipClearRowInputs(row);
+        } else {
+          // Reveal individual row; required state starts empty (no checkbox ticked).
+          row.hidden = false;
+          // cipSyncRequired will be triggered by the machine toggles on their next change;
+          // on reveal with unchecked box the fields div should stay hidden.
+          var machineFields = row.querySelector('.cip-section__machine-fields');
+          if (machineFields) {
+            cipSyncRequired(machineFields, false);
+          }
+        }
+      });
+    }
+
+    // Initial sync on page load.
+    cipApplySimultane(inlineCb.checked);
+
+    inlineCb.addEventListener('change', function () {
+      cipApplySimultane(inlineCb.checked);
+    });
+  }
+
+  // ── Machine toggles (individual centri/kze/pump done-checkboxes) ────────
   document.querySelectorAll('.cip-machine-toggle').forEach(function (cb) {
     var fields = document.getElementById('cip-machine-' + cb.dataset.machine + '-fields');
     // Initial sync on page load (handles both fresh form and re-display).
+    // Note: when simultané is active, these rows are hidden so this is a no-op on visible state,
+    // but we still init required correctly for when the row is later revealed.
     cipSyncRequired(fields, cb.checked);
     cb.addEventListener('change', function () {
       cipSyncRequired(fields, cb.checked);
@@ -395,7 +548,7 @@ $vesselCount = count($cipVessels);
     document.querySelectorAll('.cip-vessel-dynamic-label').forEach(function (el) {
       var label = _cipVesselLabel(code, number);
       el.textContent = label;
-      // Also update the hidden code/number fields for this vessel row
+      // Also update the hidden code/number fields for this vessel row.
       var idx     = el.dataset.vesselIdx;
       var codeIn  = document.querySelector('[name="cip_vessel_' + idx + '_code"]');
       var numIn   = document.querySelector('[name="cip_vessel_' + idx + '_number"]');
