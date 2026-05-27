@@ -74,9 +74,22 @@ document.addEventListener('DOMContentLoaded', function () {
     return parseFloat(String(v).trim().replace(',', '.'));
   }
 
+  // ── Loss field refs (C3 — Pertes section) ─────────────────────────────
+  var perteToggle       = document.getElementById('rf-perte-toggle');
+  var perteFields       = document.getElementById('rf-pertes-fields');
+  var lossSourceInput   = document.getElementById('loss_source_hl');
+  var lossDestInput     = document.getElementById('loss_dest_hl');
+  var lossCauseSelect   = document.getElementById('loss_cause');
+  var lossBalanceDisplay= document.getElementById('rf-loss-balance');
+
   // ── #5 — Resultant volume display ──────────────────────────────────────
   // Volume résultant = racked_vol_hl + blend_hl (pure JS; nothing stored).
   // TankSimulator is the only authoritative compute engine.
+  //
+  // C3 extension: also updates the Pertes balance readout:
+  //   Cuve arrivée après = residual + racked_vol − loss_dest
+  //   Perte totale       = loss_source + loss_dest
+  // And fires the soft over-volume warning checks.
   function updateResultant() {
     if (!resultantDisplay) return;
     var racked = parseDecimal(rackedVolInput ? rackedVolInput.value : null);
@@ -87,6 +100,11 @@ document.addEventListener('DOMContentLoaded', function () {
     } else {
       resultantDisplay.textContent = '—';
     }
+
+    // C3 — Update the Pertes balance display and soft warnings
+    updateLossBalance(racked, blend);
+    checkOverVolumeWarning(racked, blend);
+    checkRackPalierWarning(racked);
   }
 
   if (rackedVolInput) rackedVolInput.addEventListener('input', updateResultant);
@@ -96,6 +114,186 @@ document.addEventListener('DOMContentLoaded', function () {
     updateDestCipRequired();
   });
   updateResultant();
+
+  // ── C3 — Pertes toggle reveal ──────────────────────────────────────────
+  // Matches the KZE PU section pattern: checkbox shows/hides the block;
+  // loss_cause is NOT statically required (drives required from JS only).
+  function syncPerteToggle() {
+    var revealed = perteToggle ? perteToggle.checked : false;
+    if (perteFields) perteFields.hidden = !revealed;
+
+    // When collapsed: remove required from all loss fields (hidden-required deadlock prevention).
+    // When revealed: loss_cause required only if a loss volume > 0 (see syncLossCauseRequired).
+    if (!revealed) {
+      if (lossCauseSelect) lossCauseSelect.removeAttribute('required');
+    } else {
+      syncLossCauseRequired();
+    }
+    // Re-run balance + warnings since reveal state changed
+    var racked = parseDecimal(rackedVolInput ? rackedVolInput.value : null);
+    var blend  = parseDecimal(blendHlInput  ? blendHlInput.value  : null);
+    updateLossBalance(racked, blend);
+    checkOverVolumeWarning(racked, blend);
+    checkRackPalierWarning(racked);
+  }
+
+  // loss_cause is required-while-visible when any volume > 0 is entered.
+  // If both volumes are 0/empty → no required (no-loss path, everything stays NULL server-side).
+  function syncLossCauseRequired() {
+    if (!lossCauseSelect) return;
+    var revealed    = perteToggle ? perteToggle.checked : false;
+    var lostSrc     = parseDecimal(lossSourceInput ? lossSourceInput.value : null);
+    var lostDst     = parseDecimal(lossDestInput   ? lossDestInput.value   : null);
+    var hasSrcVol   = (lostSrc !== null && !isNaN(lostSrc) && lostSrc > 0);
+    var hasDstVol   = (lostDst !== null && !isNaN(lostDst) && lostDst > 0);
+    var needsCause  = revealed && (hasSrcVol || hasDstVol);
+    if (needsCause) {
+      lossCauseSelect.setAttribute('required', '');
+    } else {
+      lossCauseSelect.removeAttribute('required');
+    }
+  }
+
+  if (perteToggle) perteToggle.addEventListener('change', syncPerteToggle);
+  if (lossSourceInput) lossSourceInput.addEventListener('input', function () {
+    syncLossCauseRequired();
+    updateResultant();
+  });
+  if (lossDestInput) lossDestInput.addEventListener('input', function () {
+    syncLossCauseRequired();
+    updateResultant();
+  });
+  syncPerteToggle(); // initial state
+
+  // ── C3 — Loss balance readout ──────────────────────────────────────────
+  // Shows: "Cuve arrivée après : X HL  |  Perte totale : Y HL"
+  // Read-only, informational. Rendered only when Pertes section is revealed.
+  function updateLossBalance(racked, blend) {
+    if (!lossBalanceDisplay) return;
+    var revealed = perteToggle ? perteToggle.checked : false;
+    if (!revealed) {
+      lossBalanceDisplay.textContent = '—';
+      return;
+    }
+    var lostSrc = parseDecimal(lossSourceInput ? lossSourceInput.value : null);
+    var lostDst = parseDecimal(lossDestInput   ? lossDestInput.value   : null);
+    var src     = (lostSrc !== null && !isNaN(lostSrc)) ? lostSrc : 0;
+    var dst     = (lostDst !== null && !isNaN(lostDst)) ? lostDst : 0;
+    var total   = src + dst;
+
+    if (racked !== null && !isNaN(racked)) {
+      var b             = (blend !== null && !isNaN(blend) && blend > 0) ? blend : 0;
+      var afterDest     = Math.max(0, racked + b - dst);
+      lossBalanceDisplay.textContent =
+        'Cuve arrivée après : ' + afterDest.toFixed(2) + ' HL\n' +
+        'Perte totale : ' + total.toFixed(2) + ' HL';
+    } else {
+      lossBalanceDisplay.textContent = 'Perte totale : ' + total.toFixed(2) + ' HL';
+    }
+  }
+
+  // ── C3 — Soft over-volume warning ─────────────────────────────────────
+  // Non-blocking QA-outlier posture: flag in the existing #racking-warnings panel.
+  // Checks:
+  //   a) loss_dest_hl > (residual + racked_vol)  → over-drains destination
+  //   b) loss_source_hl > sim_vol_hl (from the selected card's data) → over-drains source
+  var _lastOverVolWarning = null;  // track the text we last injected so we can remove it
+
+  function checkOverVolumeWarning(racked, blend) {
+    var panel = document.getElementById('racking-warnings');
+    if (!panel) return;
+
+    // Remove any previously injected over-vol warning span
+    var prev = panel.querySelector('.rf-over-vol-warning');
+    if (prev) prev.remove();
+    _lastOverVolWarning = null;
+
+    var revealed = perteToggle ? perteToggle.checked : false;
+    if (!revealed) return;
+
+    var lostSrc = parseDecimal(lossSourceInput ? lossSourceInput.value : null);
+    var lostDst = parseDecimal(lossDestInput   ? lossDestInput.value   : null);
+    var warnings = [];
+
+    // Dest check: loss_dest > residual + racked_vol
+    if (lostDst !== null && !isNaN(lostDst) && lostDst > 0 &&
+        racked !== null && !isNaN(racked)) {
+      var b = (blend !== null && !isNaN(blend) && blend > 0) ? blend : 0;
+      if (lostDst > racked + b) {
+        warnings.push(
+          'Perte cuve arrivée (' + lostDst.toFixed(3) + ' HL) supérieure au volume disponible ' +
+          '(' + (racked + b).toFixed(2) + ' HL residuel + transféré).'
+        );
+      }
+    }
+
+    // Source check: loss_source > sim_vol_hl from the selected card
+    if (lostSrc !== null && !isNaN(lostSrc) && lostSrc > 0 && selectedCard) {
+      var simVol = parseFloat(selectedCard.dataset.simVolHl || '0');
+      if (!isNaN(simVol) && simVol > 0 && lostSrc > simVol) {
+        warnings.push(
+          'Perte cuve départ (' + lostSrc.toFixed(3) + ' HL) supérieure au volume estimé en CCT ' +
+          '(' + simVol.toFixed(2) + ' HL).'
+        );
+      }
+    }
+
+    if (warnings.length > 0) {
+      var span = document.createElement('span');
+      span.className = 'rf-over-vol-warning';
+      span.style.cssText = 'display:block;margin-top:0.4rem;font-size:0.83rem;color:var(--ember);';
+      span.textContent = '⚠ ' + warnings.join(' | ');
+      panel.hidden = false;
+      panel.appendChild(span);
+      _lastOverVolWarning = span;
+    }
+  }
+
+  // ── C3 — Rack-stage palier soft warning ───────────────────────────────
+  // Non-blocking advisory: if (loss_source + loss_dest) / racked_vol_hl × 100
+  // exceeds window.PERTES_CONFIG.rack_warn_pct → surface in the warnings panel.
+  // Threshold comes from commissioning_settings section='pertes', key
+  // 'pertes_rack_warn_pct' (default 2 %).
+  // Forced comment (C3c) is NOT implemented here — C3b just surfaces the text.
+  var _lastPalierWarning = null;
+
+  function checkRackPalierWarning(racked) {
+    var panel = document.getElementById('racking-warnings');
+    if (!panel) return;
+
+    // Remove any previous palier warning span
+    var prev = panel.querySelector('.rf-palier-warning');
+    if (prev) prev.remove();
+    _lastPalierWarning = null;
+
+    var revealed = perteToggle ? perteToggle.checked : false;
+    if (!revealed) return;
+    if (racked === null || isNaN(racked) || racked <= 0) return;
+
+    var lostSrc = parseDecimal(lossSourceInput ? lossSourceInput.value : null);
+    var lostDst = parseDecimal(lossDestInput   ? lossDestInput.value   : null);
+    var src     = (lostSrc !== null && !isNaN(lostSrc)) ? lostSrc : 0;
+    var dst     = (lostDst !== null && !isNaN(lostDst)) ? lostDst : 0;
+    var totalLoss = src + dst;
+    if (totalLoss <= 0) return;
+
+    var warnPct = (window.PERTES_CONFIG && typeof window.PERTES_CONFIG.rack_warn_pct === 'number')
+      ? window.PERTES_CONFIG.rack_warn_pct
+      : 2.0;
+    var lossPct = (totalLoss / racked) * 100;
+
+    if (lossPct > warnPct) {
+      var span = document.createElement('span');
+      span.className = 'rf-palier-warning';
+      span.style.cssText = 'display:block;margin-top:0.4rem;font-size:0.83rem;color:var(--ember);';
+      span.textContent =
+        '⚠ Perte totale ' + lossPct.toFixed(1) + ' % du volume transféré ' +
+        '(seuil : ' + warnPct + ' %). À justifier dans Détails / explication.';
+      panel.hidden = false;
+      panel.appendChild(span);
+      _lastPalierWarning = span;
+    }
+  }
 
   // ── #10 conditional — dest CIP required client-side sync ──────────────
   // Mirror of cip_dest_required($blend_hl) server-side.
@@ -460,4 +658,5 @@ document.addEventListener('DOMContentLoaded', function () {
   updateResultant();
   updateDestCipRequired();
   togglePuSection();
+  syncPerteToggle(); // C3 — re-sync Pertes section after draft restore
 });

@@ -260,3 +260,47 @@ body.op-form-racking .cip-dest-required > .cip-section__vessel-header::after {
 body.op-form-racking .op-form__qc-badge--normal   { color: var(--hop); font-size: 0.72rem; }
 body.op-form-racking .op-form__qc-badge--elevated { color: var(--ember); font-size: 0.72rem; }
 body.op-form-racking .op-form__qc-badge--outlier  { color: var(--ember); font-weight: 600; font-size: 0.72rem; }
+
+/* ── C3: Pertes section ─────────────────────────────────────────────────── */
+body.op-form-racking .rf-pertes-toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  user-select: none;
+  margin-bottom: 0.25rem;
+}
+body.op-form-racking .rf-pertes-toggle-checkbox {
+  accent-color: var(--ember);
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+}
+body.op-form-racking .rf-pertes-toggle-text {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+body.op-form-racking #rf-pertes-fields {
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--hairline);
+}
+
+/* Volume balance readout — styled like rf-resultant-display but ember-tinted to
+   signal this is a loss context, not the neutral resultant readout */
+body.op-form-racking .rf-loss-balance {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.82rem;
+  color: var(--ember);
+  padding: 0.45rem 0.6rem;
+  background: color-mix(in srgb, var(--ember) 6%, var(--bg-elev));
+  border: 1px solid color-mix(in srgb, var(--ember) 20%, transparent);
+  border-radius: 5px;
+  min-height: 2.1rem;
+  display: flex;
+  align-items: center;
+  white-space: pre-line;
+  line-height: 1.4;
+}

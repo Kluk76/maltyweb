@@ -239,6 +239,57 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $comments   = post_str('comments');
         $fwComment  = post_str('fw_comment');
 
+        // ── Pertes (C3) ─────────────────────────────────────────────────
+        // Read with read-then-validate discipline: empty → NULL; volumes
+        // cast to float ≥ 0; loss_cause must be in the ENUM domain or NULL;
+        // loss_note trimmed and capped at 500 chars.
+        //
+        // Server-enforce: if a loss volume > 0 then loss_cause must be non-null.
+        $lossSourceHl = post_decimal('loss_source_hl');
+        $lossDestHl   = post_decimal('loss_dest_hl');
+        $lossCause    = post_str('loss_cause');
+        $lossNote     = post_str('loss_note');
+
+        // Non-negative volumes
+        if ($lossSourceHl !== null && (float)$lossSourceHl < 0) {
+            throw new RuntimeException("loss_source_hl doit être ≥ 0.");
+        }
+        if ($lossDestHl !== null && (float)$lossDestHl < 0) {
+            throw new RuntimeException("loss_dest_hl doit être ≥ 0.");
+        }
+
+        // loss_cause domain check
+        $lossCauseAllowed = ['produit', 'machine', 'humain'];
+        if ($lossCause !== null) {
+            must_be_one_of('loss_cause', $lossCause, $lossCauseAllowed);
+        }
+
+        // loss_note capped at 500 chars
+        if ($lossNote !== null && mb_strlen($lossNote) > 500) {
+            $lossNote = mb_substr($lossNote, 0, 500);
+        }
+
+        // Server-side required: any volume > 0 must have a cause
+        $hasLossVol = (
+            ($lossSourceHl !== null && (float)$lossSourceHl > 0) ||
+            ($lossDestHl   !== null && (float)$lossDestHl   > 0)
+        );
+        if ($hasLossVol && $lossCause === null) {
+            throw new RuntimeException(
+                "Une perte de volume a été saisie mais la cause est absente. " .
+                "Sélectionner une cause (Produit / Machine / Humain)."
+            );
+        }
+
+        // Toggle off (or both volumes 0/null) → store all four as NULL
+        $perteToggle = post_str('perte_toggle');
+        if ($perteToggle !== '1' || !$hasLossVol) {
+            $lossSourceHl = null;
+            $lossDestHl   = null;
+            $lossCause    = null;
+            $lossNote     = null;
+        }
+
         // ── 2. QC flag ───────────────────────────────────────────────────
         $measurements = array_filter([
             'bbt_co2'      => $bbtCo2,
@@ -278,6 +329,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $kzeTargetPu ?? '', $kzeAvgPu ?? '',
             $comments ?? '',
             $horsProcessFlag,
+            // C3 — Pertes section (loss cols enter the hash; interrupted_*/dest_bbt_still_clean land in C4)
+            $lossSourceHl ?? '', $lossDestHl ?? '', $lossCause ?? '', $lossNote ?? '',
         ];
         $rowHash = bd_row_hash($hashCols);
 
@@ -321,6 +374,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'comments'                 => $comments,
             'hors_process_flag'        => $horsProcessFlag,
             'hors_process_reason'      => $horsProcessReason,
+            // C3 — Pertes section
+            'loss_source_hl'           => $lossSourceHl,
+            'loss_dest_hl'             => $lossDestHl,
+            'loss_cause'               => $lossCause,
+            'loss_note'                => $lossNote,
         ];
 
         $nkCols = ['submitted_at', 'neb_beer', 'neb_batch', 'contract_beer', 'contract_batch', 'seq'];
@@ -452,6 +510,9 @@ try {
             if ($tankState === null) {
                 continue;
             }
+            // Expose CCT volume so JS can show the source-overrun soft warning
+            // (loss_source_hl > sim_vol_hl) introduced in C3 Pertes section.
+            $cand['sim_vol_hl'] = round((float)($tankState['volume_hl'] ?? 0), 2);
             $out[] = $cand;
         }
         return $out;
@@ -698,6 +759,30 @@ try {
     $qcThresholdsJson = 'null';
 }
 
+// ── C3 — Pertes config for JS ─────────────────────────────────────────────
+// Read pertes_rack_warn_pct from commissioning_settings so the JS palier warning
+// uses the live operator-configurable threshold (default 2 %).
+// Non-fatal: hardcoded fallback when the row is absent.
+$pertesConfig = ['rack_warn_pct' => 2.0];
+try {
+    $pertesStmt = $pdo->prepare(
+        "SELECT key_name, value_num
+           FROM commissioning_settings
+          WHERE section = 'pertes'
+            AND key_name = 'pertes_rack_warn_pct'
+            AND is_active = 1
+          LIMIT 1"
+    );
+    $pertesStmt->execute();
+    $pertesRow = $pertesStmt->fetch(PDO::FETCH_ASSOC);
+    if ($pertesRow !== false && $pertesRow['value_num'] !== null) {
+        $pertesConfig['rack_warn_pct'] = (float)$pertesRow['value_num'];
+    }
+} catch (Throwable $pertesErr) {
+    // Non-fatal — JS uses the default 2 % above.
+}
+$pertesConfigJson = json_encode($pertesConfig, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
+
 // #8 — CIP partial config (new submission: no existing events)
 $cipConfig = [
     'machines'           => ['centri', 'kze', 'pump'],
@@ -865,12 +950,14 @@ $cipConfig = [
                 $nebBeerVal = htmlspecialchars($cand['beer'] ?? '');
                 $nebBatchVal= htmlspecialchars($cand['batch'] ?? '');
               ?>
+              <?php $simVolHl = round((float)($cand['sim_vol_hl'] ?? 0), 2); ?>
               <button type="button"
                       class="rf-cand-card"
                       data-neb-beer="<?= $nebBeerVal ?>"
                       data-neb-batch="<?= $nebBatchVal ?>"
                       data-recipe-id="<?= $recipeId ?>"
                       data-source-cct="<?= $cctNum ?>"
+                      data-sim-vol-hl="<?= $simVolHl ?>"
                       data-hors-process="0">
                 <div class="rf-cand-card__label">CCT <?= $cctNum ?></div>
                 <div class="rf-cand-card__beer"><?= $beerDisp ?></div>
@@ -920,6 +1007,7 @@ $cipConfig = [
                 $nebBeerVal = htmlspecialchars($cand['neb_beer'] ?? $cand['beer'] ?? '');
                 $nebBatchVal= htmlspecialchars($cand['neb_batch'] ?? $cand['batch'] ?? '');
               ?>
+              <?php $simVolHlOvr = round((float)($cand['sim_vol_hl'] ?? 0), 2); ?>
               <button type="button"
                       class="rf-cand-card rf-cand-card--hors-process"
                       data-neb-beer="<?= $nebBeerVal ?>"
@@ -928,6 +1016,7 @@ $cipConfig = [
                       data-source-cct="<?= $cctNum ?>"
                       data-source-bbt="<?= $srcType === 'BBT' ? (int)($cand['source_bbt'] ?? 0) : 0 ?>"
                       data-source-type="<?= htmlspecialchars($srcType) ?>"
+                      data-sim-vol-hl="<?= $simVolHlOvr ?>"
                       data-hors-process="1">
                 <div class="rf-cand-card__label"><?= htmlspecialchars($tankLabel) ?></div>
                 <div class="rf-cand-card__beer"><?= $beerDisp ?></div>
@@ -1148,6 +1237,80 @@ $cipConfig = [
       </div>
     </div>
 
+    <!-- ── Section: Pertes (C3) ──────────────────────────────────────── -->
+    <!-- Hidden section revealed by the toggle checkbox below.
+         NO static `required` on any field here — the form's established discipline.
+         JS drives required-while-visible for loss_cause when a volume is entered. -->
+    <div class="op-form__card rf-pertes-card">
+      <div class="op-form__card-title">— pertes</div>
+
+      <!-- Reveal toggle — matches the KZE PU section pattern: checkbox label + hidden section -->
+      <label class="rf-pertes-toggle-label">
+        <input type="checkbox" id="rf-perte-toggle" name="perte_toggle" value="1"
+               class="rf-pertes-toggle-checkbox">
+        <span class="rf-pertes-toggle-text">Des pertes à signaler ?</span>
+      </label>
+
+      <!-- Collapsible loss fields — hidden until toggle is checked -->
+      <div id="rf-pertes-fields" hidden>
+        <div class="op-form__grid">
+
+          <div class="op-form__field">
+            <label class="op-form__label" for="loss_source_hl">
+              Perte cuve départ <span class="op-form__unit">HL</span>
+              <span class="op-form__opt">(facultatif)</span>
+            </label>
+            <input id="loss_source_hl" name="loss_source_hl" type="number"
+                   inputmode="decimal" step="0.001" min="0"
+                   class="op-form__input" placeholder="0.000">
+          </div>
+
+          <div class="op-form__field">
+            <label class="op-form__label" for="loss_dest_hl">
+              Perte cuve arrivée <span class="op-form__unit">HL</span>
+              <span class="op-form__opt">(facultatif)</span>
+            </label>
+            <input id="loss_dest_hl" name="loss_dest_hl" type="number"
+                   inputmode="decimal" step="0.001" min="0"
+                   class="op-form__input" placeholder="0.000">
+          </div>
+
+          <div class="op-form__field">
+            <label class="op-form__label" for="loss_cause">
+              Cause
+            </label>
+            <!-- No static `required` — JS adds it when a volume > 0 is entered -->
+            <select id="loss_cause" name="loss_cause" class="op-form__select">
+              <option value="">— sélectionner —</option>
+              <option value="produit">Produit</option>
+              <option value="machine">Machine</option>
+              <option value="humain">Humain</option>
+            </select>
+          </div>
+
+          <!-- Volume balance preview (read-only, JS-computed) -->
+          <div class="op-form__field" id="rf-loss-balance-field">
+            <label class="op-form__label">
+              Bilan volumes <span class="op-form__opt">(calculé)</span>
+            </label>
+            <div id="rf-loss-balance" class="op-form__readout rf-loss-balance" aria-live="polite">—</div>
+          </div>
+
+        </div>
+
+        <div class="op-form__grid--1 op-form__grid" style="margin-top:0.5rem">
+          <div class="op-form__field op-form__field--full">
+            <label class="op-form__label" for="loss_note">
+              Détails / explication <span class="op-form__opt">(facultatif)</span>
+            </label>
+            <textarea id="loss_note" name="loss_note" class="op-form__textarea" rows="2"
+                      maxlength="500"
+                      placeholder="Cause, contexte, lot concerné…"></textarea>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Submit bar -->
     <div class="op-form__submit-bar">
       <button type="button" class="op-form__btn op-form__btn--secondary"
@@ -1226,6 +1389,9 @@ window.RF_CAN_OVERRIDE        = <?= $canOverride ? 'true' : 'false' ?>;
 // Per-recipe QC threshold bands (field-name-keyed). "__global" is the fallback.
 // null means the resolver threw — JS falls back to the static init() thresholds.
 window.QC_THRESHOLDS = <?= $qcThresholdsJson ?>;
+// C3 — Pertes advisory thresholds from commissioning_settings section='pertes'.
+// rack_warn_pct: loss % of racked vol that triggers the rack-stage palier warning.
+window.PERTES_CONFIG = <?= $pertesConfigJson ?>;
 </script>
 
 <script src="/js/form-framework.js?v=<?= @filemtime(__DIR__ . '/../js/form-framework.js') ?: time() ?>" defer></script>
