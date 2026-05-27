@@ -4122,6 +4122,264 @@ body.auth::after {
   .home .ferm-stats__th--range { display: none; }
 }
 
+/* ── Rack-stats: KPI strip spacing override ── */
+.home .rack-kpis {
+  margin-top: 0;
+  margin-bottom: 28px;
+  grid-template-columns: repeat(3, 1fr);
+}
+
+/* Rack-stats section wrapper */
+.home .rack-stats {
+  margin-bottom: 52px;
+}
+
+/* Section header row: title left, year-form right */
+.home .rack-stats__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--hairline);
+  margin-bottom: 0;
+}
+
+/* Year-picker row */
+.home .rack-stats__year-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.home .rack-stats__year-label {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+.home .rack-stats__year-form select {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline-2);
+  border-radius: 2px;
+  color: var(--ink);
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+/* Empty state */
+.home .rack-stats__empty {
+  font-family: "Fraunces", serif;
+  font-style: italic;
+  font-size: 15px;
+  color: var(--ink-mute);
+  padding: 32px 0;
+  margin: 0;
+}
+
+/* Table wrap (horizontal scroll on narrow) */
+.home .rack-stats__wrap {
+  overflow-x: auto;
+  margin-top: 0;
+}
+
+.home .rack-stats__table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+}
+
+/* Caption */
+.home .rack-stats__caption {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  text-align: left;
+  padding: 14px 0 10px;
+}
+
+/* Column headers */
+.home .rack-stats__th {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  padding: 10px 14px;
+  border-top: 1px solid var(--hairline-2);
+  border-bottom: 1px solid var(--hairline-2);
+  white-space: nowrap;
+  text-align: left;
+}
+
+.home .rack-stats__th--n,
+.home .rack-stats__th--vol,
+.home .rack-stats__th--co2,
+.home .rack-stats__th--o2 {
+  text-align: right;
+}
+
+.home .rack-stats__th--bar {
+  width: 28%;
+  min-width: 120px;
+}
+
+/* Screenreader-only text for the bar column header */
+.home .rack-stats__th-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Group separator rows (Nébuleuse / Contrat) */
+.home .rack-stats__group-header {
+  background: color-mix(in srgb, var(--ink-faint) 60%, transparent);
+}
+
+.home .rack-stats__group-label {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  padding: 6px 14px;
+}
+
+.home .rack-stats__group-label--contract {
+  color: var(--steel-mid);
+}
+
+/* Data rows */
+.home .rack-stats__row {
+  border-bottom: 1px solid var(--hairline);
+  transition: background .15s;
+}
+
+.home .rack-stats__row:hover {
+  background: color-mix(in srgb, var(--rack) 8%, transparent);
+}
+
+.home .rack-stats__row--contract {
+  opacity: 0.82;
+}
+
+.home .rack-stats__row--contract:hover {
+  background: color-mix(in srgb, var(--steel-mid) 8%, transparent);
+  opacity: 1;
+}
+
+.home .rack-stats__td {
+  padding: 11px 14px;
+  vertical-align: middle;
+}
+
+/* Beer name cell */
+.home .rack-stats__td--beer {
+  font-family: "Fraunces", "Times New Roman", serif;
+  font-variation-settings: "opsz" 72;
+  font-size: 15px;
+  font-weight: 400;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+/* Count cell */
+.home .rack-stats__td--n {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--ink-mute);
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* Volume cell — primary metric, accented (--oak passes AA on manila bg) */
+.home .rack-stats__td--vol {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--oak);
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* CO₂ and O₂ cells */
+.home .rack-stats__td--co2,
+.home .rack-stats__td--o2 {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--ink-soft);
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* Unit suffix */
+.home .rack-stats__unit {
+  font-size: 10px;
+  color: var(--ink-mute);
+  margin-left: 1px;
+}
+
+/* Bar column */
+.home .rack-stats__td--bar {
+  min-width: 120px;
+  width: 28%;
+}
+
+/* Volume bar: a filled track, length = vol / max_vol */
+.home .rack-stats__bar-wrap {
+  display: flex;
+  align-items: center;
+}
+
+.home .rack-stats__bar-track {
+  display: block;
+  position: relative;
+  height: 4px;
+  width: 100%;
+  background: rgba(0,0,0,0.08);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.home .rack-stats__bar-fill {
+  display: block;
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: var(--vol-pct);
+  background: var(--rack);
+  border-radius: 2px;
+  transition: width .3s ease;
+}
+
+.home .rack-stats__row--contract .rack-stats__bar-fill {
+  background: var(--steel-mid);
+}
+
+@media (max-width: 640px) {
+  .home .rack-stats__td--bar     { display: none; }
+  .home .rack-stats__th--bar     { display: none; }
+  .home .rack-stats__td--co2     { display: none; }
+  .home .rack-stats__th--co2     { display: none; }
+  .home .rack-kpis               { grid-template-columns: repeat(2, 1fr); }
+}
+
 /* ── Tanks as-of date filter ── */
 .home .tanks-filters {
   width: 100%;

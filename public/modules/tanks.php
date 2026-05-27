@@ -69,6 +69,18 @@ if (ctype_digit($_gfy)) {
     if ($py >= $fermYearMin && $py <= $fermYearMax) $fermYear = $py;
 }
 
+// --- Rack-stats year filter ---
+$rackYearMin = 2023;
+$rackYearMax = $currentYear;
+// Default to latest year that actually has data (will be refined after DB query)
+$rackYearDefault = $currentYear;
+$rackYear = $rackYearDefault;
+$_gry = $_GET['rack_year'] ?? '';
+if (ctype_digit($_gry)) {
+    $py = (int)$_gry;
+    if ($py >= $rackYearMin && $py <= $rackYearMax) $rackYear = $py;
+}
+
 function fmt_date_fr_tanks_full(DateTimeImmutable $dt, array $monthsFull): string {
     return sprintf('%d %s %s', (int)$dt->format('j'), $monthsFull[(int)$dt->format('n')], $dt->format('Y'));
 }
@@ -659,6 +671,61 @@ try {
         }
     }
 
+    // ---- Racking KPIs: last-30-day operator strip ----
+    $rackKpiStmt = $pdo->query("
+        SELECT
+          COUNT(*) AS racks_30d,
+          COALESCE(SUM(racked_vol_hl), 0) AS vol_30d,
+          SUM(CASE WHEN YEARWEEK(event_date, 1) = YEARWEEK(CURDATE(), 1) THEN 1 ELSE 0 END) AS racks_this_week
+        FROM bd_racking_v2
+        WHERE is_tombstoned = 0
+          AND event_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+    ");
+    $rackKpi = $rackKpiStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+    // ---- Racking stats: available years ----
+    $rackYearsStmt = $pdo->query("
+        SELECT DISTINCT YEAR(event_date) AS yr
+        FROM bd_racking_v2
+        WHERE is_tombstoned = 0 AND event_date IS NOT NULL
+        ORDER BY yr DESC
+    ");
+    $rackYears = array_column($rackYearsStmt->fetchAll(PDO::FETCH_ASSOC), 'yr');
+    // If no GET param was set, default to the latest year that has data
+    if (!ctype_digit($_GET['rack_year'] ?? '')) {
+        $rackYear = !empty($rackYears) ? (int)$rackYears[0] : $currentYear;
+    }
+
+    // ---- Racking stats: per-beer historical table for selected year ----
+    // Nébuleuse and contract rows are GROUP'd separately via their own FK columns.
+    // Both NULL FKs (id=7, empty row) and is_tombstoned=1 rows are excluded.
+    $rackStatsStmt = $pdo->prepare("
+        SELECT
+          (r.neb_recipe_id_fk IS NOT NULL)                                     AS is_neb,
+          COALESCE(rr_neb.recipe_short_name, rr_con.recipe_short_name,
+                   r.neb_beer, r.contract_beer)                                AS short_name,
+          COUNT(*)                                                              AS n_racks,
+          COALESCE(SUM(r.racked_vol_hl), 0)                                    AS vol_hl,
+          AVG(r.bbt_co2)                                                       AS avg_co2,
+          AVG(r.bbt_o2)                                                        AS avg_o2
+        FROM bd_racking_v2 r
+        LEFT JOIN ref_recipes rr_neb ON rr_neb.id = r.neb_recipe_id_fk
+        LEFT JOIN ref_recipes rr_con ON rr_con.id = r.contract_recipe_id_fk
+        WHERE r.is_tombstoned = 0
+          AND YEAR(r.event_date) = :year
+          AND (r.neb_recipe_id_fk IS NOT NULL OR r.contract_recipe_id_fk IS NOT NULL)
+        GROUP BY r.neb_recipe_id_fk, r.contract_recipe_id_fk, is_neb, short_name
+        ORDER BY is_neb DESC, vol_hl DESC
+    ");
+    $rackStatsStmt->execute([':year' => $rackYear]);
+    $rackStatsRows = $rackStatsStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Max volume across all rows — for CSS bar normalisation (largest = 100%)
+    $rackMaxVol = 0.0;
+    foreach ($rackStatsRows as $rsr) {
+        $rackMaxVol = max($rackMaxVol, (float)$rsr['vol_hl']);
+    }
+
     $dbError = null;
 
 } catch (Throwable $e) {
@@ -669,6 +736,10 @@ try {
     $totalCct        = 0;
     $occupiedCct     = 0;
     $hlInCcts        = 0.0;
+    $rackKpi         = [];
+    $rackYears       = [];
+    $rackStatsRows   = [];
+    $rackMaxVol      = 0.0;
     $dbError         = $e->getMessage();
     $cctDetails      = [];
 }
@@ -959,6 +1030,142 @@ $today = $asOfDT;
             </td>
           </tr>
           <?php endforeach ?>
+        </tbody>
+      </table>
+    </div>
+    <?php endif ?>
+  </section>
+
+
+  <!-- ================================================================
+       Racking / Transferts — KPI strip + historical per-beer table
+       Data source: bd_racking_v2 (is_tombstoned=0 always).
+       Nébuleuse (neb_recipe_id_fk) and contract (contract_recipe_id_fk)
+       rows are NEVER merged — they remain separate table rows.
+       avg_speed / destination-split are intentionally excluded (data gaps).
+  ================================================================ -->
+
+  <!-- Racking operator KPI strip (last 30 days) -->
+  <section class="wort-kpis rack-kpis" aria-label="KPI Transferts 30 jours">
+    <div class="wort-kpi">
+      <span class="wort-kpi__num"><?= (int)($rackKpi['racks_30d'] ?? 0) ?></span>
+      <span class="wort-kpi__label">Transferts · 30 jours</span>
+    </div>
+    <div class="wort-kpi">
+      <span class="wort-kpi__num"><?= $rackKpi['vol_30d'] > 0 ? number_format((float)$rackKpi['vol_30d'], 1) : '—' ?></span>
+      <span class="wort-kpi__label">HL transférés · 30 jours</span>
+    </div>
+    <div class="wort-kpi">
+      <span class="wort-kpi__num"><?= (int)($rackKpi['racks_this_week'] ?? 0) ?></span>
+      <span class="wort-kpi__label">Transferts · semaine en cours</span>
+    </div>
+  </section>
+
+  <!-- Racking historical per-beer table -->
+  <section class="tanks-section rack-stats" aria-label="Statistiques de transfert par bière">
+    <div class="wort-section__head rack-stats__head">
+      <h2 class="tanks-section__title">
+        Transferts par bière
+        <span class="tanks-section__tag">Rack</span>
+      </h2>
+      <form class="rack-stats__year-form" method="get" action="<?= htmlspecialchars($_SERVER['PHP_SELF']) ?>">
+        <?php if (isset($_GET['year']))      : ?><input type="hidden" name="year"      value="<?= htmlspecialchars($_GET['year'])      ?>"><?php endif ?>
+        <?php if (isset($_GET['month']))     : ?><input type="hidden" name="month"     value="<?= htmlspecialchars($_GET['month'])     ?>"><?php endif ?>
+        <?php if (isset($_GET['day']))       : ?><input type="hidden" name="day"       value="<?= htmlspecialchars($_GET['day'])       ?>"><?php endif ?>
+        <?php if (isset($_GET['ferm_year'])) : ?><input type="hidden" name="ferm_year" value="<?= htmlspecialchars($_GET['ferm_year']) ?>"><?php endif ?>
+        <label class="rack-stats__year-label" for="rs-year">Année</label>
+        <select id="rs-year" name="rack_year" onchange="this.form.submit()">
+          <?php foreach ($rackYears as $ry): ?>
+            <option value="<?= (int)$ry ?>"<?= (int)$ry === $rackYear ? ' selected' : '' ?>><?= (int)$ry ?></option>
+          <?php endforeach ?>
+          <?php if (empty($rackYears)): ?>
+            <option value="<?= $rackYear ?>" selected><?= $rackYear ?></option>
+          <?php endif ?>
+        </select>
+      </form>
+    </div>
+
+    <?php if (empty($rackStatsRows)): ?>
+      <p class="rack-stats__empty">Aucun transfert pour <?= $rackYear ?>.</p>
+    <?php else: ?>
+
+    <?php
+      // Split rows into Nébuleuse vs Contract for distinct rendering
+      $rackNeb = array_filter($rackStatsRows, fn($r) => (bool)(int)$r['is_neb']);
+      $rackCon = array_filter($rackStatsRows, fn($r) => !(bool)(int)$r['is_neb']);
+    ?>
+
+    <div class="rack-stats__wrap">
+      <table class="rack-stats__table" aria-label="Volume transféré par recette">
+        <caption class="rack-stats__caption">CCT → BBT · transferts <?= $rackYear ?></caption>
+        <thead>
+          <tr>
+            <th scope="col" class="rack-stats__th rack-stats__th--beer">Bière</th>
+            <th scope="col" class="rack-stats__th rack-stats__th--n">Lots</th>
+            <th scope="col" class="rack-stats__th rack-stats__th--vol">Vol. (HL)</th>
+            <th scope="col" class="rack-stats__th rack-stats__th--co2">CO₂ moy.</th>
+            <th scope="col" class="rack-stats__th rack-stats__th--o2">O₂ moy.</th>
+            <th scope="col" class="rack-stats__th rack-stats__th--bar"><span class="rack-stats__th-sr">Volume relatif</span></th>
+          </tr>
+        </thead>
+        <tbody>
+
+        <?php if (!empty($rackNeb)): ?>
+          <tr class="rack-stats__group-header">
+            <td colspan="6" class="rack-stats__group-label">Nébuleuse</td>
+          </tr>
+          <?php foreach ($rackNeb as $rsr):
+            $volHl    = (float)$rsr['vol_hl'];
+            $barPct   = $rackMaxVol > 0 ? round($volHl / $rackMaxVol * 100) : 0;
+            $avgCo2   = $rsr['avg_co2'] !== null ? number_format((float)$rsr['avg_co2'], 2) : '—';
+            $avgO2    = $rsr['avg_o2']  !== null ? number_format((float)$rsr['avg_o2'],  3) : '—';
+            $beerLabel = htmlspecialchars($rsr['short_name'] ?: '—');
+          ?>
+          <tr class="rack-stats__row">
+            <td class="rack-stats__td rack-stats__td--beer"><?= $beerLabel ?></td>
+            <td class="rack-stats__td rack-stats__td--n"><?= (int)$rsr['n_racks'] ?></td>
+            <td class="rack-stats__td rack-stats__td--vol"><?= number_format($volHl, 1) ?><span class="rack-stats__unit"> HL</span></td>
+            <td class="rack-stats__td rack-stats__td--co2"><?= $avgCo2 ?><span class="rack-stats__unit"> g/L</span></td>
+            <td class="rack-stats__td rack-stats__td--o2"><?= $avgO2 ?><span class="rack-stats__unit"> ppb</span></td>
+            <td class="rack-stats__td rack-stats__td--bar">
+              <div class="rack-stats__bar-wrap" title="<?= number_format($volHl, 1) ?> HL · <?= (int)$rsr['n_racks'] ?> transfert<?= (int)$rsr['n_racks'] !== 1 ? 's' : '' ?>">
+                <span class="rack-stats__bar-track">
+                  <span class="rack-stats__bar-fill" style="--vol-pct:<?= $barPct ?>%"></span>
+                </span>
+              </div>
+            </td>
+          </tr>
+          <?php endforeach ?>
+        <?php endif ?>
+
+        <?php if (!empty($rackCon)): ?>
+          <tr class="rack-stats__group-header rack-stats__group-header--contract">
+            <td colspan="6" class="rack-stats__group-label rack-stats__group-label--contract">Contrat</td>
+          </tr>
+          <?php foreach ($rackCon as $rsr):
+            $volHl    = (float)$rsr['vol_hl'];
+            $barPct   = $rackMaxVol > 0 ? round($volHl / $rackMaxVol * 100) : 0;
+            $avgCo2   = $rsr['avg_co2'] !== null ? number_format((float)$rsr['avg_co2'], 2) : '—';
+            $avgO2    = $rsr['avg_o2']  !== null ? number_format((float)$rsr['avg_o2'],  3) : '—';
+            $beerLabel = htmlspecialchars($rsr['short_name'] ?: '—');
+          ?>
+          <tr class="rack-stats__row rack-stats__row--contract">
+            <td class="rack-stats__td rack-stats__td--beer"><?= $beerLabel ?></td>
+            <td class="rack-stats__td rack-stats__td--n"><?= (int)$rsr['n_racks'] ?></td>
+            <td class="rack-stats__td rack-stats__td--vol"><?= number_format($volHl, 1) ?><span class="rack-stats__unit"> HL</span></td>
+            <td class="rack-stats__td rack-stats__td--co2"><?= $avgCo2 ?><span class="rack-stats__unit"> g/L</span></td>
+            <td class="rack-stats__td rack-stats__td--o2"><?= $avgO2 ?><span class="rack-stats__unit"> ppb</span></td>
+            <td class="rack-stats__td rack-stats__td--bar">
+              <div class="rack-stats__bar-wrap" title="<?= number_format($volHl, 1) ?> HL · <?= (int)$rsr['n_racks'] ?> transfert<?= (int)$rsr['n_racks'] !== 1 ? 's' : '' ?>">
+                <span class="rack-stats__bar-track">
+                  <span class="rack-stats__bar-fill" style="--vol-pct:<?= $barPct ?>%"></span>
+                </span>
+              </div>
+            </td>
+          </tr>
+          <?php endforeach ?>
+        <?php endif ?>
+
         </tbody>
       </table>
     </div>
