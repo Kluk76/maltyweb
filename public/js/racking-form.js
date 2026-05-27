@@ -101,10 +101,11 @@ document.addEventListener('DOMContentLoaded', function () {
       resultantDisplay.textContent = '—';
     }
 
-    // C3 — Update the Pertes balance display and soft warnings
+    // C3 — Update the Pertes balance display and refresh warnings via FormFramework
     updateLossBalance(racked, blend);
-    checkOverVolumeWarning(racked, blend);
-    checkRackPalierWarning(racked);
+    if (typeof FormFramework !== 'undefined' && typeof FormFramework.refreshWarnings === 'function') {
+      FormFramework.refreshWarnings();
+    }
   }
 
   if (rackedVolInput) rackedVolInput.addEventListener('input', updateResultant);
@@ -133,8 +134,9 @@ document.addEventListener('DOMContentLoaded', function () {
     var racked = parseDecimal(rackedVolInput ? rackedVolInput.value : null);
     var blend  = parseDecimal(blendHlInput  ? blendHlInput.value  : null);
     updateLossBalance(racked, blend);
-    checkOverVolumeWarning(racked, blend);
-    checkRackPalierWarning(racked);
+    if (typeof FormFramework !== 'undefined' && typeof FormFramework.refreshWarnings === 'function') {
+      FormFramework.refreshWarnings();
+    }
   }
 
   // loss_cause is required-while-visible when any volume > 0 is entered.
@@ -163,6 +165,16 @@ document.addEventListener('DOMContentLoaded', function () {
     syncLossCauseRequired();
     updateResultant();
   });
+  // loss_note input: when the operator types a justification, the palier warning
+  // demotes from 'outlier' (forced comment) to 'warn' (advisory) — refresh live.
+  var lossNoteInput = document.getElementById('loss_note');
+  if (lossNoteInput) {
+    lossNoteInput.addEventListener('input', function () {
+      if (typeof FormFramework !== 'undefined' && typeof FormFramework.refreshWarnings === 'function') {
+        FormFramework.refreshWarnings();
+      }
+    });
+  }
   syncPerteToggle(); // initial state
 
   // ── C3 — Loss balance readout ──────────────────────────────────────────
@@ -192,107 +204,81 @@ document.addEventListener('DOMContentLoaded', function () {
     }
   }
 
-  // ── C3 — Soft over-volume warning ─────────────────────────────────────
-  // Non-blocking QA-outlier posture: flag in the existing #racking-warnings panel.
-  // Checks:
-  //   a) loss_dest_hl > (residual + racked_vol)  → over-drains destination
-  //   b) loss_source_hl > sim_vol_hl (from the selected card's data) → over-drains source
-  var _lastOverVolWarning = null;  // track the text we last injected so we can remove it
-
-  function checkOverVolumeWarning(racked, blend) {
-    var panel = document.getElementById('racking-warnings');
-    if (!panel) return;
-
-    // Remove any previously injected over-vol warning span
-    var prev = panel.querySelector('.rf-over-vol-warning');
-    if (prev) prev.remove();
-    _lastOverVolWarning = null;
-
-    var revealed = perteToggle ? perteToggle.checked : false;
-    if (!revealed) return;
-
-    var lostSrc = parseDecimal(lossSourceInput ? lossSourceInput.value : null);
-    var lostDst = parseDecimal(lossDestInput   ? lossDestInput.value   : null);
+  // ── C3c — extraWarnings provider for FormFramework ────────────────────
+  // Returns an array of warning objects consumed by FormFramework.collectAllWarnings
+  // and rendered into #racking-warnings via FormFramework.refreshWarnings().
+  //
+  // Replaces the C3b direct-panel injection (checkRackPalierWarning /
+  // checkOverVolumeWarning) so warnings go through the shared pipeline and the
+  // submit dialog can enforce a comment when the palier fires without a justification.
+  //
+  // Warning definitions:
+  //
+  //   Rack palier (loss % > threshold):
+  //     level = 'outlier' when loss_note is currently EMPTY  → forces comment in submit dialog
+  //     level = 'warn'    when loss_note already has text    → advisory only (no force)
+  //     commentTarget = 'loss_note'                          → dialog comment injects into loss_note
+  //
+  //   Over-volume (impossible volume drain):
+  //     level = 'warn' always — PM ruling: never forces a comment, stays advisory.
+  //     No commentTarget.
+  function rfExtraWarnings() {
     var warnings = [];
+    var revealed  = perteToggle ? perteToggle.checked : false;
+    if (!revealed) return warnings;
 
-    // Dest check: loss_dest > residual + racked_vol
-    if (lostDst !== null && !isNaN(lostDst) && lostDst > 0 &&
-        racked !== null && !isNaN(racked)) {
-      var b = (blend !== null && !isNaN(blend) && blend > 0) ? blend : 0;
-      if (lostDst > racked + b) {
-        warnings.push(
-          'Perte cuve arrivée (' + lostDst.toFixed(3) + ' HL) supérieure au volume disponible ' +
-          '(' + (racked + b).toFixed(2) + ' HL residuel + transféré).'
-        );
+    var racked    = parseDecimal(rackedVolInput ? rackedVolInput.value : null);
+    var blend     = parseDecimal(blendHlInput   ? blendHlInput.value   : null);
+    var lostSrc   = parseDecimal(lossSourceInput ? lossSourceInput.value : null);
+    var lostDst   = parseDecimal(lossDestInput   ? lossDestInput.value   : null);
+    var src       = (lostSrc !== null && !isNaN(lostSrc)) ? lostSrc : 0;
+    var dst       = (lostDst !== null && !isNaN(lostDst)) ? lostDst : 0;
+    var totalLoss = src + dst;
+    var b         = (blend !== null && !isNaN(blend) && blend > 0) ? blend : 0;
+
+    // ── Rack palier ──────────────────────────────────────────────────────
+    if (racked !== null && !isNaN(racked) && racked > 0 && totalLoss > 0) {
+      var warnPct = (window.PERTES_CONFIG && typeof window.PERTES_CONFIG.rack_warn_pct === 'number')
+        ? window.PERTES_CONFIG.rack_warn_pct
+        : 2.0;
+      var lossPct = (totalLoss / racked) * 100;
+      if (lossPct > warnPct) {
+        // level is 'outlier' (forces comment) only when loss_note is currently empty.
+        // Once the operator has typed a justification the warning stays advisory ('warn').
+        var lossNoteEl  = document.getElementById('loss_note');
+        var hasNote     = lossNoteEl && lossNoteEl.value.trim() !== '';
+        warnings.push({
+          level:         hasNote ? 'warn' : 'outlier',
+          commentTarget: 'loss_note',
+          message:       '⚠ Perte totale ' + lossPct.toFixed(1) + ' % du volume transféré ' +
+                         '(seuil : ' + warnPct + ' %). Justification requise dans « Détails / explication ».',
+        });
       }
     }
 
-    // Source check: loss_source > sim_vol_hl from the selected card
+    // ── Over-volume (always advisory, never forces a comment) ────────────
+    // a) loss_dest > residual + racked_vol
+    if (lostDst !== null && !isNaN(lostDst) && lostDst > 0 &&
+        racked !== null && !isNaN(racked) && lostDst > racked + b) {
+      warnings.push({
+        level:   'warn',
+        message: '⚠ Perte cuve arrivée (' + lostDst.toFixed(3) + ' HL) supérieure au volume disponible ' +
+                 '(' + (racked + b).toFixed(2) + ' HL résiduel + transféré).',
+      });
+    }
+    // b) loss_source > sim_vol_hl from the selected card
     if (lostSrc !== null && !isNaN(lostSrc) && lostSrc > 0 && selectedCard) {
       var simVol = parseFloat(selectedCard.dataset.simVolHl || '0');
       if (!isNaN(simVol) && simVol > 0 && lostSrc > simVol) {
-        warnings.push(
-          'Perte cuve départ (' + lostSrc.toFixed(3) + ' HL) supérieure au volume estimé en CCT ' +
-          '(' + simVol.toFixed(2) + ' HL).'
-        );
+        warnings.push({
+          level:   'warn',
+          message: '⚠ Perte cuve départ (' + lostSrc.toFixed(3) + ' HL) supérieure au volume estimé en CCT ' +
+                   '(' + simVol.toFixed(2) + ' HL).',
+        });
       }
     }
 
-    if (warnings.length > 0) {
-      var span = document.createElement('span');
-      span.className = 'rf-over-vol-warning';
-      span.style.cssText = 'display:block;margin-top:0.4rem;font-size:0.83rem;color:var(--ember);';
-      span.textContent = '⚠ ' + warnings.join(' | ');
-      panel.hidden = false;
-      panel.appendChild(span);
-      _lastOverVolWarning = span;
-    }
-  }
-
-  // ── C3 — Rack-stage palier soft warning ───────────────────────────────
-  // Non-blocking advisory: if (loss_source + loss_dest) / racked_vol_hl × 100
-  // exceeds window.PERTES_CONFIG.rack_warn_pct → surface in the warnings panel.
-  // Threshold comes from commissioning_settings section='pertes', key
-  // 'pertes_rack_warn_pct' (default 2 %).
-  // Forced comment (C3c) is NOT implemented here — C3b just surfaces the text.
-  var _lastPalierWarning = null;
-
-  function checkRackPalierWarning(racked) {
-    var panel = document.getElementById('racking-warnings');
-    if (!panel) return;
-
-    // Remove any previous palier warning span
-    var prev = panel.querySelector('.rf-palier-warning');
-    if (prev) prev.remove();
-    _lastPalierWarning = null;
-
-    var revealed = perteToggle ? perteToggle.checked : false;
-    if (!revealed) return;
-    if (racked === null || isNaN(racked) || racked <= 0) return;
-
-    var lostSrc = parseDecimal(lossSourceInput ? lossSourceInput.value : null);
-    var lostDst = parseDecimal(lossDestInput   ? lossDestInput.value   : null);
-    var src     = (lostSrc !== null && !isNaN(lostSrc)) ? lostSrc : 0;
-    var dst     = (lostDst !== null && !isNaN(lostDst)) ? lostDst : 0;
-    var totalLoss = src + dst;
-    if (totalLoss <= 0) return;
-
-    var warnPct = (window.PERTES_CONFIG && typeof window.PERTES_CONFIG.rack_warn_pct === 'number')
-      ? window.PERTES_CONFIG.rack_warn_pct
-      : 2.0;
-    var lossPct = (totalLoss / racked) * 100;
-
-    if (lossPct > warnPct) {
-      var span = document.createElement('span');
-      span.className = 'rf-palier-warning';
-      span.style.cssText = 'display:block;margin-top:0.4rem;font-size:0.83rem;color:var(--ember);';
-      span.textContent =
-        '⚠ Perte totale ' + lossPct.toFixed(1) + ' % du volume transféré ' +
-        '(seuil : ' + warnPct + ' %). À justifier dans Détails / explication.';
-      panel.hidden = false;
-      panel.appendChild(span);
-      _lastPalierWarning = span;
-    }
+    return warnings;
   }
 
   // ── #10 conditional — dest CIP required client-side sync ──────────────
@@ -590,9 +576,10 @@ document.addEventListener('DOMContentLoaded', function () {
   // ── FormFramework init ────────────────────────────────────────────────
   if (typeof FormFramework !== 'undefined') {
     FormFramework.init({
-      formId:        'racking-form',
-      draftKey:      'racking-draft',
+      formId:         'racking-form',
+      draftKey:       'racking-draft',
       warningPanelId: 'racking-warnings',
+      extraWarnings:  rfExtraWarnings,   // C3c — palier + over-vol via shared pipeline
       thresholds: {
         bbt_co2: {
           label: 'CO₂ destination', unit: ' g/L',
@@ -655,8 +642,13 @@ document.addEventListener('DOMContentLoaded', function () {
   // the beer selection anyway. The global band is active until they do.
   applyQcThresholds(null); // applies __global until a card is selected
   updateDestFields();
-  updateResultant();
+  updateResultant();     // calls refreshWarnings() internally via C3 extension
   updateDestCipRequired();
   togglePuSection();
   syncPerteToggle(); // C3 — re-sync Pertes section after draft restore
+  // Explicit refresh after all draft values are restored, in case loss_note was
+  // already filled (drops the palier from 'outlier' to 'warn' on re-load).
+  if (typeof FormFramework !== 'undefined' && typeof FormFramework.refreshWarnings === 'function') {
+    FormFramework.refreshWarnings();
+  }
 });

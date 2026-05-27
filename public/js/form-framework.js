@@ -2,16 +2,32 @@
  * form-framework.js — Shared JS for operator input forms.
  *
  * Provides:
- *   FormFramework.init(config)  — wire up a form with soft-validation, diff-preview,
- *                                  localStorage draft, and unit labels.
+ *   FormFramework.init(config)       — wire up a form with soft-validation, diff-preview,
+ *                                      localStorage draft, and unit labels.
+ *   FormFramework.setThresholds(map) — hot-swap the active threshold map and re-render.
+ *   FormFramework.refreshWarnings()  — re-run collectWarnings (incl. extraWarnings) +
+ *                                      renderWarnings; call when non-threshold inputs change.
  *
  * config = {
- *   formId:      string           — <form> element id
- *   draftKey:    string           — localStorage key for draft persistence
- *   thresholds:  object           — { fieldName: { label, unit, warn:[lo,hi], outlier:[lo,hi] } }
- *   diffFields:  string[]         — fields to show in diff-preview panel
- *   onWarnings:  fn(warnings[])   — called with human-readable warning strings
+ *   formId:        string           — <form> element id
+ *   draftKey:      string           — localStorage key for draft persistence
+ *   thresholds:    object           — { fieldName: { label, unit, warn:[lo,hi], outlier:[lo,hi] } }
+ *   diffFields:    string[]         — fields to show in diff-preview panel
+ *   onWarnings:    fn(warnings[])   — called with human-readable warning strings
+ *   extraWarnings: fn() => Array    — optional; returns additional warning objects
+ *                                    each may carry { message, level, commentTarget? }
+ *                                    commentTarget: field name to inject the dialog comment into
+ *                                    (defaults to 'fw_comment' when absent)
  * }
+ *
+ * Comment routing (submit dialog):
+ *   - requireComment fires when ANY warning has level 'outlier' (existing behaviour).
+ *   - When confirming with a comment, the target field is chosen as follows:
+ *       1. If any outlier warning has commentTarget === 'loss_note' AND the form has a
+ *          #loss_note element with non-empty id → inject into loss_note (loss context dominates).
+ *       2. Otherwise → inject into the hidden fw_comment field (existing default).
+ *   - A target that already has text is NOT overwritten (no-clobber rule).
+ *   - Brewing and packaging forms pass no extraWarnings → all behaviour unchanged.
  *
  * No framework dependency. Vanilla ES2020.
  */
@@ -222,10 +238,11 @@ const FormFramework = (() => {
   //
   // activeThresholds: mutable reference so setThresholds() can swap the map
   // at runtime without replacing the blur/submit closures.
-  let _activeForm        = null;
-  let _activeThresholds  = {};
-  let _activeSwapPairs   = [];
-  let _activeWarningPanel = null;
+  let _activeForm           = null;
+  let _activeThresholds     = {};
+  let _activeSwapPairs      = [];
+  let _activeWarningPanel   = null;
+  let _activeExtraWarnings  = null;  // fn() => warning[] | null
 
   function init({
     formId,
@@ -235,14 +252,16 @@ const FormFramework = (() => {
     diffFields = [],
     diffLabels = {},
     warningPanelId = null,
+    extraWarnings  = null,
   }) {
     const form = document.getElementById(formId);
     if (!form) return;
 
-    _activeForm         = form;
-    _activeThresholds   = thresholds;
-    _activeSwapPairs    = swapPairs;
-    _activeWarningPanel = warningPanelId ? document.getElementById(warningPanelId) : null;
+    _activeForm          = form;
+    _activeThresholds    = thresholds;
+    _activeSwapPairs     = swapPairs;
+    _activeWarningPanel  = warningPanelId ? document.getElementById(warningPanelId) : null;
+    _activeExtraWarnings = (typeof extraWarnings === 'function') ? extraWarnings : null;
 
     // Load draft on page load
     if (draftKey) loadDraft(form, draftKey);
@@ -265,7 +284,7 @@ const FormFramework = (() => {
       const el = form.elements.namedItem(name);
       if (!el) continue;
       el.addEventListener('blur', () => {
-        const allWarnings = collectWarnings(form, _activeThresholds, _activeSwapPairs);
+        const allWarnings = collectAllWarnings(form, _activeThresholds, _activeSwapPairs, _activeExtraWarnings);
         renderWarnings(_activeWarningPanel, allWarnings);
       });
     }
@@ -274,20 +293,39 @@ const FormFramework = (() => {
     form.addEventListener('submit', (e) => {
       e.preventDefault();
 
-      const allWarnings = collectWarnings(form, _activeThresholds, _activeSwapPairs);
+      const allWarnings = collectAllWarnings(form, _activeThresholds, _activeSwapPairs, _activeExtraWarnings);
       const diffs = buildDiff(form, diffFields, diffLabels);
 
       if (allWarnings.length || diffs.length) {
         showDiffDialog(diffs, allWarnings, (comment) => {
-          // Inject comment into hidden field
-          let commentInput = form.querySelector('input[name="fw_comment"]');
-          if (!commentInput) {
-            commentInput = document.createElement('input');
-            commentInput.type = 'hidden';
-            commentInput.name = 'fw_comment';
-            form.appendChild(commentInput);
+          // Determine comment target: if any outlier carries commentTarget='loss_note'
+          // and the form has a non-empty loss_note field, route there (loss context dominates).
+          // Otherwise, inject into the default fw_comment hidden field.
+          // No-clobber: only inject when the target is currently empty.
+          const hasLossNoteTarget = allWarnings.some(
+            w => w.level === 'outlier' && w.commentTarget === 'loss_note'
+          );
+          const lossNoteEl = form.querySelector('#loss_note');
+          const routeToLossNote = hasLossNoteTarget && lossNoteEl;
+
+          if (routeToLossNote) {
+            // Inject into loss_note only when it's empty (no-clobber)
+            if (lossNoteEl.value.trim() === '') {
+              lossNoteEl.value = comment;
+            }
+          } else {
+            // Default: inject into the fw_comment hidden field
+            let commentInput = form.querySelector('input[name="fw_comment"]');
+            if (!commentInput) {
+              commentInput = document.createElement('input');
+              commentInput.type = 'hidden';
+              commentInput.name = 'fw_comment';
+              form.appendChild(commentInput);
+            }
+            if (commentInput.value.trim() === '') {
+              commentInput.value = comment;
+            }
           }
-          commentInput.value = comment;
           if (draftKey) clearDraft(draftKey);
           form.submit();
         });
@@ -315,12 +353,26 @@ const FormFramework = (() => {
   function setThresholds(map) {
     _activeThresholds = map || {};
     if (_activeForm) {
-      const allWarnings = collectWarnings(_activeForm, _activeThresholds, _activeSwapPairs);
+      const allWarnings = collectAllWarnings(_activeForm, _activeThresholds, _activeSwapPairs, _activeExtraWarnings);
       renderWarnings(_activeWarningPanel, allWarnings);
     }
   }
 
-  function collectWarnings(form, thresholds, swapPairs) {
+  /**
+   * Re-run warning collection (threshold + extraWarnings) and re-render the panel.
+   * Call this from the host page whenever a non-threshold input (e.g. a loss field)
+   * changes so the panel updates live without waiting for a blur event.
+   *
+   * No-op when init() has not been called.
+   */
+  function refreshWarnings() {
+    if (!_activeForm) return;
+    const allWarnings = collectAllWarnings(_activeForm, _activeThresholds, _activeSwapPairs, _activeExtraWarnings);
+    renderWarnings(_activeWarningPanel, allWarnings);
+  }
+
+  // Internal: merge threshold-derived warnings with extra warnings from the provider.
+  function collectAllWarnings(form, thresholds, swapPairs, extraWarningsFn) {
     const warnings = [];
     for (const [name, threshold] of Object.entries(thresholds)) {
       const el = form.elements.namedItem(name);
@@ -329,8 +381,17 @@ const FormFramework = (() => {
       if (w) warnings.push(w);
     }
     warnings.push(...detectSwaps(form, swapPairs));
+    if (typeof extraWarningsFn === 'function') {
+      const extra = extraWarningsFn();
+      if (Array.isArray(extra)) warnings.push(...extra);
+    }
     return warnings;
   }
 
-  return { init, setThresholds };
+  // Legacy alias: collectWarnings retained for internal callers that don't need extraWarnings.
+  function collectWarnings(form, thresholds, swapPairs) {
+    return collectAllWarnings(form, thresholds, swapPairs, null);
+  }
+
+  return { init, setThresholds, refreshWarnings };
 })();
