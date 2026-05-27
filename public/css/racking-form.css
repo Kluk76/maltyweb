@@ -235,6 +235,27 @@ body.op-form-racking .rf-hp-badge--normal {
   color: var(--ink-mute);
 }
 
+/* ── Derived resultant volume readout (#5) ─────────────────────────────── */
+body.op-form-racking #rf-resultant-display {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.92rem;
+  color: var(--cold);
+  padding: 0.45rem 0.6rem;
+  background: color-mix(in srgb, var(--cold) 6%, var(--bg-elev));
+  border: 1px solid color-mix(in srgb, var(--cold) 20%, transparent);
+  border-radius: 5px;
+  min-height: 2.1rem;
+  display: flex;
+  align-items: center;
+}
+
+/* ── Dest CIP required indicator (#10) ──────────────────────────────────── */
+body.op-form-racking .cip-dest-required > .cip-section__vessel-header::after {
+  content: ' *';
+  color: var(--ember);
+  font-size: 0.75rem;
+}
+
 /* ── QC badge in recent table ───────────────────────────────────────────── */
 body.op-form-racking .op-form__qc-badge--normal   { color: var(--hop); font-size: 0.72rem; }
 body.op-form-racking .op-form__qc-badge--elevated { color: var(--ember); font-size: 0.72rem; }

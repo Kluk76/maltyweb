@@ -16,11 +16,36 @@ declare(strict_types=1);
  *     - NULL effective_garde → NOT eligible (surfaces only under hors-process).
  *
  * Deliverable C: "Choix Hors Process" toggle (manager/admin only). Expands
- *   candidate set to ALL beers physically in a CCT ignoring the time gate.
+ *   candidate set to ALL beers physically in a CCT or BBT ignoring the time gate.
  *   Server-side role enforcement: hors_process=1 from a non-manager is silently ignored.
  *   Writes hors_process_flag + hors_process_reason to bd_racking_v2 (migration 174).
  *
- * Writes to: bd_racking_v2 + audit_row_revisions
+ * Round-2 changes (2026-05-27):
+ *   #1  Hors-process ALSO includes BBT-occupied lots (from bd_racking_v2 latest-per-tank
+ *       WHERE racking_destination_type IN ('BBT','CCT'), TankSimulator-filtered).
+ *       These surface ONLY in the override (hors-process) list. CCT and BBT lots are
+ *       keyed by source tank to avoid double-listing a CCT→BBT lot.
+ *   #2  event_date input has no min/max lock — back-dating works. Verified.
+ *   #3  client free-text input REMOVED. bd_racking_v2.client now resolved server-side
+ *       from the selected recipe FK: ref_recipes.client_id → ref_clients.name
+ *       (NULL client_id ⇒ "Nébuleuse"). The column is still written.
+ *   #4  Destination: CCT label → "CCT N°"; YT dropdown added (ref_yt.number);
+ *       yt_number written via migration 179. JS show/hide for BBT/CCT/YT selects.
+ *   #5  "Volume blend" relabelled → "Volume résiduel en cuve" (column stays blend_hl).
+ *       Semantics: volume already in the DESTINATION tank at transfer. Available for
+ *       all dest types. Derived "Volume résultant en cuve" shown read-only in UI (JS sum).
+ *   #6  CO₂/O₂ labels ("CO₂ BBT"/"O₂ BBT") swap client-side by dest type.
+ *   #7  "Vitesse moyenne" input REMOVED. avg_speed column kept for historical data.
+ *   #8  CIP section: flat CIP cards replaced by shared partial (cip-section.php) as the
+ *       FIRST section. Old flat CIP columns (last_cip_date/cip_type/cip_bbt_*) no longer
+ *       written by the web form. Removed from bd_row_hash to avoid hash drift.
+ *   #9  Dest CIP label is dynamic (partial's dynamic_label=true handles it).
+ *  #10  CIP type dropdown from ref_cip_types (via cip_type_options). Old free-text gone.
+ *
+ * Conditional dest-CIP: cip_dest_required($blend_hl) — residual>0 makes dest CIP
+ *   optional (blend into same beer; vessel not empty). Enforced server-side + client-side.
+ *
+ * Writes to: bd_racking_v2 + bd_cip_events + audit_row_revisions
  * Natural key: (submitted_at, neb_beer, neb_batch, contract_beer, contract_batch, seq)
  * URL: /modules/form-racking.php  (route unchanged)
  */
@@ -30,6 +55,7 @@ require __DIR__ . '/../../app/settings-helpers.php';
 require __DIR__ . '/../../app/db-write-helpers.php';
 require_once __DIR__ . '/../../app/yeast-eligibility.php';
 require_once __DIR__ . '/../../app/tank-simulator.php';
+require_once __DIR__ . '/../../app/cip-events.php';
 
 require_login();
 $me = current_user();
@@ -37,7 +63,6 @@ $me = current_user();
 // ── Allowed enum values ───────────────────────────────────────────────────
 const RACK_TYPES        = ['Centri', 'KZE', 'Pump', 'Centri+KZE'];
 const DEST_TYPES        = ['BBT', 'CCT', 'YT'];
-const CIP_YN            = ['Oui', 'Non'];
 const CENTRI_RINSED_YN  = ['Oui', 'Non'];
 
 // ── POST ──────────────────────────────────────────────────────────────────
@@ -54,8 +79,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // ── 1. Coerce + validate inputs ──────────────────────────────────
 
         // ── Override: Choix Hors Process (manager/admin only) ───────────
-        // Server-side enforcement: silently ignore hors_process=1 from a
-        // non-manager/admin. Never trust the client-side gate alone.
         $horsProcessRequested = (post_int('hors_process') === 1);
         $horsProcessAllowed   = (is_admin($me) || is_manager($me));
         $horsProcessFlag      = ($horsProcessRequested && $horsProcessAllowed) ? 1 : 0;
@@ -66,7 +89,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $nebBatch     = post_str('neb_batch')    ?? '';
         $contractBeer  = post_str('contract_beer')  ?? '';
         $contractBatch = post_str('contract_batch') ?? '';
-        $sourceCct     = post_int('source_cct_number');   // which CCT the beer is coming from
+        $sourceCct     = post_int('source_cct_number');
 
         if ($nebBeer === '' && $contractBeer === '') {
             throw new RuntimeException("Au moins une bière (Nébuleuse ou contrat) est requise.");
@@ -82,6 +105,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $bbtNumber = post_int('bbt_number');
         $cctNumber = post_int('cct_number');
+        $ytNumber  = post_int('yt_number');   // #4 — new YT field
 
         // Build target_tank_raw from parsed destination
         $targetTankRaw = null;
@@ -89,13 +113,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $targetTankRaw = "BBT {$bbtNumber}";
         } elseif ($destType === 'CCT' && $cctNumber !== null) {
             $targetTankRaw = "CCT {$cctNumber}";
+        } elseif ($destType === 'YT' && $ytNumber !== null) {
+            $targetTankRaw = "YT {$ytNumber}";
         } elseif ($destType === 'YT') {
             $targetTankRaw = 'YT';
         }
 
-        $client         = post_str('client');
-        $lastCipDate    = post_str('last_cip_date');
-        $cipType        = post_str('cip_type');
+        // #3 — Resolve client SERVER-SIDE from the recipe FK chain.
+        // Selected recipe → ref_recipes.client_id → ref_clients.name
+        // (NULL client_id ⇒ "Nébuleuse"). Never use operator free-text for client.
+        $resolvedRecipeId = $nebRecipeId ?? $contractRecipeId;
+        $client = null;
+        if ($resolvedRecipeId !== null) {
+            $clientStmt = $pdo->prepare(
+                "SELECT rc.name
+                   FROM ref_recipes rr
+                   LEFT JOIN ref_clients rc ON rc.id = rr.client_id
+                  WHERE rr.id = ?
+                  LIMIT 1"
+            );
+            $clientStmt->execute([$resolvedRecipeId]);
+            $clientRow = $clientStmt->fetch(PDO::FETCH_ASSOC);
+            $client = ($clientRow !== false && $clientRow['name'] !== null)
+                ? $clientRow['name']
+                : 'Nébuleuse';
+        }
 
         $startTimeRaw = post_str('start_time');
         $endTimeRaw   = post_str('end_time');
@@ -107,22 +149,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $bbtCo2      = post_decimal('bbt_co2');
         $bbtO2       = post_decimal('bbt_o2');
         $rackedVolHl = post_decimal('racked_vol_hl');
+        // #5 — blend_hl = residual volume in destination tank at transfer time
         $blendHl     = post_decimal('blend_hl');
         $avgTurbidity = post_decimal('avg_turbidity');
-        $avgSpeed    = post_decimal('avg_speed');
+        // #7 — avg_speed removed from form; column kept for historical data
         $bbtPressure = post_decimal('bbt_pressure');
 
         $centriRinsed = post_str('centri_rinsed');
         if ($centriRinsed !== null) must_be_one_of('centri_rinsed', $centriRinsed, CENTRI_RINSED_YN);
 
-        $cipBbtDone = post_str('cip_bbt_done');
-        if ($cipBbtDone !== null) must_be_one_of('cip_bbt_done', $cipBbtDone, CIP_YN);
-        $cipBbtType = post_str('cip_bbt_type');
-        $cipBbtDate = post_str('cip_bbt_date');
-        $comments   = post_str('comments');
+        // #8 — CIP events via shared parser (old flat fields no longer read from POST)
+        $cipEvents = cip_parse_post($_POST, 'racking');
 
-        // Operator comment from diff-preview dialog (may be empty string)
-        $fwComment = post_str('fw_comment');
+        // ── Conditional dest-CIP validation ─────────────────────────────
+        // When residual (blend_hl) > 0, dest CIP is optional (blend into same beer).
+        // When residual = 0 or null, dest CIP is required.
+        $destCipRequired = cip_dest_required($blendHl);
+        if ($destCipRequired) {
+            // Check if any vessel CIP event was submitted for this dest
+            $hasDestCip = false;
+            foreach ($cipEvents as $ev) {
+                if ($ev['target_kind'] === 'vessel') {
+                    $hasDestCip = true;
+                    break;
+                }
+            }
+            if (!$hasDestCip) {
+                throw new RuntimeException(
+                    "CIP cuve destination requis (résiduel = 0). " .
+                    "Saisir le CIP destination ou indiquer un volume résiduel > 0."
+                );
+            }
+        }
+
+        $comments   = post_str('comments');
+        $fwComment  = post_str('fw_comment');
 
         // ── 2. QC flag ───────────────────────────────────────────────────
         $measurements = array_filter([
@@ -133,34 +194,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         ], fn($v) => $v !== null);
         $qcFlag = bd_qc_flag($measurements);
 
-        // ── 3. Build submitted_at (now with microseconds) ────────────────
+        // ── 3. Build submitted_at ────────────────────────────────────────
         $submittedAt = date('Y-m-d H:i:s.u');
         $eventDate   = $eventDateRaw ?? date('Y-m-d');
 
-        // Build audit_flags
         $auditTokens = ['web_entry'];
         if ($qcFlag !== 'normal') $auditTokens[] = "qc_{$qcFlag}";
         if ($horsProcessFlag === 1) $auditTokens[] = 'hors_process_override';
         $auditFlags = implode(',', $auditTokens);
 
-        // ── 4. Canonical row for hash (exclude meta cols) ────────────────
+        // ── 4. Canonical row for hash (exclude meta cols + removed fields) ───
+        // #8 CRITICAL: flat CIP fields (last_cip_date/cip_type/cip_bbt_*)
+        //   are no longer part of the hash — they are not written from the web
+        //   form any more (CIP now goes to bd_cip_events via cip_upsert).
+        //   Leaving them in the hash after stopping to populate them would cause
+        //   hash drift → silent row re-insertion. They are absent here.
+        // #7: avg_speed removed from hash (field removed from form).
+        // #3: client is now server-resolved, still included so it varies correctly.
         $hashCols = [
             $nebBeer, $nebBatch, $nebRecipeId ?? '',
             $contractBeer, $contractBatch, $contractRecipeId ?? '',
             $rackType ?? '', $client ?? '',
             $startTime ?? '', $endTime ?? '',
-            $destType ?? '', $bbtNumber ?? '', $cctNumber ?? '',
+            $destType ?? '', $bbtNumber ?? '', $cctNumber ?? '', $ytNumber ?? '',
             $targetTankRaw ?? '',
             $bbtCo2 ?? '', $bbtO2 ?? '', $rackedVolHl ?? '', $blendHl ?? '',
-            $avgTurbidity ?? '', $avgSpeed ?? '', $bbtPressure ?? '',
-            $centriRinsed ?? '', $lastCipDate ?? '', $cipType ?? '',
-            $cipBbtDone ?? '', $cipBbtType ?? '', $cipBbtDate ?? '',
+            $avgTurbidity ?? '', $bbtPressure ?? '',
+            $centriRinsed ?? '',
             $comments ?? '',
             $horsProcessFlag,
         ];
         $rowHash = bd_row_hash($hashCols);
 
         // ── 5. Build row array ───────────────────────────────────────────
+        // Note: last_cip_date / cip_type / cip_bbt_done / cip_bbt_type / cip_bbt_date
+        //   are intentionally OMITTED — the web form no longer writes them.
+        //   Historical rows from the ingest path retain their values.
         $row = [
             'row_hash'                 => $rowHash,
             'audit_flags'              => $auditFlags,
@@ -174,27 +243,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'contract_beer'            => $contractBeer,
             'contract_batch'           => $contractBatch,
             'contract_recipe_id_fk'    => $contractRecipeId,
-            'last_cip_date'            => $lastCipDate,
-            'cip_type'                 => $cipType,
             'rack_type'                => $rackType,
-            'client'                   => $client,
+            'client'                   => $client,  // #3 — FK-resolved, never free-text
             'start_time'               => $startTime,
             'end_time'                 => $endTime,
             'racking_destination_type' => $destType,
             'bbt_number'               => $bbtNumber,
             'cct_number'               => $cctNumber,
+            'yt_number'                => $ytNumber,  // #4 — migration 179
             'target_tank_raw'          => $targetTankRaw,
             'bbt_co2'                  => $bbtCo2,
             'bbt_o2'                   => $bbtO2,
             'racked_vol_hl'            => $rackedVolHl,
-            'blend_hl'                 => $blendHl,
+            'blend_hl'                 => $blendHl,  // #5 — residual in dest tank
             'avg_turbidity'            => $avgTurbidity,
-            'avg_speed'                => $avgSpeed,
+            // avg_speed intentionally absent — column kept, form removed (#7)
             'bbt_pressure'             => $bbtPressure,
             'centri_rinsed'            => $centriRinsed,
-            'cip_bbt_done'             => $cipBbtDone,
-            'cip_bbt_type'             => $cipBbtType,
-            'cip_bbt_date'             => $cipBbtDate,
             'comments'                 => $comments,
             'hors_process_flag'        => $horsProcessFlag,
             'hors_process_reason'      => $horsProcessReason,
@@ -202,26 +267,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $nkCols = ['submitted_at', 'neb_beer', 'neb_batch', 'contract_beer', 'contract_batch', 'seq'];
 
-        // ── 6. Before-snapshot (lookup by NK) ────────────────────────────
-        // Web-form inserts always have a new submitted_at — before is always null.
+        // ── 6. Before-snapshot (web-form inserts always new submitted_at) ─
         $beforeSnapshot = null;
 
         // ── 7. UPSERT ────────────────────────────────────────────────────
         $result = bd_upsert($pdo, 'bd_racking_v2', $row, $nkCols);
+        $rackingId = (int)$result['id'];
 
-        // ── 8. Audit revision ─────────────────────────────────────────────
+        // ── 8. CIP events ─────────────────────────────────────────────────
+        // #8 — Write CIP events to bd_cip_events via the shared infra.
+        $cipMeta = ['submitted_at' => $submittedAt, 'email' => $me['username']];
+        cip_upsert($pdo, 'racking', $rackingId, $cipEvents, $cipMeta);
+
+        // ── 9. Audit revision ─────────────────────────────────────────────
         log_revision(
             $pdo,
             $me,
             'bd_racking_v2',
-            $result['id'],
+            $rackingId,
             $beforeSnapshot,
             $row,
             $qcFlag,
             $fwComment ?: null
         );
 
-        // ── 9. Success response ───────────────────────────────────────────
+        // ── 10. Success response ───────────────────────────────────────────
         $qcLabel = match($qcFlag) {
             'elevated' => ' — ⚠ valeurs à vérifier',
             'outlier'  => ' — 🔴 outlier enregistré',
@@ -247,28 +317,13 @@ try {
     // ── Current user role for override capability ─────────────────────────
     $canOverride = (is_admin($me) || is_manager($me));
 
-    // ── Candidate lots: beers in a CCT that have cold-crashed ≥ effective_garde days ──
+    // ── Candidate lots (CCT-based gated list) ────────────────────────────
     //
-    // Eligibility derivation:
-    //   1. Cold-crash day = latest bd_fermenting_v2.event_date WHERE event_type='ColdCrash'
-    //      for (recipe_id_fk, batch).
-    //   2. Source CCT = bd_brewing_brewday_v2.cct for that (recipe_id_fk, batch).
-    //   3. SQL occupancy guard (COARSE PRE-FILTER ONLY): no later brew into the same CCT.
-    //      The TankSimulator is the authoritative occupancy truth — see sim-filter below.
-    //      NOTE: bd_racking_v2 is the DESTINATION of racking (output); source-CCT occupancy
-    //      is owned by the TankSimulator (RACKING events clear the CCT there at ~L372-376).
+    // Eligibility derivation (unchanged from Round-1):
+    //   1. Cold-crash day = latest bd_fermenting_v2.event_date WHERE event_type='ColdCrash'.
+    //   2. Source CCT = bd_brewing_brewday_v2.cct.
+    //   3. SQL occupancy guard (COARSE PRE-FILTER): no later brew into the same CCT.
     //   4. Eligible = DATEDIFF(CURDATE(), cold_crash_date) >= effective_garde.
-    //      effective_garde from yeast_eligibility_join_fragment() +
-    //      yeast_eligibility_select_expressions() (single COALESCE source).
-    //      NULL effective_garde → NOT eligible (no strain classified → hors-process only).
-    //
-    // CCT→CCT blend limitation (OUT OF SCOPE / backlog):
-    //   A blended lot's bd_brewing_brewday_v2.cct points at its original brew CCT, not any
-    //   blend-destination CCT. Tracking current CCT after a blend needs a deliberate model
-    //   extension. Until then, blended lots are accessible via hors-process only.
-    //
-    // Base SQL fragment (occupancy guard + cold-crash join) — reused by both
-    // the normal query (with garde gate) and hors-process query (without garde gate).
 
     $candidateBaseSql = "
         SELECT
@@ -309,12 +364,7 @@ try {
           ys.name, ys.family,
           yfd.garde_days_min, yfd.ferm_temp_min, yfd.ferm_temp_max";
 
-    // Normal (gated) query: effective_garde must be non-NULL AND days >= effective_garde.
-    // Extra pre-filter: drop lots that already have a live racking row (cheap SQL guard).
-    // The TankSimulator (below) is the final authority; this NOT EXISTS clause just
-    // prunes the obvious cases before the sim runs, keeping the gated path conservative.
-    // NOT added to the hors-process path — a partial-rack edge case (CCT still partially
-    // occupied after a mid-process rack) must surface there for the operator to decide.
+    // Normal (gated) query — effective_garde met + not yet racked.
     $candStmt = $pdo->prepare(
         $candidateBaseSql .
         " HAVING effective_garde IS NOT NULL
@@ -330,54 +380,18 @@ try {
     $candStmt->execute();
     $candidates = $candStmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // Override (hors-process) query: all CCT-occupying beers, no time gate.
-    // Built only when current user has manager/admin role.
-    // No NOT EXISTS on racking here — hors-process is the deliberate escape hatch
-    // for partial-rack or edge-case lots that may still have a CCT presence.
-    $candidatesOverride = [];
-    if ($canOverride) {
-        $overrideStmt = $pdo->prepare(
-            $candidateBaseSql .
-            " ORDER BY bfw.event_date DESC"
-        );
-        $overrideStmt->execute();
-        $candidatesOverride = $overrideStmt->fetchAll(PDO::FETCH_ASSOC);
-    }
-
-    // ── TankSimulator: authoritative CCT occupancy filter ────────────────────
-    //
-    // The SQL occupancy guard (no-later-brew) is a COARSE pre-filter. It cannot detect
-    // racked-out lots: a CCT is only freed in SQL when a NEW brew enters it, not when
-    // the existing lot is racked out. The TankSimulator models the full event replay
-    // (COOLING fills CCT, RACKING empties CCT at ~L372-376 of tank-simulator.php) and
-    // is therefore the authoritative source of CCT state.
-    //
-    // We mirror form-packaging.php exactly:
-    //   - Instantiate once on page load.
-    //   - Key on (strtolower(tank_type), (int)tank_number) from the candidate's source_cct.
-    //   - Drop any candidate whose source CCT is null/empty in the sim.
-    //   - Do NOT compare beer strings — trust the sim's tank-occupancy as truth.
-    //   - Apply to BOTH the gated and hors-process lists: hors-process relaxes the TIME
-    //     gate (garde days), not physical reality — a racked-out lot is physically gone.
+    // ── TankSimulator: authoritative CCT occupancy filter ─────────────────
     $simState = (new TankSimulator($pdo))->run(new DateTimeImmutable('today'));
 
     /**
-     * Drop candidates whose source CCT is null/empty in the TankSimulator state.
-     *
-     * Keying: 'cct' + (int)source_cct matches $simState['cct'][N].
-     * We do NOT compare beer strings — the sim's occupancy is the truth.
-     *
-     * @param array[] $list       Candidate rows (each has 'source_cct' key)
-     * @param array   $simState   ['cct'=>[N=>state|null,...], 'bbt'=>[...]]
-     * @return array[]
+     * Drop CCT candidates whose source CCT is null/empty in the TankSimulator.
      */
     $simFilterCct = function (array $list, array $simState): array {
         $out = [];
         foreach ($list as $cand) {
-            $cctNum   = (int)($cand['source_cct'] ?? 0);
+            $cctNum    = (int)($cand['source_cct'] ?? 0);
             $tankState = $simState['cct'][$cctNum] ?? null;
             if ($tankState === null) {
-                // CCT is empty/expired in the sim — lot has been racked out. Drop it.
                 continue;
             }
             $out[] = $cand;
@@ -385,12 +399,129 @@ try {
         return $out;
     };
 
-    $candidates         = $simFilterCct($candidates,         $simState);
-    $candidatesOverride = $simFilterCct($candidatesOverride, $simState);
+    $candidates = $simFilterCct($candidates, $simState);
+
+    // ── Override (hors-process) candidate list ───────────────────────────
+    //
+    // #1 — BBT-occupied lots added to the hors-process list.
+    //
+    // Source A: CCT-occupying lots (all, no time gate) — same as Round-1.
+    // Source B: BBT-occupied lots from bd_racking_v2 (latest racking per BBT
+    //   WHERE racking_destination_type IN ('BBT','CCT')), then sim-filtered.
+    //   This is BBT occupancy from racking DESTINATIONS, not CCT source occupancy.
+    //   Legitimate: identifies beers currently in a BBT awaiting packaging.
+    //
+    // Keying: Source A rows are keyed by ('cct', source_cct) and Source B rows
+    //   by ('bbt', bbt_number) — prevents a CCT→BBT lot from appearing twice.
+    //
+    // Source B rows are marked with 'source_tank_type'='BBT' so JS can display
+    //   them with appropriate labels (they don't have a cold-crash / garde context).
+    $candidatesOverride = [];
+    if ($canOverride) {
+        // Source A: All CCT-occupying lots (no time gate)
+        $overrideStmt = $pdo->prepare(
+            $candidateBaseSql .
+            " ORDER BY bfw.event_date DESC"
+        );
+        $overrideStmt->execute();
+        $candidatesOverrideCct = $overrideStmt->fetchAll(PDO::FETCH_ASSOC);
+        $candidatesOverrideCct = $simFilterCct($candidatesOverrideCct, $simState);
+
+        // Key by ('cct', source_cct) to dedup against BBT source
+        $seenTanks = [];
+        foreach ($candidatesOverrideCct as $cand) {
+            $key = 'cct|' . (int)($cand['source_cct'] ?? 0);
+            $seenTanks[$key] = true;
+            $cand['source_tank_type'] = 'CCT';
+            $candidatesOverride[] = $cand;
+        }
+
+        // Source B: BBT-occupied lots — latest racking per BBT tank
+        // Query: latest-per-BBT-destination racking row (mirrors form-packaging.php pattern).
+        // This is the racking DESTINATION (BBT), NOT the source CCT.
+        $bbtCandSql = "
+            SELECT
+              r.id                                                     AS racking_id,
+              'BBT'                                                    AS source_tank_type,
+              r.bbt_number                                             AS source_bbt,
+              r.neb_beer,
+              r.neb_batch,
+              r.neb_recipe_id_fk,
+              r.contract_beer,
+              r.contract_batch,
+              r.contract_recipe_id_fk,
+              COALESCE(NULLIF(r.neb_beer,''), r.contract_beer)        AS beer_display,
+              r.racked_vol_hl,
+              r.event_date                                             AS brew_date,
+              r2.name                                                  AS recipe_name
+            FROM bd_racking_v2 r
+            LEFT JOIN ref_recipes r2
+              ON r2.id = COALESCE(r.neb_recipe_id_fk, r.contract_recipe_id_fk)
+            WHERE r.racking_destination_type IN ('BBT', 'CCT')
+              AND r.bbt_number IS NOT NULL
+              AND r.is_tombstoned = 0
+              AND r.id = (
+                SELECT id FROM bd_racking_v2 r2i
+                WHERE r2i.bbt_number = r.bbt_number
+                  AND r2i.racking_destination_type IN ('BBT','CCT')
+                  AND r2i.is_tombstoned = 0
+                ORDER BY r2i.submitted_at DESC
+                LIMIT 1
+              )
+            ORDER BY r.bbt_number ASC";
+
+        $bbtCandRows = $pdo->query($bbtCandSql)->fetchAll(PDO::FETCH_ASSOC);
+
+        // Sim-filter: keep only BBTs that are occupied in TankSimulator
+        foreach ($bbtCandRows as $bbtRow) {
+            $bbtNum    = (int)($bbtRow['source_bbt'] ?? 0);
+            $simTank   = $simState['bbt'][$bbtNum] ?? null;
+            if ($simTank === null) {
+                continue; // Empty/expired in sim — lot is gone
+            }
+
+            // Dedup: skip if this BBT already appeared as a CCT-lot destination
+            // (a CCT→BBT lot will appear in Source A as a CCT lot; keying prevents
+            // double listing only the same physical tank, not the same beer)
+            $bbtKey = 'bbt|' . $bbtNum;
+            if (isset($seenTanks[$bbtKey])) {
+                continue;
+            }
+            $seenTanks[$bbtKey] = true;
+
+            // Construct a shape compatible with the card renderer
+            $candidatesOverride[] = [
+                'source_tank_type'     => 'BBT',
+                'source_cct'           => null,
+                'source_bbt'           => $bbtNum,
+                'recipe_id'            => null,  // recipe_id for PHP card use
+                'recipe_name'          => $bbtRow['recipe_name'] ?? '',
+                'beer'                 => $bbtRow['neb_beer'] ?? $bbtRow['contract_beer'] ?? '',
+                'batch'                => $bbtRow['neb_batch'] ?? $bbtRow['contract_batch'] ?? '',
+                'beer_display'         => $bbtRow['beer_display'] ?? '',
+                'neb_beer'             => $bbtRow['neb_beer'] ?? '',
+                'neb_batch'            => $bbtRow['neb_batch'] ?? '',
+                'neb_recipe_id_fk'     => $bbtRow['neb_recipe_id_fk'],
+                'contract_beer'        => $bbtRow['contract_beer'] ?? '',
+                'contract_batch'       => $bbtRow['contract_batch'] ?? '',
+                'contract_recipe_id_fk'=> $bbtRow['contract_recipe_id_fk'],
+                'cold_crash_date'      => null,
+                'days_since_cold_crash'=> null,
+                'effective_garde'      => null,
+                'brew_date'            => $bbtRow['brew_date'] ?? null,
+                'sim_vol_hl'           => round((float)$simTank['volume_hl'], 2),
+            ];
+        }
+    }
 
     // Ref data for destination dropdowns
     $bbts = $pdo->query("SELECT number FROM ref_bbt ORDER BY number ASC")->fetchAll();
     $ccts = $pdo->query("SELECT number FROM ref_cct ORDER BY number ASC")->fetchAll();
+    // #4 — YT numbers
+    $yts  = $pdo->query("SELECT number FROM ref_yt WHERE status='active' ORDER BY number ASC")->fetchAll();
+
+    // CIP infra
+    $cipTypes = cip_type_options($pdo);
 
     // Recent submissions (last 10 racking entries from web)
     $recentRows = $pdo->prepare(
@@ -411,6 +542,8 @@ try {
     $candidatesOverride = [];
     $bbts               = [];
     $ccts               = [];
+    $yts                = [];
+    $cipTypes           = [];
     $recentRackings     = [];
     $canOverride        = false;
     $loadErr = $e->getMessage();
@@ -422,6 +555,23 @@ $active_module = 'racking';
 // Inject server-side data for JS
 $candidatesJson         = json_encode($candidates,         JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 $candidatesOverrideJson = json_encode($candidatesOverride, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
+
+// #8 — CIP partial config (new submission: no existing events)
+$cipConfig = [
+    'machines'           => ['centri', 'kze', 'pump'],
+    'show_inline_combine'=> true,
+    'vessels'            => [
+        [
+            'code'          => 'bbt',   // default; JS updates via cipUpdateVesselLabel
+            'number'        => null,    // JS updates via cipUpdateVesselLabel
+            'label'         => 'CIP BBT',
+            'dynamic_label' => true,
+            'required'      => true,    // JS re-evaluates when residual changes
+        ],
+    ],
+    'cip_types'          => $cipTypes,
+    'existing'           => null,  // new submission
+];
 ?><!doctype html>
 <html lang="fr">
 <head>
@@ -432,6 +582,7 @@ $candidatesOverrideJson = json_encode($candidatesOverride, JSON_UNESCAPED_UNICOD
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,200;0,9..144,300;0,9..144,400;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/app.css?v=<?= @filemtime(__DIR__ . '/../css/app.css') ?: time() ?>">
+  <link rel="stylesheet" href="/css/cip-section.css?v=<?= @filemtime(__DIR__ . '/../css/cip-section.css') ?: time() ?>">
   <link rel="stylesheet" href="/css/racking-form.css?v=<?= @filemtime(__DIR__ . '/../css/racking-form.css') ?: time() ?>">
 </head>
 <body class="home op-form-page op-form-racking">
@@ -452,7 +603,7 @@ $candidatesOverrideJson = json_encode($candidatesOverride, JSON_UNESCAPED_UNICOD
     <div class="op-form__eyebrow">Transferts · Racking</div>
     <h1 class="op-form__title">Saisie <em>transferts</em></h1>
     <p class="op-form__sub">
-      Transfert CCT → BBT (ou CCT). Sélectionner un lot éligible (cold crash ≥ garde minimum).
+      Transfert CCT → BBT (ou CCT / YT). Sélectionner un lot éligible (cold crash ≥ garde minimum).
       Toutes les mesures sont acceptées — des avertissements sont affichés si une valeur
       est hors plage typique, jamais bloquants.
     </p>
@@ -477,6 +628,9 @@ $candidatesOverrideJson = json_encode($candidatesOverride, JSON_UNESCAPED_UNICOD
     <!-- Warning panel (populated by form-framework.js) -->
     <div id="racking-warnings" class="op-form__warnings" hidden aria-live="polite"></div>
 
+    <!-- ── Section: CIP (FIRST — as per Round-2 #8) ─────────────────── -->
+    <?php require __DIR__ . '/../../app/partials/cip-section.php' ?>
+
     <!-- ── Section: Sélection lot source (CCT) ───────────────────────── -->
     <div class="op-form__card">
       <div class="op-form__card-title">— sélection lot source (CCT)</div>
@@ -494,8 +648,8 @@ $candidatesOverrideJson = json_encode($candidatesOverride, JSON_UNESCAPED_UNICOD
         </label>
         <p class="rf-override-desc" id="rf-override-desc">
           Bypasse la garde minimum (jours depuis cold crash). Affiche tous les lots
-          actuellement occupant une CCT, quelle que soit leur date de cold crash ou leur
-          classification levure. Toute saisie créée via cet override sera marquée
+          actuellement occupant une CCT ou BBT, quelle que soit leur date de cold crash
+          ou leur classification levure. Toute saisie créée via cet override sera marquée
           <code>hors_process_flag = 1</code> dans <code>bd_racking_v2</code>.
         </p>
         <div class="rf-override-reason-row" id="rf-override-reason-row" hidden>
@@ -520,7 +674,7 @@ $candidatesOverrideJson = json_encode($candidatesOverride, JSON_UNESCAPED_UNICOD
             (levure non liée ou famille sans garde définie → hors process uniquement).
             <?php if ($canOverride): ?>
               Utiliser <strong>Choix Hors Process</strong> ci-dessus pour accéder à tous
-              les lots en CCT indépendamment de la garde.
+              les lots en CCT/BBT indépendamment de la garde.
             <?php endif ?>
           </div>
         <?php else: ?>
@@ -558,20 +712,30 @@ $candidatesOverrideJson = json_encode($candidatesOverride, JSON_UNESCAPED_UNICOD
         <?php endif ?>
       </div>
 
-      <!-- Override candidate cards (hors-process: ALL CCT-occupying beers) -->
+      <!-- Override candidate cards (hors-process: ALL CCT + BBT-occupying beers) -->
       <?php if ($canOverride): ?>
       <div id="rf-override-candidates" hidden>
         <?php if (empty($candidatesOverride)): ?>
           <div class="rf-empty-state">
-            Aucun lot en CCT actuellement.
+            Aucun lot en CCT ou BBT actuellement.
           </div>
         <?php else: ?>
           <div class="rf-cand-grid" id="rf-cand-grid-override">
             <?php foreach ($candidatesOverride as $cand): ?>
               <?php
+                $srcType   = $cand['source_tank_type'] ?? 'CCT';
                 $beerDisp  = htmlspecialchars($cand['beer_display'] ?? $cand['beer'] ?? '—');
                 $batchDisp = htmlspecialchars($cand['batch'] ?? '—');
-                $cctNum    = (int)($cand['source_cct'] ?? 0);
+
+                // Label: CCT lots show source_cct; BBT lots show source_bbt
+                if ($srcType === 'BBT') {
+                    $tankLabel = 'BBT ' . (int)($cand['source_bbt'] ?? 0);
+                    $cctNum    = 0;
+                } else {
+                    $cctNum    = (int)($cand['source_cct'] ?? 0);
+                    $tankLabel = 'CCT ' . $cctNum;
+                }
+
                 $ccDate    = $cand['cold_crash_date'] !== null
                                ? htmlspecialchars($cand['cold_crash_date'])
                                : 'pas encore';
@@ -579,9 +743,9 @@ $candidatesOverrideJson = json_encode($candidatesOverride, JSON_UNESCAPED_UNICOD
                                ? (int)$cand['days_since_cold_crash'] . 'j'
                                : '—';
                 $effGarde  = $cand['effective_garde'] !== null ? (int)$cand['effective_garde'] : null;
-                $recipeId  = (int)($cand['recipe_id'] ?? 0);
-                $nebBeerVal = htmlspecialchars($cand['beer'] ?? '');
-                $nebBatchVal= htmlspecialchars($cand['batch'] ?? '');
+                $recipeId  = (int)($cand['recipe_id'] ?? $cand['neb_recipe_id_fk'] ?? $cand['contract_recipe_id_fk'] ?? 0);
+                $nebBeerVal = htmlspecialchars($cand['neb_beer'] ?? $cand['beer'] ?? '');
+                $nebBatchVal= htmlspecialchars($cand['neb_batch'] ?? $cand['batch'] ?? '');
               ?>
               <button type="button"
                       class="rf-cand-card rf-cand-card--hors-process"
@@ -589,15 +753,21 @@ $candidatesOverrideJson = json_encode($candidatesOverride, JSON_UNESCAPED_UNICOD
                       data-neb-batch="<?= $nebBatchVal ?>"
                       data-recipe-id="<?= $recipeId ?>"
                       data-source-cct="<?= $cctNum ?>"
+                      data-source-bbt="<?= $srcType === 'BBT' ? (int)($cand['source_bbt'] ?? 0) : 0 ?>"
+                      data-source-type="<?= htmlspecialchars($srcType) ?>"
                       data-hors-process="1">
-                <div class="rf-cand-card__label">CCT <?= $cctNum ?></div>
+                <div class="rf-cand-card__label"><?= htmlspecialchars($tankLabel) ?></div>
                 <div class="rf-cand-card__beer"><?= $beerDisp ?></div>
                 <div class="rf-cand-card__batch">Brassin <?= $batchDisp ?></div>
-                <div class="rf-cand-card__cc-date">Cold crash : <?= $ccDate ?> (<?= $daysCold ?>)</div>
-                <?php if ($effGarde !== null): ?>
-                  <div class="rf-cand-card__garde">Garde : <?= $effGarde ?>j (non atteinte)</div>
+                <?php if ($srcType === 'CCT'): ?>
+                  <div class="rf-cand-card__cc-date">Cold crash : <?= $ccDate ?> (<?= $daysCold ?>)</div>
+                  <?php if ($effGarde !== null): ?>
+                    <div class="rf-cand-card__garde">Garde : <?= $effGarde ?>j (non atteinte)</div>
+                  <?php else: ?>
+                    <div class="rf-cand-card__garde" style="color:var(--ink-mute)">Garde : non définie</div>
+                  <?php endif ?>
                 <?php else: ?>
-                  <div class="rf-cand-card__garde" style="color:var(--ink-mute)">Garde : non définie</div>
+                  <div class="rf-cand-card__cc-date">En BBT (post-transfert)</div>
                 <?php endif ?>
                 <div class="rf-cand-card__badge-hp">HORS PROCESS</div>
               </button>
@@ -620,7 +790,7 @@ $candidatesOverrideJson = json_encode($candidatesOverride, JSON_UNESCAPED_UNICOD
       <div class="op-form__card-title">— opération de transfert</div>
       <div class="op-form__grid">
 
-        <!-- Date -->
+        <!-- Date de transfert (#2 — verified: no min/max attribute; back-dating works) -->
         <div class="op-form__field">
           <label class="op-form__label" for="event_date">Date transfert</label>
           <input id="event_date" name="event_date" type="date" class="op-form__input"
@@ -650,12 +820,7 @@ $candidatesOverrideJson = json_encode($candidatesOverride, JSON_UNESCAPED_UNICOD
           <input id="end_time" name="end_time" type="time" class="op-form__input">
         </div>
 
-        <!-- Client (for contract brews — optional) -->
-        <div class="op-form__field">
-          <label class="op-form__label" for="client">Client <span class="op-form__opt">(contrat)</span></label>
-          <input id="client" name="client" type="text" class="op-form__input"
-                 placeholder="Nébuleuse / nom client" autocomplete="off">
-        </div>
+        <!-- #3 — client input REMOVED. Resolved server-side from recipe FK. -->
 
       </div>
     </div>
@@ -676,9 +841,9 @@ $candidatesOverrideJson = json_encode($candidatesOverride, JSON_UNESCAPED_UNICOD
           </select>
         </div>
 
-        <!-- BBT number -->
-        <div class="op-form__field" id="bbt-field">
-          <label class="op-form__label" for="bbt_number">BBT n°</label>
+        <!-- BBT N° (#4 — relabelled "BBT N°") -->
+        <div class="op-form__field" id="bbt-field" style="display:none">
+          <label class="op-form__label" for="bbt_number">BBT N°</label>
           <select id="bbt_number" name="bbt_number" class="op-form__select">
             <option value="">—</option>
             <?php foreach ($bbts as $b): ?>
@@ -687,13 +852,24 @@ $candidatesOverrideJson = json_encode($candidatesOverride, JSON_UNESCAPED_UNICOD
           </select>
         </div>
 
-        <!-- CCT number (destination CCT — distinct from source CCT) -->
-        <div class="op-form__field" id="cct-field">
-          <label class="op-form__label" for="cct_number">CCT destination n°</label>
+        <!-- CCT N° (#4 — relabelled "CCT N°") -->
+        <div class="op-form__field" id="cct-field" style="display:none">
+          <label class="op-form__label" for="cct_number">CCT N°</label>
           <select id="cct_number" name="cct_number" class="op-form__select">
             <option value="">—</option>
             <?php foreach ($ccts as $c): ?>
               <option value="<?= (int)$c['number'] ?>">CCT <?= (int)$c['number'] ?></option>
+            <?php endforeach ?>
+          </select>
+        </div>
+
+        <!-- YT N° (#4 — new YT dropdown, sourced from ref_yt) -->
+        <div class="op-form__field" id="yt-field" style="display:none">
+          <label class="op-form__label" for="yt_number">YT N°</label>
+          <select id="yt_number" name="yt_number" class="op-form__select">
+            <option value="">—</option>
+            <?php foreach ($yts as $y): ?>
+              <option value="<?= (int)$y['number'] ?>">YT <?= (int)$y['number'] ?></option>
             <?php endforeach ?>
           </select>
         </div>
@@ -714,25 +890,41 @@ $candidatesOverrideJson = json_encode($candidatesOverride, JSON_UNESCAPED_UNICOD
                  class="op-form__input" placeholder="ex. 29.5">
         </div>
 
+        <!-- #5 — "Volume blend" → "Volume résiduel en cuve" (column stays blend_hl).
+             Semantics: volume already in the DESTINATION tank at transfer time
+             (blend into same beer; usually BBT, rarely CCT/YT, can be 0).
+             Available for all destination types. -->
         <div class="op-form__field">
           <label class="op-form__label" for="blend_hl">
-            Volume blend <span class="op-form__unit">HL</span>
+            Volume résiduel en cuve <span class="op-form__unit">HL</span>
           </label>
           <input id="blend_hl" name="blend_hl" type="text" inputmode="decimal"
-                 class="op-form__input" placeholder="—">
+                 class="op-form__input" placeholder="0">
         </div>
 
+        <!-- #5 — Derived "Volume résultant en cuve" display (pure JS; nothing persisted).
+             Shown read-only; TankSimulator is the only system that computes this authoritatively. -->
+        <div class="op-form__field" id="rf-resultant-field">
+          <label class="op-form__label">
+            Volume résultant en cuve <span class="op-form__unit">HL</span>
+            <span class="op-form__opt">(calculé)</span>
+          </label>
+          <div id="rf-resultant-display" class="op-form__readout" aria-live="polite">—</div>
+        </div>
+
+        <!-- #6 — CO₂ label dynamic by dest type. Default label "CO₂ BBT" swaps JS-side. -->
         <div class="op-form__field">
           <label class="op-form__label" for="bbt_co2">
-            CO₂ BBT <span class="op-form__unit">g/L</span>
+            <span id="lbl-co2">CO₂ BBT</span> <span class="op-form__unit">g/L</span>
           </label>
           <input id="bbt_co2" name="bbt_co2" type="text" inputmode="decimal"
                  class="op-form__input" placeholder="ex. 4.2">
         </div>
 
+        <!-- #6 — O₂ label dynamic by dest type. -->
         <div class="op-form__field">
           <label class="op-form__label" for="bbt_o2">
-            O₂ BBT <span class="op-form__unit">ppb</span>
+            <span id="lbl-o2">O₂ BBT</span> <span class="op-form__unit">ppb</span>
           </label>
           <input id="bbt_o2" name="bbt_o2" type="text" inputmode="decimal"
                  class="op-form__input" placeholder="ex. 18">
@@ -740,7 +932,7 @@ $candidatesOverrideJson = json_encode($candidatesOverride, JSON_UNESCAPED_UNICOD
 
         <div class="op-form__field">
           <label class="op-form__label" for="bbt_pressure">
-            Pression BBT <span class="op-form__unit">bar</span>
+            Pression destination <span class="op-form__unit">bar</span>
           </label>
           <input id="bbt_pressure" name="bbt_pressure" type="text" inputmode="decimal"
                  class="op-form__input" placeholder="ex. 1.2">
@@ -754,13 +946,8 @@ $candidatesOverrideJson = json_encode($candidatesOverride, JSON_UNESCAPED_UNICOD
                  class="op-form__input" placeholder="ex. 0.5">
         </div>
 
-        <div class="op-form__field">
-          <label class="op-form__label" for="avg_speed">
-            Vitesse moy. <span class="op-form__unit">HL/h</span>
-          </label>
-          <input id="avg_speed" name="avg_speed" type="text" inputmode="decimal"
-                 class="op-form__input" placeholder="—">
-        </div>
+        <!-- #7 — "Vitesse moyenne" input REMOVED.
+             avg_speed column kept in DB (historical data; future derivation from start/end times). -->
 
         <div class="op-form__field">
           <label class="op-form__label" for="centri_rinsed">Centri rincée ?</label>
@@ -770,56 +957,6 @@ $candidatesOverrideJson = json_encode($candidatesOverride, JSON_UNESCAPED_UNICOD
               <option value="<?= htmlspecialchars($yn) ?>"><?= htmlspecialchars($yn) ?></option>
             <?php endforeach ?>
           </select>
-        </div>
-
-      </div>
-    </div>
-
-    <!-- ── Section: CIP équipement ───────────────────────────────────── -->
-    <div class="op-form__card">
-      <div class="op-form__card-title">— CIP équipement (centri / KZE)</div>
-      <div class="op-form__grid--3 op-form__grid">
-
-        <div class="op-form__field">
-          <label class="op-form__label" for="last_cip_date">Date dernier CIP</label>
-          <input id="last_cip_date" name="last_cip_date" type="text" class="op-form__input"
-                 placeholder="ex. 2026-05-20">
-        </div>
-
-        <div class="op-form__field">
-          <label class="op-form__label" for="cip_type">Type CIP</label>
-          <input id="cip_type" name="cip_type" type="text" class="op-form__input"
-                 placeholder="ex. Soude, Acide…">
-        </div>
-
-      </div>
-    </div>
-
-    <!-- ── Section: CIP BBT destination ──────────────────────────────── -->
-    <div class="op-form__card">
-      <div class="op-form__card-title">— CIP BBT destination</div>
-      <div class="op-form__grid--3 op-form__grid">
-
-        <div class="op-form__field">
-          <label class="op-form__label" for="cip_bbt_done">CIP BBT effectué ?</label>
-          <select id="cip_bbt_done" name="cip_bbt_done" class="op-form__select">
-            <option value="">—</option>
-            <?php foreach (CIP_YN as $yn): ?>
-              <option value="<?= htmlspecialchars($yn) ?>"><?= htmlspecialchars($yn) ?></option>
-            <?php endforeach ?>
-          </select>
-        </div>
-
-        <div class="op-form__field">
-          <label class="op-form__label" for="cip_bbt_type">Type CIP BBT</label>
-          <input id="cip_bbt_type" name="cip_bbt_type" type="text" class="op-form__input"
-                 placeholder="ex. Soude, Vapeur…">
-        </div>
-
-        <div class="op-form__field">
-          <label class="op-form__label" for="cip_bbt_date">Date CIP BBT</label>
-          <input id="cip_bbt_date" name="cip_bbt_date" type="text" class="op-form__input"
-                 placeholder="ex. 2026-05-23">
         </div>
 
       </div>
