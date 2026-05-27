@@ -309,6 +309,94 @@ body.op-form-racking .rf-bbt-propre-radio {
   flex-shrink: 0;
 }
 
+/* ── C5: BBT blend-candidate section ────────────────────────────────────── */
+body.op-form-racking .rf-bbt-blend-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--bbt);
+  margin: 0.875rem 0 0.5rem;
+}
+
+/* Blend-candidate cards: mirror .rf-cand-card but with --bbt accent */
+body.op-form-racking .rf-bbt-blend-grid {
+  margin-bottom: 0.5rem;
+}
+
+body.op-form-racking .rf-bbt-cand-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.75rem 0.875rem 0.875rem;
+  background: var(--bg-elev);
+  border: 1.5px solid color-mix(in srgb, var(--bbt) 40%, transparent);
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+  position: relative;
+  width: 100%;
+}
+body.op-form-racking .rf-bbt-cand-card:hover:not([disabled]) {
+  border-color: var(--bbt);
+  background: color-mix(in srgb, var(--bbt) 8%, var(--bg-elev));
+}
+body.op-form-racking .rf-bbt-cand-card--selected {
+  border-color: var(--bbt);
+  background: color-mix(in srgb, var(--bbt) 12%, var(--bg-elev));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--bbt) 30%, transparent);
+}
+body.op-form-racking .rf-bbt-cand-card:focus-visible {
+  outline: 2px solid var(--bbt);
+  outline-offset: 2px;
+}
+
+body.op-form-racking .rf-bbt-cand-card__label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--bbt);
+  font-weight: 600;
+}
+body.op-form-racking .rf-bbt-cand-card__vol {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+  color: var(--ink);
+  margin-top: 0.1rem;
+}
+body.op-form-racking .rf-bbt-cand-card__lots {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.63rem;
+  color: var(--ink-mute);
+  margin-top: 0.2rem;
+  line-height: 1.4;
+}
+
+/* blend_hl read-only state (C5: auto-filled from selected blend candidate) */
+body.op-form-racking #blend_hl[readonly] {
+  background: color-mix(in srgb, var(--bbt) 6%, var(--bg-elev));
+  border-color: color-mix(in srgb, var(--bbt) 30%, transparent);
+  color: var(--bbt);
+  cursor: default;
+}
+
+/* "No same-beer BBT" message */
+body.op-form-racking .rf-bbt-blend-none {
+  padding: 0.75rem 1rem;
+  background: color-mix(in srgb, var(--ink-faint) 40%, transparent);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+  line-height: 1.5;
+}
+body.op-form-racking .rf-bbt-blend-none strong {
+  color: var(--ink);
+}
+
 /* ── C3: Pertes section ─────────────────────────────────────────────────── */
 body.op-form-racking .rf-pertes-toggle-label {
   display: flex;

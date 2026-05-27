@@ -736,6 +736,28 @@ try {
 $csrf = csrf_token();
 $active_module = 'racking';
 
+// ── C5 — BBT blend candidates (per-beer, per-BBT lot composition) ─────────────
+// Built from tank_bbt_composition() which derives composition purely from $simState
+// (already computed above). Indexed by beer name for O(1) JS lookup.
+// Shape: { "BeerName": [ {bbt, beer, total_hl, lots:[{batch, vol_hl, pct}]}, … ] }
+// Beer names are canonical (TankSimulator internal) — human-readable, never DB codes.
+$bbtBlendCandidates = [];
+try {
+    $bbtComposition = tank_bbt_composition($simState);
+    foreach ($bbtComposition as $entry) {
+        $beer = $entry['beer'];
+        if (!isset($bbtBlendCandidates[$beer])) {
+            $bbtBlendCandidates[$beer] = [];
+        }
+        $bbtBlendCandidates[$beer][] = $entry;
+    }
+} catch (Throwable $bbtCompErr) {
+    // Non-fatal — JS treats missing key as "no blend candidates" and shows the
+    // hors-process direction message. Never let a composition error block the form.
+    $bbtBlendCandidates = [];
+}
+$bbtBlendCandidatesJson = json_encode($bbtBlendCandidates, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
+
 // Inject server-side data for JS
 $candidatesJson         = json_encode($candidates,         JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 $candidatesOverrideJson = json_encode($candidatesOverride, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
@@ -1193,6 +1215,23 @@ $cipConfig = [
         </div>
 
       </div>
+
+      <!-- C5 — BBT blend-candidate cards (shown only when type=BBT + source beer selected).
+           Populated entirely by JS — nothing emitted from PHP here.
+           Hidden by default; JS shows/hides this block and injects the cards. -->
+      <div id="rf-bbt-blend-section" hidden>
+        <div class="rf-bbt-blend-label">
+          Blending — même bière en BBT :
+        </div>
+        <!-- Candidate cards injected by JS -->
+        <div class="rf-cand-grid rf-bbt-blend-grid" id="rf-bbt-blend-grid"></div>
+        <!-- Message when no same-beer BBT is found -->
+        <div id="rf-bbt-blend-none" class="rf-bbt-blend-none" hidden>
+          Aucune BBT contenant cette bière actuellement. Pour transférer vers une BBT vide
+          ou une BBT avec une autre bière, utiliser <strong>Choix Hors Process</strong>.
+        </div>
+      </div>
+
     </div>
 
     <!-- ── Section: Mesures ───────────────────────────────────────────── -->
@@ -1516,6 +1555,11 @@ window.PERTES_CONFIG = <?= $pertesConfigJson ?>;
 // C4 — BBT clean-state map (event-sourced): bbtNumber(int) → 'clean'|'dirty'|'unknown'.
 // Consumed by updateDestCipRequired() to compose (residual OR clean OR explicit).
 window.BBT_CLEAN_STATES = <?= json_encode($bbtCleanStates, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+// C5 — BBT blend candidates indexed by canonical beer name.
+// Shape: { "BeerName": [{bbt, beer, total_hl, lots:[{batch, vol_hl, pct}]}, …] }
+// Used by the destination UX to surface same-beer non-empty BBTs as blend candidates
+// when type=BBT is selected after a source card picks a beer.
+window.BBT_BLEND_CANDIDATES = <?= $bbtBlendCandidatesJson ?>;
 </script>
 
 <script src="/js/form-framework.js?v=<?= @filemtime(__DIR__ . '/../js/form-framework.js') ?: time() ?>" defer></script>

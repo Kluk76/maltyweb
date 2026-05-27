@@ -14,10 +14,20 @@
  *      Drives data-pu-required → required attribute on the two PU inputs.
  *   6. FormFramework init (draft save, diff-preview, QC thresholds).
  *
+ * C5 — BBT blend-candidate UX:
+ *   When type=BBT + source card selected, surface same-beer non-empty BBTs as
+ *   blend-candidate cards showing volume + lot composition. Selecting one:
+ *     - sets bbt_number (the existing field POST expects),
+ *     - auto-fills blend_hl with that BBT's total_hl and makes it read-only,
+ *     - re-syncs resultant, dest-CIP required, and warnings.
+ *   When no same-beer BBT exists, a hors-process direction message is shown.
+ *   Non-BBT destinations and hors-process are unchanged.
+ *
  * Data injected by PHP:
- *   window.RF_CANDIDATES          — normal (gated) candidate list
- *   window.RF_CANDIDATES_OVERRIDE — hors-process candidate list (manager/admin only)
- *   window.RF_CAN_OVERRIDE        — boolean: current user may see the override block
+ *   window.RF_CANDIDATES            — normal (gated) candidate list
+ *   window.RF_CANDIDATES_OVERRIDE   — hors-process candidate list (manager/admin only)
+ *   window.RF_CAN_OVERRIDE          — boolean: current user may see the override block
+ *   window.BBT_BLEND_CANDIDATES     — C5: {beerName: [{bbt, beer, total_hl, lots}]}
  */
 
 document.addEventListener('DOMContentLoaded', function () {
@@ -428,6 +438,146 @@ document.addEventListener('DOMContentLoaded', function () {
   }
   updateDestCipRequired();
 
+  // ── C5 — BBT blend-candidate UX ────────────────────────────────────────
+  // When type=BBT and a source card is selected, surface same-beer non-empty BBTs
+  // from window.BBT_BLEND_CANDIDATES as selectable cards.
+  // blend_hl becomes read-only (auto-filled) while a blend candidate is active.
+  // Returns to manual when dest type changes away from BBT or card is deselected.
+
+  var bbtBlendSection  = document.getElementById('rf-bbt-blend-section');
+  var bbtBlendGrid     = document.getElementById('rf-bbt-blend-grid');
+  var bbtBlendNone     = document.getElementById('rf-bbt-blend-none');
+  var selectedBlendBbt = null; // currently selected blend-candidate BBT number (int | null)
+
+  // Return the canonical beer name from the currently selected source card.
+  // beer is in data-neb-beer (may be '' for contract beers, which is fine — no
+  // same-beer candidates can exist if the name is empty).
+  function selectedBeerName() {
+    if (!selectedCard) return '';
+    return selectedCard.dataset.nebBeer || '';
+  }
+
+  // Render blend-candidate cards for the given beer name.
+  // Clears and rebuilds #rf-bbt-blend-grid each time.
+  function renderBlendCandidates(beerName) {
+    if (!bbtBlendGrid) return;
+    bbtBlendGrid.innerHTML = '';
+    selectedBlendBbt = null;
+
+    var candidates = (window.BBT_BLEND_CANDIDATES && beerName)
+      ? (window.BBT_BLEND_CANDIDATES[beerName] || [])
+      : [];
+
+    if (candidates.length === 0) {
+      if (bbtBlendNone) bbtBlendNone.hidden = false;
+      return;
+    }
+    if (bbtBlendNone) bbtBlendNone.hidden = true;
+
+    candidates.forEach(function (cand) {
+      var bbtNum  = cand.bbt;
+      var totalHl = (typeof cand.total_hl === 'number') ? cand.total_hl : parseFloat(cand.total_hl || '0');
+      var lots    = Array.isArray(cand.lots) ? cand.lots : [];
+
+      // Lot composition line: "brassin 209 18 % · brassin 210 82 %"
+      var lotLine = lots.map(function (l) {
+        return 'brassin ' + escHtml(l.batch) + ' ' + l.pct + ' %';
+      }).join(' · ');
+
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'rf-bbt-cand-card';
+      btn.dataset.bbtNum  = String(bbtNum);
+      btn.dataset.totalHl = String(totalHl);
+      btn.innerHTML =
+        '<div class="rf-bbt-cand-card__label">BBT ' + escHtml(String(bbtNum)) + '</div>' +
+        '<div class="rf-bbt-cand-card__vol">' + totalHl.toFixed(2) + ' HL</div>' +
+        (lotLine ? '<div class="rf-bbt-cand-card__lots">' + lotLine + '</div>' : '');
+
+      btn.addEventListener('click', function () {
+        selectBlendCandidate(bbtNum, totalHl, btn);
+      });
+
+      bbtBlendGrid.appendChild(btn);
+    });
+  }
+
+  // Select a blend candidate: set bbt_number, auto-fill blend_hl (read-only),
+  // re-sync resultant, dest-CIP required, CIP vessel label, and warnings.
+  function selectBlendCandidate(bbtNum, totalHl, btn) {
+    // Deselect previous blend card
+    if (bbtBlendGrid) {
+      bbtBlendGrid.querySelectorAll('.rf-bbt-cand-card--selected').forEach(function (el) {
+        el.classList.remove('rf-bbt-cand-card--selected');
+      });
+    }
+    btn.classList.add('rf-bbt-cand-card--selected');
+    selectedBlendBbt = bbtNum;
+
+    // Set bbt_number (the field POST expects)
+    var bbtNumSel = document.getElementById('bbt_number');
+    if (bbtNumSel) {
+      bbtNumSel.value = String(bbtNum);
+    }
+
+    // Auto-fill blend_hl and make it read-only
+    if (blendHlInput) {
+      blendHlInput.value = totalHl.toFixed(2);
+      blendHlInput.setAttribute('readonly', '');
+    }
+
+    // Re-sync all dependents
+    updateResultant();
+    updateDestCipRequired();
+
+    // Update CIP vessel label to reflect the now-selected BBT number
+    if (typeof window.cipUpdateVesselLabel === 'function') {
+      window.cipUpdateVesselLabel('bbt', bbtNum);
+    }
+  }
+
+  // Clear the blend-candidate selection (but keep section visible if still type=BBT).
+  // Restores blend_hl to manual.
+  function clearBlendSelection() {
+    if (bbtBlendGrid) {
+      bbtBlendGrid.querySelectorAll('.rf-bbt-cand-card--selected').forEach(function (el) {
+        el.classList.remove('rf-bbt-cand-card--selected');
+      });
+    }
+    selectedBlendBbt = null;
+
+    // Restore blend_hl to manual (remove readonly, but don't clear the value —
+    // the operator may have a previously typed value they want to keep)
+    if (blendHlInput) {
+      blendHlInput.removeAttribute('readonly');
+    }
+  }
+
+  // Show or hide the blend-candidate section based on dest type + source card.
+  // Called whenever dest type changes or a card is selected/deselected.
+  function syncBlendSection() {
+    var destType = destSel ? destSel.value : '';
+    var beer     = selectedBeerName();
+
+    // Only show for BBT, normal (non-hors-process) mode, and with a beer name.
+    // hors-process: the existing hors-process flow is untouched (all tanks visible).
+    var shouldShow = (destType === 'BBT' && !isOverrideMode && beer !== '');
+
+    if (!bbtBlendSection) return;
+
+    if (!shouldShow) {
+      bbtBlendSection.hidden = true;
+      // When section hides, clear any blend candidate selection and restore manual blend_hl
+      clearBlendSelection();
+      if (bbtBlendGrid) bbtBlendGrid.innerHTML = '';
+      if (bbtBlendNone) bbtBlendNone.hidden = true;
+      return;
+    }
+
+    bbtBlendSection.hidden = false;
+    renderBlendCandidates(beer);
+  }
+
   // ── KZE PU section toggle ──────────────────────────────────────────────
   // The "Pasteurisation flash (KZE)" section is shown when KZE is in the CIP set:
   //   - cip_inline_combine (simultané) is checked, OR
@@ -518,6 +668,9 @@ document.addEventListener('DOMContentLoaded', function () {
     if (typeof window.cipUpdateVesselLabel === 'function') {
       window.cipUpdateVesselLabel(cipCode, cipNum);
     }
+
+    // C5 — sync blend-candidate section (only active for BBT + normal mode + source selected)
+    syncBlendSection();
   }
 
   // Also update CIP label when a dest-number select changes.
@@ -579,6 +732,9 @@ document.addEventListener('DOMContentLoaded', function () {
     // Switch QC threshold bands to this recipe's per-recipe values
     applyQcThresholds(recipeId);
 
+    // C5 — re-render blend candidates for the newly selected beer
+    syncBlendSection();
+
     // Summary strip — show tank label based on source type
     var tankLabel;
     if (srcType === 'BBT') {
@@ -608,6 +764,9 @@ document.addEventListener('DOMContentLoaded', function () {
     hidSourceCct.value        = '';
     horsProcessInput.value    = '0';
     selectedLotDiv.hidden     = true;
+
+    // C5 — hide blend section (no source beer selected)
+    syncBlendSection();
   }
 
   document.querySelectorAll('.rf-cand-card').forEach(function (card) {
@@ -628,6 +787,8 @@ document.addEventListener('DOMContentLoaded', function () {
       if (normalCandSection)   normalCandSection.hidden   = isOverrideMode;
       if (overrideCandSection) overrideCandSection.hidden = !isOverrideMode;
       deselect();
+      // C5 — blend section is not shown in hors-process mode (syncBlendSection
+      // reads isOverrideMode and hides accordingly; deselect() already calls it)
     });
   }
 
@@ -747,6 +908,10 @@ document.addEventListener('DOMContentLoaded', function () {
   togglePuSection();
   syncPerteToggle();       // C3 — re-sync Pertes section after draft restore
   syncInterruptedToggle(); // C4 — re-sync Interrupted section after draft restore
+  // C5 — blend section: no source card is re-selected after draft restore (draft
+  // only covers field values, not card clicks), so section starts hidden. This is
+  // acceptable: the operator must re-click a source card to confirm beer selection.
+  syncBlendSection();
   // Explicit refresh after all draft values are restored, in case loss_note was
   // already filled (drops the palier from 'outlier' to 'warn' on re-load).
   if (typeof FormFramework !== 'undefined' && typeof FormFramework.refreshWarnings === 'function') {
