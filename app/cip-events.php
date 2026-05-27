@@ -481,23 +481,136 @@ function cip_type_options(PDO $pdo): array
 // ─── 5. Conditional dest-CIP predicate ───────────────────────────────────────
 
 /**
+ * cip_dest_bbt_is_clean — Event-sourced BBT clean-state resolver.
+ *
+ * A BBT is CLEAN if, since its last fill, the most recent relevant event is:
+ *   (a) a bd_cip_events row with target_kind='vessel', target_code='bbt', target_number=$bbtNum
+ *       (an actual CIP was performed), OR
+ *   (b) a bd_racking_v2 row with interrupted_flag=1, racked_vol_hl=0, dest_bbt_still_clean=1
+ *       (an interrupted-before-transfer attests the BBT was not contaminated).
+ *
+ * A BBT is DIRTY if its last relevant event is:
+ *   (a) a bd_racking_v2 row with racked_vol_hl > 0 (a successful fill occurred, no CIP since), OR
+ *   (b) a bd_racking_v2 row with interrupted_flag=1, racked_vol_hl=0, dest_bbt_still_clean=0, OR
+ *   (c) no relevant events exist at all (conservative: treat as unknown=dirty).
+ *
+ * "Last fill" anchor: the latest bd_racking_v2 row with bbt_number=$bbtNum AND
+ *   (racked_vol_hl > 0 OR (interrupted_flag=1 AND racked_vol_hl=0 AND dest_bbt_still_clean IS NOT NULL)).
+ * We look only at events after that anchor.
+ *
+ * Event-sourced: NO stored clean/dirty column on any BBT table.
+ * Returns: 'clean'|'dirty'|'unknown' (unknown = no relevant events for this BBT)
+ *
+ * @param PDO $pdo
+ * @param int $bbtNum  The BBT number (from ref_bbt.number).
+ * @return string 'clean'|'dirty'|'unknown'
+ */
+function cip_dest_bbt_is_clean(PDO $pdo, int $bbtNum): string
+{
+    // Determine if a BBT is clean by examining the most recent anchor event.
+    //
+    // PHYSICAL SEMANTICS (simplified by the form architecture):
+    //   In this system, a CIP for a BBT is always recorded AS PART OF the racking form
+    //   that fills the BBT. There is no standalone "CIP only" form for BBTs. Therefore:
+    //
+    //   • After a real fill (racked_vol > 0): the BBT contains beer → DIRTY for the next fill.
+    //     The CIP included in that same form submission cleaned the BBT BEFORE the fill.
+    //     That CIP has no bearing on the BBT's clean-state AFTER the fill.
+    //
+    //   • An interrupted-zero-transfer (interrupted_flag=1, racked_vol=0) is the ONLY event
+    //     that can attest "the BBT is still clean after nothing was put into it":
+    //       dest_bbt_still_clean = 1 → CLEAN (operator attests no contamination occurred).
+    //       dest_bbt_still_clean = 0 → DIRTY (something happened that dirtied it anyway).
+    //       dest_bbt_still_clean IS NULL → not captured in this event; treat as DIRTY (conservative).
+    //
+    //   • No relevant events at all → UNKNOWN (conservative: treat as dirty by callers).
+    //
+    // Algorithm: find the most recent anchor event (real fill OR interrupted-zero-attestation)
+    // ordered by id DESC (BIGINT autoincrement = reliable insertion order regardless of submitted_at).
+
+    $lastAnchorStmt = $pdo->prepare(
+        "SELECT id, racked_vol_hl, interrupted_flag, dest_bbt_still_clean
+           FROM bd_racking_v2
+          WHERE bbt_number = ?
+            AND is_tombstoned = 0
+            AND (
+              (racked_vol_hl IS NOT NULL AND CAST(racked_vol_hl AS DECIMAL(8,3)) > 0)
+              OR (interrupted_flag = 1
+                  AND (racked_vol_hl IS NULL OR CAST(racked_vol_hl AS DECIMAL(8,3)) = 0))
+            )
+          ORDER BY id DESC
+          LIMIT 1"
+    );
+    $lastAnchorStmt->execute([$bbtNum]);
+    $lastAnchor = $lastAnchorStmt->fetch(PDO::FETCH_ASSOC);
+
+    if ($lastAnchor === false) {
+        // No fill or interrupted event for this BBT on record.
+        return 'unknown';
+    }
+
+    // Real fill: the BBT has beer in it → dirty.
+    if ((float)($lastAnchor['racked_vol_hl'] ?? 0) > 0.0) {
+        return 'dirty';
+    }
+
+    // Interrupted-zero: use the dest_bbt_still_clean attestation if set.
+    if ((int)$lastAnchor['interrupted_flag'] === 1) {
+        if ($lastAnchor['dest_bbt_still_clean'] === null) {
+            return 'dirty';  // conservative: attestation absent
+        }
+        return ((int)$lastAnchor['dest_bbt_still_clean'] === 1) ? 'clean' : 'dirty';
+    }
+
+    // Fallback (should not be reached given the WHERE clause): conservative.
+    return 'dirty';
+}
+
+/**
  * cip_dest_required — TRUE when the destination vessel requires a CIP.
  *
- * Returns FALSE when residual > 0 (a blend means liquid is already in the destination,
- * so destination CIP is optional — the vessel is not empty). TRUE otherwise.
+ * Composition: dest-CIP required = (residual == 0) AND NOT(destination BBT is currently clean).
+ *   - residual > 0: a blend means liquid is already in the destination vessel (same beer,
+ *     vessel not empty) → CIP is optional regardless of clean-state.
+ *   - residual = 0 AND BBT is clean (recent CIP or interrupted-zero-attested): CIP NOT required.
+ *   - residual = 0 AND BBT is dirty (fill occurred since last CIP): CIP IS required.
+ *   - residual = 0 AND BBT state is unknown (no history): CIP IS required (conservative).
  *
- * Used by racking with blend_hl; exposed shared for reuse.
+ * When $pdo and $bbtNum are both provided, the event-sourced clean-state is consulted.
+ * When either is absent (legacy call path / non-BBT destination), the old logic applies:
+ *   required iff residual == 0.
+ *
+ * Used by form-racking.php; $pdo + $bbtNum are optional for backwards compatibility
+ * (forms that never needed the clean-state gate can keep passing only $residual).
  *
  * @param float|string|null $residual  blend_hl or similar residual volume
+ * @param PDO|null          $pdo       DB connection (optional; enables clean-state check)
+ * @param int|null          $bbtNum    BBT number (optional; needed for clean-state check)
  * @return bool
  */
-function cip_dest_required(float|string|null $residual): bool
+function cip_dest_required(float|string|null $residual, ?PDO $pdo = null, ?int $bbtNum = null): bool
 {
     if ($residual === null || $residual === '' || $residual === '0' || $residual === '0.0') {
-        return true;
+        $residualIsZero = true;
+    } else {
+        $v = (float)$residual;
+        $residualIsZero = !($v > 0);
     }
-    $v = (float)$residual;
-    return !($v > 0);
+
+    // Residual > 0: blend case — dest CIP always optional.
+    if (!$residualIsZero) {
+        return false;
+    }
+
+    // Residual = 0: check clean-state when we have the info.
+    if ($pdo !== null && $bbtNum !== null) {
+        $cleanState = cip_dest_bbt_is_clean($pdo, $bbtNum);
+        // clean → CIP NOT required. dirty|unknown → required.
+        return ($cleanState !== 'clean');
+    }
+
+    // Fallback: no clean-state info → required when residual = 0 (conservative).
+    return true;
 }
 
 // ─── Private helpers ──────────────────────────────────────────────────────────

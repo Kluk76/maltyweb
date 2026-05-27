@@ -397,9 +397,39 @@ class TankSimulator
                 break;
 
             case 'RACKING':
-                // Clear CCT
+                // ── Source CCT occupancy ──────────────────────────────────────
+                // NORMAL rack (interrupted_flag != 1): full-empty the CCT (unchanged behaviour).
+                // INTERRUPTED rack (interrupted_flag = 1): partial decrement.
+                //   newVol = source_vol − racked_vol_hl − loss_source_hl
+                //   If newVol ≤ BBT_EMPTY_THRESHOLD_HL (no CCT-specific threshold exists;
+                //   reuse BBT's 2.5 HL dead-volume floor as a conservative epsilon):
+                //     null the CCT (it emptied despite the interruption).
+                //   Else: keep CCT occupied with the same beer/batch at reduced volume.
+                //   racked_vol_hl = 0 AND interrupted: source completely unchanged (0 HL left CCT).
                 if ($e['cct'] !== '?') {
-                    $cctState[$e['cct']] = null;
+                    $interrupted = (int)($e['interrupted_flag'] ?? 0);
+                    if ($interrupted !== 1) {
+                        // Normal rack — full-empty the source CCT.
+                        $cctState[$e['cct']] = null;
+                    } else {
+                        // Interrupted rack — partial decrement only.
+                        $sourceState = $cctState[$e['cct']] ?? null;
+                        if ($sourceState === null) {
+                            // CCT was already empty/null — nothing to decrement; leave null.
+                        } else {
+                            $sourceVol  = (float)$sourceState['volume_hl'];
+                            $rackedOut  = (float)($e['racked_vol'] ?? 0.0);
+                            $lostAtSrc  = (float)($e['loss_source_hl'] ?? 0.0);
+                            $remaining  = $sourceVol - $rackedOut - $lostAtSrc;
+                            if ($remaining <= self::BBT_EMPTY_THRESHOLD_HL) {
+                                // Remaining below dead-volume floor → treat as emptied.
+                                $cctState[$e['cct']] = null;
+                            } else {
+                                // Partial fill — keep CCT occupied at reduced volume.
+                                $cctState[$e['cct']]['volume_hl'] = $remaining;
+                            }
+                        }
+                    }
                 }
 
                 $netRacked = max(0.0, $e['racked_vol'] - $this->rackingLossHl);
@@ -462,12 +492,16 @@ class TankSimulator
                 // Order: fill/blend-in first (above), THEN loss_dest decrement — this is the
                 // correct physical sequence (liquid entered the tank, then some was lost).
                 //
-                // loss_source_hl: SELECT'd and carried on the event, but source-CCT occupancy
-                // is NOT reduced here. Normal racking already zeroes the source CCT (line
-                // `$cctState[$e['cct']] = null` above). The interrupted partial-decrement of
-                // the source CCT lands in C4. A comment is left here to make the gap explicit.
-                // (C4: interrupted_flag=1 → source CCT gets partial decrement = racked_vol_hl,
-                //  not full empty; loss_source_hl further reduces that partial remaining vol.)
+                // loss_source_hl: accounted for in the CCT partial-decrement above (C4).
+                // Normal racking full-empties the source CCT; interrupted racking uses
+                // (source_vol − racked_vol − loss_source_hl) to derive the remaining volume.
+                //
+                // dest_bbt_still_clean: an event-sourced BBT clean-state attestation captured
+                // when interrupted_flag=1 AND racked_vol=0. This flag is NOT consumed by the
+                // simulator itself (no stored dirty/clean column on the tank state). Instead,
+                // cip_dest_bbt_is_clean() in cip-events.php reads bd_racking_v2 + bd_cip_events
+                // chronologically to derive the current clean-state of any BBT at query time.
+                // The simulator only stores the event; the CIP gate reads from the event log.
                 $lossDestHl = (float)($e['loss_dest_hl'] ?? 0.0);
                 if ($lossDestHl > 0.0 && $bbtState[$bbt] !== null) {
                     $prevVol = $bbtState[$bbt]['volume_hl'];
@@ -663,6 +697,8 @@ class TankSimulator
                     blend_hl                            AS blend_text,
                     loss_source_hl,
                     loss_dest_hl,
+                    interrupted_flag,
+                    dest_bbt_still_clean,
                     COALESCE(start_time, submitted_at)  AS rack_date
              FROM bd_racking_v2
              WHERE COALESCE(start_time, submitted_at) IS NOT NULL'
@@ -686,26 +722,29 @@ class TankSimulator
             $cct = $batchCCT[$key] ?? '?';
 
             // C3 — carry loss columns on the event.
-            // loss_source_hl: SELECT'd and carried but source-CCT occupancy is NOT
-            // adjusted in this commit (normal racking already full-empties the CCT).
-            // Source occupancy handling for interrupted transfers lands in C4.
+            // C4 — carry interrupted_flag + dest_bbt_still_clean on the event.
             $lossSourceHl = isset($row['loss_source_hl']) && $row['loss_source_hl'] !== null
                 ? (float)$row['loss_source_hl'] : 0.0;
             $lossDestHl = isset($row['loss_dest_hl']) && $row['loss_dest_hl'] !== null
                 ? (float)$row['loss_dest_hl'] : 0.0;
+            $interruptedFlag = (int)($row['interrupted_flag'] ?? 0);
+            $destBbtStillClean = isset($row['dest_bbt_still_clean']) && $row['dest_bbt_still_clean'] !== null
+                ? (int)$row['dest_bbt_still_clean'] : null;
 
             $events[] = [
-                'type'           => 'RACKING',
-                'date'           => $date,
-                'beer'           => $beer,
-                'batch'          => $batch,
-                'cct'            => $cct,
-                'bbt'            => (string)$bbt,
-                'racked_vol'     => $rackedVol,
-                'blend_vol'      => $blendVol,
-                'loss_source_hl' => $lossSourceHl,
-                'loss_dest_hl'   => $lossDestHl,
-                'sort_priority'  => 0,
+                'type'               => 'RACKING',
+                'date'               => $date,
+                'beer'               => $beer,
+                'batch'              => $batch,
+                'cct'                => $cct,
+                'bbt'                => (string)$bbt,
+                'racked_vol'         => $rackedVol,
+                'blend_vol'          => $blendVol,
+                'loss_source_hl'     => $lossSourceHl,
+                'loss_dest_hl'       => $lossDestHl,
+                'interrupted_flag'   => $interruptedFlag,
+                'dest_bbt_still_clean' => $destBbtStillClean,
+                'sort_priority'      => 0,
             ];
         }
         return $events;

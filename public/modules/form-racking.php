@@ -217,8 +217,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         // ── Conditional dest-CIP validation ─────────────────────────────
         // When residual (blend_hl) > 0, dest CIP is optional (blend into same beer).
-        // When residual = 0 or null, dest CIP is required.
-        $destCipRequired = cip_dest_required($blendHl);
+        // When residual = 0 or null, dest CIP is required UNLESS the BBT is clean
+        // (post-CIP or attested clean via an interrupted-zero-transfer event).
+        // cip_dest_required() now accepts $pdo + $bbtNum for the event-sourced check.
+        $destCipRequired = cip_dest_required($blendHl, $pdo, $bbtNumber);
         if ($destCipRequired) {
             // Check if any vessel CIP event was submitted for this dest
             $hasDestCip = false;
@@ -238,6 +240,50 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $comments   = post_str('comments');
         $fwComment  = post_str('fw_comment');
+
+        // ── Transfert interrompu (C4) ────────────────────────────────────
+        // interrupted_flag: 1 = the transfer was not completed normally.
+        // interrupted_reason: required-while-interrupted; trimmed, capped 500 chars.
+        // dest_bbt_still_clean: only captured when interrupted=1 AND racked_vol=0.
+        //   1 → BBT stays CLEAN in the system (no CIP required for next fill).
+        //   0 → BBT is dirty  → its next fill requires a CIP.
+        //   NULL in all other cases (interrupted=0, or racked_vol > 0).
+        $interruptedFlag = (post_int('interrupted_flag') === 1) ? 1 : 0;
+        $interruptedReason = null;
+        $destBbtStillClean = null;
+
+        if ($interruptedFlag === 1) {
+            $interruptedReason = post_str('interrupted_reason');
+            if ($interruptedReason !== null) {
+                $interruptedReason = trim($interruptedReason);
+                if (mb_strlen($interruptedReason) > 500) {
+                    $interruptedReason = mb_substr($interruptedReason, 0, 500);
+                }
+            }
+            if ($interruptedReason === '' || $interruptedReason === null) {
+                throw new RuntimeException(
+                    "Un transfert interrompu nécessite une raison. " .
+                    "Renseigner le champ « Raison de l'interruption »."
+                );
+            }
+            // dest_bbt_still_clean: captured only when racked_vol_hl = 0 (nothing transferred)
+            // Peek at racked_vol before the main read below (harmless duplicate post_decimal call).
+            $rackedVolPeek = post_decimal('racked_vol_hl');
+            $rackedVolIsZero = ($rackedVolPeek === null || (float)$rackedVolPeek === 0.0);
+            if ($rackedVolIsZero) {
+                $cleanRaw = post_str('dest_bbt_still_clean');
+                // Accept '1' (Oui) or '0' (Non); anything else → require explicit choice
+                if ($cleanRaw !== '1' && $cleanRaw !== '0') {
+                    throw new RuntimeException(
+                        "Volume transféré = 0 et transfert interrompu : indiquer si la BBT est " .
+                        "encore propre (Oui / Non)."
+                    );
+                }
+                $destBbtStillClean = (int)$cleanRaw;
+            }
+            // racked_vol > 0 → dest_bbt_still_clean stays NULL (semantics: N/A)
+        }
+        // interrupted_flag = 0 → reason and clean-state must be NULL (force regardless of submitted garbage)
 
         // ── Pertes (C3) ─────────────────────────────────────────────────
         // Read with read-then-validate discipline: empty → NULL; volumes
@@ -329,8 +375,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $kzeTargetPu ?? '', $kzeAvgPu ?? '',
             $comments ?? '',
             $horsProcessFlag,
-            // C3 — Pertes section (loss cols enter the hash; interrupted_*/dest_bbt_still_clean land in C4)
+            // C3 — Pertes section
             $lossSourceHl ?? '', $lossDestHl ?? '', $lossCause ?? '', $lossNote ?? '',
+            // C4 — Transfert interrompu
+            $interruptedFlag,
+            $interruptedReason ?? '',
+            $destBbtStillClean ?? '',
         ];
         $rowHash = bd_row_hash($hashCols);
 
@@ -379,6 +429,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'loss_dest_hl'             => $lossDestHl,
             'loss_cause'               => $lossCause,
             'loss_note'                => $lossNote,
+            // C4 — Transfert interrompu
+            'interrupted_flag'         => $interruptedFlag,
+            'interrupted_reason'       => $interruptedReason,
+            'dest_bbt_still_clean'     => $destBbtStillClean,
         ];
 
         $nkCols = ['submitted_at', 'neb_beer', 'neb_batch', 'contract_beer', 'contract_batch', 'seq'];
@@ -490,6 +544,7 @@ try {
                      WHERE rk.neb_recipe_id_fk = bfw.recipe_id_fk
                        AND rk.neb_batch = bfw.batch
                        AND rk.is_tombstoned = 0
+                       AND rk.interrupted_flag = 0
                    )
           ORDER BY days_since_cold_crash DESC"
     );
@@ -639,6 +694,15 @@ try {
     // #4 — YT numbers
     $yts  = $pdo->query("SELECT number FROM ref_yt WHERE status='active' ORDER BY number ASC")->fetchAll();
 
+    // C4 — BBT clean-state map: bbtNumber → 'clean'|'dirty'|'unknown'
+    // Exposed to JS so updateDestCipRequired() can compose (residual OR clean OR explicit).
+    // Derived event-sourced from bd_cip_events + bd_racking_v2 via cip_dest_bbt_is_clean().
+    $bbtCleanStates = [];
+    foreach ($bbts as $bbtRow) {
+        $bbtNum = (int)$bbtRow['number'];
+        $bbtCleanStates[$bbtNum] = cip_dest_bbt_is_clean($pdo, $bbtNum);
+    }
+
     // CIP infra
     $cipTypes = cip_type_options($pdo);
 
@@ -664,6 +728,7 @@ try {
     $yts                = [];
     $cipTypes           = [];
     $recentRackings     = [];
+    $bbtCleanStates     = [];
     $canOverride        = false;
     $loadErr = $e->getMessage();
 }
@@ -1311,6 +1376,62 @@ $cipConfig = [
       </div>
     </div>
 
+    <!-- ── Section: Transfert interrompu (C4) ───────────────────────── -->
+    <!-- Hidden section revealed by the toggle checkbox.
+         NO static `required` on any field here — established form discipline.
+         JS adds required to interrupted_reason while revealed + to dest_bbt_still_clean
+         when also racked_vol_hl == 0/empty. -->
+    <div class="op-form__card rf-interrupted-card">
+      <div class="op-form__card-title">— transfert interrompu</div>
+
+      <!-- Toggle — matches the Pertes section reveal pattern -->
+      <label class="rf-interrupted-toggle-label">
+        <input type="checkbox" id="rf-interrupted-toggle" name="interrupted_flag" value="1"
+               class="rf-interrupted-toggle-checkbox">
+        <span class="rf-interrupted-toggle-text">Le transfert a été interrompu</span>
+      </label>
+
+      <!-- Collapsible fields — hidden until toggle is checked -->
+      <div id="rf-interrupted-fields" hidden>
+
+        <!-- interrupted_reason — required while visible -->
+        <div class="op-form__grid--1 op-form__grid" style="margin-top:0.75rem">
+          <div class="op-form__field op-form__field--full">
+            <label class="op-form__label" for="interrupted_reason">
+              Raison de l'interruption
+              <!-- No static required — JS adds it while section is visible -->
+            </label>
+            <textarea id="interrupted_reason" name="interrupted_reason"
+                      class="op-form__textarea" rows="2" maxlength="500"
+                      placeholder="Décris l'événement : cause, état de la cuve, suite prévue…"></textarea>
+          </div>
+        </div>
+
+        <!-- BBT encore propre ? — shown ONLY when racked_vol_hl == 0 / empty.
+             Semantics: if nothing was transferred and the BBT was not contaminated,
+             it stays clean in the system — no CIP required for the next fill.
+             NO static required — JS adds required when this sub-section is visible. -->
+        <div id="rf-bbt-propre-row" class="op-form__grid--1 op-form__grid" style="margin-top:0.5rem" hidden>
+          <div class="op-form__field op-form__field--full">
+            <label class="op-form__label">BBT encore propre ?</label>
+            <div class="rf-bbt-propre-radios">
+              <label class="rf-radio-label">
+                <input type="radio" name="dest_bbt_still_clean" value="1"
+                       id="dest_bbt_clean_oui" class="rf-bbt-propre-radio">
+                Oui — BBT reste propre
+              </label>
+              <label class="rf-radio-label">
+                <input type="radio" name="dest_bbt_still_clean" value="0"
+                       id="dest_bbt_clean_non" class="rf-bbt-propre-radio">
+                Non — BBT à nettoyer avant le prochain transfert
+              </label>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
     <!-- Submit bar -->
     <div class="op-form__submit-bar">
       <button type="button" class="op-form__btn op-form__btn--secondary"
@@ -1392,6 +1513,9 @@ window.QC_THRESHOLDS = <?= $qcThresholdsJson ?>;
 // C3 — Pertes advisory thresholds from commissioning_settings section='pertes'.
 // rack_warn_pct: loss % of racked vol that triggers the rack-stage palier warning.
 window.PERTES_CONFIG = <?= $pertesConfigJson ?>;
+// C4 — BBT clean-state map (event-sourced): bbtNumber(int) → 'clean'|'dirty'|'unknown'.
+// Consumed by updateDestCipRequired() to compose (residual OR clean OR explicit).
+window.BBT_CLEAN_STATES = <?= json_encode($bbtCleanStates, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
 </script>
 
 <script src="/js/form-framework.js?v=<?= @filemtime(__DIR__ . '/../js/form-framework.js') ?: time() ?>" defer></script>

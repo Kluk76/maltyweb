@@ -82,6 +82,13 @@ document.addEventListener('DOMContentLoaded', function () {
   var lossCauseSelect   = document.getElementById('loss_cause');
   var lossBalanceDisplay= document.getElementById('rf-loss-balance');
 
+  // ── C4 — Interrupted transfer refs ────────────────────────────────────
+  var interruptedToggle  = document.getElementById('rf-interrupted-toggle');
+  var interruptedFields  = document.getElementById('rf-interrupted-fields');
+  var interruptedReason  = document.getElementById('interrupted_reason');
+  var bbtPropreRow       = document.getElementById('rf-bbt-propre-row');
+  var bbtPropreRadios    = document.querySelectorAll('.rf-bbt-propre-radio');
+
   // ── #5 — Resultant volume display ──────────────────────────────────────
   // Volume résultant = racked_vol_hl + blend_hl (pure JS; nothing stored).
   // TankSimulator is the only authoritative compute engine.
@@ -281,13 +288,104 @@ document.addEventListener('DOMContentLoaded', function () {
     return warnings;
   }
 
+  // ── C4 — Interrupted transfer toggle reveal ───────────────────────────
+  // Matches the Pertes section reveal pattern exactly.
+  // interrupted_reason: required while the section is visible.
+  // bbt-propre sub-row: revealed only when interrupted is checked AND racked_vol_hl == 0/empty.
+  //   Radio Oui/Non required while sub-row is visible (one must be chosen).
+  function syncInterruptedToggle() {
+    var revealed = interruptedToggle ? interruptedToggle.checked : false;
+    if (interruptedFields) interruptedFields.hidden = !revealed;
+
+    // interrupted_reason: required while visible (no static required on the element).
+    if (interruptedReason) {
+      if (revealed) {
+        interruptedReason.setAttribute('required', '');
+      } else {
+        interruptedReason.removeAttribute('required');
+      }
+    }
+
+    // BBT-propre sub-row visibility depends on interrupted AND racked_vol == 0.
+    syncBbtPropreVisibility();
+  }
+
+  // BBT-propre sub-row: show when interrupted is checked AND racked_vol_hl is 0 or empty.
+  // Radios get required while visible (no static required).
+  function syncBbtPropreVisibility() {
+    var interrupted = interruptedToggle ? interruptedToggle.checked : false;
+    var racked = parseDecimal(rackedVolInput ? rackedVolInput.value : null);
+    var rackedIsZero = (racked === null || isNaN(racked) || racked === 0);
+    var showPropre = interrupted && rackedIsZero;
+
+    if (bbtPropreRow) bbtPropreRow.hidden = !showPropre;
+
+    // Required: at least one radio must be chosen when the sub-row is visible.
+    // Strategy: mark the radio inputs required while visible (browser validates).
+    bbtPropreRadios.forEach(function (radio) {
+      if (showPropre) {
+        radio.setAttribute('required', '');
+      } else {
+        radio.removeAttribute('required');
+      }
+    });
+  }
+
+  if (interruptedToggle) {
+    interruptedToggle.addEventListener('change', function () {
+      syncInterruptedToggle();
+      updateDestCipRequired(); // re-evaluate since interrupted changes the semantic
+    });
+  }
+
+  // Re-evaluate bbt-propre when racked_vol changes (already wired for updateResultant above)
+  // We extend the existing rackedVolInput listener chain via a wrapper rather than adding
+  // a duplicate addEventListener. The updateResultant() path already fires for input events;
+  // we add syncBbtPropreVisibility() call there via a separate targeted handler.
+  if (rackedVolInput) {
+    rackedVolInput.addEventListener('input', syncBbtPropreVisibility);
+  }
+
+  syncInterruptedToggle(); // initial state on DOMContentLoaded
+
   // ── #10 conditional — dest CIP required client-side sync ──────────────
-  // Mirror of cip_dest_required($blend_hl) server-side.
-  // When residual > 0: dest CIP vessel checkbox is optional (unmark required).
-  // When residual = 0 or empty: dest CIP vessel checkbox triggers required on fields.
+  // Composition (mirrors cip_dest_required() server-side after C4 extension):
+  //   destRequired = (residual == 0) AND NOT(dest BBT is clean)
+  //
+  // Residual > 0: blend case → CIP always optional, regardless of clean-state.
+  // Residual = 0: look up window.BBT_CLEAN_STATES[bbtNumber].
+  //   'clean'   → CIP NOT required (recent CIP or interrupted-zero attested clean).
+  //   'dirty'   → CIP IS required.
+  //   'unknown' → CIP IS required (conservative).
+  //   No BBT number selected yet → default to required (conservative).
+  //
+  // Non-BBT destinations (CCT, YT): clean-state concept does not apply to them
+  // in this form (no bd_cip_events with target_code='cct' stored from racking).
+  // For CCT/YT destinations, fall back to the residual-only rule.
   function updateDestCipRequired() {
     var blend = parseDecimal(blendHlInput ? blendHlInput.value : null);
-    var destRequired = !(blend !== null && !isNaN(blend) && blend > 0);
+    var residualIsZero = !(blend !== null && !isNaN(blend) && blend > 0);
+
+    var destRequired;
+    if (!residualIsZero) {
+      // Blend case: dest CIP always optional.
+      destRequired = false;
+    } else {
+      // Residual = 0: compose with BBT clean-state.
+      var destType = destSel ? destSel.value : '';
+      if (destType === 'BBT') {
+        var bbtSel = document.getElementById('bbt_number');
+        var bbtNum = bbtSel ? (parseInt(bbtSel.value, 10) || null) : null;
+        if (bbtNum && window.BBT_CLEAN_STATES && window.BBT_CLEAN_STATES[bbtNum] === 'clean') {
+          destRequired = false; // BBT is clean → no CIP needed for this fill
+        } else {
+          destRequired = true;  // dirty, unknown, or no BBT selected → required
+        }
+      } else {
+        // CCT / YT / no dest selected → residual-only rule (residual = 0 → required)
+        destRequired = true;
+      }
+    }
 
     // Find the first vessel-toggle checkbox (index 0) and update the cipConfig
     // The cip-section partial's cipSyncRequired handles field-level required.
@@ -422,9 +520,11 @@ document.addEventListener('DOMContentLoaded', function () {
     }
   }
 
-  // Also update CIP label when a dest-number select changes
+  // Also update CIP label when a dest-number select changes.
+  // And re-evaluate dest CIP required: switching BBT may change clean-state.
   function onDestNumChange() {
     updateDestFields();
+    updateDestCipRequired();
   }
 
   var bbtNumSel = document.getElementById('bbt_number');
@@ -645,7 +745,8 @@ document.addEventListener('DOMContentLoaded', function () {
   updateResultant();     // calls refreshWarnings() internally via C3 extension
   updateDestCipRequired();
   togglePuSection();
-  syncPerteToggle(); // C3 — re-sync Pertes section after draft restore
+  syncPerteToggle();       // C3 — re-sync Pertes section after draft restore
+  syncInterruptedToggle(); // C4 — re-sync Interrupted section after draft restore
   // Explicit refresh after all draft values are restored, in case loss_note was
   // already filled (drops the palier from 'outlier' to 'warn' on re-load).
   if (typeof FormFramework !== 'undefined' && typeof FormFramework.refreshWarnings === 'function') {
