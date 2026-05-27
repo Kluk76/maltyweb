@@ -158,6 +158,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $centriRinsed = post_str('centri_rinsed');
         if ($centriRinsed !== null) must_be_one_of('centri_rinsed', $centriRinsed, CENTRI_RINSED_YN);
 
+        $safetyCipDone = post_str('safety_cip_done');
+        if ($safetyCipDone !== null) must_be_one_of('safety_cip_done', $safetyCipDone, CENTRI_RINSED_YN);
+
         // KZE pasteurisation data — only written when KZE is in the CIP set.
         // post_decimal returns null when the field is empty (section was hidden → no input).
         // Coerce and validate: value must be a non-negative decimal when provided.
@@ -270,7 +273,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $targetTankRaw ?? '',
             $bbtCo2 ?? '', $bbtO2 ?? '', $rackedVolHl ?? '', $blendHl ?? '',
             $avgTurbidity ?? '', $bbtPressure ?? '',
-            $centriRinsed ?? '',
+            $centriRinsed ?? '', $safetyCipDone ?? '',
             $kzeTargetPu ?? '', $kzeAvgPu ?? '',
             $comments ?? '',
             $horsProcessFlag,
@@ -311,6 +314,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // avg_speed intentionally absent — column kept, form removed (#7)
             'bbt_pressure'             => $bbtPressure,
             'centri_rinsed'            => $centriRinsed,
+            'safety_cip_done'          => $safetyCipDone,
             'kze_target_pu'            => $kzeTargetPu,
             'kze_avg_pu'               => $kzeAvgPu,
             'comments'                 => $comments,
@@ -1027,6 +1031,16 @@ $cipConfig = [
         <div class="op-form__field">
           <label class="op-form__label" for="centri_rinsed">Centri rincée ?</label>
           <select id="centri_rinsed" name="centri_rinsed" class="op-form__select">
+            <option value="">—</option>
+            <?php foreach (CENTRI_RINSED_YN as $yn): ?>
+              <option value="<?= htmlspecialchars($yn) ?>"><?= htmlspecialchars($yn) ?></option>
+            <?php endforeach ?>
+          </select>
+        </div>
+
+        <div class="op-form__field">
+          <label class="op-form__label" for="safety_cip_done">Safety CIP effectué ?</label>
+          <select id="safety_cip_done" name="safety_cip_done" class="op-form__select">
             <option value="">—</option>
             <?php foreach (CENTRI_RINSED_YN as $yn): ?>
               <option value="<?= htmlspecialchars($yn) ?>"><?= htmlspecialchars($yn) ?></option>
