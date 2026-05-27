@@ -153,7 +153,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         ? 'recettes'
         : ($action === 'update_yeast_family' ? 'biochem'
         : ($action === 'update_pertes_config' ? 'pertes'
-        : (in_array($action, ['cip_type_add','cip_type_update','cip_type_deactivate','cip_type_reactivate'], true)
+        : (in_array($action, ['cip_type_add','cip_type_update','cip_type_deactivate','cip_type_reactivate','update_cip_cadence'], true)
             ? 'cip' : 'conditionnement')));
 
     try {
@@ -1133,6 +1133,125 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $label = htmlspecialchars((string) $existing['label_fr']);
             flash_set('ok', "Paramètre « {$label} » mis à jour : {$newVal}.");
 
+        // ── update_cip_cadence ───────────────────────────────────────────────
+        // Edits commissioning_settings rows for section='cip_cadence'.
+        // Role gate: admin or manager (matches update_pertes_config).
+        // Two numeric keys (acid_after, full_after) + two CSV-of-int keys
+        // (acid_reset_types, full_reset_types). Each POST saves one key.
+        // Pattern: read-then-validate (two-step) → UPDATE → log_revision audit.
+        } elseif ($action === 'update_cip_cadence') {
+            if (!is_admin($me) && !is_manager($me)) {
+                flash_set('err', 'Modification réservée aux administrateurs et managers.');
+                redirect_to('/modules/salle-de-controle.php?sec=cip');
+            }
+
+            // Allowed keys — whitelist prevents arbitrary key_name injection.
+            $allowedNumericKeys = [
+                'cip_cadence_acid_after',
+                'cip_cadence_full_after',
+            ];
+            $allowedTextKeys = [
+                'cip_cadence_acid_reset_types',
+                'cip_cadence_full_reset_types',
+            ];
+            $allowedKeys = array_merge($allowedNumericKeys, $allowedTextKeys);
+
+            // ── Step 1: read with defaults, then validate ────────────────────
+            $rawKey  = post_str('key_name');
+            $keyName = must_be_one_of('key_name', (string) $rawKey, $allowedKeys);
+
+            $isNumericKey = in_array($keyName, $allowedNumericKeys, true);
+
+            // ── Step 2: fetch current row for before-state ───────────────────
+            $fetchStmt = $pdo->prepare(
+                "SELECT id, value_num, value_text, label_fr
+                   FROM commissioning_settings
+                  WHERE section = 'cip_cadence' AND key_name = ? AND is_active = 1
+                  LIMIT 1"
+            );
+            $fetchStmt->execute([$keyName]);
+            $existing = $fetchStmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$existing) {
+                throw new RuntimeException(
+                    'Paramètre introuvable — la migration 190 doit être appliquée.'
+                );
+            }
+
+            if ($isNumericKey) {
+                // Numeric: positive integer, min 1
+                $rawVal = post_int('value_num');
+                if ($rawVal === null || $rawVal < 1) {
+                    throw new RuntimeException('La valeur doit être un entier positif (≥ 1).');
+                }
+                $newNum  = $rawVal;
+                $newText = null; // unchanged
+
+                $before = ['value_num' => $existing['value_num']];
+                $after  = ['value_num' => $newNum];
+
+                $upStmt = $pdo->prepare(
+                    "UPDATE commissioning_settings
+                        SET value_num = ?, updated_by = ?
+                      WHERE section = 'cip_cadence' AND key_name = ? AND is_active = 1"
+                );
+                $upStmt->execute([$newNum, $me['username'], $keyName]);
+
+                $displayVal = (string) $newNum . ' rack(s)';
+            } else {
+                // CSV of ref_cip_types ids: read all valid ids from DB, validate each token.
+                // Read the live ref_cip_types ids for validation.
+                $validIdsRows = $pdo->query(
+                    "SELECT id FROM ref_cip_types WHERE is_active = 1"
+                )->fetchAll(PDO::FETCH_COLUMN);
+                $validIds = array_map('intval', $validIdsRows);
+
+                // POST sends checkbox values as cip_type_ids[] array.
+                $rawIds = isset($_POST['cip_type_ids']) && is_array($_POST['cip_type_ids'])
+                    ? $_POST['cip_type_ids']
+                    : [];
+
+                $cleaned = [];
+                foreach ($rawIds as $rid) {
+                    $intId = (int) $rid;
+                    if ($intId <= 0 || !in_array($intId, $validIds, true)) {
+                        throw new RuntimeException(
+                            'Identifiant type CIP invalide : ' . htmlspecialchars((string) $rid)
+                        );
+                    }
+                    $cleaned[] = $intId;
+                }
+                sort($cleaned);
+                $newCsv = implode(',', $cleaned); // '' when no boxes checked
+
+                $before = ['value_text' => $existing['value_text']];
+                $after  = ['value_text' => $newCsv];
+
+                $upStmt = $pdo->prepare(
+                    "UPDATE commissioning_settings
+                        SET value_text = ?, updated_by = ?
+                      WHERE section = 'cip_cadence' AND key_name = ? AND is_active = 1"
+                );
+                $upStmt->execute([$newCsv, $me['username'], $keyName]);
+
+                $displayVal = $newCsv !== '' ? $newCsv : '(aucun)';
+            }
+
+            // ── Step 3: audit ────────────────────────────────────────────────
+            log_revision(
+                $pdo,
+                $me,
+                'commissioning_settings',
+                (int) $existing['id'],
+                $before,
+                $after,
+                'normal',
+                'Salle de contrôle: cip_cadence.' . $keyName
+            );
+
+            $label = htmlspecialchars((string) $existing['label_fr']);
+            flash_set('ok', "Cadence CIP — « {$label} » mis à jour : {$displayVal}.");
+
         } else {
             throw new RuntimeException('Action inconnue.');
         }
@@ -1543,6 +1662,27 @@ try {
     $cipTypes = $cipStmt->fetchAll(PDO::FETCH_ASSOC);
 } catch (Throwable $e) {
     $cipLoadErr = $e->getMessage();
+}
+
+// --- CIP cadence settings (section='cip_cadence') ----------------------------
+// Keyed by key_name. Loaded alongside CIP types since the cadence panel lives
+// in the same #sec-cip section. Gracefully empty if migration 190 not yet applied.
+$cipCadenceByKey = [];
+$cipCadenceErr   = null;
+try {
+    $pdo = maltytask_pdo();
+    $cadStmt = $pdo->prepare(
+        "SELECT key_name, label_fr, description_fr, value_num, value_text, unit_fr, default_num
+           FROM commissioning_settings
+          WHERE section = 'cip_cadence' AND is_active = 1
+          ORDER BY id ASC"
+    );
+    $cadStmt->execute();
+    foreach ($cadStmt->fetchAll(PDO::FETCH_ASSOC) as $cs) {
+        $cipCadenceByKey[$cs['key_name']] = $cs;
+    }
+} catch (Throwable $e) {
+    $cipCadenceErr = $e->getMessage();
 }
 
 $minDaysSetting = $settingsByKey['min_days_after_racking'] ?? null;
@@ -2618,6 +2758,231 @@ window.SDC_CIP_TYPES = <?= json_encode(
         </div>
 
         <?php endif ?><!-- /cipLoadErr -->
+
+        <!-- ════════ CADENCE CIP BBT — second panel inside #sec-cip ════════ -->
+        <div style="margin-top:32px;border-top:2px solid var(--hairline);padding-top:24px;">
+          <div class="cip-header">
+            <h2 style="margin:0 0 4px;">Cadence <em>CIP BBT</em></h2>
+            <div class="cip-header-sub">Politique de planification · commissioning_settings section='cip_cadence' · C6a</div>
+          </div>
+
+          <?php if ($cipCadenceErr): ?>
+            <div class="sdc-flash sdc-flash--err" style="margin-top:12px;">Erreur DB Cadence : <?= htmlspecialchars($cipCadenceErr) ?></div>
+          <?php elseif (empty($cipCadenceByKey)): ?>
+            <div class="sdc-flash sdc-flash--err" style="margin-top:12px;">Migration 190 non appliquée — paramètres cadence CIP indisponibles.</div>
+          <?php else: ?>
+
+          <?php
+          $cadAcidAfter = $cipCadenceByKey['cip_cadence_acid_after'] ?? null;
+          $cadFullAfter = $cipCadenceByKey['cip_cadence_full_after'] ?? null;
+          $cadAcidTypes = $cipCadenceByKey['cip_cadence_acid_reset_types'] ?? null;
+          $cadFullTypes = $cipCadenceByKey['cip_cadence_full_reset_types'] ?? null;
+
+          // Parse CSV values into arrays of int for checkbox pre-fill
+          $acidResetIds = [];
+          if ($cadAcidTypes && $cadAcidTypes['value_text'] !== null && $cadAcidTypes['value_text'] !== '') {
+              $acidResetIds = array_map('intval', explode(',', (string) $cadAcidTypes['value_text']));
+          }
+          $fullResetIds = [];
+          if ($cadFullTypes && $cadFullTypes['value_text'] !== null && $cadFullTypes['value_text'] !== '') {
+              $fullResetIds = array_map('intval', explode(',', (string) $cadFullTypes['value_text']));
+          }
+
+          $canEdit = is_admin($me) || is_manager($me);
+          ?>
+
+          <!-- THRESHOLDS CARD -->
+          <div class="cip-table-card" style="margin-top:16px;margin-bottom:16px;">
+            <div class="cip-table-head">
+              <span class="cip-table-title">Seuils de déclenchement</span>
+              <span class="cip-count">2 seuils · informatifs · ne bloquent pas la saisie</span>
+            </div>
+            <div style="padding:10px 16px 6px;font-size:11px;color:var(--ink-soft);line-height:1.5;border-bottom:1px solid rgba(0,0,0,.05);">
+              Cycle : <strong>N racks sans CIP BBT → recommandation acide</strong> ;
+              puis <strong>M racks supplémentaires → recommandation CIP complet</strong> ; puis cycle.
+              Le compteur est dérivé des événements <code>bd_cip_events</code> + <code>bd_racking_v2</code> (jamais stocké).
+            </div>
+
+            <?php foreach ([
+              ['cip_cadence_acid_after', $cadAcidAfter, 'Racks avant CIP acide', 'Nombre de soutirages dans un BBT sans CIP acide (ou supérieur) avant alerte.'],
+              ['cip_cadence_full_after', $cadFullAfter, 'Racks (après acide) avant CIP complet', 'Nombre de soutirages supplémentaires après le dernier CIP acide avant alerte CIP complet.'],
+            ] as [$hk, $cadRow, $shortLabel, $helpText]):
+              if ($cadRow === null) continue;
+              $curNum = (int) round((float) ($cadRow['value_num'] ?? 6));
+              $defNum = $cadRow['default_num'] !== null ? (int) round((float) $cadRow['default_num']) : null;
+            ?>
+            <div style="padding:14px 16px;border-bottom:1px solid rgba(0,0,0,.05);">
+              <div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
+                <div>
+                  <span style="font-weight:500;color:var(--ink);"><?= htmlspecialchars($shortLabel) ?></span>
+                  <?php if ($defNum !== null): ?>
+                    <span class="csr-default-note" style="margin-left:6px;">(défaut : <?= $defNum ?> racks)</span>
+                  <?php endif ?>
+                </div>
+                <span style="font-family:'JetBrains Mono',monospace;font-size:15px;font-weight:600;color:var(--hop);">
+                  <?= $curNum ?> <span style="font-size:10px;font-weight:400;">racks</span>
+                </span>
+              </div>
+              <p style="font-size:11px;color:var(--ink-soft);margin:0 0 8px;"><?= htmlspecialchars($helpText) ?></p>
+              <?php if ($canEdit): ?>
+              <form method="post" action="/modules/salle-de-controle.php" class="cond-edit-form" novalidate>
+                <input type="hidden" name="csrf"     value="<?= htmlspecialchars($csrf) ?>">
+                <input type="hidden" name="action"   value="update_cip_cadence">
+                <input type="hidden" name="key_name" value="<?= htmlspecialchars($hk) ?>">
+                <div class="cond-edit-row">
+                  <label class="cond-edit-label" for="cad_val_<?= htmlspecialchars($hk) ?>">
+                    Nouveau seuil <span class="cond-edit-unit">(racks)</span>
+                  </label>
+                  <input
+                    id="cad_val_<?= htmlspecialchars($hk) ?>"
+                    name="value_num"
+                    type="number"
+                    min="1"
+                    step="1"
+                    class="cond-edit-input"
+                    value="<?= $curNum ?>"
+                    required
+                  >
+                  <button type="submit" class="cond-edit-btn">Enregistrer</button>
+                </div>
+              </form>
+              <?php else: ?>
+              <p class="cond-readonly-note">Modification réservée aux administrateurs et managers.</p>
+              <?php endif ?>
+            </div>
+            <?php endforeach ?>
+          </div><!-- /thresholds card -->
+
+          <!-- RESET-CLASS MAPPING CARD -->
+          <div class="cip-table-card" style="margin-bottom:16px;">
+            <div class="cip-table-head">
+              <span class="cip-table-title">Classes de remise à zéro</span>
+              <span class="cip-count">par type CIP · politique brasserie</span>
+            </div>
+            <div style="padding:10px 16px 8px;font-size:11px;color:var(--ink-soft);line-height:1.5;border-bottom:1px solid rgba(0,0,0,.05);">
+              Un CIP <strong>acide</strong> remet à zéro le compteur de racks depuis le dernier acide.
+              Un CIP <strong>complet</strong> remet à zéro les deux compteurs.
+              Un type peut appartenir à au plus une classe (ou aucune — ex. Soude par défaut).
+              Stocker dans deux CSVs distincts ; le résolveur vérifie <em>complet</em> en premier.
+            </div>
+
+            <?php if (empty($cipTypes)): ?>
+              <div class="cip-empty" style="padding:14px 16px;">Aucun type CIP — ajouter d'abord dans la liste ci-dessus.</div>
+            <?php else: ?>
+            <table class="cip-table">
+              <thead>
+                <tr>
+                  <th class="cip-th">Type CIP</th>
+                  <th class="cip-th" style="text-align:center;">Remise à zéro<br><span style="font-weight:400;font-size:10px;">acide</span></th>
+                  <th class="cip-th" style="text-align:center;">Remise à zéro<br><span style="font-weight:400;font-size:10px;">complète</span></th>
+                </tr>
+              </thead>
+              <tbody>
+              <?php foreach ($cipTypes as $ct):
+                $ctId     = (int)    $ct['id'];
+                $ctName   = (string) $ct['name'];
+                $ctActive = (bool)   $ct['is_active'];
+                $inAcid   = in_array($ctId, $acidResetIds, true);
+                $inFull   = in_array($ctId, $fullResetIds, true);
+              ?>
+                <tr class="cip-row<?= !$ctActive ? ' cip-row--inactive' : '' ?>">
+                  <td class="cip-td">
+                    <span class="cip-name"><?= htmlspecialchars($ctName) ?></span>
+                    <?php if (!$ctActive): ?>
+                      <span class="cip-badge cip-badge--inactive" style="margin-left:6px;font-size:9px;">Inactif</span>
+                    <?php endif ?>
+                  </td>
+                  <td class="cip-td" style="text-align:center;">
+                    <?php if ($inAcid): ?>
+                      <span style="color:var(--hop);font-size:13px;" title="Compte comme remise à zéro acide">✓</span>
+                    <?php else: ?>
+                      <span style="color:var(--ink-faint);font-size:11px;">—</span>
+                    <?php endif ?>
+                  </td>
+                  <td class="cip-td" style="text-align:center;">
+                    <?php if ($inFull): ?>
+                      <span style="color:var(--ember);font-size:13px;" title="Compte comme remise à zéro complète">✓</span>
+                    <?php else: ?>
+                      <span style="color:var(--ink-faint);font-size:11px;">—</span>
+                    <?php endif ?>
+                  </td>
+                </tr>
+              <?php endforeach ?>
+              </tbody>
+            </table>
+
+            <?php if ($canEdit): ?>
+            <!-- Acid reset edit form -->
+            <div style="padding:14px 16px;border-top:1px solid rgba(0,0,0,.06);">
+              <div style="font-size:12px;font-weight:500;color:var(--ink);margin-bottom:8px;">
+                Modifier — Remise à zéro <em>acide</em>
+                <span style="font-size:11px;font-weight:400;color:var(--ink-soft);margin-left:6px;">(cocher les types qui réinitialisent le compteur acide)</span>
+              </div>
+              <form method="post" action="/modules/salle-de-controle.php" novalidate>
+                <input type="hidden" name="csrf"     value="<?= htmlspecialchars($csrf) ?>">
+                <input type="hidden" name="action"   value="update_cip_cadence">
+                <input type="hidden" name="key_name" value="cip_cadence_acid_reset_types">
+                <div style="display:flex;flex-wrap:wrap;gap:10px 20px;margin-bottom:10px;">
+                  <?php foreach ($cipTypes as $ct): ?>
+                    <?php if (!(bool) $ct['is_active']) continue; ?>
+                    <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--ink);cursor:pointer;">
+                      <input type="checkbox" name="cip_type_ids[]"
+                             value="<?= (int) $ct['id'] ?>"
+                             <?= in_array((int) $ct['id'], $acidResetIds, true) ? 'checked' : '' ?>
+                             style="accent-color:var(--hop);width:14px;height:14px;">
+                      <?= htmlspecialchars((string) $ct['name']) ?>
+                    </label>
+                  <?php endforeach ?>
+                </div>
+                <button type="submit" class="cond-edit-btn">Enregistrer (acide)</button>
+              </form>
+            </div>
+            <!-- Full reset edit form -->
+            <div style="padding:14px 16px;border-top:1px solid rgba(0,0,0,.06);">
+              <div style="font-size:12px;font-weight:500;color:var(--ink);margin-bottom:8px;">
+                Modifier — Remise à zéro <em>complète</em>
+                <span style="font-size:11px;font-weight:400;color:var(--ink-soft);margin-left:6px;">(cocher les types qui réinitialisent les deux compteurs)</span>
+              </div>
+              <form method="post" action="/modules/salle-de-controle.php" novalidate>
+                <input type="hidden" name="csrf"     value="<?= htmlspecialchars($csrf) ?>">
+                <input type="hidden" name="action"   value="update_cip_cadence">
+                <input type="hidden" name="key_name" value="cip_cadence_full_reset_types">
+                <div style="display:flex;flex-wrap:wrap;gap:10px 20px;margin-bottom:10px;">
+                  <?php foreach ($cipTypes as $ct): ?>
+                    <?php if (!(bool) $ct['is_active']) continue; ?>
+                    <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--ink);cursor:pointer;">
+                      <input type="checkbox" name="cip_type_ids[]"
+                             value="<?= (int) $ct['id'] ?>"
+                             <?= in_array((int) $ct['id'], $fullResetIds, true) ? 'checked' : '' ?>
+                             style="accent-color:var(--ember);width:14px;height:14px;">
+                      <?= htmlspecialchars((string) $ct['name']) ?>
+                    </label>
+                  <?php endforeach ?>
+                </div>
+                <button type="submit" class="cond-edit-btn">Enregistrer (complet)</button>
+              </form>
+            </div>
+            <?php endif ?>
+
+            <?php endif ?><!-- /empty cipTypes -->
+          </div><!-- /reset-class mapping card -->
+
+          <div class="impl-note" style="margin-top:8px;">
+            <div class="impl-note-head">Architecture cadence &amp; audit</div>
+            <div class="impl-note-body">
+              Les compteurs de racks sont <strong>dérivés</strong> des événements
+              <code>bd_racking_v2</code> (destination BBT) et <code>bd_cip_events</code>
+              (vessel CIP pour ce BBT) — jamais stockés (résolveur C6b, à venir).
+              Les seuils et la table de correspondance CIP-type → classe de remise à zéro
+              sont stockés dans <code>commissioning_settings section='cip_cadence'</code>
+              (migration 190). Chaque modification est journalisée dans
+              <code>audit_row_revisions</code>.
+            </div>
+          </div>
+
+          <?php endif ?><!-- /cipCadenceByKey empty check -->
+        </div><!-- /cadence CIP panel -->
+
       </div>
     </div><!-- /sec-cip -->
 
