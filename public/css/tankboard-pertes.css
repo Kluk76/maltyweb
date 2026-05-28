@@ -1,0 +1,487 @@
+/* tankboard-pertes.css — Pertes par batch section (C8) on the Tank Board.
+ * Scoped under body.home (the tanks page body class).
+ * Tokens: all via var(--…) from app.css :root — no raw hex.
+ * ------------------------------------------------------------------ */
+
+/* ── Section wrapper ──────────────────────────────────────────────── */
+body.home .ppb-section {
+  width: 100%;
+  margin-bottom: 52px;
+}
+
+/* ── Section header ─────────────────────────────────────────────── */
+body.home .ppb-section__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--hairline);
+  margin-bottom: 0;
+}
+
+body.home .ppb-section__title-group {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex-wrap: wrap;
+}
+
+body.home .ppb-section__title {
+  font-family: "Fraunces", "Times New Roman", serif;
+  font-variation-settings: "opsz" 72;
+  font-weight: 400;
+  font-size: 20px;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  margin: 0;
+  line-height: 1.2;
+}
+
+/* Tag chip — mirrors .tanks-section__tag */
+body.home .ppb-section__tag {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--hop);
+  vertical-align: middle;
+  margin-left: 8px;
+  padding: 2px 7px;
+  border: 1px solid color-mix(in srgb, var(--hop) 34%, transparent);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--hop) 10%, transparent);
+}
+
+/* Header right: toggle + settings link */
+body.home .ppb-section__controls {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-shrink: 0;
+}
+
+body.home .ppb-section__toggle {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  background: none;
+  border: 1px solid var(--hairline-2);
+  border-radius: 2px;
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: color .15s, border-color .15s;
+}
+
+body.home .ppb-section__toggle:hover {
+  color: var(--hop);
+  border-color: var(--hop-deep);
+}
+
+body.home .ppb-section__toggle[aria-pressed="true"] {
+  color: var(--hop);
+  border-color: var(--hop);
+  background: color-mix(in srgb, var(--hop) 8%, transparent);
+}
+
+body.home .ppb-section__config-link {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--oak);
+  text-decoration: none;
+  transition: color .15s;
+}
+
+body.home .ppb-section__config-link:hover {
+  color: var(--oak-deep);
+  text-decoration: underline;
+}
+
+/* ── Table wrap ─────────────────────────────────────────────────── */
+body.home .ppb-wrap {
+  overflow-x: auto;
+  margin-top: 0;
+  -webkit-overflow-scrolling: touch;
+}
+
+body.home .ppb-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+}
+
+/* Caption */
+body.home .ppb-caption {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  text-align: left;
+  padding: 14px 0 10px;
+}
+
+/* Column group label row */
+body.home .ppb-th-group {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  padding: 6px 14px 0;
+  text-align: center;
+  border-top: 1px solid var(--hairline-2);
+}
+
+/* Column headers */
+body.home .ppb-th {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  padding: 10px 14px;
+  border-top: 1px solid var(--hairline-2);
+  border-bottom: 1px solid var(--hairline-2);
+  white-space: nowrap;
+  text-align: left;
+}
+
+body.home .ppb-th--pct {
+  text-align: right;
+}
+
+/* Separator column */
+body.home .ppb-th--sep {
+  width: 1px;
+  padding: 0 6px;
+  border-left: 1px solid var(--hairline);
+  border-top: 1px solid var(--hairline-2);
+  border-bottom: 1px solid var(--hairline-2);
+}
+
+/* ── Data rows ──────────────────────────────────────────────────── */
+body.home .ppb-row {
+  border-bottom: 1px solid var(--hairline);
+  transition: background .12s;
+}
+
+body.home .ppb-row:hover > .ppb-td {
+  background: color-mix(in srgb, var(--rack) 6%, transparent);
+}
+
+/* Incomplete batch rows — slightly muted */
+body.home .ppb-row--incomplete {
+  opacity: 0.78;
+}
+
+body.home .ppb-row--incomplete:hover > .ppb-td {
+  background: color-mix(in srgb, var(--steel-mid) 5%, transparent);
+}
+
+/* Hidden-batch rows (behind "Tous" toggle) */
+body.home .ppb-row--hidden {
+  display: none;
+}
+
+body.home .ppb-section--show-all .ppb-row--hidden {
+  display: table-row;
+}
+
+/* Detail rows paired with section-hidden batch rows (beyond 20 complete) */
+body.home .ppb-detail-row--section-hidden {
+  display: none;
+}
+
+/* When showing all: reveal them — but only if not also collapsed by JS */
+body.home .ppb-section--show-all .ppb-detail-row--section-hidden {
+  display: table-row;
+}
+
+/* Collapsed always wins (JS state overrides section visibility) */
+body.home .ppb-section--show-all .ppb-detail-row--section-hidden.ppb-detail-row--collapsed {
+  display: none;
+}
+
+/* Data cells */
+body.home .ppb-td {
+  padding: 11px 14px;
+  vertical-align: middle;
+  white-space: nowrap;
+  transition: background .12s;
+}
+
+body.home .ppb-td--sep {
+  width: 1px;
+  padding: 0 6px;
+  border-left: 1px solid var(--hairline);
+}
+
+/* Beer + batch identity cell */
+body.home .ppb-td--batch {
+  min-width: 160px;
+}
+
+body.home .ppb-batch__beer {
+  font-family: "Fraunces", "Times New Roman", serif;
+  font-variation-settings: "opsz" 72;
+  font-weight: 400;
+  font-size: 15px;
+  color: var(--ink);
+  display: block;
+  line-height: 1.2;
+}
+
+body.home .ppb-batch__meta {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+  color: var(--ink-mute);
+  letter-spacing: 0.04em;
+  display: block;
+  margin-top: 2px;
+}
+
+/* Percentage cells — right-aligned monospace */
+body.home .ppb-td--pct {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 12px;
+  text-align: right;
+  color: var(--ink-soft);
+  min-width: 82px;
+}
+
+/* NULL / empty cell */
+body.home .ppb-pct--null {
+  color: var(--ink-faint);
+  font-style: italic;
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-size: 11px;
+}
+
+/* Flagged cell — soft ember wash, never full alarm */
+body.home .ppb-td--flagged {
+  background: color-mix(in srgb, var(--ember) 8%, transparent);
+  color: var(--ember);
+  font-weight: 500;
+}
+
+/* Bonus cell — positive yield */
+body.home .ppb-td--bonus {
+  color: var(--ok);
+  font-weight: 500;
+}
+
+/* Oddity cell — data anomaly */
+body.home .ppb-td--oddity {
+  color: var(--cold);
+}
+
+/* Muted total cells for incomplete batches */
+body.home .ppb-td--muted {
+  color: var(--ink-faint);
+}
+
+/* ── Pills ──────────────────────────────────────────────────────── */
+body.home .ppb-pill {
+  display: inline-block;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 8.5px;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  border-radius: 2px;
+  padding: 2px 5px;
+  margin-left: 5px;
+  vertical-align: middle;
+  line-height: 1.5;
+}
+
+body.home .ppb-pill--warn {
+  background: color-mix(in srgb, var(--ember) 14%, transparent);
+  color: var(--ember);
+  border: 1px solid color-mix(in srgb, var(--ember) 30%, transparent);
+}
+
+body.home .ppb-pill--bonus {
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+  color: var(--ok);
+  border: 1px solid color-mix(in srgb, var(--ok) 30%, transparent);
+}
+
+body.home .ppb-pill--oddity {
+  background: color-mix(in srgb, var(--cold) 14%, transparent);
+  color: var(--cold);
+  border: 1px solid color-mix(in srgb, var(--cold) 28%, transparent);
+}
+
+body.home .ppb-pill--inprogress {
+  background: color-mix(in srgb, var(--ink-faint) 20%, transparent);
+  color: var(--ink-mute);
+  border: 1px solid var(--hairline);
+}
+
+/* Unit suffix */
+body.home .ppb-unit {
+  font-size: 10px;
+  color: var(--ink-faint);
+  margin-left: 1px;
+}
+
+/* ── Expand trigger (batch identity cell) ───────────────────────── */
+body.home .ppb-td--expand {
+  cursor: pointer;
+  user-select: none;
+}
+
+body.home .ppb-td--expand:focus-visible {
+  outline: 2px solid var(--hop);
+  outline-offset: -2px;
+}
+
+/* Expand chevron */
+body.home .ppb-chevron {
+  display: inline-block;
+  font-size: 9px;
+  color: var(--ink-faint);
+  margin-right: 6px;
+  transition: transform .15s, color .15s;
+  vertical-align: middle;
+  position: relative;
+  top: -1px;
+}
+
+body.home .ppb-td--expand[aria-expanded="true"] .ppb-chevron {
+  transform: rotate(90deg);
+  color: var(--oak);
+}
+
+/* ── Drill-in detail row ────────────────────────────────────────── */
+/* Default: all detail rows start collapsed; JS removes --collapsed on expand. */
+body.home .ppb-detail-row {
+  border-bottom: 1px solid var(--hairline);
+}
+
+/* Collapsed state — JS managed; default for all detail rows. */
+body.home .ppb-detail-row--collapsed {
+  display: none;
+}
+
+body.home .ppb-detail-row > td {
+  padding: 0;
+}
+
+body.home .ppb-drill-panel {
+  background: var(--bg-elev);
+  border-top: 1px solid var(--hairline);
+  border-left: 3px solid var(--oak);
+  padding: 16px 22px 18px;
+}
+
+body.home .ppb-drill-title {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  margin: 0 0 10px;
+}
+
+body.home .ppb-drill-title--oddity {
+  color: var(--cold);
+}
+
+body.home .ppb-drill-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px 20px;
+}
+
+body.home .ppb-drill-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+body.home .ppb-drill-item__label {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+body.home .ppb-drill-item__value {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ink);
+  letter-spacing: 0.01em;
+}
+
+body.home .ppb-drill-item__value--note {
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--ink-soft);
+  font-style: italic;
+  letter-spacing: 0;
+}
+
+body.home .ppb-drill-item__value--surplus {
+  color: var(--ok);
+}
+
+body.home .ppb-drill-item__value--warn {
+  color: var(--ember);
+}
+
+body.home .ppb-drill-item__value--oddity {
+  color: var(--cold);
+}
+
+body.home .ppb-drill-item__value--faint {
+  color: var(--ink-faint);
+}
+
+body.home .ppb-drill-unit {
+  font-size: 11px;
+  color: var(--ink-mute);
+}
+
+body.home .ppb-drill-unit--surplus {
+  color: var(--ok);
+}
+
+body.home .ppb-drill-unit--oddity {
+  color: var(--cold);
+}
+
+/* ── Empty state ────────────────────────────────────────────────── */
+body.home .ppb-empty {
+  font-family: "Fraunces", serif;
+  font-style: italic;
+  font-size: 15px;
+  color: var(--ink-mute);
+  padding: 32px 0;
+  margin: 0;
+}
+
+/* ── Responsive ─────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  /* Hide "Vs effectif" total column on small screens */
+  body.home .ppb-th--total-eff,
+  body.home .ppb-td--total-eff,
+  body.home .ppb-th--sep-total,
+  body.home .ppb-td--sep-total {
+    display: none;
+  }
+}

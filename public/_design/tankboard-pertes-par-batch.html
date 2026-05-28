@@ -1,0 +1,1040 @@
+<!doctype html>
+<!--
+  DESIGN RATIONALE — Pertes par batch · Tank Board extension
+  ===========================================================
+
+  COLOUR / TYPOGRAPHY anchored to real app.css tokens:
+  ─────────────────────────────────────────────────────
+  All values below are verbatim from the :root block in app.css (light kraft theme).
+    --bg:        #f1e8d4  — page ground
+    --bg-elev:   #ece0c6  — elevated surfaces (cards, drill-in panels)
+    --bg-side:   #dcc9a4  — used for muted row backgrounds
+    --ink:       #241b10  — primary text
+    --ink-soft:  #3a2a18
+    --ink-mute:  #4a3820  — secondary/metadata text
+    --ink-faint: #c8b48a  — hairline / inactive
+    --hairline:  #c8b48a
+    --hairline-2:#a08060
+    --hop:       #567020  — primary accent (active flags, tags)
+    --hop-soft:  #7a8f3a
+    --hop-deep:  #3f4d14
+    --ember:     #b34428  — danger accent (WARN flags)
+    --ok:        #3d6826  — positive / bonus signal
+    --oak:       #8b5e2a  — links, secondary accent
+    --oak-deep:  #5a3a12
+    --cold:      #2f5575
+    Fraunces (opsz variable, display serif — beer names, section titles),
+    DM Sans (body copy),
+    JetBrains Mono (labels, readouts, KPI numbers, monospaced columns).
+
+  NO dark-amber tokens (no --bg #15100a, no --hop #9eb060, no --bbt #2f6d99
+  as accent — only semantic values from the live palette).
+
+  FLAG / BONUS / ODDITY TREATMENT:
+  ─────────────────────────────────
+  • WARN flag (threshold exceeded, positive %): subtle amber-ochre tint via
+    color-mix(--ember, transparent) on the cell. Text stays --ember. NOT
+    alarm-red — these are operator-tunable soft signals.
+  • Negative % (yield BONUS): rendered in --ok (dark green) with a "+" prefix.
+    Never red. The tooltip says "Rendement supérieur au nominal". Clear good news.
+  • Negative total (data oddity — rare, e.g. blended-BBT mis-attribution):
+    rendered in --cold (muted blue) with "⚠ données" annotation so the operator
+    reads it as a data audit signal, not a production problem.
+  • NULL cell (stage not yet complete — no racking, no packaging): em dash "—"
+    in --ink-faint. Not zero, not a flag.
+
+  N-BATCHES DEFAULT — 20 complete batches:
+  ─────────────────────────────────────────
+  20 fits one screenful on a 1440 px display with the existing Tank Board above
+  it. Fewer (10–12) cuts off seasonal/EPH batch comparison. More (30+) makes
+  scrolling painful and dilutes the signal. 20 is the "current campaign + prior
+  campaign overlap" window that's operationally meaningful. Toggle to "all" via
+  a small link in the header (mirrors rack-stats year-select idiom).
+
+  INCOMPLETE BATCHES:
+  ──────────────────
+  Complete=false rows ARE shown — but the two "total loss" columns (vs effectif,
+  vs nominal) are visually muted (--ink-faint) and the flag badges are suppressed
+  entirely on those columns. A "En cours" chip replaces the flag state for those
+  cells. Rationale: hiding incomplete rows entirely forces the operator to mentally
+  recount lots; showing them muted lets them track the batch lifecycle inline.
+
+  DRILL-IN MODEL:
+  ───────────────
+  Click on any row → the row expands in-place (CSS grid sub-row reveal,
+  `aria-expanded` toggle, no dialog). The expanded panel shows: cast_out_hl,
+  nominal_hl, packaged_hl, n_packaging_events, nominal_basis (note string).
+  These are the raw reconciliation numbers. Pure CSS with `<details>` for the
+  mockup (no JS required in the static HTML), but the build agent will use
+  a data-driven JS toggle pattern (mirrors cct-modal expansion).
+  A "details" open/close is purely read-only — no edit surface.
+-->
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pertes par batch · Tank Board mockup — MaltyTask</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;1,9..144,300;1,9..144,400;1,9..144,500&family=DM+Sans:opsz,wght@9..40,400;9..40,500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<style>
+/* =====================================================================
+   Design tokens — verbatim from app.css :root (light kraft / manila)
+   ===================================================================== */
+:root {
+  --bg:        #f1e8d4;
+  --bg-elev:   #ece0c6;
+  --bg-side:   #dcc9a4;
+  --ink:       #241b10;
+  --ink-soft:  #3a2a18;
+  --ink-mute:  #4a3820;
+  --ink-faint: #c8b48a;
+  --hairline:  #c8b48a;
+  --hairline-2:#a08060;
+  --oak:       #8b5e2a;
+  --oak-deep:  #5a3a12;
+  --hop:       #567020;
+  --hop-soft:  #7a8f3a;
+  --hop-deep:  #3f4d14;
+  --ember:     #b34428;
+  --cold:      #2f5575;
+  --bbt:       #2f6d99;
+  --ok:        #3d6826;
+  --bad:       #b34428;
+  --rack:      #8a7050;
+  --steel-mid: #5e6266;
+}
+
+/* =====================================================================
+   Page shell — mirrors .home .tanks-main context
+   ===================================================================== */
+*, *::before, *::after { box-sizing: border-box; }
+
+html { font-size: 16px; }
+
+body {
+  font-family: "DM Sans", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  background: var(--bg);
+  color: var(--ink);
+  margin: 0;
+  padding: 52px 56px 72px;
+  min-height: 100vh;
+}
+
+/* Narrow the mockup to mimic tank-board content width */
+.tanks-main-mock {
+  width: 100%;
+  max-width: 1100px;
+}
+
+/* =====================================================================
+   Context placeholder — shows where rack-stats sits ABOVE this section
+   ===================================================================== */
+.mock-above {
+  margin-bottom: 52px;
+  padding: 20px 22px;
+  border: 1px dashed var(--hairline-2);
+  border-radius: 2px;
+  opacity: 0.6;
+}
+.mock-above__label {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  display: block;
+  margin-bottom: 4px;
+}
+.mock-above__title {
+  font-family: "Fraunces", "Times New Roman", serif;
+  font-variation-settings: "opsz" 72;
+  font-weight: 400;
+  font-size: 20px;
+  color: var(--ink);
+  margin: 0;
+}
+
+/* =====================================================================
+   Pertes par batch — section wrapper (mirrors .tanks-section)
+   ===================================================================== */
+.ppb-section {
+  width: 100%;
+  margin-bottom: 52px;
+}
+
+/* ── Section header ── */
+.ppb-section__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--hairline);
+  margin-bottom: 0;
+}
+
+.ppb-section__title-group {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex-wrap: wrap;
+}
+
+.ppb-section__title {
+  font-family: "Fraunces", "Times New Roman", serif;
+  font-variation-settings: "opsz" 72;
+  font-weight: 400;
+  font-size: 20px;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  margin: 0;
+  line-height: 1.2;
+}
+
+/* Tag chip — mirrors .tanks-section__tag */
+.ppb-section__tag {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--hop);
+  vertical-align: middle;
+  margin-left: 8px;
+  padding: 2px 7px;
+  border: 1px solid color-mix(in srgb, var(--hop) 34%, transparent);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--hop) 10%, transparent);
+}
+
+/* Header right: toggle + settings link */
+.ppb-section__controls {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-shrink: 0;
+}
+
+.ppb-section__toggle {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  background: none;
+  border: 1px solid var(--hairline-2);
+  border-radius: 2px;
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: color .15s, border-color .15s;
+}
+.ppb-section__toggle:hover {
+  color: var(--hop);
+  border-color: var(--hop-deep);
+}
+
+.ppb-section__config-link {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--oak);
+  text-decoration: none;
+  transition: color .15s;
+}
+.ppb-section__config-link:hover {
+  color: var(--oak-deep);
+  text-decoration: underline;
+}
+
+/* ── Table wrap ── */
+.ppb-wrap {
+  overflow-x: auto;
+  margin-top: 0;
+  -webkit-overflow-scrolling: touch;
+}
+
+.ppb-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+}
+
+/* Caption */
+.ppb-caption {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  text-align: left;
+  padding: 14px 0 10px;
+}
+
+/* Column headers */
+.ppb-th {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  padding: 10px 14px;
+  border-top: 1px solid var(--hairline-2);
+  border-bottom: 1px solid var(--hairline-2);
+  white-space: nowrap;
+  text-align: left;
+}
+
+.ppb-th--pct,
+.ppb-th--n {
+  text-align: right;
+}
+
+/* Column header groups */
+.ppb-th-group {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  padding: 6px 14px 0;
+  text-align: center;
+  border-top: 1px solid var(--hairline-2);
+}
+
+/* Separator column */
+.ppb-th--sep {
+  width: 1px;
+  padding: 0 6px;
+  border-left: 1px solid var(--hairline);
+  border-top: 1px solid var(--hairline-2);
+  border-bottom: 1px solid var(--hairline-2);
+}
+
+/* ── Data rows ── */
+.ppb-row {
+  border-bottom: 1px solid var(--hairline);
+  transition: background .12s;
+}
+
+.ppb-row:hover > .ppb-td {
+  background: color-mix(in srgb, var(--rack) 6%, transparent);
+}
+
+/* Incomplete batch rows — slightly muted but still present */
+.ppb-row--incomplete {
+  opacity: 0.78;
+}
+.ppb-row--incomplete:hover > .ppb-td {
+  background: color-mix(in srgb, var(--steel-mid) 5%, transparent);
+  opacity: 1;
+}
+
+/* Data cells */
+.ppb-td {
+  padding: 11px 14px;
+  vertical-align: middle;
+  white-space: nowrap;
+  transition: background .12s;
+}
+
+.ppb-td--sep {
+  width: 1px;
+  padding: 0 6px;
+  border-left: 1px solid var(--hairline);
+}
+
+/* Beer + batch identity cell */
+.ppb-td--batch {
+  min-width: 160px;
+}
+
+.ppb-batch__beer {
+  font-family: "Fraunces", "Times New Roman", serif;
+  font-variation-settings: "opsz" 72;
+  font-weight: 400;
+  font-size: 15px;
+  color: var(--ink);
+  display: block;
+  line-height: 1.2;
+}
+
+.ppb-batch__meta {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+  color: var(--ink-mute);
+  letter-spacing: 0.04em;
+  display: block;
+  margin-top: 2px;
+}
+
+/* Percentage cells — right-aligned monospace */
+.ppb-td--pct {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 12px;
+  text-align: right;
+  color: var(--ink-soft);
+  min-width: 82px;
+}
+
+/* NULL / empty cell */
+.ppb-pct--null {
+  color: var(--ink-faint);
+  font-style: italic;
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-size: 11px;
+}
+
+/* Flagged cell — soft ember wash, never full alarm */
+.ppb-td--flagged {
+  background: color-mix(in srgb, var(--ember) 8%, transparent);
+  color: var(--ember);
+  font-weight: 500;
+}
+
+/* Bonus cell — positive yield, never red */
+.ppb-td--bonus {
+  color: var(--ok);
+  font-weight: 500;
+}
+
+/* Oddity cell — data anomaly (e.g. negative total) */
+.ppb-td--oddity {
+  color: var(--cold);
+}
+
+/* Muted total cells for incomplete batches */
+.ppb-td--muted {
+  color: var(--ink-faint);
+}
+
+/* Flag badge pill */
+.ppb-flag {
+  display: inline-block;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 8.5px;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  border-radius: 2px;
+  padding: 2px 5px;
+  margin-left: 5px;
+  vertical-align: middle;
+  line-height: 1.5;
+}
+
+.ppb-flag--warn {
+  background: color-mix(in srgb, var(--ember) 14%, transparent);
+  color: var(--ember);
+  border: 1px solid color-mix(in srgb, var(--ember) 30%, transparent);
+}
+
+.ppb-flag--bonus {
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+  color: var(--ok);
+  border: 1px solid color-mix(in srgb, var(--ok) 30%, transparent);
+}
+
+.ppb-flag--oddity {
+  background: color-mix(in srgb, var(--cold) 14%, transparent);
+  color: var(--cold);
+  border: 1px solid color-mix(in srgb, var(--cold) 28%, transparent);
+}
+
+.ppb-flag--progress {
+  background: color-mix(in srgb, var(--ink-faint) 20%, transparent);
+  color: var(--ink-mute);
+  border: 1px solid var(--hairline);
+}
+
+/* Unit suffix */
+.ppb-unit {
+  font-size: 10px;
+  color: var(--ink-faint);
+  margin-left: 1px;
+}
+
+/* ── Drill-in expanded panel ── */
+
+/* Trigger cell — the batch identity cell is the expand handle */
+.ppb-td--expand {
+  cursor: pointer;
+  user-select: none;
+}
+
+.ppb-td--expand:focus-visible {
+  outline: 2px solid var(--hop);
+  outline-offset: -2px;
+}
+
+/* Expand chevron */
+.ppb-chevron {
+  display: inline-block;
+  font-size: 9px;
+  color: var(--ink-faint);
+  margin-right: 6px;
+  transition: transform .15s, color .15s;
+  vertical-align: middle;
+  position: relative;
+  top: -1px;
+}
+
+details.ppb-row-wrap[open] .ppb-chevron {
+  transform: rotate(90deg);
+  color: var(--oak);
+}
+
+/* Details element wraps the data-row tr + the drill-in tr as a tbody */
+details.ppb-row-wrap {
+  display: contents;
+}
+
+details.ppb-row-wrap summary {
+  display: contents;
+  list-style: none;
+}
+details.ppb-row-wrap summary::-webkit-details-marker { display: none; }
+
+/* Drill-in row */
+.ppb-drillrow {
+  border-bottom: 1px solid var(--hairline);
+}
+
+.ppb-drillrow > td {
+  padding: 0;
+}
+
+.ppb-drill-panel {
+  display: none;
+  background: var(--bg-elev);
+  border-top: 1px solid var(--hairline);
+  border-left: 3px solid var(--oak);
+  padding: 16px 22px 18px;
+}
+
+details.ppb-row-wrap[open] .ppb-drill-panel {
+  display: block;
+}
+
+.ppb-drill-title {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  margin: 0 0 10px;
+}
+
+.ppb-drill-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px 20px;
+}
+
+.ppb-drill-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ppb-drill-item__label {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+.ppb-drill-item__value {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ink);
+  letter-spacing: 0.01em;
+}
+
+.ppb-drill-item__value--note {
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--ink-soft);
+  font-style: italic;
+  letter-spacing: 0;
+}
+
+.ppb-drill-item__value--surplus {
+  color: var(--ok);
+}
+
+.ppb-drill-item__value--warn {
+  color: var(--ember);
+}
+
+/* ── Empty state ── */
+.ppb-empty {
+  font-family: "Fraunces", serif;
+  font-style: italic;
+  font-size: 15px;
+  color: var(--ink-mute);
+  padding: 32px 0;
+  margin: 0;
+}
+
+/* ── Responsive ── */
+@media (max-width: 880px) {
+  body { padding: 32px 20px 48px; }
+}
+
+@media (max-width: 640px) {
+  /* Hide total columns, keep stage losses readable */
+  .ppb-th--total-eff,
+  .ppb-td--total-eff,
+  .ppb-th--sep-total,
+  .ppb-td--sep-total { display: none; }
+}
+</style>
+</head>
+
+<body>
+<div class="tanks-main-mock">
+
+  <!-- ── Context placeholder: shows what sits ABOVE this section on Tank Board ── -->
+  <div class="mock-above">
+    <span class="mock-above__label">Section existante (ci-dessus)</span>
+    <h2 class="mock-above__title">Transferts par bière <span style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:var(--hop);margin-left:8px;padding:2px 7px;border:1px solid color-mix(in srgb,var(--hop) 34%,transparent);border-radius:2px;background:color-mix(in srgb,var(--hop) 10%,transparent);vertical-align:middle;">Rack</span></h2>
+  </div>
+
+  <!-- ================================================================
+       Pertes par batch — new section, sits directly under rack-stats
+  ================================================================ -->
+  <section class="ppb-section" aria-label="Pertes par batch">
+
+    <!-- Section header -->
+    <div class="ppb-section__head">
+      <div class="ppb-section__title-group">
+        <h2 class="ppb-section__title">
+          Pertes par batch
+          <span class="ppb-section__tag">Rendement</span>
+        </h2>
+      </div>
+      <div class="ppb-section__controls">
+        <button class="ppb-section__toggle" type="button" aria-label="Afficher tous les batches">
+          Tous les batches
+        </button>
+        <a class="ppb-section__config-link" href="?sec=pertes" title="Modifier les seuils dans Salle de Contrôle">
+          Seuils ↗
+        </a>
+      </div>
+    </div><!-- /.ppb-section__head -->
+
+    <div class="ppb-wrap">
+      <table class="ppb-table" aria-label="Pertes de brassage par batch · 20 derniers batchs complets">
+        <caption class="ppb-caption">20 derniers batchs complets · seuils : brassage 5 % · soutirage 2 % · conditionnement 1 %</caption>
+
+        <colgroup>
+          <col><!-- batch identity -->
+          <!-- stage losses -->
+          <col><!-- brewing -->
+          <col><!-- rack -->
+          <col><!-- packaging -->
+          <!-- separator -->
+          <col style="width:1px">
+          <!-- total losses -->
+          <col><!-- vs effectif -->
+          <col><!-- vs nominal -->
+        </colgroup>
+
+        <thead>
+          <!-- Column group labels -->
+          <tr>
+            <th class="ppb-th-group" scope="colgroup" style="text-align:left; border-top:1px solid var(--hairline-2);"></th>
+            <th class="ppb-th-group" scope="colgroup" colspan="3" style="border-top:1px solid var(--hairline-2);">Pertes par étape</th>
+            <th class="ppb-th--sep" rowspan="2" aria-hidden="true"></th>
+            <th class="ppb-th-group" scope="colgroup" colspan="2" style="border-top:1px solid var(--hairline-2);">Perte totale</th>
+          </tr>
+          <!-- Column headers -->
+          <tr>
+            <th scope="col" class="ppb-th">Batch</th>
+            <th scope="col" class="ppb-th ppb-th--pct">Brassage</th>
+            <th scope="col" class="ppb-th ppb-th--pct">Soutirage</th>
+            <th scope="col" class="ppb-th ppb-th--pct">Cond.</th>
+            <!-- sep already spans 2 rows -->
+            <th scope="col" class="ppb-th ppb-th--pct ppb-th--total-eff">Vs effectif</th>
+            <th scope="col" class="ppb-th ppb-th--pct">Vs nominal</th>
+          </tr>
+        </thead>
+
+        <tbody>
+
+          <!-- ────────────────────────────────────────────────────────
+               ROW 1 — Healthy batch: all within thresholds
+          ──────────────────────────────────────────────────────────── -->
+          <details class="ppb-row-wrap" open>
+            <summary>
+              <tr class="ppb-row" role="row">
+                <td class="ppb-td ppb-td--batch ppb-td--expand" tabindex="0"
+                    aria-expanded="true"
+                    title="Développer les volumes bruts">
+                  <span class="ppb-chevron">▶</span>
+                  <span class="ppb-batch__beer">Embuscade</span>
+                  <span class="ppb-batch__meta">b72 · 14 mai 2026</span>
+                </td>
+                <td class="ppb-td ppb-td--pct">3.4<span class="ppb-unit"> %</span></td>
+                <td class="ppb-td ppb-td--pct">1.1<span class="ppb-unit"> %</span></td>
+                <td class="ppb-td ppb-td--pct">0.6<span class="ppb-unit"> %</span></td>
+                <td class="ppb-td ppb-td--sep ppb-td--sep-total" aria-hidden="true"></td>
+                <td class="ppb-td ppb-td--pct ppb-td--total-eff">5.1<span class="ppb-unit"> %</span></td>
+                <td class="ppb-td ppb-td--pct">5.1<span class="ppb-unit"> %</span></td>
+              </tr>
+            </summary>
+            <tr class="ppb-drillrow">
+              <td colspan="7">
+                <div class="ppb-drill-panel">
+                  <p class="ppb-drill-title">Volumes bruts · Embuscade b72</p>
+                  <div class="ppb-drill-grid">
+                    <div class="ppb-drill-item">
+                      <span class="ppb-drill-item__label">Sortie cuve (effectif)</span>
+                      <span class="ppb-drill-item__value">32.4 <small style="font-size:11px;color:var(--ink-mute);">HL</small></span>
+                    </div>
+                    <div class="ppb-drill-item">
+                      <span class="ppb-drill-item__label">Nominal (base)</span>
+                      <span class="ppb-drill-item__value">32.4 <small style="font-size:11px;color:var(--ink-mute);">HL</small></span>
+                    </div>
+                    <div class="ppb-drill-item">
+                      <span class="ppb-drill-item__label">Conditionné</span>
+                      <span class="ppb-drill-item__value">30.7 <small style="font-size:11px;color:var(--ink-mute);">HL</small></span>
+                    </div>
+                    <div class="ppb-drill-item">
+                      <span class="ppb-drill-item__label">Événements conditionnement</span>
+                      <span class="ppb-drill-item__value">2</span>
+                    </div>
+                    <div class="ppb-drill-item" style="grid-column: span 2;">
+                      <span class="ppb-drill-item__label">Base nominale</span>
+                      <span class="ppb-drill-item__value ppb-drill-item__value--note">Recette Embuscade · 32.4 HL cible</span>
+                    </div>
+                  </div>
+                </div>
+              </td>
+            </tr>
+          </details>
+
+          <!-- ────────────────────────────────────────────────────────
+               ROW 2 — Yield bonus: negative brewing loss (good news)
+          ──────────────────────────────────────────────────────────── -->
+          <details class="ppb-row-wrap">
+            <summary>
+              <tr class="ppb-row" role="row">
+                <td class="ppb-td ppb-td--batch ppb-td--expand" tabindex="0"
+                    aria-expanded="false"
+                    title="Développer les volumes bruts">
+                  <span class="ppb-chevron">▶</span>
+                  <span class="ppb-batch__beer">Zepp</span>
+                  <span class="ppb-batch__meta">b68 · 7 avr. 2026</span>
+                </td>
+                <!-- Negative brewing loss = yield bonus, rendered in --ok -->
+                <td class="ppb-td ppb-td--pct ppb-td--bonus">
+                  −1.8<span class="ppb-unit"> %</span>
+                  <span class="ppb-flag ppb-flag--bonus">+Rendement</span>
+                </td>
+                <td class="ppb-td ppb-td--pct">1.6<span class="ppb-unit"> %</span></td>
+                <td class="ppb-td ppb-td--pct">0.7<span class="ppb-unit"> %</span></td>
+                <td class="ppb-td ppb-td--sep ppb-td--sep-total" aria-hidden="true"></td>
+                <!-- Total vs effectif: negative bonus propagates, but total stays in normal range -->
+                <td class="ppb-td ppb-td--pct ppb-td--total-eff ppb-td--bonus">
+                  0.5<span class="ppb-unit"> %</span>
+                </td>
+                <td class="ppb-td ppb-td--pct ppb-td--bonus">
+                  −1.1<span class="ppb-unit"> %</span>
+                  <span class="ppb-flag ppb-flag--bonus">+Rendement</span>
+                </td>
+              </tr>
+            </summary>
+            <tr class="ppb-drillrow">
+              <td colspan="7">
+                <div class="ppb-drill-panel">
+                  <p class="ppb-drill-title">Volumes bruts · Zepp b68</p>
+                  <div class="ppb-drill-grid">
+                    <div class="ppb-drill-item">
+                      <span class="ppb-drill-item__label">Sortie cuve (effectif)</span>
+                      <span class="ppb-drill-item__value ppb-drill-item__value--surplus">34.1 <small style="font-size:11px;color:var(--ok);">HL ↑</small></span>
+                    </div>
+                    <div class="ppb-drill-item">
+                      <span class="ppb-drill-item__label">Nominal (base)</span>
+                      <span class="ppb-drill-item__value">33.5 <small style="font-size:11px;color:var(--ink-mute);">HL</small></span>
+                    </div>
+                    <div class="ppb-drill-item">
+                      <span class="ppb-drill-item__label">Conditionné</span>
+                      <span class="ppb-drill-item__value">33.9 <small style="font-size:11px;color:var(--ink-mute);">HL</small></span>
+                    </div>
+                    <div class="ppb-drill-item">
+                      <span class="ppb-drill-item__label">Événements conditionnement</span>
+                      <span class="ppb-drill-item__value">3</span>
+                    </div>
+                    <div class="ppb-drill-item" style="grid-column: span 2;">
+                      <span class="ppb-drill-item__label">Base nominale</span>
+                      <span class="ppb-drill-item__value ppb-drill-item__value--note">Recette Zepp Standard · 33.5 HL cible</span>
+                    </div>
+                  </div>
+                </div>
+              </td>
+            </tr>
+          </details>
+
+          <!-- ────────────────────────────────────────────────────────
+               ROW 3 — Flagged batch: rack + total both over threshold
+          ──────────────────────────────────────────────────────────── -->
+          <details class="ppb-row-wrap">
+            <summary>
+              <tr class="ppb-row" role="row">
+                <td class="ppb-td ppb-td--batch ppb-td--expand" tabindex="0"
+                    aria-expanded="false"
+                    title="Développer les volumes bruts">
+                  <span class="ppb-chevron">▶</span>
+                  <span class="ppb-batch__beer">Moonshine</span>
+                  <span class="ppb-batch__meta">b61 · 12 fév. 2026</span>
+                </td>
+                <td class="ppb-td ppb-td--pct">4.8<span class="ppb-unit"> %</span></td>
+                <!-- Rack exceeds 2% threshold -->
+                <td class="ppb-td ppb-td--pct ppb-td--flagged">
+                  3.4<span class="ppb-unit"> %</span>
+                  <span class="ppb-flag ppb-flag--warn">Seuil</span>
+                </td>
+                <td class="ppb-td ppb-td--pct">0.9<span class="ppb-unit"> %</span></td>
+                <td class="ppb-td ppb-td--sep ppb-td--sep-total" aria-hidden="true"></td>
+                <!-- Total vs effectif flagged (>18%) -->
+                <td class="ppb-td ppb-td--pct ppb-td--total-eff ppb-td--flagged">
+                  9.1<span class="ppb-unit"> %</span>
+                </td>
+                <!-- Total vs nominal flagged (>10%) -->
+                <td class="ppb-td ppb-td--pct ppb-td--flagged">
+                  9.1<span class="ppb-unit"> %</span>
+                  <span class="ppb-flag ppb-flag--warn">Seuil</span>
+                </td>
+              </tr>
+            </summary>
+            <tr class="ppb-drillrow">
+              <td colspan="7">
+                <div class="ppb-drill-panel">
+                  <p class="ppb-drill-title">Volumes bruts · Moonshine b61</p>
+                  <div class="ppb-drill-grid">
+                    <div class="ppb-drill-item">
+                      <span class="ppb-drill-item__label">Sortie cuve (effectif)</span>
+                      <span class="ppb-drill-item__value">28.8 <small style="font-size:11px;color:var(--ink-mute);">HL</small></span>
+                    </div>
+                    <div class="ppb-drill-item">
+                      <span class="ppb-drill-item__label">Nominal (base)</span>
+                      <span class="ppb-drill-item__value ppb-drill-item__value--warn">31.6 <small style="font-size:11px;color:var(--ember);">HL</small></span>
+                    </div>
+                    <div class="ppb-drill-item">
+                      <span class="ppb-drill-item__label">Conditionné</span>
+                      <span class="ppb-drill-item__value">28.5 <small style="font-size:11px;color:var(--ink-mute);">HL</small></span>
+                    </div>
+                    <div class="ppb-drill-item">
+                      <span class="ppb-drill-item__label">Événements conditionnement</span>
+                      <span class="ppb-drill-item__value">2</span>
+                    </div>
+                    <div class="ppb-drill-item" style="grid-column: span 2;">
+                      <span class="ppb-drill-item__label">Base nominale</span>
+                      <span class="ppb-drill-item__value ppb-drill-item__value--note">Recette Moonshine 15°P · 31.6 HL cible</span>
+                    </div>
+                  </div>
+                </div>
+              </td>
+            </tr>
+          </details>
+
+          <!-- ────────────────────────────────────────────────────────
+               ROW 4 — Double Oat b64 surplus oddity:
+                        packaged > cast_out (conditionné > effectif)
+                        → negative total loss, treated as data oddity
+          ──────────────────────────────────────────────────────────── -->
+          <details class="ppb-row-wrap">
+            <summary>
+              <tr class="ppb-row" role="row">
+                <td class="ppb-td ppb-td--batch ppb-td--expand" tabindex="0"
+                    aria-expanded="false"
+                    title="Développer les volumes bruts">
+                  <span class="ppb-chevron">▶</span>
+                  <span class="ppb-batch__beer" style="font-style:italic;">Double Oat</span>
+                  <span class="ppb-batch__meta">b64 · 3 mar. 2026</span>
+                </td>
+                <td class="ppb-td ppb-td--pct">2.1<span class="ppb-unit"> %</span></td>
+                <td class="ppb-td ppb-td--pct">1.4<span class="ppb-unit"> %</span></td>
+                <!-- Packaging "negative" — packaged > cast_out due to blended-BBT -->
+                <td class="ppb-td ppb-td--pct ppb-td--oddity">
+                  −4.2<span class="ppb-unit"> %</span>
+                  <span class="ppb-flag ppb-flag--oddity">Données</span>
+                </td>
+                <td class="ppb-td ppb-td--sep ppb-td--sep-total" aria-hidden="true"></td>
+                <!-- Total negative = data oddity, muted blue, not red -->
+                <td class="ppb-td ppb-td--pct ppb-td--total-eff ppb-td--oddity">
+                  −0.7<span class="ppb-unit"> %</span>
+                  <span class="ppb-flag ppb-flag--oddity">Données</span>
+                </td>
+                <td class="ppb-td ppb-td--pct ppb-td--oddity">
+                  −0.7<span class="ppb-unit"> %</span>
+                </td>
+              </tr>
+            </summary>
+            <tr class="ppb-drillrow">
+              <td colspan="7">
+                <div class="ppb-drill-panel">
+                  <p class="ppb-drill-title">Volumes bruts · Double Oat b64 — <span style="color:var(--cold)">anomalie : conditionné &gt; sortie cuve</span></p>
+                  <div class="ppb-drill-grid">
+                    <div class="ppb-drill-item">
+                      <span class="ppb-drill-item__label">Sortie cuve (effectif)</span>
+                      <span class="ppb-drill-item__value">30.4 <small style="font-size:11px;color:var(--ink-mute);">HL</small></span>
+                    </div>
+                    <div class="ppb-drill-item">
+                      <span class="ppb-drill-item__label">Nominal (base)</span>
+                      <span class="ppb-drill-item__value">30.4 <small style="font-size:11px;color:var(--ink-mute);">HL</small></span>
+                    </div>
+                    <div class="ppb-drill-item">
+                      <span class="ppb-drill-item__label">Conditionné</span>
+                      <span class="ppb-drill-item__value ppb-drill-item__value--surplus">31.7 <small style="font-size:11px;color:var(--cold);">HL ↑ surplus BBT</small></span>
+                    </div>
+                    <div class="ppb-drill-item">
+                      <span class="ppb-drill-item__label">Événements conditionnement</span>
+                      <span class="ppb-drill-item__value">4</span>
+                    </div>
+                    <div class="ppb-drill-item" style="grid-column: span 2;">
+                      <span class="ppb-drill-item__label">Base nominale</span>
+                      <span class="ppb-drill-item__value ppb-drill-item__value--note">Recette Double Oat · mélange BBT-12 + BBT-14 — attribution à vérifier</span>
+                    </div>
+                  </div>
+                </div>
+              </td>
+            </tr>
+          </details>
+
+          <!-- ────────────────────────────────────────────────────────
+               ROW 5 — Incomplete batch: packaging not yet done
+                        Total columns muted, no flag badges on totals
+          ──────────────────────────────────────────────────────────── -->
+          <details class="ppb-row-wrap">
+            <summary>
+              <tr class="ppb-row ppb-row--incomplete" role="row">
+                <td class="ppb-td ppb-td--batch ppb-td--expand" tabindex="0"
+                    aria-expanded="false"
+                    title="Développer les volumes bruts">
+                  <span class="ppb-chevron">▶</span>
+                  <span class="ppb-batch__beer">Stirling</span>
+                  <span class="ppb-batch__meta">b75 · 22 mai 2026</span>
+                </td>
+                <td class="ppb-td ppb-td--pct">3.9<span class="ppb-unit"> %</span></td>
+                <td class="ppb-td ppb-td--pct">1.8<span class="ppb-unit"> %</span></td>
+                <!-- No packaging yet — NULL -->
+                <td class="ppb-td ppb-td--pct">
+                  <span class="ppb-pct--null">—</span>
+                </td>
+                <td class="ppb-td ppb-td--sep ppb-td--sep-total" aria-hidden="true"></td>
+                <!-- Total muted + "En cours" chip, no flag -->
+                <td class="ppb-td ppb-td--pct ppb-td--total-eff ppb-td--muted">
+                  5.7<span class="ppb-unit"> %</span>
+                  <span class="ppb-flag ppb-flag--progress">En cours</span>
+                </td>
+                <td class="ppb-td ppb-td--pct ppb-td--muted">
+                  5.7<span class="ppb-unit"> %</span>
+                  <span class="ppb-flag ppb-flag--progress">En cours</span>
+                </td>
+              </tr>
+            </summary>
+            <tr class="ppb-drillrow">
+              <td colspan="7">
+                <div class="ppb-drill-panel">
+                  <p class="ppb-drill-title">Volumes bruts · Stirling b75 — <span style="color:var(--ink-mute)">conditionnement non encore effectué</span></p>
+                  <div class="ppb-drill-grid">
+                    <div class="ppb-drill-item">
+                      <span class="ppb-drill-item__label">Sortie cuve (effectif)</span>
+                      <span class="ppb-drill-item__value">31.2 <small style="font-size:11px;color:var(--ink-mute);">HL</small></span>
+                    </div>
+                    <div class="ppb-drill-item">
+                      <span class="ppb-drill-item__label">Nominal (base)</span>
+                      <span class="ppb-drill-item__value">31.2 <small style="font-size:11px;color:var(--ink-mute);">HL</small></span>
+                    </div>
+                    <div class="ppb-drill-item">
+                      <span class="ppb-drill-item__label">Conditionné</span>
+                      <span class="ppb-drill-item__value" style="color:var(--ink-faint);">—</span>
+                    </div>
+                    <div class="ppb-drill-item">
+                      <span class="ppb-drill-item__label">Événements conditionnement</span>
+                      <span class="ppb-drill-item__value" style="color:var(--ink-faint);">0</span>
+                    </div>
+                    <div class="ppb-drill-item" style="grid-column: span 2;">
+                      <span class="ppb-drill-item__label">Base nominale</span>
+                      <span class="ppb-drill-item__value ppb-drill-item__value--note">Recette Stirling · 31.5 HL cible</span>
+                    </div>
+                  </div>
+                </div>
+              </td>
+            </tr>
+          </details>
+
+          <!-- ────────────────────────────────────────────────────────
+               ROW 6 — Healthy, compact row (no drill open by default)
+          ──────────────────────────────────────────────────────────── -->
+          <details class="ppb-row-wrap">
+            <summary>
+              <tr class="ppb-row" role="row">
+                <td class="ppb-td ppb-td--batch ppb-td--expand" tabindex="0"
+                    aria-expanded="false"
+                    title="Développer les volumes bruts">
+                  <span class="ppb-chevron">▶</span>
+                  <span class="ppb-batch__beer">Speakeasy</span>
+                  <span class="ppb-batch__meta">b69 · 20 avr. 2026</span>
+                </td>
+                <td class="ppb-td ppb-td--pct">4.2<span class="ppb-unit"> %</span></td>
+                <td class="ppb-td ppb-td--pct">1.5<span class="ppb-unit"> %</span></td>
+                <td class="ppb-td ppb-td--pct">0.8<span class="ppb-unit"> %</span></td>
+                <td class="ppb-td ppb-td--sep ppb-td--sep-total" aria-hidden="true"></td>
+                <td class="ppb-td ppb-td--pct ppb-td--total-eff">6.5<span class="ppb-unit"> %</span></td>
+                <td class="ppb-td ppb-td--pct">6.5<span class="ppb-unit"> %</span></td>
+              </tr>
+            </summary>
+            <tr class="ppb-drillrow">
+              <td colspan="7">
+                <div class="ppb-drill-panel">
+                  <p class="ppb-drill-title">Volumes bruts · Speakeasy b69</p>
+                  <div class="ppb-drill-grid">
+                    <div class="ppb-drill-item">
+                      <span class="ppb-drill-item__label">Sortie cuve (effectif)</span>
+                      <span class="ppb-drill-item__value">32.8 <small style="font-size:11px;color:var(--ink-mute);">HL</small></span>
+                    </div>
+                    <div class="ppb-drill-item">
+                      <span class="ppb-drill-item__label">Nominal (base)</span>
+                      <span class="ppb-drill-item__value">32.8 <small style="font-size:11px;color:var(--ink-mute);">HL</small></span>
+                    </div>
+                    <div class="ppb-drill-item">
+                      <span class="ppb-drill-item__label">Conditionné</span>
+                      <span class="ppb-drill-item__value">32.5 <small style="font-size:11px;color:var(--ink-mute);">HL</small></span>
+                    </div>
+                    <div class="ppb-drill-item">
+                      <span class="ppb-drill-item__label">Événements conditionnement</span>
+                      <span class="ppb-drill-item__value">2</span>
+                    </div>
+                    <div class="ppb-drill-item" style="grid-column: span 2;">
+                      <span class="ppb-drill-item__label">Base nominale</span>
+                      <span class="ppb-drill-item__value ppb-drill-item__value--note">Recette Speakeasy · 33.0 HL cible</span>
+                    </div>
+                  </div>
+                </div>
+              </td>
+            </tr>
+          </details>
+
+        </tbody>
+      </table>
+    </div><!-- /.ppb-wrap -->
+
+  </section><!-- /.ppb-section -->
+
+</div><!-- /.tanks-main-mock -->
+</body>
+</html>
