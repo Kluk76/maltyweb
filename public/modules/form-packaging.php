@@ -74,6 +74,165 @@ const FORMAT_SUFFIXES = [
     'CU'  => 'CU (single can)',
 ];
 
+// ── SKU resolution ────────────────────────────────────────────────────────────
+/**
+ * Resolves sku_id_fk for a packaging row at form-submit time.
+ *
+ * Mirrors the Python ingest's three-layer SKU resolution:
+ *   1. Literal raw SKU text (neb_beer / contract_beer) → ref_skus.sku_code.
+ *      This is the primary path for all normal and white-label rows because
+ *      the form field already carries the SKU code as entered by the operator.
+ *   2. When $isWhiteLabel && $whiteLabelSkuCode is set (future explicit WL path):
+ *      explicit literal lookup before falling through — same mechanism, earlier check.
+ *   3. (recipe_id, format_code) JOIN: fallback when literal lookup found nothing
+ *      and format_suffix is non-empty. NULL/empty suffix is skipped (mirrors Python:
+ *      `sku_map.get((recipe_id, format_suffix))` only when format_suffix is not None).
+ *
+ * Static array caches both lookup paths within a single POST so repeated
+ * (recipe_id, format_code) pairs across parallel rows hit MySQL only once.
+ */
+function resolve_packaging_sku_id(
+    PDO $pdo,
+    ?string $rawSkuText,
+    ?int $recipeIdFk,
+    ?string $formatSuffix,
+    bool $isWhiteLabel,
+    ?string $whiteLabelSkuCode = null
+): ?int {
+    static $codeCache  = [];   // UPPER(sku_code) → id
+    static $recipeCache = [];  // "{recipe_id}:{format_code}" → id
+
+    // Step 1: explicit white-label SKU code (future path — form doesn't yet collect this,
+    // but the helper accepts it so the function signature is complete).
+    if ($isWhiteLabel && $whiteLabelSkuCode !== null && $whiteLabelSkuCode !== '') {
+        $key = strtoupper($whiteLabelSkuCode);
+        if (!array_key_exists($key, $codeCache)) {
+            $st = $pdo->prepare(
+                'SELECT id FROM ref_skus WHERE UPPER(sku_code) = ? LIMIT 1'
+            );
+            $st->execute([$key]);
+            $codeCache[$key] = ($row = $st->fetchColumn()) !== false ? (int)$row : null;
+        }
+        if ($codeCache[$key] !== null) return $codeCache[$key];
+    }
+
+    // Step 2: literal raw SKU text (neb_beer / contract_beer IS the SKU code in this form).
+    if ($rawSkuText !== null && $rawSkuText !== '') {
+        $key = strtoupper($rawSkuText);
+        if (!array_key_exists($key, $codeCache)) {
+            $st = $pdo->prepare(
+                'SELECT id FROM ref_skus WHERE UPPER(sku_code) = ? LIMIT 1'
+            );
+            $st->execute([$key]);
+            $codeCache[$key] = ($row = $st->fetchColumn()) !== false ? (int)$row : null;
+        }
+        if ($codeCache[$key] !== null) return $codeCache[$key];
+    }
+
+    // Step 3: (recipe_id, format_code) JOIN — only when both are present.
+    // NULL/empty format_suffix means no-suffix rows (BU/F/V/CU/33C via literal text only).
+    if ($recipeIdFk !== null && $formatSuffix !== null && $formatSuffix !== '') {
+        $cacheKey = "{$recipeIdFk}:{$formatSuffix}";
+        if (!array_key_exists($cacheKey, $recipeCache)) {
+            $st = $pdo->prepare(
+                'SELECT s.id
+                   FROM ref_skus s
+                   JOIN ref_packaging_formats f ON f.id = s.format_id
+                  WHERE s.recipe_id = ?
+                    AND f.format_code = ?
+                    AND s.is_active = 1
+                  LIMIT 1'
+            );
+            $st->execute([$recipeIdFk, $formatSuffix]);
+            $recipeCache[$cacheKey] = ($row = $st->fetchColumn()) !== false ? (int)$row : null;
+        }
+        if ($recipeCache[$cacheKey] !== null) return $recipeCache[$cacheKey];
+    }
+
+    return null;
+}
+
+// ── vendable_hl compute ───────────────────────────────────────────────────────
+/**
+ * Computes vendable_hl server-side, mirroring v_bd_packaging_v2_vendable (mig 203).
+ *
+ * Formula (verbatim from migration 203 view):
+ *   vendable_units = prod_total + CASE echo_guard THEN 0 ELSE special END
+ *                  - qa_analyses - qa_library - unsaleable
+ *                  - loss_4pack_btl - loss_4pack_can - loss_wrap_btl - loss_wrap_can
+ *                  - loss_label_btl - loss_keg_collar - loss_crown_cork - loss_can_lid
+ *                  - loss_keg_save - loss_container_btl - loss_container_can
+ *   vendable_hl   = (vendable_units / units_per_pack) * hl_per_unit
+ *                 - loss_liquid_other_units / 100
+ *
+ * bcmath scale=6 throughout; final result rounded to DECIMAL(8,3).
+ * Returns null when hl_per_unit or units_per_pack is null/≤0 (cannot compute).
+ *
+ * $row: the row array as built by the format loop (same keys as bd_packaging_v2).
+ * $skuMeta: ['hl_per_unit' => string|null, 'units_per_pack' => string|null]
+ */
+function compute_packaging_vendable_hl(array $row, array $skuMeta): ?string
+{
+    $hlPerUnit    = $skuMeta['hl_per_unit']    ?? null;
+    $unitsPerPack = $skuMeta['units_per_pack'] ?? null;
+
+    if ($hlPerUnit === null || $unitsPerPack === null) return null;
+    if (bccomp((string)$unitsPerPack, '0', 6) <= 0) return null;
+
+    $scale = 6;
+    $zero  = '0';
+
+    // COALESCE(x, 0) helper
+    $c = static fn(?string $v): string => ($v !== null && $v !== '') ? (string)$v : $zero;
+
+    $prodTotal    = $c(isset($row['prod_total_units'])    ? (string)$row['prod_total_units']    : null);
+    $specialQty   = $c(isset($row['special_qty_units'])   ? (string)$row['special_qty_units']   : null);
+    $qaAnalyses   = $c(isset($row['qa_analyses_units'])   ? (string)$row['qa_analyses_units']   : null);
+    $qaLibrary    = $c(isset($row['qa_library_units'])    ? (string)$row['qa_library_units']    : null);
+    $unsaleable   = $c(isset($row['unsaleable_units'])    ? (string)$row['unsaleable_units']    : null);
+    $l4packBtl    = $c(isset($row['loss_4pack_btl_units'])    ? (string)$row['loss_4pack_btl_units']    : null);
+    $l4packCan    = $c(isset($row['loss_4pack_can_units'])    ? (string)$row['loss_4pack_can_units']    : null);
+    $lWrapBtl     = $c(isset($row['loss_wrap_btl_units'])     ? (string)$row['loss_wrap_btl_units']     : null);
+    $lWrapCan     = $c(isset($row['loss_wrap_can_units'])     ? (string)$row['loss_wrap_can_units']     : null);
+    $lLabelBtl    = $c(isset($row['loss_label_btl_units'])    ? (string)$row['loss_label_btl_units']    : null);
+    $lKegCollar   = $c(isset($row['loss_keg_collar_units'])   ? (string)$row['loss_keg_collar_units']   : null);
+    $lCrownCork   = $c(isset($row['loss_crown_cork_units'])   ? (string)$row['loss_crown_cork_units']   : null);
+    $lCanLid      = $c(isset($row['loss_can_lid_units'])      ? (string)$row['loss_can_lid_units']      : null);
+    $lKegSave     = $c(isset($row['loss_keg_save_units'])     ? (string)$row['loss_keg_save_units']     : null);
+    $lContBtl     = $c(isset($row['loss_container_btl_units']) ? (string)$row['loss_container_btl_units'] : null);
+    $lContCan     = $c(isset($row['loss_container_can_units']) ? (string)$row['loss_container_can_units'] : null);
+    $lLiquid      = $c(isset($row['loss_liquid_other_units']) ? (string)$row['loss_liquid_other_units'] : null);
+
+    // Echo-row guard: when special_qty_units = prod_total_units, special contributes 0.
+    $effectiveSpecial = (bccomp($specialQty, $prodTotal, $scale) === 0) ? $zero : $specialQty;
+
+    $vendableUnits = $prodTotal;
+    $vendableUnits = bcadd($vendableUnits, $effectiveSpecial, $scale);
+    $vendableUnits = bcsub($vendableUnits, $qaAnalyses,  $scale);
+    $vendableUnits = bcsub($vendableUnits, $qaLibrary,   $scale);
+    $vendableUnits = bcsub($vendableUnits, $unsaleable,  $scale);
+    $vendableUnits = bcsub($vendableUnits, $l4packBtl,   $scale);
+    $vendableUnits = bcsub($vendableUnits, $l4packCan,   $scale);
+    $vendableUnits = bcsub($vendableUnits, $lWrapBtl,    $scale);
+    $vendableUnits = bcsub($vendableUnits, $lWrapCan,    $scale);
+    $vendableUnits = bcsub($vendableUnits, $lLabelBtl,   $scale);
+    $vendableUnits = bcsub($vendableUnits, $lKegCollar,  $scale);
+    $vendableUnits = bcsub($vendableUnits, $lCrownCork,  $scale);
+    $vendableUnits = bcsub($vendableUnits, $lCanLid,     $scale);
+    $vendableUnits = bcsub($vendableUnits, $lKegSave,    $scale);
+    $vendableUnits = bcsub($vendableUnits, $lContBtl,    $scale);
+    $vendableUnits = bcsub($vendableUnits, $lContCan,    $scale);
+
+    // (vendable_units / units_per_pack) * hl_per_unit - loss_liquid_other_units/100
+    $perPack   = bcdiv($vendableUnits, (string)$unitsPerPack, $scale);
+    $hlGross   = bcmul($perPack, (string)$hlPerUnit, $scale);
+    $liqAdj    = bcdiv($lLiquid, '100', $scale);
+    $vendableHl = bcsub($hlGross, $liqAdj, $scale);
+
+    // Round to 3 decimals to match bd_packaging_v2.vendable_hl DECIMAL(8,3)
+    return number_format((float)$vendableHl, 3, '.', '');
+}
+
 // ── POST ──────────────────────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
@@ -167,11 +326,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // ── 3. Build submitted_at ───────────────────────────────────────────
         $submittedAt = date('Y-m-d H:i:s.u');
 
-        $auditTokens = ['web_entry', 'write_guard_active'];
-        if (!PACKAGING_WRITE_ENABLED) $auditTokens[] = 'draft_mode';
-        if ($qcFlag !== 'normal') $auditTokens[] = "qc_{$qcFlag}";
-        if ($horsProcessFlag === 1) $auditTokens[] = 'hors_process_override';
-        $auditFlags = implode(',', $auditTokens);
+        $baseAuditTokens = ['web_entry', 'write_guard_active'];
+        if (!PACKAGING_WRITE_ENABLED) $baseAuditTokens[] = 'draft_mode';
+        if ($qcFlag !== 'normal') $baseAuditTokens[] = "qc_{$qcFlag}";
+        if ($horsProcessFlag === 1) $baseAuditTokens[] = 'hors_process_override';
+
+        // Per-row audit tokens are built inside the format loop below.
+        // $baseAuditTokens is the session-level base; each row appends row-local tokens.
+
+        // Sku meta cache (hl_per_unit, units_per_pack) keyed by sku_id.
+        // Populated lazily inside the format loop; one SELECT per distinct sku_id.
+        $skuMetaCache = [];
 
         // ── 4. Parse multi-format rows (decision 8) ─────────────────────────
         // The form submits N format lines. Each has:
@@ -231,7 +396,75 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new RuntimeException("row_origin invalide pour le format #{$idx}.");
             }
 
-            // Row hash: include session identity + format-specific fields
+            // ── Server-side sku_id_fk resolution ─────────────────────────────
+            // Primary: literal neb_beer text → ref_skus.sku_code (mirrors Python ingest).
+            // Fallback: (recipe_id, format_suffix=format_code) JOIN when suffix is set.
+            // NULL/empty suffix rows rely on literal lookup only (no suffix = no (recipe,fmt) key).
+            $rawSkuText = ($nebBeer !== '') ? $nebBeer : (($contractBeer !== '') ? $contractBeer : null);
+            $skuIdFk    = resolve_packaging_sku_id(
+                $pdo,
+                $rawSkuText,
+                $recipeIdFk,
+                ($fSuffix !== '' && $fSuffix !== null) ? $fSuffix : null,
+                (bool)$isWhiteLabel,
+                null  // whiteLabelSkuCode: form doesn't collect this yet
+            );
+
+            // ── SKU meta (hl_per_unit, units_per_pack) ────────────────────────
+            // Loaded once per distinct sku_id within this POST (cached in $skuMetaCache).
+            $skuMeta = ['hl_per_unit' => null, 'units_per_pack' => null];
+            if ($skuIdFk !== null) {
+                if (!isset($skuMetaCache[$skuIdFk])) {
+                    $st = $pdo->prepare(
+                        'SELECT hl_per_unit, units_per_pack FROM ref_skus WHERE id = ? LIMIT 1'
+                    );
+                    $st->execute([$skuIdFk]);
+                    $skuMetaCache[$skuIdFk] = $st->fetch(PDO::FETCH_ASSOC) ?: ['hl_per_unit' => null, 'units_per_pack' => null];
+                }
+                $skuMeta = $skuMetaCache[$skuIdFk];
+            }
+
+            // ── vendable_hl: compute or accept operator override ──────────────
+            // Build the partial row now so compute_packaging_vendable_hl() can read it.
+            $partialRow = [
+                'prod_total_units'        => ($fOrigin === 'main') ? $fProdTotal : null,
+                'special_qty_units'       => ($fOrigin === 'parallel') ? $fQteUnites : null,
+                'qa_analyses_units'       => $fQaAnalyses,
+                'qa_library_units'        => $fQaLibrary,
+                'unsaleable_units'        => $fUnsaleable,
+                'loss_4pack_btl_units'    => $fLoss4packBtl,
+                'loss_4pack_can_units'    => $fLoss4packCan,
+                'loss_wrap_btl_units'     => $fLossWrapBtl,
+                'loss_wrap_can_units'     => $fLossWrapCan,
+                'loss_label_btl_units'    => $fLossLabelBtl,
+                'loss_keg_collar_units'   => $fLossKegCollar,
+                'loss_crown_cork_units'   => $fLossCrownCork,
+                'loss_can_lid_units'      => $fLossCanLid,
+                'loss_keg_save_units'     => $fLossKegSave,
+                'loss_container_btl_units'=> $fLossContBtl,
+                'loss_container_can_units'=> $fLossContCan,
+                'loss_liquid_other_units' => $fLossLiquid,
+            ];
+            $computedVendableHl = compute_packaging_vendable_hl($partialRow, $skuMeta);
+
+            // Per-row audit tokens (session base + row-local additions).
+            $rowAuditTokens = $baseAuditTokens;
+
+            if ($fVendableHl !== null) {
+                // Operator explicitly entered a value — honour it, flag for audit.
+                $finalVendableHl = $fVendableHl;
+                $rowAuditTokens[] = 'vendable_hl_operator_override';
+            } else {
+                $finalVendableHl = $computedVendableHl;
+            }
+
+            if ($skuIdFk === null && $fOrigin === 'main' && !(bool)$isWhiteLabel) {
+                // White-label rows may legitimately have no matching sku_code yet.
+                // Non-WL main rows with no sku_id are a real gap — flag for triage.
+                $rowAuditTokens[] = 'sku_unresolved';
+            }
+
+            // ── Row hash: include session identity + format-specific fields ───
             $hashCols = [
                 $nebBeer, $nebBatch,
                 $contractBeer, $contractBatch,
@@ -248,7 +481,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'row'    => [
                     'row_hash'               => $rowHash,
                     'row_origin'             => $fOrigin,
-                    'audit_flags'            => $auditFlags,
+                    'audit_flags'            => implode(',', $rowAuditTokens),
                     'submitted_at'           => $submittedAt,
                     'email'                  => $me['username'],
                     'event_date'             => $eventDate,
@@ -263,10 +496,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'recipe_id_fk'           => $recipeIdFk,
                     'nebuleuse_format_suffix' => ($fSuffix !== '' && $fSuffix !== null) ? $fSuffix : null,
                     'run_type'               => $fRunType,
+                    // Server-resolved — never trust operator-entered sku_id_fk.
+                    'sku_id_fk'              => $skuIdFk,
                     // main: prod_total; parallel: special_qty_units (qte_unites)
                     'prod_total_units'       => ($fOrigin === 'main') ? $fProdTotal : null,
                     'special_qty_units'      => ($fOrigin === 'parallel') ? $fQteUnites : null,
-                    'vendable_hl'            => $fVendableHl,
+                    'vendable_hl'            => $finalVendableHl,
                     'unsaleable_units'       => $fUnsaleable,
                     'qa_analyses_units'      => $fQaAnalyses,
                     'qa_library_units'       => $fQaLibrary,
@@ -304,7 +539,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'hors_process_flag'      => $horsProcessFlag,
                     'hors_process_reason'    => $horsProcessReason,
                 ],
-                'origin' => $fOrigin,
+                'origin'             => $fOrigin,
+                'computed_vendable'  => $computedVendableHl,
+                'sku_id_fk'          => $skuIdFk,
+                'format_suffix_used' => ($fSuffix !== '' && $fSuffix !== null) ? $fSuffix : null,
             ];
         }
 
@@ -316,23 +554,52 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if (PACKAGING_WRITE_ENABLED) {
             // ── Live write path ──────────────────────────────────────────────────
-            // CIP events are written once per session to bd_cip_events, keyed to the
-            // MAIN row's packaging_id. Parallel rows share the same CIP session.
-            $mainPackagingId = null;
-            foreach ($rows as $rSpec) {
-                $safeRow = $rSpec['row'];
-                $result  = bd_upsert($pdo, PACKAGING_LIVE_TABLE, $safeRow, $nkCols);
-                $rowId   = (int)$result['id'];
-                log_revision($pdo, $me, PACKAGING_LIVE_TABLE, $rowId, null, $safeRow, $qcFlag,
-                    ($rSpec['origin'] === 'parallel' ? '[parallel] ' : '') . ($fwComment ?: null));
-                // Track the main row's ID for CIP attachment
-                if ($rSpec['origin'] === 'main' && $mainPackagingId === null) {
-                    $mainPackagingId = $rowId;
+            // One transaction covers all format rows + CIP events for this session.
+            // bd_upsert + log_revision + cip_upsert are all atomic — a partial write
+            // would leave orphaned rows with no corresponding audit trail.
+            $pdo->beginTransaction();
+            try {
+                $mainPackagingId = null;
+                foreach ($rows as $rSpec) {
+                    $safeRow          = $rSpec['row'];
+                    $computedVendable = $rSpec['computed_vendable'];
+                    $skuIdResolved    = $rSpec['sku_id_fk'];
+                    $suffixUsed       = $rSpec['format_suffix_used'];
+                    $result           = bd_upsert($pdo, PACKAGING_LIVE_TABLE, $safeRow, $nkCols);
+                    $rowId            = (int)$result['id'];
+
+                    // Audit comment encodes vendable_hl provenance and SKU resolution status.
+                    $auditParts = [];
+                    if ($rSpec['origin'] === 'parallel') $auditParts[] = '[parallel]';
+                    if ($fwComment) $auditParts[] = $fwComment;
+                    if (in_array('vendable_hl_operator_override', explode(',', $safeRow['audit_flags']), true)) {
+                        $auditParts[] = sprintf(
+                            'vendable_hl operator override: %s HL (computed would have been %s HL)',
+                            $safeRow['vendable_hl'] ?? 'null',
+                            $computedVendable ?? 'null'
+                        );
+                    } elseif ($computedVendable !== null) {
+                        $auditParts[] = "vendable_hl computed: {$computedVendable} HL";
+                    }
+                    if (in_array('sku_unresolved', explode(',', $safeRow['audit_flags']), true)) {
+                        $auditParts[] = "sku_id_fk unresolved (recipe={$recipeIdFk}, suffix=" . ($suffixUsed ?? 'null') . ")";
+                    }
+                    $revisionComment = implode(' — ', array_filter($auditParts)) ?: null;
+
+                    log_revision($pdo, $me, PACKAGING_LIVE_TABLE, $rowId, null, $safeRow, $qcFlag, $revisionComment);
+
+                    if ($rSpec['origin'] === 'main' && $mainPackagingId === null) {
+                        $mainPackagingId = $rowId;
+                    }
                 }
-            }
-            // Write CIP events once, linked to the main packaging row.
-            if ($mainPackagingId !== null) {
-                cip_upsert($pdo, 'packaging', $mainPackagingId, $cipEvents, $cipMeta);
+                // Write CIP events once, linked to the main packaging row.
+                if ($mainPackagingId !== null) {
+                    cip_upsert($pdo, 'packaging', $mainPackagingId, $cipEvents, $cipMeta);
+                }
+                $pdo->commit();
+            } catch (Throwable $txErr) {
+                $pdo->rollBack();
+                throw $txErr;
             }
 
             $qcLabel = match($qcFlag) {
