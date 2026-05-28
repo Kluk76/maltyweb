@@ -148,7 +148,42 @@
     });
   });
 
-  /* ── 5. Milist skip checkbox — grey out shared inputs ──────────────────────── */
+  /* ── 5. Category dropdown — reveal "new category" text input ──────────────── */
+  document.addEventListener('change', function (e) {
+    if (!e.target.matches('#mi_create_cat')) return;
+    var isNew   = e.target.value === '__NEW__';
+    var input   = document.getElementById('mi_create_cat_new');
+    var hint    = document.getElementById('mi_create_cat_new_hint');
+    if (!input) return;
+    input.style.display = isNew ? '' : 'none';
+    if (hint) hint.style.display = isNew ? '' : 'none';
+    input.required = isNew;
+    if (isNew) {
+      // Clear the select value so server receives empty category, forcing category_new path.
+      // We temporarily disable the select required so the form still submits.
+      e.target.removeAttribute('required');
+      e.target.value = '';
+      input.focus();
+    } else {
+      e.target.setAttribute('required', '');
+      input.required = false;
+      input.value = '';
+    }
+  });
+
+  /* ── 5b. Validate new-category form submit ─────────────────────────────────── */
+  document.addEventListener('submit', function (e) {
+    var form = e.target;
+    if (!form.matches('.mi-modal-form')) return;
+    var catSel  = form.querySelector('#mi_create_cat');
+    var newInp  = form.querySelector('#mi_create_cat_new');
+    if (!catSel || !newInp) return;
+    // If category_new is filled but category is blank, ensure category gets set to __NEW__
+    // so the backend can distinguish new-cat path. Backend reads category_new when category=''
+    // and category_new is non-empty. Nothing extra needed here.
+  });
+
+  /* ── 6. Milist skip checkbox — grey out shared inputs ──────────────────────── */
   document.addEventListener('change', function (e) {
     if (!e.target.matches('.milist-skip-cb')) return;
     var skip = e.target.checked;

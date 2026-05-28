@@ -73,7 +73,12 @@ if (!rl_check_and_log((int)$me['id'], 'triage_action', 200, 3600, $ip, $pdo)) {
 $rqId       = isset($_POST['rq_id'])      ? (int)$_POST['rq_id']      : 0;
 $lineIndex  = isset($_POST['line_index']) ? (int)$_POST['line_index']  : -1;
 $miId       = trim($_POST['mi_id']       ?? '');
-$category   = trim($_POST['category']    ?? '');
+$categoryNew = trim($_POST['category_new'] ?? '');
+// When operator chose "+ Nouvelle catégorie", $_POST['category'] is '' and
+// category_new holds the free-text name. Merge them here so the rest of the
+// file sees $category as the effective name (existing or new).
+$categoryRaw = trim($_POST['category'] ?? '');
+$category    = ($categoryRaw === '' && $categoryNew !== '') ? $categoryNew : $categoryRaw;
 $subcategory = trim($_POST['subcategory'] ?? '');
 $account    = trim($_POST['account']     ?? '');
 $miName     = trim($_POST['name']        ?? '');
@@ -134,14 +139,31 @@ try {
         exit;
     }
 
-    // ── Resolve category FK ───────────────────────────────────────────────────
+    // ── Resolve or bootstrap category FK ──────────────────────────────────────
     $catStmt = $pdo->prepare("SELECT id FROM ref_mi_categories WHERE name = ? LIMIT 1");
     $catStmt->execute([$category]);
     $catId = $catStmt->fetchColumn();
     if ($catId === false) {
-        $_SESSION['triage_flash'] = ['type' => 'err', 'msg' => "Catégorie «{$category}» introuvable."];
-        header('Location: /modules/triage.php?tab=docs&rq_id=' . $rqId, true, 303);
-        exit;
+        // Only auto-create when the operator explicitly typed a new name (via category_new path).
+        // If they selected an existing category and it's gone, that's a real error.
+        if ($categoryNew === '' || $category !== $categoryNew) {
+            $_SESSION['triage_flash'] = ['type' => 'err', 'msg' => "Catégorie «{$category}» introuvable."];
+            header('Location: /modules/triage.php?tab=docs&rq_id=' . $rqId, true, 303);
+            exit;
+        }
+        // Duplicate check — category names must be unique
+        $dupStmt = $pdo->prepare("SELECT id FROM ref_mi_categories WHERE LOWER(name) = LOWER(?) LIMIT 1");
+        $dupStmt->execute([$category]);
+        $existingId = $dupStmt->fetchColumn();
+        if ($existingId !== false) {
+            // Race: created between page load and submit — just use the existing row.
+            $catId = $existingId;
+        } else {
+            // Bootstrap new category (equivalent of add-ingredient.js --allow-new-category)
+            $insCat = $pdo->prepare("INSERT INTO ref_mi_categories (name) VALUES (?)");
+            $insCat->execute([$category]);
+            $catId = $pdo->lastInsertId();
+        }
     }
 
     // ── Resolve or create subcategory FK ─────────────────────────────────────

@@ -286,7 +286,16 @@ $backUrl = '/modules/triage.php?tab=docs&rq_id=' . (int)$rqRow['id'];
               <?= htmlspecialchars($cat['name']) ?>
             </option>
           <?php endforeach ?>
+          <option value="__NEW__">+ Nouvelle catégorie…</option>
         </select>
+        <!-- Revealed when operator picks "+ Nouvelle catégorie" -->
+        <input class="mi-modal-input mi-modal-new-cat-input" style="display:none;margin-top:6px"
+               type="text" id="mi_create_cat_new" name="category_new"
+               maxlength="64"
+               placeholder="Nom de la nouvelle catégorie (ex. Maintenance)">
+        <span class="mi-modal-hint" style="display:none" id="mi_create_cat_new_hint">
+          Sera créée automatiquement. Utilisez des majuscules initiales.
+        </span>
       </div>
 
       <!-- Subcategory -->
