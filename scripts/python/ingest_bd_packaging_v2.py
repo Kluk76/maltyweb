@@ -285,6 +285,25 @@ def load_sku_map(conn) -> dict[tuple[int, str], int]:
     return m
 
 
+def load_sku_code_to_id_map(conn) -> dict[str, int]:
+    """
+    Pre-load sku_code → sku_id map for literal SKU text resolution.
+    Handles white-label cases where brewing recipe differs from packaging
+    branding (e.g. BLO brewed as ZEP recipe but packaged as BLO4C). The
+    literal raw text in bd_packaging_v2.neb_beer is the source of truth
+    for SKU identity; the (recipe_id, format) lookup is the fallback for
+    events with missing/unknown raw text.
+
+    Includes ALL SKUs (active + inactive) so historical events targeting
+    a now-inactive SKU (e.g. BLA4 inactive) resolve correctly rather than
+    falling through to the recipe-based fallback (which would mis-route).
+    """
+    with conn.cursor() as cur:
+        cur.execute("SELECT id, sku_code FROM ref_skus WHERE sku_code IS NOT NULL")
+        rows = cur.fetchall()
+    return {r["sku_code"].upper(): int(r["id"]) for r in rows}
+
+
 def load_mi_string_map(conn) -> dict[str, int]:
     """
     Load mi_id (string) → ref_mi.id (int) map for MI selection resolution.
@@ -301,6 +320,7 @@ def parse_row(
     raw: tuple,
     xlsx_row_num: int,
     sku_map: dict[tuple[int, str], int],
+    sku_code_to_id_map: dict[str, int],
     mi_string_map: dict[str, int],
 ) -> dict:
     """
@@ -328,12 +348,18 @@ def parse_row(
     format_suffix = _s(r[COL_FORMAT_SUFFIX])
 
     # ── SKU resolution ────────────────────────────────────────────────────────
+    # Primary: literal raw SKU text → ref_skus.sku_code. Handles white-label
+    # cases (BLO brewed as ZEP recipe but packaged as BLO branding — see
+    # PM memory §THREE SKU IDENTITY LAYERS, 2026-05-28).
+    # Fallback: (recipe_id, format_code) lookup for events where neb_beer
+    # is missing/unrecognized.
     sku_id_fk: int | None = None
-    if recipe_id_fk is not None and format_suffix is not None:
+    raw_sku = _s(r[COL_NEB_BEER])
+    if raw_sku:
+        sku_id_fk = sku_code_to_id_map.get(raw_sku.upper())
+    if sku_id_fk is None and recipe_id_fk is not None and format_suffix is not None:
         sku_id_fk = sku_map.get((recipe_id_fk, format_suffix))
-        if sku_id_fk is None and row_origin == "main":
-            extra_flags.append("sku_unresolved")
-    elif row_origin == "main" and recipe_id_fk is not None:
+    if sku_id_fk is None and row_origin == "main":
         extra_flags.append("sku_unresolved")
 
     # ── Merge audit_flags ─────────────────────────────────────────────────────
@@ -645,16 +671,18 @@ def main() -> int:
     try:
         # ── Load lookup maps ──────────────────────────────────────────────────
         print("  Loading lookup maps ...")
-        sku_map      = load_sku_map(conn)
-        mi_string_map = load_mi_string_map(conn)
+        sku_map            = load_sku_map(conn)
+        sku_code_to_id_map = load_sku_code_to_id_map(conn)
+        mi_string_map      = load_mi_string_map(conn)
         print(f"    SKU map entries:      {len(sku_map)}")
+        print(f"    SKU code map entries: {len(sku_code_to_id_map)}")
         print(f"    MI string map entries: {len(mi_string_map)}")
 
         # ── Parse rows ────────────────────────────────────────────────────────
         parsed: list[dict] = []
         for i, raw in enumerate(data_rows):
             xlsx_row_num = i + 2   # row 1 = header
-            parsed.append(parse_row(raw, xlsx_row_num, sku_map, mi_string_map))
+            parsed.append(parse_row(raw, xlsx_row_num, sku_map, sku_code_to_id_map, mi_string_map))
 
         # ── Stats ─────────────────────────────────────────────────────────────
         main_count     = sum(1 for r in parsed if r["row_origin"] == "main")
