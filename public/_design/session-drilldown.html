@@ -1,0 +1,1019 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Session — Vue drill-in 3 phases · MaltyTask</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,200;0,9..144,300;0,9..144,400;0,9..144,600;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:            #15100a;
+  --bg-elev:       #1d160d;
+  --bg-elev2:      #251c10;
+  --bg-elev3:      #2d2114;
+  --ink:           #ede0c4;
+  --ink-soft:      #c8b894;
+  --ink-mute:      #7a6647;
+  --ink-faint:     #3a2e1d;
+  --hairline:      #261d11;
+  --hairline-2:    #342818;
+  --hop:           #9eb060;
+  --hop-deep:      #6b7a3e;
+  --hop-glow:      rgba(158,176,96,0.12);
+  --ember:         #c5664a;
+  --ember-glow:    rgba(197,102,74,0.1);
+  --oak:           #a07a48;
+  --oak-glow:      rgba(160,122,72,0.12);
+  --cold:          #2f5575;
+  --bbt:           #6593b8;
+  --bbt-glow:      rgba(101,147,184,0.12);
+  --steel-mid:     #5e6266;
+  --steel-deep:    #2c2e30;
+  --warn:          #d4923c;
+  --warn-glow:     rgba(212,146,60,0.12);
+  --ok:            #9eb060;
+  --bad:           #c5664a;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+*::selection { background: var(--hop); color: var(--bg); }
+html { font-size: 16px; }
+body.home {
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-feature-settings: "ss01";
+  background: var(--bg); color: var(--ink);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden; position: relative;
+}
+body.home::before {
+  content: ''; position: fixed; inset: 0;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.07  0 0 0 0 0.05  0 0 0 0 0.02  0 0 0 1.2 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  opacity: 0.45; pointer-events: none; z-index: 0;
+}
+
+/* ============================================================
+   PAGE LAYOUT
+   ============================================================ */
+.page-wrap {
+  position: relative; z-index: 1;
+  max-width: 960px; margin: 0 auto;
+  padding: 0 0 80px;
+  min-height: 100vh;
+}
+
+/* ── SESSION HEADER ── */
+.session-header {
+  padding: 22px 32px 18px;
+  border-bottom: 1px solid var(--hairline);
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 20px;
+  animation: fadeDown 0.35s ease;
+}
+@keyframes fadeDown { from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none} }
+
+.sh-back {
+  display: flex; align-items: center; gap: 8px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--ink-mute); background: none; border: none; cursor: pointer;
+  transition: color 0.15s;
+}
+.sh-back:hover { color: var(--oak); }
+
+.sh-identity { flex: 1; }
+.sh-type-badge {
+  display: inline-flex;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.6rem; letter-spacing: 0.12em; text-transform: uppercase;
+  padding: 2px 9px; border-radius: 2px; font-weight: 600;
+  color: var(--hop); background: var(--hop-glow);
+  border: 1px solid rgba(158,176,96,0.25); margin-bottom: 8px;
+}
+.sh-title {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 144;
+  font-size: 2rem; font-weight: 300; letter-spacing: -0.02em;
+  color: var(--ink); line-height: 1.05; margin-bottom: 4px;
+}
+.sh-title em { font-style: italic; color: var(--ink-soft); }
+.sh-sub {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.65rem; letter-spacing: 0.06em; color: var(--ink-mute);
+}
+
+.sh-right { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+.sh-elapsed {
+  display: flex; align-items: center; gap: 7px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.72rem; letter-spacing: 0.06em; color: var(--ink-mute);
+}
+.sh-live-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--hop); box-shadow: 0 0 6px rgba(158,176,96,0.5);
+  animation: pulse 2s ease-in-out infinite;
+}
+@keyframes pulse { 0%,100%{opacity:1}50%{opacity:0.35} }
+
+/* Operator chips in header */
+.sh-operators { display: flex; align-items: center; gap: 8px; }
+.sh-op-chip {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--bg-elev); border: 1px solid var(--hairline-2);
+  border-radius: 20px; padding: 4px 10px 4px 5px;
+}
+.op-av {
+  width: 22px; height: 22px; border-radius: 50%;
+  background: var(--bg-elev2); border: 1px solid var(--hairline-2);
+  display: flex; align-items: center; justify-content: center;
+  font-family: "JetBrains Mono", monospace; font-size: 0.52rem; font-weight: 600;
+  color: var(--oak);
+}
+.op-info { display: flex; flex-direction: column; }
+.op-name { font-size: 0.7rem; color: var(--ink-soft); line-height: 1; }
+.op-action {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.52rem; letter-spacing: 0.04em; color: var(--ink-mute);
+}
+
+/* ============================================================
+   PHASE TABS / STEPPER
+   ============================================================ */
+.phase-nav {
+  display: flex; align-items: stretch;
+  padding: 0 32px;
+  border-bottom: 1px solid var(--hairline);
+  gap: 0;
+  background: var(--bg-elev);
+  animation: fadeIn 0.4s ease 0.1s both;
+}
+@keyframes fadeIn { from{opacity:0}to{opacity:1} }
+
+.phase-tab {
+  flex: 1; display: flex; align-items: center; gap: 10px;
+  padding: 14px 16px;
+  cursor: pointer; position: relative;
+  border-bottom: 2px solid transparent;
+  transition: background 0.15s, border-color 0.2s;
+  background: none; border-top: none; border-left: none; border-right: none;
+  text-align: left;
+}
+.phase-tab + .phase-tab { border-left: 1px solid var(--hairline); }
+.phase-tab:hover { background: var(--bg-elev2); }
+.phase-tab.active { border-bottom-color: var(--hop); background: var(--bg-elev2); }
+.phase-tab.done   { border-bottom-color: var(--hop-deep); }
+.phase-tab.locked { cursor: not-allowed; opacity: 0.5; }
+
+.pt-circle {
+  width: 24px; height: 24px; border-radius: 50%; flex-shrink: 0;
+  border: 2px solid var(--hairline-2); background: var(--bg);
+  display: flex; align-items: center; justify-content: center;
+  font-family: "JetBrains Mono", monospace; font-size: 0.62rem; font-weight: 600;
+  color: var(--ink-faint);
+  transition: border-color 0.2s, background 0.2s;
+}
+.phase-tab.done  .pt-circle { border-color: var(--hop); background: var(--hop); }
+.phase-tab.active .pt-circle { border-color: var(--hop); background: none; color: var(--hop); }
+
+.pt-info {}
+.pt-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--ink-mute); display: block;
+}
+.phase-tab.active .pt-label { color: var(--hop); }
+.phase-tab.done   .pt-label { color: var(--hop-deep); }
+.pt-sub { font-size: 0.72rem; color: var(--ink-soft); margin-top: 1px; display: block; }
+
+.pt-lock-icon { margin-left: auto; color: var(--ink-faint); font-size: 0.8rem; }
+
+/* ============================================================
+   PHASE PANELS
+   ============================================================ */
+.phase-panels { padding: 0 32px; }
+.phase-panel { display: none; padding: 28px 0; }
+.phase-panel.active { display: block; animation: fadeIn 0.3s ease; }
+
+/* ── PANEL HEADER ── */
+.panel-title {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--ink-mute); margin-bottom: 20px;
+  display: flex; align-items: center; gap: 10px;
+}
+.panel-title::after { content:''; flex:1; height:1px; background:var(--hairline); }
+
+/* ── PHASE 1 — QC Firewall checklist ── */
+.qc-firewall {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline-2);
+  border-radius: 6px; overflow: hidden; margin-bottom: 24px;
+}
+.qcf-header {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--hairline);
+  display: flex; align-items: center; justify-content: space-between;
+}
+.qcf-title {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 96;
+  font-size: 1.05rem; font-weight: 300; color: var(--ink);
+}
+.qcf-title em { font-style: italic; color: var(--ink-soft); }
+.qcf-progress {
+  display: flex; align-items: center; gap: 8px;
+}
+.qcf-count {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.68rem; letter-spacing: 0.06em; color: var(--ink-mute);
+}
+.qcf-progress-bar {
+  width: 80px; height: 4px; background: var(--hairline);
+  border-radius: 2px; overflow: hidden;
+}
+.qcf-progress-fill {
+  height: 100%; border-radius: 2px;
+  background: var(--hop); transition: width 0.4s ease;
+}
+
+/* Checklist items */
+.qcf-item {
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--hairline);
+  display: flex; align-items: flex-start; gap: 12px;
+  transition: background 0.15s;
+}
+.qcf-item:last-child { border-bottom: none; }
+.qcf-item:hover { background: var(--bg-elev2); }
+.qcf-item.failed { background: rgba(197,102,74,0.04); }
+
+.qcf-checkbox {
+  width: 20px; height: 20px; border-radius: 3px;
+  border: 1.5px solid var(--hairline-2); background: var(--bg);
+  flex-shrink: 0; margin-top: 1px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: border-color 0.15s, background 0.15s;
+}
+.qcf-checkbox:hover { border-color: var(--hop); }
+.qcf-checkbox.checked { background: var(--hop); border-color: var(--hop-deep); }
+.qcf-checkbox.failed-chk { border-color: rgba(197,102,74,0.5); background: var(--ember-glow); }
+
+.qcf-content { flex: 1; }
+.qcf-label {
+  font-size: 0.88rem; color: var(--ink); margin-bottom: 3px; line-height: 1.4;
+}
+.qcf-label.checked { color: var(--ink-soft); text-decoration: line-through; text-decoration-color: var(--ink-faint); }
+.qcf-label.failed-label { color: var(--ember); }
+.qcf-desc {
+  font-size: 0.75rem; color: var(--ink-mute); line-height: 1.4;
+}
+
+/* Inline QC reading field */
+.qcf-input-row {
+  display: flex; align-items: center; gap: 10px; margin-top: 6px;
+}
+.qcf-input {
+  background: var(--bg); border: 1px solid var(--hairline-2);
+  border-radius: 3px; padding: 5px 10px;
+  font-family: "JetBrains Mono", monospace; font-size: 0.78rem;
+  color: var(--ink); width: 90px;
+  transition: border-color 0.15s;
+}
+.qcf-input:focus { outline: none; border-color: var(--hop); }
+.qcf-input.warn-border { border-color: var(--warn); }
+.qcf-input-unit {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.65rem; color: var(--ink-mute); letter-spacing: 0.06em;
+}
+.qcf-range {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem; color: var(--ink-faint); letter-spacing: 0.04em;
+  margin-left: auto;
+}
+
+.qcf-blocked-msg {
+  background: rgba(197,102,74,0.06);
+  border: 1px solid rgba(197,102,74,0.25);
+  border-radius: 3px; padding: 8px 12px;
+  display: flex; align-items: flex-start; gap: 8px;
+  margin: 10px 18px 14px;
+}
+.qcf-blocked-icon { color: var(--ember); font-size: 0.85rem; flex-shrink: 0; }
+.qcf-blocked-text {
+  font-size: 0.78rem; color: var(--ember); line-height: 1.5;
+}
+
+/* Gate action row */
+.qcf-action-row {
+  padding: 14px 18px;
+  background: var(--bg-elev2);
+  border-top: 1px solid var(--hairline);
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+}
+.btn-gate {
+  padding: 10px 24px;
+  background: var(--hop); color: var(--bg);
+  border: none; border-radius: 3px; cursor: pointer;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.68rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;
+  transition: opacity 0.2s, transform 0.15s;
+}
+.btn-gate:hover:not(:disabled) { opacity: 0.85; transform: translateY(-1px); }
+.btn-gate:disabled { opacity: 0.35; cursor: not-allowed; transform: none; }
+.gate-status {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem; letter-spacing: 0.06em; color: var(--ink-mute);
+}
+.gate-status.blocked { color: var(--ember); }
+
+/* ============================================================
+   PHASE 2 — En cours: live dashboard + measures
+   ============================================================ */
+.live-dashboard {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+  margin-bottom: 24px;
+}
+
+.gauge-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline-2);
+  border-radius: 5px; padding: 16px 18px;
+  position: relative; overflow: hidden;
+  transition: border-color 0.2s;
+}
+.gauge-card.ok-state    { }
+.gauge-card.warn-state  { border-color: rgba(212,146,60,0.4); }
+.gauge-card.bad-state   { border-color: rgba(197,102,74,0.4); animation: border-pulse 1.5s ease-in-out infinite; }
+
+@keyframes border-pulse {
+  0%,100%{ border-color:rgba(197,102,74,0.4); }
+  50%{ border-color:rgba(197,102,74,0.8); }
+}
+
+.gauge-key {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.58rem; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--ink-mute); margin-bottom: 8px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.gauge-key-right { display: flex; align-items: center; gap: 6px; }
+.live-badge {
+  font-size: 0.52rem; color: var(--hop);
+  background: var(--hop-glow); padding: 1px 5px; border-radius: 1px;
+  border: 1px solid rgba(158,176,96,0.2);
+}
+
+/* Big value */
+.gauge-value {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 2.4rem; font-weight: 600; line-height: 1;
+  margin-bottom: 2px;
+  color: var(--ink-soft);
+  transition: color 0.3s;
+}
+.gauge-value.ok   { color: var(--ok); }
+.gauge-value.warn { color: var(--warn); }
+.gauge-value.bad  { color: var(--bad); }
+
+.gauge-unit {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem; color: var(--ink-mute);
+}
+
+/* Gauge bar */
+.gauge-bar-wrap {
+  margin-top: 10px; height: 6px;
+  background: var(--hairline); border-radius: 3px; overflow: visible;
+  position: relative;
+}
+.gauge-bar-fill {
+  position: absolute; left: 0; top: 0; bottom: 0;
+  border-radius: 3px;
+  transition: width 0.6s ease, background 0.3s;
+}
+/* Target range highlight on track */
+.gauge-range {
+  position: absolute; top: 0; bottom: 0;
+  background: rgba(158,176,96,0.18); border-radius: 3px;
+}
+/* Needle */
+.gauge-needle {
+  position: absolute; top: -4px; bottom: -4px;
+  width: 2px; border-radius: 1px;
+  background: var(--ink-soft);
+  transform: translateX(-50%);
+  transition: left 0.6s ease;
+}
+.gauge-needle.warn { background: var(--warn); }
+.gauge-needle.bad  { background: var(--bad); }
+
+.gauge-range-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.56rem; color: var(--ink-faint); margin-top: 5px;
+}
+
+/* Flag caption */
+.gauge-flag {
+  display: flex; align-items: center; gap: 5px;
+  margin-top: 8px; padding: 5px 8px;
+  background: rgba(212,146,60,0.08);
+  border: 1px solid rgba(212,146,60,0.25);
+  border-radius: 3px;
+}
+.gauge-flag-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--warn); flex-shrink: 0; animation: pulse 1.5s ease-in-out infinite; }
+.gauge-flag-text {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.6rem; letter-spacing: 0.04em; color: var(--warn);
+}
+
+/* ── Packaging live loss tracker ── */
+.packaging-tracker {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline-2);
+  border-radius: 5px; overflow: hidden; margin-bottom: 24px;
+}
+.pt-header {
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--hairline);
+  display: flex; align-items: center; justify-content: space-between;
+}
+.pt-header-title {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.6rem; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--ink-mute);
+}
+.pt-totals { display: flex; gap: 16px; }
+.pt-total-item {
+  display: flex; flex-direction: column; align-items: flex-end;
+  font-family: "JetBrains Mono", monospace;
+}
+.pt-total-val {
+  font-size: 1.1rem; font-weight: 600; color: var(--ink-soft);
+}
+.pt-total-key { font-size: 0.55rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-mute); }
+.pt-total-val.loss { color: var(--warn); }
+.pt-total-val.ok-v { color: var(--ok); }
+
+.pt-entries { display: flex; flex-direction: column; }
+.pt-entry {
+  display: flex; align-items: center; gap: 12px;
+  padding: 9px 18px; border-bottom: 1px solid var(--hairline);
+  font-size: 0.82rem;
+}
+.pt-entry:last-child { border-bottom: none; }
+.pt-entry-time {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem; color: var(--ink-mute); flex-shrink: 0; width: 48px;
+}
+.pt-entry-desc { flex: 1; color: var(--ink-soft); }
+.pt-entry-qty {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.78rem; font-weight: 600; color: var(--warn);
+}
+.pt-entry-reason {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.6rem; color: var(--ink-mute);
+}
+
+.pt-add-row {
+  padding: 10px 18px;
+  background: var(--bg-elev2);
+  display: flex; gap: 8px; align-items: center;
+}
+.pt-add-input {
+  background: var(--bg); border: 1px solid var(--hairline-2);
+  border-radius: 3px; padding: 5px 10px;
+  font-family: "JetBrains Mono", monospace; font-size: 0.78rem; color: var(--ink);
+  width: 80px; transition: border-color 0.15s;
+}
+.pt-add-input:focus { outline: none; border-color: var(--hop); }
+.pt-add-select {
+  background: var(--bg); border: 1px solid var(--hairline-2);
+  border-radius: 3px; padding: 5px 10px;
+  font-family: "JetBrains Mono", monospace; font-size: 0.72rem; color: var(--ink-soft);
+  flex: 1;
+}
+.btn-add-loss {
+  padding: 6px 14px;
+  background: none; border: 1px solid var(--hairline-2); border-radius: 3px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--ink-mute); cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.btn-add-loss:hover { border-color: var(--warn); color: var(--warn); }
+
+/* ============================================================
+   PHASE 3 — Fin: end checklist + summary
+   ============================================================ */
+.end-summary-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px;
+}
+.summary-card {
+  background: var(--bg-elev); border: 1px solid var(--hairline-2);
+  border-radius: 5px; padding: 16px 18px;
+}
+.summary-card-key {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.58rem; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--ink-mute); margin-bottom: 6px;
+}
+.summary-card-val {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 1.8rem; font-weight: 600; color: var(--ink-soft); line-height: 1;
+}
+.summary-card-sub { font-size: 0.72rem; color: var(--ink-mute); margin-top: 3px; }
+.summary-card-val.ok  { color: var(--ok); }
+.summary-card-val.warn{ color: var(--warn); }
+
+/* Confirm & submit button */
+.btn-close-session {
+  width: 100%; padding: 14px 20px;
+  background: var(--hop); color: var(--bg);
+  border: none; border-radius: 4px; cursor: pointer;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.72rem; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  transition: opacity 0.2s, transform 0.15s;
+  margin-top: 24px;
+}
+.btn-close-session:hover { opacity: 0.85; transform: translateY(-1px); }
+
+/* ── Phase tab legend at bottom (for mockup context) ── */
+.mockup-legend {
+  position: fixed; bottom: 0; left: 0; right: 0;
+  background: var(--bg-elev);
+  border-top: 1px solid var(--hairline);
+  padding: 10px 32px;
+  display: flex; gap: 24px; align-items: center; z-index: 50;
+}
+.legend-item {
+  display: flex; align-items: center; gap: 7px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.58rem; letter-spacing: 0.08em; color: var(--ink-mute);
+}
+.legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+</style>
+</head>
+<body class="home">
+<div class="page-wrap">
+
+  <!-- SESSION HEADER -->
+  <header class="session-header">
+    <div>
+      <button class="sh-back">
+        <svg width="12" height="10" viewBox="0 0 12 10" fill="none"><path d="M5 1L1 5m0 0l4 4M1 5h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Retour sessions
+      </button>
+    </div>
+    <div class="sh-identity">
+      <div class="sh-type-badge">Emballage · Run bouteille</div>
+      <div class="sh-title"><em>Zepp</em> 33cl · Ligne 1</div>
+      <div class="sh-sub">Session #PKG-2026-089 · Lot ZEP-26-18 · Démarré 07:00 par P. Lacroix</div>
+    </div>
+    <div class="sh-right">
+      <div class="sh-elapsed">
+        <div class="sh-live-dot"></div>
+        <span id="elapsed">42 min en cours</span>
+      </div>
+      <div class="sh-operators">
+        <div class="sh-op-chip">
+          <div class="op-av">PL</div>
+          <div class="op-info">
+            <span class="op-name">P. Lacroix</span>
+            <span class="op-action">Ouvert 07:00</span>
+          </div>
+        </div>
+        <div class="sh-op-chip">
+          <div class="op-av">MA</div>
+          <div class="op-info">
+            <span class="op-name">M. Amrani</span>
+            <span class="op-action">Validé 07:35</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- PHASE TABS -->
+  <div class="phase-nav">
+    <button class="phase-tab done" onclick="switchTab(0)">
+      <div class="pt-circle">
+        <svg width="11" height="11" viewBox="0 0 11 11" fill="none"><path d="M2 5.5l2.5 2.8L9 3" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+      <div class="pt-info">
+        <span class="pt-label">1 — Début</span>
+        <span class="pt-sub">Checklist QC · Validé 07:35</span>
+      </div>
+    </button>
+    <button class="phase-tab active" onclick="switchTab(1)">
+      <div class="pt-circle">2</div>
+      <div class="pt-info">
+        <span class="pt-label">2 — En cours</span>
+        <span class="pt-sub">Suivi live · 5 pertes saisies</span>
+      </div>
+    </button>
+    <button class="phase-tab locked" onclick="switchTab(2)">
+      <div class="pt-circle">3</div>
+      <div class="pt-info">
+        <span class="pt-label">3 — Fin</span>
+        <span class="pt-sub">Clôture · Disponible à l'arrêt</span>
+      </div>
+      <div class="pt-lock-icon">⏸</div>
+    </button>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════
+       PHASE 1 — QC FIREWALL
+       ═══════════════════════════════════════════════════════ -->
+  <div class="phase-panels">
+
+    <div class="phase-panel" id="panel-0">
+      <div class="panel-title">Checklist de démarrage — Pare-feu QC</div>
+
+      <div class="qc-firewall">
+        <div class="qcf-header">
+          <div class="qcf-title">Validations <em>obligatoires</em></div>
+          <div class="qcf-progress">
+            <span class="qcf-count">5 / 5 confirmés</span>
+            <div class="qcf-progress-bar">
+              <div class="qcf-progress-fill" style="width:100%"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="qcf-item">
+          <div class="qcf-checkbox checked" onclick="toggleCheck(this)">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 5l2.5 2.8L8 3" stroke="white" stroke-width="1.4" stroke-linecap="round"/></svg>
+          </div>
+          <div class="qcf-content">
+            <div class="qcf-label checked">CIP Ligne 1 confirmé</div>
+            <div class="qcf-desc">Rinçage final validé, pas de trace de mousse. Vérifié par P. Lacroix 06:55.</div>
+          </div>
+        </div>
+
+        <div class="qcf-item">
+          <div class="qcf-checkbox checked" onclick="toggleCheck(this)">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 5l2.5 2.8L8 3" stroke="white" stroke-width="1.4" stroke-linecap="round"/></svg>
+          </div>
+          <div class="qcf-content">
+            <div class="qcf-label checked">Test O₂ départ — dans la plage</div>
+            <div class="qcf-input-row">
+              <input class="qcf-input" type="text" value="0.06" readonly>
+              <span class="qcf-input-unit">ppm</span>
+              <span class="qcf-range">cible ≤ 0.1 ppm ✓</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="qcf-item">
+          <div class="qcf-checkbox checked" onclick="toggleCheck(this)">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 5l2.5 2.8L8 3" stroke="white" stroke-width="1.4" stroke-linecap="round"/></svg>
+          </div>
+          <div class="qcf-content">
+            <div class="qcf-label checked">CO₂ bière confirmé</div>
+            <div class="qcf-input-row">
+              <input class="qcf-input" type="text" value="5.2" readonly>
+              <span class="qcf-input-unit">g/L</span>
+              <span class="qcf-range">cible 5.0–5.5 g/L ✓</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="qcf-item">
+          <div class="qcf-checkbox checked" onclick="toggleCheck(this)">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 5l2.5 2.8L8 3" stroke="white" stroke-width="1.4" stroke-linecap="round"/></svg>
+          </div>
+          <div class="qcf-content">
+            <div class="qcf-label checked">Température bière BBT</div>
+            <div class="qcf-input-row">
+              <input class="qcf-input" type="text" value="2.0" readonly>
+              <span class="qcf-input-unit">°C</span>
+              <span class="qcf-range">cible 0–4°C ✓</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="qcf-item">
+          <div class="qcf-checkbox checked" onclick="toggleCheck(this)">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 5l2.5 2.8L8 3" stroke="white" stroke-width="1.4" stroke-linecap="round"/></svg>
+          </div>
+          <div class="qcf-content">
+            <div class="qcf-label checked">Lot bouteilles confirmé</div>
+            <div class="qcf-desc">Lot VDG-2026-04 · 33cl. Format et quantité vérifiés.</div>
+          </div>
+        </div>
+
+        <div class="qcf-action-row">
+          <div class="gate-status">Toutes les conditions sont remplies. Session autorisée.</div>
+          <button class="btn-gate" onclick="switchTab(1)">Démarrer session →</button>
+        </div>
+      </div>
+
+      <div style="background:var(--bg-elev);border:1px solid var(--hairline-2);border-radius:5px;padding:14px 18px;display:flex;align-items:center;gap:10px">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:0.6rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--hop)">Note design</div>
+        <div style="font-size:0.78rem;color:var(--ink-mute)">Un seul item non-coché bloque le bouton « Démarrer session ». La gate est entièrement côté serveur — le bouton est disabled ET l'API refuse. Si un item requis a une mesure numérique, le champ est affiché inline pour saisie immédiate avec validation de plage.</div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════
+         PHASE 2 — EN COURS: Live dashboard + packaging losses
+         ═══════════════════════════════════════════════════════ -->
+    <div class="phase-panel active" id="panel-1">
+      <div class="panel-title">Tableau de bord live — Session en cours</div>
+
+      <!-- Live gauges -->
+      <div class="live-dashboard">
+        <div class="gauge-card ok-state">
+          <div class="gauge-key">
+            O₂ ligne
+            <div class="gauge-key-right"><span class="live-badge">LIVE</span></div>
+          </div>
+          <div class="gauge-value ok" id="o2-val">0.06</div>
+          <div class="gauge-unit">ppm · cible ≤ 0.1</div>
+          <div class="gauge-bar-wrap">
+            <div class="gauge-range" style="left:0%;width:50%"></div>
+            <div class="gauge-bar-fill" style="width:6%;background:var(--ok)"></div>
+            <div class="gauge-needle ok" style="left:6%"></div>
+          </div>
+          <div class="gauge-range-label">0 ────────────── 0.1 ────────────── 0.2</div>
+        </div>
+
+        <div class="gauge-card ok-state">
+          <div class="gauge-key">
+            CO₂ bière
+            <div class="gauge-key-right"><span class="live-badge">LIVE</span></div>
+          </div>
+          <div class="gauge-value ok" id="co2-val">5.2</div>
+          <div class="gauge-unit">g/L · cible 5.0 – 5.5</div>
+          <div class="gauge-bar-wrap">
+            <div class="gauge-range" style="left:55%;width:30%"></div>
+            <div class="gauge-bar-fill" style="width:65%;background:var(--ok)"></div>
+            <div class="gauge-needle ok" style="left:65%"></div>
+          </div>
+          <div class="gauge-range-label">4.0 ──── 4.5 ──── 5.0 ──── 5.5 ──── 6.0</div>
+        </div>
+
+        <div class="gauge-card warn-state">
+          <div class="gauge-key">
+            Débit mise en bouteille
+            <div class="gauge-key-right"><span class="live-badge">LIVE</span></div>
+          </div>
+          <div class="gauge-value warn" id="flow-val">3 840</div>
+          <div class="gauge-unit">boites/h · nominal 4 200</div>
+          <div class="gauge-bar-wrap">
+            <div class="gauge-range" style="left:70%;width:25%"></div>
+            <div class="gauge-bar-fill" style="width:57%;background:var(--warn)"></div>
+            <div class="gauge-needle warn" style="left:57%"></div>
+          </div>
+          <div class="gauge-range-label">0 ──── 2k ──── 4k ──── 5k</div>
+          <div class="gauge-flag">
+            <div class="gauge-flag-dot"></div>
+            <span class="gauge-flag-text">Débit −8.6% vs nominal — surveiller</span>
+          </div>
+        </div>
+
+        <div class="gauge-card ok-state">
+          <div class="gauge-key">
+            T° bière
+            <div class="gauge-key-right"><span class="live-badge">LIVE</span></div>
+          </div>
+          <div class="gauge-value ok" id="temp-val">2.1</div>
+          <div class="gauge-unit">°C · cible 0 – 4°C</div>
+          <div class="gauge-bar-wrap">
+            <div class="gauge-range" style="left:0%;width:40%"></div>
+            <div class="gauge-bar-fill" style="width:21%;background:var(--ok)"></div>
+            <div class="gauge-needle ok" style="left:21%"></div>
+          </div>
+          <div class="gauge-range-label">0 ──── 2 ──── 4 ──── 6 ──── 10°C</div>
+        </div>
+      </div>
+
+      <!-- Packaging incremental loss tracker -->
+      <div class="packaging-tracker">
+        <div class="pt-header">
+          <div class="pt-header-title">Pertes — Saisie en continu · Auto-somme</div>
+          <div class="pt-totals">
+            <div class="pt-total-item">
+              <div class="pt-total-val">2 840</div>
+              <div class="pt-total-key">Produites</div>
+            </div>
+            <div class="pt-total-item">
+              <div class="pt-total-val loss">48</div>
+              <div class="pt-total-key">Pertes totales</div>
+            </div>
+            <div class="pt-total-item">
+              <div class="pt-total-val ok-v">98.3%</div>
+              <div class="pt-total-key">Rendement</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="pt-entries">
+          <div class="pt-entry">
+            <span class="pt-entry-time">07:12</span>
+            <span class="pt-entry-desc">Démarrage ligne · Purge</span>
+            <span class="pt-entry-qty">−12</span>
+            <span class="pt-entry-reason">démarrage</span>
+          </div>
+          <div class="pt-entry">
+            <span class="pt-entry-time">07:28</span>
+            <span class="pt-entry-desc">Bouchon mal positionné</span>
+            <span class="pt-entry-qty">−8</span>
+            <span class="pt-entry-reason">défaut équip.</span>
+          </div>
+          <div class="pt-entry">
+            <span class="pt-entry-time">07:34</span>
+            <span class="pt-entry-desc">Étiquetteuse · calage</span>
+            <span class="pt-entry-qty">−18</span>
+            <span class="pt-entry-reason">réglage</span>
+          </div>
+          <div class="pt-entry">
+            <span class="pt-entry-time">07:41</span>
+            <span class="pt-entry-desc">Bouteilles tombées tapis</span>
+            <span class="pt-entry-qty">−10</span>
+            <span class="pt-entry-reason">incident</span>
+          </div>
+        </div>
+
+        <div class="pt-add-row">
+          <input class="pt-add-input" type="number" placeholder="Qté" min="1">
+          <select class="pt-add-select">
+            <option>Cause — Sélectionner</option>
+            <option>Démarrage / purge</option>
+            <option>Défaut équipement</option>
+            <option>Réglage</option>
+            <option>Incident opérateur</option>
+            <option>Défaut bouteille</option>
+            <option>Fin de run</option>
+            <option>Autre</option>
+          </select>
+          <button class="btn-add-loss">+ Perte</button>
+        </div>
+      </div>
+
+      <div style="background:var(--bg-elev);border:1px solid var(--hairline-2);border-radius:5px;padding:14px 18px;display:flex;align-items:center;gap:10px">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:0.6rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--hop)">Note design</div>
+        <div style="font-size:0.78rem;color:var(--ink-mute)">Pertes: chaque ligne = saisie immédiate, le total s'auto-somme en temps réel. La gauge « Débit » clignote en amber quand hors plage. Phase 3 déverrouillée par bouton « Arrêt run » — jamais automatiquement (évite les clôtures accidentelles en cours de ligne).</div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════
+         PHASE 3 — FIN: Recap + CIP checklist
+         ═══════════════════════════════════════════════════════ -->
+    <div class="phase-panel" id="panel-2">
+      <div class="panel-title">Bilan de session — Clôture</div>
+
+      <div class="end-summary-grid">
+        <div class="summary-card">
+          <div class="summary-card-key">Bouteilles produites</div>
+          <div class="summary-card-val ok">2 840</div>
+          <div class="summary-card-sub">sur 3 000 prévues — 94.7%</div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-card-key">Pertes totales</div>
+          <div class="summary-card-val warn">48</div>
+          <div class="summary-card-sub">1.7% · seuil alerte 3%</div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-card-key">Durée session</div>
+          <div class="summary-card-val">3h 12m</div>
+          <div class="summary-card-sub">7h00 → 10h12</div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-card-key">Rendement ligne</div>
+          <div class="summary-card-val ok">98.3%</div>
+          <div class="summary-card-sub">Objectif ≥ 97% ✓</div>
+        </div>
+      </div>
+
+      <div class="qc-firewall">
+        <div class="qcf-header">
+          <div class="qcf-title">Checklist de <em>clôture</em></div>
+          <div class="qcf-progress">
+            <span class="qcf-count">2 / 4 confirmés</span>
+            <div class="qcf-progress-bar">
+              <div class="qcf-progress-fill" style="width:50%"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="qcf-item">
+          <div class="qcf-checkbox checked" onclick="toggleCheck(this)">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 5l2.5 2.8L8 3" stroke="white" stroke-width="1.4" stroke-linecap="round"/></svg>
+          </div>
+          <div class="qcf-content">
+            <div class="qcf-label checked">Arrêt ligne confirmé</div>
+            <div class="qcf-desc">Tapis arrêté, capots fermés.</div>
+          </div>
+        </div>
+
+        <div class="qcf-item">
+          <div class="qcf-checkbox checked" onclick="toggleCheck(this)">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 5l2.5 2.8L8 3" stroke="white" stroke-width="1.4" stroke-linecap="round"/></svg>
+          </div>
+          <div class="qcf-content">
+            <div class="qcf-label checked">Stock bouteilles vides inventorié</div>
+            <div class="qcf-input-row">
+              <input class="qcf-input" type="text" value="112">
+              <span class="qcf-input-unit">restantes</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="qcf-item">
+          <div class="qcf-checkbox" onclick="toggleCheck(this)">
+          </div>
+          <div class="qcf-content">
+            <div class="qcf-label">CIP final Ligne 1</div>
+            <div class="qcf-desc">Rinçage complet à l'eau chaude + désinfectant. À confirmer une fois terminé.</div>
+          </div>
+        </div>
+
+        <div class="qcf-item">
+          <div class="qcf-checkbox" onclick="toggleCheck(this)">
+          </div>
+          <div class="qcf-content">
+            <div class="qcf-label">Zone nettoyée et sécurisée</div>
+            <div class="qcf-desc">Sol, tapis convoyeur, zone étiquetteuse.</div>
+          </div>
+        </div>
+
+        <div class="qcf-blocked-msg">
+          <span class="qcf-blocked-icon">⏸</span>
+          <span class="qcf-blocked-text">2 items manquants avant validation finale. Compléter CIP et nettoyage zone.</span>
+        </div>
+
+        <div class="qcf-action-row">
+          <div class="gate-status blocked">2 items obligatoires non confirmés</div>
+          <button class="btn-gate" disabled>Valider et clôturer</button>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+</div>
+
+<!-- Bottom legend -->
+<div class="mockup-legend">
+  <div style="font-family:'JetBrains Mono',monospace;font-size:0.58rem;letter-spacing:0.12em;text-transform:uppercase;color:var(--hop)">Drill-in session</div>
+  <div class="legend-item"><div class="legend-dot" style="background:var(--hop)"></div>Onglet 1: QC Firewall</div>
+  <div class="legend-item"><div class="legend-dot" style="background:var(--warn);animation:pulse 2s ease-in-out infinite"></div>Onglet 2: Live + pertes packaging</div>
+  <div class="legend-item"><div class="legend-dot" style="background:var(--ink-faint)"></div>Onglet 3: Clôture (verrouillé jusqu'à arrêt run)</div>
+  <div style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:0.58rem;color:var(--ink-mute)">Cliquer les onglets pour naviguer</div>
+</div>
+
+<script>
+// Clock
+function tick() {
+  const now = new Date();
+  // no clock field here, skip
+}
+
+// Tab switching
+function switchTab(idx) {
+  document.querySelectorAll('.phase-panel').forEach((p,i) => {
+    p.classList.toggle('active', i === idx);
+  });
+  document.querySelectorAll('.phase-tab').forEach((t,i) => {
+    if (i === idx) {
+      t.classList.add('active');
+      if (i > 0) t.classList.remove('done');
+    } else {
+      t.classList.remove('active');
+    }
+  });
+}
+
+// Checkbox toggle (for mockup interactivity)
+function toggleCheck(el) {
+  const isChecked = el.classList.contains('checked');
+  el.classList.toggle('checked', !isChecked);
+  el.innerHTML = !isChecked
+    ? '<svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 5l2.5 2.8L8 3" stroke="white" stroke-width="1.4" stroke-linecap="round"/></svg>'
+    : '';
+  const item = el.closest('.qcf-item');
+  const label = item.querySelector('.qcf-label');
+  label.classList.toggle('checked', !isChecked);
+}
+
+// Animate gauge values gently
+const gauges = [
+  { id: 'o2-val', base: 0.06, range: 0.008, dec: 2 },
+  { id: 'co2-val', base: 5.2, range: 0.06, dec: 1 },
+  { id: 'flow-val', base: 3840, range: 40, dec: 0 },
+  { id: 'temp-val', base: 2.1, range: 0.08, dec: 1 },
+];
+setInterval(() => {
+  gauges.forEach(g => {
+    const el = document.getElementById(g.id);
+    if (!el) return;
+    const v = g.base + (Math.random()-0.5)*g.range;
+    el.textContent = g.dec === 0 ? Math.round(v).toLocaleString('fr') : v.toFixed(g.dec);
+  });
+}, 3000);
+</script>
+</body>
+</html>

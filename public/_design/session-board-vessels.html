@@ -1,0 +1,956 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Sessions Actives — Carte des Cuves · MaltyTask</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,200;0,9..144,300;0,9..144,400;0,9..144,600;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:            #15100a;
+  --bg-elev:       #1d160d;
+  --bg-elev2:      #251c10;
+  --bg-elev3:      #2d2114;
+  --ink:           #ede0c4;
+  --ink-soft:      #c8b894;
+  --ink-mute:      #7a6647;
+  --ink-faint:     #3a2e1d;
+  --hairline:      #261d11;
+  --hairline-2:    #342818;
+  --hop:           #9eb060;
+  --hop-deep:      #6b7a3e;
+  --hop-glow:      rgba(158,176,96,0.12);
+  --ember:         #c5664a;
+  --ember-glow:    rgba(197,102,74,0.12);
+  --oak:           #a07a48;
+  --oak-deep:      #6e4e26;
+  --cold:          #2f5575;
+  --bbt:           #6593b8;
+  --bbt-glow:      rgba(101,147,184,0.12);
+  --steel:         #b8bcc0;
+  --steel-light:   #d8dbde;
+  --steel-mid:     #5e6266;
+  --steel-deep:    #2c2e30;
+  --warn:          #d4923c;
+  --warn-glow:     rgba(212,146,60,0.15);
+  --ok:            #9eb060;
+  --bad:           #c5664a;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+*::selection { background: var(--bbt); color: var(--bg); }
+html { font-size: 16px; }
+body.home {
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-feature-settings: "ss01";
+  background: var(--bg);
+  color: var(--ink);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden; position: relative;
+}
+body.home::before {
+  content: ''; position: fixed; inset: 0;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.07  0 0 0 0 0.05  0 0 0 0 0.02  0 0 0 1.2 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  opacity: 0.45; pointer-events: none; z-index: 0;
+}
+
+/* ============================================================
+   LAYOUT — SPLIT: Vessel map LEFT, Detail panel RIGHT
+   ============================================================ */
+.page-wrap {
+  position: relative; z-index: 1;
+  display: grid;
+  grid-template-rows: 56px 1fr;
+  grid-template-columns: 1fr 380px;
+  grid-template-areas:
+    "topbar topbar"
+    "map detail";
+  min-height: 100vh;
+}
+
+/* ── TOPBAR ── */
+.topbar {
+  grid-area: topbar;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--bg);
+  z-index: 100;
+}
+.wordmark { display: flex; align-items: baseline; gap: 10px; }
+.wordmark-name {
+  font-family: "Fraunces", serif; font-variation-settings: "opsz" 96;
+  font-size: 1.1rem; font-weight: 300; color: var(--ink);
+}
+.wordmark-name em { font-style: italic; color: var(--ink-soft); }
+.wordmark-section {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.6rem; letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--ink-mute);
+}
+.topbar-right { display: flex; align-items: center; gap: 16px; }
+.topbar-clock {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.72rem; letter-spacing: 0.08em; color: var(--ink-mute);
+}
+.avatar {
+  width: 30px; height: 30px; border-radius: 50%;
+  background: var(--bg-elev); border: 1px solid var(--hairline-2);
+  display: flex; align-items: center; justify-content: center;
+  font-family: "JetBrains Mono", monospace; font-size: 0.63rem; font-weight: 600;
+  color: var(--oak); letter-spacing: 0;
+}
+.avatar.sm { width: 22px; height: 22px; font-size: 0.55rem; }
+.operator-label { font-size: 0.82rem; color: var(--ink-soft); }
+.topbar-operator { display: flex; align-items: center; gap: 8px; }
+
+.btn-new {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--hop); color: var(--bg);
+  border: none; border-radius: 3px; cursor: pointer;
+  padding: 7px 14px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.65rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;
+  transition: opacity 0.2s;
+}
+.btn-new:hover { opacity: 0.85; }
+
+/* ============================================================
+   MAP AREA (left)
+   ============================================================ */
+.map-area {
+  grid-area: map;
+  padding: 24px;
+  overflow-y: auto;
+  display: flex; flex-direction: column; gap: 24px;
+}
+
+.zone-section {
+  display: flex; flex-direction: column; gap: 12px;
+  animation: fadeIn 0.45s ease both;
+}
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+.zone-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.6rem; letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--ink-faint);
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.vessel-row {
+  display: flex; gap: 12px; flex-wrap: wrap;
+}
+
+/* ── Vessel tile ── */
+.vessel-tile {
+  width: 120px;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline-2);
+  border-radius: 5px; overflow: hidden;
+  cursor: pointer; position: relative;
+  transition: border-color 0.2s, transform 0.15s, box-shadow 0.2s;
+}
+.vessel-tile:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 32px rgba(0,0,0,0.4);
+}
+.vessel-tile.selected {
+  border-color: var(--bbt);
+  box-shadow: 0 0 0 2px rgba(101,147,184,0.2), 0 10px 32px rgba(0,0,0,0.4);
+}
+
+/* Status accent top stripe */
+.vessel-tile::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+}
+.vessel-tile.active-brew::before  { background: var(--ember); }
+.vessel-tile.active-ferm::before  { background: var(--bbt); }
+.vessel-tile.active-rack::before  { background: var(--oak); }
+.vessel-tile.active-pack::before  { background: var(--hop); }
+.vessel-tile.idle::before         { background: var(--hairline); }
+.vessel-tile.cip::before          { background: var(--warn); animation: pulse-warn 1s ease-in-out infinite; }
+
+@keyframes pulse-warn {
+  0%, 100% { opacity: 1; } 50% { opacity: 0.4; }
+}
+
+/* SVG vessel illustration */
+.vessel-svg-wrap {
+  height: 88px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg);
+  border-bottom: 1px solid var(--hairline);
+  position: relative;
+}
+
+/* Mini fill level bar on the side */
+.fill-indicator {
+  position: absolute; left: 8px; top: 10px; bottom: 10px;
+  width: 4px;
+  background: var(--hairline);
+  border-radius: 2px; overflow: hidden;
+}
+.fill-bar {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  border-radius: 2px;
+  transition: height 0.6s ease;
+}
+.fill-bar.brew  { background: var(--ember); }
+.fill-bar.ferm  { background: var(--bbt); }
+.fill-bar.rack  { background: var(--oak); }
+.fill-bar.idle  { background: var(--hairline-2); }
+
+/* Status badge floating top-right */
+.vessel-status-badge {
+  position: absolute; top: 6px; right: 6px;
+  width: 10px; height: 10px; border-radius: 50%;
+  border: 1.5px solid var(--bg);
+}
+.vessel-status-badge.active { background: var(--hop); box-shadow: 0 0 6px rgba(158,176,96,0.5); animation: pulse-warn 2s ease-in-out infinite; }
+.vessel-status-badge.warn   { background: var(--warn); box-shadow: 0 0 6px rgba(212,146,60,0.5); animation: pulse-warn 1.2s ease-in-out infinite; }
+.vessel-status-badge.idle   { background: var(--ink-faint); }
+.vessel-status-badge.cip    { background: var(--bbt); }
+
+.vessel-body {
+  padding: 8px 10px 10px;
+}
+.vessel-code {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.68rem; font-weight: 600; letter-spacing: 0.06em;
+  color: var(--ink-soft); margin-bottom: 2px;
+}
+.vessel-beer {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 96;
+  font-size: 0.75rem; font-weight: 300;
+  color: var(--ink); line-height: 1.2;
+  margin-bottom: 4px;
+}
+.vessel-beer em { font-style: italic; color: var(--ink-soft); }
+.vessel-phase {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.55rem; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--ink-mute);
+}
+.vessel-phase.active-ferm { color: var(--bbt); }
+.vessel-phase.active-brew { color: var(--ember); }
+.vessel-phase.active-rack { color: var(--oak); }
+.vessel-phase.active-pack { color: var(--hop); }
+
+/* Quick live chip on the tile */
+.vessel-live-chip {
+  margin-top: 5px;
+  display: flex; gap: 3px; align-items: center;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.58rem; color: var(--ink-mute);
+}
+.vessel-live-val { color: var(--ink-soft); font-weight: 600; }
+.vessel-live-val.warn { color: var(--warn); }
+
+/* ============================================================
+   DETAIL PANEL (right side)
+   ============================================================ */
+.detail-panel {
+  grid-area: detail;
+  background: var(--bg-elev);
+  border-left: 1px solid var(--hairline);
+  display: flex; flex-direction: column;
+  overflow-y: auto;
+}
+
+.detail-header {
+  padding: 20px 20px 16px;
+  border-bottom: 1px solid var(--hairline);
+  position: sticky; top: 0;
+  background: var(--bg-elev);
+  z-index: 10;
+}
+
+.detail-type-badge {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.58rem; letter-spacing: 0.12em; text-transform: uppercase;
+  padding: 2px 8px; border-radius: 2px; font-weight: 600;
+  background: var(--bbt-glow); color: var(--bbt);
+  border: 1px solid rgba(101,147,184,0.25);
+  display: inline-flex; margin-bottom: 8px;
+}
+
+.detail-beer-name {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 144;
+  font-size: 1.6rem; font-weight: 300; letter-spacing: -0.02em;
+  color: var(--ink); line-height: 1.1; margin-bottom: 4px;
+}
+.detail-beer-name em { font-style: italic; color: var(--ink-soft); }
+
+.detail-vessel-info {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.65rem; letter-spacing: 0.06em; color: var(--ink-mute);
+}
+
+/* Phase stepper inside detail panel */
+.phase-stepper {
+  display: flex; align-items: stretch;
+  padding: 16px 20px;
+  gap: 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.phase-step {
+  flex: 1; display: flex; flex-direction: column; align-items: center;
+  gap: 6px; position: relative;
+}
+.phase-step + .phase-step::before {
+  content: ''; position: absolute; left: 0; top: 12px;
+  width: 1px; height: 20px;
+  background: var(--hairline);
+}
+.phase-dot {
+  width: 20px; height: 20px; border-radius: 50%;
+  border: 2px solid var(--hairline-2);
+  background: var(--bg);
+  display: flex; align-items: center; justify-content: center;
+  position: relative; z-index: 1;
+  transition: border-color 0.2s, background 0.2s;
+  flex-shrink: 0;
+}
+.phase-dot.done {
+  border-color: var(--hop); background: var(--hop);
+}
+.phase-dot.done svg { display: block; }
+.phase-dot.active {
+  border-color: var(--bbt); background: var(--bbt-glow);
+  box-shadow: 0 0 0 4px rgba(101,147,184,0.15);
+  animation: pulse-warn 2s ease-in-out infinite;
+}
+.phase-dot svg { display: none; }
+.phase-step-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.55rem; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--ink-mute); text-align: center;
+}
+.phase-step.active .phase-step-label { color: var(--bbt); }
+.phase-step.done .phase-step-label { color: var(--hop); }
+
+/* Live measures grid */
+.detail-section {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--hairline);
+}
+.detail-section-title {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.58rem; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--ink-mute); margin-bottom: 12px;
+  display: flex; align-items: center; gap: 8px;
+}
+.detail-section-title::after {
+  content: ''; flex: 1; height: 1px; background: var(--hairline);
+}
+
+/* Big measure readouts */
+.measure-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+}
+.measure-block {
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  border-radius: 4px; padding: 10px 12px;
+  position: relative; overflow: hidden;
+}
+.measure-block.flagged {
+  border-color: rgba(212,146,60,0.4);
+  background: rgba(212,146,60,0.04);
+}
+.measure-block.alert {
+  border-color: rgba(197,102,74,0.4);
+  background: rgba(197,102,74,0.04);
+}
+.measure-block-key {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.58rem; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--ink-mute); margin-bottom: 4px;
+}
+.measure-block-val {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 1.5rem; font-weight: 600; line-height: 1;
+  color: var(--ink-soft);
+}
+.measure-block-val.ok   { color: var(--ok); }
+.measure-block-val.warn { color: var(--warn); }
+.measure-block-val.bad  { color: var(--bad); }
+.measure-block-unit {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.65rem; color: var(--ink-mute); margin-top: 1px;
+}
+/* Flag label */
+.measure-flag-label {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.68rem; color: var(--warn);
+  margin-top: 4px; line-height: 1.3;
+}
+
+/* Range bar under value */
+.range-bar {
+  height: 2px; background: var(--hairline);
+  border-radius: 1px; overflow: visible;
+  margin-top: 6px; position: relative;
+}
+.range-ok { position: absolute; height: 100%; background: var(--ok); border-radius: 1px; }
+.range-marker {
+  position: absolute; top: -3px;
+  width: 2px; height: 8px;
+  background: var(--ink-soft); border-radius: 1px;
+  transform: translateX(-50%);
+}
+.range-marker.warn { background: var(--warn); }
+
+/* Time series */
+.timeseries {
+  display: flex; flex-direction: column; gap: 6px;
+}
+.ts-row {
+  display: flex; align-items: baseline; justify-content: space-between;
+  padding: 6px 0; border-bottom: 1px solid var(--hairline);
+}
+.ts-row:last-child { border-bottom: none; }
+.ts-time {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem; letter-spacing: 0.04em; color: var(--ink-mute);
+  flex-shrink: 0; min-width: 80px;
+}
+.ts-operator {
+  font-size: 0.72rem; color: var(--ink-soft); flex: 1; padding: 0 10px;
+}
+.ts-vals {
+  display: flex; gap: 10px;
+}
+.ts-val {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem; font-weight: 600;
+  color: var(--ink-soft);
+}
+.ts-val.warn { color: var(--warn); }
+
+/* Alert card */
+.alert-card {
+  background: rgba(197,102,74,0.08);
+  border: 1px solid rgba(197,102,74,0.3);
+  border-radius: 4px; padding: 10px 12px;
+  margin: 12px 20px;
+}
+.alert-card-title {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.6rem; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--ember); margin-bottom: 4px;
+  display: flex; align-items: center; gap: 6px;
+}
+.alert-pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--ember); animation: pulse-warn 1.2s ease-in-out infinite; }
+.alert-card-body {
+  font-size: 0.78rem; color: var(--ink-soft); line-height: 1.5;
+}
+
+/* Operator presence block */
+.operator-presence {
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--hairline);
+}
+.presence-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 5px 0;
+}
+.presence-avatar { position: relative; }
+.presence-online-dot {
+  position: absolute; bottom: -1px; right: -1px;
+  width: 7px; height: 7px; border-radius: 50%;
+  border: 1.5px solid var(--bg-elev);
+  background: var(--hop);
+}
+.presence-info {
+  flex: 1;
+  display: flex; flex-direction: column; gap: 1px;
+}
+.presence-name { font-size: 0.82rem; color: var(--ink-soft); }
+.presence-action {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.6rem; letter-spacing: 0.04em; color: var(--ink-mute);
+}
+.presence-role-badge {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.55rem; letter-spacing: 0.1em; text-transform: uppercase;
+  padding: 2px 6px; border-radius: 2px;
+  border: 1px solid var(--hairline-2); color: var(--ink-mute);
+}
+.presence-role-badge.validated { border-color: var(--hop-deep); color: var(--hop); }
+
+/* Action buttons */
+.detail-actions {
+  padding: 16px 20px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.btn-primary {
+  width: 100%; border: none; border-radius: 3px; cursor: pointer;
+  padding: 11px 16px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.68rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;
+  background: var(--bbt); color: var(--bg);
+  transition: opacity 0.2s, transform 0.15s;
+}
+.btn-primary:hover { opacity: 0.85; transform: translateY(-1px); }
+.btn-secondary {
+  width: 100%; border: 1px solid var(--hairline-2); border-radius: 3px; cursor: pointer;
+  padding: 9px 16px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.65rem; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase;
+  background: none; color: var(--ink-mute);
+  transition: border-color 0.2s, color 0.2s;
+}
+.btn-secondary:hover { border-color: var(--oak); color: var(--oak); }
+
+/* Mockup note */
+.mockup-note {
+  position: fixed; bottom: 20px; left: 20px;
+  background: var(--bg-elev2); border: 1px solid var(--hairline-2);
+  border-radius: 5px; padding: 12px 16px; z-index: 200; max-width: 260px;
+}
+.mockup-note-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.58rem; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--bbt); margin-bottom: 6px;
+}
+.mockup-note p { font-size: 0.75rem; color: var(--ink-mute); line-height: 1.5; }
+
+/* Tiny SVG inline tanks */
+.cct-svg { filter: drop-shadow(0 2px 6px rgba(0,0,0,0.4)); }
+</style>
+</head>
+<body class="home">
+<div class="page-wrap">
+
+  <!-- TOPBAR -->
+  <nav class="topbar">
+    <div class="wordmark">
+      <div class="wordmark-name">La <em>Nébuleuse</em></div>
+      <div class="wordmark-section">Carte des cuves · Sessions</div>
+    </div>
+    <div class="topbar-right">
+      <div class="topbar-clock" id="clock">07:42:18</div>
+      <div class="topbar-operator">
+        <div class="avatar">MA</div>
+        <span class="operator-label">M. Amrani</span>
+      </div>
+      <button class="btn-new">
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M5 1v8M1 5h8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        Nouvelle session
+      </button>
+    </div>
+  </nav>
+
+  <!-- MAP AREA -->
+  <main class="map-area">
+
+    <!-- Zone: Brasserie -->
+    <section class="zone-section">
+      <div class="zone-label">Brasserie</div>
+      <div class="vessel-row">
+        <!-- Active brewing session -->
+        <div class="vessel-tile active-brew selected" onclick="selectVessel(this, 'brew')">
+          <div class="vessel-svg-wrap">
+            <div class="fill-indicator">
+              <div class="fill-bar brew" style="height:78%"></div>
+            </div>
+            <div class="vessel-status-badge active"></div>
+            <svg class="cct-svg" width="48" height="72" viewBox="0 0 48 72" fill="none">
+              <!-- CCT/Brewkettle body -->
+              <rect x="8" y="10" width="32" height="48" rx="3" fill="#2c2e30" stroke="#5e6266" stroke-width="1"/>
+              <rect x="10" y="12" width="28" height="44" rx="2" fill="#1d1f21"/>
+              <!-- Fill level -->
+              <rect x="10" y="34" width="28" height="22" rx="0" fill="rgba(197,102,74,0.35)"/>
+              <!-- Domed top -->
+              <ellipse cx="24" cy="10" rx="16" ry="5" fill="#3a3d40" stroke="#5e6266" stroke-width="1"/>
+              <!-- Cone bottom -->
+              <path d="M10 56 L24 68 L38 56 Z" fill="#2c2e30" stroke="#5e6266" stroke-width="1"/>
+              <!-- Port nozzle -->
+              <line x1="40" y1="40" x2="46" y2="40" stroke="#5e6266" stroke-width="1.5"/>
+              <rect x="44" y="38" width="3" height="4" rx="1" fill="#3a3d40"/>
+              <!-- Pipes top -->
+              <line x1="24" y1="5" x2="24" y2="1" stroke="#4a4e52" stroke-width="2"/>
+            </svg>
+          </div>
+          <div class="vessel-body">
+            <div class="vessel-code">BK-01</div>
+            <div class="vessel-beer"><em>Embuscade</em></div>
+            <div class="vessel-phase active-brew">Brassage · Début</div>
+            <div class="vessel-live-chip">
+              T° <span class="vessel-live-val">68.4°C</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Idle -->
+        <div class="vessel-tile idle" onclick="selectVessel(this, 'idle')">
+          <div class="vessel-svg-wrap">
+            <div class="fill-indicator">
+              <div class="fill-bar idle" style="height:0%"></div>
+            </div>
+            <div class="vessel-status-badge idle"></div>
+            <svg class="cct-svg" width="48" height="72" viewBox="0 0 48 72" fill="none">
+              <rect x="8" y="10" width="32" height="48" rx="3" fill="#2c2e30" stroke="#3a3d40" stroke-width="1"/>
+              <rect x="10" y="12" width="28" height="44" rx="2" fill="#1d1f21"/>
+              <ellipse cx="24" cy="10" rx="16" ry="5" fill="#3a3d40" stroke="#4a4e52" stroke-width="1"/>
+              <path d="M10 56 L24 68 L38 56 Z" fill="#2c2e30" stroke="#3a3d40" stroke-width="1"/>
+              <line x1="40" y1="40" x2="46" y2="40" stroke="#3a3d40" stroke-width="1.5"/>
+              <rect x="44" y="38" width="3" height="4" rx="1" fill="#2c2e30"/>
+              <line x1="24" y1="5" x2="24" y2="1" stroke="#3a3d40" stroke-width="2"/>
+            </svg>
+          </div>
+          <div class="vessel-body">
+            <div class="vessel-code">BK-02</div>
+            <div class="vessel-beer" style="color:var(--ink-faint)">—</div>
+            <div class="vessel-phase">Libre</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Zone: Cave de fermentation -->
+    <section class="zone-section" style="animation-delay:0.1s">
+      <div class="zone-label">Cave de fermentation · CCT</div>
+      <div class="vessel-row">
+        <!-- CCT-4 fermenting / warn -->
+        <div class="vessel-tile active-ferm" onclick="selectVessel(this,'ferm')">
+          <div class="vessel-svg-wrap">
+            <div class="fill-indicator"><div class="fill-bar ferm" style="height:90%"></div></div>
+            <div class="vessel-status-badge warn"></div>
+            <svg class="cct-svg" width="44" height="80" viewBox="0 0 44 80" fill="none">
+              <rect x="7" y="8" width="30" height="56" rx="3" fill="#2c2e30" stroke="#5e6266" stroke-width="1"/>
+              <rect x="9" y="10" width="26" height="52" rx="2" fill="#1d1f21"/>
+              <rect x="9" y="14" width="26" height="48" rx="0" fill="rgba(101,147,184,0.22)"/>
+              <ellipse cx="22" cy="8" rx="15" ry="5" fill="#3a3d40" stroke="#5e6266" stroke-width="1"/>
+              <path d="M9 64 L22 76 L35 64 Z" fill="#2c2e30" stroke="#5e6266" stroke-width="1"/>
+              <line x1="37" y1="38" x2="42" y2="38" stroke="#5e6266" stroke-width="1.5"/>
+              <line x1="22" y1="3" x2="22" y2="0" stroke="#4a4e52" stroke-width="2"/>
+            </svg>
+          </div>
+          <div class="vessel-body">
+            <div class="vessel-code">CCT-4</div>
+            <div class="vessel-beer"><em>Stirling</em></div>
+            <div class="vessel-phase active-ferm">Ferm. · En cours</div>
+            <div class="vessel-live-chip">
+              pH <span class="vessel-live-val warn">4.72</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- CCT-7 racking -->
+        <div class="vessel-tile active-rack" onclick="selectVessel(this,'rack')">
+          <div class="vessel-svg-wrap">
+            <div class="fill-indicator"><div class="fill-bar rack" style="height:30%"></div></div>
+            <div class="vessel-status-badge active"></div>
+            <svg class="cct-svg" width="44" height="80" viewBox="0 0 44 80" fill="none">
+              <rect x="7" y="8" width="30" height="56" rx="3" fill="#2c2e30" stroke="#5e6266" stroke-width="1"/>
+              <rect x="9" y="10" width="26" height="52" rx="2" fill="#1d1f21"/>
+              <rect x="9" y="54" width="26" height="8" rx="0" fill="rgba(160,122,72,0.3)"/>
+              <ellipse cx="22" cy="8" rx="15" ry="5" fill="#3a3d40" stroke="#5e6266" stroke-width="1"/>
+              <path d="M9 64 L22 76 L35 64 Z" fill="#2c2e30" stroke="#5e6266" stroke-width="1"/>
+              <line x1="37" y1="38" x2="42" y2="38" stroke="#a07a48" stroke-width="2"/>
+              <line x1="22" y1="3" x2="22" y2="0" stroke="#4a4e52" stroke-width="2"/>
+              <!-- Transfer arrow -->
+              <path d="M38 36 L43 38 L38 40" fill="none" stroke="#a07a48" stroke-width="1.2"/>
+            </svg>
+          </div>
+          <div class="vessel-body">
+            <div class="vessel-code">CCT-7</div>
+            <div class="vessel-beer"><em>Moonshine</em></div>
+            <div class="vessel-phase active-rack">Soutirage · En cours</div>
+            <div class="vessel-live-chip">
+              O₂ <span class="vessel-live-val">0.06ppm</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Idle CCTs -->
+        <div class="vessel-tile idle" onclick="selectVessel(this,'idle')">
+          <div class="vessel-svg-wrap">
+            <div class="fill-indicator"><div class="fill-bar idle" style="height:0%"></div></div>
+            <div class="vessel-status-badge idle"></div>
+            <svg class="cct-svg" width="44" height="80" viewBox="0 0 44 80" fill="none">
+              <rect x="7" y="8" width="30" height="56" rx="3" fill="#2c2e30" stroke="#3a3d40" stroke-width="1"/>
+              <rect x="9" y="10" width="26" height="52" rx="2" fill="#1d1f21"/>
+              <ellipse cx="22" cy="8" rx="15" ry="5" fill="#3a3d40" stroke="#4a4e52" stroke-width="1"/>
+              <path d="M9 64 L22 76 L35 64 Z" fill="#2c2e30" stroke="#3a3d40" stroke-width="1"/>
+              <line x1="22" y1="3" x2="22" y2="0" stroke="#3a3d40" stroke-width="2"/>
+            </svg>
+          </div>
+          <div class="vessel-body">
+            <div class="vessel-code">CCT-2</div>
+            <div class="vessel-beer" style="color:var(--ink-faint)">—</div>
+            <div class="vessel-phase">Libre</div>
+          </div>
+        </div>
+
+        <div class="vessel-tile cip">
+          <div class="vessel-svg-wrap">
+            <div class="fill-indicator"><div class="fill-bar" style="height:60%;background:var(--bbt);opacity:0.6"></div></div>
+            <div class="vessel-status-badge cip"></div>
+            <svg class="cct-svg" width="44" height="80" viewBox="0 0 44 80" fill="none">
+              <rect x="7" y="8" width="30" height="56" rx="3" fill="#2c2e30" stroke="#4a4e52" stroke-width="1" stroke-dasharray="3 2"/>
+              <rect x="9" y="10" width="26" height="52" rx="2" fill="#1d1f21"/>
+              <ellipse cx="22" cy="8" rx="15" ry="5" fill="#3a3d40" stroke="#4a4e52" stroke-width="1"/>
+              <path d="M9 64 L22 76 L35 64 Z" fill="#2c2e30" stroke="#4a4e52" stroke-width="1"/>
+              <text x="22" y="40" text-anchor="middle" font-family="monospace" font-size="8" fill="#6593b8" opacity="0.7">CIP</text>
+              <line x1="22" y1="3" x2="22" y2="0" stroke="#4a4e52" stroke-width="2"/>
+            </svg>
+          </div>
+          <div class="vessel-body">
+            <div class="vessel-code">CCT-9</div>
+            <div class="vessel-beer" style="color:var(--bbt);font-size:0.72rem">CIP en cours</div>
+            <div class="vessel-phase" style="color:var(--bbt)">Nettoyage</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Zone: Conditionnement -->
+    <section class="zone-section" style="animation-delay:0.2s">
+      <div class="zone-label">Conditionnement</div>
+      <div class="vessel-row">
+        <div class="vessel-tile active-pack" onclick="selectVessel(this,'pack')">
+          <div class="vessel-svg-wrap">
+            <div class="vessel-status-badge active"></div>
+            <!-- Packaging line icon -->
+            <svg width="56" height="52" viewBox="0 0 56 52" fill="none">
+              <rect x="4" y="18" width="48" height="20" rx="3" fill="#2c2e30" stroke="#5e6266" stroke-width="1"/>
+              <!-- Bottles on conveyor -->
+              <rect x="9" y="14" width="7" height="20" rx="3" fill="#1d1f21" stroke="#4a4e52" stroke-width="0.8"/>
+              <rect x="20" y="14" width="7" height="20" rx="3" fill="#9eb060" opacity="0.4" stroke="#6b7a3e" stroke-width="0.8"/>
+              <rect x="31" y="14" width="7" height="20" rx="3" fill="#9eb060" opacity="0.4" stroke="#6b7a3e" stroke-width="0.8"/>
+              <rect x="42" y="14" width="7" height="20" rx="3" fill="#9eb060" opacity="0.4" stroke="#6b7a3e" stroke-width="0.8"/>
+              <!-- Conveyor rollers -->
+              <line x1="4" y1="38" x2="52" y2="38" stroke="#3a3d40" stroke-width="1"/>
+              <circle cx="12" cy="41" r="3" fill="#3a3d40" stroke="#4a4e52" stroke-width="0.8"/>
+              <circle cx="24" cy="41" r="3" fill="#3a3d40" stroke="#4a4e52" stroke-width="0.8"/>
+              <circle cx="36" cy="41" r="3" fill="#3a3d40" stroke="#4a4e52" stroke-width="0.8"/>
+              <circle cx="48" cy="41" r="3" fill="#3a3d40" stroke="#4a4e52" stroke-width="0.8"/>
+            </svg>
+          </div>
+          <div class="vessel-body">
+            <div class="vessel-code">LIGNE-1</div>
+            <div class="vessel-beer"><em>Zepp</em> 33cl</div>
+            <div class="vessel-phase active-pack">Emballage · Début</div>
+            <div class="vessel-live-chip">
+              5/5 <span class="vessel-live-val">validés</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="vessel-tile idle" onclick="selectVessel(this,'idle')">
+          <div class="vessel-svg-wrap">
+            <div class="vessel-status-badge idle"></div>
+            <svg width="56" height="52" viewBox="0 0 56 52" fill="none">
+              <rect x="4" y="18" width="48" height="20" rx="3" fill="#2c2e30" stroke="#3a3d40" stroke-width="1"/>
+              <line x1="4" y1="38" x2="52" y2="38" stroke="#2a2d30" stroke-width="1"/>
+              <circle cx="12" cy="41" r="3" fill="#2c2e30" stroke="#3a3d40" stroke-width="0.8"/>
+              <circle cx="24" cy="41" r="3" fill="#2c2e30" stroke="#3a3d40" stroke-width="0.8"/>
+              <circle cx="36" cy="41" r="3" fill="#2c2e30" stroke="#3a3d40" stroke-width="0.8"/>
+              <circle cx="48" cy="41" r="3" fill="#2c2e30" stroke="#3a3d40" stroke-width="0.8"/>
+            </svg>
+          </div>
+          <div class="vessel-body">
+            <div class="vessel-code">LIGNE-2</div>
+            <div class="vessel-beer" style="color:var(--ink-faint)">—</div>
+            <div class="vessel-phase">Libre</div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- DETAIL PANEL -->
+  <aside class="detail-panel" id="detail-panel">
+    <!-- Header -->
+    <div class="detail-header">
+      <div class="detail-type-badge">Fermentation</div>
+      <div class="detail-beer-name"><em>Stirling</em> · CCT-4</div>
+      <div class="detail-vessel-info">CCT-4 · 3 000 L · Fermentation jour 5</div>
+    </div>
+
+    <!-- Phase stepper -->
+    <div class="phase-stepper">
+      <div class="phase-step done">
+        <div class="phase-dot done">
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 5l2.5 2.5L8 3" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+        <div class="phase-step-label">Début</div>
+      </div>
+      <div class="phase-step active">
+        <div class="phase-dot active"></div>
+        <div class="phase-step-label">En cours</div>
+      </div>
+      <div class="phase-step">
+        <div class="phase-dot"></div>
+        <div class="phase-step-label">Fin</div>
+      </div>
+    </div>
+
+    <!-- Alert -->
+    <div class="alert-card">
+      <div class="alert-card-title"><div class="alert-pulse"></div>Alerte pH</div>
+      <div class="alert-card-body">pH actuel 4.72 hors plage cible 4.2–4.5. Deux relevés consécutifs au-dessus de la limite. Surveiller l'atténuation.</div>
+    </div>
+
+    <!-- Live measures -->
+    <div class="detail-section">
+      <div class="detail-section-title">Mesures actuelles</div>
+      <div class="measure-grid">
+        <div class="measure-block flagged">
+          <div class="measure-block-key">pH</div>
+          <div class="measure-block-val warn">4.72</div>
+          <div class="measure-block-unit">cible 4.2 – 4.5</div>
+          <div class="range-bar">
+            <div class="range-ok" style="left:20%;width:55%"></div>
+            <div class="range-marker warn" style="left:76%"></div>
+          </div>
+          <div class="measure-flag-label">⚑ Hors plage haute</div>
+        </div>
+        <div class="measure-block">
+          <div class="measure-block-key">Densité</div>
+          <div class="measure-block-val">8.4°P</div>
+          <div class="measure-block-unit">OG 16.2°P → FG ~2.8°P</div>
+          <div class="range-bar">
+            <div class="range-ok" style="left:0%;width:48%"></div>
+            <div class="range-marker" style="left:48%"></div>
+          </div>
+        </div>
+        <div class="measure-block">
+          <div class="measure-block-key">Température</div>
+          <div class="measure-block-val ok">12.2°C</div>
+          <div class="measure-block-unit">cible 11 – 13°C</div>
+          <div class="range-bar">
+            <div class="range-ok" style="left:20%;width:60%"></div>
+            <div class="range-marker ok" style="left:61%"></div>
+          </div>
+        </div>
+        <div class="measure-block">
+          <div class="measure-block-key">CO₂</div>
+          <div class="measure-block-val ok">4.8 g/L</div>
+          <div class="measure-block-unit">cible 4.5 – 5.5 g/L</div>
+          <div class="range-bar">
+            <div class="range-ok" style="left:25%;width:50%"></div>
+            <div class="range-marker ok" style="left:47%"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Time series -->
+    <div class="detail-section">
+      <div class="detail-section-title">Relevés (5 derniers)</div>
+      <div class="timeseries">
+        <div class="ts-row">
+          <span class="ts-time">07:30 auj.</span>
+          <span class="ts-operator">M. Amrani</span>
+          <div class="ts-vals">
+            <span class="ts-val warn">4.72</span>
+            <span class="ts-val">8.4°P</span>
+            <span class="ts-val">12.2°C</span>
+          </div>
+        </div>
+        <div class="ts-row">
+          <span class="ts-time">14:30 hier</span>
+          <span class="ts-operator">P. Lacroix</span>
+          <div class="ts-vals">
+            <span class="ts-val warn">4.70</span>
+            <span class="ts-val">9.8°P</span>
+            <span class="ts-val">12.5°C</span>
+          </div>
+        </div>
+        <div class="ts-row">
+          <span class="ts-time">09:00 hier</span>
+          <span class="ts-operator">R. Fontaine</span>
+          <div class="ts-vals">
+            <span class="ts-val">4.45</span>
+            <span class="ts-val">11.2°P</span>
+            <span class="ts-val">12.8°C</span>
+          </div>
+        </div>
+        <div class="ts-row">
+          <span class="ts-time">Lun 14:00</span>
+          <span class="ts-operator">R. Fontaine</span>
+          <div class="ts-vals">
+            <span class="ts-val">4.38</span>
+            <span class="ts-val">13.4°P</span>
+            <span class="ts-val">13.2°C</span>
+          </div>
+        </div>
+        <div class="ts-row">
+          <span class="ts-time">Lun 09:00</span>
+          <span class="ts-operator">R. Fontaine</span>
+          <div class="ts-vals">
+            <span class="ts-val">4.35</span>
+            <span class="ts-val">15.8°P</span>
+            <span class="ts-val">14.0°C</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Operator presence -->
+    <div class="operator-presence detail-section" style="border-top:none">
+      <div class="detail-section-title">Opérateurs</div>
+      <div class="presence-row">
+        <div class="presence-avatar">
+          <div class="avatar sm">RF</div>
+          <div class="presence-online-dot"></div>
+        </div>
+        <div class="presence-info">
+          <div class="presence-name">R. Fontaine</div>
+          <div class="presence-action">Ouvert lun. 09:00 · Saisie démarrage</div>
+        </div>
+        <div class="presence-role-badge validated">Validé</div>
+      </div>
+      <div class="presence-row">
+        <div class="presence-avatar">
+          <div class="avatar sm">PL</div>
+          <div class="presence-online-dot" style="background:var(--ok)"></div>
+        </div>
+        <div class="presence-info">
+          <div class="presence-name">P. Lacroix</div>
+          <div class="presence-action">Relevé hier 14:30</div>
+        </div>
+        <div class="presence-role-badge">Relevé</div>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="detail-actions">
+      <button class="btn-primary">Saisir nouveau relevé</button>
+      <button class="btn-secondary">Voir historique complet</button>
+    </div>
+  </aside>
+</div>
+
+<div class="mockup-note">
+  <div class="mockup-note-label">Direction B — Carte des cuves</div>
+  <p>Cuves visibles en permanence avec badge état + niveau. Cliquer → panneau détail. SVG vessels avec fill-level animé.</p>
+</div>
+
+<script>
+function tick() {
+  const now = new Date();
+  document.getElementById('clock').textContent =
+    String(now.getHours()).padStart(2,'0') + ':' +
+    String(now.getMinutes()).padStart(2,'0') + ':' +
+    String(now.getSeconds()).padStart(2,'0');
+}
+tick(); setInterval(tick,1000);
+
+function selectVessel(el, type) {
+  document.querySelectorAll('.vessel-tile').forEach(t => t.classList.remove('selected'));
+  el.classList.add('selected');
+}
+</script>
+</body>
+</html>

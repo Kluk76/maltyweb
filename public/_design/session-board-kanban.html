@@ -1,0 +1,873 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Sessions Actives — Kanban · MaltyTask</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,200;0,9..144,300;0,9..144,400;0,9..144,600;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   DESIGN TOKENS — Dark aged-oak palette (maltyweb canonical)
+   ============================================================ */
+:root {
+  --bg:            #15100a;
+  --bg-elev:       #1d160d;
+  --bg-elev2:      #251c10;
+  --bg-elev3:      #2d2114;
+  --ink:           #ede0c4;
+  --ink-soft:      #c8b894;
+  --ink-mute:      #7a6647;
+  --ink-faint:     #3a2e1d;
+  --hairline:      #261d11;
+  --hairline-2:    #342818;
+  --hop:           #9eb060;
+  --hop-deep:      #6b7a3e;
+  --hop-glow:      rgba(158,176,96,0.12);
+  --ember:         #c5664a;
+  --ember-glow:    rgba(197,102,74,0.12);
+  --oak:           #a07a48;
+  --oak-deep:      #6e4e26;
+  --oak-glow:      rgba(160,122,72,0.12);
+  --cold:          #2f5575;
+  --bbt:           #6593b8;
+  --bbt-glow:      rgba(101,147,184,0.12);
+  --steel:         #b8bcc0;
+  --steel-mid:     #5e6266;
+  --steel-deep:    #2c2e30;
+  --warn:          #d4923c;
+  --warn-glow:     rgba(212,146,60,0.12);
+  --ok:            #9eb060;
+  --bad:           #c5664a;
+
+  /* Phase token mapping */
+  --phase-debut:   #9eb060;    /* hop-green: gates passed, fresh start */
+  --phase-cours:   #d4923c;    /* amber: active, ongoing */
+  --phase-fin:     #a07a48;    /* oak: wrapping up, close-out */
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+*::selection { background: var(--hop); color: var(--bg); }
+html { font-size: 16px; }
+
+body.home {
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-feature-settings: "ss01";
+  background: var(--bg);
+  color: var(--ink);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+  position: relative;
+}
+
+/* Grain overlay */
+body.home::before {
+  content: '';
+  position: fixed; inset: 0;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.07  0 0 0 0 0.05  0 0 0 0 0.02  0 0 0 1.2 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  opacity: 0.45; pointer-events: none; z-index: 0;
+}
+
+/* ============================================================
+   LAYOUT
+   ============================================================ */
+.page-wrap {
+  position: relative; z-index: 1;
+  display: flex; flex-direction: column;
+  min-height: 100vh;
+}
+
+/* ============================================================
+   TOPBAR
+   ============================================================ */
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 28px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--bg);
+  position: sticky; top: 0; z-index: 100;
+  backdrop-filter: blur(4px);
+}
+
+.wordmark {
+  display: flex; align-items: baseline; gap: 10px;
+}
+.wordmark-name {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 96;
+  font-size: 1.15rem; font-weight: 300; letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.wordmark-name em { font-style: italic; color: var(--ink-soft); }
+.wordmark-section {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem; letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+.topbar-right {
+  display: flex; align-items: center; gap: 20px;
+}
+.topbar-clock {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.75rem; letter-spacing: 0.08em;
+  color: var(--ink-mute);
+}
+.topbar-operator {
+  display: flex; align-items: center; gap: 8px;
+}
+.avatar {
+  width: 30px; height: 30px; border-radius: 50%;
+  background: var(--bg-elev); border: 1px solid var(--hairline-2);
+  display: flex; align-items: center; justify-content: center;
+  font-family: "JetBrains Mono", monospace; font-size: 0.65rem; font-weight: 600;
+  color: var(--oak); letter-spacing: 0;
+}
+.avatar.sm { width: 22px; height: 22px; font-size: 0.55rem; }
+.operator-label {
+  font-size: 0.82rem; color: var(--ink-soft);
+}
+
+.btn-new {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--hop); color: var(--bg);
+  border: none; border-radius: 3px; cursor: pointer;
+  padding: 7px 14px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.68rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;
+  transition: opacity 0.2s, transform 0.15s;
+}
+.btn-new:hover { opacity: 0.88; transform: translateY(-1px); }
+
+/* ============================================================
+   BOARD HEADER
+   ============================================================ */
+.board-header {
+  padding: 28px 28px 16px;
+  display: flex; align-items: flex-end; justify-content: space-between;
+  animation: fadeIn 0.4s ease;
+}
+
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+.board-title {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 144;
+  font-size: 2rem; font-weight: 300; letter-spacing: -0.02em;
+  color: var(--ink); line-height: 1;
+}
+.board-title em { font-style: italic; color: var(--ink-soft); }
+.board-subtitle {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.65rem; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--ink-mute); margin-top: 4px;
+}
+
+.board-stats {
+  display: flex; gap: 20px; align-items: center;
+}
+.stat-pill {
+  display: flex; align-items: center; gap: 6px;
+  font-family: "JetBrains Mono", monospace; font-size: 0.68rem;
+  color: var(--ink-mute); letter-spacing: 0.04em;
+}
+.stat-pill-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+}
+
+/* ============================================================
+   FILTER STRIP
+   ============================================================ */
+.filter-strip {
+  padding: 0 28px 16px;
+  display: flex; gap: 8px; align-items: center;
+}
+.filter-btn {
+  background: none; border: 1px solid var(--hairline-2);
+  border-radius: 2px; color: var(--ink-mute);
+  padding: 5px 12px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem; letter-spacing: 0.1em; text-transform: uppercase;
+  cursor: pointer; transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.filter-btn:hover, .filter-btn.active {
+  border-color: var(--hop); color: var(--hop);
+  background: var(--hop-glow);
+}
+.filter-btn.active { background: var(--hop-glow); }
+.filter-sep { color: var(--hairline-2); font-size: 0.8rem; }
+
+/* ============================================================
+   KANBAN BOARD
+   ============================================================ */
+.board {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+  padding: 0 28px 48px;
+  flex: 1;
+  align-items: start;
+  animation: fadeIn 0.5s ease 0.1s both;
+}
+
+/* ── Column ── */
+.col-wrap {
+  display: flex; flex-direction: column; gap: 8px;
+}
+
+.col-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 0 8px 2px;
+  border-bottom: 2px solid var(--hairline);
+  margin-bottom: 4px;
+}
+.col-head.debut  { border-color: var(--phase-debut); }
+.col-head.cours  { border-color: var(--phase-cours); }
+.col-head.fin    { border-color: var(--phase-fin); }
+
+.col-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.65rem; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--ink-mute);
+  display: flex; align-items: center; gap: 7px;
+}
+.col-label-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  flex-shrink: 0;
+}
+.col-label-dot.debut { background: var(--phase-debut); }
+.col-label-dot.cours { background: var(--phase-cours); box-shadow: 0 0 6px var(--warn-glow); }
+.col-label-dot.fin   { background: var(--phase-fin); }
+
+.col-count {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.65rem; color: var(--ink-faint);
+  background: var(--bg-elev2); border-radius: 2px;
+  padding: 1px 7px;
+}
+
+/* ── Session cards ── */
+.session-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline-2);
+  border-radius: 5px;
+  padding: 14px 14px 12px;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  transition: border-color 0.2s, transform 0.15s, box-shadow 0.2s;
+  animation: cardIn 0.35s ease both;
+}
+.session-card:hover {
+  border-color: var(--oak);
+  transform: translateY(-1px);
+  box-shadow: 0 8px 28px rgba(0,0,0,0.35);
+}
+
+/* Phase accent stripe top */
+.session-card::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0; height: 2px;
+}
+.session-card.brewing::before  { background: linear-gradient(90deg, var(--ember), transparent 80%); }
+.session-card.fermenting::before { background: linear-gradient(90deg, var(--bbt), transparent 80%); }
+.session-card.racking::before  { background: linear-gradient(90deg, var(--oak), transparent 80%); }
+.session-card.packaging::before { background: linear-gradient(90deg, var(--hop), transparent 80%); }
+
+@keyframes cardIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.session-card:nth-child(1) { animation-delay: 0.1s; }
+.session-card:nth-child(2) { animation-delay: 0.17s; }
+.session-card:nth-child(3) { animation-delay: 0.24s; }
+
+/* Card type badge + beer name row */
+.card-top {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  margin-bottom: 10px;
+}
+.type-badge {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.58rem; letter-spacing: 0.12em; text-transform: uppercase;
+  padding: 2px 7px; border-radius: 2px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.type-badge.brewing  { background: var(--ember-glow); color: var(--ember); border: 1px solid rgba(197,102,74,0.25); }
+.type-badge.fermenting { background: var(--bbt-glow);  color: var(--bbt);   border: 1px solid rgba(101,147,184,0.25); }
+.type-badge.racking  { background: var(--oak-glow);   color: var(--oak);   border: 1px solid rgba(160,122,72,0.25); }
+.type-badge.packaging { background: var(--hop-glow);  color: var(--hop);   border: 1px solid rgba(158,176,96,0.25); }
+
+.card-flags {
+  display: flex; gap: 5px; align-items: center; flex-wrap: wrap; justify-content: flex-end;
+}
+.flag {
+  width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+}
+.flag.ok   { background: var(--ok); }
+.flag.warn { background: var(--warn); box-shadow: 0 0 5px rgba(212,146,60,0.5); }
+.flag.bad  { background: var(--bad); box-shadow: 0 0 5px rgba(197,102,74,0.5); animation: pulse-bad 1.5s ease-in-out infinite; }
+
+@keyframes pulse-bad {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.card-beer {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 96;
+  font-size: 1.05rem; font-weight: 300;
+  color: var(--ink);
+  line-height: 1.2;
+  margin-bottom: 2px;
+}
+.card-beer em { font-style: italic; color: var(--ink-soft); }
+.card-vessel {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.65rem; letter-spacing: 0.08em;
+  color: var(--ink-mute);
+  margin-bottom: 10px;
+}
+
+/* Measures row (live reads) */
+.card-measures {
+  display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px;
+}
+.measure-chip {
+  display: flex; align-items: center; gap: 4px;
+  background: var(--bg-elev2);
+  border: 1px solid var(--hairline);
+  border-radius: 2px; padding: 3px 7px;
+}
+.measure-key {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.58rem; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--ink-mute);
+}
+.measure-val {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.72rem; font-weight: 600;
+  color: var(--ink-soft);
+}
+.measure-val.warn { color: var(--warn); }
+.measure-val.bad  { color: var(--bad); }
+
+/* Progress bar (gate / checklist progress) */
+.card-progress {
+  margin-bottom: 10px;
+}
+.progress-label {
+  display: flex; justify-content: space-between;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.58rem; letter-spacing: 0.07em;
+  color: var(--ink-mute); margin-bottom: 4px;
+}
+.progress-track {
+  height: 3px; background: var(--hairline);
+  border-radius: 2px; overflow: hidden;
+}
+.progress-fill {
+  height: 100%; border-radius: 2px;
+  transition: width 0.4s ease;
+}
+.progress-fill.debut { background: var(--phase-debut); }
+.progress-fill.cours { background: var(--phase-cours); }
+.progress-fill.fin   { background: var(--phase-fin); }
+
+/* Multi-operator presence */
+.card-operators {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 10px;
+}
+.operator-stack {
+  display: flex; align-items: center;
+}
+.operator-stack .avatar { margin-left: -6px; border: 1px solid var(--bg-elev2); }
+.operator-stack .avatar:first-child { margin-left: 0; }
+
+.operator-trail {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.58rem; letter-spacing: 0.04em;
+  color: var(--ink-mute);
+  display: flex; flex-direction: column; gap: 1px;
+  margin-left: 8px;
+}
+.trail-line { white-space: nowrap; }
+.trail-line .trail-name { color: var(--ink-soft); }
+.trail-line .trail-action { color: var(--ink-faint); }
+
+.card-elapsed {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.65rem; letter-spacing: 0.06em;
+  color: var(--ink-mute);
+  display: flex; align-items: center; gap: 5px;
+}
+.elapsed-dot {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--warn); animation: pulse-bad 2s ease-in-out infinite;
+}
+
+/* Resume button */
+.btn-resume {
+  width: 100%; border: 1px solid var(--hairline-2);
+  background: none; border-radius: 3px; cursor: pointer;
+  padding: 7px 12px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.65rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--ink-mute);
+  transition: border-color 0.2s, color 0.2s, background 0.2s;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+}
+.btn-resume:hover {
+  border-color: var(--hop); color: var(--hop);
+  background: var(--hop-glow);
+}
+.btn-resume svg { flex-shrink: 0; }
+
+/* Alert banner on card */
+.card-alert {
+  background: var(--ember-glow);
+  border: 1px solid rgba(197,102,74,0.25);
+  border-radius: 3px;
+  padding: 5px 9px;
+  margin-bottom: 8px;
+  display: flex; align-items: flex-start; gap: 6px;
+}
+.card-alert-icon { color: var(--ember); font-size: 0.7rem; flex-shrink: 0; margin-top: 1px; }
+.card-alert-text {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.72rem; color: var(--ember); line-height: 1.4;
+}
+
+/* Waiting / blocked card state */
+.session-card.blocked {
+  opacity: 0.65;
+  border-style: dashed;
+  border-color: var(--hairline);
+}
+.session-card.blocked:hover {
+  border-color: var(--bad); opacity: 0.9;
+}
+
+/* ============================================================
+   DIRECTION NOTE OVERLAY (for mockup only)
+   ============================================================ */
+.mockup-note {
+  position: fixed; bottom: 20px; right: 20px;
+  background: var(--bg-elev2); border: 1px solid var(--hairline-2);
+  border-radius: 5px; padding: 12px 16px;
+  z-index: 200; max-width: 280px;
+}
+.mockup-note-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.58rem; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--hop); margin-bottom: 6px;
+}
+.mockup-note p {
+  font-size: 0.78rem; color: var(--ink-mute); line-height: 1.5;
+}
+</style>
+</head>
+<body class="home">
+<div class="page-wrap">
+
+  <!-- ── TOPBAR ── -->
+  <nav class="topbar">
+    <div class="wordmark">
+      <div class="wordmark-name">La <em>Nébuleuse</em></div>
+      <div class="wordmark-section">Sessions actives</div>
+    </div>
+    <div class="topbar-right">
+      <div class="topbar-clock" id="clock">07:42:18</div>
+      <div class="topbar-operator">
+        <div class="avatar">MA</div>
+        <span class="operator-label">M. Amrani</span>
+      </div>
+      <button class="btn-new">
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M5 1v8M1 5h8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        Nouvelle session
+      </button>
+    </div>
+  </nav>
+
+  <!-- ── BOARD HEADER ── -->
+  <header class="board-header">
+    <div>
+      <div class="board-title">Tableau de <em>bord</em></div>
+      <div class="board-subtitle">Jeudi 28 mai 2026 · 5 sessions · 2 alertes actives</div>
+    </div>
+    <div class="board-stats">
+      <div class="stat-pill">
+        <div class="stat-pill-dot" style="background:var(--phase-debut)"></div>
+        2 en démarrage
+      </div>
+      <div class="stat-pill">
+        <div class="stat-pill-dot" style="background:var(--phase-cours);box-shadow:0 0 6px var(--warn-glow)"></div>
+        2 en cours
+      </div>
+      <div class="stat-pill">
+        <div class="stat-pill-dot" style="background:var(--phase-fin)"></div>
+        1 en clôture
+      </div>
+    </div>
+  </header>
+
+  <!-- ── FILTER STRIP ── -->
+  <div class="filter-strip">
+    <button class="filter-btn active">Tous</button>
+    <button class="filter-btn">Brassage</button>
+    <button class="filter-btn">Fermentation</button>
+    <button class="filter-btn">Soutirages</button>
+    <button class="filter-btn">Emballage</button>
+    <span class="filter-sep">|</span>
+    <button class="filter-btn">⚑ Alertes</button>
+  </div>
+
+  <!-- ── KANBAN BOARD ── -->
+  <main class="board">
+
+    <!-- COLONNE 1 — DÉBUT DE SESSION -->
+    <div class="col-wrap">
+      <div class="col-head debut">
+        <div class="col-label">
+          <div class="col-label-dot debut"></div>
+          Début de session
+        </div>
+        <div class="col-count">2</div>
+      </div>
+
+      <!-- Card: Brassage en démarrage -->
+      <div class="session-card brewing">
+        <div class="card-top">
+          <span class="type-badge brewing">Brassage</span>
+          <div class="card-flags">
+            <div class="flag ok" title="CIP confirmé"></div>
+            <div class="flag warn" title="CO₂ en attente"></div>
+          </div>
+        </div>
+        <div class="card-beer"><em>Embuscade</em> SPY · Lot 26-14</div>
+        <div class="card-vessel">Brasserie · Cuve 3 000 L</div>
+
+        <!-- Gate progress -->
+        <div class="card-progress">
+          <div class="progress-label">
+            <span>Checklist ouverture</span>
+            <span>3/5 confirmés</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill debut" style="width:60%"></div>
+          </div>
+        </div>
+
+        <!-- Alert -->
+        <div class="card-alert">
+          <span class="card-alert-icon">!</span>
+          <span class="card-alert-text">Test O₂ départ manquant — validation bloquée</span>
+        </div>
+
+        <!-- Operators -->
+        <div class="card-operators">
+          <div class="operator-stack">
+            <div class="avatar sm">MA</div>
+          </div>
+          <div class="operator-trail">
+            <div class="trail-line"><span class="trail-name">M. Amrani</span> <span class="trail-action">ouvert 07:28</span></div>
+          </div>
+          <div class="card-elapsed">
+            <div class="elapsed-dot"></div>
+            14 min
+          </div>
+        </div>
+
+        <button class="btn-resume">
+          <svg width="9" height="9" viewBox="0 0 9 9" fill="none"><path d="M2 1.5L7 4.5L2 7.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Reprendre
+        </button>
+      </div>
+
+      <!-- Card: Emballage en démarrage -->
+      <div class="session-card packaging">
+        <div class="card-top">
+          <span class="type-badge packaging">Emballage</span>
+          <div class="card-flags">
+            <div class="flag ok"></div>
+            <div class="flag ok"></div>
+            <div class="flag ok"></div>
+          </div>
+        </div>
+        <div class="card-beer"><em>Zepp</em> 33cl · Run bouteille</div>
+        <div class="card-vessel">Conditionnement · Ligne 1</div>
+
+        <div class="card-progress">
+          <div class="progress-label">
+            <span>Checklist ouverture</span>
+            <span>5/5 confirmés</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill debut" style="width:100%"></div>
+          </div>
+        </div>
+
+        <div class="card-operators">
+          <div class="operator-stack">
+            <div class="avatar sm">PL</div>
+            <div class="avatar sm">MA</div>
+          </div>
+          <div class="operator-trail">
+            <div class="trail-line"><span class="trail-name">P. Lacroix</span> <span class="trail-action">ouvert 07:00</span></div>
+            <div class="trail-line"><span class="trail-name">M. Amrani</span> <span class="trail-action">validé 07:35</span></div>
+          </div>
+          <div class="card-elapsed">
+            <div class="elapsed-dot"></div>
+            42 min
+          </div>
+        </div>
+
+        <button class="btn-resume">
+          <svg width="9" height="9" viewBox="0 0 9 9" fill="none"><path d="M2 1.5L7 4.5L2 7.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Démarrer session
+        </button>
+      </div>
+    </div>
+
+    <!-- COLONNE 2 — EN COURS -->
+    <div class="col-wrap">
+      <div class="col-head cours">
+        <div class="col-label">
+          <div class="col-label-dot cours"></div>
+          Session en cours
+        </div>
+        <div class="col-count">2</div>
+      </div>
+
+      <!-- Card: Fermentation en cours (active) -->
+      <div class="session-card fermenting">
+        <div class="card-top">
+          <span class="type-badge fermenting">Fermentation</span>
+          <div class="card-flags">
+            <div class="flag ok"></div>
+            <div class="flag warn" title="pH hors plage"></div>
+          </div>
+        </div>
+        <div class="card-beer"><em>Stirling</em> · CCT-4</div>
+        <div class="card-vessel">Garde · J+5 de fermentation</div>
+
+        <!-- Live measures -->
+        <div class="card-measures">
+          <div class="measure-chip">
+            <span class="measure-key">Densité</span>
+            <span class="measure-val">8.4 °P</span>
+          </div>
+          <div class="measure-chip">
+            <span class="measure-key">pH</span>
+            <span class="measure-val warn">4.72</span>
+          </div>
+          <div class="measure-chip">
+            <span class="measure-key">T°</span>
+            <span class="measure-val">12.2 °C</span>
+          </div>
+        </div>
+
+        <div class="card-progress">
+          <div class="progress-label">
+            <span>Fermentation</span>
+            <span>J+5 / J+8 estimé</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill cours" style="width:63%"></div>
+          </div>
+        </div>
+
+        <div class="card-alert">
+          <span class="card-alert-icon">!</span>
+          <span class="card-alert-text">pH 4.72 — légèrement hors plage (cible 4.2–4.5). Surveiller.</span>
+        </div>
+
+        <div class="card-operators">
+          <div class="operator-stack">
+            <div class="avatar sm">RF</div>
+            <div class="avatar sm">PL</div>
+          </div>
+          <div class="operator-trail">
+            <div class="trail-line"><span class="trail-name">R. Fontaine</span> <span class="trail-action">ouvert lun 09:00</span></div>
+            <div class="trail-line"><span class="trail-name">P. Lacroix</span> <span class="trail-action">relevé hier 14:30</span></div>
+          </div>
+          <div class="card-elapsed">
+            <div class="elapsed-dot"></div>
+            5j 22h
+          </div>
+        </div>
+
+        <button class="btn-resume">
+          <svg width="9" height="9" viewBox="0 0 9 9" fill="none"><path d="M2 1.5L7 4.5L2 7.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Saisir relevé
+        </button>
+      </div>
+
+      <!-- Card: Soutirage en cours -->
+      <div class="session-card racking">
+        <div class="card-top">
+          <span class="type-badge racking">Soutirage</span>
+          <div class="card-flags">
+            <div class="flag ok"></div>
+            <div class="flag ok"></div>
+          </div>
+        </div>
+        <div class="card-beer"><em>Moonshine</em> · CCT-7 → BBT-2</div>
+        <div class="card-vessel">Soutirage · Démarré 06:50</div>
+
+        <div class="card-measures">
+          <div class="measure-chip">
+            <span class="measure-key">CO₂</span>
+            <span class="measure-val">5.8 g/L</span>
+          </div>
+          <div class="measure-chip">
+            <span class="measure-key">O₂</span>
+            <span class="measure-val">0.06 ppm</span>
+          </div>
+          <div class="measure-chip">
+            <span class="measure-key">T°</span>
+            <span class="measure-val">1.8 °C</span>
+          </div>
+        </div>
+
+        <div class="card-progress">
+          <div class="progress-label">
+            <span>Avancement</span>
+            <span>~70% transféré</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill cours" style="width:70%"></div>
+          </div>
+        </div>
+
+        <div class="card-operators">
+          <div class="operator-stack">
+            <div class="avatar sm">MA</div>
+          </div>
+          <div class="operator-trail">
+            <div class="trail-line"><span class="trail-name">M. Amrani</span> <span class="trail-action">ouvert 06:50</span></div>
+          </div>
+          <div class="card-elapsed">
+            <div class="elapsed-dot"></div>
+            52 min
+          </div>
+        </div>
+
+        <button class="btn-resume">
+          <svg width="9" height="9" viewBox="0 0 9 9" fill="none"><path d="M2 1.5L7 4.5L2 7.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Reprendre
+        </button>
+      </div>
+    </div>
+
+    <!-- COLONNE 3 — FIN DE SESSION -->
+    <div class="col-wrap">
+      <div class="col-head fin">
+        <div class="col-label">
+          <div class="col-label-dot fin"></div>
+          Fin de session
+        </div>
+        <div class="col-count">1</div>
+      </div>
+
+      <!-- Card: Emballage en clôture -->
+      <div class="session-card packaging">
+        <div class="card-top">
+          <span class="type-badge packaging">Emballage</span>
+          <div class="card-flags">
+            <div class="flag ok"></div>
+            <div class="flag ok"></div>
+            <div class="flag ok"></div>
+          </div>
+        </div>
+        <div class="card-beer"><em>Diversion</em> Blanche 33cl · Run can</div>
+        <div class="card-vessel">Conditionnement · Ligne 2 · Run terminé</div>
+
+        <!-- Loss summary (packaging: incremental live) -->
+        <div class="card-measures">
+          <div class="measure-chip">
+            <span class="measure-key">Produites</span>
+            <span class="measure-val">2 840</span>
+          </div>
+          <div class="measure-chip">
+            <span class="measure-key">Pertes</span>
+            <span class="measure-val">48</span>
+          </div>
+          <div class="measure-chip">
+            <span class="measure-key">Rendement</span>
+            <span class="measure-val ok">98.3%</span>
+          </div>
+        </div>
+
+        <div class="card-progress">
+          <div class="progress-label">
+            <span>Clôture</span>
+            <span>CIP final en attente</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill fin" style="width:80%"></div>
+          </div>
+        </div>
+
+        <div class="card-operators">
+          <div class="operator-stack">
+            <div class="avatar sm">PL</div>
+            <div class="avatar sm">RF</div>
+            <div class="avatar sm">MA</div>
+          </div>
+          <div class="operator-trail">
+            <div class="trail-line"><span class="trail-name">P. Lacroix</span> <span class="trail-action">ouvert 04:30</span></div>
+            <div class="trail-line"><span class="trail-name">R. Fontaine</span> <span class="trail-action">relevé 07:10</span></div>
+          </div>
+          <div class="card-elapsed">
+            <div class="elapsed-dot"></div>
+            3h 14min
+          </div>
+        </div>
+
+        <button class="btn-resume">
+          <svg width="9" height="9" viewBox="0 0 9 9" fill="none"><path d="M2 1.5L7 4.5L2 7.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Clôturer session
+        </button>
+      </div>
+
+      <!-- Empty state hint -->
+      <div style="border:1px dashed var(--hairline);border-radius:5px;padding:20px;text-align:center;">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:0.62rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--ink-faint);">Aucune autre clôture</div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- Mockup info overlay -->
+<div class="mockup-note">
+  <div class="mockup-note-label">Direction A — Kanban</div>
+  <p>Trois colonnes: Début · En cours · Fin. Chaque carte = une session. Cliquer → drill-in. Filtres par type de saisie. Multi-opérateur visible sur chaque carte.</p>
+</div>
+
+<script>
+// Live clock
+function tick() {
+  const now = new Date();
+  document.getElementById('clock').textContent =
+    String(now.getHours()).padStart(2,'0') + ':' +
+    String(now.getMinutes()).padStart(2,'0') + ':' +
+    String(now.getSeconds()).padStart(2,'0');
+}
+tick();
+setInterval(tick, 1000);
+
+// Filter buttons
+document.querySelectorAll('.filter-btn').forEach(btn => {
+  btn.addEventListener('click', function() {
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    this.classList.add('active');
+  });
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,1086 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Sessions Actives — Journal de bord · MaltyTask</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,200;0,9..144,300;0,9..144,400;0,9..144,600;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:            #15100a;
+  --bg-elev:       #1d160d;
+  --bg-elev2:      #251c10;
+  --bg-elev3:      #2d2114;
+  --ink:           #ede0c4;
+  --ink-soft:      #c8b894;
+  --ink-mute:      #7a6647;
+  --ink-faint:     #3a2e1d;
+  --hairline:      #261d11;
+  --hairline-2:    #342818;
+  --hop:           #9eb060;
+  --hop-deep:      #6b7a3e;
+  --hop-glow:      rgba(158,176,96,0.12);
+  --ember:         #c5664a;
+  --ember-glow:    rgba(197,102,74,0.1);
+  --oak:           #a07a48;
+  --oak-glow:      rgba(160,122,72,0.12);
+  --cold:          #2f5575;
+  --bbt:           #6593b8;
+  --bbt-glow:      rgba(101,147,184,0.12);
+  --steel:         #b8bcc0;
+  --steel-mid:     #5e6266;
+  --steel-deep:    #2c2e30;
+  --warn:          #d4923c;
+  --warn-glow:     rgba(212,146,60,0.1);
+  --ok:            #9eb060;
+  --bad:           #c5664a;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+*::selection { background: var(--oak); color: var(--bg); }
+html { font-size: 16px; }
+body.home {
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-feature-settings: "ss01";
+  background: var(--bg);
+  color: var(--ink);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden; position: relative;
+}
+body.home::before {
+  content: ''; position: fixed; inset: 0;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.07  0 0 0 0 0.05  0 0 0 0 0.02  0 0 0 1.2 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  opacity: 0.45; pointer-events: none; z-index: 0;
+}
+
+/* ============================================================
+   LAYOUT — Sidebar sessions list + Main content (log + drill-in)
+   ============================================================ */
+.page-wrap {
+  position: relative; z-index: 1;
+  display: grid;
+  grid-template-rows: 52px 1fr;
+  grid-template-columns: 280px 1fr;
+  grid-template-areas:
+    "topbar topbar"
+    "sidebar main";
+  min-height: 100vh;
+}
+
+/* ── TOPBAR ── */
+.topbar {
+  grid-area: topbar;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 20px 0 16px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--bg); z-index: 100;
+}
+.wordmark { display: flex; align-items: baseline; gap: 8px; }
+.wordmark-name {
+  font-family: "Fraunces", serif; font-variation-settings: "opsz" 96;
+  font-size: 1.05rem; font-weight: 300; color: var(--ink);
+}
+.wordmark-name em { font-style: italic; color: var(--ink-soft); }
+.wordmark-section {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.58rem; letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--ink-mute);
+}
+.topbar-right { display: flex; align-items: center; gap: 14px; }
+.topbar-clock {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem; letter-spacing: 0.1em; color: var(--ink-mute);
+}
+.avatar {
+  width: 28px; height: 28px; border-radius: 50%;
+  background: var(--bg-elev); border: 1px solid var(--hairline-2);
+  display: flex; align-items: center; justify-content: center;
+  font-family: "JetBrains Mono", monospace; font-size: 0.6rem; font-weight: 600;
+  color: var(--oak); letter-spacing: 0;
+}
+.avatar.sm { width: 22px; height: 22px; font-size: 0.52rem; }
+.operator-label { font-size: 0.8rem; color: var(--ink-soft); }
+.topbar-operator { display: flex; align-items: center; gap: 7px; }
+
+.btn-new {
+  display: flex; align-items: center; gap: 5px;
+  background: var(--hop); color: var(--bg);
+  border: none; border-radius: 3px; cursor: pointer;
+  padding: 6px 12px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;
+  transition: opacity 0.2s;
+}
+.btn-new:hover { opacity: 0.85; }
+
+/* ============================================================
+   SIDEBAR — Active sessions list (compact)
+   ============================================================ */
+.sidebar {
+  grid-area: sidebar;
+  background: var(--bg-elev);
+  border-right: 1px solid var(--hairline);
+  display: flex; flex-direction: column;
+  overflow-y: auto;
+}
+
+.sidebar-head {
+  padding: 14px 14px 10px;
+  border-bottom: 1px solid var(--hairline);
+  position: sticky; top: 0;
+  background: var(--bg-elev); z-index: 10;
+}
+.sidebar-title {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.6rem; letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+.session-list { display: flex; flex-direction: column; }
+
+/* ── Session list item ── */
+.session-item {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--hairline);
+  cursor: pointer;
+  position: relative;
+  transition: background 0.15s;
+}
+.session-item::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 2px;
+}
+.session-item.brewing::before  { background: var(--ember); }
+.session-item.fermenting::before { background: var(--bbt); }
+.session-item.racking::before  { background: var(--oak); }
+.session-item.packaging::before { background: var(--hop); }
+.session-item:hover { background: var(--bg-elev2); }
+.session-item.active { background: var(--bg-elev2); }
+.session-item.active::after {
+  content: ''; position: absolute; right: -1px; top: 50%;
+  transform: translateY(-50%);
+  width: 0; height: 0;
+  border-top: 6px solid transparent;
+  border-bottom: 6px solid transparent;
+  border-right: 6px solid var(--bg);
+}
+
+.si-top {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 5px;
+}
+.si-badge {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.54rem; letter-spacing: 0.1em; text-transform: uppercase;
+  font-weight: 600; padding: 1px 5px; border-radius: 1px;
+}
+.si-badge.brewing  { color: var(--ember); background: var(--ember-glow); }
+.si-badge.fermenting { color: var(--bbt);   background: var(--bbt-glow); }
+.si-badge.racking  { color: var(--oak);   background: var(--oak-glow); }
+.si-badge.packaging { color: var(--hop);  background: var(--hop-glow); }
+
+.si-phase {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.54rem; letter-spacing: 0.06em;
+  color: var(--ink-mute);
+  display: flex; align-items: center; gap: 4px;
+}
+.si-phase-dot {
+  width: 5px; height: 5px; border-radius: 50%;
+}
+.si-phase-dot.debut  { background: var(--hop); }
+.si-phase-dot.cours  { background: var(--warn); animation: pulse-bad 2s ease-in-out infinite; }
+.si-phase-dot.fin    { background: var(--oak); }
+
+@keyframes pulse-bad { 0%,100%{opacity:1}50%{opacity:0.35} }
+
+.si-beer {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 96;
+  font-size: 0.88rem; font-weight: 300;
+  color: var(--ink); margin-bottom: 3px;
+}
+.si-beer em { font-style: italic; color: var(--ink-soft); }
+.si-vessel {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.58rem; letter-spacing: 0.05em; color: var(--ink-mute);
+}
+
+.si-bottom {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-top: 7px;
+}
+.si-operators {
+  display: flex;
+}
+.si-operators .avatar { margin-left: -5px; border: 1px solid var(--bg-elev); }
+.si-operators .avatar:first-child { margin-left: 0; }
+.si-elapsed {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.58rem; letter-spacing: 0.04em; color: var(--ink-mute);
+}
+.si-alert-flag {
+  color: var(--ember); font-size: 0.7rem; animation: pulse-bad 1.5s ease-in-out infinite;
+}
+
+/* ============================================================
+   MAIN — Log + Session drill-in
+   ============================================================ */
+.main-area {
+  grid-area: main;
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  overflow: hidden;
+}
+
+/* ── Left: journal / log ── */
+.journal {
+  padding: 0;
+  overflow-y: auto;
+  border-right: 1px solid var(--hairline);
+}
+
+.journal-head {
+  padding: 18px 24px 14px;
+  border-bottom: 1px solid var(--hairline);
+  position: sticky; top: 0; background: var(--bg); z-index: 10;
+  display: flex; align-items: flex-end; justify-content: space-between;
+}
+.journal-title {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 144;
+  font-size: 1.6rem; font-weight: 300; letter-spacing: -0.02em;
+  color: var(--ink);
+}
+.journal-title em { font-style: italic; color: var(--ink-soft); }
+.journal-date {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+/* Timeline entries */
+.timeline {
+  padding: 20px 24px;
+  display: flex; flex-direction: column; gap: 0;
+}
+
+/* ── Day divider ── */
+.tl-day {
+  display: flex; align-items: center; gap: 12px;
+  margin: 16px 0 12px;
+}
+.tl-day-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.58rem; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--ink-faint); white-space: nowrap;
+}
+.tl-day-line { flex: 1; height: 1px; background: var(--hairline); }
+
+/* ── Timeline row ── */
+.tl-row {
+  display: grid;
+  grid-template-columns: 52px 16px 1fr;
+  gap: 0 12px;
+  padding-bottom: 4px;
+  position: relative;
+  animation: rowIn 0.3s ease both;
+}
+@keyframes rowIn { from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none} }
+
+/* Time column */
+.tl-time {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem; letter-spacing: 0.04em;
+  color: var(--ink-mute); text-align: right;
+  padding-top: 3px; grid-column: 1;
+}
+
+/* Spine column */
+.tl-spine { grid-column: 2; position: relative; display: flex; flex-direction: column; align-items: center; }
+.tl-dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  border: 1.5px solid var(--hairline-2);
+  background: var(--bg); position: relative; z-index: 1;
+  flex-shrink: 0; margin-top: 2px;
+  display: flex; align-items: center; justify-content: center;
+}
+.tl-dot.event-open    { border-color: var(--hop); background: var(--hop-deep); }
+.tl-dot.event-read    { border-color: var(--bbt); background: var(--bbt-glow); }
+.tl-dot.event-gate    { border-color: var(--hop); background: var(--hop); }
+.tl-dot.event-alert   { border-color: var(--warn); background: var(--warn-glow); animation: pulse-bad 1.5s ease-in-out infinite; }
+.tl-dot.event-close   { border-color: var(--oak); background: var(--oak-deep); }
+.tl-dot.event-system  { border-color: var(--ink-faint); background: var(--bg); }
+.tl-dot svg { width: 6px; height: 6px; }
+
+.tl-line {
+  flex: 1; width: 1px; background: var(--hairline); min-height: 18px;
+}
+
+/* Content column */
+.tl-content { grid-column: 3; padding-bottom: 16px; }
+.tl-entry {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px; padding: 10px 13px;
+  cursor: pointer;
+  transition: border-color 0.2s, box-shadow 0.15s;
+}
+.tl-entry:hover { border-color: var(--oak); box-shadow: 0 4px 16px rgba(0,0,0,0.3); }
+.tl-entry.alert {
+  border-color: rgba(197,102,74,0.35);
+  background: rgba(197,102,74,0.06);
+}
+.tl-entry.alert:hover { border-color: var(--ember); }
+
+/* Inline operator attribution */
+.tl-meta {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 5px; flex-wrap: wrap;
+}
+.tl-op-avatar {
+  width: 18px; height: 18px; border-radius: 50%;
+  background: var(--bg-elev2); border: 1px solid var(--hairline-2);
+  display: flex; align-items: center; justify-content: center;
+  font-family: "JetBrains Mono", monospace; font-size: 0.5rem; font-weight: 600;
+  color: var(--oak);
+}
+.tl-op-name { font-size: 0.72rem; color: var(--ink-soft); }
+.tl-type-chip {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.54rem; letter-spacing: 0.1em; text-transform: uppercase;
+  padding: 1px 5px; border-radius: 1px; font-weight: 600;
+}
+.tl-type-chip.open    { color: var(--hop); background: var(--hop-glow); }
+.tl-type-chip.read    { color: var(--bbt); background: var(--bbt-glow); }
+.tl-type-chip.gate    { color: var(--hop); background: var(--hop-glow); }
+.tl-type-chip.alert   { color: var(--warn); background: var(--warn-glow); }
+.tl-type-chip.close   { color: var(--oak); background: var(--oak-glow); }
+.tl-type-chip.system  { color: var(--ink-mute); background: var(--hairline); }
+
+.tl-text {
+  font-size: 0.82rem; color: var(--ink); line-height: 1.5; margin-bottom: 6px;
+}
+.tl-text strong { color: var(--ink-soft); font-weight: 600; }
+.tl-text em { font-style: italic; color: var(--ink-soft); }
+.tl-text .beer-tag {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 96;
+  font-style: italic;
+}
+
+/* Inline measure chips in log entry */
+.tl-measures {
+  display: flex; gap: 5px; flex-wrap: wrap;
+}
+.tl-mchip {
+  background: var(--bg-elev2); border: 1px solid var(--hairline);
+  border-radius: 2px; padding: 2px 7px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem; color: var(--ink-mute);
+}
+.tl-mchip span { color: var(--ink-soft); font-weight: 600; }
+.tl-mchip span.warn { color: var(--warn); }
+
+/* Checklist block inside entry */
+.tl-checklist { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.tl-check-row {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 0.78rem; color: var(--ink-mute);
+}
+.tl-check-icon {
+  width: 14px; height: 14px; border-radius: 2px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.tl-check-icon.ok   { background: rgba(158,176,96,0.15); border: 1px solid var(--hop-deep); }
+.tl-check-icon.pend { background: var(--hairline); border: 1px solid var(--hairline-2); }
+.tl-check-icon.fail { background: var(--ember-glow); border: 1px solid rgba(197,102,74,0.3); }
+.tl-check-label.ok  { color: var(--ink-soft); }
+.tl-check-label.fail { color: var(--ember); }
+
+/* ── Right: session drill-in (3-phase view) ── */
+.drilldown {
+  overflow-y: auto;
+  display: flex; flex-direction: column;
+}
+
+.dd-header {
+  padding: 18px 18px 14px;
+  border-bottom: 1px solid var(--hairline);
+  position: sticky; top: 0; background: var(--bg); z-index: 10;
+}
+.dd-type-badge {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.56rem; letter-spacing: 0.12em; text-transform: uppercase;
+  padding: 2px 7px; border-radius: 2px; font-weight: 600;
+  color: var(--ember); background: var(--ember-glow);
+  border: 1px solid rgba(197,102,74,0.2);
+  display: inline-flex; margin-bottom: 8px;
+}
+.dd-title {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 144;
+  font-size: 1.3rem; font-weight: 300; letter-spacing: -0.02em;
+  color: var(--ink); margin-bottom: 3px;
+}
+.dd-title em { font-style: italic; color: var(--ink-soft); }
+.dd-sub {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.6rem; letter-spacing: 0.06em; color: var(--ink-mute);
+}
+
+/* Vertical phase timeline in drill-down */
+.dd-phases { padding: 16px 18px; display: flex; flex-direction: column; gap: 0; }
+
+.dd-phase-block {
+  display: flex; gap: 12px;
+  position: relative;
+}
+.dd-phase-spine {
+  display: flex; flex-direction: column; align-items: center; flex-shrink: 0; width: 24px;
+}
+.dd-phase-circle {
+  width: 24px; height: 24px; border-radius: 50%;
+  border: 2px solid var(--hairline-2);
+  background: var(--bg);
+  display: flex; align-items: center; justify-content: center;
+  font-family: "JetBrains Mono", monospace; font-size: 0.6rem; font-weight: 600;
+  color: var(--ink-faint);
+  flex-shrink: 0; z-index: 1;
+}
+.dd-phase-circle.done  { border-color: var(--hop); background: var(--hop); color: var(--bg); }
+.dd-phase-circle.active{ border-color: var(--ember); background: rgba(197,102,74,0.1); color: var(--ember); animation: pulse-bad 2.5s ease-in-out infinite; }
+.dd-phase-line { flex: 1; width: 1px; background: var(--hairline); min-height: 24px; margin: 3px 0; }
+.dd-phase-line.done { background: var(--hop-deep); }
+
+.dd-phase-content { flex: 1; padding-bottom: 20px; }
+.dd-phase-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem; letter-spacing: 0.12em; text-transform: uppercase;
+  margin-bottom: 8px; margin-top: 3px;
+}
+.dd-phase-label.done   { color: var(--hop); }
+.dd-phase-label.active { color: var(--ember); }
+.dd-phase-label.pending{ color: var(--ink-faint); }
+
+/* Compact checklist in phase */
+.dd-checklist { display: flex; flex-direction: column; gap: 5px; }
+.dd-check {
+  display: flex; align-items: flex-start; gap: 8px;
+  font-size: 0.75rem; line-height: 1.4;
+}
+.dd-check-box {
+  width: 15px; height: 15px; border-radius: 2px;
+  border: 1px solid var(--hairline-2); background: var(--bg);
+  flex-shrink: 0; margin-top: 1px;
+  display: flex; align-items: center; justify-content: center;
+}
+.dd-check-box.checked { background: var(--hop); border-color: var(--hop-deep); }
+.dd-check-box.blocked { background: var(--ember-glow); border-color: rgba(197,102,74,0.4); }
+.dd-check-text { color: var(--ink-mute); }
+.dd-check-text.checked { color: var(--ink-soft); }
+.dd-check-text.blocked { color: var(--ember); }
+
+/* Gate lock badge */
+.gate-lock {
+  display: flex; align-items: center; gap: 7px;
+  background: rgba(212,146,60,0.08);
+  border: 1px solid rgba(212,146,60,0.25);
+  border-radius: 3px; padding: 7px 10px;
+  margin-top: 8px;
+}
+.gate-lock-icon { color: var(--warn); font-size: 0.8rem; }
+.gate-lock-text {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.6rem; letter-spacing: 0.06em; color: var(--warn);
+}
+
+/* In-progress read: compact entry */
+.dd-read-entry {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 3px; padding: 7px 10px;
+  margin-bottom: 5px;
+}
+.dd-read-meta {
+  display: flex; align-items: center; gap: 6px; margin-bottom: 4px;
+}
+.dd-read-time {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.58rem; color: var(--ink-mute); letter-spacing: 0.04em;
+}
+.dd-read-op { font-size: 0.7rem; color: var(--ink-soft); }
+.dd-read-vals {
+  display: flex; gap: 8px; flex-wrap: wrap;
+}
+.dd-rv {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.65rem; font-weight: 600; color: var(--ink-soft);
+}
+.dd-rv.warn { color: var(--warn); }
+.dd-rv-key { color: var(--ink-mute); font-weight: 400; }
+
+/* Phase action button */
+.dd-phase-action {
+  margin-top: 8px;
+  padding: 7px 12px;
+  background: none;
+  border: 1px solid var(--hairline-2); border-radius: 3px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--ember); border-color: rgba(197,102,74,0.3);
+  cursor: pointer;
+  width: 100%;
+  transition: background 0.15s, border-color 0.15s;
+}
+.dd-phase-action:hover {
+  background: var(--ember-glow); border-color: var(--ember);
+}
+
+/* Operator presence in drill-down */
+.dd-presence { padding: 12px 18px; border-top: 1px solid var(--hairline); }
+.dd-presence-title {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.56rem; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--ink-mute); margin-bottom: 8px;
+}
+.dd-person {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+}
+.dd-person-info { flex: 1; }
+.dd-person-name { font-size: 0.78rem; color: var(--ink-soft); }
+.dd-person-action {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.56rem; letter-spacing: 0.04em; color: var(--ink-mute);
+}
+.dd-person-badge {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.52rem; letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 1px 5px; border-radius: 1px;
+  border: 1px solid var(--hairline-2); color: var(--ink-mute);
+}
+.dd-person-badge.open  { color: var(--hop); border-color: var(--hop-deep); }
+.dd-person-badge.doing { color: var(--ember); border-color: rgba(197,102,74,0.3); }
+
+/* Online dot */
+.online-wrap { position: relative; }
+.online-dot {
+  position: absolute; bottom: -1px; right: -1px;
+  width: 7px; height: 7px; border-radius: 50%;
+  border: 1.5px solid var(--bg);
+  background: var(--hop);
+}
+
+/* Mockup note */
+.mockup-note {
+  position: fixed; bottom: 20px; right: 20px;
+  background: var(--bg-elev2); border: 1px solid var(--hairline-2);
+  border-radius: 5px; padding: 12px 16px; z-index: 200; max-width: 260px;
+}
+.mockup-note-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.58rem; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--oak); margin-bottom: 6px;
+}
+.mockup-note p { font-size: 0.75rem; color: var(--ink-mute); line-height: 1.5; }
+</style>
+</head>
+<body class="home">
+<div class="page-wrap">
+
+  <!-- TOPBAR -->
+  <nav class="topbar">
+    <div class="wordmark">
+      <div class="wordmark-name">La <em>Nébuleuse</em></div>
+      <div class="wordmark-section">Journal de bord · Sessions</div>
+    </div>
+    <div class="topbar-right">
+      <div class="topbar-clock" id="clock">07:42:18</div>
+      <div class="topbar-operator">
+        <div class="avatar">MA</div>
+        <span class="operator-label">M. Amrani</span>
+      </div>
+      <button class="btn-new">
+        <svg width="9" height="9" viewBox="0 0 9 9" fill="none"><path d="M4.5 1v7M1 4.5h7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        Nouvelle
+      </button>
+    </div>
+  </nav>
+
+  <!-- SIDEBAR — session list -->
+  <aside class="sidebar">
+    <div class="sidebar-head">
+      <div class="sidebar-title">5 sessions actives</div>
+    </div>
+    <div class="session-list">
+
+      <div class="session-item brewing">
+        <div class="si-top">
+          <span class="si-badge brewing">Brassage</span>
+          <div class="si-phase"><div class="si-phase-dot debut"></div>Début</div>
+        </div>
+        <div class="si-beer"><em>Embuscade</em> SPY</div>
+        <div class="si-vessel">BK-01 · Lot 26-14</div>
+        <div class="si-bottom">
+          <div class="si-operators">
+            <div class="avatar sm">MA</div>
+          </div>
+          <span class="si-elapsed">14 min</span>
+          <span class="si-alert-flag">!</span>
+        </div>
+      </div>
+
+      <div class="session-item fermenting active">
+        <div class="si-top">
+          <span class="si-badge fermenting">Fermentation</span>
+          <div class="si-phase"><div class="si-phase-dot cours"></div>En cours</div>
+        </div>
+        <div class="si-beer"><em>Stirling</em></div>
+        <div class="si-vessel">CCT-4 · J+5</div>
+        <div class="si-bottom">
+          <div class="si-operators">
+            <div class="avatar sm">RF</div>
+            <div class="avatar sm">PL</div>
+          </div>
+          <span class="si-elapsed">5j 22h</span>
+          <span class="si-alert-flag">!</span>
+        </div>
+      </div>
+
+      <div class="session-item racking">
+        <div class="si-top">
+          <span class="si-badge racking">Soutirage</span>
+          <div class="si-phase"><div class="si-phase-dot cours"></div>En cours</div>
+        </div>
+        <div class="si-beer"><em>Moonshine</em></div>
+        <div class="si-vessel">CCT-7 → BBT-2</div>
+        <div class="si-bottom">
+          <div class="si-operators">
+            <div class="avatar sm">MA</div>
+          </div>
+          <span class="si-elapsed">52 min</span>
+        </div>
+      </div>
+
+      <div class="session-item packaging">
+        <div class="si-top">
+          <span class="si-badge packaging">Emballage</span>
+          <div class="si-phase"><div class="si-phase-dot debut"></div>Début</div>
+        </div>
+        <div class="si-beer"><em>Zepp</em> 33cl</div>
+        <div class="si-vessel">LIGNE-1 · Run bouteille</div>
+        <div class="si-bottom">
+          <div class="si-operators">
+            <div class="avatar sm">PL</div>
+            <div class="avatar sm">MA</div>
+          </div>
+          <span class="si-elapsed">42 min</span>
+        </div>
+      </div>
+
+      <div class="session-item packaging">
+        <div class="si-top">
+          <span class="si-badge packaging">Emballage</span>
+          <div class="si-phase"><div class="si-phase-dot fin"></div>Fin</div>
+        </div>
+        <div class="si-beer"><em>Diversion</em> Bl. 33cl</div>
+        <div class="si-vessel">LIGNE-2 · CIP final</div>
+        <div class="si-bottom">
+          <div class="si-operators">
+            <div class="avatar sm">PL</div>
+            <div class="avatar sm">RF</div>
+            <div class="avatar sm">MA</div>
+          </div>
+          <span class="si-elapsed">3h 14min</span>
+        </div>
+      </div>
+
+    </div>
+  </aside>
+
+  <!-- MAIN — Journal + Drill-in -->
+  <div class="main-area">
+
+    <!-- Journal / Timeline -->
+    <div class="journal">
+      <div class="journal-head">
+        <div>
+          <div class="journal-title">Journal de <em>bord</em></div>
+        </div>
+        <div class="journal-date">Jeu 28 mai 2026</div>
+      </div>
+
+      <div class="timeline">
+
+        <!-- Today's entries -->
+        <div class="tl-day">
+          <div class="tl-day-label">Aujourd'hui</div>
+          <div class="tl-day-line"></div>
+        </div>
+
+        <!-- Alert entry -->
+        <div class="tl-row" style="animation-delay:0.05s">
+          <div class="tl-time">07:30</div>
+          <div class="tl-spine">
+            <div class="tl-dot event-alert"></div>
+            <div class="tl-line"></div>
+          </div>
+          <div class="tl-content">
+            <div class="tl-entry alert">
+              <div class="tl-meta">
+                <div class="tl-op-avatar">MA</div>
+                <span class="tl-op-name">M. Amrani</span>
+                <span class="tl-type-chip alert">Alerte</span>
+              </div>
+              <div class="tl-text">
+                pH <strong>4.72</strong> hors plage sur <span class="beer-tag">Stirling</span> · CCT-4. 2ème dépassement consécutif (hier 4.70). Cible 4.2–4.5.
+              </div>
+              <div class="tl-measures">
+                <div class="tl-mchip">pH <span class="warn">4.72</span></div>
+                <div class="tl-mchip">Densité <span>8.4°P</span></div>
+                <div class="tl-mchip">T° <span>12.2°C</span></div>
+                <div class="tl-mchip">CO₂ <span>4.8 g/L</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Open session entry -->
+        <div class="tl-row" style="animation-delay:0.1s">
+          <div class="tl-time">07:28</div>
+          <div class="tl-spine">
+            <div class="tl-dot event-open"></div>
+            <div class="tl-line"></div>
+          </div>
+          <div class="tl-content">
+            <div class="tl-entry">
+              <div class="tl-meta">
+                <div class="tl-op-avatar">MA</div>
+                <span class="tl-op-name">M. Amrani</span>
+                <span class="tl-type-chip open">Ouverture</span>
+              </div>
+              <div class="tl-text">
+                Session brassage démarrée — <span class="beer-tag">Embuscade</span> SPY · Lot 26-14 · BK-01. Checklist en cours (3/5 confirmés). Démarrage bloqué sur test O₂.
+              </div>
+              <div class="tl-checklist">
+                <div class="tl-check-row">
+                  <div class="tl-check-icon ok">
+                    <svg width="8" height="8" viewBox="0 0 8 8" fill="none"><path d="M1 4l2 2 4-3.5" stroke="#9eb060" stroke-width="1.2" stroke-linecap="round"/></svg>
+                  </div>
+                  <span class="tl-check-label ok">CIP Brasserie vérifié</span>
+                </div>
+                <div class="tl-check-row">
+                  <div class="tl-check-icon ok">
+                    <svg width="8" height="8" viewBox="0 0 8 8" fill="none"><path d="M1 4l2 2 4-3.5" stroke="#9eb060" stroke-width="1.2" stroke-linecap="round"/></svg>
+                  </div>
+                  <span class="tl-check-label ok">Eau de brassage confirmée</span>
+                </div>
+                <div class="tl-check-row">
+                  <div class="tl-check-icon ok">
+                    <svg width="8" height="8" viewBox="0 0 8 8" fill="none"><path d="M1 4l2 2 4-3.5" stroke="#9eb060" stroke-width="1.2" stroke-linecap="round"/></svg>
+                  </div>
+                  <span class="tl-check-label ok">Malts pesés et confirmés</span>
+                </div>
+                <div class="tl-check-row">
+                  <div class="tl-check-icon fail"></div>
+                  <span class="tl-check-label fail">Test O₂ départ — manquant</span>
+                </div>
+                <div class="tl-check-row">
+                  <div class="tl-check-icon pend"></div>
+                  <span class="tl-check-label">pH eau brassage</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Gate passed entry -->
+        <div class="tl-row" style="animation-delay:0.15s">
+          <div class="tl-time">07:10</div>
+          <div class="tl-spine">
+            <div class="tl-dot event-gate"></div>
+            <div class="tl-line"></div>
+          </div>
+          <div class="tl-content">
+            <div class="tl-entry">
+              <div class="tl-meta">
+                <div class="tl-op-avatar">PL</div>
+                <span class="tl-op-name">P. Lacroix</span>
+                <span class="tl-type-chip gate">Passage gate</span>
+              </div>
+              <div class="tl-text">
+                Checklist ouverture <strong>5/5 validée</strong> — <span class="beer-tag">Zepp</span> 33cl · Ligne 1. Démarrage session autorisé.
+              </div>
+              <div class="tl-measures">
+                <div class="tl-mchip">O₂ <span>0.06 ppm</span></div>
+                <div class="tl-mchip">CO₂ <span>5.2 g/L</span></div>
+                <div class="tl-mchip">T° ligne <span>2.0°C</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Read entry (soutirage) -->
+        <div class="tl-row" style="animation-delay:0.2s">
+          <div class="tl-time">06:50</div>
+          <div class="tl-spine">
+            <div class="tl-dot event-open"></div>
+            <div class="tl-line"></div>
+          </div>
+          <div class="tl-content">
+            <div class="tl-entry">
+              <div class="tl-meta">
+                <div class="tl-op-avatar">MA</div>
+                <span class="tl-op-name">M. Amrani</span>
+                <span class="tl-type-chip open">Ouverture</span>
+              </div>
+              <div class="tl-text">
+                Soutirage démarré — <span class="beer-tag">Moonshine</span> · CCT-7 → BBT-2. Tous les paramètres de départ conformes.
+              </div>
+              <div class="tl-measures">
+                <div class="tl-mchip">CO₂ <span>5.8 g/L</span></div>
+                <div class="tl-mchip">O₂ <span>0.06 ppm</span></div>
+                <div class="tl-mchip">T° <span>1.8°C</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Yesterday's entries -->
+        <div class="tl-day" style="margin-top:24px">
+          <div class="tl-day-label">Hier</div>
+          <div class="tl-day-line"></div>
+        </div>
+
+        <div class="tl-row" style="animation-delay:0.25s">
+          <div class="tl-time">14:30</div>
+          <div class="tl-spine">
+            <div class="tl-dot event-read"></div>
+            <div class="tl-line"></div>
+          </div>
+          <div class="tl-content">
+            <div class="tl-entry alert">
+              <div class="tl-meta">
+                <div class="tl-op-avatar">PL</div>
+                <span class="tl-op-name">P. Lacroix</span>
+                <span class="tl-type-chip read">Relevé</span>
+              </div>
+              <div class="tl-text">
+                Relevé J+4 — <span class="beer-tag">Stirling</span> · CCT-4. pH légèrement élevé, premier dépassement.
+              </div>
+              <div class="tl-measures">
+                <div class="tl-mchip">pH <span class="warn">4.70</span></div>
+                <div class="tl-mchip">Densité <span>9.8°P</span></div>
+                <div class="tl-mchip">T° <span>12.5°C</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="tl-row" style="animation-delay:0.3s">
+          <div class="tl-time">09:00</div>
+          <div class="tl-spine">
+            <div class="tl-dot event-read"></div>
+            <div class="tl-line"></div>
+          </div>
+          <div class="tl-content">
+            <div class="tl-entry">
+              <div class="tl-meta">
+                <div class="tl-op-avatar">RF</div>
+                <span class="tl-op-name">R. Fontaine</span>
+                <span class="tl-type-chip read">Relevé</span>
+              </div>
+              <div class="tl-text">
+                Relevé J+3 — <span class="beer-tag">Stirling</span> · CCT-4. Tous les paramètres dans les normes.
+              </div>
+              <div class="tl-measures">
+                <div class="tl-mchip">pH <span>4.45</span></div>
+                <div class="tl-mchip">Densité <span>11.2°P</span></div>
+                <div class="tl-mchip">T° <span>12.8°C</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Drill-in: 3-phase session view (Stirling fermenting, selected) -->
+    <div class="drilldown">
+      <div class="dd-header">
+        <div class="dd-type-badge">Fermentation · En cours</div>
+        <div class="dd-title"><em>Stirling</em> · CCT-4</div>
+        <div class="dd-sub">Ouvert lun. 09:00 · R. Fontaine · J+5 de fermentation</div>
+      </div>
+
+      <div class="dd-phases">
+
+        <!-- Phase 1: Début ✓ -->
+        <div class="dd-phase-block">
+          <div class="dd-phase-spine">
+            <div class="dd-phase-circle done">
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 5l2.5 2.5L8 3" stroke="white" stroke-width="1.5" stroke-linecap="round"/></svg>
+            </div>
+            <div class="dd-phase-line done"></div>
+          </div>
+          <div class="dd-phase-content">
+            <div class="dd-phase-label done">1 — Début de session</div>
+            <div class="dd-checklist">
+              <div class="dd-check">
+                <div class="dd-check-box checked">
+                  <svg width="8" height="8" viewBox="0 0 8 8" fill="none"><path d="M1 4l2 2 4-3.5" stroke="white" stroke-width="1.2" stroke-linecap="round"/></svg>
+                </div>
+                <span class="dd-check-text checked">CIP CCT-4 confirmé</span>
+              </div>
+              <div class="dd-check">
+                <div class="dd-check-box checked">
+                  <svg width="8" height="8" viewBox="0 0 8 8" fill="none"><path d="M1 4l2 2 4-3.5" stroke="white" stroke-width="1.2" stroke-linecap="round"/></svg>
+                </div>
+                <span class="dd-check-text checked">Levure inoculée (taux + lot)</span>
+              </div>
+              <div class="dd-check">
+                <div class="dd-check-box checked">
+                  <svg width="8" height="8" viewBox="0 0 8 8" fill="none"><path d="M1 4l2 2 4-3.5" stroke="white" stroke-width="1.2" stroke-linecap="round"/></svg>
+                </div>
+                <span class="dd-check-text checked">T° départ: 18.5°C — conforme</span>
+              </div>
+              <div class="dd-check">
+                <div class="dd-check-box checked">
+                  <svg width="8" height="8" viewBox="0 0 8 8" fill="none"><path d="M1 4l2 2 4-3.5" stroke="white" stroke-width="1.2" stroke-linecap="round"/></svg>
+                </div>
+                <span class="dd-check-text checked">OG confirmée: 16.2°P</span>
+              </div>
+              <div class="dd-check">
+                <div class="dd-check-box checked">
+                  <svg width="8" height="8" viewBox="0 0 8 8" fill="none"><path d="M1 4l2 2 4-3.5" stroke="white" stroke-width="1.2" stroke-linecap="round"/></svg>
+                </div>
+                <span class="dd-check-text checked">Fermeture étanche · CO₂ branché</span>
+              </div>
+            </div>
+            <div style="margin-top:6px;font-family:'JetBrains Mono',monospace;font-size:0.56rem;letter-spacing:0.06em;color:var(--ink-mute)">
+              Validé par R. Fontaine · lun. 09:18
+            </div>
+          </div>
+        </div>
+
+        <!-- Phase 2: En cours (active) -->
+        <div class="dd-phase-block">
+          <div class="dd-phase-spine">
+            <div class="dd-phase-circle active">2</div>
+            <div class="dd-phase-line"></div>
+          </div>
+          <div class="dd-phase-content">
+            <div class="dd-phase-label active">2 — Session en cours</div>
+
+            <!-- Last 2 reads -->
+            <div class="dd-read-entry">
+              <div class="dd-read-meta">
+                <span class="dd-read-time">Auj. 07:30</span>
+                <span class="dd-read-op">M. Amrani</span>
+              </div>
+              <div class="dd-read-vals">
+                <div class="dd-rv"><span class="dd-rv-key">pH </span><span class="warn">4.72</span></div>
+                <div class="dd-rv"><span class="dd-rv-key">Dens. </span>8.4°P</div>
+                <div class="dd-rv"><span class="dd-rv-key">T° </span>12.2°C</div>
+                <div class="dd-rv"><span class="dd-rv-key">CO₂ </span>4.8 g/L</div>
+              </div>
+            </div>
+
+            <div class="dd-read-entry">
+              <div class="dd-read-meta">
+                <span class="dd-read-time">Hier 14:30</span>
+                <span class="dd-read-op">P. Lacroix</span>
+              </div>
+              <div class="dd-read-vals">
+                <div class="dd-rv"><span class="dd-rv-key">pH </span><span class="warn">4.70</span></div>
+                <div class="dd-rv"><span class="dd-rv-key">Dens. </span>9.8°P</div>
+                <div class="dd-rv"><span class="dd-rv-key">T° </span>12.5°C</div>
+              </div>
+            </div>
+
+            <button class="dd-phase-action">+ Saisir nouveau relevé</button>
+          </div>
+        </div>
+
+        <!-- Phase 3: Fin (pending) -->
+        <div class="dd-phase-block">
+          <div class="dd-phase-spine">
+            <div class="dd-phase-circle" style="color:var(--ink-faint)">3</div>
+          </div>
+          <div class="dd-phase-content">
+            <div class="dd-phase-label pending">3 — Fin de session</div>
+            <div class="gate-lock">
+              <span class="gate-lock-icon">⏸</span>
+              <span class="gate-lock-text">Bloqué — FG cible &lt; 3.0°P non atteinte (actuel 8.4°P)</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Operator presence -->
+      <div class="dd-presence">
+        <div class="dd-presence-title">Traçabilité opérateurs</div>
+        <div class="dd-person">
+          <div class="online-wrap">
+            <div class="avatar sm">RF</div>
+            <div class="online-dot"></div>
+          </div>
+          <div class="dd-person-info">
+            <div class="dd-person-name">R. Fontaine</div>
+            <div class="dd-person-action">A ouvert la session lun. 09:00</div>
+          </div>
+          <div class="dd-person-badge open">Ouverture</div>
+        </div>
+        <div class="dd-person">
+          <div class="online-wrap">
+            <div class="avatar sm">PL</div>
+            <div class="online-dot" style="background:var(--ok)"></div>
+          </div>
+          <div class="dd-person-info">
+            <div class="dd-person-name">P. Lacroix</div>
+            <div class="dd-person-action">Relevé hier 14:30 · 1 alerte</div>
+          </div>
+          <div class="dd-person-badge doing">En cours</div>
+        </div>
+        <div class="dd-person">
+          <div class="online-wrap">
+            <div class="avatar sm">MA</div>
+            <div class="online-dot" style="background:var(--ok)"></div>
+          </div>
+          <div class="dd-person-info">
+            <div class="dd-person-name">M. Amrani</div>
+            <div class="dd-person-action">Relevé auj. 07:30 · 1 alerte</div>
+          </div>
+          <div class="dd-person-badge doing">En cours</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="mockup-note">
+  <div class="mockup-note-label">Direction C — Journal de bord</div>
+  <p>Sidebar: liste compacte. Milieu: journal chronologique multi-session. Droite: drill-in 3 phases verticales avec gate-lock visible.</p>
+</div>
+
+<script>
+function tick() {
+  const now = new Date();
+  document.getElementById('clock').textContent =
+    String(now.getHours()).padStart(2,'0') + ':' +
+    String(now.getMinutes()).padStart(2,'0') + ':' +
+    String(now.getSeconds()).padStart(2,'0');
+}
+tick(); setInterval(tick,1000);
+
+document.querySelectorAll('.session-item').forEach(item => {
+  item.addEventListener('click', function() {
+    document.querySelectorAll('.session-item').forEach(i => i.classList.remove('active'));
+    this.classList.add('active');
+  });
+});
+</script>
+</body>
+</html>
