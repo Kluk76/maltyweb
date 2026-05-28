@@ -253,7 +253,7 @@ $jsCacheV   = filemtime(__DIR__ . '/../js/session-framework.js') ?: time();
        SESSION HEADER
   ═══════════════════════════════════════════════════════════════ -->
   <header class="ss-header">
-    <a href="/modules/sessions-list.php" class="ss-header__back">
+    <a href="/modules/sessions.php" class="ss-header__back">
       <svg class="ss-icon" viewBox="0 0 14 12" fill="none"><path d="M6 1L1 6m0 0l5 5M1 6h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
       Journal de bord
     </a>
@@ -312,7 +312,7 @@ $jsCacheV   = filemtime(__DIR__ . '/../js/session-framework.js') ?: time();
         <?php endif; ?>
       </div>
 
-      <a href="/modules/sessions-list.php" class="ss-header__journal">Journal ↗</a>
+      <a href="/modules/sessions.php" class="ss-header__journal">Journal ↗</a>
     </div>
   </header>
 

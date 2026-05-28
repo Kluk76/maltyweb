@@ -1,0 +1,629 @@
+/* sessions-dashboard.css — Journal de bord operations cockpit.
+ * Namespace: sd-* (sessions-dashboard)
+ * Body class: body.sessions-dashboard
+ * All colours via var(--…) from app.css :root (light-kraft palette).
+ * NO inline styles in the PHP file.
+ * ────────────────────────────────────────────────────────────────── */
+
+/* ══════════════════════════════════════════════════════════════════
+   PAGE SHELL
+   ══════════════════════════════════════════════════════════════════ */
+
+/* Override .home .main align-items:center (see ui skill catalog — alignment trap). */
+body.sessions-dashboard .main {
+  align-items: stretch;   /* MUST override the global .home .main centering */
+  padding: 0;             /* dashboard owns its own spacing */
+}
+
+body.sessions-dashboard .sd-page {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - 52px); /* below topbar */
+}
+
+/* ── Breadcrumb + controls bar ── */
+body.sessions-dashboard .sd-topstrip {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 28px 12px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--bg);
+  position: sticky;
+  top: 52px; /* below the global topbar */
+  z-index: 30;
+  flex-wrap: wrap;
+}
+
+body.sessions-dashboard .sd-breadcrumb {
+  font-family: "Fraunces", "Times New Roman", serif;
+  font-variation-settings: "opsz" 144;
+  font-size: 20px;
+  font-weight: 300;
+  letter-spacing: -0.015em;
+  color: var(--ink);
+  line-height: 1;
+  flex-shrink: 0;
+}
+body.sessions-dashboard .sd-breadcrumb em {
+  font-style: italic;
+  color: var(--oak);
+}
+
+/* View toggle */
+body.sessions-dashboard .sd-view-toggle {
+  display: flex;
+  gap: 2px;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  padding: 2px;
+}
+body.sessions-dashboard .sd-view-btn {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-weight: 600;
+  padding: 5px 11px;
+  border: none;
+  border-radius: 2px;
+  cursor: pointer;
+  color: var(--ink-mute);
+  background: transparent;
+  transition: background 0.15s, color 0.15s;
+}
+body.sessions-dashboard .sd-view-btn.active {
+  background: var(--bg);
+  color: var(--ink);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+body.sessions-dashboard .sd-view-btn:hover:not(.active) {
+  color: var(--ink-soft);
+}
+
+/* Count pill */
+body.sessions-dashboard .sd-count-pill {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--ink-mute);
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  padding: 3px 9px;
+}
+
+/* ── Filters bar ── */
+body.sessions-dashboard .sd-filters {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  padding: 10px 28px;
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--hairline);
+  flex-wrap: wrap;
+}
+
+body.sessions-dashboard .sd-filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+body.sessions-dashboard .sd-filter-label {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 8.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+body.sessions-dashboard .sd-filter-group select,
+body.sessions-dashboard .sd-filter-group input[type="date"] {
+  font-family: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--hairline-2);
+  border-radius: 3px;
+  padding: 5px 9px;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  min-width: 120px;
+}
+body.sessions-dashboard .sd-filter-group select:focus,
+body.sessions-dashboard .sd-filter-group input:focus {
+  outline: none;
+  border-color: var(--oak);
+}
+
+body.sessions-dashboard .sd-filter-actions {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  padding-bottom: 0;
+}
+
+body.sessions-dashboard .sd-btn-apply {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-weight: 600;
+  padding: 7px 14px;
+  background: var(--hop);
+  color: var(--bg);
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+body.sessions-dashboard .sd-btn-apply:hover { opacity: 0.85; }
+
+body.sessions-dashboard .sd-btn-reset {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 6px 12px;
+  background: transparent;
+  color: var(--ink-mute);
+  border: 1px solid var(--hairline-2);
+  border-radius: 3px;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  transition: color 0.15s;
+}
+body.sessions-dashboard .sd-btn-reset:hover { color: var(--ember); border-color: var(--ember); }
+
+/* ── Abandoned toggle ── */
+body.sessions-dashboard .sd-abandoned-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+  cursor: pointer;
+}
+body.sessions-dashboard .sd-abandoned-toggle input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--oak);
+  cursor: pointer;
+}
+body.sessions-dashboard .sd-abandoned-label {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  user-select: none;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   BODY — outer wrapper for both views
+   ══════════════════════════════════════════════════════════════════ */
+
+body.sessions-dashboard .sd-body {
+  flex: 1;
+  padding: 24px 28px 48px;
+  min-height: 0;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   DIRECTION C — TIMELINE VIEW
+   ══════════════════════════════════════════════════════════════════ */
+
+body.sessions-dashboard .sd-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  max-width: 840px;
+}
+
+/* Day divider */
+body.sessions-dashboard .sd-day {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 20px 0 10px;
+}
+body.sessions-dashboard .sd-day-label {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  white-space: nowrap;
+}
+body.sessions-dashboard .sd-day-line {
+  flex: 1;
+  height: 1px;
+  background: var(--hairline);
+}
+
+/* Timeline row */
+body.sessions-dashboard .sd-tl-row {
+  display: grid;
+  grid-template-columns: 46px 14px 1fr;
+  gap: 0 10px;
+  padding-bottom: 2px;
+}
+
+/* Time column */
+body.sessions-dashboard .sd-tl-time {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--ink-mute);
+  text-align: right;
+  padding-top: 3px;
+  grid-column: 1;
+}
+
+/* Spine column */
+body.sessions-dashboard .sd-tl-spine {
+  grid-column: 2;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+body.sessions-dashboard .sd-tl-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--bg);
+  border: 1.5px solid var(--hairline-2);
+  flex-shrink: 0;
+  margin-top: 3px;
+  position: relative;
+  z-index: 1;
+}
+body.sessions-dashboard .sd-tl-dot.open     { border-color: var(--hop);   background: color-mix(in srgb, var(--hop) 25%, var(--bg)); }
+body.sessions-dashboard .sd-tl-dot.closed   { border-color: var(--oak);   background: color-mix(in srgb, var(--oak) 25%, var(--bg)); }
+body.sessions-dashboard .sd-tl-dot.abandoned{ border-color: var(--ember); background: color-mix(in srgb, var(--ember) 15%, var(--bg)); }
+body.sessions-dashboard .sd-tl-line {
+  flex: 1;
+  width: 1px;
+  background: var(--hairline);
+  min-height: 16px;
+}
+
+/* Event card */
+body.sessions-dashboard .sd-tl-content { grid-column: 3; padding-bottom: 14px; }
+body.sessions-dashboard .sd-entry {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  padding: 10px 14px;
+  text-decoration: none;
+  display: block;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+body.sessions-dashboard .sd-entry:hover {
+  border-color: var(--hairline-2);
+  box-shadow: 0 2px 10px rgba(0,0,0,0.07);
+}
+body.sessions-dashboard .sd-entry.status-open {
+  border-left: 3px solid var(--hop);
+}
+body.sessions-dashboard .sd-entry.status-closed {
+  border-left: 3px solid var(--oak);
+  opacity: 0.85;
+}
+body.sessions-dashboard .sd-entry.status-abandoned {
+  border-left: 3px solid var(--ember);
+  opacity: 0.7;
+}
+
+/* Entry meta row */
+body.sessions-dashboard .sd-entry-meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 5px;
+  flex-wrap: wrap;
+}
+
+/* Form-type chip — matches ss-* phase pill style */
+body.sessions-dashboard .sd-form-chip {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 2px;
+  border: 1px solid;
+}
+body.sessions-dashboard .sd-form-chip.racking     { color: var(--oak);   background: color-mix(in srgb, var(--oak) 10%, transparent);   border-color: color-mix(in srgb, var(--oak) 30%, transparent); }
+body.sessions-dashboard .sd-form-chip.fermenting  { color: var(--bbt);   background: color-mix(in srgb, var(--bbt) 10%, transparent);   border-color: color-mix(in srgb, var(--bbt) 30%, transparent); }
+body.sessions-dashboard .sd-form-chip.brewing     { color: var(--ember); background: color-mix(in srgb, var(--ember) 10%, transparent); border-color: color-mix(in srgb, var(--ember) 30%, transparent); }
+body.sessions-dashboard .sd-form-chip.packaging   { color: var(--hop);   background: color-mix(in srgb, var(--hop) 10%, transparent);   border-color: color-mix(in srgb, var(--hop) 30%, transparent); }
+
+/* Step-type chip */
+body.sessions-dashboard .sd-step-chip {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 8px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  border-radius: 2px;
+  padding: 1px 5px;
+}
+
+/* Phase pill */
+body.sessions-dashboard .sd-phase-pill {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 8px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 10px;
+  border: 1px solid;
+}
+body.sessions-dashboard .sd-phase-pill.start      { color: var(--hop);   border-color: color-mix(in srgb, var(--hop) 40%, transparent);   background: color-mix(in srgb, var(--hop) 8%, transparent); }
+body.sessions-dashboard .sd-phase-pill.in-progress{ color: var(--bbt);   border-color: color-mix(in srgb, var(--bbt) 40%, transparent);   background: color-mix(in srgb, var(--bbt) 8%, transparent); }
+body.sessions-dashboard .sd-phase-pill.end        { color: var(--oak);   border-color: color-mix(in srgb, var(--oak) 40%, transparent);   background: color-mix(in srgb, var(--oak) 8%, transparent); }
+body.sessions-dashboard .sd-phase-pill.closed     { color: var(--ink-mute); border-color: var(--hairline); background: var(--bg-elev); }
+body.sessions-dashboard .sd-phase-pill.abandoned  { color: var(--ember); border-color: color-mix(in srgb, var(--ember) 30%, transparent); background: color-mix(in srgb, var(--ember) 6%, transparent); }
+
+/* Status dot (live pulse for open) */
+body.sessions-dashboard .sd-status-dot {
+  width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+}
+body.sessions-dashboard .sd-status-dot.open     { background: var(--hop); animation: sd-pulse 2.4s ease-in-out infinite; }
+body.sessions-dashboard .sd-status-dot.closed   { background: var(--oak); }
+body.sessions-dashboard .sd-status-dot.abandoned{ background: var(--ember); }
+@keyframes sd-pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+
+/* Entry title */
+body.sessions-dashboard .sd-entry-title {
+  font-family: "Fraunces", "Times New Roman", serif;
+  font-variation-settings: "opsz" 96;
+  font-size: 15px;
+  font-weight: 300;
+  color: var(--ink);
+  line-height: 1.2;
+  margin-bottom: 3px;
+}
+body.sessions-dashboard .sd-entry-title em {
+  font-style: italic;
+  color: var(--oak);
+}
+
+/* Entry sub-line (vessel + operator + elapsed) */
+body.sessions-dashboard .sd-entry-sub {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--ink-mute);
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+body.sessions-dashboard .sd-entry-sub-sep {
+  color: var(--hairline-2);
+}
+
+/* Last-step preview strip */
+body.sessions-dashboard .sd-steps-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 6px;
+  padding-top: 7px;
+  border-top: 1px solid var(--hairline);
+}
+body.sessions-dashboard .sd-step-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--ink-mute);
+}
+body.sessions-dashboard .sd-step-row .sd-step-time {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  color: var(--ink-faint);
+  flex-shrink: 0;
+}
+body.sessions-dashboard .sd-step-row .sd-step-actor {
+  font-weight: 600;
+  color: var(--ink-soft);
+  flex-shrink: 0;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   DIRECTION B — VESSEL VIEW (grid of vessel cards)
+   ══════════════════════════════════════════════════════════════════ */
+
+body.sessions-dashboard .sd-vessel-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+
+/* Vessel group header */
+body.sessions-dashboard .sd-vessel-group {
+  display: contents; /* flat grid, no per-form grouping wrapper */
+}
+
+body.sessions-dashboard .sd-vessel-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 5px;
+  padding: 14px 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-decoration: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+body.sessions-dashboard .sd-vessel-card:hover {
+  border-color: var(--hairline-2);
+  box-shadow: 0 3px 12px rgba(0,0,0,0.08);
+}
+body.sessions-dashboard .sd-vessel-card.open {
+  border-top: 3px solid var(--hop);
+}
+body.sessions-dashboard .sd-vessel-card.closed {
+  border-top: 3px solid var(--oak);
+  opacity: 0.8;
+}
+body.sessions-dashboard .sd-vessel-card.abandoned {
+  border-top: 3px solid var(--ember);
+  opacity: 0.7;
+}
+
+/* Vessel identity */
+body.sessions-dashboard .sd-vc-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+body.sessions-dashboard .sd-vc-vessel-badge {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--steel-mid);
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  padding: 4px 9px;
+  flex-shrink: 0;
+}
+body.sessions-dashboard .sd-vc-vessel-badge.no-vessel {
+  color: var(--ink-faint);
+  border-style: dashed;
+}
+
+/* Card title */
+body.sessions-dashboard .sd-vc-title {
+  font-family: "Fraunces", "Times New Roman", serif;
+  font-variation-settings: "opsz" 96;
+  font-size: 14px;
+  font-weight: 300;
+  color: var(--ink);
+  line-height: 1.2;
+}
+body.sessions-dashboard .sd-vc-title em {
+  font-style: italic;
+  color: var(--oak);
+}
+
+/* Card sub */
+body.sessions-dashboard .sd-vc-sub {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  color: var(--ink-mute);
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* Card footer */
+body.sessions-dashboard .sd-vc-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 6px;
+  border-top: 1px solid var(--hairline);
+}
+body.sessions-dashboard .sd-vc-operator {
+  font-size: 11px;
+  color: var(--ink-mute);
+}
+body.sessions-dashboard .sd-vc-elapsed {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--ink-mute);
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   EMPTY STATE
+   ══════════════════════════════════════════════════════════════════ */
+
+body.sessions-dashboard .sd-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 24px;
+  text-align: center;
+  gap: 10px;
+}
+body.sessions-dashboard .sd-empty-icon {
+  font-size: 28px;
+  color: var(--hairline-2);
+}
+body.sessions-dashboard .sd-empty-text {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 96;
+  font-size: 15px;
+  font-weight: 300;
+  color: var(--ink-mute);
+}
+body.sessions-dashboard .sd-empty-sub {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  color: var(--ink-faint);
+  text-transform: uppercase;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   PAGINATION
+   ══════════════════════════════════════════════════════════════════ */
+
+body.sessions-dashboard .sd-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 28px 0 8px;
+}
+body.sessions-dashboard .sd-page-link {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 6px 14px;
+  border: 1px solid var(--hairline-2);
+  border-radius: 3px;
+  color: var(--ink-mute);
+  text-decoration: none;
+  transition: color 0.15s, border-color 0.15s;
+}
+body.sessions-dashboard .sd-page-link:hover { color: var(--oak); border-color: var(--oak); }
+body.sessions-dashboard .sd-page-link.disabled { opacity: 0.35; pointer-events: none; }
+body.sessions-dashboard .sd-page-info {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  color: var(--ink-mute);
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   RESPONSIVE
+   ══════════════════════════════════════════════════════════════════ */
+@media (max-width: 700px) {
+  body.sessions-dashboard .sd-topstrip { padding: 10px 16px 8px; gap: 10px; }
+  body.sessions-dashboard .sd-filters  { padding: 8px 16px; }
+  body.sessions-dashboard .sd-body     { padding: 16px 16px 40px; }
+  body.sessions-dashboard .sd-breadcrumb { font-size: 16px; }
+  body.sessions-dashboard .sd-vessel-grid { grid-template-columns: 1fr; }
+  body.sessions-dashboard .sd-tl-row { grid-template-columns: 38px 12px 1fr; gap: 0 8px; }
+}
