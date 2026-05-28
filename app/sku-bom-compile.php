@@ -156,7 +156,13 @@ function compile_sku_bom_packaging(
              ON bt.format_id = s.format_id
             AND bt.supply = 'we_supply'
             AND bt.is_active = 1
+           JOIN dbc_packaging_format_templates t ON t.id  = f.catalog_id
+           JOIN dbc_container_types            c ON c.container_code = t.container_code
+           JOIN ref_filler_containers         fc ON fc.container_id  = c.id AND fc.is_active = 1
+           JOIN ref_process_machines           m ON m.id = fc.machine_id   AND m.is_active = 1
           WHERE s.id IN ({$placeholders})
+            AND f.is_active = 1
+            AND f.is_composite = 0
           ORDER BY s.sku_code";
     } else {
         // Two branches: normal recipe_id path + collab override path
@@ -179,7 +185,13 @@ function compile_sku_bom_packaging(
              ON bt.format_id = s.format_id
             AND bt.supply = 'we_supply'
             AND bt.is_active = 1
-          WHERE s.id IN ({$np})";
+           JOIN dbc_packaging_format_templates t ON t.id  = f.catalog_id
+           JOIN dbc_container_types            c ON c.container_code = t.container_code
+           JOIN ref_filler_containers         fc ON fc.container_id  = c.id AND fc.is_active = 1
+           JOIN ref_process_machines           m ON m.id = fc.machine_id   AND m.is_active = 1
+          WHERE s.id IN ({$np})
+            AND f.is_active = 1
+            AND f.is_composite = 0";
             foreach ($normalIds as $nid) {
                 $metaParams[] = $nid;
             }
@@ -200,7 +212,13 @@ function compile_sku_bom_packaging(
              ON bt.format_id = s.format_id
             AND bt.supply = 'we_supply'
             AND bt.is_active = 1
-          WHERE s.id = ?";
+           JOIN dbc_packaging_format_templates t ON t.id  = f.catalog_id
+           JOIN dbc_container_types            c ON c.container_code = t.container_code
+           JOIN ref_filler_containers         fc ON fc.container_id  = c.id AND fc.is_active = 1
+           JOIN ref_process_machines           m ON m.id = fc.machine_id   AND m.is_active = 1
+          WHERE s.id = ?
+            AND f.is_active = 1
+            AND f.is_composite = 0";
             $metaParams[] = $rId;
             $metaParams[] = $rId;
             $metaParams[] = $cid;
@@ -478,8 +496,73 @@ function compile_sku_bom_packaging(
     $totalParityViol  = 0;
     $totalErrors      = 0;
 
+    // ── UoT assertion: refuse-don't-NULL ─────────────────────────────────────
+    // For each requested SKU: if its format is NOT in the dbc commissioning chain
+    // AND it has no composite slots, SKIP it with an explicit error — do not silently no-op.
+    // This surfaces future un-gated activations (contracted-out, draft formats, genuinely new).
+    // Composites are passed through unconditionally (their formats have catalog_id=NULL by design).
+    // The buildability gate INNER-JOIN above already excluded un-gated SKUs from skuIndex;
+    // this assertion makes the exclusion VISIBLE in the $summary output so the CLI reports it.
+    $gatedFormatIds = _compiler_gated_format_ids($pdo);
+    $gatedFormatSet = array_flip($gatedFormatIds);  // O(1) lookup
+
+    // Build sku_id → format_id map for ALL requested SKUs (including those that missed the gate)
+    if (!empty($skuIds)) {
+        $fmtPlaceholders = implode(',', array_fill(0, count($skuIds), '?'));
+        $fmtStmt = $pdo->prepare(
+            "SELECT id, format_id FROM ref_skus WHERE id IN ({$fmtPlaceholders})"
+        );
+        $fmtStmt->execute($skuIds);
+        $skuFormatMap = [];
+        foreach ($fmtStmt->fetchAll(\PDO::FETCH_ASSOC) as $fmtRow) {
+            $skuFormatMap[(int)$fmtRow['id']] = (int)$fmtRow['format_id'];
+        }
+    } else {
+        $skuFormatMap = [];
+    }
+
+    foreach ($skuIds as $_assertSkuId) {
+        $_assertSkuId = (int)$_assertSkuId;
+        // Composites: routed via composite branch — exempt from gate assertion
+        if (isset($compositeSlots[$_assertSkuId])) {
+            continue;
+        }
+        // Already in skuIndex: passed the buildability gate — OK
+        if (isset($skuIndex[$_assertSkuId])) {
+            continue;
+        }
+        // Not in skuIndex and not composite: check if it's a gate miss (un-commissioned format)
+        $fmtId = $skuFormatMap[$_assertSkuId] ?? null;
+        if ($fmtId !== null && !isset($gatedFormatSet[$fmtId])) {
+            $summary[$_assertSkuId] = [
+                'sku_code'        => "sku_id={$_assertSkuId}",
+                'format_code'     => '',
+                'sku_prefix'      => '',
+                'pkg_deleted'     => 0,
+                'pkg_inserted'    => 0,
+                'rq_emitted'      => 0,
+                'liq_rows_before' => 0,
+                'liq_cost_before' => 0.0,
+                'liq_rows_after'  => 0,
+                'liq_cost_after'  => 0.0,
+                'parity_ok'       => false,
+                'error'           => "SKU id={$_assertSkuId} skipped: format_id={$fmtId} not commissioned (not in dbc gate) and not composite",
+            ];
+            $totalErrors++;
+        }
+        // If fmtId IS in gatedFormatSet but SKU still missed skuIndex, it fell through due to
+        // missing recipe_id/template — the existing missingIds path below will catch it.
+    }
+
     foreach ($skuIds as $skuId) {
         $skuId = (int)$skuId;
+
+        // UoT assertion above already marked this SKU as errored (un-gated format,
+        // not composite). Preserve that specific reason — do not let the generic
+        // missingIds path overwrite the message or double-count $totalErrors.
+        if (isset($summary[$skuId]) && ($summary[$skuId]['error'] ?? null) !== null) {
+            continue;
+        }
 
         // ── Route: composite vs. non-composite ───────────────────────────────
         // Composites are detected by the presence of ref_sku_composite_slots rows.
@@ -705,7 +788,7 @@ function compile_sku_bom_packaging(
 
                 // ── Step 2 delete packaging rows ──────────────────────────
                 $del = $pdo->prepare(
-                    "DELETE FROM ref_sku_bom WHERE sku_id = ? AND source = 'Packaging'"
+                    "DELETE FROM ref_sku_bom WHERE sku_id = ? AND (source <> 'Brewing' OR source IS NULL)"
                 );
                 $del->execute([$skuId]);
                 $pkgDeleted = $del->rowCount();
@@ -1060,9 +1143,9 @@ function _bom_compile_composite(
     $liqAfter    = $liqBefore;
 
     if ($dryRun) {
-        // Count stale rows that would be deleted
+        // Count stale rows that would be deleted (mirrors the live DELETE predicate in the apply path)
         $delCountStmt = $pdo->prepare(
-            "SELECT COUNT(*) FROM ref_sku_bom WHERE sku_id = ? AND bom_source IS NULL"
+            "SELECT COUNT(*) FROM ref_sku_bom WHERE sku_id = ? AND (bom_source IS NULL OR bom_source IN ('composite_liquid','composite_packaging'))"
         );
         $delCountStmt->execute([$skuId]);
         $pkgDeleted  = (int)$delCountStmt->fetchColumn();
@@ -1086,9 +1169,11 @@ function _bom_compile_composite(
             // Snapshot inside transaction
             $liqBefore = _bom_liquid_snapshot($pdo, $skuId);
 
-            // Delete ALL stale flat rows (bom_source IS NULL) for this composite
+            // Delete ALL stale flat rows (bom_source IS NULL or previously compiled composite rows)
+            // for this composite. Covers: legacy bom_source=NULL rows AND prior composite_liquid/
+            // composite_packaging rows from a previous compile — prevents double-insert on recompute.
             $del = $pdo->prepare(
-                "DELETE FROM ref_sku_bom WHERE sku_id = ? AND bom_source IS NULL"
+                "DELETE FROM ref_sku_bom WHERE sku_id = ? AND (bom_source IS NULL OR bom_source IN ('composite_liquid','composite_packaging'))"
             );
             $del->execute([$skuId]);
             $pkgDeleted = $del->rowCount();
@@ -1306,12 +1391,18 @@ function _bom_liquid_snapshot(PDO $pdo, int $skuId): array
 }
 
 /**
- * Count existing packaging rows for a SKU (for dry-run reporting).
+ * Count rows that the non-composite DELETE would purge on apply (for dry-run reporting).
+ *
+ * Predicate MUST match the live DELETE in the apply path (~line 781):
+ *   DELETE FROM ref_sku_bom WHERE sku_id = ? AND (source <> 'Brewing' OR source IS NULL)
+ *
+ * This catches any legacy non-Brewing tag (Packaging, mi_match, NULL) — keeping the
+ * dry-run pkg_deleted counter honest about what apply would actually do.
  */
 function _bom_count_packaging(PDO $pdo, int $skuId): int
 {
     $stmt = $pdo->prepare(
-        "SELECT COUNT(*) FROM ref_sku_bom WHERE sku_id = ? AND source = 'Packaging'"
+        "SELECT COUNT(*) FROM ref_sku_bom WHERE sku_id = ? AND (source <> 'Brewing' OR source IS NULL)"
     );
     $stmt->execute([$skuId]);
     return (int)$stmt->fetchColumn();
@@ -1532,4 +1623,42 @@ function _bom_build_rq_row(
         'dedup_key'   => $dedupKey,
         'priority'    => $priority,
     ];
+}
+
+/**
+ * Returns the set of format IDs that are commissioned and buildable today.
+ *
+ * Mirrors the logic in sdc_gated_format_ids() (public/modules/salle-de-controle.php).
+ * MUST stay in sync with that function — if the UI gate changes, update here too.
+ *
+ * Gate: ref_filler_containers (active) → ref_process_machines (active) →
+ *       dbc_container_types → dbc_packaging_format_templates → ref_packaging_formats (active, non-composite).
+ * Cartoner check: formats requiring units_per_format > 1 are excluded when no active cartoner exists.
+ *
+ * @return int[]
+ */
+function _compiler_gated_format_ids(PDO $pdo): array
+{
+    $cartoner = (int)$pdo->query(
+        "SELECT COUNT(*) FROM ref_process_machines WHERE machine_type='cartoner' AND is_active=1"
+    )->fetchColumn();
+
+    $rows = $pdo->query(
+        "SELECT DISTINCT f.id, (t.units_per_format > 1) AS needs_cartoner
+           FROM ref_filler_containers fc
+           JOIN ref_process_machines m   ON m.id = fc.machine_id  AND m.is_active = 1
+           JOIN dbc_container_types c    ON c.id = fc.container_id
+           JOIN dbc_packaging_format_templates t ON t.container_code = c.container_code
+           JOIN ref_packaging_formats f  ON f.catalog_id = t.id
+          WHERE fc.is_active = 1 AND f.is_active = 1 AND f.is_composite = 0"
+    )->fetchAll(\PDO::FETCH_ASSOC);
+
+    $ids = [];
+    foreach ($rows as $r) {
+        if ($r['needs_cartoner'] && !$cartoner) {
+            continue;
+        }
+        $ids[] = (int)$r['id'];
+    }
+    return $ids;
 }
