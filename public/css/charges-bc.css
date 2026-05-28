@@ -1,0 +1,550 @@
+/* charges-bc.css — ChargesBC upload module styles
+ * Scoped under body.charges-bc
+ * Light kraft palette via CSS custom properties from :root (app.css)
+ */
+
+/* ── Layout ──────────────────────────────────────────────────────────────────*/
+body.charges-bc .main {
+  align-items: stretch;   /* override .home .main centering (see ui-skill catalog) */
+  overflow-y: auto;
+}
+
+.cbc-wrap {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2.5rem;
+}
+
+/* ── Page header ─────────────────────────────────────────────────────────────*/
+.cbc-page-head {
+  border-bottom: 1.5px solid var(--hairline);
+  padding-bottom: 1.25rem;
+}
+
+.cbc-title {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  margin: 0 0 0.5rem;
+}
+
+.cbc-title__label {
+  font-family: 'Fraunces', serif;
+  font-size: 1.75rem;
+  font-variation-settings: "opsz" 96;
+  color: var(--ink);
+  line-height: 1.1;
+}
+
+.cbc-title__sub {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.9rem;
+  color: var(--ink-mute);
+  font-weight: 400;
+}
+
+.cbc-desc {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.875rem;
+  color: var(--ink-mute);
+  margin: 0;
+  line-height: 1.5;
+}
+
+.cbc-desc code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+  background: var(--bg-elev);
+  border-radius: 3px;
+  padding: 0.1em 0.35em;
+  color: var(--oak);
+}
+
+/* ── Section ─────────────────────────────────────────────────────────────────*/
+.cbc-section {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  padding: 1.5rem;
+}
+
+.cbc-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.cbc-section-title {
+  font-family: 'Fraunces', serif;
+  font-size: 1.1rem;
+  font-variation-settings: "opsz" 96;
+  color: var(--ink);
+  margin: 0 0 1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.cbc-section-header .cbc-section-title {
+  margin-bottom: 0;
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+/* ── Upload card ─────────────────────────────────────────────────────────────*/
+.cbc-upload-card {
+  background: var(--bg);
+  border: 1px dashed var(--hairline-2);
+  border-radius: 6px;
+  padding: 1.5rem;
+}
+
+.cbc-upload-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.cbc-dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 2rem;
+  border-radius: 6px;
+  background: var(--bg-elev);
+  border: 2px dashed var(--hairline);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.cbc-dropzone.drag-over {
+  border-color: var(--hop);
+  background: rgba(86, 112, 32, 0.06);
+}
+
+.cbc-dropzone__icon {
+  width: 40px;
+  height: 40px;
+  color: var(--ink-faint);
+}
+
+.cbc-dropzone__text {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.9rem;
+  color: var(--ink-mute);
+  margin: 0;
+}
+
+.cbc-dropzone__btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.4rem 1rem;
+  background: var(--bg-side);
+  border: 1px solid var(--hairline-2);
+  border-radius: 5px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: background 0.12s;
+  user-select: none;
+}
+
+.cbc-dropzone__btn:hover {
+  background: var(--hairline);
+}
+
+.cbc-file-hidden {
+  position: absolute;
+  width: 1px; height: 1px;
+  overflow: hidden;
+  clip: rect(0,0,0,0);
+  border: 0;
+}
+
+.cbc-dropzone__hint {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+  color: var(--ink-mute);
+  margin: 0;
+  letter-spacing: 0.02em;
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────────────*/
+.cbc-upload-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.cbc-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 1.25rem;
+  border: none;
+  border-radius: 5px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity 0.12s, background 0.12s;
+}
+
+.cbc-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.cbc-btn--primary {
+  background: var(--hop);
+  color: #fff;
+}
+
+.cbc-btn--primary:not(:disabled):hover {
+  background: var(--hop-deep);
+}
+
+.cbc-btn--commit {
+  background: var(--ok);
+  color: #fff;
+}
+
+.cbc-btn--commit:not(:disabled):hover {
+  opacity: 0.85;
+}
+
+.cbc-btn--cancel {
+  background: var(--bg-side);
+  color: var(--ink-mute);
+  border: 1px solid var(--hairline);
+}
+
+.cbc-btn--cancel:hover {
+  background: var(--hairline);
+}
+
+/* ── Preview panel ───────────────────────────────────────────────────────────*/
+.cbc-preview-panel {
+  margin-top: 1.25rem;
+  background: var(--bg);
+  border: 1px solid var(--hairline-2);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.cbc-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.cbc-preview-title {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--ink);
+  margin: 0;
+}
+
+.cbc-preview-close {
+  background: none;
+  border: none;
+  color: var(--ink-mute);
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 0 0.25rem;
+  line-height: 1;
+}
+
+.cbc-preview-stats {
+  padding: 0.75rem 1rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+  color: var(--ink-mute);
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.cbc-preview-stats .stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.cbc-preview-stats .stat-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+}
+
+.cbc-preview-stats .stat-value {
+  font-size: 0.9rem;
+  color: var(--ink);
+}
+
+.cbc-preview-table-wrap {
+  overflow-x: auto;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.cbc-preview-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+}
+
+.cbc-preview-table th,
+.cbc-preview-table td {
+  padding: 0.35rem 0.6rem;
+  border-bottom: 1px solid var(--hairline);
+  text-align: left;
+  white-space: nowrap;
+  color: var(--ink);
+}
+
+.cbc-preview-table th {
+  background: var(--bg-side);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-mute);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.cbc-preview-table td.num { text-align: right; }
+
+.cbc-preview-errors {
+  padding: 0.75rem 1rem;
+  background: rgba(179, 68, 40, 0.06);
+  border-top: 1px solid var(--ember);
+}
+
+.cbc-preview-errors h4 {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--ember);
+  margin: 0 0 0.5rem;
+}
+
+.cbc-preview-errors ul {
+  margin: 0;
+  padding: 0 0 0 1.2rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  color: var(--ink-mute);
+}
+
+.cbc-preview-actions {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-top: 1px solid var(--hairline);
+  justify-content: flex-end;
+}
+
+/* ── Result notice ───────────────────────────────────────────────────────────*/
+.cbc-result {
+  margin-top: 1rem;
+  padding: 0.75rem 1rem;
+  border-radius: 5px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.875rem;
+}
+
+.cbc-result.ok {
+  background: rgba(61, 104, 38, 0.08);
+  border: 1px solid var(--ok);
+  color: var(--ok);
+}
+
+.cbc-result.err {
+  background: rgba(179, 68, 40, 0.08);
+  border: 1px solid var(--ember);
+  color: var(--ember);
+}
+
+/* ── Summary table ───────────────────────────────────────────────────────────*/
+.cbc-summary-table-wrap {
+  overflow-x: auto;
+}
+
+.cbc-summary-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.875rem;
+}
+
+.cbc-summary-table th {
+  background: var(--bg-side);
+  color: var(--ink-mute);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  border-bottom: 2px solid var(--hairline-2);
+}
+
+.cbc-summary-table th.num,
+.cbc-summary-table td.num {
+  text-align: right;
+}
+
+.cbc-summary-table td {
+  padding: 0.45rem 0.75rem;
+  border-bottom: 1px solid var(--hairline);
+  color: var(--ink);
+}
+
+.cbc-summary-table tr:last-child td {
+  border-bottom: none;
+}
+
+.cbc-summary-table tr:hover td {
+  background: rgba(200, 180, 140, 0.18);
+}
+
+.cbc-gl-no {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+  color: var(--oak);
+}
+
+/* ── History table ───────────────────────────────────────────────────────────*/
+.cbc-history-table-wrap {
+  overflow-x: auto;
+}
+
+.cbc-history-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.85rem;
+}
+
+.cbc-history-table th {
+  background: var(--bg-side);
+  color: var(--ink-mute);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  border-bottom: 2px solid var(--hairline-2);
+}
+
+.cbc-history-table td {
+  padding: 0.45rem 0.75rem;
+  border-bottom: 1px solid var(--hairline);
+  color: var(--ink);
+}
+
+.cbc-history-table tr:last-child td {
+  border-bottom: none;
+}
+
+.cbc-ts {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+  color: var(--ink-mute);
+  white-space: nowrap;
+}
+
+.cbc-user {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+  color: var(--oak);
+}
+
+.cbc-comment {
+  font-size: 0.83rem;
+  color: var(--ink-mute);
+}
+
+/* ── Month selector ──────────────────────────────────────────────────────────*/
+.cbc-month-form {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.cbc-month-label {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.85rem;
+  color: var(--ink-mute);
+}
+
+.cbc-month-select {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.82rem;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px;
+  padding: 0.3rem 0.6rem;
+  cursor: pointer;
+}
+
+/* ── Empty / error states ────────────────────────────────────────────────────*/
+.cbc-empty {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.875rem;
+  color: var(--ink-mute);
+  margin: 0.5rem 0 0;
+  font-style: italic;
+}
+
+.cbc-db-error {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+  color: var(--ember);
+  margin: 0.5rem 0 0;
+}
+
+/* ── Spinner ─────────────────────────────────────────────────────────────────*/
+.cbc-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255,255,255,0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: cbc-spin 0.7s linear infinite;
+  vertical-align: middle;
+}
+
+@keyframes cbc-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Responsive ──────────────────────────────────────────────────────────────*/
+@media (max-width: 640px) {
+  .cbc-wrap {
+    padding: 1rem 0.75rem 3rem;
+  }
+  .cbc-section {
+    padding: 1rem;
+  }
+  .cbc-preview-stats {
+    gap: 1rem;
+  }
+}

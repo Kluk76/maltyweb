@@ -31,6 +31,7 @@ if ($showAdminBlock) {
     $adminEntries[] = ["Ingest",      "/admin/ingest.php",    "ingest"];
 }
 if (is_admin($me)) {
+    $adminEntries[] = ["ChargesBC",   "/modules/charges-bc.php","charges-bc"];
     $adminEntries[] = ["DB Browser",  "/admin/db-browser.php","db-browser"];
 }
 
