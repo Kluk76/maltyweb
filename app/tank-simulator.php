@@ -766,16 +766,38 @@ class TankSimulator
         // bd_packaging_v2 has no loss_liquid_l column; totalHl = vendable_hl
         // only (processEvent adds PACKAGING_LOSS_HL = 0.15 on top regardless).
         //
-        // Dedup: bd_packaging_v2 and bd_packaging share ALL their historical
-        // rows (both tables were populated from the same BSF sync). A submitted_at
-        // JOIN is many-to-many (multiple rows per timestamp across beers) and
-        // row_hash has 0 cross-table matches. The safe dedup key is
-        // (beer_canonical, batch, date_str): a packaging event for the same
-        // beer+batch on the same calendar day cannot legitimately appear twice
-        // from different sources (both rows represent the same physical run).
-        // This correctly dedupes legacy+v2 history while adding net-new web rows.
+        // DEDUP STRATEGY (2026-05-28):
+        //
+        // Two dedup purposes must be handled separately:
+        //
+        //   Purpose 1 — cross-source dedup: bd_packaging and bd_packaging_v2
+        //   share their historical rows (both were populated from the same BSF
+        //   sync). The safe cross-source key is (beer_canonical, batch, date):
+        //   a legacy row for that triple wins; any v2 row for the same triple
+        //   is skipped. This applies to ALL formats.
+        //
+        //   Purpose 2 — within-source same-day collapse: for keg/bot/can formats
+        //   there is at most one row per (beer, batch, date) in either table, so
+        //   the collapse is a no-op. For Cuv (V-suffix SKUs in bd_packaging;
+        //   run_type='cuv' in bd_packaging_v2) a single day can hold multiple
+        //   DISTINCT serving-tank fills (operator-confirmed 2026-05-28). Collapsing
+        //   them under-counts packaged volume by up to 20 HL per batch and inflates
+        //   COGS/WIP loss flags.
+        //
+        // Implementation:
+        //   $crossSourceSeen  — 'beer|batch|date' → true for ALL formats.
+        //                       Blocks v2 rows that duplicate a legacy row.
+        //   For non-Cuv rows: the existing $crossSourceSeen key also covers
+        //                       within-source (only one row per day exists anyway).
+        //   For Cuv rows:     skip the within-source collapse; only $crossSourceSeen
+        //                       guards against cross-source duplication.
+        //
+        // Cuv detection:
+        //   bd_packaging (legacy, SKU-coded): beer matches /^[A-Z]{3,4}V$/ —
+        //     the format suffix is the final character of the SKU (e.g. "ZEPV").
+        //   bd_packaging_v2 (web-form): run_type = 'cuv'.
 
-        // 1. Load legacy rows from bd_packaging
+        // 1. Load legacy rows from bd_packaging (raw beer column kept for Cuv detection via SKU suffix)
         $legacyRows = $this->pdo->query(
             'SELECT beer,
                     batch,
@@ -787,13 +809,14 @@ class TankSimulator
                AND (vendable_hl > 0 OR loss_liquid_l > 0)'
         )->fetchAll();
 
-        // 2. Load new web-form rows from bd_packaging_v2 (only rows with volume)
+        // 2. Load new web-form rows from bd_packaging_v2 (include run_type for Cuv detection)
         $v2Rows = $this->pdo->query(
             'SELECT COALESCE(NULLIF(neb_beer, ""), contract_beer) AS beer,
                     COALESCE(NULLIF(neb_batch, ""), contract_batch) AS batch,
                     vendable_hl,
                     NULL AS loss_liquid_l,
-                    submitted_at
+                    submitted_at,
+                    run_type
              FROM bd_packaging_v2
              WHERE submitted_at IS NOT NULL
                AND vendable_hl IS NOT NULL
@@ -801,16 +824,16 @@ class TankSimulator
                AND is_tombstoned = 0'
         )->fetchAll();
 
-        // 3. Parse all rows into a canonical event structure, dedup by (beer,batch,date)
-        $seen   = [];   // dedup set: 'beer|batch|YYYY-MM-DD' → true
-        $events = [];
+        // 3. Parse all rows into a canonical event structure with Cuv-aware dedup.
+        $crossSourceSeen = [];  // 'beer|batch|YYYY-MM-DD' → true (cross-source gate, all formats)
+        $events          = [];
 
         // $isSkuSource=true  → legacy bd_packaging: beer holds SKU codes (e.g. "SPYF"),
         //                      so deriveBeerFromSku() is tried first.
         // $isSkuSource=false → bd_packaging_v2: neb_beer/contract_beer hold racking-style
         //                      names (e.g. "Div.Blanche"), identical to bd_racking_v2 —
         //                      skip deriveBeerFromSku() so the key matches the racking key.
-        $processRow = function (array $row, bool $isSkuSource) use (&$seen, &$events): void {
+        $processRow = function (array $row, bool $isSkuSource) use (&$crossSourceSeen, &$events): void {
             $rawBeer       = trim($row['beer'] ?? '');
             if ($isSkuSource) {
                 $beer = $this->deriveBeerFromSku($rawBeer);
@@ -829,9 +852,28 @@ class TankSimulator
             if ($beer === '' || $date === null || $totalHl <= 0) return;
             if ($this->isWortSale($beer)) return;
 
-            $dedupKey = $beer . '|' . $batch . '|' . $date->format('Y-m-d');
-            if (isset($seen[$dedupKey])) return;
-            $seen[$dedupKey] = true;
+            // Cuv rows (serving-tank fills) may appear multiple times on the same
+            // day — each is a distinct fill event. Only cross-source dedup applies.
+            // All other formats have at most one row per (beer, batch, date) per
+            // source, so the cross-source key also covers within-source collapse.
+            $isCuv = $isSkuSource
+                ? (bool)preg_match('/^[A-Z]{3,4}V$/', strtoupper($rawBeer))
+                : (($row['run_type'] ?? '') === 'cuv');
+
+            $crossKey = $beer . '|' . $batch . '|' . $date->format('Y-m-d');
+
+            if ($isCuv) {
+                // Cross-source: if a legacy row already covers this (beer,batch,date),
+                // skip any v2 row for the same triple (legacy wins — it also carries
+                // loss_liquid_l). Within the same source, every Cuv row is distinct.
+                if (!$isSkuSource && isset($crossSourceSeen[$crossKey])) return;
+                // Mark after the check so the first legacy row does not block its siblings.
+                if ($isSkuSource) $crossSourceSeen[$crossKey] = true;
+            } else {
+                // Non-Cuv: one row per (beer, batch, date) across both sources.
+                if (isset($crossSourceSeen[$crossKey])) return;
+                $crossSourceSeen[$crossKey] = true;
+            }
 
             $events[] = [
                 'type'          => 'PACKAGING',
@@ -843,7 +885,7 @@ class TankSimulator
             ];
         };
 
-        // Legacy first so that if there is a dedup collision the legacy row wins
+        // Legacy first so that if there is a cross-source collision the legacy row wins
         // (legacy rows have vendable_hl + loss_liquid_l; v2 only has vendable_hl)
         foreach ($legacyRows as $row) { $processRow($row, true); }
         foreach ($v2Rows as $row)     { $processRow($row, false); }

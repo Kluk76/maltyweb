@@ -611,7 +611,7 @@ function _loss_load_rack_map(PDO $pdo, ?array $filter): array
  */
 function _loss_load_packaging_map(PDO $pdo, ?array $filter): array
 {
-    // 1. Legacy bd_packaging (SKU-coded beer names)
+    // 1. Legacy bd_packaging (SKU-coded beer names; include raw beer for Cuv detection)
     $legacyStmt = $pdo->query(
         "SELECT beer,
                 batch,
@@ -624,13 +624,14 @@ function _loss_load_packaging_map(PDO $pdo, ?array $filter): array
     );
     $legacyRows = $legacyStmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // 2. Web-form bd_packaging_v2 (full beer names; no loss_liquid_l column)
+    // 2. Web-form bd_packaging_v2 (full beer names; no loss_liquid_l; include run_type for Cuv detection)
     $v2Stmt = $pdo->query(
         "SELECT COALESCE(NULLIF(neb_beer, ''), contract_beer)   AS beer,
                 COALESCE(NULLIF(neb_batch, ''), contract_batch) AS batch,
                 vendable_hl,
                 0                                               AS loss_liquid_l,
-                DATE(submitted_at)                              AS pkg_date
+                DATE(submitted_at)                              AS pkg_date,
+                run_type
            FROM bd_packaging_v2
           WHERE submitted_at IS NOT NULL
             AND vendable_hl IS NOT NULL
@@ -639,13 +640,19 @@ function _loss_load_packaging_map(PDO $pdo, ?array $filter): array
     );
     $v2Rows = $v2Stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // 3. Merge and dedup — same logic as TankSimulator::loadPackagingEvents().
-    //    Dedup key: (beer_canonical, batch, date). Legacy rows loaded first so they
-    //    win when there is a same-day collision (they carry loss_liquid_l too).
-    $seen     = [];  // 'beer|batch|YYYY-MM-DD' → true
-    $map      = [];  // 'beer|batch' → [vendable_sum, n_events, total_drawn_sum]
+    // 3. Merge with Cuv-aware dedup — mirrors TankSimulator::loadPackagingEvents().
+    //
+    // Two dedup purposes (see loadPackagingEvents() for full rationale):
+    //   Cross-source: (beer, batch, date) key blocks v2 rows that duplicate a legacy
+    //                 row. Legacy wins (it carries loss_liquid_l). Applies to ALL formats.
+    //   Within-source same-day collapse: suppressed for Cuv (V-suffix SKUs / run_type='cuv')
+    //                 because multiple same-day Cuv rows are distinct serving-tank fills.
+    //                 For keg/bot/can there is at most one row per (beer,batch,date) per
+    //                 source, so the cross-source key also covers within-source.
+    $crossSourceSeen = [];  // 'beer|batch|YYYY-MM-DD' → true (cross-source gate, all formats)
+    $map             = [];  // 'beer|batch' → [vendable_sum, n_events, total_drawn_sum]
 
-    $mergeRow = function (array $row, bool $isSkuSource) use (&$seen, &$map, $filter): void {
+    $mergeRow = function (array $row, bool $isSkuSource) use (&$crossSourceSeen, &$map, $filter): void {
         $rawBeer = trim($row['beer'] ?? '');
         if ($isSkuSource) {
             $beer = _loss_derive_beer_from_sku($rawBeer);
@@ -664,9 +671,24 @@ function _loss_load_packaging_map(PDO $pdo, ?array $filter): array
         if (isset($filter['beer'])  && $beer  !== $filter['beer'])  return;
         if (isset($filter['batch']) && $batch !== $filter['batch'])  return;
 
-        $dedupKey = $beer . '|' . $batch . '|' . $pkgDate;
-        if (isset($seen[$dedupKey])) return;
-        $seen[$dedupKey] = true;
+        // Cuv rows (serving-tank fills) may appear multiple times on the same day —
+        // each is a distinct fill event. Only cross-source dedup applies.
+        $isCuv = $isSkuSource
+            ? (bool)preg_match('/^[A-Z]{3,4}V$/', strtoupper($rawBeer))
+            : (($row['run_type'] ?? '') === 'cuv');
+
+        $crossKey = $beer . '|' . $batch . '|' . $pkgDate;
+
+        if ($isCuv) {
+            // Cross-source: legacy row for this (beer,batch,date) blocks any v2 row.
+            // Within the same source, every Cuv row is a distinct fill — no collapse.
+            if (!$isSkuSource && isset($crossSourceSeen[$crossKey])) return;
+            if ($isSkuSource) $crossSourceSeen[$crossKey] = true;
+        } else {
+            // Non-Cuv: one row per (beer, batch, date) across both sources.
+            if (isset($crossSourceSeen[$crossKey])) return;
+            $crossSourceSeen[$crossKey] = true;
+        }
 
         $vendable  = (float)($row['vendable_hl']   ?? 0);
         $lossLiqL  = (float)($row['loss_liquid_l'] ?? 0);
@@ -681,6 +703,8 @@ function _loss_load_packaging_map(PDO $pdo, ?array $filter): array
         $map[$key]['drawn_sum']    += $drawnHl;
     };
 
+    // Legacy first so that if there is a cross-source collision the legacy row wins
+    // (legacy rows have loss_liquid_l; v2 rows do not).
     foreach ($legacyRows as $row) { $mergeRow($row, true); }
     foreach ($v2Rows    as $row) { $mergeRow($row, false); }
 
