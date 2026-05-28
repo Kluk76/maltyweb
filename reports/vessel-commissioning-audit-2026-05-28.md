@@ -204,22 +204,54 @@ Zero format codes in `bd_packaging_v2.nebuleuse_format_suffix` are absent from `
 
 ## Findings Summary (Operator Action Required)
 
-### FINDING F1 — NEW, operator review needed
-**6C format (id=10) has catalog_id=NULL — no matching dbc_packaging_format_templates row.**  
-Impact: Any SKU assigned to format 6C would be silently excluded from the compiler gate and produce no BOM. Currently 0 active SKUs use 6C, so there is no immediate COGS disruption.  
-Action: Either (a) create a `SIX_TRAY_CAN_50` template in `dbc_packaging_format_templates` and assign it to format 10, or (b) deactivate format 10 if 6-pack trays are not planned.
+### FINDING F1 — [POST-RESOLVED, mig 208 — 2026-05-29]
+**6C format (id=10) had catalog_id=NULL — no matching dbc_packaging_format_templates row.**  
 
-### FINDING F2 — NEW, operator review needed
-**8 non-composite, non-draft active formats had 0 production events in 12 months: B12, 4PB, BU, X, 12C, 4PC, CU, and 6C.**  
-These are all commissioned (valid catalog_ids, active fillers), pass the compiler gate, but show no real production. If any are permanently retired, set `is_active=0` to reduce noise in format dropdowns and audit checks.
+Operator-confirmed resolution 2026-05-29: deactivate. F1 + the 6C entry in F2 were the same architectural smell — a speculative 6-can tray format never modelled in the dbc catalog. Single SKU (ZEP6C id=57) was already deactivated via mig 191; single historical event (Feb 2024 contractor run) preserved as production record. Orphan BOM template id=11 also deactivated to prevent future audit drift.
+
+Applied via `db/migrations/208_deactivate_format_6c.sql`. Post-apply state: `ref_packaging_formats id=10 is_active=0`, `ref_packaging_bom_templates id=11 is_active=0`, active SKU count unchanged at 154. If a 6-can tray ever recurs, the right path is to add a `SIX_TRAY_CAN_50` dbc template + matching `dbc_container_types` cardboard-tray entry, then re-activate.
+
+### FINDING F2 — [POST-RESOLVED via architectural arc — migs 210/211/212 — 2026-05-29]
+**Original framing was wrong.** The audit flagged 8 formats as "idle commissioned" (B12, 4PB, BU, X, 12C, 4PC, CU, 6C) but the underlying issue was that `ref_skus` had no discriminator between **production-line SKUs** (come off the packaging line as `bd_packaging_v2` events) and **direct-sales SKUs** (eshop unboxing into singles/4-packs, B2B pallets). The "idle commissioned formats" served real active SKUs — they're just direct-sales SKUs that don't have a production event signature.
+
+PM verdict 2026-05-29: add two **orthogonal flags** (not ENUM) since some SKUs are BOTH (F, 4, B, C are produced AND sold direct). Compositeness stays in `ref_sku_composite_slots`; draft-pour stays in `run_type='-'`.
+
+Applied via:
+- **mig 210** — `ALTER TABLE ref_skus ADD COLUMN is_packaging_line + is_direct_sales TINYINT(1) NOT NULL DEFAULT 0`
+- **mig 211** — data-driven backfill from `bd_packaging_v2.sku_id_fk` + `inv_sales_bc.sku_id_fk` + `inv_sales_order_lines.sku_id_fk`. X-cage cardinal invariant special-cased (`format_id=6 → is_packaging_line=1` regardless of v2 evidence). 188 audit_row_revisions written.
+- **mig 212** — deactivate BLOCU (id=103, eshop single missed by BLO retirement mig 204).
+
+Post-apply active-SKU flag distribution (153 active SKUs):
+| `is_packaging_line` | `is_direct_sales` | n | Shape |
+|:---:|:---:|---:|---|
+| 1 | 1 | 40 | Core production beers sold direct (F, 4, B, C, etc.) |
+| 0 | 1 | 74 | Direct-sales-only — unboxing/B2B/draft |
+| 1 | 0 | 20 | Production-line w/o sales evidence — mostly X cages (WIP) |
+| 0 | 0 | 19 | New collabs (DGDB/DGDF), pre-cycle EPH seasonal eshop, composites (PAC, PAL) |
+
+**The 19 BOTH-0 active SKUs are all explainable** (investigated by recipe+subtype lookup, not pattern-guessing): 2 CollabIn (DrunkBeard Galactic Drift, ingested 2026-05-28), 5 Core eshop/draft, 9 EPH seasonal eshop forms, 2 composites, plus EPH24PB/EPH44PB (standard 4PB form for EPH2/EPH4 seasonals — clarified after misreading the codes as "24-pack/44-pack" initially).
+
+**Downstream consumer hookup** (not done in this migration — surfaced for follow-up):
+- Future audit re-runs of "idle commissioned formats" should filter by `is_packaging_line=1`.
+- `derive-eshop-consumption.ts` (Stage-2 consumption matrix, not yet built) will key off `is_direct_sales=1 AND is_packaging_line=0` for the unboxing chain.
+- `ingest_bd_packaging_v2.py` ingest could add a safety check: resolved `sku_id_fk` with `is_packaging_line=0` → route to doc_review_queue (defense against future mis-routing à la BLO/BLA item #2).
 
 ### FINDING F3 — NEW, count drift
 **bd_packaging_v2 contract-run rows with sku_id_fk=NULL = 244, not 240.**  
 All 244 correctly have contract_beer/contract_batch set (no rogue NULLs). The +4 drift since PM's last live read is simply new contract runs processed. No action needed, but update PM memory to 244.
 
-### FINDING F4 — NEW, denormalization gap (no operational impact)
-**ref_skus.bom_template_id is NULL for all 154 active SKUs.**  
-The compiler does not use `bom_template_id` in its buildability or BOM resolution path — it joins on `format_id` directly. The column is only set at SKC activation time via the SDC UI (`public/modules/salle-de-controle.php`) and is never backfilled for imported/pre-existing SKUs. This creates a gap for any UI widget that uses `bom_template_id` as a shortcut display (e.g. `public/js/salle-de-controle.js` line 147). Functional impact: zero on COGS. Display impact: the SDC UI may show blank bom-template for all existing SKUs until re-activated via the UI. Backfill is straightforward: `UPDATE ref_skus s JOIN ref_packaging_bom_templates bt ON bt.format_id=s.format_id AND bt.supply='we_supply' AND bt.is_active=1 SET s.bom_template_id=bt.id WHERE s.bom_template_id IS NULL` (single-template-per-format assumption; safe for current 1:1 mapping).
+### FINDING F4 — [POST-RESOLVED, mig 209 — 2026-05-29]
+**ref_skus.bom_template_id was NULL on all 154 active SKUs.**  
+
+Operator-confirmed resolution 2026-05-29: backfill. The compiler doesn't use this column (joins on format_id) but the SDC UI widget reads it for the BOM-template selector. 1:1 mapping verified live pre-apply (15/15 formats with active SKUs each have exactly one active we_supply template; 0 collisions).
+
+Applied via `db/migrations/209_backfill_ref_skus_bom_template_id.sql`. Post-apply: **122/154 active SKUs received a bom_template_id**, **32 stay NULL** by design:
+- 13 P25 (draft-pour 25cl) — no physical packaging step
+- 13 P50 (draft-pour 50cl) — same
+- 2 alias SKUs (PACKDECX8, EPH24P) — format_id IS NULL, resolved via ref_sku_aliases
+- 4 composite SKUs (1 each on PD8, XMASPACK, PAL, PAC) — composites resolve through composite-slot path, not we_supply templates
+
+122 `audit_row_revisions` rows written with `comment='backfill_bom_template_id_mig209'` for clean rollback.
 
 ### FINDING F5 — [POST-RESOLVED, mig 207 — 2026-05-28]
 **dbc_container_types BOT_GLASS_50 (id=2), BOT_PET_100 (id=3), and KEG_INOX_30 (id=7) were is_active=1 in the catalog but had no active ref_filler_containers row.**  
@@ -258,8 +290,8 @@ Applied via `db/migrations/207_deactivate_speculative_dbc_container_types.sql`. 
 
 | Finding | Status | Resolution |
 |---|---|---|
-| F1 (6C catalog_id NULL) | OPEN — pending operator decision | Deactivate format 10 OR add `SIX_TRAY_CAN_50` template |
-| F2 (8 idle commissioned formats) | OPEN — pending operator decision | Per-format `is_active=0` review (keep 4PB — has active sibling SKUs) |
+| F1 (6C catalog_id NULL) | **RESOLVED via mig 208** (2026-05-29) | Format 10 + orphan template 11 deactivated |
+| F2 (8 idle commissioned formats) | **RESOLVED via architectural arc — migs 210/211/212** (2026-05-29) | Reframed: added `is_packaging_line` + `is_direct_sales` flags. BLOCU stranded SKU also deactivated. |
 | F3 (count drift 240→244) | RESOLVED (informational) | PM memory bumped to 244 |
-| F4 (bom_template_id NULL × 154) | OPEN — pending operator decision | Single-shot UPDATE backfill OR formally retire column |
+| F4 (bom_template_id NULL × 154) | **RESOLVED via mig 209** (2026-05-29) | 122 backfilled, 32 correctly NULL (P25/P50/aliases/composites) |
 | F5 (3 dbc speculative rows) | **RESOLVED via mig 207** (2026-05-28) | is_active=0 on BOT_GLASS_50 / BOT_PET_100 / KEG_INOX_30 |
