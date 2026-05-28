@@ -135,6 +135,15 @@ const LOSS_SKU_BEER_MAP = [
 // Mirrors TankSimulator::BBT_EMPTY_THRESHOLD_HL.
 const LOSS_BBT_EMPTY_THRESHOLD_HL = 2.5;
 
+// Wort-sale beers never enter a BBT — their loss model is meaningless under
+// the rack→pkg→completeness gate. Mirrors TankSimulator::WORT_SALES.
+// TODO(wort-contract): replace with ref_recipes.process_type='wort_contract'
+// when the column lands.
+const LOSS_WORT_SALES = [
+    'Chien Bleu - Moût Chaud',
+    'Chien Bleu - Moût Froid',
+];
+
 /* ═══════════════════════════════════════════════════════════════════════════
    1. THRESHOLDS (commissioning_settings section='pertes')
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -244,6 +253,32 @@ function _loss_derive_beer_from_sku(string $sku): string
         ?? '';
 }
 
+/**
+ * Strip the canonical beer prefix from an SKU code to get the format suffix.
+ * "EPH1B" + "EPH1" → "B"; "MOOF" + "Moonshine" → "F"; "ZEPC" → "C"; "EMB4" → "4".
+ * Falls back to a 3- or 4-char prefix probe against LOSS_SKU_BEER_MAP when
+ * the canonical name isn't directly a prefix (most cases — the map is the
+ * authoritative prefix → name mapping). Returns '' if no prefix matches.
+ *
+ * @internal
+ */
+function _loss_extract_format_suffix(string $rawSku, string $canonicalBeer): string
+{
+    if ($rawSku === '') return '';
+    $s = strtoupper($rawSku);
+
+    if (preg_match('/^EPH[1-4]/', $s)) {
+        return substr($s, 4);
+    }
+    if (isset(LOSS_SKU_BEER_MAP[substr($s, 0, 4)])) {
+        return substr($s, 4);
+    }
+    if (isset(LOSS_SKU_BEER_MAP[substr($s, 0, 3)])) {
+        return substr($s, 3);
+    }
+    return '';
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    3. MAIN RESOLVER
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -263,6 +298,12 @@ function _loss_derive_beer_from_sku(string $sku): string
  *                               to a given op_sessions.id (via bd_racking_v2.session_id_fk).
  *                               If no bd_racking_v2 row is found for the session, returns [].
  *                               Additive with beer/batch keys (both applied when present).
+ *                             ['view' => 'core'|'collab-eph'|'contract']
+ *                               — restrict to beer family. Default: 'core'.
+ *                               Beers absent from ref_beer_types default to 'core' (visible
+ *                               by default; the normalization step maps e.g. "MeltingPote - IPA"
+ *                               to its canonical ref_beer_types name before the filter).
+ *                               Ignored when 'beer' or 'batch' keys restrict to a single batch.
  *
  * @return array<int, array{
  *   beer:                      string,
@@ -350,23 +391,13 @@ function loss_metrics_for_batches(PDO $pdo, ?array $filter = null): array
         return [];
     }
 
-    // ── B. Nominal HL from ref_brewhouse_size (SCD2 temporal) ─────────────────
+    // ── B/C/D. Nominal + racking + packaging loaders ──────────────────────────
     //
-    // One query for all distinct brew_dates.
-    //
-    $brewhouses   = _loss_load_brewhouse_sizes($pdo);
-    $nominalMap   = _loss_build_nominal_map($castOutRows, $brewhouses);
+    $brewhouses = _loss_load_brewhouse_sizes($pdo);
+    $nominalMap = _loss_build_nominal_map($castOutRows, $brewhouses);
+    $rackMap    = _loss_load_rack_map($pdo, $filter);
+    $pkgMap     = _loss_load_packaging_map($pdo, $filter);
 
-    // ── C. Racking losses per (beer, batch) ───────────────────────────────────
-    //
-    $rackMap = _loss_load_rack_map($pdo, $filter);
-
-    // ── D. Packaged HL per (beer, batch) ──────────────────────────────────────
-    //
-    $pkgMap = _loss_load_packaging_map($pdo, $filter);
-
-    // ── E. Assemble result rows ────────────────────────────────────────────────
-    //
     $result = [];
     foreach ($castOutRows as $row) {
         $beer      = $row['beer'];
@@ -495,6 +526,48 @@ function _loss_load_cast_out(PDO $pdo, ?array $filter): array
         $params[] = $filter['batch'];
     }
 
+    // Brewed batches whose brew_date predates racking-form coverage will never
+    // reach a valid racked_vol_hl. The 6-month rolling floor is the dominant
+    // constraint today; GREATEST ensures we never regress if the racking floor
+    // advances past 6 months in the future.
+    $rackingFloor = _loss_racking_data_floor($pdo);
+    $havingClause = '';
+    if ($rackingFloor !== null) {
+        // Compose both floors: racking-data coverage AND 6-month rolling window.
+        $havingClause = 'HAVING brew_date >= GREATEST(?, (NOW() - INTERVAL 6 MONTH))';
+        $params[] = $rackingFloor;
+        error_log('[loss-metrics] _loss_load_cast_out floor: GREATEST(' . $rackingFloor . ', NOW()-6mo)');
+    } else {
+        $havingClause = 'HAVING brew_date >= (NOW() - INTERVAL 6 MONTH)';
+        error_log('[loss-metrics] _loss_load_cast_out floor: NOW()-6mo (no racking floor)');
+    }
+
+    // View-filter join: restrict to the beer family selected via $filter['view'].
+    // Applied only when not restricted to a single beer/batch (single-batch calls
+    // bypass the family filter — the caller asked for an exact match).
+    $viewJoin  = '';
+    $viewWhere = '';
+    $activeView = $filter['view'] ?? 'core';
+    if (!isset($filter['beer']) && !isset($filter['batch'])) {
+        $viewJoin = "LEFT JOIN ref_beer_types rbt
+                        ON rbt.beer_name COLLATE utf8mb4_unicode_ci = g.beer COLLATE utf8mb4_unicode_ci";
+        switch ($activeView) {
+            case 'collab-eph':
+                // EPH + CollabIn + CollabOut regardless of type
+                $viewWhere = "AND (rbt.subtype IN ('EPH', 'CollabIn', 'CollabOut'))";
+                break;
+            case 'contract':
+                $viewWhere = "AND (rbt.type = 'Contract')";
+                break;
+            case 'core':
+            default:
+                // Core Nébuleuse beers; unclassified beers (rbt.beer_name IS NULL) also default here
+                // so they remain visible in the default view rather than disappearing silently.
+                $viewWhere = "AND (rbt.type = 'Neb' AND rbt.subtype = 'Core' OR rbt.beer_name IS NULL)";
+                break;
+        }
+    }
+
     $whereClause = implode(' AND ', $where);
 
     $stmt = $pdo->prepare(
@@ -504,14 +577,20 @@ function _loss_load_cast_out(PDO $pdo, ?array $filter): array
                 COUNT(*)                  AS n_brews,
                 SUM(g.final_volume)       AS cast_out_hl
            FROM bd_brewing_gravity_v2 g
+           {$viewJoin}
           WHERE {$whereClause}
+            {$viewWhere}
           GROUP BY g.beer, g.batch
+          {$havingClause}
           ORDER BY brew_date DESC, g.beer, g.batch"
     );
     $stmt->execute($params);
 
     $rows = [];
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        // Wort-sale beers never enter a BBT — exclude from PPB.
+        if (in_array($row['beer'], LOSS_WORT_SALES, true)) continue;
+
         $beer = _loss_normalize_beer($row['beer']);
         if ($beer !== '') {
             $row['beer'] = $beer;
@@ -519,6 +598,39 @@ function _loss_load_cast_out(PDO $pdo, ?array $filter): array
         }
     }
     return $rows;
+}
+
+/**
+ * Earliest racking-form submission date (YYYY-MM-DD) or null if none.
+ * Memoised. Defines the data-coverage horizon below which PPB cannot meaningfully
+ * compute completeness (no racked_vol_hl exists).
+ *
+ * @internal
+ */
+function _loss_racking_data_floor(PDO $pdo): ?string
+{
+    static $cached = null;
+    static $loaded = false;
+    if ($loaded) return $cached;
+    $loaded = true;
+
+    $stmt = $pdo->query(
+        "SELECT DATE(MIN(submitted_at)) AS floor_date
+           FROM bd_racking_v2
+          WHERE is_tombstoned = 0"
+    );
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    $cached = ($row && $row['floor_date']) ? (string)$row['floor_date'] : null;
+    return $cached;
+}
+
+/**
+ * Public accessor for the racking data-coverage floor. Surfaces it to the UI
+ * so the operator understands why pre-floor batches are absent from PPB.
+ */
+function loss_racking_data_floor(PDO $pdo): ?string
+{
+    return _loss_racking_data_floor($pdo);
 }
 
 /**
@@ -668,14 +780,16 @@ function _loss_load_packaging_map(PDO $pdo, ?array $filter): array
     );
     $legacyRows = $legacyStmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // 2. Web-form bd_packaging_v2 (full beer names; no loss_liquid_l; include run_type for Cuv detection)
+    // 2. Web-form bd_packaging_v2 (full beer names; no loss_liquid_l; include run_type for Cuv detection;
+    //    nebuleuse_format_suffix carries the SKU discriminator for the dedup key).
     $v2Stmt = $pdo->query(
         "SELECT COALESCE(NULLIF(neb_beer, ''), contract_beer)   AS beer,
                 COALESCE(NULLIF(neb_batch, ''), contract_batch) AS batch,
                 vendable_hl,
                 0                                               AS loss_liquid_l,
                 DATE(submitted_at)                              AS pkg_date,
-                run_type
+                run_type,
+                nebuleuse_format_suffix                         AS sku_suffix
            FROM bd_packaging_v2
           WHERE submitted_at IS NOT NULL
             AND vendable_hl IS NOT NULL
@@ -684,16 +798,20 @@ function _loss_load_packaging_map(PDO $pdo, ?array $filter): array
     );
     $v2Rows = $v2Stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // 3. Merge with Cuv-aware dedup — mirrors TankSimulator::loadPackagingEvents().
+    // 3. Merge with Cuv-aware AND format-aware dedup — mirrors TankSimulator::loadPackagingEvents().
     //
-    // Two dedup purposes (see loadPackagingEvents() for full rationale):
-    //   Cross-source: (beer, batch, date) key blocks v2 rows that duplicate a legacy
-    //                 row. Legacy wins (it carries loss_liquid_l). Applies to ALL formats.
+    // Two dedup purposes:
+    //   Cross-source: (beer, batch, date, sku_format) key blocks v2 rows that duplicate
+    //                 a legacy row of the SAME SKU format. Different SKU formats on the
+    //                 same day (e.g. EPH1F + EPH1B on 2026-03-19) are distinct packaging
+    //                 events and must both count — earlier (beer, batch, date) key
+    //                 collapsed them, silently dropping volume (fixed 2026-05-28).
+    //                 Legacy wins on collision (it carries loss_liquid_l).
     //   Within-source same-day collapse: suppressed for Cuv (V-suffix SKUs / run_type='cuv')
     //                 because multiple same-day Cuv rows are distinct serving-tank fills.
-    //                 For keg/bot/can there is at most one row per (beer,batch,date) per
-    //                 source, so the cross-source key also covers within-source.
-    $crossSourceSeen = [];  // 'beer|batch|YYYY-MM-DD' → true (cross-source gate, all formats)
+    //                 For keg/bot/can there is at most one row per (beer,batch,date,format)
+    //                 per source, so the cross-source key also covers within-source.
+    $crossSourceSeen = [];  // 'beer|batch|YYYY-MM-DD|format' → true
     $map             = [];  // 'beer|batch' → [vendable_sum, n_events, total_drawn_sum]
 
     $mergeRow = function (array $row, bool $isSkuSource) use (&$crossSourceSeen, &$map, $filter): void {
@@ -721,15 +839,21 @@ function _loss_load_packaging_map(PDO $pdo, ?array $filter): array
             ? (bool)preg_match('/^[A-Z]{3,4}V$/', strtoupper($rawBeer))
             : (($row['run_type'] ?? '') === 'cuv');
 
-        $crossKey = $beer . '|' . $batch . '|' . $pkgDate;
+        // SKU format discriminator. Legacy: rawBeer IS the SKU code (e.g. "EPH1F") — strip
+        // the canonical prefix to extract the format suffix. v2: read nebuleuse_format_suffix.
+        $skuFormat = $isSkuSource
+            ? _loss_extract_format_suffix($rawBeer, $beer)
+            : trim((string)($row['sku_suffix'] ?? ''));
+
+        $crossKey = $beer . '|' . $batch . '|' . $pkgDate . '|' . $skuFormat;
 
         if ($isCuv) {
-            // Cross-source: legacy row for this (beer,batch,date) blocks any v2 row.
+            // Cross-source: legacy row for this (beer,batch,date,format) blocks any v2 row.
             // Within the same source, every Cuv row is a distinct fill — no collapse.
             if (!$isSkuSource && isset($crossSourceSeen[$crossKey])) return;
             if ($isSkuSource) $crossSourceSeen[$crossKey] = true;
         } else {
-            // Non-Cuv: one row per (beer, batch, date) across both sources.
+            // Non-Cuv: one row per (beer, batch, date, format) across both sources.
             if (isset($crossSourceSeen[$crossKey])) return;
             $crossSourceSeen[$crossKey] = true;
         }
@@ -781,4 +905,110 @@ function _loss_is_complete(?float $packedHl, float $totalDrawnHl, ?float $racked
     if ($rackedVol === null || $rackedVol <= 0.0) return false;
     // Drawn amount must have emptied the BBT to within the dead-volume threshold.
     return $totalDrawnHl >= ($rackedVol - LOSS_BBT_EMPTY_THRESHOLD_HL);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   5. PER-BEER AGGREGATE (6-month rolling, complete batches only)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Compute per-beer 6-month rolling average loss metrics.
+ *
+ * Calls loss_metrics_for_batches() (which itself uses the 6-month window set
+ * in _loss_load_cast_out) then groups complete batches by beer.
+ * Incomplete batches are excluded from all averages — they inflate loss figures
+ * because packaged_hl is 0 or partial while cast_out/nominal are already set.
+ *
+ * @param PDO        $pdo    Active DB connection.
+ * @param array|null $filter Optional. Supported keys:
+ *                             ['view' => 'core'|'collab-eph'|'contract']
+ *                             (passed through to loss_metrics_for_batches).
+ *
+ * @return array<int, array{
+ *   beer:                       string,
+ *   n_batches:                  int,        // complete batches in window
+ *   n_incomplete:               int,        // incomplete batches in window (informational)
+ *   avg_brewing_loss_pct:       float|null,
+ *   avg_rack_loss_pct:          float|null,
+ *   avg_packaging_loss_pct:     float|null,
+ *   avg_loss_vs_effectif_pct:   float|null,
+ *   avg_loss_vs_nominal_pct:    float|null,
+ *   last_brew_date:             string,     // 'YYYY-MM-DD' of most recent complete batch
+ * }>
+ * Sorted by avg_loss_vs_nominal_pct DESC (worst-loss beers first — most actionable).
+ * Beers with no complete batches in the window are omitted entirely.
+ */
+function loss_metrics_per_beer(PDO $pdo, ?array $filter = null): array
+{
+    $allBatches = loss_metrics_for_batches($pdo, $filter);
+
+    // Group complete vs incomplete counts per beer.
+    $groups = [];
+    foreach ($allBatches as $row) {
+        $beer = $row['beer'];
+        if (!isset($groups[$beer])) {
+            $groups[$beer] = [
+                'complete_rows' => [],
+                'n_incomplete'  => 0,
+            ];
+        }
+        if ($row['complete']) {
+            $groups[$beer]['complete_rows'][] = $row;
+        } else {
+            $groups[$beer]['n_incomplete']++;
+        }
+    }
+
+    $result = [];
+    foreach ($groups as $beer => $g) {
+        $rows = $g['complete_rows'];
+        if (empty($rows)) continue;
+
+        $nBatches = count($rows);
+
+        // Helper: average a nullable float field across rows, skipping nulls.
+        $avg = function (string $field) use ($rows): ?float {
+            $sum   = 0.0;
+            $count = 0;
+            foreach ($rows as $r) {
+                if ($r[$field] !== null) {
+                    $sum += (float)$r[$field];
+                    $count++;
+                }
+            }
+            return $count > 0 ? $sum / $count : null;
+        };
+
+        $lastBrewDate = '';
+        foreach ($rows as $r) {
+            if ($r['brew_date'] > $lastBrewDate) {
+                $lastBrewDate = $r['brew_date'];
+            }
+        }
+
+        $result[] = [
+            'beer'                     => $beer,
+            'n_batches'                => $nBatches,
+            'n_incomplete'             => $g['n_incomplete'],
+            'avg_brewing_loss_pct'     => $avg('brewing_loss_pct'),
+            'avg_rack_loss_pct'        => $avg('rack_loss_pct'),
+            'avg_packaging_loss_pct'   => $avg('packaging_loss_pct'),
+            'avg_loss_vs_effectif_pct' => $avg('loss_vs_effectif_pct'),
+            'avg_loss_vs_nominal_pct'  => $avg('loss_vs_nominal_pct'),
+            'last_brew_date'           => $lastBrewDate,
+        ];
+    }
+
+    // Worst-loss beers first — most actionable at the top.
+    // NULLs sort last (no complete batches with nominal data → least useful).
+    usort($result, function (array $a, array $b): int {
+        $va = $a['avg_loss_vs_nominal_pct'];
+        $vb = $b['avg_loss_vs_nominal_pct'];
+        if ($va === null && $vb === null) return 0;
+        if ($va === null) return 1;
+        if ($vb === null) return -1;
+        return $vb <=> $va;
+    });
+
+    return $result;
 }

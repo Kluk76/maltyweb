@@ -55,37 +55,12 @@ body.home .ppb-section__tag {
   background: color-mix(in srgb, var(--hop) 10%, transparent);
 }
 
-/* Header right: toggle + settings link */
+/* Header right: settings link */
 body.home .ppb-section__controls {
   display: flex;
   align-items: center;
   gap: 14px;
   flex-shrink: 0;
-}
-
-body.home .ppb-section__toggle {
-  font-family: "JetBrains Mono", ui-monospace, monospace;
-  font-size: 9.5px;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: var(--ink-mute);
-  background: none;
-  border: 1px solid var(--hairline-2);
-  border-radius: 2px;
-  padding: 5px 10px;
-  cursor: pointer;
-  transition: color .15s, border-color .15s;
-}
-
-body.home .ppb-section__toggle:hover {
-  color: var(--hop);
-  border-color: var(--hop-deep);
-}
-
-body.home .ppb-section__toggle[aria-pressed="true"] {
-  color: var(--hop);
-  border-color: var(--hop);
-  background: color-mix(in srgb, var(--hop) 8%, transparent);
 }
 
 body.home .ppb-section__config-link {
@@ -178,39 +153,6 @@ body.home .ppb-row:hover > .ppb-td {
   background: color-mix(in srgb, var(--rack) 6%, transparent);
 }
 
-/* Incomplete batch rows — slightly muted */
-body.home .ppb-row--incomplete {
-  opacity: 0.78;
-}
-
-body.home .ppb-row--incomplete:hover > .ppb-td {
-  background: color-mix(in srgb, var(--steel-mid) 5%, transparent);
-}
-
-/* Hidden-batch rows (behind "Tous" toggle) */
-body.home .ppb-row--hidden {
-  display: none;
-}
-
-body.home .ppb-section--show-all .ppb-row--hidden {
-  display: table-row;
-}
-
-/* Detail rows paired with section-hidden batch rows (beyond 20 complete) */
-body.home .ppb-detail-row--section-hidden {
-  display: none;
-}
-
-/* When showing all: reveal them — but only if not also collapsed by JS */
-body.home .ppb-section--show-all .ppb-detail-row--section-hidden {
-  display: table-row;
-}
-
-/* Collapsed always wins (JS state overrides section visibility) */
-body.home .ppb-section--show-all .ppb-detail-row--section-hidden.ppb-detail-row--collapsed {
-  display: none;
-}
-
 /* Data cells */
 body.home .ppb-td {
   padding: 11px 14px;
@@ -225,7 +167,7 @@ body.home .ppb-td--sep {
   border-left: 1px solid var(--hairline);
 }
 
-/* Beer + batch identity cell */
+/* Beer identity cell */
 body.home .ppb-td--batch {
   min-width: 160px;
 }
@@ -247,6 +189,10 @@ body.home .ppb-batch__meta {
   letter-spacing: 0.04em;
   display: block;
   margin-top: 2px;
+}
+
+body.home .ppb-batch__meta--incomplete {
+  color: var(--ink-faint);
 }
 
 /* Percentage cells — right-aligned monospace */
@@ -284,11 +230,6 @@ body.home .ppb-td--oddity {
   color: var(--cold);
 }
 
-/* Muted total cells for incomplete batches */
-body.home .ppb-td--muted {
-  color: var(--ink-faint);
-}
-
 /* ── Pills ──────────────────────────────────────────────────────── */
 body.home .ppb-pill {
   display: inline-block;
@@ -322,147 +263,11 @@ body.home .ppb-pill--oddity {
   border: 1px solid color-mix(in srgb, var(--cold) 28%, transparent);
 }
 
-body.home .ppb-pill--inprogress {
-  background: color-mix(in srgb, var(--ink-faint) 20%, transparent);
-  color: var(--ink-mute);
-  border: 1px solid var(--hairline);
-}
-
 /* Unit suffix */
 body.home .ppb-unit {
   font-size: 10px;
   color: var(--ink-faint);
   margin-left: 1px;
-}
-
-/* ── Expand trigger (batch identity cell) ───────────────────────── */
-body.home .ppb-td--expand {
-  cursor: pointer;
-  user-select: none;
-}
-
-body.home .ppb-td--expand:focus-visible {
-  outline: 2px solid var(--hop);
-  outline-offset: -2px;
-}
-
-/* Expand chevron */
-body.home .ppb-chevron {
-  display: inline-block;
-  font-size: 9px;
-  color: var(--ink-faint);
-  margin-right: 6px;
-  transition: transform .15s, color .15s;
-  vertical-align: middle;
-  position: relative;
-  top: -1px;
-}
-
-body.home .ppb-td--expand[aria-expanded="true"] .ppb-chevron {
-  transform: rotate(90deg);
-  color: var(--oak);
-}
-
-/* ── Drill-in detail row ────────────────────────────────────────── */
-/* Default: all detail rows start collapsed; JS removes --collapsed on expand. */
-body.home .ppb-detail-row {
-  border-bottom: 1px solid var(--hairline);
-}
-
-/* Collapsed state — JS managed; default for all detail rows. */
-body.home .ppb-detail-row--collapsed {
-  display: none;
-}
-
-body.home .ppb-detail-row > td {
-  padding: 0;
-}
-
-body.home .ppb-drill-panel {
-  background: var(--bg-elev);
-  border-top: 1px solid var(--hairline);
-  border-left: 3px solid var(--oak);
-  padding: 16px 22px 18px;
-}
-
-body.home .ppb-drill-title {
-  font-family: "JetBrains Mono", ui-monospace, monospace;
-  font-size: 9.5px;
-  font-weight: 500;
-  letter-spacing: 0.24em;
-  text-transform: uppercase;
-  color: var(--ink-mute);
-  margin: 0 0 10px;
-}
-
-body.home .ppb-drill-title--oddity {
-  color: var(--cold);
-}
-
-body.home .ppb-drill-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 12px 20px;
-}
-
-body.home .ppb-drill-item {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-body.home .ppb-drill-item__label {
-  font-family: "JetBrains Mono", ui-monospace, monospace;
-  font-size: 9px;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: var(--ink-mute);
-}
-
-body.home .ppb-drill-item__value {
-  font-family: "JetBrains Mono", ui-monospace, monospace;
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--ink);
-  letter-spacing: 0.01em;
-}
-
-body.home .ppb-drill-item__value--note {
-  font-family: "DM Sans", system-ui, sans-serif;
-  font-size: 12px;
-  font-weight: 400;
-  color: var(--ink-soft);
-  font-style: italic;
-  letter-spacing: 0;
-}
-
-body.home .ppb-drill-item__value--surplus {
-  color: var(--ok);
-}
-
-body.home .ppb-drill-item__value--warn {
-  color: var(--ember);
-}
-
-body.home .ppb-drill-item__value--oddity {
-  color: var(--cold);
-}
-
-body.home .ppb-drill-item__value--faint {
-  color: var(--ink-faint);
-}
-
-body.home .ppb-drill-unit {
-  font-size: 11px;
-  color: var(--ink-mute);
-}
-
-body.home .ppb-drill-unit--surplus {
-  color: var(--ok);
-}
-
-body.home .ppb-drill-unit--oddity {
-  color: var(--cold);
 }
 
 /* ── Empty state ────────────────────────────────────────────────── */
@@ -473,6 +278,55 @@ body.home .ppb-empty {
   color: var(--ink-mute);
   padding: 32px 0;
   margin: 0;
+}
+
+/* ── View toggle (Core / Collab+EPH / Contract) ─────────────────── */
+body.home .ppb-view-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin-top: 14px;
+  margin-bottom: 2px;
+}
+
+body.home .ppb-view-toggle__btn {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.20em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  text-decoration: none;
+  background: none;
+  border: 1px solid var(--hairline-2);
+  border-right-width: 0;
+  padding: 5px 14px;
+  cursor: pointer;
+  transition: color .13s, background .13s;
+  white-space: nowrap;
+}
+
+body.home .ppb-view-toggle__btn:first-child {
+  border-radius: 2px 0 0 2px;
+}
+
+body.home .ppb-view-toggle__btn:last-child {
+  border-right-width: 1px;
+  border-radius: 0 2px 2px 0;
+}
+
+body.home .ppb-view-toggle__btn:hover {
+  color: var(--hop);
+}
+
+body.home .ppb-view-toggle__btn--active {
+  color: var(--hop);
+  background: color-mix(in srgb, var(--hop) 10%, transparent);
+  border-color: color-mix(in srgb, var(--hop) 40%, transparent);
+}
+
+/* Right-adjacent border of the active segment */
+body.home .ppb-view-toggle__btn--active + .ppb-view-toggle__btn {
+  border-left-color: color-mix(in srgb, var(--hop) 40%, transparent);
 }
 
 /* ── Responsive ─────────────────────────────────────────────────── */

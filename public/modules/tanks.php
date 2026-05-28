@@ -727,18 +727,15 @@ try {
         $rackMaxVol = max($rackMaxVol, (float)$rsr['vol_hl']);
     }
 
-    // ---- Pertes par batch (C8) ----
-    // Server-render all rows (complete N=20 + incomplete) — toggle is purely client-side.
-    $allLossMetrics   = loss_metrics_for_batches($pdo);
-    $lossThresholds   = loss_thresholds($pdo);
+    // ---- Pertes par batch (C8) — per-beer 6-month rolling averages ----
+    // ppb_view: sanitized to whitelist before use to prevent header injection.
+    $ppbViewAllowed = ['core', 'collab-eph', 'contract'];
+    $ppbViewRaw     = $_GET['ppb_view'] ?? '';
+    $ppbView        = in_array($ppbViewRaw, $ppbViewAllowed, true) ? $ppbViewRaw : 'core';
 
-    // Split: complete batches (default view, up to 20 latest) vs incomplete.
-    $completeBatches   = array_values(array_filter($allLossMetrics, fn($r) => $r['complete']));
-    $incompleteBatches = array_values(array_filter($allLossMetrics, fn($r) => !$r['complete']));
-    // Latest 20 complete first (already ordered brew_date DESC from the loader).
-    $completeBatches20 = array_slice($completeBatches, 0, 20);
-    // Rows beyond the first 20 complete batches (shown only in "Tous" mode).
-    $completeBatchesRest = array_slice($completeBatches, 20);
+    $perBeerMetrics   = loss_metrics_per_beer($pdo, ['view' => $ppbView]);
+    $lossThresholds   = loss_thresholds($pdo);
+    $lossRackingFloor = loss_racking_data_floor($pdo);
 
     $dbError = null;
 
@@ -754,13 +751,12 @@ try {
     $rackYears           = [];
     $rackStatsRows       = [];
     $rackMaxVol          = 0.0;
-    $allLossMetrics      = [];
-    $lossThresholds      = [];
-    $completeBatches20   = [];
-    $incompleteBatches   = [];
-    $completeBatchesRest = [];
-    $dbError             = $e->getMessage();
-    $cctDetails          = [];
+    $perBeerMetrics   = [];
+    $lossThresholds   = [];
+    $lossRackingFloor = null;
+    $dbError          = $e->getMessage();
+    $cctDetails       = [];
+    $ppbView          = 'core';
 }
 
 $today = $asOfDT;
@@ -1195,10 +1191,9 @@ $today = $asOfDT;
 
 
   <!-- ================================================================
-       Pertes par batch (C8) — loss KPI table, server-rendered.
-       Data source: app/loss-metrics.php — loss_metrics_for_batches().
-       Default view: 20 complete batches + all incomplete rows.
-       "Tous" toggle reveals batches beyond the first 20 (CSS-only, no reload).
+       Pertes par batch (C8) — per-beer 6-month rolling averages.
+       Data source: app/loss-metrics.php — loss_metrics_per_beer().
+       Incomplete batches excluded from averages entirely.
   ================================================================ -->
   <?php
     // ── helpers for number formatting ──────────────────────────────────────────
@@ -1215,21 +1210,18 @@ $today = $asOfDT;
 
     /**
      * Render a single percentage cell (td) with appropriate class and pill.
+     * All rendered rows are complete-batch aggregates — $flagged drives Seuil pill.
      *
-     * @param float|null $val         The percentage value (can be negative).
-     * @param bool       $flagged     Should the Seuil pill appear?
-     * @param bool       $complete    Batch completeness (suppresses total flags).
-     * @param bool       $isTotal     Is this a "total" column (muted when incomplete)?
-     * @param bool       $isTotalEff  Is this the "Vs effectif" column (extra class + oddity semantics).
-     *                                loss_vs_effectif_pct < 0 means packaged > cast_out — data oddity.
-     *                                loss_vs_nominal_pct < 0 means packaged > nominal — yield bonus.
+     * @param float|null $val        The percentage value (can be negative).
+     * @param bool       $flagged    Should the Seuil pill appear?
+     * @param bool       $isTotalEff Is this the "Vs effectif" column (extra class + oddity semantics).
+     *                               loss_vs_effectif_pct < 0 means packaged > cast_out — data oddity.
+     *                               loss_vs_nominal_pct < 0 means packaged > nominal — yield bonus.
      * @return string HTML for the <td>.
      */
     function ppb_render_pct_cell(
         ?float $val,
         bool $flagged,
-        bool $complete,
-        bool $isTotal = false,
         bool $isTotalEff = false
     ): string {
         $extraClass = $isTotalEff ? ' ppb-td--total-eff' : '';
@@ -1241,26 +1233,20 @@ $today = $asOfDT;
             );
         }
 
-        // Determine cell semantic class
         $tdClass = '';
         $pill    = '';
 
-        if ($isTotal && !$complete) {
-            // Total columns for incomplete batches: muted + En cours pill
-            $tdClass = 'ppb-td--muted';
-            $pill    = '<span class="ppb-pill ppb-pill--inprogress">En cours</span>';
-        } elseif ($val < 0) {
+        if ($val < 0) {
             if ($isTotalEff) {
-                // loss_vs_effectif_pct < 0: packaged > cast_out — physics oddity (blended BBT mis-attr)
+                // Average loss_vs_effectif < 0: packaged > cast_out across batches — data oddity
                 $tdClass = 'ppb-td--oddity';
                 $pill    = '<span class="ppb-pill ppb-pill--oddity">Données</span>';
             } else {
-                // Negative stage or nominal-total loss = yield bonus (cast_out or packaged > nominal)
+                // Negative stage or nominal-total average = yield bonus
                 $tdClass = 'ppb-td--bonus';
                 $pill    = '<span class="ppb-pill ppb-pill--bonus">+Rendement</span>';
             }
-        } elseif ($flagged && $complete) {
-            // Over threshold for a complete batch
+        } elseif ($flagged) {
             $tdClass = 'ppb-td--flagged';
             $pill    = '<span class="ppb-pill ppb-pill--warn">Seuil</span>';
         }
@@ -1274,119 +1260,11 @@ $today = $asOfDT;
         );
     }
 
-    /**
-     * Render the drill-in <tr> for a batch row.
-     */
-    function ppb_render_detail_row(array $row, int $idx, string $hiddenClass, array $monthsFR): string {
-        $beer  = htmlspecialchars($row['beer']);
-        $batch = htmlspecialchars($row['batch']);
-
-        $castOutFmt   = $row['cast_out_hl']   !== null ? number_format((float)$row['cast_out_hl'],   1) : null;
-        $nominalFmt   = $row['nominal_hl']    !== null ? number_format((float)$row['nominal_hl'],    1) : null;
-        $packagedFmt  = $row['packaged_hl']   !== null ? number_format((float)$row['packaged_hl'],   1) : null;
-        $nEvents      = (int)$row['n_packaging_events'];
-        $nominalBasis = htmlspecialchars($row['nominal_basis']);
-
-        // Drill title — oddity annotation when packaged > cast_out
-        $isOddity = $row['packaged_hl'] !== null && $row['cast_out_hl'] !== null
-                    && (float)$row['packaged_hl'] > (float)$row['cast_out_hl'];
-
-        $drillTitleSuffix = '';
-        if ($isOddity) {
-            $drillTitleSuffix = ' — <span class="ppb-drill-title--oddity">anomalie&nbsp;: conditionné &gt; sortie cuve</span>';
-        } elseif (!$row['complete']) {
-            $drillTitleSuffix = ' — <span style="color:var(--ink-mute)">conditionnement non encore effectué</span>';
-        }
-
-        // Cast-out value class: surplus (green) when > nominal (bonus batch)
-        $castOutClass = '';
-        $castOutUnit  = '<span class="ppb-drill-unit">HL</span>';
-        if ($row['cast_out_hl'] !== null && $row['nominal_hl'] !== null
-            && (float)$row['cast_out_hl'] > (float)$row['nominal_hl']) {
-            $castOutClass = 'ppb-drill-item__value--surplus';
-            $castOutUnit  = '<span class="ppb-drill-unit ppb-drill-unit--surplus">HL ↑</span>';
-        }
-
-        // Packaged value class
-        $packagedClass = '';
-        $packagedUnit  = '<span class="ppb-drill-unit">HL</span>';
-        if ($isOddity) {
-            $packagedClass = 'ppb-drill-item__value--oddity';
-            $packagedUnit  = '<span class="ppb-drill-unit ppb-drill-unit--oddity">HL ↑ surplus BBT</span>';
-        }
-
-        // Nominal value class: warn when cast_out < nominal (loss vs nominal)
-        $nominalClass = '';
-        if ($row['cast_out_hl'] !== null && $row['nominal_hl'] !== null
-            && (float)$row['cast_out_hl'] < (float)$row['nominal_hl']
-            && $row['flags']['brewing']) {
-            $nominalClass = 'ppb-drill-item__value--warn';
-        }
-
-        $castOutHtml  = $castOutFmt  !== null
-            ? sprintf('<span class="ppb-drill-item__value %s">%s %s</span>', $castOutClass, $castOutFmt, $castOutUnit)
-            : '<span class="ppb-drill-item__value ppb-drill-item__value--faint">—</span>';
-
-        $nominalHtml  = $nominalFmt  !== null
-            ? sprintf('<span class="ppb-drill-item__value %s">%s <span class="ppb-drill-unit">HL</span></span>', $nominalClass, $nominalFmt)
-            : '<span class="ppb-drill-item__value ppb-drill-item__value--faint">—</span>';
-
-        $packagedHtml = $packagedFmt !== null
-            ? sprintf('<span class="ppb-drill-item__value %s">%s %s</span>', $packagedClass, $packagedFmt, $packagedUnit)
-            : '<span class="ppb-drill-item__value ppb-drill-item__value--faint">—</span>';
-
-        $nEventsHtml = $nEvents > 0
-            ? sprintf('<span class="ppb-drill-item__value">%d</span>', $nEvents)
-            : '<span class="ppb-drill-item__value ppb-drill-item__value--faint">0</span>';
-
-        // Always start collapsed (JS toggle); add section-hidden if this is a "rest" row.
-        $detailClasses = 'ppb-detail-row ppb-detail-row--collapsed';
-        if ($hiddenClass !== '') {
-            $detailClasses .= ' ppb-detail-row--section-hidden';
-        }
-        $out  = sprintf('<tr class="%s" id="ppb-detail-ppb-row-%d">', $detailClasses, $idx);
-        $out .= '<td colspan="7">';
-        $out .= '<div class="ppb-drill-panel">';
-        $out .= sprintf('<p class="ppb-drill-title">Volumes bruts · %s %s%s</p>', $beer, $batch, $drillTitleSuffix);
-        $out .= '<div class="ppb-drill-grid">';
-
-        $out .= '<div class="ppb-drill-item">';
-        $out .= '<span class="ppb-drill-item__label">Sortie cuve (effectif)</span>';
-        $out .= $castOutHtml;
-        $out .= '</div>';
-
-        $out .= '<div class="ppb-drill-item">';
-        $out .= '<span class="ppb-drill-item__label">Nominal (base)</span>';
-        $out .= $nominalHtml;
-        $out .= '</div>';
-
-        $out .= '<div class="ppb-drill-item">';
-        $out .= '<span class="ppb-drill-item__label">Conditionné</span>';
-        $out .= $packagedHtml;
-        $out .= '</div>';
-
-        $out .= '<div class="ppb-drill-item">';
-        $out .= '<span class="ppb-drill-item__label">Événements conditionnement</span>';
-        $out .= $nEventsHtml;
-        $out .= '</div>';
-
-        $out .= '<div class="ppb-drill-item" style="grid-column: span 2;">';
-        $out .= '<span class="ppb-drill-item__label">Base nominale</span>';
-        $out .= sprintf('<span class="ppb-drill-item__value ppb-drill-item__value--note">%s</span>', $nominalBasis);
-        $out .= '</div>';
-
-        $out .= '</div>'; // .ppb-drill-grid
-        $out .= '</div>'; // .ppb-drill-panel
-        $out .= '</td>';
-        $out .= '</tr>';
-        return $out;
-    }
-
     // Build threshold caption string
-    $ppbCaption = '20 derniers batchs complets';
+    $ppbCaption = 'Moyennes des 6 derniers mois, brassins complets uniquement (les saisies incomplètes sont exclues du calcul).';
     if (!empty($lossThresholds)) {
         $ppbCaption .= sprintf(
-            ' · seuils : brassage %s %% · soutirage %s %% · conditionnement %s %%',
+            ' Seuils : brassage %s %% · transferts %s %% · conditionnement %s %%.',
             number_format((float)($lossThresholds['pertes_brewing_warn_pct'] ?? 5.0), 1),
             number_format((float)($lossThresholds['pertes_rack_warn_pct'] ?? 2.0), 1),
             number_format((float)($lossThresholds['pertes_packaging_warn_pct'] ?? 1.0), 1)
@@ -1405,13 +1283,6 @@ $today = $asOfDT;
         </h2>
       </div>
       <div class="ppb-section__controls">
-        <button class="ppb-section__toggle"
-                type="button"
-                data-ppb-toggle-all="ppb-section-main"
-                aria-pressed="false"
-                aria-label="Afficher tous les batches">
-          Tous les batches
-        </button>
         <a class="ppb-section__config-link"
            href="/modules/salle-de-controle.php?sec=pertes"
            title="Modifier les seuils dans Salle de Contrôle">
@@ -1420,16 +1291,34 @@ $today = $asOfDT;
       </div>
     </div><!-- /.ppb-section__head -->
 
-    <?php if (empty($completeBatches20) && empty($incompleteBatches)): ?>
-      <p class="ppb-empty">Aucune donnée de perte disponible.</p>
+    <!-- View toggle: Core / Collab+EPH / Contract -->
+    <?php
+      // Build the base URL preserving all existing GET params except ppb_view.
+      $toggleBase = array_filter($_GET, fn($k) => $k !== 'ppb_view', ARRAY_FILTER_USE_KEY);
+      $mkToggleUrl = fn(string $v) => '?' . http_build_query(array_merge($toggleBase, ['ppb_view' => $v]));
+    ?>
+    <nav class="ppb-view-toggle" aria-label="Filtrer par famille de bière">
+      <a href="<?= htmlspecialchars($mkToggleUrl('core')) ?>"
+         class="ppb-view-toggle__btn<?= $ppbView === 'core' ? ' ppb-view-toggle__btn--active' : '' ?>"
+         aria-current="<?= $ppbView === 'core' ? 'true' : 'false' ?>">Core</a>
+      <a href="<?= htmlspecialchars($mkToggleUrl('collab-eph')) ?>"
+         class="ppb-view-toggle__btn<?= $ppbView === 'collab-eph' ? ' ppb-view-toggle__btn--active' : '' ?>"
+         aria-current="<?= $ppbView === 'collab-eph' ? 'true' : 'false' ?>">Collab + EPH</a>
+      <a href="<?= htmlspecialchars($mkToggleUrl('contract')) ?>"
+         class="ppb-view-toggle__btn<?= $ppbView === 'contract' ? ' ppb-view-toggle__btn--active' : '' ?>"
+         aria-current="<?= $ppbView === 'contract' ? 'true' : 'false' ?>">Contrat</a>
+    </nav>
+
+    <?php if (empty($perBeerMetrics)): ?>
+      <p class="ppb-empty">Aucune moyenne disponible pour cette catégorie sur les 6 derniers mois.</p>
     <?php else: ?>
 
     <div class="ppb-wrap">
-      <table class="ppb-table" aria-label="Pertes de brassage par batch">
+      <table class="ppb-table" aria-label="Pertes de brassage par bière — moyennes 6 mois">
         <caption class="ppb-caption"><?= htmlspecialchars($ppbCaption) ?></caption>
 
         <colgroup>
-          <col><!-- batch identity -->
+          <col><!-- beer identity + batch count -->
           <col><!-- brewing loss -->
           <col><!-- rack loss -->
           <col><!-- packaging loss -->
@@ -1439,126 +1328,58 @@ $today = $asOfDT;
         </colgroup>
 
         <thead>
-          <!-- Column group labels -->
           <tr>
             <th class="ppb-th-group" scope="colgroup" style="text-align:left; border-top:1px solid var(--hairline-2);"></th>
             <th class="ppb-th-group" scope="colgroup" colspan="3" style="border-top:1px solid var(--hairline-2);">Pertes par étape</th>
             <th class="ppb-th--sep" rowspan="2" aria-hidden="true"></th>
             <th class="ppb-th-group ppb-th--total-eff" scope="colgroup" colspan="2" style="border-top:1px solid var(--hairline-2);">Perte totale</th>
           </tr>
-          <!-- Column headers -->
           <tr>
-            <th scope="col" class="ppb-th">Batch</th>
-            <th scope="col" class="ppb-th ppb-th--pct">Brassage</th>
-            <th scope="col" class="ppb-th ppb-th--pct">Soutirage</th>
-            <th scope="col" class="ppb-th ppb-th--pct">Cond.</th>
-            <!-- sep already spans 2 rows -->
-            <th scope="col" class="ppb-th ppb-th--pct ppb-th--total-eff">Vs effectif</th>
-            <th scope="col" class="ppb-th ppb-th--pct">Vs nominal</th>
+            <th scope="col" class="ppb-th">Bière</th>
+            <th scope="col" class="ppb-th ppb-th--pct">Brewing %</th>
+            <th scope="col" class="ppb-th ppb-th--pct">Racking %</th>
+            <th scope="col" class="ppb-th ppb-th--pct">Packaging %</th>
+            <th scope="col" class="ppb-th ppb-th--pct ppb-th--total-eff">Vs effectif %</th>
+            <th scope="col" class="ppb-th ppb-th--pct">Vs nominal %</th>
           </tr>
         </thead>
 
         <tbody>
-          <?php
-            $ppbIdx = 0; // global row index for unique IDs
+          <?php foreach ($perBeerMetrics as $pbr):
+            $thresholds = $lossThresholds;
+            $beerHtml   = htmlspecialchars($pbr['beer']);
+            $nBatches   = (int)$pbr['n_batches'];
+            $nInc       = (int)$pbr['n_incomplete'];
 
-            /**
-             * Render a single batch data row + its sibling detail row.
-             * @param array  $row        Loss metric row.
-             * @param int    $idx        Global row index (for IDs).
-             * @param string $hiddenClass CSS class to mark the row as hidden ("Tous" mode) or ''.
-             * @param array  $monthsFR   Month abbreviation map.
-             */
-            function ppb_render_row(array $row, int $idx, string $hiddenClass, array $monthsFR): void {
-                $beerHtml  = htmlspecialchars($row['beer']);
-                $batchHtml = htmlspecialchars($row['batch']);
-                $dateHtml  = !empty($row['brew_date'])
-                    ? htmlspecialchars(ppb_fmt_date($row['brew_date'], $monthsFR))
-                    : '—';
-
-                $rowClass  = 'ppb-row';
-                if (!$row['complete']) $rowClass .= ' ppb-row--incomplete';
-                if ($hiddenClass)     $rowClass .= ' ppb-row--hidden';
-
-                $expandId = 'ppb-row-' . $idx;
-
-                echo '<tr class="' . $rowClass . '">';
-
-                // Batch identity cell — the expand trigger
-                echo '<td class="ppb-td ppb-td--batch ppb-td--expand"';
-                echo '    data-ppb-expand="' . $expandId . '"';
-                echo '    role="button"';
-                echo '    tabindex="0"';
-                echo '    aria-expanded="false"';
-                echo '    title="Développer les volumes bruts">';
-                echo '<span class="ppb-chevron" aria-hidden="true">▶</span>';
-                echo '<span class="ppb-batch__beer">' . $beerHtml . '</span>';
-                echo '<span class="ppb-batch__meta">' . $batchHtml . ' · ' . $dateHtml . '</span>';
-                echo '</td>';
-
-                // Per-stage loss cells
-                echo ppb_render_pct_cell(
-                    $row['brewing_loss_pct'],
-                    $row['flags']['brewing'],
-                    $row['complete'],
-                    false, false
-                );
-                echo ppb_render_pct_cell(
-                    $row['rack_loss_pct'],
-                    $row['flags']['rack'],
-                    $row['complete'],
-                    false, false
-                );
-                echo ppb_render_pct_cell(
-                    $row['packaging_loss_pct'],
-                    $row['flags']['packaging'],
-                    $row['complete'],
-                    false, false
-                );
-
-                // Separator
-                echo '<td class="ppb-td ppb-td--sep ppb-td--sep-total" aria-hidden="true"></td>';
-
-                // Total vs effectif (hidden on small screens)
-                echo ppb_render_pct_cell(
-                    $row['loss_vs_effectif_pct'],
-                    $row['flags']['total_effectif'],
-                    $row['complete'],
-                    true, true
-                );
-
-                // Total vs nominal
-                echo ppb_render_pct_cell(
-                    $row['loss_vs_nominal_pct'],
-                    $row['flags']['total_nominal'],
-                    $row['complete'],
-                    true, false
-                );
-
-                echo '</tr>';
-
-                // Sibling detail row (hidden by default)
-                echo ppb_render_detail_row($row, $idx, $hiddenClass, $monthsFR);
+            $nLabel = (string)$nBatches;
+            if ($nInc > 0) {
+                $nLabel .= ' <span class="ppb-batch__meta--incomplete">(+' . $nInc . ' incomplet' . ($nInc > 1 ? 's' : '') . ')</span>';
             }
 
-            // ── Render: first 20 complete batches (always visible) ──
-            foreach ($completeBatches20 as $row) {
-                ppb_render_row($row, $ppbIdx, '', $monthsFR);
-                $ppbIdx++;
-            }
-
-            // ── Render: complete batches beyond the first 20 (hidden until "Tous") ──
-            foreach ($completeBatchesRest as $row) {
-                ppb_render_row($row, $ppbIdx, 'ppb-row--hidden', $monthsFR);
-                $ppbIdx++;
-            }
-
-            // ── Render: incomplete batches (always visible — operator tracks lifecycle) ──
-            foreach ($incompleteBatches as $row) {
-                ppb_render_row($row, $ppbIdx, '', $monthsFR);
-                $ppbIdx++;
-            }
+            $flagBrew = $pbr['avg_brewing_loss_pct']     !== null
+                        && $pbr['avg_brewing_loss_pct']     > (float)($thresholds['pertes_brewing_warn_pct']    ?? 5.0);
+            $flagRack = $pbr['avg_rack_loss_pct']         !== null
+                        && $pbr['avg_rack_loss_pct']         > (float)($thresholds['pertes_rack_warn_pct']       ?? 2.0);
+            $flagPkg  = $pbr['avg_packaging_loss_pct']   !== null
+                        && $pbr['avg_packaging_loss_pct']   > (float)($thresholds['pertes_packaging_warn_pct']  ?? 1.0);
+            $flagEff  = $pbr['avg_loss_vs_effectif_pct'] !== null
+                        && $pbr['avg_loss_vs_effectif_pct'] > (float)($thresholds['pertes_total_effectif_warn_pct'] ?? 18.0);
+            $flagNom  = $pbr['avg_loss_vs_nominal_pct']  !== null
+                        && $pbr['avg_loss_vs_nominal_pct']  > (float)($thresholds['pertes_total_nominal_warn_pct']  ?? 10.0);
           ?>
+          <tr class="ppb-row">
+            <td class="ppb-td ppb-td--batch">
+              <span class="ppb-batch__beer"><?= $beerHtml ?></span>
+              <span class="ppb-batch__meta"><?= $nBatches ?> brassin<?= $nBatches !== 1 ? 's' : '' ?><?php if ($nInc > 0): ?> <span class="ppb-batch__meta--incomplete">(+<?= $nInc ?> incomplet<?= $nInc > 1 ? 's' : '' ?>)</span><?php endif ?></span>
+            </td>
+            <?= ppb_render_pct_cell($pbr['avg_brewing_loss_pct'],     $flagBrew, false) ?>
+            <?= ppb_render_pct_cell($pbr['avg_rack_loss_pct'],         $flagRack, false) ?>
+            <?= ppb_render_pct_cell($pbr['avg_packaging_loss_pct'],   $flagPkg,  false) ?>
+            <td class="ppb-td ppb-td--sep ppb-td--sep-total" aria-hidden="true"></td>
+            <?= ppb_render_pct_cell($pbr['avg_loss_vs_effectif_pct'], $flagEff,  true) ?>
+            <?= ppb_render_pct_cell($pbr['avg_loss_vs_nominal_pct'],  $flagNom,  false) ?>
+          </tr>
+          <?php endforeach ?>
         </tbody>
       </table>
     </div><!-- /.ppb-wrap -->
