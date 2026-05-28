@@ -170,4 +170,99 @@ declare(strict_types=1);
     <span id="rf-selected-summary" class="rf-selected-lot__summary"></span>
     <button type="button" id="rf-deselect" class="rf-selected-lot__clear">✕ changer</button>
   </div>
+
+  <!-- hors_process override reason — populated here for the eligibility attestation payload. -->
+  <!-- hors_process hidden input is in the parent form (session-body-racking.php). -->
 </div><!-- card lot source -->
+
+<!-- ── START PHASE: Firewall attestation buttons (P-B) ───────────────────── -->
+<!--
+  These three buttons POST to /api/session-action.php via session-framework.js
+  attest_* handlers. They are SEPARATE from the form submit (which still goes to
+  /modules/form-racking.php for P-B; split-write is P-C work).
+
+  Disabled state: each button is disabled when already attested (derived from
+  window.SESSION_FIREWALL injected server-side). JS reads the flag on DOMContentLoaded
+  and applies disabled + done styling without a page reload.
+
+  Payloads (P-B, option b — CIP attestation records operator choices without
+  a cip_event_id, which is written on the form's eventual submit):
+    attest_cip         → {cip_types: ['centri','kze'], dest_cip: true}  (read from CIP section)
+    attest_eligibility → {lots: [...], override: null|'hors_process', override_reason: ''}
+    attest_firewall    → {predicate: 'racking_eligibility_v1', readings: {}, passed: bool,
+                          failed_fields: [], operator_override_reason: null}
+-->
+<div class="ss-fw-attest-row" id="ss-fw-attest-row"
+     aria-label="Attestations pare-feu — Démarrage soutirage">
+
+  <!-- Gate 1: CIP -->
+  <button type="button"
+          class="ss-btn ss-btn--attest"
+          id="ss-attest-cip"
+          data-action="attest_cip"
+          data-gate="cip_done"
+          <?= ($firewall['cip_done'] ?? false) ? 'disabled aria-disabled="true"' : '' ?>>
+    <?php if ($firewall['cip_done'] ?? false): ?>
+      <svg class="ss-btn__check" width="11" height="9" viewBox="0 0 11 9" fill="none" aria-hidden="true"><path d="M1 4.5L4 7.5L10 1.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      CIP validé
+    <?php else: ?>
+      Valider CIP
+    <?php endif ?>
+  </button>
+
+  <!-- Gate 2: Lot eligibility -->
+  <button type="button"
+          class="ss-btn ss-btn--attest"
+          id="ss-attest-eligibility"
+          data-action="attest_eligibility"
+          data-gate="eligibility_done"
+          <?= ($firewall['eligibility_done'] ?? false) ? 'disabled aria-disabled="true"' : '' ?>>
+    <?php if ($firewall['eligibility_done'] ?? false): ?>
+      <svg class="ss-btn__check" width="11" height="9" viewBox="0 0 11 9" fill="none" aria-hidden="true"><path d="M1 4.5L4 7.5L10 1.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Lots validés
+    <?php else: ?>
+      Valider lots
+    <?php endif ?>
+  </button>
+
+  <!-- Gate 3: QC readings -->
+  <?php
+  // hors_process override reason input for firewall QC attestation.
+  // Only shown when the lot requires an override comment (eligibility not yet attested
+  // or override checkbox is checked). The JS shows/hides this via rf-override logic.
+  ?>
+  <div class="ss-fw-attest-row__qc-wrap">
+    <div class="ss-fw-attest-row__override-reason" id="ss-fw-override-reason" hidden>
+      <label class="ss-fw-attest-row__override-label" for="ss-fw-qc-override-note">
+        Motif override QC <span class="ss-fw-attest-row__required">*</span>
+      </label>
+      <input type="text" id="ss-fw-qc-override-note"
+             class="ss-fw-attest-row__override-input"
+             placeholder="ex. lot urgent — accord chef de cave"
+             maxlength="255">
+    </div>
+    <button type="button"
+            class="ss-btn ss-btn--attest"
+            id="ss-attest-firewall"
+            data-action="attest_firewall"
+            data-gate="qc_done"
+            <?= ($firewall['qc_done'] ?? false) ? 'disabled aria-disabled="true"' : '' ?>>
+      <?php if ($firewall['qc_done'] ?? false): ?>
+        <svg class="ss-btn__check" width="11" height="9" viewBox="0 0 11 9" fill="none" aria-hidden="true"><path d="M1 4.5L4 7.5L10 1.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        QC validé
+      <?php else: ?>
+        Valider QC
+      <?php endif ?>
+    </button>
+  </div>
+
+  <!-- CIP cadence badge — shown by JS when any BBT has warn/critical signal -->
+  <div class="ss-cadence-badge ss-cadence-badge--hidden" id="ss-cadence-badge" role="status" aria-live="polite">
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+      <circle cx="6" cy="6" r="5" stroke="currentColor" stroke-width="1.3"/>
+      <path d="M6 4v2.5M6 8v.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+    </svg>
+    <span id="ss-cadence-badge-text"></span>
+  </div>
+
+</div><!-- /.ss-fw-attest-row -->

@@ -18,6 +18,7 @@ declare(strict_types=1);
  *   attest_cip          → session_attest_cip($pdo, $sid, $payload['cip_event_id'], $me['id'])
  *   attest_eligibility  → session_attest_eligibility($pdo, $sid, $me['id'], $payload)
  *   attest_firewall_qc  → session_attest_firewall($pdo, $sid, $me['id'], $payload)
+ *   attest_firewall     → session_attest_firewall($pdo, $sid, $me['id'], $payload)   (spec-canonical alias)
  *   handover            → session_handover($pdo, $sid, $me['id'], $payload['to_user_id'], $payload['note'] ?? null)
  *   abandon             → session_abandon($pdo, $sid, $payload['reason'], $me['id'])
  *   add_note            → session_note($pdo, $sid, $me['id'], $payload['text'])
@@ -96,6 +97,7 @@ const SA_ALLOWED_ACTIONS = [
     'attest_cip',
     'attest_eligibility',
     'attest_firewall_qc',
+    'attest_firewall',       // alias for attest_firewall_qc (spec-canonical name)
     'handover',
     'abandon',
     'add_note',
@@ -125,20 +127,36 @@ try {
                 echo json_encode(['ok' => false, 'error' => 'advance_phase: payload.to_phase est requis.']);
                 exit;
             }
+            // Server-side firewall re-verify: start → in_progress requires all_clear.
+            // Client-side disabled state is UX-only; this is the authoritative gate.
+            if ($toPhase === 'in_progress') {
+                $fwStatus = session_firewall_status($pdo, $sid);
+                if (!$fwStatus['all_clear']) {
+                    $blocking = implode(', ', $fwStatus['blocking_items']);
+                    http_response_code(400);
+                    echo json_encode([
+                        'ok'    => false,
+                        'error' => "Pare-feu non validé — impossible de passer en cours. Points bloquants : {$blocking}.",
+                    ]);
+                    exit;
+                }
+            }
             // Pass the full payload (minus to_phase) as optional extra payload.
             $extra = array_diff_key($payload, ['to_phase' => null]);
             session_advance_phase($pdo, $sid, $toPhase, (int)$me['id'], $extra ?: null);
             break;
 
         case 'attest_cip':
-            // payload: { cip_event_id: int }
+            // payload option A (P-C+): { cip_event_id: int }  — binds a real bd_cip_events row.
+            // payload option B (P-B):  { cip_choices: {...} }  — records operator choices without a
+            //                           cip_event_id; the bd_cip_events write happens on form submit.
             $cipEventId = isset($payload['cip_event_id']) ? (int)$payload['cip_event_id'] : 0;
-            if ($cipEventId <= 0) {
-                http_response_code(400);
-                echo json_encode(['ok' => false, 'error' => 'attest_cip: payload.cip_event_id est requis (int > 0).']);
-                exit;
+            if ($cipEventId > 0) {
+                session_attest_cip($pdo, $sid, $cipEventId, (int)$me['id']);
+            } else {
+                // P-B option (b): record choices payload directly as a cip_attested step.
+                session_log_step($pdo, $sid, 'cip_attested', (int)$me['id'], $payload ?: null);
             }
-            session_attest_cip($pdo, $sid, $cipEventId, (int)$me['id']);
             break;
 
         case 'attest_eligibility':
@@ -147,7 +165,23 @@ try {
             break;
 
         case 'attest_firewall_qc':
-            // payload: { predicate: string, passed: array, failed: array, thresholds_snapshot: array }
+        case 'attest_firewall':
+            // payload: { predicate: string, passed: array, failed: array, thresholds_snapshot: array,
+            //            override?: 'hors_process', operator_override_reason?: string }
+            // 'attest_firewall' is the spec-canonical alias; 'attest_firewall_qc' kept for back-compat.
+            // Server-side gate: hors-process override REQUIRES a non-empty reason (PM spec).
+            // The client JS enforces this too, but raw-curl bypass is rejected here.
+            if (isset($payload['override']) && $payload['override'] === 'hors_process') {
+                $reason = trim((string)($payload['operator_override_reason'] ?? ''));
+                if ($reason === '') {
+                    http_response_code(400);
+                    echo json_encode([
+                        'ok'    => false,
+                        'error' => "attest_firewall: motif d'override QC requis pour un passage hors-process.",
+                    ]);
+                    exit;
+                }
+            }
             session_attest_firewall($pdo, $sid, (int)$me['id'], $payload);
             break;
 

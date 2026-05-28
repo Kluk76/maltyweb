@@ -24,6 +24,7 @@ require_once __DIR__ . '/../../../app/yeast-eligibility.php';
 require_once __DIR__ . '/../../../app/tank-simulator.php';
 require_once __DIR__ . '/../../../app/cip-events.php';
 require_once __DIR__ . '/../../../app/qc-thresholds.php';
+require_once __DIR__ . '/../../../app/cip-cadence.php';
 
 // ── Allowed enum values (mirror form-racking.php constants) ──────────────────
 // Constants RACK_TYPES / DEST_TYPES / CENTRI_RINSED_YN are defined in form-racking.php.
@@ -366,7 +367,40 @@ if ($_rack_loadErr): ?>
 <!-- Recent submissions are rendered OUTSIDE the <form> — matching form-racking.php structure. -->
 <?php require __DIR__ . '/racking-phase-recent.php' ?>
 
+<?php
+// ── C6b: BBT CIP cadence — P-B data surface ──────────────────────────────────
+// Computed once here and injected as window.BBT_CIP_CADENCE for the JS layer.
+// P-B: used by the attestation button JS to show cadence badges.
+// P-C: consumed in the BBT picker (S5 IN_PROGRESS) for inline warn chips.
+$bbtCipCadenceJson = 'null';
+try {
+    // array_values() re-indexes so json_encode produces a real JSON array (not an
+    // object keyed by bbt_number). JS iterates via Array.prototype.forEach.
+    $bbtCipCadence     = array_values(cadence_for_all_bbts($pdo));
+    $bbtCipCadenceJson = json_encode($bbtCipCadence, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_QUOT | JSON_HEX_APOS);
+} catch (Throwable $_cadErr) {
+    // Non-fatal: cadence data is informational; missing data is safe.
+}
+?>
 <!-- Form assets: loaded after </form>, outside the form element. -->
+<script>
+// Window globals expected by racking-form.js (matching form-racking.php names).
+window.RF_CANDIDATES          = <?= $candidatesJson ?>;
+window.RF_CANDIDATES_OVERRIDE = <?= $candidatesOverrideJson ?>;
+window.RF_CAN_OVERRIDE        = <?= ($canOverride ?? false) ? 'true' : 'false' ?>;
+window.QC_THRESHOLDS          = <?= $qcThresholdsJson ?>;
+window.PERTES_CONFIG          = <?= $pertesConfigJson ?>;
+window.BBT_BLEND_CANDIDATES   = <?= $bbtBlendCandidatesJson ?>;
+window.BBT_CLEAN_STATES       = <?= json_encode($bbtCleanStates, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+// P-B: C6b cadence resolver output + session firewall state for attestation JS.
+window.BBT_CIP_CADENCE        = <?= $bbtCipCadenceJson ?>;
+window.SESSION_FIREWALL       = <?= json_encode([
+    'cip_done'         => (bool)($firewall['cip_done'] ?? false),
+    'eligibility_done' => (bool)($firewall['eligibility_done'] ?? false),
+    'qc_done'          => (bool)($firewall['qc_done'] ?? false),
+    'all_clear'        => (bool)($firewall['all_clear'] ?? false),
+], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_QUOT | JSON_HEX_APOS) ?>;
+</script>
 <script src="/js/racking-form.js?v=<?= @filemtime(__DIR__ . '/../../js/racking-form.js') ?: time() ?>"></script>
 <link rel="stylesheet" href="/css/cip-section.css?v=<?= @filemtime(__DIR__ . '/../../css/cip-section.css') ?: time() ?>">
 <link rel="stylesheet" href="/css/racking-form.css?v=<?= @filemtime(__DIR__ . '/../../css/racking-form.css') ?: time() ?>">

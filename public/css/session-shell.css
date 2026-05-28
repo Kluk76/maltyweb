@@ -828,6 +828,108 @@ body.session-shell .ss-toast {
 body.session-shell .ss-toast--visible { opacity: 1; }
 body.session-shell .ss-toast--error { background: var(--ember); }
 
+/* ── Firewall attestation row (P-B) ── */
+body.session-shell .ss-fw-attest-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+  padding: 14px 16px;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px;
+}
+
+/* Attestation buttons — solid fill, done state uses --ok tone */
+body.session-shell .ss-btn--attest {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: var(--hop);
+  color: var(--bg);
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  transition: opacity .15s, background .15s;
+  white-space: nowrap;
+}
+body.session-shell .ss-btn--attest:hover:not(:disabled) { opacity: .88; }
+body.session-shell .ss-btn--attest:disabled,
+body.session-shell .ss-btn--attest[aria-disabled="true"] {
+  background: var(--ok, #4a8c5c);
+  opacity: .75;
+  cursor: default;
+}
+body.session-shell .ss-btn__check {
+  width: 11px;
+  height: 9px;
+  flex-shrink: 0;
+}
+
+/* QC gate wrap — stacks override-reason input above the button */
+body.session-shell .ss-fw-attest-row__qc-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+body.session-shell .ss-fw-attest-row__override-reason {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+body.session-shell .ss-fw-attest-row__override-label {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+body.session-shell .ss-fw-attest-row__required {
+  color: var(--ember);
+}
+body.session-shell .ss-fw-attest-row__override-input {
+  background: var(--bg);
+  border: 1px solid var(--hairline-2);
+  border-radius: 3px;
+  padding: 7px 10px;
+  font-family: "DM Sans", sans-serif;
+  font-size: 13px;
+  color: var(--ink);
+  min-width: 220px;
+  transition: border-color .15s;
+}
+body.session-shell .ss-fw-attest-row__override-input:focus {
+  outline: none;
+  border-color: var(--hop);
+}
+
+/* CIP cadence badge — shown by JS when warn/critical */
+body.session-shell .ss-cadence-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--ember) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ember) 30%, transparent);
+  color: var(--ember);
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  transition: opacity .2s;
+}
+body.session-shell .ss-cadence-badge--hidden {
+  display: none;
+}
+
 /* ── Utility ── */
 body.session-shell .ss-icon { width: 14px; height: 14px; flex-shrink: 0; }
 
