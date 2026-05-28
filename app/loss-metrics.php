@@ -256,9 +256,13 @@ function _loss_derive_beer_from_sku(string $sku): string
  * keyed by the serialised $filter).
  *
  * @param PDO        $pdo     Active DB connection.
- * @param array|null $filter  Optional. ['beer' => string, 'batch' => string] to
- *                             restrict to one batch; ['beer' => string] for one recipe;
- *                             null (default) = all batches.
+ * @param array|null $filter  Optional filter. Supported keys (all additive / combinable):
+ *                             ['beer'  => string]               — restrict to one recipe
+ *                             ['beer'  => string, 'batch' => string] — restrict to one batch
+ *                             ['session_id' => int]             — restrict to the beer+batch linked
+ *                               to a given op_sessions.id (via bd_racking_v2.session_id_fk).
+ *                               If no bd_racking_v2 row is found for the session, returns [].
+ *                               Additive with beer/batch keys (both applied when present).
  *
  * @return array<int, array{
  *   beer:                      string,
@@ -290,6 +294,46 @@ function loss_metrics_for_batches(PDO $pdo, ?array $filter = null): array
     $cacheKey = serialize($filter);
     if (isset($cache[$cacheKey])) {
         return $cache[$cacheKey];
+    }
+
+    // ── session_id filter: translate to beer+batch via bd_racking_v2 ──────────
+    //
+    // Additive: if 'session_id' is present, resolve the canonical (beer, batch)
+    // pair from bd_racking_v2.session_id_fk, then merge into the existing filter
+    // so _loss_load_cast_out and siblings pick it up normally.
+    // Existing callers passing only 'beer'/'batch' are unaffected.
+    if (isset($filter['session_id'])) {
+        $sessId = (int)$filter['session_id'];
+        if ($sessId > 0) {
+            $rackRowStmt = $pdo->prepare(
+                "SELECT COALESCE(NULLIF(neb_beer,''), contract_beer)   AS beer,
+                        COALESCE(NULLIF(neb_batch,''), contract_batch) AS batch
+                   FROM bd_racking_v2
+                  WHERE session_id_fk = ? AND is_tombstoned = 0
+                  ORDER BY id ASC
+                  LIMIT 1"
+            );
+            $rackRowStmt->execute([$sessId]);
+            $rackRow = $rackRowStmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$rackRow || ($rackRow['beer'] === null && $rackRow['batch'] === null)) {
+                // No racking row linked to this session yet → empty result.
+                $cache[$cacheKey] = [];
+                return [];
+            }
+
+            $resolvedBeer  = _loss_normalize_beer((string)($rackRow['beer']  ?? ''));
+            $resolvedBatch = (string)($rackRow['batch'] ?? '');
+
+            // Merge — allow caller to further restrict if they supplied beer/batch too.
+            if (!isset($filter['beer'])) {
+                $filter['beer'] = $resolvedBeer;
+            }
+            if (!isset($filter['batch'])) {
+                $filter['batch'] = $resolvedBatch;
+            }
+        }
+        unset($filter['session_id']); // consumed — helpers do not know this key
     }
 
     $thresholds = loss_thresholds($pdo);

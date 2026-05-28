@@ -1,24 +1,173 @@
 <?php
 declare(strict_types=1);
 /**
- * racking-phase-end.php — END phase sections for the racking form.
+ * racking-phase-end.php — END phase sections for the racking form (P-C).
  *
- * Loaded by session-body-racking.php (the phase dispatcher).
- * Inherits the dispatcher's scope: $recentRackings, $csrf.
+ * Loaded by session-body-racking.php (the phase dispatcher) when phase='end'.
+ * Inherits the dispatcher's scope: $session, $pdo, $csrf.
  *
- * Sections (P-A: render-only, byte-for-byte from form-racking.php):
- *   S7  Commentaires fw_comment (lines 1332-1342)
- *   S8  Pertes (lines 1344-1416)
- *   S9  Transfert interrompu (lines 1418-1472)
- *   Submit bar + recent submissions table (lines 1474-end)
+ * P-C changes vs P-A:
+ *   - Recap card added at top (ss-recap* styles, reads loss_metrics_for_batches).
+ *   - safety_cip_done moved here from racking-phase-in-progress.php.
+ *   - Wrapped in its own <form> POSTing to /api/racking-phase-submit.php (phase=end).
+ *   - Submit button changed to "Clôturer la session".
  *
- * JS data surfaces (window.RACK_CANDIDATES etc.) are emitted once by
- * racking-phase-in-progress.php via the _RACKING_JS_DATA_INJECTED guard.
- * If in-progress is somehow omitted (future phase-gate scenarios), this
- * partial has a fallback guard that does NOT emit the block again.
- * The racking-form.js <script> tag is emitted here (last partial = safe).
+ * Sections:
+ *   SR  Recap pertes (read-only, top of end phase)
+ *   S7  Commentaires + fw_comment
+ *   S8  Pertes (user-entered loss volumes)
+ *   S9  Transfert interrompu
+ *   S6b Safety CIP (moved from in-progress)
+ *   Submit bar
  */
+require_once __DIR__ . '/../../../app/loss-metrics.php';
+
+// ── Recap data ────────────────────────────────────────────────────────────────
+// Load loss metrics for the batch linked to this session.
+// Tolerates missing data silently — recap section renders as "Données insuffisantes"
+// when the batch hasn't been fully processed yet.
+$_recapMetrics   = [];
+$_recapThresholds = [];
+$_recapErr        = null;
+
+try {
+    $_recapMetrics    = loss_metrics_for_batches($pdo, ['session_id' => (int)$session['id']]);
+    $_recapThresholds = loss_thresholds($pdo);
+} catch (Throwable $_recapLoadErr) {
+    $_recapErr = $_recapLoadErr->getMessage();
+}
+
+// Helper: format a percentage value or '—' when null.
+function _recap_pct(?float $v, int $decimals = 1): string
+{
+    if ($v === null) return '—';
+    return number_format(abs($v), $decimals, '.', '') . ' %';
+}
+
+// Helper: render a palier badge (ss-recap-badge).
+// warn  threshold only (no critical in the data model).
+// green = OK, amber = warn exceeded.
+function _recap_badge(?float $pct, float $warnPct): string
+{
+    if ($pct === null) return '<span class="ss-recap-badge ss-recap-badge--unknown">—</span>';
+    if ($pct > $warnPct) {
+        return '<span class="ss-recap-badge ss-recap-badge--warn">⚠ ' . number_format($pct, 1, '.', '') . ' %</span>';
+    }
+    return '<span class="ss-recap-badge ss-recap-badge--ok">✓ ' . number_format($pct, 1, '.', '') . ' %</span>';
+}
 ?>
+
+<!-- ── SR: Recap pertes (read-only) ──────────────────────────────────────── -->
+<div class="op-form__card ss-recap-card" id="ss-recap-pertes">
+  <div class="op-form__card-title">— récap pertes de ce transfert</div>
+
+  <?php if ($_recapErr !== null): ?>
+    <p class="ss-recap-notice">Erreur de chargement des métriques : <?= htmlspecialchars($_recapErr) ?></p>
+
+  <?php elseif (empty($_recapMetrics)): ?>
+    <p class="ss-recap-notice">Données insuffisantes — les métriques seront disponibles après enregistrement du transfert.</p>
+
+  <?php else:
+    $m = $_recapMetrics[0]; // session_id filter returns at most 1 batch
+    $th = $_recapThresholds;
+  ?>
+    <div class="ss-recap-grid">
+
+      <!-- Cast-out (volume effectif) -->
+      <div class="ss-recap-item">
+        <span class="ss-recap-label">Volume effectif (cast-out)</span>
+        <span class="ss-recap-value">
+          <?= $m['cast_out_hl'] !== null ? number_format((float)$m['cast_out_hl'], 2, '.', '') . ' HL' : '—' ?>
+        </span>
+      </div>
+
+      <!-- Nominal -->
+      <div class="ss-recap-item">
+        <span class="ss-recap-label">Volume nominal</span>
+        <span class="ss-recap-value ss-recap-value--muted"
+              title="<?= htmlspecialchars($m['nominal_basis'] ?? '') ?>">
+          <?= $m['nominal_hl'] !== null ? number_format((float)$m['nominal_hl'], 1, '.', '') . ' HL' : '—' ?>
+        </span>
+      </div>
+
+      <!-- Racked vol -->
+      <div class="ss-recap-item">
+        <span class="ss-recap-label">Volume transféré</span>
+        <span class="ss-recap-value">
+          <?php
+            // Racked vol comes from the bd_racking_v2 row linked to this session.
+            // loss_metrics doesn't surface it directly; it can be null at recap time.
+            // For the end phase, render a short note.
+          ?>
+          <span class="ss-recap-value--muted">voir mesures ci-dessus</span>
+        </span>
+      </div>
+
+      <!-- Packaged -->
+      <div class="ss-recap-item">
+        <span class="ss-recap-label">Volume conditionné</span>
+        <span class="ss-recap-value">
+          <?= $m['packaged_hl'] !== null ? number_format((float)$m['packaged_hl'], 2, '.', '') . ' HL' : '—' ?>
+          <?php if (!$m['complete']): ?>
+            <span class="ss-recap-badge ss-recap-badge--pending">en cours</span>
+          <?php endif ?>
+        </span>
+      </div>
+
+    </div><!-- /.ss-recap-grid -->
+
+    <!-- Palier badges row -->
+    <div class="ss-recap-badges-row">
+
+      <div class="ss-recap-badge-item">
+        <span class="ss-recap-badge-label">Pertes transfert</span>
+        <?= _recap_badge($m['rack_loss_pct'], $th['pertes_rack_warn_pct']) ?>
+      </div>
+
+      <div class="ss-recap-badge-item">
+        <span class="ss-recap-badge-label">Pertes brassage</span>
+        <?= _recap_badge($m['brewing_loss_pct'], $th['pertes_brewing_warn_pct']) ?>
+      </div>
+
+      <?php if ($m['complete']): ?>
+      <div class="ss-recap-badge-item">
+        <span class="ss-recap-badge-label">Total vs effectif</span>
+        <?= _recap_badge($m['loss_vs_effectif_pct'], $th['pertes_total_effectif_warn_pct']) ?>
+      </div>
+      <div class="ss-recap-badge-item">
+        <span class="ss-recap-badge-label">Total vs nominal</span>
+        <?= _recap_badge($m['loss_vs_nominal_pct'], $th['pertes_total_nominal_warn_pct']) ?>
+      </div>
+      <?php endif ?>
+
+    </div><!-- /.ss-recap-badges-row -->
+
+  <?php endif ?>
+</div><!-- /#ss-recap-pertes -->
+
+<!-- ── END-phase form (P-C: own <form> for phase-split write) ────────────── -->
+<form id="racking-end-form" novalidate>
+  <input type="hidden" name="csrf"       value="<?= htmlspecialchars($csrf) ?>">
+  <input type="hidden" name="session_id" value="<?= (int)$session['id'] ?>">
+  <input type="hidden" name="phase"      value="end">
+
+<!-- ── S6b: Safety CIP (moved here from in-progress — end-phase field) ───── -->
+<div class="op-form__card">
+  <div class="op-form__card-title">— nettoyage</div>
+  <div class="op-form__grid">
+
+    <div class="op-form__field">
+      <label class="op-form__label" for="safety_cip_done">Safety CIP effectué ?</label>
+      <select id="safety_cip_done" name="safety_cip_done" class="op-form__select">
+        <option value="">—</option>
+        <?php foreach (CENTRI_RINSED_YN as $yn): ?>
+          <option value="<?= htmlspecialchars($yn) ?>"><?= htmlspecialchars($yn) ?></option>
+        <?php endforeach ?>
+      </select>
+    </div>
+
+  </div>
+</div>
 
 <!-- ── S7: Commentaires ───────────────────────────────────────────────────── -->
 <div class="op-form__card">
@@ -153,17 +302,16 @@ declare(strict_types=1);
   </div>
 </div>
 
-<!-- Submit bar — this IS the real submit for the single-submit endpoint (P-A).
-     In P-C this bar will move to a per-phase action. -->
+<!-- Submit bar — P-C: closes the session after persisting end-phase data. -->
 <div class="op-form__submit-bar">
-  <button type="button" class="op-form__btn op-form__btn--secondary"
-          onclick="if(confirm('Effacer le brouillon ?')){localStorage.removeItem('racking-draft');location.reload();}">
-    Effacer brouillon
+  <button type="button" id="racking-end-cancel"
+          class="op-form__btn op-form__btn--secondary">
+    Annuler
   </button>
-  <button type="submit" id="rf-submit" class="op-form__btn op-form__btn--primary">
-    Enregistrer le transfert →
+  <button type="submit" id="racking-end-submit"
+          class="op-form__btn op-form__btn--primary">
+    Clôturer la session →
   </button>
 </div>
 
-<!-- racking-form.js and form stylesheets are loaded by the dispatcher
-     (session-body-racking.php) after </form>, outside the form element. -->
+</form><!-- /#racking-end-form -->

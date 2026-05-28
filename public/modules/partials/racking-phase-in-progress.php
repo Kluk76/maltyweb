@@ -1,20 +1,47 @@
 <?php
 declare(strict_types=1);
 /**
- * racking-phase-in-progress.php — IN_PROGRESS phase sections for the racking form.
+ * racking-phase-in-progress.php — IN_PROGRESS phase sections for the racking form (P-C).
  *
- * Loaded by session-body-racking.php (the phase dispatcher).
+ * Loaded by session-body-racking.php (the phase dispatcher) when phase='in_progress'.
  * Inherits the dispatcher's scope: $bbts, $ccts, $yts, $bbtBlendCandidatesJson,
- * $candidatesJson, $candidatesOverrideJson, $qcThresholdsJson, $pertesConfigJson.
+ * $candidatesJson, $candidatesOverrideJson, $qcThresholdsJson, $pertesConfigJson,
+ * $session, $csrf.
  *
- * Sections (P-A: render-only, byte-for-byte from form-racking.php):
- *   S2  Pasteurisation flash KZE (lines 948-977)  — hidden by default, JS reveals
- *   S4  Opération date/heures (lines 1137-1166)
- *   S5  Destination tank (lines 1168-1218)
- *   S5b BBT blend candidate cards JS-injected (lines 1219-1234)
- *   S6  Mesures volumes/CO₂/O₂ (lines 1237-1330)
+ * P-C changes vs P-A:
+ *   - Wrapped in its own <form> (id="racking-in-progress-form").
+ *   - safety_cip_done moved to racking-phase-end.php (end-phase field).
+ *   - JS data-injection block (window.RF_*) retained here (emitted once, guarded).
+ *   - Submit button: "Enregistrer le transfert →"
+ *
+ * Sections:
+ *   S2  Pasteurisation flash KZE (hidden by default; JS reveals)
+ *   S4  Opération date/heures
+ *   S5  Destination tank + S5b BBT blend candidates
+ *   S6  Mesures volumes/CO₂/O₂ (safety_cip_done REMOVED — now in end phase)
  */
 ?>
+
+<!-- ── IN_PROGRESS phase form (P-C: per-phase split-write) ───────────────── -->
+<form id="racking-in-progress-form" novalidate>
+  <input type="hidden" name="csrf"       value="<?= htmlspecialchars($csrf) ?>">
+  <input type="hidden" name="session_id" value="<?= (int)$session['id'] ?>">
+  <input type="hidden" name="phase"      value="in_progress">
+
+  <!-- Hidden lot-identity fields populated by JS from the attested candidate card.
+       The start-phase attestation already locked the lot; JS re-populates these
+       from the stored SESSION_FIREWALL.eligibility state on page load. -->
+  <input type="hidden" id="neb_beer"              name="neb_beer"              value="">
+  <input type="hidden" id="neb_batch"             name="neb_batch"             value="">
+  <input type="hidden" id="neb_recipe_id_fk"      name="neb_recipe_id_fk"      value="">
+  <input type="hidden" id="contract_beer"         name="contract_beer"         value="">
+  <input type="hidden" id="contract_batch"        name="contract_batch"        value="">
+  <input type="hidden" id="contract_recipe_id_fk" name="contract_recipe_id_fk" value="">
+  <input type="hidden" id="source_cct_number"     name="source_cct_number"     value="">
+  <input type="hidden" id="hors_process"          name="hors_process"          value="0">
+
+  <!-- Warning panel (populated by racking-form.js) -->
+  <div id="racking-warnings" class="op-form__warnings" hidden aria-live="polite"></div>
 
 <!-- ── S2: Pasteurisation flash (KZE) ─────────────────────────────────────── -->
 <!-- Hidden by default. JS shows when KZE is in the CIP set.
@@ -141,6 +168,7 @@ declare(strict_types=1);
 </div>
 
 <!-- ── S6: Mesures ────────────────────────────────────────────────────────── -->
+<!-- Note: safety_cip_done REMOVED — moved to racking-phase-end.php (end-phase field). -->
 <div class="op-form__card">
   <div class="op-form__card-title">— mesures</div>
   <div class="op-form__grid">
@@ -217,18 +245,20 @@ declare(strict_types=1);
       </select>
     </div>
 
-    <div class="op-form__field">
-      <label class="op-form__label" for="safety_cip_done">Safety CIP effectué ?</label>
-      <select id="safety_cip_done" name="safety_cip_done" class="op-form__select">
-        <option value="">—</option>
-        <?php foreach (CENTRI_RINSED_YN as $yn): ?>
-          <option value="<?= htmlspecialchars($yn) ?>"><?= htmlspecialchars($yn) ?></option>
-        <?php endforeach ?>
-      </select>
-    </div>
+    <!-- safety_cip_done intentionally absent — moved to end phase (P-C spec). -->
 
   </div>
 </div>
+
+<!-- Submit bar — P-C: saves in-progress data and advances to end phase. -->
+<div class="op-form__submit-bar">
+  <button type="submit" id="racking-ip-submit"
+          class="op-form__btn op-form__btn--primary">
+    Enregistrer le transfert →
+  </button>
+</div>
+
+</form><!-- /#racking-in-progress-form -->
 
 <!-- JS data surfaces for racking-form.js — injected once (by whichever partial loads first).
      Guard with a flag so the block is not duplicated when both in-progress and end load. -->

@@ -336,33 +336,27 @@ if ($_rack_loadErr): ?>
 <?php endif; ?>
 
 <!--
-  P-A RENDER STRATEGY: All 3 phase partials concatenated under ONE form.
-  The form POSTs to /modules/form-racking.php — the unchanged single-submit endpoint.
-  No phase-gating logic in P-A. The operator scrolls top-to-bottom and submits at
-  the bottom, exactly as today. Phase-gating + per-phase split-write come in P-B/P-C.
+  P-C RENDER STRATEGY: Phase-gated dispatcher.
+  Only the partial matching $session['phase'] is rendered.
+  Each active phase partial wraps its own <form> with CSRF + session_id.
+  Closed/abandoned sessions render a read-only terminal banner.
 -->
-<form id="racking-form" method="post" action="/modules/form-racking.php" novalidate>
-  <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+<?php
+$_phase = (string)($session['phase'] ?? 'start');
 
-  <!-- Hidden fields populated by JS from card selection -->
-  <input type="hidden" id="neb_beer"              name="neb_beer"              value="">
-  <input type="hidden" id="neb_batch"             name="neb_batch"             value="">
-  <input type="hidden" id="neb_recipe_id_fk"      name="neb_recipe_id_fk"      value="">
-  <input type="hidden" id="contract_beer"         name="contract_beer"         value="">
-  <input type="hidden" id="contract_batch"        name="contract_batch"        value="">
-  <input type="hidden" id="contract_recipe_id_fk" name="contract_recipe_id_fk" value="">
-  <input type="hidden" id="source_cct_number"     name="source_cct_number"     value="">
-  <!-- hors_process: set by JS to 1 when override checkbox is checked. -->
-  <input type="hidden" id="hors_process" name="hors_process" value="0">
-
-  <!-- Warning panel (populated by form-framework.js) -->
-  <div id="racking-warnings" class="op-form__warnings" hidden aria-live="polite"></div>
-
+if (in_array($session['status'] ?? '', ['closed', 'abandoned'], true)): ?>
+  <!-- Terminal state: no form rendered — shell footer already shows the closed banner. -->
+<?php elseif ($_phase === 'start'): ?>
   <?php require __DIR__ . '/racking-phase-start.php' ?>
+<?php elseif ($_phase === 'in_progress'): ?>
   <?php require __DIR__ . '/racking-phase-in-progress.php' ?>
+<?php elseif ($_phase === 'end'): ?>
   <?php require __DIR__ . '/racking-phase-end.php' ?>
-
-</form>
+<?php else: ?>
+  <div class="db-flash db-flash--err">
+    Phase de session inconnue : <?= htmlspecialchars($_phase) ?>
+  </div>
+<?php endif ?>
 
 <!-- Recent submissions are rendered OUTSIDE the <form> — matching form-racking.php structure. -->
 <?php require __DIR__ . '/racking-phase-recent.php' ?>

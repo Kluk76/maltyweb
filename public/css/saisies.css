@@ -126,6 +126,64 @@ body.saisies-hub .sh-card--soon .sh-card__badge {
   vertical-align: middle;
 }
 
+/* ── Split card (classic link + session CTA) ──────────────────────────────── */
+/* sh-card--split: not an <a>, so loses the default anchor hover; re-apply. */
+body.saisies-hub .sh-card--split {
+  cursor: default; /* card itself not clickable — its children are */
+}
+body.saisies-hub .sh-card--split:hover {
+  border-color: var(--oak);
+  background: color-mix(in srgb, var(--oak) 6%, var(--bg-elev));
+  box-shadow: 0 4px 16px rgba(60,40,20,0.14);
+}
+
+/* Actions row: classic link left, session button right */
+body.saisies-hub .sh-card__actions {
+  margin-top: auto;
+  padding-top: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+body.saisies-hub .sh-card__link {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  color: var(--oak-deep);
+  text-transform: uppercase;
+  text-decoration: none;
+}
+body.saisies-hub .sh-card__link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* "Démarrer (session)" primary CTA button */
+body.saisies-hub .sh-card__btn-session {
+  padding: 6px 13px;
+  background: var(--hop);
+  color: var(--bg);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  transition: opacity .15s, background .15s;
+  white-space: nowrap;
+}
+body.saisies-hub .sh-card__btn-session:hover:not(:disabled) {
+  opacity: .88;
+}
+body.saisies-hub .sh-card__btn-session:disabled {
+  opacity: .55;
+  cursor: default;
+}
+
 /* ── Section label ────────────────────────────────────────────────────────── */
 body.saisies-hub .sh-section-label {
   font-family: 'JetBrains Mono', monospace;

@@ -934,6 +934,126 @@ body.session-shell .ss-cadence-badge--hidden {
 body.session-shell .ss-icon { width: 14px; height: 14px; flex-shrink: 0; }
 
 /* ══════════════════════════════════════════════════════════════
+   RECAP CARD (P-C — end phase, read-only loss metrics)
+   Scoped: body.session-shell .ss-recap-*
+   ══════════════════════════════════════════════════════════════ */
+
+body.session-shell .ss-recap-card {
+  background: color-mix(in srgb, var(--bg-elev) 60%, var(--bg));
+  border-left: 3px solid var(--oak);
+}
+
+/* Notice text — shown when data is missing or errored */
+body.session-shell .ss-recap-notice {
+  font-family: "DM Sans", sans-serif;
+  font-size: 13px;
+  color: var(--ink-soft);
+  margin: 0;
+  padding: 4px 0;
+}
+
+/* Grid of recap items (volume readings) */
+body.session-shell .ss-recap-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px 20px;
+  margin-bottom: 14px;
+}
+
+body.session-shell .ss-recap-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+body.session-shell .ss-recap-label {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+body.session-shell .ss-recap-value {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: 0.01em;
+}
+
+body.session-shell .ss-recap-value--muted {
+  color: var(--ink-soft);
+  font-weight: 400;
+}
+
+/* Palier badges row */
+body.session-shell .ss-recap-badges-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  border-top: 1px solid var(--hairline-1);
+  padding-top: 12px;
+  margin-top: 4px;
+}
+
+body.session-shell .ss-recap-badge-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  align-items: flex-start;
+}
+
+body.session-shell .ss-recap-badge-label {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 8.5px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+/* Palier badge chips (inline, rendered by PHP _recap_badge()) */
+body.session-shell .ss-recap-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 3px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+body.session-shell .ss-recap-badge--ok {
+  background: color-mix(in srgb, var(--hop) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--hop) 25%, transparent);
+  color: var(--hop);
+}
+
+body.session-shell .ss-recap-badge--warn {
+  background: color-mix(in srgb, var(--oak) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--oak) 30%, transparent);
+  color: var(--oak);
+}
+
+body.session-shell .ss-recap-badge--pending {
+  background: color-mix(in srgb, var(--ink-mute) 8%, transparent);
+  border: 1px solid var(--hairline-2);
+  color: var(--ink-mute);
+  font-size: 9px;
+}
+
+body.session-shell .ss-recap-badge--unknown {
+  color: var(--ink-faint);
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 12px;
+}
+
+/* ══════════════════════════════════════════════════════════════
    RESPONSIVE — tablet 1024px and below
    ══════════════════════════════════════════════════════════════ */
 @media (max-width: 1023px) {

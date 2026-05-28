@@ -401,6 +401,118 @@
     });
   }
 
+  // ── P-C: IN_PROGRESS phase form submit ─────────────────────────────────────
+  // POSTs to /api/racking-phase-submit.php (phase=in_progress).
+  // On success, server returns racking_id. Then advance_phase(end) → reload.
+  var formInProgress = document.getElementById('racking-in-progress-form');
+  if (formInProgress) {
+    formInProgress.addEventListener('submit', function (e) {
+      e.preventDefault();
+
+      var submitBtn = document.getElementById('racking-ip-submit');
+      if (submitBtn) submitBtn.disabled = true;
+
+      // Collect all named form fields into a flat fields object.
+      var formData  = new FormData(formInProgress);
+      var fields    = {};
+      formData.forEach(function (v, k) {
+        // Skip the top-level envelope keys — they are sent separately.
+        if (k !== 'csrf' && k !== 'session_id' && k !== 'phase') {
+          fields[k] = v;
+        }
+      });
+
+      fetch('/api/racking-phase-submit.php', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+          session_id: sessionId,
+          csrf:       csrfToken,
+          phase:      'in_progress',
+          fields:     fields,
+        }),
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          if (!data.ok) {
+            showToast(data.error || 'Erreur lors de l\'enregistrement.', true);
+            if (submitBtn) submitBtn.disabled = false;
+            return;
+          }
+          // Advance phase to 'end' — then reload.
+          postAction('advance_phase', { to_phase: 'end' }, function () {
+            window.location.reload();
+          }, function (msg) {
+            showToast('Transfert enregistré, mais avancement impossible : ' + msg, true);
+            if (submitBtn) submitBtn.disabled = false;
+          });
+        })
+        .catch(function () {
+          showToast('Erreur réseau. Réessayez.', true);
+          if (submitBtn) submitBtn.disabled = false;
+        });
+    });
+  }
+
+  // ── P-C: END phase form submit ──────────────────────────────────────────────
+  // POSTs to /api/racking-phase-submit.php (phase=end).
+  // On success, advance_phase(closed) → reload.
+  var formEnd = document.getElementById('racking-end-form');
+  if (formEnd) {
+    // Cancel button: navigate back (browser history) — no state change.
+    var cancelEndBtn = document.getElementById('racking-end-cancel');
+    if (cancelEndBtn) {
+      cancelEndBtn.addEventListener('click', function () {
+        history.back();
+      });
+    }
+
+    formEnd.addEventListener('submit', function (e) {
+      e.preventDefault();
+
+      var submitEndBtn = document.getElementById('racking-end-submit');
+      if (submitEndBtn) submitEndBtn.disabled = true;
+
+      var formData = new FormData(formEnd);
+      var fields   = {};
+      formData.forEach(function (v, k) {
+        if (k !== 'csrf' && k !== 'session_id' && k !== 'phase') {
+          fields[k] = v;
+        }
+      });
+
+      fetch('/api/racking-phase-submit.php', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+          session_id: sessionId,
+          csrf:       csrfToken,
+          phase:      'end',
+          fields:     fields,
+        }),
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          if (!data.ok) {
+            showToast(data.error || 'Erreur lors de la clôture.', true);
+            if (submitEndBtn) submitEndBtn.disabled = false;
+            return;
+          }
+          // Advance phase to 'closed' → reload.
+          postAction('advance_phase', { to_phase: 'closed' }, function () {
+            window.location.reload();
+          }, function (msg) {
+            showToast('Données enregistrées, mais clôture impossible : ' + msg, true);
+            if (submitEndBtn) submitEndBtn.disabled = false;
+          });
+        })
+        .catch(function () {
+          showToast('Erreur réseau. Réessayez.', true);
+          if (submitEndBtn) submitEndBtn.disabled = false;
+        });
+    });
+  }
+
   // ── Gate 3: Attest firewall QC ───────────────────────────────────────────────
   // Show the override-reason input when a hors-process lot is selected.
   (function () {

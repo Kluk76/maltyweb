@@ -10,6 +10,7 @@ declare(strict_types=1);
  */
 
 require __DIR__ . '/../../app/auth.php';
+require __DIR__ . '/../../app/csrf.php';
 
 require_login();
 $me = current_user();
@@ -60,15 +61,23 @@ $active_module = 'saisies';
       <div class="sh-card__arrow">Ouvrir →</div>
     </a>
 
-    <a class="sh-card" href="/modules/form-racking.php">
+    <!-- Transferts card: two entry points — classic form + new session path. -->
+    <div class="sh-card sh-card--split">
       <div class="sh-card__icon">🔀</div>
       <div class="sh-card__name">Transferts</div>
       <div class="sh-card__desc">
         Enregistrement d'un transfert : soutirage de bière depuis une CCT vers un BBT
         ou une autre CCT, avec volumes et mesures associés.
       </div>
-      <div class="sh-card__arrow">Ouvrir →</div>
-    </a>
+      <div class="sh-card__actions">
+        <a class="sh-card__link" href="/modules/form-racking.php">Saisie classique →</a>
+        <button type="button" id="sh-start-racking-session"
+                class="sh-card__btn-session"
+                data-csrf="<?= htmlspecialchars(csrf_token()) ?>">
+          Démarrer (session) ⟶
+        </button>
+      </div>
+    </div>
 
   </div>
 
@@ -116,5 +125,6 @@ $active_module = 'saisies';
 
 </main>
 
+<script src="/js/saisies.js?v=<?= @filemtime(__DIR__ . '/../js/saisies.js') ?: time() ?>"></script>
 </body>
 </html>
