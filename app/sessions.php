@@ -1138,3 +1138,213 @@ function _session_open_sessions_for_vessel(PDO $pdo, string $vesselKind, int $ve
     $stmt->execute([$vesselKind, $vesselNumber]);
     return $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
+
+// ─── 3. Display helpers (new — session-shell.php) ─────────────────────────────
+
+/**
+ * session_firewall_status — Derive the three-gate QC firewall status from steps.
+ *
+ * Gates:
+ *   cip_done         — at least one cip_attested step exists.
+ *   eligibility_done — at least one eligibility_attested step exists.
+ *   qc_done          — at least one firewall_qc_passed step exists.
+ *   all_clear        — all three true.
+ *   blocking_items   — FR labels of the missing gates (empty when all_clear).
+ *
+ * Memoized per request (static cache keyed on $sessionId). No DB writes.
+ *
+ * @param PDO $pdo
+ * @param int $sessionId  op_sessions.id
+ *
+ * @return array {
+ *   cip_done: bool, eligibility_done: bool, qc_done: bool,
+ *   all_clear: bool, blocking_items: string[]
+ * }
+ */
+function session_firewall_status(PDO $pdo, int $sessionId): array
+{
+    static $cache = [];
+    if (array_key_exists($sessionId, $cache)) {
+        return $cache[$sessionId];
+    }
+
+    // Derive from already-loaded steps (reuse session_steps_for memoization).
+    $steps = session_steps_for($pdo, $sessionId);
+
+    $cipDone         = false;
+    $eligibilityDone = false;
+    $qcDone          = false;
+
+    foreach ($steps as $step) {
+        $type = $step['step_type'] ?? '';
+        if ($type === 'cip_attested')        $cipDone         = true;
+        if ($type === 'eligibility_attested') $eligibilityDone = true;
+        if ($type === 'firewall_qc_passed')  $qcDone          = true;
+    }
+
+    $allClear     = ($cipDone && $eligibilityDone && $qcDone);
+    $blockingItems = [];
+    if (!$cipDone)         $blockingItems[] = 'CIP non attesté';
+    if (!$eligibilityDone) $blockingItems[] = 'Lots non validés';
+    if (!$qcDone)          $blockingItems[] = 'Contrôle QC non passé';
+
+    $cache[$sessionId] = [
+        'cip_done'         => $cipDone,
+        'eligibility_done' => $eligibilityDone,
+        'qc_done'          => $qcDone,
+        'all_clear'        => $allClear,
+        'blocking_items'   => $blockingItems,
+    ];
+    return $cache[$sessionId];
+}
+
+/**
+ * session_labels — Build all human-readable display labels for the session shell.
+ *
+ * Returns:
+ *   vessel      — "BBT 4" style (vessel_kind uppercase + space + vessel_number), or null.
+ *   form_type   — human FR label: Soutirage / Brassage / Conditionnement / Fermentation.
+ *   recipe      — ref_recipes.name via JOIN, or null if no recipe linked.
+ *   batch       — "#232" or "—" when batch is null.
+ *   session_ref — "{PREFIX}-{YYYY}-{BATCH}" e.g. "RACK-2026-232".
+ *   elapsed     — humanised duration between opened_at and (closed_at ?? NOW()),
+ *                 in French units ("3 h 22 min", "2 jours 4 h", etc.).
+ *
+ * session_ref format:
+ *   PREFIX mapping: racking→RACK, fermenting→FERM, brewing→BREW, packaging→PACK.
+ *   Year  = year extracted from opened_at.
+ *   Batch = $session['batch'] as supplied, or "—" when null.
+ *
+ * Memoized per request (static cache keyed on $sessionId). No DB writes.
+ *
+ * @param PDO $pdo
+ * @param int $sessionId  op_sessions.id
+ *
+ * @return array {
+ *   vessel: string|null, form_type: string, recipe: string|null,
+ *   batch: string, session_ref: string, elapsed: string
+ * }
+ */
+function session_labels(PDO $pdo, int $sessionId): array
+{
+    static $cache = [];
+    if (array_key_exists($sessionId, $cache)) {
+        return $cache[$sessionId];
+    }
+
+    // Load session (reuses session_for_id memoization).
+    $session = session_for_id($pdo, $sessionId);
+    if ($session === null) {
+        // Defensive fallback for callers that did not guard against null.
+        $cache[$sessionId] = [
+            'vessel'      => null,
+            'form_type'   => '',
+            'recipe'      => null,
+            'batch'       => '—',
+            'session_ref' => '',
+            'elapsed'     => '',
+        ];
+        return $cache[$sessionId];
+    }
+
+    // ── Vessel label ──────────────────────────────────────────────────────────
+    $vessel = null;
+    if ($session['vessel_kind'] !== null && $session['vessel_number'] !== null) {
+        $vessel = strtoupper((string)$session['vessel_kind']) . ' ' . (string)$session['vessel_number'];
+    }
+
+    // ── form_type human label ─────────────────────────────────────────────────
+    $formTypeMap = [
+        'racking'    => 'Soutirage',
+        'fermenting' => 'Fermentation',
+        'brewing'    => 'Brassage',
+        'packaging'  => 'Conditionnement',
+    ];
+    $formTypeLabel = $formTypeMap[$session['form_type']] ?? (string)$session['form_type'];
+
+    // ── Recipe name via JOIN ──────────────────────────────────────────────────
+    $recipeName = null;
+    if (!empty($session['recipe_id_fk'])) {
+        $stmt = $pdo->prepare(
+            "SELECT name FROM ref_recipes WHERE id = ? LIMIT 1"
+        );
+        $stmt->execute([(int)$session['recipe_id_fk']]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row !== false) {
+            $recipeName = (string)$row['name'];
+        }
+    }
+
+    // ── Batch display ─────────────────────────────────────────────────────────
+    $batchRaw     = $session['batch'] ?? null;
+    $batchDisplay = ($batchRaw !== null && $batchRaw !== '') ? '#' . $batchRaw : '—';
+
+    // ── session_ref: {PREFIX}-{YYYY}-{BATCH} ─────────────────────────────────
+    $prefixMap = [
+        'racking'    => 'RACK',
+        'fermenting' => 'FERM',
+        'brewing'    => 'BREW',
+        'packaging'  => 'PACK',
+    ];
+    $prefix      = $prefixMap[$session['form_type']] ?? strtoupper(substr((string)$session['form_type'], 0, 4));
+    $openedAt    = $session['opened_at'] ?? date('Y-m-d H:i:s');
+    $year        = (int)substr((string)$openedAt, 0, 4);
+    $batchForRef = ($batchRaw !== null && $batchRaw !== '') ? $batchRaw : '—';
+    $sessionRef  = $prefix . '-' . $year . '-' . $batchForRef;
+
+    // ── Elapsed time (FR humanised) ───────────────────────────────────────────
+    $startTs = strtotime((string)$openedAt);
+    if ($startTs === false) {
+        $startTs = time();
+    }
+    $endTs = time(); // default to now (open session)
+    if (!empty($session['closed_at'])) {
+        $endTsCandidate = strtotime((string)$session['closed_at']);
+        if ($endTsCandidate !== false) {
+            $endTs = $endTsCandidate;
+        }
+    }
+    $seconds = max(0, $endTs - $startTs);
+    $elapsed = _session_humanise_elapsed($seconds);
+
+    $cache[$sessionId] = [
+        'vessel'      => $vessel,
+        'form_type'   => $formTypeLabel,
+        'recipe'      => $recipeName,
+        'batch'       => $batchDisplay,
+        'session_ref' => $sessionRef,
+        'elapsed'     => $elapsed,
+    ];
+    return $cache[$sessionId];
+}
+
+/**
+ * Convert a duration in seconds to a French human-readable string.
+ *
+ * Examples:
+ *   45      → "45 sec"
+ *   3742    → "1 h 2 min"
+ *   90061   → "1 jour 1 h"
+ *   180000  → "2 jours 2 h"
+ *
+ * @internal
+ */
+function _session_humanise_elapsed(int $seconds): string
+{
+    if ($seconds < 60) {
+        return $seconds . ' sec';
+    }
+    $minutes = (int)round($seconds / 60);
+    if ($minutes < 60) {
+        return $minutes . ' min';
+    }
+    $hours = (int)floor($seconds / 3600);
+    $mins  = (int)round(($seconds % 3600) / 60);
+    if ($hours < 24) {
+        return $mins > 0 ? $hours . ' h ' . $mins . ' min' : $hours . ' h';
+    }
+    $days  = (int)floor($hours / 24);
+    $hrs   = $hours % 24;
+    $dayLabel = $days === 1 ? 'jour' : 'jours';
+    return $hrs > 0 ? $days . ' ' . $dayLabel . ' ' . $hrs . ' h' : $days . ' ' . $dayLabel;
+}

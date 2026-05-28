@@ -1,0 +1,1823 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Session Shell — Mockup · MaltyTask</title>
+
+<!-- Same Google Fonts stack used site-wide -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,200;0,9..144,300;0,9..144,400;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<!--
+═══════════════════════════════════════════════════════════════════════════════
+BUILD CONTRACT — read this before converting to PHP template
+═══════════════════════════════════════════════════════════════════════════════
+
+PHP TEMPLATE: public/modules/session-shell.php
+Body class:   body.session-shell (scopes all .ss-* rules into app.css)
+
+── SERVER VARIABLES REQUIRED ──────────────────────────────────────────────────
+
+$session   (array) — full op_sessions row enriched by session_for_id():
+  ['id', 'form_type', 'vessel_kind', 'vessel_number',
+   'recipe_id_fk', 'batch', 'phase', 'status',
+   'opened_by_fk', 'opened_at', 'closed_by_fk', 'closed_at',
+   'abandon_reason', 'parent_session_id_fk', 'audit_flags',
+   'opener_username', 'closer_username']
+
+$steps     (array) — ordered list from session_steps_for($pdo, $session['id']):
+  each: ['id', 'step_type', 'acted_by', 'acted_at', 'payload', 'actor_username']
+  Derive current operator as: last acted_by across all steps (or opener if none).
+
+$formBody  (string) — rendered HTML for the phase-specific capture surface.
+  Produced by the per-form-type partial (racking/packaging/brewing/fermenting).
+  PHP pattern:
+    ob_start();
+    require "partials/session-body-{$session['form_type']}.php";
+    $formBody = ob_get_clean();
+  Slot: <FORM_BODY_SLOT> marker below (rendered as HTML comment in production).
+
+$me        (array) — current_user() result: ['id', 'username', 'role', …]
+
+$firewall  (array) — computed firewall status (built by session-shell PHP):
+  ['cip_done'        => bool,    // cip_attested step exists
+   'eligibility_done'=> bool,    // eligibility_attested step exists
+   'qc_done'         => bool,    // firewall_qc_passed step exists
+   'all_clear'       => bool,    // all three true → Avancer enabled
+   'blocking_items'  => string[] // human labels of what's missing
+  ]
+
+$labels    (array) — human display labels:
+  ['vessel'       => "BBT 4"                          // vessel_kind + vessel_number
+   'form_type'    => "Soutirage"                      // human label
+   'recipe'       => "Embuscade"                      // from ref_recipes join
+   'batch'        => "#232"                           // display batch
+   'session_ref'  => "RACK-2026-232"                  // or session id padded
+   'elapsed'      => "3 h 22 min"                    // computed server-side
+  ]
+
+── PHASE TRANSITIONS / POST ENDPOINTS ─────────────────────────────────────────
+
+All lifecycle POST actions go to: POST /api/session-action.php
+  Body: JSON { "session_id": int, "action": string, "payload": object? }
+
+Actions map to app/sessions.php functions:
+  "advance_phase"         → session_advance_phase()
+  "attest_cip"            → session_attest_cip()
+  "attest_eligibility"    → session_attest_eligibility()
+  "attest_firewall_qc"    → session_attest_firewall()
+  "handover"              → session_handover()    payload: { "to_user_id": int }
+  "abandon"               → session_abandon()     payload: { "reason": string }
+  "add_note"              → session_note()        payload: { "text": string }
+  "recap_ack"             → session_recap_ack()   payload: { "recap": object }
+
+Response: { "ok": bool, "session": { … updated row … }, "error"?: string }
+
+── SLOTS ───────────────────────────────────────────────────────────────────────
+
+<FORM_BODY_SLOT>          Insert $formBody here (phase-specific capture surface).
+                          The slot is inside .ss-body__content (scrollable region).
+
+── GUARD ───────────────────────────────────────────────────────────────────────
+
+PHP guard at top of module:
+  if ($session === null) { http_response_code(404); require 'errors/404.php'; exit; }
+  if ($session['status'] === 'abandoned' || $session['status'] === 'closed') {
+      // Render shell in read-only mode (no lifecycle controls, no form slot).
+  }
+
+── TERMINAL STATES ─────────────────────────────────────────────────────────────
+
+Closed:    $session['phase'] === 'closed' && $session['status'] === 'closed'
+           Render .ss-terminal.ss-terminal--closed (no controls, full audit trail)
+Abandoned: $session['status'] === 'abandoned'
+           Render .ss-terminal.ss-terminal--abandoned (reason banner + audit trail)
+
+═══════════════════════════════════════════════════════════════════════════════
+-->
+
+<!--
+DESIGN RATIONALE
+═══════════════════════════════════════════════════════════════════════════════
+
+CHROME LAYOUT — top stepper + right audit rail
+
+Choice: horizontal phase stepper (top) + fixed-width right audit rail.
+Rejected: left-rail stepper (steals too much horizontal space on tablets;
+  brewers scan left→right for the form body; vertical space is more abundant
+  in portrait but this is landscape-dominant tablet work).
+Rejected: accordion phases (hides audit trail; "where am I" requires
+  interaction; violates "at a glance" requirement).
+
+The top stepper is visually strict forward-only: past phases show a filled
+circle + "Done by X at HH:MM" summary — they are NOT clickable (no pointer,
+no hover). Future phases are desaturated and locked-looking. The
+"no-backward" rule is expressed in markup (no onclick, cursor:default on
+done/future tabs, aria-disabled on locked ones).
+
+LIFECYCLE CONTROLS PLACEMENT — sticky footer bar
+
+A sticky footer bar holds all lifecycle controls (Avancer, Passer la main,
+Abandonner, Ajouter une note). Rationale: on a tablet, a brewer with gloves
+reaches the bottom of the screen more reliably than a topbar dropdown; the
+controls stay in reach regardless of scroll depth in the form body; the
+disabled state of "Avancer" + why-blocked text are visible without scrolling.
+The footer is intentionally compact (44px tap targets) and separated from
+the form body by a clear hairline.
+
+AUDIT RAIL — always visible, right column, collapsible on tablet
+
+The audit rail is a right column (~256px) showing op_session_steps in
+chronological order. It is always visible on ≥1024px (tablet landscape).
+On <768px it collapses behind a bottom drawer toggled by a rail toggle button.
+"Did A complete the CIP?" is answerable without any navigation.
+
+HANDOVER VISUALIZATION — welcome banner
+
+When the logged-in user ($me['id']) differs from the last actor in $steps
+and there is a 'handover' step, we show a .ss-handover-banner above the
+phase body: "Session ouverte par M. Dupont — Reprise par J. Martin".
+Compact, dismissible, not obstructive.
+
+TOKEN ANCHORS FROM APP.CSS :root
+  --bg          #f1e8d4   page ground
+  --bg-elev     #ece0c6   cards / rail / stepper bg
+  --bg-side     #dcc9a4   sticky footer bg / section dividers
+  --ink         #241b10   primary text
+  --ink-soft    #3a2a18   secondary text
+  --ink-mute    #4a3820   labels / timestamps
+  --ink-faint   #c8b48a   hairlines used as text (light divider tone)
+  --hairline    #c8b48a   borders
+  --hairline-2  #a08060   stronger borders
+  --hop         #567020   primary accent (advance button, active phase)
+  --hop-soft    #7a8f3a   hover
+  --hop-deep    #3f4d14   done-phase indicator
+  --ember       #b34428   danger (abandon, blocked)
+  --ok          #3d6826   success states
+  --oak         #8b5e2a   links, secondary accent
+  --oak-deep    #5a3a12   oak hover
+  --cold        #2f5575   informational / note accent
+  --bbt         #2f6d99   phase-in-progress accent (informational blue)
+
+No --bg:#15100a, no dark-amber palette.
+
+MOBILE / TABLET (1024×768 landscape)
+  - .ss-layout switches from 2-col to 1-col below 1024px
+  - Audit rail collapses; toggle button appears at bottom of body
+  - Stepper abbreviates to icons + phase number (text truncated)
+  - Footer sticky controls remain full-width, stacked if <480px
+
+═══════════════════════════════════════════════════════════════════════════════
+-->
+
+<style>
+/* ═══════════════════════════════════════════════════════════════════
+   SESSION SHELL — scoped under body.session-shell
+   Lifts directly into public/css/session-shell.css at build time.
+   All colour via var(--…) from app.css :root — no raw hex.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Global reset for mockup ── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 16px; }
+
+/* ── Simulate body.home base tokens ── */
+:root {
+  --bg:        #f1e8d4;
+  --bg-elev:   #ece0c6;
+  --bg-side:   #dcc9a4;
+  --ink:       #241b10;
+  --ink-soft:  #3a2a18;
+  --ink-mute:  #4a3820;
+  --ink-faint: #c8b48a;
+  --hairline:  #c8b48a;
+  --hairline-2:#a08060;
+  --oak:       #8b5e2a;
+  --oak-deep:  #5a3a12;
+  --hop:       #567020;
+  --hop-soft:  #7a8f3a;
+  --hop-deep:  #3f4d14;
+  --ember:     #b34428;
+  --cold:      #2f5575;
+  --bbt:       #2f6d99;
+  --ok:        #3d6826;
+  --bad:       #b34428;
+  --steel:     #8a8f94;
+}
+
+body.session-shell {
+  font-family: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  /* Warm atmosphere matching body.home */
+  background-image:
+    radial-gradient(1200px 800px at 8% -8%, color-mix(in srgb, var(--oak) 10%, transparent), transparent 60%),
+    radial-gradient(900px 600px at 105% 105%, color-mix(in srgb, var(--hop) 6%, transparent), transparent 65%);
+  background-attachment: fixed;
+}
+
+/* Grain overlay matching body.home */
+body.session-shell::before {
+  content: "";
+  position: fixed; inset: 0;
+  pointer-events: none; z-index: 0;
+  opacity: 0.05;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.95  0 0 0 0 0.85  0 0 0 0 0.65  0 0 0 1 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+
+/* ── Page wrapper ── */
+body.session-shell .ss-page {
+  position: relative; z-index: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  /* Reserve space for sticky footer (64px) */
+  padding-bottom: 64px;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   SESSION HEADER — compact identity strip
+   ══════════════════════════════════════════════════════════════ */
+body.session-shell .ss-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 24px 13px;
+  border-bottom: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--bg-elev) 85%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  position: sticky;
+  top: 0;
+  z-index: 60;
+  flex-wrap: wrap;
+}
+
+/* Back button */
+body.session-shell .ss-header__back {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px; letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--ink-mute); background: none; border: none; cursor: pointer;
+  padding: 4px 0; flex-shrink: 0;
+  transition: color .15s;
+}
+body.session-shell .ss-header__back:hover { color: var(--oak); }
+
+/* Divider between back + identity */
+body.session-shell .ss-header__sep {
+  width: 1px; height: 28px;
+  background: var(--hairline);
+  flex-shrink: 0;
+}
+
+/* Identity block */
+body.session-shell .ss-header__identity { flex: 1; min-width: 0; }
+
+body.session-shell .ss-header__type-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--hop);
+  background: color-mix(in srgb, var(--hop) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--hop) 30%, transparent);
+  border-radius: 2px; padding: 2px 7px;
+  margin-bottom: 5px;
+}
+
+body.session-shell .ss-header__title {
+  font-family: "Fraunces", "Times New Roman", serif;
+  font-variation-settings: "opsz" 96;
+  font-size: 22px; font-weight: 300; letter-spacing: -0.015em;
+  color: var(--ink); line-height: 1.1; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+body.session-shell .ss-header__title em {
+  font-style: italic; color: var(--oak);
+}
+
+body.session-shell .ss-header__sub {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px; letter-spacing: 0.06em; color: var(--ink-mute);
+  margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* Right cluster — live elapsed + operator chips */
+body.session-shell .ss-header__right {
+  display: flex; align-items: center; gap: 12px; flex-shrink: 0;
+}
+
+body.session-shell .ss-elapsed {
+  display: flex; align-items: center; gap: 6px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px; letter-spacing: 0.06em; color: var(--ink-mute);
+}
+body.session-shell .ss-live-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--hop);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--hop) 50%, transparent);
+  animation: ss-pulse 2.4s ease-in-out infinite;
+  flex-shrink: 0;
+}
+@keyframes ss-pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+/* Operator chips — compact pill showing initials + name */
+body.session-shell .ss-op-chips { display: flex; align-items: center; gap: 6px; }
+body.session-shell .ss-op-chip {
+  display: flex; align-items: center; gap: 5px;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 16px;
+  padding: 4px 9px 4px 4px;
+}
+body.session-shell .ss-op-av {
+  width: 22px; height: 22px; border-radius: 50%;
+  background: var(--bg-side);
+  border: 1px solid var(--hairline-2);
+  display: flex; align-items: center; justify-content: center;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 8px; font-weight: 600; color: var(--oak);
+  flex-shrink: 0;
+}
+body.session-shell .ss-op-av--active {
+  background: color-mix(in srgb, var(--hop) 14%, var(--bg-side));
+  border-color: color-mix(in srgb, var(--hop) 40%, transparent);
+  color: var(--hop-deep);
+}
+body.session-shell .ss-op-chip__info { display: flex; flex-direction: column; gap: 0; }
+body.session-shell .ss-op-chip__name {
+  font-family: "DM Sans", sans-serif;
+  font-size: 11px; font-weight: 500; color: var(--ink-soft); line-height: 1.1;
+}
+body.session-shell .ss-op-chip__role {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 8.5px; letter-spacing: 0.04em; color: var(--ink-mute);
+}
+
+/* Journal de bord link */
+body.session-shell .ss-header__journal {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--oak); text-decoration: none;
+  border: 1px solid var(--hairline);
+  border-radius: 2px; padding: 5px 10px;
+  transition: color .15s, border-color .15s, background .15s;
+}
+body.session-shell .ss-header__journal:hover {
+  color: var(--oak-deep); border-color: var(--hairline-2);
+  background: color-mix(in srgb, var(--oak) 6%, transparent);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   PHASE STEPPER — top, strict forward-only
+   ══════════════════════════════════════════════════════════════ */
+body.session-shell .ss-stepper {
+  display: flex; align-items: stretch;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--bg-elev);
+  padding: 0 24px;
+  gap: 0;
+}
+
+body.session-shell .ss-step {
+  flex: 1; display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px;
+  position: relative;
+  /* No pointer on any step — strictly non-clickable */
+  cursor: default;
+  user-select: none;
+}
+
+/* Connector line between steps */
+body.session-shell .ss-step + .ss-step::before {
+  content: "";
+  position: absolute; left: 0; top: 50%;
+  transform: translateY(-50%);
+  width: 1px; height: 50%;
+  background: var(--hairline);
+}
+
+/* Step state: done ✓ */
+body.session-shell .ss-step--done .ss-step__circle {
+  background: var(--hop-deep);
+  border-color: var(--hop-deep);
+  color: var(--bg);
+}
+body.session-shell .ss-step--done .ss-step__label { color: var(--hop-deep); }
+body.session-shell .ss-step--done .ss-step__sub { color: var(--ink-mute); }
+
+/* Step state: active (current phase) */
+body.session-shell .ss-step--active {
+  border-bottom: 2px solid var(--hop);
+  margin-bottom: -1px; /* overlap the container border */
+}
+body.session-shell .ss-step--active .ss-step__circle {
+  background: color-mix(in srgb, var(--hop) 12%, var(--bg-elev));
+  border-color: var(--hop);
+  color: var(--hop);
+}
+body.session-shell .ss-step--active .ss-step__label { color: var(--hop); font-weight: 600; }
+body.session-shell .ss-step--active .ss-step__sub { color: var(--ink-soft); }
+
+/* Step state: future (locked) */
+body.session-shell .ss-step--future .ss-step__circle {
+  background: var(--bg-elev);
+  border-color: var(--hairline);
+  color: var(--ink-faint);
+}
+body.session-shell .ss-step--future .ss-step__label { color: var(--ink-faint); }
+body.session-shell .ss-step--future .ss-step__sub { color: var(--ink-faint); }
+
+/* The numbered/checkmark circle */
+body.session-shell .ss-step__circle {
+  width: 26px; height: 26px; border-radius: 50%;
+  border: 1.5px solid;
+  display: flex; align-items: center; justify-content: center;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px; font-weight: 600;
+  flex-shrink: 0;
+  transition: background .2s, border-color .2s, color .2s;
+}
+
+body.session-shell .ss-step__info { flex: 1; min-width: 0; }
+body.session-shell .ss-step__label {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase;
+  display: block;
+  transition: color .2s;
+}
+body.session-shell .ss-step__sub {
+  font-family: "DM Sans", sans-serif;
+  font-size: 11.5px; color: var(--ink-mute);
+  display: block; margin-top: 1px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* Terminal status pill — appended to stepper */
+body.session-shell .ss-step--terminal {
+  flex: 0 0 auto; padding: 12px 16px;
+}
+body.session-shell .ss-terminal-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase;
+  padding: 4px 9px; border-radius: 2px;
+}
+body.session-shell .ss-terminal-pill--open {
+  color: var(--bbt);
+  background: color-mix(in srgb, var(--bbt) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--bbt) 28%, transparent);
+}
+body.session-shell .ss-terminal-pill--closed {
+  color: var(--hop-deep);
+  background: color-mix(in srgb, var(--hop-deep) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--hop-deep) 28%, transparent);
+}
+body.session-shell .ss-terminal-pill--abandoned {
+  color: var(--ember);
+  background: color-mix(in srgb, var(--ember) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ember) 28%, transparent);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   HANDOVER BANNER — shows when current user is taking over
+   ══════════════════════════════════════════════════════════════ */
+body.session-shell .ss-handover-banner {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 10px 24px;
+  background: color-mix(in srgb, var(--cold) 8%, var(--bg));
+  border-bottom: 1px solid color-mix(in srgb, var(--cold) 22%, transparent);
+}
+body.session-shell .ss-handover-banner__icon {
+  color: var(--cold); font-size: 14px; flex-shrink: 0; margin-top: 1px;
+}
+body.session-shell .ss-handover-banner__text {
+  flex: 1;
+  font-size: 13px; color: var(--ink-soft); line-height: 1.45;
+}
+body.session-shell .ss-handover-banner__text strong { color: var(--ink); }
+body.session-shell .ss-handover-banner__dismiss {
+  background: none; border: none; cursor: pointer;
+  color: var(--ink-mute); font-size: 14px; padding: 2px;
+  transition: color .15s;
+}
+body.session-shell .ss-handover-banner__dismiss:hover { color: var(--ink); }
+
+/* ══════════════════════════════════════════════════════════════
+   MAIN LAYOUT — body (2-col: form + audit rail)
+   ══════════════════════════════════════════════════════════════ */
+body.session-shell .ss-layout {
+  display: grid;
+  grid-template-columns: 1fr 256px;
+  grid-template-areas: "body rail";
+  gap: 0;
+  flex: 1;
+  align-items: start;
+}
+
+/* ── Phase body / form slot ── */
+body.session-shell .ss-body {
+  grid-area: body;
+  border-right: 1px solid var(--hairline);
+}
+
+body.session-shell .ss-body__phase-label {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px; letter-spacing: 0.28em; text-transform: uppercase;
+  color: var(--ink-mute);
+  padding: 18px 24px 0;
+  display: flex; align-items: center; gap: 10px;
+}
+body.session-shell .ss-body__phase-label::after {
+  content: ""; flex: 1; height: 1px; background: var(--hairline);
+}
+
+/* The slot where $formBody HTML is injected */
+body.session-shell .ss-body__content {
+  padding: 20px 24px 32px;
+}
+
+/* ── FORM BODY SLOT placeholder ── */
+body.session-shell .ss-slot-placeholder {
+  min-height: 240px;
+  border: 2px dashed var(--hairline-2);
+  border-radius: 4px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px;
+  color: var(--ink-mute);
+  background: color-mix(in srgb, var(--bg-elev) 50%, transparent);
+}
+body.session-shell .ss-slot-placeholder__label {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px; letter-spacing: 0.22em; text-transform: uppercase;
+  color: var(--ink-faint);
+}
+body.session-shell .ss-slot-placeholder__hint {
+  font-size: 12px; color: var(--ink-faint);
+  max-width: 280px; text-align: center; line-height: 1.5;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   AUDIT RAIL — right column, chronological op_session_steps
+   ══════════════════════════════════════════════════════════════ */
+body.session-shell .ss-rail {
+  grid-area: rail;
+  position: sticky;
+  top: 0; /* will be overridden to account for header height in JS */
+  align-self: start;
+  padding: 16px 0;
+  min-height: 200px;
+}
+
+body.session-shell .ss-rail__head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 16px 10px;
+  border-bottom: 1px solid var(--hairline);
+  margin-bottom: 4px;
+}
+body.session-shell .ss-rail__title {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px; letter-spacing: 0.28em; text-transform: uppercase;
+  color: var(--ink-mute);
+}
+body.session-shell .ss-rail__count {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px; color: var(--ink-faint);
+}
+
+/* Step entries in the rail */
+body.session-shell .ss-rail__entry {
+  display: flex; gap: 10px;
+  padding: 8px 16px;
+  transition: background .12s;
+}
+body.session-shell .ss-rail__entry:hover {
+  background: color-mix(in srgb, var(--hop) 5%, transparent);
+}
+
+/* Left: dot + vertical connector */
+body.session-shell .ss-rail__dot-col {
+  display: flex; flex-direction: column; align-items: center;
+  flex-shrink: 0; padding-top: 3px;
+}
+body.session-shell .ss-rail__dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--hairline-2); flex-shrink: 0;
+}
+body.session-shell .ss-rail__dot--phase   { background: var(--hop); }
+body.session-shell .ss-rail__dot--cip     { background: var(--ok); }
+body.session-shell .ss-rail__dot--eligibility { background: var(--ok); }
+body.session-shell .ss-rail__dot--firewall { background: var(--ok); }
+body.session-shell .ss-rail__dot--handover { background: var(--cold); }
+body.session-shell .ss-rail__dot--abandon  { background: var(--ember); }
+body.session-shell .ss-rail__dot--note    { background: var(--oak); }
+body.session-shell .ss-rail__dot--event   { background: var(--bbt); }
+body.session-shell .ss-rail__dot--recap   { background: var(--hop-deep); }
+
+body.session-shell .ss-rail__connector {
+  flex: 1; width: 1px; background: var(--hairline); margin: 3px 0;
+  min-height: 14px;
+}
+
+/* Right: text content */
+body.session-shell .ss-rail__entry-body { flex: 1; min-width: 0; }
+body.session-shell .ss-rail__entry-type {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px; letter-spacing: 0.1em;
+  color: var(--ink-mute); display: block;
+}
+body.session-shell .ss-rail__entry-actor {
+  font-size: 12px; font-weight: 500; color: var(--ink-soft);
+  display: block; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+body.session-shell .ss-rail__entry-time {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px; color: var(--ink-faint);
+  display: block; margin-top: 1px;
+}
+body.session-shell .ss-rail__entry-payload {
+  font-size: 11px; color: var(--ink-mute); margin-top: 3px;
+  line-height: 1.4; font-style: italic;
+  display: block;
+}
+
+/* Rail collapse toggle (tablet only) */
+body.session-shell .ss-rail__toggle {
+  display: none;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--ink-mute); background: none;
+  border: 1px solid var(--hairline-2); border-radius: 2px;
+  padding: 5px 10px; cursor: pointer;
+  transition: color .15s, border-color .15s;
+}
+body.session-shell .ss-rail__toggle:hover { color: var(--hop); border-color: var(--hop); }
+
+/* ══════════════════════════════════════════════════════════════
+   QC FIREWALL CHECKLIST — phase=start body
+   ══════════════════════════════════════════════════════════════ */
+body.session-shell .ss-firewall {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 4px; overflow: hidden;
+  margin-bottom: 20px;
+}
+body.session-shell .ss-firewall__head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--hairline);
+}
+body.session-shell .ss-firewall__title {
+  font-family: "Fraunces", "Times New Roman", serif;
+  font-variation-settings: "opsz" 96;
+  font-size: 16px; font-weight: 300; color: var(--ink);
+}
+body.session-shell .ss-firewall__progress {
+  display: flex; align-items: center; gap: 8px;
+}
+body.session-shell .ss-firewall__count {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px; letter-spacing: 0.06em; color: var(--ink-mute);
+}
+body.session-shell .ss-firewall__bar-wrap {
+  width: 72px; height: 4px;
+  background: var(--hairline); border-radius: 2px; overflow: hidden;
+}
+body.session-shell .ss-firewall__bar-fill {
+  height: 100%; border-radius: 2px;
+  background: var(--hop); transition: width .4s ease;
+}
+
+/* Checklist row */
+body.session-shell .ss-fw-item {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--hairline);
+  transition: background .12s;
+}
+body.session-shell .ss-fw-item:last-of-type { border-bottom: none; }
+body.session-shell .ss-fw-item:hover { background: color-mix(in srgb, var(--hop) 4%, var(--bg-elev)); }
+
+body.session-shell .ss-fw-check {
+  width: 20px; height: 20px; border-radius: 3px;
+  border: 1.5px solid var(--hairline-2);
+  background: var(--bg);
+  flex-shrink: 0; margin-top: 1px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+body.session-shell .ss-fw-check:hover { border-color: var(--hop); }
+body.session-shell .ss-fw-check--done {
+  background: var(--ok);
+  border-color: var(--ok);
+}
+
+body.session-shell .ss-fw-content { flex: 1; }
+body.session-shell .ss-fw-label {
+  font-size: 13.5px; color: var(--ink); line-height: 1.4; display: block;
+}
+body.session-shell .ss-fw-label--done {
+  color: var(--ink-mute);
+  text-decoration: line-through;
+  text-decoration-color: var(--hairline-2);
+}
+body.session-shell .ss-fw-desc {
+  font-size: 11.5px; color: var(--ink-mute); margin-top: 2px; line-height: 1.4; display: block;
+}
+body.session-shell .ss-fw-attested {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px; color: var(--ok); margin-top: 3px; display: block;
+}
+
+/* Blocked message */
+body.session-shell .ss-blocked-msg {
+  display: flex; align-items: flex-start; gap: 8px;
+  margin: 0 16px 14px;
+  padding: 9px 12px;
+  background: color-mix(in srgb, var(--ember) 7%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--ember) 25%, transparent);
+  border-radius: 3px;
+}
+body.session-shell .ss-blocked-msg__icon { color: var(--ember); flex-shrink: 0; margin-top: 1px; }
+body.session-shell .ss-blocked-msg__text {
+  font-size: 12.5px; color: var(--ember); line-height: 1.5;
+}
+
+/* Firewall footer action row */
+body.session-shell .ss-firewall__action {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 16px;
+  background: color-mix(in srgb, var(--bg-side) 50%, var(--bg-elev));
+  border-top: 1px solid var(--hairline);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   LIVE KPI STRIP — appears in in_progress phase
+   ══════════════════════════════════════════════════════════════ */
+body.session-shell .ss-kpi-strip {
+  display: flex; gap: 1px;
+  background: var(--hairline);
+  border: 1px solid var(--hairline);
+  border-radius: 4px; overflow: hidden;
+  margin-bottom: 20px;
+}
+body.session-shell .ss-kpi-cell {
+  flex: 1; padding: 12px 14px;
+  background: var(--bg-elev);
+  display: flex; flex-direction: column; gap: 2px;
+  min-width: 0;
+}
+body.session-shell .ss-kpi-cell__key {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--ink-mute);
+}
+body.session-shell .ss-kpi-cell__val {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 22px; font-weight: 600; color: var(--ink-soft); line-height: 1;
+}
+body.session-shell .ss-kpi-cell__val--ok   { color: var(--ok); }
+body.session-shell .ss-kpi-cell__val--warn { color: #7a5010; }
+body.session-shell .ss-kpi-cell__val--bad  { color: var(--ember); }
+body.session-shell .ss-kpi-cell__unit {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px; color: var(--ink-mute);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   END PHASE — summary cards grid
+   ══════════════════════════════════════════════════════════════ */
+body.session-shell .ss-summary-grid {
+  display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;
+  margin-bottom: 20px;
+}
+body.session-shell .ss-summary-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 4px; padding: 14px 16px;
+}
+body.session-shell .ss-summary-card__key {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--ink-mute); margin-bottom: 4px; display: block;
+}
+body.session-shell .ss-summary-card__val {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 26px; font-weight: 600; color: var(--ink-soft); line-height: 1;
+  display: block;
+}
+body.session-shell .ss-summary-card__val--ok   { color: var(--ok); }
+body.session-shell .ss-summary-card__val--warn { color: #7a5010; }
+body.session-shell .ss-summary-card__sub {
+  font-size: 11px; color: var(--ink-mute); margin-top: 2px; display: block;
+}
+
+/* End checklist */
+body.session-shell .ss-end-checklist {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 4px; overflow: hidden; margin-bottom: 20px;
+}
+body.session-shell .ss-end-checklist__head {
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--hairline);
+}
+body.session-shell .ss-end-checklist__title {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px; letter-spacing: 0.22em; text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   TERMINAL STATES — closed / abandoned
+   ══════════════════════════════════════════════════════════════ */
+body.session-shell .ss-terminal-banner {
+  display: flex; align-items: flex-start; gap: 14px;
+  padding: 18px 24px;
+  border-bottom: 1px solid var(--hairline);
+}
+body.session-shell .ss-terminal-banner--closed {
+  background: color-mix(in srgb, var(--ok) 7%, var(--bg));
+  border-bottom-color: color-mix(in srgb, var(--ok) 20%, transparent);
+}
+body.session-shell .ss-terminal-banner--abandoned {
+  background: color-mix(in srgb, var(--ember) 7%, var(--bg));
+  border-bottom-color: color-mix(in srgb, var(--ember) 22%, transparent);
+}
+body.session-shell .ss-terminal-banner__icon { font-size: 20px; flex-shrink: 0; margin-top: 2px; }
+body.session-shell .ss-terminal-banner--closed .ss-terminal-banner__icon { color: var(--ok); }
+body.session-shell .ss-terminal-banner--abandoned .ss-terminal-banner__icon { color: var(--ember); }
+body.session-shell .ss-terminal-banner__body { flex: 1; }
+body.session-shell .ss-terminal-banner__heading {
+  font-family: "Fraunces", "Times New Roman", serif;
+  font-variation-settings: "opsz" 96;
+  font-size: 18px; font-weight: 300; color: var(--ink); margin-bottom: 4px;
+}
+body.session-shell .ss-terminal-banner__meta {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px; letter-spacing: 0.06em; color: var(--ink-mute);
+}
+body.session-shell .ss-terminal-banner__reason {
+  font-size: 13px; color: var(--ink-soft); margin-top: 6px; line-height: 1.5;
+  background: color-mix(in srgb, var(--ember) 5%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--ember) 18%, transparent);
+  border-radius: 3px; padding: 7px 10px; display: inline-block;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   STICKY LIFECYCLE FOOTER
+   ══════════════════════════════════════════════════════════════ */
+body.session-shell .ss-footer {
+  position: fixed; bottom: 0; left: 0; right: 0;
+  z-index: 80;
+  background: color-mix(in srgb, var(--bg-side) 95%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-top: 1px solid var(--hairline-2);
+  padding: 10px 24px;
+  display: flex; align-items: center; gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* Primary action — Avancer */
+body.session-shell .ss-btn-advance {
+  padding: 10px 22px;
+  background: var(--hop);
+  color: var(--bg);
+  border: none; border-radius: 3px; cursor: pointer;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase;
+  display: flex; align-items: center; gap: 7px;
+  transition: background .18s, transform .12s, opacity .18s;
+  flex-shrink: 0;
+}
+body.session-shell .ss-btn-advance:hover:not(:disabled) {
+  background: var(--hop-soft); transform: translateY(-1px);
+}
+body.session-shell .ss-btn-advance:disabled {
+  opacity: 0.35; cursor: not-allowed; transform: none;
+}
+
+/* Blocked indicator beside advance button */
+body.session-shell .ss-advance-blocked {
+  display: flex; align-items: center; gap: 6px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px; letter-spacing: 0.06em; color: var(--ember);
+}
+body.session-shell .ss-advance-blocked__dot {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--ember); flex-shrink: 0;
+}
+
+/* Separator dot */
+body.session-shell .ss-footer__sep {
+  width: 4px; height: 4px; border-radius: 50%;
+  background: var(--hairline-2); flex-shrink: 0;
+}
+
+/* Secondary / ghost buttons */
+body.session-shell .ss-btn-ghost {
+  padding: 9px 16px;
+  background: none;
+  border: 1px solid var(--hairline-2); border-radius: 3px; cursor: pointer;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--ink-mute);
+  transition: color .15s, border-color .15s, background .15s;
+  display: flex; align-items: center; gap: 6px;
+  flex-shrink: 0;
+}
+body.session-shell .ss-btn-ghost:hover {
+  color: var(--ink); border-color: var(--ink-mute);
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+}
+body.session-shell .ss-btn-ghost--danger { color: var(--ember); }
+body.session-shell .ss-btn-ghost--danger:hover {
+  color: var(--ember); border-color: var(--ember);
+  background: color-mix(in srgb, var(--ember) 6%, transparent);
+}
+
+body.session-shell .ss-footer__right {
+  margin-left: auto; display: flex; align-items: center; gap: 8px;
+}
+
+/* Abandon reason overlay (dialog) */
+body.session-shell .ss-abandon-dialog {
+  border: 1px solid var(--hairline-2); border-radius: 4px;
+  background: var(--bg-elev); padding: 0;
+  box-shadow: 0 12px 40px rgba(36,27,16,.2);
+  max-width: 420px; width: 92vw;
+}
+body.session-shell .ss-abandon-dialog::backdrop { background: rgba(36,27,16,.45); }
+body.session-shell .ss-abandon-dialog[open] {
+  position: fixed; inset: 0; margin: auto;
+  display: flex; flex-direction: column;
+}
+body.session-shell .ss-abandon-dialog__head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--hairline);
+}
+body.session-shell .ss-abandon-dialog__title {
+  font-family: "Fraunces", "Times New Roman", serif;
+  font-variation-settings: "opsz" 96;
+  font-size: 17px; font-weight: 300; color: var(--ember);
+}
+body.session-shell .ss-abandon-dialog__close {
+  background: none; border: none; cursor: pointer;
+  color: var(--ink-mute); font-size: 18px; padding: 2px;
+  transition: color .15s;
+}
+body.session-shell .ss-abandon-dialog__close:hover { color: var(--ink); }
+body.session-shell .ss-abandon-dialog__body { padding: 16px 18px; }
+body.session-shell .ss-abandon-dialog__label {
+  font-size: 12px; color: var(--ink-mute); margin-bottom: 6px; display: block;
+}
+body.session-shell .ss-abandon-dialog__textarea {
+  width: 100%; background: var(--bg);
+  border: 1px solid var(--hairline-2); border-radius: 3px;
+  padding: 9px 12px; font-family: "DM Sans", sans-serif; font-size: 13.5px;
+  color: var(--ink); resize: vertical; min-height: 80px;
+  transition: border-color .15s;
+}
+body.session-shell .ss-abandon-dialog__textarea:focus {
+  outline: none; border-color: var(--ember);
+}
+body.session-shell .ss-abandon-dialog__foot {
+  padding: 12px 18px;
+  border-top: 1px solid var(--hairline);
+  display: flex; justify-content: flex-end; gap: 8px;
+}
+body.session-shell .ss-btn-confirm-abandon {
+  padding: 9px 18px;
+  background: var(--ember); color: var(--bg);
+  border: none; border-radius: 3px; cursor: pointer;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase;
+  transition: opacity .15s;
+}
+body.session-shell .ss-btn-confirm-abandon:hover { opacity: .85; }
+
+/* ══════════════════════════════════════════════════════════════
+   RESPONSIVE — tablet 1024px and below
+   ══════════════════════════════════════════════════════════════ */
+@media (max-width: 1023px) {
+  body.session-shell .ss-layout {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "body"
+      "rail";
+  }
+  body.session-shell .ss-body { border-right: none; border-bottom: 1px solid var(--hairline); }
+  body.session-shell .ss-rail { position: static; padding-top: 0; }
+  body.session-shell .ss-rail__toggle { display: inline-flex; margin: 8px 16px; }
+  body.session-shell .ss-rail__entries.rail-collapsed { display: none; }
+
+  body.session-shell .ss-step__sub { display: none; } /* truncate stepper sublabels */
+  body.session-shell .ss-summary-grid { grid-template-columns: 1fr 1fr; }
+  body.session-shell .ss-op-chips .ss-op-chip:not(:first-child) .ss-op-chip__info { display: none; }
+}
+
+@media (max-width: 767px) {
+  body.session-shell .ss-header { flex-wrap: wrap; gap: 10px; }
+  body.session-shell .ss-header__right { width: 100%; justify-content: flex-start; }
+  body.session-shell .ss-stepper { padding: 0 12px; }
+  body.session-shell .ss-step { padding: 10px 8px; }
+  body.session-shell .ss-step__label { font-size: 8.5px; letter-spacing: 0.08em; }
+  body.session-shell .ss-summary-grid { grid-template-columns: 1fr; }
+  body.session-shell .ss-footer { gap: 8px; }
+  body.session-shell .ss-btn-advance { flex: 1; justify-content: center; }
+}
+
+/* ── View-switcher (mockup only, not for production) ──
+   Rendered as a sticky bar at the TOP of the page, before the header,
+   with a dashed ember border so it reads as a mockup-only tool. */
+.mockup-switcher {
+  display: flex; gap: 4px; flex-wrap: wrap; justify-content: center;
+  padding: 6px 12px;
+  background: color-mix(in srgb, var(--ember) 6%, var(--bg-elev));
+  border-bottom: 1px dashed color-mix(in srgb, var(--ember) 40%, transparent);
+}
+.mockup-switcher::before {
+  content: "VUE DÉMO — sélection mockup uniquement";
+  display: flex; align-items: center;
+  margin-right: 12px;
+  font-family: "JetBrains Mono", monospace; font-size: 9px;
+  letter-spacing: 0.14em; text-transform: uppercase;
+  color: color-mix(in srgb, var(--ember) 80%, var(--ink));
+}
+.mockup-switcher button {
+  padding: 5px 10px;
+  font-family: "JetBrains Mono", monospace; font-size: 9px;
+  letter-spacing: 0.1em; text-transform: uppercase;
+  background: var(--bg-elev); color: var(--ink-mute);
+  border: 1px solid var(--hairline-2); border-radius: 2px; cursor: pointer;
+  transition: color .15s, border-color .15s;
+}
+.mockup-switcher button.active {
+  color: var(--hop); border-color: var(--hop);
+  background: color-mix(in srgb, var(--hop) 8%, var(--bg-elev));
+}
+.mockup-switcher button:hover:not(.active) { color: var(--ink); border-color: var(--ink-mute); }
+
+/* Utility */
+.ss-icon { width: 14px; height: 14px; flex-shrink: 0; }
+</style>
+</head>
+
+<!-- body class matches PHP module convention -->
+<body class="session-shell home">
+
+<!-- ── MOCKUP VIEW SWITCHER (remove in production) ─────────────────── -->
+<div class="mockup-switcher">
+  <button class="active" onclick="showView('start')">Phase : Démarrage</button>
+  <button onclick="showView('in_progress')">En cours</button>
+  <button onclick="showView('end')">Fin</button>
+  <button onclick="showView('closed')">Clôturée</button>
+  <button onclick="showView('abandoned')">Abandonnée</button>
+</div>
+
+<div class="ss-page">
+
+  <!-- ══════════════════════════════════════════════════════════
+       SESSION HEADER
+       Mock: Soutirage BBT4, Embuscade #232, Marie Dupont → Jean Martin
+  ═══════════════════════════════════════════════════════════════ -->
+  <header class="ss-header">
+    <button class="ss-header__back" onclick="window.history.back()">
+      <svg class="ss-icon" viewBox="0 0 14 12" fill="none"><path d="M6 1L1 6m0 0l5 5M1 6h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Journal de bord
+    </button>
+    <div class="ss-header__sep"></div>
+
+    <div class="ss-header__identity">
+      <!-- $labels['form_type'] + vessel -->
+      <div class="ss-header__type-badge" id="hdr-badge">
+        <!-- form-type icon -->
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="4" stroke="currentColor" stroke-width="1.2"/><path d="M3 5h4M5 3v4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+        Soutirage · BBT 4
+      </div>
+      <div class="ss-header__title">
+        <em>Embuscade</em> · Lot #232
+      </div>
+      <div class="ss-header__sub">
+        Session RACK-2026-232 · Ouvert 08:14 par M. Dupont · Repris par J. Martin
+      </div>
+    </div>
+
+    <div class="ss-header__right">
+      <div class="ss-elapsed" id="hdr-elapsed">
+        <div class="ss-live-dot"></div>
+        <span>3 h 22 min</span>
+      </div>
+      <!-- Operator chips: opener (past) + current actor (active) -->
+      <div class="ss-op-chips">
+        <div class="ss-op-chip" title="Marie Dupont — a ouvert la session">
+          <div class="ss-op-av">MD</div>
+          <div class="ss-op-chip__info">
+            <span class="ss-op-chip__name">M. Dupont</span>
+            <span class="ss-op-chip__role">Ouvert 08:14</span>
+          </div>
+        </div>
+        <div class="ss-op-chip" title="Jean Martin — acteur courant (dernier step)">
+          <div class="ss-op-av ss-op-av--active">JM</div>
+          <div class="ss-op-chip__info">
+            <span class="ss-op-chip__name">J. Martin</span>
+            <span class="ss-op-chip__role">Actif · Reprise 09:45</span>
+          </div>
+        </div>
+      </div>
+      <a href="#" class="ss-header__journal">Journal ↗</a>
+    </div>
+  </header>
+
+  <!-- ══════════════════════════════════════════════════════════
+       PHASE STEPPER
+  ═══════════════════════════════════════════════════════════════ -->
+  <nav class="ss-stepper" id="stepper" aria-label="Phases de la session">
+
+    <!-- Phase 1 : Démarrage -->
+    <div class="ss-step ss-step--done" id="step-start" role="tab" aria-selected="false" aria-label="Démarrage — terminé">
+      <div class="ss-step__circle">✓</div>
+      <div class="ss-step__info">
+        <span class="ss-step__label">Démarrage</span>
+        <span class="ss-step__sub" id="step-start-sub">Pare-feu validé par M. Dupont · 08:31</span>
+      </div>
+    </div>
+
+    <!-- Phase 2 : En cours -->
+    <div class="ss-step ss-step--active" id="step-in-progress" role="tab" aria-selected="true" aria-label="En cours — phase active">
+      <div class="ss-step__circle">2</div>
+      <div class="ss-step__info">
+        <span class="ss-step__label">En cours</span>
+        <span class="ss-step__sub" id="step-ip-sub">2 événements liés · Démarré 08:31</span>
+      </div>
+    </div>
+
+    <!-- Phase 3 : Fin -->
+    <div class="ss-step ss-step--future" id="step-end" role="tab" aria-selected="false" aria-disabled="true" aria-label="Fin — verrouillé">
+      <div class="ss-step__circle">3</div>
+      <div class="ss-step__info">
+        <span class="ss-step__label">Fin</span>
+        <span class="ss-step__sub">Récapitulatif + fermeture</span>
+      </div>
+      <!-- Lock indicator -->
+      <svg class="ss-icon" style="color:var(--ink-faint);margin-left:auto" viewBox="0 0 12 14" fill="none"><rect x="1" y="6" width="10" height="7" rx="1.5" stroke="currentColor" stroke-width="1.2"/><path d="M4 6V4a2 2 0 014 0v2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+    </div>
+
+    <!-- Terminal status -->
+    <div class="ss-step ss-step--terminal" id="step-terminal">
+      <div class="ss-terminal-pill ss-terminal-pill--open" id="terminal-pill">
+        <span>●</span> En cours
+      </div>
+    </div>
+  </nav>
+
+  <!-- ══════════════════════════════════════════════════════════
+       HANDOVER BANNER — shows when operator B takes over
+       Dismiss on click; PHP: show when $me['id'] !== $session['opened_by_fk']
+       AND a handover step exists AND not yet dismissed (sessionStorage)
+  ═══════════════════════════════════════════════════════════════ -->
+  <div class="ss-handover-banner" id="handover-banner" style="display:none">
+    <div class="ss-handover-banner__icon">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 8h5m0 0L5 6m2 2L5 10M14 8H9m0 0l2-2M9 8l2 2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+    <div class="ss-handover-banner__text">
+      <strong>Reprise de session.</strong> Cette session a été ouverte par <strong>Marie Dupont</strong> à 08:14.
+      Le pare-feu QC a été validé. 2 événements soutirage sont déjà enregistrés.
+      Vous êtes maintenant l'opérateur actif.
+    </div>
+    <button class="ss-handover-banner__dismiss" onclick="document.getElementById('handover-banner').style.display='none'" aria-label="Fermer">✕</button>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════
+       AUDIT FLAGS WARNING (PQ-6 — multi-active session on same vessel)
+  ═══════════════════════════════════════════════════════════════ -->
+  <div id="audit-flags-warn" style="display:none;padding:8px 24px;background:color-mix(in srgb,#b34428 8%,#f1e8d4);border-bottom:1px solid color-mix(in srgb,#b34428 22%,transparent)">
+    <span style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.06em;color:#b34428">
+      ⚠ Attention : une autre session est déjà ouverte sur BBT 4 (session #RACK-2026-231).
+    </span>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════
+       MAIN LAYOUT — body column + audit rail
+  ═══════════════════════════════════════════════════════════════ -->
+  <div class="ss-layout">
+
+    <!-- ── LEFT: Phase body ─────────────────────────────────── -->
+    <div class="ss-body">
+
+      <!-- ════════════ VIEW: start ════════════ -->
+      <div id="view-start">
+        <div class="ss-body__phase-label">Démarrage — Pare-feu QC</div>
+        <div class="ss-body__content">
+
+          <!-- QC Firewall checklist -->
+          <div class="ss-firewall">
+            <div class="ss-firewall__head">
+              <span class="ss-firewall__title">Pare-feu qualité</span>
+              <div class="ss-firewall__progress">
+                <span class="ss-firewall__count" id="fw-count">3 / 3</span>
+                <div class="ss-firewall__bar-wrap">
+                  <div class="ss-firewall__bar-fill" id="fw-bar" style="width:100%"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- CIP attestation -->
+            <div class="ss-fw-item">
+              <div class="ss-fw-check ss-fw-check--done" title="Validé">
+                <svg width="11" height="9" viewBox="0 0 11 9" fill="none"><path d="M1 4.5L4 7.5L10 1.5" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </div>
+              <div class="ss-fw-content">
+                <span class="ss-fw-label ss-fw-label--done">CIP attesté — BBT 4 propre</span>
+                <span class="ss-fw-desc">Nettoyage en place du tank de destination confirmé par l'opérateur.</span>
+                <span class="ss-fw-attested">✓ Validé par M. Dupont · 08:22</span>
+              </div>
+            </div>
+
+            <!-- Eligibility -->
+            <div class="ss-fw-item">
+              <div class="ss-fw-check ss-fw-check--done" title="Validé">
+                <svg width="11" height="9" viewBox="0 0 11 9" fill="none"><path d="M1 4.5L4 7.5L10 1.5" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </div>
+              <div class="ss-fw-content">
+                <span class="ss-fw-label ss-fw-label--done">Lots éligibles sélectionnés</span>
+                <span class="ss-fw-desc">CCT 2 — Embuscade lot 232 · Cold crash ≥ 72 h confirmé (88 h mesurés).</span>
+                <span class="ss-fw-attested">✓ Validé par M. Dupont · 08:25</span>
+              </div>
+            </div>
+
+            <!-- QC readings -->
+            <div class="ss-fw-item">
+              <div class="ss-fw-check ss-fw-check--done" title="Validé">
+                <svg width="11" height="9" viewBox="0 0 11 9" fill="none"><path d="M1 4.5L4 7.5L10 1.5" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </div>
+              <div class="ss-fw-content">
+                <span class="ss-fw-label ss-fw-label--done">Lectures QC pré-soutirage</span>
+                <span class="ss-fw-desc">Gravité finale, pH, turbidité dans les seuils attendus pour Embuscade.</span>
+                <span class="ss-fw-attested">✓ Validé par M. Dupont · 08:31 · GF 3.8 °P · pH 4.32</span>
+              </div>
+            </div>
+
+            <!-- All clear — no blocked-msg shown -->
+            <div class="ss-firewall__action">
+              <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ok);letter-spacing:0.06em;display:flex;align-items:center;gap:6px">
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><circle cx="6" cy="6" r="5" stroke="currentColor" stroke-width="1.3"/><path d="M3.5 6.5L5 8L8.5 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                Pare-feu complet — prêt à avancer
+              </span>
+              <!-- In this demo all items are complete, so button is active -->
+            </div>
+          </div>
+
+          <!-- FORM BODY SLOT (per-form-type body goes here in phase start if needed) -->
+          <div class="ss-slot-placeholder">
+            <svg width="28" height="28" viewBox="0 0 28 28" fill="none" style="color:var(--ink-faint)"><rect x="4" y="4" width="20" height="20" rx="2" stroke="currentColor" stroke-width="1.4" stroke-dasharray="3 2"/><path d="M10 14h8M14 10v8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+            <span class="ss-slot-placeholder__label"><!-- FORM_BODY_SLOT --></span>
+            <span class="ss-slot-placeholder__hint">Contenu spécifique au type de session (soutirage / brassage / fermentation / emballage) — injecté via <code>$formBody</code></span>
+          </div>
+
+        </div><!-- /.ss-body__content -->
+      </div><!-- /#view-start -->
+
+      <!-- ════════════ VIEW: in_progress ════════════ -->
+      <div id="view-in-progress" style="display:none">
+        <div class="ss-body__phase-label">En cours — Capture opérationnelle</div>
+        <div class="ss-body__content">
+
+          <!-- Live KPI strip -->
+          <div class="ss-kpi-strip">
+            <div class="ss-kpi-cell">
+              <span class="ss-kpi-cell__key">Volume soutiré</span>
+              <span class="ss-kpi-cell__val ss-kpi-cell__val--ok">12.4</span>
+              <span class="ss-kpi-cell__unit">hl</span>
+            </div>
+            <div class="ss-kpi-cell">
+              <span class="ss-kpi-cell__key">Pression BBT</span>
+              <span class="ss-kpi-cell__val">0.8</span>
+              <span class="ss-kpi-cell__unit">bar</span>
+            </div>
+            <div class="ss-kpi-cell">
+              <span class="ss-kpi-cell__key">Temp. CCT</span>
+              <span class="ss-kpi-cell__val">1.2</span>
+              <span class="ss-kpi-cell__unit">°C</span>
+            </div>
+            <div class="ss-kpi-cell">
+              <span class="ss-kpi-cell__key">Événements</span>
+              <span class="ss-kpi-cell__val">2</span>
+              <span class="ss-kpi-cell__unit">liés</span>
+            </div>
+          </div>
+
+          <!-- FORM BODY SLOT — racking capture surface goes here -->
+          <div class="ss-slot-placeholder" style="min-height:320px">
+            <svg width="28" height="28" viewBox="0 0 28 28" fill="none" style="color:var(--ink-faint)"><rect x="4" y="4" width="20" height="20" rx="2" stroke="currentColor" stroke-width="1.4" stroke-dasharray="3 2"/><path d="M10 14h8M14 10v8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+            <span class="ss-slot-placeholder__label"><!-- FORM_BODY_SLOT --></span>
+            <span class="ss-slot-placeholder__hint">Surface de capture soutirage : lectures (pression, température, volumes par étape), ajout d'événements, notes de lot. Injectée via <code>$formBody</code></span>
+          </div>
+
+        </div>
+      </div><!-- /#view-in-progress -->
+
+      <!-- ════════════ VIEW: end ════════════ -->
+      <div id="view-end" style="display:none">
+        <div class="ss-body__phase-label">Fin — Récapitulatif &amp; fermeture</div>
+        <div class="ss-body__content">
+
+          <!-- Summary cards -->
+          <div class="ss-summary-grid">
+            <div class="ss-summary-card">
+              <span class="ss-summary-card__key">Volume total soutiré</span>
+              <span class="ss-summary-card__val ss-summary-card__val--ok">24.8</span>
+              <span class="ss-summary-card__sub">hl · objectif 25.0 hl</span>
+            </div>
+            <div class="ss-summary-card">
+              <span class="ss-summary-card__key">Pertes soutirage</span>
+              <span class="ss-summary-card__val ss-summary-card__val--warn">0.7</span>
+              <span class="ss-summary-card__sub">hl · 2.7 % du lot</span>
+            </div>
+            <div class="ss-summary-card">
+              <span class="ss-summary-card__key">Durée</span>
+              <span class="ss-summary-card__val">4h 18</span>
+              <span class="ss-summary-card__sub">08:14 → 12:32</span>
+            </div>
+          </div>
+
+          <!-- End checklist -->
+          <div class="ss-end-checklist">
+            <div class="ss-end-checklist__head">
+              <span class="ss-end-checklist__title">Checklist de fin</span>
+            </div>
+            <!-- Reuse ss-fw-item pattern for end checks -->
+            <div class="ss-fw-item">
+              <div class="ss-fw-check ss-fw-check--done">
+                <svg width="11" height="9" viewBox="0 0 11 9" fill="none"><path d="M1 4.5L4 7.5L10 1.5" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </div>
+              <div class="ss-fw-content">
+                <span class="ss-fw-label ss-fw-label--done">Lectures finales enregistrées (GF, pH, turbidité)</span>
+                <span class="ss-fw-attested">✓ GF 3.8 °P · pH 4.31 · Turbidité 1.2 NTU</span>
+              </div>
+            </div>
+            <div class="ss-fw-item">
+              <div class="ss-fw-check ss-fw-check--done">
+                <svg width="11" height="9" viewBox="0 0 11 9" fill="none"><path d="M1 4.5L4 7.5L10 1.5" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </div>
+              <div class="ss-fw-content">
+                <span class="ss-fw-label ss-fw-label--done">Tank source (CCT 2) marqué vide / CIP requis</span>
+              </div>
+            </div>
+            <div class="ss-fw-item">
+              <div class="ss-fw-check" id="end-check-3" onclick="toggleEndCheck(this)" style="cursor:pointer">
+              </div>
+              <div class="ss-fw-content">
+                <span class="ss-fw-label" id="end-check-3-label">Pertes soutirage documentées et validées</span>
+                <span class="ss-fw-desc">Confirmer que les pertes (0.7 hl) sont justifiées ou signaler une anomalie.</span>
+              </div>
+            </div>
+
+            <div class="ss-firewall__action">
+              <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--ink-mute);letter-spacing:0.06em">
+                Ce récapitulatif alimentera le digest email de fin de journée.
+              </span>
+            </div>
+          </div>
+
+          <!-- FORM BODY SLOT — final readings injection -->
+          <div class="ss-slot-placeholder">
+            <svg width="28" height="28" viewBox="0 0 28 28" fill="none" style="color:var(--ink-faint)"><rect x="4" y="4" width="20" height="20" rx="2" stroke="currentColor" stroke-width="1.4" stroke-dasharray="3 2"/></svg>
+            <span class="ss-slot-placeholder__label"><!-- FORM_BODY_SLOT --></span>
+            <span class="ss-slot-placeholder__hint">Lectures finales + notes de clôture, injectées via <code>$formBody</code></span>
+          </div>
+
+        </div>
+      </div><!-- /#view-end -->
+
+      <!-- ════════════ VIEW: closed ════════════ -->
+      <div id="view-closed" style="display:none">
+        <!-- Terminal banner -->
+        <div class="ss-terminal-banner ss-terminal-banner--closed">
+          <div class="ss-terminal-banner__icon">
+            <svg width="22" height="22" viewBox="0 0 22 22" fill="none"><circle cx="11" cy="11" r="9" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 11.5L9.5 14.5L15.5 8.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+          <div class="ss-terminal-banner__body">
+            <div class="ss-terminal-banner__heading">Session clôturée avec succès</div>
+            <div class="ss-terminal-banner__meta">
+              Clôturée par J. Martin · 12:32 · Durée totale : 4 h 18 min
+            </div>
+          </div>
+        </div>
+
+        <div class="ss-body__phase-label">Récapitulatif — Lecture seule</div>
+        <div class="ss-body__content">
+          <!-- Read-only summary cards -->
+          <div class="ss-summary-grid">
+            <div class="ss-summary-card">
+              <span class="ss-summary-card__key">Volume soutiré</span>
+              <span class="ss-summary-card__val ss-summary-card__val--ok">24.8</span>
+              <span class="ss-summary-card__sub">hl · 2.7 % de pertes</span>
+            </div>
+            <div class="ss-summary-card">
+              <span class="ss-summary-card__key">Tank destination</span>
+              <span class="ss-summary-card__val" style="font-size:20px">BBT 4</span>
+              <span class="ss-summary-card__sub">Pression finale 0.8 bar</span>
+            </div>
+            <div class="ss-summary-card">
+              <span class="ss-summary-card__key">Durée</span>
+              <span class="ss-summary-card__val">4h 18</span>
+              <span class="ss-summary-card__sub">08:14 → 12:32</span>
+            </div>
+          </div>
+          <p style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.1em;color:var(--ink-mute);text-align:center;padding:24px">
+            — SESSION CLÔTURÉE — AUCUNE MODIFICATION POSSIBLE —
+          </p>
+        </div>
+      </div><!-- /#view-closed -->
+
+      <!-- ════════════ VIEW: abandoned ════════════ -->
+      <div id="view-abandoned" style="display:none">
+        <!-- Terminal banner -->
+        <div class="ss-terminal-banner ss-terminal-banner--abandoned">
+          <div class="ss-terminal-banner__icon">
+            <svg width="22" height="22" viewBox="0 0 22 22" fill="none"><path d="M11 7v5M11 15v.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="11" cy="11" r="9" stroke="currentColor" stroke-width="1.5"/></svg>
+          </div>
+          <div class="ss-terminal-banner__body">
+            <div class="ss-terminal-banner__heading">Session abandonnée</div>
+            <div class="ss-terminal-banner__meta">
+              Abandonnée par M. Dupont · 09:03 · Phase : En cours
+            </div>
+            <div class="ss-terminal-banner__reason">
+              Raison : Fuite détectée sur la vanne de sortie CCT 2 — intervention maintenance requise avant nouveau soutirage.
+            </div>
+          </div>
+        </div>
+
+        <div class="ss-body__phase-label">Historique — Lecture seule</div>
+        <div class="ss-body__content">
+          <p style="font-size:13px;color:var(--ink-mute);line-height:1.6">
+            Les événements liés à cette session sont conservés. Le lot CCT 2 · Embuscade #232 reste associé à cette session.
+            Une corrective note a été ajoutée dans le journal de bord.
+          </p>
+          <p style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.1em;color:var(--ember);text-align:center;padding:24px">
+            — SESSION ABANDONNÉE — AUCUNE REPRISE POSSIBLE —
+          </p>
+        </div>
+      </div><!-- /#view-abandoned -->
+
+    </div><!-- /.ss-body -->
+
+    <!-- ── RIGHT: Audit rail ─────────────────────────────────── -->
+    <aside class="ss-rail" aria-label="Journal des actions">
+      <div class="ss-rail__head">
+        <span class="ss-rail__title">Activité</span>
+        <span class="ss-rail__count">5 entrées</span>
+      </div>
+
+      <button class="ss-rail__toggle" onclick="toggleRail(this)" aria-label="Afficher/masquer le journal" aria-expanded="true">
+        Journal ▾
+      </button>
+
+      <div class="ss-rail__entries" id="rail-entries">
+
+        <!-- Entry 1 — session opened (synthetic, from op_sessions row) -->
+        <div class="ss-rail__entry">
+          <div class="ss-rail__dot-col">
+            <div class="ss-rail__dot ss-rail__dot--phase"></div>
+            <div class="ss-rail__connector"></div>
+          </div>
+          <div class="ss-rail__entry-body">
+            <span class="ss-rail__entry-type">Session ouverte</span>
+            <span class="ss-rail__entry-actor">M. Dupont</span>
+            <span class="ss-rail__entry-time">08:14</span>
+          </div>
+        </div>
+
+        <!-- Entry 2 — CIP attested -->
+        <div class="ss-rail__entry">
+          <div class="ss-rail__dot-col">
+            <div class="ss-rail__dot ss-rail__dot--cip"></div>
+            <div class="ss-rail__connector"></div>
+          </div>
+          <div class="ss-rail__entry-body">
+            <span class="ss-rail__entry-type">CIP attesté</span>
+            <span class="ss-rail__entry-actor">M. Dupont</span>
+            <span class="ss-rail__entry-time">08:22</span>
+          </div>
+        </div>
+
+        <!-- Entry 3 — eligibility attested -->
+        <div class="ss-rail__entry">
+          <div class="ss-rail__dot-col">
+            <div class="ss-rail__dot ss-rail__dot--eligibility"></div>
+            <div class="ss-rail__connector"></div>
+          </div>
+          <div class="ss-rail__entry-body">
+            <span class="ss-rail__entry-type">Lots validés</span>
+            <span class="ss-rail__entry-actor">M. Dupont</span>
+            <span class="ss-rail__entry-time">08:25</span>
+            <span class="ss-rail__entry-payload">CCT 2 · 88 h cold crash</span>
+          </div>
+        </div>
+
+        <!-- Entry 4 — phase advanced start→in_progress -->
+        <div class="ss-rail__entry">
+          <div class="ss-rail__dot-col">
+            <div class="ss-rail__dot ss-rail__dot--phase"></div>
+            <div class="ss-rail__connector"></div>
+          </div>
+          <div class="ss-rail__entry-body">
+            <span class="ss-rail__entry-type">Phase avancée → En cours</span>
+            <span class="ss-rail__entry-actor">M. Dupont</span>
+            <span class="ss-rail__entry-time">08:31</span>
+          </div>
+        </div>
+
+        <!-- Entry 5 — handover -->
+        <div class="ss-rail__entry">
+          <div class="ss-rail__dot-col">
+            <div class="ss-rail__dot ss-rail__dot--handover"></div>
+            <!-- No connector after last entry -->
+          </div>
+          <div class="ss-rail__entry-body">
+            <span class="ss-rail__entry-type">Passage de main</span>
+            <span class="ss-rail__entry-actor">M. Dupont → J. Martin</span>
+            <span class="ss-rail__entry-time">09:45</span>
+            <span class="ss-rail__entry-payload">Soutirage en cours, 2 lectures OK</span>
+          </div>
+        </div>
+
+      </div><!-- /.ss-rail__entries -->
+    </aside>
+
+  </div><!-- /.ss-layout -->
+
+  <!-- ══════════════════════════════════════════════════════════
+       STICKY LIFECYCLE FOOTER
+       PHP: render only when session is not closed/abandoned
+  ═══════════════════════════════════════════════════════════════ -->
+  <footer class="ss-footer" id="ss-footer">
+
+    <!-- Primary action — Avancer -->
+    <!-- Label changes per phase: start→"Démarrer la session" / in_progress→"Passer à la clôture" / end→"Clôturer" -->
+    <button class="ss-btn-advance" id="btn-advance">
+      <svg class="ss-icon" viewBox="0 0 14 12" fill="none"><path d="M8 1L13 6m0 0L8 11M13 6H1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span id="btn-advance-label">Passer à la clôture</span>
+    </button>
+
+    <!-- Blocked indicator (shows when advance is disabled) -->
+    <div class="ss-advance-blocked" id="advance-blocked" style="display:none">
+      <div class="ss-advance-blocked__dot"></div>
+      <span id="advance-blocked-reason">En attente de confirmation</span>
+    </div>
+
+    <div class="ss-footer__sep"></div>
+
+    <!-- Passer la main -->
+    <button class="ss-btn-ghost" id="btn-handover" title="Transférer la session à un autre opérateur">
+      <svg class="ss-icon" viewBox="0 0 14 12" fill="none"><path d="M2 6h4m0 0L4 4m2 2L4 8M12 6H8m0 0l2-2M8 6l2 2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Passer la main
+    </button>
+
+    <!-- Ajouter une note -->
+    <button class="ss-btn-ghost" id="btn-note" title="Ajouter une note au journal">
+      <svg class="ss-icon" viewBox="0 0 14 14" fill="none"><rect x="1" y="2" width="12" height="10" rx="1.5" stroke="currentColor" stroke-width="1.2"/><path d="M4 5h6M4 8h4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+      Note
+    </button>
+
+    <div class="ss-footer__right">
+      <!-- Abandonner — rightmost, danger styling, never next to Avancer -->
+      <button class="ss-btn-ghost ss-btn-ghost--danger" id="btn-abandon" onclick="openAbandon()">
+        <svg class="ss-icon" viewBox="0 0 14 14" fill="none"><path d="M2 2l10 10M12 2L2 12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        Abandonner
+      </button>
+    </div>
+
+  </footer>
+
+  <!-- ══════════════════════════════════════════════════════════
+       ABANDON DIALOG
+  ═══════════════════════════════════════════════════════════════ -->
+  <dialog class="ss-abandon-dialog" id="abandon-dialog">
+    <div class="ss-abandon-dialog__head">
+      <span class="ss-abandon-dialog__title">Abandonner la session</span>
+      <button class="ss-abandon-dialog__close" onclick="document.getElementById('abandon-dialog').close()">✕</button>
+    </div>
+    <div class="ss-abandon-dialog__body">
+      <label class="ss-abandon-dialog__label" for="abandon-reason">
+        Raison de l'abandon — obligatoire, visible dans le journal de bord
+      </label>
+      <textarea class="ss-abandon-dialog__textarea" id="abandon-reason" placeholder="Ex : fuite sur vanne, panne matériel, priorité rebrassage…" rows="4"></textarea>
+    </div>
+    <div class="ss-abandon-dialog__foot">
+      <button class="ss-btn-ghost" onclick="document.getElementById('abandon-dialog').close()">Annuler</button>
+      <button class="ss-btn-confirm-abandon" onclick="confirmAbandon()">Confirmer l'abandon</button>
+    </div>
+  </dialog>
+
+</div><!-- /.ss-page -->
+
+<!-- ═══════════════════════════════════════════════════════════════
+     MOCKUP INTERACTION SCRIPT (remove in production — replace with
+     real POST calls to /api/session-action.php)
+═══════════════════════════════════════════════════════════════════ -->
+<script>
+// ── View state definitions ──────────────────────────────────────
+const VIEWS = {
+  start: {
+    stepperState: { start:'done', ip:'future', end:'future' },
+    terminalPill: { text:'● Démarrage', cls:'ss-terminal-pill--open' },
+    advanceLabel: 'Démarrer la session',
+    advanceEnabled: true,
+    blockedReason: '',
+    showHandoverBanner: false,
+    showFooter: true,
+    headerElapsed: '17 min',
+  },
+  in_progress: {
+    stepperState: { start:'done', ip:'active', end:'future' },
+    terminalPill: { text:'● En cours', cls:'ss-terminal-pill--open' },
+    advanceLabel: 'Passer à la clôture',
+    advanceEnabled: true,
+    blockedReason: '',
+    showHandoverBanner: true,
+    showFooter: true,
+    headerElapsed: '3 h 22 min',
+  },
+  end: {
+    stepperState: { start:'done', ip:'done', end:'active' },
+    terminalPill: { text:'● Fin', cls:'ss-terminal-pill--open' },
+    advanceLabel: 'Clôturer la session',
+    advanceEnabled: false,
+    blockedReason: 'Checklist de fin incomplète',
+    showHandoverBanner: false,
+    showFooter: true,
+    headerElapsed: '4 h 18 min',
+  },
+  closed: {
+    stepperState: { start:'done', ip:'done', end:'done' },
+    terminalPill: { text:'✓ Clôturée', cls:'ss-terminal-pill--closed' },
+    advanceLabel: '',
+    advanceEnabled: false,
+    blockedReason: '',
+    showHandoverBanner: false,
+    showFooter: false,
+    headerElapsed: '4 h 18 min',
+  },
+  abandoned: {
+    stepperState: { start:'done', ip:'active', end:'future' },
+    terminalPill: { text:'✕ Abandonnée', cls:'ss-terminal-pill--abandoned' },
+    advanceLabel: '',
+    advanceEnabled: false,
+    blockedReason: '',
+    showHandoverBanner: false,
+    showFooter: false,
+    headerElapsed: '0 h 49 min',
+  },
+};
+
+function showView(viewKey) {
+  const v = VIEWS[viewKey];
+  if (!v) return;
+
+  // Update switcher buttons
+  document.querySelectorAll('.mockup-switcher button').forEach(b => {
+    b.classList.toggle('active', b.textContent.toLowerCase().includes(viewKey.replace('_',' ')));
+  });
+
+  // Show/hide phase body views
+  ['start','in-progress','end','closed','abandoned'].forEach(k => {
+    const el = document.getElementById('view-' + k);
+    if (el) el.style.display = 'none';
+  });
+  const target = document.getElementById('view-' + viewKey.replace('_','-'));
+  if (target) target.style.display = '';
+
+  // Update stepper
+  const stepStart = document.getElementById('step-start');
+  const stepIp    = document.getElementById('step-in-progress');
+  const stepEnd   = document.getElementById('step-end');
+  const steps = { start: stepStart, ip: stepIp, end: stepEnd };
+  const stateMap = { start: 'start', ip: 'ip', end: 'end' };
+  const stateTarget = v.stepperState;
+
+  ['start','ip','end'].forEach(k => {
+    const el = steps[k];
+    if (!el) return;
+    el.classList.remove('ss-step--done','ss-step--active','ss-step--future');
+    const s = stateTarget[k === 'ip' ? 'ip' : k];
+    if (s === 'done')   el.classList.add('ss-step--done');
+    if (s === 'active') el.classList.add('ss-step--active');
+    if (s === 'future') el.classList.add('ss-step--future');
+  });
+
+  // Terminal pill
+  const pill = document.getElementById('terminal-pill');
+  pill.className = 'ss-terminal-pill ' + v.terminalPill.cls;
+  pill.textContent = v.terminalPill.text;
+
+  // Live dot + elapsed
+  const liveEl = document.querySelector('.ss-live-dot');
+  const elapsedEl = document.querySelector('.ss-elapsed span');
+  if (liveEl) liveEl.style.display = (viewKey === 'closed' || viewKey === 'abandoned') ? 'none' : '';
+  if (elapsedEl) elapsedEl.textContent = v.headerElapsed;
+
+  // Footer
+  const footer = document.getElementById('ss-footer');
+  if (footer) footer.style.display = v.showFooter ? '' : 'none';
+
+  // Advance button
+  const btnAdv = document.getElementById('btn-advance');
+  const advLabel = document.getElementById('btn-advance-label');
+  const blocked = document.getElementById('advance-blocked');
+  if (btnAdv) {
+    btnAdv.disabled = !v.advanceEnabled;
+    if (advLabel) advLabel.textContent = v.advanceLabel;
+  }
+  if (blocked) {
+    blocked.style.display = (!v.advanceEnabled && v.blockedReason && v.showFooter) ? 'flex' : 'none';
+    const br = document.getElementById('advance-blocked-reason');
+    if (br) br.textContent = v.blockedReason;
+  }
+
+  // Handover banner
+  const hb = document.getElementById('handover-banner');
+  if (hb) hb.style.display = v.showHandoverBanner ? 'flex' : 'none';
+
+  // Hide handover + note + abandon in terminal states
+  ['btn-handover','btn-note','btn-abandon'].forEach(id => {
+    const b = document.getElementById(id);
+    if (b) b.style.display = v.showFooter ? '' : 'none';
+  });
+}
+
+// Audit rail collapse (tablet)
+function toggleRail(btn) {
+  const entries = document.getElementById('rail-entries');
+  const expanded = btn.getAttribute('aria-expanded') === 'true';
+  entries.classList.toggle('rail-collapsed', expanded);
+  btn.setAttribute('aria-expanded', String(!expanded));
+  btn.textContent = expanded ? 'Journal ▾' : 'Journal ▲';
+}
+
+// End-phase checkbox toggle (demo only)
+function toggleEndCheck(el) {
+  const isDone = el.classList.toggle('ss-fw-check--done');
+  const label = document.getElementById('end-check-3-label');
+  if (label) label.classList.toggle('ss-fw-label--done', isDone);
+  if (isDone) {
+    el.innerHTML = '<svg width="11" height="9" viewBox="0 0 11 9" fill="none"><path d="M1 4.5L4 7.5L10 1.5" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    // In production: POST /api/session-action.php { action:'attest_firewall_qc', session_id }
+    // then re-check advance eligibility
+  } else {
+    el.innerHTML = '';
+  }
+}
+
+// Abandon dialog
+function openAbandon() {
+  document.getElementById('abandon-dialog').showModal();
+}
+function confirmAbandon() {
+  const reason = document.getElementById('abandon-reason').value.trim();
+  if (!reason) {
+    document.getElementById('abandon-reason').focus();
+    document.getElementById('abandon-reason').style.borderColor = 'var(--ember)';
+    return;
+  }
+  // In production: POST /api/session-action.php { action:'abandon', session_id, payload:{reason} }
+  document.getElementById('abandon-dialog').close();
+  showView('abandoned');
+}
+
+// Mockup-switcher active state fix (text match fallback)
+function syncSwitcher(viewKey) {
+  const labels = {
+    start:'Démarrage', in_progress:'En cours', end:'Fin',
+    closed:'Clôturée', abandoned:'Abandonnée'
+  };
+  document.querySelectorAll('.mockup-switcher button').forEach(b => {
+    const matches = b.textContent.includes(labels[viewKey] || '');
+    b.classList.toggle('active', matches);
+  });
+}
+
+// ── Init ──
+showView('in_progress');
+
+// Override switcher onclick to also sync
+document.querySelectorAll('.mockup-switcher button').forEach(b => {
+  const orig = b.getAttribute('onclick');
+  b.onclick = function() {
+    const m = orig.match(/showView\('(.+?)'\)/);
+    if (m) { showView(m[1]); syncSwitcher(m[1]); }
+  };
+});
+syncSwitcher('in_progress');
+</script>
+
+</body>
+</html>

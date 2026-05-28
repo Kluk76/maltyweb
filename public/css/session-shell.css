@@ -1,0 +1,863 @@
+/* session-shell.css — Session Shell component styles.
+ * Source: public/_design/session-shell.html (UI/UX mockup, operator-approved 2026-05-28).
+ * Scoped under body.session-shell; all colours via var(--…) from app.css :root.
+ * ────────────────────────────────────────────────────────────────────────────── */
+
+/* ── Page wrapper ── */
+body.session-shell .ss-page {
+  position: relative; z-index: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  /* Reserve space for sticky footer (64px) */
+  padding-bottom: 64px;
+}
+
+body.session-shell {
+  font-family: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  background-image:
+    radial-gradient(1200px 800px at 8% -8%, color-mix(in srgb, var(--oak) 10%, transparent), transparent 60%),
+    radial-gradient(900px 600px at 105% 105%, color-mix(in srgb, var(--hop) 6%, transparent), transparent 65%);
+  background-attachment: fixed;
+}
+
+/* Grain overlay matching body.home */
+body.session-shell::before {
+  content: "";
+  position: fixed; inset: 0;
+  pointer-events: none; z-index: 0;
+  opacity: 0.05;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.95  0 0 0 0 0.85  0 0 0 0 0.65  0 0 0 1 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+
+/* ══════════════════════════════════════════════════════════════
+   SESSION HEADER — compact identity strip
+   ══════════════════════════════════════════════════════════════ */
+body.session-shell .ss-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 24px 13px;
+  border-bottom: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--bg-elev) 85%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  position: sticky;
+  top: 0;
+  z-index: 60;
+  flex-wrap: wrap;
+}
+
+/* Back button */
+body.session-shell .ss-header__back {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px; letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--ink-mute); background: none; border: none; cursor: pointer;
+  padding: 4px 0; flex-shrink: 0;
+  text-decoration: none;
+  transition: color .15s;
+}
+body.session-shell .ss-header__back:hover { color: var(--oak); }
+
+/* Divider between back + identity */
+body.session-shell .ss-header__sep {
+  width: 1px; height: 28px;
+  background: var(--hairline);
+  flex-shrink: 0;
+}
+
+/* Identity block */
+body.session-shell .ss-header__identity { flex: 1; min-width: 0; }
+
+body.session-shell .ss-header__type-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--hop);
+  background: color-mix(in srgb, var(--hop) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--hop) 30%, transparent);
+  border-radius: 2px; padding: 2px 7px;
+  margin-bottom: 5px;
+}
+
+body.session-shell .ss-header__title {
+  font-family: "Fraunces", "Times New Roman", serif;
+  font-variation-settings: "opsz" 96;
+  font-size: 22px; font-weight: 300; letter-spacing: -0.015em;
+  color: var(--ink); line-height: 1.1; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+body.session-shell .ss-header__title em {
+  font-style: italic; color: var(--oak);
+}
+
+body.session-shell .ss-header__sub {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px; letter-spacing: 0.06em; color: var(--ink-mute);
+  margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* Right cluster — live elapsed + operator chips */
+body.session-shell .ss-header__right {
+  display: flex; align-items: center; gap: 12px; flex-shrink: 0;
+}
+
+body.session-shell .ss-elapsed {
+  display: flex; align-items: center; gap: 6px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px; letter-spacing: 0.06em; color: var(--ink-mute);
+}
+body.session-shell .ss-live-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--hop);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--hop) 50%, transparent);
+  animation: ss-pulse 2.4s ease-in-out infinite;
+  flex-shrink: 0;
+}
+@keyframes ss-pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+/* Operator chips — compact pill showing initials + name */
+body.session-shell .ss-op-chips { display: flex; align-items: center; gap: 6px; }
+body.session-shell .ss-op-chip {
+  display: flex; align-items: center; gap: 5px;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 16px;
+  padding: 4px 9px 4px 4px;
+}
+body.session-shell .ss-op-av {
+  width: 22px; height: 22px; border-radius: 50%;
+  background: var(--bg-side);
+  border: 1px solid var(--hairline-2);
+  display: flex; align-items: center; justify-content: center;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 8px; font-weight: 600; color: var(--oak);
+  flex-shrink: 0;
+}
+body.session-shell .ss-op-av--active {
+  background: color-mix(in srgb, var(--hop) 14%, var(--bg-side));
+  border-color: color-mix(in srgb, var(--hop) 40%, transparent);
+  color: var(--hop-deep);
+}
+body.session-shell .ss-op-chip__info { display: flex; flex-direction: column; gap: 0; }
+body.session-shell .ss-op-chip__name {
+  font-family: "DM Sans", sans-serif;
+  font-size: 11px; font-weight: 500; color: var(--ink-soft); line-height: 1.1;
+}
+body.session-shell .ss-op-chip__role {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 8.5px; letter-spacing: 0.04em; color: var(--ink-mute);
+}
+
+/* Journal de bord link */
+body.session-shell .ss-header__journal {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--oak); text-decoration: none;
+  border: 1px solid var(--hairline);
+  border-radius: 2px; padding: 5px 10px;
+  transition: color .15s, border-color .15s, background .15s;
+}
+body.session-shell .ss-header__journal:hover {
+  color: var(--oak-deep); border-color: var(--hairline-2);
+  background: color-mix(in srgb, var(--oak) 6%, transparent);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   PHASE STEPPER — top, strict forward-only
+   ══════════════════════════════════════════════════════════════ */
+body.session-shell .ss-stepper {
+  display: flex; align-items: stretch;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--bg-elev);
+  padding: 0 24px;
+  gap: 0;
+}
+
+body.session-shell .ss-step {
+  flex: 1; display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px;
+  position: relative;
+  /* No pointer on any step — strictly non-clickable */
+  cursor: default;
+  user-select: none;
+}
+
+/* Connector line between steps */
+body.session-shell .ss-step + .ss-step::before {
+  content: "";
+  position: absolute; left: 0; top: 50%;
+  transform: translateY(-50%);
+  width: 1px; height: 50%;
+  background: var(--hairline);
+}
+
+/* Step state: done ✓ */
+body.session-shell .ss-step--done .ss-step__circle {
+  background: var(--hop-deep);
+  border-color: var(--hop-deep);
+  color: var(--bg);
+}
+body.session-shell .ss-step--done .ss-step__label { color: var(--hop-deep); }
+body.session-shell .ss-step--done .ss-step__sub { color: var(--ink-mute); }
+
+/* Step state: active (current phase) */
+body.session-shell .ss-step--active {
+  border-bottom: 2px solid var(--hop);
+  margin-bottom: -1px; /* overlap the container border */
+}
+body.session-shell .ss-step--active .ss-step__circle {
+  background: color-mix(in srgb, var(--hop) 12%, var(--bg-elev));
+  border-color: var(--hop);
+  color: var(--hop);
+}
+body.session-shell .ss-step--active .ss-step__label { color: var(--hop); font-weight: 600; }
+body.session-shell .ss-step--active .ss-step__sub { color: var(--ink-soft); }
+
+/* Step state: future (locked) */
+body.session-shell .ss-step--future .ss-step__circle {
+  background: var(--bg-elev);
+  border-color: var(--hairline);
+  color: var(--ink-faint);
+}
+body.session-shell .ss-step--future .ss-step__label { color: var(--ink-faint); }
+body.session-shell .ss-step--future .ss-step__sub { color: var(--ink-faint); }
+
+/* The numbered/checkmark circle */
+body.session-shell .ss-step__circle {
+  width: 26px; height: 26px; border-radius: 50%;
+  border: 1.5px solid;
+  display: flex; align-items: center; justify-content: center;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px; font-weight: 600;
+  flex-shrink: 0;
+  transition: background .2s, border-color .2s, color .2s;
+}
+
+body.session-shell .ss-step__info { flex: 1; min-width: 0; }
+body.session-shell .ss-step__label {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase;
+  display: block;
+  transition: color .2s;
+}
+body.session-shell .ss-step__sub {
+  font-family: "DM Sans", sans-serif;
+  font-size: 11.5px; color: var(--ink-mute);
+  display: block; margin-top: 1px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* Terminal status pill — appended to stepper */
+body.session-shell .ss-step--terminal {
+  flex: 0 0 auto; padding: 12px 16px;
+}
+body.session-shell .ss-terminal-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase;
+  padding: 4px 9px; border-radius: 2px;
+}
+body.session-shell .ss-terminal-pill--open {
+  color: var(--bbt);
+  background: color-mix(in srgb, var(--bbt) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--bbt) 28%, transparent);
+}
+body.session-shell .ss-terminal-pill--closed {
+  color: var(--hop-deep);
+  background: color-mix(in srgb, var(--hop-deep) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--hop-deep) 28%, transparent);
+}
+body.session-shell .ss-terminal-pill--abandoned {
+  color: var(--ember);
+  background: color-mix(in srgb, var(--ember) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ember) 28%, transparent);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   HANDOVER BANNER — shows when current user is taking over
+   ══════════════════════════════════════════════════════════════ */
+body.session-shell .ss-handover-banner {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 10px 24px;
+  background: color-mix(in srgb, var(--cold) 8%, var(--bg));
+  border-bottom: 1px solid color-mix(in srgb, var(--cold) 22%, transparent);
+}
+body.session-shell .ss-handover-banner__icon {
+  color: var(--cold); font-size: 14px; flex-shrink: 0; margin-top: 1px;
+}
+body.session-shell .ss-handover-banner__text {
+  flex: 1;
+  font-size: 13px; color: var(--ink-soft); line-height: 1.45;
+}
+body.session-shell .ss-handover-banner__text strong { color: var(--ink); }
+body.session-shell .ss-handover-banner__dismiss {
+  background: none; border: none; cursor: pointer;
+  color: var(--ink-mute); font-size: 14px; padding: 2px;
+  transition: color .15s;
+}
+body.session-shell .ss-handover-banner__dismiss:hover { color: var(--ink); }
+
+/* ══════════════════════════════════════════════════════════════
+   MAIN LAYOUT — body (2-col: form + audit rail)
+   ══════════════════════════════════════════════════════════════ */
+body.session-shell .ss-layout {
+  display: grid;
+  grid-template-columns: 1fr 256px;
+  grid-template-areas: "body rail";
+  gap: 0;
+  flex: 1;
+  align-items: start;
+}
+
+/* ── Phase body / form slot ── */
+body.session-shell .ss-body {
+  grid-area: body;
+  border-right: 1px solid var(--hairline);
+}
+
+body.session-shell .ss-body__phase-label {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px; letter-spacing: 0.28em; text-transform: uppercase;
+  color: var(--ink-mute);
+  padding: 18px 24px 0;
+  display: flex; align-items: center; gap: 10px;
+}
+body.session-shell .ss-body__phase-label::after {
+  content: ""; flex: 1; height: 1px; background: var(--hairline);
+}
+
+/* The slot where $formBody HTML is injected */
+body.session-shell .ss-body__content {
+  padding: 20px 24px 32px;
+}
+
+/* ── FORM BODY SLOT placeholder ── */
+body.session-shell .ss-slot-placeholder {
+  min-height: 240px;
+  border: 2px dashed var(--hairline-2);
+  border-radius: 4px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px;
+  color: var(--ink-mute);
+  background: color-mix(in srgb, var(--bg-elev) 50%, transparent);
+}
+body.session-shell .ss-slot-placeholder__label {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px; letter-spacing: 0.22em; text-transform: uppercase;
+  color: var(--ink-faint);
+}
+body.session-shell .ss-slot-placeholder__hint {
+  font-size: 12px; color: var(--ink-faint);
+  max-width: 280px; text-align: center; line-height: 1.5;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   AUDIT RAIL — right column, chronological op_session_steps
+   ══════════════════════════════════════════════════════════════ */
+body.session-shell .ss-rail {
+  grid-area: rail;
+  position: sticky;
+  top: 0;
+  align-self: start;
+  padding: 16px 0;
+  min-height: 200px;
+}
+
+body.session-shell .ss-rail__head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 16px 10px;
+  border-bottom: 1px solid var(--hairline);
+  margin-bottom: 4px;
+}
+body.session-shell .ss-rail__title {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px; letter-spacing: 0.28em; text-transform: uppercase;
+  color: var(--ink-mute);
+}
+body.session-shell .ss-rail__count {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px; color: var(--ink-faint);
+}
+
+/* Step entries in the rail */
+body.session-shell .ss-rail__entry {
+  display: flex; gap: 10px;
+  padding: 8px 16px;
+  transition: background .12s;
+}
+body.session-shell .ss-rail__entry:hover {
+  background: color-mix(in srgb, var(--hop) 5%, transparent);
+}
+
+/* Left: dot + vertical connector */
+body.session-shell .ss-rail__dot-col {
+  display: flex; flex-direction: column; align-items: center;
+  flex-shrink: 0; padding-top: 3px;
+}
+body.session-shell .ss-rail__dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--hairline-2); flex-shrink: 0;
+}
+body.session-shell .ss-rail__dot--phase     { background: var(--hop); }
+body.session-shell .ss-rail__dot--cip       { background: var(--ok); }
+body.session-shell .ss-rail__dot--eligibility { background: var(--ok); }
+body.session-shell .ss-rail__dot--firewall  { background: var(--ok); }
+body.session-shell .ss-rail__dot--handover  { background: var(--cold); }
+body.session-shell .ss-rail__dot--abandon   { background: var(--ember); }
+body.session-shell .ss-rail__dot--note      { background: var(--oak); }
+body.session-shell .ss-rail__dot--event     { background: var(--bbt); }
+body.session-shell .ss-rail__dot--recap     { background: var(--hop-deep); }
+
+body.session-shell .ss-rail__connector {
+  flex: 1; width: 1px; background: var(--hairline); margin: 3px 0;
+  min-height: 14px;
+}
+
+/* Right: text content */
+body.session-shell .ss-rail__entry-body { flex: 1; min-width: 0; }
+body.session-shell .ss-rail__entry-type {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px; letter-spacing: 0.1em;
+  color: var(--ink-mute); display: block;
+}
+body.session-shell .ss-rail__entry-actor {
+  font-size: 12px; font-weight: 500; color: var(--ink-soft);
+  display: block; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+body.session-shell .ss-rail__entry-time {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px; color: var(--ink-faint);
+  display: block; margin-top: 1px;
+}
+body.session-shell .ss-rail__entry-payload {
+  font-size: 11px; color: var(--ink-mute); margin-top: 3px;
+  line-height: 1.4; font-style: italic;
+  display: block;
+}
+
+/* Rail collapse toggle (tablet only) */
+body.session-shell .ss-rail__toggle {
+  display: none;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--ink-mute); background: none;
+  border: 1px solid var(--hairline-2); border-radius: 2px;
+  padding: 5px 10px; cursor: pointer;
+  transition: color .15s, border-color .15s;
+}
+body.session-shell .ss-rail__toggle:hover { color: var(--hop); border-color: var(--hop); }
+
+/* ══════════════════════════════════════════════════════════════
+   QC FIREWALL CHECKLIST — phase=start body
+   ══════════════════════════════════════════════════════════════ */
+body.session-shell .ss-firewall {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 4px; overflow: hidden;
+  margin-bottom: 20px;
+}
+body.session-shell .ss-firewall__head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--hairline);
+}
+body.session-shell .ss-firewall__title {
+  font-family: "Fraunces", "Times New Roman", serif;
+  font-variation-settings: "opsz" 96;
+  font-size: 16px; font-weight: 300; color: var(--ink);
+}
+body.session-shell .ss-firewall__progress {
+  display: flex; align-items: center; gap: 8px;
+}
+body.session-shell .ss-firewall__count {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px; letter-spacing: 0.06em; color: var(--ink-mute);
+}
+body.session-shell .ss-firewall__bar-wrap {
+  width: 72px; height: 4px;
+  background: var(--hairline); border-radius: 2px; overflow: hidden;
+}
+body.session-shell .ss-firewall__bar-fill {
+  height: 100%; border-radius: 2px;
+  background: var(--hop); transition: width .4s ease;
+}
+
+/* Checklist row */
+body.session-shell .ss-fw-item {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--hairline);
+  transition: background .12s;
+}
+body.session-shell .ss-fw-item:last-of-type { border-bottom: none; }
+body.session-shell .ss-fw-item:hover { background: color-mix(in srgb, var(--hop) 4%, var(--bg-elev)); }
+
+body.session-shell .ss-fw-check {
+  width: 20px; height: 20px; border-radius: 3px;
+  border: 1.5px solid var(--hairline-2);
+  background: var(--bg);
+  flex-shrink: 0; margin-top: 1px;
+  display: flex; align-items: center; justify-content: center;
+  transition: border-color .15s, background .15s;
+}
+body.session-shell .ss-fw-check--done {
+  background: var(--ok);
+  border-color: var(--ok);
+}
+
+body.session-shell .ss-fw-content { flex: 1; }
+body.session-shell .ss-fw-label {
+  font-size: 13.5px; color: var(--ink); line-height: 1.4; display: block;
+}
+body.session-shell .ss-fw-label--done {
+  color: var(--ink-mute);
+  text-decoration: line-through;
+  text-decoration-color: var(--hairline-2);
+}
+body.session-shell .ss-fw-desc {
+  font-size: 11.5px; color: var(--ink-mute); margin-top: 2px; line-height: 1.4; display: block;
+}
+body.session-shell .ss-fw-attested {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px; color: var(--ok); margin-top: 3px; display: block;
+}
+
+/* Blocked message */
+body.session-shell .ss-blocked-msg {
+  display: flex; align-items: flex-start; gap: 8px;
+  margin: 0 16px 14px;
+  padding: 9px 12px;
+  background: color-mix(in srgb, var(--ember) 7%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--ember) 25%, transparent);
+  border-radius: 3px;
+}
+body.session-shell .ss-blocked-msg__icon { color: var(--ember); flex-shrink: 0; margin-top: 1px; }
+body.session-shell .ss-blocked-msg__text {
+  font-size: 12.5px; color: var(--ember); line-height: 1.5;
+}
+
+/* Firewall footer action row */
+body.session-shell .ss-firewall__action {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 16px;
+  background: color-mix(in srgb, var(--bg-side) 50%, var(--bg-elev));
+  border-top: 1px solid var(--hairline);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   LIVE KPI STRIP — appears in in_progress phase
+   ══════════════════════════════════════════════════════════════ */
+body.session-shell .ss-kpi-strip {
+  display: flex; gap: 1px;
+  background: var(--hairline);
+  border: 1px solid var(--hairline);
+  border-radius: 4px; overflow: hidden;
+  margin-bottom: 20px;
+}
+body.session-shell .ss-kpi-cell {
+  flex: 1; padding: 12px 14px;
+  background: var(--bg-elev);
+  display: flex; flex-direction: column; gap: 2px;
+  min-width: 0;
+}
+body.session-shell .ss-kpi-cell__key {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--ink-mute);
+}
+body.session-shell .ss-kpi-cell__val {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 22px; font-weight: 600; color: var(--ink-soft); line-height: 1;
+}
+body.session-shell .ss-kpi-cell__val--ok   { color: var(--ok); }
+body.session-shell .ss-kpi-cell__val--warn { color: #7a5010; }
+body.session-shell .ss-kpi-cell__val--bad  { color: var(--ember); }
+body.session-shell .ss-kpi-cell__unit {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px; color: var(--ink-mute);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   END PHASE — summary cards grid
+   ══════════════════════════════════════════════════════════════ */
+body.session-shell .ss-summary-grid {
+  display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;
+  margin-bottom: 20px;
+}
+body.session-shell .ss-summary-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 4px; padding: 14px 16px;
+}
+body.session-shell .ss-summary-card__key {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--ink-mute); margin-bottom: 4px; display: block;
+}
+body.session-shell .ss-summary-card__val {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 26px; font-weight: 600; color: var(--ink-soft); line-height: 1;
+  display: block;
+}
+body.session-shell .ss-summary-card__val--ok   { color: var(--ok); }
+body.session-shell .ss-summary-card__val--warn { color: #7a5010; }
+body.session-shell .ss-summary-card__sub {
+  font-size: 11px; color: var(--ink-mute); margin-top: 2px; display: block;
+}
+
+/* End checklist */
+body.session-shell .ss-end-checklist {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 4px; overflow: hidden; margin-bottom: 20px;
+}
+body.session-shell .ss-end-checklist__head {
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--hairline);
+}
+body.session-shell .ss-end-checklist__title {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px; letter-spacing: 0.22em; text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   TERMINAL STATES — closed / abandoned
+   ══════════════════════════════════════════════════════════════ */
+body.session-shell .ss-terminal-banner {
+  display: flex; align-items: flex-start; gap: 14px;
+  padding: 18px 24px;
+  border-bottom: 1px solid var(--hairline);
+}
+body.session-shell .ss-terminal-banner--closed {
+  background: color-mix(in srgb, var(--ok) 7%, var(--bg));
+  border-bottom-color: color-mix(in srgb, var(--ok) 20%, transparent);
+}
+body.session-shell .ss-terminal-banner--abandoned {
+  background: color-mix(in srgb, var(--ember) 7%, var(--bg));
+  border-bottom-color: color-mix(in srgb, var(--ember) 22%, transparent);
+}
+body.session-shell .ss-terminal-banner__icon { font-size: 20px; flex-shrink: 0; margin-top: 2px; }
+body.session-shell .ss-terminal-banner--closed .ss-terminal-banner__icon { color: var(--ok); }
+body.session-shell .ss-terminal-banner--abandoned .ss-terminal-banner__icon { color: var(--ember); }
+body.session-shell .ss-terminal-banner__body { flex: 1; }
+body.session-shell .ss-terminal-banner__heading {
+  font-family: "Fraunces", "Times New Roman", serif;
+  font-variation-settings: "opsz" 96;
+  font-size: 18px; font-weight: 300; color: var(--ink); margin-bottom: 4px;
+}
+body.session-shell .ss-terminal-banner__meta {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px; letter-spacing: 0.06em; color: var(--ink-mute);
+}
+body.session-shell .ss-terminal-banner__reason {
+  font-size: 13px; color: var(--ink-soft); margin-top: 6px; line-height: 1.5;
+  background: color-mix(in srgb, var(--ember) 5%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--ember) 18%, transparent);
+  border-radius: 3px; padding: 7px 10px; display: inline-block;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   STICKY LIFECYCLE FOOTER
+   ══════════════════════════════════════════════════════════════ */
+body.session-shell .ss-footer {
+  position: fixed; bottom: 0; left: 0; right: 0;
+  z-index: 80;
+  background: color-mix(in srgb, var(--bg-side) 95%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-top: 1px solid var(--hairline-2);
+  padding: 10px 24px;
+  display: flex; align-items: center; gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* Primary action — Avancer */
+body.session-shell .ss-btn-advance {
+  padding: 10px 22px;
+  background: var(--hop);
+  color: var(--bg);
+  border: none; border-radius: 3px; cursor: pointer;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase;
+  display: flex; align-items: center; gap: 7px;
+  transition: background .18s, transform .12s, opacity .18s;
+  flex-shrink: 0;
+}
+body.session-shell .ss-btn-advance:hover:not(:disabled) {
+  background: var(--hop-soft); transform: translateY(-1px);
+}
+body.session-shell .ss-btn-advance:disabled {
+  opacity: 0.35; cursor: not-allowed; transform: none;
+}
+
+/* Blocked indicator beside advance button */
+body.session-shell .ss-advance-blocked {
+  display: flex; align-items: center; gap: 6px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px; letter-spacing: 0.06em; color: var(--ember);
+}
+body.session-shell .ss-advance-blocked__dot {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--ember); flex-shrink: 0;
+}
+
+/* Separator dot */
+body.session-shell .ss-footer__sep {
+  width: 4px; height: 4px; border-radius: 50%;
+  background: var(--hairline-2); flex-shrink: 0;
+}
+
+/* Secondary / ghost buttons */
+body.session-shell .ss-btn-ghost {
+  padding: 9px 16px;
+  background: none;
+  border: 1px solid var(--hairline-2); border-radius: 3px; cursor: pointer;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--ink-mute);
+  transition: color .15s, border-color .15s, background .15s;
+  display: flex; align-items: center; gap: 6px;
+  flex-shrink: 0;
+}
+body.session-shell .ss-btn-ghost:hover {
+  color: var(--ink); border-color: var(--ink-mute);
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+}
+body.session-shell .ss-btn-ghost--danger { color: var(--ember); }
+body.session-shell .ss-btn-ghost--danger:hover {
+  color: var(--ember); border-color: var(--ember);
+  background: color-mix(in srgb, var(--ember) 6%, transparent);
+}
+
+body.session-shell .ss-footer__right {
+  margin-left: auto; display: flex; align-items: center; gap: 8px;
+}
+
+/* ── Dialog shared styles ── */
+body.session-shell .ss-dialog {
+  border: 1px solid var(--hairline-2); border-radius: 4px;
+  background: var(--bg-elev); padding: 0;
+  box-shadow: 0 12px 40px rgba(36,27,16,.2);
+  max-width: 420px; width: 92vw;
+}
+body.session-shell .ss-dialog::backdrop { background: rgba(36,27,16,.45); }
+body.session-shell .ss-dialog[open] {
+  position: fixed; inset: 0; margin: auto;
+  display: flex; flex-direction: column;
+}
+body.session-shell .ss-dialog__head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--hairline);
+}
+body.session-shell .ss-dialog__title {
+  font-family: "Fraunces", "Times New Roman", serif;
+  font-variation-settings: "opsz" 96;
+  font-size: 17px; font-weight: 300; color: var(--ink);
+}
+body.session-shell .ss-dialog__title--danger { color: var(--ember); }
+body.session-shell .ss-dialog__close {
+  background: none; border: none; cursor: pointer;
+  color: var(--ink-mute); font-size: 18px; padding: 2px;
+  transition: color .15s;
+}
+body.session-shell .ss-dialog__close:hover { color: var(--ink); }
+body.session-shell .ss-dialog__body { padding: 16px 18px; }
+body.session-shell .ss-dialog__label {
+  font-size: 12px; color: var(--ink-mute); margin-bottom: 6px; display: block;
+}
+body.session-shell .ss-dialog__textarea,
+body.session-shell .ss-dialog__input {
+  width: 100%; background: var(--bg);
+  border: 1px solid var(--hairline-2); border-radius: 3px;
+  padding: 9px 12px; font-family: "DM Sans", sans-serif; font-size: 13.5px;
+  color: var(--ink); transition: border-color .15s;
+}
+body.session-shell .ss-dialog__textarea {
+  resize: vertical; min-height: 80px;
+}
+body.session-shell .ss-dialog__textarea:focus,
+body.session-shell .ss-dialog__input:focus {
+  outline: none; border-color: var(--hop);
+}
+body.session-shell .ss-dialog__textarea--danger:focus { border-color: var(--ember); }
+body.session-shell .ss-dialog__select {
+  width: 100%; background: var(--bg);
+  border: 1px solid var(--hairline-2); border-radius: 3px;
+  padding: 9px 12px; font-family: "DM Sans", sans-serif; font-size: 13.5px;
+  color: var(--ink); transition: border-color .15s; cursor: pointer;
+}
+body.session-shell .ss-dialog__select:focus { outline: none; border-color: var(--hop); }
+body.session-shell .ss-dialog__foot {
+  padding: 12px 18px;
+  border-top: 1px solid var(--hairline);
+  display: flex; justify-content: flex-end; gap: 8px;
+}
+body.session-shell .ss-btn-confirm {
+  padding: 9px 18px;
+  background: var(--hop); color: var(--bg);
+  border: none; border-radius: 3px; cursor: pointer;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase;
+  transition: opacity .15s;
+}
+body.session-shell .ss-btn-confirm:hover { opacity: .88; }
+body.session-shell .ss-btn-confirm--danger {
+  background: var(--ember);
+}
+
+/* Toast notification */
+body.session-shell .ss-toast {
+  position: fixed; bottom: 76px; left: 50%; transform: translateX(-50%);
+  z-index: 100;
+  background: var(--ink); color: var(--bg);
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10.5px; letter-spacing: 0.06em;
+  padding: 10px 18px; border-radius: 3px;
+  box-shadow: 0 6px 24px rgba(36,27,16,.3);
+  opacity: 0; transition: opacity .25s;
+  pointer-events: none;
+}
+body.session-shell .ss-toast--visible { opacity: 1; }
+body.session-shell .ss-toast--error { background: var(--ember); }
+
+/* ── Utility ── */
+body.session-shell .ss-icon { width: 14px; height: 14px; flex-shrink: 0; }
+
+/* ══════════════════════════════════════════════════════════════
+   RESPONSIVE — tablet 1024px and below
+   ══════════════════════════════════════════════════════════════ */
+@media (max-width: 1023px) {
+  body.session-shell .ss-layout {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "body"
+      "rail";
+  }
+  body.session-shell .ss-body { border-right: none; border-bottom: 1px solid var(--hairline); }
+  body.session-shell .ss-rail { position: static; padding-top: 0; }
+  body.session-shell .ss-rail__toggle { display: inline-flex; margin: 8px 16px; }
+  body.session-shell .ss-rail__entries.rail-collapsed { display: none; }
+
+  body.session-shell .ss-step__sub { display: none; }
+  body.session-shell .ss-summary-grid { grid-template-columns: 1fr 1fr; }
+  body.session-shell .ss-op-chips .ss-op-chip:not(:first-child) .ss-op-chip__info { display: none; }
+}
+
+@media (max-width: 767px) {
+  body.session-shell .ss-header { flex-wrap: wrap; gap: 10px; }
+  body.session-shell .ss-header__right { width: 100%; justify-content: flex-start; }
+  body.session-shell .ss-stepper { padding: 0 12px; }
+  body.session-shell .ss-step { padding: 10px 8px; }
+  body.session-shell .ss-step__label { font-size: 8.5px; letter-spacing: 0.08em; }
+  body.session-shell .ss-summary-grid { grid-template-columns: 1fr; }
+  body.session-shell .ss-footer { gap: 8px; }
+  body.session-shell .ss-btn-advance { flex: 1; justify-content: center; }
+}
