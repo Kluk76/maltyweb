@@ -602,6 +602,56 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw $txErr;
             }
 
+            // ── Auto-link to mother shell (Phase 2-5, Atom 10) ───────────────────────
+            // Opens or finds the op_sessions row for this packaging run, then links it
+            // to the mother session for (recipe_id_fk, batch) if one exists.
+            // Fires only after the packaging transaction commits successfully.
+            // Fail-open: any error is logged and silently swallowed — the form submit
+            // has already succeeded; auto-link failure must NOT block the operator.
+            $pkgBatch = $nebBatch !== '' ? $nebBatch : $contractBatch;
+            if ($recipeIdFk !== null && $pkgBatch !== '') {
+                try {
+                    require_once __DIR__ . '/../../app/sessions.php';
+                    require_once __DIR__ . '/../../app/mother-shell.php';
+
+                    // Open or look up an op_sessions row for this packaging run.
+                    // Lookup: find the most recent open packaging session for
+                    //         (recipe_id_fk, batch) — same vessel means same run.
+                    $pkgSessWhere  = 'form_type = ? AND recipe_id_fk = ? AND batch = ? AND status = ?';
+                    $pkgSessParams = ['packaging', $recipeIdFk, $pkgBatch, 'open'];
+                    $pkgSessStmt   = $pdo->prepare(
+                        "SELECT id FROM op_sessions WHERE {$pkgSessWhere} ORDER BY id DESC LIMIT 1"
+                    );
+                    $pkgSessStmt->execute($pkgSessParams);
+                    $pkgSessRow = $pkgSessStmt->fetch(PDO::FETCH_ASSOC);
+
+                    if ($pkgSessRow !== false) {
+                        $pkgSessionId = (int)$pkgSessRow['id'];
+                    } else {
+                        // No open session — open one.
+                        $pkgCtx = [
+                            'form_type'    => 'packaging',
+                            'recipe_id_fk' => $recipeIdFk,
+                            'batch'        => $pkgBatch,
+                        ];
+                        if ($sourceTankNum !== null && $sourceTankNum > 0) {
+                            // RULE-2 BLOCK fix: SESSION_VESSEL_KINDS is lowercase ('cct','bbt'...)
+                            // session_open throws InvalidArgumentException on 'BBT'/'CCT'.
+                            $pkgCtx['vessel_kind']   = strtolower($sourceTankType);
+                            $pkgCtx['vessel_number'] = $sourceTankNum;
+                        }
+                        $pkgSessionId = session_open($pdo, $pkgCtx, (int)$me['id']);
+                    }
+
+                    // Link to mother (idempotent — no-op if already linked).
+                    link_daily_to_mother($pdo, $pkgSessionId, $recipeIdFk, $pkgBatch);
+
+                } catch (\Throwable $_linkErr) {
+                    error_log('[mother-shell] auto-link (packaging recipe=' . $recipeIdFk
+                        . ', batch=' . $pkgBatch . '): ' . $_linkErr->getMessage());
+                }
+            }
+
             $qcLabel = match($qcFlag) {
                 'elevated' => ' — valeurs à vérifier',
                 'outlier'  => ' — outlier enregistré',
