@@ -54,6 +54,29 @@ if ($motherId === 0) {
 
 $payload = sb_mother_drill_in($pdo, $motherId);
 
+// ─── 2b. Derive current vessel from children (FIX 1) ──────────────────────────
+// sb_mother_drill_in() does NOT expose current_vessel_kind at the top level.
+// Derive it from the latest open child that has a vessel assignment.
+$currentVesselKind   = null;
+$currentVesselNumber = null;
+if ($payload !== null) {
+    $latestOpenChildWithVessel = null;
+    foreach ($payload['children'] as $child) {
+        if (($child['status'] ?? '') === 'open'
+            && !empty($child['vessel_kind'])
+            && isset($child['vessel_number'])) {
+            if ($latestOpenChildWithVessel === null
+                || $child['opened_at'] > $latestOpenChildWithVessel['opened_at']) {
+                $latestOpenChildWithVessel = $child;
+            }
+        }
+    }
+    if ($latestOpenChildWithVessel !== null) {
+        $currentVesselKind   = $latestOpenChildWithVessel['vessel_kind'];
+        $currentVesselNumber = (int)$latestOpenChildWithVessel['vessel_number'];
+    }
+}
+
 // ─── 3. Local helpers ──────────────────────────────────────────────────────────
 
 /** Escape value for HTML output. */
@@ -792,17 +815,26 @@ $cssMotherV = @filemtime(__DIR__ . '/../css/sb-mother.css') ?: time();
 
   </div><!-- /smh-body -->
 
-  <!-- ── STICKY FOOTER — actions (deferred to atoms 7+) ─────────── -->
+  <!-- ── STICKY FOOTER ─────────────────────────────────────────── -->
   <?php if (!$isArchived): ?>
   <footer class="smh-footer" role="complementary" aria-label="Actions du lot">
     <div class="smh-footer__left">
       <?php if (!$wortContract): ?>
-      <!-- Cuve vide — deferred atom 7 -->
-      <button class="smh-btn smh-btn--secondary smh-btn--disabled"
-              disabled aria-disabled="true" tabindex="-1"
-              title="Configuré en atome 7 — déclenchement cuve-vide">
+      <?php if ($isActive && $currentVesselKind !== null): ?>
+      <!-- Cuve vide — Atom 7: active, has vessel assignment -->
+      <button class="smh-btn smh-btn--secondary"
+              onclick="window.sbCuveVide && window.sbCuveVide.open()"
+              title="Déclarer la cuve vide — déclenche la clôture des lots">
         Cuve vide
       </button>
+      <?php elseif ($isActive): ?>
+      <!-- Cuve vide — active but no vessel assigned yet -->
+      <button class="smh-btn smh-btn--secondary smh-btn--disabled"
+              disabled aria-disabled="true" tabindex="-1"
+              title="Aucune cuve assignée — soutirage requis d'abord">
+        Cuve vide
+      </button>
+      <?php endif ?>
       <!-- Fusionner — deferred atom 8, active mothers only -->
       <?php if ($isActive): ?>
       <button class="smh-btn smh-btn--secondary smh-btn--disabled"
@@ -814,10 +846,10 @@ $cssMotherV = @filemtime(__DIR__ . '/../css/sb-mother.css') ?: time();
       <?php endif ?>
     </div>
     <div class="smh-footer__right">
-      <!-- Clôturer manuellement — admin only, deferred atom 7 -->
+      <!-- Clôturer manuellement — admin only, deferred atom 8 -->
       <button class="smh-btn smh-btn--danger smh-btn--disabled"
               disabled aria-disabled="true" tabindex="-1"
-              title="Configuré en atome 7 — admin seulement">
+              title="Réservé aux administrateurs — atome 8">
         Clôturer manuellement
       </button>
     </div>
@@ -825,6 +857,10 @@ $cssMotherV = @filemtime(__DIR__ . '/../css/sb-mother.css') ?: time();
   <?php endif ?>
 
 </div><!-- /smh-shell -->
+<?php endif ?>
+
+<?php if ($payload !== null && !$isArchived && $currentVesselKind !== null): ?>
+<?php require __DIR__ . '/../../app/partials/sb-cuve-vide-modal.php'; ?>
 <?php endif ?>
 </main>
 

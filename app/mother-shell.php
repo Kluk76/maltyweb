@@ -444,6 +444,200 @@ function merge_mothers(
     return $fresh;
 }
 
+// ─── Cuve-vide API ────────────────────────────────────────────────────────────
+
+/**
+ * cuve_vide_pressed: identify mothers affected by "Cuve vide" on a vessel.
+ *
+ * Finds all open mothers whose latest non-tombstoned child points at
+ * (vessel_kind, vessel_number). Also performs a TankSimulator emptiness check
+ * via inv_tank_balances (most recent month_key for this vessel).
+ *
+ * @return array {
+ *   'mothers'       => array of mother summaries (id, recipe_name, batch, pct_packaged),
+ *   'tanksim_empty' => bool,
+ *   'tanksim_note'  => string,
+ * }
+ */
+function cuve_vide_pressed(PDO $pdo, string $vessel_kind, int $vessel_number): array
+{
+    if ($vessel_kind === '') {
+        return ['mothers' => [], 'tanksim_empty' => true,
+                'tanksim_note' => "vessel_kind vide — aucun vessel à vérifier."];
+    }
+    if ($vessel_number <= 0) {
+        return ['mothers' => [], 'tanksim_empty' => true,
+                'tanksim_note' => "vessel_number invalide ({$vessel_number})."];
+    }
+
+    // Find all open mothers whose current vessel matches.
+    // "Current vessel" = most recent non-tombstoned child with a vessel assignment.
+    $stmt = $pdo->prepare(
+        "SELECT DISTINCT m.id, m.recipe_id_fk, m.batch,
+                r.name AS recipe_name,
+                m.opened_at
+           FROM op_sessions m
+           JOIN (
+                SELECT parent_session_id_fk, vessel_kind, vessel_number
+                  FROM op_sessions
+                 WHERE form_type      != 'batch'
+                   AND is_tombstoned   = 0
+                   AND vessel_kind     = ?
+                   AND vessel_number   = ?
+                   AND parent_session_id_fk IS NOT NULL
+               ) child ON child.parent_session_id_fk = m.id
+      LEFT JOIN ref_recipes r ON r.id = m.recipe_id_fk
+          WHERE m.form_type = 'batch'
+            AND m.status    = 'open'
+            AND m.merged_into_session_id_fk IS NULL
+            AND m.is_tombstoned = 0"
+    );
+    $stmt->execute([$vessel_kind, $vessel_number]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // FIX 7: pct_packaged removed — duplicated _sb_pct_packaged (drift risk).
+    // Modal v1 shows recipe/batch/heartbeat only; pct_packaged is not actionable at close time.
+    $mothers = [];
+    foreach ($rows as $row) {
+        $mothers[] = [
+            'id'          => (int)$row['id'],
+            'recipe_name' => $row['recipe_name'] ?? $row['recipe_id_fk'] ?? '—',
+            'batch'       => $row['batch'],
+            'opened_at'   => $row['opened_at'],
+        ];
+    }
+
+    // TankSimulator check: query latest month balance for this vessel.
+    // inv_tank_balances.tank_type stores uppercase kind ('CCT','BBT',…);
+    // tank_id stores the number as a string.
+    $tankType = strtoupper($vessel_kind);
+    $tankId   = (string)$vessel_number;
+
+    $tbStmt = $pdo->prepare(
+        "SELECT volume_hl, month_key
+           FROM inv_tank_balances
+          WHERE tank_type = ?
+            AND tank_id   = ?
+          ORDER BY month_key DESC
+          LIMIT 1"
+    );
+    $tbStmt->execute([$tankType, $tankId]);
+    $tb = $tbStmt->fetch(PDO::FETCH_ASSOC);
+
+    if ($tb === false) {
+        // No TankSimulator record at all — cannot verify; treat as empty with a note.
+        $tanksimEmpty = true;
+        $tanksimNote  = "Aucune donnée TankSimulator pour {$tankType}-{$vessel_number} — vérification ignorée.";
+    } else {
+        $volHl        = (float)$tb['volume_hl'];
+        $tanksimEmpty = $volHl <= 0;
+        $tanksimNote  = $tanksimEmpty
+            ? "TankSimulator ({$tb['month_key']}): {$tankType}-{$vessel_number} = {$volHl} HL — cuve vide confirmée."
+            : "TankSimulator ({$tb['month_key']}): {$tankType}-{$vessel_number} = {$volHl} HL — cuve non vide selon le système.";
+    }
+
+    return [
+        'mothers'       => $mothers,
+        'tanksim_empty' => $tanksimEmpty,
+        'tanksim_note'  => $tanksimNote,
+    ];
+}
+
+/**
+ * cuve_vide_apply: close affected mothers and record the reason.
+ *
+ * Reasons:
+ *   'emballe'      — packaging completed → closes mothers
+ *   'jete'         — dumped → closes mothers
+ *   'vendu_mout'   — sold as wort → closes mothers
+ *   'encore_en_cuve' — vessel NOT actually empty → keeps mothers open, logs step only
+ *
+ * @param string      $vessel_kind
+ * @param int         $vessel_number
+ * @param string      $reason  One of the 4 allowed values.
+ * @param string|null $note    Optional operator note.
+ * @return array {
+ *   'closed_mothers' => array of closed mother IDs,
+ *   'kept_open'      => array of kept-open mother IDs (encore_en_cuve),
+ *   'errors'         => array of error strings,
+ * }
+ */
+function cuve_vide_apply(
+    PDO     $pdo,
+    string  $vessel_kind,
+    int     $vessel_number,
+    string  $reason,
+    ?string $note = null
+): array {
+    $allowedReasons = ['emballe', 'jete', 'vendu_mout', 'encore_en_cuve'];
+    if (!in_array($reason, $allowedReasons, true)) {
+        throw new InvalidArgumentException(
+            "cuve_vide_apply: raison invalide '{$reason}'. Valeurs autorisées: " . implode(', ', $allowedReasons)
+        );
+    }
+
+    $closedMothers = [];
+    $keptOpen      = [];
+    $errors        = [];
+
+    $sysMe       = ['id' => 0, 'username' => MOTHER_SHELL_ACTOR];
+    $auditSuffix = "cuve-vide: {$vessel_kind}-{$vessel_number}, raison={$reason}"
+                 . ($note !== null ? ", note={$note}" : '');
+
+    $ownTx     = !$pdo->inTransaction();
+    $savepoint = 'cuve_vide_apply_' . uniqid('', true);
+    $ownTx ? $pdo->beginTransaction() : $pdo->exec("SAVEPOINT `{$savepoint}`");
+
+    try {
+        // FIX 4: cuve_vide_pressed called INSIDE the transaction so the row reads
+        // take InnoDB shared locks as part of the transaction, preventing TOCTOU races.
+        $preview = cuve_vide_pressed($pdo, $vessel_kind, $vessel_number);
+        $mothers  = $preview['mothers'];
+
+        if (empty($mothers)) {
+            $ownTx ? $pdo->commit() : $pdo->exec("RELEASE SAVEPOINT `{$savepoint}`");
+            return ['closed_mothers' => [], 'kept_open' => [], 'errors' => []];
+        }
+
+        foreach ($mothers as $m) {
+            $motherId = (int)$m['id'];
+
+            if ($reason === 'encore_en_cuve') {
+                // Log the contradiction — vessel reported empty but operator says not.
+                // Do NOT close. Record the step via log_revision.
+                log_revision(
+                    $pdo, $sysMe, 'op_sessions', $motherId,
+                    ['status' => 'open'],
+                    ['status' => 'open', '_cuve_vide_contradiction' => true],
+                    'normal',
+                    "mother-shell: cuve_vide_apply — encore_en_cuve, mother {$motherId} gardée ouverte. {$auditSuffix}"
+                );
+                $keptOpen[] = $motherId;
+            } else {
+                // Close the mother.
+                try {
+                    close_mother($pdo, $motherId, $auditSuffix);
+                    $closedMothers[] = $motherId;
+                } catch (\Throwable $e) {
+                    $errors[] = "mother_id={$motherId}: " . $e->getMessage();
+                }
+            }
+        }
+
+        $ownTx ? $pdo->commit() : $pdo->exec("RELEASE SAVEPOINT `{$savepoint}`");
+
+    } catch (\Throwable $e) {
+        $ownTx ? $pdo->rollBack() : $pdo->exec("ROLLBACK TO SAVEPOINT `{$savepoint}`");
+        throw $e;
+    }
+
+    return [
+        'closed_mothers' => $closedMothers,
+        'kept_open'      => $keptOpen,
+        'errors'         => $errors,
+    ];
+}
+
 // ─── Private helpers ──────────────────────────────────────────────────────────
 
 /**
