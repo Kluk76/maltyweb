@@ -127,7 +127,16 @@
         } else {
           var card = buildCard(mother, zone);
           card.classList.add('sb-card--entering');
-          zoneEl.appendChild(card);
+          // RULE-2 ISSUE 1 fix: new cards must land inside .sb-cards-stack
+          // (the gap/padding wrapper); PHP renders them there at page-load.
+          // If the zone was empty at page-load, the stack may not exist yet.
+          var stackEl = zoneEl.querySelector('.sb-cards-stack');
+          if (!stackEl) {
+            stackEl = document.createElement('div');
+            stackEl.className = 'sb-cards-stack';
+            zoneEl.insertBefore(stackEl, zoneEl.firstChild);
+          }
+          stackEl.appendChild(card);
           // Trigger CSS transition on next frame
           requestAnimationFrame(function () {
             requestAnimationFrame(function () {

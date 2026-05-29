@@ -201,6 +201,9 @@ $jsBoardV      = @filemtime(__DIR__ . '/../js/sb-board.js')   ?: time();
 <main class="main">
 <div class="sb-board-wrap">
 
+  <!-- Sync pill — atom 6 polling driver writes "Synchronisé à HH:MM" here -->
+  <div class="sb-sync-ts" data-sb-fetched-at aria-live="polite"></div>
+
   <!-- ══════════════════════════════════════════════════════════════
        DIORAMA — Theater of Operations (5 production zones)
   ══════════════════════════════════════════════════════════════════ -->
