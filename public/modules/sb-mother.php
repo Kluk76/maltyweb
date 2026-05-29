@@ -835,23 +835,31 @@ $cssMotherV = @filemtime(__DIR__ . '/../css/sb-mother.css') ?: time();
         Cuve vide
       </button>
       <?php endif ?>
-      <!-- Fusionner — deferred atom 8, active mothers only -->
+      <!-- Fusionner — Atom 8: active mothers only -->
       <?php if ($isActive): ?>
-      <button class="smh-btn smh-btn--secondary smh-btn--disabled"
-              disabled aria-disabled="true" tabindex="-1"
-              title="Configuré en atome 8 — fusionner deux lots">
+      <button class="smh-btn smh-btn--secondary"
+              onclick="window.sbMerge && window.sbMerge.open()"
+              title="Fusionner ce lot avec un autre lot ouvert">
         Fusionner
       </button>
       <?php endif ?>
       <?php endif ?>
     </div>
     <div class="smh-footer__right">
-      <!-- Clôturer manuellement — admin only, deferred atom 8 -->
-      <button class="smh-btn smh-btn--danger smh-btn--disabled"
-              disabled aria-disabled="true" tabindex="-1"
-              title="Réservé aux administrateurs — atome 8">
+      <!-- Clôturer manuellement — admin only, Atom 8 -->
+      <?php if ($isActive && ($me['role'] ?? '') === 'admin'): ?>
+      <button class="smh-btn smh-btn--danger"
+              onclick="window.sbForceClose && window.sbForceClose.open()"
+              title="Clôturer manuellement ce lot — admin uniquement">
         Clôturer manuellement
       </button>
+      <?php elseif ($isActive): ?>
+      <button class="smh-btn smh-btn--danger smh-btn--disabled"
+              disabled aria-disabled="true" tabindex="-1"
+              title="Réservé aux administrateurs">
+        Clôturer manuellement
+      </button>
+      <?php endif ?>
     </div>
   </footer>
   <?php endif ?>
@@ -861,6 +869,14 @@ $cssMotherV = @filemtime(__DIR__ . '/../css/sb-mother.css') ?: time();
 
 <?php if ($payload !== null && !$isArchived && $currentVesselKind !== null): ?>
 <?php require __DIR__ . '/../../app/partials/sb-cuve-vide-modal.php'; ?>
+<?php endif ?>
+
+<?php if ($payload !== null && $isActive && !$isMergedSurvivor): ?>
+<?php $motherId = $mId; require __DIR__ . '/../../app/partials/sb-merge-modal.php'; ?>
+<?php endif ?>
+
+<?php if ($payload !== null && $isActive && !$isArchived && ($me['role'] ?? '') === 'admin'): ?>
+<?php $motherId = $mId; require __DIR__ . '/../../app/partials/sb-force-close-modal.php'; ?>
 <?php endif ?>
 </main>
 
