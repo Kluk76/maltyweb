@@ -126,9 +126,11 @@ $submitBlocked = (
 
 ?>
 
-<!-- ── START PHASE: Fermenting session firewall (P-B) ──────────────────────── -->
-<form id="fermenting-form" method="post" action="/modules/form-fermenting.php" novalidate>
+<!-- ── START PHASE: Fermenting session firewall (P-B / P-C) ───────────────────── -->
+<form id="fermenting-form" method="post" action="/api/fermenting-phase-submit.php" novalidate>
   <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+  <input type="hidden" name="phase" value="start">
+  <input type="hidden" name="session_id" value="<?= (int)$ff_sessionId ?>">
   <input type="hidden" id="recipe_id_fk" name="recipe_id_fk"
          value="<?= $ff_recipeId !== null ? (int)$ff_recipeId : '' ?>">
   <!-- CIP override payload — populated by JS when operator fills the reason field -->

@@ -40,7 +40,7 @@
       el.hidden = !show.includes(id);
     }
 
-    // Update submit button label
+    // Update primary submit button label
     const btn = document.getElementById('ferm-submit-btn');
     if (btn) {
       const labels = {
@@ -50,6 +50,18 @@
         ColdCrash: 'Enregistrer le cold crash →',
       };
       btn.textContent = labels[eventType] || 'Enregistrer →';
+    }
+
+    // Dual-CTA: enable "Terminer fermentation" only for ColdCrash.
+    // The terminate button is rendered disabled/aria-disabled by PHP; JS gates it.
+    const terminateBtn = document.getElementById('ferm-btn-terminate');
+    if (terminateBtn) {
+      const isColdCrash = (eventType === 'ColdCrash');
+      terminateBtn.disabled      = !isColdCrash;
+      terminateBtn.setAttribute('aria-disabled', isColdCrash ? 'false' : 'true');
+      terminateBtn.title = isColdCrash
+        ? 'Enregistrer le cold crash et terminer la fermentation'
+        : 'Disponible uniquement pour l\'évènement Cold Crash';
     }
   }
 

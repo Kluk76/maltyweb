@@ -88,280 +88,19 @@ const FERM_EVENT_TYPES = ['Reads', 'DryHop', 'Purge', 'ColdCrash'];
 // Mirrors bd_fermenting_v2.dh_unit ENUM exactly
 const DH_UNITS = ['g', 'kg'];
 
-// ── POST handler ──────────────────────────────────────────────────────────────
+// ── POST handler (P-C: delegated to /api/fermenting-phase-submit.php) ─────────
+// The inline POST handler has been extracted to /api/fermenting-phase-submit.php.
+// This guard catches any form that still posts here (e.g. cached pages, direct
+// form submissions without session_id) and redirects to the new endpoint.
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-
-    if (!csrf_verify($_POST['csrf'] ?? null)) {
-        flash_set('err', 'Session expirée — recharge la page.');
-        redirect_to('/modules/form-fermenting.php');
-    }
-
-    try {
-        $pdo = maltytask_pdo();
-
-        // ── 1. Coerce header inputs ────────────────────────────────────────
-        $beerRaw     = post_str('beer_select') ?? '';
-        $batch       = post_str('batch')       ?? '';
-        $recipeId    = post_int('recipe_id_fk');
-        $eventDateRaw = post_str('event_date');
-        $eventType   = post_str('event_type')  ?? 'Reads';
-
-        if ($beerRaw === '') {
-            throw new RuntimeException("La bière est obligatoire.");
-        }
-        if ($batch === '') {
-            throw new RuntimeException("Le numéro de brassin est obligatoire.");
-        }
-
-        must_be_one_of('event_type', $eventType, FERM_EVENT_TYPES);
-
-        // Date: always store as Y-m-d in DB
-        $eventDate = $eventDateRaw ?? date('Y-m-d');
-
-        // ── 2. Shared measurements ─────────────────────────────────────────
-        // gravity is stored in °Plato — operators enter °Plato directly.
-        $gravityRaw = post_str('gravity');
-        $gravity    = null;
-        if ($gravityRaw !== null && $gravityRaw !== '') {
-            $gNorm = str_replace(',', '.', $gravityRaw);
-            if (!is_numeric($gNorm)) {
-                throw new RuntimeException("Densité invalide « {$gravityRaw} ».");
-            }
-            $gravity = $gNorm;
-        }
-
-        $phRaw = post_str('ph');
-        $ph    = null;
-        if ($phRaw !== null && $phRaw !== '') {
-            $phNorm = str_replace(',', '.', $phRaw);
-            if (!is_numeric($phNorm)) {
-                throw new RuntimeException("pH invalide « {$phRaw} ».");
-            }
-            $ph = $phNorm;
-        }
-
-        $tempRaw    = post_str('temperature');
-        $temperature = null;
-        if ($tempRaw !== null && $tempRaw !== '') {
-            $tNorm = str_replace(',', '.', $tempRaw);
-            if (!is_numeric($tNorm)) {
-                throw new RuntimeException("Température invalide « {$tempRaw} ».");
-            }
-            $temperature = $tNorm;
-        }
-
-        // ── 3. Event-specific fields ───────────────────────────────────────
-        $finalComments   = post_str('final_comments');
-        $commentPurge    = ($eventType === 'Purge')      ? post_str('comment_purge')      : null;
-        $commentColdCrash = ($eventType === 'ColdCrash') ? post_str('comment_cold_crash') : null;
-
-        // fw_comment from diff-preview dialog
-        $fwComment = post_str('fw_comment');
-
-        // ── 4. Build submitted_at ──────────────────────────────────────────
-        $submittedAt = date('Y-m-d H:i:s.u');
-        $auditFlags  = 'web_entry';
-
-        // ── 5. DryHop lines ───────────────────────────────────────────────
-        // Input arrays: dh_mi_id[], dh_qty[], dh_unit[], dh_lot[]
-        $dhMiIds = $_POST['dh_mi_id'] ?? [];
-        $dhQtys  = $_POST['dh_qty']   ?? [];
-        $dhUnits = $_POST['dh_unit']  ?? [];
-        $dhLots  = $_POST['dh_lot']   ?? [];
-
-        $dhLines = [];
-        if ($eventType === 'DryHop') {
-            $indices = array_keys($dhMiIds);
-            foreach ($indices as $i) {
-                $miId   = isset($dhMiIds[$i]) ? trim((string) $dhMiIds[$i]) : '';
-                $qtyRaw = isset($dhQtys[$i])  ? trim((string) $dhQtys[$i])  : '';
-                $unit   = isset($dhUnits[$i]) ? trim((string) $dhUnits[$i]) : 'g';
-                $lot    = isset($dhLots[$i])  ? trim((string) $dhLots[$i])  : '';
-
-                // Skip fully empty rows
-                if ($miId === '' && $qtyRaw === '') continue;
-
-                if ($unit !== '' && !in_array($unit, DH_UNITS, true)) {
-                    throw new RuntimeException("Unité dry-hop invalide « {$unit} ».");
-                }
-
-                $qty = null;
-                if ($qtyRaw !== '') {
-                    $qNorm = str_replace(',', '.', $qtyRaw);
-                    if (!is_numeric($qNorm)) {
-                        throw new RuntimeException("Quantité dry-hop invalide « {$qtyRaw} ».");
-                    }
-                    $qty = $qNorm;
-                }
-
-                $dhLines[] = [
-                    'mi_id' => $miId,
-                    'qty'   => $qty,
-                    'unit'  => $unit !== '' ? $unit : 'g',
-                    'lot'   => $lot !== '' ? $lot : null,
-                ];
-            }
-
-            if (empty($dhLines)) {
-                throw new RuntimeException("Un houblonnage à froid doit contenir au moins une ligne.");
-            }
-        }
-
-        // ── 6. Resolve dh_mi_id_fk for DryHop lines ──────────────────────
-        $miIdFkMap = [];
-        if (!empty($dhLines)) {
-            $miIds = array_filter(array_column($dhLines, 'mi_id'));
-            if (!empty($miIds)) {
-                $placeholders = implode(',', array_fill(0, count($miIds), '?'));
-                $stmt = $pdo->prepare(
-                    "SELECT mi_id, id FROM ref_mi WHERE mi_id IN ($placeholders) AND is_active = 1"
-                );
-                $stmt->execute(array_values($miIds));
-                foreach ($stmt->fetchAll() as $r) {
-                    $miIdFkMap[$r['mi_id']] = (int) $r['id'];
-                }
-            }
-        }
-
-        // ── 7. Build and insert rows ───────────────────────────────────────
-        // For DryHop: one row per line (line_idx 0…N).
-        //   Readings (gravity/ph/temp) are copied onto the first line (line_idx=0)
-        //   so they are captured even for DryHop submissions.
-        // For all other event types: one row with line_idx=0.
-        $rowsToInsert = [];
-
-        if ($eventType === 'DryHop' && !empty($dhLines)) {
-            foreach ($dhLines as $lineIdx => $line) {
-                $miIdStr = $line['mi_id'] ?? '';
-                $miFk    = $miIdStr !== '' ? ($miIdFkMap[$miIdStr] ?? null) : null;
-
-                $hashCols = [
-                    $eventType, $beerRaw, $batch, (string) $lineIdx,
-                    $recipeId ?? '',
-                    $eventDate, $miIdStr,
-                    $line['qty'] ?? '',
-                    $line['unit'],
-                    $line['lot'] ?? '',
-                    $gravity ?? '',
-                    $ph ?? '',
-                    $temperature ?? '',
-                    $finalComments ?? '',
-                    $submittedAt,
-                ];
-
-                $rowsToInsert[] = [
-                    'row'      => [
-                        'row_hash'            => bd_row_hash($hashCols),
-                        'audit_flags'         => $auditFlags,
-                        'submitted_at'        => $submittedAt,
-                        'email'               => $me['username'],
-                        'event_date'          => $eventDate,
-                        'event_type'          => $eventType,
-                        'beer_raw'            => $beerRaw,
-                        'batch'               => $batch,
-                        'line_idx'            => $lineIdx,
-                        'recipe_id_fk'        => $recipeId,
-                        'dh_category'         => 'hops_dry',
-                        'dh_mi_id_fk'         => $miFk,
-                        'dh_raw_name'         => $miIdStr !== '' ? $miIdStr : null,
-                        'dh_qty'              => $line['qty'],
-                        'dh_unit'             => $line['unit'],
-                        'dh_lot'              => $line['lot'],
-                        'dh_confidence'       => 'web_entry',
-                        'dh_parse_note'       => $miFk !== null ? 'direct-mi-pick' : 'unresolved-mi-id',
-                        'dh_source_row'       => null,
-                        // Readings on first row only
-                        'gravity'             => ($lineIdx === 0) ? $gravity : null,
-                        'ph'                  => ($lineIdx === 0) ? $ph      : null,
-                        'temperature'         => ($lineIdx === 0) ? $temperature : null,
-                        'comment_purge'       => null,
-                        'comment_cold_crash'  => null,
-                        'final_comments'      => ($lineIdx === 0) ? $finalComments : null,
-                    ],
-                    'line_idx' => $lineIdx,
-                ];
-            }
-        } else {
-            // Reads / Purge / ColdCrash — single row, line_idx=0
-            $hashCols = [
-                $eventType, $beerRaw, $batch, '0',
-                $recipeId ?? '',
-                $eventDate,
-                $gravity ?? '',
-                $ph ?? '',
-                $temperature ?? '',
-                $commentPurge ?? '',
-                $commentColdCrash ?? '',
-                $finalComments ?? '',
-                $submittedAt,
-            ];
-
-            $rowsToInsert[] = [
-                'row'      => [
-                    'row_hash'           => bd_row_hash($hashCols),
-                    'audit_flags'        => $auditFlags,
-                    'submitted_at'       => $submittedAt,
-                    'email'              => $me['username'],
-                    'event_date'         => $eventDate,
-                    'event_type'         => $eventType,
-                    'beer_raw'           => $beerRaw,
-                    'batch'              => $batch,
-                    'line_idx'           => 0,
-                    'recipe_id_fk'       => $recipeId,
-                    'dh_category'        => null,
-                    'dh_mi_id_fk'        => null,
-                    'dh_raw_name'        => null,
-                    'dh_qty'             => null,
-                    'dh_unit'            => null,
-                    'dh_lot'             => null,
-                    'dh_confidence'      => null,
-                    'dh_parse_note'      => null,
-                    'dh_source_row'      => null,
-                    'gravity'            => $gravity,
-                    'ph'                 => $ph,
-                    'temperature'        => $temperature,
-                    'comment_purge'      => $commentPurge,
-                    'comment_cold_crash' => $commentColdCrash,
-                    'final_comments'     => $finalComments,
-                ],
-                'line_idx' => 0,
-            ];
-        }
-
-        // ── 8. Write rows ─────────────────────────────────────────────────
-        $nkCols = ['submitted_at', 'event_type', 'beer_raw', 'batch', 'line_idx'];
-        $firstId = null;
-        foreach ($rowsToInsert as $entry) {
-            $result = bd_upsert($pdo, 'bd_fermenting_v2', $entry['row'], $nkCols);
-            if ($firstId === null) $firstId = $result['id'];
-
-            log_revision(
-                $pdo,
-                $me,
-                'bd_fermenting_v2',
-                $result['id'],
-                null,
-                $entry['row'],
-                'normal',
-                $fwComment ?: null
-            );
-        }
-
-        // ── 9. Success flash ──────────────────────────────────────────────
-        $eventLabel = match($eventType) {
-            'Reads'      => 'Mesures',
-            'DryHop'     => 'Houblonnage à froid (' . count($rowsToInsert) . ' addition' . (count($rowsToInsert) > 1 ? 's' : '') . ')',
-            'Purge'      => 'Purge',
-            'ColdCrash'  => 'Cold Crash',
-            default      => $eventType,
-        };
-        flash_set('ok', "{$eventLabel} enregistré — {$beerRaw} (B{$batch})");
-
-    } catch (Throwable $e) {
-        flash_set('err', pdo_friendly_error($e, 'form-fermenting'));
-    }
-
-    redirect_to('/modules/form-fermenting.php');
+    // Carry forward form data via a GET redirect — the session endpoint handles PRG.
+    // If there's a session_id in the POST, the form should have gone to the endpoint.
+    // Redirect back to GET with an informational error.
+    flash_set('err', 'Saisie re-routée — rechargez la page et réessayez.');
+    $beer  = isset($_POST['beer_select']) ? urlencode(trim((string)$_POST['beer_select'])) : '';
+    $batch = isset($_POST['batch'])       ? urlencode(trim((string)$_POST['batch']))       : '';
+    $qs = ($beer !== '' ? '?beer=' . $beer : '') . ($batch !== '' ? ($beer !== '' ? '&' : '?') . 'batch=' . $batch : '');
+    redirect_to('/modules/form-fermenting.php' . $qs);
 }
 
 // ── GET ───────────────────────────────────────────────────────────────────────
@@ -399,17 +138,62 @@ try {
         ];
     }
 
-    // Recent fermentation submissions (last 10 web-entered, any event type)
-    $recentStmt = $pdo->prepare(
-        "SELECT id, event_date, event_type, beer_raw, batch, gravity, ph, temperature,
-                email, submitted_at
-         FROM bd_fermenting_v2
-         WHERE audit_flags LIKE '%web_entry%'
-         ORDER BY submitted_at DESC
-         LIMIT 10"
+    // Recent fermentation sessions (last 5 open/closed fermenting sessions).
+    // For each session, all bd_fermenting_v2 events are loaded in chronological order.
+    // Historical rows with NULL session_id_fk are surfaced under a synthetic group.
+    $recentSessionsStmt = $pdo->prepare(
+        "SELECT s.id, s.phase, s.status, s.batch, s.recipe_id_fk,
+                s.opened_at, s.closed_at,
+                r.name AS recipe_name, r.recipe_short_name
+           FROM op_sessions s
+           LEFT JOIN ref_recipes r ON r.id = s.recipe_id_fk
+          WHERE s.form_type     = 'fermenting'
+            AND s.is_tombstoned = 0
+          ORDER BY s.opened_at DESC
+          LIMIT 5"
     );
-    $recentStmt->execute();
-    $recentFerm = $recentStmt->fetchAll();
+    $recentSessionsStmt->execute();
+    $recentSessions = $recentSessionsStmt->fetchAll();
+
+    // Collect session PKs to load their events in one query
+    $sessionIds = array_column($recentSessions, 'id');
+
+    // Events grouped by session_id_fk (only for the sessions we loaded above)
+    $sessionEvents = [];
+    if (!empty($sessionIds)) {
+        $inPlaceholders = implode(',', array_fill(0, count($sessionIds), '?'));
+        $evtStmt = $pdo->prepare(
+            "SELECT id, session_id_fk, event_date, event_type, beer_raw, batch,
+                    gravity, ph, temperature, dh_raw_name, dh_qty, dh_unit,
+                    comment_purge, comment_cold_crash, final_comments,
+                    email, submitted_at
+               FROM bd_fermenting_v2
+              WHERE session_id_fk IN ({$inPlaceholders})
+                AND is_tombstoned = 0
+              ORDER BY submitted_at ASC"
+        );
+        $evtStmt->execute($sessionIds);
+        foreach ($evtStmt->fetchAll() as $ev) {
+            $sessionEvents[(int)$ev['session_id_fk']][] = $ev;
+        }
+    }
+
+    // Historical rows: web-entered events with NULL session_id_fk (pre-P-C submissions)
+    $historicalStmt = $pdo->prepare(
+        "SELECT id, event_date, event_type, beer_raw, batch, gravity, ph, temperature,
+                dh_raw_name, dh_qty, dh_unit, email, submitted_at
+           FROM bd_fermenting_v2
+          WHERE audit_flags   LIKE '%web_entry%'
+            AND session_id_fk IS NULL
+            AND is_tombstoned = 0
+          ORDER BY submitted_at DESC
+          LIMIT 20"
+    );
+    $historicalStmt->execute();
+    $recentHistorical = $historicalStmt->fetchAll();
+
+    // Keep $recentFerm for backward compat with any partial still referencing it (empty sentinel)
+    $recentFerm = [];
 
     $loadErr = null;
 
@@ -417,6 +201,12 @@ try {
     $recipes   = [];
     $hopsJs    = [];
     $recentFerm = [];
+    // RULE-2 followup #1 — recap partial expects these on every render path,
+    // including the catch path. Without these, partial emits PHP warnings
+    // and broken HTML. Empty defaults render the "no sessions" empty-state.
+    $recentSessions   = [];
+    $sessionEvents    = [];
+    $recentHistorical = [];
     $loadErr   = $e->getMessage();
 }
 

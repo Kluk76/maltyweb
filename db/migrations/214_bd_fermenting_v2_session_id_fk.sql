@@ -1,0 +1,32 @@
+-- Migration 214: bd_fermenting_v2 session_id_fk (P-C traceability)
+--
+-- Documents the session_id_fk column that was pre-applied to bd_fermenting_v2
+-- as part of the fermenting pilot session-shell scaffold (before P-C formalized
+-- the split-write endpoint).
+--
+-- Live schema (verified 2026-05-29):
+--   session_id_fk  bigint unsigned DEFAULT NULL
+--   KEY ix_bd_fermenting_v2_session (session_id_fk)
+--   CONSTRAINT fk_bd_fermenting_v2_session FOREIGN KEY (session_id_fk)
+--     REFERENCES op_sessions(id) ON DELETE RESTRICT
+--
+-- The column, index, and FK already exist on the VPS — this migration is a
+-- no-op record that schema_migrations uses for idempotency tracking.
+-- Re-applying produces no error; the ADD COLUMN IF NOT EXISTS pattern is NOT
+-- used because MySQL 8 doesn't support it — instead we use this documented no-op.
+--
+-- If ever applied to a clean DB that was created before this column existed,
+-- remove this comment and replace SET @noop with the actual DDL below:
+--
+--   ALTER TABLE bd_fermenting_v2
+--     ADD COLUMN session_id_fk BIGINT UNSIGNED NULL AFTER batch,
+--     ADD INDEX ix_bd_fermenting_v2_session (session_id_fk);
+--
+--   ALTER TABLE bd_fermenting_v2
+--     ADD CONSTRAINT fk_bd_fermenting_v2_session
+--     FOREIGN KEY (session_id_fk) REFERENCES op_sessions(id) ON DELETE RESTRICT;
+--
+-- schema_meta row for bd_fermenting_v2: corrections_policy='allowed'
+-- op_sessions.id type: BIGINT UNSIGNED (verified — FK type matches)
+
+SET @noop = 1;

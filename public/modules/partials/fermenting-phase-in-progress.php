@@ -27,9 +27,11 @@ declare(strict_types=1);
  */
 ?>
 
-<!-- ── IN_PROGRESS PHASE: Repeating event capture ────────────────────────── -->
-<form id="fermenting-form" method="post" action="/modules/form-fermenting.php" novalidate>
+<!-- ── IN_PROGRESS PHASE: Repeating event capture (P-C) ─────────────────────── -->
+<form id="fermenting-form" method="post" action="/api/fermenting-phase-submit.php" novalidate>
   <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+  <input type="hidden" name="phase" value="in_progress">
+  <input type="hidden" name="session_id" value="<?= (int)$ff_sessionId ?>">
   <input type="hidden" id="recipe_id_fk" name="recipe_id_fk"
          value="<?= $ff_recipeId !== null ? (int)$ff_recipeId : '' ?>">
 
@@ -249,15 +251,36 @@ declare(strict_types=1);
     </div>
   </div>
 
-  <!-- Submit bar -->
-  <div class="op-form__submit-bar">
+  <!-- Submit bar — Dual-CTA (P-C) ─────────────────────────────────────────── -->
+  <!--
+    "Continuer" (default): submit and return to in-progress (same as before).
+    "Terminer fermentation": only enabled when event_type=ColdCrash.
+      Both CTAs POST to the same endpoint; phase advance is server-side per event_type.
+      The JS sets data-action to signal the operator's intent, but the server
+      always drives the actual phase transition (ColdCrash → end regardless of intent).
+      No client-side flag is sent or trusted — the server decides.
+  -->
+  <div class="op-form__submit-bar ferm-dual-cta">
     <button type="button" class="op-form__btn op-form__btn--secondary"
             onclick="if(confirm('Effacer le brouillon ?')){localStorage.removeItem('fermenting-draft');location.reload();}">
       Effacer brouillon
     </button>
-    <button type="submit" class="op-form__btn op-form__btn--primary" id="ferm-submit-btn">
-      Enregistrer →
-    </button>
+    <div class="ferm-dual-cta__btns">
+      <button type="submit" class="op-form__btn op-form__btn--primary" id="ferm-submit-btn">
+        Continuer →
+      </button>
+      <button type="submit"
+              class="op-form__btn op-form__btn--primary ferm-btn-terminate"
+              id="ferm-btn-terminate"
+              disabled aria-disabled="true"
+              title="Disponible uniquement pour l'évènement Cold Crash">
+        Terminer fermentation ⬛
+      </button>
+    </div>
   </div>
+  <!--
+    JS (form-fermenting.js) enables ferm-btn-terminate when event_type = ColdCrash.
+    Disabled by default to prevent accidental session termination on Reads/DryHop/Purge.
+  -->
 
 </form>

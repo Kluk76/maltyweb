@@ -463,3 +463,283 @@ body.form-fermenting .ferm-fw-override-desc {
   line-height: 1.45;
   margin: 0;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   P-C: Garde-countdown widget (ferm-garde-*)
+   Scoped under body.form-fermenting.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+body.form-fermenting .ferm-garde-widget {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 14px;
+  margin-top: 14px;
+  border-radius: 4px;
+  border: 1px solid var(--hairline);
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+
+/* Widget variants */
+body.form-fermenting .ferm-garde-widget--ok {
+  border-color: color-mix(in srgb, var(--hop)  40%, transparent);
+  background:   color-mix(in srgb, var(--hop)   7%, var(--bg-elev));
+  color: var(--ink-soft);
+}
+
+body.form-fermenting .ferm-garde-widget--waiting {
+  border-color: color-mix(in srgb, var(--cold) 40%, transparent);
+  background:   color-mix(in srgb, var(--cold)  7%, var(--bg-elev));
+  color: var(--ink-soft);
+}
+
+body.form-fermenting .ferm-garde-widget--pending {
+  border-color: var(--hairline);
+  background:   var(--bg-elev);
+  color: var(--ink-mute);
+  opacity: 0.8;
+}
+
+body.form-fermenting .ferm-garde-widget--error {
+  border-color: color-mix(in srgb, var(--ember) 40%, transparent);
+  background:   color-mix(in srgb, var(--ember)  7%, var(--bg-elev));
+  color: var(--ember);
+}
+
+/* Icon */
+body.form-fermenting .ferm-garde-icon {
+  flex-shrink: 0;
+  font-size: 1rem;
+  line-height: 1.45;
+}
+
+/* Sub-detail line */
+body.form-fermenting .ferm-garde-detail,
+body.form-fermenting .ferm-garde-note {
+  width: 100%;
+  font-size: 0.78rem;
+  color: var(--ink-mute);
+  margin: 2px 0 0 0;
+}
+
+body.form-fermenting .ferm-garde-widget--waiting .ferm-garde-detail {
+  color: color-mix(in srgb, var(--cold) 70%, var(--ink-mute));
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   P-C: Dual-CTA submit bar (ferm-dual-cta)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+body.form-fermenting .ferm-dual-cta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+body.form-fermenting .ferm-dual-cta__label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.65rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  margin-bottom: 2px;
+}
+
+body.form-fermenting .ferm-dual-cta__btns {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* Terminate button — muted until enabled by JS */
+body.form-fermenting .ferm-btn-terminate {
+  background: color-mix(in srgb, var(--ember) 10%, var(--bg-elev));
+  border: 1px solid color-mix(in srgb, var(--ember) 30%, transparent);
+  color: color-mix(in srgb, var(--ember) 70%, var(--ink-mute));
+  transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s;
+}
+
+body.form-fermenting .ferm-btn-terminate:not([disabled]):not([aria-disabled="true"]) {
+  background: color-mix(in srgb, var(--ember) 18%, var(--bg-elev));
+  border-color: color-mix(in srgb, var(--ember) 60%, transparent);
+  color: var(--ember);
+}
+
+body.form-fermenting .ferm-btn-terminate:not([disabled]):not([aria-disabled="true"]):hover {
+  background: color-mix(in srgb, var(--ember) 28%, var(--bg-elev));
+}
+
+body.form-fermenting .ferm-btn-terminate[disabled],
+body.form-fermenting .ferm-btn-terminate[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   P-C: Per-session grouped recap (ferm-session-*)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+body.form-fermenting .ferm-recent {
+  margin-top: 32px;
+}
+
+body.form-fermenting .ferm-session-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+/* <details> session group */
+body.form-fermenting .ferm-session-group {
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--bg-elev);
+}
+
+body.form-fermenting .ferm-session-group--historical {
+  opacity: 0.8;
+}
+
+/* <summary> row */
+body.form-fermenting .ferm-session-summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 10px 14px;
+  user-select: none;
+}
+
+body.form-fermenting .ferm-session-summary::-webkit-details-marker {
+  display: none;
+}
+
+body.form-fermenting .ferm-session-summary:hover {
+  background: color-mix(in srgb, var(--ink) 3%, var(--bg-elev));
+}
+
+/* Meta row inside summary */
+body.form-fermenting .ferm-session-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 0.875rem;
+}
+
+body.form-fermenting .ferm-session-beer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+body.form-fermenting .ferm-session-batch {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.75rem;
+  color: var(--ink-mute);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+body.form-fermenting .ferm-session-dates {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.72rem;
+  color: var(--ink-mute);
+  margin-left: auto;
+}
+
+body.form-fermenting .ferm-session-count {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.68rem;
+  color: var(--ink-mute);
+  white-space: nowrap;
+}
+
+/* Status pill */
+body.form-fermenting .ferm-status-pill {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.65rem;
+  padding: 2px 7px;
+  border-radius: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+body.form-fermenting .ferm-status-pill--inprog {
+  background: color-mix(in srgb, var(--bbt)  14%, transparent);
+  color: var(--bbt);
+}
+
+body.form-fermenting .ferm-status-pill--end {
+  background: color-mix(in srgb, var(--cold) 18%, transparent);
+  color: color-mix(in srgb, var(--cold) 80%, var(--ink));
+}
+
+body.form-fermenting .ferm-status-pill--closed {
+  background: color-mix(in srgb, var(--hop)  14%, transparent);
+  color: var(--hop);
+}
+
+body.form-fermenting .ferm-status-pill--start {
+  background: color-mix(in srgb, var(--ink)  8%, transparent);
+  color: var(--ink-mute);
+}
+
+body.form-fermenting .ferm-status-pill--abandoned {
+  background: color-mix(in srgb, var(--ember) 12%, transparent);
+  color: var(--ember);
+}
+
+body.form-fermenting .ferm-status-pill--historical {
+  background: color-mix(in srgb, var(--oak) 12%, transparent);
+  color: var(--oak, #8b6f47);
+}
+
+/* Session event table (inside <details>) */
+body.form-fermenting .ferm-session-table {
+  font-size: 0.82rem;
+  margin: 0;
+  width: 100%;
+  border-top: 1px solid var(--hairline);
+}
+
+body.form-fermenting .ferm-session-table thead th {
+  padding: 7px 12px;
+  background: color-mix(in srgb, var(--ink) 3%, var(--bg-elev));
+}
+
+body.form-fermenting .ferm-session-table tbody td {
+  padding: 6px 12px;
+}
+
+body.form-fermenting .ferm-recent-note {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-soft);
+  font-size: 0.79rem;
+}
+
+body.form-fermenting .ferm-recent-email {
+  font-size: 0.72rem;
+  color: var(--ink-mute);
+}
+
+body.form-fermenting .ferm-session-empty {
+  padding: 10px 14px;
+  font-size: 0.82rem;
+  color: var(--ink-mute);
+  border-top: 1px solid var(--hairline);
+  margin: 0;
+}
+
+body.form-fermenting .ferm-muted {
+  color: var(--ink-mute);
+}

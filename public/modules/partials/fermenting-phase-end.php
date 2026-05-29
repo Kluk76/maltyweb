@@ -1,34 +1,96 @@
 <?php
 declare(strict_types=1);
 /**
- * fermenting-phase-end.php — END phase for the fermenting form.
+ * fermenting-phase-end.php — END phase for the fermenting form (P-C).
  *
  * Loaded by session-body-fermenting.php when phase='end':
  * a ColdCrash event has been recorded for this (beer, batch) pair.
  *
  * Fermenting closes AUTOMATICALLY when a racking session opens for this
  * (recipe_id_fk, batch) — there is NO explicit close button in this form.
- * This partial renders a "ready-for-racking" green-light state showing the
- * operator that ColdCrash is confirmed and the lot is awaiting racking.
+ * This partial renders a "ready-for-racking" state with garde-countdown.
  *
- * The close-button logic and garde-eligibility check are P-C work
- * (reusing app/yeast-eligibility.php already wired in racking).
+ * P-C adds:
+ *   - Garde-countdown widget: days since ColdCrash vs cold_crash_min_days_before_rack
+ *     from commissioning_settings.fermenting_cadence.
+ *     If setting absent → "Rackable dès maintenant (aucun seuil CC défini)".
+ *   - Form updated to POST to /api/fermenting-phase-submit.php (phase=end).
  *
- * Inherits scope: $pdo, $me, $csrf, $ff_beer, $ff_batch, $ff_recipeId
+ * Inherits scope: $pdo, $me, $csrf, $ff_beer, $ff_batch, $ff_recipeId,
+ *                 $ff_sessionId, $recipes, $displayFmt
  *                 (from session-body-fermenting.php)
- *
- * P-A: pure UI stub — no SQL writes, no new API endpoints.
- * P-C: will add garde-days countdown + racking eligibility signal.
- *
- * TODO (P-C):
- *   - Load loss_metrics / garde progress via yeast-eligibility.php
- *   - Show days-since-cold-crash vs min_ferment_days countdown
- *   - Signal eligibility for racking (green badge when garde met)
- *   - Close-session endpoint at /api/fermenting-phase-submit.php (phase=end)
  */
+
+require_once __DIR__ . '/../../../app/yeast-eligibility.php';
+
+// ── Garde-countdown resolution ────────────────────────────────────────────────
+//
+// Resolves: ColdCrash_date + commissioning_settings.fermenting_cadence.cold_crash_min_days_before_rack
+// Falls back to 0 days (rackable immediately) when the setting is absent.
+// TODO(garde-floor): confirm with operator whether 0 is an acceptable default,
+//   or whether there should be a brewery-default floor. Setting absent = no floor
+//   is the spec (refuse-don't-invent-a-number); render explicit note when absent.
+
+$_gardeErr          = null;
+$_coldCrashDate     = null;  // date('Y-m-d') string from the latest ColdCrash event
+$_minDaysBeforeRack = null;  // int|null from commissioning_settings
+$_daysSinceCc       = null;  // int|null
+$_gardeRemaining    = null;  // int: negative = past threshold, 0 = today, positive = still waiting
+$_rackableDate      = null;  // date string when rackable
+$_gardeSettingFound = false;
+
+if ($ff_beer !== '' && $ff_batch !== '') {
+    try {
+        // Fetch ColdCrash date
+        $ccStmt = $pdo->prepare(
+            "SELECT MAX(event_date) AS cc_date
+               FROM bd_fermenting_v2
+              WHERE beer_raw      = ?
+                AND batch         = ?
+                AND event_type    = 'ColdCrash'
+                AND is_tombstoned = 0"
+        );
+        $ccStmt->execute([$ff_beer, $ff_batch]);
+        $ccRow = $ccStmt->fetch(PDO::FETCH_ASSOC);
+        if ($ccRow && $ccRow['cc_date'] !== null) {
+            $_coldCrashDate = (string)$ccRow['cc_date'];
+            $_daysSinceCc   = (int)floor((time() - strtotime($_coldCrashDate)) / 86400);
+        }
+
+        // Fetch commissioning setting
+        $settingStmt = $pdo->prepare(
+            "SELECT value_num
+               FROM commissioning_settings
+              WHERE section  = 'fermenting_cadence'
+                AND key_name = 'cold_crash_min_days_before_rack'
+                AND is_active = 1
+              LIMIT 1"
+        );
+        $settingStmt->execute();
+        $settingRow = $settingStmt->fetch(PDO::FETCH_ASSOC);
+        if ($settingRow !== false && $settingRow['value_num'] !== null) {
+            $_minDaysBeforeRack = (int)$settingRow['value_num'];
+            $_gardeSettingFound = true;
+        }
+
+        // Compute remaining days and rackable date
+        if ($_coldCrashDate !== null && $_minDaysBeforeRack !== null) {
+            $_gardeRemaining = $_minDaysBeforeRack - $_daysSinceCc;
+            $rackableTs      = strtotime($_coldCrashDate) + ($_minDaysBeforeRack * 86400);
+            $_rackableDate   = date('d.m.Y', $rackableTs);
+        } elseif ($_coldCrashDate !== null) {
+            // No setting → rackable immediately
+            $_gardeRemaining = 0;
+            $_rackableDate   = date('d.m.Y', strtotime($_coldCrashDate));
+        }
+
+    } catch (Throwable $_gardeLoadErr) {
+        $_gardeErr = $_gardeLoadErr->getMessage();
+    }
+}
 ?>
 
-<!-- ── END PHASE: Ready-for-racking view ─────────────────────────────────── -->
+<!-- ── END PHASE: Ready-for-racking view (P-C) ───────────────────────────── -->
 <div class="op-form__card ferm-end-card" id="ferm-end-ready">
   <div class="op-form__card-title">— cold crash enregistré</div>
 
@@ -54,21 +116,57 @@ declare(strict_types=1);
     </div>
   </div>
 
-  <!-- TODO (P-C): garde-days countdown + eligibility badge will go here. -->
-  <!-- TODO (P-C): if garde not yet met → amber warning; if met → green "Éligible au soutirage". -->
+  <!-- ── Garde-countdown widget ──────────────────────────────────────────────── -->
+  <?php if ($_gardeErr !== null): ?>
+    <div class="ferm-garde-widget ferm-garde-widget--error">
+      <span class="ferm-garde-icon" aria-hidden="true">⚠</span>
+      <span>Erreur garde-countdown : <?= htmlspecialchars($_gardeErr) ?></span>
+    </div>
+  <?php elseif ($_coldCrashDate === null): ?>
+    <div class="ferm-garde-widget ferm-garde-widget--pending">
+      <span class="ferm-garde-icon" aria-hidden="true">⏳</span>
+      <span>Date cold crash introuvable — garde non calculable.</span>
+    </div>
+  <?php elseif (!$_gardeSettingFound): ?>
+    <!-- No setting defined — rackable immediately per spec -->
+    <div class="ferm-garde-widget ferm-garde-widget--ok">
+      <span class="ferm-garde-icon" aria-hidden="true">✅</span>
+      <strong>Rackable dès maintenant</strong>
+      <span class="ferm-garde-note">(aucun seuil CC défini dans les paramètres commissioning)</span>
+    </div>
+  <?php elseif ($_gardeRemaining !== null && $_gardeRemaining <= 0): ?>
+    <!-- Garde met or exceeded -->
+    <div class="ferm-garde-widget ferm-garde-widget--ok">
+      <span class="ferm-garde-icon" aria-hidden="true">✅</span>
+      <strong>Prêt pour racking</strong>
+      <span class="ferm-garde-detail">
+        Garde minimum atteinte (<?= (int)$_daysSinceCc ?>j depuis cold crash ≥ <?= (int)$_minDaysBeforeRack ?>j requis)
+      </span>
+    </div>
+  <?php elseif ($_gardeRemaining !== null): ?>
+    <!-- Garde not yet met -->
+    <div class="ferm-garde-widget ferm-garde-widget--waiting">
+      <span class="ferm-garde-icon" aria-hidden="true">❄</span>
+      <strong>Garde restante :
+        <?= (int)$_gardeRemaining ?>j
+        <?php if ($_rackableDate !== null): ?>
+          (rackable le <?= htmlspecialchars($_rackableDate) ?>)
+        <?php endif ?>
+      </strong>
+      <span class="ferm-garde-detail">
+        <?= (int)$_daysSinceCc ?>j depuis cold crash (<?= htmlspecialchars($_coldCrashDate) ?>) —
+        seuil minimum : <?= (int)$_minDaysBeforeRack ?>j
+      </span>
+    </div>
+  <?php endif ?>
 
-  <div class="ferm-end-note ferm-unwired-notice">
-    <strong>P-A — stub :</strong>
-    La progression garde minimum (jours depuis cold crash vs
-    <code>ref_yeast_family_defaults.min_ferment_days</code>) sera affichée ici en P-C.
-    La logique réutilise <code>app/yeast-eligibility.php</code> depuis le pilot racking.
-  </div>
 </div>
 
-<!-- Operator can still add a Reads event post-ColdCrash if needed (temp monitoring). -->
-<!-- P-B will enforce the cadence rules and show/hide this form accordingly. -->
-<form id="fermenting-form" method="post" action="/modules/form-fermenting.php" novalidate>
+<!-- Operator can add post-ColdCrash Reads for temperature monitoring. -->
+<form id="fermenting-form" method="post" action="/api/fermenting-phase-submit.php" novalidate>
   <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+  <input type="hidden" name="phase" value="end">
+  <input type="hidden" name="session_id" value="<?= (int)$ff_sessionId ?>">
   <input type="hidden" id="recipe_id_fk" name="recipe_id_fk"
          value="<?= $ff_recipeId !== null ? (int)$ff_recipeId : '' ?>">
 
@@ -212,7 +310,7 @@ declare(strict_types=1);
     </div>
   </div>
 
-  <!-- ColdCrash (JS-toggled — re-recordable for corrections) -->
+  <!-- ColdCrash (JS-toggled) -->
   <div class="op-form__card" id="section-coldcrash" hidden>
     <div class="op-form__card-title">— cold crash / refroidissement</div>
     <div class="op-form__grid--1 op-form__grid">

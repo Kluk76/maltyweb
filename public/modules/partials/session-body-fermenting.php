@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 /**
- * session-body-fermenting.php — Phase dispatcher for fermenting sessions.
+ * session-body-fermenting.php — Phase dispatcher for fermenting sessions (P-C).
  *
  * Loaded by form-fermenting.php (GET path) after auth, data-load, and the
  * HTML shell (<head> + sidebar + topbar + flash + page-header). Mirrors
@@ -17,21 +17,31 @@ declare(strict_types=1);
  * These are made available to fermenting-phase-start.php as:
  *   $ff_cctNumber, $ff_cctMissing, $ff_cipStatus, $ff_yeastInfo
  *
- * Phase detection:
+ * P-C (split-write): when (beer, batch) are both provided, opens or looks up
+ *   the op_sessions row for this (recipe_id_fk, batch) and makes available:
+ *   $ff_sessionId  — int, the session PK to embed in form hidden fields
+ *
+ * Phase detection (from bd_fermenting_v2 events for this beer/batch):
  *   none        — no (beer, batch) selection yet from URL → start partial
  *   start       — (beer, batch) supplied but NO bd_fermenting_v2 events exist yet
  *   in_progress — at least one event exists AND no ColdCrash event
  *   end         — a ColdCrash event exists for this (beer, batch)
  *
+ * Session phase is authoritative for the submit endpoint; bd_fermenting_v2 event
+ * count drives the display phase here (matches P-A/P-B; consistent with historical
+ * rows that have no session_id_fk).
+ *
  * Variables built here and made available to the phase sub-partials:
  *   $ff_phase, $ff_beer, $ff_batch, $ff_recipeId,
  *   $ff_hasEvents, $ff_hasColdCrash, $ff_loadErr,
+ *   $ff_sessionId  (P-C — always set when beer+batch known; 0 when not yet resolved)
  *   $ff_cctNumber, $ff_cctMissing, $ff_cipStatus, $ff_yeastInfo (P-B, start only)
  */
 
 $ff_loadErr      = null;
 $ff_hasEvents    = false;
 $ff_hasColdCrash = false;
+$ff_sessionId    = 0;   // P-C: op_sessions.id for this (recipe_id, batch); 0 until resolved
 
 // P-B firewall data — populated only when phase='start' and (beer, batch) supplied.
 $ff_cctNumber = null;  // int|null — CCT number from bd_brewing_brewday_v2
@@ -81,6 +91,60 @@ if ($ff_beer === '' || $ff_batch === '') {
     $ff_phase = 'in_progress'; // Events exist, no ColdCrash yet
 } else {
     $ff_phase = 'start';     // Selection supplied, no events yet
+}
+
+// ── P-C: Open or find the op_sessions row for this (recipe_id_fk, batch) ─────
+//
+// Strategy: look for an open fermenting session whose (recipe_id_fk, batch) matches.
+// If found, reuse it. If not found AND a (beer, batch) is known (any phase except none),
+// open a new session. This keeps the session creation lazy — we don't open a session
+// until the operator has selected a beer/batch, and we don't create duplicates.
+//
+// The session is embedded in the form as a hidden field; the endpoint uses it
+// to gate the write and advance the phase. Historical submissions where the
+// form still posts to form-fermenting.php are unaffected (no session_id field).
+if ($ff_beer !== '' && $ff_batch !== '' && $ff_loadErr === null) {
+    require_once __DIR__ . '/../../../app/sessions.php';
+    try {
+        // Look for an existing open fermenting session for this (recipe_id, batch).
+        // If recipe_id is known, use it; otherwise fall back to a batch-only lookup
+        // which is less precise but avoids stalling on missing recipe metadata.
+        $sessLookupParams = ['fermenting'];
+        $sessLookupWhere  = "form_type = ? AND status = 'open' AND is_tombstoned = 0";
+
+        if ($ff_recipeId !== null) {
+            $sessLookupWhere  .= " AND recipe_id_fk = ?";
+            $sessLookupParams[] = $ff_recipeId;
+        }
+        $sessLookupWhere  .= " AND batch = ?";
+        $sessLookupParams[] = $ff_batch;
+
+        $sessLookupStmt = $pdo->prepare(
+            "SELECT id FROM op_sessions WHERE {$sessLookupWhere} ORDER BY id DESC LIMIT 1"
+        );
+        $sessLookupStmt->execute($sessLookupParams);
+        $sessLookupRow = $sessLookupStmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($sessLookupRow !== false) {
+            $ff_sessionId = (int)$sessLookupRow['id'];
+        } else {
+            // No open session found — open one.
+            $ctx = [
+                'form_type' => 'fermenting',
+                'batch'     => $ff_batch,
+            ];
+            if ($ff_recipeId !== null) {
+                $ctx['recipe_id_fk'] = $ff_recipeId;
+            }
+            $ff_sessionId = session_open($pdo, $ctx, (int)$me['id']);
+        }
+    } catch (Throwable $_sessErr) {
+        // Non-fatal — forms render but session_id will be 0; endpoint will reject.
+        if ($ff_loadErr === null) {
+            $ff_loadErr = 'Session open/lookup error: ' . $_sessErr->getMessage();
+        }
+        $ff_sessionId = 0;
+    }
 }
 
 if ($ff_loadErr !== null): ?>
