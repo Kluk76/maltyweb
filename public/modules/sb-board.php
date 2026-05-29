@@ -173,6 +173,7 @@ function sbb_render_mother_card(array $m, string $zone): string
 $active_module = 'sb-board';
 $cssAppV       = @filemtime(__DIR__ . '/../css/app.css')      ?: time();
 $cssBoardV     = @filemtime(__DIR__ . '/../css/sb-board.css') ?: time();
+$jsBoardV      = @filemtime(__DIR__ . '/../js/sb-board.js')   ?: time();
 ?><!doctype html>
 <html lang="fr">
 <head>
@@ -503,5 +504,6 @@ $cssBoardV     = @filemtime(__DIR__ . '/../css/sb-board.css') ?: time();
 </div><!-- /sb-board-wrap -->
 </main>
 
+<script src="/js/sb-board.js?v=<?= $jsBoardV ?>" defer></script>
 </body>
 </html>

@@ -382,6 +382,19 @@ body.sb-board .main {
 }
 .sb-card--flash { animation: sb-card-flash .6s ease-out; }
 
+/* Polling driver enter/leave transitions (sb-board.js) */
+.sb-card--entering {
+  opacity: 0;
+  transform: translateY(-6px);
+  transition: opacity .25s ease, transform .25s ease;
+}
+.sb-card--leaving {
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity .3s ease, transform .3s ease;
+  pointer-events: none;
+}
+
 /* Phase accent bar (left edge) */
 .sb-card::before {
   content: "";
