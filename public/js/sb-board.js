@@ -310,6 +310,19 @@
     start();
   }
 
+  /* Shift+W → open Salle de Guerre panic view.
+     NOT plain W (collides with Cmd+W browser-tab-close).
+     Guard: skip when focus is inside an input/textarea/select. */
+  document.addEventListener('keydown', function (e) {
+    if (
+      e.key === 'W' &&
+      e.shiftKey &&
+      !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName ?? '')
+    ) {
+      window.location.href = '/modules/sb-salle-de-guerre.php';
+    }
+  });
+
   // Minimal debug surface
   window.SbBoard = {
     fetchNow:   fetchBoard,
