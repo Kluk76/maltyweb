@@ -335,3 +335,131 @@ body.form-fermenting .ferm-empty-note {
   color: var(--ink-mute);
   padding: 12px 0;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   P-B: Start firewall checklist (ferm-fw-*)
+   Scoped under body.form-fermenting.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+body.form-fermenting .ferm-fw-card {
+  border-color: var(--hairline);
+}
+
+/* ── Checklist ─────────────────────────────────────────────────────────────── */
+body.form-fermenting .ferm-fw-checklist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* ── Individual check row ─────────────────────────────────────────────────── */
+body.form-fermenting .ferm-fw-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 4px;
+  border: 1px solid var(--hairline);
+  background: var(--bg-elev);
+  line-height: 1.45;
+  flex-wrap: wrap;
+}
+
+/* Severity variants */
+body.form-fermenting .ferm-fw-item--ok {
+  border-color: color-mix(in srgb, var(--hop) 35%, transparent);
+  background: color-mix(in srgb, var(--hop) 6%, var(--bg-elev));
+}
+body.form-fermenting .ferm-fw-item--warn {
+  border-color: color-mix(in srgb, var(--ember) 45%, transparent);
+  background: color-mix(in srgb, var(--ember) 7%, var(--bg-elev));
+}
+body.form-fermenting .ferm-fw-item--red {
+  border-color: color-mix(in srgb, var(--ember) 65%, transparent);
+  background: color-mix(in srgb, var(--ember) 10%, var(--bg-elev));
+}
+body.form-fermenting .ferm-fw-item--info {
+  border-color: color-mix(in srgb, var(--cold) 30%, transparent);
+  background: color-mix(in srgb, var(--cold) 5%, var(--bg-elev));
+}
+body.form-fermenting .ferm-fw-item--pending {
+  opacity: 0.65;
+}
+
+/* ── Icon + text ──────────────────────────────────────────────────────────── */
+body.form-fermenting .ferm-fw-icon {
+  font-size: 0.9rem;
+  flex-shrink: 0;
+  line-height: 1.5;
+}
+body.form-fermenting .ferm-fw-text {
+  font-size: 0.855rem;
+  color: var(--ink-soft);
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── Red note (under blocked CIP row) ────────────────────────────────────── */
+body.form-fermenting .ferm-fw-red-note {
+  width: 100%;
+  margin: 4px 0 0 26px;
+  font-size: 0.8rem;
+  color: var(--ember);
+  line-height: 1.45;
+}
+
+/* ── Override block (YELLOW CIP) ─────────────────────────────────────────── */
+body.form-fermenting .ferm-fw-override-wrap {
+  width: 100%;
+  margin: 6px 0 0 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+body.form-fermenting .ferm-fw-override-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.845rem;
+  color: var(--ink-soft);
+  cursor: pointer;
+  user-select: none;
+}
+
+body.form-fermenting .ferm-fw-override-cb {
+  accent-color: var(--ember);
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+body.form-fermenting .ferm-fw-override-reason-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+body.form-fermenting .ferm-fw-override-reason-label {
+  font-size: 0.8rem;
+}
+
+body.form-fermenting .ferm-fw-override-reason-input {
+  font-size: 0.85rem;
+}
+
+body.form-fermenting .op-form__req {
+  color: var(--ember);
+  font-size: 0.8em;
+}
+
+body.form-fermenting .ferm-fw-override-desc {
+  font-size: 0.77rem;
+  color: var(--ink-mute);
+  line-height: 1.45;
+  margin: 0;
+}

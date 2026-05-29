@@ -162,6 +162,53 @@
     temperature: { label: 'Temp',    unit: '°C', warn: [-2, 35],   outlier: [-5, 40]    },
   };
 
+  /* ── Firewall: CIP override (YELLOW cadence gate) ───────────────────── */
+  // When window.FERMENTING_FIREWALL.gate2_allow_override is true (YELLOW severity),
+  // the PHP renders the override checkbox + reason field. The submit button starts
+  // disabled (PHP sets disabled when gate2 is warn without committed override);
+  // JS enables it only once the operator ticks the box AND fills the reason.
+  function initCipOverride() {
+    const fw = window.FERMENTING_FIREWALL || {};
+    if (!fw.gate2_allow_override) return;
+
+    const cb             = document.getElementById('ferm_cip_override_cb');
+    const reasonRow      = document.getElementById('ferm-cip-override-reason-row');
+    const reasonInput    = document.getElementById('ferm_cip_override_reason_text');
+    const hiddenOverride = document.getElementById('ferm_fw_cip_override');
+    const hiddenReason   = document.getElementById('ferm_fw_cip_override_reason');
+    const submitBtn      = document.getElementById('ferm-submit-btn');
+
+    if (!cb || !reasonRow || !reasonInput || !hiddenOverride || !hiddenReason) return;
+
+    function syncReason() {
+      const val = reasonInput.value.trim();
+      hiddenReason.value = val;
+      if (submitBtn) submitBtn.disabled = (val.length === 0);
+    }
+
+    function syncOverride() {
+      const checked = cb.checked;
+      reasonRow.hidden = !checked;
+      hiddenOverride.value = checked ? '1' : '0';
+
+      if (checked) {
+        reasonInput.setAttribute('required', '');
+        reasonInput.addEventListener('input', syncReason);
+        syncReason();
+      } else {
+        reasonInput.removeAttribute('required');
+        reasonInput.removeEventListener('input', syncReason);
+        hiddenReason.value = '';
+        if (submitBtn) submitBtn.disabled = true;
+      }
+    }
+
+    cb.addEventListener('change', syncOverride);
+    // On initial load: YELLOW gate means PHP already disabled submit; confirm here.
+    if (submitBtn) submitBtn.disabled = true;
+    syncOverride();
+  }
+
   /* ── FormFramework initialisation ─────────────────────────────────────── */
   function initFramework() {
     if (typeof FormFramework === 'undefined') return;
@@ -207,6 +254,9 @@
 
     // Expose dry-hop add to PHP button onclick
     window._fermAddDhRow = addDhRow;
+
+    // Firewall CIP override (YELLOW gate only)
+    initCipOverride();
 
     // FormFramework
     initFramework();

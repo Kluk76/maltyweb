@@ -1,39 +1,139 @@
 <?php
 declare(strict_types=1);
 /**
- * fermenting-phase-start.php — START phase sections for the fermenting form.
+ * fermenting-phase-start.php — START phase for the fermenting form (P-B).
  *
  * Loaded by session-body-fermenting.php when phase='none' or phase='start'.
- * Mirrors racking-phase-start.php's role: the pre-session firewall view.
  *
- * In P-A: renders the full unified fermenting form verbatim (identity card
- * + event-type picker + all measurement sections). The operator picks beer,
- * batch, event type, fills measurements, and submits — exactly as before
- * extraction. No phase-gating is applied here (P-B work).
+ * P-B upgrades this from the P-A "pick beer + batch + submit" placeholder to
+ * a real pre-start firewall view with three predicates, mirroring the racking
+ * pilot 3 P-B pattern (commit 60e0b89).
  *
- * If $ff_beer / $ff_batch / $ff_recipeId are set (from URL params, passed by
- * session-body-fermenting.php), they pre-fill the hidden recipe_id_fk and
- * may be used by JS to pre-select the beer/batch dropdowns.
+ * Inherits scope from session-body-fermenting.php:
+ *   $pdo, $me, $csrf, $recipes, $hopsJs, $displayFmt
+ *   $ff_beer, $ff_batch, $ff_recipeId (URL params)
+ *   $ff_cctNumber  — int|null      CCT number for this (beer, batch)
+ *   $ff_cctMissing — bool          brewday row found but cct IS NULL
+ *   $ff_cipStatus  — array|null    from cct_cip_status(); null if no CCT
+ *   $ff_yeastInfo  — array|null    from resolve_recipe_yeast(); null if no recipe
  *
- * Inherits scope: $pdo, $me, $csrf, $recipes, $hopsJs, $displayFmt,
- *                 $ff_beer, $ff_batch, $ff_recipeId (from session-body-fermenting.php)
+ * Firewall predicates (all display-only; submit button state derived from them):
+ *   1. CCT-presence gate — resolves (beer, batch) → CCT or shows banner
+ *   2. CCT CIP cadence   — days since last CCT CIP vs thresholds; override path
+ *   3. Yeast eligibility — earliest ColdCrash date from garde_days_min (display only)
  *
- * Sections (verbatim from form-fermenting.php GET block):
- *   Identity card (beer/batch/date/event_type)
- *   Readings card (gravity/pH/temperature)
- *   DryHop card (JS-toggled table)
- *   Purge card (JS-toggled)
- *   ColdCrash card (JS-toggled)
- *   Comments card
- *   Submit bar
+ * The form <form> wraps the complete fermenting event fields. The submit button
+ * is disabled when any firewall predicate is RED (no CCT or CIP blocked without
+ * override). YELLOW with override checkbox + reason field leaves submit enabled
+ * after the reason is filled.
+ *
+ * POST handler: /modules/form-fermenting.php (unchanged, P-C work).
+ *
+ * CSS: /css/form-fermenting.css (ferm-* namespace).
  */
+
+// ── Derive firewall verdict ────────────────────────────────────────────────────
+
+// Gate 1: CCT presence
+// RED if no CCT number and no brewday row (cctNumber null AND cctMissing false
+// means no brewday row at all); RED also if brewday row exists but cct is NULL.
+$gate1Severity = 'ok';
+$gate1Label    = '';
+$hasBeerBatch  = ($ff_beer !== '' && $ff_batch !== '');
+
+if ($hasBeerBatch) {
+    if ($ff_cctNumber !== null) {
+        $gate1Severity = 'ok';
+        $gate1Label    = 'CCT ' . $ff_cctNumber . ' (saisie brewday)';
+    } elseif ($ff_cctMissing) {
+        // Brewday row exists but CCT not recorded.
+        $gate1Severity = 'red';
+        $gate1Label    = 'CCT non renseignée dans la saisie brewday — corriger avant de démarrer';
+    } else {
+        // No brewday row at all for (beer, batch).
+        $gate1Severity = 'red';
+        $gate1Label    = 'Aucune CCT trouvée pour ce brassin — vérifier la saisie brewday';
+    }
+} else {
+    // No beer/batch selected yet: gate is not yet applicable (show as neutral).
+    $gate1Severity = 'pending';
+    $gate1Label    = 'Sélectionner un brassin pour évaluer la CCT';
+}
+
+// Gate 2: CCT CIP cadence
+$gate2Severity     = 'pending';
+$gate2Label        = '';
+$cipDaysSince      = null;
+$cipMaxDays        = null;
+$cipWarnDays       = null;
+$gate2AllowOverride = false;  // YELLOW permits override; RED does not by design
+                               // (no CCT = cannot override: must fix data first)
+
+if ($ff_cipStatus !== null) {
+    $cipDaysSince = $ff_cipStatus['days_since_cip'];
+    $cipMaxDays   = $ff_cipStatus['max_days'];
+    $cipWarnDays  = $ff_cipStatus['warn_days'];
+
+    $gate2Severity = $ff_cipStatus['severity'];  // 'ok', 'warn', 'red'
+    // Store raw — escape at render-time only (consistent with lines 223 + 260).
+    $gate2Label    = $ff_cipStatus['verdict_label'];
+
+    // YELLOW allows operator override with a reason field; RED blocks the submit button.
+    // Rationale: 'warn' = advisory overage the operator can justify (e.g. low-foam product);
+    // 'red' = hard limit per commissioning_settings — must CIP before starting.
+    $gate2AllowOverride = ($gate2Severity === 'warn');
+} elseif ($hasBeerBatch && $ff_cctNumber === null) {
+    // CCT unknown — CIP gate cannot run.
+    $gate2Severity = 'pending';
+    $gate2Label    = 'CIP CCT — en attente de la CCT (Gate 1)';
+} elseif ($hasBeerBatch) {
+    // cct_cip_status should have been called — data-load error path.
+    $gate2Severity = 'pending';
+    $gate2Label    = 'CIP CCT — données non disponibles';
+}
+
+// Gate 3: Yeast eligibility (display-only — never blocks submit)
+$gate3Available   = false;
+$gate3Label       = '';
+$gate3EarliestCc  = null;  // DateTimeImmutable or null
+
+if ($ff_yeastInfo !== null) {
+    $gardeDays  = $ff_yeastInfo['garde_days_min'];
+    $strainName = $ff_yeastInfo['strain_name'];
+    $family     = $ff_yeastInfo['family_label'];
+
+    if ($gardeDays !== null) {
+        $gate3Available = true;
+        // Earliest ColdCrash date = today + garde_days_min (pitch day = today for new ferments).
+        $earliestTs    = strtotime("+{$gardeDays} days");
+        $gate3EarliestCc = date('d.m.Y', $earliestTs);  // display format (system: DMY)
+        $strainDisplay  = htmlspecialchars($strainName ?? ($family ?? 'Levure inconnue'));
+        $gate3Label     = "ColdCrash possible ≥ {$gate3EarliestCc} ({$strainDisplay}, garde min {$gardeDays}j)";
+    } else {
+        $gate3Available = true;
+        $strainDisplay  = htmlspecialchars($strainName ?? ($family ?? 'Levure inconnue'));
+        $gate3Label     = "Garde minimum non définie ({$strainDisplay}) — ColdCrash hors process uniquement";
+    }
+}
+
+// ── Overall submit-blocking verdict ────────────────────────────────────────────
+// RED in gate1 or gate2 (without override) → submit disabled.
+$submitBlocked = (
+    $gate1Severity === 'red' ||
+    ($gate2Severity === 'red')
+);
+// YELLOW gate2 without override reason also keeps button disabled via JS.
+
 ?>
 
-<!-- ── START PHASE: Full fermenting event form ────────────────────────────── -->
+<!-- ── START PHASE: Fermenting session firewall (P-B) ──────────────────────── -->
 <form id="fermenting-form" method="post" action="/modules/form-fermenting.php" novalidate>
   <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
   <input type="hidden" id="recipe_id_fk" name="recipe_id_fk"
          value="<?= $ff_recipeId !== null ? (int)$ff_recipeId : '' ?>">
+  <!-- CIP override payload — populated by JS when operator fills the reason field -->
+  <input type="hidden" id="ferm_fw_cip_override" name="ferm_fw_cip_override" value="0">
+  <input type="hidden" id="ferm_fw_cip_override_reason" name="ferm_fw_cip_override_reason" value="">
 
   <!-- Warning panel (populated by form-framework.js) -->
   <div id="fermenting-warnings" class="op-form__warnings" hidden aria-live="polite"></div>
@@ -43,7 +143,7 @@ declare(strict_types=1);
     <div class="op-form__card-title">— identité du brassin</div>
     <div class="op-form__grid">
 
-      <!-- Beer / recipe picker (state-gated: is_active = 1) -->
+      <!-- Beer / recipe picker -->
       <div class="op-form__field">
         <label class="op-form__label" for="beer_select">Bière (recette)</label>
         <select id="beer_select" name="beer_select" class="op-form__select">
@@ -66,7 +166,7 @@ declare(strict_types=1);
       <div class="op-form__field">
         <label class="op-form__label" for="batch">N° brassin</label>
         <input id="batch" name="batch" type="text" class="op-form__input"
-               placeholder="ex. 213" autocomplete="off" required
+               placeholder="ex. 244" autocomplete="off" required
                value="<?= htmlspecialchars($ff_batch) ?>">
       </div>
 
@@ -80,7 +180,7 @@ declare(strict_types=1);
                value="<?= htmlspecialchars(date('Y-m-d')) ?>" required>
       </div>
 
-      <!-- Event type — maps to bd_fermenting_v2.event_type ENUM -->
+      <!-- Event type -->
       <div class="op-form__field">
         <label class="op-form__label" for="event_type">Type d'évènement</label>
         <select id="event_type" name="event_type" class="op-form__select">
@@ -94,19 +194,97 @@ declare(strict_types=1);
     </div>
   </div>
 
+  <?php if ($hasBeerBatch): ?>
+  <!-- ── Section: Vérifications pré-démarrage (firewall) ─────────────────── -->
+  <div class="op-form__card ferm-fw-card" id="ferm-fw-card">
+    <div class="op-form__card-title">— vérifications pré-démarrage</div>
+
+    <ul class="ferm-fw-checklist" role="list" aria-label="Vérifications pare-feu fermentation">
+
+      <!-- Gate 1: CCT presence ───────────────────────────────────────────── -->
+      <li class="ferm-fw-item ferm-fw-item--<?= htmlspecialchars($gate1Severity) ?>">
+        <span class="ferm-fw-icon" aria-hidden="true">
+          <?php if ($gate1Severity === 'ok'): ?>✅
+          <?php elseif ($gate1Severity === 'red'): ?>🚫
+          <?php else: ?>⏳
+          <?php endif ?>
+        </span>
+        <span class="ferm-fw-text"><?= htmlspecialchars($gate1Label) ?></span>
+      </li>
+
+      <!-- Gate 2: CIP cadence ────────────────────────────────────────────── -->
+      <?php if ($gate2Severity !== 'pending'): ?>
+      <li class="ferm-fw-item ferm-fw-item--<?= htmlspecialchars($gate2Severity) ?>" id="ferm-fw-cip-row">
+        <span class="ferm-fw-icon" aria-hidden="true">
+          <?php if ($gate2Severity === 'ok'): ?>✅
+          <?php elseif ($gate2Severity === 'warn'): ?>⚠️
+          <?php else: ?>🚫
+          <?php endif ?>
+        </span>
+        <span class="ferm-fw-text"><?= htmlspecialchars($gate2Label) ?></span>
+
+        <?php if ($gate2AllowOverride): ?>
+        <!-- Yellow CIP: operator-overrideable warn (identical UX to racking start firewall) -->
+        <div class="ferm-fw-override-wrap" id="ferm-fw-cip-override-wrap">
+          <label class="ferm-fw-override-label">
+            <input type="checkbox" class="ferm-fw-override-cb" id="ferm_cip_override_cb"
+                   aria-describedby="ferm-cip-override-desc">
+            <span>J'ai effectué un CIP non tracé</span>
+          </label>
+          <div class="ferm-fw-override-reason-row" id="ferm-cip-override-reason-row" hidden>
+            <label class="op-form__label ferm-fw-override-reason-label" for="ferm_cip_override_reason_text">
+              Raison <span class="op-form__req">*</span>
+            </label>
+            <input type="text" id="ferm_cip_override_reason_text"
+                   class="op-form__input ferm-fw-override-reason-input"
+                   placeholder="ex. CIP effectué ce matin, feuille papier signée"
+                   maxlength="255"
+                   aria-describedby="ferm-cip-override-desc">
+          </div>
+          <p class="ferm-fw-override-desc" id="ferm-cip-override-desc">
+            Cocher uniquement si un CIP a été fait mais non enregistré dans le système.
+            La justification est obligatoire et sera enregistrée dans la saisie.
+          </p>
+        </div>
+        <?php endif ?>
+
+        <?php if ($gate2Severity === 'red'): ?>
+        <p class="ferm-fw-red-note">
+          CIP requis avant de démarrer la fermentation.
+          Enregistrer le CIP dans la saisie brewday ou via le formulaire CIP.
+        </p>
+        <?php endif ?>
+      </li>
+      <?php else: ?>
+      <li class="ferm-fw-item ferm-fw-item--pending" id="ferm-fw-cip-row">
+        <span class="ferm-fw-icon" aria-hidden="true">⏳</span>
+        <span class="ferm-fw-text"><?= htmlspecialchars($gate2Label) ?></span>
+      </li>
+      <?php endif ?>
+
+      <!-- Gate 3: Yeast eligibility (display-only) ───────────────────────── -->
+      <?php if ($gate3Available): ?>
+      <li class="ferm-fw-item ferm-fw-item--info">
+        <span class="ferm-fw-icon" aria-hidden="true">ℹ️</span>
+        <span class="ferm-fw-text"><?= htmlspecialchars($gate3Label) ?></span>
+      </li>
+      <?php endif ?>
+
+    </ul>
+
+  </div><!-- /.ferm-fw-card -->
+  <?php endif ?>
+
   <!-- ── Section: Mesures densité / pH / température ──────────────────────── -->
   <div class="op-form__card" id="section-readings">
     <div class="op-form__card-title">— mesures (°Plato · pH · °C)</div>
     <div class="ferm-readings-note">
       La densité est saisie en <strong>°Plato</strong> (pas en SG).
       Valeurs typiques : OG 10–20°P, FG 1–5°P.
-      Un seul champ densité — le contexte (début/fin de fermentation) est
-      déterminé par la date et le type d'évènement.
     </div>
 
     <div class="ferm-readings-grid">
 
-      <!-- Gravity — °Plato; stored in bd_fermenting_v2.gravity -->
       <div class="ferm-reading-card">
         <div class="ferm-reading-card__head">
           <span class="ferm-reading-card__label">Densité</span>
@@ -114,14 +292,10 @@ declare(strict_types=1);
         </div>
         <input type="number" id="gravity" name="gravity"
                class="ferm-reading-input"
-               placeholder="—" step="0.1" min="0" max="30"
-               autocomplete="off">
-        <div class="ferm-reading-hint" id="gravity-hint">
-          OG typique 10–20°P · FG 0.5–5°P
-        </div>
+               placeholder="—" step="0.1" min="0" max="30" autocomplete="off">
+        <div class="ferm-reading-hint" id="gravity-hint">OG typique 10–20°P · FG 0.5–5°P</div>
       </div>
 
-      <!-- pH — stored in bd_fermenting_v2.ph -->
       <div class="ferm-reading-card">
         <div class="ferm-reading-card__head">
           <span class="ferm-reading-card__label">pH</span>
@@ -129,14 +303,10 @@ declare(strict_types=1);
         </div>
         <input type="number" id="ph" name="ph"
                class="ferm-reading-input"
-               placeholder="—" step="0.01" min="2" max="8"
-               autocomplete="off">
-        <div class="ferm-reading-hint" id="ph-hint">
-          Pale Ale typique 4.1–4.6
-        </div>
+               placeholder="—" step="0.01" min="2" max="8" autocomplete="off">
+        <div class="ferm-reading-hint" id="ph-hint">Pale Ale typique 4.1–4.6</div>
       </div>
 
-      <!-- Temperature — stored in bd_fermenting_v2.temperature -->
       <div class="ferm-reading-card">
         <div class="ferm-reading-card__head">
           <span class="ferm-reading-card__label">Température</span>
@@ -144,11 +314,8 @@ declare(strict_types=1);
         </div>
         <input type="number" id="temperature" name="temperature"
                class="ferm-reading-input"
-               placeholder="—" step="0.1" min="-5" max="40"
-               autocomplete="off">
-        <div class="ferm-reading-hint" id="temp-hint">
-          Fermentation 16–22°C · Cold crash 0–4°C
-        </div>
+               placeholder="—" step="0.1" min="-5" max="40" autocomplete="off">
+        <div class="ferm-reading-hint" id="temp-hint">Fermentation 16–22°C · Cold crash 0–4°C</div>
       </div>
 
     </div>
@@ -205,11 +372,8 @@ declare(strict_types=1);
       </div>
     </div>
     <div class="ferm-unwired-notice">
-      <strong>Non câblé — colonnes manquantes :</strong>
-      CO₂ pression (bar) et CO₂ dissous (g/L) sont visibles dans le mock
-      de design mais absents de <code>bd_fermenting_v2</code>.
-      Une migration est nécessaire pour les ajouter.
-      Seul le commentaire est stocké.
+      <strong>Non câblé :</strong> CO₂ pression (bar) et CO₂ dissous (g/L) absents de
+      <code>bd_fermenting_v2</code>. Seul le commentaire est stocké.
     </div>
   </div>
 
@@ -228,11 +392,8 @@ declare(strict_types=1);
       </div>
     </div>
     <div class="ferm-unwired-notice">
-      <strong>Non câblé — colonnes manquantes :</strong>
-      Température cible, température actuelle, date crash et durée prévue
-      sont dans le mock de design mais absents de <code>bd_fermenting_v2</code>.
-      La <strong>température</strong> (°C) est capturée via la section Mesures ci-dessus.
-      Les autres champs nécessitent une migration.
+      <strong>Non câblé :</strong> Température cible, date crash et durée nécessitent
+      une migration. La <strong>température</strong> (°C) est capturée via Mesures ci-dessus.
     </div>
   </div>
 
@@ -257,9 +418,14 @@ declare(strict_types=1);
             onclick="if(confirm('Effacer le brouillon ?')){localStorage.removeItem('fermenting-draft');location.reload();}">
       Effacer brouillon
     </button>
-    <button type="submit" class="op-form__btn op-form__btn--primary" id="ferm-submit-btn">
+    <button type="submit"
+            class="op-form__btn op-form__btn--primary"
+            id="ferm-submit-btn"
+            <?= $submitBlocked ? 'disabled aria-disabled="true"' : '' ?>>
       Enregistrer →
     </button>
   </div>
 
 </form>
+
+<!-- CIP override behaviour handled by form-fermenting.js reading window.FERMENTING_FIREWALL -->

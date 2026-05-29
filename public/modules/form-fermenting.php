@@ -466,9 +466,13 @@ $displayFmt    = date_display_format();
 
 </main>
 
-<!-- Hops catalog injected server-side for the dry-hop picker JS -->
+<!-- Server-side data injected for JS — single <script> block per house convention -->
 <script>
-window.FERMENTING_HOPS = <?= json_encode($hopsJs, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+window.FERMENTING_HOPS     = <?= json_encode($hopsJs, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+window.FERMENTING_FIREWALL = <?= json_encode([
+    'gate2_severity'     => $ff_cipStatus['severity']    ?? null,
+    'gate2_allow_override' => ($ff_cipStatus['severity'] ?? null) === 'warn',
+], JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
 </script>
 
 <script src="/js/form-framework.js?v=<?= @filemtime(__DIR__ . '/../js/form-framework.js') ?: time() ?>" defer></script>

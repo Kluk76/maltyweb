@@ -10,10 +10,12 @@ declare(strict_types=1);
  * Inherits form-fermenting.php scope:
  *   $pdo, $me, $csrf, $recipes, $hopsJs, $recentFerm, $displayFmt
  *
- * P-A (skeleton): detects the current phase for the (recipe, batch) pair from
- * the URL params (?beer=&batch=), then includes the right phase partial.
- * No phase-gating logic — that is P-B (CIP/cadence firewall) work.
- * All behavior is identical to the pre-extraction inline form.
+ * P-B (firewall): when phase='start', loads:
+ *   - CCT assignment for (beer, batch) via bd_brewing_brewday_v2
+ *   - CCT CIP status via app/cct-cip-cadence.php
+ *   - Yeast eligibility for earliest ColdCrash display via app/yeast-eligibility.php
+ * These are made available to fermenting-phase-start.php as:
+ *   $ff_cctNumber, $ff_cctMissing, $ff_cipStatus, $ff_yeastInfo
  *
  * Phase detection:
  *   none        — no (beer, batch) selection yet from URL → start partial
@@ -21,18 +23,21 @@ declare(strict_types=1);
  *   in_progress — at least one event exists AND no ColdCrash event
  *   end         — a ColdCrash event exists for this (beer, batch)
  *
- * For P-A the form renders identically in ALL phases (single-form, no split-write).
- * Phase detection is computed here so P-B can add firewall gates without touching
- * the phase partials.
- *
  * Variables built here and made available to the phase sub-partials:
  *   $ff_phase, $ff_beer, $ff_batch, $ff_recipeId,
- *   $ff_hasEvents, $ff_hasColdCrash, $ff_loadErr
+ *   $ff_hasEvents, $ff_hasColdCrash, $ff_loadErr,
+ *   $ff_cctNumber, $ff_cctMissing, $ff_cipStatus, $ff_yeastInfo (P-B, start only)
  */
 
-$ff_loadErr     = null;
-$ff_hasEvents   = false;
+$ff_loadErr      = null;
+$ff_hasEvents    = false;
 $ff_hasColdCrash = false;
+
+// P-B firewall data — populated only when phase='start' and (beer, batch) supplied.
+$ff_cctNumber = null;  // int|null — CCT number from bd_brewing_brewday_v2
+$ff_cctMissing = false; // true when (beer,batch) found but cct IS NULL
+$ff_cipStatus  = null;  // array|null — from cct_cip_status()
+$ff_yeastInfo  = null;  // array|null — from resolve_recipe_yeast()
 
 // URL params — operators may land with pre-filled beer/batch from a deep-link.
 // Security: PDO binding handles SQL injection; htmlspecialchars at render time handles XSS.
@@ -85,9 +90,71 @@ if ($ff_loadErr !== null): ?>
 <?php endif ?>
 
 <!--
-  P-A RENDER STRATEGY: Phase-gated dispatcher.
-  All phases render the full unified form (same HTML as pre-extraction inline).
-  P-B will add firewall gates per-phase; P-C will split the write endpoint.
+  P-B FIREWALL DATA LOAD: When phase is 'start' (beer+batch provided, no events yet),
+  load CCT assignment + CCT CIP status + yeast eligibility for the start-firewall view.
+  These resolvers are pure-read; errors are caught and surfaced as banners in the partial.
+-->
+<?php if (($ff_phase === 'start' || $ff_phase === 'none') && $ff_beer !== '' && $ff_batch !== ''): ?>
+<?php
+require_once __DIR__ . '/../../../app/cct-cip-cadence.php';
+require_once __DIR__ . '/../../../app/yeast-eligibility.php';
+
+try {
+    // ── 1. CCT assignment for this (beer, batch) ──────────────────────────
+    // Use the MOST RECENT brewday row — ORDER BY id DESC LIMIT 1 handles
+    // batches that were re-entered or corrected without requiring event_date.
+    $cctStmt = $pdo->prepare(
+        "SELECT cct, recipe_id_fk
+           FROM bd_brewing_brewday_v2
+          WHERE beer  = ?
+            AND batch = ?
+            AND is_tombstoned = 0
+          ORDER BY id DESC
+          LIMIT 1"
+    );
+    $cctStmt->execute([$ff_beer, $ff_batch]);
+    $cctRow = $cctStmt->fetch(PDO::FETCH_ASSOC);
+
+    if ($cctRow !== false) {
+        if ($cctRow['cct'] !== null) {
+            $ff_cctNumber = (int)$cctRow['cct'];
+        } else {
+            // Brewday row exists but CCT is NULL — operator didn't record it.
+            $ff_cctMissing = true;
+        }
+        // Use recipe_id from brewday if not already set from URL param.
+        if ($ff_recipeId === null && $cctRow['recipe_id_fk'] !== null) {
+            $ff_recipeId = (int)$cctRow['recipe_id_fk'];
+        }
+    }
+    // No brewday row at all: ff_cctNumber stays null, ff_cctMissing stays false.
+    // The partial will show "Aucune CCT trouvée" banner (no brewday row = refuse-don't-NULL).
+
+    // ── 2. CCT CIP status ─────────────────────────────────────────────────
+    if ($ff_cctNumber !== null) {
+        $ff_cipStatus = cct_cip_status($pdo, $ff_cctNumber);
+    }
+
+    // ── 3. Yeast eligibility (display-only — earliest ColdCrash date) ─────
+    if ($ff_recipeId !== null) {
+        try {
+            $ff_yeastInfo = resolve_recipe_yeast($pdo, $ff_recipeId);
+        } catch (RuntimeException $e) {
+            // Recipe not found — leave ff_yeastInfo null; partial will omit the row.
+            $ff_yeastInfo = null;
+        }
+    }
+} catch (Throwable $e) {
+    // Non-fatal: firewall data load failed. Partial will render banners in place of predicates.
+    if ($ff_loadErr === null) {
+        $ff_loadErr = 'Firewall data load error: ' . $e->getMessage();
+    }
+}
+?>
+<?php endif ?>
+
+<!--
+  Phase-gated dispatcher.
 -->
 <?php if ($ff_phase === 'none' || $ff_phase === 'start'): ?>
   <?php require __DIR__ . '/fermenting-phase-start.php' ?>
