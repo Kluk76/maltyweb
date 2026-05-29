@@ -30,6 +30,7 @@ declare(strict_types=1);
 require __DIR__ . '/../../app/auth.php';
 require __DIR__ . '/../../app/csrf.php';
 require_once __DIR__ . '/../../app/sessions.php';
+require_once __DIR__ . '/../../app/mother-shell.php';
 
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
@@ -82,6 +83,22 @@ if ($vesselKind !== null && $vesselKind !== '' && $vesselNumber !== null && $ves
 try {
     $pdo       = maltytask_pdo();
     $sessionId = session_open($pdo, $ctx, (int)$me['id']);
+
+    // ── Auto-link to mother (Phase 1) ─────────────────────────────────────────
+    // Racking session-start does not carry recipe_id_fk/batch — link fires only
+    // if the caller includes them in the request (future pilot 6 path). For now
+    // this is always a graceful no-op. Failure must NOT block session open.
+    $linkRecipeId = isset($data['recipe_id_fk']) ? (int)$data['recipe_id_fk'] : 0;
+    $linkBatch    = isset($data['batch']) ? trim((string)$data['batch']) : '';
+    if ($linkRecipeId > 0 && $linkBatch !== '') {
+        try {
+            link_daily_to_mother($pdo, $sessionId, $linkRecipeId, $linkBatch);
+        } catch (Throwable $_linkErr) {
+            // Non-fatal — log warning; session already open.
+            error_log('[mother-shell] link_daily_to_mother (racking session=' . $sessionId
+                . '): ' . $_linkErr->getMessage());
+        }
+    }
 
     http_response_code(200);
     echo json_encode([

@@ -98,7 +98,7 @@ require_once __DIR__ . '/auth.php';               // current_user
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 /** Valid form_type values (mirrors op_sessions.form_type ENUM). */
-const SESSION_FORM_TYPES = ['racking', 'fermenting', 'brewing', 'packaging'];
+const SESSION_FORM_TYPES = ['racking', 'fermenting', 'brewing', 'packaging', 'batch'];
 
 /** Valid vessel_kind values (mirrors op_sessions.vessel_kind ENUM). */
 const SESSION_VESSEL_KINDS = ['cct', 'bbt', 'yt', 'fermenter', 'brewhouse', 'machine'];
@@ -1259,6 +1259,7 @@ function session_labels(PDO $pdo, int $sessionId): array
         'fermenting' => 'Fermentation',
         'brewing'    => 'Brassage',
         'packaging'  => 'Conditionnement',
+        'batch'      => 'Production',
     ];
     $formTypeLabel = $formTypeMap[$session['form_type']] ?? (string)$session['form_type'];
 
@@ -1285,6 +1286,7 @@ function session_labels(PDO $pdo, int $sessionId): array
         'fermenting' => 'FERM',
         'brewing'    => 'BREW',
         'packaging'  => 'PACK',
+        'batch'      => 'PROD',
     ];
     $prefix      = $prefixMap[$session['form_type']] ?? strtoupper(substr((string)$session['form_type'], 0, 4));
     $openedAt    = $session['opened_at'] ?? date('Y-m-d H:i:s');

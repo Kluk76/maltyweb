@@ -105,6 +105,7 @@ if ($ff_beer === '' || $ff_batch === '') {
 // form still posts to form-fermenting.php are unaffected (no session_id field).
 if ($ff_beer !== '' && $ff_batch !== '' && $ff_loadErr === null) {
     require_once __DIR__ . '/../../../app/sessions.php';
+    require_once __DIR__ . '/../../../app/mother-shell.php';
     try {
         // Look for an existing open fermenting session for this (recipe_id, batch).
         // If recipe_id is known, use it; otherwise fall back to a batch-only lookup
@@ -137,6 +138,18 @@ if ($ff_beer !== '' && $ff_batch !== '' && $ff_loadErr === null) {
                 $ctx['recipe_id_fk'] = $ff_recipeId;
             }
             $ff_sessionId = session_open($pdo, $ctx, (int)$me['id']);
+
+            // ── Auto-link to mother (Phase 1) ─────────────────────────────────
+            // Fires only when a NEW fermenting session is opened (not on lookup).
+            // Failure must NOT block the form render.
+            if ($ff_sessionId > 0 && $ff_recipeId !== null) {
+                try {
+                    link_daily_to_mother($pdo, $ff_sessionId, $ff_recipeId, $ff_batch);
+                } catch (Throwable $_linkErr) {
+                    error_log('[mother-shell] link_daily_to_mother (fermenting session=' . $ff_sessionId
+                        . '): ' . $_linkErr->getMessage());
+                }
+            }
         }
     } catch (Throwable $_sessErr) {
         // Non-fatal — forms render but session_id will be 0; endpoint will reject.
