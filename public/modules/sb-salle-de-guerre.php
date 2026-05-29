@@ -165,15 +165,19 @@ function sdg_render_card(array $row, bool $isWarn = false): string
     }
     $html .= '<h2 class="sb-guerre-card__title"><em>' . $titleText . '</em></h2>';
 
-    /* Detail body */
-    $html .= '<div class="sb-guerre-card__detail">' . nl2br($body) . '</div>';
+    /* Detail body — FU-2 fix: render "Pas de détail" when body is empty */
+    $detail = $body !== '' ? nl2br($body) : '<em>Pas de détail.</em>';
+    $html .= '<div class="sb-guerre-card__detail">' . $detail . '</div>';
 
     $html .= '</div>';/* /card__body */
 
     /* Actions */
     $html .= '<div class="sb-guerre-card__actions">';
-    $html .= '<a href="' . sdg_esc($voirHref) . '" class="sb-guerre-action-voir">Voir →</a>';
-    $html .= '<button class="sb-guerre-action-snooze" type="button" disabled title="Snooze non disponible en v1">Acquitter</button>';
+    /* FU-4 fix: make Voir → inert when no mother_id (href="#" was a scroll-to-top no-op) */
+    $voirInert = ($voirHref === '#') ? ' aria-disabled="true" tabindex="-1" style="pointer-events:none;opacity:0.45"' : '';
+    $html .= '<a href="' . sdg_esc($voirHref) . '" class="sb-guerre-action-voir"' . $voirInert . '>Voir →</a>';
+    /* FU-1 fix: aria-disabled + tabindex per atom 4 RULE-2 lesson on disabled buttons */
+    $html .= '<button class="sb-guerre-action-snooze" type="button" disabled aria-disabled="true" tabindex="-1" title="Acquitter — disponible en Phase 3">Acquitter</button>';
     $html .= '</div>';
 
     $html .= '</div>';/* /card__inner */
