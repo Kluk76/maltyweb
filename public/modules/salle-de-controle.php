@@ -3217,17 +3217,13 @@ const SDC_INITIAL   = <?= json_encode($initialSec, JSON_HEX_TAG | JSON_HEX_AMP) 
    Recettes + Biochimie are presentational this pass.
    TODO: data-wiring phase — replace with server-injected window.SDC_* JSON.
    ═══════════════════════════════════════════ */
-const RECIPES = [
-  {id:57,name:"Zepp",sku:"ZEP",subtype:"Core",vintage:""},
-  {id:32,name:"Embuscade",sku:"EMB",subtype:"Core",vintage:""},
-  {id:44,name:"Moonshine",sku:"MOO",subtype:"Core",vintage:""},
-  {id:51,name:"Speakeasy",sku:"SPY",subtype:"Core",vintage:""},
-  {id:52,name:"Stirling",sku:"STI",subtype:"Core",vintage:""},
-  {id:30,name:"Double Oat",sku:"DOA",subtype:"Core",vintage:""},
-  {id:25,name:"Diversion",sku:"DIV",subtype:"Core",vintage:""},
-  {id:26,name:"Diversion Blanche",sku:"DIB",subtype:"Core",vintage:""},
-  {id:6,name:"Alternative",sku:"ALT",subtype:"Core",vintage:""},
-];
+const RECIPES = <?= json_encode(array_map(fn($r) => [
+  'id' => (int)$r['id'],
+  'name' => $r['name'],
+  'sku' => $r['sku_prefix'],
+  'subtype' => $r['subtype'],
+  'vintage' => ''
+], $activatableRecs), JSON_HEX_TAG | JSON_HEX_AMP | JSON_UNESCAPED_UNICODE) ?>;
 
 const INGREDIENTS = {
   57:[{mi:"MALT_PILSENER",name:"Pilsener",cat:"Malt",qty:15.833,unit:"kg"},{mi:"HOPS_HERKULES",name:"Herkules",cat:"Hops",qty:13.333,unit:"g"},{mi:"HOPS_SAAZER",name:"Saazer",cat:"Hops",qty:83.333,unit:"g"},{mi:"HOPS_SPALTER_SELECT",name:"Spalter Select",cat:"Hops",qty:83.333,unit:"g"},{mi:"PROC_PHOSPHORIQUE",name:"Phosphorique",cat:"Proc/Chem",qty:23.333,unit:"ml"},{mi:"PROC_YEASTVIT",name:"Yeastvit",cat:"Proc/Chem",qty:8.0,unit:"g"},{mi:"MIN_CACL2",name:"Calcium Chloride",cat:"Minéraux",qty:5.833,unit:"g"},{mi:"MIN_MGCL2",name:"Magnesium Chloride",cat:"Minéraux",qty:5.833,unit:"g"},{mi:"MIN_MGSO4",name:"Magnesium Sulphate",cat:"Minéraux",qty:3.5,unit:"g"},{mi:"MIN_NACL",name:"Sodium Chloride",cat:"Minéraux",qty:4.667,unit:"g"}],
@@ -3325,6 +3321,7 @@ function buildRecipeList(){
   label.textContent='Core — Nébuleuse';
   scroll.appendChild(label);
   RECIPES.forEach(r=>{
+    INGREDIENTS[r.id] = INGREDIENTS[r.id] || [];
     const p=PROFILES[r.id];
     const abv=p?calcAbv(p.og,p.fg):null;
     const div=document.createElement('div');
