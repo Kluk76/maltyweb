@@ -35,28 +35,33 @@ $ff_hasEvents   = false;
 $ff_hasColdCrash = false;
 
 // URL params — operators may land with pre-filled beer/batch from a deep-link.
-// Raw values used for DB queries (PDO binds prevent injection); escaping applied
-// at render time only (htmlspecialchars in the phase partials and error banner).
-$ff_beer     = isset($_GET['beer'])      ? strip_tags(trim((string)$_GET['beer']))  : '';
-$ff_batch    = isset($_GET['batch'])     ? strip_tags(trim((string)$_GET['batch'])) : '';
-$ff_recipeId = isset($_GET['recipe_id']) ? (int)$_GET['recipe_id']                 : null;
+// Security: PDO binding handles SQL injection; htmlspecialchars at render time handles XSS.
+// trim() drops accidental whitespace from URL copy-paste. strip_tags() removed — it added
+// no SQL-layer protection (PDO binding is the actual defence) and was misleading.
+$ff_beer     = isset($_GET['beer'])      ? trim((string)$_GET['beer'])  : '';
+$ff_batch    = isset($_GET['batch'])     ? trim((string)$_GET['batch']) : '';
+$ff_recipeId = isset($_GET['recipe_id']) ? (int)$_GET['recipe_id']      : null;
 
 // Detect phase from bd_fermenting_v2 when (beer, batch) are both provided.
+// Aggregate existence check — no LIMIT so ColdCrash is never truncated away on
+// long ferments (3-week ferment with daily Reads = 21+ events).
 if ($ff_beer !== '' && $ff_batch !== '') {
     try {
         $phaseStmt = $pdo->prepare(
-            "SELECT event_type
-               FROM bd_fermenting_v2
-              WHERE beer_raw = ?
-                AND batch    = ?
-                AND is_tombstoned = 0
-              LIMIT 20"
+            "SELECT
+               MAX(event_type = 'ColdCrash') AS has_cold_crash,
+               COUNT(*) > 0                  AS has_events
+             FROM bd_fermenting_v2
+             WHERE beer_raw      = ?
+               AND batch         = ?
+               AND is_tombstoned = 0"
         );
         $phaseStmt->execute([$ff_beer, $ff_batch]);
-        $phaseRows = $phaseStmt->fetchAll(PDO::FETCH_COLUMN, 0);
+        $phaseRow = $phaseStmt->fetch(PDO::FETCH_ASSOC);
 
-        $ff_hasEvents    = !empty($phaseRows);
-        $ff_hasColdCrash = in_array('ColdCrash', $phaseRows, true);
+        // COUNT(*)>0 returns 0/1 even on no rows; MAX() returns NULL on no rows — coalesce both.
+        $ff_hasEvents    = !empty($phaseRow) && (bool)($phaseRow['has_events']     ?? false);
+        $ff_hasColdCrash = !empty($phaseRow) && (bool)($phaseRow['has_cold_crash'] ?? false);
     } catch (Throwable $_phErr) {
         $ff_loadErr = $_phErr->getMessage();
     }
