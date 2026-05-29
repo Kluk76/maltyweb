@@ -611,3 +611,34 @@ function sb_heartbeat_severity(PDO $pdo, int $mother_id): string
     $last_activity_dt = _sb_last_activity($pdo, $mother_id);
     return _sb_compute_heartbeat($last_activity_dt, $green_hours, $amber_hours);
 }
+
+/**
+ * Recently-closed mothers for the board's ghost strip surface.
+ * Atom 3 BLOCK fix: surfaces consume this API instead of querying op_sessions
+ * directly (single-source-of-truth contract for all board reads).
+ *
+ * Returns list of arrays with: id, batch, opened_at, closed_at, recipe_name, days_open.
+ * Empty list if no closed mothers (graceful — caller renders "Aucun lot clos récemment").
+ */
+function sb_recent_closed_mothers(PDO $pdo, int $limit = 3): array
+{
+    $limit = max(1, min(50, $limit));
+    try {
+        $stmt = $pdo->prepare(
+            "SELECT m.id, m.batch, m.opened_at, m.closed_at, r.name AS recipe_name,
+                    TIMESTAMPDIFF(DAY, m.opened_at, m.closed_at) AS days_open
+               FROM op_sessions m
+               LEFT JOIN ref_recipes r ON r.id = m.recipe_id_fk
+              WHERE m.form_type     = 'batch'
+                AND m.status        = 'closed'
+                AND m.is_tombstoned = 0
+              ORDER BY m.closed_at DESC
+              LIMIT {$limit}"
+        );
+        $stmt->execute();
+        return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    } catch (\Throwable $e) {
+        // Graceful degrade — table may not exist in test environments.
+        return [];
+    }
+}

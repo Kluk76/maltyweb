@@ -1,0 +1,986 @@
+/* ════════════════════════════════════════════════════════════════
+   sb-board.css — Mother Shell Board (Atom 3)
+   ════════════════════════════════════════════════════════════════
+   sb-* namespace · light-kraft palette · body.sb-board scoping
+   Ported from _design/mother-shell/_shared.css + board-empty.html
+   + board-populated.html (populated-state classes for future atoms).
+
+   Fonts: Fraunces (display) · DM Sans (body) · JetBrains Mono (data)
+   Loaded via Google Fonts in sb-board.php <head>.
+   ════════════════════════════════════════════════════════════════ */
+
+/* ══════════════════════════════════════════════════════════════
+   TOKEN DEFINITIONS — mirrors _shared.css :root
+   Warm kraft-aware steel values for vessels on light ground.
+   Zone tints for per-zone surface identity.
+   ══════════════════════════════════════════════════════════════ */
+:root {
+  /* ── Surface ── */
+  --bg:        #f1e8d4;
+  --bg-elev:   #ece0c6;
+  --bg-side:   #dcc9a4;
+
+  /* ── Ink ── */
+  --ink:       #241b10;
+  --ink-soft:  #3a2a18;
+  --ink-mute:  #4a3820;
+  --ink-faint: #c8b48a;
+
+  /* ── Structure ── */
+  --hairline:   #c8b48a;
+  --hairline-2: #a08060;
+
+  /* ── Accent palette ── */
+  --oak:       #8b5e2a;
+  --oak-deep:  #5a3a12;
+  --hop:       #567020;
+  --hop-soft:  #7a8f3a;
+  --hop-deep:  #3f4d14;
+  --ember:     #b34428;
+  --cold:      #2f5575;
+  --bbt:       #2f6d99;
+  --ok:        #3d6826;
+
+  /* ── Stamp colors ── */
+  --kf-stamp-red:   #7a2f25;
+  --kf-stamp-navy:  #27384a;
+  --kf-stamp-olive: #3d4a1a;
+
+  /* ── Vessel / equipment metal — WARM kraft-aware steel ──
+     On a light paper ground (#f1e8d4), steel reads as steel
+     only when it has warm-grey mid-tones and clear specular
+     highlights. Cold graphite reads as black on kraft.
+     These values deliberately veer warm to sit on kraft.
+  ── */
+  --steel:        #b8a684;  /* mid brushed steel on kraft */
+  --steel-light:  #d4c4a4;  /* highlight band (top of specular) */
+  --steel-mid:    #9a8868;  /* main body mid-tone */
+  --steel-deep:   #7a6848;  /* shadow / lower face */
+  --steel-shadow: #5c4e32;  /* deep shadow edge / feet */
+  --tank-empty:   #cfc6b2;  /* empty tank fill (neutral kraft-grey) */
+
+  /* ── Zone tints — SURFACE coloring (very subtle) ── */
+  --zone-brasserie-tint:       color-mix(in srgb, var(--ember) 7%, var(--bg));
+  --zone-fermentation-tint:    color-mix(in srgb, var(--cold)  7%, var(--bg));
+  --zone-bbt-tint:             color-mix(in srgb, var(--bbt)   7%, var(--bg));
+  --zone-conditionnement-tint: color-mix(in srgb, var(--hop)   7%, var(--bg));
+  --zone-expedition-tint:      color-mix(in srgb, var(--ink-faint) 5%, var(--bg));
+
+  /* ── Zone accent colors — for borders, bars, chips ── */
+  --zone-brasserie-accent:       color-mix(in srgb, var(--ember) 70%, var(--oak-deep));
+  --zone-fermentation-accent:    color-mix(in srgb, var(--cold)  70%, var(--ink));
+  --zone-bbt-accent:             color-mix(in srgb, var(--bbt)   70%, var(--ink));
+  --zone-conditionnement-accent: color-mix(in srgb, var(--hop)   70%, var(--ink));
+}
+
+/* ══════════════════════════════════════════════════════════════
+   RESET & BASE
+   ══════════════════════════════════════════════════════════════ */
+/* Reset scoped to body.sb-board to prevent bleed into other modules
+   when sb-board.css gets imported alongside other CSS (atom 4 sb-mother). */
+body.sb-board, body.sb-board *, body.sb-board *::before, body.sb-board *::after {
+  box-sizing: border-box;
+}
+body.sb-board { font-size: 16px; }
+
+body.sb-board {
+  font-family: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  font-feature-settings: "ss01";
+  background: var(--bg);
+  color: var(--ink);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+  position: relative;
+  /* Board layout: full-height flex column */
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+/* Kraft grain overlay */
+body.sb-board::before {
+  content: "";
+  position: fixed; inset: 0;
+  pointer-events: none; z-index: 0;
+  opacity: 0.055;
+  mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.55  0 0 0 0 0.38  0 0 0 0 0.18  0 0 0 1.4 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+
+/* Radial atmosphere gradients */
+body.sb-board::after {
+  content: "";
+  position: fixed; inset: 0;
+  pointer-events: none; z-index: 0;
+  background:
+    radial-gradient(1400px 900px at 10% -5%, color-mix(in srgb, var(--oak) 7%, transparent), transparent 55%),
+    radial-gradient(800px 600px at 95% 110%, color-mix(in srgb, var(--hop) 5%, transparent), transparent 60%);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   BOARD WRAPPER — flex column holding diorama + list + strip
+   ══════════════════════════════════════════════════════════════ */
+body.sb-board .main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  position: relative;
+  z-index: 1;
+}
+
+.sb-board-wrap {
+  position: relative; z-index: 1;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   DIORAMA SHELL — the Theater of Operations canvas
+   ══════════════════════════════════════════════════════════════ */
+.sb-diorama {
+  position: relative; z-index: 1;
+  flex: 0 0 56vh;
+  min-height: 440px;
+  max-height: 62vh;
+  display: grid;
+  grid-template-columns: 1fr 2fr 1.5fr 1.2fr 0.7fr;
+  grid-template-rows: 1fr;
+  gap: 0;
+  overflow: hidden;
+}
+
+/* Zone separator lines (schematic / technical) */
+.sb-diorama__sep {
+  position: absolute; top: 0; bottom: 0;
+  width: 1px;
+  background: var(--hairline);
+  z-index: 10;
+}
+
+/* ── Zone ── */
+.sb-zone {
+  position: relative;
+  display: flex; flex-direction: column;
+  border-right: 1px solid var(--hairline);
+  overflow: hidden;
+  transition: background .3s;
+}
+.sb-zone:last-child { border-right: none; }
+
+/* Zone header strip */
+.sb-zone__header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 14px 8px;
+  border-bottom: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--bg-elev) 80%, transparent);
+  backdrop-filter: blur(6px);
+  position: relative; z-index: 5;
+  cursor: default;
+  transition: background .2s;
+}
+.sb-zone__header:hover {
+  background: color-mix(in srgb, var(--bg-elev) 95%, transparent);
+}
+.sb-zone__header[role="button"] { cursor: pointer; }
+.sb-zone__header[role="button"]:focus-visible {
+  outline: 2px solid var(--hop);
+  outline-offset: -2px;
+}
+
+.sb-zone__label {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.57rem; letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--ink-mute);
+  flex: 1;
+}
+.sb-zone__count {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.6rem; letter-spacing: 0.06em;
+  color: var(--ink-mute);
+  padding: 2px 7px;
+  background: var(--bg-side);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+}
+.sb-zone__count--zero {
+  color: var(--ink-faint);
+  background: transparent;
+  border-color: var(--hairline);
+}
+.sb-zone__label--active { color: var(--hop); }
+
+/* Zone body — two-section column: cards on top, vessels at base */
+.sb-zone__body {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  padding: 0;
+}
+
+/* Cards area — top portion, scrollable */
+.sb-zone__cards {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 10px 8px 6px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 0;
+  min-height: 0;
+}
+.sb-zone__cards::-webkit-scrollbar { width: 3px; }
+.sb-zone__cards::-webkit-scrollbar-track { background: transparent; }
+.sb-zone__cards::-webkit-scrollbar-thumb { background: var(--hairline); border-radius: 1px; }
+
+/* Vessel stage — bottom portion, fixed height, in normal flow */
+.sb-vessel-stage {
+  flex: 0 0 auto;
+  position: relative;
+  padding: 4px 8px 22px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+/* Zone surface tints */
+.sb-zone--brasserie    .sb-zone__body { background: var(--zone-brasserie-tint); }
+.sb-zone--fermentation .sb-zone__body { background: var(--zone-fermentation-tint); }
+.sb-zone--bbt          .sb-zone__body { background: var(--zone-bbt-tint); }
+.sb-zone--conditionnement .sb-zone__body { background: var(--zone-conditionnement-tint); }
+
+/* Zone header bottom border — zone signal on demarcator */
+.sb-zone--brasserie    .sb-zone__header { border-bottom-color: color-mix(in srgb, var(--ember) 40%, transparent); }
+.sb-zone--fermentation .sb-zone__header { border-bottom-color: color-mix(in srgb, var(--cold)  40%, transparent); }
+.sb-zone--bbt          .sb-zone__header { border-bottom-color: color-mix(in srgb, var(--bbt)   40%, transparent); }
+.sb-zone--conditionnement .sb-zone__header { border-bottom-color: color-mix(in srgb, var(--hop) 40%, transparent); }
+
+/* Zone label accent colors */
+.sb-zone--brasserie    .sb-zone__label { color: var(--ember); }
+.sb-zone--fermentation .sb-zone__label { color: var(--cold); }
+.sb-zone--bbt          .sb-zone__label { color: var(--bbt); }
+.sb-zone--conditionnement .sb-zone__label { color: var(--hop); }
+
+/* Vessel-stage zone tint underlay */
+.sb-zone--brasserie    .sb-vessel-stage { background: color-mix(in srgb, var(--ember) 4%, var(--bg-side)); }
+.sb-zone--fermentation .sb-vessel-stage { background: color-mix(in srgb, var(--cold)  5%, var(--bg-side)); }
+.sb-zone--bbt          .sb-vessel-stage { background: color-mix(in srgb, var(--bbt)   5%, var(--bg-side)); }
+.sb-zone--conditionnement .sb-vessel-stage { background: color-mix(in srgb, var(--hop) 4%, var(--bg-side)); }
+
+/* Ground line (schematic base) */
+.sb-ground {
+  position: absolute;
+  bottom: 20px; left: 0; right: 0;
+  height: 1px;
+  background: linear-gradient(90deg,
+    transparent,
+    var(--hairline-2) 15%,
+    var(--hairline-2) 85%,
+    transparent);
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+/* Cross-hatch corner decorations (engineering schematic) */
+.sb-zone__corner {
+  position: absolute;
+  top: 44px; right: 8px;
+  width: 20px; height: 20px;
+  opacity: 0.15;
+  background-image:
+    repeating-linear-gradient(45deg, var(--ink) 0, var(--ink) 0.5px, transparent 0, transparent 50%);
+  background-size: 4px 4px;
+}
+
+/* ── EXPÉDITION: placeholder zone ── */
+.sb-zone--placeholder {
+  opacity: 0.45;
+  background: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 8px,
+    color-mix(in srgb, var(--hairline) 30%, transparent) 8px,
+    color-mix(in srgb, var(--hairline) 30%, transparent) 9px
+  );
+}
+.sb-zone--placeholder .sb-zone__header {
+  background: color-mix(in srgb, var(--bg-side) 60%, transparent);
+}
+.sb-zone--placeholder .sb-zone__label { color: var(--ink-faint); }
+
+.sb-placeholder-msg {
+  text-align: center;
+  padding: 20px 16px;
+  flex: 1;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px;
+}
+.sb-placeholder-msg__icon { font-size: 28px; opacity: 0.3; }
+.sb-placeholder-msg__label {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.55rem; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.sb-placeholder-msg__phase {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.72rem; color: var(--ink-faint);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   ANNOTATION (zone corner text labels)
+   ══════════════════════════════════════════════════════════════ */
+.sb-annotation {
+  position: absolute;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.44rem; letter-spacing: 0.10em; text-transform: uppercase;
+  color: var(--ink-faint);
+  pointer-events: none; z-index: 0;
+}
+.sb-annotation--br { bottom: 8px; right: 10px; }
+.sb-annotation--bl { bottom: 8px; left: 10px; }
+
+/* ══════════════════════════════════════════════════════════════
+   MOTHER CARDS — the actors in the theater
+   ══════════════════════════════════════════════════════════════ */
+.sb-cards-stack {
+  width: 100%;
+  display: flex; flex-direction: column; gap: 8px;
+  position: relative; z-index: 3;
+  padding: 0 2px;
+}
+
+.sb-card {
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  padding: 10px 11px 9px;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  transition: border-color .18s, box-shadow .18s, transform .12s;
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--ink) 6%, transparent);
+}
+.sb-card:hover {
+  border-color: var(--hairline-2);
+  box-shadow: 0 3px 10px color-mix(in srgb, var(--ink) 10%, transparent);
+  transform: translateY(-1px);
+}
+.sb-card--active {
+  border-color: var(--hop);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--hop) 18%, transparent),
+              0 3px 10px color-mix(in srgb, var(--ink) 10%, transparent);
+}
+.sb-card--flash { animation: sb-card-flash .6s ease-out; }
+
+/* Phase accent bar (left edge) */
+.sb-card::before {
+  content: "";
+  position: absolute; top: 0; left: 0; bottom: 0;
+  width: 3px;
+  background: var(--hairline-2);
+  border-radius: 3px 0 0 3px;
+}
+.sb-card--brewing::before   { background: var(--ember); }
+.sb-card--fermenting::before { background: var(--bbt); }
+.sb-card--racking::before   { background: var(--oak); }
+.sb-card--packaging::before { background: var(--hop); }
+.sb-card--mout::before      { background: var(--oak-deep); }
+
+/* Zone-scoped card tints */
+.sb-zone--brasserie    .sb-card { background: color-mix(in srgb, var(--ember) 3%, var(--bg)); }
+.sb-zone--fermentation .sb-card { background: color-mix(in srgb, var(--cold)  3%, var(--bg)); }
+.sb-zone--bbt          .sb-card { background: color-mix(in srgb, var(--bbt)   3%, var(--bg)); }
+.sb-zone--conditionnement .sb-card { background: color-mix(in srgb, var(--hop) 3%, var(--bg)); }
+
+/* Card top row */
+.sb-card__top {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  margin-bottom: 5px;
+}
+.sb-card__batch {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.62rem; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--ink-mute);
+}
+.sb-card__stamp {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.52rem; letter-spacing: 0.14em; text-transform: uppercase;
+  padding: 2px 6px; border-radius: 1px;
+  border: 1.5px solid var(--oak);
+  color: var(--oak);
+  transform: rotate(-1.5deg);
+  display: inline-block;
+}
+
+/* Beer name */
+.sb-card__name {
+  font-family: "Fraunces", "Times New Roman", serif;
+  font-variation-settings: "opsz" 96;
+  font-size: 1.0rem; font-weight: 300;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+  line-height: 1.15;
+  margin-bottom: 4px;
+}
+.sb-card__name em { font-style: italic; color: var(--oak); }
+
+/* Card meta row */
+.sb-card__meta {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-bottom: 5px;
+}
+.sb-card__meta-item {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.56rem; letter-spacing: 0.06em;
+  color: var(--ink-mute);
+  display: flex; align-items: center; gap: 3px;
+}
+.sb-card__meta-item--vessel {
+  color: var(--cold);
+  background: color-mix(in srgb, var(--cold) 8%, transparent);
+  padding: 1px 5px; border-radius: 2px;
+  border: 1px solid color-mix(in srgb, var(--cold) 20%, transparent);
+}
+.sb-card__meta-dot {
+  width: 3px; height: 3px; border-radius: 50%;
+  background: var(--hairline-2);
+  flex-shrink: 0;
+}
+
+/* ETA badge */
+.sb-eta {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.54rem; letter-spacing: 0.06em;
+  color: var(--cold);
+  background: color-mix(in srgb, var(--cold) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--cold) 20%, transparent);
+  padding: 2px 6px; border-radius: 2px;
+  white-space: nowrap;
+}
+
+/* Voir détails link */
+.sb-card__link {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.54rem; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--oak); text-decoration: none;
+  display: flex; align-items: center; gap: 3px;
+  margin-top: 6px;
+  transition: color .15s;
+  width: fit-content;
+}
+.sb-card__link:hover { color: var(--oak-deep); }
+.sb-card__link-arrow { font-size: 0.65rem; transition: transform .15s; }
+.sb-card__link:hover .sb-card__link-arrow { transform: translateX(2px); }
+
+/* Merged badge */
+.sb-card__merged-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.52rem; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--oak);
+  background: color-mix(in srgb, var(--oak) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--oak) 25%, transparent);
+  padding: 2px 6px; border-radius: 2px;
+  margin-top: 3px;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   EMPTY STATE PER ZONE
+   ══════════════════════════════════════════════════════════════ */
+.sb-zone-empty {
+  text-align: center;
+  padding: 24px 12px;
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  position: relative; z-index: 3;
+}
+.sb-zone-empty__icon { opacity: 0.2; font-size: 22px; }
+.sb-zone-empty__msg {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.72rem; color: var(--ink-faint);
+  line-height: 1.4;
+}
+.sb-zone-empty__cta {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.56rem; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--oak); text-decoration: none;
+  padding: 5px 10px;
+  border: 1px solid color-mix(in srgb, var(--oak) 30%, transparent);
+  border-radius: 2px;
+  transition: background .15s, color .15s;
+  margin-top: 4px;
+}
+.sb-zone-empty__cta:hover {
+  background: color-mix(in srgb, var(--oak) 8%, transparent);
+  color: var(--oak-deep);
+}
+/* Disabled CTA state (Brasserie — not yet implemented) */
+.sb-zone-empty__cta[aria-disabled="true"] {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   VESSEL ILLUSTRATIONS (SVG wrappers)
+   ══════════════════════════════════════════════════════════════ */
+.sb-vessel-row {
+  display: flex; align-items: flex-end; justify-content: center;
+  gap: 10px;
+  position: relative;
+  padding: 0 10px;
+  pointer-events: none;
+  z-index: 1;
+  width: 100%;
+}
+.sb-vessel {
+  flex: 0 0 auto;
+  position: relative;
+}
+.sb-vessel svg { display: block; }
+.sb-vessel__label {
+  position: absolute; bottom: -14px; left: 50%; transform: translateX(-50%);
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.46rem; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--ink-mute); white-space: nowrap;
+}
+.sb-vessel__label--occupied { color: var(--cold); }
+.sb-vessel__label--brewing  { color: var(--ember); }
+
+/* Vessel sizing */
+.sb-vessel--cct-sm svg { width: 40px; height: auto; }
+.sb-vessel--bbt-sm svg { width: 44px; height: auto; }
+.sb-vessel--kettle svg { width: 72px; height: auto; }
+
+/* Kettle wrap */
+.sb-kettle-wrap {
+  position: relative; display: flex; flex-direction: column;
+  align-items: center; z-index: 2;
+}
+
+/* Packaging conveyor elements (from board-empty.html) */
+.sb-packaging-line {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  z-index: 2; width: 100%;
+}
+.sb-packaging-rollers {
+  display: flex; align-items: center; width: 100%; gap: 0;
+}
+.sb-packaging-roller {
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--tank-empty);
+  border: 1px solid var(--hairline-2);
+  flex-shrink: 0;
+}
+.sb-packaging-belt {
+  flex: 1; height: 10px;
+  background: color-mix(in srgb, var(--bg-side) 50%, transparent);
+  border: 1px solid var(--hairline); border-radius: 0;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   HEARTBEAT PULSE DOTS
+   ══════════════════════════════════════════════════════════════ */
+.sb-heartbeat {
+  width: 7px; height: 7px; border-radius: 50%;
+  flex-shrink: 0;
+  position: relative;
+}
+.sb-heartbeat--green {
+  background: var(--ok);
+  box-shadow: 0 0 5px color-mix(in srgb, var(--ok) 50%, transparent);
+  animation: sb-pulse-green 2.8s ease-in-out infinite;
+}
+.sb-heartbeat--amber {
+  background: color-mix(in srgb, var(--oak) 80%, var(--ember));
+  box-shadow: 0 0 5px color-mix(in srgb, var(--oak) 40%, transparent);
+  animation: sb-pulse-amber 2.2s ease-in-out infinite;
+}
+.sb-heartbeat--red {
+  background: var(--ember);
+  box-shadow: 0 0 5px color-mix(in srgb, var(--ember) 60%, transparent);
+  animation: sb-pulse-red 1.5s ease-in-out infinite;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   PROGRESS BAR (packaging fill)
+   ══════════════════════════════════════════════════════════════ */
+.sb-progress {
+  margin-top: 5px;
+  height: 3px;
+  background: var(--bg-side);
+  border-radius: 1.5px;
+  overflow: hidden;
+}
+.sb-progress__fill {
+  height: 100%; border-radius: 1.5px;
+  background: var(--hop);
+  transition: width .3s ease;
+}
+.sb-progress__fill--warn { background: var(--oak); }
+
+/* ══════════════════════════════════════════════════════════════
+   BATCH LIST TABLE (below diorama)
+   ══════════════════════════════════════════════════════════════ */
+.sb-batch-list {
+  position: relative; z-index: 1;
+  flex: 1;
+  max-height: none;
+  overflow-y: auto;
+  border-top: 2px solid var(--hairline-2);
+  background: var(--bg-elev);
+}
+
+.sb-batch-list-header {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 16px 7px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--bg-side);
+  position: sticky; top: 0; z-index: 10;
+}
+.sb-batch-list-header__title {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.56rem; letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+.sb-batch-list__head {
+  display: grid;
+  grid-template-columns: 90px 1fr 100px 120px 80px 70px 80px 1fr;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--hairline);
+  position: sticky; top: 37px;
+  background: var(--bg-side); z-index: 5;
+}
+.sb-batch-list__th {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.52rem; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+.sb-batch-row {
+  display: grid;
+  grid-template-columns: 90px 1fr 100px 120px 80px 70px 80px 1fr;
+  padding: 7px 16px;
+  border-bottom: 1px solid var(--hairline);
+  cursor: pointer;
+  transition: background .12s;
+  align-items: center;
+}
+.sb-batch-row:hover { background: color-mix(in srgb, var(--bg-side) 60%, transparent); }
+.sb-batch-row--active { background: color-mix(in srgb, var(--hop) 5%, transparent); }
+
+.sb-batch-row__ref {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.62rem; letter-spacing: 0.06em; color: var(--ink-mute);
+}
+.sb-batch-row__name {
+  font-family: "Fraunces", "Times New Roman", serif;
+  font-variation-settings: "opsz" 9;
+  font-size: 0.88rem; font-weight: 300;
+  color: var(--ink); letter-spacing: -0.01em;
+}
+.sb-batch-row__name em { font-style: italic; color: var(--oak); }
+
+.sb-batch-row__td {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.6rem; letter-spacing: 0.04em; color: var(--ink-mute);
+}
+.sb-batch-row__link {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.56rem; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--oak); text-decoration: none;
+  transition: color .15s;
+}
+.sb-batch-row__link:hover { color: var(--oak-deep); }
+
+/* Phase pill */
+.sb-phase-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.52rem; letter-spacing: 0.1em; text-transform: uppercase;
+  padding: 2px 7px; border-radius: 2px;
+}
+.sb-phase-pill--brewing   { color: var(--ember); background: color-mix(in srgb, var(--ember) 9%, transparent); border: 1px solid color-mix(in srgb, var(--ember) 25%, transparent); }
+.sb-phase-pill--fermenting { color: var(--bbt);  background: color-mix(in srgb, var(--bbt) 9%, transparent);   border: 1px solid color-mix(in srgb, var(--bbt) 25%, transparent); }
+.sb-phase-pill--racking   { color: var(--oak);  background: color-mix(in srgb, var(--oak) 9%, transparent);   border: 1px solid color-mix(in srgb, var(--oak) 25%, transparent); }
+.sb-phase-pill--packaging  { color: var(--hop);  background: color-mix(in srgb, var(--hop) 9%, transparent);   border: 1px solid color-mix(in srgb, var(--hop) 25%, transparent); }
+
+/* Batch list empty state */
+.sb-batch-list-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 40px 24px; gap: 10px;
+}
+.sb-batch-list-empty__icon { font-size: 2rem; opacity: 0.15; }
+.sb-batch-list-empty__msg {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.82rem; color: var(--ink-faint); text-align: center;
+}
+.sb-batch-list-empty__sub {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.56rem; letter-spacing: 0.06em; color: var(--ink-faint);
+  text-align: center;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   GHOST STRIP — recently closed lots
+   ══════════════════════════════════════════════════════════════ */
+.sb-closed-strip {
+  position: relative; z-index: 1;
+  background: color-mix(in srgb, var(--bg-side) 40%, transparent);
+  border-top: 1px solid var(--hairline);
+  padding: 8px 16px;
+  display: flex; align-items: center; gap: 12px;
+  overflow-x: auto;
+}
+.sb-closed-strip::-webkit-scrollbar { height: 2px; }
+.sb-closed-strip::-webkit-scrollbar-track { background: transparent; }
+.sb-closed-strip::-webkit-scrollbar-thumb { background: var(--hairline); }
+
+.sb-closed-strip__label {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.54rem; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--ink-faint); flex-shrink: 0;
+}
+
+.sb-ghost-card {
+  flex-shrink: 0;
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 10px;
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  border: 1px dashed var(--hairline);
+  border-radius: 3px;
+  opacity: 0.65;
+  transition: opacity .15s;
+  cursor: pointer;
+}
+.sb-ghost-card:hover { opacity: 0.9; }
+.sb-ghost-card__closed-stamp {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.48rem; letter-spacing: 0.14em; text-transform: uppercase;
+  padding: 1px 5px; border: 1px solid var(--ink-faint);
+  border-radius: 1px; color: var(--ink-faint);
+  transform: rotate(-1deg); display: inline-block;
+}
+.sb-ghost-card__name {
+  font-family: "Fraunces", "Times New Roman", serif;
+  font-variation-settings: "opsz" 9;
+  font-size: 0.78rem; font-weight: 300; color: var(--ink-mute);
+}
+.sb-ghost-card__meta {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.52rem; letter-spacing: 0.04em; color: var(--ink-faint);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   REGISTRATION MARKS (engineering schematic corners)
+   ══════════════════════════════════════════════════════════════ */
+.sb-reg-mark {
+  position: fixed;
+  width: 24px; height: 24px;
+  border: 1px solid var(--hairline);
+  z-index: 200;
+  pointer-events: none;
+  opacity: 0.45;
+}
+.sb-reg-mark--tl { top: 14px; left: 14px; border-right: none; border-bottom: none; }
+.sb-reg-mark--tr { top: 14px; right: 14px; border-left: none; border-bottom: none; }
+.sb-reg-mark--bl { bottom: 14px; left: 14px; border-right: none; border-top: none; }
+.sb-reg-mark--br { bottom: 14px; right: 14px; border-left: none; border-top: none; }
+
+/* ══════════════════════════════════════════════════════════════
+   STATUS + VESSEL BADGES (used by atom 4 drill-in too)
+   ══════════════════════════════════════════════════════════════ */
+.sb-status-pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.56rem; letter-spacing: 0.12em; text-transform: uppercase;
+  padding: 3px 9px; border-radius: 2px;
+}
+.sb-status-pill--brewing    { color: var(--ember); background: color-mix(in srgb, var(--ember) 9%, transparent); border: 1px solid color-mix(in srgb, var(--ember) 25%, transparent); }
+.sb-status-pill--fermenting { color: var(--cold);  background: color-mix(in srgb, var(--cold) 9%, transparent);  border: 1px solid color-mix(in srgb, var(--cold) 25%, transparent); }
+.sb-status-pill--racking    { color: var(--bbt);   background: color-mix(in srgb, var(--bbt) 9%, transparent);   border: 1px solid color-mix(in srgb, var(--bbt) 25%, transparent); }
+.sb-status-pill--packaging  { color: var(--hop);   background: color-mix(in srgb, var(--hop) 9%, transparent);   border: 1px solid color-mix(in srgb, var(--hop) 25%, transparent); }
+
+.sb-vessel-badge {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.56rem; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--cold);
+  background: color-mix(in srgb, var(--cold) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--cold) 22%, transparent);
+  padding: 2px 7px; border-radius: 2px;
+}
+.sb-vessel-badge--bbt {
+  color: var(--bbt);
+  background: color-mix(in srgb, var(--bbt) 8%, transparent);
+  border-color: color-mix(in srgb, var(--bbt) 22%, transparent);
+}
+
+/* ── Zone count zero-state chip ── */
+.sb-zone__count--zero {
+  color: var(--ink-faint);
+  background: transparent;
+  border-color: var(--hairline);
+}
+
+/* ── Keyboard hint badge ── */
+.sb-kb-hint {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.52rem; letter-spacing: 0.08em;
+  color: var(--ink-faint); padding: 2px 5px;
+  border: 1px solid var(--hairline); border-radius: 2px;
+}
+
+/* ── Label badge (utility chip) ── */
+.sb-label-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.52rem; letter-spacing: 0.12em; text-transform: uppercase;
+  padding: 2px 6px; border-radius: 2px;
+}
+.sb-label-badge--hop   { color: var(--hop-deep); background: color-mix(in srgb, var(--hop) 10%, transparent); border: 1px solid color-mix(in srgb, var(--hop) 25%, transparent); }
+.sb-label-badge--ember { color: var(--ember); background: color-mix(in srgb, var(--ember) 10%, transparent); border: 1px solid color-mix(in srgb, var(--ember) 25%, transparent); }
+.sb-label-badge--cold  { color: var(--cold); background: color-mix(in srgb, var(--cold) 10%, transparent); border: 1px solid color-mix(in srgb, var(--cold) 25%, transparent); }
+.sb-label-badge--oak   { color: var(--oak-deep); background: color-mix(in srgb, var(--oak) 10%, transparent); border: 1px solid color-mix(in srgb, var(--oak) 25%, transparent); }
+
+/* ── Garde flag (fermentation threshold) ── */
+.sb-garde-flag {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.50rem; letter-spacing: 0.10em; text-transform: uppercase;
+  padding: 2px 5px; border-radius: 2px;
+  color: var(--oak-deep);
+  background: color-mix(in srgb, var(--oak) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--oak) 30%, transparent);
+}
+.sb-garde-flag--exceeded {
+  color: var(--ember);
+  background: color-mix(in srgb, var(--ember) 8%, transparent);
+  border-color: color-mix(in srgb, var(--ember) 25%, transparent);
+  animation: sb-stamp-urgent 2s ease-in-out infinite;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   CONVEYOR ANIMATION HOOKS (atom 6 JS will activate these)
+   ══════════════════════════════════════════════════════════════ */
+.sb-conveyor-lines { overflow: hidden; }
+/* atom 6 adds: animation: sb-conveyor-move 1s linear infinite on .sb-conveyor-lines when state=running */
+
+/* ══════════════════════════════════════════════════════════════
+   KEYFRAMES
+   ══════════════════════════════════════════════════════════════ */
+@keyframes sb-pulse-green {
+  0%,100% { opacity: 1; transform: scale(1); }
+  50%     { opacity: .5; transform: scale(.85); }
+}
+@keyframes sb-pulse-amber {
+  0%,100% { opacity: 1; transform: scale(1); }
+  50%     { opacity: .45; transform: scale(.8); }
+}
+@keyframes sb-pulse-red {
+  0%,100% { opacity: 1; transform: scale(1.1); }
+  50%     { opacity: .3; transform: scale(.7); }
+}
+@keyframes sb-vessel-pulse {
+  0%,100% { opacity: 1; }
+  50%     { opacity: 0.65; }
+}
+@keyframes sb-card-flash {
+  0%   { background: color-mix(in srgb, var(--hop) 22%, var(--bg)); }
+  100% { background: var(--bg); }
+}
+@keyframes sb-stamp-urgent {
+  0%,100% { opacity: 1; }
+  50%     { opacity: .55; }
+}
+@keyframes sb-conveyor-move {
+  from { transform: translateX(0); }
+  to   { transform: translateX(15px); }
+}
+
+/* Pulsing vessel animation (active states) */
+.sb-vessel--pulsing { animation: sb-vessel-pulse 2.4s ease-in-out infinite; }
+
+/* CCT fill empty class (for SVG fill override) */
+.cct-fill-empty { fill: var(--tank-empty); opacity: 0.55; }
+
+/* ══════════════════════════════════════════════════════════════
+   REDUCED MOTION — disable all animations
+   ══════════════════════════════════════════════════════════════ */
+@media (prefers-reduced-motion: reduce) {
+  .sb-vessel--pulsing,
+  .sb-heartbeat--green,
+  .sb-heartbeat--amber,
+  .sb-heartbeat--red,
+  .sb-live-dot,
+  .sb-garde-flag--exceeded,
+  .sb-guerre__card-stamp--urgent {
+    animation: none !important;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   RESPONSIVE — TABLET (≤1000px): 2-col diorama
+   ══════════════════════════════════════════════════════════════ */
+@media (max-width: 1000px) {
+  .sb-diorama {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    height: auto;
+    flex: none;
+    max-height: none;
+  }
+  .sb-zone:nth-child(1) { border-bottom: 1px solid var(--hairline); }
+  .sb-zone:nth-child(2) { border-bottom: 1px solid var(--hairline); }
+  .sb-zone:nth-child(3) { border-bottom: 1px solid var(--hairline); border-right: none; }
+  .sb-zone:nth-child(4) { border-right: 1px solid var(--hairline); }
+  .sb-zone:nth-child(5) { border-right: none; }
+
+  .sb-batch-list__head,
+  .sb-batch-row {
+    grid-template-columns: 80px 1fr 90px 100px 70px 1fr;
+  }
+  .sb-batch-list__th:nth-child(5),
+  .sb-batch-row > *:nth-child(5) { display: none; }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   RESPONSIVE — MOBILE (≤768px): single-column diorama
+   ══════════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+  .sb-diorama {
+    grid-template-columns: 1fr;
+    grid-template-rows: repeat(5, auto);
+    height: auto;
+  }
+  .sb-zone { height: 220px; }
+  .sb-zone:nth-child(n) {
+    border-right: none;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .sb-batch-list__head,
+  .sb-batch-row {
+    grid-template-columns: 70px 1fr 80px 1fr;
+  }
+  .sb-batch-list__th:nth-child(n+3):nth-child(-n+7),
+  .sb-batch-row > *:nth-child(n+3):nth-child(-n+7) { display: none; }
+  .sb-batch-list__th:nth-child(3),
+  .sb-batch-row > *:nth-child(3),
+  .sb-batch-list__th:nth-child(8),
+  .sb-batch-row > *:nth-child(8) { display: block; }
+}
+
+/*
+  Atom 4 drill-in (.sb-mother body class) uses its own CSS (sb-mother.css).
+  sb-board.css rules are effectively scoped to body.sb-board pages via the
+  body class set in public/modules/sb-board.php.
+*/
