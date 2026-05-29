@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Salle de Guerre — Alertes critiques · MaltyTask</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,200;0,9..144,300;0,9..144,400;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<!--
+  ════════════════════════════════════════════════════════════════
+  MOCKUP: board-salle-de-guerre.html — War Room / Critical Alert View
+  ════════════════════════════════════════════════════════════════
+  Concept C: Theater of Operations diorama
+  Light-kraft palette · sb-* namespace · static only
+
+  DESIGN DECISION (2026-05-29, Opus orchestrator):
+  The Salle de Guerre is NOT a separate data store. It is a FILTERED VIEW
+  of the review_queue table with:
+    severity IN ('critical', 'blocking')
+    AND scope = 'mother-shell'
+  New RQ types for mother-shell: garde_seuil_overdue, contamination_flagged,
+  packaged_volume_anomaly (+ existing types filtered to scope=mother-shell).
+
+  This screen shows 4 critical-state mothers (representative examples):
+    1. STI 88 — garde seuil overdue (J+45 vs expected J+28)
+    2. MOO 171 — abandoned (operator-toggled, visible for audit)
+    3. EMB 243 — contamination flagged (pH drift + turbidity outlier)
+    4. SPY 254 — packaged volume anomaly (60% of expected after close)
+
+  Triggered by W shortcut on main board. Press W or Esc to close.
+  Header: "VUE DE GUERRE — alertes critiques uniquement" + count + last-refresh.
+
+  Each card: compact 3-line summary + red stamp + "Voir →" + dismiss/snooze actions.
+  ════════════════════════════════════════════════════════════════
+-->
+
+<link rel="stylesheet" href="_shared.css">
+
+</head>
+<body class="sb-board">
+
+<div class="sb-reg-mark sb-reg-mark--tl" aria-hidden="true"></div>
+<div class="sb-reg-mark sb-reg-mark--tr" aria-hidden="true"></div>
+<div class="sb-reg-mark sb-reg-mark--bl" aria-hidden="true"></div>
+<div class="sb-reg-mark sb-reg-mark--br" aria-hidden="true"></div>
+
+<!-- TOPBAR — war-room register -->
+<header class="sb-topbar" role="banner">
+  <div class="sb-wordmark">
+    <span class="sb-wordmark__name">Malty<em>Task</em></span>
+    <span class="sb-wordmark__sect">La Nébuleuse</span>
+  </div>
+  <nav class="sb-nav" aria-label="Navigation">
+    <a href="board-populated.html" class="sb-nav__item">← Tableau de bord</a>
+    <span class="sb-nav__item sb-nav__item--active" style="color:var(--ember);" aria-current="page">Salle de Guerre</span>
+  </nav>
+  <div class="sb-topbar__right">
+    <span class="sb-guerre-topbar-war" aria-live="assertive">ALERTE CRITIQUE</span>
+    <div class="sb-refresh-indicator">
+      <span class="sb-refresh-dot"></span>
+      <span>Dernière màj: il y a 4s</span>
+    </div>
+    <div class="sb-topbar__clock" id="js-clock">09:47</div>
+    <div class="sb-avatar" aria-label="Opérateur">LK</div>
+  </div>
+</header>
+
+<!-- WAR ROOM BODY -->
+<div class="sb-guerre-wrap">
+
+  <!-- Top banner -->
+  <div class="sb-guerre-banner" role="banner" aria-label="Salle de Guerre — vue alertes critiques">
+    <div class="sb-guerre-banner__signal">
+      <div class="sb-guerre-banner__dot" aria-hidden="true"></div>
+      <div class="sb-guerre-banner__title">VUE DE GUERRE — alertes critiques uniquement</div>
+    </div>
+    <div style="display:flex;flex-direction:column;align-items:flex-start;gap:2px;">
+      <div class="sb-guerre-banner__count" aria-label="4 alertes critiques">4</div>
+      <div class="sb-guerre-banner__count-label">alertes actives</div>
+    </div>
+    <div class="sb-guerre-banner__refresh" style="margin-left:auto;margin-right:0;">
+      Actualisé: 2026-05-29 09:47:22 · Auto-refresh 15s
+    </div>
+    <button class="sb-guerre-banner__close-hint" onclick="window.location='board-populated.html'"
+            title="Fermer la Salle de Guerre (Esc ou W)" aria-label="Fermer la Salle de Guerre">
+      ← Retour tableau · Esc
+    </button>
+  </div>
+
+  <!-- RQ source note -->
+  <div class="sb-guerre-rq-note" role="note">
+    <span class="sb-guerre-rq-note__tag">review_queue</span>
+    Vue filtrée : severity IN (critical, blocking) AND scope = 'mother-shell' · Les alertes acquittées n'apparaissent pas ici.
+  </div>
+
+  <!-- Card list -->
+  <div class="sb-guerre-body" role="main" aria-label="Alertes critiques">
+
+    <!-- ── Bloc CRITIQUE ── -->
+    <div class="sb-guerre-section-div">
+      <span class="sb-guerre-section-div__label">Critique · 3 alertes</span>
+      <div class="sb-guerre-section-div__rule"></div>
+    </div>
+
+    <!-- Card 1: STI 88 — garde seuil overdue -->
+    <article class="sb-guerre-card" aria-label="Stirling 88 — garde seuil dépassé">
+      <div class="sb-guerre-card__accent"></div>
+      <div class="sb-guerre-card__inner">
+        <div class="sb-guerre-card__stamp" aria-label="Alerte critique: garde dépassée">GARDE<br>OVERDUE</div>
+        <div class="sb-guerre-card__body">
+          <div class="sb-guerre-card__ref">
+            <span class="sb-guerre-rq-type">garde_seuil_overdue</span>
+            STI #88 · Cave Fermentation · CCT-7
+          </div>
+          <h2 class="sb-guerre-card__title"><em>Stirling</em> — Lot #88</h2>
+          <div class="sb-guerre-card__detail">
+            Garde seuil: <strong>J+45 en cours</strong> — attendu J+28 (config commissioning).<br>
+            Dépassement: <strong>+17 jours</strong> · FG stable depuis J+22 (3.1°P) · Dernière action: J+4.<br>
+            <!-- ETA formula: médiane des STI closes ≥3 = 28j (N=7 lots historiques). Source: config commissioning_settings.garde_days_stirling -->
+            ETA médiane (N=7): 28j · Seuil alerte: +20% = J+33.6 → <strong>dépassé depuis J+33</strong>.
+          </div>
+        </div>
+        <div class="sb-guerre-card__actions">
+          <a href="mother-shell-active.html" class="sb-guerre-action-voir">Voir →</a>
+          <button class="sb-guerre-action-snooze" title="Reporter l'alerte de 24h">Snooze 24h</button>
+        </div>
+      </div>
+    </article>
+
+    <!-- Card 2: EMB 243 — contamination flagged -->
+    <article class="sb-guerre-card" aria-label="Embuscade 243 — contamination signalée">
+      <div class="sb-guerre-card__accent"></div>
+      <div class="sb-guerre-card__inner">
+        <div class="sb-guerre-card__stamp">CONTAM.<br>FLAGGED</div>
+        <div class="sb-guerre-card__body">
+          <div class="sb-guerre-card__ref">
+            <span class="sb-guerre-rq-type">contamination_flagged</span>
+            EMB #243 · Cave Fermentation · CCT-3
+          </div>
+          <h2 class="sb-guerre-card__title"><em>Embuscade</em> — Lot #243</h2>
+          <div class="sb-guerre-card__detail">
+            QA signale: pH 5.8 → <strong>3.7 en J+6</strong> (attendu 4.1–4.4).<br>
+            Turbidité: <strong>anomalie mesure J+8</strong> · Levure: visuellement saine J+4.<br>
+            Action requise: décision soutirage/rejet avant J+14 · <strong>Contacter QA → Emmanuel</strong>.
+          </div>
+        </div>
+        <div class="sb-guerre-card__actions">
+          <a href="mother-shell-active.html" class="sb-guerre-action-voir">Voir →</a>
+          <button class="sb-guerre-action-snooze" title="Reporter l'alerte de 4h">Snooze 4h</button>
+        </div>
+      </div>
+    </article>
+
+    <!-- Card 3: MOO 171 — abandoned (RQ type: mother_abandoned) -->
+    <article class="sb-guerre-card" aria-label="Moonshine 171 — lot abandonné">
+      <div class="sb-guerre-card__accent"></div>
+      <div class="sb-guerre-card__inner">
+        <div class="sb-guerre-card__stamp">ABANDON<br>DÉCLARÉ</div>
+        <div class="sb-guerre-card__body">
+          <div class="sb-guerre-card__ref">
+            <span class="sb-guerre-rq-type">mother_abandoned</span>
+            MOO #171 · Cave Fermentation · CCT-1 → <em style="color:var(--ink-faint)">libéré</em>
+          </div>
+          <h2 class="sb-guerre-card__title"><em>Moonshine</em> — Lot #171</h2>
+          <div class="sb-guerre-card__detail">
+            Abandonné le 2026-05-28 par Kouros (raison: contamination pH grave).<br>
+            CCT-1 est <strong>en cours de nettoyage CIP</strong> · Lot visible pour audit 30j.<br>
+            <strong>⚠ 28.4 HL de moût non récupérable</strong> — déclarer en pertes comptabilité.
+          </div>
+        </div>
+        <div class="sb-guerre-card__actions">
+          <a href="mother-shell-archive.html" class="sb-guerre-action-voir">Voir →</a>
+          <button class="sb-guerre-action-snooze">Acquitter</button>
+        </div>
+      </div>
+    </article>
+
+    <!-- ── Bloc ATTENTION ── -->
+    <div class="sb-guerre-section-div sb-guerre-section-div--warn" style="margin-top:8px;">
+      <span class="sb-guerre-section-div__label">Attention · 1 alerte</span>
+      <div class="sb-guerre-section-div__rule"></div>
+    </div>
+
+    <!-- Card 4: SPY 254 — packaged volume anomaly -->
+    <article class="sb-guerre-card sb-guerre-card--warn" aria-label="Speakeasy 254 — anomalie volume emballé">
+      <div class="sb-guerre-card__accent"></div>
+      <div class="sb-guerre-card__inner">
+        <div class="sb-guerre-card__stamp sb-guerre-card__stamp--warn">VOLUME<br>ANOMALY</div>
+        <div class="sb-guerre-card__body">
+          <div class="sb-guerre-card__ref">
+            <span class="sb-guerre-rq-type sb-guerre-rq-type--warn">packaged_volume_anomaly</span>
+            SPY #254 · Conditionnement · CLOS le 2026-05-28
+          </div>
+          <h2 class="sb-guerre-card__title"><em>Speakeasy</em> — Lot #254</h2>
+          <div class="sb-guerre-card__detail">
+            <!-- DOA formula: SUM(bd_packaging_v2.vendable_hl WHERE batch=254) / bd_racking_v2.racked_vol_hl WHERE batch=254 × 100 -->
+            Emballé: <span class="warn"><strong>14.2 HL / 23.8 HL rackés = 59.7%</strong></span> — seuil alerte 80%.<br>
+            Emballage clos manuellement le 2026-05-28 à 15:22 par Marc.<br>
+            Écart: −9.6 HL non comptabilisé · Vérifier pertes conditionnement + nettoyage ligne.
+          </div>
+        </div>
+        <div class="sb-guerre-card__actions">
+          <a href="mother-shell-archive.html" class="sb-guerre-action-voir">Voir →</a>
+          <button class="sb-guerre-action-snooze">Snooze 48h</button>
+        </div>
+      </div>
+    </article>
+
+    <!-- Footer note -->
+    <div style="margin-top:8px;padding:12px 14px;background:color-mix(in srgb,var(--bg-side) 40%,transparent);border-radius:3px;border:1px dashed var(--hairline);">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:0.52rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:4px;">À propos de cette vue</div>
+      <div style="font-family:'DM Sans',sans-serif;font-size:0.74rem;color:var(--ink-mute);line-height:1.55;">
+        La Salle de Guerre est une vue filtrée de <code style="font-family:'JetBrains Mono',monospace;font-size:0.7rem;background:var(--bg-elev);padding:1px 4px;border-radius:2px;">review_queue</code> — aucun stockage parallèle.
+        Les alertes sont générées automatiquement par les routines de surveillance (garde seuil, QA seuils, volume emballé).
+        Acquitter une alerte ferme la ligne RQ (decision='acquitté') et retire la carte de cette vue.
+      </div>
+    </div>
+
+  </div><!-- /sb-guerre-body -->
+</div><!-- /sb-guerre-wrap -->
+
+<script>
+// Live clock
+function updateClock() {
+  const el = document.getElementById('js-clock');
+  if (!el) return;
+  const now = new Date();
+  el.textContent = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+}
+updateClock();
+setInterval(updateClock, 30000);
+
+// W key or Esc returns to board
+document.addEventListener('keydown', e => {
+  if (e.key === 'w' || e.key === 'W' || e.key === 'Escape') {
+    window.location = 'board-populated.html';
+  }
+});
+</script>
+
+</body>
+</html>

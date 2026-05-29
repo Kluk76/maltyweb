@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BBT-2 vide — Confirmer la clôture · MaltyTask</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,200;0,9..144,300;0,9..144,400;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<!--
+  ════════════════════════════════════════════════════════════════
+  MOCKUP: packaging-cuve-vide-modal.html — Cuve vide confirmation modal
+  ════════════════════════════════════════════════════════════════
+  Concept C: Theater of Operations diorama
+  Light-kraft palette · sb-* namespace · static only
+
+  This page simulates the full-page modal backdrop experience.
+  Background is blurred, modal centered.
+
+  Triggered by: operator clicks "Marquer BBT-2 vide" in a packaging session.
+
+  Modal body:
+    Two affected-mother close-reason cards:
+      - EMB 244: 22.4 HL / 24.0 HL racked (93.3%) — raison: "emballé" — OUI
+      - EMB 245 (already absorbed into 244 in this merge scenario — shown as
+        a simpler standalone example instead):
+        ZEP 312: 16.0 HL / 16.0 HL racked (100%) — raison: "emballé" — OUI
+
+    DOA formula comment:
+      % emballé = SUM(bd_packaging_v2.vendable_hl WHERE batch=N)
+                  / bd_racking_v2.racked_vol_hl WHERE batch=N × 100
+
+    Optional note textarea.
+    "Confirmer la clôture" primary CTA + Annuler secondary.
+    Footer micro: "Cette action est irréversible."
+
+  Interactions wired:
+    - Annuler / ×  → simulate close (alert + go back)
+    - Confirmer → confirm dialog then simulate POST
+    - Radio OUI/NON toggles card highlight
+  ════════════════════════════════════════════════════════════════
+-->
+
+<link rel="stylesheet" href="_shared.css">
+
+</head>
+<body class="sb-board">
+
+<!-- Blurred background — simulates the board underneath -->
+<div class="sb-modal-bg" aria-hidden="true">
+  <div class="sb-modal-bg__bar"></div>
+  <div class="sb-modal-bg__diorama">
+    <div class="sb-modal-bg__zone"></div>
+    <div class="sb-modal-bg__zone"></div>
+    <div class="sb-modal-bg__zone"></div>
+    <div class="sb-modal-bg__zone" style="background:color-mix(in srgb,var(--hop) 3%,var(--bg));"></div>
+    <div class="sb-modal-bg__zone"></div>
+  </div>
+</div>
+
+<!-- Modal backdrop + modal -->
+<div class="sb-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+
+  <div class="sb-modal-modal">
+
+    <!-- Header -->
+    <div class="sb-modal-modal__header">
+      <div class="sb-modal-modal__icon" aria-hidden="true">⊠</div>
+      <div class="sb-modal-modal__heading">
+        <h1 class="sb-modal-modal__title" id="modal-title">BBT-2 est vide — confirmer la clôture des lots concernés</h1>
+        <p class="sb-modal-modal__sub">L'opérateur a déclaré la cuve BBT-2 physiquement vide. Le système va clôturer automatiquement les mother shells dont le contenu était dans BBT-2.</p>
+      </div>
+      <button class="sb-modal-modal__close" onclick="window.history.back() || (window.location='mother-shell-active.html');"
+              aria-label="Annuler et fermer">×</button>
+    </div>
+
+    <!-- Body -->
+    <div class="sb-modal-modal__body">
+
+      <p class="sb-modal-intro">Sélectionnez la raison de clôture pour chaque lot et confirmez leur inclusion dans la fermeture.</p>
+
+      <!-- Card 1: EMB 244 — 93.3% emballé -->
+      <div class="sb-modal-close-card sb-modal-close-card--included" id="card-emb244">
+        <div class="sb-modal-close-card__head">
+          <div class="sb-modal-close-card__name"><em>Embuscade</em> #244</div>
+          <span class="sb-modal-close-card__pct sb-modal-close-card__pct--ok">93.3%</span>
+        </div>
+        <div class="sb-modal-close-card__vol">
+          Emballé: 22.4 HL / 24.0 HL rackés
+          <!--
+            DOA formula: % emballé = SUM(bd_packaging_v2.vendable_hl WHERE batch=244)
+                                     / bd_racking_v2.racked_vol_hl WHERE batch=244 × 100
+            = 22.4 / 24.0 × 100 = 93.3%
+          -->
+          <small>Formule: SUM(vendable_hl WHERE batch=244) / racked_vol_hl × 100</small>
+        </div>
+        <div class="sb-modal-close-card__row">
+          <div class="sb-modal-progress" title="93.3% du volume racked emballé">
+            <div class="sb-modal-progress__fill" style="width:93.3%;"></div>
+          </div>
+          <select class="sb-modal-select" id="raison-emb244" aria-label="Raison de clôture EMB 244">
+            <option value="emballe" selected>Emballé</option>
+            <option value="jete">Jeté</option>
+            <option value="vendu-mout">Vendu moût</option>
+            <option value="autre">Autre</option>
+          </select>
+          <div class="sb-modal-radio-group" role="group" aria-label="Inclure dans la clôture?">
+            <label class="sb-modal-radio-label" title="Inclure dans la clôture">
+              <input type="radio" name="include-emb244" value="oui" checked onchange="updateCard('emb244', true)"> OUI
+            </label>
+            <label class="sb-modal-radio-label sb-modal-radio-label--non" title="Exclure de la clôture">
+              <input type="radio" name="include-emb244" value="non" onchange="updateCard('emb244', false)"> NON
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- Card 2: ZEP 312 — 100% emballé -->
+      <div class="sb-modal-close-card sb-modal-close-card--included" id="card-zep312">
+        <div class="sb-modal-close-card__head">
+          <div class="sb-modal-close-card__name"><em>Zepp</em> #312</div>
+          <span class="sb-modal-close-card__pct sb-modal-close-card__pct--ok">100.0%</span>
+        </div>
+        <div class="sb-modal-close-card__vol">
+          Emballé: 16.0 HL / 16.0 HL rackés
+          <!--
+            DOA formula: SUM(bd_packaging_v2.vendable_hl WHERE batch=312)
+                         / bd_racking_v2.racked_vol_hl WHERE batch=312 × 100
+            = 16.0 / 16.0 × 100 = 100.0%
+          -->
+          <small>Formule: SUM(vendable_hl WHERE batch=312) / racked_vol_hl × 100</small>
+        </div>
+        <div class="sb-modal-close-card__row">
+          <div class="sb-modal-progress" title="100% du volume racked emballé">
+            <div class="sb-modal-progress__fill" style="width:100%;"></div>
+          </div>
+          <select class="sb-modal-select" id="raison-zep312" aria-label="Raison de clôture ZEP 312">
+            <option value="emballe" selected>Emballé</option>
+            <option value="jete">Jeté</option>
+            <option value="vendu-mout">Vendu moût</option>
+            <option value="autre">Autre</option>
+          </select>
+          <div class="sb-modal-radio-group" role="group" aria-label="Inclure dans la clôture?">
+            <label class="sb-modal-radio-label" title="Inclure dans la clôture">
+              <input type="radio" name="include-zep312" value="oui" checked onchange="updateCard('zep312', true)"> OUI
+            </label>
+            <label class="sb-modal-radio-label sb-modal-radio-label--non" title="Exclure de la clôture">
+              <input type="radio" name="include-zep312" value="non" onchange="updateCard('zep312', false)"> NON
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- Note globale -->
+      <div class="sb-modal-note-area">
+        <label class="sb-modal-note-label" for="close-note">Note de clôture (optionnel)</label>
+        <textarea class="sb-modal-textarea" id="close-note"
+                  placeholder="Observations sur la vidange de BBT-2, pertes constatées, etc."
+                  aria-label="Note de clôture optionnelle"></textarea>
+      </div>
+
+    </div><!-- /body -->
+
+    <!-- Footer -->
+    <div class="sb-modal-modal__footer">
+      <div class="sb-modal-footer-micro">
+        ⚠ Cette action est irréversible. Pour rouvrir une mother shell, contacter l'administrateur.
+      </div>
+      <button class="sb-btn sb-btn--secondary"
+              onclick="window.history.back() || (window.location='mother-shell-active.html');"
+              aria-label="Annuler, retour sans clôture">
+        Annuler
+      </button>
+      <button class="sb-btn sb-btn--primary"
+              id="btn-confirm"
+              onclick="handleConfirm()"
+              aria-label="Confirmer la clôture des lots">
+        Confirmer la clôture
+      </button>
+    </div>
+
+  </div><!-- /modal -->
+
+</div><!-- /backdrop -->
+
+<script>
+function updateCard(id, included) {
+  const card = document.getElementById('card-' + id);
+  if (!card) return;
+  card.classList.toggle('sb-modal-close-card--included', included);
+  card.classList.toggle('sb-modal-close-card--excluded', !included);
+}
+
+function handleConfirm() {
+  // Check if at least one lot is included
+  const emb244 = document.querySelector('input[name="include-emb244"]:checked')?.value === 'oui';
+  const zep312 = document.querySelector('input[name="include-zep312"]:checked')?.value === 'oui';
+  if (!emb244 && !zep312) {
+    // Show inline validation message instead of alert()
+    const btn = document.getElementById('btn-confirm');
+    const prev = btn.textContent;
+    btn.textContent = '⚠ Choisir au moins un lot';
+    btn.style.background = 'color-mix(in srgb, var(--ember) 12%, var(--bg-elev))';
+    setTimeout(() => { btn.textContent = prev; btn.style.background = ''; }, 2500);
+    return;
+  }
+  // Mockup: redirect directly to archive (production: POST /api/session-action.php)
+  window.location = 'mother-shell-archive.html';
+}
+
+// Esc to close
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') window.history.back();
+});
+</script>
+
+</body>
+</html>

@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mother Shell — Navigateur de maquettes · MaltyTask</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,200;0,9..144,300;0,9..144,400;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<!--
+  ════════════════════════════════════════════════════════════════
+  MOCKUP: index.html — Navigateur des maquettes Stage B
+  ════════════════════════════════════════════════════════════════
+  Concept C: Theater of Operations diorama — Stage B suite
+  Light-kraft palette · sb-* namespace · static only
+
+  This page is the operator's entry point for all mockup screens.
+  Open this first thing, then navigate to each screen via the cards.
+
+  Deployment: https://app.maltytask.ch/_design/mother-shell/index.html
+  Stage A output: FOUNDATIONS.md + board-populated.html
+  Stage B output: 10 screen mockups (this page + 9 screens)
+  ════════════════════════════════════════════════════════════════
+-->
+
+<link rel="stylesheet" href="_shared.css">
+
+<style>
+body.sb-board {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  align-items: stretch;
+}
+</style>
+</head>
+<body class="sb-board">
+
+<!-- Engineering registration marks -->
+<div class="sb-reg-mark sb-reg-mark--tl" aria-hidden="true"
+  style="position:fixed;width:24px;height:24px;border:1px solid var(--hairline);z-index:200;pointer-events:none;opacity:0.5;top:14px;left:14px;border-right:none;border-bottom:none;"></div>
+<div class="sb-reg-mark sb-reg-mark--tr" aria-hidden="true"
+  style="position:fixed;width:24px;height:24px;border:1px solid var(--hairline);z-index:200;pointer-events:none;opacity:0.5;top:14px;right:14px;border-left:none;border-bottom:none;"></div>
+<div class="sb-reg-mark sb-reg-mark--bl" aria-hidden="true"
+  style="position:fixed;width:24px;height:24px;border:1px solid var(--hairline);z-index:200;pointer-events:none;opacity:0.5;bottom:14px;left:14px;border-right:none;border-top:none;"></div>
+<div class="sb-reg-mark sb-reg-mark--br" aria-hidden="true"
+  style="position:fixed;width:24px;height:24px;border:1px solid var(--hairline);z-index:200;pointer-events:none;opacity:0.5;bottom:14px;right:14px;border-left:none;border-top:none;"></div>
+
+<!-- TOPBAR -->
+<header class="sb-topbar" role="banner">
+  <div class="sb-wordmark">
+    <span class="sb-wordmark__name">Malty<em>Task</em></span>
+    <span class="sb-wordmark__sect">La Nébuleuse</span>
+  </div>
+  <nav class="sb-nav" aria-label="Navigation principale">
+    <a href="../index.html" class="sb-nav__item" style="color:var(--ink-mute);">← Toutes les maquettes</a>
+    <span class="sb-nav__item sb-nav__item--active" aria-current="page">Mother Shell — Stage B</span>
+  </nav>
+  <div class="sb-topbar__right">
+    <span style="font-family:'JetBrains Mono',monospace;font-size:0.56rem;letter-spacing:0.06em;color:var(--ink-faint);">Stage B · 2026-05-29</span>
+    <div class="sb-avatar" aria-label="Revue interne">ÉQ</div>
+  </div>
+</header>
+
+<!-- BODY -->
+<main class="sb-index" style="max-width:1100px;">
+
+  <div class="sb-index__hero">
+    <div class="sb-index__kicker">Concept C · Theater of Operations</div>
+    <h1 class="sb-index__title">Mother Shell<br><em>Suite complète</em></h1>
+    <p class="sb-index__sub">Maquettes statiques pour la revue opérateur. Toutes les interactions (flip de carte, overlay Salle de Guerre, expansion composition) sont câblées en vanilla JS pur — aucun appel réseau, aucune donnée réelle.</p>
+    <div style="margin-top:14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+      <a href="FOUNDATIONS.md" class="sb-zone-empty__cta" style="margin-top:0;">Foundations.md →</a>
+      <a href="board-populated.html" class="sb-zone-empty__cta" style="margin-top:0;background:color-mix(in srgb,var(--hop) 8%,transparent);border-color:color-mix(in srgb,var(--hop) 30%,transparent);color:var(--hop-deep);">Stage A hero →</a>
+      <span style="font-family:'JetBrains Mono',monospace;font-size:0.56rem;letter-spacing:0.08em;color:var(--ink-faint);">Déploiement live: app.maltytask.ch/_design/mother-shell/</span>
+    </div>
+  </div>
+
+  <!-- ── Section: Tableaux ── -->
+  <div style="margin-bottom:10px;">
+    <div class="sb-section-head">
+      <span class="sb-section-label">Tableaux de bord</span>
+    </div>
+  </div>
+
+  <div class="sb-index__grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:32px;">
+
+    <!-- board-populated -->
+    <a href="board-populated.html" class="sb-index-card">
+      <div class="sb-index-card__thumb" style="background:color-mix(in srgb,var(--hop) 6%,var(--bg-side));">
+        <div class="sb-index-card__thumb-icon">🗺</div>
+        <span class="sb-index-card__thumb-label">Stage A</span>
+      </div>
+      <div class="sb-index-card__body">
+        <div class="sb-index-card__filename">board-populated.html</div>
+        <div class="sb-index-card__name">Tableau — État peuplé</div>
+        <div class="sb-index-card__desc">6 lots actifs répartis sur 4 zones. Diorama complet avec SVG vessels, heartbeats, batch list. Référence Stage A.</div>
+      </div>
+    </a>
+
+    <!-- board-empty -->
+    <a href="board-empty.html" class="sb-index-card">
+      <div class="sb-index-card__thumb" style="background:color-mix(in srgb,var(--hairline) 15%,var(--bg-side));">
+        <div class="sb-index-card__thumb-icon">◻</div>
+        <span class="sb-index-card__thumb-label">Stage B</span>
+      </div>
+      <div class="sb-index-card__body">
+        <div class="sb-index-card__filename">board-empty.html</div>
+        <div class="sb-index-card__name">Tableau — État vide</div>
+        <div class="sb-index-card__desc">Aucun lot actif. Empty states par zone, cuve illustrations grises, CTA "Démarrer un brassin".</div>
+      </div>
+    </a>
+
+    <!-- board-tablet -->
+    <a href="board-tablet.html" class="sb-index-card">
+      <div class="sb-index-card__thumb" style="background:color-mix(in srgb,var(--cold) 5%,var(--bg-side));">
+        <div class="sb-index-card__thumb-icon">⬛</div>
+        <span class="sb-index-card__thumb-label">Stage B</span>
+      </div>
+      <div class="sb-index-card__body">
+        <div class="sb-index-card__filename">board-tablet.html</div>
+        <div class="sb-index-card__name">Tableau — Vue tablette</div>
+        <div class="sb-index-card__desc">Breakpoint 1024×768. Grille 2×2, diorama compressé, liste scrollable horizontalement.</div>
+      </div>
+    </a>
+
+    <!-- board-salle-de-guerre -->
+    <a href="board-salle-de-guerre.html" class="sb-index-card">
+      <div class="sb-index-card__thumb" style="background:color-mix(in srgb,var(--ember) 8%,var(--bg-side));">
+        <div class="sb-index-card__thumb-icon">⚠</div>
+        <span class="sb-index-card__thumb-label">Stage B · W</span>
+      </div>
+      <div class="sb-index-card__body">
+        <div class="sb-index-card__filename">board-salle-de-guerre.html</div>
+        <div class="sb-index-card__name">Salle de Guerre</div>
+        <div class="sb-index-card__desc">Vue plein-écran critique. Lots en alerte maximale seulement: garde overdue, contamination, anomalie emballage. Raccourci W.</div>
+      </div>
+    </a>
+
+    <!-- mother-shell-archive -->
+    <a href="mother-shell-archive.html" class="sb-index-card">
+      <div class="sb-index-card__thumb" style="background:color-mix(in srgb,var(--ink-faint) 20%,var(--bg-side));">
+        <div class="sb-index-card__thumb-icon">📁</div>
+        <span class="sb-index-card__thumb-label">Stage B</span>
+      </div>
+      <div class="sb-index-card__body">
+        <div class="sb-index-card__filename">mother-shell-archive.html</div>
+        <div class="sb-index-card__name">Archive des lots clos</div>
+        <div class="sb-index-card__desc">30 derniers jours. Filtre par recette / période. Disposition finale: emballé / jeté / vendu moût.</div>
+      </div>
+    </a>
+  </div>
+
+  <!-- ── Section: Mother Shell (drill-ins) ── -->
+  <div style="margin-bottom:10px;">
+    <div class="sb-section-head">
+      <span class="sb-section-label">Mother Shell — pages détail</span>
+    </div>
+  </div>
+
+  <div class="sb-index__grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:32px;">
+
+    <!-- mother-shell-active -->
+    <a href="mother-shell-active.html" class="sb-index-card">
+      <div class="sb-index-card__thumb" style="background:color-mix(in srgb,var(--cold) 7%,var(--bg-side));">
+        <div class="sb-index-card__thumb-icon">⬢</div>
+        <span class="sb-index-card__thumb-label">Stage B</span>
+      </div>
+      <div class="sb-index-card__body">
+        <div class="sb-index-card__filename">mother-shell-active.html</div>
+        <div class="sb-index-card__name">Lot actif — EMB 244</div>
+        <div class="sb-index-card__desc">Drill-in complet: arc 4 zones, état actuel, chronologie, faces PRODUCTION/COÛT/QUALITÉ, footer sticky.</div>
+      </div>
+    </a>
+
+    <!-- mother-shell-merged -->
+    <a href="mother-shell-merged.html" class="sb-index-card">
+      <div class="sb-index-card__thumb" style="background:color-mix(in srgb,var(--oak) 6%,var(--bg-side));">
+        <div class="sb-index-card__thumb-icon">⊕</div>
+        <span class="sb-index-card__thumb-label">Stage B</span>
+      </div>
+      <div class="sb-index-card__body">
+        <div class="sb-index-card__filename">mother-shell-merged.html</div>
+        <div class="sb-index-card__name">Lot fusionné — EMB 244+245</div>
+        <div class="sb-index-card__desc">Survivor ayant absorbé EMB 245 (40%). Composition dual-layer, badge FUSIONNÉE, expand de la source absorbée.</div>
+      </div>
+    </a>
+
+    <!-- wort-contract-mother -->
+    <a href="wort-contract-mother.html" class="sb-index-card">
+      <div class="sb-index-card__thumb" style="background:color-mix(in srgb,var(--oak) 8%,var(--bg-side));">
+        <div class="sb-index-card__thumb-icon">🍺</div>
+        <span class="sb-index-card__thumb-label">Stage B</span>
+      </div>
+      <div class="sb-index-card__body">
+        <div class="sb-index-card__filename">wort-contract-mother.html</div>
+        <div class="sb-index-card__name">Contrat moût — Chien Bleu</div>
+        <div class="sb-index-card__desc">process_type='wort_contract'. Cycle tronqué: Brassage seulement, 3 zones grises, CTA "Moût transféré" direct.</div>
+      </div>
+    </a>
+  </div>
+
+  <!-- ── Section: Interactions / sessions ── -->
+  <div style="margin-bottom:10px;">
+    <div class="sb-section-head">
+      <span class="sb-section-label">Sessions quotidiennes &amp; modales</span>
+    </div>
+  </div>
+
+  <div class="sb-index__grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:32px;">
+
+    <!-- packaging-cuve-vide-modal -->
+    <a href="packaging-cuve-vide-modal.html" class="sb-index-card">
+      <div class="sb-index-card__thumb" style="background:color-mix(in srgb,var(--hop) 7%,var(--bg-side));">
+        <div class="sb-index-card__thumb-icon">⊠</div>
+        <span class="sb-index-card__thumb-label">Stage B</span>
+      </div>
+      <div class="sb-index-card__body">
+        <div class="sb-index-card__filename">packaging-cuve-vide-modal.html</div>
+        <div class="sb-index-card__name">Modal — Cuve vide</div>
+        <div class="sb-index-card__desc">Confirmation de clôture BBT-2. 2 lots affectés avec raison + radio OUI/NON. Action irréversible.</div>
+      </div>
+    </a>
+
+    <!-- daily-shell-with-mother-context -->
+    <a href="daily-shell-with-mother-context.html" class="sb-index-card">
+      <div class="sb-index-card__thumb" style="background:color-mix(in srgb,var(--oak) 5%,var(--bg-side));">
+        <div class="sb-index-card__thumb-icon">↩</div>
+        <span class="sb-index-card__thumb-label">Stage B</span>
+      </div>
+      <div class="sb-index-card__body">
+        <div class="sb-index-card__filename">daily-shell-with-mother-context.html</div>
+        <div class="sb-index-card__name">Session soutirage + contexte lot</div>
+        <div class="sb-index-card__desc">Formulaire racking ZEP 312 avec bande de contexte mother-shell en haut. Breadcrumb, arc 4 zones, lien retour.</div>
+      </div>
+    </a>
+
+  </div>
+
+  <!-- ── Section: Bonus — pour inspiration (Stage B stretch) ── -->
+  <div style="margin-bottom:10px;">
+    <div class="sb-section-head" style="border-bottom:2px solid color-mix(in srgb,var(--oak) 30%,transparent);">
+      <span class="sb-section-label" style="color:var(--oak);">Bonus — pour inspiration</span>
+      <span style="font-family:'JetBrains Mono',monospace;font-size:0.52rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--oak-deep);background:color-mix(in srgb,var(--oak) 8%,transparent);border:1px solid color-mix(in srgb,var(--oak) 25%,transparent);padding:2px 7px;border-radius:2px;">Stage B Stretch</span>
+    </div>
+    <p style="font-family:'DM Sans',sans-serif;font-size:0.78rem;color:var(--ink-mute);line-height:1.5;margin-bottom:16px;max-width:600px;">Ces 3 écrans ne font pas partie du scope v1 — ils démontrent des mécaniques du système et des pistes d'évolution pour inspirer une v2/v3. Aucun engagement de livraison.</p>
+  </div>
+
+  <div class="sb-index__grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:40px;">
+
+    <!-- mother-creation-cascade -->
+    <a href="mother-creation-cascade.html" class="sb-index-card" style="border-color:color-mix(in srgb,var(--oak) 20%,var(--hairline));">
+      <div class="sb-index-card__thumb" style="background:color-mix(in srgb,var(--ember) 7%,var(--bg-side));">
+        <svg width="60" height="60" viewBox="0 0 120 120" opacity="0.5" style="margin:0 auto;">
+          <rect x="30" y="10" width="60" height="22" rx="2" fill="none" stroke="#b34428" stroke-width="1.5"/>
+          <line x1="60" y1="32" x2="60" y2="48" stroke="#b34428" stroke-width="1.5" marker-end="url(#idx-arr)"/>
+          <rect x="20" y="48" width="80" height="22" rx="2" fill="none" stroke="#2f5575" stroke-width="1.5"/>
+          <line x1="60" y1="70" x2="60" y2="86" stroke="#567020" stroke-width="1.5"/>
+          <rect x="20" y="86" width="80" height="22" rx="2" fill="none" stroke="#567020" stroke-width="1.5"/>
+          <defs><marker id="idx-arr" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><polygon points="0 0, 6 3, 0 6" fill="#b34428"/></marker></defs>
+        </svg>
+        <span class="sb-index-card__thumb-label" style="color:var(--oak);">Éducatif</span>
+      </div>
+      <div class="sb-index-card__body">
+        <div class="sb-index-card__filename" style="color:var(--oak);">mother-creation-cascade.html</div>
+        <div class="sb-index-card__name">Cascade de création</div>
+        <div class="sb-index-card__desc">3 panneaux AVANT/PENDANT/APRÈS. Explique comment la mother shell naît automatiquement au premier brassin, avec diagramme SVG animé de la transaction SQL.</div>
+      </div>
+    </a>
+
+    <!-- card-flip-faces -->
+    <a href="card-flip-faces.html" class="sb-index-card" style="border-color:color-mix(in srgb,var(--oak) 20%,var(--hairline));">
+      <div class="sb-index-card__thumb" style="background:color-mix(in srgb,var(--hop) 6%,var(--bg-side));">
+        <div class="sb-index-card__thumb-icon" style="font-size:1.8rem;">⟳</div>
+        <span class="sb-index-card__thumb-label" style="color:var(--oak);">Interaction v2</span>
+      </div>
+      <div class="sb-index-card__body">
+        <div class="sb-index-card__filename" style="color:var(--oak);">card-flip-faces.html</div>
+        <div class="sb-index-card__name">Flip 3 faces — EMB 244</div>
+        <div class="sb-index-card__desc">Animation CSS 3D rotateY 600ms. 3 faces cliquables: PRODUCTION (état, heartbeat, ETA), COÛT (CHF/HL accumulé), QUALITÉ (sparkline FG, pH, température).</div>
+      </div>
+    </a>
+
+    <!-- live-activity-feed -->
+    <a href="live-activity-feed.html" class="sb-index-card" style="border-color:color-mix(in srgb,var(--oak) 20%,var(--hairline));">
+      <div class="sb-index-card__thumb" style="background:color-mix(in srgb,var(--cold) 6%,var(--bg-side));">
+        <div class="sb-index-card__thumb-icon">📡</div>
+        <span class="sb-index-card__thumb-label" style="color:var(--oak);">Inspiration v2/v3</span>
+      </div>
+      <div class="sb-index-card__body">
+        <div class="sb-index-card__filename" style="color:var(--oak);">live-activity-feed.html</div>
+        <div class="sb-index-card__name">Fil d'activité temps réel</div>
+        <div class="sb-index-card__desc">Panneau latéral 360px sur fond tableau. 12 événements récents sur toutes les mothers, triés par heure. Entrée animée, filtres par zone, simulation d'un nouvel événement au bout de 8s.</div>
+      </div>
+    </a>
+
+  </div>
+
+  <!-- ── Footer note ── -->
+  <div style="border-top:1px solid var(--hairline);padding-top:20px;margin-top:8px;">
+    <div style="display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap;">
+      <div>
+        <div class="sb-section-label" style="margin-bottom:6px;">Fondations Stage A</div>
+        <div style="font-family:'DM Sans',sans-serif;font-size:0.78rem;color:var(--ink-mute);line-height:1.5;">
+          Palette kraft-manila · Namespace <code style="font-family:'JetBrains Mono',monospace;font-size:0.72rem;background:var(--bg-side);padding:1px 4px;border-radius:2px;">sb-*</code> · Composants réutilisables dans <code style="font-family:'JetBrains Mono',monospace;font-size:0.72rem;background:var(--bg-side);padding:1px 4px;border-radius:2px;">_shared.css</code>
+        </div>
+      </div>
+      <div>
+        <div class="sb-section-label" style="margin-bottom:6px;">Conventions de production</div>
+        <div style="font-family:'DM Sans',sans-serif;font-size:0.78rem;color:var(--ink-mute);line-height:1.5;">
+          ETA = médiane des mothers closes même recette (N≥3), sinon config avec annotation<br>
+          % emballé = SUM(vendable_hl) / racked_vol_hl × 100<br>
+          Salle de Guerre = vue filtrée RQ (severity=critical, scope=mother-shell)
+        </div>
+      </div>
+      <div>
+        <div class="sb-section-label" style="margin-bottom:6px;">Note de déploiement</div>
+        <div style="font-family:'DM Sans',sans-serif;font-size:0.78rem;color:var(--ink-mute);line-height:1.5;">
+          Maquettes statiques · Aucune auth requise<br>
+          Commit en attente de validation opérateur (Stage C critic pass)
+        </div>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<script>
+// Live clock
+function updateClock() {
+  const now = new Date();
+  const h = String(now.getHours()).padStart(2,'0');
+  const m = String(now.getMinutes()).padStart(2,'0');
+  const el = document.querySelector('.sb-topbar__clock');
+  if (el) el.textContent = `${h}:${m}`;
+}
+updateClock();
+setInterval(updateClock, 30000);
+</script>
+
+</body>
+</html>

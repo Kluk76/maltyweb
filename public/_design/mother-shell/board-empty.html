@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lots en cours — Aucun lot · MaltyTask</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,200;0,9..144,300;0,9..144,400;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<!--
+  ════════════════════════════════════════════════════════════════
+  MOCKUP: board-empty.html — Main board, EMPTY state
+  ════════════════════════════════════════════════════════════════
+  Concept C: Theater of Operations diorama
+  Light-kraft palette · sb-* namespace · static only
+
+  What this screen shows:
+    No active mother shells. Empty state per zone with subdued vessel
+    illustrations (all empty, --tank-empty fill). Tasteful empty state
+    messaging. CTA "Démarrer un nouveau brassin →" in Brasserie zone.
+    Ghost strip shows 2 recently closed lots.
+
+  The diorama is still fully visible — the theater is open even when
+  no units are deployed. Vessels stand ready. The emptiness itself
+  communicates operational readiness.
+  ════════════════════════════════════════════════════════════════
+-->
+
+<link rel="stylesheet" href="_shared.css">
+
+<style>
+body.sb-board {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  align-items: stretch;
+}
+
+/* Board-specific extensions */
+.sb-board-wrap {
+  position: relative; z-index: 1; flex: 1;
+  display: flex; flex-direction: column; overflow: hidden; min-height: 0;
+}
+.sb-diorama { flex: 0 0 56vh; min-height: 440px; max-height: 62vh; }
+.sb-batch-list { flex: 1; max-height: none; overflow-y: auto; }
+
+/* Zone accent labels */
+.sb-zone--brasserie    .sb-zone__label { color: var(--ember); }
+.sb-zone--fermentation .sb-zone__label { color: var(--cold); }
+.sb-zone--bbt          .sb-zone__label { color: var(--bbt); }
+.sb-zone--conditionnement .sb-zone__label { color: var(--hop); }
+
+.sb-zone--brasserie    .sb-zone__header { border-bottom-color: color-mix(in srgb, var(--ember) 20%, transparent); }
+.sb-zone--fermentation .sb-zone__header { border-bottom-color: color-mix(in srgb, var(--cold) 20%, transparent); }
+.sb-zone--bbt          .sb-zone__header { border-bottom-color: color-mix(in srgb, var(--bbt) 20%, transparent); }
+.sb-zone--conditionnement .sb-zone__header { border-bottom-color: color-mix(in srgb, var(--hop) 20%, transparent); }
+
+/* Vessel sizing */
+.sb-vessel--cct-sm svg { width: 40px; height: auto; }
+.sb-vessel--bbt-sm svg { width: 44px; height: auto; }
+.sb-vessel--kettle svg { width: 72px; height: auto; }
+
+/* Zone body arrangement — use sb-zone__cards + sb-vessel-stage pattern */
+.sb-zone--brasserie .sb-zone__body { /* inherits from _shared.css */ }
+.sb-zone--conditionnement .sb-zone__body { /* inherits from _shared.css */ }
+
+/* Packaging zone — in-flow in sb-vessel-stage */
+.sb-packaging-line { display: flex; flex-direction: column; align-items: center; gap: 3px; z-index: 2; width: 100%; }
+.sb-packaging-rollers { display: flex; align-items: center; width: 100%; gap: 0; }
+.sb-packaging-roller { width: 10px; height: 10px; border-radius: 50%; background: var(--tank-empty); border: 1px solid var(--hairline-2); flex-shrink: 0; }
+.sb-packaging-belt { flex: 1; height: 10px; background: color-mix(in srgb, var(--bg-side) 50%, transparent); border: 1px solid var(--hairline); border-radius: 0; }
+
+/* Annotation */
+.sb-annotation {
+  position: absolute; font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.44rem; letter-spacing: 0.10em; text-transform: uppercase;
+  color: var(--ink-faint); pointer-events: none; z-index: 0;
+}
+.sb-annotation--br { bottom: 8px; right: 10px; }
+.sb-annotation--bl { bottom: 8px; left: 10px; }
+
+/* Kettle wrap */
+.sb-kettle-wrap { position: relative; display: flex; flex-direction: column; align-items: center; z-index: 2; }
+
+/* Batch list header */
+.sb-batch-list-header {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 16px 7px; border-bottom: 1px solid var(--hairline);
+  background: var(--bg-side); position: sticky; top: 0; z-index: 10;
+}
+.sb-batch-list-header__title {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.56rem; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-mute);
+}
+
+/* Empty state for batch list */
+.sb-batch-list-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 40px 24px; gap: 10px;
+}
+.sb-batch-list-empty__icon { font-size: 2rem; opacity: 0.15; }
+.sb-batch-list-empty__msg {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.82rem; color: var(--ink-faint); text-align: center;
+}
+.sb-batch-list-empty__sub {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.56rem; letter-spacing: 0.06em; color: var(--ink-faint);
+  text-align: center;
+}
+
+/* CCT empty fill */
+.cct-fill-empty { fill: var(--tank-empty); opacity: 0.55; }
+</style>
+</head>
+<body class="sb-board">
+
+<div class="sb-reg-mark sb-reg-mark--tl" aria-hidden="true"></div>
+<div class="sb-reg-mark sb-reg-mark--tr" aria-hidden="true"></div>
+<div class="sb-reg-mark sb-reg-mark--bl" aria-hidden="true"></div>
+<div class="sb-reg-mark sb-reg-mark--br" aria-hidden="true"></div>
+
+<!-- TOPBAR -->
+<header class="sb-topbar" role="banner">
+  <div class="sb-wordmark">
+    <span class="sb-wordmark__name">Malty<em>Task</em></span>
+    <span class="sb-wordmark__sect">La Nébuleuse</span>
+  </div>
+  <nav class="sb-nav" aria-label="Navigation principale">
+    <a href="#" class="sb-nav__item sb-nav__item--active" aria-current="page">
+      Lots en cours
+      <span class="sb-nav__badge" style="background:var(--bg-side);color:var(--ink-faint);border:1px solid var(--hairline);" aria-label="0 lots actifs">0</span>
+    </a>
+    <a href="#" class="sb-nav__item">Journal de bord</a>
+    <a href="#" class="sb-nav__item">Cuves</a>
+    <a href="#" class="sb-nav__item">Fournisseurs</a>
+    <a href="#" class="sb-nav__item">Recettes</a>
+  </nav>
+  <div class="sb-topbar__right">
+    <div class="sb-refresh-indicator">
+      <span class="sb-refresh-dot"></span>
+      <span>Dernière màj: il y a 8s</span>
+    </div>
+    <span class="sb-kb-hint" title="Salle de Guerre (W)">W</span>
+    <div class="sb-topbar__clock" id="js-clock">09:47</div>
+    <div class="sb-avatar" aria-label="Opérateur">LK</div>
+  </div>
+</header>
+
+<div class="sb-board-wrap">
+
+  <!-- DIORAMA -->
+  <section class="sb-diorama" aria-label="Tableau des lots par phase — aucun lot actif">
+
+    <!-- ── ZONE 1: BRASSERIE (empty + CTA) ── -->
+    <div class="sb-zone sb-zone--brasserie" role="region" aria-labelledby="zone-brew-label">
+      <div class="sb-zone__header">
+        <h2 id="zone-brew-label" class="sb-zone__label">Brasserie</h2>
+        <span class="sb-zone__count sb-zone__count--zero" aria-label="0 lots">0</span>
+        <div class="sb-zone__corner" aria-hidden="true"></div>
+      </div>
+      <div class="sb-zone__body">
+        <span class="sb-annotation sb-annotation--bl" aria-hidden="true">Brew ·</span>
+        <!-- Cards area — empty state + CTA -->
+        <div class="sb-zone__cards">
+          <div class="sb-zone-empty" style="position:relative;z-index:3;padding:8px 10px 10px;">
+            <div class="sb-zone-empty__msg">Aucun lot en brassage</div>
+            <a href="#" class="sb-zone-empty__cta" style="margin-top:6px;">Démarrer un brassin →</a>
+          </div>
+        </div>
+        <!-- Vessel stage — empty kettle -->
+        <div class="sb-vessel-stage">
+          <div class="sb-kettle-wrap">
+            <svg width="68" height="76" viewBox="0 0 72 80" fill="none" xmlns="http://www.w3.org/2000/svg"
+                 opacity="0.4" aria-label="Chaudière vide" role="img">
+              <title>Chaudière (vide)</title>
+              <rect x="8" y="15" width="56" height="50" rx="1" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/>
+              <rect x="4" y="10" width="64" height="7" rx="1" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/>
+              <ellipse cx="36" cy="13" rx="8" ry="3" fill="var(--steel-mid)"/>
+              <rect x="8" y="53" width="56" height="12" fill="none" stroke="var(--steel-mid)" stroke-width="0.5"/>
+              <rect x="14" y="65" width="4" height="12" rx="0.5" fill="var(--steel-mid)"/>
+              <rect x="27" y="65" width="4" height="12" rx="0.5" fill="var(--steel-mid)"/>
+              <rect x="45" y="65" width="4" height="12" rx="0.5" fill="var(--steel-mid)"/>
+              <rect x="58" y="65" width="4" height="12" rx="0.5" fill="var(--steel-mid)"/>
+              <ellipse cx="36" cy="78" rx="28" ry="1.5" fill="var(--steel-shadow)" opacity="0.2"/>
+            </svg>
+          </div>
+          <div class="sb-ground" aria-hidden="true"></div>
+        </div><!-- /sb-vessel-stage -->
+      </div>
+    </div>
+
+    <!-- ── ZONE 2: CAVE FERMENTATION (empty) ── -->
+    <div class="sb-zone sb-zone--fermentation" role="region" aria-labelledby="zone-ferm-label">
+      <div class="sb-zone__header">
+        <h2 id="zone-ferm-label" class="sb-zone__label">Cave Fermentation</h2>
+        <span class="sb-zone__count sb-zone__count--zero">0</span>
+        <div class="sb-zone__corner" aria-hidden="true"></div>
+      </div>
+      <div class="sb-zone__body">
+        <span class="sb-annotation sb-annotation--br" aria-hidden="true">CCT</span>
+
+        <!-- Cards area — empty state message -->
+        <div class="sb-zone__cards">
+          <div class="sb-zone-empty" style="position:relative;z-index:3;">
+            <div class="sb-zone-empty__msg">Aucun lot en fermentation</div>
+            <div class="sb-zone-empty__msg" style="font-size:0.66rem;color:var(--ink-faint);">8 CCTs disponibles</div>
+          </div>
+        </div>
+
+        <!-- Vessel stage — 8 empty CCT vessels -->
+        <div class="sb-vessel-stage">
+        <div class="sb-vessel-row" aria-hidden="true">
+          <!-- CCT 1–8 empty (simplified, tank-empty fill) -->
+          <!-- Reusing the same base SVG with empty fill for all 8 -->
+          <div class="sb-vessel sb-vessel--cct-sm">
+            <svg viewBox="0 0 80 155" xmlns="http://www.w3.org/2000/svg" opacity="0.55" aria-label="CCT 1 vide" role="img"><title>CCT 1 (vide)</title>
+              <polygon points="12,10 68,10 68,100 46,130 34,130 12,100" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/>
+              <rect x="12" y="2" width="56" height="8" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/>
+              <rect x="12" y="2" width="7" height="98" fill="rgba(255,255,255,0.10)"/>
+              <ellipse cx="40" cy="150" rx="30" ry="1.6" fill="var(--steel-shadow)" opacity="0.22"/>
+              <path d="M 20,108 L 22,108 L 17,147 L 15,147 Z" fill="var(--steel-mid)"/>
+              <path d="M 39,108 L 41,108 L 41.2,147 L 38.8,147 Z" fill="var(--steel-mid)"/>
+              <path d="M 58,108 L 60,108 L 65,147 L 63,147 Z" fill="var(--steel-mid)"/>
+              <text x="40" y="30" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="13" font-weight="500" fill="rgba(0,0,0,0.35)">1</text>
+            </svg>
+            <span class="sb-vessel__label">CCT-1</span>
+          </div>
+          <div class="sb-vessel sb-vessel--cct-sm"><svg viewBox="0 0 80 155" xmlns="http://www.w3.org/2000/svg" opacity="0.55"><polygon points="12,10 68,10 68,100 46,130 34,130 12,100" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/><rect x="12" y="2" width="56" height="8" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/><rect x="12" y="2" width="7" height="98" fill="rgba(255,255,255,0.10)"/><ellipse cx="40" cy="150" rx="30" ry="1.6" fill="var(--steel-shadow)" opacity="0.22"/><path d="M 20,108 L 22,108 L 17,147 L 15,147 Z" fill="var(--steel-mid)"/><path d="M 39,108 L 41,108 L 41.2,147 L 38.8,147 Z" fill="var(--steel-mid)"/><path d="M 58,108 L 60,108 L 65,147 L 63,147 Z" fill="var(--steel-mid)"/><text x="40" y="30" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="13" font-weight="500" fill="rgba(0,0,0,0.35)">2</text></svg><span class="sb-vessel__label">CCT-2</span></div>
+          <div class="sb-vessel sb-vessel--cct-sm"><svg viewBox="0 0 80 155" xmlns="http://www.w3.org/2000/svg" opacity="0.55"><polygon points="12,10 68,10 68,100 46,130 34,130 12,100" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/><rect x="12" y="2" width="56" height="8" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/><rect x="12" y="2" width="7" height="98" fill="rgba(255,255,255,0.10)"/><ellipse cx="40" cy="150" rx="30" ry="1.6" fill="var(--steel-shadow)" opacity="0.22"/><path d="M 20,108 L 22,108 L 17,147 L 15,147 Z" fill="var(--steel-mid)"/><path d="M 39,108 L 41,108 L 41.2,147 L 38.8,147 Z" fill="var(--steel-mid)"/><path d="M 58,108 L 60,108 L 65,147 L 63,147 Z" fill="var(--steel-mid)"/><text x="40" y="30" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="13" font-weight="500" fill="rgba(0,0,0,0.35)">3</text></svg><span class="sb-vessel__label">CCT-3</span></div>
+          <div class="sb-vessel sb-vessel--cct-sm"><svg viewBox="0 0 80 155" xmlns="http://www.w3.org/2000/svg" opacity="0.55"><polygon points="12,10 68,10 68,100 46,130 34,130 12,100" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/><rect x="12" y="2" width="56" height="8" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/><rect x="12" y="2" width="7" height="98" fill="rgba(255,255,255,0.10)"/><ellipse cx="40" cy="150" rx="30" ry="1.6" fill="var(--steel-shadow)" opacity="0.22"/><path d="M 20,108 L 22,108 L 17,147 L 15,147 Z" fill="var(--steel-mid)"/><path d="M 39,108 L 41,108 L 41.2,147 L 38.8,147 Z" fill="var(--steel-mid)"/><path d="M 58,108 L 60,108 L 65,147 L 63,147 Z" fill="var(--steel-mid)"/><text x="40" y="30" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="13" font-weight="500" fill="rgba(0,0,0,0.35)">4</text></svg><span class="sb-vessel__label">CCT-4</span></div>
+          <div class="sb-vessel sb-vessel--cct-sm"><svg viewBox="0 0 80 155" xmlns="http://www.w3.org/2000/svg" opacity="0.55"><polygon points="12,10 68,10 68,100 46,130 34,130 12,100" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/><rect x="12" y="2" width="56" height="8" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/><rect x="12" y="2" width="7" height="98" fill="rgba(255,255,255,0.10)"/><ellipse cx="40" cy="150" rx="30" ry="1.6" fill="var(--steel-shadow)" opacity="0.22"/><path d="M 20,108 L 22,108 L 17,147 L 15,147 Z" fill="var(--steel-mid)"/><path d="M 39,108 L 41,108 L 41.2,147 L 38.8,147 Z" fill="var(--steel-mid)"/><path d="M 58,108 L 60,108 L 65,147 L 63,147 Z" fill="var(--steel-mid)"/><text x="40" y="30" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="13" font-weight="500" fill="rgba(0,0,0,0.35)">5</text></svg><span class="sb-vessel__label">CCT-5</span></div>
+          <div class="sb-vessel sb-vessel--cct-sm"><svg viewBox="0 0 80 155" xmlns="http://www.w3.org/2000/svg" opacity="0.55"><polygon points="12,10 68,10 68,100 46,130 34,130 12,100" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/><rect x="12" y="2" width="56" height="8" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/><rect x="12" y="2" width="7" height="98" fill="rgba(255,255,255,0.10)"/><ellipse cx="40" cy="150" rx="30" ry="1.6" fill="var(--steel-shadow)" opacity="0.22"/><path d="M 20,108 L 22,108 L 17,147 L 15,147 Z" fill="var(--steel-mid)"/><path d="M 39,108 L 41,108 L 41.2,147 L 38.8,147 Z" fill="var(--steel-mid)"/><path d="M 58,108 L 60,108 L 65,147 L 63,147 Z" fill="var(--steel-mid)"/><text x="40" y="30" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="13" font-weight="500" fill="rgba(0,0,0,0.35)">6</text></svg><span class="sb-vessel__label">CCT-6</span></div>
+          <div class="sb-vessel sb-vessel--cct-sm"><svg viewBox="0 0 80 155" xmlns="http://www.w3.org/2000/svg" opacity="0.55"><polygon points="12,10 68,10 68,100 46,130 34,130 12,100" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/><rect x="12" y="2" width="56" height="8" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/><rect x="12" y="2" width="7" height="98" fill="rgba(255,255,255,0.10)"/><ellipse cx="40" cy="150" rx="30" ry="1.6" fill="var(--steel-shadow)" opacity="0.22"/><path d="M 20,108 L 22,108 L 17,147 L 15,147 Z" fill="var(--steel-mid)"/><path d="M 39,108 L 41,108 L 41.2,147 L 38.8,147 Z" fill="var(--steel-mid)"/><path d="M 58,108 L 60,108 L 65,147 L 63,147 Z" fill="var(--steel-mid)"/><text x="40" y="30" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="13" font-weight="500" fill="rgba(0,0,0,0.35)">7</text></svg><span class="sb-vessel__label">CCT-7</span></div>
+          <div class="sb-vessel sb-vessel--cct-sm"><svg viewBox="0 0 80 155" xmlns="http://www.w3.org/2000/svg" opacity="0.55"><polygon points="12,10 68,10 68,100 46,130 34,130 12,100" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/><rect x="12" y="2" width="56" height="8" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/><rect x="12" y="2" width="7" height="98" fill="rgba(255,255,255,0.10)"/><ellipse cx="40" cy="150" rx="30" ry="1.6" fill="var(--steel-shadow)" opacity="0.22"/><path d="M 20,108 L 22,108 L 17,147 L 15,147 Z" fill="var(--steel-mid)"/><path d="M 39,108 L 41,108 L 41.2,147 L 38.8,147 Z" fill="var(--steel-mid)"/><path d="M 58,108 L 60,108 L 65,147 L 63,147 Z" fill="var(--steel-mid)"/><text x="40" y="30" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="13" font-weight="500" fill="rgba(0,0,0,0.35)">8</text></svg><span class="sb-vessel__label">CCT-8</span></div>
+        </div>
+          <div class="sb-ground" aria-hidden="true"></div>
+        </div><!-- /sb-vessel-stage -->
+      </div>
+    </div>
+
+    <!-- ── ZONE 3: SALLE BBT (empty) ── -->
+    <div class="sb-zone sb-zone--bbt" role="region" aria-labelledby="zone-bbt-label">
+      <div class="sb-zone__header">
+        <h2 id="zone-bbt-label" class="sb-zone__label">Salle BBT</h2>
+        <span class="sb-zone__count sb-zone__count--zero">0</span>
+        <div class="sb-zone__corner" aria-hidden="true"></div>
+      </div>
+      <div class="sb-zone__body">
+        <span class="sb-annotation sb-annotation--br" aria-hidden="true">BBT</span>
+
+        <!-- Cards area — empty state -->
+        <div class="sb-zone__cards">
+          <div class="sb-zone-empty" style="position:relative;z-index:3;">
+            <div class="sb-zone-empty__msg">Aucun lot en soutirage</div>
+            <div class="sb-zone-empty__msg" style="font-size:0.66rem;color:var(--ink-faint);">3 BBTs disponibles</div>
+          </div>
+        </div>
+
+        <!-- Vessel stage — 3 empty BBT vessels -->
+        <div class="sb-vessel-stage">
+        <div class="sb-vessel-row" aria-hidden="true">
+          <div class="sb-vessel sb-vessel--bbt-sm">
+            <svg viewBox="0 0 90 120" xmlns="http://www.w3.org/2000/svg" opacity="0.5" role="img" aria-label="BBT 1 vide"><title>BBT 1 (vide)</title>
+              <ellipse cx="45" cy="14" rx="34" ry="8" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/>
+              <rect x="11" y="14" width="68" height="70" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/>
+              <line x1="12" y1="14" x2="78" y2="14" stroke="rgba(255,255,255,0.12)" stroke-width="0.7"/>
+              <rect x="11" y="14" width="8" height="70" fill="rgba(255,255,255,0.10)"/>
+              <line x1="12" y1="37" x2="78" y2="37" stroke="var(--steel-mid)" stroke-width="0.5" opacity="0.4"/>
+              <line x1="12" y1="60" x2="78" y2="60" stroke="var(--steel-mid)" stroke-width="0.5" opacity="0.4"/>
+              <ellipse cx="45" cy="84" rx="34" ry="8" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/>
+              <path d="M 18,92 L 20,92 L 20,118 L 18,118 Z" fill="var(--steel-mid)"/>
+              <path d="M 44,92 L 46,92 L 46,118 L 44,118 Z" fill="var(--steel-mid)"/>
+              <path d="M 70,92 L 72,92 L 72,118 L 70,118 Z" fill="var(--steel-mid)"/>
+              <ellipse cx="45" cy="118" rx="28" ry="1.5" fill="var(--steel-shadow)" opacity="0.2"/>
+              <text x="45" y="58" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="14" font-weight="500" fill="rgba(0,0,0,0.35)">1</text>
+            </svg>
+            <span class="sb-vessel__label">BBT-1</span>
+          </div>
+          <div class="sb-vessel sb-vessel--bbt-sm"><svg viewBox="0 0 90 120" xmlns="http://www.w3.org/2000/svg" opacity="0.5"><ellipse cx="45" cy="14" rx="34" ry="8" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/><rect x="11" y="14" width="68" height="70" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/><rect x="11" y="14" width="8" height="70" fill="rgba(255,255,255,0.10)"/><line x1="12" y1="37" x2="78" y2="37" stroke="var(--steel-mid)" stroke-width="0.5" opacity="0.4"/><line x1="12" y1="60" x2="78" y2="60" stroke="var(--steel-mid)" stroke-width="0.5" opacity="0.4"/><ellipse cx="45" cy="84" rx="34" ry="8" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/><path d="M 18,92 L 20,92 L 20,118 L 18,118 Z" fill="var(--steel-mid)"/><path d="M 44,92 L 46,92 L 46,118 L 44,118 Z" fill="var(--steel-mid)"/><path d="M 70,92 L 72,92 L 72,118 L 70,118 Z" fill="var(--steel-mid)"/><ellipse cx="45" cy="118" rx="28" ry="1.5" fill="var(--steel-shadow)" opacity="0.2"/><text x="45" y="58" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="14" font-weight="500" fill="rgba(0,0,0,0.35)">2</text></svg><span class="sb-vessel__label">BBT-2</span></div>
+          <div class="sb-vessel sb-vessel--bbt-sm"><svg viewBox="0 0 90 120" xmlns="http://www.w3.org/2000/svg" opacity="0.5"><ellipse cx="45" cy="14" rx="34" ry="8" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/><rect x="11" y="14" width="68" height="70" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/><rect x="11" y="14" width="8" height="70" fill="rgba(255,255,255,0.10)"/><line x1="12" y1="37" x2="78" y2="37" stroke="var(--steel-mid)" stroke-width="0.5" opacity="0.4"/><line x1="12" y1="60" x2="78" y2="60" stroke="var(--steel-mid)" stroke-width="0.5" opacity="0.4"/><ellipse cx="45" cy="84" rx="34" ry="8" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/><path d="M 18,92 L 20,92 L 20,118 L 18,118 Z" fill="var(--steel-mid)"/><path d="M 44,92 L 46,92 L 46,118 L 44,118 Z" fill="var(--steel-mid)"/><path d="M 70,92 L 72,92 L 72,118 L 70,118 Z" fill="var(--steel-mid)"/><ellipse cx="45" cy="118" rx="28" ry="1.5" fill="var(--steel-shadow)" opacity="0.2"/><text x="45" y="58" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="14" font-weight="500" fill="rgba(0,0,0,0.35)">3</text></svg><span class="sb-vessel__label">BBT-3</span></div>
+        </div>
+          <div class="sb-ground" aria-hidden="true"></div>
+        </div><!-- /sb-vessel-stage -->
+      </div>
+    </div>
+
+    <!-- ── ZONE 4: CONDITIONNEMENT (empty) ── -->
+    <div class="sb-zone sb-zone--conditionnement" role="region" aria-labelledby="zone-cond-label">
+      <div class="sb-zone__header">
+        <h2 id="zone-cond-label" class="sb-zone__label">Conditionnement</h2>
+        <span class="sb-zone__count sb-zone__count--zero">0</span>
+        <div class="sb-zone__corner" aria-hidden="true"></div>
+      </div>
+      <div class="sb-zone__body">
+        <!-- Cards area — empty state -->
+        <div class="sb-zone__cards">
+          <div class="sb-zone-empty" style="position:relative;z-index:3;">
+            <div class="sb-zone-empty__msg">Aucun lot en conditionnement</div>
+          </div>
+        </div>
+        <!-- Vessel stage — empty conveyor (static, no animation) -->
+        <div class="sb-vessel-stage">
+          <div class="sb-packaging-line" style="position:relative;bottom:auto;left:auto;right:auto;width:90%;margin:0 auto;">
+            <div class="sb-packaging-rollers">
+              <div class="sb-packaging-roller"></div>
+              <div class="sb-packaging-belt" style="opacity:0.5;"></div>
+              <div class="sb-packaging-roller"></div>
+            </div>
+          </div>
+          <div class="sb-ground" aria-hidden="true"></div>
+        </div><!-- /sb-vessel-stage -->
+      </div>
+    </div>
+
+    <!-- ── ZONE 5: EXPÉDITION (placeholder) ── -->
+    <div class="sb-zone sb-zone--placeholder" role="region" aria-labelledby="zone-exp-label">
+      <div class="sb-zone__header">
+        <h2 id="zone-exp-label" class="sb-zone__label">Expédition</h2>
+        <div class="sb-zone__corner" aria-hidden="true"></div>
+      </div>
+      <div class="sb-zone__body">
+        <div class="sb-placeholder-msg">
+          <div class="sb-placeholder-msg__icon" aria-hidden="true">🚛</div>
+          <div class="sb-placeholder-msg__label">Phase 3</div>
+          <div class="sb-placeholder-msg__phase">Intégration<br>planifiée</div>
+        </div>
+      </div>
+    </div>
+
+  </section><!-- /diorama -->
+
+  <!-- BATCH LIST — empty state -->
+  <div class="sb-batch-list" role="region" aria-label="Liste des lots">
+    <div class="sb-batch-list-header">
+      <span class="sb-batch-list-header__title">Lots en cours</span>
+      <span style="font-family:'JetBrains Mono',monospace;font-size:0.56rem;letter-spacing:0.06em;color:var(--ink-faint);">0 lot</span>
+    </div>
+    <div class="sb-batch-list-empty">
+      <div class="sb-batch-list-empty__icon">◻</div>
+      <div class="sb-batch-list-empty__msg">Le tableau de bord est vide.</div>
+      <div class="sb-batch-list-empty__sub">Démarrez un nouveau brassin pour voir les lots apparaître ici.</div>
+      <a href="#" class="sb-zone-empty__cta" style="margin-top:8px;">Démarrer un nouveau brassin →</a>
+    </div>
+  </div>
+
+  <!-- GHOST STRIP — recent closed lots (2 ghosts, even with empty board) -->
+  <div class="sb-closed-strip" role="region" aria-label="Lots récemment clos">
+    <span class="sb-closed-strip__label">Clos récemment</span>
+
+    <div class="sb-ghost-card" tabindex="0" title="Zepp #309 — clos 2026-05-27">
+      <span class="sb-ghost-card__closed-stamp">Clôturé</span>
+      <div>
+        <div class="sb-ghost-card__name"><em style="font-style:italic;color:var(--ink-mute);">Zepp</em></div>
+        <div class="sb-ghost-card__meta">#309 · 28 jours · 30.2 HL · 2026-05-27</div>
+      </div>
+    </div>
+
+    <div class="sb-ghost-card" tabindex="0" title="Stirling #186 — clos 2026-05-25">
+      <span class="sb-ghost-card__closed-stamp">Clôturé</span>
+      <div>
+        <div class="sb-ghost-card__name"><em style="font-style:italic;color:var(--ink-mute);">Stirling</em></div>
+        <div class="sb-ghost-card__meta">#186 · 35 jours · 28.8 HL · 2026-05-25</div>
+      </div>
+    </div>
+
+    <a href="mother-shell-archive.html"
+       style="font-family:'JetBrains Mono',monospace;font-size:0.54rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--oak);text-decoration:none;margin-left:8px;white-space:nowrap;">
+      Voir l'archive →
+    </a>
+  </div>
+
+</div><!-- /sb-board-wrap -->
+
+<script>
+// Live clock
+function updateClock() {
+  const now = new Date();
+  document.getElementById('js-clock').textContent =
+    String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+}
+updateClock();
+setInterval(updateClock, 30000);
+</script>
+
+</body>
+</html>

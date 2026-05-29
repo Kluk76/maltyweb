@@ -1,0 +1,501 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EMB #244 — Embuscade en fermentation · MaltyTask</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,200;0,9..144,300;0,9..144,400;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<!--
+  ════════════════════════════════════════════════════════════════
+  MOCKUP: mother-shell-active.html — Mother shell drill-in (active lot)
+  ════════════════════════════════════════════════════════════════
+  Concept C: Theater of Operations diorama
+  Light-kraft palette · sb-* namespace · static only
+
+  Scenario: EMB #244 (Embuscade), currently in fermentation on CCT-4.
+  Brewed 2026-05-17, now J+12. Garde seuil approaching (expected J+14).
+  No composition (no merge yet). Production face active.
+
+  ETA formula: median of closed EMB mothers with N≥3 = 21 days
+  (N=9 Embuscade lots closed). Source: closed mothers same recipe.
+  Fallback annotation: if N<3, show "~J+N (config)" from commissioning_settings.
+
+  Interactions wired:
+    - Face tabs (PRODUCTION/COÛT/QUALITÉ) switch panels
+    - Sticky footer CTAs (Abandonner = confirm dialog hint)
+  ════════════════════════════════════════════════════════════════
+-->
+
+<link rel="stylesheet" href="_shared.css">
+
+<style>
+body.sb-board {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  align-items: stretch;
+}
+
+/* Shell body should respect viewport */
+.sb-shell {
+  flex: 1;
+}
+
+/* Face placeholder panels */
+.sb-face-placeholder {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 40px 24px; gap: 10px; text-align: center;
+  background: color-mix(in srgb, var(--bg-side) 30%, transparent);
+  border: 1px dashed var(--hairline); border-radius: 3px;
+}
+.sb-face-placeholder__label { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 0.56rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-faint); }
+.sb-face-placeholder__msg { font-family: "DM Sans", sans-serif; font-size: 0.78rem; color: var(--ink-faint); }
+
+/* Disabled footer CTA */
+.sb-btn--disabled { opacity: 0.35; cursor: not-allowed; pointer-events: none; }
+</style>
+</head>
+<body class="sb-board">
+
+<div class="sb-reg-mark sb-reg-mark--tl" aria-hidden="true"></div>
+<div class="sb-reg-mark sb-reg-mark--tr" aria-hidden="true"></div>
+
+<!-- TOPBAR -->
+<header class="sb-topbar" role="banner">
+  <div class="sb-wordmark">
+    <span class="sb-wordmark__name">Malty<em>Task</em></span>
+    <span class="sb-wordmark__sect">La Nébuleuse</span>
+  </div>
+  <nav class="sb-nav" aria-label="Navigation">
+    <a href="board-populated.html" class="sb-nav__item">← Lots en cours</a>
+    <span class="sb-nav__item sb-nav__item--active" aria-current="page">Lot EMB #244</span>
+  </nav>
+  <div class="sb-topbar__right">
+    <span class="sb-kb-hint" title="Salle de Guerre">W</span>
+    <div class="sb-topbar__clock" id="js-clock">09:47</div>
+    <div class="sb-avatar">LK</div>
+  </div>
+</header>
+
+<!-- SHELL -->
+<main class="sb-shell" aria-label="Détail lot EMB 244">
+
+  <!-- SHELL HEADER — sticky -->
+  <div class="sb-shell__header">
+    <a href="board-populated.html" class="sb-shell__back" aria-label="Retour au tableau">← Tableau</a>
+    <div class="sb-shell__header-sep" aria-hidden="true"></div>
+
+    <!-- Title block -->
+    <div style="flex:1;display:flex;align-items:center;gap:14px;flex-wrap:wrap;min-width:0;">
+      <h1 class="sb-shell__title">
+        <em>Embuscade</em>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:0.9rem;font-weight:400;color:var(--ink-mute);margin-left:6px;letter-spacing:0.04em;">#244</span>
+      </h1>
+      <span class="sb-status-pill sb-status-pill--fermenting">
+        <span class="sb-heartbeat sb-heartbeat--amber" title="Dernière activité: il y a 2h" style="width:6px;height:6px;"></span>
+        Fermentation
+      </span>
+      <span class="sb-vessel-badge" title="Cuve de fermentation conique — CCT 4">CCT-4</span>
+      <span class="sb-garde-flag" title="Garde seuil approchant">⏱ Garde J+14 approche</span>
+    </div>
+
+    <!-- Meta cluster -->
+    <div class="sb-shell__meta">
+      <span>J+12</span>
+      <span class="sb-shell__meta-sep">·</span>
+      <span>Ouvert le 2026-05-17</span>
+      <span class="sb-shell__meta-sep">·</span>
+      <div class="sb-avatar" style="width:22px;height:22px;font-size:0.5rem;" aria-label="Ouvert par Luca">LC</div>
+      <span>Luca</span>
+      <span class="sb-shell__meta-sep">·</span>
+      <a href="board-salle-de-guerre.html" class="sb-guerre-link" title="Voir les alertes de ce lot en Salle de Guerre">⚠ Salle de Guerre</a>
+    </div>
+  </div>
+
+  <!-- 4-ZONE PROGRESS ARC -->
+  <div class="sb-arc" role="navigation" aria-label="Progression du lot par phase">
+    <div class="sb-arc__zone sb-arc__zone--done">
+      <span class="sb-arc__icon" aria-hidden="true">✓</span>
+      <div>
+        <div class="sb-arc__name">Brassage</div>
+        <span class="sb-arc__detail">2026-05-17 · 7h · 32 HL</span>
+      </div>
+    </div>
+    <div class="sb-arc__zone sb-arc__zone--active" aria-current="step">
+      <span class="sb-arc__icon" aria-hidden="true">⬡</span>
+      <div>
+        <div class="sb-arc__name">Fermentation</div>
+        <span class="sb-arc__detail" style="color:var(--hop);">J+12 · CCT-4 · FG 4.2°P</span>
+      </div>
+    </div>
+    <div class="sb-arc__zone sb-arc__zone--future">
+      <span class="sb-arc__icon" aria-hidden="true">—</span>
+      <div>
+        <div class="sb-arc__name">Soutirage</div>
+        <span class="sb-arc__detail">En attente</span>
+      </div>
+    </div>
+    <div class="sb-arc__zone sb-arc__zone--future">
+      <span class="sb-arc__icon" aria-hidden="true">—</span>
+      <div>
+        <div class="sb-arc__name">Conditionnement</div>
+        <span class="sb-arc__detail">En attente</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- FACE TABS -->
+  <div class="sb-face-tabs" role="tablist" aria-label="Faces du lot">
+    <button class="sb-face-tab sb-face-tab--active" role="tab" aria-selected="true"
+            aria-controls="face-production" onclick="showFace('production')">Production</button>
+    <button class="sb-face-tab" role="tab" aria-selected="false"
+            aria-controls="face-cout" onclick="showFace('cout')" style="opacity:0.5;" title="Disponible Phase 2">Coût</button>
+    <button class="sb-face-tab" role="tab" aria-selected="false"
+            aria-controls="face-qualite" onclick="showFace('qualite')" style="opacity:0.5;" title="Disponible Phase 2">Qualité</button>
+  </div>
+
+  <!-- BODY — 2 column -->
+  <div class="sb-shell__body">
+
+    <!-- LEFT: content -->
+    <div class="sb-shell__content">
+
+      <!-- FACE: PRODUCTION (visible) -->
+      <div id="face-production" class="sb-face-content sb-face-content--visible" role="tabpanel">
+
+        <!-- Live state card -->
+        <div class="sb-live-card" role="status" aria-live="polite">
+          <div class="sb-live-dot" aria-hidden="true"></div>
+          <div class="sb-live-card__body">
+            <div class="sb-live-card__label">État actuel</div>
+            <div class="sb-live-card__desc">Fermentation en cours — CCT-4 · FG 4.2°P · J+12 · garde seuil approchant J+14</div>
+            <div class="sb-live-card__data">
+              <span>OG: 13.8°P</span>
+              <span>FG cible: 3.2°P</span>
+              <span>Atténuation: 69.6%</span>
+              <span>Temp: 20°C</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- KPI row -->
+        <div class="sb-kpi-row" aria-label="Indicateurs clés">
+          <div class="sb-kpi">
+            <div class="sb-kpi__label">Volume brassé</div>
+            <div class="sb-kpi__value">32.0<span class="sb-kpi__unit">HL</span></div>
+          </div>
+          <div class="sb-kpi">
+            <div class="sb-kpi__label">Jours en cours</div>
+            <div class="sb-kpi__value">12<span class="sb-kpi__unit">j</span></div>
+          </div>
+          <div class="sb-kpi" style="border-color:color-mix(in srgb,var(--cold) 30%,transparent);">
+            <div class="sb-kpi__label">
+              <!-- ETA: médiane N=9 lots EMB clos = 21 jours total (brassage→clôture). Reste = 21−12 = ~9j -->
+              ETA restant
+              <span style="font-family:'JetBrains Mono',monospace;font-size:0.48rem;color:var(--ink-faint);margin-left:4px;" title="Médiane de 9 lots Embuscade clos. Formule: médiane(days_open) WHERE recipe=EMB AND status=CLOS AND count≥3">médiane N=9</span>
+            </div>
+            <div class="sb-kpi__value" style="color:var(--cold);">~9<span class="sb-kpi__unit">j</span></div>
+            <div class="sb-kpi__delta">Clôture prévue ~2026-06-07</div>
+          </div>
+          <div class="sb-kpi" style="border-color:color-mix(in srgb,var(--oak) 30%,transparent);">
+            <div class="sb-kpi__label">Garde seuil</div>
+            <div class="sb-kpi__value" style="color:var(--oak);">J+14<span class="sb-kpi__unit"></span></div>
+            <div class="sb-kpi__delta" style="color:var(--oak);">Dans 2 jours</div>
+          </div>
+        </div>
+
+        <!-- Composition panel (no merge for this lot) -->
+        <div class="sb-section-head">
+          <span class="sb-section-label">Composition</span>
+        </div>
+        <div style="font-family:'DM Sans',sans-serif;font-size:0.8rem;color:var(--ink-faint);padding:10px 0;font-style:italic;">
+          Lot simple — aucune fusion. Tout le volume provient du brassage EMB #244 du 2026-05-17.
+        </div>
+
+        <div class="sb-divider"></div>
+
+        <!-- TIMELINE (chronologie) -->
+        <div class="sb-section-head">
+          <span class="sb-section-label">Chronologie</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:0.52rem;letter-spacing:0.06em;color:var(--ink-faint);">desc.</span>
+        </div>
+
+        <div class="sb-timeline" role="log" aria-label="Journal des événements du lot">
+
+          <!-- Current: active fermenting -->
+          <div class="sb-timeline-event">
+            <div class="sb-timeline-event__dot sb-timeline-event__dot--ferm"></div>
+            <div class="sb-timeline-event__body">
+              <div class="sb-timeline-event__title">Lecture FG — J+12</div>
+              <div class="sb-timeline-event__detail">FG: 4.2°P · Temp: 20.0°C · Levure: active · Garde J+14 approche · Opérateur: Luca</div>
+            </div>
+            <div class="sb-timeline-event__time">08:42<br>auj.</div>
+          </div>
+
+          <div class="sb-timeline-event">
+            <div class="sb-timeline-event__dot sb-timeline-event__dot--ferm"></div>
+            <div class="sb-timeline-event__body">
+              <div class="sb-timeline-event__title">Cold crash initié — J+11</div>
+              <div class="sb-timeline-event__detail">Température: 20°C → 4°C (progression) · Durée cible: 48h · Op: Emmanuel</div>
+            </div>
+            <div class="sb-timeline-event__time">14:20<br>hier</div>
+          </div>
+
+          <div class="sb-timeline-event">
+            <div class="sb-timeline-event__dot sb-timeline-event__dot--ferm"></div>
+            <div class="sb-timeline-event__body">
+              <div class="sb-timeline-event__title">Lecture FG — J+8</div>
+              <div class="sb-timeline-event__detail">FG: 3.8°P · Atténuation apparente: 72.5% · En garde</div>
+            </div>
+            <div class="sb-timeline-event__time">10:15<br>-4j</div>
+          </div>
+
+          <div class="sb-timeline-event">
+            <div class="sb-timeline-event__dot sb-timeline-event__dot--ferm"></div>
+            <div class="sb-timeline-event__body">
+              <div class="sb-timeline-event__title">Fermentation active — J+4</div>
+              <div class="sb-timeline-event__detail">FG: 6.2°P · Bulle CO₂ actif · Levure saine visuellement</div>
+            </div>
+            <div class="sb-timeline-event__time">09:00<br>-8j</div>
+          </div>
+
+          <!-- Milestone: brewing closed -->
+          <div class="sb-timeline-milestone">
+            <span class="sb-timeline-milestone__label">✓ Brassage clos</span>
+            <span class="sb-timeline-milestone__detail">2026-05-17 à 16:05 — Luca · 32.0 HL transféré vers CCT-4</span>
+          </div>
+
+          <div class="sb-timeline-event">
+            <div class="sb-timeline-event__dot sb-timeline-event__dot--brew"></div>
+            <div class="sb-timeline-event__body">
+              <div class="sb-timeline-event__title">Session brassage ouverte — J+0</div>
+              <div class="sb-timeline-event__detail">Embuscade #244 · 32 HL · Brasseur: Luca · RACK-EMB-244 démarré</div>
+            </div>
+            <div class="sb-timeline-event__time">07:30<br>2026-05-17</div>
+          </div>
+
+        </div><!-- /timeline -->
+
+      </div><!-- /face-production -->
+
+      <!-- FACE: COÛT (placeholder, hidden) -->
+      <div id="face-cout" class="sb-face-content" role="tabpanel">
+        <div class="sb-face-placeholder">
+          <div class="sb-face-placeholder__label">Face Coût — Phase 2</div>
+          <div class="sb-face-placeholder__msg">Valorisation du lot, coût matières, coût horaire, CHF/HL estimé.<br>Disponible après intégration Phase 2 du plan.</div>
+        </div>
+      </div>
+
+      <!-- FACE: QUALITÉ (placeholder, hidden) -->
+      <div id="face-qualite" class="sb-face-content" role="tabpanel">
+        <div class="sb-face-placeholder">
+          <div class="sb-face-placeholder__label">Face Qualité — Phase 2</div>
+          <div class="sb-face-placeholder__msg">Profil gravimétrique, pH, turbidité, seuils QA.<br>Disponible après intégration Phase 2 du plan.</div>
+        </div>
+      </div>
+
+    </div><!-- /content -->
+
+    <!-- RIGHT RAIL — audit / meta -->
+    <div class="sb-shell__rail">
+      <div class="sb-rail-head">Informations du lot</div>
+      <div style="margin-bottom:16px;">
+        <div class="sb-rail-item">
+          <span class="sb-rail-item__label">Recette</span>
+          <span class="sb-rail-item__value" style="font-family:'Fraunces',serif;font-size:0.82rem;font-style:italic;color:var(--oak);">Embuscade</span>
+        </div>
+        <div class="sb-rail-item">
+          <span class="sb-rail-item__label">Batch #</span>
+          <span class="sb-rail-item__value">#244</span>
+        </div>
+        <div class="sb-rail-item">
+          <span class="sb-rail-item__label">Process type</span>
+          <span class="sb-rail-item__value">Brassage maison</span>
+        </div>
+        <div class="sb-rail-item">
+          <span class="sb-rail-item__label">Ouvert par</span>
+          <span class="sb-rail-item__value">Luca</span>
+        </div>
+        <div class="sb-rail-item">
+          <span class="sb-rail-item__label">Ouverture</span>
+          <span class="sb-rail-item__value">2026-05-17</span>
+        </div>
+        <div class="sb-rail-item">
+          <span class="sb-rail-item__label">Cuve actuelle</span>
+          <span class="sb-rail-item__value" style="color:var(--cold);">CCT-4</span>
+        </div>
+        <div class="sb-rail-item">
+          <span class="sb-rail-item__label">Volume</span>
+          <span class="sb-rail-item__value">32.0 HL</span>
+        </div>
+        <div class="sb-rail-item">
+          <span class="sb-rail-item__label">ETA clôture</span>
+          <span class="sb-rail-item__value" style="color:var(--cold);">~2026-06-07</span>
+        </div>
+      </div>
+
+      <div class="sb-rail-head">Alertes actives</div>
+      <div style="margin-bottom:16px;">
+        <div style="display:flex;align-items:flex-start;gap:6px;padding:8px 10px;background:color-mix(in srgb,var(--oak) 7%,transparent);border:1px solid color-mix(in srgb,var(--oak) 25%,transparent);border-radius:3px;margin-bottom:6px;">
+          <span style="color:var(--oak);font-size:0.8rem;margin-top:1px;flex-shrink:0;">⏱</span>
+          <div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:0.52rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--oak-deep);margin-bottom:2px;">Garde seuil approchant</div>
+            <div style="font-family:'DM Sans',sans-serif;font-size:0.72rem;color:var(--ink-mute);">J+14 dans 2 jours. Surveiller FG.</div>
+          </div>
+        </div>
+        <a href="board-salle-de-guerre.html" class="sb-guerre-link" style="display:block;text-align:center;margin-top:4px;">
+          ⚠ Salle de Guerre
+        </a>
+      </div>
+
+      <div class="sb-rail-head">Actions rapides</div>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <a href="#" class="sb-btn sb-btn--secondary" style="justify-content:center;font-size:0.56rem;">+ Ajouter une note</a>
+        <a href="#" class="sb-btn sb-btn--secondary" style="justify-content:center;font-size:0.56rem;">📋 Journal de bord →</a>
+      </div>
+    </div><!-- /rail -->
+
+  </div><!-- /body -->
+
+</main><!-- /shell -->
+
+<!-- STICKY FOOTER -->
+<footer class="sb-shell__footer" role="complementary" aria-label="Actions du lot">
+  <div style="display:flex;gap:10px;align-items:center;">
+    <button class="sb-btn sb-btn--secondary sb-btn--disabled"
+            title="Disponible quand la cuve est physiquement vide et le conditionnement clos"
+            aria-disabled="true">
+      Marquer cuve vide
+    </button>
+    <a href="#" class="sb-btn sb-btn--secondary">📋 Journal de bord →</a>
+  </div>
+  <button class="sb-btn sb-btn--danger"
+          onclick="openAbandonModal()"
+          aria-label="Abandonner ce lot (action irréversible)">
+    Abandonner ce lot
+  </button>
+</footer>
+
+<!-- ════════ ABANDON CONFIRM MODAL ════════ -->
+<div class="sb-modal-backdrop" id="js-abandon-modal" role="dialog" aria-modal="true"
+     aria-labelledby="abandon-modal-title" aria-hidden="true">
+  <div class="sb-modal" id="js-abandon-modal-inner">
+    <div class="sb-modal__header" style="border-top: 3px solid var(--ember);">
+      <div class="sb-modal__title" style="color:var(--ember);">⚠ Abandonner le lot EMB #244</div>
+    </div>
+    <div class="sb-modal__body">
+      <p style="font-family:'DM Sans',sans-serif;font-size:0.82rem;color:var(--ember);font-weight:600;margin-bottom:12px;">
+        Cette action est irréversible et requiert une approbation admin.
+      </p>
+      <div style="margin-bottom:14px;">
+        <label style="font-family:'JetBrains Mono',monospace;font-size:0.54rem;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink-mute);display:block;margin-bottom:6px;">
+          Raison de l'abandon <span style="color:var(--ember);">*</span>
+        </label>
+        <select id="abandon-reason-select" class="sb-select" style="width:100%;margin-bottom:8px;" required
+                onchange="updateAbandonConfirm()">
+          <option value="">— Sélectionner une raison —</option>
+          <option value="contamination">Contamination confirmée</option>
+          <option value="erreur_saisie">Erreur de saisie / lot dupliqué</option>
+          <option value="fuite">Fuite / perte cuve</option>
+          <option value="autre">Autre raison</option>
+        </select>
+        <textarea id="abandon-reason-text" class="sb-textarea" rows="2"
+                  placeholder="Détails supplémentaires (facultatif)…"
+                  style="min-height:48px;font-size:0.76rem;"></textarea>
+      </div>
+      <div style="padding:10px 12px;background:color-mix(in srgb,var(--ember) 5%,var(--bg-elev));border:1px solid color-mix(in srgb,var(--ember) 20%,transparent);border-radius:3px;font-family:'DM Sans',sans-serif;font-size:0.74rem;color:var(--ink-mute);line-height:1.5;">
+        En production: <code style="font-family:'JetBrains Mono',monospace;font-size:0.68rem;background:var(--bg);padding:1px 4px;border-radius:2px;">POST /api/session-action.php { action: "abandon" }</code>
+      </div>
+    </div>
+    <div class="sb-modal__footer">
+      <button class="sb-btn sb-btn--secondary" onclick="closeAbandonModal()">Annuler</button>
+      <button id="abandon-confirm-btn" class="sb-btn sb-btn--danger" disabled
+              onclick="confirmAbandon()" aria-disabled="true">
+        Confirmer l'abandon
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Face tab switching ──
+function showFace(name) {
+  document.querySelectorAll('.sb-face-content').forEach(el => el.classList.remove('sb-face-content--visible'));
+  document.querySelectorAll('.sb-face-tab').forEach(el => { el.classList.remove('sb-face-tab--active'); el.setAttribute('aria-selected','false'); });
+  const panel = document.getElementById('face-' + name);
+  if (panel) panel.classList.add('sb-face-content--visible');
+  const tabs = document.querySelectorAll('.sb-face-tab');
+  tabs.forEach(t => { if (t.getAttribute('onclick') && t.getAttribute('onclick').includes(name)) { t.classList.add('sb-face-tab--active'); t.setAttribute('aria-selected','true'); } });
+}
+
+// ── Abandon modal ──
+var _abandonOpener = null;
+
+function trapFocus(container) {
+  const focusable = container.querySelectorAll('button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+  const first = focusable[0], last = focusable[focusable.length - 1];
+  container.addEventListener('keydown', function _trap(e) {
+    if (e.key !== 'Tab') return;
+    if (e.shiftKey) { if (document.activeElement === first) { e.preventDefault(); last.focus(); } }
+    else { if (document.activeElement === last) { e.preventDefault(); first.focus(); } }
+  });
+}
+
+function openAbandonModal() {
+  _abandonOpener = document.activeElement;
+  const modal = document.getElementById('js-abandon-modal');
+  modal.classList.add('sb-modal-backdrop--visible');
+  modal.setAttribute('aria-hidden', 'false');
+  document.getElementById('abandon-reason-select').focus();
+  trapFocus(document.getElementById('js-abandon-modal-inner'));
+}
+
+function closeAbandonModal() {
+  const modal = document.getElementById('js-abandon-modal');
+  modal.classList.remove('sb-modal-backdrop--visible');
+  modal.setAttribute('aria-hidden', 'true');
+  document.getElementById('abandon-reason-select').value = '';
+  document.getElementById('abandon-reason-text').value = '';
+  document.getElementById('abandon-confirm-btn').disabled = true;
+  document.getElementById('abandon-confirm-btn').setAttribute('aria-disabled','true');
+  if (_abandonOpener) _abandonOpener.focus();
+}
+
+function updateAbandonConfirm() {
+  const sel = document.getElementById('abandon-reason-select').value;
+  const btn = document.getElementById('abandon-confirm-btn');
+  btn.disabled = !sel;
+  btn.setAttribute('aria-disabled', !sel ? 'true' : 'false');
+}
+
+function confirmAbandon() {
+  const reason = document.getElementById('abandon-reason-select').value;
+  const detail = document.getElementById('abandon-reason-text').value;
+  // In production: POST /api/session-action.php { action:'abandon', reason, detail }
+  closeAbandonModal();
+  // Show inline feedback (mockup only)
+  const footer = document.querySelector('.sb-shell__footer');
+  if (footer) footer.innerHTML = '<div style="font-family:\'JetBrains Mono\',monospace;font-size:0.6rem;letter-spacing:0.1em;color:var(--ink-mute);">Abandon enregistré — redirection vers archive…</div>';
+}
+
+document.getElementById('js-abandon-modal').addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') closeAbandonModal();
+});
+
+// ── Live clock ──
+function updateClock() {
+  const el = document.getElementById('js-clock');
+  if (!el) return;
+  const now = new Date();
+  el.textContent = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+}
+updateClock();
+setInterval(updateClock, 30000);
+</script>
+
+</body>
+</html>

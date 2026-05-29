@@ -1,0 +1,423 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Soutirage ZEP #312 — Session avec contexte lot · MaltyTask</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,200;0,9..144,300;0,9..144,400;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<!--
+  ════════════════════════════════════════════════════════════════
+  MOCKUP: daily-shell-with-mother-context.html
+  Daily child shell (racking session ZEP #312) with mother-context strip
+  ════════════════════════════════════════════════════════════════
+  Concept C: Theater of Operations diorama
+  Light-kraft palette · sb-* namespace · static only
+
+  This is a RACKING SESSION FORM page with a mother-context strip at top.
+  The form surface below the strip reuses the session-shell.html style.
+  The strip integrates WITHOUT forking — it's purely additive.
+
+  The parent strip shows:
+    - Breadcrumb: ← Lot ZEP 312 · Zepp · J+34 · vue d'ensemble
+    - Mini 4-zone arc: Brassage ✓  Fermentation ✓  Soutirage [EN COURS]  Conditionnement —
+    - "Voir le lot →" link to mother-shell page
+
+  Compose-don't-fork principle: below the strip, this is a standard racking
+  session shell using the sb-form-* (session-shell form) component vocabulary plus
+  sb-* for the mother context strip. We don't reinvent the session form —
+  we just add the strip integration.
+  ════════════════════════════════════════════════════════════════
+-->
+
+<link rel="stylesheet" href="_shared.css">
+
+<style>
+body.sb-board {
+  display: flex; flex-direction: column; min-height: 100vh; align-items: stretch;
+}
+.sb-reg-mark { position: fixed; width: 24px; height: 24px; border: 1px solid var(--hairline); z-index: 200; pointer-events: none; opacity: 0.4; }
+.sb-reg-mark--tl { top: 14px; left: 14px; border-right: none; border-bottom: none; }
+.sb-reg-mark--tr { top: 14px; right: 14px; border-left: none; border-bottom: none; }
+.sb-kb-hint { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 0.52rem; letter-spacing: 0.08em; color: var(--ink-faint); padding: 2px 5px; border: 1px solid var(--hairline); border-radius: 2px; }
+
+/* ── Session shell styles (mirror of session-shell.css key patterns) ── */
+/* Using sb-* vocabulary since we're in the mother-shell namespace */
+.sb-form-header {
+  padding: 12px 20px 11px;
+  border-bottom: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--bg-elev) 90%, transparent);
+  backdrop-filter: blur(8px);
+  position: sticky; top: 0; z-index: 60;
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+}
+.sb-form-title {
+  font-family: "Fraunces", "Times New Roman", serif;
+  font-variation-settings: "opsz" 96;
+  font-size: 1.2rem; font-weight: 300; color: var(--ink);
+  letter-spacing: -0.01em; flex: 1; min-width: 0;
+}
+.sb-form-title em { font-style: italic; color: var(--oak); }
+.sb-form-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.56rem; letter-spacing: 0.1em; text-transform: uppercase;
+  padding: 3px 8px; border-radius: 2px;
+}
+.sb-form-badge--rack { color: var(--oak); background: color-mix(in srgb, var(--oak) 9%, transparent); border: 1px solid color-mix(in srgb, var(--oak) 25%, transparent); }
+.sb-form-badge--bbt { color: var(--bbt); background: color-mix(in srgb, var(--bbt) 9%, transparent); border: 1px solid color-mix(in srgb, var(--bbt) 25%, transparent); }
+.sb-form-meta { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 0.58rem; letter-spacing: 0.06em; color: var(--ink-mute); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.sb-form-sep { color: var(--hairline-2); }
+
+/* ── Body layout ── */
+.sb-form-body {
+  flex: 1;
+  display: grid; grid-template-columns: 1fr 240px;
+  align-items: start;
+  padding-bottom: 70px;
+}
+.sb-form-content { padding: 20px 22px; border-right: 1px solid var(--hairline); }
+.sb-form-rail { padding: 16px; }
+
+/* ── Section heads ── */
+.sb-form-section-head {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.52rem; letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--ink-mute); margin-bottom: 10px; padding-bottom: 7px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+/* ── Form fields ── */
+.sb-form-field { margin-bottom: 14px; }
+.sb-form-label {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.54rem; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--ink-mute); display: block; margin-bottom: 5px;
+}
+.sb-form-input {
+  width: 100%; font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.78rem; color: var(--ink);
+  background: var(--bg-elev); border: 1px solid var(--hairline);
+  border-radius: 2px; padding: 7px 10px;
+}
+.sb-form-input:focus { outline: none; border-color: var(--hairline-2); }
+.sb-form-input-hint { font-family: "DM Sans", sans-serif; font-size: 0.7rem; color: var(--ink-faint); margin-top: 3px; }
+
+/* 2-col field row */
+.sb-form-field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.sb-form-field-row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+
+/* Firewall checklist */
+.sb-form-firewall {
+  background: color-mix(in srgb, var(--cold) 4%, var(--bg-elev));
+  border: 1px solid color-mix(in srgb, var(--cold) 20%, transparent);
+  border-radius: 3px; padding: 12px 14px; margin-bottom: 14px;
+}
+.sb-form-firewall__title {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.52rem; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--cold); margin-bottom: 8px;
+}
+.sb-form-firewall__item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 0; border-bottom: 1px solid color-mix(in srgb, var(--cold) 10%, transparent);
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.58rem; letter-spacing: 0.04em; color: var(--ink-mute);
+}
+.sb-form-firewall__item:last-child { border-bottom: none; }
+.sb-form-firewall__check { width: 14px; height: 14px; border-radius: 2px; border: 1px solid var(--hairline-2); flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 0.65rem; }
+.sb-form-firewall__check--ok { background: color-mix(in srgb, var(--ok) 15%, transparent); border-color: var(--ok); color: var(--ok); }
+.sb-form-firewall__check--pending { background: color-mix(in srgb, var(--oak) 10%, transparent); border-color: var(--oak); color: var(--oak); }
+
+/* Sticky footer */
+.sb-form-footer {
+  position: fixed; bottom: 0; left: 0; right: 0; height: 60px;
+  background: color-mix(in srgb, var(--bg-elev) 96%, transparent);
+  backdrop-filter: blur(8px); border-top: 1px solid var(--hairline);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 22px; z-index: 50;
+}
+
+/* Rail items */
+.sb-form-rail-head { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 0.52rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-mute); margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--hairline); }
+.sb-form-rail-item { display: flex; justify-content: space-between; align-items: baseline; padding: 5px 0; border-bottom: 1px solid var(--hairline); }
+.sb-form-rail-item:last-child { border-bottom: none; }
+.sb-form-rail-item__label { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 0.54rem; letter-spacing: 0.04em; color: var(--ink-mute); }
+.sb-form-rail-item__value { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 0.58rem; letter-spacing: 0.04em; color: var(--ink); }
+
+/* Session ref */
+.sb-form-ref { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 0.62rem; letter-spacing: 0.04em; color: var(--ink-mute); }
+
+/* Elapsed timer */
+.sb-form-elapsed { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 0.62rem; letter-spacing: 0.06em; color: var(--cold); }
+</style>
+</head>
+<body class="sb-board">
+
+<div class="sb-reg-mark sb-reg-mark--tl" aria-hidden="true"></div>
+<div class="sb-reg-mark sb-reg-mark--tr" aria-hidden="true"></div>
+
+<!-- TOPBAR -->
+<header class="sb-topbar" role="banner">
+  <div class="sb-wordmark">
+    <span class="sb-wordmark__name">Malty<em>Task</em></span>
+    <span class="sb-wordmark__sect">La Nébuleuse</span>
+  </div>
+  <nav class="sb-nav" aria-label="Navigation">
+    <a href="board-populated.html" class="sb-nav__item">← Tableau</a>
+    <a href="mother-shell-active.html" class="sb-nav__item">Lot ZEP #312</a>
+    <span class="sb-nav__item sb-nav__item--active" aria-current="page">Soutirage</span>
+  </nav>
+  <div class="sb-topbar__right">
+    <span class="sb-kb-hint">W</span>
+    <div class="sb-topbar__clock" id="js-clock">09:47</div>
+    <div class="sb-avatar">LK</div>
+  </div>
+</header>
+
+<!-- ════════════════════════════════════════════════════════════════
+     MOTHER CONTEXT STRIP — the new addition above the session shell
+     This is the sb-parent-strip component from _shared.css.
+     It provides spatial awareness: operator always knows which lot
+     this session belongs to, with minimal visual footprint.
+     ════════════════════════════════════════════════════════════════ -->
+<div class="sb-parent-strip" role="navigation" aria-label="Contexte lot parent">
+
+  <!-- Breadcrumb back to mother shell -->
+  <a href="mother-shell-active.html" class="sb-parent-strip__back" aria-label="Retour à la vue du lot ZEP 312">
+    ← Lot ZEP #312 · <em style="font-style:italic;color:var(--cold);margin:0 3px;">Zepp</em> · J+34 · vue d'ensemble
+  </a>
+
+  <span class="sb-parent-strip__sep" aria-hidden="true">|</span>
+
+  <!-- Mini 4-zone arc -->
+  <div class="sb-parent-strip__arc" role="list" aria-label="Progression du lot">
+    <div class="sb-parent-strip__arc-step sb-parent-strip__arc-step--done" role="listitem">
+      <span aria-hidden="true">✓</span> Brassage
+    </div>
+    <span class="sb-parent-strip__arc-sep" aria-hidden="true">›</span>
+    <div class="sb-parent-strip__arc-step sb-parent-strip__arc-step--done" role="listitem">
+      <span aria-hidden="true">✓</span> Fermentation
+    </div>
+    <span class="sb-parent-strip__arc-sep" aria-hidden="true">›</span>
+    <div class="sb-parent-strip__arc-step sb-parent-strip__arc-step--active" role="listitem" aria-current="step">
+      <span class="sb-heartbeat sb-heartbeat--green" style="width:5px;height:5px;" aria-hidden="true"></span>
+      [EN COURS] Soutirage
+    </div>
+    <span class="sb-parent-strip__arc-sep" aria-hidden="true">›</span>
+    <div class="sb-parent-strip__arc-step sb-parent-strip__arc-step--future" role="listitem">
+      Conditionnement —
+    </div>
+  </div>
+
+  <!-- Voir le lot link -->
+  <a href="mother-shell-active.html" class="sb-parent-strip__voir" aria-label="Voir la vue complète du lot ZEP 312">
+    Voir le lot →
+  </a>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════
+     SESSION SHELL — racking form (ZEP #312)
+     Below the strip: standard session shell layout.
+     The sb-form-* classes are the session-shell form component vocabulary (renamed from ss-* for sb-* namespace compliance).
+     ════════════════════════════════════════════════════════════════ -->
+<div style="flex:1;display:flex;flex-direction:column;min-height:0;">
+
+  <!-- Session header (sticky after the strip) -->
+  <div class="sb-form-header">
+    <div style="display:flex;flex-direction:column;flex:1;min-width:0;gap:4px;">
+      <h1 class="sb-form-title">Soutirage — <em>Zepp</em> <span style="font-family:'JetBrains Mono',monospace;font-weight:400;font-size:0.9rem;color:var(--ink-mute);margin-left:4px;">#312</span></h1>
+      <div class="sb-form-meta">
+        <span class="sb-form-ref">RACK-2026-312</span>
+        <span class="sb-form-sep">·</span>
+        <span class="sb-form-badge sb-form-badge--rack">Soutirage</span>
+        <span class="sb-form-badge sb-form-badge--bbt">→ BBT-1</span>
+        <span class="sb-form-sep">·</span>
+        <span class="sb-form-elapsed" id="js-elapsed">3 h 22 min</span>
+        <span class="sb-form-sep">·</span>
+        <div class="sb-avatar" style="width:20px;height:20px;font-size:0.46rem;" aria-label="Opérateur: Luca">LC</div>
+        <span>Luca</span>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <span class="sb-heartbeat sb-heartbeat--green" title="Session active" style="width:8px;height:8px;"></span>
+      <span style="font-family:'JetBrains Mono',monospace;font-size:0.54rem;color:var(--ok);">SESSION ACTIVE</span>
+    </div>
+  </div>
+
+  <!-- Firewall checklist — pre-conditions for racking -->
+  <div style="padding:12px 22px 0;">
+    <div class="sb-form-firewall" role="list" aria-label="Vérifications préalables au soutirage">
+      <div class="sb-form-firewall__title">✓ Vérifications préalables</div>
+      <div class="sb-form-firewall__item" role="listitem">
+        <div class="sb-form-firewall__check sb-form-firewall__check--ok" aria-label="Validé">✓</div>
+        <span>CIP BBT-1 attesté — 2026-05-29 06:15 par Emmanuel</span>
+      </div>
+      <div class="sb-form-firewall__item" role="listitem">
+        <div class="sb-form-firewall__check sb-form-firewall__check--ok" aria-label="Validé">✓</div>
+        <span>CCT-4 cold-crash ≥ 48h — complété 2026-05-27 (55h)</span>
+      </div>
+      <div class="sb-form-firewall__item" role="listitem">
+        <div class="sb-form-firewall__check sb-form-firewall__check--ok" aria-label="Validé">✓</div>
+        <span>FG stable ≤ 0.2°P sur 48h — confirmé J+22 vs J+24</span>
+      </div>
+      <div class="sb-form-firewall__item" role="listitem">
+        <div class="sb-form-firewall__check sb-form-firewall__check--pending" aria-label="En cours">→</div>
+        <span>QC gate — en attente de la lecture finale post-soutirage</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Body: form + rail -->
+  <div class="sb-form-body">
+    <div class="sb-form-content">
+
+      <!-- Section: volumes de soutirage -->
+      <div class="sb-form-section-head">Volumes soutirage — CCT-4 → BBT-1</div>
+
+      <div class="sb-form-field-row" style="margin-bottom:14px;">
+        <div class="sb-form-field">
+          <label class="sb-form-label" for="vol-avant">Volume CCT avant (HL)</label>
+          <input class="sb-form-input" type="number" id="vol-avant" value="30.5" step="0.1" min="0"
+                 aria-label="Volume CCT avant soutirage">
+          <div class="sb-form-input-hint">Lecture jaugeage CCT-4 avant transfert</div>
+        </div>
+        <div class="sb-form-field">
+          <label class="sb-form-label" for="vol-apres">Volume BBT après (HL)</label>
+          <input class="sb-form-input" type="number" id="vol-apres" value="30.2" step="0.1" min="0"
+                 aria-label="Volume BBT après soutirage">
+          <div class="sb-form-input-hint">Lecture jaugeage BBT-1 après transfert</div>
+        </div>
+      </div>
+
+      <div class="sb-form-field-row" style="margin-bottom:14px;">
+        <div class="sb-form-field">
+          <label class="sb-form-label" for="perte">Perte estimée (HL)</label>
+          <input class="sb-form-input" type="number" id="perte" value="0.3" step="0.05" min="0"
+                 aria-label="Volume perdu pendant le soutirage" readonly
+                 style="background:color-mix(in srgb,var(--bg-side) 60%,var(--bg-elev));">
+          <div class="sb-form-input-hint">Calculé: vol_avant − vol_après</div>
+        </div>
+        <div class="sb-form-field">
+          <label class="sb-form-label" for="pression">Pression BBT-1 (bar)</label>
+          <input class="sb-form-input" type="number" id="pression" value="1.2" step="0.1" min="0"
+                 aria-label="Pression dans BBT-1 après soutirage">
+        </div>
+      </div>
+
+      <!-- Section: carbonatation -->
+      <div class="sb-form-section-head" style="margin-top:4px;">Carbonatation &amp; garde</div>
+
+      <div class="sb-form-field-row3" style="margin-bottom:14px;">
+        <div class="sb-form-field">
+          <label class="sb-form-label" for="co2-avant">CO₂ avant (g/L)</label>
+          <input class="sb-form-input" type="number" id="co2-avant" value="3.8" step="0.1">
+        </div>
+        <div class="sb-form-field">
+          <label class="sb-form-label" for="temp-bbt">Temp BBT (°C)</label>
+          <input class="sb-form-input" type="number" id="temp-bbt" value="2.0" step="0.5">
+        </div>
+        <div class="sb-form-field">
+          <label class="sb-form-label" for="duree-garde">Durée garde (j)</label>
+          <input class="sb-form-input" type="number" id="duree-garde" value="7" step="1">
+        </div>
+      </div>
+
+      <!-- Section: notes libres -->
+      <div class="sb-form-section-head">Observations</div>
+      <div class="sb-form-field">
+        <label class="sb-form-label" for="notes">Notes de l'opérateur</label>
+        <textarea class="sb-form-input" id="notes" rows="3" style="resize:vertical;min-height:64px;"
+                  placeholder="Ex: aspect limpide, couleur conforme, mousse stable…"
+                  aria-label="Notes libres de l'opérateur"></textarea>
+      </div>
+
+    </div><!-- /content -->
+
+    <!-- RAIL -->
+    <div class="sb-form-rail">
+      <div class="sb-form-rail-head">Lot parent</div>
+      <div style="margin-bottom:16px;">
+        <div class="sb-form-rail-item"><span class="sb-form-rail-item__label">Recette</span><span class="sb-form-rail-item__value" style="font-style:italic;font-family:'Fraunces',serif;color:var(--oak);">Zepp</span></div>
+        <div class="sb-form-rail-item"><span class="sb-form-rail-item__label">Batch #</span><span class="sb-form-rail-item__value">#312</span></div>
+        <div class="sb-form-rail-item"><span class="sb-form-rail-item__label">Jours total</span><span class="sb-form-rail-item__value">J+34</span></div>
+        <div class="sb-form-rail-item"><span class="sb-form-rail-item__label">CCT source</span><span class="sb-form-rail-item__value" style="color:var(--cold);">CCT-4</span></div>
+        <div class="sb-form-rail-item"><span class="sb-form-rail-item__label">BBT cible</span><span class="sb-form-rail-item__value" style="color:var(--bbt);">BBT-1</span></div>
+        <div class="sb-form-rail-item"><span class="sb-form-rail-item__label">Volume brassé</span><span class="sb-form-rail-item__value">31.0 HL</span></div>
+      </div>
+      <div class="sb-form-rail-head">Session</div>
+      <div>
+        <div class="sb-form-rail-item"><span class="sb-form-rail-item__label">Ref</span><span class="sb-form-rail-item__value">RACK-2026-312</span></div>
+        <div class="sb-form-rail-item"><span class="sb-form-rail-item__label">Ouverte</span><span class="sb-form-rail-item__value">06:25 auj.</span></div>
+        <div class="sb-form-rail-item"><span class="sb-form-rail-item__label">Durée</span><span class="sb-form-rail-item__value" id="js-elapsed-rail">3h 22min</span></div>
+        <div class="sb-form-rail-item"><span class="sb-form-rail-item__label">Opérateur</span><span class="sb-form-rail-item__value">Luca</span></div>
+      </div>
+      <div style="margin-top:12px;">
+        <a href="mother-shell-active.html" class="sb-btn sb-btn--secondary" style="font-size:0.54rem;justify-content:center;width:100%;box-sizing:border-box;">
+          ← Vue lot complète
+        </a>
+      </div>
+    </div><!-- /rail -->
+
+  </div><!-- /sb-form-body -->
+
+</div>
+
+<!-- STICKY FOOTER — racking session actions -->
+<footer class="sb-form-footer" role="complementary">
+  <div style="display:flex;gap:10px;align-items:center;">
+    <button class="sb-btn sb-btn--secondary" onclick="mockupFlash(this,'Passer la main')" data-mockup="POST action=handover">
+      Passer la main
+    </button>
+    <button class="sb-btn sb-btn--secondary" onclick="mockupFlash(this,'Note ajoutée')" data-mockup="POST action=add_note">
+      + Note
+    </button>
+  </div>
+  <div style="display:flex;gap:10px;align-items:center;">
+    <button class="sb-btn sb-btn--danger" onclick="mockupFlash(this,'[mockup] abandon')" data-mockup="POST action=abandon">
+      Abandonner
+    </button>
+    <button class="sb-btn sb-btn--primary" onclick="mockupFlash(this,'→ Conditionnement')" data-mockup="POST action=advance_phase">
+      Valider le soutirage →
+    </button>
+  </div>
+</footer>
+
+<script>
+// Live clock
+function updateClock() {
+  const el = document.getElementById('js-clock');
+  if (el) {
+    const now = new Date();
+    el.textContent = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+  }
+}
+updateClock();
+setInterval(updateClock, 30000);
+
+// Auto-compute loss
+const volAvant = document.getElementById('vol-avant');
+const volApres = document.getElementById('vol-apres');
+const perte = document.getElementById('perte');
+function computeLoss() {
+  const a = parseFloat(volAvant.value) || 0;
+  const b = parseFloat(volApres.value) || 0;
+  perte.value = Math.max(0, a - b).toFixed(2);
+}
+volAvant.addEventListener('input', computeLoss);
+volApres.addEventListener('input', computeLoss);
+
+// Mockup-only flash feedback (replaces alert/confirm calls)
+function mockupFlash(btn, label) {
+  const orig = btn.textContent;
+  btn.textContent = '✓ ' + label;
+  btn.disabled = true;
+  setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1800);
+}
+</script>
+
+</body>
+</html>

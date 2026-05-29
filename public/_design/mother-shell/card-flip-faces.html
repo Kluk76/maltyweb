@@ -1,0 +1,718 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flip 3 faces — PRODUCTION / COÛT / QUALITÉ · MaltyTask</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,200;0,9..144,300;0,9..144,400;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<!--
+  ════════════════════════════════════════════════════════════════
+  BUILD CONTRACT: card-flip-faces.html
+  ════════════════════════════════════════════════════════════════
+  PURPOSE: Isolated 3-face card flip animation mockup (PRODUCTION /
+  COÛT / QUALITÉ). Demonstrates the v2 upgrade path the operator
+  opted out of in v1. Clickable face tabs trigger CSS 3D rotateY
+  flip with backface-visibility:hidden on each panel.
+
+  PALETTE: light-kraft only — all colors via FOUNDATIONS.md tokens
+  NAMESPACE: sb-* (extends _shared.css)
+  CONSTRAINTS: no PHP, no fetches, static HTML only
+  CREATIVE DECISION: Rather than a simple tab switch, the card
+  literally flips in 3D space using CSS perspective + rotateY. Each
+  face is a sibling element positioned absolutely. The flip is keyed
+  to the face-tabs above the card — clicking a tab simultaneously
+  rotates the card to the right Y angle (0° = PRODUCTION,
+  120° = COÛT, 240° = QUALITÉ). The QUALITÉ face includes a
+  mini SVG sparkline for gravity readings — drawn as SVG path in
+  hairline strokes on the kraft paper, matching the schematic
+  aesthetic.
+
+  Stage B stretch · 2026-05-29
+  ════════════════════════════════════════════════════════════════
+-->
+
+<link rel="stylesheet" href="_shared.css">
+
+<style>
+body.sb-board {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  align-items: stretch;
+}
+
+/* ── Page layout — centered card on kraft ground ── */
+.flip-stage {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 24px;
+  position: relative;
+  z-index: 1;
+  gap: 0;
+}
+
+.flip-context {
+  text-align: center;
+  margin-bottom: 32px;
+}
+.flip-context__kicker {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.56rem; letter-spacing: 0.22em; text-transform: uppercase;
+  color: var(--oak); margin-bottom: 8px;
+}
+.flip-context__title {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 96;
+  font-size: 1.8rem; font-weight: 200;
+  color: var(--ink); letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+.flip-context__title em { font-style: italic; color: var(--oak); }
+.flip-context__sub {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.82rem; color: var(--ink-mute);
+  line-height: 1.55; margin-top: 6px;
+}
+
+/* ── Card container (controls the 3D space) ── */
+.flip-wrapper {
+  width: 360px;
+  perspective: 1000px;
+  position: relative;
+}
+
+/* Face tabs ABOVE the card */
+.flip-tabs {
+  display: flex;
+  width: 100%;
+  margin-bottom: 0;
+  border: 1px solid var(--hairline);
+  border-bottom: none;
+  border-radius: 3px 3px 0 0;
+  overflow: hidden;
+  background: var(--bg-elev);
+}
+.flip-tab {
+  flex: 1;
+  padding: 8px 12px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.58rem; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--ink-mute);
+  background: none;
+  border: none; border-right: 1px solid var(--hairline);
+  cursor: pointer;
+  transition: background .15s, color .15s;
+  text-align: center;
+  position: relative;
+}
+.flip-tab:last-child { border-right: none; }
+.flip-tab:hover { background: color-mix(in srgb, var(--bg-side) 60%, transparent); color: var(--ink); }
+.flip-tab--active {
+  color: var(--hop);
+  background: color-mix(in srgb, var(--hop) 5%, var(--bg));
+  border-bottom: 2px solid var(--hop);
+}
+.flip-tab--cost.flip-tab--active {
+  color: var(--oak); border-bottom-color: var(--oak);
+  background: color-mix(in srgb, var(--oak) 5%, var(--bg));
+}
+.flip-tab--qual.flip-tab--active {
+  color: var(--cold); border-bottom-color: var(--cold);
+  background: color-mix(in srgb, var(--cold) 5%, var(--bg));
+}
+
+/* ── 3D flip card ── */
+.flip-card {
+  width: 360px;
+  /* Height set in JS after determining tallest face */
+  position: relative;
+  transform-style: preserve-3d;
+  transition: transform 600ms ease-in-out;
+  border-radius: 0 0 3px 3px;
+}
+.flip-card--to-cost { transform: rotateY(-120deg); }
+.flip-card--to-qual { transform: rotateY(-240deg); }
+
+/* Each face */
+.flip-face {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  border-radius: 0 0 3px 3px;
+  overflow: hidden;
+  border-top: none; /* tabs above handle top border */
+}
+
+/* The three face rotations */
+.flip-face--production { transform: rotateY(0deg); }
+.flip-face--cost       { transform: rotateY(120deg); }
+.flip-face--qual       { transform: rotateY(240deg); }
+
+/* ── Card anatomy (shared across faces) ── */
+.flip-card__inner {
+  padding: 16px 16px 14px;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Phase accent bar */
+.flip-card__accent {
+  position: absolute; top: 0; left: 0; bottom: 0;
+  width: 3px;
+  border-radius: 0 0 0 3px;
+}
+.flip-card__accent--brew { background: var(--cold); } /* fermenting phase */
+
+.flip-card__batch {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.6rem; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--ink-mute); margin-bottom: 5px;
+}
+.flip-card__name {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 96;
+  font-size: 1.15rem; font-weight: 300;
+  color: var(--ink); letter-spacing: -0.01em;
+  line-height: 1.15; margin-bottom: 8px;
+}
+.flip-card__name em { font-style: italic; color: var(--oak); }
+
+.flip-card__meta {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.flip-card__meta-item {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.55rem; letter-spacing: 0.06em;
+  color: var(--ink-mute);
+  display: flex; align-items: center; gap: 3px;
+}
+.flip-card__meta-item--vessel {
+  color: var(--cold);
+  background: color-mix(in srgb, var(--cold) 8%, transparent);
+  padding: 2px 6px; border-radius: 2px;
+  border: 1px solid color-mix(in srgb, var(--cold) 20%, transparent);
+}
+
+/* ── PRODUCTION face content ── */
+.fp-row {
+  display: flex; gap: 8px; margin-bottom: 8px;
+}
+.fp-kpi {
+  flex: 1;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 2px;
+  padding: 8px 10px;
+}
+.fp-kpi__label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.5rem; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--ink-mute); margin-bottom: 3px;
+}
+.fp-kpi__value {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 9;
+  font-size: 1.15rem; font-weight: 300;
+  color: var(--ink); letter-spacing: -0.01em; line-height: 1;
+}
+.fp-kpi__unit {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.56rem; color: var(--ink-mute); margin-left: 2px;
+}
+.fp-kpi__sub {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.52rem; color: var(--ink-mute); margin-top: 2px;
+}
+
+.fp-eta-block {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px;
+  background: color-mix(in srgb, var(--cold) 5%, var(--bg-elev));
+  border: 1px solid color-mix(in srgb, var(--cold) 18%, transparent);
+  border-radius: 2px;
+  margin-bottom: 8px;
+}
+.fp-eta-block__label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.52rem; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--cold); flex: 1;
+}
+.fp-eta-block__date {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem; letter-spacing: 0.04em; color: var(--cold);
+  font-weight: 500;
+}
+
+.fp-heartbeat-row {
+  display: flex; align-items: center; gap: 6px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.54rem; letter-spacing: 0.06em;
+  color: var(--ok);
+}
+
+/* ── COÛT face content ── */
+.fc-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 10px;
+}
+.fc-table th {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.5rem; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--ink-mute);
+  padding: 4px 6px 4px 0;
+  border-bottom: 1px solid var(--hairline);
+  text-align: left;
+  font-weight: 500;
+}
+.fc-table th:last-child { text-align: right; }
+.fc-table td {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.58rem; letter-spacing: 0.02em;
+  color: var(--ink-mute);
+  padding: 5px 6px 5px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.fc-table td:last-child { text-align: right; color: var(--ink); }
+.fc-table td.fc-cat { color: var(--ink); }
+.fc-table td.fc-zero { color: var(--ink-faint); }
+.fc-table tr.fc-total td {
+  border-top: 2px solid var(--hairline-2);
+  border-bottom: none;
+  font-weight: 600; color: var(--ink);
+  padding-top: 8px;
+}
+
+.fc-ratio {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--oak) 6%, var(--bg-elev));
+  border: 1px solid color-mix(in srgb, var(--oak) 20%, transparent);
+  border-radius: 2px;
+  margin-bottom: 8px;
+}
+.fc-ratio__label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.52rem; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--oak); flex: 1;
+}
+.fc-ratio__value {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 9;
+  font-size: 1.1rem; font-weight: 300;
+  color: var(--oak); letter-spacing: -0.01em;
+}
+.fc-ratio__unit {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.56rem; color: var(--oak-deep); margin-left: 2px;
+}
+
+.fc-note {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.72rem; color: var(--ink-mute); line-height: 1.45;
+  margin-top: 4px;
+}
+
+/* ── QUALITÉ face content ── */
+.fq-sparkline {
+  width: 100%;
+  margin-bottom: 12px;
+}
+.fq-sparkline svg {
+  display: block; width: 100%; height: 72px;
+}
+
+.fq-readings {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 8px; margin-bottom: 10px;
+}
+.fq-reading {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 2px;
+  padding: 7px 10px;
+}
+.fq-reading__label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.5rem; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--ink-mute); margin-bottom: 3px;
+}
+.fq-reading__value {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 9;
+  font-size: 1.05rem; font-weight: 300;
+  color: var(--ink); line-height: 1;
+}
+.fq-reading__unit {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.54rem; color: var(--ink-mute); margin-left: 2px;
+}
+.fq-reading__status {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.5rem; letter-spacing: 0.06em; text-transform: uppercase;
+  margin-top: 2px;
+}
+.fq-reading__status--ok    { color: var(--ok); }
+.fq-reading__status--watch { color: var(--oak); }
+
+.fq-flags {
+  display: flex; flex-direction: column; gap: 4px;
+}
+.fq-flag {
+  display: flex; align-items: center; gap: 7px;
+  padding: 5px 8px;
+  background: color-mix(in srgb, var(--hop) 5%, var(--bg-elev));
+  border: 1px solid color-mix(in srgb, var(--hop) 20%, transparent);
+  border-radius: 2px;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.74rem; color: var(--ink);
+}
+.fq-flag__dot {
+  width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+  background: var(--ok);
+}
+
+/* ── Caption ── */
+.flip-caption {
+  margin-top: 20px;
+  text-align: center;
+  max-width: 380px;
+}
+.flip-caption__text {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.54rem; letter-spacing: 0.08em;
+  color: var(--ink-faint);
+  line-height: 1.6;
+}
+.flip-caption__badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.52rem; letter-spacing: 0.1em; text-transform: uppercase;
+  padding: 3px 8px; border-radius: 10px;
+  border: 1px solid var(--hairline-2);
+  color: var(--ink-mute);
+  margin-bottom: 8px;
+}
+</style>
+</head>
+<body class="sb-board">
+
+<!-- Engineering registration marks -->
+<div aria-hidden="true" style="position:fixed;width:24px;height:24px;border:1px solid var(--hairline);z-index:200;pointer-events:none;opacity:0.5;top:14px;left:14px;border-right:none;border-bottom:none;"></div>
+<div aria-hidden="true" style="position:fixed;width:24px;height:24px;border:1px solid var(--hairline);z-index:200;pointer-events:none;opacity:0.5;top:14px;right:14px;border-left:none;border-bottom:none;"></div>
+<div aria-hidden="true" style="position:fixed;width:24px;height:24px;border:1px solid var(--hairline);z-index:200;pointer-events:none;opacity:0.5;bottom:14px;left:14px;border-right:none;border-top:none;"></div>
+<div aria-hidden="true" style="position:fixed;width:24px;height:24px;border:1px solid var(--hairline);z-index:200;pointer-events:none;opacity:0.5;bottom:14px;right:14px;border-left:none;border-top:none;"></div>
+
+<!-- TOPBAR -->
+<header class="sb-topbar" role="banner">
+  <div class="sb-wordmark">
+    <span class="sb-wordmark__name">Malty<em>Task</em></span>
+    <span class="sb-wordmark__sect">La Nébuleuse</span>
+  </div>
+  <nav class="sb-nav" aria-label="Navigation">
+    <a href="index.html" class="sb-nav__item">← Navigateur</a>
+    <span class="sb-nav__item sb-nav__item--active">Flip 3 faces</span>
+  </nav>
+  <div class="sb-topbar__right">
+    <span style="font-family:'JetBrains Mono',monospace;font-size:0.56rem;letter-spacing:0.06em;color:var(--ink-faint);">Inspiration v2 · Stage B stretch</span>
+    <div class="sb-avatar" aria-label="Équipe">ÉQ</div>
+  </div>
+</header>
+
+<!-- MAIN STAGE -->
+<main class="flip-stage">
+
+  <div class="flip-context">
+    <div class="flip-context__kicker">Interaction backlog v2 · Carte à 3 faces</div>
+    <h1 class="flip-context__title"><em>EMB</em> 244 — Production · Coût · Qualité</h1>
+    <p class="flip-context__sub">Cliquez sur les onglets pour retourner la carte. L'animation CSS 3D rotateY à 600ms démontre l'interaction envisagée pour une future version — facilement activable.</p>
+  </div>
+
+  <div class="flip-wrapper">
+
+    <!-- FACE TABS -->
+    <div class="flip-tabs" role="tablist" aria-label="Faces de la carte">
+      <button class="flip-tab flip-tab--prod flip-tab--active"
+              id="tab-prod" role="tab" aria-selected="true"
+              aria-controls="face-production" type="button"
+              onclick="flipTo('production')">Production</button>
+      <button class="flip-tab flip-tab--cost"
+              id="tab-cost" role="tab" aria-selected="false"
+              aria-controls="face-cost" type="button"
+              onclick="flipTo('cost')">Coût</button>
+      <button class="flip-tab flip-tab--qual"
+              id="tab-qual" role="tab" aria-selected="false"
+              aria-controls="face-qual" type="button"
+              onclick="flipTo('qual')">Qualité</button>
+    </div>
+
+    <!-- 3D FLIP CARD -->
+    <div class="flip-card" id="flip-card" role="region" aria-live="polite">
+
+      <!-- ─── FACE 1: PRODUCTION ─── -->
+      <div class="flip-face flip-face--production" id="face-production" role="tabpanel" aria-labelledby="tab-prod">
+        <div class="flip-card__inner">
+          <div class="flip-card__accent flip-card__accent--brew"></div>
+          <div class="flip-card__batch">EMB · #244 · Brasserie → Fermentation</div>
+          <div class="flip-card__name"><em>Embuscade</em></div>
+          <div class="flip-card__meta">
+            <div class="flip-card__meta-item flip-card__meta-item--vessel">CCT-4</div>
+            <div class="flip-card__meta-item">Fermentation</div>
+            <div class="sb-heartbeat sb-heartbeat--green" title="Dernière activité: il y a 2h"></div>
+          </div>
+
+          <div class="fp-row">
+            <div class="fp-kpi">
+              <div class="fp-kpi__label">Volume</div>
+              <div class="fp-kpi__value">32<span class="fp-kpi__unit">HL</span></div>
+              <div class="fp-kpi__sub">brassin</div>
+            </div>
+            <div class="fp-kpi">
+              <div class="fp-kpi__label">Garde</div>
+              <div class="fp-kpi__value">11<span class="fp-kpi__unit">j</span></div>
+              <div class="fp-kpi__sub">en cours</div>
+            </div>
+            <div class="fp-kpi">
+              <div class="fp-kpi__label">FG cible</div>
+              <div class="fp-kpi__value">2.8<span class="fp-kpi__unit">°P</span></div>
+              <div class="fp-kpi__sub">en approche</div>
+            </div>
+          </div>
+
+          <div class="fp-eta-block">
+            <span class="fp-eta-block__label">ETA conditionnement</span>
+            <span class="fp-eta-block__date">09/06/2026</span>
+          </div>
+
+          <div class="fp-heartbeat-row">
+            <div class="sb-heartbeat sb-heartbeat--green"></div>
+            Actif · dernière saisie il y a 2h · 3 événements aujourd'hui
+          </div>
+        </div>
+      </div>
+
+      <!-- ─── FACE 2: COÛT ─── -->
+      <div class="flip-face flip-face--cost" id="face-cost" role="tabpanel" aria-labelledby="tab-cost">
+        <div class="flip-card__inner">
+          <div class="flip-card__accent" style="background:var(--oak);"></div>
+          <div class="flip-card__batch">EMB · #244 · Matières premières accumulées</div>
+          <div class="flip-card__name"><em>Embuscade</em> — Coût à ce stade</div>
+
+          <table class="fc-table">
+            <thead>
+              <tr>
+                <th>Catégorie</th>
+                <th>% lot</th>
+                <th>CHF HT</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="fc-cat">Malt</td>
+                <td>69%</td>
+                <td>412.—</td>
+              </tr>
+              <tr>
+                <td class="fc-cat">Houblons</td>
+                <td>31%</td>
+                <td>184.—</td>
+              </tr>
+              <tr>
+                <td class="fc-cat fc-zero">Packaging</td>
+                <td class="fc-zero">—</td>
+                <td class="fc-zero">0.— <span style="font-size:0.48rem;color:var(--ink-faint);">pas encore</span></td>
+              </tr>
+              <tr>
+                <td class="fc-cat fc-zero">Process aids</td>
+                <td class="fc-zero">—</td>
+                <td class="fc-zero">0.—</td>
+              </tr>
+            </tbody>
+            <tfoot>
+              <tr class="fc-total">
+                <td>Total brassage</td>
+                <td>100%</td>
+                <td>CHF 596.—</td>
+              </tr>
+            </tfoot>
+          </table>
+
+          <div class="fc-ratio">
+            <span class="fc-ratio__label">CHF / HL estimé</span>
+            <span class="fc-ratio__value">18.6<span class="fc-ratio__unit">CHF/HL</span></span>
+          </div>
+
+          <div class="fc-note">
+            Calculé depuis <code style="font-family:'JetBrains Mono',monospace;font-size:0.68rem;background:var(--bg-side);padding:1px 4px;border-radius:2px;">inv_deliveries</code> +
+            <code style="font-family:'JetBrains Mono',monospace;font-size:0.68rem;background:var(--bg-side);padding:1px 4px;border-radius:2px;">inv_consumption</code> sur les events child de ce lot. Le packaging viendra s'ajouter lors du conditionnement.
+          </div>
+        </div>
+      </div>
+
+      <!-- ─── FACE 3: QUALITÉ ─── -->
+      <div class="flip-face flip-face--qual" id="face-qual" role="tabpanel" aria-labelledby="tab-qual">
+        <div class="flip-card__inner">
+          <div class="flip-card__accent" style="background:var(--cold);"></div>
+          <div class="flip-card__batch">EMB · #244 · Suivi qualité fermentation</div>
+          <div class="flip-card__name"><em>Embuscade</em> — Gravité &amp; QA</div>
+
+          <!-- FG sparkline -->
+          <div class="fq-sparkline">
+            <svg viewBox="0 0 328 72" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Évolution de la densité finale">
+              <defs>
+                <style>.sp-label{font-family:'JetBrains Mono',monospace;font-size:7px;fill:#4a3820;}</style>
+              </defs>
+              <!-- Grid lines -->
+              <line x1="32" y1="10" x2="322" y2="10" stroke="#c8b48a" stroke-width="0.5" stroke-dasharray="2 3"/>
+              <line x1="32" y1="30" x2="322" y2="30" stroke="#c8b48a" stroke-width="0.5" stroke-dasharray="2 3"/>
+              <line x1="32" y1="50" x2="322" y2="50" stroke="#c8b48a" stroke-width="0.5" stroke-dasharray="2 3"/>
+
+              <!-- Y axis labels -->
+              <text x="28" y="13" class="sp-label" text-anchor="end">12°P</text>
+              <text x="28" y="33" class="sp-label" text-anchor="end">6°P</text>
+              <text x="28" y="53" class="sp-label" text-anchor="end">3°P</text>
+              <text x="28" y="68" class="sp-label" text-anchor="end">FG</text>
+              <!-- Target line -->
+              <line x1="32" y1="56" x2="322" y2="56" stroke="#2f5575" stroke-width="0.8" stroke-dasharray="4 3" opacity="0.6"/>
+              <text x="325" y="59" class="sp-label" style="fill:#2f5575">2.8°P</text>
+
+              <!-- FG trace (high → low as fermentation progresses) -->
+              <polyline
+                points="40,12 75,16 115,24 155,34 195,44 235,50 270,54 300,56"
+                fill="none" stroke="#2f5575" stroke-width="1.5" stroke-linejoin="round"/>
+
+              <!-- Data points -->
+              <circle cx="40"  cy="12" r="2.5" fill="#2f5575"/>
+              <circle cx="75"  cy="16" r="2.5" fill="#2f5575"/>
+              <circle cx="115" cy="24" r="2.5" fill="#2f5575"/>
+              <circle cx="155" cy="34" r="2.5" fill="#2f5575"/>
+              <circle cx="195" cy="44" r="2.5" fill="#2f5575"/>
+              <circle cx="235" cy="50" r="2.5" fill="#2f5575"/>
+              <circle cx="270" cy="54" r="2.5" fill="#2f5575"/>
+              <!-- Current point (larger, pulsing done in title text) -->
+              <circle cx="300" cy="56" r="4" fill="none" stroke="#2f5575" stroke-width="1.5"/>
+              <circle cx="300" cy="56" r="2"  fill="#567020"/>
+
+              <!-- X labels -->
+              <text x="40"  y="70" class="sp-label" text-anchor="middle">J0</text>
+              <text x="115" y="70" class="sp-label" text-anchor="middle">J3</text>
+              <text x="195" y="70" class="sp-label" text-anchor="middle">J7</text>
+              <text x="300" y="70" class="sp-label" text-anchor="middle" style="fill:#567020">J11</text>
+            </svg>
+          </div>
+
+          <div class="fq-readings">
+            <div class="fq-reading">
+              <div class="fq-reading__label">FG actuelle</div>
+              <div class="fq-reading__value">3.1<span class="fq-reading__unit">°P</span></div>
+              <div class="fq-reading__status fq-reading__status--watch">↘ en approche</div>
+            </div>
+            <div class="fq-reading">
+              <div class="fq-reading__label">Température</div>
+              <div class="fq-reading__value">12.4<span class="fq-reading__unit">°C</span></div>
+              <div class="fq-reading__status fq-reading__status--ok">✓ dans range</div>
+            </div>
+            <div class="fq-reading">
+              <div class="fq-reading__label">pH</div>
+              <div class="fq-reading__value">4.3</div>
+              <div class="fq-reading__status fq-reading__status--ok">✓ normal</div>
+            </div>
+            <div class="fq-reading">
+              <div class="fq-reading__label">Garde seuil</div>
+              <div class="fq-reading__value">14<span class="fq-reading__unit">j</span></div>
+              <div class="fq-reading__status fq-reading__status--ok">Seuil: 14j · OK</div>
+            </div>
+          </div>
+
+          <div class="fq-flags">
+            <div class="fq-flag">
+              <div class="fq-flag__dot"></div>
+              Aucune alerte QA active — lot conforme
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- / .flip-card -->
+  </div><!-- / .flip-wrapper -->
+
+  <!-- Caption -->
+  <div class="flip-caption">
+    <div>
+      <span class="flip-caption__badge">Backlog v2/v3</span>
+    </div>
+    <p class="flip-caption__text">
+      Démonstration de l'interaction 3-faces — non incluse dans v1 mais facilement activable via un flag de feature. L'animation CSS <code style="background:var(--bg-side);padding:1px 4px;border-radius:2px;font-size:0.65rem;">rotateY</code> tourne sur le même composant de carte.
+    </p>
+  </div>
+
+</main>
+
+<script>
+// ── Face flip logic ──
+const card     = document.getElementById('flip-card');
+const tabs     = document.querySelectorAll('.flip-tab');
+const faceMap  = { production: 'prod', cost: 'cost', qual: 'qual' };
+const classMap = { production: null, cost: 'flip-card--to-cost', qual: 'flip-card--to-qual' };
+const tabMap   = { production: 'tab-prod', cost: 'tab-cost', qual: 'tab-qual' };
+let currentFace = 'production';
+
+// Set card height to accommodate all faces before measuring
+// We measure after fonts load
+function setCardHeight() {
+  const faces = card.querySelectorAll('.flip-face');
+  let maxH = 0;
+  faces.forEach(f => {
+    // Temporarily make visible to measure
+    const origVis = f.style.visibility;
+    f.style.visibility = 'hidden';
+    f.style.position = 'relative';
+    const h = f.offsetHeight;
+    f.style.position = '';
+    f.style.visibility = origVis;
+    if (h > maxH) maxH = h;
+  });
+  card.style.height = maxH + 'px';
+}
+
+window.addEventListener('load', setCardHeight);
+
+function flipTo(face) {
+  if (face === currentFace) return;
+  currentFace = face;
+
+  // Update card rotation
+  card.classList.remove('flip-card--to-cost', 'flip-card--to-qual');
+  if (classMap[face]) card.classList.add(classMap[face]);
+
+  // Update tabs
+  tabs.forEach(tab => {
+    const isActive = tab.id === tabMap[face];
+    tab.classList.toggle('flip-tab--active', isActive);
+    tab.setAttribute('aria-selected', isActive ? 'true' : 'false');
+  });
+}
+
+// Keyboard support
+tabs.forEach((tab, i) => {
+  tab.addEventListener('keydown', e => {
+    const faces = ['production', 'cost', 'qual'];
+    if (e.key === 'ArrowRight') flipTo(faces[(i + 1) % 3]);
+    if (e.key === 'ArrowLeft')  flipTo(faces[(i + 2) % 3]);
+  });
+});
+</script>
+
+</body>
+</html>

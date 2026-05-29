@@ -1,0 +1,554 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EMB #244 ⊕ #245 — Lot fusionné · MaltyTask</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,200;0,9..144,300;0,9..144,400;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<!--
+  ════════════════════════════════════════════════════════════════
+  MOCKUP: mother-shell-merged.html — Survivor mother with absorbed source
+  ════════════════════════════════════════════════════════════════
+  Concept C: Theater of Operations diorama
+  Light-kraft palette · sb-* namespace · static only
+
+  Scenario: EMB #244 (surviving, 60% = 19.2 HL) has absorbed EMB #245
+  (40% = 12.8 HL) at a blend in BBT-2 on 2026-05-28.
+  Total volume now in BBT-2: 32.0 HL.
+
+  The composition panel shows TWO source cards:
+    - EMB 244: primary surviving mother (full opacity, "Mother principale")
+    - EMB 245: absorbed source (faded, expand-in-place to reveal detail)
+
+  The progress arc shows both source histories merging at the blend event.
+  The FUSIONNÉE badge appears in the header in --kf-stamp-navy.
+
+  Interactions wired:
+    - Expand/collapse absorbed source card
+    - Face tabs
+  ════════════════════════════════════════════════════════════════
+-->
+
+<link rel="stylesheet" href="_shared.css">
+
+<style>
+body.sb-board {
+  display: flex; flex-direction: column; min-height: 100vh; align-items: stretch;
+}
+
+/* FUSIONNÉE badge — uses --kf-stamp-navy */
+.sb-fusion-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.54rem; letter-spacing: 0.14em; text-transform: uppercase;
+  padding: 3px 9px; border-radius: 2px;
+  color: var(--kf-stamp-navy);
+  background: color-mix(in srgb, var(--kf-stamp-navy) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--kf-stamp-navy) 25%, transparent);
+}
+
+/* Blend arc – special merged arc visualization */
+.sb-arc-merged {
+  display: flex; border-bottom: 1px solid var(--hairline);
+  background: var(--bg-elev);
+  overflow-x: auto;
+}
+.sb-arc-merged__source {
+  flex: 1; border-right: 1px solid var(--hairline);
+  display: flex; flex-direction: column; min-width: 0;
+}
+.sb-arc-merged__source-label {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.48rem; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--ink-faint); padding: 5px 10px 3px;
+  border-bottom: 1px solid var(--hairline);
+}
+.sb-arc-merged__source-label--main { color: var(--ok); }
+.sb-arc-merged__source-label--absorbed { color: var(--ink-faint); }
+.sb-arc-merged__zones { display: flex; }
+.sb-arc-merged__zone { flex: 1; padding: 7px 10px; display: flex; align-items: center; gap: 6px; border-right: 1px dashed var(--hairline); }
+.sb-arc-merged__zone:last-child { border-right: none; }
+.sb-arc-merged__zone--done .sb-arc__icon { color: var(--hop-deep); }
+.sb-arc-merged__zone--done .sb-arc__name { color: var(--ink-mute); font-size: 0.52rem; }
+.sb-arc-merged__zone--blend {
+  flex: 1; padding: 7px 10px; display: flex; align-items: center; gap: 6px;
+  background: color-mix(in srgb, var(--kf-stamp-navy) 5%, transparent);
+  border-left: 2px solid var(--kf-stamp-navy);
+}
+.sb-arc-merged__blend-label { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 0.52rem; letter-spacing: 0.10em; text-transform: uppercase; color: var(--kf-stamp-navy); }
+.sb-arc-merged__blend-detail { font-family: "DM Sans", sans-serif; font-size: 0.66rem; color: var(--ink-mute); display: block; }
+.sb-arc-merged__zone--future .sb-arc__icon { color: var(--ink-faint); }
+.sb-arc-merged__zone--future .sb-arc__name { color: var(--ink-faint); font-size: 0.52rem; }
+.sb-arc-merged__zone--active { background: color-mix(in srgb, var(--bbt) 5%, transparent); border-bottom: 2px solid var(--bbt); }
+.sb-arc-merged__zone--active .sb-arc__icon { color: var(--bbt); }
+.sb-arc-merged__zone--active .sb-arc__name { color: var(--bbt); font-size: 0.52rem; font-weight: 600; }
+
+/* Blend milestone (special styling) */
+.sb-blend-milestone {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--kf-stamp-navy) 6%, transparent);
+  border: 1.5px solid color-mix(in srgb, var(--kf-stamp-navy) 30%, transparent);
+  border-radius: 3px; margin: 8px 0;
+}
+.sb-blend-milestone__icon { font-size: 1rem; color: var(--kf-stamp-navy); flex-shrink: 0; }
+.sb-blend-milestone__label { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 0.56rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--kf-stamp-navy); }
+.sb-blend-milestone__detail { font-family: "DM Sans", sans-serif; font-size: 0.76rem; color: var(--ink-mute); margin-top: 1px; }
+
+/* Face placeholder */
+.sb-face-placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 24px; gap: 10px; text-align: center; background: color-mix(in srgb, var(--bg-side) 30%, transparent); border: 1px dashed var(--hairline); border-radius: 3px; }
+.sb-face-placeholder__label { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 0.56rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-faint); }
+.sb-face-placeholder__msg { font-family: "DM Sans", sans-serif; font-size: 0.78rem; color: var(--ink-faint); }
+</style>
+</head>
+<body class="sb-board">
+
+<div class="sb-reg-mark sb-reg-mark--tl" aria-hidden="true"></div>
+<div class="sb-reg-mark sb-reg-mark--tr" aria-hidden="true"></div>
+
+<!-- TOPBAR -->
+<header class="sb-topbar" role="banner">
+  <div class="sb-wordmark">
+    <span class="sb-wordmark__name">Malty<em>Task</em></span>
+    <span class="sb-wordmark__sect">La Nébuleuse</span>
+  </div>
+  <nav class="sb-nav" aria-label="Navigation">
+    <a href="board-populated.html" class="sb-nav__item">← Lots en cours</a>
+    <span class="sb-nav__item sb-nav__item--active" aria-current="page">Lot EMB #244 (fusionné)</span>
+  </nav>
+  <div class="sb-topbar__right">
+    <span class="sb-kb-hint">W</span>
+    <div class="sb-topbar__clock" id="js-clock">09:47</div>
+    <div class="sb-avatar">LK</div>
+  </div>
+</header>
+
+<main class="sb-shell" aria-label="Lot fusionné EMB 244 + 245">
+
+  <!-- SHELL HEADER -->
+  <div class="sb-shell__header">
+    <a href="board-populated.html" class="sb-shell__back">← Tableau</a>
+    <div class="sb-shell__header-sep" aria-hidden="true"></div>
+
+    <div style="flex:1;display:flex;align-items:center;gap:12px;flex-wrap:wrap;min-width:0;">
+      <h1 class="sb-shell__title">
+        <em>Embuscade</em>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:0.9rem;font-weight:400;color:var(--ink-mute);margin-left:6px;">#244</span>
+      </h1>
+      <span class="sb-status-pill sb-status-pill--racking">
+        <span class="sb-heartbeat sb-heartbeat--green" style="width:6px;height:6px;" title="Activité il y a 1h"></span>
+        Garde BBT
+      </span>
+      <span class="sb-vessel-badge">BBT-2</span>
+      <!-- FUSIONNÉE badge in --kf-stamp-navy as specified -->
+      <span class="sb-fusion-badge" aria-label="Lot fusionné: contient EMB 245 à 40%">⊕ FUSIONNÉE: contient EMB #245 (40%)</span>
+    </div>
+
+    <div class="sb-shell__meta">
+      <span>J+16</span>
+      <span class="sb-shell__meta-sep">·</span>
+      <span>Fusion: 2026-05-28</span>
+      <span class="sb-shell__meta-sep">·</span>
+      <div class="sb-avatar" style="width:22px;height:22px;font-size:0.5rem;">LC</div>
+      <span>Luca</span>
+    </div>
+  </div>
+
+  <!-- ARC — MERGED VISUALIZATION -->
+  <!--
+    Design decision: merged arc shows both source timelines converging at
+    the blend event, then continuing together. This is a unique visualization
+    for merged mothers — the standard 4-zone arc cannot represent dual history.
+  -->
+  <div class="sb-arc-merged" role="navigation" aria-label="Progression des deux sources + fusion">
+
+    <!-- Source 1: EMB 244 (main) -->
+    <div class="sb-arc-merged__source">
+      <div class="sb-arc-merged__source-label sb-arc-merged__source-label--main">EMB #244 — Mother principale (60%)</div>
+      <div class="sb-arc-merged__zones">
+        <div class="sb-arc-merged__zone sb-arc-merged__zone--done">
+          <span class="sb-arc__icon">✓</span>
+          <div><div class="sb-arc__name">Brassage</div></div>
+        </div>
+        <div class="sb-arc-merged__zone sb-arc-merged__zone--done">
+          <span class="sb-arc__icon">✓</span>
+          <div><div class="sb-arc__name">Fermentation</div></div>
+        </div>
+        <div class="sb-arc-merged__zone--blend">
+          <span style="font-size:0.85rem;color:var(--kf-stamp-navy);">⊕</span>
+          <div>
+            <div class="sb-arc-merged__blend-label">Fusion BBT-2</div>
+            <span class="sb-arc-merged__blend-detail">19.2 HL · 60%</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Source 2: EMB 245 (absorbed) -->
+    <div class="sb-arc-merged__source" style="opacity:0.6;">
+      <div class="sb-arc-merged__source-label sb-arc-merged__source-label--absorbed">EMB #245 — Absorbée (40%) · CLÔTURÉE</div>
+      <div class="sb-arc-merged__zones">
+        <div class="sb-arc-merged__zone sb-arc-merged__zone--done">
+          <span class="sb-arc__icon" style="color:var(--ink-faint);">✓</span>
+          <div><div class="sb-arc__name" style="color:var(--ink-faint);">Brassage</div></div>
+        </div>
+        <div class="sb-arc-merged__zone sb-arc-merged__zone--done">
+          <span class="sb-arc__icon" style="color:var(--ink-faint);">✓</span>
+          <div><div class="sb-arc__name" style="color:var(--ink-faint);">Fermentation</div></div>
+        </div>
+        <div class="sb-arc-merged__zone--blend" style="border-left:2px dashed color-mix(in srgb,var(--ink-faint) 40%,transparent);background:transparent;">
+          <span style="font-size:0.85rem;color:var(--ink-faint);">→</span>
+          <div>
+            <div class="sb-arc-merged__blend-label" style="color:var(--ink-faint);">Vers #244</div>
+            <span class="sb-arc-merged__blend-detail" style="color:var(--ink-faint);">12.8 HL · 40%</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- After fusion: continuation as single arc -->
+    <div style="flex:1;display:flex;flex-direction:column;border-left:2px solid var(--kf-stamp-navy);">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:0.48rem;letter-spacing:0.14em;text-transform:uppercase;color:var(--kf-stamp-navy);padding:5px 10px 3px;border-bottom:1px solid var(--hairline);background:color-mix(in srgb,var(--kf-stamp-navy) 4%,transparent);">Après fusion — volume unique</div>
+      <div style="display:flex;flex:1;">
+        <div class="sb-arc-merged__zone sb-arc-merged__zone--active" style="flex:1;border-bottom:2px solid var(--bbt);background:color-mix(in srgb,var(--bbt) 5%,transparent);">
+          <span class="sb-arc__icon" style="color:var(--bbt);">⊕</span>
+          <div>
+            <div class="sb-arc__name" style="color:var(--bbt);font-size:0.52rem;font-weight:600;">Garde BBT-2</div>
+            <span style="font-family:'DM Sans',sans-serif;font-size:0.62rem;color:var(--bbt);display:block;">32.0 HL · J+1 garde</span>
+          </div>
+        </div>
+        <div class="sb-arc-merged__zone sb-arc-merged__zone--future" style="flex:1;">
+          <span class="sb-arc__icon" style="color:var(--ink-faint);">—</span>
+          <div><div class="sb-arc__name" style="color:var(--ink-faint);font-size:0.52rem;">Conditionnement</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FACE TABS -->
+  <div class="sb-face-tabs" role="tablist">
+    <button class="sb-face-tab sb-face-tab--active" onclick="showFace('production')">Production</button>
+    <button class="sb-face-tab" onclick="showFace('cout')" style="opacity:0.5;">Coût</button>
+    <button class="sb-face-tab" onclick="showFace('qualite')" style="opacity:0.5;">Qualité</button>
+  </div>
+
+  <!-- BODY -->
+  <div class="sb-shell__body">
+    <div class="sb-shell__content">
+
+      <!-- FACE: PRODUCTION -->
+      <div id="face-production" class="sb-face-content sb-face-content--visible">
+
+        <!-- KPI row — merged total -->
+        <div class="sb-kpi-row">
+          <div class="sb-kpi">
+            <div class="sb-kpi__label">Volume total (fusionné)</div>
+            <div class="sb-kpi__value">32.0<span class="sb-kpi__unit">HL</span></div>
+            <div class="sb-kpi__delta">19.2 HL (#244) + 12.8 HL (#245)</div>
+          </div>
+          <div class="sb-kpi">
+            <div class="sb-kpi__label">Jours depuis ouverture</div>
+            <div class="sb-kpi__value">16<span class="sb-kpi__unit">j</span></div>
+          </div>
+          <div class="sb-kpi">
+            <div class="sb-kpi__label">ETA conditionnement</div>
+            <div class="sb-kpi__value" style="color:var(--cold);">~5<span class="sb-kpi__unit">j</span></div>
+            <div class="sb-kpi__delta">~2026-06-03 (médiane N=9)</div>
+          </div>
+          <div class="sb-kpi" style="border-color:color-mix(in srgb,var(--kf-stamp-navy) 30%,transparent);">
+            <div class="sb-kpi__label">Ratio fusion</div>
+            <div class="sb-kpi__value" style="color:var(--kf-stamp-navy);">60<span class="sb-kpi__unit">%</span></div>
+            <div class="sb-kpi__delta">#244 dominant</div>
+          </div>
+        </div>
+
+        <!-- COMPOSITION PANEL (dual-layer) -->
+        <div class="sb-section-head">
+          <span class="sb-section-label">Composition</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:0.52rem;color:var(--kf-stamp-navy);">Fusion BBT-2 · 2026-05-28</span>
+        </div>
+
+        <div class="sb-composition" aria-label="Composition du lot fusionné">
+
+          <!-- Source 1: EMB 244 (main, full opacity) -->
+          <div class="sb-comp-source sb-comp-source--main">
+            <div class="sb-comp-source__bar" style="width:60%;"></div>
+            <div class="sb-comp-source__inner">
+              <div style="flex:1;min-width:0;">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px;">
+                  <span style="font-family:'JetBrains Mono',monospace;font-size:0.52rem;letter-spacing:0.12em;text-transform:uppercase;color:var(--ok);border:1px solid color-mix(in srgb,var(--ok) 25%,transparent);background:color-mix(in srgb,var(--ok) 7%,transparent);padding:1px 5px;border-radius:2px;">Mother principale</span>
+                  <span style="font-family:'JetBrains Mono',monospace;font-size:0.56rem;color:var(--ink-mute);">EMB #244</span>
+                </div>
+                <div style="font-family:'Fraunces','Times New Roman',serif;font-variation-settings:'opsz' 9;font-size:0.92rem;font-weight:300;color:var(--ink);">
+                  <em style="font-style:italic;color:var(--oak);">Embuscade</em> — 19.2 HL (60%)
+                </div>
+                <div style="font-family:'JetBrains Mono',monospace;font-size:0.54rem;letter-spacing:0.04em;color:var(--ink-mute);margin-top:3px;">
+                  OG: 13.8°P · Levurage: 2026-05-17 · Fermentation: J+1 → J+14 → CCT-4
+                </div>
+              </div>
+              <div style="font-family:'JetBrains Mono',monospace;font-size:1.2rem;font-weight:300;color:var(--hop);letter-spacing:-0.01em;">60%</div>
+            </div>
+          </div>
+
+          <!-- Source 2: EMB 245 (absorbed, faded, expandable) -->
+          <div class="sb-comp-source sb-comp-source--absorbed">
+            <div class="sb-comp-source__bar" style="width:40%;"></div>
+            <div class="sb-comp-source__inner">
+              <div style="flex:1;min-width:0;">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px;flex-wrap:wrap;">
+                  <span style="font-family:'JetBrains Mono',monospace;font-size:0.52rem;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink-faint);border:1px solid var(--hairline);padding:1px 5px;border-radius:2px;">Fusionnée le 2026-05-28 par Kouros</span>
+                  <span style="font-family:'JetBrains Mono',monospace;font-size:0.52rem;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink-faint);border:1px dashed var(--hairline);padding:1px 5px;border-radius:2px;">CLÔTURÉE</span>
+                </div>
+                <div style="font-family:'Fraunces','Times New Roman',serif;font-variation-settings:'opsz' 9;font-size:0.92rem;font-weight:300;color:var(--ink-mute);">
+                  <em style="font-style:italic;">Embuscade</em> #245 — 12.8 HL (40%)
+                </div>
+                <div style="font-family:'JetBrains Mono',monospace;font-size:0.54rem;letter-spacing:0.04em;color:var(--ink-faint);margin-top:3px;">
+                  OG: 13.6°P · Levurage: 2026-05-20 · CCT-6 · 10j fermentation
+                </div>
+              </div>
+              <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px;">
+                <div style="font-family:'JetBrains Mono',monospace;font-size:1.2rem;font-weight:300;color:var(--ink-faint);">40%</div>
+                <button class="sb-comp-source__expand" onclick="toggleAbsorbed()"
+                        id="btn-absorbed" aria-expanded="false" aria-controls="absorbed-detail">
+                  Voir le détail ↓
+                </button>
+              </div>
+            </div>
+
+            <!-- Expandable detail -->
+            <div class="sb-comp-expanded" id="absorbed-detail" aria-hidden="true">
+              <div style="margin-bottom:8px;">
+                <div style="font-family:'JetBrains Mono',monospace;font-size:0.52rem;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink-mute);margin-bottom:6px;">Mini-chronologie EMB #245 (absorbée)</div>
+                <div class="sb-timeline" style="max-height:160px;overflow-y:auto;">
+                  <div class="sb-timeline-event">
+                    <div class="sb-timeline-event__dot" style="background:var(--kf-stamp-navy);"></div>
+                    <div class="sb-timeline-event__body">
+                      <div class="sb-timeline-event__title">Fusion dans EMB #244</div>
+                      <div class="sb-timeline-event__detail">12.8 HL transférés de CCT-6 → BBT-2 · Blendé à 40% · Opérateur: Kouros</div>
+                    </div>
+                    <div class="sb-timeline-event__time">14:30<br>2026-05-28</div>
+                  </div>
+                  <div class="sb-timeline-event">
+                    <div class="sb-timeline-event__dot sb-timeline-event__dot--ferm"></div>
+                    <div class="sb-timeline-event__body">
+                      <div class="sb-timeline-event__title">Cold crash complété — J+10</div>
+                      <div class="sb-timeline-event__detail">FG: 3.0°P · Atténuation: 78% · Prêt pour soutirage</div>
+                    </div>
+                    <div class="sb-timeline-event__time">08:00<br>2026-05-27</div>
+                  </div>
+                  <div class="sb-timeline-event">
+                    <div class="sb-timeline-event__dot sb-timeline-event__dot--brew"></div>
+                    <div class="sb-timeline-event__body">
+                      <div class="sb-timeline-event__title">Brassage ouvert — #245</div>
+                      <div class="sb-timeline-event__detail">32 HL · Levurage vers CCT-6 · Marc</div>
+                    </div>
+                    <div class="sb-timeline-event__time">06:30<br>2026-05-20</div>
+                  </div>
+                </div>
+              </div>
+              <div style="font-family:'JetBrains Mono',monospace;font-size:0.52rem;letter-spacing:0.06em;color:var(--ink-faint);padding-top:8px;border-top:1px dashed var(--hairline);">
+                Lot EMB #245 reste consultable dans l'archive (read-only) → <a href="mother-shell-archive.html" style="color:var(--oak);text-decoration:none;">Archive lots →</a>
+              </div>
+            </div>
+          </div>
+
+        </div><!-- /composition -->
+
+        <div class="sb-divider"></div>
+
+        <!-- TIMELINE — merged chronology -->
+        <div class="sb-section-head">
+          <span class="sb-section-label">Chronologie</span>
+        </div>
+
+        <div class="sb-timeline">
+          <!-- Current: garde BBT -->
+          <div class="sb-timeline-event">
+            <div class="sb-timeline-event__dot" style="background:var(--bbt);"></div>
+            <div class="sb-timeline-event__body">
+              <div class="sb-timeline-event__title">Garde en BBT-2 — J+1 après fusion</div>
+              <div class="sb-timeline-event__detail">32.0 HL · FG consolidé: 3.1°P · Pression: 1.2 bar · En stabilisation</div>
+            </div>
+            <div class="sb-timeline-event__time">09:00<br>auj.</div>
+          </div>
+
+          <!-- Blend event — milestone -->
+          <div class="sb-blend-milestone">
+            <span class="sb-blend-milestone__icon">⊕</span>
+            <div>
+              <div class="sb-blend-milestone__label">FUSION — EMB #244 ← EMB #245</div>
+              <div class="sb-blend-milestone__detail">19.2 HL (#244) + 12.8 HL (#245) → 32.0 HL dans BBT-2 · Opérateur: Kouros · 2026-05-28 14:30</div>
+            </div>
+          </div>
+
+          <!-- Pre-blend events: EMB 244 -->
+          <div class="sb-timeline-event">
+            <div class="sb-timeline-event__dot sb-timeline-event__dot--ferm"></div>
+            <div class="sb-timeline-event__body">
+              <div class="sb-timeline-event__title">Cold crash complété — EMB #244 · J+14</div>
+              <div class="sb-timeline-event__detail">FG: 3.2°P · Prêt pour soutirage · CCT-4</div>
+            </div>
+            <div class="sb-timeline-event__time">07:00<br>2026-05-28</div>
+          </div>
+          <div class="sb-timeline-milestone">
+            <span class="sb-timeline-milestone__label">✓ Brassage clos — EMB #244</span>
+            <span class="sb-timeline-milestone__detail">2026-05-17 · 32 HL · CCT-4</span>
+          </div>
+        </div>
+
+      </div><!-- /face-production -->
+
+      <div id="face-cout" class="sb-face-content">
+        <div class="sb-face-placeholder">
+          <div class="sb-face-placeholder__label">Face Coût — Phase 2</div>
+          <div class="sb-face-placeholder__msg">Coût pondéré des deux sources fusionnées, CHF/HL résultant.</div>
+        </div>
+      </div>
+      <div id="face-qualite" class="sb-face-content">
+        <div class="sb-face-placeholder">
+          <div class="sb-face-placeholder__label">Face Qualité — Phase 2</div>
+          <div class="sb-face-placeholder__msg">Profils QA des deux sources, validation du blend.</div>
+        </div>
+      </div>
+
+    </div><!-- /content -->
+
+    <!-- RAIL -->
+    <div class="sb-shell__rail">
+      <div class="sb-rail-head">Lot fusionné</div>
+      <div style="margin-bottom:16px;">
+        <div class="sb-rail-item"><span class="sb-rail-item__label">Recette</span><span class="sb-rail-item__value" style="font-style:italic;font-family:'Fraunces',serif;color:var(--oak);">Embuscade</span></div>
+        <div class="sb-rail-item"><span class="sb-rail-item__label">Mother principale</span><span class="sb-rail-item__value">#244 (60%)</span></div>
+        <div class="sb-rail-item"><span class="sb-rail-item__label">Source absorbée</span><span class="sb-rail-item__value" style="color:var(--ink-faint);">#245 (40%)</span></div>
+        <div class="sb-rail-item"><span class="sb-rail-item__label">Fusion le</span><span class="sb-rail-item__value">2026-05-28</span></div>
+        <div class="sb-rail-item"><span class="sb-rail-item__label">Par</span><span class="sb-rail-item__value">Kouros</span></div>
+        <div class="sb-rail-item"><span class="sb-rail-item__label">Cuve actuelle</span><span class="sb-rail-item__value" style="color:var(--bbt);">BBT-2</span></div>
+        <div class="sb-rail-item"><span class="sb-rail-item__label">Volume total</span><span class="sb-rail-item__value">32.0 HL</span></div>
+      </div>
+    </div>
+  </div><!-- /body -->
+
+</main>
+
+<!-- STICKY FOOTER -->
+<footer class="sb-shell__footer">
+  <div style="display:flex;gap:10px;align-items:center;">
+    <a href="packaging-cuve-vide-modal.html" class="sb-btn sb-btn--primary">
+      Marquer BBT-2 vide
+    </a>
+    <a href="#" class="sb-btn sb-btn--secondary">📋 Journal de bord →</a>
+  </div>
+  <button class="sb-btn sb-btn--danger" onclick="openAbandonModal()">
+    Abandonner ce lot
+  </button>
+</footer>
+
+<script>
+function showFace(name) {
+  document.querySelectorAll('.sb-face-content').forEach(el => el.classList.remove('sb-face-content--visible'));
+  document.querySelectorAll('.sb-face-tab').forEach(el => el.classList.remove('sb-face-tab--active'));
+  const panel = document.getElementById('face-' + name);
+  if (panel) panel.classList.add('sb-face-content--visible');
+  document.querySelectorAll('.sb-face-tab').forEach(t => {
+    if (t.getAttribute('onclick') && t.getAttribute('onclick').includes(name)) t.classList.add('sb-face-tab--active');
+  });
+}
+
+function toggleAbsorbed() {
+  const detail = document.getElementById('absorbed-detail');
+  const btn = document.getElementById('btn-absorbed');
+  const expanded = detail.classList.toggle('sb-comp-expanded--visible');
+  detail.setAttribute('aria-hidden', String(!expanded));
+  btn.setAttribute('aria-expanded', String(expanded));
+  btn.textContent = expanded ? 'Réduire ↑' : 'Voir le détail ↓';
+}
+
+function updateClock() {
+  const el = document.getElementById('js-clock');
+  if (!el) return;
+  const now = new Date();
+  el.textContent = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+}
+updateClock();
+setInterval(updateClock, 30000);
+
+// ── Abandon modal ──
+var _abandonOpener = null;
+function openAbandonModal() {
+  _abandonOpener = document.activeElement;
+  var m = document.getElementById('js-abandon-modal');
+  m.setAttribute('aria-hidden', 'false');
+  m.classList.add('sb-modal-backdrop--visible');
+  document.getElementById('abandon-reason').value = '';
+  document.getElementById('abandon-confirm-btn').disabled = true;
+  document.getElementById('abandon-confirm-btn').setAttribute('aria-disabled', 'true');
+  trapFocus(m);
+  document.getElementById('abandon-reason').focus();
+}
+function closeAbandonModal() {
+  var m = document.getElementById('js-abandon-modal');
+  m.setAttribute('aria-hidden', 'true');
+  m.classList.remove('sb-modal-backdrop--visible');
+  if (_abandonOpener) { _abandonOpener.focus(); _abandonOpener = null; }
+}
+function updateAbandonConfirm() {
+  var ok = !!document.getElementById('abandon-reason').value;
+  document.getElementById('abandon-confirm-btn').disabled = !ok;
+  document.getElementById('abandon-confirm-btn').setAttribute('aria-disabled', String(!ok));
+}
+function trapFocus(container) {
+  var sel = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+  container.addEventListener('keydown', function handler(e) {
+    if (!container.classList.contains('sb-modal-backdrop--visible')) { container.removeEventListener('keydown', handler); return; }
+    if (e.key === 'Escape') { e.preventDefault(); closeAbandonModal(); return; }
+    if (e.key !== 'Tab') return;
+    var els = Array.from(container.querySelectorAll(sel)).filter(el => !el.closest('[aria-hidden="true"]'));
+    if (!els.length) return;
+    var first = els[0], last = els[els.length - 1];
+    if (e.shiftKey) { if (document.activeElement === first) { e.preventDefault(); last.focus(); } }
+    else { if (document.activeElement === last) { e.preventDefault(); first.focus(); } }
+  });
+}
+</script>
+
+<!-- Abandon modal -->
+<div class="sb-modal-backdrop" id="js-abandon-modal"
+     role="dialog" aria-modal="true" aria-labelledby="abandon-modal-title" aria-hidden="true">
+  <div class="sb-modal">
+    <div class="sb-modal__header" style="border-top:3px solid var(--ember);">
+      <div class="sb-modal__icon" aria-hidden="true">⚠</div>
+      <div>
+        <div class="sb-modal__title" id="abandon-modal-title">Abandonner le lot fusionné EMB #244+245</div>
+        <div class="sb-modal__sub">Cette action est irréversible. Le lot passera en statut Jeté et sera archivé.</div>
+      </div>
+      <button class="sb-modal__close" onclick="closeAbandonModal()" aria-label="Fermer">×</button>
+    </div>
+    <div style="padding:16px 22px 8px;">
+      <label class="sb-label" for="abandon-reason">Raison <span aria-hidden="true" style="color:var(--ember)">*</span></label>
+      <select id="abandon-reason" class="sb-select" style="width:100%;margin-bottom:12px;" required onchange="updateAbandonConfirm()" aria-required="true">
+        <option value="">— choisir une raison —</option>
+        <option value="contamination">Contamination confirmée</option>
+        <option value="erreur_saisie">Erreur de saisie (doublon)</option>
+        <option value="fuite">Fuite / perte physique</option>
+        <option value="autre">Autre</option>
+      </select>
+      <label class="sb-label" for="abandon-detail">Détails (optionnel)</label>
+      <textarea id="abandon-detail" class="sb-textarea" rows="2" style="width:100%;margin-bottom:12px;"
+                placeholder="Observations, contexte…"></textarea>
+    </div>
+    <div style="padding:0 22px 16px;display:flex;gap:10px;align-items:center;justify-content:flex-end;">
+      <button class="sb-btn sb-btn--secondary" onclick="closeAbandonModal()">Annuler</button>
+      <button id="abandon-confirm-btn" class="sb-btn sb-btn--danger" disabled aria-disabled="true"
+              onclick="window.location='mother-shell-archive.html'">
+        Confirmer l'abandon
+      </button>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,483 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<!-- Responsive viewport — layout constrained by max-width:1024px on body -->
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tableau de bord — Vue tablette 1024×768 · MaltyTask</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,200;0,9..144,300;0,9..144,400;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<!--
+  ════════════════════════════════════════════════════════════════
+  MOCKUP: board-tablet.html — Tablet/landscape (1024×768) breakpoint
+  ════════════════════════════════════════════════════════════════
+  Concept C: Theater of Operations diorama
+  Light-kraft palette · sb-* namespace · static only
+
+  VUE TABLETTE 1024×768 — breakpoint layout.
+  Same content as board-populated.html but layout adapts:
+    - 4-zone grid → 2×2 grid (Brasserie+Cave top row, BBT+Conditionnement bottom row)
+    - EXPÉDITION zone moves to a small ribbon at bottom (greyed, collapsed)
+    - Diorama vessels scale down
+    - Batch list table scrolls horizontally on narrow columns
+    - Topbar nav collapses some items
+
+  The _shared.css already handles the 1000px breakpoint:
+    .sb-diorama { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+  This mockup shows that breakpoint in action with a frame annotation.
+
+  Note: this file uses max-width:1024px styling embedded here. On a real
+  1024px viewport, the @media rule in _shared.css kicks in automatically.
+  ════════════════════════════════════════════════════════════════
+-->
+
+<link rel="stylesheet" href="_shared.css">
+
+<style>
+body.sb-board {
+  display: flex; flex-direction: column; min-height: 100vh; align-items: stretch;
+  max-width: 1024px; margin: 0 auto;
+  box-shadow: 0 0 0 1px var(--hairline-2), 0 8px 40px color-mix(in srgb, var(--ink) 12%, transparent);
+}
+
+/* Viewport annotation frame */
+.tablet-frame-note {
+  position: fixed; top: 8px; right: 12px; z-index: 1000;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.52rem; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--cold);
+  background: color-mix(in srgb, var(--cold) 6%, var(--bg-elev));
+  border: 1px solid color-mix(in srgb, var(--cold) 25%, transparent);
+  padding: 3px 8px; border-radius: 2px;
+  pointer-events: none;
+}
+
+/* Board layout */
+.sb-board-wrap {
+  position: relative; z-index: 1; flex: 1;
+  display: flex; flex-direction: column; overflow: hidden; min-height: 0;
+}
+
+/* TABLET DIORAMA — force 2×2 */
+.sb-diorama {
+  /* Override: 2-col 2-row grid */
+  grid-template-columns: 1fr 1fr !important;
+  grid-template-rows: 200px 200px !important;
+  height: auto !important;
+  flex: 0 0 auto !important;
+  min-height: unset !important;
+  max-height: unset !important;
+}
+
+/* Zone ordering in 2×2: Brasserie, Cave (row 1), BBT, Conditionnement (row 2) */
+/* Expédition hidden — goes to ribbon */
+.sb-zone:nth-child(1) { grid-column: 1; grid-row: 1; border-bottom: 1px solid var(--hairline); }
+.sb-zone:nth-child(2) { grid-column: 2; grid-row: 1; border-bottom: 1px solid var(--hairline); border-right: none; }
+.sb-zone:nth-child(3) { grid-column: 1; grid-row: 2; }
+.sb-zone:nth-child(4) { grid-column: 2; grid-row: 2; border-right: none; }
+.sb-zone:nth-child(5) { display: none; } /* EXPÉDITION: collapsed to ribbon */
+
+/* Zone accent labels */
+.sb-zone--brasserie    .sb-zone__label { color: var(--ember); }
+.sb-zone--fermentation .sb-zone__label { color: var(--cold); }
+.sb-zone--bbt          .sb-zone__label { color: var(--bbt); }
+.sb-zone--conditionnement .sb-zone__label { color: var(--hop); }
+
+.sb-zone--brasserie    .sb-zone__header { border-bottom-color: color-mix(in srgb, var(--ember) 50%, transparent); }
+.sb-zone--fermentation .sb-zone__header { border-bottom-color: color-mix(in srgb, var(--cold) 50%, transparent); }
+.sb-zone--bbt          .sb-zone__header { border-bottom-color: color-mix(in srgb, var(--bbt) 50%, transparent); }
+.sb-zone--conditionnement .sb-zone__header { border-bottom-color: color-mix(in srgb, var(--hop) 50%, transparent); }
+
+/* Zone count chip colors */
+.sb-zone--brasserie    .sb-zone__count { background: color-mix(in srgb, var(--ember) 10%, var(--bg-side)); color: var(--ember); border-color: color-mix(in srgb, var(--ember) 20%, transparent); }
+.sb-zone--fermentation .sb-zone__count { background: color-mix(in srgb, var(--cold) 10%, var(--bg-side)); color: var(--cold); border-color: color-mix(in srgb, var(--cold) 20%, transparent); }
+.sb-zone--bbt          .sb-zone__count { background: color-mix(in srgb, var(--bbt) 10%, var(--bg-side)); color: var(--bbt); border-color: color-mix(in srgb, var(--bbt) 20%, transparent); }
+.sb-zone--conditionnement .sb-zone__count { background: color-mix(in srgb, var(--hop) 10%, var(--bg-side)); color: var(--hop); border-color: color-mix(in srgb, var(--hop) 20%, transparent); }
+
+/* Scale down vessels for tablet */
+.sb-vessel--cct-sm svg { width: 30px; height: auto; }
+.sb-vessel--cct svg    { width: 36px; height: auto; }
+.sb-vessel--bbt svg    { width: 38px; height: auto; }
+.sb-vessel--kettle svg { width: 56px; height: auto; }
+.sb-vessel__label { font-size: 0.40rem !important; }
+
+/* Smaller cards on tablet */
+.sb-card { padding: 7px 8px 7px; }
+.sb-card__name { font-size: 0.86rem !important; }
+.sb-card__meta-item { font-size: 0.50rem !important; }
+
+/* Batch list — horizontal scroll on narrow viewport */
+.sb-batch-list {
+  flex: 1; max-height: none; overflow-y: auto;
+  overflow-x: auto;
+}
+.sb-batch-list__head, .sb-batch-row {
+  grid-template-columns: 80px 1fr 90px 110px 72px 62px 1fr !important;
+  min-width: 640px;
+}
+
+/* Zone body — two-section layout (same as board-populated / board-empty) */
+/* Do NOT set justify-content:center here — inherited from _shared.css flex-start */
+.sb-kettle-wrap { position: relative; display: flex; flex-direction: column; align-items: center; z-index: 2; }
+
+/* Expédition ribbon at bottom */
+.sb-exp-ribbon {
+  height: 28px;
+  display: flex; align-items: center; padding: 0 14px; gap: 10px;
+  background: repeating-linear-gradient(45deg, transparent, transparent 6px, color-mix(in srgb, var(--hairline) 25%, transparent) 6px, color-mix(in srgb, var(--hairline) 25%, transparent) 7px);
+  border-top: 1px solid var(--hairline);
+  opacity: 0.5;
+}
+.sb-exp-ribbon__label {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.50rem; letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.sb-exp-ribbon__phase {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.48rem; letter-spacing: 0.06em;
+  color: var(--ink-faint);
+}
+
+/* Batch list header */
+.sb-batch-list-header {
+  display: flex; align-items: center; gap: 12px;
+  padding: 6px 14px 6px; border-bottom: 1px solid var(--hairline);
+  background: var(--bg-side); position: sticky; top: 0; z-index: 10;
+}
+.sb-batch-list-header__title {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.52rem; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-mute);
+}
+
+/* Packaging conveyor (tablet) — in-flow inside sb-vessel-stage */
+.sb-packaging-line { position: relative; width: 100%; display: flex; flex-direction: column; align-items: center; gap: 2px; z-index: 2; }
+.sb-packaging-rollers { display: flex; align-items: center; width: 100%; gap: 0; }
+.sb-packaging-roller { width: 8px; height: 8px; border-radius: 50%; background: var(--steel-mid); border: 1px solid var(--steel-shadow); flex-shrink: 0; }
+.sb-packaging-belt { flex: 1; height: 8px; background: var(--bg-side); border: 1px solid var(--hairline-2); overflow: hidden; }
+.sb-conveyor-dashes { display: block; overflow: hidden; position: relative; height: 3px; width: 100%; }
+.sb-conveyor-dashes__inner { display: flex; gap: 4px; animation: sb-conveyor 1.8s linear infinite; width: 200%; }
+.sb-conveyor-dash { width: 10px; height: 3px; flex-shrink: 0; background: color-mix(in srgb, var(--hop) 35%, var(--bg-side)); border-radius: 1px; }
+@keyframes sb-conveyor { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+
+/* Annotation */
+.sb-annotation { position: absolute; font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 0.40rem; letter-spacing: 0.10em; text-transform: uppercase; color: var(--ink-faint); pointer-events: none; z-index: 0; }
+.sb-annotation--br { bottom: 6px; right: 8px; }
+</style>
+</head>
+<body class="sb-board">
+
+<!-- Tablet frame annotation -->
+<div class="tablet-frame-note" aria-hidden="true">VUE TABLETTE 1024×768</div>
+
+<!-- TOPBAR — compact for tablet -->
+<header class="sb-topbar" role="banner" style="padding:0 14px;">
+  <div class="sb-wordmark" style="margin-right:20px;">
+    <span class="sb-wordmark__name">Malty<em>Task</em></span>
+    <!-- section label hidden on tablet -->
+  </div>
+  <nav class="sb-nav" aria-label="Navigation principale">
+    <a href="#" class="sb-nav__item sb-nav__item--active" aria-current="page">
+      Lots
+      <span class="sb-nav__badge" aria-label="6 lots actifs">6</span>
+    </a>
+    <a href="#" class="sb-nav__item">Journal</a>
+    <a href="#" class="sb-nav__item">Cuves</a>
+  </nav>
+  <div class="sb-topbar__right" style="gap:10px;">
+    <div class="sb-refresh-indicator">
+      <span class="sb-refresh-dot"></span>
+      <span>màj: 12s</span>
+    </div>
+    <span class="sb-kb-hint">W</span>
+    <div class="sb-topbar__clock" id="js-clock">09:47</div>
+    <div class="sb-avatar">LK</div>
+  </div>
+</header>
+
+<div class="sb-board-wrap">
+
+  <!-- DIORAMA — 2×2 grid (tablet layout) -->
+  <section class="sb-diorama" aria-label="Tableau des lots par phase">
+
+    <!-- ── ZONE 1: BRASSERIE ── -->
+    <div class="sb-zone sb-zone--brasserie" role="region" aria-labelledby="zt-brew">
+      <div class="sb-zone__header">
+        <h2 id="zt-brew" class="sb-zone__label">Brasserie</h2>
+        <span class="sb-zone__count">2</span>
+        <div class="sb-zone__corner" aria-hidden="true"></div>
+      </div>
+      <div class="sb-zone__body">
+        <!-- Cards: top section (scrollable) -->
+        <div class="sb-zone__cards">
+          <div class="sb-cards-stack">
+            <article class="sb-card sb-card--brewing">
+              <div class="sb-card__top">
+                <span class="sb-card__batch">EMB #244</span>
+                <span class="sb-heartbeat sb-heartbeat--green" title="Active" style="width:6px;height:6px;"></span>
+              </div>
+              <h3 class="sb-card__name"><em>Embuscade</em></h3>
+              <div class="sb-card__meta">
+                <span class="sb-card__meta-item">J+0</span>
+                <span class="sb-card__meta-dot"></span>
+                <span class="sb-card__meta-item">32 HL</span>
+              </div>
+            </article>
+            <article class="sb-card sb-card--mout">
+              <div class="sb-card__top">
+                <span class="sb-card__batch">CB-MW #01</span>
+                <span class="sb-card__stamp">MOÛT</span>
+              </div>
+              <h3 class="sb-card__name"><em>Chien Bleu</em></h3>
+            </article>
+          </div>
+        </div>
+        <!-- Vessel stage: bottom section (fixed height) -->
+        <div class="sb-vessel-stage">
+          <div class="sb-kettle-wrap">
+            <svg width="56" height="64" viewBox="0 0 72 80" fill="none" xmlns="http://www.w3.org/2000/svg" opacity="0.85" role="img" aria-label="Chaudière active">
+              <defs>
+                <linearGradient id="tb-kg" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="rgba(255,255,255,0.18)"/><stop offset="18%" stop-color="rgba(255,255,255,0.06)"/><stop offset="100%" stop-color="rgba(0,0,0,0.12)"/></linearGradient>
+                <linearGradient id="tb-wg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="var(--ember)" stop-opacity="0.7"/><stop offset="100%" stop-color="var(--ember)" stop-opacity="0.45"/></linearGradient>
+              </defs>
+              <rect x="8" y="15" width="56" height="50" rx="1" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/>
+              <rect x="8" y="15" width="8" height="50" fill="url(#tb-kg)" rx="1"/>
+              <rect x="9" y="22" width="54" height="42" fill="url(#tb-wg)"/>
+              <rect x="4" y="10" width="64" height="7" rx="1" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/>
+              <ellipse cx="36" cy="13" rx="8" ry="3" fill="var(--steel-mid)"/>
+              <rect x="14" y="65" width="4" height="12" rx="0.5" fill="var(--steel-mid)"/>
+              <rect x="45" y="65" width="4" height="12" rx="0.5" fill="var(--steel-mid)"/>
+              <ellipse cx="36" cy="78" rx="28" ry="1.5" fill="var(--steel-shadow)" opacity="0.2"/>
+            </svg>
+          </div>
+          <div class="sb-ground" aria-hidden="true"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── ZONE 2: CAVE FERMENTATION ── -->
+    <div class="sb-zone sb-zone--fermentation" role="region" aria-labelledby="zt-ferm">
+      <div class="sb-zone__header">
+        <h2 id="zt-ferm" class="sb-zone__label">Cave Fermentation</h2>
+        <span class="sb-zone__count">2</span>
+        <div class="sb-zone__corner" aria-hidden="true"></div>
+      </div>
+      <div class="sb-zone__body">
+        <span class="sb-annotation sb-annotation--br" aria-hidden="true">CCT</span>
+        <!-- Cards: top section (scrollable) -->
+        <div class="sb-zone__cards">
+          <div class="sb-cards-stack">
+            <article class="sb-card sb-card--fermenting">
+              <div class="sb-card__top"><span class="sb-card__batch">ZEP #312</span><span class="sb-heartbeat sb-heartbeat--amber" style="width:6px;height:6px;"></span></div>
+              <h3 class="sb-card__name"><em>Zepp</em></h3>
+              <div class="sb-card__meta"><span class="sb-card__meta-item sb-card__meta-item--vessel">CCT-4</span><span class="sb-card__meta-dot"></span><span class="sb-card__meta-item">J+12</span></div>
+            </article>
+            <article class="sb-card sb-card--fermenting">
+              <div class="sb-card__top"><span class="sb-card__batch">STI #88</span><span class="sb-heartbeat sb-heartbeat--red" style="width:6px;height:6px;"></span></div>
+              <h3 class="sb-card__name"><em>Stirling</em></h3>
+              <div class="sb-card__meta"><span class="sb-card__meta-item">J+45 ⚠</span></div>
+            </article>
+          </div>
+        </div>
+        <!-- Vessel stage: bottom section (compact CCT row) -->
+        <div class="sb-vessel-stage">
+          <div class="sb-vessel-row" aria-hidden="true" style="gap:6px;">
+            <div class="sb-vessel sb-vessel--cct-sm"><svg viewBox="0 0 80 155" xmlns="http://www.w3.org/2000/svg" opacity="0.5"><polygon points="12,10 68,10 68,100 46,130 34,130 12,100" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/><rect x="12" y="2" width="56" height="8" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/><text x="40" y="30" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="13" font-weight="500" fill="rgba(0,0,0,0.4)">1</text></svg><span class="sb-vessel__label">CCT-1</span></div>
+            <div class="sb-vessel sb-vessel--cct-sm"><svg viewBox="0 0 80 155" xmlns="http://www.w3.org/2000/svg" opacity="0.5"><polygon points="12,10 68,10 68,100 46,130 34,130 12,100" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/><rect x="12" y="2" width="56" height="8" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/><text x="40" y="30" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="13" font-weight="500" fill="rgba(0,0,0,0.4)">2</text></svg><span class="sb-vessel__label">CCT-2</span></div>
+            <div class="sb-vessel sb-vessel--cct-sm"><svg viewBox="0 0 80 155" xmlns="http://www.w3.org/2000/svg" opacity="0.5"><polygon points="12,10 68,10 68,100 46,130 34,130 12,100" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/><rect x="12" y="2" width="56" height="8" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/><text x="40" y="30" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="13" font-weight="500" fill="rgba(0,0,0,0.4)">3</text></svg><span class="sb-vessel__label">CCT-3</span></div>
+            <!-- CCT 4 occupied -->
+            <div class="sb-vessel sb-vessel--cct-sm sb-vessel--occupied" id="vessel-cct4-t">
+              <span class="sb-vessel-ring"></span>
+              <svg viewBox="0 0 80 155" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="fill-t" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="var(--cold)" stop-opacity="0.7"/><stop offset="100%" stop-color="var(--cold)" stop-opacity="0.4"/></linearGradient></defs><polygon points="12,10 68,10 68,100 46,130 34,130 12,100" fill="var(--steel-deep)" stroke="var(--cold)" stroke-width="1.5"/><rect x="12" y="2" width="56" height="8" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/><polygon points="13,30 67,30 67,99 45,129 35,129 13,99" fill="url(#fill-t)"/><text x="40" y="24" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="12" font-weight="600" fill="rgba(255,255,255,0.85)">4</text></svg>
+              <span class="sb-vessel__label sb-vessel__label--occupied">CCT-4</span>
+            </div>
+            <div class="sb-vessel sb-vessel--cct-sm"><svg viewBox="0 0 80 155" xmlns="http://www.w3.org/2000/svg" opacity="0.5"><polygon points="12,10 68,10 68,100 46,130 34,130 12,100" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/><rect x="12" y="2" width="56" height="8" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/><text x="40" y="30" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="13" font-weight="500" fill="rgba(0,0,0,0.4)">5</text></svg><span class="sb-vessel__label">CCT-5</span></div>
+          </div>
+          <div class="sb-ground" aria-hidden="true"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── ZONE 3: SALLE BBT ── -->
+    <div class="sb-zone sb-zone--bbt" role="region" aria-labelledby="zt-bbt">
+      <div class="sb-zone__header">
+        <h2 id="zt-bbt" class="sb-zone__label">Salle BBT</h2>
+        <span class="sb-zone__count">1</span>
+        <div class="sb-zone__corner" aria-hidden="true"></div>
+      </div>
+      <div class="sb-zone__body">
+        <!-- Cards: top section (scrollable) -->
+        <div class="sb-zone__cards">
+          <div class="sb-cards-stack">
+            <article class="sb-card sb-card--racking">
+              <div class="sb-card__top"><span class="sb-card__batch">EMB #244+245</span><span class="sb-heartbeat sb-heartbeat--green" style="width:6px;height:6px;"></span></div>
+              <h3 class="sb-card__name"><em>Embuscade</em></h3>
+              <div class="sb-card__meta"><span class="sb-card__meta-item sb-card__meta-item--vessel">BBT-2</span><span class="sb-card__meta-dot"></span><span class="sb-card__meta-item">32.0 HL</span></div>
+              <div class="sb-card__merged-badge">⊕ Fusionné</div>
+            </article>
+          </div>
+        </div>
+        <!-- Vessel stage: bottom section (3 BBT, 1 occupied) -->
+        <div class="sb-vessel-stage">
+          <div class="sb-vessel-row" aria-hidden="true" style="gap:12px;">
+            <div class="sb-vessel sb-vessel--bbt"><svg viewBox="0 0 90 120" xmlns="http://www.w3.org/2000/svg" opacity="0.5"><ellipse cx="45" cy="14" rx="34" ry="8" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/><rect x="11" y="14" width="68" height="70" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/><ellipse cx="45" cy="84" rx="34" ry="8" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/><text x="45" y="58" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="14" font-weight="500" fill="rgba(0,0,0,0.35)">1</text></svg><span class="sb-vessel__label">BBT-1</span></div>
+            <div class="sb-vessel sb-vessel--bbt sb-vessel--occupied">
+              <span class="sb-vessel-ring"></span>
+              <svg viewBox="0 0 90 120" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="bbt-fill-t" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="var(--bbt)" stop-opacity="0.7"/><stop offset="100%" stop-color="var(--bbt)" stop-opacity="0.4"/></linearGradient></defs><ellipse cx="45" cy="14" rx="34" ry="8" fill="var(--steel-deep)" stroke="var(--bbt)" stroke-width="1.5"/><rect x="11" y="14" width="68" height="70" fill="var(--steel-deep)" stroke="var(--bbt)" stroke-width="1.5"/><rect x="12" y="30" width="66" height="53" fill="url(#bbt-fill-t)"/><ellipse cx="45" cy="84" rx="34" ry="8" fill="var(--steel-deep)" stroke="var(--bbt)" stroke-width="1.5"/><text x="45" y="24" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="14" font-weight="600" fill="rgba(255,255,255,0.85)">2</text></svg>
+              <span class="sb-vessel__label sb-vessel__label--occupied" style="color:var(--bbt);">BBT-2</span>
+            </div>
+            <div class="sb-vessel sb-vessel--bbt"><svg viewBox="0 0 90 120" xmlns="http://www.w3.org/2000/svg" opacity="0.5"><ellipse cx="45" cy="14" rx="34" ry="8" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/><rect x="11" y="14" width="68" height="70" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/><ellipse cx="45" cy="84" rx="34" ry="8" fill="var(--steel-deep)" stroke="var(--steel-mid)" stroke-width="1.2"/><text x="45" y="58" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="14" font-weight="500" fill="rgba(0,0,0,0.35)">3</text></svg><span class="sb-vessel__label">BBT-3</span></div>
+          </div>
+          <div class="sb-ground" aria-hidden="true"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── ZONE 4: CONDITIONNEMENT ── -->
+    <div class="sb-zone sb-zone--conditionnement" role="region" aria-labelledby="zt-cond">
+      <div class="sb-zone__header">
+        <h2 id="zt-cond" class="sb-zone__label">Conditionnement</h2>
+        <span class="sb-zone__count">1</span>
+        <div class="sb-zone__corner" aria-hidden="true"></div>
+      </div>
+      <div class="sb-zone__body">
+        <!-- Cards: top section (scrollable) -->
+        <div class="sb-zone__cards">
+          <div class="sb-cards-stack">
+            <article class="sb-card sb-card--packaging">
+              <div class="sb-card__top"><span class="sb-card__batch">ZEP #312</span><span class="sb-heartbeat sb-heartbeat--green" style="width:6px;height:6px;"></span></div>
+              <h3 class="sb-card__name"><em>Zepp</em></h3>
+              <div class="sb-card__meta"><span class="sb-card__meta-item">Bouteilles</span><span class="sb-card__meta-dot"></span><span class="sb-card__meta-item">14 HL / 16 HL</span></div>
+              <div style="margin-top:4px;height:3px;background:var(--bg-side);border-radius:1.5px;overflow:hidden;"><div style="height:100%;width:87%;background:var(--hop);border-radius:1.5px;"></div></div>
+            </article>
+          </div>
+        </div>
+        <!-- Vessel stage: bottom section (packaging conveyor) -->
+        <div class="sb-vessel-stage">
+          <div class="sb-packaging-line">
+            <div class="sb-packaging-rollers">
+              <div class="sb-packaging-roller"></div>
+              <div class="sb-packaging-belt">
+                <div class="sb-conveyor-dashes"><div class="sb-conveyor-dashes__inner">
+                  <div class="sb-conveyor-dash"></div><div class="sb-conveyor-dash"></div><div class="sb-conveyor-dash"></div><div class="sb-conveyor-dash"></div><div class="sb-conveyor-dash"></div><div class="sb-conveyor-dash"></div><div class="sb-conveyor-dash"></div><div class="sb-conveyor-dash"></div>
+                </div></div>
+              </div>
+              <div class="sb-packaging-roller"></div>
+            </div>
+          </div>
+          <div class="sb-ground" aria-hidden="true"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Zone 5: EXPÉDITION — hidden in CSS, becomes ribbon -->
+
+  </section><!-- /diorama -->
+
+  <!-- EXPÉDITION RIBBON -->
+  <div class="sb-exp-ribbon" aria-label="Expédition — Phase 3 (planifiée)">
+    <span class="sb-exp-ribbon__label">Expédition</span>
+    <span class="sb-exp-ribbon__phase">Phase 3 — intégration planifiée</span>
+  </div>
+
+  <!-- BATCH LIST — scrollable horizontally -->
+  <div class="sb-batch-list" role="region" aria-label="Liste des lots">
+    <div class="sb-batch-list-header">
+      <span class="sb-batch-list-header__title">Lots en cours</span>
+      <span style="font-family:'JetBrains Mono',monospace;font-size:0.52rem;color:var(--ink-faint);">6 lots</span>
+    </div>
+
+    <div style="overflow-x: auto;">
+      <div class="sb-batch-list__head">
+        <div class="sb-batch-list__th">Référence</div>
+        <div class="sb-batch-list__th">Recette</div>
+        <div class="sb-batch-list__th">Phase</div>
+        <div class="sb-batch-list__th">Cuve</div>
+        <div class="sb-batch-list__th">Durée</div>
+        <div class="sb-batch-list__th">Volume</div>
+        <div class="sb-batch-list__th">Action</div>
+      </div>
+
+      <div class="sb-batch-row sb-batch-row--active">
+        <div class="sb-batch-row__ref">EMB #244</div>
+        <div class="sb-batch-row__name"><em>Embuscade</em></div>
+        <div><span class="sb-phase-pill sb-phase-pill--brewing">Brassage</span></div>
+        <div class="sb-batch-row__td">Chaudière</div>
+        <div class="sb-batch-row__td">J+0</div>
+        <div class="sb-batch-row__td">32 HL</div>
+        <div><a href="mother-shell-active.html" class="sb-batch-row__link">Voir →</a></div>
+      </div>
+      <div class="sb-batch-row">
+        <div class="sb-batch-row__ref">CB-MW #01</div>
+        <div class="sb-batch-row__name"><em>Chien Bleu</em></div>
+        <div><span class="sb-phase-pill sb-phase-pill--brewing">Brassage</span></div>
+        <div class="sb-batch-row__td">Chaudière</div>
+        <div class="sb-batch-row__td">J+0</div>
+        <div class="sb-batch-row__td">24 HL</div>
+        <div><a href="wort-contract-mother.html" class="sb-batch-row__link">Voir →</a></div>
+      </div>
+      <div class="sb-batch-row">
+        <div class="sb-batch-row__ref">ZEP #312</div>
+        <div class="sb-batch-row__name"><em>Zepp</em></div>
+        <div><span class="sb-phase-pill sb-phase-pill--fermenting">Fermentation</span></div>
+        <div class="sb-batch-row__td" style="color:var(--cold);">CCT-4</div>
+        <div class="sb-batch-row__td">J+12</div>
+        <div class="sb-batch-row__td">30 HL</div>
+        <div><a href="mother-shell-active.html" class="sb-batch-row__link">Voir →</a></div>
+      </div>
+      <div class="sb-batch-row">
+        <div class="sb-batch-row__ref">STI #88</div>
+        <div class="sb-batch-row__name"><em>Stirling</em></div>
+        <div><span class="sb-phase-pill sb-phase-pill--fermenting">Fermentation</span></div>
+        <div class="sb-batch-row__td" style="color:var(--cold);">CCT-7</div>
+        <div class="sb-batch-row__td" style="color:var(--ember);">J+45 ⚠</div>
+        <div class="sb-batch-row__td">28 HL</div>
+        <div><a href="board-salle-de-guerre.html" class="sb-batch-row__link" style="color:var(--ember);">⚠ Guerre</a></div>
+      </div>
+      <div class="sb-batch-row">
+        <div class="sb-batch-row__ref">EMB #244+</div>
+        <div class="sb-batch-row__name"><em>Embuscade</em> ⊕</div>
+        <div><span class="sb-phase-pill sb-phase-pill--racking">Garde BBT</span></div>
+        <div class="sb-batch-row__td" style="color:var(--bbt);">BBT-2</div>
+        <div class="sb-batch-row__td">J+16</div>
+        <div class="sb-batch-row__td">32 HL</div>
+        <div><a href="mother-shell-merged.html" class="sb-batch-row__link">Voir →</a></div>
+      </div>
+      <div class="sb-batch-row">
+        <div class="sb-batch-row__ref">ZEP #312</div>
+        <div class="sb-batch-row__name"><em>Zepp</em></div>
+        <div><span class="sb-phase-pill sb-phase-pill--packaging">Embouteillage</span></div>
+        <div class="sb-batch-row__td" style="color:var(--hop);">Ligne</div>
+        <div class="sb-batch-row__td">J+34</div>
+        <div class="sb-batch-row__td">14/16 HL</div>
+        <div><a href="packaging-cuve-vide-modal.html" class="sb-batch-row__link">Vide →</a></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Ghost strip -->
+  <div class="sb-closed-strip" style="padding:5px 14px;">
+    <span class="sb-closed-strip__label">Récents</span>
+    <div class="sb-ghost-card"><span class="sb-ghost-card__closed-stamp">Clôturé</span><div><div class="sb-ghost-card__name"><em style="font-style:italic;">Zepp</em></div><div class="sb-ghost-card__meta">#309 · 28j</div></div></div>
+    <div class="sb-ghost-card"><span class="sb-ghost-card__closed-stamp">Clôturé</span><div><div class="sb-ghost-card__name"><em style="font-style:italic;">Stirling</em></div><div class="sb-ghost-card__meta">#186 · 35j</div></div></div>
+    <a href="mother-shell-archive.html" style="font-family:'JetBrains Mono',monospace;font-size:0.50rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--oak);text-decoration:none;margin-left:8px;">Archive →</a>
+  </div>
+
+</div><!-- /board-wrap -->
+
+<script>
+function updateClock() {
+  const el = document.getElementById('js-clock');
+  if (!el) return;
+  const now = new Date();
+  el.textContent = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+}
+updateClock();
+setInterval(updateClock, 30000);
+</script>
+
+</body>
+</html>

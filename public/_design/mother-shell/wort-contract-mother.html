@@ -1,0 +1,498 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chien Bleu — Moût chaud · Contrat moût · MaltyTask</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,200;0,9..144,300;0,9..144,400;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<!--
+  ════════════════════════════════════════════════════════════════
+  MOCKUP: wort-contract-mother.html — Wort contract truncated lifecycle
+  ════════════════════════════════════════════════════════════════
+  Concept C: Theater of Operations diorama
+  Light-kraft palette · sb-* namespace · static only
+
+  Mother for "Chien Bleu - Moût Chaud" with process_type='wort_contract'.
+
+  Key design elements:
+  - MOÛT stamp prominent at top (rotating, --oak color)
+  - 4-zone progress: ONLY Brassage active. Fermentation/Soutirage/Conditionnement
+    are GREYED OUT + dashed + "—" placeholder (these phases NEVER happen
+    for this mother type)
+  - Brewing session in progress (J+0)
+  - Sticky footer with: "Clôturer le lot (moût transféré)" CTA — appears
+    as soon as brewing child closed, skips other phases
+  - Recap on close: "Moût transféré: X HL au client Chien Bleu"
+
+  The MOÛT stamp is the key visual differentiator. It communicates immediately
+  that this lot has a truncated lifecycle — no tank, no fermentation, no
+  packaging. Just brew → transfer.
+  ════════════════════════════════════════════════════════════════
+-->
+
+<link rel="stylesheet" href="_shared.css">
+
+</head>
+<body class="sb-board">
+
+<div class="sb-reg-mark sb-reg-mark--tl" aria-hidden="true"></div>
+<div class="sb-reg-mark sb-reg-mark--tr" aria-hidden="true"></div>
+
+<!-- TOPBAR -->
+<header class="sb-topbar" role="banner">
+  <div class="sb-wordmark">
+    <span class="sb-wordmark__name">Malty<em>Task</em></span>
+    <span class="sb-wordmark__sect">La Nébuleuse</span>
+  </div>
+  <nav class="sb-nav" aria-label="Navigation">
+    <a href="board-populated.html" class="sb-nav__item">← Lots en cours</a>
+    <span class="sb-nav__item sb-nav__item--active" aria-current="page">CB-MW #01 — Moût</span>
+  </nav>
+  <div class="sb-topbar__right">
+    <span class="sb-kb-hint">W</span>
+    <div class="sb-topbar__clock" id="js-clock">09:47</div>
+    <div class="sb-avatar">MD</div>
+  </div>
+</header>
+
+<main class="sb-shell" aria-label="Contrat moût Chien Bleu">
+
+  <!-- SHELL HEADER — with MOÛT stamp prominently featured -->
+  <div class="sb-shell__header">
+    <a href="board-populated.html" class="sb-shell__back">← Tableau</a>
+    <div class="sb-shell__header-sep" aria-hidden="true"></div>
+
+    <!-- MOÛT stamp — the most prominent element -->
+    <div class="sb-mout-stamp" aria-label="Contrat moût — lot à cycle tronqué">MOÛT</div>
+
+    <div style="flex:1;display:flex;align-items:center;gap:12px;flex-wrap:wrap;min-width:0;">
+      <h1 class="sb-shell__title">
+        <em>Chien Bleu</em>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:0.85rem;font-weight:400;color:var(--ink-mute);margin-left:6px;">Moût chaud</span>
+      </h1>
+      <span style="display:inline-flex;align-items:center;gap:5px;font-family:'JetBrains Mono',monospace;font-size:0.56rem;letter-spacing:0.12em;text-transform:uppercase;padding:3px 9px;border-radius:2px;color:var(--ember);background:color-mix(in srgb,var(--ember) 9%,transparent);border:1px solid color-mix(in srgb,var(--ember) 25%,transparent);">
+        <span class="sb-heartbeat sb-heartbeat--green" style="width:6px;height:6px;"></span>
+        Brassage
+      </span>
+    </div>
+
+    <div class="sb-shell__meta">
+      <span>J+0</span>
+      <span class="sb-shell__meta-sep">·</span>
+      <span>Ouvert: 2026-05-29 06:15</span>
+      <span class="sb-shell__meta-sep">·</span>
+      <div class="sb-avatar" style="width:22px;height:22px;font-size:0.5rem;">MD</div>
+      <span>Marc</span>
+      <span class="sb-shell__meta-sep">·</span>
+      <span style="font-family:'JetBrains Mono',monospace;font-size:0.56rem;color:var(--oak);letter-spacing:0.08em;text-transform:uppercase;">wort_contract</span>
+    </div>
+  </div>
+
+  <!-- 4-ZONE ARC — only Brassage active, rest disabled -->
+  <div class="sb-arc" role="navigation" aria-label="Progression du contrat moût">
+    <div class="sb-arc__zone sb-arc__zone--active" aria-current="step">
+      <span class="sb-arc__icon">🔥</span>
+      <div>
+        <div class="sb-arc__name">Brassage</div>
+        <span class="sb-arc__detail" style="color:var(--ember);">En cours · Chaudière · 06:15</span>
+      </div>
+    </div>
+    <!-- Fermentation — disabled for wort contract -->
+    <div class="sb-arc__zone sb-arc__zone--disabled" aria-label="Non applicable — contrat moût">
+      <span class="sb-arc__icon">—</span>
+      <div>
+        <div class="sb-arc__name">Fermentation</div>
+        <span class="sb-arc__detail">N/A — moût transféré</span>
+      </div>
+    </div>
+    <!-- Soutirage — disabled -->
+    <div class="sb-arc__zone sb-arc__zone--disabled" aria-label="Non applicable — contrat moût">
+      <span class="sb-arc__icon">—</span>
+      <div>
+        <div class="sb-arc__name">Soutirage</div>
+        <span class="sb-arc__detail">N/A — moût transféré</span>
+      </div>
+    </div>
+    <!-- Conditionnement — disabled -->
+    <div class="sb-arc__zone sb-arc__zone--disabled" aria-label="Non applicable — contrat moût">
+      <span class="sb-arc__icon">—</span>
+      <div>
+        <div class="sb-arc__name">Conditionnement</div>
+        <span class="sb-arc__detail">N/A — moût transféré</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- FACE TABS (production face only for wort contract) -->
+  <div class="sb-face-tabs" role="tablist">
+    <button class="sb-face-tab sb-face-tab--active" aria-selected="true">Production</button>
+    <button class="sb-face-tab" style="opacity:0.3;" title="Non applicable — contrat moût" aria-disabled="true">Coût</button>
+    <button class="sb-face-tab" style="opacity:0.3;" title="Non applicable — contrat moût" aria-disabled="true">Qualité</button>
+  </div>
+
+  <!-- BODY -->
+  <div class="sb-shell__body">
+    <div class="sb-shell__content">
+
+      <!-- WORT CONTRACT CONTEXT BOX -->
+      <div class="sb-mout-context" role="note">
+        <div class="sb-mout-context__title">⚡ Contrat moût — cycle tronqué</div>
+        <div class="sb-mout-context__body">
+          Ce lot est un <strong>contrat de fourniture de moût</strong> pour le client <strong>Chien Bleu Brewing</strong>.
+          Le moût chaud sera transféré directement après brassage — aucune fermentation, soutirage ou conditionnement
+          n'est prévu dans cette installation. Le lot se clôture dès la livraison confirmée.
+        </div>
+      </div>
+
+      <!-- Lifecycle notice -->
+      <div class="sb-mout-lifecycle-notice" role="note" aria-label="Note sur le cycle tronqué">
+        <span class="sb-mout-lifecycle-notice__icon">ℹ</span>
+        <div>
+          Les phases <strong>Fermentation, Soutirage et Conditionnement</strong> sont désactivées pour ce type de lot.
+          Le brasseur clôture le lot directement via "Moût transféré" dès que le transfert est complété
+          et la quantité livrée confirmée.
+        </div>
+      </div>
+
+      <!-- Live state -->
+      <div class="sb-live-card" role="status" aria-live="polite">
+        <div class="sb-live-dot" style="background:var(--ember);box-shadow:0 0 7px color-mix(in srgb,var(--ember) 55%,transparent);" aria-hidden="true"></div>
+        <div class="sb-live-card__body">
+          <div class="sb-live-card__label" style="color:var(--ember);">Brassage en cours</div>
+          <div class="sb-live-card__desc">Moût en ébullition — Chaudière principale · Température: 99°C</div>
+          <div class="sb-live-card__data">
+            <span>OG visé: 14.2°P</span>
+            <span>Volume cible: 20.0 HL</span>
+            <span>Durée ébullition: 75 min</span>
+            <span>Hop stand: en cours</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- KPI row -->
+      <div class="sb-kpi-row">
+        <div class="sb-kpi">
+          <div class="sb-kpi__label">Volume brassé</div>
+          <div class="sb-kpi__value">20.0<span class="sb-kpi__unit">HL</span></div>
+          <div class="sb-kpi__delta">Selon commande</div>
+        </div>
+        <div class="sb-kpi">
+          <div class="sb-kpi__label">Client</div>
+          <div class="sb-kpi__value" style="font-size:0.95rem;font-family:'Fraunces',serif;font-style:italic;color:var(--oak);">Chien Bleu</div>
+          <div class="sb-kpi__delta">Brewing contract #CB-04</div>
+        </div>
+        <div class="sb-kpi" style="border-color:color-mix(in srgb,var(--ember) 30%,transparent);">
+          <div class="sb-kpi__label">Phases actives</div>
+          <div class="sb-kpi__value" style="color:var(--ember);">1<span class="sb-kpi__unit">/ 4</span></div>
+          <div class="sb-kpi__delta">Cycle tronqué</div>
+        </div>
+        <div class="sb-kpi">
+          <div class="sb-kpi__label">Type de lot</div>
+          <div class="sb-kpi__value" style="font-size:0.85rem;font-family:'JetBrains Mono',monospace;letter-spacing:0.04em;color:var(--oak);">MOÛT</div>
+          <div class="sb-kpi__delta">wort_contract</div>
+        </div>
+      </div>
+
+      <!-- Timeline -->
+      <div class="sb-section-head">
+        <span class="sb-section-label">Chronologie</span>
+      </div>
+
+      <div class="sb-timeline">
+        <div class="sb-timeline-event">
+          <div class="sb-timeline-event__dot sb-timeline-event__dot--brew"></div>
+          <div class="sb-timeline-event__body">
+            <div class="sb-timeline-event__title">Ébullition en cours — J+0</div>
+            <div class="sb-timeline-event__detail">Houblon ajouté · 30 min restantes · Hop stand prévu à 79°C · Opérateur: Marc</div>
+          </div>
+          <div class="sb-timeline-event__time">09:45<br>auj.</div>
+        </div>
+        <div class="sb-timeline-event">
+          <div class="sb-timeline-event__dot sb-timeline-event__dot--brew"></div>
+          <div class="sb-timeline-event__body">
+            <div class="sb-timeline-event__title">Ébullition démarrée</div>
+            <div class="sb-timeline-event__detail">Empâtage complété · OG initial: 14.0°P · Volume: 22 HL avant ébullition</div>
+          </div>
+          <div class="sb-timeline-event__time">08:30<br>auj.</div>
+        </div>
+        <div class="sb-timeline-event">
+          <div class="sb-timeline-event__dot sb-timeline-event__dot--brew"></div>
+          <div class="sb-timeline-event__body">
+            <div class="sb-timeline-event__title">Session brassage ouverte — CB-MW #01</div>
+            <div class="sb-timeline-event__detail">Contrat moût · Chien Bleu Brewing · Brasseur: Marc · Chaudière principale</div>
+          </div>
+          <div class="sb-timeline-event__time">06:15<br>auj.</div>
+        </div>
+      </div>
+
+      <!-- Close context (what happens on close) -->
+      <div style="margin-top:20px;padding:12px 14px;background:color-mix(in srgb,var(--oak) 4%,var(--bg-elev));border:1px solid color-mix(in srgb,var(--oak) 18%,transparent);border-radius:3px;">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:0.52rem;letter-spacing:0.14em;text-transform:uppercase;color:var(--oak);margin-bottom:6px;">À la clôture</div>
+        <div style="font-family:'DM Sans',sans-serif;font-size:0.78rem;color:var(--ink-mute);line-height:1.5;">
+          En cliquant "Moût transféré" dans le footer, le système enregistrera:
+          <br>• Volume livré (HL) + OG final
+          <br>• Client: Chien Bleu Brewing
+          <br>• Pas de fermentation / soutirage / conditionnement attendu
+          <br>• Le lot passera directement à <code style="font-family:'JetBrains Mono',monospace;font-size:0.7rem;background:var(--bg);padding:1px 4px;border-radius:2px;">status='clos'</code>
+          <br><strong style="color:var(--oak);">"Moût transféré: X HL au client Chien Bleu · Aucune fermentation/conditionnement attendu pour ce lot."</strong>
+        </div>
+      </div>
+
+    </div><!-- /content -->
+
+    <!-- RAIL -->
+    <div class="sb-shell__rail">
+      <div class="sb-rail-head">Contrat moût</div>
+      <div style="margin-bottom:16px;">
+        <div class="sb-rail-item"><span class="sb-rail-item__label">Type</span><span class="sb-rail-item__value" style="color:var(--oak);">wort_contract</span></div>
+        <div class="sb-rail-item"><span class="sb-rail-item__label">Client</span><span class="sb-rail-item__value">Chien Bleu</span></div>
+        <div class="sb-rail-item"><span class="sb-rail-item__label">Contrat ref</span><span class="sb-rail-item__value">#CB-04</span></div>
+        <div class="sb-rail-item"><span class="sb-rail-item__label">Volume demandé</span><span class="sb-rail-item__value">20.0 HL</span></div>
+        <div class="sb-rail-item"><span class="sb-rail-item__label">OG ciblé</span><span class="sb-rail-item__value">14.2°P</span></div>
+        <div class="sb-rail-item"><span class="sb-rail-item__label">Brasseur</span><span class="sb-rail-item__value">Marc</span></div>
+        <div class="sb-rail-item"><span class="sb-rail-item__label">Ouvert</span><span class="sb-rail-item__value">2026-05-29</span></div>
+      </div>
+      <div class="sb-rail-head">Phases désactivées</div>
+      <div style="padding:8px 10px;background:repeating-linear-gradient(45deg,transparent,transparent 5px,color-mix(in srgb,var(--hairline) 25%,transparent) 5px,color-mix(in srgb,var(--hairline) 25%,transparent) 6px);border:1px dashed var(--hairline);border-radius:2px;opacity:0.6;">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:0.52rem;letter-spacing:0.1em;color:var(--ink-faint);line-height:1.8;">
+          Fermentation — N/A<br>
+          Soutirage — N/A<br>
+          Conditionnement — N/A
+        </div>
+      </div>
+    </div>
+  </div><!-- /body -->
+
+</main>
+
+<!-- STICKY FOOTER — moût contract specific -->
+<footer class="sb-shell__footer" role="complementary">
+  <div style="display:flex;gap:10px;align-items:center;">
+    <a href="#" class="sb-btn sb-btn--secondary">+ Note opérateur</a>
+  </div>
+  <div style="display:flex;gap:10px;align-items:center;">
+    <button class="sb-btn sb-btn--danger"
+            onclick="openAbandonModal()"
+            aria-label="Abandonner ce contrat">
+      Abandonner
+    </button>
+    <!-- PRIMARY CTA: Clôturer le lot (moût transféré) -->
+    <button class="sb-btn sb-btn--cta"
+            onclick="openMoutCloseModal()"
+            aria-label="Clôturer le lot — confirmer le transfert du moût au client">
+      ⊟ Moût transféré — Clôturer le lot
+    </button>
+  </div>
+</footer>
+
+<!-- ════════ MOÛT CLOSE MODAL ════════ -->
+<div class="sb-modal-backdrop" id="js-mout-close-modal" role="dialog" aria-modal="true"
+     aria-labelledby="sb-mout-close-title" aria-hidden="true">
+  <div class="sb-modal" id="js-mout-close-inner">
+    <div class="sb-modal__header" style="border-top: 3px solid var(--oak);">
+      <div class="sb-modal__title">⊟ Clôturer le lot CB-MW #01 — Moût transféré</div>
+    </div>
+    <div class="sb-modal__body">
+      <p style="font-family:'DM Sans',sans-serif;font-size:0.8rem;color:var(--ink-mute);margin-bottom:16px;line-height:1.5;">
+        Confirmer le transfert de moût chaud au client <strong style="color:var(--oak-deep);">Chien Bleu Brewing</strong>.
+        Le lot passera à <code style="font-family:'JetBrains Mono',monospace;font-size:0.7rem;background:var(--bg-elev);padding:1px 4px;border-radius:2px;">status='clos'</code>.
+      </p>
+      <div class="sb-kpi-row" style="margin-bottom:16px;">
+        <div style="flex:1;">
+          <label style="font-family:'JetBrains Mono',monospace;font-size:0.52rem;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink-mute);display:block;margin-bottom:6px;">
+            Volume livré (HL) <span style="color:var(--ember);">*</span>
+          </label>
+          <input id="sb-mout-vol-input" type="number" step="0.1" min="0" max="100" value="20.0"
+                 class="sb-select" style="width:100%;font-size:1.1rem;font-family:'Fraunces',serif;"
+                 placeholder="0.0" required oninput="updateMoutConfirm()"
+                 aria-label="Volume de moût livré en hectolitres">
+          <div style="font-family:'DM Sans',sans-serif;font-size:0.68rem;color:var(--ink-faint);margin-top:4px;">Requis — saisir le volume réel transféré (0–100 HL)</div>
+        </div>
+        <div style="flex:1;">
+          <label style="font-family:'JetBrains Mono',monospace;font-size:0.52rem;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink-mute);display:block;margin-bottom:6px;">
+            OG final (°Plato) <span style="color:var(--ink-faint);">facultatif</span>
+          </label>
+          <input id="sb-mout-og-input" type="number" step="0.1" min="5" max="25" value="14.1"
+                 class="sb-select" style="width:100%;font-size:1.1rem;font-family:'Fraunces',serif;"
+                 placeholder="—"
+                 aria-label="Densité originale finale en degrés Plato">
+          <div style="font-family:'DM Sans',sans-serif;font-size:0.68rem;color:var(--ink-faint);margin-top:4px;">°Plato · plage valide: 5–25</div>
+        </div>
+      </div>
+      <div style="margin-bottom:12px;">
+        <label style="font-family:'JetBrains Mono',monospace;font-size:0.52rem;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink-mute);display:block;margin-bottom:6px;">
+          Notes de clôture <span style="color:var(--ink-faint);">facultatif</span>
+        </label>
+        <textarea id="sb-mout-notes-input" class="sb-textarea" rows="2"
+                  placeholder="Ex: livraison conforme, pompe transfert OK, client confirmé…"
+                  style="min-height:48px;font-size:0.76rem;"></textarea>
+      </div>
+      <div id="sb-mout-recap-preview" style="padding:10px 12px;background:color-mix(in srgb,var(--oak) 5%,var(--bg-elev));border:1px solid color-mix(in srgb,var(--oak) 20%,transparent);border-radius:3px;font-family:'JetBrains Mono',monospace;font-size:0.58rem;letter-spacing:0.04em;color:var(--oak-deep);line-height:1.6;display:none;">
+      </div>
+      <p style="font-family:'DM Sans',sans-serif;font-size:0.72rem;color:var(--ember);font-weight:600;margin-top:12px;">
+        ⚠ Cette action est irréversible.
+      </p>
+    </div>
+    <div class="sb-modal__footer">
+      <button class="sb-btn sb-btn--secondary" onclick="closeMoutCloseModal()">Annuler</button>
+      <button id="sb-mout-confirm-btn" class="sb-btn sb-btn--cta" disabled aria-disabled="true"
+              onclick="confirmMoutClose()">
+        Confirmer la clôture
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ════════ ABANDON CONFIRM MODAL ════════ -->
+<div class="sb-modal-backdrop" id="js-mout-abandon-modal" role="dialog" aria-modal="true"
+     aria-labelledby="sb-mout-abandon-title" aria-hidden="true">
+  <div class="sb-modal" id="js-mout-abandon-inner">
+    <div class="sb-modal__header" style="border-top: 3px solid var(--ember);">
+      <div class="sb-modal__title" style="color:var(--ember);">⚠ Abandonner le contrat CB-MW #01</div>
+    </div>
+    <div class="sb-modal__body">
+      <p style="font-family:'DM Sans',sans-serif;font-size:0.82rem;color:var(--ember);font-weight:600;margin-bottom:12px;">
+        Cette action est irréversible.
+      </p>
+      <div style="margin-bottom:14px;">
+        <label style="font-family:'JetBrains Mono',monospace;font-size:0.54rem;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink-mute);display:block;margin-bottom:6px;">
+          Raison <span style="color:var(--ember);">*</span>
+        </label>
+        <select id="sb-mout-abandon-reason" class="sb-select" style="width:100%;margin-bottom:8px;" required
+                onchange="updateMoutAbandonConfirm()">
+          <option value="">— Sélectionner —</option>
+          <option value="contamination">Contamination confirmée</option>
+          <option value="erreur_saisie">Erreur de saisie / lot dupliqué</option>
+          <option value="fuite">Fuite / perte cuve</option>
+          <option value="autre">Autre raison</option>
+        </select>
+        <textarea class="sb-textarea" rows="2" placeholder="Détails (facultatif)…" style="min-height:48px;font-size:0.76rem;"></textarea>
+      </div>
+    </div>
+    <div class="sb-modal__footer">
+      <button class="sb-btn sb-btn--secondary" onclick="closeAbandonModal()">Annuler</button>
+      <button id="sb-mout-abandon-confirm-btn" class="sb-btn sb-btn--danger" disabled aria-disabled="true"
+              onclick="confirmAbandon()">
+        Confirmer l'abandon
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Focus trap helper ──
+function trapFocus(container) {
+  const focusable = container.querySelectorAll('button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+  const first = focusable[0], last = focusable[focusable.length - 1];
+  container.addEventListener('keydown', function(e) {
+    if (e.key !== 'Tab') return;
+    if (e.shiftKey) { if (document.activeElement === first) { e.preventDefault(); last.focus(); } }
+    else { if (document.activeElement === last) { e.preventDefault(); first.focus(); } }
+  });
+}
+
+// ── Moût close modal ──
+var _moutOpener = null;
+
+function openMoutCloseModal() {
+  _moutOpener = document.activeElement;
+  const modal = document.getElementById('js-mout-close-modal');
+  modal.classList.add('sb-modal-backdrop--visible');
+  modal.setAttribute('aria-hidden','false');
+  document.getElementById('sb-mout-vol-input').focus();
+  trapFocus(document.getElementById('js-mout-close-inner'));
+  updateMoutConfirm();
+}
+
+function closeMoutCloseModal() {
+  const modal = document.getElementById('js-mout-close-modal');
+  modal.classList.remove('sb-modal-backdrop--visible');
+  modal.setAttribute('aria-hidden','true');
+  if (_moutOpener) _moutOpener.focus();
+}
+
+function updateMoutConfirm() {
+  const vol = parseFloat(document.getElementById('sb-mout-vol-input').value);
+  const btn = document.getElementById('sb-mout-confirm-btn');
+  const recap = document.getElementById('sb-mout-recap-preview');
+  const valid = !isNaN(vol) && vol > 0 && vol <= 100;
+  btn.disabled = !valid;
+  btn.setAttribute('aria-disabled', !valid ? 'true' : 'false');
+  if (valid) {
+    const og = document.getElementById('sb-mout-og-input').value;
+    recap.style.display = 'block';
+    recap.textContent = 'RECAP: Moût transféré: ' + vol.toFixed(1) + ' HL au client Chien Bleu' + (og ? ' · OG: ' + og + '°P' : '') + ' · Aucune fermentation/conditionnement prévu.';
+  } else {
+    recap.style.display = 'none';
+  }
+}
+
+function confirmMoutClose() {
+  const vol = parseFloat(document.getElementById('sb-mout-vol-input').value);
+  const og = document.getElementById('sb-mout-og-input').value;
+  // In production: POST /api/session-action.php { action:'close_wort_contract', vol_hl:vol, og_plato:og }
+  closeMoutCloseModal();
+  window.location = 'mother-shell-archive.html';
+}
+
+document.getElementById('js-mout-close-modal').addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') closeMoutCloseModal();
+});
+
+// ── Abandon modal ──
+var _abandonOpener = null;
+
+function openAbandonModal() {
+  _abandonOpener = document.activeElement;
+  const modal = document.getElementById('js-mout-abandon-modal');
+  modal.classList.add('sb-modal-backdrop--visible');
+  modal.setAttribute('aria-hidden','false');
+  document.getElementById('sb-mout-abandon-reason').focus();
+  trapFocus(document.getElementById('js-mout-abandon-inner'));
+}
+
+function closeAbandonModal() {
+  const modal = document.getElementById('js-mout-abandon-modal');
+  modal.classList.remove('sb-modal-backdrop--visible');
+  modal.setAttribute('aria-hidden','true');
+  document.getElementById('sb-mout-abandon-reason').value = '';
+  document.getElementById('sb-mout-abandon-confirm-btn').disabled = true;
+  document.getElementById('sb-mout-abandon-confirm-btn').setAttribute('aria-disabled','true');
+  if (_abandonOpener) _abandonOpener.focus();
+}
+
+function updateMoutAbandonConfirm() {
+  const sel = document.getElementById('sb-mout-abandon-reason').value;
+  const btn = document.getElementById('sb-mout-abandon-confirm-btn');
+  btn.disabled = !sel;
+  btn.setAttribute('aria-disabled', !sel ? 'true' : 'false');
+}
+
+function confirmAbandon() {
+  // In production: POST /api/session-action.php { action:'abandon' }
+  closeAbandonModal();
+  const footer = document.querySelector('.sb-shell__footer');
+  if (footer) footer.innerHTML = '<div style="font-family:\'JetBrains Mono\',monospace;font-size:0.6rem;letter-spacing:0.1em;color:var(--ink-mute);">Abandon enregistré — lot archivé.</div>';
+}
+
+document.getElementById('js-mout-abandon-modal').addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') closeAbandonModal();
+});
+
+// ── Live clock ──
+function updateClock() {
+  const el = document.getElementById('js-clock');
+  if (!el) return;
+  const now = new Date();
+  el.textContent = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+}
+updateClock();
+setInterval(updateClock, 30000);
+</script>
+
+</body>
+</html>

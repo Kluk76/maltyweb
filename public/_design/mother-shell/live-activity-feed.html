@@ -1,0 +1,678 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fil d'activité temps réel · MaltyTask</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,200;0,9..144,300;0,9..144,400;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<!--
+  ════════════════════════════════════════════════════════════════
+  BUILD CONTRACT: live-activity-feed.html
+  ════════════════════════════════════════════════════════════════
+  PURPOSE: Standalone mockup of a "live activity feed" sidebar —
+  a real-time dispatch wire showing recent events across ALL mother
+  shells. V2/V3 inspirational backlog feature.
+
+  PALETTE: light-kraft only — all colors via FOUNDATIONS.md tokens
+  NAMESPACE: sb-* (extends _shared.css)
+  CONSTRAINTS: no PHP, no fetches, static HTML only
+  CREATIVE DECISION: The board behind the panel uses actual SVG
+  vessels from the Stage A CCT vocabulary, rendered at 25% opacity
+  to give the context of the theater of operations. The panel slides
+  in from the right (CSS translate animation on load), and each feed
+  item enters with a staggered fade-in + translateY to make the
+  dispatch wire feel ALIVE from the first render. Items are
+  color-coded by zone token (ember=brasserie, cold=fermentation,
+  oak=racking, hop=packaging). The JS simulates auto-scroll: new
+  events prepend every ~15s with an insert animation (for mockup
+  this fires once after 8s to demonstrate the mechanic without
+  running forever).
+
+  Stage B stretch · 2026-05-29
+  ════════════════════════════════════════════════════════════════
+-->
+
+<link rel="stylesheet" href="_shared.css">
+
+<style>
+body.sb-board {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  align-items: stretch;
+  overflow: hidden;
+}
+
+/* ── BOARD BACKGROUND (dimmed context) ── */
+.laf-board-bg {
+  position: fixed;
+  inset: 50px 0 0 0; /* below topbar */
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* Dimming overlay */
+.laf-board-bg::after {
+  content: "";
+  position: absolute; inset: 0;
+  background: color-mix(in srgb, var(--bg) 40%, transparent);
+  z-index: 1;
+}
+
+/* Board zone columns (simplified) */
+.laf-bg-grid {
+  position: absolute; inset: 0;
+  display: grid;
+  grid-template-columns: 1fr 2fr 1.5fr 1.2fr 0.7fr;
+  gap: 0;
+  z-index: 0;
+}
+.laf-bg-zone {
+  border-right: 1px solid var(--hairline);
+  position: relative;
+  overflow: hidden;
+}
+.laf-bg-zone:last-child { border-right: none; }
+.laf-bg-zone__header {
+  padding: 9px 14px 8px;
+  border-bottom: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--bg-elev) 80%, transparent);
+}
+.laf-bg-zone__label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.57rem; letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--ink-mute);
+}
+.laf-bg-zone__body {
+  position: absolute;
+  bottom: 24px; left: 0; right: 0;
+  display: flex; align-items: flex-end; justify-content: center;
+  gap: 10px;
+  padding: 0 10px;
+}
+
+/* ── ACTIVITY FEED PANEL ── */
+.laf-panel {
+  position: fixed;
+  top: 50px; right: 0; bottom: 0;
+  width: 360px;
+  z-index: 10;
+  display: flex; flex-direction: column;
+  background: color-mix(in srgb, var(--bg-elev) 96%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-left: 1px solid var(--hairline-2);
+  box-shadow: -6px 0 32px color-mix(in srgb, var(--ink) 10%, transparent);
+  transform: translateX(100%);
+  animation: laf-panel-in 0.35s ease-out 0.2s forwards;
+}
+
+@keyframes laf-panel-in {
+  to { transform: translateX(0); }
+}
+
+/* Panel header */
+.laf-header {
+  padding: 12px 16px 11px;
+  border-bottom: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--bg-elev) 80%, transparent);
+  display: flex; align-items: center; gap: 10px;
+  flex-shrink: 0;
+}
+.laf-header__live-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--ok) 60%, transparent);
+  animation: sb-pulse-green 2.2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+.laf-header__title {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.6rem; letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--ink); flex: 1;
+}
+.laf-header__time {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.52rem; letter-spacing: 0.06em;
+  color: var(--ink-faint);
+}
+.laf-header__collapse {
+  width: 24px; height: 24px;
+  background: none; border: 1px solid var(--hairline); border-radius: 2px;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  color: var(--ink-mute); font-size: 0.75rem;
+  transition: border-color .15s, color .15s;
+}
+.laf-header__collapse:hover { border-color: var(--hairline-2); color: var(--ink); }
+
+/* Feed container */
+.laf-feed {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 0;
+}
+.laf-feed::-webkit-scrollbar { width: 3px; }
+.laf-feed::-webkit-scrollbar-track { background: transparent; }
+.laf-feed::-webkit-scrollbar-thumb { background: var(--hairline); border-radius: 1px; }
+
+/* Feed divider (time group) */
+.laf-divider {
+  padding: 6px 16px 4px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.5rem; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--ink-faint);
+  border-bottom: 1px solid var(--hairline);
+  margin-bottom: 2px;
+}
+
+/* Feed item */
+.laf-item {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 8px 16px 8px 14px;
+  border-bottom: 1px solid var(--hairline);
+  cursor: pointer;
+  transition: background .12s;
+  position: relative;
+  opacity: 0;
+  transform: translateY(4px);
+}
+.laf-item--visible {
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 0.28s ease-out, transform 0.28s ease-out, background .12s;
+}
+.laf-item:hover {
+  background: color-mix(in srgb, var(--bg-side) 50%, transparent);
+}
+
+/* Zone accent stripe */
+.laf-item::before {
+  content: "";
+  position: absolute; top: 0; left: 0; bottom: 0;
+  width: 2px;
+}
+.laf-item--brew::before  { background: var(--ember); }
+.laf-item--ferm::before  { background: var(--cold); }
+.laf-item--rack::before  { background: var(--oak); }
+.laf-item--pack::before  { background: var(--hop); }
+
+/* Zone icon circle */
+.laf-item__icon {
+  width: 28px; height: 28px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.75rem;
+  flex-shrink: 0;
+  border: 1px solid;
+  margin-top: 1px;
+}
+.laf-item--brew .laf-item__icon  { background: color-mix(in srgb, var(--ember) 10%, transparent); border-color: color-mix(in srgb, var(--ember) 30%, transparent); color: var(--ember); }
+.laf-item--ferm .laf-item__icon  { background: color-mix(in srgb, var(--cold)  10%, transparent); border-color: color-mix(in srgb, var(--cold)  30%, transparent); color: var(--cold); }
+.laf-item--rack .laf-item__icon  { background: color-mix(in srgb, var(--oak)   10%, transparent); border-color: color-mix(in srgb, var(--oak)   30%, transparent); color: var(--oak); }
+.laf-item--pack .laf-item__icon  { background: color-mix(in srgb, var(--hop)   10%, transparent); border-color: color-mix(in srgb, var(--hop)   30%, transparent); color: var(--hop); }
+
+/* Item avatar (small) */
+.laf-item__avatar {
+  width: 20px; height: 20px; border-radius: 50%;
+  background: var(--bg-side); border: 1px solid var(--hairline-2);
+  display: flex; align-items: center; justify-content: center;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.44rem; font-weight: 600; color: var(--oak);
+  flex-shrink: 0;
+  margin-top: 4px;
+}
+
+/* Item body */
+.laf-item__body { flex: 1; min-width: 0; }
+.laf-item__ref {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.78rem; color: var(--ink);
+  line-height: 1.3;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.laf-item__ref em { font-style: italic; color: var(--oak); }
+.laf-item__ref strong { font-weight: 500; }
+.laf-item__event {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.52rem; letter-spacing: 0.04em;
+  color: var(--ink-mute); margin-top: 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* Timestamp (right-aligned) */
+.laf-item__time {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.5rem; letter-spacing: 0.04em;
+  color: var(--ink-faint); flex-shrink: 0; text-align: right;
+  margin-top: 2px;
+}
+
+/* New item flash */
+.laf-item--new {
+  animation: laf-new-flash 1.5s ease-out forwards;
+}
+@keyframes laf-new-flash {
+  0%   { background: color-mix(in srgb, var(--hop) 18%, var(--bg-elev)); }
+  100% { background: transparent; }
+}
+
+/* Feed footer (settings) */
+.laf-footer {
+  padding: 10px 16px;
+  border-top: 1px solid var(--hairline);
+  flex-shrink: 0;
+  background: color-mix(in srgb, var(--bg-elev) 80%, transparent);
+}
+.laf-footer__settings {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.laf-footer__btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.52rem; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--ink-mute);
+  background: none; border: 1px solid var(--hairline); border-radius: 2px;
+  padding: 4px 8px; cursor: pointer;
+  transition: color .15s, border-color .15s;
+}
+.laf-footer__btn:hover { color: var(--ink); border-color: var(--hairline-2); }
+.laf-footer__btn--active { color: var(--hop); border-color: color-mix(in srgb, var(--hop) 30%, transparent); }
+
+.laf-footer__caption {
+  margin-top: 8px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.5rem; letter-spacing: 0.08em;
+  color: var(--ink-faint);
+  text-align: center;
+}
+
+/* ── Main content area (board dimmed) ── */
+.laf-main {
+  position: relative; z-index: 1;
+  flex: 1;
+  padding-right: 360px; /* panel width */
+  display: flex; align-items: center; justify-content: center;
+}
+.laf-main__hint {
+  text-align: center;
+  padding: 24px;
+  pointer-events: none;
+}
+.laf-main__hint-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.56rem; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--ink-faint);
+  margin-bottom: 6px;
+}
+.laf-main__hint-text {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.8rem; color: var(--ink-faint); line-height: 1.5;
+}
+</style>
+</head>
+<body class="sb-board">
+
+<!-- Engineering registration marks -->
+<div aria-hidden="true" style="position:fixed;width:24px;height:24px;border:1px solid var(--hairline);z-index:200;pointer-events:none;opacity:0.4;top:14px;left:14px;border-right:none;border-bottom:none;"></div>
+<div aria-hidden="true" style="position:fixed;width:24px;height:24px;border:1px solid var(--hairline);z-index:200;pointer-events:none;opacity:0.4;top:14px;right:14px;border-left:none;border-bottom:none;"></div>
+<div aria-hidden="true" style="position:fixed;width:24px;height:24px;border:1px solid var(--hairline);z-index:200;pointer-events:none;opacity:0.4;bottom:14px;left:14px;border-right:none;border-top:none;"></div>
+<div aria-hidden="true" style="position:fixed;width:24px;height:24px;border:1px solid var(--hairline);z-index:200;pointer-events:none;opacity:0.4;bottom:14px;right:14px;border-left:none;border-top:none;"></div>
+
+<!-- TOPBAR -->
+<header class="sb-topbar" role="banner" style="position:relative;z-index:20;">
+  <div class="sb-wordmark">
+    <span class="sb-wordmark__name">Malty<em>Task</em></span>
+    <span class="sb-wordmark__sect">La Nébuleuse</span>
+  </div>
+  <nav class="sb-nav" aria-label="Navigation">
+    <a href="index.html" class="sb-nav__item">← Navigateur</a>
+    <span class="sb-nav__item sb-nav__item--active">Fil d'activité</span>
+  </nav>
+  <div class="sb-topbar__right">
+    <span class="sb-topbar__clock" id="clock">09:14</span>
+    <span style="font-family:'JetBrains Mono',monospace;font-size:0.56rem;letter-spacing:0.06em;color:var(--ink-faint);">Inspiration v2/v3</span>
+    <div class="sb-avatar" aria-label="Équipe">ÉQ</div>
+  </div>
+</header>
+
+<!-- BOARD BACKGROUND (dimmed theater) -->
+<div class="laf-board-bg" aria-hidden="true">
+  <div class="laf-bg-grid">
+
+    <!-- Zone 1: Brasserie -->
+    <div class="laf-bg-zone">
+      <div class="laf-bg-zone__header">
+        <div class="laf-bg-zone__label">Brasserie</div>
+      </div>
+      <div class="laf-bg-zone__body">
+        <!-- Simplified kettle silhouette -->
+        <svg width="56" height="78" viewBox="0 0 80 110" opacity="0.35">
+          <ellipse cx="40" cy="18" rx="30" ry="8" fill="none" stroke="#a08060" stroke-width="1.2"/>
+          <rect x="10" y="18" width="60" height="64" rx="4" fill="none" stroke="#a08060" stroke-width="1.2"/>
+          <rect x="18" y="72" width="44" height="12" rx="2" fill="none" stroke="#a08060" stroke-width="0.8"/>
+          <line x1="10" y1="58" x2="70" y2="58" stroke="#a08060" stroke-width="0.5" stroke-dasharray="3 3"/>
+          <circle cx="40" cy="14" r="3" fill="none" stroke="#b34428" stroke-width="1"/>
+        </svg>
+      </div>
+    </div>
+
+    <!-- Zone 2: Cave Fermentation (8 CCTs) -->
+    <div class="laf-bg-zone">
+      <div class="laf-bg-zone__header">
+        <div class="laf-bg-zone__label">Cave fermentation</div>
+      </div>
+      <div class="laf-bg-zone__body" style="gap:6px;">
+        <!-- 8 CCT outlines -->
+        <svg width="32" height="80" viewBox="0 0 80 155" opacity="0.3"><ellipse cx="40" cy="12" rx="28" ry="8" fill="none" stroke="#a08060" stroke-width="1.2"/><rect x="12" y="12" width="56" height="100" fill="none" stroke="#2f5575" stroke-width="1.2"/><polygon points="12,112 68,112 54,135 26,135" fill="none" stroke="#a08060" stroke-width="1"/></svg>
+        <svg width="32" height="80" viewBox="0 0 80 155" opacity="0.3"><ellipse cx="40" cy="12" rx="28" ry="8" fill="none" stroke="#a08060" stroke-width="1.2"/><rect x="12" y="12" width="56" height="100" fill="none" stroke="#2f5575" stroke-width="1.2"/><polygon points="12,112 68,112 54,135 26,135" fill="none" stroke="#a08060" stroke-width="1"/></svg>
+        <svg width="32" height="80" viewBox="0 0 80 155" opacity="0.5"><ellipse cx="40" cy="12" rx="28" ry="8" fill="none" stroke="#a08060" stroke-width="1.2"/><rect x="12" y="12" width="56" height="100" fill="none" stroke="#2f5575" stroke-width="1.5"/><polygon points="12,112 68,112 54,135 26,135" fill="none" stroke="#a08060" stroke-width="1"/></svg>
+        <svg width="32" height="80" viewBox="0 0 80 155" opacity="0.3"><ellipse cx="40" cy="12" rx="28" ry="8" fill="none" stroke="#a08060" stroke-width="1.2"/><rect x="12" y="12" width="56" height="100" fill="none" stroke="#a08060" stroke-width="1.2"/><polygon points="12,112 68,112 54,135 26,135" fill="none" stroke="#a08060" stroke-width="1"/></svg>
+        <svg width="32" height="80" viewBox="0 0 80 155" opacity="0.5"><ellipse cx="40" cy="12" rx="28" ry="8" fill="none" stroke="#a08060" stroke-width="1.2"/><rect x="12" y="12" width="56" height="100" fill="none" stroke="#2f5575" stroke-width="1.5"/><polygon points="12,112 68,112 54,135 26,135" fill="none" stroke="#a08060" stroke-width="1"/></svg>
+        <svg width="32" height="80" viewBox="0 0 80 155" opacity="0.3"><ellipse cx="40" cy="12" rx="28" ry="8" fill="none" stroke="#a08060" stroke-width="1.2"/><rect x="12" y="12" width="56" height="100" fill="none" stroke="#a08060" stroke-width="1.2"/><polygon points="12,112 68,112 54,135 26,135" fill="none" stroke="#a08060" stroke-width="1"/></svg>
+      </div>
+    </div>
+
+    <!-- Zone 3: BBT -->
+    <div class="laf-bg-zone">
+      <div class="laf-bg-zone__header">
+        <div class="laf-bg-zone__label">Salle BBT</div>
+      </div>
+      <div class="laf-bg-zone__body">
+        <svg width="48" height="68" viewBox="0 0 100 120" opacity="0.35">
+          <ellipse cx="50" cy="10" rx="38" ry="10" fill="none" stroke="#a08060" stroke-width="1.2"/>
+          <rect x="12" y="10" width="76" height="90" fill="none" stroke="#2f6d99" stroke-width="1.2"/>
+          <ellipse cx="50" cy="100" rx="38" ry="10" fill="none" stroke="#a08060" stroke-width="1.2"/>
+          <line x1="12" y1="40" x2="88" y2="40" stroke="#a08060" stroke-width="0.6"/>
+          <line x1="12" y1="70" x2="88" y2="70" stroke="#a08060" stroke-width="0.6"/>
+        </svg>
+        <svg width="48" height="68" viewBox="0 0 100 120" opacity="0.25">
+          <ellipse cx="50" cy="10" rx="38" ry="10" fill="none" stroke="#a08060" stroke-width="1.2"/>
+          <rect x="12" y="10" width="76" height="90" fill="none" stroke="#a08060" stroke-width="1.2"/>
+          <ellipse cx="50" cy="100" rx="38" ry="10" fill="none" stroke="#a08060" stroke-width="1.2"/>
+          <line x1="12" y1="40" x2="88" y2="40" stroke="#a08060" stroke-width="0.6"/>
+          <line x1="12" y1="70" x2="88" y2="70" stroke="#a08060" stroke-width="0.6"/>
+        </svg>
+      </div>
+    </div>
+
+    <!-- Zone 4: Conditionnement -->
+    <div class="laf-bg-zone">
+      <div class="laf-bg-zone__header">
+        <div class="laf-bg-zone__label">Conditionnement</div>
+      </div>
+      <div class="laf-bg-zone__body">
+        <!-- Conveyor silhouette -->
+        <svg width="100" height="50" viewBox="0 0 200 80" opacity="0.3">
+          <rect x="10" y="30" width="180" height="20" rx="2" fill="none" stroke="#567020" stroke-width="1.2"/>
+          <circle cx="22" cy="40" r="12" fill="none" stroke="#a08060" stroke-width="1"/>
+          <circle cx="178" cy="40" r="12" fill="none" stroke="#a08060" stroke-width="1"/>
+          <line x1="34" y1="32" x2="166" y2="32" stroke="#a08060" stroke-width="0.5" stroke-dasharray="4 3"/>
+          <line x1="34" y1="48" x2="166" y2="48" stroke="#a08060" stroke-width="0.5" stroke-dasharray="4 3"/>
+          <rect x="80" y="10" width="40" height="20" fill="none" stroke="#567020" stroke-width="1"/>
+          <line x1="100" y1="10" x2="100" y2="30" stroke="#a08060" stroke-width="0.8"/>
+        </svg>
+      </div>
+    </div>
+
+    <!-- Zone 5: Expédition (placeholder) -->
+    <div class="laf-bg-zone" style="opacity:0.3;">
+      <div class="laf-bg-zone__header">
+        <div class="laf-bg-zone__label" style="color:var(--ink-faint);">Expédition</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MAIN AREA (transparent — board shows through) -->
+<div class="laf-main" style="position:relative;z-index:2;min-height:calc(100vh - 50px);">
+  <div class="laf-main__hint">
+    <div class="laf-main__hint-label">Tableau de bord · Vue en arrière-plan</div>
+    <p class="laf-main__hint-text">Le fil d'activité se superpose au tableau<br>sans en bloquer la lecture.</p>
+  </div>
+</div>
+
+<!-- ─────────────────────────────────────────
+     ACTIVITY FEED PANEL
+───────────────────────────────────────── -->
+<aside class="laf-panel" role="complementary" aria-label="Fil d'activité">
+
+  <!-- Header -->
+  <div class="laf-header">
+    <div class="laf-header__live-dot"></div>
+    <span class="laf-header__title">Fil d'activité — temps réel</span>
+    <span class="laf-header__time" id="laf-last-update">màj il y a 0s</span>
+    <button class="laf-header__collapse" type="button" title="Réduire" aria-label="Réduire le fil">›</button>
+  </div>
+
+  <!-- Feed -->
+  <div class="laf-feed" id="laf-feed" role="log" aria-live="polite" aria-label="Fil d'événements">
+
+    <!-- Group: MAINTENANT -->
+    <div class="laf-divider">Maintenant</div>
+
+    <!-- Item 1: brewing, most recent -->
+    <div class="laf-item laf-item--brew" id="laf-i1" data-link="mother-shell-active.html">
+      <div class="laf-item__icon" title="Brasserie">🔥</div>
+      <div class="laf-item__body">
+        <div class="laf-item__ref"><em>Embuscade</em> <strong>#244</strong> → brewing</div>
+        <div class="laf-item__event">cooling started · OG mesurée 13.2°P</div>
+      </div>
+      <div class="laf-item__avatar" title="Raphaël">RA</div>
+      <div class="laf-item__time">0min</div>
+    </div>
+
+    <!-- Item 2 -->
+    <div class="laf-item laf-item--ferm" id="laf-i2" data-link="#">
+      <div class="laf-item__icon" title="Cave fermentation">❄</div>
+      <div class="laf-item__body">
+        <div class="laf-item__ref"><em>Zepp</em> <strong>#312</strong> → fermenting</div>
+        <div class="laf-item__event">FG relevée 3.4°P · seuil -0.4°P</div>
+      </div>
+      <div class="laf-item__avatar" title="Nina">NI</div>
+      <div class="laf-item__time">2min</div>
+    </div>
+
+    <!-- Item 3 -->
+    <div class="laf-item laf-item--pack" id="laf-i3" data-link="#">
+      <div class="laf-item__icon" title="Conditionnement">🍃</div>
+      <div class="laf-item__body">
+        <div class="laf-item__ref"><em>Stirling</em> <strong>#88</strong> → packaging</div>
+        <div class="laf-item__event">run bouteille démarré · 2000 bouteilles</div>
+      </div>
+      <div class="laf-item__avatar" title="Lucas">LU</div>
+      <div class="laf-item__time">4min</div>
+    </div>
+
+    <!-- Item 4 -->
+    <div class="laf-item laf-item--ferm" id="laf-i4" data-link="#">
+      <div class="laf-item__icon" title="Cave fermentation">❄</div>
+      <div class="laf-item__body">
+        <div class="laf-item__ref"><em>Embuscade</em> <strong>#243</strong> → fermenting</div>
+        <div class="laf-item__event">cold crash initié · 2°C cible</div>
+      </div>
+      <div class="laf-item__avatar" title="Nina">NI</div>
+      <div class="laf-item__time">7min</div>
+    </div>
+
+    <!-- Group: IL Y A ~30 MIN -->
+    <div class="laf-divider">Il y a ~30 min</div>
+
+    <!-- Item 5 -->
+    <div class="laf-item laf-item--rack" id="laf-i5" data-link="#">
+      <div class="laf-item__icon" title="Soutirage">🪵</div>
+      <div class="laf-item__body">
+        <div class="laf-item__ref"><em>Zepp</em> <strong>#311</strong> → racking</div>
+        <div class="laf-item__event">soutirage CCT-3 → BBT-1 · 28 HL transférés</div>
+      </div>
+      <div class="laf-item__avatar" title="Raphaël">RA</div>
+      <div class="laf-item__time">31min</div>
+    </div>
+
+    <!-- Item 6 -->
+    <div class="laf-item laf-item--brew" id="laf-i6" data-link="#">
+      <div class="laf-item__icon" title="Brasserie">🔥</div>
+      <div class="laf-item__body">
+        <div class="laf-item__ref"><em>Moonshine</em> <strong>#56</strong> → brewing</div>
+        <div class="laf-item__event">ébullition démarrée · durée 75 min</div>
+      </div>
+      <div class="laf-item__avatar" title="Lucas">LU</div>
+      <div class="laf-item__time">38min</div>
+    </div>
+
+    <!-- Item 7 -->
+    <div class="laf-item laf-item--pack" id="laf-i7" data-link="#">
+      <div class="laf-item__icon" title="Conditionnement">🍃</div>
+      <div class="laf-item__body">
+        <div class="laf-item__ref"><em>Stirling</em> <strong>#88</strong> → packaging</div>
+        <div class="laf-item__event">fût 20L rempli · lot BBT-2 · 8 fûts</div>
+      </div>
+      <div class="laf-item__avatar" title="Raphaël">RA</div>
+      <div class="laf-item__time">45min</div>
+    </div>
+
+    <!-- Group: IL Y A ~1H -->
+    <div class="laf-divider">Il y a ~1h</div>
+
+    <!-- Item 8 -->
+    <div class="laf-item laf-item--ferm" id="laf-i8" data-link="#">
+      <div class="laf-item__icon" title="Cave fermentation">❄</div>
+      <div class="laf-item__body">
+        <div class="laf-item__ref"><em>Speakeasy</em> <strong>#19</strong> → fermenting</div>
+        <div class="laf-item__event">début garde sèche · Citra 200g/HL</div>
+      </div>
+      <div class="laf-item__avatar" title="Nina">NI</div>
+      <div class="laf-item__time">1h02</div>
+    </div>
+
+    <!-- Item 9 -->
+    <div class="laf-item laf-item--brew" id="laf-i9" data-link="#">
+      <div class="laf-item__icon" title="Brasserie">🔥</div>
+      <div class="laf-item__body">
+        <div class="laf-item__ref"><em>Moonshine</em> <strong>#56</strong> → brewing</div>
+        <div class="laf-item__event">whirlpool terminé · transfert cuve</div>
+      </div>
+      <div class="laf-item__avatar" title="Lucas">LU</div>
+      <div class="laf-item__time">1h18</div>
+    </div>
+
+    <!-- Item 10 -->
+    <div class="laf-item laf-item--rack" id="laf-i10" data-link="#">
+      <div class="laf-item__icon" title="Soutirage">🪵</div>
+      <div class="laf-item__body">
+        <div class="laf-item__ref"><em>Diversion</em> <strong>#127</strong> → racking</div>
+        <div class="laf-item__event">session ouverte · BBT-3 disponible</div>
+      </div>
+      <div class="laf-item__avatar" title="Raphaël">RA</div>
+      <div class="laf-item__time">1h35</div>
+    </div>
+
+    <!-- Group: IL Y A ~2H -->
+    <div class="laf-divider">Il y a ~2h</div>
+
+    <!-- Item 11 -->
+    <div class="laf-item laf-item--ferm" id="laf-i11" data-link="#">
+      <div class="laf-item__icon" title="Cave fermentation">❄</div>
+      <div class="laf-item__body">
+        <div class="laf-item__ref"><em>Embuscade</em> <strong>#244</strong> → brewing</div>
+        <div class="laf-item__event">mother shell créée · session liée #43</div>
+      </div>
+      <div class="laf-item__avatar" title="Système">SY</div>
+      <div class="laf-item__time">1h58</div>
+    </div>
+
+    <!-- Item 12 -->
+    <div class="laf-item laf-item--pack" id="laf-i12" data-link="#">
+      <div class="laf-item__icon" title="Conditionnement">🍃</div>
+      <div class="laf-item__body">
+        <div class="laf-item__ref"><em>Zepp</em> <strong>#310</strong> → packaging</div>
+        <div class="laf-item__event">clôture validée · 2840 bouteilles emballées</div>
+      </div>
+      <div class="laf-item__avatar" title="Lucas">LU</div>
+      <div class="laf-item__time">2h10</div>
+    </div>
+
+  </div><!-- / .laf-feed -->
+
+  <!-- Footer: settings -->
+  <div class="laf-footer">
+    <div class="laf-footer__settings">
+      <button class="laf-footer__btn laf-footer__btn--active" type="button">⚡ Toutes les zones</button>
+      <button class="laf-footer__btn" type="button">🔔 Notifs</button>
+      <button class="laf-footer__btn" type="button">↑ Auto-scroll</button>
+    </div>
+    <div class="laf-footer__caption">Backlog v2/v3 — affichage d'inspiration · Données simulées</div>
+  </div>
+
+</aside>
+
+<script>
+// ── Live clock ──
+function updateClock() {
+  const now = new Date();
+  const h = String(now.getHours()).padStart(2,'0');
+  const m = String(now.getMinutes()).padStart(2,'0');
+  const el = document.getElementById('clock');
+  if (el) el.textContent = h + ':' + m;
+}
+updateClock();
+setInterval(updateClock, 30000);
+
+// ── Staggered item reveal ──
+const items = document.querySelectorAll('.laf-item');
+items.forEach((item, i) => {
+  setTimeout(() => item.classList.add('laf-item--visible'), 80 + i * 55);
+});
+
+// ── Last-update counter ──
+let lastUpdate = 0;
+function updateLastUpdate() {
+  const el = document.getElementById('laf-last-update');
+  if (!el) return;
+  const s = Math.floor(lastUpdate);
+  if (s < 60) el.textContent = 'màj il y a ' + s + 's';
+  else el.textContent = 'màj il y a ' + Math.floor(s/60) + 'min';
+  lastUpdate++;
+}
+setInterval(updateLastUpdate, 1000);
+
+// ── Simulate new event arriving (once after 8s, for demo) ──
+setTimeout(() => {
+  const feed    = document.getElementById('laf-feed');
+  const divider = feed.querySelector('.laf-divider');
+
+  const newItem = document.createElement('div');
+  newItem.className = 'laf-item laf-item--brew';
+  newItem.setAttribute('data-link', '#');
+  newItem.innerHTML = `
+    <div class="laf-item__icon" title="Brasserie">🔥</div>
+    <div class="laf-item__body">
+      <div class="laf-item__ref"><em>Embuscade</em> <strong>#244</strong> → brewing</div>
+      <div class="laf-item__event">levure pitchée · CCT-4 température 18°C</div>
+    </div>
+    <div class="laf-item__avatar" title="Nina">NI</div>
+    <div class="laf-item__time">0s</div>
+  `;
+
+  feed.insertBefore(newItem, divider.nextSibling);
+  // Trigger animation
+  requestAnimationFrame(() => {
+    newItem.classList.add('laf-item--visible', 'laf-item--new');
+    lastUpdate = 0; // reset counter
+  });
+}, 8000);
+
+// ── Click items → navigate (mockup: just highlight) ──
+document.querySelectorAll('.laf-item').forEach(item => {
+  item.addEventListener('click', () => {
+    document.querySelectorAll('.laf-item').forEach(i => i.style.background = '');
+    item.style.background = 'color-mix(in srgb, var(--bg-side) 60%, transparent)';
+  });
+});
+</script>
+
+</body>
+</html>

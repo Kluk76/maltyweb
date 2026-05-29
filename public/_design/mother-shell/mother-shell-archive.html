@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Archive des lots clos · MaltyTask</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,200;0,9..144,300;0,9..144,400;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<!--
+  ════════════════════════════════════════════════════════════════
+  MOCKUP: mother-shell-archive.html — Closed mothers archive view
+  ════════════════════════════════════════════════════════════════
+  Concept C: Theater of Operations diorama
+  Light-kraft palette · sb-* namespace · static only
+
+  Shows: last 30 days of closed mothers, filterable by recipe/date-range.
+  Each row: CLÔTURÉ stamp + recipe + batch + total HL + days alive +
+  final disposition (emballé/jeté/vendu moût).
+  Click row → opens mother-shell page in read-only/terminal mode.
+  Footer: "Plus ancien → archive complète" link to placeholder.
+
+  Interaction: filter by recipe (JS), sort by date.
+  ════════════════════════════════════════════════════════════════
+-->
+
+<link rel="stylesheet" href="_shared.css">
+
+</head>
+<body class="sb-board">
+
+<div class="sb-reg-mark sb-reg-mark--tl" aria-hidden="true"></div>
+<div class="sb-reg-mark sb-reg-mark--tr" aria-hidden="true"></div>
+
+<!-- TOPBAR -->
+<header class="sb-topbar" role="banner">
+  <div class="sb-wordmark">
+    <span class="sb-wordmark__name">Malty<em>Task</em></span>
+    <span class="sb-wordmark__sect">La Nébuleuse</span>
+  </div>
+  <nav class="sb-nav" aria-label="Navigation">
+    <a href="board-populated.html" class="sb-nav__item">← Lots en cours</a>
+    <span class="sb-nav__item sb-nav__item--active" aria-current="page">Archive</span>
+  </nav>
+  <div class="sb-topbar__right">
+    <span class="sb-kb-hint">W</span>
+    <div class="sb-topbar__clock" id="js-clock">09:47</div>
+    <div class="sb-avatar">LK</div>
+  </div>
+</header>
+
+<main class="sb-archive-wrap">
+
+  <!-- HEADER -->
+  <div class="sb-archive-header">
+    <div class="sb-archive-kicker">Historique des lots</div>
+    <h1 class="sb-archive-title">Archive — <em>lots clos</em></h1>
+    <p class="sb-archive-sub">30 derniers jours · Cliquez sur un lot pour accéder à sa fiche (lecture seule)</p>
+  </div>
+
+  <!-- FILTERS -->
+  <div class="sb-archive-filters" role="search" aria-label="Filtres d'archive">
+    <span class="sb-archive-filter-label">Filtrer</span>
+    <select class="sb-archive-filter-select" id="filter-recipe" aria-label="Filtrer par recette" onchange="filterTable()">
+      <option value="">Toutes les recettes</option>
+      <option value="Zepp">Zepp</option>
+      <option value="Embuscade">Embuscade</option>
+      <option value="Stirling">Stirling</option>
+      <option value="Moonshine">Moonshine</option>
+      <option value="Speakeasy">Speakeasy</option>
+      <option value="Chien Bleu">Chien Bleu (moût)</option>
+    </select>
+    <input class="sb-archive-filter-input" type="date" id="filter-from" value="2026-04-29" aria-label="Filtrer depuis le">
+    <span style="font-family:'JetBrains Mono',monospace;font-size:0.54rem;color:var(--ink-faint);">→</span>
+    <input class="sb-archive-filter-input" type="date" id="filter-to" value="2026-05-29" aria-label="Filtrer jusqu'au">
+    <select class="sb-archive-filter-select" id="filter-disp" aria-label="Filtrer par disposition" onchange="filterTable()">
+      <option value="">Toutes dispositions</option>
+      <option value="emballe">Emballé</option>
+      <option value="jete">Jeté</option>
+      <option value="mout">Vendu moût</option>
+    </select>
+    <span class="sb-archive-count" id="sb-archive-count" aria-live="polite">10 lots</span>
+  </div>
+
+  <!-- TABLE -->
+  <div style="overflow-x:auto;flex:1;border:1px solid var(--hairline);border-radius:3px;overflow:hidden;">
+    <table class="sb-archive-table" aria-label="Archive des lots clos">
+      <thead>
+        <tr>
+          <th scope="col">Statut</th>
+          <th scope="col">Recette</th>
+          <th scope="col">Batch</th>
+          <th scope="col" style="text-align:right;">Volume HL</th>
+          <th scope="col" style="text-align:right;">Durée</th>
+          <th scope="col">Clos le</th>
+          <th scope="col">Disposition</th>
+          <th scope="col">Opérateur</th>
+          <th scope="col">Action</th>
+        </tr>
+      </thead>
+      <tbody id="sb-archive-tbody">
+        <!-- Data rows — 10 representative lots -->
+        <tr data-recipe="Zepp" data-disp="emballe" onclick="window.location='mother-shell-active.html'">
+          <td><span class="sb-archive-stamp">Clôturé</span></td>
+          <td class="sb-archive-recipe"><em>Zepp</em></td>
+          <td class="sb-archive-ref">#309</td>
+          <td class="sb-archive-num">30.2</td>
+          <td class="sb-archive-num">28j</td>
+          <td class="sb-archive-num" style="text-align:left;">2026-05-27</td>
+          <td><span class="sb-archive-disp sb-archive-disp--emballe">Emballé</span></td>
+          <td class="sb-archive-num" style="text-align:left;">Luca</td>
+          <td><a href="mother-shell-active.html" class="sb-archive-link" onclick="event.stopPropagation()">Voir →</a></td>
+        </tr>
+        <tr data-recipe="Stirling" data-disp="emballe" onclick="window.location='mother-shell-active.html'">
+          <td><span class="sb-archive-stamp">Clôturé</span></td>
+          <td class="sb-archive-recipe"><em>Stirling</em></td>
+          <td class="sb-archive-ref">#186</td>
+          <td class="sb-archive-num">28.8</td>
+          <td class="sb-archive-num">35j</td>
+          <td class="sb-archive-num" style="text-align:left;">2026-05-25</td>
+          <td><span class="sb-archive-disp sb-archive-disp--emballe">Emballé</span></td>
+          <td class="sb-archive-num" style="text-align:left;">Emmanuel</td>
+          <td><a href="mother-shell-active.html" class="sb-archive-link" onclick="event.stopPropagation()">Voir →</a></td>
+        </tr>
+        <tr data-recipe="Moonshine" data-disp="jete" onclick="window.location='mother-shell-active.html'">
+          <td><span class="sb-archive-stamp" style="border-color:var(--ember);color:var(--ember);">Jeté</span></td>
+          <td class="sb-archive-recipe"><em>Moonshine</em></td>
+          <td class="sb-archive-ref">#171</td>
+          <td class="sb-archive-num" style="color:var(--ember);">28.4</td>
+          <td class="sb-archive-num">8j</td>
+          <td class="sb-archive-num" style="text-align:left;">2026-05-28</td>
+          <td><span class="sb-archive-disp sb-archive-disp--jete">Jeté</span></td>
+          <td class="sb-archive-num" style="text-align:left;">Kouros</td>
+          <td><a href="mother-shell-active.html" class="sb-archive-link" onclick="event.stopPropagation()">Voir →</a></td>
+        </tr>
+        <tr data-recipe="Speakeasy" data-disp="emballe" onclick="window.location='mother-shell-active.html'">
+          <td><span class="sb-archive-stamp">Clôturé</span></td>
+          <td class="sb-archive-recipe"><em>Speakeasy</em></td>
+          <td class="sb-archive-ref">#254</td>
+          <td class="sb-archive-num">14.2</td>
+          <td class="sb-archive-num">22j</td>
+          <td class="sb-archive-num" style="text-align:left;">2026-05-22</td>
+          <td><span class="sb-archive-disp sb-archive-disp--emballe">Emballé</span></td>
+          <td class="sb-archive-num" style="text-align:left;">Marc</td>
+          <td><a href="mother-shell-active.html" class="sb-archive-link" onclick="event.stopPropagation()">Voir →</a></td>
+        </tr>
+        <tr data-recipe="Zepp" data-disp="emballe" onclick="window.location='mother-shell-active.html'">
+          <td><span class="sb-archive-stamp">Clôturé</span></td>
+          <td class="sb-archive-recipe"><em>Zepp</em></td>
+          <td class="sb-archive-ref">#308</td>
+          <td class="sb-archive-num">31.0</td>
+          <td class="sb-archive-num">30j</td>
+          <td class="sb-archive-num" style="text-align:left;">2026-05-18</td>
+          <td><span class="sb-archive-disp sb-archive-disp--emballe">Emballé</span></td>
+          <td class="sb-archive-num" style="text-align:left;">Luca</td>
+          <td><a href="mother-shell-active.html" class="sb-archive-link" onclick="event.stopPropagation()">Voir →</a></td>
+        </tr>
+        <tr data-recipe="Chien Bleu" data-disp="mout" onclick="window.location='wort-contract-mother.html'">
+          <td><span class="sb-archive-stamp sb-archive-stamp--mout">Moût livré</span></td>
+          <td class="sb-archive-recipe"><em>Chien Bleu</em> — Moût</td>
+          <td class="sb-archive-ref">#CB-03</td>
+          <td class="sb-archive-num">20.0</td>
+          <td class="sb-archive-num">1j</td>
+          <td class="sb-archive-num" style="text-align:left;">2026-05-14</td>
+          <td><span class="sb-archive-disp sb-archive-disp--mout">Vendu moût</span></td>
+          <td class="sb-archive-num" style="text-align:left;">Kouros</td>
+          <td><a href="wort-contract-mother.html" class="sb-archive-link" onclick="event.stopPropagation()">Voir →</a></td>
+        </tr>
+        <tr data-recipe="Embuscade" data-disp="emballe" onclick="window.location='mother-shell-merged.html'">
+          <td><span class="sb-archive-stamp">Clôturé</span></td>
+          <td class="sb-archive-recipe"><em>Embuscade</em> ⊕</td>
+          <td class="sb-archive-ref">#242+243</td>
+          <td class="sb-archive-num">29.8</td>
+          <td class="sb-archive-num">24j</td>
+          <td class="sb-archive-num" style="text-align:left;">2026-05-10</td>
+          <td><span class="sb-archive-disp sb-archive-disp--emballe">Emballé</span></td>
+          <td class="sb-archive-num" style="text-align:left;">Emmanuel</td>
+          <td><a href="mother-shell-merged.html" class="sb-archive-link" onclick="event.stopPropagation()">Voir →</a></td>
+        </tr>
+        <tr data-recipe="Stirling" data-disp="emballe" onclick="window.location='mother-shell-active.html'">
+          <td><span class="sb-archive-stamp">Clôturé</span></td>
+          <td class="sb-archive-recipe"><em>Stirling</em></td>
+          <td class="sb-archive-ref">#185</td>
+          <td class="sb-archive-num">27.4</td>
+          <td class="sb-archive-num">33j</td>
+          <td class="sb-archive-num" style="text-align:left;">2026-05-05</td>
+          <td><span class="sb-archive-disp sb-archive-disp--emballe">Emballé</span></td>
+          <td class="sb-archive-num" style="text-align:left;">Luca</td>
+          <td><a href="mother-shell-active.html" class="sb-archive-link" onclick="event.stopPropagation()">Voir →</a></td>
+        </tr>
+        <tr data-recipe="Zepp" data-disp="emballe" onclick="window.location='mother-shell-active.html'">
+          <td><span class="sb-archive-stamp">Clôturé</span></td>
+          <td class="sb-archive-recipe"><em>Zepp</em></td>
+          <td class="sb-archive-ref">#307</td>
+          <td class="sb-archive-num">32.0</td>
+          <td class="sb-archive-num">29j</td>
+          <td class="sb-archive-num" style="text-align:left;">2026-05-02</td>
+          <td><span class="sb-archive-disp sb-archive-disp--emballe">Emballé</span></td>
+          <td class="sb-archive-num" style="text-align:left;">Marc</td>
+          <td><a href="mother-shell-active.html" class="sb-archive-link" onclick="event.stopPropagation()">Voir →</a></td>
+        </tr>
+        <tr data-recipe="Speakeasy" data-disp="emballe" onclick="window.location='mother-shell-active.html'">
+          <td><span class="sb-archive-stamp">Clôturé</span></td>
+          <td class="sb-archive-recipe"><em>Speakeasy</em></td>
+          <td class="sb-archive-ref">#253</td>
+          <td class="sb-archive-num">22.1</td>
+          <td class="sb-archive-num">21j</td>
+          <td class="sb-archive-num" style="text-align:left;">2026-04-30</td>
+          <td><span class="sb-archive-disp sb-archive-disp--emballe">Emballé</span></td>
+          <td class="sb-archive-num" style="text-align:left;">Luca</td>
+          <td><a href="mother-shell-active.html" class="sb-archive-link" onclick="event.stopPropagation()">Voir →</a></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- FOOTER -->
+  <div class="sb-archive-footer">
+    <span class="sb-archive-footer__note">Affichage: 30 derniers jours · archive complète depuis 2024-01</span>
+    <a href="#" class="sb-zone-empty__cta" style="margin-top:0;" onclick="event.preventDefault(); return false;">
+      Archive complète →
+    </a>
+  </div>
+
+</main>
+
+<script>
+function filterTable() {
+  const recipe = document.getElementById('filter-recipe').value;
+  const disp = document.getElementById('filter-disp').value;
+  const rows = document.querySelectorAll('#sb-archive-tbody tr');
+  let count = 0;
+  rows.forEach(row => {
+    const rMatch = !recipe || row.dataset.recipe === recipe;
+    const dMatch = !disp || row.dataset.disp === disp;
+    const show = rMatch && dMatch;
+    row.style.display = show ? '' : 'none';
+    if (show) count++;
+  });
+  document.getElementById('sb-archive-count').textContent = count + ' lot' + (count !== 1 ? 's' : '');
+}
+
+function updateClock() {
+  const el = document.getElementById('js-clock');
+  if (!el) return;
+  const now = new Date();
+  el.textContent = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+}
+updateClock();
+setInterval(updateClock, 30000);
+</script>
+
+</body>
+</html>
