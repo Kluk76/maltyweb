@@ -89,8 +89,8 @@ function canonical_beer_name_for_loader(string $raw): string {
     $map = [
         'Div.Blanche'   => 'Diversion Blanche',
         'Div. Blanche'  => 'Diversion Blanche',
-        'Div.Gose'      => 'Diversion Gose',
-        'Div. Gose'     => 'Diversion Gose',
+        'Div.Gose'      => 'Qrew - Diversion Gose',
+        'Div. Gose'     => 'Qrew - Diversion Gose',
         'Div.Panaché'   => 'Diversion Panaché',
     ];
     return $map[$raw] ?? $raw;
