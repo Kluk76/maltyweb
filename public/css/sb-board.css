@@ -1019,3 +1019,323 @@ body.sb-board .sb-sync-ts {
   pointer-events: none;
 }
 body.sb-board .sb-sync-ts:not(:empty) { opacity: 0.85; }
+
+/* ══════════════════════════════════════════════════════════════
+   RETRO-LINK — Atom 11.a (sb-rl-* namespace, body.sb-board)
+   ══════════════════════════════════════════════════════════════ */
+
+/* ── Trigger button in batch-list header ── */
+body.sb-board .sb-rl-trigger {
+  margin-left: auto;
+  padding: 3px 10px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.56rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--oak);
+  background: transparent;
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .15s, color .15s, border-color .15s;
+}
+body.sb-board .sb-rl-trigger:hover {
+  background: color-mix(in srgb, var(--oak) 10%, var(--bg));
+  border-color: var(--oak);
+  color: var(--oak-deep);
+}
+
+/* ── Backdrop / modal shell ── */
+body.sb-board .sb-rl-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  background: color-mix(in srgb, var(--ink) 55%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+}
+body.sb-board .sb-rl-backdrop[hidden] { display: none; }
+
+body.sb-board .sb-rl-modal {
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  box-shadow: 0 8px 32px color-mix(in srgb, var(--ink) 30%, transparent);
+  width: 100%;
+  max-width: 820px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Header ── */
+body.sb-board .sb-rl-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px 20px 14px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--bg-elev);
+  flex-shrink: 0;
+}
+body.sb-board .sb-rl-header__icon {
+  font-size: 1.4rem;
+  line-height: 1;
+  color: var(--oak);
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+body.sb-board .sb-rl-header__text {
+  flex: 1;
+  min-width: 0;
+}
+body.sb-board .sb-rl-title {
+  font-family: "Fraunces", serif;
+  font-optical-sizing: auto;
+  font-size: 1.05rem;
+  font-weight: 400;
+  color: var(--ink);
+  margin: 0 0 3px;
+}
+body.sb-board .sb-rl-sub {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.06em;
+  color: var(--ink-mute);
+  margin: 0;
+}
+body.sb-board .sb-rl-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1.2rem;
+  line-height: 1;
+  color: var(--ink-mute);
+  padding: 2px 6px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  transition: color .15s, background .15s;
+}
+body.sb-board .sb-rl-close:hover {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
+}
+
+/* ── Body ── */
+body.sb-board .sb-rl-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+}
+
+/* ── Loading state ── */
+body.sb-board .sb-rl-loading {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.7rem;
+  color: var(--ink-mute);
+  text-align: center;
+  padding: 32px 0;
+}
+
+/* ── Empty state ── */
+body.sb-board .sb-rl-empty {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.875rem;
+  color: var(--ink-soft);
+  text-align: center;
+  padding: 32px 0;
+}
+
+/* ── Error state ── */
+body.sb-board .sb-rl-error {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  background: color-mix(in srgb, var(--ember) 8%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--ember) 30%, var(--hairline));
+  border-radius: 4px;
+  margin: 16px 0;
+}
+body.sb-board .sb-rl-error[hidden] { display: none; }
+body.sb-board .sb-rl-error__text {
+  flex: 1;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.875rem;
+  color: var(--ink-soft);
+}
+body.sb-board .sb-rl-retry-btn {
+  padding: 4px 12px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ember);
+  background: transparent;
+  border: 1px solid var(--ember);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+body.sb-board .sb-rl-retry-btn:hover {
+  background: var(--ember);
+  color: var(--bg);
+}
+
+/* ── Proposals table ── */
+body.sb-board .sb-rl-table-wrap {
+  overflow-x: auto;
+}
+body.sb-board .sb-rl-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.8rem;
+}
+body.sb-board .sb-rl-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg-side);
+}
+body.sb-board .sb-rl-table th {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.52rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  padding: 7px 10px 6px;
+  border-bottom: 1px solid var(--hairline);
+  text-align: left;
+  white-space: nowrap;
+}
+body.sb-board .sb-rl-td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--hairline);
+  color: var(--ink-soft);
+  vertical-align: middle;
+}
+body.sb-board .sb-rl-td--id {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.65rem;
+  color: var(--ink-mute);
+  white-space: nowrap;
+}
+body.sb-board .sb-rl-td--type {
+  white-space: nowrap;
+}
+body.sb-board .sb-rl-td--recipe {
+  font-style: italic;
+}
+body.sb-board .sb-rl-td--batch {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
+body.sb-board .sb-rl-td--reason {
+  font-size: 0.72rem;
+  color: var(--ink-mute);
+  max-width: 260px;
+}
+body.sb-board .sb-rl-id-fallback {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.65rem;
+  color: var(--ink-mute);
+}
+
+/* Row tints by action */
+body.sb-board .sb-rl-row--skip {
+  opacity: 0.55;
+}
+body.sb-board .sb-rl-row--link,
+body.sb-board .sb-rl-row--create {
+  background: color-mix(in srgb, var(--hop) 5%, var(--bg));
+}
+
+/* ── Action badges ── */
+body.sb-board .sb-rl-badge {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 3px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.58rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+body.sb-board .sb-rl-badge--link {
+  background: color-mix(in srgb, var(--hop) 15%, var(--bg));
+  color: var(--hop-deep);
+  border: 1px solid color-mix(in srgb, var(--hop) 30%, var(--hairline));
+}
+body.sb-board .sb-rl-badge--create {
+  background: color-mix(in srgb, var(--bbt) 15%, var(--bg));
+  color: var(--cold);
+  border: 1px solid color-mix(in srgb, var(--bbt) 30%, var(--hairline));
+}
+body.sb-board .sb-rl-badge--skip {
+  background: var(--bg-elev);
+  color: var(--ink-faint);
+  border: 1px solid var(--hairline);
+}
+
+/* ── Footer ── */
+body.sb-board .sb-rl-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--hairline);
+  background: var(--bg-elev);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+body.sb-board .sb-rl-footer-micro {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.56rem;
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+}
+body.sb-board .sb-rl-footer-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* ── Buttons ── */
+body.sb-board .sb-rl-btn {
+  padding: 6px 16px;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.8rem;
+  font-weight: 500;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background .15s, color .15s, border-color .15s;
+}
+body.sb-board .sb-rl-btn--secondary {
+  background: transparent;
+  color: var(--ink-mute);
+  border-color: var(--hairline-2);
+}
+body.sb-board .sb-rl-btn--secondary:hover {
+  background: color-mix(in srgb, var(--ink) 8%, var(--bg));
+  color: var(--ink);
+}
+body.sb-board .sb-rl-btn--apply {
+  background: var(--oak);
+  color: var(--bg);
+  border-color: var(--oak-deep);
+}
+body.sb-board .sb-rl-btn--apply:hover:not(:disabled) {
+  background: var(--oak-deep);
+}
+body.sb-board .sb-rl-btn--apply:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

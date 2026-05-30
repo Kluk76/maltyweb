@@ -49,6 +49,16 @@ foreach (SB_ZONES as $z) {
     }
 }
 
+// Recipe lookup map for the retro-link modal (admin only, but fetched once for simplicity).
+// Keyed by recipe id → name; injected as window.SB_RECIPES in the page.
+$recipesForRl = [];
+if (($me['role'] ?? '') === 'admin') {
+    $rlStmt = $pdo->query("SELECT id, name FROM ref_recipes ORDER BY name");
+    foreach ($rlStmt->fetchAll(PDO::FETCH_ASSOC) as $rr) {
+        $recipesForRl[(int) $rr['id']] = (string) $rr['name'];
+    }
+}
+
 // ─── Local helpers ────────────────────────────────────────────────────────────
 
 /** Escape for HTML output. */
@@ -411,6 +421,13 @@ $jsBoardV      = @filemtime(__DIR__ . '/../js/sb-board.js')   ?: time();
       <span style="font-family:'JetBrains Mono',monospace;font-size:0.56rem;letter-spacing:0.06em;color:var(--ink-faint);">
         <?= $totalMothers ?> lot<?= $totalMothers !== 1 ? 's' : '' ?>
       </span>
+      <?php if (($me['role'] ?? '') === 'admin'): ?>
+      <button class="sb-rl-trigger" id="sb-rl-trigger"
+              onclick="window.sbRetroLink && window.sbRetroLink.open()"
+              title="Voir les propositions de liaisons rétroactives (admin)">
+        ⇆ Retro-link
+      </button>
+      <?php endif ?>
     </div>
 
     <?php if ($totalMothers === 0): ?>
@@ -507,6 +524,13 @@ $jsBoardV      = @filemtime(__DIR__ . '/../js/sb-board.js')   ?: time();
 </div><!-- /sb-board-wrap -->
 </main>
 
+<?php if (($me['role'] ?? '') === 'admin'): ?>
+<script>
+/* Retro-link recipe lookup map — admin only (id → name). */
+window.SB_RECIPES = <?= json_encode($recipesForRl, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+</script>
+<?php require __DIR__ . '/../../app/partials/sb-retro-link-modal.php' ?>
+<?php endif ?>
 <script src="/js/sb-board.js?v=<?= $jsBoardV ?>" defer></script>
 </body>
 </html>
