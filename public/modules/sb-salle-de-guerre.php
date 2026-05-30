@@ -14,11 +14,17 @@ declare(strict_types=1);
  * Topbar: discrete "Salle de Guerre" link alongside the "Lots en cours" entry.
  *
  * Architecture: doc_review_queue is the canonical RQ surface.
- *   SELECT * FROM doc_review_queue
- *   WHERE type IN ('garde_seuil_overdue','contamination_flagged',
- *                  'mother_abandoned','packaged_volume_anomaly')
- *     AND closed_at IS NULL
- *   ORDER BY created_at DESC
+ * SELECT id, type, status, priority, context, created_at, decision
+ *   FROM doc_review_queue
+ *  WHERE type IN ('garde_seuil_overdue','contamination_flagged',
+ *                 'mother_abandoned','packaged_volume_anomaly')
+ *    AND status = 'open'
+ *  ORDER BY created_at DESC
+ *
+ * `context` column intentionally not rendered until the heartbeat emitters
+ * land and define the payload schema (Option C interim, 2026-05-31 PM verdict).
+ * When emitters land, swap to `$body = sdg_esc($meta['detail'] ?? '')` and
+ * declare the SDG-type JSON schema in this header.
  *
  * Reuse anchors (DO NOT FORK):
  *   app/auth.php        — require_login(), current_user()
@@ -44,22 +50,30 @@ const SDG_TYPES = [
     'packaged_volume_anomaly',
 ];
 
+/* Severity derived from RQ type — not from the priority column. */
+const SDG_TYPE_SEVERITY = [
+    'mother_abandoned'        => 'critical',
+    'contamination_flagged'   => 'critical',
+    'garde_seuil_overdue'     => 'warning',
+    'packaged_volume_anomaly' => 'warning',
+];
+
 /* ─── Data fetch ─────────────────────────────────────────────────────────────── */
 
 $placeholders = implode(',', array_fill(0, count(SDG_TYPES), '?'));
 $stmt = $pdo->prepare(
-    "SELECT id, type, body, metadata, severity, created_at, decision
+    "SELECT id, type, status, priority, context, created_at, decision
        FROM doc_review_queue
       WHERE type IN ({$placeholders})
-        AND closed_at IS NULL
+        AND status = 'open'
       ORDER BY created_at DESC"
 );
 $stmt->execute(SDG_TYPES);
 $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-/* Split into critical vs warning sections (guard: severity column may be NULL). */
-$critical = array_filter($rows, fn($r) => !in_array($r['severity'] ?? 'critical', ['warning', 'warn'], true));
-$warnings = array_filter($rows, fn($r) =>  in_array($r['severity'] ?? 'critical', ['warning', 'warn'], true));
+/* Split into critical vs warning sections — severity derived from type map. */
+$critical = array_filter($rows, fn($r) => (SDG_TYPE_SEVERITY[$r['type']] ?? 'critical') === 'critical');
+$warnings = array_filter($rows, fn($r) => (SDG_TYPE_SEVERITY[$r['type']] ?? 'critical') === 'warning');
 $totalOpen = count($rows);
 $refreshedAt = date('Y-m-d H:i:s');
 
@@ -116,9 +130,12 @@ function sdg_meta(string|null $raw): array
  */
 function sdg_render_card(array $row, bool $isWarn = false): string
 {
-    $meta      = sdg_meta($row['metadata'] ?? null);
-    $motherId  = isset($meta['mother_id']) ? (int) $meta['mother_id'] : null;
-    $body      = sdg_esc($row['body'] ?? '');
+    /* Option C interim per PM 2026-05-31: context column intentionally not rendered
+       until the heartbeat emitters land and define the payload schema. The existing
+       inert-Voir guard handles missing mother_id gracefully. */
+    $meta      = [];
+    $body      = '';
+    $motherId  = null;
     $type      = $row['type'] ?? '';
     $createdAt = sdg_date_fr($row['created_at'] ?? null);
     $stampText = sdg_type_label($type);
