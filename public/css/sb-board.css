@@ -125,7 +125,7 @@ body.sb-board .main {
   flex: 1;
   display: flex;
   flex-direction: column;
-  min-height: 0;
+  /* min-height: 0 removed — diorama is now content-height, page scrolls */
   position: relative;
   z-index: 1;
 }
@@ -135,8 +135,7 @@ body.sb-board .main {
   flex: 1;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
-  min-height: 0;
+  /* overflow: hidden removed — let diorama expand and page scroll */
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -144,14 +143,15 @@ body.sb-board .main {
    ══════════════════════════════════════════════════════════════ */
 .sb-diorama {
   position: relative; z-index: 1;
-  flex: 0 0 56vh;
+  /* Atom 18.c: content-driven height — diorama grows to fit tallest zone.
+     Removed: flex: 0 0 56vh; max-height: 62vh; overflow: hidden.
+     Page scrolls as a whole; no internal zone clipping. */
+  flex: 0 0 auto;
   min-height: 440px;
-  max-height: 62vh;
   display: grid;
   grid-template-columns: 1fr 2fr 1.5fr 1.2fr 0.7fr;
-  grid-template-rows: 1fr;
+  grid-template-rows: auto;
   gap: 0;
-  overflow: hidden;
 }
 
 /* Zone separator lines (schematic / technical) */
@@ -167,7 +167,7 @@ body.sb-board .main {
   position: relative;
   display: flex; flex-direction: column;
   border-right: 1px solid var(--hairline);
-  overflow: hidden;
+  /* overflow: hidden removed — zones grow with content */
   transition: background .3s;
 }
 .sb-zone:last-child { border-right: none; }
@@ -218,7 +218,7 @@ body.sb-board .main {
 .sb-zone__body {
   flex: 1;
   position: relative;
-  overflow: hidden;
+  /* overflow: hidden removed — body expands to show all cards */
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -226,21 +226,18 @@ body.sb-board .main {
   padding: 0;
 }
 
-/* Cards area — top portion, scrollable */
+/* Cards area — top portion, no internal scroll (Atom 18.c).
+   Removed: overflow-y: auto; min-height: 0.
+   All chips/cards are visible; the page scrolls as a whole. */
 .sb-zone__cards {
-  flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
+  flex: 0 0 auto;
+  overflow: visible;
   padding: 10px 8px 6px;
   display: flex;
   flex-direction: column;
   justify-content: flex-start;
   gap: 0;
-  min-height: 0;
 }
-.sb-zone__cards::-webkit-scrollbar { width: 3px; }
-.sb-zone__cards::-webkit-scrollbar-track { background: transparent; }
-.sb-zone__cards::-webkit-scrollbar-thumb { background: var(--hairline); border-radius: 1px; }
 
 /* Vessel stage — bottom portion, fixed height, in normal flow */
 .sb-vessel-stage {
@@ -1095,7 +1092,7 @@ body.sb-board .sb-avail-widget__note--assemblage {
 @media (max-width: 1000px) {
   .sb-diorama {
     grid-template-columns: 1fr 1fr;
-    grid-template-rows: 1fr 1fr;
+    grid-template-rows: auto auto;
     height: auto;
     flex: none;
     max-height: none;
@@ -1117,7 +1114,8 @@ body.sb-board .sb-avail-widget__note--assemblage {
     grid-template-rows: repeat(5, auto);
     height: auto;
   }
-  .sb-zone { height: 220px; }
+  /* height: 220px removed — zones expand to show all content on mobile too */
+  .sb-zone { min-height: 120px; }
   .sb-zone:nth-child(n) {
     border-right: none;
     border-bottom: 1px solid var(--hairline);
