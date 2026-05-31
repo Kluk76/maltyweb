@@ -11,6 +11,12 @@ declare(strict_types=1);
  * Unions across multi-vintage recipes via `ref_recipes.name = beer_name` JOIN
  * (e.g. EPH1 has 5 ref_recipes rows; all contribute to the result).
  *
+ * Alias-aware: if $beer_name matches a ref_recipe_aliases.alias instead of a
+ * canonical ref_recipes.name, the JOIN resolves via the alias → recipe_id_fk
+ * link so that historical bd_* rows using old contract names (TM-BLO, TM-IPA,
+ * TM-TR, TM-ST, NYL, full Toccalmatto names) still resolve to the correct
+ * recipe ingredients after the 2026-05 operator renames.
+ *
  * Rule (memory: feedback_observed_data_wins_over_ref_recipe.md):
  *   1. Observed in bd_brewing_ingredients_parsed → used directly by the existing
  *      brew-cost SQL. This loader does NOT touch those rows.
@@ -137,7 +143,14 @@ function load_recipe_ingredients_for_batch(
         $observed[(int) $mid] = true;
     }
 
-    // Step 2: ref_recipe rows for any recipe matching this beer name (unions vintages)
+    // Step 2: ref_recipe rows for any recipe matching this beer name (unions vintages).
+    // Alias-aware: LEFT JOIN ref_recipe_aliases so that old contract names (TM-BLO,
+    // "Toccalmatto - Blonde", NYL, etc.) resolve to the correct recipe even after an
+    // operator rename. The WHERE matches the canonical name first (r.name = ?) and falls
+    // back to an alias match (rra.alias = ?). For multi-vintage recipes like EPH1, the
+    // canonical name path unions all vintage rows as before (no behavioural change).
+    // COLLATE utf8mb4_unicode_ci applied to both sides of each comparison because
+    // bd_* source columns use utf8mb4_0900_ai_ci; ref_* tables use utf8mb4_unicode_ci.
     $stmt = $pdo->prepare("
         SELECT
           ri.mi_id_fk,
@@ -149,14 +162,20 @@ function load_recipe_ingredients_for_batch(
         FROM ref_recipe_ingredients ri
         JOIN ref_mi m       ON m.id  = ri.mi_id_fk
         JOIN ref_recipes r  ON r.id  = ri.recipe_id
-        WHERE r.name COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci
+        LEFT JOIN ref_recipe_aliases rra
+               ON rra.recipe_id = r.id
+              AND rra.alias COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci
+        WHERE (
+                r.name COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci
+             OR rra.alias IS NOT NULL
+              )
           AND r.is_active  = 1
           AND ri.is_active = 1
           AND (ri.effective_from  IS NULL OR ri.effective_from  <= ?)
           AND (ri.effective_until IS NULL OR ri.effective_until >  ?)
         ORDER BY ri.mi_id_fk
     ");
-    $stmt->execute([$beer_name, $asof, $asof]);
+    $stmt->execute([$beer_name, $beer_name, $asof, $asof]);
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
     // Step 3: gap-fill — emit only rows whose mi_id_fk is NOT observed

@@ -134,6 +134,28 @@ function sdc_flash_bom_result(string $saveMsg, array $r): void
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// HELPER: build the PRG redirect URL carrying selection state through the round-trip.
+//   $sec      — section (recettes|biochem|conditionnement|…)
+//   $recipeId — positive int restores the recipe selection on recettes; 0 = no-op
+//   $sub      — subtab name (ingr|process|formats|yeast); '' = no-op (stays on ingr)
+//   $strainId — positive int scrolls to the strain row on biochem; 0 = no-op
+// ─────────────────────────────────────────────────────────────────────────────
+function sdc_redirect_url(string $sec, int $recipeId = 0, string $sub = '', int $strainId = 0): string
+{
+    $url = '/modules/salle-de-controle.php?sec=' . urlencode($sec);
+    if ($recipeId > 0) {
+        $url .= '&recipe=' . $recipeId;
+    }
+    if ($sub !== '') {
+        $url .= '&sub=' . urlencode($sub);
+    }
+    if ($strainId > 0) {
+        $url .= '&strain=' . $strainId;
+    }
+    return $url;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // POST handler
 // ─────────────────────────────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -156,6 +178,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         : ($action === 'update_pertes_config' ? 'pertes'
         : (in_array($action, ['cip_type_add','cip_type_update','cip_type_deactivate','cip_type_reactivate','update_cip_cadence'], true)
             ? 'cip' : 'conditionnement')));
+
+    // Selection state threaded through PRG so the page can restore position on reload.
+    $redirectRecipeId = 0; // carried as &recipe=<id> on recettes section
+    $redirectSub      = ''; // carried as &sub=<tab> on recettes section
+    $redirectStrainId = 0; // carried as &strain=<id> on biochem section
 
     try {
         $pdo = maltytask_pdo();
@@ -296,6 +323,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 flash_set('ok', $activateMsg
                     . " · BOM recompilation échouée (la sauvegarde est conservée — relance en cron).");
             }
+            $redirectRecipeId = $recipeId;
+            $redirectSub      = 'formats';
 
         // ── deactivate_format ────────────────────────────────────────────────
         } elseif ($action === 'deactivate_format') {
@@ -338,6 +367,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 flash_set('ok', $deactivateMsg
                     . " · BOM recompilation échouée (la sauvegarde est conservée — relance en cron).");
             }
+            $redirectRecipeId = $recipeId;
+            $redirectSub      = 'formats';
 
         // ── set_binding ──────────────────────────────────────────────────────
         } elseif ($action === 'set_binding') {
@@ -444,6 +475,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 flash_set('ok', $bindingMsg
                     . " · BOM recompilation échouée (la sauvegarde est conservée — relance en cron).");
             }
+            $redirectRecipeId = $recipeId;
+            $redirectSub      = 'formats';
 
         // ── update_yeast_family ──────────────────────────────────────────────
         } elseif ($action === 'update_yeast_family') {
@@ -586,7 +619,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // Role gate: admin or manager only (silent reject for operateur)
             if (!is_admin($me) && !is_manager($me)) {
                 flash_set('err', 'Modification réservée aux administrateurs et managers.');
-                redirect_to('/modules/salle-de-controle.php?sec=recettes');
+                $rid = max(0, (int) ($_POST['recipe_id'] ?? 0));
+                redirect_to(sdc_redirect_url('recettes', $rid, 'yeast'));
             }
 
             // ── Step 1: read with defaults, then validate ────────────────────
@@ -751,6 +785,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 . ($newFamily !== null ? " · famille souche : {$newFamily}" : '')
                 . '.'
             );
+            $redirectRecipeId = $recipeId;
+            $redirectSub      = 'yeast';
 
         // ── update_yeast_strain ──────────────────────────────────────────────
         // Per-strain catalog editor in the Biochimie section.
@@ -761,7 +797,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif ($action === 'update_yeast_strain') {
             if (!is_admin($me) && !is_manager($me)) {
                 flash_set('err', 'Modification réservée aux administrateurs et managers.');
-                redirect_to('/modules/salle-de-controle.php?sec=biochem');
+                $sid = max(0, (int) ($_POST['strain_id'] ?? 0));
+                redirect_to(sdc_redirect_url('biochem', 0, '', $sid));
             }
 
             // Step 1 — read with defaults, then validate (two-step pattern)
@@ -890,6 +927,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             );
 
             flash_set('ok', "Souche «{$strainRow['name']}» mise à jour.");
+            $redirectStrainId = $strainId;
 
         // ── update_recipe_qc ─────────────────────────────────────────────────
         // Editor for per-recipe CO₂ target/tolerance and optional racked_vol overrides.
@@ -899,7 +937,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif ($action === 'update_recipe_qc') {
             if (!is_admin($me) && !is_manager($me)) {
                 flash_set('err', 'Modification réservée aux administrateurs et managers.');
-                redirect_to('/modules/salle-de-controle.php?sec=recettes');
+                $rid = max(0, (int) ($_POST['recipe_id'] ?? 0));
+                redirect_to(sdc_redirect_url('recettes', $rid, 'yeast'));
             }
 
             // ── Step 1: read with defaults, then validate ────────────────────
@@ -1019,6 +1058,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             flash_set('ok',
                 "Seuils QC enregistrés — «{$recRow['name']}» · " . implode(', ', $parts) . '.'
             );
+            $redirectRecipeId = $recipeId;
+            $redirectSub      = 'yeast';
 
         // ── cip_type_add ─────────────────────────────────────────────────────
         } elseif ($action === 'cip_type_add') {
@@ -1396,7 +1437,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif ($action === 'update_recipe_style') {
             if (!is_admin($me) && !is_manager($me)) {
                 flash_set('err', 'Modification réservée aux administrateurs et managers.');
-                redirect_to('/modules/salle-de-controle.php?sec=recettes');
+                $rid = max(0, (int) ($_POST['recipe_id'] ?? 0));
+                redirect_to(sdc_redirect_url('recettes', $rid, 'ingr'));
             }
 
             // Step 1 — read with defaults, then validate
@@ -1444,12 +1486,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $styleLabel = $styleOrNull ?? '(vide)';
             flash_set('ok', "Style enregistré — «{$recRow['name']}» · {$styleLabel}.");
+            $redirectRecipeId = $recipeId;
+            $redirectSub      = 'ingr';
 
         // ── update_recipe_name ───────────────────────────────────────────────
         } elseif ($action === 'update_recipe_name') {
             if (!is_admin($me) && !is_manager($me)) {
                 flash_set('err', 'Modification réservée aux administrateurs et managers.');
-                redirect_to('/modules/salle-de-controle.php?sec=recettes');
+                $rid = max(0, (int) ($_POST['recipe_id'] ?? 0));
+                redirect_to(sdc_redirect_url('recettes', $rid, 'ingr'));
             }
 
             // Step 1 — read with defaults, then validate
@@ -1485,7 +1530,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // single-vintage, subtype NULL, brew-linked by recipe_id_fk — safe.
             if (($recRow['classification'] ?? '') !== 'Contract') {
                 flash_set('err', 'Renommage réservé aux recettes sous contrat — les noms des recettes Nébuleuse sont des clés de jointure (attribution cuves / COGS).');
-                redirect_to('/modules/salle-de-controle.php?sec=recettes');
+                redirect_to(sdc_redirect_url('recettes', $recipeId, 'ingr'));
             }
 
             // Step 3 — fetch before-state for audit
@@ -1509,6 +1554,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             );
 
             flash_set('ok', "Recette renommée : «{$before['name']}» → «{$newName}».");
+            $redirectRecipeId = $recipeId;
+            $redirectSub      = 'ingr';
 
         } else {
             throw new RuntimeException('Action inconnue.');
@@ -1517,7 +1564,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         flash_set('err', pdo_friendly_error($e, 'salle-de-controle'));
     }
 
-    redirect_to('/modules/salle-de-controle.php?sec=' . $redirectSec);
+    redirect_to(sdc_redirect_url($redirectSec, $redirectRecipeId, $redirectSub, $redirectStrainId));
 }
 
 // ── GET — load data for all sections ──────────────────────────────────────────
@@ -2836,7 +2883,7 @@ window.SDC_PROFILES = {};
                 $flocLabels = ['low' => 'Faible', 'medium' => 'Moyenne', 'high' => 'Élevée'];
                 $typeLabels = ['ale' => 'Ale', 'lager' => 'Lager', 'wild' => 'Wild', 'hybrid' => 'Hybride', 'unknown' => '—'];
               ?>
-              <tr class="<?= $rowClass ?>">
+              <tr class="<?= $rowClass ?>" data-strain-id="<?= $sId ?>">
                 <td class="sc-td sc-td--name">
                   <?= htmlspecialchars($sName) ?>
                   <?php if ($isOrphan): ?>
@@ -4539,11 +4586,38 @@ function showToast(msg){
    ═══════════════════════════════════════════ */
 buildRecipeList();
 switchSection(SDC_INITIAL);
-// Auto-select first active recipe on load; fall back to first overall if actives is empty.
-if(SDC_INITIAL==='recettes'){
-  const firstRec=(RECIPES_ACTIVES[0]||RECIPES[0]);
-  if(firstRec) selectRecipe(firstRec.id);
-}
+
+// Restore position after a PRG redirect.
+// PHP carries &recipe=<id>&sub=<tab> (recipe actions) or &strain=<id> (biochem).
+(function(){
+  const sp       = new URLSearchParams(location.search);
+  const recipeId = sp.has('recipe') ? parseInt(sp.get('recipe'), 10) : null;
+  const sub      = sp.get('sub') || null;
+  const strainId = sp.has('strain') ? parseInt(sp.get('strain'), 10) : null;
+
+  if(SDC_INITIAL==='recettes' && recipeId && !isNaN(recipeId)){
+    // Switch subtab first so selectRecipe triggers the right panel render.
+    if(sub && ['ingr','process','formats','yeast'].includes(sub)) switchSubtab(sub);
+    selectRecipe(recipeId);
+    // Scroll recipe item into view after a short frame to let the list render.
+    requestAnimationFrame(()=>{
+      const el=document.querySelector('.recipe-item[data-id="'+recipeId+'"]');
+      if(el) el.scrollIntoView({block:'center',behavior:'smooth'});
+    });
+  } else if(SDC_INITIAL==='recettes'){
+    // Default: auto-select first active recipe.
+    const firstRec=(RECIPES_ACTIVES[0]||RECIPES[0]);
+    if(firstRec) selectRecipe(firstRec.id);
+  }
+
+  if(SDC_INITIAL==='biochem' && strainId && !isNaN(strainId)){
+    // Scroll to the matching strain row in the catalog table.
+    requestAnimationFrame(()=>{
+      const row=document.querySelector('tr[data-strain-id="'+strainId+'"]');
+      if(row) row.scrollIntoView({block:'center',behavior:'smooth'});
+    });
+  }
+})();
 </script>
 <script src="/js/salle-de-controle.js?v=<?= @filemtime(__DIR__ . '/../js/salle-de-controle.js') ?: time() ?>"></script>
 </body>
