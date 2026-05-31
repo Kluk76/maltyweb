@@ -164,6 +164,109 @@ body.form-brewing .brew-note {
   line-height: 1.4;
 }
 
+/* ── Cooling sub-brew table ────────────────────────────────────────────────── */
+body.form-brewing .brew-cool__table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+  font-size: 0.875rem;
+}
+
+body.form-brewing .brew-cool__table thead th {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  padding: 0 8px 8px 0;
+  text-align: left;
+  border-bottom: 1px solid var(--hairline);
+}
+
+body.form-brewing .brew-cool__table tbody tr {
+  border-bottom: 1px solid var(--hairline);
+}
+
+body.form-brewing .brew-cool__table tbody tr:last-child {
+  border-bottom: none;
+}
+
+body.form-brewing .brew-cool__table tbody td {
+  padding: 7px 8px 7px 0;
+  vertical-align: middle;
+}
+
+/* Column widths */
+body.form-brewing .brew-cool__col--num { width: 64px; }
+body.form-brewing .brew-cool__col--vol { min-width: 110px; }
+body.form-brewing .brew-cool__col--og  { min-width: 100px; }
+body.form-brewing .brew-cool__col--ph  { min-width: 90px; }
+body.form-brewing .brew-cool__col--del { width: 32px; }
+
+/* Row number cell */
+body.form-brewing .brew-cool__num-cell {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.75rem;
+  color: var(--ink-mute);
+  font-weight: 600;
+  padding-left: 2px;
+}
+
+/* Inputs inside the cooling table reuse ingredient-table styles */
+body.form-brewing .brew-cool__input {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  padding: 7px 10px;
+  color: var(--ink);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.82rem;
+  outline: none;
+  transition: border-color 0.15s;
+  width: 100%;
+  text-align: right;
+}
+
+body.form-brewing .brew-cool__input:focus {
+  border-color: var(--hop);
+}
+
+body.form-brewing .brew-cool__input::placeholder {
+  color: var(--ink-mute);
+}
+
+/* Footer row: add-button + running total */
+body.form-brewing .brew-cool__footer {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 4px;
+}
+
+body.form-brewing .brew-cool__add-btn {
+  flex: 1;
+}
+
+body.form-brewing .brew-cool__total {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  white-space: nowrap;
+  padding-right: 4px;
+}
+
+body.form-brewing .brew-cool__total strong {
+  color: var(--hop);
+}
+
+/* Sub-brew count badge (mirrors ingredient count) */
+body.form-brewing .brew-cool__count {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem;
+  color: var(--hop);
+  margin-left: 6px;
+}
+
 /* ── FLAGGED / deferred section notice ─────────────────────────────────────── */
 body.form-brewing .brew-deferred-notice {
   background: color-mix(in srgb, var(--oak)  8%, transparent);
@@ -189,4 +292,61 @@ body.form-brewing .brew-empty-note {
 @media (max-width: 600px) {
   body.form-brewing .brew-ing__col--lot  { display: none; }
   body.form-brewing .brew-ing__col--unit { width: 66px; }
+}
+
+/* ── FIX 2: Overwrite-conflict warning banner ──────────────────────────────── */
+body.form-brewing .fb-overwrite-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: color-mix(in srgb, var(--ember) 12%, var(--bg));
+  border: 1.5px solid color-mix(in srgb, var(--ember) 50%, transparent);
+  border-radius: 5px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  font-size: 0.875rem;
+  color: var(--ink);
+  line-height: 1.45;
+}
+
+body.form-brewing .fb-overwrite-warning__icon {
+  font-size: 1.1rem;
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--ember);
+}
+
+body.form-brewing .fb-overwrite-warning__body {
+  flex: 1;
+}
+
+body.form-brewing .fb-overwrite-warning__body strong {
+  color: var(--ember);
+}
+
+/* Confirm-overwrite checkbox row (shown inline under the warning) */
+body.form-brewing .fb-overwrite-confirm {
+  margin-bottom: 16px;
+  padding: 10px 16px;
+  background: color-mix(in srgb, var(--ember) 6%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--ember) 30%, transparent);
+  border-top: none;
+  border-radius: 0 0 5px 5px;
+}
+
+body.form-brewing .fb-overwrite-confirm__label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.875rem;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+body.form-brewing .fb-overwrite-confirm__cb {
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+  accent-color: var(--ember);
+  flex-shrink: 0;
 }
