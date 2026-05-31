@@ -395,11 +395,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $comments  = post_str('comments');
         $fwComment = post_str('fw_comment');
 
-        // DLC/BBD — single input, routed to the neb or contract column by which beer is set.
-        // (Nébuleuse vs contract is known from the selected beer; no need for two questions.)
-        $dlcRaw      = post_str('dlc');
-        $nebDlc      = ($nebBeer !== '' && $nebBeer !== null) ? $dlcRaw : null;
-        $contractDlc = ($contractBeer !== '' && $contractBeer !== null) ? $dlcRaw : null;
+        // DLC/BBD — single input, single column. The selected beer already tells us
+        // Nébuleuse vs contract (no need for two questions/columns like BSF had), so the
+        // one value is stored in the existing neb_dlc column for every row. There is no
+        // contract_dlc column on bd_packaging_v2.
+        $nebDlc = post_str('dlc');
 
         // ── 2. QC flag ─────────────────────────────────────────────────────
         // Evaluate each CO₂/O₂ pair; take the worst flag across all pairs.
@@ -584,7 +584,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'neb_beer'               => $nebBeer,
                     'neb_batch'              => $nebBatch,
                     'neb_dlc'                => $nebDlc,
-                    'contract_dlc'           => $contractDlc,
                     'contract_beer'          => $contractBeer,
                     'contract_batch'         => $contractBatch,
                     'recipe_id_fk'           => $recipeIdFk,
@@ -1681,7 +1680,7 @@ window.MIN_DAYS_AFTER_RACKING = <?= $minDays ?>;
  * event_date                  → event_date                        NEW col (mig 127)
  * neb_beer (hidden)           → neb_beer
  * neb_batch (hidden)          → neb_batch
- * dlc                         → neb_dlc (when neb_beer set) | contract_dlc (when contract_beer set)
+ * dlc                         → neb_dlc (single DLC/BBD column; beer selection disambiguates neb/contract)
  * contract_beer (hidden)      → contract_beer
  * contract_batch (hidden)     → contract_batch
  * recipe_id_fk (hidden)       → recipe_id_fk
