@@ -213,7 +213,7 @@ function _sb_pct_packaged(PDO $pdo, int $mother_id): ?float
         return null; // No racking yet — refuse to return 0
     }
 
-    // Packaging children → vendable_hl
+    // Packaging children → vendable_hl (exclude cuve-réutilisée reuse rows — mig 237)
     $stmt = $pdo->prepare(
         "SELECT COALESCE(SUM(p.vendable_hl), 0) AS total_packaged
            FROM op_sessions s
@@ -221,7 +221,8 @@ function _sb_pct_packaged(PDO $pdo, int $mother_id): ?float
           WHERE s.parent_session_id_fk = :mother_id
             AND s.form_type = 'packaging'
             AND s.is_tombstoned = 0
-            AND p.is_tombstoned = 0"
+            AND p.is_tombstoned = 0
+            AND p.reuses_packaging_id_fk IS NULL"
     );
     $stmt->execute([':mother_id' => $mother_id]);
     $total_packaged = (float) $stmt->fetchColumn();
@@ -795,6 +796,7 @@ function sb_observed_occupancy(PDO $pdo): array
             WHERE recipe_id_fk IS NOT NULL
               AND neb_batch     IS NOT NULL
               AND is_tombstoned = 0
+              AND reuses_packaging_id_fk IS NULL
             GROUP BY recipe_id_fk, neb_batch
         )
         SELECT
@@ -911,6 +913,7 @@ function sb_fermentation_occupancy(PDO $pdo): array
               AND recipe_id_fk IS NOT NULL
               AND neb_batch    IS NOT NULL
               AND vendable_hl  > 0
+              AND reuses_packaging_id_fk IS NULL
         )
         SELECT
             lb.cct,

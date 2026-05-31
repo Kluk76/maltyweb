@@ -8,7 +8,7 @@ declare(strict_types=1);
  *   2. POST handler: csrf_verify → coerce inputs → bd_qc_flag → build rows (main + parallels)
  *      → bd_upsert each → log_revision → flash_set → redirect
  *   3. GET: load candidate lots (bd_racking_v2, eligibility ≥1 day before today,
- *            BBT or CCT destinations) + ref_clients + ref data
+ *            BBT or CCT destinations) + ref_packaging_clients + ref data
  *      → render form with op-form__* CSS classes
  *   4. JS: tank card selection → hidden fields; multi-format parallel rows; client dropdown
  *          (contract/WL only); CIP section; loss fields.
@@ -479,6 +479,48 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         foreach ($formatsRaw as $idx => $f) {
             $fRunType   = $f['run_type'] ?? '';
             $fOrigin    = $f['row_origin'] ?? 'main';
+
+            // ── Cuve réutilisée (mig 237) ─────────────────────────────────────
+            // A cuv row may carry a reuses_packaging_id_fk pointing at the source
+            // cuv row.  When set: this row is a re-allocation — zero new volume.
+            // Server validates: source row must exist, be run_type='cuv', not
+            // tombstoned, not itself a reuse, and not already reused.
+            // Only applicable when $fRunType = 'cuv'.
+            $fReusesPackagingIdFk = null;
+            if ($fRunType === 'cuv') {
+                $rawReuse = isset($f['reuses_packaging_id_fk']) && $f['reuses_packaging_id_fk'] !== ''
+                    ? (int)$f['reuses_packaging_id_fk'] : null;
+                if ($rawReuse !== null && $rawReuse > 0) {
+                    // Validate: source exists, is cuv, not tombstoned, not a reuse
+                    $reuseCheckSt = $pdo->prepare(
+                        'SELECT id FROM bd_packaging_v2
+                          WHERE id = ?
+                            AND run_type = "cuv"
+                            AND is_tombstoned = 0
+                            AND reuses_packaging_id_fk IS NULL
+                          LIMIT 1'
+                    );
+                    $reuseCheckSt->execute([$rawReuse]);
+                    if ($reuseCheckSt->fetchColumn() === false) {
+                        throw new RuntimeException(
+                            "Cuve réutilisée #{$rawReuse} introuvable, déjà marquée comme réutilisée, ou non éligible."
+                        );
+                    }
+                    // Validate: source not already referenced (prevent double-reuse of same source)
+                    $reuseDupSt = $pdo->prepare(
+                        'SELECT COUNT(*) FROM bd_packaging_v2
+                          WHERE reuses_packaging_id_fk = ?
+                            AND is_tombstoned = 0'
+                    );
+                    $reuseDupSt->execute([$rawReuse]);
+                    if ((int)$reuseDupSt->fetchColumn() > 0) {
+                        throw new RuntimeException(
+                            "La cuve #{$rawReuse} a déjà été réutilisée dans une autre saisie."
+                        );
+                    }
+                    $fReusesPackagingIdFk = $rawReuse;
+                }
+            }
             $fSuffix    = $f['format_suffix'] ?? null;
             $fProdTotal = isset($f['prod_total_units']) && $f['prod_total_units'] !== ''
                             ? (int)$f['prod_total_units'] : null;
@@ -518,29 +560,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // ── Per-row client / liner fields ─────────────────────────────────
             // Read with isset+'' check FIRST, then gate — never trust a stale hidden value.
             //
-            // client_fk + keg_client_delivered: allowed when
-            //   - run_type = 'cuv', OR
-            //   - session beer is contract-type ($contractBeer non-empty), OR
-            //   - session is white-label ($isWhiteLabel = 1)
-            // This mirrors the JS sessionNeedsClient() predicate exactly.
+            // client_fk: cuv ONLY. NULLed for all other run_types.
+            //   Previously wired to ref_clients (contract brewers) for contract/WL sessions —
+            //   that was a mis-wire (mig 237). Now: ref_packaging_clients (venues/events),
+            //   cuv rows only. Contract/WL rows do NOT get a client_fk.
+            //
+            // keg_client_delivered: no longer written from new submissions.
+            //   Column kept in table as historical provenance. Always NULL for new rows.
+            //   The FK-backed client_fk is the sole structured field going forward.
             //
             // new_liner_client + new_liner_transport: cuv only — NULLed for all other run_types.
             $fClientFk          = isset($f['client_fk']) && $f['client_fk'] !== ''
                                     ? (int)$f['client_fk'] : null;
-            $fKegClientDelivered= isset($f['keg_client_delivered']) && $f['keg_client_delivered'] !== ''
-                                    ? (string)$f['keg_client_delivered'] : null;
             $fNewLinerClient    = isset($f['new_liner_client'])    && $f['new_liner_client']    !== ''
                                     ? (int)$f['new_liner_client']    : null;
             $fNewLinerTransport = isset($f['new_liner_transport']) && $f['new_liner_transport'] !== ''
                                     ? (int)$f['new_liner_transport'] : null;
 
-            // Defense-in-depth: NULL client fields unless cuv, contract, or WL.
-            $rowAllowsClient = ($fRunType === 'cuv' || $contractBeer !== '' || $isWhiteLabel === 1);
-            if (!$rowAllowsClient) {
-                $fClientFk           = null;
-                $fKegClientDelivered = null;
+            // Defense-in-depth: NULL client_fk unless cuv.
+            if ($fRunType !== 'cuv') {
+                $fClientFk = null;
             }
-            // Liner fields remain cuv-only regardless of contract/WL.
+            // Liner fields: cuv only.
             if ($fRunType !== 'cuv') {
                 $fNewLinerClient    = null;
                 $fNewLinerTransport = null;
@@ -575,34 +616,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             // ── vendable_hl: always computed (no operator override) ──────────────
-            // Build the partial row now so compute_packaging_vendable_hl() can read it.
-            $partialRow = [
-                'prod_total_units'        => ($fOrigin === 'main') ? $fProdTotal : null,
-                'special_qty_units'       => ($fOrigin === 'parallel') ? $fQteUnites : null,
-                'qa_analyses_units'       => $fQaAnalyses,
-                'qa_library_units'        => $fQaLibrary,
-                'unsaleable_units'        => $fUnsaleable,
-                'loss_uncapped_units'      => $fLossUncapped,
-                'loss_half_filled_units'  => $fLossHalfFilled,
-                'loss_untaxed_full_units' => $fLossUntaxedFull,
-                'loss_keg_liquid_l'       => $fLossKegLiquid,
-                'taproom_keg_l'           => $fTaproomKeg,
-                'loss_liquid_other_units' => $fLossLiquid,
-            ];
-            // $isContract: true when no SKU resolved AND this is a contract beer.
-            // Enables the run_type volume fallback instead of sku_meta_missing refusal.
-            $isContractRow = ($skuIdFk === null && $contractBeer !== '');
-            $computed = compute_packaging_vendable_hl($partialRow, $skuMeta, $fRunType, $isContractRow);
-            $finalVendableHl = $computed['vendable_hl'];
+            // Cuve réutilisée: force vendable_hl = 0 (no new volume packaged).
+            // Skip the normal computation entirely for reuse rows.
+            if ($fReusesPackagingIdFk !== null) {
+                $computed = ['vendable_hl' => '0.000', 'beer_tax_base_hl' => '0.000', 'loss_kpi_hl' => '0.000', 'qc_flag' => null];
+                $finalVendableHl = '0.000';
+            } else {
+                // Build the partial row now so compute_packaging_vendable_hl() can read it.
+                $partialRow = [
+                    'prod_total_units'        => ($fOrigin === 'main') ? $fProdTotal : null,
+                    'special_qty_units'       => ($fOrigin === 'parallel') ? $fQteUnites : null,
+                    'qa_analyses_units'       => $fQaAnalyses,
+                    'qa_library_units'        => $fQaLibrary,
+                    'unsaleable_units'        => $fUnsaleable,
+                    'loss_uncapped_units'      => $fLossUncapped,
+                    'loss_half_filled_units'  => $fLossHalfFilled,
+                    'loss_untaxed_full_units' => $fLossUntaxedFull,
+                    'loss_keg_liquid_l'       => $fLossKegLiquid,
+                    'taproom_keg_l'           => $fTaproomKeg,
+                    'loss_liquid_other_units' => $fLossLiquid,
+                ];
+                // $isContract: true when no SKU resolved AND this is a contract beer.
+                // Enables the run_type volume fallback instead of sku_meta_missing refusal.
+                $isContractRow = ($skuIdFk === null && $contractBeer !== '');
+                $computed = compute_packaging_vendable_hl($partialRow, $skuMeta, $fRunType, $isContractRow);
+                $finalVendableHl = $computed['vendable_hl'];
+            }
 
             // Per-row audit tokens (session base + row-local additions).
             $rowAuditTokens = $baseAuditTokens;
+
+            if ($fReusesPackagingIdFk !== null) {
+                $rowAuditTokens[] = 'cuv_reuse_no_deplete';
+            }
 
             if ($computed['qc_flag'] !== null) {
                 $rowAuditTokens[] = $computed['qc_flag'];
             }
 
-            if ($skuIdFk === null && $fOrigin === 'main' && !(bool)$isWhiteLabel) {
+            if ($skuIdFk === null && $fOrigin === 'main' && !(bool)$isWhiteLabel && $fReusesPackagingIdFk === null) {
                 // White-label rows may legitimately have no matching sku_code yet.
                 // Non-WL main rows with no sku_id are a real gap — flag for triage.
                 $rowAuditTokens[] = 'sku_unresolved';
@@ -671,7 +723,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'loss_container_can_units'=> $fLossContCan,
                     'loss_liquid_other_units' => $fLossLiquid,
                     // Cuv-only per-row fields (NULL for keg/bot/can/can33 — server-enforced above)
-                    'keg_client_delivered'   => $fKegClientDelivered,
+                    // keg_client_delivered intentionally not written — historical provenance column only.
+                    // New rows use client_fk (→ ref_packaging_clients) exclusively.
                     'new_liner_client'       => ($fNewLinerClient !== null) ? ($fNewLinerClient ? 1 : 0) : null,
                     'new_liner_transport'    => ($fNewLinerTransport !== null) ? ($fNewLinerTransport ? 1 : 0) : null,
                     // White label
@@ -679,6 +732,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'white_label_name'       => $whiteLabelName,
                     // Client FK — per-row for cuv; NULL for all other run_types (enforced above)
                     'client_fk'              => $fClientFk,
+                    // Cuve réutilisée (mig 237): self-FK; NULL for normal rows
+                    'reuses_packaging_id_fk' => $fReusesPackagingIdFk,
                     // CIP: flat cip_tank_*/cip_machines_* columns are intentionally NOT written
                     // from the web form — CIP now goes to bd_cip_events via cip_upsert().
                     // Historical flat columns remain in the table for legacy ingest rows only.
@@ -1220,9 +1275,69 @@ try {
         }
     }
 
-    // ── Clients for dropdown (decision 7) ─────────────────────────────────────
-    $clients = $pdo->query(
-        "SELECT id, name FROM ref_clients ORDER BY name ASC"
+    // ── Cuve réutilisée candidates (mig 237) ─────────────────────────────────
+    // Cuves packaged in the last 14 days that:
+    //   - Are not themselves reuse rows (reuses_packaging_id_fk IS NULL)
+    //   - Have not already been reused (no existing row references them)
+    //   - Are active (is_tombstoned = 0)
+    // Emitted as window.PF_CUVE_CANDIDATES for the per-row reuse dropdown.
+    // Falls back to [] if the column does not yet exist (migration not applied).
+    $cuveCandidates = [];
+    try {
+        $cuveCandStmt = $pdo->prepare(
+            "SELECT p.id,
+                    COALESCE(NULLIF(p.neb_beer,''), p.contract_beer)   AS beer,
+                    COALESCE(NULLIF(p.neb_batch,''), p.contract_batch) AS batch,
+                    p.event_date,
+                    p.prod_total_units,
+                    p.vendable_hl,
+                    p.client_fk,
+                    p.keg_client_delivered
+               FROM bd_packaging_v2 p
+              WHERE p.run_type       = 'cuv'
+                AND p.is_tombstoned  = 0
+                AND p.event_date    >= DATE_SUB(CURDATE(), INTERVAL 14 DAY)
+                AND p.reuses_packaging_id_fk IS NULL
+                AND p.id NOT IN (
+                    SELECT reuses_packaging_id_fk
+                      FROM bd_packaging_v2
+                     WHERE reuses_packaging_id_fk IS NOT NULL
+                )
+              ORDER BY p.event_date DESC"
+        );
+        $cuveCandStmt->execute();
+        $cuveCandidatesRaw = $cuveCandStmt->fetchAll(PDO::FETCH_ASSOC);
+        // Augment with client name for display label
+        $clientNameCache = [];
+        foreach ($cuveCandidatesRaw as $cc) {
+            $clientLabel = $cc['keg_client_delivered'] ?? null;
+            if ($clientLabel === null && $cc['client_fk'] !== null) {
+                $cfk = (int)$cc['client_fk'];
+                if (!isset($clientNameCache[$cfk])) {
+                    $cnSt = $pdo->prepare('SELECT name FROM ref_packaging_clients WHERE id = ? LIMIT 1');
+                    $cnSt->execute([$cfk]);
+                    $clientNameCache[$cfk] = (string)($cnSt->fetchColumn() ?: '');
+                }
+                $clientLabel = $clientNameCache[$cfk];
+            }
+            $cuveCandidates[] = [
+                'id'          => (int)$cc['id'],
+                'beer'        => $cc['beer'] ?? '',
+                'batch'       => $cc['batch'] ?? '',
+                'event_date'  => $cc['event_date'] ?? '',
+                'vendable_hl' => $cc['vendable_hl'],
+                'client_label'=> $clientLabel,
+            ];
+        }
+    } catch (\Throwable $_cuvEx) {
+        // Migration 237 not yet applied — column absent; degrade gracefully
+        $cuveCandidates = [];
+    }
+
+    // ── Packaging clients for cuv dropdown ────────────────────────────────────
+    // Source: ref_packaging_clients (venues/festivals), not ref_clients (contract brewers).
+    $packagingClientsForForm = $pdo->query(
+        "SELECT id, name FROM ref_packaging_clients WHERE is_active = 1 ORDER BY sort_order ASC, name ASC"
     )->fetchAll(PDO::FETCH_ASSOC);
 
     // ── Active recipes for confirmation dropdown ──────────────────────────────
@@ -1257,6 +1372,7 @@ try {
     $recipes            = [];
     $recentPackaging    = [];
     $cipTypes           = [];
+    $cuveCandidates     = [];
     // Safe fallback: on DB error, disallow override display to avoid confusion
     $canOverride        = false;
     $minDays            = PACKAGING_MIN_DAYS_FALLBACK;
@@ -1271,9 +1387,10 @@ $candidatesJson         = json_encode($candidates,         JSON_UNESCAPED_UNICOD
 $candidatesOverrideJson = json_encode($candidatesOverride, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 $pfRecipeSkusJson       = json_encode($pfRecipeSkus,       JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 $pfRecipeUnassignedJson = json_encode($pfRecipeUnassigned, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
-$clientsJson            = json_encode($clients,            JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
+$packagingClientsJson   = json_encode($packagingClientsForForm, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 $runTypeLabelJson       = json_encode(RUN_TYPE_LABELS,     JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 $suffixLabelJson        = json_encode(FORMAT_SUFFIXES,     JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
+$cuveCandidatesJson     = json_encode($cuveCandidates,     JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 
 // ── CIP partial config ────────────────────────────────────────────────────────
 // Packaging CIPs only the filling machine (Soutireuse / filler) and optionally
@@ -1649,10 +1766,11 @@ window.PF_CANDIDATES_OVERRIDE = <?= $candidatesOverrideJson ?>;
 window.PF_RECIPE_SKUS         = <?= $pfRecipeSkusJson ?>;
 window.PF_RECIPE_UNASSIGNED   = <?= $pfRecipeUnassignedJson ?>;
 window.PF_CAN_OVERRIDE        = <?= $canOverride ? 'true' : 'false' ?>;
-window.PF_CLIENTS             = <?= $clientsJson ?>;
+window.PF_PACKAGING_CLIENTS   = <?= $packagingClientsJson ?>;
 window.RUN_TYPE_LABELS        = <?= $runTypeLabelJson ?>;
 window.FORMAT_SUFFIXES        = <?= $suffixLabelJson ?>;
 window.MIN_DAYS_AFTER_RACKING = <?= $minDays ?>;
+window.PF_CUVE_CANDIDATES     = <?= $cuveCandidatesJson ?>;
 </script>
 
 <script src="/js/form-framework.js?v=<?= @filemtime(__DIR__ . '/../js/form-framework.js') ?: time() ?>" defer></script>
@@ -1699,8 +1817,8 @@ window.MIN_DAYS_AFTER_RACKING = <?= $minDays ?>;
  * cip_machines_done/type/date → NOT written (flat columns kept in table for legacy ingest only)
  * hors_process (hidden)       → hors_process_flag (TINYINT)       NEW col (mig 128) manager/admin only
  * hors_process_reason         → hors_process_reason (VARCHAR 255) NEW col (mig 128) optional justification
- * formats[N][client_fk]       → client_fk (FK ref_clients.id)    cuv|contract|WL; NULLed otherwise
- * formats[N][keg_client_delivered] → keg_client_delivered          cuv|contract|WL; NULLed otherwise
+ * formats[N][client_fk]       → client_fk (FK ref_packaging_clients.id)  cuv only; NULLed otherwise
+ * [keg_client_delivered not written — historical provenance column only; new rows always NULL]
  * formats[N][new_liner_client]→ new_liner_client (TINYINT bool)    cuv only; NULLed for keg/bot/can
  * formats[N][new_liner_transport]→ new_liner_transport (TINYINT bool) cuv only; NULLed for keg/bot/can
  * is_white_label              → is_white_label (TINYINT bool)
@@ -1711,7 +1829,7 @@ window.MIN_DAYS_AFTER_RACKING = <?= $minDays ?>;
  * Q1 bbt_source_fk: YES — added as source_tank_type ENUM + bbt_source_fk + cct_source_fk
  *    with ENFORCED CHECK (mig 127). FK to ref_bbt.id / ref_cct.id (both INT UNSIGNED).
  * Q2 event_date: YES — added as DATE NULL (mig 127). Defaults to today in form.
- * Q3 client: dropdown from ref_clients → client_fk INT. Master-data gap flagged if empty.
+ * Q3 client: dropdown from ref_packaging_clients (venues/festivals) → client_fk INT. cuv only.
  * Q4 nebuleuse_format_suffix: YES — multi-format UI, one row per format (main + parallels).
  * Q5 selection_can_mi_id_fk / selection_bottle_mi_id_fk: SKIPPED (decision 5) — no
  *    consumable selection inputs. Derived from Salle des Machines / SKU_BOM.

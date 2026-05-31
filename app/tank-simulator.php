@@ -768,7 +768,8 @@ class TankSimulator
              WHERE submitted_at IS NOT NULL
                AND vendable_hl IS NOT NULL
                AND CAST(vendable_hl AS DECIMAL(14,4)) > 0
-               AND is_tombstoned = 0'
+               AND is_tombstoned = 0
+               AND reuses_packaging_id_fk IS NULL'
         )->fetchAll();
 
         // Parse v2 rows into canonical event structure.

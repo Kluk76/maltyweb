@@ -194,6 +194,88 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             redirect_to('/modules/reglages-generaux.php?sec=general');
         }
 
+        // ── Action: add packaging client ──
+        if ($action === 'add_pkg_client') {
+            $name = post_str('name');
+            if ($name === null || strlen(trim($name)) < 2) {
+                throw new RuntimeException('Le nom du client est obligatoire (minimum 2 caractères).');
+            }
+            $name       = substr(trim($name), 0, 128);
+            $notes      = post_str('notes');
+            if ($notes !== null) $notes = substr($notes, 0, 255);
+            $sortOrder  = post_int('sort_order') ?? 0;
+
+            $ins = $pdo->prepare(
+                "INSERT INTO ref_packaging_clients (name, notes, sort_order, updated_by)
+                 VALUES (?, ?, ?, ?)"
+            );
+            $ins->execute([$name, $notes, $sortOrder, $me['username']]);
+            $newId = (int) $pdo->lastInsertId();
+
+            log_revision($pdo, $me, 'ref_packaging_clients', $newId, null,
+                ['name' => $name, 'notes' => $notes, 'sort_order' => $sortOrder, 'is_active' => 1],
+                'normal', 'Réglages généraux: nouveau client packaging');
+
+            flash_set('ok', "Client « " . htmlspecialchars($name) . " » ajouté.");
+            redirect_to('/modules/reglages-generaux.php?sec=pkg_clients');
+        }
+
+        // ── Action: edit packaging client ──
+        if ($action === 'edit_pkg_client') {
+            $clientId = post_int('client_id');
+            if ($clientId === null || $clientId <= 0) {
+                throw new RuntimeException('Identifiant de client invalide.');
+            }
+            $before = bd_fetch_before($pdo, 'ref_packaging_clients', $clientId);
+            if ($before === null) {
+                throw new RuntimeException('Client introuvable.');
+            }
+
+            $name = post_str('name');
+            if ($name === null || strlen(trim($name)) < 2) {
+                throw new RuntimeException('Le nom du client est obligatoire (minimum 2 caractères).');
+            }
+            $name      = substr(trim($name), 0, 128);
+            $notes     = post_str('notes');
+            if ($notes !== null) $notes = substr($notes, 0, 255);
+            $sortOrder = post_int('sort_order') ?? 0;
+
+            $upd = $pdo->prepare(
+                "UPDATE ref_packaging_clients SET name=?, notes=?, sort_order=?, updated_by=?
+                  WHERE id = ?"
+            );
+            $upd->execute([$name, $notes, $sortOrder, $me['username'], $clientId]);
+
+            log_revision($pdo, $me, 'ref_packaging_clients', $clientId,
+                ['name' => $before['name'], 'notes' => $before['notes'], 'sort_order' => $before['sort_order']],
+                ['name' => $name, 'notes' => $notes, 'sort_order' => $sortOrder],
+                'normal', 'Réglages généraux: client packaging modifié');
+
+            flash_set('ok', "Client « " . htmlspecialchars($name) . " » mis à jour.");
+            redirect_to('/modules/reglages-generaux.php?sec=pkg_clients');
+        }
+
+        // ── Action: toggle packaging client active ──
+        if ($action === 'toggle_pkg_client') {
+            $clientId = post_int('client_id');
+            if ($clientId === null || $clientId <= 0) throw new RuntimeException('Identifiant invalide.');
+            $before = bd_fetch_before($pdo, 'ref_packaging_clients', $clientId);
+            if ($before === null) throw new RuntimeException('Client introuvable.');
+
+            $newActive = ((int) $before['is_active'] === 1) ? 0 : 1;
+            $upd = $pdo->prepare("UPDATE ref_packaging_clients SET is_active = ?, updated_by = ? WHERE id = ?");
+            $upd->execute([$newActive, $me['username'], $clientId]);
+
+            log_revision($pdo, $me, 'ref_packaging_clients', $clientId,
+                ['is_active' => $before['is_active']],
+                ['is_active' => $newActive],
+                'normal', 'Réglages généraux: client packaging ' . ($newActive ? 'réactivé' : 'désactivé'));
+
+            $verb = $newActive ? 'réactivé' : 'désactivé';
+            flash_set('ok', "Client « " . htmlspecialchars((string) $before['name']) . " » {$verb}.");
+            redirect_to('/modules/reglages-generaux.php?sec=pkg_clients');
+        }
+
         // ── Action: create user ──
         if ($action === 'create_user') {
             $username    = post_str('username');
@@ -248,7 +330,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // ── GET — load data ───────────────────────────────────────────────────────────
 header('Content-Type: text/html; charset=utf-8');
 
-$initialSec = in_array($_GET['sec'] ?? '', ['general', 'users'], true)
+$initialSec = in_array($_GET['sec'] ?? '', ['general', 'pkg_clients', 'users'], true)
     ? $_GET['sec']
     : 'general';
 
@@ -268,6 +350,14 @@ $users        = [];
 // Edit-site context (from ?edit_site=ID)
 $editSiteId   = isset($_GET['edit_site']) ? (int) $_GET['edit_site'] : null;
 $editSiteRow  = null;
+
+// Edit-packaging-client context (from ?edit_pkg_client=ID)
+$editPkgClientId  = isset($_GET['edit_pkg_client']) ? (int) $_GET['edit_pkg_client'] : null;
+$editPkgClientRow = null;
+
+// Packaging clients
+$packagingClients        = [];
+$packagingClientsApplied = false;
 
 try {
     $pdo = maltytask_pdo();
@@ -302,6 +392,24 @@ try {
         }
     } catch (Throwable) {
         $sitesApplied = false;
+    }
+
+    // ref_packaging_clients
+    try {
+        $stmt = $pdo->query(
+            "SELECT id, name, is_active, sort_order, notes
+               FROM ref_packaging_clients
+              ORDER BY sort_order ASC, name ASC"
+        );
+        $packagingClients        = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $packagingClientsApplied = true;
+        if ($editPkgClientId !== null) {
+            foreach ($packagingClients as $pc) {
+                if ((int) $pc['id'] === $editPkgClientId) { $editPkgClientRow = $pc; break; }
+            }
+        }
+    } catch (Throwable) {
+        $packagingClientsApplied = false;
     }
 
     // users
@@ -386,6 +494,18 @@ $csrf = csrf_token();
         </svg>
       </span>
       Données générales
+    </div>
+
+    <div class="nav-item<?= $initialSec === 'pkg_clients' ? ' active' : '' ?>" data-sec="pkg_clients" onclick="switchSection('pkg_clients')">
+      <span class="nav-icon">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <rect x="1.5" y="4.5" width="13" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
+          <path d="M5 4.5V3a3 3 0 0 1 6 0v1.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+          <circle cx="8" cy="9" r="1.5" fill="currentColor" opacity=".55"/>
+        </svg>
+      </span>
+      Clients packaging
+      <span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.06em;background:color-mix(in srgb, var(--hop) 18%, transparent);color:var(--hop);padding:2px 7px;border-radius:10px;"><?= count($packagingClients) ?></span>
     </div>
 
     <div class="nav-item<?= $initialSec === 'users' ? ' active' : '' ?>" data-sec="users" onclick="switchSection('users')">
@@ -713,6 +833,152 @@ $csrf = csrf_token();
     </div><!-- /#sec-general -->
 
 
+    <!-- ═══════════════ SECTION: Clients packaging ═══════════════ -->
+    <div class="section-panel<?= $initialSec === 'pkg_clients' ? ' active' : '' ?>" id="sec-pkg_clients">
+      <div class="section-scroll">
+
+        <div class="sec-title">Clients <em>packaging</em></div>
+        <div class="sec-subtitle">Livraison cuve de service · venues · festivals</div>
+
+        <?php
+        if ($initialSec === 'pkg_clients'):
+            $flashPc = flash_pop();
+            if ($flashPc !== null):
+                $fcPc = $flashPc['type'] === 'ok' ? 'rg-flash--ok' : 'rg-flash--err';
+                $fiPc = $flashPc['type'] === 'ok' ? '✓' : '⚠';
+        ?>
+        <div class="rg-flash <?= $fcPc ?>"><?= $fiPc ?> <?= htmlspecialchars($flashPc['msg']) ?></div>
+        <?php endif; endif ?>
+
+        <?php if (!$packagingClientsApplied): ?>
+        <div class="rg-migration-banner">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" style="flex:0 0 18px;margin-top:1px"><path d="M9 3 L16 15 H2 Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M9 8v4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="9" cy="13.5" r=".8" fill="currentColor"/></svg>
+          <div>
+            <strong>Migration 237 en attente.</strong>
+            La table <code>ref_packaging_clients</code> n'existe pas encore.
+            Appliquer la migration <code>237_packaging_clients_normalise.sql</code> via
+            <code>php scripts/migrate.php</code> pour gérer les clients packaging.
+          </div>
+        </div>
+        <?php else: ?>
+
+        <div class="rg-card">
+          <div class="rg-card-title">
+            Clients packaging (livraison cuve)
+            <span class="rg-card-label">ref_packaging_clients</span>
+          </div>
+
+          <?php if (!empty($packagingClients)): ?>
+          <div class="rg-table-wrap">
+            <table class="rg-table">
+              <thead>
+                <tr>
+                  <th>Nom</th>
+                  <th>Ordre</th>
+                  <th>Notes</th>
+                  <th>Statut</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                <?php foreach ($packagingClients as $pc): ?>
+                <tr>
+                  <td><?= htmlspecialchars((string) $pc['name']) ?></td>
+                  <td style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-mute);"><?= (int) $pc['sort_order'] ?></td>
+                  <td><?= htmlspecialchars((string) ($pc['notes'] ?? '—')) ?></td>
+                  <td><?php if ((int) $pc['is_active'] === 1): ?>
+                    <span class="rg-pill-active">Actif</span>
+                  <?php else: ?>
+                    <span class="rg-pill-inactive">Inactif</span>
+                  <?php endif ?></td>
+                  <td style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+                    <a href="?sec=pkg_clients&edit_pkg_client=<?= (int) $pc['id'] ?>" class="rg-action-link">Modifier</a>
+                    <form method="post" action="/modules/reglages-generaux.php" style="display:inline;">
+                      <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+                      <input type="hidden" name="action" value="toggle_pkg_client">
+                      <input type="hidden" name="client_id" value="<?= (int) $pc['id'] ?>">
+                      <input type="hidden" name="sec" value="pkg_clients">
+                      <button type="submit" class="rg-action-link<?= (int) $pc['is_active'] === 1 ? ' danger' : '' ?>">
+                        <?= (int) $pc['is_active'] === 1 ? 'Désactiver' : 'Réactiver' ?>
+                      </button>
+                    </form>
+                  </td>
+                </tr>
+                <?php endforeach ?>
+              </tbody>
+            </table>
+          </div>
+          <?php else: ?>
+          <p style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.1em;color:var(--ink-faint);text-transform:uppercase;padding:16px 0;">Aucun client packaging enregistré.</p>
+          <?php endif ?>
+
+          <!-- Edit or Add packaging client form -->
+          <?php if ($editPkgClientRow !== null): ?>
+          <div class="rg-inline-form">
+            <div class="rg-form-title">Modifier le client · <?= htmlspecialchars((string) $editPkgClientRow['name']) ?></div>
+            <form method="post" action="/modules/reglages-generaux.php">
+              <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+              <input type="hidden" name="action" value="edit_pkg_client">
+              <input type="hidden" name="client_id" value="<?= (int) $editPkgClientRow['id'] ?>">
+              <input type="hidden" name="sec" value="pkg_clients">
+              <div class="rg-form-grid">
+                <div class="full">
+                  <label class="rg-form-label">Nom du client / venue *</label>
+                  <input class="rg-input" type="text" name="name" maxlength="128" required
+                         value="<?= htmlspecialchars((string) $editPkgClientRow['name']) ?>">
+                </div>
+                <div>
+                  <label class="rg-form-label">Ordre d'affichage</label>
+                  <input class="rg-input" type="number" name="sort_order" min="0" max="9999"
+                         value="<?= (int) ($editPkgClientRow['sort_order'] ?? 0) ?>">
+                </div>
+                <div class="full">
+                  <label class="rg-form-label">Notes (libre)</label>
+                  <input class="rg-input" type="text" name="notes" maxlength="255"
+                         value="<?= htmlspecialchars((string) ($editPkgClientRow['notes'] ?? '')) ?>">
+                </div>
+              </div>
+              <div style="display:flex;gap:10px;">
+                <button type="submit" class="rg-btn rg-btn-primary">Enregistrer</button>
+                <a href="/modules/reglages-generaux.php?sec=pkg_clients" class="rg-btn rg-btn-secondary" style="text-decoration:none;display:inline-flex;align-items:center;">Annuler</a>
+              </div>
+            </form>
+          </div>
+          <?php else: ?>
+          <div class="rg-inline-form">
+            <div class="rg-form-title">Ajouter un client</div>
+            <form method="post" action="/modules/reglages-generaux.php">
+              <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+              <input type="hidden" name="action" value="add_pkg_client">
+              <input type="hidden" name="sec" value="pkg_clients">
+              <div class="rg-form-grid">
+                <div class="full">
+                  <label class="rg-form-label">Nom du client / venue *</label>
+                  <input class="rg-input" type="text" name="name" maxlength="128" required
+                         placeholder="ex: Festival de la Cité">
+                </div>
+                <div>
+                  <label class="rg-form-label">Ordre d'affichage</label>
+                  <input class="rg-input" type="number" name="sort_order" min="0" max="9999" value="0">
+                </div>
+                <div class="full">
+                  <label class="rg-form-label">Notes (libre)</label>
+                  <input class="rg-input" type="text" name="notes" maxlength="255">
+                </div>
+              </div>
+              <button type="submit" class="rg-btn rg-btn-primary">Ajouter le client</button>
+            </form>
+          </div>
+          <?php endif ?>
+
+        </div><!-- /.rg-card pkg_clients -->
+
+        <?php endif /* $packagingClientsApplied */ ?>
+
+      </div><!-- /.section-scroll -->
+    </div><!-- /#sec-pkg_clients -->
+
+
     <!-- ═══════════════ SECTION: Utilisateurs ═══════════════ -->
     <div class="section-panel<?= $initialSec === 'users' ? ' active' : '' ?>" id="sec-users">
       <div class="section-scroll">
@@ -845,6 +1111,7 @@ $csrf = csrf_token();
     var url = new URL(window.location.href);
     url.searchParams.set('sec', sec);
     url.searchParams.delete('edit_site');
+    url.searchParams.delete('edit_pkg_client');
     history.replaceState(null, '', url.toString());
   }
 

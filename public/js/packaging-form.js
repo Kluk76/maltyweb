@@ -25,12 +25,17 @@
  *      as clickable tiles above the format rows. Tile click pre-fills format row 0.
  *      NULL-format SKUs land in an "à assigner" tray, never as tiles.
  *      Reads: window.PF_RECIPE_SKUS, window.PF_RECIPE_UNASSIGNED
+ *  11. Cuve réutilisée (mig 237): for cuv rows, an optional "Cuve réutilisée"
+ *      dropdown lists eligible source cuves from window.PF_CUVE_CANDIDATES.
+ *      When a candidate is chosen: source-tank/qty/loss inputs are hidden for
+ *      that row (no volume); client becomes required. Clearing restores normal
+ *      cuv behaviour.  Reads: window.PF_CUVE_CANDIDATES.
  *
  * No framework. Vanilla ES2020.
  * Reads: window.PF_CANDIDATES, window.PF_CANDIDATES_OVERRIDE, window.PF_CAN_OVERRIDE,
- *        window.PF_CLIENTS, window.RUN_TYPE_LABELS, window.FORMAT_SUFFIXES,
+ *        window.PF_PACKAGING_CLIENTS, window.RUN_TYPE_LABELS, window.FORMAT_SUFFIXES,
  *        window.MIN_DAYS_AFTER_RACKING, window.PF_RECIPE_SKUS,
- *        window.PF_RECIPE_UNASSIGNED
+ *        window.PF_RECIPE_UNASSIGNED, window.PF_CUVE_CANDIDATES
  */
 
 'use strict';
@@ -358,16 +363,16 @@ document.addEventListener('DOMContentLoaded', function () {
         '</div>' +
       '</div>';
 
-    // ── Client sub-block (cuv OR contract/WL) ────────────────────────────────
-    // Shown when: run_type='cuv' OR session beer is contract-type OR is_white_label=1.
-    // Visibility is re-evaluated on run_type change AND on tank select/deselect/WL toggle
-    // via updateAllRowDispositionGroups().
+    // ── Client sub-block (cuv ONLY) ──────────────────────────────────────────
+    // Shown when: run_type='cuv' only.
+    // Source: window.PF_PACKAGING_CLIENTS (ref_packaging_clients — venues/festivals).
+    // Visibility is re-evaluated on run_type change via updateAllRowDispositionGroups().
     var clientOptions = '<option value="">— sélectionner —</option>';
-    (window.PF_CLIENTS || []).forEach(function (cl) {
+    (window.PF_PACKAGING_CLIENTS || []).forEach(function (cl) {
       clientOptions += '<option value="' + escHtml(String(cl.id)) + '">' + escHtml(cl.name) + '</option>';
     });
-    var noClientHint = (!window.PF_CLIENTS || window.PF_CLIENTS.length === 0)
-      ? '<span class="op-form__hint pf-hint--warn">Aucun client dans ref_clients — saisir le nom ci-dessous.</span>'
+    var noClientHint = (!window.PF_PACKAGING_CLIENTS || window.PF_PACKAGING_CLIENTS.length === 0)
+      ? '<span class="op-form__hint pf-hint--warn">Aucun client dans ref_packaging_clients — ajouter via Réglages généraux.</span>'
       : '';
 
     const clientGroupHtml =
@@ -375,16 +380,11 @@ document.addEventListener('DOMContentLoaded', function () {
         '<div class="pf-client-title">— client</div>' +
         '<div class="op-form__grid--3 op-form__grid">' +
           '<div class="op-form__field">' +
-            '<label class="op-form__label" for="' + idPfx + '_client_fk">Client</label>' +
+            '<label class="op-form__label" for="' + idPfx + '_client_fk">Client livraison cuve</label>' +
             '<select id="' + idPfx + '_client_fk" name="' + prefix + '[client_fk]" class="op-form__select">' +
               clientOptions +
             '</select>' +
             noClientHint +
-          '</div>' +
-          '<div class="op-form__field">' +
-            '<label class="op-form__label" for="' + idPfx + '_keg_client_delivered">Client livraison <span class="op-form__opt">(texte libre)</span></label>' +
-            '<input id="' + idPfx + '_keg_client_delivered" name="' + prefix + '[keg_client_delivered]"' +
-              ' type="text" class="op-form__input" placeholder="ex. Le Bourg">' +
           '</div>' +
         '</div>' +
       '</div>';
@@ -411,6 +411,53 @@ document.addEventListener('DOMContentLoaded', function () {
               '<option value="0">Non</option>' +
             '</select>' +
           '</div>' +
+        '</div>' +
+      '</div>';
+
+    // ── Cuve réutilisée sub-block (cuv only, mig 237) ────────────────────────
+    // Optional: operator selects a source cuv row to re-allocate to a new client.
+    // When a candidate is chosen: qty/loss/tank inputs for this row are hidden
+    // (no new volume packaged); client becomes required.
+    var cuveCandOptions = '<option value="">— nouvelle cuve (pas de réutilisation) —</option>';
+    (window.PF_CUVE_CANDIDATES || []).forEach(function (cc) {
+      // Display: "BEER Brassin BATCH — DD/MM/YYYY — Xu HL — Client"
+      var dateStr = cc.event_date
+        ? cc.event_date.replace(/^(\d{4})-(\d{2})-(\d{2})$/, '$3/$2/$1')
+        : '';
+      var hlStr = cc.vendable_hl !== null && cc.vendable_hl !== undefined
+        ? parseFloat(cc.vendable_hl).toFixed(1) + ' HL'
+        : '';
+      var clientStr = cc.client_label ? cc.client_label : '';
+      var parts = [escHtml(cc.beer || '?'), 'B.' + escHtml(cc.batch || '?')];
+      if (dateStr) parts.push(dateStr);
+      if (hlStr)   parts.push(hlStr);
+      if (clientStr) parts.push(clientStr);
+      cuveCandOptions += '<option value="' + escHtml(String(cc.id)) + '">' + parts.join(' — ') + '</option>';
+    });
+
+    const reuseGroupHtml =
+      '<div class="pf-disposition-group pf-disposition-group--reuse" data-fmt-idx="' + idx + '">' +
+        '<div class="pf-reuse-title">— cuve réutilisée <span class="op-form__opt">(optionnel)</span></div>' +
+        '<div class="op-form__grid--3 op-form__grid">' +
+          '<div class="op-form__field op-form__field--span2">' +
+            '<label class="op-form__label" for="' + idPfx + '_reuses_packaging_id_fk">' +
+              'Réutilisation d\'une cuve existante' +
+            '</label>' +
+            '<select id="' + idPfx + '_reuses_packaging_id_fk"' +
+              ' name="' + prefix + '[reuses_packaging_id_fk]"' +
+              ' class="op-form__select pf-reuse-select" data-fmt-idx="' + idx + '">' +
+              cuveCandOptions +
+            '</select>' +
+            '<span class="op-form__hint pf-reuse-hint">' +
+              'Sélectionner pour transférer la propriété d\'une cuve déjà remplie à un nouveau client. ' +
+              'Aucun nouveau volume n\'est conditionné — la cuve source garde son vendable_hl.' +
+            '</span>' +
+          '</div>' +
+        '</div>' +
+        // Warning banner shown when a reuse is selected
+        '<div class="pf-reuse-active-banner" id="' + idPfx + '_reuse_banner" hidden>' +
+          '<strong>Cuve réutilisée</strong> — Aucun volume conditionné. ' +
+          'Sélectionner le nouveau client ci-dessous.' +
         '</div>' +
       '</div>';
 
@@ -460,17 +507,17 @@ document.addEventListener('DOMContentLoaded', function () {
       '</div>' +
       bottleDispositionHtml +
       kegDispositionHtml +
+      reuseGroupHtml +
       clientGroupHtml +
       linerGroupHtml +
     '</div>';
   }
 
-  // Returns true when the current session beer requires a client dropdown regardless of run_type.
-  // Contract beer: cBeer non-empty and nebBeer empty (mirrors selectTank logic for isContractBeer).
-  // White label: is_white_label select = '1' (session-level, same for every row).
-  function sessionNeedsClient() {
-    const isWl = wlSelect && wlSelect.value === '1';
-    return isContractBeer || isWl;
+  // Returns true when the given cuv row has a reuse source selected.
+  function rowIsReuse(rowEl) {
+    if (!rowEl) return false;
+    const sel = rowEl.querySelector('.pf-reuse-select');
+    return sel ? (sel.value !== '' && sel.value !== '0') : false;
   }
 
   function updateRowDispositionGroups(rowEl) {
@@ -479,18 +526,45 @@ document.addEventListener('DOMContentLoaded', function () {
     const runType = sel ? sel.value : '';
     const isKegOrCuv = (runType === 'keg' || runType === 'cuv');
     const isCuv      = (runType === 'cuv');
+    const isReuse    = isCuv && rowIsReuse(rowEl);
 
     const bottleGroup = rowEl.querySelector('.pf-disposition-group--bottle');
     const kegGroup    = rowEl.querySelector('.pf-disposition-group--keg');
-    // Client block: cuv OR contract/WL session beer
+    // Client block: cuv only
     const clientGroup = rowEl.querySelector('.pf-disposition-group--client');
     // Liner block: cuv only
     const linerGroup  = rowEl.querySelector('.pf-disposition-group--liner');
+    // Reuse block: cuv only
+    const reuseGroup  = rowEl.querySelector('.pf-disposition-group--reuse');
+    // Reuse banner
+    const reuseIdPfx  = rowEl.id ? rowEl.id.replace('pf-fmt-', 'fmt') : '';
+    const reuseBanner = reuseIdPfx ? document.getElementById(reuseIdPfx + '_reuse_banner') : null;
 
+    // Group visibility:
+    //   bottle group: shown for bot/can/can33 only
+    //   keg group:    shown for keg/cuv, but HIDDEN for cuv-reuse rows (no volume to enter)
+    //   client group: shown for cuv ONLY (mig 237 repoint — no longer contract/WL)
+    //   liner group:  shown for cuv only
+    //   reuse group:  shown for cuv only
     if (bottleGroup) bottleGroup.hidden = isKegOrCuv;
-    if (kegGroup)    kegGroup.hidden    = !isKegOrCuv;
-    if (clientGroup) clientGroup.hidden = !(isCuv || sessionNeedsClient());
+    if (kegGroup)    kegGroup.hidden    = !isKegOrCuv || isReuse;
+    if (clientGroup) clientGroup.hidden = !isCuv;
     if (linerGroup)  linerGroup.hidden  = !isCuv;
+    if (reuseGroup)  reuseGroup.hidden  = !isCuv;
+
+    // Hide qty input for reuse rows (no volume packaged)
+    const qtiesSection = rowEl.querySelector('.pf-format-top-grid');
+    if (qtiesSection) {
+      // The prod_total or qte_unites field is the 3rd child of the top grid
+      const qtyField = qtiesSection.querySelector('[name*="prod_total_units"],[name*="qte_unites"]');
+      if (qtyField) {
+        const qtyWrapper = qtyField.closest('.op-form__field');
+        if (qtyWrapper) qtyWrapper.hidden = isReuse;
+      }
+    }
+
+    // Reuse banner
+    if (reuseBanner) reuseBanner.hidden = !isReuse;
   }
 
   // Re-evaluate all rendered rows when session-level state changes (tank select/deselect/WL toggle).
@@ -512,6 +586,14 @@ document.addEventListener('DOMContentLoaded', function () {
       const sel = rowEl.querySelector('.pf-run-type-select');
       if (sel) {
         sel.addEventListener('change', function () {
+          updateRowDispositionGroups(rowEl);
+        });
+      }
+
+      // Wire reuse-select change → update disposition groups + require client
+      const reuseSelect = rowEl.querySelector('.pf-reuse-select');
+      if (reuseSelect) {
+        reuseSelect.addEventListener('change', function () {
           updateRowDispositionGroups(rowEl);
         });
       }
@@ -549,7 +631,7 @@ document.addEventListener('DOMContentLoaded', function () {
   function updateWlField() {
     if (!wlSelect || !wlNameField) return;
     wlNameField.hidden = (wlSelect.value !== '1');
-    // WL toggle changes sessionNeedsClient() result — re-evaluate all rows
+    // WL toggle changes is_white_label — re-evaluate all rows
     updateAllRowDispositionGroups();
   }
   if (wlSelect) {

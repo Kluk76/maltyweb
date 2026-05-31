@@ -612,3 +612,36 @@ body.op-form-packaging .pf-co2o2-add-btn {
   body.op-form-packaging .pf-co2o2-field--time { grid-column: 2; }
   body.op-form-packaging .pf-co2o2-row .pf-co2o2-remove { grid-column: 3; justify-self: end; }
 }
+
+/* ── Cuve réutilisée (mig 237) ───────────────────────────────────────────── */
+body.op-form-packaging .pf-reuse-title {
+  font-size: 0.72rem;
+  font-family: 'JetBrains Mono', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+  margin-bottom: 0.5rem;
+}
+
+body.op-form-packaging .pf-reuse-hint {
+  font-size: 0.77rem;
+  color: var(--ink-soft);
+  margin-top: 0.25rem;
+  display: block;
+  line-height: 1.4;
+}
+
+body.op-form-packaging .pf-reuse-active-banner {
+  margin-top: 0.75rem;
+  padding: 0.6rem 1rem;
+  background: color-mix(in srgb, var(--ember) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ember) 35%, transparent);
+  border-radius: 5px;
+  font-size: 0.82rem;
+  color: var(--ink);
+  line-height: 1.5;
+}
+
+body.op-form-packaging .pf-reuse-active-banner strong {
+  color: var(--ember);
+}
