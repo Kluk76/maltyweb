@@ -226,9 +226,10 @@ function compute_packaging_vendable_hl(array $row, array $skuMeta, string $runTy
         // ── BOTTLE / CAN ──────────────────────────────────────────────────────
         $unsaleable  = $c(isset($row['unsaleable_units'])        ? (string)$row['unsaleable_units']        : null);
         $lUncapped   = $c(isset($row['loss_uncapped_units'])     ? (string)$row['loss_uncapped_units']     : null);
-        $lHalfFilled = $c(isset($row['loss_half_filled_units'])  ? (string)$row['loss_half_filled_units']  : null);
-        $qaAnalyses  = $c(isset($row['qa_analyses_units'])       ? (string)$row['qa_analyses_units']       : null);
-        $qaLibrary   = $c(isset($row['qa_library_units'])        ? (string)$row['qa_library_units']        : null);
+        $lHalfFilled    = $c(isset($row['loss_half_filled_units'])    ? (string)$row['loss_half_filled_units']    : null);
+        $lUntaxedFull   = $c(isset($row['loss_untaxed_full_units'])  ? (string)$row['loss_untaxed_full_units']  : null);
+        $qaAnalyses     = $c(isset($row['qa_analyses_units'])        ? (string)$row['qa_analyses_units']        : null);
+        $qaLibrary      = $c(isset($row['qa_library_units'])         ? (string)$row['qa_library_units']         : null);
 
         // half_filled counts at 0.5 volume (½ fill before seal)
         $halfFilledEff = bcdiv($lHalfFilled, '2', $scale);   // * 0.5
@@ -237,7 +238,8 @@ function compute_packaging_vendable_hl(array $row, array $skuMeta, string $runTy
         $vendableUnits = bcadd($vendableUnits, $effectiveSpecial, $scale);
         $vendableUnits = bcsub($vendableUnits, $unsaleable,    $scale);
         $vendableUnits = bcsub($vendableUnits, $lUncapped,     $scale);
-        $vendableUnits = bcsub($vendableUnits, $halfFilledEff, $scale);
+        $vendableUnits = bcsub($vendableUnits, $halfFilledEff,  $scale);
+        $vendableUnits = bcsub($vendableUnits, $lUntaxedFull,  $scale);
         $vendableUnits = bcsub($vendableUnits, $qaLibrary,     $scale);
         $vendableUnits = bcsub($vendableUnits, $qaAnalyses,    $scale);
         // Material scraps (loss_4pack_*, loss_wrap_*, loss_label_*, loss_crown_cork,
@@ -254,7 +256,9 @@ function compute_packaging_vendable_hl(array $row, array $skuMeta, string $runTy
         $beerTaxBaseHl  = bcadd($vendableHl, $unsaleableHl, $scale);
 
         // loss_kpi_hl: beer-disposition losses only (material scraps excluded)
+        // untaxed_full is a full unit, counts in full (no ×0.5 unlike half_filled)
         $lossUnits      = bcadd(bcadd($unsaleable, $lUncapped, $scale), $halfFilledEff, $scale);
+        $lossUnits      = bcadd($lossUnits, $lUntaxedFull, $scale);
         $lossKpiHl      = bcmul(bcdiv($lossUnits, (string)$unitsPerPack, $scale), (string)$hlPerUnit, $scale);
 
     } else {
@@ -487,8 +491,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $fQaAnalyses     = isset($f['qa_analyses_units'])        && $f['qa_analyses_units']     !== '' ? (int)$f['qa_analyses_units']     : null;
             $fQaLibrary      = isset($f['qa_library_units'])         && $f['qa_library_units']      !== '' ? (int)$f['qa_library_units']      : null;
             // New disposition fields (mig 231)
-            $fLossUncapped   = isset($f['loss_uncapped_units'])      && $f['loss_uncapped_units']   !== '' ? (int)$f['loss_uncapped_units']   : null;
-            $fLossHalfFilled = isset($f['loss_half_filled_units'])   && $f['loss_half_filled_units'] !== '' ? (int)$f['loss_half_filled_units'] : null;
+            $fLossUncapped      = isset($f['loss_uncapped_units'])      && $f['loss_uncapped_units']      !== '' ? (int)$f['loss_uncapped_units']      : null;
+            $fLossHalfFilled    = isset($f['loss_half_filled_units'])   && $f['loss_half_filled_units']   !== '' ? (int)$f['loss_half_filled_units']   : null;
+            // New loss category (mig 233): full unit lost, NOT in beer-tax base
+            $fLossUntaxedFull   = isset($f['loss_untaxed_full_units'])  && $f['loss_untaxed_full_units']  !== '' ? (int)$f['loss_untaxed_full_units']  : null;
             $fLossKegLiquid  = isset($f['loss_keg_liquid_l'])        && $f['loss_keg_liquid_l']     !== '' ? $f['loss_keg_liquid_l']         : null;
             $fTaproomKeg     = isset($f['taproom_keg_l'])            && $f['taproom_keg_l']         !== '' ? $f['taproom_keg_l']             : null;
 
@@ -533,8 +539,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'qa_analyses_units'       => $fQaAnalyses,
                 'qa_library_units'        => $fQaLibrary,
                 'unsaleable_units'        => $fUnsaleable,
-                'loss_uncapped_units'     => $fLossUncapped,
+                'loss_uncapped_units'      => $fLossUncapped,
                 'loss_half_filled_units'  => $fLossHalfFilled,
+                'loss_untaxed_full_units' => $fLossUntaxedFull,
                 'loss_keg_liquid_l'       => $fLossKegLiquid,
                 'taproom_keg_l'           => $fTaproomKeg,
                 'loss_liquid_other_units' => $fLossLiquid,
@@ -598,10 +605,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'unsaleable_units'       => $fUnsaleable,
                     'qa_analyses_units'      => $fQaAnalyses,
                     'qa_library_units'       => $fQaLibrary,
-                    // New disposition fields (mig 231)
-                    'loss_uncapped_units'    => $fLossUncapped,
-                    'loss_half_filled_units' => $fLossHalfFilled,
-                    'loss_keg_liquid_l'      => $fLossKegLiquid,
+                    // New disposition fields (mig 231 + 233)
+                    'loss_uncapped_units'     => $fLossUncapped,
+                    'loss_half_filled_units'  => $fLossHalfFilled,
+                    'loss_untaxed_full_units' => $fLossUntaxedFull,
+                    'loss_keg_liquid_l'       => $fLossKegLiquid,
                     'taproom_keg_l'          => $fTaproomKeg,
                     // Per-type material scraps (decision 6 — stored, not subtracted from vendable)
                     'loss_4pack_btl_units'   => $fLoss4packBtl,
