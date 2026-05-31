@@ -1,0 +1,485 @@
+/*
+ * rm-stock-comparison.css — Bilan de clôture MP
+ * Scoped under body.home .rsc-*
+ * Palette : tokens app.css :root uniquement, jamais de hex brut.
+ */
+
+/* ── Layout principal ─────────────────────────────────────────────────────── */
+
+body.home .rsc-main {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 1.5rem 1.25rem 4rem;
+}
+
+/* ── En-tête ─────────────────────────────────────────────────────────────── */
+
+body.home .rsc-header {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.25rem;
+    align-items: flex-end;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--ink-faint);
+}
+
+body.home .rsc-title {
+    font-family: 'Fraunces', Georgia, serif;
+    font-variation-settings: "opsz" 96;
+    font-size: 1.75rem;
+    font-weight: 400;
+    color: var(--ink);
+    margin: 0 0 0.2rem;
+    line-height: 1.15;
+}
+
+body.home .rsc-subtitle {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.92rem;
+    color: var(--ink-mute);
+    margin: 0;
+}
+
+/* ── Sélecteur de période ────────────────────────────────────────────────── */
+
+body.home .rsc-period-form {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
+}
+
+body.home .rsc-period-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-mute);
+    white-space: nowrap;
+}
+
+body.home .rsc-period-input {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.85rem;
+    padding: 0.35rem 0.6rem;
+    background: var(--bg-elev);
+    border: 1px solid var(--ink-faint);
+    border-radius: 4px;
+    color: var(--ink);
+    cursor: pointer;
+}
+
+body.home .rsc-period-input:focus {
+    outline: 2px solid var(--hop);
+    outline-offset: 1px;
+}
+
+body.home .rsc-period-btn {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.83rem;
+    padding: 0.35rem 0.85rem;
+    background: var(--ink);
+    color: var(--bg);
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+body.home .rsc-period-btn:hover {
+    background: var(--ink-soft);
+}
+
+/* ── Notice lecture seule ────────────────────────────────────────────────── */
+
+body.home .rsc-readonly-notice {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.55rem 0.9rem;
+    background: color-mix(in srgb, var(--oak) 7%, var(--bg));
+    border: 1px solid color-mix(in srgb, var(--oak) 22%, transparent);
+    border-radius: 6px;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.82rem;
+    color: var(--oak-deep);
+    margin-bottom: 1.5rem;
+}
+
+body.home .rsc-readonly-icon {
+    font-size: 0.95rem;
+}
+
+/* ── KPIs ────────────────────────────────────────────────────────────────── */
+
+body.home .rsc-kpis {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-bottom: 2rem;
+}
+
+body.home .rsc-kpi {
+    flex: 1 1 130px;
+    padding: 1rem 1.1rem;
+    background: var(--bg-elev);
+    border-radius: 8px;
+    border: 1px solid color-mix(in srgb, var(--ink-faint) 50%, transparent);
+    text-align: center;
+}
+
+body.home .rsc-kpi__num {
+    display: block;
+    font-family: 'Fraunces', Georgia, serif;
+    font-size: 2rem;
+    font-weight: 400;
+    line-height: 1.1;
+    color: var(--ink);
+}
+
+body.home .rsc-kpi__label {
+    display: block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.68rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--ink-mute);
+    margin-top: 0.25rem;
+}
+
+body.home .rsc-kpi--drift .rsc-kpi__num {
+    color: var(--ember);
+}
+
+body.home .rsc-kpi--noanchor .rsc-kpi__num {
+    color: var(--cold);
+}
+
+body.home .rsc-kpi--ok .rsc-kpi__num {
+    color: var(--hop);
+}
+
+/* ── DB Error ────────────────────────────────────────────────────────────── */
+
+body.home .rsc-dberror {
+    padding: 0.75rem 1rem;
+    background: color-mix(in srgb, var(--ember) 10%, var(--bg));
+    border: 1px solid color-mix(in srgb, var(--ember) 30%, transparent);
+    border-radius: 6px;
+    color: var(--ember);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.875rem;
+    margin-bottom: 1.25rem;
+}
+
+/* ── Sections ────────────────────────────────────────────────────────────── */
+
+body.home .rsc-section {
+    margin-bottom: 2.25rem;
+    padding: 1.25rem 1.5rem;
+    border-radius: 10px;
+    border: 1px solid color-mix(in srgb, var(--ink-faint) 40%, transparent);
+    background: var(--bg-elev);
+}
+
+body.home .rsc-section--drift {
+    border-color: color-mix(in srgb, var(--ember) 35%, transparent);
+    background: color-mix(in srgb, var(--ember) 4%, var(--bg-elev));
+}
+
+body.home .rsc-section--no-anchor {
+    border-color: color-mix(in srgb, var(--cold) 35%, transparent);
+    background: color-mix(in srgb, var(--cold) 4%, var(--bg-elev));
+}
+
+body.home .rsc-section--no-count {
+    border-color: color-mix(in srgb, var(--oak) 25%, transparent);
+    background: color-mix(in srgb, var(--oak) 3%, var(--bg-elev));
+}
+
+body.home .rsc-section--ok {
+    border-color: color-mix(in srgb, var(--ink-faint) 35%, transparent);
+    background: var(--bg-elev);
+    opacity: 0.85;
+}
+
+body.home .rsc-section-title {
+    font-family: 'Fraunces', Georgia, serif;
+    font-variation-settings: "opsz" 96;
+    font-size: 1.15rem;
+    font-weight: 400;
+    color: var(--ink);
+    margin: 0 0 0.4rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    line-height: 1.2;
+}
+
+body.home .rsc-section-title--ok {
+    color: var(--ink-mute);
+}
+
+body.home .rsc-section-icon {
+    font-size: 1rem;
+}
+
+body.home .rsc-section-count {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.82rem;
+    padding: 0.15rem 0.5rem;
+    background: color-mix(in srgb, var(--bg-side) 80%, transparent);
+    border-radius: 20px;
+    color: var(--ink-mute);
+    font-weight: 400;
+}
+
+body.home .rsc-section-desc {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.83rem;
+    color: var(--ink-mute);
+    margin: 0 0 1rem;
+}
+
+/* ── Details / résumé collapsible ────────────────────────────────────────── */
+
+body.home .rsc-details {
+    margin-top: 0.25rem;
+}
+
+body.home .rsc-details__summary {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.85rem;
+    color: var(--oak);
+    cursor: pointer;
+    padding: 0.35rem 0;
+    user-select: none;
+}
+
+body.home .rsc-details__summary:hover {
+    color: var(--oak-deep);
+}
+
+body.home .rsc-details[open] .rsc-details__summary {
+    margin-bottom: 0.75rem;
+}
+
+/* ── Table ───────────────────────────────────────────────────────────────── */
+
+body.home .rsc-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.83rem;
+    color: var(--ink);
+    table-layout: auto;
+}
+
+body.home .rsc-th {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.68rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--ink-mute);
+    padding: 0.45rem 0.6rem;
+    border-bottom: 2px solid var(--ink-faint);
+    white-space: nowrap;
+}
+
+body.home .rsc-th--num,
+body.home .rsc-td--num {
+    text-align: right;
+}
+
+body.home .rsc-th--mi {
+    text-align: left;
+    min-width: 200px;
+}
+
+body.home .rsc-th--theor,
+body.home .rsc-td--theor {
+    background: color-mix(in srgb, var(--ink) 5%, transparent);
+    font-weight: 600;
+}
+
+body.home .rsc-th--counted,
+body.home .rsc-td--counted {
+    background: color-mix(in srgb, var(--hop) 6%, transparent);
+    font-weight: 600;
+}
+
+body.home .rsc-th--drift,
+body.home .rsc-td--drift {
+    font-family: 'JetBrains Mono', monospace;
+}
+
+/* Catégorie séparateur */
+body.home .rsc-cat-row td {
+    background: var(--bg-side);
+    padding: 0.3rem 0.6rem;
+    border-bottom: 1px solid var(--ink-faint);
+}
+
+body.home .rsc-cat-cell {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+body.home .rsc-cat-count {
+    font-size: 0.68rem;
+    padding: 0.1rem 0.4rem;
+    background: color-mix(in srgb, var(--ink) 12%, transparent);
+    border-radius: 10px;
+    color: var(--ink-mute);
+}
+
+/* Lignes de données */
+body.home .rsc-row {
+    border-bottom: 1px solid color-mix(in srgb, var(--ink-faint) 35%, transparent);
+}
+
+body.home .rsc-row:hover {
+    background: color-mix(in srgb, var(--hop) 4%, var(--bg-elev));
+}
+
+body.home .rsc-td {
+    padding: 0.45rem 0.6rem;
+    vertical-align: middle;
+}
+
+body.home .rsc-td--mi {
+    font-size: 0.85rem;
+    color: var(--ink);
+    max-width: 320px;
+}
+
+body.home .rsc-td--unit {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    color: var(--ink-mute);
+    white-space: nowrap;
+}
+
+body.home .rsc-td--inflow {
+    color: var(--hop-deep);
+}
+
+body.home .rsc-td--outflow {
+    color: var(--ember);
+}
+
+/* Coloration drift : surplus = bleu, manque = rouge */
+body.home .rsc-td.rsc-drift--over {
+    color: var(--cold);
+    font-weight: 600;
+}
+
+body.home .rsc-td.rsc-drift--under {
+    color: var(--ember);
+    font-weight: 600;
+}
+
+/* ── Chips de flag ───────────────────────────────────────────────────────── */
+
+body.home .rsc-flag {
+    display: inline-block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.68rem;
+    letter-spacing: 0.03em;
+    padding: 0.2rem 0.55rem;
+    border-radius: 4px;
+    white-space: nowrap;
+    font-weight: 500;
+}
+
+body.home .rsc-flag--drift {
+    background: color-mix(in srgb, var(--ember) 15%, transparent);
+    color: var(--ember);
+    border: 1px solid color-mix(in srgb, var(--ember) 30%, transparent);
+}
+
+body.home .rsc-flag--no-anchor {
+    background: color-mix(in srgb, var(--cold) 15%, transparent);
+    color: var(--cold);
+    border: 1px solid color-mix(in srgb, var(--cold) 30%, transparent);
+}
+
+body.home .rsc-flag--no-count {
+    background: color-mix(in srgb, var(--oak) 12%, transparent);
+    color: var(--oak-deep);
+    border: 1px solid color-mix(in srgb, var(--oak) 25%, transparent);
+}
+
+body.home .rsc-flag--ok {
+    background: color-mix(in srgb, var(--hop) 12%, transparent);
+    color: var(--hop-deep);
+    border: 1px solid color-mix(in srgb, var(--hop) 25%, transparent);
+}
+
+/* ── Badge "attendu" (expected-only opening) ─────────────────────────────── */
+
+body.home .rsc-badge {
+    display: inline-block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.62rem;
+    padding: 0.1rem 0.35rem;
+    border-radius: 3px;
+    vertical-align: middle;
+    margin-left: 0.35rem;
+}
+
+body.home .rsc-badge--expected {
+    background: color-mix(in srgb, var(--oak) 14%, transparent);
+    color: var(--oak-deep);
+    border: 1px solid color-mix(in srgb, var(--oak) 25%, transparent);
+}
+
+/* ── Empty state ─────────────────────────────────────────────────────────── */
+
+body.home .rsc-empty {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.85rem;
+    color: var(--ink-mute);
+    padding: 1rem 0;
+}
+
+body.home .rsc-empty-state {
+    text-align: center;
+    padding: 3rem 1rem;
+    font-family: 'DM Sans', sans-serif;
+    color: var(--ink-mute);
+}
+
+/* ── Responsive ──────────────────────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+    body.home .rsc-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    body.home .rsc-table {
+        font-size: 0.78rem;
+    }
+
+    body.home .rsc-th,
+    body.home .rsc-td {
+        padding: 0.35rem 0.4rem;
+    }
+
+    /* Sur mobile : masquer les colonnes de détail, garder l'essentiel */
+    body.home .rsc-td--inflow,
+    body.home .rsc-th--inflow,
+    body.home .rsc-td--outflow,
+    body.home .rsc-th--outflow {
+        display: none;
+    }
+}

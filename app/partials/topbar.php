@@ -24,6 +24,7 @@ $modules = [
     ["06", "QA / QC",         "#",                     "qa"],
     ["07", "SKU Costs",       "/modules/sku-costs.php","sku-costs"],
     ["08", "Warehouse",       "/modules/warehouse.php","warehouse"],
+    ["09", "Bilan MP",        "/modules/rm-stock-comparison.php","rm-comparison"],
 ];
 
 $showAdminBlock = is_admin($me) || is_manager($me);
