@@ -239,10 +239,14 @@ function sbb_render_observed_chip(array $c): string
     $html  = '<a class="' . $chipClass . '" href="' . $href . '" title="' . $tooltip . '"';
     $html .= ' aria-label="' . $recipeName . ' #' . $batch . ' — ' . $vesselLabel . ' (observé)">';
     $html .= '<span class="sb-observed-chip__text">';
-    $html .= $recipeName . ' · #' . $batch . ' · ' . $vesselLabel;
+    /* Line 1: recipe name — DM Sans, readable weight */
+    $html .= '<span class="sb-observed-chip__name">' . $recipeName . '</span>';
+    /* Line 2: #batch · vessel (+ assemblage glyph if set) */
+    $html .= '<span class="sb-observed-chip__meta">#' . $batch . ' · ' . $vesselLabel;
     if ($isAssemblage) {
         $html .= ' <span class="sb-observed-chip__assemblage" title="assemblage" aria-label="assemblage">⋈</span>';
     }
+    $html .= '</span>';
     $html .= '</span>';
     $html .= '</a>';
 

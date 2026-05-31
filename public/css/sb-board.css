@@ -556,40 +556,46 @@ body.sb-board .sb-zone-empty__msg--sub {
 
 /* ══════════════════════════════════════════════════════════════
    OBSERVED IN-FLIGHT CHIPS (Atom 18) — sb-observed-chip namespace
-   Minimal 3-token chips: recipe · #batch · vessel.
+   Shell cards: recipe on line 1, #batch · vessel on line 2.
    Linked to sb-batch.php (atom 18 stub; drill-in = atom 19).
    Provenance and abandoned state expressed via styling only — no text badges.
+   Atom 18.b: enlarged to fill zone vertical space (grid layout, card sizing).
    ══════════════════════════════════════════════════════════════ */
 
-/* Chip pack — wrapping flex row inside the zone cards area */
+/* Chip pack — CSS grid filling the zone width, auto-fill columns.
+   minmax(140px, 1fr) gives ~3-4 columns in the fermentation band width,
+   scales gracefully from 8 BBT chips to 18 CCT chips. */
 body.sb-board .sb-chips-pack {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 5px;
-  padding: 6px 8px 4px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px;
+  padding: 8px 10px 6px;
+  align-content: start;
 }
 
-/* Individual chip link */
+/* Individual chip — proper shell card, not a postage stamp.
+   Block-level inside grid cell; two-line text layout. */
 body.sb-board .sb-observed-chip {
-  display: inline-flex;
-  align-items: center;
+  display: flex;
+  align-items: flex-start;
   font-family: "JetBrains Mono", ui-monospace, monospace;
-  font-size: 0.55rem;
-  letter-spacing: 0.04em;
-  color: var(--ink-faint);
+  font-size: 0.64rem;
+  letter-spacing: 0.03em;
+  color: var(--ink-mute);
   background: color-mix(in srgb, var(--bg-side) 55%, var(--bg));
   border: 1px dashed var(--hairline);
-  border-radius: 3px;
-  padding: 3px 7px;
+  border-radius: 4px;
+  padding: 9px 11px 8px;
   text-decoration: none;
-  white-space: nowrap;
   transition: background .12s, border-color .12s, color .12s;
   cursor: pointer;
+  /* min-height ensures even single-line chips feel substantial */
+  min-height: 52px;
 }
 body.sb-board .sb-observed-chip:hover {
-  background: color-mix(in srgb, var(--bg-side) 80%, var(--bg));
+  background: color-mix(in srgb, var(--bg-side) 85%, var(--bg));
   border-color: var(--hairline-2);
-  color: var(--ink-mute);
+  color: var(--ink-soft);
 }
 body.sb-board .sb-observed-chip:focus-visible {
   outline: 2px solid var(--hop);
@@ -598,32 +604,62 @@ body.sb-board .sb-observed-chip:focus-visible {
 
 /* Zone tints for chips (mirrors zone accent) */
 body.sb-board .sb-zone--fermentation .sb-observed-chip {
-  border-color: color-mix(in srgb, var(--cold) 22%, var(--hairline));
+  border-color: color-mix(in srgb, var(--cold) 28%, var(--hairline));
 }
 body.sb-board .sb-zone--bbt .sb-observed-chip {
-  border-color: color-mix(in srgb, var(--bbt) 22%, var(--hairline));
+  border-color: color-mix(in srgb, var(--bbt) 28%, var(--hairline));
 }
 
 /* Abandoned variant — muted warning border tint */
 body.sb-board .sb-observed-chip--abandoned {
-  border-color: color-mix(in srgb, var(--oak) 35%, var(--hairline));
+  border-color: color-mix(in srgb, var(--oak) 40%, var(--hairline));
   border-style: solid;
-  background: color-mix(in srgb, var(--oak) 5%, var(--bg-side));
+  background: color-mix(in srgb, var(--oak) 6%, var(--bg-side));
 }
 
-/* Chip text span — holds the three tokens */
+/* Chip text — two-line column layout:
+   line 1: recipe name (bold, ink-soft)
+   line 2: #batch · vessel (muted, smaller) */
 body.sb-board .sb-observed-chip__text {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
 }
 
-/* Assemblage glyph — tiny indicator glyph, muted */
-body.sb-board .sb-observed-chip__assemblage {
-  font-size: 0.60rem;
+/* Line 1 — recipe name */
+body.sb-board .sb-observed-chip__name {
+  font-family: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--ink-soft);
+  line-height: 1.2;
+  /* truncate very long names gracefully */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Line 2 — #batch · vessel (and optional assemblage glyph) */
+body.sb-board .sb-observed-chip__meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.58rem;
+  letter-spacing: 0.05em;
   color: var(--ink-faint);
-  opacity: 0.7;
-  margin-left: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Assemblage glyph — inline in the meta line */
+body.sb-board .sb-observed-chip__assemblage {
+  font-size: 0.62rem;
+  color: var(--ink-faint);
+  opacity: 0.75;
+  flex-shrink: 0;
 }
 
 /* ══════════════════════════════════════════════════════════════
