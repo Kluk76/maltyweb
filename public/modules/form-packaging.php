@@ -1553,8 +1553,7 @@ $cipConfig = [
 
         <div class="op-form__field">
           <label class="op-form__label" for="dlc">DLC / BBD</label>
-          <input id="dlc" name="dlc" type="text" class="op-form__input"
-                 placeholder="ex. 2026-11">
+          <input id="dlc" name="dlc" type="month" class="op-form__input">
         </div>
 
       </div>
