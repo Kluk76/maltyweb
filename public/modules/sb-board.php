@@ -45,6 +45,10 @@ $closedMothers = sb_recent_closed_mothers($pdo, 3);
 $fleet      = sb_fleet($pdo);            // ['cct'=>[...], 'bbt'=>[...], 'yt'=>[...], 'serving'=>[...]]
 $occupancy  = sb_observed_occupancy($pdo); // keyed "bbt-8" => [...], "cct-3" => [...], etc.
 
+// Atom 13: observed in-flight cards — bucketed by zone, reuses $occupancy derivation.
+// READ-ONLY projection. op_sessions (true mothers) path is unaffected and rendered in parallel.
+$observedInFlight = sb_observed_in_flight($pdo); // ['fermentation' => [...], 'bbt' => [...]]
+
 // Total open mothers across all zones (expedition excluded by sb_open_mothers)
 $totalMothers = 0;
 foreach (SB_ZONES as $z) {
@@ -182,6 +186,53 @@ function sbb_render_mother_card(array $m, string $zone): string
     return $html;
 }
 
+/**
+ * Render a read-only observed card for an in-flight batch derived from bd_* data.
+ *
+ * Rules (Atom 13 spec, PM-locked):
+ *   - NO heartbeat — data is weeks old; green/amber/red would be misleading.
+ *   - NON-CLICKABLE — no drill-in link (no op_session children exist).
+ *   - recipe_name used verbatim — never a hardcoded id→name lookup.
+ *   - Neutral factual line: "soutiré il y a N j · X.X HL en cuve".
+ *   - Badge: "observé · lecture seule".
+ *
+ * Returns escaped HTML string — safe to echo directly.
+ */
+function sbb_render_observed_card(array $c): string
+{
+    $vesselLabel  = sbb_esc($c['vessel_label']);
+    $recipeName   = sbb_esc($c['recipe_name'] ?: '—');
+    $batch        = sbb_esc($c['batch']);
+    $remainingHl  = number_format((float) $c['remaining_hl'], 1);
+    $daysInTank   = $c['days_in_tank'] !== null ? (int) $c['days_in_tank'] : null;
+
+    // Neutral factual line: "soutiré il y a N j · X.X HL en cuve"
+    $neutralLine = '';
+    if ($daysInTank !== null) {
+        $neutralLine = 'soutiré il y a ' . $daysInTank . ' j · ' . $remainingHl . ' HL en cuve';
+    } else {
+        $neutralLine = $remainingHl . ' HL en cuve';
+    }
+
+    // tooltip: vessel + racked date + HL (spec ceiling for interactivity)
+    $tooltip = $vesselLabel . ' · soutiré le ' . sbb_esc($c['racked_on']) . ' · ' . $remainingHl . ' HL';
+
+    $html  = '<div class="sb-observed-card" title="' . $tooltip . '" role="presentation" aria-label="' . $recipeName . ' #' . $batch . ' — ' . $vesselLabel . ' (observé, lecture seule)">';
+    $html .= '<div class="sb-observed-card__top">';
+    $html .= '<span class="sb-observed-card__batch">#' . $batch . '</span>';
+    $html .= '<span class="sb-observed-badge">observé · lecture seule</span>';
+    $html .= '</div>';
+    $html .= '<div class="sb-observed-card__name">' . $recipeName . '</div>';
+    $html .= '<div class="sb-observed-card__meta">';
+    $html .= '<span class="sb-observed-card__vessel">' . $vesselLabel . '</span>';
+    $html .= '<span class="sb-observed-card__meta-dot" aria-hidden="true"></span>';
+    $html .= '<span class="sb-observed-card__neutral">' . sbb_esc($neutralLine) . '</span>';
+    $html .= '</div>';
+    $html .= '</div>';
+
+    return $html;
+}
+
 // ─── Page variables ───────────────────────────────────────────────────────────
 
 $active_module = 'sb-board';
@@ -225,10 +276,19 @@ $jsBoardV      = @filemtime(__DIR__ . '/../js/sb-board.js')   ?: time();
 
     <?php foreach (SB_ZONES as $zone):
         $mothers   = $byZone[$zone] ?? [];
-        $zoneCount = count($mothers);
         $zoneKey   = 'zone-' . $zone . '-label';
         $phaseClass = sbb_zone_phase_class($zone);
         $isExpedition = ($zone === 'expedition');
+        // FIX 1: Badge must reflect both true mothers AND observed in-flight cards.
+        // Fermentation and BBT zones each get an effective count so the badge is
+        // never "0" while cards are visible beneath it.  Other zones (brasserie,
+        // conditionnement, expedition) have no observed cards — effective == true count.
+        $observedCountForZone = match ($zone) {
+            'fermentation' => count($observedInFlight['fermentation'] ?? []),
+            'bbt'          => count($observedInFlight['bbt'] ?? []),
+            default        => 0,
+        };
+        $zoneCount = count($mothers) + $observedCountForZone;
     ?>
 
     <?php if ($isExpedition): ?>
@@ -303,16 +363,23 @@ $jsBoardV      = @filemtime(__DIR__ . '/../js/sb-board.js')   ?: time();
 
         <!-- Cards area -->
         <div class="sb-zone__cards">
-          <?php if ($zoneCount > 0): ?>
+          <?php
+            $fermObserved = $observedInFlight['fermentation'] ?? [];
+            $hasFermCards = ($zoneCount > 0 || count($fermObserved) > 0);
+          ?>
+          <?php if ($hasFermCards): ?>
           <div class="sb-cards-stack">
             <?php foreach ($mothers as $m): ?>
             <?= sbb_render_mother_card($m, $zone) ?>
+            <?php endforeach ?>
+            <?php foreach ($fermObserved as $c): ?>
+            <?= sbb_render_observed_card($c) ?>
             <?php endforeach ?>
           </div>
           <?php else: ?>
           <div class="sb-zone-empty">
             <div class="sb-zone-empty__msg">Aucun lot en fermentation</div>
-            <div class="sb-zone-empty__msg" style="font-size:0.66rem;color:var(--ink-faint);"><?= count($fleet['cct']) ?> CCTs disponibles</div>
+            <div class="sb-zone-empty__msg sb-zone-empty__msg--sub"><?= count($fleet['cct']) ?> CCTs disponibles</div>
           </div>
           <?php endif ?>
         </div>
@@ -373,16 +440,23 @@ $jsBoardV      = @filemtime(__DIR__ . '/../js/sb-board.js')   ?: time();
 
         <!-- Cards area -->
         <div class="sb-zone__cards">
-          <?php if ($zoneCount > 0): ?>
+          <?php
+            $bbtObserved = $observedInFlight['bbt'] ?? [];
+            $hasBbtCards = ($zoneCount > 0 || count($bbtObserved) > 0);
+          ?>
+          <?php if ($hasBbtCards): ?>
           <div class="sb-cards-stack">
             <?php foreach ($mothers as $m): ?>
             <?= sbb_render_mother_card($m, $zone) ?>
+            <?php endforeach ?>
+            <?php foreach ($bbtObserved as $c): ?>
+            <?= sbb_render_observed_card($c) ?>
             <?php endforeach ?>
           </div>
           <?php else: ?>
           <div class="sb-zone-empty">
             <div class="sb-zone-empty__msg">Aucun lot en soutirage</div>
-            <div class="sb-zone-empty__msg" style="font-size:0.66rem;color:var(--ink-faint);"><?= count($fleet['bbt']) ?> BBTs disponibles</div>
+            <div class="sb-zone-empty__msg sb-zone-empty__msg--sub"><?= count($fleet['bbt']) ?> BBTs disponibles</div>
           </div>
           <?php endif ?>
         </div>

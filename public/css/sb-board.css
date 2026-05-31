@@ -543,6 +543,124 @@ body.sb-board .main {
   pointer-events: none;
 }
 
+/*
+ * Secondary/sub empty-state line (Fermentation "N CCTs disponibles",
+ * BBT "N BBTs disponibles").
+ * Replaces the two former inline style="font-size:0.66rem;color:var(--ink-faint);"
+ * attributes — house rule: no inline CSS.
+ */
+body.sb-board .sb-zone-empty__msg--sub {
+  font-size: 0.66rem;
+  color: var(--ink-faint);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   OBSERVED IN-FLIGHT CARDS (Atom 13) — sb-observed-* namespace
+   Read-only projection from bd_* historical data.
+   Distinct from true-mother cards: muted/secondary, clearly
+   labelled as "observé · lecture seule". No heartbeat, no link.
+   ══════════════════════════════════════════════════════════════ */
+
+/*
+ * Card shell — muted relative to the true sb-card.
+ * cursor:default enforces non-clickability at the CSS layer.
+ * No :hover lift — reinforces read-only nature.
+ */
+body.sb-board .sb-observed-card {
+  background: color-mix(in srgb, var(--bg-side) 60%, var(--bg));
+  border: 1px dashed var(--hairline);
+  border-radius: 3px;
+  padding: 9px 11px 8px;
+  cursor: default;
+  position: relative;
+  overflow: hidden;
+  /* Left-edge bar: muted ink-faint (contrast with zone-coloured true cards) */
+}
+body.sb-board .sb-observed-card::before {
+  content: "";
+  position: absolute; top: 0; left: 0; bottom: 0;
+  width: 2px;
+  background: var(--hairline-2);
+  border-radius: 3px 0 0 3px;
+  opacity: 0.6;
+}
+
+/* Zone-scoped observed-card tints — slightly muted vs true cards */
+body.sb-board .sb-zone--fermentation .sb-observed-card {
+  background: color-mix(in srgb, var(--cold) 4%, var(--bg-side));
+}
+body.sb-board .sb-zone--bbt .sb-observed-card {
+  background: color-mix(in srgb, var(--bbt) 4%, var(--bg-side));
+}
+
+/* Top row: batch ref on the left, badge on the right */
+body.sb-board .sb-observed-card__top {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+/* Batch ref — same mono style as true card, slightly muted */
+body.sb-board .sb-observed-card__batch {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.60rem; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+/* Recipe name — Fraunces italic, muted ink */
+body.sb-board .sb-observed-card__name {
+  font-family: "Fraunces", "Times New Roman", serif;
+  font-variation-settings: "opsz" 96;
+  font-size: 0.92rem; font-weight: 300;
+  font-style: italic;
+  color: var(--ink-mute);
+  letter-spacing: -0.01em;
+  line-height: 1.15;
+  margin-bottom: 4px;
+}
+
+/* Meta row: vessel label + separator dot + neutral factual line */
+body.sb-board .sb-observed-card__meta {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+}
+
+body.sb-board .sb-observed-card__vessel {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.56rem; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--ink-faint);
+  background: color-mix(in srgb, var(--hairline) 30%, transparent);
+  border: 1px solid var(--hairline);
+  padding: 1px 5px; border-radius: 2px;
+}
+
+body.sb-board .sb-observed-card__meta-dot {
+  width: 3px; height: 3px; border-radius: 50%;
+  background: var(--hairline);
+  flex-shrink: 0;
+}
+
+body.sb-board .sb-observed-card__neutral {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.54rem; letter-spacing: 0.04em;
+  color: var(--ink-faint);
+}
+
+/*
+ * "observé · lecture seule" badge — stamp-style, clearly secondary.
+ * No rotation (unlike closed-lot stamp) — this is a persistent state indicator.
+ */
+body.sb-board .sb-observed-badge {
+  display: inline-block;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.46rem; letter-spacing: 0.12em; text-transform: uppercase;
+  padding: 2px 5px;
+  border: 1px solid var(--hairline);
+  border-radius: 2px;
+  color: var(--ink-faint);
+  background: color-mix(in srgb, var(--bg-side) 70%, transparent);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 /* ══════════════════════════════════════════════════════════════
    VESSEL ILLUSTRATIONS (SVG wrappers)
    ══════════════════════════════════════════════════════════════ */

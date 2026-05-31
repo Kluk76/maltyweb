@@ -852,6 +852,100 @@ function sb_observed_occupancy(PDO $pdo): array
             'packaged_hl'   => (float) $r['packaged_hl'],
             'remaining_hl'  => (float) $r['remaining_hl'],
             'is_stale_heel' => $is_stale_heel,
+            'age_days'      => $age_days,   // FIX 4: exposed so sb_observed_in_flight() avoids recomputing
+        ];
+    }
+
+    return $out;
+}
+
+/**
+ * Observed in-flight batches, bucketed by board zone.
+ *
+ * REUSES sb_observed_occupancy() — does NOT re-query bd_* tables.
+ * Single-source-of-truth contract: the vessel-occupancy derivation lives
+ * exclusively in sb_observed_occupancy(); this function only filters and
+ * re-shapes its output.
+ *
+ * Filtering:
+ *   - Drops rows where is_stale_heel === true (heels are grid-only; Atom 12
+ *     already renders them as muted badges on the vessel stage).
+ *
+ * Bucketing by vessel-key prefix:
+ *   - "cct-*" and "yt-*" → 'fermentation'
+ *   - "bbt-*"            → 'bbt'
+ *   (Other dest_types not currently modelled; silently omitted.)
+ *
+ * Returns shape:
+ *   [
+ *     'fermentation' => [ [...card fields...], ... ],
+ *     'bbt'          => [ [...card fields...], ... ],
+ *   ]
+ * Each card carries: vessel_key, vessel_label, recipe_name, batch,
+ *   racked_on, racked_hl, remaining_hl, days_in_tank.
+ *
+ * READ-ONLY. Writes nothing.
+ */
+function sb_observed_in_flight(PDO $pdo): array
+{
+    $occupancy = sb_observed_occupancy($pdo);
+
+    // FIX 2: Build a dedup set of (recipe_id, batch) pairs already covered by
+    // true open mothers (op_sessions).  When op_sessions is empty (today's
+    // state), this set is empty and nothing is excluded — verified no-op.
+    // Once pilots 5/6 populate op_sessions with real batches, any observed
+    // card whose recipe+batch matches an open mother will be suppressed here,
+    // preventing duplicate cards on the board.
+    $openMothers = sb_open_mothers($pdo);
+    $motherKeys  = [];
+    foreach ($openMothers as $zone => $zone_mothers) {
+        foreach ($zone_mothers as $m) {
+            if (isset($m['recipe_id_fk'], $m['batch'])) {
+                $motherKeys[$m['recipe_id_fk'] . ':' . $m['batch']] = true;
+            }
+        }
+    }
+
+    $out = ['fermentation' => [], 'bbt' => []];
+
+    foreach ($occupancy as $vessel_key => $occ) {
+        // Drop stale heels — grid-only, not card candidates.
+        if (!empty($occ['is_stale_heel'])) {
+            continue;
+        }
+
+        // FIX 2: Skip if this batch already appears as a true open mother.
+        $dedupKey = $occ['recipe_id'] . ':' . $occ['batch'];
+        if (isset($motherKeys[$dedupKey])) {
+            continue;
+        }
+
+        // Bucket by prefix.
+        if (str_starts_with($vessel_key, 'bbt-')) {
+            $zone = 'bbt';
+        } elseif (str_starts_with($vessel_key, 'cct-') || str_starts_with($vessel_key, 'yt-')) {
+            $zone = 'fermentation';
+        } else {
+            continue; // unrecognised prefix — omit rather than misclassify
+        }
+
+        // FIX 4: Reuse age_days already computed in sb_observed_occupancy()
+        // rather than re-deriving from racked_on.
+        $days_in_tank = $occ['age_days'] ?? null;
+
+        // Human-readable vessel label: "BBT-8", "CCT-3", "YT-2".
+        $parts        = explode('-', $vessel_key, 2);
+        $vessel_label = strtoupper($parts[0]) . '-' . ($parts[1] ?? '');
+
+        $out[$zone][] = [
+            'vessel_key'   => $vessel_key,
+            'vessel_label' => $vessel_label,
+            'recipe_name'  => $occ['recipe_name'],
+            'batch'        => $occ['batch'],
+            'racked_on'    => $occ['racked_on'],
+            'racked_hl'    => $occ['racked_hl'],
+            'remaining_hl' => $occ['remaining_hl'],
+            'days_in_tank' => $days_in_tank,
         ];
     }
 
