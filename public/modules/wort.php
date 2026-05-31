@@ -11,7 +11,7 @@ header("Content-Type: text/html; charset=utf-8");
 $active_module = "wort";
 $crumbs        = ["Accueil", "Wort Production"];
 
-// --- Filter input validation ---
+// --- Filter input validation (Tab 1: Brassins) ---
 $filterYear           = null;
 $filterMonth          = null;
 $filterRecipe         = null;
@@ -166,8 +166,43 @@ $joinsSql = "
             ) + 0
 ";
 
+// ─────────────────────────────────────────────────────────────
+// Tab 2 (KPIs): CANONICAL DERIVATION
+//   HL produced = SUM(cl.final_volume) FROM bd_brewing_gravity_v2
+//                 WHERE event_type='Cooling' AND is_tombstoned=0
+//   Recipe join directly from the cooling row:
+//     JOIN ref_recipes rr ON rr.id = cl.recipe_id_fk
+//   (0 NULL FK — clean join, no date-equality match needed)
+//   wort.php's cooling join through bd_brewing_brewday_v2 by date
+//   is intentionally NOT reused here — it drops ~15% of HL.
+// ─────────────────────────────────────────────────────────────
+
+$kpiBucketExpr = "CASE
+    WHEN rr.classification='Contract' THEN 'contract'
+    WHEN rr.classification='Neb' AND ( rr.subtype IN('EPH','CollabIn','CollabOut')
+         OR (rr.subtype='Archive' AND (rr.client_id IS NOT NULL OR lc.n = 1)) ) THEN 'special'
+    WHEN rr.classification='Neb' THEN 'core'
+    ELSE 'other' END";
+
+$kpiBaseJoin = "
+    FROM bd_brewing_gravity_v2 cl
+    JOIN ref_recipes rr ON rr.id = cl.recipe_id_fk
+    JOIN (
+        SELECT recipe_id_fk AS rid, COUNT(*) AS n
+        FROM bd_brewing_gravity_v2
+        WHERE event_type = 'Cooling' AND is_tombstoned = 0
+        GROUP BY recipe_id_fk
+    ) lc ON lc.rid = cl.recipe_id_fk
+    WHERE cl.event_type = 'Cooling' AND cl.is_tombstoned = 0
+";
+
+$kpiPayload = [];
+$dbError    = null;
+
 try {
     $pdo = maltytask_pdo();
+
+    // ─── Tab 1: Brassins queries ───────────────────────────────
 
     // --- Dropdown data: years ---
     $yearRows = $pdo->query("
@@ -202,8 +237,6 @@ try {
     ")->fetchAll(PDO::FETCH_COLUMN);
 
     // Cooling join (1 brewday row → N brew/cooling rows for same beer+batch+date).
-    // bd_brewing_cooling folded into bd_brewing_gravity_v2 WHERE event_type='Cooling'.
-    // gravity_v2 has no event_date column — only submitted_at — so match on DATE(submitted_at).
     $coolingJoinSql = "
         LEFT JOIN bd_brewing_gravity_v2 cl
             ON  cl.event_type = 'Cooling'
@@ -223,7 +256,7 @@ try {
     $kpiStmt->execute($params);
     $stats = $kpiStmt->fetch();
 
-    // --- Last brewday detail (recipe / volume / CCT for the latest event_date in the filtered set) ---
+    // --- Last brewday detail ---
     $lastBrewday = null;
     if (!empty($stats["latest_date"])) {
         $latestDate = $stats["latest_date"];
@@ -241,11 +274,6 @@ try {
     }
 
     // --- Row query (filtered) ---
-    // EPH rows: bd_batch typically encodes the year suffix, e.g. "24" -> vintage "2024".
-    // We attempt two left-joins to ref_recipes:
-    //   rr  — match name + vintage built from bd_batch (EPH pattern)
-    //   rr2 — match name + vintage='' (non-EPH / no vintage)
-    // COALESCE picks rr first, rr2 as fallback.
     $rowSql = "
         SELECT
             bb.id,
@@ -277,7 +305,261 @@ try {
     $rowStmt = $pdo->prepare($rowSql);
     $rowStmt->execute($params);
     $rows    = $rowStmt->fetchAll();
-    $dbError = null;
+
+    // ─── Tab 2: KPIs / Analyse queries ───────────────────────
+
+    // Active KPI year (independent from brewday filter)
+    $kpiYearParam = $_GET['kpi_year'] ?? null;
+    if ($kpiYearParam === null) {
+        $kpiActiveYear = $currentYear;
+    } elseif ($kpiYearParam === 'all') {
+        $kpiActiveYear = 'all';
+    } elseif (ctype_digit((string) $kpiYearParam)) {
+        $ky = (int) $kpiYearParam;
+        $kpiActiveYear = ($ky >= 2015 && $ky <= 2030) ? $ky : $currentYear;
+    } else {
+        $kpiActiveYear = $currentYear;
+    }
+
+    // 1. Distinct years
+    $kpiYears = $pdo->query("
+        SELECT DISTINCT YEAR(DATE(cl.submitted_at)) AS yr
+        " . $kpiBaseJoin . "
+        ORDER BY yr DESC
+    ")->fetchAll(PDO::FETCH_COLUMN);
+    $kpiPayload['years'] = array_values($kpiYears);
+
+    // 2. Bucket totals per year × month
+    $monthlyRows = $pdo->query("
+        SELECT
+            YEAR(DATE(cl.submitted_at)) AS yr,
+            MONTH(DATE(cl.submitted_at)) AS mo,
+            ({$kpiBucketExpr}) AS bucket,
+            ROUND(SUM(cl.final_volume), 1) AS hl,
+            COUNT(*) AS brews
+        {$kpiBaseJoin}
+        GROUP BY yr, mo, bucket
+        ORDER BY yr, mo, bucket
+    ")->fetchAll(PDO::FETCH_ASSOC);
+
+    // 3. Per-recipe × month
+    $recipeMonthRows = $pdo->query("
+        SELECT
+            YEAR(DATE(cl.submitted_at)) AS yr,
+            MONTH(DATE(cl.submitted_at)) AS mo,
+            COALESCE(NULLIF(rr.recipe_short_name, ''), rr.name) AS recipe,
+            ({$kpiBucketExpr}) AS bucket,
+            ROUND(SUM(cl.final_volume), 1) AS hl
+        {$kpiBaseJoin}
+        GROUP BY yr, mo, recipe, bucket
+        ORDER BY yr, bucket, recipe, mo
+    ")->fetchAll(PDO::FETCH_ASSOC);
+
+    // 4. YTD query: current + prior year, months 1–today
+    $todayMonth = (int) date('n');
+    $ytdStmt = $pdo->prepare("
+        SELECT
+            YEAR(DATE(cl.submitted_at)) AS yr,
+            ({$kpiBucketExpr}) AS bucket,
+            ROUND(SUM(cl.final_volume), 1) AS hl
+        {$kpiBaseJoin}
+          AND YEAR(DATE(cl.submitted_at)) IN (:cy, :py)
+          AND MONTH(DATE(cl.submitted_at)) <= :mo
+        GROUP BY yr, bucket
+    ");
+    $ytdStmt->execute([':cy' => $currentYear, ':py' => $currentYear - 1, ':mo' => $todayMonth]);
+    $ytdRows = $ytdStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Assemble per-year data structures
+    $byYear = [];
+    foreach ($monthlyRows as $r) {
+        $yr = (int)$r['yr'];
+        $mo = (int)$r['mo'];
+        $bk = $r['bucket'];
+        if (!isset($byYear[$yr])) {
+            $byYear[$yr] = ['monthly' => [], 'totals' => ['core_hl'=>0,'spec_hl'=>0,'contract_hl'=>0,'neb_hl'=>0,'total_hl'=>0,'brews'=>0,'neb_brews'=>0,'contract_brews'=>0]];
+        }
+        if (!isset($byYear[$yr]['monthly'][$mo])) {
+            $byYear[$yr]['monthly'][$mo] = ['core'=>0.0,'special'=>0.0,'contract'=>0.0,'brews'=>['core'=>0,'special'=>0,'contract'=>0]];
+        }
+        $byYear[$yr]['monthly'][$mo][$bk] = (float)$r['hl'];
+        $byYear[$yr]['monthly'][$mo]['brews'][$bk] = (int)$r['brews'];
+
+        $hl = (float)$r['hl'];
+        $br = (int)$r['brews'];
+        if ($bk === 'core')     { $byYear[$yr]['totals']['core_hl'] += $hl; $byYear[$yr]['totals']['neb_hl'] += $hl; $byYear[$yr]['totals']['neb_brews'] += $br; }
+        if ($bk === 'special')  { $byYear[$yr]['totals']['spec_hl'] += $hl; $byYear[$yr]['totals']['neb_hl'] += $hl; $byYear[$yr]['totals']['neb_brews'] += $br; }
+        if ($bk === 'contract') { $byYear[$yr]['totals']['contract_hl'] += $hl; $byYear[$yr]['totals']['contract_brews'] += $br; }
+        $byYear[$yr]['totals']['total_hl'] += $hl;
+        $byYear[$yr]['totals']['brews'] += $br;
+    }
+
+    // Index recipe×month by year
+    $recipeMo = [];
+    foreach ($recipeMonthRows as $r) {
+        $yr  = (int)$r['yr'];
+        $mo  = (int)$r['mo'];
+        $rec = $r['recipe'];
+        $bk  = $r['bucket'];
+        if (!isset($recipeMo[$yr][$rec])) {
+            $recipeMo[$yr][$rec] = ['recipe' => $rec, 'bucket' => $bk, 'mo' => []];
+        }
+        $recipeMo[$yr][$rec]['mo'][$mo] = (float)$r['hl'];
+    }
+
+    // YTD index
+    $ytdIndex = [];
+    foreach ($ytdRows as $r) {
+        $yr = (int)$r['yr'];
+        $bk = $r['bucket'];
+        if (!isset($ytdIndex[$yr])) $ytdIndex[$yr] = ['core'=>0.0,'special'=>0.0,'contract'=>0.0];
+        $ytdIndex[$yr][$bk] = (float)$r['hl'];
+    }
+
+    // Build years_data (per-year payload)
+    $yearsData = [];
+    foreach ($byYear as $yr => $yd) {
+        $monthly12 = [];
+        $lastDataMonth = 0;
+        for ($mo = 1; $mo <= 12; $mo++) {
+            $m = $yd['monthly'][$mo] ?? ['core'=>0.0,'special'=>0.0,'contract'=>0.0];
+            $monthly12[] = [
+                round((float)$m['core'], 1),
+                round((float)$m['special'], 1),
+                round((float)$m['contract'], 1),
+            ];
+            if ($m['core'] + $m['special'] + $m['contract'] > 0) {
+                $lastDataMonth = $mo;
+            }
+        }
+
+        $isPartial = ($yr === $currentYear);
+
+        $t = $yd['totals'];
+        $cards = [
+            'core_hl'         => round($t['core_hl'], 1),
+            'spec_hl'         => round($t['spec_hl'], 1),
+            'neb_hl'          => round($t['neb_hl'], 1),
+            'contract_hl'     => round($t['contract_hl'], 1),
+            'total_hl'        => round($t['total_hl'], 1),
+            'brews'           => $t['brews'],
+            'neb_brews'       => $t['neb_brews'],
+            'contract_brews'  => $t['contract_brews'],
+        ];
+
+        $yoy = null;
+        $yoyLabel = 'totale';
+        if ($isPartial) {
+            $nebCY = ($ytdIndex[$currentYear]['core'] ?? 0.0) + ($ytdIndex[$currentYear]['special'] ?? 0.0);
+            $nebPY = ($ytdIndex[$currentYear - 1]['core'] ?? 0.0) + ($ytdIndex[$currentYear - 1]['special'] ?? 0.0);
+            if ($nebPY > 0) {
+                $yoy = round(($nebCY - $nebPY) / $nebPY * 100, 1);
+                $yoyLabel = 'jan–' . $monthsFR[min($todayMonth, 12)];
+            }
+        } elseif ($yr >= 2022) {
+            $prevYrNeb = isset($byYear[$yr - 1]) ? round($byYear[$yr - 1]['totals']['neb_hl'], 1) : null;
+            if ($prevYrNeb !== null && $prevYrNeb > 0) {
+                $yoy = round(($t['neb_hl'] - $prevYrNeb) / $prevYrNeb * 100, 1);
+            }
+        }
+
+        // recipe_month: [{recipe, bucket, vals:[n]}]
+        $recipeMonth = [];
+        if (isset($recipeMo[$yr])) {
+            foreach ($recipeMo[$yr] as $rec => $rd) {
+                $vals = [];
+                for ($mo = 1; $mo <= $lastDataMonth; $mo++) {
+                    $vals[] = round($rd['mo'][$mo] ?? 0.0, 1);
+                }
+                $recipeMonth[] = [
+                    'recipe' => $rd['recipe'],
+                    'bucket' => $rd['bucket'],
+                    'vals'   => $vals,
+                ];
+            }
+        }
+
+        // recipe_quarter: [{recipe, bucket, vals:[4]}]
+        $recipeQuarter = [];
+        if (isset($recipeMo[$yr])) {
+            foreach ($recipeMo[$yr] as $rec => $rd) {
+                $qVals = [0.0, 0.0, 0.0, 0.0];
+                foreach ($rd['mo'] as $mo => $hl) {
+                    $qi = (int)ceil($mo / 3) - 1;
+                    if ($qi >= 0 && $qi < 4) $qVals[$qi] = round($qVals[$qi] + $hl, 1);
+                }
+                $recipeQuarter[] = [
+                    'recipe' => $rd['recipe'],
+                    'bucket' => $rd['bucket'],
+                    'vals'   => array_map(fn($v) => round($v, 1), $qVals),
+                ];
+            }
+        }
+
+        $yearsData[$yr] = [
+            'monthly'          => $monthly12,
+            'cards'            => $cards,
+            'is_partial'       => $isPartial,
+            'is_illustrative'  => false,
+            'last_month'       => $lastDataMonth,
+            'yoy'              => $yoy,
+            'yoy_label'        => $yoyLabel,
+            'recipe_month'     => $recipeMonth,
+            'recipe_quarter'   => $recipeQuarter,
+        ];
+    }
+
+    // Annual view (year=all)
+    $annualRows  = [];
+    $annualCards = ['core_hl'=>0.0,'spec_hl'=>0.0,'neb_hl'=>0.0,'contract_hl'=>0.0,'total_hl'=>0.0,'brews'=>0,'neb_brews'=>0,'contract_brews'=>0];
+    foreach ($byYear as $yr => $yd) {
+        $t = $yd['totals'];
+        $annualRows[] = [
+            'year'     => $yr,
+            'core'     => round($t['core_hl'], 1),
+            'spec'     => round($t['spec_hl'], 1),
+            'contract' => round($t['contract_hl'], 1),
+            'neb'      => round($t['neb_hl'], 1),
+            'total'    => round($t['total_hl'], 1),
+        ];
+        $annualCards['core_hl']        += $t['core_hl'];
+        $annualCards['spec_hl']        += $t['spec_hl'];
+        $annualCards['neb_hl']         += $t['neb_hl'];
+        $annualCards['contract_hl']    += $t['contract_hl'];
+        $annualCards['total_hl']       += $t['total_hl'];
+        $annualCards['brews']          += $t['brews'];
+        $annualCards['neb_brews']      += $t['neb_brews'];
+        $annualCards['contract_brews'] += $t['contract_brews'];
+    }
+    usort($annualRows, fn($a,$b) => $a['year'] <=> $b['year']);
+    foreach (['core_hl','spec_hl','neb_hl','contract_hl','total_hl'] as $k) {
+        $annualCards[$k] = round($annualCards[$k], 1);
+    }
+
+    $annualView = [
+        'annual_monthly_stub' => true,
+        'cards'               => $annualCards,
+        'is_partial'          => false,
+        'is_illustrative'     => false,
+        'yoy'                 => null,
+        'yoy_label'           => null,
+        'recipe_month'        => [],
+        'recipe_quarter'      => [],
+    ];
+
+    $lastDataMonthCurrent = 0;
+    if (isset($yearsData[$currentYear])) {
+        $lastDataMonthCurrent = $yearsData[$currentYear]['last_month'];
+    }
+
+    $kpiPayload = [
+        'years'          => array_values($kpiYears),
+        'active_year'    => $kpiActiveYear,
+        'years_data'     => $yearsData,
+        'annual'         => $annualRows,
+        'annual_view'    => $annualView,
+        'last_data_month'=> $lastDataMonthCurrent,
+    ];
 
 } catch (Throwable $e) {
     $rows        = [];
@@ -288,6 +570,8 @@ try {
     $recipeRows  = [];
     $yeastRows   = [];
     $genRows     = [];
+    $kpiPayload  = ['error' => $e->getMessage()];
+    $kpiActiveYear = $currentYear;
 }
 ?><!doctype html>
 <html lang="fr">
@@ -299,8 +583,9 @@ try {
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/app.css?v=<?= @filemtime(__DIR__ . '/../css/app.css') ?: time() ?>">
+  <link rel="stylesheet" href="/css/wort-kpis.css?v=<?= @filemtime(__DIR__ . '/../css/wort-kpis.css') ?: time() ?>">
 </head>
-<body class="home">
+<body class="home wort">
 
 <?php require __DIR__ . "/../../app/partials/sidebar.php" ?>
 
@@ -314,282 +599,448 @@ try {
     </div>
   <?php endif ?>
 
-  <!-- KPI stats bar -->
-  <section class="wort-kpis" aria-label="Statistiques brassage">
-    <div class="wort-kpi">
-      <span class="wort-kpi__num"><?= htmlspecialchars((string) ($stats["brewday_count"] ?? "—")) ?></span>
-      <span class="wort-kpi__label">Brewdays</span>
-    </div>
-    <div class="wort-kpi">
-      <span class="wort-kpi__num"><?= htmlspecialchars((string) ($stats["brew_count"] ?? "—")) ?></span>
-      <span class="wort-kpi__label">Brews</span>
-    </div>
-    <div class="wort-kpi">
-      <span class="wort-kpi__num"><?= htmlspecialchars((string) ($stats["distinct_beers"] ?? "—")) ?></span>
-      <span class="wort-kpi__label">Recettes distinctes</span>
-    </div>
-    <div class="wort-kpi wort-kpi--compound">
-      <?php if (!empty($stats["latest_date"])): ?>
-        <span class="wort-kpi__date"><?= fmt_date_fr($stats["latest_date"], $monthsFR) ?></span>
-        <?php
-          $lbRecipes = $lastBrewday["recipes"] ?? "";
-          $lbCcts    = $lastBrewday["ccts"]    ?? "";
-          $lbVolHl   = isset($lastBrewday["total_vol_hl"]) ? (float) $lastBrewday["total_vol_hl"] : 0.0;
+  <!-- ── Tab switcher ── -->
+  <nav class="wort-tabs" aria-label="Sections Wort Production" role="tablist">
+    <button class="wort-tab-btn active" data-tab="brassins" role="tab" aria-selected="true"  aria-controls="wort-panel-brassins">Brassins</button>
+    <button class="wort-tab-btn"        data-tab="kpis"     role="tab" aria-selected="false" aria-controls="wort-panel-kpis">KPIs / Analyse</button>
+  </nav>
 
-          $volDisplay = $lbVolHl > 0 ? number_format($lbVolHl, 1) . " HL" : "—";
-          if ($lbCcts !== "") {
-              $cctParts = array_filter(array_map('trim', explode("/", $lbCcts)), fn($c) => $c !== "");
-              $cctDisplay = $cctParts ? "CCT " . implode(" / ", $cctParts) : "—";
-          } else {
-              $cctDisplay = "—";
-          }
-        ?>
-        <?php if ($lbRecipes !== ""): ?>
-          <span class="wort-kpi__detail"><?= htmlspecialchars($lbRecipes) ?></span>
-        <?php endif ?>
-        <span class="wort-kpi__detail"><?= htmlspecialchars($volDisplay) ?> · <?= htmlspecialchars($cctDisplay) ?></span>
-      <?php else: ?>
-        <span class="wort-kpi__date">—</span>
-      <?php endif ?>
-      <span class="wort-kpi__label">Dernier brewday</span>
-    </div>
-  </section>
+  <!-- ══════════════════════════════════════════
+       TAB 1 — Brassins
+       ══════════════════════════════════════════ -->
+  <div class="wort-tab-panel active" id="wort-panel-brassins" role="tabpanel" aria-labelledby="">
 
-  <!-- Filter bar -->
-  <form class="wort-filters" method="get" action="">
-    <div class="wort-filters__row">
-
-      <label class="wort-filters__field">
-        <span class="wort-filters__label">Année</span>
-        <select name="year" onchange="this.form.submit()">
-          <option value="all"<?= ($filterYear === null) ? ' selected' : '' ?>>Tous</option>
-          <?php foreach ($yearRows as $yr): ?>
-            <option value="<?= htmlspecialchars((string) $yr) ?>"<?= ($filterYear === (int) $yr) ? ' selected' : '' ?>>
-              <?= htmlspecialchars((string) $yr) ?>
-            </option>
-          <?php endforeach ?>
-        </select>
-      </label>
-
-      <label class="wort-filters__field">
-        <span class="wort-filters__label">Mois</span>
-        <select name="month" onchange="this.form.submit()">
-          <option value="">Tous</option>
-          <?php for ($mi = 1; $mi <= 12; $mi++): ?>
-            <option value="<?= $mi ?>"<?= ($filterMonth === $mi) ? ' selected' : '' ?>>
-              <?= htmlspecialchars($monthsFRFull[$mi]) ?>
-            </option>
-          <?php endfor ?>
-        </select>
-      </label>
-
-      <label class="wort-filters__field">
-        <span class="wort-filters__label">Recette</span>
-        <select name="recipe" onchange="this.form.submit()">
-          <option value="">Tous</option>
-          <?php foreach ($recipeRows as $rec): ?>
-            <option value="<?= htmlspecialchars($rec) ?>"<?= ($filterRecipe === $rec) ? ' selected' : '' ?>>
-              <?= htmlspecialchars($rec) ?>
-            </option>
-          <?php endforeach ?>
-        </select>
-      </label>
-
-      <label class="wort-filters__field">
-        <span class="wort-filters__label">Levure</span>
-        <select name="yeast" onchange="this.form.submit()">
-          <option value="">Tous</option>
-          <?php foreach ($yeastRows as $ye): ?>
-            <option value="<?= htmlspecialchars($ye) ?>"<?= ($filterYeast === $ye) ? ' selected' : '' ?>>
-              <?= htmlspecialchars($ye) ?>
-            </option>
-          <?php endforeach ?>
-        </select>
-      </label>
-
-      <label class="wort-filters__field">
-        <span class="wort-filters__label">Génération</span>
-        <select name="gen" onchange="this.form.submit()">
-          <option value="">Tous</option>
-          <?php foreach ($genRows as $gen): ?>
-            <option value="<?= htmlspecialchars($gen) ?>"<?= ($filterGen === $gen) ? ' selected' : '' ?>>
-              G<?= htmlspecialchars($gen) ?>
-            </option>
-          <?php endforeach ?>
-        </select>
-      </label>
-
-      <label class="wort-filters__field">
-        <span class="wort-filters__label">CCT</span>
-        <select name="cct" onchange="this.form.submit()">
-          <option value="">Tous</option>
-          <?php for ($ci = 1; $ci <= 18; $ci++): ?>
-            <option value="<?= $ci ?>"<?= ($filterCct === $ci) ? ' selected' : '' ?>>
-              CCT <?= $ci ?>
-            </option>
-          <?php endfor ?>
-        </select>
-      </label>
-
-      <label class="wort-filters__field">
-        <span class="wort-filters__label">Classification</span>
-        <select name="classification" onchange="this.form.submit()">
-          <option value="">Tous</option>
-          <option value="Neb"<?= ($filterClassification === 'Neb') ? ' selected' : '' ?>>Neb</option>
-          <option value="Contract"<?= ($filterClassification === 'Contract') ? ' selected' : '' ?>>Contract</option>
-        </select>
-      </label>
-
-      <?php if ($anyFilter): ?>
-        <a class="wort-filters__reset" href="<?= htmlspecialchars($_SERVER['PHP_SELF']) ?>">Réinitialiser</a>
-      <?php endif ?>
-
-    </div>
-  </form>
-
-  <!-- Brewday table -->
-  <section class="wort-section" aria-label="Derniers brewdays">
-    <div class="wort-section__head">
-      <span class="wort-section__label">
-        <?php if ($anyFilter): ?>
-          — résultats filtrés
-        <?php else: ?>
-          — derniers 50 brewdays
-        <?php endif ?>
-      </span>
-      <?php if ($anyFilter): ?>
-        <span class="wort-filters__count"><?= count($rows) ?> résultat<?= count($rows) !== 1 ? 's' : '' ?></span>
-      <?php endif ?>
-    </div>
-
-    <?php if (empty($rows)): ?>
-      <div class="empty">Aucun brewday enregistré.</div>
-    <?php else: ?>
-      <div class="wort-table-wrap">
-        <table class="wort-table">
-          <thead>
-            <tr>
-              <th scope="col">Date</th>
-              <th scope="col">Recette</th>
-              <th scope="col">Batch</th>
-              <th scope="col">CCT</th>
-              <th scope="col">Levure</th>
-              <th scope="col">YT</th>
-              <th scope="col">Soumis</th>
-            </tr>
-          </thead>
-          <tbody>
-            <?php foreach ($rows as $r): ?>
-              <?php
-                // --- Date column ---
-                $dateStr = best_date($r);
-                $dateFmt = $dateStr ? fmt_date_fr($dateStr, $monthsFR) : "—";
-
-                // --- Recipe column ---
-                $shortName  = $r["recipe_short_name"] ?? null;
-                $rawBeer    = $r["bd_beer"] ?? "";
-                // Show raw beer name below short name only when they differ
-                $showRaw    = $shortName && strtolower(trim($shortName)) !== strtolower(trim($rawBeer));
-                // Contract client badge
-                $showClient = ($r["classification"] === "Contract") && !empty($r["client_name"]);
-
-                // --- Batch column ---
-                $batch   = $r["bd_batch"] ?? "";
-                $vintage = $r["vintage"]  ?? "";
-                // Show vintage badge when EPH-style batch resolves to a vintage
-                $showVintage = ($vintage !== "" && strlen($batch) === 2
-                                && str_starts_with($vintage, "20" . $batch));
-
-                // --- CCT column ---
-                // bd_cct is INT UNSIGNED NULL since migration 026d — cast to string before regex.
-                $rawCct     = (string) ($r["bd_cct"] ?? "");
-                $cctCap     = $r["cct_capacity_hl"] ?? null;
-                $cctNum     = preg_replace('/[^0-9].*$/', '', $rawCct);
-                if ($cctNum !== "" && $cctCap !== null) {
-                    $cctDisplay = $cctNum . " · " . $cctCap . " HL";
-                } elseif ($rawCct !== "") {
-                    $cctDisplay = $rawCct;
-                } else {
-                    $cctDisplay = "—";
-                }
-
-                // --- Yeast column ---
-                $yeast    = $r["bd_yeast"]     ?? "";
-                $yeastGen = $r["bd_yeast_gen"] ?? "";
-
-                // --- YT column ---
-                // bd_yt is INT UNSIGNED NULL since migration 026d — cast to string before regex.
-                $rawYt  = (string) ($r["bd_yt"] ?? "");
-                $ytCap  = $r["yt_capacity_hl"] ?? null;
-                $ytNum  = preg_replace('/[^0-9].*$/', '', $rawYt);
-                if ($ytNum !== "" && $ytCap !== null) {
-                    $ytDisplay = $ytNum . " · " . $ytCap . " HL";
-                } elseif ($rawYt !== "") {
-                    $ytDisplay = $rawYt;
-                } else {
-                    $ytDisplay = "—";
-                }
-
-                // --- Submitted column ---
-                $submittedFmt = !empty($r["submitted_at"])
-                    ? fmt_submitted($r["submitted_at"])
-                    : "—";
-              ?>
-              <tr>
-                <td class="wort-td wort-td--date">
-                  <?= htmlspecialchars($dateFmt) ?>
-                </td>
-
-                <td class="wort-td wort-td--recipe">
-                  <span class="wort-recipe__short">
-                    <?= htmlspecialchars($shortName ?? $rawBeer) ?>
-                  </span>
-                  <?php if ($showRaw): ?>
-                    <span class="wort-recipe__raw"><?= htmlspecialchars($rawBeer) ?></span>
-                  <?php endif ?>
-                  <?php if ($showClient): ?>
-                    <span class="wort-recipe__client"><?= htmlspecialchars($r["client_name"]) ?></span>
-                  <?php endif ?>
-                </td>
-
-                <td class="wort-td wort-td--batch">
-                  <?php if ($showVintage): ?>
-                    <span class="wort-badge wort-badge--vintage"><?= htmlspecialchars($vintage) ?></span>
-                  <?php endif ?>
-                  <span class="wort-mono"><?= htmlspecialchars($batch !== "" ? $batch : "—") ?></span>
-                </td>
-
-                <td class="wort-td wort-td--cct">
-                  <span class="wort-mono"><?= htmlspecialchars($cctDisplay) ?></span>
-                </td>
-
-                <td class="wort-td wort-td--yeast">
-                  <?php if ($yeast !== ""): ?>
-                    <span class="wort-yeast__name"><?= htmlspecialchars($yeast) ?></span>
-                  <?php else: ?>
-                    <span class="wort-muted">—</span>
-                  <?php endif ?>
-                  <?php if ($yeastGen !== ""): ?>
-                    <span class="wort-badge wort-badge--gen">G<?= htmlspecialchars($yeastGen) ?></span>
-                  <?php endif ?>
-                </td>
-
-                <td class="wort-td wort-td--yt">
-                  <span class="wort-mono"><?= htmlspecialchars($ytDisplay) ?></span>
-                </td>
-
-                <td class="wort-td wort-td--submitted">
-                  <span class="wort-mono wort-muted"><?= htmlspecialchars($submittedFmt) ?></span>
-                </td>
-              </tr>
-            <?php endforeach ?>
-          </tbody>
-        </table>
+    <!-- KPI stats bar -->
+    <section class="wort-kpis" aria-label="Statistiques brassage">
+      <div class="wort-kpi">
+        <span class="wort-kpi__num"><?= htmlspecialchars((string) ($stats["brewday_count"] ?? "—")) ?></span>
+        <span class="wort-kpi__label">Brewdays</span>
       </div>
+      <div class="wort-kpi">
+        <span class="wort-kpi__num"><?= htmlspecialchars((string) ($stats["brew_count"] ?? "—")) ?></span>
+        <span class="wort-kpi__label">Brews</span>
+      </div>
+      <div class="wort-kpi">
+        <span class="wort-kpi__num"><?= htmlspecialchars((string) ($stats["distinct_beers"] ?? "—")) ?></span>
+        <span class="wort-kpi__label">Recettes distinctes</span>
+      </div>
+      <div class="wort-kpi wort-kpi--compound">
+        <?php if (!empty($stats["latest_date"])): ?>
+          <span class="wort-kpi__date"><?= fmt_date_fr($stats["latest_date"], $monthsFR) ?></span>
+          <?php
+            $lbRecipes = $lastBrewday["recipes"] ?? "";
+            $lbCcts    = $lastBrewday["ccts"]    ?? "";
+            $lbVolHl   = isset($lastBrewday["total_vol_hl"]) ? (float) $lastBrewday["total_vol_hl"] : 0.0;
+
+            $volDisplay = $lbVolHl > 0 ? number_format($lbVolHl, 1) . " HL" : "—";
+            if ($lbCcts !== "") {
+                $cctParts = array_filter(array_map('trim', explode("/", $lbCcts)), fn($c) => $c !== "");
+                $cctDisplay = $cctParts ? "CCT " . implode(" / ", $cctParts) : "—";
+            } else {
+                $cctDisplay = "—";
+            }
+          ?>
+          <?php if ($lbRecipes !== ""): ?>
+            <span class="wort-kpi__detail"><?= htmlspecialchars($lbRecipes) ?></span>
+          <?php endif ?>
+          <span class="wort-kpi__detail"><?= htmlspecialchars($volDisplay) ?> · <?= htmlspecialchars($cctDisplay) ?></span>
+        <?php else: ?>
+          <span class="wort-kpi__date">—</span>
+        <?php endif ?>
+        <span class="wort-kpi__label">Dernier brewday</span>
+      </div>
+    </section>
+
+    <!-- Filter bar -->
+    <form class="wort-filters" method="get" action="">
+      <div class="wort-filters__row">
+
+        <label class="wort-filters__field">
+          <span class="wort-filters__label">Année</span>
+          <select name="year" onchange="this.form.submit()">
+            <option value="all"<?= ($filterYear === null) ? ' selected' : '' ?>>Tous</option>
+            <?php foreach ($yearRows as $yr): ?>
+              <option value="<?= htmlspecialchars((string) $yr) ?>"<?= ($filterYear === (int) $yr) ? ' selected' : '' ?>>
+                <?= htmlspecialchars((string) $yr) ?>
+              </option>
+            <?php endforeach ?>
+          </select>
+        </label>
+
+        <label class="wort-filters__field">
+          <span class="wort-filters__label">Mois</span>
+          <select name="month" onchange="this.form.submit()">
+            <option value="">Tous</option>
+            <?php for ($mi = 1; $mi <= 12; $mi++): ?>
+              <option value="<?= $mi ?>"<?= ($filterMonth === $mi) ? ' selected' : '' ?>>
+                <?= htmlspecialchars($monthsFRFull[$mi]) ?>
+              </option>
+            <?php endfor ?>
+          </select>
+        </label>
+
+        <label class="wort-filters__field">
+          <span class="wort-filters__label">Recette</span>
+          <select name="recipe" onchange="this.form.submit()">
+            <option value="">Tous</option>
+            <?php foreach ($recipeRows as $rec): ?>
+              <option value="<?= htmlspecialchars($rec) ?>"<?= ($filterRecipe === $rec) ? ' selected' : '' ?>>
+                <?= htmlspecialchars($rec) ?>
+              </option>
+            <?php endforeach ?>
+          </select>
+        </label>
+
+        <label class="wort-filters__field">
+          <span class="wort-filters__label">Levure</span>
+          <select name="yeast" onchange="this.form.submit()">
+            <option value="">Tous</option>
+            <?php foreach ($yeastRows as $ye): ?>
+              <option value="<?= htmlspecialchars($ye) ?>"<?= ($filterYeast === $ye) ? ' selected' : '' ?>>
+                <?= htmlspecialchars($ye) ?>
+              </option>
+            <?php endforeach ?>
+          </select>
+        </label>
+
+        <label class="wort-filters__field">
+          <span class="wort-filters__label">Génération</span>
+          <select name="gen" onchange="this.form.submit()">
+            <option value="">Tous</option>
+            <?php foreach ($genRows as $gen): ?>
+              <option value="<?= htmlspecialchars($gen) ?>"<?= ($filterGen === $gen) ? ' selected' : '' ?>>
+                G<?= htmlspecialchars($gen) ?>
+              </option>
+            <?php endforeach ?>
+          </select>
+        </label>
+
+        <label class="wort-filters__field">
+          <span class="wort-filters__label">CCT</span>
+          <select name="cct" onchange="this.form.submit()">
+            <option value="">Tous</option>
+            <?php for ($ci = 1; $ci <= 18; $ci++): ?>
+              <option value="<?= $ci ?>"<?= ($filterCct === $ci) ? ' selected' : '' ?>>
+                CCT <?= $ci ?>
+              </option>
+            <?php endfor ?>
+          </select>
+        </label>
+
+        <label class="wort-filters__field">
+          <span class="wort-filters__label">Classification</span>
+          <select name="classification" onchange="this.form.submit()">
+            <option value="">Tous</option>
+            <option value="Neb"<?= ($filterClassification === 'Neb') ? ' selected' : '' ?>>Neb</option>
+            <option value="Contract"<?= ($filterClassification === 'Contract') ? ' selected' : '' ?>>Contract</option>
+          </select>
+        </label>
+
+        <?php if ($anyFilter): ?>
+          <a class="wort-filters__reset" href="<?= htmlspecialchars($_SERVER['PHP_SELF']) ?>">Réinitialiser</a>
+        <?php endif ?>
+
+      </div>
+    </form>
+
+    <!-- Brewday table -->
+    <section class="wort-section" aria-label="Derniers brewdays">
+      <div class="wort-section__head">
+        <span class="wort-section__label">
+          <?php if ($anyFilter): ?>
+            — résultats filtrés
+          <?php else: ?>
+            — derniers 50 brewdays
+          <?php endif ?>
+        </span>
+        <?php if ($anyFilter): ?>
+          <span class="wort-filters__count"><?= count($rows) ?> résultat<?= count($rows) !== 1 ? 's' : '' ?></span>
+        <?php endif ?>
+      </div>
+
+      <?php if (empty($rows)): ?>
+        <div class="empty">Aucun brewday enregistré.</div>
+      <?php else: ?>
+        <div class="wort-table-wrap">
+          <table class="wort-table">
+            <thead>
+              <tr>
+                <th scope="col">Date</th>
+                <th scope="col">Recette</th>
+                <th scope="col">Batch</th>
+                <th scope="col">CCT</th>
+                <th scope="col">Levure</th>
+                <th scope="col">YT</th>
+                <th scope="col">Soumis</th>
+              </tr>
+            </thead>
+            <tbody>
+              <?php foreach ($rows as $r): ?>
+                <?php
+                  // --- Date column ---
+                  $dateStr = best_date($r);
+                  $dateFmt = $dateStr ? fmt_date_fr($dateStr, $monthsFR) : "—";
+
+                  // --- Recipe column ---
+                  $shortName  = $r["recipe_short_name"] ?? null;
+                  $rawBeer    = $r["bd_beer"] ?? "";
+                  $showRaw    = $shortName && strtolower(trim($shortName)) !== strtolower(trim($rawBeer));
+                  $showClient = ($r["classification"] === "Contract") && !empty($r["client_name"]);
+
+                  // --- Batch column ---
+                  $batch   = $r["bd_batch"] ?? "";
+                  $vintage = $r["vintage"]  ?? "";
+                  $showVintage = ($vintage !== "" && strlen($batch) === 2
+                                  && str_starts_with($vintage, "20" . $batch));
+
+                  // --- CCT column ---
+                  $rawCct     = (string) ($r["bd_cct"] ?? "");
+                  $cctCap     = $r["cct_capacity_hl"] ?? null;
+                  $cctNum     = preg_replace('/[^0-9].*$/', '', $rawCct);
+                  if ($cctNum !== "" && $cctCap !== null) {
+                      $cctDisplay = $cctNum . " · " . $cctCap . " HL";
+                  } elseif ($rawCct !== "") {
+                      $cctDisplay = $rawCct;
+                  } else {
+                      $cctDisplay = "—";
+                  }
+
+                  // --- Yeast column ---
+                  $yeast    = $r["bd_yeast"]     ?? "";
+                  $yeastGen = $r["bd_yeast_gen"] ?? "";
+
+                  // --- YT column ---
+                  $rawYt  = (string) ($r["bd_yt"] ?? "");
+                  $ytCap  = $r["yt_capacity_hl"] ?? null;
+                  $ytNum  = preg_replace('/[^0-9].*$/', '', $rawYt);
+                  if ($ytNum !== "" && $ytCap !== null) {
+                      $ytDisplay = $ytNum . " · " . $ytCap . " HL";
+                  } elseif ($rawYt !== "") {
+                      $ytDisplay = $rawYt;
+                  } else {
+                      $ytDisplay = "—";
+                  }
+
+                  // --- Submitted column ---
+                  $submittedFmt = !empty($r["submitted_at"])
+                      ? fmt_submitted($r["submitted_at"])
+                      : "—";
+                ?>
+                <tr>
+                  <td class="wort-td wort-td--date">
+                    <?= htmlspecialchars($dateFmt) ?>
+                  </td>
+
+                  <td class="wort-td wort-td--recipe">
+                    <span class="wort-recipe__short">
+                      <?= htmlspecialchars($shortName ?? $rawBeer) ?>
+                    </span>
+                    <?php if ($showRaw): ?>
+                      <span class="wort-recipe__raw"><?= htmlspecialchars($rawBeer) ?></span>
+                    <?php endif ?>
+                    <?php if ($showClient): ?>
+                      <span class="wort-recipe__client"><?= htmlspecialchars($r["client_name"]) ?></span>
+                    <?php endif ?>
+                  </td>
+
+                  <td class="wort-td wort-td--batch">
+                    <?php if ($showVintage): ?>
+                      <span class="wort-badge wort-badge--vintage"><?= htmlspecialchars($vintage) ?></span>
+                    <?php endif ?>
+                    <span class="wort-mono"><?= htmlspecialchars($batch !== "" ? $batch : "—") ?></span>
+                  </td>
+
+                  <td class="wort-td wort-td--cct">
+                    <span class="wort-mono"><?= htmlspecialchars($cctDisplay) ?></span>
+                  </td>
+
+                  <td class="wort-td wort-td--yeast">
+                    <?php if ($yeast !== ""): ?>
+                      <span class="wort-yeast__name"><?= htmlspecialchars($yeast) ?></span>
+                    <?php else: ?>
+                      <span class="wort-muted">—</span>
+                    <?php endif ?>
+                    <?php if ($yeastGen !== ""): ?>
+                      <span class="wort-badge wort-badge--gen">G<?= htmlspecialchars($yeastGen) ?></span>
+                    <?php endif ?>
+                  </td>
+
+                  <td class="wort-td wort-td--yt">
+                    <span class="wort-mono"><?= htmlspecialchars($ytDisplay) ?></span>
+                  </td>
+
+                  <td class="wort-td wort-td--submitted">
+                    <span class="wort-mono wort-muted"><?= htmlspecialchars($submittedFmt) ?></span>
+                  </td>
+                </tr>
+              <?php endforeach ?>
+            </tbody>
+          </table>
+        </div>
+      <?php endif ?>
+    </section>
+
+  </div><!-- /#wort-panel-brassins -->
+
+  <!-- ══════════════════════════════════════════
+       TAB 2 — KPIs / Analyse
+       ══════════════════════════════════════════ -->
+  <div class="wort-tab-panel" id="wort-panel-kpis" role="tabpanel" aria-labelledby="">
+
+    <?php if ($dbError): ?>
+      <div class="wort-error">
+        Erreur base de données&nbsp;: <?= htmlspecialchars($dbError) ?>
+      </div>
+    <?php else: ?>
+
+    <div class="wk-wrap">
+
+      <!-- ── Page header ─────────────────────────── -->
+      <header class="wk-header">
+        <div>
+          <div class="wk-header__title">Production de <em>moût</em></div>
+          <div class="wk-header__sub">Analytique · La Nébuleuse · KPIs annuels</div>
+        </div>
+        <span class="wk-header__badge">Données réelles</span>
+      </header>
+
+      <!-- ── Year selector ───────────────────────── -->
+      <div class="wk-year-bar">
+        <span class="wk-year-bar__label">Année</span>
+        <?php foreach ($kpiPayload['years'] as $yr): ?>
+          <button class="wk-year-btn<?= ($kpiActiveYear === $yr || ($kpiActiveYear === (int)$yr)) ? ' active' : '' ?>"
+                  data-year="<?= htmlspecialchars((string)$yr) ?>"><?= htmlspecialchars((string)$yr) ?></button>
+        <?php endforeach ?>
+        <button class="wk-year-btn<?= ($kpiActiveYear === 'all') ? ' active' : '' ?>" data-year="all">Tous</button>
+      </div>
+
+      <!-- ── YTD notice (current year only) ─────── -->
+      <div class="wk-ytd-note" id="wk-ytd-note" style="<?= ($kpiActiveYear === $currentYear) ? '' : 'display:none' ?>">
+        Données <?= htmlspecialchars((string)$currentYear) ?> jusqu'au <?= htmlspecialchars(date('j')) ?> <?= htmlspecialchars($monthsFR[(int)date('n')] ?? '') ?> — année en cours
+      </div>
+
+      <!-- A. HEADLINE STAT CARDS -->
+      <section class="wk-section">
+        <div class="wk-stats" id="wk-stat-cards"></div>
+      </section>
+
+      <!-- ANNUAL TREND (shown only in "Tous" view) -->
+      <section class="wk-section" id="wk-section-annual" style="<?= ($kpiActiveYear !== 'all') ? 'display:none' : '' ?>">
+        <div class="wk-section__head">
+          <h2 class="wk-section__title">Tendance annuelle — HL produits</h2>
+          <span class="wk-section__note">Toutes années</span>
+        </div>
+        <div class="wk-legend">
+          <div class="wk-legend__item"><span class="wk-legend__dot wk-legend__dot--core"></span>Gamme principale</div>
+          <div class="wk-legend__item"><span class="wk-legend__dot wk-legend__dot--spec"></span>Spéciales</div>
+          <div class="wk-legend__item"><span class="wk-legend__dot wk-legend__dot--contract"></span>Contrat</div>
+        </div>
+        <div class="wk-chart-card">
+          <div class="wk-annual-wrap" id="wk-chart-annual"></div>
+        </div>
+      </section>
+
+      <!-- B. Nébuleuse vs Contrat — HL par mois -->
+      <section class="wk-section" id="wk-section-monthly" style="<?= ($kpiActiveYear === 'all') ? 'display:none' : '' ?>">
+        <div class="wk-section__head">
+          <h2 class="wk-section__title">Nébuleuse vs Contrat — HL par mois</h2>
+        </div>
+        <div class="wk-legend">
+          <div class="wk-legend__item"><span class="wk-legend__dot wk-legend__dot--neb"></span>Nébuleuse (total)</div>
+          <div class="wk-legend__item"><span class="wk-legend__dot wk-legend__dot--contract"></span>Contrat</div>
+        </div>
+        <div class="wk-chart-card">
+          <div class="wk-svg-wrap" id="wk-chart-neb-contract"></div>
+        </div>
+      </section>
+
+      <!-- C + E in 2-col row -->
+      <div class="wk-row-2" id="wk-section-row2" style="<?= ($kpiActiveYear === 'all') ? 'display:none' : '' ?>">
+        <section class="wk-section" style="margin-bottom:0">
+          <div class="wk-section__head">
+            <h2 class="wk-section__title">Composition Nébuleuse par mois</h2>
+          </div>
+          <div class="wk-legend">
+            <div class="wk-legend__item"><span class="wk-legend__dot wk-legend__dot--core"></span>Gamme principale</div>
+            <div class="wk-legend__item"><span class="wk-legend__dot wk-legend__dot--spec"></span>Spéciales</div>
+          </div>
+          <div class="wk-chart-card">
+            <div class="wk-svg-wrap" id="wk-chart-neb-comp"></div>
+          </div>
+        </section>
+        <section class="wk-section" style="margin-bottom:0">
+          <div class="wk-section__head">
+            <h2 class="wk-section__title">Contrat par mois</h2>
+            <span class="wk-section__note">Zéros réels affichés</span>
+          </div>
+          <div class="wk-legend">
+            <div class="wk-legend__item"><span class="wk-legend__dot wk-legend__dot--contract"></span>Contrat (HL)</div>
+          </div>
+          <div class="wk-chart-card">
+            <div class="wk-svg-wrap" id="wk-chart-contract"></div>
+          </div>
+        </section>
+      </div><!-- /.wk-row-2 -->
+
+      <!-- D. ROLLUP TRIMESTRIEL -->
+      <section class="wk-section" id="wk-section-quarterly" style="<?= ($kpiActiveYear === 'all') ? 'display:none' : '' ?>">
+        <div class="wk-section__head">
+          <h2 class="wk-section__title">Rollup trimestriel — Total HL par trimestre</h2>
+        </div>
+        <div class="wk-legend">
+          <div class="wk-legend__item"><span class="wk-legend__dot wk-legend__dot--core"></span>Gamme principale</div>
+          <div class="wk-legend__item"><span class="wk-legend__dot wk-legend__dot--spec"></span>Spéciales</div>
+          <div class="wk-legend__item"><span class="wk-legend__dot wk-legend__dot--contract"></span>Contrat</div>
+        </div>
+        <div class="wk-chart-card">
+          <div class="wk-qtr-grid" id="wk-chart-quarterly"></div>
+        </div>
+      </section>
+
+      <!-- F. CUMUL YTD NÉBULEUSE -->
+      <section class="wk-section" id="wk-section-cumul" style="<?= ($kpiActiveYear === 'all') ? 'display:none' : '' ?>">
+        <div class="wk-section__head">
+          <h2 class="wk-section__title">Cumul YTD — Nébuleuse (HL)</h2>
+        </div>
+        <div class="wk-chart-card">
+          <div class="wk-cumul-wrap" id="wk-chart-cumul"></div>
+        </div>
+      </section>
+
+      <!-- G. PRODUCTION PAR RECETTE × MOIS / TRIMESTRE (HEATMAP) -->
+      <section class="wk-section" id="wk-section-heatmap">
+        <div class="wk-section__head">
+          <h2 class="wk-section__title">Production par recette</h2>
+          <span class="wk-section__note" id="wk-heatmap-note">HL brassés — données réelles</span>
+          <div class="wk-hm-toggle">
+            <button class="wk-hm-toggle-btn active" data-gran="month">Mois</button>
+            <button class="wk-hm-toggle-btn"        data-gran="quarter">Trimestre</button>
+          </div>
+        </div>
+        <div class="wk-chart-card">
+          <div class="wk-heatmap-wrap" id="wk-chart-heatmap"></div>
+        </div>
+      </section>
+
+      <p class="wk-footnote" id="wk-footnote" style="<?= ($kpiActiveYear === $currentYear) ? 'display:none' : '' ?>">
+        Les Spéciales incluent les recettes ponctuelles / retirées, comptabilisées sous leur année de brassage.
+      </p>
+
+    </div><!-- /.wk-wrap -->
+
     <?php endif ?>
-  </section>
+
+  </div><!-- /#wort-panel-kpis -->
 
 </main>
+
+<!-- Tooltip (shared, fixed position — lives outside main so it always floats on top) -->
+<div class="wk-tooltip" id="wk-tooltip"></div>
+
+<script>
+window.WORT_KPIS = <?= json_encode($kpiPayload, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+</script>
+<script defer src="/js/wort-kpis.js?v=<?= @filemtime(__DIR__ . '/../js/wort-kpis.js') ?: time() ?>"></script>
 
 </body>
 </html>

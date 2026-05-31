@@ -21,6 +21,10 @@ body.salle-des-machines .main {
   padding: 0;
   position: relative;
 }
+/* Exempt the 400%-wide sliding stage from the global `.home .main > *
+   { max-width:100% }` fit guard — this stage is a genuine full-bleed child
+   and is left-anchored by the align-items:stretch above. */
+body.salle-des-machines .main > .sdm-stage { max-width: none; }
 
 /* ── blueprint board ground ───────────────────────────────────── */
 body.salle-des-machines .sdm-board {

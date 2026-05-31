@@ -678,6 +678,14 @@ body.home::after {
   max-width: none;
 }
 
+/* Fit guard (PM Option B, 2026-05-31): cap direct children to the viewport so
+   wide content can't be centered off-screen and clipped by body.home's
+   overflow-x:hidden (the "site doesn't fit / cut off both sides" bug).
+   min-width:0 lets wide flex children shrink so their own overflow-x:auto
+   wrappers (.db-table-wrap etc.) engage. Per-page exemptions for genuine
+   full-bleed children (e.g. the salle-des-machines 400% sliding stage). */
+.home .main > * { max-width: 100%; min-width: 0; }
+
 .home .hero {
   display: flex;
   flex-direction: column;
@@ -1033,7 +1041,8 @@ body.home::after {
 
 .home .wort-kpi {
   border: 1px solid var(--hairline-2);
-  background: linear-gradient(180deg, rgba(25, 20, 15, 0.55), rgba(10, 9, 8, 0.35));
+  background: var(--bg-elev);
+  box-shadow: 0 1px 3px rgba(60,40,20,0.10), inset 0 1px 0 rgba(255,255,255,0.35);
   padding: 24px 26px 20px;
   border-radius: 2px;
   display: flex;
