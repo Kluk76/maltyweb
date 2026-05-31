@@ -404,17 +404,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // combineAnchor='filler' enforces that KZE-alone is dropped server-side.
         $cipEvents = cip_parse_post($_POST, 'packaging', ['filler', 'kze'], 'filler');
 
-        // Keg / cuv specific (decision 1 fields carried over)
-        $kegClientDelivered = post_str('keg_client_delivered');
-        $newLinerClient     = post_int('new_liner_client');
-        $newLinerTransport  = post_int('new_liner_transport');
-
         // White label
         $isWhiteLabel   = (post_int('is_white_label') === 1) ? 1 : 0;
         $whiteLabelName = post_str('white_label_name');
-
-        // Client FK (decision 7 — dropdown from ref_clients, visible for contract/WL)
-        $clientFk = post_int('client_fk');   // ref_clients.id or null
 
         // Comments / framework comment
         $comments  = post_str('comments');
@@ -521,6 +513,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             must_be_one_of("formats[{$idx}][run_type]", $fRunType, RUN_TYPES);
             if (!in_array($fOrigin, ['main', 'parallel'], true)) {
                 throw new RuntimeException("row_origin invalide pour le format #{$idx}.");
+            }
+
+            // ── Per-row client / liner fields ─────────────────────────────────
+            // Read with isset+'' check FIRST, then gate — never trust a stale hidden value.
+            //
+            // client_fk + keg_client_delivered: allowed when
+            //   - run_type = 'cuv', OR
+            //   - session beer is contract-type ($contractBeer non-empty), OR
+            //   - session is white-label ($isWhiteLabel = 1)
+            // This mirrors the JS sessionNeedsClient() predicate exactly.
+            //
+            // new_liner_client + new_liner_transport: cuv only — NULLed for all other run_types.
+            $fClientFk          = isset($f['client_fk']) && $f['client_fk'] !== ''
+                                    ? (int)$f['client_fk'] : null;
+            $fKegClientDelivered= isset($f['keg_client_delivered']) && $f['keg_client_delivered'] !== ''
+                                    ? (string)$f['keg_client_delivered'] : null;
+            $fNewLinerClient    = isset($f['new_liner_client'])    && $f['new_liner_client']    !== ''
+                                    ? (int)$f['new_liner_client']    : null;
+            $fNewLinerTransport = isset($f['new_liner_transport']) && $f['new_liner_transport'] !== ''
+                                    ? (int)$f['new_liner_transport'] : null;
+
+            // Defense-in-depth: NULL client fields unless cuv, contract, or WL.
+            $rowAllowsClient = ($fRunType === 'cuv' || $contractBeer !== '' || $isWhiteLabel === 1);
+            if (!$rowAllowsClient) {
+                $fClientFk           = null;
+                $fKegClientDelivered = null;
+            }
+            // Liner fields remain cuv-only regardless of contract/WL.
+            if ($fRunType !== 'cuv') {
+                $fNewLinerClient    = null;
+                $fNewLinerTransport = null;
             }
 
             // ── Server-side sku_id_fk resolution ─────────────────────────────
@@ -647,15 +670,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'loss_container_btl_units'=> $fLossContBtl,
                     'loss_container_can_units'=> $fLossContCan,
                     'loss_liquid_other_units' => $fLossLiquid,
-                    // Keg / cuv (shared for main row; parallel rows inherit the same tank)
-                    'keg_client_delivered'   => $kegClientDelivered,
-                    'new_liner_client'       => ($newLinerClient !== null) ? ($newLinerClient ? 1 : 0) : null,
-                    'new_liner_transport'    => ($newLinerTransport !== null) ? ($newLinerTransport ? 1 : 0) : null,
+                    // Cuv-only per-row fields (NULL for keg/bot/can/can33 — server-enforced above)
+                    'keg_client_delivered'   => $fKegClientDelivered,
+                    'new_liner_client'       => ($fNewLinerClient !== null) ? ($fNewLinerClient ? 1 : 0) : null,
+                    'new_liner_transport'    => ($fNewLinerTransport !== null) ? ($fNewLinerTransport ? 1 : 0) : null,
                     // White label
                     'is_white_label'         => $isWhiteLabel,
                     'white_label_name'       => $whiteLabelName,
-                    // Client FK (decision 7)
-                    'client_fk'              => $clientFk,
+                    // Client FK — per-row for cuv; NULL for all other run_types (enforced above)
+                    'client_fk'              => $fClientFk,
                     // CIP: flat cip_tank_*/cip_machines_* columns are intentionally NOT written
                     // from the web form — CIP now goes to bd_cip_events via cip_upsert().
                     // Historical flat columns remain in the table for legacy ingest rows only.
@@ -1495,38 +1518,6 @@ $cipConfig = [
       </button>
     </div><!-- card CO2/O2 -->
 
-    <!-- ── Section: Fûts / cuves de service (visible pour keg/cuv) ── -->
-    <div class="op-form__card" id="pf-keg-section" hidden>
-      <div class="op-form__card-title">— fûts / cuves de service</div>
-      <div class="op-form__grid--3 op-form__grid">
-
-        <div class="op-form__field">
-          <label class="op-form__label" for="keg_client_delivered">Client fûts livrés</label>
-          <input id="keg_client_delivered" name="keg_client_delivered" type="text"
-                 class="op-form__input" placeholder="ex. Le Bourg">
-        </div>
-
-        <div class="op-form__field">
-          <label class="op-form__label" for="new_liner_client">Nouveau liner client ?</label>
-          <select id="new_liner_client" name="new_liner_client" class="op-form__select">
-            <option value="">—</option>
-            <option value="1">Oui</option>
-            <option value="0">Non</option>
-          </select>
-        </div>
-
-        <div class="op-form__field">
-          <label class="op-form__label" for="new_liner_transport">Nouveau liner transport ?</label>
-          <select id="new_liner_transport" name="new_liner_transport" class="op-form__select">
-            <option value="">—</option>
-            <option value="1">Oui</option>
-            <option value="0">Non</option>
-          </select>
-        </div>
-
-      </div>
-    </div><!-- card keg -->
-
     <!-- ── Section: White label ───────────────────────────────────── -->
     <div class="op-form__card">
       <div class="op-form__card-title">— white label <span class="op-form__opt">(optionnel)</span></div>
@@ -1548,30 +1539,6 @@ $cipConfig = [
 
       </div>
     </div><!-- card white label -->
-
-    <!-- ── Section: Client (decision 7 — visible for contract / WL) ── -->
-    <!-- Shown by JS when beer is contract-type OR is_white_label=1 -->
-    <div class="op-form__card" id="pf-client-section" hidden>
-      <div class="op-form__card-title">— client <span class="op-form__opt">(contrat / white label)</span></div>
-      <div class="op-form__grid--3 op-form__grid">
-
-        <div class="op-form__field">
-          <label class="op-form__label" for="client_fk">Client</label>
-          <select id="client_fk" name="client_fk" class="op-form__select">
-            <option value="">— sélectionner —</option>
-            <?php foreach ($clients as $cl): ?>
-              <option value="<?= (int)$cl['id'] ?>"><?= htmlspecialchars($cl['name']) ?></option>
-            <?php endforeach ?>
-          </select>
-          <?php if (empty($clients)): ?>
-            <span class="op-form__hint pf-hint--warn">
-              Aucun client dans ref_clients — lacune master-data. Saisir le nom dans Commentaires.
-            </span>
-          <?php endif ?>
-        </div>
-
-      </div>
-    </div><!-- card client -->
 
     <!-- ── Section: DLC ──────────────────────────────────────────── -->
     <div class="op-form__card">
@@ -1732,12 +1699,12 @@ window.MIN_DAYS_AFTER_RACKING = <?= $minDays ?>;
  * cip_machines_done/type/date → NOT written (flat columns kept in table for legacy ingest only)
  * hors_process (hidden)       → hors_process_flag (TINYINT)       NEW col (mig 128) manager/admin only
  * hors_process_reason         → hors_process_reason (VARCHAR 255) NEW col (mig 128) optional justification
- * keg_client_delivered        → keg_client_delivered
- * new_liner_client            → new_liner_client (TINYINT bool)
- * new_liner_transport         → new_liner_transport (TINYINT bool)
+ * formats[N][client_fk]       → client_fk (FK ref_clients.id)    cuv|contract|WL; NULLed otherwise
+ * formats[N][keg_client_delivered] → keg_client_delivered          cuv|contract|WL; NULLed otherwise
+ * formats[N][new_liner_client]→ new_liner_client (TINYINT bool)    cuv only; NULLed for keg/bot/can
+ * formats[N][new_liner_transport]→ new_liner_transport (TINYINT bool) cuv only; NULLed for keg/bot/can
  * is_white_label              → is_white_label (TINYINT bool)
  * white_label_name            → white_label_name
- * client_fk                   → client_fk (FK ref_clients.id)    Dropdown from ref_clients
  * comments                    → comments                          Main row only
  *
  * ── DECISIONS RESOLVED ────────────────────────────────────────────────────────

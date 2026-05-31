@@ -9,9 +9,10 @@
  *      - One row per format line (main + N parallels).
  *      - prod_total on main; qte_unites on parallels (ADD, not subtract).
  *      - Loss fields + QA analysis per format row.
- *   4. Show/hide keg section when any format is keg/cuv.
+ *   4. Per-row disposition groups: bottle/keg (run_type-driven); client (cuv OR
+ *      contract/WL session); liner (cuv only). Re-evaluated on run_type change
+ *      AND on tank select/deselect/WL toggle via updateAllRowDispositionGroups().
  *   5. Show/hide white-label name field.
- *   6. Show/hide client dropdown for contract beer or white-label.
  *   7. Enable submit only once a tank is selected AND ≥1 format row exists.
  *   8. Init FormFramework for soft-validation + draft persistence.
  *   9. Wire "Choix Hors Process" override checkbox (manager/admin only):
@@ -65,10 +66,8 @@ document.addEventListener('DOMContentLoaded', function () {
   const addFormatBtn     = document.getElementById('pf-add-format');
   const skuMosaic        = document.getElementById('pf-sku-mosaic');
 
-  const kegSection         = document.getElementById('pf-keg-section');
   const wlSelect           = document.getElementById('is_white_label');
   const wlNameField        = document.getElementById('pf-wl-name-field');
-  const clientSection      = document.getElementById('pf-client-section');
 
   // Override (Choix Hors Process) — manager/admin only
   const overrideCheckbox   = document.getElementById('pf-override-checkbox');
@@ -225,9 +224,9 @@ document.addEventListener('DOMContentLoaded', function () {
     selectedSummary.textContent =
       tankType + ' ' + tankNum + ' — ' + beerDisplay + ' · Brassin ' + batchDisplay;
 
-    // Track contract-beer state for client-section visibility
+    // Track contract-beer state; drives per-row client block visibility
     isContractBeer = (cBeer !== '' && nebBeer === '');
-    updateClientSection();
+    updateAllRowDispositionGroups();
 
     tryEnableSubmit();
     saveDraft({ tankType, tankNum, tankFkId, nebBeer, nebBatch, cBeer, cBatch, recipeId });
@@ -249,8 +248,8 @@ document.addEventListener('DOMContentLoaded', function () {
     selectedPanel.hidden  = true;
     selectedSummary.textContent = '';
     isContractBeer = false;
+    updateAllRowDispositionGroups();
     clearSkuMosaic();
-    updateClientSection();
     submitBtn.disabled = true;
   }
 
@@ -359,6 +358,62 @@ document.addEventListener('DOMContentLoaded', function () {
         '</div>' +
       '</div>';
 
+    // ── Client sub-block (cuv OR contract/WL) ────────────────────────────────
+    // Shown when: run_type='cuv' OR session beer is contract-type OR is_white_label=1.
+    // Visibility is re-evaluated on run_type change AND on tank select/deselect/WL toggle
+    // via updateAllRowDispositionGroups().
+    var clientOptions = '<option value="">— sélectionner —</option>';
+    (window.PF_CLIENTS || []).forEach(function (cl) {
+      clientOptions += '<option value="' + escHtml(String(cl.id)) + '">' + escHtml(cl.name) + '</option>';
+    });
+    var noClientHint = (!window.PF_CLIENTS || window.PF_CLIENTS.length === 0)
+      ? '<span class="op-form__hint pf-hint--warn">Aucun client dans ref_clients — saisir le nom ci-dessous.</span>'
+      : '';
+
+    const clientGroupHtml =
+      '<div class="pf-disposition-group pf-disposition-group--client" data-fmt-idx="' + idx + '">' +
+        '<div class="pf-client-title">— client</div>' +
+        '<div class="op-form__grid--3 op-form__grid">' +
+          '<div class="op-form__field">' +
+            '<label class="op-form__label" for="' + idPfx + '_client_fk">Client</label>' +
+            '<select id="' + idPfx + '_client_fk" name="' + prefix + '[client_fk]" class="op-form__select">' +
+              clientOptions +
+            '</select>' +
+            noClientHint +
+          '</div>' +
+          '<div class="op-form__field">' +
+            '<label class="op-form__label" for="' + idPfx + '_keg_client_delivered">Client livraison <span class="op-form__opt">(texte libre)</span></label>' +
+            '<input id="' + idPfx + '_keg_client_delivered" name="' + prefix + '[keg_client_delivered]"' +
+              ' type="text" class="op-form__input" placeholder="ex. Le Bourg">' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+
+    // ── Liner sub-block (cuv only) ────────────────────────────────────────────
+    // Shown only when run_type='cuv'. Keg/bot/can rows never show liners.
+    const linerGroupHtml =
+      '<div class="pf-disposition-group pf-disposition-group--liner" data-fmt-idx="' + idx + '">' +
+        '<div class="pf-liner-title">— liners cuve</div>' +
+        '<div class="op-form__grid--3 op-form__grid">' +
+          '<div class="op-form__field">' +
+            '<label class="op-form__label" for="' + idPfx + '_new_liner_client">Nouveau liner client ?</label>' +
+            '<select id="' + idPfx + '_new_liner_client" name="' + prefix + '[new_liner_client]" class="op-form__select">' +
+              '<option value="">—</option>' +
+              '<option value="1">Oui</option>' +
+              '<option value="0">Non</option>' +
+            '</select>' +
+          '</div>' +
+          '<div class="op-form__field">' +
+            '<label class="op-form__label" for="' + idPfx + '_new_liner_transport">Nouveau liner transport ?</label>' +
+            '<select id="' + idPfx + '_new_liner_transport" name="' + prefix + '[new_liner_transport]" class="op-form__select">' +
+              '<option value="">—</option>' +
+              '<option value="1">Oui</option>' +
+              '<option value="0">Non</option>' +
+            '</select>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+
     const qtiesHtml = isMain
       ? '<div class="op-form__field">' +
           '<label class="op-form__label" for="' + idPfx + '_prod_total_units">' +
@@ -405,20 +460,45 @@ document.addEventListener('DOMContentLoaded', function () {
       '</div>' +
       bottleDispositionHtml +
       kegDispositionHtml +
+      clientGroupHtml +
+      linerGroupHtml +
     '</div>';
+  }
+
+  // Returns true when the current session beer requires a client dropdown regardless of run_type.
+  // Contract beer: cBeer non-empty and nebBeer empty (mirrors selectTank logic for isContractBeer).
+  // White label: is_white_label select = '1' (session-level, same for every row).
+  function sessionNeedsClient() {
+    const isWl = wlSelect && wlSelect.value === '1';
+    return isContractBeer || isWl;
   }
 
   function updateRowDispositionGroups(rowEl) {
     if (!rowEl) return;
-    const sel = rowEl.querySelector('.pf-run-type-select');
+    const sel     = rowEl.querySelector('.pf-run-type-select');
     const runType = sel ? sel.value : '';
     const isKegOrCuv = (runType === 'keg' || runType === 'cuv');
+    const isCuv      = (runType === 'cuv');
 
     const bottleGroup = rowEl.querySelector('.pf-disposition-group--bottle');
     const kegGroup    = rowEl.querySelector('.pf-disposition-group--keg');
+    // Client block: cuv OR contract/WL session beer
+    const clientGroup = rowEl.querySelector('.pf-disposition-group--client');
+    // Liner block: cuv only
+    const linerGroup  = rowEl.querySelector('.pf-disposition-group--liner');
 
     if (bottleGroup) bottleGroup.hidden = isKegOrCuv;
     if (kegGroup)    kegGroup.hidden    = !isKegOrCuv;
+    if (clientGroup) clientGroup.hidden = !(isCuv || sessionNeedsClient());
+    if (linerGroup)  linerGroup.hidden  = !isCuv;
+  }
+
+  // Re-evaluate all rendered rows when session-level state changes (tank select/deselect/WL toggle).
+  function updateAllRowDispositionGroups() {
+    if (!formatsContainer) return;
+    formatsContainer.querySelectorAll('.pf-format-row').forEach(function (rowEl) {
+      updateRowDispositionGroups(rowEl);
+    });
   }
 
   function addFormatRow(isMain) {
@@ -432,7 +512,6 @@ document.addEventListener('DOMContentLoaded', function () {
       const sel = rowEl.querySelector('.pf-run-type-select');
       if (sel) {
         sel.addEventListener('change', function () {
-          updateKegSection();
           updateRowDispositionGroups(rowEl);
         });
       }
@@ -454,16 +533,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const el = document.getElementById('pf-fmt-' + idx);
     if (el) el.remove();
     formatRows = formatRows.filter(function (i) { return i !== idx; });
-    updateKegSection();
     tryEnableSubmit();
-  }
-
-  function updateKegSection() {
-    const selects = formatsContainer ? formatsContainer.querySelectorAll('.pf-run-type-select') : [];
-    const hasKegOrCuv = Array.from(selects).some(function (s) {
-      return s.value === 'keg' || s.value === 'cuv';
-    });
-    if (kegSection) kegSection.hidden = !hasKegOrCuv;
   }
 
   if (addFormatBtn) {
@@ -479,19 +549,12 @@ document.addEventListener('DOMContentLoaded', function () {
   function updateWlField() {
     if (!wlSelect || !wlNameField) return;
     wlNameField.hidden = (wlSelect.value !== '1');
-    updateClientSection();
+    // WL toggle changes sessionNeedsClient() result — re-evaluate all rows
+    updateAllRowDispositionGroups();
   }
   if (wlSelect) {
     wlSelect.addEventListener('change', updateWlField);
     updateWlField();
-  }
-
-  // ── Client section visibility (decision 7) ────────────────────────────────
-  // Show for contract beers or white-label runs
-  function updateClientSection() {
-    if (!clientSection) return;
-    const isWl = wlSelect && wlSelect.value === '1';
-    clientSection.hidden = !(isContractBeer || isWl);
   }
 
   // ── Enable submit ─────────────────────────────────────────────────────────

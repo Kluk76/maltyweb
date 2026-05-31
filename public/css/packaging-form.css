@@ -267,6 +267,24 @@ body.op-form-packaging .pf-format-top-grid {
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
 }
 
+/* ── Per-row client / liner sub-blocks ───────────────────────────────────── */
+/* Both share a top border to visually separate from the disposition fields above */
+body.op-form-packaging .pf-disposition-group--client,
+body.op-form-packaging .pf-disposition-group--liner {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--hairline);
+}
+body.op-form-packaging .pf-client-title,
+body.op-form-packaging .pf-liner-title {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  margin-bottom: 0.5rem;
+}
+
 /* ── CIP groups ──────────────────────────────────────────────────────────── */
 body.op-form-packaging .pf-cip-group {
   margin-bottom: 1rem;
