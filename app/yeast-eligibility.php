@@ -29,7 +29,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/db.php';
 
 /* ── ENUM constants (mirrors ref_yeast_strains.family and ref_yeast_family_defaults.family) ── */
-const YEAST_FAMILIES = ['ale', 'lager', 'non_alcool', 'spontane', 'mixte'];
+const YEAST_FAMILIES = ['ale', 'lager', 'non_alcool', 'spontane', 'mixte', 'priming', 'hybrid'];
 
 /** French labels for the yeast family ENUM values. */
 const YEAST_FAMILY_LABELS = [
@@ -38,6 +38,8 @@ const YEAST_FAMILY_LABELS = [
     'non_alcool'=> 'Non-alcool',
     'spontane'  => 'Spontanée',
     'mixte'     => 'Mixte',
+    'priming'   => 'Priming (refermentation)',
+    'hybrid'    => 'Hybride',
 ];
 
 /* ═══════════════════════════════════════════════════════════════════════════

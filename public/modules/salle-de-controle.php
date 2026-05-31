@@ -14,7 +14,7 @@ declare(strict_types=1);
  *   update_min_days      — Conditionnement settings (admin only)
  *   update_pertes_config — Pertes constants + thresholds (admin/manager only)
  *   update_yeast_family  — Biochimie yeast-family defaults (admin only)
- *   update_yeast_strain  — Biochimie per-strain catalog edit: family/type/floc/attenuation/temp (admin/manager)
+ *   update_yeast_strain  — Biochimie per-strain catalog edit: family/floc/attenuation/temp (admin/manager)
  *   activate_format      — upsert ref_skus row for (recipe_id, format_id) (admin only)
  *   deactivate_format    — soft-deactivate ref_skus row (admin only)
  *   set_binding          — upsert ref_recipe_packaging_bindings row (admin only)
@@ -790,7 +790,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         // ── update_yeast_strain ──────────────────────────────────────────────
         // Per-strain catalog editor in the Biochimie section.
-        // Writes: family, type, flocculation, attenuation_min/max, temp_min/max.
+        // Writes: family, flocculation, attenuation_min/max, temp_min/max.
+        // Note: 'type' column is deprecated (all values='unknown'); the UI
+        // field has been removed. The column remains in the DB; DEFAULT='unknown'
+        // so omitting it from writes is safe.
         // Role gate: admin or manager (same as update_recipe_yeast).
         // Writes the same ref_yeast_strains.family column as update_recipe_yeast —
         // both paths use the same column and the same audit shape.
@@ -812,13 +815,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $newFamily = null;
             if ($rawFamily !== null) {
                 $newFamily = must_be_one_of('family', $rawFamily, YEAST_FAMILIES);
-            }
-
-            // type: empty → NULL, else validate ENUM
-            $rawType = post_str('type');
-            $newType = null;
-            if ($rawType !== null) {
-                $newType = must_be_one_of('type', $rawType, YEAST_TYPES);
             }
 
             // flocculation: empty → NULL, else validate ENUM
@@ -874,7 +870,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             // Step 3 — fetch before-state for audit
             $beforeStmt = $pdo->prepare(
-                "SELECT family, type, flocculation, attenuation_min, attenuation_max, temp_min, temp_max
+                "SELECT family, flocculation, attenuation_min, attenuation_max, temp_min, temp_max
                    FROM ref_yeast_strains
                   WHERE id = ?
                   LIMIT 1"
@@ -883,10 +879,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $beforeState = $beforeStmt->fetch(PDO::FETCH_ASSOC);
 
             // Step 4 — write
+            // 'type' column intentionally omitted: deprecated (all=unknown), UI removed,
+            // DEFAULT='unknown' so omitting preserves the existing value.
             $upStrainStmt = $pdo->prepare(
                 "UPDATE ref_yeast_strains
                     SET family          = ?,
-                        type            = ?,
                         flocculation    = ?,
                         attenuation_min = ?,
                         attenuation_max = ?,
@@ -896,7 +893,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             );
             $upStrainStmt->execute([
                 $newFamily,
-                $newType,
                 $newFloc,
                 $attMin,
                 $attMax,
@@ -907,7 +903,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $afterState = [
                 'family'          => $newFamily,
-                'type'            => $newType,
                 'flocculation'    => $newFloc,
                 'attenuation_min' => $attMin,
                 'attenuation_max' => $attMax,
@@ -2856,7 +2851,6 @@ window.SDC_PROFILES = {};
                 <th class="sc-th sc-th--name">Souche</th>
                 <th class="sc-th sc-th--fournisseur">Fournisseur</th>
                 <th class="sc-th sc-th--family">Famille</th>
-                <th class="sc-th sc-th--type">Type</th>
                 <th class="sc-th sc-th--floc">Floculation</th>
                 <th class="sc-th sc-th--att">Atténuation (%)</th>
                 <th class="sc-th sc-th--temp">Temp. ferm. (°C)</th>
@@ -2871,7 +2865,6 @@ window.SDC_PROFILES = {};
                 $sName    = (string) $ys['name'];
                 $sSupplier= (string) ($ys['supplier'] ?? '');
                 $sFamily  = $ys['family'];
-                $sType    = $ys['type'];
                 $sFloc    = $ys['flocculation'];
                 $sAttMin  = $ys['attenuation_min'] !== null ? (float) $ys['attenuation_min'] : null;
                 $sAttMax  = $ys['attenuation_max'] !== null ? (float) $ys['attenuation_max'] : null;
@@ -2881,7 +2874,6 @@ window.SDC_PROFILES = {};
                 $rowClass = 'sc-row' . ($isOrphan ? ' sc-row--orphan' : '');
                 // French labels for display
                 $flocLabels = ['low' => 'Faible', 'medium' => 'Moyenne', 'high' => 'Élevée'];
-                $typeLabels = ['ale' => 'Ale', 'lager' => 'Lager', 'wild' => 'Wild', 'hybrid' => 'Hybride', 'unknown' => '—'];
               ?>
               <tr class="<?= $rowClass ?>" data-strain-id="<?= $sId ?>">
                 <td class="sc-td sc-td--name">
@@ -2901,9 +2893,6 @@ window.SDC_PROFILES = {};
                   <?php else: ?>
                     <span class="sc-null">—</span>
                   <?php endif ?>
-                </td>
-                <td class="sc-td sc-td--type">
-                  <span class="sc-type-chip"><?= htmlspecialchars($typeLabels[$sType] ?? htmlspecialchars($sType)) ?></span>
                 </td>
                 <td class="sc-td sc-td--floc">
                   <?= $sFloc !== null ? htmlspecialchars($flocLabels[$sFloc] ?? $sFloc) : '<span class="sc-null">—</span>' ?>
@@ -2966,18 +2955,6 @@ window.SDC_PROFILES = {};
                     <?php foreach (YEAST_FAMILIES as $fam): ?>
                     <option value="<?= htmlspecialchars($fam) ?>">
                       <?= htmlspecialchars(YEAST_FAMILY_LABELS[$fam] ?? $fam) ?>
-                    </option>
-                    <?php endforeach ?>
-                  </select>
-                </div>
-
-                <div class="sc-edit-field">
-                  <label class="sc-edit-label" for="scEditType">Type</label>
-                  <select name="type" id="scEditType" class="sc-edit-select">
-                    <option value="">— (inconnu)</option>
-                    <?php foreach (YEAST_TYPES as $typ): ?>
-                    <option value="<?= htmlspecialchars($typ) ?>">
-                      <?= htmlspecialchars($typ) ?>
                     </option>
                     <?php endforeach ?>
                   </select>
@@ -4545,7 +4522,6 @@ function createRecipe(){
     document.getElementById('scEditStrainId').value = strainId;
 
     setOpt(document.getElementById('scEditFamily'), s.family);
-    setOpt(document.getElementById('scEditType'),   s.type);
     setOpt(document.getElementById('scEditFloc'),   s.flocculation);
 
     const setNum = (elId, val) => {
