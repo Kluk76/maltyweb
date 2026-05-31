@@ -11,12 +11,13 @@ declare(strict_types=1);
  *
  * Auth: require_login() — all logged-in users can view; edit gated to is_admin().
  * POST handlers:
- *   update_min_days     — Conditionnement settings (admin only)
+ *   update_min_days      — Conditionnement settings (admin only)
  *   update_pertes_config — Pertes constants + thresholds (admin/manager only)
- *   update_yeast_family — Biochimie yeast-family defaults (admin only)
- *   activate_format     — upsert ref_skus row for (recipe_id, format_id) (admin only)
- *   deactivate_format   — soft-deactivate ref_skus row (admin only)
- *   set_binding         — upsert ref_recipe_packaging_bindings row (admin only)
+ *   update_yeast_family  — Biochimie yeast-family defaults (admin only)
+ *   update_yeast_strain  — Biochimie per-strain catalog edit: family/type/floc/attenuation/temp (admin/manager)
+ *   activate_format      — upsert ref_skus row for (recipe_id, format_id) (admin only)
+ *   deactivate_format    — soft-deactivate ref_skus row (admin only)
+ *   set_binding          — upsert ref_recipe_packaging_bindings row (admin only)
  */
 
 require __DIR__ . '/../../app/auth.php';
@@ -149,9 +150,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = post_str('action') ?? '';
 
     // Redirect target depends on action
-    $redirectSec = in_array($action, ['activate_format','deactivate_format','set_binding','update_recipe_yeast','update_recipe_qc'], true)
+    $redirectSec = in_array($action, ['activate_format','deactivate_format','set_binding','update_recipe_yeast','update_recipe_qc','update_recipe_style','update_recipe_name'], true)
         ? 'recettes'
-        : ($action === 'update_yeast_family' ? 'biochem'
+        : (in_array($action, ['update_yeast_family','update_yeast_strain'], true) ? 'biochem'
         : ($action === 'update_pertes_config' ? 'pertes'
         : (in_array($action, ['cip_type_add','cip_type_update','cip_type_deactivate','cip_type_reactivate','update_cip_cadence'], true)
             ? 'cip' : 'conditionnement')));
@@ -751,6 +752,145 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 . '.'
             );
 
+        // ── update_yeast_strain ──────────────────────────────────────────────
+        // Per-strain catalog editor in the Biochimie section.
+        // Writes: family, type, flocculation, attenuation_min/max, temp_min/max.
+        // Role gate: admin or manager (same as update_recipe_yeast).
+        // Writes the same ref_yeast_strains.family column as update_recipe_yeast —
+        // both paths use the same column and the same audit shape.
+        } elseif ($action === 'update_yeast_strain') {
+            if (!is_admin($me) && !is_manager($me)) {
+                flash_set('err', 'Modification réservée aux administrateurs et managers.');
+                redirect_to('/modules/salle-de-controle.php?sec=biochem');
+            }
+
+            // Step 1 — read with defaults, then validate (two-step pattern)
+            $strainId = post_int('strain_id') ?? 0;
+            if ($strainId <= 0) {
+                throw new RuntimeException('strain_id requis.');
+            }
+
+            // family: empty → NULL, else validate ENUM
+            $rawFamily = post_str('family');
+            $newFamily = null;
+            if ($rawFamily !== null) {
+                $newFamily = must_be_one_of('family', $rawFamily, YEAST_FAMILIES);
+            }
+
+            // type: empty → NULL, else validate ENUM
+            $rawType = post_str('type');
+            $newType = null;
+            if ($rawType !== null) {
+                $newType = must_be_one_of('type', $rawType, YEAST_TYPES);
+            }
+
+            // flocculation: empty → NULL, else validate ENUM
+            $rawFloc = post_str('flocculation');
+            $newFloc = null;
+            if ($rawFloc !== null) {
+                $newFloc = must_be_one_of('flocculation', $rawFloc, ['low', 'medium', 'high']);
+            }
+
+            // attenuation_min: decimal 0–100 or empty → NULL
+            $rawAttMin = post_decimal('attenuation_min');
+            $attMin = $rawAttMin !== null ? (float) $rawAttMin : null;
+            if ($attMin !== null && ($attMin < 0 || $attMin > 100)) {
+                throw new RuntimeException('attenuation_min doit être entre 0 et 100 %.');
+            }
+
+            // attenuation_max: decimal 0–100 or empty → NULL
+            $rawAttMax = post_decimal('attenuation_max');
+            $attMax = $rawAttMax !== null ? (float) $rawAttMax : null;
+            if ($attMax !== null && ($attMax < 0 || $attMax > 100)) {
+                throw new RuntimeException('attenuation_max doit être entre 0 et 100 %.');
+            }
+            if ($attMin !== null && $attMax !== null && $attMin > $attMax) {
+                throw new RuntimeException('attenuation_min ne peut pas être supérieur à attenuation_max.');
+            }
+
+            // temp_min: decimal 0–50 or empty → NULL
+            $rawTMin = post_decimal('temp_min');
+            $tempMin = $rawTMin !== null ? (float) $rawTMin : null;
+            if ($tempMin !== null && ($tempMin < 0 || $tempMin > 50)) {
+                throw new RuntimeException('temp_min doit être entre 0 et 50 °C.');
+            }
+
+            // temp_max: decimal 0–50 or empty → NULL
+            $rawTMax = post_decimal('temp_max');
+            $tempMax = $rawTMax !== null ? (float) $rawTMax : null;
+            if ($tempMax !== null && ($tempMax < 0 || $tempMax > 50)) {
+                throw new RuntimeException('temp_max doit être entre 0 et 50 °C.');
+            }
+            if ($tempMin !== null && $tempMax !== null && $tempMin > $tempMax) {
+                throw new RuntimeException('temp_min ne peut pas être supérieur à temp_max.');
+            }
+
+            // Step 2 — confirm strain exists and is active
+            $strFetchStmt = $pdo->prepare(
+                "SELECT id, name FROM ref_yeast_strains WHERE id = ? AND is_active = 1 LIMIT 1"
+            );
+            $strFetchStmt->execute([$strainId]);
+            $strainRow = $strFetchStmt->fetch(PDO::FETCH_ASSOC);
+            if (!$strainRow) {
+                throw new RuntimeException("Souche levurienne introuvable ou inactive : id={$strainId}");
+            }
+
+            // Step 3 — fetch before-state for audit
+            $beforeStmt = $pdo->prepare(
+                "SELECT family, type, flocculation, attenuation_min, attenuation_max, temp_min, temp_max
+                   FROM ref_yeast_strains
+                  WHERE id = ?
+                  LIMIT 1"
+            );
+            $beforeStmt->execute([$strainId]);
+            $beforeState = $beforeStmt->fetch(PDO::FETCH_ASSOC);
+
+            // Step 4 — write
+            $upStrainStmt = $pdo->prepare(
+                "UPDATE ref_yeast_strains
+                    SET family          = ?,
+                        type            = ?,
+                        flocculation    = ?,
+                        attenuation_min = ?,
+                        attenuation_max = ?,
+                        temp_min        = ?,
+                        temp_max        = ?
+                  WHERE id = ?"
+            );
+            $upStrainStmt->execute([
+                $newFamily,
+                $newType,
+                $newFloc,
+                $attMin,
+                $attMax,
+                $tempMin,
+                $tempMax,
+                $strainId,
+            ]);
+
+            $afterState = [
+                'family'          => $newFamily,
+                'type'            => $newType,
+                'flocculation'    => $newFloc,
+                'attenuation_min' => $attMin,
+                'attenuation_max' => $attMax,
+                'temp_min'        => $tempMin,
+                'temp_max'        => $tempMax,
+            ];
+
+            log_revision(
+                $pdo,
+                $me,
+                'ref_yeast_strains',
+                $strainId,
+                $beforeState ?: [],
+                $afterState,
+                'normal',
+                "Salle de contrôle: biochimie catalogue souche · {$strainRow['name']}"
+            );
+
+            flash_set('ok', "Souche «{$strainRow['name']}» mise à jour.");
+
         // ── update_recipe_qc ─────────────────────────────────────────────────
         // Editor for per-recipe CO₂ target/tolerance and optional racked_vol overrides.
         // Role gate: admin or manager (mirrors update_recipe_yeast).
@@ -1252,6 +1392,124 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $label = htmlspecialchars((string) $existing['label_fr']);
             flash_set('ok', "Cadence CIP — « {$label} » mis à jour : {$displayVal}.");
 
+        // ── update_recipe_style ──────────────────────────────────────────────
+        } elseif ($action === 'update_recipe_style') {
+            if (!is_admin($me) && !is_manager($me)) {
+                flash_set('err', 'Modification réservée aux administrateurs et managers.');
+                redirect_to('/modules/salle-de-controle.php?sec=recettes');
+            }
+
+            // Step 1 — read with defaults, then validate
+            $recipeId = post_int('recipe_id') ?? 0;
+            if ($recipeId <= 0) {
+                throw new RuntimeException('recipe_id requis.');
+            }
+
+            $rawStyle = post_str('style') ?? '';
+            $style    = trim($rawStyle);
+            if (mb_strlen($style) > 64) {
+                throw new RuntimeException('Style trop long (max 64 caractères).');
+            }
+            $styleOrNull = $style !== '' ? $style : null;
+
+            // Step 2 — validate recipe exists and is active
+            $recStmt = $pdo->prepare(
+                "SELECT id, name FROM ref_recipes WHERE id = ? AND is_active = 1 LIMIT 1"
+            );
+            $recStmt->execute([$recipeId]);
+            $recRow = $recStmt->fetch(PDO::FETCH_ASSOC);
+            if (!$recRow) {
+                throw new RuntimeException("Recette introuvable ou inactive : id={$recipeId}");
+            }
+
+            // Step 3 — fetch before-state for audit
+            $beforeStmt = $pdo->prepare("SELECT style FROM ref_recipes WHERE id = ? LIMIT 1");
+            $beforeStmt->execute([$recipeId]);
+            $before = $beforeStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+            // Step 4 — write
+            $upStmt = $pdo->prepare(
+                "UPDATE ref_recipes SET style = ?, last_modified_by = 'web' WHERE id = ?"
+            );
+            $upStmt->execute([$styleOrNull, $recipeId]);
+
+            $after = ['style' => $styleOrNull, 'last_modified_by' => 'web'];
+            log_revision(
+                $pdo, $me, 'ref_recipes', $recipeId,
+                $before,
+                $after,
+                'normal',
+                "Salle de contrôle: style · recette {$recRow['name']}"
+            );
+
+            $styleLabel = $styleOrNull ?? '(vide)';
+            flash_set('ok', "Style enregistré — «{$recRow['name']}» · {$styleLabel}.");
+
+        // ── update_recipe_name ───────────────────────────────────────────────
+        } elseif ($action === 'update_recipe_name') {
+            if (!is_admin($me) && !is_manager($me)) {
+                flash_set('err', 'Modification réservée aux administrateurs et managers.');
+                redirect_to('/modules/salle-de-controle.php?sec=recettes');
+            }
+
+            // Step 1 — read with defaults, then validate
+            $recipeId = post_int('recipe_id') ?? 0;
+            if ($recipeId <= 0) {
+                throw new RuntimeException('recipe_id requis.');
+            }
+
+            $rawName = post_str('name') ?? '';
+            $newName = trim($rawName);
+            if ($newName === '') {
+                throw new RuntimeException('Le nom de la recette ne peut pas être vide.');
+            }
+            if (mb_strlen($newName) > 128) {
+                throw new RuntimeException('Nom trop long (max 128 caractères).');
+            }
+
+            // Step 2 — validate recipe exists and is active
+            $recStmt = $pdo->prepare(
+                "SELECT id, name, classification FROM ref_recipes WHERE id = ? AND is_active = 1 LIMIT 1"
+            );
+            $recStmt->execute([$recipeId]);
+            $recRow = $recStmt->fetch(PDO::FETCH_ASSOC);
+            if (!$recRow) {
+                throw new RuntimeException("Recette introuvable ou inactive : id={$recipeId}");
+            }
+
+            // Rename is restricted to CONTRACT recipes. Nébuleuse recipe names are
+            // DB join keys: tanks.php attributes fermentation via ref_recipes.name =
+            // f.beer (subtype='Core'), and recipe-ingredients-loader.php gap-fills
+            // COGS via ref_recipes.name = beer_name. Renaming a Neb recipe would
+            // silently break tank attribution and COGS gap-fill. Contracts are
+            // single-vintage, subtype NULL, brew-linked by recipe_id_fk — safe.
+            if (($recRow['classification'] ?? '') !== 'Contract') {
+                flash_set('err', 'Renommage réservé aux recettes sous contrat — les noms des recettes Nébuleuse sont des clés de jointure (attribution cuves / COGS).');
+                redirect_to('/modules/salle-de-controle.php?sec=recettes');
+            }
+
+            // Step 3 — fetch before-state for audit
+            $beforeStmt = $pdo->prepare("SELECT name FROM ref_recipes WHERE id = ? LIMIT 1");
+            $beforeStmt->execute([$recipeId]);
+            $before = $beforeStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+            // Step 4 — write
+            $upStmt = $pdo->prepare(
+                "UPDATE ref_recipes SET name = ?, last_modified_by = 'web' WHERE id = ?"
+            );
+            $upStmt->execute([$newName, $recipeId]);
+
+            $after = ['name' => $newName, 'last_modified_by' => 'web'];
+            log_revision(
+                $pdo, $me, 'ref_recipes', $recipeId,
+                $before,
+                $after,
+                'normal',
+                "Salle de contrôle: renommage · {$before['name']} → {$newName}"
+            );
+
+            flash_set('ok', "Recette renommée : «{$before['name']}» → «{$newName}».");
+
         } else {
             throw new RuntimeException('Action inconnue.');
         }
@@ -1382,21 +1640,86 @@ try {
         }
     }
 
-    // Activatable recipes (sku_prefix NOT NULL/empty)
-    $activatableRecs = $pdo->query(
-        "SELECT id, name, classification, subtype, sku_prefix
-           FROM ref_recipes
-          WHERE sku_prefix IS NOT NULL AND sku_prefix<>'' AND is_active=1
-          ORDER BY FIELD(subtype,'Core','EPH','CollabIn','Archive'), name"
+    // Recipe lifecycle: three lists derived from v_recipe_lifecycle.
+    // Collapsed to one entry per identity (name, classification, client_id).
+    // Operative row = newest vintage. W window from commissioning_settings.
+    $lifecycleRows = $pdo->query(
+        "SELECT recipe_id AS id, display_name AS name, classification, subtype,
+                sku_prefix, vintage, last_brew, in_stock_qty, lifecycle_state,
+                list_bucket, flag
+           FROM v_recipe_lifecycle
+          ORDER BY list_bucket, FIELD(subtype,'Core','EPH','CollabIn','CollabOut','WhiteLabel','Archive'), display_name"
     )->fetchAll(PDO::FETCH_ASSOC);
 
-    // NULL-prefix recipes (read-only list)
-    $noPrefix = $pdo->query(
-        "SELECT id, name, classification, subtype
-           FROM ref_recipes
-          WHERE (sku_prefix IS NULL OR sku_prefix='') AND is_active=1
-          ORDER BY name"
-    )->fetchAll(PDO::FETCH_ASSOC);
+    $recipesActives  = array_values(array_filter($lifecycleRows, fn($r) => $r['list_bucket'] === 'actives'));
+    $recipesPassees  = array_values(array_filter($lifecycleRows, fn($r) => $r['list_bucket'] === 'passees'));
+    $recipesContrats = array_values(array_filter($lifecycleRows, fn($r) => $r['list_bucket'] === 'contrats'));
+
+    // $activatableRecs keeps the existing formats/yeast/QC pipeline working.
+    // It must carry the same rows as before (sku_prefix non-null, is_active=1).
+    // We rebuild it from the lifecycle query: actives with a non-null sku_prefix.
+    $activatableRecs = array_values(array_filter($lifecycleRows, function ($r) {
+        return $r['list_bucket'] === 'actives'
+            && $r['sku_prefix'] !== null
+            && $r['sku_prefix'] !== '';
+    }));
+
+    // Rebuild $noPrefix for any downstream code that referenced it.
+    $noPrefix = array_values(array_filter($lifecycleRows, function ($r) {
+        return $r['list_bucket'] !== 'contrats'
+            && ($r['sku_prefix'] === null || $r['sku_prefix'] === '');
+    }));
+
+    // Full id set across all three lifecycle buckets — used by yeast + QC data builds
+    // so that passées/contrats recipes also get yeast assignment and QC data.
+    // (Formats/SKU pipeline keeps its own $allRecipeIds gated to $activatableRecs.)
+    $allLifecycleIds = array_values(array_unique(array_map('intval', array_column($lifecycleRows, 'id'))));
+    if (empty($allLifecycleIds)) {
+        $allLifecycleIds = [0];
+    }
+
+    // Recipe ingredients — keyed by recipe_id for all lifecycle recipes.
+    // DB category names mapped to display labels used by the JS render layer.
+    $ingredientsData = [];
+    {
+        $catMap = [
+            'Malt'             => 'Malt',
+            'Hops'             => 'Hops',
+            'Brewing Adjunct'  => 'Adjunct',
+            'Process Chemical' => 'Proc/Chem',
+            'Brewing Mineral'  => 'Minéraux',
+            'Yeast'            => 'Yeast',
+        ];
+        $inPlaceAll = implode(',', array_fill(0, count($allLifecycleIds), '?'));
+        $ingrStmt = $pdo->prepare(
+            "SELECT ri.recipe_id,
+                    m.mi_id   AS mi,
+                    m.name    AS name,
+                    c.name    AS db_category,
+                    ri.qty_per_hl,
+                    ri.unit
+               FROM ref_recipe_ingredients ri
+               JOIN ref_mi m             ON m.id = ri.mi_id_fk
+               JOIN ref_mi_categories c  ON c.id = m.category_id
+              WHERE ri.recipe_id IN ({$inPlaceAll})
+                AND ri.is_active = 1
+              ORDER BY ri.recipe_id, c.name, m.name"
+        );
+        $ingrStmt->execute($allLifecycleIds);
+        foreach ($ingrStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $rid = (int) $row['recipe_id'];
+            if (!isset($ingredientsData[$rid])) {
+                $ingredientsData[$rid] = [];
+            }
+            $ingredientsData[$rid][] = [
+                'mi'   => (string) $row['mi'],
+                'name' => (string) $row['name'],
+                'cat'  => $catMap[$row['db_category']] ?? (string) $row['db_category'],
+                'qty'  => (float)  $row['qty_per_hl'],
+                'unit' => (string) $row['unit'],
+            ];
+        }
+    }
 
     // Collect recipe IDs for IN clause
     $allRecipeIds = array_column($activatableRecs, 'id');
@@ -1549,13 +1872,16 @@ try {
     $formatsData    = null;
 }
 
-// --- Yeast strains (for per-recipe assignment panel) -------------------------
+// --- Yeast strains (for per-recipe assignment panel + Biochimie catalog) -----
+// Includes new strain-science columns (mig 224) for the per-strain catalog.
+// $yeastStrains feeds both the recipe-dropdown and the Biochimie catalog table.
 $yeastStrains    = [];
 $yeastLoadErr    = null;
 try {
     $pdo = maltytask_pdo();
     $ysStmt = $pdo->query(
-        "SELECT id, name, family, type, is_active
+        "SELECT id, name, supplier, family, type, is_active,
+                flocculation, attenuation_min, attenuation_max, temp_min, temp_max
            FROM ref_yeast_strains
           WHERE is_active = 1
           ORDER BY name"
@@ -1565,14 +1891,16 @@ try {
     $yeastLoadErr = $e->getMessage();
 }
 
-// --- Per-recipe yeast resolutions (for all activatable recipes) --------------
-// Keyed by recipe id. Silently skips on DB error (panel shows "no data" state).
+// --- Per-recipe yeast resolutions (for all lifecycle recipes) ----------------
+// Keyed by recipe id. Covers actives + passées + contrats so that archived and
+// contract recipes can have their yeast strain classified in the SDC panel.
+// Silently skips on DB error (panel shows "no data" state).
 $recipeYeastData  = [];
 $recipeYeastError = null;
 try {
     $pdo = maltytask_pdo();
-    if (!empty($activatableRecs ?? [])) {
-        $allRecIds = array_column($activatableRecs, 'id');
+    if (!empty($allLifecycleIds)) {
+        $allRecIds = $allLifecycleIds;
         $inPlace2  = implode(',', array_fill(0, count($allRecIds), '?'));
 
         // Build all recipe yeast resolutions in one query using the shared fragments.
@@ -1595,13 +1923,14 @@ try {
 }
 
 // --- Per-recipe QC data (co2_target, co2_tolerance, vol overrides + vol band) -----
-// Keyed by recipe id. Used to pre-populate the QC editor panel.
+// Keyed by recipe id. Covers actives + passées + contrats so archived/contract
+// recipes also get QC data in the SDC panel.
 $recipeQcData  = [];
 $recipeQcError = null;
 try {
     $pdo = maltytask_pdo();
-    if (!empty($activatableRecs ?? [])) {
-        $allRecIds3 = array_column($activatableRecs, 'id');
+    if (!empty($allLifecycleIds)) {
+        $allRecIds3 = $allLifecycleIds;
         $inPlace3   = implode(',', array_fill(0, count($allRecIds3), '?'));
 
         // Load per-recipe QC override columns
@@ -1647,6 +1976,29 @@ try {
     }
 } catch (Throwable $e) {
     $recipeQcError = $e->getMessage();
+}
+
+// --- Per-recipe style (ref_recipes.style) ------------------------------------
+// Keyed by recipe id (int). Only emitted after migration 225 adds the column;
+// silently empty if the column is absent or no styles are set.
+$recipeStyleData = [];
+try {
+    $pdo = maltytask_pdo();
+    if (!empty($allLifecycleIds)) {
+        $inPlaceStyle = implode(',', array_fill(0, count($allLifecycleIds), '?'));
+        $styleStmt = $pdo->prepare(
+            "SELECT id, style FROM ref_recipes WHERE id IN ({$inPlaceStyle})"
+        );
+        $styleStmt->execute($allLifecycleIds);
+        foreach ($styleStmt->fetchAll(PDO::FETCH_ASSOC) as $sr) {
+            if ($sr['style'] !== null) {
+                $recipeStyleData[(int) $sr['id']] = (string) $sr['style'];
+            }
+        }
+    }
+} catch (Throwable $e) {
+    // Column may not exist until migration 225 is applied — silently degrade.
+    $recipeStyleData = [];
 }
 
 // --- CIP types (ref_cip_types) -----------------------------------------------
@@ -1719,15 +2071,23 @@ window.SDC_FORMATS_ERR  = <?= json_encode($formatsLoadErr ?? 'Erreur inconnue', 
 window.SDC_CSRF = <?= json_encode($csrf ?? csrf_token(), JSON_HEX_TAG | JSON_HEX_AMP) ?>;
 window.SDC_YEAST_STRAINS = <?= json_encode(
     array_map(fn($s) => [
-        'id'     => (int)    $s['id'],
-        'name'   => (string) $s['name'],
-        'family' => $s['family'],
-        'type'   => (string) $s['type'],
+        'id'              => (int)    $s['id'],
+        'name'            => (string) $s['name'],
+        'supplier'        => (string) ($s['supplier'] ?? ''),
+        'family'          => $s['family'],
+        'type'            => (string) $s['type'],
+        // strain-science columns added in mig 224
+        'flocculation'    => $s['flocculation'],
+        'attenuation_min' => $s['attenuation_min'] !== null ? (float) $s['attenuation_min'] : null,
+        'attenuation_max' => $s['attenuation_max'] !== null ? (float) $s['attenuation_max'] : null,
+        'temp_min'        => $s['temp_min']        !== null ? (float) $s['temp_min']        : null,
+        'temp_max'        => $s['temp_max']        !== null ? (float) $s['temp_max']        : null,
     ], $yeastStrains),
     JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP
 ) ?>;
-window.SDC_RECIPE_YEAST = <?= json_encode($recipeYeastData, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
-window.SDC_RECIPE_QC = <?= json_encode($recipeQcData, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+window.SDC_RECIPE_YEAST  = <?= json_encode($recipeYeastData,  JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+window.SDC_RECIPE_QC     = <?= json_encode($recipeQcData,     JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+window.SDC_RECIPE_STYLES = <?= json_encode($recipeStyleData,  JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
 window.SDC_YEAST_FAMILY_LABELS = <?= json_encode(YEAST_FAMILY_LABELS, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
 window.SDC_CIP_TYPES = <?= json_encode(
     array_map(fn($ct) => [
@@ -1740,6 +2100,8 @@ window.SDC_CIP_TYPES = <?= json_encode(
     ], $cipTypes),
     JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP
 ) ?>;
+window.SDC_INGREDIENTS = <?= json_encode($ingredientsData, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+window.SDC_PROFILES = {};
 </script>
 </head>
 <body class="sdc-page" data-role="<?= htmlspecialchars($me['role'] ?? 'operateur') ?>">
@@ -1894,11 +2256,11 @@ window.SDC_CIP_TYPES = <?= json_encode(
       ?>
       <div class="recettes-layout">
 
-        <!-- recipe list column -->
+        <!-- recipe list column — three lifecycle sections -->
         <div class="recipe-list-col">
           <div class="col-header">
-            <div class="col-title">Recettes <em>actives</em></div>
-            <div class="col-subtitle">Nébuleuse · core + EPH</div>
+            <div class="col-title">Recettes</div>
+            <div class="col-subtitle">Nébuleuse · actives · passées · contrats</div>
           </div>
           <div class="recipe-scroll" id="recipeScroll"></div>
           <?php if (is_admin($me) || is_manager($me)): ?>
@@ -1913,12 +2275,19 @@ window.SDC_CIP_TYPES = <?= json_encode(
         <div class="recipe-detail-col" id="recipeDetailCol">
           <div class="recipe-detail-header" id="recipeDetailHeader">
             <div>
+              <?php if (is_admin($me) || is_manager($me)): ?>
+              <input class="rdh-title-input" id="rdh-title" type="text"
+                placeholder="Sélectionner une recette"
+                maxlength="128" autocomplete="off"
+                onblur="onNameBlur(this)" readonly>
+              <?php else: ?>
               <div class="rdh-title" id="rdh-title">Sélectionner <em>une recette</em></div>
+              <?php endif ?>
               <div class="rdh-style-row">
-                <input class="rdh-style-input" id="rdh-style" type="text" placeholder="style — à renseigner" maxlength="80"
+                <input class="rdh-style-input" id="rdh-style" type="text" placeholder="style — à renseigner" maxlength="64"
                   onblur="onStyleBlur(this)" autocomplete="off"
                   <?= !is_admin($me) && !is_manager($me) ? 'readonly' : '' ?>>
-                <span class="new-field-tag">nouveau champ · à câbler</span>
+
               </div>
               <div class="rdh-meta" id="rdh-meta">—</div>
             </div>
@@ -2417,6 +2786,218 @@ window.SDC_CIP_TYPES = <?= json_encode(
         </div>
 
         <?php endif ?><!-- /biochemLoadErr -->
+
+        <!-- ═══ STRAIN CATALOG ════════════════════════════════════════════════ -->
+        <?php if ($yeastLoadErr): ?>
+          <div class="sdc-flash sdc-flash--err" style="margin-top:20px;">
+            Erreur chargement souches : <?= htmlspecialchars($yeastLoadErr) ?>
+          </div>
+        <?php else: ?>
+        <div class="sc-catalog-header">
+          <h3>Catalogue des souches</h3>
+          <div class="sc-catalog-sub">
+            <?= count($yeastStrains) ?> souches actives ·
+            <?= count(array_filter($yeastStrains, fn($s) => $s['family'] === null)) ?> sans famille ·
+            ref_yeast_strains
+          </div>
+        </div>
+
+        <div class="sc-catalog-wrap">
+          <table class="sc-catalog-table">
+            <thead>
+              <tr>
+                <th class="sc-th sc-th--name">Souche</th>
+                <th class="sc-th sc-th--fournisseur">Fournisseur</th>
+                <th class="sc-th sc-th--family">Famille</th>
+                <th class="sc-th sc-th--type">Type</th>
+                <th class="sc-th sc-th--floc">Floculation</th>
+                <th class="sc-th sc-th--att">Atténuation (%)</th>
+                <th class="sc-th sc-th--temp">Temp. ferm. (°C)</th>
+                <?php if (is_admin($me) || is_manager($me)): ?>
+                <th class="sc-th sc-th--actions"></th>
+                <?php endif ?>
+              </tr>
+            </thead>
+            <tbody>
+              <?php foreach ($yeastStrains as $ys):
+                $sId      = (int) $ys['id'];
+                $sName    = (string) $ys['name'];
+                $sSupplier= (string) ($ys['supplier'] ?? '');
+                $sFamily  = $ys['family'];
+                $sType    = $ys['type'];
+                $sFloc    = $ys['flocculation'];
+                $sAttMin  = $ys['attenuation_min'] !== null ? (float) $ys['attenuation_min'] : null;
+                $sAttMax  = $ys['attenuation_max'] !== null ? (float) $ys['attenuation_max'] : null;
+                $sTMin    = $ys['temp_min']        !== null ? (float) $ys['temp_min']        : null;
+                $sTMax    = $ys['temp_max']        !== null ? (float) $ys['temp_max']        : null;
+                $isOrphan = ($sFamily === null);
+                $rowClass = 'sc-row' . ($isOrphan ? ' sc-row--orphan' : '');
+                // French labels for display
+                $flocLabels = ['low' => 'Faible', 'medium' => 'Moyenne', 'high' => 'Élevée'];
+                $typeLabels = ['ale' => 'Ale', 'lager' => 'Lager', 'wild' => 'Wild', 'hybrid' => 'Hybride', 'unknown' => '—'];
+              ?>
+              <tr class="<?= $rowClass ?>">
+                <td class="sc-td sc-td--name">
+                  <?= htmlspecialchars($sName) ?>
+                  <?php if ($isOrphan): ?>
+                    <span class="sc-orphan-badge">non classée</span>
+                  <?php endif ?>
+                </td>
+                <td class="sc-td sc-td--fournisseur">
+                  <?= $sSupplier !== '' ? htmlspecialchars($sSupplier) : '<span class="sc-null">—</span>' ?>
+                </td>
+                <td class="sc-td sc-td--family">
+                  <?php if ($sFamily): ?>
+                    <span class="sc-family-chip sc-family-chip--<?= htmlspecialchars($sFamily) ?>">
+                      <?= htmlspecialchars(YEAST_FAMILY_LABELS[$sFamily] ?? $sFamily) ?>
+                    </span>
+                  <?php else: ?>
+                    <span class="sc-null">—</span>
+                  <?php endif ?>
+                </td>
+                <td class="sc-td sc-td--type">
+                  <span class="sc-type-chip"><?= htmlspecialchars($typeLabels[$sType] ?? htmlspecialchars($sType)) ?></span>
+                </td>
+                <td class="sc-td sc-td--floc">
+                  <?= $sFloc !== null ? htmlspecialchars($flocLabels[$sFloc] ?? $sFloc) : '<span class="sc-null">—</span>' ?>
+                </td>
+                <td class="sc-td sc-td--att">
+                  <?php if ($sAttMin !== null || $sAttMax !== null): ?>
+                    <?= $sAttMin !== null ? htmlspecialchars(number_format($sAttMin, 0)) : '?' ?>
+                    –
+                    <?= $sAttMax !== null ? htmlspecialchars(number_format($sAttMax, 0)) : '?' ?>
+                    <span class="sc-unit">%</span>
+                  <?php else: ?>
+                    <span class="sc-null">—</span>
+                  <?php endif ?>
+                </td>
+                <td class="sc-td sc-td--temp">
+                  <?php if ($sTMin !== null || $sTMax !== null): ?>
+                    <?= $sTMin !== null ? htmlspecialchars(number_format($sTMin, 1)) : '?' ?>
+                    –
+                    <?= $sTMax !== null ? htmlspecialchars(number_format($sTMax, 1)) : '?' ?>
+                    <span class="sc-unit">°C</span>
+                  <?php else: ?>
+                    <span class="sc-null">—</span>
+                  <?php endif ?>
+                </td>
+                <?php if (is_admin($me) || is_manager($me)): ?>
+                <td class="sc-td sc-td--actions">
+                  <button type="button"
+                          class="sc-edit-btn"
+                          onclick="scOpenEdit(<?= $sId ?>)"
+                          aria-label="Modifier <?= htmlspecialchars($sName) ?>">
+                    Modifier
+                  </button>
+                </td>
+                <?php endif ?>
+              </tr>
+              <?php endforeach ?>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Strain edit modal -->
+        <?php if (is_admin($me) || is_manager($me)): ?>
+        <dialog id="scEditDialog" class="sc-edit-dialog">
+          <div class="sc-edit-wrap">
+            <div class="sc-edit-head">
+              <div class="sc-edit-title" id="scEditTitle">Modifier la souche</div>
+              <button type="button" class="sc-edit-close" onclick="scCloseEdit()" aria-label="Fermer">×</button>
+            </div>
+            <form method="post" action="/modules/salle-de-controle.php" class="sc-edit-form" novalidate>
+              <input type="hidden" name="csrf"     value="<?= htmlspecialchars($csrf) ?>">
+              <input type="hidden" name="action"   value="update_yeast_strain">
+              <input type="hidden" name="strain_id" id="scEditStrainId" value="">
+
+              <div class="sc-edit-grid">
+
+                <div class="sc-edit-field">
+                  <label class="sc-edit-label" for="scEditFamily">Famille</label>
+                  <select name="family" id="scEditFamily" class="sc-edit-select">
+                    <option value="">— (non définie)</option>
+                    <?php foreach (YEAST_FAMILIES as $fam): ?>
+                    <option value="<?= htmlspecialchars($fam) ?>">
+                      <?= htmlspecialchars(YEAST_FAMILY_LABELS[$fam] ?? $fam) ?>
+                    </option>
+                    <?php endforeach ?>
+                  </select>
+                </div>
+
+                <div class="sc-edit-field">
+                  <label class="sc-edit-label" for="scEditType">Type</label>
+                  <select name="type" id="scEditType" class="sc-edit-select">
+                    <option value="">— (inconnu)</option>
+                    <?php foreach (YEAST_TYPES as $typ): ?>
+                    <option value="<?= htmlspecialchars($typ) ?>">
+                      <?= htmlspecialchars($typ) ?>
+                    </option>
+                    <?php endforeach ?>
+                  </select>
+                </div>
+
+                <div class="sc-edit-field">
+                  <label class="sc-edit-label" for="scEditFloc">Floculation</label>
+                  <select name="flocculation" id="scEditFloc" class="sc-edit-select">
+                    <option value="">— (non définie)</option>
+                    <option value="low">Faible</option>
+                    <option value="medium">Moyenne</option>
+                    <option value="high">Élevée</option>
+                  </select>
+                </div>
+
+                <div class="sc-edit-field"><!-- spacer --></div>
+
+                <div class="sc-edit-field">
+                  <label class="sc-edit-label" for="scEditAttMin">Atténuation min (%)</label>
+                  <div class="sc-edit-input-row">
+                    <input type="number" name="attenuation_min" id="scEditAttMin"
+                           class="sc-edit-input" min="0" max="100" step="0.5" placeholder="—">
+                    <span class="sc-edit-unit">%</span>
+                  </div>
+                </div>
+
+                <div class="sc-edit-field">
+                  <label class="sc-edit-label" for="scEditAttMax">Atténuation max (%)</label>
+                  <div class="sc-edit-input-row">
+                    <input type="number" name="attenuation_max" id="scEditAttMax"
+                           class="sc-edit-input" min="0" max="100" step="0.5" placeholder="—">
+                    <span class="sc-edit-unit">%</span>
+                  </div>
+                </div>
+
+                <div class="sc-edit-field">
+                  <label class="sc-edit-label" for="scEditTMin">Temp. min (°C)</label>
+                  <div class="sc-edit-input-row">
+                    <input type="number" name="temp_min" id="scEditTMin"
+                           class="sc-edit-input" min="0" max="50" step="0.5" placeholder="—">
+                    <span class="sc-edit-unit">°C</span>
+                  </div>
+                </div>
+
+                <div class="sc-edit-field">
+                  <label class="sc-edit-label" for="scEditTMax">Temp. max (°C)</label>
+                  <div class="sc-edit-input-row">
+                    <input type="number" name="temp_max" id="scEditTMax"
+                           class="sc-edit-input" min="0" max="50" step="0.5" placeholder="—">
+                    <span class="sc-edit-unit">°C</span>
+                  </div>
+                </div>
+
+              </div><!-- /sc-edit-grid -->
+
+              <div class="sc-edit-hint">Vide = NULL (non défini). La famille mise à jour ici est la même colonne que celle câblée dans Recettes → Levure &amp; garde.</div>
+
+              <div class="sc-edit-actions">
+                <button type="button" class="sc-edit-cancel" onclick="scCloseEdit()">Annuler</button>
+                <button type="submit" class="sc-edit-save">Enregistrer</button>
+              </div>
+            </form>
+          </div>
+        </dialog>
+        <?php endif ?>
+
+        <?php endif ?><!-- /yeastLoadErr -->
 
         <!-- Pending items still to wire -->
         <div class="pending-block" style="margin-top:24px;">
@@ -3157,7 +3738,7 @@ window.SDC_CIP_TYPES = <?= json_encode(
   </div><!-- /content-area -->
 </div><!-- /sdc-stage -->
 
-<!-- CONFIRM MODAL (client-side, mockup interactions only — TODO: data-wiring) -->
+<!-- CONFIRM MODAL — wired for update_recipe_style and update_recipe_name -->
 <div class="modal-overlay" id="modalOverlay">
   <div class="modal-box">
     <h4>Confirmer la modification</h4>
@@ -3213,41 +3794,32 @@ const SDC_ROLE      = <?= json_encode($me['role'] ?? 'operateur', JSON_HEX_TAG |
 const SDC_INITIAL   = <?= json_encode($initialSec, JSON_HEX_TAG | JSON_HEX_AMP) ?>;
 
 /* ═══════════════════════════════════════════
-   DATA — baked from live DB (ref_recipe_profile rolling_12mo)
-   Recettes + Biochimie are presentational this pass.
-   TODO: data-wiring phase — replace with server-injected window.SDC_* JSON.
+   DATA — baked from live DB via v_recipe_lifecycle
+   Three lifecycle lists: actives / passées / contrats.
    ═══════════════════════════════════════════ */
-const RECIPES = <?= json_encode(array_map(fn($r) => [
-  'id' => (int)$r['id'],
-  'name' => $r['name'],
-  'sku' => $r['sku_prefix'],
-  'subtype' => $r['subtype'],
-  'vintage' => ''
-], $activatableRecs), JSON_HEX_TAG | JSON_HEX_AMP | JSON_UNESCAPED_UNICODE) ?>;
+<?php
+function _recipe_js_shape(array $r): array {
+    return [
+        'id'       => (int)    $r['id'],
+        'name'     => (string) $r['name'],
+        'sku'      => $r['sku_prefix'],
+        'subtype'  => (string) $r['subtype'],
+        'vintage'  => (string) $r['vintage'],
+        'flag'     => $r['flag'],
+        // Rename is contract-only (Neb names are join keys — see update_recipe_name).
+        'contract' => (($r['classification'] ?? '') === 'Contract'),
+    ];
+}
+?>
+const RECIPES_ACTIVES  = <?= json_encode(array_map('_recipe_js_shape', $recipesActives),  JSON_HEX_TAG | JSON_HEX_AMP | JSON_UNESCAPED_UNICODE) ?>;
+const RECIPES_PASSEES  = <?= json_encode(array_map('_recipe_js_shape', $recipesPassees),  JSON_HEX_TAG | JSON_HEX_AMP | JSON_UNESCAPED_UNICODE) ?>;
+const RECIPES_CONTRATS = <?= json_encode(array_map('_recipe_js_shape', $recipesContrats), JSON_HEX_TAG | JSON_HEX_AMP | JSON_UNESCAPED_UNICODE) ?>;
+// Unified lookup: all recipes across all three buckets.
+const RECIPES = [...RECIPES_ACTIVES, ...RECIPES_PASSEES, ...RECIPES_CONTRATS];
 
-const INGREDIENTS = {
-  57:[{mi:"MALT_PILSENER",name:"Pilsener",cat:"Malt",qty:15.833,unit:"kg"},{mi:"HOPS_HERKULES",name:"Herkules",cat:"Hops",qty:13.333,unit:"g"},{mi:"HOPS_SAAZER",name:"Saazer",cat:"Hops",qty:83.333,unit:"g"},{mi:"HOPS_SPALTER_SELECT",name:"Spalter Select",cat:"Hops",qty:83.333,unit:"g"},{mi:"PROC_PHOSPHORIQUE",name:"Phosphorique",cat:"Proc/Chem",qty:23.333,unit:"ml"},{mi:"PROC_YEASTVIT",name:"Yeastvit",cat:"Proc/Chem",qty:8.0,unit:"g"},{mi:"MIN_CACL2",name:"Calcium Chloride",cat:"Minéraux",qty:5.833,unit:"g"},{mi:"MIN_MGCL2",name:"Magnesium Chloride",cat:"Minéraux",qty:5.833,unit:"g"},{mi:"MIN_MGSO4",name:"Magnesium Sulphate",cat:"Minéraux",qty:3.5,unit:"g"},{mi:"MIN_NACL",name:"Sodium Chloride",cat:"Minéraux",qty:4.667,unit:"g"}],
-  32:[{mi:"MALT_MUNICH",name:"Munich",cat:"Malt",qty:8.0,unit:"kg"},{mi:"MALT_PILSENER",name:"Pilsener",cat:"Malt",qty:14.833,unit:"kg"},{mi:"HOPS_AMARILLO",name:"Amarillo",cat:"Hops",qty:333.333,unit:"g"},{mi:"HOPS_CASCADE",name:"Cascade",cat:"Hops",qty:166.667,unit:"g"},{mi:"HOPS_HERKULES",name:"Herkules",cat:"Hops",qty:33.333,unit:"g"},{mi:"HOPS_SIMCOE",name:"Simcoe",cat:"Hops",qty:166.667,unit:"g"},{mi:"PROC_PHOSPHORIQUE",name:"Phosphorique",cat:"Proc/Chem",qty:45.0,unit:"ml"},{mi:"PROC_YEASTVIT",name:"Yeastvit",cat:"Proc/Chem",qty:8.0,unit:"g"},{mi:"MIN_CACL2",name:"Calcium Chloride",cat:"Minéraux",qty:10.0,unit:"g"},{mi:"MIN_CASO4",name:"Calcium Sulphate",cat:"Minéraux",qty:6.667,unit:"g"}],
-  44:[{mi:"MALT_PILSENER",name:"Pilsener",cat:"Malt",qty:10.333,unit:"kg"},{mi:"MALT_WHEAT",name:"Wheat",cat:"Malt",qty:8.333,unit:"kg"},{mi:"HOPS_CASCADE",name:"Cascade",cat:"Hops",qty:166.667,unit:"g"},{mi:"ADJ_CORIANDER",name:"Coriander",cat:"Adjunct",qty:73.333,unit:"g"},{mi:"ADJ_ORANGE_PEEL",name:"Orange Peel",cat:"Adjunct",qty:110.0,unit:"g"},{mi:"PROC_PHOSPHORIQUE",name:"Phosphorique",cat:"Proc/Chem",qty:26.667,unit:"ml"},{mi:"PROC_YEASTVIT",name:"Yeastvit",cat:"Proc/Chem",qty:8.0,unit:"g"},{mi:"MIN_CACL2",name:"Calcium Chloride",cat:"Minéraux",qty:5.933,unit:"g"},{mi:"MIN_CASO4",name:"Calcium Sulphate",cat:"Minéraux",qty:5.933,unit:"g"},{mi:"MIN_MGCL2",name:"Magnesium Chloride",cat:"Minéraux",qty:3.567,unit:"g"}],
-  51:[{mi:"MALT_OAT_FLAKES",name:"Oat Flakes",cat:"Malt",qty:2.0,unit:"kg"},{mi:"MALT_PILSENER",name:"Pilsener",cat:"Malt",qty:8.667,unit:"kg"},{mi:"MALT_WHEAT",name:"Wheat",cat:"Malt",qty:4.667,unit:"kg"},{mi:"HOPS_C_INCOGNITO",name:"Citra Incognito",cat:"Hops",qty:66.667,unit:"g"},{mi:"HOPS_EL_DORADO",name:"El Dorado",cat:"Hops",qty:166.667,unit:"g"},{mi:"HOPS_MOSAIC",name:"Mosaic",cat:"Hops",qty:333.333,unit:"g"},{mi:"PROC_PHOSPHORIQUE",name:"Phosphorique",cat:"Proc/Chem",qty:28.333,unit:"ml"},{mi:"PROC_YEASTVIT",name:"Yeastvit",cat:"Proc/Chem",qty:8.0,unit:"g"},{mi:"MIN_CACL2",name:"Calcium Chloride",cat:"Minéraux",qty:19.667,unit:"g"}],
-  52:[{mi:"MALT_CRYSTAL",name:"Cara Crystal",cat:"Malt",qty:0.277,unit:"kg"},{mi:"MALT_MUNICH",name:"Munich",cat:"Malt",qty:4.167,unit:"kg"},{mi:"MALT_PILSENER",name:"Pilsener",cat:"Malt",qty:13.667,unit:"kg"},{mi:"HOPS_CASCADE",name:"Cascade",cat:"Hops",qty:166.667,unit:"g"},{mi:"HOPS_HERKULES",name:"Herkules",cat:"Hops",qty:16.667,unit:"g"},{mi:"HOPS_SIMCOE",name:"Simcoe",cat:"Hops",qty:266.667,unit:"g"},{mi:"PROC_DEHAZE",name:"Dehaze",cat:"Proc/Chem",qty:5.0,unit:"ml"},{mi:"PROC_PHOSPHORIQUE",name:"Phosphorique",cat:"Proc/Chem",qty:40.0,unit:"ml"},{mi:"PROC_YEASTVIT",name:"Yeastvit",cat:"Proc/Chem",qty:8.0,unit:"g"},{mi:"MIN_CACL2",name:"Calcium Chloride",cat:"Minéraux",qty:4.867,unit:"g"},{mi:"MIN_CASO4",name:"Calcium Sulphate",cat:"Minéraux",qty:2.433,unit:"g"},{mi:"MIN_MGSO4",name:"Magnesium Sulphate",cat:"Minéraux",qty:4.867,unit:"g"},{mi:"MIN_NACL",name:"Sodium Chloride",cat:"Minéraux",qty:6.083,unit:"g"}],
-  30:[{mi:"MALT_OAT_FLAKES",name:"Oat Flakes",cat:"Malt",qty:4.667,unit:"kg"},{mi:"MALT_PILSENER",name:"Pilsener",cat:"Malt",qty:25.0,unit:"kg"},{mi:"MALT_WHEAT",name:"Wheat",cat:"Malt",qty:3.333,unit:"kg"},{mi:"HOPS_MOSAIC",name:"Mosaic",cat:"Hops",qty:500.0,unit:"g"},{mi:"HOPS_M_INCOGNITO",name:"Mosaic Incognito",cat:"Hops",qty:66.667,unit:"g"},{mi:"PROC_PHOSPHORIQUE",name:"Phosphorique",cat:"Proc/Chem",qty:53.333,unit:"ml"},{mi:"PROC_YEASTVIT",name:"Yeastvit",cat:"Proc/Chem",qty:8.0,unit:"g"},{mi:"MIN_CACL2",name:"Calcium Chloride",cat:"Minéraux",qty:8.867,unit:"g"},{mi:"MIN_CASO4",name:"Calcium Sulphate",cat:"Minéraux",qty:34.2,unit:"g"},{mi:"MIN_MGSO4",name:"Magnesium Sulphate",cat:"Minéraux",qty:12.667,unit:"g"}],
-  25:[{mi:"MALT_MUNICH",name:"Munich",cat:"Malt",qty:1.667,unit:"kg"},{mi:"MALT_PILSENER",name:"Pilsener",cat:"Malt",qty:6.333,unit:"kg"},{mi:"HOPS_MOSAIC",name:"Mosaic",cat:"Hops",qty:166.667,unit:"g"},{mi:"HOPS_M_INCOGNITO",name:"Mosaic Incognito",cat:"Hops",qty:66.667,unit:"g"},{mi:"PROC_NAGARDO",name:"Nagardo",cat:"Proc/Chem",qty:2.0,unit:"g"},{mi:"PROC_PHOSPHORIQUE",name:"Phosphorique",cat:"Proc/Chem",qty:41.667,unit:"ml"},{mi:"MIN_CACL2",name:"Calcium Chloride",cat:"Minéraux",qty:4.867,unit:"g"},{mi:"MIN_CASO4",name:"Calcium Sulphate",cat:"Minéraux",qty:2.433,unit:"g"},{mi:"MIN_MGSO4",name:"Magnesium Sulphate",cat:"Minéraux",qty:4.867,unit:"g"}],
-  26:[{mi:"MALT_PILSENER",name:"Pilsener",cat:"Malt",qty:5.667,unit:"kg"},{mi:"MALT_WHEAT",name:"Wheat",cat:"Malt",qty:5.333,unit:"kg"},{mi:"HOPS_CASCADE",name:"Cascade",cat:"Hops",qty:40.0,unit:"g"},{mi:"ADJ_PEACH_TEA",name:"Peach Tea",cat:"Adjunct",qty:133.333,unit:"g"},{mi:"PROC_ISYENHANCE",name:"IsyEnhance",cat:"Proc/Chem",qty:40.0,unit:"g"},{mi:"PROC_NAGARDO",name:"Nagardo",cat:"Proc/Chem",qty:2.0,unit:"g"},{mi:"PROC_PHOSPHORIQUE",name:"Phosphorique",cat:"Proc/Chem",qty:43.333,unit:"ml"}],
-  6:[{mi:"MALT_MUNICH",name:"Munich",cat:"Malt",qty:1.833,unit:"kg"},{mi:"MALT_OAT_FLAKES",name:"Oat Flakes",cat:"Malt",qty:0.667,unit:"kg"},{mi:"MALT_PILSENER",name:"Pilsener",cat:"Malt",qty:4.667,unit:"kg"},{mi:"MALT_WHEAT",name:"Wheat",cat:"Malt",qty:1.0,unit:"kg"},{mi:"HOPS_C_INCOGNITO",name:"Citra Incognito",cat:"Hops",qty:66.667,unit:"g"},{mi:"HOPS_MOSAIC",name:"Mosaic",cat:"Hops",qty:333.333,unit:"g"},{mi:"PROC_PHOSPHORIQUE",name:"Phosphorique",cat:"Proc/Chem",qty:23.333,unit:"ml"}],
-};
+const INGREDIENTS = window.SDC_INGREDIENTS || {};
 
-const PROFILES = {
-  57:{og:10.09,fg:2.08,atten:79.37,phCool:4.98,phFerm:4.41,fermDays:13.43,ccDays:28.25,gardeDays:null,co2:null,batches:37},
-  32:{og:14.10,fg:2.20,atten:84.40,phCool:4.99,phFerm:4.59,fermDays:12.70,ccDays:25.58,gardeDays:null,co2:null,batches:21},
-  44:{og:12.24,fg:2.25,atten:81.56,phCool:5.04,phFerm:4.19,fermDays:7.84,ccDays:35.50,gardeDays:null,co2:null,batches:20},
-  51:{og:9.07,fg:1.74,atten:80.70,phCool:4.96,phFerm:4.04,fermDays:6.92,ccDays:10.23,gardeDays:null,co2:null,batches:14},
-  52:{og:11.84,fg:2.75,atten:76.83,phCool:5.02,phFerm:4.39,fermDays:8.89,ccDays:17.11,gardeDays:null,co2:null,batches:11},
-  30:{og:17.06,fg:3.62,atten:78.75,phCool:5.05,phFerm:4.45,fermDays:13.75,ccDays:13.13,gardeDays:null,co2:null,batches:9},
-  25:{og:5.10,fg:4.54,atten:8.89,phCool:4.60,phFerm:4.31,fermDays:2.57,ccDays:42.90,gardeDays:null,co2:null,batches:14},
-  26:{og:7.05,fg:5.20,atten:22.30,phCool:4.65,phFerm:4.37,fermDays:3.75,ccDays:20.0,gardeDays:null,co2:null,batches:4},
-  6:{og:6.07,fg:1.26,atten:78.23,phCool:4.86,phFerm:4.06,fermDays:7.50,ccDays:19.67,gardeDays:null,co2:null,batches:7},
-};
+const PROFILES = window.SDC_PROFILES || {};
 
 const YEAST_DEFAULTS = {
   ale:{fermTempMin:18,fermTempMax:22,gardeMin:14,gardeMax:28,typical:"Saccharomyces cerevisiae — ale top-fermenting. Température ambiante, développe esters fruités."},
@@ -3276,7 +3848,7 @@ let currentSubtab    = 'ingr';
 let pendingModal     = null;
 let ingrScale        = 'brassin';
 const BRASSIN_HL     = 30;
-const RECIPE_STYLES  = {};
+const RECIPE_STYLES  = window.SDC_RECIPE_STYLES || {};
 
 /* ═══════════════════════════════════════════
    SECTION SWITCHER
@@ -3316,22 +3888,23 @@ function buildRecipeList(){
   const scroll=document.getElementById('recipeScroll');
   if(!scroll) return;
   scroll.innerHTML='';
-  const label=document.createElement('div');
-  label.className='recipe-group-label';
-  label.textContent='Core — Nébuleuse';
-  scroll.appendChild(label);
-  RECIPES.forEach(r=>{
+
+  const FLAG_LABELS={'production_a_venir':'production à venir','plus_produite':'plus produite'};
+
+  function appendRecipeItem(r){
     INGREDIENTS[r.id] = INGREDIENTS[r.id] || [];
     const p=PROFILES[r.id];
     const abv=p?calcAbv(p.og,p.fg):null;
     const div=document.createElement('div');
     div.className='recipe-item';
     div.dataset.id=r.id;
-    const dotClass={Core:'core',EPH:'eph',CollabIn:'collab',Archive:'archive'}[r.subtype]||'archive';
+    const dotClass={Core:'core',EPH:'eph',CollabIn:'collab',CollabOut:'collab',Archive:'archive'}[r.subtype]||'archive';
+    const chipHtml=r.flag&&FLAG_LABELS[r.flag]
+      ?`<span class="ri-lifecycle-chip ri-chip--${escHtml(r.flag)}">${escHtml(FLAG_LABELS[r.flag])}</span>`:'';
     div.innerHTML=`<span class="ri-dot ${escHtml(dotClass)}"></span>
       <div class="ri-body">
-        <div class="ri-name">${escHtml(r.name)}</div>
-        <div class="ri-meta">${p?p.batches+' brassin(s) · OG '+p.og+'°P':'—'}</div>
+        <div class="ri-name">${escHtml(r.name)}${chipHtml}</div>
+        <div class="ri-meta">${[r.vintage?'Millésime '+escHtml(r.vintage):null, p?p.batches+' brassin(s) · OG '+p.og+'°P':null].filter(Boolean).join(' · ')||'—'}</div>
       </div>
       <div>
         ${r.sku?`<div class="ri-sku">${escHtml(r.sku)}</div>`:''}
@@ -3339,7 +3912,29 @@ function buildRecipeList(){
       </div>`;
     div.addEventListener('click',()=>selectRecipe(r.id));
     scroll.appendChild(div);
-  });
+  }
+
+  function appendGroupLabel(text){
+    const lbl=document.createElement('div');
+    lbl.className='recipe-group-label';
+    lbl.textContent=text;
+    scroll.appendChild(lbl);
+  }
+
+  if(RECIPES_ACTIVES.length){
+    appendGroupLabel('Recettes actives — Nébuleuse');
+    RECIPES_ACTIVES.forEach(appendRecipeItem);
+  }
+
+  if(RECIPES_PASSEES.length){
+    appendGroupLabel('Recettes passées');
+    RECIPES_PASSEES.forEach(appendRecipeItem);
+  }
+
+  if(RECIPES_CONTRATS.length){
+    appendGroupLabel('Contrats');
+    RECIPES_CONTRATS.forEach(appendRecipeItem);
+  }
 }
 
 function selectRecipe(id){
@@ -3348,7 +3943,15 @@ function selectRecipe(id){
   const rec=RECIPES.find(r=>r.id===id);
   const p=PROFILES[id];
   const abv=p?calcAbv(p.og,p.fg):null;
-  document.getElementById('rdh-title').innerHTML=`<em>${escHtml(rec.name)}</em>`;
+  const titleEl=document.getElementById('rdh-title');
+  if(titleEl.tagName==='INPUT'){
+    titleEl.value=rec.name;titleEl.defaultValue=rec.name;
+    // Rename is contract-only — Neb recipe names are DB join keys (tanks/COGS).
+    if(rec.contract){titleEl.removeAttribute('readonly');titleEl.title='';}
+    else{titleEl.setAttribute('readonly','readonly');titleEl.title='Renommage réservé aux recettes sous contrat';}
+  } else {
+    titleEl.innerHTML=`<em>${escHtml(rec.name)}</em>`;
+  }
   const styleInp=document.getElementById('rdh-style');
   if(styleInp){styleInp.value=RECIPE_STYLES[id]||'';styleInp.defaultValue=styleInp.value;}
   document.getElementById('rdh-meta').textContent=(rec.sku||'—')+' · '+rec.subtype+(p?' · '+p.batches+' brassins':'');
@@ -3365,8 +3968,8 @@ function selectRecipe(id){
 /* ═══════════════════════════════════════════
    INGRÉDIENTS PANE
    ═══════════════════════════════════════════ */
-const CAT_COLORS={Malt:'#a07a48',Hops:'#9eb060',Adjunct:'#9b7cc8','Proc/Chem':'#6593b8',Minéraux:'#4a8c78'};
-const CAT_ORDER=['Malt','Hops','Adjunct','Proc/Chem','Minéraux'];
+const CAT_COLORS={Malt:'#a07a48',Hops:'#9eb060',Adjunct:'#9b7cc8','Proc/Chem':'#6593b8',Minéraux:'#4a8c78',Yeast:'#b07a5a'};
+const CAT_ORDER=['Malt','Hops','Adjunct','Proc/Chem','Minéraux','Yeast'];
 
 function scaledQty(qty,unit){
   const factor=ingrScale==='brassin'?BRASSIN_HL:1;
@@ -3392,7 +3995,7 @@ function renderIngrPane(id,profile){
   const container=document.getElementById('ingrPaneContent');
   if(!container) return;
   const items=INGREDIENTS[id]||[];
-  if(!items.length){container.innerHTML='<div style="padding:40px;text-align:center;color:var(--ink-faint);">Aucun ingrédient.</div>';return;}
+  if(!items.length){container.innerHTML='<div style="padding:40px;text-align:center;color:var(--ink-faint);">Aucune recette officielle saisie.</div>';return;}
   const groups={};
   items.forEach(it=>{const c=it.cat;if(!groups[c])groups[c]=[];groups[c].push(it);});
   const toGRaw=(qty,unit)=>unit==='kg'?qty*1000:qty;
@@ -3778,13 +4381,25 @@ function closeModal(){
   document.getElementById('modalOverlay').classList.remove('open');
 }
 function applyModal(){
-  if(pendingModal){
-    pendingModal.inp.defaultValue=pendingModal.newVal;
-    if(pendingModal.isStyle&&selectedRecipeId!==null){RECIPE_STYLES[selectedRecipeId]=pendingModal.newVal;}
-    showToast('Enregistré (mock): '+pendingModal.field+' = '+pendingModal.newVal);
-  }
+  if(!pendingModal){document.getElementById('modalOverlay').classList.remove('open');return;}
+  const pm=pendingModal;
   pendingModal=null;
   document.getElementById('modalOverlay').classList.remove('open');
+  if((pm.isStyle||pm.isName)&&pm.recipeId){
+    // Build and submit a hidden form for the real POST (PRG — page will reload to sec=recettes)
+    const f=document.createElement('form');
+    f.method='post';f.action='/modules/salle-de-controle.php';f.style.display='none';
+    const add=(n,v)=>{const i=document.createElement('input');i.type='hidden';i.name=n;i.value=v;f.appendChild(i);};
+    add('csrf',window.SDC_CSRF||'');
+    add('recipe_id',pm.recipeId);
+    if(pm.isStyle){add('action','update_recipe_style');add('style',pm.newVal);}
+    else{add('action','update_recipe_name');add('name',pm.newVal);}
+    document.body.appendChild(f);
+    f.submit();
+  } else {
+    // Fallback for any other pending field (currently none — onFieldBlur is still mock)
+    pm.inp.defaultValue=pm.newVal;
+  }
 }
 
 /* onBiochemBlur removed — biochem edit is now a real POST form. */
@@ -3797,13 +4412,32 @@ function onStyleBlur(inp){
   const oldVal=inp.defaultValue;
   const newVal=inp.value.trim();
   if(oldVal===newVal) return;
-  if(SDC_ROLE==='admin'){
-    pendingModal={inp,oldVal,newVal,field:'style',id:selectedRecipeId,isStyle:true};
-    document.getElementById('modalContext').textContent='style · recette #'+selectedRecipeId;
+  if(!selectedRecipeId){inp.value=oldVal;return;}
+  if(SDC_ROLE==='admin'||SDC_ROLE==='manager'){
+    pendingModal={inp,oldVal,newVal,field:'style',id:selectedRecipeId,recipeId:selectedRecipeId,isStyle:true};
+    document.getElementById('modalContext').textContent='Style · recette #'+selectedRecipeId;
     document.getElementById('modalOld').textContent=oldVal||'(vide)';
     document.getElementById('modalNew').textContent=newVal||'(vide)';
     document.getElementById('modalOverlay').classList.add('open');
   } else {inp.value=oldVal;showToast('Style soumis pour approbation');}
+}
+
+/* ═══════════════════════════════════════════
+   NAME FIELD
+   ═══════════════════════════════════════════ */
+function onNameBlur(inp){
+  if(SDC_ROLE==='operateur') return;
+  const oldVal=inp.defaultValue;
+  const newVal=inp.value.trim();
+  if(oldVal===newVal||!newVal) {inp.value=oldVal||'';return;}
+  if(!selectedRecipeId){inp.value=oldVal;return;}
+  if(SDC_ROLE==='admin'||SDC_ROLE==='manager'){
+    pendingModal={inp,oldVal,newVal,field:'name',id:selectedRecipeId,recipeId:selectedRecipeId,isName:true};
+    document.getElementById('modalContext').textContent='Nom · recette #'+selectedRecipeId;
+    document.getElementById('modalOld').textContent=oldVal;
+    document.getElementById('modalNew').textContent=newVal;
+    document.getElementById('modalOverlay').classList.add('open');
+  } else {inp.value=oldVal;showToast('Nom soumis pour approbation');}
 }
 
 /* ═══════════════════════════════════════════
@@ -3831,13 +4465,64 @@ function createRecipe(){
   if(SDC_ROLE==='manager'){closeNewRecipeModal();showToast('Demande soumise: '+name+' · en attente admin');return;}
   const newId=Date.now();
   const newRec={id:newId,name,sku:'',subtype:'Core',vintage:''};
-  RECIPES.push(newRec);INGREDIENTS[newId]=[];PROFILES[newId]=null;RECIPE_YEAST[newId]=yeast;
+  RECIPES_ACTIVES.push(newRec);INGREDIENTS[newId]=[];PROFILES[newId]=null;RECIPE_YEAST[newId]=yeast;
   if(style) RECIPE_STYLES[newId]=style;
   const badge=document.querySelector('.nav-badge');
   if(badge) badge.textContent=RECIPES.length;
   closeNewRecipeModal();buildRecipeList();selectRecipe(newId);
   showToast('Recette créée (mock): '+name+(style?' · '+style:''));
 }
+
+/* ═══════════════════════════════════════════
+   STRAIN CATALOG EDIT MODAL
+   Reads from window.SDC_YEAST_STRAINS to pre-fill the dialog fields.
+   Uses the native <dialog> element; avoids display:none lazy-image trap.
+   ═══════════════════════════════════════════ */
+(function(){
+  const dialog = document.getElementById('scEditDialog');
+  if (!dialog) return; // manager/admin only — dialog is absent for operateur
+
+  function setOpt(selectEl, value) {
+    // Set a <select> to value or '' if value is null/undefined/empty
+    const v = (value != null && value !== '') ? String(value) : '';
+    selectEl.value = v;
+    // fallback: if the value doesn't exist as an option, reset to ''
+    if (selectEl.value !== v) selectEl.value = '';
+  }
+
+  window.scOpenEdit = function(strainId) {
+    const s = (window.SDC_YEAST_STRAINS || []).find(x => x.id === strainId);
+    if (!s) return;
+
+    document.getElementById('scEditTitle').textContent = 'Modifier · ' + s.name;
+    document.getElementById('scEditStrainId').value = strainId;
+
+    setOpt(document.getElementById('scEditFamily'), s.family);
+    setOpt(document.getElementById('scEditType'),   s.type);
+    setOpt(document.getElementById('scEditFloc'),   s.flocculation);
+
+    const setNum = (elId, val) => {
+      document.getElementById(elId).value = (val !== null && val !== undefined) ? val : '';
+    };
+    setNum('scEditAttMin', s.attenuation_min);
+    setNum('scEditAttMax', s.attenuation_max);
+    setNum('scEditTMin',   s.temp_min);
+    setNum('scEditTMax',   s.temp_max);
+
+    dialog.showModal();
+  };
+
+  window.scCloseEdit = function() {
+    dialog.close();
+  };
+
+  // Close on backdrop click
+  dialog.addEventListener('click', function(e) {
+    if (e.target === dialog) dialog.close();
+  });
+
+  // Close on Escape is native to <dialog> — no extra listener needed
+})();
 
 /* ═══════════════════════════════════════════
    TOAST
@@ -3854,7 +4539,11 @@ function showToast(msg){
    ═══════════════════════════════════════════ */
 buildRecipeList();
 switchSection(SDC_INITIAL);
-if(SDC_INITIAL==='recettes') selectRecipe(RECIPES[0].id);
+// Auto-select first active recipe on load; fall back to first overall if actives is empty.
+if(SDC_INITIAL==='recettes'){
+  const firstRec=(RECIPES_ACTIVES[0]||RECIPES[0]);
+  if(firstRec) selectRecipe(firstRec.id);
+}
 </script>
 <script src="/js/salle-de-controle.js?v=<?= @filemtime(__DIR__ . '/../js/salle-de-controle.js') ?: time() ?>"></script>
 </body>

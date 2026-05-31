@@ -248,11 +248,19 @@ body.sdc-page .ri-body { flex: 1; min-width: 0; }
 body.sdc-page .ri-name { font-family: "DM Sans", sans-serif; font-weight: 500; font-size: 13px; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 body.sdc-page .ri-meta { font-family: "JetBrains Mono", monospace; font-size: 9px; letter-spacing: .06em; color: var(--ink-mute); margin-top: 1px; }
 body.sdc-page .ri-sku { flex: 0 0 auto; font-family: "JetBrains Mono", monospace; font-size: 9px; letter-spacing: .1em; color: var(--ink-mute); background: color-mix(in srgb, var(--ink) 6%, transparent); padding: 2px 7px; border-radius: 5px; }
+/* Lifecycle chips — inline after recipe name */
+body.sdc-page .ri-lifecycle-chip { display: inline-block; margin-left: 6px; font-family: "JetBrains Mono", monospace; font-size: 7px; font-weight: 500; letter-spacing: .14em; text-transform: uppercase; padding: 1px 5px; border-radius: 3px; vertical-align: middle; white-space: nowrap; }
+body.sdc-page .ri-chip--production_a_venir { background: color-mix(in srgb, var(--cold) 18%, transparent); color: var(--cold); border: 1px solid color-mix(in srgb, var(--cold) 30%, transparent); }
+body.sdc-page .ri-chip--plus_produite { background: color-mix(in srgb, var(--oak) 18%, transparent); color: var(--oak); border: 1px solid color-mix(in srgb, var(--oak) 30%, transparent); }
 
 body.sdc-page .recipe-detail-col { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
 body.sdc-page .recipe-detail-header { flex: 0 0 auto; padding: 18px 28px 0; border-bottom: 1px solid var(--hairline); display: flex; align-items: flex-end; gap: 0; }
 body.sdc-page .rdh-title { font-family: "Fraunces", serif; font-variation-settings: "opsz" 144; font-weight: 400; font-size: 28px; color: var(--ink); line-height: 1; }
 body.sdc-page .rdh-title em { font-style: italic; color: var(--lab); }
+body.sdc-page .rdh-title-input { font-family: "Fraunces", serif; font-variation-settings: "opsz" 144; font-style: italic; font-weight: 400; font-size: 28px; color: var(--lab); background: none; border: none; border-bottom: 1px dashed transparent; outline: none; padding: 0 2px; width: 100%; max-width: 420px; line-height: 1; transition: border-color .2s; }
+body.sdc-page .rdh-title-input:not([readonly]):focus { border-bottom-color: var(--lab); }
+body.sdc-page .rdh-title-input[readonly] { pointer-events: none; color: var(--ink-mute); }
+body.sdc-page .rdh-title-input::placeholder { color: var(--ink-faint); font-style: italic; }
 body.sdc-page .rdh-meta { font-family: "JetBrains Mono", monospace; font-size: 9px; letter-spacing: .15em; color: var(--ink-mute); text-transform: uppercase; margin-left: 16px; margin-bottom: 5px; }
 body.sdc-page .rdh-abv { margin-left: auto; font-family: "Fraunces", serif; font-variation-settings: "opsz" 72; font-size: 22px; font-weight: 400; color: var(--lab); margin-bottom: 4px; }
 body.sdc-page .rdh-abv-label { font-family: "JetBrains Mono", monospace; font-size: 8px; letter-spacing: .2em; color: var(--ink-mute); text-align: right; margin-bottom: 6px; }
@@ -875,3 +883,74 @@ body.sdc-page .cip-deact-btn { padding: 4px 10px; border-radius: 6px; border: 1p
 body.sdc-page .cip-deact-btn:hover { background: color-mix(in srgb, var(--ember) 22%, transparent); }
 body.sdc-page .cip-react-btn { padding: 4px 10px; border-radius: 6px; border: 1px solid color-mix(in srgb, var(--lab) 40%, transparent); background: color-mix(in srgb, var(--lab) 10%, transparent); color: var(--lab); cursor: pointer; font-family: "JetBrains Mono", monospace; font-size: 9px; letter-spacing: .1em; text-transform: uppercase; transition: background .15s; white-space: nowrap; }
 body.sdc-page .cip-react-btn:hover { background: color-mix(in srgb, var(--lab) 22%, transparent); }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   BIOCHIMIE — Strain catalog (added mig 224 / per-strain editor)
+   sc- = strain catalog prefix; scoped to body.sdc-page
+   ───────────────────────────────────────────────────────────────────────────── */
+body.sdc-page .sc-catalog-header { margin-top: 36px; margin-bottom: 14px; }
+body.sdc-page .sc-catalog-header h3 { font-family: "Fraunces", serif; font-variation-settings: "opsz" 96; font-weight: 400; font-size: 20px; color: var(--ink); margin: 0 0 4px; }
+body.sdc-page .sc-catalog-sub { font-family: "JetBrains Mono", monospace; font-size: 9px; letter-spacing: .15em; color: var(--ink-mute); text-transform: uppercase; }
+
+body.sdc-page .sc-catalog-wrap { overflow-x: auto; border: 1px solid var(--hairline-2); border-radius: 10px; background: var(--bg-elev); }
+body.sdc-page .sc-catalog-table { width: 100%; border-collapse: collapse; }
+
+body.sdc-page .sc-th { padding: 9px 14px; font-family: "JetBrains Mono", monospace; font-size: 8px; letter-spacing: .18em; text-transform: uppercase; color: var(--ink-mute); border-bottom: 1px solid var(--hairline-2); text-align: left; white-space: nowrap; }
+body.sdc-page .sc-th--actions { width: 80px; }
+
+body.sdc-page .sc-row { transition: background .12s; }
+body.sdc-page .sc-row:hover { background: color-mix(in srgb, var(--lab) 5%, transparent); }
+body.sdc-page .sc-row--orphan { background: color-mix(in srgb, var(--ember) 6%, transparent); }
+body.sdc-page .sc-row--orphan:hover { background: color-mix(in srgb, var(--ember) 11%, transparent); }
+body.sdc-page .sc-row:not(:last-child) td { border-bottom: 1px solid var(--hairline); }
+
+body.sdc-page .sc-td { padding: 10px 14px; vertical-align: middle; }
+body.sdc-page .sc-td--name { font-family: "DM Sans", sans-serif; font-size: 14px; color: var(--ink); font-weight: 500; white-space: nowrap; }
+body.sdc-page .sc-td--fournisseur { font-family: "JetBrains Mono", monospace; font-size: 10px; color: var(--ink-mute); }
+body.sdc-page .sc-td--type { font-family: "JetBrains Mono", monospace; font-size: 10px; color: var(--ink-mute); text-transform: uppercase; letter-spacing: .06em; }
+body.sdc-page .sc-td--floc { font-family: "DM Sans", sans-serif; font-size: 13px; color: var(--ink-soft); }
+body.sdc-page .sc-td--att,
+body.sdc-page .sc-td--temp { font-family: "JetBrains Mono", monospace; font-size: 12px; color: var(--ink); white-space: nowrap; }
+
+body.sdc-page .sc-orphan-badge { display: inline-block; margin-left: 7px; font-family: "JetBrains Mono", monospace; font-size: 8px; letter-spacing: .12em; text-transform: uppercase; color: var(--ember); background: color-mix(in srgb, var(--ember) 12%, transparent); border: 1px solid color-mix(in srgb, var(--ember) 30%, transparent); padding: 1px 7px; border-radius: 10px; vertical-align: middle; }
+body.sdc-page .sc-family-chip { display: inline-block; font-family: "JetBrains Mono", monospace; font-size: 9px; letter-spacing: .1em; text-transform: uppercase; padding: 2px 9px; border-radius: 10px; }
+body.sdc-page .sc-family-chip--ale { color: var(--oak); background: color-mix(in srgb, var(--oak) 14%, transparent); border: 1px solid color-mix(in srgb, var(--oak) 28%, transparent); }
+body.sdc-page .sc-family-chip--lager { color: var(--bbt); background: color-mix(in srgb, var(--bbt) 14%, transparent); border: 1px solid color-mix(in srgb, var(--bbt) 28%, transparent); }
+body.sdc-page .sc-family-chip--non_alcool { color: var(--lab); background: color-mix(in srgb, var(--lab) 14%, transparent); border: 1px solid color-mix(in srgb, var(--lab) 28%, transparent); }
+body.sdc-page .sc-family-chip--spontane { color: var(--ember); background: color-mix(in srgb, var(--ember) 14%, transparent); border: 1px solid color-mix(in srgb, var(--ember) 28%, transparent); }
+body.sdc-page .sc-family-chip--mixte { color: var(--pkg-band, var(--hop)); background: color-mix(in srgb, var(--pkg-band, var(--hop)) 14%, transparent); border: 1px solid color-mix(in srgb, var(--pkg-band, var(--hop)) 28%, transparent); }
+body.sdc-page .sc-type-chip { font-family: "JetBrains Mono", monospace; font-size: 9px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-mute); }
+body.sdc-page .sc-null { color: var(--ink-faint); }
+body.sdc-page .sc-unit { font-family: "JetBrains Mono", monospace; font-size: 9px; color: var(--oak); margin-left: 2px; }
+
+body.sdc-page .sc-edit-btn { padding: 4px 12px; font-family: "JetBrains Mono", monospace; font-size: 9px; letter-spacing: .1em; text-transform: uppercase; color: var(--lab); background: color-mix(in srgb, var(--lab) 12%, transparent); border: 1px solid color-mix(in srgb, var(--lab) 30%, transparent); border-radius: 6px; cursor: pointer; transition: background .15s; white-space: nowrap; }
+body.sdc-page .sc-edit-btn:hover { background: color-mix(in srgb, var(--lab) 24%, transparent); }
+
+/* Strain edit dialog — uses native <dialog> element */
+/* base reset only; layout applies only when [open] to avoid display trap */
+body.sdc-page #scEditDialog { border: 0; padding: 0; background: transparent; max-width: none; }
+body.sdc-page #scEditDialog[open] { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: color-mix(in srgb, var(--ink) 55%, transparent); z-index: 1000; }
+body.sdc-page #scEditDialog::backdrop { display: none; }
+
+body.sdc-page .sc-edit-wrap { background: var(--bg-elev); border: 1px solid var(--hairline-2); border-radius: 14px; padding: 28px 30px; width: 520px; max-width: 92vw; max-height: 90vh; overflow-y: auto; box-shadow: 0 20px 60px -10px color-mix(in srgb, var(--ink) 35%, transparent); }
+body.sdc-page .sc-edit-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 22px; }
+body.sdc-page .sc-edit-title { font-family: "Fraunces", serif; font-variation-settings: "opsz" 72; font-size: 19px; font-weight: 400; color: var(--ink); }
+body.sdc-page .sc-edit-close { background: none; border: none; font-size: 22px; line-height: 1; color: var(--ink-mute); cursor: pointer; padding: 0 4px; transition: color .15s; }
+body.sdc-page .sc-edit-close:hover { color: var(--ink); }
+
+body.sdc-page .sc-edit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+body.sdc-page .sc-edit-field { display: flex; flex-direction: column; gap: 5px; }
+body.sdc-page .sc-edit-label { font-family: "JetBrains Mono", monospace; font-size: 8px; letter-spacing: .18em; text-transform: uppercase; color: var(--ink-mute); }
+body.sdc-page .sc-edit-select { width: 100%; padding: 7px 10px; background: color-mix(in srgb, var(--ink) 5%, transparent); border: 1px solid color-mix(in srgb, var(--lab) 30%, transparent); border-radius: 7px; color: var(--ink); font-family: "DM Sans", sans-serif; font-size: 13px; outline: none; transition: border-color .2s; cursor: pointer; appearance: none; }
+body.sdc-page .sc-edit-select:focus { border-color: var(--lab); box-shadow: 0 0 0 2px color-mix(in srgb, var(--lab) 20%, transparent); }
+body.sdc-page .sc-edit-input-row { display: flex; align-items: center; gap: 5px; }
+body.sdc-page .sc-edit-input { width: 5rem; padding: 7px 9px; background: color-mix(in srgb, var(--ink) 5%, transparent); border: 1px solid color-mix(in srgb, var(--lab) 30%, transparent); border-radius: 7px; color: var(--ink); font-family: "JetBrains Mono", monospace; font-size: 13px; text-align: center; outline: none; transition: border-color .2s; }
+body.sdc-page .sc-edit-input:focus { border-color: var(--lab); box-shadow: 0 0 0 2px color-mix(in srgb, var(--lab) 20%, transparent); }
+body.sdc-page .sc-edit-unit { font-family: "JetBrains Mono", monospace; font-size: 9px; color: var(--oak); }
+
+body.sdc-page .sc-edit-hint { font-family: "DM Sans", sans-serif; font-size: 11.5px; color: var(--ink-mute); margin-bottom: 18px; line-height: 1.55; border-top: 1px solid var(--hairline); padding-top: 12px; }
+body.sdc-page .sc-edit-actions { display: flex; gap: 10px; justify-content: flex-end; }
+body.sdc-page .sc-edit-cancel { padding: 8px 18px; border-radius: 7px; border: 1px solid var(--hairline-2); background: none; color: var(--ink-mute); font-family: "JetBrains Mono", monospace; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; cursor: pointer; transition: border-color .15s, color .15s; }
+body.sdc-page .sc-edit-cancel:hover { border-color: var(--ink-mute); color: var(--ink); }
+body.sdc-page .sc-edit-save { padding: 8px 22px; border-radius: 7px; border: 1px solid var(--lab-deep); background: color-mix(in srgb, var(--lab) 20%, transparent); color: var(--lab); font-family: "JetBrains Mono", monospace; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; cursor: pointer; transition: background .15s; }
+body.sdc-page .sc-edit-save:hover { background: color-mix(in srgb, var(--lab) 34%, transparent); }
