@@ -164,23 +164,52 @@ body.form-brewing .brew-note {
   line-height: 1.4;
 }
 
-/* ── Cooling sub-brew table ────────────────────────────────────────────────── */
-body.form-brewing .brew-cool__table {
-  width: 100%;
-  border-collapse: collapse;
+/* ── Brew-progression sub-brew table ──────────────────────────────────────── */
+
+/* Horizontal-scroll container — keeps the wide table usable on tablet.
+   min-width:0 is REQUIRED: the wrap is a grid/flex item and defaults to
+   min-width:auto (=min-content), which the 1090px table forces wider than
+   the 860px form column — that suppresses the scrollbar and blows out the
+   page. min-width:0 down the chain (form → card → wrap) lets the wrap
+   shrink to the column width so overflow-x:auto actually engages. */
+body.form-brewing #brewing-form,
+body.form-brewing.form-brewing .op-form__card {
+  min-width: 0;
+}
+body.form-brewing .brew-cool__scroll-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
   margin-top: 10px;
+  margin-bottom: 0;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  scrollbar-width: thin;   /* Firefox: always show a thin bar */
+}
+
+body.form-brewing .brew-cool__table {
+  border-collapse: collapse;
   font-size: 0.875rem;
+  /* Don't force 100% width — let it be as wide as its columns need */
+  width: 100%;
+}
+
+/* Wide variant: min-content so the scroll wrapper expands on narrow viewports.
+   Two new date columns (~112px each) added → bumped from 860 to 1090px. */
+body.form-brewing .brew-cool__table--wide {
+  min-width: 1090px;
 }
 
 body.form-brewing .brew-cool__table thead th {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.62rem;
-  letter-spacing: 0.1em;
+  font-size: 0.60rem;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--ink-mute);
-  padding: 0 8px 8px 0;
+  padding: 0 5px 7px 0;
   text-align: left;
   border-bottom: 1px solid var(--hairline);
+  white-space: nowrap;
 }
 
 body.form-brewing .brew-cool__table tbody tr {
@@ -192,16 +221,55 @@ body.form-brewing .brew-cool__table tbody tr:last-child {
 }
 
 body.form-brewing .brew-cool__table tbody td {
-  padding: 7px 8px 7px 0;
+  padding: 5px 5px 5px 0;
   vertical-align: middle;
 }
 
-/* Column widths */
-body.form-brewing .brew-cool__col--num { width: 64px; }
-body.form-brewing .brew-cool__col--vol { min-width: 110px; }
-body.form-brewing .brew-cool__col--og  { min-width: 100px; }
-body.form-brewing .brew-cool__col--ph  { min-width: 90px; }
-body.form-brewing .brew-cool__col--del { width: 32px; }
+/* ── Column widths (compact for 13-col layout) ─────────────────────────────── */
+body.form-brewing .brew-cool__col--num     { width: 46px; min-width: 46px; }
+body.form-brewing .brew-cool__col--fw-grav { min-width: 78px; }
+body.form-brewing .brew-cool__col--fw-ph   { min-width: 70px; }
+body.form-brewing .brew-cool__col--pv      { min-width: 78px; }
+body.form-brewing .brew-cool__col--kw      { min-width: 78px; }
+body.form-brewing .brew-cool__col--date    { min-width: 112px; }
+body.form-brewing .brew-cool__col--time    { min-width: 90px; }
+body.form-brewing .brew-cool__col--vol     { min-width: 78px; }
+body.form-brewing .brew-cool__col--dilut   { min-width: 70px; }
+body.form-brewing .brew-cool__col--og      { min-width: 78px; }
+body.form-brewing .brew-cool__col--ph      { min-width: 70px; }
+body.form-brewing .brew-cool__col--del     { width: 30px; min-width: 30px; }
+
+/* ── Column group tints — subtle left border dividers between groups ─────── */
+/* Group: gravity (FW through Kochwürze) */
+body.form-brewing .brew-cool__group--grav {
+  border-left: 2px solid color-mix(in srgb, var(--hop) 18%, transparent);
+}
+/* Group: timings */
+body.form-brewing .brew-cool__group--time {
+  border-left: 2px solid color-mix(in srgb, var(--oak) 22%, transparent);
+}
+/* Group: cast-out */
+body.form-brewing .brew-cool__group--castout {
+  border-left: 2px solid color-mix(in srgb, var(--cold) 22%, transparent);
+}
+
+/* Header cells inherit the tint via the th alignment with td column groups.
+   Only the FIRST column of each group gets the left-border divider. */
+body.form-brewing .brew-cool__table thead th.brew-cool__col--fw-grav {
+  border-left: 2px solid color-mix(in srgb, var(--hop) 18%, transparent);
+}
+/* Date début (7th th = col index 6) is the first column of the timing group.
+   Selecting the first .brew-cool__col--date sibling via :not preceding a .brew-cool__col--date */
+body.form-brewing .brew-cool__table thead th.brew-cool__col--date {
+  border-left: 2px solid color-mix(in srgb, var(--oak) 22%, transparent);
+}
+/* Date fin and Heure fin do not need a new divider; inherit the group tint from tbody tds */
+body.form-brewing .brew-cool__table thead th.brew-cool__col--time {
+  border-left: none;
+}
+body.form-brewing .brew-cool__table thead th.brew-cool__col--vol {
+  border-left: 2px solid color-mix(in srgb, var(--cold) 22%, transparent);
+}
 
 /* Row number cell */
 body.form-brewing .brew-cool__num-cell {
@@ -212,19 +280,36 @@ body.form-brewing .brew-cool__num-cell {
   padding-left: 2px;
 }
 
-/* Inputs inside the cooling table reuse ingredient-table styles */
+/* Base input style for all cells in the brew-progression table */
 body.form-brewing .brew-cool__input {
   background: var(--bg-elev);
   border: 1px solid var(--hairline);
   border-radius: 3px;
-  padding: 7px 10px;
+  padding: 6px 7px;
   color: var(--ink);
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.82rem;
+  font-size: 0.80rem;
   outline: none;
   transition: border-color 0.15s;
   width: 100%;
   text-align: right;
+}
+
+/* Narrow variant: used for numeric inputs (gravity, pH, volume) */
+body.form-brewing .brew-cool__input--narrow {
+  padding: 6px 5px;
+}
+
+/* Time inputs: left-align and full-width within cell */
+body.form-brewing .brew-cool__input--time {
+  text-align: left;
+  min-width: 82px;
+}
+
+/* Date inputs: left-align, compact width */
+body.form-brewing .brew-cool__input--date {
+  text-align: left;
+  min-width: 106px;
 }
 
 body.form-brewing .brew-cool__input:focus {
@@ -292,6 +377,8 @@ body.form-brewing .brew-empty-note {
 @media (max-width: 600px) {
   body.form-brewing .brew-ing__col--lot  { display: none; }
   body.form-brewing .brew-ing__col--unit { width: 66px; }
+  /* The brew-progression table is already in a scroll-wrap — no need to hide
+     columns; horizontal scroll handles narrower viewports. */
 }
 
 /* ── FIX 2: Overwrite-conflict warning banner ──────────────────────────────── */
@@ -349,4 +436,58 @@ body.form-brewing .fb-overwrite-confirm__cb {
   cursor: pointer;
   accent-color: var(--ember);
   flex-shrink: 0;
+}
+
+/* ── Edit-mode info banner ──────────────────────────────────────────────────── */
+body.form-brewing .fb-edit-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: color-mix(in srgb, var(--hop) 10%, var(--bg));
+  border: 1.5px solid color-mix(in srgb, var(--hop) 45%, transparent);
+  border-radius: 5px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  font-size: 0.875rem;
+  color: var(--ink);
+  line-height: 1.45;
+}
+
+body.form-brewing .fb-edit-banner__icon {
+  font-size: 1.05rem;
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--hop);
+}
+
+body.form-brewing .fb-edit-banner__body strong {
+  color: var(--hop-deep, var(--hop));
+}
+
+body.form-brewing .fb-edit-banner__warn {
+  font-size: 0.82rem;
+  color: var(--ember);
+}
+
+/* ── Recent-table edit link ─────────────────────────────────────────────────── */
+body.form-brewing .fb-recent__edit-cell {
+  text-align: right;
+  white-space: nowrap;
+}
+
+body.form-brewing .fb-recent__edit-link {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.78rem;
+  color: var(--hop);
+  text-decoration: none;
+  border: 1px solid color-mix(in srgb, var(--hop) 35%, transparent);
+  border-radius: 3px;
+  padding: 3px 8px;
+  transition: background 0.15s, color 0.15s;
+  display: inline-block;
+}
+
+body.form-brewing .fb-recent__edit-link:hover {
+  background: color-mix(in srgb, var(--hop) 10%, transparent);
+  color: var(--hop-deep, var(--hop));
 }

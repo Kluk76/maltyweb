@@ -104,40 +104,120 @@
     return tr;
   }
 
-  /* ── Cooling row helpers ────────────────────────────────────────────────── */
+  /* ── Cooling / brew-progression row helpers ─────────────────────────────── */
 
   /**
-   * Build one cooling sub-brew row. idx is the 0-based position within the tbody;
-   * PHP receives cool_final_volume[], cool_final_gravity[], cool_final_ph[] arrays
-   * and uses the array position +1 as the brew number.
+   * Build one brew-progression row in brewhouse column order.
+   * idx is the 0-based position within the tbody; brew number = idx + 1.
+   *
+   * Columns (left → right):
+   *   Brassin # | FW °P | FW pH | Pfannevoll °P | Kochwürze °P |
+   *   Date début | Heure début | Date fin | Heure fin |
+   *   Cast-out HL | Dilution HL | OG °P | pH | (delete)
+   *
+   * POST array names:
+   *   brew_fw_gravity[]   brew_fw_ph[]
+   *   brew_pv_gravity[]   brew_kw_gravity[]
+   *   brew_start_date[]   brew_start_time[]
+   *   brew_end_date[]     brew_end_time[]
+   *   cool_final_volume[] cool_batch_dilution[]
+   *   cool_final_gravity[] cool_final_ph[]
+   *
+   * Date inputs default to the current value of #event_date (the header brewday date).
    */
   function buildCoolRow(idx) {
+    const headerDate = (document.getElementById('event_date') || {}).value || '';
     const tr = document.createElement('tr');
     tr.dataset.coolIdx = idx;
     tr.innerHTML = `
       <td class="brew-cool__col--num brew-cool__num-cell">${idx + 1}</td>
-      <td class="brew-cool__col--vol">
+
+      <td class="brew-cool__col--fw-grav brew-cool__group--grav">
+        <input type="number" inputmode="decimal"
+               name="brew_fw_gravity[]"
+               class="brew-cool__input brew-cool__input--narrow op-form__input"
+               placeholder="ex. 18.0" step="0.1" min="0" max="35"
+               autocomplete="off">
+      </td>
+      <td class="brew-cool__col--fw-ph brew-cool__group--grav">
+        <input type="number" inputmode="decimal"
+               name="brew_fw_ph[]"
+               class="brew-cool__input brew-cool__input--narrow op-form__input"
+               placeholder="ex. 5.60" step="0.01" min="0" max="14"
+               autocomplete="off">
+      </td>
+      <td class="brew-cool__col--pv brew-cool__group--grav">
+        <input type="number" inputmode="decimal"
+               name="brew_pv_gravity[]"
+               class="brew-cool__input brew-cool__input--narrow op-form__input"
+               placeholder="ex. 16.5" step="0.1" min="0" max="35"
+               autocomplete="off">
+      </td>
+      <td class="brew-cool__col--kw brew-cool__group--grav">
+        <input type="number" inputmode="decimal"
+               name="brew_kw_gravity[]"
+               class="brew-cool__input brew-cool__input--narrow op-form__input"
+               placeholder="ex. 14.2" step="0.1" min="0" max="35"
+               autocomplete="off">
+      </td>
+
+      <td class="brew-cool__col--date brew-cool__group--time">
+        <input type="date"
+               name="brew_start_date[]"
+               class="brew-cool__input brew-cool__input--date op-form__input"
+               value="${escAttr(headerDate)}"
+               autocomplete="off">
+      </td>
+      <td class="brew-cool__col--time brew-cool__group--time">
+        <input type="time"
+               name="brew_start_time[]"
+               class="brew-cool__input brew-cool__input--time op-form__input"
+               autocomplete="off">
+      </td>
+      <td class="brew-cool__col--date brew-cool__group--time">
+        <input type="date"
+               name="brew_end_date[]"
+               class="brew-cool__input brew-cool__input--date op-form__input"
+               value="${escAttr(headerDate)}"
+               autocomplete="off">
+      </td>
+      <td class="brew-cool__col--time brew-cool__group--time">
+        <input type="time"
+               name="brew_end_time[]"
+               class="brew-cool__input brew-cool__input--time op-form__input"
+               autocomplete="off">
+      </td>
+
+      <td class="brew-cool__col--vol brew-cool__group--castout">
         <input type="number" inputmode="decimal"
                name="cool_final_volume[]"
-               class="brew-cool__input op-form__input"
+               class="brew-cool__input brew-cool__input--narrow op-form__input"
                placeholder="ex. 29.3" step="0.1" min="0" max="500"
                autocomplete="off"
                oninput="window._brewingUpdateCoolTotal()">
       </td>
-      <td class="brew-cool__col--og">
+      <td class="brew-cool__col--dilut brew-cool__group--castout">
+        <input type="number" inputmode="decimal"
+               name="cool_batch_dilution[]"
+               class="brew-cool__input brew-cool__input--narrow op-form__input"
+               placeholder="0.0" step="0.1" min="0"
+               autocomplete="off">
+      </td>
+      <td class="brew-cool__col--og brew-cool__group--castout">
         <input type="number" inputmode="decimal"
                name="cool_final_gravity[]"
-               class="brew-cool__input op-form__input"
+               class="brew-cool__input brew-cool__input--narrow op-form__input"
                placeholder="ex. 12.0" step="0.1" min="0" max="35"
                autocomplete="off">
       </td>
-      <td class="brew-cool__col--ph">
+      <td class="brew-cool__col--ph brew-cool__group--castout">
         <input type="number" inputmode="decimal"
                name="cool_final_ph[]"
-               class="brew-cool__input op-form__input"
+               class="brew-cool__input brew-cool__input--narrow op-form__input"
                placeholder="ex. 4.87" step="0.01" min="0" max="14"
                autocomplete="off">
       </td>
+
       <td class="brew-cool__col--del">
         <button type="button" class="brew-ing__remove-btn" title="Supprimer"
                 onclick="window._brewingRemoveCoolRow(this)">
@@ -324,30 +404,87 @@
     wireRecipeSelect();
     wireCipVesselNumbers();
 
-    // Seed cooling rows: restore sticky data from a conflict re-render, or add one blank row.
+    // Seed brew-progression rows: restore sticky data from a conflict re-render, or add one blank row.
     const sticky = window.BREWING_STICKY_COOL;
-    if (sticky && sticky.volumes && sticky.volumes.length > 0) {
-      // Pre-populate from sticky POST data (overwrite-conflict re-render).
-      const count = Math.max(sticky.volumes.length, sticky.gravities.length, sticky.phs.length);
-      for (let i = 0; i < count; i++) {
+    if (sticky) {
+      // Determine row count from the longest array across all sticky fields.
+      const allArrays = [
+        sticky.fw_gravities, sticky.fw_phs, sticky.pv_gravities, sticky.kw_gravities,
+        sticky.start_dates, sticky.start_times, sticky.end_dates, sticky.end_times,
+        sticky.volumes, sticky.dilutions, sticky.gravities, sticky.phs,
+      ];
+      const count = Math.max(...allArrays.map(function (a) { return (a || []).length; }), 0);
+      if (count > 0) {
+        for (let i = 0; i < count; i++) {
+          window._brewingAddCoolRow();
+        }
+        const tbody = document.getElementById('cool-tbody');
+        if (tbody) {
+          const rows = tbody.querySelectorAll('tr');
+          rows.forEach(function (tr, i) {
+            function setVal(sel, arr) {
+              const el = tr.querySelector(sel);
+              if (el && arr && arr[i] !== undefined && arr[i] !== '') el.value = arr[i];
+            }
+            setVal('input[name="brew_fw_gravity[]"]',     sticky.fw_gravities);
+            setVal('input[name="brew_fw_ph[]"]',          sticky.fw_phs);
+            setVal('input[name="brew_pv_gravity[]"]',     sticky.pv_gravities);
+            setVal('input[name="brew_kw_gravity[]"]',     sticky.kw_gravities);
+            setVal('input[name="brew_start_date[]"]',     sticky.start_dates);
+            setVal('input[name="brew_start_time[]"]',     sticky.start_times);
+            setVal('input[name="brew_end_date[]"]',       sticky.end_dates);
+            setVal('input[name="brew_end_time[]"]',       sticky.end_times);
+            setVal('input[name="cool_final_volume[]"]',   sticky.volumes);
+            setVal('input[name="cool_batch_dilution[]"]', sticky.dilutions);
+            setVal('input[name="cool_final_gravity[]"]',  sticky.gravities);
+            setVal('input[name="cool_final_ph[]"]',       sticky.phs);
+          });
+          window._brewingUpdateCoolTotal();
+        }
+      } else {
         window._brewingAddCoolRow();
       }
-      const tbody = document.getElementById('cool-tbody');
-      if (tbody) {
-        const rows = tbody.querySelectorAll('tr');
-        rows.forEach(function (tr, i) {
-          const volInput  = tr.querySelector('input[name="cool_final_volume[]"]');
-          const gravInput = tr.querySelector('input[name="cool_final_gravity[]"]');
-          const phInput   = tr.querySelector('input[name="cool_final_ph[]"]');
-          if (volInput  && sticky.volumes[i]   !== undefined) volInput.value  = sticky.volumes[i];
-          if (gravInput && sticky.gravities[i] !== undefined) gravInput.value = sticky.gravities[i];
-          if (phInput   && sticky.phs[i]       !== undefined) phInput.value   = sticky.phs[i];
-        });
-        window._brewingUpdateCoolTotal();
-      }
     } else {
-      // Normal fresh load — seed one blank cooling row.
+      // Normal fresh load — seed one blank brew-progression row.
       window._brewingAddCoolRow();
+    }
+
+    // Seed ingredient rows: restore sticky data from a conflict re-render.
+    const stickyIng = window.BREWING_STICKY_ING;
+    if (stickyIng && stickyIng.mi_ids && stickyIng.mi_ids.length > 0) {
+      const ingTbody = document.getElementById('ing-tbody');
+      if (ingTbody) {
+        stickyIng.mi_ids.forEach(function (miId, i) {
+          if (!miId && !(stickyIng.qtys || [])[i]) return; // skip blank rows
+          const idx = rowCounter++;
+          ingTbody.appendChild(buildRow(idx));
+          // Set MI select
+          const sel = document.getElementById('mi-sel-' + idx);
+          if (sel && miId) {
+            sel.value = miId;
+            window._brewingOnMiChange(idx); // updates chip + default unit
+          }
+          // Override cat if supplied (must come after _brewingOnMiChange to allow override)
+          const cat = (stickyIng.cats || [])[i];
+          if (cat) {
+            const catInput = document.getElementById('ing-cat-' + idx);
+            if (catInput) catInput.value = cat;
+          }
+          // Qty
+          const qtyInput = document.getElementById('ing-qty-' + idx);
+          const qty = (stickyIng.qtys || [])[i];
+          if (qtyInput && qty !== undefined) qtyInput.value = qty;
+          // Unit
+          const unitSel = document.getElementById('ing-unit-' + idx);
+          const unit = (stickyIng.units || [])[i];
+          if (unitSel && unit) unitSel.value = unit;
+          // Lot — find by name since there's no stable id for the lot input
+          const lotInputs = ingTbody.querySelectorAll('input[name="ing_lot[' + idx + ']"]');
+          const lot = (stickyIng.lots || [])[i];
+          if (lotInputs[0] && lot) lotInputs[0].value = lot;
+        });
+        _updateCount();
+      }
     }
 
     // FormFramework integration — draft persistence only (no numeric thresholds

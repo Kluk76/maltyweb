@@ -4,26 +4,20 @@ declare(strict_types=1);
  * form-brewing.php — Operator brewing entry form.
  *
  * Writes to:
- *   bd_brewing_brewday_v2          — one row per (beer, batch) — idempotent on
- *                                    re-submit. NK: (beer, batch). row_hash keyed
- *                                    on (beer, batch) only — same hash on re-submit
- *                                    → ON DUPLICATE KEY UPDATE, no duplicate header.
- *   bd_brewing_ingredients_v2      — one header row per submission (raw_blob_text =
- *                                    JSON encoding of ingredient lines for audit trail)
+ *   bd_brewing_brewday_v2            — one row per (beer, batch) — idempotent on
+ *                                      re-submit. NK: (beer, batch). row_hash keyed
+ *                                      on (beer, batch) only.
+ *   bd_brewing_ingredients_v2        — one header row per submission (raw_blob_text =
+ *                                      JSON encoding of ingredient lines for audit trail)
  *   bd_brewing_ingredients_parsed_v2 — one row per ingredient line
- *                                    (header_id FK, line_idx, category,
- *                                     mi_id_fk, raw_name, qty, unit, lot)
- *   bd_brewing_gravity_v2          — N Cooling rows per batch (one per sub-brew).
- *                                    NK: (beer, batch, brew, event_type='Cooling').
- *                                    brew = row position 1..N. Each row is idempotent
- *                                    on re-submit (same NK → upsert refreshes values).
- *                                    Batch total cast-out = SUM(final_volume) over all
- *                                    Cooling rows — downstream already groups by batch.
- *
- * NOT wired:
- *   bd_brewing_gravity_v2 (other event types) — FirstWort / Pfannevoll / Kochwurze
- *                          require a per-sub-brew gravity form (brew > 1).
- *   bd_brewing_timings_v2   — per-brew start/end timestamps. Separate form required.
+ *                                      (header_id FK, line_idx, category,
+ *                                       mi_id_fk, raw_name, qty, unit, lot)
+ *   bd_brewing_gravity_v2            — up to FOUR rows per sub-brew per submit:
+ *                                      event_type IN ('FirstWort','Pfannevoll','Kochwurze','Cooling').
+ *                                      NK: (beer, batch, brew, event_type) — 4-tuple.
+ *                                      Each is gated on the presence of its own fields.
+ *   bd_brewing_timings_v2            — ONE row per sub-brew (brew_start, brew_end, event_date).
+ *                                      NK: (beer, batch, brew) — 3-tuple (no event_type).
  *
  * Pattern: mirrors form-racking.php exactly —
  *   CSRF → coerce → hash → bd_upsert → log_revision → flash → PRG redirect.
@@ -129,6 +123,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // The $overwriteConflict variable signals the render to show the banner.
             goto render_form;
         }
+
+        // Soft-warning accumulator (e.g. time logic notices). Appended to flash.
+        $softNotes = [];
 
         // ── 2. Parse ingredient lines ─────────────────────────────────────────
         // Input arrays: ing_mi_id[], ing_cat[], ing_qty[], ing_unit[], ing_lot[]
@@ -334,130 +331,295 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ]);
         }
 
-        // ── 8. Cooling / cast-out rows (bd_brewing_gravity_v2) — MULTI-BREW ───
-        // Each sub-brew row submitted as cool_final_volume[], cool_final_gravity[],
-        // cool_final_ph[]. Array position (0-based) maps to brew number (1-based).
-        // Skip rows where all three fields are empty.
-        // NK = (beer, batch, brew, event_type) — matches uq_natural_key on the table.
-        // Re-submitting the same (beer, batch, brew) Cooling row hits uq_row_hash
-        // → ON DUPLICATE KEY UPDATE refreshes values without inserting a duplicate.
-        $coolVolsRaw    = $_POST['cool_final_volume']   ?? [];
-        $coolOGsRaw     = $_POST['cool_final_gravity']  ?? [];
-        $coolPhsRaw     = $_POST['cool_final_ph']       ?? [];
+        // ── 8. Per-sub-brew: gravity + timings rows ──────────────────────────
+        //
+        // View-model: one UI row = up to 5 DB rows:
+        //   bd_brewing_gravity_v2 × 4 event_types (each gated on its own fields)
+        //   bd_brewing_timings_v2 × 1               (always written for present rows)
+        //
+        // NK for gravity:  (beer, batch, brew, event_type)  — 4-tuple
+        // NK for timings:  (beer, batch, brew)               — 3-tuple (no event_type)
+        // row_hash for gravity MUST include the event_type discriminator.
+        // row_hash for timings MUST NOT include event_type.
+
+        // ── Read all per-brassin arrays ───────────────────────────────────────
+        $fwGravsRaw      = $_POST['brew_fw_gravity']     ?? [];
+        $fwPhsRaw        = $_POST['brew_fw_ph']          ?? [];
+        $pvGravsRaw      = $_POST['brew_pv_gravity']     ?? [];
+        $kwGravsRaw      = $_POST['brew_kw_gravity']     ?? [];
+        $startDatesRaw   = $_POST['brew_start_date']     ?? [];
+        $startTimesRaw   = $_POST['brew_start_time']     ?? [];
+        $endDatesRaw     = $_POST['brew_end_date']       ?? [];
+        $endTimesRaw     = $_POST['brew_end_time']       ?? [];
+        $coolVolsRaw     = $_POST['cool_final_volume']   ?? [];
+        $coolDilutsRaw   = $_POST['cool_batch_dilution'] ?? [];
+        $coolOGsRaw      = $_POST['cool_final_gravity']  ?? [];
+        $coolPhsRaw      = $_POST['cool_final_ph']       ?? [];
 
         $coolRowsWritten = 0;
         $coolTotalVol    = 0.0;
         $writtenBrews    = [];  // 1-based brew numbers actually written this submit
 
-        // Iterate over submitted array positions; brew number = position + 1
-        $coolCount = max(count($coolVolsRaw), count($coolOGsRaw), count($coolPhsRaw));
-        for ($pos = 0; $pos < $coolCount; $pos++) {
-            $volRaw = isset($coolVolsRaw[$pos]) ? trim((string)$coolVolsRaw[$pos]) : '';
-            $ogRaw  = isset($coolOGsRaw[$pos])  ? trim((string)$coolOGsRaw[$pos])  : '';
-            $phRaw  = isset($coolPhsRaw[$pos])  ? trim((string)$coolPhsRaw[$pos])  : '';
+        // Helper: normalise decimal separator (same pattern as existing Cooling block)
+        $normDec = static function (string $raw): ?string {
+            return $raw !== '' ? str_replace(',', '.', $raw) : null;
+        };
 
-            // Skip fully-empty rows (all three blank)
-            if ($volRaw === '' && $ogRaw === '' && $phRaw === '') {
+        // Helper: validate a Y-m-d date string; returns the string if valid, else null.
+        $validDate = static function (string $raw): ?string {
+            if ($raw === '') return null;
+            $d = DateTimeImmutable::createFromFormat('Y-m-d', $raw);
+            return ($d && $d->format('Y-m-d') === $raw) ? $raw : null;
+        };
+
+        $allArrays = [
+            $fwGravsRaw, $fwPhsRaw, $pvGravsRaw, $kwGravsRaw,
+            $startDatesRaw, $startTimesRaw, $endDatesRaw, $endTimesRaw,
+            $coolVolsRaw, $coolDilutsRaw, $coolOGsRaw, $coolPhsRaw,
+        ];
+        $brewCount = max(array_map('count', $allArrays));
+
+        for ($pos = 0; $pos < $brewCount; $pos++) {
+            $fwGravRaw    = isset($fwGravsRaw[$pos])      ? trim((string)$fwGravsRaw[$pos])      : '';
+            $fwPhRaw      = isset($fwPhsRaw[$pos])        ? trim((string)$fwPhsRaw[$pos])        : '';
+            $pvGravRaw    = isset($pvGravsRaw[$pos])      ? trim((string)$pvGravsRaw[$pos])      : '';
+            $kwGravRaw    = isset($kwGravsRaw[$pos])      ? trim((string)$kwGravsRaw[$pos])      : '';
+            $startDateRaw = isset($startDatesRaw[$pos])   ? trim((string)$startDatesRaw[$pos])   : '';
+            $startTime    = isset($startTimesRaw[$pos])   ? trim((string)$startTimesRaw[$pos])   : '';
+            $endDateRaw   = isset($endDatesRaw[$pos])     ? trim((string)$endDatesRaw[$pos])     : '';
+            $endTime      = isset($endTimesRaw[$pos])     ? trim((string)$endTimesRaw[$pos])     : '';
+            $volRaw       = isset($coolVolsRaw[$pos])     ? trim((string)$coolVolsRaw[$pos])     : '';
+            $dilutRaw     = isset($coolDilutsRaw[$pos])   ? trim((string)$coolDilutsRaw[$pos])   : '';
+            $ogRaw        = isset($coolOGsRaw[$pos])      ? trim((string)$coolOGsRaw[$pos])      : '';
+            $phRaw        = isset($coolPhsRaw[$pos])      ? trim((string)$coolPhsRaw[$pos])      : '';
+
+            // Whole-row presence gate: skip if all substantive fields blank.
+            // Date inputs are excluded — they auto-default to the header date
+            // so a row with only dates and nothing else must still count as empty.
+            if ($fwGravRaw === '' && $fwPhRaw === '' && $pvGravRaw === '' && $kwGravRaw === ''
+                && $startTime === '' && $endTime === ''
+                && $volRaw === '' && $dilutRaw === '' && $ogRaw === '' && $phRaw === '') {
                 continue;
             }
 
-            // Normalise decimal separator (accept comma from European keyboards)
-            $volParsed = $volRaw !== '' ? str_replace(',', '.', $volRaw) : null;
-            $ogParsed  = $ogRaw  !== '' ? str_replace(',', '.', $ogRaw)  : null;
-            $phParsed  = $phRaw  !== '' ? str_replace(',', '.', $phRaw)  : null;
+            $brew = (string)($pos + 1);
 
-            $coolBrew = (string)($pos + 1);
-            // Hash is deterministic over the NK identity — same as ingest convention
-            $coolHash = bd_row_hash([$beer, $batch, $coolBrew, 'Cooling']);
+            // ── Resolve per-brew start/end dates ─────────────────────────────
+            // HTML date inputs return Y-m-d; fall back to header $eventDate when
+            // empty or not a valid Y-m-d (e.g. user cleared the field).
+            $startDate = $validDate($startDateRaw) ?? $eventDate;
+            $endDate   = $validDate($endDateRaw)   ?? $eventDate;
 
-            $coolRow = [
-                'row_hash'      => $coolHash,
+            // ── 8a. bd_brewing_timings_v2 ────────────────────────────────────
+            // Always written for every present brassin (event_date guarantees CHECK).
+            // row_hash: NK is (beer, batch, brew) — no event_type.
+            // timings.event_date = startDate (the START day — occupancy/age anchor).
+            $brewStartVal = null;
+            $brewEndVal   = null;
+            if ($startTime !== '') {
+                $brewStartVal = "{$startDate} {$startTime}:00";
+            }
+            if ($endTime !== '') {
+                $brewEndVal = "{$endDate} {$endTime}:00";
+            }
+
+            // Soft note when brew_end < brew_start (full datetime comparison — handles
+            // cross-midnight brews correctly once dates differ).
+            if ($brewStartVal !== null && $brewEndVal !== null
+                && strcmp($brewEndVal, $brewStartVal) < 0) {
+                $softNotes[] = "Brassin {$brew} : fin antérieure au début — à vérifier.";
+            }
+
+            $timingsHash = bd_row_hash([$beer, $batch, $brew]);
+            $timingsRow  = [
+                'row_hash'      => $timingsHash,
                 'audit_flags'   => $auditFlags,
                 'submitted_at'  => $submittedAt,
                 'email'         => $me['username'],
                 'beer'          => $beer,
                 'batch'         => $batch,
-                'brew'          => $coolBrew,
-                'event_type'    => 'Cooling',
-                'recipe_id_fk'  => $recipeId,
-                'session_id_fk' => null,
-                'final_volume'  => $volParsed,
-                'final_gravity' => $ogParsed,
-                'final_ph'      => $phParsed,
+                'brew'          => $brew,
+                'event_date'    => $startDate,  // occupancy/age anchor = brew start day
+                'brew_start'    => $brewStartVal,
+                'brew_end'      => $brewEndVal,
                 'is_tombstoned' => 0,
             ];
+            $timingsNk     = ['beer', 'batch', 'brew'];
+            $timingsResult = bd_upsert($pdo, 'bd_brewing_timings_v2', $timingsRow, $timingsNk);
+            log_revision($pdo, $me, 'bd_brewing_timings_v2', $timingsResult['id'],
+                null, $timingsRow, 'normal', $fwComment ?: null);
 
-            $coolNk = ['beer', 'batch', 'brew', 'event_type'];
-            $coolResult = bd_upsert($pdo, 'bd_brewing_gravity_v2', $coolRow, $coolNk);
+            $gravNk = ['beer', 'batch', 'brew', 'event_type'];
 
-            log_revision(
-                $pdo,
-                $me,
-                'bd_brewing_gravity_v2',
-                $coolResult['id'],
-                null,
-                $coolRow,
-                'normal',
-                $fwComment ?: null
-            );
-
-            $writtenBrews[] = (int)$coolBrew;
-            $coolRowsWritten++;
-            if ($volParsed !== null && is_numeric($volParsed)) {
-                $coolTotalVol += (float)$volParsed;
+            // ── 8b. FirstWort gravity row ─────────────────────────────────────
+            if ($fwGravRaw !== '' || $fwPhRaw !== '') {
+                $fwHash = bd_row_hash([$beer, $batch, $brew, 'FirstWort']);
+                $fwRow  = [
+                    'row_hash'          => $fwHash,
+                    'audit_flags'       => $auditFlags,
+                    'submitted_at'      => $submittedAt,
+                    'email'             => $me['username'],
+                    'beer'              => $beer,
+                    'batch'             => $batch,
+                    'brew'              => $brew,
+                    'event_type'        => 'FirstWort',
+                    'recipe_id_fk'      => $recipeId,
+                    'session_id_fk'     => null,
+                    'firstwort_gravity' => $normDec($fwGravRaw),
+                    'firstwort_ph'      => $normDec($fwPhRaw),
+                    'is_tombstoned'     => 0,
+                ];
+                $fwResult = bd_upsert($pdo, 'bd_brewing_gravity_v2', $fwRow, $gravNk);
+                log_revision($pdo, $me, 'bd_brewing_gravity_v2', $fwResult['id'],
+                    null, $fwRow, 'normal', $fwComment ?: null);
             }
+
+            // ── 8c. Pfannevoll gravity row ────────────────────────────────────
+            if ($pvGravRaw !== '') {
+                $pvHash = bd_row_hash([$beer, $batch, $brew, 'Pfannevoll']);
+                $pvRow  = [
+                    'row_hash'            => $pvHash,
+                    'audit_flags'         => $auditFlags,
+                    'submitted_at'        => $submittedAt,
+                    'email'               => $me['username'],
+                    'beer'                => $beer,
+                    'batch'               => $batch,
+                    'brew'                => $brew,
+                    'event_type'          => 'Pfannevoll',
+                    'recipe_id_fk'        => $recipeId,
+                    'session_id_fk'       => null,
+                    'pfannevoll_gravity'  => $normDec($pvGravRaw),
+                    'is_tombstoned'       => 0,
+                ];
+                $pvResult = bd_upsert($pdo, 'bd_brewing_gravity_v2', $pvRow, $gravNk);
+                log_revision($pdo, $me, 'bd_brewing_gravity_v2', $pvResult['id'],
+                    null, $pvRow, 'normal', $fwComment ?: null);
+            }
+
+            // ── 8d. Kochwurze gravity row ─────────────────────────────────────
+            if ($kwGravRaw !== '') {
+                $kwHash = bd_row_hash([$beer, $batch, $brew, 'Kochwurze']);
+                $kwRow  = [
+                    'row_hash'           => $kwHash,
+                    'audit_flags'        => $auditFlags,
+                    'submitted_at'       => $submittedAt,
+                    'email'              => $me['username'],
+                    'beer'               => $beer,
+                    'batch'              => $batch,
+                    'brew'               => $brew,
+                    'event_type'         => 'Kochwurze',
+                    'recipe_id_fk'       => $recipeId,
+                    'session_id_fk'      => null,
+                    'kochwurze_gravity'  => $normDec($kwGravRaw),
+                    'is_tombstoned'      => 0,
+                ];
+                $kwResult = bd_upsert($pdo, 'bd_brewing_gravity_v2', $kwRow, $gravNk);
+                log_revision($pdo, $me, 'bd_brewing_gravity_v2', $kwResult['id'],
+                    null, $kwRow, 'normal', $fwComment ?: null);
+            }
+
+            // ── 8e. Cooling / cast-out gravity row ────────────────────────────
+            if ($volRaw !== '' || $dilutRaw !== '' || $ogRaw !== '' || $phRaw !== '') {
+                $volParsed   = $normDec($volRaw);
+                $dilutParsed = $normDec($dilutRaw);
+                $ogParsed    = $normDec($ogRaw);
+                $phParsed    = $normDec($phRaw);
+
+                // Cast-out date: use endDate when an end time is present (cooling is the
+                // last step, so a cross-midnight brew casts out on the END day); otherwise
+                // fall back to startDate (which already defaults to the header event_date).
+                $castoutDate     = ($endTime !== '') ? $endDate : $startDate;
+                // Preserve the time/microsecond portion of $submittedAt for uniqueness.
+                // substr($submittedAt, 10) yields " H:i:s.uuuuuu" from "Y-m-d H:i:s.u".
+                $coolSubmittedAt = $castoutDate . substr($submittedAt, 10);
+
+                // Cast-out dated by brew_end (cooling=last step); tank-sim/wort read DATE(submitted_at).
+                // timings.event_date stays start-day (occupancy anchor).
+                $coolHash = bd_row_hash([$beer, $batch, $brew, 'Cooling']);
+                $coolRow  = [
+                    'row_hash'        => $coolHash,
+                    'audit_flags'     => $auditFlags,
+                    'submitted_at'    => $coolSubmittedAt,
+                    'email'           => $me['username'],
+                    'beer'            => $beer,
+                    'batch'           => $batch,
+                    'brew'            => $brew,
+                    'event_type'      => 'Cooling',
+                    'recipe_id_fk'    => $recipeId,
+                    'session_id_fk'   => null,
+                    'final_volume'    => $volParsed,
+                    'batch_dilution'  => $dilutParsed,
+                    'final_gravity'   => $ogParsed,
+                    'final_ph'        => $phParsed,
+                    'is_tombstoned'   => 0,
+                ];
+                $coolResult = bd_upsert($pdo, 'bd_brewing_gravity_v2', $coolRow, $gravNk);
+                log_revision($pdo, $me, 'bd_brewing_gravity_v2', $coolResult['id'],
+                    null, $coolRow, 'normal', $fwComment ?: null);
+
+                $coolRowsWritten++;
+                if ($volParsed !== null && is_numeric($volParsed)) {
+                    $coolTotalVol += (float)$volParsed;
+                }
+            }
+
+            $writtenBrews[] = (int)$brew;
         }
 
-        // ── FIX 1: Delete orphan Cooling rows on shrinking re-submit ──────────
-        // After writing the brews from this submit, remove any Cooling rows for
-        // this (beer, batch) whose brew number is NOT in $writtenBrews.
-        // Guard: only run when at least one brew was written (never emit NOT IN ()).
-        // NOTE: the delete + upsert sequence above is non-atomic (no transaction,
-        // mirroring the pre-existing form-racking.php pattern). A failed delete
-        // after a successful upsert leaves stale rows recoverable by idempotent
-        // re-submit with the correct brew count.
+        // ── FIX 1: Orphan-delete-on-shrink — all 5 surfaces ──────────────────
+        // After writing all sub-brew rows, delete orphans whose brew number is
+        // NOT IN $writtenBrews on both gravity_v2 (all 4 event types) and timings_v2.
+        // Guard: only run when $writtenBrews is non-empty (never emit NOT IN ()).
+        // Non-atomic (no transaction) — mirrors the pre-existing form-racking.php
+        // pattern; idempotent re-submit is the recovery guarantee.
         if (!empty($writtenBrews)) {
-            // Collect orphan rows BEFORE deleting so we can audit-tombstone each.
             $orphanPlaceholders = implode(',', array_fill(0, count($writtenBrews), '?'));
-            $orphanSelect = $pdo->prepare(
-                "SELECT id, beer, batch, brew, event_type, final_volume, final_gravity, final_ph,
-                        row_hash, audit_flags, submitted_at, email, recipe_id_fk,
-                        session_id_fk, is_tombstoned
-                   FROM bd_brewing_gravity_v2
-                  WHERE beer = ? AND batch = ?
-                    AND event_type = 'Cooling'
-                    AND brew NOT IN ($orphanPlaceholders)
-                    AND is_tombstoned = 0"
-            );
-            $orphanSelect->execute(array_merge([$beer, $batch], $writtenBrews));
-            $orphanRows = $orphanSelect->fetchAll();
 
-            if (!empty($orphanRows)) {
-                // Audit-tombstone each orphan row before deleting it.
-                // audit_row_revisions.action ENUM has no 'delete' — convention is
-                // action='update' with after_json={"_tombstone":"..."}.
+            // Config list: [table, event_type|null]
+            // gravity_v2 entries include an event_type filter; timings_v2 does not.
+            $orphanSurfaces = [
+                ['bd_brewing_gravity_v2', 'FirstWort'],
+                ['bd_brewing_gravity_v2', 'Pfannevoll'],
+                ['bd_brewing_gravity_v2', 'Kochwurze'],
+                ['bd_brewing_gravity_v2', 'Cooling'],
+                ['bd_brewing_timings_v2', null],
+            ];
+
+            foreach ($orphanSurfaces as [$tbl, $evType]) {
+                $evFilter = $evType !== null ? "AND event_type = ?" : '';
+
+                // Collect orphan rows for audit-tombstone BEFORE deleting.
+                $selParams = array_merge([$beer, $batch], $evType !== null ? [$evType] : [], $writtenBrews);
+                $orphanSelect = $pdo->prepare(
+                    "SELECT * FROM `{$tbl}`
+                      WHERE beer = ? AND batch = ?
+                        {$evFilter}
+                        AND brew NOT IN ($orphanPlaceholders)
+                        AND is_tombstoned = 0"
+                );
+                $orphanSelect->execute($selParams);
+                $orphanRows = $orphanSelect->fetchAll();
+
                 foreach ($orphanRows as $orphan) {
                     log_revision(
-                        $pdo,
-                        $me,
-                        'bd_brewing_gravity_v2',
-                        (int)$orphan['id'],
-                        $orphan,    // before = full row snapshot
+                        $pdo, $me, $tbl, (int)$orphan['id'],
+                        $orphan,
                         ['_tombstone' => 'deleted_by_form-brewing_shrink'],
                         'normal',
-                        'Orphan Cooling row removed: batch shrank on re-submit'
+                        "Orphan {$tbl}" . ($evType ? "/{$evType}" : '') . ' row removed: batch shrank on re-submit'
                     );
                 }
 
-                // Now delete the orphan rows (parameterized, never string-interpolated).
-                $delPlaceholders = implode(',', array_fill(0, count($writtenBrews), '?'));
-                $pdo->prepare(
-                    "DELETE FROM bd_brewing_gravity_v2
-                      WHERE beer = ? AND batch = ?
-                        AND event_type = 'Cooling'
-                        AND brew NOT IN ($delPlaceholders)
-                        AND is_tombstoned = 0"
-                )->execute(array_merge([$beer, $batch], $writtenBrews));
+                if (!empty($orphanRows)) {
+                    $delParams = array_merge([$beer, $batch], $evType !== null ? [$evType] : [], $writtenBrews);
+                    $pdo->prepare(
+                        "DELETE FROM `{$tbl}`
+                          WHERE beer = ? AND batch = ?
+                            {$evFilter}
+                            AND brew NOT IN ($orphanPlaceholders)
+                            AND is_tombstoned = 0"
+                    )->execute($delParams);
+                }
             }
         }
 
@@ -471,7 +633,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 : '1 brassin';
             $coolLabel = " · cast-out {$brewLabel} / " . round($coolTotalVol, 1) . ' HL total';
         }
-        flash_set('ok', "Brassage enregistré : {$beer} (B{$batch}){$lineLabel}{$coolLabel}");
+        $notesSuffix = !empty($softNotes) ? ' ⚠ ' . implode(' / ', $softNotes) : '';
+        flash_set('ok', "Brassage enregistré : {$beer} (B{$batch}){$lineLabel}{$coolLabel}{$notesSuffix}");
 
     } catch (Throwable $e) {
         flash_set('err', pdo_friendly_error($e, 'form-brewing'));
@@ -484,9 +647,252 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 render_form:
 header('Content-Type: text/html; charset=utf-8');
 
+// ── Edit-mode detection ───────────────────────────────────────────────────────
+// Read with ?? default, then validate (never trust the raw param directly).
+$editIdRaw = $_GET['edit'] ?? null;
+$editId    = ($editIdRaw !== null && is_numeric($editIdRaw)) ? (int)$editIdRaw : null;
+if ($editId !== null && $editId <= 0) {
+    $editId = null;
+}
+
+$editMode       = false;
+$prefillHeader  = [];   // assoc with same keys as $stickyPost header fields
+$editBanner     = null; // ['recipe_name', 'batch', 'event_date'] for banner display
+$contiguityWarn = false;
+
+if ($editId !== null) {
+    try {
+        $pdoEdit = maltytask_pdo();
+
+        // Load brewday header
+        $editBrewday = $pdoEdit->prepare(
+            "SELECT b.id, b.beer, b.batch, b.event_date, b.cct, b.yeast, b.yeast_gen,
+                    b.new_yeast, b.pitched_from, b.yt_number, b.comments, b.recipe_id_fk,
+                    r.name AS recipe_name
+               FROM bd_brewing_brewday_v2 b
+               LEFT JOIN ref_recipes r ON r.id = b.recipe_id_fk
+              WHERE b.id = ? AND b.is_tombstoned = 0
+              LIMIT 1"
+        );
+        $editBrewday->execute([$editId]);
+        $editRow = $editBrewday->fetch(PDO::FETCH_ASSOC);
+
+        if ($editRow === false) {
+            flash_set('err', "Brassin ID {$editId} introuvable ou archivé.");
+            // Fall through to blank-entry mode
+        } else {
+            $editMode = true;
+            $editBeer  = (string)$editRow['beer'];
+            $editBatch = (string)$editRow['batch'];
+
+            // ── Load ingredients ──────────────────────────────────────────────
+            // NK (beer, batch) on bd_brewing_ingredients_v2 — one header per batch.
+            $ingHeaderStmt = $pdoEdit->prepare(
+                "SELECT id FROM bd_brewing_ingredients_v2
+                  WHERE beer = ? AND batch = ? AND is_tombstoned = 0
+                  ORDER BY id DESC LIMIT 1"
+            );
+            $ingHeaderStmt->execute([$editBeer, $editBatch]);
+            $ingHeaderRow = $ingHeaderStmt->fetch(PDO::FETCH_ASSOC);
+
+            $prefillIngLines = [];
+            if ($ingHeaderRow !== false) {
+                $ingParsedStmt = $pdoEdit->prepare(
+                    "SELECT category, raw_name, qty, unit, lot
+                       FROM bd_brewing_ingredients_parsed_v2
+                      WHERE header_id = ?
+                      ORDER BY line_idx ASC"
+                );
+                $ingParsedStmt->execute([(int)$ingHeaderRow['id']]);
+                $prefillIngLines = $ingParsedStmt->fetchAll(PDO::FETCH_ASSOC);
+            }
+
+            // ── Load gravity (pivot by brew) ──────────────────────────────────
+            $gravStmt = $pdoEdit->prepare(
+                "SELECT brew, event_type,
+                        firstwort_gravity, firstwort_ph,
+                        pfannevoll_gravity,
+                        kochwurze_gravity,
+                        final_volume, batch_dilution, final_gravity, final_ph
+                   FROM bd_brewing_gravity_v2
+                  WHERE beer = ? AND batch = ? AND is_tombstoned = 0"
+            );
+            $gravStmt->execute([$editBeer, $editBatch]);
+            $gravRows = $gravStmt->fetchAll(PDO::FETCH_ASSOC);
+
+            // ── Load timings ──────────────────────────────────────────────────
+            $timStmt = $pdoEdit->prepare(
+                "SELECT brew, brew_start, brew_end, event_date
+                   FROM bd_brewing_timings_v2
+                  WHERE beer = ? AND batch = ? AND is_tombstoned = 0"
+            );
+            $timStmt->execute([$editBeer, $editBatch]);
+            $timRows = $timStmt->fetchAll(PDO::FETCH_ASSOC);
+
+            // ── Build per-brew pivot ──────────────────────────────────────────
+            // Collect distinct brew numbers from both gravity and timings sets.
+            $brewNums = [];
+            foreach ($gravRows as $gr) { $brewNums[(int)$gr['brew']] = true; }
+            foreach ($timRows  as $tr) { $brewNums[(int)$tr['brew']] = true; }
+            ksort($brewNums);
+            $sortedBrewNums = array_keys($brewNums);
+
+            // Contiguity guard: brews must be exactly 1..N
+            $expectedBrews = range(1, count($sortedBrewNums));
+            if ($sortedBrewNums !== $expectedBrews) {
+                $contiguityWarn = true;
+            }
+
+            // Scatter gravity and timings into per-brew indexed arrays
+            $brewGrav = [];  // keyed by brew number
+            foreach ($gravRows as $gr) {
+                $b = (int)$gr['brew'];
+                if (!isset($brewGrav[$b])) {
+                    $brewGrav[$b] = [];
+                }
+                switch ($gr['event_type']) {
+                    case 'FirstWort':
+                        $brewGrav[$b]['fw_gravity'] = $gr['firstwort_gravity'];
+                        $brewGrav[$b]['fw_ph']      = $gr['firstwort_ph'];
+                        break;
+                    case 'Pfannevoll':
+                        $brewGrav[$b]['pv_gravity'] = $gr['pfannevoll_gravity'];
+                        break;
+                    case 'Kochwurze':
+                        $brewGrav[$b]['kw_gravity'] = $gr['kochwurze_gravity'];
+                        break;
+                    case 'Cooling':
+                        $brewGrav[$b]['volume']   = $gr['final_volume'];
+                        $brewGrav[$b]['dilution'] = $gr['batch_dilution'];
+                        $brewGrav[$b]['og']       = $gr['final_gravity'];
+                        $brewGrav[$b]['ph']        = $gr['final_ph'];
+                        break;
+                }
+            }
+
+            $brewTim = [];  // keyed by brew number
+            $editHeaderDate = (string)($editRow['event_date'] ?? '');
+            foreach ($timRows as $tr) {
+                $b = (int)$tr['brew'];
+                // Split DATETIME to date (Y-m-d) and time (HH:MM) parts.
+                // Fallbacks: start_date → stored event_date → header date;
+                //            end_date   → start_date.
+                $startDate = '';
+                $startHm   = '';
+                $endDate   = '';
+                $endHm     = '';
+                if (!empty($tr['brew_start'])) {
+                    $startDate = substr($tr['brew_start'], 0, 10); // "YYYY-MM-DD"
+                    $startHm   = substr($tr['brew_start'], 11, 5); // "HH:MM"
+                } else {
+                    $startDate = !empty($tr['event_date'])
+                        ? (string)$tr['event_date']
+                        : $editHeaderDate;
+                }
+                if (!empty($tr['brew_end'])) {
+                    $endDate = substr($tr['brew_end'], 0, 10);
+                    $endHm   = substr($tr['brew_end'], 11, 5);
+                } else {
+                    $endDate = $startDate ?: $editHeaderDate;
+                }
+                $brewTim[$b] = [
+                    'start_date' => $startDate,
+                    'start'      => $startHm,
+                    'end_date'   => $endDate,
+                    'end'        => $endHm,
+                ];
+            }
+
+            // ── Build BREWING_STICKY_COOL arrays (indexed 0..N-1) ─────────────
+            $prefillCoolArrays = [
+                'fw_gravities' => [],
+                'fw_phs'       => [],
+                'pv_gravities' => [],
+                'kw_gravities' => [],
+                'start_dates'  => [],
+                'start_times'  => [],
+                'end_dates'    => [],
+                'end_times'    => [],
+                'volumes'      => [],
+                'dilutions'    => [],
+                'gravities'    => [],
+                'phs'          => [],
+            ];
+            foreach ($sortedBrewNums as $b) {
+                $g = $brewGrav[$b] ?? [];
+                $t = $brewTim[$b]  ?? [];
+                $prefillCoolArrays['fw_gravities'][] = $g['fw_gravity'] ?? '';
+                $prefillCoolArrays['fw_phs'][]       = $g['fw_ph']      ?? '';
+                $prefillCoolArrays['pv_gravities'][] = $g['pv_gravity'] ?? '';
+                $prefillCoolArrays['kw_gravities'][] = $g['kw_gravity'] ?? '';
+                $prefillCoolArrays['start_dates'][]  = $t['start_date'] ?? $editHeaderDate;
+                $prefillCoolArrays['start_times'][]  = $t['start']      ?? '';
+                $prefillCoolArrays['end_dates'][]    = $t['end_date']   ?? $editHeaderDate;
+                $prefillCoolArrays['end_times'][]    = $t['end']        ?? '';
+                $prefillCoolArrays['volumes'][]      = $g['volume']     ?? '';
+                $prefillCoolArrays['dilutions'][]    = $g['dilution']   ?? '';
+                $prefillCoolArrays['gravities'][]    = $g['og']         ?? '';
+                $prefillCoolArrays['phs'][]          = $g['ph']         ?? '';
+            }
+
+            // ── Build BREWING_STICKY_ING arrays ───────────────────────────────
+            $prefillIngArrays = [
+                'mi_ids' => [],
+                'cats'   => [],
+                'qtys'   => [],
+                'units'  => [],
+                'lots'   => [],
+            ];
+            foreach ($prefillIngLines as $il) {
+                // raw_name holds the MI string id when resolved
+                $prefillIngArrays['mi_ids'][] = $il['raw_name'] ?? '';
+                $prefillIngArrays['cats'][]   = $il['category'] ?? '';
+                $prefillIngArrays['qtys'][]   = $il['qty']      ?? '';
+                $prefillIngArrays['units'][]  = $il['unit']     ?? '';
+                $prefillIngArrays['lots'][]   = $il['lot']      ?? '';
+            }
+
+            // ── Prefill header fields ─────────────────────────────────────────
+            // Keys mirror those used in $stickyPost reads in the render block.
+            $prefillHeader = [
+                'beer_select'  => $editRow['beer'],
+                'batch'        => $editRow['batch'],
+                'event_date'   => $editRow['event_date'],
+                'cct'          => $editRow['cct'],
+                'yeast_select' => $editRow['yeast'],
+                'yeast_gen'    => $editRow['yeast_gen'],
+                'pitched_from' => $editRow['pitched_from'],
+                'new_yeast'    => $editRow['new_yeast'],
+                'yt_number'    => $editRow['yt_number'],
+                'comments'     => $editRow['comments'],
+                'recipe_id_fk' => $editRow['recipe_id_fk'],
+            ];
+
+            $editBanner = [
+                'recipe_name' => $editRow['recipe_name'] ?? $editRow['beer'],
+                'batch'       => $editRow['batch'],
+                'event_date'  => $editRow['event_date'],
+            ];
+
+            // ── CIP: use existing clean loader ────────────────────────────────
+            // cip_events_for() exists in cip-events.php and returns the
+            // structured grouped data. The CIP partial supports $cipConfig['existing'].
+            $cipExisting = cip_events_for($pdoEdit, 'brewing', $editId);
+        }
+
+    } catch (Throwable $eEdit) {
+        flash_set('err', 'Erreur lors du chargement du brassin : ' . htmlspecialchars($eEdit->getMessage()));
+        $editMode = false;
+    }
+}
+
 // $stickyPost: populated when re-rendering after an overwrite conflict so the
 // operator's entered values survive the round-trip without retyping.
 $stickyPost = ($overwriteConflict !== null) ? $_POST : [];
+
+// In edit-mode, the unified prefill accessor $pf gives the same key names as
+// $stickyPost. The render block reads $pf['key'] for all header fields.
+$pf = $editMode ? $prefillHeader : $stickyPost;
 
 try {
     $pdo = maltytask_pdo();
@@ -601,14 +1007,14 @@ $cipConfig = [
         ],
     ],
     'cip_types'          => $cipTypes,
-    'existing'           => null,         // new submission
+    'existing'           => $editMode ? ($cipExisting ?? null) : null,
 ];
 ?><!doctype html>
 <html lang="fr">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Saisie Brassage — MaltyTask</title>
+  <title><?= $editMode ? 'Modifier Brassage' : 'Saisie Brassage' ?> — MaltyTask</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,200;0,9..144,300;0,9..144,400;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -631,7 +1037,23 @@ $cipConfig = [
     </div>
   <?php endif ?>
 
-  <?php if ($overwriteConflict !== null):
+  <?php if ($editMode && $editBanner !== null):
+      $ebRecipe = htmlspecialchars((string)($editBanner['recipe_name'] ?? '—'));
+      $ebBatch  = htmlspecialchars((string)($editBanner['batch'] ?? '—'));
+      $ebDate   = htmlspecialchars((string)($editBanner['event_date'] ?? '—'));
+  ?>
+    <div class="fb-edit-banner" role="status">
+      <span class="fb-edit-banner__icon" aria-hidden="true">✎</span>
+      <div class="fb-edit-banner__body">
+        <strong>Mettre à jour le brassin <?= $ebRecipe ?> (B<?= $ebBatch ?>) brassé le <?= $ebDate ?></strong>
+        <?php if ($contiguityWarn): ?>
+          <br><span class="fb-edit-banner__warn">Numérotation de brassins non contiguë détectée — vérifier après sauvegarde.</span>
+        <?php endif ?>
+      </div>
+    </div>
+  <?php endif ?>
+
+  <?php if ($overwriteConflict !== null && !$editMode):
       $owRecipe   = htmlspecialchars((string)($overwriteConflict['recipe_name'] ?? '—'));
       $owCct      = $overwriteConflict['cct'] !== null ? 'CCT-' . (int)$overwriteConflict['cct'] : '—';
       $owDate     = htmlspecialchars((string)($overwriteConflict['event_date'] ?? '—'));
@@ -641,7 +1063,8 @@ $cipConfig = [
       <div class="fb-overwrite-warning__body">
         <strong>Ce lot existe déjà —</strong>
         <?= $owRecipe ?> / <?= htmlspecialchars($owCct) ?> / brassé le <?= $owDate ?>.
-        Re-soumettre va écraser l'en-tête du brassin (recette, CCT, levure).
+        Re-soumettre va rafraîchir toutes les données du brassin : en-tête (recette, CCT, levure),
+        ingrédients, gravités (première trempe, Pfannevoll, Kochwürze, cast-out) et timings.
       </div>
     </div>
   <?php endif ?>
@@ -649,27 +1072,35 @@ $cipConfig = [
   <!-- ── Page header ────────────────────────────────────────────────────────── -->
   <div class="op-form__header">
     <div class="op-form__eyebrow">Brassage · Brewing</div>
+    <?php if ($editMode): ?>
+    <h1 class="op-form__title">Modifier <em>brassage</em></h1>
+    <p class="op-form__sub">
+      Mise à jour d'un brassin existant. Les champs sont pré-remplis depuis la base de données.
+      Complétez les cases vides et sauvegardez.
+    </p>
+    <?php else: ?>
     <h1 class="op-form__title">Saisie <em>brassage</em></h1>
     <p class="op-form__sub">
       Enregistrement d'un brassin : recette, CCT, levure, ingrédients.
       Toutes les valeurs sont acceptées sans blocage — les saisies web sont marquées
       <code>web_entry</code> pour l'audit.
     </p>
+    <?php endif ?>
   </div>
 
   <!-- ── FORM ──────────────────────────────────────────────────────────────── -->
   <form id="brewing-form" method="post" action="/modules/form-brewing.php" novalidate>
     <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
-    <!-- FIX 2: confirm_overwrite flag — 0 by default; JS sets to 1 when the
-         operator ticks the confirmation checkbox shown in the warning banner.
-         The hidden input is always present so the handler always sees it. -->
-    <input type="hidden" name="confirm_overwrite" id="confirm_overwrite_hidden" value="0">
-    <?php if ($overwriteConflict !== null): ?>
+    <!-- confirm_overwrite: pre-acknowledged in edit-mode (operator intent established
+         by clicking ?edit= entry point); operator checkbox gates blank-entry conflicts. -->
+    <input type="hidden" name="confirm_overwrite" id="confirm_overwrite_hidden"
+           value="<?= $editMode ? '1' : '0' ?>">
+    <?php if ($overwriteConflict !== null && !$editMode): ?>
     <div class="fb-overwrite-confirm">
       <label class="fb-overwrite-confirm__label">
         <input type="checkbox" id="confirm_overwrite_cb" class="fb-overwrite-confirm__cb"
                onchange="document.getElementById('confirm_overwrite_hidden').value = this.checked ? '1' : '0'">
-        Confirmer l'écrasement de l'en-tête de ce brassin
+        Confirmer le rafraîchissement complet de ce brassin (en-tête, ingrédients, gravités, timings)
       </label>
     </div>
     <?php endif ?>
@@ -691,9 +1122,9 @@ $cipConfig = [
           <select id="recipe_select" name="beer_select" class="op-form__select">
             <option value="">— sélectionner —</option>
             <?php
-              $stickyBeer = htmlspecialchars($stickyPost['beer_select'] ?? '');
+              $pfBeer = (string)($pf['beer_select'] ?? '');
               foreach ($recipes as $r):
-                $selected = ($r['name'] === ($stickyPost['beer_select'] ?? '')) ? ' selected' : '';
+                $selected = ($r['name'] === $pfBeer) ? ' selected' : '';
             ?>
               <option value="<?= htmlspecialchars($r['name']) ?>"
                       data-recipe-id="<?= (int)$r['id'] ?>"<?= $selected ?>>
@@ -704,9 +1135,10 @@ $cipConfig = [
               </option>
             <?php endforeach ?>
           </select>
-          <!-- Hidden recipe FK — populated by form-brewing.js (seeded from sticky on conflict) -->
+          <!-- Hidden recipe FK — populated by form-brewing.js on select-change;
+               pre-seeded from $pf (edit-mode DB value or sticky POST value). -->
           <input type="hidden" id="recipe_id_fk" name="recipe_id_fk"
-                 value="<?= htmlspecialchars($stickyPost['recipe_id_fk'] ?? '') ?>">
+                 value="<?= htmlspecialchars((string)($pf['recipe_id_fk'] ?? '')) ?>">
         </div>
 
         <!-- Batch number -->
@@ -714,7 +1146,7 @@ $cipConfig = [
           <label class="op-form__label" for="batch">N° brassin</label>
           <input id="batch" name="batch" type="text" class="op-form__input"
                  placeholder="ex. 215" autocomplete="off" required
-                 value="<?= htmlspecialchars($stickyPost['batch'] ?? '') ?>">
+                 value="<?= htmlspecialchars((string)($pf['batch'] ?? '')) ?>">
         </div>
 
         <!-- Brew date (HTML date picker, always Y-m-d on submit) -->
@@ -724,7 +1156,7 @@ $cipConfig = [
             <span class="op-form__unit"><?= htmlspecialchars($displayFmt) ?></span>
           </label>
           <input id="event_date" name="event_date" type="date" class="op-form__input"
-                 value="<?= htmlspecialchars($stickyPost['event_date'] ?? date('Y-m-d')) ?>" required>
+                 value="<?= htmlspecialchars((string)($pf['event_date'] ?? date('Y-m-d'))) ?>" required>
         </div>
 
       </div>
@@ -741,7 +1173,8 @@ $cipConfig = [
           <select id="cct" name="cct" class="op-form__select">
             <option value="">— sélectionner —</option>
             <?php foreach ($ccts as $c):
-              $cctSelected = (isset($stickyPost['cct']) && (string)(int)$c['number'] === (string)(int)$stickyPost['cct'])
+              $pfCct = $pf['cct'] ?? null;
+              $cctSelected = ($pfCct !== null && $pfCct !== '' && (string)(int)$c['number'] === (string)(int)$pfCct)
                   ? ' selected' : '';
             ?>
               <option value="<?= (int)$c['number'] ?>"<?= $cctSelected ?>>
@@ -765,7 +1198,7 @@ $cipConfig = [
           <select id="yeast_select" name="yeast_select" class="op-form__select">
             <option value="">— sélectionner —</option>
             <?php foreach ($yeastStrains as $ys):
-              $yeastSelected = (($stickyPost['yeast_select'] ?? '') === $ys['name']) ? ' selected' : '';
+              $yeastSelected = (((string)($pf['yeast_select'] ?? '')) === $ys['name']) ? ' selected' : '';
             ?>
               <option value="<?= htmlspecialchars($ys['name']) ?>"<?= $yeastSelected ?>>
                 <?= htmlspecialchars($ys['name']) ?>
@@ -779,7 +1212,7 @@ $cipConfig = [
           <label class="op-form__label" for="yeast_gen">Génération</label>
           <input id="yeast_gen" name="yeast_gen" type="text" class="op-form__input"
                  placeholder="ex. 3" autocomplete="off"
-                 value="<?= htmlspecialchars($stickyPost['yeast_gen'] ?? '') ?>">
+                 value="<?= htmlspecialchars((string)($pf['yeast_gen'] ?? '')) ?>">
         </div>
 
         <!-- Pitched from (previous batch) -->
@@ -787,7 +1220,7 @@ $cipConfig = [
           <label class="op-form__label" for="pitched_from">Récolte de</label>
           <input id="pitched_from" name="pitched_from" type="text" class="op-form__input"
                  placeholder="ex. ZEP 213" autocomplete="off"
-                 value="<?= htmlspecialchars($stickyPost['pitched_from'] ?? '') ?>">
+                 value="<?= htmlspecialchars((string)($pf['pitched_from'] ?? '')) ?>">
         </div>
 
         <!-- New yeast (free-text, used when new strain not in catalog) -->
@@ -797,7 +1230,7 @@ $cipConfig = [
           </label>
           <input id="new_yeast" name="new_yeast" type="text" class="op-form__input"
                  placeholder="Nom de la nouvelle souche" autocomplete="off"
-                 value="<?= htmlspecialchars($stickyPost['new_yeast'] ?? '') ?>">
+                 value="<?= htmlspecialchars((string)($pf['new_yeast'] ?? '')) ?>">
         </div>
 
         <!-- YT number (optional — when pitched via Yeast Temp tank) -->
@@ -805,7 +1238,7 @@ $cipConfig = [
           <label class="op-form__label" for="yt_number">YT n°</label>
           <input id="yt_number" name="yt_number" type="number" class="op-form__input"
                  placeholder="—" min="1"
-                 value="<?= htmlspecialchars($stickyPost['yt_number'] ?? '') ?>">
+                 value="<?= htmlspecialchars((string)($pf['yt_number'] ?? '')) ?>">
         </div>
 
       </div>
@@ -848,30 +1281,43 @@ $cipConfig = [
       </p>
     </div>
 
-    <!-- ── Section: Refroidissement / Cast-out (multi-brassin) ────────────────── -->
-    <!-- Each sub-brew row writes one bd_brewing_gravity_v2 Cooling row.           -->
-    <!-- NK: (beer, batch, brew, event_type='Cooling') — idempotent on re-submit.  -->
-    <!-- brew = row position 1..N. Batch total = SUM(final_volume) over all rows.  -->
+    <!-- ── Section: Déroulé du brassage (multi-brassin) ──────────────────────── -->
+    <!-- One row per sub-brew. Each row writes:                                    -->
+    <!--   bd_brewing_gravity_v2 × 4 (FirstWort/Pfannevoll/Kochwurze/Cooling)     -->
+    <!--   bd_brewing_timings_v2 × 1 (brew_start / brew_end / event_date)         -->
+    <!-- NK gravity: (beer, batch, brew, event_type) — NK timings: (beer, batch, brew) -->
+    <!-- Fully empty rows are skipped. Batch total = SUM(Cooling.final_volume).   -->
     <div class="op-form__card">
       <div class="op-form__card-title">
-        — refroidissement / cast-out
+        — déroulé du brassage
         <span class="brew-cool__count" id="cool-count-badge"></span>
       </div>
 
-      <table class="brew-cool__table">
-        <thead>
-          <tr>
-            <th class="brew-cool__col--num">Brassin</th>
-            <th class="brew-cool__col--vol">Volume cast-out <span class="op-form__unit">HL</span></th>
-            <th class="brew-cool__col--og">OG <span class="op-form__unit">°Plato</span></th>
-            <th class="brew-cool__col--ph">pH <span class="op-form__unit">(opt.)</span></th>
-            <th class="brew-cool__col--del"></th>
-          </tr>
-        </thead>
-        <tbody id="cool-tbody">
-          <!-- Rows added by form-brewing.js — one shown by default -->
-        </tbody>
-      </table>
+      <div class="brew-cool__scroll-wrap">
+        <table class="brew-cool__table brew-cool__table--wide">
+          <thead>
+            <tr>
+              <th class="brew-cool__col--num">Brassin</th>
+              <th class="brew-cool__col--fw-grav">Première trempe <span class="op-form__unit">°P</span></th>
+              <th class="brew-cool__col--fw-ph">pH FW</th>
+              <th class="brew-cool__col--pv">Pfannevoll <span class="op-form__unit">°P</span></th>
+              <th class="brew-cool__col--kw">Kochwürze <span class="op-form__unit">°P</span></th>
+              <th class="brew-cool__col--date">Date début</th>
+              <th class="brew-cool__col--time">Heure début</th>
+              <th class="brew-cool__col--date">Date fin</th>
+              <th class="brew-cool__col--time">Heure fin</th>
+              <th class="brew-cool__col--vol">Cast-out <span class="op-form__unit">HL</span></th>
+              <th class="brew-cool__col--dilut">Dilution <span class="op-form__unit">HL</span></th>
+              <th class="brew-cool__col--og">OG <span class="op-form__unit">°P</span></th>
+              <th class="brew-cool__col--ph">pH</th>
+              <th class="brew-cool__col--del"></th>
+            </tr>
+          </thead>
+          <tbody id="cool-tbody">
+            <!-- Rows added by form-brewing.js — one shown by default -->
+          </tbody>
+        </table>
+      </div>
 
       <div class="brew-cool__footer">
         <button type="button" class="brew-ing__add-btn brew-cool__add-btn"
@@ -888,10 +1334,11 @@ $cipConfig = [
       </div>
 
       <p class="brew-note">
-        Un brassin = un cycle de brassage (cast-out vers le CCT). Pour un multi-brassin,
-        ajouter une ligne par cycle. Le volume cast-out est l'opérande WIP/COGS —
+        Un brassin = un cycle de brassage. Pour un multi-brassin, ajouter une ligne par cycle.
+        Les colonnes gravité enregistrent la progression en °Plato (première trempe → Pfannevoll →
+        Kochwürze → cast-out). Le volume cast-out est l'opérande WIP/COGS —
         <code>SUM(final_volume)</code> sur les lignes <code>Cooling</code> du batch.
-        La densité est en °Plato (OG au refroidissement, typiquement 9.8–19.2°P).
+        La dilution est le volume d'eau ajouté au refroidissement (optionnel).
         Les lignes entièrement vides sont ignorées.
       </p>
     </div>
@@ -903,7 +1350,7 @@ $cipConfig = [
         <div class="op-form__field op-form__field--full">
           <label class="op-form__label" for="comments">Commentaires brassage</label>
           <textarea id="comments" name="comments" class="op-form__textarea" rows="3"
-                    placeholder="Observations, écarts de rendement, problèmes…"><?= htmlspecialchars($stickyPost['comments'] ?? '') ?></textarea>
+                    placeholder="Observations, écarts de rendement, problèmes…"><?= htmlspecialchars((string)($pf['comments'] ?? '')) ?></textarea>
         </div>
       </div>
     </div>
@@ -915,7 +1362,7 @@ $cipConfig = [
         Effacer brouillon
       </button>
       <button type="submit" class="op-form__btn op-form__btn--primary">
-        Enregistrer le brassin →
+        <?= $editMode ? 'Mettre à jour le brassin →' : 'Enregistrer le brassin →' ?>
       </button>
     </div>
 
@@ -936,6 +1383,7 @@ $cipConfig = [
             <th>CCT</th>
             <th>Levure</th>
             <th>Opérateur</th>
+            <th></th>
           </tr>
         </thead>
         <tbody>
@@ -947,6 +1395,10 @@ $cipConfig = [
               <td class="op-form__mono"><?= $rb['cct'] !== null ? 'CCT ' . (int)$rb['cct'] : '—' ?></td>
               <td><?= htmlspecialchars($rb['yeast'] ?? '—') ?></td>
               <td class="op-form__mono"><?= htmlspecialchars($rb['email'] ?? '') ?></td>
+              <td class="fb-recent__edit-cell">
+                <a href="/modules/form-brewing.php?edit=<?= (int)$rb['id'] ?>"
+                   class="fb-recent__edit-link">Ouvrir / compléter</a>
+              </td>
             </tr>
           <?php endforeach ?>
         </tbody>
@@ -959,12 +1411,33 @@ $cipConfig = [
 <!-- MI catalog injected server-side for the ingredient picker JS -->
 <script>
 window.BREWING_MI = <?= json_encode($miJs, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
-<?php if (!empty($stickyPost)): ?>
-// Sticky cooling rows — pre-seed JS when re-rendering after an overwrite conflict.
+<?php if ($editMode): ?>
+// Edit-mode: pre-seed JS blobs from canonical DB data (reassembled above from bd_*_v2 tables).
+window.BREWING_STICKY_COOL = <?= json_encode($prefillCoolArrays, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+window.BREWING_STICKY_ING  = <?= json_encode($prefillIngArrays,  JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+<?php elseif (!empty($stickyPost)): ?>
+// Sticky brew-progression rows — pre-seed JS when re-rendering after an overwrite conflict.
 window.BREWING_STICKY_COOL = <?= json_encode([
-    'volumes'   => array_values($stickyPost['cool_final_volume']  ?? []),
-    'gravities' => array_values($stickyPost['cool_final_gravity'] ?? []),
-    'phs'       => array_values($stickyPost['cool_final_ph']      ?? []),
+    'fw_gravities'  => array_values($stickyPost['brew_fw_gravity']     ?? []),
+    'fw_phs'        => array_values($stickyPost['brew_fw_ph']          ?? []),
+    'pv_gravities'  => array_values($stickyPost['brew_pv_gravity']     ?? []),
+    'kw_gravities'  => array_values($stickyPost['brew_kw_gravity']     ?? []),
+    'start_dates'   => array_values($stickyPost['brew_start_date']     ?? []),
+    'start_times'   => array_values($stickyPost['brew_start_time']     ?? []),
+    'end_dates'     => array_values($stickyPost['brew_end_date']       ?? []),
+    'end_times'     => array_values($stickyPost['brew_end_time']       ?? []),
+    'volumes'       => array_values($stickyPost['cool_final_volume']   ?? []),
+    'dilutions'     => array_values($stickyPost['cool_batch_dilution'] ?? []),
+    'gravities'     => array_values($stickyPost['cool_final_gravity']  ?? []),
+    'phs'           => array_values($stickyPost['cool_final_ph']       ?? []),
+], JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+// Sticky ingredient rows — pre-seed JS when re-rendering after an overwrite conflict.
+window.BREWING_STICKY_ING = <?= json_encode([
+    'mi_ids'  => array_values($stickyPost['ing_mi_id']  ?? []),
+    'cats'    => array_values($stickyPost['ing_cat']    ?? []),
+    'qtys'    => array_values($stickyPost['ing_qty']    ?? []),
+    'units'   => array_values($stickyPost['ing_unit']   ?? []),
+    'lots'    => array_values($stickyPost['ing_lot']    ?? []),
 ], JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
 <?php endif ?>
 </script>
