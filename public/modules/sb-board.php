@@ -62,28 +62,7 @@ foreach (SB_ZONES as $z) {
     }
 }
 
-// Pre-compute observed totals here so $totalListItems is available before the batch-list section.
-// Build dedup keys from true mothers so observed rows don't double-count.
-$_motherBatchKeys = [];
-foreach (SB_ZONES as $_zChk) {
-    foreach ($byZone[$_zChk] ?? [] as $_mChk) {
-        // Skip mothers with null recipe_id_fk — they can't correspond to an observed card.
-        if (isset($_mChk['recipe_id_fk'], $_mChk['batch']) && $_mChk['recipe_id_fk'] !== null) {
-            $_motherBatchKeys[(int)$_mChk['recipe_id_fk'] . ':' . $_mChk['batch']] = true;
-        }
-    }
-}
-$_allObservedPreCount = [];
-foreach (['fermentation', 'bbt'] as $_obZone) {
-    foreach ($observedInFlight[$_obZone] ?? [] as $_obCard) {
-        $_obKey = ($_obCard['recipe_id'] ?? '') . ':' . ($_obCard['batch'] ?? '');
-        if (!isset($_motherBatchKeys[$_obKey])) {
-            $_allObservedPreCount[] = true;
-        }
-    }
-}
-$totalObservedCount = count($_allObservedPreCount);
-$totalListItems     = $totalMothers + $totalObservedCount;
+// Atom 18: Bottom batch-list removed — dedup pre-count no longer needed.
 
 // Recipe lookup map for the retro-link modal (admin only, but fetched once for simplicity).
 // Keyed by recipe id → name; injected as window.SB_RECIPES in the page.
@@ -215,72 +194,57 @@ function sbb_render_mother_card(array $m, string $zone): string
 }
 
 /**
- * Render a read-only observed card for an in-flight batch derived from bd_* data.
+ * Render a minimal chip for an in-flight observed batch (Atom 18 re-skin).
  *
- * Handles both CCT cards (kind=cct; uses brewed_on + days_in_tank) and BBT cards
- * (kind=bbt; uses racked_on + days_in_tank). The caller sets 'brewed_on' or
- * 'racked_on' as appropriate; this function picks whichever is non-null.
- *
- * Rules (Atoms 13-15 spec, PM-locked):
- *   - NO heartbeat — data is weeks old; green/amber/red would be misleading.
- *   - NON-CLICKABLE — no drill-in link (no op_session children exist).
- *   - recipe_name used verbatim — never a hardcoded id→name lookup.
- *   - Neutral factual line: CCT "en fermentation depuis N j",
- *     BBT "soutiré il y a N j".
- *   - Badge: "observé · lecture seule".
- *   - "(assemblage)" chip when is_assemblage=true (neutral, no per-source breakdown).
+ * Face: "{recipe_name} · #{batch} · {vessel_label}" — three tokens, one line.
+ * The chip is a link to sb-batch.php?recipe=<id>&batch=<encoded>.
+ * Provenance (observé) = muted/faint styling, not text badge.
+ * Abandoned = distinct warning border tint, not text badge.
+ * Assemblage = tiny "⋈" glyph appended to the text with a title tooltip.
  *
  * Returns escaped HTML string — safe to echo directly.
  */
-function sbb_render_observed_card(array $c): string
+function sbb_render_observed_chip(array $c): string
 {
-    $vesselLabel   = sbb_esc($c['vessel_label']);
-    $recipeName    = sbb_esc($c['recipe_name'] ?: '—');
-    $batch         = sbb_esc($c['batch']);
-    $daysInTank    = isset($c['days_in_tank']) && $c['days_in_tank'] !== null
-                       ? (int) $c['days_in_tank'] : null;
-    $isBbt         = str_starts_with((string) ($c['vessel_key'] ?? ''), 'bbt-');
-    $isAssemblage  = !empty($c['is_assemblage']);
-    $isAbandoned   = !empty($c['is_abandoned']);
+    $vesselLabel  = sbb_esc($c['vessel_label']);
+    $recipeName   = sbb_esc($c['recipe_name'] ?: '—');
+    $batch        = sbb_esc($c['batch']);
+    $recipeId     = (int) ($c['recipe_id'] ?? 0);
+    $isBbt        = str_starts_with((string) ($c['vessel_key'] ?? ''), 'bbt-');
+    $isAssemblage = !empty($c['is_assemblage']);
+    $isAbandoned  = !empty($c['is_abandoned']);
+    $daysInTank   = isset($c['days_in_tank']) && $c['days_in_tank'] !== null
+                      ? (int) $c['days_in_tank'] : null;
 
-    // Neutral factual line — differs by vessel kind
-    if ($isBbt) {
-        $neutralLine = $daysInTank !== null
-            ? 'soutiré il y a ' . $daysInTank . ' j'
-            : 'soutiré en BBT';
-    } else {
-        $neutralLine = $daysInTank !== null
-            ? 'en fermentation depuis ' . $daysInTank . ' j'
-            : 'en fermentation';
-    }
-
-    // Tooltip: vessel + event date
+    // Tooltip carries the richer context (vessel · event date · flags) since the chip face is minimal.
     $eventDate = $isBbt ? ($c['racked_on'] ?? '') : ($c['brewed_on'] ?? '');
     $eventVerb = $isBbt ? 'soutiré le' : 'brassé le';
-    $tooltip   = $vesselLabel . ' · ' . $eventVerb . ' ' . sbb_esc((string) $eventDate);
+    $daysStr   = $daysInTank !== null ? ' · ' . $daysInTank . ' j' : '';
+    $tooltip   = $vesselLabel . ' · ' . $eventVerb . ' ' . sbb_esc((string) $eventDate) . $daysStr;
     if ($isAbandoned) {
         $tooltip .= ' · ABANDONNÉ ?';
     }
-
-    $ariaLabel = $recipeName . ' #' . $batch . ' — ' . $vesselLabel . ' (observé, lecture seule)';
-
-    $html  = '<div class="sb-observed-card' . ($isAbandoned ? ' sb-observed-card--abandoned' : '') . '"';
-    $html .= ' title="' . $tooltip . '" role="presentation" aria-label="' . $ariaLabel . '">';
-    $html .= '<div class="sb-observed-card__top">';
-    $html .= '<span class="sb-observed-card__batch">#' . $batch . '</span>';
-    $html .= '<span class="sb-observed-badge">observé · lecture seule</span>';
-    $html .= '</div>';
-    $html .= '<div class="sb-observed-card__name">' . $recipeName . '</div>';
-    $html .= '<div class="sb-observed-card__meta">';
-    $html .= '<span class="sb-observed-card__vessel">' . $vesselLabel . '</span>';
-    $html .= '<span class="sb-observed-card__meta-dot" aria-hidden="true"></span>';
-    $html .= '<span class="sb-observed-card__neutral">' . sbb_esc($neutralLine) . '</span>';
     if ($isAssemblage) {
-        $html .= '<span class="sb-observed-card__meta-dot" aria-hidden="true"></span>';
-        $html .= '<span class="sb-assemblage-chip">(assemblage)</span>';
+        $tooltip .= ' · assemblage';
     }
-    $html .= '</div>';
-    $html .= '</div>';
+
+    // URL: recipe id as int, batch rawurlencode'd — sb-batch.php stub (atom 18); drill-in = atom 19.
+    $href = '/modules/sb-batch.php?recipe=' . $recipeId . '&amp;batch=' . rawurlencode((string)($c['batch'] ?? ''));
+
+    $chipClass = 'sb-observed-chip';
+    if ($isAbandoned) {
+        $chipClass .= ' sb-observed-chip--abandoned';
+    }
+
+    $html  = '<a class="' . $chipClass . '" href="' . $href . '" title="' . $tooltip . '"';
+    $html .= ' aria-label="' . $recipeName . ' #' . $batch . ' — ' . $vesselLabel . ' (observé)">';
+    $html .= '<span class="sb-observed-chip__text">';
+    $html .= $recipeName . ' · #' . $batch . ' · ' . $vesselLabel;
+    if ($isAssemblage) {
+        $html .= ' <span class="sb-observed-chip__assemblage" title="assemblage" aria-label="assemblage">⋈</span>';
+    }
+    $html .= '</span>';
+    $html .= '</a>';
 
     return $html;
 }
@@ -318,8 +282,17 @@ $jsBoardV      = @filemtime(__DIR__ . '/../js/sb-board.js')   ?: time();
 <main class="main">
 <div class="sb-board-wrap">
 
-  <!-- Sync pill — atom 6 polling driver writes "Synchronisé à HH:MM" here -->
-  <div class="sb-sync-ts" data-sb-fetched-at aria-live="polite"></div>
+  <!-- Board controls row — sync pill + admin retro-link, right-aligned as a flex unit -->
+  <div class="sb-board-controls">
+    <?php if (($me['role'] ?? '') === 'admin'): ?>
+    <button class="sb-rl-trigger" id="sb-rl-trigger"
+            onclick="window.sbRetroLink && window.sbRetroLink.open()"
+            title="Voir les propositions de liaisons rétroactives (admin)">
+      ⇆ Retro-link
+    </button>
+    <?php endif ?>
+    <div class="sb-sync-ts" data-sb-fetched-at aria-live="polite"></div>
+  </div>
 
   <!-- ══════════════════════════════════════════════════════════════
        DIORAMA — Theater of Operations (5 production zones)
@@ -424,10 +397,14 @@ $jsBoardV      = @filemtime(__DIR__ . '/../js/sb-board.js')   ?: time();
             <?php foreach ($mothers as $m): ?>
             <?= sbb_render_mother_card($m, $zone) ?>
             <?php endforeach ?>
+          </div>
+          <?php if (count($fermObserved) > 0): ?>
+          <div class="sb-chips-pack">
             <?php foreach ($fermObserved as $c): ?>
-            <?= sbb_render_observed_card($c) ?>
+            <?= sbb_render_observed_chip($c) ?>
             <?php endforeach ?>
           </div>
+          <?php endif ?>
           <?php else: ?>
           <div class="sb-zone-empty">
             <div class="sb-zone-empty__msg">Aucun lot en fermentation</div>
@@ -499,10 +476,14 @@ $jsBoardV      = @filemtime(__DIR__ . '/../js/sb-board.js')   ?: time();
             <?php foreach ($mothers as $m): ?>
             <?= sbb_render_mother_card($m, $zone) ?>
             <?php endforeach ?>
+          </div>
+          <?php if (count($bbtObserved) > 0): ?>
+          <div class="sb-chips-pack">
             <?php foreach ($bbtObserved as $c): ?>
-            <?= sbb_render_observed_card($c) ?>
+            <?= sbb_render_observed_chip($c) ?>
             <?php endforeach ?>
           </div>
+          <?php endif ?>
           <?php else: ?>
           <div class="sb-zone-empty">
             <div class="sb-zone-empty__msg">Aucun lot en soutirage</div>
@@ -605,128 +586,6 @@ $jsBoardV      = @filemtime(__DIR__ . '/../js/sb-board.js')   ?: time();
     <?php endforeach ?>
 
   </section><!-- /sb-diorama -->
-
-  <!-- ══════════════════════════════════════════════════════════════
-       BATCH LIST — all open mothers in a flat list
-  ══════════════════════════════════════════════════════════════════ -->
-  <div class="sb-batch-list" role="region" aria-label="Liste des lots">
-    <div class="sb-batch-list-header">
-      <span class="sb-batch-list-header__title">Lots en cours</span>
-      <span class="sb-batch-list-count">
-        <?= $totalListItems ?> lot<?= $totalListItems !== 1 ? 's' : '' ?>
-        <?php if ($totalObservedCount > 0): ?><span class="sb-batch-list-observed-count"> (<?= $totalObservedCount ?> observé<?= $totalObservedCount > 1 ? 's' : '' ?>)</span><?php endif ?>
-      </span>
-      <?php if (($me['role'] ?? '') === 'admin'): ?>
-      <button class="sb-rl-trigger" id="sb-rl-trigger"
-              onclick="window.sbRetroLink && window.sbRetroLink.open()"
-              title="Voir les propositions de liaisons rétroactives (admin)">
-        ⇆ Retro-link
-      </button>
-      <?php endif ?>
-    </div>
-
-    <?php
-    // Collect all observed in-flight rows (fermentation CCTs + BBTs) not already a true mother.
-    // Reuses $_motherBatchKeys computed above (pre-computed before headers section).
-    $allObservedRows = [];
-    foreach (['fermentation', 'bbt'] as $obZone) {
-        foreach ($observedInFlight[$obZone] ?? [] as $obCard) {
-            $obKey = ($obCard['recipe_id'] ?? '') . ':' . ($obCard['batch'] ?? '');
-            if (!isset($_motherBatchKeys[$obKey])) {
-                $allObservedRows[] = $obCard;
-            }
-        }
-    }
-    ?>
-    <?php if ($totalListItems === 0): ?>
-    <div class="sb-batch-list-empty">
-      <div class="sb-batch-list-empty__icon">◻</div>
-      <div class="sb-batch-list-empty__msg">Le tableau de bord est vide.</div>
-      <div class="sb-batch-list-empty__sub">Aucun lot actif ni observé — les données bd_* semblent absentes.</div>
-    </div>
-
-    <?php else: ?>
-    <!-- Batch list table header -->
-    <div class="sb-batch-list__head">
-      <span class="sb-batch-list__th">Lot</span>
-      <span class="sb-batch-list__th">Recette</span>
-      <span class="sb-batch-list__th">Phase</span>
-      <span class="sb-batch-list__th">Cuve</span>
-      <span class="sb-batch-list__th">Ouvert le</span>
-      <span class="sb-batch-list__th">ETA</span>
-      <span class="sb-batch-list__th">Cond. %</span>
-      <span class="sb-batch-list__th">Détails</span>
-    </div>
-
-    <?php foreach (SB_ZONES as $z):
-        if ($z === 'expedition') continue;
-        foreach ($byZone[$z] ?? [] as $m):
-            $rowPhase = sbb_zone_phase_class($z);
-    ?>
-    <div class="sb-batch-row<?= $rowPhase ? ' sb-batch-row--' . sbb_esc($rowPhase) : '' ?>"
-         data-mother-id="<?= (int) $m['id'] ?>"
-         role="row">
-      <span class="sb-batch-row__ref">#<?= sbb_esc($m['batch'] ?? '—') ?></span>
-      <span class="sb-batch-row__name"><?= sbb_esc($m['recipe_name'] ?? '—') ?></span>
-      <span class="sb-batch-row__td">
-        <?php if ($rowPhase): ?>
-        <span class="sb-phase-pill sb-phase-pill--<?= sbb_esc($rowPhase) ?>"><?= sbb_esc(sbb_zone_label($z)) ?></span>
-        <?php else: ?>—<?php endif ?>
-      </span>
-      <span class="sb-batch-row__td">
-        <?php if ($m['current_vessel_kind'] !== null && $m['current_vessel_number'] !== null): ?>
-        <?= sbb_esc(strtoupper((string)$m['current_vessel_kind'])) ?>-<?= (int) $m['current_vessel_number'] ?>
-        <?php else: ?>—<?php endif ?>
-      </span>
-      <span class="sb-batch-row__td"><?= sbb_date_fr((string)($m['opened_at'] ?? '')) ?></span>
-      <span class="sb-batch-row__td">
-        <?php if ($m['eta_close_date']): ?>
-        <span class="sb-eta"><?= sbb_esc((string)$m['eta_close_date']) ?></span>
-        <?php else: ?>—<?php endif ?>
-      </span>
-      <span class="sb-batch-row__td">
-        <?php if ($m['pct_packaged'] !== null): ?>
-        <?= number_format((float)$m['pct_packaged'], 1) ?> %
-        <?php else: ?>—<?php endif ?>
-      </span>
-      <a href="/modules/sb-mother.php?id=<?= (int) $m['id'] ?>" class="sb-batch-row__link">
-        Voir →
-      </a>
-    </div>
-    <?php endforeach; endforeach ?>
-
-    <?php foreach ($allObservedRows as $obCard):
-        $isBbtRow  = str_starts_with((string)($obCard['vessel_key'] ?? ''), 'bbt-');
-        $phaseLabel = $isBbtRow ? 'Salle BBT' : 'Cave Fermentation';
-        $phaseClass = $isBbtRow ? 'racking' : 'fermenting';
-        $vesselLbl  = sbb_esc($obCard['vessel_label'] ?? '—');
-        $eventDate  = $isBbtRow ? ($obCard['racked_on'] ?? '') : ($obCard['brewed_on'] ?? '');
-        $eventDateFr = $eventDate ? sbb_date_fr((string)$eventDate) : '—';
-    ?>
-    <div class="sb-batch-row sb-batch-row--observed sb-batch-row--<?= sbb_esc($phaseClass) ?>"
-         role="row"
-         title="Lot observé (bd_* data, lecture seule)">
-      <span class="sb-batch-row__ref">#<?= sbb_esc($obCard['batch'] ?? '—') ?></span>
-      <span class="sb-batch-row__name">
-        <em><?= sbb_esc($obCard['recipe_name'] ?? '—') ?></em>
-        <?php if (!empty($obCard['is_assemblage'])): ?>
-        <span class="sb-assemblage-chip">(assemblage)</span>
-        <?php endif ?>
-      </span>
-      <span class="sb-batch-row__td">
-        <span class="sb-phase-pill sb-phase-pill--<?= sbb_esc($phaseClass) ?>"><?= sbb_esc($phaseLabel) ?></span>
-      </span>
-      <span class="sb-batch-row__td"><?= $vesselLbl ?></span>
-      <span class="sb-batch-row__td"><?= sbb_esc($eventDateFr) ?></span>
-      <span class="sb-batch-row__td">—</span>
-      <span class="sb-batch-row__td">—</span>
-      <span class="sb-batch-row__td">
-        <span class="sb-observed-badge">observé</span>
-      </span>
-    </div>
-    <?php endforeach ?>
-    <?php endif ?>
-  </div><!-- /sb-batch-list -->
 
   <!-- ══════════════════════════════════════════════════════════════
        GHOST STRIP — recently closed lots

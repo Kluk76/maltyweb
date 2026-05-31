@@ -1091,6 +1091,7 @@ function sb_observed_in_flight(PDO $pdo): array
             $out[$zone][] = [
                 'vessel_key'   => $vessel_key,
                 'vessel_label' => $vessel_label,
+                'recipe_id'    => (int) $occ['recipe_id'],
                 'recipe_name'  => $occ['recipe_name'],
                 'batch'        => $occ['batch'],
                 'brewed_on'    => $occ['brewed_on'],
@@ -1106,6 +1107,7 @@ function sb_observed_in_flight(PDO $pdo): array
             $out[$zone][] = [
                 'vessel_key'   => $vessel_key,
                 'vessel_label' => $vessel_label,
+                'recipe_id'    => (int) $occ['recipe_id'],
                 'recipe_name'  => $occ['recipe_name'],
                 'batch'        => $occ['batch'],
                 'brewed_on'    => null,

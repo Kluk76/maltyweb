@@ -555,110 +555,75 @@ body.sb-board .sb-zone-empty__msg--sub {
 }
 
 /* ══════════════════════════════════════════════════════════════
-   OBSERVED IN-FLIGHT CARDS (Atom 13) — sb-observed-* namespace
-   Read-only projection from bd_* historical data.
-   Distinct from true-mother cards: muted/secondary, clearly
-   labelled as "observé · lecture seule". No heartbeat, no link.
+   OBSERVED IN-FLIGHT CHIPS (Atom 18) — sb-observed-chip namespace
+   Minimal 3-token chips: recipe · #batch · vessel.
+   Linked to sb-batch.php (atom 18 stub; drill-in = atom 19).
+   Provenance and abandoned state expressed via styling only — no text badges.
    ══════════════════════════════════════════════════════════════ */
 
-/*
- * Card shell — muted relative to the true sb-card.
- * cursor:default enforces non-clickability at the CSS layer.
- * No :hover lift — reinforces read-only nature.
- */
-body.sb-board .sb-observed-card {
-  background: color-mix(in srgb, var(--bg-side) 60%, var(--bg));
+/* Chip pack — wrapping flex row inside the zone cards area */
+body.sb-board .sb-chips-pack {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 5px;
+  padding: 6px 8px 4px;
+}
+
+/* Individual chip link */
+body.sb-board .sb-observed-chip {
+  display: inline-flex;
+  align-items: center;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.55rem;
+  letter-spacing: 0.04em;
+  color: var(--ink-faint);
+  background: color-mix(in srgb, var(--bg-side) 55%, var(--bg));
   border: 1px dashed var(--hairline);
   border-radius: 3px;
-  padding: 9px 11px 8px;
-  cursor: default;
-  position: relative;
-  overflow: hidden;
-  /* Left-edge bar: muted ink-faint (contrast with zone-coloured true cards) */
-}
-body.sb-board .sb-observed-card::before {
-  content: "";
-  position: absolute; top: 0; left: 0; bottom: 0;
-  width: 2px;
-  background: var(--hairline-2);
-  border-radius: 3px 0 0 3px;
-  opacity: 0.6;
-}
-
-/* Zone-scoped observed-card tints — slightly muted vs true cards */
-body.sb-board .sb-zone--fermentation .sb-observed-card {
-  background: color-mix(in srgb, var(--cold) 4%, var(--bg-side));
-}
-body.sb-board .sb-zone--bbt .sb-observed-card {
-  background: color-mix(in srgb, var(--bbt) 4%, var(--bg-side));
-}
-
-/* Top row: batch ref on the left, badge on the right */
-body.sb-board .sb-observed-card__top {
-  display: flex; align-items: flex-start; justify-content: space-between;
-  margin-bottom: 4px;
-}
-
-/* Batch ref — same mono style as true card, slightly muted */
-body.sb-board .sb-observed-card__batch {
-  font-family: "JetBrains Mono", ui-monospace, monospace;
-  font-size: 0.60rem; letter-spacing: 0.1em; text-transform: uppercase;
-  color: var(--ink-faint);
-}
-
-/* Recipe name — Fraunces italic, muted ink */
-body.sb-board .sb-observed-card__name {
-  font-family: "Fraunces", "Times New Roman", serif;
-  font-variation-settings: "opsz" 96;
-  font-size: 0.92rem; font-weight: 300;
-  font-style: italic;
-  color: var(--ink-mute);
-  letter-spacing: -0.01em;
-  line-height: 1.15;
-  margin-bottom: 4px;
-}
-
-/* Meta row: vessel label + separator dot + neutral factual line */
-body.sb-board .sb-observed-card__meta {
-  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
-}
-
-body.sb-board .sb-observed-card__vessel {
-  font-family: "JetBrains Mono", ui-monospace, monospace;
-  font-size: 0.56rem; letter-spacing: 0.06em; text-transform: uppercase;
-  color: var(--ink-faint);
-  background: color-mix(in srgb, var(--hairline) 30%, transparent);
-  border: 1px solid var(--hairline);
-  padding: 1px 5px; border-radius: 2px;
-}
-
-body.sb-board .sb-observed-card__meta-dot {
-  width: 3px; height: 3px; border-radius: 50%;
-  background: var(--hairline);
-  flex-shrink: 0;
-}
-
-body.sb-board .sb-observed-card__neutral {
-  font-family: "JetBrains Mono", ui-monospace, monospace;
-  font-size: 0.54rem; letter-spacing: 0.04em;
-  color: var(--ink-faint);
-}
-
-/*
- * "observé · lecture seule" badge — stamp-style, clearly secondary.
- * No rotation (unlike closed-lot stamp) — this is a persistent state indicator.
- */
-body.sb-board .sb-observed-badge {
-  display: inline-block;
-  font-family: "JetBrains Mono", ui-monospace, monospace;
-  font-size: 0.46rem; letter-spacing: 0.12em; text-transform: uppercase;
-  padding: 2px 5px;
-  border: 1px solid var(--hairline);
-  border-radius: 2px;
-  color: var(--ink-faint);
-  background: color-mix(in srgb, var(--bg-side) 70%, transparent);
+  padding: 3px 7px;
+  text-decoration: none;
   white-space: nowrap;
-  flex-shrink: 0;
+  transition: background .12s, border-color .12s, color .12s;
+  cursor: pointer;
+}
+body.sb-board .sb-observed-chip:hover {
+  background: color-mix(in srgb, var(--bg-side) 80%, var(--bg));
+  border-color: var(--hairline-2);
+  color: var(--ink-mute);
+}
+body.sb-board .sb-observed-chip:focus-visible {
+  outline: 2px solid var(--hop);
+  outline-offset: 2px;
+}
+
+/* Zone tints for chips (mirrors zone accent) */
+body.sb-board .sb-zone--fermentation .sb-observed-chip {
+  border-color: color-mix(in srgb, var(--cold) 22%, var(--hairline));
+}
+body.sb-board .sb-zone--bbt .sb-observed-chip {
+  border-color: color-mix(in srgb, var(--bbt) 22%, var(--hairline));
+}
+
+/* Abandoned variant — muted warning border tint */
+body.sb-board .sb-observed-chip--abandoned {
+  border-color: color-mix(in srgb, var(--oak) 35%, var(--hairline));
+  border-style: solid;
+  background: color-mix(in srgb, var(--oak) 5%, var(--bg-side));
+}
+
+/* Chip text span — holds the three tokens */
+body.sb-board .sb-observed-chip__text {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+/* Assemblage glyph — tiny indicator glyph, muted */
+body.sb-board .sb-observed-chip__assemblage {
+  font-size: 0.60rem;
+  color: var(--ink-faint);
+  opacity: 0.7;
+  margin-left: 2px;
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -745,38 +710,6 @@ body.sb-board .sb-avail-widget__note {
 
 body.sb-board .sb-avail-widget__note--assemblage {
   color: var(--oak);
-}
-
-/* ── Assemblage chip (BBT card + batch-list row) ── */
-body.sb-board .sb-assemblage-chip {
-  display: inline-block;
-  font-family: "JetBrains Mono", ui-monospace, monospace;
-  font-size: 0.46rem;
-  letter-spacing: 0.08em;
-  text-transform: lowercase;
-  color: var(--ink-mute);
-  background: color-mix(in srgb, var(--hairline) 40%, transparent);
-  border: 1px solid var(--hairline);
-  border-radius: 2px;
-  padding: 1px 5px;
-  margin-left: 4px;
-  vertical-align: middle;
-}
-
-/* Abandoned observed card tint */
-body.sb-board .sb-observed-card--abandoned {
-  border-color: color-mix(in srgb, var(--oak) 35%, var(--hairline));
-  background: color-mix(in srgb, var(--oak) 4%, var(--bg-side));
-}
-
-/* Observed row in batch-list */
-body.sb-board .sb-batch-row--observed {
-  opacity: 0.85;
-  font-style: italic;
-}
-
-body.sb-board .sb-batch-row--observed .sb-batch-row__name em {
-  color: var(--ink-mute);
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -922,117 +855,6 @@ body.sb-board .sb-batch-row--observed .sb-batch-row__name em {
   transition: width .3s ease;
 }
 .sb-progress__fill--warn { background: var(--oak); }
-
-/* ══════════════════════════════════════════════════════════════
-   BATCH LIST TABLE (below diorama)
-   ══════════════════════════════════════════════════════════════ */
-.sb-batch-list {
-  position: relative; z-index: 1;
-  flex: 1;
-  max-height: none;
-  overflow-y: auto;
-  border-top: 2px solid var(--hairline-2);
-  background: var(--bg-elev);
-}
-
-.sb-batch-list-header {
-  display: flex; align-items: center; gap: 12px;
-  padding: 8px 16px 7px;
-  border-bottom: 1px solid var(--hairline);
-  background: var(--bg-side);
-  position: sticky; top: 0; z-index: 10;
-}
-.sb-batch-list-header__title {
-  font-family: "JetBrains Mono", ui-monospace, monospace;
-  font-size: 0.56rem; letter-spacing: 0.18em; text-transform: uppercase;
-  color: var(--ink-mute);
-}
-body.sb-board .sb-batch-list-count {
-  font-family: "JetBrains Mono", ui-monospace, monospace;
-  font-size: 0.56rem; letter-spacing: 0.06em;
-  color: var(--ink-faint);
-}
-body.sb-board .sb-batch-list-observed-count {
-  color: var(--ink-faint);
-}
-
-.sb-batch-list__head {
-  display: grid;
-  grid-template-columns: 90px 1fr 100px 120px 80px 70px 80px 1fr;
-  padding: 6px 16px;
-  border-bottom: 1px solid var(--hairline);
-  position: sticky; top: 37px;
-  background: var(--bg-side); z-index: 5;
-}
-.sb-batch-list__th {
-  font-family: "JetBrains Mono", ui-monospace, monospace;
-  font-size: 0.52rem; letter-spacing: 0.1em; text-transform: uppercase;
-  color: var(--ink-mute);
-}
-
-.sb-batch-row {
-  display: grid;
-  grid-template-columns: 90px 1fr 100px 120px 80px 70px 80px 1fr;
-  padding: 7px 16px;
-  border-bottom: 1px solid var(--hairline);
-  cursor: pointer;
-  transition: background .12s;
-  align-items: center;
-}
-.sb-batch-row:hover { background: color-mix(in srgb, var(--bg-side) 60%, transparent); }
-.sb-batch-row--active { background: color-mix(in srgb, var(--hop) 5%, transparent); }
-
-.sb-batch-row__ref {
-  font-family: "JetBrains Mono", ui-monospace, monospace;
-  font-size: 0.62rem; letter-spacing: 0.06em; color: var(--ink-mute);
-}
-.sb-batch-row__name {
-  font-family: "Fraunces", "Times New Roman", serif;
-  font-variation-settings: "opsz" 9;
-  font-size: 0.88rem; font-weight: 300;
-  color: var(--ink); letter-spacing: -0.01em;
-}
-.sb-batch-row__name em { font-style: italic; color: var(--oak); }
-
-.sb-batch-row__td {
-  font-family: "JetBrains Mono", ui-monospace, monospace;
-  font-size: 0.6rem; letter-spacing: 0.04em; color: var(--ink-mute);
-}
-.sb-batch-row__link {
-  font-family: "JetBrains Mono", ui-monospace, monospace;
-  font-size: 0.56rem; letter-spacing: 0.1em; text-transform: uppercase;
-  color: var(--oak); text-decoration: none;
-  transition: color .15s;
-}
-.sb-batch-row__link:hover { color: var(--oak-deep); }
-
-/* Phase pill */
-.sb-phase-pill {
-  display: inline-flex; align-items: center; gap: 4px;
-  font-family: "JetBrains Mono", ui-monospace, monospace;
-  font-size: 0.52rem; letter-spacing: 0.1em; text-transform: uppercase;
-  padding: 2px 7px; border-radius: 2px;
-}
-.sb-phase-pill--brewing   { color: var(--ember); background: color-mix(in srgb, var(--ember) 9%, transparent); border: 1px solid color-mix(in srgb, var(--ember) 25%, transparent); }
-.sb-phase-pill--fermenting { color: var(--bbt);  background: color-mix(in srgb, var(--bbt) 9%, transparent);   border: 1px solid color-mix(in srgb, var(--bbt) 25%, transparent); }
-.sb-phase-pill--racking   { color: var(--oak);  background: color-mix(in srgb, var(--oak) 9%, transparent);   border: 1px solid color-mix(in srgb, var(--oak) 25%, transparent); }
-.sb-phase-pill--packaging  { color: var(--hop);  background: color-mix(in srgb, var(--hop) 9%, transparent);   border: 1px solid color-mix(in srgb, var(--hop) 25%, transparent); }
-
-/* Batch list empty state */
-.sb-batch-list-empty {
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  padding: 40px 24px; gap: 10px;
-}
-.sb-batch-list-empty__icon { font-size: 2rem; opacity: 0.15; }
-.sb-batch-list-empty__msg {
-  font-family: "DM Sans", sans-serif;
-  font-size: 0.82rem; color: var(--ink-faint); text-align: center;
-}
-.sb-batch-list-empty__sub {
-  font-family: "JetBrains Mono", ui-monospace, monospace;
-  font-size: 0.56rem; letter-spacing: 0.06em; color: var(--ink-faint);
-  text-align: center;
-}
 
 /* ══════════════════════════════════════════════════════════════
    GHOST STRIP — recently closed lots
@@ -1248,12 +1070,6 @@ body.sb-board .sb-batch-list-observed-count {
   .sb-zone:nth-child(4) { border-right: 1px solid var(--hairline); }
   .sb-zone:nth-child(5) { border-right: none; }
 
-  .sb-batch-list__head,
-  .sb-batch-row {
-    grid-template-columns: 80px 1fr 90px 100px 70px 1fr;
-  }
-  .sb-batch-list__th:nth-child(5),
-  .sb-batch-row > *:nth-child(5) { display: none; }
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -1270,16 +1086,82 @@ body.sb-board .sb-batch-list-observed-count {
     border-right: none;
     border-bottom: 1px solid var(--hairline);
   }
-  .sb-batch-list__head,
-  .sb-batch-row {
-    grid-template-columns: 70px 1fr 80px 1fr;
-  }
-  .sb-batch-list__th:nth-child(n+3):nth-child(-n+7),
-  .sb-batch-row > *:nth-child(n+3):nth-child(-n+7) { display: none; }
-  .sb-batch-list__th:nth-child(3),
-  .sb-batch-row > *:nth-child(3),
-  .sb-batch-list__th:nth-child(8),
-  .sb-batch-row > *:nth-child(8) { display: block; }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   BATCH DETAIL STUB (Atom 18) — sb-batch-stub namespace
+   Minimal placeholder for sb-batch.php; full drill-in = Atom 19.
+   Reuses sb-board layout shell (body.sb-board).
+   ══════════════════════════════════════════════════════════════ */
+body.sb-batch .main {
+  align-items: stretch;
+}
+body.sb-board.sb-batch .sb-batch-stub {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 48px 24px;
+}
+body.sb-board.sb-batch .sb-batch-stub__inner {
+  max-width: 560px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+body.sb-board.sb-batch .sb-batch-stub__back-link {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.58rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--oak);
+  text-decoration: none;
+  transition: color .15s;
+}
+body.sb-board.sb-batch .sb-batch-stub__back-link:hover { color: var(--oak-deep); }
+body.sb-board.sb-batch .sb-batch-stub__label {
+  display: block;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.52rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin-bottom: 6px;
+}
+body.sb-board.sb-batch .sb-batch-stub__title {
+  font-family: "Fraunces", "Times New Roman", serif;
+  font-variation-settings: "opsz" 96;
+  font-size: 1.5rem;
+  font-weight: 300;
+  color: var(--ink);
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+body.sb-board.sb-batch .sb-batch-stub__placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 28px 24px;
+  background: var(--bg-elev);
+  border: 1px dashed var(--hairline);
+  border-radius: 4px;
+}
+body.sb-board.sb-batch .sb-batch-stub__placeholder-icon {
+  font-size: 1.5rem;
+  opacity: 0.15;
+}
+body.sb-board.sb-batch .sb-batch-stub__placeholder-msg {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.92rem;
+  color: var(--ink-mute);
+}
+body.sb-board.sb-batch .sb-batch-stub__placeholder-sub {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.54rem;
+  letter-spacing: 0.05em;
+  color: var(--ink-faint);
 }
 
 /*
@@ -1289,12 +1171,21 @@ body.sb-board .sb-batch-list-observed-count {
 */
 
 /* ══════════════════════════════════════════════════════════════
-   SYNC PILL — atom 6 polling timestamp (populated via JS)
+   BOARD CONTROLS — sync pill + admin retro-link, right-aligned
+   Both elements sit in a shared flex row so their layout is
+   self-contained and cannot overlap regardless of pill width.
    ══════════════════════════════════════════════════════════════ */
-body.sb-board .sb-sync-ts {
+body.sb-board .sb-board-controls {
   position: absolute;
   top: 8px; right: 16px;
   z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ── Sync pill — atom 6 polling timestamp (populated via JS) ── */
+body.sb-board .sb-sync-ts {
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 0.62rem;
   letter-spacing: 0.08em;
@@ -1314,9 +1205,8 @@ body.sb-board .sb-sync-ts:not(:empty) { opacity: 0.85; }
    RETRO-LINK — Atom 11.a (sb-rl-* namespace, body.sb-board)
    ══════════════════════════════════════════════════════════════ */
 
-/* ── Trigger button in batch-list header ── */
+/* ── Trigger button (flex child of .sb-board-controls, admin only) ── */
 body.sb-board .sb-rl-trigger {
-  margin-left: auto;
   padding: 3px 10px;
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 0.56rem;
