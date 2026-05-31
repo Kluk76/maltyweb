@@ -555,6 +555,21 @@ body.sb-board .main {
   z-index: 1;
   width: 100%;
 }
+
+/*
+ * Responsive wrapping variant for large fleets (18 CCTs, 8 BBTs).
+ * flex-wrap keeps vessels on multiple rows rather than overflowing horizontally.
+ * auto-fill minmax ensures each vessel gets a minimum cell and expands evenly.
+ * align-items: flex-end keeps vessel bases aligned on each row.
+ */
+.sb-vessel-row--wrap {
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: flex-end;
+  gap: 6px 8px;
+  padding-bottom: 18px; /* extra room for label below last row */
+}
+
 .sb-vessel {
   flex: 0 0 auto;
   position: relative;
@@ -568,6 +583,37 @@ body.sb-board .main {
 }
 .sb-vessel__label--occupied { color: var(--cold); }
 .sb-vessel__label--brewing  { color: var(--ember); }
+
+/*
+ * Stale-heel state: vessel has a residual batch > stale_heel_days old.
+ * Rendered as muted/faded to distinguish from both empty and active.
+ * The heel-badge (~) appears below the label as a low-severity hint.
+ */
+.sb-vessel--stale-heel {
+  opacity: 0.42;
+  filter: saturate(0.25);
+}
+.sb-vessel--stale-heel .sb-vessel__label {
+  color: var(--ink-faint);
+  font-style: italic;
+}
+.sb-vessel__heel-badge {
+  position: absolute;
+  bottom: -24px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.44rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  background: color-mix(in srgb, var(--ink-faint) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ink-faint) 30%, transparent);
+  border-radius: 2px;
+  padding: 1px 4px;
+  white-space: nowrap;
+  pointer-events: none;
+}
 
 /* Vessel sizing */
 .sb-vessel--cct-sm svg { width: 40px; height: auto; }

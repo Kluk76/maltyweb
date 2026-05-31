@@ -41,6 +41,10 @@ $csrf   = csrf_token();
 // (single-source-of-truth contract for all board reads).
 $closedMothers = sb_recent_closed_mothers($pdo, 3);
 
+// Atom 12: real fleet + observed occupancy (READ-ONLY projection from bd_* events).
+$fleet      = sb_fleet($pdo);            // ['cct'=>[...], 'bbt'=>[...], 'yt'=>[...], 'serving'=>[...]]
+$occupancy  = sb_observed_occupancy($pdo); // keyed "bbt-8" => [...], "cct-3" => [...], etc.
+
 // Total open mothers across all zones (expedition excluded by sb_open_mothers)
 $totalMothers = 0;
 foreach (SB_ZONES as $z) {
@@ -308,20 +312,47 @@ $jsBoardV      = @filemtime(__DIR__ . '/../js/sb-board.js')   ?: time();
           <?php else: ?>
           <div class="sb-zone-empty">
             <div class="sb-zone-empty__msg">Aucun lot en fermentation</div>
-            <div class="sb-zone-empty__msg" style="font-size:0.66rem;color:var(--ink-faint);">8 CCTs disponibles</div>
+            <div class="sb-zone-empty__msg" style="font-size:0.66rem;color:var(--ink-faint);"><?= count($fleet['cct']) ?> CCTs disponibles</div>
           </div>
           <?php endif ?>
         </div>
 
-        <!-- Vessel stage — 8 CCT vessels, all empty in v1 -->
+        <!-- Vessel stage — real CCT fleet from ref_cct, lit by observed occupancy -->
         <div class="sb-vessel-stage">
-          <div class="sb-vessel-row" aria-hidden="true">
-            <?php for ($i = 1; $i <= 8; $i++): ?>
-            <div class="sb-vessel sb-vessel--cct-sm">
-              <?= svg_vessel_cct($i, 0.0, 'empty', ['compact' => true]) ?>
-              <span class="sb-vessel__label">CCT-<?= $i ?></span>
+          <div class="sb-vessel-row sb-vessel-row--wrap">
+            <?php foreach ($fleet['cct'] as $vessel):
+                $vKey      = 'cct-' . $vessel['number'];
+                $occ       = $occupancy[$vKey] ?? null;
+                $isHeel    = ($occ !== null && !empty($occ['is_stale_heel']));
+                $isActive  = ($occ !== null && !$isHeel);
+                $fillPct   = 0.0;
+                $state     = 'empty';
+                $opts      = ['compact' => true];
+                if ($isActive && $vessel['capacity_hl'] !== null && $vessel['capacity_hl'] > 0) {
+                    $fillPct = min(1.0, max(0.0, $occ['remaining_hl'] / $vessel['capacity_hl']));
+                    $state   = 'active';
+                    $opts['recipe'] = $occ['recipe_name'];
+                    $opts['batch']  = $occ['batch'];
+                }
+                $vesselClass = 'sb-vessel sb-vessel--cct-sm';
+                $labelClass  = '';
+                if ($isActive) {
+                    $labelClass = ' sb-vessel__label--occupied';
+                } elseif ($isHeel) {
+                    $vesselClass .= ' sb-vessel--stale-heel';
+                }
+            ?>
+            <div class="<?= $vesselClass ?>"
+                 <?php if ($occ !== null): ?>
+                 title="CCT-<?= (int)$vessel['number'] ?>: <?= sbb_esc($occ['recipe_name']) ?> #<?= sbb_esc($occ['batch']) ?><?php if ($isHeel): ?> — heel résiduel (soutiré le <?= sbb_esc($occ['racked_on']) ?>)<?php else: ?> — <?= number_format($occ['remaining_hl'], 1) ?> HL restants<?php endif ?>"
+                 <?php endif ?>>
+              <?= svg_vessel_cct((int)$vessel['number'], $fillPct, $state, $opts) ?>
+              <span class="sb-vessel__label<?= $labelClass ?>">CCT-<?= (int)$vessel['number'] ?></span>
+              <?php if ($isHeel): ?>
+              <span class="sb-vessel__heel-badge" aria-label="Heel résiduel — à vérifier">~</span>
+              <?php endif ?>
             </div>
-            <?php endfor ?>
+            <?php endforeach ?>
           </div>
           <div class="sb-ground" aria-hidden="true"></div>
         </div>
@@ -351,20 +382,47 @@ $jsBoardV      = @filemtime(__DIR__ . '/../js/sb-board.js')   ?: time();
           <?php else: ?>
           <div class="sb-zone-empty">
             <div class="sb-zone-empty__msg">Aucun lot en soutirage</div>
-            <div class="sb-zone-empty__msg" style="font-size:0.66rem;color:var(--ink-faint);">3 BBTs disponibles</div>
+            <div class="sb-zone-empty__msg" style="font-size:0.66rem;color:var(--ink-faint);"><?= count($fleet['bbt']) ?> BBTs disponibles</div>
           </div>
           <?php endif ?>
         </div>
 
-        <!-- Vessel stage — 3 BBT vessels, all empty in v1 -->
+        <!-- Vessel stage — real BBT fleet from ref_bbt, lit by observed occupancy -->
         <div class="sb-vessel-stage">
-          <div class="sb-vessel-row" aria-hidden="true">
-            <?php for ($i = 1; $i <= 3; $i++): ?>
-            <div class="sb-vessel sb-vessel--bbt-sm">
-              <?= svg_vessel_bbt($i, 0.0, 'empty', ['compact' => true]) ?>
-              <span class="sb-vessel__label">BBT-<?= $i ?></span>
+          <div class="sb-vessel-row sb-vessel-row--wrap">
+            <?php foreach ($fleet['bbt'] as $vessel):
+                $vKey      = 'bbt-' . $vessel['number'];
+                $occ       = $occupancy[$vKey] ?? null;
+                $isHeel    = ($occ !== null && !empty($occ['is_stale_heel']));
+                $isActive  = ($occ !== null && !$isHeel);
+                $fillPct   = 0.0;
+                $state     = 'empty';
+                $opts      = ['compact' => true];
+                if ($isActive && $vessel['capacity_hl'] !== null && $vessel['capacity_hl'] > 0) {
+                    $fillPct = min(1.0, max(0.0, $occ['remaining_hl'] / $vessel['capacity_hl']));
+                    $state   = 'ready';
+                    $opts['recipe'] = $occ['recipe_name'];
+                    $opts['batch']  = $occ['batch'];
+                }
+                $vesselClass = 'sb-vessel sb-vessel--bbt-sm';
+                $labelClass  = '';
+                if ($isActive) {
+                    $labelClass = ' sb-vessel__label--occupied';
+                } elseif ($isHeel) {
+                    $vesselClass .= ' sb-vessel--stale-heel';
+                }
+            ?>
+            <div class="<?= $vesselClass ?>"
+                 <?php if ($occ !== null): ?>
+                 title="BBT-<?= (int)$vessel['number'] ?>: <?= sbb_esc($occ['recipe_name']) ?> #<?= sbb_esc($occ['batch']) ?><?php if ($isHeel): ?> — heel résiduel (soutiré le <?= sbb_esc($occ['racked_on']) ?>)<?php else: ?> — <?= number_format($occ['remaining_hl'], 1) ?> HL restants / <?= $vessel['capacity_hl'] !== null ? number_format($vessel['capacity_hl'], 0) . ' HL cap' : '—' ?><?php endif ?>"
+                 <?php endif ?>>
+              <?= svg_vessel_bbt((int)$vessel['number'], $fillPct, $state, $opts) ?>
+              <span class="sb-vessel__label<?= $labelClass ?>">BBT-<?= (int)$vessel['number'] ?></span>
+              <?php if ($isHeel): ?>
+              <span class="sb-vessel__heel-badge" aria-label="Heel résiduel — à vérifier">~</span>
+              <?php endif ?>
             </div>
-            <?php endfor ?>
+            <?php endforeach ?>
           </div>
           <div class="sb-ground" aria-hidden="true"></div>
         </div>

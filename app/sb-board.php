@@ -24,6 +24,10 @@ require_once __DIR__ . '/db.php';
 const SB_HEARTBEAT_GREEN_DEFAULT_HOURS = 24;
 const SB_HEARTBEAT_AMBER_DEFAULT_HOURS = 72;
 
+// ─── Occupancy defaults (mig 218 seeds commissioning_settings; until then use this) ───
+
+const SB_STALE_HEEL_DEFAULT_DAYS = 90;
+
 // ─── Zone mapping: latest child form_type → board zone ────────────────────────
 
 const SB_ZONE_MAP = [
@@ -58,6 +62,27 @@ function _sb_heartbeat_thresholds(PDO $pdo): array
     $amber = isset($rows['amber_max_hours']) ? (int) $rows['amber_max_hours'] : SB_HEARTBEAT_AMBER_DEFAULT_HOURS;
 
     return [$green, $amber];
+}
+
+/**
+ * Load the stale-heel age threshold from commissioning_settings (section='occupancy').
+ * Returns stale_heel_days as int. Falls back to SB_STALE_HEEL_DEFAULT_DAYS (90)
+ * when the row is absent (mig 218 seeds it).
+ */
+function _sb_occupancy_threshold(PDO $pdo): int
+{
+    $stmt = $pdo->prepare(
+        "SELECT COALESCE(value_num, default_num)
+           FROM commissioning_settings
+          WHERE section  = 'occupancy'
+            AND key_name = 'stale_heel_days'
+            AND is_active = 1
+          LIMIT 1"
+    );
+    $stmt->execute();
+    $val = $stmt->fetchColumn();
+
+    return ($val !== false && is_numeric($val)) ? (int) $val : SB_STALE_HEEL_DEFAULT_DAYS;
 }
 
 /**
@@ -641,4 +666,194 @@ function sb_recent_closed_mothers(PDO $pdo, int $limit = 3): array
         // Graceful degrade — table may not exist in test environments.
         return [];
     }
+}
+
+/**
+ * Active vessel fleet grouped by kind.
+ *
+ * Returns ['cct' => [...], 'bbt' => [...], 'yt' => [...], 'serving' => [...]]
+ * Each entry: ['number' => int, 'capacity_hl' => float]
+ * Ordered by number ASC within each group.
+ * Filter: status = 'active'.
+ */
+function sb_fleet(PDO $pdo): array
+{
+    $out = ['cct' => [], 'bbt' => [], 'yt' => [], 'serving' => []];
+
+    $tables = [
+        'cct'     => 'ref_cct',
+        'bbt'     => 'ref_bbt',
+        'yt'      => 'ref_yt',
+        'serving' => 'ref_serving_tanks',
+    ];
+
+    foreach ($tables as $kind => $table) {
+        $allowedFleetTables = ['ref_cct', 'ref_bbt', 'ref_yt', 'ref_serving_tanks'];
+        if (!in_array($table, $allowedFleetTables, true)) {
+            continue; // defensive: never interpolate an unlisted table
+        }
+        $stmt = $pdo->prepare(
+            "SELECT number, capacity_hl
+               FROM {$table}
+              WHERE status = 'active'
+              ORDER BY number ASC"
+        );
+        $stmt->execute();
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        foreach ($rows as $r) {
+            $out[$kind][] = [
+                'number'      => (int) $r['number'],
+                'capacity_hl' => $r['capacity_hl'] !== null ? (float) $r['capacity_hl'] : null,
+            ];
+        }
+    }
+
+    return $out;
+}
+
+/**
+ * Observed vessel occupancy derived from bd_racking_v2 and bd_packaging_v2.
+ *
+ * Derivation (PM-authored, binding):
+ *   A batch (neb_recipe_id_fk, neb_batch) is IN vessel X iff:
+ *   1. Its LATEST racking row (by COALESCE(event_date, DATE(submitted_at)) DESC,
+ *      submitted_at DESC) points to X's kind + number.
+ *   2. SUM(bd_packaging_v2.vendable_hl) for the same recipe+batch is STRICTLY LESS
+ *      than the racked HL (batch not yet fully packaged out).
+ *
+ * Key constraints (each has bitten before):
+ *   - Vessel-centric: partition the latest-rack by (dest_type, vessel_number).
+ *   - Depletion joined on (recipe_id_fk, neb_batch) ONLY — bbt_source_fk / cct_source_fk
+ *     are 100% NULL and must never be used as join keys.
+ *   - packaged_hl > racked_hl is normal noise (multi-rack, loss) — not an error.
+ *   - Racking rows missing neb_recipe_id_fk or neb_batch are excluded.
+ *   - ONLY_FULL_GROUP_BY: use ANY_VALUE() for recipe_name.
+ *   - NULL vessel_number rows (data quality) are excluded via the key build step.
+ *
+ * Stale-heel gate (mig 218 / Atom 12 PM ruling):
+ *   A vessel occupancy is ACTIVE only if its latest racking date is within
+ *   stale_heel_days of today (read from commissioning_settings, default 90).
+ *   Beyond that threshold the occupancy is a SUPPRESSED HEEL: the row is
+ *   returned with is_stale_heel=true so the renderer can show a muted badge
+ *   rather than a normal fill. Heels are never silently dropped.
+ *
+ * Returns array keyed by "<kind>-<number>" (e.g. "bbt-8"):
+ *   ['recipe_id' => int, 'recipe_name' => string, 'batch' => string,
+ *    'racked_on' => string (YYYY-MM-DD), 'racked_hl' => float,
+ *    'packaged_hl' => float, 'remaining_hl' => float,
+ *    'is_stale_heel' => bool]
+ *
+ * READ-ONLY. Writes nothing.
+ */
+function sb_observed_occupancy(PDO $pdo): array
+{
+    $stale_heel_days = _sb_occupancy_threshold($pdo);
+    $sql = "
+        WITH ranked_by_vessel AS (
+            SELECT
+                neb_recipe_id_fk,
+                neb_batch,
+                racking_destination_type,
+                bbt_number,
+                cct_number,
+                yt_number,
+                racked_vol_hl,
+                COALESCE(event_date, DATE(submitted_at)) AS rack_date,
+                submitted_at,
+                ROW_NUMBER() OVER (
+                    PARTITION BY racking_destination_type,
+                                 COALESCE(bbt_number, cct_number, yt_number)
+                    ORDER BY COALESCE(event_date, DATE(submitted_at)) DESC,
+                             submitted_at DESC
+                ) AS vessel_rn
+            FROM bd_racking_v2
+            WHERE neb_recipe_id_fk IS NOT NULL
+              AND neb_batch        IS NOT NULL
+              AND is_tombstoned = 0
+              AND (bbt_number IS NOT NULL OR cct_number IS NOT NULL OR yt_number IS NOT NULL)
+        ),
+        packaged AS (
+            SELECT
+                recipe_id_fk,
+                neb_batch,
+                SUM(COALESCE(vendable_hl, 0)) AS total_packaged_hl
+            FROM bd_packaging_v2
+            WHERE recipe_id_fk IS NOT NULL
+              AND neb_batch     IS NOT NULL
+              AND is_tombstoned = 0
+            GROUP BY recipe_id_fk, neb_batch
+        )
+        SELECT
+            rv.neb_recipe_id_fk                            AS recipe_id,
+            ANY_VALUE(rr.name)                             AS recipe_name,
+            rv.neb_batch                                   AS batch,
+            rv.racking_destination_type                    AS dest_type,
+            rv.bbt_number,
+            rv.cct_number,
+            rv.yt_number,
+            rv.rack_date                                   AS racked_on,
+            rv.racked_vol_hl                               AS racked_hl,
+            COALESCE(p.total_packaged_hl, 0)               AS packaged_hl,
+            rv.racked_vol_hl - COALESCE(p.total_packaged_hl, 0) AS remaining_hl
+        FROM ranked_by_vessel rv
+        LEFT JOIN ref_recipes rr
+               ON rr.id = rv.neb_recipe_id_fk
+        LEFT JOIN packaged p
+               ON p.recipe_id_fk = rv.neb_recipe_id_fk
+              AND p.neb_batch    = rv.neb_batch
+        WHERE rv.vessel_rn = 1
+          AND rv.racked_vol_hl IS NOT NULL
+          AND rv.racked_vol_hl > COALESCE(p.total_packaged_hl, 0)
+        ORDER BY rv.racking_destination_type, rv.bbt_number, rv.cct_number, rv.yt_number
+    ";
+
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute();
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $out = [];
+    foreach ($rows as $r) {
+        $dest_type = $r['dest_type'];
+        if ($dest_type === null) {
+            continue;
+        }
+        $kind = strtolower($dest_type);
+
+        $num = null;
+        if ($dest_type === 'BBT' && $r['bbt_number'] !== null) {
+            $num = (int) $r['bbt_number'];
+        } elseif ($dest_type === 'CCT' && $r['cct_number'] !== null) {
+            $num = (int) $r['cct_number'];
+        } elseif ($dest_type === 'YT' && $r['yt_number'] !== null) {
+            $num = (int) $r['yt_number'];
+        }
+
+        if ($num === null) {
+            continue; // exclude rows with no vessel number (data quality gap)
+        }
+
+        $key = $kind . '-' . $num;
+
+        // Stale-heel age gate: compute days since latest racking.
+        // A bad/unparseable racking date is treated as stale (fail loud, refuse-don't-NULL).
+        $racked_ts    = strtotime((string) $r['racked_on']);
+        $age_days     = $racked_ts !== false
+            ? (int) floor((time() - $racked_ts) / 86400)
+            : 0;
+        $is_stale_heel = ($racked_ts === false) || ($age_days > $stale_heel_days);
+
+        $out[$key] = [
+            'recipe_id'     => (int) $r['recipe_id'],
+            'recipe_name'   => (string) ($r['recipe_name'] ?? ''),
+            'batch'         => (string) $r['batch'],
+            'racked_on'     => (string) $r['racked_on'],
+            'racked_hl'     => (float) $r['racked_hl'],
+            'packaged_hl'   => (float) $r['packaged_hl'],
+            'remaining_hl'  => (float) $r['remaining_hl'],
+            'is_stale_heel' => $is_stale_heel,
+        ];
+    }
+
+    return $out;
 }
