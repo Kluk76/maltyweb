@@ -3451,7 +3451,7 @@ body.auth::after {
 /* Individual tank card */
 .home .tank-card {
   border: 1px solid var(--hairline-2);
-  background: linear-gradient(160deg, rgba(25, 20, 15, 0.65), rgba(10, 9, 8, 0.42));
+  background: var(--bg-elev);
   border-radius: 2px;
   padding: 18px 16px 16px;
   display: flex;
@@ -3460,7 +3460,8 @@ body.auth::after {
   gap: 12px;
   position: relative;
   overflow: hidden;
-  transition: border-color .2s, background .2s;
+  box-shadow: 0 1px 3px rgba(60,40,20,0.10), inset 0 1px 0 rgba(255,255,255,0.35);
+  transition: border-color .2s, background .2s, box-shadow .2s;
 }
 
 .home .tank-card::before {
@@ -3490,8 +3491,9 @@ body.auth::after {
 
 /* Hover state */
 .home .tank-card:hover {
-  border-color: var(--hairline);
-  background: linear-gradient(160deg, rgba(30, 24, 17, 0.75), rgba(14, 12, 9, 0.55));
+  border-color: var(--hairline-2);
+  background: var(--bg-side);
+  box-shadow: 0 2px 6px rgba(60,40,20,0.14), inset 0 1px 0 rgba(255,255,255,0.28);
 }
 
 /* SVG wrapper — extended height accommodates legs + CIP arm overhang */
@@ -3542,7 +3544,7 @@ body.auth::after {
 .home .tank-card__vol {
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 12px;
-  color: var(--hop-soft);
+  color: var(--hop);
   letter-spacing: 0.04em;
 }
 
@@ -3585,7 +3587,7 @@ body.auth::after {
   font-family: "Fraunces", serif;
   font-style: italic;
   font-size: 18px;
-  color: var(--ink-faint);
+  color: var(--ink-mute);
   line-height: 1;
 }
 
@@ -4468,8 +4470,8 @@ body.auth::after {
 .home .pkg-format-bar {
   margin-top: 4px;
   padding: 18px 20px;
-  background: linear-gradient(135deg, rgba(25, 20, 15, 0.55), rgba(12, 10, 7, 0.35));
-  border: 1px solid var(--hairline-2);
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
   border-radius: 2px;
 }
 
@@ -11431,4 +11433,688 @@ body.approv-fournisseurs .af-zoom-level {
   min-width: 36px;
   text-align: center;
   user-select: none;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   PKG-A2 — Packaging KPI Dashboard
+   Scoped under body.home (packaging.php uses body.home).
+   Component prefix: .pkg-kpi-*
+   ══════════════════════════════════════════════════════════════ */
+
+/* Dashboard outer container — 2-column grid for KPIs 1–4; full-width sections span both columns */
+.home .pkg-kpi-dashboard {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 28px;
+}
+
+/* KPI 2 (heatmap), Week table, QA grid, and Rhythm section occupy the full row */
+.home #pkg-kpi-2,
+.home #pkg-kpi-week,
+.home #pkg-kpi-qa,
+.home #pkg-kpi-rhythm {
+  grid-column: 1 / -1;
+}
+
+/* Individual KPI section card */
+.home .pkg-kpi-section {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  padding: 20px 22px 18px;
+}
+
+/* Contract section — visually distinct: cooler tint + bolder border */
+.home .pkg-kpi-section--contract {
+  background: color-mix(in srgb, var(--cold) 6%, var(--bg-elev));
+  border-color: color-mix(in srgb, var(--cold) 30%, var(--hairline));
+}
+
+/* Section header */
+.home .pkg-kpi-section__head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-bottom: 14px;
+}
+
+.home .pkg-kpi-section__title {
+  font-family: "Fraunces", "Times New Roman", serif;
+  font-variation-settings: "opsz" 36;
+  font-size: 15px;
+  font-weight: 400;
+  color: var(--ink);
+  margin: 0;
+}
+
+.home .pkg-kpi-section__sub {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--ink-mute);
+}
+
+/* Contract section head — badge + title inline */
+.home .pkg-kpi-section__contract-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-bottom: 14px;
+}
+
+.home .pkg-kpi-section__contract-badge {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 8.5px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--cold);
+  background: color-mix(in srgb, var(--cold) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--cold) 28%, transparent);
+  border-radius: 2px;
+  padding: 2px 7px;
+  line-height: 1.6;
+}
+
+/* Chart host: fills grid cell width; overflow prevents SVG overflow */
+.home .pkg-kpi-chart {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.home .pkg-kpi-chart svg {
+  display: block;
+  width: 100%;
+  min-width: 420px;
+  height: auto;
+}
+
+/* Legend row */
+.home .pkg-kpi-legend {
+  margin-top: 12px;
+}
+
+.home .pkg-kpi-legend__total {
+  margin-bottom: 8px;
+}
+
+.home .pkg-kpi-legend__total-num {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+}
+
+.home .pkg-kpi-legend__total-ev {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  color: var(--ink-mute);
+}
+
+.home .pkg-kpi-legend__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+}
+
+.home .pkg-kpi-legend__item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.home .pkg-kpi-legend__swatch {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 1px;
+  flex-shrink: 0;
+  position: relative;
+  top: -1px;
+  opacity: 0.85;
+}
+
+.home .pkg-kpi-legend__label {
+  font-family: "Fraunces", "Times New Roman", serif;
+  font-variation-settings: "opsz" 36;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.home .pkg-kpi-legend__hl {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  color: var(--ink-mute);
+  letter-spacing: 0.04em;
+}
+
+/* Informational note below a chart */
+.home .pkg-kpi-note {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  color: var(--ink-mute);
+  margin: 10px 0 0;
+}
+
+/* Empty state */
+.home .pkg-kpi-empty {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--ink-mute);
+  padding: 20px 0 4px;
+  margin: 0;
+}
+
+/* Loading placeholder */
+.home .pkg-kpi-loading {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--ink-faint);
+  margin: 0;
+  padding: 8px 0;
+}
+
+/* Tooltip — fixed position, floats above everything */
+.home .pkg-tooltip,
+.pkg-tooltip {
+  position: fixed;
+  background: var(--bg-side);
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px;
+  padding: 6px 11px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem;
+  color: var(--ink-soft);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .1s;
+  z-index: 900;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(36,27,16,.12);
+}
+
+.home .pkg-tooltip.visible,
+.pkg-tooltip.visible {
+  opacity: 1;
+}
+
+@media (max-width: 860px) {
+  .home .pkg-kpi-dashboard { grid-template-columns: 1fr; }
+  .home #pkg-kpi-week,
+  .home #pkg-kpi-qa,
+  .home #pkg-kpi-rhythm { grid-column: 1; }
+  .home .pkg-kpi-section { padding: 16px 14px 14px; }
+  .home .pkg-kpi-legend__list { gap: 8px 14px; }
+  .home .pkg-kpi-legend__label { font-size: 11px; }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   A3a — Current-week events table (.pkg-week-*)
+   Scoped under body.home, component prefix: .pkg-week-*
+   ══════════════════════════════════════════════════════════════ */
+
+.home .pkg-kpi-section__week-badge {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  background: var(--bg-side);
+  border: 1px solid var(--hairline);
+  border-radius: 2px;
+  padding: 2px 7px;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+.home .pkg-week-table-wrap {
+  overflow-x: auto;
+  margin-top: 4px;
+}
+
+.home .pkg-week-table {
+  width: 100%;
+  min-width: 580px;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.home .pkg-week-th {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  text-align: left;
+  padding: 4px 10px 6px;
+  border-bottom: 1px solid var(--hairline);
+  white-space: nowrap;
+}
+
+.home .pkg-week-th--num {
+  text-align: right;
+}
+
+.home .pkg-week-tr:hover .pkg-week-td {
+  background: var(--bg-side);
+}
+
+.home .pkg-week-td {
+  padding: 7px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--hairline) 45%, transparent);
+  color: var(--ink-soft);
+  font-family: "DM Sans", sans-serif;
+  font-size: 12.5px;
+  vertical-align: middle;
+  transition: background .08s;
+}
+
+.home .pkg-week-td--date {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--ink-mute);
+  white-space: nowrap;
+}
+
+.home .pkg-week-td--sku {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11.5px;
+  color: var(--ink);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+
+.home .pkg-week-td--num {
+  text-align: right;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11.5px;
+}
+
+.home .pkg-week-td-null {
+  color: var(--ink-faint);
+  font-size: 11px;
+}
+
+.home .pkg-week-td-sub {
+  font-size: 9px;
+  color: var(--ink-faint);
+  margin-left: 3px;
+  letter-spacing: 0.04em;
+}
+
+.home .pkg-week-loss {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--ink-mute);
+}
+
+.home .pkg-week-loss--mid {
+  color: var(--oak);
+}
+
+.home .pkg-week-loss--warn {
+  color: var(--ember);
+  font-weight: 500;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   A3b — QA overview grid (.pkg-qa-*)
+   ══════════════════════════════════════════════════════════════ */
+
+.home .pkg-qa-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 12px;
+  margin-top: 6px;
+}
+
+.home .pkg-qa-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 12px 14px 10px;
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+}
+
+.home .pkg-qa-kpi__num {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  color: var(--ink);
+  line-height: 1.1;
+}
+
+.home .pkg-qa-kpi__label {
+  font-family: "Fraunces", "Times New Roman", serif;
+  font-variation-settings: "opsz" 36;
+  font-size: 11px;
+  color: var(--ink-soft);
+  line-height: 1.3;
+}
+
+.home .pkg-qa-kpi__sub {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   A4 — Rhythm charts (.pkg-rhythm-*, .pkg-ytd-delta)
+   ══════════════════════════════════════════════════════════════ */
+
+.home .pkg-rhythm-sub-head {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  margin: 16px 0 8px;
+}
+
+.home .pkg-rhythm-sub-head--ytd {
+  margin-top: 28px;
+}
+
+.home .pkg-rhythm-chart {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.home .pkg-rhythm-chart svg {
+  display: block;
+  width: 100%;
+  min-width: 360px;
+  height: auto;
+}
+
+.home .pkg-ytd-delta {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  padding: 10px 14px;
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  margin-bottom: 12px;
+}
+
+.home .pkg-ytd-delta__num {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
+
+.home .pkg-ytd-delta__pct {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+
+.home .pkg-ytd-delta__label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  flex-basis: 100%;
+  order: -1;
+}
+
+.home .pkg-ytd-delta__vals {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  color: var(--ink-mute);
+  letter-spacing: 0.04em;
+  flex-basis: 100%;
+}
+
+@media (max-width: 860px) {
+  .home .pkg-qa-grid { grid-template-columns: repeat(2, 1fr); }
+  .home .pkg-qa-kpi__num { font-size: 14px; }
+  .home .pkg-ytd-delta__num { font-size: 18px; }
+  .home .pkg-ytd-delta__pct { font-size: 13px; }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   KPI 2 — SKU × Month heatmap grid (.pkg-skuheat-*)
+   Full-row section (grid-column 1/-1 set above on #pkg-kpi-2).
+   Intensity ramp: color-mix(--hop, --bg-elev) set inline by JS.
+   ══════════════════════════════════════════════════════════════ */
+
+/* Horizontal scroll wrapper (narrow viewports) */
+.home .pkg-skuheat__scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* The grid table itself */
+.home .pkg-skuheat {
+  border-collapse: collapse;
+  width: 100%;
+  min-width: 640px;
+  table-layout: fixed;
+}
+
+/* Column sizing: SKU label | 12 equal month cols | Total */
+.home .pkg-skuheat .pkg-skuheat__th-sku,
+.home .pkg-skuheat .pkg-skuheat__sku {
+  width: 72px;
+  min-width: 64px;
+}
+
+.home .pkg-skuheat .pkg-skuheat__th-tot,
+.home .pkg-skuheat .pkg-skuheat__total {
+  width: 64px;
+  min-width: 56px;
+}
+
+/* Header row */
+.home .pkg-skuheat thead tr {
+  border-bottom: 1px solid var(--hairline);
+}
+
+.home .pkg-skuheat__th-sku,
+.home .pkg-skuheat__th-mo,
+.home .pkg-skuheat__th-tot {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 8.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  text-align: center;
+  padding: 5px 3px 6px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.home .pkg-skuheat__th-sku {
+  text-align: left;
+  padding-left: 0;
+}
+
+.home .pkg-skuheat__th-tot {
+  color: var(--ink-mute);
+}
+
+/* Data rows */
+.home .pkg-skuheat__row td {
+  padding: 2px;
+}
+
+.home .pkg-skuheat__row + .home .pkg-skuheat__row {
+  border-top: 1px solid transparent;
+}
+
+/* SKU label cell */
+.home .pkg-skuheat__sku {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  color: var(--ink-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 2px 6px 2px 0 !important;
+  vertical-align: middle;
+}
+
+.home .pkg-skuheat__row--autres .pkg-skuheat__sku {
+  font-family: "DM Sans", sans-serif;
+  font-size: 9px;
+  letter-spacing: 0;
+  color: var(--ink-faint);
+}
+
+/* Month data cells */
+.home .pkg-skuheat__cell {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  letter-spacing: 0.02em;
+  text-align: center;
+  vertical-align: middle;
+  height: 28px;
+  border-radius: 2px;
+  /* background and color set by JS (dynamic intensity) */
+  cursor: default;
+  transition: filter 0.1s ease;
+  /* default: empty cell — faint hairline grid */
+  background: transparent;
+  color: var(--ink-soft);
+  outline: 1px solid color-mix(in srgb, var(--hairline) 40%, transparent);
+  outline-offset: -1px;
+}
+
+.home .pkg-skuheat__cell:hover {
+  filter: brightness(1.08);
+  outline-color: color-mix(in srgb, var(--hop) 50%, transparent);
+  z-index: 1;
+  position: relative;
+}
+
+/* Year total cell */
+.home .pkg-skuheat__total {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  color: var(--ink-mute);
+  text-align: right;
+  padding: 2px 0 2px 8px !important;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.home .pkg-skuheat__row--autres .pkg-skuheat__total {
+  color: var(--ink-faint);
+}
+
+/* Row separator (light line between data rows) */
+.home .pkg-skuheat tbody tr + tr td {
+  border-top: 1px solid color-mix(in srgb, var(--hairline) 35%, transparent);
+}
+
+/* Responsive: below 860px already collapses to 1-col grid;
+   heatmap keeps its min-width and scrolls horizontally */
+@media (max-width: 860px) {
+  .home .pkg-skuheat {
+    min-width: 560px;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   QA section redesign — sub-heads, CO2/O2 cards (.pkg-qa-sub-head,
+   .pkg-co2-*, .pkg-cons-grid)
+   ══════════════════════════════════════════════════════════════ */
+
+.home .pkg-qa-sub-head {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  margin: 20px 0 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.home .pkg-qa-sub-head:first-of-type {
+  margin-top: 4px;
+}
+
+/* O2/CO2 reading cards */
+.home .pkg-co2-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.home .pkg-co2-card {
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  padding: 8px 12px 7px;
+  min-width: 160px;
+}
+
+.home .pkg-co2-card__sku {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+}
+
+.home .pkg-co2-card__date {
+  font-size: 9px;
+  color: var(--ink-faint);
+  margin-left: 5px;
+}
+
+.home .pkg-co2-card__vals {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.home .pkg-co2-card__co2,
+.home .pkg-co2-card__o2 {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+
+.home .pkg-co2-card__n {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 8.5px;
+  color: var(--ink-faint);
+  margin-top: 3px;
+  letter-spacing: 0.04em;
+}
+
+/* Consumable scrap grid — reuses pkg-qa-grid but smaller tiles */
+.home .pkg-cons-grid {
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+}
+
+@media (max-width: 860px) {
+  .home .pkg-month-legend {
+    grid-template-columns: 48px repeat(12, 1fr) 40px;
+    font-size: 7px;
+  }
+  .home .pkg-co2-grid { flex-direction: column; }
+  .home .pkg-co2-card { min-width: 0; }
 }

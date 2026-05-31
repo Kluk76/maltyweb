@@ -12,6 +12,7 @@ $active_module = "packaging";
 $crumbs        = ["Accueil", "Packaging", "BBT & Conditionnement"];
 
 require_once __DIR__ . "/../../app/svg-tanks.php";
+require_once __DIR__ . "/../../app/packaging-stats.php";
 
 // --- Date helpers (FR locale) ---
 $monthsFR = [
@@ -230,6 +231,29 @@ try {
         $pkgTop5ByFormat[$r['fmt']][] = $r;
     }
 
+    // Packaging KPI dashboard data (V2-only, year-filtered by $pkgYear)
+    $pkgStatsNebByMonth         = pkg_neb_hl_by_month($pdo, $pkgYear);
+    $pkgStatsNebBySkuMonth      = pkg_neb_hl_by_sku_month($pdo, $pkgYear);
+    $pkgStatsNebByFormatMonth   = pkg_hl_by_format_month($pdo, $pkgYear);
+    $pkgStatsContractByFmtMonth = pkg_contract_hl_by_format_month($pdo, $pkgYear);
+
+    // A3a — current-week events (anchored to data max, no year filter)
+    $pkgWeekEvents = pkg_current_week_events($pdo);
+
+    // A3b — year QA metrics (summary card — kept for weekly view compatibility)
+    $pkgQaMetrics = pkg_qa_metrics($pdo, $pkgYear);
+
+    // Change 2/3 — canonical beer-loss and new QA section data
+    $pkgBeerLossByYear        = pkg_beer_loss_by_year($pdo);
+    $pkgBeerLossByFormatMonth = pkg_beer_loss_by_format_month($pdo, $pkgYear);
+    $pkgConsumableLossRates   = pkg_consumable_loss_rates($pdo, $pkgYear);
+    $pkgQaTrendByMonth        = pkg_qa_trend_by_month($pdo, $pkgYear);
+    $pkgCo2o2Readings         = pkg_co2o2_readings($pdo, $pkgYear);
+
+    // A4 — quarterly + monthly YTD (current + prior year)
+    $pkgQuarterlyHl = pkg_quarterly_hl($pdo, $pkgYear);
+    $pkgMonthlyYtd  = pkg_monthly_hl_ytd($pdo, $pkgYear);
+
     $dbError = null;
 
 } catch (Throwable $e) {
@@ -241,18 +265,33 @@ try {
     $pkgTotals       = ['hl_total' => 0, 'distinct_skus' => 0, 'pkg_events' => 0];
     $pkgByFormat     = [];
     $pkgTop5ByFormat = [];
-    $dbError         = $e->getMessage();
+    $pkgStatsNebByMonth         = [];
+    $pkgStatsNebBySkuMonth      = [];
+    $pkgStatsNebByFormatMonth   = [];
+    $pkgStatsContractByFmtMonth = [];
+    $pkgWeekEvents  = ['list' => [], 'week_label' => '', 'week_start' => '', 'week_end' => '', 'total_events' => 0];
+    $pkgQaMetrics   = ['year' => $pkgYear, 'total_events' => 0, 'qa_analyses_total' => 0, 'qa_library_total' => 0, 'unsaleable_total' => 0, 'loss_units_total' => 0, 'prod_units_total' => 0, 'loss_pct' => null, 'co2o2_events_with_measures' => 0, 'co2o2_total_events' => 0, 'avg_co2_where_measured' => null, 'avg_o2_where_measured' => null, 'n_co2o2_readings' => 0];
+    $pkgQuarterlyHl = [];
+    $pkgMonthlyYtd  = [];
+    $pkgBeerLossByYear        = [];
+    $pkgBeerLossByFormatMonth = [];
+    $pkgConsumableLossRates   = ['rateable' => [], 'raw_count' => []];
+    $pkgQaTrendByMonth        = [];
+    $pkgCo2o2Readings         = ['readings' => [], 'n_readings' => 0, 'n_events' => 0];
+    $dbError        = $e->getMessage();
 }
 
 $today = $asOfDT;
 
 // Precompute format bar segments (pct of total HL)
 $fmtTotalHl = array_sum(array_column($pkgByFormat, 'hl'));
+// Segment colors aligned with PKG_FORMAT_COLOR in packaging.js:
+// Bouteille→--hop, Canette→--ember, Fût→--oak, Cuve de service→--steel-mid
 $fmtColors  = [
     'Keg' => 'var(--oak)',
-    'Bot' => 'var(--hop-soft)',
+    'Bot' => 'var(--hop)',
     'Can' => 'var(--ember)',
-    'Cuve de service' => 'var(--steel)',
+    'Cuve de service' => 'var(--steel-mid)',
 ];
 $fmtLabels = ['Keg' => 'Fût', 'Bot' => 'Bouteille', 'Can' => 'Canette', 'Cuve de service' => 'Cuve de service'];
 ?><!doctype html>
@@ -330,6 +369,87 @@ $fmtLabels = ['Keg' => 'Fût', 'Bot' => 'Bouteille', 'Can' => 'Canette', 'Cuve d
       État actuel · <?= htmlspecialchars(fmt_date_fr_tanks_full($todayDT, $monthsFRFull)) ?>
     </div>
   <?php endif ?>
+
+  <!-- ══════════════════════════════════════════════════════════
+       BBT Tank Grid — FIRST content block (operator request A0/T1)
+       Positioned at top so current fill state is immediately visible.
+       ══════════════════════════════════════════════════════════ -->
+  <section class="tanks-section" aria-label="Tanks de garde BBT">
+    <div class="wort-section__head">
+      <h2 class="tanks-section__title">Tanks de garde <span class="tanks-section__tag">BBT</span></h2>
+      <span class="wort-section__label">— <?= $occupiedBbt ?> occupé<?= $occupiedBbt !== 1 ? 's' : '' ?> sur <?= $totalBbt ?> actifs</span>
+    </div>
+
+    <div class="tanks-grid">
+      <?php foreach ($bbtRef as $bbt):
+        $num      = (int)$bbt['number'];
+        $capHl    = (float)$bbt['capacity_hl'];
+        $status   = $bbt['status'];
+        $occ      = $bbtOccMap[$num] ?? null;
+        $isMaint  = ($status === 'maintenance' || $status === 'retired');
+
+        if ($isMaint) {
+            $stateClass = 'tank-card--maint';
+            $svgState   = 'maint';
+            $fillRatio  = 0.0;
+        } elseif ($occ === null) {
+            $stateClass = 'tank-card--empty';
+            $svgState   = '';
+            $fillRatio  = 0.0;
+        } else {
+            $stateClass = 'tank-card--bbt-occ';
+            $svgState   = 'bbt';
+            $remainHl   = (float)($occ['remaining_hl'] ?? 0);
+            $fillRatio  = $capHl > 0 ? min(1.0, $remainHl / $capHl) : 0.0;
+        }
+      ?>
+      <div class="tank-card <?= $stateClass ?>">
+        <div class="tank-card__svg">
+          <?= svg_bbt($fillRatio, $svgState, $num, (string)($occ['beer'] ?? '')) ?>
+        </div>
+
+        <?php if ($isMaint): ?>
+          <div class="tank-card__info">
+            <span class="tank-card__cap tanks-mute"><?= htmlspecialchars(number_format($capHl, 0)) ?> HL</span>
+            <span class="tank-badge tank-badge--maint"><?= htmlspecialchars($status) ?></span>
+          </div>
+
+        <?php elseif ($occ === null): ?>
+          <div class="tank-card__info">
+            <span class="tank-card__empty-label">—</span>
+            <span class="tank-card__cap tanks-mute"><?= htmlspecialchars(number_format($capHl, 0)) ?> HL</span>
+          </div>
+
+        <?php else:
+          $beerLabel = htmlspecialchars($occ['recipe_short_name'] ?? $occ['beer'] ?? '');
+          $batch     = htmlspecialchars($occ['batch'] ?? '');
+          $remainHl  = (float)($occ['remaining_hl'] ?? 0);
+          $blendStr  = $occ['blend_str'] ?? '';
+          $rackDate  = !empty($occ['rack_date'])
+              ? fmt_date_fr_tanks($occ['rack_date'], $monthsFR)
+              : '—';
+
+          $daysInBbt = 0;
+          if (!empty($occ['rack_date'])) {
+              $rackDT    = new DateTimeImmutable($occ['rack_date']);
+              $daysInBbt = (int)$rackDT->diff($today)->days;
+          }
+        ?>
+          <div class="tank-card__info">
+            <span class="tank-card__beer"><?= $beerLabel ?></span>
+            <span class="tank-card__batch tanks-mono"><?= $batch ?></span>
+            <span class="tank-card__vol"><?= htmlspecialchars(number_format($remainHl, 1)) ?> HL</span>
+            <?php if ($blendStr !== ''): ?>
+              <span class="tank-card__sub tanks-mute"><?= htmlspecialchars($blendStr) ?></span>
+            <?php endif ?>
+            <span class="tank-card__brewdate tanks-mute"><?= htmlspecialchars($rackDate) ?></span>
+            <span class="tank-badge tank-badge--days">J+<?= $daysInBbt ?></span>
+          </div>
+        <?php endif ?>
+      </div>
+      <?php endforeach ?>
+    </div>
+  </section>
 
   <!-- Packaging KPI section -->
   <section class="tanks-section pkg-stats" aria-label="Statistiques de conditionnement">
@@ -436,85 +556,74 @@ $fmtLabels = ['Keg' => 'Fût', 'Bot' => 'Bouteille', 'Can' => 'Canette', 'Cuve d
     <?php endif ?>
   </section>
 
-  <!-- BBT Section -->
-  <section class="tanks-section" aria-label="Tanks de garde BBT">
-    <div class="wort-section__head">
-      <h2 class="tanks-section__title">Tanks de garde <span class="tanks-section__tag">BBT</span></h2>
-      <span class="wort-section__label">— <?= $occupiedBbt ?> occupé<?= $occupiedBbt !== 1 ? 's' : '' ?> sur <?= $totalBbt ?> actifs</span>
+  <!-- ════════════════════════════════════════════════════════
+       KPI Dashboard (KPIs 1–4) — year-filtered, JS-rendered
+       Year controlled by the pkg_year selector already on page.
+       ════════════════════════════════════════════════════════ -->
+  <section class="tanks-section pkg-kpi-dashboard" aria-label="Tableau de bord KPI conditionnement <?= $pkgYear ?>">
+
+    <!-- KPI 1: Total Nébuleuse HL par mois -->
+    <div class="pkg-kpi-section" id="pkg-kpi-1" aria-live="polite">
+      <p class="pkg-kpi-loading">Chargement KPI 1…</p>
     </div>
 
-    <div class="tanks-grid">
-      <?php foreach ($bbtRef as $bbt):
-        $num      = (int)$bbt['number'];
-        $capHl    = (float)$bbt['capacity_hl'];
-        $status   = $bbt['status'];
-        $occ      = $bbtOccMap[$num] ?? null;
-        $isMaint  = ($status === 'maintenance' || $status === 'retired');
-
-        if ($isMaint) {
-            $stateClass = 'tank-card--maint';
-            $svgState   = 'maint';
-            $fillRatio  = 0.0;
-        } elseif ($occ === null) {
-            $stateClass = 'tank-card--empty';
-            $svgState   = '';
-            $fillRatio  = 0.0;
-        } else {
-            $stateClass = 'tank-card--bbt-occ';
-            $svgState   = 'bbt';
-            $remainHl   = (float)($occ['remaining_hl'] ?? 0);
-            $fillRatio  = $capHl > 0 ? min(1.0, $remainHl / $capHl) : 0.0;
-        }
-      ?>
-      <div class="tank-card <?= $stateClass ?>">
-        <div class="tank-card__svg">
-          <?= svg_bbt($fillRatio, $svgState, $num, (string)($occ['beer'] ?? '')) ?>
-        </div>
-
-        <?php if ($isMaint): ?>
-          <div class="tank-card__info">
-            <span class="tank-card__cap tanks-mute"><?= htmlspecialchars(number_format($capHl, 0)) ?> HL</span>
-            <span class="tank-badge tank-badge--maint"><?= htmlspecialchars($status) ?></span>
-          </div>
-
-        <?php elseif ($occ === null): ?>
-          <div class="tank-card__info">
-            <span class="tank-card__empty-label">—</span>
-            <span class="tank-card__cap tanks-mute"><?= htmlspecialchars(number_format($capHl, 0)) ?> HL</span>
-          </div>
-
-        <?php else:
-          $beerLabel = htmlspecialchars($occ['recipe_short_name'] ?? $occ['beer'] ?? '');
-          $batch     = htmlspecialchars($occ['batch'] ?? '');
-          $remainHl  = (float)($occ['remaining_hl'] ?? 0);
-          $blendStr  = $occ['blend_str'] ?? '';
-          $rackDate  = !empty($occ['rack_date'])
-              ? fmt_date_fr_tanks($occ['rack_date'], $monthsFR)
-              : '—';
-
-          $daysInBbt = 0;
-          if (!empty($occ['rack_date'])) {
-              $rackDT    = new DateTimeImmutable($occ['rack_date']);
-              $daysInBbt = (int)$rackDT->diff($today)->days;
-          }
-        ?>
-          <div class="tank-card__info">
-            <span class="tank-card__beer"><?= $beerLabel ?></span>
-            <span class="tank-card__batch tanks-mono"><?= $batch ?></span>
-            <span class="tank-card__vol"><?= htmlspecialchars(number_format($remainHl, 1)) ?> HL</span>
-            <?php if ($blendStr !== ''): ?>
-              <span class="tank-card__sub tanks-mute"><?= htmlspecialchars($blendStr) ?></span>
-            <?php endif ?>
-            <span class="tank-card__brewdate tanks-mute"><?= htmlspecialchars($rackDate) ?></span>
-            <span class="tank-badge tank-badge--days">J+<?= $daysInBbt ?></span>
-          </div>
-        <?php endif ?>
-      </div>
-      <?php endforeach ?>
+    <!-- KPI 2: Nébuleuse HL par SKU exact par mois -->
+    <div class="pkg-kpi-section" id="pkg-kpi-2" aria-live="polite">
+      <p class="pkg-kpi-loading">Chargement KPI 2…</p>
     </div>
+
+    <!-- KPI 3: Nébuleuse HL par format par mois -->
+    <div class="pkg-kpi-section" id="pkg-kpi-3" aria-live="polite">
+      <p class="pkg-kpi-loading">Chargement KPI 3…</p>
+    </div>
+
+    <!-- KPI 4: Contract HL par format par mois (own section, visually distinct) -->
+    <div class="pkg-kpi-section pkg-kpi-section--contract" id="pkg-kpi-4" aria-live="polite">
+      <p class="pkg-kpi-loading">Chargement KPI 4…</p>
+    </div>
+
+    <!-- A3a: Cette semaine — current-week events table (JS-rendered) -->
+    <div class="pkg-kpi-section" id="pkg-kpi-week" aria-live="polite">
+      <p class="pkg-kpi-loading">Chargement semaine…</p>
+    </div>
+
+    <!-- A3b: QA overview — year-filtered (JS-rendered) -->
+    <div class="pkg-kpi-section" id="pkg-kpi-qa" aria-live="polite">
+      <p class="pkg-kpi-loading">Chargement QA…</p>
+    </div>
+
+    <!-- A4: Quarterly + YTD rhythm with prior-year comparison (JS-rendered) -->
+    <div class="pkg-kpi-section" id="pkg-kpi-rhythm" aria-live="polite">
+      <p class="pkg-kpi-loading">Chargement rythme…</p>
+    </div>
+
   </section>
 
 </main>
+
+<!-- Floating tooltip for SVG chart hovers -->
+<div class="pkg-tooltip" id="pkg-tooltip"></div>
+
+<script>
+window.PKG_STATS = <?= json_encode([
+    'year'                        => $pkgYear,
+    'neb_hl_by_month'             => $pkgStatsNebByMonth,
+    'neb_hl_by_sku_month'         => $pkgStatsNebBySkuMonth,
+    'neb_hl_by_format_month'      => $pkgStatsNebByFormatMonth,
+    'contract_hl_by_format_month' => $pkgStatsContractByFmtMonth,
+    'week_events'                 => $pkgWeekEvents,
+    'qa_metrics'                  => $pkgQaMetrics,
+    'quarterly_hl'                => $pkgQuarterlyHl,
+    'monthly_ytd'                 => $pkgMonthlyYtd,
+    // Change 2/3 — canonical beer-loss + new QA section
+    'beer_loss_by_year'           => array_values($pkgBeerLossByYear),
+    'beer_loss_by_format_month'   => $pkgBeerLossByFormatMonth,
+    'consumable_loss_rates'       => $pkgConsumableLossRates,
+    'qa_trend_by_month'           => $pkgQaTrendByMonth,
+    'co2o2_readings'              => $pkgCo2o2Readings,
+], JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+</script>
+<script defer src="/js/packaging.js?v=<?= @filemtime(__DIR__ . '/../js/packaging.js') ?: time() ?>"></script>
 
 </body>
 </html>

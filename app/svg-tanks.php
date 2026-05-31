@@ -26,7 +26,7 @@ function svg_cct(
     $fullThreshold = 0.85;
     $isUnderfilled = $variant === 'fill' && $isFerm && $fillRatio > 0 && $fillRatio < $fullThreshold;
     if ($isMaint) {
-        $fillColour  = '#cfc6b2';
+        $fillColour  = 'var(--tank-empty)';
         $fillOpacity = '0.5';
     } elseif ($isCold) {
         $fillColour  = 'var(--cold)';
@@ -241,7 +241,7 @@ function svg_bbt(float $fillRatio, string $stateClass = '', int $number = 0, str
 
     $isMaint = str_contains($stateClass, 'maint');
     if ($isMaint) {
-        $fillColour  = '#cfc6b2';
+        $fillColour  = 'var(--tank-empty)';
         $fillOpacity = '0.5';
     } else {
         $fillColour  = 'var(--bbt)';
