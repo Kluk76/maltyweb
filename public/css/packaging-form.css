@@ -708,4 +708,35 @@ body.op-form-packaging .pf-co2o2-override-block {
   border: 1px solid color-mix(in srgb, var(--ember) 20%, transparent);
   border-radius: 5px;
 }
+
+/* ── In-tank CO₂/O₂ single-pair card ────────────────────────────────────── */
+body.op-form-packaging .pf-tank-read-hint {
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+  margin-bottom: 0.75rem;
+}
+
+body.op-form-packaging .pf-tank-read-grid {
+  margin-bottom: 0.75rem;
+}
+
+/* Inherit banner: shown when an existing lot-day reading is found */
+body.op-form-packaging .pf-tank-read-inherit-banner {
+  margin-bottom: 0.75rem;
+  padding: 0.6rem 1rem;
+  background: color-mix(in srgb, var(--cold) 8%, var(--bg-elev));
+  border: 1px solid color-mix(in srgb, var(--cold) 30%, transparent);
+  border-radius: 5px;
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+  font-style: italic;
+  line-height: 1.5;
+}
+
+/* Read-only in-tank inputs: visually greyed to signal locked state */
+body.op-form-packaging .pf-tank-read-input--readonly {
+  background: color-mix(in srgb, var(--bg-elev) 50%, transparent);
+  color: var(--ink-soft);
+  cursor: not-allowed;
+  border-color: color-mix(in srgb, var(--ink-faint) 60%, transparent);
 }

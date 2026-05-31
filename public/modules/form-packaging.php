@@ -373,11 +373,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ? $eventDateRaw
             : date('Y-m-d');
 
-        // CO₂/O₂ session measurements — up to 20 pairs, POSTed as co2o2[N][co2|o2].
+        // In-filling CO₂/O₂ measurements — up to 20 pairs, POSTed as co2o2[N][co2|o2].
+        // These are reads taken FROM FINISHED UNITS during filling (QA Mesures losses).
+        // Written to bd_packaging_readings (keyed on packaging_v2_id). NOT the in-tank gate read.
         // A reading is "present" when co2 OR o2 is non-empty; fully-blank rows are skipped.
-        // reading_index = N + 1 (1-based, matches bd_packaging_co2o2_measures.reading_index).
         $co2o2Raw = $_POST['co2o2'] ?? [];
-        $co2o2Pairs = [];  // [['co2_gl'=>float|null,'o2_ppb'=>float|null,'measured_at'=>null], ...]
+        $co2o2Pairs = [];  // [['reading_index'=>int,'co2_gl'=>float|null,'o2_ppb'=>float|null], ...]
         if (is_array($co2o2Raw)) {
             $pairIdx = 0;
             foreach ($co2o2Raw as $pairRaw) {
@@ -385,19 +386,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $co2Val = isset($pairRaw['co2']) && $pairRaw['co2'] !== '' ? (float)$pairRaw['co2'] : null;
                 $o2Val  = isset($pairRaw['o2'])  && $pairRaw['o2']  !== '' ? (float)$pairRaw['o2']  : null;
                 if ($co2Val === null && $o2Val === null) continue; // skip fully-blank rows
-                // Time-of-reading removed from the form (operator request) — always null.
-                $measAt = null;
                 if ($pairIdx < 20) { // cap at 20
                     $co2o2Pairs[] = [
                         'reading_index' => $pairIdx + 1,
                         'co2_gl'        => $co2Val,
                         'o2_ppb'        => $o2Val,
-                        'measured_at'   => $measAt,
                     ];
                     $pairIdx++;
                 }
             }
         }
+
+        // In-TANK CO₂/O₂ read — single pair taken from the BBT/CCT BEFORE filling.
+        // One per lot-day (beer, batch, date). This is the gate metric.
+        $tankCo2 = isset($_POST['tank_co2']) && $_POST['tank_co2'] !== '' ? (float)$_POST['tank_co2'] : null;
+        $tankO2  = isset($_POST['tank_o2'])  && $_POST['tank_o2']  !== '' ? (float)$_POST['tank_o2']  : null;
 
         // CIP events (decision 4) — parsed via shared infra; written to bd_cip_events after upsert.
         // Packaging uses filler+kze as the inline-combine pair (not centri+kze like racking).
@@ -427,85 +430,95 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ? (string)$_POST['tank_reading_override_reason'] : null)
             : null;
 
-        // ── 1b. Lot-day anchor resolution (mig 240) ──────────────────────────
-        // Re-query authoritatively: never trust the client's co2o2_inherit_anchor_id alone.
-        // An anchor = a main row, not tombstoned, not a reuse, owns its reads
-        // (tank_reading_session_id_fk IS NULL), and has ≥1 co2o2 row.
-        // NULL-safe lot-day key: Neb lane (recipe_id_fk + neb_batch) or
-        // Contract lane (recipe_id_fk IS NULL + contract_beer + contract_batch).
-        $lotDayAnchorId = null;
-        {
-            $anchorSql = "SELECT p.id
-               FROM bd_packaging_v2 p
-              WHERE p.row_origin = 'main'
-                AND p.is_tombstoned = 0
-                AND p.reuses_packaging_id_fk IS NULL
-                AND p.tank_reading_session_id_fk IS NULL
-                AND EXISTS (SELECT 1 FROM bd_packaging_co2o2_measures c WHERE c.packaging_id_fk = p.id)
-                AND p.event_date <=> ?
-                AND p.recipe_id_fk <=> ?
-                AND (
-                    (p.recipe_id_fk IS NOT NULL AND p.neb_batch <=> ?)
-                    OR
-                    (p.recipe_id_fk IS NULL AND p.contract_beer <=> ? AND p.contract_batch <=> ?)
-                )
-              ORDER BY p.event_date DESC, p.id DESC LIMIT 1";
-            $anchorStmt = $pdo->prepare($anchorSql);
-            $anchorStmt->execute([
-                $eventDate,
-                $recipeIdFk,
-                $recipeIdFk !== null ? ($nebBatch !== '' ? $nebBatch : null) : null,
-                $recipeIdFk === null ? ($contractBeer !== '' ? $contractBeer : null) : null,
-                $recipeIdFk === null ? ($contractBatch !== '' ? $contractBatch : null) : null,
-            ]);
-            $anchorRow = $anchorStmt->fetchColumn();
-            $lotDayAnchorId = ($anchorRow !== false) ? (int)$anchorRow : null;
+        // ── 1b. Reused-cuve exempt check ──────────────────────────────────────
+        // When the main format row carries reuses_packaging_id_fk != null, this is
+        // a re-allocation of an existing cuve — no new tank fill, so no in-tank read needed.
+        $isReuseSession = false;
+        foreach (($_POST['formats'] ?? []) as $fRaw) {
+            if (($fRaw['row_origin'] ?? 'main') === 'main') {
+                $rawR = isset($fRaw['reuses_packaging_id_fk']) && $fRaw['reuses_packaging_id_fk'] !== ''
+                    ? (int)$fRaw['reuses_packaging_id_fk'] : null;
+                if ($rawR !== null && $rawR > 0) {
+                    $isReuseSession = true;
+                }
+                break;
+            }
         }
 
-        // ── 1c. Determine tank-reading ownership for this session ─────────────
-        // Case a: operator entered reads → session OWNS reads (fresh anchor or fork)
-        // Case b: no reads AND anchor exists → INHERIT
-        // Case c: no reads AND no anchor → GATE (first lot-day run, reads required)
-        $operatorEnteredReads = !empty($co2o2Pairs);
+        // ── 1c. In-tank read gate (bd_tank_readings) ─────────────────────────
+        // NULL-safe lot-day key lookup for both lanes:
+        //   Neb lane:      recipe_id_fk <=> $recipeIdFk AND neb_batch <=> $nebBatch
+        //   Contract lane: recipe_id_fk IS NULL AND contract_beer <=> $contractBeer AND contract_batch <=> $contractBatch
+        // Mode: inherit (existing row found) | own (operator entered values, insert deferred to tx)
+        //       | overridden (no read, admin override) | exempt (reused-cuve session)
+        $tankReadId   = null;
+        $tankReadMode = 'exempt';
 
-        if ($operatorEnteredReads) {
-            // Case a: own
-            $effectiveAnchorMode = 'own';
-            $sessionTankReadingFk = null; // main row gets NULL (owns reads)
-        } elseif ($lotDayAnchorId !== null) {
-            // Case b: inherit
-            $effectiveAnchorMode = 'inherit';
-            $sessionTankReadingFk = $lotDayAnchorId;
-        } else {
-            // Case c: gate — first run of lot-day with no reads → block unless overridden
-            if ($tankReadingOverrideFlag === 1) {
-                $effectiveAnchorMode = 'overridden';
-                $sessionTankReadingFk = null; // no reads, no anchor
-            } else {
-                throw new RuntimeException(
-                    "Relevés in-tank CO₂/O₂ requis pour la première saisie de ce lot-jour " .
-                    "(toutes formes, y compris cuve). Saisir au moins une mesure, " .
-                    "ou utiliser l'override manager/admin si les relevés ne sont pas disponibles."
+        if (!$isReuseSession) {
+            // Try to find an existing lot-day row in bd_tank_readings
+            if ($recipeIdFk !== null) {
+                // Neb lane
+                $trStmt = $pdo->prepare(
+                    "SELECT id FROM bd_tank_readings
+                      WHERE recipe_id_fk <=> ?
+                        AND neb_batch    <=> ?
+                        AND read_date    <=> ?
+                      LIMIT 1"
                 );
+                $trStmt->execute([
+                    $recipeIdFk,
+                    ($nebBatch !== '' ? $nebBatch : null),
+                    $eventDate,
+                ]);
+            } else {
+                // Contract lane
+                $trStmt = $pdo->prepare(
+                    "SELECT id FROM bd_tank_readings
+                      WHERE recipe_id_fk IS NULL
+                        AND contract_beer  <=> ?
+                        AND contract_batch <=> ?
+                        AND read_date      <=> ?
+                      LIMIT 1"
+                );
+                $trStmt->execute([
+                    ($contractBeer  !== '' ? $contractBeer  : null),
+                    ($contractBatch !== '' ? $contractBatch : null),
+                    $eventDate,
+                ]);
+            }
+            $existingTrRow = $trStmt->fetchColumn();
+
+            if ($existingTrRow !== false) {
+                // Inherit: lot-day already has an in-tank reading
+                $tankReadId   = (int)$existingTrRow;
+                $tankReadMode = 'inherit';
+            } elseif ($tankCo2 !== null || $tankO2 !== null) {
+                // Own: operator entered at least one value — insert inside the transaction
+                $tankReadMode = 'own';
+            } else {
+                // Gate: no existing read and operator didn't enter one
+                if ($tankReadingOverrideFlag === 1) {
+                    $tankReadMode = 'overridden';
+                } else {
+                    throw new RuntimeException(
+                        "Relevé in-tank CO₂/O₂ requis avant soutirage (toutes formes, y compris cuve). " .
+                        "Saisir la mesure, ou utiliser l'override manager/admin."
+                    );
+                }
             }
         }
 
         // ── 2. QC flag ─────────────────────────────────────────────────────
-        // Evaluate each CO₂/O₂ pair; take the worst flag across all pairs.
-        // When no pairs were submitted, no CO₂/O₂ QC check is performed.
+        // Evaluate the IN-TANK single pair (the gate metric).
+        // When no in-tank read is present (exempt / overridden), no QC check.
         $qcFlag = 'normal';
-        foreach ($co2o2Pairs as $pair) {
-            $pairMeasurements = array_filter([
-                'bbt_co2' => $pair['co2_gl'],
-                'bbt_o2'  => $pair['o2_ppb'],
+        if ($tankCo2 !== null || $tankO2 !== null) {
+            $tankMeasurements = array_filter([
+                'bbt_co2' => $tankCo2,
+                'bbt_o2'  => $tankO2,
             ], fn($v) => $v !== null);
-            if (!empty($pairMeasurements)) {
-                $pairFlag = bd_qc_flag($pairMeasurements);
-                // Escalate: outlier > elevated > normal
-                $order = ['normal' => 0, 'elevated' => 1, 'outlier' => 2];
-                if (($order[$pairFlag] ?? 0) > ($order[$qcFlag] ?? 0)) {
-                    $qcFlag = $pairFlag;
-                }
+            if (!empty($tankMeasurements)) {
+                $qcFlag = bd_qc_flag($tankMeasurements);
             }
         }
 
@@ -517,8 +530,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($qcFlag !== 'normal') $baseAuditTokens[] = "qc_{$qcFlag}";
         if ($horsProcessFlag === 1) $baseAuditTokens[] = 'hors_process_override';
         if ($tankReadingOverrideFlag === 1) $baseAuditTokens[] = 'tank_reading_override';
-        if ($effectiveAnchorMode === 'inherit') $baseAuditTokens[] = 'co2o2_inherited';
-        if ($effectiveAnchorMode === 'own') $baseAuditTokens[] = 'co2o2_own';
+        if ($tankReadMode === 'inherit')   $baseAuditTokens[] = 'tank_read_inherited';
+        if ($tankReadMode === 'own')       $baseAuditTokens[] = 'tank_read_own';
+        if ($tankReadMode === 'exempt')    $baseAuditTokens[] = 'tank_read_exempt';
 
         // Per-row audit tokens are built inside the format loop below.
         // $baseAuditTokens is the session-level base; each row appends row-local tokens.
@@ -840,17 +854,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     // CIP: flat cip_tank_*/cip_machines_* columns are intentionally NOT written
                     // from the web form — CIP now goes to bd_cip_events via cip_upsert().
                     // Historical flat columns remain in the table for legacy ingest rows only.
-                    // CO₂/O₂ measurements are NOT on bd_packaging_v2 rows — they live in
-                    // bd_packaging_co2o2_measures (mig 232) linked to the main row id.
-                    // Written after the upsert loop via the dedicated persist block below.
-                    // tank_reading_session_id_fk (mig 240):
-                    //   main row: $sessionTankReadingFk (NULL=own/overridden; anchorId=inherit)
-                    //   parallel rows: WILL BE SET in the write loop after main is inserted.
-                    //   Sentinel '_needs_effective_anchor' for parallel rows is replaced in
-                    //   the write loop once effectiveAnchorId is known.
-                    'tank_reading_session_id_fk' => ($fOrigin === 'main')
-                        ? $sessionTankReadingFk
-                        : '_needs_effective_anchor',  // placeholder — replaced in write loop
+                    // tank_read_id_fk (mig 242): FK → bd_tank_readings.id.
+                    //   Set to $tankReadId when known at row-build time (inherit/exempt/overridden).
+                    //   'own' mode: $tankReadId is null here — replaced in the write loop after
+                    //   the bd_tank_readings INSERT returns the new id.
+                    //   Sentinel '_needs_tank_read_id' for 'own' mode rows is replaced in
+                    //   the write loop once the new in-tank row is inserted.
+                    'tank_read_id_fk' => ($tankReadMode === 'own')
+                        ? '_needs_tank_read_id'  // placeholder — replaced in write loop
+                        : $tankReadId,           // null (exempt/overridden) or existing id (inherit)
                     // Comments (on main row only; parallels inherit the session)
                     'comments'               => ($fOrigin === 'main') ? $comments : null,
                     // Hors Process override (migration 128 — columns absent until applied)
@@ -872,26 +884,62 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if (PACKAGING_WRITE_ENABLED) {
             // ── Live write path ──────────────────────────────────────────────────
-            // One transaction covers all format rows + CIP events for this session.
-            // bd_upsert + log_revision + cip_upsert are all atomic — a partial write
-            // would leave orphaned rows with no corresponding audit trail.
+            // One transaction covers: in-tank reading (own mode) + all format rows
+            // + CIP events + in-filling readings. Atomic — a partial write would
+            // leave orphaned rows with no corresponding audit trail.
             $pdo->beginTransaction();
             try {
                 $mainPackagingId = null;
-                // effectiveAnchorId is computed after the main row is inserted:
-                //   own       → mainRowId   (this session's main row owns reads)
-                //   inherit   → $lotDayAnchorId  (another row owns reads)
-                //   overridden→ null  (no reads, no anchor)
-                // All parallel rows in this session receive this value as their
-                // tank_reading_session_id_fk so COALESCE(tank_reading_session_id_fk,id)
-                // resolves every row to the read-owning row.
-                $effectiveAnchorId = null;
-                $effectiveAnchorResolved = false;
 
-                // Insert the main row FIRST so $mainPackagingId is known before any
-                // parallel row resolves its tank_reading_session_id_fk in 'own' mode
-                // (otherwise a parallel ordered ahead of the main locks effectiveAnchorId
-                // to a still-null main id). PHP 8 usort is stable → parallels keep order.
+                // ── Step A: insert in-tank reading if 'own' mode ─────────────────
+                // ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id) atomically handles
+                // a concurrent insert of the same lot-day (race → returns existing id).
+                if ($tankReadMode === 'own') {
+                    if ($recipeIdFk !== null) {
+                        // Neb lane: contract_* columns = NULL
+                        $trInsStmt = $pdo->prepare(
+                            "INSERT INTO bd_tank_readings
+                               (recipe_id_fk, neb_batch, contract_beer, contract_batch,
+                                read_date, co2_gl, o2_ppb, measured_at, bbt_source_fk,
+                                source, created_by)
+                             VALUES (?, ?, NULL, NULL, ?, ?, ?, NULL, ?, 'web_entry', ?)
+                             ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)"
+                        );
+                        $trInsStmt->execute([
+                            $recipeIdFk,
+                            ($nebBatch !== '' ? $nebBatch : null),
+                            $eventDate,
+                            $tankCo2,
+                            $tankO2,
+                            $sourceTankId,
+                            $me['username'],
+                        ]);
+                    } else {
+                        // Contract lane: recipe_id_fk = NULL, neb_batch = NULL
+                        $trInsStmt = $pdo->prepare(
+                            "INSERT INTO bd_tank_readings
+                               (recipe_id_fk, neb_batch, contract_beer, contract_batch,
+                                read_date, co2_gl, o2_ppb, measured_at, bbt_source_fk,
+                                source, created_by)
+                             VALUES (NULL, NULL, ?, ?, ?, ?, ?, NULL, ?, 'web_entry', ?)
+                             ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)"
+                        );
+                        $trInsStmt->execute([
+                            ($contractBeer  !== '' ? $contractBeer  : null),
+                            ($contractBatch !== '' ? $contractBatch : null),
+                            $eventDate,
+                            $tankCo2,
+                            $tankO2,
+                            $sourceTankId,
+                            $me['username'],
+                        ]);
+                    }
+                    $tankReadId = (int)$pdo->lastInsertId();
+                }
+
+                // ── Step B: upsert packaging rows ─────────────────────────────────
+                // Insert main row FIRST so $mainPackagingId is known before parallels.
+                // PHP 8 usort is stable → parallels keep their original order.
                 usort($rows, fn($a, $b) =>
                     (($a['origin'] ?? 'main') === 'main' ? 0 : 1)
                     <=> (($b['origin'] ?? 'main') === 'main' ? 0 : 1)
@@ -903,38 +951,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $skuIdResolved    = $rSpec['sku_id_fk'];
                     $suffixUsed       = $rSpec['format_suffix_used'];
 
-                    // Replace sentinel for parallel rows once effectiveAnchorId is known.
-                    if ($safeRow['tank_reading_session_id_fk'] === '_needs_effective_anchor') {
-                        // effectiveAnchorResolved is set after main row insert below.
-                        // For inherit/overridden it's already resolvable from pre-insert values.
-                        if (!$effectiveAnchorResolved) {
-                            // inherit: $lotDayAnchorId; overridden: null
-                            // own: $mainPackagingId (set in previous iteration)
-                            $effectiveAnchorId = match($effectiveAnchorMode) {
-                                'inherit'    => $lotDayAnchorId,
-                                'overridden' => null,
-                                default      => $mainPackagingId, // 'own'
-                            };
-                            $effectiveAnchorResolved = true;
-                        }
-                        $safeRow['tank_reading_session_id_fk'] = $effectiveAnchorId;
+                    // Replace 'own' sentinel now that $tankReadId is resolved.
+                    if ($safeRow['tank_read_id_fk'] === '_needs_tank_read_id') {
+                        $safeRow['tank_read_id_fk'] = $tankReadId;
                     }
 
                     $result           = bd_upsert($pdo, PACKAGING_LIVE_TABLE, $safeRow, $nkCols);
                     $rowId            = (int)$result['id'];
 
-                    // After main insert: compute effectiveAnchorId for subsequent parallel rows.
                     if ($rSpec['origin'] === 'main' && $mainPackagingId === null) {
                         $mainPackagingId = $rowId;
-                        if (!$effectiveAnchorResolved) {
-                            $effectiveAnchorId = match($effectiveAnchorMode) {
-                                'own'        => $mainPackagingId,
-                                'inherit'    => $lotDayAnchorId,
-                                'overridden' => null,
-                                default      => null,
-                            };
-                            $effectiveAnchorResolved = true;
-                        }
                     }
 
                     // Audit comment encodes vendable_hl provenance and SKU resolution status.
@@ -950,8 +976,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if (in_array('sku_unresolved', explode(',', $safeRow['audit_flags']), true)) {
                         $auditParts[] = "sku_id_fk unresolved (recipe={$recipeIdFk}, suffix=" . ($suffixUsed ?? 'null') . ")";
                     }
-                    if ($effectiveAnchorMode === 'inherit') {
-                        $auditParts[] = "co2o2 inherited from anchor #{$lotDayAnchorId}";
+                    if ($tankReadMode === 'inherit') {
+                        $auditParts[] = "in-tank read inherited from bd_tank_readings #{$tankReadId}";
                     } elseif ($tankReadingOverrideFlag === 1) {
                         $auditParts[] = "tank_reading_override: " . ($tankReadingOverrideReason ?? 'no reason given');
                     }
@@ -959,31 +985,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                     log_revision($pdo, $me, PACKAGING_LIVE_TABLE, $rowId, null, $safeRow, $qcFlag, $revisionComment);
                 }
-                // Write CIP events once, linked to the main packaging row.
+
+                // ── Step C: CIP events ────────────────────────────────────────────
                 if ($mainPackagingId !== null) {
                     cip_upsert($pdo, 'packaging', $mainPackagingId, $cipEvents, $cipMeta);
                 }
 
-                // Write CO₂/O₂ pairs to bd_packaging_co2o2_measures (idempotent: delete-then-insert).
-                // GATED: only write when this session OWNS reads (case a).
-                // Inheriting (case b) and overridden (case c) sessions do NOT write co2o2 rows.
-                if ($mainPackagingId !== null && $effectiveAnchorMode === 'own' && !empty($co2o2Pairs)) {
+                // ── Step D: in-filling reads → bd_packaging_readings ─────────────
+                // Idempotent delete-then-insert keyed on packaging_v2_id.
+                // Note column mapping: co2o2Pairs['co2_gl'] → co2; co2o2Pairs['o2_ppb'] → o2.
+                // Note table column: reading_idx (not reading_index).
+                if ($mainPackagingId !== null && !empty($co2o2Pairs)) {
                     $pdo->prepare(
-                        'DELETE FROM bd_packaging_co2o2_measures WHERE packaging_id_fk = ?'
+                        'DELETE FROM bd_packaging_readings WHERE packaging_v2_id = ?'
                     )->execute([$mainPackagingId]);
-                    $stCo2 = $pdo->prepare(
-                        'INSERT INTO bd_packaging_co2o2_measures
-                           (packaging_id_fk, reading_index, co2_gl, o2_ppb, measured_at, source)
-                         VALUES (?, ?, ?, ?, ?, ?)'
+                    $stFill = $pdo->prepare(
+                        'INSERT INTO bd_packaging_readings
+                           (packaging_id, packaging_v2_id, reading_idx, o2, co2)
+                         VALUES (NULL, ?, ?, ?, ?)'
                     );
                     foreach ($co2o2Pairs as $pair) {
-                        $stCo2->execute([
+                        $stFill->execute([
                             $mainPackagingId,
                             $pair['reading_index'],
-                            $pair['co2_gl'],
                             $pair['o2_ppb'],
-                            $pair['measured_at'],
-                            'web_entry',
+                            $pair['co2_gl'],
                         ]);
                     }
                 }
@@ -1498,53 +1524,35 @@ try {
         $cuveCandidates = [];
     }
 
-    // ── Lot-day anchor preload for CO₂/O₂ inheritance (mig 240) ─────────────
-    // An anchor = a main row that OWNS reads: row_origin='main', not tombstoned,
-    // not a reuse, tank_reading_session_id_fk IS NULL (it owns the reads), and
-    // has at least one co2o2 row. Window = last 60 days (keeps payload small).
-    // The reads array is loaded via a single JOIN and folded per anchor in PHP.
-    $tankAnchors = [];
+    // ── In-tank readings preload (bd_tank_readings, last 60 days) ───────────
+    // Used by JS to auto-fill the in-tank card when a matching lot-day read exists,
+    // and to show the inherit banner. Each entry carries the single co2_gl/o2_ppb pair.
+    // Window = last 60 days (keeps JS payload small).
+    $tankReadings = [];
     try {
-        $anchorStmt = $pdo->prepare(
-            "SELECT p.id, p.recipe_id_fk, p.neb_batch, p.contract_beer, p.contract_batch,
-                    p.event_date,
-                    c.co2_gl, c.o2_ppb, c.reading_index
-               FROM bd_packaging_v2 p
-               JOIN bd_packaging_co2o2_measures c ON c.packaging_id_fk = p.id
-              WHERE p.row_origin = 'main'
-                AND p.is_tombstoned = 0
-                AND p.reuses_packaging_id_fk IS NULL
-                AND p.tank_reading_session_id_fk IS NULL
-                AND p.event_date >= (CURDATE() - INTERVAL 60 DAY)
-              ORDER BY p.id ASC, c.reading_index ASC"
+        $trPreloadStmt = $pdo->prepare(
+            "SELECT id, recipe_id_fk, neb_batch, contract_beer, contract_batch,
+                    read_date, co2_gl, o2_ppb
+               FROM bd_tank_readings
+              WHERE read_date >= (CURDATE() - INTERVAL 60 DAY)
+              ORDER BY read_date DESC, id DESC"
         );
-        $anchorStmt->execute();
-        $anchorRowsRaw = $anchorStmt->fetchAll(PDO::FETCH_ASSOC);
-
-        // Fold co2o2 rows into per-anchor arrays
-        $anchorMap = [];
-        foreach ($anchorRowsRaw as $ar) {
-            $aid = (int)$ar['id'];
-            if (!isset($anchorMap[$aid])) {
-                $anchorMap[$aid] = [
-                    'id'               => $aid,
-                    'recipe_id_fk'     => $ar['recipe_id_fk'] !== null ? (int)$ar['recipe_id_fk'] : null,
-                    'neb_batch'        => $ar['neb_batch'],
-                    'contract_beer'    => $ar['contract_beer'],
-                    'contract_batch'   => $ar['contract_batch'],
-                    'event_date'       => $ar['event_date'],
-                    'reads'            => [],
-                ];
-            }
-            $anchorMap[$aid]['reads'][] = [
-                'co2_gl'  => $ar['co2_gl'] !== null  ? (float)$ar['co2_gl']  : null,
-                'o2_ppb'  => $ar['o2_ppb'] !== null  ? (float)$ar['o2_ppb']  : null,
+        $trPreloadStmt->execute();
+        foreach ($trPreloadStmt->fetchAll(PDO::FETCH_ASSOC) as $tr) {
+            $tankReadings[] = [
+                'id'             => (int)$tr['id'],
+                'recipe_id_fk'   => $tr['recipe_id_fk'] !== null ? (int)$tr['recipe_id_fk'] : null,
+                'neb_batch'      => $tr['neb_batch'],
+                'contract_beer'  => $tr['contract_beer'],
+                'contract_batch' => $tr['contract_batch'],
+                'read_date'      => $tr['read_date'],
+                'co2_gl'         => $tr['co2_gl'] !== null ? (float)$tr['co2_gl'] : null,
+                'o2_ppb'         => $tr['o2_ppb'] !== null ? (float)$tr['o2_ppb'] : null,
             ];
         }
-        $tankAnchors = array_values($anchorMap);
-    } catch (\Throwable $_anchorEx) {
-        // Column or table absent — degrade gracefully (pre-mig240 environments)
-        $tankAnchors = [];
+    } catch (\Throwable $_trEx) {
+        // Table absent — degrade gracefully
+        $tankReadings = [];
     }
 
     // ── Packaging clients for cuv dropdown ────────────────────────────────────
@@ -1613,7 +1621,7 @@ try {
     $recentPackaging    = [];
     $cipTypes           = [];
     $cuveCandidates     = [];
-    $tankAnchors        = [];
+    $tankReadings       = [];
     $linerMisForForm    = [];
     $allowedLinerIds    = [];
     $linerDefaultMiId   = 0;
@@ -1636,7 +1644,7 @@ $linerMisJson           = json_encode($linerMisForForm,     JSON_UNESCAPED_UNICO
 $runTypeLabelJson       = json_encode(RUN_TYPE_LABELS,     JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 $suffixLabelJson        = json_encode(FORMAT_SUFFIXES,     JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 $cuveCandidatesJson     = json_encode($cuveCandidates,     JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
-$tankAnchorsJson        = json_encode($tankAnchors,        JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
+$tankReadingsJson       = json_encode($tankReadings,       JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 
 // ── CIP partial config ────────────────────────────────────────────────────────
 // Packaging CIPs only the filling machine (Soutireuse / filler) and optionally
@@ -1841,6 +1849,68 @@ $cipConfig = [
       </div>
     </div><!-- card session -->
 
+    <!-- ── Section: Relevé in-tank CO₂/O₂ ──────────────────────────────────── -->
+    <!-- One pair per lot-day, taken from the BBT/CCT BEFORE filling.           -->
+    <!-- Gating metric: required on first run of a lot-day; auto-filled (read-  -->
+    <!-- only) on subsequent runs of the same lot-day.                           -->
+    <div class="op-form__card" id="pf-tank-read-card">
+      <div class="op-form__card-title">— relevé in-tank CO₂ / O₂</div>
+      <p class="op-form__hint pf-tank-read-hint">
+        Relevé in-tank pris sur la cuve avant soutirage — une seule paire par lot-jour.
+        Partagé entre tous les formats du même lot conditionné ce jour.
+      </p>
+
+      <!-- Auto-fill banner (shown by JS when a matching lot-day read is found) -->
+      <div id="pf-tank-read-inherit-banner" class="pf-tank-read-inherit-banner" hidden>
+        Relevé in-tank repris du lot-jour (lot déjà mesuré — champs verrouillés).
+      </div>
+
+      <div class="op-form__grid--3 op-form__grid pf-tank-read-grid">
+        <div class="op-form__field">
+          <label class="op-form__label" for="pf-tank-co2">
+            CO₂ in-tank <span class="op-form__unit">g/L</span>
+          </label>
+          <input id="pf-tank-co2" name="tank_co2" type="text" inputmode="decimal"
+                 class="op-form__input" placeholder="ex. 4.8"
+                 autocomplete="off">
+        </div>
+        <div class="op-form__field">
+          <label class="op-form__label" for="pf-tank-o2">
+            O₂ in-tank <span class="op-form__unit">ppb</span>
+          </label>
+          <input id="pf-tank-o2" name="tank_o2" type="text" inputmode="decimal"
+                 class="op-form__input" placeholder="ex. 25"
+                 autocomplete="off">
+        </div>
+      </div>
+
+      <?php if ($canOverride): ?>
+      <!-- Tank-reading override (manager/admin only — mirrors hors_process pattern) -->
+      <!-- Shown only when a tank is selected and no existing lot-day read is found. -->
+      <div class="pf-co2o2-override-block" id="pf-co2o2-override-block" hidden>
+        <label class="pf-override-label">
+          <input type="checkbox" id="pf-tank-reading-override-checkbox" class="pf-override-checkbox"
+                 name="tank_reading_override" value="1"
+                 aria-describedby="pf-tank-reading-override-desc">
+          <span class="pf-override-text">Override relevés in-tank</span>
+          <span class="pf-override-badge">Manager / Admin</span>
+        </label>
+        <p class="pf-override-desc" id="pf-tank-reading-override-desc">
+          Bypasse l'obligation de saisir les relevés CO₂/O₂ avant soutirage.
+          La saisie sera marquée <code>tank_reading_override</code> dans <code>audit_flags</code>.
+        </p>
+        <div class="pf-override-reason-row" id="pf-tank-reading-override-reason-row" hidden>
+          <label class="op-form__label pf-override-reason-label" for="tank_reading_override_reason">
+            Justification <span class="op-form__opt">(recommandé)</span>
+          </label>
+          <input id="tank_reading_override_reason" name="tank_reading_override_reason" type="text"
+                 class="op-form__input pf-override-reason-input"
+                 placeholder="ex. Premières mesures prises par le labo — saisie différée">
+        </div>
+      </div>
+      <?php endif ?>
+    </div><!-- card in-tank read -->
+
     <!-- ── Section: Formats de conditionnement (multi-format, decision 8) ── -->
     <div class="op-form__card">
       <div class="op-form__card-title">— formats conditionnés</div>
@@ -1863,21 +1933,13 @@ $cipConfig = [
       </button>
     </div><!-- card formats -->
 
-    <!-- ── Section: Mesures CO₂/O₂ (partagées pour la session) ──── -->
+    <!-- ── Section: Mesures CO₂/O₂ en cours de soutirage (in-filling) ──── -->
     <div class="op-form__card">
-      <div class="op-form__card-title">— mesures CO₂ / O₂</div>
+      <div class="op-form__card-title">— mesures CO₂/O₂ en cours de soutirage</div>
       <p class="op-form__hint pf-qa-hint">
-        Mesures relevées sur la cuve source — communes à tous les formats du run.
-        Jusqu'à 20 relevés par session.
+        Relevés pris sur les unités en cours de remplissage (pertes QA).
+        Jusqu'à 20 relevés.
       </p>
-
-      <!-- Inherit banner (shown by JS when a matching lot-day anchor is found) -->
-      <div id="pf-co2o2-inherit-banner" class="pf-co2o2-inherit-banner" hidden>
-        <!-- content injected by JS -->
-      </div>
-
-      <!-- Hidden input: set by JS when the operator accepts inherited reads -->
-      <input type="hidden" id="co2o2_inherit_anchor_id" name="co2o2_inherit_anchor_id" value="">
 
       <div id="pf-co2o2-list" class="pf-co2o2-list">
         <!-- Rows injected by JS (packaging-form.js: addCo2O2Row) -->
@@ -1887,32 +1949,7 @@ $cipConfig = [
               class="op-form__btn op-form__btn--secondary pf-co2o2-add-btn">
         + Ajouter une mesure
       </button>
-
-      <?php if ($canOverride): ?>
-      <!-- Tank-reading override (manager/admin only — mirrors hors_process pattern) -->
-      <div class="pf-co2o2-override-block" id="pf-co2o2-override-block" hidden>
-        <label class="pf-override-label">
-          <input type="checkbox" id="pf-tank-reading-override-checkbox" class="pf-override-checkbox"
-                 name="tank_reading_override" value="1"
-                 aria-describedby="pf-tank-reading-override-desc">
-          <span class="pf-override-text">Override relevés in-tank</span>
-          <span class="pf-override-badge">Manager / Admin</span>
-        </label>
-        <p class="pf-override-desc" id="pf-tank-reading-override-desc">
-          Bypasse l'obligation de saisir les relevés CO₂/O₂ pour la première saisie d'un lot-jour.
-          La saisie sera marquée <code>tank_reading_override</code> dans <code>audit_flags</code>.
-        </p>
-        <div class="pf-override-reason-row" id="pf-tank-reading-override-reason-row" hidden>
-          <label class="op-form__label pf-override-reason-label" for="tank_reading_override_reason">
-            Justification <span class="op-form__opt">(recommandé)</span>
-          </label>
-          <input id="tank_reading_override_reason" name="tank_reading_override_reason" type="text"
-                 class="op-form__input pf-override-reason-input"
-                 placeholder="ex. Premières mesures prises par le labo — saisie différée">
-        </div>
-      </div>
-      <?php endif ?>
-    </div><!-- card CO2/O2 -->
+    </div><!-- card in-filling CO2/O2 -->
 
     <!-- ── Section: White label ───────────────────────────────────── -->
     <div class="op-form__card">
@@ -2052,7 +2089,7 @@ window.RUN_TYPE_LABELS        = <?= $runTypeLabelJson ?>;
 window.FORMAT_SUFFIXES        = <?= $suffixLabelJson ?>;
 window.MIN_DAYS_AFTER_RACKING = <?= $minDays ?>;
 window.PF_CUVE_CANDIDATES     = <?= $cuveCandidatesJson ?>;
-window.PF_TANK_ANCHORS        = <?= $tankAnchorsJson ?>;
+window.PF_TANK_READINGS       = <?= $tankReadingsJson ?>;
 </script>
 
 <script src="/js/form-framework.js?v=<?= @filemtime(__DIR__ . '/../js/form-framework.js') ?: time() ?>" defer></script>
@@ -2090,8 +2127,10 @@ window.PF_TANK_ANCHORS        = <?= $tankAnchorsJson ?>;
  * formats[N][qa_library_units]→ qa_library_units
  * formats[N][loss_*_units]    → loss_*_units                      Per-type losses (decision 6)
  * formats[N][loss_liquid_*]   → loss_liquid_other_units
- * co2o2[N][co2]               → bd_packaging_co2o2_measures.co2_gl   Session-level (mig 232)
- * co2o2[N][o2]                → bd_packaging_co2o2_measures.o2_ppb   Up to 20 pairs per session
+ * tank_co2                    → bd_tank_readings.co2_gl            In-tank gate read (single pair, lot-day dedup)
+ * tank_o2                     → bd_tank_readings.o2_ppb            In-tank gate read (single pair, lot-day dedup)
+ * co2o2[N][co2]               → bd_packaging_readings.co2          In-filling reads (up to 20, keyed on packaging_v2_id)
+ * co2o2[N][o2]                → bd_packaging_readings.o2           In-filling reads (up to 20, keyed on packaging_v2_id)
  * [CIP — not written to bd_packaging_v2]
  * cip_machine_centri/kze/pump → bd_cip_events (source_form='packaging', target_kind='machine')
  * cip_vessel_0 (tank)         → bd_cip_events (source_form='packaging', target_kind='vessel', target_code='tank')
