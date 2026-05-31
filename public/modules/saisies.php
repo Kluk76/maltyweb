@@ -7,9 +7,9 @@ declare(strict_types=1);
  *               Soutirage      (/modules/form-racking.php)
  *               Brassage       (/modules/form-brewing.php)
  *               Fermentation   (/modules/form-fermenting.php)
+ *               Inventaire RM  (/modules/form-rm-stocktake.php)
  *
- * Placeholder cards (disabled) shown for forms not yet built:
- *               Inventaire RM  (form not yet built)
+ * All forms are active. No placeholder cards remain.
  */
 
 require __DIR__ . '/../../app/auth.php';
@@ -102,23 +102,15 @@ $active_module = 'saisies';
       <div class="sh-card__arrow">Ouvrir →</div>
     </a>
 
-  </div>
-
-  <!-- ── Upcoming forms (placeholder cards) ───────────────────────────── -->
-  <p class="sh-section-label">— à venir</p>
-  <div class="sh-grid">
-
-    <div class="sh-card sh-card--soon">
+    <a class="sh-card" href="/modules/form-rm-stocktake.php">
       <div class="sh-card__icon">📋</div>
-      <div class="sh-card__name">
-        Inventaire RM <span class="sh-card__badge">à venir</span>
-      </div>
+      <div class="sh-card__name">Inventaire RM</div>
       <div class="sh-card__desc">
         Saisie du stock physique de matières premières : comptage mensuel par
         ingrédient pour le suivi d'inventaire.
       </div>
-      <div class="sh-card__arrow">Bientôt disponible</div>
-    </div>
+      <div class="sh-card__arrow">Ouvrir →</div>
+    </a>
 
   </div>
 

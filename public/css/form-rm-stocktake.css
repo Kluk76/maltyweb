@@ -1,0 +1,218 @@
+/*
+ * form-rm-stocktake.css — Operator RM stocktake form styles.
+ *
+ * Scoped under body.form-rm-stocktake. Extends .op-form__* classes from app.css.
+ * No inline styles. Uses palette tokens from app.css :root block.
+ */
+
+/* ── Period selector card ─────────────────────────────────────────────────── */
+body.form-rm-stocktake .rms-period-card {
+  margin-bottom: 20px;
+}
+
+body.form-rm-stocktake .rms-period-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+body.form-rm-stocktake .rms-period-field {
+  flex: 0 0 auto;
+}
+
+body.form-rm-stocktake .rms-period-input {
+  width: 160px;
+}
+
+body.form-rm-stocktake .rms-period-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+body.form-rm-stocktake .rms-period-hint {
+  margin-top: 12px;
+  font-size: 0.82rem;
+  color: var(--ink-mute);
+  line-height: 1.5;
+}
+
+body.form-rm-stocktake .rms-period-hint--preloaded {
+  color: var(--hop);
+}
+
+body.form-rm-stocktake .rms-period-hint strong {
+  color: var(--ink-soft);
+  font-weight: 600;
+}
+
+/* ── Category card ────────────────────────────────────────────────────────── */
+body.form-rm-stocktake .rms-cat-card {
+  margin-bottom: 16px;
+  padding: 20px 24px;
+}
+
+body.form-rm-stocktake .rms-cat-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+body.form-rm-stocktake .rms-cat-count {
+  font-size: 0.65rem;
+  color: var(--ink-faint);
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  padding: 2px 8px;
+}
+
+/* ── MI table ─────────────────────────────────────────────────────────────── */
+body.form-rm-stocktake .rms-mi-table {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+body.form-rm-stocktake .rms-mi-header {
+  display: grid;
+  grid-template-columns: 1fr 180px 160px 70px;
+  gap: 10px;
+  padding: 0 4px 8px;
+  border-bottom: 1px solid var(--hairline);
+  margin-bottom: 4px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+@media (max-width: 640px) {
+  body.form-rm-stocktake .rms-mi-header {
+    display: none;
+  }
+}
+
+body.form-rm-stocktake .rms-mi-row {
+  display: grid;
+  grid-template-columns: 1fr 180px 160px 70px;
+  gap: 10px;
+  align-items: center;
+  padding: 5px 4px;
+  border-radius: 3px;
+  transition: background 0.1s;
+}
+
+body.form-rm-stocktake .rms-mi-row:hover {
+  background: color-mix(in srgb, var(--bg-side) 40%, transparent);
+}
+
+body.form-rm-stocktake .rms-mi-row--preloaded {
+  background: color-mix(in srgb, var(--hop) 5%, transparent);
+}
+
+body.form-rm-stocktake .rms-mi-row--preloaded:hover {
+  background: color-mix(in srgb, var(--hop) 10%, transparent);
+}
+
+@media (max-width: 640px) {
+  body.form-rm-stocktake .rms-mi-row {
+    grid-template-columns: 1fr auto;
+    grid-template-rows: auto auto;
+    padding: 10px 4px;
+    border-bottom: 1px solid var(--hairline);
+  }
+
+  body.form-rm-stocktake .rms-mi-row__id { display: none; }
+
+  body.form-rm-stocktake .rms-mi-row__name {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  body.form-rm-stocktake .rms-qty-input {
+    grid-column: 1;
+    grid-row: 2;
+    max-width: 140px;
+  }
+
+  body.form-rm-stocktake .rms-mi-row__unit {
+    grid-column: 2;
+    grid-row: 2;
+  }
+}
+
+body.form-rm-stocktake .rms-mi-row__name {
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-size: 0.88rem;
+  color: var(--ink);
+  cursor: pointer;
+  line-height: 1.3;
+}
+
+body.form-rm-stocktake .rms-mi-row__id {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.68rem;
+  color: var(--ink-faint);
+  letter-spacing: 0.03em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body.form-rm-stocktake .rms-qty-input {
+  padding: 6px 10px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.88rem;
+  text-align: right;
+}
+
+body.form-rm-stocktake .rms-qty-input--prefilled {
+  border-color: var(--hop);
+  background: color-mix(in srgb, var(--hop) 5%, var(--bg));
+}
+
+/* Remove browser number input spinners — clean look */
+body.form-rm-stocktake .rms-qty-input::-webkit-inner-spin-button,
+body.form-rm-stocktake .rms-qty-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+body.form-rm-stocktake .rms-qty-input[type=number] {
+  -moz-appearance: textfield;
+}
+
+body.form-rm-stocktake .rms-mi-row__unit {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.72rem;
+  color: var(--ink-mute);
+  letter-spacing: 0.04em;
+}
+
+/* ── Submit bar ───────────────────────────────────────────────────────────── */
+body.form-rm-stocktake .rms-submit-bar {
+  margin-top: 8px;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+body.form-rm-stocktake .rms-submit-hint {
+  flex: 1 1 auto;
+  font-size: 0.8rem;
+  color: var(--ink-mute);
+  font-style: italic;
+}
+
+/* ── Empty state ──────────────────────────────────────────────────────────── */
+body.form-rm-stocktake .rms-empty {
+  color: var(--ink-mute);
+  font-size: 0.88rem;
+  font-style: italic;
+  text-align: center;
+  padding: 20px 0;
+}
