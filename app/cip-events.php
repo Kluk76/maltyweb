@@ -64,7 +64,7 @@ declare(strict_types=1);
  * ══════════════════════════════════════════════════════════════════════════
  *
  * Public API:
- *   cip_parse_post(array $post, string $sourceForm): array   → events[]
+ *   cip_parse_post(array $post, string $sourceForm, ?array $combinePair = ['centri','kze'], ?string $combineAnchor = null): array   → events[]
  *   cip_upsert(PDO $pdo, string $sourceForm, int $parentId,
  *              array $events, array $meta): void
  *   cip_events_for(PDO $pdo, string $sourceForm, int $parentId): array
@@ -79,8 +79,8 @@ require_once __DIR__ . '/auth.php';               // current_user
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-/** Valid machine target_codes. */
-const CIP_MACHINE_CODES = ['centri', 'kze', 'pump', 'unspecified'];
+/** Valid machine target_codes. Must stay in lockstep with bd_cip_events.target_code ENUM. */
+const CIP_MACHINE_CODES = ['centri', 'kze', 'pump', 'unspecified', 'filler'];
 
 /** Valid vessel target_codes. */
 const CIP_VESSEL_CODES  = ['cct', 'yt', 'bbt', 'tank'];
@@ -102,23 +102,33 @@ const CIP_SOURCE_FORMS  = ['racking', 'brewing', 'packaging'];
  *     'cip_date'      => string|null,
  *     'cip_started_at'=> string|null  (HH:MM:SS),
  *     'cip_ended_at'  => string|null  (HH:MM:SS),
- *     'inline_group'  => int|null,    (shared id for centri+kze inline pair)
+ *     'inline_group'  => int|null,    (shared id for inline-combined pair)
  *     'notes'         => string|null,
  *   ]
  *
  * Rules:
  *   - Machine rows whose "CIP done" checkbox is off are silently skipped.
  *   - Vessel rows with cip_vessel_{N}_done != "1" are skipped.
- *   - cip_inline_combine = "1": centri + kze events share inline_group = 1.
+ *   - cip_inline_combine = "1": the two codes in $combinePair share inline_group = 1.
  *   - Times are normalised to HH:MM:SS (or null when absent).
  *   - sourceForm is validated against CIP_SOURCE_FORMS.
  *
- * @param array  $post       Raw POST array (pass $_POST or a slice thereof)
- * @param string $sourceForm 'racking'|'brewing'|'packaging'
- * @return array             Event records (may be empty)
+ * @param array       $post          Raw POST array (pass $_POST or a slice thereof)
+ * @param string      $sourceForm    'racking'|'brewing'|'packaging'
+ * @param array|null  $combinePair   Two machine codes that form the inline pair.
+ *                                   Defaults to ['centri','kze'] — preserving racking/brewing
+ *                                   behaviour byte-for-byte when callers pass no third arg.
+ *                                   Packaging passes ['filler','kze'].
+ * @param string|null $combineAnchor When set, enforces the anchor-requires rule: if a partner
+ *                                   event (the non-anchor member of $combinePair) appears in the
+ *                                   parsed result without an accompanying anchor event, the partner
+ *                                   is silently dropped (refuse-don't-NULL: never persist an
+ *                                   invalid partner-alone state).  Anchor-alone and anchor+partner
+ *                                   both pass through unchanged.  When null: no guard.
+ * @return array                     Event records (may be empty)
  * @throws InvalidArgumentException on invalid sourceForm
  */
-function cip_parse_post(array $post, string $sourceForm): array
+function cip_parse_post(array $post, string $sourceForm, ?array $combinePair = ['centri', 'kze'], ?string $combineAnchor = null): array
 {
     if (!in_array($sourceForm, CIP_SOURCE_FORMS, true)) {
         throw new InvalidArgumentException("cip_parse_post: unknown sourceForm '{$sourceForm}'");
@@ -131,18 +141,21 @@ function cip_parse_post(array $post, string $sourceForm): array
     // Only emitted by racking + packaging forms; brewing form passes no machine fields.
     $inlineCombine = (($post['cip_inline_combine'] ?? '0') === '1');
 
+    // Resolve the combine pair: default to ['centri','kze'] if null (keeps racking unchanged).
+    $resolvedPair = $combinePair ?? ['centri', 'kze'];
+
     if ($inlineCombine) {
         // ── SIMULTANÉ mode ───────────────────────────────────────────────────
-        // Read the single combined block. Emit TWO events (centri + kze) sharing
-        // inline_group=1 and identical date/type/start/end values.
-        // Individual cip_machine_centri_* / cip_machine_kze_* fields are NOT read —
-        // the UI hides and clears them when simultané is checked.
+        // Read the single combined block. Emit TWO events (one per code in $resolvedPair)
+        // sharing inline_group=1 and identical date/type/start/end values.
+        // Individual per-machine fields are NOT read — the UI hides and clears them
+        // when simultané is checked.
         $combinedTypeId = _cip_int($post['cip_combined_type_id'] ?? null);
         $combinedDate   = _cip_trim($post['cip_combined_date'] ?? null);
         $combinedStart  = _cip_time($post['cip_combined_start'] ?? null);
         $combinedEnd    = _cip_time($post['cip_combined_end'] ?? null);
 
-        foreach (['centri', 'kze'] as $code) {
+        foreach ($resolvedPair as $code) {
             $events[] = [
                 'target_kind'    => 'machine',
                 'target_code'    => $code,
@@ -172,8 +185,12 @@ function cip_parse_post(array $post, string $sourceForm): array
         }
     } else {
         // ── INDIVIDUAL mode ──────────────────────────────────────────────────
-        // Parse centri / kze / pump independently; inline_group stays NULL.
-        foreach (['centri', 'kze', 'pump'] as $code) {
+        // Parse each machine independently; inline_group stays NULL.
+        // Iterate pair codes + remaining user-submittable codes (pump, filler).
+        // Codes not present on the form simply won't have their checkbox set —
+        // the ($post["cip_machine_{$code}"] ?? '0') !== '1' guard skips them.
+        $individualCodes = array_unique(array_merge($resolvedPair, ['pump', 'filler']));
+        foreach ($individualCodes as $code) {
             if (($post["cip_machine_{$code}"] ?? '0') !== '1') {
                 continue;
             }
@@ -222,6 +239,42 @@ function cip_parse_post(array $post, string $sourceForm): array
             'inline_group'   => null,
             'notes'          => $notes,
         ];
+    }
+
+    // ── Anchor guard ────────────────────────────────────────────────────────
+    // When $combineAnchor is set, ensure the partner never appears without the anchor.
+    // This is the server-side enforcement of the config-driven UI constraint.
+    if ($combineAnchor !== null && !empty($resolvedPair)) {
+        // Identify the partner: the pair member that is not the anchor.
+        $cipGuardPartner = null;
+        foreach ($resolvedPair as $pairCode) {
+            if ($pairCode !== $combineAnchor) {
+                $cipGuardPartner = $pairCode;
+                break;
+            }
+        }
+        if ($cipGuardPartner !== null) {
+            // Determine whether the anchor and partner appear in the machine events.
+            $hasAnchor  = false;
+            $hasPartner = false;
+            foreach ($events as $ev) {
+                if ($ev['target_kind'] !== 'machine') {
+                    continue;
+                }
+                if ($ev['target_code'] === $combineAnchor) {
+                    $hasAnchor = true;
+                }
+                if ($ev['target_code'] === $cipGuardPartner) {
+                    $hasPartner = true;
+                }
+            }
+            // Partner without anchor: drop partner events (refuse-don't-NULL).
+            if ($hasPartner && !$hasAnchor) {
+                $events = array_values(array_filter($events, function (array $ev) use ($cipGuardPartner): bool {
+                    return !($ev['target_kind'] === 'machine' && $ev['target_code'] === $cipGuardPartner);
+                }));
+            }
+        }
     }
 
     return $events;
@@ -393,6 +446,7 @@ function cip_upsert(
  *       'centri' => event_row|null,
  *       'kze'    => event_row|null,
  *       'pump'   => event_row|null,
+ *       'filler' => event_row|null,
  *     ],
  *     'inline_groups' => [ group_id => [event_row, ...], ... ],
  *     'vessels' => [ event_row, ... ],   (ordered by id ASC)
@@ -425,7 +479,13 @@ function cip_events_for(PDO $pdo, string $sourceForm, int $parentId): array
     $stmt->execute([$sourceForm, $parentId]);
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    $machines = ['centri' => null, 'kze' => null, 'pump' => null];
+    // Derive the machines map from CIP_MACHINE_CODES so saved 'filler' events
+    // are not silently dropped on reopen/re-display (reopen-data-loss bug if missed).
+    // 'unspecified' is a DB-level fallback, not a display slot — exclude it.
+    $machines = array_fill_keys(
+        array_diff(CIP_MACHINE_CODES, ['unspecified']),
+        null
+    );
     $vessels  = [];
     $inlineGroups = [];
 

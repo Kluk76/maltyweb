@@ -293,8 +293,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $tankCo2 = post_decimal('tank_co2');
         $tankO2  = post_decimal('tank_o2');
 
-        // CIP events (decision 4) — parsed via shared infra; written to bd_cip_events after upsert
-        $cipEvents = cip_parse_post($_POST, 'packaging');
+        // CIP events (decision 4) — parsed via shared infra; written to bd_cip_events after upsert.
+        // Packaging uses filler+kze as the inline-combine pair (not centri+kze like racking).
+        // combineAnchor='filler' enforces that KZE-alone is dropped server-side.
+        $cipEvents = cip_parse_post($_POST, 'packaging', ['filler', 'kze'], 'filler');
 
         // Keg / cuv specific (decision 1 fields carried over)
         $kegClientDelivered = post_str('keg_client_delivered');
@@ -1103,23 +1105,20 @@ $runTypeLabelJson       = json_encode(RUN_TYPE_LABELS,     JSON_UNESCAPED_UNICOD
 $suffixLabelJson        = json_encode(FORMAT_SUFFIXES,     JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 
 // ── CIP partial config ────────────────────────────────────────────────────────
-// Packaging CIPs machines (centri/kze/pump) + a generic tank vessel.
-// The tank vessel uses code='tank' (no specific number — packaging CIPs
-// "the source tank" generically; the tank identity is already captured via
-// bbt_source_fk/cct_source_fk on the parent row, not repeated in CIP).
-// required=false: CIP is capturable but not mandated for packaging.
+// Packaging CIPs only the filling machine (Soutireuse / filler) and optionally
+// the KZE (flash pasteurizer) as an inline-combined pair. No centrifuge, no pump,
+// no generic tank vessel — those are racking/brewing concerns.
+//
+// combine_anchor='filler' enforces the constraint that filler is always present:
+// valid packaging CIP states are "Soutireuse alone" or "Soutireuse + KZE".
+// KZE-alone is impossible — the partial renders no independent KZE row and the
+// parser drops a forged partner-without-anchor submission.
 $cipConfig = [
-    'machines'            => ['centri', 'kze', 'pump'],
+    'machines'            => ['filler', 'kze'],
     'show_inline_combine' => true,
-    'vessels'             => [
-        [
-            'code'          => 'tank',
-            'number'        => null,
-            'label'         => 'CIP cuve',
-            'dynamic_label' => false,
-            'required'      => false,
-        ],
-    ],
+    'combine_pair'        => ['filler', 'kze'],
+    'combine_anchor'      => 'filler',
+    'vessels'             => [],
     'cip_types'           => $cipTypes,
     'existing'            => null,  // new submission only (no edit path yet)
 ];
