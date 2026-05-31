@@ -35,7 +35,8 @@
  * Reads: window.PF_CANDIDATES, window.PF_CANDIDATES_OVERRIDE, window.PF_CAN_OVERRIDE,
  *        window.PF_PACKAGING_CLIENTS, window.RUN_TYPE_LABELS, window.FORMAT_SUFFIXES,
  *        window.MIN_DAYS_AFTER_RACKING, window.PF_RECIPE_SKUS,
- *        window.PF_RECIPE_UNASSIGNED, window.PF_CUVE_CANDIDATES
+ *        window.PF_RECIPE_UNASSIGNED, window.PF_CUVE_CANDIDATES,
+ *        window.PF_TANK_ANCHORS
  */
 
 'use strict';
@@ -233,6 +234,10 @@ document.addEventListener('DOMContentLoaded', function () {
     isContractBeer = (cBeer !== '' && nebBeer === '');
     updateAllRowDispositionGroups();
 
+    // Re-evaluate CO₂/O₂ lot-day anchor after tank selection
+    updateCo2O2AnchorState();
+    updateTankReadingOverrideVisibility();
+
     tryEnableSubmit();
     saveDraft({ tankType, tankNum, tankFkId, nebBeer, nebBatch, cBeer, cBatch, recipeId });
   }
@@ -255,6 +260,12 @@ document.addEventListener('DOMContentLoaded', function () {
     isContractBeer = false;
     updateAllRowDispositionGroups();
     clearSkuMosaic();
+    // Clear CO₂/O₂ anchor state on deselect
+    clearCo2O2InheritMode();
+    var hintEl = document.getElementById('pf-co2o2-first-hint');
+    if (hintEl) hintEl.remove();
+    if (co2o2InheritBanner) co2o2InheritBanner.hidden = true;
+    updateTankReadingOverrideVisibility();
     submitBtn.disabled = true;
   }
 
@@ -878,6 +889,174 @@ document.addEventListener('DOMContentLoaded', function () {
   addCo2O2Row();
   addCo2O2Row();
   addCo2O2Row();
+
+  // ── CO₂/O₂ lot-day anchor: inherit / fork UX ─────────────────────────────
+  //
+  // When the operator selects a tank + date that matches a recent lot-day anchor
+  // (a same-recipe/batch/date row that already owns in-tank reads), the co2o2
+  // card switches to INHERITED mode:
+  //   - The anchor's reads are shown as read-only rows with a "inherited" note.
+  //   - The "+ Ajouter une mesure" button is hidden.
+  //   - A hidden input co2o2_inherit_anchor_id is set so the server knows.
+  //   - A "Re-mesurer (nouveau relevé)" fork button is shown.
+  // If no anchor matches → normal entry mode + a "first entry" hint.
+  //
+  // Resolution is triggered by: tank card click, tank deselect, date change.
+  // Contract lane (recipe_id_fk IS NULL): match contract_beer + contract_batch + event_date.
+  // Neb lane: match recipe_id_fk + neb_batch + event_date.
+
+  var co2o2InheritBanner    = document.getElementById('pf-co2o2-inherit-banner');
+  var co2o2InheritAnchorFld = document.getElementById('co2o2_inherit_anchor_id');
+  var co2o2EventDateFld     = document.getElementById('event_date');
+  var co2o2InheritMode      = false;  // true = inherited reads shown
+
+  function resolveAnchor(recipeId, nebBatchVal, cBeer, cBatch, eventDateVal) {
+    var anchors = window.PF_TANK_ANCHORS || [];
+    var rId = recipeId ? parseInt(recipeId, 10) : null;
+    for (var i = 0; i < anchors.length; i++) {
+      var a = anchors[i];
+      if (a.event_date !== eventDateVal) continue;
+      if (rId !== null) {
+        // Neb lane: recipe_id_fk + neb_batch
+        if (a.recipe_id_fk === rId && a.neb_batch === nebBatchVal) return a;
+      } else {
+        // Contract lane: recipe_id_fk null + contract_beer + contract_batch
+        if (a.recipe_id_fk === null
+            && (a.contract_beer || null) === (cBeer || null)
+            && (a.contract_batch || null) === (cBatch || null)) return a;
+      }
+    }
+    return null;
+  }
+
+  function setCo2O2InheritMode(anchor) {
+    co2o2InheritMode = true;
+    if (co2o2InheritAnchorFld) co2o2InheritAnchorFld.value = String(anchor.id);
+
+    // Hide the entry rows + add button
+    if (co2o2List) {
+      co2o2List.querySelectorAll('.pf-co2o2-row').forEach(function (r) { r.hidden = true; });
+    }
+    if (addCo2O2Btn) addCo2O2Btn.hidden = true;
+
+    // Build inherited reads HTML
+    var readsHtml = '';
+    (anchor.reads || []).forEach(function (rd, idx) {
+      var co2Str = rd.co2_gl !== null ? parseFloat(rd.co2_gl).toFixed(2) + ' g/L' : '—';
+      var o2Str  = rd.o2_ppb !== null ? parseFloat(rd.o2_ppb).toFixed(1) + ' ppb' : '—';
+      readsHtml +=
+        '<div class="pf-co2o2-inherited-row">' +
+          '<span class="pf-co2o2-row__num">' + (idx + 1) + '</span>' +
+          '<span class="pf-co2o2-inherited-val">CO₂ ' + escHtml(co2Str) + '</span>' +
+          '<span class="pf-co2o2-inherited-val">O₂ ' + escHtml(o2Str) + '</span>' +
+        '</div>';
+    });
+
+    // Render inherit banner
+    if (co2o2InheritBanner) {
+      co2o2InheritBanner.hidden = false;
+      co2o2InheritBanner.innerHTML =
+        '<div class="pf-co2o2-inherit-note">' +
+          '« Relevés in-tank hérités du run de référence du lot-jour (<strong>#' + escHtml(String(anchor.id)) + '</strong>) »' +
+        '</div>' +
+        '<div class="pf-co2o2-inherited-reads">' + readsHtml + '</div>' +
+        '<button type="button" id="pf-co2o2-fork-btn" class="op-form__btn op-form__btn--secondary pf-co2o2-fork-btn">' +
+          'Re-mesurer (nouveau relevé)' +
+        '</button>';
+
+      // Wire fork button
+      var forkBtn = document.getElementById('pf-co2o2-fork-btn');
+      if (forkBtn) {
+        forkBtn.addEventListener('click', function () {
+          clearCo2O2InheritMode();
+        });
+      }
+    }
+  }
+
+  function clearCo2O2InheritMode() {
+    co2o2InheritMode = false;
+    if (co2o2InheritAnchorFld) co2o2InheritAnchorFld.value = '';
+
+    // Re-show existing entry rows + add button
+    if (co2o2List) {
+      co2o2List.querySelectorAll('.pf-co2o2-row').forEach(function (r) { r.hidden = false; });
+    }
+    if (addCo2O2Btn) addCo2O2Btn.hidden = false;
+
+    // Hide banner
+    if (co2o2InheritBanner) {
+      co2o2InheritBanner.hidden = true;
+      co2o2InheritBanner.innerHTML = '';
+    }
+  }
+
+  function updateCo2O2AnchorState() {
+    var recipeId    = fldRecipeId   ? fldRecipeId.value : '';
+    var nebBatchVal = fldNebBatch   ? fldNebBatch.value : '';
+    var cBeer       = fldContractBeer  ? fldContractBeer.value  : '';
+    var cBatch      = fldContractBatch ? fldContractBatch.value : '';
+    var eventDateVal = co2o2EventDateFld ? co2o2EventDateFld.value : '';
+
+    // Only try to match if a tank is selected (all key fields are non-empty)
+    if (!fldTankType || fldTankType.value === '') {
+      clearCo2O2InheritMode();
+      // Remove first-entry hint if any
+      var hintEl = document.getElementById('pf-co2o2-first-hint');
+      if (hintEl) hintEl.remove();
+      return;
+    }
+
+    var anchor = resolveAnchor(recipeId || null, nebBatchVal, cBeer, cBatch, eventDateVal);
+
+    // Remove stale first-entry hint before re-evaluating
+    var oldHint = document.getElementById('pf-co2o2-first-hint');
+    if (oldHint) oldHint.remove();
+
+    if (anchor) {
+      setCo2O2InheritMode(anchor);
+    } else {
+      clearCo2O2InheritMode();
+      // Show first-entry hint
+      if (co2o2InheritBanner) {
+        co2o2InheritBanner.hidden = false;
+        co2o2InheritBanner.innerHTML =
+          '<div class="pf-co2o2-first-hint" id="pf-co2o2-first-hint">' +
+            '« Première saisie du lot-jour — relevés in-tank requis »' +
+          '</div>';
+      }
+    }
+    updateTankReadingOverrideVisibility();
+  }
+
+  // Wire date change → re-evaluate anchor
+  if (co2o2EventDateFld) {
+    co2o2EventDateFld.addEventListener('change', updateCo2O2AnchorState);
+  }
+
+  // Wire the tank-reading override checkbox show/hide (manager/admin only)
+  var tankReadingOverrideCb   = document.getElementById('pf-tank-reading-override-checkbox');
+  var tankReadingOverrideBlock = document.getElementById('pf-co2o2-override-block');
+  var tankReadingOverrideReasonRow = document.getElementById('pf-tank-reading-override-reason-row');
+
+  if (tankReadingOverrideCb) {
+    tankReadingOverrideCb.addEventListener('change', function () {
+      if (tankReadingOverrideReasonRow) {
+        tankReadingOverrideReasonRow.hidden = !tankReadingOverrideCb.checked;
+      }
+    });
+  }
+
+  // Expose a function to show/hide the override block when in gate mode.
+  // Called from updateCo2O2AnchorState when no anchor found + tank selected.
+  function updateTankReadingOverrideVisibility() {
+    if (!tankReadingOverrideBlock) return;
+    var tankSelected = fldTankType && fldTankType.value !== '';
+    // Show override block only when a tank is selected and no anchor (gate case).
+    // In inherit or no-tank states it is hidden.
+    var isGateCase = tankSelected && !co2o2InheritMode;
+    tankReadingOverrideBlock.hidden = !isGateCase;
+  }
 
   // ── CO₂/O₂ inversion guard on submit ─────────────────────────────────────
   //

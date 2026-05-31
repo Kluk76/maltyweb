@@ -645,3 +645,67 @@ body.op-form-packaging .pf-reuse-active-banner {
 body.op-form-packaging .pf-reuse-active-banner strong {
   color: var(--ember);
 }
+
+/* ── CO₂/O₂ lot-day anchor: inherit / fork / gate (mig 240) ──────────────── */
+body.op-form-packaging .pf-co2o2-inherit-banner {
+  margin-bottom: 0.75rem;
+  padding: 0.7rem 1rem;
+  background: color-mix(in srgb, var(--cold) 8%, var(--bg-elev));
+  border: 1px solid color-mix(in srgb, var(--cold) 30%, transparent);
+  border-radius: 5px;
+  font-size: 0.82rem;
+  color: var(--ink);
+  line-height: 1.5;
+}
+
+body.op-form-packaging .pf-co2o2-inherit-note {
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+  margin-bottom: 0.5rem;
+}
+
+body.op-form-packaging .pf-co2o2-inherited-reads {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-bottom: 0.65rem;
+}
+
+body.op-form-packaging .pf-co2o2-inherited-row {
+  display: grid;
+  grid-template-columns: 1.4rem 1fr 1fr;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.35rem 0.6rem;
+  background: color-mix(in srgb, var(--bg-elev) 80%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ink-faint) 40%, transparent);
+  border-radius: 4px;
+  opacity: 0.72;
+}
+
+body.op-form-packaging .pf-co2o2-inherited-val {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  letter-spacing: 0.02em;
+}
+
+body.op-form-packaging .pf-co2o2-fork-btn {
+  align-self: flex-start;
+  font-size: 0.8rem;
+}
+
+body.op-form-packaging .pf-co2o2-first-hint {
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+  font-style: italic;
+}
+
+body.op-form-packaging .pf-co2o2-override-block {
+  margin-top: 1rem;
+  padding: 0.75rem 1rem;
+  background: color-mix(in srgb, var(--ember) 6%, var(--bg-elev));
+  border: 1px solid color-mix(in srgb, var(--ember) 20%, transparent);
+  border-radius: 5px;
+}
+}
