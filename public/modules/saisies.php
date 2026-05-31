@@ -5,8 +5,11 @@ declare(strict_types=1);
  *
  * Active forms: Conditionnement (/modules/form-packaging.php)
  *               Soutirage      (/modules/form-racking.php)
+ *               Brassage       (/modules/form-brewing.php)
+ *               Fermentation   (/modules/form-fermenting.php)
  *
- * Placeholder cards (disabled) shown for forms not yet built.
+ * Placeholder cards (disabled) shown for forms not yet built:
+ *               Inventaire RM  (form not yet built)
  */
 
 require __DIR__ . '/../../app/auth.php';
@@ -79,35 +82,31 @@ $active_module = 'saisies';
       </div>
     </div>
 
+    <a class="sh-card" href="/modules/form-brewing.php">
+      <div class="sh-card__icon">🍺</div>
+      <div class="sh-card__name">Brassage</div>
+      <div class="sh-card__desc">
+        Saisie des données de brassage : ingrédients, volumes, densités initiales
+        et paramètres de cuve.
+      </div>
+      <div class="sh-card__arrow">Ouvrir →</div>
+    </a>
+
+    <a class="sh-card" href="/modules/form-fermenting.php">
+      <div class="sh-card__icon">🧪</div>
+      <div class="sh-card__name">Fermentation</div>
+      <div class="sh-card__desc">
+        Suivi de fermentation : relevés de densité, températures et état des cuves
+        en cours de fermentation.
+      </div>
+      <div class="sh-card__arrow">Ouvrir →</div>
+    </a>
+
   </div>
 
   <!-- ── Upcoming forms (placeholder cards) ───────────────────────────── -->
   <p class="sh-section-label">— à venir</p>
   <div class="sh-grid">
-
-    <div class="sh-card sh-card--soon">
-      <div class="sh-card__icon">🍺</div>
-      <div class="sh-card__name">
-        Brassage <span class="sh-card__badge">à venir</span>
-      </div>
-      <div class="sh-card__desc">
-        Saisie des données de brassage : ingrédients, volumes, densités initiales
-        et paramètres de cuve.
-      </div>
-      <div class="sh-card__arrow">Bientôt disponible</div>
-    </div>
-
-    <div class="sh-card sh-card--soon">
-      <div class="sh-card__icon">🧪</div>
-      <div class="sh-card__name">
-        Fermentation <span class="sh-card__badge">à venir</span>
-      </div>
-      <div class="sh-card__desc">
-        Suivi de fermentation : relevés de densité, températures et état des cuves
-        en cours de fermentation.
-      </div>
-      <div class="sh-card__arrow">Bientôt disponible</div>
-    </div>
 
     <div class="sh-card sh-card--soon">
       <div class="sh-card__icon">📋</div>
