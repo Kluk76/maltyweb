@@ -166,7 +166,7 @@ document.addEventListener('DOMContentLoaded', function () {
     var runTypeSelect = row0.querySelector('select[name="formats[0][run_type]"]');
     if (runTypeSelect) {
       runTypeSelect.value = runType;
-      // Dispatch change so keg-section visibility updates
+      // Dispatch change so keg-section + per-row disposition groups update
       runTypeSelect.dispatchEvent(new Event('change'));
     }
 
@@ -275,24 +275,40 @@ document.addEventListener('DOMContentLoaded', function () {
   // Index 0 is always the 'main' row. Indexes 1+ are 'parallel'.
   // PHP reads formats[N][...] arrays.
 
-  const LOSS_FIELDS = [
+  // ── Disposition field definitions (run_type-aware) ───────────────────────
+  //
+  // bot/can/can33: beer-disposition fields (decrement vendable + affect tax)
+  //               + material-scrap fields (stored only, never affect vendable HL)
+  // keg/cuv:      keg-specific disposition fields only
+
+  // Beer-disposition fields for bottle/can (subtract from vendable, affect tax/KPI)
+  const BOTTLE_DISPOSITION_FIELDS = [
+    { name: 'unsaleable_units',      label: 'Invendable',                    unit: 'unités' },
+    { name: 'loss_uncapped_units',   label: 'Perte liquide sans capsule',     unit: 'unités' },
+    { name: 'loss_half_filled_units',label: 'Perte liquide à moitié remplie', unit: 'unités (×0,5 vol)' },
+    { name: 'qa_library_units',      label: 'Bibliothèque QA',               unit: 'unités' },
+    { name: 'qa_analyses_units',     label: 'Mesures QA',                    unit: 'unités' },
+  ];
+
+  // Material-scrap fields for bottle/can (stored for material loss tally only)
+  const BOTTLE_SCRAP_FIELDS = [
     { name: 'loss_4pack_btl_units',    label: 'Pertes 4-pack bouteille',  unit: 'unités' },
     { name: 'loss_4pack_can_units',    label: 'Pertes 4-pack canette',    unit: 'unités' },
     { name: 'loss_wrap_btl_units',     label: 'Pertes wraparound btl',    unit: 'unités' },
     { name: 'loss_wrap_can_units',     label: 'Pertes wraparound can',    unit: 'unités' },
     { name: 'loss_label_btl_units',    label: 'Pertes étiquette btl',     unit: 'unités' },
-    { name: 'loss_keg_collar_units',   label: 'Pertes collier fût',       unit: 'unités' },
     { name: 'loss_crown_cork_units',   label: 'Pertes capsule couronne',  unit: 'unités' },
     { name: 'loss_can_lid_units',      label: 'Pertes couvercle canette', unit: 'unités' },
-    { name: 'loss_keg_save_units',     label: 'Pertes rinçage fût',       unit: 'unités' },
     { name: 'loss_container_btl_units',label: 'Pertes contenant btl',     unit: 'unités' },
     { name: 'loss_container_can_units',label: 'Pertes contenant can',     unit: 'unités' },
-    { name: 'loss_liquid_other_units', label: 'Pertes liquide autres',    unit: 'L / unités' },
+    { name: 'loss_liquid_other_units', label: 'Pertes liquide autres',    unit: 'L' },
   ];
 
-  const QA_FIELDS = [
-    { name: 'qa_analyses_units', label: 'Unités analyses QA',   unit: 'unités' },
-    { name: 'qa_library_units',  label: 'Unités bibliothèque QA',unit: 'unités' },
+  // Disposition fields for keg/cuv
+  const KEG_DISPOSITION_FIELDS = [
+    { name: 'loss_keg_liquid_l', label: 'Perte liquide fût',   unit: 'L' },
+    { name: 'taproom_keg_l',     label: 'Fût taproom',         unit: 'L (taxé)' },
+    { name: 'loss_keg_save_units',label: 'Perte capuchon fût', unit: 'unités' },
   ];
 
   function buildFormatRow(idx, isMain) {
@@ -308,27 +324,40 @@ document.addEventListener('DOMContentLoaded', function () {
       '<option value="' + escHtml(v) + '">' + escHtml(l) + '</option>'
     ).join('');
 
-    // Build loss fields HTML
-    const lossHtml = LOSS_FIELDS.map(function (lf) {
-      const fid = idPfx + '_' + lf.name;
-      return '<div class="op-form__field pf-loss-field">' +
-        '<label class="op-form__label pf-loss-label" for="' + fid + '">' + escHtml(lf.label) +
-          ' <span class="op-form__unit">' + escHtml(lf.unit) + '</span></label>' +
-        '<input id="' + fid + '" name="' + prefix + '[' + lf.name + ']"' +
-          ' type="text" inputmode="numeric" class="op-form__input pf-loss-input"' +
-          ' placeholder="0">' +
+    // Helper: build a single input field div
+    function fieldHtml(fieldDef, extraCss) {
+      const fid = idPfx + '_' + fieldDef.name;
+      const isDecimal = fieldDef.unit === 'L' || fieldDef.unit === 'L (taxé)' || fieldDef.unit === 'L / unités';
+      return '<div class="op-form__field' + (extraCss ? ' ' + extraCss : '') + '">' +
+        '<label class="op-form__label pf-loss-label" for="' + fid + '">' + escHtml(fieldDef.label) +
+          ' <span class="op-form__unit">' + escHtml(fieldDef.unit) + '</span></label>' +
+        '<input id="' + fid + '" name="' + prefix + '[' + fieldDef.name + ']"' +
+          ' type="text" inputmode="' + (isDecimal ? 'decimal' : 'numeric') + '"' +
+          ' class="op-form__input pf-loss-input" placeholder="0">' +
         '</div>';
-    }).join('');
+    }
 
-    const qaHtml = QA_FIELDS.map(function (qf) {
-      const fid = idPfx + '_' + qf.name;
-      return '<div class="op-form__field">' +
-        '<label class="op-form__label" for="' + fid + '">' + escHtml(qf.label) +
-          ' <span class="op-form__unit">' + escHtml(qf.unit) + '</span></label>' +
-        '<input id="' + fid + '" name="' + prefix + '[' + qf.name + ']"' +
-          ' type="text" inputmode="numeric" class="op-form__input" placeholder="0">' +
-        '</div>';
-    }).join('');
+    // Bottle/can disposition section
+    const bottleDispositionHtml =
+      '<div class="pf-disposition-group pf-disposition-group--bottle" data-fmt-idx="' + idx + '">' +
+        '<div class="op-form__grid--3 op-form__grid pf-disposition-grid">' +
+          BOTTLE_DISPOSITION_FIELDS.map(function (f) { return fieldHtml(f, ''); }).join('') +
+        '</div>' +
+        '<details class="pf-losses-details">' +
+          '<summary class="pf-losses-summary">Pertes matière <span class="pf-losses-summary__hint">(comptage emballages, non déduit du volume)</span></summary>' +
+          '<div class="op-form__grid pf-losses-grid">' +
+            BOTTLE_SCRAP_FIELDS.map(function (f) { return fieldHtml(f, 'pf-loss-field'); }).join('') +
+          '</div>' +
+        '</details>' +
+      '</div>';
+
+    // Keg/cuv disposition section
+    const kegDispositionHtml =
+      '<div class="pf-disposition-group pf-disposition-group--keg" data-fmt-idx="' + idx + '">' +
+        '<div class="op-form__grid--3 op-form__grid pf-disposition-grid">' +
+          KEG_DISPOSITION_FIELDS.map(function (f) { return fieldHtml(f, ''); }).join('') +
+        '</div>' +
+      '</div>';
 
     const qtiesHtml = isMain
       ? '<div class="op-form__field">' +
@@ -373,23 +402,23 @@ document.addEventListener('DOMContentLoaded', function () {
           '</select>' +
         '</div>' +
         qtiesHtml +
-        '<div class="op-form__field">' +
-          '<label class="op-form__label" for="' + idPfx + '_vendable_hl">Volume vendable <span class="op-form__unit">HL</span></label>' +
-          '<input id="' + idPfx + '_vendable_hl" name="' + prefix + '[vendable_hl]"' +
-            ' type="text" inputmode="decimal" class="op-form__input" placeholder="ex. 27.8">' +
-        '</div>' +
-        '<div class="op-form__field">' +
-          '<label class="op-form__label" for="' + idPfx + '_unsaleable_units">Unités invendables <span class="op-form__unit">(qualité)</span></label>' +
-          '<input id="' + idPfx + '_unsaleable_units" name="' + prefix + '[unsaleable_units]"' +
-            ' type="text" inputmode="numeric" class="op-form__input" placeholder="ex. 12">' +
-        '</div>' +
       '</div>' +
-      '<details class="pf-losses-details">' +
-        '<summary class="pf-losses-summary">Pertes par type <span class="pf-losses-summary__hint">(développer)</span></summary>' +
-        '<div class="op-form__grid pf-losses-grid">' + lossHtml + '</div>' +
-        '<div class="op-form__grid--3 op-form__grid pf-qa-grid">' + qaHtml + '</div>' +
-      '</details>' +
+      bottleDispositionHtml +
+      kegDispositionHtml +
     '</div>';
+  }
+
+  function updateRowDispositionGroups(rowEl) {
+    if (!rowEl) return;
+    const sel = rowEl.querySelector('.pf-run-type-select');
+    const runType = sel ? sel.value : '';
+    const isKegOrCuv = (runType === 'keg' || runType === 'cuv');
+
+    const bottleGroup = rowEl.querySelector('.pf-disposition-group--bottle');
+    const kegGroup    = rowEl.querySelector('.pf-disposition-group--keg');
+
+    if (bottleGroup) bottleGroup.hidden = isKegOrCuv;
+    if (kegGroup)    kegGroup.hidden    = !isKegOrCuv;
   }
 
   function addFormatRow(isMain) {
@@ -397,11 +426,16 @@ document.addEventListener('DOMContentLoaded', function () {
     formatRows.push(idx);
     formatsContainer.insertAdjacentHTML('beforeend', buildFormatRow(idx, isMain));
 
-    // Wire run_type→keg section visibility + remove btn
+    // Wire run_type→keg section visibility + per-row disposition groups + remove btn
     const rowEl = document.getElementById('pf-fmt-' + idx);
     if (rowEl) {
       const sel = rowEl.querySelector('.pf-run-type-select');
-      if (sel) sel.addEventListener('change', updateKegSection);
+      if (sel) {
+        sel.addEventListener('change', function () {
+          updateKegSection();
+          updateRowDispositionGroups(rowEl);
+        });
+      }
 
       const removeBtn = rowEl.querySelector('.pf-remove-format');
       if (removeBtn) {
@@ -409,6 +443,9 @@ document.addEventListener('DOMContentLoaded', function () {
           removeFormatRow(idx);
         });
       }
+
+      // Set initial state (no run_type selected → show bottle group by default)
+      updateRowDispositionGroups(rowEl);
     }
     tryEnableSubmit();
   }
@@ -614,29 +651,94 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   }
 
+  // ── CO₂/O₂ session measurements (up to 20 pairs) ────────────────────────
+  //
+  // POST shape: co2o2[N][co2], co2o2[N][o2], co2o2[N][measured_at]
+  // A row is present when co2 OR o2 is non-empty; fully-blank rows are skipped
+  // server-side. QC is server-only (no client-side threshold display).
+  // Isolated from the formats[N] repeater — do NOT mix these indices.
+
+  var MAX_CO2O2_ROWS = 20;
+  var co2o2Count = 0;
+  var co2o2List  = document.getElementById('pf-co2o2-list');
+  var addCo2O2Btn = document.getElementById('pf-add-co2o2');
+
+  function buildCo2O2Row(n) {
+    var prefix = 'co2o2[' + n + ']';
+    var div = document.createElement('div');
+    div.className = 'pf-co2o2-row';
+    div.id = 'pf-co2o2-row-' + n;
+    div.dataset.n = String(n);
+    div.innerHTML =
+      '<span class="pf-co2o2-row__num">' + (n + 1) + '</span>' +
+      '<div class="op-form__field pf-co2o2-field">' +
+        '<label class="op-form__label" for="co2o2_' + n + '_co2">' +
+          'CO₂ <span class="op-form__unit">g/L</span></label>' +
+        '<input id="co2o2_' + n + '_co2" name="' + prefix + '[co2]"' +
+          ' type="text" inputmode="decimal" class="op-form__input" placeholder="ex. 4.2">' +
+      '</div>' +
+      '<div class="op-form__field pf-co2o2-field">' +
+        '<label class="op-form__label" for="co2o2_' + n + '_o2">' +
+          'O₂ <span class="op-form__unit">ppb</span></label>' +
+        '<input id="co2o2_' + n + '_o2" name="' + prefix + '[o2]"' +
+          ' type="text" inputmode="decimal" class="op-form__input" placeholder="ex. 18">' +
+      '</div>' +
+      '<div class="op-form__field pf-co2o2-field pf-co2o2-field--time">' +
+        '<label class="op-form__label" for="co2o2_' + n + '_at">' +
+          'Heure <span class="op-form__unit op-form__opt">(opt.)</span></label>' +
+        '<input id="co2o2_' + n + '_at" name="' + prefix + '[measured_at]"' +
+          ' type="time" class="op-form__input">' +
+      '</div>' +
+      '<button type="button" class="pf-co2o2-remove op-form__btn op-form__btn--danger-sm"' +
+        ' data-n="' + n + '" title="Supprimer ce relevé" aria-label="Supprimer relevé ' + (n + 1) + '">' +
+        '✕' +
+      '</button>';
+    return div;
+  }
+
+  function addCo2O2Row() {
+    if (co2o2Count >= MAX_CO2O2_ROWS) return;
+    var n = co2o2Count;
+    co2o2Count++;
+    var row = buildCo2O2Row(n);
+    row.querySelector('.pf-co2o2-remove').addEventListener('click', function () {
+      removeCo2O2Row(n);
+    });
+    if (co2o2List) co2o2List.appendChild(row);
+    updateCo2O2AddBtn();
+  }
+
+  function removeCo2O2Row(n) {
+    var el = document.getElementById('pf-co2o2-row-' + n);
+    if (el) el.remove();
+    updateCo2O2AddBtn();
+  }
+
+  function updateCo2O2AddBtn() {
+    if (!addCo2O2Btn) return;
+    var present = co2o2List ? co2o2List.querySelectorAll('.pf-co2o2-row').length : 0;
+    addCo2O2Btn.disabled = (present >= MAX_CO2O2_ROWS);
+  }
+
+  if (addCo2O2Btn) {
+    addCo2O2Btn.addEventListener('click', addCo2O2Row);
+  }
+
+  // Seed 3 rows on load (matches task spec "start with a few rows")
+  addCo2O2Row();
+  addCo2O2Row();
+  addCo2O2Row();
+
   // ── FormFramework init ────────────────────────────────────────────────────
   if (typeof FormFramework !== 'undefined') {
     FormFramework.init({
       formId:         'packaging-form',
       draftKey:       'packaging-draft',
       warningPanelId: 'packaging-warnings',
-      thresholds: {
-        tank_co2: {
-          label: 'CO₂ cuve', unit: ' g/L',
-          warn:    [3.5, 5.0],
-          outlier: [2.5, 6.0],
-        },
-        tank_o2: {
-          label: 'O₂ cuve', unit: ' ppb',
-          warn:    [0, 50],
-          outlier: [0, 200],
-        },
-      },
-      diffFields: ['event_date', 'tank_co2', 'tank_o2'],
+      thresholds:     {},
+      diffFields: ['event_date'],
       diffLabels: {
         event_date: 'Date conditionnement',
-        tank_co2:   'CO₂ cuve (g/L)',
-        tank_o2:    'O₂ cuve (ppb)',
       },
     });
   }

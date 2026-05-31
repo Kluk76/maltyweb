@@ -154,30 +154,58 @@ function resolve_packaging_sku_id(
 
 // ── vendable_hl compute ───────────────────────────────────────────────────────
 /**
- * Computes vendable_hl server-side, mirroring v_bd_packaging_v2_vendable (mig 203).
+ * Computes vendable_hl, beer_tax_base_hl, and loss_kpi_hl server-side,
+ * mirroring v_bd_packaging_v2_vendable (mig 231).
  *
- * Formula (verbatim from migration 203 view):
- *   vendable_units = prod_total + CASE echo_guard THEN 0 ELSE special END
- *                  - qa_analyses - qa_library - unsaleable
- *                  - loss_4pack_btl - loss_4pack_can - loss_wrap_btl - loss_wrap_can
- *                  - loss_label_btl - loss_keg_collar - loss_crown_cork - loss_can_lid
- *                  - loss_keg_save - loss_container_btl - loss_container_can
- *   vendable_hl   = (vendable_units / units_per_pack) * hl_per_unit
- *                 - loss_liquid_other_units / 100
+ * Run-type-aware formulas. c(x) = COALESCE(x, 0).
  *
- * bcmath scale=6 throughout; final result rounded to DECIMAL(8,3).
- * Returns null when hl_per_unit or units_per_pack is null/≤0 (cannot compute).
+ * BOTTLE/CAN (run_type ∈ bot, can, can33):
+ *   vendable_units = prod + special_eff
+ *                  − c(unsaleable) − c(loss_uncapped)
+ *                  − c(loss_half_filled) * 0.5
+ *                  − c(qa_library) − c(qa_analyses)
+ *                  // material scraps do NOT decrement vendable_units
+ *   vendable_hl    = (vendable_units / units_per_pack) * hl_per_unit
+ *                  − c(loss_liquid_other_units) / 100
+ *   beer_tax_base_hl = vendable_hl + c(unsaleable) / units_per_pack * hl_per_unit
+ *   loss_kpi_hl    = (c(unsaleable) + c(loss_uncapped) + c(loss_half_filled)*0.5)
+ *                    / units_per_pack * hl_per_unit
  *
- * $row: the row array as built by the format loop (same keys as bd_packaging_v2).
+ * KEG/CUV (run_type ∈ keg, cuv):
+ *   vendable_units = prod + special_eff
+ *   vendable_hl    = (vendable_units / units_per_pack) * hl_per_unit
+ *                  − c(loss_keg_liquid_l) / 100
+ *                  − c(taproom_keg_l) / 100
+ *                  − c(loss_liquid_other_units) / 100
+ *   beer_tax_base_hl = vendable_hl + c(taproom_keg_l) / 100
+ *   loss_kpi_hl    = c(loss_keg_liquid_l) / 100
+ *
+ * bcmath scale=6 throughout; vendable_hl rounded to DECIMAL(8,3).
+ * Returns null for all three values when hl_per_unit or units_per_pack is null/≤0.
+ * Also returns null (refuse-don't-NULL guard) and sets $qcFlagOut='sku_meta_missing'
+ * when the SKU meta is missing.
+ *
+ * $row:     the row array as built by the format loop (same keys as bd_packaging_v2).
  * $skuMeta: ['hl_per_unit' => string|null, 'units_per_pack' => string|null]
+ * $runType: the row's run_type string (bot|can|can33|keg|cuv)
+ *
+ * Returns: ['vendable_hl' => string|null, 'beer_tax_base_hl' => string|null,
+ *           'loss_kpi_hl' => string|null, 'qc_flag' => string|null]
  */
-function compute_packaging_vendable_hl(array $row, array $skuMeta): ?string
+function compute_packaging_vendable_hl(array $row, array $skuMeta, string $runType = ''): array
 {
+    $null4 = ['vendable_hl' => null, 'beer_tax_base_hl' => null, 'loss_kpi_hl' => null, 'qc_flag' => null];
+
     $hlPerUnit    = $skuMeta['hl_per_unit']    ?? null;
     $unitsPerPack = $skuMeta['units_per_pack'] ?? null;
 
-    if ($hlPerUnit === null || $unitsPerPack === null) return null;
-    if (bccomp((string)$unitsPerPack, '0', 6) <= 0) return null;
+    // Refuse-don't-NULL: missing SKU meta means we cannot compute — return null + flag.
+    if ($hlPerUnit === null || $unitsPerPack === null) {
+        return array_merge($null4, ['qc_flag' => 'sku_meta_missing']);
+    }
+    if (bccomp((string)$unitsPerPack, '0', 6) <= 0) {
+        return array_merge($null4, ['qc_flag' => 'sku_meta_missing']);
+    }
 
     $scale = 6;
     $zero  = '0';
@@ -185,52 +213,79 @@ function compute_packaging_vendable_hl(array $row, array $skuMeta): ?string
     // COALESCE(x, 0) helper
     $c = static fn(?string $v): string => ($v !== null && $v !== '') ? (string)$v : $zero;
 
-    $prodTotal    = $c(isset($row['prod_total_units'])    ? (string)$row['prod_total_units']    : null);
-    $specialQty   = $c(isset($row['special_qty_units'])   ? (string)$row['special_qty_units']   : null);
-    $qaAnalyses   = $c(isset($row['qa_analyses_units'])   ? (string)$row['qa_analyses_units']   : null);
-    $qaLibrary    = $c(isset($row['qa_library_units'])    ? (string)$row['qa_library_units']    : null);
-    $unsaleable   = $c(isset($row['unsaleable_units'])    ? (string)$row['unsaleable_units']    : null);
-    $l4packBtl    = $c(isset($row['loss_4pack_btl_units'])    ? (string)$row['loss_4pack_btl_units']    : null);
-    $l4packCan    = $c(isset($row['loss_4pack_can_units'])    ? (string)$row['loss_4pack_can_units']    : null);
-    $lWrapBtl     = $c(isset($row['loss_wrap_btl_units'])     ? (string)$row['loss_wrap_btl_units']     : null);
-    $lWrapCan     = $c(isset($row['loss_wrap_can_units'])     ? (string)$row['loss_wrap_can_units']     : null);
-    $lLabelBtl    = $c(isset($row['loss_label_btl_units'])    ? (string)$row['loss_label_btl_units']    : null);
-    $lKegCollar   = $c(isset($row['loss_keg_collar_units'])   ? (string)$row['loss_keg_collar_units']   : null);
-    $lCrownCork   = $c(isset($row['loss_crown_cork_units'])   ? (string)$row['loss_crown_cork_units']   : null);
-    $lCanLid      = $c(isset($row['loss_can_lid_units'])      ? (string)$row['loss_can_lid_units']      : null);
-    $lKegSave     = $c(isset($row['loss_keg_save_units'])     ? (string)$row['loss_keg_save_units']     : null);
-    $lContBtl     = $c(isset($row['loss_container_btl_units']) ? (string)$row['loss_container_btl_units'] : null);
-    $lContCan     = $c(isset($row['loss_container_can_units']) ? (string)$row['loss_container_can_units'] : null);
-    $lLiquid      = $c(isset($row['loss_liquid_other_units']) ? (string)$row['loss_liquid_other_units'] : null);
+    $prodTotal   = $c(isset($row['prod_total_units'])        ? (string)$row['prod_total_units']        : null);
+    $specialQty  = $c(isset($row['special_qty_units'])       ? (string)$row['special_qty_units']       : null);
+    $lLiquid     = $c(isset($row['loss_liquid_other_units']) ? (string)$row['loss_liquid_other_units'] : null);
 
     // Echo-row guard: when special_qty_units = prod_total_units, special contributes 0.
     $effectiveSpecial = (bccomp($specialQty, $prodTotal, $scale) === 0) ? $zero : $specialQty;
 
-    $vendableUnits = $prodTotal;
-    $vendableUnits = bcadd($vendableUnits, $effectiveSpecial, $scale);
-    $vendableUnits = bcsub($vendableUnits, $qaAnalyses,  $scale);
-    $vendableUnits = bcsub($vendableUnits, $qaLibrary,   $scale);
-    $vendableUnits = bcsub($vendableUnits, $unsaleable,  $scale);
-    $vendableUnits = bcsub($vendableUnits, $l4packBtl,   $scale);
-    $vendableUnits = bcsub($vendableUnits, $l4packCan,   $scale);
-    $vendableUnits = bcsub($vendableUnits, $lWrapBtl,    $scale);
-    $vendableUnits = bcsub($vendableUnits, $lWrapCan,    $scale);
-    $vendableUnits = bcsub($vendableUnits, $lLabelBtl,   $scale);
-    $vendableUnits = bcsub($vendableUnits, $lKegCollar,  $scale);
-    $vendableUnits = bcsub($vendableUnits, $lCrownCork,  $scale);
-    $vendableUnits = bcsub($vendableUnits, $lCanLid,     $scale);
-    $vendableUnits = bcsub($vendableUnits, $lKegSave,    $scale);
-    $vendableUnits = bcsub($vendableUnits, $lContBtl,    $scale);
-    $vendableUnits = bcsub($vendableUnits, $lContCan,    $scale);
+    $isKegOrCuv = in_array($runType, ['keg', 'cuv'], true);
 
-    // (vendable_units / units_per_pack) * hl_per_unit - loss_liquid_other_units/100
-    $perPack   = bcdiv($vendableUnits, (string)$unitsPerPack, $scale);
-    $hlGross   = bcmul($perPack, (string)$hlPerUnit, $scale);
-    $liqAdj    = bcdiv($lLiquid, '100', $scale);
-    $vendableHl = bcsub($hlGross, $liqAdj, $scale);
+    if (!$isKegOrCuv) {
+        // ── BOTTLE / CAN ──────────────────────────────────────────────────────
+        $unsaleable  = $c(isset($row['unsaleable_units'])        ? (string)$row['unsaleable_units']        : null);
+        $lUncapped   = $c(isset($row['loss_uncapped_units'])     ? (string)$row['loss_uncapped_units']     : null);
+        $lHalfFilled = $c(isset($row['loss_half_filled_units'])  ? (string)$row['loss_half_filled_units']  : null);
+        $qaAnalyses  = $c(isset($row['qa_analyses_units'])       ? (string)$row['qa_analyses_units']       : null);
+        $qaLibrary   = $c(isset($row['qa_library_units'])        ? (string)$row['qa_library_units']        : null);
 
-    // Round to 3 decimals to match bd_packaging_v2.vendable_hl DECIMAL(8,3)
-    return number_format((float)$vendableHl, 3, '.', '');
+        // half_filled counts at 0.5 volume (½ fill before seal)
+        $halfFilledEff = bcdiv($lHalfFilled, '2', $scale);   // * 0.5
+
+        $vendableUnits = $prodTotal;
+        $vendableUnits = bcadd($vendableUnits, $effectiveSpecial, $scale);
+        $vendableUnits = bcsub($vendableUnits, $unsaleable,    $scale);
+        $vendableUnits = bcsub($vendableUnits, $lUncapped,     $scale);
+        $vendableUnits = bcsub($vendableUnits, $halfFilledEff, $scale);
+        $vendableUnits = bcsub($vendableUnits, $qaLibrary,     $scale);
+        $vendableUnits = bcsub($vendableUnits, $qaAnalyses,    $scale);
+        // Material scraps (loss_4pack_*, loss_wrap_*, loss_label_*, loss_crown_cork,
+        // loss_can_lid, loss_keg_collar, loss_container_*) are NOT subtracted from
+        // vendable_units — they track material waste, not filled-unit destruction.
+
+        $perPack    = bcdiv($vendableUnits, (string)$unitsPerPack, $scale);
+        $hlGross    = bcmul($perPack, (string)$hlPerUnit, $scale);
+        $liqAdj     = bcdiv($lLiquid, '100', $scale);
+        $vendableHl = bcsub($hlGross, $liqAdj, $scale);
+
+        // beer_tax_base: vendable + invendable (taxed even if not sold)
+        $unsaleableHl   = bcmul(bcdiv($unsaleable, (string)$unitsPerPack, $scale), (string)$hlPerUnit, $scale);
+        $beerTaxBaseHl  = bcadd($vendableHl, $unsaleableHl, $scale);
+
+        // loss_kpi_hl: beer-disposition losses only (material scraps excluded)
+        $lossUnits      = bcadd(bcadd($unsaleable, $lUncapped, $scale), $halfFilledEff, $scale);
+        $lossKpiHl      = bcmul(bcdiv($lossUnits, (string)$unitsPerPack, $scale), (string)$hlPerUnit, $scale);
+
+    } else {
+        // ── KEG / CUV ─────────────────────────────────────────────────────────
+        $lKegLiquid = $c(isset($row['loss_keg_liquid_l']) ? (string)$row['loss_keg_liquid_l'] : null);
+        $taproom    = $c(isset($row['taproom_keg_l'])     ? (string)$row['taproom_keg_l']     : null);
+
+        $vendableUnits = $prodTotal;
+        $vendableUnits = bcadd($vendableUnits, $effectiveSpecial, $scale);
+
+        $perPack    = bcdiv($vendableUnits, (string)$unitsPerPack, $scale);
+        $hlGross    = bcmul($perPack, (string)$hlPerUnit, $scale);
+        $vendableHl = bcsub($hlGross, bcdiv($lKegLiquid, '100', $scale), $scale);
+        $vendableHl = bcsub($vendableHl, bcdiv($taproom, '100', $scale), $scale);
+        $vendableHl = bcsub($vendableHl, bcdiv($lLiquid, '100', $scale), $scale);
+
+        // beer_tax_base: vendable + taproom (taproom is taxed)
+        $beerTaxBaseHl = bcadd($vendableHl, bcdiv($taproom, '100', $scale), $scale);
+
+        // loss_kpi: liquid lost from the vessel (not taproom — that's intentional fill)
+        $lossKpiHl = bcdiv($lKegLiquid, '100', $scale);
+    }
+
+    $fmt = fn(string $v): string => number_format((float)$v, 3, '.', '');
+
+    return [
+        'vendable_hl'      => $fmt($vendableHl),
+        'beer_tax_base_hl' => $fmt($beerTaxBaseHl),
+        'loss_kpi_hl'      => $fmt($lossKpiHl),
+        'qc_flag'          => null,
+    ];
 }
 
 // ── POST ──────────────────────────────────────────────────────────────────────
@@ -289,9 +344,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ? $eventDateRaw
             : date('Y-m-d');
 
-        // QA measurements (shared across all format rows in the session)
-        $tankCo2 = post_decimal('tank_co2');
-        $tankO2  = post_decimal('tank_o2');
+        // CO₂/O₂ session measurements — up to 20 pairs, POSTed as co2o2[N][co2|o2|measured_at].
+        // A reading is "present" when co2 OR o2 is non-empty; fully-blank rows are skipped.
+        // reading_index = N + 1 (1-based, matches bd_packaging_co2o2_measures.reading_index).
+        $co2o2Raw = $_POST['co2o2'] ?? [];
+        $co2o2Pairs = [];  // [['co2_gl'=>float|null,'o2_ppb'=>float|null,'measured_at'=>string|null], ...]
+        if (is_array($co2o2Raw)) {
+            $pairIdx = 0;
+            foreach ($co2o2Raw as $pairRaw) {
+                if (!is_array($pairRaw)) continue;
+                $co2Val = isset($pairRaw['co2']) && $pairRaw['co2'] !== '' ? (float)$pairRaw['co2'] : null;
+                $o2Val  = isset($pairRaw['o2'])  && $pairRaw['o2']  !== '' ? (float)$pairRaw['o2']  : null;
+                if ($co2Val === null && $o2Val === null) continue; // skip fully-blank rows
+                $measAt = (isset($pairRaw['measured_at']) && $pairRaw['measured_at'] !== '')
+                    ? $pairRaw['measured_at']
+                    : null;
+                // Sanitize measured_at: accept HH:MM or HH:MM:SS; combine with event_date.
+                if ($measAt !== null) {
+                    $measAt = preg_match('/^\d{2}:\d{2}(:\d{2})?$/', $measAt)
+                        ? $eventDate . ' ' . $measAt . (strlen($measAt) === 5 ? ':00' : '')
+                        : null;
+                }
+                if ($pairIdx < 20) { // cap at 20
+                    $co2o2Pairs[] = [
+                        'reading_index' => $pairIdx + 1,
+                        'co2_gl'        => $co2Val,
+                        'o2_ppb'        => $o2Val,
+                        'measured_at'   => $measAt,
+                    ];
+                    $pairIdx++;
+                }
+            }
+        }
 
         // CIP events (decision 4) — parsed via shared infra; written to bd_cip_events after upsert.
         // Packaging uses filler+kze as the inline-combine pair (not centri+kze like racking).
@@ -319,11 +403,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $contractDlc = post_str('contract_dlc');
 
         // ── 2. QC flag ─────────────────────────────────────────────────────
-        $measurements = array_filter([
-            'bbt_co2' => $tankCo2,
-            'bbt_o2'  => $tankO2,
-        ], fn($v) => $v !== null);
-        $qcFlag = bd_qc_flag($measurements);
+        // Evaluate each CO₂/O₂ pair; take the worst flag across all pairs.
+        // When no pairs were submitted, no CO₂/O₂ QC check is performed.
+        $qcFlag = 'normal';
+        foreach ($co2o2Pairs as $pair) {
+            $pairMeasurements = array_filter([
+                'bbt_co2' => $pair['co2_gl'],
+                'bbt_o2'  => $pair['o2_ppb'],
+            ], fn($v) => $v !== null);
+            if (!empty($pairMeasurements)) {
+                $pairFlag = bd_qc_flag($pairMeasurements);
+                // Escalate: outlier > elevated > normal
+                $order = ['normal' => 0, 'elevated' => 1, 'outlier' => 2];
+                if (($order[$pairFlag] ?? 0) > ($order[$qcFlag] ?? 0)) {
+                    $qcFlag = $pairFlag;
+                }
+            }
+        }
 
         // ── 3. Build submitted_at ───────────────────────────────────────────
         $submittedAt = date('Y-m-d H:i:s.u');
@@ -343,7 +439,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // ── 4. Parse multi-format rows (decision 8) ─────────────────────────
         // The form submits N format lines. Each has:
         //   formats[N][run_type], formats[N][format_suffix], formats[N][row_origin] (main|parallel)
-        //   formats[N][prod_total_units], formats[N][qte_unites], formats[N][vendable_hl]
+        //   formats[N][prod_total_units], formats[N][qte_unites]
         //   formats[N][unsaleable_units], formats[N][loss_*], ...
         //
         // prod_total  = main run only (row_origin='main')
@@ -372,8 +468,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             ? (int)$f['prod_total_units'] : null;
             $fQteUnites = isset($f['qte_unites']) && $f['qte_unites'] !== ''
                             ? (int)$f['qte_unites'] : null;
-            $fVendableHl= isset($f['vendable_hl']) && $f['vendable_hl'] !== ''
-                            ? $f['vendable_hl'] : null;
             $fUnsaleable= isset($f['unsaleable_units']) && $f['unsaleable_units'] !== ''
                             ? (int)$f['unsaleable_units'] : null;
 
@@ -392,6 +486,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $fLossLiquid     = isset($f['loss_liquid_other_units'])  && $f['loss_liquid_other_units'] !== '' ? $f['loss_liquid_other_units'] : null;
             $fQaAnalyses     = isset($f['qa_analyses_units'])        && $f['qa_analyses_units']     !== '' ? (int)$f['qa_analyses_units']     : null;
             $fQaLibrary      = isset($f['qa_library_units'])         && $f['qa_library_units']      !== '' ? (int)$f['qa_library_units']      : null;
+            // New disposition fields (mig 231)
+            $fLossUncapped   = isset($f['loss_uncapped_units'])      && $f['loss_uncapped_units']   !== '' ? (int)$f['loss_uncapped_units']   : null;
+            $fLossHalfFilled = isset($f['loss_half_filled_units'])   && $f['loss_half_filled_units'] !== '' ? (int)$f['loss_half_filled_units'] : null;
+            $fLossKegLiquid  = isset($f['loss_keg_liquid_l'])        && $f['loss_keg_liquid_l']     !== '' ? $f['loss_keg_liquid_l']         : null;
+            $fTaproomKeg     = isset($f['taproom_keg_l'])            && $f['taproom_keg_l']         !== '' ? $f['taproom_keg_l']             : null;
 
             must_be_one_of("formats[{$idx}][run_type]", $fRunType, RUN_TYPES);
             if (!in_array($fOrigin, ['main', 'parallel'], true)) {
@@ -426,7 +525,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $skuMeta = $skuMetaCache[$skuIdFk];
             }
 
-            // ── vendable_hl: compute or accept operator override ──────────────
+            // ── vendable_hl: always computed (no operator override) ──────────────
             // Build the partial row now so compute_packaging_vendable_hl() can read it.
             $partialRow = [
                 'prod_total_units'        => ($fOrigin === 'main') ? $fProdTotal : null,
@@ -434,30 +533,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'qa_analyses_units'       => $fQaAnalyses,
                 'qa_library_units'        => $fQaLibrary,
                 'unsaleable_units'        => $fUnsaleable,
-                'loss_4pack_btl_units'    => $fLoss4packBtl,
-                'loss_4pack_can_units'    => $fLoss4packCan,
-                'loss_wrap_btl_units'     => $fLossWrapBtl,
-                'loss_wrap_can_units'     => $fLossWrapCan,
-                'loss_label_btl_units'    => $fLossLabelBtl,
-                'loss_keg_collar_units'   => $fLossKegCollar,
-                'loss_crown_cork_units'   => $fLossCrownCork,
-                'loss_can_lid_units'      => $fLossCanLid,
-                'loss_keg_save_units'     => $fLossKegSave,
-                'loss_container_btl_units'=> $fLossContBtl,
-                'loss_container_can_units'=> $fLossContCan,
+                'loss_uncapped_units'     => $fLossUncapped,
+                'loss_half_filled_units'  => $fLossHalfFilled,
+                'loss_keg_liquid_l'       => $fLossKegLiquid,
+                'taproom_keg_l'           => $fTaproomKeg,
                 'loss_liquid_other_units' => $fLossLiquid,
             ];
-            $computedVendableHl = compute_packaging_vendable_hl($partialRow, $skuMeta);
+            $computed = compute_packaging_vendable_hl($partialRow, $skuMeta, $fRunType);
+            $finalVendableHl = $computed['vendable_hl'];
 
             // Per-row audit tokens (session base + row-local additions).
             $rowAuditTokens = $baseAuditTokens;
 
-            if ($fVendableHl !== null) {
-                // Operator explicitly entered a value — honour it, flag for audit.
-                $finalVendableHl = $fVendableHl;
-                $rowAuditTokens[] = 'vendable_hl_operator_override';
-            } else {
-                $finalVendableHl = $computedVendableHl;
+            if ($computed['qc_flag'] !== null) {
+                $rowAuditTokens[] = $computed['qc_flag'];
             }
 
             if ($skuIdFk === null && $fOrigin === 'main' && !(bool)$isWhiteLabel) {
@@ -504,10 +593,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'prod_total_units'       => ($fOrigin === 'main') ? $fProdTotal : null,
                     'special_qty_units'      => ($fOrigin === 'parallel') ? $fQteUnites : null,
                     'vendable_hl'            => $finalVendableHl,
+                    'beer_tax_base_hl'       => $computed['beer_tax_base_hl'],
+                    'loss_kpi_hl'            => $computed['loss_kpi_hl'],
                     'unsaleable_units'       => $fUnsaleable,
                     'qa_analyses_units'      => $fQaAnalyses,
                     'qa_library_units'       => $fQaLibrary,
-                    // Per-type losses (decision 6)
+                    // New disposition fields (mig 231)
+                    'loss_uncapped_units'    => $fLossUncapped,
+                    'loss_half_filled_units' => $fLossHalfFilled,
+                    'loss_keg_liquid_l'      => $fLossKegLiquid,
+                    'taproom_keg_l'          => $fTaproomKeg,
+                    // Per-type material scraps (decision 6 — stored, not subtracted from vendable)
                     'loss_4pack_btl_units'   => $fLoss4packBtl,
                     'loss_4pack_can_units'   => $fLoss4packCan,
                     'loss_wrap_btl_units'    => $fLossWrapBtl,
@@ -532,9 +628,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     // CIP: flat cip_tank_*/cip_machines_* columns are intentionally NOT written
                     // from the web form — CIP now goes to bd_cip_events via cip_upsert().
                     // Historical flat columns remain in the table for legacy ingest rows only.
-                    // QA
-                    'tank_co2'               => $tankCo2,
-                    'tank_o2'                => $tankO2,
+                    // CO₂/O₂ measurements are NOT on bd_packaging_v2 rows — they live in
+                    // bd_packaging_co2o2_measures (mig 232) linked to the main row id.
+                    // Written after the upsert loop via the dedicated persist block below.
                     // Comments (on main row only; parallels inherit the session)
                     'comments'               => ($fOrigin === 'main') ? $comments : null,
                     // Hors Process override (migration 128 — columns absent until applied)
@@ -542,7 +638,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'hors_process_reason'    => $horsProcessReason,
                 ],
                 'origin'             => $fOrigin,
-                'computed_vendable'  => $computedVendableHl,
+                'computed_vendable'  => $finalVendableHl,
                 'sku_id_fk'          => $skuIdFk,
                 'format_suffix_used' => ($fSuffix !== '' && $fSuffix !== null) ? $fSuffix : null,
             ];
@@ -574,14 +670,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $auditParts = [];
                     if ($rSpec['origin'] === 'parallel') $auditParts[] = '[parallel]';
                     if ($fwComment) $auditParts[] = $fwComment;
-                    if (in_array('vendable_hl_operator_override', explode(',', $safeRow['audit_flags']), true)) {
-                        $auditParts[] = sprintf(
-                            'vendable_hl operator override: %s HL (computed would have been %s HL)',
-                            $safeRow['vendable_hl'] ?? 'null',
-                            $computedVendable ?? 'null'
-                        );
-                    } elseif ($computedVendable !== null) {
+                    if ($computedVendable !== null) {
                         $auditParts[] = "vendable_hl computed: {$computedVendable} HL";
+                    }
+                    if (in_array('sku_meta_missing', explode(',', $safeRow['audit_flags']), true)) {
+                        $auditParts[] = "vendable_hl NULL — SKU meta (hl_per_unit / units_per_pack) missing";
                     }
                     if (in_array('sku_unresolved', explode(',', $safeRow['audit_flags']), true)) {
                         $auditParts[] = "sku_id_fk unresolved (recipe={$recipeIdFk}, suffix=" . ($suffixUsed ?? 'null') . ")";
@@ -598,6 +691,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($mainPackagingId !== null) {
                     cip_upsert($pdo, 'packaging', $mainPackagingId, $cipEvents, $cipMeta);
                 }
+
+                // Write CO₂/O₂ pairs to bd_packaging_co2o2_measures (idempotent: delete-then-insert).
+                // Anchored to the main row (row_origin='main') — one set of measurements per session.
+                if ($mainPackagingId !== null && !empty($co2o2Pairs)) {
+                    $pdo->prepare(
+                        'DELETE FROM bd_packaging_co2o2_measures WHERE packaging_id_fk = ?'
+                    )->execute([$mainPackagingId]);
+                    $stCo2 = $pdo->prepare(
+                        'INSERT INTO bd_packaging_co2o2_measures
+                           (packaging_id_fk, reading_index, co2_gl, o2_ppb, measured_at, source)
+                         VALUES (?, ?, ?, ?, ?, ?)'
+                    );
+                    foreach ($co2o2Pairs as $pair) {
+                        $stCo2->execute([
+                            $mainPackagingId,
+                            $pair['reading_index'],
+                            $pair['co2_gl'],
+                            $pair['o2_ppb'],
+                            $pair['measured_at'],
+                            'web_entry',
+                        ]);
+                    }
+                }
+
                 $pdo->commit();
             } catch (Throwable $txErr) {
                 $pdo->rollBack();
@@ -1329,26 +1446,23 @@ $cipConfig = [
       </button>
     </div><!-- card formats -->
 
-    <!-- ── Section: Mesures QA (partagées pour la session) ───────── -->
+    <!-- ── Section: Mesures CO₂/O₂ (partagées pour la session) ──── -->
     <div class="op-form__card">
-      <div class="op-form__card-title">— mesures QA cuve</div>
-      <p class="op-form__hint pf-qa-hint">Mesures relevées sur la cuve source — communes à tous les formats du run.</p>
-      <div class="op-form__grid--3 op-form__grid">
+      <div class="op-form__card-title">— mesures CO₂ / O₂</div>
+      <p class="op-form__hint pf-qa-hint">
+        Mesures relevées sur la cuve source — communes à tous les formats du run.
+        Jusqu'à 20 relevés par session.
+      </p>
 
-        <div class="op-form__field">
-          <label class="op-form__label" for="tank_co2">CO₂ cuve <span class="op-form__unit">g/L</span></label>
-          <input id="tank_co2" name="tank_co2" type="text" inputmode="decimal"
-                 class="op-form__input" placeholder="ex. 4.2">
-        </div>
-
-        <div class="op-form__field">
-          <label class="op-form__label" for="tank_o2">O₂ cuve <span class="op-form__unit">ppb</span></label>
-          <input id="tank_o2" name="tank_o2" type="text" inputmode="decimal"
-                 class="op-form__input" placeholder="ex. 18">
-        </div>
-
+      <div id="pf-co2o2-list" class="pf-co2o2-list">
+        <!-- Rows injected by JS (packaging-form.js: addCo2O2Row) -->
       </div>
-    </div><!-- card QA -->
+
+      <button type="button" id="pf-add-co2o2"
+              class="op-form__btn op-form__btn--secondary pf-co2o2-add-btn">
+        + Ajouter une mesure
+      </button>
+    </div><!-- card CO2/O2 -->
 
     <!-- ── Section: Fûts / cuves de service (visible pour keg/cuv) ── -->
     <div class="op-form__card" id="pf-keg-section" hidden>
@@ -1579,14 +1693,15 @@ window.MIN_DAYS_AFTER_RACKING = <?= $minDays ?>;
  * formats[N][format_suffix]   → nebuleuse_format_suffix           Part of natural key
  * formats[N][prod_total_units]→ prod_total_units                  Main row only
  * formats[N][qte_unites]      → special_qty_units                 Parallel rows only (ADD)
- * formats[N][vendable_hl]     → vendable_hl
+ * formats[N][vendable_hl]     → vendable_hl                        ALWAYS COMPUTED (mig 231)
  * formats[N][unsaleable_units]→ unsaleable_units
  * formats[N][qa_analyses_units]→qa_analyses_units
  * formats[N][qa_library_units]→ qa_library_units
  * formats[N][loss_*_units]    → loss_*_units                      Per-type losses (decision 6)
  * formats[N][loss_liquid_*]   → loss_liquid_other_units
- * tank_co2                    → tank_co2                          Shared across all format rows
- * tank_o2                     → tank_o2
+ * co2o2[N][co2]               → bd_packaging_co2o2_measures.co2_gl   Session-level (mig 232)
+ * co2o2[N][o2]                → bd_packaging_co2o2_measures.o2_ppb   Up to 20 pairs per session
+ * co2o2[N][measured_at]       → bd_packaging_co2o2_measures.measured_at  HH:MM or HH:MM:SS (optional)
  * [CIP — not written to bd_packaging_v2]
  * cip_machine_centri/kze/pump → bd_cip_events (source_form='packaging', target_kind='machine')
  * cip_vessel_0 (tank)         → bd_cip_events (source_form='packaging', target_kind='vessel', target_code='tank')
