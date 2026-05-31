@@ -368,43 +368,80 @@ function renderQuarterly(d) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   F. CUMULATIVE YTD
+   F. CUMULATIVE YTD — multi-year overlay
+   Active year: thick --hop accent, area fill, dots, end-value label.
+   Other years 2021→present: thin muted lines, end-of-line year label.
+   In-progress year (last data month < 11) stops at last data month.
+   Complete years run all 12 months.
+   X-axis: uniform Jan→Dec (0→11) shared across all series.
+   Y-axis: global max across all years.
    ═══════════════════════════════════════════════════════════ */
 function renderCumul(d) {
   const el = document.getElementById('wk-chart-cumul');
   if (!el) return;
   el.innerHTML = '';
 
-  const W = 840, H = 220;
-  const padL = 48, padR = 16, padT = 16, padB = 36;
+  /* ── Build per-year cumulative series from years_data ── */
+  /* years_data[yr].monthly is an array of 12 elements [core, special, contract].
+     Nébuleuse = monthly[i][0] + monthly[i][1] (core + special). */
+  const allYears = Object.keys(KD.years_data).map(Number).sort();
+  if (!allYears.length) { el.textContent = '—'; return; }
+
+  /* Compute the last data month index for the active year (d) — reuse existing logic */
+  let activeLastDataMi = -1;
+  d.monthly.forEach(function(m, i) {
+    if ((m[0] || 0) + (m[1] || 0) > 0) activeLastDataMi = i;
+  });
+  if (activeLastDataMi < 0) { el.textContent = '—'; return; }
+
+  /* Build series for all years */
+  const yearSeries = {};
+  allYears.forEach(function(yr) {
+    const yd = KD.years_data[yr];
+    if (!yd || !yd.monthly) return;
+    /* Last data month for this year (0-based idx) */
+    let lastMi = -1;
+    yd.monthly.forEach(function(m, i) {
+      if ((m[0] || 0) + (m[1] || 0) > 0) lastMi = i;
+    });
+    if (lastMi < 0) return; /* no data — skip */
+    /* Build cumulative array, stopping at lastMi */
+    const cum = [];
+    let run = 0;
+    for (let i = 0; i <= lastMi; i++) {
+      run += (yd.monthly[i][0] || 0) + (yd.monthly[i][1] || 0);
+      cum.push({ mi: i, val: Math.round(run * 10) / 10 });
+    }
+    yearSeries[yr] = { cum: cum, lastMi: lastMi, total: Math.round(run * 10) / 10 };
+  });
+
+  const seriesYears = Object.keys(yearSeries).map(Number).sort();
+  if (!seriesYears.length) { el.textContent = '—'; return; }
+
+  /* Global Y max across all series */
+  let globalMax = 0;
+  seriesYears.forEach(function(yr) {
+    const last = yearSeries[yr].cum[yearSeries[yr].cum.length - 1];
+    if (last && last.val > globalMax) globalMax = last.val;
+  });
+  if (globalMax === 0) globalMax = 1;
+
+  /* ── SVG dimensions ── */
+  const W = 840, H = 240;
+  const padL = 48, padR = 50, padT = 16, padB = 36;
   const chartW = W - padL - padR, chartH = H - padT - padB;
 
-  const cumPoints = [];
-  let running = 0;
-  let lastDataMi = -1;
-  d.monthly.forEach(function(m, i) {
-    if ((m[0] || 0) + (m[1] || 0) > 0) lastDataMi = i;
-  });
-  for (let i = 0; i <= (lastDataMi >= 0 ? lastDataMi : 11); i++) {
-    running += (d.monthly[i][0] || 0) + (d.monthly[i][1] || 0);
-    cumPoints.push({ mi: i, val: running });
-  }
+  /* X: uniform Jan(0)→Dec(11) scale */
+  const xOf = function(mi) { return padL + (mi / 11) * chartW; };
+  /* Y: 0→globalMax */
+  const yOf = function(v)  { return padT + chartH * (1 - v / globalMax); };
 
-  if (cumPoints.length === 0 || lastDataMi < 0) { el.textContent = '—'; return; }
+  const svg = svgEl('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img' });
 
-  const maxCum = running;
-  const totalMonths = lastDataMi;
-  const xScale = function(mi) {
-    if (totalMonths === 0) return padL + chartW / 2;
-    return padL + (mi / Math.max(totalMonths, 1)) * chartW;
-  };
-  const yScale2 = function(v) { return padT + chartH * (1 - v / maxCum); };
-
-  const svg = svgEl('svg', { viewBox: '0 0 ' + W + ' ' + H });
-
+  /* Grid lines (4 horizontal) */
   for (let i = 0; i <= 4; i++) {
-    const v = maxCum * i / 4;
-    const y = yScale2(v);
+    const v = globalMax * i / 4;
+    const y = yOf(v);
     svg.appendChild(svgEl('line', { x1: padL, y1: y, x2: W - padR, y2: y,
       stroke: C.hairline, 'stroke-width': i === 0 ? 1.5 : 0.5, opacity: i === 0 ? 0.9 : 0.45 }));
     if (i > 0) {
@@ -415,55 +452,135 @@ function renderCumul(d) {
     }
   }
 
-  const firstX = xScale(cumPoints[0].mi);
-  const lastX  = xScale(cumPoints[cumPoints.length - 1].mi);
-  svg.appendChild(svgEl('path', {
-    d: 'M' + firstX + ',' + yScale2(0) + ' ' +
-       cumPoints.map(function(p) { return 'L' + xScale(p.mi) + ',' + yScale2(p.val); }).join(' ') +
-       ' L' + lastX + ',' + yScale2(0) + ' Z',
-    fill: C.core, opacity: 0.12,
-  }));
-
-  const linePath = cumPoints.map(function(p, i) {
-    return (i === 0 ? 'M' : 'L') + xScale(p.mi) + ',' + yScale2(p.val);
-  }).join(' ');
-  svg.appendChild(svgEl('path', { d: linePath, fill: 'none', stroke: C.core,
-    'stroke-width': 2.5, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
-
-  cumPoints.forEach(function(p) {
-    const cx = xScale(p.mi), cy = yScale2(p.val);
-    const dot = svgEl('circle', { cx: cx, cy: cy, r: 4, fill: C.core });
-    dot.addEventListener('mouseenter', function(e) {
-      showTip(e, '<strong>' + MONTHS_FR[p.mi].toUpperCase() + '</strong> · Cumul : <strong>' + fmt(p.val, 1) + ' HL</strong>');
-    });
-    dot.addEventListener('mousemove', moveTip);
-    dot.addEventListener('mouseleave', hideTip);
-    svg.appendChild(dot);
-  });
-
-  cumPoints.forEach(function(p) {
-    const t = svgEl('text', { x: xScale(p.mi), y: H - padB + 14, 'text-anchor': 'middle', fill: C.ink_faint,
-      'font-family': 'JetBrains Mono,monospace', 'font-size': 9, 'letter-spacing': '0.06em' });
-    t.textContent = MONTHS_FR[p.mi];
+  /* Month axis labels (Jan→Dec) */
+  MONTHS_FR.forEach(function(label, mi) {
+    const t = svgEl('text', { x: xOf(mi), y: H - padB + 14, 'text-anchor': 'middle', fill: C.ink_faint,
+      'font-family': 'JetBrains Mono,monospace', 'font-size': 9, 'letter-spacing': '0.05em' });
+    t.textContent = label;
     svg.appendChild(t);
   });
 
-  const last = cumPoints[cumPoints.length - 1];
-  const finalLbl = svgEl('text', {
-    x: xScale(last.mi), y: yScale2(last.val) - 8,
-    'text-anchor': last.mi >= totalMonths * 0.85 ? 'end' : 'middle',
-    fill: C.core, 'font-family': 'JetBrains Mono,monospace', 'font-size': 10, 'font-weight': 500,
-  });
-  finalLbl.textContent = fmt(last.val, 1) + ' HL';
-  svg.appendChild(finalLbl);
-
+  /* Y-axis label */
   const yAxisLbl = svgEl('text', { x: 10, y: padT + chartH / 2, 'text-anchor': 'middle', fill: C.ink_faint,
     'font-family': 'JetBrains Mono,monospace', 'font-size': 8, 'letter-spacing': '0.1em',
     transform: 'rotate(-90, 10, ' + (padT + chartH / 2) + ')' });
   yAxisLbl.textContent = 'HL Nébuleuse';
   svg.appendChild(yAxisLbl);
 
+  /* ── Draw muted lines first (background), then active year on top ── */
+  seriesYears.forEach(function(yr) {
+    if (yr === activeYear) return; /* draw active year last */
+    const s = yearSeries[yr];
+    if (!s || !s.cum.length) return;
+
+    const pathD = s.cum.map(function(p, i) {
+      return (i === 0 ? 'M' : 'L') + xOf(p.mi).toFixed(1) + ',' + yOf(p.val).toFixed(1);
+    }).join(' ');
+
+    svg.appendChild(svgEl('path', {
+      d: pathD, fill: 'none',
+      stroke: C.ink_mute,
+      'stroke-width': 1,
+      opacity: 0.35,
+      'stroke-linejoin': 'round', 'stroke-linecap': 'round',
+    }));
+
+    /* End-of-line year label (right of last point, inside padR) */
+    const last = s.cum[s.cum.length - 1];
+    const lx = xOf(last.mi) + 4;
+    const ly = yOf(last.val);
+    const endLbl = svgEl('text', {
+      x: lx, y: ly + 4,
+      fill: C.ink_faint, opacity: 0.7,
+      'font-family': 'JetBrains Mono,monospace', 'font-size': 8,
+    });
+    endLbl.textContent = String(yr);
+    /* Tooltip on the line endpoint */
+    const dot = svgEl('circle', { cx: xOf(last.mi), cy: ly, r: 2.5, fill: C.ink_mute, opacity: 0.45 });
+    const yrLabel = String(yr);
+    const totalVal = s.total;
+    dot.addEventListener('mouseenter', function(e) {
+      showTip(e, '<strong>' + escHtml(yrLabel) + '</strong> · Cumul ' + escHtml(MONTHS_FR[last.mi].toUpperCase()) + ' : <strong>' + fmt(totalVal, 1) + ' HL</strong>');
+    });
+    dot.addEventListener('mousemove', moveTip);
+    dot.addEventListener('mouseleave', hideTip);
+    svg.appendChild(dot);
+    svg.appendChild(endLbl);
+  });
+
+  /* ── Active year: thick accent line with area fill and dots ── */
+  const activeSeries = yearSeries[activeYear];
+  if (activeSeries && activeSeries.cum.length) {
+    const cumPoints = activeSeries.cum;
+    const lastPoint = cumPoints[cumPoints.length - 1];
+
+    /* Area fill */
+    const areaD = 'M' + xOf(cumPoints[0].mi).toFixed(1) + ',' + yOf(0).toFixed(1) + ' ' +
+      cumPoints.map(function(p) { return 'L' + xOf(p.mi).toFixed(1) + ',' + yOf(p.val).toFixed(1); }).join(' ') +
+      ' L' + xOf(lastPoint.mi).toFixed(1) + ',' + yOf(0).toFixed(1) + ' Z';
+    svg.appendChild(svgEl('path', { d: areaD, fill: C.core, opacity: 0.10 }));
+
+    /* Line */
+    const lineD = cumPoints.map(function(p, i) {
+      return (i === 0 ? 'M' : 'L') + xOf(p.mi).toFixed(1) + ',' + yOf(p.val).toFixed(1);
+    }).join(' ');
+    svg.appendChild(svgEl('path', { d: lineD, fill: 'none', stroke: C.core,
+      'stroke-width': 2.5, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+
+    /* Dots with tooltip */
+    cumPoints.forEach(function(p) {
+      const cx = xOf(p.mi), cy = yOf(p.val);
+      const dot = svgEl('circle', { cx: cx, cy: cy, r: 4, fill: C.core });
+      dot.addEventListener('mouseenter', function(e) {
+        showTip(e, '<strong>' + escHtml(String(activeYear)) + ' · ' + MONTHS_FR[p.mi].toUpperCase() + '</strong> · Cumul : <strong>' + fmt(p.val, 1) + ' HL</strong>');
+      });
+      dot.addEventListener('mousemove', moveTip);
+      dot.addEventListener('mouseleave', hideTip);
+      svg.appendChild(dot);
+    });
+
+    /* End-value label for active year */
+    const endX = xOf(lastPoint.mi);
+    const endY = yOf(lastPoint.val);
+    const anchor = lastPoint.mi >= 9 ? 'end' : 'middle';
+    const finalLbl = svgEl('text', {
+      x: anchor === 'end' ? endX - 6 : endX, y: endY - 9,
+      'text-anchor': anchor,
+      fill: C.core, 'font-family': 'JetBrains Mono,monospace', 'font-size': 10, 'font-weight': 500,
+    });
+    finalLbl.textContent = fmt(lastPoint.val, 1) + ' HL';
+    svg.appendChild(finalLbl);
+  }
+
   el.appendChild(svg);
+
+  /* ── Inject / refresh compact legend below the chart ── */
+  const section = document.getElementById('wk-section-cumul');
+  if (section) {
+    var existingLegend = section.querySelector('.wk-cumul-legend');
+    if (existingLegend) existingLegend.remove();
+    var legendDiv = document.createElement('div');
+    legendDiv.className = 'wk-cumul-legend';
+    var legendHtml = '';
+    /* Active year first */
+    legendHtml += '<span class="wk-cumul-legend__item wk-cumul-legend__item--active">'
+      + '<span class="wk-cumul-legend__swatch wk-cumul-legend__swatch--active"></span>'
+      + escHtml(String(activeYear)) + '</span>';
+    /* Muted years in reverse order (newest first among non-active) */
+    var otherYears = seriesYears.filter(function(yr) { return yr !== activeYear; }).reverse();
+    otherYears.forEach(function(yr) {
+      legendHtml += '<span class="wk-cumul-legend__item">'
+        + '<span class="wk-cumul-legend__swatch"></span>'
+        + escHtml(String(yr)) + '</span>';
+    });
+    legendDiv.innerHTML = legendHtml;
+    var chartCard = section.querySelector('.wk-chart-card');
+    if (chartCard) {
+      chartCard.after(legendDiv);
+    } else {
+      section.appendChild(legendDiv);
+    }
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -678,6 +795,463 @@ function renderHeatmap(year) {
 }
 
 /* ═══════════════════════════════════════════════════════════
+   SHARED PACE TINT HELPER
+   Unified rule — used by both Section 1 (bar-table) and
+   Section 2 (sparkline cards).
+
+   Returns 'ok' | 'ember' | 'nouveau' | 'arrete' | 'neutral'
+
+   Rules (ordered):
+   1. status==='nouveau'  (prevTotal==0): 'nouveau'  — no colour
+   2. status==='arrete'   (currTotal==0): 'arrete'   — muted
+   3. paceRefPrev==0 && currTotal>0: 'ok' (GREEN) — producing
+      when the reference period had zero; this is AHEAD, not behind
+   4. pacePct >= 100: 'ok' (green)
+   5. pacePct < 100 (including null with currTotal>0): 'ember' (red)
+   ═══════════════════════════════════════════════════════════ */
+function paceTintResult(b) {
+  var status     = b.status;
+  var currTotal  = b.currTotal;
+  var paceRefPrev= b.paceRefPrev;
+  var pacePct    = b.pacePct;
+
+  if (status === 'nouveau') return 'nouveau';
+  if (status === 'arrete')  return 'arrete';
+
+  // paceRefPrev==0 but we have production → ahead (not behind)
+  if ((paceRefPrev === 0 || paceRefPrev == null) && currTotal > 0) return 'ok';
+
+  // pacePct null with currTotal>0 also counts as ahead (same logic)
+  if (pacePct === null && currTotal > 0) return 'ok';
+
+  return (pacePct !== null && pacePct >= 100) ? 'ok' : 'ember';
+}
+
+/* ═══════════════════════════════════════════════════════════
+   H. YOY PCT — "Par bière · % du total {prevYear}"
+   Bar-table: each beer's YTD curr vs full prevYear total,
+   with a progress-bar showing % achieved.
+   Tint is driven by PACE (same-period comparison), not headline %.
+   ═══════════════════════════════════════════════════════════ */
+function renderYoyPct(year) {
+  var el = document.getElementById('wk-chart-yoy-pct');
+  if (!el) return;
+
+  var yoy = KD.yoy;
+  if (!yoy || !yoy.beers || !yoy.beers.length) {
+    el.innerHTML = '<div class="wk-hm-unavail">Données YoY indisponibles.</div>';
+    return;
+  }
+
+  var prevYear = yoy.prevYear;
+  var kpiYear  = yoy.kpiYear;
+  var lastIdx  = yoy.lastDataMonthIdx; // 0-based
+
+  // Update title labels (the year selector may have changed)
+  var titlePrev = document.getElementById('wk-yoy-prev-year-label');
+  if (titlePrev) titlePrev.textContent = String(prevYear);
+
+  var BUCKET_ORDER  = ['core', 'special', 'contract'];
+  var BUCKET_LABELS = { core: 'Gamme principale', special: 'Spéciales', contract: 'Contrat' };
+
+  // Group beers by bucket
+  var byBucket = { core: [], special: [], contract: [] };
+  yoy.beers.forEach(function(b) {
+    if (byBucket[b.bucket]) byBucket[b.bucket].push(b);
+  });
+
+  var months_fr = ['jan','fév','mar','avr','mai','jun','jul','aoû','sep','oct','nov','déc'];
+  var paceEndLabel = lastIdx >= 0 ? months_fr[lastIdx] : '—';
+
+  // Legend line explaining colour meaning
+  var legendHtml = '<div class="wk-yoy-colour-legend">'
+    + 'Couleur : rythme vs ' + escHtml(String(prevYear)) + ' même période'
+    + ' — <span class="wk-yoy-cl-ok">▲ vert = en avance</span>'
+    + ', <span class="wk-yoy-cl-ember">▼ rouge = en retard</span>'
+    + ' · Barre = % du total annuel ' + escHtml(String(prevYear))
+    + '</div>';
+
+  var html = legendHtml + '<table class="wk-yoy-pct-table">';
+  html += '<thead><tr>'
+    + '<th class="wk-yoy-col-beer">Bière</th>'
+    + '<th class="wk-yoy-col-curr">Cette année (YTD)</th>'
+    + '<th class="wk-yoy-col-prev">' + escHtml(String(prevYear)) + ' (total)</th>'
+    + '<th class="wk-yoy-col-pct">% atteint · rythme jan–' + escHtml(paceEndLabel) + '</th>'
+    + '</tr></thead>';
+  html += '<tbody>';
+
+  BUCKET_ORDER.forEach(function(bk) {
+    var beers = byBucket[bk];
+    if (!beers || !beers.length) return;
+
+    html += '<tr class="wk-yoy-bucket-sep"><td colspan="4">' + escHtml(BUCKET_LABELS[bk]) + '</td></tr>';
+
+    beers.forEach(function(b) {
+      var pct     = b.pct;
+      var status  = b.status;
+
+      // Unified tint — covers the paceRefPrev==0 bug
+      var tint = paceTintResult(b);
+      var tintClass = (tint === 'ok') ? 'wk-yoy-bar--ok' : (tint === 'ember') ? 'wk-yoy-bar--ember' : '';
+
+      var pctCell = '';
+      if (status === 'nouveau') {
+        pctCell = '<div class="wk-yoy-pct-inner">'
+          + '<div class="wk-yoy-status-chip wk-yoy-status-chip--nouveau">nouveau</div>'
+          + '<span class="wk-yoy-curr-hl">' + escHtml(fmt(b.currTotal, 1)) + ' HL</span>'
+          + '</div>';
+      } else if (status === 'arrete') {
+        pctCell = '<div class="wk-yoy-pct-inner">'
+          + '<div class="wk-yoy-pct-readout wk-yoy-pct-readout--arrete">'
+          + '<span class="wk-yoy-status-chip wk-yoy-status-chip--arrete">arrêté</span>'
+          + '</div>'
+          + '</div>';
+      } else {
+        // headline % vs full prevYear — may exceed 100
+        var fillPct = Math.min(pct !== null ? pct : 0, 100);
+        var overBar = (pct !== null && pct > 100);
+        var pctLabel = pct !== null ? escHtml(pct.toFixed(1)) + '%' : '—';
+        pctCell = '<div class="wk-yoy-pct-inner">'
+          + '<div class="wk-yoy-bar-wrap' + (overBar ? ' wk-yoy-bar-wrap--over' : '') + '">'
+          + '<div class="wk-yoy-bar ' + tintClass + '" style="width:' + fillPct.toFixed(1) + '%">'
+          + (overBar ? '<span class="wk-yoy-bar__ahead">&#x25BA;</span>' : '')
+          + '</div>'
+          + '</div>'
+          + '<span class="wk-yoy-pct-label ' + tintClass + '">' + pctLabel + '</span>'
+          + '</div>';
+      }
+
+      var currDisplay = b.status === 'arrete' ? '<span class="wk-yoy-muted">—</span>' : escHtml(fmt(b.currTotal, 1)) + ' HL';
+      var prevDisplay = b.prevTotal > 0 ? escHtml(fmt(b.prevTotal, 1)) + ' HL' : '<span class="wk-yoy-muted">—</span>';
+
+      html += '<tr class="wk-yoy-row">'
+        + '<td class="wk-yoy-col-beer">' + escHtml(b.label || b.name) + '</td>'
+        + '<td class="wk-yoy-col-curr">' + currDisplay + '</td>'
+        + '<td class="wk-yoy-col-prev">' + prevDisplay + '</td>'
+        + '<td class="wk-yoy-col-pct">' + pctCell + '</td>'
+        + '</tr>';
+    });
+  });
+
+  html += '</tbody></table>';
+  el.innerHTML = html;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   I. YOY SPARKLINES — "Comparatif mensuel par bière"
+   Small-multiples grid: one 12-month dual-series SVG per beer.
+   curr year = solid line (--hop); prev year = dashed muted (--ink-mute).
+   A "Tous" aggregate mini-chart is rendered first.
+   Sorted by currTotal desc; all beers with HL in either year shown.
+
+   Change (2026-05-31): curr series truncated at lastDataMonthIdx
+   (no flat future months). Prev stays full 12 months (complete year).
+   ═══════════════════════════════════════════════════════════ */
+function renderYoySparklines(year) {
+  var el = document.getElementById('wk-chart-yoy-spark');
+  if (!el) return;
+
+  var yoy = KD.yoy;
+  if (!yoy || !yoy.beers || !yoy.beers.length) {
+    el.innerHTML = '<div class="wk-hm-unavail">Données YoY indisponibles.</div>';
+    return;
+  }
+
+  var prevYear     = yoy.prevYear;
+  var kpiYear      = yoy.kpiYear;
+  var lastDataMi   = yoy.lastDataMonthIdx; // 0-based; -1 if no curr data
+
+  // Update title + legend labels
+  var titleCurr = document.getElementById('wk-yoy-curr-year-label');
+  var titlePrev2 = document.getElementById('wk-yoy-prev-year-label2');
+  var legendCurr = document.getElementById('wk-yoy-legend-curr');
+  var legendPrev = document.getElementById('wk-yoy-legend-prev');
+  if (titleCurr) titleCurr.textContent = String(kpiYear);
+  if (titlePrev2) titlePrev2.textContent = String(prevYear);
+  if (legendCurr) legendCurr.textContent = String(kpiYear);
+  if (legendPrev) legendPrev.textContent = String(prevYear);
+
+  // Build aggregate "Tous" arrays (full 12, truncation happens in buildSparkSvg)
+  var allCurr = new Array(12).fill(0);
+  var allPrev = new Array(12).fill(0);
+  yoy.beers.forEach(function(b) {
+    for (var i = 0; i < 12; i++) {
+      allCurr[i] += (b.curr[i] || 0);
+      allPrev[i] += (b.prev[i] || 0);
+    }
+  });
+
+  /* Build the sparkline SVG.
+     curr: full 12-entry array but we draw only [0..lastDataMi] (truncated).
+     prev: full 12 months (complete reference year).
+  */
+  function buildSparkSvg(curr, prev, label, bucket, isTous) {
+    var W = 200, H = 90;
+    var padL = 4, padR = 4, padT = 10, padB = 20;
+    var cW = W - padL - padR;
+    var cH = H - padT - padB;
+
+    // Curr series: only up to lastDataMi (no future flat months)
+    var currPoints = lastDataMi >= 0 ? curr.slice(0, lastDataMi + 1) : [];
+
+    // Scale: max across full prev AND the truncated curr
+    var allVals = currPoints.concat(prev);
+    var maxVal = Math.max.apply(null, allVals.concat([0.1]));
+
+    // Prev uses all 12 x positions; curr uses positions 0..lastDataMi
+    function xOfAll(i, total) {
+      // Position index i in a series of `total` points across the chart width.
+      // When total===12 both series share the same x scale.
+      if (total <= 1) return padL;
+      return padL + (i / (total - 1)) * cW;
+    }
+    // Convenience: both series use 12-point x scale (prev is always 12).
+    function xOf(i) { return padL + (i / 11) * cW; }
+    function yOf(v)  { return padT + cH * (1 - v / maxVal); }
+
+    var svg = svgEl('svg', {
+      viewBox: '0 0 ' + W + ' ' + H,
+      class: 'wk-yoy-spark-svg',
+      'aria-label': escHtml(label),
+    });
+
+    // Faint grid line at 50%
+    svg.appendChild(svgEl('line', {
+      x1: padL, y1: padT + cH * 0.5,
+      x2: W - padR, y2: padT + cH * 0.5,
+      stroke: tok('--hairline') || '#c8b48a',
+      'stroke-width': 0.5, opacity: 0.5,
+    }));
+
+    // Previous year — dashed grey line (full 12 months)
+    var prevHasData = prev.some(function(v) { return v > 0; });
+    if (prevHasData) {
+      var prevPath = '';
+      for (var i = 0; i < 12; i++) {
+        prevPath += (i === 0 ? 'M' : 'L') + xOf(i).toFixed(1) + ',' + yOf(prev[i]).toFixed(1);
+      }
+      svg.appendChild(svgEl('path', {
+        d: prevPath, fill: 'none',
+        stroke: tok('--ink-mute') || '#4a3820',
+        'stroke-width': 1,
+        'stroke-dasharray': '3 3',
+        opacity: 0.45,
+        'stroke-linejoin': 'round', 'stroke-linecap': 'round',
+      }));
+    }
+
+    // Current year — solid coloured line, STOPS at lastDataMi
+    var BUCKET_COLORS = {
+      core:     tok('--hop')  || '#567020',
+      special:  tok('--cat-process') || '#5a4a8c',
+      contract: tok('--cold') || '#2f5575',
+    };
+    var lineColor = isTous ? (tok('--ink-soft') || '#3d2f1f') : (BUCKET_COLORS[bucket] || BUCKET_COLORS.core);
+
+    var currHasData = currPoints.some(function(v) { return v > 0; });
+    if (currHasData) {
+      // Area fill (subtle) — only over the valid months
+      var areaD = 'M' + xOf(0) + ',' + (padT + cH);
+      for (var j = 0; j < currPoints.length; j++) {
+        areaD += 'L' + xOf(j).toFixed(1) + ',' + yOf(currPoints[j]).toFixed(1);
+      }
+      areaD += 'L' + xOf(currPoints.length - 1).toFixed(1) + ',' + (padT + cH) + 'Z';
+      svg.appendChild(svgEl('path', { d: areaD, fill: lineColor, opacity: 0.07 }));
+
+      var currPath = '';
+      for (var k = 0; k < currPoints.length; k++) {
+        currPath += (k === 0 ? 'M' : 'L') + xOf(k).toFixed(1) + ',' + yOf(currPoints[k]).toFixed(1);
+      }
+      svg.appendChild(svgEl('path', {
+        d: currPath, fill: 'none',
+        stroke: lineColor, 'stroke-width': isTous ? 1.8 : 1.5,
+        'stroke-linejoin': 'round', 'stroke-linecap': 'round',
+      }));
+    }
+
+    // Month axis labels (jan, avr, jul, oct)
+    var axisMonths = [0, 3, 6, 9];
+    axisMonths.forEach(function(i) {
+      var t = svgEl('text', {
+        x: xOf(i), y: H - 4,
+        'text-anchor': 'middle',
+        fill: tok('--ink-faint') || '#7a6647',
+        'font-family': 'JetBrains Mono,monospace',
+        'font-size': 7,
+        'letter-spacing': '0.04em',
+      });
+      t.textContent = MONTHS_FR[i];
+      svg.appendChild(t);
+    });
+
+    return svg;
+  }
+
+  /* Build the KPI readout block for a beer card.
+     b: beer object (or null for the "Tous" aggregate).
+     For "Tous": pass a synthetic pseudo-beer object.
+  */
+  function buildReadout(b, prevYear) {
+    var status     = b.status;
+    var currTotal  = b.currTotal;
+    var prevTotal  = b.prevTotal;
+    var pct        = b.pct;
+    var pacePct    = b.pacePct;
+    var paceRefPrev= b.paceRefPrev;
+
+    var tint = paceTintResult(b);
+
+    var div = document.createElement('div');
+    div.className = 'wk-yoy-spark-readout';
+
+    // Line 1: currTotal HL (prominent)
+    var hl = document.createElement('div');
+    hl.className = 'wk-spark-hl';
+    if (status === 'arrete') {
+      hl.textContent = '—';
+      hl.className += ' wk-spark-hl--muted';
+    } else {
+      hl.textContent = escHtml(fmt(currTotal, 1)) + ' HL';
+    }
+    div.appendChild(hl);
+
+    // Line 2: pct / status label
+    var pctLine = document.createElement('div');
+    pctLine.className = 'wk-spark-pct';
+    if (status === 'nouveau') {
+      pctLine.innerHTML = '<span class="wk-yoy-status-chip wk-yoy-status-chip--nouveau">nouveau</span>';
+    } else if (status === 'arrete') {
+      pctLine.innerHTML = 'arrêté · '
+        + escHtml(String(prevYear)) + '&nbsp;: '
+        + escHtml(fmt(prevTotal, 1)) + '&nbsp;HL';
+    } else {
+      var pctText = pct !== null ? escHtml(pct.toFixed(1)) + '&nbsp;%' : '—';
+      pctLine.innerHTML = pctText + ' du total ' + escHtml(String(prevYear));
+    }
+    div.appendChild(pctLine);
+
+    // Line 3: pace line (only for actif or paceRefPrev==0 ahead case)
+    if (status !== 'nouveau' && status !== 'arrete') {
+      var paceLine = document.createElement('div');
+      paceLine.className = 'wk-spark-pace';
+      if (tint === 'ok') {
+        paceLine.className += ' wk-spark-pace--ok';
+        if ((paceRefPrev === 0 || paceRefPrev == null) && currTotal > 0) {
+          // Producing when reference period was zero
+          paceLine.innerHTML = '▲ <span class="wk-spark-pace-label">nouv. sur période</span>';
+        } else {
+          paceLine.innerHTML = '▲ ' + escHtml(pacePct !== null ? pacePct.toFixed(1) : '—') + '&nbsp;% du rythme';
+        }
+      } else {
+        paceLine.className += ' wk-spark-pace--ember';
+        paceLine.innerHTML = '▼ ' + escHtml(pacePct !== null ? pacePct.toFixed(1) : '—') + '&nbsp;% du rythme';
+      }
+      div.appendChild(paceLine);
+    }
+
+    // Line 4: prev year reference (muted), skip for nouveau (no prev) or arrete (already shown)
+    if (status === 'actif' && prevTotal > 0) {
+      var ref = document.createElement('div');
+      ref.className = 'wk-spark-prev-ref';
+      ref.innerHTML = escHtml(String(prevYear)) + '&nbsp;: ' + escHtml(fmt(prevTotal, 1)) + '&nbsp;HL';
+      div.appendChild(ref);
+    }
+
+    return div;
+  }
+
+  el.innerHTML = '';
+
+  // Legend line for Section 2
+  var legendDiv = document.createElement('div');
+  legendDiv.className = 'wk-yoy-colour-legend wk-yoy-colour-legend--spark';
+  legendDiv.innerHTML = 'Couleur&nbsp;: rythme vs ' + escHtml(String(prevYear)) + ' même période'
+    + ' — <span class="wk-yoy-cl-ok">▲ vert&nbsp;= en avance</span>'
+    + ', <span class="wk-yoy-cl-ember">▼ rouge&nbsp;= en retard</span>';
+  el.parentElement && el.parentElement.insertBefore(legendDiv, el);
+  // (We prepend into the card grid container instead; see below)
+  // Actually we add to el directly as a sibling would be complex; insert into section head instead.
+  // The section head already contains title + legend so we put a note div just before the grid.
+  var sparkSection = document.getElementById('wk-section-yoy-spark');
+  if (sparkSection) {
+    // Remove any existing colour legend we already inserted (for re-renders)
+    var existingLegend = sparkSection.querySelector('.wk-yoy-colour-legend--spark');
+    if (existingLegend) existingLegend.remove();
+    // Insert before the wk-chart-card
+    var chartCard = sparkSection.querySelector('.wk-chart-card');
+    if (chartCard) {
+      sparkSection.insertBefore(legendDiv, chartCard);
+    }
+  } else {
+    // Fallback: prepend to grid
+    el.insertAdjacentElement('beforebegin', legendDiv);
+  }
+
+  // ── "Tous" aggregate chart first ──
+  var allCurrTotal = allCurr.reduce(function(s,v){return s+v;},0);
+  var allPrevTotal = allPrev.reduce(function(s,v){return s+v;},0);
+
+  // Pseudo-beer for "Tous" readout (actif, pct computed vs prevYear total)
+  var tousPseudo = {
+    status:      'actif',
+    currTotal:   allCurrTotal,
+    prevTotal:   allPrevTotal,
+    pct:         allPrevTotal > 0 ? Math.round(allCurrTotal / allPrevTotal * 1000) / 10 : null,
+    paceRefPrev: allPrev.slice(0, lastDataMi + 1).reduce(function(s,v){return s+v;}, 0),
+    pacePct:     null,
+  };
+  if (tousPseudo.paceRefPrev > 0) {
+    tousPseudo.pacePct = Math.round(allCurrTotal / tousPseudo.paceRefPrev * 1000) / 10;
+  }
+
+  var tousCard = document.createElement('div');
+  tousCard.className = 'wk-yoy-spark-card wk-yoy-spark-card--tous';
+
+  var tousLabel = document.createElement('div');
+  tousLabel.className = 'wk-yoy-spark-label';
+  tousLabel.textContent = 'Tous';
+
+  tousCard.appendChild(tousLabel);
+  tousCard.appendChild(buildSparkSvg(allCurr, allPrev, 'Tous', 'core', true));
+  tousCard.appendChild(buildReadout(tousPseudo, prevYear));
+  el.appendChild(tousCard);
+
+  // ── Per-beer mini charts ──
+  yoy.beers.forEach(function(b) {
+    // Render all beers that have any HL in either year (the union — no truncation)
+    if (b.currTotal === 0 && b.prevTotal === 0) return;
+
+    var tint = paceTintResult(b);
+
+    var card = document.createElement('div');
+    card.className = 'wk-yoy-spark-card';
+    if (b.status === 'nouveau')  card.classList.add('wk-yoy-spark-card--nouveau');
+    if (b.status === 'arrete')   card.classList.add('wk-yoy-spark-card--arrete');
+    // Tint border for actif beers: subtle ok/ember top border
+    if (b.status === 'actif' && tint === 'ok')    card.classList.add('wk-yoy-spark-card--ok');
+    if (b.status === 'actif' && tint === 'ember')  card.classList.add('wk-yoy-spark-card--ember');
+
+    var lbl = document.createElement('div');
+    lbl.className = 'wk-yoy-spark-label';
+    lbl.textContent = b.label || b.name;
+
+    if (b.status !== 'actif') {
+      var chip = document.createElement('span');
+      chip.className = 'wk-yoy-status-chip wk-yoy-status-chip--' + escHtml(b.status);
+      chip.textContent = b.status === 'nouveau' ? 'nouveau' : 'arrêté';
+      card.appendChild(lbl);
+      card.appendChild(chip);
+    } else {
+      card.appendChild(lbl);
+    }
+
+    card.appendChild(buildSparkSvg(b.curr, b.prev, b.label || b.name, b.bucket, false));
+    card.appendChild(buildReadout(b, prevYear));
+    el.appendChild(card);
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════
    FULL RENDER
    ═══════════════════════════════════════════════════════════ */
 function render(year) {
@@ -710,6 +1284,8 @@ function render(year) {
     renderStats('all', KD.annual_view);
     renderAnnualTrend();
     renderHeatmap('all');
+    renderYoyPct('all');
+    renderYoySparklines('all');
     return;
   }
 
@@ -741,6 +1317,8 @@ function render(year) {
   renderQuarterly(d);
   renderCumul(d);
   renderHeatmap(year);
+  renderYoyPct(year);
+  renderYoySparklines(year);
 }
 
 /* ── Year buttons ── */

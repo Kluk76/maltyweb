@@ -552,6 +552,111 @@ try {
         $lastDataMonthCurrent = $yearsData[$currentYear]['last_month'];
     }
 
+    // ─── YoY block: per-beer × month for kpi_year vs (kpi_year-1) ────────────
+    // Cross-year beer-identity key = rr.name (NOT recipe_short_name — two contract
+    // beers share short_name 'Pale Ale'; NOT sku_prefix — mostly NULL).
+    // EPH vintages share one rr.name and must aggregate, so GROUP BY rr.name.
+    // LATENT CAVEAT: if a future collab is renamed per vintage (different rr.name
+    // each year) it would appear as separate nouveau/arrêté rows.
+    // Zero such cases exist today (2026-05-31).
+    $yoyKpiYear  = is_int($kpiActiveYear) ? $kpiActiveYear : $currentYear;
+    $yoyPrevYear = $yoyKpiYear - 1;
+
+    $yoyStmt = $pdo->prepare("
+        SELECT
+            rr.name                              AS beer_name,
+            MAX(COALESCE(NULLIF(rr.recipe_short_name, ''), rr.name)) AS beer_label,
+            ({$kpiBucketExpr})                   AS bucket,
+            YEAR(DATE(cl.submitted_at))           AS yr,
+            MONTH(DATE(cl.submitted_at))          AS mo,
+            ROUND(SUM(cl.final_volume), 1)        AS hl
+        {$kpiBaseJoin}
+          AND YEAR(DATE(cl.submitted_at)) IN (:cy, :py)
+        GROUP BY rr.name, bucket, yr, mo
+        ORDER BY rr.name, yr, mo
+    ");
+    $yoyStmt->execute([':cy' => $yoyKpiYear, ':py' => $yoyPrevYear]);
+    $yoyRawRows = $yoyStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Build per-beer 12-month arrays for curr + prev year
+    $yoyBeerMap = [];   // name => { bucket, curr:[12], prev:[12] }
+    foreach ($yoyRawRows as $r) {
+        $name = $r['beer_name'];
+        $yr   = (int) $r['yr'];
+        $mo   = (int) $r['mo'];
+        $hl   = (float) $r['hl'];
+        $bk   = $r['bucket'];
+        if (!isset($yoyBeerMap[$name])) {
+            $yoyBeerMap[$name] = [
+                // match/key on rr.name; DISPLAY the short label (consistent with
+                // the recipe heatmap) so contracts read "Jasper" not "Chien Bleu - Jasper".
+                'label'  => $r['beer_label'] ?: $name,
+                'bucket' => $bk,
+                'curr'   => array_fill(0, 12, 0.0),
+                'prev'   => array_fill(0, 12, 0.0),
+            ];
+        }
+        if ($yr === $yoyKpiYear)  $yoyBeerMap[$name]['curr'][$mo - 1] += $hl;
+        if ($yr === $yoyPrevYear) $yoyBeerMap[$name]['prev'][$mo - 1] += $hl;
+    }
+
+    // Compute lastDataMonthIdx for the current/selected year
+    // (0-based index of last month with any HL in kpi_year)
+    $yoyLastDataMonthIdx = -1;
+    foreach ($yoyBeerMap as $bd) {
+        foreach ($bd['curr'] as $idx => $v) {
+            if ($v > 0 && $idx > $yoyLastDataMonthIdx) {
+                $yoyLastDataMonthIdx = $idx;
+            }
+        }
+    }
+
+    // Build the yoy.beers array sorted by currTotal desc
+    $yoyBeers = [];
+    foreach ($yoyBeerMap as $name => $bd) {
+        $currTotal   = array_sum($bd['curr']);
+        $prevTotal   = array_sum($bd['prev']);
+        $pct         = ($prevTotal > 0) ? round($currTotal / $prevTotal * 100, 1) : null;
+        // paceRefPrev = sum of prev[0..lastDataMonthIdx]
+        $paceRefPrev = 0.0;
+        if ($yoyLastDataMonthIdx >= 0) {
+            for ($mi = 0; $mi <= $yoyLastDataMonthIdx; $mi++) {
+                $paceRefPrev += $bd['prev'][$mi];
+            }
+        }
+        $pacePct  = ($paceRefPrev > 0) ? round($currTotal / $paceRefPrev * 100, 1) : null;
+        if ($currTotal == 0 && $prevTotal > 0) {
+            $status = 'arrete';
+        } elseif ($prevTotal == 0 && $currTotal > 0) {
+            $status = 'nouveau';
+        } else {
+            $status = 'actif';
+        }
+        $yoyBeers[] = [
+            'name'           => $name,
+            'label'          => $bd['label'],
+            'bucket'         => $bd['bucket'],
+            'curr'           => array_map(fn($v) => round($v, 1), $bd['curr']),
+            'prev'           => array_map(fn($v) => round($v, 1), $bd['prev']),
+            'currTotal'      => round($currTotal, 1),
+            'prevTotal'      => round($prevTotal, 1),
+            'pct'            => $pct,
+            'paceRefPrev'    => round($paceRefPrev, 1),
+            'pacePct'        => $pacePct,
+            'status'         => $status,
+        ];
+    }
+    // Sort by currTotal desc (arrêté beers fall to bottom naturally)
+    usort($yoyBeers, fn($a, $b) => $b['currTotal'] <=> $a['currTotal']);
+
+    $yoyPayload = [
+        'prevYear'         => $yoyPrevYear,
+        'kpiYear'          => $yoyKpiYear,
+        'lastDataMonthIdx' => $yoyLastDataMonthIdx,
+        'beers'            => $yoyBeers,
+    ];
+    // ─── End YoY block ────────────────────────────────────────────────────────
+
     $kpiPayload = [
         'years'          => array_values($kpiYears),
         'active_year'    => $kpiActiveYear,
@@ -559,6 +664,7 @@ try {
         'annual'         => $annualRows,
         'annual_view'    => $annualView,
         'last_data_month'=> $lastDataMonthCurrent,
+        'yoy'            => $yoyPayload,
     ];
 
 } catch (Throwable $e) {
@@ -1019,6 +1125,31 @@ try {
         </div>
         <div class="wk-chart-card">
           <div class="wk-heatmap-wrap" id="wk-chart-heatmap"></div>
+        </div>
+      </section>
+
+      <!-- H. VS ANNÉE PRÉCÉDENTE — % du total par bière -->
+      <section class="wk-section" id="wk-section-yoy-pct">
+        <div class="wk-section__head">
+          <h2 class="wk-section__title" id="wk-yoy-pct-title">Par bière · % du total <span id="wk-yoy-prev-year-label"><?= htmlspecialchars((string)($kpiActiveYear !== 'all' ? (int)$kpiActiveYear - 1 : $currentYear - 1)) ?></span></h2>
+          <span class="wk-section__note">YTD vs année complète précédente</span>
+        </div>
+        <div class="wk-chart-card">
+          <div class="wk-yoy-pct-wrap" id="wk-chart-yoy-pct"></div>
+        </div>
+      </section>
+
+      <!-- I. COMPARATIF MENSUEL PAR BIÈRE -->
+      <section class="wk-section" id="wk-section-yoy-spark">
+        <div class="wk-section__head">
+          <h2 class="wk-section__title" id="wk-yoy-spark-title">Comparatif mensuel par bière · <span id="wk-yoy-curr-year-label"><?= htmlspecialchars((string)($kpiActiveYear !== 'all' ? (int)$kpiActiveYear : $currentYear)) ?></span> vs <span id="wk-yoy-prev-year-label2"><?= htmlspecialchars((string)($kpiActiveYear !== 'all' ? (int)$kpiActiveYear - 1 : $currentYear - 1)) ?></span></h2>
+        </div>
+        <div class="wk-legend wk-yoy-legend">
+          <div class="wk-legend__item"><span class="wk-legend__dot wk-yoy-dot--curr"></span><span id="wk-yoy-legend-curr"><?= htmlspecialchars((string)($kpiActiveYear !== 'all' ? (int)$kpiActiveYear : $currentYear)) ?></span> (HL brassés)</div>
+          <div class="wk-legend__item"><span class="wk-legend__dot wk-yoy-dot--prev"></span><span id="wk-yoy-legend-prev"><?= htmlspecialchars((string)($kpiActiveYear !== 'all' ? (int)$kpiActiveYear - 1 : $currentYear - 1)) ?></span> (référence)</div>
+        </div>
+        <div class="wk-chart-card">
+          <div class="wk-yoy-spark-grid" id="wk-chart-yoy-spark"></div>
         </div>
       </section>
 
