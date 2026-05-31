@@ -40,16 +40,6 @@
     process:     'process',
   };
 
-  /* ── Unit options per category (convenience defaults — operator can change) */
-  const CAT_DEFAULT_UNIT = {
-    malt:        'kg',
-    hops_kettle: 'g',
-    hops_dry:    'g',
-    adjunct:     'kg',
-    mineral:     'g',
-    process:     'g',
-  };
-
   /* ── Row counters ───────────────────────────────────────────────────────── */
   let rowCounter = 0;   // ingredient rows
 

@@ -921,7 +921,7 @@ try {
     // MI catalog for the ingredient picker (brewing-relevant categories only)
     // Joined to categories to get the category slug for JS.
     $miCatalog = $pdo->query(
-        "SELECT m.id, m.mi_id, m.name, c.name AS category, m.pricing_unit
+        "SELECT m.id, m.mi_id, m.name, c.name AS category, m.input_unit
          FROM ref_mi m
          LEFT JOIN ref_mi_categories c ON m.category_id = c.id
          WHERE c.name IN ('Malt','Hops','Yeast','Brewing Adjunct','Brewing Mineral','Process Chemical')
@@ -943,12 +943,22 @@ try {
     // Build a compact JS-safe structure for BREWING_MI
     $miJs = [];
     foreach ($miCatalog as $m) {
+        $slug = $catToSlug[$m['category']] ?? 'adjunct';
+        $raw  = $m['input_unit'] ?? null;
+        if ($raw === 'kg' || $raw === 'g' || $raw === 'ml') {
+            $unit = $raw;
+        } elseif ($raw === 'l') {
+            $unit = 'ml';
+        } else {
+            // month, unit, NULL, or anything unrecognised → category fallback
+            $unit = ($slug === 'malt') ? 'kg' : 'g';
+        }
         $miJs[] = [
             'id'   => (int)  $m['id'],
             'mi_id'=> $m['mi_id'],
             'name' => $m['name'],
-            'cat'  => $catToSlug[$m['category']] ?? 'adjunct',
-            'unit' => $m['pricing_unit'] ?? 'kg',
+            'cat'  => $slug,
+            'unit' => $unit,
         ];
     }
 
