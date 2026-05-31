@@ -723,6 +723,89 @@ document.addEventListener('DOMContentLoaded', function () {
   addCo2O2Row();
   addCo2O2Row();
 
+  // ── CO₂/O₂ inversion guard on submit ─────────────────────────────────────
+  //
+  // If a pair looks inverted (swapped values produce a lower severity than
+  // as-entered), show a confirm dialog before submission.  The operator can
+  // still override — we never hard-block (mirrors server QC: import-then-flag).
+
+  var co2o2InversionConfirmed = false;
+
+  // QC thresholds — mirrors db-write-helpers.php bd_qc_flag exactly.
+  // Severity: 0=normal, 1=elevated, 2=outlier.
+  function co2Flag(v) {
+    if (v < 2.5 || v > 6.0) return 2;   // outlier
+    if (v < 3.5 || v > 5.0) return 1;   // elevated
+    return 0;                             // normal
+  }
+
+  function o2Flag(v) {
+    if (v > 200) return 2;               // outlier
+    if (v >= 50) return 1;               // elevated
+    return 0;                             // normal
+  }
+
+  if (form) {
+    form.addEventListener('submit', function (e) {
+      if (co2o2InversionConfirmed) return; // operator already confirmed — let through
+
+      var rows = document.querySelectorAll('.pf-co2o2-row');
+      var inverted = [];
+
+      for (var i = 0; i < rows.length; i++) {
+        var row = rows[i];
+        var n   = row.dataset.n;
+        var co2Input = document.getElementById('co2o2_' + n + '_co2');
+        var o2Input  = document.getElementById('co2o2_' + n + '_o2');
+        if (!co2Input || !o2Input) continue;
+
+        var co2Val = parseFloat(co2Input.value);
+        var o2Val  = parseFloat(o2Input.value);
+        if (isNaN(co2Val) || isNaN(o2Val)) continue; // blank or non-numeric — skip
+
+        var sevAsEntered = Math.max(co2Flag(co2Val), o2Flag(o2Val));
+        var sevSwapped   = Math.max(co2Flag(o2Val),  o2Flag(co2Val));
+
+        if (sevSwapped < sevAsEntered) {
+          var numSpan = row.querySelector('.pf-co2o2-row__num');
+          inverted.push({
+            readingNum: numSpan ? numSpan.textContent : String(parseInt(n, 10) + 1),
+            co2: co2Val,
+            o2: o2Val,
+            inputId: 'co2o2_' + n + '_co2',
+          });
+        }
+      }
+
+      if (inverted.length === 0) return; // nothing suspicious — submit normally
+
+      e.preventDefault();
+
+      var msg;
+      if (inverted.length === 1) {
+        msg = 'Lecture ' + inverted[0].readingNum + ' : les mesures CO₂/O₂ semblent inversées' +
+              ' (CO₂ ' + inverted[0].co2 + ' g/L, O₂ ' + inverted[0].o2 + ' ppb).' +
+              '\n\nTu valides quand même ?';
+      } else {
+        var nums = inverted.map(function (p) { return p.readingNum; }).join(', ');
+        msg = 'Lectures ' + nums + ' : les mesures CO₂/O₂ semblent inversées.' +
+              '\n\nTu valides quand même ?';
+      }
+
+      if (window.confirm(msg)) {
+        co2o2InversionConfirmed = true;
+        form.submit(); // programmatic — bypasses the listener
+      } else {
+        // Focus the first inverted pair's CO₂ input so the operator can fix it
+        var firstInput = document.getElementById(inverted[0].inputId);
+        if (firstInput) {
+          firstInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          firstInput.focus();
+        }
+      }
+    });
+  }
+
   // ── FormFramework init ────────────────────────────────────────────────────
   if (typeof FormFramework !== 'undefined') {
     FormFramework.init({
