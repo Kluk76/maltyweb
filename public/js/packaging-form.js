@@ -391,24 +391,35 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // ── Liner sub-block (cuv only) ────────────────────────────────────────────
     // Shown only when run_type='cuv'. Keg/bot/can rows never show liners.
+    // Dropdowns built from window.PF_LINER_MIS (canonical ref_mi Liner subcategory);
+    // first option is "— aucun —" (NULL, no liner). Default pre-selected from
+    // window.PF_LINER_DEFAULT_MI (BOM slot liner_client default_mi_id_fk).
+    var linerMis     = window.PF_LINER_MIS     || [];
+    var linerDefault = window.PF_LINER_DEFAULT_MI || 0;
+
+    function buildLinerOptions() {
+      var opts = '<option value="">— aucun —</option>';
+      linerMis.forEach(function (lm) {
+        var sel = (linerDefault && lm.id === linerDefault) ? ' selected' : '';
+        opts += '<option value="' + lm.id + '"' + sel + '>' + escHtml(lm.name) + '</option>';
+      });
+      return opts;
+    }
+
     const linerGroupHtml =
       '<div class="pf-disposition-group pf-disposition-group--liner" data-fmt-idx="' + idx + '">' +
         '<div class="pf-liner-title">— liners cuve</div>' +
         '<div class="op-form__grid--3 op-form__grid">' +
           '<div class="op-form__field">' +
-            '<label class="op-form__label" for="' + idPfx + '_new_liner_client">Nouveau liner client ?</label>' +
-            '<select id="' + idPfx + '_new_liner_client" name="' + prefix + '[new_liner_client]" class="op-form__select">' +
-              '<option value="">—</option>' +
-              '<option value="1">Oui</option>' +
-              '<option value="0">Non</option>' +
+            '<label class="op-form__label" for="' + idPfx + '_liner_client_mi_id_fk">Liner client</label>' +
+            '<select id="' + idPfx + '_liner_client_mi_id_fk" name="' + prefix + '[liner_client_mi_id_fk]" class="op-form__select">' +
+              buildLinerOptions() +
             '</select>' +
           '</div>' +
           '<div class="op-form__field">' +
-            '<label class="op-form__label" for="' + idPfx + '_new_liner_transport">Nouveau liner transport ?</label>' +
-            '<select id="' + idPfx + '_new_liner_transport" name="' + prefix + '[new_liner_transport]" class="op-form__select">' +
-              '<option value="">—</option>' +
-              '<option value="1">Oui</option>' +
-              '<option value="0">Non</option>' +
+            '<label class="op-form__label" for="' + idPfx + '_liner_transport_mi_id_fk">Liner transport</label>' +
+            '<select id="' + idPfx + '_liner_transport_mi_id_fk" name="' + prefix + '[liner_transport_mi_id_fk]" class="op-form__select">' +
+              buildLinerOptions() +
             '</select>' +
           '</div>' +
         '</div>' +

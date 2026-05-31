@@ -474,6 +474,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             throw new RuntimeException("Exactement un format principal (main) requis.");
         }
 
+        // Allowed liner-MI id set for server-side validation of the cuv liner dropdowns (mig 239).
+        // Sourced canonically from ref_mi (subcategory 'Liner'); mirrors the GET-path build.
+        // Built once per POST here, before the per-format loop that validates against it many times.
+        $allowedLinerIds = [];
+        foreach ($pdo->query(
+            "SELECT id FROM ref_mi
+              WHERE subcategory_id = (SELECT id FROM ref_mi_subcategories WHERE name = 'Liner' LIMIT 1)
+                AND is_active = 1"
+        ) as $lmRow) {
+            $allowedLinerIds[(int)$lmRow['id']] = true;
+        }
+
         // Build one row per format line
         $rows = [];
         foreach ($formatsRaw as $idx => $f) {
@@ -569,13 +581,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             //   Column kept in table as historical provenance. Always NULL for new rows.
             //   The FK-backed client_fk is the sole structured field going forward.
             //
-            // new_liner_client + new_liner_transport: cuv only — NULLed for all other run_types.
-            $fClientFk          = isset($f['client_fk']) && $f['client_fk'] !== ''
-                                    ? (int)$f['client_fk'] : null;
-            $fNewLinerClient    = isset($f['new_liner_client'])    && $f['new_liner_client']    !== ''
-                                    ? (int)$f['new_liner_client']    : null;
-            $fNewLinerTransport = isset($f['new_liner_transport']) && $f['new_liner_transport'] !== ''
-                                    ? (int)$f['new_liner_transport'] : null;
+            // new_liner_client + new_liner_transport bools: no longer read from new submissions.
+            // new rows use liner_client_mi_id_fk / liner_transport_mi_id_fk (mig 239).
+            $fClientFk = isset($f['client_fk']) && $f['client_fk'] !== ''
+                           ? (int)$f['client_fk'] : null;
+
+            // Liner MI FKs (mig 239): two-step read — isset+'' guard FIRST, then validate.
+            $fLinerClientMi    = isset($f['liner_client_mi_id_fk'])    && $f['liner_client_mi_id_fk']    !== ''
+                                   ? (int)$f['liner_client_mi_id_fk']    : null;
+            $fLinerTransportMi = isset($f['liner_transport_mi_id_fk']) && $f['liner_transport_mi_id_fk'] !== ''
+                                   ? (int)$f['liner_transport_mi_id_fk'] : null;
+            // Defense-in-depth: reject ids not in the canonical liner-MI set (stale form value).
+            if ($fLinerClientMi !== null && !isset($allowedLinerIds[$fLinerClientMi])) {
+                $fLinerClientMi = null;
+            }
+            if ($fLinerTransportMi !== null && !isset($allowedLinerIds[$fLinerTransportMi])) {
+                $fLinerTransportMi = null;
+            }
 
             // Defense-in-depth: NULL client_fk unless cuv.
             if ($fRunType !== 'cuv') {
@@ -583,8 +605,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             // Liner fields: cuv only.
             if ($fRunType !== 'cuv') {
-                $fNewLinerClient    = null;
-                $fNewLinerTransport = null;
+                $fLinerClientMi    = null;
+                $fLinerTransportMi = null;
             }
 
             // ── Server-side sku_id_fk resolution ─────────────────────────────
@@ -725,8 +747,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     // Cuv-only per-row fields (NULL for keg/bot/can/can33 — server-enforced above)
                     // keg_client_delivered intentionally not written — historical provenance column only.
                     // New rows use client_fk (→ ref_packaging_clients) exclusively.
-                    'new_liner_client'       => ($fNewLinerClient !== null) ? ($fNewLinerClient ? 1 : 0) : null,
-                    'new_liner_transport'    => ($fNewLinerTransport !== null) ? ($fNewLinerTransport ? 1 : 0) : null,
+                    // new_liner_client / new_liner_transport bools: explicitly NULL for all new rows.
+                    // Legacy bool provenance is preserved in the column; new rows use the FK below.
+                    'new_liner_client'          => null,
+                    'new_liner_transport'       => null,
+                    // Liner MI FKs (mig 239): the specific liner MI installed per event.
+                    // NULL = no liner selected (operator left dropdown on "— aucun —").
+                    'liner_client_mi_id_fk'     => $fLinerClientMi,
+                    'liner_transport_mi_id_fk'  => $fLinerTransportMi,
                     // White label
                     'is_white_label'         => $isWhiteLabel,
                     'white_label_name'       => $whiteLabelName,
@@ -1340,6 +1368,33 @@ try {
         "SELECT id, name FROM ref_packaging_clients WHERE is_active = 1 ORDER BY sort_order ASC, name ASC"
     )->fetchAll(PDO::FETCH_ASSOC);
 
+    // ── Liner MIs for cuv liner dropdowns (mig 239) ───────────────────────────
+    // Source: ref_mi rows whose subcategory is 'Liner'. Never hardcode ids or patterns.
+    $linerMisForForm = $pdo->query(
+        "SELECT id, mi_id, name
+           FROM ref_mi
+          WHERE subcategory_id = (SELECT id FROM ref_mi_subcategories WHERE name = 'Liner' LIMIT 1)
+            AND is_active = 1
+          ORDER BY name ASC"
+    )->fetchAll(PDO::FETCH_ASSOC);
+    // Build an O(1) allowed-id set for server-side validation below.
+    $allowedLinerIds = [];
+    foreach ($linerMisForForm as $lm) {
+        $allowedLinerIds[(int)$lm['id']] = true;
+    }
+
+    // Default liner from BOM slot (not hardcoded — read from ref_packaging_items).
+    $linerDefaultStmt = $pdo->query(
+        "SELECT default_mi_id_fk
+           FROM ref_packaging_items
+          WHERE slot_name = 'liner_client'
+            AND mi_filter_pattern = 'PKG_LINER_%'
+          LIMIT 1"
+    );
+    $linerDefaultRow  = $linerDefaultStmt ? $linerDefaultStmt->fetch(PDO::FETCH_ASSOC) : false;
+    $linerDefaultMiId = ($linerDefaultRow && $linerDefaultRow['default_mi_id_fk'] !== null)
+                          ? (int)$linerDefaultRow['default_mi_id_fk'] : 0;
+
     // ── Active recipes for confirmation dropdown ──────────────────────────────
     $recipes = $pdo->query(
         "SELECT id, name FROM ref_recipes WHERE is_active = 1 ORDER BY name ASC"
@@ -1373,6 +1428,9 @@ try {
     $recentPackaging    = [];
     $cipTypes           = [];
     $cuveCandidates     = [];
+    $linerMisForForm    = [];
+    $allowedLinerIds    = [];
+    $linerDefaultMiId   = 0;
     // Safe fallback: on DB error, disallow override display to avoid confusion
     $canOverride        = false;
     $minDays            = PACKAGING_MIN_DAYS_FALLBACK;
@@ -1388,6 +1446,7 @@ $candidatesOverrideJson = json_encode($candidatesOverride, JSON_UNESCAPED_UNICOD
 $pfRecipeSkusJson       = json_encode($pfRecipeSkus,       JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 $pfRecipeUnassignedJson = json_encode($pfRecipeUnassigned, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 $packagingClientsJson   = json_encode($packagingClientsForForm, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
+$linerMisJson           = json_encode($linerMisForForm,     JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 $runTypeLabelJson       = json_encode(RUN_TYPE_LABELS,     JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 $suffixLabelJson        = json_encode(FORMAT_SUFFIXES,     JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 $cuveCandidatesJson     = json_encode($cuveCandidates,     JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
@@ -1767,6 +1826,8 @@ window.PF_RECIPE_SKUS         = <?= $pfRecipeSkusJson ?>;
 window.PF_RECIPE_UNASSIGNED   = <?= $pfRecipeUnassignedJson ?>;
 window.PF_CAN_OVERRIDE        = <?= $canOverride ? 'true' : 'false' ?>;
 window.PF_PACKAGING_CLIENTS   = <?= $packagingClientsJson ?>;
+window.PF_LINER_MIS           = <?= $linerMisJson ?>;
+window.PF_LINER_DEFAULT_MI    = <?= (int)$linerDefaultMiId ?>;
 window.RUN_TYPE_LABELS        = <?= $runTypeLabelJson ?>;
 window.FORMAT_SUFFIXES        = <?= $suffixLabelJson ?>;
 window.MIN_DAYS_AFTER_RACKING = <?= $minDays ?>;
@@ -1819,8 +1880,10 @@ window.PF_CUVE_CANDIDATES     = <?= $cuveCandidatesJson ?>;
  * hors_process_reason         → hors_process_reason (VARCHAR 255) NEW col (mig 128) optional justification
  * formats[N][client_fk]       → client_fk (FK ref_packaging_clients.id)  cuv only; NULLed otherwise
  * [keg_client_delivered not written — historical provenance column only; new rows always NULL]
- * formats[N][new_liner_client]→ new_liner_client (TINYINT bool)    cuv only; NULLed for keg/bot/can
- * formats[N][new_liner_transport]→ new_liner_transport (TINYINT bool) cuv only; NULLed for keg/bot/can
+ * [new_liner_client bool no longer written — always NULL for new rows; legacy provenance preserved]
+ * [new_liner_transport bool no longer written — always NULL for new rows; legacy provenance preserved]
+ * formats[N][liner_client_mi_id_fk]    → liner_client_mi_id_fk (INT UNSIGNED FK ref_mi)   cuv only; NULL = no liner
+ * formats[N][liner_transport_mi_id_fk] → liner_transport_mi_id_fk (INT UNSIGNED FK ref_mi) cuv only; NULL = no liner
  * is_white_label              → is_white_label (TINYINT bool)
  * white_label_name            → white_label_name
  * comments                    → comments                          Main row only
