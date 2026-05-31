@@ -21,7 +21,11 @@ declare(strict_types=1);
  * Design contract: sb-rl-* CSS namespace, body.sb-board scope.
  */
 
-$rlCsrfJs = htmlspecialchars(json_encode($csrf), ENT_QUOTES, 'UTF-8');
+// Inject as a JS string literal inside <script> — HTML entities are NOT decoded
+// in script content, so use JSON_HEX_* (matches the SB_RECIPES convention in
+// sb-board.php) rather than htmlspecialchars, which would emit `&quot;` and break
+// the IIFE with a syntax error.
+$rlCsrfJs = json_encode($csrf, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE);
 ?>
 
 <!-- ══ Retro-link modal (Atom 11.a) ══════════════════════════════════════ -->
