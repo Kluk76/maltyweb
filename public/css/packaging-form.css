@@ -740,3 +740,100 @@ body.op-form-packaging .pf-tank-read-input--readonly {
   cursor: not-allowed;
   border-color: color-mix(in srgb, var(--ink-faint) 60%, transparent);
 }
+
+/* ── Edit-mode banner ────────────────────────────────────────────────────── */
+body.op-form-packaging .pf-edit-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: color-mix(in srgb, var(--hop) 10%, var(--bg));
+  border: 1.5px solid color-mix(in srgb, var(--hop) 45%, transparent);
+  border-radius: 5px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  font-size: 0.875rem;
+  color: var(--ink);
+  line-height: 1.45;
+}
+
+body.op-form-packaging .pf-edit-banner__icon {
+  font-size: 1.05rem;
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--hop);
+}
+
+body.op-form-packaging .pf-edit-banner__body strong {
+  color: var(--hop-deep, var(--hop));
+}
+
+/* ── Recent-table edit link ──────────────────────────────────────────────── */
+body.op-form-packaging .pf-recent__edit-cell {
+  text-align: right;
+  white-space: nowrap;
+}
+
+body.op-form-packaging .pf-recent__edit-link {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.78rem;
+  color: var(--hop);
+  text-decoration: none;
+  border: 1px solid color-mix(in srgb, var(--hop) 35%, transparent);
+  border-radius: 3px;
+  padding: 3px 8px;
+  transition: background 0.15s, color 0.15s;
+  display: inline-block;
+}
+
+body.op-form-packaging .pf-recent__edit-link:hover {
+  background: color-mix(in srgb, var(--hop) 10%, transparent);
+  color: var(--hop-deep, var(--hop));
+}
+
+/* ── Shared in-tank warn block (edit mode) ───────────────────────────────── */
+body.op-form-packaging .pf-shared-tank-warn {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-top: 0.75rem;
+  padding: 0.875rem 1rem;
+  background: color-mix(in srgb, var(--ember) 8%, var(--bg-elev));
+  border: 1.5px solid color-mix(in srgb, var(--ember) 45%, transparent);
+  border-radius: 5px;
+  font-size: 0.875rem;
+  line-height: 1.45;
+  color: var(--ink);
+}
+
+body.op-form-packaging .pf-shared-tank-warn__icon {
+  font-size: 1rem;
+  flex-shrink: 0;
+  color: var(--ember);
+}
+
+body.op-form-packaging .pf-shared-tank-warn__body {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+body.op-form-packaging .pf-shared-tank-warn__body strong {
+  color: var(--ember);
+}
+
+body.op-form-packaging .pf-shared-tank-warn__confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+body.op-form-packaging .pf-shared-tank-warn__confirm input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--ember);
+  flex-shrink: 0;
+  cursor: pointer;
+}

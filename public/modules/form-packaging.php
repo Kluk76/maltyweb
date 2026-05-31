@@ -328,6 +328,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         $pdo = maltytask_pdo();
 
+        // ── 0. Edit-mode: original submitted_at for row-identity preservation ───
+        // Validated here in the POST path (PRG discipline — never in GET-render only).
+        // The hidden field edit_submitted_at is only written by the server in edit mode;
+        // if absent or malformed, we treat this as a fresh submission.
+        $editSubmittedAtRaw = isset($_POST['edit_submitted_at']) && $_POST['edit_submitted_at'] !== ''
+            ? (string)$_POST['edit_submitted_at'] : null;
+        // Strict datetime regex: "YYYY-MM-DD HH:MM:SS" with optional ".microseconds"
+        $editSubmittedAtValid = ($editSubmittedAtRaw !== null
+            && preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?$/', $editSubmittedAtRaw));
+        $editSubmittedAt = $editSubmittedAtValid ? $editSubmittedAtRaw : null;
+
+        // Shared-in-tank warn+confirm: only gate the UPDATE when operator confirmed.
+        // edit_shared_tank_confirmed=1 is the explicit confirm checkbox in edit mode.
+        $sharedTankConfirmed = (isset($_POST['edit_shared_tank_confirmed'])
+            && $_POST['edit_shared_tank_confirmed'] === '1');
+
         // ── 1. Coerce + validate inputs ──────────────────────────────────────
 
         // ── Override: Choix Hors Process (manager/admin only) ───────────────────
@@ -506,6 +522,68 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     );
                 }
             }
+
+            // ── Shared-reading gate (edit mode + own mode) ─────────────────────
+            // If the operator entered new in-tank values in edit mode (own mode),
+            // check how many live non-reuse rows reference this reading.
+            // When referrer count > 1, updating would silently change siblings' data.
+            // Require explicit confirm ($sharedTankConfirmed). NEVER null tank_read_id_fk.
+            if ($editSubmittedAt !== null && $tankReadMode === 'own') {
+                // We only reach here if there's NO existing lot-day reading (own mode).
+                // So by definition referrer count = 0 for the new read. No shared risk.
+                // (If the existing row was found, inherit mode is set above and no UPDATE
+                //  of bd_tank_readings occurs in Step A of the write path.)
+            }
+            // Separate case: inherit mode in edit session with operator having entered
+            // values (inherit takes priority but tank_co2/o2 may still be submitted).
+            // Check for shared referrer before allowing any UPDATE to bd_tank_readings.
+            // For inherit mode, we do NOT update bd_tank_readings — the read is locked.
+            // If the operator WANTS to update a shared inherited reading, that requires
+            // the shared-tank confirm path below (detected client-side; server enforces).
+            if ($editSubmittedAt !== null && $tankReadMode === 'inherit'
+                && ($tankCo2 !== null || $tankO2 !== null)
+            ) {
+                // Operator submitted values AND an existing lot-day row was found.
+                // CRITICAL: in edit mode the in-tank inputs are prefilled and always
+                // re-POST their values (read-only fields still submit). So we must only
+                // treat this as an UPDATE when the values ACTUALLY CHANGED — otherwise a
+                // routine re-save of any run on a multi-run lot-day would trip the shared
+                // gate and block the save. Compare at the column scale (co2 3dp, o2 2dp).
+                $curStmt = $pdo->prepare(
+                    "SELECT co2_gl, o2_ppb FROM bd_tank_readings WHERE id = ? LIMIT 1"
+                );
+                $curStmt->execute([$tankReadId]);
+                $curRead = $curStmt->fetch(PDO::FETCH_ASSOC) ?: ['co2_gl' => null, 'o2_ppb' => null];
+                $curCo2  = ($curRead['co2_gl'] !== null) ? (float)$curRead['co2_gl'] : null;
+                $curO2   = ($curRead['o2_ppb'] !== null) ? (float)$curRead['o2_ppb'] : null;
+                $co2Changed = (($tankCo2 === null) !== ($curCo2 === null))
+                    || ($tankCo2 !== null && $curCo2 !== null && round($tankCo2, 3) !== round($curCo2, 3));
+                $o2Changed  = (($tankO2 === null) !== ($curO2 === null))
+                    || ($tankO2 !== null && $curO2 !== null && round($tankO2, 2) !== round($curO2, 2));
+
+                if ($co2Changed || $o2Changed) {
+                    // The operator genuinely changed the in-tank reading.
+                    // Count how many live bd_packaging_v2 rows reference this same reading.
+                    $refCountStmt = $pdo->prepare(
+                        "SELECT COUNT(*) FROM bd_packaging_v2
+                          WHERE tank_read_id_fk = ?
+                            AND is_tombstoned = 0
+                            AND reuses_packaging_id_fk IS NULL"
+                    );
+                    $refCountStmt->execute([$tankReadId]);
+                    $sharedReferrerCount = (int)$refCountStmt->fetchColumn();
+
+                    if ($sharedReferrerCount > 1 && !$sharedTankConfirmed) {
+                        throw new RuntimeException(
+                            "Ce relevé in-tank est partagé par {$sharedReferrerCount} saisies du même lot-jour. "
+                            . "Cocher la confirmation pour mettre à jour toutes les saisies associées."
+                        );
+                    }
+                    // Confirmed or single-referrer: UPDATE the existing reading.
+                    $tankReadMode = 'inherit_update';
+                }
+                // else: values unchanged → stay 'inherit' (no UPDATE, no shared gate).
+            }
         }
 
         // ── 2. QC flag ─────────────────────────────────────────────────────
@@ -523,14 +601,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         // ── 3. Build submitted_at ───────────────────────────────────────────
-        $submittedAt = date('Y-m-d H:i:s.u');
+        // Edit mode: reuse the ORIGINAL submitted_at so row_hash stays identical
+        // → bd_upsert resolves to the same uq_natural_key row → UPDATE in place.
+        // Fresh submission: generate a new timestamp.
+        $submittedAt = ($editSubmittedAt !== null) ? $editSubmittedAt : date('Y-m-d H:i:s.u');
 
         $baseAuditTokens = ['web_entry', 'write_guard_active'];
         if (!PACKAGING_WRITE_ENABLED) $baseAuditTokens[] = 'draft_mode';
+        if ($editSubmittedAt !== null) $baseAuditTokens[] = 'edit_reopen';
         if ($qcFlag !== 'normal') $baseAuditTokens[] = "qc_{$qcFlag}";
         if ($horsProcessFlag === 1) $baseAuditTokens[] = 'hors_process_override';
         if ($tankReadingOverrideFlag === 1) $baseAuditTokens[] = 'tank_reading_override';
-        if ($tankReadMode === 'inherit')   $baseAuditTokens[] = 'tank_read_inherited';
+        if ($tankReadMode === 'inherit' || $tankReadMode === 'inherit_update') $baseAuditTokens[] = 'tank_read_inherited';
+        if ($tankReadMode === 'inherit_update') $baseAuditTokens[] = 'tank_read_shared_updated';
         if ($tankReadMode === 'own')       $baseAuditTokens[] = 'tank_read_own';
         if ($tankReadMode === 'exempt')    $baseAuditTokens[] = 'tank_read_exempt';
 
@@ -935,6 +1018,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         ]);
                     }
                     $tankReadId = (int)$pdo->lastInsertId();
+                } elseif ($tankReadMode === 'inherit_update') {
+                    // ── Step A2: UPDATE existing shared bd_tank_readings row ──────────
+                    // The operator confirmed updating a shared reading. All sibling sessions
+                    // that reference this tank_read_id_fk legitimately move together —
+                    // it is one physical reading. tank_read_id_fk is NEVER nulled.
+                    $pdo->prepare(
+                        "UPDATE bd_tank_readings
+                            SET co2_gl     = ?,
+                                o2_ppb     = ?,
+                                updated_at = CURRENT_TIMESTAMP
+                          WHERE id = ?"
+                    )->execute([$tankCo2, $tankO2, $tankReadId]);
                 }
 
                 // ── Step B: upsert packaging rows ─────────────────────────────────
@@ -976,7 +1071,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if (in_array('sku_unresolved', explode(',', $safeRow['audit_flags']), true)) {
                         $auditParts[] = "sku_id_fk unresolved (recipe={$recipeIdFk}, suffix=" . ($suffixUsed ?? 'null') . ")";
                     }
-                    if ($tankReadMode === 'inherit') {
+                    if ($tankReadMode === 'inherit' || $tankReadMode === 'inherit_update') {
                         $auditParts[] = "in-tank read inherited from bd_tank_readings #{$tankReadId}";
                     } elseif ($tankReadingOverrideFlag === 1) {
                         $auditParts[] = "tank_reading_override: " . ($tankReadingOverrideReason ?? 'no reason given');
@@ -984,6 +1079,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $revisionComment = implode(' — ', array_filter($auditParts)) ?: null;
 
                     log_revision($pdo, $me, PACKAGING_LIVE_TABLE, $rowId, null, $safeRow, $qcFlag, $revisionComment);
+                }
+
+                // ── Step B2: Orphan-on-shrink (edit mode only) ────────────────────
+                // When the operator removed a parallel format in the editor, its prior
+                // bd_packaging_v2 row won't appear in this session's row_hash set and
+                // bd_upsert won't touch it. Tombstone any session rows that were NOT
+                // re-submitted. Keyed on the ORIGINAL submitted_at, which is stable.
+                if ($editSubmittedAt !== null) {
+                    // Collect the set of row_hashes we just wrote/updated.
+                    $writtenHashes = array_map(fn($r) => $r['row']['row_hash'], $rows);
+                    // Fetch all non-tombstoned rows for this original session.
+                    $sessionRowStmt = $pdo->prepare(
+                        "SELECT id, row_hash FROM bd_packaging_v2
+                          WHERE submitted_at = ? AND is_tombstoned = 0"
+                    );
+                    $sessionRowStmt->execute([$editSubmittedAt]);
+                    foreach ($sessionRowStmt->fetchAll(PDO::FETCH_ASSOC) as $sRow) {
+                        if (!in_array($sRow['row_hash'], $writtenHashes, true)) {
+                            // Row was in original session but not in re-submit → tombstone it.
+                            $pdo->prepare(
+                                "UPDATE bd_packaging_v2
+                                    SET is_tombstoned = 1,
+                                        audit_flags   = CONCAT(COALESCE(audit_flags,''), ',orphaned_by_edit_reopen'),
+                                        updated_at    = CURRENT_TIMESTAMP
+                                  WHERE id = ?"
+                            )->execute([(int)$sRow['id']]);
+                            log_revision(
+                                $pdo, $me, PACKAGING_LIVE_TABLE, (int)$sRow['id'],
+                                null,
+                                ['is_tombstoned' => 1, 'row_hash' => $sRow['row_hash']],
+                                'normal',
+                                'Tombstoned: parallel format removed during edit_reopen'
+                            );
+                        }
+                    }
                 }
 
                 // ── Step C: CIP events ────────────────────────────────────────────
@@ -1120,6 +1250,203 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // ── GET ───────────────────────────────────────────────────────────────────────
 header('Content-Type: text/html; charset=utf-8');
+
+// ── Edit-mode detection (GET path) ────────────────────────────────────────────
+// Read with ?? default, then validate (two-step pattern — never trust raw param).
+$editIdRaw = $_GET['edit'] ?? null;
+$editId    = ($editIdRaw !== null && is_numeric($editIdRaw)) ? (int)$editIdRaw : null;
+if ($editId !== null && $editId <= 0) $editId = null;
+
+$editMode            = false;
+$editBanner          = null;   // ['beer','batch','event_date','formats_label']
+$pfSticky            = [];     // header-level prefill (mirrors $prefillHeader in brewing)
+$pfStickyFormats     = [];     // per-format rows: [['run_type','suffix','origin',...], ...]
+$pfStickyTankRead    = null;   // ['co2_gl','o2_ppb'] or null
+$pfStickyInFilling   = [];     // [['co2','o2'], ...] from bd_packaging_readings
+$pfStickySubmittedAt = null;   // original submitted_at to carry in hidden field
+$pfSharedTankCount   = 0;      // referrer count for the in-tank reading (shared warn)
+
+if ($editId !== null) {
+    try {
+        $pdoEdit = maltytask_pdo();
+
+        // Load the anchor row (the row whose ?edit=id was clicked).
+        // One row from the recap table — use its submitted_at to pull the whole session.
+        $anchorStmt = $pdoEdit->prepare(
+            "SELECT submitted_at, neb_beer, neb_batch, contract_beer, contract_batch,
+                    source_tank_type, bbt_source_fk, cct_source_fk, recipe_id_fk,
+                    event_date, is_white_label, white_label_name, neb_dlc, comments,
+                    tank_read_id_fk, hors_process_flag, hors_process_reason,
+                    reuses_packaging_id_fk
+               FROM bd_packaging_v2
+              WHERE id = ? AND is_tombstoned = 0
+              LIMIT 1"
+        );
+        $anchorStmt->execute([$editId]);
+        $anchorRow = $anchorStmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($anchorRow === false) {
+            // Not found or tombstoned — degrade gracefully to new-submission mode.
+            flash_set('err', "Saisie #${editId} introuvable ou archivée — nouvelle saisie ouverte.");
+        } else {
+            $editOrigSubmittedAt = (string)$anchorRow['submitted_at'];
+
+            // Load all non-tombstoned rows for this session (same submitted_at).
+            // Main row first, then parallels in insertion order.
+            $sessionStmt = $pdoEdit->prepare(
+                "SELECT id, row_origin, run_type, nebuleuse_format_suffix,
+                        prod_total_units, special_qty_units, unsaleable_units,
+                        loss_uncapped_units, loss_half_filled_units, loss_untaxed_full_units,
+                        loss_keg_liquid_l, taproom_keg_l, loss_liquid_other_units,
+                        loss_4pack_btl_units, loss_4pack_can_units, loss_wrap_btl_units,
+                        loss_wrap_can_units, loss_label_btl_units, loss_keg_collar_units,
+                        loss_crown_cork_units, loss_can_lid_units, loss_keg_save_units,
+                        loss_container_btl_units, loss_container_can_units,
+                        qa_analyses_units, qa_library_units,
+                        client_fk, liner_client_mi_id_fk, liner_transport_mi_id_fk,
+                        reuses_packaging_id_fk, tank_read_id_fk
+                   FROM bd_packaging_v2
+                  WHERE submitted_at = ? AND is_tombstoned = 0
+                  ORDER BY (row_origin = 'main') DESC, id ASC"
+            );
+            $sessionStmt->execute([$editOrigSubmittedAt]);
+            $sessionRows = $sessionStmt->fetchAll(PDO::FETCH_ASSOC);
+
+            if (!empty($sessionRows)) {
+                $editMode = true;
+                $pfStickySubmittedAt = $editOrigSubmittedAt;
+
+                // Header-level fields (same for all rows in session — use anchor).
+                $pfSticky = [
+                    'source_tank_type'  => $anchorRow['source_tank_type'] ?? '',
+                    'bbt_source_fk'     => $anchorRow['bbt_source_fk'],
+                    'cct_source_fk'     => $anchorRow['cct_source_fk'],
+                    'neb_beer'          => $anchorRow['neb_beer'] ?? '',
+                    'neb_batch'         => $anchorRow['neb_batch'] ?? '',
+                    'contract_beer'     => $anchorRow['contract_beer'] ?? '',
+                    'contract_batch'    => $anchorRow['contract_batch'] ?? '',
+                    'recipe_id_fk'      => $anchorRow['recipe_id_fk'],
+                    'event_date'        => $anchorRow['event_date'] ?? date('Y-m-d'),
+                    'is_white_label'    => (int)($anchorRow['is_white_label'] ?? 0),
+                    'white_label_name'  => $anchorRow['white_label_name'] ?? '',
+                    'dlc'               => $anchorRow['neb_dlc'] ?? '',
+                    'comments'          => $anchorRow['comments'] ?? '',
+                    'hors_process_flag'   => (int)($anchorRow['hors_process_flag'] ?? 0),
+                    'hors_process_reason' => $anchorRow['hors_process_reason'] ?? '',
+                    // Tank source ID for JS to select the correct card
+                    'tank_fk_id'        => $anchorRow['source_tank_type'] === 'BBT'
+                                              ? $anchorRow['bbt_source_fk']
+                                              : $anchorRow['cct_source_fk'],
+                ];
+
+                // Per-format rows
+                foreach ($sessionRows as $sr) {
+                    $pfStickyFormats[] = [
+                        'row_origin'              => $sr['row_origin'],
+                        'run_type'                => $sr['run_type'],
+                        'nebuleuse_format_suffix' => $sr['nebuleuse_format_suffix'] ?? '',
+                        'prod_total_units'        => $sr['prod_total_units'],
+                        'special_qty_units'       => $sr['special_qty_units'],
+                        'unsaleable_units'        => $sr['unsaleable_units'],
+                        'loss_uncapped_units'     => $sr['loss_uncapped_units'],
+                        'loss_half_filled_units'  => $sr['loss_half_filled_units'],
+                        'loss_untaxed_full_units' => $sr['loss_untaxed_full_units'],
+                        'loss_keg_liquid_l'       => $sr['loss_keg_liquid_l'],
+                        'taproom_keg_l'           => $sr['taproom_keg_l'],
+                        'loss_liquid_other_units' => $sr['loss_liquid_other_units'],
+                        'loss_4pack_btl_units'    => $sr['loss_4pack_btl_units'],
+                        'loss_4pack_can_units'    => $sr['loss_4pack_can_units'],
+                        'loss_wrap_btl_units'     => $sr['loss_wrap_btl_units'],
+                        'loss_wrap_can_units'     => $sr['loss_wrap_can_units'],
+                        'loss_label_btl_units'    => $sr['loss_label_btl_units'],
+                        'loss_keg_collar_units'   => $sr['loss_keg_collar_units'],
+                        'loss_crown_cork_units'   => $sr['loss_crown_cork_units'],
+                        'loss_can_lid_units'      => $sr['loss_can_lid_units'],
+                        'loss_keg_save_units'     => $sr['loss_keg_save_units'],
+                        'loss_container_btl_units'=> $sr['loss_container_btl_units'],
+                        'loss_container_can_units'=> $sr['loss_container_can_units'],
+                        'qa_analyses_units'       => $sr['qa_analyses_units'],
+                        'qa_library_units'        => $sr['qa_library_units'],
+                        'client_fk'               => $sr['client_fk'],
+                        'liner_client_mi_id_fk'   => $sr['liner_client_mi_id_fk'],
+                        'liner_transport_mi_id_fk'=> $sr['liner_transport_mi_id_fk'],
+                        'reuses_packaging_id_fk'  => $sr['reuses_packaging_id_fk'],
+                    ];
+                }
+
+                // In-tank read (bd_tank_readings) — load from main row's tank_read_id_fk.
+                $tankReadIdFk = $anchorRow['tank_read_id_fk'];
+                if ($tankReadIdFk !== null) {
+                    $trLoadStmt = $pdoEdit->prepare(
+                        "SELECT co2_gl, o2_ppb FROM bd_tank_readings WHERE id = ? LIMIT 1"
+                    );
+                    $trLoadStmt->execute([(int)$tankReadIdFk]);
+                    $trRow = $trLoadStmt->fetch(PDO::FETCH_ASSOC);
+                    if ($trRow !== false) {
+                        $pfStickyTankRead = [
+                            'co2_gl' => $trRow['co2_gl'],
+                            'o2_ppb' => $trRow['o2_ppb'],
+                        ];
+                    }
+
+                    // Shared-reading hazard: count live non-reuse referrers.
+                    // Determines whether operator can edit vs read-only / needs warn.
+                    $refCntStmt = $pdoEdit->prepare(
+                        "SELECT COUNT(*) FROM bd_packaging_v2
+                          WHERE tank_read_id_fk = ?
+                            AND is_tombstoned = 0
+                            AND reuses_packaging_id_fk IS NULL"
+                    );
+                    $refCntStmt->execute([(int)$tankReadIdFk]);
+                    $pfSharedTankCount = (int)$refCntStmt->fetchColumn();
+                }
+
+                // In-filling reads (bd_packaging_readings) — keyed on main row id.
+                $mainRowId = null;
+                foreach ($sessionRows as $sr) {
+                    if ($sr['row_origin'] === 'main') {
+                        // The main row's id — look it up from the session query
+                        $mainRowId = (int)$sr['id'];
+                        break;
+                    }
+                }
+                if ($mainRowId !== null) {
+                    $fillStmt = $pdoEdit->prepare(
+                        "SELECT reading_idx, co2, o2
+                           FROM bd_packaging_readings
+                          WHERE packaging_v2_id = ?
+                          ORDER BY reading_idx ASC"
+                    );
+                    $fillStmt->execute([$mainRowId]);
+                    foreach ($fillStmt->fetchAll(PDO::FETCH_ASSOC) as $fr) {
+                        $pfStickyInFilling[] = [
+                            'co2' => $fr['co2'],
+                            'o2'  => $fr['o2'],
+                        ];
+                    }
+                }
+
+                // Build banner label
+                $beerDisp  = ($pfSticky['neb_beer'] !== '' ? $pfSticky['neb_beer'] : $pfSticky['contract_beer']);
+                $batchDisp = ($pfSticky['neb_batch'] !== '' ? $pfSticky['neb_batch'] : $pfSticky['contract_batch']);
+                $fmtLabels = array_map(
+                    fn($f) => (RUN_TYPE_LABELS[$f['run_type']] ?? $f['run_type'])
+                              . ($f['nebuleuse_format_suffix'] !== '' ? ' (' . $f['nebuleuse_format_suffix'] . ')' : ''),
+                    $pfStickyFormats
+                );
+                $editBanner = [
+                    'beer'         => $beerDisp,
+                    'batch'        => $batchDisp,
+                    'event_date'   => $pfSticky['event_date'],
+                    'formats_label'=> implode(', ', $fmtLabels),
+                ];
+            }
+        }
+    } catch (Throwable $eEdit) {
+        flash_set('err', 'Erreur lors du chargement de la saisie : ' . htmlspecialchars($eEdit->getMessage()));
+        $editMode = false;
+    }
+}
 
 try {
     $pdo = maltytask_pdo();
@@ -1655,6 +1982,16 @@ $tankReadingsJson       = json_encode($tankReadings,       JSON_UNESCAPED_UNICOD
 // valid packaging CIP states are "Soutireuse alone" or "Soutireuse + KZE".
 // KZE-alone is impossible — the partial renders no independent KZE row and the
 // parser drops a forged partner-without-anchor submission.
+// Load CIP existing events in edit mode so the CIP partial can prefill them.
+$cipExisting = null;
+if ($editMode && $editId !== null) {
+    try {
+        $cipExisting = cip_events_for($pdo, 'packaging', $editId);
+    } catch (\Throwable $_cipEx) {
+        $cipExisting = null;
+    }
+}
+
 $cipConfig = [
     'machines'            => ['filler', 'kze'],
     'show_inline_combine' => true,
@@ -1662,7 +1999,7 @@ $cipConfig = [
     'combine_anchor'      => 'filler',
     'vessels'             => [],
     'cip_types'           => $cipTypes,
-    'existing'            => null,  // new submission only (no edit path yet)
+    'existing'            => $cipExisting,
 ];
 ?><!doctype html>
 <html lang="fr">
@@ -1699,19 +2036,47 @@ $cipConfig = [
   </div>
   <?php endif ?>
 
+  <?php if ($editMode && $editBanner !== null):
+      $ebBeer    = htmlspecialchars((string)($editBanner['beer'] ?? '—'));
+      $ebBatch   = htmlspecialchars((string)($editBanner['batch'] ?? '—'));
+      $ebDate    = htmlspecialchars((string)($editBanner['event_date'] ?? '—'));
+      $ebFormats = htmlspecialchars((string)($editBanner['formats_label'] ?? ''));
+  ?>
+    <div class="pf-edit-banner" role="status">
+      <span class="pf-edit-banner__icon" aria-hidden="true">✎</span>
+      <div class="pf-edit-banner__body">
+        <strong>Mettre à jour la saisie <?= $ebBeer ?> (B<?= $ebBatch ?>) — <?= $ebFormats ?> du <?= $ebDate ?></strong>
+      </div>
+    </div>
+  <?php endif ?>
+
   <!-- Header -->
   <div class="op-form__header">
     <div class="op-form__eyebrow">Conditionnement · Packaging</div>
+    <?php if ($editMode): ?>
+    <h1 class="op-form__title">Modifier <em>conditionnement</em></h1>
+    <p class="op-form__sub">
+      Mise à jour d'une saisie existante. Les champs sont pré-remplis depuis la base de données.
+      Modifiez les valeurs et sauvegardez.
+    </p>
+    <?php else: ?>
     <h1 class="op-form__title">Saisie <em>conditionnement</em></h1>
     <p class="op-form__sub">
       Sélectionner le lot à conditionner (BBT ou CCT disponible depuis
       <?= $minDays ?> jour<?= $minDays > 1 ? 's' : '' ?> après soutirage).
     </p>
+    <?php endif ?>
   </div>
 
   <!-- ── FORM ─────────────────────────────────────────────────────────── -->
   <form id="packaging-form" method="post" action="/modules/form-packaging.php" novalidate>
     <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+    <!-- edit_submitted_at: carries the original submitted_at in edit mode.
+         Server validates format strictly; absent or malformed = fresh submission. -->
+    <?php if ($editMode && $pfStickySubmittedAt !== null): ?>
+    <input type="hidden" name="edit_submitted_at" id="edit_submitted_at"
+           value="<?= htmlspecialchars($pfStickySubmittedAt) ?>">
+    <?php endif ?>
 
     <!-- Hidden fields populated by JS from tank selection -->
     <input type="hidden" id="source_tank_type" name="source_tank_type" value="">
@@ -1838,8 +2203,9 @@ $cipConfig = [
             <span class="op-form__opt">(modifiable)</span>
           </label>
           <!-- Decision 3: defaults to today; operator can freely backdate via calendar picker -->
+          <!-- Edit mode: prefilled from original session event_date. -->
           <input id="event_date" name="event_date" type="date" class="op-form__input"
-                 value="<?= htmlspecialchars(date('Y-m-d')) ?>" required>
+                 value="<?= htmlspecialchars($editMode ? ($pfSticky['event_date'] ?? date('Y-m-d')) : date('Y-m-d')) ?>" required>
           <span class="op-form__hint">
             Par défaut : aujourd'hui. Pour une saisie rétrospective, cliquer sur
             la date et sélectionner la date réelle du conditionnement.
@@ -1909,6 +2275,22 @@ $cipConfig = [
         </div>
       </div>
       <?php endif ?>
+
+      <!-- Shared in-tank warn block (edit mode only — shown by JS when shared referrer count > 1) -->
+      <!-- JS sets data-shared-count from window.PF_EDIT_SHARED_TANK_COUNT. -->
+      <div id="pf-shared-tank-warn" class="pf-shared-tank-warn" hidden>
+        <span class="pf-shared-tank-warn__icon" aria-hidden="true">⚠</span>
+        <div class="pf-shared-tank-warn__body">
+          <strong>Relevé in-tank partagé</strong> —
+          Ce relevé est partagé par <strong id="pf-shared-tank-count">N</strong> saisies du même lot-jour.
+          La modification s'applique à toutes.
+        </div>
+        <label class="pf-shared-tank-warn__confirm">
+          <input type="checkbox" id="pf-shared-tank-confirm-cb"
+                 name="edit_shared_tank_confirmed" value="1">
+          Confirmer la mise à jour pour toutes les saisies associées
+        </label>
+      </div>
     </div><!-- card in-tank read -->
 
     <!-- ── Section: Formats de conditionnement (multi-format, decision 8) ── -->
@@ -1959,15 +2341,16 @@ $cipConfig = [
         <div class="op-form__field">
           <label class="op-form__label" for="is_white_label">White label ?</label>
           <select id="is_white_label" name="is_white_label" class="op-form__select">
-            <option value="0">Non</option>
-            <option value="1">Oui</option>
+            <option value="0"<?= ($editMode && (int)($pfSticky['is_white_label'] ?? 0) === 0) ? ' selected' : '' ?>>Non</option>
+            <option value="1"<?= ($editMode && (int)($pfSticky['is_white_label'] ?? 0) === 1) ? ' selected' : '' ?>>Oui</option>
           </select>
         </div>
 
-        <div class="op-form__field" id="pf-wl-name-field" hidden>
+        <div class="op-form__field" id="pf-wl-name-field"<?= (!$editMode || (int)($pfSticky['is_white_label'] ?? 0) !== 1) ? ' hidden' : '' ?>>
           <label class="op-form__label" for="white_label_name">Nom white label</label>
           <input id="white_label_name" name="white_label_name" type="text" class="op-form__input"
-                 placeholder="ex. Monoprix Lager">
+                 placeholder="ex. Monoprix Lager"
+                 value="<?= htmlspecialchars($editMode ? ($pfSticky['white_label_name'] ?? '') : '') ?>">
         </div>
 
       </div>
@@ -1980,7 +2363,8 @@ $cipConfig = [
 
         <div class="op-form__field">
           <label class="op-form__label" for="dlc">DLC / BBD</label>
-          <input id="dlc" name="dlc" type="month" class="op-form__input">
+          <input id="dlc" name="dlc" type="month" class="op-form__input"
+                 value="<?= htmlspecialchars($editMode ? ($pfSticky['dlc'] ?? '') : '') ?>">
         </div>
 
       </div>
@@ -1993,19 +2377,31 @@ $cipConfig = [
         <div class="op-form__field op-form__field--full">
           <label class="op-form__label" for="comments">Commentaires libres</label>
           <textarea id="comments" name="comments" class="op-form__textarea" rows="3"
-                    placeholder="Incidents, observations qualité, conditions de conditionnement…"></textarea>
+                    placeholder="Incidents, observations qualité, conditions de conditionnement…"><?= htmlspecialchars($editMode ? ($pfSticky['comments'] ?? '') : '') ?></textarea>
         </div>
       </div>
     </div>
 
     <!-- Submit bar -->
     <div class="op-form__submit-bar">
+      <?php if (!$editMode): ?>
       <button type="button" class="op-form__btn op-form__btn--secondary"
               onclick="if(confirm('Effacer le brouillon ?')){localStorage.removeItem('packaging-draft');location.reload();}">
         Effacer brouillon
       </button>
+      <?php else: ?>
+      <a href="/modules/form-packaging.php" class="op-form__btn op-form__btn--secondary">
+        Annuler
+      </a>
+      <?php endif ?>
       <button type="submit" id="pf-submit" class="op-form__btn op-form__btn--primary" disabled>
-        <?= PACKAGING_WRITE_ENABLED ? 'Enregistrer le conditionnement →' : 'Enregistrer (mode test) →' ?>
+        <?php if ($editMode): ?>
+          Mettre à jour →
+        <?php elseif (PACKAGING_WRITE_ENABLED): ?>
+          Enregistrer le conditionnement →
+        <?php else: ?>
+          Enregistrer (mode test) →
+        <?php endif ?>
       </button>
     </div>
 
@@ -2031,6 +2427,7 @@ $cipConfig = [
             <th>Opérateur</th>
             <th>Mode</th>
             <th>Override</th>
+            <th></th>
           </tr>
         </thead>
         <tbody>
@@ -2047,6 +2444,7 @@ $cipConfig = [
               $units        = $origin === 'parallel' ? ($r['special_qty_units'] ?? null) : ($r['prod_total_units'] ?? null);
               $dateDisp     = $r['event_date'] ?? substr($r['submitted_at'] ?? '', 0, 10);
               $rowClass     = trim(($isDraft ? 'pf-row--draft' : '') . ' ' . ($isHorsProcess ? 'pf-row--hors-process' : ''));
+              $rowId        = (int)($r['id'] ?? 0);
             ?>
             <tr<?= $rowClass !== '' ? ' class="' . $rowClass . '"' : '' ?>>
               <td class="op-form__mono"><?= htmlspecialchars($dateDisp) ?></td>
@@ -2064,6 +2462,16 @@ $cipConfig = [
                   <span class="pf-hp-badge" title="Saisie créée via override Choix Hors Process">HORS PROCESS</span>
                 <?php else: ?>
                   <span class="pf-hp-badge pf-hp-badge--normal">—</span>
+                <?php endif ?>
+              </td>
+              <td class="pf-recent__edit-cell">
+                <?php /* Edit link only on the MAIN row: ?edit must resolve to the session
+                         main row id so CIP prefill + the anchor load are correct. The whole
+                         session (main + parallels) loads from the main row's submitted_at. */ ?>
+                <?php if ($rowId > 0 && !$isDraft && $origin === 'main'): ?>
+                  <a href="/modules/form-packaging.php?edit=<?= $rowId ?>"
+                     class="pf-recent__edit-link"
+                     title="Ouvrir / compléter cette saisie">Ouvrir / compléter</a>
                 <?php endif ?>
               </td>
             </tr>
@@ -2090,6 +2498,15 @@ window.FORMAT_SUFFIXES        = <?= $suffixLabelJson ?>;
 window.MIN_DAYS_AFTER_RACKING = <?= $minDays ?>;
 window.PF_CUVE_CANDIDATES     = <?= $cuveCandidatesJson ?>;
 window.PF_TANK_READINGS       = <?= $tankReadingsJson ?>;
+<?php if ($editMode): ?>
+// Edit-mode: pre-seed JS from canonical DB data (loaded from bd_packaging_v2 + bd_tank_readings + bd_packaging_readings).
+window.PF_EDIT_MODE            = true;
+window.PF_EDIT_STICKY_HEADER   = <?= json_encode($pfSticky,          JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+window.PF_EDIT_STICKY_FORMATS  = <?= json_encode($pfStickyFormats,   JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+window.PF_EDIT_STICKY_TANK     = <?= json_encode($pfStickyTankRead,  JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+window.PF_EDIT_STICKY_FILLING  = <?= json_encode($pfStickyInFilling, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+window.PF_EDIT_SHARED_TANK_COUNT = <?= (int)$pfSharedTankCount ?>;
+<?php endif ?>
 </script>
 
 <script src="/js/form-framework.js?v=<?= @filemtime(__DIR__ . '/../js/form-framework.js') ?: time() ?>" defer></script>

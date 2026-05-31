@@ -1130,4 +1130,228 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   }
 
+  // ── Edit-mode prefill (PF_STICKY_*) ─────────────────────────────────────
+  //
+  // When window.PF_EDIT_MODE is true, the server injected:
+  //   PF_EDIT_STICKY_HEADER   — header fields (tank, beer, batch, etc.)
+  //   PF_EDIT_STICKY_FORMATS  — per-format row data
+  //   PF_EDIT_STICKY_TANK     — {co2_gl, o2_ppb} or null
+  //   PF_EDIT_STICKY_FILLING  — [{co2, o2}, ...] in-filling pairs
+  //   PF_EDIT_SHARED_TANK_COUNT — referrer count for shared-reading warn
+  //
+  // Flow: restore tank selection → JS fires selectTank() → format rows rendered
+  //       → fill format fields → fill in-tank inputs → fill in-filling pairs.
+  //
+  // The tank-card selection triggers selectTank() which populates all hidden
+  // identity fields (neb_beer, neb_batch, recipe_id_fk, etc.) and enables submit.
+  // If the exact tank card isn't found (e.g. lot no longer eligible), we set
+  // hidden fields directly and show a warning — the operator can still save.
+
+  if (window.PF_EDIT_MODE && window.PF_EDIT_STICKY_HEADER) {
+    var stickyH = window.PF_EDIT_STICKY_HEADER;
+
+    // ── 1. Restore tank selection ──────────────────────────────────────────
+    var tankTypeVal = stickyH.source_tank_type || '';
+    var tankFkId    = stickyH.tank_fk_id !== null && stickyH.tank_fk_id !== undefined
+                        ? String(stickyH.tank_fk_id) : '';
+
+    var foundCard = null;
+    if (tankTypeVal && tankFkId) {
+      // Try current tank grid (normal candidates)
+      foundCard = document.querySelector(
+        '.pf-tank-card[data-tank-type="' + escHtml(tankTypeVal) + '"][data-tank-fk-id="' + escHtml(tankFkId) + '"]'
+      );
+    }
+
+    if (foundCard && !foundCard.disabled) {
+      // Normal path: card is present and eligible → select it
+      selectTank(foundCard);
+    } else {
+      // Fallback: tank no longer in normal candidate list
+      // (could be ineligible lot, or date gate). Populate hidden fields directly
+      // so the form can still be saved. Operator sees a warning.
+      if (fldTankType)     fldTankType.value     = tankTypeVal;
+      if (fldTankId)       fldTankId.value       = tankFkId;
+      if (fldTankNum)      fldTankNum.value       = '';
+      if (fldNebBeer)      fldNebBeer.value       = stickyH.neb_beer || '';
+      if (fldNebBatch)     fldNebBatch.value      = stickyH.neb_batch || '';
+      if (fldContractBeer) fldContractBeer.value  = stickyH.contract_beer || '';
+      if (fldContractBatch)fldContractBatch.value = stickyH.contract_batch || '';
+      if (fldRecipeId)     fldRecipeId.value      = stickyH.recipe_id_fk ? String(stickyH.recipe_id_fk) : '';
+
+      isContractBeer = (stickyH.contract_beer && !stickyH.neb_beer);
+      updateAllRowDispositionGroups();
+      updateTankReadState();
+
+      // Show selected-panel summary even without a card
+      if (selectedPanel) selectedPanel.hidden = false;
+      if (selectedSummary) {
+        var bDisp = stickyH.neb_beer || stickyH.contract_beer || '?';
+        var baDisp = stickyH.neb_batch || stickyH.contract_batch || '?';
+        selectedSummary.textContent = tankTypeVal + ' — ' + bDisp + ' · Brassin ' + baDisp;
+      }
+
+      tryEnableSubmit();
+    }
+
+    // ── 1b. Restore hors_process override state ─────────────────────────────
+    // Round-trip the original flag so a plain re-save does NOT silently clear it.
+    // Set the POST hidden directly (do NOT dispatch the checkbox 'change' handler —
+    // that would swap the tank candidate list and clobber the edit-mode selection
+    // restored above). The visible checkbox/reason are set for UI consistency only.
+    if (Number(stickyH.hors_process_flag) === 1) {
+      if (horsProcessFld) horsProcessFld.value = '1';
+      if (overrideCheckbox) overrideCheckbox.checked = true;
+      if (overrideReasonRow) overrideReasonRow.hidden = false;
+      var hpReasonInput = document.getElementById('hors_process_reason');
+      if (hpReasonInput && stickyH.hors_process_reason) {
+        hpReasonInput.value = stickyH.hors_process_reason;
+      }
+    }
+
+    // ── 2. Restore format rows ──────────────────────────────────────────────
+    // The main format row (index 0) was seeded by addFormatRow(true) above.
+    // We need to restore its values AND add parallel rows if needed.
+    var stickyFmts = window.PF_EDIT_STICKY_FORMATS || [];
+
+    stickyFmts.forEach(function (fmt, i) {
+      var isMain = (fmt.row_origin === 'main');
+      // Row 0 already added (main); add additional rows for parallels.
+      if (i > 0) {
+        addFormatRow(false);
+      }
+
+      var rowEl = document.getElementById('pf-fmt-' + i);
+      if (!rowEl) return;
+
+      // Set run_type
+      var rtSel = rowEl.querySelector('[name="formats[' + i + '][run_type]"]');
+      if (rtSel && fmt.run_type) {
+        rtSel.value = fmt.run_type;
+        rtSel.dispatchEvent(new Event('change'));
+      }
+
+      // Set format_suffix
+      var sfxSel = rowEl.querySelector('[name="formats[' + i + '][format_suffix]"]');
+      if (sfxSel) {
+        var sfxVal = fmt.nebuleuse_format_suffix || '';
+        // Add option if missing (handles values outside FORMAT_SUFFIXES)
+        var sfxOpt = Array.from(sfxSel.options).find(function (o) { return o.value === sfxVal; });
+        if (!sfxOpt && sfxVal !== '') {
+          var newOpt = document.createElement('option');
+          newOpt.value = sfxVal;
+          newOpt.textContent = sfxVal;
+          sfxSel.appendChild(newOpt);
+        }
+        sfxSel.value = sfxVal;
+      }
+
+      // Set qty field (prod_total or qte_unites depending on origin)
+      function setFmtInput(nameFragment, value) {
+        var el = rowEl.querySelector('[name="formats[' + i + '][' + nameFragment + ']"]');
+        if (el && value !== null && value !== undefined && value !== '') {
+          el.value = String(value);
+        }
+      }
+
+      if (isMain) {
+        setFmtInput('prod_total_units', fmt.prod_total_units);
+      } else {
+        setFmtInput('qte_unites', fmt.special_qty_units);
+      }
+
+      // Disposition fields
+      var dispFields = [
+        'unsaleable_units', 'loss_uncapped_units', 'loss_half_filled_units',
+        'loss_untaxed_full_units', 'loss_keg_liquid_l', 'taproom_keg_l',
+        'loss_liquid_other_units', 'loss_4pack_btl_units', 'loss_4pack_can_units',
+        'loss_wrap_btl_units', 'loss_wrap_can_units', 'loss_label_btl_units',
+        'loss_keg_collar_units', 'loss_crown_cork_units', 'loss_can_lid_units',
+        'loss_keg_save_units', 'loss_container_btl_units', 'loss_container_can_units',
+        'qa_analyses_units', 'qa_library_units',
+      ];
+      dispFields.forEach(function (fname) {
+        setFmtInput(fname, fmt[fname]);
+      });
+
+      // Per-row client / liner FKs
+      setFmtInput('client_fk', fmt.client_fk);
+
+      var linerClientSel = rowEl.querySelector('[name="formats[' + i + '][liner_client_mi_id_fk]"]');
+      if (linerClientSel && fmt.liner_client_mi_id_fk !== null && fmt.liner_client_mi_id_fk !== undefined) {
+        linerClientSel.value = String(fmt.liner_client_mi_id_fk);
+      }
+      var linerTransSel = rowEl.querySelector('[name="formats[' + i + '][liner_transport_mi_id_fk]"]');
+      if (linerTransSel && fmt.liner_transport_mi_id_fk !== null && fmt.liner_transport_mi_id_fk !== undefined) {
+        linerTransSel.value = String(fmt.liner_transport_mi_id_fk);
+      }
+
+      // Reuses FK (cuv only)
+      var reuseSel = rowEl.querySelector('[name="formats[' + i + '][reuses_packaging_id_fk]"]');
+      if (reuseSel && fmt.reuses_packaging_id_fk !== null && fmt.reuses_packaging_id_fk !== undefined) {
+        reuseSel.value = String(fmt.reuses_packaging_id_fk);
+        reuseSel.dispatchEvent(new Event('change'));
+      }
+
+      // Re-evaluate disposition groups after all values set
+      updateRowDispositionGroups(rowEl);
+    });
+
+    // ── 3. Restore in-tank CO₂/O₂ ─────────────────────────────────────────
+    var stickyTank = window.PF_EDIT_STICKY_TANK;
+    if (stickyTank) {
+      if (tankCo2Input) {
+        tankCo2Input.value = stickyTank.co2_gl !== null && stickyTank.co2_gl !== undefined
+          ? String(stickyTank.co2_gl) : '';
+      }
+      if (tankO2Input) {
+        tankO2Input.value = stickyTank.o2_ppb !== null && stickyTank.o2_ppb !== undefined
+          ? String(stickyTank.o2_ppb) : '';
+      }
+    }
+
+    // ── 4. Restore in-filling CO₂/O₂ pairs ────────────────────────────────
+    // The 3 seed rows added above already have empty values. Clear them first,
+    // then add the prefilled rows. If stickyFilling is empty, leave 3 blank rows.
+    var stickyFilling = window.PF_EDIT_STICKY_FILLING || [];
+    if (stickyFilling.length > 0 && co2o2List) {
+      // Remove all seeded rows
+      while (co2o2List.firstChild) co2o2List.removeChild(co2o2List.firstChild);
+      co2o2Count = 0;
+
+      stickyFilling.forEach(function (pair) {
+        var n = co2o2Count;
+        co2o2Count++;
+        var row = buildCo2O2Row(n);
+        // Pre-fill values
+        var co2El = row.querySelector('[name="co2o2[' + n + '][co2]"]');
+        var o2El  = row.querySelector('[name="co2o2[' + n + '][o2]"]');
+        if (co2El && pair.co2 !== null && pair.co2 !== undefined) co2El.value = String(pair.co2);
+        if (o2El  && pair.o2  !== null && pair.o2  !== undefined) o2El.value  = String(pair.o2);
+        row.querySelector('.pf-co2o2-remove').addEventListener('click', function () {
+          removeCo2O2Row(n);
+        });
+        co2o2List.appendChild(row);
+      });
+      updateCo2O2AddBtn();
+    }
+
+    // ── 5. Shared in-tank warn ─────────────────────────────────────────────
+    var sharedCount = window.PF_EDIT_SHARED_TANK_COUNT || 0;
+    var sharedWarnEl = document.getElementById('pf-shared-tank-warn');
+    if (sharedWarnEl && sharedCount > 1) {
+      var countEl = document.getElementById('pf-shared-tank-count');
+      if (countEl) countEl.textContent = String(sharedCount);
+      sharedWarnEl.hidden = false;
+    }
+  }
+
 });
+
+// ── Edit-mode: enable submit without tank selection ────────────────────────
+// In edit mode, the submit button should not be gated on a freshly-selected
+// tank card (the existing session's identity is already stored in hidden fields).
+// Re-enable submit after prefill sets the hidden tank fields.
+// (tryEnableSubmit already calls fldTankType.value check; after setting it in
+//  the restore path above, we must call it again once DOM is settled.)
+// Handled by the selectTank() call or the direct field-set + tryEnableSubmit() above.
