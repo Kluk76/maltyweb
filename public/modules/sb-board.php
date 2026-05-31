@@ -41,11 +41,16 @@ $csrf   = csrf_token();
 // (single-source-of-truth contract for all board reads).
 $closedMothers = sb_recent_closed_mothers($pdo, 3);
 
-// Atom 12: real fleet + observed occupancy (READ-ONLY projection from bd_* events).
-$fleet      = sb_fleet($pdo);            // ['cct'=>[...], 'bbt'=>[...], 'yt'=>[...], 'serving'=>[...]]
-$occupancy  = sb_observed_occupancy($pdo); // keyed "bbt-8" => [...], "cct-3" => [...], etc.
+// Atoms 14+15: corrected occupancy engine.
+// CCT occupancy from bd_brewing_brewday_v2 (sb_fermentation_occupancy via sb_merged_occupancy).
+// BBT occupancy from bd_racking_v2 survivor model (sb_observed_occupancy via sb_merged_occupancy).
+// $occupancy is NOT used for vessel SVG grids (grids removed — replaced by availability widget).
+// $fleet is used by the empty-zone fallback strings and the avail-bar segment loops.
+$fleet            = sb_fleet($pdo);                // ['cct'=>[…],'bbt'=>[…],…]
+$occupancy        = sb_merged_occupancy($pdo);     // keyed "cct-N"/"bbt-N"
+$fleetAvail       = sb_fleet_availability($pdo);   // per-kind {active,occupied,available}
 
-// Atom 13: observed in-flight cards — bucketed by zone, reuses $occupancy derivation.
+// Observed in-flight cards — bucketed by zone, reuses merged occupancy (no extra DB queries).
 // READ-ONLY projection. op_sessions (true mothers) path is unaffected and rendered in parallel.
 $observedInFlight = sb_observed_in_flight($pdo); // ['fermentation' => [...], 'bbt' => [...]]
 
@@ -56,6 +61,29 @@ foreach (SB_ZONES as $z) {
         $totalMothers += count($byZone[$z] ?? []);
     }
 }
+
+// Pre-compute observed totals here so $totalListItems is available before the batch-list section.
+// Build dedup keys from true mothers so observed rows don't double-count.
+$_motherBatchKeys = [];
+foreach (SB_ZONES as $_zChk) {
+    foreach ($byZone[$_zChk] ?? [] as $_mChk) {
+        // Skip mothers with null recipe_id_fk — they can't correspond to an observed card.
+        if (isset($_mChk['recipe_id_fk'], $_mChk['batch']) && $_mChk['recipe_id_fk'] !== null) {
+            $_motherBatchKeys[(int)$_mChk['recipe_id_fk'] . ':' . $_mChk['batch']] = true;
+        }
+    }
+}
+$_allObservedPreCount = [];
+foreach (['fermentation', 'bbt'] as $_obZone) {
+    foreach ($observedInFlight[$_obZone] ?? [] as $_obCard) {
+        $_obKey = ($_obCard['recipe_id'] ?? '') . ':' . ($_obCard['batch'] ?? '');
+        if (!isset($_motherBatchKeys[$_obKey])) {
+            $_allObservedPreCount[] = true;
+        }
+    }
+}
+$totalObservedCount = count($_allObservedPreCount);
+$totalListItems     = $totalMothers + $totalObservedCount;
 
 // Recipe lookup map for the retro-link modal (admin only, but fetched once for simplicity).
 // Keyed by recipe id → name; injected as window.SB_RECIPES in the page.
@@ -189,35 +217,55 @@ function sbb_render_mother_card(array $m, string $zone): string
 /**
  * Render a read-only observed card for an in-flight batch derived from bd_* data.
  *
- * Rules (Atom 13 spec, PM-locked):
+ * Handles both CCT cards (kind=cct; uses brewed_on + days_in_tank) and BBT cards
+ * (kind=bbt; uses racked_on + days_in_tank). The caller sets 'brewed_on' or
+ * 'racked_on' as appropriate; this function picks whichever is non-null.
+ *
+ * Rules (Atoms 13-15 spec, PM-locked):
  *   - NO heartbeat — data is weeks old; green/amber/red would be misleading.
  *   - NON-CLICKABLE — no drill-in link (no op_session children exist).
  *   - recipe_name used verbatim — never a hardcoded id→name lookup.
- *   - Neutral factual line: "soutiré il y a N j · X.X HL en cuve".
+ *   - Neutral factual line: CCT "en fermentation depuis N j",
+ *     BBT "soutiré il y a N j".
  *   - Badge: "observé · lecture seule".
+ *   - "(assemblage)" chip when is_assemblage=true (neutral, no per-source breakdown).
  *
  * Returns escaped HTML string — safe to echo directly.
  */
 function sbb_render_observed_card(array $c): string
 {
-    $vesselLabel  = sbb_esc($c['vessel_label']);
-    $recipeName   = sbb_esc($c['recipe_name'] ?: '—');
-    $batch        = sbb_esc($c['batch']);
-    $remainingHl  = number_format((float) $c['remaining_hl'], 1);
-    $daysInTank   = $c['days_in_tank'] !== null ? (int) $c['days_in_tank'] : null;
+    $vesselLabel   = sbb_esc($c['vessel_label']);
+    $recipeName    = sbb_esc($c['recipe_name'] ?: '—');
+    $batch         = sbb_esc($c['batch']);
+    $daysInTank    = isset($c['days_in_tank']) && $c['days_in_tank'] !== null
+                       ? (int) $c['days_in_tank'] : null;
+    $isBbt         = str_starts_with((string) ($c['vessel_key'] ?? ''), 'bbt-');
+    $isAssemblage  = !empty($c['is_assemblage']);
+    $isAbandoned   = !empty($c['is_abandoned']);
 
-    // Neutral factual line: "soutiré il y a N j · X.X HL en cuve"
-    $neutralLine = '';
-    if ($daysInTank !== null) {
-        $neutralLine = 'soutiré il y a ' . $daysInTank . ' j · ' . $remainingHl . ' HL en cuve';
+    // Neutral factual line — differs by vessel kind
+    if ($isBbt) {
+        $neutralLine = $daysInTank !== null
+            ? 'soutiré il y a ' . $daysInTank . ' j'
+            : 'soutiré en BBT';
     } else {
-        $neutralLine = $remainingHl . ' HL en cuve';
+        $neutralLine = $daysInTank !== null
+            ? 'en fermentation depuis ' . $daysInTank . ' j'
+            : 'en fermentation';
     }
 
-    // tooltip: vessel + racked date + HL (spec ceiling for interactivity)
-    $tooltip = $vesselLabel . ' · soutiré le ' . sbb_esc($c['racked_on']) . ' · ' . $remainingHl . ' HL';
+    // Tooltip: vessel + event date
+    $eventDate = $isBbt ? ($c['racked_on'] ?? '') : ($c['brewed_on'] ?? '');
+    $eventVerb = $isBbt ? 'soutiré le' : 'brassé le';
+    $tooltip   = $vesselLabel . ' · ' . $eventVerb . ' ' . sbb_esc((string) $eventDate);
+    if ($isAbandoned) {
+        $tooltip .= ' · ABANDONNÉ ?';
+    }
 
-    $html  = '<div class="sb-observed-card" title="' . $tooltip . '" role="presentation" aria-label="' . $recipeName . ' #' . $batch . ' — ' . $vesselLabel . ' (observé, lecture seule)">';
+    $ariaLabel = $recipeName . ' #' . $batch . ' — ' . $vesselLabel . ' (observé, lecture seule)';
+
+    $html  = '<div class="sb-observed-card' . ($isAbandoned ? ' sb-observed-card--abandoned' : '') . '"';
+    $html .= ' title="' . $tooltip . '" role="presentation" aria-label="' . $ariaLabel . '">';
     $html .= '<div class="sb-observed-card__top">';
     $html .= '<span class="sb-observed-card__batch">#' . $batch . '</span>';
     $html .= '<span class="sb-observed-badge">observé · lecture seule</span>';
@@ -227,6 +275,10 @@ function sbb_render_observed_card(array $c): string
     $html .= '<span class="sb-observed-card__vessel">' . $vesselLabel . '</span>';
     $html .= '<span class="sb-observed-card__meta-dot" aria-hidden="true"></span>';
     $html .= '<span class="sb-observed-card__neutral">' . sbb_esc($neutralLine) . '</span>';
+    if ($isAssemblage) {
+        $html .= '<span class="sb-observed-card__meta-dot" aria-hidden="true"></span>';
+        $html .= '<span class="sb-assemblage-chip">(assemblage)</span>';
+    }
     $html .= '</div>';
     $html .= '</div>';
 
@@ -384,44 +436,42 @@ $jsBoardV      = @filemtime(__DIR__ . '/../js/sb-board.js')   ?: time();
           <?php endif ?>
         </div>
 
-        <!-- Vessel stage — real CCT fleet from ref_cct, lit by observed occupancy -->
-        <div class="sb-vessel-stage">
-          <div class="sb-vessel-row sb-vessel-row--wrap">
-            <?php foreach ($fleet['cct'] as $vessel):
-                $vKey      = 'cct-' . $vessel['number'];
-                $occ       = $occupancy[$vKey] ?? null;
-                $isHeel    = ($occ !== null && !empty($occ['is_stale_heel']));
-                $isActive  = ($occ !== null && !$isHeel);
-                $fillPct   = 0.0;
-                $state     = 'empty';
-                $opts      = ['compact' => true];
-                if ($isActive && $vessel['capacity_hl'] !== null && $vessel['capacity_hl'] > 0) {
-                    $fillPct = min(1.0, max(0.0, $occ['remaining_hl'] / $vessel['capacity_hl']));
-                    $state   = 'active';
-                    $opts['recipe'] = $occ['recipe_name'];
-                    $opts['batch']  = $occ['batch'];
-                }
-                $vesselClass = 'sb-vessel sb-vessel--cct-sm';
-                $labelClass  = '';
-                if ($isActive) {
-                    $labelClass = ' sb-vessel__label--occupied';
-                } elseif ($isHeel) {
-                    $vesselClass .= ' sb-vessel--stale-heel';
-                }
-            ?>
-            <div class="<?= $vesselClass ?>"
-                 <?php if ($occ !== null): ?>
-                 title="CCT-<?= (int)$vessel['number'] ?>: <?= sbb_esc($occ['recipe_name']) ?> #<?= sbb_esc($occ['batch']) ?><?php if ($isHeel): ?> — heel résiduel (soutiré le <?= sbb_esc($occ['racked_on']) ?>)<?php else: ?> — <?= number_format($occ['remaining_hl'], 1) ?> HL restants<?php endif ?>"
-                 <?php endif ?>>
-              <?= svg_vessel_cct((int)$vessel['number'], $fillPct, $state, $opts) ?>
-              <span class="sb-vessel__label<?= $labelClass ?>">CCT-<?= (int)$vessel['number'] ?></span>
-              <?php if ($isHeel): ?>
-              <span class="sb-vessel__heel-badge" aria-label="Heel résiduel — à vérifier">~</span>
-              <?php endif ?>
-            </div>
+        <!-- Availability widget — replaces per-tank CCT SVG grid (Atom 14) -->
+        <?php
+            $cctAvail     = $fleetAvail['cct'];
+            $cctOccupied  = $cctAvail['occupied'];
+            $cctActive    = $cctAvail['active'];
+            $cctAvailable = $cctAvail['available'];
+            $cctAbandonedCount = 0;
+            foreach ($observedInFlight['fermentation'] ?? [] as $card) {
+                if (!empty($card['is_abandoned'])) { $cctAbandonedCount++; }
+            }
+        ?>
+        <div class="sb-avail-widget">
+          <div class="sb-avail-widget__label">
+            Cuves disponibles
+            <span class="sb-avail-widget__count"><?= $cctAvailable ?>/<?= $cctActive ?></span>
+          </div>
+          <div class="sb-avail-bar" role="img" aria-label="<?= $cctOccupied ?> cuve<?= $cctOccupied > 1 ? 's' : '' ?> occupée<?= $cctOccupied > 1 ? 's' : '' ?> sur <?= $cctActive ?>">
+            <?php foreach ($fleet['cct'] as $_cctVessel): ?>
+              <?php
+                $num     = (int)$_cctVessel['number'];
+                $segKey  = 'cct-' . $num;
+                $segOcc  = isset($occupancy[$segKey]);
+                // CCT abandoned state not tracked separately; always false
+                $segClass = $segOcc ? 'sb-avail-bar__seg--occupied' : 'sb-avail-bar__seg--free';
+                $segTitle = $segOcc
+                    ? ('CCT-' . $num . ': ' . ($occupancy[$segKey]['recipe_name'] ?? '') . ' #' . ($occupancy[$segKey]['batch'] ?? ''))
+                    : ('CCT-' . $num . ': libre');
+              ?>
+              <div class="sb-avail-bar__seg <?= $segClass ?>" title="<?= sbb_esc($segTitle) ?>"></div>
             <?php endforeach ?>
           </div>
-          <div class="sb-ground" aria-hidden="true"></div>
+          <?php if ($cctAbandonedCount > 0): ?>
+          <div class="sb-avail-widget__note">
+            <?= $cctAbandonedCount ?> lot<?= $cctAbandonedCount > 1 ? 's' : '' ?> potentiellement abandonné<?= $cctAbandonedCount > 1 ? 's' : '' ?>
+          </div>
+          <?php endif ?>
         </div>
       </div>
     </div>
@@ -461,44 +511,56 @@ $jsBoardV      = @filemtime(__DIR__ . '/../js/sb-board.js')   ?: time();
           <?php endif ?>
         </div>
 
-        <!-- Vessel stage — real BBT fleet from ref_bbt, lit by observed occupancy -->
-        <div class="sb-vessel-stage">
-          <div class="sb-vessel-row sb-vessel-row--wrap">
-            <?php foreach ($fleet['bbt'] as $vessel):
-                $vKey      = 'bbt-' . $vessel['number'];
-                $occ       = $occupancy[$vKey] ?? null;
-                $isHeel    = ($occ !== null && !empty($occ['is_stale_heel']));
-                $isActive  = ($occ !== null && !$isHeel);
-                $fillPct   = 0.0;
-                $state     = 'empty';
-                $opts      = ['compact' => true];
-                if ($isActive && $vessel['capacity_hl'] !== null && $vessel['capacity_hl'] > 0) {
-                    $fillPct = min(1.0, max(0.0, $occ['remaining_hl'] / $vessel['capacity_hl']));
-                    $state   = 'ready';
-                    $opts['recipe'] = $occ['recipe_name'];
-                    $opts['batch']  = $occ['batch'];
+        <!-- Availability widget — replaces per-tank BBT SVG grid (Atom 14) -->
+        <?php
+            $bbtAvail     = $fleetAvail['bbt'];
+            $bbtOccupied  = $bbtAvail['occupied'];
+            $bbtActive    = $bbtAvail['active'];
+            $bbtAvailable = $bbtAvail['available'];
+            $bbtAbandonedCount = 0;
+            foreach ($observedInFlight['bbt'] ?? [] as $card) {
+                if (!empty($card['is_abandoned'])) { $bbtAbandonedCount++; }
+            }
+            $bbtAssemblageCount = 0;
+            foreach ($observedInFlight['bbt'] ?? [] as $card) {
+                if (!empty($card['is_assemblage'])) { $bbtAssemblageCount++; }
+            }
+        ?>
+        <div class="sb-avail-widget sb-avail-widget--bbt">
+          <div class="sb-avail-widget__label">
+            BBT disponibles
+            <span class="sb-avail-widget__count"><?= $bbtAvailable ?>/<?= $bbtActive ?></span>
+          </div>
+          <div class="sb-avail-bar" role="img" aria-label="<?= $bbtOccupied ?> BBT<?= $bbtOccupied > 1 ? 's' : '' ?> occupé<?= $bbtOccupied > 1 ? 's' : '' ?> sur <?= $bbtActive ?>">
+            <?php foreach ($fleet['bbt'] as $_bbtVessel): ?>
+              <?php
+                $num      = (int)$_bbtVessel['number'];
+                $segKey   = 'bbt-' . $num;
+                $segOcc   = isset($occupancy[$segKey]);
+                $segAbnd  = $segOcc && !empty($occupancy[$segKey]['is_abandoned'] ?? false);
+                $segClass = 'sb-avail-bar__seg--free';
+                if ($segOcc && $segAbnd) {
+                    $segClass = 'sb-avail-bar__seg--abandoned';
+                } elseif ($segOcc) {
+                    $segClass = 'sb-avail-bar__seg--occupied';
                 }
-                $vesselClass = 'sb-vessel sb-vessel--bbt-sm';
-                $labelClass  = '';
-                if ($isActive) {
-                    $labelClass = ' sb-vessel__label--occupied';
-                } elseif ($isHeel) {
-                    $vesselClass .= ' sb-vessel--stale-heel';
-                }
-            ?>
-            <div class="<?= $vesselClass ?>"
-                 <?php if ($occ !== null): ?>
-                 title="BBT-<?= (int)$vessel['number'] ?>: <?= sbb_esc($occ['recipe_name']) ?> #<?= sbb_esc($occ['batch']) ?><?php if ($isHeel): ?> — heel résiduel (soutiré le <?= sbb_esc($occ['racked_on']) ?>)<?php else: ?> — <?= number_format($occ['remaining_hl'], 1) ?> HL restants / <?= $vessel['capacity_hl'] !== null ? number_format($vessel['capacity_hl'], 0) . ' HL cap' : '—' ?><?php endif ?>"
-                 <?php endif ?>>
-              <?= svg_vessel_bbt((int)$vessel['number'], $fillPct, $state, $opts) ?>
-              <span class="sb-vessel__label<?= $labelClass ?>">BBT-<?= (int)$vessel['number'] ?></span>
-              <?php if ($isHeel): ?>
-              <span class="sb-vessel__heel-badge" aria-label="Heel résiduel — à vérifier">~</span>
-              <?php endif ?>
-            </div>
+                $segTitle = $segOcc
+                    ? ('BBT-' . $num . ': ' . ($occupancy[$segKey]['recipe_name'] ?? '') . ' #' . ($occupancy[$segKey]['batch'] ?? ''))
+                    : ('BBT-' . $num . ': libre');
+              ?>
+              <div class="sb-avail-bar__seg <?= $segClass ?>" title="<?= sbb_esc($segTitle) ?>"></div>
             <?php endforeach ?>
           </div>
-          <div class="sb-ground" aria-hidden="true"></div>
+          <?php if ($bbtAbandonedCount > 0): ?>
+          <div class="sb-avail-widget__note">
+            <?= $bbtAbandonedCount ?> BBT<?= $bbtAbandonedCount > 1 ? 's' : '' ?> potentiellement abandonné<?= $bbtAbandonedCount > 1 ? 's' : '' ?>
+          </div>
+          <?php endif ?>
+          <?php if ($bbtAssemblageCount > 0): ?>
+          <div class="sb-avail-widget__note sb-avail-widget__note--assemblage">
+            <?= $bbtAssemblageCount ?> assemblage<?= $bbtAssemblageCount > 1 ? 's' : '' ?> en cours
+          </div>
+          <?php endif ?>
         </div>
       </div>
     </div>
@@ -550,8 +612,9 @@ $jsBoardV      = @filemtime(__DIR__ . '/../js/sb-board.js')   ?: time();
   <div class="sb-batch-list" role="region" aria-label="Liste des lots">
     <div class="sb-batch-list-header">
       <span class="sb-batch-list-header__title">Lots en cours</span>
-      <span style="font-family:'JetBrains Mono',monospace;font-size:0.56rem;letter-spacing:0.06em;color:var(--ink-faint);">
-        <?= $totalMothers ?> lot<?= $totalMothers !== 1 ? 's' : '' ?>
+      <span class="sb-batch-list-count">
+        <?= $totalListItems ?> lot<?= $totalListItems !== 1 ? 's' : '' ?>
+        <?php if ($totalObservedCount > 0): ?><span class="sb-batch-list-observed-count"> (<?= $totalObservedCount ?> observé<?= $totalObservedCount > 1 ? 's' : '' ?>)</span><?php endif ?>
       </span>
       <?php if (($me['role'] ?? '') === 'admin'): ?>
       <button class="sb-rl-trigger" id="sb-rl-trigger"
@@ -562,11 +625,24 @@ $jsBoardV      = @filemtime(__DIR__ . '/../js/sb-board.js')   ?: time();
       <?php endif ?>
     </div>
 
-    <?php if ($totalMothers === 0): ?>
+    <?php
+    // Collect all observed in-flight rows (fermentation CCTs + BBTs) not already a true mother.
+    // Reuses $_motherBatchKeys computed above (pre-computed before headers section).
+    $allObservedRows = [];
+    foreach (['fermentation', 'bbt'] as $obZone) {
+        foreach ($observedInFlight[$obZone] ?? [] as $obCard) {
+            $obKey = ($obCard['recipe_id'] ?? '') . ':' . ($obCard['batch'] ?? '');
+            if (!isset($_motherBatchKeys[$obKey])) {
+                $allObservedRows[] = $obCard;
+            }
+        }
+    }
+    ?>
+    <?php if ($totalListItems === 0): ?>
     <div class="sb-batch-list-empty">
       <div class="sb-batch-list-empty__icon">◻</div>
       <div class="sb-batch-list-empty__msg">Le tableau de bord est vide.</div>
-      <div class="sb-batch-list-empty__sub">Démarrez un nouveau brassin pour voir les lots apparaître ici.</div>
+      <div class="sb-batch-list-empty__sub">Aucun lot actif ni observé — les données bd_* semblent absentes.</div>
     </div>
 
     <?php else: ?>
@@ -618,6 +694,37 @@ $jsBoardV      = @filemtime(__DIR__ . '/../js/sb-board.js')   ?: time();
       </a>
     </div>
     <?php endforeach; endforeach ?>
+
+    <?php foreach ($allObservedRows as $obCard):
+        $isBbtRow  = str_starts_with((string)($obCard['vessel_key'] ?? ''), 'bbt-');
+        $phaseLabel = $isBbtRow ? 'Salle BBT' : 'Cave Fermentation';
+        $phaseClass = $isBbtRow ? 'racking' : 'fermenting';
+        $vesselLbl  = sbb_esc($obCard['vessel_label'] ?? '—');
+        $eventDate  = $isBbtRow ? ($obCard['racked_on'] ?? '') : ($obCard['brewed_on'] ?? '');
+        $eventDateFr = $eventDate ? sbb_date_fr((string)$eventDate) : '—';
+    ?>
+    <div class="sb-batch-row sb-batch-row--observed sb-batch-row--<?= sbb_esc($phaseClass) ?>"
+         role="row"
+         title="Lot observé (bd_* data, lecture seule)">
+      <span class="sb-batch-row__ref">#<?= sbb_esc($obCard['batch'] ?? '—') ?></span>
+      <span class="sb-batch-row__name">
+        <em><?= sbb_esc($obCard['recipe_name'] ?? '—') ?></em>
+        <?php if (!empty($obCard['is_assemblage'])): ?>
+        <span class="sb-assemblage-chip">(assemblage)</span>
+        <?php endif ?>
+      </span>
+      <span class="sb-batch-row__td">
+        <span class="sb-phase-pill sb-phase-pill--<?= sbb_esc($phaseClass) ?>"><?= sbb_esc($phaseLabel) ?></span>
+      </span>
+      <span class="sb-batch-row__td"><?= $vesselLbl ?></span>
+      <span class="sb-batch-row__td"><?= sbb_esc($eventDateFr) ?></span>
+      <span class="sb-batch-row__td">—</span>
+      <span class="sb-batch-row__td">—</span>
+      <span class="sb-batch-row__td">
+        <span class="sb-observed-badge">observé</span>
+      </span>
+    </div>
+    <?php endforeach ?>
     <?php endif ?>
   </div><!-- /sb-batch-list -->
 

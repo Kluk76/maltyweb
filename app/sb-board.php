@@ -668,6 +668,19 @@ function sb_recent_closed_mothers(PDO $pdo, int $limit = 3): array
     }
 }
 
+// ─── Atoms 14+15 occupancy API ───────────────────────────────────────────────
+//
+// Two authoritative derivation paths, by vessel kind:
+//
+//   CCT occupancy  → sb_fermentation_occupancy()  reads bd_brewing_brewday_v2
+//   BBT occupancy  → sb_observed_occupancy()       reads bd_racking_v2 (BBT-only)
+//
+// Merged map keyed "cct-N"/"bbt-N" returned by sb_merged_occupancy().
+// sb_fleet_availability() wraps sb_fleet() + sb_merged_occupancy().
+// sb_observed_in_flight() wraps sb_merged_occupancy() (no new DB queries).
+//
+// Do NOT use inv_tank_balances / TankSimulator — known location bug.
+
 /**
  * Active vessel fleet grouped by kind.
  *
@@ -713,71 +726,71 @@ function sb_fleet(PDO $pdo): array
 }
 
 /**
- * Observed vessel occupancy derived from bd_racking_v2 and bd_packaging_v2.
+ * BBT occupancy from bd_racking_v2 — corrected survivor model (Atom 14).
  *
- * Derivation (PM-authored, binding):
- *   A batch (neb_recipe_id_fk, neb_batch) is IN vessel X iff:
- *   1. Its LATEST racking row (by COALESCE(event_date, DATE(submitted_at)) DESC,
- *      submitted_at DESC) points to X's kind + number.
- *   2. SUM(bd_packaging_v2.vendable_hl) for the same recipe+batch is STRICTLY LESS
- *      than the racked HL (batch not yet fully packaged out).
+ * Occupant of each BBT = the batch (neb_recipe_id_fk, neb_batch) from the
+ * LATEST rack-in row for that BBT (partitioned by bbt_number, ordered by
+ * event_date DESC, id DESC, rn=1).
  *
- * Key constraints (each has bitten before):
- *   - Vessel-centric: partition the latest-rack by (dest_type, vessel_number).
- *   - Depletion joined on (recipe_id_fk, neb_batch) ONLY — bbt_source_fk / cct_source_fk
- *     are 100% NULL and must never be used as join keys.
- *   - packaged_hl > racked_hl is normal noise (multi-rack, loss) — not an error.
- *   - Racking rows missing neb_recipe_id_fk or neb_batch are excluded.
- *   - ONLY_FULL_GROUP_BY: use ANY_VALUE() for recipe_name.
- *   - NULL vessel_number rows (data quality) are excluded via the key build step.
+ * EMPTIED predicate (age-guarded; event-OR-age so Atom 16 can prepend a
+ * cuve_vide check without touching this function):
+ *   emptied = [FUTURE: cuve_vide_event()]
+ *             OR ( SUM(vendable_hl for (recipe_id_fk, neb_batch)) > 0
+ *                  AND racked_age_days > stale_heel_days )
+ *   where stale_heel_days comes from _sb_occupancy_threshold() (default 90).
  *
- * Stale-heel gate (mig 218 / Atom 12 PM ruling):
- *   A vessel occupancy is ACTIVE only if its latest racking date is within
- *   stale_heel_days of today (read from commissioning_settings, default 90).
- *   Beyond that threshold the occupancy is a SUPPRESSED HEEL: the row is
- *   returned with is_stale_heel=true so the renderer can show a muted badge
- *   rather than a normal fill. Heels are never silently dropped.
+ * Decision table:
+ *   vendable=0                              → OCCUPIED (full; never packaged)
+ *   vendable>0 AND age ≤ stale_heel_days    → OCCUPIED (mid-packaging; beer still in tank)
+ *   vendable>0 AND age >  stale_heel_days   → EMPTIED  (old, packaged → free)
  *
- * Returns array keyed by "<kind>-<number>" (e.g. "bbt-8"):
+ * Flags:
+ *   is_assemblage  = blend_hl > 0 on the survivor's latest rack-in row.
+ *                    Renders "(assemblage)" chip; no per-source breakdown.
+ *   is_abandoned   = occupied AND vendable=0 AND age > stale_heel_days.
+ *                    (Racked, never packaged, ancient = suspicious; occupied but flagged.)
+ *
+ * Join keys: (recipe_id_fk, neb_batch) PAIR ONLY — bbt_source_fk / cct_source_fk
+ * are 100% NULL and must never be used as join keys.
+ *
+ * Returns array keyed by "bbt-N":
  *   ['recipe_id' => int, 'recipe_name' => string, 'batch' => string,
  *    'racked_on' => string (YYYY-MM-DD), 'racked_hl' => float,
- *    'packaged_hl' => float, 'remaining_hl' => float,
- *    'is_stale_heel' => bool]
+ *    'age_days'  => int,
+ *    'is_assemblage' => bool, 'is_abandoned' => bool]
  *
- * READ-ONLY. Writes nothing.
+ * Returns ONLY occupied BBTs. READ-ONLY. Writes nothing.
  */
 function sb_observed_occupancy(PDO $pdo): array
 {
     $stale_heel_days = _sb_occupancy_threshold($pdo);
+
     $sql = "
-        WITH ranked_by_vessel AS (
+        WITH latest_rack_per_bbt AS (
             SELECT
                 neb_recipe_id_fk,
                 neb_batch,
-                racking_destination_type,
                 bbt_number,
-                cct_number,
-                yt_number,
+                COALESCE(event_date, DATE(submitted_at)) AS racked_on,
                 racked_vol_hl,
-                COALESCE(event_date, DATE(submitted_at)) AS rack_date,
-                submitted_at,
+                blend_hl,
+                DATEDIFF(CURDATE(), COALESCE(event_date, DATE(submitted_at))) AS racked_age_days,
                 ROW_NUMBER() OVER (
-                    PARTITION BY racking_destination_type,
-                                 COALESCE(bbt_number, cct_number, yt_number)
-                    ORDER BY COALESCE(event_date, DATE(submitted_at)) DESC,
-                             submitted_at DESC
-                ) AS vessel_rn
+                    PARTITION BY bbt_number
+                    ORDER BY COALESCE(event_date, DATE(submitted_at)) DESC, id DESC
+                ) AS rn
             FROM bd_racking_v2
-            WHERE neb_recipe_id_fk IS NOT NULL
-              AND neb_batch        IS NOT NULL
+            WHERE racking_destination_type = 'BBT'
+              AND bbt_number               IS NOT NULL
+              AND neb_recipe_id_fk         IS NOT NULL
+              AND neb_batch                IS NOT NULL
               AND is_tombstoned = 0
-              AND (bbt_number IS NOT NULL OR cct_number IS NOT NULL OR yt_number IS NOT NULL)
         ),
         packaged AS (
             SELECT
                 recipe_id_fk,
                 neb_batch,
-                SUM(COALESCE(vendable_hl, 0)) AS total_packaged_hl
+                SUM(COALESCE(vendable_hl, 0)) AS total_vendable_hl
             FROM bd_packaging_v2
             WHERE recipe_id_fk IS NOT NULL
               AND neb_batch     IS NOT NULL
@@ -785,27 +798,26 @@ function sb_observed_occupancy(PDO $pdo): array
             GROUP BY recipe_id_fk, neb_batch
         )
         SELECT
-            rv.neb_recipe_id_fk                            AS recipe_id,
-            ANY_VALUE(rr.name)                             AS recipe_name,
-            rv.neb_batch                                   AS batch,
-            rv.racking_destination_type                    AS dest_type,
-            rv.bbt_number,
-            rv.cct_number,
-            rv.yt_number,
-            rv.rack_date                                   AS racked_on,
-            rv.racked_vol_hl                               AS racked_hl,
-            COALESCE(p.total_packaged_hl, 0)               AS packaged_hl,
-            rv.racked_vol_hl - COALESCE(p.total_packaged_hl, 0) AS remaining_hl
-        FROM ranked_by_vessel rv
-        LEFT JOIN ref_recipes rr
-               ON rr.id = rv.neb_recipe_id_fk
+            lr.bbt_number,
+            lr.neb_recipe_id_fk                           AS recipe_id,
+            ANY_VALUE(rr.name)                            AS recipe_name,
+            lr.neb_batch                                  AS batch,
+            lr.racked_on,
+            lr.racked_vol_hl                              AS racked_hl,
+            lr.racked_age_days                            AS age_days,
+            COALESCE(p.total_vendable_hl, 0)              AS vendable_hl,
+            IF(lr.blend_hl > 0, 1, 0)                    AS is_assemblage,
+            -- emptied = vendable > 0 AND age > threshold (FUTURE: OR cuve_vide_event())
+            IF(COALESCE(p.total_vendable_hl, 0) > 0
+               AND lr.racked_age_days > {$stale_heel_days}, 1, 0) AS is_emptied
+        FROM latest_rack_per_bbt lr
+        LEFT JOIN ref_recipes rr ON rr.id = lr.neb_recipe_id_fk
         LEFT JOIN packaged p
-               ON p.recipe_id_fk = rv.neb_recipe_id_fk
-              AND p.neb_batch    = rv.neb_batch
-        WHERE rv.vessel_rn = 1
-          AND rv.racked_vol_hl IS NOT NULL
-          AND rv.racked_vol_hl > COALESCE(p.total_packaged_hl, 0)
-        ORDER BY rv.racking_destination_type, rv.bbt_number, rv.cct_number, rv.yt_number
+               ON p.recipe_id_fk = lr.neb_recipe_id_fk
+              AND p.neb_batch    = lr.neb_batch
+        WHERE lr.rn = 1
+        HAVING is_emptied = 0
+        ORDER BY lr.bbt_number
     ";
 
     $stmt = $pdo->prepare($sql);
@@ -814,34 +826,13 @@ function sb_observed_occupancy(PDO $pdo): array
 
     $out = [];
     foreach ($rows as $r) {
-        $dest_type = $r['dest_type'];
-        if ($dest_type === null) {
-            continue;
-        }
-        $kind = strtolower($dest_type);
+        $bbt_num = (int) $r['bbt_number'];
+        $key     = 'bbt-' . $bbt_num;
 
-        $num = null;
-        if ($dest_type === 'BBT' && $r['bbt_number'] !== null) {
-            $num = (int) $r['bbt_number'];
-        } elseif ($dest_type === 'CCT' && $r['cct_number'] !== null) {
-            $num = (int) $r['cct_number'];
-        } elseif ($dest_type === 'YT' && $r['yt_number'] !== null) {
-            $num = (int) $r['yt_number'];
-        }
-
-        if ($num === null) {
-            continue; // exclude rows with no vessel number (data quality gap)
-        }
-
-        $key = $kind . '-' . $num;
-
-        // Stale-heel age gate: compute days since latest racking.
-        // A bad/unparseable racking date is treated as stale (fail loud, refuse-don't-NULL).
-        $racked_ts    = strtotime((string) $r['racked_on']);
-        $age_days     = $racked_ts !== false
-            ? (int) floor((time() - $racked_ts) / 86400)
-            : 0;
-        $is_stale_heel = ($racked_ts === false) || ($age_days > $stale_heel_days);
+        $age_days   = (int) $r['age_days'];
+        $vendable   = (float) $r['vendable_hl'];
+        // is_abandoned: occupied AND never packaged AND ancient
+        $is_abandoned = ($vendable <= 0.0 && $age_days > $stale_heel_days);
 
         $out[$key] = [
             'recipe_id'     => (int) $r['recipe_id'],
@@ -849,10 +840,9 @@ function sb_observed_occupancy(PDO $pdo): array
             'batch'         => (string) $r['batch'],
             'racked_on'     => (string) $r['racked_on'],
             'racked_hl'     => (float) $r['racked_hl'],
-            'packaged_hl'   => (float) $r['packaged_hl'],
-            'remaining_hl'  => (float) $r['remaining_hl'],
-            'is_stale_heel' => $is_stale_heel,
-            'age_days'      => $age_days,   // FIX 4: exposed so sb_observed_in_flight() avoids recomputing
+            'age_days'      => $age_days,
+            'is_assemblage' => (bool) $r['is_assemblage'],
+            'is_abandoned'  => $is_abandoned,
         ];
     }
 
@@ -860,48 +850,215 @@ function sb_observed_occupancy(PDO $pdo): array
 }
 
 /**
- * Observed in-flight batches, bucketed by board zone.
+ * CCT occupancy from bd_brewing_brewday_v2 (Atom 15).
  *
- * REUSES sb_observed_occupancy() — does NOT re-query bd_* tables.
- * Single-source-of-truth contract: the vessel-occupancy derivation lives
- * exclusively in sb_observed_occupancy(); this function only filters and
- * re-shapes its output.
+ * Source: bd_brewing_brewday_v2. COLUMN NOTE: its identity columns are
+ * `beer`, `batch`, `recipe_id_fk`, `cct` (NOT neb_* prefixed).
  *
- * Filtering:
- *   - Drops rows where is_stale_heel === true (heels are grid-only; Atom 12
- *     already renders them as muted badges on the vessel stage).
+ * For each CCT, occupant = the latest brewday-assigned (recipe_id_fk, batch)
+ * (partition by cct, ORDER BY event_date DESC / id DESC, rn=1), EXCLUDING
+ * batches that have already left the CCT:
+ *
+ *   fermentation_emptied =
+ *       SUM(bd_racking_v2.racked_vol_hl for (neb_recipe_id_fk, neb_batch)) > 0
+ *         [racked out to BBT]
+ *       OR SUM(bd_packaging_v2.vendable_hl for (recipe_id_fk, neb_batch)) > 0
+ *         [packaged direct — rare]
+ *       [FUTURE: OR cuve_vide_event()]
+ *
+ * Join: bd_brewing_brewday_v2.recipe_id_fk ↔ bd_racking_v2.neb_recipe_id_fk
+ *       bd_brewing_brewday_v2.batch        ↔ bd_racking_v2.neb_batch
+ *
+ * Returns array keyed by "cct-N":
+ *   ['recipe_id' => int, 'recipe_name' => string, 'batch' => string,
+ *    'brewed_on' => string (YYYY-MM-DD), 'age_days' => int]
+ *
+ * Returns ONLY occupied CCTs. READ-ONLY. Writes nothing.
+ */
+function sb_fermentation_occupancy(PDO $pdo): array
+{
+    $sql = "
+        WITH latest_brew_per_cct AS (
+            SELECT
+                beer,
+                batch,
+                recipe_id_fk,
+                cct,
+                event_date                                  AS brewed_on,
+                DATEDIFF(CURDATE(), event_date)             AS age_days,
+                ROW_NUMBER() OVER (
+                    PARTITION BY cct
+                    ORDER BY event_date DESC, id DESC
+                ) AS rn
+            FROM bd_brewing_brewday_v2
+            WHERE is_tombstoned = 0
+              AND cct            IS NOT NULL
+              AND recipe_id_fk   IS NOT NULL
+              AND batch          IS NOT NULL
+        ),
+        racked_out AS (
+            SELECT DISTINCT neb_recipe_id_fk, neb_batch
+            FROM bd_racking_v2
+            WHERE is_tombstoned = 0
+              AND racking_destination_type = 'BBT'
+              AND neb_recipe_id_fk         IS NOT NULL
+              AND neb_batch                IS NOT NULL
+        ),
+        packaged_direct AS (
+            SELECT DISTINCT recipe_id_fk, neb_batch
+            FROM bd_packaging_v2
+            WHERE is_tombstoned = 0
+              AND recipe_id_fk IS NOT NULL
+              AND neb_batch    IS NOT NULL
+              AND vendable_hl  > 0
+        )
+        SELECT
+            lb.cct,
+            lb.recipe_id_fk              AS recipe_id,
+            ANY_VALUE(rr.name)           AS recipe_name,
+            lb.batch,
+            lb.brewed_on,
+            lb.age_days
+        FROM latest_brew_per_cct lb
+        LEFT JOIN ref_recipes rr ON rr.id = lb.recipe_id_fk
+        LEFT JOIN racked_out ro
+               ON ro.neb_recipe_id_fk = lb.recipe_id_fk
+              AND ro.neb_batch        = lb.batch
+        LEFT JOIN packaged_direct pd
+               ON pd.recipe_id_fk = lb.recipe_id_fk
+              AND pd.neb_batch    = lb.batch
+        WHERE lb.rn = 1
+          AND ro.neb_recipe_id_fk IS NULL   -- not racked out to BBT
+          AND pd.recipe_id_fk     IS NULL   -- not packaged direct
+        GROUP BY lb.cct, lb.recipe_id_fk, lb.batch, lb.brewed_on, lb.age_days
+        ORDER BY lb.cct
+    ";
+
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute();
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $out = [];
+    foreach ($rows as $r) {
+        $cct_num = (int) $r['cct'];
+        $key     = 'cct-' . $cct_num;
+
+        $out[$key] = [
+            'recipe_id'   => (int) $r['recipe_id'],
+            'recipe_name' => (string) ($r['recipe_name'] ?? ''),
+            'batch'       => (string) $r['batch'],
+            'brewed_on'   => (string) $r['brewed_on'],
+            'age_days'    => (int) $r['age_days'],
+        ];
+    }
+
+    return $out;
+}
+
+/**
+ * Merged occupancy map keyed "cct-N" / "bbt-N".
+ *
+ * Combines sb_fermentation_occupancy() (CCT) + sb_observed_occupancy() (BBT).
+ * A batch racked out of its CCT appears ONLY in BBT — the fermentation_emptied
+ * exclusion in sb_fermentation_occupancy() guarantees no double-counting.
+ *
+ * Returns array keyed by "cct-N" or "bbt-N"; each value is the raw occupancy
+ * array from its source function with an added 'kind' => 'cct'|'bbt' field.
+ *
+ * READ-ONLY. Writes nothing.
+ */
+function sb_merged_occupancy(PDO $pdo): array
+{
+    $cct_occ = sb_fermentation_occupancy($pdo);
+    $bbt_occ = sb_observed_occupancy($pdo);
+
+    $out = [];
+    foreach ($cct_occ as $key => $occ) {
+        $out[$key] = $occ + ['kind' => 'cct'];
+    }
+    foreach ($bbt_occ as $key => $occ) {
+        $out[$key] = $occ + ['kind' => 'bbt'];
+    }
+    return $out;
+}
+
+/**
+ * Fleet availability per vessel kind.
+ *
+ * Reuses sb_fleet() + sb_merged_occupancy(). Per kind:
+ *   available = active − occupied
+ *
+ * Returns array keyed by 'cct', 'bbt', 'yt', 'serving':
+ *   ['active' => int, 'occupied' => int, 'available' => int]
+ *
+ * READ-ONLY. Writes nothing.
+ */
+function sb_fleet_availability(PDO $pdo): array
+{
+    $fleet     = sb_fleet($pdo);
+    $occupancy = sb_merged_occupancy($pdo);
+
+    $result = [];
+    foreach (['cct', 'bbt', 'yt', 'serving'] as $kind) {
+        $active   = count($fleet[$kind] ?? []);
+        $occupied = 0;
+        foreach (array_keys($occupancy) as $key) {
+            if (str_starts_with($key, $kind . '-')) {
+                $occupied++;
+            }
+        }
+        $result[$kind] = [
+            'active'    => $active,
+            'occupied'  => $occupied,
+            'available' => max(0, $active - $occupied),
+        ];
+    }
+    return $result;
+}
+
+/**
+ * Observed in-flight batches, bucketed by board zone (Atoms 14+15 rebuild).
+ *
+ * REUSES sb_merged_occupancy() — does NOT re-query bd_* tables.
+ * Single-source-of-truth contract: all occupancy derivation lives in
+ * sb_fermentation_occupancy() + sb_observed_occupancy(); this function
+ * only filters and reshapes.
  *
  * Bucketing by vessel-key prefix:
- *   - "cct-*" and "yt-*" → 'fermentation'
- *   - "bbt-*"            → 'bbt'
- *   (Other dest_types not currently modelled; silently omitted.)
+ *   "cct-*"  → 'fermentation'
+ *   "bbt-*"  → 'bbt'
+ *   (yt/serving not currently modelled; silently omitted.)
+ *
+ * Dedup against true open mothers: any batch already appearing in
+ * sb_open_mothers() (by recipe_id+batch) is suppressed here to prevent
+ * duplicate cards on the board. Currently a no-op (op_sessions is empty).
  *
  * Returns shape:
  *   [
  *     'fermentation' => [ [...card fields...], ... ],
  *     'bbt'          => [ [...card fields...], ... ],
  *   ]
- * Each card carries: vessel_key, vessel_label, recipe_name, batch,
- *   racked_on, racked_hl, remaining_hl, days_in_tank.
+ *
+ * CCT card fields: vessel_key, vessel_label, recipe_name, batch, brewed_on,
+ *   age_days (= days_in_tank for CCT cards).
+ * BBT card fields: vessel_key, vessel_label, recipe_name, batch, racked_on,
+ *   racked_hl, age_days, is_assemblage, is_abandoned.
  *
  * READ-ONLY. Writes nothing.
  */
 function sb_observed_in_flight(PDO $pdo): array
 {
-    $occupancy = sb_observed_occupancy($pdo);
+    $occupancy = sb_merged_occupancy($pdo);
 
-    // FIX 2: Build a dedup set of (recipe_id, batch) pairs already covered by
-    // true open mothers (op_sessions).  When op_sessions is empty (today's
-    // state), this set is empty and nothing is excluded — verified no-op.
-    // Once pilots 5/6 populate op_sessions with real batches, any observed
-    // card whose recipe+batch matches an open mother will be suppressed here,
-    // preventing duplicate cards on the board.
+    // Build dedup set of (recipe_id, batch) from true open mothers.
+    // Currently a no-op (op_sessions empty); gates once pilots 5/6 are live.
     $openMothers = sb_open_mothers($pdo);
     $motherKeys  = [];
-    foreach ($openMothers as $zone => $zone_mothers) {
+    foreach ($openMothers as $zone_mothers) {
         foreach ($zone_mothers as $m) {
-            if (isset($m['recipe_id_fk'], $m['batch'])) {
-                $motherKeys[$m['recipe_id_fk'] . ':' . $m['batch']] = true;
+            // Skip mothers with null recipe_id_fk — they can't correspond to an observed card.
+            if (isset($m['recipe_id_fk'], $m['batch']) && $m['recipe_id_fk'] !== null) {
+                $motherKeys[(int)$m['recipe_id_fk'] . ':' . $m['batch']] = true;
             }
         }
     }
@@ -909,44 +1066,57 @@ function sb_observed_in_flight(PDO $pdo): array
     $out = ['fermentation' => [], 'bbt' => []];
 
     foreach ($occupancy as $vessel_key => $occ) {
-        // Drop stale heels — grid-only, not card candidates.
-        if (!empty($occ['is_stale_heel'])) {
-            continue;
+        $kind = $occ['kind'];
+
+        // Bucket by kind.
+        if ($kind === 'cct') {
+            $zone = 'fermentation';
+        } elseif ($kind === 'bbt') {
+            $zone = 'bbt';
+        } else {
+            continue; // yt/serving not yet modelled
         }
 
-        // FIX 2: Skip if this batch already appears as a true open mother.
+        // Dedup against true mothers.
         $dedupKey = $occ['recipe_id'] . ':' . $occ['batch'];
         if (isset($motherKeys[$dedupKey])) {
             continue;
         }
 
-        // Bucket by prefix.
-        if (str_starts_with($vessel_key, 'bbt-')) {
-            $zone = 'bbt';
-        } elseif (str_starts_with($vessel_key, 'cct-') || str_starts_with($vessel_key, 'yt-')) {
-            $zone = 'fermentation';
-        } else {
-            continue; // unrecognised prefix — omit rather than misclassify
-        }
-
-        // FIX 4: Reuse age_days already computed in sb_observed_occupancy()
-        // rather than re-deriving from racked_on.
-        $days_in_tank = $occ['age_days'] ?? null;
-
-        // Human-readable vessel label: "BBT-8", "CCT-3", "YT-2".
+        // Human-readable vessel label: "CCT-5", "BBT-8".
         $parts        = explode('-', $vessel_key, 2);
         $vessel_label = strtoupper($parts[0]) . '-' . ($parts[1] ?? '');
 
-        $out[$zone][] = [
-            'vessel_key'   => $vessel_key,
-            'vessel_label' => $vessel_label,
-            'recipe_name'  => $occ['recipe_name'],
-            'batch'        => $occ['batch'],
-            'racked_on'    => $occ['racked_on'],
-            'racked_hl'    => $occ['racked_hl'],
-            'remaining_hl' => $occ['remaining_hl'],
-            'days_in_tank' => $days_in_tank,
-        ];
+        if ($kind === 'cct') {
+            $out[$zone][] = [
+                'vessel_key'   => $vessel_key,
+                'vessel_label' => $vessel_label,
+                'recipe_name'  => $occ['recipe_name'],
+                'batch'        => $occ['batch'],
+                'brewed_on'    => $occ['brewed_on'],
+                'days_in_tank' => $occ['age_days'],
+                // CCT cards use age_days as days_in_tank; no racked_on/racked_hl
+                'racked_on'    => null,
+                'racked_hl'    => null,
+                'remaining_hl' => null,
+                'is_assemblage' => false,
+                'is_abandoned'  => false,
+            ];
+        } else {
+            $out[$zone][] = [
+                'vessel_key'   => $vessel_key,
+                'vessel_label' => $vessel_label,
+                'recipe_name'  => $occ['recipe_name'],
+                'batch'        => $occ['batch'],
+                'brewed_on'    => null,
+                'racked_on'    => $occ['racked_on'],
+                'racked_hl'    => $occ['racked_hl'],
+                'remaining_hl' => null, // BBT remaining HL: racked_hl - packaged not tracked here
+                'days_in_tank' => $occ['age_days'],
+                'is_assemblage' => $occ['is_assemblage'],
+                'is_abandoned'  => $occ['is_abandoned'],
+            ];
+        }
     }
 
     return $out;

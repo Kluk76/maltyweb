@@ -662,6 +662,124 @@ body.sb-board .sb-observed-badge {
 }
 
 /* ══════════════════════════════════════════════════════════════
+   AVAILABILITY WIDGET — Atoms 14+15 (replaces CCT/BBT SVG grids)
+   sb-avail-* namespace · body.sb-board scoping
+   ══════════════════════════════════════════════════════════════ */
+body.sb-board .sb-avail-widget {
+  padding: 10px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: color-mix(in srgb, var(--bg-side) 70%, var(--bg));
+  border-top: 1px solid var(--hairline);
+  flex-shrink: 0;
+}
+
+body.sb-board .sb-avail-widget--bbt {
+  background: color-mix(in srgb, var(--bbt) 4%, var(--bg-side));
+}
+
+body.sb-board .sb-avail-widget__label {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.52rem;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+body.sb-board .sb-avail-widget__count {
+  font-size: 0.64rem;
+  font-weight: 600;
+  color: var(--cold);
+  letter-spacing: 0.04em;
+}
+
+body.sb-board .sb-avail-widget--bbt .sb-avail-widget__count {
+  color: var(--bbt);
+}
+
+/* Slim horizontal occupancy bar */
+body.sb-board .sb-avail-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 8px;
+}
+
+body.sb-board .sb-avail-bar__seg {
+  flex: 1;
+  height: 100%;
+  border-radius: 1px;
+  transition: opacity .15s;
+}
+
+body.sb-board .sb-avail-bar__seg--occupied {
+  background: var(--cold);
+  opacity: 0.75;
+}
+
+body.sb-board .sb-avail-widget--bbt .sb-avail-bar__seg--occupied {
+  background: var(--bbt);
+  opacity: 0.80;
+}
+
+body.sb-board .sb-avail-bar__seg--free {
+  background: var(--hairline);
+  opacity: 0.55;
+}
+
+body.sb-board .sb-avail-bar__seg--abandoned {
+  background: var(--oak);
+  opacity: 0.60;
+}
+
+body.sb-board .sb-avail-widget__note {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.46rem;
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+}
+
+body.sb-board .sb-avail-widget__note--assemblage {
+  color: var(--oak);
+}
+
+/* ── Assemblage chip (BBT card + batch-list row) ── */
+body.sb-board .sb-assemblage-chip {
+  display: inline-block;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.46rem;
+  letter-spacing: 0.08em;
+  text-transform: lowercase;
+  color: var(--ink-mute);
+  background: color-mix(in srgb, var(--hairline) 40%, transparent);
+  border: 1px solid var(--hairline);
+  border-radius: 2px;
+  padding: 1px 5px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+/* Abandoned observed card tint */
+body.sb-board .sb-observed-card--abandoned {
+  border-color: color-mix(in srgb, var(--oak) 35%, var(--hairline));
+  background: color-mix(in srgb, var(--oak) 4%, var(--bg-side));
+}
+
+/* Observed row in batch-list */
+body.sb-board .sb-batch-row--observed {
+  opacity: 0.85;
+  font-style: italic;
+}
+
+body.sb-board .sb-batch-row--observed .sb-batch-row__name em {
+  color: var(--ink-mute);
+}
+
+/* ══════════════════════════════════════════════════════════════
    VESSEL ILLUSTRATIONS (SVG wrappers)
    ══════════════════════════════════════════════════════════════ */
 .sb-vessel-row {
@@ -828,6 +946,14 @@ body.sb-board .sb-observed-badge {
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 0.56rem; letter-spacing: 0.18em; text-transform: uppercase;
   color: var(--ink-mute);
+}
+body.sb-board .sb-batch-list-count {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.56rem; letter-spacing: 0.06em;
+  color: var(--ink-faint);
+}
+body.sb-board .sb-batch-list-observed-count {
+  color: var(--ink-faint);
 }
 
 .sb-batch-list__head {
