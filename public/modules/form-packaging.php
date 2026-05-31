@@ -180,31 +180,56 @@ function resolve_packaging_sku_id(
  *   beer_tax_base_hl = vendable_hl + c(taproom_keg_l) / 100
  *   loss_kpi_hl    = c(loss_keg_liquid_l) / 100
  *
- * bcmath scale=6 throughout; vendable_hl rounded to DECIMAL(8,3).
- * Returns null for all three values when hl_per_unit or units_per_pack is null/≤0.
- * Also returns null (refuse-don't-NULL guard) and sets $qcFlagOut='sku_meta_missing'
- * when the SKU meta is missing.
+ * SKU resolution paths:
+ *   SKU present (sku_id_fk set)     → hl_per_unit / units_per_pack from ref_skus (existing path).
+ *   No SKU + contract + run_type ∈ {keg, bot, can33} → run_type fallback (see $isContract).
+ *     keg   → 0.20 HL/unit, units_per_pack = 1
+ *     bot   → 0.0033 HL/unit, units_per_pack = 1
+ *     can33 → 0.0033 HL/unit, units_per_pack = 1
+ *   No SKU + contract + run_type = cuv → NULL (serving-tank volume is variable; refuse).
+ *   No SKU + non-contract (Neb beer with broken SKU) → NULL + qc_flag='sku_meta_missing'.
  *
- * $row:     the row array as built by the format loop (same keys as bd_packaging_v2).
- * $skuMeta: ['hl_per_unit' => string|null, 'units_per_pack' => string|null]
- * $runType: the row's run_type string (bot|can|can33|keg|cuv)
+ * bcmath scale=6 throughout; vendable_hl rounded to DECIMAL(8,3).
+ *
+ * $row:        the row array as built by the format loop (same keys as bd_packaging_v2).
+ * $skuMeta:    ['hl_per_unit' => string|null, 'units_per_pack' => string|null]
+ * $runType:    the row's run_type string (bot|can|can33|keg|cuv)
+ * $isContract: true when sku_id_fk is NULL and contract_beer is non-empty — enables
+ *              run_type fallback instead of sku_meta_missing refusal.
  *
  * Returns: ['vendable_hl' => string|null, 'beer_tax_base_hl' => string|null,
  *           'loss_kpi_hl' => string|null, 'qc_flag' => string|null]
  */
-function compute_packaging_vendable_hl(array $row, array $skuMeta, string $runType = ''): array
-{
+function compute_packaging_vendable_hl(
+    array  $row,
+    array  $skuMeta,
+    string $runType    = '',
+    bool   $isContract = false
+): array {
     $null4 = ['vendable_hl' => null, 'beer_tax_base_hl' => null, 'loss_kpi_hl' => null, 'qc_flag' => null];
 
     $hlPerUnit    = $skuMeta['hl_per_unit']    ?? null;
     $unitsPerPack = $skuMeta['units_per_pack'] ?? null;
 
-    // Refuse-don't-NULL: missing SKU meta means we cannot compute — return null + flag.
-    if ($hlPerUnit === null || $unitsPerPack === null) {
-        return array_merge($null4, ['qc_flag' => 'sku_meta_missing']);
-    }
-    if (bccomp((string)$unitsPerPack, '0', 6) <= 0) {
-        return array_merge($null4, ['qc_flag' => 'sku_meta_missing']);
+    // When SKU meta is missing, check whether a run_type fallback applies.
+    if ($hlPerUnit === null || $unitsPerPack === null
+        || bccomp((string)$unitsPerPack, '0', 6) <= 0
+    ) {
+        if ($isContract) {
+            // Contract beer (no SKU row): derive per-unit volume from run_type.
+            // cuv is excluded — serving-tank volume is variable, no fixed per-unit volume.
+            $contractVolMap = ['keg' => '0.200000', 'bot' => '0.003300', 'can33' => '0.003300'];
+            if (!isset($contractVolMap[$runType])) {
+                // cuv or unknown run_type: refuse (volume is not fixed).
+                return array_merge($null4, ['qc_flag' => 'sku_meta_missing']);
+            }
+            $hlPerUnit    = $contractVolMap[$runType];
+            $unitsPerPack = '1';
+            // Falls through to the shared computation below.
+        } else {
+            // Neb beer with broken/missing SKU: refuse-don't-NULL.
+            return array_merge($null4, ['qc_flag' => 'sku_meta_missing']);
+        }
     }
 
     $scale = 6;
@@ -541,7 +566,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'taproom_keg_l'           => $fTaproomKeg,
                 'loss_liquid_other_units' => $fLossLiquid,
             ];
-            $computed = compute_packaging_vendable_hl($partialRow, $skuMeta, $fRunType);
+            // $isContract: true when no SKU resolved AND this is a contract beer.
+            // Enables the run_type volume fallback instead of sku_meta_missing refusal.
+            $isContractRow = ($skuIdFk === null && $contractBeer !== '');
+            $computed = compute_packaging_vendable_hl($partialRow, $skuMeta, $fRunType, $isContractRow);
             $finalVendableHl = $computed['vendable_hl'];
 
             // Per-row audit tokens (session base + row-local additions).
