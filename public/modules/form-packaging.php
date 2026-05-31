@@ -348,11 +348,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ? $eventDateRaw
             : date('Y-m-d');
 
-        // CO₂/O₂ session measurements — up to 20 pairs, POSTed as co2o2[N][co2|o2|measured_at].
+        // CO₂/O₂ session measurements — up to 20 pairs, POSTed as co2o2[N][co2|o2].
         // A reading is "present" when co2 OR o2 is non-empty; fully-blank rows are skipped.
         // reading_index = N + 1 (1-based, matches bd_packaging_co2o2_measures.reading_index).
         $co2o2Raw = $_POST['co2o2'] ?? [];
-        $co2o2Pairs = [];  // [['co2_gl'=>float|null,'o2_ppb'=>float|null,'measured_at'=>string|null], ...]
+        $co2o2Pairs = [];  // [['co2_gl'=>float|null,'o2_ppb'=>float|null,'measured_at'=>null], ...]
         if (is_array($co2o2Raw)) {
             $pairIdx = 0;
             foreach ($co2o2Raw as $pairRaw) {
@@ -360,15 +360,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $co2Val = isset($pairRaw['co2']) && $pairRaw['co2'] !== '' ? (float)$pairRaw['co2'] : null;
                 $o2Val  = isset($pairRaw['o2'])  && $pairRaw['o2']  !== '' ? (float)$pairRaw['o2']  : null;
                 if ($co2Val === null && $o2Val === null) continue; // skip fully-blank rows
-                $measAt = (isset($pairRaw['measured_at']) && $pairRaw['measured_at'] !== '')
-                    ? $pairRaw['measured_at']
-                    : null;
-                // Sanitize measured_at: accept HH:MM or HH:MM:SS; combine with event_date.
-                if ($measAt !== null) {
-                    $measAt = preg_match('/^\d{2}:\d{2}(:\d{2})?$/', $measAt)
-                        ? $eventDate . ' ' . $measAt . (strlen($measAt) === 5 ? ':00' : '')
-                        : null;
-                }
+                // Time-of-reading removed from the form (operator request) — always null.
+                $measAt = null;
                 if ($pairIdx < 20) { // cap at 20
                     $co2o2Pairs[] = [
                         'reading_index' => $pairIdx + 1,
@@ -402,9 +395,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $comments  = post_str('comments');
         $fwComment = post_str('fw_comment');
 
-        // DLC
-        $nebDlc      = post_str('neb_dlc');
-        $contractDlc = post_str('contract_dlc');
+        // DLC/BBD — single input, routed to the neb or contract column by which beer is set.
+        // (Nébuleuse vs contract is known from the selected beer; no need for two questions.)
+        $dlcRaw      = post_str('dlc');
+        $nebDlc      = ($nebBeer !== '' && $nebBeer !== null) ? $dlcRaw : null;
+        $contractDlc = ($contractBeer !== '' && $contractBeer !== null) ? $dlcRaw : null;
 
         // ── 2. QC flag ─────────────────────────────────────────────────────
         // Evaluate each CO₂/O₂ pair; take the worst flag across all pairs.
@@ -589,6 +584,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'neb_beer'               => $nebBeer,
                     'neb_batch'              => $nebBatch,
                     'neb_dlc'                => $nebDlc,
+                    'contract_dlc'           => $contractDlc,
                     'contract_beer'          => $contractBeer,
                     'contract_batch'         => $contractBatch,
                     'recipe_id_fk'           => $recipeIdFk,
@@ -626,10 +622,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'loss_liquid_other_units' => $fLossLiquid,
                     // Keg / cuv (shared for main row; parallel rows inherit the same tank)
                     'keg_client_delivered'   => $kegClientDelivered,
-                    'new_liner_client'       => ($newLinerClient !== null) ? (bool)$newLinerClient : null,
-                    'new_liner_transport'    => ($newLinerTransport !== null) ? (bool)$newLinerTransport : null,
+                    'new_liner_client'       => ($newLinerClient !== null) ? ($newLinerClient ? 1 : 0) : null,
+                    'new_liner_transport'    => ($newLinerTransport !== null) ? ($newLinerTransport ? 1 : 0) : null,
                     // White label
-                    'is_white_label'         => (bool)$isWhiteLabel,
+                    'is_white_label'         => $isWhiteLabel,
                     'white_label_name'       => $whiteLabelName,
                     // Client FK (decision 7)
                     'client_fk'              => $clientFk,
@@ -1556,14 +1552,8 @@ $cipConfig = [
       <div class="op-form__grid--3 op-form__grid">
 
         <div class="op-form__field">
-          <label class="op-form__label" for="neb_dlc">DLC Nébuleuse</label>
-          <input id="neb_dlc" name="neb_dlc" type="text" class="op-form__input"
-                 placeholder="ex. 2026-11">
-        </div>
-
-        <div class="op-form__field">
-          <label class="op-form__label" for="contract_dlc">DLC contrat</label>
-          <input id="contract_dlc" name="contract_dlc" type="text" class="op-form__input"
+          <label class="op-form__label" for="dlc">DLC / BBD</label>
+          <input id="dlc" name="dlc" type="text" class="op-form__input"
                  placeholder="ex. 2026-11">
         </div>
 
@@ -1692,7 +1682,7 @@ window.MIN_DAYS_AFTER_RACKING = <?= $minDays ?>;
  * event_date                  → event_date                        NEW col (mig 127)
  * neb_beer (hidden)           → neb_beer
  * neb_batch (hidden)          → neb_batch
- * neb_dlc                     → neb_dlc
+ * dlc                         → neb_dlc (when neb_beer set) | contract_dlc (when contract_beer set)
  * contract_beer (hidden)      → contract_beer
  * contract_batch (hidden)     → contract_batch
  * recipe_id_fk (hidden)       → recipe_id_fk
@@ -1709,7 +1699,6 @@ window.MIN_DAYS_AFTER_RACKING = <?= $minDays ?>;
  * formats[N][loss_liquid_*]   → loss_liquid_other_units
  * co2o2[N][co2]               → bd_packaging_co2o2_measures.co2_gl   Session-level (mig 232)
  * co2o2[N][o2]                → bd_packaging_co2o2_measures.o2_ppb   Up to 20 pairs per session
- * co2o2[N][measured_at]       → bd_packaging_co2o2_measures.measured_at  HH:MM or HH:MM:SS (optional)
  * [CIP — not written to bd_packaging_v2]
  * cip_machine_centri/kze/pump → bd_cip_events (source_form='packaging', target_kind='machine')
  * cip_vessel_0 (tank)         → bd_cip_events (source_form='packaging', target_kind='vessel', target_code='tank')

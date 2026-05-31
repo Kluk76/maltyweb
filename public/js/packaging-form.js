@@ -302,7 +302,6 @@ document.addEventListener('DOMContentLoaded', function () {
     { name: 'loss_can_lid_units',      label: 'Pertes couvercle canette', unit: 'unités' },
     { name: 'loss_container_btl_units',label: 'Pertes contenant btl',     unit: 'unités' },
     { name: 'loss_container_can_units',label: 'Pertes contenant can',     unit: 'unités' },
-    { name: 'loss_liquid_other_units', label: 'Pertes liquide autres',    unit: 'L' },
   ];
 
   // Disposition fields for keg/cuv
@@ -654,7 +653,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
   // ── CO₂/O₂ session measurements (up to 20 pairs) ────────────────────────
   //
-  // POST shape: co2o2[N][co2], co2o2[N][o2], co2o2[N][measured_at]
+  // POST shape: co2o2[N][co2], co2o2[N][o2]
   // A row is present when co2 OR o2 is non-empty; fully-blank rows are skipped
   // server-side. QC is server-only (no client-side threshold display).
   // Isolated from the formats[N] repeater — do NOT mix these indices.
@@ -683,12 +682,6 @@ document.addEventListener('DOMContentLoaded', function () {
           'O₂ <span class="op-form__unit">ppb</span></label>' +
         '<input id="co2o2_' + n + '_o2" name="' + prefix + '[o2]"' +
           ' type="text" inputmode="decimal" class="op-form__input" placeholder="ex. 18">' +
-      '</div>' +
-      '<div class="op-form__field pf-co2o2-field pf-co2o2-field--time">' +
-        '<label class="op-form__label" for="co2o2_' + n + '_at">' +
-          'Heure <span class="op-form__unit op-form__opt">(opt.)</span></label>' +
-        '<input id="co2o2_' + n + '_at" name="' + prefix + '[measured_at]"' +
-          ' type="time" class="op-form__input">' +
       '</div>' +
       '<button type="button" class="pf-co2o2-remove op-form__btn op-form__btn--danger-sm"' +
         ' data-n="' + n + '" title="Supprimer ce relevé" aria-label="Supprimer relevé ' + (n + 1) + '">' +
