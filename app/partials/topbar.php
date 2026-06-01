@@ -278,3 +278,4 @@ $userRole = htmlspecialchars($me["role"] ?? "");
 </div>
 
 <script defer src="/js/topbar.js?v=<?= @filemtime(__DIR__ . '/../../public/js/topbar.js') ?: time() ?>"></script>
+<script defer src="/js/form-resilience.js?v=<?= @filemtime(__DIR__ . '/../../public/js/form-resilience.js') ?: time() ?>"></script>
