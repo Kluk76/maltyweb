@@ -155,12 +155,12 @@ function resolve_packaging_sku_id(
 // ── vendable_hl compute ───────────────────────────────────────────────────────
 /**
  * Computes vendable_hl, beer_tax_base_hl, and loss_kpi_hl server-side,
- * mirroring v_bd_packaging_v2_vendable (mig 231).
+ * mirroring v_bd_packaging_v2_vendable (mig 250).
  *
  * Run-type-aware formulas. c(x) = COALESCE(x, 0).
  *
  * BOTTLE/CAN (run_type ∈ bot, can, can33):
- *   vendable_units = prod + special_eff
+ *   vendable_units = prod
  *                  − c(unsaleable) − c(loss_uncapped)
  *                  − c(loss_half_filled) * 0.5
  *                  − c(qa_library) − c(qa_analyses)
@@ -172,7 +172,7 @@ function resolve_packaging_sku_id(
  *                    / units_per_pack * hl_per_unit
  *
  * KEG/CUV (run_type ∈ keg, cuv):
- *   vendable_units = prod + special_eff
+ *   vendable_units = prod
  *   vendable_hl    = (vendable_units / units_per_pack) * hl_per_unit
  *                  − c(loss_keg_liquid_l) / 100
  *                  − c(taproom_keg_l) / 100
@@ -239,11 +239,7 @@ function compute_packaging_vendable_hl(
     $c = static fn(?string $v): string => ($v !== null && $v !== '') ? (string)$v : $zero;
 
     $prodTotal   = $c(isset($row['prod_total_units'])        ? (string)$row['prod_total_units']        : null);
-    $specialQty  = $c(isset($row['special_qty_units'])       ? (string)$row['special_qty_units']       : null);
     $lLiquid     = $c(isset($row['loss_liquid_other_units']) ? (string)$row['loss_liquid_other_units'] : null);
-
-    // Echo-row guard: when special_qty_units = prod_total_units, special contributes 0.
-    $effectiveSpecial = (bccomp($specialQty, $prodTotal, $scale) === 0) ? $zero : $specialQty;
 
     $isKegOrCuv = in_array($runType, ['keg', 'cuv'], true);
 
@@ -260,7 +256,6 @@ function compute_packaging_vendable_hl(
         $halfFilledEff = bcdiv($lHalfFilled, '2', $scale);   // * 0.5
 
         $vendableUnits = $prodTotal;
-        $vendableUnits = bcadd($vendableUnits, $effectiveSpecial, $scale);
         $vendableUnits = bcsub($vendableUnits, $unsaleable,    $scale);
         $vendableUnits = bcsub($vendableUnits, $lUncapped,     $scale);
         $vendableUnits = bcsub($vendableUnits, $halfFilledEff,  $scale);
@@ -292,7 +287,6 @@ function compute_packaging_vendable_hl(
         $taproom    = $c(isset($row['taproom_keg_l'])     ? (string)$row['taproom_keg_l']     : null);
 
         $vendableUnits = $prodTotal;
-        $vendableUnits = bcadd($vendableUnits, $effectiveSpecial, $scale);
 
         $perPack    = bcdiv($vendableUnits, (string)$unitsPerPack, $scale);
         $hlGross    = bcmul($perPack, (string)$hlPerUnit, $scale);
@@ -630,8 +624,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         //   formats[N][prod_total_units], formats[N][qte_unites]
         //   formats[N][unsaleable_units], formats[N][loss_*], ...
         //
-        // prod_total  = main run only (row_origin='main')
-        // qte_unites  = parallel rows only (special_qty_units in v2), ADD not subtract
+        // prod_total  = main run (prod_total_units); parallel rows (prod_total_units = qte_unites)
+        // qte_unites  = parallel rows: own quantity → both prod_total_units AND special_qty_units
         $formatsRaw = $_POST['formats'] ?? [];
         if (empty($formatsRaw) || !is_array($formatsRaw)) {
             throw new RuntimeException("Au moins un format de conditionnement est requis.");
@@ -818,7 +812,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             } else {
                 // Build the partial row now so compute_packaging_vendable_hl() can read it.
                 $partialRow = [
-                    'prod_total_units'        => ($fOrigin === 'main') ? $fProdTotal : null,
+                    'prod_total_units'        => ($fOrigin === 'main') ? $fProdTotal : $fQteUnites,
                     'special_qty_units'       => ($fOrigin === 'parallel') ? $fQteUnites : null,
                     'qa_analyses_units'       => $fQaAnalyses,
                     'qa_library_units'        => $fQaLibrary,
@@ -888,8 +882,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'run_type'               => $fRunType,
                     // Server-resolved — never trust operator-entered sku_id_fk.
                     'sku_id_fk'              => $skuIdFk,
-                    // main: prod_total; parallel: special_qty_units (qte_unites)
-                    'prod_total_units'       => ($fOrigin === 'main') ? $fProdTotal : null,
+                    // main: prod_total; parallel: prod_total = qte_unites (own quantity)
+                    // special_qty_units kept on parallel as consumption provenance key (RULE-1)
+                    'prod_total_units'       => ($fOrigin === 'main') ? $fProdTotal : $fQteUnites,
                     'special_qty_units'      => ($fOrigin === 'parallel') ? $fQteUnites : null,
                     'vendable_hl'            => $finalVendableHl,
                     'beer_tax_base_hl'       => $computed['beer_tax_base_hl'],
@@ -2536,8 +2531,8 @@ window.PF_EDIT_SHARED_TANK_COUNT = <?= (int)$pfSharedTankCount ?>;
  * formats[N][run_type]        → run_type                          ENUM bot/can/can33/keg/cuv
  * formats[N][row_origin]      → row_origin                        ENUM main/parallel
  * formats[N][format_suffix]   → nebuleuse_format_suffix           Part of natural key
- * formats[N][prod_total_units]→ prod_total_units                  Main row only
- * formats[N][qte_unites]      → special_qty_units                 Parallel rows only (ADD)
+ * formats[N][prod_total_units]→ prod_total_units                  Main row: prod_total; parallel: qte_unites
+ * formats[N][qte_unites]      → special_qty_units + prod_total    Parallel rows: own qty (both cols)
  * formats[N][vendable_hl]     → vendable_hl                        ALWAYS COMPUTED (mig 231)
  * formats[N][unsaleable_units]→ unsaleable_units
  * formats[N][qa_analyses_units]→qa_analyses_units
