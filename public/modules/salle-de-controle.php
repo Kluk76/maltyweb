@@ -963,6 +963,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new RuntimeException('co2_tolerance doit être ≥ 0.');
             }
 
+            // CO₂ half-spec guard: require both or neither — a target without a
+            // tolerance (or vice versa) cannot form a usable conformance band.
+            if (($co2Target === null) !== ($co2Tolerance === null)) {
+                throw new RuntimeException(
+                    'CO₂ cible et tolérance doivent être renseignées ensemble ou laissées toutes deux vides.'
+                );
+            }
+
             // racked_vol override cols: all four must be provided or all must be empty.
             // Partial override is rejected — the resolver requires all four to be non-null.
             $rawVolWarnLo    = post_decimal('racked_vol_warn_lo');
@@ -4149,7 +4157,7 @@ window.SDC_TANK_ERR = null;
             <div class="sdc-conf-nospec" id="sdcConfNospec" style="display:none;">
               <span class="sdc-conf-nospec-icon">○</span>
               <span class="sdc-conf-nospec-msg">Aucune cible CO₂ définie pour cette recette.</span>
-              <span class="sdc-conf-nospec-hint">Définir la cible CO₂ dans Recettes → onglet Qualité.</span>
+              <span class="sdc-conf-nospec-hint">Définir la cible CO₂ dans Recettes → Levure &amp; garde → Seuils QC CO₂.</span>
             </div>
 
             <!-- Chart area: CO₂ primary + O₂ secondary -->
