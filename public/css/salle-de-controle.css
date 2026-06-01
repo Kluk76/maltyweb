@@ -954,3 +954,34 @@ body.sdc-page .sc-edit-cancel { padding: 8px 18px; border-radius: 7px; border: 1
 body.sdc-page .sc-edit-cancel:hover { border-color: var(--ink-mute); color: var(--ink); }
 body.sdc-page .sc-edit-save { padding: 8px 22px; border-radius: 7px; border: 1px solid var(--lab-deep); background: color-mix(in srgb, var(--lab) 20%, transparent); color: var(--lab); font-family: "JetBrains Mono", monospace; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; cursor: pointer; transition: background .15s; }
 body.sdc-page .sc-edit-save:hover { background: color-mix(in srgb, var(--lab) 34%, transparent); }
+
+/* ── Hop stage controls ────────────────────────────────────────────────────── */
+body.sdc-page .ingr-row--hop { align-items: center; }
+body.sdc-page .ingr-row--staged { background: color-mix(in srgb, var(--hop) 5%, transparent); }
+body.sdc-page .ingr-row--staged:hover { background: color-mix(in srgb, var(--hop) 10%, transparent); }
+
+body.sdc-page .ingr-hop-group { margin-bottom: 2px; }
+body.sdc-page .ingr-hop-group .ingr-row { margin-bottom: 0; border-radius: 0; }
+body.sdc-page .ingr-hop-group .ingr-row:first-of-type { border-radius: 7px 7px 0 0; }
+body.sdc-page .ingr-hop-group .ingr-row:last-of-type { border-radius: 0 0 7px 7px; }
+body.sdc-page .ingr-hop-group .ingr-row:only-of-type { border-radius: 7px; }
+
+body.sdc-page .ingr-hop-stage-wrap { display: flex; align-items: center; gap: 5px; flex: 0 0 auto; }
+body.sdc-page .hop-stage-select { padding: 3px 6px; background: color-mix(in srgb, var(--ink) 5%, transparent); border: 1px solid color-mix(in srgb, var(--hop) 35%, transparent); border-radius: 6px; color: var(--ink); font-family: "JetBrains Mono", monospace; font-size: 9px; letter-spacing: .04em; cursor: pointer; appearance: none; outline: none; transition: border-color .2s; }
+body.sdc-page .hop-stage-select:focus { border-color: var(--hop); box-shadow: 0 0 0 2px color-mix(in srgb, var(--hop) 18%, transparent); }
+body.sdc-page .hop-boil-min { width: 44px; padding: 3px 5px; background: color-mix(in srgb, var(--ink) 5%, transparent); border: 1px solid color-mix(in srgb, var(--hop) 35%, transparent); border-radius: 6px; color: var(--ink); font-family: "JetBrains Mono", monospace; font-size: 10px; text-align: center; outline: none; transition: border-color .2s; }
+body.sdc-page .hop-boil-min:focus { border-color: var(--hop); }
+body.sdc-page .hop-boil-unit { font-family: "JetBrains Mono", monospace; font-size: 8px; color: var(--oak); white-space: nowrap; }
+body.sdc-page .hop-stage-err { font-family: "DM Sans", sans-serif; font-size: 10px; color: var(--ember); min-width: 0; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+body.sdc-page .ingr-hop-stage-ro { flex: 0 0 auto; }
+body.sdc-page .hop-stage-chip { display: inline-block; font-family: "JetBrains Mono", monospace; font-size: 8px; letter-spacing: .1em; text-transform: uppercase; color: var(--hop); background: color-mix(in srgb, var(--hop) 12%, transparent); border: 1px solid color-mix(in srgb, var(--hop) 28%, transparent); padding: 1px 8px; border-radius: 10px; white-space: nowrap; }
+body.sdc-page .hop-stage-none { color: var(--ink-faint); font-family: "JetBrains Mono", monospace; font-size: 10px; }
+
+body.sdc-page .ingr-hop-del { flex: 0 0 22px; display: flex; align-items: center; justify-content: center; }
+body.sdc-page .hop-del-btn { width: 22px; height: 22px; border: none; background: none; color: var(--ink-faint); font-size: 16px; line-height: 1; cursor: pointer; border-radius: 4px; transition: color .15s, background .15s; display: flex; align-items: center; justify-content: center; padding: 0; }
+body.sdc-page .hop-del-btn:hover { color: var(--ember); background: color-mix(in srgb, var(--ember) 10%, transparent); }
+
+body.sdc-page .ingr-hop-add-row { padding: 3px 10px 8px 10px; }
+body.sdc-page .hop-add-btn { padding: 3px 12px; font-family: "JetBrains Mono", monospace; font-size: 8px; letter-spacing: .12em; text-transform: uppercase; color: var(--hop); background: color-mix(in srgb, var(--hop) 8%, transparent); border: 1px dashed color-mix(in srgb, var(--hop) 40%, transparent); border-radius: 6px; cursor: pointer; transition: background .15s, border-color .15s; }
+body.sdc-page .hop-add-btn:hover { background: color-mix(in srgb, var(--hop) 16%, transparent); border-color: var(--hop); }

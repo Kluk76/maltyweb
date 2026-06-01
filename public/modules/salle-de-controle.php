@@ -171,6 +171,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $action = post_str('action') ?? '';
 
+    // JSON-API actions respond directly (no PRG redirect)
+    $jsonActions = ['set_hop_stage', 'add_hop_addition', 'delete_hop_addition'];
+    if (in_array($action, $jsonActions, true)) {
+        header('Content-Type: application/json; charset=utf-8');
+    }
+
     // Redirect target depends on action
     $redirectSec = in_array($action, ['activate_format','deactivate_format','set_binding','update_recipe_yeast','update_recipe_qc','update_recipe_style','update_recipe_name'], true)
         ? 'recettes'
@@ -1552,6 +1558,317 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $redirectRecipeId = $recipeId;
             $redirectSub      = 'ingr';
 
+        // ── set_hop_stage ────────────────────────────────────────────────────
+        } elseif ($action === 'set_hop_stage') {
+            if (!is_admin($me) && !is_manager($me)) {
+                http_response_code(403);
+                echo json_encode(['ok' => false, 'error' => 'Modification réservée aux administrateurs et managers.']);
+                exit;
+            }
+
+            // Step 1 — read with defaults, then validate
+            $rriId  = post_int('id') ?? 0;
+            $rawStage  = post_str('stage') ?? '';
+            $rawBoilMin = isset($_POST['boil_min']) && $_POST['boil_min'] !== '' ? $_POST['boil_min'] : null;
+
+            if ($rriId <= 0) {
+                http_response_code(400);
+                echo json_encode(['ok' => false, 'error' => 'id requis.']);
+                exit;
+            }
+
+            $allowedStages = ['mash', 'first_wort', 'boil', 'hop_stand', 'dry_hop'];
+            $stageOrNull = ($rawStage !== '' && in_array($rawStage, $allowedStages, true))
+                ? $rawStage : null;
+
+            // Enforce CHECK invariant in PHP: boil ↔ minutes non-null; every other stage → minutes NULL
+            if ($stageOrNull === 'boil') {
+                if ($rawBoilMin === null || !is_numeric($rawBoilMin)) {
+                    http_response_code(400);
+                    echo json_encode(['ok' => false, 'error' => 'Le temps de contact (minutes) est requis pour le stage "boil".']);
+                    exit;
+                }
+                $boilMin = (int) $rawBoilMin;
+                if ($boilMin < 0 || $boilMin > 90) {
+                    http_response_code(400);
+                    echo json_encode(['ok' => false, 'error' => 'Les minutes de houblonnage doivent être comprises entre 0 (flameout) et 90.']);
+                    exit;
+                }
+            } else {
+                // Any stage other than boil (including NULL/unclassified) → minutes must be NULL
+                if ($rawBoilMin !== null && is_numeric($rawBoilMin)) {
+                    http_response_code(400);
+                    echo json_encode(['ok' => false, 'error' => 'Les minutes de houblonnage ne sont valides que pour le stage "boil".']);
+                    exit;
+                }
+                $boilMin = null;
+            }
+
+            // Step 2 — validate row exists and is a hop MI (category_id = 2)
+            $rriStmt = $pdo->prepare(
+                "SELECT ri.id, ri.recipe_id, ri.hop_addition_stage, ri.hop_boil_time_min,
+                        m.category_id, m.name AS mi_name, r.name AS recipe_name
+                   FROM ref_recipe_ingredients ri
+                   JOIN ref_mi m ON m.id = ri.mi_id_fk
+                   JOIN ref_recipes r ON r.id = ri.recipe_id
+                  WHERE ri.id = ? AND ri.is_active = 1 LIMIT 1"
+            );
+            $rriStmt->execute([$rriId]);
+            $rriRow = $rriStmt->fetch(PDO::FETCH_ASSOC);
+            if (!$rriRow) {
+                http_response_code(404);
+                echo json_encode(['ok' => false, 'error' => "Ligne ingrédient introuvable ou inactive : id={$rriId}"]);
+                exit;
+            }
+            if ((int) $rriRow['category_id'] !== 2) {
+                http_response_code(400);
+                echo json_encode(['ok' => false, 'error' => "Cet ingrédient n'est pas un houblon — la classification de stage est réservée aux houblons."]);
+                exit;
+            }
+
+            // Step 3 — before-state for audit
+            $before = [
+                'hop_addition_stage' => $rriRow['hop_addition_stage'],
+                'hop_boil_time_min'  => $rriRow['hop_boil_time_min'],
+            ];
+
+            // Step 4 — write
+            $upStmt = $pdo->prepare(
+                "UPDATE ref_recipe_ingredients
+                    SET hop_addition_stage = ?, hop_boil_time_min = ?
+                  WHERE id = ?"
+            );
+            $upStmt->execute([$stageOrNull, $boilMin, $rriId]);
+
+            $after = [
+                'hop_addition_stage' => $stageOrNull,
+                'hop_boil_time_min'  => $boilMin,
+            ];
+            log_revision(
+                $pdo, $me, 'ref_recipe_ingredients', $rriId,
+                $before,
+                $after,
+                'normal',
+                "Salle de contrôle: hop stage · {$rriRow['recipe_name']} · {$rriRow['mi_name']}"
+            );
+
+            echo json_encode([
+                'ok'       => true,
+                'id'       => $rriId,
+                'stage'    => $stageOrNull,
+                'boil_min' => $boilMin,
+            ]);
+            exit;
+
+        // ── add_hop_addition ─────────────────────────────────────────────────
+        } elseif ($action === 'add_hop_addition') {
+            if (!is_admin($me) && !is_manager($me)) {
+                http_response_code(403);
+                echo json_encode(['ok' => false, 'error' => 'Modification réservée aux administrateurs et managers.']);
+                exit;
+            }
+
+            // Step 1 — read with defaults, then validate
+            $recipeId  = post_int('recipe_id') ?? 0;
+            $miIdFk    = post_int('mi_id_fk') ?? 0;
+            $rawQty    = post_str('qty_per_hl') ?? '';
+            $unit      = post_str('unit') ?? '';
+            $rawStage  = post_str('stage') ?? '';
+            $rawBoilMin = isset($_POST['boil_min']) && $_POST['boil_min'] !== '' ? $_POST['boil_min'] : null;
+
+            if ($recipeId <= 0 || $miIdFk <= 0) {
+                http_response_code(400);
+                echo json_encode(['ok' => false, 'error' => 'recipe_id et mi_id_fk requis.']);
+                exit;
+            }
+            if (!is_numeric($rawQty) || (float) $rawQty <= 0) {
+                http_response_code(400);
+                echo json_encode(['ok' => false, 'error' => 'qty_per_hl doit être un nombre positif.']);
+                exit;
+            }
+            $qtyPerHl = (float) $rawQty;
+
+            $allowedUnits = ['kg', 'g', 'ml', 'L'];
+            if (!in_array($unit, $allowedUnits, true)) {
+                http_response_code(400);
+                echo json_encode(['ok' => false, 'error' => 'Unité invalide.']);
+                exit;
+            }
+
+            $allowedStages = ['mash', 'first_wort', 'boil', 'hop_stand', 'dry_hop'];
+            $stageOrNull = ($rawStage !== '' && in_array($rawStage, $allowedStages, true))
+                ? $rawStage : null;
+
+            // Enforce CHECK invariant
+            if ($stageOrNull === 'boil') {
+                if ($rawBoilMin === null || !is_numeric($rawBoilMin)) {
+                    http_response_code(400);
+                    echo json_encode(['ok' => false, 'error' => 'Le temps de contact (minutes) est requis pour le stage "boil".']);
+                    exit;
+                }
+                $boilMin = (int) $rawBoilMin;
+                if ($boilMin < 0 || $boilMin > 90) {
+                    http_response_code(400);
+                    echo json_encode(['ok' => false, 'error' => 'Les minutes de houblonnage doivent être comprises entre 0 (flameout) et 90.']);
+                    exit;
+                }
+            } else {
+                $boilMin = null;
+            }
+
+            // Step 2 — validate MI exists, is category_id=2, and is already on that recipe
+            $miStmt = $pdo->prepare(
+                "SELECT m.id, m.mi_id, m.name, m.category_id
+                   FROM ref_mi m
+                  WHERE m.id = ? AND m.category_id = 2 LIMIT 1"
+            );
+            $miStmt->execute([$miIdFk]);
+            $miRow = $miStmt->fetch(PDO::FETCH_ASSOC);
+            if (!$miRow) {
+                http_response_code(400);
+                echo json_encode(['ok' => false, 'error' => "L'ingrédient n'existe pas ou n'est pas un houblon."]);
+
+                exit;
+            }
+
+            $existsStmt = $pdo->prepare(
+                "SELECT COUNT(*) FROM ref_recipe_ingredients
+                  WHERE recipe_id = ? AND mi_id_fk = ? AND is_active = 1 LIMIT 1"
+            );
+            $existsStmt->execute([$recipeId, $miIdFk]);
+            if ((int) $existsStmt->fetchColumn() === 0) {
+                http_response_code(400);
+                echo json_encode(['ok' => false, 'error' => "Cet houblon n'est pas encore dans cette recette — ajoutez-le d'abord via la fiche recette."]);
+                exit;
+            }
+
+            $recStmt2 = $pdo->prepare("SELECT id, name FROM ref_recipes WHERE id = ? AND is_active = 1 LIMIT 1");
+            $recStmt2->execute([$recipeId]);
+            $recRow2 = $recStmt2->fetch(PDO::FETCH_ASSOC);
+            if (!$recRow2) {
+                http_response_code(404);
+                echo json_encode(['ok' => false, 'error' => "Recette introuvable ou inactive : id={$recipeId}"]);
+                exit;
+            }
+
+            // Step 3 — INSERT (UNIQUE on (recipe_id, mi_id_fk, stage_key, boil_time_key) catches dupes)
+            try {
+                $insStmt = $pdo->prepare(
+                    "INSERT INTO ref_recipe_ingredients
+                        (recipe_id, mi_id_fk, qty_per_hl, unit, hop_addition_stage, hop_boil_time_min, is_active)
+                     VALUES (?, ?, ?, ?, ?, ?, 1)"
+                );
+                $insStmt->execute([$recipeId, $miIdFk, $qtyPerHl, $unit, $stageOrNull, $boilMin]);
+                $newId = (int) $pdo->lastInsertId();
+            } catch (PDOException $e) {
+                // Duplicate stage+time for same (recipe, MI)
+                if (str_contains($e->getMessage(), '1062') || str_contains($e->getMessage(), 'Duplicate')) {
+                    http_response_code(409);
+                    echo json_encode(['ok' => false, 'error' => "Cette combinaison houblon + stage + minutes existe déjà pour cette recette."]);
+                    exit;
+                }
+                throw $e;
+            }
+
+            $after = [
+                'recipe_id' => $recipeId, 'mi_id_fk' => $miIdFk,
+                'qty_per_hl' => $qtyPerHl, 'unit' => $unit,
+                'hop_addition_stage' => $stageOrNull, 'hop_boil_time_min' => $boilMin,
+                'is_active' => 1,
+            ];
+            log_revision(
+                $pdo, $me, 'ref_recipe_ingredients', $newId,
+                null,
+                $after,
+                'normal',
+                "Salle de contrôle: add hop addition · {$recRow2['name']} · {$miRow['name']}"
+            );
+
+            echo json_encode([
+                'ok'       => true,
+                'id'       => $newId,
+                'mi'       => (string) $miRow['mi_id'],
+                'name'     => (string) $miRow['name'],
+                'cat'      => 'Hops',
+                'qty'      => $qtyPerHl,
+                'unit'     => $unit,
+                'is_hop'   => true,
+                'stage'    => $stageOrNull,
+                'boil_min' => $boilMin,
+            ]);
+            exit;
+
+        // ── delete_hop_addition ──────────────────────────────────────────────
+        } elseif ($action === 'delete_hop_addition') {
+            if (!is_admin($me) && !is_manager($me)) {
+                http_response_code(403);
+                echo json_encode(['ok' => false, 'error' => 'Modification réservée aux administrateurs et managers.']);
+                exit;
+            }
+
+            // Step 1 — read with defaults, then validate
+            $rriId = post_int('id') ?? 0;
+            if ($rriId <= 0) {
+                http_response_code(400);
+                echo json_encode(['ok' => false, 'error' => 'id requis.']);
+                exit;
+            }
+
+            // Step 2 — validate row exists, is a hop, and is a STAGE row (not the last/only row for that mi on that recipe)
+            $rriStmt2 = $pdo->prepare(
+                "SELECT ri.id, ri.recipe_id, ri.mi_id_fk, ri.hop_addition_stage, ri.hop_boil_time_min,
+                        m.category_id, m.name AS mi_name, r.name AS recipe_name
+                   FROM ref_recipe_ingredients ri
+                   JOIN ref_mi m ON m.id = ri.mi_id_fk
+                   JOIN ref_recipes r ON r.id = ri.recipe_id
+                  WHERE ri.id = ? AND ri.is_active = 1 LIMIT 1"
+            );
+            $rriStmt2->execute([$rriId]);
+            $rriRow2 = $rriStmt2->fetch(PDO::FETCH_ASSOC);
+            if (!$rriRow2) {
+                http_response_code(404);
+                echo json_encode(['ok' => false, 'error' => "Ligne ingrédient introuvable ou inactive : id={$rriId}"]);
+                exit;
+            }
+            if ((int) $rriRow2['category_id'] !== 2) {
+                http_response_code(400);
+                echo json_encode(['ok' => false, 'error' => "Cet ingrédient n'est pas un houblon."]);
+                exit;
+            }
+
+            // Count how many active rows this MI has on this recipe
+            $countStmt = $pdo->prepare(
+                "SELECT COUNT(*) FROM ref_recipe_ingredients
+                  WHERE recipe_id = ? AND mi_id_fk = ? AND is_active = 1"
+            );
+            $countStmt->execute([$rriRow2['recipe_id'], $rriRow2['mi_id_fk']]);
+            $rowCount = (int) $countStmt->fetchColumn();
+            if ($rowCount <= 1) {
+                http_response_code(400);
+                echo json_encode(['ok' => false, 'error' => "Impossible de supprimer la seule addition de ce houblon — utilisez la fiche recette pour retirer l'ingrédient."]);
+                exit;
+            }
+
+            // Step 3 — soft-delete (is_active = 0)
+            $before = [
+                'is_active'          => 1,
+                'hop_addition_stage' => $rriRow2['hop_addition_stage'],
+                'hop_boil_time_min'  => $rriRow2['hop_boil_time_min'],
+            ];
+            $pdo->prepare("UPDATE ref_recipe_ingredients SET is_active = 0 WHERE id = ?")->execute([$rriId]);
+
+            $after = ['is_active' => 0, '_tombstone' => 'deleted_by_sdc'];
+            log_revision(
+                $pdo, $me, 'ref_recipe_ingredients', $rriId,
+                $before,
+                $after,
+                'normal',
+                "Salle de contrôle: delete hop addition · {$rriRow2['recipe_name']} · {$rriRow2['mi_name']}"
+            );
+
+            echo json_encode(['ok' => true, 'id' => $rriId]);
+            exit;
+
         } else {
             throw new RuntimeException('Action inconnue.');
         }
@@ -1734,18 +2051,23 @@ try {
         ];
         $inPlaceAll = implode(',', array_fill(0, count($allLifecycleIds), '?'));
         $ingrStmt = $pdo->prepare(
-            "SELECT ri.recipe_id,
-                    m.mi_id   AS mi,
-                    m.name    AS name,
-                    c.name    AS db_category,
+            "SELECT ri.id,
+                    ri.recipe_id,
+                    ri.mi_id_fk,
+                    m.mi_id        AS mi,
+                    m.name         AS name,
+                    m.category_id  AS category_id,
+                    c.name         AS db_category,
                     ri.qty_per_hl,
-                    ri.unit
+                    ri.unit,
+                    ri.hop_addition_stage,
+                    ri.hop_boil_time_min
                FROM ref_recipe_ingredients ri
                JOIN ref_mi m             ON m.id = ri.mi_id_fk
                JOIN ref_mi_categories c  ON c.id = m.category_id
               WHERE ri.recipe_id IN ({$inPlaceAll})
                 AND ri.is_active = 1
-              ORDER BY ri.recipe_id, c.name, m.name"
+              ORDER BY ri.recipe_id, c.name, m.name, ri.hop_addition_stage, ri.hop_boil_time_min"
         );
         $ingrStmt->execute($allLifecycleIds);
         foreach ($ingrStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
@@ -1754,11 +2076,16 @@ try {
                 $ingredientsData[$rid] = [];
             }
             $ingredientsData[$rid][] = [
-                'mi'   => (string) $row['mi'],
-                'name' => (string) $row['name'],
-                'cat'  => $catMap[$row['db_category']] ?? (string) $row['db_category'],
-                'qty'  => (float)  $row['qty_per_hl'],
-                'unit' => (string) $row['unit'],
+                'id'        => (int)    $row['id'],
+                'mi'        => (string) $row['mi'],
+                'mi_id_fk'  => (int)    $row['mi_id_fk'],
+                'name'      => (string) $row['name'],
+                'cat'       => $catMap[$row['db_category']] ?? (string) $row['db_category'],
+                'qty'       => (float)  $row['qty_per_hl'],
+                'unit'      => (string) $row['unit'],
+                'is_hop'    => (int)    $row['category_id'] === 2,
+                'stage'     => $row['hop_addition_stage'] !== null ? (string) $row['hop_addition_stage'] : null,
+                'boil_min'  => $row['hop_boil_time_min'] !== null ? (int) $row['hop_boil_time_min'] : null,
             ];
         }
     }
@@ -4015,16 +4342,167 @@ function setIngrScale(scale){
   document.getElementById('istHl').classList.toggle('active',scale==='hl');
   if(selectedRecipeId!==null) renderIngrPane(selectedRecipeId,PROFILES[selectedRecipeId]);
 }
+/* ── Hop stage helpers ───────────────────────────────────────────────────── */
+const HOP_STAGES=[
+  {v:'',      label:'— non classé —'},
+  {v:'mash',       label:'Mash'},
+  {v:'first_wort', label:'First wort'},
+  {v:'boil',       label:'Boil'},
+  {v:'hop_stand',  label:'Hop stand'},
+  {v:'dry_hop',    label:'Dry hop'},
+];
+function hopStageLabel(v){const s=HOP_STAGES.find(x=>x.v===v);return s?s.label:(v||'—');}
+
+function hopStageSelectHtml(rriId,currentStage,currentBoilMin){
+  const sel=currentStage||'';
+  let h=`<select class="hop-stage-select" data-rri-id="${rriId}">`;
+  HOP_STAGES.forEach(s=>{h+=`<option value="${escHtml(s.v)}"${s.v===sel?' selected':''}>${escHtml(s.label)}</option>`;});
+  h+='</select>';
+  const showMin=sel==='boil';
+  h+=`<input type="number" class="hop-boil-min" data-rri-id="${rriId}" min="0" max="90" placeholder="min" title="Minutes de houblonnage (0=flameout)" value="${showMin&&currentBoilMin!=null?currentBoilMin:''}" style="display:${showMin?'inline-block':'none'};">`;
+  h+=`<span class="hop-boil-unit" style="display:${showMin?'inline':'none'};">min</span>`;
+  return h;
+}
+
+function hopAddBtnHtml(recipeId,miIdFk){
+  return `<button class="hop-add-btn" data-recipe-id="${recipeId}" data-mi-id-fk="${miIdFk}" title="Ajouter une addition pour ce houblon">+ addition</button>`;
+}
+
+function hopDeleteBtnHtml(rriId){
+  return `<button class="hop-del-btn" data-rri-id="${rriId}" title="Supprimer cette addition">×</button>`;
+}
+
+/* ── Hop API helpers ─────────────────────────────────────────────────────── */
+async function hopApiFetch(action,body){
+  const resp=await fetch('/modules/salle-de-controle.php',{
+    method:'POST',
+    headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body:new URLSearchParams({action,...body,csrf:window.SDC_CSRF||''}),
+  });
+  return resp.json();
+}
+
+/* ── Bind hop controls (called after re-render) ──────────────────────────── */
+function bindHopControls(container){
+  // Stage select: show/hide boil-min, then save on change (non-boil stages save immediately)
+  container.querySelectorAll('.hop-stage-select').forEach(sel=>{
+    sel.addEventListener('change',async function(){
+      const id=this.dataset.rriId;
+      const stage=this.value;
+      const isBoil=stage==='boil';
+      const minInp=container.querySelector(`.hop-boil-min[data-rri-id="${id}"]`);
+      const minUnit=container.querySelector(`.hop-boil-unit[data-rri-id="${id}"]`);
+      if(minInp){minInp.style.display=isBoil?'inline-block':'none';if(!isBoil)minInp.value='';}
+      if(minUnit){minUnit.style.display=isBoil?'inline':'none';}
+      if(isBoil) return; // wait for boil-min blur
+      const errEl=container.querySelector(`.hop-stage-err[data-rri-id="${id}"]`);
+      if(errEl)errEl.textContent='';
+      try{
+        const data=await hopApiFetch('set_hop_stage',{id,stage,boil_min:''});
+        if(!data.ok){if(errEl)errEl.textContent=data.error||'Erreur';return;}
+        const arr=INGREDIENTS[selectedRecipeId]||[];
+        const row=arr.find(r=>r.id===parseInt(id,10));
+        if(row){row.stage=data.stage;row.boil_min=data.boil_min;}
+        if(window.showToast)showToast('Stage houblon enregistré.');
+      }catch(e){if(errEl)errEl.textContent='Erreur réseau.';}
+    });
+  });
+
+  // Boil-min input → save on blur
+  container.querySelectorAll('.hop-boil-min').forEach(inp=>{
+    inp.addEventListener('blur',async function(){
+      if(this.style.display==='none') return;
+      const id=this.dataset.rriId;
+      const sel=container.querySelector(`.hop-stage-select[data-rri-id="${id}"]`);
+      const stage=sel?sel.value:'boil';
+      if(stage!=='boil') return;
+      const boilMin=this.value;
+      const errEl=container.querySelector(`.hop-stage-err[data-rri-id="${id}"]`);
+      if(errEl)errEl.textContent='';
+      if(boilMin===''||isNaN(parseInt(boilMin,10))){
+        if(errEl)errEl.textContent='Entrer les minutes (0–90, 0=flameout).';
+        return;
+      }
+      try{
+        const data=await hopApiFetch('set_hop_stage',{id,stage,boil_min:boilMin});
+        if(!data.ok){if(errEl)errEl.textContent=data.error||'Erreur';return;}
+        const arr=INGREDIENTS[selectedRecipeId]||[];
+        const row=arr.find(r=>r.id===parseInt(id,10));
+        if(row){row.stage=data.stage;row.boil_min=data.boil_min;}
+        if(window.showToast)showToast('Stage houblon enregistré.');
+      }catch(e){if(errEl)errEl.textContent='Erreur réseau.';}
+    });
+  });
+
+  // Add-addition button
+  container.querySelectorAll('.hop-add-btn').forEach(btn=>{
+    btn.addEventListener('click',async function(){
+      const recipeId=parseInt(this.dataset.recipeId,10);
+      const miIdFk=this.dataset.miIdFk;
+      const qty=window.prompt('Quantité / hl (ex: 50):');
+      if(!qty||isNaN(parseFloat(qty))||parseFloat(qty)<=0){return;}
+      const unit=window.prompt('Unité (g, kg, ml, L):','g');
+      if(!['g','kg','ml','L'].includes(unit)){window.alert('Unité invalide.');return;}
+      const stageIdx=window.prompt('Stage:\n0=non classé\n1=mash\n2=first_wort\n3=boil\n4=hop_stand\n5=dry_hop\n\nEntrer le numéro:','');
+      const stageMap=['','mash','first_wort','boil','hop_stand','dry_hop'];
+      const stage=stageMap[parseInt(stageIdx,10)]??'';
+      let boilMin='';
+      if(stage==='boil'){
+        const bm=window.prompt('Minutes de houblonnage (0=flameout, max 90):');
+        if(!bm||isNaN(parseInt(bm,10))||parseInt(bm,10)<0||parseInt(bm,10)>90){window.alert('Minutes invalides.');return;}
+        boilMin=bm;
+      }
+      try{
+        const data=await hopApiFetch('add_hop_addition',{recipe_id:recipeId,mi_id_fk:miIdFk,qty_per_hl:qty,unit,stage,boil_min:boilMin});
+        if(!data.ok){window.alert(data.error||'Erreur');return;}
+        const arr=INGREDIENTS[recipeId]||(INGREDIENTS[recipeId]=[]);
+        arr.push({id:data.id,mi:data.mi,name:data.name,cat:'Hops',qty:data.qty,unit:data.unit,is_hop:true,stage:data.stage,boil_min:data.boil_min});
+        renderIngrPane(selectedRecipeId,PROFILES[selectedRecipeId]);
+        if(window.showToast)showToast('Addition houblon ajoutée.');
+      }catch(e){window.alert('Erreur réseau.');}
+    });
+  });
+
+  // Delete-addition button
+  container.querySelectorAll('.hop-del-btn').forEach(btn=>{
+    btn.addEventListener('click',async function(){
+      const id=this.dataset.rriId;
+      if(!window.confirm('Supprimer cette addition de houblon ?')) return;
+      try{
+        const data=await hopApiFetch('delete_hop_addition',{id});
+        if(!data.ok){window.alert(data.error||'Erreur');return;}
+        const arr=INGREDIENTS[selectedRecipeId]||[];
+        const idx=arr.findIndex(r=>r.id===parseInt(id,10));
+        if(idx!==-1) arr.splice(idx,1);
+        renderIngrPane(selectedRecipeId,PROFILES[selectedRecipeId]);
+        if(window.showToast)showToast('Addition supprimée.');
+      }catch(e){window.alert('Erreur réseau.');}
+    });
+  });
+}
+
 function renderIngrPane(id,profile){
   const container=document.getElementById('ingrPaneContent');
   if(!container) return;
   const items=INGREDIENTS[id]||[];
   if(!items.length){container.innerHTML='<div style="padding:40px;text-align:center;color:var(--ink-faint);">Aucune recette officielle saisie.</div>';return;}
+  const canEdit=(SDC_ROLE==='admin'||SDC_ROLE==='manager');
+
+  // Group by category. Hop items grouped by MI name (since same MI may have multiple addition rows).
   const groups={};
   items.forEach(it=>{const c=it.cat;if(!groups[c])groups[c]=[];groups[c].push(it);});
   const toGRaw=(qty,unit)=>unit==='kg'?qty*1000:qty;
   const maxPerCat={};
-  Object.entries(groups).forEach(([c,rows])=>{maxPerCat[c]=Math.max(...rows.map(r=>toGRaw(r.qty,r.unit)));});
+  // For Hops, max is computed across all addition rows for the same MI (use total per MI)
+  Object.entries(groups).forEach(([c,rows])=>{
+    if(c==='Hops'){
+      const totals={};
+      rows.forEach(r=>{totals[r.mi]=(totals[r.mi]||0)+toGRaw(r.qty,r.unit);});
+      maxPerCat[c]=Math.max(...Object.values(totals));
+    } else {
+      maxPerCat[c]=Math.max(...rows.map(r=>toGRaw(r.qty,r.unit)));
+    }
+  });
   let html='';
   const abv=profile?calcAbv(profile.og,profile.fg):null;
   if(abv){html+=`<div style="margin-bottom:16px;padding:12px 14px;background:rgba(74,140,120,.10);border:1px solid rgba(74,140,120,.22);border-radius:8px;display:flex;align-items:baseline;gap:12px;"><span class="abv-big">${escHtml(abv)}</span><span class="abv-pct">% ABV</span><span class="abv-calc-note" style="margin-left:auto;">Estimé Plato · OG ${profile.og}°P · FG ${profile.fg}°P · ${profile.batches} brassins</span></div>`;}
@@ -4038,13 +4516,50 @@ function renderIngrPane(id,profile){
     if(totalKgScaled>0){total=totalKgScaled>=1?totalKgScaled.toFixed(2)+' kg '+scaleLabel:(totalKgScaled*1000).toFixed(0)+' g '+scaleLabel;}
     else if(totalGScaled>0){total=totalGScaled>=1000?(totalGScaled/1000).toFixed(2)+' kg '+scaleLabel:totalGScaled.toFixed(0)+' g '+scaleLabel;}
     html+=`<div class="ingr-section-head"><span class="ish-dot" style="background:${color}"></span><span class="ish-label">${escHtml(cat)}</span><span class="ish-rule"></span><span class="ish-total">${escHtml(total)}</span></div>`;
-    rows.forEach(it=>{
-      const pct=toGRaw(it.qty,it.unit)/maxPerCat[cat]*100;
-      const s=scaledQty(it.qty,it.unit);
-      html+=`<div class="ingr-row"><div class="ingr-name">${escHtml(it.name)}</div><div class="ingr-mid">${escHtml(it.mi)}</div><div class="ingr-qty">${escHtml(String(fmtVal(s.val,s.unit)))}</div><div class="ingr-unit">${escHtml(s.unit)}</div><div class="ingr-bar-wrap"><div class="ingr-bar" style="width:${pct}%;background:${color};opacity:.7;"></div></div></div>`;
-    });
+
+    if(cat==='Hops'){
+      // Group hop items by MI, then render each MI's additions together
+      const byMi={};
+      rows.forEach(r=>{if(!byMi[r.mi])byMi[r.mi]={name:r.name,mi:r.mi,rows:[]};byMi[r.mi].rows.push(r);});
+      Object.values(byMi).forEach(miGroup=>{
+        const totalForMi=miGroup.rows.reduce((s,r)=>s+toGRaw(r.qty,r.unit),0);
+        const pct=totalForMi/maxPerCat[cat]*100;
+        html+=`<div class="ingr-hop-group">`;
+        miGroup.rows.forEach((it,idx)=>{
+          const s=scaledQty(it.qty,it.unit);
+          const isFirst=idx===0;
+          const canDelete=miGroup.rows.length>1;
+          html+=`<div class="ingr-row ingr-row--hop${it.stage?' ingr-row--staged':''}" data-rri-id="${it.id}">`;
+          html+=`<div class="ingr-name">${isFirst?escHtml(it.name):''}</div>`;
+          html+=`<div class="ingr-mid">${isFirst?escHtml(it.mi):''}</div>`;
+          html+=`<div class="ingr-qty">${escHtml(String(fmtVal(s.val,s.unit)))}</div>`;
+          html+=`<div class="ingr-unit">${escHtml(s.unit)}</div>`;
+          if(canEdit){
+            html+=`<div class="ingr-hop-stage-wrap">${hopStageSelectHtml(it.id,it.stage,it.boil_min)}<span class="hop-stage-err" data-rri-id="${it.id}"></span></div>`;
+            if(canDelete){html+=`<div class="ingr-hop-del">${hopDeleteBtnHtml(it.id)}</div>`;}
+            else{html+=`<div class="ingr-hop-del"></div>`;}
+          } else {
+            // Read-only: just show stage label
+            html+=`<div class="ingr-hop-stage-ro">${it.stage?`<span class="hop-stage-chip">${escHtml(hopStageLabel(it.stage))}${it.boil_min!=null?' · '+it.boil_min+'min':''}</span>`:'<span class="hop-stage-none">—</span>'}</div>`;
+          }
+          html+=`<div class="ingr-bar-wrap"><div class="ingr-bar" style="width:${isFirst?pct:0}%;background:${color};opacity:.7;"></div></div>`;
+          html+=`</div>`;
+        });
+        if(canEdit){
+          html+=`<div class="ingr-hop-add-row">${hopAddBtnHtml(id,miGroup.rows[0].mi_id_fk||miGroup.rows[0].mi)}</div>`;
+        }
+        html+=`</div>`;
+      });
+    } else {
+      rows.forEach(it=>{
+        const pct=toGRaw(it.qty,it.unit)/maxPerCat[cat]*100;
+        const s=scaledQty(it.qty,it.unit);
+        html+=`<div class="ingr-row"><div class="ingr-name">${escHtml(it.name)}</div><div class="ingr-mid">${escHtml(it.mi)}</div><div class="ingr-qty">${escHtml(String(fmtVal(s.val,s.unit)))}</div><div class="ingr-unit">${escHtml(s.unit)}</div><div class="ingr-bar-wrap"><div class="ingr-bar" style="width:${pct}%;background:${color};opacity:.7;"></div></div></div>`;
+      });
+    }
   });
   container.innerHTML=html;
+  bindHopControls(container);
 }
 
 /* ═══════════════════════════════════════════
