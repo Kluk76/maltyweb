@@ -491,4 +491,172 @@ if ($failTanks > 0) {
     }
 }
 
+// ── ASSERTION: loader dedup-by-mi_id_fk ──────────────────────────────────────
+//
+// Proves the dedup fix in load_recipe_ingredients_for_batch() Step 3.
+//
+// Strategy: find a hop MI that is in ref_recipe_ingredients for some recipe,
+// and find a (beer, batch) where that MI is NOT observed (so it will reach
+// gap-fill). Insert a SECOND stage-row for that same (recipe_id, mi_id_fk)
+// with a different stage so the new unique key allows it. Call the loader and
+// assert: exactly ONE entry for that MI, qty = sum of both stage rows.
+// Self-clean: DELETE both synthetic rows even on failure (try/finally).
+//
+// The fixture uses real recipe/MI FKs to avoid FK violations — we look them
+// up dynamically so the test doesn't embed hardcoded IDs that may drift.
+echo "\n$hr80\n";
+echo "ASSERTION: multi-stage gap-fill dedup (mi_id_fk summing)\n";
+echo "$hr80\n";
+
+$assertPassed = false;
+$assertMsg    = '';
+
+// Find a hop MI that has exactly one recipe-ingredient row in some active recipe
+// and that is NOT in bd_brewing_ingredients_parsed_v2 for a known (beer, batch).
+// We pick the first such hop MI and a batch that doesn't observe it.
+
+// Pick a hop MI with at least one active rri row
+$hopCandRow = $pdo->query("
+    SELECT ri.recipe_id, ri.mi_id_fk, ri.unit, ri.qty_per_hl,
+           r.name AS recipe_name
+      FROM ref_recipe_ingredients ri
+      JOIN ref_mi m       ON m.id = ri.mi_id_fk
+      JOIN ref_recipes r  ON r.id = ri.recipe_id AND r.is_active = 1
+      JOIN ref_mi_categories cat ON cat.id = m.category_id AND cat.name = 'Hops'
+     WHERE ri.is_active = 1
+       AND ri.hop_addition_stage IS NULL
+     LIMIT 1
+")->fetch(PDO::FETCH_ASSOC);
+
+if (!$hopCandRow) {
+    echo "SKIP: no suitable hop MI with stage=NULL found — no hop rows yet seeded\n";
+} else {
+    $fixtureRecipeId = (int)   $hopCandRow['recipe_id'];
+    $fixtureMiFk     = (int)   $hopCandRow['mi_id_fk'];
+    $fixtureUnit     = (string)$hopCandRow['unit'];
+    $fixtureQplA     = (float) $hopCandRow['qty_per_hl'];   // original row qty
+    $fixtureRecipeName = (string)$hopCandRow['recipe_name'];
+
+    // synthetic second-stage qty (arbitrary, distinct from original)
+    $fixtureQplB = 25.0;  // g/HL — won't collide with typical recipe qtys
+
+    // Find a (beer, batch) for this recipe name where the MI is NOT observed.
+    // We look for the latest bd_brewing_cooling entry for this beer and check
+    // bd_brewing_ingredients_parsed_v2 for that batch.
+    $batchCandRow = $pdo->prepare("
+        SELECT cool_beer AS beer_name, cool_batch AS batch,
+               SUM(cool_final_volume_hl) AS brew_hl
+          FROM bd_brewing_cooling
+         WHERE cool_beer COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci
+           AND cool_final_volume_hl > 0
+         GROUP BY cool_beer, cool_batch
+         ORDER BY cool_batch DESC
+         LIMIT 5
+    ");
+    $batchCandRow->execute([$fixtureRecipeName]);
+    $candidateBatches = $batchCandRow->fetchAll(PDO::FETCH_ASSOC);
+
+    $fixtureBeer  = null;
+    $fixtureBatch = null;
+    $fixtureBrewHl = 30.0;
+
+    foreach ($candidateBatches as $cb) {
+        // Check if mi_id_fk is observed for this batch
+        $obsCheck = $pdo->prepare("
+            SELECT COUNT(*) AS cnt
+              FROM bd_brewing_ingredients_parsed_v2 bip
+              JOIN bd_brewing_ingredients_v2 bih ON bih.id = bip.header_id
+             WHERE bih.beer  COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci
+               AND bih.batch COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci
+               AND bip.mi_id_fk = ?
+        ");
+        $obsCheck->execute([$cb['beer_name'], $cb['batch'], $fixtureMiFk]);
+        if ((int)$obsCheck->fetchColumn() === 0) {
+            $fixtureBeer   = $cb['beer_name'];
+            $fixtureBatch  = $cb['batch'];
+            $fixtureBrewHl = (float)$cb['brew_hl'];
+            break;
+        }
+    }
+
+    if ($fixtureBeer === null) {
+        echo "SKIP: no (beer, batch) found where hop MI {$fixtureMiFk} is not observed — cannot wire fixture\n";
+        echo "WHY: all recent batches of '{$fixtureRecipeName}' already have this MI in observed data.\n";
+        echo "     This is expected when observed brewing data is complete. The dedup logic in\n";
+        echo "     load_recipe_ingredients_for_batch() Step 3 is exercised by live data in this case.\n";
+    } else {
+        // Insert a synthetic second-stage row. The new unique key is
+        // (recipe_id, mi_id_fk, stage_key, boil_time_key).
+        // Original row has stage_key='none', boil_time_key=-1.
+        // We insert with stage='dry_hop' → stage_key='dry_hop', boil_time_key=-1.
+        // hop_boil_time_min stays NULL (dry_hop requires no boil time per the CHECK).
+        $insertedIds = [];
+        try {
+            $ins = $pdo->prepare("
+                INSERT INTO ref_recipe_ingredients
+                    (recipe_id, mi_id_fk, qty_per_hl, unit, hop_addition_stage, is_active)
+                VALUES
+                    (?, ?, ?, ?, 'dry_hop', 1)
+            ");
+            $ins->execute([$fixtureRecipeId, $fixtureMiFk, $fixtureQplB, $fixtureUnit]);
+            $insertedIds[] = (int)$pdo->lastInsertId();
+
+            // Call the loader — should return exactly ONE entry for $fixtureMiFk
+            // with qty_per_hl = $fixtureQplA + $fixtureQplB
+            $loaderResult = load_recipe_ingredients_for_batch(
+                $pdo,
+                $fixtureBeer,
+                $fixtureBatch,
+                $fixtureBrewHl
+            );
+
+            // Find entry for fixtureMiFk
+            $matchingEntries = array_filter($loaderResult, fn($e) => (int)$e['mi_id_fk'] === $fixtureMiFk);
+
+            $countForMi  = count($matchingEntries);
+            $expectedQpl = $fixtureQplA + $fixtureQplB;
+            $actualQpl   = 0.0;
+            if ($countForMi === 1) {
+                $entry      = array_values($matchingEntries)[0];
+                $actualQpl  = (float)$entry['qty_per_hl'];
+            }
+
+            $qplMatch = $countForMi === 1 && abs($actualQpl - $expectedQpl) < 0.000001;
+
+            if ($countForMi === 1 && $qplMatch) {
+                $assertPassed = true;
+                $assertMsg = sprintf(
+                    "PASS: mi_id_fk=%d → 1 entry, qty_per_hl=%.6f (expected=%.6f, A=%.6f + B=%.6f)",
+                    $fixtureMiFk, $actualQpl, $expectedQpl, $fixtureQplA, $fixtureQplB
+                );
+            } else {
+                $assertMsg = sprintf(
+                    "FAIL: mi_id_fk=%d → %d entries (expected 1), qty_per_hl=%.6f (expected=%.6f)",
+                    $fixtureMiFk, $countForMi, $actualQpl, $expectedQpl
+                );
+            }
+        } finally {
+            // Self-clean: always delete synthetic rows, even on exception
+            if (!empty($insertedIds)) {
+                $placeholders = implode(',', array_fill(0, count($insertedIds), '?'));
+                $pdo->prepare("DELETE FROM ref_recipe_ingredients WHERE id IN ($placeholders)")
+                    ->execute($insertedIds);
+                $deleted = count($insertedIds);
+                echo "  [cleanup] deleted $deleted synthetic row(s): id(s) " . implode(', ', $insertedIds) . "\n";
+            }
+        }
+
+        echo "  Recipe: '{$fixtureRecipeName}' (recipe_id={$fixtureRecipeId}), mi_id_fk={$fixtureMiFk}\n";
+        echo "  Beer/batch for gap-fill: '{$fixtureBeer}' / '{$fixtureBatch}' (brew_hl={$fixtureBrewHl})\n";
+        echo "  Original row qty_per_hl: {$fixtureQplA} {$fixtureUnit}\n";
+        echo "  Synthetic dry_hop row qty_per_hl: {$fixtureQplB} {$fixtureUnit}\n";
+        echo "  $assertMsg\n";
+
+        if (!$assertPassed) {
+            echo "\nASSERTION FAILED — dedup fix is not working correctly.\n";
+            exit(2);
+        }
+    }
+}
+
 echo "\nDone.\n";

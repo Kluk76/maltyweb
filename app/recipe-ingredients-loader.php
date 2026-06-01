@@ -178,18 +178,64 @@ function load_recipe_ingredients_for_batch(
     $stmt->execute([$beer_name, $beer_name, $asof, $asof]);
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
-    // Step 3: gap-fill — emit only rows whose mi_id_fk is NOT observed
-    $applied = [];
+    // Step 3: gap-fill — emit only rows whose mi_id_fk is NOT observed.
+    // Dedup-and-sum by mi_id_fk: once multi-stage rows exist for a hop MI that
+    // is absent from observed data, the same MI may appear on two or more stage-
+    // rows (e.g. 'boil' + 'dry_hop'). Sum their qty_per_hl values into ONE entry
+    // so that COGS/COP consumers are never double-charged for the same MI.
+    //
+    // Unit guard: only sum rows whose unit matches. If two rows for the same MI
+    // have DIFFERENT units, that is a data anomaly. Keep the first, log a warning
+    // (must be visible, not swallowed), and skip the conflicting row.
+    $accumulator = [];  // mi_id_fk => [meta fields + running qty_per_hl sum]
     foreach ($rows as $r) {
         $miFk = (int) $r['mi_id_fk'];
         if (isset($observed[$miFk])) continue;
+
+        $unit = (string) ($r['unit'] ?? 'kg');
+        $qpl  = (float) $r['qty_per_hl'];
+
+        if (!isset($accumulator[$miFk])) {
+            $accumulator[$miFk] = [
+                'mi_id_fk'   => $miFk,
+                'mi_id'      => (string) $r['mi_id'],
+                'mi_name'    => (string) $r['mi_name'],
+                'unit'       => $unit,
+                'qty_per_hl' => $qpl,
+                'hl_applied' => $brew_hl,
+            ];
+        } else {
+            // Second (or subsequent) stage-row for the same MI — sum qty.
+            if ($accumulator[$miFk]['unit'] !== $unit) {
+                // Unit mismatch: data anomaly — refuse to mis-sum, keep first row.
+                error_log(sprintf(
+                    'recipe-ingredients-loader: unit mismatch for mi_id_fk=%d (%s)'
+                    . ' in beer "%s" batch "%s": accumulated unit "%s" vs new row unit "%s"'
+                    . ' — skipping conflicting row (qty_per_hl=%.6f)',
+                    $miFk,
+                    $r['mi_id'],
+                    $beer_name,
+                    $batch,
+                    $accumulator[$miFk]['unit'],
+                    $unit,
+                    $qpl
+                ));
+                continue;
+            }
+            $accumulator[$miFk]['qty_per_hl'] += $qpl;
+        }
+    }
+
+    // Build final output with qty = summed qty_per_hl × brew_hl
+    $applied = [];
+    foreach ($accumulator as $entry) {
         $applied[] = [
-            'mi_id_fk'   => $miFk,
-            'mi_id'      => (string) $r['mi_id'],
-            'mi_name'    => (string) $r['mi_name'],
-            'qty'        => (float) $r['qty_per_hl'] * $brew_hl,
-            'unit'       => (string) ($r['unit'] ?? 'kg'),
-            'qty_per_hl' => (float) $r['qty_per_hl'],
+            'mi_id_fk'   => $entry['mi_id_fk'],
+            'mi_id'      => $entry['mi_id'],
+            'mi_name'    => $entry['mi_name'],
+            'qty'        => $entry['qty_per_hl'] * $brew_hl,
+            'unit'       => $entry['unit'],
+            'qty_per_hl' => $entry['qty_per_hl'],
             'hl_applied' => $brew_hl,
         ];
     }
