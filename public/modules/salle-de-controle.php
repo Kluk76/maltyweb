@@ -27,6 +27,7 @@ require __DIR__ . '/../../app/db-write-helpers.php';
 require_once __DIR__ . '/../../app/sku-bom-compile.php';
 require_once __DIR__ . '/../../app/yeast-eligibility.php';
 require_once __DIR__ . '/../../app/qc-thresholds.php';
+require_once __DIR__ . '/../../app/qa-tank-stats.php';
 
 require_login();
 $me = current_user();
@@ -2406,6 +2407,18 @@ try {
     $cipCadenceErr = $e->getMessage();
 }
 
+// --- CO₂/O₂ conformité — in-tank tracker ------------------------------------
+$tankBeerList  = [];
+$tankSeriesAll = [];
+$tankLoadErr   = null;
+try {
+    $pdoTank       = maltytask_pdo();
+    $tankBeerList  = qa_tank_beer_list($pdoTank);
+    $tankSeriesAll = qa_tank_series_all($pdoTank);
+} catch (Throwable $e) {
+    $tankLoadErr = $e->getMessage();
+}
+
 $minDaysSetting = $settingsByKey['min_days_after_racking'] ?? null;
 $minDaysCurrent = $minDaysSetting !== null
     ? (float) ($minDaysSetting['value_num'] ?? $minDaysSetting['default_num'] ?? 1)
@@ -2416,7 +2429,7 @@ $csrf = csrf_token();
 
 // Active section from query string (for PRG redirect after save)
 $sec = $_GET['sec'] ?? '';
-$initialSec = in_array($sec, ['recettes', 'biochem', 'conditionnement', 'cip', 'pertes'], true)
+$initialSec = in_array($sec, ['recettes', 'biochem', 'conditionnement', 'cip', 'pertes', 'conformite'], true)
     ? $sec : 'recettes';
 
 ?><!doctype html>
@@ -2471,6 +2484,13 @@ window.SDC_CIP_TYPES = <?= json_encode(
 ) ?>;
 window.SDC_INGREDIENTS = <?= json_encode($ingredientsData, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
 window.SDC_PROFILES = {};
+window.SDC_TANK_BEERS  = <?= json_encode($tankBeerList,  JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+window.SDC_TANK_SERIES = <?= json_encode($tankSeriesAll, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+<?php if ($tankLoadErr): ?>
+window.SDC_TANK_ERR = <?= json_encode($tankLoadErr, JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+<?php else: ?>
+window.SDC_TANK_ERR = null;
+<?php endif ?>
 </script>
 </head>
 <body class="sdc-page" data-role="<?= htmlspecialchars($me['role'] ?? 'operateur') ?>">
@@ -2581,6 +2601,16 @@ window.SDC_PROFILES = {};
         </svg>
       </span>
       Pertes
+    </div>
+
+    <div class="nav-item" data-sec="conformite" onclick="switchSection('conformite')">
+      <span class="nav-icon">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <circle cx="8" cy="8" r="5.5" stroke="currentColor" stroke-width="1.2"/>
+          <path d="M5.5 9.5 L7 11 L10.5 7" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </span>
+      CO₂/O₂ conformité
     </div>
 
     <div class="nav-section-label" style="margin-top:16px;">À venir</div>
@@ -4085,6 +4115,59 @@ window.SDC_PROFILES = {};
         <?php endif ?><!-- /pertesSettings empty check -->
       </div>
     </div><!-- /sec-pertes -->
+
+    <!-- ════════════════════════════════ CO₂/O₂ CONFORMITÉ SECTION -->
+    <div class="section-panel" id="sec-conformite">
+      <div class="cip-layout">
+        <div class="cip-header">
+          <h2>CO₂ / O₂ <em>conformité</em></h2>
+          <div class="cip-header-sub">Suivi en-cuve · cible CO₂ par recette · bd_tank_readings</div>
+        </div>
+
+        <?php if ($tankLoadErr): ?>
+          <div class="sdc-flash sdc-flash--err">Erreur DB conformité : <?= htmlspecialchars($tankLoadErr) ?></div>
+        <?php elseif (empty($tankBeerList)): ?>
+          <div class="sdc-conf-empty">Aucune lecture en-cuve disponible.</div>
+        <?php else: ?>
+
+        <div class="sdc-conf-layout">
+
+          <!-- ── Beer selector ───────────────────────────────────────────── -->
+          <div class="sdc-conf-selector" id="sdcConfSelector">
+            <!-- populated by JS: sdcConf.init() -->
+          </div>
+
+          <!-- ── Right panel: summary strip + chart + table ─────────────── -->
+          <div class="sdc-conf-panel">
+
+            <!-- Summary strip -->
+            <div class="sdc-conf-summary" id="sdcConfSummary">
+              <!-- populated by JS -->
+            </div>
+
+            <!-- No-spec notice (shown when selected beer has no CO₂ target) -->
+            <div class="sdc-conf-nospec" id="sdcConfNospec" style="display:none;">
+              <span class="sdc-conf-nospec-icon">○</span>
+              <span class="sdc-conf-nospec-msg">Aucune cible CO₂ définie pour cette recette.</span>
+              <span class="sdc-conf-nospec-hint">Définir la cible CO₂ dans Recettes → onglet Qualité.</span>
+            </div>
+
+            <!-- Chart area: CO₂ primary + O₂ secondary -->
+            <div class="sdc-conf-charts" id="sdcConfCharts">
+              <!-- populated by JS -->
+            </div>
+
+            <!-- Raw readings table (optional fallback) -->
+            <div class="sdc-conf-table-wrap" id="sdcConfTableWrap">
+              <!-- populated by JS -->
+            </div>
+
+          </div><!-- /sdc-conf-panel -->
+        </div><!-- /sdc-conf-layout -->
+
+        <?php endif ?>
+      </div><!-- /cip-layout -->
+    </div><!-- /sec-conformite -->
 
   </div><!-- /content-area -->
 </div><!-- /sdc-stage -->
