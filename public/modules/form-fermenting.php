@@ -78,6 +78,7 @@ require __DIR__ . '/../../app/auth.php';
 require __DIR__ . '/../../app/settings.php';
 require __DIR__ . '/../../app/settings-helpers.php';
 require __DIR__ . '/../../app/db-write-helpers.php';
+require_once __DIR__ . '/../../app/tank-simulator.php';
 
 require_login();
 $me = current_user();
@@ -108,6 +109,191 @@ header('Content-Type: text/html; charset=utf-8');
 
 try {
     $pdo = maltytask_pdo();
+
+    // ── Role gate for hors-process override ───────────────────────────────────
+    $canOverride = (is_admin($me) || is_manager($me));
+
+    // ── Candidate builder for beer-selection cards ─────────────────────────────
+    //
+    // Base CCT query: latest brew per CCT, active recipes only.
+    // Mirrors form-racking.php $candidateBaseSql minus yeast/garde joins.
+    $fermBaseSql = "
+        SELECT
+          bfw.recipe_id_fk,
+          bfw.cct                                     AS source_cct,
+          bfw.batch,
+          bfw.beer,
+          r.id                                        AS recipe_id,
+          r.name                                      AS recipe_name,
+          r.recipe_short_name,
+          COALESCE(NULLIF(bfw.beer,''), r.name)       AS beer_display
+        FROM bd_brewing_brewday_v2 bfw
+        JOIN ref_recipes r ON r.id = bfw.recipe_id_fk
+        WHERE bfw.is_tombstoned = 0
+          AND bfw.cct IS NOT NULL
+          AND r.is_active = 1
+          AND NOT EXISTS (
+            SELECT 1 FROM bd_brewing_brewday_v2 b2
+            WHERE b2.cct = bfw.cct
+              AND b2.is_tombstoned = 0
+              AND b2.event_date IS NOT NULL
+              AND b2.event_date > bfw.event_date
+          )";
+
+    // ── TankSimulator: single run — authoritative CCT occupancy filter ─────────
+    $fermSimState = (new TankSimulator($pdo))->run(new DateTimeImmutable('today'));
+
+    // Drop candidates whose CCT reports 0/null volume in the simulator.
+    // Mirrors form-racking.php $simFilterCct exactly.
+    $fermSimFilterCct = function (array $list) use ($fermSimState): array {
+        $out = [];
+        foreach ($list as $cand) {
+            $cctNum    = (int)($cand['source_cct'] ?? 0);
+            $tankState = $fermSimState['cct'][$cctNum] ?? null;
+            if ($tankState === null) {
+                continue; // CCT not in sim (empty or unknown)
+            }
+            $cand['sim_vol_hl'] = round((float)($tankState['volume_hl'] ?? 0), 2);
+            $out[] = $cand;
+        }
+        return $out;
+    };
+
+    // Gate predicates (applied on top of the base SQL, then sim-filtered):
+    //
+    //   NotColdCrashed — excludes (recipe_id_fk, batch) pairs that already have a
+    //     ColdCrash event. Used for both Reads and ColdCrash event types (same set).
+    //
+    //   DryHop — dry-hop recipe predicate (OR-bridge: canonical ref_recipe_ingredients
+    //     classified arm OR observed-history arm) AND not yet dry-hopped this batch.
+    //     OR-bridge is intentional: keeps the gate non-empty while recipe classification
+    //     is ongoing; remove the f2 sub-query once all recipes are fully classified.
+    //
+    //   Purge — base set only (all CCT lots; no extra exclusion).
+
+    $andNotColdCrashed = "
+          AND NOT EXISTS (
+            SELECT 1 FROM bd_fermenting_v2 f
+            WHERE f.recipe_id_fk = bfw.recipe_id_fk
+              AND f.batch         = bfw.batch
+              AND f.event_type    = 'ColdCrash'
+              AND f.is_tombstoned = 0
+          )";
+
+    $andNotDryHopped = "
+          AND NOT EXISTS (
+            SELECT 1 FROM bd_fermenting_v2 f
+            WHERE f.recipe_id_fk = bfw.recipe_id_fk
+              AND f.batch         = bfw.batch
+              AND f.event_type    = 'DryHop'
+              AND f.is_tombstoned = 0
+          )
+          AND (
+            EXISTS (
+              SELECT 1 FROM ref_recipe_ingredients ri
+              JOIN ref_mi m ON m.id = ri.mi_id_fk
+              WHERE ri.recipe_id              = r.id
+                AND m.category_id             = 2
+                AND ri.hop_addition_stage     = 'dry_hop'
+                AND ri.is_active              = 1
+            )
+            OR EXISTS (
+              SELECT 1 FROM bd_fermenting_v2 f2
+              WHERE f2.recipe_id_fk = r.id
+                AND f2.event_type   = 'DryHop'
+                AND f2.is_tombstoned = 0
+            )
+          )";
+
+    // Build each gated list and pass through sim filter.
+    $fermRowsReads = $fermSimFilterCct(
+        $pdo->query($fermBaseSql . $andNotColdCrashed)->fetchAll(PDO::FETCH_ASSOC)
+    );
+    $fermRowsDryHop = $fermSimFilterCct(
+        $pdo->query($fermBaseSql . $andNotDryHopped)->fetchAll(PDO::FETCH_ASSOC)
+    );
+    $fermRowsPurge = $fermSimFilterCct(
+        $pdo->query($fermBaseSql)->fetchAll(PDO::FETCH_ASSOC)
+    );
+    // ColdCrash = same as Reads (same SQL, same sim filter — share the array)
+    $fermCandidates = [
+        'Reads'     => $fermRowsReads,
+        'ColdCrash' => $fermRowsReads,   // alias — compute once
+        'DryHop'    => $fermRowsDryHop,
+        'Purge'     => $fermRowsPurge,
+    ];
+
+    // ── Hors-process list (admin / manager only): all CCT ∪ all BBT ───────────
+    $fermCandidatesHp = [];
+    if ($canOverride) {
+        // Source A: all CCT lots (no gate), sim-filtered
+        $allCctRows = $fermSimFilterCct(
+            $pdo->query($fermBaseSql)->fetchAll(PDO::FETCH_ASSOC)
+        );
+        $seenHp = [];
+        foreach ($allCctRows as $cand) {
+            $key = 'cct|' . (int)($cand['source_cct'] ?? 0);
+            $seenHp[$key] = true;
+            $cand['source_tank_type'] = 'CCT';
+            $fermCandidatesHp[] = $cand;
+        }
+
+        // Source B: latest-per-BBT from bd_racking_v2, sim-filtered.
+        // Mirrors racking's Source B exactly (form-racking.php ~L616-688).
+        $bbtCandRows = $pdo->query("
+            SELECT
+              'BBT'                                              AS source_tank_type,
+              r.bbt_number                                       AS source_bbt,
+              r.neb_beer,
+              r.neb_batch,
+              r.neb_recipe_id_fk,
+              r.contract_beer,
+              r.contract_batch,
+              r.contract_recipe_id_fk,
+              COALESCE(NULLIF(r.neb_beer,''), r.contract_beer)  AS beer_display,
+              r.event_date                                       AS brew_date,
+              r2.name                                            AS recipe_name
+            FROM bd_racking_v2 r
+            LEFT JOIN ref_recipes r2
+              ON r2.id = COALESCE(r.neb_recipe_id_fk, r.contract_recipe_id_fk)
+            WHERE r.racking_destination_type IN ('BBT','CCT')
+              AND r.bbt_number IS NOT NULL
+              AND r.is_tombstoned = 0
+              AND r.id = (
+                SELECT id FROM bd_racking_v2 r2i
+                WHERE r2i.bbt_number = r.bbt_number
+                  AND r2i.racking_destination_type IN ('BBT','CCT')
+                  AND r2i.is_tombstoned = 0
+                ORDER BY r2i.submitted_at DESC
+                LIMIT 1
+              )
+            ORDER BY r.bbt_number ASC
+        ")->fetchAll(PDO::FETCH_ASSOC);
+
+        foreach ($bbtCandRows as $bbtRow) {
+            $bbtNum  = (int)($bbtRow['source_bbt'] ?? 0);
+            $simTank = $fermSimState['bbt'][$bbtNum] ?? null;
+            if ($simTank === null) {
+                continue; // Empty/expired in sim
+            }
+            $bbtKey = 'bbt|' . $bbtNum;
+            if (isset($seenHp[$bbtKey])) {
+                continue;
+            }
+            $seenHp[$bbtKey] = true;
+            $fermCandidatesHp[] = [
+                'source_tank_type'      => 'BBT',
+                'source_cct'            => null,
+                'source_bbt'            => $bbtNum,
+                'recipe_id'             => null,
+                'recipe_name'           => $bbtRow['recipe_name'] ?? '',
+                'beer'                  => $bbtRow['neb_beer'] ?? $bbtRow['contract_beer'] ?? '',
+                'batch'                 => $bbtRow['neb_batch'] ?? $bbtRow['contract_batch'] ?? '',
+                'beer_display'          => $bbtRow['beer_display'] ?? '',
+                'sim_vol_hl'            => round((float)$simTank['volume_hl'], 2),
+            ];
+        }
+    }
 
     // Recipes (active, for the beer picker)
     $recipes = $pdo->query(
@@ -207,6 +393,10 @@ try {
     $recentSessions   = [];
     $sessionEvents    = [];
     $recentHistorical = [];
+    // Candidate fallbacks — candidate builder failed; JS will show empty-state.
+    $canOverride      = false;
+    $fermCandidates   = ['Reads' => [], 'ColdCrash' => [], 'DryHop' => [], 'Purge' => []];
+    $fermCandidatesHp = [];
     $loadErr   = $e->getMessage();
 }
 
@@ -260,9 +450,15 @@ $displayFmt    = date_display_format();
 <script>
 window.FERMENTING_HOPS     = <?= json_encode($hopsJs, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
 window.FERMENTING_FIREWALL = <?= json_encode([
-    'gate2_severity'     => $ff_cipStatus['severity']    ?? null,
+    'gate2_severity'       => $ff_cipStatus['severity']    ?? null,
     'gate2_allow_override' => ($ff_cipStatus['severity'] ?? null) === 'warn',
 ], JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+// Beer-selection card candidates — shape: { Reads:[…], ColdCrash:[…], DryHop:[…], Purge:[…] }
+// Each element: { beer, batch, beer_display, source_cct, recipe_id, recipe_name, sim_vol_hl }
+// FERM_CANDIDATES is shown when ff_phase='none' (no beer/batch in URL).
+window.FERM_CANDIDATES    = <?= json_encode($fermCandidates,   JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+window.FERM_CANDIDATES_HP = <?= json_encode($fermCandidatesHp, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+window.FERM_CAN_OVERRIDE  = <?= $canOverride ? 'true' : 'false' ?>;
 </script>
 
 <script src="/js/form-framework.js?v=<?= @filemtime(__DIR__ . '/../js/form-framework.js') ?: time() ?>" defer></script>

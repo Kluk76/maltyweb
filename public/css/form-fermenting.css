@@ -743,3 +743,217 @@ body.form-fermenting .ferm-session-empty {
 body.form-fermenting .ferm-muted {
   color: var(--ink-mute);
 }
+
+/* ── Beer-selection card module (selector view, ff_phase='none') ─────────── */
+
+body.form-fermenting .ferm-sel-type-field {
+  margin-bottom: 1.1rem;
+}
+
+/* Candidate card grid — mirrors racking's .rf-cand-grid */
+body.form-fermenting .ferm-cand-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(155px, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+body.form-fermenting .ferm-cand-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.75rem 0.875rem 0.875rem;
+  background: var(--bg-elev);
+  border: 1.5px solid var(--hairline);
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+  position: relative;
+  width: 100%;
+}
+
+body.form-fermenting .ferm-cand-card:hover {
+  border-color: var(--hop);
+  background: color-mix(in srgb, var(--hop) 8%, var(--bg-elev));
+}
+
+body.form-fermenting .ferm-cand-card:focus-visible {
+  outline: 2px solid var(--hop);
+  outline-offset: 2px;
+}
+
+body.form-fermenting .ferm-cand-card--hors-process {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--ember) 50%, transparent);
+}
+
+body.form-fermenting .ferm-cand-card--hors-process:hover {
+  border-color: var(--ember);
+  border-style: solid;
+  background: color-mix(in srgb, var(--ember) 6%, var(--bg-elev));
+}
+
+body.form-fermenting .ferm-cand-card__label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--hop);
+  font-weight: 600;
+}
+
+body.form-fermenting .ferm-cand-card__label--bbt {
+  color: var(--bbt);
+}
+
+body.form-fermenting .ferm-cand-card--hors-process .ferm-cand-card__label {
+  color: var(--ember);
+}
+
+body.form-fermenting .ferm-cand-card__beer {
+  font-family: 'Fraunces', serif;
+  font-size: 0.92rem;
+  font-variation-settings: "opsz" 96;
+  color: var(--ink);
+  line-height: 1.2;
+  margin-top: 0.15rem;
+}
+
+body.form-fermenting .ferm-cand-card__batch {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  color: var(--ink-soft);
+}
+
+body.form-fermenting .ferm-cand-card__vol {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  color: var(--ink-mute);
+  margin-top: 0.2rem;
+}
+
+body.form-fermenting .ferm-cand-card__badge-hp {
+  display: inline-block;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.58rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--ember) 16%, transparent);
+  color: var(--ember);
+  margin-top: 0.3rem;
+  align-self: flex-start;
+}
+
+/* Empty state (no candidates for this event type) */
+body.form-fermenting .ferm-empty-state {
+  padding: 1.25rem 1rem;
+  background: color-mix(in srgb, var(--ink-faint) 40%, transparent);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  font-size: 0.84rem;
+  color: var(--ink-soft);
+  line-height: 1.6;
+  grid-column: 1 / -1;
+}
+
+body.form-fermenting .ferm-empty-state strong {
+  color: var(--ink);
+}
+
+/* Hors-process toggle block (manager/admin only) */
+body.form-fermenting .ferm-hp-block {
+  margin: 0.5rem 0 0.75rem;
+  padding: 0.75rem 1rem;
+  background: color-mix(in srgb, var(--ember) 7%, var(--bg-elev));
+  border: 1px solid color-mix(in srgb, var(--ember) 28%, transparent);
+  border-radius: 6px;
+}
+
+body.form-fermenting .ferm-hp-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+body.form-fermenting .ferm-hp-checkbox {
+  accent-color: var(--ember);
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+}
+
+body.form-fermenting .ferm-hp-text {
+  font-weight: 600;
+  font-size: 0.88rem;
+  color: var(--ink);
+}
+
+body.form-fermenting .ferm-hp-badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--ember) 18%, transparent);
+  color: var(--ember);
+}
+
+body.form-fermenting .ferm-hp-desc {
+  margin: 0.5rem 0 0;
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  line-height: 1.5;
+}
+
+/* Identity strip — shown in form view when beer/batch selected */
+body.form-fermenting .ferm-identity-strip {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.875rem;
+  background: color-mix(in srgb, var(--hop) 10%, var(--bg-elev));
+  border: 1px solid color-mix(in srgb, var(--hop) 30%, transparent);
+  border-radius: 6px;
+  font-size: 0.82rem;
+  margin-bottom: 1rem;
+}
+
+body.form-fermenting .ferm-identity-beer {
+  font-family: 'Fraunces', serif;
+  font-variation-settings: "opsz" 96;
+  font-size: 0.95rem;
+  color: var(--ink);
+}
+
+body.form-fermenting .ferm-identity-sep {
+  color: var(--ink-mute);
+}
+
+body.form-fermenting .ferm-identity-batch {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+}
+
+body.form-fermenting .ferm-identity-change {
+  margin-left: auto;
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  text-decoration: none;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  transition: color 0.12s;
+}
+
+body.form-fermenting .ferm-identity-change:hover {
+  color: var(--ember);
+}

@@ -245,8 +245,155 @@
     });
   }
 
+  /* ── Beer-selection card module (selector view, ff_phase='none') ───────── */
+  //
+  // Renders candidate cards into #ferm-cand-grid-normal / #ferm-cand-grid-override.
+  // On card click: navigates via GET (?beer=…&batch=…&event_type=…) so the firewall
+  // and form sections render server-side. Does NOT submit a POST form.
+  //
+  // Data: window.FERM_CANDIDATES { Reads, ColdCrash, DryHop, Purge }
+  //       window.FERM_CANDIDATES_HP (hors-process, admin/manager only)
+  //       window.FERM_CAN_OVERRIDE  (bool)
+
+  var _selNormalGrid   = null;
+  var _selOverrideGrid = null;
+  var _selEventType    = 'Reads';
+  var _selHpMode       = false;
+
+  function _selEscHtml(s) {
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function _selBuildCard(cand, isHp) {
+    var btn  = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'ferm-cand-card' + (isHp ? ' ferm-cand-card--hors-process' : '');
+
+    // data-beer = raw bfw.beer string (NOT recipe_short_name).
+    // The firewall/phase-detection in session-body-fermenting.php matches on this exact string.
+    // COALESCE(NULLIF(bfw.beer,''), r.name) is beer_display (human label only).
+    btn.dataset.beer    = cand.beer    || '';
+    btn.dataset.batch   = cand.batch   || '';
+    btn.dataset.recipeId = cand.recipe_id != null ? String(cand.recipe_id) : '';
+
+    var srcType = cand.source_tank_type || 'CCT';
+    btn.dataset.sourceType = srcType;
+
+    var tankLabel, tankClass;
+    if (srcType === 'BBT') {
+      tankLabel = 'BBT ' + _selEscHtml(String(cand.source_bbt || '?'));
+      tankClass = 'ferm-cand-card__label--bbt';
+    } else {
+      tankLabel = 'CCT ' + _selEscHtml(String(cand.source_cct || '?'));
+      tankClass = '';
+    }
+
+    var beerDisp = _selEscHtml(cand.beer_display || cand.beer || '—');
+    var batchDisp = _selEscHtml(String(cand.batch || '—'));
+    var volHl = cand.sim_vol_hl != null ? Number(cand.sim_vol_hl).toFixed(1) + ' HL' : '';
+
+    btn.innerHTML =
+      '<div class="ferm-cand-card__label ' + tankClass + '">' + tankLabel + '</div>' +
+      '<div class="ferm-cand-card__beer">'  + beerDisp  + '</div>' +
+      '<div class="ferm-cand-card__batch">Brassin ' + batchDisp + '</div>' +
+      (volHl ? '<div class="ferm-cand-card__vol">' + _selEscHtml(volHl) + '</div>' : '') +
+      (isHp  ? '<div class="ferm-cand-card__badge-hp">HORS PROCESS</div>' : '');
+
+    btn.addEventListener('click', function () {
+      _selOnCardClick(cand, _selEventType);
+    });
+    return btn;
+  }
+
+  function _selOnCardClick(cand, eventType) {
+    var beer  = cand.beer  || '';
+    var batch = cand.batch || '';
+    if (!beer || !batch) return;
+    // Navigate — carries event_type so the correct section is pre-selected after load
+    window.location = '/modules/form-fermenting.php' +
+      '?beer='       + encodeURIComponent(beer) +
+      '&batch='      + encodeURIComponent(batch) +
+      '&event_type=' + encodeURIComponent(eventType);
+  }
+
+  function _selRenderNormal(eventType) {
+    if (!_selNormalGrid) return;
+    _selNormalGrid.innerHTML = '';
+    var data = window.FERM_CANDIDATES || {};
+    var list = data[eventType] || [];
+    if (list.length === 0) {
+      var empty = document.createElement('div');
+      empty.className = 'ferm-empty-state';
+      empty.innerHTML = '<strong>Aucun lot éligible</strong> pour cet évènement.<br>'
+        + 'Les lots cold-crashés, déjà traités ou dont la CCT est vide en simulation ne s\'affichent pas.';
+      _selNormalGrid.appendChild(empty);
+      return;
+    }
+    list.forEach(function (cand) {
+      _selNormalGrid.appendChild(_selBuildCard(cand, false));
+    });
+  }
+
+  function _selRenderOverride() {
+    if (!_selOverrideGrid) return;
+    _selOverrideGrid.innerHTML = '';
+    var list = window.FERM_CANDIDATES_HP || [];
+    if (list.length === 0) {
+      var empty = document.createElement('div');
+      empty.className = 'ferm-empty-state';
+      empty.innerHTML = '<strong>Aucun lot</strong> en CCT ou BBT actuellement.';
+      _selOverrideGrid.appendChild(empty);
+      return;
+    }
+    list.forEach(function (cand) {
+      _selOverrideGrid.appendChild(_selBuildCard(cand, true));
+    });
+  }
+
+  function initBeerSelector() {
+    var selectorCard = document.getElementById('ferm-selector-card');
+    if (!selectorCard) return; // Not in selector view (beer/batch already set)
+
+    _selNormalGrid   = document.getElementById('ferm-cand-grid-normal');
+    _selOverrideGrid = document.getElementById('ferm-cand-grid-override');
+
+    // Event-type select drives which normal candidate set is shown
+    var typeSel = document.getElementById('ferm_sel_event_type');
+    if (typeSel) {
+      _selEventType = typeSel.value;
+      _selRenderNormal(_selEventType);
+      typeSel.addEventListener('change', function () {
+        _selEventType = this.value;
+        _selRenderNormal(_selEventType);
+      });
+    }
+
+    // Hors-process toggle (only present for admin/manager — PHP-gated)
+    var hpCb = document.getElementById('ferm_hp_checkbox');
+    var normalSection   = document.getElementById('ferm-normal-candidates');
+    var overrideSection = document.getElementById('ferm-override-candidates');
+    if (hpCb) {
+      hpCb.addEventListener('change', function () {
+        _selHpMode = this.checked;
+        if (normalSection)   normalSection.hidden   = _selHpMode;
+        if (overrideSection) overrideSection.hidden = !_selHpMode;
+        if (_selHpMode && _selOverrideGrid) {
+          _selRenderOverride();
+        }
+      });
+    }
+  }
+
   /* ── Init ────────────────────────────────────────────────────────────── */
   function init() {
+    // ── Selector view (no beer/batch selected): initialise card module
+    initBeerSelector();
+
+    // ── Form view (beer/batch selected): wire up sections + framework
     const form = document.getElementById('fermenting-form');
     if (!form) return;
 
@@ -257,7 +404,9 @@
       evtSel.addEventListener('change', () => updateSections(evtSel.value));
     }
 
-    // Recipe → recipe_id_fk
+    // Recipe → recipe_id_fk (not needed in form view since identity is fixed,
+    // but kept for safety — beer_select hidden input has no data-recipe-id so
+    // syncRecipeId is a no-op; recipe_id_fk is set from PHP directly)
     const beerSel = document.getElementById('beer_select');
     if (beerSel) {
       syncRecipeId();

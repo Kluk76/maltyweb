@@ -53,9 +53,13 @@ $ff_yeastInfo  = null;  // array|null — from resolve_recipe_yeast()
 // Security: PDO binding handles SQL injection; htmlspecialchars at render time handles XSS.
 // trim() drops accidental whitespace from URL copy-paste. strip_tags() removed — it added
 // no SQL-layer protection (PDO binding is the actual defence) and was misleading.
-$ff_beer     = isset($_GET['beer'])      ? trim((string)$_GET['beer'])  : '';
-$ff_batch    = isset($_GET['batch'])     ? trim((string)$_GET['batch']) : '';
-$ff_recipeId = isset($_GET['recipe_id']) ? (int)$_GET['recipe_id']      : null;
+$ff_beer       = isset($_GET['beer'])      ? trim((string)$_GET['beer'])  : '';
+$ff_batch      = isset($_GET['batch'])     ? trim((string)$_GET['batch']) : '';
+$ff_recipeId   = isset($_GET['recipe_id']) ? (int)$_GET['recipe_id']      : null;
+// event_type from card click navigation — read-with-default, then validate against allowed enum.
+// Invalid/missing values are silently ignored; JS will default to 'Reads' on the form.
+$_ff_etRaw     = $_GET['event_type'] ?? '';
+$ff_eventType  = in_array($_ff_etRaw, FERM_EVENT_TYPES, true) ? $_ff_etRaw : '';
 
 // Detect phase from bd_fermenting_v2 when (beer, batch) are both provided.
 // Aggregate existence check — no LIMIT so ColdCrash is never truncated away on

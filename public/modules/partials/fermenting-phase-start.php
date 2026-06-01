@@ -126,6 +126,70 @@ $submitBlocked = (
 
 ?>
 
+<?php
+// $ff_phase / $ff_eventType / $hasBeerBatch are set by the calling partials.
+// $canOverride is set in form-fermenting.php (is_admin || is_manager).
+?>
+
+<?php if ($ff_phase === 'none'): ?>
+<!-- ──────────────────────────────────────────────────────────────────────────
+     SELECTOR VIEW — no beer/batch selected yet.
+     Shows: event_type selector + dynamic candidate cards.
+     Card click navigates via GET (?beer=…&batch=…&event_type=…).
+     The existing firewall + form sections only render once beer/batch are known.
+     ────────────────────────────────────────────────────────────────────────── -->
+<div class="op-form__card" id="ferm-selector-card">
+  <div class="op-form__card-title">— sélectionner un brassin en fermentation</div>
+
+  <!-- Event type drives which card set is shown -->
+  <div class="op-form__field ferm-sel-type-field">
+    <label class="op-form__label" for="ferm_sel_event_type">Type d'évènement</label>
+    <select id="ferm_sel_event_type" class="op-form__select" style="max-width:320px;">
+      <option value="Reads">Mesures densité / pH / temp</option>
+      <option value="DryHop">Houblonnage à froid</option>
+      <option value="Purge">Purge CO₂</option>
+      <option value="ColdCrash">Cold Crash</option>
+    </select>
+  </div>
+
+  <?php if ($canOverride): ?>
+  <!-- Hors-process toggle (admin / manager only — PHP-gated, not just CSS-hidden) -->
+  <div class="ferm-hp-block" id="ferm-hp-block">
+    <label class="ferm-hp-label">
+      <input type="checkbox" id="ferm_hp_checkbox" class="ferm-hp-checkbox"
+             aria-describedby="ferm-hp-desc">
+      <span class="ferm-hp-text">Choix Hors Process</span>
+      <span class="ferm-hp-badge">Manager / Admin</span>
+    </label>
+    <p class="ferm-hp-desc" id="ferm-hp-desc">
+      Affiche tous les lots en CCT ou BBT, indépendamment de l'état de l'évènement.
+    </p>
+  </div>
+  <?php endif ?>
+
+  <!-- Normal (gated) candidates — populated by form-fermenting.js -->
+  <div id="ferm-normal-candidates">
+    <div class="ferm-cand-grid" id="ferm-cand-grid-normal">
+      <!-- Cards injected by form-fermenting.js on event_type change -->
+    </div>
+  </div>
+
+  <?php if ($canOverride): ?>
+  <!-- Hors-process candidates — populated by form-fermenting.js when toggle active -->
+  <div id="ferm-override-candidates" hidden>
+    <div class="ferm-cand-grid" id="ferm-cand-grid-override">
+      <!-- Cards injected by form-fermenting.js when hors-process is enabled -->
+    </div>
+  </div>
+  <?php endif ?>
+
+</div><!-- /#ferm-selector-card -->
+
+<?php else: ?>
+<!-- ──────────────────────────────────────────────────────────────────────────
+     FORM VIEW — beer/batch selected; render full firewall + event sections.
+     ────────────────────────────────────────────────────────────────────────── -->
+
 <!-- ── START PHASE: Fermenting session firewall (P-B / P-C) ───────────────────── -->
 <form id="fermenting-form" method="post" action="/api/fermenting-phase-submit.php" novalidate>
   <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
@@ -143,34 +207,20 @@ $submitBlocked = (
   <!-- ── Section: Identité ────────────────────────────────────────────────── -->
   <div class="op-form__card">
     <div class="op-form__card-title">— identité du brassin</div>
+
+    <!-- Identity strip: show selected beer + batch + "change" link -->
+    <div class="ferm-identity-strip">
+      <span class="ferm-identity-beer"><?= htmlspecialchars($ff_beer) ?></span>
+      <span class="ferm-identity-sep">·</span>
+      <span class="ferm-identity-batch">Brassin <?= htmlspecialchars($ff_batch) ?></span>
+      <a href="/modules/form-fermenting.php" class="ferm-identity-change">✕ changer</a>
+    </div>
+
+    <!-- Hidden identity fields consumed by the POST handler -->
+    <input type="hidden" name="beer_select" value="<?= htmlspecialchars($ff_beer) ?>">
+    <input type="hidden" name="batch"       value="<?= htmlspecialchars($ff_batch) ?>">
+
     <div class="op-form__grid">
-
-      <!-- Beer / recipe picker -->
-      <div class="op-form__field">
-        <label class="op-form__label" for="beer_select">Bière (recette)</label>
-        <select id="beer_select" name="beer_select" class="op-form__select">
-          <option value="">— sélectionner —</option>
-          <?php foreach ($recipes as $r): ?>
-            <option value="<?= htmlspecialchars($r['recipe_short_name'] ?: $r['name']) ?>"
-                    data-recipe-id="<?= (int)$r['id'] ?>"
-                    data-recipe-name="<?= htmlspecialchars($r['name']) ?>"
-                    <?= ($ff_beer !== '' && ($r['recipe_short_name'] === $ff_beer || $r['name'] === $ff_beer)) ? 'selected' : '' ?>>
-              <?= htmlspecialchars($r['name']) ?>
-              <?php if ($r['recipe_short_name']): ?>
-                (<?= htmlspecialchars($r['recipe_short_name']) ?>)
-              <?php endif ?>
-            </option>
-          <?php endforeach ?>
-        </select>
-      </div>
-
-      <!-- Batch number -->
-      <div class="op-form__field">
-        <label class="op-form__label" for="batch">N° brassin</label>
-        <input id="batch" name="batch" type="text" class="op-form__input"
-               placeholder="ex. 244" autocomplete="off" required
-               value="<?= htmlspecialchars($ff_batch) ?>">
-      </div>
 
       <!-- Event date -->
       <div class="op-form__field">
@@ -182,14 +232,25 @@ $submitBlocked = (
                value="<?= htmlspecialchars(date('Y-m-d')) ?>" required>
       </div>
 
-      <!-- Event type -->
+      <!-- Event type — pre-selected from GET param if valid -->
       <div class="op-form__field">
         <label class="op-form__label" for="event_type">Type d'évènement</label>
         <select id="event_type" name="event_type" class="op-form__select">
-          <option value="Reads">Mesures densité / pH / temp</option>
-          <option value="DryHop">Houblonnage à froid</option>
-          <option value="Purge">Purge CO₂</option>
-          <option value="ColdCrash">Cold Crash</option>
+          <?php
+          // $ff_eventType is validated in session-body-fermenting.php; empty = default Reads.
+          $evtOptions = [
+              'Reads'     => 'Mesures densité / pH / temp',
+              'DryHop'    => 'Houblonnage à froid',
+              'Purge'     => 'Purge CO₂',
+              'ColdCrash' => 'Cold Crash',
+          ];
+          foreach ($evtOptions as $evtVal => $evtLabel):
+          ?>
+          <option value="<?= htmlspecialchars($evtVal) ?>"
+                  <?= ($ff_eventType === $evtVal) ? 'selected' : '' ?>>
+            <?= htmlspecialchars($evtLabel) ?>
+          </option>
+          <?php endforeach ?>
         </select>
       </div>
 
@@ -431,3 +492,4 @@ $submitBlocked = (
 </form>
 
 <!-- CIP override behaviour handled by form-fermenting.js reading window.FERMENTING_FIREWALL -->
+<?php endif /* $ff_phase === 'none' vs form view */ ?>
