@@ -1,5 +1,5 @@
 /*
- * form-rm-stocktake.css — Operator RM stocktake form styles.
+ * form-rm-stocktake.css — Operator RM per-pallet stocktake form styles.
  *
  * Scoped under body.form-rm-stocktake. Extends .op-form__* classes from app.css.
  * No inline styles. Uses palette tokens from app.css :root block.
@@ -46,138 +46,139 @@ body.form-rm-stocktake .rms-period-hint strong {
   font-weight: 600;
 }
 
-/* ── Category card ────────────────────────────────────────────────────────── */
-body.form-rm-stocktake .rms-cat-card {
+/* ── Entry card ───────────────────────────────────────────────────────────── */
+body.form-rm-stocktake .rms-entry-card {
   margin-bottom: 16px;
-  padding: 20px 24px;
 }
 
-body.form-rm-stocktake .rms-cat-title {
+body.form-rm-stocktake .rms-entry-row {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 16px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
-body.form-rm-stocktake .rms-cat-count {
-  font-size: 0.65rem;
-  color: var(--ink-faint);
-  font-weight: 400;
-  letter-spacing: 0;
-  text-transform: none;
-  background: var(--bg);
+/* ── Type-ahead search ────────────────────────────────────────────────────── */
+body.form-rm-stocktake .rms-search-wrap {
+  position: relative;
+  flex: 1 1 260px;
+  min-width: 200px;
+}
+
+body.form-rm-stocktake .rms-mi-search {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+body.form-rm-stocktake .rms-mi-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 40;
+  background: var(--bg-elev);
   border: 1px solid var(--hairline);
-  border-radius: 10px;
-  padding: 2px 8px;
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.14);
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  max-height: 280px;
+  overflow-y: auto;
 }
 
-/* ── MI table ─────────────────────────────────────────────────────────────── */
-body.form-rm-stocktake .rms-mi-table {
+body.form-rm-stocktake .rms-mi-dropdown li {
   display: flex;
-  flex-direction: column;
-  gap: 0;
-}
-
-body.form-rm-stocktake .rms-mi-header {
-  display: grid;
-  grid-template-columns: 1fr 180px 160px 70px;
+  align-items: baseline;
   gap: 10px;
-  padding: 0 4px 8px;
-  border-bottom: 1px solid var(--hairline);
-  margin-bottom: 4px;
-  font-family: "JetBrains Mono", monospace;
-  font-size: 0.6rem;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
-}
-
-@media (max-width: 640px) {
-  body.form-rm-stocktake .rms-mi-header {
-    display: none;
-  }
-}
-
-body.form-rm-stocktake .rms-mi-row {
-  display: grid;
-  grid-template-columns: 1fr 180px 160px 70px;
-  gap: 10px;
-  align-items: center;
-  padding: 5px 4px;
-  border-radius: 3px;
-  transition: background 0.1s;
-}
-
-body.form-rm-stocktake .rms-mi-row:hover {
-  background: color-mix(in srgb, var(--bg-side) 40%, transparent);
-}
-
-body.form-rm-stocktake .rms-mi-row--preloaded {
-  background: color-mix(in srgb, var(--hop) 5%, transparent);
-}
-
-body.form-rm-stocktake .rms-mi-row--preloaded:hover {
-  background: color-mix(in srgb, var(--hop) 10%, transparent);
-}
-
-@media (max-width: 640px) {
-  body.form-rm-stocktake .rms-mi-row {
-    grid-template-columns: 1fr auto;
-    grid-template-rows: auto auto;
-    padding: 10px 4px;
-    border-bottom: 1px solid var(--hairline);
-  }
-
-  body.form-rm-stocktake .rms-mi-row__id { display: none; }
-
-  body.form-rm-stocktake .rms-mi-row__name {
-    grid-column: 1;
-    grid-row: 1;
-  }
-
-  body.form-rm-stocktake .rms-qty-input {
-    grid-column: 1;
-    grid-row: 2;
-    max-width: 140px;
-  }
-
-  body.form-rm-stocktake .rms-mi-row__unit {
-    grid-column: 2;
-    grid-row: 2;
-  }
-}
-
-body.form-rm-stocktake .rms-mi-row__name {
-  font-family: "DM Sans", system-ui, sans-serif;
-  font-size: 0.88rem;
-  color: var(--ink);
+  padding: 8px 14px;
   cursor: pointer;
-  line-height: 1.3;
+  outline: none;
 }
 
-body.form-rm-stocktake .rms-mi-row__id {
+body.form-rm-stocktake .rms-mi-dropdown li:hover,
+body.form-rm-stocktake .rms-mi-dropdown li:focus {
+  background: color-mix(in srgb, var(--hop) 10%, var(--bg-elev));
+}
+
+body.form-rm-stocktake .rms-dd-name {
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-size: 0.9rem;
+  color: var(--ink);
+  flex: 1 1 auto;
+}
+
+body.form-rm-stocktake .rms-dd-id {
   font-family: "JetBrains Mono", monospace;
   font-size: 0.68rem;
   color: var(--ink-faint);
   letter-spacing: 0.03em;
+  flex-shrink: 0;
+}
+
+/* ── Selected MI display ──────────────────────────────────────────────────── */
+body.form-rm-stocktake .rms-selected-mi {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: color-mix(in srgb, var(--hop) 10%, var(--bg-elev));
+  border: 1px solid var(--hop);
+  border-radius: 6px;
+  padding: 7px 12px;
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+body.form-rm-stocktake .rms-selected-name {
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-size: 0.9rem;
+  color: var(--ink);
+  flex: 1 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-body.form-rm-stocktake .rms-qty-input {
-  padding: 6px 10px;
+body.form-rm-stocktake .rms-selected-unit {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.88rem;
+  font-size: 0.72rem;
+  color: var(--ink-mute);
+  flex-shrink: 0;
+}
+
+body.form-rm-stocktake .rms-clear-mi {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--ink-faint);
+  font-size: 0.8rem;
+  padding: 0 2px;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: color 0.15s;
+}
+
+body.form-rm-stocktake .rms-clear-mi:hover {
+  color: var(--ember);
+}
+
+/* ── Qty + Add ────────────────────────────────────────────────────────────── */
+body.form-rm-stocktake .rms-qty-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+body.form-rm-stocktake .rms-qty-input {
+  width: 110px;
+  padding: 7px 10px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.9rem;
   text-align: right;
 }
 
-body.form-rm-stocktake .rms-qty-input--prefilled {
-  border-color: var(--hop);
-  background: color-mix(in srgb, var(--hop) 5%, var(--bg));
-}
-
-/* Remove browser number input spinners — clean look */
+/* Remove browser number spinners — clean look */
 body.form-rm-stocktake .rms-qty-input::-webkit-inner-spin-button,
 body.form-rm-stocktake .rms-qty-input::-webkit-outer-spin-button {
   -webkit-appearance: none;
@@ -194,18 +195,223 @@ body.form-rm-stocktake .rms-mi-row__unit {
   letter-spacing: 0.04em;
 }
 
-/* ── Submit bar ───────────────────────────────────────────────────────────── */
-body.form-rm-stocktake .rms-submit-bar {
-  margin-top: 8px;
-  flex-wrap: wrap;
-  gap: 10px;
+body.form-rm-stocktake .rms-add-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
-body.form-rm-stocktake .rms-submit-hint {
-  flex: 1 1 auto;
-  font-size: 0.8rem;
+/* ── Inline feedback message ──────────────────────────────────────────────── */
+body.form-rm-stocktake .rms-entry-msg {
+  margin-top: 10px;
+  font-size: 0.83rem;
+  padding: 6px 10px;
+  border-radius: 4px;
+  line-height: 1.4;
+}
+
+body.form-rm-stocktake .rms-entry-msg--ok {
+  color: var(--hop);
+  background: color-mix(in srgb, var(--hop) 8%, var(--bg));
+  border-left: 3px solid var(--hop);
+}
+
+body.form-rm-stocktake .rms-entry-msg--error {
+  color: var(--ember);
+  background: color-mix(in srgb, var(--ember) 8%, var(--bg));
+  border-left: 3px solid var(--ember);
+}
+
+/* ── Ledger card ──────────────────────────────────────────────────────────── */
+body.form-rm-stocktake .rms-ledger-card {
+  margin-bottom: 80px; /* leave room above the FAB */
+}
+
+body.form-rm-stocktake .rms-ledger-period {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.72rem;
+  font-weight: 400;
+  color: var(--ink-faint);
+  letter-spacing: 0.04em;
+  margin-left: 8px;
+  text-transform: none;
+}
+
+body.form-rm-stocktake .rms-ledger-empty {
   color: var(--ink-mute);
+  font-size: 0.88rem;
   font-style: italic;
+  text-align: center;
+  padding: 20px 0;
+}
+
+body.form-rm-stocktake .rms-ledger-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* ── MI group in ledger ───────────────────────────────────────────────────── */
+body.form-rm-stocktake .rms-ledger-mi {
+  border-bottom: 1px solid var(--hairline);
+  padding: 10px 4px;
+}
+
+body.form-rm-stocktake .rms-ledger-mi:last-child {
+  border-bottom: none;
+}
+
+body.form-rm-stocktake .rms-ledger-mi-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+body.form-rm-stocktake .rms-ledger-mi-name {
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-size: 0.88rem;
+  color: var(--ink);
+  font-weight: 500;
+  flex: 1 1 auto;
+}
+
+body.form-rm-stocktake .rms-ledger-mi-subtotal {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.88rem;
+  color: var(--ink-soft);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+body.form-rm-stocktake .rms-ledger-mi-unit {
+  font-size: 0.72rem;
+  font-weight: 400;
+  color: var(--ink-mute);
+  margin-left: 3px;
+}
+
+/* ── Line chips ───────────────────────────────────────────────────────────── */
+body.form-rm-stocktake .rms-ledger-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+body.form-rm-stocktake .rms-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  padding: 3px 8px 3px 10px;
+  white-space: nowrap;
+  transition: background 0.1s, border-color 0.1s;
+}
+
+body.form-rm-stocktake .rms-chip:hover {
+  border-color: var(--ember);
+  background: color-mix(in srgb, var(--ember) 5%, var(--bg));
+}
+
+body.form-rm-stocktake .rms-chip-del {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--ink-faint);
+  font-size: 0.7rem;
+  padding: 0;
+  line-height: 1;
+  transition: color 0.15s;
+}
+
+body.form-rm-stocktake .rms-chip-del:hover {
+  color: var(--ember);
+}
+
+/* ── Grand total row ──────────────────────────────────────────────────────── */
+body.form-rm-stocktake .rms-ledger-total-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 12px 4px 4px;
+  border-top: 2px solid var(--hairline);
+  margin-top: 8px;
+}
+
+body.form-rm-stocktake .rms-ledger-total-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--ink-faint);
+}
+
+body.form-rm-stocktake .rms-ledger-grand-total {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 1.0rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* ── FAB back button (bottom-right, thumb-reachable on tablet) ────────────── */
+body.form-rm-stocktake .rms-fab-back {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 30;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.18);
+  border-radius: 28px;
+  padding: 12px 22px;
+  font-size: 0.88rem;
+  white-space: nowrap;
+  text-decoration: none;
+  /* Warm accent — uses the ember token (warm brown/copper) */
+  background: var(--ember);
+  color: var(--bg);
+  border: none;
+}
+
+body.form-rm-stocktake .rms-fab-back:hover {
+  background: color-mix(in srgb, var(--ember) 85%, var(--ink));
+  color: var(--bg);
+}
+
+@media (max-width: 640px) {
+  body.form-rm-stocktake .rms-entry-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  body.form-rm-stocktake .rms-search-wrap,
+  body.form-rm-stocktake .rms-selected-mi {
+    flex: 1 0 auto;
+    min-width: 0;
+  }
+
+  body.form-rm-stocktake .rms-qty-wrap {
+    width: 100%;
+  }
+
+  body.form-rm-stocktake .rms-qty-input {
+    flex: 1 1 auto;
+    width: auto;
+  }
+
+  body.form-rm-stocktake .rms-add-btn {
+    width: 100%;
+  }
+
+  body.form-rm-stocktake .rms-fab-back {
+    bottom: 16px;
+    right: 16px;
+    left: 16px;
+    text-align: center;
+  }
 }
 
 /* ── Empty state ──────────────────────────────────────────────────────────── */
