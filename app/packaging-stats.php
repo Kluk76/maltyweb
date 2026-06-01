@@ -96,6 +96,7 @@ function _pkg_neb_where(int $year): array
     // using sku-NULL as a Contract proxy would mis-label 4 real Neb events — A1.1 fix).
     $where = "YEAR(p.event_date) = ?
       AND p.reuses_packaging_id_fk IS NULL
+      AND p.is_tombstoned = 0
       AND r.classification = 'Neb'";
 
     return [$where, [$year]];
@@ -299,6 +300,7 @@ function pkg_contract_hl_by_format_month(PDO $pdo, int $year): array
      INNER JOIN ref_recipes r ON p.recipe_id_fk = r.id
           WHERE YEAR(p.event_date) = ?
             AND p.reuses_packaging_id_fk IS NULL
+            AND p.is_tombstoned = 0
             AND r.classification = 'Contract'
           GROUP BY MONTH(p.event_date), p.run_type
           ORDER BY MONTH(p.event_date), p.run_type"
@@ -454,10 +456,11 @@ function pkg_current_week_events(PDO $pdo): array
             GROUP BY packaging_v2_id
         ) co ON co.packaging_v2_id = p.id
         WHERE p.reuses_packaging_id_fk IS NULL
+          AND p.is_tombstoned = 0
           AND YEARWEEK(p.event_date, 3) = (
               SELECT YEARWEEK(MAX(event_date), 3)
               FROM bd_packaging_v2
-              WHERE reuses_packaging_id_fk IS NULL AND event_date IS NOT NULL
+              WHERE reuses_packaging_id_fk IS NULL AND is_tombstoned = 0 AND event_date IS NOT NULL
           )
         ORDER BY p.event_date, p.id
     ");
@@ -580,6 +583,7 @@ function pkg_qa_metrics(PDO $pdo, int $year): array
             SUM(COALESCE(p.prod_total_units,0))  AS prod_units_total
         FROM bd_packaging_v2 p
         WHERE p.reuses_packaging_id_fk IS NULL
+          AND p.is_tombstoned = 0
           AND YEAR(p.event_date) = ?
     ");
     $stmt->execute([$year]);
@@ -600,6 +604,7 @@ function pkg_qa_metrics(PDO $pdo, int $year): array
         INNER JOIN bd_packaging_v2 p ON p.id = m.packaging_v2_id
         WHERE YEAR(p.event_date) = ?
           AND p.reuses_packaging_id_fk IS NULL
+          AND p.is_tombstoned = 0
     ");
     $coStmt->execute([$year]);
     $coRow = $coStmt->fetch(PDO::FETCH_ASSOC) ?: [];
@@ -668,6 +673,7 @@ function pkg_beer_loss_by_year(PDO $pdo): array
         FROM bd_packaging_v2 b
         JOIN v_bd_packaging_v2_vendable v ON v.id = b.id
         WHERE b.reuses_packaging_id_fk IS NULL
+          AND b.is_tombstoned = 0
           AND b.event_date IS NOT NULL
         GROUP BY YEAR(b.event_date)
         ORDER BY yr
@@ -728,6 +734,7 @@ function pkg_beer_loss_by_format_month(PDO $pdo, int $year): array
         FROM bd_packaging_v2 b
         JOIN v_bd_packaging_v2_vendable v ON v.id = b.id
         WHERE b.reuses_packaging_id_fk IS NULL
+          AND b.is_tombstoned = 0
           AND YEAR(b.event_date) = ?
           AND b.event_date IS NOT NULL
         GROUP BY MONTH(b.event_date), v.run_type
@@ -800,6 +807,7 @@ function pkg_consumable_loss_rates(PDO $pdo, int $year): array
         FROM bd_packaging_v2 b
         JOIN v_bd_packaging_v2_vendable v ON v.id = b.id
         WHERE b.reuses_packaging_id_fk IS NULL
+          AND b.is_tombstoned = 0
           AND YEAR(b.event_date) = ?
     ");
     $stmt->execute([$year]);
@@ -914,6 +922,7 @@ function pkg_qa_trend_by_month(PDO $pdo, int $year): array
             COUNT(*)                              AS events
         FROM bd_packaging_v2 b
         WHERE b.reuses_packaging_id_fk IS NULL
+          AND b.is_tombstoned = 0
           AND YEAR(b.event_date) = ?
           AND b.event_date IS NOT NULL
         GROUP BY MONTH(b.event_date)
@@ -976,6 +985,7 @@ function pkg_co2o2_readings(PDO $pdo, int $year): array
         LEFT  JOIN ref_skus s        ON s.id = p.sku_id_fk
         WHERE YEAR(p.event_date) = ?
           AND p.reuses_packaging_id_fk IS NULL
+          AND p.is_tombstoned = 0
         ORDER BY p.event_date, m.packaging_v2_id, m.reading_idx
     ");
     $stmt->execute([$year]);
@@ -1036,6 +1046,7 @@ function pkg_quarterly_hl(PDO $pdo, int $year): array
                COUNT(*)                      AS events
         FROM bd_packaging_v2 p
         WHERE p.reuses_packaging_id_fk IS NULL
+          AND p.is_tombstoned = 0
           AND YEAR(p.event_date) IN (?, ?)
         GROUP BY YEAR(p.event_date), QUARTER(p.event_date)
         ORDER BY yr, q
@@ -1086,6 +1097,7 @@ function pkg_monthly_hl_ytd(PDO $pdo, int $year): array
                COUNT(*)                      AS events
         FROM bd_packaging_v2 p
         WHERE p.reuses_packaging_id_fk IS NULL
+          AND p.is_tombstoned = 0
           AND YEAR(p.event_date) IN (?, ?)
         GROUP BY YEAR(p.event_date), MONTH(p.event_date)
         ORDER BY yr, mo
