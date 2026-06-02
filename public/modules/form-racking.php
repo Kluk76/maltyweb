@@ -150,6 +150,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $bbtCo2      = post_decimal('bbt_co2');
         $bbtO2       = post_decimal('bbt_o2');
         $rackedVolHl = post_decimal('racked_vol_hl');
+        $flowStart   = post_decimal('flowmeter_start_hl');
+        $flowEnd     = post_decimal('flowmeter_end_hl');
+        // Flowmeter derive: when both readings present, end must be >= start.
+        if ($flowStart !== null && $flowEnd !== null) {
+            if ((float)$flowEnd < (float)$flowStart) {
+                throw new RuntimeException(
+                    "Relevé compteur fin ({$flowEnd}) < début ({$flowStart}) — vérifiez les relevés."
+                );
+            }
+            $rackedVolHl = number_format((float)$flowEnd - (float)$flowStart, 1, '.', '');
+        }
         // #5 — blend_hl = residual volume in destination tank at transfer time
         $blendHl     = post_decimal('blend_hl');
         $avgTurbidity = post_decimal('avg_turbidity');
@@ -369,7 +380,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $startTime ?? '', $endTime ?? '',
             $destType ?? '', $bbtNumber ?? '', $cctNumber ?? '', $ytNumber ?? '',
             $targetTankRaw ?? '',
-            $bbtCo2 ?? '', $bbtO2 ?? '', $rackedVolHl ?? '', $blendHl ?? '',
+            $bbtCo2 ?? '', $bbtO2 ?? '', $rackedVolHl ?? '', $flowStart ?? '', $flowEnd ?? '', $blendHl ?? '',
             $avgTurbidity ?? '', $bbtPressure ?? '',
             $centriRinsed ?? '', $safetyCipDone ?? '',
             $kzeTargetPu ?? '', $kzeAvgPu ?? '',
@@ -413,6 +424,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'bbt_co2'                  => $bbtCo2,
             'bbt_o2'                   => $bbtO2,
             'racked_vol_hl'            => $rackedVolHl,
+            'flowmeter_start_hl'       => $flowStart,
+            'flowmeter_end_hl'         => $flowEnd,
             'blend_hl'                 => $blendHl,  // #5 — residual in dest tank
             'avg_turbidity'            => $avgTurbidity,
             // avg_speed intentionally absent — column kept, form removed (#7)
@@ -1240,11 +1253,29 @@ $cipConfig = [
       <div class="op-form__grid">
 
         <div class="op-form__field">
+          <label class="op-form__label" for="flowmeter_start_hl">
+            Relevé compteur — début <span class="op-form__unit">HL</span>
+          </label>
+          <input id="flowmeter_start_hl" name="flowmeter_start_hl" type="text" inputmode="decimal"
+                 class="op-form__input" placeholder="ex. 12345.6">
+        </div>
+
+        <div class="op-form__field">
+          <label class="op-form__label" for="flowmeter_end_hl">
+            Relevé compteur — fin <span class="op-form__unit">HL</span>
+          </label>
+          <input id="flowmeter_end_hl" name="flowmeter_end_hl" type="text" inputmode="decimal"
+                 class="op-form__input" placeholder="ex. 12375.1">
+        </div>
+
+        <div class="op-form__field">
           <label class="op-form__label" for="racked_vol_hl">
             Volume transféré <span class="op-form__unit">HL</span>
+            <span id="rf-vol-calculé-hint" class="op-form__opt" hidden>(calculé depuis le compteur)</span>
           </label>
           <input id="racked_vol_hl" name="racked_vol_hl" type="text" inputmode="decimal"
                  class="op-form__input" placeholder="ex. 29.5">
+          <div id="rf-flowmeter-error" class="op-form__inline-error" hidden></div>
         </div>
 
         <!-- #5 — "Volume blend" → "Volume résiduel en cuve" (column stays blend_hl).

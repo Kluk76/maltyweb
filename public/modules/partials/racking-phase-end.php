@@ -151,6 +151,23 @@ function _recap_badge(?float $pct, float $warnPct): string
   <input type="hidden" name="session_id" value="<?= (int)$session['id'] ?>">
   <input type="hidden" name="phase"      value="end">
 
+<!-- ── S6c: Flowmeter end reading ────────────────────────────────────────── -->
+<div class="op-form__card">
+  <div class="op-form__card-title">— relevé compteur fin</div>
+  <div class="op-form__grid">
+
+    <div class="op-form__field">
+      <label class="op-form__label" for="flowmeter_end_hl">
+        Relevé compteur — fin <span class="op-form__unit">HL</span>
+      </label>
+      <input id="flowmeter_end_hl" name="flowmeter_end_hl" type="text" inputmode="decimal"
+             class="op-form__input" placeholder="ex. 12375.1">
+      <div id="rf-flowmeter-end-error" class="op-form__inline-error" hidden></div>
+    </div>
+
+  </div>
+</div>
+
 <!-- ── S6b: Safety CIP (moved here from in-progress — end-phase field) ───── -->
 <div class="op-form__card">
   <div class="op-form__card-title">— nettoyage</div>

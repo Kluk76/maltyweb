@@ -56,6 +56,12 @@ document.addEventListener('DOMContentLoaded', function () {
   const rackedVolInput      = document.getElementById('racked_vol_hl');
   const resultantDisplay    = document.getElementById('rf-resultant-display');
 
+  // Flowmeter counter refs
+  const flowStartInput      = document.getElementById('flowmeter_start_hl');
+  const flowEndInput        = document.getElementById('flowmeter_end_hl');
+  const flowCalcHint        = document.getElementById('rf-vol-calculé-hint');
+  const flowErrorDiv        = document.getElementById('rf-flowmeter-error');
+
   // #6 — Dynamic CO₂/O₂ labels
   const lblCo2              = document.getElementById('lbl-co2');
   const lblO2               = document.getElementById('lbl-o2');
@@ -83,6 +89,49 @@ document.addEventListener('DOMContentLoaded', function () {
     if (v === null || v === undefined || String(v).trim() === '') return null;
     return parseFloat(String(v).trim().replace(',', '.'));
   }
+
+  // ── Flowmeter counter live logic ────────────────────────────────────────
+  // When both start and end readings are valid numbers, derive racked_vol_hl
+  // as (end - start), set the input read-only, and show the "(calculé)" hint.
+  // If end < start, surface an inline error and clear the derived value.
+  // If either reading is blank, restore racked_vol_hl to editable.
+  function syncFlowmeterDerive() {
+    if (!flowStartInput || !flowEndInput || !rackedVolInput) return;
+    var start = parseDecimal(flowStartInput.value);
+    var end   = parseDecimal(flowEndInput.value);
+    var hasStart = start !== null && !isNaN(start);
+    var hasEnd   = end   !== null && !isNaN(end);
+
+    if (hasStart && hasEnd) {
+      if (end < start) {
+        // Validation error — end < start
+        if (flowErrorDiv) {
+          flowErrorDiv.textContent = 'Relevé fin (' + end.toFixed(1) + ') < début (' + start.toFixed(1) + ') — vérifiez les relevés.';
+          flowErrorDiv.hidden = false;
+        }
+        rackedVolInput.removeAttribute('readonly');
+        rackedVolInput.value = '';
+        if (flowCalcHint) flowCalcHint.hidden = true;
+      } else {
+        // Valid — derive and lock
+        if (flowErrorDiv) { flowErrorDiv.hidden = true; flowErrorDiv.textContent = ''; }
+        var delta = end - start;
+        rackedVolInput.value = delta.toFixed(1);
+        rackedVolInput.setAttribute('readonly', '');
+        if (flowCalcHint) flowCalcHint.hidden = false;
+        updateResultant();
+      }
+    } else {
+      // Missing one or both — restore manual entry
+      if (flowErrorDiv) { flowErrorDiv.hidden = true; flowErrorDiv.textContent = ''; }
+      rackedVolInput.removeAttribute('readonly');
+      if (flowCalcHint) flowCalcHint.hidden = true;
+    }
+  }
+
+  if (flowStartInput) flowStartInput.addEventListener('input', syncFlowmeterDerive);
+  if (flowEndInput)   flowEndInput.addEventListener('input', syncFlowmeterDerive);
+  syncFlowmeterDerive();
 
   // ── Loss field refs (C3 — Pertes section) ─────────────────────────────
   var perteToggle       = document.getElementById('rf-perte-toggle');
@@ -903,6 +952,7 @@ document.addEventListener('DOMContentLoaded', function () {
   // the beer selection anyway. The global band is active until they do.
   applyQcThresholds(null); // applies __global until a card is selected
   updateDestFields();
+  syncFlowmeterDerive();   // re-sync flowmeter readonly state after draft restore
   updateResultant();     // calls refreshWarnings() internally via C3 extension
   updateDestCipRequired();
   togglePuSection();

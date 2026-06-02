@@ -424,6 +424,36 @@ body.op-form-racking #rf-pertes-fields {
   border-top: 1px solid var(--hairline);
 }
 
+/* ── Flowmeter counter ─────────────────────────────────────────────────── */
+/* "(calculé depuis le compteur)" hint shown when flowmeter derive is active */
+body.op-form-racking .op-form__opt {
+  font-size: 0.62rem;
+  color: var(--cold);
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  font-family: "JetBrains Mono", monospace;
+}
+body.op-form-racking .op-form__opt[hidden] { display: none; }
+
+/* Inline validation error shown below an input when JS detects invalid state */
+body.op-form-racking .op-form__inline-error {
+  font-size: 0.75rem;
+  color: var(--ember);
+  font-family: "DM Sans", system-ui, sans-serif;
+  margin-top: 4px;
+  line-height: 1.3;
+}
+body.op-form-racking .op-form__inline-error[hidden] { display: none; }
+
+/* racked_vol_hl becomes readonly when derived from flowmeter — soften input */
+body.op-form-racking #racked_vol_hl[readonly] {
+  background: color-mix(in srgb, var(--cold) 6%, var(--bg-elev));
+  border-color: color-mix(in srgb, var(--cold) 30%, transparent);
+  color: var(--cold);
+  cursor: default;
+}
+
 /* Volume balance readout — styled like rf-resultant-display but ember-tinted to
    signal this is a loss context, not the neutral resultant readout */
 body.op-form-racking .rf-loss-balance {

@@ -174,11 +174,21 @@ declare(strict_types=1);
   <div class="op-form__grid">
 
     <div class="op-form__field">
+      <label class="op-form__label" for="flowmeter_start_hl">
+        Relevé compteur — début <span class="op-form__unit">HL</span>
+      </label>
+      <input id="flowmeter_start_hl" name="flowmeter_start_hl" type="text" inputmode="decimal"
+             class="op-form__input" placeholder="ex. 12345.6">
+    </div>
+
+    <div class="op-form__field">
       <label class="op-form__label" for="racked_vol_hl">
         Volume transféré <span class="op-form__unit">HL</span>
+        <span id="rf-vol-calculé-hint" class="op-form__opt" hidden>(calculé depuis le compteur)</span>
       </label>
       <input id="racked_vol_hl" name="racked_vol_hl" type="text" inputmode="decimal"
              class="op-form__input" placeholder="ex. 29.5">
+      <div id="rf-flowmeter-error" class="op-form__inline-error" hidden></div>
     </div>
 
     <!-- "Volume résiduel en cuve" (column stays blend_hl) -->

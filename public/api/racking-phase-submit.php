@@ -222,6 +222,8 @@ try {
 
         // -- Measurements --
         $rackedVolHl  = _rps_decimal(isset($fields['racked_vol_hl'])  ? (string)$fields['racked_vol_hl']  : null);
+        $flowStart    = _rps_decimal(isset($fields['flowmeter_start_hl']) ? (string)$fields['flowmeter_start_hl'] : null);
+        // flowmeter_end is not captured at in_progress — left null; captured at end phase.
         $blendHl      = _rps_decimal(isset($fields['blend_hl'])       ? (string)$fields['blend_hl']       : null);
         $bbtCo2       = _rps_decimal(isset($fields['bbt_co2'])        ? (string)$fields['bbt_co2']        : null);
         $bbtO2        = _rps_decimal(isset($fields['bbt_o2'])         ? (string)$fields['bbt_o2']         : null);
@@ -296,7 +298,8 @@ try {
             $startTime ?? '', $endTime ?? '',
             $destType ?? '', $bbtNumber ?? '', $cctNumber ?? '', $ytNumber ?? '',
             $targetTankRaw ?? '',
-            $bbtCo2 ?? '', $bbtO2 ?? '', $rackedVolHl ?? '', $blendHl ?? '',
+            $bbtCo2 ?? '', $bbtO2 ?? '', $rackedVolHl ?? '', $flowStart ?? '', '',  // flowmeter_end: end-phase → '' at INSERT time
+            $blendHl ?? '',
             $avgTurbidity ?? '', $bbtPressure ?? '',
             $centriRinsed ?? '', '',  // safety_cip_done: end-phase field → '' at INSERT time
             $kzeTargetPu ?? '', $kzeAvgPu ?? '',
@@ -339,6 +342,8 @@ try {
             'bbt_co2'                  => $bbtCo2,
             'bbt_o2'                   => $bbtO2,
             'racked_vol_hl'            => $rackedVolHl,
+            'flowmeter_start_hl'       => $flowStart,
+            'flowmeter_end_hl'         => null,   // end-phase field — not captured at INSERT
             'blend_hl'                 => $blendHl,
             'avg_turbidity'            => $avgTurbidity,
             'bbt_pressure'             => $bbtPressure,
@@ -423,6 +428,22 @@ try {
             exit;
         }
 
+        // -- Flowmeter end reading + racked_vol_hl recompute --
+        $flowEnd   = _rps_decimal(isset($fields['flowmeter_end_hl']) ? (string)$fields['flowmeter_end_hl'] : null);
+        $flowStart = $existingRow['flowmeter_start_hl'] !== null ? (string)$existingRow['flowmeter_start_hl'] : null;
+        $derivedRackedVol = null;
+        if ($flowStart !== null && $flowEnd !== null) {
+            if ((float)$flowEnd < (float)$flowStart) {
+                http_response_code(400);
+                echo json_encode([
+                    'ok'    => false,
+                    'error' => "Relevé compteur fin ({$flowEnd}) < début ({$flowStart}) — vérifiez les relevés.",
+                ]);
+                exit;
+            }
+            $derivedRackedVol = number_format((float)$flowEnd - (float)$flowStart, 1, '.', '');
+        }
+
         // -- Parse end-phase fields --
         $safetyCipDoneRaw = isset($fields['safety_cip_done']) ? trim((string)$fields['safety_cip_done']) : null;
         $safetyCipDone    = ($safetyCipDoneRaw !== null && in_array($safetyCipDoneRaw, _RPS_YN, true)) ? $safetyCipDoneRaw : null;
@@ -460,7 +481,12 @@ try {
         $targetRaw  = (string)($existingRow['target_tank_raw'] ?? '');
         $bbtCo2     = $existingRow['bbt_co2']       !== null ? (string)$existingRow['bbt_co2']       : '';
         $bbtO2      = $existingRow['bbt_o2']        !== null ? (string)$existingRow['bbt_o2']        : '';
-        $rackedVol  = $existingRow['racked_vol_hl'] !== null ? (string)$existingRow['racked_vol_hl'] : '';
+        // If flowmeter derive produced a new racked_vol, use it in the hash.
+        $rackedVol  = $derivedRackedVol !== null
+            ? $derivedRackedVol
+            : ($existingRow['racked_vol_hl'] !== null ? (string)$existingRow['racked_vol_hl'] : '');
+        $fmStart    = $existingRow['flowmeter_start_hl'] !== null ? (string)$existingRow['flowmeter_start_hl'] : '';
+        $fmEnd      = $flowEnd !== null ? $flowEnd : '';
         $blendHl    = $existingRow['blend_hl']      !== null ? (string)$existingRow['blend_hl']      : '';
         $avgTurb    = $existingRow['avg_turbidity'] !== null ? (string)$existingRow['avg_turbidity'] : '';
         $bbtPres    = $existingRow['bbt_pressure']  !== null ? (string)$existingRow['bbt_pressure']  : '';
@@ -480,7 +506,7 @@ try {
             $startTime, $endTime,
             $destType, $bbtNumber, $cctNumber, $ytNumber,
             $targetRaw,
-            $bbtCo2, $bbtO2, $rackedVol, $blendHl,
+            $bbtCo2, $bbtO2, $rackedVol, $fmStart, $fmEnd, $blendHl,
             $avgTurb, $bbtPres,
             $centriRins, $safetyCipDone ?? '',
             $kzeTarget, $kzeAvg,
@@ -516,6 +542,8 @@ try {
                    interrupted_flag    = ?,
                    interrupted_reason  = ?,
                    dest_bbt_still_clean = ?,
+                   flowmeter_end_hl    = ?,
+                   racked_vol_hl       = COALESCE(?, racked_vol_hl),
                    updated_at       = CURRENT_TIMESTAMP
                  WHERE id = ?"
             );
@@ -531,6 +559,8 @@ try {
                 $interruptedFlag,
                 $interruptedReason !== '' ? $interruptedReason : null,
                 $destBbtStillClean,
+                $flowEnd,
+                $derivedRackedVol,  // null → COALESCE keeps existing value
                 $rackingId,
             ]);
 
@@ -550,6 +580,8 @@ try {
                     'interrupted_flag'    => $interruptedFlag,
                     'interrupted_reason'  => $interruptedReason,
                     'dest_bbt_still_clean'=> $destBbtStillClean,
+                    'flowmeter_end_hl'    => $flowEnd,
+                    'racked_vol_hl'       => $derivedRackedVol ?? $existingRow['racked_vol_hl'],
                 ]),
                 'normal',
                 $fwComment !== '' ? $fwComment : null
