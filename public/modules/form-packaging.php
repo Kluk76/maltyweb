@@ -2007,6 +2007,7 @@ $cipConfig = [
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,200;0,9..144,300;0,9..144,400;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/app.css?v=<?= @filemtime(__DIR__ . '/../css/app.css') ?: time() ?>">
   <link rel="stylesheet" href="/css/cip-section.css?v=<?= @filemtime(__DIR__ . '/../css/cip-section.css') ?: time() ?>">
+  <link rel="stylesheet" href="/css/multi-submit-reads.css?v=<?= @filemtime(__DIR__ . '/../css/multi-submit-reads.css') ?: time() ?>">
   <link rel="stylesheet" href="/css/packaging-form.css?v=<?= @filemtime(__DIR__ . '/../css/packaging-form.css') ?: time() ?>">
 </head>
 <body class="home op-form-page op-form-packaging">
@@ -2318,14 +2319,7 @@ $cipConfig = [
         Jusqu'à 20 relevés.
       </p>
 
-      <div id="pf-co2o2-list" class="pf-co2o2-list">
-        <!-- Rows injected by JS (packaging-form.js: addCo2O2Row) -->
-      </div>
-
-      <button type="button" id="pf-add-co2o2"
-              class="op-form__btn op-form__btn--secondary pf-co2o2-add-btn">
-        + Ajouter une mesure
-      </button>
+      <div id="pf-co2o2-msr"></div>
     </div><!-- card in-filling CO2/O2 -->
 
     <!-- ── Section: White label ───────────────────────────────────── -->
@@ -2505,6 +2499,7 @@ window.PF_EDIT_SHARED_TANK_COUNT = <?= (int)$pfSharedTankCount ?>;
 </script>
 
 <script src="/js/form-framework.js?v=<?= @filemtime(__DIR__ . '/../js/form-framework.js') ?: time() ?>" defer></script>
+<script src="/js/multi-submit-reads.js?v=<?= @filemtime(__DIR__ . '/../js/multi-submit-reads.js') ?: time() ?>" defer></script>
 <script src="/js/packaging-form.js?v=<?= @filemtime(__DIR__ . '/../js/packaging-form.js') ?: time() ?>" defer></script>
 
 </body>

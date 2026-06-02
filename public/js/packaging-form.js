@@ -817,77 +817,40 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   }
 
-  // ── CO₂/O₂ session measurements (up to 20 pairs) ────────────────────────
+  // ── CO₂/O₂ in-filling session measurements (up to 20 pairs) ─────────────
   //
-  // POST shape: co2o2[N][co2], co2o2[N][o2]
+  // POST shape: co2o2[N][co2], co2o2[N][o2]   (contiguous 0-based, serialize mode)
   // A row is present when co2 OR o2 is non-empty; fully-blank rows are skipped
   // server-side. QC is server-only (no client-side threshold display).
   // Isolated from the formats[N] repeater — do NOT mix these indices.
+  //
+  // Edit-mode: PF_EDIT_STICKY_FILLING is mapped to initialRows [[co2, o2], ...].
+  // If absent or empty, minRows=3 blank rows are seeded.
 
-  var MAX_CO2O2_ROWS = 20;
-  var co2o2Count = 0;
-  var co2o2List  = document.getElementById('pf-co2o2-list');
-  var addCo2O2Btn = document.getElementById('pf-add-co2o2');
-
-  function buildCo2O2Row(n) {
-    var prefix = 'co2o2[' + n + ']';
-    var div = document.createElement('div');
-    div.className = 'pf-co2o2-row';
-    div.id = 'pf-co2o2-row-' + n;
-    div.dataset.n = String(n);
-    div.innerHTML =
-      '<span class="pf-co2o2-row__num">' + (n + 1) + '</span>' +
-      '<div class="op-form__field pf-co2o2-field">' +
-        '<label class="op-form__label" for="co2o2_' + n + '_co2">' +
-          'CO₂ <span class="op-form__unit">g/L</span></label>' +
-        '<input id="co2o2_' + n + '_co2" name="' + prefix + '[co2]"' +
-          ' type="text" inputmode="decimal" class="op-form__input" placeholder="ex. 4.2">' +
-      '</div>' +
-      '<div class="op-form__field pf-co2o2-field">' +
-        '<label class="op-form__label" for="co2o2_' + n + '_o2">' +
-          'O₂ <span class="op-form__unit">ppb</span></label>' +
-        '<input id="co2o2_' + n + '_o2" name="' + prefix + '[o2]"' +
-          ' type="text" inputmode="decimal" class="op-form__input" placeholder="ex. 18">' +
-      '</div>' +
-      '<button type="button" class="pf-co2o2-remove op-form__btn op-form__btn--danger-sm"' +
-        ' data-n="' + n + '" title="Supprimer ce relevé" aria-label="Supprimer relevé ' + (n + 1) + '">' +
-        '✕' +
-      '</button>';
-    return div;
-  }
-
-  function addCo2O2Row() {
-    if (co2o2Count >= MAX_CO2O2_ROWS) return;
-    var n = co2o2Count;
-    co2o2Count++;
-    var row = buildCo2O2Row(n);
-    row.querySelector('.pf-co2o2-remove').addEventListener('click', function () {
-      removeCo2O2Row(n);
+  if (document.getElementById('pf-co2o2-msr') && typeof MultiSubmitReads !== 'undefined') {
+    var fillingInitialRows = [];
+    var stickyFillingData = window.PF_EDIT_STICKY_FILLING || [];
+    if (stickyFillingData.length > 0) {
+      fillingInitialRows = stickyFillingData.map(function (pair) {
+        return [
+          (pair.co2 !== null && pair.co2 !== undefined) ? String(pair.co2) : '',
+          (pair.o2  !== null && pair.o2  !== undefined) ? String(pair.o2)  : '',
+        ];
+      });
+    }
+    MultiSubmitReads.init({
+      mountId:     'pf-co2o2-msr',
+      mode:        'serialize',
+      arrayName:   'co2o2',
+      fields: [
+        { key: 'co2', label: 'CO₂', unit: 'g/L',  placeholder: 'ex. 4.2', step: '0.001' },
+        { key: 'o2',  label: 'O₂',  unit: 'ppb',  placeholder: 'ex. 18',  step: '0.001' },
+      ],
+      minRows:     3,
+      maxRows:     20,
+      initialRows: fillingInitialRows.length > 0 ? fillingInitialRows : undefined,
     });
-    if (co2o2List) co2o2List.appendChild(row);
-    updateCo2O2AddBtn();
   }
-
-  function removeCo2O2Row(n) {
-    var el = document.getElementById('pf-co2o2-row-' + n);
-    if (el) el.remove();
-    updateCo2O2AddBtn();
-  }
-
-  function updateCo2O2AddBtn() {
-    if (!addCo2O2Btn) return;
-    var present = co2o2List ? co2o2List.querySelectorAll('.pf-co2o2-row').length : 0;
-    addCo2O2Btn.disabled = (present >= MAX_CO2O2_ROWS);
-  }
-
-  if (addCo2O2Btn) {
-    addCo2O2Btn.addEventListener('click', addCo2O2Row);
-  }
-
-  // Seed 3 rows on load (matches task spec "start with a few rows")
-  addCo2O2Row();
-  addCo2O2Row();
-  addCo2O2Row();
 
   // ── In-tank CO₂/O₂ single-pair auto-fill ────────────────────────────────
   //
@@ -1038,6 +1001,9 @@ document.addEventListener('DOMContentLoaded', function () {
   // If a pair looks inverted (swapped values produce a lower severity than
   // as-entered), show a confirm dialog before submission.  The operator can
   // still override — we never hard-block (mirrors server QC: import-then-flag).
+  //
+  // Iterates inputs by name pattern co2o2[N][co2|o2] (MSR serialize output),
+  // grouped by the [N] index.  Decoupled from old bespoke DOM classes.
 
   var co2o2InversionConfirmed = false;
 
@@ -1059,14 +1025,32 @@ document.addEventListener('DOMContentLoaded', function () {
     form.addEventListener('submit', function (e) {
       if (co2o2InversionConfirmed) return; // operator already confirmed — let through
 
-      var rows = document.querySelectorAll('.pf-co2o2-row');
+      // Collect all co2o2 inputs rendered by MSR (name="co2o2[N][co2|o2]"),
+      // grouped into pairs by the [N] index extracted from the name attribute.
+      var allInputs = form.querySelectorAll('input[name^="co2o2["]');
+      // pairMap: { N: { co2: input, o2: input } }
+      var pairMap = {};
+      var pairOrder = []; // preserve insertion order of indices
+      for (var ii = 0; ii < allInputs.length; ii++) {
+        var inp = allInputs[ii];
+        // name format: co2o2[N][co2] or co2o2[N][o2]
+        var m = inp.name.match(/^co2o2\[(\d+)\]\[(co2|o2)\]$/);
+        if (!m) continue;
+        var idx = m[1];
+        var key = m[2]; // 'co2' or 'o2'
+        if (!pairMap[idx]) {
+          pairMap[idx] = {};
+          pairOrder.push(idx);
+        }
+        pairMap[idx][key] = inp;
+      }
+
       var inverted = [];
 
-      for (var i = 0; i < rows.length; i++) {
-        var row = rows[i];
-        var n   = row.dataset.n;
-        var co2Input = document.getElementById('co2o2_' + n + '_co2');
-        var o2Input  = document.getElementById('co2o2_' + n + '_o2');
+      for (var pi = 0; pi < pairOrder.length; pi++) {
+        var pIdx = pairOrder[pi];
+        var co2Input = pairMap[pIdx].co2;
+        var o2Input  = pairMap[pIdx].o2;
         if (!co2Input || !o2Input) continue;
 
         var co2Val = parseFloat(co2Input.value);
@@ -1077,12 +1061,11 @@ document.addEventListener('DOMContentLoaded', function () {
         var sevSwapped   = Math.max(co2Flag(o2Val),  o2Flag(co2Val));
 
         if (sevSwapped < sevAsEntered) {
-          var numSpan = row.querySelector('.pf-co2o2-row__num');
           inverted.push({
-            readingNum: numSpan ? numSpan.textContent : String(parseInt(n, 10) + 1),
+            readingNum: String(parseInt(pIdx, 10) + 1),
             co2: co2Val,
             o2: o2Val,
-            inputId: 'co2o2_' + n + '_co2',
+            co2Input: co2Input,
           });
         }
       }
@@ -1107,7 +1090,7 @@ document.addEventListener('DOMContentLoaded', function () {
         form.submit(); // programmatic — bypasses the listener
       } else {
         // Focus the first inverted pair's CO₂ input so the operator can fix it
-        var firstInput = document.getElementById(inverted[0].inputId);
+        var firstInput = inverted[0].co2Input;
         if (firstInput) {
           firstInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
           firstInput.focus();
@@ -1311,30 +1294,8 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     // ── 4. Restore in-filling CO₂/O₂ pairs ────────────────────────────────
-    // The 3 seed rows added above already have empty values. Clear them first,
-    // then add the prefilled rows. If stickyFilling is empty, leave 3 blank rows.
-    var stickyFilling = window.PF_EDIT_STICKY_FILLING || [];
-    if (stickyFilling.length > 0 && co2o2List) {
-      // Remove all seeded rows
-      while (co2o2List.firstChild) co2o2List.removeChild(co2o2List.firstChild);
-      co2o2Count = 0;
-
-      stickyFilling.forEach(function (pair) {
-        var n = co2o2Count;
-        co2o2Count++;
-        var row = buildCo2O2Row(n);
-        // Pre-fill values
-        var co2El = row.querySelector('[name="co2o2[' + n + '][co2]"]');
-        var o2El  = row.querySelector('[name="co2o2[' + n + '][o2]"]');
-        if (co2El && pair.co2 !== null && pair.co2 !== undefined) co2El.value = String(pair.co2);
-        if (o2El  && pair.o2  !== null && pair.o2  !== undefined) o2El.value  = String(pair.o2);
-        row.querySelector('.pf-co2o2-remove').addEventListener('click', function () {
-          removeCo2O2Row(n);
-        });
-        co2o2List.appendChild(row);
-      });
-      updateCo2O2AddBtn();
-    }
+    // Handled by MultiSubmitReads.init() above via initialRows (reads
+    // window.PF_EDIT_STICKY_FILLING at init time). No re-seed needed here.
 
     // ── 5. Shared in-tank warn ─────────────────────────────────────────────
     var sharedCount = window.PF_EDIT_SHARED_TANK_COUNT || 0;
