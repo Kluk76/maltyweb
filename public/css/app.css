@@ -10235,6 +10235,18 @@ body.auth::after {
 .op-form__input.fw-input--warn { border-color: var(--ember); }
 .op-form__input.fw-input--outlier { border-color: var(--ember); box-shadow: 0 0 0 2px color-mix(in srgb, var(--ember) 22%, transparent); }
 
+/* Auto-derived read-only field (e.g. qa_analyses_units) */
+.op-form__input.pf-loss-input--derived[readonly] {
+  background: var(--bg-elev);
+  border-color: var(--hairline-2);
+  color: var(--ink-mute);
+  cursor: default;
+}
+.op-form__unit--derived {
+  color: var(--ink-faint);
+  font-style: italic;
+}
+
 /* ── Warning panel ──────────────────────────────────────────── */
 .op-form__warnings {
   background: var(--bg-elev);

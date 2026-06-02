@@ -403,9 +403,15 @@
 
     // ── Public: destroy ────────────────────────────────────────────────────────
     function destroy() {
-      if (form && form._msrSubmitHandler) {
-        form.removeEventListener('submit', form._msrSubmitHandler);
-        delete form._msrSubmitHandler;
+      // Remove THIS instance's submit handler (registered below as `handler`).
+      // `handler` is hoisted (var) and assigned by the time destroy() can run.
+      if (form && typeof handler === 'function') {
+        form.removeEventListener('submit', handler);
+        if (form._msrSubmitHandlers) {
+          form._msrSubmitHandlers = form._msrSubmitHandlers.filter(function (h) {
+            return h !== handler;
+          });
+        }
       }
       mount.innerHTML = '';
       rows = [];

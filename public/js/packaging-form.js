@@ -336,16 +336,49 @@ document.addEventListener('DOMContentLoaded', function () {
       '<option value="' + escHtml(v) + '">' + escHtml(l) + '</option>'
     ).join('');
 
-    // Helper: build a single input field div
+    // Fields converted to multi-submit widget (SUM mode). qa_analyses_units is
+    // excluded — it becomes auto-derived in a subsequent task and stays a plain input.
+    const MSR_LOSS_FIELDS = new Set([
+      'unsaleable_units', 'loss_uncapped_units', 'loss_untaxed_full_units',
+      'loss_half_filled_units', 'qa_library_units',
+      'loss_4pack_btl_units', 'loss_4pack_can_units', 'loss_wrap_btl_units',
+      'loss_wrap_can_units', 'loss_label_btl_units', 'loss_crown_cork_units',
+      'loss_can_lid_units', 'loss_container_btl_units', 'loss_container_can_units',
+      'loss_keg_liquid_l', 'taproom_keg_l', 'loss_keg_save_units',
+    ]);
+
+    // Helper: build a single field div — widget mount for convertible fields, plain
+    // input for qa_analyses_units and any non-convertible field.
     function fieldHtml(fieldDef, extraCss) {
       const fid = idPfx + '_' + fieldDef.name;
       const isDecimal = fieldDef.unit === 'L' || fieldDef.unit === 'L (taxé)' || fieldDef.unit === 'L / unités';
+
+      if (MSR_LOSS_FIELDS.has(fieldDef.name)) {
+        // Multi-submit widget mount — hidden output created by MultiSubmitReads.init().
+        const mountId = idPfx + '_' + fieldDef.name + '_msr';
+        return '<div class="op-form__field pf-loss-field--msr' + (extraCss ? ' ' + extraCss : '') + '">' +
+          '<label class="op-form__label pf-loss-label">' + escHtml(fieldDef.label) +
+            ' <span class="op-form__unit">' + escHtml(fieldDef.unit) + '</span></label>' +
+          '<div class="pf-loss-msr" id="' + mountId + '"' +
+            ' data-fmt-idx="' + idx + '"' +
+            ' data-loss-name="' + escHtml(fieldDef.name) + '"' +
+            ' data-decimals="' + (isDecimal ? '3' : '0') + '">' +
+          '</div>' +
+        '</div>';
+      }
+
+      // Plain input. qa_analyses_units is auto-derived (read-only + computed hint).
+      var isQaAnalyses = (fieldDef.name === 'qa_analyses_units');
       return '<div class="op-form__field' + (extraCss ? ' ' + extraCss : '') + '">' +
-        '<label class="op-form__label pf-loss-label" for="' + fid + '">' + escHtml(fieldDef.label) +
-          ' <span class="op-form__unit">' + escHtml(fieldDef.unit) + '</span></label>' +
+        '<label class="op-form__label pf-loss-label' + (isQaAnalyses ? ' op-form__opt' : '') + '" for="' + fid + '">' +
+          escHtml(fieldDef.label) +
+          (isQaAnalyses ? ' <span class="op-form__unit op-form__unit--derived">(calculé)</span>' : ' <span class="op-form__unit">' + escHtml(fieldDef.unit) + '</span>') +
+        '</label>' +
         '<input id="' + fid + '" name="' + prefix + '[' + fieldDef.name + ']"' +
           ' type="text" inputmode="' + (isDecimal ? 'decimal' : 'numeric') + '"' +
-          ' class="op-form__input pf-loss-input" placeholder="0">' +
+          ' class="op-form__input pf-loss-input' + (isQaAnalyses ? ' pf-loss-input--derived' : '') + '"' +
+          ' placeholder="0"' +
+          (isQaAnalyses ? ' readonly tabindex="-1"' : '') + '>' +
         '</div>';
     }
 
@@ -594,9 +627,48 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   }
 
-  function addFormatRow(isMain) {
+  // syncQaAnalysesDisplay — mirrors the server's $co2o2Pairs count to the UI.
+  // Main format row: qa_analyses_units = number of in-filling reads with co2 OR o2 filled.
+  // All non-main rows: qa_analyses_units = 0.
+  // The field is readonly; this only updates its display value.
+  function syncQaAnalysesDisplay() {
+    // Count non-blank in-filling read rows (mirror server's blank-skip: co2 OR o2 non-empty).
+    var co2o2Count = 0;
+    var msrEl = document.getElementById('pf-co2o2-msr');
+    if (msrEl) {
+      // Inputs are named co2o2[N][co2] and co2o2[N][o2].
+      // Group by index N; count indices that have at least one non-empty value.
+      var co2Inputs = form.querySelectorAll('input[name^="co2o2["]');
+      var seenIndices = {};
+      co2Inputs.forEach(function (inp) {
+        // name format: co2o2[N][co2] or co2o2[N][o2]
+        var m = inp.name.match(/^co2o2\[(\d+)\]/);
+        if (!m) return;
+        var idx = m[1];
+        if (inp.value.trim() !== '') seenIndices[idx] = true;
+      });
+      co2o2Count = Object.keys(seenIndices).length;
+    }
+
+    // Find all format rows and update their qa_analyses_units inputs.
+    formatsContainer.querySelectorAll('.pf-format-row').forEach(function (rowEl) {
+      // Identify main row via hidden row_origin input.
+      var originInput = rowEl.querySelector('input[name$="[row_origin]"]');
+      var isMainRow = originInput && originInput.value === 'main';
+      var qaInput = rowEl.querySelector('input[name$="[qa_analyses_units]"]');
+      if (qaInput) {
+        qaInput.value = isMainRow ? String(co2o2Count) : '0';
+      }
+    });
+  }
+
+  function addFormatRow(isMain, _editValues) {
     const idx = formatRows.length;
     formatRows.push(idx);
+    // _editValues: optional map of fieldName→value used during edit hydration to
+    // seed widget initialRows before init (avoids a post-init re-seed race).
+    const editValues = _editValues || {};
+
     formatsContainer.insertAdjacentHTML('beforeend', buildFormatRow(idx, isMain));
 
     // Wire run_type→keg section visibility + per-row disposition groups + remove btn
@@ -626,10 +698,38 @@ document.addEventListener('DOMContentLoaded', function () {
         });
       }
 
+      // Init MultiSubmitReads widgets for all .pf-loss-msr mounts in this row.
+      // ALL mounts are inited regardless of which disposition group is currently
+      // visible — hidden groups still need their hidden output fields so they post
+      // an empty string (= server null) identical to today's plain-input behaviour.
+      if (typeof MultiSubmitReads !== 'undefined') {
+        rowEl.querySelectorAll('.pf-loss-msr').forEach(function (mount) {
+          const lossName  = mount.dataset.lossName;
+          const decimals  = parseInt(mount.dataset.decimals, 10) || 0;
+          const editVal   = editValues[lossName];
+          const initRows  = (editVal !== null && editVal !== undefined && editVal !== '')
+                              ? [[String(editVal)]] : [];
+
+          const inst = MultiSubmitReads.init({
+            mountId:     mount.id,
+            mode:        'sum',
+            outputName:  'formats[' + idx + '][' + lossName + ']',
+            decimals:    decimals,
+            minRows:     1,
+            maxRows:     30,
+            fields:      [{ key: 'v', placeholder: '0', step: decimals ? '0.001' : '1' }],
+            initialRows: initRows,
+          });
+          // Store instance on the mount element for potential future use.
+          mount._msr = inst;
+        });
+      }
+
       // Set initial state (no run_type selected → show bottle group by default)
       updateRowDispositionGroups(rowEl);
     }
     tryEnableSubmit();
+    syncQaAnalysesDisplay();
   }
 
   function removeFormatRow(idx) {
@@ -637,6 +737,7 @@ document.addEventListener('DOMContentLoaded', function () {
     if (el) el.remove();
     formatRows = formatRows.filter(function (i) { return i !== idx; });
     tryEnableSubmit();
+    syncQaAnalysesDisplay();
   }
 
   if (addFormatBtn) {
@@ -849,6 +950,8 @@ document.addEventListener('DOMContentLoaded', function () {
       minRows:     3,
       maxRows:     20,
       initialRows: fillingInitialRows.length > 0 ? fillingInitialRows : undefined,
+      // Keep qa_analyses_units display in sync as the operator adds/removes/edits reads.
+      onChange:    function () { syncQaAnalysesDisplay(); },
     });
   }
 
@@ -1195,17 +1298,75 @@ document.addEventListener('DOMContentLoaded', function () {
     // ── 2. Restore format rows ──────────────────────────────────────────────
     // The main format row (index 0) was seeded by addFormatRow(true) above.
     // We need to restore its values AND add parallel rows if needed.
+    //
+    // For widget fields (MSR_LOSS_FIELDS): parallel rows pass editValues into
+    // addFormatRow() so widgets are seeded at init time via initialRows.
+    // Row 0 was already inited without values; we re-seed its widget mounts
+    // by looking up the stored instance on each mount element.
     var stickyFmts = window.PF_EDIT_STICKY_FORMATS || [];
+
+    // Fields that are plain inputs in edit hydration (not widgets):
+    // qa_analyses_units is excluded from MSR_LOSS_FIELDS (stays plain input).
+    // loss_liquid_other_units and loss_keg_collar_units are legacy fields not in the
+    // current field-def arrays — restored via setFmtInput if present on server data.
+    var PLAIN_DISP_FIELDS = [
+      'loss_liquid_other_units', 'loss_keg_collar_units',
+      'qa_analyses_units',
+    ];
+    // Widget fields list (must mirror MSR_LOSS_FIELDS in buildFormatRow above)
+    var WIDGET_DISP_FIELDS = [
+      'unsaleable_units', 'loss_uncapped_units', 'loss_untaxed_full_units',
+      'loss_half_filled_units', 'qa_library_units',
+      'loss_4pack_btl_units', 'loss_4pack_can_units', 'loss_wrap_btl_units',
+      'loss_wrap_can_units', 'loss_label_btl_units', 'loss_crown_cork_units',
+      'loss_can_lid_units', 'loss_container_btl_units', 'loss_container_can_units',
+      'loss_keg_liquid_l', 'taproom_keg_l', 'loss_keg_save_units',
+    ];
 
     stickyFmts.forEach(function (fmt, i) {
       var isMain = (fmt.row_origin === 'main');
+
+      // Build editValues map for this format row (widget fields only).
+      var editVals = {};
+      WIDGET_DISP_FIELDS.forEach(function (fname) {
+        var v = fmt[fname];
+        if (v !== null && v !== undefined && v !== '') editVals[fname] = v;
+      });
+
       // Row 0 already added (main); add additional rows for parallels.
+      // Parallel rows receive editValues so their widgets are seeded at init.
       if (i > 0) {
-        addFormatRow(false);
+        addFormatRow(false, editVals);
       }
 
       var rowEl = document.getElementById('pf-fmt-' + i);
       if (!rowEl) return;
+
+      // For row 0 (already inited without values), re-seed widget instances now.
+      if (i === 0 && typeof MultiSubmitReads !== 'undefined') {
+        rowEl.querySelectorAll('.pf-loss-msr').forEach(function (mount) {
+          var lossName = mount.dataset.lossName;
+          var v = editVals[lossName];
+          if (v !== undefined && mount._msr) {
+            // The widget was inited with minRows:1 (one blank row).
+            // Re-seed: addRow with the value, then the blank initial row
+            // was created by the widget already. We need to destroy and
+            // re-init with the value — easiest is to re-init entirely.
+            mount._msr.destroy();
+            var dec = parseInt(mount.dataset.decimals, 10) || 0;
+            mount._msr = MultiSubmitReads.init({
+              mountId:     mount.id,
+              mode:        'sum',
+              outputName:  'formats[0][' + lossName + ']',
+              decimals:    dec,
+              minRows:     1,
+              maxRows:     30,
+              fields:      [{ key: 'v', placeholder: '0', step: dec ? '0.001' : '1' }],
+              initialRows: [[String(v)]],
+            });
+          }
+        });
+      }
 
       // Set run_type
       var rtSel = rowEl.querySelector('[name="formats[' + i + '][run_type]"]');
@@ -1243,17 +1404,8 @@ document.addEventListener('DOMContentLoaded', function () {
         setFmtInput('qte_unites', fmt.special_qty_units);
       }
 
-      // Disposition fields
-      var dispFields = [
-        'unsaleable_units', 'loss_uncapped_units', 'loss_half_filled_units',
-        'loss_untaxed_full_units', 'loss_keg_liquid_l', 'taproom_keg_l',
-        'loss_liquid_other_units', 'loss_4pack_btl_units', 'loss_4pack_can_units',
-        'loss_wrap_btl_units', 'loss_wrap_can_units', 'loss_label_btl_units',
-        'loss_keg_collar_units', 'loss_crown_cork_units', 'loss_can_lid_units',
-        'loss_keg_save_units', 'loss_container_btl_units', 'loss_container_can_units',
-        'qa_analyses_units', 'qa_library_units',
-      ];
-      dispFields.forEach(function (fname) {
+      // Plain disposition fields (non-widget inputs) — qa_analyses_units + legacy fields
+      PLAIN_DISP_FIELDS.forEach(function (fname) {
         setFmtInput(fname, fmt[fname]);
       });
 
@@ -1305,6 +1457,11 @@ document.addEventListener('DOMContentLoaded', function () {
       if (countEl) countEl.textContent = String(sharedCount);
       sharedWarnEl.hidden = false;
     }
+
+    // ── 6. Sync qa_analyses_units display after full edit-restore ─────────
+    // All rows and in-filling data are now restored; recompute the derived count
+    // so the read-only field shows the correct value immediately.
+    syncQaAnalysesDisplay();
   }
 
 });

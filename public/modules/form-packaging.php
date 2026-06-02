@@ -720,7 +720,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $fLossContBtl    = isset($f['loss_container_btl_units']) && $f['loss_container_btl_units'] !== '' ? (int)$f['loss_container_btl_units'] : null;
             $fLossContCan    = isset($f['loss_container_can_units']) && $f['loss_container_can_units'] !== '' ? (int)$f['loss_container_can_units'] : null;
             $fLossLiquid     = isset($f['loss_liquid_other_units'])  && $f['loss_liquid_other_units'] !== '' ? $f['loss_liquid_other_units'] : null;
-            $fQaAnalyses     = isset($f['qa_analyses_units'])        && $f['qa_analyses_units']     !== '' ? (int)$f['qa_analyses_units']     : null;
+            // qa_analyses_units: auto-derived from in-filling read count (forward-only).
+            // Main row = number of co2o2Pairs (any pair with co2 OR o2 filled = one unit sacrificed).
+            // Every other format row gets 0 (in-filling reads are session-level, main row only).
+            // The posted qa_analyses_units value is intentionally ignored — server recomputes.
+            $fQaAnalyses     = ($fOrigin === 'main') ? count($co2o2Pairs) : 0;
             $fQaLibrary      = isset($f['qa_library_units'])         && $f['qa_library_units']      !== '' ? (int)$f['qa_library_units']      : null;
             // New disposition fields (mig 231)
             $fLossUncapped      = isset($f['loss_uncapped_units'])      && $f['loss_uncapped_units']      !== '' ? (int)$f['loss_uncapped_units']      : null;

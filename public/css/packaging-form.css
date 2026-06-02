@@ -262,6 +262,53 @@ body.op-form-packaging .pf-loss-input {
   font-size: 0.82rem;
 }
 
+/* ── Pertes multi-submit widget — compact override for op-form__grid--3 ────── */
+/* Goal: 1-row state reads like a normal labelled field; "Ajouter" is subtle    */
+/* until the operator actually needs sub-counts.                                 */
+body.op-form-packaging .pf-loss-field--msr {
+  /* Same baseline as adjacent op-form__field items */
+  display: flex;
+  flex-direction: column;
+}
+/* Widget container sits below the label with no extra gap */
+body.op-form-packaging .pf-loss-field--msr .pf-loss-msr {
+  flex: 1;
+}
+/* Compact msr-list: tighter gap when used in the pertes grid */
+body.op-form-packaging .pf-loss-msr .msr-list {
+  margin-bottom: 0.35rem;
+  gap: 0.35rem;
+}
+/* Single-row state: strip the card background so it looks like a plain field */
+body.op-form-packaging .pf-loss-msr .msr-list:has(.msr-row:only-child) .msr-row {
+  background: transparent;
+  border-color: transparent;
+  padding: 0;
+  gap: 0.4rem;
+}
+/* Hide the row-number badge when there is only one row */
+body.op-form-packaging .pf-loss-msr .msr-list:has(.msr-row:only-child) .msr-row__num {
+  display: none;
+}
+/* "Ajouter" button: smaller / lower prominence in single-row state */
+body.op-form-packaging .pf-loss-msr .msr-add {
+  font-size: 0.76rem;
+  padding: 3px 9px;
+  border-style: dashed;
+  opacity: 0.6;
+}
+body.op-form-packaging .pf-loss-msr .msr-add:hover:not(:disabled) {
+  opacity: 1;
+}
+/* Readout: hidden when empty (single blank row → no total shown) */
+body.op-form-packaging .pf-loss-msr .msr-readout:empty {
+  display: none;
+}
+body.op-form-packaging .pf-loss-msr .msr-readout {
+  font-size: 0.72rem;
+  margin-top: 0.2rem;
+}
+
 /* ── Format top grid ─────────────────────────────────────────────────────── */
 body.op-form-packaging .pf-format-top-grid {
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
