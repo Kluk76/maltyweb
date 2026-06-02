@@ -911,6 +911,7 @@ $cipConfig = [
   <link rel="stylesheet" href="/css/app.css?v=<?= @filemtime(__DIR__ . '/../css/app.css') ?: time() ?>">
   <link rel="stylesheet" href="/css/cip-section.css?v=<?= @filemtime(__DIR__ . '/../css/cip-section.css') ?: time() ?>">
   <link rel="stylesheet" href="/css/racking-form.css?v=<?= @filemtime(__DIR__ . '/../css/racking-form.css') ?: time() ?>">
+  <link rel="stylesheet" href="/css/multi-submit-reads.css?v=<?= @filemtime(__DIR__ . '/../css/multi-submit-reads.css') ?: time() ?>">
 </head>
 <body class="home op-form-page op-form-racking">
 
@@ -1327,11 +1328,10 @@ $cipConfig = [
         </div>
 
         <div class="op-form__field">
-          <label class="op-form__label" for="avg_turbidity">
-            Turbidité moy. <span class="op-form__unit">NTU</span>
+          <label class="op-form__label">
+            Turbidité <span class="op-form__unit">NTU</span>
           </label>
-          <input id="avg_turbidity" name="avg_turbidity" type="text" inputmode="decimal"
-                 class="op-form__input" placeholder="ex. 0.5">
+          <div id="rf-turbidity-msr"></div>
         </div>
 
         <!-- #7 — "Vitesse moyenne" input REMOVED.
@@ -1594,6 +1594,7 @@ window.BBT_BLEND_CANDIDATES = <?= $bbtBlendCandidatesJson ?>;
 </script>
 
 <script src="/js/form-framework.js?v=<?= @filemtime(__DIR__ . '/../js/form-framework.js') ?: time() ?>" defer></script>
+<script src="/js/multi-submit-reads.js?v=<?= @filemtime(__DIR__ . '/../js/multi-submit-reads.js') ?: time() ?>" defer></script>
 <script src="/js/racking-form.js?v=<?= @filemtime(__DIR__ . '/../js/racking-form.js') ?: time() ?>" defer></script>
 
 </body>

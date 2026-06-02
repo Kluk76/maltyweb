@@ -395,6 +395,8 @@ window.SESSION_FIREWALL       = <?= json_encode([
     'all_clear'        => (bool)($firewall['all_clear'] ?? false),
 ], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_QUOT | JSON_HEX_APOS) ?>;
 </script>
-<script src="/js/racking-form.js?v=<?= @filemtime(__DIR__ . '/../../js/racking-form.js') ?: time() ?>"></script>
 <link rel="stylesheet" href="/css/cip-section.css?v=<?= @filemtime(__DIR__ . '/../../css/cip-section.css') ?: time() ?>">
 <link rel="stylesheet" href="/css/racking-form.css?v=<?= @filemtime(__DIR__ . '/../../css/racking-form.css') ?: time() ?>">
+<link rel="stylesheet" href="/css/multi-submit-reads.css?v=<?= @filemtime(__DIR__ . '/../../css/multi-submit-reads.css') ?: time() ?>">
+<script src="/js/multi-submit-reads.js?v=<?= @filemtime(__DIR__ . '/../../js/multi-submit-reads.js') ?: time() ?>"></script>
+<script src="/js/racking-form.js?v=<?= @filemtime(__DIR__ . '/../../js/racking-form.js') ?: time() ?>"></script>

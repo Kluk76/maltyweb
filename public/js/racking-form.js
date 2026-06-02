@@ -967,4 +967,37 @@ document.addEventListener('DOMContentLoaded', function () {
   if (typeof FormFramework !== 'undefined' && typeof FormFramework.refreshWarnings === 'function') {
     FormFramework.refreshWarnings();
   }
+
+  // ── Multi-entry turbidity widget (item #4) ──────────────────────────────
+  // Mounts on both form-racking.php and racking-phase-in-progress.php (they share
+  // this JS file). The mount div id is the same on both surfaces — only one renders
+  // at a time so there is no collision.
+  //
+  // mode='average': each operator reading is entered individually; the session
+  // average is computed client-side and stored in the hidden <input name=avg_turbidity>.
+  // Server-side (form-racking.php:166, racking-phase-submit.php) is UNCHANGED —
+  // it reads post_decimal('avg_turbidity') exactly as before.
+  //
+  // initialRows=[]: this is an append-only form; no existing avg_turbidity value
+  // is prefilled by the server, so we start with one blank row (minRows=1).
+  if (document.getElementById('rf-turbidity-msr')) {
+    if (typeof MultiSubmitReads !== 'undefined') {
+      MultiSubmitReads.init({
+        mountId:     'rf-turbidity-msr',
+        mode:        'average',
+        outputName:  'avg_turbidity',
+        decimals:    3,
+        minRows:     1,
+        maxRows:     20,
+        fields: [{
+          key:         'v',
+          label:       'Turbidité',
+          unit:        'NTU',
+          placeholder: 'ex. 0.5',
+          step:        '0.001',
+        }],
+        initialRows: [],
+      });
+    }
+  }
 });

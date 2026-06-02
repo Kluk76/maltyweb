@@ -1,0 +1,162 @@
+/*
+ * multi-submit-reads.css — Generic multi-entry measurement widget.
+ *
+ * Used by: racking turbidity (#4), packaging O₂/CO₂ (#3), packaging pertes (#5).
+ * Scope: class prefix `msr-` — no body-class scope (shared across pages).
+ * Tokens: all from app.css :root — NO custom tokens invented here.
+ * Fonts: JetBrains Mono (labels/readouts), DM Sans (inputs).
+ */
+
+/* ── Container ───────────────────────────────────────────────────────────── */
+.msr-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-bottom: 0.6rem;
+}
+
+/* ── Single row ─────────────────────────────────────────────────────────── */
+.msr-row {
+  display: grid;
+  /* num | field(s) | remove — fields column auto-expands */
+  grid-template-columns: 1.6rem 1fr auto;
+  align-items: end;
+  gap: 0.6rem;
+  padding: 0.45rem 0.6rem;
+  background: color-mix(in srgb, var(--bg-elev) 60%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ink-faint) 55%, transparent);
+  border-radius: 5px;
+}
+
+/* When there are 2+ fields per row, the field area becomes its own flex row */
+.msr-row__fields {
+  display: flex;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.msr-row__fields .msr-field {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── Row number badge ────────────────────────────────────────────────────── */
+.msr-row__num {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  color: var(--ink-mute);
+  letter-spacing: 0.04em;
+  text-align: center;
+  line-height: 2.2;
+  user-select: none;
+}
+
+/* ── Field sub-label (unit text above input) ─────────────────────────────── */
+.msr-field__label {
+  display: block;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  margin-bottom: 0.2rem;
+}
+
+/* ── Input inherits op-form__input aesthetics ────────────────────────────── */
+.msr-field__input {
+  background: var(--bg);
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px;
+  color: var(--ink);
+  font-family: 'DM Sans', system-ui, sans-serif;
+  font-size: 0.88rem;
+  padding: 7px 9px;
+  width: 100%;
+  transition: border-color 0.15s;
+}
+.msr-field__input:focus {
+  outline: none;
+  border-color: var(--oak);
+}
+.msr-field__input::placeholder { color: var(--ink-faint); }
+
+/* ── Remove button (danger-sm style) ─────────────────────────────────────── */
+.msr-remove {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--ink-mute);
+  font-size: 0.9rem;
+  line-height: 1;
+  padding: 4px 5px;
+  border-radius: 3px;
+  align-self: end;
+  transition: color 0.12s, background 0.12s;
+}
+.msr-remove:hover:not(:disabled) {
+  color: var(--bad);
+  background: color-mix(in srgb, var(--bad) 10%, transparent);
+}
+.msr-remove:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* ── Inline row error ────────────────────────────────────────────────────── */
+.msr-row-error {
+  grid-column: 1 / -1;
+  font-family: 'DM Sans', system-ui, sans-serif;
+  font-size: 0.78rem;
+  color: var(--ember);
+  margin-top: 0.1rem;
+  line-height: 1.35;
+}
+
+/* ── Add button ──────────────────────────────────────────────────────────── */
+.msr-add {
+  background: transparent;
+  border: 1px dashed var(--hairline-2);
+  border-radius: 4px;
+  color: var(--ink-soft);
+  font-family: 'DM Sans', system-ui, sans-serif;
+  font-size: 0.84rem;
+  padding: 6px 14px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  align-self: flex-start;
+}
+.msr-add:hover:not(:disabled) {
+  border-color: var(--hop);
+  color: var(--hop);
+  background: color-mix(in srgb, var(--hop) 6%, transparent);
+}
+.msr-add:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* ── Live aggregate readout ──────────────────────────────────────────────── */
+.msr-readout {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+  color: var(--cold);
+  letter-spacing: 0.03em;
+  margin-top: 0.35rem;
+  min-height: 1.2em;
+}
+
+/* ── Responsive: collapse field labels on narrow screens ─────────────────── */
+@media (max-width: 400px) {
+  .msr-row {
+    grid-template-columns: 1.2rem 1fr auto;
+    gap: 0.4rem;
+    padding: 0.35rem 0.45rem;
+  }
+  .msr-row__fields {
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+}

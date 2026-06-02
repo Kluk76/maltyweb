@@ -236,11 +236,10 @@ declare(strict_types=1);
     </div>
 
     <div class="op-form__field">
-      <label class="op-form__label" for="avg_turbidity">
-        Turbidité moy. <span class="op-form__unit">NTU</span>
+      <label class="op-form__label">
+        Turbidité <span class="op-form__unit">NTU</span>
       </label>
-      <input id="avg_turbidity" name="avg_turbidity" type="text" inputmode="decimal"
-             class="op-form__input" placeholder="ex. 0.5">
+      <div id="rf-turbidity-msr"></div>
     </div>
 
     <!-- avg_speed intentionally absent — column kept for historical data (#7) -->
