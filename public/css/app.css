@@ -181,6 +181,18 @@ body.home {
     radial-gradient(900px 600px at 105% 105%, color-mix(in srgb, var(--hop) 8%, transparent), transparent 65%);
   background-attachment: fixed;
   position: relative;
+  /* When content is genuinely wider than the viewport (narrow window, wide
+     grids/tables/forms), show a horizontal scrollbar so nothing is clipped
+     unreachably — was `hidden`, which cut content off with no way to reach it.
+     The fixed ::before/::after wash layers are viewport-bound and add no scroll
+     width. Pages with a deliberate full-bleed/sliding stage re-clip below. */
+  overflow-x: auto;
+}
+
+/* Salle des machines slides a 400%-wide #sdmStage via translateX and relies on
+   the body clipping the off-screen rooms — keep overflow-x:hidden here so the
+   stage slides instead of producing a 400%-wide horizontal scrollbar. */
+body.home.salle-des-machines {
   overflow-x: hidden;
 }
 
@@ -3014,7 +3026,9 @@ body.auth {
     radial-gradient(900px 600px at 105% 105%, color-mix(in srgb, var(--hop) 8%, transparent), transparent 65%);
   background-attachment: fixed;
   position: relative;
-  overflow-x: hidden;
+  /* Show a horizontal scrollbar instead of clipping when the centred card is
+     wider than a narrow window (was `hidden`). */
+  overflow-x: auto;
 }
 
 /* Sepia film grain */
