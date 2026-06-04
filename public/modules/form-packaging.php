@@ -344,7 +344,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // Server-side role enforcement: if a non-manager/admin somehow sends
         // hors_process=1, silently ignore it (never trust the client-side gate alone).
         $horsProcessRequested = (post_int('hors_process') === 1);
-        $horsProcessAllowed   = (is_admin($me) || is_manager($me));
+        $horsProcessAllowed   = manager_can('production', $me);
         $horsProcessFlag      = ($horsProcessRequested && $horsProcessAllowed) ? 1 : 0;
         $horsProcessReason    = ($horsProcessFlag === 1) ? post_str('hors_process_reason') : null;
 
@@ -433,7 +433,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         // ── Tank-reading override inputs (manager/admin only, mirrors hors_process) ──
         $tankReadingOverrideRequested = (isset($_POST['tank_reading_override']) && $_POST['tank_reading_override'] === '1');
-        $tankReadingOverrideAllowed   = (is_admin($me) || is_manager($me));
+        $tankReadingOverrideAllowed   = manager_can('production', $me);
         $tankReadingOverrideFlag      = ($tankReadingOverrideRequested && $tankReadingOverrideAllowed) ? 1 : 0;
         $tankReadingOverrideReason    = ($tankReadingOverrideFlag === 1)
             ? (isset($_POST['tank_reading_override_reason']) && $_POST['tank_reading_override_reason'] !== ''
@@ -1467,7 +1467,7 @@ try {
         : PACKAGING_MIN_DAYS_FALLBACK;
 
     // ── Current user role for override capability ──────────────────────────
-    $canOverride = (is_admin($me) || is_manager($me));
+    $canOverride = manager_can('production', $me);
 
     // ── Candidate lots: racking events ≥ $minDays before today ───────────────
     //

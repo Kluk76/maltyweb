@@ -60,7 +60,7 @@ function auth_verify(string $username, string $password): ?array
 {
     $pdo = maltytask_pdo();
     $stmt = $pdo->prepare(
-        "SELECT id, username, email, password_hash, display_name, role, is_active
+        "SELECT id, username, email, password_hash, display_name, role, manager_scope, is_active
          FROM users WHERE username = ? LIMIT 1"
     );
     $stmt->execute([$username]);
@@ -92,10 +92,11 @@ function auth_login(array $user): void
     maltytask_session_start();
     session_regenerate_id(true);
     $_SESSION["user"] = [
-        "id"           => (int) $user["id"],
-        "username"     => $user["username"],
-        "display_name" => $user["display_name"] ?? $user["username"],
-        "role"         => $user["role"],
+        "id"            => (int) $user["id"],
+        "username"      => $user["username"],
+        "display_name"  => $user["display_name"] ?? $user["username"],
+        "role"          => $user["role"],
+        "manager_scope" => $user["manager_scope"] ?? null,
     ];
     $_SESSION["last_activity"] = time();
     $_SESSION["regen_at"] = time();
@@ -152,10 +153,11 @@ function current_user(): ?array
             maltytask_session_start();
             session_regenerate_id(true);
             $_SESSION["user"] = [
-                "id"           => $remembered["id"],
-                "username"     => $remembered["username"],
-                "display_name" => $remembered["display_name"],
-                "role"         => $remembered["role"],
+                "id"            => $remembered["id"],
+                "username"      => $remembered["username"],
+                "display_name"  => $remembered["display_name"],
+                "role"          => $remembered["role"],
+                "manager_scope" => $remembered["manager_scope"] ?? null,
             ];
             $_SESSION["last_activity"] = time();
             $_SESSION["regen_at"]      = time();
@@ -231,6 +233,30 @@ function is_manager(?array $user = null): bool
 {
     $u = $user ?? current_user();
     return ($u["role"] ?? "") === "manager";
+}
+
+/**
+ * Domain-scoped capability check.
+ *
+ * Admins can do everything. Managers are constrained by manager_scope:
+ *   'production' — can perform production-override actions (⊇ logistics)
+ *   'logistics'  — can perform logistics/supply-chain actions only
+ *   'all'        — unrestricted manager (both domains)
+ *   NULL         — same as no scope (returns false; only operator role has NULL)
+ *
+ * A production manager also passes the 'logistics' check because production ⊇ logistics.
+ */
+function manager_can(string $domain, ?array $user = null): bool
+{
+    $u = $user ?? current_user();
+    if (($u["role"] ?? "") === "admin") return true;
+    if (($u["role"] ?? "") !== "manager") return false;
+    $scope = $u["manager_scope"] ?? null;
+    if ($scope === "all") return true;
+    if ($scope === $domain) return true;
+    // production ⊇ logistics: a production manager may also perform logistics actions.
+    if ($scope === "production" && $domain === "logistics") return true;
+    return false;
 }
 
 /**

@@ -81,7 +81,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         // ── Override: Choix Hors Process (manager/admin only) ───────────
         $horsProcessRequested = (post_int('hors_process') === 1);
-        $horsProcessAllowed   = (is_admin($me) || is_manager($me));
+        $horsProcessAllowed   = manager_can('production', $me);
         $horsProcessFlag      = ($horsProcessRequested && $horsProcessAllowed) ? 1 : 0;
         $horsProcessReason    = ($horsProcessFlag === 1) ? post_str('hors_process_reason') : null;
 
@@ -498,7 +498,7 @@ try {
     $pdo = maltytask_pdo();
 
     // ── Current user role for override capability ─────────────────────────
-    $canOverride = (is_admin($me) || is_manager($me));
+    $canOverride = manager_can('production', $me);
 
     // ── Candidate lots (CCT-based gated list) ────────────────────────────
     //

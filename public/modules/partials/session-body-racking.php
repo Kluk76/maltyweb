@@ -42,7 +42,7 @@ if (!defined('CENTRI_RINSED_YN')) {
 $_rack_loadErr = null;
 try {
     // Role gate
-    $canOverride = (is_admin($me) || is_manager($me));
+    $canOverride = manager_can('production', $me);
 
     // ── Candidate lots (CCT-based gated list) ────────────────────────────────
     $candidateBaseSql = "

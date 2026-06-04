@@ -145,6 +145,13 @@ try {
 
     // ── Manager → proposal path ───────────────────────────────────────────────
     if (!is_admin($me)) {
+        // Supplier proposals require logistics (or broader) scope.
+        // Forward-proofing: a future production-only manager must not reach this path.
+        if (!manager_can('logistics', $me)) {
+            http_response_code(403);
+            echo json_encode(['ok' => false, 'error' => 'Portée insuffisante pour proposer des modifications fournisseur.']);
+            exit;
+        }
         $pdo->beginTransaction();
         $pdo->prepare(
             'INSERT INTO ref_supplier_proposals
