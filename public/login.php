@@ -4,8 +4,15 @@ declare(strict_types=1);
 require_once __DIR__ . "/../app/auth.php";
 require_once __DIR__ . "/../app/csrf.php";
 require_once __DIR__ . "/../app/services/remember_token.php";
+require_once __DIR__ . "/../app/services/device.php";
+require_once __DIR__ . "/../app/settings-helpers.php";
 
 maltytask_session_start();
+
+// Resolve device identity before any output (sets Set-Cookie header).
+$deviceId     = device_id_ensure();
+$pdo          = maltytask_pdo();
+$sharedDevice = device_is_shared($deviceId, $pdo);
 
 // Already logged in? Bounce to dashboard.
 if (current_user() !== null) {
@@ -43,13 +50,16 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         } else {
             auth_login($user);
 
-            // ── Remember this device? ──────────────────────────────────────
-            if (!empty($_POST["remember_me"])) {
-                $pdo = maltytask_pdo();
-                $ip  = $_SERVER['REMOTE_ADDR'] ?? null;
-                $ua  = $_SERVER['HTTP_USER_AGENT'] ?? null;
+            $ip = $_SERVER['REMOTE_ADDR'] ?? null;
+            $ua = $_SERVER['HTTP_USER_AGENT'] ?? null;
+
+            // ── Remember this device? (blocked on shared devices) ──────────
+            if (!empty($_POST["remember_me"]) && !$sharedDevice) {
                 rt_create((int)$user["id"], null, $ip, $ua, $pdo);
             }
+
+            // Update last-seen in device registry (no-op for unregistered browsers).
+            device_touch($deviceId, $ip, $ua, $pdo);
 
             $next = $_GET["next"] ?? "/";
             // Reject open-redirects: must be a same-origin path
@@ -62,8 +72,9 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
     }
 }
 
-$token = csrf_token();
+$token    = csrf_token();
 $insecure = empty($_SERVER["HTTPS"]) || $_SERVER["HTTPS"] === "off";
+$brewery  = brewery_identity();
 ?><!doctype html>
 <html lang="fr">
 <head>
@@ -134,10 +145,14 @@ $insecure = empty($_SERVER["HTTPS"]) || $_SERVER["HTTPS"] === "off";
         <span class="auth__field-label">Password</span>
         <input type="password" name="password" required>
       </label>
-      <label class="auth__field auth__field--check">
-        <input type="checkbox" name="remember_me" value="1" checked>
-        <span class="auth__field-label">Se souvenir de cet appareil (90 jours)</span>
-      </label>
+      <?php if ($sharedDevice): ?>
+        <p class="auth__warn">Poste partagé — déconnexion automatique après inactivité. Aucune session persistante sur cet appareil.</p>
+      <?php else: ?>
+        <label class="auth__field auth__field--check">
+          <input type="checkbox" name="remember_me" value="1" checked>
+          <span class="auth__field-label">Se souvenir de cet appareil (90 jours)</span>
+        </label>
+      <?php endif ?>
       <button class="auth__submit" type="submit">
         <span>Connexion</span>
         <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
@@ -148,8 +163,8 @@ $insecure = empty($_SERVER["HTTPS"]) || $_SERVER["HTTPS"] === "off";
   </section>
 
   <footer class="auth__foot">
-    <span>La Nébuleuse · Est. 2014</span>
-    <span>Lausanne · CH</span>
+    <span><?= htmlspecialchars($brewery['name']) ?> · Est. 2014</span>
+    <span><?= htmlspecialchars($brewery['city']) ?> · <?= htmlspecialchars($brewery['country_code']) ?></span>
   </footer>
 
 </main>
