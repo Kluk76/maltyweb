@@ -77,6 +77,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         $pdo = maltytask_pdo();
 
+        // ── 0. Edit-mode: original submitted_at for NK preservation ──────
+        // The hidden field edit_submitted_at is written by the server in edit mode only.
+        // Strict-regex validate before trusting (hidden field, user-controlled).
+        // When absent or malformed → treat as a fresh submission (new submitted_at).
+        $editSubmittedAtRaw = isset($_POST['edit_submitted_at']) && $_POST['edit_submitted_at'] !== ''
+            ? (string)$_POST['edit_submitted_at'] : null;
+        $editSubmittedAtValid = ($editSubmittedAtRaw !== null
+            && preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?$/', $editSubmittedAtRaw));
+        $editSubmittedAt = $editSubmittedAtValid ? $editSubmittedAtRaw : null;
+        $isEditMode = ($editSubmittedAt !== null);
+
+        // edit_id: PK of the row being corrected — used for the before-snapshot.
+        $editIdFromPost = (isset($_POST['edit_id']) && ctype_digit((string)$_POST['edit_id']))
+            ? (int)$_POST['edit_id'] : null;
+        if ($editIdFromPost !== null && $editIdFromPost <= 0) $editIdFromPost = null;
+
         // ── 1. Coerce + validate inputs ──────────────────────────────────
 
         // ── Override: Choix Hors Process (manager/admin only) ───────────
@@ -357,12 +373,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $qcFlag = bd_qc_flag($measurements);
 
         // ── 3. Build submitted_at ────────────────────────────────────────
-        $submittedAt = date('Y-m-d H:i:s.u');
+        // CRITICAL: in edit mode, reuse the original submitted_at so bd_upsert
+        // hits the same NK (submitted_at + identity cols) → UPDATE-in-place.
+        // A fresh date() here would INSERT a duplicate row instead of correcting.
+        $submittedAt = $isEditMode ? $editSubmittedAt : date('Y-m-d H:i:s.u');
         $eventDate   = $eventDateRaw ?? date('Y-m-d');
 
         $auditTokens = ['web_entry'];
         if ($qcFlag !== 'normal') $auditTokens[] = "qc_{$qcFlag}";
         if ($horsProcessFlag === 1) $auditTokens[] = 'hors_process_override';
+        if ($isEditMode) $auditTokens[] = 'correction';
         $auditFlags = implode(',', $auditTokens);
 
         // ── 4. Canonical row for hash (exclude meta cols + removed fields) ───
@@ -450,8 +470,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $nkCols = ['submitted_at', 'neb_beer', 'neb_batch', 'contract_beer', 'contract_batch', 'seq'];
 
-        // ── 6. Before-snapshot (web-form inserts always new submitted_at) ─
+        // ── 6. Before-snapshot (edit mode: capture pre-image for audit) ───
+        // In edit mode, fetch the row before overwriting so log_revision emits
+        // action='update' with a real before_json. For new submissions, $before = null
+        // → action='insert' (correct).
         $beforeSnapshot = null;
+        if ($isEditMode) {
+            // Prefer the explicit edit_id; fall back to NK lookup.
+            if ($editIdFromPost !== null) {
+                $beforeSnapshot = bd_fetch_before($pdo, 'bd_racking_v2', $editIdFromPost);
+            }
+            if ($beforeSnapshot === null) {
+                $existingPk = bd_lookup_pk_by_nk($pdo, 'bd_racking_v2', $nkCols, $row);
+                if ($existingPk !== null) {
+                    $beforeSnapshot = bd_fetch_before($pdo, 'bd_racking_v2', $existingPk);
+                }
+            }
+        }
 
         // ── 7. UPSERT ────────────────────────────────────────────────────
         $result = bd_upsert($pdo, 'bd_racking_v2', $row, $nkCols);
@@ -463,6 +498,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         cip_upsert($pdo, 'racking', $rackingId, $cipEvents, $cipMeta);
 
         // ── 9. Audit revision ─────────────────────────────────────────────
+        // $beforeSnapshot is non-null in edit mode → action='update' with real before_json.
+        // audit_flags already includes 'correction' when $isEditMode.
         log_revision(
             $pdo,
             $me,
@@ -482,7 +519,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         };
         $beerLabel = $nebBeer !== '' ? $nebBeer : $contractBeer;
         $hpLabel   = $horsProcessFlag ? ' [HORS PROCESS]' : '';
-        flash_set('ok', "Transfert enregistré : {$beerLabel}{$qcLabel}{$hpLabel}");
+        $editLabel = $isEditMode ? 'Transfert mis à jour' : 'Transfert enregistré';
+        flash_set('ok', "{$editLabel} : {$beerLabel}{$qcLabel}{$hpLabel}");
 
     } catch (Throwable $e) {
         flash_set('err', pdo_friendly_error($e, 'form-racking'));
@@ -883,7 +921,110 @@ try {
 }
 $pertesConfigJson = json_encode($pertesConfig, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 
-// #8 — CIP partial config (new submission: no existing events)
+// ── Edit-mode detection ───────────────────────────────────────────────────────
+// Read with ?? default then validate (never trust the raw param directly).
+$editIdRaw = $_GET['edit'] ?? null;
+$editId    = ($editIdRaw !== null && is_numeric($editIdRaw)) ? (int)$editIdRaw : null;
+if ($editId !== null && $editId <= 0) $editId = null;
+
+$editMode        = false;
+$editBanner      = null;  // ['beer', 'batch', 'event_date', 'target_tank_raw']
+$editPrefill     = [];    // assoc with same key names as the form fields
+$editSubmittedAtForHidden = null;  // the original submitted_at for the hidden field
+
+if ($editId !== null) {
+    try {
+        $pdoEdit = maltytask_pdo();
+        $editStmt = $pdoEdit->prepare(
+            "SELECT * FROM bd_racking_v2 WHERE id = ? AND is_tombstoned = 0 LIMIT 1"
+        );
+        $editStmt->execute([$editId]);
+        $editRow = $editStmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($editRow === false) {
+            flash_set('err', "Transfert ID {$editId} introuvable ou archivé.");
+            // Fall through to blank-entry mode
+        } else {
+            $editMode = true;
+            $editSubmittedAtForHidden = (string)$editRow['submitted_at'];
+
+            // Separate start_time and end_time into date + HHmm parts for prefill
+            $stStartDate = '';
+            $stStartHm   = '';
+            $stEndDate   = '';
+            $stEndHm     = '';
+            if (!empty($editRow['start_time'])) {
+                $stStartDate = substr((string)$editRow['start_time'], 0, 10);
+                $stStartHm   = substr((string)$editRow['start_time'], 11, 5);
+            }
+            if (!empty($editRow['end_time'])) {
+                $stEndDate = substr((string)$editRow['end_time'], 0, 10);
+                $stEndHm   = substr((string)$editRow['end_time'], 11, 5);
+            }
+
+            $editPrefill = [
+                'event_date'               => $editRow['event_date'] ?? date('Y-m-d'),
+                'start_time'               => $stStartHm,
+                'end_time'                 => $stEndHm,
+                'racking_destination_type' => $editRow['racking_destination_type'] ?? '',
+                'bbt_number'               => $editRow['bbt_number'] ?? '',
+                'cct_number'               => $editRow['cct_number'] ?? '',
+                'yt_number'                => $editRow['yt_number'] ?? '',
+                'bbt_co2'                  => $editRow['bbt_co2'] ?? '',
+                'bbt_o2'                   => $editRow['bbt_o2'] ?? '',
+                'racked_vol_hl'            => $editRow['racked_vol_hl'] ?? '',
+                'flowmeter_start_hl'       => $editRow['flowmeter_start_hl'] ?? '',
+                'flowmeter_end_hl'         => $editRow['flowmeter_end_hl'] ?? '',
+                'blend_hl'                 => $editRow['blend_hl'] ?? '',
+                'avg_turbidity'            => $editRow['avg_turbidity'] ?? '',
+                'bbt_pressure'             => $editRow['bbt_pressure'] ?? '',
+                'centri_rinsed'            => $editRow['centri_rinsed'] ?? '',
+                'safety_cip_done'          => $editRow['safety_cip_done'] ?? '',
+                'kze_target_pu'            => $editRow['kze_target_pu'] ?? '',
+                'kze_avg_pu'               => $editRow['kze_avg_pu'] ?? '',
+                'comments'                 => $editRow['comments'] ?? '',
+                'loss_source_hl'           => $editRow['loss_source_hl'] ?? '',
+                'loss_dest_hl'             => $editRow['loss_dest_hl'] ?? '',
+                'loss_cause'               => $editRow['loss_cause'] ?? '',
+                'loss_note'                => $editRow['loss_note'] ?? '',
+                'interrupted_flag'         => (int)($editRow['interrupted_flag'] ?? 0),
+                'interrupted_reason'       => $editRow['interrupted_reason'] ?? '',
+                'dest_bbt_still_clean'     => $editRow['dest_bbt_still_clean'],
+                'hors_process_flag'        => (int)($editRow['hors_process_flag'] ?? 0),
+                'hors_process_reason'      => $editRow['hors_process_reason'] ?? '',
+                // Identity (for the non-editable strip + hidden fields)
+                'neb_beer'                 => $editRow['neb_beer'] ?? '',
+                'neb_batch'                => $editRow['neb_batch'] ?? '',
+                'neb_recipe_id_fk'         => $editRow['neb_recipe_id_fk'] ?? '',
+                'contract_beer'            => $editRow['contract_beer'] ?? '',
+                'contract_batch'           => $editRow['contract_batch'] ?? '',
+                'contract_recipe_id_fk'    => $editRow['contract_recipe_id_fk'] ?? '',
+            ];
+
+            $beerDisp = ($editRow['neb_beer'] ?? '') !== ''
+                ? $editRow['neb_beer']
+                : ($editRow['contract_beer'] ?? '—');
+            $batchDisp = ($editRow['neb_batch'] ?? '') !== ''
+                ? $editRow['neb_batch']
+                : ($editRow['contract_batch'] ?? '—');
+
+            $editBanner = [
+                'beer'            => $beerDisp,
+                'batch'           => $batchDisp,
+                'event_date'      => $editRow['event_date'] ?? '',
+                'target_tank_raw' => $editRow['target_tank_raw'] ?? '',
+            ];
+
+            // CIP: load existing events for the partial
+            $cipExistingEdit = cip_events_for($pdoEdit, 'racking', $editId);
+        }
+    } catch (Throwable $eEdit) {
+        flash_set('err', 'Erreur lors du chargement du transfert : ' . htmlspecialchars($eEdit->getMessage()));
+        $editMode = false;
+    }
+}
+
+// #8 — CIP partial config (edit mode loads existing events; new submission: null)
 $cipConfig = [
     'machines'           => ['centri', 'kze', 'pump'],
     'show_inline_combine'=> true,
@@ -897,14 +1038,14 @@ $cipConfig = [
         ],
     ],
     'cip_types'          => $cipTypes,
-    'existing'           => null,  // new submission
+    'existing'           => $editMode ? ($cipExistingEdit ?? null) : null,
 ];
 ?><!doctype html>
 <html lang="fr">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Saisie Transferts — MaltyTask</title>
+  <title><?= $editMode ? 'Modifier Transfert' : 'Saisie Transferts' ?> — MaltyTask</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,200;0,9..144,300;0,9..144,400;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -926,38 +1067,89 @@ $cipConfig = [
     <div class="db-flash db-flash--err">⚠ Erreur de chargement : <?= htmlspecialchars($loadErr) ?></div>
   <?php endif ?>
 
+  <?php if ($editMode && $editBanner !== null):
+      $ebBeer   = htmlspecialchars((string)($editBanner['beer'] ?? '—'));
+      $ebBatch  = htmlspecialchars((string)($editBanner['batch'] ?? '—'));
+      $ebDate   = htmlspecialchars((string)($editBanner['event_date'] ?? '—'));
+      $ebTank   = htmlspecialchars((string)($editBanner['target_tank_raw'] ?? '—'));
+  ?>
+    <div class="fb-edit-banner" role="status">
+      <span class="fb-edit-banner__icon" aria-hidden="true">✎</span>
+      <div class="fb-edit-banner__body">
+        <strong>Modifier le transfert : <?= $ebBeer ?> (B<?= $ebBatch ?>) du <?= $ebDate ?> → <?= $ebTank ?></strong>
+        <br><span style="font-size:0.82rem;color:var(--ink-soft)">
+          Les champs sont pré-remplis depuis la base de données. La modification écrase les données existantes.
+          L'identité du lot (bière, brassin) n'est pas modifiable ici.
+        </span>
+      </div>
+    </div>
+  <?php endif ?>
+
   <!-- Header -->
   <div class="op-form__header">
     <div class="op-form__eyebrow">Transferts · Racking</div>
+    <?php if ($editMode): ?>
+    <h1 class="op-form__title">Modifier <em>transfert</em></h1>
+    <p class="op-form__sub">
+      Mise à jour d'un transfert existant. Les champs sont pré-remplis. La modification
+      écrase les données en base — les données modifiées deviennent la vérité.
+    </p>
+    <?php else: ?>
     <h1 class="op-form__title">Saisie <em>transferts</em></h1>
     <p class="op-form__sub">
       Transfert CCT → BBT (ou CCT / YT). Sélectionner un lot éligible (cold crash ≥ garde minimum).
       Toutes les mesures sont acceptées — des avertissements sont affichés si une valeur
       est hors plage typique, jamais bloquants.
     </p>
+    <?php endif ?>
   </div>
 
   <!-- ── FORM ─────────────────────────────────────────────────────────── -->
   <form id="racking-form" method="post" action="/modules/form-racking.php" novalidate>
     <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
 
-    <!-- Hidden fields populated by JS from card selection -->
-    <input type="hidden" id="neb_beer"              name="neb_beer"              value="">
-    <input type="hidden" id="neb_batch"             name="neb_batch"             value="">
-    <input type="hidden" id="neb_recipe_id_fk"      name="neb_recipe_id_fk"      value="">
-    <input type="hidden" id="contract_beer"         name="contract_beer"         value="">
-    <input type="hidden" id="contract_batch"        name="contract_batch"        value="">
-    <input type="hidden" id="contract_recipe_id_fk" name="contract_recipe_id_fk" value="">
+    <?php if ($editMode && $editSubmittedAtForHidden !== null): ?>
+    <!-- Edit-mode: carry original submitted_at so the POST handler preserves the NK. -->
+    <input type="hidden" name="edit_submitted_at" id="edit_submitted_at"
+           value="<?= htmlspecialchars($editSubmittedAtForHidden) ?>">
+    <input type="hidden" name="edit_id" value="<?= $editId ?>">
+    <?php endif ?>
+
+    <!-- Hidden fields populated by JS from card selection (or by PHP in edit mode) -->
+    <input type="hidden" id="neb_beer"              name="neb_beer"
+           value="<?= htmlspecialchars($editMode ? ($editPrefill['neb_beer'] ?? '') : '') ?>">
+    <input type="hidden" id="neb_batch"             name="neb_batch"
+           value="<?= htmlspecialchars($editMode ? ($editPrefill['neb_batch'] ?? '') : '') ?>">
+    <input type="hidden" id="neb_recipe_id_fk"      name="neb_recipe_id_fk"
+           value="<?= htmlspecialchars((string)($editMode ? ($editPrefill['neb_recipe_id_fk'] ?? '') : '')) ?>">
+    <input type="hidden" id="contract_beer"         name="contract_beer"
+           value="<?= htmlspecialchars($editMode ? ($editPrefill['contract_beer'] ?? '') : '') ?>">
+    <input type="hidden" id="contract_batch"        name="contract_batch"
+           value="<?= htmlspecialchars($editMode ? ($editPrefill['contract_batch'] ?? '') : '') ?>">
+    <input type="hidden" id="contract_recipe_id_fk" name="contract_recipe_id_fk"
+           value="<?= htmlspecialchars((string)($editMode ? ($editPrefill['contract_recipe_id_fk'] ?? '') : '')) ?>">
     <input type="hidden" id="source_cct_number"     name="source_cct_number"     value="">
     <!-- hors_process: set by JS to 1 when override checkbox is checked.
-         Server enforces role: if not manager/admin, this field is silently ignored. -->
-    <input type="hidden" id="hors_process" name="hors_process" value="0">
+         Server enforces role: if not manager/admin, this field is silently ignored.
+         In edit mode, pre-seed from the stored value. -->
+    <input type="hidden" id="hors_process" name="hors_process"
+           value="<?= $editMode ? (int)($editPrefill['hors_process_flag'] ?? 0) : 0 ?>">
 
     <!-- Warning panel (populated by form-framework.js) -->
     <div id="racking-warnings" class="op-form__warnings" hidden aria-live="polite"></div>
 
     <!-- ── Section: CIP (FIRST — as per Round-2 #8) ─────────────────── -->
     <?php require __DIR__ . '/../../app/partials/cip-section.php' ?>
+
+    <?php
+      // Pre-fill shorthand for all prefilled inputs below (KZE, mesures, pertes).
+      // Must be defined before its first use (KZE section, just below) — it is
+      // also used in the Mesures and Pertes sections further down.
+      $pf    = $editMode ? $editPrefill : [];
+      $pfVal = static function(string $key, $default = '') use ($pf): string {
+          return htmlspecialchars((string)($pf[$key] ?? $default));
+      };
+    ?>
 
     <!-- ── Section: Pasteurisation flash (KZE) ──────────────────────── -->
     <!-- Hidden by default. JS shows it when KZE is in the CIP set:
@@ -974,6 +1166,7 @@ $cipConfig = [
           </label>
           <input id="kze_target_pu" name="kze_target_pu" type="text" inputmode="decimal"
                  class="op-form__input" placeholder="ex. 25"
+                 value="<?= $pfVal('kze_target_pu') ?>"
                  data-pu-required="1">
         </div>
 
@@ -984,6 +1177,7 @@ $cipConfig = [
           </label>
           <input id="kze_avg_pu" name="kze_avg_pu" type="text" inputmode="decimal"
                  class="op-form__input" placeholder="ex. 26.1"
+                 value="<?= $pfVal('kze_avg_pu') ?>"
                  data-pu-required="1">
         </div>
 
@@ -991,6 +1185,28 @@ $cipConfig = [
     </div>
 
     <!-- ── Section: Sélection lot source (CCT) ───────────────────────── -->
+    <?php if ($editMode): ?>
+    <!-- Edit mode: identity strip (non-editable) replaces the candidate picker. -->
+    <div class="op-form__card">
+      <div class="op-form__card-title">— lot source (non modifiable)</div>
+      <div class="rf-edit-identity-strip">
+        <?php
+          $idBeer  = ($editPrefill['neb_beer']  ?? '') !== ''
+              ? $editPrefill['neb_beer']  : ($editPrefill['contract_beer']  ?? '—');
+          $idBatch = ($editPrefill['neb_batch'] ?? '') !== ''
+              ? $editPrefill['neb_batch'] : ($editPrefill['contract_batch'] ?? '—');
+        ?>
+        <span class="rf-edit-identity-strip__field">
+          <span class="rf-edit-identity-strip__label">Bière</span>
+          <span class="rf-edit-identity-strip__value"><?= htmlspecialchars($idBeer) ?></span>
+        </span>
+        <span class="rf-edit-identity-strip__field">
+          <span class="rf-edit-identity-strip__label">Brassin</span>
+          <span class="rf-edit-identity-strip__value"><?= htmlspecialchars($idBatch) ?></span>
+        </span>
+      </div>
+    </div>
+    <?php else: ?>
     <div class="op-form__card">
       <div class="op-form__card-title">— sélection lot source (CCT)</div>
 
@@ -1147,6 +1363,7 @@ $cipConfig = [
         <button type="button" id="rf-deselect" class="rf-selected-lot__clear">✕ changer</button>
       </div>
     </div><!-- card lot source -->
+    <?php endif // editMode candidate-picker vs identity-strip ?>
 
     <!-- ── Section: Opération ─────────────────────────────────────────── -->
     <div class="op-form__card">
@@ -1157,7 +1374,7 @@ $cipConfig = [
         <div class="op-form__field">
           <label class="op-form__label" for="event_date">Date transfert</label>
           <input id="event_date" name="event_date" type="date" class="op-form__input"
-                 value="<?= htmlspecialchars(date('Y-m-d')) ?>" required>
+                 value="<?= htmlspecialchars($editMode ? ($editPrefill['event_date'] ?? date('Y-m-d')) : date('Y-m-d')) ?>" required>
         </div>
 
         <!-- rack_type removed from form — derived server-side from CIP machine events -->
@@ -1165,13 +1382,15 @@ $cipConfig = [
         <!-- Start time -->
         <div class="op-form__field">
           <label class="op-form__label" for="start_time">Heure début <span class="op-form__unit">HH:MM</span></label>
-          <input id="start_time" name="start_time" type="time" class="op-form__input">
+          <input id="start_time" name="start_time" type="time" class="op-form__input"
+                 value="<?= htmlspecialchars($editMode ? ($editPrefill['start_time'] ?? '') : '') ?>">
         </div>
 
         <!-- End time -->
         <div class="op-form__field">
           <label class="op-form__label" for="end_time">Heure fin <span class="op-form__unit">HH:MM</span></label>
-          <input id="end_time" name="end_time" type="time" class="op-form__input">
+          <input id="end_time" name="end_time" type="time" class="op-form__input"
+                 value="<?= htmlspecialchars($editMode ? ($editPrefill['end_time'] ?? '') : '') ?>">
         </div>
 
         <!-- #3 — client input REMOVED. Resolved server-side from recipe FK. -->
@@ -1185,45 +1404,51 @@ $cipConfig = [
       <div class="op-form__grid--3 op-form__grid">
 
         <!-- Destination type -->
+        <?php
+          $pfDestType = $editMode ? ($editPrefill['racking_destination_type'] ?? '') : '';
+          $pfBbtNum   = $editMode ? (int)($editPrefill['bbt_number'] ?? 0) : 0;
+          $pfCctNum   = $editMode ? (int)($editPrefill['cct_number'] ?? 0) : 0;
+          $pfYtNum    = $editMode ? (int)($editPrefill['yt_number'] ?? 0) : 0;
+        ?>
         <div class="op-form__field">
           <label class="op-form__label" for="racking_destination_type">Type destination</label>
           <select id="racking_destination_type" name="racking_destination_type" class="op-form__select">
             <option value="">— sélectionner —</option>
             <?php foreach (DEST_TYPES as $dt): ?>
-              <option value="<?= htmlspecialchars($dt) ?>"><?= htmlspecialchars($dt) ?></option>
+              <option value="<?= htmlspecialchars($dt) ?>"<?= ($pfDestType === $dt) ? ' selected' : '' ?>><?= htmlspecialchars($dt) ?></option>
             <?php endforeach ?>
           </select>
         </div>
 
         <!-- BBT N° (#4 — relabelled "BBT N°") -->
-        <div class="op-form__field" id="bbt-field" style="display:none">
+        <div class="op-form__field" id="bbt-field"<?= ($pfDestType !== 'BBT') ? ' style="display:none"' : '' ?>>
           <label class="op-form__label" for="bbt_number">BBT N°</label>
           <select id="bbt_number" name="bbt_number" class="op-form__select">
             <option value="">—</option>
             <?php foreach ($bbts as $b): ?>
-              <option value="<?= (int)$b['number'] ?>">BBT <?= (int)$b['number'] ?></option>
+              <option value="<?= (int)$b['number'] ?>"<?= ($pfBbtNum > 0 && (int)$b['number'] === $pfBbtNum) ? ' selected' : '' ?>>BBT <?= (int)$b['number'] ?></option>
             <?php endforeach ?>
           </select>
         </div>
 
         <!-- CCT N° (#4 — relabelled "CCT N°") -->
-        <div class="op-form__field" id="cct-field" style="display:none">
+        <div class="op-form__field" id="cct-field"<?= ($pfDestType !== 'CCT') ? ' style="display:none"' : '' ?>>
           <label class="op-form__label" for="cct_number">CCT N°</label>
           <select id="cct_number" name="cct_number" class="op-form__select">
             <option value="">—</option>
             <?php foreach ($ccts as $c): ?>
-              <option value="<?= (int)$c['number'] ?>">CCT <?= (int)$c['number'] ?></option>
+              <option value="<?= (int)$c['number'] ?>"<?= ($pfCctNum > 0 && (int)$c['number'] === $pfCctNum) ? ' selected' : '' ?>>CCT <?= (int)$c['number'] ?></option>
             <?php endforeach ?>
           </select>
         </div>
 
         <!-- YT N° (#4 — new YT dropdown, sourced from ref_yt) -->
-        <div class="op-form__field" id="yt-field" style="display:none">
+        <div class="op-form__field" id="yt-field"<?= ($pfDestType !== 'YT') ? ' style="display:none"' : '' ?>>
           <label class="op-form__label" for="yt_number">YT N°</label>
           <select id="yt_number" name="yt_number" class="op-form__select">
             <option value="">—</option>
             <?php foreach ($yts as $y): ?>
-              <option value="<?= (int)$y['number'] ?>">YT <?= (int)$y['number'] ?></option>
+              <option value="<?= (int)$y['number'] ?>"<?= ($pfYtNum > 0 && (int)$y['number'] === $pfYtNum) ? ' selected' : '' ?>>YT <?= (int)$y['number'] ?></option>
             <?php endforeach ?>
           </select>
         </div>
@@ -1258,7 +1483,8 @@ $cipConfig = [
             Relevé compteur — début <span class="op-form__unit">HL</span>
           </label>
           <input id="flowmeter_start_hl" name="flowmeter_start_hl" type="text" inputmode="decimal"
-                 class="op-form__input" placeholder="ex. 12345.6">
+                 class="op-form__input" placeholder="ex. 12345.6"
+                 value="<?= $pfVal('flowmeter_start_hl') ?>">
         </div>
 
         <div class="op-form__field">
@@ -1266,7 +1492,8 @@ $cipConfig = [
             Relevé compteur — fin <span class="op-form__unit">HL</span>
           </label>
           <input id="flowmeter_end_hl" name="flowmeter_end_hl" type="text" inputmode="decimal"
-                 class="op-form__input" placeholder="ex. 12375.1">
+                 class="op-form__input" placeholder="ex. 12375.1"
+                 value="<?= $pfVal('flowmeter_end_hl') ?>">
         </div>
 
         <div class="op-form__field">
@@ -1274,8 +1501,12 @@ $cipConfig = [
             Volume transféré <span class="op-form__unit">HL</span>
             <span id="rf-vol-calculé-hint" class="op-form__opt" hidden>(calculé depuis le compteur)</span>
           </label>
+          <!-- racked_vol_hl: in edit mode, server RE-DERIVES from flowmeter start/end.
+               Pre-fill shows the stored value as a fallback; the derivation code
+               overwrites it when both flowmeter readings are present and valid. -->
           <input id="racked_vol_hl" name="racked_vol_hl" type="text" inputmode="decimal"
-                 class="op-form__input" placeholder="ex. 29.5">
+                 class="op-form__input" placeholder="ex. 29.5"
+                 value="<?= $pfVal('racked_vol_hl') ?>">
           <div id="rf-flowmeter-error" class="op-form__inline-error" hidden></div>
         </div>
 
@@ -1288,7 +1519,8 @@ $cipConfig = [
             Volume résiduel en cuve <span class="op-form__unit">HL</span>
           </label>
           <input id="blend_hl" name="blend_hl" type="text" inputmode="decimal"
-                 class="op-form__input" placeholder="0">
+                 class="op-form__input" placeholder="0"
+                 value="<?= $pfVal('blend_hl') ?>">
         </div>
 
         <!-- #5 — Derived "Volume résultant en cuve" display (pure JS; nothing persisted).
@@ -1307,7 +1539,8 @@ $cipConfig = [
             <span id="lbl-co2">CO₂ BBT</span> <span class="op-form__unit">g/L</span>
           </label>
           <input id="bbt_co2" name="bbt_co2" type="text" inputmode="decimal"
-                 class="op-form__input" placeholder="ex. 4.2">
+                 class="op-form__input" placeholder="ex. 4.2"
+                 value="<?= $pfVal('bbt_co2') ?>">
         </div>
 
         <!-- #6 — O₂ label dynamic by dest type. -->
@@ -1316,7 +1549,8 @@ $cipConfig = [
             <span id="lbl-o2">O₂ BBT</span> <span class="op-form__unit">ppb</span>
           </label>
           <input id="bbt_o2" name="bbt_o2" type="text" inputmode="decimal"
-                 class="op-form__input" placeholder="ex. 18">
+                 class="op-form__input" placeholder="ex. 18"
+                 value="<?= $pfVal('bbt_o2') ?>">
         </div>
 
         <div class="op-form__field">
@@ -1324,7 +1558,8 @@ $cipConfig = [
             Pression destination <span class="op-form__unit">bar</span>
           </label>
           <input id="bbt_pressure" name="bbt_pressure" type="text" inputmode="decimal"
-                 class="op-form__input" placeholder="ex. 1.2">
+                 class="op-form__input" placeholder="ex. 1.2"
+                 value="<?= $pfVal('bbt_pressure') ?>">
         </div>
 
         <div class="op-form__field">
@@ -1342,7 +1577,7 @@ $cipConfig = [
           <select id="centri_rinsed" name="centri_rinsed" class="op-form__select">
             <option value="">—</option>
             <?php foreach (CENTRI_RINSED_YN as $yn): ?>
-              <option value="<?= htmlspecialchars($yn) ?>"><?= htmlspecialchars($yn) ?></option>
+              <option value="<?= htmlspecialchars($yn) ?>"<?= ($editMode && ($editPrefill['centri_rinsed'] ?? '') === $yn) ? ' selected' : '' ?>><?= htmlspecialchars($yn) ?></option>
             <?php endforeach ?>
           </select>
         </div>
@@ -1352,7 +1587,7 @@ $cipConfig = [
           <select id="safety_cip_done" name="safety_cip_done" class="op-form__select">
             <option value="">—</option>
             <?php foreach (CENTRI_RINSED_YN as $yn): ?>
-              <option value="<?= htmlspecialchars($yn) ?>"><?= htmlspecialchars($yn) ?></option>
+              <option value="<?= htmlspecialchars($yn) ?>"<?= ($editMode && ($editPrefill['safety_cip_done'] ?? '') === $yn) ? ' selected' : '' ?>><?= htmlspecialchars($yn) ?></option>
             <?php endforeach ?>
           </select>
         </div>
@@ -1367,7 +1602,7 @@ $cipConfig = [
         <div class="op-form__field op-form__field--full">
           <label class="op-form__label" for="comments">Commentaires libres</label>
           <textarea id="comments" name="comments" class="op-form__textarea" rows="3"
-                    placeholder="Observations, problèmes rencontrés…"></textarea>
+                    placeholder="Observations, problèmes rencontrés…"><?= htmlspecialchars($editMode ? ($editPrefill['comments'] ?? '') : '') ?></textarea>
         </div>
       </div>
     </div>
@@ -1380,14 +1615,21 @@ $cipConfig = [
       <div class="op-form__card-title">— pertes</div>
 
       <!-- Reveal toggle — matches the KZE PU section pattern: checkbox label + hidden section -->
+      <?php
+        $pfHasLoss = $editMode && (
+            ($editPrefill['loss_source_hl'] ?? '') !== '' ||
+            ($editPrefill['loss_dest_hl']   ?? '') !== ''
+        );
+        $pfLossCause = $editMode ? ($editPrefill['loss_cause'] ?? '') : '';
+      ?>
       <label class="rf-pertes-toggle-label">
         <input type="checkbox" id="rf-perte-toggle" name="perte_toggle" value="1"
-               class="rf-pertes-toggle-checkbox">
+               class="rf-pertes-toggle-checkbox"<?= $pfHasLoss ? ' checked' : '' ?>>
         <span class="rf-pertes-toggle-text">Des pertes à signaler ?</span>
       </label>
 
       <!-- Collapsible loss fields — hidden until toggle is checked -->
-      <div id="rf-pertes-fields" hidden>
+      <div id="rf-pertes-fields"<?= $pfHasLoss ? '' : ' hidden' ?>>
         <div class="op-form__grid">
 
           <div class="op-form__field">
@@ -1397,7 +1639,8 @@ $cipConfig = [
             </label>
             <input id="loss_source_hl" name="loss_source_hl" type="number"
                    inputmode="decimal" step="0.001" min="0"
-                   class="op-form__input" placeholder="0.000">
+                   class="op-form__input" placeholder="0.000"
+                   value="<?= $pfVal('loss_source_hl') ?>">
           </div>
 
           <div class="op-form__field">
@@ -1407,7 +1650,8 @@ $cipConfig = [
             </label>
             <input id="loss_dest_hl" name="loss_dest_hl" type="number"
                    inputmode="decimal" step="0.001" min="0"
-                   class="op-form__input" placeholder="0.000">
+                   class="op-form__input" placeholder="0.000"
+                   value="<?= $pfVal('loss_dest_hl') ?>">
           </div>
 
           <div class="op-form__field">
@@ -1417,9 +1661,9 @@ $cipConfig = [
             <!-- No static `required` — JS adds it when a volume > 0 is entered -->
             <select id="loss_cause" name="loss_cause" class="op-form__select">
               <option value="">— sélectionner —</option>
-              <option value="produit">Produit</option>
-              <option value="machine">Machine</option>
-              <option value="humain">Humain</option>
+              <option value="produit"<?= ($pfLossCause === 'produit') ? ' selected' : '' ?>>Produit</option>
+              <option value="machine"<?= ($pfLossCause === 'machine') ? ' selected' : '' ?>>Machine</option>
+              <option value="humain"<?= ($pfLossCause === 'humain')  ? ' selected' : '' ?>>Humain</option>
             </select>
           </div>
 
@@ -1440,7 +1684,7 @@ $cipConfig = [
             </label>
             <textarea id="loss_note" name="loss_note" class="op-form__textarea" rows="2"
                       maxlength="500"
-                      placeholder="Cause, contexte, lot concerné…"></textarea>
+                      placeholder="Cause, contexte, lot concerné…"><?= htmlspecialchars($editMode ? ($editPrefill['loss_note'] ?? '') : '') ?></textarea>
           </div>
         </div>
       </div>
@@ -1455,14 +1699,18 @@ $cipConfig = [
       <div class="op-form__card-title">— transfert interrompu</div>
 
       <!-- Toggle — matches the Pertes section reveal pattern -->
+      <?php
+        $pfInterrupted = $editMode && (int)($editPrefill['interrupted_flag'] ?? 0) === 1;
+        $pfCleanVal    = $editMode ? $editPrefill['dest_bbt_still_clean'] : null;
+      ?>
       <label class="rf-interrupted-toggle-label">
         <input type="checkbox" id="rf-interrupted-toggle" name="interrupted_flag" value="1"
-               class="rf-interrupted-toggle-checkbox">
+               class="rf-interrupted-toggle-checkbox"<?= $pfInterrupted ? ' checked' : '' ?>>
         <span class="rf-interrupted-toggle-text">Le transfert a été interrompu</span>
       </label>
 
       <!-- Collapsible fields — hidden until toggle is checked -->
-      <div id="rf-interrupted-fields" hidden>
+      <div id="rf-interrupted-fields"<?= $pfInterrupted ? '' : ' hidden' ?>>
 
         <!-- interrupted_reason — required while visible -->
         <div class="op-form__grid--1 op-form__grid" style="margin-top:0.75rem">
@@ -1473,7 +1721,7 @@ $cipConfig = [
             </label>
             <textarea id="interrupted_reason" name="interrupted_reason"
                       class="op-form__textarea" rows="2" maxlength="500"
-                      placeholder="Décris l'événement : cause, état de la cuve, suite prévue…"></textarea>
+                      placeholder="Décris l'événement : cause, état de la cuve, suite prévue…"><?= htmlspecialchars($editMode ? ($editPrefill['interrupted_reason'] ?? '') : '') ?></textarea>
           </div>
         </div>
 
@@ -1487,12 +1735,14 @@ $cipConfig = [
             <div class="rf-bbt-propre-radios">
               <label class="rf-radio-label">
                 <input type="radio" name="dest_bbt_still_clean" value="1"
-                       id="dest_bbt_clean_oui" class="rf-bbt-propre-radio">
+                       id="dest_bbt_clean_oui" class="rf-bbt-propre-radio"
+                       <?= ($pfCleanVal !== null && (int)$pfCleanVal === 1) ? ' checked' : '' ?>>
                 Oui — BBT reste propre
               </label>
               <label class="rf-radio-label">
                 <input type="radio" name="dest_bbt_still_clean" value="0"
-                       id="dest_bbt_clean_non" class="rf-bbt-propre-radio">
+                       id="dest_bbt_clean_non" class="rf-bbt-propre-radio"
+                       <?= ($pfCleanVal !== null && (int)$pfCleanVal === 0) ? ' checked' : '' ?>>
                 Non — BBT à nettoyer avant le prochain transfert
               </label>
             </div>
@@ -1504,12 +1754,14 @@ $cipConfig = [
 
     <!-- Submit bar -->
     <div class="op-form__submit-bar">
+      <?php if (!$editMode): ?>
       <button type="button" class="op-form__btn op-form__btn--secondary"
               onclick="if(confirm('Effacer le brouillon ?')){localStorage.removeItem('racking-draft');location.reload();}">
         Effacer brouillon
       </button>
+      <?php endif ?>
       <button type="submit" id="rf-submit" class="op-form__btn op-form__btn--primary">
-        Enregistrer le transfert →
+        <?= $editMode ? 'Mettre à jour le transfert →' : 'Enregistrer le transfert →' ?>
       </button>
     </div>
 
@@ -1533,6 +1785,7 @@ $cipConfig = [
             <th>QC</th>
             <th>Opérateur</th>
             <th>Override</th>
+            <th></th>
           </tr>
         </thead>
         <tbody>
@@ -1563,6 +1816,10 @@ $cipConfig = [
                   <span class="rf-hp-badge rf-hp-badge--normal">—</span>
                 <?php endif ?>
               </td>
+              <td class="fb-recent__edit-cell">
+                <a href="/modules/form-racking.php?edit=<?= (int)$r['id'] ?>"
+                   class="fb-recent__edit-link">Corriger</a>
+              </td>
             </tr>
           <?php endforeach ?>
         </tbody>
@@ -1577,6 +1834,16 @@ $cipConfig = [
 window.RF_CANDIDATES          = <?= $candidatesJson ?>;
 window.RF_CANDIDATES_OVERRIDE = <?= $candidatesOverrideJson ?>;
 window.RF_CAN_OVERRIDE        = <?= $canOverride ? 'true' : 'false' ?>;
+// Edit mode: when true, JS skips the lot-card selection requirement and treats
+// the pre-seeded hidden identity fields as already-selected.
+window.RF_EDIT_MODE = <?= $editMode ? 'true' : 'false' ?>;
+<?php if ($editMode): ?>
+window.RF_EDIT_PREFILL = <?= json_encode([
+    'neb_beer'      => $editPrefill['neb_beer'] ?? '',
+    'neb_batch'     => $editPrefill['neb_batch'] ?? '',
+    'avg_turbidity' => $editPrefill['avg_turbidity'] ?? '',
+], JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+<?php endif ?>
 // Per-recipe QC threshold bands (field-name-keyed). "__global" is the fallback.
 // null means the resolver threw — JS falls back to the static init() thresholds.
 window.QC_THRESHOLDS = <?= $qcThresholdsJson ?>;

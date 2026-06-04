@@ -179,7 +179,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // ── 3. Build submitted_at ─────────────────────────────────────────────
         $submittedAt = date('Y-m-d H:i:s.u');
 
-        $auditFlags = 'web_entry';
+        // In edit mode (confirmed overwrite of existing batch), append ,correction to audit flags.
+        $auditFlags = ($existingRow !== false && $confirmOverwrite) ? 'web_entry,correction' : 'web_entry';
 
         // ── 4. Brewday header row ─────────────────────────────────────────────
         // Idempotency: uq_natural_key (beer, batch) already enforced at DB level.
@@ -211,6 +212,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         ];
 
         $brewdayNk = ['beer', 'batch'];
+
+        // Before-snapshot for the main brewday row:
+        // $existingRow was fetched above for the confirm-overwrite guard.
+        // When it's non-false and the operator confirmed or is in edit-mode, this
+        // is an UPDATE — capture the pre-image so log_revision emits action='update'.
+        $brewdayBefore = null;
+        if ($existingRow !== false) {
+            $brewdayBefore = bd_fetch_before($pdo, 'bd_brewing_brewday_v2', (int)$existingRow['id']);
+        }
+
         $brewdayResult = bd_upsert($pdo, 'bd_brewing_brewday_v2', $brewdayRow, $brewdayNk);
         $brewdayId = $brewdayResult['id'];
 
@@ -218,12 +229,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $cipMeta = ['submitted_at' => $submittedAt, 'email' => $me['username']];
         cip_upsert($pdo, 'brewing', $brewdayId, $cipEvents, $cipMeta);
 
+        // $brewdayBefore is non-null when an existing row is being overwritten (edit/confirm
+        // path) → action='update' with real before_json. null → action='insert' (new batch).
         log_revision(
             $pdo,
             $me,
             'bd_brewing_brewday_v2',
             $brewdayId,
-            null,   // new insert from web form; submitted_at is always fresh
+            $brewdayBefore,
             $brewdayRow,
             'normal',
             $fwComment ?: null

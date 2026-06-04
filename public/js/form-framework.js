@@ -53,6 +53,9 @@ const FormFramework = (() => {
     for (const [k, v] of Object.entries(data)) {
       const el = form.elements.namedItem(k);
       if (!el || el.type === 'hidden' || el.type === 'submit') continue;
+      // Restore only into empty fields — never clobber a server-side prefill
+      // (edit mode) or a value already present on this load.
+      if (el.value !== '' && el.value != null) continue;
       el.value = v;
     }
   }
@@ -263,8 +266,17 @@ const FormFramework = (() => {
     _activeWarningPanel  = warningPanelId ? document.getElementById(warningPanelId) : null;
     _activeExtraWarnings = (typeof extraWarnings === 'function') ? extraWarnings : null;
 
-    // Load draft on page load
-    if (draftKey) loadDraft(form, draftKey);
+    // Load draft on page load — but if the LAST action succeeded (a success
+    // flash is on the page after the PRG redirect), start fresh instead. On a
+    // validation error (err flash) or a normal revisit there is no success flash,
+    // so the draft is restored and the operator's input survives a rejected submit.
+    if (draftKey) {
+      if (document.querySelector('.db-flash--ok')) {
+        clearDraft(draftKey);
+      } else {
+        loadDraft(form, draftKey);
+      }
+    }
 
     // Save draft on any input change
     if (draftKey) {
@@ -326,11 +338,13 @@ const FormFramework = (() => {
               commentInput.value = comment;
             }
           }
-          if (draftKey) clearDraft(draftKey);
+          // Do NOT clear the draft here (on submit attempt) — that wiped the
+          // operator's input before the server validated, blanking the form on a
+          // validation error. The draft is cleared on the next load instead, iff a
+          // success flash (.db-flash--ok) is present (see init()).
           form.submit();
         });
       } else {
-        if (draftKey) clearDraft(draftKey);
         form.submit();
       }
     });

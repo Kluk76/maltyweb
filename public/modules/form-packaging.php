@@ -1050,6 +1050,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $safeRow['tank_read_id_fk'] = $tankReadId;
                     }
 
+                    // Before-snapshot for edit mode: capture the pre-image so
+                    // log_revision emits action='update' with real before_json.
+                    // NK has nullable contract columns — can't use bd_lookup_pk_by_nk reliably.
+                    // Instead, look up the row by submitted_at + row_origin + nebuleuse_format_suffix
+                    // (the columns that uniquely identify a session row within the original session).
+                    $rowBefore = null;
+                    if ($editSubmittedAt !== null) {
+                        $preLookup = $pdo->prepare(
+                            "SELECT id FROM `" . PACKAGING_LIVE_TABLE . "`
+                              WHERE submitted_at = ?
+                                AND row_origin = ?
+                                AND COALESCE(nebuleuse_format_suffix,'') = COALESCE(?,'')
+                                AND is_tombstoned = 0
+                              LIMIT 1"
+                        );
+                        $preLookup->execute([
+                            $editSubmittedAt,
+                            $safeRow['row_origin'] ?? 'main',
+                            $safeRow['nebuleuse_format_suffix'] ?? null,
+                        ]);
+                        $prePk = $preLookup->fetchColumn();
+                        if ($prePk !== false) {
+                            $rowBefore = bd_fetch_before($pdo, PACKAGING_LIVE_TABLE, (int)$prePk);
+                        }
+                    }
+
                     $result           = bd_upsert($pdo, PACKAGING_LIVE_TABLE, $safeRow, $nkCols);
                     $rowId            = (int)$result['id'];
 
@@ -1075,9 +1101,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     } elseif ($tankReadingOverrideFlag === 1) {
                         $auditParts[] = "tank_reading_override: " . ($tankReadingOverrideReason ?? 'no reason given');
                     }
+                    if ($editSubmittedAt !== null) {
+                        $auditParts[] = 'correction';
+                    }
                     $revisionComment = implode(' — ', array_filter($auditParts)) ?: null;
 
-                    log_revision($pdo, $me, PACKAGING_LIVE_TABLE, $rowId, null, $safeRow, $qcFlag, $revisionComment);
+                    // $rowBefore is non-null in edit mode → action='update'; null → action='insert'.
+                    log_revision($pdo, $me, PACKAGING_LIVE_TABLE, $rowId, $rowBefore, $safeRow, $qcFlag, $revisionComment);
                 }
 
                 // ── Step B2: Orphan-on-shrink (edit mode only) ────────────────────
