@@ -215,10 +215,9 @@ $userRole = htmlspecialchars($me["role"] ?? "");
         <?php if ($userRole): ?>
           <div class="tb__user-role"><?= $userRole ?></div>
         <?php endif ?>
-        <?php if (!$showAdminBlock): ?>
-          <div class="tb__admin-sep" role="separator"></div>
-          <a class="tb__admin-item tb__admin-item--out" href="/logout.php" role="menuitem">Déconnexion</a>
-        <?php endif ?>
+        <div class="tb__admin-sep" role="separator"></div>
+        <a class="tb__admin-item" href="/admin/settings/devices.php" role="menuitem">Mes appareils</a>
+        <a class="tb__admin-item tb__admin-item--switch" href="/logout.php" role="menuitem">Changer d'utilisateur</a>
       </div>
     </div>
 

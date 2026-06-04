@@ -3001,6 +3001,239 @@ body.home::after {
 }
 .home .settings-table__row--pinned:hover td { background: color-mix(in srgb, var(--hop) 9%, transparent); }
 
+/* ============================================================
+   Settings — Devices page (settings__* BEM block)
+   ============================================================ */
+
+/* Section wrapper */
+.home .settings__section {
+  width: 100%;
+  margin-bottom: 42px;
+}
+.home .settings__section-title {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--hop);
+  margin: 0 0 18px;
+}
+
+/* "Cet appareil" card */
+.home .settings__device-panel {
+  padding: 22px 24px 20px;
+  border: 1px solid var(--hairline-2);
+  background: linear-gradient(180deg, rgba(25,20,15,0.55), rgba(10,9,8,0.35));
+  border-radius: 2px;
+  position: relative;
+  overflow: hidden;
+}
+.home .settings__device-panel::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--oak-deep), transparent 75%);
+}
+
+/* Status row */
+.home .settings__device-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+/* Status badges */
+.home .settings__device-badge {
+  display: inline-block;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  padding: 3px 9px;
+  border-radius: 1px;
+  border: 1px solid;
+}
+.home .settings__device-badge--shared {
+  color: var(--oak);
+  border-color: color-mix(in srgb, var(--oak) 38%, transparent);
+  background: color-mix(in srgb, var(--oak) 12%, transparent);
+}
+.home .settings__device-badge--personal {
+  color: var(--ink-mute);
+  border-color: var(--hairline-2);
+  background: transparent;
+}
+.home .settings__device-label {
+  font-family: "DM Sans", sans-serif;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.home .settings__device-note {
+  font-family: "DM Sans", sans-serif;
+  font-size: 13px;
+  color: var(--ink-mute);
+  line-height: 1.5;
+  margin: 0 0 16px;
+  max-width: 680px;
+}
+
+/* Mark-shared form row */
+.home .settings__device-mark-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.home .settings__device-input {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 12px;
+  background: var(--bg);
+  color: var(--ink);
+  border: 1px solid var(--hairline-2);
+  padding: 7px 10px;
+  border-radius: 1px;
+  min-width: 260px;
+  box-sizing: border-box;
+}
+.home .settings__device-input--sm { min-width: 180px; }
+.home .settings__device-input:focus {
+  outline: none;
+  border-color: var(--hop-deep);
+}
+
+/* Relabel row inside table cell */
+.home .settings__relabel-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Inline form wrapper */
+.home .settings__inline-form { display: inline; }
+.home .settings__inline-form--mark,
+.home .settings__inline-form--unmark { display: block; }
+.home .settings__inline-form--relabel { display: block; }
+
+/* Table */
+.home .settings__table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin-bottom: 18px;
+}
+.home .settings__table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.home .settings__table thead tr {
+  border-bottom: 1px solid var(--hairline-2);
+}
+.home .settings__table th {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  text-align: left;
+  padding: 12px 14px 10px;
+  white-space: nowrap;
+}
+.home .settings__table td {
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--hairline);
+  font-size: 13px;
+  color: var(--ink-soft);
+  vertical-align: middle;
+}
+.home .settings__table tbody tr:hover td {
+  background: color-mix(in srgb, var(--hop) 5%, transparent);
+}
+.home .settings__mono {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11.5px;
+}
+.home .settings__ua {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+  color: var(--ink-mute);
+  max-width: 260px;
+}
+
+/* Buttons */
+.home .settings__btn {
+  display: inline-block;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  background: transparent;
+  color: var(--ink-soft);
+  border: 1px solid var(--hairline-2);
+  padding: 6px 12px;
+  border-radius: 1px;
+  cursor: pointer;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.home .settings__btn:hover {
+  border-color: var(--ink-mute);
+  color: var(--ink);
+}
+.home .settings__btn--primary {
+  color: var(--hop);
+  border-color: var(--hop-deep);
+}
+.home .settings__btn--primary:hover {
+  background: var(--hop-deep);
+  color: var(--bg);
+}
+.home .settings__btn--neutral {
+  color: var(--ink-mute);
+}
+.home .settings__btn--danger {
+  color: var(--ember);
+  border-color: color-mix(in srgb, var(--ember) 38%, transparent);
+}
+.home .settings__btn--danger:hover {
+  background: var(--ember);
+  color: var(--bg);
+  border-color: var(--ember);
+}
+.home .settings__btn--danger-outline {
+  color: var(--ember);
+  border-color: color-mix(in srgb, var(--ember) 38%, transparent);
+}
+.home .settings__btn--danger-outline:hover {
+  background: color-mix(in srgb, var(--ember) 12%, transparent);
+}
+
+/* Bulk-action footer */
+.home .settings__bulk-actions {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--hairline);
+}
+.home .settings__empty {
+  font-family: "Fraunces", serif;
+  font-style: italic;
+  color: var(--ink-mute);
+  font-size: 14px;
+  margin: 0;
+}
+
+/* Topbar — "Changer d'utilisateur" emphasis */
+.home .tb__admin-item--switch {
+  font-weight: 500;
+  color: var(--oak);
+}
+.home .tb__admin-item--switch:hover {
+  color: var(--ember);
+  background: color-mix(in srgb, var(--ember) 10%, transparent);
+}
 
 /* ============================================================
    AUTH — Login page (dark editorial, toasted oak + hop garden)
