@@ -17,6 +17,7 @@ require_once __DIR__ . '/../../app/csrf.php';
 require_once __DIR__ . '/../../app/settings-helpers.php';
 require_once __DIR__ . '/../../app/db-write-helpers.php';
 require_once __DIR__ . '/../../app/services/invite_token.php';
+require_once __DIR__ . '/../../app/services/mailer.php';
 // app/db.php + app/services/remember_token.php are already included transitively via auth.php
 
 require_login();
@@ -342,10 +343,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'normal', 'Réglages généraux: création utilisateur');
 
             if (!$passwordProvided) {
-                // Generate invite link — admin copies and sends to user
+                // Generate invite link — try to email it, always show copy-able fallback
                 $raw       = invite_create($pdo, $newUserId, (int) $me['id'], 'invite', 72);
                 $inviteUrl = 'https://app.maltytask.ch/set-password.php?token=' . $raw;
-                flash_set('ok', "Utilisateur « " . htmlspecialchars($username) . " » créé (inactif). Lien d'invitation (valable 72 h) — copier et envoyer à l'utilisateur :\n" . $inviteUrl);
+
+                $mailSent = false;
+                if ($email !== null) {
+                    $tpl      = mail_account_template(
+                        $displayName ?? $username,
+                        $inviteUrl,
+                        $me['display_name'] ?? $me['username'],
+                        'invite'
+                    );
+                    $mailSent = send_mail($email, $tpl['subject'], $tpl['html'], $tpl['text']);
+                }
+
+                if ($email !== null && $mailSent) {
+                    flash_set('ok', "Utilisateur « " . htmlspecialchars($username) . " » créé (inactif). Invitation envoyée à " . htmlspecialchars($email) . ". · Lien de secours : " . $inviteUrl);
+                } elseif ($email !== null && !$mailSent) {
+                    flash_set('ok', "Utilisateur « " . htmlspecialchars($username) . " » créé (inactif). Envoi e-mail indisponible — transmettez ce lien : " . $inviteUrl);
+                } else {
+                    flash_set('ok', "Utilisateur « " . htmlspecialchars($username) . " » créé (inactif). Lien d'invitation (valable 72 h) — copier et envoyer à l'utilisateur :\n" . $inviteUrl);
+                }
             } else {
                 flash_set('ok', "Utilisateur « " . htmlspecialchars($username) . " » créé.");
             }
@@ -465,7 +484,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ['event' => 'password_reset_link_generated'],
                 'normal', 'Réglages généraux: lien de réinitialisation mot de passe généré');
 
-            flash_set('ok', "Lien de réinitialisation pour « " . htmlspecialchars((string) $targetUser['username']) . " » (valable 72 h) — copier et envoyer à l'utilisateur :\n" . $resetUrl);
+            $targetEmail = ($targetUser['email'] ?? '') !== '' ? (string) $targetUser['email'] : null;
+            $mailSent    = false;
+            if ($targetEmail !== null) {
+                $tpl      = mail_account_template(
+                    $targetUser['display_name'] ?? $targetUser['username'],
+                    $resetUrl,
+                    $me['display_name'] ?? $me['username'],
+                    'reset'
+                );
+                $mailSent = send_mail($targetEmail, $tpl['subject'], $tpl['html'], $tpl['text']);
+            }
+
+            if ($targetEmail !== null && $mailSent) {
+                flash_set('ok', "Lien de réinitialisation envoyé à " . htmlspecialchars($targetEmail) . " · Lien de secours : " . $resetUrl);
+            } elseif ($targetEmail !== null && !$mailSent) {
+                flash_set('ok', "Envoi e-mail indisponible — transmettez ce lien à « " . htmlspecialchars((string) $targetUser['username']) . " » : " . $resetUrl);
+            } else {
+                flash_set('ok', "Lien de réinitialisation pour « " . htmlspecialchars((string) $targetUser['username']) . " » (valable 72 h) — copier et envoyer à l'utilisateur :\n" . $resetUrl);
+            }
             redirect_to('/modules/reglages-generaux.php?sec=users');
         }
 
@@ -488,7 +525,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ['event' => 'invite_link_generated'],
                 'normal', 'Réglages généraux: lien d\'invitation généré');
 
-            flash_set('ok', "Lien d'invitation pour « " . htmlspecialchars((string) $targetUser['username']) . " » (valable 72 h) — copier et envoyer à l'utilisateur :\n" . $inviteUrl);
+            $targetEmail = ($targetUser['email'] ?? '') !== '' ? (string) $targetUser['email'] : null;
+            $mailSent    = false;
+            if ($targetEmail !== null) {
+                $tpl      = mail_account_template(
+                    $targetUser['display_name'] ?? $targetUser['username'],
+                    $inviteUrl,
+                    $me['display_name'] ?? $me['username'],
+                    'invite'
+                );
+                $mailSent = send_mail($targetEmail, $tpl['subject'], $tpl['html'], $tpl['text']);
+            }
+
+            if ($targetEmail !== null && $mailSent) {
+                flash_set('ok', "Invitation envoyée à " . htmlspecialchars($targetEmail) . " · Lien de secours : " . $inviteUrl);
+            } elseif ($targetEmail !== null && !$mailSent) {
+                flash_set('ok', "Envoi e-mail indisponible — transmettez ce lien à « " . htmlspecialchars((string) $targetUser['username']) . " » : " . $inviteUrl);
+            } else {
+                flash_set('ok', "Lien d'invitation pour « " . htmlspecialchars((string) $targetUser['username']) . " » (valable 72 h) — copier et envoyer à l'utilisateur :\n" . $inviteUrl);
+            }
             redirect_to('/modules/reglages-generaux.php?sec=users');
         }
 
