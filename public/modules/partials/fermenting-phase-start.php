@@ -14,18 +14,15 @@ declare(strict_types=1);
  *   $ff_beer, $ff_batch, $ff_recipeId (URL params)
  *   $ff_cctNumber  — int|null      CCT number for this (beer, batch)
  *   $ff_cctMissing — bool          brewday row found but cct IS NULL
- *   $ff_cipStatus  — array|null    from cct_cip_status(); null if no CCT
  *   $ff_yeastInfo  — array|null    from resolve_recipe_yeast(); null if no recipe
  *
  * Firewall predicates (all display-only; submit button state derived from them):
  *   1. CCT-presence gate — resolves (beer, batch) → CCT or shows banner
- *   2. CCT CIP cadence   — days since last CCT CIP vs thresholds; override path
- *   3. Yeast eligibility — earliest ColdCrash date from garde_days_min (display only)
+ *   2. Yeast eligibility — earliest ColdCrash date from garde_days_min (display only)
  *
  * The form <form> wraps the complete fermenting event fields. The submit button
- * is disabled when any firewall predicate is RED (no CCT or CIP blocked without
- * override). YELLOW with override checkbox + reason field leaves submit enabled
- * after the reason is filled.
+ * is disabled when any firewall predicate is RED (no CCT). Gate 2 (CIP cadence)
+ * is intentionally absent from the fermenting start firewall.
  *
  * POST handler: /modules/form-fermenting.php (unchanged, P-C work).
  *
@@ -60,39 +57,10 @@ if ($hasBeerBatch) {
     $gate1Label    = 'Sélectionner un brassin pour évaluer la CCT';
 }
 
-// Gate 2: CCT CIP cadence
-$gate2Severity     = 'pending';
-$gate2Label        = '';
-$cipDaysSince      = null;
-$cipMaxDays        = null;
-$cipWarnDays       = null;
-$gate2AllowOverride = false;  // YELLOW permits override; RED does not by design
-                               // (no CCT = cannot override: must fix data first)
+// Gate 2 (CIP cadence) has been removed from the fermenting start firewall.
+// It remains active in the racking start firewall (session-body-racking.php).
 
-if ($ff_cipStatus !== null) {
-    $cipDaysSince = $ff_cipStatus['days_since_cip'];
-    $cipMaxDays   = $ff_cipStatus['max_days'];
-    $cipWarnDays  = $ff_cipStatus['warn_days'];
-
-    $gate2Severity = $ff_cipStatus['severity'];  // 'ok', 'warn', 'red'
-    // Store raw — escape at render-time only (consistent with lines 223 + 260).
-    $gate2Label    = $ff_cipStatus['verdict_label'];
-
-    // YELLOW allows operator override with a reason field; RED blocks the submit button.
-    // Rationale: 'warn' = advisory overage the operator can justify (e.g. low-foam product);
-    // 'red' = hard limit per commissioning_settings — must CIP before starting.
-    $gate2AllowOverride = ($gate2Severity === 'warn');
-} elseif ($hasBeerBatch && $ff_cctNumber === null) {
-    // CCT unknown — CIP gate cannot run.
-    $gate2Severity = 'pending';
-    $gate2Label    = 'CIP CCT — en attente de la CCT (Gate 1)';
-} elseif ($hasBeerBatch) {
-    // cct_cip_status should have been called — data-load error path.
-    $gate2Severity = 'pending';
-    $gate2Label    = 'CIP CCT — données non disponibles';
-}
-
-// Gate 3: Yeast eligibility (display-only — never blocks submit)
+// Gate 2: Yeast eligibility (display-only — never blocks submit)
 $gate3Available   = false;
 $gate3Label       = '';
 $gate3EarliestCc  = null;  // DateTimeImmutable or null
@@ -117,12 +85,12 @@ if ($ff_yeastInfo !== null) {
 }
 
 // ── Overall submit-blocking verdict ────────────────────────────────────────────
-// RED in gate1 or gate2 (without override) → submit disabled.
-$submitBlocked = (
-    $gate1Severity === 'red' ||
-    ($gate2Severity === 'red')
-);
-// YELLOW gate2 without override reason also keeps button disabled via JS.
+// RED in gate1 → submit disabled. Gate 2 (CIP cadence) removed from fermenting.
+// EDIT MODE: a correction never re-runs the start firewall (the firewall is for
+// commissioning a NEW ferment). Migrated rows carry beer_raw values (e.g. "STI 171")
+// that don't resolve to a brewday CCT, which would otherwise wrongly disable the
+// submit button. Always allow submit when correcting an existing row.
+$submitBlocked = (!empty($editMode)) ? false : ($gate1Severity === 'red');
 
 ?>
 
@@ -147,8 +115,7 @@ $submitBlocked = (
     <select id="ferm_sel_event_type" class="op-form__select" style="max-width:320px;">
       <option value="Reads">Mesures densité / pH / temp</option>
       <option value="DryHop">Houblonnage à froid</option>
-      <option value="Purge">Purge CO₂</option>
-      <option value="ColdCrash">Cold Crash</option>
+      <option value="Purge">Purge</option>
     </select>
   </div>
 
@@ -188,18 +155,26 @@ $submitBlocked = (
 <?php else: ?>
 <!-- ──────────────────────────────────────────────────────────────────────────
      FORM VIEW — beer/batch selected; render full firewall + event sections.
+     In edit mode ($editMode): identity strip is locked, event_type is locked,
+     event_date is editable, edit_submitted_at hidden field preserves NK.
      ────────────────────────────────────────────────────────────────────────── -->
 
-<!-- ── START PHASE: Fermenting session firewall (P-B / P-C) ───────────────────── -->
+<!-- ── START PHASE: Fermenting session firewall (P-B / P-C) / Edit correction ── -->
 <form id="fermenting-form" method="post" action="/api/fermenting-phase-submit.php" novalidate>
   <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
   <input type="hidden" name="phase" value="start">
   <input type="hidden" name="session_id" value="<?= (int)$ff_sessionId ?>">
   <input type="hidden" id="recipe_id_fk" name="recipe_id_fk"
          value="<?= $ff_recipeId !== null ? (int)$ff_recipeId : '' ?>">
-  <!-- CIP override payload — populated by JS when operator fills the reason field -->
-  <input type="hidden" id="ferm_fw_cip_override" name="ferm_fw_cip_override" value="0">
-  <input type="hidden" id="ferm_fw_cip_override_reason" name="ferm_fw_cip_override_reason" value="">
+
+  <?php if (!empty($editMode) && $editOrigSubmittedAt !== null): ?>
+  <!-- Edit-mode guard: carry original submitted_at to preserve the NK on re-POST.
+       CRITICAL: without this, bd_upsert stamps a fresh submitted_at → new NK → duplicate row. -->
+  <input type="hidden" name="edit_submitted_at"
+         value="<?= htmlspecialchars($editOrigSubmittedAt) ?>">
+  <input type="hidden" name="edit_id"
+         value="<?= (int)$editId ?>">
+  <?php endif ?>
 
   <!-- Warning panel (populated by form-framework.js) -->
   <div id="fermenting-warnings" class="op-form__warnings" hidden aria-live="polite"></div>
@@ -208,6 +183,34 @@ $submitBlocked = (
   <div class="op-form__card">
     <div class="op-form__card-title">— identité du brassin</div>
 
+    <?php if (!empty($editMode) && $editBanner !== null): ?>
+    <!-- Edit-mode banner — identifies the event being corrected -->
+    <div class="ferm-edit-banner" role="alert">
+      <span class="ferm-edit-banner__label">Correction</span>
+      <span class="ferm-edit-banner__detail">
+        <strong><?= htmlspecialchars($editBanner['beer']) ?></strong>
+        · Brassin <?= htmlspecialchars($editBanner['batch']) ?>
+        · <?= htmlspecialchars($editBanner['event_type']) ?>
+        · <?= htmlspecialchars($editBanner['event_date'] !== '' ? date('d.m.Y', strtotime($editBanner['event_date'])) : '') ?>
+      </span>
+    </div>
+
+    <!-- Non-editable identity strip in edit mode: beer/batch/event_type are locked -->
+    <div class="ferm-edit-identity-strip">
+      <strong><?= htmlspecialchars($prefillEdit['beer_raw'] ?? '') ?></strong>
+      <span>·</span>
+      <span>Brassin <?= htmlspecialchars($prefillEdit['batch'] ?? '') ?></span>
+      <span>·</span>
+      <span><?= htmlspecialchars($prefillEdit['event_type'] ?? '') ?></span>
+    </div>
+
+    <!-- Hidden identity fields consumed by the POST handler -->
+    <input type="hidden" name="beer_select" value="<?= htmlspecialchars($prefillEdit['beer_raw'] ?? '') ?>">
+    <input type="hidden" name="batch"       value="<?= htmlspecialchars($prefillEdit['batch']    ?? '') ?>">
+    <!-- event_type locked: passed as hidden field, not editable select -->
+    <input type="hidden" name="event_type"  value="<?= htmlspecialchars($prefillEdit['event_type'] ?? 'Reads') ?>">
+
+    <?php else: ?>
     <!-- Identity strip: show selected beer + batch + "change" link -->
     <div class="ferm-identity-strip">
       <span class="ferm-identity-beer"><?= htmlspecialchars($ff_beer) ?></span>
@@ -219,46 +222,59 @@ $submitBlocked = (
     <!-- Hidden identity fields consumed by the POST handler -->
     <input type="hidden" name="beer_select" value="<?= htmlspecialchars($ff_beer) ?>">
     <input type="hidden" name="batch"       value="<?= htmlspecialchars($ff_batch) ?>">
+    <?php endif ?>
 
     <div class="op-form__grid">
 
-      <!-- Event date -->
+      <!-- Event date — editable in both normal and edit modes -->
+      <?php
+      $editDateValue = (!empty($editMode) && !empty($prefillEdit['event_date']))
+          ? htmlspecialchars($prefillEdit['event_date'])
+          : htmlspecialchars(date('Y-m-d'));
+      ?>
       <div class="op-form__field">
         <label class="op-form__label" for="event_date">
           Date
           <span class="op-form__unit"><?= htmlspecialchars($displayFmt) ?></span>
         </label>
         <input id="event_date" name="event_date" type="date" class="op-form__input"
-               value="<?= htmlspecialchars(date('Y-m-d')) ?>" required>
+               value="<?= $editDateValue ?>" required>
       </div>
 
-      <!-- Event type — pre-selected from GET param if valid -->
+      <?php if (empty($editMode)): ?>
+      <!-- Event type — editable only in normal mode; locked as hidden field in edit mode.
+           ColdCrash is intentionally absent — it is captured via the checkbox below. -->
       <div class="op-form__field">
         <label class="op-form__label" for="event_type">Type d'évènement</label>
         <select id="event_type" name="event_type" class="op-form__select">
           <?php
           // $ff_eventType is validated in session-body-fermenting.php; empty = default Reads.
+          // ColdCrash is excluded: it is captured via the cold-crash checkbox, not the dropdown.
           $evtOptions = [
-              'Reads'     => 'Mesures densité / pH / temp',
-              'DryHop'    => 'Houblonnage à froid',
-              'Purge'     => 'Purge CO₂',
-              'ColdCrash' => 'Cold Crash',
+              'Reads'  => 'Mesures densité / pH / temp',
+              'DryHop' => 'Houblonnage à froid',
+              'Purge'  => 'Purge',
           ];
+          // If we arrived here via a ColdCrash deep-link (URL param), default to Reads.
+          $activeEvtType = in_array($ff_eventType, array_keys($evtOptions), true)
+              ? $ff_eventType : 'Reads';
           foreach ($evtOptions as $evtVal => $evtLabel):
           ?>
           <option value="<?= htmlspecialchars($evtVal) ?>"
-                  <?= ($ff_eventType === $evtVal) ? 'selected' : '' ?>>
+                  <?= ($activeEvtType === $evtVal) ? 'selected' : '' ?>>
             <?= htmlspecialchars($evtLabel) ?>
           </option>
           <?php endforeach ?>
         </select>
       </div>
+      <?php endif ?>
 
     </div>
   </div>
 
-  <?php if ($hasBeerBatch): ?>
+  <?php if (empty($editMode) && $hasBeerBatch): ?>
   <!-- ── Section: Vérifications pré-démarrage (firewall) ─────────────────── -->
+  <!-- Skipped in edit mode: corrections bypass the firewall (event already submitted). -->
   <div class="op-form__card ferm-fw-card" id="ferm-fw-card">
     <div class="op-form__card-title">— vérifications pré-démarrage</div>
 
@@ -275,57 +291,7 @@ $submitBlocked = (
         <span class="ferm-fw-text"><?= htmlspecialchars($gate1Label) ?></span>
       </li>
 
-      <!-- Gate 2: CIP cadence ────────────────────────────────────────────── -->
-      <?php if ($gate2Severity !== 'pending'): ?>
-      <li class="ferm-fw-item ferm-fw-item--<?= htmlspecialchars($gate2Severity) ?>" id="ferm-fw-cip-row">
-        <span class="ferm-fw-icon" aria-hidden="true">
-          <?php if ($gate2Severity === 'ok'): ?>✅
-          <?php elseif ($gate2Severity === 'warn'): ?>⚠️
-          <?php else: ?>🚫
-          <?php endif ?>
-        </span>
-        <span class="ferm-fw-text"><?= htmlspecialchars($gate2Label) ?></span>
-
-        <?php if ($gate2AllowOverride): ?>
-        <!-- Yellow CIP: operator-overrideable warn (identical UX to racking start firewall) -->
-        <div class="ferm-fw-override-wrap" id="ferm-fw-cip-override-wrap">
-          <label class="ferm-fw-override-label">
-            <input type="checkbox" class="ferm-fw-override-cb" id="ferm_cip_override_cb"
-                   aria-describedby="ferm-cip-override-desc">
-            <span>J'ai effectué un CIP non tracé</span>
-          </label>
-          <div class="ferm-fw-override-reason-row" id="ferm-cip-override-reason-row" hidden>
-            <label class="op-form__label ferm-fw-override-reason-label" for="ferm_cip_override_reason_text">
-              Raison <span class="op-form__req">*</span>
-            </label>
-            <input type="text" id="ferm_cip_override_reason_text"
-                   class="op-form__input ferm-fw-override-reason-input"
-                   placeholder="ex. CIP effectué ce matin, feuille papier signée"
-                   maxlength="255"
-                   aria-describedby="ferm-cip-override-desc">
-          </div>
-          <p class="ferm-fw-override-desc" id="ferm-cip-override-desc">
-            Cocher uniquement si un CIP a été fait mais non enregistré dans le système.
-            La justification est obligatoire et sera enregistrée dans la saisie.
-          </p>
-        </div>
-        <?php endif ?>
-
-        <?php if ($gate2Severity === 'red'): ?>
-        <p class="ferm-fw-red-note">
-          CIP requis avant de démarrer la fermentation.
-          Enregistrer le CIP dans la saisie brewday ou via le formulaire CIP.
-        </p>
-        <?php endif ?>
-      </li>
-      <?php else: ?>
-      <li class="ferm-fw-item ferm-fw-item--pending" id="ferm-fw-cip-row">
-        <span class="ferm-fw-icon" aria-hidden="true">⏳</span>
-        <span class="ferm-fw-text"><?= htmlspecialchars($gate2Label) ?></span>
-      </li>
-      <?php endif ?>
-
-      <!-- Gate 3: Yeast eligibility (display-only) ───────────────────────── -->
+      <!-- Gate 2: Yeast eligibility (display-only) ──────────────────────── -->
       <?php if ($gate3Available): ?>
       <li class="ferm-fw-item ferm-fw-item--info">
         <span class="ferm-fw-icon" aria-hidden="true">ℹ️</span>
@@ -348,6 +314,16 @@ $submitBlocked = (
 
     <div class="ferm-readings-grid">
 
+      <?php
+      // Edit-mode prefill values for reading inputs
+      $_editGravity = (!empty($editMode) && $prefillEdit['gravity'] !== null)
+          ? htmlspecialchars((string)$prefillEdit['gravity']) : '';
+      $_editPh = (!empty($editMode) && $prefillEdit['ph'] !== null)
+          ? htmlspecialchars((string)$prefillEdit['ph']) : '';
+      $_editTemp = (!empty($editMode) && $prefillEdit['temperature'] !== null)
+          ? htmlspecialchars((string)$prefillEdit['temperature']) : '';
+      ?>
+
       <div class="ferm-reading-card">
         <div class="ferm-reading-card__head">
           <span class="ferm-reading-card__label">Densité</span>
@@ -355,7 +331,8 @@ $submitBlocked = (
         </div>
         <input type="number" id="gravity" name="gravity"
                class="ferm-reading-input"
-               placeholder="—" step="0.1" min="0" max="30" autocomplete="off">
+               placeholder="—" step="0.1" min="0" max="30" autocomplete="off"
+               <?= $_editGravity !== '' ? "value=\"{$_editGravity}\"" : '' ?>>
         <div class="ferm-reading-hint" id="gravity-hint">OG typique 10–20°P · FG 0.5–5°P</div>
       </div>
 
@@ -366,7 +343,8 @@ $submitBlocked = (
         </div>
         <input type="number" id="ph" name="ph"
                class="ferm-reading-input"
-               placeholder="—" step="0.01" min="2" max="8" autocomplete="off">
+               placeholder="—" step="0.01" min="2" max="8" autocomplete="off"
+               <?= $_editPh !== '' ? "value=\"{$_editPh}\"" : '' ?>>
         <div class="ferm-reading-hint" id="ph-hint">Pale Ale typique 4.1–4.6</div>
       </div>
 
@@ -377,10 +355,44 @@ $submitBlocked = (
         </div>
         <input type="number" id="temperature" name="temperature"
                class="ferm-reading-input"
-               placeholder="—" step="0.1" min="-5" max="40" autocomplete="off">
+               placeholder="—" step="0.1" min="-5" max="40" autocomplete="off"
+               <?= $_editTemp !== '' ? "value=\"{$_editTemp}\"" : '' ?>>
         <div class="ferm-reading-hint" id="temp-hint">Fermentation 16–22°C · Cold crash 0–4°C</div>
       </div>
 
+    </div>
+
+    <?php
+    // Cold-crash checkbox logic:
+    //   - Non-edit mode: unchecked, always enabled.
+    //   - Edit mode, existing row IS ColdCrash: ticked + DISABLED (cannot un-terminate).
+    //   - Edit mode, existing row is NOT ColdCrash: unchecked + ENABLED (conversion path).
+    $isColdCrashEdit   = (!empty($editMode) && ($prefillEdit['event_type'] ?? '') === 'ColdCrash');
+    $ccFlagChecked     = $isColdCrashEdit;
+    $ccFlagDisabled    = $isColdCrashEdit; // locked only when already a ColdCrash row
+    ?>
+    <!-- ── Cold-crash flag: replaces the ColdCrash dropdown option ──────────── -->
+    <div class="ferm-coldcrash-flag" id="ferm-coldcrash-flag-wrap">
+      <label class="ferm-coldcrash-flag__label">
+        <input type="checkbox"
+               id="ferm_cold_crash_flag"
+               name="cold_crash_flag"
+               value="1"
+               class="ferm-coldcrash-flag__cb"
+               <?= $ccFlagChecked  ? 'checked'   : '' ?>
+               <?= $ccFlagDisabled ? 'disabled aria-disabled="true"' : '' ?>
+               aria-describedby="ferm-cc-flag-desc">
+        <span class="ferm-coldcrash-flag__text">Cold Crash — termine la fermentation</span>
+      </label>
+      <p class="ferm-coldcrash-flag__desc" id="ferm-cc-flag-desc">
+        <?php if (!empty($editMode) && !$isColdCrashEdit): ?>
+        Cocher pour convertir cette mesure en cold crash (in-place, même ID).
+        Cette action termine la session de fermentation et débloque le passage en soutirage.
+        <?php else: ?>
+        Cocher pour enregistrer le refroidissement final. Cette action termine la session
+        de fermentation et débloque le passage en garde / rack.
+        <?php endif ?>
+      </p>
     </div>
   </div>
 
@@ -391,10 +403,25 @@ $submitBlocked = (
       <span class="ferm-dh-count" id="dh-count-badge"></span>
     </div>
 
+    <?php
+    $_editDhTemp = (!empty($editMode) && $prefillEdit['temperature'] !== null)
+        ? htmlspecialchars((string)$prefillEdit['temperature']) : '';
+    ?>
+    <div class="op-form__field">
+      <label class="op-form__label" for="dh_temperature">
+        Température du dry-hop (°C)
+        <span class="op-form__unit">(optionnel)</span>
+      </label>
+      <input type="number" id="dh_temperature" name="dh_temperature"
+             class="op-form__input"
+             placeholder="—" step="0.1"
+             <?= $_editDhTemp !== '' ? "value=\"{$_editDhTemp}\"" : '' ?>>
+    </div>
+
     <table class="ferm-dh-table">
       <thead>
         <tr>
-          <th class="ferm-dh-col--hop">Houblon (MI)</th>
+          <th class="ferm-dh-col--hop">Ingrédient (MI)</th>
           <th class="ferm-dh-col--qty">Quantité</th>
           <th class="ferm-dh-col--unit">Unité</th>
           <th class="ferm-dh-col--lot">N° lot</th>
@@ -415,15 +442,26 @@ $submitBlocked = (
     </button>
 
     <p class="ferm-dh-note">
-      Saisir en grammes (g) ou kilogrammes (kg). Les additions sont enregistrées
-      dans <code>bd_fermenting_v2</code> avec <code>dh_category = 'hops_dry'</code>.
+      Houblons et autres ingrédients (additions à froid). Catégorie dérivée automatiquement du MI.
     </p>
   </div>
 
   <!-- ── Section: Purge (shown when event_type = Purge) ──────────────────── -->
   <div class="op-form__card" id="section-purge" hidden>
-    <div class="op-form__card-title">— purge CO₂</div>
+    <div class="op-form__card-title">— purge</div>
     <div class="op-form__grid--1 op-form__grid">
+      <div class="op-form__field">
+        <label class="op-form__label" for="purge_pressure_bar">
+          Pression cuve (bar)
+          <span class="op-form__unit">(optionnel)</span>
+        </label>
+        <input type="number" id="purge_pressure_bar" name="purge_pressure_bar"
+               class="op-form__input"
+               placeholder="—" step="0.01" min="0" autocomplete="off"
+               <?= (!empty($editMode) && isset($prefillEdit['purge_pressure_bar']) && $prefillEdit['purge_pressure_bar'] !== null)
+                   ? 'value="' . htmlspecialchars((string)$prefillEdit['purge_pressure_bar']) . '"'
+                   : '' ?>>
+      </div>
       <div class="op-form__field op-form__field--full">
         <label class="op-form__label" for="comment_purge">
           Commentaire purge
@@ -431,12 +469,8 @@ $submitBlocked = (
         </label>
         <textarea id="comment_purge" name="comment_purge"
                   class="op-form__textarea" rows="3"
-                  placeholder="Fuites constatées, pression anormale, anomalies…"></textarea>
+                  placeholder="Fuites constatées, pression anormale, anomalies…"><?= htmlspecialchars(!empty($editMode) ? ($prefillEdit['comment_purge'] ?? '') : '') ?></textarea>
       </div>
-    </div>
-    <div class="ferm-unwired-notice">
-      <strong>Non câblé :</strong> CO₂ pression (bar) et CO₂ dissous (g/L) absents de
-      <code>bd_fermenting_v2</code>. Seul le commentaire est stocké.
     </div>
   </div>
 
@@ -451,7 +485,7 @@ $submitBlocked = (
         </label>
         <textarea id="comment_cold_crash" name="comment_cold_crash"
                   class="op-form__textarea" rows="3"
-                  placeholder="Temp. cible, durée prévue, observations…"></textarea>
+                  placeholder="Temp. cible, durée prévue, observations…"><?= htmlspecialchars(!empty($editMode) ? ($prefillEdit['comment_cold_crash'] ?? '') : '') ?></textarea>
       </div>
     </div>
     <div class="ferm-unwired-notice">
@@ -470,7 +504,7 @@ $submitBlocked = (
         </label>
         <textarea id="final_comments" name="final_comments"
                   class="op-form__textarea" rows="3"
-                  placeholder="Notes, odeurs, aspect visuel, écarts, problèmes…"></textarea>
+                  placeholder="Notes, odeurs, aspect visuel, écarts, problèmes…"><?= htmlspecialchars(!empty($editMode) ? ($prefillEdit['final_comments'] ?? '') : '') ?></textarea>
       </div>
     </div>
   </div>
@@ -491,5 +525,4 @@ $submitBlocked = (
 
 </form>
 
-<!-- CIP override behaviour handled by form-fermenting.js reading window.FERMENTING_FIREWALL -->
 <?php endif /* $ff_phase === 'none' vs form view */ ?>

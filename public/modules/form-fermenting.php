@@ -27,7 +27,7 @@ declare(strict_types=1);
  *   batch         — batch number string (e.g. "213")
  *   line_idx      — 0 for all non-DryHop events; 0…N for DryHop rows
  *   recipe_id_fk  — INT UNSIGNED FK to ref_recipes.id (nullable)
- *   dh_category   — ENUM('hops_dry') — always 'hops_dry' on DryHop rows
+ *   dh_category   — ENUM('hops_dry','adjunct','mineral','process') — derived from MI category
  *   dh_mi_id_fk   — INT UNSIGNED FK to ref_mi.id (nullable on non-DH rows)
  *   dh_raw_name   — raw hop name as entered (nullable)
  *   dh_qty        — dry-hop quantity DECIMAL(10,3) in dh_unit
@@ -86,8 +86,8 @@ $me = current_user();
 // ── Allowed enum values ───────────────────────────────────────────────────────
 // Mirrors bd_fermenting_v2.event_type ENUM exactly
 const FERM_EVENT_TYPES = ['Reads', 'DryHop', 'Purge', 'ColdCrash'];
-// Mirrors bd_fermenting_v2.dh_unit ENUM exactly
-const DH_UNITS = ['g', 'kg'];
+// Mirrors bd_fermenting_v2.dh_unit ENUM exactly (migration 259 adds 'ml')
+const DH_UNITS = ['g', 'kg', 'ml'];
 
 // ── POST handler (P-C: delegated to /api/fermenting-phase-submit.php) ─────────
 // The inline POST handler has been extracted to /api/fermenting-phase-submit.php.
@@ -111,7 +111,7 @@ try {
     $pdo = maltytask_pdo();
 
     // ── Role gate for hors-process override ───────────────────────────────────
-    $canOverride = (is_admin($me) || is_manager($me));
+    $canOverride = manager_can('production', $me);
 
     // ── Candidate builder for beer-selection cards ─────────────────────────────
     //
@@ -303,38 +303,65 @@ try {
          ORDER BY name ASC"
     )->fetchAll();
 
-    // Hops MI catalog for dry-hop picker (Hops category, active only)
+    // Dry-hop MI catalog: Hops + adjuncts + minerals + process aids (active only).
+    // Ordered by category then name so the picker groups naturally.
     $hopsMi = $pdo->query(
-        "SELECT m.id, m.mi_id, m.name, m.pricing_unit
+        "SELECT m.id, m.mi_id, m.name, m.pricing_unit, c.name AS category
          FROM ref_mi m
          JOIN ref_mi_categories c ON m.category_id = c.id
-         WHERE c.name = 'Hops'
+         WHERE c.name IN ('Hops','Brewing Adjunct','Brewing Mineral','Process Chemical')
            AND m.is_active = 1
-         ORDER BY m.name ASC"
+         ORDER BY c.name ASC, m.name ASC"
     )->fetchAll();
 
-    // Build compact JS-safe hop structure
+    // Build compact JS-safe structure (window.FERMENTING_HOPS kept for minimal JS churn)
     $hopsJs = [];
     foreach ($hopsMi as $h) {
         $hopsJs[] = [
-            'id'    => (int)   $h['id'],
-            'mi_id' => $h['mi_id'],
-            'name'  => $h['name'],
-            'unit'  => $h['pricing_unit'] ?? 'kg',
+            'id'       => (int)$h['id'],
+            'mi_id'    => $h['mi_id'],
+            'name'     => $h['name'],
+            'unit'     => $h['pricing_unit'] ?? 'kg',
+            'category' => $h['category'],
         ];
     }
 
     // Recent fermentation sessions (last 5 open/closed fermenting sessions).
     // For each session, all bd_fermenting_v2 events are loaded in chronological order.
     // Historical rows with NULL session_id_fk are surfaced under a synthetic group.
+    //
+    // Display-side fallback (Bug C): when s.recipe_id_fk IS NULL (sessions opened before
+    // the write-side fix propagated recipe_id_fk), resolve recipe from the session's event
+    // rows via a correlated subquery. Uses ANY_VALUE() to satisfy ONLY_FULL_GROUP_BY while
+    // picking the first distinct recipe_id_fk from events linked to the session.
     $recentSessionsStmt = $pdo->prepare(
-        "SELECT s.id, s.phase, s.status, s.batch, s.recipe_id_fk,
+        "SELECT s.id, s.phase, s.status, s.batch,
+                COALESCE(s.recipe_id_fk,
+                    (SELECT MIN(f.recipe_id_fk)
+                       FROM bd_fermenting_v2 f
+                      WHERE f.session_id_fk = s.id
+                        AND f.recipe_id_fk IS NOT NULL
+                        AND f.is_tombstoned = 0)
+                ) AS recipe_id_fk,
                 s.opened_at, s.closed_at,
                 r.name AS recipe_name, r.recipe_short_name
            FROM op_sessions s
-           LEFT JOIN ref_recipes r ON r.id = s.recipe_id_fk
+           LEFT JOIN ref_recipes r ON r.id = COALESCE(s.recipe_id_fk,
+                    (SELECT MIN(f2.recipe_id_fk)
+                       FROM bd_fermenting_v2 f2
+                      WHERE f2.session_id_fk = s.id
+                        AND f2.recipe_id_fk IS NOT NULL
+                        AND f2.is_tombstoned = 0))
           WHERE s.form_type     = 'fermenting'
             AND s.is_tombstoned = 0
+            AND NOT (
+                s.status = 'open'
+                AND NOT EXISTS (
+                    SELECT 1 FROM bd_fermenting_v2 f3
+                    WHERE f3.session_id_fk = s.id
+                      AND f3.is_tombstoned = 0
+                )
+            )
           ORDER BY s.opened_at DESC
           LIMIT 5"
     );
@@ -403,6 +430,121 @@ try {
 $csrf          = csrf_token();
 $active_module = 'saisies';
 $displayFmt    = date_display_format();
+
+// ── Edit-mode detection ───────────────────────────────────────────────────────
+// Read with ?? default, then validate — same two-step pattern as form-brewing.php.
+$editIdRaw = $_GET['edit'] ?? null;
+$editId    = ($editIdRaw !== null && is_numeric($editIdRaw)) ? (int)$editIdRaw : null;
+if ($editId !== null && $editId <= 0) $editId = null;
+
+$editMode      = false;
+$prefillEdit   = [];   // fields to prefill: event_type, event_date, readings, beer_raw, batch, line_idx
+$editBanner    = null; // ['beer','batch','event_type','event_date'] for banner display
+$editOrigSubmittedAt = null;  // CRITICAL: original submitted_at to round-trip in hidden field
+$prefillDhLines = []; // DryHop sibling lines for edit-mode picker repopulation; empty for non-DryHop
+
+if ($editId !== null) {
+    try {
+        $pdoEdit = maltytask_pdo();
+
+        $editStmt = $pdoEdit->prepare(
+            "SELECT id, submitted_at, event_type, event_date,
+                    beer_raw, batch, line_idx, recipe_id_fk,
+                    gravity, ph, temperature,
+                    comment_purge, purge_pressure_bar, comment_cold_crash, final_comments,
+                    dh_mi_id_fk, dh_raw_name, dh_qty, dh_unit, dh_lot,
+                    session_id_fk
+               FROM bd_fermenting_v2
+              WHERE id = ? AND is_tombstoned = 0
+              LIMIT 1"
+        );
+        $editStmt->execute([$editId]);
+        $editRow = $editStmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($editRow === false) {
+            flash_set('err', "Évènement #{$editId} introuvable ou archivé.");
+            // Fall through to blank entry mode
+        } else {
+            $editMode = true;
+            $editOrigSubmittedAt = (string)$editRow['submitted_at'];
+
+            // ── DryHop sibling re-group ───────────────────────────────────────
+            // For DryHop events, the "event" is N rows sharing (submitted_at,
+            // beer_raw, batch, event_type='DryHop'), differing by line_idx.
+            // The operator may click Corriger on ANY sibling row (not necessarily
+            // line_idx=0). Re-group all siblings so the picker can be repopulated.
+            $prefillDhLines = [];
+            if ((string)$editRow['event_type'] === 'DryHop') {
+                $sibStmt = $pdoEdit->prepare(
+                    "SELECT line_idx, dh_raw_name, dh_qty, dh_unit, dh_lot,
+                            temperature, final_comments, recipe_id_fk
+                       FROM bd_fermenting_v2
+                      WHERE submitted_at = ?
+                        AND beer_raw     = ?
+                        AND batch        = ?
+                        AND event_type   = 'DryHop'
+                        AND is_tombstoned = 0
+                      ORDER BY line_idx ASC"
+                );
+                $sibStmt->execute([
+                    $editOrigSubmittedAt,
+                    (string)($editRow['beer_raw'] ?? ''),
+                    (string)($editRow['batch']    ?? ''),
+                ]);
+                $sibRows = $sibStmt->fetchAll(PDO::FETCH_ASSOC);
+
+                foreach ($sibRows as $sib) {
+                    $prefillDhLines[] = [
+                        'mi_id' => (string)($sib['dh_raw_name'] ?? ''),
+                        'qty'   => $sib['dh_qty']  !== null ? (string)$sib['dh_qty']  : '',
+                        'unit'  => (string)($sib['dh_unit'] ?? 'g'),
+                        'lot'   => (string)($sib['dh_lot']  ?? ''),
+                    ];
+                }
+
+                // Authoritative temperature + final_comments + recipe_id_fk come from line_idx=0.
+                $sib0 = $sibRows[0] ?? $editRow;
+            }
+
+            $prefillEdit = [
+                'event_type'        => (string)($editRow['event_type']    ?? 'Reads'),
+                'event_date'        => (string)($editRow['event_date']    ?? date('Y-m-d')),
+                'beer_raw'          => (string)($editRow['beer_raw']      ?? ''),
+                'batch'             => (string)($editRow['batch']         ?? ''),
+                'line_idx'          => (int)($editRow['line_idx']         ?? 0),
+                'recipe_id_fk'      => $editRow['recipe_id_fk'] !== null ? (int)$editRow['recipe_id_fk'] : null,
+                // For DryHop: temperature + final_comments from line_idx=0 sibling.
+                // DryHop rows carry no gravity/pH readings (only temperature on line_idx=0).
+                'gravity'           => (string)($editRow['event_type'] ?? '') === 'DryHop'
+                                           ? null
+                                           : $editRow['gravity'],
+                'ph'                => (string)($editRow['event_type'] ?? '') === 'DryHop'
+                                           ? null
+                                           : $editRow['ph'],
+                'temperature'       => (string)($editRow['event_type'] ?? '') === 'DryHop'
+                                           ? ($sib0['temperature'] ?? null)
+                                           : $editRow['temperature'],
+                'comment_purge'      => $editRow['comment_purge'],
+                'purge_pressure_bar' => $editRow['purge_pressure_bar'],
+                'comment_cold_crash' => $editRow['comment_cold_crash'],
+                'final_comments'    => (string)($editRow['event_type'] ?? '') === 'DryHop'
+                                           ? ($sib0['final_comments'] ?? null)
+                                           : $editRow['final_comments'],
+                'session_id_fk'     => $editRow['session_id_fk'],
+            ];
+
+            $editBanner = [
+                'beer'       => (string)($editRow['beer_raw']   ?? ''),
+                'batch'      => (string)($editRow['batch']      ?? ''),
+                'event_type' => (string)($editRow['event_type'] ?? ''),
+                'event_date' => (string)($editRow['event_date'] ?? ''),
+            ];
+        }
+    } catch (Throwable $eEdit) {
+        flash_set('err', 'Erreur lors du chargement de l\'évènement : ' . htmlspecialchars($eEdit->getMessage()));
+        $editMode = false;
+    }
+}
 ?><!doctype html>
 <html lang="fr">
 <head>
@@ -449,16 +591,19 @@ $displayFmt    = date_display_format();
 <!-- Server-side data injected for JS — single <script> block per house convention -->
 <script>
 window.FERMENTING_HOPS     = <?= json_encode($hopsJs, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
-window.FERMENTING_FIREWALL = <?= json_encode([
-    'gate2_severity'       => $ff_cipStatus['severity']    ?? null,
-    'gate2_allow_override' => ($ff_cipStatus['severity'] ?? null) === 'warn',
-], JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
 // Beer-selection card candidates — shape: { Reads:[…], ColdCrash:[…], DryHop:[…], Purge:[…] }
 // Each element: { beer, batch, beer_display, source_cct, recipe_id, recipe_name, sim_vol_hl }
 // FERM_CANDIDATES is shown when ff_phase='none' (no beer/batch in URL).
 window.FERM_CANDIDATES    = <?= json_encode($fermCandidates,   JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
 window.FERM_CANDIDATES_HP = <?= json_encode($fermCandidatesHp, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
 window.FERM_CAN_OVERRIDE  = <?= $canOverride ? 'true' : 'false' ?>;
+<?php if (!empty($editMode) && ($prefillEdit['event_type'] ?? '') === 'DryHop' && !empty($prefillDhLines)): ?>
+// Edit-mode DryHop prefill: array of { mi_id, qty, unit, lot } in line_idx order.
+// form-fermenting.js reads this on init to repopulate the picker rows.
+window.FERM_EDIT_DH_LINES = <?= json_encode($prefillDhLines, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+<?php else: ?>
+window.FERM_EDIT_DH_LINES = null;
+<?php endif ?>
 </script>
 
 <script src="/js/form-framework.js?v=<?= @filemtime(__DIR__ . '/../js/form-framework.js') ?: time() ?>" defer></script>

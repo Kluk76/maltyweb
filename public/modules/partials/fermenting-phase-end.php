@@ -41,16 +41,29 @@ $_gardeSettingFound = false;
 
 if ($ff_beer !== '' && $ff_batch !== '') {
     try {
-        // Fetch ColdCrash date
-        $ccStmt = $pdo->prepare(
-            "SELECT MAX(event_date) AS cc_date
-               FROM bd_fermenting_v2
-              WHERE beer_raw      = ?
-                AND batch         = ?
-                AND event_type    = 'ColdCrash'
-                AND is_tombstoned = 0"
-        );
-        $ccStmt->execute([$ff_beer, $ff_batch]);
+        // Fetch ColdCrash date — key on recipe_id_fk when known (canonical, immune to
+        // beer_raw fragmentation), fall back to beer_raw for legacy direct-URLs.
+        if ($ff_recipeId !== null) {
+            $ccStmt = $pdo->prepare(
+                "SELECT MAX(event_date) AS cc_date
+                   FROM bd_fermenting_v2
+                  WHERE recipe_id_fk = ?
+                    AND batch        = ?
+                    AND event_type   = 'ColdCrash'
+                    AND is_tombstoned = 0"
+            );
+            $ccStmt->execute([$ff_recipeId, $ff_batch]);
+        } else {
+            $ccStmt = $pdo->prepare(
+                "SELECT MAX(event_date) AS cc_date
+                   FROM bd_fermenting_v2
+                  WHERE beer_raw      = ?
+                    AND batch         = ?
+                    AND event_type    = 'ColdCrash'
+                    AND is_tombstoned = 0"
+            );
+            $ccStmt->execute([$ff_beer, $ff_batch]);
+        }
         $ccRow = $ccStmt->fetch(PDO::FETCH_ASSOC);
         if ($ccRow && $ccRow['cc_date'] !== null) {
             $_coldCrashDate = (string)$ccRow['cc_date'];
@@ -93,6 +106,11 @@ if ($ff_beer !== '' && $ff_batch !== '') {
 <!-- ── END PHASE: Ready-for-racking view (P-C) ───────────────────────────── -->
 <div class="op-form__card ferm-end-card" id="ferm-end-ready">
   <div class="op-form__card-title">— cold crash enregistré</div>
+
+  <!-- Return-to-selector link — always visible; mirrors the "✕ changer" affordance -->
+  <div class="ferm-identity-strip">
+    <a href="/modules/form-fermenting.php" class="ferm-identity-change">← Choisir un autre lot</a>
+  </div>
 
   <div class="ferm-end-state">
     <div class="ferm-end-state__icon" aria-hidden="true">
@@ -182,10 +200,17 @@ if ($ff_beer !== '' && $ff_batch !== '') {
         <select id="beer_select" name="beer_select" class="op-form__select">
           <option value="">— sélectionner —</option>
           <?php foreach ($recipes as $r): ?>
+            <?php
+            // Pre-select by recipe_id (canonical) when available; fall back to
+            // name-string match only for legacy direct-URLs without recipe_id.
+            $isSelected = $ff_recipeId !== null
+                ? ((int)$r['id'] === $ff_recipeId)
+                : ($ff_beer !== '' && ($r['recipe_short_name'] === $ff_beer || $r['name'] === $ff_beer));
+            ?>
             <option value="<?= htmlspecialchars($r['recipe_short_name'] ?: $r['name']) ?>"
                     data-recipe-id="<?= (int)$r['id'] ?>"
                     data-recipe-name="<?= htmlspecialchars($r['name']) ?>"
-                    <?= ($ff_beer !== '' && ($r['recipe_short_name'] === $ff_beer || $r['name'] === $ff_beer)) ? 'selected' : '' ?>>
+                    <?= $isSelected ? 'selected' : '' ?>>
               <?= htmlspecialchars($r['name']) ?>
               <?php if ($r['recipe_short_name']): ?>
                 (<?= htmlspecialchars($r['recipe_short_name']) ?>)
@@ -214,10 +239,24 @@ if ($ff_beer !== '' && $ff_batch !== '') {
       <div class="op-form__field">
         <label class="op-form__label" for="event_type">Type d'évènement</label>
         <select id="event_type" name="event_type" class="op-form__select">
-          <option value="Reads">Mesures densité / pH / temp</option>
-          <option value="DryHop">Houblonnage à froid</option>
-          <option value="Purge">Purge CO₂</option>
-          <option value="ColdCrash">Cold Crash</option>
+          <?php
+          // Pre-select the event type carried from the card-click URL ($ff_eventType).
+          // ColdCrash is included in this partial's option set (end-phase).
+          $evtOptions = [
+              'Reads'     => 'Mesures densité / pH / temp',
+              'DryHop'    => 'Houblonnage à froid',
+              'Purge'     => 'Purge',
+              'ColdCrash' => 'Cold Crash',
+          ];
+          $activeEvtType = in_array($ff_eventType, array_keys($evtOptions), true)
+              ? $ff_eventType : 'Reads';
+          foreach ($evtOptions as $evtVal => $evtLabel):
+          ?>
+          <option value="<?= htmlspecialchars($evtVal) ?>"
+                  <?= ($activeEvtType === $evtVal) ? 'selected' : '' ?>>
+            <?= htmlspecialchars($evtLabel) ?>
+          </option>
+          <?php endforeach ?>
         </select>
       </div>
 
@@ -270,10 +309,19 @@ if ($ff_beer !== '' && $ff_batch !== '') {
       — houblonnage à froid
       <span class="ferm-dh-count" id="dh-count-badge"></span>
     </div>
+    <div class="op-form__field">
+      <label class="op-form__label" for="dh_temperature">
+        Température du dry-hop (°C)
+        <span class="op-form__unit">(optionnel)</span>
+      </label>
+      <input type="number" id="dh_temperature" name="dh_temperature"
+             class="op-form__input"
+             placeholder="—" step="0.1">
+    </div>
     <table class="ferm-dh-table">
       <thead>
         <tr>
-          <th class="ferm-dh-col--hop">Houblon (MI)</th>
+          <th class="ferm-dh-col--hop">Ingrédient (MI)</th>
           <th class="ferm-dh-col--qty">Quantité</th>
           <th class="ferm-dh-col--unit">Unité</th>
           <th class="ferm-dh-col--lot">N° lot</th>
@@ -290,15 +338,23 @@ if ($ff_beer !== '' && $ff_batch !== '') {
       Ajouter une addition
     </button>
     <p class="ferm-dh-note">
-      Saisir en grammes (g) ou kilogrammes (kg). Les additions sont enregistrées
-      dans <code>bd_fermenting_v2</code> avec <code>dh_category = 'hops_dry'</code>.
+      Houblons et autres ingrédients (additions à froid). Catégorie dérivée automatiquement du MI.
     </p>
   </div>
 
   <!-- Purge (JS-toggled) -->
   <div class="op-form__card" id="section-purge" hidden>
-    <div class="op-form__card-title">— purge CO₂</div>
+    <div class="op-form__card-title">— purge</div>
     <div class="op-form__grid--1 op-form__grid">
+      <div class="op-form__field">
+        <label class="op-form__label" for="purge_pressure_bar">
+          Pression cuve (bar)
+          <span class="op-form__unit">(optionnel)</span>
+        </label>
+        <input type="number" id="purge_pressure_bar" name="purge_pressure_bar"
+               class="op-form__input"
+               placeholder="—" step="0.01" min="0" autocomplete="off">
+      </div>
       <div class="op-form__field op-form__field--full">
         <label class="op-form__label" for="comment_purge">
           Commentaire purge <span class="op-form__unit">(optionnel)</span>

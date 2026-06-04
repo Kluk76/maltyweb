@@ -41,6 +41,12 @@ declare(strict_types=1);
   <!-- ── Section: Identité ────────────────────────────────────────────────── -->
   <div class="op-form__card">
     <div class="op-form__card-title">— identité du brassin</div>
+
+    <!-- Return-to-selector link — always visible; mirrors the "✕ changer" affordance -->
+    <div class="ferm-identity-strip">
+      <a href="/modules/form-fermenting.php" class="ferm-identity-change">← Choisir un autre lot</a>
+    </div>
+
     <div class="op-form__grid">
 
       <!-- Beer / recipe picker -->
@@ -49,10 +55,17 @@ declare(strict_types=1);
         <select id="beer_select" name="beer_select" class="op-form__select">
           <option value="">— sélectionner —</option>
           <?php foreach ($recipes as $r): ?>
+            <?php
+            // Pre-select by recipe_id (canonical) when available; fall back to
+            // name-string match only for legacy direct-URLs without recipe_id.
+            $isSelected = $ff_recipeId !== null
+                ? ((int)$r['id'] === $ff_recipeId)
+                : ($ff_beer !== '' && ($r['recipe_short_name'] === $ff_beer || $r['name'] === $ff_beer));
+            ?>
             <option value="<?= htmlspecialchars($r['recipe_short_name'] ?: $r['name']) ?>"
                     data-recipe-id="<?= (int)$r['id'] ?>"
                     data-recipe-name="<?= htmlspecialchars($r['name']) ?>"
-                    <?= ($ff_beer !== '' && ($r['recipe_short_name'] === $ff_beer || $r['name'] === $ff_beer)) ? 'selected' : '' ?>>
+                    <?= $isSelected ? 'selected' : '' ?>>
               <?= htmlspecialchars($r['name']) ?>
               <?php if ($r['recipe_short_name']): ?>
                 (<?= htmlspecialchars($r['recipe_short_name']) ?>)
@@ -80,14 +93,28 @@ declare(strict_types=1);
                value="<?= htmlspecialchars(date('Y-m-d')) ?>" required>
       </div>
 
-      <!-- Event type — maps to bd_fermenting_v2.event_type ENUM -->
+      <!-- Event type — maps to bd_fermenting_v2.event_type ENUM.
+           ColdCrash is intentionally absent — it is captured via the checkbox below. -->
       <div class="op-form__field">
         <label class="op-form__label" for="event_type">Type d'évènement</label>
         <select id="event_type" name="event_type" class="op-form__select">
-          <option value="Reads">Mesures densité / pH / temp</option>
-          <option value="DryHop">Houblonnage à froid</option>
-          <option value="Purge">Purge CO₂</option>
-          <option value="ColdCrash">Cold Crash</option>
+          <?php
+          // Pre-select the event type carried from the card-click URL ($ff_eventType).
+          // ColdCrash is excluded: it is captured via the cold-crash checkbox, not the dropdown.
+          $evtOptions = [
+              'Reads'  => 'Mesures densité / pH / temp',
+              'DryHop' => 'Houblonnage à froid',
+              'Purge'  => 'Purge',
+          ];
+          $activeEvtType = in_array($ff_eventType, array_keys($evtOptions), true)
+              ? $ff_eventType : 'Reads';
+          foreach ($evtOptions as $evtVal => $evtLabel):
+          ?>
+          <option value="<?= htmlspecialchars($evtVal) ?>"
+                  <?= ($activeEvtType === $evtVal) ? 'selected' : '' ?>>
+            <?= htmlspecialchars($evtLabel) ?>
+          </option>
+          <?php endforeach ?>
         </select>
       </div>
 
@@ -152,6 +179,23 @@ declare(strict_types=1);
       </div>
 
     </div>
+
+    <!-- ── Cold-crash flag: replaces the ColdCrash dropdown option ──────────── -->
+    <div class="ferm-coldcrash-flag" id="ferm-coldcrash-flag-wrap">
+      <label class="ferm-coldcrash-flag__label">
+        <input type="checkbox"
+               id="ferm_cold_crash_flag"
+               name="cold_crash_flag"
+               value="1"
+               class="ferm-coldcrash-flag__cb"
+               aria-describedby="ferm-cc-flag-desc">
+        <span class="ferm-coldcrash-flag__text">Cold Crash — termine la fermentation</span>
+      </label>
+      <p class="ferm-coldcrash-flag__desc" id="ferm-cc-flag-desc">
+        Cocher pour enregistrer le refroidissement final. Cette action termine la session
+        de fermentation et débloque le passage en garde / rack.
+      </p>
+    </div>
   </div>
 
   <!-- ── Section: Dry-hop (shown when event_type = DryHop) ───────────────── -->
@@ -161,10 +205,20 @@ declare(strict_types=1);
       <span class="ferm-dh-count" id="dh-count-badge"></span>
     </div>
 
+    <div class="op-form__field">
+      <label class="op-form__label" for="dh_temperature">
+        Température du dry-hop (°C)
+        <span class="op-form__unit">(optionnel)</span>
+      </label>
+      <input type="number" id="dh_temperature" name="dh_temperature"
+             class="op-form__input"
+             placeholder="—" step="0.1">
+    </div>
+
     <table class="ferm-dh-table">
       <thead>
         <tr>
-          <th class="ferm-dh-col--hop">Houblon (MI)</th>
+          <th class="ferm-dh-col--hop">Ingrédient (MI)</th>
           <th class="ferm-dh-col--qty">Quantité</th>
           <th class="ferm-dh-col--unit">Unité</th>
           <th class="ferm-dh-col--lot">N° lot</th>
@@ -185,15 +239,23 @@ declare(strict_types=1);
     </button>
 
     <p class="ferm-dh-note">
-      Saisir en grammes (g) ou kilogrammes (kg). Les additions sont enregistrées
-      dans <code>bd_fermenting_v2</code> avec <code>dh_category = 'hops_dry'</code>.
+      Houblons et autres ingrédients (additions à froid). Catégorie dérivée automatiquement du MI.
     </p>
   </div>
 
   <!-- ── Section: Purge (shown when event_type = Purge) ──────────────────── -->
   <div class="op-form__card" id="section-purge" hidden>
-    <div class="op-form__card-title">— purge CO₂</div>
+    <div class="op-form__card-title">— purge</div>
     <div class="op-form__grid--1 op-form__grid">
+      <div class="op-form__field">
+        <label class="op-form__label" for="purge_pressure_bar">
+          Pression cuve (bar)
+          <span class="op-form__unit">(optionnel)</span>
+        </label>
+        <input type="number" id="purge_pressure_bar" name="purge_pressure_bar"
+               class="op-form__input"
+               placeholder="—" step="0.01" min="0" autocomplete="off">
+      </div>
       <div class="op-form__field op-form__field--full">
         <label class="op-form__label" for="comment_purge">
           Commentaire purge
@@ -203,13 +265,6 @@ declare(strict_types=1);
                   class="op-form__textarea" rows="3"
                   placeholder="Fuites constatées, pression anormale, anomalies…"></textarea>
       </div>
-    </div>
-    <div class="ferm-unwired-notice">
-      <strong>Non câblé — colonnes manquantes :</strong>
-      CO₂ pression (bar) et CO₂ dissous (g/L) sont visibles dans le mock
-      de design mais absents de <code>bd_fermenting_v2</code>.
-      Une migration est nécessaire pour les ajouter.
-      Seul le commentaire est stocké.
     </div>
   </div>
 
@@ -251,36 +306,16 @@ declare(strict_types=1);
     </div>
   </div>
 
-  <!-- Submit bar — Dual-CTA (P-C) ─────────────────────────────────────────── -->
-  <!--
-    "Continuer" (default): submit and return to in-progress (same as before).
-    "Terminer fermentation": only enabled when event_type=ColdCrash.
-      Both CTAs POST to the same endpoint; phase advance is server-side per event_type.
-      The JS sets data-action to signal the operator's intent, but the server
-      always drives the actual phase transition (ColdCrash → end regardless of intent).
-      No client-side flag is sent or trusted — the server decides.
-  -->
-  <div class="op-form__submit-bar ferm-dual-cta">
+  <!-- Submit bar ─────────────────────────────────────────────────────────── -->
+  <!-- Single CTA — phase advance (including ColdCrash → end) is always server-side. -->
+  <div class="op-form__submit-bar">
     <button type="button" class="op-form__btn op-form__btn--secondary"
             onclick="if(confirm('Effacer le brouillon ?')){localStorage.removeItem('fermenting-draft');location.reload();}">
       Effacer brouillon
     </button>
-    <div class="ferm-dual-cta__btns">
-      <button type="submit" class="op-form__btn op-form__btn--primary" id="ferm-submit-btn">
-        Continuer →
-      </button>
-      <button type="submit"
-              class="op-form__btn op-form__btn--primary ferm-btn-terminate"
-              id="ferm-btn-terminate"
-              disabled aria-disabled="true"
-              title="Disponible uniquement pour l'évènement Cold Crash">
-        Terminer fermentation ⬛
-      </button>
-    </div>
+    <button type="submit" class="op-form__btn op-form__btn--primary" id="ferm-submit-btn">
+      Enregistrer →
+    </button>
   </div>
-  <!--
-    JS (form-fermenting.js) enables ferm-btn-terminate when event_type = ColdCrash.
-    Disabled by default to prevent accidental session termination on Reads/DryHop/Purge.
-  -->
 
 </form>

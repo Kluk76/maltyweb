@@ -12,10 +12,9 @@ declare(strict_types=1);
  *
  * P-B (firewall): when phase='start', loads:
  *   - CCT assignment for (beer, batch) via bd_brewing_brewday_v2
- *   - CCT CIP status via app/cct-cip-cadence.php
  *   - Yeast eligibility for earliest ColdCrash display via app/yeast-eligibility.php
  * These are made available to fermenting-phase-start.php as:
- *   $ff_cctNumber, $ff_cctMissing, $ff_cipStatus, $ff_yeastInfo
+ *   $ff_cctNumber, $ff_cctMissing, $ff_yeastInfo
  *
  * P-C (split-write): when (beer, batch) are both provided, opens or looks up
  *   the op_sessions row for this (recipe_id_fk, batch) and makes available:
@@ -35,7 +34,7 @@ declare(strict_types=1);
  *   $ff_phase, $ff_beer, $ff_batch, $ff_recipeId,
  *   $ff_hasEvents, $ff_hasColdCrash, $ff_loadErr,
  *   $ff_sessionId  (P-C — always set when beer+batch known; 0 when not yet resolved)
- *   $ff_cctNumber, $ff_cctMissing, $ff_cipStatus, $ff_yeastInfo (P-B, start only)
+ *   $ff_cctNumber, $ff_cctMissing, $ff_yeastInfo (P-B, start only)
  */
 
 $ff_loadErr      = null;
@@ -46,8 +45,28 @@ $ff_sessionId    = 0;   // P-C: op_sessions.id for this (recipe_id, batch); 0 un
 // P-B firewall data — populated only when phase='start' and (beer, batch) supplied.
 $ff_cctNumber = null;  // int|null — CCT number from bd_brewing_brewday_v2
 $ff_cctMissing = false; // true when (beer,batch) found but cct IS NULL
-$ff_cipStatus  = null;  // array|null — from cct_cip_status()
 $ff_yeastInfo  = null;  // array|null — from resolve_recipe_yeast()
+
+// ── Edit-mode fast-path ───────────────────────────────────────────────────────
+// $editMode / $prefillEdit / $editBanner / $editOrigSubmittedAt are set by
+// form-fermenting.php GET path when ?edit=<id> is present.
+// In edit mode: skip phase detection, skip session open/lookup, dispatch straight
+// to the start partial (which renders the edit form view).
+if (!empty($editMode)) {
+    // Set ff_beer / ff_batch / ff_recipeId / ff_eventType from the loaded row so
+    // the start partial has the correct identity context.
+    $ff_beer      = $prefillEdit['beer_raw']     ?? '';
+    $ff_batch     = $prefillEdit['batch']        ?? '';
+    $ff_recipeId  = $prefillEdit['recipe_id_fk'] ?? null;
+    $ff_eventType = $prefillEdit['event_type']   ?? 'Reads';
+    // Force phase = 'start' so the start partial (not in_progress/end) renders
+    $ff_phase     = 'start';
+    // Session: use the row's own session_id_fk for PRG return (may be null for legacy)
+    $ff_sessionId = (int)($prefillEdit['session_id_fk'] ?? 0);
+    require __DIR__ . '/fermenting-phase-start.php';
+    require __DIR__ . '/fermenting-phase-recent.php';
+    return;
+}
 
 // URL params — operators may land with pre-filled beer/batch from a deep-link.
 // Security: PDO binding handles SQL injection; htmlspecialchars at render time handles XSS.
@@ -64,18 +83,39 @@ $ff_eventType  = in_array($_ff_etRaw, FERM_EVENT_TYPES, true) ? $_ff_etRaw : '';
 // Detect phase from bd_fermenting_v2 when (beer, batch) are both provided.
 // Aggregate existence check — no LIMIT so ColdCrash is never truncated away on
 // long ferments (3-week ferment with daily Reads = 21+ events).
+//
+// Keying strategy: use recipe_id_fk + batch when recipe_id is known (canonical,
+// fragmentation-proof). Fall back to beer_raw + batch only when recipe_id is null
+// (legacy deep-links without recipe_id that cannot be resolved from brewday).
+// This fixes batches like EPH2/26 whose events split across multiple beer_raw
+// spellings ("EPH2" for DryHop, "EPH2 26" for Reads/Purge/ColdCrash).
 if ($ff_beer !== '' && $ff_batch !== '') {
     try {
-        $phaseStmt = $pdo->prepare(
-            "SELECT
-               MAX(event_type = 'ColdCrash') AS has_cold_crash,
-               COUNT(*) > 0                  AS has_events
-             FROM bd_fermenting_v2
-             WHERE beer_raw      = ?
-               AND batch         = ?
-               AND is_tombstoned = 0"
-        );
-        $phaseStmt->execute([$ff_beer, $ff_batch]);
+        if ($ff_recipeId !== null) {
+            // Canonical path: key on (recipe_id_fk, batch) — immune to beer_raw fragmentation.
+            $phaseStmt = $pdo->prepare(
+                "SELECT
+                   MAX(event_type = 'ColdCrash') AS has_cold_crash,
+                   COUNT(*) > 0                  AS has_events
+                 FROM bd_fermenting_v2
+                 WHERE recipe_id_fk = ?
+                   AND batch        = ?
+                   AND is_tombstoned = 0"
+            );
+            $phaseStmt->execute([$ff_recipeId, $ff_batch]);
+        } else {
+            // Legacy fallback: key on (beer_raw, batch) when recipe_id is unknown.
+            $phaseStmt = $pdo->prepare(
+                "SELECT
+                   MAX(event_type = 'ColdCrash') AS has_cold_crash,
+                   COUNT(*) > 0                  AS has_events
+                 FROM bd_fermenting_v2
+                 WHERE beer_raw      = ?
+                   AND batch         = ?
+                   AND is_tombstoned = 0"
+            );
+            $phaseStmt->execute([$ff_beer, $ff_batch]);
+        }
         $phaseRow = $phaseStmt->fetch(PDO::FETCH_ASSOC);
 
         // COUNT(*)>0 returns 0/1 even on no rows; MAX() returns NULL on no rows — coalesce both.
@@ -111,6 +151,36 @@ if ($ff_beer !== '' && $ff_batch !== '' && $ff_loadErr === null) {
     require_once __DIR__ . '/../../../app/sessions.php';
     require_once __DIR__ . '/../../../app/mother-shell.php';
     try {
+        // ── Recipe resolution (early, before session open) ────────────────────
+        // Resolve $ff_recipeId from the brewday row so new sessions are opened with
+        // recipe_id_fk set. Without this, the session is opened with recipe_id_fk=NULL
+        // because the firewall block (which also resolves recipe from brewday) runs after
+        // the session open/lookup block — leaving all new sessions with NULL recipe_id_fk
+        // and "Recette inconnue" in the recent-inputs list (Bug C).
+        if ($ff_recipeId === null) {
+            try {
+                $earlyRecipeStmt = $pdo->prepare(
+                    "SELECT recipe_id_fk
+                       FROM bd_brewing_brewday_v2
+                      WHERE beer      = ?
+                        AND batch     = ?
+                        AND is_tombstoned = 0
+                        AND recipe_id_fk IS NOT NULL
+                      ORDER BY id DESC
+                      LIMIT 1"
+                );
+                $earlyRecipeStmt->execute([$ff_beer, $ff_batch]);
+                $earlyRecipeRow = $earlyRecipeStmt->fetch(PDO::FETCH_ASSOC);
+                if ($earlyRecipeRow !== false) {
+                    $ff_recipeId = (int)$earlyRecipeRow['recipe_id_fk'];
+                }
+            } catch (Throwable $_erErr) {
+                // Non-fatal: if brewday lookup fails, session opens without recipe_id_fk.
+                // The display-side fallback in recentSessionsStmt will still resolve the label.
+                error_log('[session-body-fermenting] Early recipe lookup failed: ' . $_erErr->getMessage());
+            }
+        }
+
         // Look for an existing open fermenting session for this (recipe_id, batch).
         // If recipe_id is known, use it; otherwise fall back to a batch-only lookup
         // which is less precise but avoids stalling on missing recipe metadata.
@@ -125,13 +195,53 @@ if ($ff_beer !== '' && $ff_batch !== '' && $ff_loadErr === null) {
         $sessLookupParams[] = $ff_batch;
 
         $sessLookupStmt = $pdo->prepare(
-            "SELECT id FROM op_sessions WHERE {$sessLookupWhere} ORDER BY id DESC LIMIT 1"
+            "SELECT id, phase FROM op_sessions WHERE {$sessLookupWhere} ORDER BY id DESC LIMIT 1"
         );
         $sessLookupStmt->execute($sessLookupParams);
         $sessLookupRow = $sessLookupStmt->fetch(PDO::FETCH_ASSOC);
 
         if ($sessLookupRow !== false) {
-            $ff_sessionId = (int)$sessLookupRow['id'];
+            $ff_sessionId     = (int)$sessLookupRow['id'];
+            $_storedPhase     = (string)($sessLookupRow['phase'] ?? 'start');
+
+            // ── Render-time phase sync ────────────────────────────────────────
+            // op_sessions.phase is a derived cache. For NULL-linked batches (events
+            // with session_id_fk=NULL, i.e. historical/backfill rows) it can go
+            // stale — the session has never been advanced because no event advanced it.
+            // If the event-derived phase ($ff_phase) disagrees with the stored phase,
+            // resync the session record so subsequent submits accept the correct phase.
+            // CRITICAL: status='open' guard is MANDATORY — never touch a closed/abandoned
+            // session (their phase is fiscal-frozen).
+            // Do NOT call session_advance_phase() — it enforces strict single-step forward
+            // and would throw on a start→end jump. Direct UPDATE only.
+            if ($_storedPhase !== $ff_phase) {
+                $_syncStmt = $pdo->prepare(
+                    "UPDATE op_sessions
+                        SET phase      = ?,
+                            updated_at = CURRENT_TIMESTAMP
+                      WHERE id            = ?
+                        AND status        = 'open'
+                        AND is_tombstoned = 0"
+                );
+                $_syncStmt->execute([$ff_phase, $ff_sessionId]);
+
+                if ($_syncStmt->rowCount() > 0) {
+                    // Emit audit for the phase correction (log_revision only —
+                    // SESSION_STEP_TYPES has no 'resync' value, so no step row).
+                    require_once __DIR__ . '/../../../app/db-write-helpers.php';
+                    log_revision(
+                        $pdo,
+                        $me,
+                        'op_sessions',
+                        $ff_sessionId,
+                        ['phase' => $_storedPhase],
+                        ['phase' => $ff_phase, '_resync' => 'event_derived'],
+                        'normal',
+                        null
+                    );
+                }
+            }
+
         } else {
             // No open session found — open one.
             $ctx = [
@@ -142,6 +252,36 @@ if ($ff_beer !== '' && $ff_batch !== '' && $ff_loadErr === null) {
                 $ctx['recipe_id_fk'] = $ff_recipeId;
             }
             $ff_sessionId = session_open($pdo, $ctx, (int)$me['id']);
+
+            // ── Phase sync for newly-opened session ───────────────────────────
+            // session_open always writes phase='start'. If the event-derived phase
+            // is already ahead (e.g. historical ColdCrash events exist), sync now.
+            // Same guard: direct UPDATE, status='open', log_revision only.
+            if ($ff_sessionId > 0 && $ff_phase !== 'start') {
+                $_syncNewStmt = $pdo->prepare(
+                    "UPDATE op_sessions
+                        SET phase      = ?,
+                            updated_at = CURRENT_TIMESTAMP
+                      WHERE id            = ?
+                        AND status        = 'open'
+                        AND is_tombstoned = 0"
+                );
+                $_syncNewStmt->execute([$ff_phase, $ff_sessionId]);
+
+                if ($_syncNewStmt->rowCount() > 0) {
+                    require_once __DIR__ . '/../../../app/db-write-helpers.php';
+                    log_revision(
+                        $pdo,
+                        $me,
+                        'op_sessions',
+                        $ff_sessionId,
+                        ['phase' => 'start'],
+                        ['phase' => $ff_phase, '_resync' => 'event_derived'],
+                        'normal',
+                        null
+                    );
+                }
+            }
 
             // ── Auto-link to mother (Phase 1) ─────────────────────────────────
             // Fires only when a NEW fermenting session is opened (not on lookup).
@@ -172,28 +312,42 @@ if ($ff_loadErr !== null): ?>
 
 <!--
   P-B FIREWALL DATA LOAD: When phase is 'start' (beer+batch provided, no events yet),
-  load CCT assignment + CCT CIP status + yeast eligibility for the start-firewall view.
+  load CCT assignment + yeast eligibility for the start-firewall view.
   These resolvers are pure-read; errors are caught and surfaced as banners in the partial.
 -->
 <?php if (($ff_phase === 'start' || $ff_phase === 'none') && $ff_beer !== '' && $ff_batch !== ''): ?>
 <?php
-require_once __DIR__ . '/../../../app/cct-cip-cadence.php';
 require_once __DIR__ . '/../../../app/yeast-eligibility.php';
 
 try {
     // ── 1. CCT assignment for this (beer, batch) ──────────────────────────
     // Use the MOST RECENT brewday row — ORDER BY id DESC LIMIT 1 handles
     // batches that were re-entered or corrected without requiring event_date.
-    $cctStmt = $pdo->prepare(
-        "SELECT cct, recipe_id_fk
-           FROM bd_brewing_brewday_v2
-          WHERE beer  = ?
-            AND batch = ?
-            AND is_tombstoned = 0
-          ORDER BY id DESC
-          LIMIT 1"
-    );
-    $cctStmt->execute([$ff_beer, $ff_batch]);
+    // Key on recipe_id_fk when known (canonical); fall back to beer string for
+    // legacy deep-links where recipe_id was not passed.
+    if ($ff_recipeId !== null) {
+        $cctStmt = $pdo->prepare(
+            "SELECT cct, recipe_id_fk
+               FROM bd_brewing_brewday_v2
+              WHERE recipe_id_fk = ?
+                AND batch        = ?
+                AND is_tombstoned = 0
+              ORDER BY id DESC
+              LIMIT 1"
+        );
+        $cctStmt->execute([$ff_recipeId, $ff_batch]);
+    } else {
+        $cctStmt = $pdo->prepare(
+            "SELECT cct, recipe_id_fk
+               FROM bd_brewing_brewday_v2
+              WHERE beer  = ?
+                AND batch = ?
+                AND is_tombstoned = 0
+              ORDER BY id DESC
+              LIMIT 1"
+        );
+        $cctStmt->execute([$ff_beer, $ff_batch]);
+    }
     $cctRow = $cctStmt->fetch(PDO::FETCH_ASSOC);
 
     if ($cctRow !== false) {
@@ -211,12 +365,7 @@ try {
     // No brewday row at all: ff_cctNumber stays null, ff_cctMissing stays false.
     // The partial will show "Aucune CCT trouvée" banner (no brewday row = refuse-don't-NULL).
 
-    // ── 2. CCT CIP status ─────────────────────────────────────────────────
-    if ($ff_cctNumber !== null) {
-        $ff_cipStatus = cct_cip_status($pdo, $ff_cctNumber);
-    }
-
-    // ── 3. Yeast eligibility (display-only — earliest ColdCrash date) ─────
+    // ── 2. Yeast eligibility (display-only — earliest ColdCrash date) ─────
     if ($ff_recipeId !== null) {
         try {
             $ff_yeastInfo = resolve_recipe_yeast($pdo, $ff_recipeId);

@@ -26,13 +26,14 @@
   /* ── Section visibility ──────────────────────────────────────────────── */
   const SECTIONS = {
     Reads:      ['section-readings'],
-    DryHop:     ['section-readings', 'section-dryhop'],
-    Purge:      ['section-readings', 'section-purge'],
+    DryHop:     ['section-dryhop'],   // no OG/pH readings for dry-hop
+    Purge:      ['section-purge'],    // pressure (optional) + comment only — no readings card
     ColdCrash:  ['section-readings', 'section-coldcrash'],
   };
 
   function updateSections(eventType) {
-    const all = ['section-readings', 'section-dryhop', 'section-purge', 'section-coldcrash'];
+    // section-coldcrash visibility is driven by the cold-crash checkbox, not the dropdown.
+    const all = ['section-readings', 'section-dryhop', 'section-purge'];
     const show = SECTIONS[eventType] || ['section-readings'];
     for (const id of all) {
       const el = document.getElementById(id);
@@ -40,28 +41,41 @@
       el.hidden = !show.includes(id);
     }
 
-    // Update primary submit button label
+    // Update primary submit button label (cold-crash case is handled by updateColdCrash).
     const btn = document.getElementById('ferm-submit-btn');
     if (btn) {
       const labels = {
-        Reads:     'Enregistrer les mesures →',
-        DryHop:    'Enregistrer le houblonnage →',
-        Purge:     'Enregistrer la purge →',
-        ColdCrash: 'Enregistrer le cold crash →',
+        Reads:  'Enregistrer les mesures →',
+        DryHop: 'Enregistrer le houblonnage →',
+        Purge:  'Enregistrer la purge →',
       };
-      btn.textContent = labels[eventType] || 'Enregistrer →';
+      // Only overwrite label if not already set by updateColdCrash (checkbox ticked).
+      const ccCb = document.getElementById('ferm_cold_crash_flag');
+      if (!ccCb || !ccCb.checked) {
+        btn.textContent = labels[eventType] || 'Enregistrer →';
+      }
     }
+  }
 
-    // Dual-CTA: enable "Terminer fermentation" only for ColdCrash.
-    // The terminate button is rendered disabled/aria-disabled by PHP; JS gates it.
-    const terminateBtn = document.getElementById('ferm-btn-terminate');
-    if (terminateBtn) {
-      const isColdCrash = (eventType === 'ColdCrash');
-      terminateBtn.disabled      = !isColdCrash;
-      terminateBtn.setAttribute('aria-disabled', isColdCrash ? 'false' : 'true');
-      terminateBtn.title = isColdCrash
-        ? 'Enregistrer le cold crash et terminer la fermentation'
-        : 'Disponible uniquement pour l\'évènement Cold Crash';
+  // Update section-coldcrash visibility and submit label based on the checkbox state.
+  function updateColdCrash(checked) {
+    const ccSection = document.getElementById('section-coldcrash');
+    if (ccSection) ccSection.hidden = !checked;
+
+    const btn = document.getElementById('ferm-submit-btn');
+    if (!btn) return;
+    if (checked) {
+      btn.textContent = 'Enregistrer le cold crash →';
+    } else {
+      // Re-derive label from the current dropdown value.
+      const evtSel = document.getElementById('event_type');
+      const et = evtSel ? evtSel.value : 'Reads';
+      const labels = {
+        Reads:  'Enregistrer les mesures →',
+        DryHop: 'Enregistrer le houblonnage →',
+        Purge:  'Enregistrer la purge →',
+      };
+      btn.textContent = labels[et] || 'Enregistrer →';
     }
   }
 
@@ -110,7 +124,7 @@
 
     tr.innerHTML =
       `<td>
-         <select name="dh_mi_id[${idx}]" class="ferm-dh__hop-select" aria-label="Houblon MI">
+         <select name="dh_mi_id[${idx}]" class="ferm-dh__hop-select" aria-label="Ingrédient MI">
            <option value="">— choisir —</option>
            ${buildHopOptions()}
          </select>
@@ -123,6 +137,7 @@
          <select name="dh_unit[${idx}]" class="ferm-dh__unit-select" aria-label="Unité">
            <option value="g" selected>g</option>
            <option value="kg">kg</option>
+           <option value="ml">ml</option>
          </select>
        </td>
        <td>
@@ -173,53 +188,6 @@
     ph:          { label: 'pH',       unit: '',   warn: [3.8, 5.5], outlier: [2.5, 7.5]  },
     temperature: { label: 'Temp',    unit: '°C', warn: [-2, 35],   outlier: [-5, 40]    },
   };
-
-  /* ── Firewall: CIP override (YELLOW cadence gate) ───────────────────── */
-  // When window.FERMENTING_FIREWALL.gate2_allow_override is true (YELLOW severity),
-  // the PHP renders the override checkbox + reason field. The submit button starts
-  // disabled (PHP sets disabled when gate2 is warn without committed override);
-  // JS enables it only once the operator ticks the box AND fills the reason.
-  function initCipOverride() {
-    const fw = window.FERMENTING_FIREWALL || {};
-    if (!fw.gate2_allow_override) return;
-
-    const cb             = document.getElementById('ferm_cip_override_cb');
-    const reasonRow      = document.getElementById('ferm-cip-override-reason-row');
-    const reasonInput    = document.getElementById('ferm_cip_override_reason_text');
-    const hiddenOverride = document.getElementById('ferm_fw_cip_override');
-    const hiddenReason   = document.getElementById('ferm_fw_cip_override_reason');
-    const submitBtn      = document.getElementById('ferm-submit-btn');
-
-    if (!cb || !reasonRow || !reasonInput || !hiddenOverride || !hiddenReason) return;
-
-    function syncReason() {
-      const val = reasonInput.value.trim();
-      hiddenReason.value = val;
-      if (submitBtn) submitBtn.disabled = (val.length === 0);
-    }
-
-    function syncOverride() {
-      const checked = cb.checked;
-      reasonRow.hidden = !checked;
-      hiddenOverride.value = checked ? '1' : '0';
-
-      if (checked) {
-        reasonInput.setAttribute('required', '');
-        reasonInput.addEventListener('input', syncReason);
-        syncReason();
-      } else {
-        reasonInput.removeAttribute('required');
-        reasonInput.removeEventListener('input', syncReason);
-        hiddenReason.value = '';
-        if (submitBtn) submitBtn.disabled = true;
-      }
-    }
-
-    cb.addEventListener('change', syncOverride);
-    // On initial load: YELLOW gate means PHP already disabled submit; confirm here.
-    if (submitBtn) submitBtn.disabled = true;
-    syncOverride();
-  }
 
   /* ── FormFramework initialisation ─────────────────────────────────────── */
   function initFramework() {
@@ -310,14 +278,16 @@
   }
 
   function _selOnCardClick(cand, eventType) {
-    var beer  = cand.beer  || '';
-    var batch = cand.batch || '';
+    var beer     = cand.beer  || '';
+    var batch    = cand.batch || '';
+    var recipeId = cand.recipe_id != null ? String(cand.recipe_id) : '';
     if (!beer || !batch) return;
-    // Navigate — carries event_type so the correct section is pre-selected after load
+    // Navigate — carries recipe_id (canonical identity) + event_type (pre-selects section)
     window.location = '/modules/form-fermenting.php' +
       '?beer='       + encodeURIComponent(beer) +
       '&batch='      + encodeURIComponent(batch) +
-      '&event_type=' + encodeURIComponent(eventType);
+      '&event_type=' + encodeURIComponent(eventType) +
+      '&recipe_id='  + encodeURIComponent(recipeId);
   }
 
   function _selRenderNormal(eventType) {
@@ -388,6 +358,48 @@
     }
   }
 
+  /* ── Edit-mode DryHop prefill ────────────────────────────────────────── */
+  // Called from init() when window.FERM_EDIT_DH_LINES is a non-empty array.
+  // For each persisted line: adds a picker row then sets its select/inputs to the
+  // stored values so the operator sees the original dry-hop composition.
+  function prefillDhLines(lines) {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      addDhRow();  // appends row, increments dhRowCount; row index = i
+
+      const tbody = document.getElementById('dh-tbody');
+      if (!tbody) continue;
+      const rows = tbody.querySelectorAll('tr');
+      const tr = rows[rows.length - 1];  // the row just added
+      if (!tr) continue;
+
+      const hopSel  = tr.querySelector('select[name^="dh_mi_id"]');
+      const qtyIn   = tr.querySelector('input[name^="dh_qty"]');
+      const unitSel = tr.querySelector('select[name^="dh_unit"]');
+      const lotIn   = tr.querySelector('input[name^="dh_lot"]');
+
+      // mi_id option values are MI code strings (e.g. 'HOPS_MOSAIC') — same as dh_raw_name.
+      if (hopSel && line.mi_id) {
+        for (let j = 0; j < hopSel.options.length; j++) {
+          if (hopSel.options[j].value === line.mi_id) {
+            hopSel.selectedIndex = j;
+            break;
+          }
+        }
+      }
+      if (qtyIn  && line.qty  !== '')  qtyIn.value  = line.qty;
+      if (unitSel && line.unit !== '') {
+        for (let j = 0; j < unitSel.options.length; j++) {
+          if (unitSel.options[j].value === line.unit) {
+            unitSel.selectedIndex = j;
+            break;
+          }
+        }
+      }
+      if (lotIn  && line.lot  !== '')  lotIn.value  = line.lot;
+    }
+  }
+
   /* ── Init ────────────────────────────────────────────────────────────── */
   function init() {
     // ── Selector view (no beer/batch selected): initialise card module
@@ -397,11 +409,26 @@
     const form = document.getElementById('fermenting-form');
     if (!form) return;
 
-    // Event-type switcher
-    const evtSel = document.getElementById('event_type');
+    // Event-type switcher.
+    // In edit mode the <select id="event_type"> is absent (replaced by a hidden field);
+    // derive the active type from the hidden field instead so updateSections fires correctly.
+    const evtSel    = document.getElementById('event_type');
+    const evtHidden = form.querySelector('input[type="hidden"][name="event_type"]');
+    const initEvtType = evtSel
+      ? evtSel.value
+      : (evtHidden ? evtHidden.value : 'Reads');
+
+    updateSections(initEvtType);
     if (evtSel) {
-      updateSections(evtSel.value);
       evtSel.addEventListener('change', () => updateSections(evtSel.value));
+    }
+
+    // Cold-crash checkbox — reveal section-coldcrash + relabel submit button.
+    const ccCb = document.getElementById('ferm_cold_crash_flag');
+    if (ccCb) {
+      // Initial state (edit mode: checkbox may already be checked).
+      updateColdCrash(ccCb.checked);
+      ccCb.addEventListener('change', () => updateColdCrash(ccCb.checked));
     }
 
     // Recipe → recipe_id_fk (not needed in form view since identity is fixed,
@@ -416,8 +443,11 @@
     // Expose dry-hop add to PHP button onclick
     window._fermAddDhRow = addDhRow;
 
-    // Firewall CIP override (YELLOW gate only)
-    initCipOverride();
+    // Edit-mode DryHop line repopulation — must run AFTER updateSections shows
+    // section-dryhop and AFTER window._fermAddDhRow is exposed.
+    if (Array.isArray(window.FERM_EDIT_DH_LINES) && window.FERM_EDIT_DH_LINES.length > 0) {
+      prefillDhLines(window.FERM_EDIT_DH_LINES);
+    }
 
     // FormFramework
     initFramework();

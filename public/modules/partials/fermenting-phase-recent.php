@@ -118,6 +118,7 @@ function _ferm_recent_status_label(string $phase, string $status): string {
                     <th>Temp °C</th>
                     <th>Houblon / Note</th>
                     <th>Opérateur</th>
+                    <th></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -149,6 +150,10 @@ function _ferm_recent_status_label(string $phase, string $status): string {
                       <td class="op-form__mono"><?= ($ev['temperature'] !== null) ? htmlspecialchars((string)$ev['temperature']) . '°C' : '—' ?></td>
                       <td class="ferm-recent-note"><?= htmlspecialchars(mb_strimwidth($dhNote, 0, 60, '…')) ?></td>
                       <td class="op-form__mono ferm-recent-email"><?= htmlspecialchars($ev['email'] ?? '') ?></td>
+                      <td class="ferm-recent-action">
+                        <a href="/modules/form-fermenting.php?edit=<?= (int)$ev['id'] ?>"
+                           class="ferm-recent-corriger">Corriger</a>
+                      </td>
                     </tr>
                   <?php endforeach ?>
                 </tbody>
@@ -183,6 +188,7 @@ function _ferm_recent_status_label(string $phase, string $status): string {
               <th>pH</th>
               <th>Temp °C</th>
               <th>Opérateur</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -202,6 +208,10 @@ function _ferm_recent_status_label(string $phase, string $status): string {
                 <td class="op-form__mono"><?= ($rf['ph']          !== null) ? htmlspecialchars((string)$rf['ph'])          : '—' ?></td>
                 <td class="op-form__mono"><?= ($rf['temperature'] !== null) ? htmlspecialchars((string)$rf['temperature']) . '°C' : '—' ?></td>
                 <td class="op-form__mono ferm-recent-email"><?= htmlspecialchars($rf['email'] ?? '') ?></td>
+                <td class="ferm-recent-action">
+                  <a href="/modules/form-fermenting.php?edit=<?= (int)$rf['id'] ?>"
+                     class="ferm-recent-corriger">Corriger</a>
+                </td>
               </tr>
             <?php endforeach ?>
           </tbody>
