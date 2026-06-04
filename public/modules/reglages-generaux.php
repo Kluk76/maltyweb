@@ -16,7 +16,8 @@ require_once __DIR__ . '/../../app/auth.php';
 require_once __DIR__ . '/../../app/csrf.php';
 require_once __DIR__ . '/../../app/settings-helpers.php';
 require_once __DIR__ . '/../../app/db-write-helpers.php';
-// app/db.php is already included transitively via auth.php → db.php
+require_once __DIR__ . '/../../app/services/invite_token.php';
+// app/db.php + app/services/remember_token.php are already included transitively via auth.php
 
 require_login();
 $me = current_user();
@@ -282,6 +283,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $displayName = post_str('display_name');
             $role        = post_str('role') ?? '';
             $password    = $_POST['password'] ?? '';
+            $emailRaw    = post_str('email');
+            $scopeRaw    = post_str('manager_scope');
 
             if ($username === null || strlen($username) < 2) {
                 throw new RuntimeException('Identifiant utilisateur obligatoire (minimum 2 caractères).');
@@ -295,26 +298,197 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $allowedRoles = ['admin', 'operator', 'viewer', 'manager'];
             must_be_one_of('role', $role, $allowedRoles);
 
-            if (!is_string($password) || strlen($password) < 8) {
-                throw new RuntimeException('Mot de passe obligatoire (minimum 8 caractères).');
+            // Email: optional but must be valid when provided
+            $email = null;
+            if ($emailRaw !== null && $emailRaw !== '') {
+                if (!filter_var($emailRaw, FILTER_VALIDATE_EMAIL)) {
+                    throw new RuntimeException('Adresse e-mail invalide.');
+                }
+                $email = substr($emailRaw, 0, 255);
             }
 
-            // Hash using the same algorithm as auth.php (Argon2id)
-            $hash = password_hash($password, PASSWORD_ARGON2ID);
+            // manager_scope: required when role=manager; forced NULL otherwise
+            $managerScope = null;
+            if ($role === 'manager') {
+                must_be_one_of('manager_scope', $scopeRaw ?? '', ['production', 'logistics', 'all']);
+                $managerScope = $scopeRaw;
+            }
+
+            // Password is optional — blank → create inactive with unusable hash + send invite
+            $passwordProvided = is_string($password) && strlen($password) >= 8;
+            if (!$passwordProvided && $password !== '' && $password !== null) {
+                throw new RuntimeException('Mot de passe trop court (minimum 8 caractères), ou laisser vide pour envoyer une invitation.');
+            }
+
+            if ($passwordProvided) {
+                $hash     = password_hash($password, PASSWORD_ARGON2ID);
+                $isActive = 1;
+            } else {
+                // Unusable random hash — user activates via invite link
+                $hash     = password_hash(bin2hex(random_bytes(16)), PASSWORD_ARGON2ID);
+                $isActive = 0;
+            }
 
             $ins = $pdo->prepare(
-                "INSERT INTO users (username, display_name, role, password_hash, is_active)
-                 VALUES (?, ?, ?, ?, 1)"
+                "INSERT INTO users (username, email, display_name, role, manager_scope, password_hash, is_active)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)"
             );
-            $ins->execute([$username, $displayName ?? $username, $role, $hash]);
+            $ins->execute([$username, $email, $displayName ?? $username, $role, $managerScope, $hash, $isActive]);
             $newUserId = (int) $pdo->lastInsertId();
 
             // Log revision — never log the hash itself
             log_revision($pdo, $me, 'users', $newUserId, null,
-                ['username' => $username, 'display_name' => $displayName, 'role' => $role, 'is_active' => 1],
+                ['username' => $username, 'email' => $email, 'display_name' => $displayName, 'role' => $role, 'manager_scope' => $managerScope, 'is_active' => $isActive],
                 'normal', 'Réglages généraux: création utilisateur');
 
-            flash_set('ok', "Utilisateur « " . htmlspecialchars($username) . " » créé.");
+            if (!$passwordProvided) {
+                // Generate invite link — admin copies and sends to user
+                $raw       = invite_create($pdo, $newUserId, (int) $me['id'], 'invite', 72);
+                $inviteUrl = 'https://app.maltytask.ch/set-password.php?token=' . $raw;
+                flash_set('ok', "Utilisateur « " . htmlspecialchars($username) . " » créé (inactif). Lien d'invitation (valable 72 h) — copier et envoyer à l'utilisateur :\n" . $inviteUrl);
+            } else {
+                flash_set('ok', "Utilisateur « " . htmlspecialchars($username) . " » créé.");
+            }
+            redirect_to('/modules/reglages-generaux.php?sec=users');
+        }
+
+        // ── Action: update user ──
+        if ($action === 'update_user') {
+            $userId      = post_int('user_id');
+            $displayName = post_str('display_name');
+            $role        = post_str('role') ?? '';
+            $scopeRaw    = post_str('manager_scope');
+
+            if ($userId === null || $userId <= 0) {
+                throw new RuntimeException('Identifiant utilisateur invalide.');
+            }
+            $before = bd_fetch_before($pdo, 'users', $userId);
+            if ($before === null) {
+                throw new RuntimeException('Utilisateur introuvable.');
+            }
+
+            $allowedRoles = ['admin', 'operator', 'viewer', 'manager'];
+            must_be_one_of('role', $role, $allowedRoles);
+
+            if ($displayName !== null) $displayName = substr($displayName, 0, 128);
+
+            // Last-active-admin guard: cannot downgrade the last active admin
+            if ((string) $before['role'] === 'admin' && (int) $before['is_active'] === 1 && $role !== 'admin') {
+                $cnt = (int) $pdo->query("SELECT COUNT(*) FROM users WHERE role='admin' AND is_active=1")->fetchColumn();
+                if ($cnt <= 1) {
+                    throw new RuntimeException("Impossible : c'est le dernier administrateur actif.");
+                }
+            }
+
+            // manager_scope: required when role=manager; forced NULL otherwise
+            $managerScope = null;
+            if ($role === 'manager') {
+                must_be_one_of('manager_scope', $scopeRaw ?? '', ['production', 'logistics', 'all']);
+                $managerScope = $scopeRaw;
+            }
+
+            $upd = $pdo->prepare(
+                "UPDATE users SET display_name=?, role=?, manager_scope=? WHERE id=?"
+            );
+            $upd->execute([$displayName ?? ($before['display_name'] ?? $before['username']), $role, $managerScope, $userId]);
+
+            log_revision($pdo, $me, 'users', $userId,
+                ['display_name' => $before['display_name'], 'role' => $before['role'], 'manager_scope' => $before['manager_scope']],
+                ['display_name' => $displayName, 'role' => $role, 'manager_scope' => $managerScope],
+                'normal', 'Réglages généraux: mise à jour utilisateur');
+
+            flash_set('ok', "Utilisateur « " . htmlspecialchars((string) $before['username']) . " » mis à jour.");
+            redirect_to('/modules/reglages-generaux.php?sec=users');
+        }
+
+        // ── Action: toggle user active ──
+        if ($action === 'toggle_user_active') {
+            $userId = post_int('user_id');
+            if ($userId === null || $userId <= 0) {
+                throw new RuntimeException('Identifiant utilisateur invalide.');
+            }
+            $before = bd_fetch_before($pdo, 'users', $userId);
+            if ($before === null) {
+                throw new RuntimeException('Utilisateur introuvable.');
+            }
+
+            $newActive = ((int) $before['is_active'] === 1) ? 0 : 1;
+            $deactivating = ($newActive === 0);
+
+            // Forbid self-deactivation
+            if ($deactivating && (int) $me['id'] === $userId) {
+                throw new RuntimeException("Impossible de désactiver son propre compte.");
+            }
+
+            // Last-active-admin guard
+            if ($deactivating && (string) $before['role'] === 'admin') {
+                $cnt = (int) $pdo->query("SELECT COUNT(*) FROM users WHERE role='admin' AND is_active=1")->fetchColumn();
+                if ($cnt <= 1) {
+                    throw new RuntimeException("Impossible : c'est le dernier administrateur actif.");
+                }
+            }
+
+            $upd = $pdo->prepare("UPDATE users SET is_active=? WHERE id=?");
+            $upd->execute([$newActive, $userId]);
+
+            // On deactivation, revoke all remember-me tokens immediately
+            if ($deactivating) {
+                rt_revoke_all($userId, $pdo);
+            }
+
+            log_revision($pdo, $me, 'users', $userId,
+                ['is_active' => (int) $before['is_active']],
+                ['is_active' => $newActive],
+                'normal', 'Réglages généraux: compte ' . ($deactivating ? 'désactivé' : 'réactivé'));
+
+            $verb = $deactivating ? 'désactivé' : 'réactivé';
+            flash_set('ok', "Compte « " . htmlspecialchars((string) $before['username']) . " » {$verb}.");
+            redirect_to('/modules/reglages-generaux.php?sec=users');
+        }
+
+        // ── Action: reset user password (admin sends reset link) ──
+        if ($action === 'reset_user_password') {
+            $userId = post_int('user_id');
+            if ($userId === null || $userId <= 0) {
+                throw new RuntimeException('Identifiant utilisateur invalide.');
+            }
+            $targetUser = bd_fetch_before($pdo, 'users', $userId);
+            if ($targetUser === null) {
+                throw new RuntimeException('Utilisateur introuvable.');
+            }
+
+            $raw      = invite_create($pdo, $userId, (int) $me['id'], 'reset', 72);
+            $resetUrl = 'https://app.maltytask.ch/set-password.php?token=' . $raw;
+
+            log_revision($pdo, $me, 'users', $userId,
+                null,
+                ['event' => 'password_reset_link_generated'],
+                'normal', 'Réglages généraux: lien de réinitialisation mot de passe généré');
+
+            flash_set('ok', "Lien de réinitialisation pour « " . htmlspecialchars((string) $targetUser['username']) . " » (valable 72 h) — copier et envoyer à l'utilisateur :\n" . $resetUrl);
+            redirect_to('/modules/reglages-generaux.php?sec=users');
+        }
+
+        // ── Action: resend invite (send invite link for inactive/uninvited users) ──
+        if ($action === 'invite_user') {
+            $userId = post_int('user_id');
+            if ($userId === null || $userId <= 0) {
+                throw new RuntimeException('Identifiant utilisateur invalide.');
+            }
+            $targetUser = bd_fetch_before($pdo, 'users', $userId);
+            if ($targetUser === null) {
+                throw new RuntimeException('Utilisateur introuvable.');
+            }
+
+            $raw       = invite_create($pdo, $userId, (int) $me['id'], 'invite', 72);
+            $inviteUrl = 'https://app.maltytask.ch/set-password.php?token=' . $raw;
+
+            log_revision($pdo, $me, 'users', $userId,
+                null,
+                ['event' => 'invite_link_generated'],
+                'normal', 'Réglages généraux: lien d\'invitation généré');
+
+            flash_set('ok', "Lien d'invitation pour « " . htmlspecialchars((string) $targetUser['username']) . " » (valable 72 h) — copier et envoyer à l'utilisateur :\n" . $inviteUrl);
             redirect_to('/modules/reglages-generaux.php?sec=users');
         }
 
@@ -415,7 +589,7 @@ try {
     // users
     try {
         $stmt  = $pdo->query(
-            "SELECT id, username, display_name, role, is_active, last_login_at
+            "SELECT id, username, email, display_name, role, manager_scope, is_active, last_login_at
                FROM users
               ORDER BY role ASC, username ASC"
         );
@@ -998,39 +1172,131 @@ $csrf = csrf_token();
         <!-- Users list -->
         <div class="rg-card">
           <div class="rg-card-title">
-            Comptes actifs
+            Comptes utilisateurs
             <span class="rg-card-label"><?= count($users) ?> utilisateur<?= count($users) !== 1 ? 's' : '' ?></span>
           </div>
 
           <?php if (!empty($users)): ?>
           <div class="rg-table-wrap">
-            <table class="rg-table">
+            <table class="rg-table" id="rg-users-table">
               <thead>
                 <tr>
                   <th>Identifiant</th>
                   <th>Nom d'affichage</th>
-                  <th>Rôle</th>
+                  <th>E-mail</th>
+                  <th>Rôle · Périmètre</th>
                   <th>Statut</th>
                   <th>Dernière connexion</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                <?php foreach ($users as $u): ?>
-                <tr>
+                <?php foreach ($users as $u):
+                    $uid        = (int) $u['id'];
+                    $uRole      = (string) ($u['role'] ?? 'operator');
+                    $uScope     = $u['manager_scope'] ?? null;
+                    $uActive    = (int) $u['is_active'] === 1;
+                    $isSelf     = ((int) $me['id'] === $uid);
+                    $scopeLabel = ['production' => 'production', 'logistics' => 'logistique', 'all' => 'tout'];
+                ?>
+                <tr id="rg-user-row-<?= $uid ?>">
                   <td style="font-family:'JetBrains Mono',monospace;font-size:12px;"><?= htmlspecialchars((string) $u['username']) ?></td>
                   <td><?= htmlspecialchars((string) ($u['display_name'] ?? '—')) ?></td>
+                  <td style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-mute);"><?= htmlspecialchars((string) ($u['email'] ?? '—')) ?></td>
                   <td>
-                    <span class="rg-role-badge <?= htmlspecialchars((string) ($u['role'] ?? 'operator')) ?>">
-                      <?= htmlspecialchars((string) ($u['role'] ?? 'operator')) ?>
-                    </span>
+                    <span class="rg-role-badge <?= htmlspecialchars($uRole) ?>"><?= htmlspecialchars($uRole) ?></span>
+                    <?php if ($uRole === 'manager' && $uScope !== null): ?>
+                    <span class="rg-scope-badge"><?= htmlspecialchars($scopeLabel[$uScope] ?? $uScope) ?></span>
+                    <?php endif ?>
                   </td>
-                  <td><?php if ((int) $u['is_active'] === 1): ?>
+                  <td><?php if ($uActive): ?>
                     <span class="rg-pill-active">Actif</span>
                   <?php else: ?>
                     <span class="rg-pill-inactive">Inactif</span>
                   <?php endif ?></td>
                   <td style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-mute);">
                     <?= $u['last_login_at'] ? htmlspecialchars((string) $u['last_login_at']) : '—' ?>
+                  </td>
+                  <td>
+                    <div class="rg-user-actions">
+                      <!-- Toggle edit row -->
+                      <button type="button" class="rg-action-link"
+                              onclick="rgToggleEditRow(<?= $uid ?>)">Modifier</button>
+
+                      <!-- Toggle active / deactivate -->
+                      <?php if (!$isSelf): ?>
+                      <form method="post" action="/modules/reglages-generaux.php" style="display:inline;">
+                        <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+                        <input type="hidden" name="action" value="toggle_user_active">
+                        <input type="hidden" name="user_id" value="<?= $uid ?>">
+                        <input type="hidden" name="sec" value="users">
+                        <button type="submit" class="rg-action-link<?= $uActive ? ' danger' : '' ?>">
+                          <?= $uActive ? 'Désactiver' : 'Réactiver' ?>
+                        </button>
+                      </form>
+                      <?php endif ?>
+
+                      <!-- Reset password -->
+                      <form method="post" action="/modules/reglages-generaux.php" style="display:inline;">
+                        <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+                        <input type="hidden" name="action" value="reset_user_password">
+                        <input type="hidden" name="user_id" value="<?= $uid ?>">
+                        <input type="hidden" name="sec" value="users">
+                        <button type="submit" class="rg-action-link">Réinitialiser MDP</button>
+                      </form>
+
+                      <!-- Resend invite (most useful for inactive users) -->
+                      <?php if (!$uActive): ?>
+                      <form method="post" action="/modules/reglages-generaux.php" style="display:inline;">
+                        <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+                        <input type="hidden" name="action" value="invite_user">
+                        <input type="hidden" name="user_id" value="<?= $uid ?>">
+                        <input type="hidden" name="sec" value="users">
+                        <button type="submit" class="rg-action-link">Renvoyer invitation</button>
+                      </form>
+                      <?php endif ?>
+                    </div>
+                  </td>
+                </tr>
+                <!-- Inline edit row (hidden by default) -->
+                <tr id="rg-edit-row-<?= $uid ?>" class="rg-edit-row" style="display:none;">
+                  <td colspan="7">
+                    <form method="post" action="/modules/reglages-generaux.php" class="rg-inline-edit-form">
+                      <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+                      <input type="hidden" name="action" value="update_user">
+                      <input type="hidden" name="user_id" value="<?= $uid ?>">
+                      <input type="hidden" name="sec" value="users">
+                      <div class="rg-form-grid">
+                        <div>
+                          <label class="rg-form-label">Nom d'affichage</label>
+                          <input class="rg-input" type="text" name="display_name" maxlength="128"
+                                 value="<?= htmlspecialchars((string) ($u['display_name'] ?? '')) ?>">
+                        </div>
+                        <div>
+                          <label class="rg-form-label">Rôle *</label>
+                          <select class="rg-select rg-role-select" name="role" required
+                                  onchange="rgUpdateScopeSelect(this)">
+                            <?php foreach (['operator' => 'Opérateur', 'manager' => 'Manager', 'viewer' => 'Lecteur (viewer)', 'admin' => 'Administrateur'] as $rv => $rl): ?>
+                            <option value="<?= $rv ?>"<?= $uRole === $rv ? ' selected' : '' ?>><?= htmlspecialchars($rl) ?></option>
+                            <?php endforeach ?>
+                          </select>
+                        </div>
+                        <div class="rg-scope-field<?= $uRole !== 'manager' ? ' rg-scope-hidden' : '' ?>" id="rg-scope-field-<?= $uid ?>">
+                          <label class="rg-form-label">Périmètre manager</label>
+                          <select class="rg-select" name="manager_scope"<?= $uRole !== 'manager' ? ' disabled' : '' ?>>
+                            <option value=""<?= $uScope === null ? ' selected' : '' ?>>— choisir —</option>
+                            <?php foreach (['production' => 'Production', 'logistics' => 'Logistique', 'all' => 'Tout'] as $sv => $sl): ?>
+                            <option value="<?= $sv ?>"<?= $uScope === $sv ? ' selected' : '' ?>><?= htmlspecialchars($sl) ?></option>
+                            <?php endforeach ?>
+                          </select>
+                        </div>
+                      </div>
+                      <div style="display:flex;gap:10px;margin-top:12px;">
+                        <button type="submit" class="rg-btn rg-btn-primary">Enregistrer</button>
+                        <button type="button" class="rg-btn rg-btn-secondary"
+                                onclick="rgToggleEditRow(<?= $uid ?>)">Annuler</button>
+                      </div>
+                    </form>
                   </td>
                 </tr>
                 <?php endforeach ?>
@@ -1067,19 +1333,36 @@ $csrf = csrf_token();
                        placeholder="ex: Jean Dupont">
               </div>
               <div>
+                <label class="rg-form-label">E-mail</label>
+                <input class="rg-input" type="email" name="email" maxlength="255"
+                       autocomplete="off"
+                       placeholder="ex: jean@example.com">
+              </div>
+              <div>
                 <label class="rg-form-label">Rôle *</label>
-                <select class="rg-select" name="role" required>
+                <select class="rg-select rg-role-select" name="role" required id="rg-create-role"
+                        onchange="rgUpdateScopeSelect(this)">
                   <option value="operator" selected>Opérateur</option>
                   <option value="manager">Manager</option>
                   <option value="viewer">Lecteur (viewer)</option>
                   <option value="admin">Administrateur</option>
                 </select>
               </div>
+              <div class="rg-scope-field rg-scope-hidden" id="rg-scope-field-create">
+                <label class="rg-form-label">Périmètre manager</label>
+                <select class="rg-select" name="manager_scope" disabled id="rg-create-scope">
+                  <option value="">— choisir —</option>
+                  <option value="production">Production</option>
+                  <option value="logistics">Logistique</option>
+                  <option value="all">Tout</option>
+                </select>
+              </div>
               <div>
-                <label class="rg-form-label">Mot de passe * (min. 8 caractères)</label>
-                <input class="rg-input" type="password" name="password" minlength="8" required
-                       autocomplete="new-password">
-                <span class="rg-pw-hint">Haché Argon2id — jamais stocké en clair.</span>
+                <label class="rg-form-label">Mot de passe (laisser vide pour envoyer une invitation)</label>
+                <input class="rg-input" type="password" name="password"
+                       autocomplete="new-password"
+                       placeholder="Laisser vide → lien d'invitation généré">
+                <span class="rg-pw-hint">Min. 8 caractères, ou vide → compte inactif + lien invitation. Haché Argon2id.</span>
               </div>
             </div>
 
@@ -1126,6 +1409,33 @@ $csrf = csrf_token();
       dpLabel.textContent = dpCb.checked ? 'Activé' : 'Désactivé';
     });
   }
+
+  // ── Inline edit row toggle ────────────────────────────────────────────────
+  function rgToggleEditRow(uid) {
+    var row = document.getElementById('rg-edit-row-' + uid);
+    if (!row) return;
+    var visible = row.style.display !== 'none';
+    row.style.display = visible ? 'none' : 'table-row';
+  }
+  window.rgToggleEditRow = rgToggleEditRow;
+
+  // ── manager_scope select: enable/disable based on role select ────────────
+  // Works for both the create form and each per-user edit form.
+  // Called via onchange on any .rg-role-select element.
+  function rgUpdateScopeSelect(roleSelect) {
+    // Find the nearest ancestor form, then the scope field within it
+    var form = roleSelect.closest('form');
+    if (!form) return;
+    var scopeField  = form.querySelector('[id^="rg-scope-field-"]');
+    var scopeSelect = form.querySelector('select[name="manager_scope"]');
+    if (!scopeField || !scopeSelect) return;
+
+    var isManager = roleSelect.value === 'manager';
+    scopeField.classList.toggle('rg-scope-hidden', !isManager);
+    scopeSelect.disabled = !isManager;
+    if (!isManager) scopeSelect.value = '';
+  }
+  window.rgUpdateScopeSelect = rgUpdateScopeSelect;
 })();
 </script>
 

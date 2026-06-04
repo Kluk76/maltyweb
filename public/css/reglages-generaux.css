@@ -405,6 +405,31 @@ body.rg-page .rg-role-badge.manager { background: color-mix(in srgb,var(--bbt) 1
 body.rg-page .rg-role-badge.operator { background: color-mix(in srgb,var(--steel) 14%,transparent); color: var(--steel-mid); border-color: color-mix(in srgb,var(--steel) 28%,transparent); }
 body.rg-page .rg-role-badge.viewer  { background: color-mix(in srgb,var(--oak) 14%,transparent);   color: var(--oak);      border-color: color-mix(in srgb,var(--oak) 28%,transparent); }
 
+body.rg-page .rg-scope-badge {
+  font-family: "JetBrains Mono", monospace; font-size: 8px; letter-spacing: .08em;
+  text-transform: uppercase; padding: 2px 7px; border-radius: 10px; margin-left: 5px;
+  background: color-mix(in srgb,var(--ember) 12%,transparent); color: var(--ember);
+  border: 1px solid color-mix(in srgb,var(--ember) 24%,transparent);
+}
+
+/* Actions column: wrap small buttons in a flex row */
+body.rg-page .rg-user-actions {
+  display: flex; flex-wrap: wrap; gap: 5px; align-items: center;
+}
+
+/* Inline edit row expander */
+body.rg-page .rg-edit-row td {
+  background: color-mix(in srgb, var(--bbt) 6%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--bbt) 18%, transparent);
+  padding: 16px 18px;
+}
+body.rg-page .rg-inline-edit-form {
+  /* reuse rg-form-grid inside edit row */
+}
+
+/* Scope field: hidden when role≠manager */
+body.rg-page .rg-scope-hidden { display: none; }
+
 /* ── Create-user form ────────────────────────────────────────────────────────── */
 body.rg-page .rg-create-user {
   border: 1px dashed color-mix(in srgb, var(--bbt) 28%, transparent); border-radius: 10px;
