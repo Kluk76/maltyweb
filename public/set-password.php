@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . "/../app/auth.php";
 require_once __DIR__ . "/../app/csrf.php";
+require_once __DIR__ . "/../app/settings-helpers.php";
 require_once __DIR__ . "/../app/services/invite_token.php";
 require_once __DIR__ . "/../app/services/rate_limit.php";
 
@@ -15,6 +16,12 @@ if (current_user() !== null) {
 }
 
 $pdo = maltytask_pdo();
+
+// ── Brewery identity: read once, used in all footer renders ──────────────────
+$bi              = brewery_identity();
+$biName          = htmlspecialchars($bi['name'],         ENT_QUOTES, 'UTF-8');
+$biCity          = htmlspecialchars($bi['city'],         ENT_QUOTES, 'UTF-8');
+$biCountryCode   = htmlspecialchars($bi['country_code'], ENT_QUOTES, 'UTF-8');
 
 // ── Two-step param read: default first, then validate ────────────────────────
 $rawToken = $_GET['token'] ?? '';
@@ -39,7 +46,7 @@ $invalidHtml = '<!doctype html><html lang="fr"><head>'
     . '<div class="auth__panel-head"><span class="auth__panel-label">— activation de compte</span></div>'
     . '<div class="auth__err">Lien invalide ou expiré.<br>Contacte un administrateur pour recevoir un nouveau lien.</div>'
     . '</section>'
-    . '<footer class="auth__foot"><span>La Nébuleuse · Est. 2014</span><span>Lausanne · CH</span></footer>'
+    . '<footer class="auth__foot"><span>' . $biName . ' · Est. 2014</span><span>' . $biCity . ' · ' . $biCountryCode . '</span></footer>'
     . '</main></body></html>';
 
 // ── GET: validate token; render form or invalid message ──────────────────────
@@ -158,8 +165,8 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
   </section>
 
   <footer class="auth__foot">
-    <span>La Nébuleuse · Est. 2014</span>
-    <span>Lausanne · CH</span>
+    <span><?= $biName ?> · Est. 2014</span>
+    <span><?= $biCity ?> · <?= $biCountryCode ?></span>
   </footer>
 
 </main>
@@ -231,7 +238,7 @@ if (!$allowed) {
     <div class="auth__panel-head"><span class="auth__panel-label">— activation du compte</span></div>
     <div class="auth__err">Trop de tentatives. Réessaie dans quelques minutes.</div>
   </section>
-  <footer class="auth__foot"><span>La Nébuleuse · Est. 2014</span><span>Lausanne · CH</span></footer>
+  <footer class="auth__foot"><span><?= $biName ?> · Est. 2014</span><span><?= $biCity ?> · <?= $biCountryCode ?></span></footer>
 </main></body></html>
 <?php
     exit;
@@ -329,8 +336,8 @@ if ($error !== null) {
     </form>
   </section>
   <footer class="auth__foot">
-    <span>La Nébuleuse · Est. 2014</span>
-    <span>Lausanne · CH</span>
+    <span><?= $biName ?> · Est. 2014</span>
+    <span><?= $biCity ?> · <?= $biCountryCode ?></span>
   </footer>
 </main>
 </body>

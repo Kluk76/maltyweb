@@ -13,6 +13,8 @@ declare(strict_types=1);
  * the definitions from this file.
  */
 
+require_once __DIR__ . '/../settings-helpers.php';
+
 const MAIL_FROM      = 'noreply@maltytask.ch';
 const MAIL_FROM_NAME = 'MaltyTask — La Nébuleuse';
 
@@ -142,10 +144,18 @@ function mail_account_template(
                    . "aucune action n'est requise.";
     }
 
+    // ── Brewery identity for footer (reads DB; falls back gracefully) ─────────
+    $bi         = brewery_identity();
+    $footerLine = htmlspecialchars($bi['name'], ENT_QUOTES, 'UTF-8')
+                . ' · '
+                . htmlspecialchars($bi['city'], ENT_QUOTES, 'UTF-8')
+                . ', '
+                . htmlspecialchars($bi['country'], ENT_QUOTES, 'UTF-8');
+
     // ── Plain-text version ────────────────────────────────────────────────────
     $text = "Bonjour {$displayName},\n\n"
           . $textIntro . "\n\n"
-          . "— L'équipe La Nébuleuse · MaltyTask\n"
+          . "— L'équipe {$bi['name']} · MaltyTask\n"
           . "   https://app.maltytask.ch";
 
     // ── HTML version ──────────────────────────────────────────────────────────
@@ -199,7 +209,7 @@ function mail_account_template(
       <tr>
         <td style="background:#f5f3ef;border-top:1px solid #e0d8cc;padding:16px 32px;">
           <p style="margin:0;font-size:11px;color:#9a8a75;line-height:1.5;">
-            La Nébuleuse · Brasserie artisanale · Neuchâtel, Suisse<br>
+            {$footerLine}<br>
             <a href="https://app.maltytask.ch" style="color:#9a8a75;text-decoration:underline;">app.maltytask.ch</a>
           </p>
         </td>

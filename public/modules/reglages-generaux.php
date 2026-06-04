@@ -377,6 +377,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $displayName = post_str('display_name');
             $role        = post_str('role') ?? '';
             $scopeRaw    = post_str('manager_scope');
+            $emailRaw    = post_str('email');
 
             if ($userId === null || $userId <= 0) {
                 throw new RuntimeException('Identifiant utilisateur invalide.');
@@ -390,6 +391,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             must_be_one_of('role', $role, $allowedRoles);
 
             if ($displayName !== null) $displayName = substr($displayName, 0, 128);
+
+            // Email: optional but must be valid when provided; NULL when empty
+            $email = null;
+            if ($emailRaw !== null && $emailRaw !== '') {
+                if (!filter_var($emailRaw, FILTER_VALIDATE_EMAIL)) {
+                    throw new RuntimeException('Adresse e-mail invalide.');
+                }
+                $email = substr($emailRaw, 0, 255);
+            }
 
             // Last-active-admin guard: cannot downgrade the last active admin
             if ((string) $before['role'] === 'admin' && (int) $before['is_active'] === 1 && $role !== 'admin') {
@@ -406,14 +416,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $managerScope = $scopeRaw;
             }
 
-            $upd = $pdo->prepare(
-                "UPDATE users SET display_name=?, role=?, manager_scope=? WHERE id=?"
-            );
-            $upd->execute([$displayName ?? ($before['display_name'] ?? $before['username']), $role, $managerScope, $userId]);
+            try {
+                $upd = $pdo->prepare(
+                    "UPDATE users SET display_name=?, role=?, manager_scope=?, email=? WHERE id=?"
+                );
+                $upd->execute([$displayName ?? ($before['display_name'] ?? $before['username']), $role, $managerScope, $email, $userId]);
+            } catch (\PDOException $pdoEx) {
+                if (str_contains($pdoEx->getMessage(), '1062')) {
+                    throw new RuntimeException('Cet e-mail est déjà utilisé par un autre compte.');
+                }
+                throw $pdoEx;
+            }
 
             log_revision($pdo, $me, 'users', $userId,
-                ['display_name' => $before['display_name'], 'role' => $before['role'], 'manager_scope' => $before['manager_scope']],
-                ['display_name' => $displayName, 'role' => $role, 'manager_scope' => $managerScope],
+                ['display_name' => $before['display_name'], 'role' => $before['role'], 'manager_scope' => $before['manager_scope'], 'email' => $before['email'] ?? null],
+                ['display_name' => $displayName, 'role' => $role, 'manager_scope' => $managerScope, 'email' => $email],
                 'normal', 'Réglages généraux: mise à jour utilisateur');
 
             flash_set('ok', "Utilisateur « " . htmlspecialchars((string) $before['username']) . " » mis à jour.");
@@ -1250,9 +1267,10 @@ $csrf = csrf_token();
                     $uid        = (int) $u['id'];
                     $uRole      = (string) ($u['role'] ?? 'operator');
                     $uScope     = $u['manager_scope'] ?? null;
-                    $uActive    = (int) $u['is_active'] === 1;
-                    $isSelf     = ((int) $me['id'] === $uid);
-                    $scopeLabel = ['production' => 'production', 'logistics' => 'logistique', 'all' => 'tout'];
+                    $uActive     = (int) $u['is_active'] === 1;
+                    $uOnboarded  = $u['last_login_at'] !== null; // has logged in at least once
+                    $isSelf      = ((int) $me['id'] === $uid);
+                    $scopeLabel  = ['production' => 'production', 'logistics' => 'logistique', 'all' => 'tout'];
                 ?>
                 <tr id="rg-user-row-<?= $uid ?>">
                   <td style="font-family:'JetBrains Mono',monospace;font-size:12px;"><?= htmlspecialchars((string) $u['username']) ?></td>
@@ -1291,7 +1309,16 @@ $csrf = csrf_token();
                       </form>
                       <?php endif ?>
 
-                      <!-- Reset password -->
+                      <?php if (!$uOnboarded): ?>
+                      <!-- PRIMARY for never-logged-in users: send welcome / onboarding e-mail -->
+                      <form method="post" action="/modules/reglages-generaux.php" style="display:inline;">
+                        <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+                        <input type="hidden" name="action" value="invite_user">
+                        <input type="hidden" name="user_id" value="<?= $uid ?>">
+                        <input type="hidden" name="sec" value="users">
+                        <button type="submit" class="rg-action-link rg-action-primary">Envoyer l'e-mail de bienvenue</button>
+                      </form>
+                      <!-- Secondary: password reset still accessible for edge cases -->
                       <form method="post" action="/modules/reglages-generaux.php" style="display:inline;">
                         <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
                         <input type="hidden" name="action" value="reset_user_password">
@@ -1299,15 +1326,14 @@ $csrf = csrf_token();
                         <input type="hidden" name="sec" value="users">
                         <button type="submit" class="rg-action-link">Réinitialiser MDP</button>
                       </form>
-
-                      <!-- Resend invite (most useful for inactive users) -->
-                      <?php if (!$uActive): ?>
+                      <?php else: ?>
+                      <!-- PRIMARY for onboarded users: password reset -->
                       <form method="post" action="/modules/reglages-generaux.php" style="display:inline;">
                         <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
-                        <input type="hidden" name="action" value="invite_user">
+                        <input type="hidden" name="action" value="reset_user_password">
                         <input type="hidden" name="user_id" value="<?= $uid ?>">
                         <input type="hidden" name="sec" value="users">
-                        <button type="submit" class="rg-action-link">Renvoyer invitation</button>
+                        <button type="submit" class="rg-action-link">Réinitialiser le mot de passe</button>
                       </form>
                       <?php endif ?>
                     </div>
@@ -1326,6 +1352,12 @@ $csrf = csrf_token();
                           <label class="rg-form-label">Nom d'affichage</label>
                           <input class="rg-input" type="text" name="display_name" maxlength="128"
                                  value="<?= htmlspecialchars((string) ($u['display_name'] ?? '')) ?>">
+                        </div>
+                        <div>
+                          <label class="rg-form-label">E-mail</label>
+                          <input class="rg-input" type="email" name="email" maxlength="255"
+                                 value="<?= htmlspecialchars((string) ($u['email'] ?? '')) ?>"
+                                 placeholder="ex: prenom@example.com">
                         </div>
                         <div>
                           <label class="rg-form-label">Rôle *</label>

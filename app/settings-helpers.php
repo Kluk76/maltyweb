@@ -11,7 +11,83 @@ require_once __DIR__ . "/db.php";
  * - Flash messages (via $_SESSION) for the post/redirect/get pattern after
  *   form submissions.
  * - Friendly translation of MySQL error codes (FK constraints, duplicates).
+ * - brewery_identity(): reads brewery name + primary site from DB for use in
+ *   email footers and public-facing pages; never fatals on DB error.
  */
+
+/**
+ * Returns the brewery's canonical identity from the DB.
+ *
+ * Reads:
+ *   - system_settings WHERE section='general' AND key_name='brewery_name'  → name
+ *   - ref_sites ORDER BY id ASC LIMIT 1                                     → city, country
+ *
+ * Fallbacks: name='La Nébuleuse', city='Renens', country='Suisse'.
+ * Country codes are mapped to labels: 'CH' → 'Suisse', else the raw code.
+ *
+ * Wrapped in try/catch — never throws; email/page must not fatal on a
+ * settings read failure.
+ *
+ * @return array{name: string, city: string, country: string, country_code: string}
+ */
+function brewery_identity(): array
+{
+    $fallback = [
+        'name'         => 'La Nébuleuse',
+        'city'         => 'Renens',
+        'country'      => 'Suisse',
+        'country_code' => 'CH',
+    ];
+
+    $countryLabels = [
+        'CH' => 'Suisse',
+        'FR' => 'France',
+        'DE' => 'Allemagne',
+        'IT' => 'Italie',
+        'BE' => 'Belgique',
+        'LU' => 'Luxembourg',
+        'AT' => 'Autriche',
+        'NL' => 'Pays-Bas',
+        'US' => 'États-Unis',
+        'GB' => 'Royaume-Uni',
+    ];
+
+    try {
+        $pdo = maltytask_pdo();
+
+        // Brewery name from system_settings
+        $nameStmt = $pdo->prepare(
+            "SELECT value_text FROM system_settings
+              WHERE section = 'general' AND key_name = 'brewery_name' AND is_active = 1
+              LIMIT 1"
+        );
+        $nameStmt->execute();
+        $nameRow = $nameStmt->fetch(PDO::FETCH_ASSOC);
+        $name = ($nameRow && !empty($nameRow['value_text']))
+            ? (string) $nameRow['value_text']
+            : $fallback['name'];
+
+        // Primary site (lowest id) from ref_sites
+        $siteStmt = $pdo->query(
+            "SELECT city, country FROM ref_sites ORDER BY id ASC LIMIT 1"
+        );
+        $siteRow = $siteStmt ? $siteStmt->fetch(PDO::FETCH_ASSOC) : false;
+
+        $city        = ($siteRow && !empty($siteRow['city']))    ? (string) $siteRow['city']    : $fallback['city'];
+        $countryCode = ($siteRow && !empty($siteRow['country'])) ? (string) $siteRow['country'] : $fallback['country_code'];
+        $country     = $countryLabels[$countryCode] ?? $countryCode;
+
+        return [
+            'name'         => $name,
+            'city'         => $city,
+            'country'      => $country,
+            'country_code' => $countryCode,
+        ];
+    } catch (\Throwable $e) {
+        error_log('brewery_identity: DB read failed — ' . $e->getMessage());
+        return $fallback;
+    }
+}
 
 /**
  * Stashes a one-shot flash message in the session. Read once via flash_pop().
