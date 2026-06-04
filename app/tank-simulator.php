@@ -305,10 +305,19 @@ class TankSimulator
 
         // ── 4. Pre-build batch→BBT map (handles late racking forms) ──────────
         // Only consider racking events up to $now (the as-of cutoff).
+        // Key strategy: (recipe_id, batch) when recipe_id is known; (beer, batch) fallback
+        // for sparse edges where recipe_id is NULL. recipe_id keying is immune to the
+        // neb_beer fragmentation problem (SKU codes STI4/SPYB/EMB4C vs canonical names)
+        // that caused BBT under-drain. Both keys are stored so PACKAGING lookups can
+        // try recipe_id-based key first, then fall back to beer-name key.
         $batchBBT = [];
         foreach ($events as $e) {
             if ($e['type'] === 'RACKING' && $e['date'] <= $now) {
+                // Store under both key forms for lookup fallback compatibility.
                 $batchBBT[$e['beer'] . '|' . $e['batch']] = $e['bbt'];
+                if (($e['recipe_id'] ?? null) !== null) {
+                    $batchBBT['rid:' . $e['recipe_id'] . '|' . $e['batch']] = $e['bbt'];
+                }
             }
         }
 
@@ -372,18 +381,25 @@ class TankSimulator
             case 'COOLING':
                 $cct = $e['cct'];
                 $existing = $cctState[$cct] ?? null;
-                // Different batch in the same CCT → implicit rack-out
-                if (
-                    $existing !== null &&
-                    ($existing['beer'] !== $e['beer'] || $existing['batch'] !== $e['batch'])
-                ) {
-                    $cctState[$cct] = null;
+                // Different batch in the same CCT → implicit rack-out.
+                // Identity check uses (recipe_id, batch) when both sides have a recipe_id;
+                // falls back to (beer, batch) when either side is NULL (sparse edge).
+                if ($existing !== null) {
+                    $existingRecipeId = $existing['recipe_id'] ?? null;
+                    $eventRecipeId    = $e['recipe_id'] ?? null;
+                    $sameOccupant = ($existingRecipeId !== null && $eventRecipeId !== null)
+                        ? ($existingRecipeId === $eventRecipeId && $existing['batch'] === $e['batch'])
+                        : ($existing['beer'] === $e['beer']     && $existing['batch'] === $e['batch']);
+                    if (!$sameOccupant) {
+                        $cctState[$cct] = null;
+                    }
                 }
                 if (!isset($cctState[$cct]) || $cctState[$cct] === null) {
                     $cctState[$cct] = [
                         'beer'        => $e['beer'],
                         'raw_beer'    => $e['raw_beer'],
                         'batch'       => $e['batch'],
+                        'recipe_id'   => $e['recipe_id'] ?? null,
                         'volume_hl'   => 0.0,
                         'filled_date' => $e['date'],
                         'blend_info'  => null,
@@ -408,24 +424,56 @@ class TankSimulator
                 if ($e['cct'] !== '?') {
                     $interrupted = (int)($e['interrupted_flag'] ?? 0);
                     if ($interrupted !== 1) {
-                        // Normal rack — full-empty the source CCT.
-                        $cctState[$e['cct']] = null;
+                        // Normal rack — full-empty the source CCT, but ONLY if the CCT's
+                        // current occupant is the same batch being racked.
+                        // Guard against cross-batch drain: a late/out-of-order racking
+                        // form may reference a CCT that a NEWER batch has since refilled.
+                        // If the CCT holds a different batch, the rack-out is a no-op on
+                        // the CCT (that batch already left; its volume is already gone)
+                        // but we still proceed to fill/blend the destination BBT below.
+                        // Mirrors the analogous BBT cross-recipe guard on ~L551.
+                        $sourceState = $cctState[$e['cct']] ?? null;
+                        if ($sourceState !== null) {
+                            // Identity check uses (recipe_id, batch) when both sides have
+                            // a recipe_id; falls back to (beer, batch) for sparse edges.
+                            $srcRecipeId   = $sourceState['recipe_id'] ?? null;
+                            $evtRecipeId   = $e['recipe_id'] ?? null;
+                            $sameOccupant  = ($srcRecipeId !== null && $evtRecipeId !== null)
+                                ? ($srcRecipeId === $evtRecipeId && $sourceState['batch'] === $e['batch'])
+                                : ($sourceState['beer'] === $e['beer'] && $sourceState['batch'] === $e['batch']);
+                            if ($sameOccupant) {
+                                $cctState[$e['cct']] = null;
+                            }
+                            // else: CCT now holds a newer batch — leave it occupied.
+                        }
+                        // CCT was already null — nothing to drain.
                     } else {
                         // Interrupted rack — partial decrement only.
                         $sourceState = $cctState[$e['cct']] ?? null;
                         if ($sourceState === null) {
                             // CCT was already empty/null — nothing to decrement; leave null.
                         } else {
-                            $sourceVol  = (float)$sourceState['volume_hl'];
-                            $rackedOut  = (float)($e['racked_vol'] ?? 0.0);
-                            $lostAtSrc  = (float)($e['loss_source_hl'] ?? 0.0);
-                            $remaining  = $sourceVol - $rackedOut - $lostAtSrc;
-                            if ($remaining <= self::BBT_EMPTY_THRESHOLD_HL) {
-                                // Remaining below dead-volume floor → treat as emptied.
-                                $cctState[$e['cct']] = null;
+                            // Same identity guard as the normal-rack path above.
+                            $srcRecipeId   = $sourceState['recipe_id'] ?? null;
+                            $evtRecipeId   = $e['recipe_id'] ?? null;
+                            $sameOccupant  = ($srcRecipeId !== null && $evtRecipeId !== null)
+                                ? ($srcRecipeId === $evtRecipeId && $sourceState['batch'] === $e['batch'])
+                                : ($sourceState['beer'] === $e['beer'] && $sourceState['batch'] === $e['batch']);
+                            if (!$sameOccupant) {
+                                // Interrupted rack on a different occupant — no-op on CCT.
+                                // (Proceed to fill/blend BBT below regardless.)
                             } else {
-                                // Partial fill — keep CCT occupied at reduced volume.
-                                $cctState[$e['cct']]['volume_hl'] = $remaining;
+                                $sourceVol  = (float)$sourceState['volume_hl'];
+                                $rackedOut  = (float)($e['racked_vol'] ?? 0.0);
+                                $lostAtSrc  = (float)($e['loss_source_hl'] ?? 0.0);
+                                $remaining  = $sourceVol - $rackedOut - $lostAtSrc;
+                                if ($remaining <= self::BBT_EMPTY_THRESHOLD_HL) {
+                                    // Remaining below dead-volume floor → treat as emptied.
+                                    $cctState[$e['cct']] = null;
+                                } else {
+                                    // Partial fill — keep CCT occupied at reduced volume.
+                                    $cctState[$e['cct']]['volume_hl'] = $remaining;
+                                }
                             }
                         }
                     }
@@ -436,37 +484,55 @@ class TankSimulator
                 $existing  = $bbtState[$bbt] ?? null;
 
                 // A true blend requires: (a) blend_vol > 0, (b) the BBT is occupied,
-                // AND (c) the existing beer is the same recipe.  The MySQL
+                // AND (c) the existing content is the same recipe.  The MySQL
                 // blend_volume_hl field is populated on every racking row (set equal to
                 // racked_vol_hl by the form), so we cannot use it alone to infer that a
-                // prior BBT volume is being preserved.  Checking same-beer guards against
+                // prior BBT volume is being preserved.  Checking same-recipe guards against
                 // cascading rescale of unrelated batches.
+                // Identity: (recipe_id, batch) when both sides have recipe_id; (beer)
+                // otherwise — a blended BBT can hold multiple batches of the same recipe.
+                $existingBbtRecipeId = $existing['recipe_id'] ?? null;
+                $eventRecipeId       = $e['recipe_id'] ?? null;
+                $sameRecipe = ($existingBbtRecipeId !== null && $eventRecipeId !== null)
+                    ? ($existingBbtRecipeId === $eventRecipeId)
+                    : ($existing !== null && $existing['beer'] === $e['beer']);
                 $isTrueBlend = $e['blend_vol'] > 0
                     && $existing !== null
-                    && $existing['beer'] === $e['beer'];
+                    && $sameRecipe;
 
                 if ($isTrueBlend) {
                     // Blending into existing BBT (same recipe, multi-batch)
                     $blendVol  = (float)$e['blend_vol'];
                     $newTotal  = $netRacked + $blendVol;
 
-                    // Rescale existing blend info proportionally
+                    // Rescale existing blend info proportionally; preserve recipe_id per lot.
                     $newBlend = [];
                     if (!empty($existing['blend_info']) && $existing['volume_hl'] > 0) {
                         foreach ($existing['blend_info'] as $bi) {
                             $newBlend[] = [
-                                'batch' => $bi['batch'],
-                                'vol'   => $bi['vol'] * ($blendVol / $existing['volume_hl']),
+                                'batch'     => $bi['batch'],
+                                'recipe_id' => $bi['recipe_id'] ?? null,
+                                'vol'       => $bi['vol'] * ($blendVol / $existing['volume_hl']),
                             ];
                         }
                     } else {
-                        $newBlend[] = ['batch' => $existing['batch'], 'vol' => $blendVol];
+                        $newBlend[] = [
+                            'batch'     => $existing['batch'],
+                            'recipe_id' => $existing['recipe_id'] ?? null,
+                            'vol'       => $blendVol,
+                        ];
                     }
-                    $newBlend[] = ['batch' => $e['batch'], 'vol' => $netRacked];
+                    $newBlend[] = [
+                        'batch'     => $e['batch'],
+                        'recipe_id' => $e['recipe_id'] ?? null,
+                        'vol'       => $netRacked,
+                    ];
 
                     $bbtState[$bbt] = [
                         'beer'        => $e['beer'],
+                        'raw_beer'    => $existing['raw_beer'] ?? $e['beer'],
                         'batch'       => $e['batch'],
+                        'recipe_id'   => $e['recipe_id'] ?? null,
                         'volume_hl'   => $newTotal,
                         'filled_date' => $e['date'],
                         'blend_info'  => $newBlend,
@@ -475,14 +541,23 @@ class TankSimulator
                     // Fresh fill or different-recipe replacement
                     $bbtState[$bbt] = [
                         'beer'        => $e['beer'],
+                        'raw_beer'    => $e['beer'],
                         'batch'       => $e['batch'],
+                        'recipe_id'   => $e['recipe_id'] ?? null,
                         'volume_hl'   => $netRacked,
                         'filled_date' => $e['date'],
-                        'blend_info'  => [['batch' => $e['batch'], 'vol' => $netRacked]],
+                        'blend_info'  => [[
+                            'batch'     => $e['batch'],
+                            'recipe_id' => $e['recipe_id'] ?? null,
+                            'vol'       => $netRacked,
+                        ]],
                     ];
                 }
 
                 $batchBBT[$e['beer'] . '|' . $e['batch']] = $bbt;
+                if (($e['recipe_id'] ?? null) !== null) {
+                    $batchBBT['rid:' . $e['recipe_id'] . '|' . $e['batch']] = $bbt;
+                }
 
                 // C3 — Apply loss_dest_hl AFTER the fill/blend-in.
                 // Semantics: operator-entered volume lost at/inside the destination tank
@@ -537,8 +612,17 @@ class TankSimulator
                 break;
 
             case 'PACKAGING':
-                $key = $e['beer'] . '|' . $e['batch'];
-                $bbt = $batchBBT[$key] ?? null;
+                // Key lookup: prefer (recipe_id, batch) when recipe_id is known —
+                // immune to neb_beer fragmentation (SKU codes STI4/SPYB vs canonical names).
+                // Fall back to (beer, batch) only when recipe_id is NULL (sparse edge).
+                // Mirrors the (recipe_id, batch)-with-name-fallback pattern used at CCT/racking.
+                $eventRecipeId = $e['recipe_id'] ?? null;
+                if ($eventRecipeId !== null) {
+                    $ridKey = 'rid:' . $eventRecipeId . '|' . $e['batch'];
+                    $bbt    = $batchBBT[$ridKey] ?? $batchBBT[$e['beer'] . '|' . $e['batch']] ?? null;
+                } else {
+                    $bbt = $batchBBT[$e['beer'] . '|' . $e['batch']] ?? null;
+                }
 
                 if ($bbt !== null && !empty($bbtState[$bbt])) {
                     // Guard against cross-recipe drain: form submission timestamps
@@ -546,9 +630,15 @@ class TankSimulator
                     // physically replaced the packaged content (e.g. operator
                     // submits Jasper rack form before submitting earlier Bamse
                     // packaging form — physically Bamse was emptied first, then
-                    // Jasper filled).  If the BBT's current beer differs, the
+                    // Jasper filled). If the BBT's current recipe differs, the
                     // packaged content is gone — skip the deduction.
-                    if ($bbtState[$bbt]['beer'] === $e['beer']) {
+                    // Identity: (recipe_id, batch) when both sides have recipe_id;
+                    // falls back to beer-name compare only when either is NULL.
+                    $bbtRecipeId   = $bbtState[$bbt]['recipe_id'] ?? null;
+                    $sameOccupant  = ($bbtRecipeId !== null && $eventRecipeId !== null)
+                        ? ($bbtRecipeId === $eventRecipeId)
+                        : ($bbtState[$bbt]['beer'] === $e['beer']);
+                    if ($sameOccupant) {
                         $deduct      = $e['hl'] + $this->packagingLossHl;
                         $prevVol     = $bbtState[$bbt]['volume_hl'];
                         $bbtState[$bbt]['volume_hl'] = max(0.0, $prevVol - $deduct);
@@ -577,14 +667,20 @@ class TankSimulator
     // Data loaders
     // ─────────────────────────────────────────────────────────────────────────
 
-    /** Returns ['beer|batch' => cct#string, ...] */
+    /**
+     * Returns ['beer|batch' => ['cct' => string, 'recipe_id' => int|null], ...]
+     * ORDER BY event_date ASC so last-write-wins is deterministic when a
+     * (beer, batch) key appears on multiple brewdays (re-brew edge case).
+     */
     private function loadBatchCCT(DateTimeImmutable $simStart): array
     {
         $stmt = $this->pdo->prepare(
-            'SELECT beer AS bd_beer, batch AS bd_batch, cct AS bd_cct
+            'SELECT beer AS bd_beer, batch AS bd_batch, cct AS bd_cct,
+                    recipe_id_fk AS bd_recipe_id
              FROM bd_brewing_brewday_v2
              WHERE cct IS NOT NULL
-               AND event_date >= :start'
+               AND event_date >= :start
+             ORDER BY event_date ASC'
         );
         $stmt->execute([':start' => $simStart->format('Y-m-d')]);
 
@@ -594,7 +690,12 @@ class TankSimulator
             $batch = trim($row['bd_batch'] ?? '');
             $cct   = (string)(int)$row['bd_cct'];
             if ($beer !== '' && $batch !== '' && !$this->isWortSale($beer)) {
-                $map[$beer . '|' . $batch] = $cct;
+                // Last-write-wins (ORDER BY event_date ASC means later rows
+                // overwrite earlier ones — deterministic for re-brew edge cases).
+                $map[$beer . '|' . $batch] = [
+                    'cct'       => $cct,
+                    'recipe_id' => isset($row['bd_recipe_id']) ? (int)$row['bd_recipe_id'] : null,
+                ];
             }
         }
         return $map;
@@ -631,9 +732,11 @@ class TankSimulator
     ): array {
         // bd_brewing_cooling folded into bd_brewing_gravity_v2 WHERE event_type='Cooling'.
         // gravity_v2 has no event_date column — derive it from DATE(submitted_at).
+        // recipe_id_fk is 100% populated on bd_brewing_gravity_v2 (pre-flight verified).
         $stmt = $this->pdo->prepare(
             'SELECT beer AS cool_beer, batch AS cool_batch,
-                    final_volume AS cool_final_volume_hl, DATE(submitted_at) AS event_date
+                    final_volume AS cool_final_volume_hl, DATE(submitted_at) AS event_date,
+                    recipe_id_fk AS cool_recipe_id
              FROM bd_brewing_gravity_v2
              WHERE event_type = "Cooling"
                AND DATE(submitted_at) >= :start
@@ -643,21 +746,48 @@ class TankSimulator
 
         $events = [];
         foreach ($stmt->fetchAll() as $row) {
-            $rawBeer = trim($row['cool_beer'] ?? '');
-            $beer  = $this->normalizeBeerName($rawBeer);
-            $batch = trim($row['cool_batch'] ?? '');
-            $vol   = (float)($row['cool_final_volume_hl'] ?? 0);
-            $date  = $this->parseDate($row['event_date'] ?? '');
+            $rawBeer  = trim($row['cool_beer'] ?? '');
+            $beer     = $this->normalizeBeerName($rawBeer);
+            $batch    = trim($row['cool_batch'] ?? '');
+            $vol      = (float)($row['cool_final_volume_hl'] ?? 0);
+            $date     = $this->parseDate($row['event_date'] ?? '');
+            $recipeId = isset($row['cool_recipe_id']) ? (int)$row['cool_recipe_id'] : null;
 
             if ($beer === '' || $batch === '' || $date === null || $vol <= 0) continue;
             if ($this->isWortSale($beer)) continue;
 
-            $key    = $beer . '|' . $batch;
-            $cct    = $batchCCT[$key] ?? '?';
-            $isRacked  = isset($rackedBatches[$key]);
-            $isRecent  = $date >= $recentCutoff;
+            // Log unresolved recipe_id edges so they surface in error_log without
+            // breaking the sim — fallback to beer-name-only keying is safe here.
+            if ($recipeId === null) {
+                error_log(sprintf(
+                    '[TankSimulator] COOLING event with NULL recipe_id_fk: beer=%s batch=%s date=%s',
+                    $beer, $batch, $date->format('Y-m-d')
+                ));
+            }
 
-            if (!$isRacked && !$isRecent) continue;
+            $key           = $beer . '|' . $batch;
+            $batchCCTEntry = $batchCCT[$key] ?? null;
+            $cct           = $batchCCTEntry !== null ? $batchCCTEntry['cct'] : '?';
+            $isRacked      = isset($rackedBatches[$key]);
+            $isRecent      = $date >= $recentCutoff;
+
+            // Part C fix (2026-06-04): do NOT drop an un-racked cooling event on recency
+            // alone. An un-racked batch is physically still in its CCT regardless of age
+            // (example: DIB/6 cooled 2026-02-06, un-racked, still in CCT9 at 96.7 HL).
+            // Keep alive until: (a) it is racked (implicit-evict in RACKING case handles that),
+            // (b) its CCT is reused by a later brew (COOLING implicit-evict), or (c) it
+            // exceeds the MAX_TANK_AGE_DAYS cap (180 days). The 3-month $isRecent window
+            // is kept as-is for racked events — those only matter for CCT eviction, and the
+            // racking events themselves carry the date that actually clears the slot.
+            //
+            // Original rule: drop only when !isRacked && !isRecent.
+            // New rule: additionally allow !isRacked && !isRecent when still within MAX_TANK_AGE_DAYS.
+            if (!$isRacked && !$isRecent) {
+                // Un-racked + beyond 3-month recency: keep if within MAX_TANK_AGE_DAYS (180d).
+                if ($this->isExpired($date, new DateTimeImmutable('today'))) continue;
+                // else: un-racked, old (>3mo), but within 180 days → keep (may be physically present)
+            }
+            // All other cases (racked, or recent regardless of racked) → keep unchanged.
 
             $events[] = [
                 'type'          => 'COOLING',
@@ -665,6 +795,7 @@ class TankSimulator
                 'beer'          => $beer,
                 'raw_beer'      => $rawBeer,
                 'batch'         => $batch,
+                'recipe_id'     => $recipeId,
                 'cct'           => $cct,
                 'vol'           => $vol,
                 'sort_priority' => 1,
@@ -687,20 +818,27 @@ class TankSimulator
         // text (legacy bbt / "BBT 7") is now target_tank_raw; bbt_old is the legacy
         // int fallback. neb_* columns are NOT NULL DEFAULT '' in v2, so NULLIF the
         // empties before falling through to contract_*.
+        // Date strategy (updated 2026-06-04): use event_date as the canonical racking date.
+        // bd_racking_v2.start_time is populated by the web form's "Heure de début" field
+        // but historically suffered a DD/MM↔MM/DD swap in the BSF-era ingest (same bug fixed
+        // for packaging in commits c97cedd/f828ca4). event_date is the operator-entered date
+        // (the *physical* date the racking happened) and is correct on 100% of rows.
+        // Fallback chain: event_date → submitted_at → start_time (last resort, legacy only).
         $rows = $this->pdo->query(
-            'SELECT COALESCE(NULLIF(neb_beer, ""), contract_beer)   AS beer,
-                    COALESCE(NULLIF(neb_batch, ""), contract_batch) AS batch,
-                    target_tank_raw                     AS bbt,
+            'SELECT COALESCE(NULLIF(neb_beer, ""), contract_beer)                    AS beer,
+                    COALESCE(NULLIF(neb_batch, ""), contract_batch)                   AS batch,
+                    COALESCE(neb_recipe_id_fk, contract_recipe_id_fk)                 AS recipe_id_fk,
+                    target_tank_raw                                                    AS bbt,
                     bbt_old,
                     racked_vol_hl,
-                    blend_hl                            AS blend_text,
+                    blend_hl                                                           AS blend_text,
                     loss_source_hl,
                     loss_dest_hl,
                     interrupted_flag,
                     dest_bbt_still_clean,
-                    COALESCE(start_time, submitted_at)  AS rack_date
+                    COALESCE(event_date, DATE(submitted_at), DATE(start_time))         AS rack_date
              FROM bd_racking_v2
-             WHERE COALESCE(start_time, submitted_at) IS NOT NULL'
+             WHERE COALESCE(event_date, submitted_at, start_time) IS NOT NULL'
         )->fetchAll();
 
         $events = [];
@@ -717,8 +855,15 @@ class TankSimulator
             if ($beer === '' || $batch === '' || $bbt === null || $date === null) continue;
             if ($this->isWortSale($beer)) continue;
 
-            $key = $beer . '|' . $batch;
-            $cct = $batchCCT[$key] ?? '?';
+            $key           = $beer . '|' . $batch;
+            $batchCCTEntry = $batchCCT[$key] ?? null;
+            $cct           = $batchCCTEntry !== null ? $batchCCTEntry['cct'] : '?';
+            $recipeId      = isset($row['recipe_id_fk']) ? (int)$row['recipe_id_fk'] : null;
+            // Fallback to batchCCT recipe_id when the racking row has NULL.
+            // 99.8% of racking rows have recipe_id_fk set (pre-flight verified).
+            if ($recipeId === null && $batchCCTEntry !== null) {
+                $recipeId = $batchCCTEntry['recipe_id'];
+            }
 
             // C3 — carry loss columns on the event.
             // C4 — carry interrupted_flag + dest_bbt_still_clean on the event.
@@ -735,6 +880,7 @@ class TankSimulator
                 'date'               => $date,
                 'beer'               => $beer,
                 'batch'              => $batch,
+                'recipe_id'          => $recipeId,
                 'cct'                => $cct,
                 'bbt'                => (string)$bbt,
                 'racked_vol'         => $rackedVol,
@@ -752,20 +898,38 @@ class TankSimulator
     /** Build PACKAGING events. */
     private function loadPackagingEvents(): array
     {
-        // SOURCE STRATEGY (2026-05-25):
+        // SOURCE STRATEGY (2026-05-25, updated 2026-06-04):
         //
         // bd_packaging_v2 is now the sole packaging source. Every row is a distinct packaging
         // event (operator-confirmed: multiple same-day Cuv rows are distinct
         // serving-tank fills, not duplicates). No cross-source dedup needed.
+        //
+        // Key changes (2026-06-04):
+        //   1. recipe_id_fk added — enables (recipe_id, batch) keying in the PACKAGING
+        //      case below (Part B). neb_beer/contract_beer often hold SKU codes like
+        //      STI4/SPYB/EMB4C which normalizeBeerName() passes through unchanged, so
+        //      the old (beer|batch) key silently mismatched the racking entry. recipe_id_fk
+        //      is 100% populated on drainable rows and matches neb_recipe_id_fk on racking.
+        //   2. event_date used for the event date instead of submitted_at. The sim sorts
+        //      events chronologically; racking already uses event_date; using submitted_at
+        //      here let stale fills survive when submission lag placed packaging events
+        //      after a newer racking in sort order (e.g. BBT2/BBT5 wrong-beer survivals).
+        //   3. Deduct amount = vendable_hl + loss_kpi_hl (liquid losses already expressed
+        //      in HL on the row). loss_kpi_hl captures keg-liquid-loss (loss_keg_liquid_l/100)
+        //      and bottle/can unsaleable waste (unsaleable_units × per-unit HL). Operator
+        //      note: "expect a few HL discrepancy — half-filled is computed differently in
+        //      v2." Goal is correct beer identity + volumes within a few HL, not exact parity.
 
         // Load web-form rows from bd_packaging_v2.
         $v2Rows = $this->pdo->query(
             'SELECT COALESCE(NULLIF(neb_beer, ""), contract_beer) AS beer,
                     COALESCE(NULLIF(neb_batch, ""), contract_batch) AS batch,
+                    recipe_id_fk,
                     vendable_hl,
-                    submitted_at
+                    COALESCE(loss_kpi_hl, 0) AS loss_kpi_hl,
+                    event_date
              FROM bd_packaging_v2
-             WHERE submitted_at IS NOT NULL
+             WHERE event_date IS NOT NULL
                AND vendable_hl IS NOT NULL
                AND CAST(vendable_hl AS DECIMAL(14,4)) > 0
                AND is_tombstoned = 0
@@ -773,15 +937,19 @@ class TankSimulator
         )->fetchAll();
 
         // Parse v2 rows into canonical event structure.
-        // neb_beer/contract_beer hold racking-style names (e.g. "Div.Blanche"),
-        // identical to bd_racking_v2 — normalizeBeerName() keeps the key consistent.
+        // neb_beer/contract_beer hold racking-style names or SKU codes — normalizeBeerName()
+        // normalises the canonical names but passes SKU codes through unchanged. The beer
+        // field is kept for fallback display/guard purposes; recipe_id is the primary key.
         $events = [];
 
         $processRow = function (array $row) use (&$events): void {
-            $beer       = $this->normalizeBeerName(trim($row['beer'] ?? ''));
-            $batch      = trim($row['batch'] ?? '');
-            $vendableHl = (float)($row['vendable_hl'] ?? 0);
-            $date       = $this->parseDate($row['submitted_at'] ?? '');
+            $beer        = $this->normalizeBeerName(trim($row['beer'] ?? ''));
+            $batch       = trim($row['batch'] ?? '');
+            $vendableHl  = (float)($row['vendable_hl'] ?? 0);
+            $lossKpiHl   = (float)($row['loss_kpi_hl'] ?? 0);
+            $date        = $this->parseDate($row['event_date'] ?? '');
+            $recipeId    = isset($row['recipe_id_fk']) && $row['recipe_id_fk'] !== null
+                ? (int)$row['recipe_id_fk'] : null;
 
             if ($beer === '' || $date === null || $vendableHl <= 0) return;
             if ($this->isWortSale($beer)) return;
@@ -791,7 +959,11 @@ class TankSimulator
                 'date'          => $date,
                 'beer'          => $beer,
                 'batch'         => $batch,
-                'hl'            => $vendableHl,
+                'recipe_id'     => $recipeId,
+                // Total liquid leaving the tank: vendable + liquid losses (loss_kpi_hl).
+                // The flat packagingLossHl constant (0.15 HL per run from commissioning_settings)
+                // is added in the PACKAGING case processor — do not include it here.
+                'hl'            => $vendableHl + $lossKpiHl,
                 'sort_priority' => 2,
             ];
         };

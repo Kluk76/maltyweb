@@ -200,9 +200,12 @@ function _recipe_resolver_load(PDO $pdo, ?array &$all_recipes, ?array &$all_alia
     $all_aliases = [];
     $norm_map    = [];
 
-    // Load all recipes (use COLLATE utf8mb4_unicode_ci explicitly for cross-table safety)
+    // Load active recipes only. Order by vintage DESC, id DESC so that when multiple
+    // rows share the same name (EPH1–4 were multi-vintage), the map-key collision for
+    // a vintage-less lookup lands on the NEWEST/operative row, not the oldest stub.
+    // Tombstoned stubs (is_active=0) are excluded — they must not win name resolution.
     $stmt = $pdo->query(
-        "SELECT id, name, vintage FROM ref_recipes ORDER BY id"
+        "SELECT id, name, vintage FROM ref_recipes WHERE is_active = 1 ORDER BY vintage DESC, id DESC"
     );
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
         $key = _rr_ci_key($row['name'], $row['vintage']);
@@ -211,7 +214,8 @@ function _recipe_resolver_load(PDO $pdo, ?array &$all_recipes, ?array &$all_alia
             'canonical_name' => $row['name'],
             'vintage'        => $row['vintage'],
         ];
-        // Build normalised → recipe map
+        // Build normalised → recipe map (first-seen wins; with newest-first order,
+        // the operative row always wins for duplicate names).
         $norm = _rr_normalize($row['name']);
         if (!isset($norm_map[$norm])) {
             $norm_map[$norm] = [
