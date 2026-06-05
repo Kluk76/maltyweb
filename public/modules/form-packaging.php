@@ -417,9 +417,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // combineAnchor='filler' enforces that KZE-alone is dropped server-side.
         $cipEvents = cip_parse_post($_POST, 'packaging', ['filler', 'kze'], 'filler');
 
-        // White label
-        $isWhiteLabel   = (post_int('is_white_label') === 1) ? 1 : 0;
-        $whiteLabelName = post_str('white_label_name');
+        // White label moved to per-card grain — no session-level read here.
 
         // Comments / framework comment
         $comments  = post_str('comments');
@@ -779,6 +777,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $fLinerTransportMi = null;
             }
 
+            // ── Per-card white-label fields ──────────────────────────────────
+            // Read with isset+'' guard FIRST (repo convention), then cast.
+            $fIsWl    = (isset($f['is_white_label']) && (int)$f['is_white_label'] === 1) ? 1 : 0;
+            $fWlUnits = (isset($f['wl_units']) && $f['wl_units'] !== '')
+                            ? (int)$f['wl_units'] : null;
+            $fWlName  = (isset($f['white_label_name']) && $f['white_label_name'] !== '')
+                            ? trim((string)$f['white_label_name']) : null;
+
             // ── Server-side sku_id_fk resolution ─────────────────────────────
             // Primary: literal neb_beer text → ref_skus.sku_code (mirrors Python ingest).
             // Fallback: (recipe_id, format_suffix=format_code) JOIN when suffix is set.
@@ -789,7 +795,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $rawSkuText,
                 $recipeIdFk,
                 ($fSuffix !== '' && $fSuffix !== null) ? $fSuffix : null,
-                (bool)$isWhiteLabel,
+                (bool)$fIsWl,
                 null  // whiteLabelSkuCode: form doesn't collect this yet
             );
 
@@ -846,7 +852,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $rowAuditTokens[] = $computed['qc_flag'];
             }
 
-            if ($skuIdFk === null && $fOrigin === 'main' && !(bool)$isWhiteLabel && $fReusesPackagingIdFk === null) {
+            if ($skuIdFk === null && $fOrigin === 'main' && !(bool)$fIsWl && $fReusesPackagingIdFk === null) {
                 // White-label rows may legitimately have no matching sku_code yet.
                 // Non-WL main rows with no sku_id are a real gap — flag for triage.
                 $rowAuditTokens[] = 'sku_unresolved';
@@ -926,9 +932,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     // NULL = no liner selected (operator left dropdown on "— aucun —").
                     'liner_client_mi_id_fk'     => $fLinerClientMi,
                     'liner_transport_mi_id_fk'  => $fLinerTransportMi,
-                    // White label
-                    'is_white_label'         => $isWhiteLabel,
-                    'white_label_name'       => $whiteLabelName,
+                    // White label — per-card; this card row is the Nébuleuse run (is_white_label=0, full qty).
+                    // WL units are a separate additive leg appended below (B-split).
+                    'is_white_label'         => 0,
+                    'white_label_name'       => null,
                     // Client FK — per-row for cuv; NULL for all other run_types (enforced above)
                     'client_fk'              => $fClientFk,
                     // Cuve réutilisée (mig 237): self-FK; NULL for normal rows
@@ -956,6 +963,117 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'sku_id_fk'          => $skuIdFk,
                 'format_suffix_used' => ($fSuffix !== '' && $fSuffix !== null) ? $fSuffix : null,
             ];
+
+            // ── B-split: append WL units as a separate additive leg ─────────
+            // The card row is the Nébuleuse run (full quantity, untouched).
+            // WL units are ADDED on top: session total = card units + WL units.
+            // The '-WL' suffix on nebuleuse_format_suffix is the NK distinguisher
+            // so the WL leg and the card row don't collide on the natural key.
+            if ($fIsWl === 1 && $fWlUnits !== null && $fWlUnits > 0) {
+                // ── WL leg ───────────────────────────────────────────────────
+                // NK-distinguisher: append '-WL' to the card suffix (or use 'WL' if suffix is empty).
+                $wlSuffix = (($fSuffix !== '' && $fSuffix !== null) ? $fSuffix . '-WL' : 'WL');
+
+                // Recompute vendable_hl for the WL qty.
+                $wlPartialRow = [
+                    'prod_total_units'        => $fWlUnits,
+                    'special_qty_units'       => $fWlUnits,
+                    'qa_analyses_units'       => 0,
+                    'qa_library_units'        => null,
+                    'unsaleable_units'        => null,
+                    'loss_uncapped_units'     => null,
+                    'loss_half_filled_units'  => null,
+                    'loss_untaxed_full_units' => null,
+                    'loss_keg_liquid_l'       => null,
+                    'taproom_keg_l'           => null,
+                    'loss_liquid_other_units' => null,
+                ];
+                $wlComputed = compute_packaging_vendable_hl(
+                    $wlPartialRow, $skuMeta, $fRunType, ($skuIdFk === null && $contractBeer !== '')
+                );
+
+                $wlHashCols = [
+                    $nebBeer, $nebBatch,
+                    $contractBeer, $contractBatch,
+                    $sourceTankType, (string)$sourceTankId,
+                    $fRunType, 'parallel',
+                    $wlSuffix,
+                    $eventDate,
+                    $submittedAt,
+                    (string)$idx . '-WL',   // distinct idx token
+                ];
+                $wlRowHash = bd_row_hash($wlHashCols);
+
+                $rows[] = [
+                    'row' => [
+                        'row_hash'               => $wlRowHash,
+                        'row_origin'             => 'parallel',
+                        'audit_flags'            => implode(',', $baseAuditTokens),
+                        'submitted_at'           => $submittedAt,
+                        'email'                  => $me['username'],
+                        'event_date'             => $eventDate,
+                        'source_tank_type'       => $sourceTankType,
+                        'bbt_source_fk'          => $bbtSourceFk,
+                        'cct_source_fk'          => $cctSourceFk,
+                        'neb_beer'               => $nebBeer,
+                        'neb_batch'              => $nebBatch,
+                        'neb_dlc'                => $nebDlc,
+                        'contract_beer'          => $contractBeer,
+                        'contract_batch'         => $contractBatch,
+                        'recipe_id_fk'           => $recipeIdFk,
+                        'nebuleuse_format_suffix' => $wlSuffix,
+                        'run_type'               => $fRunType,
+                        // WL leg: copy the card row's sku_id_fk directly.
+                        // Do NOT re-run resolve_packaging_sku_id with '-WL' suffix.
+                        'sku_id_fk'              => $skuIdFk,
+                        'prod_total_units'       => $fWlUnits,
+                        'special_qty_units'      => $fWlUnits,
+                        'vendable_hl'            => $wlComputed['vendable_hl'],
+                        'beer_tax_base_hl'       => $wlComputed['beer_tax_base_hl'],
+                        'loss_kpi_hl'            => $wlComputed['loss_kpi_hl'],
+                        // All loss/qa/disposition fields = null/0 (losses belong to remainder leg).
+                        'unsaleable_units'       => null,
+                        'qa_analyses_units'      => 0,
+                        'qa_library_units'       => null,
+                        'loss_uncapped_units'    => null,
+                        'loss_half_filled_units' => null,
+                        'loss_untaxed_full_units'=> null,
+                        'loss_keg_liquid_l'      => null,
+                        'taproom_keg_l'          => null,
+                        'loss_4pack_btl_units'   => null,
+                        'loss_4pack_can_units'   => null,
+                        'loss_wrap_btl_units'    => null,
+                        'loss_wrap_can_units'    => null,
+                        'loss_label_btl_units'   => null,
+                        'loss_keg_collar_units'  => null,
+                        'loss_crown_cork_units'  => null,
+                        'loss_can_lid_units'     => null,
+                        'loss_keg_save_units'    => null,
+                        'loss_container_btl_units'=> null,
+                        'loss_container_can_units'=> null,
+                        'loss_liquid_other_units' => null,
+                        'new_liner_client'       => null,
+                        'new_liner_transport'    => null,
+                        'liner_client_mi_id_fk'  => null,
+                        'liner_transport_mi_id_fk'=> null,
+                        // White label identity lives here.
+                        'is_white_label'         => 1,
+                        'white_label_name'       => $fWlName,
+                        'client_fk'              => null,
+                        'reuses_packaging_id_fk' => null,
+                        'tank_read_id_fk'        => ($tankReadMode === 'own')
+                            ? '_needs_tank_read_id'
+                            : $tankReadId,
+                        'comments'               => null,
+                        'hors_process_flag'      => $horsProcessFlag,
+                        'hors_process_reason'    => $horsProcessReason,
+                    ],
+                    'origin'             => 'parallel',
+                    'computed_vendable'  => $wlComputed['vendable_hl'],
+                    'sku_id_fk'          => $skuIdFk,
+                    'format_suffix_used' => $wlSuffix,
+                ];
+            }
         }
 
         $nkCols = ['submitted_at', 'neb_beer', 'neb_batch', 'contract_beer', 'contract_batch', 'row_origin', 'nebuleuse_format_suffix'];
@@ -1356,8 +1474,6 @@ if ($editId !== null) {
                     'contract_batch'    => $anchorRow['contract_batch'] ?? '',
                     'recipe_id_fk'      => $anchorRow['recipe_id_fk'],
                     'event_date'        => $anchorRow['event_date'] ?? date('Y-m-d'),
-                    'is_white_label'    => (int)($anchorRow['is_white_label'] ?? 0),
-                    'white_label_name'  => $anchorRow['white_label_name'] ?? '',
                     'dlc'               => $anchorRow['neb_dlc'] ?? '',
                     'comments'          => $anchorRow['comments'] ?? '',
                     'hors_process_flag'   => (int)($anchorRow['hors_process_flag'] ?? 0),
@@ -1400,6 +1516,9 @@ if ($editId !== null) {
                         'liner_client_mi_id_fk'   => $sr['liner_client_mi_id_fk'],
                         'liner_transport_mi_id_fk'=> $sr['liner_transport_mi_id_fk'],
                         'reuses_packaging_id_fk'  => $sr['reuses_packaging_id_fk'],
+                        // Per-card WL fields (both legs returned; JS strips -WL suffix for WL leg)
+                        'is_white_label'          => (int)($sr['is_white_label'] ?? 0),
+                        'white_label_name'        => $sr['white_label_name'] ?? null,
                     ];
                 }
 
@@ -2355,29 +2474,6 @@ $cipConfig = [
 
       <div id="pf-co2o2-msr"></div>
     </div><!-- card in-filling CO2/O2 -->
-
-    <!-- ── Section: White label ───────────────────────────────────── -->
-    <div class="op-form__card">
-      <div class="op-form__card-title">— white label <span class="op-form__opt">(optionnel)</span></div>
-      <div class="op-form__grid--3 op-form__grid">
-
-        <div class="op-form__field">
-          <label class="op-form__label" for="is_white_label">White label ?</label>
-          <select id="is_white_label" name="is_white_label" class="op-form__select">
-            <option value="0"<?= ($editMode && (int)($pfSticky['is_white_label'] ?? 0) === 0) ? ' selected' : '' ?>>Non</option>
-            <option value="1"<?= ($editMode && (int)($pfSticky['is_white_label'] ?? 0) === 1) ? ' selected' : '' ?>>Oui</option>
-          </select>
-        </div>
-
-        <div class="op-form__field" id="pf-wl-name-field"<?= (!$editMode || (int)($pfSticky['is_white_label'] ?? 0) !== 1) ? ' hidden' : '' ?>>
-          <label class="op-form__label" for="white_label_name">Nom white label</label>
-          <input id="white_label_name" name="white_label_name" type="text" class="op-form__input"
-                 placeholder="ex. Monoprix Lager"
-                 value="<?= htmlspecialchars($editMode ? ($pfSticky['white_label_name'] ?? '') : '') ?>">
-        </div>
-
-      </div>
-    </div><!-- card white label -->
 
     <!-- ── Section: DLC ──────────────────────────────────────────── -->
     <div class="op-form__card">

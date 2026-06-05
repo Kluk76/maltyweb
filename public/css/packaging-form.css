@@ -693,6 +693,21 @@ body.op-form-packaging .pf-reuse-active-banner strong {
   color: var(--ember);
 }
 
+/* ── Per-card white-label sub-block ─────────────────────────────────────── */
+body.op-form-packaging .pf-disposition-group--wl {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--hairline);
+}
+body.op-form-packaging .pf-wl-title {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  margin-bottom: 0.5rem;
+}
+
 /* ── CO₂/O₂ lot-day anchor: inherit / fork / gate (mig 240) ──────────────── */
 body.op-form-packaging .pf-co2o2-inherit-banner {
   margin-bottom: 0.75rem;

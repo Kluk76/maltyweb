@@ -72,9 +72,6 @@ document.addEventListener('DOMContentLoaded', function () {
   const addFormatBtn     = document.getElementById('pf-add-format');
   const skuMosaic        = document.getElementById('pf-sku-mosaic');
 
-  const wlSelect           = document.getElementById('is_white_label');
-  const wlNameField        = document.getElementById('pf-wl-name-field');
-
   // Override (Choix Hors Process) — manager/admin only
   const overrideCheckbox   = document.getElementById('pf-override-checkbox');
   const overrideReasonRow  = document.getElementById('pf-override-reason-row');
@@ -532,6 +529,36 @@ document.addEventListener('DOMContentLoaded', function () {
       : '<button type="button" class="pf-remove-format op-form__btn op-form__btn--danger-sm"' +
           ' data-idx="' + idx + '" title="Supprimer ce format">✕</button>';
 
+    // ── Per-card white-label sub-block ────────────────────────────────────────
+    // Always rendered (no run_type gate). Default: Non. When Oui, reveals
+    // wl_units (additive WL quantity) and white_label_name.
+    const wlGroupHtml =
+      '<div class="pf-disposition-group pf-disposition-group--wl" data-fmt-idx="' + idx + '">' +
+        '<div class="pf-wl-title">— white label <span class="op-form__opt">(optionnel)</span></div>' +
+        '<div class="op-form__grid--3 op-form__grid">' +
+          '<div class="op-form__field">' +
+            '<label class="op-form__label" for="' + idPfx + '_is_white_label">White label ?</label>' +
+            '<select id="' + idPfx + '_is_white_label"' +
+              ' name="' + prefix + '[is_white_label]"' +
+              ' class="op-form__select pf-wl-select" data-fmt-idx="' + idx + '">' +
+              '<option value="0">Non</option>' +
+              '<option value="1">Oui</option>' +
+            '</select>' +
+          '</div>' +
+          '<div class="op-form__field pf-wl-units-field" id="' + idPfx + '_wl_units_field" hidden>' +
+            '<label class="op-form__label" for="' + idPfx + '_wl_units">' +
+              'Unités white label <span class="op-form__unit">(additif)</span></label>' +
+            '<input id="' + idPfx + '_wl_units" name="' + prefix + '[wl_units]"' +
+              ' type="text" inputmode="numeric" class="op-form__input" placeholder="0">' +
+          '</div>' +
+          '<div class="op-form__field pf-wl-name-field" id="' + idPfx + '_wl_name_field" hidden>' +
+            '<label class="op-form__label" for="' + idPfx + '_wl_name">Nom white label</label>' +
+            '<input id="' + idPfx + '_wl_name" name="' + prefix + '[white_label_name]"' +
+              ' type="text" class="op-form__input" placeholder="ex. Monoprix Lager">' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+
     return '<div class="pf-format-row" id="pf-fmt-' + idx + '" data-idx="' + idx + '">' +
       '<div class="pf-format-row__header">' +
         '<span class="pf-format-row__badge pf-format-row__badge--' + origin + '">' +
@@ -562,6 +589,7 @@ document.addEventListener('DOMContentLoaded', function () {
       reuseGroupHtml +
       clientGroupHtml +
       linerGroupHtml +
+      wlGroupHtml +
     '</div>';
   }
 
@@ -725,6 +753,24 @@ document.addEventListener('DOMContentLoaded', function () {
         });
       }
 
+      // Per-card WL toggle: show wl_units + white_label_name when Oui selected.
+      var wlSel = rowEl.querySelector('.pf-wl-select');
+      if (wlSel) {
+        var updateWlSubfields = function (sel) {
+          var isWl = (sel.value === '1');
+          var unitsField = document.getElementById(
+            'fmt' + sel.dataset.fmtIdx + '_wl_units_field'
+          );
+          var nameField = document.getElementById(
+            'fmt' + sel.dataset.fmtIdx + '_wl_name_field'
+          );
+          if (unitsField) unitsField.hidden = !isWl;
+          if (nameField)  nameField.hidden  = !isWl;
+        };
+        wlSel.addEventListener('change', function () { updateWlSubfields(wlSel); });
+        updateWlSubfields(wlSel);
+      }
+
       // Set initial state (no run_type selected → show bottle group by default)
       updateRowDispositionGroups(rowEl);
     }
@@ -748,18 +794,6 @@ document.addEventListener('DOMContentLoaded', function () {
 
   // Seed the main format row on load
   addFormatRow(true);
-
-  // ── White label visibility ────────────────────────────────────────────────
-  function updateWlField() {
-    if (!wlSelect || !wlNameField) return;
-    wlNameField.hidden = (wlSelect.value !== '1');
-    // WL toggle changes is_white_label — re-evaluate all rows
-    updateAllRowDispositionGroups();
-  }
-  if (wlSelect) {
-    wlSelect.addEventListener('change', updateWlField);
-    updateWlField();
-  }
 
   // ── Enable submit ─────────────────────────────────────────────────────────
   function tryEnableSubmit() {
@@ -953,6 +987,12 @@ document.addEventListener('DOMContentLoaded', function () {
       // Keep qa_analyses_units display in sync as the operator adds/removes/edits reads.
       onChange:    function () { syncQaAnalysesDisplay(); },
     });
+    // Belt-and-suspenders: delegated listener catches any value change inside
+    // the mount (including draft-restore values set without change events).
+    var co2o2Mount = document.getElementById('pf-co2o2-msr');
+    if (co2o2Mount) {
+      co2o2Mount.addEventListener('input', function () { syncQaAnalysesDisplay(); });
+    }
   }
 
   // ── In-tank CO₂/O₂ single-pair auto-fill ────────────────────────────────
@@ -1215,6 +1255,11 @@ document.addEventListener('DOMContentLoaded', function () {
       },
     });
   }
+  // Re-derive qa_analyses_units after a draft restore. loadDraft() runs
+  // synchronously inside FormFramework.init() and sets input values without
+  // dispatching change events, so syncQaAnalysesDisplay() must run after init
+  // to reflect the restored CO₂/O₂ pair count on a fresh page load.
+  syncQaAnalysesDisplay();
 
   // ── Edit-mode prefill (PF_STICKY_*) ─────────────────────────────────────
   //
@@ -1419,6 +1464,45 @@ document.addEventListener('DOMContentLoaded', function () {
       var linerTransSel = rowEl.querySelector('[name="formats[' + i + '][liner_transport_mi_id_fk]"]');
       if (linerTransSel && fmt.liner_transport_mi_id_fk !== null && fmt.liner_transport_mi_id_fk !== undefined) {
         linerTransSel.value = String(fmt.liner_transport_mi_id_fk);
+      }
+
+      // Per-card WL fields (edit-mode hydration).
+      // WL split legs come back with is_white_label=1 and suffix ending in '-WL'.
+      // Strip the trailing '-WL' before setting the suffix dropdown so the format
+      // renders cleanly; set wl_units from prod_total_units and wl_name from the row.
+      var fmtSuffix = fmt.nebuleuse_format_suffix || '';
+      var isWlLeg   = (fmt.is_white_label === 1 || fmt.is_white_label === '1')
+                       && (fmtSuffix === 'WL' || fmtSuffix.slice(-3) === '-WL');
+      if (isWlLeg) {
+        // Correct the suffix dropdown: strip '-WL' / 'WL' trailing token.
+        var cleanSuffix = (fmtSuffix === 'WL') ? '' : fmtSuffix.replace(/-WL$/, '');
+        var sfxSelWl = rowEl.querySelector('[name="formats[' + i + '][format_suffix]"]');
+        if (sfxSelWl) {
+          var sfxOptWl = Array.from(sfxSelWl.options).find(function (o) { return o.value === cleanSuffix; });
+          if (!sfxOptWl && cleanSuffix !== '') {
+            var newOptWl = document.createElement('option');
+            newOptWl.value = cleanSuffix;
+            newOptWl.textContent = cleanSuffix;
+            sfxSelWl.appendChild(newOptWl);
+          }
+          sfxSelWl.value = cleanSuffix;
+        }
+        // Set wl_units from prod_total_units (WL leg special_qty_units == prod_total_units)
+        setFmtInput('wl_units', fmt.prod_total_units);
+        // Set white_label_name
+        setFmtInput('white_label_name', fmt.white_label_name);
+      }
+      // Set the is_white_label select (covers both WL legs and normal cards with is_white_label=1)
+      var wlSelEdit = rowEl.querySelector('[name="formats[' + i + '][is_white_label]"]');
+      if (wlSelEdit && (fmt.is_white_label === 1 || fmt.is_white_label === '1')) {
+        wlSelEdit.value = '1';
+        // Trigger the show/hide — reuse the same updater pattern
+        wlSelEdit.dispatchEvent(new Event('change'));
+        if (!isWlLeg) {
+          // For a non-split card restoring is_white_label=1 (unlikely in current flow
+          // but safe): wl_units and white_label_name would need to come from the split
+          // leg which is a separate row — nothing extra to set here.
+        }
       }
 
       // Reuses FK (cuv only)
