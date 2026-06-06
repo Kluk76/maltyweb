@@ -152,7 +152,8 @@ function rt_lookup(string $raw_token, ?string $ip, ?string $ua, PDO $pdo): ?arra
     $stmt = $pdo->prepare(
         "SELECT t.id AS token_id, t.user_id, t.expires_at, t.revoked_at,
                 t.device_label,
-                u.id, u.username, u.display_name, u.role, u.manager_scope, u.is_active
+                u.id, u.username, u.display_name, u.role, u.manager_scope,
+                u.access_preset_id_fk, u.is_active
            FROM user_remember_tokens t
            JOIN users u ON u.id = t.user_id
           WHERE t.token_hash = ?
@@ -168,11 +169,14 @@ function rt_lookup(string $raw_token, ?string $ip, ?string $ua, PDO $pdo): ?arra
 
     // Build the user array (same shape that auth_login stores in $_SESSION)
     $user = [
-        'id'            => (int)$row['id'],
-        'username'      => $row['username'],
-        'display_name'  => $row['display_name'] ?? $row['username'],
-        'role'          => $row['role'],
-        'manager_scope' => $row['manager_scope'] ?? null,
+        'id'                   => (int)$row['id'],
+        'username'             => $row['username'],
+        'display_name'         => $row['display_name'] ?? $row['username'],
+        'role'                 => $row['role'],
+        'manager_scope'        => $row['manager_scope'] ?? null,
+        'access_preset_id_fk'  => isset($row['access_preset_id_fk'])
+                                       ? (int) $row['access_preset_id_fk']
+                                       : null,
     ];
 
     // ── Token rotation: revoke old hash, issue new token ──────────────────

@@ -6,7 +6,7 @@ require __DIR__ . "/../../app/services/document_preview.php";
 require __DIR__ . "/../../app/services/triage_actions.php";
 require __DIR__ . "/../../app/csrf.php";
 
-require_login();
+require_page_access('triage');
 $me = current_user();
 
 header("Content-Type: text/html; charset=utf-8");

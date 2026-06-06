@@ -4,7 +4,7 @@ declare(strict_types=1);
 require __DIR__ . "/../../app/auth.php";
 require_once __DIR__ . "/../../app/settings.php";
 
-require_login();
+require_page_access('sku-costs');
 $me = current_user();
 
 header("Content-Type: text/html; charset=utf-8");

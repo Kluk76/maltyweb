@@ -10,33 +10,29 @@ declare(strict_types=1);
 $active_module = $active_module ?? "";
 $me            = $me ?? current_user() ?? [];
 
-$modules = [
-    ["⊞", "Lots en cours",    "/modules/sb-board.php",         "sb-board"],
-    ["⚑", "Salle de Guerre",  "/modules/sb-salle-de-guerre.php","sb-guerre"],
-    ["✦", "Le Zeppelin",      "/modules/le-zeppelin.php", "zeppelin"],
-    ["00", "Triage",          "/modules/triage.php",   "triage"],
-    ["✎", "Saisies",         "/modules/saisies.php",  "saisies"],
-    ["01", "Approvisionnement", "/modules/approvisionnement.php", "approvisionnement"],
-    ["02", "Wort Production", "/modules/wort.php",     "wort"],
-    ["03", "Fermentation",    "/modules/tanks.php",    "fermentation"],
-    ["04", "Packaging",       "/modules/packaging.php","packaging"],
-    ["05", "Fulfilment",      "#",                     "fulfilment"],
-    ["06", "QA / QC",         "#",                     "qa"],
-    ["07", "SKU Costs",       "/modules/sku-costs.php","sku-costs"],
-    ["08", "Warehouse",       "/modules/warehouse.php","warehouse"],
-    ["09", "Bilan MP",        "/modules/rm-stock-comparison.php","rm-comparison"],
-];
+// ── Load nav from ref_pages (replaces hardcoded $modules array) ─────────────
+$_tbPdo     = maltytask_pdo();
+$_tbStmt    = $_tbPdo->query(
+    "SELECT page_key, label, icon, href, min_role, domain
+       FROM ref_pages
+      WHERE is_active = 1
+      ORDER BY sort"
+);
+$_tbAllRows = $_tbStmt->fetchAll();
 
-$showAdminBlock = is_admin($me) || is_manager($me);
-$adminEntries   = [];
-if ($showAdminBlock) {
-    $adminEntries[] = ["Paramètres",  "/admin/settings.php",  "settings"];
-    $adminEntries[] = ["Ingest",      "/admin/ingest.php",    "ingest"];
+$_tbMainRows  = [];  // domain != 'admin', filtered to what user can see
+$_tbAdminRows = [];  // domain = 'admin',  filtered to what user can see
+
+foreach ($_tbAllRows as $_tbRow) {
+    if (!user_can_access($_tbRow['page_key'], $me)) continue;
+    if ($_tbRow['domain'] === 'admin') {
+        $_tbAdminRows[] = $_tbRow;
+    } else {
+        $_tbMainRows[]  = $_tbRow;
+    }
 }
-if (is_admin($me)) {
-    $adminEntries[] = ["ChargesBC",   "/modules/charges-bc.php","charges-bc"];
-    $adminEntries[] = ["DB Browser",  "/admin/db-browser.php","db-browser"];
-}
+
+$showAdminBlock = count($_tbAdminRows) > 0;
 
 // ── Ingest badge (1-row query, 60-second file-transient cache) ───────────────
 // Cache is skipped when the last run status is 'failed' or 'partial' so the
@@ -154,13 +150,13 @@ $userRole = htmlspecialchars($me["role"] ?? "");
   <!-- ── Module nav (desktop) ── -->
   <nav class="tb__nav" aria-label="Modules" id="tb-nav">
     <ul>
-      <?php foreach ($modules as [$idx, $name, $href, $key]): ?>
-        <?php $active = ($key === $active_module); ?>
+      <?php foreach ($_tbMainRows as $_tbMod): ?>
+        <?php $active = ($_tbMod['page_key'] === $active_module); ?>
         <li>
           <a class="tb__module<?= $active ? ' tb__module--active' : '' ?>"
-             href="<?= htmlspecialchars($href) ?>"
+             href="<?= htmlspecialchars($_tbMod['href']) ?>"
              <?= $active ? 'aria-current="page"' : '' ?>>
-            <span class="tb__midx"><?= htmlspecialchars($idx) ?></span><span class="tb__mname"><?= htmlspecialchars($name) ?></span>
+            <span class="tb__midx"><?= htmlspecialchars($_tbMod['icon'] ?? '') ?></span><span class="tb__mname"><?= htmlspecialchars($_tbMod['label']) ?></span>
           </a>
         </li>
       <?php endforeach ?>
@@ -192,10 +188,10 @@ $userRole = htmlspecialchars($me["role"] ?? "");
         </svg>
       </button>
       <div class="tb__admin-panel" id="tb-admin-panel" role="menu" hidden>
-        <?php foreach ($adminEntries as [$label, $href, $key]): ?>
-          <a class="tb__admin-item<?= ($key === $active_module) ? ' tb__admin-item--active' : '' ?>"
-             href="<?= htmlspecialchars($href) ?>"
-             role="menuitem"><?= htmlspecialchars($label) ?></a>
+        <?php foreach ($_tbAdminRows as $_tbAdm): ?>
+          <a class="tb__admin-item<?= ($_tbAdm['page_key'] === $active_module) ? ' tb__admin-item--active' : '' ?>"
+             href="<?= htmlspecialchars($_tbAdm['href']) ?>"
+             role="menuitem"><?= htmlspecialchars($_tbAdm['label']) ?></a>
         <?php endforeach ?>
         <div class="tb__admin-sep" role="separator"></div>
         <a class="tb__admin-item tb__admin-item--out" href="/logout.php" role="menuitem">Déconnexion</a>
@@ -241,14 +237,14 @@ $userRole = htmlspecialchars($me["role"] ?? "");
 
     <div class="tb-drawer__section-label">— modules</div>
     <ul class="tb-drawer__list">
-      <?php foreach ($modules as [$idx, $name, $href, $key]): ?>
-        <?php $active = ($key === $active_module); ?>
+      <?php foreach ($_tbMainRows as $_tbMod): ?>
+        <?php $active = ($_tbMod['page_key'] === $active_module); ?>
         <li>
           <a class="tb-drawer__item<?= $active ? ' tb-drawer__item--active' : '' ?>"
-             href="<?= htmlspecialchars($href) ?>"
+             href="<?= htmlspecialchars($_tbMod['href']) ?>"
              <?= $active ? 'aria-current="page"' : '' ?>>
-            <span class="tb-drawer__idx"><?= htmlspecialchars($idx) ?></span>
-            <span class="tb-drawer__name"><?= htmlspecialchars($name) ?></span>
+            <span class="tb-drawer__idx"><?= htmlspecialchars($_tbMod['icon'] ?? '') ?></span>
+            <span class="tb-drawer__name"><?= htmlspecialchars($_tbMod['label']) ?></span>
           </a>
         </li>
       <?php endforeach ?>
@@ -257,11 +253,11 @@ $userRole = htmlspecialchars($me["role"] ?? "");
     <?php if ($showAdminBlock): ?>
     <div class="tb-drawer__section-label tb-drawer__section-label--admin">— admin</div>
     <ul class="tb-drawer__list">
-      <?php foreach ($adminEntries as [$label, $href, $key]): ?>
+      <?php foreach ($_tbAdminRows as $_tbAdm): ?>
         <li>
-          <a class="tb-drawer__item<?= ($key === $active_module) ? ' tb-drawer__item--active' : '' ?>"
-             href="<?= htmlspecialchars($href) ?>">
-            <span class="tb-drawer__name"><?= htmlspecialchars($label) ?></span>
+          <a class="tb-drawer__item<?= ($_tbAdm['page_key'] === $active_module) ? ' tb-drawer__item--active' : '' ?>"
+             href="<?= htmlspecialchars($_tbAdm['href']) ?>">
+            <span class="tb-drawer__name"><?= htmlspecialchars($_tbAdm['label']) ?></span>
           </a>
         </li>
       <?php endforeach ?>

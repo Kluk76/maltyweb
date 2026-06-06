@@ -60,7 +60,8 @@ function auth_verify(string $username, string $password): ?array
 {
     $pdo = maltytask_pdo();
     $stmt = $pdo->prepare(
-        "SELECT id, username, email, password_hash, display_name, role, manager_scope, is_active
+        "SELECT id, username, email, password_hash, display_name, role, manager_scope,
+                access_preset_id_fk, is_active
          FROM users WHERE username = ? LIMIT 1"
     );
     $stmt->execute([$username]);
@@ -92,11 +93,14 @@ function auth_login(array $user): void
     maltytask_session_start();
     session_regenerate_id(true);
     $_SESSION["user"] = [
-        "id"            => (int) $user["id"],
-        "username"      => $user["username"],
-        "display_name"  => $user["display_name"] ?? $user["username"],
-        "role"          => $user["role"],
-        "manager_scope" => $user["manager_scope"] ?? null,
+        "id"                   => (int) $user["id"],
+        "username"             => $user["username"],
+        "display_name"         => $user["display_name"] ?? $user["username"],
+        "role"                 => $user["role"],
+        "manager_scope"        => $user["manager_scope"] ?? null,
+        "access_preset_id_fk"  => isset($user["access_preset_id_fk"])
+                                       ? (int) $user["access_preset_id_fk"]
+                                       : null,
     ];
     $_SESSION["last_activity"] = time();
     $_SESSION["regen_at"] = time();
@@ -153,11 +157,14 @@ function current_user(): ?array
             maltytask_session_start();
             session_regenerate_id(true);
             $_SESSION["user"] = [
-                "id"            => $remembered["id"],
-                "username"      => $remembered["username"],
-                "display_name"  => $remembered["display_name"],
-                "role"          => $remembered["role"],
-                "manager_scope" => $remembered["manager_scope"] ?? null,
+                "id"                   => $remembered["id"],
+                "username"             => $remembered["username"],
+                "display_name"         => $remembered["display_name"],
+                "role"                 => $remembered["role"],
+                "manager_scope"        => $remembered["manager_scope"] ?? null,
+                "access_preset_id_fk"  => isset($remembered["access_preset_id_fk"])
+                                              ? (int) $remembered["access_preset_id_fk"]
+                                              : null,
             ];
             $_SESSION["last_activity"] = time();
             $_SESSION["regen_at"]      = time();
@@ -287,4 +294,165 @@ function _send_403(string $msg): void
        . "<body class=\"auth\"><h1>403</h1><div class=\"err\">{$safe}</div>"
        . "<p><a href=\"/\">Retour à l'accueil</a></p></body></html>";
     exit;
+}
+
+// ── Per-page access control ──────────────────────────────────────────────────
+
+/**
+ * Returns all ref_pages rows keyed by page_key.
+ * Loaded once per request via static cache — ≤1 query total.
+ *
+ * @return array<string, array{min_role: string, domain: string}>
+ */
+function _page_registry(): array
+{
+    static $registry = null;
+    if ($registry !== null) return $registry;
+
+    try {
+        $pdo  = maltytask_pdo();
+        $stmt = $pdo->query("SELECT page_key, min_role, domain FROM ref_pages");
+        $registry = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $registry[$row['page_key']] = [
+                'min_role' => $row['min_role'],
+                'domain'   => $row['domain'],
+            ];
+        }
+    } catch (\Throwable $e) {
+        $registry = []; // degrade gracefully — deny non-admins on DB error
+    }
+    return $registry;
+}
+
+/**
+ * Returns the user_page_access override rows for the given user,
+ * keyed by page_key. Loaded once per request via static cache.
+ *
+ * @return array<string, bool>  page_key → granted (true/false)
+ */
+function _user_page_overrides(int $userId): array
+{
+    static $cache = [];
+    if (array_key_exists($userId, $cache)) return $cache[$userId];
+
+    try {
+        $pdo  = maltytask_pdo();
+        $stmt = $pdo->prepare(
+            "SELECT rp.page_key, upa.granted
+               FROM user_page_access upa
+               JOIN ref_pages rp ON rp.id = upa.page_id_fk
+              WHERE upa.user_id_fk = ?"
+        );
+        $stmt->execute([$userId]);
+        $cache[$userId] = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $cache[$userId][$row['page_key']] = (bool)(int)$row['granted'];
+        }
+    } catch (\Throwable $e) {
+        $cache[$userId] = [];
+    }
+    return $cache[$userId];
+}
+
+/**
+ * Returns the set of page_keys in a given preset.
+ * Loaded once per request via static cache.
+ *
+ * @return array<string, true>  page_key → true (membership set)
+ */
+function _preset_page_keys(int $presetId): array
+{
+    static $cache = [];
+    if (array_key_exists($presetId, $cache)) return $cache[$presetId];
+
+    try {
+        $pdo  = maltytask_pdo();
+        $stmt = $pdo->prepare(
+            "SELECT rp.page_key
+               FROM ref_access_preset_pages rapp
+               JOIN ref_pages rp ON rp.id = rapp.page_id_fk
+              WHERE rapp.preset_id_fk = ?"
+        );
+        $stmt->execute([$presetId]);
+        $cache[$presetId] = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $cache[$presetId][$row['page_key']] = true;
+        }
+    } catch (\Throwable $e) {
+        $cache[$presetId] = [];
+    }
+    return $cache[$presetId];
+}
+
+/**
+ * Role rank for floor comparison. Higher = more privileged.
+ */
+function _role_rank(string $role): int
+{
+    return match($role) {
+        'viewer'   => 0,
+        'operator' => 1,
+        'manager'  => 2,
+        'admin'    => 3,
+        default    => 0,
+    };
+}
+
+/**
+ * Checks whether the given (or current) user may access a page by page_key.
+ *
+ * Resolution order:
+ *   1. Admin bypass — admins always have access.
+ *   2. Page not found in ref_pages — deny (unregistered surface).
+ *   3. Role floor — user's role rank must be ≥ page's min_role rank.
+ *   4. Explicit user_page_access override (per-user grant/deny).
+ *   5. Preset membership — if user has a preset assigned.
+ *   6. Fallback (no preset) — allow (role floor already passed).
+ *      CRITICAL: all current users have access_preset_id_fk=NULL and must
+ *      retain today's full access until presets are assigned at onboarding.
+ */
+function user_can_access(string $page_key, ?array $u = null): bool
+{
+    $u = $u ?? current_user();
+    if (!$u) return false;
+
+    // 1. Admin bypass — never lock out admins
+    if (($u['role'] ?? '') === 'admin') return true;
+
+    // 2. Look up page in registry (static-cached)
+    $registry = _page_registry();
+    if (!isset($registry[$page_key])) return false;
+
+    $page = $registry[$page_key];
+
+    // 3. Role floor check
+    if (_role_rank($u['role'] ?? '') < _role_rank($page['min_role'])) return false;
+
+    // 4. Explicit per-user override (static-cached by user id)
+    $userId    = (int)($u['id'] ?? 0);
+    $overrides = _user_page_overrides($userId);
+    if (array_key_exists($page_key, $overrides)) {
+        return $overrides[$page_key];
+    }
+
+    // 5. Preset membership
+    $presetId = isset($u['access_preset_id_fk']) ? (int)$u['access_preset_id_fk'] : null;
+    if ($presetId !== null && $presetId > 0) {
+        return isset(_preset_page_keys($presetId)[$page_key]);
+    }
+
+    // 6. Fallback — no preset assigned; role floor passed → allow
+    return true;
+}
+
+/**
+ * Require login, then assert page access. Sends 403 if denied.
+ * Drop-in companion to require_login() / require_admin().
+ */
+function require_page_access(string $page_key): void
+{
+    require_login();
+    if (user_can_access($page_key)) return;
+    _send_403("Accès non autorisé à cette section.");
 }

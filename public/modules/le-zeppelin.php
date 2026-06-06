@@ -12,7 +12,7 @@ declare(strict_types=1);
 
 require __DIR__ . '/../../app/auth.php';
 
-require_login();
+require_page_access('zeppelin');
 $me = current_user();
 
 header('Content-Type: text/html; charset=utf-8');

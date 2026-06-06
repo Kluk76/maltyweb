@@ -27,7 +27,7 @@ require __DIR__ . '/../../app/csrf.php';
 require_once __DIR__ . '/../../app/sb-board.php';
 require_once __DIR__ . '/../../app/svg-vessels.php';
 
-require_login();
+require_page_access('sb-board');
 $me  = current_user();
 $pdo = maltytask_pdo();
 

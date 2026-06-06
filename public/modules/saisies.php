@@ -15,7 +15,7 @@ declare(strict_types=1);
 require __DIR__ . '/../../app/auth.php';
 require __DIR__ . '/../../app/csrf.php';
 
-require_login();
+require_page_access('saisies');
 $me = current_user();
 
 header('Content-Type: text/html; charset=utf-8');

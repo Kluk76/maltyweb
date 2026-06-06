@@ -15,7 +15,7 @@ declare(strict_types=1);
  */
 
 require __DIR__ . "/../../app/auth.php";
-require_login();
+require_page_access('approvisionnement');
 $me = current_user();
 
 $active_module = "approvisionnement";
