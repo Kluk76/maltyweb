@@ -1,0 +1,453 @@
+/*
+ * bom-review.css — BOM Review surface
+ * Scoped under body.bom-review.
+ * Follows the light kraft/manila design system; consumes only var(--*) tokens.
+ * No inline styles. No hardcoded hex.
+ */
+
+/* ── Page layout ──────────────────────────────────────────────────────────── */
+body.bom-review .main {
+    align-items: stretch; /* override .home .main centering */
+    display:     flex;
+    flex-direction: column;
+    padding:     0;
+}
+
+.br-page {
+    padding: 1.5rem 2rem 3rem;
+    max-width: 1400px;
+    width: 100%;
+    margin: 0 auto;
+}
+
+/* ── Page header ──────────────────────────────────────────────────────────── */
+.br-header {
+    display:     flex;
+    align-items: baseline;
+    gap:         1rem;
+    margin-bottom: 2rem;
+    flex-wrap:   wrap;
+}
+
+.br-header h1 {
+    font-family: 'Fraunces', serif;
+    font-size:   1.75rem;
+    color:       var(--ink);
+    margin:      0;
+}
+
+.br-header .br-subtitle {
+    font-family: 'DM Sans', sans-serif;
+    font-size:   0.85rem;
+    color:       var(--ink-soft);
+}
+
+/* ── Flash messages (reuse existing db-flash pattern) ────────────────────── */
+.db-flash {
+    margin-bottom: 1rem;
+}
+
+/* ── Section titles ───────────────────────────────────────────────────────── */
+.br-section-title {
+    font-family:    'JetBrains Mono', monospace;
+    font-size:      0.72rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color:          var(--ink-soft);
+    margin:         2rem 0 0.75rem;
+    display:        flex;
+    align-items:    center;
+    gap:            0.5rem;
+}
+
+.br-section-title::after {
+    content:          '';
+    flex:             1;
+    height:           1px;
+    background:       var(--ink-faint);
+}
+
+/* ── Feed cards grid ─────────────────────────────────────────────────────── */
+.br-feeds {
+    display:               grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap:                   1rem;
+    margin-bottom:         2rem;
+}
+
+.br-feed-card {
+    background:    var(--bg-elev);
+    border:        1px solid var(--ink-faint);
+    border-radius: 6px;
+    padding:       1rem 1.25rem;
+}
+
+.br-feed-card__label {
+    font-family:    'JetBrains Mono', monospace;
+    font-size:      0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color:          var(--ink-mute);
+    margin-bottom:  0.35rem;
+}
+
+.br-feed-card__count {
+    font-family: 'Fraunces', serif;
+    font-size:   2rem;
+    color:       var(--ink);
+    line-height: 1;
+}
+
+.br-feed-card__count--alert {
+    color: var(--ember);
+}
+
+.br-feed-card__count--ok {
+    color: var(--hop);
+}
+
+.br-feed-card__desc {
+    font-family: 'DM Sans', sans-serif;
+    font-size:   0.8rem;
+    color:       var(--ink-soft);
+    margin-top:  0.35rem;
+}
+
+/* ── Defect table ─────────────────────────────────────────────────────────── */
+.br-table-wrap {
+    overflow-x: auto;
+    border:     1px solid var(--ink-faint);
+    border-radius: 6px;
+    margin-bottom: 2rem;
+}
+
+.br-table {
+    width:           100%;
+    border-collapse: collapse;
+    font-family:     'DM Sans', sans-serif;
+    font-size:       0.84rem;
+}
+
+.br-table th {
+    font-family:    'JetBrains Mono', monospace;
+    font-size:      0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color:          var(--ink-mute);
+    background:     var(--bg);
+    padding:        0.6rem 0.75rem;
+    border-bottom:  1px solid var(--ink-faint);
+    text-align:     left;
+    white-space:    nowrap;
+}
+
+.br-table td {
+    padding:       0.55rem 0.75rem;
+    border-bottom: 1px solid var(--ink-faint);
+    vertical-align: top;
+    color:          var(--ink);
+}
+
+.br-table tr:last-child td {
+    border-bottom: none;
+}
+
+.br-table tr:hover td {
+    background: var(--bg);
+}
+
+.br-badge {
+    display:        inline-block;
+    padding:        0.15rem 0.45rem;
+    border-radius:  3px;
+    font-family:    'JetBrains Mono', monospace;
+    font-size:      0.65rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+
+.br-badge--t1 {
+    background: var(--hop);
+    color:      #fff;
+}
+
+.br-badge--t2 {
+    background: var(--cold);
+    color:      #fff;
+}
+
+.br-badge--t3 {
+    background: var(--ink-mute);
+    color:      #fff;
+}
+
+.br-badge--brewing {
+    background: var(--oak);
+    color:      #fff;
+}
+
+.br-badge--pkg {
+    background: var(--bbt);
+    color:      #fff;
+}
+
+.br-badge--unresolved {
+    background: var(--ember);
+    color:      #fff;
+}
+
+.br-badge--nopriced {
+    background: #c9571a;
+    color:      #fff;
+}
+
+.br-badge--anomaly {
+    background: var(--ink-soft);
+    color:      #fff;
+}
+
+.br-badge--readonly {
+    background: var(--bg);
+    color:      var(--ink-mute);
+    border:     1px solid var(--ink-faint);
+}
+
+/* ── Drill-down navigation ────────────────────────────────────────────────── */
+.br-picker-bar {
+    display:     flex;
+    align-items: center;
+    gap:         0.75rem;
+    margin-bottom: 1.5rem;
+    flex-wrap:   wrap;
+}
+
+.br-picker-bar label {
+    font-family: 'DM Sans', sans-serif;
+    font-size:   0.84rem;
+    color:       var(--ink-soft);
+}
+
+.br-picker-bar select {
+    font-family:   'DM Sans', sans-serif;
+    font-size:     0.84rem;
+    padding:       0.35rem 0.6rem;
+    border:        1px solid var(--ink-faint);
+    border-radius: 4px;
+    background:    var(--bg-elev);
+    color:         var(--ink);
+}
+
+/* ── Drill-down SKU tabs ─────────────────────────────────────────────────── */
+.br-sku-tabs {
+    display:         flex;
+    flex-wrap:       wrap;
+    gap:             0.4rem;
+    margin-bottom:   1rem;
+}
+
+.br-sku-tab {
+    font-family:   'JetBrains Mono', monospace;
+    font-size:     0.72rem;
+    padding:       0.25rem 0.6rem;
+    border:        1px solid var(--ink-faint);
+    border-radius: 3px;
+    cursor:        pointer;
+    background:    var(--bg-elev);
+    color:         var(--ink);
+    text-decoration: none;
+}
+
+.br-sku-tab:hover,
+.br-sku-tab--active {
+    background:   var(--hop);
+    color:        #fff;
+    border-color: var(--hop);
+}
+
+.br-sku-tab--has-issue {
+    border-color: var(--ember);
+}
+
+.br-sku-tab--has-issue.br-sku-tab--active {
+    background:   var(--ember);
+    border-color: var(--ember);
+}
+
+/* ── BOM detail table ─────────────────────────────────────────────────────── */
+.br-bom-section {
+    margin-bottom: 1.5rem;
+}
+
+.br-provenance-note {
+    font-family: 'DM Sans', sans-serif;
+    font-size:   0.78rem;
+    color:       var(--ink-mute);
+    font-style:  italic;
+    margin-bottom: 0.5rem;
+}
+
+/* ── Edit forms ───────────────────────────────────────────────────────────── */
+.br-edit-row {
+    background:    var(--bg);
+    border:        1px solid var(--ink-faint);
+    border-radius: 6px;
+    padding:       1rem 1.25rem;
+    margin-bottom: 1rem;
+}
+
+.br-edit-row__title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size:   0.72rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color:       var(--ink-soft);
+    margin-bottom: 0.6rem;
+}
+
+.br-edit-row__fields {
+    display:     flex;
+    gap:         0.75rem;
+    flex-wrap:   wrap;
+    align-items: flex-end;
+}
+
+.br-edit-row__fields label {
+    font-family: 'DM Sans', sans-serif;
+    font-size:   0.8rem;
+    color:       var(--ink-soft);
+    display:     flex;
+    flex-direction: column;
+    gap:         0.25rem;
+}
+
+.br-edit-row__fields select,
+.br-edit-row__fields input[type="number"],
+.br-edit-row__fields input[type="text"] {
+    font-family:   'DM Sans', sans-serif;
+    font-size:     0.84rem;
+    padding:       0.35rem 0.6rem;
+    border:        1px solid var(--ink-faint);
+    border-radius: 4px;
+    background:    var(--bg-elev);
+    color:         var(--ink);
+    min-width:     180px;
+}
+
+.br-edit-row__fields input[type="number"] {
+    min-width: 100px;
+}
+
+.br-btn {
+    font-family:   'DM Sans', sans-serif;
+    font-size:     0.84rem;
+    padding:       0.4rem 0.9rem;
+    border:        none;
+    border-radius: 4px;
+    cursor:        pointer;
+    background:    var(--hop);
+    color:         #fff;
+    display:       inline-flex;
+    align-items:   center;
+    gap:           0.35rem;
+}
+
+.br-btn:hover {
+    opacity: 0.9;
+}
+
+.br-btn--secondary {
+    background: var(--bg-elev);
+    color:      var(--ink);
+    border:     1px solid var(--ink-faint);
+}
+
+.br-btn--danger {
+    background: var(--ember);
+}
+
+.br-btn--price {
+    background: var(--cold);
+}
+
+/* ── MI price edit form ────────────────────────────────────────────────────── */
+.br-price-form {
+    display:     inline-flex;
+    align-items: center;
+    gap:         0.4rem;
+    flex-wrap:   wrap;
+}
+
+.br-price-form input[type="number"] {
+    font-family:   'DM Sans', sans-serif;
+    font-size:     0.84rem;
+    padding:       0.3rem 0.5rem;
+    border:        1px solid var(--ink-faint);
+    border-radius: 4px;
+    background:    var(--bg-elev);
+    color:         var(--ink);
+    width:         90px;
+}
+
+/* ── Readonly brewing rows ────────────────────────────────────────────────── */
+.br-readonly-note {
+    display:     inline-flex;
+    align-items: center;
+    gap:         0.3rem;
+    font-family: 'DM Sans', sans-serif;
+    font-size:   0.78rem;
+    color:       var(--ink-mute);
+    font-style:  italic;
+}
+
+/* ── Recompile result box ─────────────────────────────────────────────────── */
+.br-recompile-result {
+    background:    var(--bg);
+    border:        1px solid var(--ink-faint);
+    border-left:   3px solid var(--hop);
+    border-radius: 4px;
+    padding:       0.6rem 0.9rem;
+    font-family:   'DM Sans', sans-serif;
+    font-size:     0.82rem;
+    color:         var(--ink-soft);
+    margin-top:    0.75rem;
+}
+
+.br-recompile-result--warn {
+    border-left-color: var(--ember);
+}
+
+/* ── Empty-state ──────────────────────────────────────────────────────────── */
+.br-empty {
+    text-align:  center;
+    padding:     3rem 1rem;
+    color:       var(--ink-mute);
+    font-family: 'DM Sans', sans-serif;
+    font-size:   0.9rem;
+}
+
+.br-empty__icon {
+    font-size:     2rem;
+    margin-bottom: 0.5rem;
+    display:       block;
+}
+
+/* ── Responsive ───────────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+    .br-page {
+        padding: 1rem;
+    }
+
+    .br-feeds {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .br-edit-row__fields {
+        flex-direction: column;
+    }
+}
+
+@media (max-width: 480px) {
+    .br-feeds {
+        grid-template-columns: 1fr;
+    }
+}
