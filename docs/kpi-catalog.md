@@ -15,8 +15,13 @@ dashboard (`mon-tableau.php`) and the recap email share the same `compute_handle
 ## Readiness tally (provisional — verified against schema at seed time)
 - ✅ LIVE: ~38
 - 🔶 COMPUTE: ~140
-- ⛔ GAP: ~72
-- **Total: 250 active trackers** (#57 dropped).
+- ⛔ GAP: ~90 (incl. the expert-added control-loop canon, Category 14)
+- **Total: ~268 active trackers** (#57 dropped; #252–269 added from the expert audit).
+
+> An external **VP-Brewing-Operations audit** (`docs/kpi-catalog-expert-audit.md`, 2026-06-06) found the
+> original 250 measured *levels and counts, not control loops*. Its missing canon is folded in as
+> **Category 14**; its hero shortlist is the **Hero metrics** section below. Headline finding: there was no
+> single reconciled **beer-loss / extract cascade** — now #252, designated hero H1.
 
 ## Cross-cutting "smart" engines
 Two flagship predictive trackers share one engine (sales-velocity × inventory-cover × free-capacity):
@@ -25,6 +30,18 @@ Two flagship predictive trackers share one engine (sales-velocity × inventory-c
 Build the engine once; both trackers call it. Heavier than the rest (Phase 2b).
 
 Flag-type trackers (deviation/alert, not a level): #85 FG stock-variation, #131 overpriced-purchase, plus the existing RM RQ alerts (#108/#109/#119).
+
+## Hero metrics (expert-designated — the dashboard's prominent big-number cards)
+The audit's shortlist of the 6 a production director is held accountable for. Four don't fully exist yet — build toward them. The **volume triad (#1 HL brewed, #3 brew count, #9 brews-this-week, #48 units packaged) is explicitly DEMOTED from the hero row** (vanity volume — kept in the catalog/dashboards, never a hero card).
+
+| Hero | Metric | Maps to | Status |
+|------|--------|---------|--------|
+| **H1** | Total Beer Loss % + stage waterfall | #252 | partial buildable now; full needs FV/dry-hop capture |
+| **H2** | COGS / HL & / SKU | #170 / #171 / #184 | ✅ live |
+| **H3** | Packaging-line OEE | #257 | needs availability/downtime capture |
+| **H4** | Water/beer ratio + kWh/HL | #199 / #200 | ✅ promote |
+| **H5** | Plan attainment % | #261 | needs production-schedule artifact |
+| **H6** | Right-First-Time % (all stages) | #264 (#156 partial) | needs stage RFT rollup |
 
 ---
 
@@ -333,6 +350,30 @@ Flag-type trackers (deviation/alert, not a level): #85 FG stock-variation, #131 
 
 ---
 
+## 14 — 🎯 Control-Loop / Cross-Cutting KPIs (expert-added 2026-06-06)
+The brewing-ops canon the original 250 under-developed. These are *control loops*, not levels. Several are hero metrics. Where a metric was scattered across earlier trackers, the cascade/rollup is the point — it must roll up to ONE reconciled number.
+
+| # | Tracker | Source / what it needs | Readiness |
+|---|---------|------------------------|-----------|
+| 252 | 🌟 **Total beer-loss / extract cascade** (brewhouse→ferment→rack→package, reconciled waterfall + total %) | HL deltas across `bd_brewing_gravity_v2`→`bd_racking_v2`→`bd_packaging_v2`; full needs 254/255 | 🔶 partial now / ⛔ full |
+| 253 | **Extract efficiency vs *lab* extract** (not self-set recipe yield) | needs lab/theoretical extract per recipe | ⛔ |
+| 254 | **Dry-hop absorption loss** | new fermentation form field | ⛔ |
+| 255 | **FV / trub loss** (knockout→FV) | new form field | ⛔ |
+| 256 | **Giveaway / overfill** (% and CHF) | fill-volume actuals at packaging | 🔶/⛔ |
+| 257 | 🌟 **Packaging-line OEE** (availability × performance × quality) | needs downtime/changeover capture; perf+quality partial | ⛔ |
+| 258 | **Brewhouse OEE / utilization** | brewhouse run-time vs available | 🔶/⛔ |
+| 259 | **Changeover / CIP time as % of available** | time capture | ⛔ |
+| 260 | **MTBF / MTTR** (packaging line) | breakdown log | ⛔ |
+| 261 | 🌟 **Plan attainment / schedule adherence %** | needs a production-schedule artifact | ⛔ |
+| 262 | **Forecast accuracy** (sales) | needs a forecast artifact (also unblocks #23/#64) | ⛔ |
+| 263 | **OTIF to customer** (on-time-in-full) | order/ship data | ⛔ future |
+| 264 | 🌟 **Right-First-Time %** (rolled up all stages, not just final QA) | stage RFT rollup; #156 partial | 🔶 partial / ⛔ full |
+| 265 | **Complaint PPM** (market quality, not per-batch) | complaint log | ⛔ |
+| 266 | **Safety — LTIFR / days-since-last-incident** | incident log (cheap field) | ⛔ |
+| 267 | **Inventory days-of-supply** (RM + FG) | stock ÷ consumption/sales rate | 🔶 |
+| 268 | **Cash-conversion cycle** (DIO + DSO − DPO) | needs AR/AP days | 🔶/⛔ |
+| 269 | **Mass / energy / water balance** (plant-level) | water-ratio #199 + kWh/HL #200 + mass = #252 | 🔶 |
+
 ## Data-gap backlog (the ⛔ items, grouped by what capture they need)
 - **New fermentation/QA form fields:** yeast generation # + repitch + harvest yield (26/27/28/32/33), diacetyl rest (25), turbidity (36), tank temp log (24), micro/sensory/shelf-life/contamination/complaint/calibration/CIP-verify/allergen (157–162, 165–167).
 - **Packaging-consumption pipeline fix:** #58, #68 (and unblocks the paused RM retro).
@@ -340,7 +381,13 @@ Flag-type trackers (deviation/alert, not a level): #85 FG stock-variation, #131 
 - **Thresholds / reference values:** reorder points (75, 111), recipe targets garde_days/yield (19, 43), budget (126, 191).
 - **External integrations:** eshop/Swiss Post fulfilment (134–146), AR/payments (101), keg-fleet tracking (82, 140), byproduct/wastewater/renewable/heat (206–209), labor/HR/safety/maintenance-logging (237–251 most).
 
-## Proposed Phase-2 seed plan
-- **v1 seed = the ✅ + cheap 🔶** (≈ the production, sales, COGS, RM, ops-health backbones) — these wrap metrics we already compute. Target ~40–60 trackers live in `mon-tableau.php` at launch.
-- **v1b = flagship engines** #23 / #64 (shared sales×inventory×capacity engine).
-- **Roadmap = the ⛔ backlog**, each activated as its data-capture lands.
+## Proposed Phase-2 seed plan (post-audit)
+- **v1 seed = the ~65 backbone (✅ + cheap 🔶)** confirmed with the operator, **+ #252 (partial loss-cascade tile, buildable today from HL deltas) + #267 (days-of-supply)**. Volume triad (#1/#3/#9/#48) stays in the dashboard but is **demoted from the hero row**. Hero cards = H1–H6 (build partial where full capture isn't ready).
+- **v1b = flagship engines** #23 / #64 (shared sales×inventory×capacity engine; after the tank-sim free-capacity port).
+- **Roadmap = the ⛔ backlog** (incl. Category 14's control-loop canon), each activated as its data-capture lands via the `data_ready` flag.
+
+### Instrument-FIRST (expert priority, ahead of/alongside v1 — new capture justified)
+1. **FIX the packaging-consumption pipeline gap (#58/#68)** — a known paused defect (RM-retro arc) silently corrupting RM stock + packaging COGS already on display. A fix, not a tracker. **Front-loaded.**
+2. **Capture FV loss (#255) + dry-hop absorption (#254)** — a few form fields that turn the loss cascade from "we're losing beer" into "here's where."
+3. **Stand up a production schedule + crude sales forecast** — unlocks #261 plan-attainment, #262 forecast-accuracy, #263 OTIF, and credible #23/#64.
+4. Cheap governance add: **days-since-last-safety-incident** field (#266).
