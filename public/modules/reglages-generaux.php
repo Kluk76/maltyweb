@@ -286,6 +286,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $password    = $_POST['password'] ?? '';
             $emailRaw    = post_str('email');
             $scopeRaw    = post_str('manager_scope');
+            $presetRaw   = post_str('access_preset_id_fk');
 
             if ($username === null || strlen($username) < 2) {
                 throw new RuntimeException('Identifiant utilisateur obligatoire (minimum 2 caractères).');
@@ -330,16 +331,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $isActive = 0;
             }
 
+            // access_preset_id_fk: validate against ref_access_presets if provided
+            $createPresetId = null;
+            if ($presetRaw !== null && $presetRaw !== '' && $presetRaw !== '0') {
+                $presetCheck = $pdo->prepare("SELECT id FROM ref_access_presets WHERE id = ?");
+                $presetCheck->execute([(int)$presetRaw]);
+                if (!$presetCheck->fetch()) {
+                    throw new RuntimeException('Preset d\'accès invalide.');
+                }
+                $createPresetId = (int)$presetRaw;
+            }
+
             $ins = $pdo->prepare(
-                "INSERT INTO users (username, email, display_name, role, manager_scope, password_hash, is_active)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)"
+                "INSERT INTO users (username, email, display_name, role, manager_scope, password_hash, is_active, access_preset_id_fk)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
             );
-            $ins->execute([$username, $email, $displayName ?? $username, $role, $managerScope, $hash, $isActive]);
+            $ins->execute([$username, $email, $displayName ?? $username, $role, $managerScope, $hash, $isActive, $createPresetId]);
             $newUserId = (int) $pdo->lastInsertId();
 
             // Log revision — never log the hash itself
             log_revision($pdo, $me, 'users', $newUserId, null,
-                ['username' => $username, 'email' => $email, 'display_name' => $displayName, 'role' => $role, 'manager_scope' => $managerScope, 'is_active' => $isActive],
+                ['username' => $username, 'email' => $email, 'display_name' => $displayName, 'role' => $role, 'manager_scope' => $managerScope, 'is_active' => $isActive, 'access_preset_id_fk' => $createPresetId],
                 'normal', 'Réglages généraux: création utilisateur');
 
             if (!$passwordProvided) {
@@ -378,6 +390,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $role        = post_str('role') ?? '';
             $scopeRaw    = post_str('manager_scope');
             $emailRaw    = post_str('email');
+            $presetRaw   = post_str('access_preset_id_fk');
 
             if ($userId === null || $userId <= 0) {
                 throw new RuntimeException('Identifiant utilisateur invalide.');
@@ -416,11 +429,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $managerScope = $scopeRaw;
             }
 
+            // access_preset_id_fk: validate against ref_access_presets if provided
+            $presetId = null;
+            if ($presetRaw !== null && $presetRaw !== '' && $presetRaw !== '0') {
+                $presetCheck = $pdo->prepare("SELECT id FROM ref_access_presets WHERE id = ?");
+                $presetCheck->execute([(int)$presetRaw]);
+                if (!$presetCheck->fetch()) {
+                    throw new RuntimeException('Preset d\'accès invalide.');
+                }
+                $presetId = (int)$presetRaw;
+            }
+
             try {
                 $upd = $pdo->prepare(
-                    "UPDATE users SET display_name=?, role=?, manager_scope=?, email=? WHERE id=?"
+                    "UPDATE users SET display_name=?, role=?, manager_scope=?, email=?, access_preset_id_fk=? WHERE id=?"
                 );
-                $upd->execute([$displayName ?? ($before['display_name'] ?? $before['username']), $role, $managerScope, $email, $userId]);
+                $upd->execute([$displayName ?? ($before['display_name'] ?? $before['username']), $role, $managerScope, $email, $presetId, $userId]);
             } catch (\PDOException $pdoEx) {
                 if (str_contains($pdoEx->getMessage(), '1062')) {
                     throw new RuntimeException('Cet e-mail est déjà utilisé par un autre compte.');
@@ -429,8 +453,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             log_revision($pdo, $me, 'users', $userId,
-                ['display_name' => $before['display_name'], 'role' => $before['role'], 'manager_scope' => $before['manager_scope'], 'email' => $before['email'] ?? null],
-                ['display_name' => $displayName, 'role' => $role, 'manager_scope' => $managerScope, 'email' => $email],
+                ['display_name' => $before['display_name'], 'role' => $before['role'], 'manager_scope' => $before['manager_scope'], 'email' => $before['email'] ?? null, 'access_preset_id_fk' => $before['access_preset_id_fk'] ?? null],
+                ['display_name' => $displayName, 'role' => $role, 'manager_scope' => $managerScope, 'email' => $email, 'access_preset_id_fk' => $presetId],
                 'normal', 'Réglages généraux: mise à jour utilisateur');
 
             flash_set('ok', "Utilisateur « " . htmlspecialchars((string) $before['username']) . " » mis à jour.");
@@ -564,6 +588,156 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             redirect_to('/modules/reglages-generaux.php?sec=users');
         }
 
+        // ── Action: update user access (per-page overrides) ──
+        if ($action === 'update_user_access') {
+            $userId = post_int('user_id');
+            if ($userId === null || $userId <= 0) {
+                throw new RuntimeException('Identifiant utilisateur invalide.');
+            }
+            $targetUser = bd_fetch_before($pdo, 'users', $userId);
+            if ($targetUser === null) {
+                throw new RuntimeException('Utilisateur introuvable.');
+            }
+
+            // Build canonical allowed page-id set from ref_pages (mig-239 lesson)
+            $pageStmt = $pdo->query("SELECT id, page_key FROM ref_pages");
+            $allowedPages = [];
+            foreach ($pageStmt->fetchAll(PDO::FETCH_ASSOC) as $pr) {
+                $allowedPages[(int)$pr['id']] = $pr['page_key'];
+            }
+
+            // The posted page overrides: array indexed by page_id, value 'inherit'|'allow'|'deny'
+            $posted = $_POST['page_access'] ?? [];
+
+            foreach ($allowedPages as $pageId => $pageKey) {
+                $val = $posted[$pageId] ?? 'inherit';
+                if (!in_array($val, ['inherit', 'allow', 'deny'], true)) {
+                    $val = 'inherit';
+                }
+
+                if ($val === 'inherit') {
+                    // DELETE the override row if it exists
+                    $del = $pdo->prepare("DELETE FROM user_page_access WHERE user_id_fk = ? AND page_id_fk = ?");
+                    $del->execute([$userId, $pageId]);
+                } else {
+                    $granted = ($val === 'allow') ? 1 : 0;
+                    // Upsert
+                    $ups = $pdo->prepare(
+                        "INSERT INTO user_page_access (user_id_fk, page_id_fk, granted, set_by_fk)
+                         VALUES (?, ?, ?, ?)
+                         ON DUPLICATE KEY UPDATE granted = VALUES(granted), set_by_fk = VALUES(set_by_fk)"
+                    );
+                    $ups->execute([$userId, $pageId, $granted, (int)$me['id']]);
+                }
+            }
+
+            log_revision($pdo, $me, 'user_page_access', $userId,
+                ['user_id_fk' => $userId, 'event' => 'before_bulk_update'],
+                ['user_id_fk' => $userId, 'page_count' => count($allowedPages), 'event' => 'bulk_update'],
+                'normal', 'Réglages généraux: mise à jour accès pages utilisateur');
+
+            flash_set('ok', "Accès pages mis à jour pour « " . htmlspecialchars((string)$targetUser['username']) . " ».");
+            redirect_to('/modules/reglages-generaux.php?sec=users');
+        }
+
+        // ── Action: update page registry row ──
+        if ($action === 'update_page') {
+            $pageId = post_int('page_id');
+            if ($pageId === null || $pageId <= 0) throw new RuntimeException('Identifiant page invalide.');
+            $before = bd_fetch_before($pdo, 'ref_pages', $pageId);
+            if ($before === null) throw new RuntimeException('Page introuvable.');
+
+            $label   = post_str('label');
+            $href    = post_str('href');
+            $minRole = post_str('min_role') ?? '';
+            $domain  = post_str('domain');
+            $sort    = post_int('sort') ?? 0;
+
+            if ($label === null || strlen(trim($label)) < 1) throw new RuntimeException('Label obligatoire.');
+            $label = substr(trim($label), 0, 64);
+            if ($href === null || strlen(trim($href)) < 1) throw new RuntimeException('URL obligatoire.');
+            $href = substr(trim($href), 0, 128);
+            must_be_one_of('min_role', $minRole, ['viewer', 'operator', 'manager', 'admin']);
+            if ($domain !== null && $domain !== '') {
+                must_be_one_of('domain', $domain, ['production', 'logistics', 'admin', 'general']);
+            } else {
+                $domain = null;
+            }
+
+            $upd = $pdo->prepare(
+                "UPDATE ref_pages SET label=?, href=?, min_role=?, domain=?, sort=? WHERE id=?"
+            );
+            $upd->execute([$label, $href, $minRole, $domain, $sort, $pageId]);
+
+            log_revision($pdo, $me, 'ref_pages', $pageId,
+                ['label' => $before['label'], 'href' => $before['href'], 'min_role' => $before['min_role'], 'domain' => $before['domain'], 'sort' => $before['sort']],
+                ['label' => $label, 'href' => $href, 'min_role' => $minRole, 'domain' => $domain, 'sort' => $sort],
+                'normal', 'Réglages généraux: page modifiée');
+
+            flash_set('ok', "Page « " . htmlspecialchars($label) . " » mise à jour.");
+            redirect_to('/modules/reglages-generaux.php?sec=access');
+        }
+
+        // ── Action: create page registry row ──
+        if ($action === 'create_page') {
+            $pageKey = post_str('page_key');
+            $label   = post_str('label');
+            $href    = post_str('href');
+            $minRole = post_str('min_role') ?? 'viewer';
+            $domain  = post_str('domain');
+            $sort    = post_int('sort') ?? 0;
+
+            if ($pageKey === null || !preg_match('/^[a-z0-9-]+$/', $pageKey)) {
+                throw new RuntimeException('page_key invalide — caractères autorisés : a-z 0-9 -');
+            }
+            $pageKey = substr($pageKey, 0, 48);
+            if ($label === null || strlen(trim($label)) < 1) throw new RuntimeException('Label obligatoire.');
+            $label = substr(trim($label), 0, 64);
+            if ($href === null || strlen(trim($href)) < 1) throw new RuntimeException('URL obligatoire.');
+            $href = substr(trim($href), 0, 128);
+            must_be_one_of('min_role', $minRole, ['viewer', 'operator', 'manager', 'admin']);
+            if ($domain !== null && $domain !== '') {
+                must_be_one_of('domain', $domain, ['production', 'logistics', 'admin', 'general']);
+            } else {
+                $domain = null;
+            }
+
+            $ins = $pdo->prepare(
+                "INSERT INTO ref_pages (page_key, label, href, min_role, domain, sort, is_active)
+                 VALUES (?, ?, ?, ?, ?, ?, 1)"
+            );
+            $ins->execute([$pageKey, $label, $href, $minRole, $domain, $sort]);
+            $newId = (int) $pdo->lastInsertId();
+
+            log_revision($pdo, $me, 'ref_pages', $newId, null,
+                ['page_key' => $pageKey, 'label' => $label, 'href' => $href, 'min_role' => $minRole, 'domain' => $domain, 'sort' => $sort, 'is_active' => 1],
+                'normal', 'Réglages généraux: nouvelle page créée');
+
+            flash_set('ok', "Page « " . htmlspecialchars($label) . " » (key: " . htmlspecialchars($pageKey) . ") créée.");
+            redirect_to('/modules/reglages-generaux.php?sec=access');
+        }
+
+        // ── Action: toggle page active ──
+        if ($action === 'toggle_page_active') {
+            $pageId = post_int('page_id');
+            if ($pageId === null || $pageId <= 0) throw new RuntimeException('Identifiant invalide.');
+            $before = bd_fetch_before($pdo, 'ref_pages', $pageId);
+            if ($before === null) throw new RuntimeException('Page introuvable.');
+
+            $newActive = ((int)$before['is_active'] === 1) ? 0 : 1;
+            $upd = $pdo->prepare("UPDATE ref_pages SET is_active = ? WHERE id = ?");
+            $upd->execute([$newActive, $pageId]);
+
+            log_revision($pdo, $me, 'ref_pages', $pageId,
+                ['is_active' => (int)$before['is_active']],
+                ['is_active' => $newActive],
+                'normal', 'Réglages généraux: page ' . ($newActive ? 'activée' : 'désactivée'));
+
+            $verb = $newActive ? 'activée' : 'désactivée';
+            flash_set('ok', "Page « " . htmlspecialchars((string)$before['label']) . " » {$verb}.");
+            redirect_to('/modules/reglages-generaux.php?sec=access');
+        }
+
         throw new RuntimeException("Action inconnue : " . htmlspecialchars($action));
 
     } catch (Throwable $e) {
@@ -576,7 +750,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // ── GET — load data ───────────────────────────────────────────────────────────
 header('Content-Type: text/html; charset=utf-8');
 
-$initialSec = in_array($_GET['sec'] ?? '', ['general', 'pkg_clients', 'users'], true)
+$initialSec = in_array($_GET['sec'] ?? '', ['general', 'pkg_clients', 'users', 'access'], true)
     ? $_GET['sec']
     : 'general';
 
@@ -604,6 +778,14 @@ $editPkgClientRow = null;
 // Packaging clients
 $packagingClients        = [];
 $packagingClientsApplied = false;
+
+// Access control data
+$presets           = [];
+$refPages          = [];
+$userPageAccessMap = [];
+$presetPageMap     = [];
+$editPageId        = isset($_GET['edit_page']) ? (int)$_GET['edit_page'] : null;
+$editPageRow       = null;
 
 try {
     $pdo = maltytask_pdo();
@@ -661,13 +843,73 @@ try {
     // users
     try {
         $stmt  = $pdo->query(
-            "SELECT id, username, email, display_name, role, manager_scope, is_active, last_login_at
+            "SELECT id, username, email, display_name, role, manager_scope, is_active, last_login_at, access_preset_id_fk
                FROM users
               ORDER BY role ASC, username ASC"
         );
         $users = $stmt->fetchAll(PDO::FETCH_ASSOC);
     } catch (Throwable) {
         $users = [];
+    }
+
+    // ref_access_presets
+    try {
+        $stmt    = $pdo->query("SELECT id, preset_key, label, description FROM ref_access_presets ORDER BY id ASC");
+        $presets = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Throwable) {
+        $presets = [];
+    }
+
+    // ref_pages (for access matrix + page registry)
+    try {
+        $stmt     = $pdo->query(
+            "SELECT id, page_key, label, icon, href, min_role, domain, is_active, sort
+               FROM ref_pages ORDER BY sort ASC, page_key ASC"
+        );
+        $refPages = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Throwable) {
+        $refPages = [];
+    }
+
+    // user_page_access — all rows, keyed by user_id_fk then page_id_fk
+    // Also resolve to page_key for display
+    try {
+        $stmt = $pdo->query(
+            "SELECT upa.user_id_fk, upa.page_id_fk, upa.granted, rp.page_key
+               FROM user_page_access upa
+               JOIN ref_pages rp ON rp.id = upa.page_id_fk"
+        );
+        $userPageAccessRaw = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        // Index: [user_id][page_id] = 0|1
+        $userPageAccessMap = [];
+        foreach ($userPageAccessRaw as $r) {
+            $userPageAccessMap[(int)$r['user_id_fk']][(int)$r['page_id_fk']] = (int)$r['granted'];
+        }
+    } catch (Throwable) {
+        $userPageAccessMap = [];
+    }
+
+    // ref_access_preset_pages — for showing effective access
+    // [preset_id][page_key] = true
+    try {
+        $stmt = $pdo->query(
+            "SELECT rapp.preset_id_fk, rp.page_key, rp.id AS page_id
+               FROM ref_access_preset_pages rapp
+               JOIN ref_pages rp ON rp.id = rapp.page_id_fk"
+        );
+        $presetPageMap = []; // [preset_id][page_key] = true
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
+            $presetPageMap[(int)$r['preset_id_fk']][$r['page_key']] = true;
+        }
+    } catch (Throwable) {
+        $presetPageMap = [];
+    }
+
+    // edit_page context (from ?edit_page=ID)
+    if ($editPageId !== null) {
+        foreach ($refPages as $rp) {
+            if ((int)$rp['id'] === $editPageId) { $editPageRow = $rp; break; }
+        }
     }
 
 } catch (Throwable $e) {
@@ -763,6 +1005,18 @@ $csrf = csrf_token();
       </span>
       Utilisateurs
       <span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.06em;background:color-mix(in srgb, var(--bbt) 18%, transparent);color:var(--bbt);padding:2px 7px;border-radius:10px;"><?= count($users) ?></span>
+    </div>
+
+    <div class="nav-item<?= $initialSec === 'access' ? ' active' : '' ?>" data-sec="access" onclick="switchSection('access')">
+      <span class="nav-icon">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <rect x="3" y="7" width="10" height="7" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
+          <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+          <circle cx="8" cy="10.5" r="1.2" fill="currentColor" opacity=".55"/>
+        </svg>
+      </span>
+      Pages &amp; Accès
+      <span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.06em;background:color-mix(in srgb, var(--oak) 18%, transparent);color:var(--oak);padding:2px 7px;border-radius:10px;"><?= count($refPages) ?></span>
     </div>
   </nav>
 
@@ -1257,6 +1511,7 @@ $csrf = csrf_token();
                   <th>Nom d'affichage</th>
                   <th>E-mail</th>
                   <th>Rôle · Périmètre</th>
+                  <th>Preset accès</th>
                   <th>Statut</th>
                   <th>Dernière connexion</th>
                   <th>Actions</th>
@@ -1266,11 +1521,17 @@ $csrf = csrf_token();
                 <?php foreach ($users as $u):
                     $uid        = (int) $u['id'];
                     $uRole      = (string) ($u['role'] ?? 'operator');
-                    $uScope     = $u['manager_scope'] ?? null;
+                    $uScope      = $u['manager_scope'] ?? null;
                     $uActive     = (int) $u['is_active'] === 1;
                     $uOnboarded  = $u['last_login_at'] !== null; // has logged in at least once
                     $isSelf      = ((int) $me['id'] === $uid);
+                    $isAdmin     = $uRole === 'admin';
                     $scopeLabel  = ['production' => 'production', 'logistics' => 'logistique', 'all' => 'tout'];
+                    $uPresetId   = isset($u['access_preset_id_fk']) && $u['access_preset_id_fk'] !== null ? (int)$u['access_preset_id_fk'] : null;
+                    $uPresetLabel = null;
+                    foreach ($presets as $pr) {
+                        if ((int)$pr['id'] === $uPresetId) { $uPresetLabel = $pr['label']; break; }
+                    }
                 ?>
                 <tr id="rg-user-row-<?= $uid ?>">
                   <td style="font-family:'JetBrains Mono',monospace;font-size:12px;"><?= htmlspecialchars((string) $u['username']) ?></td>
@@ -1280,6 +1541,15 @@ $csrf = csrf_token();
                     <span class="rg-role-badge <?= htmlspecialchars($uRole) ?>"><?= htmlspecialchars($uRole) ?></span>
                     <?php if ($uRole === 'manager' && $uScope !== null): ?>
                     <span class="rg-scope-badge"><?= htmlspecialchars($scopeLabel[$uScope] ?? $uScope) ?></span>
+                    <?php endif ?>
+                  </td>
+                  <td>
+                    <?php if ($isAdmin): ?>
+                    <span class="rg-preset-bypass">Admin — bypass</span>
+                    <?php elseif ($uPresetLabel !== null): ?>
+                    <span class="rg-preset-badge"><?= htmlspecialchars($uPresetLabel) ?></span>
+                    <?php else: ?>
+                    <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-faint);">—</span>
                     <?php endif ?>
                   </td>
                   <td><?php if ($uActive): ?>
@@ -1295,6 +1565,9 @@ $csrf = csrf_token();
                       <!-- Toggle edit row -->
                       <button type="button" class="rg-action-link"
                               onclick="rgToggleEditRow(<?= $uid ?>)">Modifier</button>
+                      <!-- Toggle per-user access matrix -->
+                      <button type="button" class="rg-action-link"
+                              onclick="rgToggleAccessRow(<?= $uid ?>)">Accès</button>
 
                       <!-- Toggle active / deactivate -->
                       <?php if (!$isSelf): ?>
@@ -1341,7 +1614,7 @@ $csrf = csrf_token();
                 </tr>
                 <!-- Inline edit row (hidden by default) -->
                 <tr id="rg-edit-row-<?= $uid ?>" class="rg-edit-row" style="display:none;">
-                  <td colspan="7">
+                  <td colspan="8">
                     <form method="post" action="/modules/reglages-generaux.php" class="rg-inline-edit-form">
                       <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
                       <input type="hidden" name="action" value="update_user">
@@ -1377,11 +1650,103 @@ $csrf = csrf_token();
                             <?php endforeach ?>
                           </select>
                         </div>
+                        <div>
+                          <label class="rg-form-label">Preset d'accès</label>
+                          <select class="rg-select" name="access_preset_id_fk">
+                            <option value="">— aucun —</option>
+                            <?php foreach ($presets as $pr): ?>
+                            <option value="<?= (int)$pr['id'] ?>"<?= $uPresetId === (int)$pr['id'] ? ' selected' : '' ?>><?= htmlspecialchars($pr['label']) ?></option>
+                            <?php endforeach ?>
+                          </select>
+                        </div>
                       </div>
                       <div style="display:flex;gap:10px;margin-top:12px;">
                         <button type="submit" class="rg-btn rg-btn-primary">Enregistrer</button>
                         <button type="button" class="rg-btn rg-btn-secondary"
                                 onclick="rgToggleEditRow(<?= $uid ?>)">Annuler</button>
+                      </div>
+                    </form>
+                  </td>
+                </tr>
+                <!-- Per-user access matrix row (hidden by default) -->
+                <tr id="rg-access-row-<?= $uid ?>" class="rg-access-row" style="display:none;">
+                  <td colspan="8">
+                    <?php if ($isAdmin): ?>
+                    <div class="rg-access-admin-note">
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="flex:0 0 14px;"><circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.3"/><path d="M8 7v4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="5" r=".9" fill="currentColor"/></svg>
+                      Les administrateurs contournent toujours le contrôle d'accès — les overrides per-page sont sans effet.
+                    </div>
+                    <?php endif ?>
+                    <form method="post" action="/modules/reglages-generaux.php" class="rg-access-form">
+                      <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+                      <input type="hidden" name="action" value="update_user_access">
+                      <input type="hidden" name="user_id" value="<?= $uid ?>">
+                      <input type="hidden" name="sec" value="users">
+                      <div class="rg-access-grid">
+                        <?php
+                        $domainLabels = ['production' => 'Production', 'logistics' => 'Logistique', 'admin' => 'Admin', 'general' => 'Général'];
+                        $currentPresetPages = ($uPresetId !== null && isset($presetPageMap[$uPresetId])) ? $presetPageMap[$uPresetId] : null;
+                        foreach ($refPages as $rp):
+                            $rpId      = (int)$rp['id'];
+                            $rpKey     = $rp['page_key'];
+                            // Determine tri-state: does user_page_access override exist?
+                            if (isset($userPageAccessMap[$uid][$rpId])) {
+                                $triState = $userPageAccessMap[$uid][$rpId] ? 'allow' : 'deny';
+                            } else {
+                                $triState = 'inherit';
+                            }
+                            // Effective access computation (mirrors user_can_access logic, minus admin bypass)
+                            if ($triState !== 'inherit') {
+                                $effectiveAccess = ($triState === 'allow');
+                                $effectiveSrc    = $triState === 'allow' ? 'override-allow' : 'override-deny';
+                            } elseif ($currentPresetPages !== null) {
+                                $effectiveAccess = isset($currentPresetPages[$rpKey]);
+                                $effectiveSrc    = 'preset';
+                            } else {
+                                $effectiveAccess = true; // fallback: no preset, role floor passed
+                                $effectiveSrc    = 'fallback';
+                            }
+                            $domainLabel = $domainLabels[$rp['domain'] ?? ''] ?? ($rp['domain'] ?? '');
+                        ?>
+                        <div class="rg-access-item<?= !(bool)(int)$rp['is_active'] ? ' rg-access-item--inactive' : '' ?>">
+                          <div class="rg-access-page-info">
+                            <span class="rg-access-page-label"><?= htmlspecialchars($rp['label']) ?></span>
+                            <?php if ($domainLabel): ?>
+                            <span class="rg-domain-badge rg-domain-<?= htmlspecialchars($rp['domain'] ?? 'general') ?>"><?= htmlspecialchars($domainLabel) ?></span>
+                            <?php endif ?>
+                            <?php if (!(bool)(int)$rp['is_active']): ?>
+                            <span class="rg-pill-inactive" style="font-size:7.5px;padding:1px 6px;">inactif</span>
+                            <?php endif ?>
+                            <span class="rg-access-effective <?= $effectiveAccess ? 'eff-allow' : 'eff-deny' ?>">
+                              <?= $effectiveAccess ? '✓' : '✗' ?> <?php
+                              if ($effectiveSrc === 'override-allow') echo 'Override autorisé';
+                              elseif ($effectiveSrc === 'override-deny') echo 'Override refusé';
+                              elseif ($effectiveSrc === 'preset') echo ($effectiveAccess ? 'Via preset' : 'Non dans preset');
+                              else echo 'Fallback (aucun preset)';
+                              ?>
+                            </span>
+                          </div>
+                          <div class="rg-tristate">
+                            <label class="rg-tristate-opt<?= $triState === 'inherit' ? ' selected' : '' ?>">
+                              <input type="radio" name="page_access[<?= $rpId ?>]" value="inherit"<?= $triState === 'inherit' ? ' checked' : '' ?>>
+                              Hérité
+                            </label>
+                            <label class="rg-tristate-opt<?= $triState === 'allow' ? ' selected' : '' ?>">
+                              <input type="radio" name="page_access[<?= $rpId ?>]" value="allow"<?= $triState === 'allow' ? ' checked' : '' ?>>
+                              Autorisé
+                            </label>
+                            <label class="rg-tristate-opt<?= $triState === 'deny' ? ' selected' : '' ?>">
+                              <input type="radio" name="page_access[<?= $rpId ?>]" value="deny"<?= $triState === 'deny' ? ' checked' : '' ?>>
+                              Refusé
+                            </label>
+                          </div>
+                        </div>
+                        <?php endforeach ?>
+                      </div><!-- /.rg-access-grid -->
+                      <div style="display:flex;gap:10px;margin-top:14px;">
+                        <button type="submit" class="rg-btn rg-btn-primary">Enregistrer les accès</button>
+                        <button type="button" class="rg-btn rg-btn-secondary"
+                                onclick="rgToggleAccessRow(<?= $uid ?>)">Annuler</button>
                       </div>
                     </form>
                   </td>
@@ -1445,6 +1810,15 @@ $csrf = csrf_token();
                 </select>
               </div>
               <div>
+                <label class="rg-form-label">Preset d'accès</label>
+                <select class="rg-select" name="access_preset_id_fk">
+                  <option value="">— aucun —</option>
+                  <?php foreach ($presets as $pr): ?>
+                  <option value="<?= (int)$pr['id'] ?>"><?= htmlspecialchars($pr['label']) ?></option>
+                  <?php endforeach ?>
+                </select>
+              </div>
+              <div>
                 <label class="rg-form-label">Mot de passe (laisser vide pour envoyer une invitation)</label>
                 <input class="rg-input" type="password" name="password"
                        autocomplete="new-password"
@@ -1461,6 +1835,231 @@ $csrf = csrf_token();
 
       </div><!-- /.section-scroll -->
     </div><!-- /#sec-users -->
+
+
+    <!-- ═══════════════ SECTION: Pages & Accès ═══════════════ -->
+    <div class="section-panel<?= $initialSec === 'access' ? ' active' : '' ?>" id="sec-access">
+      <div class="section-scroll">
+
+        <?php if ($initialSec === 'access'):
+            $flashAc = flash_pop();
+            if ($flashAc !== null):
+                $fcAc = $flashAc['type'] === 'ok' ? 'rg-flash--ok' : 'rg-flash--err';
+                $fiAc = $flashAc['type'] === 'ok' ? '✓' : '⚠';
+        ?>
+        <div class="rg-flash <?= $fcAc ?>"><?= $fiAc ?> <?= htmlspecialchars($flashAc['msg']) ?></div>
+        <?php endif; endif ?>
+
+        <div class="sec-title">Pages &amp; <em>Accès</em></div>
+        <div class="sec-subtitle">Registre des pages · présets d'accès · contrôle d'accès</div>
+
+        <!-- Presets info card -->
+        <div class="rg-card">
+          <div class="rg-card-title">
+            Présets d'accès
+            <span class="rg-card-label">ref_access_presets</span>
+          </div>
+          <?php if (!empty($presets)): ?>
+          <div class="rg-access-presets-list">
+            <?php foreach ($presets as $pr):
+                $prId     = (int)$pr['id'];
+                $prPages  = isset($presetPageMap[$prId]) ? $presetPageMap[$prId] : [];
+                // Count users with this preset
+                $prUserCt = 0;
+                foreach ($users as $uu) {
+                    if (isset($uu['access_preset_id_fk']) && (int)$uu['access_preset_id_fk'] === $prId) $prUserCt++;
+                }
+            ?>
+            <div class="rg-preset-card">
+              <div class="rg-preset-card-header">
+                <span class="rg-preset-name"><?= htmlspecialchars($pr['label']) ?></span>
+                <span class="rg-preset-key"><?= htmlspecialchars($pr['preset_key']) ?></span>
+                <span class="rg-preset-userct"><?= $prUserCt ?> utilisateur<?= $prUserCt !== 1 ? 's' : '' ?></span>
+              </div>
+              <?php if ($pr['description']): ?>
+              <div class="rg-preset-desc"><?= htmlspecialchars($pr['description']) ?></div>
+              <?php endif ?>
+              <div class="rg-preset-pages">
+                <?php foreach ($refPages as $rp):
+                    if (!(bool)(int)$rp['is_active']) continue;
+                    $inPreset = isset($prPages[$rp['page_key']]);
+                ?>
+                <span class="rg-preset-page-chip <?= $inPreset ? 'in-preset' : 'out-preset' ?>">
+                  <?= htmlspecialchars($rp['label']) ?>
+                </span>
+                <?php endforeach ?>
+              </div>
+            </div>
+            <?php endforeach ?>
+          </div>
+          <p class="rg-access-note">Les présets sont gérés via migrations SQL. Assignez-les aux utilisateurs depuis la section Utilisateurs.</p>
+          <?php else: ?>
+          <p style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.1em;color:var(--ink-faint);text-transform:uppercase;padding:16px 0;">Aucun préset chargé.</p>
+          <?php endif ?>
+        </div><!-- /.rg-card presets -->
+
+        <!-- Page registry card -->
+        <div class="rg-card">
+          <div class="rg-card-title">
+            Registre des pages
+            <span class="rg-card-label">ref_pages · <?= count($refPages) ?> entrées</span>
+          </div>
+
+          <?php if (!empty($refPages)): ?>
+          <div class="rg-table-wrap">
+            <table class="rg-table rg-pages-table">
+              <thead>
+                <tr>
+                  <th>page_key</th>
+                  <th>Label</th>
+                  <th>URL</th>
+                  <th>min_role</th>
+                  <th>Domaine</th>
+                  <th>Sort</th>
+                  <th>Statut</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                <?php foreach ($refPages as $rp):
+                    $rpId = (int)$rp['id'];
+                    $rpActive = (bool)(int)$rp['is_active'];
+                ?>
+                <tr class="<?= !$rpActive ? 'rg-row-inactive' : '' ?>">
+                  <td style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-mute);"><?= htmlspecialchars($rp['page_key']) ?></td>
+                  <td style="font-weight:500;"><?= htmlspecialchars($rp['label']) ?></td>
+                  <td style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-mute);"><?= htmlspecialchars($rp['href']) ?></td>
+                  <td><span class="rg-minrole-badge rg-minrole-<?= htmlspecialchars($rp['min_role']) ?>"><?= htmlspecialchars($rp['min_role']) ?></span></td>
+                  <td><?php if ($rp['domain']): ?><span class="rg-domain-badge rg-domain-<?= htmlspecialchars($rp['domain']) ?>"><?= htmlspecialchars($rp['domain']) ?></span><?php else: ?>—<?php endif ?></td>
+                  <td style="font-family:'JetBrains Mono',monospace;font-size:11px;text-align:right;"><?= (int)$rp['sort'] ?></td>
+                  <td><?= $rpActive ? '<span class="rg-pill-active">Actif</span>' : '<span class="rg-pill-inactive">Inactif</span>' ?></td>
+                  <td>
+                    <div class="rg-user-actions">
+                      <a href="?sec=access&edit_page=<?= $rpId ?>" class="rg-action-link">Modifier</a>
+                      <form method="post" action="/modules/reglages-generaux.php" style="display:inline;">
+                        <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+                        <input type="hidden" name="action" value="toggle_page_active">
+                        <input type="hidden" name="page_id" value="<?= $rpId ?>">
+                        <input type="hidden" name="sec" value="access">
+                        <button type="submit" class="rg-action-link<?= $rpActive ? ' danger' : '' ?>">
+                          <?= $rpActive ? 'Désactiver' : 'Activer' ?>
+                        </button>
+                      </form>
+                    </div>
+                  </td>
+                </tr>
+                <?php endforeach ?>
+              </tbody>
+            </table>
+          </div>
+          <?php endif ?>
+
+          <!-- Edit or Add page form -->
+          <?php if ($editPageRow !== null): ?>
+          <div class="rg-inline-form">
+            <div class="rg-form-title">Modifier la page · <?= htmlspecialchars($editPageRow['page_key']) ?></div>
+            <form method="post" action="/modules/reglages-generaux.php">
+              <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+              <input type="hidden" name="action" value="update_page">
+              <input type="hidden" name="page_id" value="<?= (int)$editPageRow['id'] ?>">
+              <input type="hidden" name="sec" value="access">
+              <div class="rg-form-grid">
+                <div>
+                  <label class="rg-form-label">Label *</label>
+                  <input class="rg-input" type="text" name="label" maxlength="64" required
+                         value="<?= htmlspecialchars($editPageRow['label']) ?>">
+                </div>
+                <div>
+                  <label class="rg-form-label">URL (href) *</label>
+                  <input class="rg-input" type="text" name="href" maxlength="128" required
+                         value="<?= htmlspecialchars($editPageRow['href']) ?>">
+                </div>
+                <div>
+                  <label class="rg-form-label">Rôle minimum *</label>
+                  <select class="rg-select" name="min_role">
+                    <?php foreach (['viewer' => 'Viewer', 'operator' => 'Opérateur', 'manager' => 'Manager', 'admin' => 'Admin'] as $rv => $rl): ?>
+                    <option value="<?= $rv ?>"<?= $editPageRow['min_role'] === $rv ? ' selected' : '' ?>><?= htmlspecialchars($rl) ?></option>
+                    <?php endforeach ?>
+                  </select>
+                </div>
+                <div>
+                  <label class="rg-form-label">Domaine</label>
+                  <select class="rg-select" name="domain">
+                    <option value="">— aucun —</option>
+                    <?php foreach (['production' => 'Production', 'logistics' => 'Logistique', 'admin' => 'Admin', 'general' => 'Général'] as $dv => $dl): ?>
+                    <option value="<?= $dv ?>"<?= ($editPageRow['domain'] ?? '') === $dv ? ' selected' : '' ?>><?= htmlspecialchars($dl) ?></option>
+                    <?php endforeach ?>
+                  </select>
+                </div>
+                <div>
+                  <label class="rg-form-label">Ordre d'affichage</label>
+                  <input class="rg-input" type="number" name="sort" min="0" max="9999"
+                         value="<?= (int)$editPageRow['sort'] ?>">
+                </div>
+              </div>
+              <div style="display:flex;gap:10px;">
+                <button type="submit" class="rg-btn rg-btn-primary">Enregistrer</button>
+                <a href="/modules/reglages-generaux.php?sec=access" class="rg-btn rg-btn-secondary" style="text-decoration:none;display:inline-flex;align-items:center;">Annuler</a>
+              </div>
+            </form>
+          </div>
+          <?php else: ?>
+          <div class="rg-inline-form">
+            <div class="rg-form-title">Ajouter une page</div>
+            <form method="post" action="/modules/reglages-generaux.php">
+              <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+              <input type="hidden" name="action" value="create_page">
+              <input type="hidden" name="sec" value="access">
+              <div class="rg-form-grid">
+                <div>
+                  <label class="rg-form-label">page_key * <span style="font-weight:400;font-size:9px;">(a-z 0-9 -)</span></label>
+                  <input class="rg-input" type="text" name="page_key" maxlength="48" required
+                         placeholder="ex: mon-module"
+                         pattern="[a-z0-9-]+" title="Minuscules, chiffres et tirets uniquement">
+                </div>
+                <div>
+                  <label class="rg-form-label">Label *</label>
+                  <input class="rg-input" type="text" name="label" maxlength="64" required
+                         placeholder="ex: Mon Module">
+                </div>
+                <div>
+                  <label class="rg-form-label">URL (href) *</label>
+                  <input class="rg-input" type="text" name="href" maxlength="128" required
+                         placeholder="ex: /modules/mon-module.php">
+                </div>
+                <div>
+                  <label class="rg-form-label">Rôle minimum *</label>
+                  <select class="rg-select" name="min_role">
+                    <option value="viewer" selected>Viewer</option>
+                    <option value="operator">Opérateur</option>
+                    <option value="manager">Manager</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="rg-form-label">Domaine</label>
+                  <select class="rg-select" name="domain">
+                    <option value="">— aucun —</option>
+                    <option value="production">Production</option>
+                    <option value="logistics">Logistique</option>
+                    <option value="admin">Admin</option>
+                    <option value="general">Général</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="rg-form-label">Ordre d'affichage</label>
+                  <input class="rg-input" type="number" name="sort" min="0" max="9999" value="0">
+                </div>
+              </div>
+              <button type="submit" class="rg-btn rg-btn-primary">Créer la page</button>
+            </form>
+          </div>
+          <?php endif ?>
+
+        </div><!-- /.rg-card page registry -->
+
+      </div><!-- /.section-scroll -->
+    </div><!-- /#sec-access -->
 
   </div><!-- /.content-area -->
 </div><!-- /.rg-stage -->
@@ -1482,6 +2081,7 @@ $csrf = csrf_token();
     url.searchParams.set('sec', sec);
     url.searchParams.delete('edit_site');
     url.searchParams.delete('edit_pkg_client');
+    url.searchParams.delete('edit_page');
     history.replaceState(null, '', url.toString());
   }
 
@@ -1499,12 +2099,40 @@ $csrf = csrf_token();
 
   // ── Inline edit row toggle ────────────────────────────────────────────────
   function rgToggleEditRow(uid) {
-    var row = document.getElementById('rg-edit-row-' + uid);
-    if (!row) return;
-    var visible = row.style.display !== 'none';
-    row.style.display = visible ? 'none' : 'table-row';
+    var editRow   = document.getElementById('rg-edit-row-' + uid);
+    var accessRow = document.getElementById('rg-access-row-' + uid);
+    if (!editRow) return;
+    var nowVisible = editRow.style.display !== 'none';
+    editRow.style.display = nowVisible ? 'none' : 'table-row';
+    // Close access row if opening edit row
+    if (!nowVisible && accessRow) accessRow.style.display = 'none';
   }
   window.rgToggleEditRow = rgToggleEditRow;
+
+  // ── Per-user access matrix row toggle ────────────────────────────────────
+  function rgToggleAccessRow(uid) {
+    var accessRow = document.getElementById('rg-access-row-' + uid);
+    var editRow   = document.getElementById('rg-edit-row-' + uid);
+    if (!accessRow) return;
+    var nowVisible = accessRow.style.display !== 'none';
+    accessRow.style.display = nowVisible ? 'none' : 'table-row';
+    // Close edit row if opening access row
+    if (!nowVisible && editRow) editRow.style.display = 'none';
+  }
+  window.rgToggleAccessRow = rgToggleAccessRow;
+
+  // ── Tri-state radio: highlight selected label ─────────────────────────────
+  // Delegates to the .rg-access-grid container via a single listener.
+  document.addEventListener('change', function(e) {
+    var input = e.target;
+    if (input.type !== 'radio' || !input.closest('.rg-access-grid')) return;
+    // Update selected class on sibling labels within this tristate group
+    var group = input.closest('.rg-tristate');
+    if (!group) return;
+    group.querySelectorAll('.rg-tristate-opt').forEach(function(lbl) {
+      lbl.classList.toggle('selected', lbl.querySelector('input') === input);
+    });
+  });
 
   // ── manager_scope select: enable/disable based on role select ────────────
   // Works for both the create form and each per-user edit form.

@@ -451,3 +451,181 @@ body.rg-page .rg-pw-hint {
   body.rg-page .rg-form-grid { grid-template-columns: 1fr; }
   body.rg-page .rg-form-grid .full { grid-column: 1; }
 }
+
+/* ── Preset badge (users table) ──────────────────────────────────────────────── */
+body.rg-page .rg-preset-badge {
+  font-family: "JetBrains Mono", monospace; font-size: 8.5px; letter-spacing: .08em;
+  text-transform: uppercase; padding: 3px 9px; border-radius: 10px;
+  background: color-mix(in srgb, var(--cold) 16%, transparent); color: var(--cold);
+  border: 1px solid color-mix(in srgb, var(--cold) 28%, transparent);
+}
+body.rg-page .rg-preset-bypass {
+  font-family: "JetBrains Mono", monospace; font-size: 8.5px; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--ink-faint); font-style: italic;
+}
+
+/* ── Inline access row ───────────────────────────────────────────────────────── */
+body.rg-page .rg-access-row td {
+  background: color-mix(in srgb, var(--oak) 5%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--oak) 18%, transparent);
+  padding: 16px 18px;
+}
+
+body.rg-page .rg-access-admin-note {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 8px 14px; border-radius: 8px; margin-bottom: 14px;
+  border: 1px solid color-mix(in srgb, var(--cold) 28%, transparent);
+  background: color-mix(in srgb, var(--cold) 8%, transparent);
+  font-family: "DM Sans", sans-serif; font-size: 12px; color: var(--cold);
+}
+
+body.rg-page .rg-access-form {}
+
+body.rg-page .rg-access-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 8px;
+}
+
+body.rg-page .rg-access-item {
+  border: 1px solid var(--hairline); border-radius: 8px;
+  padding: 10px 12px; background: color-mix(in srgb, var(--bg-elev) 60%, transparent);
+  display: flex; flex-direction: column; gap: 8px;
+  transition: border-color .18s;
+}
+body.rg-page .rg-access-item:hover { border-color: var(--hairline-2); }
+body.rg-page .rg-access-item--inactive { opacity: .55; }
+
+body.rg-page .rg-access-page-info {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+}
+
+body.rg-page .rg-access-page-label {
+  font-family: "DM Sans", sans-serif; font-size: 13px; color: var(--ink-soft); font-weight: 500;
+}
+
+body.rg-page .rg-access-effective {
+  font-family: "JetBrains Mono", monospace; font-size: 8.5px; letter-spacing: .07em;
+  text-transform: uppercase; padding: 2px 8px; border-radius: 6px; margin-left: auto;
+}
+body.rg-page .rg-access-effective.eff-allow {
+  background: color-mix(in srgb, var(--hop) 14%, transparent); color: var(--hop);
+}
+body.rg-page .rg-access-effective.eff-deny {
+  background: color-mix(in srgb, var(--ember) 14%, transparent); color: var(--ember);
+}
+
+/* Tri-state radio group */
+body.rg-page .rg-tristate {
+  display: flex; gap: 4px;
+}
+body.rg-page .rg-tristate-opt {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  padding: 5px 8px; border: 1px solid var(--hairline); border-radius: 6px;
+  font-family: "JetBrains Mono", monospace; font-size: 9px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--ink-mute); cursor: pointer;
+  transition: .16s; user-select: none;
+}
+body.rg-page .rg-tristate-opt:hover { border-color: var(--hairline-2); color: var(--ink-soft); }
+body.rg-page .rg-tristate-opt input { display: none; }
+body.rg-page .rg-tristate-opt.selected[for*="inherit"],
+body.rg-page .rg-tristate-opt.selected {
+  border-color: var(--hairline-2); background: color-mix(in srgb, var(--oak) 12%, transparent);
+  color: var(--oak);
+}
+/* Specific selected states by value context (via JS .selected class) */
+body.rg-page .rg-tristate input[value="allow"]:checked ~ span,
+body.rg-page .rg-tristate-opt:has(input[value="allow"]:checked) {
+  border-color: color-mix(in srgb, var(--hop) 36%, transparent);
+  background: color-mix(in srgb, var(--hop) 14%, transparent); color: var(--hop);
+}
+body.rg-page .rg-tristate-opt:has(input[value="deny"]:checked) {
+  border-color: color-mix(in srgb, var(--ember) 36%, transparent);
+  background: color-mix(in srgb, var(--ember) 14%, transparent); color: var(--ember);
+}
+
+/* ── Domain badges ───────────────────────────────────────────────────────────── */
+body.rg-page .rg-domain-badge {
+  font-family: "JetBrains Mono", monospace; font-size: 8px; letter-spacing: .1em;
+  text-transform: uppercase; padding: 2px 7px; border-radius: 8px;
+  border: 1px solid;
+}
+body.rg-page .rg-domain-production { background: color-mix(in srgb, var(--steel) 12%, transparent); color: var(--steel-mid); border-color: color-mix(in srgb, var(--steel) 24%, transparent); }
+body.rg-page .rg-domain-logistics  { background: color-mix(in srgb, var(--bbt) 12%, transparent);   color: var(--bbt);      border-color: color-mix(in srgb, var(--bbt) 24%, transparent); }
+body.rg-page .rg-domain-admin      { background: color-mix(in srgb, var(--ember) 12%, transparent);  color: var(--ember);    border-color: color-mix(in srgb, var(--ember) 24%, transparent); }
+body.rg-page .rg-domain-general    { background: color-mix(in srgb, var(--oak) 12%, transparent);    color: var(--oak);      border-color: color-mix(in srgb, var(--oak) 24%, transparent); }
+
+/* ── min_role badge (pages table) ────────────────────────────────────────────── */
+body.rg-page .rg-minrole-badge {
+  font-family: "JetBrains Mono", monospace; font-size: 8.5px; letter-spacing: .08em;
+  text-transform: uppercase; padding: 3px 9px; border-radius: 10px; border: 1px solid;
+}
+body.rg-page .rg-minrole-viewer   { background: color-mix(in srgb, var(--oak) 12%,transparent);   color: var(--oak);      border-color: color-mix(in srgb, var(--oak) 28%,transparent); }
+body.rg-page .rg-minrole-operator { background: color-mix(in srgb, var(--steel) 12%,transparent); color: var(--steel-mid); border-color: color-mix(in srgb, var(--steel) 28%,transparent); }
+body.rg-page .rg-minrole-manager  { background: color-mix(in srgb, var(--bbt) 12%,transparent);   color: var(--bbt);      border-color: color-mix(in srgb, var(--bbt) 28%,transparent); }
+body.rg-page .rg-minrole-admin    { background: color-mix(in srgb, var(--hop) 12%,transparent);   color: var(--hop);      border-color: color-mix(in srgb, var(--hop) 28%,transparent); }
+
+/* Inactive row in pages table */
+body.rg-page .rg-row-inactive td { opacity: .6; }
+
+/* ── Presets info card ───────────────────────────────────────────────────────── */
+body.rg-page .rg-access-presets-list {
+  display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px;
+}
+
+body.rg-page .rg-preset-card {
+  border: 1px solid var(--hairline); border-radius: 10px;
+  padding: 14px 16px; background: color-mix(in srgb, var(--bg-elev) 60%, transparent);
+}
+
+body.rg-page .rg-preset-card-header {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 6px;
+}
+
+body.rg-page .rg-preset-name {
+  font-family: "DM Sans", sans-serif; font-size: 14px; font-weight: 600; color: var(--ink);
+}
+
+body.rg-page .rg-preset-key {
+  font-family: "JetBrains Mono", monospace; font-size: 9px; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--ink-faint);
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+  padding: 2px 8px; border-radius: 6px;
+}
+
+body.rg-page .rg-preset-userct {
+  font-family: "JetBrains Mono", monospace; font-size: 9px; letter-spacing: .1em;
+  color: var(--cold); margin-left: auto;
+}
+
+body.rg-page .rg-preset-desc {
+  font-family: "DM Sans", sans-serif; font-size: 12px; color: var(--ink-mute);
+  margin-bottom: 10px;
+}
+
+body.rg-page .rg-preset-pages {
+  display: flex; flex-wrap: wrap; gap: 5px;
+}
+
+body.rg-page .rg-preset-page-chip {
+  font-family: "JetBrains Mono", monospace; font-size: 8.5px; letter-spacing: .07em;
+  text-transform: uppercase; padding: 3px 8px; border-radius: 8px; border: 1px solid;
+}
+body.rg-page .rg-preset-page-chip.in-preset {
+  background: color-mix(in srgb, var(--hop) 14%, transparent); color: var(--hop);
+  border-color: color-mix(in srgb, var(--hop) 28%, transparent);
+}
+body.rg-page .rg-preset-page-chip.out-preset {
+  background: transparent; color: var(--ink-faint);
+  border-color: var(--hairline);
+}
+
+body.rg-page .rg-access-note {
+  font-family: "DM Sans", sans-serif; font-size: 11.5px; color: var(--ink-mute);
+  margin-top: 0; font-style: italic;
+}
+
+/* ── Responsive narrow addendum ──────────────────────────────────────────────── */
+@media (max-width: 900px) {
+  body.rg-page .rg-access-grid { grid-template-columns: 1fr; }
+  body.rg-page .rg-tristate-opt { font-size: 8px; padding: 4px 5px; }
+}
