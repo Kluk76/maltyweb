@@ -454,6 +454,361 @@ body.bom-review .main {
     line-height:   1.5;
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   BROWSE TAB — Parcourir les BOM
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* Nav tabs distinguish from SKU tabs inside a recipe (top-level nav) */
+.br-nav-tabs .br-sku-tab {
+    font-size:   0.8rem;
+    padding:     0.3rem 0.8rem;
+}
+
+/* ── COGS warning banner ────────────────────────────────────────────────── */
+.br-browse-cogs-warn {
+    background:    var(--bg-elev);
+    border:        1px solid var(--oak);
+    border-left:   3px solid var(--oak);
+    border-radius: 4px;
+    padding:       0.55rem 0.9rem;
+    font-family:   'DM Sans', sans-serif;
+    font-size:     0.82rem;
+    color:         var(--ink-soft);
+    margin-bottom: 1.25rem;
+}
+
+/* ── Filter chips ───────────────────────────────────────────────────────── */
+.br-browse-filters {
+    display:       flex;
+    flex-direction: column;
+    gap:           0.75rem;
+    margin-bottom: 1.25rem;
+}
+
+.br-browse-filter-group {
+    display:     flex;
+    align-items: flex-start;
+    gap:         0.6rem;
+    flex-wrap:   wrap;
+}
+
+.br-browse-filter-label {
+    font-family:    'JetBrains Mono', monospace;
+    font-size:      0.68rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color:          var(--ink-mute);
+    padding-top:    0.2rem;
+    white-space:    nowrap;
+    min-width:      90px;
+}
+
+.br-browse-chips {
+    display:  flex;
+    flex-wrap: wrap;
+    gap:      0.3rem;
+}
+
+.br-chip {
+    font-family:   'DM Sans', sans-serif;
+    font-size:     0.78rem;
+    padding:       0.2rem 0.55rem;
+    border:        1px solid var(--ink-faint);
+    border-radius: 3px;
+    color:         var(--ink-soft);
+    background:    var(--bg-elev);
+    text-decoration: none;
+    white-space:   nowrap;
+}
+
+.br-chip:hover {
+    border-color: var(--cold);
+    color:        var(--cold);
+}
+
+.br-chip--active {
+    background:   var(--cold);
+    color:        #fff;
+    border-color: var(--cold);
+}
+
+/* ── Count row ──────────────────────────────────────────────────────────── */
+.br-browse-count {
+    font-family: 'DM Sans', sans-serif;
+    font-size:   0.8rem;
+    color:       var(--ink-mute);
+    margin-bottom: 1.5rem;
+}
+
+/* ── Classification group heading ───────────────────────────────────────── */
+.br-browse-cls-title {
+    font-size:   0.78rem;
+    color:       var(--ink);
+}
+
+.br-browse-cls-count {
+    font-family: 'DM Sans', sans-serif;
+    font-size:   0.72rem;
+    color:       var(--ink-mute);
+    margin-left: 0.35rem;
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+/* ── Subtype group heading ──────────────────────────────────────────────── */
+.br-browse-sub-group {
+    margin-bottom: 1.5rem;
+}
+
+.br-browse-sub-title {
+    font-family:    'JetBrains Mono', monospace;
+    font-size:      0.67rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color:          var(--ink-mute);
+    margin:         0.5rem 0 0.5rem;
+    padding-left:   0.25rem;
+    border-left:    3px solid var(--ink-faint);
+    display:        flex;
+    align-items:    center;
+    gap:            0.4rem;
+}
+
+.br-browse-sub-count {
+    font-family: 'DM Sans', sans-serif;
+    font-size:   0.7rem;
+    color:       var(--ink-mute);
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+.br-browse-sub-empty {
+    font-family: 'DM Sans', sans-serif;
+    font-size:   0.78rem;
+    color:       var(--ink-faint);
+    padding:     0.3rem 0.5rem;
+    font-style:  italic;
+}
+
+/* ── SKU grid ───────────────────────────────────────────────────────────── */
+.br-browse-sku-grid {
+    display:       flex;
+    flex-direction: column;
+    gap:           0.6rem;
+}
+
+/* ── SKU card ───────────────────────────────────────────────────────────── */
+.br-browse-sku-card {
+    background:    var(--bg-elev);
+    border:        1px solid var(--ink-faint);
+    border-radius: 6px;
+    overflow:      hidden;
+}
+
+.br-browse-sku-header {
+    display:         flex;
+    align-items:     center;
+    gap:             0.75rem;
+    padding:         0.6rem 0.9rem;
+    flex-wrap:       wrap;
+}
+
+.br-browse-sku-meta {
+    display:     flex;
+    align-items: center;
+    gap:         0.5rem;
+    flex:        1;
+    min-width:   0;
+    flex-wrap:   wrap;
+}
+
+.br-browse-sku-code {
+    font-family:  'JetBrains Mono', monospace;
+    font-size:    0.82rem;
+    font-weight:  700;
+    color:        var(--ink);
+}
+
+.br-browse-sku-fmt {
+    font-family: 'DM Sans', sans-serif;
+    font-size:   0.76rem;
+    color:       var(--ink-soft);
+    background:  var(--bg);
+    border:      1px solid var(--ink-faint);
+    border-radius: 3px;
+    padding:     0.1rem 0.35rem;
+}
+
+.br-browse-sku-recipe {
+    font-family: 'DM Sans', sans-serif;
+    font-size:   0.76rem;
+    color:       var(--ink-mute);
+    font-style:  italic;
+}
+
+.br-browse-sku-costs {
+    display:     flex;
+    gap:         1rem;
+    font-family: 'DM Sans', sans-serif;
+    font-size:   0.78rem;
+    color:       var(--ink-soft);
+    white-space: nowrap;
+}
+
+.br-browse-cost-pkg strong,
+.br-browse-cost-total strong {
+    font-family: 'JetBrains Mono', monospace;
+    color:       var(--ink);
+}
+
+/* ── BOM panel (expanded) ───────────────────────────────────────────────── */
+.br-browse-bom-panel {
+    border-top: 1px solid var(--ink-faint);
+    padding:    0.75rem 0.9rem 0.9rem;
+    background: var(--bg);
+}
+
+.br-browse-bom-table {
+    font-size: 0.8rem;
+}
+
+.br-browse-choices-summary {
+    font-family:  'DM Sans', sans-serif;
+    font-size:    0.78rem;
+    color:        var(--hop);
+    background:   var(--bg-elev);
+    border:       1px solid var(--hop);
+    border-radius: 4px;
+    padding:      0.4rem 0.7rem;
+    margin-bottom: 0.5rem;
+    display:       flex;
+    flex-wrap:     wrap;
+    gap:           0.5rem;
+    align-items:   center;
+}
+
+/* ── Binding section inside BOM panel ──────────────────────────────────── */
+.br-browse-binding-section {
+    margin-top:    0.75rem;
+    padding-top:   0.75rem;
+    border-top:    1px dashed var(--ink-faint);
+}
+
+.br-browse-binding-title {
+    font-family:    'JetBrains Mono', monospace;
+    font-size:      0.68rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color:          var(--ink-soft);
+    margin-bottom:  0.25rem;
+}
+
+.br-browse-binding-note {
+    font-family:  'DM Sans', sans-serif;
+    font-size:    0.76rem;
+    color:        var(--ink-mute);
+    font-style:   italic;
+    margin-bottom: 0.5rem;
+}
+
+.br-browse-binding-list {
+    display:       flex;
+    flex-direction: column;
+    gap:           0.35rem;
+}
+
+.br-browse-binding-row {
+    display:     flex;
+    align-items: center;
+    gap:         0.6rem;
+    flex-wrap:   wrap;
+    font-family: 'DM Sans', sans-serif;
+    font-size:   0.8rem;
+}
+
+.br-browse-binding-role {
+    font-family:    'JetBrains Mono', monospace;
+    font-size:      0.68rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color:          var(--ink-mute);
+    min-width:      80px;
+}
+
+.br-browse-binding-mi {
+    flex: 1;
+    min-width: 0;
+}
+
+/* ── Confirm modal ──────────────────────────────────────────────────────── */
+.br-confirm-dialog {
+    border:        0;
+    padding:       0;
+    background:    transparent;
+    max-width:     480px;
+    width:         90%;
+}
+
+.br-confirm-dialog[open] {
+    position:      fixed;
+    inset:         0;
+    display:       flex;
+    align-items:   center;
+    justify-content: center;
+    margin:        auto;
+}
+
+.br-confirm-dialog::backdrop {
+    background: rgba(0,0,0,0.35);
+}
+
+.br-confirm-dialog__inner {
+    background:    var(--bg-elev);
+    border:        1px solid var(--ink-faint);
+    border-radius: 8px;
+    padding:       1.5rem;
+    width:         100%;
+}
+
+.br-confirm-dialog__title {
+    font-family: 'Fraunces', serif;
+    font-size:   1.1rem;
+    color:       var(--ink);
+    margin:      0 0 0.75rem;
+}
+
+.br-confirm-dialog__body {
+    font-family: 'DM Sans', sans-serif;
+    font-size:   0.84rem;
+    color:       var(--ink-soft);
+    margin-bottom: 0.5rem;
+}
+
+.br-confirm-dialog__blast {
+    font-family:   'JetBrains Mono', monospace;
+    font-size:     0.72rem;
+    color:         var(--ink-mute);
+    background:    var(--bg);
+    border:        1px solid var(--ink-faint);
+    border-radius: 4px;
+    padding:       0.5rem 0.7rem;
+    margin-bottom: 0.75rem;
+    white-space:   pre-wrap;
+}
+
+.br-confirm-dialog__cogs-warn {
+    font-family: 'DM Sans', sans-serif;
+    font-size:   0.78rem;
+    color:       var(--oak);
+    margin-bottom: 1rem;
+}
+
+.br-confirm-dialog__actions {
+    display:  flex;
+    gap:      0.6rem;
+    justify-content: flex-end;
+}
+
 /* ── Responsive ───────────────────────────────────────────────────────────── */
 @media (max-width: 768px) {
     .br-page {
@@ -465,6 +820,20 @@ body.bom-review .main {
     }
 
     .br-edit-row__fields {
+        flex-direction: column;
+    }
+
+    .br-browse-sku-header {
+        flex-direction: column;
+        align-items:    flex-start;
+    }
+
+    .br-browse-sku-costs {
+        flex-direction: column;
+        gap:            0.25rem;
+    }
+
+    .br-browse-filter-group {
         flex-direction: column;
     }
 }

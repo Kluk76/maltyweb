@@ -179,6 +179,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 flash_set('ok', $saveMsg . ' · BOM recompilation échouée (la sauvegarde est conservée).');
             }
 
+            // Return to browse tab if the edit came from there
+            $postSec = post_str('sec') ?? 'drill';
+            if ($postSec === 'browse') {
+                redirect_to('/modules/bom-review.php?sec=browse');
+            }
             redirect_to('/modules/bom-review.php?sec=drill&recipe=' . $recipeId);
         }
 
@@ -279,6 +284,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 flash_set('ok', $saveMsg . ' · BOM recompilation échouée (la sauvegarde est conservée).');
             }
 
+            // Return to browse tab if the edit came from there
+            $postSec2 = post_str('sec') ?? 'drill';
+            if ($postSec2 === 'browse') {
+                redirect_to('/modules/bom-review.php?sec=browse#browse-sku-' . $skuId);
+            }
             redirect_to('/modules/bom-review.php?sec=drill&recipe=' . max(0, $recipeIdForCompile)
                 . '#sku-' . $skuId);
         }
@@ -380,7 +390,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 flash_set('ok', $saveMsg . " · BOM recompilé ({$totalRecompiled} recette(s)).");
             }
 
-            // Redirect back to feed view (or drill-down if recipe param present)
+            // Redirect back to browse, drill, or feeds depending on call origin
+            $postSecMi = post_str('sec') ?? '';
+            if ($postSecMi === 'browse') {
+                redirect_to('/modules/bom-review.php?sec=browse');
+            }
             $backRecipe = post_int('back_recipe') ?? 0;
             if ($backRecipe > 0) {
                 redirect_to('/modules/bom-review.php?sec=drill&recipe=' . $backRecipe);
@@ -406,7 +420,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // ─────────────────────────────────────────────────────────────────────────────
 
 $sec      = isset($_GET['sec']) ? (string) $_GET['sec'] : 'feeds';
-$validSec = ['feeds', 'drill'];
+$validSec = ['feeds', 'drill', 'browse'];
 if (!in_array($sec, $validSec, true)) $sec = 'feeds';
 
 // Recipe selection for drill-down
@@ -421,6 +435,21 @@ $feed3Skus         = []; // SKUs with anomaly flags
 $feedDivergenceItems = []; // WAC-priced but no catalog price — BOM compiler divergence set
 $recipes           = []; // all active recipes with sku_prefix (for picker + drill)
 $allMis            = []; // packaging MIs (id → {mi_id, name, price, currency}) for edit dropdowns
+
+// Browse tab data
+$browseSkus           = []; // all active SKUs with classification/format/BOM cost — browse tab
+$browseBomBySkuId     = []; // sku_id → [bom lines] for expanded rows in browse
+$browseBindings       = []; // recipe_id → role → mi binding info
+$browseChoices        = []; // sku_id → slot_name → choice info
+$browseFilterFmt      = isset($_GET['bfmt'])  ? (string) $_GET['bfmt']  : '';
+$browseFilterCls      = isset($_GET['bcls'])  ? (string) $_GET['bcls']  : '';
+$browseFilterSub      = isset($_GET['bsub'])  ? (string) $_GET['bsub']  : '';
+
+// All valid classification / subtype values (from ENUM — hardcoded is safe: these are schema ENUMs)
+$allClassifications = ['Neb', 'Contract'];
+$allSubtypes        = ['Core', 'EPH', 'CollabIn', 'CollabOut', 'WhiteLabel', 'Archive'];
+// All distinct format display_names (including the pseudo-bucket for NULL format_id)
+$browseAllFormats   = [];
 
 try {
     $pdo = maltytask_pdo();
@@ -607,6 +636,108 @@ try {
         }
     }
 
+    // ── Browse tab data loading ────────────────────────────────────────────
+    if ($sec === 'browse') {
+        // Full SKU list with classification/format/BOM cost aggregates (LEFT JOIN — keeps composites)
+        $browseStmt = $pdo->query(
+            "SELECT
+                s.id             AS sku_id,
+                s.sku_code,
+                s.format,
+                s.format_id,
+                COALESCE(f.display_name, '(format non assigné)') AS format_display,
+                r.id             AS recipe_id,
+                r.name           AS recipe_name,
+                r.classification,
+                r.subtype,
+                ROUND(SUM(CASE WHEN b.source = 'Packaging' THEN COALESCE(b.cost, 0) ELSE 0 END), 4) AS pkg_cost,
+                ROUND(SUM(COALESCE(b.cost, 0)), 4) AS total_bom_cost,
+                COUNT(CASE WHEN b.source = 'Packaging' THEN 1 END) AS pkg_lines
+             FROM ref_skus s
+             LEFT JOIN ref_packaging_formats f ON f.id = s.format_id
+             LEFT JOIN ref_recipes r            ON r.id = s.recipe_id
+             LEFT JOIN ref_sku_bom b            ON b.sku_id = s.id
+             WHERE s.is_active = 1
+             GROUP BY s.id, s.sku_code, s.format, s.format_id,
+                      f.display_name, r.id, r.name, r.classification, r.subtype
+             ORDER BY
+                CASE WHEN r.classification IS NULL THEN 'ZZZ' ELSE r.classification END,
+                CASE WHEN r.subtype       IS NULL THEN 'ZZZ' ELSE r.subtype        END,
+                COALESCE(r.name, s.sku_code),
+                s.sku_code"
+        );
+        $browseSkus = $browseStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // Collect distinct format labels for the filter chips
+        $fmtSeen = [];
+        foreach ($browseSkus as $bs) {
+            $fmtSeen[$bs['format_display']] = true;
+        }
+        $browseAllFormats = array_keys($fmtSeen);
+        sort($browseAllFormats);
+
+        // Gather all relevant recipe_ids and sku_ids for BOM + bindings + choices
+        $allBrowseSkuIds    = array_map(fn($r) => (int) $r['sku_id'], $browseSkus);
+        $allBrowseRecipeIds = array_filter(array_unique(
+            array_map(fn($r) => $r['recipe_id'] !== null ? (int) $r['recipe_id'] : null, $browseSkus)
+        ), fn($v) => $v !== null);
+
+        if (!empty($allBrowseSkuIds)) {
+            $skuPh = implode(',', array_fill(0, count($allBrowseSkuIds), '?'));
+
+            // BOM lines for ALL browse SKUs
+            $bomBrStmt = $pdo->prepare(
+                "SELECT
+                    b.sku_id, b.source, b.ingredient_raw,
+                    b.qty_per_unit, b.ing_unit, b.price, b.currency, b.cost,
+                    b.mi_id AS mi_id_int, b.bom_source,
+                    m.mi_id AS mi_id_str, m.name AS mi_name
+                 FROM ref_sku_bom b
+                 LEFT JOIN ref_mi m ON m.id = b.mi_id
+                 WHERE b.sku_id IN ({$skuPh})
+                 ORDER BY b.sku_id,
+                    CASE b.source WHEN 'Brewing' THEN 1 WHEN 'Packaging' THEN 2 ELSE 3 END,
+                    COALESCE(b.cost, 0) DESC"
+            );
+            $bomBrStmt->execute($allBrowseSkuIds);
+            foreach ($bomBrStmt->fetchAll(PDO::FETCH_ASSOC) as $bLine) {
+                $browseBomBySkuId[(int) $bLine['sku_id']][] = $bLine;
+            }
+
+            // Per-SKU packaging choices
+            $chBrStmt = $pdo->prepare(
+                "SELECT rspc.sku_id, rspc.slot_name, rspc.mi_id_fk,
+                        m.mi_id AS mi_id_str, m.name AS mi_name
+                   FROM ref_sku_packaging_choices rspc
+                   LEFT JOIN ref_mi m ON m.id = rspc.mi_id_fk
+                  WHERE rspc.sku_id IN ({$skuPh})
+                    AND rspc.is_checked = 1
+                    AND (rspc.effective_until IS NULL OR rspc.effective_until > CURDATE())"
+            );
+            $chBrStmt->execute($allBrowseSkuIds);
+            foreach ($chBrStmt->fetchAll(PDO::FETCH_ASSOC) as $ch) {
+                $browseChoices[(int) $ch['sku_id']][$ch['slot_name']] = $ch;
+            }
+        }
+
+        if (!empty($allBrowseRecipeIds)) {
+            $recPh = implode(',', array_fill(0, count($allBrowseRecipeIds), '?'));
+
+            // Recipe bindings (all active recipes present in browse)
+            $bindBrStmt = $pdo->prepare(
+                "SELECT rpb.recipe_id, rpb.role, rpb.mi_id_fk, m.mi_id AS mi_id_str, m.name AS mi_name
+                   FROM ref_recipe_packaging_bindings rpb
+                   JOIN ref_mi m ON m.id = rpb.mi_id_fk
+                  WHERE rpb.recipe_id IN ({$recPh})
+                    AND (rpb.effective_until IS NULL OR rpb.effective_until > CURDATE())"
+            );
+            $bindBrStmt->execute(array_values($allBrowseRecipeIds));
+            foreach ($bindBrStmt->fetchAll(PDO::FETCH_ASSOC) as $bind) {
+                $browseBindings[(int) $bind['recipe_id']][$bind['role']] = $bind;
+            }
+        }
+    }
+
 } catch (Throwable $e) {
     $dbError = $e->getMessage();
 }
@@ -661,7 +792,7 @@ $csrfToken = csrf_token();
 </div>
 
 <!-- ── Navigation tabs ──────────────────────────────────────────────────── -->
-<div class="br-sku-tabs" style="margin-bottom:1.5rem;">
+<div class="br-sku-tabs br-nav-tabs" style="margin-bottom:1.5rem;">
     <a href="/modules/bom-review.php?sec=feeds"
        class="br-sku-tab <?= $sec === 'feeds' ? 'br-sku-tab--active' : '' ?>">
        Défauts détectés
@@ -669,6 +800,10 @@ $csrfToken = csrf_token();
     <a href="/modules/bom-review.php?sec=drill<?= $selectedRecipeId > 0 ? '&recipe=' . $selectedRecipeId : '' ?>"
        class="br-sku-tab <?= $sec === 'drill' ? 'br-sku-tab--active' : '' ?>">
        Drill-down recette
+    </a>
+    <a href="/modules/bom-review.php?sec=browse"
+       class="br-sku-tab <?= $sec === 'browse' ? 'br-sku-tab--active' : '' ?>">
+       Parcourir les BOM
     </a>
 </div>
 
@@ -1364,6 +1499,515 @@ $csrfToken = csrf_token();
 <?php endif; // $selectedRecipeId && $drillRecipe ?>
 
 <?php endif; // $sec === 'drill' ?>
+
+<?php if ($sec === 'browse'): ?>
+<!-- ══════════════════════════════════════════════════════════════════════════
+     BROWSE VIEW — all active SKUs with full packaging BOM, filterable
+     ══════════════════════════════════════════════════════════════════════════ -->
+
+<?php
+// ── Build the grouped structure ─────────────────────────────────────────────
+// Groups: [classification|'(composite)'] → [subtype|'(composite)'] → [sku_id → row]
+// Classification + subtype buckets are always shown even when empty.
+// Applied filter: filter browseSkus BEFORE grouping but show ALL group headers.
+
+function browse_matches_filter(array $row, string $filterFmt, string $filterCls, string $filterSub): bool
+{
+    if ($filterCls !== '' && $filterSub !== '') {
+        $cls = $row['classification'] ?? '(composite)';
+        $sub = $row['subtype'] ?? '(composite)';
+        if ($cls !== $filterCls || $sub !== $filterSub) return false;
+    } elseif ($filterCls !== '') {
+        if (($row['classification'] ?? '(composite)') !== $filterCls) return false;
+    } elseif ($filterSub !== '') {
+        if (($row['subtype'] ?? '(composite)') !== $filterSub) return false;
+    }
+    if ($filterFmt !== '') {
+        if (($row['format_display'] ?? '(format non assigné)') !== $filterFmt) return false;
+    }
+    return true;
+}
+
+$filteredBrowseSkus = array_filter(
+    $browseSkus,
+    fn($r) => browse_matches_filter($r, $browseFilterFmt, $browseFilterCls, $browseFilterSub)
+);
+
+// Count for display
+$browseTotal    = count($browseSkus);
+$browseFiltered = count($filteredBrowseSkus);
+
+// Human labels for classification and subtype
+$clsLabels = [
+    'Neb'      => 'Nebuleuse',
+    'Contract' => 'Contract',
+];
+$subLabels = [
+    'Core'       => 'Core',
+    'EPH'        => 'Éphémère (EPH)',
+    'CollabIn'   => 'Collaboration — achetée',
+    'CollabOut'  => 'Collaboration — vendue',
+    'WhiteLabel' => 'White Label',
+    'Archive'    => 'Archive',
+];
+
+?>
+
+<!-- ── Closed-month COGS warning ───────────────────────────────────────── -->
+<div class="br-browse-cogs-warn">
+    <strong>Attention :</strong> toute modification va-et-vient BOM est appliquée immédiatement.
+    Elle n'affecte pas rétroactivement les mois COGS déjà clôturés, mais prend effet
+    sur les runs futurs. Utilisez avec discernement.
+</div>
+
+<!-- ── Filter chips ────────────────────────────────────────────────────── -->
+<form method="get" action="/modules/bom-review.php" id="browse-filter-form">
+    <input type="hidden" name="sec" value="browse">
+    <div class="br-browse-filters">
+        <div class="br-browse-filter-group">
+            <span class="br-browse-filter-label">Classification :</span>
+            <div class="br-browse-chips">
+                <a href="<?= '/modules/bom-review.php?sec=browse'
+                    . ($browseFilterFmt !== '' ? '&bfmt=' . urlencode($browseFilterFmt) : '')
+                    . ($browseFilterSub !== '' ? '&bsub=' . urlencode($browseFilterSub) : '') ?>"
+                   class="br-chip <?= $browseFilterCls === '' ? 'br-chip--active' : '' ?>">
+                   Toutes
+                </a>
+                <?php foreach ($allClassifications as $cls): ?>
+                <a href="<?= '/modules/bom-review.php?sec=browse&bcls=' . urlencode($cls)
+                    . ($browseFilterFmt !== '' ? '&bfmt=' . urlencode($browseFilterFmt) : '')
+                    . ($browseFilterSub !== '' ? '&bsub=' . urlencode($browseFilterSub) : '') ?>"
+                   class="br-chip <?= $browseFilterCls === $cls ? 'br-chip--active' : '' ?>">
+                   <?= htmlspecialchars($clsLabels[$cls] ?? $cls) ?>
+                </a>
+                <?php endforeach; ?>
+            </div>
+        </div>
+        <div class="br-browse-filter-group">
+            <span class="br-browse-filter-label">Sous-type :</span>
+            <div class="br-browse-chips">
+                <a href="<?= '/modules/bom-review.php?sec=browse'
+                    . ($browseFilterFmt !== '' ? '&bfmt=' . urlencode($browseFilterFmt) : '')
+                    . ($browseFilterCls !== '' ? '&bcls=' . urlencode($browseFilterCls) : '') ?>"
+                   class="br-chip <?= $browseFilterSub === '' ? 'br-chip--active' : '' ?>">
+                   Tous
+                </a>
+                <?php foreach ($allSubtypes as $sub): ?>
+                <a href="<?= '/modules/bom-review.php?sec=browse&bsub=' . urlencode($sub)
+                    . ($browseFilterFmt !== '' ? '&bfmt=' . urlencode($browseFilterFmt) : '')
+                    . ($browseFilterCls !== '' ? '&bcls=' . urlencode($browseFilterCls) : '') ?>"
+                   class="br-chip <?= $browseFilterSub === $sub ? 'br-chip--active' : '' ?>">
+                   <?= htmlspecialchars($subLabels[$sub] ?? $sub) ?>
+                </a>
+                <?php endforeach; ?>
+                <a href="<?= '/modules/bom-review.php?sec=browse&bsub=(composite)'
+                    . ($browseFilterFmt !== '' ? '&bfmt=' . urlencode($browseFilterFmt) : '')
+                    . ($browseFilterCls !== '' ? '&bcls=' . urlencode($browseFilterCls) : '') ?>"
+                   class="br-chip <?= $browseFilterSub === '(composite)' ? 'br-chip--active' : '' ?>">
+                   Composite / multi-recette
+                </a>
+            </div>
+        </div>
+        <div class="br-browse-filter-group">
+            <span class="br-browse-filter-label">Format :</span>
+            <div class="br-browse-chips">
+                <a href="<?= '/modules/bom-review.php?sec=browse'
+                    . ($browseFilterCls !== '' ? '&bcls=' . urlencode($browseFilterCls) : '')
+                    . ($browseFilterSub !== '' ? '&bsub=' . urlencode($browseFilterSub) : '') ?>"
+                   class="br-chip <?= $browseFilterFmt === '' ? 'br-chip--active' : '' ?>">
+                   Tous
+                </a>
+                <?php foreach ($browseAllFormats as $fmt): ?>
+                <a href="<?= '/modules/bom-review.php?sec=browse&bfmt=' . urlencode($fmt)
+                    . ($browseFilterCls !== '' ? '&bcls=' . urlencode($browseFilterCls) : '')
+                    . ($browseFilterSub !== '' ? '&bsub=' . urlencode($browseFilterSub) : '') ?>"
+                   class="br-chip <?= $browseFilterFmt === $fmt ? 'br-chip--active' : '' ?>">
+                   <?= htmlspecialchars($fmt) ?>
+                </a>
+                <?php endforeach; ?>
+            </div>
+        </div>
+    </div>
+</form>
+
+<div class="br-browse-count">
+    <?php if ($browseFiltered === $browseTotal): ?>
+        <?= $browseTotal ?> SKUs actifs affichés
+    <?php else: ?>
+        <?= $browseFiltered ?> / <?= $browseTotal ?> SKUs actifs (filtre actif)
+        — <a href="/modules/bom-review.php?sec=browse" style="color:var(--cold);">Réinitialiser</a>
+    <?php endif; ?>
+</div>
+
+<?php if (empty($filteredBrowseSkus)): ?>
+<div class="br-empty">
+    <span class="br-empty__icon">—</span>
+    Aucun SKU ne correspond aux filtres sélectionnés.
+</div>
+<?php else: ?>
+
+<?php
+// ── Render groups ────────────────────────────────────────────────────────────
+// Build groups from filtered SKUs; but also show ALL cls/subtype bucket headers
+// (so empty buckets are visible — per spec). We render only filtered SKUs inside
+// the buckets, but draw all declared cls+subtype headings.
+
+// Build the grouped map from filtered set
+$groupedBrowse = [];
+foreach ($filteredBrowseSkus as $bs) {
+    $cls = $bs['classification'] ?? '(composite)';
+    $sub = $bs['subtype']        ?? '(composite)';
+    $groupedBrowse[$cls][$sub][] = $bs;
+}
+
+// All classification groups to render (Neb, Contract, composite)
+$renderCls = $allClassifications;
+// Add composite if any composites in filteredBrowseSkus
+foreach ($filteredBrowseSkus as $bs) {
+    if ($bs['recipe_id'] === null) { $renderCls[] = '(composite)'; break; }
+}
+$renderCls = array_unique($renderCls);
+
+// Subtype groups within each classification
+$subtypesByClass = [
+    'Neb'          => $allSubtypes,
+    'Contract'     => $allSubtypes,
+    '(composite)'  => ['(composite)'],
+];
+?>
+
+<?php foreach ($renderCls as $cls):
+    $clsRows = $groupedBrowse[$cls] ?? [];
+    $clsTotal = 0;
+    foreach ($clsRows as $subRows) $clsTotal += count($subRows);
+?>
+<div class="br-browse-cls-group" data-cls="<?= htmlspecialchars($cls) ?>">
+<div class="br-section-title br-browse-cls-title">
+    <?= htmlspecialchars($clsLabels[$cls] ?? ($cls === '(composite)' ? 'Composite / multi-recette' : $cls)) ?>
+    <span class="br-browse-cls-count">(<?= $clsTotal ?> SKU<?= $clsTotal !== 1 ? 's' : '' ?>)</span>
+</div>
+
+<?php
+    $subtypes = $subtypesByClass[$cls] ?? $allSubtypes;
+    foreach ($subtypes as $sub):
+        $subRows = $groupedBrowse[$cls][$sub] ?? [];
+        $subLabel = ($sub === '(composite)')
+            ? 'Composite / multi-recette'
+            : ($subLabels[$sub] ?? $sub);
+?>
+<div class="br-browse-sub-group" data-sub="<?= htmlspecialchars($sub) ?>">
+<div class="br-browse-sub-title">
+    <?= htmlspecialchars($subLabel) ?>
+    <span class="br-browse-sub-count">(<?= count($subRows) ?>)</span>
+</div>
+
+<?php if (empty($subRows)): ?>
+<div class="br-browse-sub-empty">— aucun SKU actif dans ce groupe —</div>
+<?php else: ?>
+<div class="br-browse-sku-grid">
+<?php foreach ($subRows as $bs):
+    $bSkuId    = (int) $bs['sku_id'];
+    $bLines    = $browseBomBySkuId[$bSkuId] ?? [];
+    $bChoices  = $browseChoices[$bSkuId]    ?? [];
+    $bBindings = $browseBindings[(int)($bs['recipe_id'] ?? 0)] ?? [];
+    $pkgCost   = (float) ($bs['pkg_cost'] ?? 0);
+    $totalCost = (float) ($bs['total_bom_cost'] ?? 0);
+    $hasBindings = !empty($bBindings);
+?>
+<div class="br-browse-sku-card" id="browse-sku-<?= $bSkuId ?>">
+    <div class="br-browse-sku-header">
+        <div class="br-browse-sku-meta">
+            <span class="br-browse-sku-code"><?= htmlspecialchars($bs['sku_code']) ?></span>
+            <span class="br-browse-sku-fmt"><?= htmlspecialchars($bs['format_display']) ?></span>
+            <?php if ($bs['recipe_name']): ?>
+            <span class="br-browse-sku-recipe"><?= htmlspecialchars($bs['recipe_name']) ?></span>
+            <?php endif; ?>
+        </div>
+        <div class="br-browse-sku-costs">
+            <span class="br-browse-cost-pkg">
+                Pkg <strong><?= number_format($pkgCost, 4, '.', "'") ?></strong> CHF
+            </span>
+            <span class="br-browse-cost-total">
+                Total BOM <strong><?= number_format($totalCost, 4, '.', "'") ?></strong> CHF
+            </span>
+        </div>
+        <button type="button"
+                class="br-btn br-btn--secondary br-browse-expand-btn"
+                data-target="browse-bom-<?= $bSkuId ?>"
+                aria-expanded="false">
+            ▶ Voir BOM
+        </button>
+    </div>
+
+    <div class="br-browse-bom-panel" id="browse-bom-<?= $bSkuId ?>" hidden>
+
+        <?php if (!empty($bChoices)): ?>
+        <div class="br-browse-choices-summary">
+            <strong>Choix Tier-1 actifs :</strong>
+            <?php foreach ($bChoices as $slot => $ch): ?>
+            <span><code><?= htmlspecialchars($slot) ?></code> → <code><?= htmlspecialchars($ch['mi_id_str'] ?? '?') ?></code></span>
+            <?php endforeach; ?>
+        </div>
+        <?php endif; ?>
+
+        <?php if (empty($bLines)): ?>
+        <div class="br-empty" style="padding:0.75rem 0;">Aucune ligne BOM pour ce SKU.</div>
+        <?php else: ?>
+        <div class="br-table-wrap" style="margin-bottom:0.75rem;">
+        <table class="br-table br-browse-bom-table">
+            <thead>
+                <tr>
+                    <th>Source</th>
+                    <th>Tier</th>
+                    <th>Code MI</th>
+                    <th>Nom</th>
+                    <th>Qté/u</th>
+                    <th>Prix</th>
+                    <th>Coût</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+            <?php foreach ($bLines as $bl):
+                $isBrewing = $bl['source'] === 'Brewing';
+                $miIdInt   = (int) ($bl['mi_id_int'] ?? 0);
+
+                // Determine tier
+                if ($isBrewing) {
+                    $tierBadge = 'brewing'; $tierLabel = 'Brassage (obs.)';
+                } else {
+                    $foundInChoice = false;
+                    foreach ($bChoices as $cs => $cv) {
+                        if ((int) $cv['mi_id_fk'] === $miIdInt) { $foundInChoice = true; break; }
+                    }
+                    if ($foundInChoice) {
+                        $tierBadge = 't1'; $tierLabel = 'Choix SKU (T1)';
+                    } else {
+                        $foundInBinding = false;
+                        foreach ($bBindings as $role => $bnd) {
+                            if ((int) $bnd['mi_id_fk'] === $miIdInt) { $foundInBinding = true; break; }
+                        }
+                        $tierBadge = $foundInBinding ? 't2' : 't3';
+                        $tierLabel = $foundInBinding ? 'Liaison recette (T2)' : 'Défaut template (T3)';
+                    }
+                }
+
+                $hasCost  = (float) ($bl['cost'] ?? 0) > 0;
+                $costFmt  = $hasCost
+                    ? number_format((float) $bl['cost'], 4, '.', "'") . ' CHF'
+                    : '<span class="br-badge br-badge--nopriced">manquant</span>';
+                $priceFmt = fmt_price($bl['price'] ?? null, $bl['currency'] ?? null);
+            ?>
+            <tr>
+                <td>
+                    <span class="br-badge br-badge--<?= $isBrewing ? 'brewing' : 'pkg' ?>">
+                        <?= $isBrewing ? 'Brassage' : 'Packaging' ?>
+                    </span>
+                </td>
+                <td>
+                    <span class="br-badge br-badge--<?= htmlspecialchars($tierBadge) ?>">
+                        <?= htmlspecialchars($tierLabel) ?>
+                    </span>
+                </td>
+                <td><code style="font-size:0.78rem;"><?= htmlspecialchars($bl['mi_id_str'] ?? $bl['ingredient_raw'] ?? '?') ?></code></td>
+                <td><?= htmlspecialchars($bl['mi_name'] ?? $bl['ingredient_raw'] ?? '?') ?></td>
+                <td style="white-space:nowrap;">
+                    <?= htmlspecialchars(number_format((float)($bl['qty_per_unit']??0), 4, '.', "'")) ?>
+                    <?= htmlspecialchars($bl['ing_unit'] ?? '') ?>
+                </td>
+                <td style="white-space:nowrap;"><?= $priceFmt ?></td>
+                <td style="white-space:nowrap;"><?= $costFmt ?></td>
+                <td>
+                    <?php if ($isBrewing): ?>
+                        <span class="br-readonly-note" title="Les données brassage observées sont canoniques — modifier la source bd_brewing_ingredients_parsed.">🔒 Lecture seule</span>
+                    <?php else: ?>
+                        <?php if ($tierBadge !== 't1'): ?>
+                        <button type="button"
+                                class="br-btn br-btn--secondary br-price-toggle"
+                                style="font-size:0.74rem;padding:0.18rem 0.45rem;"
+                                data-toggle-target="br-choice-<?= $bSkuId ?>-<?= $miIdInt ?>">
+                            Choix SKU (T1)
+                        </button>
+                        <div id="br-choice-<?= $bSkuId ?>-<?= $miIdInt ?>" hidden style="margin-top:0.35rem;">
+                            <!-- Confirm-before-recompile modal trigger -->
+                            <form method="post" action="/modules/bom-review.php"
+                                  class="br-browse-edit-form"
+                                  data-action="set_sku_choice"
+                                  data-sku-id="<?= $bSkuId ?>"
+                                  data-recipe-id="<?= (int)($bs['recipe_id']??0) ?>"
+                                  data-sku-code="<?= htmlspecialchars($bs['sku_code']) ?>">
+                                <input type="hidden" name="csrf"   value="<?= htmlspecialchars($csrfToken) ?>">
+                                <input type="hidden" name="action" value="set_sku_choice">
+                                <input type="hidden" name="sku_id" value="<?= $bSkuId ?>">
+                                <input type="hidden" name="sec"    value="browse">
+                                <div class="br-edit-row__fields">
+                                    <label>Slot
+                                        <select name="slot_name" required>
+                                            <option value="">— slot —</option>
+                                            <?php foreach ($validSlots as $vs): ?>
+                                            <option value="<?= htmlspecialchars($vs) ?>"><?= htmlspecialchars($vs) ?></option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </label>
+                                    <label>MI de remplacement
+                                        <select name="mi_id_fk" required>
+                                            <option value="">— MI —</option>
+                                            <?php foreach ($allMis as $mId => $mData): ?>
+                                            <option value="<?= $mId ?>"
+                                                <?= $mId === $miIdInt ? 'selected' : '' ?>>
+                                                <?= htmlspecialchars($mData['mi_id']) ?>
+                                                — <?= htmlspecialchars($mData['name']) ?>
+                                                <?= $mData['price'] ? '(' . htmlspecialchars((string)$mData['price']) . ')' : '' ?>
+                                            </option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </label>
+                                    <button type="submit" class="br-btn">Enregistrer + Recompiler</button>
+                                </div>
+                            </form>
+                        </div>
+                        <?php endif; ?>
+
+                        <?php if (!$hasCost && $miIdInt > 0): ?>
+                        <button type="button"
+                                class="br-btn br-btn--price br-price-toggle"
+                                style="font-size:0.74rem;padding:0.18rem 0.45rem;margin-left:0.25rem;"
+                                data-toggle-target="br-price-<?= $bSkuId ?>-<?= $miIdInt ?>">
+                            Prix MI
+                        </button>
+                        <div id="br-price-<?= $bSkuId ?>-<?= $miIdInt ?>" hidden style="margin-top:0.35rem;">
+                            <form method="post" action="/modules/bom-review.php"
+                                  class="br-browse-edit-form"
+                                  data-action="set_mi_price"
+                                  data-sku-id="<?= $bSkuId ?>"
+                                  data-recipe-id="<?= (int)($bs['recipe_id']??0) ?>"
+                                  data-sku-code="<?= htmlspecialchars($bs['sku_code']) ?>">
+                                <input type="hidden" name="csrf"        value="<?= htmlspecialchars($csrfToken) ?>">
+                                <input type="hidden" name="action"      value="set_mi_price">
+                                <input type="hidden" name="mi_id"       value="<?= $miIdInt ?>">
+                                <input type="hidden" name="sec"         value="browse">
+                                <div class="br-price-form">
+                                    <input type="number" name="price" step="0.0001" min="0"
+                                           placeholder="0.0000" required>
+                                    <select name="currency">
+                                        <option value="CHF">CHF</option>
+                                        <option value="EUR">EUR</option>
+                                    </select>
+                                    <button type="submit" class="br-btn">Enregistrer</button>
+                                </div>
+                            </form>
+                        </div>
+                        <?php endif; ?>
+                    <?php endif; ?>
+                </td>
+            </tr>
+            <?php endforeach; ?>
+            </tbody>
+        </table>
+        </div>
+        <?php endif; ?>
+
+        <!-- Recipe binding edit (if recipe-linked SKU) -->
+        <?php if ((int)($bs['recipe_id']??0) > 0 && !empty($VALID_BINDING_ROLES)): ?>
+        <div class="br-browse-binding-section">
+            <div class="br-browse-binding-title">Liaisons recette (Tier-2) — <?= htmlspecialchars($bs['recipe_name'] ?? '') ?></div>
+            <div class="br-browse-binding-note">Une modification de liaison recette recompile TOUS les SKUs de cette recette.</div>
+            <div class="br-browse-binding-list">
+            <?php
+            $roleLabels = [
+                'label'      => 'Étiquette',
+                'can'        => 'Canette',
+                'sticker'    => 'Autocollant',
+                'holder'     => 'Holder 4-pack',
+                'outer_tray' => 'Plateau extérieur',
+                'scotch'     => 'Scotch',
+            ];
+            foreach ($VALID_BINDING_ROLES as $bRole):
+                $bound = $bBindings[$bRole] ?? null;
+            ?>
+            <div class="br-browse-binding-row">
+                <span class="br-browse-binding-role"><?= htmlspecialchars($roleLabels[$bRole] ?? $bRole) ?></span>
+                <span class="br-browse-binding-mi">
+                    <?php if ($bound): ?>
+                        <code><?= htmlspecialchars($bound['mi_id_str']) ?></code>
+                        <span style="color:var(--ink-mute);font-size:0.78rem;">— <?= htmlspecialchars($bound['mi_name']) ?></span>
+                    <?php else: ?>
+                        <span style="color:var(--ink-mute);">Non lié</span>
+                    <?php endif; ?>
+                </span>
+                <button type="button"
+                        class="br-btn br-btn--secondary br-price-toggle"
+                        style="font-size:0.72rem;padding:0.15rem 0.4rem;"
+                        data-toggle-target="br-bind-<?= $bSkuId ?>-<?= htmlspecialchars($bRole) ?>">
+                    Modifier liaison
+                </button>
+                <div id="br-bind-<?= $bSkuId ?>-<?= htmlspecialchars($bRole) ?>" hidden style="margin-top:0.35rem;">
+                    <form method="post" action="/modules/bom-review.php"
+                          class="br-browse-edit-form"
+                          data-action="set_recipe_binding"
+                          data-recipe-id="<?= (int)$bs['recipe_id'] ?>"
+                          data-sku-code="<?= htmlspecialchars($bs['sku_code']) ?>"
+                          data-recipe-name="<?= htmlspecialchars($bs['recipe_name'] ?? '') ?>">
+                        <input type="hidden" name="csrf"      value="<?= htmlspecialchars($csrfToken) ?>">
+                        <input type="hidden" name="action"    value="set_recipe_binding">
+                        <input type="hidden" name="recipe_id" value="<?= (int)$bs['recipe_id'] ?>">
+                        <input type="hidden" name="role"      value="<?= htmlspecialchars($bRole) ?>">
+                        <input type="hidden" name="sec"       value="browse">
+                        <div class="br-edit-row__fields">
+                            <label>Ingrédient (MI Packaging)
+                                <select name="mi_id_fk" required>
+                                    <option value="">— choisir —</option>
+                                    <?php foreach ($allMis as $mId => $mData): ?>
+                                    <option value="<?= $mId ?>"
+                                        <?= ($bound && (int)$bound['mi_id_fk'] === $mId) ? 'selected' : '' ?>>
+                                        <?= htmlspecialchars($mData['mi_id']) ?>
+                                        — <?= htmlspecialchars($mData['name']) ?>
+                                        <?= $mData['price'] ? '(' . htmlspecialchars((string)$mData['price']) . ' ' . htmlspecialchars((string)$mData['currency']) . ')' : '(sans prix)' ?>
+                                    </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </label>
+                            <button type="submit" class="br-btn">Enregistrer + Recompiler</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+            <?php endforeach; ?>
+            </div>
+        </div>
+        <?php endif; ?>
+
+    </div><!-- /.br-browse-bom-panel -->
+</div><!-- /.br-browse-sku-card -->
+<?php endforeach; // subRows ?>
+</div><!-- /.br-browse-sku-grid -->
+<?php endif; // empty($subRows) ?>
+
+</div><!-- /.br-browse-sub-group -->
+<?php endforeach; // subtypes ?>
+</div><!-- /.br-browse-cls-group -->
+<?php endforeach; // renderCls ?>
+
+<?php endif; // empty($filteredBrowseSkus) ?>
+
+<!-- ── Confirm-before-recompile modal ────────────────────────────────── -->
+<dialog id="br-confirm-modal" class="br-confirm-dialog">
+    <div class="br-confirm-dialog__inner">
+        <h3 class="br-confirm-dialog__title">Confirmer la modification BOM</h3>
+        <p class="br-confirm-dialog__body" id="br-confirm-body"></p>
+        <div class="br-confirm-dialog__blast" id="br-confirm-blast"></div>
+        <p class="br-confirm-dialog__cogs-warn">
+            ⚠ Cette modification prend effet sur les runs futurs.
+            Elle n'affecte pas les mois COGS déjà clôturés.
+        </p>
+        <div class="br-confirm-dialog__actions">
+            <button type="button" class="br-btn br-btn--secondary" id="br-confirm-cancel">Annuler</button>
+            <button type="button" class="br-btn" id="br-confirm-ok">Confirmer et recompiler</button>
+        </div>
+    </div>
+</dialog>
+
+<?php endif; // $sec === 'browse' ?>
 
 </div><!-- /.br-page -->
 </main>
