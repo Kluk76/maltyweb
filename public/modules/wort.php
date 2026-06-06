@@ -1171,6 +1171,7 @@ try {
 <script>
 window.WORT_KPIS = <?= json_encode($kpiPayload, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
 </script>
+<script defer src="/js/kpi-charts.js?v=<?= @filemtime(__DIR__ . '/../js/kpi-charts.js') ?: time() ?>"></script>
 <script defer src="/js/wort-kpis.js?v=<?= @filemtime(__DIR__ . '/../js/wort-kpis.js') ?: time() ?>"></script>
 
 </body>

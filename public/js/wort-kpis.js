@@ -2,52 +2,32 @@
    wort-kpis.js — Production de moût KPIs
    Data source: window.WORT_KPIS (server-injected)
    No CDN chart library — hand-rolled SVG/CSS charts.
+   Shared primitives live in kpi-charts.js (loaded first).
    ═══════════════════════════════════════════════════════════ */
 
 'use strict';
 
-/* ── XSS guard ── */
-function escHtml(s) {
-  if (s == null) return '';
-  return String(s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-/* ── Number formatter (FR-CH) ── */
-function fmt(n, dec) {
-  if (n === 0 || n == null) return '0';
-  dec = (dec == null) ? 1 : dec;
-  return Number(n).toLocaleString('fr-CH', { minimumFractionDigits: dec, maximumFractionDigits: dec });
-}
-
-/* ── SVG helper ── */
-function svgEl(tag, attrs) {
-  const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
-  attrs = attrs || {};
-  for (const k in attrs) el.setAttribute(k, attrs[k]);
-  return el;
-}
-
-/* ── French month short labels ── */
-const MONTHS_FR = ['jan','fév','mar','avr','mai','jun','jul','aoû','sep','oct','nov','déc'];
+/* ── Pull shared primitives from kpi-charts.js ── */
+const escHtml        = window.KpcCharts.escHtml;
+const fmt            = window.KpcCharts.fmt;
+const svgEl          = window.KpcCharts.svgEl;
+const MONTHS_FR      = window.KpcCharts.KPC_MONTHS_FR;
+const buildBarChart  = window.KpcCharts.buildBarChart;
+const paceTintResult = window.KpcCharts.paceTintResult;
 
 /* ── Palette — read from CSS tokens at runtime ── */
 const CS = getComputedStyle(document.documentElement);
 function tok(name) { return CS.getPropertyValue(name).trim(); }
 const C = {
-  core:     tok('--hop')       || '#567020',
+  core:     tok('--hop')         || '#567020',
   spec:     tok('--cat-process') || '#5a4a8c',
-  contract: tok('--cold')      || '#2f5575',
-  ok:       tok('--ok')        || '#3d6826',
-  ember:    tok('--ember')     || '#b34428',
-  hairline: tok('--hairline')  || '#c8b48a',
-  bg:       tok('--bg')        || '#f1e8d4',
-  ink_faint:tok('--ink-faint') || '#7a6647',
-  ink_mute: tok('--ink-mute')  || '#4a3820',
+  contract: tok('--cold')        || '#2f5575',
+  ok:       tok('--ok')          || '#3d6826',
+  ember:    tok('--ember')       || '#b34428',
+  hairline: tok('--hairline')    || '#c8b48a',
+  bg:       tok('--bg')          || '#f1e8d4',
+  ink_faint:tok('--ink-faint')   || '#7a6647',
+  ink_mute: tok('--ink-mute')    || '#4a3820',
 };
 
 /* ═══════════════════════════════════════════════════════════
@@ -160,130 +140,9 @@ function renderStats(year, d) {
     yoyHtml;
 }
 
-/* ═══════════════════════════════════════════════════════════
-   SVG BAR CHART — grouped or single series
-   ═══════════════════════════════════════════════════════════ */
-function buildBarChart(container, points, series, opts) {
-  /*
-    points: array of arrays indexed to match series
-    series: array of { color, labelFn }
-    opts: { height, showZeroLabels, partial, illustrative }
-  */
-  opts = opts || {};
-  const height = opts.height || 200;
-  const partial = !!opts.partial;
-  const illustrative = !!opts.illustrative;
-
-  const W = 840, H = height + 52;
-  const padL = 44, padR = 12, padT = 16, padB = 36;
-  const chartW = W - padL - padR;
-  const chartH = H - padT - padB;
-
-  const maxVal = Math.max.apply(null, points.map(function(m) {
-    return series.reduce(function(s, _, i) { return s + (m[i] || 0); }, 0);
-  }).concat([1]));
-  const gridTop = Math.ceil(maxVal / 100) * 100;
-  const yScale = function(v) { return chartH * (1 - v / gridTop); };
-
-  const n = series.length;
-  const monthW = chartW / points.length;
-  const gap = monthW * 0.18;
-  const barW = (monthW - gap * 2) / n;
-
-  const svg = svgEl('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img' });
-
-  /* Grid lines */
-  const gridSteps = 5;
-  for (let i = 0; i <= gridSteps; i++) {
-    const v = gridTop * i / gridSteps;
-    const y = padT + yScale(v);
-    svg.appendChild(svgEl('line', {
-      x1: padL, y1: y, x2: W - padR, y2: y,
-      stroke: C.hairline, 'stroke-width': i === 0 ? 1.5 : 0.5,
-      opacity: i === 0 ? 0.9 : 0.5,
-    }));
-    if (i > 0) {
-      const lbl = svgEl('text', {
-        x: padL - 5, y: y + 4, 'text-anchor': 'end', fill: C.ink_faint,
-        'font-family': 'JetBrains Mono,monospace', 'font-size': 9, 'letter-spacing': '0.04em',
-      });
-      lbl.textContent = v >= 1000 ? (v / 1000).toFixed(1) + 'k' : v.toFixed(0);
-      svg.appendChild(lbl);
-    }
-  }
-
-  /* Columns */
-  points.forEach(function(m, mi) {
-    const xBase = padL + mi * monthW + gap;
-    const isFuture = partial && illustrative && mi >= points.length - (12 - KD.last_data_month);
-
-    /* Month/quarter label */
-    const axisLabel = (points.length === 12) ? MONTHS_FR[mi] : ('Q' + (mi + 1));
-    const lbl = svgEl('text', {
-      x: padL + mi * monthW + monthW / 2,
-      y: H - padB + 14,
-      'text-anchor': 'middle',
-      fill: isFuture ? C.hairline : C.ink_faint,
-      'font-family': 'JetBrains Mono,monospace',
-      'font-size': 9,
-      'letter-spacing': '0.06em',
-    });
-    lbl.textContent = axisLabel;
-    svg.appendChild(lbl);
-
-    series.forEach(function(s, si) {
-      const val = m[si] || 0;
-      if (val === 0) {
-        if (series.length === 1) {
-          svg.appendChild(svgEl('rect', {
-            x: xBase + si * barW, y: padT + chartH - 1,
-            width: Math.max(barW - 1, 4), height: 1,
-            fill: isFuture ? C.hairline : s.color, opacity: 0.3, rx: 1,
-          }));
-        }
-        return;
-      }
-      const bh = yScale(0) - yScale(val);
-      const bx = xBase + si * barW;
-      const by = padT + yScale(val);
-      const rect = svgEl('rect', {
-        x: bx, y: by,
-        width: Math.max(barW - 1, 4), height: Math.max(bh, 1),
-        fill: s.color, opacity: isFuture ? 0.3 : 1, rx: 2,
-      });
-      const totalRow = series.reduce(function(acc, _, ii) { return acc + (m[ii] || 0); }, 0);
-      const axisLabelForTip = (points.length === 12) ? MONTHS_FR[mi].toUpperCase() : ('Q' + (mi + 1));
-      rect.addEventListener('mouseenter', function(e) {
-        showTip(e, '<strong>' + axisLabelForTip + '</strong> · ' + escHtml(s.labelFn()) + ' : <strong>' + fmt(val) + ' HL</strong><br><span style="color:' + C.ink_faint + '">Total : ' + fmt(totalRow) + ' HL</span>');
-      });
-      rect.addEventListener('mousemove', moveTip);
-      rect.addEventListener('mouseleave', hideTip);
-      svg.appendChild(rect);
-
-      if (bh > 18) {
-        const vlbl = svgEl('text', {
-          x: bx + (barW - 1) / 2, y: by - 3,
-          'text-anchor': 'middle', fill: s.color,
-          'font-family': 'JetBrains Mono,monospace', 'font-size': 8, 'font-weight': 500,
-        });
-        vlbl.textContent = val >= 100 ? Math.round(val) : val.toFixed(1);
-        svg.appendChild(vlbl);
-      }
-    });
-  });
-
-  /* Y-axis label */
-  const yAxisLbl = svgEl('text', {
-    x: 10, y: padT + chartH / 2, 'text-anchor': 'middle', fill: C.ink_faint,
-    'font-family': 'JetBrains Mono,monospace', 'font-size': 8, 'letter-spacing': '0.1em',
-    transform: 'rotate(-90, 10, ' + (padT + chartH / 2) + ')',
-  });
-  yAxisLbl.textContent = 'HL';
-  svg.appendChild(yAxisLbl);
-
-  container.innerHTML = '';
-  container.appendChild(svg);
-}
+/* buildBarChart is imported from kpi-charts.js (window.KpcCharts.buildBarChart).
+   The wort page passes the shared tooltip callbacks via opts; kpi-charts.js
+   creates its own local tooltip per chart, which is fine for the KPI tab. */
 
 /* ═══════════════════════════════════════════════════════════
    B. NEB vs CONTRACT
@@ -295,7 +154,7 @@ function renderNebContract(d) {
   buildBarChart(el, monthly, [
     { color: C.core,     labelFn: function() { return 'Nébuleuse'; } },
     { color: C.contract, labelFn: function() { return 'Contrat'; } },
-  ], { height: 200, partial: d.is_partial, illustrative: d.is_illustrative });
+  ], { height: 200, partial: d.is_partial, illustrative: d.is_illustrative, yUnit: 'HL' });
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -308,7 +167,7 @@ function renderNebComp(d) {
   buildBarChart(el, monthly, [
     { color: C.core, labelFn: function() { return 'Gamme principale'; } },
     { color: C.spec, labelFn: function() { return 'Spéciales'; } },
-  ], { height: 180, partial: d.is_partial, illustrative: d.is_illustrative });
+  ], { height: 180, partial: d.is_partial, illustrative: d.is_illustrative, yUnit: 'HL' });
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -320,7 +179,7 @@ function renderContract(d) {
   const monthly = d.monthly.map(function(m) { return [m[2]]; });
   buildBarChart(el, monthly, [
     { color: C.contract, labelFn: function() { return 'Contrat'; } },
-  ], { height: 180, partial: d.is_partial, illustrative: d.is_illustrative });
+  ], { height: 180, partial: d.is_partial, illustrative: d.is_illustrative, yUnit: 'HL' });
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -794,38 +653,8 @@ function renderHeatmap(year) {
   container.appendChild(tbl);
 }
 
-/* ═══════════════════════════════════════════════════════════
-   SHARED PACE TINT HELPER
-   Unified rule — used by both Section 1 (bar-table) and
-   Section 2 (sparkline cards).
-
-   Returns 'ok' | 'ember' | 'nouveau' | 'arrete' | 'neutral'
-
-   Rules (ordered):
-   1. status==='nouveau'  (prevTotal==0): 'nouveau'  — no colour
-   2. status==='arrete'   (currTotal==0): 'arrete'   — muted
-   3. paceRefPrev==0 && currTotal>0: 'ok' (GREEN) — producing
-      when the reference period had zero; this is AHEAD, not behind
-   4. pacePct >= 100: 'ok' (green)
-   5. pacePct < 100 (including null with currTotal>0): 'ember' (red)
-   ═══════════════════════════════════════════════════════════ */
-function paceTintResult(b) {
-  var status     = b.status;
-  var currTotal  = b.currTotal;
-  var paceRefPrev= b.paceRefPrev;
-  var pacePct    = b.pacePct;
-
-  if (status === 'nouveau') return 'nouveau';
-  if (status === 'arrete')  return 'arrete';
-
-  // paceRefPrev==0 but we have production → ahead (not behind)
-  if ((paceRefPrev === 0 || paceRefPrev == null) && currTotal > 0) return 'ok';
-
-  // pacePct null with currTotal>0 also counts as ahead (same logic)
-  if (pacePct === null && currTotal > 0) return 'ok';
-
-  return (pacePct !== null && pacePct >= 100) ? 'ok' : 'ember';
-}
+/* paceTintResult is imported from kpi-charts.js (window.KpcCharts.paceTintResult).
+   Same logic: 'ok' | 'ember' | 'nouveau' | 'arrete' | 'neutral'. */
 
 /* ═══════════════════════════════════════════════════════════
    H. YOY PCT — "Par bière · % du total {prevYear}"
