@@ -206,6 +206,11 @@ body.bom-review .main {
     color:      #fff;
 }
 
+.br-badge--divergence {
+    background: var(--cold);
+    color:      #fff;
+}
+
 .br-badge--readonly {
     background: var(--bg);
     color:      var(--ink-mute);
@@ -429,6 +434,24 @@ body.bom-review .main {
     font-size:     2rem;
     margin-bottom: 0.5rem;
     display:       block;
+}
+
+/* ── Divergence guard panel ───────────────────────────────────────────────── */
+.br-feed-card--divergence {
+    border-color: var(--cold);
+}
+
+.br-divergence-notice {
+    background:    var(--bg-elev);
+    border:        1px solid var(--cold);
+    border-left:   3px solid var(--cold);
+    border-radius: 4px;
+    padding:       0.6rem 0.9rem;
+    font-family:   'DM Sans', sans-serif;
+    font-size:     0.82rem;
+    color:         var(--ink-soft);
+    margin-bottom: 1rem;
+    line-height:   1.5;
 }
 
 /* ── Responsive ───────────────────────────────────────────────────────────── */

@@ -415,11 +415,12 @@ $selectedRecipeId = isset($_GET['recipe']) ? (int) $_GET['recipe'] : 0;
 $dbError = null;
 
 // ── Always-needed data ────────────────────────────────────────────────────────
-$feed1Count = 0;  // open sku-bom-unresolved RQ rows
-$feed2Items = []; // unpriced packaging MIs that are in BOM
-$feed3Skus  = []; // SKUs with anomaly flags
-$recipes    = []; // all active recipes with sku_prefix (for picker + drill)
-$allMis     = []; // packaging MIs (id → {mi_id, name, price, currency}) for edit dropdowns
+$feed1Count        = 0;  // open sku-bom-unresolved RQ rows
+$feed2Items        = []; // unpriced packaging MIs that are in BOM
+$feed3Skus         = []; // SKUs with anomaly flags
+$feedDivergenceItems = []; // WAC-priced but no catalog price — BOM compiler divergence set
+$recipes           = []; // all active recipes with sku_prefix (for picker + drill)
+$allMis            = []; // packaging MIs (id → {mi_id, name, price, currency}) for edit dropdowns
 
 try {
     $pdo = maltytask_pdo();
@@ -468,6 +469,26 @@ try {
          ORDER BY unpriced_lines DESC, s.sku_code ASC"
     );
     $feed3Skus = $f3Stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // ── Feed Divergence: WAC-priced but no catalog price, in packaging BOM ──
+    // Signals the gap between the PHP BOM compiler (ref_mi.price) and the
+    // canonical v_mi_cost view (which values WAC-priced MIs at cost_chf).
+    // Expected to be 0 today; lights up automatically when the set becomes real.
+    $fDivStmt = $pdo->query(
+        "SELECT
+            m.id, m.mi_id, m.name, m.price, m.currency, m.pricing_unit,
+            vc.cost_chf AS wac_cost_chf,
+            COUNT(DISTINCT b.sku_id) AS sku_count
+         FROM ref_mi m
+         JOIN ref_sku_bom b ON b.mi_id = m.id AND b.source = 'Packaging'
+         JOIN ref_skus s    ON s.id = b.sku_id AND s.is_active = 1
+         JOIN v_mi_cost vc  ON vc.mi_id_fk = m.id AND vc.cost_basis = 'wac'
+         WHERE (m.price IS NULL OR m.price = 0)
+           AND m.is_active = 1
+         GROUP BY m.id, m.mi_id, m.name, m.price, m.currency, m.pricing_unit, vc.cost_chf
+         ORDER BY sku_count DESC, m.mi_id ASC"
+    );
+    $feedDivergenceItems = $fDivStmt->fetchAll(PDO::FETCH_ASSOC);
 
     // ── Recipes for picker ────────────────────────────────────────────────
     $recStmt = $pdo->query(
@@ -690,6 +711,18 @@ $csrfToken = csrf_token();
             Impact direct sur le COGS.
         </div>
     </div>
+
+    <div class="br-feed-card br-feed-card--divergence">
+        <div class="br-feed-card__label">Divergence — WAC sans prix catalogue</div>
+        <div class="br-feed-card__count <?= count($feedDivergenceItems) > 0 ? 'br-feed-card__count--alert' : 'br-feed-card__count--ok' ?>">
+            <?= count($feedDivergenceItems) ?>
+        </div>
+        <div class="br-feed-card__desc">
+            MI packaging avec un WAC (<code>v_mi_cost</code>) mais sans prix catalogue
+            (<code>ref_mi.price</code>). Le compilateur BOM PHP utilise <code>ref_mi.price</code>
+            — ces MI sont valorisés à 0 dans le BOM compilé.
+        </div>
+    </div>
 </div>
 
 <!-- ── Feed 2: Unpriced MIs ───────────────────────────────────────────── -->
@@ -808,6 +841,90 @@ $csrfToken = csrf_token();
                     <?php else: ?>
                     <span style="color:var(--ink-mute);font-size:0.78rem;">Composite / Collab</span>
                     <?php endif; ?>
+                </td>
+            </tr>
+        <?php endforeach; ?>
+        </tbody>
+    </table>
+</div>
+<?php endif; ?>
+
+<!-- ── Divergence panel: WAC but no catalog price ────────────────────── -->
+<div class="br-section-title">Divergence — MI avec WAC mais sans prix catalogue</div>
+
+<div class="br-divergence-notice">
+    <strong>Contexte :</strong> le compilateur BOM PHP (<code>sku-bom-compile.php</code>)
+    valorise les MI packaging depuis <code>ref_mi.price</code> (prix catalogue, devise native).
+    La vue canonique <code>v_mi_cost</code> utilise en priorité le WAC
+    (<code>cost_basis='wac'</code>). Tant que ces deux sources divergent, le BOM compilé
+    sous-évalue ces MI à 0. Résolution : définir le prix catalogue ci-dessous,
+    ou attendre la migration du compilateur vers <code>v_mi_cost</code>.
+</div>
+
+<?php if (empty($feedDivergenceItems)): ?>
+<div class="br-empty">
+    <span class="br-empty__icon">✓</span>
+    Aucune divergence — tous les MI packaging avec WAC ont également un prix catalogue.
+</div>
+<?php else: ?>
+<p style="font-family:'DM Sans',sans-serif;font-size:0.82rem;color:var(--ink-soft);margin-bottom:0.75rem;">
+    Ces MI ont un coût WAC dans <code>v_mi_cost</code> mais aucun prix catalogue dans
+    <code>ref_mi</code>. Définissez le prix catalogue pour aligner le compilateur BOM.
+</p>
+<div class="br-table-wrap">
+    <table class="br-table">
+        <thead>
+            <tr>
+                <th>Code MI</th>
+                <th>Nom</th>
+                <th>SKUs actifs affectés</th>
+                <th>WAC actuel</th>
+                <th>Unité de prix</th>
+                <th>Définir le prix catalogue</th>
+            </tr>
+        </thead>
+        <tbody>
+        <?php foreach ($feedDivergenceItems as $di): ?>
+            <tr>
+                <td><code><?= htmlspecialchars($di['mi_id']) ?></code></td>
+                <td><?= htmlspecialchars($di['name']) ?></td>
+                <td>
+                    <span class="br-badge br-badge--divergence"><?= (int) $di['sku_count'] ?> SKU<?= (int) $di['sku_count'] > 1 ? 's' : '' ?></span>
+                </td>
+                <td style="white-space:nowrap;">
+                    <?= number_format((float) $di['wac_cost_chf'], 4, '.', "'") ?> CHF
+                </td>
+                <td><?= htmlspecialchars((string) ($di['pricing_unit'] ?? '—')) ?></td>
+                <td>
+                    <button type="button"
+                            class="br-btn br-btn--price br-price-toggle"
+                            data-toggle-target="div-price-<?= (int) $di['id'] ?>">
+                        Définir le prix
+                    </button>
+                    <div id="div-price-<?= (int) $di['id'] ?>" hidden style="margin-top:0.5rem;">
+                        <form method="post" action="/modules/bom-review.php">
+                            <input type="hidden" name="csrf"    value="<?= htmlspecialchars($csrfToken) ?>">
+                            <input type="hidden" name="action"  value="set_mi_price">
+                            <input type="hidden" name="mi_id"   value="<?= (int) $di['id'] ?>">
+                            <input type="hidden" name="sec"     value="feeds">
+                            <div class="br-price-form">
+                                <label style="font-family:'DM Sans',sans-serif;font-size:0.8rem;color:var(--ink-soft);">
+                                    Prix catalogue
+                                    <input type="number" name="price" step="0.0001" min="0"
+                                           placeholder="<?= number_format((float) $di['wac_cost_chf'], 4, '.', '') ?>"
+                                           required>
+                                </label>
+                                <label style="font-family:'DM Sans',sans-serif;font-size:0.8rem;color:var(--ink-soft);">
+                                    Devise
+                                    <select name="currency">
+                                        <option value="CHF">CHF</option>
+                                        <option value="EUR">EUR</option>
+                                    </select>
+                                </label>
+                                <button type="submit" class="br-btn">Enregistrer</button>
+                            </div>
+                        </form>
+                    </div>
                 </td>
             </tr>
         <?php endforeach; ?>
