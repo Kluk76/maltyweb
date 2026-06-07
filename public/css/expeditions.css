@@ -1,0 +1,712 @@
+/*
+ * expeditions.css — Expéditions module styles.
+ *
+ * Scoped under body.expeditions. Uses palette tokens from app.css :root.
+ * No inline styles. No hardcoded hex — only var(--…) tokens.
+ * exp-* prefix throughout.
+ */
+
+/* ── Page layout override ─────────────────────────────────────────────────── */
+/* The expeditions module can be slightly wider than the op-form default 860px
+   because the orders table benefits from extra width on desktop. */
+body.expeditions.op-form-page .main {
+  max-width: 1040px;
+}
+
+/* ── Page header with actions slot ───────────────────────────────────────── */
+body.expeditions .exp-page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+body.expeditions .exp-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  padding-top: 4px;
+}
+
+body.expeditions .exp-new-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 16px;
+  background: var(--hop);
+  color: var(--bg);
+  border: none;
+  border-radius: 5px;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.82rem;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s;
+  touch-action: manipulation;
+  min-height: 44px;
+}
+
+body.expeditions .exp-new-btn:hover {
+  background: var(--hop-soft);
+  text-decoration: none;
+}
+
+body.expeditions .exp-new-btn--active {
+  background: var(--hop-deep);
+}
+
+/* ── Tab navigation ───────────────────────────────────────────────────────── */
+body.expeditions .exp-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 2px solid var(--hairline);
+  margin-bottom: 24px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+body.expeditions .exp-tab {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.84rem;
+  font-weight: 500;
+  color: var(--ink-mute);
+  text-decoration: none;
+  padding: 10px 18px;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s;
+  touch-action: manipulation;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
+
+body.expeditions .exp-tab:hover {
+  color: var(--ink-soft);
+  text-decoration: none;
+}
+
+body.expeditions .exp-tab--active {
+  color: var(--hop);
+  border-bottom-color: var(--hop);
+  font-weight: 600;
+}
+
+/* ── Section wrapper ──────────────────────────────────────────────────────── */
+body.expeditions .exp-section {
+  width: 100%;
+}
+
+/* ── Empty / placeholder states ───────────────────────────────────────────── */
+body.expeditions .exp-empty,
+body.expeditions .exp-placeholder-text {
+  color: var(--ink-mute);
+  font-size: 0.88rem;
+  font-family: "DM Sans", sans-serif;
+  margin: 8px 0 0;
+}
+
+body.expeditions .exp-placeholder-card {
+  text-align: center;
+  padding: 40px 28px;
+}
+
+/* ── Status chips ─────────────────────────────────────────────────────────── */
+/* Status chip palette — semantic, not positional */
+
+body.expeditions .exp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  border: 1px solid;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.64rem;
+  letter-spacing: 0.04em;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: default;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+
+  /* By default: neutral inactive stage */
+  background: transparent;
+  border-color: var(--hairline-2);
+  color: var(--ink-faint);
+}
+
+/* Done stage (passed) — subtle positive */
+body.expeditions .exp-chip--done {
+  background: color-mix(in srgb, var(--ok) 10%, transparent);
+  border-color: color-mix(in srgb, var(--ok) 35%, transparent);
+  color: var(--ok);
+}
+
+/* Next actionable stage — prominent, clickable */
+body.expeditions .exp-chip--next {
+  cursor: pointer;
+  background: var(--bg);
+  border-color: var(--oak);
+  color: var(--ink-soft);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(30, 18, 5, 0.1);
+  touch-action: manipulation;
+  min-height: 32px;
+}
+
+body.expeditions .exp-chip--next:hover:not([disabled]) {
+  background: var(--bg-elev);
+  border-color: var(--hop);
+  color: var(--hop);
+}
+
+body.expeditions .exp-chip--next:focus-visible {
+  outline: 2px solid var(--hop);
+  outline-offset: 2px;
+}
+
+/* Stage-specific tints for "done" overrides */
+body.expeditions .exp-chip--confirmed.exp-chip--done { color: var(--cold); border-color: color-mix(in srgb, var(--cold) 35%, transparent); background: color-mix(in srgb, var(--cold) 8%, transparent); }
+body.expeditions .exp-chip--picked.exp-chip--done    { color: var(--oak); border-color: color-mix(in srgb, var(--oak) 35%, transparent); background: color-mix(in srgb, var(--oak) 8%, transparent); }
+body.expeditions .exp-chip--bl_printed.exp-chip--done { color: #5a4a8c; border-color: rgba(90,74,140,0.35); background: rgba(90,74,140,0.08); }
+body.expeditions .exp-chip--shipped.exp-chip--done   { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 35%, transparent); background: color-mix(in srgb, var(--ok) 10%, transparent); }
+
+/* Cancelled terminal chip */
+body.expeditions .exp-chip--cancelled {
+  background: color-mix(in srgb, var(--ember) 10%, transparent);
+  border-color: color-mix(in srgb, var(--ember) 30%, transparent);
+  color: var(--ember);
+  text-decoration: line-through;
+}
+
+/* ── Orders list ──────────────────────────────────────────────────────────── */
+body.expeditions .exp-orders-card {
+  padding: 0;
+}
+
+/* Remove inner card padding — rows handle their own spacing */
+body.expeditions .exp-orders-card .op-form__card-title {
+  padding: 14px 24px 10px;
+  margin-bottom: 0;
+  border-radius: 5px 5px 0 0;
+}
+
+body.expeditions .exp-date-group {
+  border-bottom: 1px solid var(--hairline);
+  padding: 0;
+}
+
+body.expeditions .exp-date-group:last-child {
+  border-bottom: none;
+}
+
+body.expeditions .exp-date-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.64rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--hop);
+  padding: 10px 24px 6px;
+  background: color-mix(in srgb, var(--hop) 4%, transparent);
+  border-bottom: 1px solid var(--hairline);
+}
+
+body.expeditions .exp-order-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--hairline);
+  flex-wrap: wrap;
+  transition: background 0.12s;
+}
+
+body.expeditions .exp-order-row:last-child {
+  border-bottom: none;
+}
+
+body.expeditions .exp-order-row:hover {
+  background: var(--bg-elev);
+}
+
+body.expeditions .exp-order-id {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.72rem;
+  color: var(--ink-mute);
+  font-weight: 500;
+  min-width: 44px;
+  flex-shrink: 0;
+}
+
+body.expeditions .exp-order-party {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.88rem;
+  color: var(--ink-soft);
+  font-weight: 500;
+  flex: 1 1 140px;
+  min-width: 80px;
+}
+
+body.expeditions .exp-order-party--internal {
+  color: var(--cold);
+  font-style: italic;
+}
+
+body.expeditions .exp-progress {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  flex: 2 1 260px;
+}
+
+body.expeditions .exp-order-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+body.expeditions .exp-action-btn {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.76rem;
+  padding: 5px 10px;
+  border-radius: 4px;
+  text-decoration: none;
+  cursor: pointer;
+  touch-action: manipulation;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  transition: background 0.12s, color 0.12s;
+  border: 1px solid var(--hairline-2);
+  background: transparent;
+  color: var(--ink-mute);
+}
+
+body.expeditions .exp-action-btn:hover {
+  background: var(--bg-elev);
+  text-decoration: none;
+  color: var(--ink-soft);
+}
+
+body.expeditions .exp-action-btn--cancel:hover {
+  background: color-mix(in srgb, var(--ember) 10%, transparent);
+  border-color: color-mix(in srgb, var(--ember) 40%, transparent);
+  color: var(--ember);
+}
+
+body.expeditions .exp-action-btn--edit {
+  font-size: 1rem;
+  color: var(--oak);
+  border-color: transparent;
+}
+
+/* ── Saisie form ──────────────────────────────────────────────────────────── */
+body.expeditions .exp-form {
+  width: 100%;
+}
+
+body.expeditions .exp-card {
+  /* inherits .op-form__card */
+}
+
+/* Type toggle */
+body.expeditions .exp-type-toggle {
+  margin-bottom: 20px;
+}
+
+body.expeditions .exp-toggle-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  display: block;
+  margin-bottom: 8px;
+}
+
+body.expeditions .exp-toggle-group {
+  display: inline-flex;
+  border: 1px solid var(--hairline-2);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+body.expeditions .exp-toggle-btn {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.84rem;
+  font-weight: 500;
+  padding: 8px 18px;
+  border: none;
+  background: var(--bg);
+  color: var(--ink-mute);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+  touch-action: manipulation;
+  min-height: 44px;
+  border-right: 1px solid var(--hairline-2);
+}
+
+body.expeditions .exp-toggle-btn:last-child {
+  border-right: none;
+}
+
+body.expeditions .exp-toggle-btn--active {
+  background: var(--hop);
+  color: var(--bg);
+  font-weight: 600;
+}
+
+body.expeditions .exp-toggle-btn:not(.exp-toggle-btn--active):hover:not(:disabled) {
+  background: var(--bg-elev);
+  color: var(--ink-soft);
+}
+
+body.expeditions .exp-toggle-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* Party panels */
+body.expeditions .exp-party-panel {
+  animation: exp-fade-in 0.15s ease;
+}
+
+body.expeditions .exp-party-panel--hidden {
+  display: none;
+}
+
+@keyframes exp-fade-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+body.expeditions .exp-required {
+  color: var(--ember);
+  margin-left: 1px;
+}
+
+/* Transporter hint */
+body.expeditions .exp-trans-hint {
+  font-size: 0.75rem;
+  color: var(--hop);
+  font-family: "DM Sans", sans-serif;
+  margin-top: 4px;
+}
+
+/* ── Typeahead ────────────────────────────────────────────────────────────── */
+body.expeditions .exp-typeahead-wrap {
+  position: relative;
+}
+
+body.expeditions .exp-typeahead-input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+body.expeditions .exp-typeahead-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 40;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 5px;
+  box-shadow: 0 4px 16px rgba(30, 18, 5, 0.12);
+  max-height: 260px;
+  overflow-y: auto;
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  overscroll-behavior: contain;
+}
+
+body.expeditions .exp-typeahead-dropdown li {
+  padding: 9px 14px;
+  cursor: pointer;
+  transition: background 0.1s;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+body.expeditions .exp-typeahead-dropdown li:hover,
+body.expeditions .exp-typeahead-dropdown li[aria-selected="true"] {
+  background: color-mix(in srgb, var(--hop) 12%, transparent);
+}
+
+body.expeditions .exp-suggest-name {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.86rem;
+  color: var(--ink-soft);
+  font-weight: 500;
+}
+
+body.expeditions .exp-suggest-meta {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem;
+  color: var(--ink-mute);
+}
+
+body.expeditions .exp-suggest-badge {
+  font-size: 0.6rem;
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-family: "JetBrains Mono", monospace;
+  letter-spacing: 0.05em;
+  border: 1px solid;
+  flex-shrink: 0;
+}
+
+body.expeditions .exp-suggest-badge--on  { color: var(--cold); border-color: color-mix(in srgb, var(--cold) 40%, transparent); background: color-mix(in srgb, var(--cold) 8%, transparent); }
+body.expeditions .exp-suggest-badge--off { color: var(--oak);  border-color: color-mix(in srgb, var(--oak)  40%, transparent); background: color-mix(in srgb, var(--oak)  8%, transparent); }
+
+body.expeditions .exp-suggest-new {
+  color: var(--hop);
+  font-style: italic;
+}
+
+body.expeditions .exp-suggest-divider {
+  border-bottom: 1px solid var(--hairline);
+  margin: 4px 0;
+}
+
+/* ── Order lines ──────────────────────────────────────────────────────────── */
+body.expeditions .exp-lines-container {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+body.expeditions .exp-line-row {
+  display: grid;
+  /* SKU (flexible) · Qty (fixed) · Remove button — comment spans row 2 */
+  grid-template-columns: 1fr 100px 32px;
+  gap: 10px 10px;
+  align-items: end;
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  border-radius: 5px;
+  padding: 12px 14px;
+  animation: exp-fade-in 0.15s ease;
+}
+
+body.expeditions .exp-line-sku-wrap {
+  position: relative;
+}
+
+body.expeditions .exp-line-sku-search {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+body.expeditions .exp-line-sku-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 50;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 5px;
+  box-shadow: 0 4px 14px rgba(30, 18, 5, 0.12);
+  max-height: 220px;
+  overflow-y: auto;
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  overscroll-behavior: contain;
+}
+
+body.expeditions .exp-line-sku-dropdown li {
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: background 0.1s;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+body.expeditions .exp-line-sku-dropdown li:hover,
+body.expeditions .exp-line-sku-dropdown li[aria-selected="true"] {
+  background: color-mix(in srgb, var(--hop) 12%, transparent);
+}
+
+body.expeditions .exp-line-sku-code {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.72rem;
+  color: var(--ink-soft);
+  font-weight: 600;
+}
+
+body.expeditions .exp-line-sku-format {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.78rem;
+  color: var(--ink-mute);
+}
+
+body.expeditions .exp-line-remove {
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--ink-mute);
+  cursor: pointer;
+  font-size: 1rem;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  padding: 0;
+  touch-action: manipulation;
+  align-self: center;
+}
+
+body.expeditions .exp-line-remove:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ember) 10%, transparent);
+  border-color: color-mix(in srgb, var(--ember) 30%, transparent);
+  color: var(--ember);
+}
+
+body.expeditions .exp-line-remove:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* Lines recap bar */
+body.expeditions .exp-lines-recap {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem;
+  color: var(--hop);
+  font-weight: 400;
+  letter-spacing: 0.03em;
+  margin-left: 4px;
+}
+
+/* Add line button */
+body.expeditions .exp-add-line-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 14px;
+  background: transparent;
+  border: 1px dashed var(--hairline-2);
+  border-radius: 5px;
+  color: var(--ink-mute);
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+  touch-action: manipulation;
+  min-height: 40px;
+}
+
+body.expeditions .exp-add-line-btn:hover:not(:disabled) {
+  border-color: var(--hop);
+  color: var(--hop);
+  background: color-mix(in srgb, var(--hop) 5%, transparent);
+}
+
+body.expeditions .exp-add-line-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Line comment input spans full width in its auto-placed row (5th item → row 2) */
+body.expeditions .exp-line-comment {
+  grid-column: 1 / -1;
+}
+
+/* ── Submit + cancel bar ──────────────────────────────────────────────────── */
+body.expeditions .exp-submit-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding-top: 4px;
+}
+
+body.expeditions .exp-cancel-link {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.82rem;
+  color: var(--ink-mute);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  transition: color 0.12s;
+}
+
+body.expeditions .exp-cancel-link:hover {
+  color: var(--ink-soft);
+  text-decoration: underline;
+}
+
+body.expeditions .exp-readonly-bar {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-top: 4px;
+}
+
+/* ── Inline feedback ──────────────────────────────────────────────────────── */
+body.expeditions .exp-inline-err {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.78rem;
+  color: var(--ember);
+  margin-top: 4px;
+}
+
+/* ── Responsive ───────────────────────────────────────────────────────────── */
+@media (max-width: 700px) {
+  body.expeditions .exp-order-row {
+    padding: 10px 14px;
+    gap: 8px;
+  }
+
+  body.expeditions .exp-date-label {
+    padding: 8px 14px 5px;
+  }
+
+  body.expeditions .exp-line-row {
+    grid-template-columns: 1fr 80px auto 32px;
+    gap: 8px;
+    padding: 10px;
+  }
+
+  body.expeditions .exp-progress {
+    flex-basis: 100%;
+    order: 3;
+  }
+
+  body.expeditions .exp-order-actions {
+    flex-basis: 100%;
+    order: 4;
+  }
+
+  body.expeditions .exp-tabs {
+    gap: 0;
+  }
+
+  body.expeditions .exp-tab {
+    padding: 8px 12px;
+    font-size: 0.8rem;
+  }
+}
+
+@media (max-width: 480px) {
+  body.expeditions .exp-line-row {
+    grid-template-columns: 1fr;
+  }
+
+  body.expeditions .exp-line-remove {
+    justify-self: end;
+  }
+}
