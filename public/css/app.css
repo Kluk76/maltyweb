@@ -180,6 +180,13 @@ a:focus-visible,
   outline: 2px solid var(--hop);
   outline-offset: 2px;
 }
+/* Inset rings where an outset ring would be clipped by an overflow:hidden
+   parent (.family-switcher in rg-page) or by the element's own overflow:hidden
+   (.sdm-zone — Firefox clips, Chrome doesn't). Inset stays visible everywhere. */
+.family-btn:focus-visible,
+.sdm-zone:focus-visible {
+  outline-offset: -2px;
+}
 
 /* ── Global touch enhancement for all interactive chips/row-actions ── */
 .sh-card,
@@ -5265,6 +5272,28 @@ body.auth::after {
 }
 
 /* Flash messages (reuse db-flash pattern) */
+/* Unscoped dismiss style: form-resilience.js injects .db-flash--warn with a
+   .db-flash__dismiss on ANY page incl. non-.home bodies (rg-page) — the
+   .home-scoped rule near line 1949 doesn't reach there. Keep in sync with it. */
+.db-flash__dismiss {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  border-radius: 3px;
+  font-size: 15px;
+  line-height: 1;
+  opacity: 0.55;
+  color: inherit;
+  transition: opacity .15s;
+  padding: 0;
+}
+.db-flash__dismiss:hover { opacity: 1; }
 .db-flash--warn {
   background: color-mix(in srgb, var(--oak) 11%, transparent);
   border: 1px solid color-mix(in srgb, var(--oak) 38%, transparent);
