@@ -38,11 +38,16 @@ declare(strict_types=1);
  *   labelled_only → only when template decoration_integral = 0
  *   we_supply_only→ only when template supply = 'we_supply'
  *
- * Box-sticker rule (§8.1):
- *   For 24-box formats (B id=1 / C id=7 / BC id=8):
- *     - If scotch resolves to PKG_SCOTCH_TRANSP (id=179): sticker slot REQUIRED.
- *     - If scotch resolves to a branded PKG_SCOTCH_[beer]: sticker INTENTIONALLY ABSENT.
- *     - If scotch UNRESOLVED: scotch → RQ row; sticker also unresolved → RQ row.
+ * Box-sticker rule (§8.1) — AMENDED:
+ *   For 24-box formats (B id=1 / C id=7 / BC id=8), box decoration is exactly ONE of:
+ *     (1) box-sticker: REQUIRED iff scotch=TRANSP AND box_label resolves NULL.
+ *     (2) branded scotch → sticker intentionally absent (keep existing behaviour).
+ *     (3) box_label resolves non-NULL → sticker intentionally absent (no line, no RQ).
+ *   EXCEPTION: an active Tier-1 sticker choice (ref_sku_packaging_choices.mi_id_fk NOT NULL)
+ *              overrides suppression (3) — explicit beats structural (ZEPC choice-47 principle).
+ *   Explicit-NULL box_label choices (mi_id_fk=NULL, e.g. ALTB/DIBB/etc.) resolve to null
+ *   → NO suppression → their stickers process normally.
+ *   box_label template item exists only on fmt 1; B12/ZEPC (fmt 7) are unaffected.
  *
  * @param PDO        $pdo           Active DB connection (maltytask_pdo()).
  * @param int[]|null $skuIds        SKU ids to recompute. Null = auto-detect the 25 affected.
@@ -322,7 +327,7 @@ function compile_sku_bom_packaging(
     // cost_chf and cost_basis come from v_mi_cost (WAC > catalog > no_basis, FX-normalised to CHF).
     // cost_chf is the canonical per-pricing-unit cost used for BOM line costing from this point forward.
     $allMiStmt = $pdo->query(
-        "SELECT m.id, m.mi_id, m.name, c.name AS cat_name,
+        "SELECT m.id, m.mi_id, m.name, m.is_active, c.name AS cat_name,
                 m.price, m.currency, m.pricing_unit,
                 v.cost_chf, v.cost_basis
            FROM ref_mi m
@@ -772,6 +777,25 @@ function compile_sku_bom_packaging(
             }
         }
 
+        // Pre-resolve box_label for §8.1 amended sticker-suppression check.
+        // box_label exists only on fmt 1 (ref_packaging_items id=71); other formats have no such item.
+        // null  = slot absent on this format, or explicit-null Tier-1 choice, or pattern miss → no suppression.
+        // int   = MI id resolved (non-null) → sticker suppressed unless overridden by active Tier-1 sticker choice.
+        $boxLabelResolved = null; // int|null
+        if ($is24Box) {
+            foreach ($items as $blItem) {
+                if ($blItem['slot_name'] === 'box_label') {
+                    $blScope = $blItem['slot_scope'];
+                    if (_bom_scope_ok($blScope, $decoIntegral, $isWeSupply)) {
+                        $boxLabelResolved = _bom_resolve_slot(
+                            $blItem, $skuId, $recipeId, $prefix, $bindings, $skuChoices, $miById
+                        );
+                    }
+                    break; // only one box_label slot per format
+                }
+            }
+        }
+
         // Now process all slots
         foreach ($items as $item) {
             $slotName = $item['slot_name'];
@@ -784,17 +808,27 @@ function compile_sku_bom_packaging(
                 continue;
             }
 
-            // ── §8.1 box-sticker rule ────────────────────────────────────
-            // For 24-box formats, the 'sticker' slot (box-sticker) is:
-            //   - REQUIRED if scotch resolves to TRANSP (179)
-            //   - INTENTIONALLY ABSENT (skip, no RQ) if scotch resolves to branded
-            //   - UNRESOLVED (emit RQ) if scotch itself is unresolved
+            // ── §8.1 box-sticker rule (amended) ─────────────────────────
+            // For 24-box formats, box decoration = exactly one of 3 mechanisms:
+            //   (1) box-sticker: REQUIRED iff scotch=TRANSP AND box_label=null
+            //   (2) branded scotch → sticker intentionally absent
+            //   (3) box_label non-null → sticker intentionally absent (no line, no RQ)
+            // EXCEPTION: active Tier-1 sticker choice (mi_id_fk NOT NULL) overrides (3).
             if ($slotName === 'sticker' && $is24Box) {
                 if ($scotchResolved !== null && $scotchResolved !== $scotchTranspId) {
                     // scotch = branded → box-sticker intentionally absent, skip silently
                     continue;
                 }
-                // else: scotch=TRANSP or scotch unresolved → process sticker normally below
+                // §8.1 mechanism (3): box_label resolves non-null → suppress sticker
+                // unless an active Tier-1 sticker choice is set (explicit beats structural).
+                if ($boxLabelResolved !== null) {
+                    $hasTier1StickerChoice = isset($skuChoices[$skuId]['sticker'])
+                        && $skuChoices[$skuId]['sticker']['mi_id_fk'] !== null;
+                    if (!$hasTier1StickerChoice) {
+                        continue; // box_label present, no explicit sticker override → suppress
+                    }
+                }
+                // else: scotch=TRANSP, box_label=null, or Tier-1 override → process sticker normally below
             }
 
             // ── Scotch slot: handled above, now write or queue RQ ────────
@@ -1721,26 +1755,31 @@ function _bom_resolve_slot(
         return null;
     }
 
-    // Resolve {beer} → prefix, then LIKE lookup
+    // Resolve {beer} → prefix, then LIKE lookup.
+    // Skip is_active=0 MIs — deactivated MIs must not be resurrected via pattern resolution.
+    // (Observed consumption lines referencing inactive MIs are source='Brewing' and bypass this path.)
     $resolved = str_replace('{beer}', $prefix, $pattern);
     $resolvedExact = rtrim($resolved, '%');
 
-    // First try exact match
-    $id = _bom_lookup_mi_id($resolvedExact, $miById);
+    // First try exact match (active MIs only)
+    $id = _bom_lookup_mi_id_active($resolvedExact, $miById);
     if ($id !== null) {
         return $id;
     }
 
-    // LIKE match if pattern ends with %
+    // LIKE match if pattern ends with % (active MIs only)
     if (str_ends_with($resolved, '%')) {
         foreach ($miById as $miId => $mi) {
+            if (isset($mi['is_active']) && !(bool)$mi['is_active']) {
+                continue; // skip inactive
+            }
             if (_bom_mi_id_matches_like($mi['mi_id'], $resolved)) {
                 return $miId;
             }
         }
     }
 
-    // Fall back to template default
+    // Fall back to template default (fixed MI, not pattern-matched — left as-is)
     return $item['default_mi_id_fk'] !== null ? (int)$item['default_mi_id_fk'] : null;
 }
 
@@ -1779,11 +1818,30 @@ function _bom_resolve_scotch(
 
 /**
  * Look up a ref_mi.id by its mi_id string from the pre-loaded index.
+ * Returns the first match regardless of is_active — used for fixed/explicit references.
  */
 function _bom_lookup_mi_id(string $miIdString, array $miById): ?int
 {
     foreach ($miById as $id => $mi) {
         if ($mi['mi_id'] === $miIdString) {
+            return $id;
+        }
+    }
+    return null;
+}
+
+/**
+ * Look up a ref_mi.id by its mi_id string, skipping is_active=0 rows.
+ * Used exclusively in the {beer}-pattern resolution path to prevent resurrection
+ * of deactivated placeholder MIs via pattern matching.
+ */
+function _bom_lookup_mi_id_active(string $miIdString, array $miById): ?int
+{
+    foreach ($miById as $id => $mi) {
+        if ($mi['mi_id'] === $miIdString) {
+            if (isset($mi['is_active']) && !(bool)$mi['is_active']) {
+                return null; // found but inactive — treat as not found
+            }
             return $id;
         }
     }
@@ -1838,6 +1896,9 @@ function _bom_build_rq_row(
         $resolvedPattern = str_replace('{beer}', $prefix, $pattern);
         $resolvedExact   = rtrim($resolvedPattern, '%');
         foreach ($miById as $id => $mi) {
+            if (isset($mi['is_active']) && !(bool)$mi['is_active']) {
+                continue; // skip inactive — RQ candidates must be actionable
+            }
             if ($mi['mi_id'] === $resolvedExact || _bom_mi_id_matches_like($mi['mi_id'], $resolvedPattern)) {
                 $candidates[] = $mi['mi_id'] . ' (id=' . $id . ')';
                 if (count($candidates) >= 5) break;
