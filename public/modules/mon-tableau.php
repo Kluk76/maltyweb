@@ -263,38 +263,59 @@ foreach ($selectedTrackers as $tracker) {
     $kpiResults[$tracker['id']] = kpi_dispatch($trackerArr, $pdo);
 }
 
-/* Group allowed trackers by category for the picker UI */
-$pickerGroups = [];
+/* ─── Category labels + canonical render order (ONE place) ─── */
 $CATEGORY_LABELS = [
     'production'     => 'Production — Wort',
     'fermentation'   => 'Fermentation',
     'racking'        => 'Soutirage',
     'packaging'      => 'Packaging',
     'fg_stock'       => 'Stock PF',
-    'sales'          => 'Ventes',
     'rm_procurement' => 'Matières premières',
     'logistics'      => 'Logistique',
-    'qa_qc'          => 'QA / QC',
+    'sales'          => 'Ventes',
     'cogs_finance'   => 'COGS / Finance',
     'utilities'      => 'Utilités',
+    'qa_qc'          => 'QA / QC',
     'ops_health'     => 'Santé ops',
     'equipment'      => 'Équipement',
     'control_loop'   => 'Indicateurs pilotage',
 ];
+$CATEGORY_ORDER = [
+    'production', 'fermentation', 'racking', 'packaging', 'fg_stock',
+    'rm_procurement', 'logistics', 'sales', 'cogs_finance', 'utilities',
+    'qa_qc', 'ops_health', 'equipment', 'control_loop',
+];
+
+/* Group selected trackers by category (in fixed order) for dashboard sections */
+$dashboardSections = [];
+foreach ($CATEGORY_ORDER as $cat) {
+    $inCat = array_filter($selectedTrackers, fn($t) => $t['category'] === $cat);
+    if (!empty($inCat)) {
+        $dashboardSections[$cat] = [
+            'label'    => $CATEGORY_LABELS[$cat] ?? ucfirst($cat),
+            'trackers' => array_values($inCat),
+        ];
+    }
+}
+
+/* Group allowed trackers by category for the picker UI */
+$pickerGroups = [];
 
 /* Only show non-stubbed trackers in the picker */
 $selectedIds = array_column($selectedTrackers, 'id');
-foreach ($allowedSet as $id => $row) {
-    if (in_array($row['source_domain'], MT_STUBBED_DOMAINS, true)) continue;
-    $cat = $row['category'];
-    if (!isset($pickerGroups[$cat])) {
-        $pickerGroups[$cat] = [
-            'label'    => $CATEGORY_LABELS[$cat] ?? ucfirst($cat),
-            'trackers' => [],
-        ];
+foreach ($CATEGORY_ORDER as $cat) {
+    foreach ($allowedSet as $id => $row) {
+        if ($row['category'] !== $cat) continue;
+        if (in_array($row['source_domain'], MT_STUBBED_DOMAINS, true)) continue;
+        if (!isset($pickerGroups[$cat])) {
+            $pickerGroups[$cat] = [
+                'label'    => $CATEGORY_LABELS[$cat] ?? ucfirst($cat),
+                'trackers' => [],
+            ];
+        }
+        $row['selected'] = in_array($id, $selectedIds, true);
+        $pickerGroups[$cat]['trackers'][] = $row;
     }
-    $row['selected'] = in_array($id, $selectedIds, true);
-    $pickerGroups[$cat]['trackers'][] = $row;
 }
 
 /* Current recap subscription (for cadence selector display) */
@@ -368,14 +389,14 @@ require __DIR__ . '/../../app/partials/topbar.php';
   <?php endif ?>
 
   <?php if ($isAdmin && !empty($stubMismatches)): ?>
-  <div class="mt-flash mt-flash--err" style="margin-bottom:.75rem">
+  <div class="mt-flash mt-flash--err mt-flash--admin-notice">
     <strong>Admin notice —</strong> trackers data_ready=1 mais handler STUB (exclus du tableau) :
     <?= htmlspecialchars(implode(', ', $stubMismatches)) ?>
   </div>
   <?php endif ?>
 
   <!-- ═══════════════════════════════════════════════════
-       ACTIVE KPI GRID
+       ACTIVE KPI DASHBOARD — category-grouped sections
        ═══════════════════════════════════════════════════ -->
   <h2 class="mt-section-head">Mes indicateurs</h2>
 
@@ -385,21 +406,28 @@ require __DIR__ . '/../../app/partials/topbar.php';
     Utilise le sélecteur ci-dessous pour ajouter des KPIs à ton tableau.
   </div>
   <?php else: ?>
-  <div class="mt-kpi-grid" id="mt-kpi-grid">
-    <?php foreach ($selectedTrackers as $tracker): ?>
-    <?php $result = $kpiResults[$tracker['id']] ?? ['error' => 'Résultat manquant', 'value' => null, 'unit' => null, 'label' => $tracker['label'], 'delta' => null, 'delta_label' => null, 'tint' => 'neutral', 'series' => null, 'breakdown' => null, 'meta' => []]; ?>
-    <div class="kpc-card kpc-card--<?= htmlspecialchars($tracker['viz_type']) ?>"
-         id="mt-card-<?= (int)$tracker['id'] ?>"
-         data-tracker-id="<?= (int)$tracker['id'] ?>"
-         data-tracker-slug="<?= htmlspecialchars($tracker['slug']) ?>">
-      <!-- Rendered by kpi-charts.js renderKpiCard() via window.MY_KPIS -->
-    </div>
+  <div class="mt-dashboard" id="mt-kpi-grid">
+    <?php foreach ($dashboardSections as $cat => $section): ?>
+    <section class="mt-cat-section" data-cat="<?= htmlspecialchars($cat) ?>">
+      <h3 class="mt-cat-section__head"><?= htmlspecialchars($section['label']) ?></h3>
+      <div class="mt-kpi-grid">
+        <?php foreach ($section['trackers'] as $tracker): ?>
+        <div class="kpc-card kpc-card--<?= htmlspecialchars($tracker['viz_type']) ?>"
+             id="mt-card-<?= (int)$tracker['id'] ?>"
+             data-tracker-id="<?= (int)$tracker['id'] ?>"
+             data-tracker-slug="<?= htmlspecialchars($tracker['slug']) ?>"
+             data-viz-type="<?= htmlspecialchars($tracker['viz_type']) ?>">
+          <!-- Rendered by kpi-charts.js renderKpiCard() via window.MY_KPIS -->
+        </div>
+        <?php endforeach ?>
+      </div>
+    </section>
     <?php endforeach ?>
   </div>
   <?php endif ?>
 
   <!-- ═══════════════════════════════════════════════════
-       PICKER — add / remove / reorder
+       PICKER — add / remove (category-grouped, collapsible)
        ═══════════════════════════════════════════════════ -->
   <div class="mt-picker" id="mt-picker">
     <button type="button" class="mt-picker__toggle" id="mt-picker-toggle" aria-expanded="false" aria-controls="mt-picker-body">
@@ -418,9 +446,21 @@ require __DIR__ . '/../../app/partials/topbar.php';
 
         <?php foreach ($pickerGroups as $cat => $group): ?>
         <?php if (empty($group['trackers'])) continue; ?>
+        <?php
+          /* Count selected items in this group for the badge */
+          $groupSelected = count(array_filter($group['trackers'], fn($t) => $t['selected']));
+        ?>
         <div class="mt-picker__group" data-cat="<?= htmlspecialchars($cat) ?>">
-          <div class="mt-picker__group-label"><?= htmlspecialchars($group['label']) ?></div>
-          <div class="mt-tracker-grid">
+          <button type="button" class="mt-picker__group-toggle"
+                  aria-expanded="true"
+                  aria-controls="mt-pg-<?= htmlspecialchars($cat) ?>">
+            <span class="mt-picker__group-label"><?= htmlspecialchars($group['label']) ?></span>
+            <?php if ($groupSelected > 0): ?>
+            <span class="mt-picker__group-badge"><?= $groupSelected ?></span>
+            <?php endif ?>
+            <span class="mt-picker__group-chevron" aria-hidden="true">▾</span>
+          </button>
+          <div class="mt-tracker-grid" id="mt-pg-<?= htmlspecialchars($cat) ?>">
             <?php foreach ($group['trackers'] as $t): ?>
             <div class="mt-tracker-item <?= $t['selected'] ? 'mt-tracker-item--selected' : 'mt-tracker-item--unselected' ?>"
                  data-tracker-id="<?= (int)$t['id'] ?>"
@@ -451,15 +491,15 @@ require __DIR__ . '/../../app/partials/topbar.php';
        RECAP EMAIL CADENCE — per-user preference
        ═══════════════════════════════════════════════════ -->
   <?php if (!empty($me['email'])): ?>
-  <div class="mt-recap-prefs" style="margin-top:2rem;padding:1rem 1.25rem;background:var(--bg-elev);border:1px solid var(--hairline);border-radius:8px;">
-    <h3 style="margin:0 0 .4rem;font-size:.8rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-mute);font-family:'JetBrains Mono',monospace;font-weight:500;">Récap par e-mail</h3>
-    <p style="margin:0 0 .85rem;font-size:.82rem;color:var(--ink-soft);">
+  <div class="mt-recap-prefs">
+    <h3 class="mt-recap-prefs__head">Récap par e-mail</h3>
+    <p class="mt-recap-prefs__sub">
       Reçois un résumé de tes indicateurs sélectionnés directement dans ta boîte mail.
     </p>
     <form method="post" action="/modules/mon-tableau.php" novalidate>
       <input type="hidden" name="csrf"   value="<?= htmlspecialchars($csrfToken) ?>">
       <input type="hidden" name="action" value="update_recap_cadence">
-      <div style="display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;">
+      <div class="mt-recap-prefs__row">
         <?php
         $cadenceOptions = [
             'none'    => 'Aucun',
@@ -470,18 +510,15 @@ require __DIR__ . '/../../app/partials/topbar.php';
         foreach ($cadenceOptions as $val => $label):
             $checked = $currentCadence === $val ? ' checked' : '';
         ?>
-        <label style="display:flex;align-items:center;gap:.35rem;cursor:pointer;font-size:.85rem;color:var(--ink);">
-          <input type="radio" name="cadence" value="<?= htmlspecialchars($val) ?>"<?= $checked ?>
-                 style="accent-color:var(--hop);">
+        <label class="mt-recap-prefs__opt">
+          <input type="radio" name="cadence" value="<?= htmlspecialchars($val) ?>"<?= $checked ?>>
           <?= htmlspecialchars($label) ?>
         </label>
         <?php endforeach ?>
-        <button type="submit" style="margin-left:.5rem;padding:.3rem .85rem;background:var(--hop);color:#fff;border:none;border-radius:5px;font-size:.82rem;cursor:pointer;font-family:'DM Sans',sans-serif;">
-          Enregistrer
-        </button>
+        <button type="submit" class="mt-recap-prefs__save">Enregistrer</button>
       </div>
       <?php if ($recapSub && $currentCadence !== 'none'): ?>
-      <p style="margin:.6rem 0 0;font-size:.78rem;color:var(--ink-mute);">
+      <p class="mt-recap-prefs__info">
         Prochain envoi :
         <?php if ($recapSub['next_due_at']): ?>
           <?= htmlspecialchars(date('d/m/Y H:i', strtotime($recapSub['next_due_at']))) ?>
@@ -496,9 +533,9 @@ require __DIR__ . '/../../app/partials/topbar.php';
     </form>
   </div>
   <?php else: ?>
-  <div class="mt-recap-prefs" style="margin-top:2rem;padding:1rem 1.25rem;background:var(--bg-elev);border:1px solid var(--hairline);border-radius:8px;opacity:.6;">
-    <h3 style="margin:0 0 .3rem;font-size:.8rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-mute);font-family:'JetBrains Mono',monospace;font-weight:500;">Récap par e-mail</h3>
-    <p style="margin:0;font-size:.82rem;color:var(--ink-soft);">Non disponible — aucune adresse e-mail associée à ton compte.</p>
+  <div class="mt-recap-prefs mt-recap-prefs--disabled">
+    <h3 class="mt-recap-prefs__head">Récap par e-mail</h3>
+    <p class="mt-recap-prefs__sub">Non disponible — aucune adresse e-mail associée à ton compte.</p>
   </div>
   <?php endif ?>
 

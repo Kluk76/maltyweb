@@ -18,10 +18,20 @@ function escHtml(s) {
     .replace(/'/g, '&#39;');
 }
 
-/* ── Number formatter (FR-CH) ── */
-function fmt(n, dec) {
+/* ── Number formatter (FR-CH)
+   dec: explicit decimal places (0/1/2/…) OR omit to auto-derive from unit.
+   unit: optional — used only when dec is omitted.
+     '%' or 'pct'  → 1 decimal
+     'CHF'         → 2 decimals
+     '' / undefined → 1 decimal (default)
+   Existing callers in wort-kpis.js pass (n, dec) — behaviour unchanged.
+   ── */
+function fmt(n, dec, unit) {
   if (n === 0 || n == null) return '0';
-  dec = (dec == null) ? 1 : dec;
+  if (dec == null) {
+    var u = (unit || '').toLowerCase();
+    dec = (u === '%' || u === 'pct') ? 1 : (u === 'chf') ? 2 : 1;
+  }
   return Number(n).toLocaleString('fr-CH', { minimumFractionDigits: dec, maximumFractionDigits: dec });
 }
 
@@ -72,7 +82,9 @@ function deltaHtml(delta, deltaLabel) {
   const sign = delta >= 0 ? '▲' : '▼';
   const cls  = delta >= 0 ? 'kpc-delta--up' : 'kpc-delta--down';
   const val  = Math.abs(delta);
-  const disp = Number.isInteger(val) ? String(val) : val.toFixed(1);
+  /* Use fmt() so large deltas (e.g. 271283.3) get fr-CH thousands separators */
+  const dec  = Number.isInteger(val) ? 0 : 1;
+  const disp = fmt(val, dec);
   return '<span class="kpc-delta ' + cls + '">' + sign + ' ' + escHtml(disp)
     + (deltaLabel ? ' <span class="kpc-delta-lbl">' + escHtml(deltaLabel) + '</span>' : '')
     + '</span>';
@@ -201,7 +213,7 @@ function buildBarChart(container, points, series, opts) {
           'text-anchor': 'middle', fill: s.color,
           'font-family': 'JetBrains Mono,monospace', 'font-size': 8, 'font-weight': 500,
         });
-        vlbl.textContent = val >= 100 ? Math.round(val) : val.toFixed(1);
+        vlbl.textContent = fmt(val, val >= 100 ? 0 : 1);
         svg.appendChild(vlbl);
       }
     });
@@ -393,7 +405,7 @@ function renderKpiCard(container, tracker, result, isAdmin) {
 
 /* ── kpi_number ──────────────────────────────────────────── */
 function renderKpiNumber(container, tracker, result, tCls) {
-  const val  = result.value != null ? escHtml(fmt(result.value, 1)) : '—';
+  const val  = result.value != null ? escHtml(fmt(result.value, null, result.unit)) : '—';
   const unit = result.unit  ? ' <span class="kpc-unit">' + escHtml(result.unit) + '</span>' : '';
   const periodLbl = result.meta && result.meta.period_label
     ? '<div class="kpc-period">' + escHtml(result.meta.period_label) + '</div>' : '';
@@ -435,7 +447,7 @@ function renderKpiSparkline(container, tracker, result, tCls) {
   if (result.value != null) {
     const valDiv = document.createElement('div');
     valDiv.className = 'kpc-card__value ' + tCls;
-    valDiv.innerHTML = escHtml(fmt(result.value, 1))
+    valDiv.innerHTML = escHtml(fmt(result.value, null, result.unit))
       + (result.unit ? ' <span class="kpc-unit">' + escHtml(result.unit) + '</span>' : '');
     container.appendChild(valDiv);
   }
@@ -532,17 +544,25 @@ function renderKpiFlag(container, tracker, result, tCls) {
   const val = result.value;
   const isAlert = val != null && Number(val) > 0;
 
+  /* Format flag value: if numeric use fmt(), otherwise pass through as string */
+  var valDisplay = '—';
+  if (val != null) {
+    valDisplay = (typeof val === 'number') ? escHtml(fmt(val, Number.isInteger(val) ? 0 : 1)) : escHtml(String(val));
+  }
   container.innerHTML =
     '<div class="kpc-card__label">' + escHtml(result.label || tracker.label) + '</div>'
     + '<div class="kpc-flag ' + (isAlert ? 'kpc-flag--alert' : 'kpc-flag--ok') + '">'
-    +   (val != null ? escHtml(String(val)) : '—')
+    +   valDisplay
     +   (result.unit ? ' <span class="kpc-unit">' + escHtml(result.unit) + '</span>' : '')
     + '</div>';
 
   if (result.breakdown && result.breakdown.length) {
     let bkHtml = '<ul class="kpc-flag-list">';
     result.breakdown.forEach(function(b) {
-      bkHtml += '<li>' + escHtml(b.label) + ': <strong>' + escHtml(String(b.value)) + '</strong></li>';
+      var bv = (typeof b.value === 'number')
+        ? escHtml(fmt(b.value, Number.isInteger(b.value) ? 0 : 1))
+        : escHtml(String(b.value));
+      bkHtml += '<li>' + escHtml(b.label) + ': <strong>' + bv + '</strong></li>';
     });
     bkHtml += '</ul>';
     container.innerHTML += bkHtml;
@@ -716,7 +736,7 @@ function renderKpiLine(container, tracker, result, tCls) {
   if (result.value != null) {
     const valDiv = document.createElement('div');
     valDiv.className = 'kpc-card__value ' + tCls;
-    valDiv.innerHTML = escHtml(fmt(result.value, 1))
+    valDiv.innerHTML = escHtml(fmt(result.value, null, result.unit))
       + (result.unit ? ' <span class="kpc-unit">' + escHtml(result.unit) + '</span>' : '');
     container.appendChild(valDiv);
   }

@@ -144,15 +144,41 @@
         item.classList.toggle('mt-tracker-item--hidden', q.length > 0 && !label.includes(q));
       });
 
-      /* Hide group header if all its items are hidden */
+      /* Hide / show group depending on whether any of its items are visible */
       document.querySelectorAll('.mt-picker__group').forEach(function (group) {
         var visible = group.querySelectorAll('.mt-tracker-item:not(.mt-tracker-item--hidden)');
         group.style.display = visible.length === 0 && q.length > 0 ? 'none' : '';
+        /* When search is active, force-expand all groups so results are visible */
+        if (q.length > 0) {
+          var toggle = group.querySelector('.mt-picker__group-toggle');
+          var grid   = group.querySelector('.mt-tracker-grid');
+          if (toggle && grid && toggle.getAttribute('aria-expanded') === 'false') {
+            toggle.setAttribute('aria-expanded', 'true');
+            grid.removeAttribute('hidden');
+          }
+        }
       });
     });
   }
 
-  /* ── 6. CSRF refresh from session keepalive ── */
+  /* ── 6. Collapsible picker category groups ── */
+  document.querySelectorAll('.mt-picker__group-toggle').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var expanded = btn.getAttribute('aria-expanded') === 'true';
+      var targetId = btn.getAttribute('aria-controls');
+      var grid     = document.getElementById(targetId);
+      btn.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+      if (grid) {
+        if (expanded) {
+          grid.setAttribute('hidden', '');
+        } else {
+          grid.removeAttribute('hidden');
+        }
+      }
+    });
+  });
+
+  /* ── 7. CSRF refresh from session keepalive ── */
   /* form-resilience.js (loaded by topbar) already rewrites input[name="csrf"]
      on each ping. The hidden CSRF input in the picker form is covered. */
 

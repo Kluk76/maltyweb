@@ -8,6 +8,12 @@
 body.mon-tableau .mt-page {
   padding: 1.25rem 1.5rem 3rem;
   max-width: 1400px;
+  /* Override .home .main align-items:center for full-width content */
+  align-self: stretch;
+}
+
+body.mon-tableau .main {
+  align-items: stretch;
 }
 
 body.mon-tableau .mt-page__title {
@@ -34,8 +40,9 @@ body.mon-tableau .mt-flash {
   margin-bottom: 1rem;
   font-family: 'DM Sans', sans-serif;
 }
-body.mon-tableau .mt-flash--ok  { background: color-mix(in srgb, var(--hop) 12%, var(--bg)); color: var(--hop); border: 1px solid color-mix(in srgb, var(--hop) 30%, transparent); }
-body.mon-tableau .mt-flash--err { background: color-mix(in srgb, var(--ember) 12%, var(--bg)); color: var(--ember); border: 1px solid color-mix(in srgb, var(--ember) 30%, transparent); }
+body.mon-tableau .mt-flash--ok           { background: color-mix(in srgb, var(--hop) 12%, var(--bg)); color: var(--hop); border: 1px solid color-mix(in srgb, var(--hop) 30%, transparent); }
+body.mon-tableau .mt-flash--err          { background: color-mix(in srgb, var(--ember) 12%, var(--bg)); color: var(--ember); border: 1px solid color-mix(in srgb, var(--ember) 30%, transparent); }
+body.mon-tableau .mt-flash--admin-notice { margin-bottom: .75rem; }
 
 /* ── Section headings ── */
 body.mon-tableau .mt-section-head {
@@ -50,13 +57,41 @@ body.mon-tableau .mt-section-head {
 }
 
 /* ══════════════════════════════════════════════════════
-   KPI GRID — rendered trackers
+   DASHBOARD — category sections
+   ══════════════════════════════════════════════════════ */
+body.mon-tableau .mt-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-bottom: 2rem;
+}
+
+/* Category section */
+body.mon-tableau .mt-cat-section {
+  margin-bottom: 1.5rem;
+}
+
+body.mon-tableau .mt-cat-section__head {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: .58rem;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin: 0 0 .6rem;
+  padding-bottom: .3rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--hairline) 55%, transparent);
+  font-weight: 500;
+}
+
+/* ══════════════════════════════════════════════════════
+   KPI GRID — dense layout with viz_type span map
    ══════════════════════════════════════════════════════ */
 body.mon-tableau .mt-kpi-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 1rem;
-  margin-bottom: 2rem;
+  /* 4-column base at full width; shrinks to 2 at tablet, 1 at mobile */
+  grid-template-columns: repeat(4, 1fr);
+  grid-auto-flow: dense;
+  gap: .75rem;
 }
 
 body.mon-tableau .mt-kpi-grid--empty {
@@ -71,6 +106,29 @@ body.mon-tableau .mt-kpi-grid--empty {
   border-radius: 6px;
 }
 
+/* ── Viz-type span map (no schema change — derived in CSS) ──
+   kpi_number / flag  → 1 col × 1 row  (default — no override needed)
+   sparkline / donut  → 1 col × 1 row  (default)
+   bar / line         → 2 col × 1 row  (wide)
+   stacked_bar        → 2 col × 1 row  (wide)
+   table              → 2 col × 2 rows (large)
+   waterfall          → 4 col × 1 row  (full-width)
+   ── */
+body.mon-tableau .kpc-card--bar,
+body.mon-tableau .kpc-card--line,
+body.mon-tableau .kpc-card--stacked_bar {
+  grid-column: span 2;
+}
+
+body.mon-tableau .kpc-card--table {
+  grid-column: span 2;
+  grid-row: span 2;
+}
+
+body.mon-tableau .kpc-card--waterfall {
+  grid-column: span 4;
+}
+
 /* ── Individual KPC cards (from kpi-charts.js) ── */
 body.mon-tableau .kpc-card {
   background: var(--bg-elev);
@@ -81,10 +139,12 @@ body.mon-tableau .kpc-card {
   font-family: 'DM Sans', sans-serif;
   min-height: 90px;
   transition: box-shadow .15s;
+  /* Ensure grid item doesn't overflow its column */
+  min-width: 0;
 }
 
 body.mon-tableau .kpc-card:hover {
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--ink) 8%, transparent);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--oak) 18%, transparent);
 }
 
 body.mon-tableau .kpc-card__label {
@@ -338,6 +398,12 @@ body.mon-tableau .kpc-card__remove {
   background: none;
   border: none;
   font-family: inherit;
+  /* Ensure remove button hits 44px touch target on mobile */
+  min-width: 28px;
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 body.mon-tableau .kpc-card:hover .kpc-card__remove { opacity: 1; }
 body.mon-tableau .kpc-card__remove:hover { color: var(--ember); }
@@ -400,25 +466,78 @@ body.mon-tableau .mt-picker__search:focus {
   border-color: var(--hop);
 }
 
-/* Category groups */
+/* ── Category groups (collapsible) ── */
 body.mon-tableau .mt-picker__group {
-  margin-bottom: .9rem;
+  margin-bottom: .75rem;
+  border: 1px solid color-mix(in srgb, var(--hairline) 55%, transparent);
+  border-radius: 5px;
+  overflow: hidden;
 }
-body.mon-tableau .mt-picker__group-label {
+
+/* Group toggle button (replaces the old static label div) */
+body.mon-tableau .mt-picker__group-toggle {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  width: 100%;
+  padding: .45rem .65rem;
+  background: color-mix(in srgb, var(--bg-side) 60%, var(--bg));
+  border: none;
+  cursor: pointer;
   font-family: 'JetBrains Mono', monospace;
   font-size: .58rem;
   letter-spacing: .12em;
   text-transform: uppercase;
   color: var(--ink-faint);
-  margin-bottom: .45rem;
-  padding-bottom: .2rem;
-  border-bottom: 1px solid color-mix(in srgb, var(--hairline) 60%, transparent);
+  text-align: left;
+}
+body.mon-tableau .mt-picker__group-toggle:hover {
+  background: color-mix(in srgb, var(--hop) 6%, var(--bg-side));
 }
 
+body.mon-tableau .mt-picker__group-label {
+  flex: 1;
+  color: var(--ink-mute);
+  font-size: .58rem;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+/* Selected-count badge */
+body.mon-tableau .mt-picker__group-badge {
+  background: var(--hop);
+  color: #fff;
+  font-size: .55rem;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 8px;
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 0;
+  line-height: 1.4;
+}
+
+/* Collapse chevron */
+body.mon-tableau .mt-picker__group-chevron {
+  font-size: .7rem;
+  transition: transform .2s;
+  flex-shrink: 0;
+}
+body.mon-tableau .mt-picker__group-toggle[aria-expanded="false"] .mt-picker__group-chevron {
+  transform: rotate(-90deg);
+}
+
+/* Tracker grid inside the group */
 body.mon-tableau .mt-tracker-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: .5rem;
+  padding: .5rem .65rem .65rem;
+  background: var(--bg);
+}
+
+/* Hidden grid (collapsed) */
+body.mon-tableau .mt-tracker-grid[hidden] {
+  display: none;
 }
 
 body.mon-tableau .mt-tracker-item {
@@ -432,6 +551,8 @@ body.mon-tableau .mt-tracker-item {
   cursor: pointer;
   transition: border-color .15s, background .15s;
   text-align: left;
+  /* Minimum touch target */
+  min-height: 44px;
 }
 body.mon-tableau .mt-tracker-item:hover {
   border-color: color-mix(in srgb, var(--hop) 40%, var(--hairline));
@@ -494,20 +615,105 @@ body.mon-tableau .mt-picker__save-note {
 /* CSRF hidden input */
 body.mon-tableau .mt-picker form { display: contents; }
 
-/* ── Responsive: wide cards for waterfall / table ── */
-body.mon-tableau .kpc-card--table,
-body.mon-tableau .kpc-card--waterfall,
-body.mon-tableau .kpc-card--stacked_bar {
-  grid-column: span 2;
+/* ══════════════════════════════════════════════════════
+   RECAP EMAIL PREFERENCES
+   ══════════════════════════════════════════════════════ */
+body.mon-tableau .mt-recap-prefs {
+  margin-top: 2rem;
+  padding: 1rem 1.25rem;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+}
+body.mon-tableau .mt-recap-prefs--disabled {
+  opacity: .6;
+}
+body.mon-tableau .mt-recap-prefs__head {
+  margin: 0 0 .4rem;
+  font-size: .8rem;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 500;
+}
+body.mon-tableau .mt-recap-prefs__sub {
+  margin: 0 0 .85rem;
+  font-size: .82rem;
+  color: var(--ink-soft);
+  font-family: 'DM Sans', sans-serif;
+}
+body.mon-tableau .mt-recap-prefs__row {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  flex-wrap: wrap;
+}
+body.mon-tableau .mt-recap-prefs__opt {
+  display: flex;
+  align-items: center;
+  gap: .35rem;
+  cursor: pointer;
+  font-size: .85rem;
+  color: var(--ink);
+  font-family: 'DM Sans', sans-serif;
+}
+body.mon-tableau .mt-recap-prefs__opt input[type="radio"] {
+  accent-color: var(--hop);
+}
+body.mon-tableau .mt-recap-prefs__save {
+  margin-left: .5rem;
+  padding: .3rem .85rem;
+  background: var(--hop);
+  color: #fff;
+  border: none;
+  border-radius: 5px;
+  font-size: .82rem;
+  cursor: pointer;
+  font-family: 'DM Sans', sans-serif;
+  transition: opacity .15s;
+}
+body.mon-tableau .mt-recap-prefs__save:hover { opacity: .88; }
+body.mon-tableau .mt-recap-prefs__info {
+  margin: .6rem 0 0;
+  font-size: .78rem;
+  color: var(--ink-mute);
+  font-family: 'DM Sans', sans-serif;
 }
 
-@media (max-width: 640px) {
-  body.mon-tableau .kpc-card--table,
-  body.mon-tableau .kpc-card--waterfall,
-  body.mon-tableau .kpc-card--stacked_bar {
-    grid-column: span 1;
+/* ══════════════════════════════════════════════════════
+   RESPONSIVE — tablet (≤ 960px) → 2-column grid
+   ══════════════════════════════════════════════════════ */
+@media (max-width: 960px) {
+  body.mon-tableau .mt-kpi-grid {
+    grid-template-columns: repeat(2, 1fr);
   }
+  body.mon-tableau .kpc-card--waterfall {
+    grid-column: span 2;
+  }
+  body.mon-tableau .kpc-card--table {
+    grid-column: span 2;
+    grid-row: span 2;
+  }
+}
+
+/* ══════════════════════════════════════════════════════
+   RESPONSIVE — narrow / mobile (≤ 768px) → 1-column
+   Matches app.css mobile breakpoint
+   ══════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
   body.mon-tableau .mt-kpi-grid {
     grid-template-columns: 1fr;
+  }
+  body.mon-tableau .kpc-card--bar,
+  body.mon-tableau .kpc-card--line,
+  body.mon-tableau .kpc-card--stacked_bar,
+  body.mon-tableau .kpc-card--table,
+  body.mon-tableau .kpc-card--waterfall {
+    grid-column: span 1;
+    grid-row: span 1;
+  }
+  body.mon-tableau .mt-page {
+    padding: .85rem .9rem 2rem;
   }
 }
