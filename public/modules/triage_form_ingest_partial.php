@@ -18,6 +18,9 @@ declare(strict_types=1);
  * Outputs HTML only (no <html>/<body> wrapper — partial fragment).
  */
 
+require_once __DIR__ . '/../../app/auth.php';
+require_page_access('triage');
+
 // ── POST redirect handled by /admin/ingest-failures.php (canonical handler) ──
 // Nothing to do here on POST.
 

@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 require __DIR__ . "/../../app/auth.php";
-require_login();
+require_page_access('warehouse');
 
 // ── Input validation (two-step per feedback_php_query_param_validate_after_default) ──
 $period = $_GET['period'] ?? '';

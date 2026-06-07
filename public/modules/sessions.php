@@ -48,7 +48,7 @@ declare(strict_types=1);
 require __DIR__ . '/../../app/auth.php';
 require_once __DIR__ . '/../../app/sessions.php';
 
-require_login();
+require_page_access('saisies');
 $me  = current_user();
 $pdo = maltytask_pdo();
 

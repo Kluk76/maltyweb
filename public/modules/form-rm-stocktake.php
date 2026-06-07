@@ -19,7 +19,7 @@ require __DIR__ . '/../../app/auth.php';
 require __DIR__ . '/../../app/settings.php';
 require __DIR__ . '/../../app/settings-helpers.php';
 
-require_login();
+require_page_access('saisies');
 $me = current_user();
 
 // ── GET render ────────────────────────────────────────────────────────────────

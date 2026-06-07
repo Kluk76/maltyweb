@@ -58,7 +58,7 @@ require_once __DIR__ . '/../../app/tank-simulator.php';
 require_once __DIR__ . '/../../app/cip-events.php';
 require_once __DIR__ . '/../../app/qc-thresholds.php';
 
-require_login();
+require_page_access('saisies');
 $me = current_user();
 
 // ── Allowed enum values ───────────────────────────────────────────────────

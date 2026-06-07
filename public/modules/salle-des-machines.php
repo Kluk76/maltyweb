@@ -24,7 +24,7 @@ require __DIR__ . '/../../app/auth.php';
 require __DIR__ . '/../../app/csrf.php';
 require __DIR__ . '/../../app/db-write-helpers.php';
 require __DIR__ . '/../../app/settings-helpers.php';
-require_login();
+require_page_access('zeppelin');
 $me = current_user();
 
 /* ── Role gate ──────────────────────────────────────────────────── */

@@ -33,7 +33,7 @@ require __DIR__ . '/../../app/db-write-helpers.php';
 require_once __DIR__ . '/../../app/tank-simulator.php';
 require_once __DIR__ . '/../../app/cip-events.php';
 
-require_login();
+require_page_access('saisies');
 $me = current_user();
 
 // ── WRITE GUARD ───────────────────────────────────────────────────────────────

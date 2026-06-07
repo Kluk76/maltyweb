@@ -14,6 +14,8 @@ declare(strict_types=1);
  * Additional GET params: line=I (line_index, 0-based).
  */
 
+require_once __DIR__ . '/../../app/auth.php';
+require_page_access('triage');
 require_once __DIR__ . '/../../app/services/mi_propose.php';
 require_once __DIR__ . '/../../app/services/triage_actions.php';
 require_once __DIR__ . '/../../app/csrf.php';
