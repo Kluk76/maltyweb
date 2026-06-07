@@ -244,14 +244,20 @@ function renderCumul(d) {
   /* years_data[yr].monthly is an array of 12 elements [core, special, contract].
      Nébuleuse = monthly[i][0] + monthly[i][1] (core + special). */
   const allYears = Object.keys(KD.years_data).map(Number).sort();
-  if (!allYears.length) { el.textContent = '—'; return; }
+  if (!allYears.length) {
+    el.innerHTML = '<div class="wk-empty-state">Aucune donnée pour cette période.</div>';
+    return;
+  }
 
   /* Compute the last data month index for the active year (d) — reuse existing logic */
   let activeLastDataMi = -1;
   d.monthly.forEach(function(m, i) {
     if ((m[0] || 0) + (m[1] || 0) > 0) activeLastDataMi = i;
   });
-  if (activeLastDataMi < 0) { el.textContent = '—'; return; }
+  if (activeLastDataMi < 0) {
+    el.innerHTML = '<div class="wk-empty-state">Aucune donnée de production pour l\'année sélectionnée.</div>';
+    return;
+  }
 
   /* Build series for all years */
   const yearSeries = {};
@@ -275,7 +281,10 @@ function renderCumul(d) {
   });
 
   const seriesYears = Object.keys(yearSeries).map(Number).sort();
-  if (!seriesYears.length) { el.textContent = '—'; return; }
+  if (!seriesYears.length) {
+    el.innerHTML = '<div class="wk-empty-state">Aucune donnée de production disponible.</div>';
+    return;
+  }
 
   /* Global Y max across all series */
   let globalMax = 0;
@@ -451,7 +460,10 @@ function renderAnnualTrend() {
   el.innerHTML = '';
 
   const annual = KD.annual;
-  if (!annual || !annual.length) { el.textContent = '—'; return; }
+  if (!annual || !annual.length) {
+    el.innerHTML = '<div class="wk-empty-state">Aucune donnée annuelle disponible.</div>';
+    return;
+  }
 
   const W = 760, H = 260;
   const padL = 48, padR = 16, padT = 16, padB = 48;

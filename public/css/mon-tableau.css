@@ -143,8 +143,10 @@ body.mon-tableau .kpc-card {
   min-width: 0;
 }
 
-body.mon-tableau .kpc-card:hover {
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--oak) 18%, transparent);
+@media (hover: hover) and (pointer: fine) {
+  body.mon-tableau .kpc-card:hover {
+    box-shadow: 0 2px 8px color-mix(in srgb, var(--oak) 18%, transparent);
+  }
 }
 
 body.mon-tableau .kpc-card__label {
@@ -380,8 +382,14 @@ body.mon-tableau .kpc-card__drag {
   padding: 2px 4px;
   border-radius: 3px;
 }
-body.mon-tableau .kpc-card:hover .kpc-card__drag { opacity: 1; }
 body.mon-tableau .kpc-card__drag:active { cursor: grabbing; }
+
+/* Focus ring for drag handle (visible on keyboard focus) */
+body.mon-tableau .kpc-card__drag:focus-visible {
+  outline: 2px solid var(--hop);
+  outline-offset: 2px;
+  opacity: 1;
+}
 
 body.mon-tableau .kpc-card__remove {
   position: absolute;
@@ -398,15 +406,24 @@ body.mon-tableau .kpc-card__remove {
   background: none;
   border: none;
   font-family: inherit;
-  /* Ensure remove button hits 44px touch target on mobile */
-  min-width: 28px;
-  min-height: 28px;
+  /* Touch target ≥44×44px per house rule (floor tablets) */
+  min-width: 44px;
+  min-height: 44px;
   display: flex;
   align-items: center;
   justify-content: center;
 }
-body.mon-tableau .kpc-card:hover .kpc-card__remove { opacity: 1; }
-body.mon-tableau .kpc-card__remove:hover { color: var(--ember); }
+@media (hover: hover) and (pointer: fine) {
+  body.mon-tableau .kpc-card:hover .kpc-card__remove { opacity: 1; }
+  body.mon-tableau .kpc-card:hover .kpc-card__drag   { opacity: 1; }
+  body.mon-tableau .kpc-card__remove:hover { color: var(--ember); }
+}
+body.mon-tableau .kpc-card__remove:focus-visible {
+  outline: 2px solid var(--ember);
+  outline-offset: 2px;
+  opacity: 1;
+  color: var(--ember);
+}
 
 /* ══════════════════════════════════════════════════════
    PICKER SECTION
@@ -432,6 +449,11 @@ body.mon-tableau .mt-picker__toggle {
   padding: 0;
   width: 100%;
   text-align: left;
+}
+body.mon-tableau .mt-picker__toggle:focus-visible {
+  outline: 2px solid var(--hop);
+  outline-offset: 2px;
+  border-radius: 3px;
 }
 body.mon-tableau .mt-picker__toggle-icon {
   font-size: 1rem;
@@ -491,8 +513,14 @@ body.mon-tableau .mt-picker__group-toggle {
   color: var(--ink-faint);
   text-align: left;
 }
-body.mon-tableau .mt-picker__group-toggle:hover {
-  background: color-mix(in srgb, var(--hop) 6%, var(--bg-side));
+@media (hover: hover) and (pointer: fine) {
+  body.mon-tableau .mt-picker__group-toggle:hover {
+    background: color-mix(in srgb, var(--hop) 6%, var(--bg-side));
+  }
+}
+body.mon-tableau .mt-picker__group-toggle:focus-visible {
+  outline: 2px solid var(--hop);
+  outline-offset: -2px;
 }
 
 body.mon-tableau .mt-picker__group-label {
@@ -554,9 +582,20 @@ body.mon-tableau .mt-tracker-item {
   /* Minimum touch target */
   min-height: 44px;
 }
-body.mon-tableau .mt-tracker-item:hover {
-  border-color: color-mix(in srgb, var(--hop) 40%, var(--hairline));
-  background: color-mix(in srgb, var(--hop) 5%, var(--bg));
+@media (hover: hover) and (pointer: fine) {
+  body.mon-tableau .mt-tracker-item:hover {
+    border-color: color-mix(in srgb, var(--hop) 40%, var(--hairline));
+    background: color-mix(in srgb, var(--hop) 5%, var(--bg));
+  }
+}
+body.mon-tableau .mt-tracker-item:focus-visible {
+  outline: 2px solid var(--hop);
+  outline-offset: 2px;
+  border-color: var(--hop);
+}
+body.mon-tableau .mt-tracker-item:active {
+  transform: scale(0.98);
+  transition: transform 60ms ease-out;
 }
 body.mon-tableau .mt-tracker-item--selected {
   border-color: var(--hop);
@@ -604,7 +643,17 @@ body.mon-tableau .mt-picker__save-btn {
   cursor: pointer;
   transition: opacity .15s;
 }
-body.mon-tableau .mt-picker__save-btn:hover { opacity: .88; }
+@media (hover: hover) and (pointer: fine) {
+  body.mon-tableau .mt-picker__save-btn:hover { opacity: .88; }
+}
+body.mon-tableau .mt-picker__save-btn:focus-visible {
+  outline: 2px solid var(--hop);
+  outline-offset: 2px;
+}
+body.mon-tableau .mt-picker__save-btn:active:not(:disabled) {
+  transform: scale(0.97);
+  transition: transform 60ms ease-out;
+}
 body.mon-tableau .mt-picker__save-btn:disabled { opacity: .5; cursor: default; }
 body.mon-tableau .mt-picker__save-note {
   font-size: .75rem;
@@ -673,7 +722,17 @@ body.mon-tableau .mt-recap-prefs__save {
   font-family: 'DM Sans', sans-serif;
   transition: opacity .15s;
 }
-body.mon-tableau .mt-recap-prefs__save:hover { opacity: .88; }
+@media (hover: hover) and (pointer: fine) {
+  body.mon-tableau .mt-recap-prefs__save:hover { opacity: .88; }
+}
+body.mon-tableau .mt-recap-prefs__save:focus-visible {
+  outline: 2px solid var(--hop);
+  outline-offset: 2px;
+}
+body.mon-tableau .mt-recap-prefs__save:active {
+  transform: scale(0.97);
+  transition: transform 60ms ease-out;
+}
 body.mon-tableau .mt-recap-prefs__info {
   margin: .6rem 0 0;
   font-size: .78rem;

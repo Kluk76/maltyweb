@@ -302,15 +302,17 @@ body.wort .wk-legend__item {
   text-transform: uppercase;
   color: var(--ink-mute);
 }
+/* WO-06: shape differentiation beyond color — P3 accessibility improvement.
+   Core = rounded square, Spec = full circle, Contract = sharp square. */
 body.wort .wk-legend__dot {
   width: 10px; height: 10px;
   border-radius: 2px;
   flex-shrink: 0;
 }
-body.wort .wk-legend__dot--core     { background: var(--hop); }
-body.wort .wk-legend__dot--spec     { background: var(--cat-process); }
-body.wort .wk-legend__dot--contract { background: var(--cold); }
-body.wort .wk-legend__dot--neb      { background: var(--hop); }
+body.wort .wk-legend__dot--core     { background: var(--hop);           border-radius: 2px; }
+body.wort .wk-legend__dot--spec     { background: var(--cat-process);   border-radius: 50%; }
+body.wort .wk-legend__dot--contract { background: var(--cold);          border-radius: 0; }
+body.wort .wk-legend__dot--neb      { background: var(--hop);           border-radius: 2px; }
 
 /* ── Chart card ── */
 body.wort .wk-chart-card {
@@ -561,6 +563,17 @@ body.wort .wk-hm-unavail {
   font-style: italic;
   padding: 16px 0;
   text-align: center;
+}
+/* Empty-state for chart containers (WO-04: guidance text, not bare dash) */
+body.wort .wk-empty-state {
+  font-family: "DM Sans", sans-serif;
+  font-size: .82rem;
+  color: var(--ink-mute);
+  padding: 32px 16px;
+  text-align: center;
+  border: 1px dashed var(--hairline);
+  border-radius: 4px;
+  margin: 8px 0;
 }
 
 /* ══════════════════════════════════════════

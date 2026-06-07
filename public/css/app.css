@@ -1503,7 +1503,7 @@ body.home::after {
   transition: color .2s, border-color .2s, background .2s;
   white-space: nowrap;
   flex-shrink: 0;
-  min-height: 32px;
+  min-height: 44px; /* house touch-target floor — floor tablets */
   touch-action: manipulation;
 }
 .home .wort-filters__submit:hover {

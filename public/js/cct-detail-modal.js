@@ -111,9 +111,40 @@
     if (TOOLTIP) TOOLTIP.style.display = 'none';
   }
 
+  // ── CCT-04: Dynamic axis domain computation ──
+  // Updates CHART.fgMax, CHART.phMin/Max, CHART.dayMax based on actual data.
+  // Adds a margin and shows a "données hors plage" label when any point was clamped.
+  function computeDomains(data) {
+    const allReads = (data.current_reads || []).concat(
+      ...(data.historical || []).map(b => b.reads || [])
+    );
+    if (!allReads.length) return { outOfRange: false };
+
+    const fgVals  = allReads.filter(r => r.fg != null).map(r => +r.fg);
+    const phVals  = allReads.filter(r => r.ph != null).map(r => +r.ph);
+    const dayVals = allReads.map(r => r.day || 0);
+
+    const maxFg  = fgVals.length  ? Math.max(...fgVals)  : 16;
+    const minPh  = phVals.length  ? Math.min(...phVals)  : 4.0;
+    const maxPh  = phVals.length  ? Math.max(...phVals)  : 5.4;
+    const maxDay = dayVals.length ? Math.max(...dayVals) : 12;
+
+    // Was any value outside the old hardcoded range?
+    const outOfRange = maxFg > 16 || minPh < 4.0 || maxPh > 5.4 || maxDay > 12;
+
+    // Apply 10% margin above, round to sensible steps
+    CHART.fgMax  = Math.ceil(Math.max(maxFg * 1.1, 4) / 4) * 4;   // multiple of 4
+    CHART.phMin  = Math.floor(Math.min(minPh - 0.1, 4.0) * 10) / 10;
+    CHART.phMax  = Math.ceil(Math.max(maxPh + 0.1, 5.4) * 10) / 10;
+    CHART.dayMax = Math.max(12, maxDay + 1);
+
+    return { outOfRange };
+  }
+
   // ── Chart render ──
   function renderChart(svgEl, data) {
     if (!svgEl || !data) return;
+    const domains = computeDomains(data);
     const out = [];
 
     // Read CSS tokens once so SVG strings track the global theme automatically.
@@ -127,27 +158,35 @@
     const cold    = css.getPropertyValue('--cold').trim();     // #2f5575
     const bbt     = css.getPropertyValue('--bbt').trim();      // #2f6d99
 
-    // Grid + axes
+    // Grid + axes — use dynamic CHART domains (CCT-04)
     for (let v = CHART.fgMin; v <= CHART.fgMax; v += 4) {
       const y = yFG(v);
       out.push(`<line x1="${CHART.pad.left}" y1="${y}" x2="${CHART.w - CHART.pad.right}" y2="${y}" stroke="rgba(74,56,32,0.06)" stroke-width="1"/>`);
       out.push(`<text x="${CHART.pad.left - 10}" y="${y + 3.5}" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="9.5" fill="${inkMute}" font-weight="500">${v}</text>`);
     }
-    for (let v = 4.0; v <= 5.4 + 0.001; v += 0.4) {
+    // pH axis: dynamic range in 0.4 steps
+    const phStep = 0.4;
+    for (let v = CHART.phMin; v <= CHART.phMax + 0.001; v += phStep) {
       out.push(`<text x="${CHART.w - CHART.pad.right + 10}" y="${yPH(v) + 3.5}" text-anchor="start" font-family="JetBrains Mono, monospace" font-size="9.5" fill="${inkMute}" font-weight="500">${v.toFixed(1)}</text>`);
     }
-    for (let d = 2; d <= 12; d += 2) {
+    // Day axis: dynamic range in 2-day steps
+    const dayStep = CHART.dayMax > 20 ? 4 : 2;
+    for (let d = dayStep; d <= CHART.dayMax; d += dayStep) {
       const x = xPos(d);
       out.push(`<line x1="${x}" y1="${CHART.pad.top}" x2="${x}" y2="${CHART.h - CHART.pad.bottom}" stroke="rgba(74,56,32,0.04)" stroke-width="1"/>`);
     }
     out.push(`<line x1="${CHART.pad.left}" y1="${CHART.h - CHART.pad.bottom}" x2="${CHART.w - CHART.pad.right}" y2="${CHART.h - CHART.pad.bottom}" stroke="rgba(74,56,32,0.20)" stroke-width="1"/>`);
-    for (let d = 0; d <= 12; d += 2) {
+    for (let d = 0; d <= CHART.dayMax; d += dayStep) {
       const x = xPos(d);
       out.push(`<text x="${x}" y="${CHART.h - CHART.pad.bottom + 18}" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9.5" fill="${inkMute}" font-weight="500">J+${d}</text>`);
     }
     out.push(`<text x="${CHART.pad.left - 10}" y="${CHART.pad.top - 10}" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="8.5" fill="${inkMute}" letter-spacing="1.6" font-weight="500">FG · °P</text>`);
     out.push(`<text x="${CHART.w - CHART.pad.right + 10}" y="${CHART.pad.top - 10}" text-anchor="start" font-family="JetBrains Mono, monospace" font-size="8.5" fill="${inkMute}" letter-spacing="1.6" font-weight="500">pH</text>`);
     out.push(`<text x="${CHART.w / 2}" y="${CHART.h - 10}" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="8.5" fill="${inkMute}" letter-spacing="2.5" font-weight="500">JOURS DEPUIS DÉBUT FERMENTATION</text>`);
+    // CCT-04: "données hors plage" notice when data exceeded the default window
+    if (domains.outOfRange) {
+      out.push(`<text x="${CHART.w - CHART.pad.right}" y="${CHART.pad.top - 10}" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="8" fill="${oak}" font-weight="500" letter-spacing="0.08em" opacity="0.75">données hors plage · axe étendu</text>`);
+    }
 
     // Historical ghosts — each batch wrapped in a hover-able <g>
     const hist = data.historical || [];
@@ -230,6 +269,18 @@
         out.push(`<line x1="${ex}" y1="${CHART.pad.top + 14}" x2="${ex}" y2="${CHART.h - CHART.pad.bottom}" stroke="${cold}" stroke-width="1" stroke-dasharray="3 4" opacity="0.55"/>`);
         out.push(`<g transform="translate(${ex}, ${CHART.pad.top + 6})"><text text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" fill="${bbt}" font-weight="500" letter-spacing="0.8">❄ CC ~J+${ccEst}</text></g>`);
       }
+    }
+
+    // CCT-03: empty-state message when no readings exist for current batch
+    // and no historical batches are toggled visible.
+    // Note: cur is already declared above (data.current_reads || []).
+    const histData = data.historical || [];
+    const hasHistVisible = histData.some(b => VISIBLE[b.batch] && (b.reads || []).length > 0);
+    if (cur.length === 0 && !hasHistVisible) {
+      const cx = CHART.w / 2;
+      const cy = CHART.h / 2;
+      out.push(`<text x="${cx}" y="${cy - 10}" text-anchor="middle" font-family="DM Sans, sans-serif" font-size="14" fill="${inkMute}" opacity="0.75">Aucune donnée de fermentation disponible</text>`);
+      out.push(`<text x="${cx}" y="${cy + 12}" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" fill="${inkMute}" opacity="0.5" letter-spacing="0.06em">Les lectures FG / pH apparaîtront ici au fil du brassage.</text>`);
     }
 
     // Snap-point focus rings (toggled by JS during hover)
@@ -423,17 +474,36 @@
       .replace(/'/g, '&#39;');
   }
 
+  // ── Empty-state and error-state helpers (CCT-03) ──
+  function showModalError(dialog, msg) {
+    dialog.innerHTML = `
+      <div class="cct-modal__overlay" data-close></div>
+      <div class="cct-modal__card cct-modal__card--error" id="cct-modal-card">
+        <button class="cct-modal__close" id="cct-modal-close" aria-label="Fermer">&#x2715;</button>
+        <div class="cct-modal__empty-state" role="alert">
+          <span class="cct-modal__empty-icon" aria-hidden="true">⚠</span>
+          <p>${escHtml(msg)}</p>
+        </div>
+      </div>`;
+    dialog.querySelector('#cct-modal-close')?.addEventListener('click', () => dialog.close());
+    dialog.querySelector('[data-close]')?.addEventListener('click',     () => dialog.close());
+    dialog.showModal();
+  }
+
   // ── Open modal ──
   function openModal(cctNum) {
     const details = (window.CCT_DETAILS || {})[cctNum];
-    if (!details) return;
+    const dialog  = document.getElementById('cct-detail-modal');
+    if (!dialog) return;
+
+    if (!details) {
+      showModalError(dialog, 'Aucune donnée disponible pour ce fermenteur.');
+      return;
+    }
 
     CURRENT_DATA = details;
     VISIBLE = { current: true };
     (details.historical || []).forEach(b => { VISIBLE[b.batch] = true; });
-
-    const dialog = document.getElementById('cct-detail-modal');
-    if (!dialog) return;
 
     // Populate card
     dialog.innerHTML = `

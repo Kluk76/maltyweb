@@ -845,6 +845,10 @@ $_breweryId = brewery_identity();
           </select>
         </label>
 
+        <!-- WO-05: visible submit fallback for keyboard / AT users who cannot
+             trigger onchange events on <select> via arrow-key navigation -->
+        <button type="submit" class="wort-filters__submit">Filtrer</button>
+
         <?php if ($anyFilter): ?>
           <a class="wort-filters__reset" href="<?= htmlspecialchars($_SERVER['PHP_SELF']) ?>">Réinitialiser</a>
         <?php endif ?>

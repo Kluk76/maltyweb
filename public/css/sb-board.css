@@ -1227,17 +1227,18 @@ body.sb-board .sb-board-controls {
   gap: 8px;
 }
 
-/* ── Sync pill — atom 6 polling timestamp (populated via JS) ── */
+/* ── Sync pill — atom 6 polling timestamp (populated via JS) ──
+   backdrop-filter removed (P2 audit): chip is not fixed/sticky — opaque
+   surface is visually equivalent and avoids GPU repaint on scroll. ── */
 body.sb-board .sb-sync-ts {
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 0.62rem;
   letter-spacing: 0.08em;
   color: var(--ink-mute);
   padding: 3px 9px;
-  background: color-mix(in srgb, var(--bg-elev) 75%, transparent);
+  background: var(--bg-elev);
   border: 1px solid var(--hairline);
   border-radius: 10px;
-  backdrop-filter: blur(4px);
   opacity: 0;
   transition: opacity .25s;
   pointer-events: none;
