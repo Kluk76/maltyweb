@@ -9,8 +9,10 @@ declare(strict_types=1);
  * Per-SKU physique formula:
  *   anchor      = inv_fg_stocktake qty, latest month_closed with is_active rows
  *   anchor_date = LAST DAY of the anchor month_closed
- *   production  = Σ bd_packaging_v2.prod_total_units WHERE sku_id_fk AND
- *                 event_date > anchor_date AND is_tombstoned=0
+ *   production  = Σ (bd_packaging_v2.prod_total_units / ref_skus.units_per_pack)
+ *                 WHERE sku_id_fk AND event_date > anchor_date AND is_tombstoned=0
+ *                 NOTE: prod_total_units is in individual containers; divide by
+ *                 units_per_pack to convert to SKU pack units (same as anchor).
  *   expédié_b2b = Σ ord_order_lines.qty over ord_orders WHERE status='shipped'
  *                 AND requested_date > anchor_date  (ALL order_types)
  *   eshop_auto  = Σ inv_sales_order_lines.qty over inv_sales_orders WHERE
@@ -51,7 +53,7 @@ declare(strict_types=1);
  * Each row: {
  *   sku_id, sku_code, format, hl_per_unit,
  *   anchor_qty, prod_qty, expedie_qty, eshop_qty, taproom_qty,
- *   physique,           int: anchor + prod - expedie - eshop - taproom
+ *   physique,           float: anchor + prod - expedie - eshop - taproom
  *   open_week_qty,      int: Σ open order lines with requested_date ≤ end-of-current-ISO-week
  *   open_total_qty,     int: Σ ALL open order lines
  *   live_semaine,       int: physique - open_week_qty
@@ -131,21 +133,27 @@ function fg_stock_compute(PDO $pdo): array
     }
 
     // ── Step 3: production since anchor (bd_packaging_v2) ───────────────────
+    // prod_total_units is in INDIVIDUAL CONTAINERS (bottles, cans, kegs).
+    // All other legs (anchor, orders, eshop, taproom) are in SKU PACK UNITS.
+    // For bottles/cans: units_per_pack = 24 → divide to get pack units.
+    // For kegs/cuves: units_per_pack = 1 → division is a no-op.
+    // Lesson: same class of bug as maltytask commit 942431e (~24x inflation).
     $prodStmt = $pdo->prepare(
-        'SELECT sku_id_fk,
-                SUM(prod_total_units) AS prod_qty,
-                COUNT(*)             AS prod_events
-           FROM bd_packaging_v2
-          WHERE event_date > ?
-            AND is_tombstoned = 0
-            AND sku_id_fk IS NOT NULL
-          GROUP BY sku_id_fk'
+        'SELECT p.sku_id_fk,
+                SUM(p.prod_total_units / COALESCE(NULLIF(r.units_per_pack, 0), 1)) AS prod_qty,
+                COUNT(*)                                                             AS prod_events
+           FROM bd_packaging_v2 p
+           JOIN ref_skus r ON r.id = p.sku_id_fk
+          WHERE p.event_date > ?
+            AND p.is_tombstoned = 0
+            AND p.sku_id_fk IS NOT NULL
+          GROUP BY p.sku_id_fk'
     );
     $prodStmt->execute([$anchorDate]);
     foreach ($prodStmt->fetchAll(PDO::FETCH_ASSOC) as $pr) {
         $sid = (int) $pr['sku_id_fk'];
         if (isset($byId[$sid])) {
-            $byId[$sid]['prod_qty']    = (int) $pr['prod_qty'];
+            $byId[$sid]['prod_qty']    = round((float) $pr['prod_qty'], 2);
             $byId[$sid]['prod_events'] = (int) $pr['prod_events'];
         }
         // Production of a SKU not in the anchor (new SKU added post-anchor):
@@ -153,7 +161,7 @@ function fg_stock_compute(PDO $pdo): array
         else {
             // Fetch SKU metadata on-the-fly (rare case; accepted extra query)
             $skuMeta = $pdo->prepare(
-                'SELECT sku_code, format, hl_per_unit FROM ref_skus WHERE id = ? AND is_active = 1 LIMIT 1'
+                'SELECT sku_code, format, hl_per_unit, units_per_pack FROM ref_skus WHERE id = ? AND is_active = 1 LIMIT 1'
             );
             $skuMeta->execute([$sid]);
             $meta = $skuMeta->fetch(PDO::FETCH_ASSOC);
@@ -164,7 +172,7 @@ function fg_stock_compute(PDO $pdo): array
                     'format'         => $meta['format'],
                     'hl_per_unit'    => (float) $meta['hl_per_unit'],
                     'anchor_qty'     => 0,
-                    'prod_qty'       => (int) $pr['prod_qty'],
+                    'prod_qty'       => round((float) $pr['prod_qty'], 2),
                     'prod_events'    => (int) $pr['prod_events'],
                     'expedie_qty'    => 0,
                     'expedie_orders' => 0,
@@ -373,8 +381,9 @@ function fg_stock_compute(PDO $pdo): array
         }
 
         // Dormant: physique=0 AND no movement (prod=0, expedie=0, eshop=0, taproom=0)
-        $isDormant = ($physique === 0)
-            && ($prod === 0)
+        // Use == 0 (loose) to handle float physique (e.g. 0.0 === 0 is false in PHP).
+        $isDormant = ($physique == 0)
+            && ($prod == 0)
             && ($expedie === 0)
             && ($eshop === 0)
             && ($taproom === 0);

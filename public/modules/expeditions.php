@@ -1692,9 +1692,9 @@ $isReadOnly = $editOrder !== null
                     <td class="exp-ledger-meta">ancre</td>
                   </tr>
                   <tr class="exp-ledger-prod">
-                    <td class="exp-ledger-label">Production</td>
+                    <td class="exp-ledger-label">Production (unités SKU)</td>
                     <td class="exp-ledger-qty exp-ledger-qty--plus">
-                      +<?= number_format($sr['prod_qty']) ?>
+                      +<?= number_format($sr['prod_qty'], 2) ?>
                     </td>
                     <td class="exp-ledger-meta">
                       <?= $sr['prod_events'] ?> run<?= $sr['prod_events'] !== 1 ? 's' : '' ?>
