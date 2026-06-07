@@ -138,6 +138,10 @@ function fg_stock_compute(PDO $pdo): array
     // For bottles/cans: units_per_pack = 24 → divide to get pack units.
     // For kegs/cuves: units_per_pack = 1 → division is a no-op.
     // Lesson: same class of bug as maltytask commit 942431e (~24x inflation).
+    // is_white_label=1 rows are EXCLUDED: beer packaged under another brand
+    // (e.g. La Carougeoise) never enters Nebuleuse sellable FG stock.
+    // client_fk (cuve-de-service venue) rows are KEPT: those are Neb beer
+    // delivered via cuve orders — the matching ord_orders shipment depletes them.
     $prodStmt = $pdo->prepare(
         'SELECT p.sku_id_fk,
                 SUM(p.prod_total_units / COALESCE(NULLIF(r.units_per_pack, 0), 1)) AS prod_qty,
@@ -146,6 +150,7 @@ function fg_stock_compute(PDO $pdo): array
            JOIN ref_skus r ON r.id = p.sku_id_fk
           WHERE p.event_date > ?
             AND p.is_tombstoned = 0
+            AND p.is_white_label = 0
             AND p.sku_id_fk IS NOT NULL
           GROUP BY p.sku_id_fk'
     );
