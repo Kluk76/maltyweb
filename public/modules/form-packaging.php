@@ -72,6 +72,7 @@ const FORMAT_SUFFIXES = [
     'C'   => 'C (canette)',
     'BU'  => 'BU (single bottle)',
     'CU'  => 'CU (single can)',
+    'X'   => 'X (cage / vrac bouteilles)',
 ];
 
 // ── SKU resolution ────────────────────────────────────────────────────────────
