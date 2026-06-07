@@ -1,0 +1,32 @@
+# /etc/cron.d/maltytask-kpi-recap
+#
+# KPI recap email dispatcher: runs hourly; the script self-gates on next_due_at.
+# Exits 0 silently when nobody is due — safe to run every hour.
+#
+# Pre-flight checklist before enabling:
+#   1. Migration 277 applied (user_kpi_recap_subs table exists).
+#   2. Dry-run validated for at least one user with tracker selections:
+#        sudo -u maltytask php /var/www/maltytask/scripts/send-kpi-recap.php --dry-run --user 1
+#   3. Live test to kouros@lanebuleuse.ch:
+#        sudo -u www-data php /var/www/maltytask/scripts/send-kpi-recap.php --apply --user 1
+#      (requires at least one tracker selection on user 1)
+#   4. Confirm email arrives and next_due_at was updated in DB.
+#   5. Re-run immediately to confirm idempotency (second run exits with "No due subscriptions").
+#   6. Remove '#' from the active line below.
+#
+# Source of truth: db/cron/maltytask-kpi-recap.cron in the maltyweb repo.
+# Deployed via bin/deploy.sh --apply (sudo install → /etc/cron.d/).
+#
+# Note: cron syntax for /etc/cron.d/* requires the user column.
+# Times are UTC (VPS timezone is Etc/UTC).
+#
+# Manual edits will be overwritten on next deploy. Edit the source file
+# in the repo, commit, then run bin/deploy.sh --apply.
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# m   h  dom mon dow  user     command
+
+# DISABLED — remove this '#' to activate after pre-flight checklist is complete:
+# 0   *   *   *   *   www-data  flock -n /tmp/maltytask-kpi-recap.lock php /var/www/maltytask/scripts/send-kpi-recap.php --apply >> /var/log/maltytask/kpi-recap.log 2>&1

@@ -166,6 +166,62 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         redirect_to('/modules/mon-tableau.php');
     }
 
+    if ($action === 'update_recap_cadence') {
+        /* Guard: only users with an email can set a recap subscription */
+        if (empty($me['email'])) {
+            flash_set('err', 'Aucune adresse e-mail associée à ton compte.');
+            redirect_to('/modules/mon-tableau.php');
+        }
+        $rawCadence = post_str('cadence') ?? '';
+        $allowed    = ['none', 'daily', 'weekly', 'monthly'];
+        if (!in_array($rawCadence, $allowed, true)) {
+            flash_set('err', 'Cadence invalide.');
+            redirect_to('/modules/mon-tableau.php');
+        }
+
+        /* Snapshot before write */
+        $snapStmt = $pdo->prepare(
+            "SELECT id, cadence, is_active FROM user_kpi_recap_subs WHERE user_id_fk = ?"
+        );
+        $snapStmt->execute([$myUserId]);
+        $before = $snapStmt->fetch(PDO::FETCH_ASSOC) ?: null;
+
+        if ($rawCadence === 'none') {
+            /* Remove subscription row (sparse — absence = no recap) */
+            if ($before !== null) {
+                $pdo->prepare("DELETE FROM user_kpi_recap_subs WHERE user_id_fk = ?")->execute([$myUserId]);
+                log_revision(
+                    $pdo, $me,
+                    'user_kpi_recap_subs', (int) $before['id'],
+                    $before,
+                    null,
+                    'ok',
+                    'mon-tableau recap cadence: removed'
+                );
+            }
+        } else {
+            /* Upsert subscription: set cadence + clear next_due_at so cron fires on next check */
+            $upsSql = $before !== null
+                ? "UPDATE user_kpi_recap_subs SET cadence = ?, next_due_at = NOW(), is_active = 1 WHERE user_id_fk = ?"
+                : "INSERT INTO user_kpi_recap_subs (cadence, next_due_at, is_active, user_id_fk) VALUES (?, NOW(), 1, ?)";
+            $pdo->prepare($upsSql)->execute([$rawCadence, $myUserId]);
+
+            $afterId = $before !== null ? (int) $before['id'] : (int) $pdo->lastInsertId();
+            $after   = ['cadence' => $rawCadence, 'next_due_at' => date('Y-m-d H:i:s'), 'is_active' => 1];
+            log_revision(
+                $pdo, $me,
+                'user_kpi_recap_subs', $afterId,
+                $before,
+                $after,
+                'ok',
+                "mon-tableau recap cadence: set to {$rawCadence}"
+            );
+        }
+
+        flash_set('ok', 'Préférences de récap enregistrées.');
+        redirect_to('/modules/mon-tableau.php');
+    }
+
     /* Unknown action: ignore + redirect */
     redirect_to('/modules/mon-tableau.php');
 }
@@ -240,6 +296,20 @@ foreach ($allowedSet as $id => $row) {
     $row['selected'] = in_array($id, $selectedIds, true);
     $pickerGroups[$cat]['trackers'][] = $row;
 }
+
+/* Current recap subscription (for cadence selector display) */
+$recapSub = null;
+try {
+    $recapStmt = $pdo->prepare(
+        "SELECT cadence, last_sent_at, next_due_at, is_active FROM user_kpi_recap_subs WHERE user_id_fk = ? LIMIT 1"
+    );
+    $recapStmt->execute([$myUserId]);
+    $recapSub = $recapStmt->fetch(PDO::FETCH_ASSOC) ?: null;
+} catch (\Throwable $e) {
+    /* Non-fatal: cadence selector shows 'none' */
+    error_log('[mon-tableau] recap sub load failed: ' . $e->getMessage());
+}
+$currentCadence = ($recapSub && (int) $recapSub['is_active'] === 1) ? (string) $recapSub['cadence'] : 'none';
 
 $csrfToken = csrf_token();
 $flash     = flash_pop();
@@ -376,6 +446,61 @@ require __DIR__ . '/../../app/partials/topbar.php';
       </form>
     </div><!-- /.mt-picker__body -->
   </div><!-- /.mt-picker -->
+
+  <!-- ═══════════════════════════════════════════════════
+       RECAP EMAIL CADENCE — per-user preference
+       ═══════════════════════════════════════════════════ -->
+  <?php if (!empty($me['email'])): ?>
+  <div class="mt-recap-prefs" style="margin-top:2rem;padding:1rem 1.25rem;background:var(--bg-elev);border:1px solid var(--hairline);border-radius:8px;">
+    <h3 style="margin:0 0 .4rem;font-size:.8rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-mute);font-family:'JetBrains Mono',monospace;font-weight:500;">Récap par e-mail</h3>
+    <p style="margin:0 0 .85rem;font-size:.82rem;color:var(--ink-soft);">
+      Reçois un résumé de tes indicateurs sélectionnés directement dans ta boîte mail.
+    </p>
+    <form method="post" action="/modules/mon-tableau.php" novalidate>
+      <input type="hidden" name="csrf"   value="<?= htmlspecialchars($csrfToken) ?>">
+      <input type="hidden" name="action" value="update_recap_cadence">
+      <div style="display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;">
+        <?php
+        $cadenceOptions = [
+            'none'    => 'Aucun',
+            'daily'   => 'Quotidien',
+            'weekly'  => 'Hebdomadaire',
+            'monthly' => 'Mensuel',
+        ];
+        foreach ($cadenceOptions as $val => $label):
+            $checked = $currentCadence === $val ? ' checked' : '';
+        ?>
+        <label style="display:flex;align-items:center;gap:.35rem;cursor:pointer;font-size:.85rem;color:var(--ink);">
+          <input type="radio" name="cadence" value="<?= htmlspecialchars($val) ?>"<?= $checked ?>
+                 style="accent-color:var(--hop);">
+          <?= htmlspecialchars($label) ?>
+        </label>
+        <?php endforeach ?>
+        <button type="submit" style="margin-left:.5rem;padding:.3rem .85rem;background:var(--hop);color:#fff;border:none;border-radius:5px;font-size:.82rem;cursor:pointer;font-family:'DM Sans',sans-serif;">
+          Enregistrer
+        </button>
+      </div>
+      <?php if ($recapSub && $currentCadence !== 'none'): ?>
+      <p style="margin:.6rem 0 0;font-size:.78rem;color:var(--ink-mute);">
+        Prochain envoi :
+        <?php if ($recapSub['next_due_at']): ?>
+          <?= htmlspecialchars(date('d/m/Y H:i', strtotime($recapSub['next_due_at']))) ?>
+        <?php else: ?>
+          dès le prochain passage du cron
+        <?php endif ?>
+        <?php if ($recapSub['last_sent_at']): ?>
+          · Dernier envoi : <?= htmlspecialchars(date('d/m/Y H:i', strtotime($recapSub['last_sent_at']))) ?>
+        <?php endif ?>
+      </p>
+      <?php endif ?>
+    </form>
+  </div>
+  <?php else: ?>
+  <div class="mt-recap-prefs" style="margin-top:2rem;padding:1rem 1.25rem;background:var(--bg-elev);border:1px solid var(--hairline);border-radius:8px;opacity:.6;">
+    <h3 style="margin:0 0 .3rem;font-size:.8rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-mute);font-family:'JetBrains Mono',monospace;font-weight:500;">Récap par e-mail</h3>
+    <p style="margin:0;font-size:.82rem;color:var(--ink-soft);">Non disponible — aucune adresse e-mail associée à ton compte.</p>
+  </div>
+  <?php endif ?>
 
 </div><!-- /.mt-page -->
 </main>
