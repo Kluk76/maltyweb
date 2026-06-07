@@ -28,5 +28,8 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # m   h  dom mon dow  user     command
 
-# DISABLED — remove this '#' to activate after pre-flight checklist is complete:
-# 0   *   *   *   *   www-data  flock -n /tmp/maltytask-kpi-recap.lock php /var/www/maltytask/scripts/send-kpi-recap.php --apply >> /var/log/maltytask/kpi-recap.log 2>&1
+# ACTIVATED 2026-06-07 — pre-flight checklist complete (dry-run ✓, live send to
+# kouros@ received ✓, next_due_at advanced ✓, idempotent re-run "No due" ✓).
+# User = maltytask (house convention for PHP crons: owns /var/log/maltytask and
+# reads config/db.env — www-data could not write the log dir).
+0   *   *   *   *   maltytask  flock -n /tmp/maltytask-kpi-recap.lock php /var/www/maltytask/scripts/send-kpi-recap.php --apply >> /var/log/maltytask/kpi-recap.log 2>&1
