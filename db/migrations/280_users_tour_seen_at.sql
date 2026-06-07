@@ -1,4 +1,4 @@
--- 278_users_tour_seen_at.sql
+-- 280_users_tour_seen_at.sql (renamed from 278 after parallel-session number collision)
 -- Add tour_seen_at column to users for onboarding tour first-view tracking.
 -- NULL = never seen; NOT NULL = timestamp of first visit (marked on page load).
 -- MySQL 8: NO "IF NOT EXISTS" on ADD COLUMN (MariaDB-only syntax).
