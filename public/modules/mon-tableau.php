@@ -158,7 +158,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'user_kpi_selections', $myUserId,
             $before ?: null,
             $after,
-            'ok',
+            'normal',
             'mon-tableau selection update'
         );
 
@@ -195,7 +195,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'user_kpi_recap_subs', (int) $before['id'],
                     $before,
                     null,
-                    'ok',
+                    'normal',
                     'mon-tableau recap cadence: removed'
                 );
             }
@@ -213,7 +213,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'user_kpi_recap_subs', $afterId,
                 $before,
                 $after,
-                'ok',
+                'normal',
                 "mon-tableau recap cadence: set to {$rawCadence}"
             );
         }
