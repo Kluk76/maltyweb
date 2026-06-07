@@ -184,6 +184,66 @@ function device_list_shared(PDO $pdo): array
 }
 
 /**
+ * Return true if the given device_id has ANY row in auth_shared_devices
+ * (regardless of is_shared value). Used to detect devices that have already
+ * been through the classification interstitial.
+ *
+ * Empty / invalid device IDs return false without hitting the DB.
+ *
+ * @param string $deviceId  The 36-char UUID from the cookie.
+ * @param PDO    $pdo
+ * @return bool
+ */
+function device_classified(string $deviceId, PDO $pdo): bool
+{
+    if ($deviceId === '') return false;
+
+    $stmt = $pdo->prepare(
+        "SELECT 1 FROM auth_shared_devices WHERE device_id = ? LIMIT 1"
+    );
+    $stmt->execute([$deviceId]);
+    return $stmt->fetch() !== false;
+}
+
+/**
+ * Mark a device as personal (upsert).
+ *
+ * On first registration: inserts a new row with is_shared=0.
+ * On subsequent calls: sets is_shared=0, updates last_seen / IP / UA.
+ * Label is always set to 'Appareil personnel'.
+ *
+ * Mirrors the shape of device_mark_shared() exactly; only is_shared differs.
+ *
+ * @param string      $deviceId   36-char UUID.
+ * @param int|null    $byUserId   users.id of the user performing the action.
+ * @param string|null $ip         IPv4/IPv6 string.
+ * @param string|null $ua         User-agent string (truncated to 255).
+ * @param PDO         $pdo
+ */
+function device_mark_personal(
+    string  $deviceId,
+    ?int    $byUserId,
+    ?string $ip,
+    ?string $ua,
+    PDO     $pdo
+): void {
+    $uaTrimmed = ($ua !== null) ? substr($ua, 0, 255) : null;
+
+    $stmt = $pdo->prepare(
+        "INSERT INTO auth_shared_devices
+             (device_id, label, is_shared, registered_by, last_seen_at, last_ip, last_ua)
+         VALUES (?, 'Appareil personnel', 0, ?, NOW(), ?, ?)
+         ON DUPLICATE KEY UPDATE
+             is_shared    = 0,
+             label        = 'Appareil personnel',
+             last_seen_at = NOW(),
+             last_ip      = VALUES(last_ip),
+             last_ua      = VALUES(last_ua)"
+    );
+    $stmt->execute([$deviceId, $byUserId, $ip, $uaTrimmed]);
+}
+
+/**
  * Touch last-seen metadata for a known registered device.
  * No-op when no row exists for the given device_id (unregistered devices
  * are not auto-created here — use device_mark_shared() for that).

@@ -285,3 +285,35 @@ function rt_clear_cookie(): void
 {
     _rt_set_cookie('', true);
 }
+
+/**
+ * Revoke the remember-me token stored in the current request's mt_remember cookie,
+ * then clear the cookie. Used when a device is classified as shared — a stale 90-day
+ * token from a prior personal login on that machine must not persist.
+ *
+ * Does NOT call rt_lookup() (which rotates the token and issues a fresh one).
+ * Instead: reads the cookie, SHA-256-hashes it, DELETEs (revokes) the matching
+ * row, and clears the cookie — exactly mirroring the hashing convention in rt_create().
+ *
+ * No-op if the cookie is absent or the hash has no matching row.
+ *
+ * @param PDO $pdo
+ */
+function rt_revoke_current(PDO $pdo): void
+{
+    $rawToken = $_COOKIE[RT_COOKIE_NAME] ?? '';
+    if ($rawToken === '') {
+        return;
+    }
+
+    $hash = hash('sha256', $rawToken);
+
+    $stmt = $pdo->prepare(
+        "UPDATE user_remember_tokens
+            SET revoked_at = CURRENT_TIMESTAMP
+          WHERE token_hash = ? AND revoked_at IS NULL"
+    );
+    $stmt->execute([$hash]);
+
+    rt_clear_cookie();
+}

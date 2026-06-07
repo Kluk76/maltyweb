@@ -1,0 +1,161 @@
+/* ============================================================
+   classification-appareil.css
+   Scoped under body.auth.classification-appareil + ca- prefix.
+   All colours via app.css tokens — no new :root declarations,
+   no hardcoded hex. Inherits the global kraft/manila auth theme.
+   ============================================================ */
+
+/* ── Choice grid ─────────────────────────────────────────────────── */
+
+body.auth.classification-appareil .ca-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 4px 0 0;
+}
+
+/* ── Radio card ──────────────────────────────────────────────────── */
+
+body.auth.classification-appareil .ca-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1.5px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--bg-elev);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  /* touch target — operators on floor tablets */
+  min-height: 56px;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body.auth.classification-appareil .ca-card:hover {
+  border-color: color-mix(in srgb, var(--hop) 45%, var(--hairline));
+  background: color-mix(in srgb, var(--hop) 4%, var(--bg-elev));
+}
+
+body.auth.classification-appareil .ca-card:has(input:checked) {
+  border-color: var(--hop);
+  background: color-mix(in srgb, var(--hop) 8%, var(--bg-elev));
+}
+
+body.auth.classification-appareil .ca-card input[type="radio"] {
+  /* visually hidden but accessible */
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+/* Custom radio indicator */
+body.auth.classification-appareil .ca-radio-dot {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--ink-mute);
+  background: var(--bg);
+  margin-top: 1px;
+  transition: border-color 0.15s, background 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+body.auth.classification-appareil .ca-card:has(input:checked) .ca-radio-dot {
+  border-color: var(--hop);
+  background: var(--hop);
+}
+
+body.auth.classification-appareil .ca-radio-dot::after {
+  content: '';
+  display: block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--bg-elev);
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+body.auth.classification-appareil .ca-card:has(input:checked) .ca-radio-dot::after {
+  opacity: 1;
+}
+
+/* Card text */
+body.auth.classification-appareil .ca-card-body {
+  flex: 1;
+  min-width: 0;
+}
+
+body.auth.classification-appareil .ca-card-title {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--ink);
+  line-height: 1.35;
+  margin: 0 0 2px;
+}
+
+body.auth.classification-appareil .ca-card-sub {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  line-height: 1.4;
+}
+
+/* ── Free-text label input (choice 'd') ─────────────────────────── */
+
+body.auth.classification-appareil .ca-other-wrap {
+  display: none;
+  margin-top: 6px;
+}
+
+body.auth.classification-appareil .ca-other-wrap.ca-other-wrap--visible {
+  display: block;
+}
+
+body.auth.classification-appareil .ca-other-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 12px;
+  border: 1.5px solid var(--hairline);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.88rem;
+  transition: border-color 0.15s;
+}
+
+body.auth.classification-appareil .ca-other-input:focus {
+  outline: none;
+  border-color: var(--hop);
+}
+
+body.auth.classification-appareil .ca-other-input::placeholder {
+  color: var(--ink-faint);
+}
+
+/* ── Subtext / info strip above choices ─────────────────────────── */
+
+body.auth.classification-appareil .ca-info {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+  line-height: 1.55;
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--oak) 6%, var(--bg-elev));
+  border: 1px solid color-mix(in srgb, var(--oak) 20%, var(--hairline));
+}
+
+/* ── Submit button ───────────────────────────────────────────────── */
+
+body.auth.classification-appareil .ca-submit {
+  margin-top: 18px;
+}
