@@ -293,6 +293,86 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 . '#sku-' . $skuId);
         }
 
+        // ── Action: clear_sku_choice ────────────────────────────────────────
+        // Expire the active Tier-1 choice for a (sku_id, slot_name) pair.
+        // The BOM is recompiled immediately after — the slot falls back to T2/T3.
+        if ($action === 'clear_sku_choice') {
+            $skuId    = post_int('sku_id')    ?? 0;
+            $slotName = post_str('slot_name') ?? '';
+
+            if ($skuId <= 0 || $slotName === '') {
+                throw new RuntimeException('sku_id et slot_name sont requis.');
+            }
+
+            $slotName = must_be_one_of('slot_name', $slotName, $validSlots);
+
+            // Validate SKU exists
+            $skuStmt = $pdo->prepare(
+                'SELECT id, sku_code, recipe_id FROM ref_skus WHERE id = ? LIMIT 1'
+            );
+            $skuStmt->execute([$skuId]);
+            $skuRow = $skuStmt->fetch(PDO::FETCH_ASSOC);
+            if (!$skuRow) {
+                throw new RuntimeException('SKU introuvable.');
+            }
+
+            // Find the active choice to expire (may be absent if already cleared)
+            $choiceStmt = $pdo->prepare(
+                'SELECT id, mi_id_fk, slot_name FROM ref_sku_packaging_choices
+                  WHERE sku_id = ? AND slot_name = ? AND is_checked = 1
+                    AND (effective_until IS NULL OR effective_until > CURDATE())
+                  LIMIT 1'
+            );
+            $choiceStmt->execute([$skuId, $slotName]);
+            $choiceRow = $choiceStmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$choiceRow) {
+                flash_set('ok', "Aucun choix actif trouvé pour «{$skuRow['sku_code']}» / slot «{$slotName}».");
+                $postSec3 = post_str('sec') ?? 'drill';
+                $backRec3 = post_int('back_recipe') ?? 0;
+                if ($postSec3 === 'browse') {
+                    redirect_to('/modules/bom-review.php?sec=browse#browse-sku-' . $skuId);
+                }
+                redirect_to('/modules/bom-review.php?sec=drill&recipe=' . max(0, $backRec3) . '#sku-' . $skuId);
+            }
+
+            $choiceId    = (int) $choiceRow['id'];
+            $beforeState = ['mi_id_fk' => $choiceRow['mi_id_fk'], 'slot_name' => $choiceRow['slot_name'],
+                            'effective_until' => null];
+            $today = (new DateTimeImmutable())->format('Y-m-d');
+
+            $pdo->prepare(
+                'UPDATE ref_sku_packaging_choices SET effective_until = ? WHERE id = ?'
+            )->execute([$today, $choiceId]);
+
+            log_revision(
+                $pdo, $me, 'ref_sku_packaging_choices', $choiceId,
+                $beforeState,
+                ['effective_until' => $today],
+                'normal',
+                "BOM Review: retrait choix SKU={$skuRow['sku_code']} slot={$slotName}"
+            );
+
+            $saveMsg = "Choix Tier-1 «{$slotName}» retiré pour «{$skuRow['sku_code']}».";
+            $recipeIdForClear = (int) ($skuRow['recipe_id'] ?? 0);
+            try {
+                if ($recipeIdForClear > 0) {
+                    $r = sdc_recompile_recipe_packaging($pdo, $recipeIdForClear);
+                } else {
+                    $r = compile_sku_bom_packaging($pdo, [$skuId], false, true);
+                }
+                sdc_flash_bom_result($saveMsg, $r);
+            } catch (Throwable $bomErr) {
+                flash_set('ok', $saveMsg . ' · BOM recompilation échouée (le retrait est conservé).');
+            }
+
+            $postSec3 = post_str('sec') ?? 'drill';
+            if ($postSec3 === 'browse') {
+                redirect_to('/modules/bom-review.php?sec=browse#browse-sku-' . $skuId);
+            }
+            redirect_to('/modules/bom-review.php?sec=drill&recipe=' . max(0, $recipeIdForClear) . '#sku-' . $skuId);
+        }
+
         // ── Action: set_mi_price ────────────────────────────────────────────
         // Set/update the price on a packaging MI.
         // NEVER auto-derived — operator data-entry only.
@@ -1330,19 +1410,20 @@ $csrfToken = csrf_token();
                     $miIdInt   = (int) ($bl['mi_id_int'] ?? 0);
 
                     // Determine Tier for packaging rows
+                    $t1SlotName = null; // slot_name of the active T1 choice (when $tierBadge==='t1')
                     if ($isBrewing) {
                         $tier     = 'brewing';
                         $tierBadge = 'brewing';
                         $tierLabel = 'Brassage (obs.)';
                     } else {
-                        // Check Tier-1 choices: slot_name is stored in ingredient_raw for packaging lines
-                        // We check drillChoices to know the tier
+                        // Check Tier-1 choices; capture the slot_name for the "retirer" button.
                         $slotKey = $bl['ingredient_raw'] ?? '';
                         if (isset($drillChoices[$dSkuId])) {
                             $foundInChoice = false;
                             foreach ($drillChoices[$dSkuId] as $cs => $cv) {
                                 if ($cv['mi_id_fk'] == $miIdInt) {
                                     $foundInChoice = true;
+                                    $t1SlotName = $cs;
                                     break;
                                 }
                             }
@@ -1456,6 +1537,22 @@ $csrfToken = csrf_token();
                                     </div>
                                 </form>
                             </div>
+                            <?php endif; ?>
+
+                            <?php if ($tierBadge === 't1' && $t1SlotName !== null): ?>
+                            <form method="post" action="/modules/bom-review.php"
+                                  class="br-clear-choice-form"
+                                  onsubmit="return confirm('Retirer le choix Tier-1 pour le slot «<?= htmlspecialchars($t1SlotName, ENT_QUOTES) ?>» ?\nLe BOM sera recompilé immédiatement.');">
+                                <input type="hidden" name="csrf"        value="<?= htmlspecialchars($csrfToken) ?>">
+                                <input type="hidden" name="action"      value="clear_sku_choice">
+                                <input type="hidden" name="sku_id"      value="<?= $dSkuId ?>">
+                                <input type="hidden" name="slot_name"   value="<?= htmlspecialchars($t1SlotName) ?>">
+                                <input type="hidden" name="sec"         value="drill">
+                                <input type="hidden" name="back_recipe" value="<?= $selectedRecipeId ?>">
+                                <button type="submit" class="br-btn br-btn--clear-choice">
+                                    retirer
+                                </button>
+                            </form>
                             <?php endif; ?>
 
                             <?php if (!$hasCost && $miIdInt > 0): ?>
@@ -1772,13 +1869,18 @@ $subtypesByClass = [
                 $isBrewing = $bl['source'] === 'Brewing';
                 $miIdInt   = (int) ($bl['mi_id_int'] ?? 0);
 
-                // Determine tier
+                // Determine tier; capture $t1SlotName for the "retirer" button.
+                $t1SlotName = null;
                 if ($isBrewing) {
                     $tierBadge = 'brewing'; $tierLabel = 'Brassage (obs.)';
                 } else {
                     $foundInChoice = false;
                     foreach ($bChoices as $cs => $cv) {
-                        if ((int) $cv['mi_id_fk'] === $miIdInt) { $foundInChoice = true; break; }
+                        if ((int) $cv['mi_id_fk'] === $miIdInt) {
+                            $foundInChoice = true;
+                            $t1SlotName = $cs;
+                            break;
+                        }
                     }
                     if ($foundInChoice) {
                         $tierBadge = 't1'; $tierLabel = 'Choix SKU (T1)';
@@ -1866,6 +1968,21 @@ $subtypesByClass = [
                                 </div>
                             </form>
                         </div>
+                        <?php endif; ?>
+
+                        <?php if ($tierBadge === 't1' && $t1SlotName !== null): ?>
+                        <form method="post" action="/modules/bom-review.php"
+                              class="br-clear-choice-form"
+                              onsubmit="return confirm('Retirer le choix Tier-1 pour le slot «<?= htmlspecialchars($t1SlotName, ENT_QUOTES) ?>» ?\nLe BOM sera recompilé immédiatement.');">
+                            <input type="hidden" name="csrf"      value="<?= htmlspecialchars($csrfToken) ?>">
+                            <input type="hidden" name="action"    value="clear_sku_choice">
+                            <input type="hidden" name="sku_id"    value="<?= $bSkuId ?>">
+                            <input type="hidden" name="slot_name" value="<?= htmlspecialchars($t1SlotName) ?>">
+                            <input type="hidden" name="sec"       value="browse">
+                            <button type="submit" class="br-btn br-btn--clear-choice">
+                                retirer
+                            </button>
+                        </form>
                         <?php endif; ?>
 
                         <?php if (!$hasCost && $miIdInt > 0): ?>

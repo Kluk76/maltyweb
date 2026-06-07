@@ -374,6 +374,30 @@ body.bom-review .main {
     background: var(--cold);
 }
 
+/* Retire (expire) a Tier-1 slot choice — muted amber, distinct from full danger */
+.br-btn--clear-choice {
+    background:    transparent;
+    color:         var(--oak);
+    border:        1px solid var(--oak);
+    font-size:     0.78rem;
+    padding:       0.2rem 0.55rem;
+    border-radius: 4px;
+    cursor:        pointer;
+    font-family:   'DM Sans', sans-serif;
+    transition:    background 0.15s, color 0.15s;
+}
+
+.br-btn--clear-choice:hover {
+    background: var(--oak);
+    color:      #fff;
+}
+
+.br-clear-choice-form {
+    display: inline;
+    margin:  0;
+    padding: 0;
+}
+
 /* ── MI price edit form ────────────────────────────────────────────────────── */
 .br-price-form {
     display:     inline-flex;
