@@ -393,7 +393,7 @@ if ($purpose === 'reset') {
 
 // 7. Fetch the fresh user row (post-write, not from memory) and auto-login
 $freshStmt = $pdo->prepare(
-    "SELECT id, username, email, display_name, role, is_active
+    "SELECT id, username, email, display_name, role, manager_scope, access_preset_id_fk, is_active
        FROM users WHERE id = ? LIMIT 1"
 );
 $freshStmt->execute([$userId]);
