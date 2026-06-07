@@ -11,7 +11,7 @@ maltytask_session_start();
 
 // Already logged in? Bounce to dashboard.
 if (current_user() !== null) {
-    header("Location: /", true, 302);
+    header("Location: /modules/mon-tableau.php", true, 302);
     exit;
 }
 
@@ -393,7 +393,7 @@ if ($purpose === 'reset') {
 
 // 7. Fetch the fresh user row (post-write, not from memory) and auto-login
 $freshStmt = $pdo->prepare(
-    "SELECT id, username, email, display_name, role, manager_scope, access_preset_id_fk, is_active
+    "SELECT id, username, email, display_name, role, manager_scope, access_preset_id_fk, is_active, tour_seen_at
        FROM users WHERE id = ? LIMIT 1"
 );
 $freshStmt->execute([$userId]);
@@ -417,6 +417,10 @@ $logLine = sprintf(
 
 auth_login($freshUser);
 
-// Open-redirect-safe: always go to root
-header("Location: /", true, 302);
+// First-time invitees (tour_seen_at NULL) get the onboarding tour; existing
+// users resetting their password go straight to their dashboard.
+$dest = ($freshUser['tour_seen_at'] === null)
+    ? "/modules/visite-guidee.php"
+    : "/modules/mon-tableau.php";
+header("Location: $dest", true, 302);
 exit;

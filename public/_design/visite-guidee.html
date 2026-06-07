@@ -1,0 +1,2245 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Visite guidée · MaltyTask</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,200;0,9..144,300;0,9..144,400;0,9..144,600;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   TOKENS — extracted verbatim from app.css :root
+   ============================================================ */
+:root {
+  /* Base surfaces / ink */
+  --bg:        #f1e8d4;
+  --bg-elev:   #ece0c6;
+  --bg-side:   #dcc9a4;
+  --ink:       #241b10;
+  --ink-soft:  #3a2a18;
+  --ink-mute:  #4a3820;
+  --ink-faint: #c8b48a;
+  --hairline:  #c8b48a;
+  --hairline-2:#a08060;
+  --oak:       #8b5e2a;
+  --oak-deep:  #5a3a12;
+
+  /* Functional accents */
+  --hop:       #567020;
+  --hop-soft:  #7a8f3a;
+  --hop-deep:  #3f4d14;
+  --ember:     #b34428;
+  --cold:      #2f5575;
+  --bbt:       #2f6d99;
+  --ok:        #3d6826;
+  --bad:       #b34428;
+
+  /* Steel set */
+  --steel:       #8a8f94;
+  --steel-light: #b8bcc0;
+  --steel-mid:   #5e6266;
+  --steel-deep:  #3a3d40;
+
+  /* Downstream tokens */
+  --tank-empty:  #cfc6b2;
+  --cat-malt:    #8a5210;
+  --cat-yeast:   #2f6d99;
+  --cat-mineral: #2d7a88;
+
+  /* Motion */
+  --ease-out:    cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+}
+
+/* ============================================================
+   RESET & BASE
+   ============================================================ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+*::selection { background: var(--hop); color: var(--bg); }
+
+html { font-size: 16px; }
+
+body {
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-feature-settings: "ss01";
+  background: var(--bg);
+  color: var(--ink);
+  min-height: 100dvh;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+  position: relative;
+}
+
+/* Paper grain overlay */
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='200' height='200' filter='url(%23n)' opacity='0.04'/></svg>");
+  opacity: 0.7;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Warm atmospheric wash */
+body::after {
+  content: '';
+  position: fixed; inset: 0;
+  background-image:
+    radial-gradient(900px 600px at 10% -10%, color-mix(in srgb, var(--oak) 10%, transparent), transparent 60%),
+    radial-gradient(700px 500px at 100% 110%, color-mix(in srgb, var(--hop) 6%, transparent), transparent 65%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ============================================================
+   SKIP LINK
+   ============================================================ */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  background: var(--hop);
+  color: var(--bg);
+  padding: 0.5em 1em;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.875rem;
+  z-index: 9999;
+  border-radius: 0 0 6px 0;
+  text-decoration: none;
+}
+.skip-link:focus {
+  left: 0;
+}
+
+/* ============================================================
+   PAGE LAYOUT
+   ============================================================ */
+.vg-wrap {
+  position: relative;
+  z-index: 1;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0 16px 48px;
+  /* Prevent any child (vignettes, nav-bar sketch) from pushing scrollWidth */
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+/* ============================================================
+   HEADER BAR
+   ============================================================ */
+.vg-header {
+  width: 100%;
+  max-width: 720px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 20px 0 16px;
+  border-bottom: 1px solid var(--hairline);
+  margin-bottom: 0;
+}
+
+.vg-mark {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 144;
+  font-size: 22px;
+  font-weight: 400;
+  color: var(--ink);
+  letter-spacing: -0.02em;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.vg-mark span { color: var(--hop); font-style: italic; }
+
+.vg-header-meta {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.vg-eyebrow {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.65rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+.vg-step-counter {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  color: var(--oak);
+  font-weight: 500;
+}
+
+.vg-skip-tour {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.8rem;
+  color: var(--ink-mute);
+  text-decoration: none;
+  padding: 6px 10px;
+  border-radius: 6px;
+  transition: color 0.15s, background 0.15s;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.vg-skip-tour:hover {
+  color: var(--ink-soft);
+  background: color-mix(in srgb, var(--ink-faint) 30%, transparent);
+  text-decoration: none;
+}
+
+.vg-skip-tour:focus-visible {
+  outline: 2px solid var(--hop);
+  outline-offset: 2px;
+}
+
+/* ============================================================
+   PROGRESS DOTS
+   ============================================================ */
+.vg-dots-wrap {
+  width: 100%;
+  max-width: 720px;
+  padding: 16px 0 20px;
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.vg-dots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+}
+
+.vg-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--hairline);
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.2s var(--ease-out), transform 0.2s var(--ease-out), width 0.2s var(--ease-out);
+  min-width: 7px;
+  touch-action: manipulation;
+}
+
+.vg-dot:hover {
+  background: var(--hairline-2);
+  transform: scale(1.3);
+}
+
+.vg-dot:focus-visible {
+  outline: 2px solid var(--hop);
+  outline-offset: 2px;
+}
+
+.vg-dot--active {
+  width: 20px;
+  border-radius: 4px;
+  background: var(--hop);
+}
+
+.vg-dot--done {
+  background: var(--hop-soft);
+}
+
+.vg-dot--section {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--hairline);
+}
+
+.vg-dot--section.vg-dot--active {
+  width: 20px;
+  background: var(--ember);
+  border-radius: 4px;
+}
+
+.vg-dot--section.vg-dot--done {
+  background: color-mix(in srgb, var(--ember) 50%, var(--hairline));
+}
+
+/* ============================================================
+   STEP STAGE
+   ============================================================
+   Grid-overlay approach: all steps share the same grid cell so
+   no positional clipping is needed.  overflow:clip (x only) on
+   .vg-wrap already prevents horizontal scroll from off-screen
+   transforms.  The stage itself has NO overflow:hidden so the
+   active step's content is never clipped vertically.
+   ============================================================ */
+.vg-stage {
+  width: 100%;
+  max-width: 720px;
+  /* Grid overlay: every step occupies row 1 / col 1 */
+  display: grid;
+  grid-template-rows: auto;
+  grid-template-columns: 1fr;
+}
+
+/* Every step lives in cell [1/1] and sizes to its own content */
+.vg-step {
+  grid-row: 1;
+  grid-column: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(32px);
+  transition: opacity 0.28s var(--ease-out), transform 0.28s var(--ease-out);
+  /* Invisible steps must not contribute to grid row height */
+  visibility: hidden;
+}
+
+.vg-step--active {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
+  visibility: visible;
+}
+
+.vg-step--exit {
+  opacity: 0;
+  transform: translateX(-32px);
+  transition: opacity 0.2s var(--ease-out), transform 0.2s var(--ease-out);
+  /* Keep exiting step visible briefly so crossfade looks right */
+  visibility: visible;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vg-step, .vg-step--active, .vg-step--exit {
+    transition: opacity 0.15s linear;
+    transform: none !important;
+  }
+}
+
+/* ============================================================
+   STEP CARD
+   ============================================================ */
+.vg-card {
+  background: var(--bg-elev);
+  border: 1.5px solid var(--hairline);
+  border-radius: 14px;
+  padding: 36px 40px;
+  box-shadow: 0 4px 24px rgba(30,18,5,0.10), 0 1px 4px rgba(30,18,5,0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Subtle corner watermark on all cards */
+.vg-card::before {
+  content: '';
+  position: absolute;
+  bottom: -20px;
+  right: -20px;
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--oak) 5%, transparent);
+  pointer-events: none;
+}
+
+/* Section-opener card treatment — step 10 "Saisies" */
+.vg-card--section {
+  border-color: color-mix(in srgb, var(--ember) 40%, var(--hairline));
+  background: color-mix(in srgb, var(--ember) 4%, var(--bg-elev));
+}
+
+.vg-card--section::before {
+  background: color-mix(in srgb, var(--ember) 8%, transparent);
+}
+
+.vg-card-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 20px;
+}
+
+.vg-card-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 12px;
+  background: var(--bg-side);
+  border: 1.5px solid var(--hairline);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: inset 0 1px 3px rgba(30,18,5,0.08);
+}
+
+.vg-card-icon svg {
+  width: 24px;
+  height: 24px;
+  stroke: var(--ink-mute);
+  fill: none;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.vg-card--section .vg-card-icon svg {
+  stroke: var(--ember);
+}
+
+.vg-card--section .vg-card-icon {
+  background: color-mix(in srgb, var(--ember) 12%, var(--bg-side));
+  border-color: color-mix(in srgb, var(--ember) 30%, var(--hairline));
+}
+
+.vg-card-title {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 96;
+  font-size: clamp(1.45rem, 4vw, 1.9rem);
+  font-weight: 300;
+  color: var(--ink);
+  line-height: 1.15;
+  text-wrap: balance;
+}
+
+.vg-card-title em {
+  font-style: italic;
+  color: var(--oak);
+}
+
+.vg-card-body {
+  font-size: 0.975rem;
+  color: var(--ink-soft);
+  line-height: 1.65;
+  max-width: 58ch;
+  text-wrap: pretty;
+}
+
+.vg-card-body strong {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.vg-card-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--oak-deep);
+  text-decoration: none;
+  padding: 6px 10px 6px 0;
+  transition: color 0.15s;
+  border: none;
+  background: none;
+}
+
+.vg-card-link:hover { color: var(--oak); }
+.vg-card-link:focus-visible { outline: 2px solid var(--hop); outline-offset: 2px; border-radius: 3px; }
+
+/* ============================================================
+   MINI-VIGNETTES (CSS/SVG sketches)
+   ============================================================ */
+.vg-vignette {
+  width: 100%;
+  height: 160px;
+  border-radius: 10px;
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  overflow: hidden;
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ── Welcome vignette: app sketch (topbar + tiles) ── */
+.vign-welcome {
+  background: linear-gradient(135deg, var(--bg) 0%, color-mix(in srgb, var(--bg-side) 40%, var(--bg)) 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  padding: 0;
+}
+
+.vign-welcome .vign-brand {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 144;
+  font-size: 5rem;
+  font-weight: 300;
+  color: var(--ink-faint);
+  letter-spacing: -0.04em;
+  user-select: none;
+  line-height: 1;
+}
+
+.vign-welcome .vign-brand span { color: color-mix(in srgb, var(--hop) 60%, var(--ink-faint)); font-style: italic; }
+
+/* App-sketch inner layout */
+.vign-app-sketch {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+}
+
+.vign-app-bar {
+  height: 30px;
+  background: color-mix(in srgb, var(--bg-side) 90%, var(--bg));
+  border-bottom: 1px solid var(--hairline);
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  gap: 7px;
+  flex-shrink: 0;
+}
+
+.vign-app-bar-logo {
+  font-family: "Fraunces", serif;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--ink-mute);
+  letter-spacing: -0.02em;
+  flex-shrink: 0;
+}
+
+.vign-app-bar-logo span { color: var(--hop); font-style: italic; }
+
+.vign-app-bar-sep { width: 1px; height: 14px; background: var(--hairline); flex-shrink: 0; }
+
+.vign-app-bar-nav {
+  display: flex;
+  gap: 2px;
+  flex: 1;
+}
+
+.vign-app-bar-item {
+  height: 18px;
+  padding: 0 8px;
+  border-radius: 4px;
+  font-family: "DM Sans", sans-serif;
+  font-size: 8px;
+  display: flex;
+  align-items: center;
+  color: var(--ink-mute);
+}
+
+.vign-app-bar-item--active {
+  background: color-mix(in srgb, var(--hop) 14%, transparent);
+  color: var(--ink-soft);
+}
+
+.vign-app-bar-user {
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  background: var(--bg-side);
+  border: 1px solid var(--hairline);
+  flex-shrink: 0;
+}
+
+.vign-app-body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 7px;
+  padding: 10px;
+  background: var(--bg);
+}
+
+.vign-app-tile {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  padding: 7px 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.vign-app-tile--wide {
+  grid-column: span 2;
+}
+
+.vign-app-tile__label {
+  height: 4px;
+  width: 55%;
+  border-radius: 2px;
+  background: var(--hairline);
+}
+
+.vign-app-tile__val {
+  height: 14px;
+  width: 65%;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--ink-mute) 35%, var(--hairline));
+}
+
+.vign-app-tile__val--hop { background: color-mix(in srgb, var(--hop) 45%, var(--hairline)); }
+.vign-app-tile__val--oak { background: color-mix(in srgb, var(--oak) 40%, var(--hairline)); }
+
+.vign-app-tile__spark {
+  height: 18px;
+  width: 100%;
+  border-radius: 2px;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--hop) 18%, transparent) 30%,
+    color-mix(in srgb, var(--hop) 28%, transparent) 60%,
+    color-mix(in srgb, var(--hop) 22%, transparent) 100%
+  );
+  position: relative;
+}
+
+.vign-app-tile__spark::after {
+  content: '';
+  position: absolute;
+  bottom: 2px;
+  left: 0; right: 0;
+  height: 1.5px;
+  background: var(--hop);
+  clip-path: polygon(0% 80%, 15% 65%, 30% 75%, 48% 40%, 65% 55%, 80% 25%, 92% 30%, 100% 20%);
+}
+
+/* ── Topbar vignette ── */
+.vign-nav {
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  justify-content: flex-start;
+  align-items: stretch;
+  padding: 0;
+}
+
+.vign-topbar {
+  height: 36px;
+  background: color-mix(in srgb, var(--bg-side) 80%, var(--bg));
+  border-bottom: 1px solid var(--hairline);
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  gap: 8px;
+}
+
+.vign-topbar-mark {
+  font-family: "Fraunces", serif;
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--ink-mute);
+  letter-spacing: -0.02em;
+  margin-right: 8px;
+  flex-shrink: 0;
+}
+
+.vign-nav-pill {
+  height: 22px;
+  padding: 0 10px;
+  border-radius: 4px;
+  font-family: "DM Sans", sans-serif;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--ink-mute);
+  background: transparent;
+  display: flex;
+  align-items: center;
+}
+
+.vign-nav-pill--active {
+  color: var(--ink-soft);
+  background: color-mix(in srgb, var(--hop) 12%, transparent);
+}
+
+.vign-topbar-space { flex: 1; }
+
+.vign-user-chip {
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  background: var(--bg-side);
+  border: 1px solid var(--hairline);
+  font-family: "Fraunces", serif;
+  font-size: 9px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--ink-mute);
+  flex-shrink: 0;
+}
+
+.vign-topbar-separator { width: 1px; height: 18px; background: var(--hairline); flex-shrink: 0; }
+
+.vign-content-placeholder {
+  flex: 1;
+  background: repeating-linear-gradient(
+    0deg,
+    var(--bg) 0px, var(--bg) 20px,
+    color-mix(in srgb, var(--hairline) 40%, var(--bg)) 20px, color-mix(in srgb, var(--hairline) 40%, var(--bg)) 21px
+  );
+  display: flex;
+  padding: 10px 12px;
+  gap: 8px;
+}
+
+.vign-placeholder-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.vign-placeholder-line {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--hairline);
+}
+
+.vign-placeholder-line--short { width: 55%; }
+.vign-placeholder-line--med { width: 75%; }
+.vign-placeholder-line--full { width: 100%; }
+.vign-placeholder-line--accent { background: color-mix(in srgb, var(--hop) 50%, var(--hairline)); }
+
+/* ── KPI dashboard vignette ── */
+.vign-dashboard {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  padding: 12px;
+  background: var(--bg);
+  align-items: start;
+}
+
+.vign-kpi {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.vign-kpi__label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 7px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+.vign-kpi__val {
+  font-family: "Fraunces", serif;
+  font-size: 1.2rem;
+  font-weight: 300;
+  color: var(--ink);
+  line-height: 1;
+}
+
+.vign-kpi__val--hop { color: var(--hop); }
+.vign-kpi__val--oak { color: var(--oak); }
+
+.vign-kpi__sub {
+  font-size: 7px;
+  color: var(--ink-mute);
+  font-family: "DM Sans", sans-serif;
+}
+
+/* Sparkline inside big KPI */
+.vign-sparkline {
+  grid-column: span 3;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.vign-spark-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 7px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+.vign-spark-svg {
+  height: 32px;
+  width: 100%;
+}
+
+/* ── Kanban board vignette ── */
+.vign-board {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  padding: 10px;
+  background: var(--bg);
+  align-items: start;
+}
+
+.vign-zone {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.vign-zone-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 6.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  padding-bottom: 3px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.vign-lot-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 5px;
+  padding: 5px 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.vign-lot-name {
+  font-family: "Fraunces", serif;
+  font-size: 8px;
+  font-weight: 400;
+  font-style: italic;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vign-lot-sub {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 6px;
+  color: var(--ink-mute);
+}
+
+.vign-tank-row {
+  display: flex;
+  gap: 3px;
+  align-items: flex-end;
+}
+
+.vign-tank {
+  flex: 1;
+  border-radius: 2px 2px 3px 3px;
+  border: 1px solid var(--hairline);
+  background: var(--tank-empty);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  height: 28px;
+}
+
+.vign-tank-fill {
+  background: linear-gradient(to top, var(--cold), var(--bbt));
+  border-radius: 0 0 2px 2px;
+}
+
+/* ── Alert / Guerre vignette ── */
+.vign-guerre {
+  background: var(--bg);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  justify-content: center;
+}
+
+.vign-alert-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.vign-alert-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.vign-alert-dot--red { background: var(--ember); }
+.vign-alert-dot--warn { background: var(--cat-malt); }
+
+.vign-alert-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.vign-alert-line {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--hairline);
+}
+
+.vign-alert-line--short { width: 60%; }
+.vign-alert-line--med { width: 80%; }
+
+/* ── Zeppelin / reference hub vignette ── */
+.vign-zeppelin {
+  background: var(--bg);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 12px;
+  align-items: start;
+}
+
+.vign-ref-block {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.vign-ref-title {
+  font-family: "Fraunces", serif;
+  font-size: 9px;
+  font-weight: 400;
+  color: var(--ink);
+}
+
+.vign-ref-items {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.vign-ref-item {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--hairline);
+}
+
+.vign-ref-item--short { width: 65%; }
+.vign-ref-item--med { width: 80%; }
+.vign-ref-item--full { width: 100%; }
+.vign-ref-item--hop { background: color-mix(in srgb, var(--hop) 50%, var(--hairline)); }
+
+/* ── Form vignette ── */
+.vign-form {
+  background: var(--bg);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vign-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.vign-field-label {
+  height: 5px;
+  width: 45%;
+  border-radius: 3px;
+  background: var(--hairline);
+}
+
+.vign-field-input {
+  height: 18px;
+  border-radius: 5px;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  display: flex;
+  align-items: center;
+  padding: 0 6px;
+  gap: 4px;
+}
+
+.vign-field-input-val {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--ink-faint);
+}
+
+.vign-field-input-val--short { width: 55%; }
+
+.vign-field-input--accent {
+  border-color: color-mix(in srgb, var(--hop) 60%, var(--hairline));
+  background: color-mix(in srgb, var(--hop) 5%, var(--bg-elev));
+}
+
+.vign-submit-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.vign-btn {
+  height: 26px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  font-family: "DM Sans", sans-serif;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.vign-btn--primary {
+  background: var(--ink);
+  color: var(--bg);
+}
+
+.vign-btn--ghost {
+  background: transparent;
+  border: 1px solid var(--hairline);
+  color: var(--ink-mute);
+}
+
+/* ── Table vignette ── */
+.vign-table-wrap {
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.vign-table-header {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 1fr;
+  padding: 4px 8px;
+  gap: 8px;
+}
+
+.vign-th {
+  height: 6px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--hairline) 70%, var(--bg));
+}
+
+.vign-table-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 1fr;
+  padding: 6px 8px;
+  gap: 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--hairline) 50%, var(--bg));
+  align-items: center;
+}
+
+.vign-table-row:last-child { border-bottom: none; }
+
+.vign-td {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--hairline);
+}
+
+.vign-td--hop { background: color-mix(in srgb, var(--hop) 50%, var(--hairline)); }
+.vign-td--ember { background: color-mix(in srgb, var(--ember) 40%, var(--hairline)); }
+.vign-td--full { width: 100%; }
+.vign-td--75 { width: 75%; }
+.vign-td--50 { width: 50%; }
+.vign-td--bold { height: 8px; background: var(--ink-mute); width: 90%; }
+
+/* ── Inventory / RM stocktake vignette ── */
+.vign-stocktake {
+  background: var(--bg);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vign-search-bar {
+  height: 28px;
+  border-radius: 7px;
+  background: var(--bg-elev);
+  border: 1.5px solid color-mix(in srgb, var(--hop) 50%, var(--hairline));
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  gap: 6px;
+}
+
+.vign-search-icon {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid var(--ink-mute);
+  flex-shrink: 0;
+}
+
+.vign-search-val {
+  height: 6px;
+  width: 60%;
+  border-radius: 3px;
+  background: var(--ink-faint);
+}
+
+.vign-ledger-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.vign-ledger-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+  flex-shrink: 0;
+}
+
+.vign-ledger-name {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--ink-mute);
+}
+
+.vign-ledger-qty {
+  margin-left: auto;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 8px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+/* ============================================================
+   FOOTER NAV
+   ============================================================ */
+.vg-footer {
+  width: 100%;
+  max-width: 720px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 24px;
+  gap: 12px;
+}
+
+.vg-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 0 28px;
+  border-radius: 10px;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.9rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  border: 1.5px solid transparent;
+  transition: background 0.15s var(--ease-out), border-color 0.15s var(--ease-out), transform 0.12s var(--ease-out), box-shadow 0.15s var(--ease-out);
+  touch-action: manipulation;
+  text-decoration: none;
+  user-select: none;
+  white-space: nowrap;
+  position: relative;
+}
+
+.vg-btn:active {
+  transform: scale(0.97);
+}
+
+.vg-btn:focus-visible {
+  outline: 2px solid var(--hop);
+  outline-offset: 2px;
+}
+
+.vg-btn--prev {
+  background: var(--bg-elev);
+  border-color: var(--hairline);
+  color: var(--ink-soft);
+}
+
+.vg-btn--prev:hover {
+  border-color: var(--hairline-2);
+  background: color-mix(in srgb, var(--hairline) 40%, var(--bg-elev));
+  color: var(--ink);
+}
+
+.vg-btn--next {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--bg);
+  box-shadow: 0 2px 8px rgba(30,18,5,0.18);
+}
+
+.vg-btn--next:hover {
+  background: var(--ink-soft);
+  border-color: var(--ink-soft);
+  box-shadow: 0 4px 16px rgba(30,18,5,0.22);
+}
+
+.vg-btn--done {
+  background: var(--hop);
+  border-color: var(--hop-deep);
+  color: var(--bg);
+  box-shadow: 0 2px 8px rgba(56,70,20,0.22);
+}
+
+.vg-btn--done:hover {
+  background: var(--hop-deep);
+  border-color: var(--hop-deep);
+  box-shadow: 0 4px 16px rgba(56,70,20,0.28);
+}
+
+/* ── Spacer for single-button last step ── */
+.vg-btn--hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+@media (max-width: 600px) {
+  .vg-card { padding: 24px 20px; }
+
+  .vg-card-header { flex-direction: column; gap: 12px; }
+
+  .vg-card-title { font-size: 1.35rem; }
+
+  .vg-btn { padding: 0 18px; font-size: 0.85rem; }
+
+  .vg-mark { font-size: 18px; }
+
+  .vg-skip-tour { display: none; }
+
+  .vign-board { grid-template-columns: repeat(2, 1fr); }
+  .vign-dashboard { grid-template-columns: repeat(2, 1fr); }
+  .vign-sparkline { grid-column: span 2; }
+  .vign-zeppelin { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 400px) {
+  .vg-card { padding: 20px 16px; }
+  .vg-btn { min-height: 44px; padding: 0 14px; font-size: 0.8rem; }
+}
+
+/* Hover gated to pointer:fine */
+@media (hover: hover) and (pointer: fine) {
+  .vg-dot:hover { transform: scale(1.35); }
+  .vg-btn--prev:hover { background: color-mix(in srgb, var(--hairline) 40%, var(--bg-elev)); }
+}
+</style>
+</head>
+<body>
+<a href="#main-content" class="skip-link">Aller au contenu</a>
+
+<div class="vg-wrap">
+
+  <!-- HEADER -->
+  <header class="vg-header" role="banner">
+    <div class="vg-mark" aria-hidden="true">M<span>T</span></div>
+    <div class="vg-header-meta">
+      <div class="vg-eyebrow" aria-hidden="true">VISITE GUIDÉE</div>
+      <div class="vg-step-counter" id="step-counter" aria-live="polite">étape 1 / 17</div>
+    </div>
+    <a href="#" class="vg-skip-tour" aria-label="Passer la visite guidée">Passer la visite</a>
+  </header>
+
+  <!-- PROGRESS DOTS -->
+  <nav class="vg-dots-wrap" aria-label="Navigation par étapes">
+    <div class="vg-dots" id="dots-container" role="tablist" aria-label="Étapes de la visite">
+      <!-- dots injected by JS -->
+    </div>
+  </nav>
+
+  <!-- STEP STAGE -->
+  <main id="main-content" class="vg-stage" aria-live="polite" aria-atomic="true">
+    <!-- STEP 1 — Bienvenue -->
+    <article class="vg-step" data-step="0" aria-label="Bienvenue">
+      <div class="vg-card">
+        <div class="vg-vignette vign-welcome" aria-hidden="true">
+          <div class="vign-app-sketch">
+            <!-- Simulated app topbar -->
+            <div class="vign-app-bar">
+              <div class="vign-app-bar-logo">M<span>T</span></div>
+              <div class="vign-app-bar-sep"></div>
+              <div class="vign-app-bar-nav">
+                <div class="vign-app-bar-item vign-app-bar-item--active">Mon tableau</div>
+                <div class="vign-app-bar-item">Lots en cours</div>
+                <div class="vign-app-bar-item">Saisies</div>
+                <div class="vign-app-bar-item">Le Zeppelin</div>
+              </div>
+              <div class="vign-app-bar-user"></div>
+            </div>
+            <!-- Simulated dashboard tiles -->
+            <div class="vign-app-body">
+              <div class="vign-app-tile">
+                <div class="vign-app-tile__label"></div>
+                <div class="vign-app-tile__val vign-app-tile__val--hop"></div>
+              </div>
+              <div class="vign-app-tile">
+                <div class="vign-app-tile__label"></div>
+                <div class="vign-app-tile__val"></div>
+              </div>
+              <div class="vign-app-tile">
+                <div class="vign-app-tile__label"></div>
+                <div class="vign-app-tile__val vign-app-tile__val--oak"></div>
+              </div>
+              <div class="vign-app-tile vign-app-tile--wide">
+                <div class="vign-app-tile__label"></div>
+                <div class="vign-app-tile__spark"></div>
+              </div>
+              <div class="vign-app-tile">
+                <div class="vign-app-tile__label"></div>
+                <div class="vign-app-tile__val"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="vg-card-header">
+          <div class="vg-card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 4h12l-1 14H6L5 4z"/><path d="M8 4V2.5M12 4V2.5M16 4V2.5"/><path d="M17 9h3a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-3"/></svg></div>
+          <div>
+            <h1 class="vg-card-title">Bienvenue Alex&nbsp;!</h1>
+          </div>
+        </div>
+        <p class="vg-card-body">
+          MaltyTask est l'outil de suivi de production de <strong>La Nébuleuse</strong>.
+          Cette visite vous montre les pages auxquelles vous avez accès —
+          comptez <strong>3 minutes</strong>. Vous pourrez la relancer à tout moment
+          depuis le menu utilisateur (en haut à droite).
+        </p>
+      </div>
+    </article>
+
+    <!-- STEP 2 — Navigation -->
+    <article class="vg-step" data-step="1" aria-label="La navigation">
+      <div class="vg-card">
+        <div class="vg-vignette vign-nav" aria-hidden="true">
+          <div class="vign-topbar">
+            <div class="vign-topbar-mark">MT</div>
+            <div class="vign-topbar-separator"></div>
+            <div class="vign-nav-pill vign-nav-pill--active">Mon tableau</div>
+            <div class="vign-nav-pill">Lots en cours</div>
+            <div class="vign-nav-pill">Saisies</div>
+            <div class="vign-nav-pill">Le Zeppelin</div>
+            <div class="vign-topbar-space"></div>
+            <div class="vign-user-chip">A</div>
+          </div>
+          <div class="vign-content-placeholder">
+            <div class="vign-placeholder-col">
+              <div class="vign-placeholder-line vign-placeholder-line--accent vign-placeholder-line--med"></div>
+              <div class="vign-placeholder-line vign-placeholder-line--full"></div>
+              <div class="vign-placeholder-line vign-placeholder-line--short"></div>
+            </div>
+            <div class="vign-placeholder-col">
+              <div class="vign-placeholder-line vign-placeholder-line--full"></div>
+              <div class="vign-placeholder-line vign-placeholder-line--med"></div>
+            </div>
+          </div>
+        </div>
+        <div class="vg-card-header">
+          <div class="vg-card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg></div>
+          <div>
+            <h2 class="vg-card-title">La navigation</h2>
+          </div>
+        </div>
+        <p class="vg-card-body">
+          La barre du haut vous emmène partout. Sur tablette ou téléphone, utilisez
+          le menu <strong>☰</strong>. Sous votre nom, en haut à droite :
+          <strong>Mes appareils</strong> (déclarez un ordinateur partagé),
+          <strong>Changer d'utilisateur</strong> et <strong>Déconnexion</strong>.
+        </p>
+      </div>
+    </article>
+
+    <!-- STEP 3 — Mon tableau -->
+    <article class="vg-step" data-step="2" aria-label="Mon tableau">
+      <div class="vg-card">
+        <div class="vg-vignette vign-dashboard" aria-hidden="true">
+          <div class="vign-kpi">
+            <div class="vign-kpi__label">Brassin</div>
+            <div class="vign-kpi__val vign-kpi__val--hop">6</div>
+            <div class="vign-kpi__sub">en cours</div>
+          </div>
+          <div class="vign-kpi">
+            <div class="vign-kpi__label">Embuscade</div>
+            <div class="vign-kpi__val">85 HL</div>
+            <div class="vign-kpi__sub">en garde</div>
+          </div>
+          <div class="vign-kpi">
+            <div class="vign-kpi__label">Stock orge</div>
+            <div class="vign-kpi__val vign-kpi__val--oak">94 %</div>
+            <div class="vign-kpi__sub">vs cible</div>
+          </div>
+          <div class="vign-sparkline">
+            <div class="vign-spark-label">HL produits / semaine</div>
+            <svg class="vign-spark-svg" viewBox="0 0 200 32" preserveAspectRatio="none" aria-hidden="true">
+              <polyline points="0,28 30,22 55,24 80,16 110,20 135,12 160,10 185,8 200,14"
+                fill="none" stroke="#567020" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+              <polyline points="0,28 30,22 55,24 80,16 110,20 135,12 160,10 185,8 200,14"
+                fill="none" stroke="#567020" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+              <path d="M0,28 30,22 55,24 80,16 110,20 135,12 160,10 185,8 200,14 V32 H0 Z"
+                fill="rgba(86,112,32,0.12)"/>
+            </svg>
+          </div>
+        </div>
+        <div class="vg-card-header">
+          <div class="vg-card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="14" width="4" height="6" rx="1"/><rect x="10" y="10" width="4" height="10" rx="1"/><rect x="16" y="6" width="4" height="14" rx="1"/><path d="M4 21h16"/></svg></div>
+          <div>
+            <h2 class="vg-card-title">Mon tableau</h2>
+          </div>
+        </div>
+        <p class="vg-card-body">
+          Votre tableau de bord personnel — et votre <strong>page d'accueil</strong>.
+          Choisissez vos indicateurs parmi le catalogue (production, stocks…) et
+          suivez-les en un coup d'œil. Vous pouvez aussi recevoir un récapitulatif
+          par e-mail, à la cadence de votre choix.
+        </p>
+        <a href="#" class="vg-card-link" aria-label="Ouvrir Mon tableau (page simulée)">Ouvrir cette page ↗</a>
+      </div>
+    </article>
+
+    <!-- STEP 4 — Lots en cours -->
+    <article class="vg-step" data-step="3" aria-label="Lots en cours">
+      <div class="vg-card">
+        <div class="vg-vignette vign-board" aria-hidden="true">
+          <div class="vign-zone">
+            <div class="vign-zone-label">Brassage</div>
+            <div class="vign-lot-card">
+              <div class="vign-lot-name">Zeppelin</div>
+              <div class="vign-lot-sub">Lot 48 · J+1</div>
+            </div>
+          </div>
+          <div class="vign-zone">
+            <div class="vign-zone-label">Fermentation</div>
+            <div class="vign-lot-card">
+              <div class="vign-lot-name">Embuscade</div>
+              <div class="vign-lot-sub">Lot 45 · J+7</div>
+            </div>
+            <div class="vign-lot-card">
+              <div class="vign-lot-name">Stirling</div>
+              <div class="vign-lot-sub">Lot 31 · J+5</div>
+            </div>
+            <div class="vign-tank-row">
+              <div class="vign-tank"><div class="vign-tank-fill" style="height:70%"></div></div>
+              <div class="vign-tank"><div class="vign-tank-fill" style="height:85%"></div></div>
+              <div class="vign-tank"><div class="vign-tank-fill" style="height:45%"></div></div>
+            </div>
+          </div>
+          <div class="vign-zone">
+            <div class="vign-zone-label">Garde</div>
+            <div class="vign-lot-card">
+              <div class="vign-lot-name">Moonshine</div>
+              <div class="vign-lot-sub">Lot 29 · J+22</div>
+            </div>
+          </div>
+          <div class="vign-zone">
+            <div class="vign-zone-label">Conditionnement</div>
+            <div class="vign-lot-card">
+              <div class="vign-lot-name">Stirling</div>
+              <div class="vign-lot-sub">Lot 28 · Run</div>
+            </div>
+          </div>
+        </div>
+        <div class="vg-card-header">
+          <div class="vg-card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="5" rx="1"/><rect x="13" y="3" width="8" height="5" rx="1"/><rect x="3" y="10" width="8" height="11" rx="1"/><rect x="13" y="10" width="8" height="5" rx="1"/></svg></div>
+          <div>
+            <h2 class="vg-card-title">Lots en cours</h2>
+          </div>
+        </div>
+        <p class="vg-card-body">
+          La vue d'ensemble de la production : chaque lot en cours apparaît sur le plateau,
+          zone par zone — <strong>brassage, fermentation, garde, conditionnement</strong> —
+          avec ses cuves. Cliquez une carte pour ouvrir le détail du lot.
+        </p>
+        <a href="#" class="vg-card-link" aria-label="Ouvrir Lots en cours (page simulée)">Ouvrir cette page ↗</a>
+      </div>
+    </article>
+
+    <!-- STEP 5 — Salle de Guerre -->
+    <article class="vg-step" data-step="4" aria-label="Salle de Guerre">
+      <div class="vg-card">
+        <div class="vg-vignette vign-guerre" aria-hidden="true">
+          <div class="vign-alert-row" style="border-color:color-mix(in srgb,#b34428 40%,#c8b48a)">
+            <div class="vign-alert-dot vign-alert-dot--red"></div>
+            <div class="vign-alert-text">
+              <div class="vign-alert-line vign-alert-line--med"></div>
+              <div class="vign-alert-line vign-alert-line--short"></div>
+            </div>
+          </div>
+          <div class="vign-alert-row">
+            <div class="vign-alert-dot vign-alert-dot--warn"></div>
+            <div class="vign-alert-text">
+              <div class="vign-alert-line vign-alert-line--med"></div>
+              <div class="vign-alert-line vign-alert-line--short"></div>
+            </div>
+          </div>
+          <div style="padding:4px 8px; font-family:'JetBrains Mono',monospace; font-size:8px; color:var(--ink-mute); letter-spacing:0.06em; text-transform:uppercase;">
+            2 alertes actives
+          </div>
+        </div>
+        <div class="vg-card-header">
+          <div class="vg-card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 3v18M5 3h12l-3 5 3 5H5"/></svg></div>
+          <div>
+            <h2 class="vg-card-title">Salle de Guerre</h2>
+          </div>
+        </div>
+        <p class="vg-card-body">
+          La vue d'alerte : les <strong>anomalies critiques</strong> qui demandent une action.
+          Si la salle est vide, tout va bien.
+        </p>
+        <a href="#" class="vg-card-link" aria-label="Ouvrir Salle de Guerre (page simulée)">Ouvrir cette page ↗</a>
+      </div>
+    </article>
+
+    <!-- STEP 6 — Le Zeppelin -->
+    <article class="vg-step" data-step="5" aria-label="Le Zeppelin">
+      <div class="vg-card">
+        <div class="vg-vignette vign-zeppelin" aria-hidden="true">
+          <div class="vign-ref-block">
+            <div class="vign-ref-title">Salle des Machines</div>
+            <div class="vign-ref-items">
+              <div class="vign-ref-item vign-ref-item--full"></div>
+              <div class="vign-ref-item vign-ref-item--med vign-ref-item--hop"></div>
+              <div class="vign-ref-item vign-ref-item--short"></div>
+              <div class="vign-ref-item vign-ref-item--med"></div>
+            </div>
+          </div>
+          <div class="vign-ref-block">
+            <div class="vign-ref-title">Salle de contrôle</div>
+            <div class="vign-ref-items">
+              <div class="vign-ref-item vign-ref-item--med"></div>
+              <div class="vign-ref-item vign-ref-item--full"></div>
+              <div class="vign-ref-item vign-ref-item--short vign-ref-item--hop"></div>
+              <div class="vign-ref-item vign-ref-item--med"></div>
+            </div>
+          </div>
+          <div class="vign-ref-block" style="grid-column:span 2;">
+            <div class="vign-ref-title">Recettes</div>
+            <div class="vign-ref-items" style="display:flex;flex-direction:row;gap:6px;flex-wrap:wrap">
+              <div class="vign-ref-item" style="width:80px;height:7px;border-radius:4px;background:color-mix(in srgb,var(--cat-malt) 40%,var(--hairline))"></div>
+              <div class="vign-ref-item" style="width:64px;height:7px;border-radius:4px;background:color-mix(in srgb,var(--cold) 40%,var(--hairline))"></div>
+              <div class="vign-ref-item" style="width:72px;height:7px;border-radius:4px;background:color-mix(in srgb,var(--oak) 40%,var(--hairline))"></div>
+              <div class="vign-ref-item" style="width:56px;height:7px;border-radius:4px;background:color-mix(in srgb,var(--hop) 40%,var(--hairline))"></div>
+            </div>
+          </div>
+        </div>
+        <div class="vg-card-header">
+          <div class="vg-card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2l2.5 7.5H22l-6 4.5 2.5 7.5L12 17l-6.5 4.5 2.5-7.5L2 9.5h7.5z"/></svg></div>
+          <div>
+            <h2 class="vg-card-title">Le Zeppelin</h2>
+          </div>
+        </div>
+        <p class="vg-card-body">
+          Le hub des données de référence : <strong>Salle des Machines</strong> (cuves et
+          équipements), <strong>Salle de contrôle</strong> (QA/QC). C'est ici que vivent
+          les recettes et les capacités de la brasserie.
+        </p>
+        <a href="#" class="vg-card-link" aria-label="Ouvrir Le Zeppelin (page simulée)">Ouvrir cette page ↗</a>
+      </div>
+    </article>
+
+    <!-- STEP 7 — Wort Production -->
+    <article class="vg-step" data-step="6" aria-label="Wort Production">
+      <div class="vg-card">
+        <div class="vg-vignette vign-table-wrap" aria-hidden="true">
+          <div class="vign-table-header">
+            <div class="vign-th" style="width:80%"></div>
+            <div class="vign-th" style="width:90%"></div>
+            <div class="vign-th" style="width:70%"></div>
+            <div class="vign-th" style="width:60%"></div>
+          </div>
+          <div class="vign-table-row">
+            <div class="vign-td vign-td--bold"></div>
+            <div class="vign-td vign-td--full vign-td--hop"></div>
+            <div class="vign-td vign-td--75"></div>
+            <div class="vign-td vign-td--50"></div>
+          </div>
+          <div class="vign-table-row">
+            <div class="vign-td" style="width:85%"></div>
+            <div class="vign-td vign-td--full"></div>
+            <div class="vign-td vign-td--75 vign-td--hop"></div>
+            <div class="vign-td vign-td--50"></div>
+          </div>
+          <div class="vign-table-row">
+            <div class="vign-td" style="width:70%"></div>
+            <div class="vign-td vign-td--full"></div>
+            <div class="vign-td vign-td--75"></div>
+            <div class="vign-td vign-td--50 vign-td--ember"></div>
+          </div>
+          <div class="vign-table-row">
+            <div class="vign-td vign-td--bold"></div>
+            <div class="vign-td vign-td--full vign-td--hop"></div>
+            <div class="vign-td vign-td--75"></div>
+            <div class="vign-td vign-td--50"></div>
+          </div>
+        </div>
+        <div class="vg-card-header">
+          <div class="vg-card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 22V10"/><path d="M12 10C12 7 10 5 7 5c0 3 2 5 5 5z"/><path d="M12 10C12 7 14 5 17 5c0 3-2 5-5 5z"/><path d="M12 16c0-2-1.5-3.5-4-4 0 2 1.5 3.5 4 4z"/><path d="M12 16c0-2 1.5-3.5 4-4 0 2-1.5 3.5-4 4z"/></svg></div>
+          <div>
+            <h2 class="vg-card-title">Wort Production</h2>
+          </div>
+        </div>
+        <p class="vg-card-body">
+          Les indicateurs de brassage : <strong>volumes, densités, rendements</strong> par
+          brassin. Alimenté directement par vos saisies.
+        </p>
+        <a href="#" class="vg-card-link" aria-label="Ouvrir Wort Production (page simulée)">Ouvrir cette page ↗</a>
+      </div>
+    </article>
+
+    <!-- STEP 8 — Fermentation -->
+    <article class="vg-step" data-step="7" aria-label="Fermentation">
+      <div class="vg-card">
+        <div class="vg-vignette vign-dashboard" aria-hidden="true">
+          <div class="vign-kpi">
+            <div class="vign-kpi__label">CCT actives</div>
+            <div class="vign-kpi__val">4 / 6</div>
+            <div class="vign-kpi__sub">cuves occupées</div>
+          </div>
+          <div class="vign-kpi">
+            <div class="vign-kpi__label">Perte moy.</div>
+            <div class="vign-kpi__val vign-kpi__val--oak">3,2 %</div>
+            <div class="vign-kpi__sub">par transfert</div>
+          </div>
+          <div class="vign-kpi">
+            <div class="vign-kpi__label">Garde</div>
+            <div class="vign-kpi__val vign-kpi__val--hop">18 j</div>
+            <div class="vign-kpi__sub">Embuscade -45</div>
+          </div>
+          <div class="vign-sparkline">
+            <div class="vign-spark-label">Densité fermentation · Embuscade -45</div>
+            <svg class="vign-spark-svg" viewBox="0 0 200 32" preserveAspectRatio="none" aria-hidden="true">
+              <polyline points="0,4 25,5 50,8 75,14 100,20 125,25 150,28 175,29 200,30"
+                fill="none" stroke="#8b5e2a" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+              <path d="M0,4 25,5 50,8 75,14 100,20 125,25 150,28 175,29 200,30 V32 H0 Z"
+                fill="rgba(139,94,42,0.10)"/>
+            </svg>
+          </div>
+        </div>
+        <div class="vg-card-header">
+          <div class="vg-card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 3h6v6l4 10H5L9 9V3z"/><path d="M9 3H6M15 3h3"/><path d="M8 15h8"/></svg></div>
+          <div>
+            <h2 class="vg-card-title">Fermentation</h2>
+          </div>
+        </div>
+        <p class="vg-card-body">
+          L'état des cuves : quelle bière est dans quelle cuve, depuis combien de temps,
+          et les <strong>pertes par étape</strong>.
+        </p>
+        <a href="#" class="vg-card-link" aria-label="Ouvrir Fermentation (page simulée)">Ouvrir cette page ↗</a>
+      </div>
+    </article>
+
+    <!-- STEP 9 — Packaging -->
+    <article class="vg-step" data-step="8" aria-label="Packaging">
+      <div class="vg-card">
+        <div class="vg-vignette vign-table-wrap" aria-hidden="true">
+          <div class="vign-table-header">
+            <div class="vign-th" style="width:80%"></div>
+            <div class="vign-th" style="width:70%"></div>
+            <div class="vign-th" style="width:90%"></div>
+            <div class="vign-th" style="width:60%"></div>
+          </div>
+          <div class="vign-table-row">
+            <div class="vign-td vign-td--bold"></div>
+            <div class="vign-td vign-td--75"></div>
+            <div class="vign-td vign-td--full vign-td--hop"></div>
+            <div class="vign-td vign-td--50"></div>
+          </div>
+          <div class="vign-table-row">
+            <div class="vign-td" style="width:90%;background:color-mix(in srgb,var(--cold) 40%,var(--hairline))"></div>
+            <div class="vign-td vign-td--full"></div>
+            <div class="vign-td vign-td--75 vign-td--hop"></div>
+            <div class="vign-td vign-td--50"></div>
+          </div>
+          <div class="vign-table-row">
+            <div class="vign-td vign-td--bold"></div>
+            <div class="vign-td vign-td--75"></div>
+            <div class="vign-td vign-td--full"></div>
+            <div class="vign-td vign-td--50 vign-td--ember"></div>
+          </div>
+        </div>
+        <div class="vg-card-header">
+          <div class="vg-card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 8l-9-5L3 8l9 5 9-5z"/><path d="M3 8v8l9 5V13"/><path d="M21 8v8l-9 5"/><path d="M12 3v5M7.5 5.5l4.5 2.5"/></svg></div>
+          <div>
+            <h2 class="vg-card-title">Packaging</h2>
+          </div>
+        </div>
+        <p class="vg-card-body">
+          Le tableau de bord conditionnement : <strong>runs récents, volumes par format,
+          pertes</strong>.
+        </p>
+        <a href="#" class="vg-card-link" aria-label="Ouvrir Packaging (page simulée)">Ouvrir cette page ↗</a>
+      </div>
+    </article>
+
+    <!-- STEP 10 — Saisies section opener -->
+    <article class="vg-step" data-step="9" aria-label="Saisies — le cœur de votre travail">
+      <div class="vg-card vg-card--section">
+        <div class="vg-vignette vign-form" aria-hidden="true" style="background:color-mix(in srgb,var(--ember) 4%,var(--bg))">
+          <div class="vign-field">
+            <div class="vign-field-label" style="background:color-mix(in srgb,var(--ember) 30%,var(--hairline))"></div>
+            <div class="vign-field-input vign-field-input--accent" style="border-color:color-mix(in srgb,var(--ember) 50%,var(--hairline))">
+              <div class="vign-field-input-val vign-field-input-val--short" style="background:color-mix(in srgb,var(--ember) 25%,var(--hairline))"></div>
+            </div>
+          </div>
+          <div class="vign-field">
+            <div class="vign-field-label"></div>
+            <div class="vign-field-input">
+              <div class="vign-field-input-val vign-field-input-val--short"></div>
+            </div>
+          </div>
+          <div class="vign-field">
+            <div class="vign-field-label"></div>
+            <div class="vign-field-input">
+              <div class="vign-field-input-val" style="width:40%"></div>
+            </div>
+          </div>
+          <div class="vign-submit-row">
+            <div class="vign-btn vign-btn--primary" style="background:var(--ember)">Enregistrer la saisie</div>
+            <div class="vign-btn vign-btn--ghost">Annuler</div>
+          </div>
+        </div>
+        <div class="vg-card-header">
+          <div class="vg-card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M15 5l4 4L7 21H3v-4L15 5z"/><path d="M12 8l4 4"/></svg></div>
+          <div>
+            <h2 class="vg-card-title">Saisies — <em>le cœur de votre travail</em></h2>
+          </div>
+        </div>
+        <p class="vg-card-body">
+          C'est ici que vous enregistrez la production : <strong>cinq formulaires</strong>,
+          expliqués dans les étapes suivantes. Chaque saisie alimente directement
+          la base de production.
+        </p>
+        <a href="#" class="vg-card-link" aria-label="Ouvrir Saisies (page simulée)">Ouvrir cette page ↗</a>
+      </div>
+    </article>
+
+    <!-- STEP 11 — Saisie Brassage -->
+    <article class="vg-step" data-step="10" aria-label="Saisie Brassage">
+      <div class="vg-card">
+        <div class="vg-vignette vign-form" aria-hidden="true">
+          <div class="vign-field">
+            <div class="vign-field-label"></div>
+            <div class="vign-field-input vign-field-input--accent">
+              <div class="vign-field-input-val vign-field-input-val--short" style="background:color-mix(in srgb,var(--hop) 30%,var(--hairline))"></div>
+              <div style="margin-left:auto;height:8px;width:8px;border-radius:50%;background:var(--hop);opacity:0.5"></div>
+            </div>
+          </div>
+          <div class="vign-field">
+            <div class="vign-field-label" style="width:35%"></div>
+            <div class="vign-field-input">
+              <div class="vign-field-input-val" style="width:30%"></div>
+            </div>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;padding:4px 0;">
+            <div style="height:6px;width:6px;border-radius:50%;background:var(--cat-malt);flex-shrink:0"></div>
+            <div style="height:5px;width:55%;border-radius:3px;background:var(--hairline)"></div>
+            <div style="height:5px;width:20%;border-radius:3px;background:color-mix(in srgb,var(--cat-malt) 40%,var(--hairline));margin-left:auto"></div>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;padding:4px 0;">
+            <div style="height:6px;width:6px;border-radius:50%;background:var(--hop);flex-shrink:0"></div>
+            <div style="height:5px;width:48%;border-radius:3px;background:var(--hairline)"></div>
+            <div style="height:5px;width:20%;border-radius:3px;background:color-mix(in srgb,var(--hop) 40%,var(--hairline));margin-left:auto"></div>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;padding:4px 0;">
+            <div style="height:6px;width:6px;border-radius:50%;background:var(--cat-malt);flex-shrink:0"></div>
+            <div style="height:5px;width:60%;border-radius:3px;background:var(--hairline)"></div>
+            <div style="height:5px;width:20%;border-radius:3px;background:color-mix(in srgb,var(--cat-malt) 40%,var(--hairline));margin-left:auto"></div>
+          </div>
+        </div>
+        <div class="vg-card-header">
+          <div class="vg-card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 3h12v2a6 6 0 0 1-6 6 6 6 0 0 1-6-6V3z"/><path d="M6 5h12"/><path d="M12 11v10"/><path d="M8 21h8"/><path d="M19 8h2v5h-2"/></svg></div>
+          <div>
+            <h2 class="vg-card-title">Saisie · Brassage</h2>
+          </div>
+        </div>
+        <p class="vg-card-body">
+          À remplir <strong>le jour du brassin</strong> : bière, numéro de lot, ingrédients
+          (malts, houblons, avec leurs lots), volumes et densités. Chaque ligne d'ingrédient
+          compte pour la traçabilité et les coûts.
+        </p>
+        <a href="#" class="vg-card-link" aria-label="Ouvrir Saisie Brassage (page simulée)">Ouvrir cette page ↗</a>
+      </div>
+    </article>
+
+    <!-- STEP 12 — Saisie Fermentation -->
+    <article class="vg-step" data-step="11" aria-label="Saisie Fermentation">
+      <div class="vg-card">
+        <div class="vg-vignette vign-form" aria-hidden="true">
+          <div class="vign-field">
+            <div class="vign-field-label" style="width:40%"></div>
+            <div class="vign-field-input">
+              <div class="vign-field-input-val" style="width:65%;background:color-mix(in srgb,var(--bbt) 30%,var(--hairline))"></div>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px">
+            <div class="vign-field">
+              <div class="vign-field-label" style="width:90%"></div>
+              <div class="vign-field-input" style="background:var(--bg-elev)">
+                <div class="vign-field-input-val" style="width:50%"></div>
+              </div>
+            </div>
+            <div class="vign-field">
+              <div class="vign-field-label" style="width:80%"></div>
+              <div class="vign-field-input">
+                <div class="vign-field-input-val" style="width:60%"></div>
+              </div>
+            </div>
+            <div class="vign-field">
+              <div class="vign-field-label" style="width:70%"></div>
+              <div class="vign-field-input">
+                <div class="vign-field-input-val" style="width:40%"></div>
+              </div>
+            </div>
+          </div>
+          <div class="vign-field">
+            <div class="vign-field-label" style="width:55%"></div>
+            <div class="vign-field-input vign-field-input--accent">
+              <div class="vign-field-input-val" style="width:35%;background:color-mix(in srgb,var(--hop) 30%,var(--hairline))"></div>
+            </div>
+          </div>
+          <div class="vign-submit-row">
+            <div class="vign-btn vign-btn--primary">Enregistrer</div>
+          </div>
+        </div>
+        <div class="vg-card-header">
+          <div class="vg-card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="14" rx="8" ry="6"/><path d="M4 14V8a8 2 0 0 1 16 0v6"/><path d="M8 12c0-1 1-2 2-2s2 1 3 1 2-1 2-1"/></svg></div>
+          <div>
+            <h2 class="vg-card-title">Saisie · Fermentation</h2>
+          </div>
+        </div>
+        <p class="vg-card-body">
+          Pour suivre une bière en cuve : <strong>relevés</strong> (densité, pH, température),
+          ajouts de dry-hop, cold crash. Le formulaire ne propose que les lots réellement
+          en cuve — si votre lot n'apparaît pas, vérifiez l'étape précédente.
+        </p>
+        <a href="#" class="vg-card-link" aria-label="Ouvrir Saisie Fermentation (page simulée)">Ouvrir cette page ↗</a>
+      </div>
+    </article>
+
+    <!-- STEP 13 — Saisie Transferts -->
+    <article class="vg-step" data-step="12" aria-label="Saisie Transferts">
+      <div class="vg-card">
+        <div class="vg-vignette vign-board" aria-hidden="true" style="grid-template-columns:repeat(3,1fr);gap:6px;padding:10px;background:var(--bg);align-items:start;">
+          <div class="vign-zone" style="grid-column:span 3">
+            <div class="vign-zone-label">Lots éligibles au transfert</div>
+          </div>
+          <div class="vign-lot-card" style="border-color:color-mix(in srgb,var(--hop) 50%,var(--hairline));background:color-mix(in srgb,var(--hop) 6%,var(--bg-elev))">
+            <div class="vign-lot-name" style="color:var(--hop)">Embuscade</div>
+            <div class="vign-lot-sub">Lot 45 · CCT-3</div>
+            <div style="height:4px;border-radius:2px;background:var(--hop);margin-top:3px;opacity:0.5"></div>
+          </div>
+          <div class="vign-lot-card">
+            <div class="vign-lot-name">Moonshine</div>
+            <div class="vign-lot-sub">Lot 29 · CCT-1</div>
+          </div>
+          <div class="vign-lot-card" style="opacity:0.4;border-style:dashed">
+            <div class="vign-lot-name" style="color:var(--ink-mute)">Stirling</div>
+            <div class="vign-lot-sub" style="color:color-mix(in srgb,var(--ember) 70%,var(--ink-mute))">Garde insuffisante</div>
+          </div>
+        </div>
+        <div class="vg-card-header">
+          <div class="vg-card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M16 3l4 4-4 4"/><path d="M20 7H4"/><path d="M8 21l-4-4 4-4"/><path d="M4 17h16"/></svg></div>
+          <div>
+            <h2 class="vg-card-title">Saisie · Transferts</h2>
+          </div>
+        </div>
+        <p class="vg-card-body">
+          Pour enregistrer un soutirage : d'une CCT vers un BBT ou une autre CCT.
+          Seuls les <strong>lots éligibles</strong> (temps de garde atteint) sont proposés
+          sous forme de cartes.
+        </p>
+        <a href="#" class="vg-card-link" aria-label="Ouvrir Saisie Transferts (page simulée)">Ouvrir cette page ↗</a>
+      </div>
+    </article>
+
+    <!-- STEP 14 — Saisie Conditionnement -->
+    <article class="vg-step" data-step="13" aria-label="Saisie Conditionnement">
+      <div class="vg-card">
+        <div class="vg-vignette vign-form" aria-hidden="true">
+          <div class="vign-field">
+            <div class="vign-field-label" style="width:40%"></div>
+            <div class="vign-field-input vign-field-input--accent">
+              <div class="vign-field-input-val" style="width:60%;background:color-mix(in srgb,var(--bbt) 30%,var(--hairline))"></div>
+            </div>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <div style="padding:3px 8px;background:var(--bg-elev);border:1px solid var(--hairline);border-radius:4px;font-family:'JetBrains Mono',monospace;font-size:8px;color:var(--ink-mute);">ZEPF · 20L</div>
+            <div style="padding:3px 8px;background:color-mix(in srgb,var(--hop) 12%,var(--bg-elev));border:1.5px solid color-mix(in srgb,var(--hop) 40%,var(--hairline));border-radius:4px;font-family:'JetBrains Mono',monospace;font-size:8px;color:var(--hop-deep);">EMB4 · 4×33cl ✓</div>
+            <div style="padding:3px 8px;background:var(--bg-elev);border:1px solid var(--hairline);border-radius:4px;font-family:'JetBrains Mono',monospace;font-size:8px;color:var(--ink-mute);">EMBB · 24×33cl</div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+            <div class="vign-field">
+              <div class="vign-field-label" style="width:70%"></div>
+              <div class="vign-field-input"><div class="vign-field-input-val" style="width:50%"></div></div>
+            </div>
+            <div class="vign-field">
+              <div class="vign-field-label" style="width:55%;background:color-mix(in srgb,var(--ember) 25%,var(--hairline))"></div>
+              <div class="vign-field-input"><div class="vign-field-input-val" style="width:40%"></div></div>
+            </div>
+          </div>
+        </div>
+        <div class="vg-card-header">
+          <div class="vg-card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><path d="M12 12v4M10 14h4"/></svg></div>
+          <div>
+            <h2 class="vg-card-title">Saisie · Conditionnement</h2>
+          </div>
+        </div>
+        <p class="vg-card-body">
+          À remplir après chaque run : lot source, <strong>formats produits</strong>
+          (fûts, bouteilles, canettes), quantités, pertes et mesures QA
+          (CO₂&nbsp;/&nbsp;O₂). Gère aussi les runs parallèles —
+          4-packs et cartons d'un même lot.
+        </p>
+        <a href="#" class="vg-card-link" aria-label="Ouvrir Saisie Conditionnement (page simulée)">Ouvrir cette page ↗</a>
+      </div>
+    </article>
+
+    <!-- STEP 15 — Saisie Inventaire RM -->
+    <article class="vg-step" data-step="14" aria-label="Saisie Inventaire RM">
+      <div class="vg-card">
+        <div class="vg-vignette vign-stocktake" aria-hidden="true">
+          <div class="vign-search-bar">
+            <div class="vign-search-icon"></div>
+            <div class="vign-search-val"></div>
+          </div>
+          <div class="vign-ledger-item">
+            <div class="vign-ledger-dot"></div>
+            <div class="vign-ledger-name" style="width:50%"></div>
+            <div class="vign-ledger-qty">24,5 kg</div>
+          </div>
+          <div class="vign-ledger-item">
+            <div class="vign-ledger-dot"></div>
+            <div class="vign-ledger-name" style="width:45%"></div>
+            <div class="vign-ledger-qty">6 sacs</div>
+          </div>
+          <div class="vign-ledger-item">
+            <div class="vign-ledger-dot"></div>
+            <div class="vign-ledger-name" style="width:55%"></div>
+            <div class="vign-ledger-qty">3 cartons</div>
+          </div>
+        </div>
+        <div class="vg-card-header">
+          <div class="vg-card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/></svg></div>
+          <div>
+            <h2 class="vg-card-title">Saisie · Inventaire RM</h2>
+          </div>
+        </div>
+        <p class="vg-card-body">
+          Le comptage mensuel des matières premières, <strong>palette par palette</strong> :
+          cherchez l'ingrédient, saisissez la quantité, « Ajouter » enregistre immédiatement.
+          Rien à soumettre à la fin — chaque ligne est déjà sauvegardée.
+        </p>
+        <a href="#" class="vg-card-link" aria-label="Ouvrir Saisie Inventaire RM (page simulée)">Ouvrir cette page ↗</a>
+      </div>
+    </article>
+
+    <!-- STEP 16 — Bon à savoir -->
+    <article class="vg-step" data-step="15" aria-label="Bon à savoir">
+      <div class="vg-card">
+        <div class="vg-vignette" aria-hidden="true" style="background:var(--bg);padding:14px;display:flex;flex-direction:column;gap:10px;justify-content:center;">
+          <div style="display:flex;align-items:flex-start;gap:10px;">
+            <div style="width:28px;height:28px;border-radius:8px;background:color-mix(in srgb,var(--ok) 15%,var(--bg-elev));border:1px solid color-mix(in srgb,var(--ok) 30%,var(--hairline));display:flex;align-items:center;justify-content:center;flex-shrink:0;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg></div>
+            <div style="display:flex;flex-direction:column;gap:4px;padding-top:4px;">
+              <div style="height:6px;width:75%;border-radius:3px;background:var(--ink-mute)"></div>
+              <div style="height:5px;width:90%;border-radius:3px;background:var(--hairline)"></div>
+              <div style="height:5px;width:65%;border-radius:3px;background:var(--hairline)"></div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:flex-start;gap:10px;">
+            <div style="width:28px;height:28px;border-radius:8px;background:color-mix(in srgb,var(--bbt) 15%,var(--bg-elev));border:1px solid color-mix(in srgb,var(--bbt) 30%,var(--hairline));display:flex;align-items:center;justify-content:center;flex-shrink:0;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--bbt)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
+            <div style="display:flex;flex-direction:column;gap:4px;padding-top:4px;">
+              <div style="height:6px;width:60%;border-radius:3px;background:var(--ink-mute)"></div>
+              <div style="height:5px;width:80%;border-radius:3px;background:var(--hairline)"></div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:color-mix(in srgb,var(--ok) 10%,var(--bg-elev));border:1px solid color-mix(in srgb,var(--ok) 30%,var(--hairline));border-radius:7px">
+            <div style="width:8px;height:8px;border-radius:50%;background:var(--ok);flex-shrink:0"></div>
+            <div style="height:6px;width:60%;border-radius:3px;background:color-mix(in srgb,var(--ok) 40%,var(--hairline))"></div>
+          </div>
+        </div>
+        <div class="vg-card-header">
+          <div class="vg-card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2l8 3v7c0 4-3.5 7.5-8 9-4.5-1.5-8-5-8-9V5l8-3z"/><path d="M9 12l2 2 4-4"/></svg></div>
+          <div>
+            <h2 class="vg-card-title">Bon à savoir</h2>
+          </div>
+        </div>
+        <p class="vg-card-body">
+          Vos saisies sont protégées : <strong>brouillon auto-sauvegardé</strong>
+          (si l'onglet se ferme, vos valeurs reviennent), session maintenue active
+          pendant que vous tapez, et chaque envoi se termine par une
+          <strong>confirmation verte</strong>. En cas de doute : saisissez,
+          puis signalez.
+        </p>
+      </div>
+    </article>
+
+    <!-- STEP 17 — C'est parti ! -->
+    <article class="vg-step" data-step="16" aria-label="C'est parti !">
+      <div class="vg-card">
+        <div class="vg-vignette vign-welcome" aria-hidden="true" style="background:linear-gradient(135deg,color-mix(in srgb,var(--hop) 8%,var(--bg)) 0%,var(--bg) 100%)">
+          <div style="display:flex;flex-direction:column;align-items:center;gap:12px">
+            <svg width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="var(--hop)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h12l-1 14H6L5 4z"/><path d="M8 4V2.5M12 4V2.5M16 4V2.5"/><path d="M17 9h3a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-3"/><path d="M8 10 c0 0, 1 2, 2 2 s2-2 3-2 s1 2 2 2" opacity="0.5"/></svg>
+            <div style="font-family:'Fraunces',serif;font-variation-settings:'opsz' 96;font-size:1.2rem;font-weight:300;color:var(--hop-deep);letter-spacing:-0.01em;text-align:center">
+              <em>Bonne brasse !</em>
+            </div>
+          </div>
+        </div>
+        <div class="vg-card-header">
+          <div class="vg-card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-5"/></svg></div>
+          <div>
+            <h2 class="vg-card-title">C'est parti&nbsp;!</h2>
+          </div>
+        </div>
+        <p class="vg-card-body">
+          Votre page d'accueil est <strong>Mon tableau</strong>. Vous pouvez relancer
+          cette visite à tout moment depuis le menu utilisateur. Bonne brasse&nbsp;!
+        </p>
+      </div>
+    </article>
+  </main>
+
+  <!-- FOOTER NAV -->
+  <nav class="vg-footer" aria-label="Navigation entre étapes">
+    <button class="vg-btn vg-btn--prev" id="btn-prev" aria-label="Étape précédente">← Précédent</button>
+    <button class="vg-btn vg-btn--next" id="btn-next" aria-label="Étape suivante">Suivant →</button>
+  </nav>
+
+</div><!-- /vg-wrap -->
+
+<script>
+(function () {
+  'use strict';
+
+  const TOTAL = 17;
+  let current = 0;
+
+  /* ── Element refs ── */
+  const steps     = Array.from(document.querySelectorAll('.vg-step'));
+  const dotsWrap  = document.getElementById('dots-container');
+  const counter   = document.getElementById('step-counter');
+  const btnPrev   = document.getElementById('btn-prev');
+  const btnNext   = document.getElementById('btn-next');
+
+  /* step 9 (index 9) is the section opener — uses ember dot */
+  const SECTION_STEPS = new Set([9]);
+
+  /* ── Build dots ── */
+  function buildDots() {
+    dotsWrap.innerHTML = '';
+    for (let i = 0; i < TOTAL; i++) {
+      const btn = document.createElement('button');
+      btn.className = 'vg-dot' + (SECTION_STEPS.has(i) ? ' vg-dot--section' : '');
+      btn.setAttribute('role', 'tab');
+      btn.setAttribute('aria-label', 'Aller à l\'étape ' + (i + 1));
+      btn.setAttribute('aria-selected', String(i === current));
+      btn.setAttribute('tabindex', i === current ? '0' : '-1');
+      btn.dataset.idx = String(i);
+      btn.addEventListener('click', () => goTo(parseInt(btn.dataset.idx)));
+      dotsWrap.appendChild(btn);
+    }
+  }
+
+  /* ── Update dot states ── */
+  function updateDots() {
+    const dotBtns = dotsWrap.querySelectorAll('.vg-dot');
+    dotBtns.forEach((btn, i) => {
+      btn.classList.remove('vg-dot--active', 'vg-dot--done');
+      const isSection = SECTION_STEPS.has(i);
+      if (i === current) {
+        btn.classList.add('vg-dot--active');
+        btn.setAttribute('aria-selected', 'true');
+        btn.setAttribute('tabindex', '0');
+      } else {
+        btn.setAttribute('aria-selected', 'false');
+        btn.setAttribute('tabindex', '-1');
+        if (i < current) btn.classList.add('vg-dot--done');
+      }
+    });
+  }
+
+  /* ── Transition to step idx ── */
+  function goTo(idx, direction) {
+    if (idx < 0 || idx >= TOTAL) return;
+
+    const oldEl = steps[current];
+    const newEl = steps[idx];
+
+    /* Determine direction if not specified */
+    if (direction === undefined) direction = idx > current ? 1 : -1;
+
+    /* Exit old step */
+    oldEl.classList.remove('vg-step--active');
+    oldEl.classList.add('vg-step--exit');
+    oldEl.setAttribute('aria-hidden', 'true');
+
+    /* After exit transition, remove --exit (back to fully hidden) */
+    oldEl.addEventListener('transitionend', function onExitEnd() {
+      oldEl.classList.remove('vg-step--exit');
+      oldEl.removeEventListener('transitionend', onExitEnd);
+    }, { once: true });
+
+    /* Position incoming step for direction-aware enter animation.
+       Set inline transform/opacity so CSS transition fires from
+       the right starting point, then let --active override them. */
+    newEl.style.transform = direction > 0 ? 'translateX(32px)' : 'translateX(-32px)';
+    newEl.style.opacity = '0';
+    newEl.style.visibility = 'visible';
+
+    /* Force reflow so browser registers the start state */
+    void newEl.offsetWidth;
+
+    /* Clear inline overrides — CSS transition will animate to
+       --active values (translateX(0) / opacity 1) */
+    newEl.style.transform = '';
+    newEl.style.opacity = '';
+    newEl.style.visibility = '';
+
+    current = idx;
+
+    newEl.classList.add('vg-step--active');
+    newEl.removeAttribute('aria-hidden');
+
+    /* Update UI */
+    counter.textContent = 'étape ' + (current + 1) + ' / ' + TOTAL;
+    updateDots();
+    updateButtons();
+  }
+
+  /* ── Update prev/next buttons ── */
+  function updateButtons() {
+    /* Prev */
+    if (current === 0) {
+      btnPrev.classList.add('vg-btn--hidden');
+      btnPrev.setAttribute('aria-hidden', 'true');
+      btnPrev.setAttribute('tabindex', '-1');
+    } else {
+      btnPrev.classList.remove('vg-btn--hidden');
+      btnPrev.removeAttribute('aria-hidden');
+      btnPrev.setAttribute('tabindex', '0');
+    }
+
+    /* Next → becomes "Terminer" on last step */
+    if (current === TOTAL - 1) {
+      btnNext.textContent = 'Terminer la visite ✓';
+      btnNext.classList.remove('vg-btn--next');
+      btnNext.classList.add('vg-btn--done');
+      btnNext.setAttribute('aria-label', 'Terminer la visite guidée');
+    } else {
+      btnNext.textContent = 'Suivant →';
+      btnNext.classList.remove('vg-btn--done');
+      btnNext.classList.add('vg-btn--next');
+      btnNext.setAttribute('aria-label', 'Étape suivante');
+    }
+  }
+
+  /* ── Button listeners ── */
+  btnPrev.addEventListener('click', () => {
+    if (current > 0) goTo(current - 1, -1);
+  });
+
+  btnNext.addEventListener('click', () => {
+    if (current < TOTAL - 1) {
+      goTo(current + 1, 1);
+    } else {
+      /* "Terminer" — in real app would redirect to Mon tableau */
+      window.location.href = '#';
+    }
+  });
+
+  /* ── Keyboard arrows ── */
+  document.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (current < TOTAL - 1) goTo(current + 1, 1);
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (current > 0) goTo(current - 1, -1);
+    }
+  });
+
+  /* ── Dot keyboard nav (roving tabindex) ── */
+  dotsWrap.addEventListener('keydown', (e) => {
+    const dotBtns = Array.from(dotsWrap.querySelectorAll('.vg-dot'));
+    const focused = document.activeElement;
+    const focusIdx = dotBtns.indexOf(focused);
+    if (focusIdx === -1) return;
+
+    if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      const next = dotBtns[(focusIdx + 1) % dotBtns.length];
+      next.focus();
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      const prev = dotBtns[(focusIdx - 1 + dotBtns.length) % dotBtns.length];
+      prev.focus();
+    }
+  });
+
+  /* ── Swipe support for touch ── */
+  let touchStartX = 0;
+  let touchStartY = 0;
+
+  document.addEventListener('touchstart', (e) => {
+    touchStartX = e.touches[0].clientX;
+    touchStartY = e.touches[0].clientY;
+  }, { passive: true });
+
+  document.addEventListener('touchend', (e) => {
+    const dx = e.changedTouches[0].clientX - touchStartX;
+    const dy = e.changedTouches[0].clientY - touchStartY;
+
+    /* Only horizontal swipes (dx > 40px, dx > dy) */
+    if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy)) {
+      if (dx < 0 && current < TOTAL - 1) goTo(current + 1, 1);
+      else if (dx > 0 && current > 0) goTo(current - 1, -1);
+    }
+  }, { passive: true });
+
+  /* ── Init ── */
+  buildDots();
+
+  /* Show step 0, hide rest — CSS handles visibility/opacity via
+     .vg-step (hidden) vs .vg-step--active (visible) */
+  steps.forEach((step, i) => {
+    if (i === 0) {
+      step.classList.add('vg-step--active');
+      step.removeAttribute('aria-hidden');
+    } else {
+      step.setAttribute('aria-hidden', 'true');
+    }
+  });
+
+  updateDots();
+  updateButtons();
+
+})();
+</script>
+</body>
+</html>

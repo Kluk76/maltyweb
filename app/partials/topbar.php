@@ -213,6 +213,7 @@ $userRole = htmlspecialchars($me["role"] ?? "");
           <div class="tb__user-role"><?= $userRole ?></div>
         <?php endif ?>
         <div class="tb__admin-sep" role="separator"></div>
+        <a class="tb__admin-item" href="/modules/visite-guidee.php" role="menuitem">Visite guidée</a>
         <a class="tb__admin-item" href="/admin/settings/devices.php" role="menuitem">Mes appareils</a>
         <a class="tb__admin-item tb__admin-item--switch" href="/logout.php" role="menuitem">Changer d'utilisateur</a>
       </div>

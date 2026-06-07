@@ -1,0 +1,1117 @@
+/* ============================================================
+   visite-guidee.css
+   Scoped under body.home.visite-guidee + vg- prefix.
+   All colours via app.css tokens — no new :root declarations,
+   no hardcoded hex. Inherits global kraft/manila theme.
+   Grid-overlay step pattern (not absolute positioning).
+   ============================================================ */
+
+/* ── Page layout override ────────────────────────────────── */
+/* Inactive .vg-step articles carry translateX(32px) (slide-in rest
+   state) which widens the layout 32px past the viewport on mobile.
+   Per the app-shell rule, a page whose stage shifts children beyond
+   100% must self-clip on its OWN body class — never on body.home. */
+body.home.visite-guidee {
+  overflow-x: hidden;
+}
+
+/* The tour page renders its own full-width wrap under the topbar.
+   Override the default .home .main align-items:center so the
+   .vg-wrap children are not centered off-screen. */
+body.home.visite-guidee .main {
+  align-items: stretch;   /* reset inherited center from .home .main */
+  padding: 0;             /* the wrap handles its own padding */
+}
+
+/* ── Top-level wrapper ───────────────────────────────────── */
+body.home.visite-guidee .vg-wrap {
+  position: relative;
+  z-index: 1;
+  min-height: calc(100dvh - 56px); /* leave room for topbar */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0 16px 48px;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+/* ── Header bar ─────────────────────────────────────────── */
+body.home.visite-guidee .vg-header {
+  width: 100%;
+  max-width: 720px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 20px 0 16px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+body.home.visite-guidee .vg-mark {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 144;
+  font-size: 22px;
+  font-weight: 400;
+  color: var(--ink);
+  letter-spacing: -0.02em;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+body.home.visite-guidee .vg-mark span { color: var(--hop); font-style: italic; }
+
+body.home.visite-guidee .vg-header-meta {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+body.home.visite-guidee .vg-eyebrow {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.65rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+body.home.visite-guidee .vg-step-counter {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  color: var(--oak);
+  font-weight: 500;
+}
+
+body.home.visite-guidee .vg-skip-tour {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.8rem;
+  color: var(--ink-mute);
+  text-decoration: none;
+  padding: 6px 10px;
+  border-radius: 6px;
+  transition: color 0.15s, background 0.15s;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+body.home.visite-guidee .vg-skip-tour:hover {
+  color: var(--ink-soft);
+  background: color-mix(in srgb, var(--ink-faint) 30%, transparent);
+  text-decoration: none;
+}
+
+body.home.visite-guidee .vg-skip-tour:focus-visible {
+  outline: 2px solid var(--hop);
+  outline-offset: 2px;
+}
+
+/* ── Progress dots ───────────────────────────────────────── */
+body.home.visite-guidee .vg-dots-wrap {
+  width: 100%;
+  max-width: 720px;
+  padding: 16px 0 20px;
+  display: flex;
+  align-items: center;
+}
+
+body.home.visite-guidee .vg-dots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+}
+
+body.home.visite-guidee .vg-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--hairline);
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.2s var(--ease-out, cubic-bezier(0.23,1,0.32,1)),
+              transform 0.2s var(--ease-out, cubic-bezier(0.23,1,0.32,1)),
+              width 0.2s var(--ease-out, cubic-bezier(0.23,1,0.32,1));
+  min-width: 7px;
+  touch-action: manipulation;
+}
+
+body.home.visite-guidee .vg-dot:focus-visible {
+  outline: 2px solid var(--hop);
+  outline-offset: 2px;
+}
+
+body.home.visite-guidee .vg-dot--active {
+  width: 20px;
+  border-radius: 4px;
+  background: var(--hop);
+}
+
+body.home.visite-guidee .vg-dot--done {
+  background: var(--hop-soft);
+}
+
+body.home.visite-guidee .vg-dot--section {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--hairline);
+}
+
+body.home.visite-guidee .vg-dot--section.vg-dot--active {
+  width: 20px;
+  background: var(--ember);
+  border-radius: 4px;
+}
+
+body.home.visite-guidee .vg-dot--section.vg-dot--done {
+  background: color-mix(in srgb, var(--ember) 50%, var(--hairline));
+}
+
+/* ── Step stage — grid-overlay ───────────────────────────── */
+/* All steps share cell [1/1]; inactive steps are visibility:hidden
+   so they don't contribute to the grid row height.
+   No absolute positioning — avoids clipping / overflow bugs. */
+body.home.visite-guidee .vg-stage {
+  width: 100%;
+  max-width: 720px;
+  display: grid;
+  grid-template-rows: auto;
+  grid-template-columns: 1fr;
+}
+
+body.home.visite-guidee .vg-step {
+  grid-row: 1;
+  grid-column: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(32px);
+  transition: opacity 0.28s var(--ease-out, cubic-bezier(0.23,1,0.32,1)),
+              transform 0.28s var(--ease-out, cubic-bezier(0.23,1,0.32,1));
+  visibility: hidden;
+}
+
+body.home.visite-guidee .vg-step--active {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
+  visibility: visible;
+}
+
+body.home.visite-guidee .vg-step--exit {
+  opacity: 0;
+  transform: translateX(-32px);
+  transition: opacity 0.2s var(--ease-out, cubic-bezier(0.23,1,0.32,1)),
+              transform 0.2s var(--ease-out, cubic-bezier(0.23,1,0.32,1));
+  visibility: visible;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.home.visite-guidee .vg-step,
+  body.home.visite-guidee .vg-step--active,
+  body.home.visite-guidee .vg-step--exit {
+    transition: opacity 0.15s linear;
+    transform: none !important;
+  }
+}
+
+/* ── Step card ───────────────────────────────────────────── */
+body.home.visite-guidee .vg-card {
+  background: var(--bg-elev);
+  border: 1.5px solid var(--hairline);
+  border-radius: 14px;
+  padding: 36px 40px;
+  box-shadow: 0 4px 24px rgba(30,18,5,0.10), 0 1px 4px rgba(30,18,5,0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Corner watermark */
+body.home.visite-guidee .vg-card::before {
+  content: '';
+  position: absolute;
+  bottom: -20px;
+  right: -20px;
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--oak) 5%, transparent);
+  pointer-events: none;
+}
+
+/* Section-opener card (Saisies step) */
+body.home.visite-guidee .vg-card--section {
+  border-color: color-mix(in srgb, var(--ember) 40%, var(--hairline));
+  background: color-mix(in srgb, var(--ember) 4%, var(--bg-elev));
+}
+
+body.home.visite-guidee .vg-card--section::before {
+  background: color-mix(in srgb, var(--ember) 8%, transparent);
+}
+
+body.home.visite-guidee .vg-card-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 20px;
+}
+
+body.home.visite-guidee .vg-card-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 12px;
+  background: var(--bg-side);
+  border: 1.5px solid var(--hairline);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: inset 0 1px 3px rgba(30,18,5,0.08);
+}
+
+body.home.visite-guidee .vg-card-icon svg {
+  width: 24px;
+  height: 24px;
+  stroke: var(--ink-mute);
+  fill: none;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+body.home.visite-guidee .vg-card--section .vg-card-icon svg {
+  stroke: var(--ember);
+}
+
+body.home.visite-guidee .vg-card--section .vg-card-icon {
+  background: color-mix(in srgb, var(--ember) 12%, var(--bg-side));
+  border-color: color-mix(in srgb, var(--ember) 30%, var(--hairline));
+}
+
+body.home.visite-guidee .vg-card-title {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 96;
+  font-size: clamp(1.45rem, 4vw, 1.9rem);
+  font-weight: 300;
+  color: var(--ink);
+  line-height: 1.15;
+  text-wrap: balance;
+}
+
+body.home.visite-guidee .vg-card-title em {
+  font-style: italic;
+  color: var(--oak);
+}
+
+body.home.visite-guidee .vg-card-body {
+  font-size: 0.975rem;
+  color: var(--ink-soft);
+  line-height: 1.65;
+  max-width: 58ch;
+  text-wrap: pretty;
+}
+
+body.home.visite-guidee .vg-card-body strong {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+body.home.visite-guidee .vg-card-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--oak-deep);
+  text-decoration: none;
+  padding: 6px 10px 6px 0;
+  transition: color 0.15s;
+  border: none;
+  background: none;
+}
+
+body.home.visite-guidee .vg-card-link:hover { color: var(--oak); }
+body.home.visite-guidee .vg-card-link:focus-visible {
+  outline: 2px solid var(--hop);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* ── Mini vignettes ──────────────────────────────────────── */
+body.home.visite-guidee .vg-vignette {
+  width: 100%;
+  height: 160px;
+  border-radius: 10px;
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  overflow: hidden;
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Welcome vignette */
+body.home.visite-guidee .vign-welcome {
+  background: linear-gradient(135deg, var(--bg) 0%, color-mix(in srgb, var(--bg-side) 40%, var(--bg)) 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  padding: 0;
+}
+
+body.home.visite-guidee .vign-app-sketch {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+}
+
+body.home.visite-guidee .vign-app-bar {
+  height: 30px;
+  background: color-mix(in srgb, var(--bg-side) 90%, var(--bg));
+  border-bottom: 1px solid var(--hairline);
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  gap: 7px;
+  flex-shrink: 0;
+}
+
+body.home.visite-guidee .vign-app-bar-logo {
+  font-family: "Fraunces", serif;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--ink-mute);
+  letter-spacing: -0.02em;
+  flex-shrink: 0;
+}
+
+body.home.visite-guidee .vign-app-bar-logo span { color: var(--hop); font-style: italic; }
+body.home.visite-guidee .vign-app-bar-sep { width: 1px; height: 14px; background: var(--hairline); flex-shrink: 0; }
+
+body.home.visite-guidee .vign-app-bar-nav {
+  display: flex;
+  gap: 2px;
+  flex: 1;
+}
+
+body.home.visite-guidee .vign-app-bar-item {
+  height: 18px;
+  padding: 0 8px;
+  border-radius: 4px;
+  font-family: "DM Sans", sans-serif;
+  font-size: 8px;
+  display: flex;
+  align-items: center;
+  color: var(--ink-mute);
+}
+
+body.home.visite-guidee .vign-app-bar-item--active {
+  background: color-mix(in srgb, var(--hop) 14%, transparent);
+  color: var(--ink-soft);
+}
+
+body.home.visite-guidee .vign-app-bar-user {
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  background: var(--bg-side);
+  border: 1px solid var(--hairline);
+  flex-shrink: 0;
+}
+
+body.home.visite-guidee .vign-app-body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 7px;
+  padding: 10px;
+  background: var(--bg);
+}
+
+body.home.visite-guidee .vign-app-tile {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  padding: 7px 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+body.home.visite-guidee .vign-app-tile--wide { grid-column: span 2; }
+
+body.home.visite-guidee .vign-app-tile__label {
+  height: 4px; width: 55%;
+  border-radius: 2px;
+  background: var(--hairline);
+}
+
+body.home.visite-guidee .vign-app-tile__val {
+  height: 14px; width: 65%;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--ink-mute) 35%, var(--hairline));
+}
+
+body.home.visite-guidee .vign-app-tile__val--hop { background: color-mix(in srgb, var(--hop) 45%, var(--hairline)); }
+body.home.visite-guidee .vign-app-tile__val--oak { background: color-mix(in srgb, var(--oak) 40%, var(--hairline)); }
+
+body.home.visite-guidee .vign-app-tile__spark {
+  height: 18px;
+  width: 100%;
+  border-radius: 2px;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--hop) 18%, transparent) 30%,
+    color-mix(in srgb, var(--hop) 28%, transparent) 60%,
+    color-mix(in srgb, var(--hop) 22%, transparent) 100%
+  );
+  position: relative;
+}
+
+body.home.visite-guidee .vign-app-tile__spark::after {
+  content: '';
+  position: absolute;
+  bottom: 2px;
+  left: 0; right: 0;
+  height: 1.5px;
+  background: var(--hop);
+  clip-path: polygon(0% 80%, 15% 65%, 30% 75%, 48% 40%, 65% 55%, 80% 25%, 92% 30%, 100% 20%);
+}
+
+/* Topbar / navigation vignette */
+body.home.visite-guidee .vign-nav {
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  justify-content: flex-start;
+  align-items: stretch;
+  padding: 0;
+}
+
+body.home.visite-guidee .vign-topbar {
+  height: 36px;
+  background: color-mix(in srgb, var(--bg-side) 80%, var(--bg));
+  border-bottom: 1px solid var(--hairline);
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  gap: 8px;
+}
+
+body.home.visite-guidee .vign-topbar-mark {
+  font-family: "Fraunces", serif;
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--ink-mute);
+  letter-spacing: -0.02em;
+  margin-right: 8px;
+  flex-shrink: 0;
+}
+
+body.home.visite-guidee .vign-nav-pill {
+  height: 22px;
+  padding: 0 10px;
+  border-radius: 4px;
+  font-family: "DM Sans", sans-serif;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--ink-mute);
+  background: transparent;
+  display: flex;
+  align-items: center;
+}
+
+body.home.visite-guidee .vign-nav-pill--active {
+  color: var(--ink-soft);
+  background: color-mix(in srgb, var(--hop) 12%, transparent);
+}
+
+body.home.visite-guidee .vign-topbar-space { flex: 1; }
+
+body.home.visite-guidee .vign-user-chip {
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  background: var(--bg-side);
+  border: 1px solid var(--hairline);
+  font-family: "Fraunces", serif;
+  font-size: 9px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--ink-mute);
+  flex-shrink: 0;
+}
+
+body.home.visite-guidee .vign-topbar-separator { width: 1px; height: 18px; background: var(--hairline); flex-shrink: 0; }
+
+body.home.visite-guidee .vign-content-placeholder {
+  flex: 1;
+  background: repeating-linear-gradient(
+    0deg,
+    var(--bg) 0px, var(--bg) 20px,
+    color-mix(in srgb, var(--hairline) 40%, var(--bg)) 20px,
+    color-mix(in srgb, var(--hairline) 40%, var(--bg)) 21px
+  );
+  display: flex;
+  padding: 10px 12px;
+  gap: 8px;
+}
+
+body.home.visite-guidee .vign-placeholder-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+body.home.visite-guidee .vign-placeholder-line {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--hairline);
+}
+
+body.home.visite-guidee .vign-placeholder-line--short { width: 55%; }
+body.home.visite-guidee .vign-placeholder-line--med { width: 75%; }
+body.home.visite-guidee .vign-placeholder-line--full { width: 100%; }
+body.home.visite-guidee .vign-placeholder-line--accent {
+  background: color-mix(in srgb, var(--hop) 50%, var(--hairline));
+}
+
+/* Dashboard KPI vignette */
+body.home.visite-guidee .vign-dashboard {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  padding: 12px;
+  background: var(--bg);
+  align-items: start;
+}
+
+body.home.visite-guidee .vign-kpi {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+body.home.visite-guidee .vign-kpi__label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 7px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+body.home.visite-guidee .vign-kpi__val {
+  font-family: "Fraunces", serif;
+  font-size: 1.2rem;
+  font-weight: 300;
+  color: var(--ink);
+  line-height: 1;
+}
+
+body.home.visite-guidee .vign-kpi__val--hop { color: var(--hop); }
+body.home.visite-guidee .vign-kpi__val--oak { color: var(--oak); }
+
+body.home.visite-guidee .vign-kpi__sub {
+  font-size: 7px;
+  color: var(--ink-mute);
+  font-family: "DM Sans", sans-serif;
+}
+
+body.home.visite-guidee .vign-sparkline {
+  grid-column: span 3;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+body.home.visite-guidee .vign-spark-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 7px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+body.home.visite-guidee .vign-spark-svg {
+  height: 32px;
+  width: 100%;
+}
+
+/* Kanban board vignette */
+body.home.visite-guidee .vign-board {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  padding: 10px;
+  background: var(--bg);
+  align-items: start;
+}
+
+body.home.visite-guidee .vign-zone {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+body.home.visite-guidee .vign-zone-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 6.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  padding-bottom: 3px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+body.home.visite-guidee .vign-lot-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 5px;
+  padding: 5px 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+body.home.visite-guidee .vign-lot-name {
+  font-family: "Fraunces", serif;
+  font-size: 8px;
+  font-weight: 400;
+  font-style: italic;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+body.home.visite-guidee .vign-lot-sub {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 6px;
+  color: var(--ink-mute);
+}
+
+body.home.visite-guidee .vign-tank-row {
+  display: flex;
+  gap: 3px;
+  align-items: flex-end;
+}
+
+body.home.visite-guidee .vign-tank {
+  flex: 1;
+  border-radius: 2px 2px 3px 3px;
+  border: 1px solid var(--hairline);
+  background: var(--tank-empty);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  height: 28px;
+}
+
+body.home.visite-guidee .vign-tank-fill {
+  background: linear-gradient(to top, var(--cold), var(--bbt));
+  border-radius: 0 0 2px 2px;
+}
+
+/* Alert / Guerre vignette */
+body.home.visite-guidee .vign-guerre {
+  background: var(--bg);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  justify-content: center;
+}
+
+body.home.visite-guidee .vign-alert-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+body.home.visite-guidee .vign-alert-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+body.home.visite-guidee .vign-alert-dot--red { background: var(--ember); }
+body.home.visite-guidee .vign-alert-dot--warn { background: var(--cat-malt); }
+
+body.home.visite-guidee .vign-alert-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+body.home.visite-guidee .vign-alert-line {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--hairline);
+}
+
+body.home.visite-guidee .vign-alert-line--short { width: 60%; }
+body.home.visite-guidee .vign-alert-line--med { width: 80%; }
+
+/* Zeppelin reference hub vignette */
+body.home.visite-guidee .vign-zeppelin {
+  background: var(--bg);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 12px;
+  align-items: start;
+}
+
+body.home.visite-guidee .vign-ref-block {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+body.home.visite-guidee .vign-ref-title {
+  font-family: "Fraunces", serif;
+  font-size: 9px;
+  font-weight: 400;
+  color: var(--ink);
+}
+
+body.home.visite-guidee .vign-ref-items {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+body.home.visite-guidee .vign-ref-item {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--hairline);
+}
+
+body.home.visite-guidee .vign-ref-item--short { width: 65%; }
+body.home.visite-guidee .vign-ref-item--med { width: 80%; }
+body.home.visite-guidee .vign-ref-item--full { width: 100%; }
+body.home.visite-guidee .vign-ref-item--hop {
+  background: color-mix(in srgb, var(--hop) 50%, var(--hairline));
+}
+
+/* Form vignette */
+body.home.visite-guidee .vign-form {
+  background: var(--bg);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+body.home.visite-guidee .vign-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+body.home.visite-guidee .vign-field-label {
+  height: 5px; width: 45%;
+  border-radius: 3px;
+  background: var(--hairline);
+}
+
+body.home.visite-guidee .vign-field-input {
+  height: 18px;
+  border-radius: 5px;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  display: flex;
+  align-items: center;
+  padding: 0 6px;
+  gap: 4px;
+}
+
+body.home.visite-guidee .vign-field-input-val {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--ink-faint);
+}
+
+body.home.visite-guidee .vign-field-input-val--short { width: 55%; }
+
+body.home.visite-guidee .vign-field-input--accent {
+  border-color: color-mix(in srgb, var(--hop) 60%, var(--hairline));
+  background: color-mix(in srgb, var(--hop) 5%, var(--bg-elev));
+}
+
+body.home.visite-guidee .vign-submit-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+body.home.visite-guidee .vign-btn {
+  height: 26px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  font-family: "DM Sans", sans-serif;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+body.home.visite-guidee .vign-btn--primary {
+  background: var(--ink);
+  color: var(--bg);
+}
+
+body.home.visite-guidee .vign-btn--ghost {
+  background: transparent;
+  border: 1px solid var(--hairline);
+  color: var(--ink-mute);
+}
+
+/* Table vignette */
+body.home.visite-guidee .vign-table-wrap {
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+body.home.visite-guidee .vign-table-header {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 1fr;
+  padding: 4px 8px;
+  gap: 8px;
+}
+
+body.home.visite-guidee .vign-th {
+  height: 6px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--hairline) 70%, var(--bg));
+}
+
+body.home.visite-guidee .vign-table-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 1fr;
+  padding: 6px 8px;
+  gap: 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--hairline) 50%, var(--bg));
+  align-items: center;
+}
+
+body.home.visite-guidee .vign-table-row:last-child { border-bottom: none; }
+
+body.home.visite-guidee .vign-td {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--hairline);
+}
+
+body.home.visite-guidee .vign-td--hop { background: color-mix(in srgb, var(--hop) 50%, var(--hairline)); }
+body.home.visite-guidee .vign-td--ember { background: color-mix(in srgb, var(--ember) 40%, var(--hairline)); }
+body.home.visite-guidee .vign-td--full { width: 100%; }
+body.home.visite-guidee .vign-td--75 { width: 75%; }
+body.home.visite-guidee .vign-td--50 { width: 50%; }
+body.home.visite-guidee .vign-td--bold { height: 8px; background: var(--ink-mute); width: 90%; }
+
+/* Inventory / RM stocktake vignette */
+body.home.visite-guidee .vign-stocktake {
+  background: var(--bg);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+body.home.visite-guidee .vign-search-bar {
+  height: 28px;
+  border-radius: 7px;
+  background: var(--bg-elev);
+  border: 1.5px solid color-mix(in srgb, var(--hop) 50%, var(--hairline));
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  gap: 6px;
+}
+
+body.home.visite-guidee .vign-search-icon {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid var(--ink-mute);
+  flex-shrink: 0;
+}
+
+body.home.visite-guidee .vign-search-val {
+  height: 6px; width: 60%;
+  border-radius: 3px;
+  background: var(--ink-faint);
+}
+
+body.home.visite-guidee .vign-ledger-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+body.home.visite-guidee .vign-ledger-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+  flex-shrink: 0;
+}
+
+body.home.visite-guidee .vign-ledger-name {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--ink-mute);
+}
+
+body.home.visite-guidee .vign-ledger-qty {
+  margin-left: auto;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 8px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+/* ── Footer navigation ───────────────────────────────────── */
+body.home.visite-guidee .vg-footer {
+  width: 100%;
+  max-width: 720px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 24px;
+  gap: 12px;
+}
+
+body.home.visite-guidee .vg-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 0 28px;
+  border-radius: 10px;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.9rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  border: 1.5px solid transparent;
+  transition: background 0.15s, border-color 0.15s, transform 0.12s, box-shadow 0.15s;
+  touch-action: manipulation;
+  text-decoration: none;
+  user-select: none;
+  white-space: nowrap;
+  position: relative;
+}
+
+body.home.visite-guidee .vg-btn:active { transform: scale(0.97); }
+
+body.home.visite-guidee .vg-btn:focus-visible {
+  outline: 2px solid var(--hop);
+  outline-offset: 2px;
+}
+
+body.home.visite-guidee .vg-btn--prev {
+  background: var(--bg-elev);
+  border-color: var(--hairline);
+  color: var(--ink-soft);
+}
+
+body.home.visite-guidee .vg-btn--prev:hover {
+  border-color: var(--hairline-2);
+  background: color-mix(in srgb, var(--hairline) 40%, var(--bg-elev));
+  color: var(--ink);
+}
+
+body.home.visite-guidee .vg-btn--next {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--bg);
+  box-shadow: 0 2px 8px rgba(30,18,5,0.18);
+}
+
+body.home.visite-guidee .vg-btn--next:hover {
+  background: var(--ink-soft);
+  border-color: var(--ink-soft);
+  box-shadow: 0 4px 16px rgba(30,18,5,0.22);
+}
+
+body.home.visite-guidee .vg-btn--done {
+  background: var(--hop);
+  border-color: var(--hop-deep);
+  color: var(--bg);
+  box-shadow: 0 2px 8px rgba(56,70,20,0.22);
+}
+
+body.home.visite-guidee .vg-btn--done:hover {
+  background: var(--hop-deep);
+  border-color: var(--hop-deep);
+  box-shadow: 0 4px 16px rgba(56,70,20,0.28);
+}
+
+body.home.visite-guidee .vg-btn--hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* ── Responsive ──────────────────────────────────────────── */
+@media (max-width: 600px) {
+  body.home.visite-guidee .vg-card { padding: 24px 20px; }
+  body.home.visite-guidee .vg-card-header { flex-direction: column; gap: 12px; }
+  body.home.visite-guidee .vg-card-title { font-size: 1.35rem; }
+  body.home.visite-guidee .vg-btn { padding: 0 18px; font-size: 0.85rem; }
+  body.home.visite-guidee .vg-mark { font-size: 18px; }
+  body.home.visite-guidee .vg-skip-tour { display: none; }
+  body.home.visite-guidee .vign-board { grid-template-columns: repeat(2, 1fr); }
+  body.home.visite-guidee .vign-dashboard { grid-template-columns: repeat(2, 1fr); }
+  body.home.visite-guidee .vign-sparkline { grid-column: span 2; }
+  body.home.visite-guidee .vign-zeppelin { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 400px) {
+  body.home.visite-guidee .vg-card { padding: 20px 16px; }
+  body.home.visite-guidee .vg-btn { min-height: 44px; padding: 0 14px; font-size: 0.8rem; }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  body.home.visite-guidee .vg-dot:hover { transform: scale(1.35); }
+  body.home.visite-guidee .vg-btn--prev:hover {
+    background: color-mix(in srgb, var(--hairline) 40%, var(--bg-elev));
+  }
+}

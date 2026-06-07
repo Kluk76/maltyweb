@@ -16,7 +16,7 @@ $sharedDevice = device_is_shared($deviceId, $pdo);
 
 // Already logged in? Bounce to dashboard.
 if (current_user() !== null) {
-    header("Location: /", true, 302);
+    header("Location: /modules/mon-tableau.php", true, 302);
     exit;
 }
 
@@ -53,19 +53,48 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             $ip = $_SERVER['REMOTE_ADDR'] ?? null;
             $ua = $_SERVER['HTTP_USER_AGENT'] ?? null;
 
-            // ── Remember this device? (blocked on shared devices) ──────────
-            if (!empty($_POST["remember_me"]) && !$sharedDevice) {
-                rt_create((int)$user["id"], null, $ip, $ua, $pdo);
+            // ── Remember this device? ────────────────────────────────────
+            // Three cases:
+            //   (a) Unclassified: box ticked → defer token until after classification.
+            //       The interstitial page issues rt_create() when 'personal' is chosen.
+            //   (b) Classified personal (is_shared=0): issue token as normal.
+            //   (c) Shared (is_shared=1): refuse token (existing behaviour).
+            if (!empty($_POST["remember_me"])) {
+                if (!device_classified($deviceId, $pdo)) {
+                    // Device unknown — defer; classification page will issue token if personal.
+                    $_SESSION['pending_remember'] = 1;
+                } elseif (!$sharedDevice) {
+                    // Known personal device — issue immediately.
+                    rt_create((int)$user["id"], null, $ip, $ua, $pdo);
+                }
+                // Shared device: token refused (falls through, no action).
             }
 
             // Update last-seen in device registry (no-op for unregistered browsers).
             device_touch($deviceId, $ip, $ua, $pdo);
 
-            $next = $_GET["next"] ?? "/";
+            $next = $_GET["next"] ?? "/modules/mon-tableau.php";
             // Reject open-redirects: must be a same-origin path
             if (!is_string($next) || !str_starts_with($next, "/") || str_starts_with($next, "//")) {
-                $next = "/";
+                $next = "/modules/mon-tableau.php";
             }
+
+            // Fresh user who has never seen the tour → redirect to onboarding.
+            // Requires a DB read because auth_login() does not populate tour_seen_at in session.
+            $tourCheckStmt = $pdo->prepare('SELECT tour_seen_at FROM users WHERE id = ? LIMIT 1');
+            $tourCheckStmt->execute([(int) $user['id']]);
+            $tourCheckRow = $tourCheckStmt->fetch();
+            if ($tourCheckRow && $tourCheckRow['tour_seen_at'] === null) {
+                $next = "/modules/visite-guidee.php";
+            }
+
+            // Device classification: unclassified device runs the interstitial first.
+            // The interstitial carries the original $next through its own `next` param,
+            // so the operator lands on their intended destination after classifying.
+            if (!device_classified($deviceId, $pdo)) {
+                $next = '/modules/classification-appareil.php?next=' . rawurlencode($next);
+            }
+
             header("Location: $next", true, 302);
             exit;
         }
