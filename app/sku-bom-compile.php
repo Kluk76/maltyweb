@@ -2223,6 +2223,58 @@ function compile_sku_bom_liquid(
         $miById[(int)$m['id']] = $m;
     }
 
+    // ── 2-OI. Oldest-invoice costing data (compiler-local, NEVER modifies v_mi_cost) ──────
+    //
+    // OLDEST-INVOICE RULE (operator ruling 2026-06-07):
+    //   Per MI-line, at costing time:
+    //   TRIGGER: the MI has ≥1 inv_deliveries row (exclusion_class IS NULL, qty_delivered > 0,
+    //            ANY status including Consumed) AND the recipe's basis-window END (the latest
+    //            basis-batch date used for that recipe's observed window) is STRICTLY BEFORE
+    //            the MI's earliest date_received.
+    //   THEN: cost the line from the OLDEST delivery by date_received:
+    //         chf_unit = total_chf / qty_delivered (CHF-normalised at the source row —
+    //         NEVER unit_price × a hardcoded FX rate).
+    //         Tag provenance as 'oldest_invoice'.
+    //   ELSE if MI has no deliveries at all → existing catalog/no_basis fallback, unchanged.
+    //   ELSE (coverage overlaps the basis window) → current WAC, unchanged.
+    //
+    // This query is LOCAL to compile_sku_bom_liquid — v_mi_cost is shared and signed-off,
+    // do NOT modify it. The per-MI oldest-delivery lookup is an override applied AFTER the
+    // shared WAC is loaded, only when the trigger condition is met for a given (recipe, MI) pair.
+
+    // miOldestDelivery[mi_id_fk] = {delivery_id, date_received, chf_unit}
+    // Only populated for MIs that actually have ≥1 delivery row.
+    $miOldestDelivery = [];
+    {
+        // Subquery: per ingredient_fk, pick the row with the earliest date_received (ties: lowest id).
+        $oiStmt = $pdo->query(
+            "SELECT d.ingredient_fk, d.id AS delivery_id, d.date_received,
+                    (d.total_chf / d.qty_delivered) AS chf_unit
+               FROM inv_deliveries d
+              WHERE d.exclusion_class IS NULL
+                AND d.qty_delivered > 0
+                AND d.date_received = (
+                    SELECT MIN(d2.date_received)
+                      FROM inv_deliveries d2
+                     WHERE d2.ingredient_fk = d.ingredient_fk
+                       AND d2.exclusion_class IS NULL
+                       AND d2.qty_delivered > 0
+                )
+              ORDER BY d.ingredient_fk, d.id ASC"
+        );
+        foreach ($oiStmt->fetchAll(\PDO::FETCH_ASSOC) as $oi) {
+            $miFk = (int)$oi['ingredient_fk'];
+            // Keep only the first row per MI (earliest date_received, lowest id — ties resolved)
+            if (!isset($miOldestDelivery[$miFk])) {
+                $miOldestDelivery[$miFk] = [
+                    'delivery_id'   => (int)$oi['delivery_id'],
+                    'date_received' => $oi['date_received'],   // 'YYYY-MM-DD'
+                    'chf_unit'      => (float)$oi['chf_unit'],
+                ];
+            }
+        }
+    }
+
     // Collect unique recipe IDs across all target SKUs
     $recipeIds = array_values(array_unique(array_column($targetSkus, 'recipe_id')));
 
@@ -2605,6 +2657,31 @@ function compile_sku_bom_liquid(
         $recipeBasisBatches[$recipeId] = array_slice($withIngredients, 0, 8);
     }
 
+    // ── 3a-OI. Compute basis-window END date per recipe (for oldest-invoice trigger) ────────
+    //
+    // basis-window END = the LATEST batch event_date among the ≤8 selected basis batches.
+    // Used by the oldest-invoice trigger: if window END < MI's earliest date_received →
+    // the recipe's brews all predate the ingredient's delivery-price coverage.
+    //
+    // recipeWindowEndDate[recipe_id] = 'YYYY-MM-DD' or null (if no batches / dates unknown).
+    $recipeWindowEndDate = [];
+    foreach ($recipeBasisBatches as $rid => $batches) {
+        if (empty($batches)) {
+            $recipeWindowEndDate[$rid] = null;
+            continue;
+        }
+        // batchEventDate[rid][batch] was populated from bd_brewing_cooling MIN(event_date).
+        // The "end" of the basis window is the LATEST date among the selected batches.
+        $maxDate = null;
+        foreach ($batches as $batch) {
+            $d = $batchEventDate[$rid][$batch] ?? null;
+            if ($d !== null && ($maxDate === null || $d > $maxDate)) {
+                $maxDate = $d;
+            }
+        }
+        $recipeWindowEndDate[$rid] = $maxDate;
+    }
+
     // ── 3b. Volume-weighted per-HL aggregator (recipe-level window semantics) ──
     //
     // $computePerHl now takes the recipe's pre-selected $basisBatches (ordered ≤8 set),
@@ -2776,6 +2853,15 @@ function compile_sku_bom_liquid(
         return null;
     };
 
+    // ── Gate-15 collector (oldest-invoice transparency table) ────────────────────
+    //
+    // Populated during per-recipe costing when the oldest-invoice rule triggers.
+    // Each entry: [recipe_id, recipe_name, mi_id (int), mi_code, basis_window_end,
+    //              mi_earliest_delivery, oldest_delivery_id, oldest_chf_unit,
+    //              current_wac_chf, delta_chf_per_hl, per_hl, qty_per_unit (sku-level, filled later)]
+    // Keyed by "recipe_id:mi_id" to deduplicate within a recipe (one entry per recipe/MI pair).
+    $gate15Entries = [];
+
     // ── 4. Per-recipe: build proposed liquid lines ────────────────────────────
 
     // proposedByRecipe[recipe_id][mi_id] = {mi_code, cat_name, ing_unit, qty_per_hl,
@@ -2808,6 +2894,94 @@ function compile_sku_bom_liquid(
             continue;
         }
 
+        // ── Oldest-invoice override closure (per-recipe, captures $recipeId) ────────────
+        //
+        // $computeCostOI wraps $computeCost and applies the OLDEST-INVOICE rule when
+        // the trigger condition is met. Drop-in replacement for $computeCost at every
+        // per-recipe line-costing call site.
+        //
+        // Returns [cost => float|null, cost_basis => 'oldest_invoice'|'wac'|'catalog'|'no_basis'].
+        // Callers read [0] for cost, [1] for provenance.
+        //
+        // Gate-15 side-effect: when oldest_invoice triggers, appends an entry to $gate15Entries.
+        // The entry key is "recipeId:miId" — one record per (recipe, MI) pair (deduped).
+        $computeCostOI = function(
+            float $qtyPerUnit,
+            string $ingUnit,
+            array  $mi,
+            int    $miId
+        ) use (
+            $computeCost,
+            $recipeId,
+            $miOldestDelivery,
+            $recipeWindowEndDate,
+            &$gate15Entries
+        ): array {
+            $oi = $miOldestDelivery[$miId] ?? null;
+
+            if ($oi !== null) {
+                // The MI has at least one delivery. Check the trigger condition:
+                // basis-window END strictly before MI's earliest date_received.
+                $windowEnd = $recipeWindowEndDate[$recipeId] ?? null;
+
+                if ($windowEnd !== null && strcmp($windowEnd, $oi['date_received']) < 0) {
+                    // TRIGGER: oldest-invoice rule fires.
+                    // chf_unit = total_chf / qty_delivered (already computed at load time,
+                    // CHF-normalised at the source row — NEVER unit_price × hardcoded FX rate).
+                    $oiChfUnit = $oi['chf_unit'];  // CHF per pricing_unit of the delivery
+
+                    // Apply the same unit-conversion as $computeCost to yield cost per ing_unit qty.
+                    // oiChfUnit is CHF per pricing_unit (e.g. CHF/kg for malts/hops).
+                    // We need cost = qtyPerUnit × oiChfUnit × conversion_factor.
+                    $pricingUnit = $mi['pricing_unit'] ?? '';
+                    $conv        = $mi['conversion_factor'] !== null ? (float)$mi['conversion_factor'] : null;
+
+                    $oiCost = null;
+                    if ($ingUnit === $pricingUnit) {
+                        $oiCost = round($qtyPerUnit * $oiChfUnit, 6);
+                    } elseif (($ingUnit === 'g' || $ingUnit === 'kg') && $pricingUnit === 'kg') {
+                        if ($conv !== null) {
+                            $oiCost = round($qtyPerUnit * $oiChfUnit * $conv, 6);
+                        }
+                    } elseif ($ingUnit === 'ml' && $pricingUnit === 'kg') {
+                        $density = $mi['density_g_per_ml'] !== null ? (float)$mi['density_g_per_ml'] : null;
+                        if ($density !== null && $conv !== null) {
+                            $oiCost = round($qtyPerUnit * $density * $conv * $oiChfUnit, 6);
+                        }
+                    } elseif ($conv !== null) {
+                        $oiCost = round($qtyPerUnit * $oiChfUnit * $conv, 6);
+                    }
+
+                    // Gate-15: record one entry per (recipe, MI) pair.
+                    $g15Key = "{$recipeId}:{$miId}";
+                    if (!isset($gate15Entries[$g15Key])) {
+                        $currentWac = ($mi['cost_chf'] !== null && $mi['cost_chf'] !== '')
+                            ? (float)$mi['cost_chf'] : null;
+                        $gate15Entries[$g15Key] = [
+                            'recipe_id'             => $recipeId,
+                            'mi_id_fk'              => $miId,
+                            'mi_code'               => $mi['mi_id'],
+                            'basis_window_end'      => $windowEnd,
+                            'mi_earliest_delivery'  => $oi['date_received'],
+                            'oldest_delivery_id'    => $oi['delivery_id'],
+                            'oldest_chf_unit'       => round($oiChfUnit, 6),
+                            'current_wac_chf'       => $currentWac,
+                            'per_hl'                => $qtyPerUnit,   // filled with per-HL qty at call site
+                            'cost_per_hl_oldest'    => $oiCost,       // per-HL cost at oldest price
+                            'cost_per_hl_wac'       => $computeCost($qtyPerUnit, $ingUnit, $mi),
+                        ];
+                    }
+
+                    return [$oiCost, 'oldest_invoice'];
+                }
+            }
+
+            // No trigger — use WAC (current behavior).
+            $cost = $computeCost($qtyPerUnit, $ingUnit, $mi);
+            $basis = ($mi['cost_basis'] ?? 'no_basis');
+            return [$cost, $basis !== null ? $basis : 'no_basis'];
+        };
+
         // Determine if this recipe is "zero-observed" (no v1 OR v2 data at all)
         $hasAnyObserved = (
             !empty($v1RawRows[$recipeId]) || !empty($v2RawRows[$recipeId])
@@ -2825,7 +2999,7 @@ function compile_sku_bom_liquid(
                 }
                 $perHl  = $ing['qty_per_hl'];
                 $unit   = $ing['unit'];
-                $cost   = $computeCost($perHl, $unit, $mi);
+                [$cost, $costBasis] = $computeCostOI($perHl, $unit, $mi, $miId);
                 $proposed[$miId] = [
                     'mi_code'     => $mi['mi_id'],
                     'cat_name'    => $mi['cat_name'],
@@ -2836,6 +3010,7 @@ function compile_sku_bom_liquid(
                     'source'      => 'recipe_full_fallback',
                     'stage'       => 'brewhouse',
                     'cost_per_hl' => $cost,
+                    'cost_basis'  => $costBasis,
                     'no_price'    => ($cost === null && $mi['price'] !== null && $mi['price'] !== ''),
                 ];
             }
@@ -2863,7 +3038,7 @@ function compile_sku_bom_liquid(
                 if ($result === null) {
                     continue; // MI absent from basis window — stale/retired, drop it
                 }
-                $cost = $computeCost($result['per_hl'], $result['unit'], $mi);
+                [$cost, $costBasis] = $computeCostOI($result['per_hl'], $result['unit'], $mi, $miId);
                 $proposed[$miId] = [
                     'mi_code'     => $mi['mi_id'],
                     'cat_name'    => $mi['cat_name'],
@@ -2874,6 +3049,7 @@ function compile_sku_bom_liquid(
                     'source'      => 'observed',
                     'stage'       => 'brewhouse',
                     'cost_per_hl' => $cost,
+                    'cost_basis'  => $costBasis,
                     'no_price'    => ($cost === null),
                 ];
             }
@@ -2897,7 +3073,7 @@ function compile_sku_bom_liquid(
                 if ($result === null) {
                     continue; // MI absent from basis window — stale/retired, drop it
                 }
-                $cost = $computeCost($result['per_hl'], $result['unit'], $mi);
+                [$cost, $costBasis] = $computeCostOI($result['per_hl'], $result['unit'], $mi, $miId);
                 $proposed[$miId] = [
                     'mi_code'     => $mi['mi_id'],
                     'cat_name'    => $mi['cat_name'],
@@ -2908,6 +3084,7 @@ function compile_sku_bom_liquid(
                     'source'      => 'observed',
                     'stage'       => 'brewhouse',
                     'cost_per_hl' => $cost,
+                    'cost_basis'  => $costBasis,
                     'no_price'    => ($cost === null),
                 ];
             }
@@ -2939,7 +3116,7 @@ function compile_sku_bom_liquid(
                         // MI absent from basis window or no HL → try recipe gap-fill below
                         continue;
                     }
-                    $cost = $computeCost($result['per_hl'], $result['unit'], $mi);
+                    [$cost, $costBasis] = $computeCostOI($result['per_hl'], $result['unit'], $mi, $miId);
                     $proposed[$miId] = [
                         'mi_code'     => $mi['mi_id'],
                         'cat_name'    => $mi['cat_name'],
@@ -2950,6 +3127,7 @@ function compile_sku_bom_liquid(
                         'source'      => 'observed',
                         'stage'       => 'brewhouse',
                         'cost_per_hl' => $cost,
+                        'cost_basis'  => $costBasis,
                         'no_price'    => ($cost === null),
                     ];
                 }
@@ -2972,7 +3150,7 @@ function compile_sku_bom_liquid(
                 }
                 $perHl = $ing['qty_per_hl'];
                 $unit  = $ing['unit'];
-                $cost  = $computeCost($perHl, $unit, $mi);
+                [$cost, $costBasis] = $computeCostOI($perHl, $unit, $mi, $miId);
                 $proposed[$miId] = [
                     'mi_code'     => $mi['mi_id'],
                     'cat_name'    => $mi['cat_name'],
@@ -2983,6 +3161,7 @@ function compile_sku_bom_liquid(
                     'source'      => 'recipe_gapfill',
                     'stage'       => 'brewhouse',
                     'cost_per_hl' => $cost,
+                    'cost_basis'  => $costBasis,
                     'no_price'    => ($cost === null && $mi['price'] !== null && $mi['price'] !== ''),
                 ];
             }
@@ -3029,7 +3208,7 @@ function compile_sku_bom_liquid(
                     $recipeId, $miId, $perHlG, $result['unit']
                 ));
             }
-            $cost = $computeCost($result['per_hl'], $result['unit'], $mi);
+            [$cost, $costBasis] = $computeCostOI($result['per_hl'], $result['unit'], $mi, $miId);
             $dhKey = 'dh:' . $miId;
             $dhProposed[$dhKey] = [
                 'mi_id_fk'    => $miId,
@@ -3042,6 +3221,7 @@ function compile_sku_bom_liquid(
                 'source'      => 'observed',
                 'stage'       => 'dry_hop',
                 'cost_per_hl' => $cost,
+                'cost_basis'  => $costBasis,
                 'no_price'    => ($cost === null),
             ];
         }
@@ -3144,6 +3324,7 @@ function compile_sku_bom_liquid(
                 'price'             => $mi !== null && $mi['price'] !== null ? (float)$mi['price'] : null,
                 'source'            => $p['source'],
                 'stage'             => 'brewhouse',
+                'cost_basis'        => $p['cost_basis'] ?? null,
                 'no_price_flag'     => $p['no_price'],
             ];
         }
@@ -3169,6 +3350,7 @@ function compile_sku_bom_liquid(
                 'price'             => $mi !== null && $mi['price'] !== null ? (float)$mi['price'] : null,
                 'source'            => $p['source'],
                 'stage'             => 'dry_hop',
+                'cost_basis'        => $p['cost_basis'] ?? null,
                 'no_price_flag'     => $p['no_price'],
             ];
         }
@@ -3349,6 +3531,17 @@ function compile_sku_bom_liquid(
 -- Note: zero-window SKUs (dormant seasonals) are excluded from the apply scope.
 SQL;
 
+    // ── Gate-15: finalize oldest-invoice transparency table ────────────────────
+    // gate15_table is the apply-gate 15 transparency report: every (recipe, MI) pair
+    // where the oldest-invoice rule fired, with basis_window_end, MI's earliest delivery,
+    // oldest CHF/unit vs current WAC, and per-HL CHF delta. Sorted by recipe_id then mi_code.
+    $gate15Table = array_values($gate15Entries);
+    usort($gate15Table, fn($a, $b) =>
+        $a['recipe_id'] !== $b['recipe_id']
+            ? $a['recipe_id'] <=> $b['recipe_id']
+            : strcmp($a['mi_code'], $b['mi_code'])
+    );
+
     return [
         'dry_run'              => $dryRun,
         'generated_at'         => $generatedAt,
@@ -3363,6 +3556,9 @@ SQL;
         'alternative_validation' => $altValidation,
         'apply_predicate_note' => $applyPredicate,
         'aggregator_location'  => 'compile_sku_bom_liquid → $computePerHl closure. Recipe-level basis window (≤8 most-recent batches with HL+any-observed-ingredient, shared across all stages). Per MI: presentBatches = basis ∩ {MI qty > 0}; empty → MI drops out. Outlier rejection (2×MAD) on presentBatches per-HL values. per_hl = Σ(surviving qty) ÷ Σ(ALL basis-window HL) — absence dilutes. Reuse by extracting to _liq_compute_per_hl() if a drift surface needs the same aggregation.',
+        // Apply-gate 15 transparency: every line costed via oldest-invoice rule.
+        // Operator ruling 2026-06-07. Dry-run only — zero ref_sku_bom writes this dispatch.
+        'gate15_oldest_invoice' => $gate15Table,
     ];
 }
 

@@ -192,6 +192,51 @@ echo "       AND mi_id IS NOT NULL;\n";
 echo "    Then INSERT proposed lines with bom_source='liquid', source='Brewing'.\n";
 echo "    Safe-zone: NEVER touches Packaging, composite_liquid, or composite_packaging rows.\n";
 
+// ── Apply-gate 15: oldest-invoice transparency table ─────────────────────────
+// Operator ruling 2026-06-07. Emitted for every (recipe, MI) pair where the
+// oldest-invoice costing rule fired. Substitution is explicit, never silent.
+
+$gate15 = $result['gate15_oldest_invoice'] ?? [];
+echo "\n" . str_repeat('=', 80) . "\n";
+echo "APPLY-GATE 15 — OLDEST-INVOICE COSTING TRANSPARENCY\n";
+echo "  Rule: basis-window END < MI's earliest date_received → cost from oldest delivery.\n";
+echo "  Operator ruling: 2026-06-07 | Dispatch: DRY-RUN ONLY (zero ref_sku_bom writes)\n";
+echo str_repeat('=', 80) . "\n";
+
+if (empty($gate15)) {
+    echo "  (no oldest-invoice substitutions triggered)\n";
+} else {
+    printf("  Total substitutions: %d (recipe/MI pairs)\n\n", count($gate15));
+    printf("%-5s %-10s %-22s %-12s %-12s %-10s %-10s %-10s\n",
+        'R_ID', 'MI_CODE', 'BASIS_END', 'MI_FIRST_DEL', 'OLDEST_CHF', 'WAC_CHF', 'DELTA_PHL', 'DEL_ID'
+    );
+    printf("%-5s %-10s %-22s %-12s %-12s %-10s %-10s %-10s\n",
+        str_repeat('-', 5), str_repeat('-', 10), str_repeat('-', 22),
+        str_repeat('-', 12), str_repeat('-', 12),
+        str_repeat('-', 10), str_repeat('-', 10), str_repeat('-', 10)
+    );
+    foreach ($gate15 as $row) {
+        $wac   = $row['current_wac_chf'] !== null ? sprintf('%.6f', $row['current_wac_chf']) : 'n/a';
+        $delta = ($row['current_wac_chf'] !== null)
+            ? sprintf('%+.6f', ($row['oldest_chf_unit'] - $row['current_wac_chf']) * $row['per_hl'])
+            : 'n/a';
+        printf("%-5d %-10s %-22s %-12s %-12.6f %-10s %-10s %-10d\n",
+            $row['recipe_id'],
+            $row['mi_code'],
+            $row['basis_window_end'] ?? 'NULL',
+            $row['mi_earliest_delivery'],
+            $row['oldest_chf_unit'],
+            $wac,
+            $delta,
+            $row['oldest_delivery_id']
+        );
+    }
+    echo "\nColumns: R_ID=recipe_id, BASIS_END=latest basis-batch date, MI_FIRST_DEL=MI's earliest delivery,\n";
+    echo "  OLDEST_CHF=total_chf/qty_delivered of oldest delivery, WAC_CHF=current v_mi_cost.cost_chf,\n";
+    echo "  DELTA_PHL=(oldest_chf_unit - wac) × per_hl [CHF delta per HL], DEL_ID=inv_deliveries.id.\n";
+}
+echo str_repeat('=', 80) . "\n";
+
 echo "\nAGGREGATOR LOCATION: {$result['aggregator_location']}\n";
 echo "\n[DRY-RUN] No DB writes performed. Review JSON preview then apply with explicit --apply.\n";
 
