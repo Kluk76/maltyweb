@@ -1604,7 +1604,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'hop_boil_time_min'  => $rriRow['hop_boil_time_min'],
             ];
 
-            // Step 4 — write
+            // Step 4 — write.
+            // Pre-emptively remove any tombstoned row (is_active=0) that occupies the target
+            // (recipe_id, mi_id_fk, stage_key, boil_time_key) UNIQUE slot. Without this, the
+            // UPDATE below would hit ER_DUP_ENTRY 1062 because the generated columns still
+            // hold the slot even on soft-deleted rows.
+            $deadBlockerStmt = $pdo->prepare(
+                "SELECT id FROM ref_recipe_ingredients
+                  WHERE recipe_id = ? AND mi_id_fk = ?
+                    AND (hop_addition_stage <=> ?)
+                    AND (hop_boil_time_min  <=> ?)
+                    AND is_active = 0
+                  LIMIT 1"
+            );
+            $deadBlockerStmt->execute([
+                $rriRow['recipe_id'], $rriRow['mi_id_fk'], $stageOrNull, $boilMin,
+            ]);
+            $deadBlocker = $deadBlockerStmt->fetch(PDO::FETCH_ASSOC);
+            if ($deadBlocker) {
+                // Hard-delete the tombstone — it is already inactive and its existence was
+                // already captured in audit_row_revisions when it was soft-deleted.
+                $pdo->prepare("DELETE FROM ref_recipe_ingredients WHERE id = ? AND is_active = 0")
+                    ->execute([(int) $deadBlocker['id']]);
+            }
+
             $upStmt = $pdo->prepare(
                 "UPDATE ref_recipe_ingredients
                     SET hop_addition_stage = ?, hop_boil_time_min = ?
@@ -1757,13 +1780,74 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $insStmt->execute([$recipeId, $miIdFk, $qtyPerHl, $unit, $stageOrNull, $boilMin]);
                 $newId = (int) $pdo->lastInsertId();
             } catch (PDOException $e) {
-                // Duplicate stage+time for same (recipe, MI)
-                if (str_contains($e->getMessage(), '1062') || str_contains($e->getMessage(), 'Duplicate')) {
+                if (!str_contains($e->getMessage(), '1062') && !str_contains($e->getMessage(), 'Duplicate')) {
+                    throw $e;
+                }
+                // UNIQUE collision: the slot (recipe_id, mi_id_fk, stage_key, boil_time_key) is occupied.
+                // Check whether the occupant is a soft-deleted (is_active=0) row — if so, resurrect it
+                // rather than blocking the operator permanently. The DELETE flow soft-deletes rows, which
+                // leaves their UNIQUE slot occupied; re-adding the same hop+stage+minutes must succeed.
+                $tombStmt = $pdo->prepare(
+                    "SELECT id, qty_per_hl, unit, hop_addition_stage, hop_boil_time_min
+                       FROM ref_recipe_ingredients
+                      WHERE recipe_id = ? AND mi_id_fk = ?
+                        AND (hop_addition_stage <=> ?)
+                        AND (hop_boil_time_min  <=> ?)
+                        AND is_active = 0
+                      LIMIT 1"
+                );
+                $tombStmt->execute([$recipeId, $miIdFk, $stageOrNull, $boilMin]);
+                $tombRow = $tombStmt->fetch(PDO::FETCH_ASSOC);
+
+                if (!$tombRow) {
+                    // Collision is with an ACTIVE row — genuinely duplicate submission.
                     http_response_code(409);
                     echo json_encode(['ok' => false, 'error' => "Cette combinaison houblon + stage + minutes existe déjà pour cette recette."]);
                     exit;
                 }
-                throw $e;
+
+                // Resurrect: update the tombstoned row with new qty/unit and reactivate it.
+                $newId = (int) $tombRow['id'];
+                $beforeRes = [
+                    'qty_per_hl'         => $tombRow['qty_per_hl'],
+                    'unit'               => $tombRow['unit'],
+                    'hop_addition_stage' => $tombRow['hop_addition_stage'],
+                    'hop_boil_time_min'  => $tombRow['hop_boil_time_min'],
+                    'is_active'          => 0,
+                ];
+                $pdo->prepare(
+                    "UPDATE ref_recipe_ingredients
+                        SET qty_per_hl = ?, unit = ?, hop_addition_stage = ?, hop_boil_time_min = ?, is_active = 1
+                      WHERE id = ?"
+                )->execute([$qtyPerHl, $unit, $stageOrNull, $boilMin, $newId]);
+
+                $after = [
+                    'recipe_id'          => $recipeId, 'mi_id_fk' => $miIdFk,
+                    'qty_per_hl'         => $qtyPerHl, 'unit' => $unit,
+                    'hop_addition_stage' => $stageOrNull, 'hop_boil_time_min' => $boilMin,
+                    'is_active'          => 1,
+                ];
+                log_revision(
+                    $pdo, $me, 'ref_recipe_ingredients', $newId,
+                    $beforeRes,
+                    $after,
+                    'normal',
+                    "Salle de contrôle: add hop addition (ressuscité) · {$recRow2['name']} · {$miRow['name']}"
+                );
+
+                echo json_encode([
+                    'ok'       => true,
+                    'id'       => $newId,
+                    'mi'       => (string) $miRow['mi_id'],
+                    'name'     => (string) $miRow['name'],
+                    'cat'      => 'Hops',
+                    'qty'      => $qtyPerHl,
+                    'unit'     => $unit,
+                    'is_hop'   => true,
+                    'stage'    => $stageOrNull,
+                    'boil_min' => $boilMin,
+                ]);
+                exit;
             }
 
             $after = [
