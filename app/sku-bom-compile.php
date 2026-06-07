@@ -2171,12 +2171,44 @@ function compile_sku_bom_liquid(
 
     $recipePhRaw = implode(',', array_fill(0, count($recipeIds), '?'));
 
+    // ── 2a-pre. Recipe window guard (G2: floor date) ─────────────────────────
+    // Load liquid_basis_floor_date for all in-scope recipes.
+    //
+    // G2 (floor date): when liquid_basis_floor_date IS NOT NULL, brews whose
+    // event_date is strictly before the floor are excluded from the trailing
+    // window. Used for recipe discontinuities (DK era-change: SPY batch 57+
+    // and DIB batch 4+, both floored at 2025-10-07).
+    //
+    // Note on seasonal (EPH) scoping: each EPH vintage is already a distinct
+    // recipe row in ref_recipes (e.g. r62=EPH1-2026, r76=EPH2-2026). Active
+    // EPH SKUs point to their vintage's recipe_id, so the trailing window only
+    // ever sees that vintage's single brew. No additional vintage-scoping guard
+    // is required — the DB model enforces it structurally.
+    //
+    // If the guarded set has 0 brews: recipe is skipped with a per-recipe note
+    // (not counted as an error — expected for dormant recipes with no post-floor
+    // brews yet).
+    $recipeGuardStmt = $pdo->prepare(
+        "SELECT id, liquid_basis_floor_date
+           FROM ref_recipes
+          WHERE id IN ({$recipePhRaw})"
+    );
+    $recipeGuardStmt->execute($recipeIds);
+    // recipeGuards[recipe_id] = {floor_date}
+    $recipeGuards = [];
+    foreach ($recipeGuardStmt->fetchAll(\PDO::FETCH_ASSOC) as $rg) {
+        $recipeGuards[(int)$rg['id']] = [
+            'floor_date' => $rg['liquid_basis_floor_date'],  // 'YYYY-MM-DD' or null
+        ];
+    }
+
     // ── 2a. Batch HL index ─────────────────────────────────────────────────────
     // For each (recipe_id, batch): total cooling HL across all brews of that batch.
     // bd_brewing_cooling.cool_batch (varchar) matches bd_brewing_ingredients_v2.batch (varchar).
     $hlStmt = $pdo->prepare(
         "SELECT cool_beer_recipe_id AS recipe_id, cool_batch AS batch,
-                SUM(cool_final_volume_hl) AS batch_hl
+                SUM(cool_final_volume_hl) AS batch_hl,
+                MIN(event_date) AS batch_event_date
            FROM bd_brewing_cooling
           WHERE cool_beer_recipe_id IN ({$recipePhRaw})
             AND cool_final_volume_hl IS NOT NULL
@@ -2185,9 +2217,14 @@ function compile_sku_bom_liquid(
     );
     $hlStmt->execute($recipeIds);
     // batchHl[recipe_id][batch] = float hl
-    $batchHl = [];
+    // batchEventDate[recipe_id][batch] = date string (for guard filtering)
+    $batchHl        = [];
+    $batchEventDate = [];
     foreach ($hlStmt->fetchAll(\PDO::FETCH_ASSOC) as $hl) {
-        $batchHl[(int)$hl['recipe_id']][$hl['batch']] = (float)$hl['batch_hl'];
+        $rid   = (int)$hl['recipe_id'];
+        $batch = $hl['batch'];
+        $batchHl[$rid][$batch]        = (float)$hl['batch_hl'];
+        $batchEventDate[$rid][$batch] = $hl['batch_event_date'];  // 'YYYY-MM-DD' or null
     }
 
     // ── 2b. Observed malt/hops from v1 (bd_brewing_ingredients_parsed) ─────────
@@ -2229,7 +2266,7 @@ function compile_sku_bom_liquid(
     // Link: header_id → bd_brewing_brewday_v2 → recipe_id_fk + batch
     // Categories: adjunct, mineral, process
     $v2Stmt = $pdo->prepare(
-        "SELECT bd.recipe_id_fk AS recipe_id, bd.batch, bi.category,
+        "SELECT bd.recipe_id_fk AS recipe_id, bd.batch, bd.event_date, bi.category,
                 bi.mi_id_fk, bi.qty, bi.unit
            FROM bd_brewing_ingredients_parsed_v2 bi
            JOIN bd_brewing_brewday_v2 bd
@@ -2242,7 +2279,9 @@ function compile_sku_bom_liquid(
     );
     $v2Stmt->execute($recipeIds);
     // v2Rows[recipe_id][batch][category][mi_id_fk] = [qty, unit]
-    $v2RawRows = [];
+    // v2BatchDate[recipe_id][batch] = event_date string (for guard filtering)
+    $v2RawRows  = [];
+    $v2BatchDate = [];
     foreach ($v2Stmt->fetchAll(\PDO::FETCH_ASSOC) as $row) {
         $rid  = (int)$row['recipe_id'];
         $batch = $row['batch'];
@@ -2254,6 +2293,9 @@ function compile_sku_bom_liquid(
             $v2RawRows[$rid][$batch][$cat][$miId] = ['qty' => 0.0, 'unit' => $unit];
         }
         $v2RawRows[$rid][$batch][$cat][$miId]['qty'] += $qty;
+        if (!isset($v2BatchDate[$rid][$batch])) {
+            $v2BatchDate[$rid][$batch] = $row['event_date'];
+        }
     }
 
     // ── 2d. ref_recipe_ingredients (gap-fill / full-fallback) ─────────────────
@@ -2274,6 +2316,79 @@ function compile_sku_bom_liquid(
             'qty_per_hl' => (float)$row['qty_per_hl'],
             'unit'       => $row['unit'],
         ];
+    }
+
+    // ── 2d-post. Apply per-recipe floor-date guard (G2) ──────────────────────
+    // For recipes with liquid_basis_floor_date set, exclude batches whose brew
+    // event_date is strictly before the floor from batchHl, v1RawRows, v2RawRows.
+    // Sourced from bd_brewing_cooling.event_date (MIN per batch).
+    //
+    // Zero-surviving batches → recipe is skipped (per-recipe note, not an error).
+    //
+    // $recipeWindowGuarded[recipe_id] = [
+    //     'guarded'          => bool,      true if floor_date guard was applied
+    //     'guard_reason'     => string[],  e.g. ['floor:2025-10-07']
+    //     'batches_excluded' => int,       count of batches removed by the floor
+    //     'batches_kept'     => int,       count of batches remaining
+    //     'zero_window'      => bool,      true if no batches survive the guard
+    // ]
+    $recipeWindowGuarded = [];
+
+    foreach ($recipeIds as $recipeId) {
+        $recipeId  = (int)$recipeId;
+        $floorDate = $recipeGuards[$recipeId]['floor_date'] ?? null;  // 'YYYY-MM-DD' or null
+
+        if ($floorDate === null) {
+            // No guard for this recipe
+            $recipeWindowGuarded[$recipeId] = ['guarded' => false];
+            continue;
+        }
+
+        // Determine which batches survive the floor date.
+        // Basis = batches with a known cooling event_date >= floor, plus any batch
+        // whose event_date is unknown (null → allowed conservatively).
+        $allBatches      = array_keys($batchHl[$recipeId] ?? []);
+        $allowedBatches  = [];
+        $excludedBatches = [];
+
+        foreach ($allBatches as $batch) {
+            $batchDate = $batchEventDate[$recipeId][$batch] ?? null;
+            if ($batchDate !== null && strcmp($batchDate, $floorDate) < 0) {
+                $excludedBatches[] = $batch;
+            } else {
+                $allowedBatches[] = $batch;
+            }
+        }
+
+        $batchesKept     = count($allowedBatches);
+        $batchesExcluded = count($excludedBatches);
+        $zeroWindow      = ($batchesKept === 0);
+
+        $recipeWindowGuarded[$recipeId] = [
+            'guarded'          => true,
+            'guard_reason'     => ["floor:{$floorDate}"],
+            'batches_excluded' => $batchesExcluded,
+            'batches_kept'     => $batchesKept,
+            'zero_window'      => $zeroWindow,
+        ];
+
+        if (!$zeroWindow) {
+            $allowedSet = array_flip($allowedBatches);
+            if (isset($batchHl[$recipeId])) {
+                $batchHl[$recipeId] = array_intersect_key($batchHl[$recipeId], $allowedSet);
+            }
+            if (isset($v1RawRows[$recipeId])) {
+                $v1RawRows[$recipeId] = array_intersect_key($v1RawRows[$recipeId], $allowedSet);
+            }
+            if (isset($v2RawRows[$recipeId])) {
+                $v2RawRows[$recipeId] = array_intersect_key($v2RawRows[$recipeId], $allowedSet);
+            }
+        } else {
+            // Zero-window: clear all batch data so the aggregation step detects it.
+            $batchHl[$recipeId]   = [];
+            $v1RawRows[$recipeId] = [];
+            $v2RawRows[$recipeId] = [];
+        }
     }
 
     // ── 2e. Current liquid BOM rows (for diffing) ─────────────────────────────
@@ -2457,10 +2572,30 @@ function compile_sku_bom_liquid(
     $proposedByRecipe = [];
     $globalUnresolvedMi = [];
 
+    // zeroWindowRecipes: recipe_ids whose guarded window is empty — SKUs of these
+    // recipes will be skipped with a per-SKU note in the output.
+    $zeroWindowRecipes = [];
+    foreach ($recipeWindowGuarded as $rid => $wg) {
+        if (!empty($wg['zero_window'])) {
+            $zeroWindowRecipes[$rid] = $wg;
+        }
+    }
+
     foreach ($recipeIds as $recipeId) {
         $recipeId  = (int)$recipeId;
         $hlMap     = $batchHl[$recipeId] ?? [];
         $proposed  = [];
+
+        // Guard: if this recipe's window was guarded and has zero surviving batches,
+        // emit an empty proposed set. The per-SKU loop below will emit a 'skipped'
+        // note instead of processing this recipe. Do NOT fall through to the
+        // ref_recipe full-fallback — a zero-window seasonal (e.g. dormant EPH3 2024,
+        // no 2024-vintage brew this year) must be skipped, not costed from an
+        // out-of-date recipe baseline.
+        if (isset($zeroWindowRecipes[$recipeId])) {
+            $proposedByRecipe[$recipeId] = null;  // null sentinel = zero-window skip
+            continue;
+        }
 
         // Determine if this recipe is "zero-observed" (no v1 OR v2 data at all)
         $hasAnyObserved = (
@@ -2684,6 +2819,29 @@ function compile_sku_bom_liquid(
             continue;
         }
 
+        // Zero-window guard: recipe has no surviving batches after guard filtering.
+        // Skip this SKU with an explicit note — NOT counted as an error (expected
+        // state for dormant seasonals with no current-vintage brew).
+        if (array_key_exists($recipeId, $zeroWindowRecipes)) {
+            $wg = $zeroWindowRecipes[$recipeId];
+            $guardDesc = implode(', ', $wg['guard_reason'] ?? ['unknown guard']);
+            $skuResults[$skuId] = [
+                'sku_code'             => $skuCode,
+                'recipe_id'            => $recipeId,
+                'hl_per_unit'          => $hlPerUnit,
+                'proposed_lines'       => [],
+                'diff'                 => ['added' => [], 'removed' => [], 'changed' => []],
+                'current_liquid_lines' => count($currentLiq[$skuId] ?? []),
+                'proposed_liquid_lines'=> 0,
+                'unresolved_mi'        => [],
+                'skipped_zero_window'  => true,
+                'skip_reason'          => "zero-window after guard ({$guardDesc}) — no brews in current scope. SKU liquid basis unchanged.",
+                'error'                => null,
+            ];
+            $summaryNoChange++;
+            continue;
+        }
+
         $recipeProposed = $proposedByRecipe[$recipeId] ?? [];
         $curLines       = $currentLiq[$skuId] ?? [];
 
@@ -2792,23 +2950,45 @@ function compile_sku_bom_liquid(
     // ── 7. Summary ────────────────────────────────────────────────────────────
 
     $gainingSku = [];
+    $zeroWindowSkus = [];
     foreach ($skuResults as $sid => $sr) {
         if ($sr['proposed_liquid_lines'] > $sr['current_liquid_lines']) {
             $gainingSku[] = $sr['sku_code'];
         }
+        if (!empty($sr['skipped_zero_window'])) {
+            $zeroWindowSkus[] = $sr['sku_code'] . ' (' . ($sr['skip_reason'] ?? '') . ')';
+        }
+    }
+
+    // Compute recipe floor-guard report for the summary
+    $windowGuardReport = [];
+    foreach ($recipeWindowGuarded as $rid => $wg) {
+        if ($wg['guarded']) {
+            $windowGuardReport[] = [
+                'recipe_id'        => $rid,
+                'floor_date'       => $recipeGuards[$rid]['floor_date'] ?? null,
+                'guard_reasons'    => $wg['guard_reason'],
+                'batches_excluded' => $wg['batches_excluded'],
+                'batches_kept'     => $wg['batches_kept'],
+                'zero_window'      => $wg['zero_window'],
+            ];
+        }
     }
 
     $summaryOut = [
-        'skus_total'          => count($targetSkus),
-        'skus_gaining_liquid' => count($gainingSku),
-        'skus_gaining_codes'  => $gainingSku,
-        'skus_losing_liquid'  => $summaryLosing,
-        'skus_no_change'      => $summaryNoChange,
-        'lines_added_total'   => $totalAdded,
-        'lines_removed_total' => $totalRemoved,
-        'lines_changed_total' => $totalChanged,
-        'unresolved_mi_flags' => array_values(array_unique($allUnresolvedMi)),
-        'errors_total'        => $errorsTotal,
+        'skus_total'                  => count($targetSkus),
+        'skus_gaining_liquid'         => count($gainingSku),
+        'skus_gaining_codes'          => $gainingSku,
+        'skus_losing_liquid'          => $summaryLosing,
+        'skus_no_change'              => $summaryNoChange,
+        'skus_skipped_zero_window'    => count($zeroWindowSkus),
+        'skus_skipped_zero_window_list' => $zeroWindowSkus,
+        'lines_added_total'           => $totalAdded,
+        'lines_removed_total'         => $totalRemoved,
+        'lines_changed_total'         => $totalChanged,
+        'unresolved_mi_flags'         => array_values(array_unique($allUnresolvedMi)),
+        'errors_total'                => $errorsTotal,
+        'window_guard_report'         => $windowGuardReport,
     ];
 
     // ── 8. Apply predicate (documented, not executed) ─────────────────────────
@@ -2827,6 +3007,7 @@ function compile_sku_bom_liquid(
 --   packaging rows  (source='Packaging')
 --   composite_liquid rows (bom_source='composite_liquid')
 --   composite_packaging rows (bom_source='composite_packaging')
+-- Note: zero-window SKUs (dormant seasonals) are excluded from the apply scope.
 SQL;
 
     return [
@@ -2877,7 +3058,8 @@ function _liq_validate_alternative(
         return ['status' => 'no_alt_skus_in_scope', 'checks' => []];
     }
 
-    $altProposed = $proposedByRecipe[6] ?? [];
+    // proposedByRecipe[recipe_id] can be null for zero-window recipes.
+    $altProposed = ($proposedByRecipe[6] ?? null) ?? [];
 
     // Check (a): PROC_PHOSPHORIQUE in proposed
     $phosphStmt = $pdo->query("SELECT id FROM ref_mi WHERE mi_id = 'PROC_PHOSPHORIQUE' LIMIT 1");
