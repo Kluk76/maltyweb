@@ -1354,3 +1354,398 @@ body.expeditions .exp-order-row--cancelled {
     justify-self: end;
   }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   STOCK PF VIEW
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Stock header ─────────────────────────────────────────────────────────── */
+body.expeditions .exp-stock-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+body.expeditions .exp-stock-header__title {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 96;
+  font-size: 1.1rem;
+  font-weight: 300;
+  color: var(--ink-soft);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+body.expeditions .exp-stock-header__live {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.58rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ok) 30%, transparent);
+  border-radius: 10px;
+  padding: 2px 7px;
+}
+
+body.expeditions .exp-stock-header__anchor {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.84rem;
+  color: var(--ink-soft);
+  margin-top: 3px;
+}
+
+body.expeditions .exp-stock-header__anchor strong {
+  font-weight: 600;
+  color: var(--hop);
+}
+
+body.expeditions .exp-stock-header__anchor-note {
+  font-size: 0.76rem;
+  color: var(--ink-mute);
+}
+
+/* ── Family filter chips ──────────────────────────────────────────────────── */
+body.expeditions .exp-stock-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+body.expeditions .exp-stock-chip {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  padding: 5px 12px;
+  border-radius: 20px;
+  border: 1px solid var(--hairline-2);
+  background: var(--bg);
+  color: var(--ink-mute);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  touch-action: manipulation;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+}
+
+body.expeditions .exp-stock-chip:hover {
+  background: var(--bg-elev);
+  color: var(--ink-soft);
+  border-color: var(--hairline);
+}
+
+body.expeditions .exp-stock-chip--active {
+  background: var(--hop);
+  color: var(--bg);
+  border-color: var(--hop);
+  font-weight: 600;
+}
+
+body.expeditions .exp-stock-chip--alert {
+  border-color: color-mix(in srgb, var(--ember) 40%, transparent);
+  color: var(--ember);
+}
+
+body.expeditions .exp-stock-chip--alert.exp-stock-chip--active {
+  background: color-mix(in srgb, var(--ember) 15%, var(--bg));
+  border-color: var(--ember);
+  color: var(--ember);
+}
+
+body.expeditions .exp-stock-dormant-toggle,
+body.expeditions .exp-stock-sort-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.78rem;
+  color: var(--ink-mute);
+  cursor: pointer;
+  user-select: none;
+  margin-left: 4px;
+}
+
+body.expeditions .exp-stock-dormant-toggle input,
+body.expeditions .exp-stock-sort-toggle input {
+  accent-color: var(--hop);
+  cursor: pointer;
+  width: 14px;
+  height: 14px;
+}
+
+/* ── Stock table ──────────────────────────────────────────────────────────── */
+body.expeditions .exp-stock-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+}
+
+body.expeditions .exp-stock-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.88rem;
+  color: var(--ink-soft);
+}
+
+body.expeditions .exp-stock-table thead th {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  font-weight: 500;
+  padding: 10px 14px 8px;
+  background: color-mix(in srgb, var(--hop) 4%, var(--bg-elev));
+  border-bottom: 1px solid var(--hairline);
+  text-align: right;
+  white-space: nowrap;
+}
+
+body.expeditions .exp-stock-table thead th.exp-st-col-sku {
+  text-align: left;
+}
+
+body.expeditions .exp-stock-table thead th.exp-st-col-flag {
+  text-align: left;
+  width: 1px; /* shrink to content */
+}
+
+/* ── Stock rows ───────────────────────────────────────────────────────────── */
+body.expeditions .exp-stock-row {
+  border-bottom: 1px solid var(--hairline);
+  transition: background 0.1s;
+}
+
+body.expeditions .exp-stock-row:last-of-type {
+  border-bottom: none;
+}
+
+body.expeditions .exp-stock-row:hover {
+  background: var(--bg-elev);
+}
+
+body.expeditions .exp-stock-row--open {
+  background: color-mix(in srgb, var(--hop) 4%, var(--bg-elev));
+}
+
+body.expeditions .exp-stock-row--dormant {
+  opacity: 0.45;
+}
+
+body.expeditions .exp-stock-row--survendu td {
+  /* subtle ember tint to draw the eye */
+}
+
+body.expeditions .exp-stock-row:focus-visible {
+  outline: 2px solid var(--hop);
+  outline-offset: -2px;
+}
+
+body.expeditions .exp-stock-table td {
+  padding: 10px 14px;
+  text-align: right;
+  vertical-align: middle;
+}
+
+body.expeditions .exp-stock-table td.exp-st-col-sku,
+body.expeditions .exp-stock-table td.exp-st-col-flag {
+  text-align: left;
+}
+
+/* SKU cell */
+body.expeditions .exp-st-col-sku {
+  min-width: 100px;
+}
+
+body.expeditions .exp-st-sku-code {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+  display: block;
+}
+
+body.expeditions .exp-st-sku-hl {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.03em;
+  color: var(--ink-mute);
+  margin-top: 1px;
+}
+
+/* Number cells */
+body.expeditions .exp-st-num {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.84rem;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-soft);
+}
+
+body.expeditions .exp-st-num.exp-st-neg {
+  color: var(--ember);
+  font-weight: 600;
+}
+
+body.expeditions .exp-st-num.exp-st-low {
+  color: var(--oak);
+  font-weight: 600;
+}
+
+/* Flag badges */
+body.expeditions .exp-stock-flag {
+  display: inline-flex;
+  align-items: center;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border-radius: 10px;
+  border: 1px solid;
+  white-space: nowrap;
+  margin-right: 4px;
+}
+
+body.expeditions .exp-stock-flag--survendu {
+  color: var(--ember);
+  border-color: color-mix(in srgb, var(--ember) 40%, transparent);
+  background: color-mix(in srgb, var(--ember) 8%, transparent);
+}
+
+body.expeditions .exp-stock-flag--low {
+  color: var(--oak);
+  border-color: color-mix(in srgb, var(--oak) 40%, transparent);
+  background: color-mix(in srgb, var(--oak) 8%, transparent);
+}
+
+body.expeditions .exp-stock-flag--dormant {
+  color: var(--ink-faint);
+  border-color: var(--hairline);
+  background: transparent;
+  font-style: italic;
+}
+
+/* ── Drill-down ledger ────────────────────────────────────────────────────── */
+body.expeditions .exp-stock-drill td {
+  padding: 0 !important;
+  background: color-mix(in srgb, var(--hop) 3%, var(--bg));
+  border-bottom: 1px solid var(--hairline);
+}
+
+body.expeditions .exp-stock-ledger {
+  padding: 14px 20px;
+  border-left: 3px solid var(--hop);
+}
+
+body.expeditions .exp-stock-ledger__title {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.66rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--hop);
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+body.expeditions .exp-ledger-table {
+  border-collapse: collapse;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.82rem;
+}
+
+body.expeditions .exp-ledger-table td {
+  padding: 4px 14px 4px 0;
+  vertical-align: baseline;
+  text-align: left;
+}
+
+body.expeditions .exp-ledger-label {
+  color: var(--ink-mute);
+  min-width: 200px;
+  padding-right: 20px !important;
+}
+
+body.expeditions .exp-ledger-label--total {
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+
+body.expeditions .exp-ledger-qty {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.82rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--ink-soft);
+  min-width: 80px;
+  text-align: right;
+}
+
+body.expeditions .exp-ledger-qty--anchor { color: var(--ink-soft); }
+body.expeditions .exp-ledger-qty--plus   { color: var(--ok); }
+body.expeditions .exp-ledger-qty--minus  { color: var(--ember); }
+body.expeditions .exp-ledger-qty--open   { color: var(--oak); }
+body.expeditions .exp-ledger-qty--total  {
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+  border-top: 1px solid var(--hairline);
+  padding-top: 6px !important;
+}
+
+body.expeditions .exp-ledger-hl {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem;
+  color: var(--ink-mute);
+  font-weight: 400;
+  margin-left: 6px;
+}
+
+body.expeditions .exp-ledger-meta {
+  color: var(--ink-mute);
+  font-size: 0.76rem;
+  padding-left: 12px !important;
+  font-style: italic;
+}
+
+body.expeditions .exp-ledger-sep td {
+  padding: 4px 0 !important;
+  border-bottom: 1px solid var(--hairline);
+}
+
+/* ── Responsive — stock table ─────────────────────────────────────────────── */
+@media (max-width: 700px) {
+  body.expeditions .exp-st-col-sem,
+  body.expeditions .exp-stock-table thead th.exp-st-col-sem {
+    display: none;
+  }
+}
+
+@media (max-width: 540px) {
+  body.expeditions .exp-st-col-futur,
+  body.expeditions .exp-stock-table thead th.exp-st-col-futur {
+    display: none;
+  }
+}
+
+@media (max-width: 420px) {
+  body.expeditions .exp-stock-ledger {
+    padding: 10px 12px;
+  }
+
+  body.expeditions .exp-ledger-label {
+    min-width: 140px;
+  }
+}
