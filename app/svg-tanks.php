@@ -918,10 +918,11 @@ function svg_vessel_bbt(int $number, float $fill_pct = 0.0, string $state = 'emp
     /* BBT graduation ticks on right wall (25/50/75/100%) + hairline labels */
     $tickPcts = [100 => (int)round($cylTop), 75 => (int)round($cylTop + $cylH*0.25), 50 => (int)round($cylTop + $cylH*0.5), 25 => (int)round($cylTop + $cylH*0.75)];
     foreach ($tickPcts as $pct => $ty) {
-        echo '<line x1="' . $cylRight . '" y1="' . $ty . '" x2="' . ($cylRight+4) . '" y2="' . $ty . '"'
+        echo '<line x1="' . $cylRight . '" y1="' . $ty . '" x2="' . ($cylRight+3) . '" y2="' . $ty . '"'
             . ' stroke="var(--oak-deep,#5a3a12)" stroke-width="0.8" opacity="0.55"/>';
-        echo '<text x="' . ($cylRight+6) . '" y="' . ($ty+2) . '"'
-            . ' font-family="\'JetBrains Mono\',ui-monospace,monospace" font-size="5"'
+        /* right-anchored at the viewBox edge so "100" never clips (viewBox is 80 wide) */
+        echo '<text x="79.5" y="' . ($ty+1.8) . '" text-anchor="end"'
+            . ' font-family="\'JetBrains Mono\',ui-monospace,monospace" font-size="4.5"'
             . ' fill="var(--ink-mute,#8a7560)" opacity="0.70">' . $pct . '</text>';
     }
 
