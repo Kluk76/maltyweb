@@ -89,10 +89,37 @@ function compile_sku_bom_packaging(
     // ── 1. Resolve affected SKU set ───────────────────────────────────────────
 
     if ($skuIds === null) {
+        // Arm 1: solo SKUs with un-resolved NULL packaging rows (the original gate).
         $stmt = $pdo->query(
             "SELECT DISTINCT sku_id FROM ref_sku_bom WHERE mi_id IS NULL AND source = 'Packaging'"
         );
-        $skuIds = array_map('intval', $stmt->fetchAll(\PDO::FETCH_COLUMN, 0));
+        $nullPkgIds = array_map('intval', $stmt->fetchAll(\PDO::FETCH_COLUMN, 0));
+
+        // Arm 2: composite SKUs — composites have bom_source='composite_packaging' and
+        // already-populated mi_id rows after the first compile, so they never appear in
+        // the NULL-mi_id arm even when a label binding changes.  Always include every
+        // active composite so the cron keeps them fresh.
+        $compStmt = $pdo->query(
+            "SELECT DISTINCT cs.sku_id
+               FROM ref_sku_composite_slots cs
+               JOIN ref_skus s ON s.id = cs.sku_id AND s.is_active = 1"
+        );
+        $compositeIds = array_map('intval', $compStmt->fetchAll(\PDO::FETCH_COLUMN, 0));
+
+        // Arm 3: COLLAB SKUs whose recipe_id is NULL in ref_skus and is resolved
+        // via ref_sku_collab_temporal.  Same reasoning: their rows already exist
+        // after first compile, so they drop out of arm 1 silently.
+        $collabStmt = $pdo->query(
+            "SELECT DISTINCT s.id
+               FROM ref_skus s
+               JOIN ref_sku_collab_temporal ct ON ct.sku_code = s.sku_code
+                AND ct.effective_from <= CURDATE()
+                AND (ct.effective_until IS NULL OR ct.effective_until > CURDATE())
+              WHERE s.recipe_id IS NULL AND s.is_active = 1"
+        );
+        $collabIds = array_map('intval', $collabStmt->fetchAll(\PDO::FETCH_COLUMN, 0));
+
+        $skuIds = array_values(array_unique(array_merge($nullPkgIds, $compositeIds, $collabIds)));
     }
 
     if (count($skuIds) === 0) {
@@ -1845,11 +1872,40 @@ function _compiler_gated_format_ids(PDO $pdo): array
 if (!function_exists('sdc_recompile_recipe_packaging')) {
     function sdc_recompile_recipe_packaging(PDO $pdo, int $recipeId): array
     {
+        // Solo SKUs whose recipe_id matches directly.
         $stmt = $pdo->prepare(
             "SELECT id FROM ref_skus WHERE recipe_id = ? AND is_active = 1"
         );
         $stmt->execute([$recipeId]);
-        $skuIds = array_map('intval', array_column($stmt->fetchAll(PDO::FETCH_ASSOC), 'id'));
+        $soloIds = array_map('intval', array_column($stmt->fetchAll(PDO::FETCH_ASSOC), 'id'));
+
+        // Composite SKUs that contain this recipe as a member slot.
+        // A label-binding change for recipe N must re-emit the composite's
+        // member-container lines (bom_source='composite_packaging') for that member.
+        $compStmt = $pdo->prepare(
+            "SELECT DISTINCT cs.sku_id
+               FROM ref_sku_composite_slots cs
+               JOIN ref_skus s ON s.id = cs.sku_id AND s.is_active = 1
+              WHERE cs.recipe_id = ?
+                AND (cs.effective_until IS NULL OR cs.effective_until > CURDATE())"
+        );
+        $compStmt->execute([$recipeId]);
+        $compositeIds = array_map('intval', array_column($compStmt->fetchAll(PDO::FETCH_ASSOC), 'sku_id'));
+
+        // COLLAB SKUs temporally resolved to this recipe_id.
+        $collabStmt = $pdo->prepare(
+            "SELECT DISTINCT s.id
+               FROM ref_skus s
+               JOIN ref_sku_collab_temporal ct ON ct.sku_code = s.sku_code
+                AND ct.recipe_id = ?
+                AND ct.effective_from <= CURDATE()
+                AND (ct.effective_until IS NULL OR ct.effective_until > CURDATE())
+              WHERE s.recipe_id IS NULL AND s.is_active = 1"
+        );
+        $collabStmt->execute([$recipeId]);
+        $collabIds = array_map('intval', array_column($collabStmt->fetchAll(PDO::FETCH_ASSOC), 'id'));
+
+        $skuIds = array_values(array_unique(array_merge($soloIds, $compositeIds, $collabIds)));
         if (empty($skuIds)) {
             return [
                 'dry_run'            => false,

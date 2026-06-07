@@ -13,7 +13,9 @@ declare(strict_types=1);
  *   --dry-run   (default) Compute and report without writing.
  *   --apply     Write changes. Requires explicit flag.
  *   --sku <ids> Comma-separated ref_skus.id list to recompute.
- *               Omit to auto-detect the 25 affected SKUs (those with NULL mi_id + source='Packaging').
+ *               Omit to auto-detect: SKUs with NULL mi_id + source='Packaging', PLUS all
+ *               active composite SKUs (ref_sku_composite_slots) and active COLLAB SKUs
+ *               (ref_sku_collab_temporal) which never appear in the NULL-mi_id arm.
  *
  * Exit codes:
  *   0  Success (or dry-run completed)
@@ -51,7 +53,7 @@ if (isset($opts['sku'])) {
 // ── Run ──────────────────────────────────────────────────────────────────────
 
 echo ($dryRun ? "[DRY-RUN]" : "[APPLY]") . " sku-bom-compile-cli.php\n";
-echo "SKU scope: " . ($skuIds !== null ? implode(',', $skuIds) : "auto-detect NULL packaging rows") . "\n";
+echo "SKU scope: " . ($skuIds !== null ? implode(',', $skuIds) : "auto-detect (NULL-pkg + composites + COLLABs)") . "\n";
 echo str_repeat('-', 72) . "\n";
 
 $pdo = maltytask_pdo();
