@@ -28,6 +28,12 @@ $pdo = maltytask_pdo();
 $myUserId = (int) $me['id'];
 $myRole   = $me['role'] ?? 'viewer';
 
+/* Email read from DB, not session — the auth_login() payload doesn't carry it,
+   and an admin-added email must take effect without re-login. */
+$meEmailStmt = $pdo->prepare('SELECT email FROM users WHERE id = ? LIMIT 1');
+$meEmailStmt->execute([$myUserId]);
+$myEmail = $meEmailStmt->fetchColumn() ?: null;
+
 /* ─────────────────────────────────────────────────────────────────────────────
    STUB-DOMAIN RECONCILIATION
    Domains that kpi_dispatch routes to kpi_stub_handler even though some
@@ -168,7 +174,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($action === 'update_recap_cadence') {
         /* Guard: only users with an email can set a recap subscription */
-        if (empty($me['email'])) {
+        if (empty($myEmail)) {
             flash_set('err', 'Aucune adresse e-mail associée à ton compte.');
             redirect_to('/modules/mon-tableau.php');
         }
@@ -376,7 +382,7 @@ require __DIR__ . '/../../app/partials/sidebar.php';
 require __DIR__ . '/../../app/partials/topbar.php';
 ?>
 
-<main class="main">
+<main id="main-content" class="main">
 <div class="mt-page">
 
   <h1 class="mt-page__title">Mon tableau de bord</h1>
@@ -490,7 +496,7 @@ require __DIR__ . '/../../app/partials/topbar.php';
   <!-- ═══════════════════════════════════════════════════
        RECAP EMAIL CADENCE — per-user preference
        ═══════════════════════════════════════════════════ -->
-  <?php if (!empty($me['email'])): ?>
+  <?php if (!empty($myEmail)): ?>
   <div class="mt-recap-prefs">
     <h3 class="mt-recap-prefs__head">Récap par e-mail</h3>
     <p class="mt-recap-prefs__sub">
