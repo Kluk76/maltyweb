@@ -541,6 +541,68 @@
     });
   });
 
+  // ─── Retry helper (POST to upload-retry.php then resume polling) ────────────
+  /**
+   * POST /api/upload-retry.php for the current lastUploadId.
+   * On success: resume polling from the existing lastUploadId (zero new state).
+   * On known-failure responses: show a targeted message and switch to idle.
+   * @param {HTMLButtonElement} btn  The retry button (disabled while in flight).
+   */
+  function retryUpload(btn) {
+    btn.disabled = true;
+    const fd = new FormData();
+    fd.append('csrf', getCsrf());
+    fd.append('id', String(lastUploadId));
+    fetch('/api/upload-retry.php', {
+      method: 'POST',
+      headers: { 'Accept': 'application/json' },
+      body: fd,
+    })
+      .then(res => res.json().then(data => ({ httpOk: res.ok, data })))
+      .then(({ httpOk, data }) => {
+        if (data.ok) {
+          // Worker re-triggered — resume polling loop (no new upload_id needed)
+          pollCount = 0;
+          startedAt = Date.now();
+          startElapsedTimer();
+          setState('polling');
+          schedulePoll(lastUploadId);
+          return;
+        }
+        // Known-failure cases: leave upload_id intact but show targeted message
+        if (data.error === 'file_gone') {
+          renderRetryGone('Le fichier n\'est plus disponible sur le serveur.');
+        } else if (data.error === 'not_retryable') {
+          renderRetryGone('Ce document est déjà en cours de traitement.');
+        } else {
+          renderRetryGone(data.error || 'Réessai impossible.');
+        }
+      })
+      .catch(() => {
+        btn.disabled = false;
+        // Network blip — re-enable so operator can try again
+      });
+  }
+
+  /**
+   * Show a one-line warning and a single "Nouveau document" button.
+   * Used when retry is not possible (file_gone / not_retryable).
+   */
+  function renderRetryGone(msg) {
+    if (!statusBox) return;
+    statusBox.className = 'upload-status upload-status--warn';
+    statusBox.hidden = false;
+    const safMsg = escHtml(msg);
+    statusBox.innerHTML =
+      '<span class="upload-status__warn-icon" aria-hidden="true">⚠</span>'
+      + `<span class="upload-status__text">${safMsg}</span>`
+      + '<button class="upload-status__retry upload-status__retry--sec" type="button">Nouveau document</button>';
+    const btn = statusBox.querySelector('.upload-status__retry');
+    if (btn) {
+      btn.addEventListener('click', () => setState('idle'));
+    }
+  }
+
   // ─── Error helpers ──────────────────────────────────────────────────────────
   function showError(msg) {
     stopElapsedTimer();
@@ -683,17 +745,31 @@
       case 'timeout': {
         statusBox.hidden = false;
         statusBox.className += ' upload-status--warn';
-        const uploadIdNote = lastUploadId ? ` (ID upload : ${lastUploadId})` : '';
-        statusBox.innerHTML =
-          '<span class="upload-status__warn-icon" aria-hidden="true">⚠</span>'
-          + `<span class="upload-status__text">Timeout après 3 minutes. Le worker pipeline est peut-être bloqué.${uploadIdNote}</span>`
-          + '<button class="upload-status__retry upload-status__refresh" type="button">↺ Rafraîchir l\'état</button>';
-        const retryBtn = statusBox.querySelector('.upload-status__retry');
-        if (retryBtn) {
-          retryBtn.addEventListener('click', () => {
-            setState('idle');
-            window.location.reload();
-          });
+        const uploadIdNote = lastUploadId ? ` (ID upload : ${lastUploadId})` : '';
+        if (lastUploadId !== null) {
+          statusBox.innerHTML =
+            '<span class="upload-status__warn-icon" aria-hidden="true">⚠</span>'
+            + `<span class="upload-status__text">Timeout après 3 minutes. Le worker pipeline est peut-être bloqué.${uploadIdNote}</span>`
+            + '<button class="upload-status__retry" type="button">↩ Réessayer</button>'
+            + '<button class="upload-status__retry upload-status__retry--sec" type="button">Nouveau document</button>';
+          const retryBtn = statusBox.querySelector('.upload-status__retry:not(.upload-status__retry--sec)');
+          if (retryBtn) {
+            retryBtn.addEventListener('click', () => retryUpload(retryBtn));
+          }
+          const newBtn = statusBox.querySelector('.upload-status__retry--sec');
+          if (newBtn) {
+            newBtn.addEventListener('click', () => setState('idle'));
+          }
+        } else {
+          // No upload_id available (pre-upload disconnect) — only new-document option
+          statusBox.innerHTML =
+            '<span class="upload-status__warn-icon" aria-hidden="true">⚠</span>'
+            + '<span class="upload-status__text">Timeout — connexion interrompue.</span>'
+            + '<button class="upload-status__retry" type="button">Nouveau document</button>';
+          const newBtn = statusBox.querySelector('.upload-status__retry');
+          if (newBtn) {
+            newBtn.addEventListener('click', () => setState('idle'));
+          }
         }
         break;
       }
@@ -701,15 +777,31 @@
         statusBox.hidden = false;
         statusBox.className += ' upload-status--err';
         const safMsg = (errorMsg || 'Erreur inconnue').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        statusBox.innerHTML =
-          '<span class="upload-status__warn-icon" aria-hidden="true">✕</span>'
-          + `<span class="upload-status__text">${safMsg}</span>`
-          + '<button class="upload-status__retry" type="button">↩ Réessayer</button>';
-        const retryBtn = statusBox.querySelector('.upload-status__retry');
-        if (retryBtn) {
-          retryBtn.addEventListener('click', () => {
-            setState('idle');
-          });
+        if (lastUploadId !== null) {
+          // Upload reached the server — worker may have failed; offer retry
+          statusBox.innerHTML =
+            '<span class="upload-status__warn-icon" aria-hidden="true">✕</span>'
+            + `<span class="upload-status__text">${safMsg}</span>`
+            + '<button class="upload-status__retry" type="button">↩ Réessayer</button>'
+            + '<button class="upload-status__retry upload-status__retry--sec" type="button">Nouveau document</button>';
+          const retryBtn = statusBox.querySelector('.upload-status__retry:not(.upload-status__retry--sec)');
+          if (retryBtn) {
+            retryBtn.addEventListener('click', () => retryUpload(retryBtn));
+          }
+          const newBtn = statusBox.querySelector('.upload-status__retry--sec');
+          if (newBtn) {
+            newBtn.addEventListener('click', () => setState('idle'));
+          }
+        } else {
+          // Upload never reached the server (e.g. "Connexion interrompue") — only new upload
+          statusBox.innerHTML =
+            '<span class="upload-status__warn-icon" aria-hidden="true">✕</span>'
+            + `<span class="upload-status__text">${safMsg}</span>`
+            + '<button class="upload-status__retry" type="button">Nouveau document</button>';
+          const newBtn = statusBox.querySelector('.upload-status__retry');
+          if (newBtn) {
+            newBtn.addEventListener('click', () => setState('idle'));
+          }
         }
         break;
       }

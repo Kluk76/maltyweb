@@ -1482,6 +1482,40 @@ body.home::after {
 }
 
 /* "Réinitialiser" link — aligned to bottom of row, matching select height */
+/* WO-05: visible submit fallback — keyboard/AT users cannot trigger onchange
+   on <select> with arrow keys in some assistive tech. Visually unobtrusive
+   (secondary to the auto-submit behavior) but fully functional. */
+.home .wort-filters__submit {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-end;
+  padding: 7px 10px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  font-variant: small-caps;
+  color: var(--ink-mute);
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 2px;
+  cursor: pointer;
+  transition: color .2s, border-color .2s, background .2s;
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-height: 32px;
+  touch-action: manipulation;
+}
+.home .wort-filters__submit:hover {
+  color: var(--hop);
+  border-color: var(--hop-deep);
+  background: color-mix(in srgb, var(--hop) 6%, var(--bg-elev));
+}
+.home .wort-filters__submit:focus-visible {
+  outline: 2px solid var(--hop);
+  outline-offset: 2px;
+}
+
 .home .wort-filters__reset {
   display: inline-flex;
   align-items: center;
@@ -7561,6 +7595,13 @@ body.auth::after {
 
 .home.triage .upload-status__retry:hover { opacity: 1; }
 
+/* Secondary retry button — "Nouveau document" sibling to the primary retry */
+.home.triage .upload-status__retry--sec {
+  border-style: dashed;
+  opacity: 0.5;
+}
+.home.triage .upload-status__retry--sec:hover { opacity: 0.8; }
+
 /* ── Upload summary card (shown after successful invoice ingest) ── */
 .home.triage .upload-status--summary {
   flex-direction: column;
@@ -9808,12 +9849,6 @@ body.auth::after {
   to   { opacity: 1; transform: none; }
 }
 
-/* Gate CCT modal entrance animations under reduced-motion */
-@media (prefers-reduced-motion: reduce) {
-  .home .cct-modal__overlay { animation: none; }
-  .home .cct-modal__card    { animation: none; }
-}
-
 .home .cct-modal__card {
   width: min(920px, 94vw);
   max-height: 92vh;
@@ -9831,6 +9866,15 @@ body.auth::after {
   animation: cctCardIn 0.42s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+/* Gate CCT modal entrance animations under reduced-motion.
+   Placed AFTER the animation declarations so specificity wins. The global
+   body.home * block at ~l.1048 also catches these via !important, but this
+   explicit block makes the intent clear and is self-sufficient. */
+@media (prefers-reduced-motion: reduce) {
+  .home .cct-modal__overlay { animation: none; }
+  .home .cct-modal__card    { animation: none; }
+}
+
 /* State-colored top accent strip: ferment=ember, cold=ice */
 .home .cct-modal__card::before {
   content: '';
@@ -9842,6 +9886,29 @@ body.auth::after {
 }
 .home .cct-modal__card--cold::before {
   background: linear-gradient(90deg, var(--cold) 0%, var(--bbt) 50%, var(--cold) 100%);
+}
+
+/* CCT-03: error/empty card variant — no accent strip, centred message */
+.home .cct-modal__card--error {
+  min-height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.home .cct-modal__card--error::before { display: none; }
+.home .cct-modal__empty-state {
+  text-align: center;
+  padding: 2rem;
+  color: var(--ink-mute);
+  font-family: 'DM Sans', sans-serif;
+  font-size: .9rem;
+  line-height: 1.5;
+}
+.home .cct-modal__empty-icon {
+  display: block;
+  font-size: 1.8rem;
+  margin-bottom: .6rem;
+  opacity: .5;
 }
 
 /* Scrollbar */
@@ -11803,6 +11870,9 @@ body.approv-fournisseurs .af-zoom-btn:hover {
 body.approv-fournisseurs .af-zoom-btn:active {
   background: rgba(220,201,164,.2);
   color: var(--kf-paper);
+  /* Opt-out of global :active scale — design intent is no transform on these
+     zoom controls (review finding 9104273: preserve no-transform design). */
+  transform: none;
 }
 body.approv-fournisseurs .af-zoom-btn.af-zoom-fit {
   width: 26px;

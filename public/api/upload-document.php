@@ -39,18 +39,10 @@ require __DIR__ . '/../../app/csrf.php';
 require __DIR__ . '/../../app/services/rate_limit.php';
 require __DIR__ . '/../../app/services/upload_validation.php';
 require __DIR__ . '/../../app/services/document_preview.php';
+require __DIR__ . '/../../app/upload-ingest.php';
 
 // ── Storage inbox dir ─────────────────────────────────────────────────────────
 const UPLOAD_INBOX_DIR = '/var/www/maltytask/storage/documents/inbox';
-
-// ── Ingest pipeline command template (Option B: local path) ──────────────────
-// Uses a dedicated wrapper script (/opt/maltytask-pipeline/ingest-one-local.sh)
-// that is the only command www-data can sudo-as-maltytask for local-path ingests.
-// The %s placeholder is replaced with escapeshellarg($inbox_path).
-// nohup detaches the process; output appended to upload-ingest.log.
-const UPLOAD_INGEST_CMD =
-    'nohup sudo -u maltytask /opt/maltytask-pipeline/ingest-one-local.sh %s'
-    . ' >> /var/log/maltytask/upload-ingest.log 2>&1 &';
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -350,8 +342,7 @@ if ($upload_mode === 'bulk') {
             }
 
             // Fire background ingest
-            $cmd_bulk = sprintf(UPLOAD_INGEST_CMD, escapeshellarg($inbox_path_file));
-            exec($cmd_bulk);
+            upload_ingest_trigger($inbox_path_file);
 
             // UPDATE → triggered
             try {
@@ -620,9 +611,7 @@ if (!preg_match(
     $mark_failed('Chemin inbox invalide — ingest annulé par sécurité.');
 }
 
-$cmd = sprintf(UPLOAD_INGEST_CMD, escapeshellarg($inbox_path));
-exec($cmd);
-// exec() returns immediately; background process runs independently
+upload_ingest_trigger($inbox_path);
 
 // ── Step 11: UPDATE pipeline_status → triggered ───────────────────────────────
 try {
