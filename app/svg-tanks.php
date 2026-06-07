@@ -57,16 +57,18 @@ function svg_cct(
     $fillY  = $cylTop + $emptyH;
     $fillH  = $cylBot - $fillY;
 
-    /* ── Fill tint color for the liquid rect (under hatching, op 0.14-0.17) ── */
+    /* ── Fill tint color for the liquid rect (under hatching) ── */
+    /* Calibration 2026-06-07: raised from 0.15-0.17 to 0.34-0.35 for legibility. */
+    /* Hatch strokes render on top — engraving feel preserved. */
     if ($isMaint) {
         $tintColor = 'var(--tank-empty,#cfc6b2)';
         $tintOp    = 0.22;
     } elseif ($isCold) {
         $tintColor = 'var(--cold,#2f5575)';
-        $tintOp    = 0.15;
+        $tintOp    = 0.35;
     } elseif ($isFerm) {
         $tintColor = 'var(--hop,#567020)';
-        $tintOp    = 0.17;
+        $tintOp    = 0.34;
     } else {
         $tintColor = 'none';
         $tintOp    = 0.0;
@@ -147,18 +149,19 @@ function svg_cct(
   <!-- Contact shadow -->
   <ellipse cx="40" cy="152" rx="28" ry="2" fill="<?= $shadowFill ?>"/>
 
+  <!-- Paper body fill (no stroke — outlines rendered on top) -->
+  <polygon points="<?= $bodyPts ?>" fill="var(--bg,#f1e8d4)" stroke="none"/>
+  <rect x="<?= $cylLeft ?>" y="<?= $capTop ?>" width="<?= $cylRight - $cylLeft ?>" height="<?= $capH ?>"
+    fill="var(--bg,#f1e8d4)" stroke="none"/>
+
   <?php if ($fillRatio > 0 && !$isMaint): ?>
-  <!-- Beer fill tint — UNDER all hatching (op 0.14-0.17) -->
+  <!-- Beer fill tint — ON TOP of paper fill, UNDER hatching (op 0.32-0.35) -->
+  <!-- Calibration 2026-06-07: moved after paper fill so tint is actually visible -->
   <rect x="<?= $cylLeft ?>" y="<?= $fillY ?>"
     width="<?= $cylRight - $cylLeft ?>" height="<?= $fillH + ($coneBot - $cylBot) ?>"
     fill="<?= $tintColor ?>" opacity="<?= $tintOp ?>"
     clip-path="url(#<?= $clipId ?>)"/>
   <?php endif ?>
-
-  <!-- Paper body fill (no stroke — outlines rendered on top) -->
-  <polygon points="<?= $bodyPts ?>" fill="var(--bg,#f1e8d4)" stroke="none"/>
-  <rect x="<?= $cylLeft ?>" y="<?= $capTop ?>" width="<?= $cylRight - $cylLeft ?>" height="<?= $capH ?>"
-    fill="var(--bg,#f1e8d4)" stroke="none"/>
 
   <!-- ── HATCHING LAYER ── -->
   <?php if ($isMaint): ?>
@@ -223,16 +226,54 @@ function svg_cct(
   <line x1="<?= $cylLeft ?>" y1="72" x2="<?= $cylRight ?>" y2="72" stroke="var(--oak-deep,#5a3a12)" stroke-width="1.1" opacity="0.55"/>
 
   <?php if ($fillRatio > 0): ?>
-  <!-- Fill surface dashed line -->
+  <!-- Fill surface dashed line — calibrated 2026-06-07: sw 1.4, op 0.90, state color -->
   <line x1="<?= $cylLeft ?>" y1="<?= $fillY ?>" x2="<?= $cylRight ?>" y2="<?= $fillY ?>"
-    stroke="<?= $tintColor ?>" stroke-width="0.9" opacity="0.60" stroke-dasharray="3,2"/>
+    stroke="<?= $tintColor ?>" stroke-width="1.4" opacity="0.90" stroke-dasharray="3,2"/>
+  <!-- Meniscus ticks where surface line meets walls -->
+  <line x1="<?= $cylLeft ?>"     y1="<?= $fillY - 2 ?>" x2="<?= $cylLeft ?>"     y2="<?= $fillY + 2 ?>"
+    stroke="<?= $tintColor ?>" stroke-width="1.2" opacity="0.85" stroke-linecap="round"/>
+  <line x1="<?= $cylRight ?>"    y1="<?= $fillY - 2 ?>" x2="<?= $cylRight ?>"    y2="<?= $fillY + 2 ?>"
+    stroke="<?= $tintColor ?>" stroke-width="1.2" opacity="0.85" stroke-linecap="round"/>
   <?php endif ?>
 
   <?php if ($isFerm && $fillRatio > 0): ?>
-  <!-- Fermentation bubbles (CSS animation hook: class="ferment-bubble") -->
-  <circle cx="30" cy="<?= max($fillY + 6, 68) ?>" r="1.2" class="ferment-bubble" fill="var(--hop,#567020)" opacity="0.28"/>
-  <circle cx="46" cy="<?= max($fillY + 16, 78) ?>" r="0.9" class="ferment-bubble" fill="var(--hop,#567020)" opacity="0.22" style="animation-delay:1.1s"/>
-  <circle cx="54" cy="<?= max($fillY + 4, 60) ?>" r="1.0" class="ferment-bubble" fill="var(--hop,#567020)" opacity="0.18" style="animation-delay:2.0s"/>
+  <!-- Fermentation: CO2 bubble column (5 static circles, animation class as enhancement) -->
+  <!-- Static at r 0.9-1.4, op 0.55-0.70 → readable in grayscale even with reduced-motion -->
+  <circle cx="32" cy="<?= max($fillY + 8,  70) ?>" r="1.4" fill="var(--hop,#567020)" opacity="0.62"/>
+  <circle cx="48" cy="<?= max($fillY + 20, 84) ?>" r="1.1" fill="var(--hop,#567020)" opacity="0.58"/>
+  <circle cx="38" cy="<?= max($fillY + 14, 78) ?>" r="0.9" fill="var(--hop,#567020)" opacity="0.55"/>
+  <circle cx="56" cy="<?= max($fillY + 5,  64) ?>" r="1.2" fill="var(--hop,#567020)" opacity="0.60"/>
+  <circle cx="25" cy="<?= max($fillY + 25, 88) ?>" r="1.0" fill="var(--hop,#567020)" opacity="0.55"/>
+  <!-- Animated class on top as enhancement (CSS prefers-reduced-motion aware) -->
+  <circle cx="32" cy="<?= max($fillY + 8,  70) ?>" r="1.4" class="ferment-bubble" fill="var(--hop,#567020)" opacity="0.65"/>
+  <circle cx="48" cy="<?= max($fillY + 20, 84) ?>" r="1.1" class="ferment-bubble" fill="var(--hop,#567020)" opacity="0.58" style="animation-delay:1.1s"/>
+  <circle cx="56" cy="<?= max($fillY + 5,  64) ?>" r="1.2" class="ferment-bubble" fill="var(--hop,#567020)" opacity="0.60" style="animation-delay:2.0s"/>
+  <?php endif ?>
+
+  <?php if ($isCold && $fillRatio > 0): ?>
+  <!-- Cold crash: snowflake glyph (✻ 6-arm asterisk, ~8px, next to tank number zone) -->
+  <!-- Grayscale-safe: distinct shape from bubbles, not just color change -->
+  <g transform="translate(58,26)" opacity="0.80" stroke="var(--cold,#2f5575)" stroke-width="1.1" stroke-linecap="round">
+    <line x1="0" y1="-4.5" x2="0"    y2="4.5"/>
+    <line x1="-3.9" y1="-2.25" x2="3.9" y2="2.25"/>
+    <line x1="-3.9" y1="2.25"  x2="3.9" y2="-2.25"/>
+    <!-- Short cross-arms at each tip (30°) -->
+    <line x1="-1.2" y1="-3.5" x2="0"    y2="-4.5"/>
+    <line x1="1.2"  y1="-3.5" x2="0"    y2="-4.5"/>
+    <line x1="-1.2" y1="3.5"  x2="0"    y2="4.5"/>
+    <line x1="1.2"  y1="3.5"  x2="0"    y2="4.5"/>
+    <line x1="-4.5" y1="-1.0" x2="-3.9" y2="-2.25"/>
+    <line x1="-4.5" y1="0"    x2="-3.9" y2="-2.25"/>
+  </g>
+  <!-- Frost ticks along liquid zone walls (2 small horizontal ticks, each side) -->
+  <line x1="<?= $cylLeft ?>"   y1="<?= min($fillY + 14, $cylBot - 5) ?>" x2="<?= $cylLeft + 4 ?>"  y2="<?= min($fillY + 14, $cylBot - 5) ?>"
+    stroke="var(--cold,#2f5575)" stroke-width="0.8" opacity="0.60"/>
+  <line x1="<?= $cylRight ?>"  y1="<?= min($fillY + 14, $cylBot - 5) ?>" x2="<?= $cylRight - 4 ?>" y2="<?= min($fillY + 14, $cylBot - 5) ?>"
+    stroke="var(--cold,#2f5575)" stroke-width="0.8" opacity="0.60"/>
+  <line x1="<?= $cylLeft ?>"   y1="<?= min($fillY + 28, $cylBot - 3) ?>" x2="<?= $cylLeft + 3 ?>"  y2="<?= min($fillY + 28, $cylBot - 3) ?>"
+    stroke="var(--cold,#2f5575)" stroke-width="0.7" opacity="0.48"/>
+  <line x1="<?= $cylRight ?>"  y1="<?= min($fillY + 28, $cylBot - 3) ?>" x2="<?= $cylRight - 3 ?>" y2="<?= min($fillY + 28, $cylBot - 3) ?>"
+    stroke="var(--cold,#2f5575)" stroke-width="0.7" opacity="0.48"/>
   <?php endif ?>
   <?php endif /* end !$isMaint else */ ?>
 
@@ -329,12 +370,13 @@ function svg_bbt(float $fillRatio, string $stateClass = '', int $number = 0, str
     $fillH  = $cylBot - $fillY;
 
     /* ── Fill tint color ── */
+    /* Calibration 2026-06-07: raised from 0.17 to 0.35 for fill legibility. */
     if ($isMaint) {
         $tintColor = 'var(--tank-empty,#cfc6b2)';
         $tintOp    = 0.22;
     } else {
         $tintColor = 'var(--bbt,#2f6d99)';
-        $tintOp    = 0.17;
+        $tintOp    = 0.35;
     }
 
     /* ── Number text color ── */
@@ -395,18 +437,19 @@ function svg_bbt(float $fillRatio, string $stateClass = '', int $number = 0, str
   <!-- Contact shadow -->
   <ellipse cx="40" cy="152" rx="28" ry="2" fill="<?= $shadowFill ?>"/>
 
-  <?php if ($fillRatio > 0 && !$isMaint): ?>
-  <!-- Beer fill tint — UNDER all hatching -->
-  <rect x="<?= $cylLeft ?>" y="<?= $fillY ?>" width="<?= $cylRight - $cylLeft ?>" height="<?= $fillH ?>"
-    fill="<?= $tintColor ?>" opacity="<?= $tintOp ?>"
-    clip-path="url(#<?= $clipId ?>)"/>
-  <?php endif ?>
-
   <!-- Paper fills (no stroke yet) -->
   <rect x="<?= $cylLeft ?>" y="<?= $cylTop ?>" width="<?= $cylRight - $cylLeft ?>" height="<?= $cylH ?>"
     fill="var(--bg,#f1e8d4)" stroke="none"/>
   <ellipse cx="40" cy="<?= $cylTop ?>" rx="<?= $rx ?>" ry="<?= $ry ?>" fill="var(--bg,#f1e8d4)" stroke="none"/>
   <ellipse cx="40" cy="<?= $cylBot ?>" rx="<?= $rx ?>" ry="<?= $ry ?>" fill="var(--bg,#f1e8d4)" stroke="none"/>
+
+  <?php if ($fillRatio > 0 && !$isMaint): ?>
+  <!-- Beer fill tint — ON TOP of paper fill, UNDER hatching (op 0.35) -->
+  <!-- Calibration 2026-06-07: moved after paper fill so tint is visible -->
+  <rect x="<?= $cylLeft ?>" y="<?= $fillY ?>" width="<?= $cylRight - $cylLeft ?>" height="<?= $fillH ?>"
+    fill="<?= $tintColor ?>" opacity="<?= $tintOp ?>"
+    clip-path="url(#<?= $clipId ?>)"/>
+  <?php endif ?>
 
   <!-- ── HATCHING LAYER ── -->
   <?php if ($isMaint): ?>
@@ -456,10 +499,31 @@ function svg_bbt(float $fillRatio, string $stateClass = '', int $number = 0, str
   <line x1="<?= $cylLeft ?>" y1="90" x2="<?= $cylRight ?>" y2="90" stroke="var(--oak-deep,#5a3a12)" stroke-width="1.2"/>
 
   <?php if ($fillRatio > 0): ?>
-  <!-- Fill surface dashed line -->
+  <!-- Fill surface dashed line — calibrated 2026-06-07: sw 1.4, op 0.90 -->
   <line x1="<?= $cylLeft ?>" y1="<?= $fillY ?>" x2="<?= $cylRight ?>" y2="<?= $fillY ?>"
-    stroke="var(--bbt,#2f6d99)" stroke-width="0.9" opacity="0.60" stroke-dasharray="3,2"/>
+    stroke="var(--bbt,#2f6d99)" stroke-width="1.4" opacity="0.90" stroke-dasharray="3,2"/>
+  <!-- Meniscus ticks where surface line meets walls -->
+  <line x1="<?= $cylLeft ?>"  y1="<?= $fillY - 2 ?>" x2="<?= $cylLeft ?>"  y2="<?= $fillY + 2 ?>"
+    stroke="var(--bbt,#2f6d99)" stroke-width="1.2" opacity="0.85" stroke-linecap="round"/>
+  <line x1="<?= $cylRight ?>" y1="<?= $fillY - 2 ?>" x2="<?= $cylRight ?>" y2="<?= $fillY + 2 ?>"
+    stroke="var(--bbt,#2f6d99)" stroke-width="1.2" opacity="0.85" stroke-linecap="round"/>
   <?php endif ?>
+
+  <!-- BBT graduation ticks on right wall (25/50/75/100%) — calibration 2026-06-07 -->
+  <?php
+    $tickPositions = [
+        100 => (int)round($cylTop),
+         75 => (int)round($cylTop + $cylH * 0.25),
+         50 => (int)round($cylTop + $cylH * 0.50),
+         25 => (int)round($cylTop + $cylH * 0.75),
+    ];
+    foreach ($tickPositions as $pct => $ty):
+  ?>
+  <line x1="<?= $cylRight ?>" y1="<?= $ty ?>" x2="<?= $cylRight + 4 ?>" y2="<?= $ty ?>"
+    stroke="var(--oak-deep,#5a3a12)" stroke-width="0.8" opacity="0.55"/>
+  <text x="<?= $cylRight + 6 ?>" y="<?= $ty + 2.5 ?>"
+    font-family="'JetBrains Mono',ui-monospace,monospace" font-size="5" fill="var(--ink-mute,#8a7560)" opacity="0.70"><?= $pct ?></text>
+  <?php endforeach ?>
   <?php endif /* end !$isMaint else */ ?>
 
   <!-- ── OUTLINES (on top of all hatching) ── -->
@@ -587,9 +651,11 @@ function svg_vessel_cct(int $number, float $fill_pct = 0.0, string $state = 'emp
     $fillY  = $cylTop + $emptyH;
     $fillH  = $cylBot - $fillY + ($coneBot - $cylBot);
 
+    /* Calibration 2026-06-07: tint opacity raised to 0.34-0.35; */
+    /* active/fermentation uses --hop (green) not --cold (blue) for correct state color */
     [$tintColor, $tintOp, $numColor, $numOp] = match($state) {
-        'active'       => ['var(--cold,#2f5575)',      0.15, 'var(--cold,#2f5575)',      '0.80'],
-        'cold-crashed' => ['var(--bbt,#2f6d99)',       0.15, 'var(--bbt,#2f6d99)',        '0.80'],
+        'active'       => ['var(--hop,#567020)',        0.34, 'var(--hop,#567020)',        '0.85'],
+        'cold-crashed' => ['var(--cold,#2f5575)',       0.35, 'var(--cold,#2f5575)',       '0.80'],
         'cleaning'     => ['var(--steel-mid,#9a8868)', 0.18, 'var(--oak-deep,#5a3a12)',  '0.50'],
         default        => ['none',                     0.0,  'var(--oak-deep,#5a3a12)',  '0.45'],
     };
@@ -635,13 +701,14 @@ function svg_vessel_cct(int $number, float $fill_pct = 0.0, string $state = 'emp
 
     echo '<ellipse cx="40" cy="152" rx="28" ry="2" fill="rgba(90,58,18,0.12)"/>';
 
+    /* Paper fill first, THEN tint on top (calibration 2026-06-07 — original had tint under paper = invisible) */
+    echo '<polygon points="' . $bodyPts . '" fill="var(--bg,#f1e8d4)" stroke="none"/>';
+    echo '<rect x="' . $cylLeft . '" y="' . $capTop . '" width="' . ($cylRight-$cylLeft) . '" height="' . $capH . '" fill="var(--bg,#f1e8d4)" stroke="none"/>';
+
     if ($has_fill) {
         echo '<rect x="' . $cylLeft . '" y="' . $fillY . '" width="' . ($cylRight-$cylLeft) . '" height="' . $fillH . '"'
             . ' fill="' . $tintColor . '" opacity="' . $tintOp . '" clip-path="url(#' . $clipId . ')"/>';
     }
-
-    echo '<polygon points="' . $bodyPts . '" fill="var(--bg,#f1e8d4)" stroke="none"/>';
-    echo '<rect x="' . $cylLeft . '" y="' . $capTop . '" width="' . ($cylRight-$cylLeft) . '" height="' . $capH . '" fill="var(--bg,#f1e8d4)" stroke="none"/>';
 
     echo '<rect x="21" y="' . $cylTop . '" width="30" height="' . $cylH . '" fill="url(#' . $pxId . ')" clip-path="url(#' . $clipId . ')"/>';
     echo '<rect x="' . $cylLeft . '" y="' . $capTop . '" width="' . ($cylRight-$cylLeft) . '" height="' . $capH . '" fill="url(#' . $pdId . ')"/>';
@@ -669,15 +736,48 @@ function svg_vessel_cct(int $number, float $fill_pct = 0.0, string $state = 'emp
     echo '<line x1="' . $cylLeft . '" y1="72" x2="' . $cylRight . '" y2="72" ' . $odk . ' stroke-width="1.1" opacity="0.55"/>';
 
     if ($has_fill) {
+        /* Calibration 2026-06-07: sw 1.4, op 0.90 + meniscus ticks */
         echo '<line x1="' . $cylLeft . '" y1="' . $fillY . '" x2="' . $cylRight . '" y2="' . $fillY . '"'
-            . ' stroke="' . $tintColor . '" stroke-width="0.9" opacity="0.65" stroke-dasharray="3,2"/>';
+            . ' stroke="' . $tintColor . '" stroke-width="1.4" opacity="0.90" stroke-dasharray="3,2"/>';
+        echo '<line x1="' . $cylLeft  . '" y1="' . ($fillY-2) . '" x2="' . $cylLeft  . '" y2="' . ($fillY+2) . '"'
+            . ' stroke="' . $tintColor . '" stroke-width="1.2" opacity="0.85" stroke-linecap="round"/>';
+        echo '<line x1="' . $cylRight . '" y1="' . ($fillY-2) . '" x2="' . $cylRight . '" y2="' . ($fillY+2) . '"'
+            . ' stroke="' . $tintColor . '" stroke-width="1.2" opacity="0.85" stroke-linecap="round"/>';
     }
 
     if ($state === 'active' && $has_fill) {
-        $by1 = max($fillY + 6, 68); $by2 = max($fillY + 16, 78); $by3 = max($fillY + 4, 60);
-        echo '<circle cx="30" cy="' . $by1 . '" r="1.2" class="ferment-bubble" fill="var(--cold,#2f5575)" opacity="0.30"/>';
-        echo '<circle cx="46" cy="' . $by2 . '" r="0.9" class="ferment-bubble" fill="var(--cold,#2f5575)" opacity="0.22" style="animation-delay:1.1s"/>';
-        echo '<circle cx="54" cy="' . $by3 . '" r="1.0" class="ferment-bubble" fill="var(--cold,#2f5575)" opacity="0.18" style="animation-delay:2.0s"/>';
+        /* Fermentation: 5 static CO2 bubbles (grayscale-safe) + animated class on top */
+        $by1 = max($fillY + 8, 70); $by2 = max($fillY + 20, 84); $by3 = max($fillY + 14, 78);
+        $by4 = max($fillY + 5,  64); $by5 = max($fillY + 25, 88);
+        echo '<circle cx="32" cy="' . $by1 . '" r="1.4" fill="var(--hop,#567020)" opacity="0.62"/>';
+        echo '<circle cx="48" cy="' . $by2 . '" r="1.1" fill="var(--hop,#567020)" opacity="0.58"/>';
+        echo '<circle cx="38" cy="' . $by3 . '" r="0.9" fill="var(--hop,#567020)" opacity="0.55"/>';
+        echo '<circle cx="56" cy="' . $by4 . '" r="1.2" fill="var(--hop,#567020)" opacity="0.60"/>';
+        echo '<circle cx="25" cy="' . $by5 . '" r="1.0" fill="var(--hop,#567020)" opacity="0.55"/>';
+        echo '<circle cx="32" cy="' . $by1 . '" r="1.4" class="ferment-bubble" fill="var(--hop,#567020)" opacity="0.65"/>';
+        echo '<circle cx="48" cy="' . $by2 . '" r="1.1" class="ferment-bubble" fill="var(--hop,#567020)" opacity="0.58" style="animation-delay:1.1s"/>';
+        echo '<circle cx="56" cy="' . $by4 . '" r="1.2" class="ferment-bubble" fill="var(--hop,#567020)" opacity="0.60" style="animation-delay:2.0s"/>';
+    }
+
+    if ($state === 'cold-crashed' && $has_fill) {
+        /* Cold crash: snowflake glyph (✻ 6-arm) + frost wall ticks — grayscale-safe */
+        echo '<g transform="translate(58,26)" opacity="0.80" stroke="var(--cold,#2f5575)" stroke-width="1.1" stroke-linecap="round">'
+            . '<line x1="0" y1="-4.5" x2="0" y2="4.5"/>'
+            . '<line x1="-3.9" y1="-2.25" x2="3.9" y2="2.25"/>'
+            . '<line x1="-3.9" y1="2.25" x2="3.9" y2="-2.25"/>'
+            . '<line x1="-1.2" y1="-3.5" x2="0" y2="-4.5"/>'
+            . '<line x1="1.2" y1="-3.5" x2="0" y2="-4.5"/>'
+            . '<line x1="-1.2" y1="3.5" x2="0" y2="4.5"/>'
+            . '<line x1="1.2" y1="3.5" x2="0" y2="4.5"/>'
+            . '<line x1="-4.5" y1="-1.0" x2="-3.9" y2="-2.25"/>'
+            . '<line x1="-4.5" y1="0" x2="-3.9" y2="-2.25"/>'
+            . '</g>';
+        $ft1 = min($fillY + 14, $cylBot - 5);
+        $ft2 = min($fillY + 28, $cylBot - 3);
+        echo '<line x1="' . $cylLeft  . '" y1="' . $ft1 . '" x2="' . ($cylLeft+4)  . '" y2="' . $ft1 . '" stroke="var(--cold,#2f5575)" stroke-width="0.8" opacity="0.60"/>';
+        echo '<line x1="' . $cylRight . '" y1="' . $ft1 . '" x2="' . ($cylRight-4) . '" y2="' . $ft1 . '" stroke="var(--cold,#2f5575)" stroke-width="0.8" opacity="0.60"/>';
+        echo '<line x1="' . $cylLeft  . '" y1="' . $ft2 . '" x2="' . ($cylLeft+3)  . '" y2="' . $ft2 . '" stroke="var(--cold,#2f5575)" stroke-width="0.7" opacity="0.48"/>';
+        echo '<line x1="' . $cylRight . '" y1="' . $ft2 . '" x2="' . ($cylRight-3) . '" y2="' . $ft2 . '" stroke="var(--cold,#2f5575)" stroke-width="0.7" opacity="0.48"/>';
     }
 
     echo '<polygon points="' . $bodyPts . '" fill="none" ' . $odk . ' stroke-width="1.8" stroke-linejoin="round"/>';
@@ -734,10 +834,11 @@ function svg_vessel_bbt(int $number, float $fill_pct = 0.0, string $state = 'emp
     $fillY  = $cylTop + $emptyH;
     $fillH  = $cylBot - $fillY;
 
+    /* Calibration 2026-06-07: BBT fill tint opacity raised to 0.35 for legibility */
     [$tintColor, $tintOp, $numColor, $numOp] = match($state) {
-        'filling'  => ['var(--bbt,#2f6d99)', 0.17, 'var(--bbt,#2f6d99)',      '0.85'],
-        'ready'    => ['var(--bbt,#2f6d99)', 0.17, 'var(--bbt,#2f6d99)',      '0.85'],
-        'serving'  => ['var(--bbt,#2f6d99)', 0.20, 'var(--bbt,#2f6d99)',      '0.90'],
+        'filling'  => ['var(--bbt,#2f6d99)', 0.35, 'var(--bbt,#2f6d99)',      '0.85'],
+        'ready'    => ['var(--bbt,#2f6d99)', 0.35, 'var(--bbt,#2f6d99)',      '0.85'],
+        'serving'  => ['var(--bbt,#2f6d99)', 0.35, 'var(--bbt,#2f6d99)',      '0.90'],
         'cleaning' => ['var(--steel-mid,#9a8868)', 0.18, 'var(--oak-deep,#5a3a12)', '0.50'],
         default    => ['none', 0.0, 'var(--oak-deep,#5a3a12)', '0.45'],
     };
@@ -775,14 +876,15 @@ function svg_vessel_bbt(int $number, float $fill_pct = 0.0, string $state = 'emp
     $shOp = $has_fill ? '0.18' : '0.10';
     echo '<ellipse cx="40" cy="152" rx="28" ry="2" fill="rgba(47,109,153,' . $shOp . ')"/>';
 
+    /* Paper fill first, THEN tint on top (calibration 2026-06-07) */
+    echo '<rect x="' . $cylLeft . '" y="' . $cylTop . '" width="' . ($cylRight-$cylLeft) . '" height="' . $cylH . '" fill="var(--bg,#f1e8d4)" stroke="none"/>';
+    echo '<ellipse cx="40" cy="' . $cylTop . '" rx="' . $rx . '" ry="' . $ry . '" fill="var(--bg,#f1e8d4)" stroke="none"/>';
+    echo '<ellipse cx="40" cy="' . $cylBot . '" rx="' . $rx . '" ry="' . $ry . '" fill="var(--bg,#f1e8d4)" stroke="none"/>';
+
     if ($has_fill) {
         echo '<rect x="' . $cylLeft . '" y="' . $fillY . '" width="' . ($cylRight-$cylLeft) . '" height="' . $fillH . '"'
             . ' fill="' . $tintColor . '" opacity="' . $tintOp . '" clip-path="url(#' . $clipId . ')"/>';
     }
-
-    echo '<rect x="' . $cylLeft . '" y="' . $cylTop . '" width="' . ($cylRight-$cylLeft) . '" height="' . $cylH . '" fill="var(--bg,#f1e8d4)" stroke="none"/>';
-    echo '<ellipse cx="40" cy="' . $cylTop . '" rx="' . $rx . '" ry="' . $ry . '" fill="var(--bg,#f1e8d4)" stroke="none"/>';
-    echo '<ellipse cx="40" cy="' . $cylBot . '" rx="' . $rx . '" ry="' . $ry . '" fill="var(--bg,#f1e8d4)" stroke="none"/>';
 
     echo '<rect x="20" y="' . $cylTop . '" width="28" height="' . $cylH . '" fill="url(#' . $pxId . ')" clip-path="url(#' . $clipId . ')"/>';
     echo '<rect x="' . $cylLeft . '" y="' . ($cylTop-1) . '" width="' . ($cylRight-$cylLeft) . '" height="12" fill="url(#' . $pdId . ')" clip-path="url(#' . $clipId . ')"/>';
@@ -804,8 +906,23 @@ function svg_vessel_bbt(int $number, float $fill_pct = 0.0, string $state = 'emp
     echo '<line x1="' . $cylLeft . '" y1="90" x2="' . $cylRight . '" y2="90" ' . $odk . ' stroke-width="1.2" opacity="0.58"/>';
 
     if ($has_fill) {
+        /* Calibration 2026-06-07: sw 1.4, op 0.90 + meniscus ticks */
         echo '<line x1="' . $cylLeft . '" y1="' . $fillY . '" x2="' . $cylRight . '" y2="' . $fillY . '"'
-            . ' stroke="var(--bbt,#2f6d99)" stroke-width="0.9" opacity="0.65" stroke-dasharray="3,2"/>';
+            . ' stroke="var(--bbt,#2f6d99)" stroke-width="1.4" opacity="0.90" stroke-dasharray="3,2"/>';
+        echo '<line x1="' . $cylLeft  . '" y1="' . ($fillY-2) . '" x2="' . $cylLeft  . '" y2="' . ($fillY+2) . '"'
+            . ' stroke="var(--bbt,#2f6d99)" stroke-width="1.2" opacity="0.85" stroke-linecap="round"/>';
+        echo '<line x1="' . $cylRight . '" y1="' . ($fillY-2) . '" x2="' . $cylRight . '" y2="' . ($fillY+2) . '"'
+            . ' stroke="var(--bbt,#2f6d99)" stroke-width="1.2" opacity="0.85" stroke-linecap="round"/>';
+    }
+
+    /* BBT graduation ticks on right wall (25/50/75/100%) + hairline labels */
+    $tickPcts = [100 => (int)round($cylTop), 75 => (int)round($cylTop + $cylH*0.25), 50 => (int)round($cylTop + $cylH*0.5), 25 => (int)round($cylTop + $cylH*0.75)];
+    foreach ($tickPcts as $pct => $ty) {
+        echo '<line x1="' . $cylRight . '" y1="' . $ty . '" x2="' . ($cylRight+4) . '" y2="' . $ty . '"'
+            . ' stroke="var(--oak-deep,#5a3a12)" stroke-width="0.8" opacity="0.55"/>';
+        echo '<text x="' . ($cylRight+6) . '" y="' . ($ty+2) . '"'
+            . ' font-family="\'JetBrains Mono\',ui-monospace,monospace" font-size="5"'
+            . ' fill="var(--ink-mute,#8a7560)" opacity="0.70">' . $pct . '</text>';
     }
 
     echo '<rect x="' . $cylLeft . '" y="' . $cylTop . '" width="' . ($cylRight-$cylLeft) . '" height="' . $cylH . '"'
