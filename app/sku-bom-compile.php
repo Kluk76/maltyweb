@@ -2227,11 +2227,12 @@ function compile_sku_bom_liquid(
         $batchEventDate[$rid][$batch] = $hl['batch_event_date'];  // 'YYYY-MM-DD' or null
     }
 
-    // ── 2b. Observed malt/hops from v1 (bd_brewing_ingredients_parsed) ─────────
+    // ── 2b. Observed malt + kettle-hops from v1 (bd_brewing_ingredients_parsed) ──
     // Link: source_id → bd_brewing_ingredients_v2 → recipe_id_fk + batch
-    // Categories: malt, hops_kettle, hops_dry
-    // Only source_table = 'bd_brewing_ingredients' (fermenting rows are hops_dry from fermenting form,
-    // which we keep separate as they provide dry-hop data).
+    // Categories: malt, hops_kettle ONLY (source_table='bd_brewing_ingredients').
+    // hops_dry rows in bd_brewing_ingredients_parsed have source_table='bd_fermenting'
+    // and their source_id points into bd_fermenting_v2 (not bd_brewing_ingredients_v2),
+    // so they CANNOT be joined here — they are loaded separately in §2b2 below.
     $v1Stmt = $pdo->prepare(
         "SELECT biv.recipe_id_fk AS recipe_id, bip.batch, bip.category,
                 bip.mi_id_fk, bip.qty, bip.unit, bip.event_date
@@ -2240,12 +2241,12 @@ function compile_sku_bom_liquid(
              ON biv.id = bip.source_id
             AND biv.is_tombstoned = 0
           WHERE biv.recipe_id_fk IN ({$recipePhRaw})
-            AND bip.category IN ('malt','hops_kettle','hops_dry')
+            AND bip.category IN ('malt','hops_kettle')
             AND bip.mi_id_fk IS NOT NULL
           ORDER BY biv.recipe_id_fk, bip.batch, bip.category, bip.mi_id_fk"
     );
     $v1Stmt->execute($recipeIds);
-    // v1Rows[recipe_id][batch][category][mi_id_fk] = [qty, unit, event_date]
+    // v1RawRows[recipe_id][batch][category][mi_id_fk] = [qty, unit, event_date]
     // Note: same batch can have multiple rows for same MI (e.g. multi-brew additions)
     // We SUM them per batch per MI (batch total).
     $v1RawRows = [];
@@ -2260,6 +2261,108 @@ function compile_sku_bom_liquid(
             $v1RawRows[$rid][$batch][$cat][$miId] = ['qty' => 0.0, 'unit' => $unit, 'date' => $row['event_date']];
         }
         $v1RawRows[$rid][$batch][$cat][$miId]['qty'] += $qty;
+    }
+
+    // ── 2b2. Dry-hop observed — v1 path (bd_brewing_ingredients_parsed, source_table='bd_fermenting') ──
+    // These rows have source_id → bd_fermenting_v2.id (NOT bd_brewing_ingredients_v2).
+    // recipe_id comes from bd_fermenting_v2.recipe_id_fk; batch from bip.batch.
+    // Aggregate per (recipe_id, batch, mi_id_fk) BEFORE joining HL data to prevent fan-out inflation.
+    $dhV1Stmt = $pdo->prepare(
+        "SELECT bf.recipe_id_fk AS recipe_id, bip.batch,
+                bip.mi_id_fk, SUM(bip.qty) AS qty, bip.unit, MIN(bip.event_date) AS event_date
+           FROM bd_brewing_ingredients_parsed bip
+           JOIN bd_fermenting_v2 bf
+             ON bf.id = bip.source_id
+            AND bf.is_tombstoned = 0
+          WHERE bf.recipe_id_fk IN ({$recipePhRaw})
+            AND bip.category = 'hops_dry'
+            AND bip.source_table = 'bd_fermenting'
+            AND bip.mi_id_fk IS NOT NULL
+          GROUP BY bf.recipe_id_fk, bip.batch, bip.mi_id_fk, bip.unit
+          ORDER BY bf.recipe_id_fk, bip.batch, bip.mi_id_fk"
+    );
+    $dhV1Stmt->execute($recipeIds);
+    // dhV1[recipe_id][batch][mi_id_fk] = [qty=>float, unit=>string, date=>string]
+    $dhV1 = [];
+    foreach ($dhV1Stmt->fetchAll(\PDO::FETCH_ASSOC) as $row) {
+        $rid   = (int)$row['recipe_id'];
+        $batch = $row['batch'];
+        $miId  = (int)$row['mi_id_fk'];
+        $dhV1[$rid][$batch][$miId] = [
+            'qty'  => (float)$row['qty'],
+            'unit' => $row['unit'],
+            'date' => $row['event_date'],
+        ];
+    }
+
+    // ── 2b3. Dry-hop observed — v2 path (bd_fermenting_v2, event_type='DryHop') ────
+    // v2 is the newer form; it wins over v1 when BOTH cover the same (recipe, batch).
+    // Aggregate per (recipe_id_fk, batch, dh_mi_id_fk) to guard against multi-line same-MI
+    // dry-hop additions on the same batch (the fan-out anti-pattern).
+    $dhV2Stmt = $pdo->prepare(
+        "SELECT recipe_id_fk AS recipe_id, batch,
+                dh_mi_id_fk AS mi_id_fk, SUM(dh_qty) AS qty, dh_unit AS unit,
+                MIN(event_date) AS event_date
+           FROM bd_fermenting_v2
+          WHERE recipe_id_fk IN ({$recipePhRaw})
+            AND event_type = 'DryHop'
+            AND dh_mi_id_fk IS NOT NULL
+            AND is_tombstoned = 0
+            AND batch NOT IN ('None', '')
+          GROUP BY recipe_id_fk, batch, dh_mi_id_fk, dh_unit
+          ORDER BY recipe_id_fk, batch, dh_mi_id_fk"
+    );
+    $dhV2Stmt->execute($recipeIds);
+    // dhV2[recipe_id][batch][mi_id_fk] = [qty=>float, unit=>string, date=>string]
+    $dhV2 = [];
+    foreach ($dhV2Stmt->fetchAll(\PDO::FETCH_ASSOC) as $row) {
+        $rid   = (int)$row['recipe_id'];
+        $batch = $row['batch'];
+        $miId  = (int)$row['mi_id_fk'];
+        $dhV2[$rid][$batch][$miId] = [
+            'qty'  => (float)$row['qty'],
+            'unit' => $row['unit'],
+            'date' => $row['event_date'],
+        ];
+    }
+
+    // ── 2b4. Merge dry-hop sources: v2 wins per batch, v1 fills remaining batches ─
+    // dhMerged[recipe_id][batch][mi_id_fk] = [qty, unit, date, dh_source]
+    // For any (recipe, batch) with v2 data: use ONLY v2 (never mix v1+v2 for same batch).
+    // For batches with only v1 data: use v1.
+    // This is the SAME precedence F2 uses for brewing ingredients.
+    $dhMerged = [];
+    $dhCoverage = [];  // [recipe_id] => ['v1_only'=>int, 'v2_only'=>int, 'v2_wins'=>int]
+    foreach ($recipeIds as $_rid) {
+        $_rid = (int)$_rid;
+        $allBatches = array_unique(array_merge(
+            array_keys($dhV1[$_rid] ?? []),
+            array_keys($dhV2[$_rid] ?? [])
+        ));
+        $v1Only = $v2Only = $v2Wins = 0;
+        foreach ($allBatches as $batch) {
+            $hasV1 = isset($dhV1[$_rid][$batch]);
+            $hasV2 = isset($dhV2[$_rid][$batch]);
+            if ($hasV2) {
+                // v2 wins — use v2 data only for this batch
+                $dhMerged[$_rid][$batch] = $dhV2[$_rid][$batch];
+                if ($hasV1) {
+                    $v2Wins++;
+                } else {
+                    $v2Only++;
+                }
+            } elseif ($hasV1) {
+                // v1 only — use v1 data
+                $dhMerged[$_rid][$batch] = $dhV1[$_rid][$batch];
+                $v1Only++;
+            }
+        }
+        $dhCoverage[$_rid] = [
+            'v1_only_batches'   => $v1Only,
+            'v2_only_batches'   => $v2Only,
+            'v2_wins_over_v1'   => $v2Wins,
+            'total_dh_batches'  => count($allBatches),
+        ];
     }
 
     // ── 2c. Observed non-malt/hops from v2 (bd_brewing_ingredients_parsed_v2) ──
@@ -2383,11 +2486,16 @@ function compile_sku_bom_liquid(
             if (isset($v2RawRows[$recipeId])) {
                 $v2RawRows[$recipeId] = array_intersect_key($v2RawRows[$recipeId], $allowedSet);
             }
+            // Apply floor guard to dry-hop merged data (same allowed-batch set).
+            if (isset($dhMerged[$recipeId])) {
+                $dhMerged[$recipeId] = array_intersect_key($dhMerged[$recipeId], $allowedSet);
+            }
         } else {
             // Zero-window: clear all batch data so the aggregation step detects it.
             $batchHl[$recipeId]   = [];
             $v1RawRows[$recipeId] = [];
             $v2RawRows[$recipeId] = [];
+            $dhMerged[$recipeId]  = [];
         }
     }
 
@@ -2603,7 +2711,9 @@ function compile_sku_bom_liquid(
         );
 
         if (!$hasAnyObserved) {
-            // Full fallback: use ref_recipe_ingredients for ALL categories
+            // Full fallback: use ref_recipe_ingredients for ALL categories.
+            // Dry-hop has no recipe-ingredient equivalent (observed-only) — zero-observed recipes
+            // also get no dry-hop lines (there are no dry-hop recipe ingredients to fall back to).
             foreach ($recipeIng[$recipeId] ?? [] as $miId => $ing) {
                 $mi = $miById[$miId] ?? null;
                 if ($mi === null) {
@@ -2621,118 +2731,67 @@ function compile_sku_bom_liquid(
                     'n_brews'     => 0,
                     'n_window'    => 0,
                     'source'      => 'recipe_full_fallback',
+                    'stage'       => 'brewhouse',
                     'cost_per_hl' => $cost,
                     'no_price'    => ($cost === null && $mi['price'] !== null && $mi['price'] !== ''),
                 ];
             }
-            $proposedByRecipe[$recipeId] = $proposed;
-            continue;
+            // Dry-hop observed branch below will still run and may add dry_hop lines if
+            // $dhMerged has data for this recipe, even when brewhouse observed is absent.
         }
 
-        // ── MALT: observed-only from v1 ─────────────────────────────────────
-        // Aggregate v1 malt rows: [mi_id][batch] → qty
-        $maltByMiBatch = [];  // mi_id → batch → {qty, unit}
-        foreach ($v1RawRows[$recipeId] ?? [] as $batch => $cats) {
-            if (!isset($cats['malt'])) continue;
-            foreach ($cats['malt'] as $miId => $data) {
-                $maltByMiBatch[$miId][$batch] = $data;
+        if ($hasAnyObserved) {
+            // ── MALT: observed-only from v1 ─────────────────────────────────────
+            // Aggregate v1 malt rows: [mi_id][batch] → qty
+            $maltByMiBatch = [];  // mi_id → batch → {qty, unit}
+            foreach ($v1RawRows[$recipeId] ?? [] as $batch => $cats) {
+                if (!isset($cats['malt'])) continue;
+                foreach ($cats['malt'] as $miId => $data) {
+                    $maltByMiBatch[$miId][$batch] = $data;
+                }
             }
-        }
-        foreach ($maltByMiBatch as $miId => $batchData) {
-            $mi = $miById[$miId] ?? null;
-            if ($mi === null) {
-                $globalUnresolvedMi[] = "recipe={$recipeId} MALT mi_id_fk={$miId} (not in ref_mi)";
-                continue;
+            foreach ($maltByMiBatch as $miId => $batchData) {
+                $mi = $miById[$miId] ?? null;
+                if ($mi === null) {
+                    $globalUnresolvedMi[] = "recipe={$recipeId} MALT mi_id_fk={$miId} (not in ref_mi)";
+                    continue;
+                }
+                $result = $computePerHl($batchData, $hlMap);
+                if ($result === null) {
+                    continue; // no HL data for any of its brews — skip (not gap-fillable per spec)
+                }
+                $cost = $computeCost($result['per_hl'], $result['unit'], $mi);
+                $proposed[$miId] = [
+                    'mi_code'     => $mi['mi_id'],
+                    'cat_name'    => $mi['cat_name'],
+                    'ing_unit'    => $result['unit'],
+                    'per_hl'      => $result['per_hl'],
+                    'n_brews'     => $result['n_brews'],
+                    'n_window'    => $result['n_window'],
+                    'source'      => 'observed',
+                    'stage'       => 'brewhouse',
+                    'cost_per_hl' => $cost,
+                    'no_price'    => ($cost === null),
+                ];
             }
-            $result = $computePerHl($batchData, $hlMap);
-            if ($result === null) {
-                continue; // no HL data for any of its brews — skip (not gap-fillable per spec)
-            }
-            $cost = $computeCost($result['per_hl'], $result['unit'], $mi);
-            $proposed[$miId] = [
-                'mi_code'     => $mi['mi_id'],
-                'cat_name'    => $mi['cat_name'],
-                'ing_unit'    => $result['unit'],
-                'per_hl'      => $result['per_hl'],
-                'n_brews'     => $result['n_brews'],
-                'n_window'    => $result['n_window'],
-                'source'      => 'observed',
-                'cost_per_hl' => $cost,
-                'no_price'    => ($cost === null),
-            ];
-        }
 
-        // ── HOPS (kettle + dry): observed-only from v1 ──────────────────────
-        foreach (['hops_kettle', 'hops_dry'] as $hopCat) {
+            // ── HOPS (kettle only): observed-only from v1 ───────────────────────
+            // Dry-hop is handled separately below via the $dhMerged branch.
             $hopsByMiBatch = [];
             foreach ($v1RawRows[$recipeId] ?? [] as $batch => $cats) {
-                if (!isset($cats[$hopCat])) continue;
-                foreach ($cats[$hopCat] as $miId => $data) {
+                if (!isset($cats['hops_kettle'])) continue;
+                foreach ($cats['hops_kettle'] as $miId => $data) {
                     $hopsByMiBatch[$miId][$batch] = $data;
                 }
             }
             foreach ($hopsByMiBatch as $miId => $batchData) {
                 $mi = $miById[$miId] ?? null;
                 if ($mi === null) {
-                    $globalUnresolvedMi[] = "recipe={$recipeId} {$hopCat} mi_id_fk={$miId} (not in ref_mi)";
+                    $globalUnresolvedMi[] = "recipe={$recipeId} hops_kettle mi_id_fk={$miId} (not in ref_mi)";
                     continue;
                 }
                 $result = $computePerHl($batchData, $hlMap);
                 if ($result === null) {
-                    continue;
-                }
-                if (!isset($proposed[$miId])) {
-                    $cost = $computeCost($result['per_hl'], $result['unit'], $mi);
-                    $proposed[$miId] = [
-                        'mi_code'     => $mi['mi_id'],
-                        'cat_name'    => $mi['cat_name'],
-                        'ing_unit'    => $result['unit'],
-                        'per_hl'      => $result['per_hl'],
-                        'n_brews'     => $result['n_brews'],
-                        'n_window'    => $result['n_window'],
-                        'source'      => 'observed',
-                        'cost_per_hl' => $cost,
-                        'no_price'    => ($cost === null),
-                    ];
-                } else {
-                    // Same MI appears in both kettle and dry-hop (sum per-HL basis across stages)
-                    // This is intentional: total per-HL = kettle_per_HL + dry_per_HL
-                    $cost = $computeCost($result['per_hl'], $result['unit'], $mi);
-                    $proposed[$miId]['per_hl'] += $result['per_hl'];
-                    $proposed[$miId]['n_brews'] = max($proposed[$miId]['n_brews'], $result['n_brews']);
-                    $proposed[$miId]['n_window'] = max($proposed[$miId]['n_window'], $result['n_window']);
-                    if ($proposed[$miId]['cost_per_hl'] !== null && $cost !== null) {
-                        $proposed[$miId]['cost_per_hl'] += $cost;
-                    }
-                }
-            }
-        }
-
-        // ── Non-malt/hops: observed (v2) first, then recipe gap-fill ─────────
-        // Build: mi_id → observed per-HL from v2 (categories: mineral, process, adjunct)
-        foreach (['mineral', 'process', 'adjunct'] as $cat) {
-            // Build per-MI batch data from v2
-            $obssByMiBatch = [];
-            foreach ($v2RawRows[$recipeId] ?? [] as $batch => $cats) {
-                if (!isset($cats[$cat])) continue;
-                foreach ($cats[$cat] as $miId => $data) {
-                    $obssByMiBatch[$miId][$batch] = $data;
-                }
-            }
-
-            // MIs with observed v2 data
-            foreach ($obssByMiBatch as $miId => $batchData) {
-                $mi = $miById[$miId] ?? null;
-                if ($mi === null) {
-                    $globalUnresolvedMi[] = "recipe={$recipeId} {$cat} mi_id_fk={$miId} (not in ref_mi)";
-                    continue;
-                }
-                if (isset($proposed[$miId])) {
-                    continue; // malt/hops from v1 already set (shouldn't happen for mineral/process but guard)
-                }
-                $result = $computePerHl($batchData, $hlMap);
-                if ($result === null) {
-                    // No HL → try recipe gap-fill below
                     continue;
                 }
                 $cost = $computeCost($result['per_hl'], $result['unit'], $mi);
@@ -2744,44 +2803,150 @@ function compile_sku_bom_liquid(
                     'n_brews'     => $result['n_brews'],
                     'n_window'    => $result['n_window'],
                     'source'      => 'observed',
+                    'stage'       => 'brewhouse',
                     'cost_per_hl' => $cost,
                     'no_price'    => ($cost === null),
                 ];
             }
-        }
 
-        // Gap-fill: MIs in ref_recipe_ingredients NOT already covered by observed
-        // EXCLUDING Malt (category_id 1) and Hops (category_id 2) — observed-only rule.
-        foreach ($recipeIng[$recipeId] ?? [] as $miId => $ing) {
-            if (isset($proposed[$miId])) {
-                continue; // already covered by observed
+            // ── Non-malt/hops: observed (v2) first, then recipe gap-fill ─────────
+            // Build: mi_id → observed per-HL from v2 (categories: mineral, process, adjunct)
+            foreach (['mineral', 'process', 'adjunct'] as $cat) {
+                // Build per-MI batch data from v2
+                $obssByMiBatch = [];
+                foreach ($v2RawRows[$recipeId] ?? [] as $batch => $cats) {
+                    if (!isset($cats[$cat])) continue;
+                    foreach ($cats[$cat] as $miId => $data) {
+                        $obssByMiBatch[$miId][$batch] = $data;
+                    }
+                }
+
+                // MIs with observed v2 data
+                foreach ($obssByMiBatch as $miId => $batchData) {
+                    $mi = $miById[$miId] ?? null;
+                    if ($mi === null) {
+                        $globalUnresolvedMi[] = "recipe={$recipeId} {$cat} mi_id_fk={$miId} (not in ref_mi)";
+                        continue;
+                    }
+                    if (isset($proposed[$miId])) {
+                        continue; // malt/hops from v1 already set
+                    }
+                    $result = $computePerHl($batchData, $hlMap);
+                    if ($result === null) {
+                        // No HL → try recipe gap-fill below
+                        continue;
+                    }
+                    $cost = $computeCost($result['per_hl'], $result['unit'], $mi);
+                    $proposed[$miId] = [
+                        'mi_code'     => $mi['mi_id'],
+                        'cat_name'    => $mi['cat_name'],
+                        'ing_unit'    => $result['unit'],
+                        'per_hl'      => $result['per_hl'],
+                        'n_brews'     => $result['n_brews'],
+                        'n_window'    => $result['n_window'],
+                        'source'      => 'observed',
+                        'stage'       => 'brewhouse',
+                        'cost_per_hl' => $cost,
+                        'no_price'    => ($cost === null),
+                    ];
+                }
             }
+
+            // Gap-fill: MIs in ref_recipe_ingredients NOT already covered by observed
+            // EXCLUDING Malt (category_id 1) and Hops (category_id 2) — observed-only rule.
+            foreach ($recipeIng[$recipeId] ?? [] as $miId => $ing) {
+                if (isset($proposed[$miId])) {
+                    continue; // already covered by observed
+                }
+                $mi = $miById[$miId] ?? null;
+                if ($mi === null) {
+                    $globalUnresolvedMi[] = "recipe={$recipeId} recipe_ing mi_id_fk={$miId} (not in ref_mi)";
+                    continue;
+                }
+                // Skip Malt and Hops categories — NEVER gap-fill these
+                if ($mi['cat_name'] === 'Malt' || $mi['cat_name'] === 'Hops') {
+                    continue;
+                }
+                $perHl = $ing['qty_per_hl'];
+                $unit  = $ing['unit'];
+                $cost  = $computeCost($perHl, $unit, $mi);
+                $proposed[$miId] = [
+                    'mi_code'     => $mi['mi_id'],
+                    'cat_name'    => $mi['cat_name'],
+                    'ing_unit'    => $unit,
+                    'per_hl'      => $perHl,
+                    'n_brews'     => 0,
+                    'n_window'    => 0,
+                    'source'      => 'recipe_gapfill',
+                    'stage'       => 'brewhouse',
+                    'cost_per_hl' => $cost,
+                    'no_price'    => ($cost === null && $mi['price'] !== null && $mi['price'] !== ''),
+                ];
+            }
+        } // end if ($hasAnyObserved)
+
+        // ── DRY-HOP BRANCH (third observed branch) ─────────────────────────────
+        // Reads from $dhMerged (v2 wins per batch, v1 fills remaining).
+        // Always observed-only — no recipe gap-fill for dry-hops.
+        // Emits separate lines keyed by (mi_id, stage='dry_hop') to allow the SAME
+        // hop MI to appear in BOTH 'brewhouse' (kettle) and 'dry_hop' stages without
+        // being collapsed into a single line. Keyed as (mi_id * -1 - 1) to avoid
+        // collision with the brewhouse $proposed keying (which uses mi_id as key).
+        // The outer SKU loop uses a 'stage'-keyed composite key for the proposed lines array.
+        $dhProposed = [];  // dh_key → proposal (dh_key = 'dh:' . $miId for uniqueness)
+        $dhBatchData = [];  // mi_id → batch → [qty, unit]
+        foreach ($dhMerged[$recipeId] ?? [] as $batch => $mis) {
+            // Guard: only include batches in batchHl (same cooling-anchored window)
+            if (!isset($hlMap[$batch])) {
+                continue;
+            }
+            foreach ($mis as $miId => $data) {
+                $dhBatchData[$miId][$batch] = $data;
+            }
+        }
+        foreach ($dhBatchData as $miId => $batchQty) {
             $mi = $miById[$miId] ?? null;
             if ($mi === null) {
-                $globalUnresolvedMi[] = "recipe={$recipeId} recipe_ing mi_id_fk={$miId} (not in ref_mi)";
+                $globalUnresolvedMi[] = "recipe={$recipeId} hops_dry mi_id_fk={$miId} (not in ref_mi)";
                 continue;
             }
-            // Skip Malt and Hops categories — NEVER gap-fill these
-            if ($mi['cat_name'] === 'Malt' || $mi['cat_name'] === 'Hops') {
+            $result = $computePerHl($batchQty, $hlMap);
+            if ($result === null) {
                 continue;
             }
-            $perHl = $ing['qty_per_hl'];
-            $unit  = $ing['unit'];
-            $cost  = $computeCost($perHl, $unit, $mi);
-            $proposed[$miId] = [
+            // Sanity gate: 0–1500 g/HL (dry-hop is in grams, HL is in HL units)
+            $perHlG = $result['per_hl'];  // in source unit (g)
+            if ($result['unit'] === 'kg') {
+                $perHlG = $result['per_hl'] * 1000.0;  // convert to g for the sanity check
+            }
+            if ($perHlG < 0 || $perHlG > 1500.0) {
+                error_log(sprintf(
+                    'compile_sku_bom_liquid: DRY-HOP sanity WARN recipe=%d mi_id=%d per_hl=%.2f %s/HL (outside 0–1500 g/HL)',
+                    $recipeId, $miId, $perHlG, $result['unit']
+                ));
+            }
+            $cost = $computeCost($result['per_hl'], $result['unit'], $mi);
+            $dhKey = 'dh:' . $miId;
+            $dhProposed[$dhKey] = [
+                'mi_id_fk'    => $miId,
                 'mi_code'     => $mi['mi_id'],
                 'cat_name'    => $mi['cat_name'],
-                'ing_unit'    => $unit,
-                'per_hl'      => $perHl,
-                'n_brews'     => 0,
-                'n_window'    => 0,
-                'source'      => 'recipe_gapfill',
+                'ing_unit'    => $result['unit'],
+                'per_hl'      => $result['per_hl'],
+                'n_brews'     => $result['n_brews'],
+                'n_window'    => $result['n_window'],
+                'source'      => 'observed',
+                'stage'       => 'dry_hop',
                 'cost_per_hl' => $cost,
-                'no_price'    => ($cost === null && $mi['price'] !== null && $mi['price'] !== ''),
+                'no_price'    => ($cost === null),
             ];
         }
 
-        $proposedByRecipe[$recipeId] = $proposed;
+        $proposedByRecipe[$recipeId] = [
+            'brewhouse' => $proposed,
+            'dry_hop'   => $dhProposed,
+            'coverage'  => $dhCoverage[$recipeId] ?? [],
+        ];
     }
 
     // ── 5. Per-SKU: compute proposed lines + diff ─────────────────────────────
@@ -2842,60 +3007,112 @@ function compile_sku_bom_liquid(
             continue;
         }
 
-        $recipeProposed = $proposedByRecipe[$recipeId] ?? [];
-        $curLines       = $currentLiq[$skuId] ?? [];
+        $recipeProposedStruct = $proposedByRecipe[$recipeId] ?? ['brewhouse' => [], 'dry_hop' => [], 'coverage' => []];
+        $brewhouseProposed    = $recipeProposedStruct['brewhouse'] ?? [];
+        $dryHopProposed       = $recipeProposedStruct['dry_hop']   ?? [];
+        $curLines             = $currentLiq[$skuId] ?? [];
 
-        // Build proposed BOM lines for this SKU
+        // Build proposed BOM lines for this SKU.
+        // Key: 'bh:<mi_id>' for brewhouse lines, 'dh:<mi_id>' for dry-hop lines.
+        // This allows the same MI to appear in both stages (e.g. Mosaic kettle + Mosaic dry-hop)
+        // without collision. The diff is done against current lines keyed by mi_id (legacy),
+        // so we report net change (brewhouse + dry_hop total per MI for diff, per-line for proposed).
         $proposedLines = [];
-        foreach ($recipeProposed as $miId => $p) {
+
+        foreach ($brewhouseProposed as $miId => $p) {
             $qtyPerUnit = round($p['per_hl'] * $hlPerUnit, 6);
             $cost       = $p['cost_per_hl'] !== null
                 ? round($p['cost_per_hl'] * $hlPerUnit, 6)
                 : null;
             $mi         = $miById[$miId] ?? null;
-            $proposedLines[$miId] = [
-                'mi_id_fk'     => $miId,
-                'mi_code'      => $p['mi_code'],
-                'cat_name'     => $p['cat_name'],
-                'ing_unit'     => $p['ing_unit'],
-                'qty_per_unit' => $qtyPerUnit,
-                'per_hl'       => round($p['per_hl'], 6),
-                'n_brews'      => $p['n_brews'],
+            $lineKey    = 'bh:' . $miId;
+            $proposedLines[$lineKey] = [
+                'mi_id_fk'          => $miId,
+                'mi_code'           => $p['mi_code'],
+                'cat_name'          => $p['cat_name'],
+                'ing_unit'          => $p['ing_unit'],
+                'qty_per_unit'      => $qtyPerUnit,
+                'per_hl'            => round($p['per_hl'], 6),
+                'n_brews'           => $p['n_brews'],
                 'n_brews_in_window' => $p['n_window'],
-                'cost'         => $cost,
-                'currency'     => $mi['currency'] ?? null,
-                'price'        => $mi !== null && $mi['price'] !== null ? (float)$mi['price'] : null,
-                'source'       => $p['source'],
-                'no_price_flag'=> $p['no_price'],
+                'cost'              => $cost,
+                'currency'          => $mi['currency'] ?? null,
+                'price'             => $mi !== null && $mi['price'] !== null ? (float)$mi['price'] : null,
+                'source'            => $p['source'],
+                'stage'             => 'brewhouse',
+                'no_price_flag'     => $p['no_price'],
             ];
         }
 
-        // Diff: compare proposed vs current
+        foreach ($dryHopProposed as $dhKey => $p) {
+            $miId       = (int)$p['mi_id_fk'];
+            $qtyPerUnit = round($p['per_hl'] * $hlPerUnit, 6);
+            $cost       = $p['cost_per_hl'] !== null
+                ? round($p['cost_per_hl'] * $hlPerUnit, 6)
+                : null;
+            $mi         = $miById[$miId] ?? null;
+            $proposedLines[$dhKey] = [
+                'mi_id_fk'          => $miId,
+                'mi_code'           => $p['mi_code'],
+                'cat_name'          => $p['cat_name'],
+                'ing_unit'          => $p['ing_unit'],
+                'qty_per_unit'      => $qtyPerUnit,
+                'per_hl'            => round($p['per_hl'], 6),
+                'n_brews'           => $p['n_brews'],
+                'n_brews_in_window' => $p['n_window'],
+                'cost'              => $cost,
+                'currency'          => $mi['currency'] ?? null,
+                'price'             => $mi !== null && $mi['price'] !== null ? (float)$mi['price'] : null,
+                'source'            => $p['source'],
+                'stage'             => 'dry_hop',
+                'no_price_flag'     => $p['no_price'],
+            ];
+        }
+
+        // Diff: compare proposed vs current.
+        // Proposed is keyed by 'bh:<mi_id>' / 'dh:<mi_id>'; current is keyed by mi_id (int).
+        // For the diff, dry-hop lines are ALWAYS 'added' (current ref_sku_bom has no dry-hop stage
+        // rows yet — this compiler run is the first to introduce them).
+        // Brewhouse lines are compared to current by mi_id.
         $added   = [];
         $removed = [];
         $changed = [];
 
-        foreach ($proposedLines as $miId => $prop) {
-            if (!isset($curLines[$miId])) {
+        // Build a mi_id → qty/cost map for current lines (for brewhouse diff)
+        $curByMiId = $curLines;  // already keyed by mi_id
+
+        foreach ($proposedLines as $lineKey => $prop) {
+            $miId = (int)$prop['mi_id_fk'];
+            if ($prop['stage'] === 'dry_hop') {
+                // Dry-hop lines: always new additions (no prior dry-hop stage in current BOM)
+                $added[] = $prop;
+            } elseif (!isset($curByMiId[$miId])) {
                 $added[] = $prop;
             } else {
-                $cur = $curLines[$miId];
+                $cur = $curByMiId[$miId];
                 $qtyDelta = abs($prop['qty_per_unit'] - $cur['qty_per_unit']);
                 $qtyPct   = $cur['qty_per_unit'] > 0
                     ? round(($prop['qty_per_unit'] - $cur['qty_per_unit']) / $cur['qty_per_unit'] * 100.0, 1)
                     : 0.0;
                 if ($qtyDelta > 0.000001) {
                     $changed[] = array_merge($prop, [
-                        'old_qty'     => $cur['qty_per_unit'],
-                        'old_ing_unit'=> $cur['ing_unit'],
-                        'old_cost'    => $cur['cost'],
+                        'old_qty'        => $cur['qty_per_unit'],
+                        'old_ing_unit'   => $cur['ing_unit'],
+                        'old_cost'       => $cur['cost'],
                         'qty_pct_change' => $qtyPct,
                     ]);
                 }
             }
         }
-        foreach ($curLines as $miId => $cur) {
-            if (!isset($proposedLines[$miId])) {
+        // Build set of brewhouse mi_ids for the removed check
+        $proposedBhMiIds = [];
+        foreach ($proposedLines as $lineKey => $prop) {
+            if ($prop['stage'] === 'brewhouse') {
+                $proposedBhMiIds[(int)$prop['mi_id_fk']] = true;
+            }
+        }
+        foreach ($curByMiId as $miId => $cur) {
+            if (!isset($proposedBhMiIds[$miId])) {
                 $removed[] = [
                     'mi_id_fk'     => $miId,
                     'mi_code'      => $cur['mi_code'],
@@ -2975,6 +3192,23 @@ function compile_sku_bom_liquid(
         }
     }
 
+    // Dry-hop coverage summary across all in-scope recipes
+    $dhCoverageSummary = [];
+    foreach ($recipeIds as $_rid) {
+        $_rid = (int)$_rid;
+        $cov  = $dhCoverage[$_rid] ?? [];
+        if (($cov['total_dh_batches'] ?? 0) > 0) {
+            $recipe = null;
+            foreach ($targetSkus as $s) {
+                if ((int)$s['recipe_id'] === $_rid) {
+                    $recipe = $s['sku_code'] ?? null;
+                    break;
+                }
+            }
+            $dhCoverageSummary[] = array_merge(['recipe_id' => $_rid, 'sample_sku' => $recipe], $cov);
+        }
+    }
+
     $summaryOut = [
         'skus_total'                  => count($targetSkus),
         'skus_gaining_liquid'         => count($gainingSku),
@@ -2989,6 +3223,7 @@ function compile_sku_bom_liquid(
         'unresolved_mi_flags'         => array_values(array_unique($allUnresolvedMi)),
         'errors_total'                => $errorsTotal,
         'window_guard_report'         => $windowGuardReport,
+        'dry_hop_coverage'            => $dhCoverageSummary,
     ];
 
     // ── 8. Apply predicate (documented, not executed) ─────────────────────────
@@ -3058,17 +3293,20 @@ function _liq_validate_alternative(
         return ['status' => 'no_alt_skus_in_scope', 'checks' => []];
     }
 
-    // proposedByRecipe[recipe_id] can be null for zero-window recipes.
-    $altProposed = ($proposedByRecipe[6] ?? null) ?? [];
+    // proposedByRecipe[recipe_id] is now ['brewhouse'=>..., 'dry_hop'=>..., 'coverage'=>...]
+    // or null for zero-window recipes.
+    $altProposedStruct = $proposedByRecipe[6] ?? null;
+    $altProposed = ($altProposedStruct !== null) ? ($altProposedStruct['brewhouse'] ?? []) : [];
+    $altDryHop   = ($altProposedStruct !== null) ? ($altProposedStruct['dry_hop']   ?? []) : [];
 
-    // Check (a): PROC_PHOSPHORIQUE in proposed
+    // Check (a): PROC_PHOSPHORIQUE in brewhouse proposed
     $phosphStmt = $pdo->query("SELECT id FROM ref_mi WHERE mi_id = 'PROC_PHOSPHORIQUE' LIMIT 1");
     $phosphRow  = $phosphStmt->fetch(\PDO::FETCH_ASSOC);
     $phosphMiId = $phosphRow ? (int)$phosphRow['id'] : null;
     $phosphPresent = $phosphMiId !== null && isset($altProposed[$phosphMiId]);
     $phosphSource  = $phosphPresent ? ($altProposed[$phosphMiId]['source'] ?? 'unknown') : null;
 
-    // Check (b): hop MIs in proposed all come from observed
+    // Check (b): hop MIs in brewhouse proposed all come from observed (dry-hop lines are separate)
     $hopsObserved       = [];
     $hopsRecipeOnly     = [];
     foreach ($altProposed as $miId => $p) {
