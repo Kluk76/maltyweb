@@ -218,35 +218,161 @@ if ($hasSaisies) {
 
     $steps[] = ['type' => 'saisies_opener', 'href' => $saisiesHref];
 
-    /* Production form sub-steps (only if user has at least one prod-form page) */
+    /* Production form sub-steps — multi-step chapters (only if user has at least one prod-form page) */
     if ($hasAnyProdForm) {
+        /* ── CHAPITRE BRASSAGE (3 steps) ── */
         $steps[] = [
-            'type'  => 'form',
-            'key'   => 'brassage',
-            'title' => 'Saisie · Brassage',
-            'href'  => '/modules/form-brewing.php',
-            'body'  => 'À remplir <strong>le jour du brassin</strong> : bière, numéro de lot, ingrédients (malts, houblons, avec leurs lots), volumes et densités. Chaque ligne d\'ingrédient compte pour la traçabilité et les coûts.',
+            'type'    => 'form',
+            'key'     => 'brassage',
+            'chapter' => 'brassage',
+            'chap_n'  => 1,
+            'chap_total' => 3,
+            'title'   => 'Brassage — identité &amp; ingrédients',
+            'href'    => '/modules/form-brewing.php',
+            'body'    => 'Recette + N° de brassin = l\'identité du lot. Toute la traçabilité s\'y accroche — vérifiez-les avant d\'envoyer. Re-soumettre le même couple recette + brassin met à jour la fiche existante, sans créer de doublon.'
+                       . '<br><br>Ingrédients : une ligne par matière réellement utilisée — malts, houblons, minéraux, auxiliaires — avec quantité, unité et N° de lot. Le N° de lot alimente la traçabilité et le suivi de stock. Lot illisible ou inconnu ? Laissez vide et signalez-le — n\'inventez jamais.'
+                       . '<br><br>Levure : souche, génération, provenance.',
         ];
         $steps[] = [
-            'type'  => 'form',
-            'key'   => 'fermentation',
-            'title' => 'Saisie · Fermentation',
-            'href'  => '/modules/form-fermenting.php',
-            'body'  => 'Pour suivre une bière en cuve : <strong>relevés</strong> (densité, pH, température), ajouts de dry-hop, cold crash. Le formulaire ne propose que les lots réellement en cuve — si votre lot n\'apparaît pas, vérifiez l\'étape précédente.',
+            'type'    => 'form',
+            'key'     => 'brassage',
+            'chapter' => 'brassage',
+            'chap_n'  => 2,
+            'chap_total' => 3,
+            'title'   => 'Brassage — brassins &amp; densités',
+            'href'    => '/modules/form-brewing.php',
+            'body'    => 'Un batch peut compter plusieurs brassins, le même jour ou sur deux jours : une ligne par brassin, avec ses dates et heures de début et de fin.'
+                       . '<br><br>Les densités se saisissent en <strong>°Plato</strong>, à chaque étape : FirstWort, Pfannevoll, Kochwürze, puis la densité initiale (OG) au refroidissement. Des garde-fous signalent les valeurs improbables : ils avertissent, ne bloquent pas.',
         ];
         $steps[] = [
-            'type'  => 'form',
-            'key'   => 'transferts',
-            'title' => 'Saisie · Transferts',
-            'href'  => '/modules/form-racking.php',
-            'body'  => 'Pour enregistrer un soutirage : d\'une CCT vers un BBT ou une autre CCT. Seuls les <strong>lots éligibles</strong> (temps de garde atteint) sont proposés sous forme de cartes.',
+            'type'    => 'form',
+            'key'     => 'brassage',
+            'chapter' => 'brassage',
+            'chap_n'  => 3,
+            'chap_total' => 3,
+            'title'   => 'Brassage — le volume à froid',
+            'href'    => '/modules/form-brewing.php',
+            'body'    => 'Le <strong>volume à froid</strong> (cast-out, en HL, par brassin, plus dilution éventuelle) est le chiffre le plus important de votre saisie : c\'est le volume de référence de tout le calcul de pertes du lot, jusqu\'au conditionnement.'
+                       . '<br><br>Vous ne saisissez jamais de perte au brassage — elle est calculée automatiquement par rapport au volume nominal de la salle de brassage. Une perte de brassage négative peut être réelle : un rendement au-dessus du nominal, pas une erreur.'
+                       . '<br><br>La section CIP enregistre les nettoyages effectués — cochez et datez.',
+        ];
+
+        /* ── CHAPITRE FERMENTATION (2 steps) ── */
+        $steps[] = [
+            'type'    => 'form',
+            'key'     => 'fermentation',
+            'chapter' => 'fermentation',
+            'chap_n'  => 1,
+            'chap_total' => 2,
+            'title'   => 'Fermentation — un événement à la fois',
+            'href'    => '/modules/form-fermenting.php',
+            'body'    => 'Chaque saisie est un événement sur un lot : <strong>Mesures densité / pH / temp</strong> (densité °P, pH, température), Houblonnage à froid (une ligne par ajout : houblon, quantité, N° de lot), Purge, ou Cold Crash.'
+                       . '<br><br>Le formulaire ne propose que les lots réellement en cuve. Si votre lot n\'apparaît pas, c\'est presque toujours qu\'une étape précédente n\'a pas été saisie.',
         ];
         $steps[] = [
+            'type'    => 'form',
+            'key'     => 'fermentation',
+            'chapter' => 'fermentation',
+            'chap_n'  => 2,
+            'chap_total' => 2,
+            'title'   => 'Fermentation — mesures &amp; cold crash',
+            'href'    => '/modules/form-fermenting.php',
+            'body'    => 'Saisissez chaque relevé, même rapproché dans le temps : le système agrège lui-même. Des garde-fous signalent les valeurs improbables (densité, pH, température) : ils avertissent, ne bloquent pas — corrigez ou confirmez.'
+                       . '<br><br>Le cold crash compte double : il clôt la fermentation ET déclenche le compteur de garde qui rendra le lot éligible au transfert. C\'est une <strong>case à cocher</strong> dans la section mesures — un cold crash non coché = un lot invisible dans le formulaire Transferts.',
+        ];
+
+        /* ── CHAPITRE TRANSFERTS (3 steps) ── */
+        $steps[] = [
+            'type'    => 'form',
+            'key'     => 'transferts',
+            'chapter' => 'transferts',
+            'chap_n'  => 1,
+            'chap_total' => 3,
+            'title'   => 'Transferts — lot &amp; équipement',
+            'href'    => '/modules/form-racking.php',
+            'body'    => 'Les cartes ne montrent que les lots éligibles : garde atteinte (selon les seuils configurés pour la levure ou la recette) et réellement en cuve. Le mode hors-process (managers) déverrouille le choix, avec raison obligatoire.'
+                       . '<br><br>Machines : centrifugeuse, KZE, pompe — cochez au moins une. Avec la KZE, saisissez les PU cible et moyenne.',
+        ];
+        $steps[] = [
+            'type'    => 'form',
+            'key'     => 'transferts',
+            'chapter' => 'transferts',
+            'chap_n'  => 2,
+            'chap_total' => 3,
+            'title'   => 'Transferts — volumes',
+            'href'    => '/modules/form-racking.php',
+            'body'    => 'Destination : BBT, CCT ou YT. Avec le débitmètre, saisissez début et fin : le volume transféré se calcule tout seul. Sinon, saisissez-le manuellement.'
+                       . '<br><br>Volume résiduel : ce qui se trouvait déjà dans la cuve d\'arrivée — le volume résultant s\'affiche automatiquement.'
+                       . '<br><br>Complétez selon votre pratique : CO₂ et O₂ à destination, turbidité, pression.',
+        ];
+        $steps[] = [
+            'type'    => 'form',
+            'key'     => 'transferts',
+            'chapter' => 'transferts',
+            'chap_n'  => 3,
+            'chap_total' => 3,
+            'title'   => 'Transferts — pertes exceptionnelles',
+            'href'    => '/modules/form-racking.php',
+            'body'    => 'La perte standard de process est déjà comptée automatiquement à chaque transfert — ne la saisissez pas une deuxième fois. La section Pertes sert aux pertes exceptionnelles uniquement : <strong>Perte cuve départ</strong> (HL), <strong>Perte cuve arrivée</strong> (HL), cause (Produit / Machine / Humain) et explication.'
+                       . '<br><br>Au-delà des seuils configurés, une explication est demandée dans le champ « Détails / explication » — quelques mots suffisent.'
+                       . '<br><br>Transfert interrompu ? Cochez-le et expliquez : le système saura quoi faire du lot.',
+        ];
+
+        /* ── CHAPITRE CONDITIONNEMENT (3 steps) ── */
+        $steps[] = [
+            'type'    => 'form',
+            'key'     => 'conditionnement',
+            'chapter' => 'conditionnement',
+            'chap_n'  => 1,
+            'chap_total' => 3,
+            'title'   => 'Conditionnement — lot source &amp; formats',
+            'href'    => '/modules/form-packaging.php',
+            'body'    => 'Les cartes montrent les lots prêts à conditionner. La mosaïque des formats propose les références activées de la recette : un clic pré-remplit le format principal.'
+                       . '<br><br>Avant remplissage : mesures CO₂ et O₂ en cuve — une fois par lot et par jour ; elles sont reprises automatiquement si déjà saisies.',
+        ];
+        $steps[] = [
+            'type'    => 'form',
+            'key'     => 'conditionnement',
+            'chapter' => 'conditionnement',
+            'chap_n'  => 2,
+            'chap_total' => 3,
+            'title'   => 'Conditionnement — runs parallèles',
+            'href'    => '/modules/form-packaging.php',
+            'body'    => '« + Ajouter un format parallèle » : même bière, même brassin, conditionnée en plusieurs formats dans la même session — par exemple 4-packs et cartons de 24, ou un run Nébuleuse et un run white-label.'
+                       . '<br><br>Chaque ligne porte sa propre quantité, et les quantités s\'additionnent : ne saisissez jamais le total de la session sur la ligne principale, et ne soustrayez jamais.'
+                       . '<br><br>Une autre bière = une autre session, jamais une ligne parallèle.'
+                       . '<br><br>White label : activez-le sur la ligne concernée et choisissez le client — le liquide est le vôtre, la marque est celle du client.',
+        ];
+        $steps[] = [
+            'type'    => 'form',
+            'key'     => 'conditionnement',
+            'chapter' => 'conditionnement',
+            'chap_n'  => 3,
+            'chap_total' => 3,
+            'title'   => 'Conditionnement — dispositions &amp; pertes',
+            'href'    => '/modules/form-packaging.php',
+            'body'    => 'Bouteilles et canettes se comptent en unités, fûts en litres. Chaque case a un sens précis :'
+                       . '<br>· <strong>Invendable</strong> — bière perdue mais consommable : reste taxée.'
+                       . '<br>· <strong>Perte liquide autre</strong> — non consommable : non taxée.'
+                       . '<br>· <strong>Perte liquide sans capsule</strong> — remplie mais jamais capsulée : non taxée.'
+                       . '<br>· <strong>Perte liquide à moitié remplie</strong> — compte pour une demi-unité.'
+                       . '<br>· <strong>Bibliothèque QA</strong> et <strong>Mesures QA</strong> — pas des pertes : neutres pour le stock et la taxe.'
+                       . '<br>· <strong>Fût taproom</strong> — taxé, mais hors stock vendable.'
+                       . '<br>· <strong>Perte capuchon fût</strong>, étiquettes, 4-packs… — pertes matériel : jamais déduites du volume.'
+                       . '<br><br>Le volume vendable est calculé automatiquement à partir de vos dispositions — vous ne le saisissez jamais. C\'est lui qui alimente le stock, les coûts et la taxe bière : d\'où l\'importance de choisir la bonne case. Le compteur Mesures QA se remplit tout seul à partir des paires CO₂/O₂ saisies.',
+        ];
+
+        /* ── CAPSTONE — La chaîne des pertes ── */
+        $steps[] = [
             'type'  => 'form',
-            'key'   => 'conditionnement',
-            'title' => 'Saisie · Conditionnement',
-            'href'  => '/modules/form-packaging.php',
-            'body'  => 'À remplir après chaque run : lot source, <strong>formats produits</strong> (fûts, bouteilles, canettes), quantités, pertes et mesures QA (CO₂&nbsp;/&nbsp;O₂). Gère aussi les runs parallèles — 4-packs et cartons d\'un même lot.',
+            'key'   => 'chaine_pertes',
+            'chapter' => 'chaine_pertes',
+            'chap_n'  => 1,
+            'chap_total' => 1,
+            'title' => 'La chaîne des pertes',
+            'href'  => '/modules/saisies.php',
+            'body'  => 'Du brassage au conditionnement, les pertes se calculent automatiquement à chaque étape, à partir de vos volumes : volume à froid (brassage) → volumes et pertes de transfert → dispositions de conditionnement → volume vendable. Personne ne saisit jamais un pourcentage : tout découle de vos chiffres.'
+                     . '<br><br>Bon à savoir : une perte totale négative signale presque toujours un assemblage de lots, pas un gain.',
         ];
     }
 
@@ -254,9 +380,13 @@ if ($hasSaisies) {
     $steps[] = [
         'type'  => 'form',
         'key'   => 'inventaire',
+        'chapter' => 'inventaire',
+        'chap_n'  => 1,
+        'chap_total' => 1,
         'title' => 'Saisie · Inventaire RM',
         'href'  => '/modules/form-rm-stocktake.php',
-        'body'  => 'Le comptage mensuel des matières premières, <strong>palette par palette</strong> : cherchez l\'ingrédient, saisissez la quantité, « Ajouter » enregistre immédiatement. Rien à soumettre à la fin — chaque ligne est déjà sauvegardée.',
+        'body'  => 'Le comptage mensuel des matières premières, <strong>palette par palette</strong> : cherchez l\'ingrédient, saisissez la quantité, « Ajouter » enregistre immédiatement. Rien à soumettre à la fin — chaque ligne est déjà sauvegardée.'
+                 . '<br><br>Vide ≠ zéro : un vrai zéro se saisit (0) ; une absence de comptage se laisse vide.',
     ];
 }
 
@@ -318,21 +448,30 @@ $appCssCacheBust = @filemtime(__DIR__ . '/../css/app.css') ?: time();
   <!-- STEP STAGE — all steps rendered server-side; JS shows/hides -->
   <section class="vg-stage" aria-live="polite" aria-atomic="true">
 
-<?php foreach ($steps as $stepIdx => $step):
+<?php
+/* Track chapter boundaries for dot gap markers */
+$prevChapKey = null;
+foreach ($steps as $stepIdx => $step):
     $isSection = ($step['type'] === 'saisies_opener');
     $sectionAttr = $isSection ? ' data-section="1"' : '';
+    /* Chapter-start detection: first step of a new chapter key gets data-chap-start */
+    $thisChapKey = ($step['type'] === 'form') ? ($step['chapter'] ?? $step['key']) : null;
+    $isChapStart = ($thisChapKey !== null && $thisChapKey !== $prevChapKey);
+    if ($thisChapKey !== null) $prevChapKey = $thisChapKey;
+    $chapStartAttr = ($isChapStart && $step['type'] === 'form') ? ' data-chap-start="1"' : '';
+
     $ariaLabel = match($step['type']) {
         'bienvenue'      => 'Bienvenue',
         'navigation'     => 'La navigation',
         'page'           => htmlspecialchars($step['label'], ENT_QUOTES, 'UTF-8'),
         'saisies_opener' => 'Saisies — le cœur de votre travail',
-        'form'           => htmlspecialchars($step['title'] ?? '', ENT_QUOTES, 'UTF-8'),
+        'form'           => htmlspecialchars(strip_tags($step['title'] ?? ''), ENT_QUOTES, 'UTF-8'),
         'bon_a_savoir'   => 'Bon à savoir',
         'final'          => "C'est parti !",
         default          => 'Étape',
     };
 ?>
-  <article class="vg-step" data-step="<?= $stepIdx ?>"<?= $sectionAttr ?> aria-label="<?= $ariaLabel ?>">
+  <article class="vg-step" data-step="<?= $stepIdx ?>"<?= $sectionAttr ?><?= $chapStartAttr ?> aria-label="<?= $ariaLabel ?>">
 <?php if ($step['type'] === 'bienvenue'): ?>
     <div class="vg-card">
       <div class="vg-vignette vign-welcome" aria-hidden="true">
@@ -364,7 +503,7 @@ $appCssCacheBust = @filemtime(__DIR__ . '/../css/app.css') ?: time();
       <p class="vg-card-body">
         MaltyTask est l'outil de suivi de production de <strong><?= htmlspecialchars($brewery['name'], ENT_QUOTES, 'UTF-8') ?></strong>.
         Cette visite vous montre les pages auxquelles vous avez accès —
-        comptez <strong>3 minutes</strong>. Vous pourrez la relancer à tout moment
+        comptez <strong>5 minutes</strong>. Vous pourrez la relancer à tout moment
         depuis le menu utilisateur (en haut à droite).
       </p>
     </div>
@@ -456,8 +595,32 @@ $appCssCacheBust = @filemtime(__DIR__ . '/../css/app.css') ?: time();
 <?php elseif ($step['type'] === 'form'): ?>
     <div class="vg-card">
 <?php
-    /* Vignette per form key */
-    if ($step['key'] === 'brassage'): ?>
+    /* Chapter eyebrow label — shown for multi-step chapters */
+    $chapKey   = $step['chapter'] ?? $step['key'];
+    $chapN     = $step['chap_n'] ?? 1;
+    $chapTotal = $step['chap_total'] ?? 1;
+    $chapLabels = [
+        'brassage'       => 'SAISIE · BRASSAGE',
+        'fermentation'   => 'SAISIE · FERMENTATION',
+        'transferts'     => 'SAISIE · TRANSFERTS',
+        'conditionnement'=> 'SAISIE · CONDITIONNEMENT',
+        'chaine_pertes'  => 'SAISIE · ENCHAÎNEMENT',
+        'inventaire'     => 'SAISIE · INVENTAIRE RM',
+    ];
+    $chapLabel = $chapLabels[$chapKey] ?? '';
+    $showChapEyebrow = ($chapTotal > 1 || $chapKey === 'chaine_pertes');
+?>
+<?php if ($showChapEyebrow): ?>
+      <div class="vg-chapter-eyebrow" aria-hidden="true">
+        <?= htmlspecialchars($chapLabel, ENT_QUOTES, 'UTF-8') ?>
+        <?php if ($chapTotal > 1): ?><span class="vg-chapter-progress"><?= $chapN ?>/<?= $chapTotal ?></span><?php endif ?>
+      </div>
+<?php endif ?>
+
+<?php
+    /* Vignette per form chapter key + sub-step number */
+    if ($chapKey === 'brassage'): ?>
+<?php   if ($chapN === 1): /* B1 — identity & ingredients sketch */ ?>
       <div class="vg-vignette vign-form" aria-hidden="true">
         <div class="vign-field"><div class="vign-field-label"></div><div class="vign-field-input vign-field-input--accent"><div class="vign-field-input-val vign-field-input-val--short" style="background:color-mix(in srgb,var(--hop) 30%,var(--hairline))"></div><div style="margin-left:auto;height:8px;width:8px;border-radius:50%;background:var(--hop);opacity:0.5"></div></div></div>
         <div class="vign-field"><div class="vign-field-label" style="width:35%"></div><div class="vign-field-input"><div class="vign-field-input-val" style="width:30%"></div></div></div>
@@ -465,36 +628,98 @@ $appCssCacheBust = @filemtime(__DIR__ . '/../css/app.css') ?: time();
         <div style="display:flex;gap:6px;align-items:center;padding:4px 0;"><div style="height:6px;width:6px;border-radius:50%;background:var(--hop);flex-shrink:0"></div><div style="height:5px;width:48%;border-radius:3px;background:var(--hairline)"></div><div style="height:5px;width:20%;border-radius:3px;background:color-mix(in srgb,var(--hop) 40%,var(--hairline));margin-left:auto"></div></div>
         <div style="display:flex;gap:6px;align-items:center;padding:4px 0;"><div style="height:6px;width:6px;border-radius:50%;background:var(--cat-malt);flex-shrink:0"></div><div style="height:5px;width:60%;border-radius:3px;background:var(--hairline)"></div><div style="height:5px;width:20%;border-radius:3px;background:color-mix(in srgb,var(--cat-malt) 40%,var(--hairline));margin-left:auto"></div></div>
       </div>
-      <div class="vg-card-header">
-        <div class="vg-card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 3h12v2a6 6 0 0 1-6 6 6 6 0 0 1-6-6V3z"/><path d="M6 5h12"/><path d="M12 11v10"/><path d="M8 21h8"/><path d="M19 8h2v5h-2"/></svg></div>
-        <div><h2 class="vg-card-title"><?= htmlspecialchars($step['title'], ENT_QUOTES, 'UTF-8') ?></h2></div>
+<?php   elseif ($chapN === 2): /* B2 — densities / brewday timeline sketch */ ?>
+      <div class="vg-vignette vign-form" aria-hidden="true" style="background:var(--bg);">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;width:100%;">
+          <div class="vign-field"><div class="vign-field-label" style="width:70%"></div><div class="vign-field-input"><div class="vign-field-input-val" style="width:55%"></div></div></div>
+          <div class="vign-field"><div class="vign-field-label" style="width:60%"></div><div class="vign-field-input"><div class="vign-field-input-val" style="width:40%;background:color-mix(in srgb,var(--oak) 40%,var(--hairline))"></div></div></div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;width:100%;margin-top:2px;">
+          <div style="display:flex;flex-direction:column;gap:2px;align-items:center;background:var(--bg-elev);border:1px solid var(--hairline);border-radius:5px;padding:4px;"><div style="height:4px;width:80%;border-radius:2px;background:var(--hairline)"></div><div style="height:7px;width:60%;border-radius:2px;background:color-mix(in srgb,var(--hop) 50%,var(--hairline))"></div><div style="height:3px;width:70%;border-radius:2px;background:var(--hairline);margin-top:1px"></div></div>
+          <div style="display:flex;flex-direction:column;gap:2px;align-items:center;background:var(--bg-elev);border:1px solid var(--hairline);border-radius:5px;padding:4px;"><div style="height:4px;width:80%;border-radius:2px;background:var(--hairline)"></div><div style="height:7px;width:60%;border-radius:2px;background:color-mix(in srgb,var(--hop) 40%,var(--hairline))"></div><div style="height:3px;width:70%;border-radius:2px;background:var(--hairline);margin-top:1px"></div></div>
+          <div style="display:flex;flex-direction:column;gap:2px;align-items:center;background:var(--bg-elev);border:1px solid var(--hairline);border-radius:5px;padding:4px;"><div style="height:4px;width:80%;border-radius:2px;background:var(--hairline)"></div><div style="height:7px;width:60%;border-radius:2px;background:color-mix(in srgb,var(--oak) 40%,var(--hairline))"></div><div style="height:3px;width:70%;border-radius:2px;background:var(--hairline);margin-top:1px"></div></div>
+          <div style="display:flex;flex-direction:column;gap:2px;align-items:center;background:color-mix(in srgb,var(--hop) 6%,var(--bg-elev));border:1.5px solid color-mix(in srgb,var(--hop) 40%,var(--hairline));border-radius:5px;padding:4px;"><div style="height:4px;width:80%;border-radius:2px;background:color-mix(in srgb,var(--hop) 40%,var(--hairline))"></div><div style="height:7px;width:60%;border-radius:2px;background:var(--hop);opacity:0.7"></div><div style="height:3px;width:70%;border-radius:2px;background:var(--hairline);margin-top:1px"></div></div>
+        </div>
       </div>
+<?php   else: /* B3 — cast-out volume + CIP sketch */ ?>
+      <div class="vg-vignette vign-form" aria-hidden="true" style="background:var(--bg);">
+        <div style="display:grid;grid-template-columns:2fr 1fr;gap:6px;width:100%;">
+          <div class="vign-field"><div class="vign-field-label" style="width:55%"></div><div class="vign-field-input vign-field-input--accent"><div class="vign-field-input-val" style="width:45%;background:color-mix(in srgb,var(--hop) 40%,var(--hairline))"></div><div style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:6px;color:var(--ink-mute);letter-spacing:0.04em;">HL</div></div></div>
+          <div class="vign-field"><div class="vign-field-label" style="width:70%"></div><div class="vign-field-input"><div class="vign-field-input-val" style="width:60%"></div></div></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;padding:4px 0;margin-top:2px;border-top:1px solid var(--hairline);padding-top:6px;">
+          <div style="width:10px;height:10px;border-radius:2px;border:1.5px solid color-mix(in srgb,var(--ok) 60%,var(--hairline));background:color-mix(in srgb,var(--ok) 20%,var(--bg-elev));flex-shrink:0;"></div>
+          <div style="height:5px;width:45%;border-radius:3px;background:var(--hairline)"></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;padding:4px 0;">
+          <div style="width:10px;height:10px;border-radius:2px;border:1.5px solid var(--hairline);background:var(--bg-elev);flex-shrink:0;"></div>
+          <div style="height:5px;width:38%;border-radius:3px;background:var(--hairline)"></div>
+        </div>
+      </div>
+<?php   endif ?>
 
-<?php elseif ($step['key'] === 'fermentation'): ?>
+<?php elseif ($chapKey === 'fermentation'): ?>
+<?php   if ($chapN === 1): /* F1 — event-type selector sketch */ ?>
       <div class="vg-vignette vign-form" aria-hidden="true">
         <div class="vign-field"><div class="vign-field-label" style="width:40%"></div><div class="vign-field-input"><div class="vign-field-input-val" style="width:65%;background:color-mix(in srgb,var(--bbt) 30%,var(--hairline))"></div></div></div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px"><div class="vign-field"><div class="vign-field-label" style="width:90%"></div><div class="vign-field-input"><div class="vign-field-input-val" style="width:50%"></div></div></div><div class="vign-field"><div class="vign-field-label" style="width:80%"></div><div class="vign-field-input"><div class="vign-field-input-val" style="width:60%"></div></div></div><div class="vign-field"><div class="vign-field-label" style="width:70%"></div><div class="vign-field-input"><div class="vign-field-input-val" style="width:40%"></div></div></div></div>
+        <div style="display:flex;gap:5px;flex-wrap:wrap;padding:2px 0;">
+          <div style="padding:3px 8px;background:color-mix(in srgb,var(--ink) 8%,var(--bg-elev));border:1px solid var(--hairline);border-radius:4px;font-family:'DM Sans',sans-serif;font-size:7px;color:var(--ink-soft);">Mesures</div>
+          <div style="padding:3px 8px;background:color-mix(in srgb,var(--hop) 12%,var(--bg-elev));border:1.5px solid color-mix(in srgb,var(--hop) 40%,var(--hairline));border-radius:4px;font-family:'DM Sans',sans-serif;font-size:7px;color:var(--hop-deep);">Dry-hop ✓</div>
+          <div style="padding:3px 8px;background:var(--bg-elev);border:1px solid var(--hairline);border-radius:4px;font-family:'DM Sans',sans-serif;font-size:7px;color:var(--ink-mute);">Purge</div>
+        </div>
         <div class="vign-field"><div class="vign-field-label" style="width:55%"></div><div class="vign-field-input vign-field-input--accent"><div class="vign-field-input-val" style="width:35%;background:color-mix(in srgb,var(--hop) 30%,var(--hairline))"></div></div></div>
         <div class="vign-submit-row"><div class="vign-btn vign-btn--primary">Enregistrer</div></div>
       </div>
-      <div class="vg-card-header">
-        <div class="vg-card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="14" rx="8" ry="6"/><path d="M4 14V8a8 2 0 0 1 16 0v6"/><path d="M8 12c0-1 1-2 2-2s2 1 3 1 2-1 2-1"/></svg></div>
-        <div><h2 class="vg-card-title"><?= htmlspecialchars($step['title'], ENT_QUOTES, 'UTF-8') ?></h2></div>
+<?php   else: /* F2 — readings + cold crash checkbox sketch */ ?>
+      <div class="vg-vignette vign-form" aria-hidden="true">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px"><div class="vign-field"><div class="vign-field-label" style="width:90%"></div><div class="vign-field-input"><div class="vign-field-input-val" style="width:50%"></div></div></div><div class="vign-field"><div class="vign-field-label" style="width:80%"></div><div class="vign-field-input"><div class="vign-field-input-val" style="width:60%"></div></div></div><div class="vign-field"><div class="vign-field-label" style="width:70%"></div><div class="vign-field-input"><div class="vign-field-input-val" style="width:40%"></div></div></div></div>
+        <div style="display:flex;align-items:center;gap:8px;padding:5px 8px;margin-top:4px;background:color-mix(in srgb,var(--cold) 8%,var(--bg-elev));border:1px solid color-mix(in srgb,var(--cold) 40%,var(--hairline));border-radius:6px;">
+          <div style="width:10px;height:10px;border-radius:2px;border:1.5px solid color-mix(in srgb,var(--cold) 60%,var(--hairline));background:color-mix(in srgb,var(--cold) 25%,var(--bg-elev));flex-shrink:0;"></div>
+          <div style="height:5px;width:58%;border-radius:3px;background:color-mix(in srgb,var(--cold) 40%,var(--hairline))"></div>
+        </div>
+        <div class="vign-submit-row"><div class="vign-btn vign-btn--primary" style="background:color-mix(in srgb,var(--cold) 70%,var(--ink))">Enregistrer le cold crash →</div></div>
       </div>
+<?php   endif ?>
 
-<?php elseif ($step['key'] === 'transferts'): ?>
+<?php elseif ($chapKey === 'transferts'): ?>
+<?php   if ($chapN === 1): /* T1 — lot selector cards sketch */ ?>
       <div class="vg-vignette vign-board" aria-hidden="true" style="grid-template-columns:repeat(3,1fr);gap:6px;padding:10px;background:var(--bg);align-items:start;">
         <div class="vign-zone" style="grid-column:span 3"><div class="vign-zone-label">Lots éligibles au transfert</div></div>
         <div class="vign-lot-card" style="border-color:color-mix(in srgb,var(--hop) 50%,var(--hairline));background:color-mix(in srgb,var(--hop) 6%,var(--bg-elev))"><div class="vign-lot-name" style="color:var(--hop)">Embuscade</div><div class="vign-lot-sub">Lot 45 · CCT-3</div><div style="height:4px;border-radius:2px;background:var(--hop);margin-top:3px;opacity:0.5"></div></div>
         <div class="vign-lot-card"><div class="vign-lot-name">Moonshine</div><div class="vign-lot-sub">Lot 29 · CCT-1</div></div>
         <div class="vign-lot-card" style="opacity:0.4;border-style:dashed"><div class="vign-lot-name" style="color:var(--ink-mute)">Stirling</div><div class="vign-lot-sub" style="color:color-mix(in srgb,var(--ember) 70%,var(--ink-mute))">Garde insuffisante</div></div>
       </div>
-      <div class="vg-card-header">
-        <div class="vg-card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M16 3l4 4-4 4"/><path d="M20 7H4"/><path d="M8 21l-4-4 4-4"/><path d="M4 17h16"/></svg></div>
-        <div><h2 class="vg-card-title"><?= htmlspecialchars($step['title'], ENT_QUOTES, 'UTF-8') ?></h2></div>
+<?php   elseif ($chapN === 2): /* T2 — volume fields sketch */ ?>
+      <div class="vg-vignette vign-form" aria-hidden="true" style="background:var(--bg);">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;width:100%;">
+          <div class="vign-field"><div class="vign-field-label" style="width:65%"></div><div class="vign-field-input vign-field-input--accent"><div class="vign-field-input-val" style="width:45%;background:color-mix(in srgb,var(--bbt) 40%,var(--hairline))"></div></div></div>
+          <div class="vign-field"><div class="vign-field-label" style="width:55%"></div><div class="vign-field-input"><div class="vign-field-input-val" style="width:40%"></div></div></div>
+          <div class="vign-field"><div class="vign-field-label" style="width:70%"></div><div class="vign-field-input"><div class="vign-field-input-val" style="width:55%"></div></div></div>
+          <div class="vign-field"><div class="vign-field-label" style="width:60%"></div><div class="vign-field-input"><div style="height:6px;width:70%;border-radius:3px;background:color-mix(in srgb,var(--hop) 40%,var(--hairline));font-family:'JetBrains Mono',monospace;font-size:6px"></div></div></div>
+        </div>
       </div>
+<?php   else: /* T3 — loss fields sketch */ ?>
+      <div class="vg-vignette vign-form" aria-hidden="true" style="background:var(--bg);">
+        <div style="display:flex;align-items:center;gap:8px;padding:4px 0 6px;">
+          <div style="width:10px;height:10px;border-radius:2px;border:1.5px solid color-mix(in srgb,var(--ember) 60%,var(--hairline));background:color-mix(in srgb,var(--ember) 20%,var(--bg-elev));flex-shrink:0;"></div>
+          <div style="height:5px;width:50%;border-radius:3px;background:var(--hairline)"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;width:100%;">
+          <div class="vign-field"><div class="vign-field-label" style="width:80%"></div><div class="vign-field-input"><div class="vign-field-input-val" style="width:40%"></div></div></div>
+          <div class="vign-field"><div class="vign-field-label" style="width:80%"></div><div class="vign-field-input"><div class="vign-field-input-val" style="width:40%"></div></div></div>
+        </div>
+        <div class="vign-field"><div class="vign-field-label" style="width:30%"></div>
+          <div style="display:flex;gap:4px;flex-wrap:wrap;padding:2px 0;">
+            <div style="padding:2px 7px;background:color-mix(in srgb,var(--ember) 12%,var(--bg-elev));border:1px solid color-mix(in srgb,var(--ember) 40%,var(--hairline));border-radius:4px;font-family:'DM Sans',sans-serif;font-size:7px;color:var(--ember);">Produit</div>
+            <div style="padding:2px 7px;background:var(--bg-elev);border:1px solid var(--hairline);border-radius:4px;font-family:'DM Sans',sans-serif;font-size:7px;color:var(--ink-mute);">Machine</div>
+            <div style="padding:2px 7px;background:var(--bg-elev);border:1px solid var(--hairline);border-radius:4px;font-family:'DM Sans',sans-serif;font-size:7px;color:var(--ink-mute);">Humain</div>
+          </div>
+        </div>
+      </div>
+<?php   endif ?>
 
-<?php elseif ($step['key'] === 'conditionnement'): ?>
+<?php elseif ($chapKey === 'conditionnement'): ?>
+<?php   if ($chapN === 1): /* C1 — lot source + format tiles sketch */ ?>
       <div class="vg-vignette vign-form" aria-hidden="true">
         <div class="vign-field"><div class="vign-field-label" style="width:40%"></div><div class="vign-field-input vign-field-input--accent"><div class="vign-field-input-val" style="width:60%;background:color-mix(in srgb,var(--bbt) 30%,var(--hairline))"></div></div></div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
@@ -503,13 +728,64 @@ $appCssCacheBust = @filemtime(__DIR__ . '/../css/app.css') ?: time();
           <div style="padding:3px 8px;background:var(--bg-elev);border:1px solid var(--hairline);border-radius:4px;font-family:'JetBrains Mono',monospace;font-size:8px;color:var(--ink-mute);">EMBB · 24×33cl</div>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
-          <div class="vign-field"><div class="vign-field-label" style="width:70%"></div><div class="vign-field-input"><div class="vign-field-input-val" style="width:50%"></div></div></div>
-          <div class="vign-field"><div class="vign-field-label" style="width:55%;background:color-mix(in srgb,var(--ember) 25%,var(--hairline))"></div><div class="vign-field-input"><div class="vign-field-input-val" style="width:40%"></div></div></div>
+          <div class="vign-field"><div class="vign-field-label" style="width:55%"></div><div class="vign-field-input"><div class="vign-field-input-val" style="width:40%"></div></div></div>
+          <div class="vign-field"><div class="vign-field-label" style="width:55%"></div><div class="vign-field-input"><div class="vign-field-input-val" style="width:40%"></div></div></div>
         </div>
       </div>
-      <div class="vg-card-header">
-        <div class="vg-card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><path d="M12 12v4M10 14h4"/></svg></div>
-        <div><h2 class="vg-card-title"><?= htmlspecialchars($step['title'], ENT_QUOTES, 'UTF-8') ?></h2></div>
+<?php   elseif ($chapN === 2): /* C2 — parallel runs sketch */ ?>
+      <div class="vg-vignette vign-form" aria-hidden="true" style="background:var(--bg);">
+        <div style="display:flex;flex-direction:column;gap:4px;width:100%;">
+          <div style="display:flex;gap:6px;align-items:center;background:var(--bg-elev);border:1px solid var(--hairline);border-radius:6px;padding:5px 8px;">
+            <div style="width:6px;height:6px;border-radius:50%;background:var(--hop);flex-shrink:0;"></div>
+            <div style="height:5px;width:30%;border-radius:3px;background:color-mix(in srgb,var(--hop) 40%,var(--hairline))"></div>
+            <div style="margin-left:auto;height:5px;width:18%;border-radius:3px;background:color-mix(in srgb,var(--hop) 30%,var(--hairline))"></div>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;background:var(--bg-elev);border:1px solid var(--hairline);border-radius:6px;padding:5px 8px;">
+            <div style="width:6px;height:6px;border-radius:50%;background:var(--cold);flex-shrink:0;"></div>
+            <div style="height:5px;width:35%;border-radius:3px;background:color-mix(in srgb,var(--cold) 40%,var(--hairline))"></div>
+            <div style="margin-left:auto;height:5px;width:18%;border-radius:3px;background:color-mix(in srgb,var(--cold) 30%,var(--hairline))"></div>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;padding:3px 0;opacity:0.7;">
+            <div style="height:4px;width:4px;border-radius:1px;border:1px solid var(--ink-mute);"></div>
+            <div style="height:4px;width:50%;border-radius:2px;background:var(--hairline)"></div>
+          </div>
+        </div>
+      </div>
+<?php   else: /* C3 — disposition grid sketch — taxed / non-taxed columns */ ?>
+      <div class="vg-vignette vign-form" aria-hidden="true" style="background:var(--bg);padding:10px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;width:100%;font-family:'JetBrains Mono',monospace;font-size:6px;letter-spacing:0.06em;text-transform:uppercase;">
+          <div style="color:var(--ok);text-align:center;padding-bottom:3px;border-bottom:1px solid color-mix(in srgb,var(--ok) 30%,var(--hairline))">Taxée</div>
+          <div style="color:var(--ember);text-align:center;padding-bottom:3px;border-bottom:1px solid color-mix(in srgb,var(--ember) 30%,var(--hairline))">Non taxée</div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;width:100%;margin-top:4px;">
+          <div style="display:flex;flex-direction:column;gap:3px;">
+            <div style="display:flex;align-items:center;gap:4px;background:color-mix(in srgb,var(--ok) 6%,var(--bg-elev));border:1px solid color-mix(in srgb,var(--ok) 25%,var(--hairline));border-radius:4px;padding:3px 5px;"><div style="height:4px;width:55%;border-radius:2px;background:color-mix(in srgb,var(--ok) 40%,var(--hairline))"></div><div style="margin-left:auto;height:4px;width:14%;border-radius:2px;background:color-mix(in srgb,var(--ok) 50%,var(--hairline))"></div></div>
+            <div style="display:flex;align-items:center;gap:4px;background:var(--bg-elev);border:1px solid var(--hairline);border-radius:4px;padding:3px 5px;"><div style="height:4px;width:45%;border-radius:2px;background:var(--hairline)"></div><div style="margin-left:auto;height:4px;width:14%;border-radius:2px;background:var(--hairline)"></div></div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:3px;">
+            <div style="display:flex;align-items:center;gap:4px;background:color-mix(in srgb,var(--ember) 6%,var(--bg-elev));border:1px solid color-mix(in srgb,var(--ember) 25%,var(--hairline));border-radius:4px;padding:3px 5px;"><div style="height:4px;width:50%;border-radius:2px;background:color-mix(in srgb,var(--ember) 40%,var(--hairline))"></div><div style="margin-left:auto;height:4px;width:14%;border-radius:2px;background:color-mix(in srgb,var(--ember) 50%,var(--hairline))"></div></div>
+            <div style="display:flex;align-items:center;gap:4px;background:var(--bg-elev);border:1px solid var(--hairline);border-radius:4px;padding:3px 5px;"><div style="height:4px;width:48%;border-radius:2px;background:var(--hairline)"></div><div style="margin-left:auto;height:4px;width:14%;border-radius:2px;background:var(--hairline)"></div></div>
+          </div>
+        </div>
+      </div>
+<?php   endif ?>
+
+<?php elseif ($chapKey === 'chaine_pertes'): /* Capstone — loss chain flow sketch */ ?>
+      <div class="vg-vignette" aria-hidden="true" style="background:var(--bg);padding:12px;display:flex;flex-direction:column;gap:6px;justify-content:center;">
+        <?php
+        $chainSteps = ['Brassage', 'Transfert', 'Conditionnement', 'Vendable'];
+        $chainColors = ['var(--hop)', 'var(--bbt)', 'var(--oak)', 'var(--ok)'];
+        foreach ($chainSteps as $ci => $cLabel): ?>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <div style="width:7px;height:7px;border-radius:50%;background:<?= $chainColors[$ci] ?>;flex-shrink:0;"></div>
+          <div style="height:5px;width:30%;border-radius:3px;background:<?= $chainColors[$ci] ?>;opacity:0.5;"></div>
+          <div style="flex:1;height:1px;background:var(--hairline);margin:0 2px;"></div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:6px;color:var(--ink-mute);letter-spacing:0.04em;"><?= htmlspecialchars($cLabel) ?></div>
+        </div>
+        <?php if ($ci < count($chainSteps)-1): ?>
+        <div style="margin-left:3px;padding-left:0;width:1px;height:8px;background:var(--hairline);margin-left:3px;"></div>
+        <?php endif ?>
+        <?php endforeach ?>
       </div>
 
 <?php else: /* inventaire */ ?>
@@ -519,16 +795,27 @@ $appCssCacheBust = @filemtime(__DIR__ . '/../css/app.css') ?: time();
         <div class="vign-ledger-item"><div class="vign-ledger-dot"></div><div class="vign-ledger-name" style="width:45%"></div><div class="vign-ledger-qty">6 sacs</div></div>
         <div class="vign-ledger-item"><div class="vign-ledger-dot"></div><div class="vign-ledger-name" style="width:55%"></div><div class="vign-ledger-qty">3 cartons</div></div>
       </div>
-      <div class="vg-card-header">
-        <div class="vg-card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/></svg></div>
-        <div><h2 class="vg-card-title"><?= htmlspecialchars($step['title'], ENT_QUOTES, 'UTF-8') ?></h2></div>
-      </div>
+<?php endif /* form vignette switch */ ?>
 
-<?php endif; /* form key switch */ ?>
+<?php
+    /* Icon per chapter */
+    $chapIcons = [
+        'brassage'        => '<svg viewBox="0 0 24 24"><path d="M6 3h12v2a6 6 0 0 1-6 6 6 6 0 0 1-6-6V3z"/><path d="M6 5h12"/><path d="M12 11v10"/><path d="M8 21h8"/><path d="M19 8h2v5h-2"/></svg>',
+        'fermentation'    => '<svg viewBox="0 0 24 24"><ellipse cx="12" cy="14" rx="8" ry="6"/><path d="M4 14V8a8 2 0 0 1 16 0v6"/><path d="M8 12c0-1 1-2 2-2s2 1 3 1 2-1 2-1"/></svg>',
+        'transferts'      => '<svg viewBox="0 0 24 24"><path d="M16 3l4 4-4 4"/><path d="M20 7H4"/><path d="M8 21l-4-4 4-4"/><path d="M4 17h16"/></svg>',
+        'conditionnement' => '<svg viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><path d="M12 12v4M10 14h4"/></svg>',
+        'chaine_pertes'   => '<svg viewBox="0 0 24 24"><path d="M3 17l4-8 4 4 4-6 3 5"/><circle cx="21" cy="17" r="2"/><circle cx="3" cy="17" r="2"/></svg>',
+        'inventaire'      => '<svg viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/></svg>',
+    ];
+?>
+      <div class="vg-card-header">
+        <div class="vg-card-icon" aria-hidden="true"><?= $chapIcons[$chapKey] ?? $PAGE_ICONS['_default'] ?></div>
+        <div><h2 class="vg-card-title"><?= $step['title'] ?></h2></div>
+      </div>
       <p class="vg-card-body"><?= $step['body'] ?></p>
       <a href="<?= htmlspecialchars($step['href'], ENT_QUOTES, 'UTF-8') ?>"
          class="vg-card-link"
-         aria-label="Ouvrir <?= htmlspecialchars($step['title'], ENT_QUOTES, 'UTF-8') ?>">Ouvrir cette page ↗</a>
+         aria-label="Ouvrir <?= htmlspecialchars(strip_tags($step['title']), ENT_QUOTES, 'UTF-8') ?>">Ouvrir cette page ↗</a>
     </div>
 
 <?php elseif ($step['type'] === 'bon_a_savoir'): ?>

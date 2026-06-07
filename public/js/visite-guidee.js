@@ -1,7 +1,9 @@
 /* visite-guidee.js — Tour navigation.
    Reads TOTAL step count from data-total on #dots-container.
    No window.X payload; all steps are server-rendered PHP.
-   Section steps (ember dot) are encoded in data-section="1" on the dot. */
+   Section steps (ember dot) are encoded in data-section="1" on the dot.
+   Chapter gap dots are encoded in data-chap-start="1" (first dot of a new chapter).
+   Compact mode applied automatically when TOTAL > 20. */
 (function () {
   'use strict';
 
@@ -21,10 +23,18 @@
   /* ── Build dots ────────────────────────────────────────── */
   function buildDots() {
     dotsWrap.innerHTML = '';
+    /* Apply compact class when > 20 steps so dots fit at 390px */
+    if (TOTAL > 20) dotsWrap.classList.add('vg-dots--compact');
+
     for (let i = 0; i < TOTAL; i++) {
-      const isSection = steps[i] && steps[i].dataset.section === '1';
+      const step      = steps[i];
+      const isSection = step && step.dataset.section === '1';
+      const isChapStart = step && step.dataset.chapStart === '1';
       const btn = document.createElement('button');
-      btn.className = 'vg-dot' + (isSection ? ' vg-dot--section' : '');
+      let cls = 'vg-dot';
+      if (isSection)   cls += ' vg-dot--section';
+      if (isChapStart) cls += ' vg-dot--chap-gap';
+      btn.className = cls;
       btn.setAttribute('role', 'tab');
       btn.setAttribute('aria-label', 'Aller à l\'étape ' + (i + 1));
       btn.setAttribute('aria-selected', String(i === current));

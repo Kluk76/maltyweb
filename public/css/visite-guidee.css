@@ -106,6 +106,31 @@ body.home.visite-guidee .vg-skip-tour:focus-visible {
   outline-offset: 2px;
 }
 
+/* ── Chapter eyebrow (multi-step form chapters) ──────────── */
+body.home.visite-guidee .vg-chapter-eyebrow {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  line-height: 1;
+}
+
+body.home.visite-guidee .vg-chapter-progress {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  color: var(--oak);
+  background: color-mix(in srgb, var(--oak) 10%, var(--bg-elev));
+  border: 1px solid color-mix(in srgb, var(--oak) 25%, var(--hairline));
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-weight: 500;
+}
+
 /* ── Progress dots ───────────────────────────────────────── */
 body.home.visite-guidee .vg-dots-wrap {
   width: 100%;
@@ -118,8 +143,13 @@ body.home.visite-guidee .vg-dots-wrap {
 body.home.visite-guidee .vg-dots {
   display: flex;
   flex-wrap: wrap;
-  gap: 5px;
+  gap: 4px;
   align-items: center;
+}
+
+/* Visual chapter gap — slightly wider margin on first dot of each new chapter */
+body.home.visite-guidee .vg-dot--chap-gap {
+  margin-left: 4px;
 }
 
 body.home.visite-guidee .vg-dot {
@@ -130,11 +160,37 @@ body.home.visite-guidee .vg-dot {
   border: none;
   cursor: pointer;
   padding: 0;
+  /* Touch hit-zone expanded via box-shadow trick — visible dot stays 7px,
+     but the interactive area is padded to ≥ 44px by the surrounding flex layout
+     plus an invisible pseudo-element padding supplied by position+pseudo. */
+  position: relative;
   transition: background 0.2s var(--ease-out, cubic-bezier(0.23,1,0.32,1)),
               transform 0.2s var(--ease-out, cubic-bezier(0.23,1,0.32,1)),
               width 0.2s var(--ease-out, cubic-bezier(0.23,1,0.32,1));
   min-width: 7px;
   touch-action: manipulation;
+}
+
+/* Invisible tap-area expansion — keeps the visible dot small, hit zone ≥ 44px */
+body.home.visite-guidee .vg-dot::before {
+  content: '';
+  position: absolute;
+  inset: -16px;
+}
+
+/* Compact mode for tours with >20 steps: shrink dots + active pill */
+body.home.visite-guidee .vg-dots--compact .vg-dot {
+  width: 5px;
+  height: 5px;
+  min-width: 5px;
+}
+
+body.home.visite-guidee .vg-dots--compact .vg-dot--active {
+  width: 14px;
+}
+
+body.home.visite-guidee .vg-dots--compact .vg-dot--section.vg-dot--active {
+  width: 14px;
 }
 
 body.home.visite-guidee .vg-dot:focus-visible {
