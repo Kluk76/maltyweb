@@ -1549,7 +1549,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 exit;
             }
 
-            $allowedStages = ['mash', 'first_wort', 'boil', 'hop_stand', 'dry_hop'];
+            $allowedStages = ['mash', 'first_wort', 'boil', 'hop_stand', 'dry_hop', 'whirlpool'];
             $stageOrNull = ($rawStage !== '' && in_array($rawStage, $allowedStages, true))
                 ? $rawStage : null;
 
@@ -1667,7 +1667,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 exit;
             }
 
-            $allowedStages = ['mash', 'first_wort', 'boil', 'hop_stand', 'dry_hop'];
+            $allowedStages = ['mash', 'first_wort', 'boil', 'hop_stand', 'dry_hop', 'whirlpool'];
             $stageOrNull = ($rawStage !== '' && in_array($rawStage, $allowedStages, true))
                 ? $rawStage : null;
 
@@ -4398,10 +4398,11 @@ function setIngrScale(scale){
 }
 /* ── Hop stage helpers ───────────────────────────────────────────────────── */
 const HOP_STAGES=[
-  {v:'',      label:'— non classé —'},
+  {v:'',           label:'— non classé —'},
   {v:'mash',       label:'Mash'},
   {v:'first_wort', label:'First wort'},
   {v:'boil',       label:'Boil'},
+  {v:'whirlpool',  label:'Whirlpool'},
   {v:'hop_stand',  label:'Hop stand'},
   {v:'dry_hop',    label:'Dry hop'},
 ];
@@ -4413,7 +4414,7 @@ function hopStageSelectHtml(rriId,currentStage,currentBoilMin){
   HOP_STAGES.forEach(s=>{h+=`<option value="${escHtml(s.v)}"${s.v===sel?' selected':''}>${escHtml(s.label)}</option>`;});
   h+='</select>';
   const showMin=sel==='boil';
-  h+=`<input type="number" class="hop-boil-min" data-rri-id="${rriId}" min="0" max="90" placeholder="min" title="Minutes de houblonnage (0=flameout)" value="${showMin&&currentBoilMin!=null?currentBoilMin:''}" style="display:${showMin?'inline-block':'none'};">`;
+  h+=`<input type="number" class="hop-boil-min" data-rri-id="${rriId}" min="0" max="90" placeholder="min" title="Min restantes d'ébullition à l'ajout (60 = début de boil, 0 = flameout)" value="${showMin&&currentBoilMin!=null?currentBoilMin:''}" style="display:${showMin?'inline-block':'none'};">`;
   h+=`<span class="hop-boil-unit" style="display:${showMin?'inline':'none'};">min</span>`;
   return h;
 }
@@ -4497,8 +4498,8 @@ function bindHopControls(container){
       if(!qty||isNaN(parseFloat(qty))||parseFloat(qty)<=0){return;}
       const unit=window.prompt('Unité (g, kg, ml, L):','g');
       if(!['g','kg','ml','L'].includes(unit)){window.alert('Unité invalide.');return;}
-      const stageIdx=window.prompt('Stage:\n0=non classé\n1=mash\n2=first_wort\n3=boil\n4=hop_stand\n5=dry_hop\n\nEntrer le numéro:','');
-      const stageMap=['','mash','first_wort','boil','hop_stand','dry_hop'];
+      const stageIdx=window.prompt('Stage:\n0=non classé\n1=mash\n2=first_wort\n3=boil\n4=hop_stand\n5=dry_hop\n6=whirlpool\n\nEntrer le numéro:','');
+      const stageMap=['','mash','first_wort','boil','hop_stand','dry_hop','whirlpool'];
       const stage=stageMap[parseInt(stageIdx,10)]??'';
       let boilMin='';
       if(stage==='boil'){
