@@ -30,7 +30,7 @@ Output JSON:
 
 Decision parsing rules per sheet:
   Sheet A (Fusions proposées) — DÉCISION column:
-    OUI (or blank)  → decision=MERGE, target_bc=null   (use suggested_bc from BC col)
+    OUI             → decision=MERGE, target_bc=null   (use suggested_bc from BC col; blank = NON)
     a BC number     → decision=MERGE_BC, target_bc=<that number>
     NON             → decision=NON (skip)
 
@@ -116,15 +116,13 @@ def parse_decision(sheet_key: str, raw: str, suggested_bc: str | None) -> dict:
     v_norm = v.replace("É", "E").replace("È", "E").replace("Â", "A").replace("Î", "I")
 
     if sheet_key == "A":
-        if v in ("OUI", "") and suggested_bc:
+        # Blank = NON (leave in queue): a deleted cell must never silently merge.
+        # Only the explicit OUI prefill or a typed BC number triggers action.
+        if v == "OUI" and suggested_bc:
             return {"decision": "MERGE", "target_bc": None}
         if is_bc_number(v):
             return {"decision": "MERGE_BC", "target_bc": v}
-        if v == "NON":
-            return {"decision": "NON", "target_bc": None}
-        # OUI but no suggested_bc → treat as NON (can't merge without a target)
-        if v in ("OUI", ""):
-            return {"decision": "NON", "target_bc": None}
+        # OUI without suggested_bc, NON, blank, anything else → leave untouched
         return {"decision": "NON", "target_bc": None}
 
     if sheet_key == "B":
