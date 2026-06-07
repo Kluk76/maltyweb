@@ -2526,6 +2526,9 @@ $sec = $_GET['sec'] ?? '';
 $initialSec = in_array($sec, ['recettes', 'biochem', 'conditionnement', 'cip', 'pertes', 'conformite'], true)
     ? $sec : 'recettes';
 
+// Brewery identity from system_settings (canonical, never hardcoded).
+$_brid = brewery_identity();
+
 ?><!doctype html>
 <html lang="fr">
 <head>
@@ -2595,7 +2598,7 @@ window.SDC_TANK_ERR = null;
 
 <!-- CHROME -->
 <div class="chrome">
-  <div class="brandmark">La Nébuleuse · Le Zeppelin · <b>Salle de contrôle</b></div>
+  <div class="brandmark"><?= htmlspecialchars($_brid['name'], ENT_QUOTES, 'UTF-8') ?> · Le Zeppelin · <b>Salle de contrôle</b></div>
   <div class="family-switcher">
     <a class="family-btn fam-sdm" href="/modules/salle-des-machines.php" title="Salle des Machines">
       <span class="fam-dot"></span>Machines

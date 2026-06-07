@@ -78,8 +78,10 @@ body.sessions-dashboard .sd-view-btn.active {
   color: var(--ink);
   box-shadow: 0 1px 3px rgba(30,18,5,0.10);
 }
-body.sessions-dashboard .sd-view-btn:hover:not(.active) {
-  color: var(--ink-soft);
+@media (hover: hover) and (pointer: fine) {
+  body.sessions-dashboard .sd-view-btn:hover:not(.active) {
+    color: var(--ink-soft);
+  } /* SE-05: hover gated */
 }
 
 /* Count pill */
@@ -153,6 +155,8 @@ body.sessions-dashboard .sd-btn-apply {
   text-transform: uppercase;
   font-weight: 600;
   padding: 7px 14px;
+  min-height: 44px; /* SE-04: ≥44px touch target */
+  min-width: 44px;
   background: var(--hop);
   color: var(--bg);
   border: none;
@@ -160,7 +164,9 @@ body.sessions-dashboard .sd-btn-apply {
   cursor: pointer;
   transition: opacity 0.2s;
 }
-body.sessions-dashboard .sd-btn-apply:hover { opacity: 0.85; }
+@media (hover: hover) and (pointer: fine) {
+  body.sessions-dashboard .sd-btn-apply:hover { opacity: 0.85; } /* SE-06: hover gated */
+}
 
 body.sessions-dashboard .sd-btn-reset {
   font-family: "JetBrains Mono", ui-monospace, monospace;
@@ -168,6 +174,8 @@ body.sessions-dashboard .sd-btn-reset {
   letter-spacing: 0.12em;
   text-transform: uppercase;
   padding: 6px 12px;
+  min-height: 44px; /* SE-04: ≥44px touch target */
+  min-width: 44px;
   background: transparent;
   color: var(--ink-mute);
   border: 1px solid var(--hairline-2);
@@ -178,7 +186,9 @@ body.sessions-dashboard .sd-btn-reset {
   align-items: center;
   transition: color 0.15s;
 }
-body.sessions-dashboard .sd-btn-reset:hover { color: var(--ember); border-color: var(--ember); }
+@media (hover: hover) and (pointer: fine) {
+  body.sessions-dashboard .sd-btn-reset:hover { color: var(--ember); border-color: var(--ember); } /* SE-06: hover gated */
+}
 
 /* ── Abandoned toggle ── */
 body.sessions-dashboard .sd-abandoned-toggle {
@@ -304,9 +314,11 @@ body.sessions-dashboard .sd-entry {
   display: block;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
-body.sessions-dashboard .sd-entry:hover {
-  border-color: var(--hairline-2);
-  box-shadow: 0 2px 10px rgba(30,18,5,0.08);
+@media (hover: hover) and (pointer: fine) {
+  body.sessions-dashboard .sd-entry:hover {
+    border-color: var(--hairline-2);
+    box-shadow: 0 2px 10px rgba(30,18,5,0.08);
+  } /* SE-05: hover gated */
 }
 body.sessions-dashboard .sd-entry.status-open {
   border-left: 3px solid var(--hop);
@@ -469,9 +481,11 @@ body.sessions-dashboard .sd-vessel-card {
   text-decoration: none;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
-body.sessions-dashboard .sd-vessel-card:hover {
-  border-color: var(--hairline-2);
-  box-shadow: 0 3px 12px rgba(30,18,5,0.09);
+@media (hover: hover) and (pointer: fine) {
+  body.sessions-dashboard .sd-vessel-card:hover {
+    border-color: var(--hairline-2);
+    box-shadow: 0 3px 12px rgba(30,18,5,0.09);
+  } /* SE-05: hover gated */
 }
 body.sessions-dashboard .sd-vessel-card.open {
   border-top: 3px solid var(--hop);

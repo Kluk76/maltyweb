@@ -2265,8 +2265,7 @@ $cipConfig = [
         <p class="pf-override-desc" id="pf-override-desc">
           Bypasse le délai minimum (<?= $minDays ?> jour<?= $minDays > 1 ? 's' : '' ?> après soutirage).
           Affiche tous les lots actuellement en BBT/CCT indépendamment de leur date de soutirage.
-          Toute saisie créée via cet override sera marquée <code>hors_process_flag = 1</code>
-          dans <code>bd_packaging_v2</code>.
+          Toute saisie créée via cet override sera marquée comme saisie hors-process.
         </p>
         <div class="pf-override-reason-row" id="pf-override-reason-row" hidden>
           <label class="op-form__label pf-override-reason-label" for="hors_process_reason">
@@ -2280,12 +2279,13 @@ $cipConfig = [
       <?php endif ?>
 
       <?php if (empty($candidates)): ?>
-        <p class="op-form__muted">
+        <p class="op-form__muted" role="status">
           Aucun lot éligible (soutirage ≥ <?= $minDays ?> jour).
           Vérifier que les soutirages récents sont enregistrés dans Saisie Soutirage.
         </p>
       <?php else: ?>
-      <div class="pf-tank-grid">
+      <div role="status" class="sr-only" id="pf-tank-grid-status"></div>
+      <div class="pf-tank-grid" role="group" aria-label="Lots disponibles">
         <?php foreach ($candidates as $cand): ?>
           <?php
             $hasBeer   = ($cand['beer'] !== null && $cand['beer'] !== '');

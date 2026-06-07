@@ -843,9 +843,18 @@ document.addEventListener('DOMContentLoaded', function () {
     // Clear existing cards
     tankGrid.innerHTML = '';
 
+    // PF-03: announce grid changes via the separate sr-only status element —
+    // a summary string, never the full card content (an aria-live grid would
+    // spam screen readers with every card's text on each rebuild).
+    var gridStatus = document.getElementById('pf-tank-grid-status');
+
     if (!candidates || candidates.length === 0) {
       tankGrid.innerHTML = '<p class="op-form__muted" style="font-size:0.82rem;">Aucun lot disponible.</p>';
+      if (gridStatus) gridStatus.textContent = 'Aucun lot disponible.';
       return;
+    }
+    if (gridStatus) {
+      gridStatus.textContent = candidates.length + (candidates.length > 1 ? ' lots disponibles.' : ' lot disponible.');
     }
 
     candidates.forEach(function (cand) {
@@ -935,7 +944,7 @@ document.addEventListener('DOMContentLoaded', function () {
           banner.className = 'pf-override-active-banner';
           banner.innerHTML =
             '<strong>HORS PROCESS</strong> — Tous les lots en BBT/CCT sont affichés ' +
-            '(délai minimum bypassé). La saisie sera marquée <code>hors_process_flag = 1</code>.';
+            '(délai minimum bypassé). La saisie sera marquée comme saisie hors-process.';
           tankGrid.parentNode.insertBefore(banner, tankGrid);
         }
       } else {

@@ -407,10 +407,12 @@ $pageTitle = 'Journal de bord — MaltyTask';
     <!-- View toggle (C ↔ B) -->
     <div class="sd-view-toggle" role="group" aria-label="Vue">
       <button id="sd-btn-timeline" class="sd-view-btn active"
+              aria-pressed="true"
               title="Vue chronologique">
         &#9776; Chronologique
       </button>
       <button id="sd-btn-vessels" class="sd-view-btn"
+              aria-pressed="false"
               title="Vue par cuves">
         &#9632; Cuves
       </button>
@@ -562,7 +564,10 @@ $pageTitle = 'Journal de bord — MaltyTask';
               <div class="sd-tl-time"><?= sd_esc(sd_time($openedAt)) ?></div>
 
               <div class="sd-tl-spine">
-                <div class="sd-tl-dot <?= sd_status_css($status) ?>" title="<?= sd_esc($STATUS_LABELS[$status] ?? $status) ?>"></div>
+                <div class="sd-tl-dot <?= sd_status_css($status) ?>"
+                     role="img"
+                     title="<?= sd_esc($STATUS_LABELS[$status] ?? $status) ?>"
+                     aria-label="Statut : <?= sd_esc($STATUS_LABELS[$status] ?? $status) ?>"></div>
                 <div class="sd-tl-line"></div>
               </div>
 
@@ -577,7 +582,9 @@ $pageTitle = 'Journal de bord — MaltyTask';
                     <span class="sd-phase-pill <?= sd_phase_css($phase) ?>">
                       <?= sd_esc($PHASE_LABELS[$phase] ?? $phase) ?>
                     </span>
-                    <span class="sd-status-dot <?= sd_status_css($status) ?>"></span>
+                    <span class="sd-status-dot <?= sd_status_css($status) ?>"
+                          role="img"
+                          aria-label="Statut : <?= sd_esc($STATUS_LABELS[$status] ?? $status) ?>"></span>
                     <?php if (!empty($steps)): ?>
                       <?php $lastStep = end($steps); ?>
                       <span class="sd-step-chip">
@@ -670,7 +677,9 @@ $pageTitle = 'Journal de bord — MaltyTask';
                 <span class="sd-phase-pill <?= sd_phase_css($phase) ?>">
                   <?= sd_esc($PHASE_LABELS[$phase] ?? $phase) ?>
                 </span>
-                <span class="sd-status-dot <?= sd_status_css($status) ?>"></span>
+                <span class="sd-status-dot <?= sd_status_css($status) ?>"
+                      role="img"
+                      aria-label="Statut : <?= sd_esc($STATUS_LABELS[$status] ?? $status) ?>"></span>
               </div>
 
               <div class="sd-vc-footer">

@@ -156,12 +156,16 @@ body.op-form-packaging .pf-selected-tank__clear {
   cursor: pointer;
   color: var(--ink-soft);
   font-size: 0.8rem;
-  padding: 0.15rem 0.4rem;
+  padding: 0.65rem 0.875rem; /* PF-01: ≥44px touch target */
+  min-height: 44px;
+  min-width: 44px;
   border-radius: 4px;
   transition: color 0.12s;
 }
-body.op-form-packaging .pf-selected-tank__clear:hover {
-  color: var(--ember);
+@media (hover: hover) and (pointer: fine) {
+  body.op-form-packaging .pf-selected-tank__clear:hover {
+    color: var(--ember);
+  }
 }
 
 /* ── Formats intro hint ──────────────────────────────────────────────────── */

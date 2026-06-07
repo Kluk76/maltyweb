@@ -85,7 +85,7 @@ body.sdc-page .family-switcher {
   display: flex; align-items: center; gap: 0;
   border: 1px solid var(--hairline-2); border-radius: 8px; overflow: hidden;
   font-family: "JetBrains Mono", monospace; font-size: 10px; letter-spacing: .12em;
-  text-transform: uppercase; background: color-mix(in srgb, var(--bg-elev) 80%, transparent); backdrop-filter: blur(6px);
+  text-transform: uppercase; background: var(--bg-elev); /* perf: no backdrop-filter — scrolls with page (see ui skill perf hard-ban) */
 }
 body.sdc-page .family-btn {
   display: flex; align-items: center; gap: 8px; padding: 8px 14px;

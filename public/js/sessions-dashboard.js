@@ -29,8 +29,14 @@
 
     if (panelTimeline) panelTimeline.hidden = !isTimeline;
     if (panelVessels)  panelVessels.hidden  =  isTimeline;
-    if (btnTimeline)   btnTimeline.classList.toggle('active',  isTimeline);
-    if (btnVessels)    btnVessels.classList.toggle('active',  !isTimeline);
+    if (btnTimeline) {
+      btnTimeline.classList.toggle('active', isTimeline);
+      btnTimeline.setAttribute('aria-pressed', isTimeline ? 'true' : 'false');
+    }
+    if (btnVessels) {
+      btnVessels.classList.toggle('active', !isTimeline);
+      btnVessels.setAttribute('aria-pressed', isTimeline ? 'false' : 'true');
+    }
 
     try { localStorage.setItem(LS_VIEW_KEY, isTimeline ? 'timeline' : 'vessels'); }
     catch (_) { /* storage blocked */ }
