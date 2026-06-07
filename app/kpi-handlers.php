@@ -2408,9 +2408,14 @@ function kpi_pkg_fg_added(array $params, string $label, PDO $pdo): array
 
 // ═════════════════════════════════════════════════════════════════════════════
 // HANDLER: tanks  (source_domain = 'tanks')
-// SCOPE (this tranche): bd_tank_readings ONLY — direct reading aggregates.
-// Tank OCCUPANCY trackers (cct_bbt_occupancy, hl_in_tank, beers_fermenting_now,
-//   cct_idle_days, garde_vs_target, etc.) require the tank-sim port — OUT of scope.
+// SCOPE (this tranche):
+//   - bd_tank_readings: direct reading aggregates (O2, deviations)
+//   - Fermentation KPI mini-tranche (2026-06-07): avg_fermentation_time (#31),
+//     cct_days_per_beer (#16), beers_fermenting_now (#18), tank_turns_period (#20).
+//     Sources: bd_brewing_gravity_v2 (Cooling = pitch), bd_fermenting_v2
+//     (ColdCrash = fermentation end per operator ruling), bd_racking_v2 (transfers),
+//     ref_cct (active CCT count for turns-per-tank computation).
+//     Join shape: (recipe_id_fk, batch) — NEVER on beer-name strings.
 // ═════════════════════════════════════════════════════════════════════════════
 
 function kpi_handler_tanks(
@@ -2422,22 +2427,332 @@ function kpi_handler_tanks(
     return match ($handler) {
         'o2_in_bbt'               => kpi_tanks_o2_in_bbt($params, $label, $pdo),
         'o2_deviations'           => kpi_tanks_o2_deviations($params, $label, $pdo),
-        // Tank occupancy trackers need tank-sim port — leave as stubs
+        // Fermentation KPI mini-tranche — live implementations:
+        'avg_fermentation_time'   => kpi_tanks_avg_fermentation_time($label, $pdo),
+        'cct_days_per_beer'       => kpi_tanks_cct_days_per_beer($label, $pdo),
+        'beers_fermenting_now'    => kpi_tanks_beers_fermenting_now($label, $pdo),
+        'tank_turns_period'       => kpi_tanks_tank_turns_period($params, $label, $pdo),
+        // Remaining tank occupancy trackers still need tank-sim port:
         'tank_occupancy'          => kpi_stub_handler('tanks', $handler, $label),
         'cct_utilization_pct'     => kpi_stub_handler('tanks', $handler, $label),
         'cct_idle_days'           => kpi_stub_handler('tanks', $handler, $label),
-        'cct_days_per_beer'       => kpi_stub_handler('tanks', $handler, $label),
         'hl_in_tank_now'          => kpi_stub_handler('tanks', $handler, $label),
-        'beers_fermenting_now'    => kpi_stub_handler('tanks', $handler, $label),
         'garde_vs_target'         => kpi_stub_handler('tanks', $handler, $label),
-        'tank_turns_period'       => kpi_stub_handler('tanks', $handler, $label),
         'cold_crash_in_progress'  => kpi_stub_handler('tanks', $handler, $label),
         'fermentation_deviations' => kpi_stub_handler('tanks', $handler, $label),
         'suggested_next_brew'     => kpi_stub_handler('tanks', $handler, $label),
         'temp_pressure_excursions' => kpi_stub_handler('tanks', $handler, $label),
-        'avg_fermentation_time'   => kpi_stub_handler('tanks', $handler, $label),
         default                   => kpi_stub_handler('tanks', $handler, $label),
     };
+}
+
+// ─── Fermentation KPI mini-tranche helpers ────────────────────────────────────
+
+/**
+ * Shared CTE fragment: first Cooling date per (recipe_id_fk, batch) from
+ * bd_brewing_gravity_v2. Multi-brew batches fill a CCT over 1–3 days; the
+ * FIRST Cooling event = first fill = effective pitch day.
+ * Convention: submitted_at cast to DATE (the local calendar date the form
+ * was submitted, which matches the brew day).
+ */
+function kpi_fermentation_cooling_cte(): string
+{
+    return "
+        SELECT recipe_id_fk, batch,
+               MIN(DATE(submitted_at)) AS first_cool_date
+          FROM bd_brewing_gravity_v2
+         WHERE event_type = 'Cooling'
+           AND is_tombstoned = 0
+         GROUP BY recipe_id_fk, batch
+    ";
+}
+
+/**
+ * Shared CTE fragment: first ColdCrash event_date per (recipe_id_fk, batch)
+ * from bd_fermenting_v2. Operator ruling: fermentation END = start of cold crash.
+ */
+function kpi_fermentation_coldcrash_cte(): string
+{
+    return "
+        SELECT recipe_id_fk, batch,
+               MIN(event_date) AS cc_date
+          FROM bd_fermenting_v2
+         WHERE event_type = 'ColdCrash'
+           AND is_tombstoned = 0
+         GROUP BY recipe_id_fk, batch
+    ";
+}
+
+/** #31 — Temps moyen de fermentation par bière (jours, rolling 12m of cold-crash events) */
+function kpi_tanks_avg_fermentation_time(string $label, PDO $pdo): array
+{
+    $cacheKey = 'tanks_avg_ferm_time_12m';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    // Window: ColdCrash events in the rolling 12 months — these are the
+    // "completed fermentations" we can measure. Batches still fermenting
+    // (no ColdCrash yet) are excluded; coverage noted in meta.
+    // Sanity filter: 0–120 days excludes obvious data-entry errors.
+    $coolCte  = kpi_fermentation_cooling_cte();
+    $crashCte = "
+        SELECT recipe_id_fk, batch,
+               MIN(event_date) AS cc_date
+          FROM bd_fermenting_v2
+         WHERE event_type = 'ColdCrash'
+           AND is_tombstoned = 0
+           AND event_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+         GROUP BY recipe_id_fk, batch
+    ";
+
+    $stmt = $pdo->query("
+        SELECT rr.name AS beer_name,
+               ROUND(AVG(DATEDIFF(cc.cc_date, bw.first_cool_date)), 1) AS avg_days,
+               COUNT(*) AS batch_count
+          FROM ({$crashCte}) cc
+          JOIN ({$coolCte}) bw
+               ON bw.recipe_id_fk = cc.recipe_id_fk
+              AND bw.batch = cc.batch
+          JOIN ref_recipes rr ON rr.id = cc.recipe_id_fk
+         WHERE DATEDIFF(cc.cc_date, bw.first_cool_date) BETWEEN 0 AND 120
+         GROUP BY rr.name
+         ORDER BY batch_count DESC, rr.name
+    ");
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Weighted overall average (weight = batch_count per recipe).
+    $totalBatches = 0;
+    $weightedSum  = 0.0;
+    $series       = [];
+    foreach ($rows as $r) {
+        $n             = (int)   $r['batch_count'];
+        $d             = (float) $r['avg_days'];
+        $weightedSum  += $d * $n;
+        $totalBatches += $n;
+        $series[]      = [
+            'key'   => $r['beer_name'],
+            'label' => $r['beer_name'],
+            'value' => $d,
+            'meta'  => ['batch_count' => $n],
+        ];
+    }
+    $overallAvg = $totalBatches > 0 ? round($weightedSum / $totalBatches, 1) : null;
+
+    $result = array_merge(kpi_empty_result($label, 'jours'), [
+        'value'     => $overallAvg,
+        'tint'      => 'neutral',
+        'series'    => $series,
+        'meta'      => [
+            'period_label'    => '12 derniers mois (cold-crash enregistré)',
+            'batch_count'     => $totalBatches,
+            'recipe_count'    => count($rows),
+            'convention'      => 'Début = 1er Cooling (1re introduction CCT); Fin = 1er ColdCrash',
+            'coverage_note'   => 'Brassins sans ColdCrash enregistré (encore en fermentation ou données manquantes) exclus du calcul.',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/** #16 — Répartition jours CCT par bière (first Cooling → transfer date, rolling 12m of transfers) */
+function kpi_tanks_cct_days_per_beer(string $label, PDO $pdo): array
+{
+    $cacheKey = 'tanks_cct_days_per_beer_12m';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    // CCT residence = from first Cooling (pitch day) to transfer (racking event_date).
+    // Window: racking events in rolling 12 months.
+    // Join shape on bd_racking_v2: COALESCE(neb_recipe_id_fk, contract_recipe_id_fk)
+    //   and COALESCE(NULLIF(neb_batch,''), contract_batch) — same pattern as racking handlers.
+    // Sanity filter: 0–180 days.
+    $coolCte = kpi_fermentation_cooling_cte();
+
+    $stmt = $pdo->query("
+        SELECT rr.name AS beer_name,
+               SUM(DATEDIFF(r.event_date, bw.first_cool_date)) AS total_cct_days,
+               COUNT(*)                                          AS batch_count,
+               ROUND(AVG(DATEDIFF(r.event_date, bw.first_cool_date)), 1) AS avg_cct_days
+          FROM bd_racking_v2 r
+          JOIN ({$coolCte}) bw
+               ON bw.recipe_id_fk = COALESCE(r.neb_recipe_id_fk, r.contract_recipe_id_fk)
+              AND bw.batch = COALESCE(NULLIF(r.neb_batch, ''), r.contract_batch)
+          JOIN ref_recipes rr
+               ON rr.id = COALESCE(r.neb_recipe_id_fk, r.contract_recipe_id_fk)
+         WHERE r.is_tombstoned = 0
+           AND r.event_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+           AND DATEDIFF(r.event_date, bw.first_cool_date) BETWEEN 0 AND 180
+         GROUP BY rr.name
+         ORDER BY total_cct_days DESC
+    ");
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $grandTotal = (int) array_sum(array_column($rows, 'total_cct_days'));
+    $series     = [];
+    foreach ($rows as $r) {
+        $series[] = [
+            'key'   => $r['beer_name'],
+            'label' => $r['beer_name'],
+            'value' => (int) $r['total_cct_days'],
+            'meta'  => [
+                'avg_cct_days' => (float) $r['avg_cct_days'],
+                'batch_count'  => (int)   $r['batch_count'],
+            ],
+        ];
+    }
+
+    $result = array_merge(kpi_empty_result($label, 'jours-CCT'), [
+        'value'  => $grandTotal,
+        'tint'   => 'neutral',
+        'series' => $series,
+        'meta'   => [
+            'period_label'  => '12 derniers mois (date de soutirage)',
+            'recipe_count'  => count($rows),
+            'value_meaning' => 'Total jours-CCT cumulés sur 12 mois (somme par bière)',
+            'coverage_note' => 'Brassins encore en CCT (pas encore soutirés) non inclus dans ce total.',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/** #18 — Bières en fermentation + jours en cuve (batches with Cooling but no transfer yet) */
+function kpi_tanks_beers_fermenting_now(string $label, PDO $pdo): array
+{
+    $cacheKey = 'tanks_beers_fermenting_now';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    // A batch is "currently in CCT" if:
+    //   1. It has a Cooling event in bd_brewing_gravity_v2 (is in / has entered a CCT)
+    //   2. It has NO racking row in bd_racking_v2 (has not been transferred out)
+    //   3. Its first Cooling date is within the last 120 days (guard against ancient
+    //      data-entry gaps where a batch genuinely has no racking record).
+    $coolCte = kpi_fermentation_cooling_cte();
+
+    $stmt = $pdo->query("
+        SELECT rr.name AS beer_name,
+               bw.batch,
+               DATEDIFF(CURDATE(), bw.first_cool_date) AS days_in_cct,
+               bw.first_cool_date
+          FROM ({$coolCte}) bw
+          JOIN ref_recipes rr ON rr.id = bw.recipe_id_fk
+         WHERE bw.first_cool_date >= DATE_SUB(CURDATE(), INTERVAL 120 DAY)
+           AND NOT EXISTS (
+               SELECT 1
+                 FROM bd_racking_v2 r
+                WHERE r.is_tombstoned = 0
+                  AND COALESCE(r.neb_recipe_id_fk, r.contract_recipe_id_fk) = bw.recipe_id_fk
+                  AND COALESCE(NULLIF(r.neb_batch, ''), r.contract_batch) = bw.batch
+           )
+         ORDER BY days_in_cct DESC
+    ");
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $count  = count($rows);
+    $series = [];
+    foreach ($rows as $r) {
+        $series[] = [
+            'key'   => $r['beer_name'] . '-' . $r['batch'],
+            'label' => $r['beer_name'] . ' #' . $r['batch'],
+            'value' => (int) $r['days_in_cct'],
+            'meta'  => [
+                'batch'           => $r['batch'],
+                'first_cool_date' => $r['first_cool_date'],
+            ],
+        ];
+    }
+
+    $tint = match (true) {
+        $count === 0 => 'neutral',
+        $count <= 5  => 'green',
+        $count <= 12 => 'neutral',
+        default      => 'amber',
+    };
+
+    $result = array_merge(kpi_empty_result($label, 'brassins'), [
+        'value'  => $count,
+        'tint'   => $tint,
+        'series' => $series,
+        'meta'   => [
+            'period_label'  => 'maintenant',
+            'window_note'   => 'Brassins dont le 1er Cooling date de moins de 120 jours et sans soutirage enregistré.',
+            'coverage_note' => 'Brassins avec Cooling > 120 jours et sans soutirage sont exclus (données manquantes probables).',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/** #20 — Rotations cuves par mois (transfers to BBT = completed CCT cycles) */
+function kpi_tanks_tank_turns_period(array $params, string $label, PDO $pdo): array
+{
+    $period   = $params['period'] ?? 'current_month';
+    $p        = kpi_resolve_period($period);
+    $cacheKey = "tanks_tank_turns_{$p['start']}_{$p['end']}";
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    // Completed CCT cycle = transfer to BBT (racking_destination_type = 'BBT').
+    // This is the dominant path (141/143 rackings in the last 12m go to BBT).
+    // CCT-to-CCT transfers (1/143) are excluded — they represent a split/blend
+    // operation, not a completed fermentation cycle.
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*) AS transfer_count
+          FROM bd_racking_v2
+         WHERE is_tombstoned = 0
+           AND racking_destination_type = 'BBT'
+           AND event_date BETWEEN ? AND ?
+    ");
+    $stmt->execute([$p['start'], $p['end']]);
+    $transferCount = (int) $stmt->fetchColumn();
+
+    // CCT count from ref_cct (active CCTs only).
+    $cctCountStmt = $pdo->query("SELECT COUNT(*) FROM ref_cct WHERE status = 'active'");
+    $activeCcts   = (int) $cctCountStmt->fetchColumn();
+
+    // Turns per tank = transfers / active CCT count (meaningful only when > 0 CCTs).
+    $turnsPerTank = ($activeCcts > 0 && $transferCount > 0)
+                    ? round($transferCount / $activeCcts, 2)
+                    : null;
+
+    // Rolling 12m monthly series for sparkline.
+    $seriesStmt = $pdo->query("
+        SELECT DATE_FORMAT(event_date, '%Y-%m') AS mo,
+               COUNT(*) AS cnt
+          FROM bd_racking_v2
+         WHERE is_tombstoned = 0
+           AND racking_destination_type = 'BBT'
+           AND event_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+         GROUP BY mo
+         ORDER BY mo
+    ");
+    $seriesRows = $seriesStmt->fetchAll(PDO::FETCH_ASSOC);
+    $series     = array_map(
+        fn($r) => ['period' => $r['mo'], 'value' => (int) $r['cnt']],
+        $seriesRows
+    );
+
+    $result = array_merge(kpi_empty_result($label, 'transferts CCT→BBT'), [
+        'value'  => $transferCount,
+        'tint'   => 'neutral',
+        'series' => $series,
+        'meta'   => [
+            'period_label'    => $p['label'],
+            'active_cct_count' => $activeCcts,
+            'turns_per_tank'  => $turnsPerTank,
+            'value_meaning'   => 'Nombre de soutirages CCT→BBT (= cycles CCT terminés) sur la période',
+            'turns_note'      => $activeCcts > 0
+                                 ? "Rotations/cuve = {$transferCount} / {$activeCcts} CCT actives"
+                                 : 'Nombre de CCT actives non disponible',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
 }
 
 /** #34 — O₂ dissous en BBT (moyenne des N derniers jours, ppb) */
