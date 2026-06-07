@@ -17,15 +17,16 @@ declare(strict_types=1);
  *   app/csrf.php        — csrf_token()
  *   app/db.php          — maltytask_pdo() (pulled in via auth)
  *   app/sb-board.php    — sb_open_mothers(), SB_ZONES
- *   app/svg-vessels.php — svg_vessel_cct(), svg_vessel_bbt(),
+ *   app/svg-tanks.php   — svg_vessel_cct(), svg_vessel_bbt(),
  *                          svg_vessel_kettle(), svg_vessel_packaging_line()
+ *                          (C2 convergence 2026-06-07: svg-vessels.php retired)
  *   app/partials/sidebar.php, topbar.php — standard nav shell
  */
 
 require __DIR__ . '/../../app/auth.php';
 require __DIR__ . '/../../app/csrf.php';
 require_once __DIR__ . '/../../app/sb-board.php';
-require_once __DIR__ . '/../../app/svg-vessels.php';
+require_once __DIR__ . '/../../app/svg-tanks.php';
 
 require_page_access('sb-board');
 $me  = current_user();

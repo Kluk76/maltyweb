@@ -172,18 +172,28 @@ body.sb-board .main {
 }
 .sb-zone:last-child { border-right: none; }
 
-/* Zone header strip */
+/* Zone header strip
+ * sticky + frosted glass restored 2026-06-07 (C2 convergence).
+ * backdrop-filter on a STICKY element (not a scrolling overlay) is safe:
+ * no compositing-layer flush per scroll frame — the blur is recomputed
+ * only when the header transitions from in-flow to stuck. Audit 9104273
+ * removed backdrop-filter from 4 *scrolling* containers; this header is
+ * sticky on the column, not a scroller, so the perf concern does not apply.
+ * z-index: 6 (above z-index:5 cards) keeps the header readable when cards
+ * scroll under it inside a zone column.
+ */
 .sb-zone__header {
   display: flex; align-items: center; gap: 8px;
   padding: 9px 14px 8px;
   border-bottom: 1px solid var(--hairline);
-  background: var(--bg-elev);
-  position: relative; z-index: 5;
+  background: color-mix(in srgb, var(--bg-elev) 80%, transparent);
+  backdrop-filter: blur(6px);
+  position: sticky; top: 0; z-index: 6;
   cursor: default;
   transition: background .2s;
 }
 .sb-zone__header:hover {
-  background: color-mix(in srgb, var(--bg-elev) 95%, transparent);
+  background: color-mix(in srgb, var(--bg-elev) 92%, transparent);
 }
 .sb-zone__header[role="button"] { cursor: pointer; }
 .sb-zone__header[role="button"]:focus-visible {

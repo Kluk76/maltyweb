@@ -530,3 +530,577 @@ function svg_bbt(float $fillRatio, string $stateClass = '', int $number = 0, str
     return ob_get_clean();
 }
 endif;
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   svg_vessel_* — Mother Shell vessel components (Atom 2), gravure-dense style.
+   Same public API as the retired svg-vessels.php. CSS animation hooks preserved
+   verbatim so sb-board.css @keyframes sb-vessel-pulse / sb-conveyor-move
+   continue to target .sb-vessel--pulsing / .sb-conveyor-lines without change.
+
+   Implementation notes
+   ─────────────────────
+   • All fills/strokes use var(--token,#fallback) — no bare hex literals.
+   • No inline <style>. Animation is purely CSS-class-driven.
+   • UID: '_sv_uid' uses static counter (PHP single-threaded = safe).
+     Combined prefix + number ensures page-unique defs IDs across multiple
+     vessels. Same guarantee as the svg_cct/svg_bbt microtime uid above.
+   • viewBox dimensions are IDENTICAL to svg-vessels.php:
+       CCT/BBT = 80×155, kettle = 72×80, packaging_line = 200×60.
+   • Element budgets: cct ≤110, bbt ≤115, kettle ≤90, pkg_line ≤55.
+     sb-board re-renders every 15s — all well within budget.
+   • sb-board re-renders via PHP — ids regenerate each render, which is
+     correct; the JS never caches svg defs. No DOM def-accumulation risk.
+═══════════════════════════════════════════════════════════════════════════ */
+
+if (!function_exists('_sv_uid')):
+/** Collision-resistant uid for svg_vessel_* <defs> ids. Static counter. */
+function _sv_uid(string $prefix, int $number = 0): string {
+    static $counter = 0;
+    $counter++;
+    return $prefix . $number . '_' . substr(md5($prefix . $number . $counter), 0, 6);
+}
+endif;
+
+/* ── svg_vessel_cct ──────────────────────────────────────────────────────── */
+
+/**
+ * CCT (Conical Cylindrical Tank) — fermentation vessel, gravure-dense style.
+ *
+ * @param int    $number   CCT number for label (1-based)
+ * @param float  $fill_pct 0.0–1.0
+ * @param string $state    'empty'|'active'|'cold-crashed'|'cleaning'
+ * @param array  $opts     ['recipe'=>string, 'batch'=>string, 'compact'=>bool]
+ * @return string          Inline SVG, no <?xml header
+ */
+if (!function_exists('svg_vessel_cct')):
+function svg_vessel_cct(int $number, float $fill_pct = 0.0, string $state = 'empty', array $opts = []): string {
+    $fill_pct  = max(0.0, min(1.0, $fill_pct));
+    $is_active = in_array($state, ['active', 'cold-crashed', 'cleaning'], true);
+    $has_fill  = $fill_pct > 0 && $state !== 'empty';
+
+    $cylTop = 10; $cylBot = 100; $coneBot = 130;
+    $cylLeft = 12; $cylRight = 68; $conePoint = 40;
+    $cylH = $cylBot - $cylTop;
+    $capTop = 2; $capH = 8;
+
+    $emptyH = (int)round($cylH * (1.0 - $fill_pct));
+    $fillY  = $cylTop + $emptyH;
+    $fillH  = $cylBot - $fillY + ($coneBot - $cylBot);
+
+    [$tintColor, $tintOp, $numColor, $numOp] = match($state) {
+        'active'       => ['var(--cold,#2f5575)',      0.15, 'var(--cold,#2f5575)',      '0.80'],
+        'cold-crashed' => ['var(--bbt,#2f6d99)',       0.15, 'var(--bbt,#2f6d99)',        '0.80'],
+        'cleaning'     => ['var(--steel-mid,#9a8868)', 0.18, 'var(--oak-deep,#5a3a12)',  '0.50'],
+        default        => ['none',                     0.0,  'var(--oak-deep,#5a3a12)',  '0.45'],
+    };
+
+    /* Animation class hooks — preserved from svg-vessels.php */
+    $svg_class = 'sb-vessel__svg sb-vessel__svg--cct';
+    if ($is_active && in_array($state, ['active', 'cold-crashed'], true)) {
+        $svg_class .= ' sb-vessel--pulsing';
+    }
+
+    $uid = _sv_uid('vcct', $number);
+    $clipId = 'clip_' . $uid; $coneClipId = 'clipc_' . $uid;
+    $pxId   = 'px_'  . $uid; $pdId       = 'pd_'   . $uid;
+
+    $bodyPts = "{$cylLeft},{$cylTop} {$cylRight},{$cylTop} {$cylRight},{$cylBot} "
+        . ($conePoint+6) . ",{$coneBot} " . ($conePoint-6) . ",{$coneBot} {$cylLeft},{$cylBot}";
+
+    $title = 'CCT ' . $number . ($state !== 'empty' ? ' — ' . $state : '');
+    $tp = [];
+    if (!empty($opts['recipe'])) $tp[] = htmlspecialchars($opts['recipe'], ENT_XML1, 'UTF-8');
+    if (!empty($opts['batch']))  $tp[] = '#' . htmlspecialchars((string)$opts['batch'], ENT_XML1, 'UTF-8');
+    if ($tp) $title .= ' (' . implode(' ', $tp) . ')';
+    $showLabel = empty($opts['compact']) && (!empty($opts['recipe']) || !empty($opts['batch']));
+
+    ob_start();
+    echo '<svg class="' . htmlspecialchars($svg_class, ENT_QUOTES, 'UTF-8') . '"'
+        . ' viewBox="0 0 80 155" xmlns="http://www.w3.org/2000/svg"'
+        . ' role="img" aria-label="' . htmlspecialchars($title, ENT_XML1, 'UTF-8') . '">';
+    echo '<title>' . htmlspecialchars($title, ENT_XML1, 'UTF-8') . '</title>';
+    echo '<defs>';
+    echo '<clipPath id="' . $clipId . '"><polygon points="' . $bodyPts . '"/></clipPath>';
+    echo '<clipPath id="' . $coneClipId . '"><polygon points="' . $cylLeft . ',' . $cylBot
+        . ' ' . $cylRight . ',' . $cylBot . ' ' . ($conePoint+6) . ',' . $coneBot
+        . ' ' . ($conePoint-6) . ',' . $coneBot . '"/></clipPath>';
+    echo '<pattern id="' . $pxId . '" x="0" y="0" width="3.8" height="3.8" patternUnits="userSpaceOnUse">'
+        . '<line x1="1.9" y1="0" x2="1.9" y2="3.8" stroke="var(--oak-deep,#5a3a12)" stroke-width="0.55" opacity="0.28"/>'
+        . '</pattern>';
+    echo '<pattern id="' . $pdId . '" x="0" y="0" width="3.5" height="3.5" patternUnits="userSpaceOnUse">'
+        . '<line x1="0" y1="0" x2="3.5" y2="3.5" stroke="var(--oak-deep,#5a3a12)" stroke-width="0.58" opacity="0.52"/>'
+        . '<line x1="3.5" y1="0" x2="0" y2="3.5" stroke="var(--oak-deep,#5a3a12)" stroke-width="0.58" opacity="0.52"/>'
+        . '</pattern>';
+    echo '</defs>';
+
+    echo '<ellipse cx="40" cy="152" rx="28" ry="2" fill="rgba(90,58,18,0.12)"/>';
+
+    if ($has_fill) {
+        echo '<rect x="' . $cylLeft . '" y="' . $fillY . '" width="' . ($cylRight-$cylLeft) . '" height="' . $fillH . '"'
+            . ' fill="' . $tintColor . '" opacity="' . $tintOp . '" clip-path="url(#' . $clipId . ')"/>';
+    }
+
+    echo '<polygon points="' . $bodyPts . '" fill="var(--bg,#f1e8d4)" stroke="none"/>';
+    echo '<rect x="' . $cylLeft . '" y="' . $capTop . '" width="' . ($cylRight-$cylLeft) . '" height="' . $capH . '" fill="var(--bg,#f1e8d4)" stroke="none"/>';
+
+    echo '<rect x="21" y="' . $cylTop . '" width="30" height="' . $cylH . '" fill="url(#' . $pxId . ')" clip-path="url(#' . $clipId . ')"/>';
+    echo '<rect x="' . $cylLeft . '" y="' . $capTop . '" width="' . ($cylRight-$cylLeft) . '" height="' . $capH . '" fill="url(#' . $pdId . ')"/>';
+    echo '<rect x="' . $cylLeft . '" y="' . $cylBot . '" width="' . ($cylRight-$cylLeft) . '" height="' . ($coneBot-$cylBot) . '"'
+        . ' fill="url(#' . $pdId . ')" clip-path="url(#' . $coneClipId . ')"/>';
+    echo '<rect x="13" y="44" width="54" height="10" fill="url(#' . $pdId . ')" clip-path="url(#' . $clipId . ')" opacity="0.75"/>';
+    echo '<rect x="13" y="72" width="54" height="10" fill="url(#' . $pdId . ')" clip-path="url(#' . $clipId . ')" opacity="0.65"/>';
+
+    $odk = 'stroke="var(--oak-deep,#5a3a12)"';
+    echo '<line x1="13.5" y1="11" x2="13.5" y2="' . $cylBot . '" ' . $odk . ' stroke-width="0.60" opacity="0.55"/>';
+    echo '<line x1="15.1" y1="10.5" x2="15.0" y2="' . $cylBot . '" ' . $odk . ' stroke-width="0.55" opacity="0.50"/>';
+    echo '<line x1="16.6" y1="11" x2="16.7" y2="' . $cylBot . '" ' . $odk . ' stroke-width="0.50" opacity="0.44"/>';
+    echo '<line x1="18.2" y1="10.5" x2="18.1" y2="' . $cylBot . '" ' . $odk . ' stroke-width="0.45" opacity="0.38"/>';
+    echo '<line x1="13.5" y1="' . $cylBot . '" x2="34.5" y2="' . $coneBot . '" ' . $odk . ' stroke-width="0.60" opacity="0.55"/>';
+    echo '<line x1="15.2" y1="' . $cylBot . '" x2="36.0" y2="' . $coneBot . '" ' . $odk . ' stroke-width="0.55" opacity="0.48"/>';
+    echo '<line x1="66.2" y1="11" x2="66.3" y2="' . $cylBot . '" ' . $odk . ' stroke-width="0.65" opacity="0.60"/>';
+    echo '<line x1="64.5" y1="10.5" x2="64.4" y2="' . $cylBot . '" ' . $odk . ' stroke-width="0.62" opacity="0.55"/>';
+    echo '<line x1="62.9" y1="11" x2="63.0" y2="' . $cylBot . '" ' . $odk . ' stroke-width="0.58" opacity="0.50"/>';
+    echo '<line x1="61.2" y1="10.5" x2="61.3" y2="' . $cylBot . '" ' . $odk . ' stroke-width="0.53" opacity="0.44"/>';
+    echo '<line x1="59.6" y1="11" x2="59.5" y2="' . $cylBot . '" ' . $odk . ' stroke-width="0.48" opacity="0.38"/>';
+    echo '<line x1="66.5" y1="' . $cylBot . '" x2="45.5" y2="' . $coneBot . '" ' . $odk . ' stroke-width="0.65" opacity="0.60"/>';
+    echo '<line x1="64.8" y1="' . $cylBot . '" x2="44.0" y2="' . $coneBot . '" ' . $odk . ' stroke-width="0.58" opacity="0.52"/>';
+
+    echo '<line x1="' . $cylLeft . '" y1="44" x2="' . $cylRight . '" y2="44" ' . $odk . ' stroke-width="1.1" opacity="0.55"/>';
+    echo '<line x1="' . $cylLeft . '" y1="72" x2="' . $cylRight . '" y2="72" ' . $odk . ' stroke-width="1.1" opacity="0.55"/>';
+
+    if ($has_fill) {
+        echo '<line x1="' . $cylLeft . '" y1="' . $fillY . '" x2="' . $cylRight . '" y2="' . $fillY . '"'
+            . ' stroke="' . $tintColor . '" stroke-width="0.9" opacity="0.65" stroke-dasharray="3,2"/>';
+    }
+
+    if ($state === 'active' && $has_fill) {
+        $by1 = max($fillY + 6, 68); $by2 = max($fillY + 16, 78); $by3 = max($fillY + 4, 60);
+        echo '<circle cx="30" cy="' . $by1 . '" r="1.2" class="ferment-bubble" fill="var(--cold,#2f5575)" opacity="0.30"/>';
+        echo '<circle cx="46" cy="' . $by2 . '" r="0.9" class="ferment-bubble" fill="var(--cold,#2f5575)" opacity="0.22" style="animation-delay:1.1s"/>';
+        echo '<circle cx="54" cy="' . $by3 . '" r="1.0" class="ferment-bubble" fill="var(--cold,#2f5575)" opacity="0.18" style="animation-delay:2.0s"/>';
+    }
+
+    echo '<polygon points="' . $bodyPts . '" fill="none" ' . $odk . ' stroke-width="1.8" stroke-linejoin="round"/>';
+    echo '<rect x="' . $cylLeft . '" y="' . $capTop . '" width="' . ($cylRight-$cylLeft) . '" height="' . $capH . '" fill="none" ' . $odk . ' stroke-width="1.8"/>';
+    echo '<rect x="' . $cylRight . '" y="52" width="6" height="26" fill="var(--bg,#f1e8d4)" ' . $odk . ' stroke-width="1.1"/>';
+    echo '<rect x="6" y="54" width="6" height="4" fill="var(--bg,#f1e8d4)" ' . $odk . ' stroke-width="0.9"/>';
+    echo '<circle cx="22" cy="6" r="3" fill="var(--bg,#f1e8d4)" ' . $odk . ' stroke-width="1.0"/>';
+    echo '<rect x="37" y="' . $coneBot . '" width="6" height="4" fill="var(--bg,#f1e8d4)" ' . $odk . ' stroke-width="0.9"/>';
+    echo '<path d="M 19,' . ($coneBot+6) . ' L 21,' . ($coneBot+6) . ' L 16,152 L 14,152 Z" fill="var(--bg,#f1e8d4)" ' . $odk . ' stroke-width="1.1"/>';
+    echo '<path d="M 39,' . ($coneBot+6) . ' L 41,' . ($coneBot+6) . ' L 41,152 L 39,152 Z" fill="var(--bg,#f1e8d4)" ' . $odk . ' stroke-width="1.1"/>';
+    echo '<path d="M 59,' . ($coneBot+6) . ' L 61,' . ($coneBot+6) . ' L 65,152 L 63,152 Z" fill="var(--bg,#f1e8d4)" ' . $odk . ' stroke-width="1.1"/>';
+    echo '<rect x="12" y="151" width="6" height="2" fill="var(--oak-deep,#5a3a12)" opacity="0.58"/>';
+    echo '<rect x="37" y="151" width="6" height="2" fill="var(--oak-deep,#5a3a12)" opacity="0.58"/>';
+    echo '<rect x="61" y="151" width="6" height="2" fill="var(--oak-deep,#5a3a12)" opacity="0.58"/>';
+
+    echo '<text x="40" y="30" text-anchor="middle"'
+        . ' font-family="\'JetBrains Mono\',ui-monospace,monospace" font-size="13" font-weight="500"'
+        . ' fill="' . $numColor . '" opacity="' . $numOp . '">' . $number . '</text>';
+
+    if ($showLabel) {
+        $lp = [];
+        if (!empty($opts['recipe'])) $lp[] = htmlspecialchars($opts['recipe'], ENT_XML1, 'UTF-8');
+        if (!empty($opts['batch']))  $lp[] = '#' . htmlspecialchars((string)$opts['batch'], ENT_XML1, 'UTF-8');
+        echo '<text x="40" y="82" text-anchor="middle"'
+            . ' font-family="\'DM Sans\',ui-sans-serif,sans-serif" font-size="7.5" font-weight="500"'
+            . ' fill="var(--ink-soft,#5a4028)" opacity="0.70">' . implode(' ', $lp) . '</text>';
+    }
+
+    echo '</svg>';
+    return trim(ob_get_clean());
+}
+endif;
+
+/* ── svg_vessel_bbt ──────────────────────────────────────────────────────── */
+
+/**
+ * BBT (Bright Beer Tank) — post-racking serving tank, gravure-dense style.
+ *
+ * @param int    $number   BBT number for label (1-based)
+ * @param float  $fill_pct 0.0–1.0
+ * @param string $state    'empty'|'filling'|'ready'|'serving'|'cleaning'
+ * @param array  $opts     ['recipe'=>string, 'batch'=>string, 'compact'=>bool]
+ * @return string          Inline SVG, no <?xml header
+ */
+if (!function_exists('svg_vessel_bbt')):
+function svg_vessel_bbt(int $number, float $fill_pct = 0.0, string $state = 'empty', array $opts = []): string {
+    $fill_pct = max(0.0, min(1.0, $fill_pct));
+    $has_fill = $fill_pct > 0 && $state !== 'empty';
+
+    $cylTop = 15; $cylBot = 125; $cylLeft = 12; $cylRight = 68;
+    $cylH = $cylBot - $cylTop; $rx = 28; $ry = 6;
+
+    $emptyH = (int)round($cylH * (1.0 - $fill_pct));
+    $fillY  = $cylTop + $emptyH;
+    $fillH  = $cylBot - $fillY;
+
+    [$tintColor, $tintOp, $numColor, $numOp] = match($state) {
+        'filling'  => ['var(--bbt,#2f6d99)', 0.17, 'var(--bbt,#2f6d99)',      '0.85'],
+        'ready'    => ['var(--bbt,#2f6d99)', 0.17, 'var(--bbt,#2f6d99)',      '0.85'],
+        'serving'  => ['var(--bbt,#2f6d99)', 0.20, 'var(--bbt,#2f6d99)',      '0.90'],
+        'cleaning' => ['var(--steel-mid,#9a8868)', 0.18, 'var(--oak-deep,#5a3a12)', '0.50'],
+        default    => ['none', 0.0, 'var(--oak-deep,#5a3a12)', '0.45'],
+    };
+
+    /* Animation class hooks — preserved from svg-vessels.php */
+    $svg_class = 'sb-vessel__svg sb-vessel__svg--bbt';
+    if ($state === 'filling') $svg_class .= ' sb-vessel--pulsing';
+
+    $uid = _sv_uid('vbbt', $number);
+    $clipId = 'clip_' . $uid; $pxId = 'px_' . $uid; $pdId = 'pd_' . $uid;
+
+    $showLabel = empty($opts['compact']) && (!empty($opts['recipe']) || !empty($opts['batch']));
+    $title = 'BBT ' . $number . ($state !== 'empty' ? ' — ' . $state : '');
+    $tp = [];
+    if (!empty($opts['recipe'])) $tp[] = htmlspecialchars($opts['recipe'], ENT_XML1, 'UTF-8');
+    if (!empty($opts['batch']))  $tp[] = '#' . htmlspecialchars((string)$opts['batch'], ENT_XML1, 'UTF-8');
+    if ($tp) $title .= ' (' . implode(' ', $tp) . ')';
+
+    ob_start();
+    echo '<svg class="' . htmlspecialchars($svg_class, ENT_QUOTES, 'UTF-8') . '"'
+        . ' viewBox="0 0 80 155" xmlns="http://www.w3.org/2000/svg"'
+        . ' role="img" aria-label="' . htmlspecialchars($title, ENT_XML1, 'UTF-8') . '">';
+    echo '<title>' . htmlspecialchars($title, ENT_XML1, 'UTF-8') . '</title>';
+    echo '<defs>';
+    echo '<clipPath id="' . $clipId . '"><rect x="' . $cylLeft . '" y="' . $cylTop . '" width="' . ($cylRight-$cylLeft) . '" height="' . $cylH . '"/></clipPath>';
+    echo '<pattern id="' . $pxId . '" x="0" y="0" width="3.8" height="3.8" patternUnits="userSpaceOnUse">'
+        . '<line x1="1.9" y1="0" x2="1.9" y2="3.8" stroke="var(--oak-deep,#5a3a12)" stroke-width="0.55" opacity="0.28"/>'
+        . '</pattern>';
+    echo '<pattern id="' . $pdId . '" x="0" y="0" width="3.5" height="3.5" patternUnits="userSpaceOnUse">'
+        . '<line x1="0" y1="0" x2="3.5" y2="3.5" stroke="var(--oak-deep,#5a3a12)" stroke-width="0.58" opacity="0.52"/>'
+        . '<line x1="3.5" y1="0" x2="0" y2="3.5" stroke="var(--oak-deep,#5a3a12)" stroke-width="0.58" opacity="0.52"/>'
+        . '</pattern>';
+    echo '</defs>';
+
+    $shOp = $has_fill ? '0.18' : '0.10';
+    echo '<ellipse cx="40" cy="152" rx="28" ry="2" fill="rgba(47,109,153,' . $shOp . ')"/>';
+
+    if ($has_fill) {
+        echo '<rect x="' . $cylLeft . '" y="' . $fillY . '" width="' . ($cylRight-$cylLeft) . '" height="' . $fillH . '"'
+            . ' fill="' . $tintColor . '" opacity="' . $tintOp . '" clip-path="url(#' . $clipId . ')"/>';
+    }
+
+    echo '<rect x="' . $cylLeft . '" y="' . $cylTop . '" width="' . ($cylRight-$cylLeft) . '" height="' . $cylH . '" fill="var(--bg,#f1e8d4)" stroke="none"/>';
+    echo '<ellipse cx="40" cy="' . $cylTop . '" rx="' . $rx . '" ry="' . $ry . '" fill="var(--bg,#f1e8d4)" stroke="none"/>';
+    echo '<ellipse cx="40" cy="' . $cylBot . '" rx="' . $rx . '" ry="' . $ry . '" fill="var(--bg,#f1e8d4)" stroke="none"/>';
+
+    echo '<rect x="20" y="' . $cylTop . '" width="28" height="' . $cylH . '" fill="url(#' . $pxId . ')" clip-path="url(#' . $clipId . ')"/>';
+    echo '<rect x="' . $cylLeft . '" y="' . ($cylTop-1) . '" width="' . ($cylRight-$cylLeft) . '" height="12" fill="url(#' . $pdId . ')" clip-path="url(#' . $clipId . ')"/>';
+    echo '<rect x="' . $cylLeft . '" y="' . ($cylBot-7) . '" width="' . ($cylRight-$cylLeft) . '" height="12" fill="url(#' . $pdId . ')" clip-path="url(#' . $clipId . ')"/>';
+    echo '<rect x="13" y="52" width="54" height="9" fill="url(#' . $pdId . ')" clip-path="url(#' . $clipId . ')" opacity="0.72"/>';
+    echo '<rect x="13" y="90" width="54" height="9" fill="url(#' . $pdId . ')" clip-path="url(#' . $clipId . ')" opacity="0.65"/>';
+
+    $odk = 'stroke="var(--oak-deep,#5a3a12)"';
+    echo '<line x1="13.5" y1="' . ($cylTop+1) . '" x2="13.5" y2="' . ($cylBot-1) . '" ' . $odk . ' stroke-width="0.65" opacity="0.60"/>';
+    echo '<line x1="15.2" y1="' . ($cylTop+0.5) . '" x2="15.1" y2="' . ($cylBot-1) . '" ' . $odk . ' stroke-width="0.60" opacity="0.55"/>';
+    echo '<line x1="16.8" y1="' . ($cylTop+1) . '" x2="16.9" y2="' . ($cylBot-0.5) . '" ' . $odk . ' stroke-width="0.55" opacity="0.48"/>';
+    echo '<line x1="18.3" y1="' . ($cylTop+0.5) . '" x2="18.2" y2="' . ($cylBot-1) . '" ' . $odk . ' stroke-width="0.50" opacity="0.40"/>';
+    echo '<line x1="66.3" y1="' . ($cylTop+1) . '" x2="66.2" y2="' . ($cylBot-0.5) . '" ' . $odk . ' stroke-width="0.65" opacity="0.62"/>';
+    echo '<line x1="64.6" y1="' . ($cylTop+0.5) . '" x2="64.7" y2="' . ($cylBot-1) . '" ' . $odk . ' stroke-width="0.60" opacity="0.56"/>';
+    echo '<line x1="63.0" y1="' . ($cylTop+1) . '" x2="62.9" y2="' . ($cylBot-0.5) . '" ' . $odk . ' stroke-width="0.55" opacity="0.50"/>';
+    echo '<line x1="61.3" y1="' . ($cylTop+0.5) . '" x2="61.4" y2="' . ($cylBot-1) . '" ' . $odk . ' stroke-width="0.50" opacity="0.43"/>';
+    echo '<line x1="59.7" y1="' . ($cylTop+1) . '" x2="59.6" y2="' . ($cylBot-0.5) . '" ' . $odk . ' stroke-width="0.45" opacity="0.36"/>';
+    echo '<line x1="' . $cylLeft . '" y1="52" x2="' . $cylRight . '" y2="52" ' . $odk . ' stroke-width="1.2" opacity="0.58"/>';
+    echo '<line x1="' . $cylLeft . '" y1="90" x2="' . $cylRight . '" y2="90" ' . $odk . ' stroke-width="1.2" opacity="0.58"/>';
+
+    if ($has_fill) {
+        echo '<line x1="' . $cylLeft . '" y1="' . $fillY . '" x2="' . $cylRight . '" y2="' . $fillY . '"'
+            . ' stroke="var(--bbt,#2f6d99)" stroke-width="0.9" opacity="0.65" stroke-dasharray="3,2"/>';
+    }
+
+    echo '<rect x="' . $cylLeft . '" y="' . $cylTop . '" width="' . ($cylRight-$cylLeft) . '" height="' . $cylH . '"'
+        . ' fill="none" ' . $odk . ' stroke-width="2.0"/>';
+    echo '<ellipse cx="40" cy="' . $cylTop . '" rx="' . $rx . '" ry="' . $ry . '" fill="none" ' . $odk . ' stroke-width="1.8"/>';
+    echo '<ellipse cx="40" cy="' . $cylBot . '" rx="' . $rx . '" ry="' . $ry . '" fill="none" ' . $odk . ' stroke-width="1.8"/>';
+    echo '<rect x="6" y="60" width="6" height="12" rx="1" fill="var(--bg,#f1e8d4)" ' . $odk . ' stroke-width="1.1"/>';
+    echo '<rect x="36" y="8" width="8" height="7" fill="var(--bg,#f1e8d4)" ' . $odk . ' stroke-width="0.9"/>';
+    echo '<line x1="38" y1="7" x2="38" y2="3" ' . $odk . ' stroke-width="1.0"/>';
+    echo '<line x1="42" y1="7" x2="42" y2="3" ' . $odk . ' stroke-width="1.0"/>';
+    echo '<rect x="' . $cylRight . '" y="105" width="8" height="4" fill="var(--bg,#f1e8d4)" ' . $odk . ' stroke-width="0.9"/>';
+
+    if ($fill_pct >= 0.9 && $state === 'ready') {
+        echo '<path d="M 34,70 L 38,75 L 47,63" fill="none" stroke="var(--ok,#3d6826)"'
+            . ' stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" opacity="0.75"/>';
+    }
+
+    echo '<path d="M 19,' . ($cylBot+5) . ' L 21,' . ($cylBot+5) . ' L 16,152 L 14,152 Z" fill="var(--bg,#f1e8d4)" ' . $odk . ' stroke-width="1.1"/>';
+    echo '<path d="M 39,' . ($cylBot+5) . ' L 41,' . ($cylBot+5) . ' L 41,152 L 39,152 Z" fill="var(--bg,#f1e8d4)" ' . $odk . ' stroke-width="1.1"/>';
+    echo '<path d="M 59,' . ($cylBot+5) . ' L 61,' . ($cylBot+5) . ' L 65,152 L 63,152 Z" fill="var(--bg,#f1e8d4)" ' . $odk . ' stroke-width="1.1"/>';
+    echo '<rect x="12" y="151" width="6" height="2" fill="var(--oak-deep,#5a3a12)" opacity="0.58"/>';
+    echo '<rect x="37" y="151" width="6" height="2" fill="var(--oak-deep,#5a3a12)" opacity="0.58"/>';
+    echo '<rect x="61" y="151" width="6" height="2" fill="var(--oak-deep,#5a3a12)" opacity="0.58"/>';
+
+    echo '<text x="40" y="40" text-anchor="middle"'
+        . ' font-family="\'JetBrains Mono\',ui-monospace,monospace" font-size="13" font-weight="500"'
+        . ' fill="' . $numColor . '" opacity="' . $numOp . '">' . $number . '</text>';
+
+    if ($showLabel) {
+        $lp = [];
+        if (!empty($opts['recipe'])) $lp[] = htmlspecialchars($opts['recipe'], ENT_XML1, 'UTF-8');
+        if (!empty($opts['batch']))  $lp[] = '#' . htmlspecialchars((string)$opts['batch'], ENT_XML1, 'UTF-8');
+        echo '<text x="40" y="80" text-anchor="middle"'
+            . ' font-family="\'DM Sans\',ui-sans-serif,sans-serif" font-size="7.5" font-weight="500"'
+            . ' fill="var(--ink-soft,#5a4028)" opacity="0.70">' . implode(' ', $lp) . '</text>';
+    }
+
+    echo '</svg>';
+    return trim(ob_get_clean());
+}
+endif;
+
+/* ── svg_vessel_kettle ───────────────────────────────────────────────────── */
+
+/**
+ * Brewhouse kettle — gravure-dense squat kettle (viewBox 0 0 72 80).
+ * Adapts the cylGravure + sceneDefs pattern from salle-des-machines.js
+ * into a static PHP SVG. Same geometry + state contract as svg-vessels.php.
+ *
+ * @param int    $number  Kettle number (usually 1; >1 renders number label)
+ * @param string $state   'idle'|'mashing'|'boiling'|'whirlpool'|'transferring'
+ * @param array  $opts    []
+ * @return string         Inline SVG, no <?xml header
+ */
+if (!function_exists('svg_vessel_kettle')):
+function svg_vessel_kettle(int $number = 1, string $state = 'idle', array $opts = []): string {
+    $uid     = _sv_uid('kettle', $number);
+    $hatchId = 'hatch_' . $uid;
+    $pxId    = 'px_'   . $uid;
+    $pdId    = 'pd_'   . $uid;
+    $wortId  = 'wort_' . $uid;
+
+    $is_active = in_array($state, ['mashing', 'boiling', 'whirlpool', 'transferring'], true);
+    $has_wort  = $is_active;
+    $wort_top  = ($state === 'transferring') ? 43 : 22;
+
+    /* Animation class hooks — preserved from svg-vessels.php */
+    $svg_class = 'sb-vessel__svg sb-vessel__svg--kettle';
+    if ($is_active) $svg_class .= ' sb-vessel--pulsing';
+
+    $state_label = match($state) {
+        'mashing'      => 'empâtage',
+        'boiling'      => 'ébullition',
+        'whirlpool'    => 'whirlpool',
+        'transferring' => 'transfert',
+        default        => 'vide',
+    };
+    $title        = htmlspecialchars('Chaudière ' . $number . ' — ' . $state_label, ENT_XML1, 'UTF-8');
+    $needleAngle  = $is_active ? '40' : '-30';
+    $odk          = 'stroke="var(--oak-deep,#5a3a12)"';
+
+    ob_start();
+    echo '<svg class="' . htmlspecialchars($svg_class, ENT_QUOTES, 'UTF-8') . '"'
+        . ' viewBox="0 0 72 80" xmlns="http://www.w3.org/2000/svg"'
+        . ' role="img" aria-label="' . $title . '">';
+    echo '<title>' . $title . '</title>';
+    echo '<defs>';
+    echo '<pattern id="' . $hatchId . '" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">'
+        . '<line x1="0" y1="0" x2="0" y2="5" stroke="var(--ember,#b34428)" stroke-width="0.5" opacity="0.30"/>'
+        . '</pattern>';
+    echo '<pattern id="' . $pxId . '" x="0" y="0" width="3.8" height="3.8" patternUnits="userSpaceOnUse">'
+        . '<line x1="1.9" y1="0" x2="1.9" y2="3.8" ' . $odk . ' stroke-width="0.55" opacity="0.27"/>'
+        . '</pattern>';
+    echo '<pattern id="' . $pdId . '" x="0" y="0" width="3.5" height="3.5" patternUnits="userSpaceOnUse">'
+        . '<line x1="0" y1="0" x2="3.5" y2="3.5" ' . $odk . ' stroke-width="0.58" opacity="0.52"/>'
+        . '<line x1="3.5" y1="0" x2="0" y2="3.5" ' . $odk . ' stroke-width="0.58" opacity="0.52"/>'
+        . '</pattern>';
+    if ($has_wort) {
+        echo '<linearGradient id="' . $wortId . '" x1="0" y1="0" x2="0" y2="1">'
+            . '<stop offset="0%" stop-color="var(--ember,#b34428)" stop-opacity="0.55"/>'
+            . '<stop offset="100%" stop-color="var(--ember,#b34428)" stop-opacity="0.35"/>'
+            . '</linearGradient>';
+    }
+    echo '</defs>';
+
+    /* Paper body fill */
+    echo '<rect x="8" y="15" width="56" height="50" rx="1" fill="var(--bg,#f1e8d4)" stroke="none"/>';
+    /* Centre sparse hatch (left 40%) */
+    echo '<rect x="8" y="15" width="22" height="50" fill="url(#' . $pxId . ')"/>';
+    /* Right shadow cross-hatch (right ~22%) */
+    echo '<rect x="52" y="15" width="12" height="50" fill="url(#' . $pdId . ')"/>';
+    /* Top dome shadow band */
+    echo '<rect x="8" y="15" width="56" height="8" fill="url(#' . $pdId . ')" opacity="0.78"/>';
+
+    /* Left edge contour (4 strokes) */
+    echo '<line x1="9.5" y1="16" x2="9.5" y2="64" ' . $odk . ' stroke-width="0.60" opacity="0.56"/>';
+    echo '<line x1="11.1" y1="15" x2="11.1" y2="64" ' . $odk . ' stroke-width="0.55" opacity="0.50"/>';
+    echo '<line x1="12.6" y1="16" x2="12.6" y2="64" ' . $odk . ' stroke-width="0.50" opacity="0.43"/>';
+    echo '<line x1="14.1" y1="15" x2="14.1" y2="64" ' . $odk . ' stroke-width="0.45" opacity="0.35"/>';
+    /* Right edge contour (5 strokes) */
+    echo '<line x1="62.5" y1="16" x2="62.5" y2="64" ' . $odk . ' stroke-width="0.65" opacity="0.60"/>';
+    echo '<line x1="60.8" y1="15" x2="60.8" y2="64" ' . $odk . ' stroke-width="0.60" opacity="0.55"/>';
+    echo '<line x1="59.2" y1="16" x2="59.2" y2="64" ' . $odk . ' stroke-width="0.55" opacity="0.48"/>';
+    echo '<line x1="57.6" y1="15" x2="57.6" y2="64" ' . $odk . ' stroke-width="0.50" opacity="0.40"/>';
+    echo '<line x1="55.9" y1="16" x2="55.9" y2="64" ' . $odk . ' stroke-width="0.45" opacity="0.32"/>';
+
+    /* Wort fill */
+    if ($has_wort) {
+        echo '<rect x="9" y="' . $wort_top . '" width="54" height="' . (65 - $wort_top) . '" fill="url(#' . $wortId . ')"/>';
+    }
+
+    /* Heating jacket hatch (lower third) + border */
+    echo '<rect x="8" y="53" width="56" height="12" fill="url(#' . $hatchId . ')"/>';
+    echo '<rect x="8" y="53" width="56" height="12" fill="none" ' . $odk . ' stroke-width="0.6" opacity="0.45"/>';
+
+    /* Weld seam */
+    echo '<line x1="8" y1="43" x2="64" y2="43" ' . $odk . ' stroke-width="1.0" opacity="0.48"/>';
+
+    /* Body outline (on top of hatching) */
+    echo '<rect x="8" y="15" width="56" height="50" rx="1" fill="none" ' . $odk . ' stroke-width="1.85"/>';
+
+    /* Top rim / lid */
+    echo '<rect x="4" y="10" width="64" height="7" rx="1" fill="var(--bg,#f1e8d4)" ' . $odk . ' stroke-width="1.6"/>';
+    echo '<rect x="4" y="10" width="64" height="7" fill="url(#' . $pdId . ')" opacity="0.55"/>';
+    /* Center manhole */
+    echo '<ellipse cx="36" cy="13" rx="8" ry="3" fill="var(--bg-side,#dcc9a4)" ' . $odk . ' stroke-width="0.7"/>';
+    echo '<ellipse cx="36" cy="13" rx="5" ry="1.8" fill="none" ' . $odk . ' stroke-width="0.35" opacity="0.50"/>';
+
+    /* Steam wisps (active states; CSS gates animation via .steam-wisp) */
+    if ($is_active) {
+        echo '<path class="steam-wisp" d="M34 8 q-3 -5 1 -9" fill="none" ' . $odk . ' stroke-width="0.8" stroke-linecap="round" opacity="0.55"/>';
+        echo '<path class="steam-wisp" d="M38 6 q4 -5 -1 -9" fill="none" ' . $odk . ' stroke-width="0.8" stroke-linecap="round" opacity="0.45" style="animation-delay:0.6s"/>';
+        echo '<path class="steam-wisp" d="M42 8 q-2 -6 2 -10" fill="none" ' . $odk . ' stroke-width="0.8" stroke-linecap="round" opacity="0.40" style="animation-delay:1.2s"/>';
+    }
+
+    /* Calandre internal ellipse (boiling / whirlpool) */
+    if ($state === 'boiling' || $state === 'whirlpool') {
+        echo '<ellipse cx="36" cy="43" rx="10" ry="12" fill="none" ' . $odk . ' stroke-width="0.9" stroke-dasharray="3,2" opacity="0.50"/>';
+    }
+
+    /* Pressure gauge (left side) */
+    echo '<rect x="1" y="30" width="6" height="3.5" fill="var(--bg-side,#dcc9a4)" ' . $odk . ' stroke-width="0.5"/>';
+    echo '<circle cx="-1.5" cy="31.75" r="3" fill="var(--bg,#f1e8d4)" ' . $odk . ' stroke-width="0.6"/>';
+    echo '<circle cx="-1.5" cy="31.75" r="2.2" fill="rgba(245,235,220,0.92)" ' . $odk . ' stroke-width="0.25" opacity="0.50"/>';
+    echo '<line x1="-1.5" y1="31.75" x2="-1.5" y2="30.0" stroke="var(--ember,#b34428)" stroke-width="0.5"'
+        . ' transform="rotate(' . $needleAngle . ', -1.5, 31.75)"/>';
+    echo '<circle cx="-1.5" cy="31.75" r="0.45" fill="var(--oak-deep,#5a3a12)"/>';
+
+    /* Outlet pipe (right side) */
+    echo '<rect x="64" y="57" width="8" height="2.5" fill="var(--bg-side,#dcc9a4)" ' . $odk . ' stroke-width="0.4"/>';
+    echo '<rect x="70" y="55" width="2" height="18" fill="var(--bg-side,#dcc9a4)" ' . $odk . ' stroke-width="0.4"/>';
+
+    /* Four legs */
+    foreach ([14, 27, 45, 58] as $lx) {
+        echo '<rect x="' . $lx . '" y="65" width="4" height="12" rx="0.5" fill="var(--bg-side,#dcc9a4)" ' . $odk . ' stroke-width="0.6"/>';
+    }
+
+    /* Contact shadow */
+    echo '<ellipse cx="36" cy="78" rx="28" ry="1.5" fill="rgba(90,58,18,0.18)"/>';
+
+    /* Kettle number (multi-kettle layout only) */
+    if ($number > 1) {
+        $nFill = $has_wort ? 'var(--ember,#b34428)' : 'var(--ink-mute,#8a7560)';
+        echo '<text x="36" y="50" text-anchor="middle"'
+            . ' font-family="\'JetBrains Mono\',ui-monospace,monospace" font-size="11" font-weight="500"'
+            . ' fill="' . $nFill . '" opacity="0.65">' . $number . '</text>';
+    }
+
+    echo '</svg>';
+    return trim(ob_get_clean());
+}
+endif;
+
+/* ── svg_vessel_packaging_line ───────────────────────────────────────────── */
+
+/**
+ * Packaging line — Conditionnement zone horizontal conveyor (viewBox 0 0 200 60).
+ * CSS hooks: .sb-conveyor-lines / .sb-conveyor-lines--idle / .sb-vessel--pulsing
+ *
+ * @param string $state  'idle'|'running'|'changeover'|'maintenance'
+ * @param array  $opts   []
+ * @return string        Inline SVG, no <?xml header
+ */
+if (!function_exists('svg_vessel_packaging_line')):
+function svg_vessel_packaging_line(string $state = 'idle', array $opts = []): string {
+    $uid  = _sv_uid('pkg', 0);
+    $pxId = 'pkgpx_' . $uid;
+    $pdId = 'pkgpd_' . $uid;
+
+    $is_running = $state === 'running';
+    $is_maint   = $state === 'maintenance';
+    $is_change  = $state === 'changeover';
+
+    $line_color   = 'var(--hop,#567020)';   $line_opacity = '0.40';
+    if ($is_maint)      { $line_color = 'var(--ember,#b34428)'; $line_opacity = '0.30'; }
+    elseif ($is_change) { $line_color = 'var(--oak,#8b5e2a)';   $line_opacity = '0.35'; }
+
+    $bottle_fill = $is_running ? 'var(--bbt,#2f6d99)' : 'var(--bg-side,#dcc9a4)';
+    $bot_op1     = $is_running ? '0.70' : '0.40';
+    $bot_op2     = $is_running ? '0.70' : '0.40';
+
+    /* Animation class hooks — preserved from svg-vessels.php */
+    $svg_class = 'sb-vessel__svg sb-vessel__svg--packaging';
+    if ($is_running) $svg_class .= ' sb-vessel--pulsing';
+
+    $state_label = match($state) {
+        'running'     => 'en cours',
+        'changeover'  => 'changement de format',
+        'maintenance' => 'maintenance',
+        default       => 'arrêt',
+    };
+    $title = htmlspecialchars('Ligne de conditionnement — ' . $state_label, ENT_XML1, 'UTF-8');
+    $odk   = 'stroke="var(--oak-deep,#5a3a12)"';
+
+    ob_start();
+    echo '<svg class="' . htmlspecialchars($svg_class, ENT_QUOTES, 'UTF-8') . '"'
+        . ' viewBox="0 0 200 60" xmlns="http://www.w3.org/2000/svg"'
+        . ' role="img" aria-label="' . $title . '">';
+    echo '<title>' . $title . '</title>';
+    echo '<defs>';
+    echo '<pattern id="' . $pxId . '" x="0" y="0" width="3.8" height="3.8" patternUnits="userSpaceOnUse">'
+        . '<line x1="1.9" y1="0" x2="1.9" y2="3.8" ' . $odk . ' stroke-width="0.55" opacity="0.26"/>'
+        . '</pattern>';
+    echo '<pattern id="' . $pdId . '" x="0" y="0" width="3.5" height="3.5" patternUnits="userSpaceOnUse">'
+        . '<line x1="0" y1="0" x2="3.5" y2="3.5" ' . $odk . ' stroke-width="0.55" opacity="0.48"/>'
+        . '<line x1="3.5" y1="0" x2="0" y2="3.5" ' . $odk . ' stroke-width="0.55" opacity="0.48"/>'
+        . '</pattern>';
+    echo '</defs>';
+
+    /* Filler heads — gravure paper fill */
+    foreach ([70, 90, 110] as $fx) {
+        echo '<rect x="' . $fx . '" y="1" width="12" height="22" rx="1" fill="var(--bg,#f1e8d4)" ' . $odk . ' stroke-width="1.1"/>';
+        echo '<rect x="' . ($fx+9) . '" y="1" width="3" height="22" fill="url(#' . $pdId . ')" opacity="0.70"/>';
+    }
+    echo '<line x1="76"  y1="23" x2="76"  y2="29" ' . $odk . ' stroke-width="1.0"/>';
+    echo '<line x1="96"  y1="23" x2="96"  y2="29" ' . $odk . ' stroke-width="1.0"/>';
+    echo '<line x1="116" y1="23" x2="116" y2="29" ' . $odk . ' stroke-width="1.0"/>';
+
+    /* Conveyor belt — gravure paper fill */
+    echo '<rect x="5" y="32" width="190" height="14" rx="1" fill="var(--bg-side,#dcc9a4)" ' . $odk . ' stroke-width="1.0"/>';
+    echo '<rect x="5" y="32" width="90" height="14" fill="url(#' . $pxId . ')"/>';
+    echo '<rect x="5" y="32" width="190" height="3" fill="url(#' . $pdId . ')" opacity="0.50"/>';
+
+    /* Belt motion lines — CSS-animated when running */
+    $convClass = $is_running ? 'sb-conveyor-lines' : 'sb-conveyor-lines sb-conveyor-lines--idle';
+    echo '<g class="' . $convClass . '">';
+    for ($x = 10; $x <= 190; $x += 15) {
+        echo '<line x1="' . $x . '" y1="33" x2="' . $x . '" y2="45"'
+            . ' stroke="' . $line_color . '" stroke-width="0.8" opacity="' . $line_opacity . '"/>';
+    }
+    echo '</g>';
+
+    /* End rollers — gravure paper fill */
+    echo '<circle cx="8"   cy="39" r="6" fill="var(--bg,#f1e8d4)" ' . $odk . ' stroke-width="1.1"/>';
+    echo '<circle cx="192" cy="39" r="6" fill="var(--bg,#f1e8d4)" ' . $odk . ' stroke-width="1.1"/>';
+    echo '<circle cx="8"   cy="39" r="1.5" fill="var(--oak-deep,#5a3a12)" opacity="0.55"/>';
+    echo '<circle cx="192" cy="39" r="1.5" fill="var(--oak-deep,#5a3a12)" opacity="0.55"/>';
+
+    /* Bottles/cans on belt */
+    echo '<rect x="30" y="28" width="8" height="16" rx="1"'
+        . ' fill="' . $bottle_fill . '" opacity="' . $bot_op1 . '" ' . $odk . ' stroke-width="0.6"/>';
+    echo '<rect x="46" y="28" width="8" height="16" rx="1"'
+        . ' fill="' . $bottle_fill . '" opacity="' . $bot_op2 . '" ' . $odk . ' stroke-width="0.6"/>';
+    echo '<rect x="62" y="28" width="8" height="16" rx="1"'
+        . ' fill="' . $bottle_fill . '" opacity="0.35" ' . $odk . ' stroke-width="0.6"/>';
+
+    /* Maintenance X overlay */
+    if ($is_maint) {
+        echo '<line x1="5" y1="32" x2="195" y2="46" stroke="var(--ember,#b34428)" stroke-width="1.0" opacity="0.28"/>';
+        echo '<line x1="5" y1="46" x2="195" y2="32" stroke="var(--ember,#b34428)" stroke-width="1.0" opacity="0.20"/>';
+    }
+
+    /* Contact shadow */
+    echo '<ellipse cx="100" cy="48" rx="90" ry="2" fill="rgba(90,58,18,0.12)"/>';
+    echo '</svg>';
+    return trim(ob_get_clean());
+}
+endif;

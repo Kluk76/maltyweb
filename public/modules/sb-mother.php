@@ -21,7 +21,7 @@ declare(strict_types=1);
  *   app/csrf.php        csrf_token()
  *   app/db.php          maltytask_pdo() (pulled in via auth)
  *   app/sb-board.php    sb_mother_drill_in()
- *   app/svg-vessels.php svg_vessel_* (no inline SVG)
+ *   app/svg-tanks.php   svg_vessel_* (C2 convergence 2026-06-07: svg-vessels.php retired)
  *   app/mother-shell.php  — type reference only (no direct calls)
  *   app/partials/sidebar.php, topbar.php
  */
@@ -29,7 +29,7 @@ declare(strict_types=1);
 require __DIR__ . '/../../app/auth.php';
 require __DIR__ . '/../../app/csrf.php';
 require_once __DIR__ . '/../../app/sb-board.php';
-require_once __DIR__ . '/../../app/svg-vessels.php';
+require_once __DIR__ . '/../../app/svg-tanks.php';
 require_once __DIR__ . '/../../app/mother-shell.php';
 
 require_page_access('sb-board');
