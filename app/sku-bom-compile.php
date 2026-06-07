@@ -2230,9 +2230,7 @@ function compile_sku_bom_liquid(
     // ── 2b. Observed malt + kettle-hops from v1 (bd_brewing_ingredients_parsed) ──
     // Link: source_id → bd_brewing_ingredients_v2 → recipe_id_fk + batch
     // Categories: malt, hops_kettle ONLY (source_table='bd_brewing_ingredients').
-    // hops_dry rows in bd_brewing_ingredients_parsed have source_table='bd_fermenting'
-    // and their source_id points into bd_fermenting_v2 (not bd_brewing_ingredients_v2),
-    // so they CANNOT be joined here — they are loaded separately in §2b2 below.
+    // hops_dry rows use a different source (bd_fermenting_v2 DryHop events — see §2b3).
     $v1Stmt = $pdo->prepare(
         "SELECT biv.recipe_id_fk AS recipe_id, bip.batch, bip.category,
                 bip.mi_id_fk, bip.qty, bip.unit, bip.event_date
@@ -2263,40 +2261,13 @@ function compile_sku_bom_liquid(
         $v1RawRows[$rid][$batch][$cat][$miId]['qty'] += $qty;
     }
 
-    // ── 2b2. Dry-hop observed — v1 path (bd_brewing_ingredients_parsed, source_table='bd_fermenting') ──
-    // These rows have source_id → bd_fermenting_v2.id (NOT bd_brewing_ingredients_v2).
-    // recipe_id comes from bd_fermenting_v2.recipe_id_fk; batch from bip.batch.
-    // Aggregate per (recipe_id, batch, mi_id_fk) BEFORE joining HL data to prevent fan-out inflation.
-    $dhV1Stmt = $pdo->prepare(
-        "SELECT bf.recipe_id_fk AS recipe_id, bip.batch,
-                bip.mi_id_fk, SUM(bip.qty) AS qty, bip.unit, MIN(bip.event_date) AS event_date
-           FROM bd_brewing_ingredients_parsed bip
-           JOIN bd_fermenting_v2 bf
-             ON bf.id = bip.source_id
-            AND bf.is_tombstoned = 0
-          WHERE bf.recipe_id_fk IN ({$recipePhRaw})
-            AND bip.category = 'hops_dry'
-            AND bip.source_table = 'bd_fermenting'
-            AND bip.mi_id_fk IS NOT NULL
-          GROUP BY bf.recipe_id_fk, bip.batch, bip.mi_id_fk, bip.unit
-          ORDER BY bf.recipe_id_fk, bip.batch, bip.mi_id_fk"
-    );
-    $dhV1Stmt->execute($recipeIds);
-    // dhV1[recipe_id][batch][mi_id_fk] = [qty=>float, unit=>string, date=>string]
-    $dhV1 = [];
-    foreach ($dhV1Stmt->fetchAll(\PDO::FETCH_ASSOC) as $row) {
-        $rid   = (int)$row['recipe_id'];
-        $batch = $row['batch'];
-        $miId  = (int)$row['mi_id_fk'];
-        $dhV1[$rid][$batch][$miId] = [
-            'qty'  => (float)$row['qty'],
-            'unit' => $row['unit'],
-            'date' => $row['event_date'],
-        ];
-    }
-
-    // ── 2b3. Dry-hop observed — v2 path (bd_fermenting_v2, event_type='DryHop') ────
-    // v2 is the newer form; it wins over v1 when BOTH cover the same (recipe, batch).
+    // ── 2b3. Dry-hop observed — bd_fermenting_v2 DryHop events (sole source) ────
+    // bd_fermenting_v2 event_type='DryHop' is the canonical, recipe_id_fk-native source.
+    // The legacy bd_brewing_ingredients_parsed path (source_table='bd_fermenting') joined
+    // via source_id → bd_fermenting_v2.id was REMOVED: source_id there points into the v1
+    // bd_fermenting table, not bd_fermenting_v2, causing arbitrary cross-recipe attribution
+    // (Stirling b147 dry-hops landing on EMB b185, etc.). v2 DryHop covers all Néb recipes
+    // with dry-hop SKU BOMs; the only v1-only rows are contract brews outside F2 scope.
     // Aggregate per (recipe_id_fk, batch, dh_mi_id_fk) to guard against multi-line same-MI
     // dry-hop additions on the same batch (the fan-out anti-pattern).
     $dhV2Stmt = $pdo->prepare(
@@ -2326,42 +2297,14 @@ function compile_sku_bom_liquid(
         ];
     }
 
-    // ── 2b4. Merge dry-hop sources: v2 wins per batch, v1 fills remaining batches ─
-    // dhMerged[recipe_id][batch][mi_id_fk] = [qty, unit, date, dh_source]
-    // For any (recipe, batch) with v2 data: use ONLY v2 (never mix v1+v2 for same batch).
-    // For batches with only v1 data: use v1.
-    // This is the SAME precedence F2 uses for brewing ingredients.
-    $dhMerged = [];
-    $dhCoverage = [];  // [recipe_id] => ['v1_only'=>int, 'v2_only'=>int, 'v2_wins'=>int]
+    // ── 2b4. Assign dry-hop data — dhV2 is the sole source ──────────────────────
+    // dhMerged[recipe_id][batch][mi_id_fk] = [qty, unit, date]
+    $dhMerged  = $dhV2;
+    $dhCoverage = [];  // [recipe_id] => ['total_dh_batches'=>int]
     foreach ($recipeIds as $_rid) {
         $_rid = (int)$_rid;
-        $allBatches = array_unique(array_merge(
-            array_keys($dhV1[$_rid] ?? []),
-            array_keys($dhV2[$_rid] ?? [])
-        ));
-        $v1Only = $v2Only = $v2Wins = 0;
-        foreach ($allBatches as $batch) {
-            $hasV1 = isset($dhV1[$_rid][$batch]);
-            $hasV2 = isset($dhV2[$_rid][$batch]);
-            if ($hasV2) {
-                // v2 wins — use v2 data only for this batch
-                $dhMerged[$_rid][$batch] = $dhV2[$_rid][$batch];
-                if ($hasV1) {
-                    $v2Wins++;
-                } else {
-                    $v2Only++;
-                }
-            } elseif ($hasV1) {
-                // v1 only — use v1 data
-                $dhMerged[$_rid][$batch] = $dhV1[$_rid][$batch];
-                $v1Only++;
-            }
-        }
         $dhCoverage[$_rid] = [
-            'v1_only_batches'   => $v1Only,
-            'v2_only_batches'   => $v2Only,
-            'v2_wins_over_v1'   => $v2Wins,
-            'total_dh_batches'  => count($allBatches),
+            'total_dh_batches' => count($dhMerged[$_rid] ?? []),
         ];
     }
 
