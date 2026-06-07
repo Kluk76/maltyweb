@@ -143,7 +143,7 @@ $userRole = htmlspecialchars($me["role"] ?? "");
   </button>
 
   <!-- ── Brand ── -->
-  <a class="tb__brand" href="/modules/triage.php" aria-label="MaltyTask — Tableau de bord">
+  <a class="tb__brand" href="/modules/mon-tableau.php" aria-label="MaltyTask — Mon tableau">
     <span class="tb-mark">M<span class="tb-mark__t">T</span></span>
   </a>
 
