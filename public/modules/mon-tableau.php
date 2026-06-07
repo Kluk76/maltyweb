@@ -272,7 +272,7 @@ foreach ($selectedTrackers as $tracker) {
 $CATEGORY_LABELS = [
     'production'     => 'Production — Wort',
     'fermentation'   => 'Fermentation',
-    'racking'        => 'Soutirage',
+    'racking'        => 'Transferts',  /* operator ruling 2026-06-07: "soutirage" = filling/packaging in their usage — confusing */
     'packaging'      => 'Packaging',
     'fg_stock'       => 'Stock PF',
     'rm_procurement' => 'Matières premières',
