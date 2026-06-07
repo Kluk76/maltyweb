@@ -1641,24 +1641,48 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             // Step 1 — read with defaults, then validate
-            $recipeId  = post_int('recipe_id') ?? 0;
-            $miIdFk    = post_int('mi_id_fk') ?? 0;
-            $rawQty    = post_str('qty_per_hl') ?? '';
-            $unit      = post_str('unit') ?? '';
-            $rawStage  = post_str('stage') ?? '';
-            $rawBoilMin = isset($_POST['boil_min']) && $_POST['boil_min'] !== '' ? $_POST['boil_min'] : null;
+            $recipeId     = post_int('recipe_id') ?? 0;
+            $miIdFk       = post_int('mi_id_fk') ?? 0;
+            $unit         = post_str('unit') ?? '';
+            $rawStage     = post_str('stage') ?? '';
+            $rawBoilMin   = isset($_POST['boil_min']) && $_POST['boil_min'] !== '' ? $_POST['boil_min'] : null;
+
+            // Per-brassin input: client sends qty_per_brassin + brassin_hl, server divides
+            $rawQtyBrassin = post_str('qty_per_brassin') ?? '';
+            $rawBrassinHl  = post_str('brassin_hl') ?? '';
 
             if ($recipeId <= 0 || $miIdFk <= 0) {
                 http_response_code(400);
                 echo json_encode(['ok' => false, 'error' => 'recipe_id et mi_id_fk requis.']);
                 exit;
             }
-            if (!is_numeric($rawQty) || (float) $rawQty <= 0) {
+
+            // Validate per-brassin qty
+            if (!is_numeric($rawQtyBrassin) || (float) $rawQtyBrassin <= 0) {
                 http_response_code(400);
-                echo json_encode(['ok' => false, 'error' => 'qty_per_hl doit être un nombre positif.']);
+                echo json_encode(['ok' => false, 'error' => 'La quantité par brassin doit être un nombre positif.']);
                 exit;
             }
-            $qtyPerHl = (float) $rawQty;
+            // Validate brassin_hl — must match server-side canonical value (anti-tamper)
+            $bsSrv = $pdo->query(
+                "SELECT size_hl FROM ref_brewhouse_size WHERE effective_until IS NULL ORDER BY effective_from DESC LIMIT 1"
+            )->fetch(PDO::FETCH_ASSOC);
+            $serverBrassinHl = ($bsSrv && $bsSrv['size_hl'] > 0) ? (float) $bsSrv['size_hl'] : 30.0;
+
+            // Client-supplied brassin_hl must match server value (±0.01 tolerance for float)
+            $clientBrassinHl = is_numeric($rawBrassinHl) ? (float) $rawBrassinHl : 0.0;
+            if (abs($clientBrassinHl - $serverBrassinHl) > 0.01) {
+                http_response_code(400);
+                echo json_encode(['ok' => false, 'error' => 'Valeur brassin_hl invalide — recharge la page.']);
+                exit;
+            }
+
+            $qtyPerHl = (float) $rawQtyBrassin / $serverBrassinHl;
+            if ($qtyPerHl <= 0) {
+                http_response_code(400);
+                echo json_encode(['ok' => false, 'error' => 'La quantité par brassin doit être un nombre positif.']);
+                exit;
+            }
 
             $allowedUnits = ['kg', 'g', 'ml', 'L'];
             if (!in_array($unit, $allowedUnits, true)) {
@@ -2039,7 +2063,11 @@ try {
                JOIN ref_mi_categories c  ON c.id = m.category_id
               WHERE ri.recipe_id IN ({$inPlaceAll})
                 AND ri.is_active = 1
-              ORDER BY ri.recipe_id, c.name, m.name, ri.hop_addition_stage, ri.hop_boil_time_min"
+              ORDER BY ri.recipe_id, c.name, m.name,
+                       CASE WHEN ri.hop_addition_stage IS NULL THEN 99
+                            ELSE FIELD(ri.hop_addition_stage,'mash','first_wort','boil','whirlpool','hop_stand','dry_hop')
+                       END,
+                       COALESCE(ri.hop_boil_time_min,-1) DESC"
         );
         $ingrStmt->execute($allLifecycleIds);
         foreach ($ingrStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
@@ -2396,6 +2424,17 @@ $minDaysCurrent = $minDaysSetting !== null
     : 1.0;
 $minDaysInt = (int) round($minDaysCurrent);
 
+// --- Brewhouse size (ref_brewhouse_size — canonical brew volume for per-brassin display) ----
+$brassinsHl = 30.0; // fallback if table missing
+try {
+    $bsRow = maltytask_pdo()->query(
+        "SELECT size_hl FROM ref_brewhouse_size WHERE effective_until IS NULL ORDER BY effective_from DESC LIMIT 1"
+    )->fetch(PDO::FETCH_ASSOC);
+    if ($bsRow && $bsRow['size_hl'] > 0) {
+        $brassinsHl = (float) $bsRow['size_hl'];
+    }
+} catch (Throwable $_) { /* use fallback */ }
+
 $csrf = csrf_token();
 
 // Active section from query string (for PRG redirect after save)
@@ -2453,6 +2492,7 @@ window.SDC_CIP_TYPES = <?= json_encode(
     ], $cipTypes),
     JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP
 ) ?>;
+window.SDC_BRASSIN_HL  = <?= json_encode($brassinsHl) ?>;
 window.SDC_INGREDIENTS = <?= json_encode($ingredientsData, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
 window.SDC_PROFILES = {};
 window.SDC_TANK_BEERS  = <?= json_encode($tankBeerList,  JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
@@ -2678,7 +2718,7 @@ window.SDC_TANK_ERR = null;
             <div style="display:flex;align-items:center;padding:8px 28px 6px;border-bottom:1px solid var(--hairline);flex:0 0 auto;gap:10px;">
               <span style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:var(--ink-faint);">Quantités</span>
               <div class="ingr-scale-toggle">
-                <button class="ist-btn active" id="istBrassin" onclick="setIngrScale('brassin')">Par brassin · 30 hl</button>
+                <button class="ist-btn active" id="istBrassin" onclick="setIngrScale('brassin')">Par brassin · <?= (int) $brassinsHl ?> hl</button>
                 <button class="ist-btn" id="istHl" onclick="setIngrScale('hl')">Par hl</button>
               </div>
             </div>
@@ -4252,7 +4292,7 @@ let selectedRecipeId = null;
 let currentSubtab    = 'ingr';
 let pendingModal     = null;
 let ingrScale        = 'brassin';
-const BRASSIN_HL     = 30;
+const BRASSIN_HL     = window.SDC_BRASSIN_HL || 30;
 const RECIPE_STYLES  = window.SDC_RECIPE_STYLES || {};
 
 /* ═══════════════════════════════════════════
@@ -4376,17 +4416,22 @@ function selectRecipe(id){
 const CAT_COLORS={Malt:'#a07a48',Hops:'#9eb060',Adjunct:'#9b7cc8','Proc/Chem':'#6593b8',Minéraux:'#4a8c78',Yeast:'#b07a5a'};
 const CAT_ORDER=['Malt','Hops','Adjunct','Proc/Chem','Minéraux','Yeast'];
 
-function scaledQty(qty,unit){
+function scaledQty(qty,unit,isHop=false){
   const factor=ingrScale==='brassin'?BRASSIN_HL:1;
   const scaled=qty*factor;
   if(unit==='kg'){return scaled>=1?{val:scaled,unit:'kg'}:{val:scaled*1000,unit:'g'};}
-  if(unit==='g'){return scaled>=1000?{val:scaled/1000,unit:'kg'}:{val:scaled,unit:'g'};}
+  // Hops always render in grams — never auto-promote to kg
+  if(unit==='g'){return isHop?{val:scaled,unit:'g'}:(scaled>=1000?{val:scaled/1000,unit:'kg'}:{val:scaled,unit:'g'});}
   if(unit==='ml'){return scaled>=1000?{val:scaled/1000,unit:'L'}:{val:scaled,unit:'ml'};}
   return{val:scaled,unit};
 }
 function fmtVal(v,unit){
   if(unit==='kg') return v<1?v.toFixed(3):v.toFixed(2);
-  if(unit==='g') return v<10?v.toFixed(1):Math.round(v);
+  if(unit==='g'){
+    const r=v<10?parseFloat(v.toFixed(1)):Math.round(v);
+    // thousands separator (fr-CH space style) for readability at ≥ 1000 g
+    return r>=1000?r.toLocaleString('fr-CH'):String(r);
+  }
   if(unit==='L') return v.toFixed(2);
   return v%1===0?v:v.toFixed(1);
 }
@@ -4494,12 +4539,14 @@ function bindHopControls(container){
     btn.addEventListener('click',async function(){
       const recipeId=parseInt(this.dataset.recipeId,10);
       const miIdFk=this.dataset.miIdFk;
-      const qty=window.prompt('Quantité / hl (ex: 50):');
-      if(!qty||isNaN(parseFloat(qty))||parseFloat(qty)<=0){return;}
+      // Ask per-brassin — storage stays per-HL, server converts
+      const brassinHl=BRASSIN_HL;
+      const qtyBrassin=window.prompt(`Quantité par brassin (${brassinHl} hl) :`);
+      if(!qtyBrassin||isNaN(parseFloat(qtyBrassin))||parseFloat(qtyBrassin)<=0){return;}
       const unit=window.prompt('Unité (g, kg, ml, L):','g');
       if(!['g','kg','ml','L'].includes(unit)){window.alert('Unité invalide.');return;}
-      const stageIdx=window.prompt('Stage:\n0=non classé\n1=mash\n2=first_wort\n3=boil\n4=hop_stand\n5=dry_hop\n6=whirlpool\n\nEntrer le numéro:','');
-      const stageMap=['','mash','first_wort','boil','hop_stand','dry_hop','whirlpool'];
+      const stageIdx=window.prompt('Stage:\n0=non classé\n1=mash\n2=first_wort\n3=boil\n4=whirlpool\n5=hop_stand\n6=dry_hop\n\nEntrer le numéro:','');
+      const stageMap=['','mash','first_wort','boil','whirlpool','hop_stand','dry_hop'];
       const stage=stageMap[parseInt(stageIdx,10)]??'';
       let boilMin='';
       if(stage==='boil'){
@@ -4508,7 +4555,8 @@ function bindHopControls(container){
         boilMin=bm;
       }
       try{
-        const data=await hopApiFetch('add_hop_addition',{recipe_id:recipeId,mi_id_fk:miIdFk,qty_per_hl:qty,unit,stage,boil_min:boilMin});
+        // Send per-brassin qty + brassin_hl — server divides to store qty_per_hl
+        const data=await hopApiFetch('add_hop_addition',{recipe_id:recipeId,mi_id_fk:miIdFk,qty_per_brassin:qtyBrassin,brassin_hl:brassinHl,unit,stage,boil_min:boilMin});
         if(!data.ok){window.alert(data.error||'Erreur');return;}
         const arr=INGREDIENTS[recipeId]||(INGREDIENTS[recipeId]=[]);
         arr.push({id:data.id,mi:data.mi,name:data.name,cat:'Hops',qty:data.qty,unit:data.unit,is_hop:true,stage:data.stage,boil_min:data.boil_min});
@@ -4573,15 +4621,32 @@ function renderIngrPane(id,profile){
     html+=`<div class="ingr-section-head"><span class="ish-dot" style="background:${color}"></span><span class="ish-label">${escHtml(cat)}</span><span class="ish-rule"></span><span class="ish-total">${escHtml(total)}</span></div>`;
 
     if(cat==='Hops'){
-      // Group hop items by MI, then render each MI's additions together
-      const byMi={};
-      rows.forEach(r=>{if(!byMi[r.mi])byMi[r.mi]={name:r.name,mi:r.mi,rows:[]};byMi[r.mi].rows.push(r);});
+      // Process-order rank for hop additions (mash→first_wort→boil→whirlpool→hop_stand→dry_hop; null=last)
+      const HOP_STAGE_RANK={mash:0,first_wort:1,boil:2,whirlpool:3,hop_stand:4,dry_hop:5};
+      function hopSortKey(r){
+        const rank=r.stage!=null&&HOP_STAGE_RANK[r.stage]!=null?HOP_STAGE_RANK[r.stage]:99;
+        // Within boil: higher minutes first (60→0), NULL boil_min after numbered
+        const boilMin=r.stage==='boil'?(r.boil_min!=null?-r.boil_min:1):0;
+        return[rank,boilMin];
+      }
+      // Sort all hop rows in process order before grouping — preserves cross-MI order too
+      const sortedHopRows=[...rows].sort((a,b)=>{
+        const ka=hopSortKey(a),kb=hopSortKey(b);
+        return ka[0]!==kb[0]?ka[0]-kb[0]:ka[1]-kb[1];
+      });
+      // Group hop items by MI preserving sorted order (insertion-order Map)
+      const byMiMap=new Map();
+      sortedHopRows.forEach(r=>{
+        if(!byMiMap.has(r.mi))byMiMap.set(r.mi,{name:r.name,mi:r.mi,rows:[]});
+        byMiMap.get(r.mi).rows.push(r);
+      });
+      const byMi=Object.fromEntries(byMiMap);
       Object.values(byMi).forEach(miGroup=>{
         const totalForMi=miGroup.rows.reduce((s,r)=>s+toGRaw(r.qty,r.unit),0);
         const pct=totalForMi/maxPerCat[cat]*100;
         html+=`<div class="ingr-hop-group">`;
         miGroup.rows.forEach((it,idx)=>{
-          const s=scaledQty(it.qty,it.unit);
+          const s=scaledQty(it.qty,it.unit,true);
           const isFirst=idx===0;
           const canDelete=miGroup.rows.length>1;
           html+=`<div class="ingr-row ingr-row--hop${it.stage?' ingr-row--staged':''}" data-rri-id="${it.id}">`;
