@@ -87,7 +87,15 @@
     return CUSTOMERS.filter(function (c) {
       return c.name.toLowerCase().includes(lq)
           || (c.bc_no && c.bc_no.toLowerCase().includes(lq));
-    }).slice(0, 20);
+    })
+    // Rank: bc-linked (rank 0) first, needs_review (rank 2) last
+    .sort(function (a, b) {
+      const ra = a.rank !== undefined ? a.rank : 1;
+      const rb = b.rank !== undefined ? b.rank : 1;
+      if (ra !== rb) return ra - rb;
+      return a.name.localeCompare(b.name, 'fr');
+    })
+    .slice(0, 20);
   }
 
   function channelBadge(ch) {
@@ -115,10 +123,16 @@
       li.setAttribute('role', 'option');
       li.setAttribute('aria-selected', 'false');
       li.dataset.idx = String(i);
+      // needs_review rows get a warning badge and subdued style
+      const reviewBadge = c.needs_review
+        ? '<span class="exp-suggest-badge exp-suggest-badge--review" title="À valider — doublon possible">⚠ à valider</span>'
+        : '';
       li.innerHTML =
-        '<span class="exp-suggest-name">' + escHtml(c.name) + '</span>' +
+        '<span class="exp-suggest-name' + (c.needs_review ? ' exp-suggest-name--review' : '') + '">'
+          + escHtml(c.name) + '</span>' +
         (c.bc_no ? '<span class="exp-suggest-meta">' + escHtml(c.bc_no) + '</span>' : '') +
-        channelBadge(c.channel);
+        channelBadge(c.channel) +
+        reviewBadge;
       li.addEventListener('mousedown', function (e) {
         e.preventDefault();
         selectCustomer(c);

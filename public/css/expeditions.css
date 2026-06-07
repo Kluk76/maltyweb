@@ -1749,3 +1749,685 @@ body.expeditions .exp-ledger-sep td {
     min-width: 140px;
   }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   CARNET CLIENTS VIEW
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Tab badge (needs_review count) ──────────────────────────────────────── */
+body.expeditions .exp-tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  margin-left: 5px;
+  background: var(--ember);
+  color: var(--bg);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.6rem;
+  font-weight: 700;
+  border-radius: 10px;
+  line-height: 1;
+  vertical-align: middle;
+}
+
+/* ── Review queue section ─────────────────────────────────────────────────── */
+body.expeditions .exp-clients-review-section {
+  border: 1px solid color-mix(in srgb, var(--ember) 35%, var(--hairline));
+  border-radius: 7px;
+  overflow: hidden;
+  margin-bottom: 24px;
+  background: color-mix(in srgb, var(--ember) 3%, var(--bg));
+}
+
+body.expeditions .exp-clients-review-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 18px;
+  background: color-mix(in srgb, var(--ember) 6%, var(--bg-elev));
+  border-bottom: 1px solid color-mix(in srgb, var(--ember) 25%, var(--hairline));
+}
+
+body.expeditions .exp-clients-review-title {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ember);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+}
+
+body.expeditions .exp-clients-review-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  background: var(--ember);
+  color: var(--bg);
+  border-radius: 11px;
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+body.expeditions .exp-clients-review-hint {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.8rem;
+  color: var(--ink-mute);
+  flex: 1 1 200px;
+  font-style: italic;
+}
+
+body.expeditions .exp-clients-review-toggle {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.76rem;
+  color: var(--ink-mute);
+  background: transparent;
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  touch-action: manipulation;
+  transition: background 0.12s, color 0.12s;
+  min-height: 32px;
+  flex-shrink: 0;
+}
+
+body.expeditions .exp-clients-review-toggle:hover {
+  background: var(--bg-elev);
+  color: var(--ink-soft);
+}
+
+/* Review row */
+body.expeditions .exp-clients-review-row {
+  border-bottom: 1px solid var(--hairline);
+  padding: 10px 18px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  transition: background 0.1s;
+}
+
+body.expeditions .exp-clients-review-row:last-child {
+  border-bottom: none;
+}
+
+body.expeditions .exp-clients-review-row:hover {
+  background: var(--bg-elev);
+}
+
+body.expeditions .exp-clients-review-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 180px;
+  min-width: 120px;
+}
+
+body.expeditions .exp-clients-review-name {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--ink-soft);
+}
+
+body.expeditions .exp-clients-review-note {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.72rem;
+  color: var(--ink-mute);
+  font-style: italic;
+}
+
+body.expeditions .exp-clients-review-chan {
+  flex-shrink: 0;
+}
+
+body.expeditions .exp-clients-review-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+/* ── Channel chips ────────────────────────────────────────────────────────── */
+body.expeditions .exp-clients-chan {
+  display: inline-flex;
+  align-items: center;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid;
+  white-space: nowrap;
+}
+
+body.expeditions .exp-clients-chan--on {
+  color: var(--cold);
+  border-color: color-mix(in srgb, var(--cold) 35%, transparent);
+  background: color-mix(in srgb, var(--cold) 8%, transparent);
+}
+
+body.expeditions .exp-clients-chan--off {
+  color: var(--oak);
+  border-color: color-mix(in srgb, var(--oak) 35%, transparent);
+  background: color-mix(in srgb, var(--oak) 8%, transparent);
+}
+
+body.expeditions .exp-clients-chan--private {
+  color: var(--ink-mute);
+  border-color: var(--hairline-2);
+  background: transparent;
+  font-style: italic;
+}
+
+body.expeditions .exp-clients-chan--none {
+  color: var(--ink-faint);
+  border-color: var(--hairline);
+  background: transparent;
+}
+
+/* ── Action buttons (shared by review queue + directory) ──────────────────── */
+body.expeditions .exp-clients-action-btn {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.78rem;
+  font-weight: 500;
+  padding: 5px 11px;
+  border-radius: 4px;
+  border: 1px solid var(--hairline-2);
+  background: var(--bg);
+  color: var(--ink-mute);
+  cursor: pointer;
+  text-decoration: none;
+  touch-action: manipulation;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  white-space: nowrap;
+}
+
+body.expeditions .exp-clients-action-btn--merge {
+  color: var(--hop);
+  border-color: color-mix(in srgb, var(--hop) 35%, transparent);
+  background: color-mix(in srgb, var(--hop) 6%, transparent);
+}
+
+body.expeditions .exp-clients-action-btn--merge:hover {
+  background: color-mix(in srgb, var(--hop) 14%, transparent);
+  border-color: var(--hop);
+}
+
+body.expeditions .exp-clients-action-btn--validate {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 35%, transparent);
+}
+
+body.expeditions .exp-clients-action-btn--validate:hover {
+  background: color-mix(in srgb, var(--ok) 10%, transparent);
+  border-color: var(--ok);
+}
+
+body.expeditions .exp-clients-action-btn--deactivate {
+  color: var(--ember);
+  border-color: color-mix(in srgb, var(--ember) 30%, transparent);
+}
+
+body.expeditions .exp-clients-action-btn--deactivate:hover {
+  background: color-mix(in srgb, var(--ember) 10%, transparent);
+  border-color: var(--ember);
+}
+
+body.expeditions .exp-clients-action-btn--confirm {
+  background: var(--hop);
+  color: var(--bg);
+  border-color: var(--hop);
+  font-weight: 600;
+}
+
+body.expeditions .exp-clients-action-btn--confirm:hover {
+  background: var(--hop-soft, var(--hop));
+}
+
+body.expeditions .exp-clients-action-btn--cancel-merge {
+  color: var(--ink-mute);
+}
+
+body.expeditions .exp-clients-action-btn--cancel-merge:hover {
+  background: var(--bg-elev);
+  color: var(--ink-soft);
+}
+
+/* ── Merge panel ──────────────────────────────────────────────────────────── */
+body.expeditions .exp-merge-panel {
+  flex-basis: 100%;
+  padding: 12px 18px 14px;
+  background: color-mix(in srgb, var(--hop) 4%, var(--bg));
+  border-top: 1px solid var(--hairline);
+  animation: exp-fade-in 0.15s ease;
+}
+
+body.expeditions .exp-merge-panel__inner {
+  max-width: 560px;
+}
+
+body.expeditions .exp-merge-panel__title {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+  margin-bottom: 10px;
+}
+
+/* Merge typeahead */
+body.expeditions .exp-merge-typeahead-wrap {
+  position: relative;
+  margin-bottom: 10px;
+}
+
+body.expeditions .exp-merge-search {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+body.expeditions .exp-merge-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 50;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 5px;
+  box-shadow: 0 4px 16px rgba(30, 18, 5, 0.12);
+  max-height: 240px;
+  overflow-y: auto;
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  overscroll-behavior: contain;
+}
+
+body.expeditions .exp-merge-dropdown li {
+  padding: 8px 14px;
+  cursor: pointer;
+  transition: background 0.1s;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+body.expeditions .exp-merge-dropdown li:hover,
+body.expeditions .exp-merge-dropdown li[aria-selected="true"] {
+  background: color-mix(in srgb, var(--hop) 12%, transparent);
+}
+
+/* Merge preview line */
+body.expeditions .exp-merge-preview {
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--hop) 8%, var(--bg-elev));
+  border: 1px solid color-mix(in srgb, var(--hop) 30%, transparent);
+  border-radius: 4px;
+}
+
+body.expeditions .exp-merge-preview__text {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+  font-weight: 500;
+}
+
+/* Merge confirm bar */
+body.expeditions .exp-merge-confirm-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* ── Needs-review suggest badge ───────────────────────────────────────────── */
+body.expeditions .exp-suggest-badge--review {
+  color: var(--ember);
+  border-color: color-mix(in srgb, var(--ember) 40%, transparent);
+  background: color-mix(in srgb, var(--ember) 8%, transparent);
+}
+
+body.expeditions .exp-suggest-name--review {
+  color: var(--ink-mute);
+  font-style: italic;
+}
+
+/* ── Directory section ────────────────────────────────────────────────────── */
+body.expeditions .exp-clients-dir {
+  width: 100%;
+}
+
+/* Search + filter bar */
+body.expeditions .exp-clients-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  padding: 14px 18px;
+}
+
+body.expeditions .exp-clients-search-wrap {
+  flex: 1 1 200px;
+}
+
+body.expeditions .exp-clients-search-input {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.86rem;
+  padding: 8px 12px;
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--ink-soft);
+  min-height: 40px;
+}
+
+body.expeditions .exp-clients-search-input:focus {
+  outline: 2px solid var(--hop);
+  outline-offset: 1px;
+}
+
+body.expeditions .exp-clients-filter-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+body.expeditions .exp-clients-filter-chip {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.66rem;
+  letter-spacing: 0.04em;
+  padding: 5px 11px;
+  border-radius: 16px;
+  border: 1px solid var(--hairline-2);
+  background: var(--bg);
+  color: var(--ink-mute);
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  touch-action: manipulation;
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+}
+
+body.expeditions .exp-clients-filter-chip:hover {
+  background: var(--bg-elev);
+  color: var(--ink-soft);
+  border-color: var(--hairline);
+  text-decoration: none;
+}
+
+body.expeditions .exp-clients-filter-chip--active {
+  background: var(--hop);
+  color: var(--bg);
+  border-color: var(--hop);
+  font-weight: 600;
+}
+
+body.expeditions .exp-clients-search-btn {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 8px 16px;
+  background: var(--hop);
+  color: var(--bg);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  touch-action: manipulation;
+  min-height: 40px;
+  transition: background 0.12s;
+  white-space: nowrap;
+}
+
+body.expeditions .exp-clients-search-btn:hover {
+  background: var(--hop-soft, var(--hop));
+}
+
+/* Pagination bar */
+body.expeditions .exp-clients-pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+body.expeditions .exp-clients-pagination-bar--bottom {
+  margin-top: 16px;
+  margin-bottom: 0;
+}
+
+body.expeditions .exp-clients-count {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  color: var(--ink-mute);
+}
+
+body.expeditions .exp-clients-pagination {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+body.expeditions .exp-clients-page-btn {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.78rem;
+  color: var(--hop);
+  text-decoration: none;
+  padding: 5px 10px;
+  border: 1px solid color-mix(in srgb, var(--hop) 35%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--hop) 5%, transparent);
+  transition: background 0.12s;
+  touch-action: manipulation;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+}
+
+body.expeditions .exp-clients-page-btn:hover {
+  background: color-mix(in srgb, var(--hop) 14%, transparent);
+  text-decoration: none;
+}
+
+body.expeditions .exp-clients-page-info {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem;
+  color: var(--ink-mute);
+}
+
+/* ── Directory table ──────────────────────────────────────────────────────── */
+body.expeditions .exp-clients-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+}
+
+body.expeditions .exp-clients-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.86rem;
+  color: var(--ink-soft);
+}
+
+body.expeditions .exp-clients-table thead th {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  font-weight: 500;
+  padding: 10px 12px 8px;
+  background: color-mix(in srgb, var(--hop) 4%, var(--bg-elev));
+  border-bottom: 1px solid var(--hairline);
+  text-align: left;
+  white-space: nowrap;
+}
+
+body.expeditions .exp-clients-table th.exp-ct-col-actions {
+  width: 1px; /* shrink-to-content */
+}
+
+body.expeditions .exp-ct-row {
+  border-bottom: 1px solid var(--hairline);
+  transition: background 0.1s;
+}
+
+body.expeditions .exp-ct-row:last-child {
+  border-bottom: none;
+}
+
+body.expeditions .exp-ct-row:hover {
+  background: var(--bg-elev);
+}
+
+body.expeditions .exp-ct-row--inactive {
+  opacity: 0.5;
+}
+
+body.expeditions .exp-ct-row--review {
+  background: color-mix(in srgb, var(--ember) 3%, transparent);
+}
+
+body.expeditions .exp-clients-table td {
+  padding: 9px 12px;
+  vertical-align: middle;
+}
+
+/* Name cell */
+body.expeditions .exp-ct-name {
+  font-weight: 500;
+  color: var(--ink-soft);
+}
+
+body.expeditions .exp-ct-badge {
+  font-size: 0.7rem;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+/* BC number mono */
+body.expeditions .exp-ct-mono {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.72rem;
+  color: var(--ink-mute);
+}
+
+/* City */
+body.expeditions .exp-ct-city {
+  font-size: 0.84rem;
+  color: var(--ink-soft);
+}
+
+/* Email link */
+body.expeditions .exp-ct-email {
+  font-size: 0.78rem;
+  color: var(--hop);
+  text-decoration: none;
+}
+
+body.expeditions .exp-ct-email:hover {
+  text-decoration: underline;
+}
+
+/* Muted placeholder */
+body.expeditions .exp-ct-muted {
+  color: var(--ink-faint);
+}
+
+/* Inline select (trade_channel / transporter) */
+body.expeditions .exp-ct-inline-select {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.78rem;
+  padding: 4px 8px;
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--ink-soft);
+  cursor: pointer;
+  min-height: 30px;
+  max-width: 160px;
+  transition: border-color 0.12s;
+}
+
+body.expeditions .exp-ct-inline-select:focus {
+  outline: 2px solid var(--hop);
+  outline-offset: 1px;
+}
+
+body.expeditions .exp-ct-inline-select:hover {
+  border-color: var(--hairline);
+}
+
+/* Inline forms don't add layout */
+body.expeditions .exp-clients-inline-form,
+body.expeditions .exp-ct-inline-form {
+  display: contents;
+}
+
+/* Deactivate/reactivate buttons in table */
+body.expeditions .exp-ct-deactivate-btn,
+body.expeditions .exp-ct-reactivate-btn {
+  font-size: 0.72rem;
+  padding: 4px 8px;
+  min-height: 28px;
+}
+
+/* ── Responsive — clients view ────────────────────────────────────────────── */
+@media (max-width: 900px) {
+  body.expeditions .exp-ct-col-email,
+  body.expeditions .exp-clients-table thead th.exp-ct-col-email {
+    display: none;
+  }
+}
+
+@media (max-width: 700px) {
+  body.expeditions .exp-ct-col-city,
+  body.expeditions .exp-clients-table thead th.exp-ct-col-city {
+    display: none;
+  }
+
+  body.expeditions .exp-clients-filter-bar {
+    padding: 10px 12px;
+    gap: 8px;
+  }
+}
+
+@media (max-width: 500px) {
+  body.expeditions .exp-ct-col-bc,
+  body.expeditions .exp-clients-table thead th.exp-ct-col-bc {
+    display: none;
+  }
+
+  body.expeditions .exp-clients-review-actions {
+    flex-basis: 100%;
+  }
+}

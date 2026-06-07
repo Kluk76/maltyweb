@@ -71,11 +71,238 @@ const EXP_INTERNAL_LABELS   = [
 
 // ── View routing ──────────────────────────────────────────────────────────────
 $view    = isset($_GET['view']) ? (string) $_GET['view'] : 'commandes';
-$allowedViews = ['commandes', 'form', 'stock'];
+$allowedViews = ['commandes', 'form', 'stock', 'clients'];
 if (!in_array($view, $allowedViews, true)) $view = 'commandes';
 
 $editId  = isset($_GET['edit']) ? (int) $_GET['edit'] : 0;
 if ($editId < 0) $editId = 0;
+
+// ── POST handler (Clients view) ───────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'clients') {
+
+    if (!csrf_verify($_POST['csrf'] ?? null)) {
+        flash_set('err', 'Session expirée — recharge la page.');
+        redirect_to('/modules/expeditions.php?view=clients');
+    }
+
+    $pdo    = maltytask_pdo();
+    $action = isset($_POST['action']) ? (string) $_POST['action'] : '';
+
+    // Whitelist allowed actions
+    $allowedClientActions = ['client_merge', 'client_validate', 'client_deactivate', 'client_update'];
+    if (!in_array($action, $allowedClientActions, true)) {
+        flash_set('err', 'Action non reconnue.');
+        redirect_to('/modules/expeditions.php?view=clients');
+    }
+
+    $clientId = isset($_POST['client_id']) ? (int) $_POST['client_id'] : 0;
+    if ($clientId <= 0) {
+        flash_set('err', 'Identifiant client invalide.');
+        redirect_to('/modules/expeditions.php?view=clients');
+    }
+
+    try {
+        // Verify client exists
+        $clientRow = bd_fetch_before($pdo, 'ref_customers', $clientId);
+        if ($clientRow === null) {
+            flash_set('err', 'Client #' . $clientId . ' introuvable.');
+            redirect_to('/modules/expeditions.php?view=clients');
+        }
+
+        // ── action: client_merge ─────────────────────────────────────────────
+        if ($action === 'client_merge') {
+            $targetId = isset($_POST['target_id']) ? (int) $_POST['target_id'] : 0;
+            if ($targetId <= 0 || $targetId === $clientId) {
+                flash_set('err', 'Cible de fusion invalide.');
+                redirect_to('/modules/expeditions.php?view=clients');
+            }
+
+            $targetRow = bd_fetch_before($pdo, 'ref_customers', $targetId);
+            if ($targetRow === null || !(bool)$targetRow['is_active'] || $targetRow['bc_customer_no'] === null) {
+                flash_set('err', 'Client cible introuvable ou non éligible (doit être actif avec n° BC).');
+                redirect_to('/modules/expeditions.php?view=clients');
+            }
+
+            $pdo->beginTransaction();
+
+            // 1. Reassign orders from dup → target
+            $countOrdStmt = $pdo->prepare(
+                'SELECT COUNT(*) FROM ord_orders WHERE customer_id_fk = ?'
+            );
+            $countOrdStmt->execute([$clientId]);
+            $ordCount = (int) $countOrdStmt->fetchColumn();
+
+            if ($ordCount > 0) {
+                $updOrd = $pdo->prepare(
+                    'UPDATE ord_orders SET customer_id_fk = ?, updated_at = CURRENT_TIMESTAMP
+                      WHERE customer_id_fk = ?'
+                );
+                $updOrd->execute([$targetId, $clientId]);
+                log_revision($pdo, $me, 'ord_orders', $clientId, null,
+                    ['reassigned_to' => $targetId, 'count' => $ordCount],
+                    'normal', 'Fusion client: commandes réaffectées vers #' . $targetId);
+            }
+
+            // 2. Copy missing fields onto target (trade_channel, default_transporter_id_fk)
+            $targetUpdates = [];
+            $targetBefore  = $targetRow;
+            if ($targetRow['trade_channel'] === null && $clientRow['trade_channel'] !== null) {
+                $targetUpdates['trade_channel'] = $clientRow['trade_channel'];
+            }
+            if ($targetRow['default_transporter_id_fk'] === null && $clientRow['default_transporter_id_fk'] !== null) {
+                $targetUpdates['default_transporter_id_fk'] = $clientRow['default_transporter_id_fk'];
+            }
+            // Append alias to target notes
+            $aliasNote   = 'alias: ' . $clientRow['name'];
+            $targetNotes = trim(($targetRow['notes'] ?? '') . "\n" . $aliasNote);
+            $targetUpdates['notes'] = $targetNotes;
+            $targetUpdates['updated_by'] = $me['username'];
+
+            $setClauses = implode(', ', array_map(fn($c) => "`{$c}` = ?", array_keys($targetUpdates)));
+            $updTarget  = $pdo->prepare(
+                "UPDATE ref_customers SET {$setClauses}, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+            );
+            $updTarget->execute([...array_values($targetUpdates), $targetId]);
+            log_revision($pdo, $me, 'ref_customers', $targetId, $targetBefore,
+                array_merge($targetUpdates, ['id' => $targetId]),
+                'normal', 'Fusion client: champs copiés depuis #' . $clientId);
+
+            // 3. Tombstone the dup
+            $dupNotes = trim(($clientRow['notes'] ?? '') . "\nmerged_into: {$targetId}");
+            $updDup = $pdo->prepare(
+                'UPDATE ref_customers
+                    SET is_active = 0, needs_review = 0, notes = ?, updated_by = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                  WHERE id = ?'
+            );
+            $updDup->execute([$dupNotes, $me['username'], $clientId]);
+            log_revision($pdo, $me, 'ref_customers', $clientId, $clientRow,
+                ['is_active' => 0, 'needs_review' => 0, 'notes' => $dupNotes],
+                'normal', 'Fusion client: fusionné dans #' . $targetId);
+
+            $pdo->commit();
+            flash_set('ok', '« ' . $clientRow['name'] . ' » fusionné dans « ' . $targetRow['name'] . ' ». '
+                . ($ordCount > 0 ? $ordCount . ' commande(s) réaffectée(s).' : ''));
+            redirect_to('/modules/expeditions.php?view=clients');
+        }
+
+        // ── action: client_validate ──────────────────────────────────────────
+        if ($action === 'client_validate') {
+            $before = $clientRow;
+            $updStmt = $pdo->prepare(
+                'UPDATE ref_customers SET needs_review = 0, updated_by = ?,
+                         updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+            );
+            $updStmt->execute([$me['username'], $clientId]);
+            log_revision($pdo, $me, 'ref_customers', $clientId, $before,
+                ['needs_review' => 0], 'normal', 'Client validé tel quel');
+            flash_set('ok', '« ' . $clientRow['name'] . ' » validé.');
+            redirect_to('/modules/expeditions.php?view=clients');
+        }
+
+        // ── action: client_deactivate ────────────────────────────────────────
+        if ($action === 'client_deactivate') {
+            $before = $clientRow;
+            $updStmt = $pdo->prepare(
+                'UPDATE ref_customers SET is_active = 0, needs_review = 0, updated_by = ?,
+                         updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+            );
+            $updStmt->execute([$me['username'], $clientId]);
+            log_revision($pdo, $me, 'ref_customers', $clientId, $before,
+                ['is_active' => 0, 'needs_review' => 0], 'normal', 'Client désactivé');
+            flash_set('ok', '« ' . $clientRow['name'] . ' » désactivé.');
+            redirect_to('/modules/expeditions.php?view=clients');
+        }
+
+        // ── action: client_update (inline field edit) ────────────────────────
+        if ($action === 'client_update') {
+            // Editable fields whitelist
+            $editableFields = [
+                'trade_channel', 'default_transporter_id_fk', 'is_active',
+                'is_private', 'email', 'notes',
+            ];
+            $field = isset($_POST['field']) ? (string) $_POST['field'] : '';
+            if (!in_array($field, $editableFields, true)) {
+                flash_set('err', 'Champ non modifiable : ' . htmlspecialchars($field));
+                redirect_to('/modules/expeditions.php?view=clients');
+            }
+
+            $rawVal = isset($_POST['value']) ? $_POST['value'] : null;
+
+            // Per-field validation
+            $coerced = null;
+            if ($field === 'trade_channel') {
+                if ($rawVal === '' || $rawVal === null) {
+                    $coerced = null;
+                } elseif (in_array($rawVal, ['on_trade', 'off_trade'], true)) {
+                    $coerced = $rawVal;
+                } else {
+                    flash_set('err', 'Canal invalide.');
+                    redirect_to('/modules/expeditions.php?view=clients');
+                }
+            } elseif ($field === 'default_transporter_id_fk') {
+                $tid = (int) ($rawVal ?? 0);
+                if ($tid <= 0) {
+                    $coerced = null;
+                } else {
+                    // Verify transporter exists and is active
+                    $tStmt = $pdo->prepare('SELECT id FROM ref_transporters WHERE id = ? AND is_active = 1 LIMIT 1');
+                    $tStmt->execute([$tid]);
+                    if (!$tStmt->fetchColumn()) {
+                        flash_set('err', 'Transporteur introuvable.');
+                        redirect_to('/modules/expeditions.php?view=clients');
+                    }
+                    $coerced = $tid;
+                }
+            } elseif ($field === 'is_active') {
+                $coerced = in_array($rawVal, ['0', '1', 0, 1], true) ? (int) $rawVal : null;
+                if ($coerced === null) {
+                    flash_set('err', 'Valeur invalide pour is_active.');
+                    redirect_to('/modules/expeditions.php?view=clients');
+                }
+            } elseif ($field === 'is_private') {
+                $coerced = in_array($rawVal, ['0', '1', 0, 1], true) ? (int) $rawVal : null;
+                if ($coerced === null) {
+                    flash_set('err', 'Valeur invalide pour is_private.');
+                    redirect_to('/modules/expeditions.php?view=clients');
+                }
+            } elseif ($field === 'email') {
+                $coerced = ($rawVal === '' || $rawVal === null) ? null : substr(trim((string) $rawVal), 0, 255);
+                if ($coerced !== null && !filter_var($coerced, FILTER_VALIDATE_EMAIL)) {
+                    flash_set('err', 'Adresse e-mail invalide.');
+                    redirect_to('/modules/expeditions.php?view=clients');
+                }
+            } elseif ($field === 'notes') {
+                $coerced = ($rawVal === '' || $rawVal === null) ? null : substr(trim((string) $rawVal), 0, 2000);
+            }
+
+            $before = $clientRow;
+            $updStmt = $pdo->prepare(
+                "UPDATE ref_customers SET `{$field}` = ?, updated_by = ?,
+                         updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+            );
+            $updStmt->execute([$coerced, $me['username'], $clientId]);
+            log_revision($pdo, $me, 'ref_customers', $clientId, $before,
+                [$field => $coerced], 'normal', 'Modification inline champ: ' . $field);
+
+            // Return to the clients view preserving any filter params
+            $returnPage = isset($_POST['return_page']) ? max(1, (int) $_POST['return_page']) : 1;
+            $returnSearch = isset($_POST['return_search']) ? trim((string) $_POST['return_search']) : '';
+            $returnFilter = isset($_POST['return_filter']) ? (string) $_POST['return_filter'] : '';
+            $qs = '?view=clients&page=' . $returnPage;
+            if ($returnSearch !== '') $qs .= '&search=' . urlencode($returnSearch);
+            if ($returnFilter !== '') $qs .= '&filter=' . urlencode($returnFilter);
+            flash_set('ok', 'Client mis à jour.');
+            redirect_to('/modules/expeditions.php' . $qs);
+        }
+
+    } catch (Throwable $e) {
+        if (isset($pdo) && $pdo->inTransaction()) $pdo->rollBack();
+        error_log('[expeditions clients POST] ' . $e->getMessage());
+        flash_set('err', 'Erreur : ' . pdo_friendly_error($e));
+        redirect_to('/modules/expeditions.php?view=clients');
+    }
+}
 
 // ── POST handler (Saisie view only) ──────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'form') {
@@ -357,6 +584,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'form') {
         flash_set('err', 'Erreur lors de l\'enregistrement : ' . pdo_friendly_error($e));
         redirect_to('/modules/expeditions.php?view=form' . ($editId ? '&edit=' . $editId : ''));
     }
+}
+
+// ── Clients view: pagination + filter params ─────────────────────────────────
+$clientsPage      = 1;
+$clientsSearch    = '';
+$clientsFilter    = 'active'; // 'active'|'review'|'inactive'|'nochannel'|'all'
+$clientsPerPage   = 50;
+$clientsTotalRows = 0;
+$clientsRows      = [];
+$clientsCrmRows   = []; // for the merge typeahead: CRM rows (bc_customer_no NOT NULL, is_active=1)
+$clientsReviewCount = 0; // count of needs_review=1 rows
+
+if ($view === 'clients') {
+    $rawPage   = isset($_GET['page'])   ? (int) $_GET['page']         : 1;
+    $rawSearch = isset($_GET['search']) ? trim((string) $_GET['search']) : '';
+    $rawFilter = isset($_GET['filter']) ? (string) $_GET['filter']    : 'active';
+    $allowedClientFilters = ['active', 'review', 'inactive', 'nochannel', 'all'];
+    if (!in_array($rawFilter, $allowedClientFilters, true)) $rawFilter = 'active';
+    $clientsPage   = max(1, $rawPage);
+    $clientsSearch = $rawSearch;
+    $clientsFilter = $rawFilter;
 }
 
 // ── Commandes view: period + filter params ────────────────────────────────────
@@ -746,6 +994,72 @@ try {
         $fgStock = fg_stock_compute($pdo);
     }
 
+    if ($view === 'clients') {
+        // Count of needs_review rows (always, for the header badge)
+        $rvCnt = $pdo->query('SELECT COUNT(*) FROM ref_customers WHERE needs_review = 1');
+        $clientsReviewCount = (int) $rvCnt->fetchColumn();
+
+        // CRM rows for merge typeahead (bc_customer_no NOT NULL, is_active=1)
+        $crmStmt = $pdo->query(
+            'SELECT id, name, bc_customer_no
+               FROM ref_customers
+              WHERE bc_customer_no IS NOT NULL AND is_active = 1
+              ORDER BY name ASC'
+        );
+        $clientsCrmRows = $crmStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // Build WHERE for directory query
+        $dirWhere  = [];
+        $dirParams = [];
+        if ($clientsSearch !== '') {
+            $dirWhere[]  = '(c.name LIKE ? OR c.bc_customer_no LIKE ? OR c.city LIKE ?)';
+            $likeVal     = '%' . $clientsSearch . '%';
+            $dirParams[] = $likeVal;
+            $dirParams[] = $likeVal;
+            $dirParams[] = $likeVal;
+        }
+        if ($clientsFilter === 'active') {
+            $dirWhere[] = 'c.is_active = 1 AND c.needs_review = 0';
+        } elseif ($clientsFilter === 'review') {
+            $dirWhere[] = 'c.needs_review = 1';
+        } elseif ($clientsFilter === 'inactive') {
+            $dirWhere[] = 'c.is_active = 0';
+        } elseif ($clientsFilter === 'nochannel') {
+            $dirWhere[] = 'c.is_active = 1 AND c.trade_channel IS NULL AND c.is_private = 0';
+        }
+        // 'all' → no extra filter
+
+        $whereSql = !empty($dirWhere) ? ('WHERE ' . implode(' AND ', $dirWhere)) : '';
+
+        // Count
+        $cntStmt = $pdo->prepare(
+            "SELECT COUNT(*) FROM ref_customers c {$whereSql}"
+        );
+        $cntStmt->execute($dirParams);
+        $clientsTotalRows = (int) $cntStmt->fetchColumn();
+
+        // Page bounds
+        $totalPages     = max(1, (int) ceil($clientsTotalRows / $clientsPerPage));
+        $clientsPage    = min($clientsPage, $totalPages);
+        $offset         = ($clientsPage - 1) * $clientsPerPage;
+
+        // Fetch page
+        $dirStmt = $pdo->prepare(
+            "SELECT c.id, c.name, c.bc_customer_no, c.trade_channel,
+                    c.is_private, c.default_transporter_id_fk,
+                    c.needs_review, c.is_active, c.notes,
+                    c.email, c.city, c.canton,
+                    t.name AS transporter_name
+               FROM ref_customers c
+               LEFT JOIN ref_transporters t ON t.id = c.default_transporter_id_fk
+               {$whereSql}
+              ORDER BY c.needs_review DESC, c.is_active DESC, c.name ASC
+              LIMIT ? OFFSET ?"
+        );
+        $dirStmt->execute([...$dirParams, $clientsPerPage, $offset]);
+        $clientsRows = $dirStmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
 } catch (Throwable $e) {
     $loadErr = $e->getMessage();
     error_log('[expeditions GET] ' . $e->getMessage());
@@ -754,7 +1068,9 @@ try {
 // ── Build JSON payloads for JS (XSS-safe) ────────────────────────────────────
 $jsonFlags = JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP;
 
-// Customer typeahead data + default_transporter_id_fk map (for JS auto-fill)
+// Customer typeahead data + default_transporter_id_fk map (for JS auto-fill).
+// Ranking: bc-linked (bc_customer_no NOT NULL) come first, needs_review rows last.
+// rank: 0 = CRM-linked (bc_no set), 1 = normal active, 2 = needs_review
 $expCustomers = array_map(fn($c) => [
     'id'            => (int) $c['id'],
     'name'          => $c['name'],
@@ -762,6 +1078,10 @@ $expCustomers = array_map(fn($c) => [
     'channel'       => $c['trade_channel'] ?? '',
     'default_trans' => $c['default_transporter_id_fk']
                            ? (int) $c['default_transporter_id_fk'] : null,
+    'rank'          => ($c['bc_customer_no'] !== null && $c['bc_customer_no'] !== '')
+                           ? 0
+                           : ((bool)$c['needs_review'] ? 2 : 1),
+    'needs_review'  => (bool) $c['needs_review'],
 ], $customers);
 
 // SKU typeahead data
@@ -781,6 +1101,13 @@ $expTransporters = array_map(fn($t) => [
 $customersJson    = json_encode($expCustomers, $jsonFlags);
 $skusJson         = json_encode($expSkus, $jsonFlags);
 $transportersJson = json_encode($expTransporters, $jsonFlags);
+
+// Clients view: CRM rows for merge typeahead
+$crmRowsJson = json_encode(array_map(fn($r) => [
+    'id'    => (int) $r['id'],
+    'name'  => $r['name'],
+    'bc_no' => $r['bc_customer_no'] ?? '',
+], $clientsCrmRows), $jsonFlags);
 $editOrderJson    = $editOrder !== null
     ? json_encode($editOrder, $jsonFlags) : 'null';
 $editLinesJson    = $editLines
@@ -855,6 +1182,12 @@ $isReadOnly = $editOrder !== null
     <a href="/modules/expeditions.php?view=stock"
        class="exp-tab<?= $view === 'stock' ? ' exp-tab--active' : '' ?>"
        <?= $view === 'stock' ? 'aria-current="page"' : '' ?>>Stock PF</a>
+    <a href="/modules/expeditions.php?view=clients"
+       class="exp-tab<?= $view === 'clients' ? ' exp-tab--active' : '' ?>"
+       <?= $view === 'clients' ? 'aria-current="page"' : '' ?>>
+      Carnet clients<?= $clientsReviewCount > 0
+          ? ' <span class="exp-tab-badge">' . $clientsReviewCount . '</span>' : '' ?>
+    </a>
   </nav>
 
   <!-- ══════════════════════════════════════════════════════════════════════
@@ -1795,6 +2128,430 @@ $isReadOnly = $editOrder !== null
 
   <?php endif ?>
   <!-- /STOCK PF -->
+
+
+  <!-- ══════════════════════════════════════════════════════════════════════
+       CARNET CLIENTS VIEW
+       ══════════════════════════════════════════════════════════════════════ -->
+  <?php if ($view === 'clients'): ?>
+
+  <!-- Window globals for merge typeahead -->
+  <script>
+    window.EXP_CRM_ROWS = <?= $crmRowsJson ?>;
+    window.EXP_CSRF     = <?= json_encode($csrf, JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+  </script>
+
+  <?php
+  // ── Helper: render trade_channel chip ────────────────────────────────────
+  function exp_channel_chip(?string $ch, bool $isPrivate): string
+  {
+      if ($isPrivate) {
+          return '<span class="exp-clients-chan exp-clients-chan--private">Privé</span>';
+      }
+      if ($ch === 'on_trade') {
+          return '<span class="exp-clients-chan exp-clients-chan--on">On-trade</span>';
+      }
+      if ($ch === 'off_trade') {
+          return '<span class="exp-clients-chan exp-clients-chan--off">Off-trade</span>';
+      }
+      return '<span class="exp-clients-chan exp-clients-chan--none">—</span>';
+  }
+
+  // Compute pagination values (used below; already set by data loader above)
+  $totalPagesClients = max(1, (int) ceil($clientsTotalRows / $clientsPerPage));
+
+  // Build base URL for pagination + filter links
+  $clientsBase = '/modules/expeditions.php?view=clients';
+  $clientsQs   = '';
+  if ($clientsSearch !== '') $clientsQs .= '&search=' . urlencode($clientsSearch);
+  if ($clientsFilter !== 'active') $clientsQs .= '&filter=' . urlencode($clientsFilter);
+  ?>
+
+  <!-- ── Review queue section ───────────────────────────────────────────────── -->
+  <?php
+  // Fetch needs_review rows separately (always show them at top when filter=review or if we're on the review section)
+  // We show the review section at the top only when clientsFilter !== another category that hides them,
+  // or when there are any to show. We always show it as a standalone alert block.
+  $reviewRows = [];
+  if ($clientsReviewCount > 0 && $view === 'clients') {
+      try {
+          $rvStmt = $pdo->prepare(
+              'SELECT id, name, bc_customer_no, trade_channel, is_private, notes
+                 FROM ref_customers
+                WHERE needs_review = 1
+                ORDER BY name ASC
+                LIMIT 400'
+          );
+          $rvStmt->execute();
+          $reviewRows = $rvStmt->fetchAll(PDO::FETCH_ASSOC);
+      } catch (Throwable $e) {
+          error_log('[expeditions clients review] ' . $e->getMessage());
+      }
+  }
+  ?>
+
+  <?php if (!empty($reviewRows)): ?>
+  <div class="exp-clients-review-section" id="exp-clients-review">
+    <div class="exp-clients-review-header">
+      <span class="exp-clients-review-title">
+        À valider
+        <span class="exp-clients-review-count"><?= count($reviewRows) ?></span>
+      </span>
+      <span class="exp-clients-review-hint">
+        Ces clients proviennent de la feuille BSF et n'ont pas encore été liés à un compte CRM.
+        Fusionner, valider, ou désactiver chaque ligne.
+      </span>
+      <button type="button" class="exp-clients-review-toggle" id="exp-review-toggle"
+              aria-expanded="true" aria-controls="exp-review-list">
+        Réduire ▲
+      </button>
+    </div>
+
+    <div id="exp-review-list">
+    <?php foreach ($reviewRows as $rv): ?>
+      <?php $rvId = (int) $rv['id']; ?>
+      <div class="exp-clients-review-row" id="exp-rvrow-<?= $rvId ?>">
+
+        <!-- Name + meta -->
+        <div class="exp-clients-review-info">
+          <span class="exp-clients-review-name"><?= htmlspecialchars($rv['name']) ?></span>
+          <?php if (!empty($rv['notes'])): ?>
+            <span class="exp-clients-review-note"><?= htmlspecialchars(mb_substr($rv['notes'], 0, 80)) ?></span>
+          <?php endif ?>
+        </div>
+
+        <!-- Channel chip -->
+        <div class="exp-clients-review-chan">
+          <?= exp_channel_chip($rv['trade_channel'] ?? null, (bool) $rv['is_private']) ?>
+        </div>
+
+        <!-- Actions -->
+        <div class="exp-clients-review-actions">
+
+          <!-- Fusionner button → opens inline merge panel -->
+          <button type="button"
+                  class="exp-clients-action-btn exp-clients-action-btn--merge"
+                  data-rv-id="<?= $rvId ?>"
+                  data-rv-name="<?= htmlspecialchars($rv['name'], ENT_QUOTES) ?>"
+                  aria-expanded="false"
+                  aria-controls="exp-merge-panel-<?= $rvId ?>">
+            Fusionner
+          </button>
+
+          <!-- Valider tel quel -->
+          <form method="POST" action="/modules/expeditions.php?view=clients"
+                class="exp-clients-inline-form">
+            <input type="hidden" name="csrf"      value="<?= htmlspecialchars($csrf) ?>">
+            <input type="hidden" name="action"    value="client_validate">
+            <input type="hidden" name="client_id" value="<?= $rvId ?>">
+            <button type="submit" class="exp-clients-action-btn exp-clients-action-btn--validate"
+                    title="Ce client est réel et non-BC (privé, nouveau)">
+              Valider tel quel
+            </button>
+          </form>
+
+          <!-- Désactiver -->
+          <form method="POST" action="/modules/expeditions.php?view=clients"
+                class="exp-clients-inline-form">
+            <input type="hidden" name="csrf"      value="<?= htmlspecialchars($csrf) ?>">
+            <input type="hidden" name="action"    value="client_deactivate">
+            <input type="hidden" name="client_id" value="<?= $rvId ?>">
+            <button type="submit" class="exp-clients-action-btn exp-clients-action-btn--deactivate"
+                    title="Doublon ou artefact — désactiver">
+              Désactiver
+            </button>
+          </form>
+
+        </div>
+
+        <!-- Inline merge panel (hidden by default, opened by JS) -->
+        <div class="exp-merge-panel" id="exp-merge-panel-<?= $rvId ?>" hidden>
+          <div class="exp-merge-panel__inner">
+            <div class="exp-merge-panel__title">
+              Fusionner « <?= htmlspecialchars($rv['name']) ?> » dans →
+            </div>
+
+            <!-- Typeahead search for target CRM client -->
+            <div class="exp-merge-typeahead-wrap">
+              <input type="text"
+                     class="op-form__input exp-merge-search"
+                     id="exp-merge-search-<?= $rvId ?>"
+                     placeholder="Rechercher le client CRM cible…"
+                     autocomplete="off"
+                     autocorrect="off"
+                     spellcheck="false"
+                     data-dup-id="<?= $rvId ?>"
+                     data-dup-name="<?= htmlspecialchars($rv['name'], ENT_QUOTES) ?>">
+              <ul class="exp-merge-dropdown" id="exp-merge-drop-<?= $rvId ?>"
+                  role="listbox" aria-label="Client CRM cible" hidden></ul>
+            </div>
+
+            <!-- Preview line (filled by JS when a target is selected) -->
+            <div class="exp-merge-preview" id="exp-merge-preview-<?= $rvId ?>" hidden>
+              <span class="exp-merge-preview__text" id="exp-merge-preview-text-<?= $rvId ?>"></span>
+            </div>
+
+            <!-- Confirm form (POSTs when operator clicks Confirmer) -->
+            <form method="POST" action="/modules/expeditions.php?view=clients"
+                  class="exp-merge-confirm-form" id="exp-merge-form-<?= $rvId ?>" hidden>
+              <input type="hidden" name="csrf"      value="<?= htmlspecialchars($csrf) ?>">
+              <input type="hidden" name="action"    value="client_merge">
+              <input type="hidden" name="client_id" value="<?= $rvId ?>">
+              <input type="hidden" name="target_id" class="exp-merge-target-id" value="">
+              <div class="exp-merge-confirm-bar">
+                <button type="submit" class="exp-clients-action-btn exp-clients-action-btn--confirm">
+                  ✓ Confirmer la fusion
+                </button>
+                <button type="button" class="exp-clients-action-btn exp-clients-action-btn--cancel-merge"
+                        data-rv-id="<?= $rvId ?>">
+                  Annuler
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+      </div>
+    <?php endforeach ?>
+    </div>
+  </div>
+  <?php endif ?>
+
+  <!-- ── Directory section ──────────────────────────────────────────────────── -->
+  <div class="exp-clients-dir">
+
+    <!-- Search + filter bar -->
+    <form class="exp-clients-filter-bar" method="GET" action="/modules/expeditions.php">
+      <input type="hidden" name="view"  value="clients">
+      <div class="exp-clients-search-wrap">
+        <input type="text"
+               id="exp-clients-search"
+               name="search"
+               class="exp-clients-search-input"
+               value="<?= htmlspecialchars($clientsSearch) ?>"
+               placeholder="Nom, n° BC, ville…"
+               autocomplete="off">
+      </div>
+      <div class="exp-clients-filter-chips" role="group" aria-label="Filtre">
+        <?php
+        $filterChips = [
+            'active'    => 'Actifs',
+            'review'    => 'À valider' . ($clientsReviewCount > 0 ? ' (' . $clientsReviewCount . ')' : ''),
+            'inactive'  => 'Inactifs',
+            'nochannel' => 'Sans canal',
+            'all'       => 'Tous',
+        ];
+        foreach ($filterChips as $fv => $fl):
+        ?>
+          <a href="<?= $clientsBase ?>&amp;filter=<?= urlencode($fv) ?><?= $clientsSearch !== '' ? '&amp;search=' . urlencode($clientsSearch) : '' ?>"
+             class="exp-clients-filter-chip<?= $clientsFilter === $fv ? ' exp-clients-filter-chip--active' : '' ?>"
+             aria-pressed="<?= $clientsFilter === $fv ? 'true' : 'false' ?>">
+            <?= htmlspecialchars($fl) ?>
+          </a>
+        <?php endforeach ?>
+      </div>
+      <button type="submit" class="exp-clients-search-btn">Rechercher</button>
+    </form>
+
+    <!-- Results count + pagination top -->
+    <div class="exp-clients-pagination-bar">
+      <span class="exp-clients-count">
+        <?= number_format($clientsTotalRows) ?> client<?= $clientsTotalRows !== 1 ? 's' : '' ?>
+        <?php if ($clientsSearch !== ''): ?>
+          pour « <?= htmlspecialchars($clientsSearch) ?> »
+        <?php endif ?>
+      </span>
+      <?php if ($totalPagesClients > 1): ?>
+      <div class="exp-clients-pagination">
+        <?php if ($clientsPage > 1): ?>
+          <a href="<?= $clientsBase . $clientsQs ?>&amp;page=<?= $clientsPage - 1 ?>"
+             class="exp-clients-page-btn">◂ Préc.</a>
+        <?php endif ?>
+        <span class="exp-clients-page-info">Page <?= $clientsPage ?> / <?= $totalPagesClients ?></span>
+        <?php if ($clientsPage < $totalPagesClients): ?>
+          <a href="<?= $clientsBase . $clientsQs ?>&amp;page=<?= $clientsPage + 1 ?>"
+             class="exp-clients-page-btn">Suiv. ▸</a>
+        <?php endif ?>
+      </div>
+      <?php endif ?>
+    </div>
+
+    <!-- Directory table -->
+    <?php if (empty($clientsRows)): ?>
+    <div class="op-form__card exp-empty-state">
+      <p class="exp-empty">
+        <?= $clientsSearch !== '' ? 'Aucun client ne correspond à « ' . htmlspecialchars($clientsSearch) . ' ».' : 'Aucun client à afficher.' ?>
+      </p>
+    </div>
+    <?php else: ?>
+    <div class="exp-clients-table-wrap">
+      <table class="exp-clients-table" id="exp-clients-table">
+        <thead>
+          <tr>
+            <th class="exp-ct-col-name">Nom</th>
+            <th class="exp-ct-col-bc">N° BC</th>
+            <th class="exp-ct-col-chan">Canal</th>
+            <th class="exp-ct-col-city">Ville</th>
+            <th class="exp-ct-col-email">Email</th>
+            <th class="exp-ct-col-trans">Transporteur</th>
+            <th class="exp-ct-col-actions"></th>
+          </tr>
+        </thead>
+        <tbody>
+        <?php foreach ($clientsRows as $cr):
+            $crid    = (int) $cr['id'];
+            $inactive = !(bool) $cr['is_active'];
+            $review   = (bool) $cr['needs_review'];
+            $rowCls   = 'exp-ct-row';
+            if ($inactive) $rowCls .= ' exp-ct-row--inactive';
+            if ($review)   $rowCls .= ' exp-ct-row--review';
+        ?>
+          <tr class="<?= $rowCls ?>" data-client-id="<?= $crid ?>">
+
+            <!-- Name cell -->
+            <td class="exp-ct-col-name">
+              <span class="exp-ct-name"><?= htmlspecialchars($cr['name']) ?></span>
+              <?php if ($review): ?>
+                <span class="exp-ct-badge exp-ct-badge--review" title="À valider">⚠</span>
+              <?php endif ?>
+              <?php if ($inactive): ?>
+                <span class="exp-ct-badge exp-ct-badge--inactive" title="Inactif">🚫</span>
+              <?php endif ?>
+            </td>
+
+            <!-- BC number -->
+            <td class="exp-ct-col-bc">
+              <span class="exp-ct-mono"><?= htmlspecialchars($cr['bc_customer_no'] ?? '—') ?></span>
+            </td>
+
+            <!-- Canal — inline editable -->
+            <td class="exp-ct-col-chan">
+              <form method="POST" action="/modules/expeditions.php?view=clients"
+                    class="exp-ct-inline-form">
+                <input type="hidden" name="csrf"      value="<?= htmlspecialchars($csrf) ?>">
+                <input type="hidden" name="action"    value="client_update">
+                <input type="hidden" name="client_id" value="<?= $crid ?>">
+                <input type="hidden" name="field"     value="trade_channel">
+                <input type="hidden" name="return_page"   value="<?= $clientsPage ?>">
+                <input type="hidden" name="return_search" value="<?= htmlspecialchars($clientsSearch) ?>">
+                <input type="hidden" name="return_filter" value="<?= htmlspecialchars($clientsFilter) ?>">
+                <select name="value"
+                        class="exp-ct-inline-select"
+                        onchange="this.form.submit()"
+                        aria-label="Canal pour <?= htmlspecialchars($cr['name'], ENT_QUOTES) ?>">
+                  <option value=""         <?= ($cr['trade_channel'] === null) ? 'selected' : '' ?>>—</option>
+                  <option value="on_trade" <?= ($cr['trade_channel'] === 'on_trade')  ? 'selected' : '' ?>>On-trade</option>
+                  <option value="off_trade"<?= ($cr['trade_channel'] === 'off_trade') ? 'selected' : '' ?>>Off-trade</option>
+                </select>
+              </form>
+            </td>
+
+            <!-- City -->
+            <td class="exp-ct-col-city">
+              <span class="exp-ct-city"><?= htmlspecialchars($cr['city'] ?? '—') ?></span>
+            </td>
+
+            <!-- Email -->
+            <td class="exp-ct-col-email">
+              <?php if (!empty($cr['email'])): ?>
+                <a href="mailto:<?= htmlspecialchars($cr['email']) ?>" class="exp-ct-email">
+                  <?= htmlspecialchars($cr['email']) ?>
+                </a>
+              <?php else: ?>
+                <span class="exp-ct-muted">—</span>
+              <?php endif ?>
+            </td>
+
+            <!-- Transporter — inline editable -->
+            <td class="exp-ct-col-trans">
+              <form method="POST" action="/modules/expeditions.php?view=clients"
+                    class="exp-ct-inline-form">
+                <input type="hidden" name="csrf"      value="<?= htmlspecialchars($csrf) ?>">
+                <input type="hidden" name="action"    value="client_update">
+                <input type="hidden" name="client_id" value="<?= $crid ?>">
+                <input type="hidden" name="field"     value="default_transporter_id_fk">
+                <input type="hidden" name="return_page"   value="<?= $clientsPage ?>">
+                <input type="hidden" name="return_search" value="<?= htmlspecialchars($clientsSearch) ?>">
+                <input type="hidden" name="return_filter" value="<?= htmlspecialchars($clientsFilter) ?>">
+                <select name="value"
+                        class="exp-ct-inline-select"
+                        onchange="this.form.submit()"
+                        aria-label="Transporteur par défaut pour <?= htmlspecialchars($cr['name'], ENT_QUOTES) ?>">
+                  <option value="0" <?= ($cr['default_transporter_id_fk'] === null) ? 'selected' : '' ?>>—</option>
+                  <?php foreach ($transporters as $t): ?>
+                    <option value="<?= (int) $t['id'] ?>"
+                            <?= ((int) $cr['default_transporter_id_fk'] === (int) $t['id']) ? 'selected' : '' ?>>
+                      <?= htmlspecialchars($t['name']) ?>
+                    </option>
+                  <?php endforeach ?>
+                </select>
+              </form>
+            </td>
+
+            <!-- Actions -->
+            <td class="exp-ct-col-actions">
+              <?php if (!$inactive): ?>
+              <form method="POST" action="/modules/expeditions.php?view=clients"
+                    class="exp-ct-inline-form">
+                <input type="hidden" name="csrf"      value="<?= htmlspecialchars($csrf) ?>">
+                <input type="hidden" name="action"    value="client_deactivate">
+                <input type="hidden" name="client_id" value="<?= $crid ?>">
+                <button type="submit"
+                        class="exp-clients-action-btn exp-clients-action-btn--deactivate exp-ct-deactivate-btn"
+                        title="Désactiver ce client"
+                        onclick="return confirm('Désactiver « <?= htmlspecialchars($cr['name'], ENT_QUOTES) ?> » ?')">
+                  🚫
+                </button>
+              </form>
+              <?php else: ?>
+              <form method="POST" action="/modules/expeditions.php?view=clients"
+                    class="exp-ct-inline-form">
+                <input type="hidden" name="csrf"      value="<?= htmlspecialchars($csrf) ?>">
+                <input type="hidden" name="action"    value="client_update">
+                <input type="hidden" name="client_id" value="<?= $crid ?>">
+                <input type="hidden" name="field"     value="is_active">
+                <input type="hidden" name="value"     value="1">
+                <input type="hidden" name="return_page"   value="<?= $clientsPage ?>">
+                <input type="hidden" name="return_search" value="<?= htmlspecialchars($clientsSearch) ?>">
+                <input type="hidden" name="return_filter" value="<?= htmlspecialchars($clientsFilter) ?>">
+                <button type="submit"
+                        class="exp-clients-action-btn exp-clients-action-btn--validate exp-ct-reactivate-btn"
+                        title="Réactiver ce client">
+                  ✓ Réactiver
+                </button>
+              </form>
+              <?php endif ?>
+            </td>
+
+          </tr>
+        <?php endforeach ?>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Pagination bottom -->
+    <?php if ($totalPagesClients > 1): ?>
+    <div class="exp-clients-pagination-bar exp-clients-pagination-bar--bottom">
+      <?php if ($clientsPage > 1): ?>
+        <a href="<?= $clientsBase . $clientsQs ?>&amp;page=<?= $clientsPage - 1 ?>"
+           class="exp-clients-page-btn">◂ Préc.</a>
+      <?php endif ?>
+      <span class="exp-clients-page-info">Page <?= $clientsPage ?> / <?= $totalPagesClients ?></span>
+      <?php if ($clientsPage < $totalPagesClients): ?>
+        <a href="<?= $clientsBase . $clientsQs ?>&amp;page=<?= $clientsPage + 1 ?>"
+           class="exp-clients-page-btn">Suiv. ▸</a>
+      <?php endif ?>
+    </div>
+    <?php endif ?>
+    <?php endif ?>
+
+  </div>
+  <!-- /directory -->
+
+  <script src="/js/expeditions-clients.js?v=<?= @filemtime(__DIR__ . '/../js/expeditions-clients.js') ?: time() ?>"></script>
+
+  <?php endif ?>
+  <!-- /CARNET CLIENTS -->
 
 </main>
 
