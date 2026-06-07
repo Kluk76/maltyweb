@@ -512,7 +512,7 @@ body.salle-des-machines .sdm-modal .btn-confirm {
 }
 body.salle-des-machines .sdm-modal .btn-confirm:hover { background: var(--oak); color: var(--bg); }
 
-/* ── SVG shared ──────────────────────────────────────────────── */
+/* ── SVG shared — mini icons (config panel, not scene) ───────── */
 body.salle-des-machines svg .ground { stroke: var(--line, var(--ink-mute)); fill: none; stroke-width: 2; stroke-linecap: round; }
 body.salle-des-machines svg .ink    { stroke: var(--line, var(--ink-mute)); fill: none; stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
 body.salle-des-machines svg .ink-2  { stroke: var(--line-soft, var(--ink-faint)); fill: none; stroke-width: .95; stroke-linejoin: round; stroke-linecap: round; }
@@ -525,6 +525,47 @@ body.salle-des-machines svg .band-hop { stroke: var(--hop); fill: none; stroke-w
 body.salle-des-machines svg .band-pkg { stroke: var(--pkg-band, #7a56b4); fill: none; stroke-width: 1.6; stroke-linecap: round; }
 body.salle-des-machines svg .dim    { fill: var(--ink-mute); font-family: "JetBrains Mono", monospace; font-size: 7px; letter-spacing: .04em; }
 body.salle-des-machines svg .dim-o  { fill: var(--oak); font-family: "JetBrains Mono", monospace; font-size: 7px; letter-spacing: .04em; }
+
+/* ── SVG scene (sdm-draw) — gravure-dense colour override ────── */
+/* Scoped to .sdm-draw so mini icons in the config panel are unaffected.
+   Primary lines → var(--oak-deep); structural/secondary → var(--hairline-2).
+   Outline weights: primary 1.5 → 1.85, structural 1.0 → 1.1 (via inline attrs
+   on the emitted elements; these classes handle the CSS-class-driven paths). */
+body.salle-des-machines svg.sdm-draw .ground {
+  stroke: var(--oak-deep, #5a3a12);
+  stroke-width: 1.85;
+}
+body.salle-des-machines svg.sdm-draw .ink {
+  stroke: var(--oak-deep, #5a3a12);
+  stroke-width: 1.85;
+}
+body.salle-des-machines svg.sdm-draw .ink-2 {
+  stroke: var(--hairline-2, #a08060);
+  stroke-width: 1.1;
+}
+body.salle-des-machines svg.sdm-draw .shade {
+  stroke: var(--hairline-2, #a08060);
+}
+body.salle-des-machines svg.sdm-draw .dim {
+  fill: var(--oak, #8b5e2a);
+  font-size: 7.5px;
+}
+
+/* ── Steam wisp animation (reduced-motion gated) ─────────────── */
+@media (prefers-reduced-motion: no-preference) {
+  .steam-wisp {
+    animation: bh-steam-drift 4s ease-in-out infinite;
+  }
+  .steam-wisp:nth-child(2) { animation-delay: 1.4s; }
+  .steam-wisp:nth-child(3) { animation-delay: 2.8s; }
+  @keyframes bh-steam-drift {
+    0%, 100% { opacity: 0.22; transform: translateY(0); }
+    50%       { opacity: 0.50; transform: translateY(-3px); }
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .steam-wisp { opacity: 0.28; }
+}
 
 /* ── footer label ─────────────────────────────────────────────── */
 body.salle-des-machines .sdm-titleblock {

@@ -80,6 +80,13 @@ function valve(x, y, dir, s) {
     <line class="ink" x1="-2.4" y1="-8" x2="2.4" y2="-8"/>
   </g>`;
 }
+/*
+ * cylShade — replaced by cylGravure for the scene SVGs.
+ * Same call signature (x1, x2, y1, y2, n) kept for mini-icon call sites.
+ * Mini icons (icoHlt, icoMash, …) still use the lightweight shade lines
+ * because they are small-format and do not carry hatch pattern refs.
+ * Scene SVGs (brewScene / cellarScene / pkgScene) use cylGravure instead.
+ */
 function cylShade(x1, x2, y1, y2, n) {
   n = n || 5;
   let d = '';
@@ -91,11 +98,82 @@ function cylShade(x1, x2, y1, y2, n) {
   }
   return d;
 }
+/*
+ * cylGravure — gravure-dense shading for scene SVGs.
+ * Emits: ① paper fill ② centre sparse-vertical hatch (bh_px)
+ *        ③ right shadow cross-hatch (bh_pd) ④ 4 left contour strokes
+ *        ⑤ 5 right contour strokes (shadow side)
+ * Parameters:
+ *   x1,x2  — left/right x of the cylinder body rect
+ *   y1,y2  — top/bottom y of the cylinder body rect
+ *   cx     — width ratio of the centre hatch band (default 0.3 = 30% from left)
+ *   sx     — width ratio of the right shadow band (default 0.22 = 22% from right)
+ */
+function cylGravure(x1, x2, y1, y2, cx, sx) {
+  cx = cx || 0.30;
+  sx = sx || 0.22;
+  const w = x2 - x1, h = y2 - y1;
+  const cw = Math.round(w * cx);
+  const sw = Math.round(w * sx);
+  const sxStart = x2 - sw;
+  // Paper fill
+  let d = `<rect x="${x1}" y="${y1}" width="${w}" height="${h}" fill="var(--bg,#f1e8d4)" stroke="none"/>`;
+  // Centre sparse hatch
+  d += `<rect x="${x1}" y="${y1}" width="${cw}" height="${h}" fill="url(#bh_px)" opacity="0.9"/>`;
+  // Right shadow cross-hatch
+  d += `<rect x="${sxStart}" y="${y1}" width="${sw}" height="${h}" fill="url(#bh_pd)" opacity="0.82"/>`;
+  // 4 left contour strokes (fading inward)
+  const lOps = [0.58, 0.52, 0.45, 0.36];
+  const lWts = [0.62, 0.57, 0.52, 0.46];
+  for (let i = 0; i < 4; i++) {
+    const lx = x1 + 1.5 + i * 1.6;
+    d += `<line x1="${lx}" y1="${y1}" x2="${lx}" y2="${y2}" stroke="var(--oak-deep,#5a3a12)" stroke-width="${lWts[i]}" opacity="${lOps[i]}"/>`;
+  }
+  // 5 right contour strokes (shadow dominant)
+  const rOps = [0.62, 0.57, 0.50, 0.42, 0.34];
+  const rWts = [0.65, 0.60, 0.55, 0.50, 0.44];
+  for (let i = 0; i < 5; i++) {
+    const rx = x2 + 0.5 - i * 1.6;
+    d += `<line x1="${rx}" y1="${y1}" x2="${rx}" y2="${y2}" stroke="var(--oak-deep,#5a3a12)" stroke-width="${rWts[i]}" opacity="${rOps[i]}"/>`;
+  }
+  return d;
+}
+/*
+ * strapShadow — 10px dense-hatch band below a weld seam (strap shadow).
+ * Emitted after each weldSeam() in scene SVGs.
+ */
+function strapShadow(x1, x2, y, op) {
+  op = op || 0.68;
+  return `<rect x="${x1}" y="${y}" width="${x2 - x1}" height="9" fill="url(#bh_pd)" opacity="${op}"/>`;
+}
+/*
+ * sceneDefs — shared SVG defs block (hatch patterns + heating-jacket pattern).
+ * Emitted once per scene SVG inside its <defs>.
+ * Pattern IDs are globally unique per page so no prefix needed for single-page use.
+ */
+function sceneDefs() {
+  return `<defs>
+    <pattern id="bh_px" x="0" y="0" width="3.8" height="3.8" patternUnits="userSpaceOnUse">
+      <line x1="1.9" y1="0" x2="1.9" y2="3.8" stroke="var(--oak-deep,#5a3a12)" stroke-width="0.55" opacity="0.27"/>
+    </pattern>
+    <pattern id="bh_pd" x="0" y="0" width="3.5" height="3.5" patternUnits="userSpaceOnUse">
+      <line x1="0" y1="0" x2="3.5" y2="3.5" stroke="var(--oak-deep,#5a3a12)" stroke-width="0.58" opacity="0.52"/>
+      <line x1="3.5" y1="0" x2="0" y2="3.5" stroke="var(--oak-deep,#5a3a12)" stroke-width="0.58" opacity="0.52"/>
+    </pattern>
+    <pattern id="bh_pj" x="0" y="0" width="5" height="5" patternUnits="userSpaceOnUse">
+      <line x1="0" y1="5" x2="5" y2="0" stroke="var(--oak-deep,#5a3a12)" stroke-width="0.5" opacity="0.38"/>
+    </pattern>
+  </defs>`;
+}
+/*
+ * weldSeam — unchanged signature; emits the seam line + strap shadow below it.
+ * The strap-shadow is appended inside the same group so clip paths keep it correct.
+ */
 function weldSeam(x1, x2, y, n) {
   n = n || 7;
   let t = '', step = (x2 - x1) / (n + 1);
   for (let i = 1; i <= n; i++) { const x = x1 + step * i; t += `<line class="ink-2" x1="${x}" y1="${y - 1.1}" x2="${x}" y2="${y + 1.1}"/>`; }
-  return `<line class="ink-2" x1="${x1}" y1="${y}" x2="${x2}" y2="${y}"/>${t}`;
+  return `<line class="ink-2" x1="${x1}" y1="${y}" x2="${x2}" y2="${y}"/>${t}${strapShadow(x1, x2, y + 0.5, 0.68)}`;
 }
 function dim(x, y, t, cls) { return `<text class="${cls || 'dim'}" x="${x}" y="${y}">${escHtml(t)}</text>`; }
 
@@ -274,91 +352,222 @@ function icoCuvFiller() {
   </svg>`;
 }
 
-/* ── Scene generators (identical to mock, returns SVG string) ───── */
+/* ── Scene generators (gravure-dense, returns SVG string) ─────── */
 function brewScene() {
+  /* Element budget: ~480 (well under 700 limit) */
   return `<svg viewBox="0 0 980 400" width="100%" height="100%" class="sdm-draw" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
+    ${sceneDefs()}
+    <!-- floor line -->
     <line class="ground" x1="18" y1="368" x2="962" y2="368"/>
+    <!-- secondary floor shadow -->
+    <line x1="18" y1="374" x2="962" y2="374" stroke="var(--oak-deep,#5a3a12)" stroke-width="0.5" opacity="0.35"/>
+
+    <!-- ── HLT translate(44,18) ── -->
     <g transform="translate(44,18)">
-      <path class="ink" d="M28 50 Q60 24 92 50"/><ellipse class="ink-2" cx="60" cy="50" rx="32" ry="5.5"/>
-      <path class="ground" d="M28 50 V232"/><path class="ground" d="M92 50 V232"/>
-      ${cylShade(32,88,56,228,4)}
+      ${cylGravure(28,92,50,232)}
+      <!-- dome top -->
+      <path class="ink" d="M28 50 Q60 24 92 50"/>
+      <ellipse class="ink-2" cx="60" cy="50" rx="32" ry="5.5"/>
+      <!-- dome bottom -->
       <path class="ink" d="M28 232 Q60 246 92 232"/>
+      <ellipse class="ink-2" cx="60" cy="232" rx="32" ry="5.5"/>
+      <!-- body rect outline -->
+      <rect x="28" y="50" width="64" height="182" fill="none" stroke="var(--oak-deep,#5a3a12)" stroke-width="1.85" stroke-linejoin="round"/>
+      <!-- weld seams -->
+      ${weldSeam(28,92,130)}
+      ${weldSeam(28,92,180)}
+      <!-- dome top shadow -->
+      <rect x="28" y="44" width="64" height="14" fill="url(#bh_pd)" opacity="0.8"/>
+      <!-- dome bottom shadow -->
+      <rect x="28" y="222" width="64" height="14" fill="url(#bh_pd)" opacity="0.7"/>
       ${valve(60,256,'down',.9)}
       <path class="ground" d="M44 232 L36 340"/><path class="ground" d="M76 232 L84 340"/>
       <line class="ground" x1="20" y1="340" x2="108" y2="340"/>
-      ${dim(30,42,'HLT',)}
+      ${dim(30,42,'HLT')}
     </g>
+
+    <!-- ── MAISCHE translate(200,68) ── -->
     <g transform="translate(200,68)">
-      <path class="ink" d="M28 68 Q79 48 130 68"/><ellipse class="ink-2" cx="79" cy="68" rx="51" ry="6.5"/>
-      <path class="ground" d="M28 68 V166"/><path class="ground" d="M130 68 V166"/>
-      ${cylShade(33,125,74,162,6)}
+      ${cylGravure(28,130,68,166,0.32,0.24)}
+      <!-- dome top -->
+      <path class="ink" d="M28 68 Q79 48 130 68"/>
+      <ellipse class="ink-2" cx="79" cy="68" rx="51" ry="6.5"/>
+      <!-- dome bottom -->
       <path class="ink" d="M28 166 Q79 182 130 166"/>
+      <ellipse class="ink-2" cx="79" cy="166" rx="51" ry="6.5"/>
+      <!-- body rect outline -->
+      <rect x="28" y="68" width="102" height="98" fill="none" stroke="var(--oak-deep,#5a3a12)" stroke-width="1.85" stroke-linejoin="round"/>
+      <!-- dome shadows -->
+      <rect x="28" y="62" width="102" height="13" fill="url(#bh_pd)" opacity="0.8"/>
+      <rect x="28" y="156" width="102" height="13" fill="url(#bh_pd)" opacity="0.7"/>
+      <!-- weld seam -->
+      ${weldSeam(28,130,118)}
+      <!-- rake drive indicator -->
+      <ellipse cx="79" cy="118" rx="10" ry="13" fill="none" stroke="var(--oak-deep,#5a3a12)" stroke-width="0.9" opacity="0.45"/>
       ${valve(79,190,'down',.9)}
       <path class="ground" d="M44 170 L36 298"/><path class="ground" d="M114 170 L122 298"/>
-      <line class="ink-2" x1="36" y1="298" x2="43" y2="298"/>
       ${dim(50,60,'MAISCHE')}
     </g>
+
+    <!-- ── FILTRE translate(390,100) ── -->
     <g transform="translate(390,100)">
-      <path class="ink" d="M18 76 Q87 60 156 76"/><ellipse class="ink-2" cx="87" cy="76" rx="69" ry="6"/>
-      <path class="ground" d="M18 76 V150"/><path class="ground" d="M156 76 V150"/>
-      ${cylShade(23,151,82,146,9)}
+      ${cylGravure(18,156,76,150,0.28,0.20)}
+      <!-- dome top -->
+      <path class="ink" d="M18 76 Q87 60 156 76"/>
+      <ellipse class="ink-2" cx="87" cy="76" rx="69" ry="6"/>
+      <!-- dome bottom -->
       <path class="ink" d="M18 150 Q87 165 156 150"/>
+      <ellipse class="ink-2" cx="87" cy="150" rx="69" ry="5.5"/>
+      <!-- body rect outline -->
+      <rect x="18" y="76" width="138" height="74" fill="none" stroke="var(--oak-deep,#5a3a12)" stroke-width="1.85" stroke-linejoin="round"/>
+      <!-- dome shadows -->
+      <rect x="18" y="70" width="138" height="13" fill="url(#bh_pd)" opacity="0.8"/>
+      <rect x="18" y="140" width="138" height="13" fill="url(#bh_pd)" opacity="0.7"/>
+      <!-- filter screen line -->
+      <line x1="24" y1="138" x2="150" y2="138" stroke="var(--oak-deep,#5a3a12)" stroke-width="0.9" opacity="0.5"/>
+      <!-- sparger arms -->
+      <line x1="52" y1="122" x2="122" y2="122" stroke="var(--oak-deep,#5a3a12)" stroke-width="0.85" opacity="0.40"/>
       ${valve(87,192,'down',.9)}
       <path class="ground" d="M28 154 L18 266"/><path class="ground" d="M146 154 L156 266"/>
       ${dim(58,68,'FILTRE')}
     </g>
+
+    <!-- ── CUITE translate(620,48) ── -->
     <g transform="translate(620,48)">
-      <path class="steam" d="M68 6 q-4 -6 1 -12 M76 8 q5 -6 -1 -12"/>
-      <path class="ink" d="M28 58 Q72 36 116 58"/><ellipse class="ink-2" cx="72" cy="58" rx="44" ry="5.5"/>
-      <path class="ground" d="M28 58 V178"/><path class="ground" d="M116 58 V178"/>
-      ${cylShade(33,111,64,174,6)}
+      <!-- steam wisps (CSS gated by prefers-reduced-motion) -->
+      <path class="steam-wisp" d="M68 6 q-5 -7 1 -13" fill="none" stroke="var(--oak-deep,#5a3a12)" stroke-width="0.9" stroke-linecap="round"/>
+      <path class="steam-wisp" d="M76 8 q6 -7 -1 -14" fill="none" stroke="var(--oak-deep,#5a3a12)" stroke-width="0.9" stroke-linecap="round"/>
+      <path class="steam-wisp" d="M72 2 q-2 -8 3 -13" fill="none" stroke="var(--oak-deep,#5a3a12)" stroke-width="0.9" stroke-linecap="round"/>
+      ${cylGravure(28,116,58,178)}
+      <!-- dome top -->
+      <path class="ink" d="M28 58 Q72 36 116 58"/>
+      <ellipse class="ink-2" cx="72" cy="58" rx="44" ry="5.5"/>
+      <!-- dome bottom -->
       <path class="ink" d="M28 178 Q72 194 116 178"/>
+      <ellipse class="ink-2" cx="72" cy="178" rx="44" ry="5.5"/>
+      <!-- body rect outline -->
+      <rect x="28" y="58" width="88" height="120" fill="none" stroke="var(--oak-deep,#5a3a12)" stroke-width="1.85" stroke-linejoin="round"/>
+      <!-- dome shadows -->
+      <rect x="28" y="52" width="88" height="13" fill="url(#bh_pd)" opacity="0.8"/>
+      <rect x="28" y="168" width="88" height="13" fill="url(#bh_pd)" opacity="0.7"/>
+      <!-- weld seams -->
+      ${weldSeam(28,116,110)}
+      ${weldSeam(28,116,148)}
+      <!-- CUITE calandre interne (dashed ellipse + diagonal hatch) -->
+      <ellipse cx="72" cy="118" rx="13" ry="30" fill="none" stroke="var(--oak-deep,#5a3a12)" stroke-width="1.0" stroke-dasharray="3,2" opacity="0.55"/>
+      <ellipse cx="72" cy="118" rx="13" ry="30" fill="url(#bh_pj)" opacity="0.85" stroke="none"/>
+      <!-- calandre nozzles -->
+      <line x1="59" y1="96" x2="70" y2="96" stroke="var(--oak-deep,#5a3a12)" stroke-width="0.7" opacity="0.55"/>
+      <line x1="59" y1="138" x2="70" y2="138" stroke="var(--oak-deep,#5a3a12)" stroke-width="0.7" opacity="0.55"/>
+      <!-- sight glass / vent stack top -->
+      <path d="M58 46 L66 20 H78 L86 46" fill="none" stroke="var(--oak-deep,#5a3a12)" stroke-width="1.1"/>
       ${valve(72,202,'down',.9)}
       <path class="ground" d="M42 182 L34 318"/><path class="ground" d="M102 182 L110 318"/>
       ${dim(50,50,'CUITE')}
     </g>
+
+    <!-- ── WHIRLPOOL translate(826,80) ── -->
     <g transform="translate(826,80)">
-      <line class="ink" x1="24" y1="62" x2="112" y2="62"/><ellipse class="ink-2" cx="68" cy="62" rx="44" ry="5.5"/>
-      <path class="ground" d="M24 62 V170"/><path class="ground" d="M112 62 V170"/>
-      ${cylShade(29,107,68,166,5)}
-      <path class="ink" d="M24 170 H112"/><path class="ink" d="M50 170 L68 188 L86 170"/>
+      ${cylGravure(24,112,62,170)}
+      <!-- top flat ring -->
+      <line x1="24" y1="62" x2="112" y2="62" stroke="var(--oak-deep,#5a3a12)" stroke-width="1.85"/>
+      <ellipse class="ink-2" cx="68" cy="62" rx="44" ry="5.5"/>
+      <!-- vent stub -->
+      <line x1="68" y1="62" x2="68" y2="48" stroke="var(--oak-deep,#5a3a12)" stroke-width="1.1"/>
+      <line x1="62" y1="48" x2="74" y2="48" stroke="var(--oak-deep,#5a3a12)" stroke-width="0.9"/>
+      <!-- body walls -->
+      <line x1="24" y1="62" x2="24" y2="170" stroke="var(--oak-deep,#5a3a12)" stroke-width="1.85"/>
+      <line x1="112" y1="62" x2="112" y2="170" stroke="var(--oak-deep,#5a3a12)" stroke-width="1.85"/>
+      <!-- dome top shadow -->
+      <rect x="24" y="56" width="88" height="13" fill="url(#bh_pd)" opacity="0.8"/>
+      <!-- weld seam -->
+      ${weldSeam(24,112,116)}
+      <!-- flat bottom + cone exit -->
+      <line x1="24" y1="170" x2="112" y2="170" stroke="var(--oak-deep,#5a3a12)" stroke-width="1.85"/>
+      <path d="M50 170 L68 188 L86 170" fill="none" stroke="var(--oak-deep,#5a3a12)" stroke-width="1.85" stroke-linejoin="round"/>
+      <!-- tangential inlet (right side) -->
+      <path d="M112 88 l28 8" fill="none" stroke="var(--oak-deep,#5a3a12)" stroke-width="1.1"/>
+      <!-- whirlpool vortex glyph (twin curves) -->
+      <path d="M50 116 q18 -9 36 0" fill="none" stroke="var(--oak-deep,#5a3a12)" stroke-width="0.8" opacity="0.50"/>
+      <path d="M54 128 q14 -7 28 0" fill="none" stroke="var(--oak-deep,#5a3a12)" stroke-width="0.65" opacity="0.35"/>
+      <!-- wort outlet right lower -->
+      <line x1="112" y1="160" x2="128" y2="160" stroke="var(--oak-deep,#5a3a12)" stroke-width="1.1"/>
       ${valve(68,200,'down',.9)}
       <path class="ground" d="M38 170 L30 288"/><path class="ground" d="M98 170 L106 288"/>
       ${dim(44,54,'WHIRLPOOL')}
     </g>
+
+    <!-- ── inter-vessel wort piping ── -->
+    <!-- HLT → Maische -->
+    <path d="M164 276 h28 V118 h40" fill="none" stroke="var(--oak-deep,#5a3a12)" stroke-width="1.0" opacity="0.70"/>
+    ${triClamp(192,276,0.85)}
+    <!-- Maische → Filtre -->
+    <path d="M360 264 h24 V212 h28" fill="none" stroke="var(--oak-deep,#5a3a12)" stroke-width="1.0" opacity="0.70"/>
+    ${triClamp(388,212,0.85)}
+    <!-- Filtre → Cuite wort run -->
+    <path d="M580 302 h18 V256 h46" fill="none" stroke="var(--oak-deep,#5a3a12)" stroke-width="1.0" opacity="0.70"/>
+    ${triClamp(620,256,0.85)}
+    <!-- Cuite → Whirlpool transfer -->
+    <path d="M790 254 h28 V172 h32" fill="none" stroke="var(--oak-deep,#5a3a12)" stroke-width="1.0" opacity="0.70"/>
+    ${triClamp(810,172,0.85)}
+    <!-- CIP return dashed header -->
+    <path d="M694 346 H188" fill="none" stroke="var(--oak-deep,#5a3a12)" stroke-width="0.65" stroke-dasharray="4,3" opacity="0.30"/>
+    <text class="dim" x="426" y="342">CIP RETOUR</text>
+    <!-- hot water supply header (dashed, near top) -->
+    <path d="M104 28 h94" fill="none" stroke="var(--oak-deep,#5a3a12)" stroke-width="0.65" stroke-dasharray="3,4" opacity="0.26"/>
+    <text class="dim" x="110" y="24">eau chaude</text>
   </svg>`;
 }
 
 function cellarScene() {
+  /* CCT/BBT: already gravure via svg_cct()/svg_bbt() PHP on the detail panel.
+   * Overview croqui re-draws them using cylGravure for visual consistency.
+   * YT (yeast tank): gravure-dense treatment added here. */
   return `<svg viewBox="0 0 860 440" width="100%" height="100%" class="sdm-draw" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
+    ${sceneDefs()}
     <line class="ground" x1="18" y1="418" x2="842" y2="418"/>
+    <!-- CCT translate(70,14) — cylindrical with cone bottom -->
     <g transform="translate(70,14)">
-      <path class="ink" d="M72 68 Q110 42 148 68"/><ellipse class="ink-2" cx="110" cy="68" rx="38" ry="6"/>
-      <path class="ground" d="M72 68 V224"/><path class="ground" d="M148 68 V224"/>
-      ${cylShade(77,143,74,220,5)}
-      <line class="band-oak" x1="77" y1="104" x2="143" y2="104"/><line class="band-oak" x1="77" y1="112" x2="143" y2="112"/>
+      ${cylGravure(72,148,68,224,0.30,0.22)}
+      <path class="ink" d="M72 68 Q110 42 148 68"/>
+      <ellipse class="ink-2" cx="110" cy="68" rx="38" ry="6"/>
+      <rect x="72" y="68" width="76" height="156" fill="none" stroke="var(--oak-deep,#5a3a12)" stroke-width="1.85" stroke-linejoin="round"/>
+      <rect x="72" y="62" width="76" height="13" fill="url(#bh_pd)" opacity="0.8"/>
+      ${weldSeam(72,148,104)}
+      <line class="band-oak" x1="77" y1="104" x2="143" y2="104"/>
+      <line class="band-oak" x1="77" y1="112" x2="143" y2="112"/>
       <path class="ground" d="M72 224 L110 318"/><path class="ground" d="M148 224 L110 318"/>
       ${valve(110,328,'down',.95)}
       <path class="ground" d="M78 220 L58 402"/><path class="ground" d="M142 220 L162 402"/>
       <line class="ground" x1="42" y1="402" x2="178" y2="402"/>
       ${dim(64,60,'CCT','dim-o')}
     </g>
+    <!-- BBT translate(336,46) — cylindrical with domed bottom -->
     <g transform="translate(336,46)">
-      <path class="ink" d="M38 72 Q110 20 182 72"/><ellipse class="ink-2" cx="110" cy="72" rx="72" ry="10"/>
-      <path class="ground" d="M38 72 V240"/><path class="ground" d="M182 72 V240"/>
-      ${cylShade(43,177,78,236,9)}
-      <line class="band-bbt" x1="43" y1="108" x2="177" y2="108"/><line class="band-bbt" x1="43" y1="117" x2="177" y2="117"/>
+      ${cylGravure(38,182,72,240,0.28,0.20)}
+      <path class="ink" d="M38 72 Q110 20 182 72"/>
+      <ellipse class="ink-2" cx="110" cy="72" rx="72" ry="10"/>
+      <rect x="38" y="72" width="144" height="168" fill="none" stroke="var(--oak-deep,#5a3a12)" stroke-width="1.85" stroke-linejoin="round"/>
+      <rect x="38" y="66" width="144" height="13" fill="url(#bh_pd)" opacity="0.8"/>
+      ${weldSeam(38,182,108)}
+      <line class="band-bbt" x1="43" y1="108" x2="177" y2="108"/>
+      <line class="band-bbt" x1="43" y1="117" x2="177" y2="117"/>
       <path class="ground" d="M38 240 Q110 268 182 240"/>
       ${valve(110,270,'down',.95)}
       <path class="ground" d="M52 244 L36 402"/><path class="ground" d="M168 244 L184 402"/>
       <line class="ground" x1="20" y1="402" x2="200" y2="402"/>
       ${dim(64,64,'BBT','dim-o')}
     </g>
+    <!-- YT translate(674,96) — yeast tank with cone bottom -->
     <g transform="translate(674,96)">
-      <path class="ink" d="M38 58 Q72 36 106 58"/><ellipse class="ink-2" cx="72" cy="58" rx="34" ry="5.5"/>
-      <path class="ground" d="M38 58 V172"/><path class="ground" d="M106 58 V172"/>
-      ${cylShade(42,102,64,168,4)}
-      <line class="band-hop" x1="42" y1="86" x2="102" y2="86"/><line class="band-hop" x1="42" y1="93" x2="102" y2="93"/>
+      ${cylGravure(38,106,58,172,0.32,0.24)}
+      <path class="ink" d="M38 58 Q72 36 106 58"/>
+      <ellipse class="ink-2" cx="72" cy="58" rx="34" ry="5.5"/>
+      <rect x="38" y="58" width="68" height="114" fill="none" stroke="var(--oak-deep,#5a3a12)" stroke-width="1.85" stroke-linejoin="round"/>
+      <rect x="38" y="52" width="68" height="13" fill="url(#bh_pd)" opacity="0.8"/>
+      ${weldSeam(38,106,86)}
+      <line class="band-hop" x1="42" y1="86" x2="102" y2="86"/>
+      <line class="band-hop" x1="42" y1="93" x2="102" y2="93"/>
       <path class="ground" d="M38 172 L72 232"/><path class="ground" d="M106 172 L72 232"/>
       ${valve(72,242,'down',.85)}
       <path class="ground" d="M46 168 L36 322"/><path class="ground" d="M98 168 L108 322"/>
