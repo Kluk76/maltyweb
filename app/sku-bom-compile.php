@@ -576,7 +576,7 @@ function compile_sku_bom_packaging(
             $composite = _bom_compile_composite(
                 $pdo, $skuId, $compositeSlots[$skuId],
                 $memberLiquidBom, $memberSourceSku,
-                $miById, $skuChoices, $dryRun
+                $miById, $skuChoices, $dryRun, $bindings
             );
             $summary[$skuId] = $composite;
             $totalPkgDeleted  += $composite['pkg_deleted'];
@@ -758,6 +758,11 @@ function compile_sku_bom_packaging(
                     'qty'       => $qty,
                     'volume_hl' => $lineVolumeHl,
                 ];
+            } elseif (isset($skuChoices[$skuId][$slotName]) &&
+                      $skuChoices[$skuId][$slotName]['mi_id_fk'] === null) {
+                // Explicit null override in ref_sku_packaging_choices — intentional absence, skip silently.
+                // No RQ emitted: the operator has declared this slot is intentionally unoccupied.
+                continue;
             } else {
                 // Unresolved → emit RQ (never insert NULL mi_id)
                 $rqRows[] = _bom_build_rq_row(
@@ -997,13 +1002,18 @@ function compile_sku_bom_packaging(
  *                         when two members share an ingredient (e.g. ZEP+MOO both use MALT_PILSENER).
  *   composite_packaging — overwrap lines from ref_sku_packaging_choices for this sku_id
  *                         (source='Packaging', bom_source='composite_packaging', volume_hl=NULL)
+ *                       + member container materials per slot (bottle×units, cap×units, label×units)
+ *                         resolved data-driven from ref_packaging_items[member_format_id]
+ *                         + ref_recipe_packaging_bindings (label role) using the same 3-tier
+ *                         precedence as the per-SKU packaging compiler (_bom_resolve_slot).
+ *                         ingredient_raw = '[PREFIX]<slot_name>' for uniqueness across members.
  *
- * Safe-delete predicate: DELETE WHERE sku_id=? AND bom_source IS NULL
- * (clears ALL stale flat rows — both 'Brewing' and 'Packaging' with NULL bom_source —
- *  without touching rows from other SKUs).
+ * Safe-delete predicate: DELETE WHERE sku_id=? AND bom_source IN ('composite_liquid','composite_packaging')
+ * (clears stale composite rows without touching rows from other SKUs).
  *
  * Refuse-don't-NULL: any unresolved member (no liquid BOM source found) or
  * overwrap slot with NULL mi_id_fk → RQ row, not a NULL mi_id BOM line.
+ * Unresolved member container slot (e.g. missing label binding) → RQ row, not NULL.
  *
  * Volume: composites emit NO per-line volume_hl. SKU-level volume lives in
  * v_sku_volume.hl_per_unit_stored (from ref_skus.hl_per_unit), which is correct
@@ -1014,6 +1024,7 @@ function compile_sku_bom_packaging(
  * @param array $sourceSku   From memberSourceSku — recipe_id → sku_code (for reporting).
  * @param array $miById      Full MI index.
  * @param array $skuChoices  ref_sku_packaging_choices index (sku_id → slot_name → row).
+ * @param array $bindings    ref_recipe_packaging_bindings index (recipe_id → role → mi_id_fk).
  */
 function _bom_compile_composite(
     PDO   $pdo,
@@ -1023,7 +1034,8 @@ function _bom_compile_composite(
     array $sourceSku,
     array $miById,
     array $skuChoices,
-    bool  $dryRun
+    bool  $dryRun,
+    array $bindings = []
 ): array {
     // Load SKU metadata (sku_code) for reporting — not gated on recipe_id
     $skuMeta = $pdo->prepare(
@@ -1091,18 +1103,30 @@ function _bom_compile_composite(
         }
     }
 
-    // ── Build composite_packaging lines from ref_sku_packaging_choices ────────
-    // Overwrap items are resolved ONLY from ref_sku_packaging_choices for composite SKUs.
-    // The spec confirms: composites have no we_supply packaging template, so choices are the sole source.
+    // ── Build composite_packaging lines ──────────────────────────────────────
+    // Two sub-sources, both bom_source='composite_packaging', source='Packaging':
+    //
+    //   1. Overwrap items from ref_sku_packaging_choices for this composite sku_id.
+    //      ingredient_raw = plain mi_code (no prefix; unique per composite, not per member).
+    //
+    //   2. Member container items per slot (bottle, cap, label) resolved data-driven from
+    //      ref_packaging_items[member_format_id] using the same 3-tier precedence as the
+    //      per-SKU packaging compiler.  ingredient_raw = '[PREFIX]<slot_name>' to keep
+    //      uniqueness when two members share the same bottle/cap MI.
+    //      Scope filtering: 'always' and 'labelled_only' (decoration_integral=0 for BU/4PB).
+    //      Crown caps use 'we_supply_only' scope — treated as we_supply for composites.
+    //      Volume_hl: NULL on all composite lines (same as liquid lines above).
+    //
     $pkgLines = [];
 
+    // ── 1. Overwrap items from ref_sku_packaging_choices ──────────────────────
     if (isset($skuChoices[$skuId])) {
         foreach ($skuChoices[$skuId] as $slotName => $choice) {
-            $miIdFk    = $choice['mi_id_fk'];
+            $miIdFk     = $choice['mi_id_fk'];
             $qtyPerUnit = (float)$choice['qty_per_unit'];
 
             if ($miIdFk === null) {
-                // Explicit null override — skip (intentional absence)
+                // Explicit null override — intentional absence, skip silently.
                 continue;
             }
             $mi = $miById[$miIdFk] ?? null;
@@ -1119,8 +1143,7 @@ function _bom_compile_composite(
                 'mi_code'        => $mi['mi_id'],
                 'cat_name'       => $mi['cat_name'] ?? 'Packaging',
                 'qty'            => $qtyPerUnit,
-                'slot_name'      => $slotName,
-                'ingredient_raw' => $mi['mi_id'],  // overwrap: use plain mi_code (no prefix, unique per composite)
+                'ingredient_raw' => $mi['mi_id'],  // plain mi_code: unique per composite overwrap
             ];
         }
     } else {
@@ -1132,6 +1155,142 @@ function _bom_compile_composite(
             "Composite SKU {$skuCode} has no rows in ref_sku_packaging_choices. " .
             "Operator must add the overwrap MI binding(s) via Salle de contrôle → Recettes → Formats."
         );
+    }
+
+    // ── 2. Member container items per slot ────────────────────────────────────
+    // Collect unique member format IDs across all slots, then load their packaging items
+    // and template decoration flag once — amortised across all members of this composite.
+    $memberFormatIds = array_values(array_unique(array_column($slots, 'member_format_id')));
+    $memberFormatItems     = [];  // format_id → [items]
+    $memberFormatDecoInteg = [];  // format_id → bool decoration_integral
+
+    if (!empty($memberFormatIds)) {
+        $mfp = implode(',', array_fill(0, count($memberFormatIds), '?'));
+        $mfItemStmt = $pdo->prepare(
+            "SELECT id, format_id, slot_name, qty_per_unit, mi_filter_pattern,
+                    default_mi_id_fk, slot_scope, display_order
+               FROM ref_packaging_items
+              WHERE format_id IN ({$mfp})
+                AND (effective_until IS NULL OR effective_until > CURDATE())
+              ORDER BY format_id, display_order"
+        );
+        $mfItemStmt->execute($memberFormatIds);
+        foreach ($mfItemStmt->fetchAll(\PDO::FETCH_ASSOC) as $item) {
+            $memberFormatItems[(int)$item['format_id']][] = $item;
+        }
+
+        // Load decoration_integral from the we_supply template (same gate used for solo SKUs).
+        $mfTplStmt = $pdo->prepare(
+            "SELECT format_id, decoration_integral
+               FROM ref_packaging_bom_templates
+              WHERE format_id IN ({$mfp})
+                AND supply = 'we_supply'
+                AND is_active = 1"
+        );
+        $mfTplStmt->execute($memberFormatIds);
+        foreach ($mfTplStmt->fetchAll(\PDO::FETCH_ASSOC) as $tpl) {
+            $memberFormatDecoInteg[(int)$tpl['format_id']] = (bool)(int)$tpl['decoration_integral'];
+        }
+    }
+
+    foreach ($slots as $slot) {
+        $recipeId       = (int)$slot['recipe_id'];
+        $unitsPerRecipe = (int)$slot['units_per_recipe'];
+        $memberFormatId = (int)$slot['member_format_id'];
+        $prefix         = strtoupper($slot['sku_prefix']);
+
+        $items      = $memberFormatItems[$memberFormatId] ?? [];
+        $decoInteg  = $memberFormatDecoInteg[$memberFormatId] ?? false;
+
+        foreach ($items as $item) {
+            $slotName = $item['slot_name'];
+            $scope    = $item['slot_scope'];
+            // Scope: always → include; labelled_only → include when not decoration_integral;
+            // we_supply_only → include (composites are we-supply by definition).
+            // Any other scope value → include (safe default).
+            if ($scope === 'labelled_only' && $decoInteg) {
+                continue;
+            }
+
+            // Quantity: per-unit quantity from template × units_per_recipe (members per composite unit).
+            $itemQty  = (float)$item['qty_per_unit'] * $unitsPerRecipe;
+
+            // Resolve MI using the same 3-tier precedence as _bom_resolve_slot(),
+            // but WITHOUT scotch alternation (member containers have no scotch slot).
+            // Tier 1: SKU-level override (skuChoices keyed on composite sku_id — overwrap choices
+            //         are keyed on the same sku_id, but slot names differ so no collision).
+            // Note: member-container slot names (bottle, crown_caps, label, holder) are distinct
+            // from overwrap slot names (outer_box, scotch_eshop, verre, etc.).
+            $resolvedMiId = null;
+            if (isset($skuChoices[$skuId][$slotName])) {
+                $c = $skuChoices[$skuId][$slotName];
+                if ($c['mi_id_fk'] === null) {
+                    // Explicit null override for this member slot — intentional absence.
+                    continue;
+                }
+                $resolvedMiId = (int)$c['mi_id_fk'];
+            }
+
+            // Tier 2: recipe binding by role (role name = slot_name: label, bottle, crown_caps, holder).
+            if ($resolvedMiId === null && isset($bindings[$recipeId][$slotName])) {
+                $resolvedMiId = $bindings[$recipeId][$slotName];
+            }
+
+            // Tier 3: template default / pattern resolution.
+            if ($resolvedMiId === null) {
+                $pattern = $item['mi_filter_pattern'] ?? '';
+                if (!str_contains($pattern, '{beer}')) {
+                    // Fixed slot — use default_mi_id_fk.
+                    $resolvedMiId = $item['default_mi_id_fk'] !== null ? (int)$item['default_mi_id_fk'] : null;
+                } else {
+                    // {beer} pattern — substitute prefix.
+                    $resolved      = str_replace('{beer}', $prefix, $pattern);
+                    $resolvedExact = rtrim($resolved, '%');
+                    $resolvedMiId  = _bom_lookup_mi_id($resolvedExact, $miById);
+                    if ($resolvedMiId === null && str_ends_with($resolved, '%')) {
+                        foreach ($miById as $candidateId => $candidate) {
+                            if (_bom_mi_id_matches_like($candidate['mi_id'], $resolved)) {
+                                $resolvedMiId = $candidateId;
+                                break;
+                            }
+                        }
+                    }
+                    // Fall back to template default if pattern finds nothing.
+                    if ($resolvedMiId === null && $item['default_mi_id_fk'] !== null) {
+                        $resolvedMiId = (int)$item['default_mi_id_fk'];
+                    }
+                }
+            }
+
+            if ($resolvedMiId === null) {
+                // Refuse-don't-NULL: emit RQ.
+                $rqRows[] = _bom_build_composite_rq(
+                    $skuId, $skuCode, $formatCode, $prefix, $recipeId,
+                    $sourceSku[$recipeId] ?? "(recipe_id={$recipeId})",
+                    'composite_member_slot_unresolved',
+                    "Member {$prefix} (recipe {$recipeId}, format_id {$memberFormatId}): " .
+                    "slot '{$slotName}' could not be resolved. " .
+                    "Add a ref_recipe_packaging_bindings row (role='{$slotName}') or " .
+                    "a ref_sku_packaging_choices override for sku_id={$skuId}."
+                );
+                continue;
+            }
+
+            $mi = $miById[$resolvedMiId] ?? null;
+            if ($mi === null) {
+                continue; // MI disappeared from index — extremely unlikely
+            }
+
+            // ingredient_raw: '[PREFIX]<slot_name>' keeps uniqueness when two members share
+            // the same fixed MI (e.g. PKG_BOT_PIVO) across different recipes.
+            $pkgLines[] = [
+                'mi_id_fk'       => $resolvedMiId,
+                'mi_code'        => $mi['mi_id'],
+                'cat_name'       => $mi['cat_name'] ?? 'Packaging',
+                'qty'            => $itemQty,
+                'ingredient_raw' => "[{$prefix}]{$slotName}",
+            ];
+        }
     }
 
     // ── Snapshot liquid baseline (counts all non-Packaging rows regardless of bom_source) ──
