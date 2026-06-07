@@ -2472,53 +2472,126 @@ function compile_sku_bom_liquid(
         $currentLiq = [];
     }
 
-    // ── 3. Per-recipe: compute volume-weighted trailing average per-HL ─────────
+    // ── 3. Per-recipe: build recipe-level basis-batch set ────────────────────
+    //
+    // basisBatches[recipe_id] = ordered array of batch ids (most-recent first, ≤8)
+    // that satisfy ALL of:
+    //   (a) cooling HL > 0 (has a batchHl entry, after floor-guard filtering)
+    //   (b) at least one observed ingredient row (v1 malt/kettle-hops, v2 non-malt/hops,
+    //       or dry-hop via dhMerged)
+    //
+    // This is the SHARED window for every MI of a recipe — brewhouse AND dry-hop stages.
+    // A MI that has no qty in the basis window simply drops out (stale retired ingredients
+    // age out naturally rather than pulling in old batches outside the window).
+    //
+    // Rule ①: per_hl = Σ(MI qty over surviving presentBatches) ÷ Σ(HL over ALL basisBatches)
+    // "Absence dilutes": a batch where the MI was not used counts as qty=0 in the numerator
+    // but its HL still enters the denominator. This yields the average actual practice per HL
+    // across the window (vs the old per-present-batch weighting that inflated retired MIs).
+    $recipeBasisBatches = [];  // recipe_id → [batch, ...] sorted descending (most recent first)
+    foreach ($recipeIds as $recipeId) {
+        $recipeId = (int)$recipeId;
+        $hlMap    = $batchHl[$recipeId] ?? [];
 
-    /**
-     * Given an array of (batch → {qty, unit}) and the batchHl map for this recipe,
-     * return a volume-weighted per-HL in the source unit (qty_in_unit / hl).
-     * Returns null if no usable batches with HL.
-     *
-     * Outlier rejection: for windows ≥ 4 brews, drop batches where per_hl > median + 2×MAD
-     * or per_hl < max(0, median - 2×MAD). Minimum 1 batch accepted after rejection.
-     *
-     * @param array $batchQty  batch → [qty=>float, unit=>string]
-     * @param array $hlMap     batch → float (total HL)
-     * @param int   $maxWindow max brews to include (most recent first by batch number)
-     * @return array|null {per_hl: float, n_brews: int, n_window: int, unit: string}
-     */
-    // Inline as a closure to avoid polluting global namespace
-    $computePerHl = function(array $batchQty, array $hlMap, int $maxWindow = 8): ?array {
-        // Intersect: only batches that have BOTH qty and HL
-        $usable = [];
-        foreach ($batchQty as $batch => $data) {
-            if (isset($hlMap[$batch]) && $hlMap[$batch] > 0) {
-                $usable[$batch] = [
-                    'qty'  => $data['qty'],
-                    'unit' => $data['unit'],
-                    'hl'   => $hlMap[$batch],
-                ];
+        // Collect all batches with HL > 0 (already floor-guard filtered above)
+        $candidateBatches = array_keys($hlMap);
+
+        // Keep only batches with at least one observed ingredient row in any source
+        $withIngredients = [];
+        foreach ($candidateBatches as $batch) {
+            $hasObs = false;
+            // v1: malt or hops_kettle
+            if (isset($v1RawRows[$recipeId][$batch]) && !empty($v1RawRows[$recipeId][$batch])) {
+                $hasObs = true;
+            }
+            // v2: mineral / process / adjunct
+            if (!$hasObs && isset($v2RawRows[$recipeId][$batch]) && !empty($v2RawRows[$recipeId][$batch])) {
+                $hasObs = true;
+            }
+            // dry-hop
+            if (!$hasObs && isset($dhMerged[$recipeId][$batch]) && !empty($dhMerged[$recipeId][$batch])) {
+                $hasObs = true;
+            }
+            if ($hasObs) {
+                $withIngredients[] = $batch;
             }
         }
-        if (empty($usable)) {
+
+        // Sort descending by batch number (most recent first), cap at 8
+        usort($withIngredients, fn($a, $b) => (int)$b - (int)$a);
+        $recipeBasisBatches[$recipeId] = array_slice($withIngredients, 0, 8);
+    }
+
+    // ── 3b. Volume-weighted per-HL aggregator (recipe-level window semantics) ──
+    //
+    // $computePerHl now takes the recipe's pre-selected $basisBatches (ordered ≤8 set),
+    // the per-MI $batchQty data, and the full $hlMap.
+    //
+    // Algorithm:
+    //   1. presentBatches = basisBatches where this MI has qty > 0
+    //      → empty: return null (MI drops out; stale / retired ingredient)
+    //   2. Outlier rejection (≥4 present values): keep today's 2×MAD fences
+    //      among presentBatches' per-batch per-HL values; rejected batches'
+    //      qty is excluded from the numerator for that MI.
+    //   3. per_hl = Σ(surviving qty_i) ÷ Σ(HL over ALL basisBatches)
+    //      Denominator = full basis-window HL, not just the present/surviving batches.
+    //      Absence dilutes: a basis batch where the MI was zero contributes 0 to
+    //      numerator but its full HL to denominator → reflects true window practice.
+    //
+    // @param array  $basisBatches  Ordered list of batch ids for this recipe (≤8, desc)
+    // @param array  $batchQty      batch → [qty=>float, unit=>string]  (only batches with qty>0)
+    // @param array  $hlMap         batch → float HL
+    // @return array|null  {per_hl, n_brews, n_window, unit, basis_window_hl}
+    $computePerHl = function(array $basisBatches, array $batchQty, array $hlMap): ?array {
+        if (empty($basisBatches)) {
             return null;
         }
 
-        // Sort by batch descending (most recent first), take up to $maxWindow
-        uksort($usable, function($a, $b) {
-            return (int)$b - (int)$a;
-        });
-        $window = array_slice($usable, 0, $maxWindow, true);
-        $nWindow = count($window);
+        // Denominator: ΣHL over ALL basis batches (fixed for this recipe's window)
+        $totalBasisHl = 0.0;
+        foreach ($basisBatches as $batch) {
+            $totalBasisHl += $hlMap[$batch] ?? 0.0;
+        }
+        if ($totalBasisHl <= 0.0) {
+            return null;
+        }
+        $nWindow = count($basisBatches);
 
-        // Compute per_hl per batch (in source unit)
-        $perHls = [];
-        foreach ($window as $batch => $data) {
-            $perHls[$batch] = $data['qty'] / $data['hl'];
+        // Present batches: basis batches where this MI has qty > 0
+        $presentData = [];  // batch → {qty, unit, hl}
+        $unit = null;
+        foreach ($basisBatches as $batch) {
+            if (!isset($batchQty[$batch]) || $batchQty[$batch]['qty'] <= 0) {
+                continue;  // MI absent in this basis batch — contributes 0 to numerator
+            }
+            $presentData[$batch] = [
+                'qty'  => $batchQty[$batch]['qty'],
+                'unit' => $batchQty[$batch]['unit'],
+                'hl'   => $hlMap[$batch] ?? 0.0,
+            ];
+            if ($unit === null) {
+                $unit = $batchQty[$batch]['unit'];
+            }
         }
 
-        // Outlier rejection (only when ≥ 4 brews)
-        $filtered = $perHls;
+        // Empty presentBatches → MI has no usage in the recipe's basis window → drop it
+        if (empty($presentData)) {
+            return null;
+        }
+
+        // Compute per_hl per present batch (in source unit / HL)
+        $perHls = [];
+        foreach ($presentData as $batch => $data) {
+            if ($data['hl'] > 0) {
+                $perHls[$batch] = $data['qty'] / $data['hl'];
+            }
+        }
+        if (empty($perHls)) {
+            return null;
+        }
+
+        // Outlier rejection (only when ≥ 4 present values)
+        $survivingBatches = array_keys($perHls);
         if (count($perHls) >= 4) {
             $vals = array_values($perHls);
             sort($vals);
@@ -2527,7 +2600,6 @@ function compile_sku_bom_liquid(
             $median = ($n % 2 === 0)
                 ? ($vals[$mid - 1] + $vals[$mid]) / 2.0
                 : $vals[$mid];
-            // Compute MAD
             $deviations = array_map(fn($v) => abs($v - $median), $vals);
             sort($deviations);
             $mad = ($n % 2 === 0)
@@ -2535,36 +2607,28 @@ function compile_sku_bom_liquid(
                 : $deviations[$mid];
             $loFence = max(0.0, $median - 2.0 * $mad);
             $hiFence = $median + 2.0 * $mad;
-            // Only reject if at least 1 brew would survive rejection
             $survivors = array_filter($perHls, fn($v) => $v >= $loFence && $v <= $hiFence);
             if (count($survivors) >= 1) {
-                $filtered = $survivors;
+                $survivingBatches = array_keys($survivors);
             }
-            // else: keep all (pathological case — all values are outliers by MAD)
+            // else: pathological — keep all present batches
         }
 
-        // Volume-weighted average: SUM(perHl_i × hl_i) / SUM(hl_i)
-        $sumWeightedPerHl = 0.0;
-        $sumHl = 0.0;
-        $unit = null;
-        foreach ($filtered as $batch => $_) {
-            $bData = $window[$batch];
-            $sumWeightedPerHl += ($bData['qty'] / $bData['hl']) * $bData['hl'];
-            $sumHl += $bData['hl'];
-            if ($unit === null) {
-                $unit = $bData['unit'];
-            }
+        // Numerator: Σ qty over surviving present batches
+        $sumQty = 0.0;
+        foreach ($survivingBatches as $batch) {
+            $sumQty += $presentData[$batch]['qty'] ?? 0.0;
         }
 
-        if ($sumHl <= 0.0) {
-            return null;
-        }
-
+        // per_hl = Σ(surviving qty) ÷ Σ(ALL basis-window HL)
+        // "Absence dilutes": batches where MI was absent contribute 0 to numerator
+        // but their HL enters the denominator — per_hl reflects true average practice.
         return [
-            'per_hl'     => $sumWeightedPerHl / $sumHl,
-            'n_brews'    => count($filtered),
-            'n_window'   => $nWindow,
-            'unit'       => $unit ?? 'g',
+            'per_hl'           => $sumQty / $totalBasisHl,
+            'n_brews'          => count($survivingBatches),
+            'n_window'         => $nWindow,
+            'unit'             => $unit ?? 'g',
+            'basis_window_hl'  => $totalBasisHl,
         ];
     };
 
@@ -2699,9 +2763,9 @@ function compile_sku_bom_liquid(
                     $globalUnresolvedMi[] = "recipe={$recipeId} MALT mi_id_fk={$miId} (not in ref_mi)";
                     continue;
                 }
-                $result = $computePerHl($batchData, $hlMap);
+                $result = $computePerHl($recipeBasisBatches[$recipeId] ?? [], $batchData, $hlMap);
                 if ($result === null) {
-                    continue; // no HL data for any of its brews — skip (not gap-fillable per spec)
+                    continue; // MI absent from basis window — stale/retired, drop it
                 }
                 $cost = $computeCost($result['per_hl'], $result['unit'], $mi);
                 $proposed[$miId] = [
@@ -2733,9 +2797,9 @@ function compile_sku_bom_liquid(
                     $globalUnresolvedMi[] = "recipe={$recipeId} hops_kettle mi_id_fk={$miId} (not in ref_mi)";
                     continue;
                 }
-                $result = $computePerHl($batchData, $hlMap);
+                $result = $computePerHl($recipeBasisBatches[$recipeId] ?? [], $batchData, $hlMap);
                 if ($result === null) {
-                    continue;
+                    continue; // MI absent from basis window — stale/retired, drop it
                 }
                 $cost = $computeCost($result['per_hl'], $result['unit'], $mi);
                 $proposed[$miId] = [
@@ -2774,9 +2838,9 @@ function compile_sku_bom_liquid(
                     if (isset($proposed[$miId])) {
                         continue; // malt/hops from v1 already set
                     }
-                    $result = $computePerHl($batchData, $hlMap);
+                    $result = $computePerHl($recipeBasisBatches[$recipeId] ?? [], $batchData, $hlMap);
                     if ($result === null) {
-                        // No HL → try recipe gap-fill below
+                        // MI absent from basis window or no HL → try recipe gap-fill below
                         continue;
                     }
                     $cost = $computeCost($result['per_hl'], $result['unit'], $mi);
@@ -2836,11 +2900,12 @@ function compile_sku_bom_liquid(
         // being collapsed into a single line. Keyed as (mi_id * -1 - 1) to avoid
         // collision with the brewhouse $proposed keying (which uses mi_id as key).
         // The outer SKU loop uses a 'stage'-keyed composite key for the proposed lines array.
-        $dhProposed = [];  // dh_key → proposal (dh_key = 'dh:' . $miId for uniqueness)
+        $dhProposed  = [];  // dh_key → proposal (dh_key = 'dh:' . $miId for uniqueness)
         $dhBatchData = [];  // mi_id → batch → [qty, unit]
+        $dhBasisSet  = array_flip($recipeBasisBatches[$recipeId] ?? []);  // O(1) lookup
         foreach ($dhMerged[$recipeId] ?? [] as $batch => $mis) {
-            // Guard: only include batches in batchHl (same cooling-anchored window)
-            if (!isset($hlMap[$batch])) {
+            // Guard: only include batches that are in the shared recipe basis window
+            if (!isset($dhBasisSet[$batch])) {
                 continue;
             }
             foreach ($mis as $miId => $data) {
@@ -2853,7 +2918,7 @@ function compile_sku_bom_liquid(
                 $globalUnresolvedMi[] = "recipe={$recipeId} hops_dry mi_id_fk={$miId} (not in ref_mi)";
                 continue;
             }
-            $result = $computePerHl($batchQty, $hlMap);
+            $result = $computePerHl($recipeBasisBatches[$recipeId] ?? [], $batchQty, $hlMap);
             if ($result === null) {
                 continue;
             }
@@ -3201,7 +3266,7 @@ SQL;
         'summary'              => $summaryOut,
         'alternative_validation' => $altValidation,
         'apply_predicate_note' => $applyPredicate,
-        'aggregator_location'  => 'compile_sku_bom_liquid → $computePerHl closure (volume-weighted trailing average with 2×MAD outlier rejection). Reuse by extracting to _liq_compute_per_hl() if a drift surface needs the same aggregation.',
+        'aggregator_location'  => 'compile_sku_bom_liquid → $computePerHl closure. Recipe-level basis window (≤8 most-recent batches with HL+any-observed-ingredient, shared across all stages). Per MI: presentBatches = basis ∩ {MI qty > 0}; empty → MI drops out. Outlier rejection (2×MAD) on presentBatches per-HL values. per_hl = Σ(surviving qty) ÷ Σ(ALL basis-window HL) — absence dilutes. Reuse by extracting to _liq_compute_per_hl() if a drift surface needs the same aggregation.',
     ];
 }
 
