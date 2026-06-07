@@ -140,7 +140,7 @@ $caCssBust  = @filemtime(__DIR__ . '/../css/classification-appareil.css') ?: tim
 <main class="auth__shell">
 
   <header class="auth__hero">
-    <div class="auth__eyebrow">— accès · La Nébuleuse</div>
+    <div class="auth__eyebrow">— accès · <?= $biName ?></div>
     <h1 class="auth__mark">
       <span class="auth__a">Malty</span><span class="auth__b">Task</span>
     </h1>

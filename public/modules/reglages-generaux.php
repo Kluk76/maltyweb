@@ -976,7 +976,7 @@ $_breweryId = brewery_identity();
   <nav class="nav-rail">
     <div class="nav-section-label">Réglages généraux</div>
 
-    <button type="button" class="nav-item<?= $initialSec === 'general' ? ' active' : '' ?>" data-sec="general" onclick="switchSection('general')">
+    <button type="button" class="nav-item<?= $initialSec === 'general' ? ' active' : '' ?>" data-sec="general" onclick="switchSection('general')"<?= $initialSec === 'general' ? ' aria-current="true"' : '' ?>>
       <span class="nav-icon">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
           <circle cx="8" cy="8" r="5.5" stroke="currentColor" stroke-width="1.2"/>
@@ -987,7 +987,7 @@ $_breweryId = brewery_identity();
       Données générales
     </button>
 
-    <button type="button" class="nav-item<?= $initialSec === 'pkg_clients' ? ' active' : '' ?>" data-sec="pkg_clients" onclick="switchSection('pkg_clients')">
+    <button type="button" class="nav-item<?= $initialSec === 'pkg_clients' ? ' active' : '' ?>" data-sec="pkg_clients" onclick="switchSection('pkg_clients')"<?= $initialSec === 'pkg_clients' ? ' aria-current="true"' : '' ?>>
       <span class="nav-icon">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
           <rect x="1.5" y="4.5" width="13" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
@@ -999,7 +999,7 @@ $_breweryId = brewery_identity();
       <span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.06em;background:color-mix(in srgb, var(--hop) 18%, transparent);color:var(--hop);padding:2px 7px;border-radius:10px;"><?= count($packagingClients) ?></span>
     </button>
 
-    <button type="button" class="nav-item<?= $initialSec === 'users' ? ' active' : '' ?>" data-sec="users" onclick="switchSection('users')">
+    <button type="button" class="nav-item<?= $initialSec === 'users' ? ' active' : '' ?>" data-sec="users" onclick="switchSection('users')"<?= $initialSec === 'users' ? ' aria-current="true"' : '' ?>>
       <span class="nav-icon">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
           <circle cx="8" cy="5.5" r="2.8" stroke="currentColor" stroke-width="1.2"/>
@@ -1010,7 +1010,7 @@ $_breweryId = brewery_identity();
       <span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.06em;background:color-mix(in srgb, var(--bbt) 18%, transparent);color:var(--bbt);padding:2px 7px;border-radius:10px;"><?= count($users) ?></span>
     </button>
 
-    <button type="button" class="nav-item<?= $initialSec === 'access' ? ' active' : '' ?>" data-sec="access" onclick="switchSection('access')">
+    <button type="button" class="nav-item<?= $initialSec === 'access' ? ' active' : '' ?>" data-sec="access" onclick="switchSection('access')"<?= $initialSec === 'access' ? ' aria-current="true"' : '' ?>>
       <span class="nav-icon">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
           <rect x="3" y="7" width="10" height="7" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
@@ -2074,7 +2074,14 @@ $_breweryId = brewery_identity();
   // ── Section switching (nav + panel) ──────────────────────────────────────
   function switchSection(sec) {
     document.querySelectorAll('.nav-item').forEach(function(n) {
-      n.classList.toggle('active', n.dataset.sec === sec);
+      var isActive = n.dataset.sec === sec;
+      n.classList.toggle('active', isActive);
+      // RG-05: aria-current="true" on the active section button (section-within-page)
+      if (isActive) {
+        n.setAttribute('aria-current', 'true');
+      } else {
+        n.removeAttribute('aria-current');
+      }
     });
     document.querySelectorAll('.section-panel').forEach(function(p) {
       p.classList.toggle('active', p.id === 'sec-' + sec);

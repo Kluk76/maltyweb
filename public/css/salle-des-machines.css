@@ -261,13 +261,18 @@ body.salle-des-machines .sdm-back {
   background: none;
   border: 1px solid var(--hairline-2);
   border-radius: 7px;
-  padding: 7px 12px;
+  /* SDM-04: pad hit area to ≥44px without growing the visual glyph */
+  padding: 10px 14px;
+  min-height: 44px;
   cursor: pointer;
   text-transform: uppercase;
   transition: .2s;
   text-decoration: none;
 }
-body.salle-des-machines .sdm-back:hover { color: var(--ink); border-color: var(--oak); }
+/* SDM-03: gate hover behind pointer:fine so tap-ghost doesn't persist on tablets */
+@media (hover: hover) and (pointer: fine) {
+  body.salle-des-machines .sdm-back:hover { color: var(--ink); border-color: var(--oak); }
+}
 body.salle-des-machines .sdm-detail-head h1 {
   font-family: "Fraunces", serif;
   font-variation-settings: "opsz" 144;

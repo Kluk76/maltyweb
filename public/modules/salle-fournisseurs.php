@@ -340,8 +340,8 @@ header("Content-Type: text/html; charset=utf-8");
 <div class="sf-toast" id="sf-toast" role="status" aria-live="polite"></div>
 
 <?php if ($dbError !== null): ?>
-<div style="padding:40px;color:var(--ember);font-family:'JetBrains Mono',monospace;font-size:12px;">
-  Erreur DB : <?= $dbError ?>
+<div class="sf-db-error" role="alert" id="main-content">
+  Erreur DB : <?= htmlspecialchars((string) $dbError, ENT_QUOTES, 'UTF-8') ?>
 </div>
 <?php else: ?>
 

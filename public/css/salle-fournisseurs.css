@@ -53,6 +53,15 @@ body.salle-fournisseurs .sf-board::before {
   mask-image: radial-gradient(120% 100% at 50% 40%, #000 55%, transparent 92%);
 }
 
+/* ── DB error fallback (SF-03: replaces inline style, adds role=alert semantics) ── */
+body.salle-fournisseurs .sf-db-error {
+  padding: 40px;
+  color: var(--ember);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  letter-spacing: .04em;
+}
+
 /* ── toast ─────────────────────────────────────────────────────────── */
 body.salle-fournisseurs .sf-toast {
   position: fixed;
@@ -174,6 +183,8 @@ body.salle-fournisseurs .sf-gov-num {
   font-weight: 500;
   color: var(--ink-soft);
   line-height: 1;
+  /* SF-04: tabular figures prevent column-width shift as counts change */
+  font-variant-numeric: tabular-nums;
 }
 body.salle-fournisseurs .sf-gov-lbl {
   font-family: "JetBrains Mono", monospace;

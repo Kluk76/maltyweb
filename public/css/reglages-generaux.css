@@ -280,7 +280,8 @@ body.rg-page .rg-input {
   font-family: "JetBrains Mono", monospace; font-size: 12px; color: var(--ink);
   outline: none; transition: border-color .2s;
 }
-body.rg-page .rg-input:focus { border-color: var(--rg-accent-deep); box-shadow: 0 0 0 2px var(--rg-accent-glow); }
+/* RG-03: :focus-visible avoids showing the ring on mouse click, keyboard-only triggers it */
+body.rg-page .rg-input:focus-visible { border-color: var(--rg-accent-deep); box-shadow: 0 0 0 2px var(--rg-accent-glow); }
 
 body.rg-page .rg-select {
   width: 100%; background: color-mix(in srgb, var(--bg) 80%, var(--bg-elev)); border: 1px solid var(--hairline-2);
@@ -293,7 +294,7 @@ body.rg-page .rg-select {
   background-position: right 10px center;
   padding-right: 28px;
 }
-body.rg-page .rg-select:focus { border-color: var(--rg-accent-deep); box-shadow: 0 0 0 2px var(--rg-accent-glow); }
+body.rg-page .rg-select:focus-visible { border-color: var(--rg-accent-deep); box-shadow: 0 0 0 2px var(--rg-accent-glow); }
 body.rg-page .rg-select option { background: var(--bg-elev); color: var(--ink); }
 
 /* ── Toggle (boolean) ────────────────────────────────────────────────────────── */

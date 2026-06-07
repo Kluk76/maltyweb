@@ -98,13 +98,15 @@ body.zeppelin-hub .family-btn.fam-sdm .fam-dot {
   background: var(--steel-mid);
 }
 
-body.zeppelin-hub .family-btn.fam-sdm:hover {
-  color: var(--ink-soft);
-  background: color-mix(in srgb, var(--steel) 10%, transparent);
-}
+@media (hover: hover) and (pointer: fine) {
+  body.zeppelin-hub .family-btn.fam-sdm:hover {
+    color: var(--ink-soft);
+    background: color-mix(in srgb, var(--steel) 10%, transparent);
+  }
 
-body.zeppelin-hub .family-btn.fam-sdm:hover .fam-dot {
-  box-shadow: 0 0 7px var(--steel-mid);
+  body.zeppelin-hub .family-btn.fam-sdm:hover .fam-dot {
+    box-shadow: 0 0 7px var(--steel-mid);
+  }
 }
 
 /* Contrôle chip */
@@ -112,13 +114,15 @@ body.zeppelin-hub .family-btn.fam-sdc .fam-dot {
   background: var(--cold);
 }
 
-body.zeppelin-hub .family-btn.fam-sdc:hover {
-  color: var(--ink-soft);
-  background: color-mix(in srgb, var(--bbt) 10%, transparent);
-}
+@media (hover: hover) and (pointer: fine) {
+  body.zeppelin-hub .family-btn.fam-sdc:hover {
+    color: var(--ink-soft);
+    background: color-mix(in srgb, var(--bbt) 10%, transparent);
+  }
 
-body.zeppelin-hub .family-btn.fam-sdc:hover .fam-dot {
-  box-shadow: 0 0 7px var(--cold);
+  body.zeppelin-hub .family-btn.fam-sdc:hover .fam-dot {
+    box-shadow: 0 0 7px var(--cold);
+  }
 }
 
 /* Cockpit chip — disabled (à venir) */
@@ -187,11 +191,13 @@ body.zeppelin-hub .sh-card {
   transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
 }
 
-body.zeppelin-hub .sh-card:hover {
-  border-color: var(--oak);
-  background: color-mix(in srgb, var(--oak) 6%, var(--bg-elev));
-  box-shadow: 0 4px 16px color-mix(in srgb, var(--ink) 12%, transparent);
-  text-decoration: none;
+@media (hover: hover) and (pointer: fine) {
+  body.zeppelin-hub .sh-card:hover {
+    border-color: var(--oak);
+    background: color-mix(in srgb, var(--oak) 6%, var(--bg-elev));
+    box-shadow: 0 4px 16px color-mix(in srgb, var(--ink) 12%, transparent);
+    text-decoration: none;
+  }
 }
 
 body.zeppelin-hub .sh-card__icon {
