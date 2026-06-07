@@ -626,6 +626,45 @@ body.expeditions .exp-line-comment {
   grid-column: 1 / -1;
 }
 
+/* ── Live stock hints (advisory, amber on over-stock) ──────────────────────── */
+/* .exp-stock-hint sits inside the qty op-form__field div, below the qty input.
+   Advisory only — never blocks submission. Amber is informational, NOT alarming. */
+body.expeditions .exp-stock-hint {
+  display: inline-block;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  margin-top: 4px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  line-height: 1.4;
+  transition: background 0.15s, color 0.15s;
+}
+
+body.expeditions .exp-stock-hint--ok {
+  background: color-mix(in srgb, var(--hop) 10%, transparent);
+  color: var(--hop);
+  border: 1px solid color-mix(in srgb, var(--hop) 25%, transparent);
+}
+
+body.expeditions .exp-stock-hint--over {
+  background: color-mix(in srgb, var(--ember) 10%, transparent);
+  color: color-mix(in srgb, var(--ember) 85%, var(--ink));
+  border: 1px solid color-mix(in srgb, var(--ember) 30%, transparent);
+}
+
+/* Aggregate recap warning in the card title */
+body.expeditions .exp-stock-recap-warn {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: color-mix(in srgb, var(--ember) 85%, var(--ink));
+  margin-left: 10px;
+  vertical-align: middle;
+}
+
 /* ── Submit + cancel bar ──────────────────────────────────────────────────── */
 body.expeditions .exp-submit-bar {
   display: flex;

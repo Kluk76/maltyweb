@@ -1120,6 +1120,44 @@ $editLinesJson    = $editLines
         'comment'     => $l['line_comment'] ?? '',
     ], $editLines), $jsonFlags) : '[]';
 
+// ── Live stock map for Saisie form (injected only when view=form) ─────────────
+// Keys: sku_id (int) → {live_futur, physique, anchor_month}
+// fg_stock_compute runs several queries; acceptable for operator-frequency form load.
+// On failure the map stays empty — hints silently absent, form still works.
+$fgStockMapJson   = '{}';
+$fgStockAnchorJson = 'null';
+if ($view === 'form') {
+    try {
+        $fgStockData = fg_stock_compute($pdo);
+        $fgStockMap  = [];
+        foreach ($fgStockData['rows'] as $sr) {
+            $fgStockMap[(int) $sr['sku_id']] = [
+                'live_futur' => (int) round($sr['live_futur']),
+                'physique'   => (int) round($sr['physique']),
+            ];
+        }
+        $fgStockMapJson    = json_encode($fgStockMap, $jsonFlags);
+        $fgStockAnchorJson = json_encode($fgStockData['anchor_month'], $jsonFlags);
+    } catch (Throwable $e) {
+        error_log('[expeditions form stock] ' . $e->getMessage());
+        // Degrade silently — $fgStockMapJson stays '{}'
+    }
+}
+
+// Edit-mode: original line qtys keyed by sku_id so JS can add them back
+// to live_futur (the line's own qty is already counted in open_total_qty,
+// so live_futur is understated by exactly that qty for this order).
+$editOrigQtyJson = '{}';
+if ($view === 'form' && !empty($editLines)) {
+    $origQty = [];
+    foreach ($editLines as $l) {
+        $sid = (int) $l['sku_id_fk'];
+        // Multiple lines for same SKU in the same order are possible — sum them.
+        $origQty[$sid] = ($origQty[$sid] ?? 0) + (float) $l['qty'];
+    }
+    $editOrigQtyJson = json_encode($origQty, $jsonFlags);
+}
+
 $csrf          = csrf_token();
 $active_module = 'expeditions';
 
@@ -1634,6 +1672,14 @@ $isReadOnly = $editOrder !== null
     window.EXP_TRANSPORTERS = <?= $transportersJson ?>;
     window.EXP_EDIT_ORDER   = <?= $editOrderJson ?>;
     window.EXP_EDIT_LINES   = <?= $editLinesJson ?>;
+    // Live stock hints: {sku_id: {live_futur, physique}} + anchor_month string.
+    // Empty object = fg_stock_compute failed; hints silently absent.
+    window.EXP_STOCK_MAP    = <?= $fgStockMapJson ?>;
+    window.EXP_STOCK_ANCHOR = <?= $fgStockAnchorJson ?>;
+    // Edit-mode: {sku_id: original_qty} for this order's own lines.
+    // Lets JS add back the original qty to live_futur so editing doesn't
+    // false-flag its own lines as over-stock.
+    window.EXP_EDIT_ORIG_QTY = <?= $editOrigQtyJson ?>;
   </script>
 
   <?php if ($isReadOnly): ?>
@@ -1789,6 +1835,8 @@ $isReadOnly = $editOrder !== null
           — <span id="exp-recap-count">0</span> ligne<span id="exp-recap-s"></span>
           · <span id="exp-recap-hl">0.00</span> HL
         </span>
+        <span class="exp-stock-recap-warn" id="exp-stock-recap-warn" hidden
+              aria-live="polite">⚠ stock insuffisant sur certaines lignes</span>
       </div>
 
       <div id="exp-lines-container" class="exp-lines-container">

@@ -2,7 +2,8 @@
  * expeditions-form.js — Saisie view JS for Expéditions module.
  *
  * Reads window.EXP_CUSTOMERS, window.EXP_SKUS, window.EXP_TRANSPORTERS,
- * window.EXP_EDIT_ORDER, window.EXP_EDIT_LINES.
+ * window.EXP_EDIT_ORDER, window.EXP_EDIT_LINES, window.EXP_STOCK_MAP,
+ * window.EXP_STOCK_ANCHOR, window.EXP_EDIT_ORIG_QTY.
  *
  * Responsibilities:
  *   - Type toggle (customer ↔ internal channel) binding
@@ -11,6 +12,7 @@
  *   - SKU typeahead per line row
  *   - Dynamic line management (add/remove)
  *   - Live recap (line count + total HL)
+ *   - Live stock hints (live_futur advisory, amber when qty > available)
  *   - Prefill from EXP_EDIT_ORDER / EXP_EDIT_LINES (edit mode)
  *
  * Vanilla JS only — no external libraries.
@@ -27,6 +29,11 @@
   const TRANSPORTERS = window.EXP_TRANSPORTERS || [];
   const EDIT_ORDER   = window.EXP_EDIT_ORDER   || null;
   const EDIT_LINES   = window.EXP_EDIT_LINES   || [];
+  // Live stock: {sku_id: {live_futur, physique}} — empty object if compute failed.
+  const STOCK_MAP    = window.EXP_STOCK_MAP    || {};
+  const STOCK_ANCHOR = window.EXP_STOCK_ANCHOR || null;
+  // Edit-mode: {sku_id: original_qty} for this order's own committed lines.
+  const EDIT_ORIG_QTY = window.EXP_EDIT_ORIG_QTY || {};
 
   /* ── Utility ────────────────────────────────────────────────────────────── */
   function escHtml(s) {
@@ -39,6 +46,86 @@
   }
 
   function qs(sel, root) { return (root || document).querySelector(sel); }
+
+  /* ── Live stock hints ───────────────────────────────────────────────────── */
+  // Advisory only — never blocks submission.
+  // Edit-mode: EDIT_ORIG_QTY[skuId] is the original committed qty for this order.
+  // live_futur already has that qty deducted (it's an open order), so we add
+  // the original back to get the "available for this order" figure.
+
+  const stockRecapWarn = qs('#exp-stock-recap-warn');
+
+  /**
+   * Render (or update) the stock hint span inside a line row.
+   * @param {HTMLElement} row   — the .exp-line-row div
+   * @param {number|null} skuId — currently selected sku_id, or null
+   * @param {number}      qty   — currently entered qty
+   */
+  function renderStockHint(row, skuId, qty) {
+    // Find or create the hint span — it lives inside the qty field div, below the input.
+    // This keeps the hint naturally aligned with the qty value and inside the
+    // existing grid layout (no grid columns need to change).
+    const qtyFieldDiv = row.querySelector('.op-form__field:not(.exp-line-comment):not(.exp-line-sku-wrap)');
+    let hint = row.querySelector('.exp-stock-hint');
+    if (!hint) {
+      hint = document.createElement('span');
+      hint.className = 'exp-stock-hint';
+      if (qtyFieldDiv) {
+        qtyFieldDiv.appendChild(hint);
+      } else {
+        // Fallback: append to row directly before remove button
+        const removeBtn = row.querySelector('.exp-line-remove');
+        if (removeBtn) {
+          row.insertBefore(hint, removeBtn);
+        } else {
+          row.appendChild(hint);
+        }
+      }
+    }
+
+    // No SKU selected or no stock data — hide
+    if (!skuId || !STOCK_MAP[skuId]) {
+      hint.hidden = true;
+      hint.className = 'exp-stock-hint';
+      return;
+    }
+
+    const stockEntry = STOCK_MAP[skuId];
+    // Edit mode: add back this order's original committed qty for this SKU
+    // (live_futur deducted it as an open order — restoring it gives true available)
+    const origQty   = EDIT_ORIG_QTY[skuId] || 0;
+    const available = stockEntry.live_futur + origQty;
+
+    const anchorLabel = STOCK_ANCHOR ? '(ancre ' + STOCK_ANCHOR + ')' : '';
+    const tooltip     = 'Stock disponible après toutes les commandes ouvertes ' + anchorLabel;
+
+    const orderedQty = qty || 0;
+    const isOver     = orderedQty > available;
+
+    hint.hidden = false;
+
+    if (isOver) {
+      hint.className = 'exp-stock-hint exp-stock-hint--over';
+      hint.title      = tooltip;
+      hint.textContent = '⚠ stock : ' + available + ' — commandé ' + orderedQty;
+    } else {
+      hint.className = 'exp-stock-hint exp-stock-hint--ok';
+      hint.title      = tooltip;
+      hint.textContent = 'stock : ' + available + ' ✓';
+    }
+
+    updateStockRecapWarn();
+  }
+
+  /**
+   * Update the aggregate "⚠ stock insuffisant" warning in the card title.
+   * Amber when at least one line is over-stock.
+   */
+  function updateStockRecapWarn() {
+    if (!stockRecapWarn || !linesContainer) return;
+    const hasOver = linesContainer.querySelector('.exp-stock-hint--over') !== null;
+    stockRecapWarn.hidden = !hasOver;
+  }
 
   /* ── Type toggle ────────────────────────────────────────────────────────── */
   const btnCustomer  = qs('#exp-type-customer');
@@ -313,7 +400,11 @@
     qtyInput.placeholder = '0';
     if (qty) qtyInput.value = String(qty);
     if (disabled) qtyInput.disabled = true;
-    qtyInput.addEventListener('input', updateRecap);
+    qtyInput.addEventListener('input', function () {
+      updateRecap();
+      const sid = skuIdInput.value ? parseInt(skuIdInput.value, 10) : null;
+      renderStockHint(row, sid, parseFloat(qtyInput.value) || 0);
+    });
     qtyField.appendChild(qtyInput);
 
     // Comment field (hidden name, styled small — part of the line grid col-span)
@@ -362,6 +453,13 @@
         skuIdInput.value = String(foundSku.id);
         // Store hl_per_unit on the input for recap calculation
         qtyInput.dataset.hlPerUnit = String(foundSku.hl_per_unit);
+        // Render stock hint for the prefilled line
+        // (called after row is fully constructed and appended; deferred via a
+        //  microtask so the row DOM is already in the container when hint span
+        //  looks for siblings — safe because renderStockHint uses row reference)
+        (function (sid, q) {
+          requestAnimationFrame(function () { renderStockHint(row, sid, q); });
+        }(foundSku.id, qty || 0));
       }
     }
 
@@ -400,6 +498,7 @@
       lineDropdownIdx = -1;
       qtyInput.focus();
       updateRecap();
+      renderStockHint(row, sku.id, parseFloat(qtyInput.value) || 0);
     }
 
     function closeSkuDrop() {
@@ -424,6 +523,8 @@
       // Clear hidden id if the user edits the text
       skuIdInput.value = '';
       qtyInput.dataset.hlPerUnit = '';
+      // Hide stock hint (no SKU selected)
+      renderStockHint(row, null, 0);
       if (q.length < 1) { closeSkuDrop(); return; }
       renderSkuDropdown(q);
     });
@@ -484,6 +585,7 @@
     if (recapS)     recapS.textContent     = count > 1 ? 's' : '';
     if (recapHl)    recapHl.textContent    = totalHl.toFixed(2);
     recapEl.hidden = (count === 0);
+    updateStockRecapWarn();
   }
 
   /* ── Prefill from server (edit mode) ────────────────────────────────────── */
