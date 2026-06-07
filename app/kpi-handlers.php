@@ -51,6 +51,7 @@ const KPI_ALLOWED_METRICS = [
     'total_chf', 'inbound_count', 'o2_ppm',
 ];
 const KPI_ALLOWED_FILTERS = [];  // reserved for future per-recipe / per-site filtering
+const KPI_ALLOWED_WINDOW_DAYS = [30, 60, 90, 180];  // trailing-day windows for rate-based KPIs
 
 /**
  * Validate params_json against the whitelist. Returns a sanitized array
@@ -83,6 +84,15 @@ function kpi_validate_params(array $params): array
                 break;
             case 'limit':
                 $out['limit'] = max(1, min(50, (int) $v));
+                break;
+            case 'window_days':
+                $d = (int) $v;
+                if (!in_array($d, KPI_ALLOWED_WINDOW_DAYS, true)) {
+                    throw new RuntimeException(
+                        "kpi: window_days must be one of " . implode(',', KPI_ALLOWED_WINDOW_DAYS) . ", got '{$v}'"
+                    );
+                }
+                $out['window_days'] = $d;
                 break;
             case 'filter':
                 // reserved — no values allowed yet
@@ -630,8 +640,8 @@ function kpi_handler_cogs(
         'cogs_total_month'     => kpi_cogs_total_month($params, $label, $pdo),
         'brewing_cost_chf_hl'  => kpi_cogs_brewing_cost_hl($params, $label, $pdo),
         'cop_total_breakdown'  => kpi_cogs_cop_breakdown($params, $label, $pdo),
-        'maintenance_opex'     => kpi_cogs_maintenance_opex($params, $label, $pdo),
-        'maintenance_opex_trend' => kpi_cogs_maintenance_opex($params, $label, $pdo),
+        'maintenance_opex'       => kpi_cogs_maintenance_opex($params, $label, $pdo),
+        'maintenance_opex_trend' => kpi_cogs_maintenance_opex_trend($label, $pdo),
         default                => kpi_stub_handler('cogs', $handler, $label),
     };
 }
@@ -859,6 +869,43 @@ function kpi_cogs_maintenance_opex(array $params, string $label, PDO $pdo): arra
         'value' => $total,
         'tint'  => 'neutral',
         'meta'  => ['period_label' => $p['label'], 'line_count' => (int) ($row['cnt'] ?? 0)],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/** #235 — Maintenance OPEX trend (sparkline: last 12 months, one point per month) */
+function kpi_cogs_maintenance_opex_trend(string $label, PDO $pdo): array
+{
+    $cacheKey = 'cogs_maintenance_trend_12m';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    // Build a 12-month monthly series from inv_charges_bc GL 6100.
+    $stmt = $pdo->query(
+        "SELECT DATE_FORMAT(posting_date, '%Y-%m') AS mo,
+                SUM(COALESCE(debit_amount, 0) - COALESCE(credit_amount, 0)) AS net_chf
+           FROM inv_charges_bc
+          WHERE gl_account_no LIKE '6100%'
+            AND posting_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+          GROUP BY mo
+          ORDER BY mo"
+    );
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $series = array_map(
+        fn(array $r) => ['period' => $r['mo'], 'value' => round((float) $r['net_chf'], 2)],
+        $rows
+    );
+
+    $latest = !empty($rows) ? round((float) end($rows)['net_chf'], 2) : null;
+
+    $result = array_merge(kpi_empty_result($label, 'CHF'), [
+        'value'  => $latest,
+        'series' => $series,
+        'tint'   => 'neutral',
+        'meta'   => ['period_label' => '12 derniers mois'],
     ]);
 
     return kpi_cache_set($cacheKey, $result);
@@ -1107,7 +1154,7 @@ function kpi_handler_rm_procurement(
         'rm_negative_stock_alerts'   => kpi_rm_negative_stock_alerts($label, $pdo),
         'rm_stale_items'             => kpi_rm_stale_items($label, $pdo),
         'rm_drift_alert'             => kpi_rm_drift_alert($label, $pdo),
-        'inventory_days_of_supply'   => kpi_rm_days_of_supply($label, $pdo),
+        'inventory_days_of_supply'   => kpi_rm_days_of_supply($params, $label, $pdo),
         default                      => kpi_stub_handler('rm_procurement', $handler, $label),
     };
 }
@@ -1298,38 +1345,100 @@ function kpi_rm_drift_alert(string $label, PDO $pdo): array
     return kpi_cache_set($cacheKey, $result);
 }
 
-/** #267 — Inventory days of supply (RM stock value via v_rm_stock_dynamic) */
-function kpi_rm_days_of_supply(string $label, PDO $pdo): array
+/** #267 — MP days of supply: current stock value ÷ daily consumption rate (MP only) */
+function kpi_rm_days_of_supply(array $params, string $label, PDO $pdo): array
 {
-    $cacheKey = 'rm_days_of_supply';
+    $windowDays = $params['window_days'] ?? 90;
+    $cacheKey   = "rm_days_of_supply_{$windowDays}d";
     if (($cached = kpi_cache_get($cacheKey)) !== null) {
         return $cached;
     }
 
-    // v_rm_stock_dynamic.current_value_chf = current_qty × price_chf (already computed).
-    // Full days-of-supply (÷ consumption rate) is blocked by the packaging
-    // pipeline gap (#58) — consumption_out is zero for PKG_* rows.
-    // We return total RM stock value as a partial result.
-    $stmt = $pdo->query(
+    // ── Numerator: current MP stock value from v_rm_stock_dynamic ────────────
+    // The view already applies EUR→CHF conversion (price_chf) and current_value_chf
+    // = current_qty × price_chf. We sum only rows with positive qty (no negatives
+    // inflate the total). This is the same source as the "Valeur stock MP" tracker.
+    $stockStmt = $pdo->query(
         "SELECT
            SUM(current_value_chf) AS stock_value_chf,
            COUNT(*) AS mi_count
          FROM v_rm_stock_dynamic
          WHERE current_qty > 0"
     );
-    $row = $stmt->fetch(PDO::FETCH_ASSOC);
-
-    $stockValue = $row && $row['stock_value_chf'] !== null
-                  ? round((float) $row['stock_value_chf'], 2)
+    $stockRow = $stockStmt->fetch(PDO::FETCH_ASSOC);
+    $stockValue = ($stockRow && $stockRow['stock_value_chf'] !== null)
+                  ? (float) $stockRow['stock_value_chf']
                   : null;
-    $miCount = $row ? (int) $row['mi_count'] : 0;
+    $miCount = $stockRow ? (int) $stockRow['mi_count'] : 0;
 
-    $result = array_merge(kpi_empty_result($label, 'CHF stock'), [
-        'value' => $stockValue,
-        'tint'  => 'neutral',
-        'meta'  => [
-            'mi_count' => $miCount,
-            'note'     => 'Valeur stock MP. Calcul jours-de-couverture bloqué par gap pipeline packaging (#58).',
+    if ($stockValue === null) {
+        $result = array_merge(kpi_empty_result($label, 'jours'), [
+            'tint' => 'neutral',
+            'meta' => ['note' => 'Stock MP non disponible (v_rm_stock_dynamic vide).'],
+        ]);
+        return kpi_cache_set($cacheKey, $result);
+    }
+
+    // ── Denominator: trailing-N-day consumption in CHF ────────────────────────
+    // inv_consumption.qty is stored in input_unit (e.g. grams for hops).
+    // ref_mi.conversion_factor converts input_unit → pricing_unit (e.g. g → kg = 0.001).
+    // ref_mi.price is per pricing_unit. EUR prices are converted to CHF at 0.945.
+    // We restrict to is_inventoried=1 to match the stock-side scope.
+    // Rows with NULL price are excluded (cannot value them); they contribute 0 to CHF
+    // but do not bias the rate downward — any MI in stock but not consumed in window
+    // simply doesn't reduce the stock numerator.
+    $consStmt = $pdo->prepare(
+        "SELECT
+           SUM(
+             c.qty
+             * COALESCE(rm.conversion_factor, 1.0)
+             * CASE WHEN rm.currency = 'EUR' THEN rm.price * 0.945 ELSE rm.price END
+           ) AS consumption_chf
+         FROM inv_consumption c
+         JOIN ref_mi rm ON rm.id = c.mi_id_fk
+         WHERE c.consumed_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+           AND rm.price   IS NOT NULL
+           AND rm.is_inventoried = 1"
+    );
+    $consStmt->execute([$windowDays]);
+    $consRow = $consStmt->fetch(PDO::FETCH_ASSOC);
+    $consumptionChf = ($consRow && $consRow['consumption_chf'] !== null)
+                      ? (float) $consRow['consumption_chf']
+                      : null;
+
+    // ── Divide ────────────────────────────────────────────────────────────────
+    if ($consumptionChf === null || $consumptionChf <= 0.0) {
+        $result = array_merge(kpi_empty_result($label, 'jours'), [
+            'tint' => 'neutral',
+            'meta' => [
+                'stock_value_chf' => round($stockValue, 2),
+                'mi_count'        => $miCount,
+                'window_days'     => $windowDays,
+                'note'            => "Aucune consommation MP sur {$windowDays}j — taux indisponible.",
+            ],
+        ]);
+        return kpi_cache_set($cacheKey, $result);
+    }
+
+    $dailyRateChf  = $consumptionChf / $windowDays;
+    $daysOfSupply  = round($stockValue / $dailyRateChf, 1);
+
+    $tint = match (true) {
+        $daysOfSupply >= 90 => 'green',
+        $daysOfSupply >= 30 => 'amber',
+        default             => 'red',
+    };
+
+    $result = array_merge(kpi_empty_result($label, 'jours'), [
+        'value'       => $daysOfSupply,
+        'tint'        => $tint,
+        'meta'        => [
+            'stock_value_chf'   => round($stockValue, 2),
+            'daily_rate_chf'    => round($dailyRateChf, 2),
+            'consumption_chf'   => round($consumptionChf, 2),
+            'window_days'       => $windowDays,
+            'mi_count'          => $miCount,
+            'period_label'      => "stock ÷ conso moy. {$windowDays}j",
         ],
     ]);
 
