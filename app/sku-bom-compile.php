@@ -119,7 +119,20 @@ function compile_sku_bom_packaging(
         );
         $collabIds = array_map('intval', $collabStmt->fetchAll(\PDO::FETCH_COLUMN, 0));
 
-        $skuIds = array_values(array_unique(array_merge($nullPkgIds, $compositeIds, $collabIds)));
+        // Arm 4: derived-format SKUs (e.g. draft pours P25/P50 with
+        // derived_from_format_id set).  Their packaging rows exist after first
+        // compile and won't appear in arm 1; always include so the cron keeps
+        // them fresh when MI prices change.
+        $derivedStmt = $pdo->query(
+            "SELECT DISTINCT s.id
+               FROM ref_skus s
+               JOIN ref_packaging_formats f ON f.id = s.format_id
+              WHERE f.derived_from_format_id IS NOT NULL
+                AND s.is_active = 1"
+        );
+        $derivedIds = array_map('intval', $derivedStmt->fetchAll(\PDO::FETCH_COLUMN, 0));
+
+        $skuIds = array_values(array_unique(array_merge($nullPkgIds, $compositeIds, $collabIds, $derivedIds)));
     }
 
     if (count($skuIds) === 0) {
@@ -164,43 +177,40 @@ function compile_sku_bom_packaging(
     // the presence of ref_sku_composite_slots rows and take a separate compile path.
     // The INNER-JOIN on ref_packaging_bom_templates intentionally excludes composites
     // (no we_supply template for composite formats) — we handle that in the composite branch.
+    //
+    // Derived-format SKUs (e.g. P25/P50 draft pours) have derived_from_format_id set and
+    // catalog_id=NULL — they cannot satisfy the dbc INNER-JOIN on their own format.
+    // They pass the gate via the PARENT format's dbc chain (three-leg JOIN through parent_f).
 
-    $placeholders = implode(',', array_fill(0, count($skuIds), '?'));
+    // Pre-detect derived-format SKU ids within the requested set.
+    // These need a separate metaQuery branch joining through the parent format's dbc chain.
+    $derivedFormatSkuIds = [];
+    if (!empty($skuIds)) {
+        $dfp = implode(',', array_fill(0, count($skuIds), '?'));
+        $dfStmt = $pdo->prepare(
+            "SELECT s.id
+               FROM ref_skus s
+               JOIN ref_packaging_formats f ON f.id = s.format_id
+              WHERE s.id IN ({$dfp})
+                AND f.derived_from_format_id IS NOT NULL
+                AND f.is_composite = 0"
+        );
+        $dfStmt->execute($skuIds);
+        $derivedFormatSkuIds = array_map('intval', $dfStmt->fetchAll(\PDO::FETCH_COLUMN, 0));
+    }
 
-    // Build a UNION to cover both normally-recipe'd SKUs and COLLAB-resolved SKUs.
-    // If no COLLAB resolved, just use the standard query.
-    if (empty($collabResolvedRecipes)) {
-        $metaParams = $skuIds;
-        $metaQuery = "SELECT s.id, s.sku_code, s.format_id, s.recipe_id, s.hl_per_unit,
-                f.format_code, f.run_type AS fmt_run_type,
-                r.sku_prefix, r.uses_branded_scotch,
-                bt.decoration_integral, bt.supply,
-                0 AS collab_resolved
-           FROM ref_skus s
-           JOIN ref_packaging_formats f ON f.id = s.format_id
-           JOIN ref_recipes r           ON r.id = s.recipe_id
-           JOIN ref_packaging_bom_templates bt
-             ON bt.format_id = s.format_id
-            AND bt.supply = 'we_supply'
-            AND bt.is_active = 1
-           JOIN dbc_packaging_format_templates t ON t.id  = f.catalog_id
-           JOIN dbc_container_types            c ON c.container_code = t.container_code
-           JOIN ref_filler_containers         fc ON fc.container_id  = c.id AND fc.is_active = 1
-           JOIN ref_process_machines           m ON m.id = fc.machine_id   AND m.is_active = 1
-          WHERE s.id IN ({$placeholders})
-            AND f.is_active = 1
-            AND f.is_composite = 0
-          ORDER BY s.sku_code";
-    } else {
-        // Two branches: normal recipe_id path + collab override path
-        $collabIds    = array_keys($collabResolvedRecipes);
-        $normalIds    = array_diff($skuIds, $collabIds);
-        $queryParts   = [];
-        $metaParams   = [];
+    // Build a UNION to cover normally-recipe'd SKUs, COLLAB-resolved SKUs, and
+    // derived-format SKUs (pours).  Always use the UNION path so all three branches
+    // can be represented cleanly.
+    $collabIds   = array_keys($collabResolvedRecipes);
+    // Normal: not collab-resolved, not derived-format, not composite (composites have no recipe_id)
+    $normalIds   = array_diff($skuIds, $collabIds, $derivedFormatSkuIds);
+    $queryParts  = [];
+    $metaParams  = [];
 
-        if (!empty($normalIds)) {
-            $np = implode(',', array_fill(0, count($normalIds), '?'));
-            $queryParts[] = "SELECT s.id, s.sku_code, s.format_id, s.recipe_id, s.hl_per_unit,
+    if (!empty($normalIds)) {
+        $np = implode(',', array_fill(0, count($normalIds), '?'));
+        $queryParts[] = "SELECT s.id, s.sku_code, s.format_id, s.recipe_id, s.hl_per_unit,
                 f.format_code, f.run_type AS fmt_run_type,
                 r.sku_prefix, r.uses_branded_scotch,
                 bt.decoration_integral, bt.supply,
@@ -219,15 +229,15 @@ function compile_sku_bom_packaging(
           WHERE s.id IN ({$np})
             AND f.is_active = 1
             AND f.is_composite = 0";
-            foreach ($normalIds as $nid) {
-                $metaParams[] = $nid;
-            }
+        foreach ($normalIds as $nid) {
+            $metaParams[] = $nid;
         }
+    }
 
-        // COLLAB: substitute resolved recipe_id to pass the INNER-JOIN buildability gate
-        foreach ($collabIds as $cid) {
-            $rId = $collabResolvedRecipes[$cid];
-            $queryParts[] = "SELECT s.id, s.sku_code, s.format_id, ? AS recipe_id, s.hl_per_unit,
+    // COLLAB: substitute resolved recipe_id to pass the INNER-JOIN buildability gate
+    foreach ($collabIds as $cid) {
+        $rId = $collabResolvedRecipes[$cid];
+        $queryParts[] = "SELECT s.id, s.sku_code, s.format_id, ? AS recipe_id, s.hl_per_unit,
                 f.format_code, f.run_type AS fmt_run_type,
                 r.sku_prefix, r.uses_branded_scotch,
                 bt.decoration_integral, bt.supply,
@@ -246,11 +256,50 @@ function compile_sku_bom_packaging(
           WHERE s.id = ?
             AND f.is_active = 1
             AND f.is_composite = 0";
-            $metaParams[] = $rId;
-            $metaParams[] = $rId;
-            $metaParams[] = $cid;
-        }
+        $metaParams[] = $rId;
+        $metaParams[] = $rId;
+        $metaParams[] = $cid;
+    }
 
+    // Derived-format: format has derived_from_format_id set (e.g. P25/P50 → keg).
+    // Gate passes via PARENT format's dbc chain (parent_f.catalog_id → dbc → filler → machine).
+    // The format's own run_type is NULL for draft pours — use it as-is (known-null-volume path).
+    if (!empty($derivedFormatSkuIds)) {
+        $dp = implode(',', array_fill(0, count($derivedFormatSkuIds), '?'));
+        $queryParts[] = "SELECT s.id, s.sku_code, s.format_id, s.recipe_id, s.hl_per_unit,
+                f.format_code, f.run_type AS fmt_run_type,
+                r.sku_prefix, r.uses_branded_scotch,
+                bt.decoration_integral, bt.supply,
+                0 AS collab_resolved
+           FROM ref_skus s
+           JOIN ref_packaging_formats f       ON f.id = s.format_id
+           JOIN ref_packaging_formats parent_f ON parent_f.id = f.derived_from_format_id
+           JOIN ref_recipes r                  ON r.id = s.recipe_id
+           JOIN ref_packaging_bom_templates bt
+             ON bt.format_id = s.format_id
+            AND bt.supply = 'we_supply'
+            AND bt.is_active = 1
+           JOIN dbc_packaging_format_templates t ON t.id  = parent_f.catalog_id
+           JOIN dbc_container_types            c ON c.container_code = t.container_code
+           JOIN ref_filler_containers         fc ON fc.container_id  = c.id AND fc.is_active = 1
+           JOIN ref_process_machines           m ON m.id = fc.machine_id   AND m.is_active = 1
+          WHERE s.id IN ({$dp})
+            AND f.is_active = 1
+            AND f.is_composite = 0";
+        foreach ($derivedFormatSkuIds as $did) {
+            $metaParams[] = $did;
+        }
+    }
+
+    if (empty($queryParts)) {
+        // All requested SKUs were composites or collabs with no resolved recipe — skuIndex stays empty.
+        $metaQuery = "SELECT NULL AS id, NULL AS sku_code, NULL AS format_id, NULL AS recipe_id,
+                             NULL AS hl_per_unit, NULL AS format_code, NULL AS fmt_run_type,
+                             NULL AS sku_prefix, NULL AS uses_branded_scotch,
+                             NULL AS decoration_integral, NULL AS supply,
+                             NULL AS collab_resolved WHERE 1=0";
+        $metaParams = [];
+    } else {
         $metaQuery = implode(' UNION ALL ', $queryParts) . ' ORDER BY sku_code';
     }
 
@@ -1842,6 +1891,7 @@ function _compiler_gated_format_ids(PDO $pdo): array
         "SELECT COUNT(*) FROM ref_process_machines WHERE machine_type='cartoner' AND is_active=1"
     )->fetchColumn();
 
+    // Arm A: formats directly in the dbc commissioning chain.
     $rows = $pdo->query(
         "SELECT DISTINCT f.id, (t.units_per_format > 1) AS needs_cartoner
            FROM ref_filler_containers fc
@@ -1859,6 +1909,24 @@ function _compiler_gated_format_ids(PDO $pdo): array
         }
         $ids[] = (int)$r['id'];
     }
+
+    // Arm B: derived-format formats whose parent format passes Arm A.
+    // A pour format is gated if its parent keg format is commissioned.
+    // Generic: no hardcoded format ids.
+    $parentGated = array_flip($ids);
+    $derivedRows = $pdo->query(
+        "SELECT id, derived_from_format_id
+           FROM ref_packaging_formats
+          WHERE derived_from_format_id IS NOT NULL
+            AND is_active = 1
+            AND is_composite = 0"
+    )->fetchAll(\PDO::FETCH_ASSOC);
+    foreach ($derivedRows as $d) {
+        if (isset($parentGated[(int)$d['derived_from_format_id']])) {
+            $ids[] = (int)$d['id'];
+        }
+    }
+
     return $ids;
 }
 
