@@ -72,6 +72,7 @@ $PAGE_DESCRIPTIONS = [
     'sku-costs'        => 'Le coût de revient par référence (SKU) : décomposition liquide + emballage.',
     'warehouse'        => 'Le stock de produits finis : quantités par SKU, par site.',
     'rm-comparison'    => 'Le bilan de clôture matières premières : comptage physique vs stock théorique, écarts par ingrédient.',
+    'expeditions'      => 'Le centre logistique : <strong>saisie des commandes clients</strong> (autocomplétion clients et SKU), suivi des statuts d\'un clic — confirmée, préparée, BL imprimé, livrée — et <strong>Stock PF en direct</strong> : stock physique, disponible cette semaine, disponible après commandes futures, semaines de couverture.',
 ];
 
 /* SVG icons per page_key — inline SVG matching mockup styles */
@@ -88,6 +89,7 @@ $PAGE_ICONS = [
     'sku-costs'        => '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v1m0 8v1M9.5 9.5C9.5 8.4 10.6 7.5 12 7.5s2.5.9 2.5 2-.9 2-2.5 2-2.5.9-2.5 2 1.1 2 2.5 2 2.5-.9 2.5-2"/></svg>',
     'warehouse'        => '<svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>',
     'rm-comparison'    => '<svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>',
+    'expeditions'      => '<svg viewBox="0 0 24 24"><rect x="1" y="6" width="13" height="11" rx="1"/><path d="M14 9h4l3 4v4h-7z"/><circle cx="6" cy="19" r="2"/><circle cx="17" cy="19" r="2"/></svg>',
     'saisies'          => '<svg viewBox="0 0 24 24"><path d="M15 5l4 4L7 21H3v-4L15 5z"/><path d="M12 8l4 4"/></svg>',
     '_default'         => '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>',
 ];
