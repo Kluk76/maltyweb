@@ -142,6 +142,37 @@
 
   /* ── Handle status button clicks ────────────────────────────────────────── */
   document.addEventListener('click', function (e) {
+    // ── SKU pill "+N more" expand ────────────────────────────────────────── //
+    const moreBtn = e.target.closest('.exp-sku-more');
+    if (moreBtn) {
+      const hiddenHtml = moreBtn.getAttribute('data-hidden-pills') || '';
+      const pills = moreBtn.closest('.exp-sku-pills');
+      if (pills) {
+        // Insert hidden pills before the +N button, then remove the button
+        const temp = document.createElement('span');
+        temp.innerHTML = hiddenHtml;
+        while (temp.firstChild) {
+          pills.insertBefore(temp.firstChild, moreBtn);
+        }
+        moreBtn.remove();
+      }
+      return;
+    }
+
+    // ── Cancelled toggle ─────────────────────────────────────────────────── //
+    const toggleBtn = e.target.closest('#exp-toggle-cancelled');
+    if (toggleBtn) {
+      const isShowing = toggleBtn.getAttribute('aria-pressed') === 'true';
+      const rows = document.querySelectorAll('.exp-order-row--cancelled');
+      rows.forEach(function (r) {
+        r.hidden = isShowing;
+      });
+      toggleBtn.setAttribute('aria-pressed', String(!isShowing));
+      toggleBtn.textContent = isShowing ? 'Afficher annulées' : 'Masquer annulées';
+      return;
+    }
+
+    // ── Status chips / cancel action ─────────────────────────────────────── //
     const btn = e.target.closest('[data-action][data-order-id]');
     if (!btn) return;
 
@@ -180,10 +211,39 @@
         // Success: update CSRF + apply UI
         if (data.csrf) currentCsrf = data.csrf;
         applyStatusToRow(orderRow, data.status);
+
+        // After cancel: mark row as cancelled for the toggle to work
+        if (data.status === 'cancelled') {
+          orderRow.classList.add('exp-order-row--cancelled');
+          orderRow.setAttribute('data-status', 'cancelled');
+          // If toggle is currently hiding cancelled rows, hide this row too
+          const tb = document.getElementById('exp-toggle-cancelled');
+          if (tb && tb.getAttribute('aria-pressed') === 'false') {
+            orderRow.hidden = true;
+          }
+        }
       });
     }
 
     doRequest(currentCsrf);
   });
+
+  /* ── Range date auto-fill: Au = Du when Au is empty ───────────────────────── */
+  (function () {
+    var duInput = document.getElementById('exp-range-du');
+    var auInput = document.getElementById('exp-range-au');
+    if (!duInput || !auInput) return;
+    duInput.addEventListener('change', function () {
+      if (!auInput.value || auInput.value < duInput.value) {
+        auInput.value = duInput.value;
+      }
+    });
+  }());
+
+  /* ── Cancelled rows: start hidden ───────────────────────────────────────── */
+  (function () {
+    var rows = document.querySelectorAll('.exp-order-row--cancelled');
+    rows.forEach(function (r) { r.hidden = true; });
+  }());
 
 })();

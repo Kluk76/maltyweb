@@ -664,6 +664,650 @@ body.expeditions .exp-inline-err {
   margin-top: 4px;
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   COMMANDES DASHBOARD — period toolbar, summary band, day blocks, filters
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Period toolbar ───────────────────────────────────────────────────────── */
+body.expeditions .exp-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  padding: 16px 20px;
+  margin-bottom: 20px;
+}
+
+/* Mode toggle (Semaine / Plage de dates) */
+body.expeditions .exp-toolbar__mode {
+  display: inline-flex;
+  border: 1px solid var(--hairline-2);
+  border-radius: 5px;
+  overflow: hidden;
+  align-self: flex-start;
+}
+
+body.expeditions .exp-toolbar__mode-btn {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.82rem;
+  font-weight: 500;
+  padding: 7px 16px;
+  text-decoration: none;
+  color: var(--ink-mute);
+  background: var(--bg);
+  border-right: 1px solid var(--hairline-2);
+  transition: background 0.12s, color 0.12s;
+  touch-action: manipulation;
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+}
+
+body.expeditions .exp-toolbar__mode-btn:last-child {
+  border-right: none;
+}
+
+body.expeditions .exp-toolbar__mode-btn:hover {
+  background: var(--bg-elev);
+  color: var(--ink-soft);
+  text-decoration: none;
+}
+
+body.expeditions .exp-toolbar__mode-btn--active {
+  background: var(--hop);
+  color: var(--bg);
+  font-weight: 600;
+}
+
+/* Week navigation */
+body.expeditions .exp-toolbar__week-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+body.expeditions .exp-toolbar__nav-arrow {
+  font-size: 1rem;
+  color: var(--ink-mute);
+  text-decoration: none;
+  padding: 6px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  background: var(--bg);
+  transition: background 0.12s, color 0.12s;
+  touch-action: manipulation;
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  line-height: 1;
+}
+
+body.expeditions .exp-toolbar__nav-arrow:hover {
+  background: var(--bg-elev);
+  color: var(--hop);
+  text-decoration: none;
+}
+
+body.expeditions .exp-toolbar__week-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+  letter-spacing: 0.02em;
+}
+
+body.expeditions .exp-toolbar__today-btn {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.78rem;
+  color: var(--hop);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  padding: 4px 2px;
+  cursor: pointer;
+  transition: color 0.12s;
+}
+
+body.expeditions .exp-toolbar__today-btn:hover {
+  color: var(--hop-deep, var(--hop));
+  text-decoration: underline;
+}
+
+/* Range date inputs */
+body.expeditions .exp-toolbar__range-inputs {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+body.expeditions .exp-toolbar__range-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+body.expeditions .exp-toolbar__date-input {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.84rem;
+  padding: 7px 10px;
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--ink-soft);
+  touch-action: manipulation;
+  min-height: 38px;
+}
+
+body.expeditions .exp-toolbar__date-input:focus {
+  outline: 2px solid var(--hop);
+  outline-offset: 1px;
+}
+
+body.expeditions .exp-toolbar__range-submit {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 8px 16px;
+  background: var(--hop);
+  color: var(--bg);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  touch-action: manipulation;
+  min-height: 38px;
+  transition: background 0.12s;
+}
+
+body.expeditions .exp-toolbar__range-submit:hover {
+  background: var(--hop-soft, var(--hop));
+}
+
+/* Filters row */
+body.expeditions .exp-toolbar__filters {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-top: 10px;
+  border-top: 1px solid var(--hairline);
+}
+
+body.expeditions .exp-toolbar__filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+body.expeditions .exp-toolbar__filter-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+body.expeditions .exp-toolbar__filter-input {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.82rem;
+  padding: 6px 10px;
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--ink-soft);
+  width: 160px;
+  min-height: 36px;
+}
+
+body.expeditions .exp-toolbar__filter-input--narrow {
+  width: 90px;
+}
+
+body.expeditions .exp-toolbar__filter-input:focus,
+body.expeditions .exp-toolbar__filter-select:focus {
+  outline: 2px solid var(--hop);
+  outline-offset: 1px;
+}
+
+body.expeditions .exp-toolbar__filter-select {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.82rem;
+  padding: 6px 10px;
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--ink-soft);
+  min-height: 36px;
+  cursor: pointer;
+}
+
+body.expeditions .exp-toolbar__filter-apply {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 6px 14px;
+  background: var(--hop);
+  color: var(--bg);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  touch-action: manipulation;
+  min-height: 36px;
+  transition: background 0.12s;
+  align-self: flex-end;
+}
+
+body.expeditions .exp-toolbar__filter-apply:hover {
+  background: var(--hop-soft, var(--hop));
+}
+
+body.expeditions .exp-toolbar__reset {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.78rem;
+  color: var(--ink-mute);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  align-self: flex-end;
+  padding: 4px 2px;
+  transition: color 0.12s;
+}
+
+body.expeditions .exp-toolbar__reset:hover {
+  color: var(--ember);
+  text-decoration: underline;
+}
+
+/* ── Summary band ─────────────────────────────────────────────────────────── */
+body.expeditions .exp-summary-band {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  background: var(--bg-side, var(--bg-elev));
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  padding: 14px 20px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+  gap: 20px;
+}
+
+body.expeditions .exp-summary-kpi {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+}
+
+body.expeditions .exp-summary-kpi__value {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 96;
+  font-size: 1.4rem;
+  font-weight: 400;
+  color: var(--ink-soft);
+  line-height: 1;
+}
+
+body.expeditions .exp-summary-kpi__label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.58rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+body.expeditions .exp-summary-sep {
+  width: 1px;
+  height: 32px;
+  background: var(--hairline);
+  flex-shrink: 0;
+}
+
+/* ── Cancelled toggle ─────────────────────────────────────────────────────── */
+body.expeditions .exp-cancelled-toggle {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+
+body.expeditions .exp-cancelled-toggle__btn {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.76rem;
+  color: var(--ink-mute);
+  background: transparent;
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  padding: 5px 12px;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: background 0.12s, color 0.12s;
+  min-height: 34px;
+}
+
+body.expeditions .exp-cancelled-toggle__btn:hover {
+  background: color-mix(in srgb, var(--ember) 8%, transparent);
+  border-color: color-mix(in srgb, var(--ember) 30%, transparent);
+  color: var(--ember);
+}
+
+/* ── Day blocks ───────────────────────────────────────────────────────────── */
+body.expeditions .exp-day-block {
+  margin-bottom: 16px;
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+/* Day header */
+body.expeditions .exp-day-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 20px;
+  background: color-mix(in srgb, var(--hop) 5%, var(--bg-elev));
+  border-bottom: 1px solid var(--hairline);
+}
+
+body.expeditions .exp-day-header__date {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+body.expeditions .exp-day-header__name {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--hop);
+  font-weight: 600;
+}
+
+body.expeditions .exp-day-header__fmt {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  color: var(--ink-mute);
+}
+
+body.expeditions .exp-day-header__metrics {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+body.expeditions .exp-day-metric {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+}
+
+body.expeditions .exp-day-metric__val {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+
+body.expeditions .exp-day-metric__unit {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.58rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+body.expeditions .exp-day-metric--open .exp-day-metric__val {
+  color: var(--oak);
+}
+
+/* Order row (now inside day blocks) */
+body.expeditions .exp-day-block .exp-order-row {
+  border-bottom: 1px solid var(--hairline);
+  border-radius: 0;
+}
+
+body.expeditions .exp-day-block .exp-order-row:last-child {
+  border-bottom: none;
+}
+
+/* ── Trade channel dot ────────────────────────────────────────────────────── */
+body.expeditions .exp-trade-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  vertical-align: middle;
+  margin-right: 4px;
+}
+
+body.expeditions .exp-trade-dot--on {
+  background: var(--cold);
+}
+
+body.expeditions .exp-trade-dot--off {
+  background: var(--oak);
+}
+
+/* ── Internal badge ───────────────────────────────────────────────────────── */
+body.expeditions .exp-internal-badge {
+  display: inline-block;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--cold);
+  border: 1px solid color-mix(in srgb, var(--cold) 35%, transparent);
+  background: color-mix(in srgb, var(--cold) 8%, transparent);
+  border-radius: 10px;
+  padding: 2px 8px;
+}
+
+/* ── SKU pills ────────────────────────────────────────────────────────────── */
+body.expeditions .exp-sku-pills {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+  flex: 2 1 200px;
+}
+
+body.expeditions .exp-sku-pill {
+  display: inline-flex;
+  align-items: center;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.02em;
+  color: var(--ink-soft);
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  padding: 2px 7px;
+  white-space: nowrap;
+}
+
+body.expeditions .exp-sku-more {
+  display: inline-flex;
+  align-items: center;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem;
+  color: var(--hop);
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--hop) 30%, transparent);
+  border-radius: 4px;
+  padding: 2px 7px;
+  cursor: pointer;
+  transition: background 0.12s;
+  touch-action: manipulation;
+  white-space: nowrap;
+}
+
+body.expeditions .exp-sku-more:hover {
+  background: color-mix(in srgb, var(--hop) 8%, transparent);
+}
+
+/* ── Order comment ────────────────────────────────────────────────────────── */
+body.expeditions .exp-order-comment {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 180px;
+}
+
+body.expeditions .exp-order-comment__text {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.76rem;
+  color: var(--ink-mute);
+  font-style: italic;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Transporter tag ──────────────────────────────────────────────────────── */
+body.expeditions .exp-transporter-tag {
+  display: inline-block;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.04em;
+  color: var(--ink-mute);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  padding: 2px 8px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* ── Auto chip (eshop / taproom auto-rows) ────────────────────────────────── */
+body.expeditions .exp-chip--auto {
+  background: color-mix(in srgb, var(--steel-mid, var(--ink-faint)) 15%, transparent);
+  border-color: var(--hairline-2);
+  color: var(--ink-mute);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  cursor: default;
+}
+
+/* ── Eshop / taproom auto rows ────────────────────────────────────────────── */
+body.expeditions .exp-auto-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 20px;
+  border-bottom: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--ink-faint, var(--hairline)) 40%, var(--bg));
+  opacity: 0.75;
+}
+
+body.expeditions .exp-auto-row:last-child {
+  border-bottom: none;
+}
+
+body.expeditions .exp-auto-row__icon {
+  font-size: 0.9rem;
+  flex-shrink: 0;
+}
+
+body.expeditions .exp-auto-row__label {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.82rem;
+  color: var(--ink-mute);
+  font-style: italic;
+  flex: 1 1 auto;
+}
+
+body.expeditions .exp-auto-badge {
+  font-size: 0.7em;
+  color: var(--ink-faint);
+}
+
+body.expeditions .exp-auto-row__meta {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.68rem;
+  color: var(--ink-mute);
+  white-space: nowrap;
+}
+
+/* ── Empty state card ─────────────────────────────────────────────────────── */
+body.expeditions .exp-empty-state {
+  padding: 40px 28px;
+  text-align: center;
+}
+
+/* ── Cancelled order rows hidden by default ───────────────────────────────── */
+body.expeditions .exp-order-row--cancelled {
+  /* toggled by JS — starts hidden via expeditions.js init */
+  opacity: 0.5;
+}
+
+/* ── Responsive — commandes dashboard ────────────────────────────────────── */
+@media (max-width: 860px) {
+  body.expeditions .exp-toolbar {
+    padding: 12px 14px;
+    gap: 10px;
+  }
+
+  body.expeditions .exp-toolbar__filters {
+    gap: 8px;
+  }
+
+  body.expeditions .exp-toolbar__filter-input {
+    width: 120px;
+  }
+
+  body.expeditions .exp-summary-band {
+    gap: 14px;
+    padding: 12px 14px;
+  }
+
+  body.expeditions .exp-day-header {
+    padding: 8px 14px;
+  }
+
+  body.expeditions .exp-auto-row {
+    padding: 8px 14px;
+  }
+}
+
+@media (max-width: 600px) {
+  body.expeditions .exp-toolbar__filter-group {
+    flex: 1 1 120px;
+  }
+
+  body.expeditions .exp-toolbar__filter-input {
+    width: 100%;
+  }
+
+  body.expeditions .exp-toolbar__filter-input--narrow {
+    width: 100%;
+  }
+
+  body.expeditions .exp-summary-band {
+    gap: 10px;
+  }
+
+  body.expeditions .exp-summary-kpi__value {
+    font-size: 1.1rem;
+  }
+
+  body.expeditions .exp-sku-pills {
+    flex-basis: 100%;
+    order: 2;
+  }
+
+  body.expeditions .exp-order-comment {
+    display: none;
+  }
+}
+
 /* ── Responsive ───────────────────────────────────────────────────────────── */
 @media (max-width: 700px) {
   body.expeditions .exp-order-row {
