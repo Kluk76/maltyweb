@@ -40,10 +40,9 @@ $myEmail = $meEmailStmt->fetchColumn() ?: null;
    trackers may carry data_ready=1. We detect this at build time so we can
    skip/flag those trackers in the UI.
    ─────────────────────────────────────────────────────────────────────────── */
-const MT_STUBBED_DOMAINS = [
-    'utilities', 'tanks', 'racking', 'packaging', 'fg_stock',
-    'sales', 'qa_qc', 'equipment', 'logistics',
-];
+/* Stub-domain list now lives in kpi-handlers.php (kpi_stub_domains()) next to
+   the dispatch match it mirrors — a stale copy here silently hid the 21 new
+   racking/packaging/tanks trackers from the picker (caught by smoke E2). */
 
 /* ─────────────────────────────────────────────────────────────────────────────
    ALLOWED-SET BUILDER
@@ -89,7 +88,7 @@ function mt_stub_mismatches(array $allowedSet): array
 {
     $mismatches = [];
     foreach ($allowedSet as $id => $row) {
-        if (in_array($row['source_domain'], MT_STUBBED_DOMAINS, true)) {
+        if (in_array($row['source_domain'], kpi_stub_domains(), true)) {
             $mismatches[] = $row['slug'] . ' (' . $row['source_domain'] . ')';
         }
     }
@@ -122,7 +121,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $id = (int) $raw;
             if ($id > 0 && isset($allowedSet[$id])) {
                 /* Skip stubbed-domain handlers: refuse, don't persist */
-                if (!in_array($allowedSet[$id]['source_domain'], MT_STUBBED_DOMAINS, true)) {
+                if (!in_array($allowedSet[$id]['source_domain'], kpi_stub_domains(), true)) {
                     $validIds[] = $id;
                 }
             }
@@ -255,7 +254,7 @@ foreach ($userSelections as $sel) {
     if (!isset($allowedSet[$tid])) continue;
     $tracker = $allowedSet[$tid];
     /* Skip stubbed-domain trackers in the active render */
-    if (in_array($tracker['source_domain'], MT_STUBBED_DOMAINS, true)) continue;
+    if (in_array($tracker['source_domain'], kpi_stub_domains(), true)) continue;
     $selectedTrackers[] = $tracker;
 }
 
@@ -312,7 +311,7 @@ $selectedIds = array_column($selectedTrackers, 'id');
 foreach ($CATEGORY_ORDER as $cat) {
     foreach ($allowedSet as $id => $row) {
         if ($row['category'] !== $cat) continue;
-        if (in_array($row['source_domain'], MT_STUBBED_DOMAINS, true)) continue;
+        if (in_array($row['source_domain'], kpi_stub_domains(), true)) continue;
         if (!isset($pickerGroups[$cat])) {
             $pickerGroups[$cat] = [
                 'label'    => $CATEGORY_LABELS[$cat] ?? ucfirst($cat),

@@ -247,6 +247,18 @@ function kpi_dispatch(array $tracker, PDO $pdo): array
 // ─── Stub handler (not yet implemented domains) ───────────────────────────────
 
 /**
+ * Single source of truth for which source_domains still route to
+ * kpi_stub_handler in the kpi_dispatch() match above. Consumed by
+ * mon-tableau.php (picker exclusion + stub-mismatch watchdog).
+ * KEEP IN SYNC with the match — when a domain gains a real handler,
+ * remove it here in the same commit.
+ */
+function kpi_stub_domains(): array
+{
+    return ['utilities', 'fg_stock', 'sales', 'qa_qc', 'equipment', 'logistics'];
+}
+
+/**
  * Placeholder for domains whose v1 handlers ship in Phase 2b.
  * Returns a clearly-marked not-yet-available result so the UI can
  * render a "coming soon" tile rather than a blank error.
