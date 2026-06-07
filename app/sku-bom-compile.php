@@ -835,11 +835,11 @@ function compile_sku_bom_packaging(
 
                 $ins = $pdo->prepare(
                     "INSERT INTO ref_sku_bom
-                       (sku_id, mi_id, ingredient_raw, source, category_raw,
+                       (sku_id, mi_id, ingredient_raw, source, slot_name, category_raw,
                         qty_per_unit, ing_unit, pricing_unit, price, currency, cost, volume_hl,
                         resolution, row_hash, compiled_at, bom_source, effective_from)
                      VALUES
-                       (:sku_id, :mi_id, :ingredient_raw, :source, :category_raw,
+                       (:sku_id, :mi_id, :ingredient_raw, :source, :slot_name, :category_raw,
                         :qty_per_unit, :ing_unit, :pricing_unit, :price, :currency, :cost, :volume_hl,
                         :resolution, :row_hash, :compiled_at, :bom_source, :effective_from)"
                 );
@@ -873,6 +873,7 @@ function compile_sku_bom_packaging(
                         ':mi_id'          => $line['mi_id_fk'],
                         ':ingredient_raw' => $miCode,
                         ':source'         => 'Packaging',
+                        ':slot_name'      => $line['slot_name'],
                         ':category_raw'   => $catName,
                         ':qty_per_unit'   => round($line['qty'], 6),
                         ':ing_unit'       => 'unit',
@@ -1170,6 +1171,7 @@ function _bom_compile_composite(
                 'mi_code'        => $mi['mi_id'],
                 'cat_name'       => $mi['cat_name'] ?? 'Packaging',
                 'qty'            => $qtyPerUnit,
+                'slot_name'      => $slotName,
                 'ingredient_raw' => $mi['mi_id'],  // plain mi_code: unique per composite overwrap
             ];
         }
@@ -1315,6 +1317,7 @@ function _bom_compile_composite(
                 'mi_code'        => $mi['mi_id'],
                 'cat_name'       => $mi['cat_name'] ?? 'Packaging',
                 'qty'            => $itemQty,
+                'slot_name'      => $slotName,
                 'ingredient_raw' => "[{$prefix}]{$slotName}",
             ];
         }
@@ -1373,11 +1376,11 @@ function _bom_compile_composite(
             // Insert composite_liquid rows
             $ins = $pdo->prepare(
                 "INSERT INTO ref_sku_bom
-                   (sku_id, mi_id, ingredient_raw, source, category_raw,
+                   (sku_id, mi_id, ingredient_raw, source, slot_name, category_raw,
                     qty_per_unit, ing_unit, pricing_unit, price, currency, cost, volume_hl,
                     resolution, row_hash, compiled_at, bom_source, effective_from)
                  VALUES
-                   (:sku_id, :mi_id, :ingredient_raw, :source, :category_raw,
+                   (:sku_id, :mi_id, :ingredient_raw, :source, :slot_name, :category_raw,
                     :qty_per_unit, :ing_unit, :pricing_unit, :price, :currency, :cost, :volume_hl,
                     :resolution, :row_hash, :compiled_at, :bom_source, :effective_from)"
             );
@@ -1399,6 +1402,7 @@ function _bom_compile_composite(
                     ':mi_id'          => $line['mi_id_fk'],
                     ':ingredient_raw' => $line['ingredient_raw'],
                     ':source'         => 'Brewing',
+                    ':slot_name'      => null,  // liquid rows carry no packaging slot
                     ':category_raw'   => $line['cat_name'],
                     ':qty_per_unit'   => round($line['qty'], 6),
                     ':ing_unit'       => $line['ing_unit'],
@@ -1432,6 +1436,7 @@ function _bom_compile_composite(
                     ':mi_id'          => $line['mi_id_fk'],
                     ':ingredient_raw' => $line['ingredient_raw'],
                     ':source'         => 'Packaging',
+                    ':slot_name'      => $line['slot_name'] ?? null,
                     ':category_raw'   => $line['cat_name'],
                     ':qty_per_unit'   => round($line['qty'], 6),
                     ':ing_unit'       => 'unit',
