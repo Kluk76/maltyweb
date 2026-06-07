@@ -103,7 +103,7 @@ $csrfToken = csrf_token();
 <body class="home charges-bc">
   <?php require __DIR__ . '/../../app/partials/topbar.php'; ?>
 
-  <main class="main">
+  <main id="main-content" class="main">
     <div class="cbc-wrap">
 
       <!-- ── Page header ──────────────────────────────────────────────────── -->

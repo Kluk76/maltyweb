@@ -71,7 +71,7 @@ body.rg-page .family-switcher {
   display: flex; align-items: center; gap: 0;
   border: 1px solid var(--hairline-2); border-radius: 8px; overflow: hidden;
   font-family: "JetBrains Mono", monospace; font-size: 10px; letter-spacing: .12em;
-  text-transform: uppercase; background: color-mix(in srgb, var(--bg-elev) 80%, transparent); backdrop-filter: blur(6px);
+  text-transform: uppercase; background: var(--bg-elev);
 }
 
 body.rg-page .family-btn {
@@ -169,6 +169,8 @@ body.rg-page .nav-item {
   padding: 11px 22px; cursor: pointer; position: relative;
   font-family: "DM Sans", sans-serif; font-size: 13.5px; color: var(--ink-mute);
   transition: color .18s, background .18s; user-select: none;
+  /* button reset — <button> replaces <div> for keyboard/SR support */
+  background: none; border: none; border-radius: 0; width: 100%; text-align: left;
 }
 body.rg-page .nav-item:hover { color: var(--ink-soft); background: color-mix(in srgb, var(--oak) 8%, transparent); }
 body.rg-page .nav-item.active { color: var(--rg-accent); background: var(--rg-accent-dim); }

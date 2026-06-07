@@ -77,7 +77,7 @@ $cssBoardV     = @filemtime(__DIR__ . '/../css/sb-board.css') ?: time();
 <?php require __DIR__ . '/../../app/partials/sidebar.php' ?>
 <?php require __DIR__ . '/../../app/partials/topbar.php' ?>
 
-<main class="main">
+<main id="main-content" class="main">
 <div class="sb-board-wrap">
 
   <div class="sb-batch-stub" role="main" aria-label="Détail du lot">

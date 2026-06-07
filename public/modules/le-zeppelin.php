@@ -11,12 +11,14 @@ declare(strict_types=1);
  */
 
 require __DIR__ . '/../../app/auth.php';
+require_once __DIR__ . '/../../app/settings-helpers.php';
 
 require_page_access('zeppelin');
 $me = current_user();
 
 header('Content-Type: text/html; charset=utf-8');
 
+$_breweryId    = brewery_identity();
 $active_module = 'zeppelin';
 ?><!doctype html>
 <html lang="fr">
@@ -35,11 +37,11 @@ $active_module = 'zeppelin';
 <?php require __DIR__ . '/../../app/partials/sidebar.php' ?>
 <?php require __DIR__ . '/../../app/partials/topbar.php' ?>
 
-<main class="main">
+<main id="main-content" class="main">
 
   <!-- ── Chrome: family switcher ──────────────────────────────────────────── -->
   <div class="lz-chrome">
-    <div class="lz-brandmark">La Nébuleuse · <b>Le Zeppelin</b></div>
+    <div class="lz-brandmark"><?= htmlspecialchars($_breweryId['name']) ?> · <b>Le Zeppelin</b></div>
     <div class="family-switcher">
       <span class="family-btn fam-hub">
         <span class="fam-dot"></span>Hub
@@ -58,7 +60,7 @@ $active_module = 'zeppelin';
 
   <!-- ── Page header ──────────────────────────────────────────────────────── -->
   <div class="sh-header">
-    <div class="sh-eyebrow">MaltyTask · La Nébuleuse</div>
+    <div class="sh-eyebrow">MaltyTask · <?= htmlspecialchars($_breweryId['name']) ?></div>
     <h1 class="sh-title">Le <em>Zeppelin</em></h1>
     <p class="sh-sub">
       Tableau de bord de l'infrastructure brassicole. Sélectionnez une famille

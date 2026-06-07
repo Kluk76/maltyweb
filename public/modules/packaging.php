@@ -311,7 +311,7 @@ $fmtLabels = ['Keg' => 'Fût', 'Bot' => 'Bouteille', 'Can' => 'Canette', 'Cuve d
 
 <?php require __DIR__ . "/../../app/partials/topbar.php" ?>
 
-<main class="main tanks-main">
+<main id="main-content" class="main tanks-main">
 
   <?php if ($dbError): ?>
     <div class="wort-error">

@@ -1153,8 +1153,12 @@ function render(year) {
 /* ── Year buttons ── */
 document.querySelectorAll('.wk-year-btn').forEach(function(btn) {
   btn.addEventListener('click', function() {
-    document.querySelectorAll('.wk-year-btn').forEach(function(b) { b.classList.remove('active'); });
+    document.querySelectorAll('.wk-year-btn').forEach(function(b) {
+      b.classList.remove('active');
+      b.setAttribute('aria-pressed', 'false');
+    });
     btn.classList.add('active');
+    btn.setAttribute('aria-pressed', 'true');
     const raw = btn.dataset.year;
     activeYear = raw === 'all' ? 'all' : parseInt(raw, 10);
     render(activeYear);

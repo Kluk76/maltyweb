@@ -135,6 +135,7 @@ $ibTooltip = ($ingestBadge === false) ? 'Table ingest_runs indisponible' : _inge
 $userName = htmlspecialchars($me["display_name"] ?? $me["username"] ?? "");
 $userRole = htmlspecialchars($me["role"] ?? "");
 ?>
+<a class="skip-link" href="#main-content">Aller au contenu</a>
 <header class="tb" id="topbar" role="banner" aria-label="Navigation principale">
 
   <!-- ── Mobile burger ── -->

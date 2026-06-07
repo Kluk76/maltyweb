@@ -926,6 +926,7 @@ function eff_val(array $row): string {
 }
 
 $csrf = csrf_token();
+$_breweryId = brewery_identity();
 ?><!doctype html>
 <html lang="fr">
 <head>
@@ -937,6 +938,8 @@ $csrf = csrf_token();
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..600;1,9..144,400..500&family=DM+Sans:opsz,wght@9..40,300..600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/css/app.css?v=<?= @filemtime(__DIR__ . '/../css/app.css') ?: time() ?>">
 <link rel="stylesheet" href="/css/reglages-generaux.css?v=<?= @filemtime(__DIR__ . '/../css/reglages-generaux.css') ?: time() ?>">
+<!-- Session keepalive: page does not include topbar.php so form-resilience is wired directly -->
+<script defer src="/js/form-resilience.js?v=<?= @filemtime(__DIR__ . '/../js/form-resilience.js') ?: time() ?>"></script>
 </head>
 <body class="rg-page" data-role="<?= htmlspecialchars($me['role'] ?? 'admin') ?>">
 
@@ -946,7 +949,7 @@ $csrf = csrf_token();
 
 <!-- CHROME -->
 <div class="chrome">
-  <div class="brandmark">La Nébuleuse · Le Zeppelin · <b>Réglages généraux</b></div>
+  <div class="brandmark"><?= htmlspecialchars($_breweryId['name']) ?> · Le Zeppelin · <b>Réglages généraux</b></div>
 
   <div class="family-switcher">
     <a class="family-btn fam-sdm" href="/modules/salle-des-machines.php" title="Salle des Machines">
@@ -967,13 +970,13 @@ $csrf = csrf_token();
 </div>
 
 <!-- MAIN STAGE -->
-<div class="rg-stage">
+<div class="rg-stage" id="main-content">
 
   <!-- LEFT NAV -->
   <nav class="nav-rail">
     <div class="nav-section-label">Réglages généraux</div>
 
-    <div class="nav-item<?= $initialSec === 'general' ? ' active' : '' ?>" data-sec="general" onclick="switchSection('general')">
+    <button type="button" class="nav-item<?= $initialSec === 'general' ? ' active' : '' ?>" data-sec="general" onclick="switchSection('general')">
       <span class="nav-icon">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
           <circle cx="8" cy="8" r="5.5" stroke="currentColor" stroke-width="1.2"/>
@@ -982,9 +985,9 @@ $csrf = csrf_token();
         </svg>
       </span>
       Données générales
-    </div>
+    </button>
 
-    <div class="nav-item<?= $initialSec === 'pkg_clients' ? ' active' : '' ?>" data-sec="pkg_clients" onclick="switchSection('pkg_clients')">
+    <button type="button" class="nav-item<?= $initialSec === 'pkg_clients' ? ' active' : '' ?>" data-sec="pkg_clients" onclick="switchSection('pkg_clients')">
       <span class="nav-icon">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
           <rect x="1.5" y="4.5" width="13" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
@@ -994,9 +997,9 @@ $csrf = csrf_token();
       </span>
       Clients packaging
       <span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.06em;background:color-mix(in srgb, var(--hop) 18%, transparent);color:var(--hop);padding:2px 7px;border-radius:10px;"><?= count($packagingClients) ?></span>
-    </div>
+    </button>
 
-    <div class="nav-item<?= $initialSec === 'users' ? ' active' : '' ?>" data-sec="users" onclick="switchSection('users')">
+    <button type="button" class="nav-item<?= $initialSec === 'users' ? ' active' : '' ?>" data-sec="users" onclick="switchSection('users')">
       <span class="nav-icon">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
           <circle cx="8" cy="5.5" r="2.8" stroke="currentColor" stroke-width="1.2"/>
@@ -1005,9 +1008,9 @@ $csrf = csrf_token();
       </span>
       Utilisateurs
       <span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.06em;background:color-mix(in srgb, var(--bbt) 18%, transparent);color:var(--bbt);padding:2px 7px;border-radius:10px;"><?= count($users) ?></span>
-    </div>
+    </button>
 
-    <div class="nav-item<?= $initialSec === 'access' ? ' active' : '' ?>" data-sec="access" onclick="switchSection('access')">
+    <button type="button" class="nav-item<?= $initialSec === 'access' ? ' active' : '' ?>" data-sec="access" onclick="switchSection('access')">
       <span class="nav-icon">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
           <rect x="3" y="7" width="10" height="7" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
@@ -1017,7 +1020,7 @@ $csrf = csrf_token();
       </span>
       Pages &amp; Accès
       <span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.06em;background:color-mix(in srgb, var(--oak) 18%, transparent);color:var(--oak);padding:2px 7px;border-radius:10px;"><?= count($refPages) ?></span>
-    </div>
+    </button>
   </nav>
 
   <!-- CONTENT AREA -->

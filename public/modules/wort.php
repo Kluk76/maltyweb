@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require __DIR__ . "/../../app/auth.php";
+require_once __DIR__ . '/../../app/settings-helpers.php';
 
 require_page_access('wort');
 $me = current_user();
@@ -679,6 +680,8 @@ try {
     $kpiPayload  = ['error' => $e->getMessage()];
     $kpiActiveYear = $currentYear;
 }
+
+$_breweryId = brewery_identity();
 ?><!doctype html>
 <html lang="fr">
 <head>
@@ -697,7 +700,7 @@ try {
 
 <?php require __DIR__ . "/../../app/partials/topbar.php" ?>
 
-<main class="main wort-main">
+<main id="main-content" class="main wort-main">
 
   <?php if ($dbError): ?>
     <div class="wort-error">
@@ -707,14 +710,14 @@ try {
 
   <!-- ── Tab switcher ── -->
   <nav class="wort-tabs" aria-label="Sections Wort Production" role="tablist">
-    <button class="wort-tab-btn active" data-tab="brassins" role="tab" aria-selected="true"  aria-controls="wort-panel-brassins">Brassins</button>
-    <button class="wort-tab-btn"        data-tab="kpis"     role="tab" aria-selected="false" aria-controls="wort-panel-kpis">KPIs / Analyse</button>
+    <button class="wort-tab-btn active" id="wort-tab-brassins" data-tab="brassins" role="tab" aria-selected="true"  aria-controls="wort-panel-brassins">Brassins</button>
+    <button class="wort-tab-btn"        id="wort-tab-kpis"     data-tab="kpis"     role="tab" aria-selected="false" aria-controls="wort-panel-kpis">KPIs / Analyse</button>
   </nav>
 
   <!-- ══════════════════════════════════════════
        TAB 1 — Brassins
        ══════════════════════════════════════════ -->
-  <div class="wort-tab-panel active" id="wort-panel-brassins" role="tabpanel" aria-labelledby="">
+  <div class="wort-tab-panel active" id="wort-panel-brassins" role="tabpanel" aria-labelledby="wort-tab-brassins">
 
     <!-- KPI stats bar -->
     <section class="wort-kpis" aria-label="Statistiques brassage">
@@ -991,7 +994,7 @@ try {
   <!-- ══════════════════════════════════════════
        TAB 2 — KPIs / Analyse
        ══════════════════════════════════════════ -->
-  <div class="wort-tab-panel" id="wort-panel-kpis" role="tabpanel" aria-labelledby="">
+  <div class="wort-tab-panel" id="wort-panel-kpis" role="tabpanel" aria-labelledby="wort-tab-kpis">
 
     <?php if ($dbError): ?>
       <div class="wort-error">
@@ -1005,7 +1008,7 @@ try {
       <header class="wk-header">
         <div>
           <div class="wk-header__title">Production de <em>moût</em></div>
-          <div class="wk-header__sub">Analytique · La Nébuleuse · KPIs annuels</div>
+          <div class="wk-header__sub">Analytique · <?= htmlspecialchars($_breweryId['name']) ?> · KPIs annuels</div>
         </div>
         <span class="wk-header__badge">Données réelles</span>
       </header>
@@ -1014,10 +1017,13 @@ try {
       <div class="wk-year-bar">
         <span class="wk-year-bar__label">Année</span>
         <?php foreach ($kpiPayload['years'] as $yr): ?>
-          <button class="wk-year-btn<?= ($kpiActiveYear === $yr || ($kpiActiveYear === (int)$yr)) ? ' active' : '' ?>"
-                  data-year="<?= htmlspecialchars((string)$yr) ?>"><?= htmlspecialchars((string)$yr) ?></button>
+          <?php $isActive = ($kpiActiveYear === $yr || ($kpiActiveYear === (int)$yr)); ?>
+          <button class="wk-year-btn<?= $isActive ? ' active' : '' ?>"
+                  data-year="<?= htmlspecialchars((string)$yr) ?>"
+                  aria-pressed="<?= $isActive ? 'true' : 'false' ?>"><?= htmlspecialchars((string)$yr) ?></button>
         <?php endforeach ?>
-        <button class="wk-year-btn<?= ($kpiActiveYear === 'all') ? ' active' : '' ?>" data-year="all">Tous</button>
+        <?php $allActive = ($kpiActiveYear === 'all'); ?>
+        <button class="wk-year-btn<?= $allActive ? ' active' : '' ?>" data-year="all" aria-pressed="<?= $allActive ? 'true' : 'false' ?>">Tous</button>
       </div>
 
       <!-- ── YTD notice (current year only) ─────── -->

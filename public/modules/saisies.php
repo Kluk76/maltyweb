@@ -38,7 +38,7 @@ $active_module = 'saisies';
 <?php require __DIR__ . '/../../app/partials/sidebar.php' ?>
 <?php require __DIR__ . '/../../app/partials/topbar.php' ?>
 
-<main class="main">
+<main id="main-content" class="main">
 
   <div class="sh-header">
     <div class="sh-eyebrow">MaltyTask · Saisies opérateur</div>

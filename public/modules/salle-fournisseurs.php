@@ -345,7 +345,7 @@ header("Content-Type: text/html; charset=utf-8");
 </div>
 <?php else: ?>
 
-<main class="sf-workspace" role="main">
+<main id="main-content" class="sf-workspace" role="main">
 
   <!-- ── LEFT: Manifest Panel ── -->
   <aside class="sf-manifest" aria-label="Liste des fournisseurs">

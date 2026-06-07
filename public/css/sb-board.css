@@ -177,8 +177,7 @@ body.sb-board .main {
   display: flex; align-items: center; gap: 8px;
   padding: 9px 14px 8px;
   border-bottom: 1px solid var(--hairline);
-  background: color-mix(in srgb, var(--bg-elev) 80%, transparent);
-  backdrop-filter: blur(6px);
+  background: var(--bg-elev);
   position: relative; z-index: 5;
   cursor: default;
   transition: background .2s;

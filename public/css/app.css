@@ -129,8 +129,99 @@ button {
   border-radius: 3px;
   font: inherit;
   cursor: pointer;
+  touch-action: manipulation;
 }
 button:hover { background: var(--ink-soft); }
+button:active {
+  transform: scale(0.97);
+  transition: transform 160ms var(--ease-out, ease-out);
+}
+
+/* ── Skip-to-content link (WCAG 2.4.1) ── */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: -9999px;
+  z-index: 9999;
+  background: var(--hop);
+  color: var(--bg);
+  padding: 8px 16px;
+  border-radius: 0 0 4px 0;
+  font-family: "DM Sans", sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.skip-link:focus {
+  position: absolute;
+  left: 0;
+  top: 0;
+  outline: 2px solid var(--hop-deep);
+  outline-offset: 2px;
+}
+
+/* ── Global :focus-visible rings (WCAG 2.4.7 / 2.4.11) ── */
+button:focus-visible,
+a:focus-visible,
+[tabindex]:focus-visible,
+[role="button"]:focus-visible,
+.sd-view-btn:focus-visible,
+.sd-entry:focus-visible,
+.sd-btn-apply:focus-visible,
+.sd-btn-reset:focus-visible,
+.sh-card:focus-visible,
+.sdm-back:focus-visible,
+.sdm-zone:focus-visible,
+.sf-supplier-row:focus-visible,
+.wk-year-btn:focus-visible,
+.family-btn:focus-visible,
+.tb-drawer__item:focus-visible {
+  outline: 2px solid var(--hop);
+  outline-offset: 2px;
+}
+
+/* ── Global touch enhancement for all interactive chips/row-actions ── */
+.sh-card,
+.sd-entry,
+.sd-view-btn,
+.wk-year-btn,
+.family-btn,
+.tb__module,
+.tb-drawer__item,
+.sd-btn-apply,
+.sd-btn-reset,
+.sdm-back,
+.sdm-zone {
+  touch-action: manipulation;
+}
+.sh-card:active,
+.sd-entry:active,
+.sd-view-btn:active:not(.active),
+.wk-year-btn:active,
+.sdm-back:active,
+.sdm-zone:active {
+  transform: scale(0.97);
+  transition: transform 160ms var(--ease-out, ease-out);
+}
+
+/* ── Global reduced-motion safety net ── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── overscroll containment for modal/panel scroll containers ── */
+.tb-drawer__panel,
+.sf-fiche,
+.ia-modal__box {
+  overscroll-behavior: contain;
+}
 
 /* ---------- status messages ---------- */
 .err {
@@ -9688,10 +9779,17 @@ body.auth::after {
   to   { opacity: 1; transform: none; }
 }
 
+/* Gate CCT modal entrance animations under reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  .home .cct-modal__overlay { animation: none; }
+  .home .cct-modal__card    { animation: none; }
+}
+
 .home .cct-modal__card {
   width: min(920px, 94vw);
   max-height: 92vh;
   overflow-y: auto;
+  overscroll-behavior: contain;
   background: var(--bg-elev);
   border-radius: 4px;
   box-shadow:

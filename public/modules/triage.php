@@ -478,7 +478,7 @@ function stock_qs(array $extra): string
 
 <?php require __DIR__ . "/../../app/partials/topbar.php" ?>
 
-<main class="main admin__main">
+<main id="main-content" class="main admin__main">
 
   <?php if ($triageFlash !== null): ?>
     <?php

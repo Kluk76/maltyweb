@@ -366,6 +366,8 @@ $jsContainerMi    = json_encode($containerMi, JSON_UNESCAPED_UNICODE | JSON_HEX_
 $jsPkgFormats     = json_encode($pkgFormats, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 $jsServingTanks   = json_encode($servingTanks, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 $servingTankTotal = array_sum(array_column($servingTanks, 'capacity_hl'));
+
+$_breweryId = brewery_identity();
 ?><!doctype html>
 <html lang="fr">
 <head>
@@ -388,22 +390,22 @@ $servingTankTotal = array_sum(array_column($servingTanks, 'capacity_hl'));
 <span class="sdm-mark bl"></span><span class="sdm-mark br"></span>
 
 <div class="sdm-board"></div>
-<div class="sdm-toast" id="sdmToast"></div>
+<div class="sdm-toast" id="sdmToast" role="status" aria-live="polite"></div>
 
 <!-- csrf for JS-submitted forms -->
 <input type="hidden" id="sdmCsrf" value="<?= htmlspecialchars($csrf) ?>">
 
-<main class="main">
+<main id="main-content" class="main">
 
   <!-- ── chrome (breadcrumbs + role badge) ─────────────────────── -->
   <div class="sdm-chrome">
-    <div class="sdm-brandmark">La Nébuleuse · Le Zeppelin · <b>Salle des Machines</b></div>
+    <div class="sdm-brandmark"><?= htmlspecialchars($_breweryId['name']) ?> · Le Zeppelin · <b>Salle des Machines</b></div>
     <div class="sdm-crumbs" id="sdmCrumbs"><span class="here">Plan</span></div>
     <span class="sdm-role-badge" data-role="<?= htmlspecialchars($bodyRole) ?>"><?= htmlspecialchars($bodyRole) ?></span>
   </div>
 
   <?php if ($dbError): ?>
-    <div class="sdm-notice err" style="position:relative;z-index:5;margin:8px 44px;">
+    <div class="sdm-notice err" role="alert" style="position:relative;z-index:5;margin:8px 44px;">
       Erreur DB : <?= htmlspecialchars($dbError) ?>
     </div>
   <?php endif ?>
@@ -412,7 +414,7 @@ $servingTankTotal = array_sum(array_column($servingTanks, 'capacity_hl'));
   $flash = flash_pop();
   if ($flash !== null): ?>
     <div class="sdm-notice <?= $flash['type'] === 'ok' ? 'ok' : 'err' ?>"
-         style="position:relative;z-index:5;margin:8px 44px;">
+         role="alert" style="position:relative;z-index:5;margin:8px 44px;">
       <?= htmlspecialchars($flash['msg']) ?>
     </div>
   <?php endif ?>
@@ -561,7 +563,7 @@ $servingTankTotal = array_sum(array_column($servingTanks, 'capacity_hl'));
 
 <!-- footer label -->
 <div class="sdm-titleblock">
-  La Nébuleuse — Lausanne<br>
+  <?= htmlspecialchars($_breweryId['name']) ?> — <?= htmlspecialchars($_breweryId['city']) ?><br>
   Salle des Machines · Plan №01<br>
   rév. <?= date('Y-m-d') ?> · éch. n/a
 </div>

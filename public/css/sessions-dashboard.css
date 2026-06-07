@@ -76,7 +76,7 @@ body.sessions-dashboard .sd-view-btn {
 body.sessions-dashboard .sd-view-btn.active {
   background: var(--bg);
   color: var(--ink);
-  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  box-shadow: 0 1px 3px rgba(30,18,5,0.10);
 }
 body.sessions-dashboard .sd-view-btn:hover:not(.active) {
   color: var(--ink-soft);
@@ -306,7 +306,7 @@ body.sessions-dashboard .sd-entry {
 }
 body.sessions-dashboard .sd-entry:hover {
   border-color: var(--hairline-2);
-  box-shadow: 0 2px 10px rgba(0,0,0,0.07);
+  box-shadow: 0 2px 10px rgba(30,18,5,0.08);
 }
 body.sessions-dashboard .sd-entry.status-open {
   border-left: 3px solid var(--hop);
@@ -471,7 +471,7 @@ body.sessions-dashboard .sd-vessel-card {
 }
 body.sessions-dashboard .sd-vessel-card:hover {
   border-color: var(--hairline-2);
-  box-shadow: 0 3px 12px rgba(0,0,0,0.08);
+  box-shadow: 0 3px 12px rgba(30,18,5,0.09);
 }
 body.sessions-dashboard .sd-vessel-card.open {
   border-top: 3px solid var(--hop);

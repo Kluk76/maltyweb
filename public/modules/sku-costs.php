@@ -235,7 +235,7 @@ unset($r);
 
 <?php require __DIR__ . "/../../app/partials/topbar.php" ?>
 
-<main class="main wort-main">
+<main id="main-content" class="main wort-main">
 
   <?php if ($dbError): ?>
     <div class="wort-error">

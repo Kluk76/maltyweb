@@ -97,8 +97,7 @@ body.salle-fournisseurs .sf-manifest {
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--hairline-2);
-  background: color-mix(in srgb, var(--bg-side) 85%, transparent);
-  backdrop-filter: blur(4px);
+  background: var(--bg-side);
   overflow: hidden;
 }
 

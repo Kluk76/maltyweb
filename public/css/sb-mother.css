@@ -1189,7 +1189,7 @@ body.sb-mother .smh-cv-modal {
   max-height: 90vh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 12px 40px rgba(0,0,0,0.25);
+  box-shadow: 0 12px 40px rgba(40,25,12,0.28);
   overflow: hidden;
 }
 
@@ -1486,7 +1486,7 @@ body.sb-mother .sb-merge-modal {
   max-height: 90vh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 12px 40px rgba(0,0,0,0.25);
+  box-shadow: 0 12px 40px rgba(40,25,12,0.28);
   overflow: hidden;
 }
 
@@ -1788,7 +1788,7 @@ body.sb-mother .sb-fc-modal {
   max-height: 90vh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 12px 40px rgba(0,0,0,0.25);
+  box-shadow: 0 12px 40px rgba(40,25,12,0.28);
   overflow: hidden;
 }
 

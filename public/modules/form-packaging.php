@@ -2169,7 +2169,7 @@ $cipConfig = [
 <?php require __DIR__ . '/../../app/partials/sidebar.php' ?>
 <?php require __DIR__ . '/../../app/partials/topbar.php' ?>
 
-<main class="main">
+<main id="main-content" class="main">
 
   <?php flash_render() ?>
 

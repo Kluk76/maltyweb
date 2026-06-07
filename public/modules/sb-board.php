@@ -283,7 +283,7 @@ $jsBoardV      = @filemtime(__DIR__ . '/../js/sb-board.js')   ?: time();
 <?php require __DIR__ . '/../../app/partials/sidebar.php' ?>
 <?php require __DIR__ . '/../../app/partials/topbar.php' ?>
 
-<main class="main">
+<main id="main-content" class="main">
 <div class="sb-board-wrap">
 
   <!-- Board controls row — sync pill + admin retro-link, right-aligned as a flex unit -->

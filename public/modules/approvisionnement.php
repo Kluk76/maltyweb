@@ -301,7 +301,7 @@ header("Content-Type: text/html; charset=utf-8");
 <!-- Toast -->
 <div class="af-toast" id="af-toast" role="status" aria-live="polite"></div>
 
-<main class="af-workspace" role="main">
+<main id="main-content" class="af-workspace" role="main">
 
 <?php if ($dbError !== null): ?>
   <div style="padding:40px;color:var(--ember);font-family:'JetBrains Mono',monospace;font-size:12px;">

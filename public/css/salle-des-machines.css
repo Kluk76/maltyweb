@@ -95,8 +95,7 @@ body.salle-des-machines .sdm-chrome {
   gap: 14px;
   padding: 14px 44px 10px;
   border-bottom: 1px solid var(--hairline);
-  background: color-mix(in srgb, var(--bg-elev) 92%, transparent);
-  backdrop-filter: blur(6px);
+  background: var(--bg-elev);
   flex-shrink: 0;
 }
 body.salle-des-machines .sdm-brandmark {

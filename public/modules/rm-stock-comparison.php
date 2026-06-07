@@ -352,7 +352,7 @@ $countOk     = count($bucketOk);
 <?php require __DIR__ . "/../../app/partials/sidebar.php" ?>
 <?php require __DIR__ . "/../../app/partials/topbar.php" ?>
 
-<main class="main rsc-main">
+<main id="main-content" class="main rsc-main">
 
   <?php if ($dbError): ?>
     <div class="rsc-dberror">

@@ -237,6 +237,27 @@ function sessions_last_steps_batch(PDO $pdo, array $ids, int $k = 3): array
 $sessionIds = array_column($sessions, 'id');
 $stepsMap   = sessions_last_steps_batch($pdo, $sessionIds, SD_STEPS_SHOWN);
 
+// ─── Batch-load recipe names for all sessions that have recipe_id_fk ──────────
+// Replaces the "Recette #N" FK label anti-pattern with human recipe names.
+$recipeIds  = array_unique(array_filter(array_column($sessions, 'recipe_id_fk')));
+$recipeNames = [];  // recipe_id_fk => short display name
+if (!empty($recipeIds)) {
+    $rPlaceholders = implode(',', array_fill(0, count($recipeIds), '?'));
+    try {
+        $rStmt = $pdo->prepare(
+            "SELECT id, COALESCE(NULLIF(recipe_short_name, ''), name) AS display_name
+               FROM ref_recipes
+              WHERE id IN ({$rPlaceholders})"
+        );
+        $rStmt->execute(array_map('intval', array_values($recipeIds)));
+        foreach ($rStmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
+            $recipeNames[(int)$r['id']] = $r['display_name'];
+        }
+    } catch (Throwable) {
+        // Silent fallback — recipe labels simply won't show
+    }
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /** Escape for HTML output. */
@@ -373,7 +394,7 @@ $pageTitle = 'Journal de bord — MaltyTask';
 <?php require __DIR__ . '/../../app/partials/sidebar.php' ?>
 <?php require __DIR__ . '/../../app/partials/topbar.php' ?>
 
-<main class="main">
+<main id="main-content" class="main">
 <div class="sd-page">
 
   <!-- ════════════════════════════════════════════════════════════
@@ -575,9 +596,12 @@ $pageTitle = 'Journal de bord — MaltyTask';
                     <span><?= sd_esc($opener) ?></span>
                     <span class="sd-entry-sub-sep">·</span>
                     <span><?= sd_esc(sd_elapsed($s)) ?></span>
-                    <?php if (!empty($s['recipe_id_fk'])): ?>
+                    <?php
+                    $rId    = (int)($s['recipe_id_fk'] ?? 0);
+                    $rLabel = $rId ? ($recipeNames[$rId] ?? null) : null;
+                    if ($rLabel !== null): ?>
                       <span class="sd-entry-sub-sep">·</span>
-                      <span>Recette #<?= (int)$s['recipe_id_fk'] ?></span>
+                      <span><?= sd_esc($rLabel) ?></span>
                     <?php endif ?>
                   </div>
 
