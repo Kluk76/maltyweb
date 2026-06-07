@@ -1,0 +1,178 @@
+{
+  "generated_at": "2026-06-07T00:00:00Z",
+  "dry_run": true,
+  "status": "PREVIEW ONLY — NOT APPLIED",
+  "change": "Switch BOM line costing from ref_mi.price (native currency) to v_mi_cost.cost_chf (WAC > catalog > no_basis, CHF-normalised)",
+  "scope": "compile_sku_bom_packaging + _bom_compile_composite (composite_packaging lines) + compile_sku_bom_liquid ($computeCost closure)",
+  "note_tea": "PKG_TEA_BOT_CH (~0.02 CHF/bottle) is NOT in packaging BOM lines — it is added by format-template enrichment (a separate later build). Bottled SKUs will transiently lack the TEA line until that build runs. This is expected and NOT an error from this costing switch.",
+
+  "v_mi_cost_confirmation": {
+    "join_key": "v_mi_cost.mi_id_fk = ref_mi.id",
+    "cost_chf_unit": "CHF per pricing_unit (FX-normalised: EUR×0.945 via ref_fx)",
+    "cost_basis_enum_values": ["wac", "catalog", "no_basis"],
+    "cost_basis_distribution": {
+      "wac": 91,
+      "catalog": 146,
+      "no_basis": 130
+    },
+    "pkgbot_pivo_confirmed": {
+      "mi_id": "PKG_BOT_PIVO",
+      "mi_id_fk": 91,
+      "old_price_native": "0.1684 EUR",
+      "new_cost_chf": "0.138537 CHF",
+      "cost_basis": "wac"
+    }
+  },
+
+  "grand_total": {
+    "skus_with_packaging_bom_lines": 121,
+    "total_packaging_bom_lines": 461,
+    "total_old_cost_chf": 2031.8236,
+    "total_new_cost_chf": 1748.3598,
+    "total_cost_delta_chf": -283.4638,
+    "direction": "DOWN (packaging over-costed by ~CHF 283 per full BOM set)",
+    "no_basis_bom_lines": 44,
+    "no_basis_distinct_mis": 21
+  },
+
+  "bottle_focus": {
+    "PKG_BOT_PIVO": {
+      "old_price_native": "0.1684 EUR",
+      "old_cost_chf_equiv": "~0.1590 CHF (at 0.945)",
+      "new_cost_chf": "0.138537 CHF (WAC)",
+      "delta_per_unit": "-0.029863 CHF",
+      "note": "TEA was bundled into old catalog price (0.1684 EUR included TEA). After switch, bottle = bottle-only cost. TEA line (~0.02 CHF) must be added separately by format-template enrichment."
+    },
+    "PKG_BOT_CROWN_CAPS": {
+      "old_price_native": "0.0075 EUR",
+      "new_cost_chf": "0.006993 CHF (WAC)",
+      "delta_per_unit": "-0.000507 CHF"
+    },
+    "sku_deltas": {
+      "ALTBU": {"old": 0.199850, "new": 0.168163, "delta": -0.031687, "no_basis_lines": 0},
+      "ALTB":  {"old": 8.052350, "new": 7.291856, "delta": -0.760494, "no_basis_lines": 0},
+      "ALT-X": {"old": 205.245950, "new": 172.703145, "delta": -32.542805, "no_basis_lines": 0}
+    }
+  },
+
+  "top_movers_by_absolute_delta": [
+    {"sku_code": "ZEP-X",  "old": 205.245950, "new": 172.703144, "delta": -32.542806, "no_basis_lines": 0},
+    {"sku_code": "SPY-X",  "old": 205.245950, "new": 172.703144, "delta": -32.542806, "no_basis_lines": 0},
+    {"sku_code": "MOO-X",  "old": 205.245950, "new": 172.703145, "delta": -32.542805, "no_basis_lines": 0},
+    {"sku_code": "EMB-X",  "old": 205.245950, "new": 172.703145, "delta": -32.542805, "no_basis_lines": 0},
+    {"sku_code": "STI-X",  "old": 205.245950, "new": 172.703145, "delta": -32.542805, "no_basis_lines": 0},
+    {"sku_code": "DOA-X",  "old": 205.245950, "new": 172.703145, "delta": -32.542805, "no_basis_lines": 0},
+    {"sku_code": "ALT-X",  "old": 205.245950, "new": 172.703145, "delta": -32.542805, "no_basis_lines": 0},
+    {"sku_code": "DIV-X",  "old": 205.245950, "new": 172.703145, "delta": -32.542805, "no_basis_lines": 0},
+    {"sku_code": "DOA4",   "old": 7.148000,   "new": 6.255906,   "delta": -0.892094,  "no_basis_lines": 0},
+    {"sku_code": "EMB4",   "old": 7.074300,   "new": 6.268688,   "delta": -0.805612,  "no_basis_lines": 0},
+    {"sku_code": "EST4",   "old": 7.164800,   "new": 6.403844,   "delta": -0.760956,  "no_basis_lines": 0},
+    {"sku_code": "SPY4",   "old": 7.297200,   "new": 6.536620,   "delta": -0.760580,  "no_basis_lines": 0},
+    {"sku_code": "ALTB",   "old": 8.052350,   "new": 7.291856,   "delta": -0.760494,  "no_basis_lines": 0},
+    {"sku_code": "STIB",   "old": 8.052350,   "new": 7.291856,   "delta": -0.760494,  "no_basis_lines": 0},
+    {"sku_code": "ZEPB",   "old": 8.052350,   "new": 7.291856,   "delta": -0.760494,  "no_basis_lines": 0}
+  ],
+
+  "positive_delta_skus": [
+    {
+      "sku_code": "PAL",
+      "old": 3.450000, "new": 4.190000, "delta": 0.740000,
+      "explanation": "LOG_SCOTCH_ESHOP: BOM had stale cost=2.50 stored, v_mi_cost.cost_chf=3.24 (catalog). Correction upward."
+    },
+    {
+      "sku_code": "PAC",
+      "old": 3.450000, "new": 4.190000, "delta": 0.740000,
+      "explanation": "Same as PAL — LOG_SCOTCH_ESHOP stale BOM cost corrected."
+    },
+    {
+      "sku_code": "EMB4C",
+      "old": 10.598000, "new": 11.583860, "delta": 0.985860,
+      "explanation": "PKG_INTERCAL_NOMOQ had NULL cost in BOM (price was set but cost column was null). WAC=1.4175 CHF now applied. Correction upward."
+    },
+    {
+      "sku_code": "MOO4C", "old": 10.598000, "new": 11.583860, "delta": 0.985860, "explanation": "Same as EMB4C."
+    },
+    {
+      "sku_code": "SPY4C", "old": 10.598000, "new": 11.583860, "delta": 0.985860, "explanation": "Same as EMB4C."
+    },
+    {
+      "sku_code": "STI4C", "old": 10.598000, "new": 11.583860, "delta": 0.985860, "explanation": "Same as EMB4C."
+    },
+    {
+      "sku_code": "ZEP4C", "old": 7.848000, "new": 8.833860, "delta": 0.985860,
+      "explanation": "PKG_INTERCAL_NOMOQ NULL cost corrected. Also has 2 no_basis lines (PKG_4PACK_CAN_ZEP + PKG_6X4_CAN_ZEP)."
+    }
+  ],
+
+  "no_basis_flag_list": [
+    {"mi_id": "PKG_CAN_ALU_50",   "mi_id_fk": 616, "name": "Canette alu 50cl (générique)", "currency": null, "affected_skus": ["EPH1C","EPH1CU","EPH2C","EPH2CU","EPH3C","EPH3CU","EPH4C","EPH4CU"], "bom_lines": 8},
+    {"mi_id": "PKG_STICKER_EPH4", "mi_id_fk": 644, "name": "Sticker EPH4",                 "currency": "CHF", "affected_skus": ["EPH4B","EPH4B12","EPH4C","EPHB12"], "bom_lines": 4},
+    {"mi_id": "PKG_LABEL_EPH2",   "mi_id_fk": 149, "name": "Label EPH2",                   "currency": "CHF", "affected_skus": ["EPH24PB","EPH2B","EPH2BU"], "bom_lines": 3},
+    {"mi_id": "PKG_STICKER_DGD",  "mi_id_fk": 635, "name": "Sticker DGD",                  "currency": "CHF", "affected_skus": ["COLLAB12","DGDB"], "bom_lines": 2},
+    {"mi_id": "PKG_STICKER_MOO",  "mi_id_fk": 645, "name": "Sticker MOO",                  "currency": "CHF", "affected_skus": ["MOOB","MOOB12"], "bom_lines": 2},
+    {"mi_id": "PKG_STICKER_EPH3", "mi_id_fk": 643, "name": "Sticker EPH3",                 "currency": "CHF", "affected_skus": ["EPH3B","EPH3C"], "bom_lines": 2},
+    {"mi_id": "PKG_STICKER_EPH2", "mi_id_fk": 642, "name": "Sticker EPH2",                 "currency": "CHF", "affected_skus": ["EPH2B","EPH2C"], "bom_lines": 2},
+    {"mi_id": "PKG_STICKER_EPH1", "mi_id_fk": 641, "name": "Sticker EPH1",                 "currency": "CHF", "affected_skus": ["EPH1B","EPH1C"], "bom_lines": 2},
+    {"mi_id": "PKG_STICKER_DOA",  "mi_id_fk": 639, "name": "Sticker DOA",                  "currency": "CHF", "affected_skus": ["DOAB","DOAB12"], "bom_lines": 2},
+    {"mi_id": "PKG_STICKER_DIV",  "mi_id_fk": 638, "name": "Sticker DIV",                  "currency": "CHF", "affected_skus": ["DIVB","DIVB12"], "bom_lines": 2},
+    {"mi_id": "PKG_LABEL_DIP",    "mi_id_fk": 633, "name": "Label DIP",                    "currency": "EUR", "affected_skus": ["DIPB","DIPBU"], "bom_lines": 2},
+    {"mi_id": "PKG_LABEL_DIG",    "mi_id_fk": 632, "name": "Label DIG",                    "currency": "EUR", "affected_skus": ["DIGB","DIGBU"], "bom_lines": 2},
+    {"mi_id": "PKG_4PACK_CAN_ZEP","mi_id_fk": 624, "name": "4-pack can ZEP",               "currency": "CHF", "affected_skus": ["ZEP4C","ZEP4PC"], "bom_lines": 2},
+    {"mi_id": "PKG_4PACK_BTL_EPH4","mi_id_fk": 623,"name": "4-pack bottle EPH4",           "currency": "CHF", "affected_skus": ["EPH44PB","EPH4PB"], "bom_lines": 2},
+    {"mi_id": "PKG_4PACK_BTL_EPH2","mi_id_fk": 622,"name": "4-pack bottle EPH2",           "currency": "CHF", "affected_skus": ["EPH24PB"], "bom_lines": 1},
+    {"mi_id": "PKG_STICKER_DIG",  "mi_id_fk": 636, "name": "Sticker DIG",                  "currency": "CHF", "affected_skus": ["DIGB"], "bom_lines": 1},
+    {"mi_id": "PKG_STICKER_DIP",  "mi_id_fk": 637, "name": "Sticker DIP",                  "currency": "CHF", "affected_skus": ["DIPB"], "bom_lines": 1},
+    {"mi_id": "PKG_LABEL_DOC",    "mi_id_fk": 634, "name": "Label DOC",                    "currency": "EUR", "affected_skus": ["DOCB"], "bom_lines": 1},
+    {"mi_id": "PKG_STICKER_DOC",  "mi_id_fk": 640, "name": "Sticker DOC",                  "currency": "CHF", "affected_skus": ["DOCB"], "bom_lines": 1},
+    {"mi_id": "PKG_CAN_ALU_33",   "mi_id_fk": 617, "name": "Canette alu 33cl (générique)", "currency": null, "affected_skus": ["DIV33C"], "bom_lines": 1},
+    {"mi_id": "PKG_6X4_CAN_ZEP",  "mi_id_fk": 620, "name": "6x4 can ZEP",                 "currency": "CHF", "affected_skus": ["ZEP4C"], "bom_lines": 1}
+  ],
+
+  "per_sku_delta": [
+    {"sku_code":"ZEP-X","old":205.245950,"new":172.703144,"delta":-32.542806,"no_basis_lines":0,"total_pkg_lines":3},
+    {"sku_code":"SPY-X","old":205.245950,"new":172.703144,"delta":-32.542806,"no_basis_lines":0,"total_pkg_lines":3},
+    {"sku_code":"MOO-X","old":205.245950,"new":172.703145,"delta":-32.542805,"no_basis_lines":0,"total_pkg_lines":3},
+    {"sku_code":"EMB-X","old":205.245950,"new":172.703145,"delta":-32.542805,"no_basis_lines":0,"total_pkg_lines":3},
+    {"sku_code":"STI-X","old":205.245950,"new":172.703145,"delta":-32.542805,"no_basis_lines":0,"total_pkg_lines":3},
+    {"sku_code":"DOA-X","old":205.245950,"new":172.703145,"delta":-32.542805,"no_basis_lines":0,"total_pkg_lines":3},
+    {"sku_code":"ALT-X","old":205.245950,"new":172.703145,"delta":-32.542805,"no_basis_lines":0,"total_pkg_lines":3},
+    {"sku_code":"DIV-X","old":205.245950,"new":172.703145,"delta":-32.542805,"no_basis_lines":0,"total_pkg_lines":3},
+    {"sku_code":"DOA4","old":7.148000,"new":6.255906,"delta":-0.892094,"no_basis_lines":0,"total_pkg_lines":5},
+    {"sku_code":"EMB4","old":7.074300,"new":6.268688,"delta":-0.805612,"no_basis_lines":0,"total_pkg_lines":5},
+    {"sku_code":"EST4","old":7.164800,"new":6.403844,"delta":-0.760956,"no_basis_lines":0,"total_pkg_lines":5},
+    {"sku_code":"SPY4","old":7.297200,"new":6.536620,"delta":-0.760580,"no_basis_lines":0,"total_pkg_lines":5},
+    {"sku_code":"SPYB24","old":7.297200,"new":6.536620,"delta":-0.760580,"no_basis_lines":0,"total_pkg_lines":5},
+    {"sku_code":"DIB4","old":7.036400,"new":6.275906,"delta":-0.760494,"no_basis_lines":0,"total_pkg_lines":5},
+    {"sku_code":"ZEP4","old":7.156400,"new":6.395906,"delta":-0.760494,"no_basis_lines":0,"total_pkg_lines":5},
+    {"sku_code":"DIBB","old":8.052350,"new":7.291856,"delta":-0.760494,"no_basis_lines":0,"total_pkg_lines":6},
+    {"sku_code":"DOAB","old":5.460350,"new":4.699856,"delta":-0.760494,"no_basis_lines":1,"total_pkg_lines":6},
+    {"sku_code":"EMBB","old":7.165550,"new":6.405056,"delta":-0.760494,"no_basis_lines":0,"total_pkg_lines":6},
+    {"sku_code":"MOOB","old":5.460350,"new":4.699856,"delta":-0.760494,"no_basis_lines":1,"total_pkg_lines":6},
+    {"sku_code":"SPYB","old":8.052350,"new":7.291856,"delta":-0.760494,"no_basis_lines":0,"total_pkg_lines":6},
+    {"sku_code":"STIB","old":8.052350,"new":7.291856,"delta":-0.760494,"no_basis_lines":0,"total_pkg_lines":6},
+    {"sku_code":"ZEPB","old":8.052350,"new":7.291856,"delta":-0.760494,"no_basis_lines":0,"total_pkg_lines":6},
+    {"sku_code":"ALT4","old":7.016400,"new":6.255906,"delta":-0.760494,"no_basis_lines":0,"total_pkg_lines":5},
+    {"sku_code":"ALTB","old":8.052350,"new":7.291856,"delta":-0.760494,"no_basis_lines":0,"total_pkg_lines":6},
+    {"sku_code":"DIVB","old":5.460350,"new":4.699856,"delta":-0.760494,"no_basis_lines":1,"total_pkg_lines":6},
+    {"sku_code":"STI4","old":7.232300,"new":6.471818,"delta":-0.760482,"no_basis_lines":0,"total_pkg_lines":5},
+    {"sku_code":"MOO4","old":7.189400,"new":6.428942,"delta":-0.760458,"no_basis_lines":0,"total_pkg_lines":5},
+    {"sku_code":"EPH1B","old":10.974350,"new":10.244750,"delta":-0.729600,"no_basis_lines":1,"total_pkg_lines":6},
+    {"sku_code":"DGDB","old":10.765550,"new":10.036670,"delta":-0.728880,"no_basis_lines":1,"total_pkg_lines":6},
+    {"sku_code":"DIGB","old":4.885550,"new":4.156670,"delta":-0.728880,"no_basis_lines":2,"total_pkg_lines":6},
+    {"sku_code":"DOCB","old":4.885550,"new":4.156670,"delta":-0.728880,"no_basis_lines":2,"total_pkg_lines":6},
+    {"sku_code":"EPH2B","old":4.885550,"new":4.156670,"delta":-0.728880,"no_basis_lines":2,"total_pkg_lines":6},
+    {"sku_code":"EPH3B","old":13.721150,"new":12.992270,"delta":-0.728880,"no_basis_lines":1,"total_pkg_lines":6},
+    {"sku_code":"EPH4B","old":9.642350,"new":8.913470,"delta":-0.728880,"no_basis_lines":1,"total_pkg_lines":6},
+    {"sku_code":"DIPB","old":4.885550,"new":4.156670,"delta":-0.728880,"no_basis_lines":2,"total_pkg_lines":6},
+    {"sku_code":"DIV4","old":6.873400,"new":6.296507,"delta":-0.576893,"no_basis_lines":0,"total_pkg_lines":5},
+    {"sku_code":"ZEPC","old":11.133950,"new":10.702310,"delta":-0.431640,"no_basis_lines":0,"total_pkg_lines":5},
+    {"sku_code":"PD8","old":0.980000,"new":0.980000,"delta":0.000000,"no_basis_lines":0,"total_pkg_lines":1},
+    {"sku_code":"PAL","old":3.450000,"new":4.190000,"delta":0.740000,"no_basis_lines":0,"total_pkg_lines":2},
+    {"sku_code":"PAC","old":3.450000,"new":4.190000,"delta":0.740000,"no_basis_lines":0,"total_pkg_lines":2},
+    {"sku_code":"EMB4C","old":10.598000,"new":11.583860,"delta":0.985860,"no_basis_lines":0,"total_pkg_lines":5},
+    {"sku_code":"MOO4C","old":10.598000,"new":11.583860,"delta":0.985860,"no_basis_lines":0,"total_pkg_lines":5},
+    {"sku_code":"SPY4C","old":10.598000,"new":11.583860,"delta":0.985860,"no_basis_lines":0,"total_pkg_lines":5},
+    {"sku_code":"STI4C","old":10.598000,"new":11.583860,"delta":0.985860,"no_basis_lines":0,"total_pkg_lines":5},
+    {"sku_code":"ZEP4C","old":7.848000,"new":8.833860,"delta":0.985860,"no_basis_lines":2,"total_pkg_lines":5}
+  ]
+}
