@@ -2477,10 +2477,18 @@ function compile_sku_bom_liquid(
     // basisBatches[recipe_id] = ordered array of batch ids (most-recent first, ≤8)
     // that satisfy ALL of:
     //   (a) cooling HL > 0 (has a batchHl entry, after floor-guard filtering)
-    //   (b) at least one observed ingredient row (v1 malt/kettle-hops, v2 non-malt/hops,
-    //       or dry-hop via dhMerged)
+    //   (b) at least one observed ingredient row; AND
+    //   (c) for recipes that have ANY dry-hop batches (dhMerged non-empty):
+    //       the batch must also have dry-hop observed data — batches with only
+    //       brewhouse data but no DH entry are excluded from the shared window.
+    //       Rationale: a batch that was never dry-hopped (or whose DH was not
+    //       recorded) must not consume a window slot and inflate the denominator
+    //       without contributing to the dry-hop numerator — that would silently
+    //       dilute dry-hop per-HL averages and displace older DH batches that
+    //       carry unique hop entries (e.g. Mosaic in EMB b225).
     //
     // This is the SHARED window for every MI of a recipe — brewhouse AND dry-hop stages.
+    // ONE shared set: the dhBasisSet in the dry-hop branch reads the same array.
     // A MI that has no qty in the basis window simply drops out (stale retired ingredients
     // age out naturally rather than pulling in old batches outside the window).
     //
@@ -2496,9 +2504,22 @@ function compile_sku_bom_liquid(
         // Collect all batches with HL > 0 (already floor-guard filtered above)
         $candidateBatches = array_keys($hlMap);
 
-        // Keep only batches with at least one observed ingredient row in any source
+        // Determine whether this recipe has any dry-hop data at all.
+        // If it does, require DH presence per batch (gate c above).
+        $recipeHasDh = !empty($dhMerged[$recipeId]);
+
+        // Keep only batches with at least one observed ingredient row in any source,
+        // plus dry-hop gate when the recipe has DH batches.
         $withIngredients = [];
         foreach ($candidateBatches as $batch) {
+            // Gate (c): if recipe has DH data, this batch must also have DH data.
+            // A batch with only brewhouse data but no DH entry is excluded from the
+            // shared basis window (prevents denominator inflation without DH contribution
+            // and preserves older DH batches within the ≤8 window).
+            if ($recipeHasDh && (!isset($dhMerged[$recipeId][$batch]) || empty($dhMerged[$recipeId][$batch]))) {
+                continue;
+            }
+
             $hasObs = false;
             // v1: malt or hops_kettle
             if (isset($v1RawRows[$recipeId][$batch]) && !empty($v1RawRows[$recipeId][$batch])) {
@@ -2508,7 +2529,7 @@ function compile_sku_bom_liquid(
             if (!$hasObs && isset($v2RawRows[$recipeId][$batch]) && !empty($v2RawRows[$recipeId][$batch])) {
                 $hasObs = true;
             }
-            // dry-hop
+            // dry-hop (always present for this batch when recipeHasDh is true and gate passed)
             if (!$hasObs && isset($dhMerged[$recipeId][$batch]) && !empty($dhMerged[$recipeId][$batch])) {
                 $hasObs = true;
             }
@@ -2517,7 +2538,8 @@ function compile_sku_bom_liquid(
             }
         }
 
-        // Sort descending by batch number (most recent first), cap at 8
+        // Sort descending by batch number as integer (most recent first), cap at 8.
+        // Explicit integer cast guards against string-comparison pitfalls on numeric batch keys.
         usort($withIngredients, fn($a, $b) => (int)$b - (int)$a);
         $recipeBasisBatches[$recipeId] = array_slice($withIngredients, 0, 8);
     }
@@ -2590,7 +2612,13 @@ function compile_sku_bom_liquid(
             return null;
         }
 
-        // Outlier rejection (only when ≥ 4 present values)
+        // Outlier rejection (only when ≥ 4 present values).
+        // Relative floor: skip rejection entirely when MAD/median < 0.05 — data is
+        // already consistent; rejection would incorrectly penalise normal variation
+        // in clustered values (e.g. Amarillo DH on EMB where all per-HL values are
+        // 295–313 g/HL, median ≈ 308.9, MAD ≈ 2.2, ratio ≈ 0.007 → skip).
+        // Without this guard, the absolute 2×MAD fences (304.5–313.3) would reject
+        // two perfectly normal batches (295.6 and 304.2), under-counting n_brews.
         $survivingBatches = array_keys($perHls);
         if (count($perHls) >= 4) {
             $vals = array_values($perHls);
@@ -2605,13 +2633,20 @@ function compile_sku_bom_liquid(
             $mad = ($n % 2 === 0)
                 ? ($deviations[$mid - 1] + $deviations[$mid]) / 2.0
                 : $deviations[$mid];
-            $loFence = max(0.0, $median - 2.0 * $mad);
-            $hiFence = $median + 2.0 * $mad;
-            $survivors = array_filter($perHls, fn($v) => $v >= $loFence && $v <= $hiFence);
-            if (count($survivors) >= 1) {
-                $survivingBatches = array_keys($survivors);
+
+            // Relative consistency gate: if MAD/median < 0.05 the window is already
+            // tight — skip outlier rejection to preserve all valid brews.
+            $relativeDispersion = ($median > 0.0) ? ($mad / $median) : 0.0;
+            if ($relativeDispersion >= 0.05) {
+                $loFence = max(0.0, $median - 2.0 * $mad);
+                $hiFence = $median + 2.0 * $mad;
+                $survivors = array_filter($perHls, fn($v) => $v >= $loFence && $v <= $hiFence);
+                if (count($survivors) >= 1) {
+                    $survivingBatches = array_keys($survivors);
+                }
+                // else: pathological — keep all present batches
             }
-            // else: pathological — keep all present batches
+            // else: MAD/median < 0.05 → data is consistent, skip rejection entirely
         }
 
         // Numerator: Σ qty over surviving present batches
