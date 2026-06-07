@@ -260,8 +260,9 @@ UPDATE ref_kpi_trackers
 -- #111 deliveries_month       — Cost data (operator+ only)
 -- All cogs/utilities/rm_procurement trackers — finance-sensitive
 --
--- Activate by uncommenting and running via migrate.php:
--- UPDATE ref_kpi_trackers SET min_role = 'viewer' WHERE id IN (1, 2, 3, 8, 39, 49, 50, 52);
+-- BLESSED by operator 2026-06-07 (applied live via direct UPDATE + audit row;
+-- uncommented here so fresh-environment builds match):
+UPDATE ref_kpi_trackers SET min_role = 'viewer' WHERE id IN (1, 2, 3, 8, 39, 49, 50, 52);
 -- ══════════════════════════════════════════════════════════════════════════════
 
 
