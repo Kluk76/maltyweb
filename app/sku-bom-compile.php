@@ -2321,6 +2321,7 @@ function compile_sku_bom_liquid(
     $hlStmt = $pdo->prepare(
         "SELECT cool_beer_recipe_id AS recipe_id, cool_batch AS batch,
                 SUM(cool_final_volume_hl) AS batch_hl,
+                COUNT(*) AS n_brews,
                 MIN(event_date) AS batch_event_date
            FROM bd_brewing_cooling
           WHERE cool_beer_recipe_id IN ({$recipePhRaw})
@@ -2330,13 +2331,21 @@ function compile_sku_bom_liquid(
     );
     $hlStmt->execute($recipeIds);
     // batchHl[recipe_id][batch] = float hl
+    // batchNBrews[recipe_id][batch] = int — number of parallel brews in that batch.
+    //   bd_brewing_ingredients_v2 has ONE header per batch (the operator enters the
+    //   grain bill once, for a single brew's charge). bd_brewing_cooling has one row
+    //   per physical brew. For a 4-brew batch the ingredient qty is ONE brew's charge
+    //   but the total batch HL is 4 brews' HL — the numerator must be scaled ×n_brews
+    //   before per-HL division (done in the malt/hops_kettle accumulator below).
     // batchEventDate[recipe_id][batch] = date string (for guard filtering)
     $batchHl        = [];
+    $batchNBrews    = [];
     $batchEventDate = [];
     foreach ($hlStmt->fetchAll(\PDO::FETCH_ASSOC) as $hl) {
         $rid   = (int)$hl['recipe_id'];
         $batch = $hl['batch'];
         $batchHl[$rid][$batch]        = (float)$hl['batch_hl'];
+        $batchNBrews[$rid][$batch]    = max(1, (int)$hl['n_brews']);  // default 1 (identity) if missing
         $batchEventDate[$rid][$batch] = $hl['batch_event_date'];  // 'YYYY-MM-DD' or null
     }
 
@@ -3021,11 +3030,19 @@ function compile_sku_bom_liquid(
         if ($hasAnyObserved) {
             // ── MALT: observed-only from v1 ─────────────────────────────────────
             // Aggregate v1 malt rows: [mi_id][batch] → qty
+            // IMPORTANT: bd_brewing_ingredients_v2 has ONE header per batch regardless
+            // of how many parallel brews were made. The operator enters one brew's grain
+            // bill; bd_brewing_cooling has N rows (one per parallel brew). We must scale
+            // the observed qty × n_brews so the per-batch numerator reflects the full
+            // batch charge before dividing by total batch HL.
             $maltByMiBatch = [];  // mi_id → batch → {qty, unit}
             foreach ($v1RawRows[$recipeId] ?? [] as $batch => $cats) {
                 if (!isset($cats['malt'])) continue;
+                $nBrews = $batchNBrews[$recipeId][$batch] ?? 1;  // default 1 = single-brew (identity)
                 foreach ($cats['malt'] as $miId => $data) {
-                    $maltByMiBatch[$miId][$batch] = $data;
+                    $scaledData = $data;
+                    $scaledData['qty'] = $data['qty'] * $nBrews;
+                    $maltByMiBatch[$miId][$batch] = $scaledData;
                 }
             }
             foreach ($maltByMiBatch as $miId => $batchData) {
@@ -3056,11 +3073,15 @@ function compile_sku_bom_liquid(
 
             // ── HOPS (kettle only): observed-only from v1 ───────────────────────
             // Dry-hop is handled separately below via the $dhMerged branch.
+            // Same n_brews scaling as malt: one ingredient header per batch, N cooling rows.
             $hopsByMiBatch = [];
             foreach ($v1RawRows[$recipeId] ?? [] as $batch => $cats) {
                 if (!isset($cats['hops_kettle'])) continue;
+                $nBrews = $batchNBrews[$recipeId][$batch] ?? 1;  // default 1 = single-brew (identity)
                 foreach ($cats['hops_kettle'] as $miId => $data) {
-                    $hopsByMiBatch[$miId][$batch] = $data;
+                    $scaledData = $data;
+                    $scaledData['qty'] = $data['qty'] * $nBrews;
+                    $hopsByMiBatch[$miId][$batch] = $scaledData;
                 }
             }
             foreach ($hopsByMiBatch as $miId => $batchData) {
