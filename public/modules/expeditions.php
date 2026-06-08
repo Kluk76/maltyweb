@@ -71,7 +71,7 @@ const EXP_INTERNAL_LABELS   = [
 
 // ── View routing ──────────────────────────────────────────────────────────────
 $view    = isset($_GET['view']) ? (string) $_GET['view'] : 'commandes';
-$allowedViews = ['commandes', 'form', 'stock', 'clients'];
+$allowedViews = ['commandes', 'form', 'stock', 'stocktake', 'clients'];
 if (!in_array($view, $allowedViews, true)) $view = 'commandes';
 
 $editId  = isset($_GET['edit']) ? (int) $_GET['edit'] : 0;
@@ -586,6 +586,220 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'form') {
     }
 }
 
+// ── POST handler (Stocktake view) ─────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'stocktake') {
+
+    // CSRF — must be first
+    if (!csrf_verify($_POST['csrf'] ?? null)) {
+        flash_set('err', 'Session expirée — recharge la page.');
+        redirect_to('/modules/expeditions.php?view=stocktake');
+    }
+
+    $pdo = maltytask_pdo();
+
+    // ── Build allowed-sets INSIDE the POST path ───────────────────────────
+    // (Anti-pattern: building allowed-sets only in the GET render path leaves
+    //  them undefined when the POST handler runs.)
+
+    // Load holds_fg_stock sites
+    $stSitesRows = $pdo->query(
+        'SELECT id, name, site_type, sort_order, notes
+           FROM ref_sites
+          WHERE holds_fg_stock = 1 AND is_active = 1
+          ORDER BY sort_order ASC'
+    )->fetchAll(PDO::FETCH_ASSOC);
+    $allowedLocationIds = [];
+    foreach ($stSitesRows as $sr) {
+        $allowedLocationIds[(int) $sr['id']] = $sr;
+    }
+
+    // Active SKUs (id → {sku_code, hl_per_unit})
+    $stSkuRows = $pdo->query(
+        'SELECT id, sku_code, hl_per_unit FROM ref_skus WHERE is_active = 1'
+    )->fetchAll(PDO::FETCH_ASSOC);
+    $allowedSkuIds = [];
+    foreach ($stSkuRows as $sr) {
+        $allowedSkuIds[(int) $sr['id']] = [
+            'sku_code'    => $sr['sku_code'],
+            'hl_per_unit' => (float) $sr['hl_per_unit'],
+        ];
+    }
+
+    // ── Coerce + validate inputs ─────────────────────────────────────────
+    $stLocId    = isset($_POST['location_id'])  ? (int) $_POST['location_id']   : 0;
+    $stCountedAt = isset($_POST['counted_at']) ? trim((string) $_POST['counted_at']) : '';
+
+    $stErrors = [];
+
+    // Location must be one of the 4 holds_fg_stock sites
+    if ($stLocId <= 0 || !isset($allowedLocationIds[$stLocId])) {
+        $stErrors[] = 'Site invalide.';
+    }
+
+    // counted_at must be a valid date
+    if ($stCountedAt === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $stCountedAt)) {
+        $stErrors[] = 'Date de comptage invalide.';
+    } else {
+        // Further validate: not a future date (operator soft-check only), not absurdly old
+        if ($stCountedAt > date('Y-m-d')) {
+            $stErrors[] = 'La date de comptage ne peut pas être dans le futur.';
+        } elseif ($stCountedAt < '2020-01-01') {
+            $stErrors[] = 'Date de comptage trop ancienne.';
+        }
+    }
+
+    // Parse SKU qty entries — parallel arrays from the form
+    $stSkuIds = $_POST['sku_qty_id']  ?? [];
+    $stQtys   = $_POST['sku_qty_val'] ?? [];
+
+    $stValidLines = [];
+    if (is_array($stSkuIds) && empty($stErrors)) {
+        foreach ($stSkuIds as $idx => $rawId) {
+            $sid = (int) ($rawId ?? 0);
+            $rawQty = isset($stQtys[$idx]) ? trim((string) $stQtys[$idx]) : '';
+            if ($rawQty === '') continue; // blank = not counted — skip
+            if ($sid <= 0 || !isset($allowedSkuIds[$sid])) continue; // safety
+            $qty = (float) $rawQty;
+            if ($qty < 0) continue; // negative qty not accepted
+            $stValidLines[] = ['sku_id' => $sid, 'qty' => $qty];
+        }
+    }
+
+    if (empty($stErrors) && empty($stValidLines)) {
+        $stErrors[] = 'Aucune quantité saisie — au moins un SKU est requis.';
+    }
+
+    if (!empty($stErrors)) {
+        flash_set('err', implode(' — ', $stErrors));
+        $locQs = $stLocId > 0 ? '&loc=' . $stLocId : '';
+        redirect_to('/modules/expeditions.php?view=stocktake' . $locQs);
+    }
+
+    // ── Derive month_closed from counted_at ───────────────────────────────
+    $stMonthClosed = substr($stCountedAt, 0, 7); // 'YYYY-MM'
+    $stLocName     = $allowedLocationIds[$stLocId]['name'];
+
+    // ── Snapshot: dump current rows for this location to a JSON file ──────
+    // Best-effort — log_revision gives the real audit trail; this is belt-and-suspenders.
+    try {
+        $snapDir = __DIR__ . '/../../data/fg-stocktake-snapshots';
+        if (!is_dir($snapDir)) {
+            @mkdir($snapDir, 0755, true);
+        }
+        $snapStmt = $pdo->prepare(
+            'SELECT * FROM inv_fg_stocktake WHERE location_id_fk = ? AND is_active = 1 ORDER BY id ASC'
+        );
+        $snapStmt->execute([$stLocId]);
+        $snapRows = $snapStmt->fetchAll(PDO::FETCH_ASSOC);
+        $snapFile = $snapDir . '/loc' . $stLocId . '-' . date('Ymd-His') . '.json';
+        file_put_contents($snapFile, json_encode($snapRows, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+        // Keep last 3 snapshots per location
+        $pattern = $snapDir . '/loc' . $stLocId . '-*.json';
+        $existing = glob($pattern);
+        if ($existing !== false && count($existing) > 3) {
+            usort($existing, fn($a, $b) => strcmp($a, $b));
+            $toDelete = array_slice($existing, 0, count($existing) - 3);
+            foreach ($toDelete as $old) {
+                @unlink($old);
+            }
+        }
+    } catch (Throwable $snapEx) {
+        // Snapshot failure must never block the write
+        error_log('[expeditions stocktake snapshot] ' . $snapEx->getMessage());
+    }
+
+    // ── Write transaction ─────────────────────────────────────────────────
+    try {
+        $pdo->beginTransaction();
+
+        $upsertCount = 0;
+
+        $insSt = $pdo->prepare(
+            'INSERT INTO inv_fg_stocktake
+                (sku, sku_id_fk, source, counted_at, month_closed, qty, submitted_by,
+                 source_form_response_id, location_id_fk, is_active, row_hash)
+             VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, 1, ?)
+             ON DUPLICATE KEY UPDATE
+                qty        = VALUES(qty),
+                submitted_by = VALUES(submitted_by),
+                counted_at = VALUES(counted_at),
+                updated_at = CURRENT_TIMESTAMP'
+        );
+
+        foreach ($stValidLines as $line) {
+            $sid      = $line['sku_id'];
+            $qty      = $line['qty'];
+            $skuCode  = $allowedSkuIds[$sid]['sku_code'];
+
+            // row_hash = sha256("fgct|{sku_id_fk}|{location_id_fk}|{counted_at}")
+            $rowHash = hash('sha256', 'fgct|' . $sid . '|' . $stLocId . '|' . $stCountedAt);
+
+            // Read existing row for log_revision before-snapshot
+            $beforeStmt = $pdo->prepare(
+                'SELECT * FROM inv_fg_stocktake WHERE row_hash = ? LIMIT 1'
+            );
+            $beforeStmt->execute([$rowHash]);
+            $beforeRow = $beforeStmt->fetch(PDO::FETCH_ASSOC) ?: null;
+            $beforeRowInt = $beforeRow !== null ? (int) $beforeRow['id'] : 0;
+
+            $insSt->execute([
+                $skuCode,
+                $sid,
+                'maltyweb-form',
+                $stCountedAt,
+                $stMonthClosed,
+                $qty,
+                $me['username'],
+                $stLocId,
+                $rowHash,
+            ]);
+
+            // Fetch PK after upsert
+            $upsertedPk = (int) $pdo->lastInsertId();
+            if ($upsertedPk === 0 && $beforeRowInt > 0) {
+                $upsertedPk = $beforeRowInt;
+            }
+
+            if ($upsertedPk > 0) {
+                log_revision($pdo, $me, 'inv_fg_stocktake', $upsertedPk, $beforeRow,
+                    [
+                        'sku'             => $skuCode,
+                        'sku_id_fk'       => $sid,
+                        'location_id_fk'  => $stLocId,
+                        'counted_at'      => $stCountedAt,
+                        'month_closed'    => $stMonthClosed,
+                        'qty'             => $qty,
+                        'source'          => 'maltyweb-form',
+                        'submitted_by'    => $me['username'],
+                    ],
+                    'normal',
+                    'Saisie inventaire FG multi-site');
+            }
+            $upsertCount++;
+        }
+
+        $pdo->commit();
+
+        // Total HL summary for flash
+        $totalHl = 0.0;
+        foreach ($stValidLines as $line) {
+            $totalHl += $line['qty'] * ($allowedSkuIds[$line['sku_id']]['hl_per_unit'] ?? 0.0);
+        }
+        $hlFormatted = number_format($totalHl, 2);
+
+        flash_set('ok', 'Inventaire ' . $stLocName . ' enregistré — '
+            . $upsertCount . ' SKU' . ($upsertCount !== 1 ? 's' : '') . ', '
+            . $hlFormatted . ' HL au ' . exp_fmt_date($stCountedAt) . '.');
+        redirect_to('/modules/expeditions.php?view=stocktake&loc=' . $stLocId);
+
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        error_log('[expeditions stocktake POST] ' . $e->getMessage());
+        flash_set('err', 'Erreur lors de l\'enregistrement : ' . pdo_friendly_error($e));
+        redirect_to('/modules/expeditions.php?view=stocktake&loc=' . $stLocId);
+    }
+}
+
 // ── Clients view: pagination + filter params ─────────────────────────────────
 $clientsPage      = 1;
 $clientsSearch    = '';
@@ -765,6 +979,12 @@ $editLines    = [];
 
 // Stock PF view
 $fgStock = null; // filled below if view=stock
+
+// Inventaire FG multi-site view
+$stSitesRows = []; // filled below if view=stocktake
+$stAllSkus   = [];
+$stPriorMap  = [];
+$stLastCounted = [];
 
 try {
     // Active customers (for typeahead)
@@ -992,6 +1212,64 @@ try {
 
     if ($view === 'stock') {
         $fgStock = fg_stock_compute($pdo);
+    }
+
+    if ($view === 'stocktake') {
+        // ── Load the 4 holds_fg_stock sites ──────────────────────────────────
+        $stSitesRows = $pdo->query(
+            'SELECT id, name, site_type, sort_order, customer_id_fk, notes
+               FROM ref_sites
+              WHERE holds_fg_stock = 1 AND is_active = 1
+              ORDER BY sort_order ASC'
+        )->fetchAll(PDO::FETCH_ASSOC);
+
+        // ── Active SKUs ordered by format family then code ────────────────────
+        $stAllSkus = $pdo->query(
+            'SELECT id, sku_code, format, hl_per_unit
+               FROM ref_skus
+              WHERE is_active = 1
+              ORDER BY format ASC, sku_code ASC'
+        )->fetchAll(PDO::FETCH_ASSOC);
+
+        // ── Most-recent prior count per (sku_id, location_id) for all locations ─
+        // One query: latest row per sku_id_fk × location_id_fk using correlated MAX(id).
+        $stPriorStmt = $pdo->query(
+            'SELECT t1.sku_id_fk, t1.location_id_fk, t1.qty, t1.counted_at, t1.month_closed
+               FROM inv_fg_stocktake t1
+              WHERE t1.is_active = 1
+                AND t1.id = (
+                    SELECT MAX(t2.id)
+                      FROM inv_fg_stocktake t2
+                     WHERE t2.sku_id_fk    = t1.sku_id_fk
+                       AND t2.location_id_fk = t1.location_id_fk
+                       AND t2.is_active = 1
+                )'
+        );
+        // Build prior map: [location_id][sku_id] → {qty, counted_at, month_closed}
+        $stPriorMap = []; // keyed location_id → sku_id → row
+        foreach ($stPriorStmt->fetchAll(PDO::FETCH_ASSOC) as $pr) {
+            $lid = (int) $pr['location_id_fk'];
+            $sid = (int) $pr['sku_id_fk'];
+            if (!isset($stPriorMap[$lid])) $stPriorMap[$lid] = [];
+            $stPriorMap[$lid][$sid] = [
+                'qty'          => (float) $pr['qty'],
+                'counted_at'   => $pr['counted_at'],
+                'month_closed' => $pr['month_closed'],
+            ];
+        }
+
+        // ── Monday-cadence freshness: MAX(counted_at) per location ─────────────
+        $stFreshStmt = $pdo->query(
+            'SELECT location_id_fk, MAX(counted_at) AS last_counted
+               FROM inv_fg_stocktake
+              WHERE is_active = 1
+                AND counted_at IS NOT NULL
+              GROUP BY location_id_fk'
+        );
+        $stLastCounted = []; // location_id → last_counted date string
+        foreach ($stFreshStmt->fetchAll(PDO::FETCH_ASSOC) as $fr) {
+            $stLastCounted[(int) $fr['location_id_fk']] = $fr['last_counted'];
+        }
     }
 
     if ($view === 'clients') {
@@ -1227,6 +1505,53 @@ if ($view === 'form' && !empty($editLines)) {
     $editOrigQtyJson = json_encode($origQty, $jsonFlags);
 }
 
+// ── Stocktake view: build JS-injectable data ──────────────────────────────────
+$stSkusJson      = '[]';
+$stPriorJson     = '{}';
+$stSitesJson     = '[]';
+$stFreshnessJson = '{}';
+if ($view === 'stocktake') {
+    // SKU list for JS: [{id, sku_code, format, hl_per_unit}]
+    $stSkusForJs = array_map(fn($s) => [
+        'id'          => (int) $s['id'],
+        'sku_code'    => $s['sku_code'],
+        'format'      => $s['format'] ?? '',
+        'hl_per_unit' => (float) $s['hl_per_unit'],
+    ], $stAllSkus ?? []);
+    $stSkusJson = json_encode($stSkusForJs, $jsonFlags);
+
+    // Prior counts: {loc_id: {sku_id: {qty, counted_at, month_closed}}}
+    // Convert int keys to strings for JSON (JS accesses them as string keys)
+    $stPriorForJs = [];
+    foreach ($stPriorMap ?? [] as $locId => $bySkuId) {
+        $locKey = (string) $locId;
+        $stPriorForJs[$locKey] = [];
+        foreach ($bySkuId as $skuId => $pr) {
+            $stPriorForJs[$locKey][(string) $skuId] = $pr;
+        }
+    }
+    $stPriorJson = json_encode($stPriorForJs, $jsonFlags);
+
+    // Sites list (for location chips)
+    $stSitesForJs = array_map(fn($s) => [
+        'id'          => (int) $s['id'],
+        'name'        => $s['name'],
+        'site_type'   => $s['site_type'],
+        'sort_order'  => (int) $s['sort_order'],
+        'notes'       => $s['notes'] ?? null,
+        'is_consignment' => ($s['customer_id_fk'] !== null),
+    ], $stSitesRows ?? []);
+    $stSitesJson = json_encode($stSitesForJs, $jsonFlags);
+
+    // Freshness: {loc_id: last_counted_date_or_null}
+    $stFreshForJs = [];
+    foreach ($stSitesRows ?? [] as $s) {
+        $lid = (int) $s['id'];
+        $stFreshForJs[(string) $lid] = $stLastCounted[$lid] ?? null;
+    }
+    $stFreshnessJson = json_encode($stFreshForJs, $jsonFlags);
+}
+
 $csrf          = csrf_token();
 $active_module = 'expeditions';
 $todayDate     = date('Y-m-d'); // used for overdue + today emphasis in commandes view
@@ -1321,6 +1646,9 @@ $isReadOnly = $editOrder !== null
     <a href="/modules/expeditions.php?view=stock"
        class="exp-tab<?= $view === 'stock' ? ' exp-tab--active' : '' ?>"
        <?= $view === 'stock' ? 'aria-current="page"' : '' ?>>Stock PF</a>
+    <a href="/modules/expeditions.php?view=stocktake"
+       class="exp-tab<?= $view === 'stocktake' ? ' exp-tab--active' : '' ?>"
+       <?= $view === 'stocktake' ? 'aria-current="page"' : '' ?>>Inventaire</a>
     <a href="/modules/expeditions.php?view=clients"
        class="exp-tab<?= $view === 'clients' ? ' exp-tab--active' : '' ?>"
        <?= $view === 'clients' ? 'aria-current="page"' : '' ?>>
@@ -2415,6 +2743,253 @@ $isReadOnly = $editOrder !== null
 
 
   <!-- ══════════════════════════════════════════════════════════════════════
+       INVENTAIRE FG — SAISIE MULTI-SITE (stocktake view)
+       ══════════════════════════════════════════════════════════════════════ -->
+  <?php if ($view === 'stocktake'): ?>
+
+  <!-- Window globals: SKU list, prior counts, sites, freshness -->
+  <script>
+    window.EXP_ST_SKUS      = <?= $stSkusJson ?>;
+    window.EXP_ST_PRIOR     = <?= $stPriorJson ?>;
+    window.EXP_ST_SITES     = <?= $stSitesJson ?>;
+    window.EXP_ST_FRESHNESS = <?= $stFreshnessJson ?>;
+    window.EXP_ST_TODAY     = <?= json_encode(date('Y-m-d'), JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+    window.EXP_CSRF         = <?= json_encode($csrf, JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+  </script>
+
+  <?php
+  // ── Location selector: selected location from ?loc= ──────────────────────
+  $stSelLocId = isset($_GET['loc']) ? (int) $_GET['loc'] : 0;
+  // Default to first site if none set
+  if ($stSelLocId <= 0 && !empty($stSitesRows)) {
+      $stSelLocId = (int) $stSitesRows[0]['id'];
+  }
+  // Validate: must be in the holds_fg_stock set
+  $stSelLoc = null;
+  foreach ($stSitesRows as $sr) {
+      if ((int) $sr['id'] === $stSelLocId) {
+          $stSelLoc = $sr;
+          break;
+      }
+  }
+  if ($stSelLoc === null && !empty($stSitesRows)) {
+      $stSelLoc   = $stSitesRows[0];
+      $stSelLocId = (int) $stSelLoc['id'];
+  }
+
+  // ── Site type human labels ─────────────────────────────────────────────────
+  function exp_site_type_label(string $siteType): string
+  {
+      return match ($siteType) {
+          'production'  => 'Production',
+          'warehouse'   => 'Logistique',
+          'pos'         => 'Taproom',
+          'consignment' => 'Consignation',
+          default       => ucfirst($siteType),
+      };
+  }
+
+  // ── Monday freshness computation ──────────────────────────────────────────
+  // Current ISO week's Monday
+  $stNow       = new DateTimeImmutable(date('Y-m-d'));
+  $stDow       = (int) $stNow->format('N'); // 1=Mon, 7=Sun
+  $stThisMonday = $stNow->modify('-' . ($stDow - 1) . ' days')->format('Y-m-d');
+
+  function exp_st_freshness_chip(int $locId, array $lastCounted, string $thisMonday): string
+  {
+      $last = $lastCounted[$locId] ?? null;
+      if ($last === null) {
+          return '<span class="exp-st-fresh-chip exp-st-fresh-chip--missing" title="Jamais compté">⚠ jamais compté</span>';
+      }
+      if ($last >= $thisMonday) {
+          $d = new DateTimeImmutable($last);
+          return '<span class="exp-st-fresh-chip exp-st-fresh-chip--ok" title="Compté ' . $d->format('d/m') . '">✓ compté lun. ' . $d->format('d/m') . '</span>';
+      }
+      $d = new DateTimeImmutable($last);
+      return '<span class="exp-st-fresh-chip exp-st-fresh-chip--warn" title="Pas compté cette semaine (dernier: ' . $d->format('d/m') . ')">⚠ pas compté cette semaine</span>';
+  }
+
+  // ── Group SKUs by family for the count grid ───────────────────────────────
+  $stFamilyOrder = ['Bot', 'Can', 'Can33', 'Keg', 'Cuve de service'];
+  $stFamilyLabels = [
+      'Bot'            => 'Bouteille',
+      'Can'            => 'Canette',
+      'Can33'          => 'Can 33',
+      'Keg'            => 'Fût',
+      'Cuve de service'=> 'Cuve de service',
+  ];
+  $stSkusByFamily = [];
+  foreach ($stAllSkus as $sk) {
+      $fmt = $sk['format'] ?? 'Autre';
+      $stSkusByFamily[$fmt][] = $sk;
+  }
+  // Sort families in canonical order (unknown families appended at end)
+  $stFamiliesSorted = array_unique(array_merge(
+      array_intersect($stFamilyOrder, array_keys($stSkusByFamily)),
+      array_diff(array_keys($stSkusByFamily), $stFamilyOrder)
+  ));
+
+  // Default counted_at = today
+  $stDefaultCountedAt = date('Y-m-d');
+  ?>
+
+  <!-- ── Section: freshness strips (all 4 locations) ──────────────────────── -->
+  <div class="exp-st-freshness-bar" role="region" aria-label="Fraîcheur des inventaires par site">
+    <?php foreach ($stSitesRows as $sr): ?>
+    <?php $locId = (int) $sr['id']; ?>
+    <div class="exp-st-fresh-item<?= $locId === $stSelLocId ? ' exp-st-fresh-item--active' : '' ?>">
+      <a href="/modules/expeditions.php?view=stocktake&amp;loc=<?= $locId ?>"
+         class="exp-st-fresh-link"
+         aria-label="Sélectionner <?= htmlspecialchars($sr['name']) ?>">
+        <span class="exp-st-fresh-site"><?= htmlspecialchars($sr['name']) ?></span>
+        <span class="exp-st-fresh-type"><?= htmlspecialchars(exp_site_type_label($sr['site_type'])) ?></span>
+      </a>
+      <?= exp_st_freshness_chip($locId, $stLastCounted, $stThisMonday) ?>
+    </div>
+    <?php endforeach ?>
+  </div>
+
+  <!-- ── Location selector ─────────────────────────────────────────────────── -->
+  <div class="exp-st-location-selector" role="group" aria-label="Sélection du site">
+    <?php foreach ($stSitesRows as $sr): ?>
+    <?php $locId = (int) $sr['id']; $isConsign = ($sr['customer_id_fk'] !== null); ?>
+    <a href="/modules/expeditions.php?view=stocktake&amp;loc=<?= $locId ?>"
+       class="exp-st-loc-chip<?= $locId === $stSelLocId ? ' exp-st-loc-chip--active' : '' ?>"
+       aria-pressed="<?= $locId === $stSelLocId ? 'true' : 'false' ?>"
+       title="<?= $isConsign && !empty($sr['notes']) ? htmlspecialchars($sr['notes']) : htmlspecialchars($sr['name']) ?>">
+      <span class="exp-st-loc-name"><?= htmlspecialchars($sr['name']) ?></span>
+      <span class="exp-st-loc-type"><?= htmlspecialchars(exp_site_type_label($sr['site_type'])) ?></span>
+      <?php if ($isConsign): ?>
+        <span class="exp-st-loc-badge exp-st-loc-badge--consign">consig.</span>
+      <?php endif ?>
+    </a>
+    <?php endforeach ?>
+  </div>
+
+  <?php if ($stSelLoc !== null && ($stSelLoc['customer_id_fk'] !== null) && !empty($stSelLoc['notes'])): ?>
+  <div class="exp-st-consign-note">
+    <span class="exp-st-consign-note__icon" aria-hidden="true">ℹ</span>
+    <span class="exp-st-consign-note__text"><?= htmlspecialchars($stSelLoc['notes']) ?></span>
+  </div>
+  <?php endif ?>
+
+  <!-- ── Count form ─────────────────────────────────────────────────────────── -->
+  <form method="POST"
+        action="/modules/expeditions.php?view=stocktake"
+        class="exp-st-form"
+        id="exp-st-form"
+        novalidate>
+    <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+    <input type="hidden" name="location_id" value="<?= $stSelLocId ?>">
+
+    <!-- ── Header controls row ───────────────────────────────────────────── -->
+    <div class="exp-st-controls">
+      <div class="exp-st-date-field">
+        <label class="exp-st-label" for="exp-st-counted-at">Date de comptage</label>
+        <input type="date" id="exp-st-counted-at" name="counted_at"
+               class="exp-st-date-input"
+               value="<?= htmlspecialchars($stDefaultCountedAt) ?>"
+               max="<?= date('Y-m-d') ?>"
+               min="2020-01-01">
+        <span class="exp-st-date-hint">Chaque lundi de préférence</span>
+      </div>
+
+      <div class="exp-st-search-field">
+        <label class="exp-st-label" for="exp-st-search">Filtrer</label>
+        <input type="text" id="exp-st-search" class="exp-st-search-input"
+               placeholder="Rechercher un SKU…"
+               autocomplete="off" autocorrect="off" spellcheck="false">
+      </div>
+
+      <!-- Running summary (updated by JS) -->
+      <div class="exp-st-summary" id="exp-st-summary" role="status" aria-live="polite">
+        <span class="exp-st-summary__skus" id="exp-st-count">0 SKU saisi</span>
+        <span class="exp-st-summary__sep">·</span>
+        <span class="exp-st-summary__hl" id="exp-st-hl">0,00 HL</span>
+      </div>
+    </div>
+
+    <!-- ── SKU count grid, grouped by format family ───────────────────────── -->
+    <div class="exp-st-grid" id="exp-st-grid">
+    <?php foreach ($stFamiliesSorted as $fmtKey): ?>
+      <?php
+      $familySkus = $stSkusByFamily[$fmtKey] ?? [];
+      if (empty($familySkus)) continue;
+      $familyLabel = $stFamilyLabels[$fmtKey] ?? $fmtKey;
+      $familySlug  = exp_format_family($fmtKey);
+      ?>
+      <div class="exp-st-family" data-family="<?= htmlspecialchars($familySlug) ?>">
+        <div class="exp-st-family-header" id="exp-st-fh-<?= htmlspecialchars($familySlug) ?>">
+          <span class="exp-st-family-label"><?= htmlspecialchars($familyLabel) ?></span>
+          <span class="exp-st-family-count" id="exp-st-fc-<?= htmlspecialchars($familySlug) ?>"></span>
+        </div>
+        <div class="exp-st-family-rows">
+        <?php foreach ($familySkus as $sk): ?>
+          <?php
+          $sid  = (int) $sk['id'];
+          $code = $sk['sku_code'];
+          $hpu  = (float) $sk['hl_per_unit'];
+          $prior = $stPriorMap[$stSelLocId][$sid] ?? null;
+          $priorQty  = $prior !== null ? (float) $prior['qty'] : null;
+          $priorDate = $prior !== null ? ($prior['counted_at'] ?? $prior['month_closed'] ?? null) : null;
+          // Format prior hint date
+          $priorHint = '';
+          if ($priorDate !== null) {
+              $priorHint = strlen($priorDate) === 7
+                  ? $priorDate
+                  : exp_fmt_date($priorDate);
+          }
+          ?>
+          <div class="exp-st-row" data-sku-id="<?= $sid ?>" data-sku-code="<?= htmlspecialchars($code) ?>" data-hl="<?= $hpu ?>">
+            <label class="exp-st-row__label" for="exp-st-qty-<?= $sid ?>">
+              <span class="exp-st-row__code"><?= htmlspecialchars($code) ?></span>
+            </label>
+            <!-- Hidden parallel-array id field -->
+            <input type="hidden" name="sku_qty_id[]" value="<?= $sid ?>">
+            <div class="exp-st-row__qty-wrap">
+              <input type="number"
+                     id="exp-st-qty-<?= $sid ?>"
+                     name="sku_qty_val[]"
+                     class="exp-st-qty-input"
+                     min="0"
+                     step="1"
+                     placeholder=""
+                     autocomplete="off"
+                     <?php if ($priorQty !== null): ?>
+                     data-prior="<?= $priorQty ?>"
+                     <?php endif ?>
+                     aria-label="Quantité <?= htmlspecialchars($code) ?>"
+                     inputmode="numeric">
+              <?php if ($priorQty !== null): ?>
+              <span class="exp-st-prior-hint">
+                précéd.&nbsp;: <strong><?= number_format($priorQty, 0) ?></strong>
+                <?= $priorHint !== '' ? '<span class="exp-st-prior-date">(' . htmlspecialchars($priorHint) . ')</span>' : '' ?>
+              </span>
+              <?php endif ?>
+            </div>
+          </div>
+        <?php endforeach ?>
+        </div>
+      </div>
+    <?php endforeach ?>
+    </div>
+
+    <!-- ── Submit bar ─────────────────────────────────────────────────────── -->
+    <div class="exp-st-submit-bar">
+      <button type="submit" class="exp-st-submit-btn" id="exp-st-submit">
+        Enregistrer l'inventaire —
+        <?= htmlspecialchars($stSelLoc !== null ? $stSelLoc['name'] : '') ?>
+        au <span id="exp-st-submit-date"><?= exp_fmt_date($stDefaultCountedAt) ?></span>
+      </button>
+    </div>
+
+  </form>
+
+  <?php endif ?>
+  <!-- /INVENTAIRE FG -->
+
+
+  <!-- ══════════════════════════════════════════════════════════════════════
        CARNET CLIENTS VIEW
        ══════════════════════════════════════════════════════════════════════ -->
   <?php if ($view === 'clients'): ?>
@@ -2853,6 +3428,10 @@ $isReadOnly = $editOrder !== null
 
 <?php if ($view === 'stock'): ?>
 <script src="/js/expeditions-stock.js?v=<?= @filemtime(__DIR__ . '/../js/expeditions-stock.js') ?: time() ?>"></script>
+<?php endif ?>
+
+<?php if ($view === 'stocktake'): ?>
+<script src="/js/expeditions-stocktake.js?v=<?= @filemtime(__DIR__ . '/../js/expeditions-stocktake.js') ?: time() ?>"></script>
 <?php endif ?>
 
 </body>

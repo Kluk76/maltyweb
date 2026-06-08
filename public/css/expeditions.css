@@ -2918,3 +2918,529 @@ body.expeditions .exp-pull-body {
     padding: 5px 14px 6px;
   }
 }
+
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   INVENTAIRE FG — SAISIE MULTI-SITE  (view=stocktake)
+   All selectors scoped under body.expeditions. exp-st-* prefix.
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/* ── Freshness bar (all 4 sites in a row at the top) ─────────────────────── */
+body.expeditions .exp-st-freshness-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 18px;
+  padding: 12px 16px;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+}
+
+body.expeditions .exp-st-fresh-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 180px;
+  min-width: 140px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  transition: border-color 0.15s;
+}
+
+body.expeditions .exp-st-fresh-item--active {
+  border-color: var(--hop);
+  background: color-mix(in srgb, var(--hop) 4%, var(--bg));
+}
+
+body.expeditions .exp-st-fresh-link {
+  text-decoration: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+body.expeditions .exp-st-fresh-link:hover .exp-st-fresh-site {
+  color: var(--hop);
+}
+
+body.expeditions .exp-st-fresh-site {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--ink);
+  transition: color 0.12s;
+}
+
+body.expeditions .exp-st-fresh-type {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.7rem;
+  color: var(--ink-mute);
+}
+
+/* Freshness chips */
+body.expeditions .exp-st-fresh-chip {
+  display: inline-flex;
+  align-items: center;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.7rem;
+  font-weight: 500;
+  border-radius: 12px;
+  padding: 2px 8px;
+  margin-top: 4px;
+  width: fit-content;
+}
+
+body.expeditions .exp-st-fresh-chip--ok {
+  background: color-mix(in srgb, var(--hop) 12%, var(--bg));
+  color: color-mix(in srgb, var(--hop) 80%, var(--ink));
+}
+
+body.expeditions .exp-st-fresh-chip--warn {
+  background: color-mix(in srgb, var(--ember) 12%, var(--bg));
+  color: color-mix(in srgb, var(--ember) 80%, var(--ink));
+}
+
+body.expeditions .exp-st-fresh-chip--missing {
+  background: color-mix(in srgb, var(--oak) 10%, var(--bg));
+  color: var(--ink-soft);
+}
+
+/* ── Location chip selector ───────────────────────────────────────────────── */
+body.expeditions .exp-st-location-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+body.expeditions .exp-st-loc-chip {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 16px;
+  border: 2px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  text-decoration: none;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  min-height: 56px;
+  justify-content: center;
+  min-width: 120px;
+}
+
+body.expeditions .exp-st-loc-chip:hover {
+  border-color: var(--hop-soft);
+  text-decoration: none;
+}
+
+body.expeditions .exp-st-loc-chip--active {
+  border-color: var(--hop);
+  background: color-mix(in srgb, var(--hop) 5%, var(--bg));
+}
+
+body.expeditions .exp-st-loc-name {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+body.expeditions .exp-st-loc-type {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.7rem;
+  color: var(--ink-mute);
+}
+
+body.expeditions .exp-st-loc-badge {
+  display: inline-block;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border-radius: 4px;
+  padding: 1px 5px;
+  margin-top: 2px;
+  width: fit-content;
+}
+
+body.expeditions .exp-st-loc-badge--consign {
+  background: color-mix(in srgb, var(--ember) 12%, var(--bg));
+  color: color-mix(in srgb, var(--ember) 80%, var(--ink));
+}
+
+/* ── Consignment note ─────────────────────────────────────────────────────── */
+body.expeditions .exp-st-consign-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  background: color-mix(in srgb, var(--ember) 6%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--ember) 20%, var(--hairline));
+  border-radius: 6px;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  line-height: 1.5;
+}
+
+body.expeditions .exp-st-consign-note__icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+/* ── Form controls row ────────────────────────────────────────────────────── */
+body.expeditions .exp-st-controls {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 20px;
+  padding: 14px 16px;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+}
+
+body.expeditions .exp-st-label {
+  display: block;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  margin-bottom: 4px;
+}
+
+body.expeditions .exp-st-date-field {
+  display: flex;
+  flex-direction: column;
+}
+
+body.expeditions .exp-st-date-input {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.88rem;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--hairline-2);
+  border-radius: 5px;
+  padding: 9px 12px;
+  min-height: 44px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+body.expeditions .exp-st-date-input:focus {
+  outline: none;
+  border-color: var(--hop);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--hop) 20%, transparent);
+}
+
+body.expeditions .exp-st-date-hint {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.68rem;
+  color: var(--ink-mute);
+  margin-top: 3px;
+  font-style: italic;
+}
+
+body.expeditions .exp-st-search-field {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 200px;
+  max-width: 320px;
+}
+
+body.expeditions .exp-st-search-input {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.88rem;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--hairline-2);
+  border-radius: 5px;
+  padding: 9px 12px;
+  min-height: 44px;
+  transition: border-color 0.15s;
+}
+
+body.expeditions .exp-st-search-input:focus {
+  outline: none;
+  border-color: var(--hop);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--hop) 20%, transparent);
+}
+
+/* Running summary */
+body.expeditions .exp-st-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+  margin-left: auto;
+  padding: 9px 14px;
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  min-height: 44px;
+  white-space: nowrap;
+}
+
+body.expeditions .exp-st-summary__skus {
+  font-weight: 600;
+  color: var(--hop);
+}
+
+body.expeditions .exp-st-summary__sep {
+  color: var(--ink-faint);
+}
+
+body.expeditions .exp-st-summary__hl {
+  font-family: "JetBrains Mono", monospace;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-soft);
+}
+
+/* ── Count grid ───────────────────────────────────────────────────────────── */
+body.expeditions .exp-st-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+
+/* Family section */
+body.expeditions .exp-st-family {
+  border-bottom: 1px solid var(--hairline);
+}
+
+body.expeditions .exp-st-family:last-child {
+  border-bottom: none;
+}
+
+body.expeditions .exp-st-family--hidden {
+  display: none;
+}
+
+/* Sticky family header */
+body.expeditions .exp-st-family-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background: color-mix(in srgb, var(--bg-side) 80%, var(--bg));
+  border-bottom: 1px solid var(--hairline);
+  backdrop-filter: blur(4px);
+}
+
+body.expeditions .exp-st-family-label {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+body.expeditions .exp-st-family-count {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.72rem;
+  color: var(--ink-mute);
+  font-variant-numeric: tabular-nums;
+}
+
+/* SKU row */
+body.expeditions .exp-st-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: start;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--bg);
+  transition: background 0.1s;
+}
+
+body.expeditions .exp-st-row:last-child {
+  border-bottom: none;
+}
+
+body.expeditions .exp-st-row:hover {
+  background: color-mix(in srgb, var(--hop) 2%, var(--bg));
+}
+
+body.expeditions .exp-st-row--hidden {
+  display: none;
+}
+
+body.expeditions .exp-st-row--entered {
+  background: color-mix(in srgb, var(--hop) 3%, var(--bg));
+}
+
+body.expeditions .exp-st-row__label {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  min-height: 44px;
+}
+
+body.expeditions .exp-st-row__code {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: 0.02em;
+}
+
+/* Qty input wrapper */
+body.expeditions .exp-st-row__qty-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+/* Large touch-friendly qty input */
+body.expeditions .exp-st-qty-input {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 1.1rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--ink);
+  background: var(--bg-elev);
+  border: 2px solid var(--hairline-2);
+  border-radius: 6px;
+  padding: 8px 12px;
+  width: 90px;
+  min-height: 48px;
+  transition: border-color 0.15s, background 0.15s;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+body.expeditions .exp-st-qty-input::-webkit-outer-spin-button,
+body.expeditions .exp-st-qty-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+}
+
+body.expeditions .exp-st-qty-input:focus {
+  outline: none;
+  border-color: var(--hop);
+  background: var(--bg);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--hop) 18%, transparent);
+}
+
+/* Entered value: highlight the row */
+body.expeditions .exp-st-qty-input:not(:placeholder-shown) {
+  border-color: var(--hop-soft);
+  background: var(--bg);
+}
+
+/* Prior-count hint */
+body.expeditions .exp-st-prior-hint {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.68rem;
+  color: var(--ink-mute);
+  text-align: right;
+  font-style: italic;
+}
+
+body.expeditions .exp-st-prior-hint strong {
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+
+body.expeditions .exp-st-prior-date {
+  color: var(--ink-faint);
+}
+
+/* ── Submit bar ───────────────────────────────────────────────────────────── */
+body.expeditions .exp-st-submit-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  padding: 12px 0 16px;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    var(--bg) 35%
+  );
+}
+
+body.expeditions .exp-st-submit-btn {
+  display: block;
+  width: 100%;
+  padding: 14px 20px;
+  background: var(--hop);
+  color: var(--bg);
+  border: none;
+  border-radius: 8px;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.92rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+  min-height: 52px;
+  text-align: center;
+  touch-action: manipulation;
+}
+
+body.expeditions .exp-st-submit-btn:hover {
+  background: var(--hop-deep);
+}
+
+body.expeditions .exp-st-submit-btn:active {
+  opacity: 0.85;
+}
+
+body.expeditions .exp-st-submit-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Responsive ───────────────────────────────────────────────────────────── */
+@media (max-width: 600px) {
+  body.expeditions .exp-st-freshness-bar {
+    gap: 6px;
+    padding: 8px;
+  }
+  body.expeditions .exp-st-fresh-item {
+    flex: 1 1 140px;
+    min-width: 120px;
+    padding: 6px 10px;
+  }
+  body.expeditions .exp-st-controls {
+    padding: 10px;
+    gap: 10px;
+  }
+  body.expeditions .exp-st-summary {
+    width: 100%;
+    justify-content: center;
+    margin-left: 0;
+  }
+  body.expeditions .exp-st-row {
+    padding: 8px 12px;
+  }
+  body.expeditions .exp-st-qty-input {
+    width: 80px;
+    font-size: 1rem;
+  }
+  body.expeditions .exp-st-location-selector {
+    gap: 6px;
+  }
+  body.expeditions .exp-st-loc-chip {
+    min-width: 100px;
+    padding: 8px 12px;
+  }
+}
