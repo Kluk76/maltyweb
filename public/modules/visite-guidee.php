@@ -68,6 +68,7 @@ $PAGE_DESCRIPTIONS = [
     'fermentation'     => 'L\'état des cuves : quelle bière est dans quelle cuve, depuis combien de temps, et les <strong>pertes par étape</strong>.',
     'packaging'        => 'Le tableau de bord conditionnement : <strong>runs récents, volumes par format, pertes</strong>.',
     'triage'           => 'Le tri des documents : factures et bulletins de livraison arrivent ici pour rapprochement et validation.',
+    'invoice-validate' => 'La <strong>porte de validation des factures</strong> : chaque facture parsée apparaît ici avec le détail ligne par ligne (MI résolu, quantités, prix, flags de confiance). Un clic pour <em>Valider</em> — les livraisons s\'écrivent en base — ou <em>Refuser</em> pour signaler un problème de parser.',
     'approvisionnement'=> 'Le suivi des fournisseurs et des réceptions de matières premières : fiches fournisseurs, historique des livraisons, documents associés.',
     'sku-costs'        => 'Le coût de revient par référence (SKU) : décomposition liquide + emballage.',
     'warehouse'        => 'Le stock de produits finis : quantités par SKU, par site.',
@@ -91,6 +92,7 @@ $PAGE_ICONS = [
     'rm-comparison'    => '<svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>',
     'expeditions'      => '<svg viewBox="0 0 24 24"><rect x="1" y="6" width="13" height="11" rx="1"/><path d="M14 9h4l3 4v4h-7z"/><circle cx="6" cy="19" r="2"/><circle cx="17" cy="19" r="2"/></svg>',
     'saisies'          => '<svg viewBox="0 0 24 24"><path d="M15 5l4 4L7 21H3v-4L15 5z"/><path d="M12 8l4 4"/></svg>',
+    'invoice-validate' => '<svg viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12l2 2 4-4"/></svg>',
     '_default'         => '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>',
 ];
 

@@ -1,0 +1,597 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   invoice-validate.css — À valider module (B1b)
+   Scoped under body.home.invoice-validate  (body class set in invoice-validate.php)
+   Design system: light kraft/manila theme, tokens from app.css :root.
+   No inline styles, no hardcoded hex — var(--…) only.
+   Touch targets ≥ 44px (operator tablets).
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* ── Layout ──────────────────────────────────────────────────────────────────── */
+body.home.invoice-validate .iv-main {
+  padding: 24px 28px 48px;
+  max-width: 1120px;
+  /* Reset the centering that body.home .main applies so cards stay left-anchored */
+  align-items: stretch;
+}
+
+/* ── DB error ────────────────────────────────────────────────────────────────── */
+body.home.invoice-validate .iv-db-error {
+  background: color-mix(in srgb, var(--ember) 10%, var(--bg));
+  border: 1px solid var(--ember);
+  border-radius: 6px;
+  padding: 12px 16px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--ember);
+  margin-bottom: 20px;
+}
+
+/* ── Page header ─────────────────────────────────────────────────────────────── */
+body.home.invoice-validate .iv-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 28px;
+  flex-wrap: wrap;
+}
+
+body.home.invoice-validate .iv-header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+body.home.invoice-validate .iv-eyebrow {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+body.home.invoice-validate .iv-title {
+  font-family: 'Fraunces', serif;
+  font-variation-settings: "opsz" 96;
+  font-size: 32px;
+  font-weight: 500;
+  color: var(--ink);
+  margin: 0;
+  line-height: 1.1;
+}
+
+body.home.invoice-validate .iv-title em {
+  font-style: italic;
+  color: var(--oak);
+}
+
+/* ── Bulk validate button ────────────────────────────────────────────────────── */
+body.home.invoice-validate .iv-btn-bulk {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  background: var(--hop);
+  color: var(--bg);
+  border: 1.5px solid var(--hop-deep);
+  border-radius: 6px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  min-height: 44px;
+}
+body.home.invoice-validate .iv-btn-bulk:hover {
+  background: var(--hop-deep);
+  border-color: var(--hop-deep);
+}
+body.home.invoice-validate .iv-btn-bulk:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+body.home.invoice-validate .iv-bulk-count {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+/* ── Empty state ─────────────────────────────────────────────────────────────── */
+body.home.invoice-validate .iv-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 64px 32px;
+  text-align: center;
+}
+
+body.home.invoice-validate .iv-empty-icon svg {
+  width: 48px;
+  height: 48px;
+  stroke: var(--hop);
+  fill: none;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+body.home.invoice-validate .iv-empty-title {
+  font-family: 'Fraunces', serif;
+  font-size: 20px;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+body.home.invoice-validate .iv-empty-sub {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 14px;
+  color: var(--ink-mute);
+  max-width: 480px;
+}
+
+/* ── Card list ───────────────────────────────────────────────────────────────── */
+body.home.invoice-validate .iv-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* ── Invoice card ────────────────────────────────────────────────────────────── */
+body.home.invoice-validate .iv-card {
+  position: relative;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  padding: 20px 24px 16px;
+  box-shadow: 0 2px 6px rgba(30, 18, 5, 0.08);
+  transition: box-shadow 0.15s;
+}
+
+body.home.invoice-validate .iv-card--warn {
+  border-color: color-mix(in srgb, var(--ember) 40%, var(--hairline));
+  background: color-mix(in srgb, var(--ember) 3%, var(--bg-elev));
+}
+
+body.home.invoice-validate .iv-card--done {
+  border-color: color-mix(in srgb, var(--ok) 50%, var(--hairline));
+  background: color-mix(in srgb, var(--ok) 4%, var(--bg-elev));
+  opacity: 0.7;
+}
+
+body.home.invoice-validate .iv-card--error {
+  border-color: var(--ember);
+  background: color-mix(in srgb, var(--ember) 6%, var(--bg-elev));
+}
+
+/* ── Card header ─────────────────────────────────────────────────────────────── */
+body.home.invoice-validate .iv-card-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+body.home.invoice-validate .iv-card-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+body.home.invoice-validate .iv-supplier {
+  font-family: 'Fraunces', serif;
+  font-size: 17px;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+body.home.invoice-validate .iv-ref {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--oak);
+  letter-spacing: 0.04em;
+}
+
+body.home.invoice-validate .iv-date {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--ink-mute);
+}
+
+body.home.invoice-validate .iv-amount {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+/* ── Chips row ───────────────────────────────────────────────────────────────── */
+body.home.invoice-validate .iv-card-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+body.home.invoice-validate .iv-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+body.home.invoice-validate .iv-chip--parser {
+  background: color-mix(in srgb, var(--cold) 12%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--cold) 30%, var(--hairline));
+  color: var(--cold);
+}
+
+body.home.invoice-validate .iv-chip--ok {
+  background: color-mix(in srgb, var(--ok) 10%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--ok) 30%, var(--hairline));
+  color: var(--ok);
+}
+
+body.home.invoice-validate .iv-chip--warn {
+  background: color-mix(in srgb, var(--oak) 12%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--oak) 35%, var(--hairline));
+  color: var(--oak-deep);
+}
+
+body.home.invoice-validate .iv-chip--err {
+  background: color-mix(in srgb, var(--ember) 10%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--ember) 35%, var(--hairline));
+  color: var(--ember);
+}
+
+/* ── Lines table ─────────────────────────────────────────────────────────────── */
+body.home.invoice-validate .iv-lines-wrap {
+  overflow-x: auto;
+  margin-bottom: 16px;
+  border-radius: 6px;
+  border: 1px solid var(--hairline);
+}
+
+body.home.invoice-validate .iv-lines {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 13px;
+}
+
+body.home.invoice-validate .iv-lines thead tr {
+  background: var(--bg-side);
+}
+
+body.home.invoice-validate .iv-lines th {
+  padding: 7px 10px;
+  text-align: left;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  border-bottom: 1px solid var(--hairline);
+  white-space: nowrap;
+}
+
+body.home.invoice-validate .iv-lines td {
+  padding: 6px 10px;
+  vertical-align: top;
+  border-bottom: 1px solid color-mix(in srgb, var(--hairline) 60%, transparent);
+  color: var(--ink);
+}
+
+body.home.invoice-validate .iv-lines tbody tr:last-child td {
+  border-bottom: none;
+}
+
+body.home.invoice-validate .iv-lines tbody tr:hover {
+  background: color-mix(in srgb, var(--bg-side) 40%, transparent);
+}
+
+body.home.invoice-validate .iv-line--warn {
+  background: color-mix(in srgb, var(--ember) 4%, transparent) !important;
+}
+
+body.home.invoice-validate .iv-col-num {
+  text-align: right;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+body.home.invoice-validate .iv-col-idx {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--ink-mute);
+  width: 28px;
+}
+
+body.home.invoice-validate .iv-col-mi {
+  min-width: 140px;
+  max-width: 220px;
+}
+
+body.home.invoice-validate .iv-col-desc {
+  min-width: 160px;
+}
+
+body.home.invoice-validate .iv-col-flags {
+  width: 64px;
+  text-align: center;
+}
+
+body.home.invoice-validate .iv-mi-code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--cold);
+  background: color-mix(in srgb, var(--cold) 8%, var(--bg));
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+
+body.home.invoice-validate .iv-accounting-class {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--ink-mute);
+  font-style: italic;
+}
+
+body.home.invoice-validate .iv-unresolved {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ember);
+}
+
+/* Inline flag badges */
+body.home.invoice-validate .iv-flag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  font-weight: 700;
+  cursor: default;
+  margin: 0 1px;
+}
+
+body.home.invoice-validate .iv-flag--warn {
+  background: color-mix(in srgb, var(--oak) 15%, var(--bg));
+  color: var(--oak-deep);
+  border: 1px solid color-mix(in srgb, var(--oak) 30%, var(--hairline));
+}
+
+body.home.invoice-validate .iv-flag--err {
+  background: color-mix(in srgb, var(--ember) 12%, var(--bg));
+  color: var(--ember);
+  border: 1px solid color-mix(in srgb, var(--ember) 30%, var(--hairline));
+}
+
+/* ── Card actions ────────────────────────────────────────────────────────────── */
+body.home.invoice-validate .iv-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+body.home.invoice-validate .iv-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px 18px;
+  border-radius: 6px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.14s, border-color 0.14s, opacity 0.14s;
+  min-height: 44px;
+  border: 1.5px solid transparent;
+}
+
+body.home.invoice-validate .iv-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+body.home.invoice-validate .iv-btn-validate {
+  background: var(--hop);
+  color: var(--bg);
+  border-color: var(--hop-deep);
+}
+body.home.invoice-validate .iv-btn-validate:hover:not(:disabled) {
+  background: var(--hop-deep);
+  border-color: var(--hop-deep);
+}
+
+body.home.invoice-validate .iv-btn-reject {
+  background: transparent;
+  color: var(--ember);
+  border-color: color-mix(in srgb, var(--ember) 50%, var(--hairline));
+}
+body.home.invoice-validate .iv-btn-reject:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ember) 8%, var(--bg));
+  border-color: var(--ember);
+}
+
+body.home.invoice-validate .iv-btn-cancel {
+  background: transparent;
+  color: var(--ink-mute);
+  border-color: var(--hairline);
+}
+body.home.invoice-validate .iv-btn-cancel:hover {
+  border-color: var(--hairline-2);
+  color: var(--ink);
+}
+
+/* ── Card overlay (spinner / result state) ───────────────────────────────────── */
+body.home.invoice-validate .iv-card-overlay {
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-elev) 92%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(1px);
+  z-index: 10;
+}
+
+body.home.invoice-validate .iv-overlay-inner {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 15px;
+  font-weight: 600;
+  text-align: center;
+  padding: 20px 32px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Spinner animation */
+@keyframes iv-spin {
+  to { transform: rotate(360deg); }
+}
+
+body.home.invoice-validate .iv-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--hairline);
+  border-top-color: var(--hop);
+  border-radius: 50%;
+  animation: iv-spin 0.8s linear infinite;
+}
+
+/* ── Reject dialog ───────────────────────────────────────────────────────────── */
+/* Base reset — dialog element paint rules */
+body.home.invoice-validate .iv-reject-dialog {
+  border: none;
+  padding: 0;
+  background: transparent;
+}
+
+body.home.invoice-validate .iv-reject-dialog[open] {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100vw;
+  height: 100vh;
+  max-width: none;
+  max-height: none;
+  background: rgba(30, 18, 5, 0.45);
+  z-index: 100;
+}
+
+body.home.invoice-validate .iv-reject-dialog::backdrop {
+  background: rgba(30, 18, 5, 0.45);
+}
+
+body.home.invoice-validate .iv-reject-dialog-inner {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  padding: 28px 32px 24px;
+  width: min(480px, 92vw);
+  box-shadow: 0 8px 32px rgba(30, 18, 5, 0.2);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+body.home.invoice-validate .iv-reject-dialog-title {
+  font-family: 'Fraunces', serif;
+  font-size: 20px;
+  font-weight: 500;
+  color: var(--ink);
+  margin: 0;
+}
+
+body.home.invoice-validate .iv-reject-dialog-desc {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 14px;
+  color: var(--ink-mute);
+  margin: 0;
+}
+
+body.home.invoice-validate .iv-reject-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+body.home.invoice-validate .iv-reject-field label {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-soft);
+}
+
+body.home.invoice-validate .iv-reject-reason-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 12px;
+  background: var(--bg);
+  border: 1px solid var(--hairline-2);
+  border-radius: 5px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 14px;
+  color: var(--ink);
+  outline: none;
+  transition: border-color 0.12s;
+  min-height: 44px;
+}
+
+body.home.invoice-validate .iv-reject-reason-input:focus {
+  border-color: var(--oak);
+}
+
+body.home.invoice-validate .iv-reject-dialog-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+body.home.invoice-validate .iv-btn-reject-confirm {
+  background: color-mix(in srgb, var(--ember) 90%, var(--bg));
+  color: var(--bg);
+  border-color: var(--ember);
+}
+body.home.invoice-validate .iv-btn-reject-confirm:hover:not(:disabled) {
+  background: var(--ember);
+}
+
+/* ── Screen-reader only ──────────────────────────────────────────────────────── */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

@@ -242,6 +242,41 @@ if ($new_status !== $pipeline_status) {
     $pipeline_status = $new_status;
 }
 
+// ── B1b: Commit completion check ─────────────────────────────────────────────
+// Polls doc_invoices.validated_at to detect commit success/failure.
+// Only relevant when pipeline_status='processed' and doc_invoice_id is known.
+// commit_status: 'pending' | 'done' | 'failed'
+$commit_status    = null;
+$commit_error     = null;
+$commit_validated_at = null;
+
+if ($doc_invoice_id !== null && $new_status === 'processed') {
+    try {
+        $commitStmt = $pdo->prepare(
+            "SELECT validated_at, skipped_at FROM doc_invoices WHERE id = ? LIMIT 1"
+        );
+        $commitStmt->execute([$doc_invoice_id]);
+        $commitRow = $commitStmt->fetch();
+        if ($commitRow) {
+            if ($commitRow['validated_at'] !== null) {
+                $commit_status = 'done';
+                $commit_validated_at = $commitRow['validated_at'];
+            } elseif ($commitRow['skipped_at'] !== null) {
+                $commit_status = 'rejected';
+            } else {
+                // Not yet committed — check if commit worker left an error.
+                // error_text was already loaded in the initial SELECT ($row).
+                if (!empty($row['error_text'])) {
+                    $commit_status = 'failed';
+                    $commit_error  = $row['error_text'];
+                } else {
+                    $commit_status = 'pending';
+                }
+            }
+        }
+    } catch (Throwable) { /* non-fatal */ }
+}
+
 // ── Respond ───────────────────────────────────────────────────────────────────
 header('Content-Type: application/json; charset=utf-8');
 $payload = [
@@ -266,6 +301,14 @@ if ($summary !== null) {
 // Expose error_text for failed status so the UI can display a meaningful message
 if ($pipeline_status === 'failed') {
     $payload['error_text'] = $row['error_text'] ?? null;
+}
+// B1b: commit completion fields (only when a commit has been / is being attempted)
+if ($commit_status !== null) {
+    $payload['commit_status']       = $commit_status;
+    $payload['commit_validated_at'] = $commit_validated_at;
+    if ($commit_error !== null) {
+        $payload['commit_error'] = $commit_error;
+    }
 }
 
 echo json_encode($payload);
