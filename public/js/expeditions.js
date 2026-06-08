@@ -228,6 +228,19 @@
     doRequest(currentCsrf);
   });
 
+  /* ── Pull-list collapsible toggle ──────────────────────────────────────── */
+  (function () {
+    var toggleBtn = document.getElementById('exp-pull-toggle');
+    var body      = document.getElementById('exp-pull-body');
+    if (!toggleBtn || !body) return;
+
+    toggleBtn.addEventListener('click', function () {
+      var expanded = toggleBtn.getAttribute('aria-expanded') === 'true';
+      toggleBtn.setAttribute('aria-expanded', String(!expanded));
+      body.hidden = expanded;
+    });
+  }());
+
   /* ── Range date auto-fill: Au = Du when Au is empty ───────────────────────── */
   (function () {
     var duInput = document.getElementById('exp-range-du');

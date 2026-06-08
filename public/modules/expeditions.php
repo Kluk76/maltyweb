@@ -859,7 +859,7 @@ try {
             $placeholders = implode(',', array_fill(0, count($orderIds), '?'));
             $lineStmt = $pdo->prepare(
                 "SELECT l.order_id_fk, l.sku_id_fk, l.qty,
-                        s.sku_code, s.hl_per_unit
+                        s.sku_code, s.format, s.hl_per_unit
                    FROM ord_order_lines l
                    JOIN ref_skus s ON s.id = l.sku_id_fk
                   WHERE l.order_id_fk IN ({$placeholders})
@@ -1144,7 +1144,76 @@ if ($view === 'form') {
     }
 }
 
-// Edit-mode: original line qtys keyed by sku_id so JS can add them back
+// ── Live stock map for Commandes view — injected for per-order risk flags ────
+// Reuses fg_stock_compute exactly like the form view. On failure map stays '{}'.
+$cmdStockMapJson = '{}';
+if ($view === 'commandes') {
+    try {
+        $fgStockData2 = fg_stock_compute($pdo);
+        $cmdStockMap  = [];
+        foreach ($fgStockData2['rows'] as $sr) {
+            $cmdStockMap[(int) $sr['sku_id']] = [
+                'live_futur' => (int) round($sr['live_futur']),
+            ];
+        }
+        $cmdStockMapJson = json_encode($cmdStockMap, $jsonFlags);
+    } catch (Throwable $e) {
+        error_log('[expeditions cmd stock] ' . $e->getMessage());
+    }
+}
+
+// ── Pull-list aggregation: total qty per SKU across all OPEN orders ────────
+// Computed server-side from already-fetched $cmdLines.
+// OPEN = status NOT IN ('shipped', 'cancelled').
+// Output: [ { sku_id, sku_code, format, family, total_qty, order_count, hl_each }, … ]
+// Grouped by family in JS for rendering.
+$cmdPullList     = [];
+$cmdPullTotalHl  = 0.0;
+if ($view === 'commandes') {
+    // Map format string → family key (covers all 5 distinct values on this DB)
+    $formatFamilyMap = [
+        'Keg'            => 'keg',
+        'Bot'            => 'bot',
+        'Can'            => 'can',
+        'Can33'          => 'can33',
+        'Cuve de service'=> 'cuv',
+    ];
+    $pullAgg = []; // keyed by sku_id_fk
+    foreach ($cmdOrders as $ord) {
+        $status = (string) ($ord['status'] ?? 'entered');
+        if (in_array($status, ['shipped', 'cancelled'], true)) continue;
+        $oid = (int) $ord['id'];
+        foreach ($cmdLines[$oid] ?? [] as $ln) {
+            $sid = (int) $ln['sku_id_fk'];
+            if (!isset($pullAgg[$sid])) {
+                $fmt    = (string) ($ln['format'] ?? '');
+                $family = $formatFamilyMap[$fmt] ?? 'other';
+                $pullAgg[$sid] = [
+                    'sku_id'      => $sid,
+                    'sku_code'    => (string) $ln['sku_code'],
+                    'format'      => $fmt,
+                    'family'      => $family,
+                    'hl_each'     => (float) $ln['hl_per_unit'],
+                    'total_qty'   => 0,
+                    'order_count' => 0,
+                ];
+            }
+            $pullAgg[$sid]['total_qty']   += (float) $ln['qty'];
+            $pullAgg[$sid]['order_count'] += 1;
+        }
+    }
+    // Sort: family then sku_code
+    uasort($pullAgg, fn($a, $b) =>
+        strcmp($a['family'], $b['family']) ?: strcmp($a['sku_code'], $b['sku_code']));
+    $cmdPullList = array_values($pullAgg);
+    foreach ($cmdPullList as $pr) {
+        $cmdPullTotalHl += $pr['total_qty'] * $pr['hl_each'];
+    }
+}
+$cmdPullListJson    = json_encode($cmdPullList, $jsonFlags);
+$cmdPullTotalHlJson = json_encode(round($cmdPullTotalHl, 2), $jsonFlags);
+
+// ── Edit-mode: original line qtys keyed by sku_id so JS can add them back
 // to live_futur (the line's own qty is already counted in open_total_qty,
 // so live_futur is understated by exactly that qty for this order).
 $editOrigQtyJson = '{}';
@@ -1160,6 +1229,38 @@ if ($view === 'form' && !empty($editLines)) {
 
 $csrf          = csrf_token();
 $active_module = 'expeditions';
+$todayDate     = date('Y-m-d'); // used for overdue + today emphasis in commandes view
+
+/**
+ * Map ref_skus.format to a CSS family slug.
+ * Covers all 5 distinct format values on this DB (+ fallback).
+ */
+function exp_format_family(string $format): string
+{
+    return match ($format) {
+        'Keg'             => 'keg',
+        'Bot'             => 'bot',
+        'Can'             => 'can',
+        'Can33'           => 'can33',
+        'Cuve de service' => 'cuv',
+        default           => 'other',
+    };
+}
+
+/**
+ * Human label for format family (UI — no DB nomenclature in operator text).
+ */
+function exp_family_label(string $family): string
+{
+    return match ($family) {
+        'keg'   => 'Fût',
+        'bot'   => 'Bouteille',
+        'can'   => 'Canette',
+        'can33' => 'Can 33',
+        'cuv'   => 'Cuve',
+        default => 'Autre',
+    };
+}
 
 /**
  * Format a date string (YYYY-MM-DD) as dd/mm/yyyy (DMY system-wide).
@@ -1444,6 +1545,61 @@ $isReadOnly = $editOrder !== null
   </div>
   <?php endif ?>
 
+  <!-- ── Pull-list panel (Liste de préparation) ──────────────────────────── -->
+  <?php if (!empty($cmdPullList)): ?>
+  <div class="exp-pull-panel" id="exp-pull-panel" aria-label="Liste de préparation">
+    <button type="button" class="exp-pull-toggle" id="exp-pull-toggle"
+            aria-expanded="false" aria-controls="exp-pull-body">
+      <span class="exp-pull-toggle__icon" aria-hidden="true">▸</span>
+      <span class="exp-pull-toggle__title">Liste de préparation</span>
+      <span class="exp-pull-toggle__meta">
+        <?= count($cmdPullList) ?> SKU<?= count($cmdPullList) > 1 ? 's' : '' ?> ·
+        <?= number_format($cmdPullTotalHl, 2) ?> HL à préparer
+      </span>
+    </button>
+    <div class="exp-pull-body" id="exp-pull-body" hidden>
+      <?php
+      // Group by family for the pull-list display
+      $pullByFamily = [];
+      $pullMaxQty   = 0;
+      foreach ($cmdPullList as $pr) {
+          $pullByFamily[$pr['family']][] = $pr;
+          if ($pr['total_qty'] > $pullMaxQty) $pullMaxQty = $pr['total_qty'];
+      }
+      // Family display order (matching the token order)
+      $familyOrder = ['keg', 'bot', 'can', 'can33', 'cuv', 'other'];
+      ?>
+      <?php foreach ($familyOrder as $fam):
+          if (!isset($pullByFamily[$fam])) continue;
+          $famRows = $pullByFamily[$fam];
+      ?>
+      <div class="exp-pull-family">
+        <div class="exp-pull-family__header exp-pull-family--<?= $fam ?>">
+          <span class="exp-pull-family__label"><?= htmlspecialchars(exp_family_label($fam)) ?></span>
+          <span class="exp-pull-family__count"><?= count($famRows) ?> SKU<?= count($famRows) > 1 ? 's' : '' ?></span>
+        </div>
+        <?php foreach ($famRows as $pr): ?>
+        <div class="exp-pull-row">
+          <span class="exp-sku-pill exp-sku-pill--<?= $pr['family'] ?>" title="<?= htmlspecialchars(exp_family_label($pr['family'])) ?>">
+            <?= htmlspecialchars($pr['sku_code']) ?>
+          </span>
+          <span class="exp-pull-row__fmt"><?= htmlspecialchars(exp_family_label($pr['family'])) ?></span>
+          <span class="exp-pull-row__qty" tabular-nums>
+            <?= number_format($pr['total_qty'], 0) ?> <span class="exp-pull-row__unit">unités</span>
+          </span>
+          <span class="exp-pull-row__orders">(<?= $pr['order_count'] ?> cmd)</span>
+          <span class="exp-pull-bar" role="presentation" aria-hidden="true">
+            <span class="exp-pull-bar__fill exp-pull-bar__fill--<?= $pr['family'] ?>"
+                  style="width:<?= $pullMaxQty > 0 ? round(100 * $pr['total_qty'] / $pullMaxQty) : 0 ?>%"></span>
+          </span>
+        </div>
+        <?php endforeach ?>
+      </div>
+      <?php endforeach ?>
+    </div>
+  </div>
+  <?php endif ?>
+
   <!-- ── Cancelled toggle ──────────────────────────────────────────────────── -->
   <?php
   $hasCancelled = false;
@@ -1488,29 +1644,53 @@ $isReadOnly = $editOrder !== null
       <?php
       $dayOrderIds  = $cmdByDay[$date]  ?? [];
       $dayEshop     = $cmdEshopByDay[$date] ?? [];
+      $isToday      = ($date === $todayDate);
 
       // Per-day metrics (exclude cancelled from HL)
       $dayHl     = 0.0;
       $dayCount  = 0;
       $dayOpen   = 0;
+      // Per-day action summary counts
+      $dayActCounts = [
+          'entered'    => 0,
+          'confirmed'  => 0,
+          'picked'     => 0,
+          'bl_printed' => 0,
+          'shipped'    => 0,
+          'cancelled'  => 0,
+      ];
       foreach ($dayOrderIds as $oid) {
           $ord = $cmdOrders[$oid] ?? null;
           if ($ord === null) continue;
+          $s = (string) ($ord['status'] ?? 'entered');
           $dayCount++;
-          if (!in_array($ord['status'], ['shipped', 'cancelled'], true)) $dayOpen++;
-          if ($ord['status'] !== 'cancelled' && isset($cmdLines[$oid])) {
+          if (!in_array($s, ['shipped', 'cancelled'], true)) $dayOpen++;
+          if (isset($dayActCounts[$s])) $dayActCounts[$s]++;
+          if ($s !== 'cancelled' && isset($cmdLines[$oid])) {
               foreach ($cmdLines[$oid] as $ln) {
                   $dayHl += (float) $ln['qty'] * (float) $ln['hl_per_unit'];
               }
           }
       }
+      // Labels used in action summary strip
+      $actSummaryDefs = [
+          'entered'    => ['à confirmer',    false],
+          'confirmed'  => ['à préparer',     false],
+          'picked'     => ['à charger (BL)', false],
+          'bl_printed' => ['à livrer',       false],
+          'shipped'    => ['livrées',         true],
+          'cancelled'  => ['annulées',        true],
+      ];
       ?>
-      <div class="exp-day-block">
+      <div class="exp-day-block<?= $isToday ? ' exp-day-block--today' : '' ?>">
         <!-- Day header -->
-        <div class="exp-day-header">
+        <div class="exp-day-header<?= $isToday ? ' exp-day-header--today' : '' ?>">
           <div class="exp-day-header__date">
             <span class="exp-day-header__name"><?= exp_day_name($date) ?></span>
             <span class="exp-day-header__fmt"><?= exp_fmt_date($date) ?></span>
+            <?php if ($isToday): ?>
+              <span class="exp-day-today-badge" aria-label="Aujourd'hui">Aujourd'hui</span>
+            <?php endif ?>
           </div>
           <div class="exp-day-header__metrics">
             <?php if ($dayCount > 0): ?>
@@ -1532,6 +1712,29 @@ $isReadOnly = $editOrder !== null
           </div>
         </div>
 
+        <!-- Action summary strip -->
+        <?php if ($dayCount > 0): ?>
+        <div class="exp-day-summary" role="group" aria-label="Résumé des actions du jour">
+          <?php foreach ($actSummaryDefs as $actStatus => [$actLabel, $actTerminal]):
+              $n = $dayActCounts[$actStatus] ?? 0;
+              if ($n === 0) continue;
+              // Build filter URL: click → reload with statut filter for this day
+              $actUrl = $baseUrl . '&amp;mode=' . htmlspecialchars($cmdMode)
+                  . ($cmdMode === 'week' ? '&amp;kw=' . urlencode($cmdKw) : '&amp;du=' . $cmdDu . '&amp;au=' . $cmdAu)
+                  . '&amp;statut=' . urlencode($actStatus)
+                  . ($filterClient !== '' ? '&amp;client=' . urlencode($filterClient) : '')
+                  . ($filterSku !== '' ? '&amp;sku=' . urlencode($filterSku) : '')
+                  . ($filterChannel !== '' ? '&amp;canal=' . urlencode($filterChannel) : '');
+          ?>
+          <a href="<?= $actUrl ?>"
+             class="exp-day-act-chip exp-day-act-chip--<?= $actStatus ?><?= $actTerminal ? ' exp-day-act-chip--terminal' : ' exp-day-act-chip--action' ?>"
+             aria-label="Filtrer : <?= $n ?> <?= htmlspecialchars($actLabel) ?>">
+            <?= $n ?> <?= htmlspecialchars($actLabel) ?>
+          </a>
+          <?php endforeach ?>
+        </div>
+        <?php endif ?>
+
         <!-- Orders for this day -->
         <?php foreach ($dayOrderIds as $oid):
             $ord     = $cmdOrders[$oid] ?? null;
@@ -1541,7 +1744,28 @@ $isReadOnly = $editOrder !== null
             $isShip  = $status === 'shipped';
             $lines   = $cmdLines[$oid] ?? [];
 
-            // SKU pills: up to 6 visible, +N expand
+            // Overdue: open order with requested_date < today
+            $isOverdue = !$isCanc && !$isShip && $date < $todayDate;
+
+            // Per-order stock-risk: any line qty > live_futur
+            $hasStockRisk = false;
+            // Decode stock map from JSON string once (lazy)
+            static $cmdStockMapDecoded = null;
+            if ($cmdStockMapDecoded === null) {
+                $cmdStockMapDecoded = json_decode($cmdStockMapJson, true) ?? [];
+            }
+            if (!$isCanc && !empty($cmdStockMapDecoded)) {
+                foreach ($lines as $ln) {
+                    $sid = (int) ($ln['sku_id_fk'] ?? 0);
+                    $lf  = $cmdStockMapDecoded[$sid]['live_futur'] ?? null;
+                    if ($lf !== null && (float) $ln['qty'] > $lf) {
+                        $hasStockRisk = true;
+                        break;
+                    }
+                }
+            }
+
+            // SKU pills: up to 6 visible, +N expand — with family colour class
             $pillsHtml = '';
             $pillCount = count($lines);
             $visLines  = array_slice($lines, 0, 6);
@@ -1549,7 +1773,8 @@ $isReadOnly = $editOrder !== null
             foreach ($visLines as $ln) {
                 $qty     = (float) $ln['qty'];
                 $qtyFmt  = (floor($qty) == $qty) ? (int)$qty : $qty;
-                $pillsHtml .= '<span class="exp-sku-pill">'
+                $fam     = exp_format_family((string) ($ln['format'] ?? ''));
+                $pillsHtml .= '<span class="exp-sku-pill exp-sku-pill--' . $fam . '" title="' . htmlspecialchars(exp_family_label($fam)) . '">'
                     . htmlspecialchars($ln['sku_code']) . '×' . $qtyFmt
                     . '</span>';
             }
@@ -1558,7 +1783,8 @@ $isReadOnly = $editOrder !== null
                 foreach ($hidLines as $ln) {
                     $qty = (float) $ln['qty'];
                     $qtyFmt = (floor($qty) == $qty) ? (int)$qty : $qty;
-                    $hidHtml .= '<span class="exp-sku-pill">'
+                    $fam = exp_format_family((string) ($ln['format'] ?? ''));
+                    $hidHtml .= '<span class="exp-sku-pill exp-sku-pill--' . $fam . '" title="' . htmlspecialchars(exp_family_label($fam)) . '">'
                         . htmlspecialchars($ln['sku_code']) . '×' . $qtyFmt
                         . '</span>';
                 }
@@ -1567,11 +1793,21 @@ $isReadOnly = $editOrder !== null
                     . ' aria-expanded="false">+' . count($hidLines) . '</button>';
             }
         ?>
-          <div class="exp-order-row<?= $isCanc ? ' exp-order-row--cancelled' : '' ?>"
+          <div class="exp-order-row exp-order-row--status-<?= htmlspecialchars($status) ?><?= $isCanc ? ' exp-order-row--cancelled' : '' ?><?= $isOverdue ? ' exp-order-row--overdue' : '' ?>"
                data-order-id="<?= $oid ?>"
                data-status="<?= htmlspecialchars($status) ?>">
 
             <span class="exp-order-id">#<?= $oid ?></span>
+
+            <!-- Overdue badge -->
+            <?php if ($isOverdue): ?>
+              <span class="exp-overdue-badge" aria-label="Commande en retard">⚠ en retard</span>
+            <?php endif ?>
+
+            <!-- Stock risk advisory chip -->
+            <?php if ($hasStockRisk): ?>
+              <span class="exp-stock-risk-chip" aria-label="Stock potentiellement insuffisant — advisory">⚠ stock</span>
+            <?php endif ?>
 
             <!-- Party -->
             <?php if ($ord['order_type'] === 'customer'): ?>
@@ -2605,7 +2841,12 @@ $isReadOnly = $editOrder !== null
 
 <?php if ($view === 'commandes'): ?>
 <script>
-  window.EXP_CSRF = <?= json_encode($csrf, JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+  window.EXP_CSRF         = <?= json_encode($csrf, JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+  // Advisory stock map for per-order risk flags: {sku_id: {live_futur}}
+  window.EXP_CMD_STOCK_MAP = <?= $cmdStockMapJson ?>;
+  // Pull-list aggregation: [{sku_id,sku_code,format,family,total_qty,order_count,hl_each}]
+  window.EXP_CMD_PULL     = <?= $cmdPullListJson ?>;
+  window.EXP_CMD_PULL_HL  = <?= $cmdPullTotalHlJson ?>;
 </script>
 <script src="/js/expeditions.js?v=<?= @filemtime(__DIR__ . '/../js/expeditions.js') ?: time() ?>"></script>
 <?php endif ?>
