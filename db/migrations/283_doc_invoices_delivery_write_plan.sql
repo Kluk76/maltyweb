@@ -1,0 +1,68 @@
+-- Migration 283 — doc_invoices: add delivery_write_plan JSON staging column
+--
+-- delivery_write_plan JSON NULL
+--   Staged per-line delivery write plan for invoice deliveries.
+--   Written at STAGE time by ingest-one-local.ts (during invoice parse), replacing
+--   the auto-write to inv_deliveries. Applied to inv_deliveries by the --commit path
+--   triggered by operator validate click (Phase B, via B1b PHP endpoint).
+--
+--   NULL means no plan was staged (doc parsed under old code, or DN/ambiguous file).
+--   Non-null means plan is staged and awaiting operator validation.
+--   Once committed (validated_at becomes non-null), the plan value is preserved for
+--   audit — it is not cleared after commit.
+--
+--   Shape:
+--   {
+--     "header": {
+--       "currency":     string,
+--       "eurToChf":     number,
+--       "dateReceived": string,        -- YYYY-MM-DD
+--       "supplierRaw":  string,
+--       "invoiceRef":   string,
+--       "fileDocId":    number,        -- doc_files.id (BIGINT)
+--       "parserLabel":  string,
+--       "fileName":     string,
+--       "gateDecision": string         -- gate.decision enum value
+--     },
+--     "lines": [
+--       {
+--         "dateReceived":   string,    -- YYYY-MM-DD
+--         "supplier":       string,
+--         "ingredientName": string,
+--         "lotNumber":      string,
+--         "qtyDelivered":   number,
+--         "unitPrice":      number,
+--         "lineTotal":      number|null,
+--         "currency":       string,
+--         "eurToChf":       number,
+--         "invoiceRef":     string,
+--         "source":         "Invoice-OCR",
+--         "status":         "Active"|"Pending",
+--         "notes":          string,
+--         "miIdRaw":        string|null,
+--         "fileIdFk":       number,    -- doc_files.id (BIGINT)
+--         "lineIndex":      number,
+--         "exclusionClass": string|null,
+--         "supplierFk":     number|null,
+--         "ingredientFk":   number|null,
+--         "resolution":     "unresolved"|"partial"|"resolved"
+--       }, ...
+--     ],
+--     "dnPromotion": {                 -- present only when a DN Pending row matched
+--       "pendingRowId": number,        -- inv_deliveries.id of the row to promote
+--       "invoiceRef":   string,
+--       "currency":     string,
+--       "eurToChf":     number,
+--       "fileName":     string
+--     }|null,
+--     "energyAlreadyStaged": boolean  -- true when energy_extract is set; commit applies it
+--   }
+--
+-- Pre-flight:
+--   table_class = 'source', corrections_policy = 'allowed' — additive nullable column OK.
+--   MySQL 8 syntax: no ADD COLUMN IF NOT EXISTS (schema_migrations provides idempotency).
+--   FK structure unchanged — no new FK needed for a JSON column.
+
+ALTER TABLE doc_invoices
+  ADD COLUMN delivery_write_plan JSON NULL
+    COMMENT 'Staged per-line write plan for inv_deliveries; set at parse, applied on operator validate (--commit path)';
