@@ -192,8 +192,20 @@ foreach ($decisions as $dec) {
         $counts['SKIP']++;
         continue;
     }
-    if (!(bool)$sourceRow['needs_review']) {
+    // needs_review=0 blocks VALIDER/DÉSACTIVER (idempotency) but NOT a MERGE:
+    // a previously-validated standalone row can still be discovered to be an
+    // alias of a parent account. The merge's own guard (not-already-tombstoned)
+    // protects against double-merge.
+    $isMergeDecision = ($decision === 'MERGE' || $decision === 'MERGE_BC');
+    if (!(bool)$sourceRow['needs_review'] && !$isMergeDecision) {
         $msg = "SKIP  [{$sheetKey}] #{$id} \"{$name}\" — needs_review=0 (already processed)";
+        $errorList[]  = $msg;
+        $actionLog[]  = $msg;
+        $counts['SKIP']++;
+        continue;
+    }
+    if ($isMergeDecision && strpos((string)($sourceRow['notes'] ?? ''), 'merged_into:') !== false) {
+        $msg = "SKIP  [{$sheetKey}] #{$id} \"{$name}\" — already merged (tombstone)";
         $errorList[]  = $msg;
         $actionLog[]  = $msg;
         $counts['SKIP']++;
