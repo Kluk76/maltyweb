@@ -613,15 +613,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'stocktake') {
         $allowedLocationIds[(int) $sr['id']] = $sr;
     }
 
-    // Active SKUs (id → {sku_code, hl_per_unit})
+    // Active SKUs (id → {sku_code, hl_per_unit, is_cage, bottles_per_cage})
+    // units_per_pack is used for cage SKUs: submitted value is bottles, stored as cage-units.
     $stSkuRows = $pdo->query(
-        'SELECT id, sku_code, hl_per_unit FROM ref_skus WHERE is_active = 1'
+        'SELECT id, sku_code, hl_per_unit, units_per_pack FROM ref_skus WHERE is_active = 1'
     )->fetchAll(PDO::FETCH_ASSOC);
     $allowedSkuIds = [];
     foreach ($stSkuRows as $sr) {
+        $isCage = (substr($sr['sku_code'], -2) === '-X');
         $allowedSkuIds[(int) $sr['id']] = [
-            'sku_code'    => $sr['sku_code'],
-            'hl_per_unit' => (float) $sr['hl_per_unit'],
+            'sku_code'        => $sr['sku_code'],
+            'hl_per_unit'     => (float) $sr['hl_per_unit'],
+            'is_cage'         => $isCage,
+            'bottles_per_cage'=> $isCage ? (float) $sr['units_per_pack'] : 1.0,
         ];
     }
 
@@ -661,6 +665,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'stocktake') {
             if ($sid <= 0 || !isset($allowedSkuIds[$sid])) continue; // safety
             $qty = (float) $rawQty;
             if ($qty < 0) continue; // negative qty not accepted
+
+            // Cage SKUs: submitted value is bottles; convert → cage-units for storage.
+            // DB column qty stores cage-units (e.g. 0.667 = ⅔ cage).
+            // We read bottles_per_cage from the DB row — never hardcoded.
+            if ($allowedSkuIds[$sid]['is_cage']) {
+                $bottlesPerCage = $allowedSkuIds[$sid]['bottles_per_cage'];
+                if ($bottlesPerCage > 0) {
+                    $qty = $qty / $bottlesPerCage; // e.g. 685 / 1027 = 0.6670…
+                } else {
+                    continue; // degenerate row — skip
+                }
+            }
+
             $stValidLines[] = ['sku_id' => $sid, 'qty' => $qty];
         }
     }
@@ -1224,8 +1241,9 @@ try {
         )->fetchAll(PDO::FETCH_ASSOC);
 
         // ── Active SKUs ordered by format family then code ────────────────────
+        // units_per_pack is fetched here for cage-SKU bottle→cage-unit conversion.
         $stAllSkus = $pdo->query(
-            'SELECT id, sku_code, format, hl_per_unit
+            'SELECT id, sku_code, format, hl_per_unit, units_per_pack
                FROM ref_skus
               WHERE is_active = 1
               ORDER BY format ASC, sku_code ASC'
@@ -1511,13 +1529,19 @@ $stPriorJson     = '{}';
 $stSitesJson     = '[]';
 $stFreshnessJson = '{}';
 if ($view === 'stocktake') {
-    // SKU list for JS: [{id, sku_code, format, hl_per_unit}]
-    $stSkusForJs = array_map(fn($s) => [
-        'id'          => (int) $s['id'],
-        'sku_code'    => $s['sku_code'],
-        'format'      => $s['format'] ?? '',
-        'hl_per_unit' => (float) $s['hl_per_unit'],
-    ], $stAllSkus ?? []);
+    // SKU list for JS: [{id, sku_code, format, hl_per_unit, is_cage, bottles_per_cage}]
+    // Cage SKUs (suffix -X) get is_cage=true + bottles_per_cage from DB units_per_pack.
+    $stSkusForJs = array_map(function ($s) {
+        $isCage = (substr((string) $s['sku_code'], -2) === '-X');
+        return [
+            'id'               => (int) $s['id'],
+            'sku_code'         => $s['sku_code'],
+            'format'           => $s['format'] ?? '',
+            'hl_per_unit'      => (float) $s['hl_per_unit'],
+            'is_cage'          => $isCage,
+            'bottles_per_cage' => $isCage ? (float) $s['units_per_pack'] : null,
+        ];
+    }, $stAllSkus ?? []);
     $stSkusJson = json_encode($stSkusForJs, $jsonFlags);
 
     // Prior counts: {loc_id: {sku_id: {qty, counted_at, month_closed}}}
@@ -2810,6 +2834,8 @@ $isReadOnly = $editOrder !== null
   }
 
   // ── Group SKUs by family for the count grid ───────────────────────────────
+  // Cage SKUs (suffix -X) are extracted from their format family and rendered
+  // in their own "Cages" section at the bottom with bottle-unit inputs.
   $stFamilyOrder = ['Bot', 'Can', 'Can33', 'Keg', 'Cuve de service'];
   $stFamilyLabels = [
       'Bot'            => 'Bouteille',
@@ -2819,9 +2845,14 @@ $isReadOnly = $editOrder !== null
       'Cuve de service'=> 'Cuve de service',
   ];
   $stSkusByFamily = [];
+  $stCageSkus     = []; // cage SKUs extracted from their format family
   foreach ($stAllSkus as $sk) {
-      $fmt = $sk['format'] ?? 'Autre';
-      $stSkusByFamily[$fmt][] = $sk;
+      if (substr((string) $sk['sku_code'], -2) === '-X') {
+          $stCageSkus[] = $sk;
+      } else {
+          $fmt = $sk['format'] ?? 'Autre';
+          $stSkusByFamily[$fmt][] = $sk;
+      }
   }
   // Sort families in canonical order (unknown families appended at end)
   $stFamiliesSorted = array_unique(array_merge(
@@ -2972,6 +3003,64 @@ $isReadOnly = $editOrder !== null
         </div>
       </div>
     <?php endforeach ?>
+
+    <?php if (!empty($stCageSkus)): ?>
+      <!-- ── Cage SKUs section (bottle-unit entry, no prefill) ─────────────── -->
+      <div class="exp-st-family exp-st-family--cage" data-family="cage">
+        <div class="exp-st-family-header exp-st-family-header--cage" id="exp-st-fh-cage">
+          <span class="exp-st-family-label">Cages</span>
+          <span class="exp-st-family-count" id="exp-st-fc-cage"></span>
+        </div>
+        <div class="exp-st-cage-note" role="note">
+          Comptage à l'unité (bouteilles) — comptez les couches × bouteilles par couche.
+          <strong>Cette semaine&nbsp;: laisser vide, stock plié dans les SKU&nbsp;-B.</strong>
+        </div>
+        <div class="exp-st-family-rows">
+        <?php foreach ($stCageSkus as $sk): ?>
+          <?php
+          $sid            = (int) $sk['id'];
+          $code           = $sk['sku_code'];
+          $hpu            = (float) $sk['hl_per_unit'];
+          $bottlesPerCage = (float) $sk['units_per_pack']; // read from DB, not hardcoded
+          ?>
+          <!-- Cage row: input in bottles, JS converts to cage-units live for summary.
+               No prefill regardless of prior counts — prevents double-count against -B SKUs. -->
+          <div class="exp-st-row exp-st-row--cage"
+               data-sku-id="<?= $sid ?>"
+               data-sku-code="<?= htmlspecialchars($code) ?>"
+               data-hl="<?= $hpu ?>"
+               data-is-cage="1"
+               data-bottles-per-cage="<?= $bottlesPerCage ?>">
+            <label class="exp-st-row__label" for="exp-st-qty-<?= $sid ?>">
+              <span class="exp-st-row__code"><?= htmlspecialchars($code) ?></span>
+              <span class="exp-st-cage-ref">
+                1&nbsp;cage&nbsp;=&nbsp;<?= number_format($bottlesPerCage, 0) ?>&nbsp;bouteilles&nbsp;·&nbsp;<?= number_format($hpu, 3) ?>&nbsp;hl
+              </span>
+            </label>
+            <!-- Hidden parallel-array id field (always submitted so POST knows this SKU exists) -->
+            <input type="hidden" name="sku_qty_id[]" value="<?= $sid ?>">
+            <div class="exp-st-row__qty-wrap">
+              <div class="exp-st-cage-input-wrap">
+                <input type="number"
+                       id="exp-st-qty-<?= $sid ?>"
+                       name="sku_qty_val[]"
+                       class="exp-st-qty-input exp-st-cage-input"
+                       min="0"
+                       step="1"
+                       placeholder=""
+                       autocomplete="off"
+                       aria-label="Bouteilles <?= htmlspecialchars($code) ?>"
+                       inputmode="numeric">
+                <span class="exp-st-cage-unit">bouteilles</span>
+              </div>
+              <!-- Live hint: JS writes this from input value -->
+              <span class="exp-st-cage-live" id="exp-st-cage-live-<?= $sid ?>" aria-live="polite"></span>
+            </div>
+          </div>
+        <?php endforeach ?>
+        </div>
+      </div>
+    <?php endif ?>
     </div>
 
     <!-- ── Submit bar ─────────────────────────────────────────────────────── -->

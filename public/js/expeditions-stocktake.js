@@ -2,7 +2,7 @@
  * expeditions-stocktake.js — FG Inventaire multi-site saisie JS.
  *
  * Reads:
- *   window.EXP_ST_SKUS      [{id, sku_code, format, hl_per_unit}]
+ *   window.EXP_ST_SKUS      [{id, sku_code, format, hl_per_unit, is_cage, bottles_per_cage}]
  *   window.EXP_ST_PRIOR     {loc_id: {sku_id: {qty, counted_at, month_closed}}}
  *   window.EXP_ST_SITES     [{id, name, site_type, sort_order, notes, is_consignment}]
  *   window.EXP_ST_FRESHNESS {loc_id: last_counted_date_or_null}
@@ -11,11 +11,17 @@
  *
  * Responsibilities:
  *   - Running summary: count of entered SKUs + total HL
+ *     Cage rows: input is bottles; HL = (bottles / bottles_per_cage) × hl_per_unit
  *   - Submit-button date label sync
  *   - Search/filter: show/hide rows + update family counts
  *   - Highlight rows where a qty has been entered
  *   - Family collapse (header click)
- *   - Prior-count prefill-hint visibility
+ *   - Cage live hint: bottles → "= X.XX cage · Y.YY hl"
+ *
+ * Cage SKUs are identified by data-is-cage="1" on the row and
+ * data-bottles-per-cage on the same element. Input is in bottles.
+ * The POST handler converts bottles → cage-units server-side.
+ * Cage rows start with no prefill (no data-prior attribute set).
  *
  * PRG form — submit is a regular POST. No AJAX on submit.
  * Vanilla JS only. No external libraries. XSS: only textContent / numeric values.
@@ -30,9 +36,15 @@
   const PRIOR     = window.EXP_ST_PRIOR     || {};
   const TODAY     = window.EXP_ST_TODAY     || '';
 
-  /* ── Build sku_id → hl_per_unit lookup ────────────────────────────────── */
-  const hlBySkuId = {};
-  SKUS.forEach(function (s) { hlBySkuId[s.id] = s.hl_per_unit; });
+  /* ── Build sku_id → {hl_per_unit, is_cage, bottles_per_cage} lookup ──── */
+  const skuMeta = {};
+  SKUS.forEach(function (s) {
+    skuMeta[s.id] = {
+      hl_per_unit:      s.hl_per_unit,
+      is_cage:          s.is_cage || false,
+      bottles_per_cage: s.bottles_per_cage || 1,
+    };
+  });
 
   /* ── Utility ────────────────────────────────────────────────────────────── */
   function qs(sel, root) { return (root || document).querySelector(sel); }
@@ -57,6 +69,40 @@
     return iso.slice(8, 10) + '/' + iso.slice(5, 7) + '/' + iso.slice(0, 4);
   }
 
+  /* ── Format HL: fr-CH locale (space thousands, comma decimal) ────────────── */
+  function formatHl(val) {
+    return val.toLocaleString('fr-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  /* ── Format cage-units: always 3 decimal places (tabular) ───────────────── */
+  function formatCageUnits(val) {
+    return val.toLocaleString('fr-CH', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+  }
+
+  /* ── Cage live hint: update "= X.XXX cage · Y.YY hl" for one row ──────── */
+  function updateCageLiveHint(row, inp) {
+    var sid = parseInt(row.dataset.skuId, 10);
+    var meta = skuMeta[sid];
+    if (!meta || !meta.is_cage) return;
+
+    var hintEl = qs('#exp-st-cage-live-' + sid);
+    if (!hintEl) return;
+
+    var raw = inp.value.trim();
+    if (raw === '') {
+      hintEl.textContent = '';
+      return;
+    }
+    var bottles = parseFloat(raw);
+    if (isNaN(bottles) || bottles < 0) {
+      hintEl.textContent = '';
+      return;
+    }
+    var cageUnits = bottles / meta.bottles_per_cage;
+    var hlVal     = cageUnits * meta.hl_per_unit;
+    hintEl.textContent = '= ' + formatCageUnits(cageUnits) + ' cage · ' + formatHl(hlVal) + ' hl';
+  }
+
   /* ── Running summary ──────────────────────────────────────────────────── */
   function recompute() {
     var count = 0;
@@ -67,12 +113,23 @@
       var qty = parseFloat(raw);
       if (isNaN(qty) || qty < 0) return;
       count++;
-      var sid = parseInt(inp.closest('.exp-st-row').dataset.skuId, 10);
-      var hpu = hlBySkuId[sid] || 0;
-      totalHl += qty * hpu;
+
+      var row = inp.closest('.exp-st-row');
+      var sid = parseInt(row.dataset.skuId, 10);
+      var meta = skuMeta[sid] || {};
+      var hpu  = meta.hl_per_unit || 0;
+
+      if (meta.is_cage) {
+        // input is bottles; convert to cage-units first, then to HL
+        var bottlesPerCage = meta.bottles_per_cage || 1;
+        var cageUnits = qty / bottlesPerCage;
+        totalHl += cageUnits * hpu;
+      } else {
+        totalHl += qty * hpu;
+      }
 
       // Highlight row when entered
-      inp.closest('.exp-st-row').classList.toggle('exp-st-row--entered', true);
+      row.classList.add('exp-st-row--entered');
     });
 
     // Clear entered flag on blank rows
@@ -86,15 +143,10 @@
       countEl.textContent = count + ' SKU' + (count !== 1 ? 's' : '') + ' saisi' + (count !== 1 ? 's' : '');
     }
     if (hlEl) {
-      // Format as fr-CH: space thousand-separator, comma decimal
       hlEl.textContent = formatHl(totalHl) + ' HL';
     }
 
     updateFamilyCounts();
-  }
-
-  function formatHl(val) {
-    return val.toLocaleString('fr-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
   /* ── Update per-family count labels ──────────────────────────────────────── */
@@ -153,8 +205,19 @@
 
   /* ── Wire qty inputs ─────────────────────────────────────────────────── */
   qtyInputs.forEach(function (inp) {
-    inp.addEventListener('input', recompute);
-    inp.addEventListener('change', recompute);
+    var row = inp.closest('.exp-st-row');
+    inp.addEventListener('input', function () {
+      recompute();
+      if (row && row.dataset.isCage === '1') {
+        updateCageLiveHint(row, inp);
+      }
+    });
+    inp.addEventListener('change', function () {
+      recompute();
+      if (row && row.dataset.isCage === '1') {
+        updateCageLiveHint(row, inp);
+      }
+    });
   });
 
   /* ── Family header collapse/expand (optional UX touch) ───────────────── */

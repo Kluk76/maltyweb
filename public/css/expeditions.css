@@ -3409,6 +3409,77 @@ body.expeditions .exp-st-submit-btn:disabled {
   cursor: not-allowed;
 }
 
+/* ── Cage SKU section ─────────────────────────────────────────────────────── */
+
+/* Cage section header: subtle amber tint to visually separate from regular families */
+body.expeditions .exp-st-family-header--cage {
+  background: color-mix(in srgb, var(--oak) 6%, var(--bg-elev));
+}
+
+/* Instructional note inside the Cages section */
+body.expeditions .exp-st-cage-note {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.76rem;
+  color: var(--ink-mute);
+  padding: 8px 16px 10px;
+  background: color-mix(in srgb, var(--oak) 4%, var(--bg));
+  border-bottom: 1px solid var(--hairline);
+  line-height: 1.5;
+}
+
+body.expeditions .exp-st-cage-note strong {
+  color: var(--ink-soft);
+}
+
+/* Cage row: label stacks vertically (SKU code + reference line below) */
+body.expeditions .exp-st-row--cage .exp-st-row__label {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+/* Faint reference text under the SKU code: "1 cage = 1027 bouteilles · 3.389 hl" */
+body.expeditions .exp-st-cage-ref {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem;
+  color: var(--ink-faint);
+  letter-spacing: 0.02em;
+  font-weight: 400;
+}
+
+/* Input + unit label side-by-side */
+body.expeditions .exp-st-cage-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* "bouteilles" unit label right of the input */
+body.expeditions .exp-st-cage-unit {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.72rem;
+  color: var(--ink-mute);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Wider input for bottle counts (4–5 digits) */
+body.expeditions .exp-st-cage-input {
+  width: 110px;
+}
+
+/* Live conversion hint: "= 0.667 cage · 2.26 hl" — tabular-nums, faint */
+body.expeditions .exp-st-cage-live {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.68rem;
+  color: var(--ink-mute);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  min-height: 1em;
+  display: block;
+  margin-top: 2px;
+}
+
 /* ── Responsive ───────────────────────────────────────────────────────────── */
 @media (max-width: 600px) {
   body.expeditions .exp-st-freshness-bar {
@@ -3435,6 +3506,9 @@ body.expeditions .exp-st-submit-btn:disabled {
   body.expeditions .exp-st-qty-input {
     width: 80px;
     font-size: 1rem;
+  }
+  body.expeditions .exp-st-cage-input {
+    width: 90px;
   }
   body.expeditions .exp-st-location-selector {
     gap: 6px;
