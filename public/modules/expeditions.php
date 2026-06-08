@@ -745,8 +745,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'stocktake') {
         $insSt = $pdo->prepare(
             'INSERT INTO inv_fg_stocktake
                 (sku, sku_id_fk, source, counted_at, month_closed, qty, submitted_by,
-                 source_form_response_id, location_id_fk, is_active, row_hash)
-             VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, 1, ?)
+                 source_form_response_id, location_id_fk, is_active)
+             VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, 1)
              ON DUPLICATE KEY UPDATE
                 qty        = VALUES(qty),
                 submitted_by = VALUES(submitted_by),
@@ -779,7 +779,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'stocktake') {
                 $qty,
                 $me['username'],
                 $stLocId,
-                $rowHash,
             ]);
 
             // Fetch PK after upsert
