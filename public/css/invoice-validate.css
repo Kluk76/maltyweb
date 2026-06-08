@@ -595,3 +595,415 @@ body.home.invoice-validate .iv-btn-reject-confirm:hover:not(:disabled) {
   white-space: nowrap;
   border: 0;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   B2 — Upload-page inline recap card
+   Shared between:
+     body.home.invoice-validate  (À valider module — not currently used here but
+                                  available for future per-upload card reuse)
+     body.home.triage            (triage upload zone — main B2 consumer)
+
+   Scoped as .upload-recap__* under .upload-status--recap so there is no
+   collision with the existing .iv-* classes of the module page.
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+body.home.triage .upload-status--recap,
+body.home.invoice-validate .upload-status--recap {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(30, 18, 5, 0.09);
+  overflow: hidden;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 13px;
+}
+
+/* Settled state tints */
+body.home.triage .upload-status--recap-done,
+body.home.invoice-validate .upload-status--recap-done {
+  border-color: color-mix(in srgb, var(--ok) 50%, var(--hairline));
+  background: color-mix(in srgb, var(--ok) 4%, var(--bg-elev));
+}
+
+body.home.triage .upload-status--recap-rejected,
+body.home.invoice-validate .upload-status--recap-rejected {
+  border-color: color-mix(in srgb, var(--ember) 35%, var(--hairline));
+  background: color-mix(in srgb, var(--ember) 4%, var(--bg-elev));
+  opacity: 0.75;
+}
+
+/* ── Header ─────────────────────────────────────────────────────────────────── */
+body.home.triage .upload-recap__header,
+body.home.invoice-validate .upload-recap__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 16px 10px;
+  border-bottom: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--bg-side) 50%, var(--bg-elev));
+}
+
+body.home.triage .upload-recap__meta,
+body.home.invoice-validate .upload-recap__meta {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+body.home.triage .upload-recap__supplier,
+body.home.invoice-validate .upload-recap__supplier {
+  font-family: 'Fraunces', serif;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+body.home.triage .upload-recap__ref,
+body.home.invoice-validate .upload-recap__ref {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--oak);
+  letter-spacing: 0.04em;
+}
+
+body.home.triage .upload-recap__date,
+body.home.invoice-validate .upload-recap__date {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--ink-mute);
+}
+
+body.home.triage .upload-recap__unknown,
+body.home.invoice-validate .upload-recap__unknown {
+  color: var(--ink-mute);
+}
+
+body.home.triage .upload-recap__header-right,
+body.home.invoice-validate .upload-recap__header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+body.home.triage .upload-recap__amount,
+body.home.invoice-validate .upload-recap__amount {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+body.home.triage .upload-recap__chip,
+body.home.invoice-validate .upload-recap__chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+body.home.triage .upload-recap__chip--ok,
+body.home.invoice-validate .upload-recap__chip--ok {
+  background: color-mix(in srgb, var(--ok) 12%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--ok) 30%, var(--hairline));
+  color: var(--ok);
+}
+
+body.home.triage .upload-recap__chip--warn,
+body.home.invoice-validate .upload-recap__chip--warn {
+  background: color-mix(in srgb, var(--oak) 12%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--oak) 35%, var(--hairline));
+  color: var(--oak-deep);
+}
+
+/* ── Lines table ─────────────────────────────────────────────────────────────── */
+body.home.triage .upload-recap__table-wrap,
+body.home.invoice-validate .upload-recap__table-wrap {
+  overflow-x: auto;
+}
+
+body.home.triage .upload-recap__empty-lines,
+body.home.invoice-validate .upload-recap__empty-lines {
+  padding: 12px 16px;
+  font-size: 12px;
+  color: var(--ink-mute);
+  margin: 0;
+}
+
+body.home.triage .upload-recap__table,
+body.home.invoice-validate .upload-recap__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+body.home.triage .upload-recap__table thead tr,
+body.home.invoice-validate .upload-recap__table thead tr {
+  background: var(--bg-side);
+}
+
+body.home.triage .upload-recap__table th,
+body.home.invoice-validate .upload-recap__table th {
+  padding: 6px 10px;
+  text-align: left;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  border-bottom: 1px solid var(--hairline);
+  white-space: nowrap;
+}
+
+body.home.triage .upload-recap__table td,
+body.home.invoice-validate .upload-recap__table td {
+  padding: 5px 10px;
+  vertical-align: top;
+  border-bottom: 1px solid color-mix(in srgb, var(--hairline) 55%, transparent);
+  color: var(--ink);
+}
+
+body.home.triage .upload-recap__table tbody tr:last-child td,
+body.home.invoice-validate .upload-recap__table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+body.home.triage .upload-recap__row--warn td,
+body.home.invoice-validate .upload-recap__row--warn td {
+  background: color-mix(in srgb, var(--ember) 4%, transparent);
+}
+
+body.home.triage .upload-recap__col-idx,
+body.home.invoice-validate .upload-recap__col-idx {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--ink-mute);
+  width: 24px;
+}
+
+body.home.triage .upload-recap__col-mi,
+body.home.invoice-validate .upload-recap__col-mi {
+  min-width: 130px;
+  max-width: 200px;
+}
+
+body.home.triage .upload-recap__col-desc,
+body.home.invoice-validate .upload-recap__col-desc {
+  min-width: 120px;
+}
+
+body.home.triage .upload-recap__col-num,
+body.home.invoice-validate .upload-recap__col-num {
+  text-align: right;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+body.home.triage .upload-recap__col-flags,
+body.home.invoice-validate .upload-recap__col-flags {
+  width: 56px;
+  text-align: center;
+}
+
+body.home.triage .upload-recap__mi-code,
+body.home.invoice-validate .upload-recap__mi-code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--cold);
+  background: color-mix(in srgb, var(--cold) 8%, var(--bg));
+  border-radius: 3px;
+  padding: 1px 4px;
+}
+
+body.home.triage .upload-recap__acct,
+body.home.invoice-validate .upload-recap__acct {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--ink-mute);
+  font-style: italic;
+}
+
+body.home.triage .upload-recap__unresolved,
+body.home.invoice-validate .upload-recap__unresolved {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ember);
+}
+
+body.home.triage .upload-recap__flag,
+body.home.invoice-validate .upload-recap__flag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8px;
+  font-weight: 700;
+  cursor: default;
+  margin: 0 1px;
+}
+
+body.home.triage .upload-recap__flag--warn,
+body.home.invoice-validate .upload-recap__flag--warn {
+  background: color-mix(in srgb, var(--oak) 15%, var(--bg));
+  color: var(--oak-deep);
+  border: 1px solid color-mix(in srgb, var(--oak) 30%, var(--hairline));
+}
+
+body.home.triage .upload-recap__flag--err,
+body.home.invoice-validate .upload-recap__flag--err {
+  background: color-mix(in srgb, var(--ember) 12%, var(--bg));
+  color: var(--ember);
+  border: 1px solid color-mix(in srgb, var(--ember) 30%, var(--hairline));
+}
+
+/* ── Actions bar ─────────────────────────────────────────────────────────────── */
+body.home.triage .upload-recap__actions,
+body.home.invoice-validate .upload-recap__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 16px;
+  border-top: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--bg-side) 30%, var(--bg-elev));
+}
+
+body.home.triage .upload-recap__btn,
+body.home.invoice-validate .upload-recap__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.14s, border-color 0.14s, opacity 0.14s;
+  min-height: 40px;
+  border: 1.5px solid transparent;
+}
+
+body.home.triage .upload-recap__btn:disabled,
+body.home.invoice-validate .upload-recap__btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+body.home.triage .upload-recap__btn--validate,
+body.home.invoice-validate .upload-recap__btn--validate {
+  background: var(--hop);
+  color: var(--bg);
+  border-color: var(--hop-deep);
+}
+body.home.triage .upload-recap__btn--validate:hover:not(:disabled),
+body.home.invoice-validate .upload-recap__btn--validate:hover:not(:disabled) {
+  background: var(--hop-deep);
+}
+
+body.home.triage .upload-recap__btn--reject,
+body.home.invoice-validate .upload-recap__btn--reject {
+  background: transparent;
+  color: var(--ember);
+  border-color: color-mix(in srgb, var(--ember) 45%, var(--hairline));
+}
+body.home.triage .upload-recap__btn--reject:hover:not(:disabled),
+body.home.invoice-validate .upload-recap__btn--reject:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ember) 8%, var(--bg));
+  border-color: var(--ember);
+}
+
+body.home.triage .upload-recap__btn--new,
+body.home.invoice-validate .upload-recap__btn--new {
+  background: transparent;
+  color: var(--ink-mute);
+  border-color: var(--hairline);
+  font-size: 12px;
+}
+body.home.triage .upload-recap__btn--new:hover,
+body.home.invoice-validate .upload-recap__btn--new:hover {
+  border-color: var(--hairline-2);
+  color: var(--ink);
+}
+
+body.home.triage .upload-recap__link,
+body.home.invoice-validate .upload-recap__link {
+  margin-left: auto;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--ink-mute);
+  text-decoration: none;
+  white-space: nowrap;
+}
+body.home.triage .upload-recap__link:hover,
+body.home.invoice-validate .upload-recap__link:hover {
+  color: var(--hop);
+  text-decoration: underline;
+}
+
+/* ── Commit-status indicator ─────────────────────────────────────────────────── */
+body.home.triage .upload-recap__commit-status,
+body.home.invoice-validate .upload-recap__commit-status {
+  padding: 6px 16px 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  border-top: 1px solid var(--hairline);
+}
+
+body.home.triage .upload-recap__commit-status--busy,
+body.home.invoice-validate .upload-recap__commit-status--busy {
+  color: var(--ink-soft);
+}
+body.home.triage .upload-recap__commit-status--err,
+body.home.invoice-validate .upload-recap__commit-status--err {
+  color: var(--ember);
+}
+body.home.triage .upload-recap__commit-status--warn,
+body.home.invoice-validate .upload-recap__commit-status--warn {
+  color: var(--oak);
+}
+
+/* ── Done / rejected result text ─────────────────────────────────────────────── */
+body.home.triage .upload-recap__done-msg,
+body.home.invoice-validate .upload-recap__done-msg {
+  font-weight: 700;
+  color: var(--ok);
+  font-size: 14px;
+}
+
+body.home.triage .upload-recap__rejected-msg,
+body.home.invoice-validate .upload-recap__rejected-msg {
+  font-weight: 600;
+  color: var(--ember);
+  font-size: 13px;
+}
+
+/* ── Bulk-item "à valider" label ─────────────────────────────────────────────── */
+body.home.triage .bulk-item__awaiting {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--oak);
+  font-style: italic;
+}

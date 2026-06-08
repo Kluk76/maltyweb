@@ -9,6 +9,9 @@
  *  - State machine:
  *      Single/multishot: idle → capturing → uploading → polling → done/timeout/error
  *      Bulk:             idle → uploading → bulk-progress (per-file polling)
+ *  - B2: When upload resolves to an invoice awaiting validation, renders the full
+ *        per-line recap card (supplier/ref/date/total + lines table) with inline
+ *        ✓ Valider / ✗ Refuser actions + commit_status polling.
  *
  * Requires: <meta name="csrf-token" content="..."> in the page head.
  * No external dependencies.
@@ -35,6 +38,12 @@
   let elapsedTimer = null;
   let lastPollData = null; // last JSON payload from upload-status (for summary + error_text)
   let lastUploadId = null; // upload_id for timeout message
+
+  // ─── Commit-status polling (B2 — inline recap card) ─────────────────────────
+  var commitPollTimer   = null;
+  var commitPollCount   = 0;
+  var COMMIT_POLL_MAX   = 60;       // 2 min max
+  var COMMIT_POLL_MS    = 2000;
 
   // ─── Bulk upload state ───────────────────────────────────────────────────────
   /**
@@ -238,7 +247,349 @@
   // ─── State machine ──────────────────────────────────────────────────────────
   function setState(newState) {
     state = newState;
+    // Cancel any in-flight commit poll when resetting
+    if (newState === 'idle' && commitPollTimer !== null) {
+      clearTimeout(commitPollTimer);
+      commitPollTimer = null;
+    }
     renderStatus();
+  }
+
+  // ─── B2: Recap card helpers ──────────────────────────────────────────────────
+
+  /** Format a number in fr-CH locale (decimal comma, narrow NNBSP thousands). */
+  function fmtNum(n, decimals) {
+    if (n === null || n === undefined) return '—';
+    return Number(n).toLocaleString('fr-CH', {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    });
+  }
+
+  /** Refresh CSRF from session-ping (mirrors invoice-validate.js pattern). */
+  function refreshCsrfForRecap(callback) {
+    fetch('/api/session-ping.php', {
+      method: 'GET',
+      credentials: 'same-origin',
+      headers: { 'Accept': 'application/json' },
+      cache: 'no-store',
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data && data.csrf) {
+          // Update <meta name="csrf-token"> so getCsrf() stays fresh
+          var meta = document.querySelector('meta[name="csrf-token"]');
+          if (meta) meta.setAttribute('content', data.csrf);
+        }
+        callback();
+      })
+      .catch(function () { callback(); });
+  }
+
+  /** Build the per-line recap table HTML from recap.lines array. */
+  function buildRecapLinesHtml(lines) {
+    if (!lines || lines.length === 0) {
+      return '<p class="upload-recap__empty-lines">Aucune ligne parsée.</p>';
+    }
+    var rows = lines.map(function (l) {
+      var miCell = '';
+      if (l.mi_label) {
+        miCell = '<code class="upload-recap__mi-code">' + escHtml(l.mi_label) + '</code>';
+      } else if (l.accounting_class) {
+        miCell = '<span class="upload-recap__acct">' + escHtml(l.accounting_class) + '</span>';
+      } else if (l.mi_unresolved) {
+        miCell = '<span class="upload-recap__unresolved" title="MI non résolu">⚠ non résolu</span>';
+      }
+
+      var flagsHtml = '';
+      if (l.low_confidence) {
+        flagsHtml += '<span class="upload-recap__flag upload-recap__flag--warn" title="Confiance faible">C</span>';
+      }
+      if (l.gate_failed) {
+        flagsHtml += '<span class="upload-recap__flag upload-recap__flag--err" title="Gate failure">G</span>';
+      }
+      if (l.mi_unresolved) {
+        flagsHtml += '<span class="upload-recap__flag upload-recap__flag--err" title="MI non résolu">?</span>';
+      }
+
+      var rowClass = (l.mi_unresolved || l.low_confidence || l.gate_failed)
+        ? 'upload-recap__row upload-recap__row--warn'
+        : 'upload-recap__row';
+
+      var qty = (l.qty !== null && l.qty !== undefined)
+        ? fmtNum(l.qty, 4).replace(/0+$/, '').replace(/[,.]$/, '')
+          + (l.unit ? ' ' + escHtml(l.unit) : '')
+        : '—';
+
+      return '<tr class="' + rowClass + '">'
+        + '<td class="upload-recap__col-idx">' + (l.line_index + 1) + '</td>'
+        + '<td class="upload-recap__col-mi">' + miCell + '</td>'
+        + '<td class="upload-recap__col-desc">' + escHtml(l.description || '') + '</td>'
+        + '<td class="upload-recap__col-num">' + qty + '</td>'
+        + '<td class="upload-recap__col-num">' + fmtNum(l.unit_price, 4) + '</td>'
+        + '<td class="upload-recap__col-num">' + fmtNum(l.line_total, 2) + '</td>'
+        + '<td class="upload-recap__col-flags">' + flagsHtml + '</td>'
+        + '</tr>';
+    }).join('');
+
+    return '<div class="upload-recap__table-wrap">'
+      + '<table class="upload-recap__table" aria-label="Lignes de la facture">'
+      + '<thead><tr>'
+      + '<th scope="col">#</th>'
+      + '<th scope="col">MI</th>'
+      + '<th scope="col">Description</th>'
+      + '<th scope="col" class="upload-recap__col-num">Qté</th>'
+      + '<th scope="col" class="upload-recap__col-num">PU</th>'
+      + '<th scope="col" class="upload-recap__col-num">Total HT</th>'
+      + '<th scope="col">Flags</th>'
+      + '</tr></thead>'
+      + '<tbody>' + rows + '</tbody>'
+      + '</table></div>';
+  }
+
+  /**
+   * Render the full recap card (commit_status='pending') inside #upload-status.
+   * Includes Valider / Refuser buttons and watches commit_status until settled.
+   */
+  function renderRecapCard(d) {
+    var recap  = d.recap;
+    var uploadId = d.upload_id;
+
+    statusBox.className = 'upload-status upload-status--recap';
+    statusBox.hidden    = false;
+
+    var supplierHtml = recap.supplier_name
+      ? '<span class="upload-recap__supplier">' + escHtml(recap.supplier_name) + '</span>'
+      : '<span class="upload-recap__unknown">?</span>';
+
+    var refHtml = recap.invoice_ref
+      ? '<span class="upload-recap__ref">' + escHtml(recap.invoice_ref) + '</span>'
+      : '<span class="upload-recap__unknown">—</span>';
+
+    var dateHtml = recap.invoice_date
+      ? '<span class="upload-recap__date">' + escHtml(recap.invoice_date) + '</span>'
+      : '';
+
+    var totalHtml = (recap.total_ht !== null && recap.total_ht !== undefined)
+      ? '<span class="upload-recap__amount">'
+          + fmtNum(recap.total_ht, 2) + ' '
+          + escHtml(recap.currency || 'CHF') + ' HT'
+        + '</span>'
+      : '';
+
+    var hasIssues = (recap.lines || []).some(function (l) {
+      return l.mi_unresolved || l.low_confidence || l.gate_failed;
+    });
+    var issueChip = hasIssues
+      ? '<span class="upload-recap__chip upload-recap__chip--warn">⚠ lignes à vérifier</span>'
+      : '<span class="upload-recap__chip upload-recap__chip--ok">Prêt à valider</span>';
+
+    var linesHtml = buildRecapLinesHtml(recap.lines || []);
+
+    statusBox.innerHTML =
+      '<div class="upload-recap__header">'
+        + '<div class="upload-recap__meta">'
+          + supplierHtml + refHtml + dateHtml
+        + '</div>'
+        + '<div class="upload-recap__header-right">'
+          + totalHtml + issueChip
+        + '</div>'
+      + '</div>'
+      + linesHtml
+      + '<div class="upload-recap__actions" id="upload-recap-actions">'
+        + '<button class="upload-recap__btn upload-recap__btn--validate" id="upload-recap-validate" type="button">'
+          + '✓ Valider'
+        + '</button>'
+        + '<button class="upload-recap__btn upload-recap__btn--reject" id="upload-recap-reject" type="button">'
+          + '✗ Refuser'
+        + '</button>'
+        + '<a class="upload-recap__link" href="/modules/invoice-validate.php">'
+          + 'Voir tout dans À valider →'
+        + '</a>'
+      + '</div>'
+      + '<div class="upload-recap__commit-status" id="upload-recap-commit" hidden></div>';
+
+    // Wire Valider
+    var validateBtn = document.getElementById('upload-recap-validate');
+    if (validateBtn) {
+      validateBtn.addEventListener('click', function () {
+        doRecapValidate(uploadId, validateBtn, false);
+      });
+    }
+
+    // Wire Refuser (inline reject — no dialog in upload context; confirm inline)
+    var rejectBtn = document.getElementById('upload-recap-reject');
+    if (rejectBtn) {
+      rejectBtn.addEventListener('click', function () {
+        doRecapReject(uploadId, rejectBtn, false);
+      });
+    }
+  }
+
+  /** Disable/enable the two recap action buttons. */
+  function setRecapBtnsDisabled(disabled) {
+    var v = document.getElementById('upload-recap-validate');
+    var r = document.getElementById('upload-recap-reject');
+    if (v) v.disabled = disabled;
+    if (r) r.disabled = disabled;
+  }
+
+  /** Update the commit-status inline indicator. */
+  function setRecapCommitMsg(msg, cssClass) {
+    var el = document.getElementById('upload-recap-commit');
+    if (!el) return;
+    el.hidden = false;
+    el.className = 'upload-recap__commit-status upload-recap__commit-status--' + cssClass;
+    el.textContent = msg;
+  }
+
+  /** Poll commit_status after Valider fired. */
+  function pollRecapCommit(uploadId, attempt) {
+    attempt = attempt || 0;
+    if (attempt >= COMMIT_POLL_MAX) {
+      setRecapBtnsDisabled(false);
+      setRecapCommitMsg('Délai dépassé — vérifier dans À valider.', 'warn');
+      return;
+    }
+    commitPollTimer = setTimeout(function () {
+      fetch(STATUS_ENDPOINT + '?upload_id=' + encodeURIComponent(uploadId), {
+        credentials: 'same-origin',
+        headers: { 'Accept': 'application/json' },
+        cache: 'no-store',
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          var cs = data.commit_status;
+          if (cs === 'done') {
+            // Turn the card green
+            statusBox.className = 'upload-status upload-status--recap upload-status--recap-done';
+            var actionsEl = document.getElementById('upload-recap-actions');
+            if (actionsEl) {
+              actionsEl.innerHTML =
+                '<span class="upload-recap__done-msg">✓ Écrit en base</span>'
+                + '<button class="upload-recap__btn upload-recap__btn--new" id="upload-recap-new" type="button">'
+                  + 'Nouveau document'
+                + '</button>';
+              var newBtn = document.getElementById('upload-recap-new');
+              if (newBtn) newBtn.addEventListener('click', function () { setState('idle'); });
+            }
+            var commitEl = document.getElementById('upload-recap-commit');
+            if (commitEl) commitEl.hidden = true;
+          } else if (cs === 'failed') {
+            setRecapBtnsDisabled(false);
+            setRecapCommitMsg('Échec : ' + escHtml(data.commit_error || 'erreur inconnue'), 'err');
+          } else {
+            pollRecapCommit(uploadId, attempt + 1);
+          }
+        })
+        .catch(function () {
+          pollRecapCommit(uploadId, attempt + 1);
+        });
+    }, COMMIT_POLL_MS);
+  }
+
+  /** POST /api/invoice-validate.php for the inline recap card. */
+  function doRecapValidate(uploadId, btn, isRetry) {
+    setRecapBtnsDisabled(true);
+    setRecapCommitMsg('Validation en cours…', 'busy');
+
+    var fd = new FormData();
+    fd.append('upload_id', String(uploadId));
+    fd.append('csrf', getCsrf());
+
+    fetch('/api/invoice-validate.php', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Accept': 'application/json' },
+      body: fd,
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.ok) {
+          setRecapCommitMsg('Commit en cours…', 'busy');
+          commitPollCount = 0;
+          pollRecapCommit(uploadId, 0);
+        } else if (data.error === 'csrf_invalid' && !isRetry) {
+          refreshCsrfForRecap(function () { doRecapValidate(uploadId, btn, true); });
+        } else if (data.error === 'not_validatable') {
+          // Already committed (race) — treat as done
+          statusBox.className = 'upload-status upload-status--recap upload-status--recap-done';
+          var actionsEl = document.getElementById('upload-recap-actions');
+          if (actionsEl) {
+            actionsEl.innerHTML =
+              '<span class="upload-recap__done-msg">✓ Déjà validée</span>';
+          }
+        } else {
+          setRecapBtnsDisabled(false);
+          setRecapCommitMsg('Erreur : ' + escHtml(data.error || 'inconnue'), 'err');
+        }
+      })
+      .catch(function (err) {
+        setRecapBtnsDisabled(false);
+        setRecapCommitMsg('Erreur réseau : ' + escHtml(err.message || 'inconnue'), 'err');
+      });
+  }
+
+  /** POST /api/invoice-reject.php for the inline recap card. */
+  function doRecapReject(uploadId, btn, isRetry) {
+    // Inline confirm (no dialog) — button text changes to a 2-click confirm pattern
+    if (!btn.dataset.confirming) {
+      btn.dataset.confirming = '1';
+      btn.textContent = '✗ Confirmer le refus';
+      btn.style.outline = '2px solid var(--ember)';
+      // Auto-cancel after 5 s
+      setTimeout(function () {
+        if (btn.dataset.confirming) {
+          delete btn.dataset.confirming;
+          btn.textContent = '✗ Refuser';
+          btn.style.outline = '';
+        }
+      }, 5000);
+      return;
+    }
+    delete btn.dataset.confirming;
+
+    setRecapBtnsDisabled(true);
+    setRecapCommitMsg('Refus en cours…', 'busy');
+
+    var fd = new FormData();
+    fd.append('upload_id', String(uploadId));
+    fd.append('csrf', getCsrf());
+
+    fetch('/api/invoice-reject.php', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Accept': 'application/json' },
+      body: fd,
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.ok) {
+          statusBox.className = 'upload-status upload-status--recap upload-status--recap-rejected';
+          var actionsEl = document.getElementById('upload-recap-actions');
+          if (actionsEl) {
+            actionsEl.innerHTML =
+              '<span class="upload-recap__rejected-msg">✗ Facture refusée</span>'
+              + '<button class="upload-recap__btn upload-recap__btn--new" id="upload-recap-new2" type="button">'
+                + 'Nouveau document'
+              + '</button>';
+            var newBtn = document.getElementById('upload-recap-new2');
+            if (newBtn) newBtn.addEventListener('click', function () { setState('idle'); });
+          }
+          var commitEl = document.getElementById('upload-recap-commit');
+          if (commitEl) commitEl.hidden = true;
+        } else if (data.error === 'csrf_invalid' && !isRetry) {
+          setRecapBtnsDisabled(false);
+          refreshCsrfForRecap(function () { doRecapReject(uploadId, btn, true); });
+        } else {
+          setRecapBtnsDisabled(false);
+          setRecapCommitMsg('Erreur : ' + escHtml(data.error || 'inconnue'), 'err');
+        }
+      })
+      .catch(function (err) {
+        setRecapBtnsDisabled(false);
+        setRecapCommitMsg('Erreur réseau : ' + escHtml(err.message || 'inconnue'), 'err');
+      });
   }
 
   // ─── File → upload ──────────────────────────────────────────────────────────
@@ -349,14 +700,15 @@
 
         // Build per-file tracking state
         bulkItems = data.uploads.map(u => ({
-          fileName:   u.file_name || '(inconnu)',
-          uploadId:   u.upload_id || null,
-          statusUrl:  u.status_url || null,
-          status:     u.status === 'queued' ? 'ingest' : 'failed',
-          pollCount:  0,
-          pollTimer:  null,
-          error:      u.error || null,
-          redirectUrl: null,
+          fileName:        u.file_name || '(inconnu)',
+          uploadId:        u.upload_id || null,
+          statusUrl:       u.status_url || null,
+          status:          u.status === 'queued' ? 'ingest' : 'failed',
+          pollCount:       0,
+          pollTimer:       null,
+          error:           u.error || null,
+          redirectUrl:     null,
+          awaitingValidate: false,
         }));
 
         setState('bulk-progress');
@@ -410,6 +762,8 @@
         if (ps === 'processed') {
           item.status = 'done';
           item.redirectUrl = data.redirect_url || null;
+          // Mark items that are awaiting operator validation so the CTA can count them
+          item.awaitingValidate = (data.commit_status === 'pending' && !!data.recap);
           renderStatus();
           checkBulkAllDone();
           return;
@@ -535,6 +889,7 @@
     stopElapsedTimer();
     if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
     if (uploadCtrl) { uploadCtrl.abort(); uploadCtrl = null; }
+    if (commitPollTimer) { clearTimeout(commitPollTimer); commitPollTimer = null; }
     // Cancel any in-flight bulk poll timers
     bulkItems.forEach(item => {
       if (item.pollTimer) { clearTimeout(item.pollTimer); item.pollTimer = null; }
@@ -627,6 +982,9 @@
       case 'uploading': return 'envoi…';
       case 'ingest':    return 'traitement…';
       case 'done':
+        if (item.awaitingValidate) {
+          return '<span class="bulk-item__awaiting">à valider</span>';
+        }
         if (item.redirectUrl) {
           const safe = item.redirectUrl.replace(/"/g, '&quot;');
           return `<a class="bulk-item__link" href="${safe}">voir dans triage →</a>`;
@@ -677,8 +1035,14 @@
         const d = lastPollData || {};
         const s = d.summary || null;
 
+        // B2: recap card — invoice awaiting validation (commit_status='pending' + recap present)
+        if (d.recap && d.commit_status === 'pending') {
+          renderRecapCard(d);
+          break;
+        }
+
         if (s) {
-          // Rich summary card
+          // Rich summary card (invoice already committed or no recap available)
           statusBox.className += ' upload-status--done upload-status--summary';
 
           const fmtHT = typeof s.total_ht === 'number'
@@ -840,9 +1204,23 @@
           ? '<button class="upload-status__retry" type="button">↩ Nouveau</button>'
           : '';
 
-        let triageBtn = (allSettled && doneCount > 0)
-          ? '<a class="bulk-triage-btn" href="/modules/triage.php?tab=docs">Tout voir dans triage →</a>'
-          : '';
+        // Count docs that are 'done' and awaiting validation (have recap/commit_status='pending')
+        // We track this via bulkItems.awaitingValidate flag set during bulk polling.
+        var awaitingValidateCount = bulkItems.filter(function (i) {
+          return i.status === 'done' && i.awaitingValidate;
+        }).length;
+
+        let triageBtn = '';
+        if (allSettled && doneCount > 0) {
+          if (awaitingValidateCount > 0) {
+            triageBtn =
+              '<a class="bulk-triage-btn bulk-triage-btn--validate" href="/modules/invoice-validate.php">'
+              + '→ Valider les ' + awaitingValidateCount + ' document'
+              + (awaitingValidateCount !== 1 ? 's' : '') + '</a>';
+          } else {
+            triageBtn = '<a class="bulk-triage-btn" href="/modules/triage.php?tab=docs">Tout voir dans triage →</a>';
+          }
+        }
 
         statusBox.innerHTML =
           `<div class="bulk-header ${headerClass}">

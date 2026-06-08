@@ -464,6 +464,7 @@ function stock_qs(array $extra): string
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/app.css?v=<?= @filemtime(__DIR__ . '/../css/app.css') ?: time() ?>">
+  <link rel="stylesheet" href="/css/invoice-validate.css?v=<?= @filemtime(__DIR__ . '/../css/invoice-validate.css') ?: time() ?>">
   <script>
     // Register service worker — must be at root scope
     if ('serviceWorker' in navigator) {

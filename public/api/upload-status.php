@@ -31,6 +31,7 @@ declare(strict_types=1);
  */
 
 require __DIR__ . '/../../app/auth.php';
+require __DIR__ . '/../../app/recap-lines.php';
 
 require_login();
 $me = current_user();
@@ -277,6 +278,37 @@ if ($doc_invoice_id !== null && $new_status === 'processed') {
     } catch (Throwable) { /* non-fatal */ }
 }
 
+// ── B2: Inline recap (lines) for upload-page Valider card ────────────────────
+// Included when:
+//   - pipeline_status='processed'  (doc_invoices row exists)
+//   - delivery_write_plan IS NOT NULL  (plan was staged — awaiting validation)
+//   - validated_at IS NULL AND skipped_at IS NULL  (not yet committed or rejected)
+// The commit_status='pending' check covers the typical state; we also include
+// when commit_status is null (edge: delivery_write_plan not NULL but invoice_id
+// not resolved yet — shouldn't happen for processed, but guard gracefully).
+$recap = null;
+if ($doc_invoice_id !== null && $new_status === 'processed' && $commit_status === 'pending') {
+    try {
+        // Verify the invoice is awaiting validation (has a plan, not yet committed)
+        $planStmt = $pdo->prepare(
+            "SELECT delivery_write_plan IS NOT NULL AS has_plan,
+                    validated_at, skipped_at
+               FROM doc_invoices
+              WHERE id = ?
+              LIMIT 1"
+        );
+        $planStmt->execute([$doc_invoice_id]);
+        $planRow = $planStmt->fetch();
+        if ($planRow
+            && (int)$planRow['has_plan'] === 1
+            && $planRow['validated_at'] === null
+            && $planRow['skipped_at']   === null
+        ) {
+            $recap = fetch_recap_for_invoice($pdo, $doc_invoice_id);
+        }
+    } catch (Throwable) { /* non-fatal — recap simply omitted */ }
+}
+
 // ── Respond ───────────────────────────────────────────────────────────────────
 header('Content-Type: application/json; charset=utf-8');
 $payload = [
@@ -310,5 +342,9 @@ if ($commit_status !== null) {
         $payload['commit_error'] = $commit_error;
     }
 }
+// B2: inline recap for the upload-page Valider card
+if ($recap !== null) {
+    $payload['recap'] = $recap;
+}
 
-echo json_encode($payload);
+echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
