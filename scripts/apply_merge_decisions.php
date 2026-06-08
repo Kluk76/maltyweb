@@ -200,21 +200,22 @@ foreach ($decisions as $dec) {
         continue;
     }
 
-    // ── VALIDER ───────────────────────────────────────────────────────────
-    if ($decision === 'VALIDER') {
+    // ── VALIDER / VALIDER_PRIVE ───────────────────────────────────────────
+    // VALIDER_PRIVE additionally flags the row as a private (individual) client.
+    if ($decision === 'VALIDER' || $decision === 'VALIDER_PRIVE') {
+        $setPrivate = ($decision === 'VALIDER_PRIVE');
         $before = $sourceRow;
         if (!$isDry) {
             $pdo->beginTransaction();
             try {
-                $stmt = $pdo->prepare(
-                    'UPDATE ref_customers
-                        SET needs_review = 0, updated_by = ?, updated_at = CURRENT_TIMESTAMP
-                      WHERE id = ?'
-                );
-                $stmt->execute([CLI_ACTOR, $id]);
-                log_revision($pdo, $me, 'ref_customers', $id, $before,
-                    ['needs_review' => 0, 'updated_by' => CLI_ACTOR],
-                    'normal', 'Batch merge-decisions: validé tel quel');
+                $sql = $setPrivate
+                    ? 'UPDATE ref_customers SET needs_review = 0, is_private = 1, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+                    : 'UPDATE ref_customers SET needs_review = 0, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?';
+                $pdo->prepare($sql)->execute([CLI_ACTOR, $id]);
+                $after = ['needs_review' => 0, 'updated_by' => CLI_ACTOR];
+                if ($setPrivate) { $after['is_private'] = 1; }
+                log_revision($pdo, $me, 'ref_customers', $id, $before, $after,
+                    'normal', $setPrivate ? 'Batch merge-decisions: validé (privé)' : 'Batch merge-decisions: validé tel quel');
                 $pdo->commit();
             } catch (Throwable $e) {
                 $pdo->rollBack();
@@ -226,7 +227,7 @@ foreach ($decisions as $dec) {
             }
         }
         $counts['VALIDER']++;
-        $actionLog[] = "VALIDER [{$sheetKey}] #{$id} \"{$name}\"";
+        $actionLog[] = ($setPrivate ? "VALIDER (privé) [{$sheetKey}] " : "VALIDER [{$sheetKey}] ") . "#{$id} \"{$name}\"";
         continue;
     }
 

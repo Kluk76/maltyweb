@@ -150,6 +150,10 @@ def parse_decision(sheet_key: str, raw: str, suggested_bc: str | None) -> dict:
             return {"decision": "MERGE_BC", "target_bc": v}
         if v_norm in ("VALIDER",):
             return {"decision": "VALIDER", "target_bc": None}
+        # "privé"/"privée" → validate as a genuine private (non-BC) client.
+        # apply script sets is_private=1 for VALIDER_PRIVE.
+        if v_norm in ("PRIVE", "PRIVEE"):
+            return {"decision": "VALIDER_PRIVE", "target_bc": None}
         if v_norm in ("DESACTIVER", "DÉSACTIVER") or v == "DÉSACTIVER":
             return {"decision": "DÉSACTIVER", "target_bc": None}
         if v == "NON" or v == "":
