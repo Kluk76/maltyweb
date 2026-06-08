@@ -1255,10 +1255,12 @@ try {
         // units_per_pack is fetched here for cage-SKU bottle→cage-unit conversion.
         // stocktake_scope is fetched for per-location visibility filtering.
         $stAllSkus = $pdo->query(
-            'SELECT id, sku_code, format, hl_per_unit, units_per_pack, stocktake_scope
-               FROM ref_skus
-              WHERE is_active = 1
-              ORDER BY format ASC, sku_code ASC'
+            'SELECT s.id, s.sku_code, s.format, s.hl_per_unit, s.units_per_pack, s.stocktake_scope,
+                    COALESCE(f.display_family, s.format) AS display_family
+               FROM ref_skus s
+               LEFT JOIN ref_packaging_formats f ON s.format_id = f.id
+              WHERE s.is_active = 1
+              ORDER BY display_family ASC, s.sku_code ASC'
         )->fetchAll(PDO::FETCH_ASSOC);
 
         // ── Most-recent prior count per (sku_id, location_id) for all locations ─
@@ -1627,6 +1629,7 @@ function exp_format_family(string $format): string
         'Can'             => 'can',
         'Can33'           => 'can33',
         'Cuve de service' => 'cuv',
+        'multipack'       => 'multipack',
         default           => 'other',
     };
 }
@@ -1637,12 +1640,13 @@ function exp_format_family(string $format): string
 function exp_family_label(string $family): string
 {
     return match ($family) {
-        'keg'   => 'Fût',
-        'bot'   => 'Bouteille',
-        'can'   => 'Canette',
-        'can33' => 'Can 33',
-        'cuv'   => 'Cuve',
-        default => 'Autre',
+        'keg'        => 'Fût',
+        'bot'        => 'Bouteille',
+        'can'        => 'Canette',
+        'can33'      => 'Can 33',
+        'cuv'        => 'Cuve',
+        'multipack'  => 'Multipacks',
+        default      => 'Autre',
     };
 }
 
@@ -2871,12 +2875,13 @@ $isReadOnly = $editOrder !== null
   // ── Group SKUs by family for the count grid ───────────────────────────────
   // Cage SKUs (suffix -X) are extracted from their format family and rendered
   // in their own "Cages" section at the bottom with bottle-unit inputs.
-  $stFamilyOrder = ['Bot', 'Can', 'Can33', 'Keg', 'Cuve de service'];
+  $stFamilyOrder = ['Bot', 'Can', 'Can33', 'Keg', 'multipack', 'Cuve de service'];
   $stFamilyLabels = [
       'Bot'            => 'Bouteille',
       'Can'            => 'Canette',
       'Can33'          => 'Can 33',
       'Keg'            => 'Fût',
+      'multipack'      => 'Multipacks',
       'Cuve de service'=> 'Cuve de service',
   ];
   // Determine which scopes are visible at the selected location.
@@ -2894,7 +2899,7 @@ $isReadOnly = $editOrder !== null
       if (substr((string) $sk['sku_code'], -2) === '-X') {
           $stCageSkus[] = $sk;
       } else {
-          $fmt = $sk['format'] ?? 'Autre';
+          $fmt = $sk['display_family'] ?? $sk['format'] ?? 'Autre';
           $stSkusByFamily[$fmt][] = $sk;
       }
   }
