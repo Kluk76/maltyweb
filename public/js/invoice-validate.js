@@ -109,6 +109,26 @@
     announceSr('Échec de validation : ' + (errMsg || 'erreur inconnue'));
   }
 
+  /* Neutral "still working" state — a poll timeout is NOT a failure. The commit
+     worker (cold-start tsx) can outlive the poll window; the write may already
+     have landed or be moments away. Do NOT mark the card as error and do NOT
+     re-enable Valider (a re-click would be a no-op — validated_at is idempotent). */
+  function showCardTimeout(uploadId) {
+    var overlay = document.getElementById('iv-overlay-' + uploadId);
+    if (overlay) {
+      overlay.hidden = false;
+      var inner = overlay.querySelector('.iv-overlay-inner');
+      if (inner) {
+        inner.innerHTML =
+          '<div style="font-size:24px;color:var(--oak);">⏳</div>' +
+          '<div style="color:var(--ink);font-size:13px;font-weight:600;">Toujours en cours</div>' +
+          '<div style="color:var(--ink-mute);font-size:12px;max-width:280px;">L\'écriture prend plus de temps que prévu. Rechargez la page pour vérifier l\'état — elle a probablement abouti.</div>' +
+          '<button type="button" class="iv-btn" style="margin-top:4px;font-size:12px;padding:5px 12px;min-height:36px;border-color:var(--hairline-2);background:var(--bg);" onclick="location.reload()">Recharger</button>';
+      }
+    }
+    announceSr('Validation toujours en cours. Rechargez la page pour vérifier l\'état.');
+  }
+
   function showCardRejected(uploadId) {
     var card = document.getElementById('iv-card-' + uploadId);
     var overlay = document.getElementById('iv-overlay-' + uploadId);
@@ -147,12 +167,30 @@
 
   /* ── Polling ────────────────────────────────────────────────────────────── */
   var POLL_INTERVAL_MS = 2000;
-  var POLL_MAX_ATTEMPTS = 60; /* 2 min */
+  var POLL_MAX_ATTEMPTS = 120; /* 4 min — covers the commit worker's tsx cold-start */
 
   function pollCommit(uploadId, attempt) {
     attempt = attempt || 0;
     if (attempt >= POLL_MAX_ATTEMPTS) {
-      showCardError(uploadId, 'Délai d\'attente dépassé. Rechargez la page pour vérifier l\'état.');
+      /* One final status check before giving up — the worker may have just
+         finished. Only show the neutral timeout state if it's genuinely still
+         pending; surface a real failure as an error. */
+      fetch('/api/upload-status.php?upload_id=' + encodeURIComponent(uploadId), {
+        credentials: 'same-origin',
+        headers: { 'Accept': 'application/json' },
+        cache: 'no-store',
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          if (data.commit_status === 'done') {
+            showCardDone(uploadId);
+          } else if (data.commit_status === 'failed') {
+            showCardError(uploadId, data.commit_error || data.error_text || 'Erreur du worker');
+          } else {
+            showCardTimeout(uploadId);
+          }
+        })
+        .catch(function () { showCardTimeout(uploadId); });
       return;
     }
     fetch('/api/upload-status.php?upload_id=' + encodeURIComponent(uploadId), {

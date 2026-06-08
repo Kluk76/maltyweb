@@ -27,7 +27,7 @@ $triageAction = trim($_GET['action'] ?? '');
 $triageLineIdx = isset($_GET['line']) ? (int)$_GET['line'] : 0;
 
 // ── Tab routing ───────────────────────────────────────────────────────────────
-$allowedTabs = ["docs", "stock"];
+$allowedTabs = ["docs", "stock", "valider"];
 if (is_admin($me)) {
     $allowedTabs[] = "form";
 }
@@ -46,10 +46,11 @@ $docTypes   = ["invoice-line-items-needed", "doc-classify-ambiguous", "invoice-n
 $stockTypes = ["rm-stale", "rm-negative", "rm-orphan-mi", "dynamic-vs-take-drift"];
 
 // ── Count badges + load docs tab data ────────────────────────────────────────
-$countDocs  = 0;
-$countStock = 0;
-$countForm  = 0;
-$dbError    = null;
+$countDocs    = 0;
+$countStock   = 0;
+$countForm    = 0;
+$countValider = 0;
+$dbError      = null;
 
 // Docs tab pagination
 const TRIAGE_PAGE_SIZE = 50;
@@ -101,6 +102,22 @@ try {
     $stmtS   = $pdo->prepare("SELECT COUNT(*) FROM doc_review_queue WHERE status = 'open' AND type IN ($inStock)");
     $stmtS->execute($stockTypes);
     $countStock = (int) $stmtS->fetchColumn();
+
+    // Valider badge — same WHERE as the partial's list query (kept in sync via this shared SQL)
+    $stmtV = $pdo->query(
+        "SELECT COUNT(*)
+           FROM doc_uploads du
+           JOIN doc_files   df ON df.file_id = du.drive_file_id
+           JOIN doc_invoices di ON di.file_id = df.id
+          WHERE du.pipeline_status = 'processed'
+            AND di.validated_at IS NULL
+            AND di.skipped_at   IS NULL
+            AND di.delivery_write_plan IS NOT NULL
+            AND NOT EXISTS (
+                SELECT 1 FROM inv_deliveries d WHERE d.file_id_fk = df.id
+            )"
+    );
+    $countValider = (int) $stmtV->fetchColumn();
 
     // Form badge
     if (is_admin($me)) {
@@ -255,8 +272,12 @@ try {
     $dbError = $e->getMessage();
 }
 
-$totalPending = $countDocs + $countStock + $countForm;
+$totalPending = $countDocs + $countStock + $countForm + $countValider;
 $lastPage     = $totalDocRows > 0 ? (int) floor(($totalDocRows - 1) / TRIAGE_PAGE_SIZE) : 0;
+
+// CSRF token — pre-computed here so the valider-queue partial can use $csrfToken
+// (matches the pattern in invoice-validate.php; called once, same value via session)
+$csrfToken = csrf_token();
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -473,7 +494,7 @@ function stock_qs(array $extra): string
     }
   </script>
 </head>
-<body class="home triage">
+<body class="home triage<?= $activeTab === 'valider' ? ' invoice-validate' : '' ?>">
 
 <?php require __DIR__ . "/../../app/partials/sidebar.php" ?>
 
@@ -616,6 +637,17 @@ function stock_qs(array $extra): string
       Stock
       <?php if ($countStock > 0): ?>
         <span class="triage-badge"><?= $countStock ?></span>
+      <?php elseif ($dbError === null): ?>
+        <span class="triage-badge triage-badge--zero">0</span>
+      <?php endif ?>
+    </a>
+
+    <a class="triage-tab<?= $activeTab === "valider" ? " triage-tab--active" : "" ?>"
+       href="?tab=valider"
+       <?= $activeTab === "valider" ? 'aria-current="true"' : "" ?>>
+      À valider
+      <?php if ($countValider > 0): ?>
+        <span class="triage-badge"><?= $countValider ?></span>
       <?php elseif ($dbError === null): ?>
         <span class="triage-badge triage-badge--zero">0</span>
       <?php endif ?>
@@ -1490,6 +1522,14 @@ function stock_qs(array $extra): string
 
       <?php endif; // empty stockRows ?>
 
+    <!-- ═══════════════════════ À VALIDER TAB ═══════════════════════ -->
+    <?php elseif ($activeTab === "valider"): ?>
+
+      <div class="iv-main">
+        <?php $valider_embedded = true; ?>
+        <?php require __DIR__ . "/partials/valider-queue.php" ?>
+      </div>
+
     <!-- ═══════════════════════ FORM-INGEST TAB ═══════════════════════ -->
     <?php elseif ($activeTab === "form" && is_admin($me)): ?>
 
@@ -1504,6 +1544,9 @@ function stock_qs(array $extra): string
 <script src="/js/triage-upload.js?v=<?= @filemtime(__DIR__ . '/../js/triage-upload.js') ?: time() ?>"></script>
 <script defer src="/js/triage-manual-lines.js?v=<?= @filemtime(__DIR__ . '/../js/triage-manual-lines.js') ?: time() ?>"></script>
 <script defer src="/js/triage-skip-delivery.js?v=<?= @filemtime(__DIR__ . '/../js/triage-skip-delivery.js') ?: time() ?>"></script>
+<?php if ($activeTab === 'valider'): ?>
+<script src="/js/invoice-validate.js?v=<?= @filemtime(__DIR__ . '/../js/invoice-validate.js') ?: time() ?>"></script>
+<?php endif ?>
 
 </body>
 </html>

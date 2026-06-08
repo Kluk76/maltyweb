@@ -449,11 +449,18 @@ body.home.invoice-validate .iv-card-overlay {
   inset: 0;
   border-radius: 8px;
   background: color-mix(in srgb, var(--bg-elev) 92%, transparent);
-  display: flex;
+  /* display gated on :not([hidden]) below — an unconditional `display:flex`
+     here would override the [hidden] attribute (author CSS beats UA
+     [hidden]{display:none}) and pin the blur/wash layer over every card. */
   align-items: center;
   justify-content: center;
   backdrop-filter: blur(1px);
   z-index: 10;
+}
+
+/* Only render the overlay when JS has revealed it (overlay.hidden = false). */
+body.home.invoice-validate .iv-card-overlay:not([hidden]) {
+  display: flex;
 }
 
 body.home.invoice-validate .iv-overlay-inner {

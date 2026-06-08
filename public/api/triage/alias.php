@@ -336,6 +336,20 @@ try {
             );
             $closeStmt->execute([$newContext, $me['username'], $rqId]);
             $rowClosed = true;
+
+            // Stamp validated_at on the parent invoice so it drops out of the
+            // À-valider list. The triage path fully resolved every line — the
+            // invoice must NOT appear as a pending validation target.
+            // validated_by is INT UNSIGNED FK to users.id — the operator who
+            // resolved the last line is the validator.
+            if ($invRow !== null) {
+                $pdo->prepare(
+                    "UPDATE doc_invoices
+                        SET validated_at = NOW(),
+                            validated_by = ?
+                      WHERE id = ? AND validated_at IS NULL"
+                )->execute([(int)$me['id'], (int)$invRow['inv_id']]);
+            }
         } else {
             $updCtx = $pdo->prepare(
                 "UPDATE doc_review_queue SET context = ?, updated_at = NOW() WHERE id = ?"

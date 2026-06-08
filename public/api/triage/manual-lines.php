@@ -297,6 +297,19 @@ try {
     );
     $closeStmt->execute([$me['username'], $resolutionNote, $rqId]);
 
+    // Stamp validated_at on the parent invoice so it drops out of the
+    // À-valider list. manual-lines always closes the full RQ row in one step.
+    // validated_by is INT UNSIGNED FK to users.id — the operator who
+    // resolved the lines is the validator.
+    if ($invRow !== null) {
+        $pdo->prepare(
+            "UPDATE doc_invoices
+                SET validated_at = NOW(),
+                    validated_by = ?
+              WHERE id = ? AND validated_at IS NULL"
+        )->execute([(int)$me['id'], (int)$invRow['inv_id']]);
+    }
+
     $pdo->commit();
 
     $flashRef = ($invRef !== null && $invRef !== '') ? " · {$invRef}" : '';
