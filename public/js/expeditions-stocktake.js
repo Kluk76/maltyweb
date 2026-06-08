@@ -2,7 +2,7 @@
  * expeditions-stocktake.js — FG Inventaire multi-site saisie JS.
  *
  * Reads:
- *   window.EXP_ST_SKUS      [{id, sku_code, format, hl_per_unit, is_cage, bottles_per_cage}]
+ *   window.EXP_ST_SKUS      [{id, sku_code, format, hl_per_unit, is_cage, bottles_per_cage, stocktake_scope}]
  *   window.EXP_ST_PRIOR     {loc_id: {sku_id: {qty, counted_at, month_closed}}}
  *   window.EXP_ST_SITES     [{id, name, site_type, sort_order, notes, is_consignment}]
  *   window.EXP_ST_FRESHNESS {loc_id: last_counted_date_or_null}
@@ -23,6 +23,11 @@
  * The POST handler converts bottles → cage-units server-side.
  * Cage rows start with no prefill (no data-prior attribute set).
  *
+ * Visibility (scope × site_type) is enforced server-side: PHP renders only
+ * the SKU rows permitted at the selected location. The form never contains
+ * out-of-scope rows, and the POST handler rejects them as a defense-in-depth.
+ * stocktake_scope is included in EXP_ST_SKUS for informational use only.
+ *
  * PRG form — submit is a regular POST. No AJAX on submit.
  * Vanilla JS only. No external libraries. XSS: only textContent / numeric values.
  */
@@ -36,13 +41,14 @@
   const PRIOR     = window.EXP_ST_PRIOR     || {};
   const TODAY     = window.EXP_ST_TODAY     || '';
 
-  /* ── Build sku_id → {hl_per_unit, is_cage, bottles_per_cage} lookup ──── */
+  /* ── Build sku_id → {hl_per_unit, is_cage, bottles_per_cage, stocktake_scope} lookup ── */
   const skuMeta = {};
   SKUS.forEach(function (s) {
     skuMeta[s.id] = {
       hl_per_unit:      s.hl_per_unit,
       is_cage:          s.is_cage || false,
       bottles_per_cage: s.bottles_per_cage || 1,
+      stocktake_scope:  s.stocktake_scope || 'none',
     };
   });
 

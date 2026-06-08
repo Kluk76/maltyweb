@@ -613,19 +613,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'stocktake') {
         $allowedLocationIds[(int) $sr['id']] = $sr;
     }
 
-    // Active SKUs (id → {sku_code, hl_per_unit, is_cage, bottles_per_cage})
+    // Active SKUs (id → {sku_code, hl_per_unit, is_cage, bottles_per_cage, stocktake_scope})
     // units_per_pack is used for cage SKUs: submitted value is bottles, stored as cage-units.
     $stSkuRows = $pdo->query(
-        'SELECT id, sku_code, hl_per_unit, units_per_pack FROM ref_skus WHERE is_active = 1'
+        'SELECT id, sku_code, hl_per_unit, units_per_pack, stocktake_scope FROM ref_skus WHERE is_active = 1'
     )->fetchAll(PDO::FETCH_ASSOC);
     $allowedSkuIds = [];
     foreach ($stSkuRows as $sr) {
         $isCage = (substr($sr['sku_code'], -2) === '-X');
         $allowedSkuIds[(int) $sr['id']] = [
-            'sku_code'        => $sr['sku_code'],
-            'hl_per_unit'     => (float) $sr['hl_per_unit'],
-            'is_cage'         => $isCage,
-            'bottles_per_cage'=> $isCage ? (float) $sr['units_per_pack'] : 1.0,
+            'sku_code'         => $sr['sku_code'],
+            'hl_per_unit'      => (float) $sr['hl_per_unit'],
+            'is_cage'          => $isCage,
+            'bottles_per_cage' => $isCage ? (float) $sr['units_per_pack'] : 1.0,
+            'stocktake_scope'  => $sr['stocktake_scope'],
         ];
     }
 
@@ -652,6 +653,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'stocktake') {
         }
     }
 
+    // Derive the site_type for the selected location (used for scope×site_type enforcement below).
+    $stSiteType = ($stLocId > 0 && isset($allowedLocationIds[$stLocId]))
+        ? (string) $allowedLocationIds[$stLocId]['site_type']
+        : '';
+
     // Parse SKU qty entries — parallel arrays from the form
     $stSkuIds = $_POST['sku_qty_id']  ?? [];
     $stQtys   = $_POST['sku_qty_val'] ?? [];
@@ -663,6 +669,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'stocktake') {
             $rawQty = isset($stQtys[$idx]) ? trim((string) $stQtys[$idx]) : '';
             if ($rawQty === '') continue; // blank = not counted — skip
             if ($sid <= 0 || !isset($allowedSkuIds[$sid])) continue; // safety
+            // Defense-in-depth: enforce scope × site_type server-side.
+            // Rejects any SKU not permitted at the selected location even if
+            // a malformed POST tries to submit it.
+            $scope = $allowedSkuIds[$sid]['stocktake_scope'];
+            if (!exp_st_scope_allowed($scope, $stSiteType)) continue;
             $qty = (float) $rawQty;
             if ($qty < 0) continue; // negative qty not accepted
 
@@ -1242,8 +1253,9 @@ try {
 
         // ── Active SKUs ordered by format family then code ────────────────────
         // units_per_pack is fetched here for cage-SKU bottle→cage-unit conversion.
+        // stocktake_scope is fetched for per-location visibility filtering.
         $stAllSkus = $pdo->query(
-            'SELECT id, sku_code, format, hl_per_unit, units_per_pack
+            'SELECT id, sku_code, format, hl_per_unit, units_per_pack, stocktake_scope
                FROM ref_skus
               WHERE is_active = 1
               ORDER BY format ASC, sku_code ASC'
@@ -1529,8 +1541,9 @@ $stPriorJson     = '{}';
 $stSitesJson     = '[]';
 $stFreshnessJson = '{}';
 if ($view === 'stocktake') {
-    // SKU list for JS: [{id, sku_code, format, hl_per_unit, is_cage, bottles_per_cage}]
+    // SKU list for JS: [{id, sku_code, format, hl_per_unit, is_cage, bottles_per_cage, stocktake_scope}]
     // Cage SKUs (suffix -X) get is_cage=true + bottles_per_cage from DB units_per_pack.
+    // stocktake_scope is included so JS can reflect server-side visibility logic if needed.
     $stSkusForJs = array_map(function ($s) {
         $isCage = (substr((string) $s['sku_code'], -2) === '-X');
         return [
@@ -1540,6 +1553,7 @@ if ($view === 'stocktake') {
             'hl_per_unit'      => (float) $s['hl_per_unit'],
             'is_cage'          => $isCage,
             'bottles_per_cage' => $isCage ? (float) $s['units_per_pack'] : null,
+            'stocktake_scope'  => $s['stocktake_scope'],
         ];
     }, $stAllSkus ?? []);
     $stSkusJson = json_encode($stSkusForJs, $jsonFlags);
@@ -1579,6 +1593,27 @@ if ($view === 'stocktake') {
 $csrf          = csrf_token();
 $active_module = 'expeditions';
 $todayDate     = date('Y-m-d'); // used for overdue + today emphasis in commandes view
+
+/**
+ * Returns true if a SKU with the given stocktake_scope is visible at a site
+ * with the given site_type.
+ *
+ * Visibility matrix:
+ *   base   → always (all site types)
+ *   cage   → production + warehouse only
+ *   single → pos only
+ *   none   → never
+ */
+function exp_st_scope_allowed(string $scope, string $siteType): bool
+{
+    return match ($scope) {
+        'base'   => true,
+        'cage'   => in_array($siteType, ['production', 'warehouse'], true),
+        'single' => $siteType === 'pos',
+        'none'   => false,
+        default  => false,
+    };
+}
 
 /**
  * Map ref_skus.format to a CSS family slug.
@@ -2844,9 +2879,18 @@ $isReadOnly = $editOrder !== null
       'Keg'            => 'Fût',
       'Cuve de service'=> 'Cuve de service',
   ];
+  // Determine which scopes are visible at the selected location.
+  // exp_st_scope_allowed() is defined at the top of the helper functions section.
+  $stSelSiteType = $stSelLoc !== null ? (string) $stSelLoc['site_type'] : '';
+
   $stSkusByFamily = [];
-  $stCageSkus     = []; // cage SKUs extracted from their format family
+  $stCageSkus     = []; // cage SKUs (scope='cage') — only at production+warehouse
   foreach ($stAllSkus as $sk) {
+      $scope = $sk['stocktake_scope'] ?? 'none';
+      // Skip SKUs not permitted at the selected location.
+      if (!exp_st_scope_allowed($scope, $stSelSiteType)) {
+          continue;
+      }
       if (substr((string) $sk['sku_code'], -2) === '-X') {
           $stCageSkus[] = $sk;
       } else {
