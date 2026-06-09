@@ -2667,24 +2667,28 @@ $isReadOnly = $editOrder !== null
 
   // ── Family grouping order — display_family (multipack aware) ─────────────
   // Hardcoding display ORDER is acceptable per spec; hardcoding SKU names is not.
+  // BU/CU = single-unit convention (SKU naming: BU/CU suffix = individual bottle/can,
+  // taproom-only, not full packs). Detected by sku_code suffix, NOT by name.
   $stockFamilyOrder = [
-      'Bot'            => 0,
-      'Can'            => 1,
-      'Can33'          => 2,
-      'Keg'            => 3,
+      'Keg'            => 0,
+      'Bot'            => 1,
+      'Can'            => 2,
+      'Can33'          => 3,
       'multipack'      => 4,
       'Cuve de service'=> 5,
+      "À l'unité"      => 98,  // synthetic: SKUs with sku_code ending in BU or CU
   ];
 
   $stockRows   = $fgStock['rows'] ?? [];
   $anchorMonth = $fgStock['anchor_month'] ?? null;
   $anchorDate  = $fgStock['anchor_date']  ?? null;
 
-  // Collect distinct display_family values for filter chips
+  // Collect distinct display_family values for filter chips.
+  // BU/CU suffix → singles group (taproom-only SKUs, pushed to bottom).
   $presentFamilies = [];
   $hasAlerts       = false;
   foreach ($stockRows as $sr) {
-      $fam = $sr['display_family'] ?? $sr['format'];
+      $fam = preg_match('/(BU|CU)$/', $sr['sku_code'] ?? '') ? "À l'unité" : ($sr['display_family'] ?? $sr['format']);
       $presentFamilies[$fam] = true;
       if ($sr['flag_survendu'] || $sr['flag_low_stock']) $hasAlerts = true;
   }
@@ -2954,26 +2958,33 @@ $isReadOnly = $editOrder !== null
 
   <!-- ── Stock table (grouped by display_family) ────────────────────────── -->
   <?php
+  // Resolve effective family for a stock row — BU/CU suffix → singles group.
+  // BU/CU = single-unit SKUs (taproom-only), pushed last regardless of display_family.
+  $eff_stock_family = function (array $sr) use ($stockFamilyOrder): string {
+      return preg_match('/(BU|CU)$/', $sr['sku_code'] ?? '') ? "À l'unité" : ($sr['display_family'] ?? $sr['format']);
+  };
+
   // Sort rows: by health rank ASC (worst first), then family order, then sku_code.
   // This gives worst-first order across all families by default — Kouros asked
   // for alerts surfaced at top. The "Alertes d'abord" JS toggle (sort by rank only,
   // ignoring family) remains available for flat rank-only ordering.
-  usort($stockRows, function ($a, $b) use ($stockFamilyOrder, $stockLevels) {
+  usort($stockRows, function ($a, $b) use ($stockFamilyOrder, $stockLevels, $eff_stock_family) {
       $rankA = $stockLevels[(int) $a['sku_id']]['rank'] ?? 99;
       $rankB = $stockLevels[(int) $b['sku_id']]['rank'] ?? 99;
       if ($rankA !== $rankB) return $rankA <=> $rankB;
-      $famA = $a['display_family'] ?? $a['format'];
-      $famB = $b['display_family'] ?? $b['format'];
+      $famA = $eff_stock_family($a);
+      $famB = $eff_stock_family($b);
       $oa   = $stockFamilyOrder[$famA] ?? 99;
       $ob   = $stockFamilyOrder[$famB] ?? 99;
       if ($oa !== $ob) return $oa <=> $ob;
       return strcmp($a['sku_code'], $b['sku_code']);
   });
 
-  // Group into families for section headers
+  // Group into families for section headers.
+  // BU/CU suffix routes to the synthetic singles group, not their display_family.
   $stockByFamily = [];
   foreach ($stockRows as $sr) {
-      $fam = $sr['display_family'] ?? $sr['format'];
+      $fam = $eff_stock_family($sr);
       $stockByFamily[$fam][] = $sr;
   }
   // Family order for grouped display
@@ -2999,7 +3010,10 @@ $isReadOnly = $editOrder !== null
       <tbody id="exp-stock-tbody">
       <?php foreach ($stockFamilyKeys as $groupFam):
         if (empty($stockByFamily[$groupFam])) continue;
-        $groupLabel = exp_family_label(exp_format_family($groupFam));
+        // Synthetic singles group gets its own label; real families use the shared helper.
+        $groupLabel = ($groupFam === "À l'unité")
+            ? "À l'unité (taproom)"
+            : exp_family_label(exp_format_family($groupFam));
         $groupCount = count($stockByFamily[$groupFam]);
       ?>
         <tr class="exp-stock-family-header" data-family-group="<?= htmlspecialchars($groupFam) ?>" aria-hidden="true">
@@ -3137,7 +3151,7 @@ $isReadOnly = $editOrder !== null
                     <tr class="exp-ledger-prod">
                       <td class="exp-ledger-label">Production (unités SKU)</td>
                       <td class="exp-ledger-qty exp-ledger-qty--plus">
-                        +<?= number_format($sr['prod_qty'], 2) ?>
+                        +<?= number_format((int) $sr['prod_qty']) ?>
                       </td>
                       <td class="exp-ledger-meta">
                         <?= $sr['prod_events'] ?> run<?= $sr['prod_events'] !== 1 ? 's' : '' ?>
@@ -3230,11 +3244,12 @@ $isReadOnly = $editOrder !== null
 
   <!-- ── Per-location tables (hidden by default, toggled by JS) ────────── -->
   <?php foreach ($locSnap['locations'] as $lc):
-    // Group this location's snapshot rows by display_family
+    // Group this location's snapshot rows by display_family.
+    // BU/CU suffix routes to the synthetic singles group (same logic as total view).
     $lcFamilyOrder = $stockFamilyOrder; // reuse the same order
     $lcByFamily    = [];
     foreach ($lc['rows'] as $lr) {
-        $fam = $lr['display_family'] ?? $lr['format'];
+        $fam = preg_match('/(BU|CU)$/', $lr['sku_code'] ?? '') ? "À l'unité" : ($lr['display_family'] ?? $lr['format']);
         $lcByFamily[$fam][] = $lr;
     }
     // Sort families in canonical order
@@ -3281,12 +3296,14 @@ $isReadOnly = $editOrder !== null
         <tbody>
         <?php foreach ($lcFamilyKeys as $lcGroupFam):
           if (empty($lcByFamily[$lcGroupFam])) continue;
-          $lcGroupLabel = exp_family_label(exp_format_family($lcGroupFam));
+          $lcGroupLabel = ($lcGroupFam === "À l'unité")
+              ? "À l'unité (taproom)"
+              : exp_family_label(exp_format_family($lcGroupFam));
           $lcGroupCount = count($lcByFamily[$lcGroupFam]);
-          $lcFamUnits   = 0.0;
+          $lcFamUnits   = 0;
           $lcFamHl      = 0.0;
           foreach ($lcByFamily[$lcGroupFam] as $lr) {
-              $lcFamUnits += $lr['qty'];
+              $lcFamUnits += (int) $lr['qty'];
               $lcFamHl    += $lr['hl'];
           }
         ?>
@@ -3299,7 +3316,7 @@ $isReadOnly = $editOrder !== null
           <?php foreach ($lcByFamily[$lcGroupFam] as $lr):
             // Lighter single-location treatment: has-stock dot vs empty dot only.
             // No weeks-of-cover gauge or 6-state badge (no per-site velocity).
-            $lrQty     = (float) $lr['qty'];
+            $lrQty     = (int) $lr['qty'];
             $lrHasStock = $lrQty > 0;
             $lrDotClass = $lrHasStock ? 'exp-loc-dot--stock' : 'exp-loc-dot--empty';
             $lrDotTitle = $lrHasStock ? 'En stock' : 'Épuisé à ce site';
