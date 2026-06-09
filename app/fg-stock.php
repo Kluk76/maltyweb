@@ -148,6 +148,14 @@ function fg_stock_compute(PDO $pdo): array
     }
 
     // anchor_month derived from anchor_date
+    // SCOPE NOTE: $anchorDate is the GLOBAL MAX(counted_at) across all sites. It
+    // still drives the SALES legs (expedie / eshop / taproom, Steps 4-6) and the
+    // displayed meta.anchor_date. The PRODUCTION leg (Step 3) NO LONGER uses it
+    // as the cutoff — it derives a per-SKU production-site cutoff instead (see
+    // Step 3). So a partial count (e.g. taproom-only) still coarsens the sales
+    // legs (e.g. taproom: period > anchorMonth can exclude the current month).
+    // Per-SKU/per-location settlement of the sales legs is deferred to the
+    // future stock-movement saisie arc — prod-fixed does NOT mean all-fixed.
     $anchorDate  = $anchorDate ?? date('Y-m-d');
     $anchorMonth = substr($anchorDate, 0, 7);
 
@@ -159,21 +167,82 @@ function fg_stock_compute(PDO $pdo): array
     // Lesson: same class of bug as maltytask commit 942431e (~24x inflation).
     // is_white_label=1 rows are EXCLUDED: beer packaged under another brand
     // (e.g. La Carougeoise) never enters Nebuleuse sellable FG stock.
-    // client_fk (cuve-de-service venue) rows are KEPT: those are Neb beer
-    // delivered via cuve orders — the matching ord_orders shipment depletes them.
-    $prodStmt = $pdo->prepare(
-        'SELECT p.sku_id_fk,
-                SUM(p.prod_total_units / COALESCE(NULLIF(r.units_per_pack, 0), 1)) AS prod_qty,
-                COUNT(*)                                                             AS prod_events
-           FROM bd_packaging_v2 p
-           JOIN ref_skus r ON r.id = p.sku_id_fk
-          WHERE p.event_date > ?
-            AND p.is_tombstoned = 0
-            AND p.is_white_label = 0
-            AND p.sku_id_fk IS NOT NULL
-          GROUP BY p.sku_id_fk'
+    //
+    // Per-SKU production cutoff fix (partial-count global-cutoff bug):
+    //   The global $anchorDate = MAX(counted_at) across ALL sites. When only the
+    //   Taproom (pos site) is counted on a given day, $anchorDate jumps to that
+    //   date and drops production events at the production site whose event_date
+    //   equals that same day (fails event_date > anchor_date).
+    //   Fix: packaging always lands at the production site. The relevant baseline
+    //   is when the PRODUCTION SITE was last counted — not a global max poisoned
+    //   by a taproom-only count. Derive production site ids from ref_sites
+    //   (site_type='production', is_active=1) — never hardcode an id.
+    //   Per-SKU cutoff = that SKU's MAX(counted_at) at the production site(s).
+    //   Fallback: COALESCE(prod_anchor, $anchorDate) — if a SKU has never been
+    //   counted at the production site, use the global anchor as before.
+    //
+    // run_type='cuv' events are EXCLUDED: cuve-de-service fills are delivered
+    //   directly to the client venue (filled-at-client = sold), never FG stock.
+    //   Including them would inflate physique by the cuve volume, then the
+    //   matching ord_orders shipment would double-deduct it.
+
+    // Derive production site id(s) from DB — never hardcode
+    $prodSiteStmt = $pdo->prepare(
+        'SELECT id FROM ref_sites WHERE site_type = ? AND is_active = 1'
     );
-    $prodStmt->execute([$anchorDate]);
+    $prodSiteStmt->execute(['production']);
+    $prodSiteIds = array_column($prodSiteStmt->fetchAll(PDO::FETCH_ASSOC), 'id');
+    // Cast to int for safe IN(...) interpolation
+    $prodSiteIds = array_map('intval', $prodSiteIds);
+
+    if (!empty($prodSiteIds)) {
+        // Build safe IN(...) placeholders from the id array
+        $inPlaceholders = implode(',', array_fill(0, count($prodSiteIds), '?'));
+
+        // Per-SKU production cutoff = MAX(counted_at) at production site(s).
+        // COALESCE(pa.prod_anchor, ?) falls back to global $anchorDate for SKUs
+        // that have never been counted at the production site.
+        $prodStmt = $pdo->prepare(
+            'SELECT p.sku_id_fk,
+                    SUM(p.prod_total_units / COALESCE(NULLIF(r.units_per_pack,0),1)) AS prod_qty,
+                    COUNT(*) AS prod_events
+               FROM bd_packaging_v2 p
+               JOIN ref_skus r ON r.id = p.sku_id_fk
+               LEFT JOIN (
+                   SELECT sku_id_fk, MAX(counted_at) AS prod_anchor
+                     FROM inv_fg_stocktake
+                    WHERE is_active = 1
+                      AND location_id_fk IN (' . $inPlaceholders . ')
+                    GROUP BY sku_id_fk
+               ) pa ON pa.sku_id_fk = p.sku_id_fk
+              WHERE p.is_tombstoned = 0
+                AND p.is_white_label = 0
+                AND p.sku_id_fk IS NOT NULL
+                AND p.run_type <> ?
+                AND p.event_date > COALESCE(pa.prod_anchor, ?)
+              GROUP BY p.sku_id_fk'
+        );
+        // Params: prodSiteIds... (for the IN), then 'cuv', then $anchorDate (COALESCE fallback)
+        $prodParams = array_merge($prodSiteIds, ['cuv', $anchorDate]);
+        $prodStmt->execute($prodParams);
+    } else {
+        // No production site found — fall back to global cutoff for all SKUs.
+        // run_type='cuv' still excluded.
+        $prodStmt = $pdo->prepare(
+            'SELECT p.sku_id_fk,
+                    SUM(p.prod_total_units / COALESCE(NULLIF(r.units_per_pack, 0), 1)) AS prod_qty,
+                    COUNT(*) AS prod_events
+               FROM bd_packaging_v2 p
+               JOIN ref_skus r ON r.id = p.sku_id_fk
+              WHERE p.event_date > ?
+                AND p.is_tombstoned = 0
+                AND p.is_white_label = 0
+                AND p.sku_id_fk IS NOT NULL
+                AND p.run_type <> ?
+              GROUP BY p.sku_id_fk'
+        );
+        $prodStmt->execute([$anchorDate, 'cuv']);
+    }
     foreach ($prodStmt->fetchAll(PDO::FETCH_ASSOC) as $pr) {
         $sid = (int) $pr['sku_id_fk'];
         if (isset($byId[$sid])) {
