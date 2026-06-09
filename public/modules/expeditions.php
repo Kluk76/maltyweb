@@ -2821,7 +2821,7 @@ $isReadOnly = $editOrder !== null
           $freshChip = '<span class="exp-st-fresh-chip exp-st-fresh-chip--missing">⚠ pas encore compté</span>';
       } elseif ($lcLastCounted >= $stMondayStock) {
           $d = new DateTimeImmutable($lcLastCounted);
-          $freshChip = '<span class="exp-st-fresh-chip exp-st-fresh-chip--ok">✓ compté lun. ' . $d->format('d/m') . '</span>';
+          $freshChip = '<span class="exp-st-fresh-chip exp-st-fresh-chip--ok">✓ compté ' . exp_dow_fr($d) . ' ' . $d->format('d/m') . '</span>';
       } else {
           $d = new DateTimeImmutable($lcLastCounted);
           $freshChip = '<span class="exp-st-fresh-chip exp-st-fresh-chip--warn">⚠ compté ' . $d->format('d/m') . '</span>';
@@ -3419,6 +3419,13 @@ $isReadOnly = $editOrder !== null
   $stDow       = (int) $stNow->format('N'); // 1=Mon, 7=Sun
   $stThisMonday = $stNow->modify('-' . ($stDow - 1) . ' days')->format('Y-m-d');
 
+/** French weekday abbreviation ("lun.", "mar.", …) for a date. */
+function exp_dow_fr(DateTimeImmutable $d): string
+{
+    static $days = ['dim.','lun.','mar.','mer.','jeu.','ven.','sam.'];
+    return $days[(int) $d->format('w')];
+}
+
   function exp_st_freshness_chip(int $locId, array $lastCounted, string $thisMonday): string
   {
       $last = $lastCounted[$locId] ?? null;
@@ -3427,7 +3434,7 @@ $isReadOnly = $editOrder !== null
       }
       if ($last >= $thisMonday) {
           $d = new DateTimeImmutable($last);
-          return '<span class="exp-st-fresh-chip exp-st-fresh-chip--ok" title="Compté ' . $d->format('d/m') . '">✓ compté lun. ' . $d->format('d/m') . '</span>';
+          return '<span class="exp-st-fresh-chip exp-st-fresh-chip--ok" title="Compté ' . exp_dow_fr($d) . ' ' . $d->format('d/m') . '">✓ compté ' . exp_dow_fr($d) . ' ' . $d->format('d/m') . '</span>';
       }
       $d = new DateTimeImmutable($last);
       return '<span class="exp-st-fresh-chip exp-st-fresh-chip--warn" title="Pas compté cette semaine (dernier: ' . $d->format('d/m') . ')">⚠ pas compté cette semaine</span>';
