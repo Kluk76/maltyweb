@@ -1300,7 +1300,8 @@ $cipConfig = [
 
       <p class="brew-note">
         Seules les catégories suivantes sont disponibles : Malt, Houblon (kettle / dry),
-        Adjuvant, Minéral, Process. La levure est saisie dans la section ci-dessus.
+        Adjuvant, Minéral, Process. La levure est saisie dans la section ci-dessus.<br>
+        Collage / clarification (Nagardo, Clarex, Dehaze) → saisir sous <strong>Process</strong>.
       </p>
     </div>
 
