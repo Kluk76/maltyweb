@@ -59,10 +59,16 @@ if (empty($pending)) {
 // migration only on success. A failure mid-file leaves partial state — that's
 // the price of MySQL DDL semantics. Keep migrations small and idempotent
 // (CREATE TABLE IF NOT EXISTS, ALTER TABLE … IF NOT EXISTS-equivalents).
+$touchedRefPages = false;
+
 foreach ($pending as $f) {
     $name = basename($f);
     echo "→ applying $name … ";
     $sql = file_get_contents($f);
+
+    if (stripos($sql, 'ref_pages') !== false) {
+        $touchedRefPages = true;
+    }
 
     try {
         $pdo->exec($sql);
@@ -76,3 +82,11 @@ foreach ($pending as $f) {
 }
 
 echo "✓ all migrations applied\n";
+
+if ($touchedRefPages) {
+    echo "\nℹ tour-coverage: a migration touched ref_pages — checking Visite guidée cards…\n";
+    passthru(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__DIR__ . '/tour-gap-check.php') . ' --quiet', $rc);
+    if ($rc !== 0) {
+        echo "⚠ One or more active pages have no Visite guidée card. Run scripts/tour-gap-check.php for detail, or dispatch maltyweb-tour-steward.\n";
+    }
+}

@@ -74,6 +74,8 @@ $PAGE_DESCRIPTIONS = [
     'warehouse'        => 'Le stock de produits finis : quantités par SKU, par site.',
     'rm-comparison'    => 'Le bilan de clôture matières premières : comptage physique vs stock théorique, écarts par ingrédient.',
     'expeditions'      => 'Le centre logistique : <strong>saisie des commandes clients</strong> (autocomplétion clients et SKU), suivi des statuts d\'un clic — confirmée, préparée, BL imprimé, livrée — et <strong>Stock PF en direct</strong> : stock physique, disponible cette semaine, disponible après commandes futures, semaines de couverture.',
+    'tap-shop'         => 'Tap&amp;Shop réunit en une seule vue les ventes directes de la brasserie : les commandes de la boutique en ligne et les ventes du taproom, mises en regard du stock de produits finis réellement disponible. C\'est une page de consultation : rien ne s\'y saisit. Elle vous sert à voir d\'un coup d\'œil ce qui s\'est vendu en direct et ce qu\'il reste, sans avoir à croiser plusieurs écrans.',
+    'qa'               => 'Le suivi qualité de la brasserie : contrôles et analyses sur les lots, de la production au produit fini. Les résultats hors seuils sont signalés pour vérification.',
 ];
 
 /* SVG icons per page_key — inline SVG matching mockup styles */
@@ -93,6 +95,8 @@ $PAGE_ICONS = [
     'expeditions'      => '<svg viewBox="0 0 24 24"><rect x="1" y="6" width="13" height="11" rx="1"/><path d="M14 9h4l3 4v4h-7z"/><circle cx="6" cy="19" r="2"/><circle cx="17" cy="19" r="2"/></svg>',
     'saisies'          => '<svg viewBox="0 0 24 24"><path d="M15 5l4 4L7 21H3v-4L15 5z"/><path d="M12 8l4 4"/></svg>',
     'invoice-validate' => '<svg viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12l2 2 4-4"/></svg>',
+    'tap-shop'         => '<svg viewBox="0 0 24 24"><path d="M3 9l1.5-5h15L21 9M3 9h18M3 9v11h18V9M9 20v-6h6v6"/></svg>',
+    'qa'               => '<svg viewBox="0 0 24 24"><path d="M9 3h6M10 3v6l-5 9a1 1 0 0 0 1 1.5h12a1 1 0 0 0 1-1.5l-5-9V3"/><path d="M7.5 14h9"/></svg>',
     '_default'         => '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>',
 ];
 
