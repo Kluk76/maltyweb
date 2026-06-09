@@ -723,13 +723,101 @@ function compile_sku_bom_packaging(
         $skuVolumeHl     = $formatVol['volume_hl'];
         $containerSlotName = $formatVol['container_slot'];
 
-        $pkgLines = [];   // rows to INSERT: ['mi_id_fk' => int, 'slot_name' => str, 'qty' => float, 'volume_hl' => float|null]
+        $runTypeFmt = $sku['fmt_run_type'] ?? '';  // populated in step 2 via f.run_type
+
+        $pkgLines = [];   // rows to INSERT: ['mi_id_fk' => int|null, 'slot_name' => str, 'qty' => float, 'volume_hl' => float|null, 'cost_direct' => float|null]
         $rqRows   = [];   // rows to emit in doc_review_queue
+
+        // ── §cuv observed-liner branch ────────────────────────────────────────
+        // For cuv (serving-tank) SKUs, liner cost is volume-weighted from observed
+        // bd_packaging_v2 data rather than a fixed per-event template pair.
+        // Operator ruling: liner count = what was actually entered per row
+        // (new_liner_*=1 OR liner_*_mi_id_fk IS NOT NULL); cost diluted per HL filled.
+        // We compute liner_cost_per_hl here and later suppress the two fixed template
+        // slots (liner_client / liner_transport) to prevent double-emission.
+        $isCuvSku = ($runTypeFmt === 'cuv');
+        $cuvLinerCostPerHl = null;  // float|null — set for cuv SKUs with observed data
+
+        if ($isCuvSku) {
+            // Default MI id for fallback when flag set but mi_id_fk IS NULL.
+            // MI 102 = PKG_LINER_10HL_EDS25 (the format-18 template default).
+            $cuvDefaultLinerId = 102;
+
+            $cuvStmt = $pdo->prepare(
+                "SELECT
+                     p.vendable_hl,
+                     p.new_liner_client,    p.liner_client_mi_id_fk,
+                     p.new_liner_transport, p.liner_transport_mi_id_fk,
+                     vc_c.cost_chf AS client_cost_chf,
+                     vc_t.cost_chf AS transport_cost_chf
+                   FROM bd_packaging_v2 p
+                   LEFT JOIN v_mi_cost vc_c ON vc_c.mi_id_fk = p.liner_client_mi_id_fk
+                   LEFT JOIN v_mi_cost vc_t ON vc_t.mi_id_fk = p.liner_transport_mi_id_fk
+                  WHERE p.recipe_id_fk = ?
+                    AND p.run_type = 'cuv'
+                    AND p.is_tombstoned = 0
+                    AND p.vendable_hl > 0"
+            );
+            $cuvStmt->execute([$recipeId]);
+            $cuvRows = $cuvStmt->fetchAll(\PDO::FETCH_ASSOC);
+
+            // Default liner cost in CHF (MI 102: EUR 18.00 × EUR→CHF rate from v_mi_cost).
+            // v_mi_cost already normalises EUR→CHF for MI 102; look it up once.
+            $defStmt = $pdo->prepare("SELECT cost_chf FROM v_mi_cost WHERE mi_id_fk = ?");
+            $defStmt->execute([$cuvDefaultLinerId]);
+            $defCostRow = $defStmt->fetch(\PDO::FETCH_ASSOC);
+            $cuvDefaultCostChf = ($defCostRow && $defCostRow['cost_chf'] !== null)
+                ? (float)$defCostRow['cost_chf']
+                : 17.01;  // hard fallback: EUR 18.00 × 0.945 ≈ 17.01
+
+            $cuvTotalHl    = 0.0;
+            $cuvTotalCost  = 0.0;
+
+            foreach ($cuvRows as $cuvRow) {
+                $hl = (float)$cuvRow['vendable_hl'];
+                $cuvTotalHl += $hl;
+
+                // Liner present = (new_liner_*=1) OR (liner_*_mi_id_fk IS NOT NULL).
+                // Older rows may have NULL boolean but populated FK (or vice versa).
+                $hasClient    = ((int)($cuvRow['new_liner_client']    ?? 0) === 1
+                                 || $cuvRow['liner_client_mi_id_fk']    !== null);
+                $hasTransport = ((int)($cuvRow['new_liner_transport']  ?? 0) === 1
+                                 || $cuvRow['liner_transport_mi_id_fk'] !== null);
+
+                if ($hasClient) {
+                    $cuvTotalCost += $cuvRow['client_cost_chf'] !== null
+                        ? (float)$cuvRow['client_cost_chf']
+                        : $cuvDefaultCostChf;
+                }
+                if ($hasTransport) {
+                    $cuvTotalCost += $cuvRow['transport_cost_chf'] !== null
+                        ? (float)$cuvRow['transport_cost_chf']
+                        : $cuvDefaultCostChf;
+                }
+            }
+
+            if ($cuvTotalHl > 0) {
+                $cuvLinerCostPerHl = $cuvTotalCost / $cuvTotalHl;
+                // Emit one synthetic line: slot_name='liner_amortized'.
+                // mi_id_fk = cuvDefaultLinerId (MI 102, the most common liner) satisfies
+                // the ref_sku_bom CHECK constraint (mi_id NOT NULL for bom_source='packaging').
+                // The actual cost comes from cost_direct (volume-weighted average), NOT the
+                // MI's catalog price — cost_direct bypasses the normal mi-lookup in the INSERT loop.
+                // qty_per_unit=1.0: with hl_per_unit=1.0, cost = liner_cost_per_hl directly.
+                $pkgLines[] = [
+                    'mi_id_fk'    => $cuvDefaultLinerId,
+                    'slot_name'   => 'liner_amortized',
+                    'qty'         => 1.0,
+                    'volume_hl'   => null,
+                    'cost_direct' => round($cuvLinerCostPerHl, 6),
+                ];
+            }
+            // If no observed cuv rows (new recipe, zero history), emit nothing — no liner cost yet.
+        }
 
         // Identify known-by-design NULL volume cases — these must NOT emit RQ rows.
         // run_type='cuv': CUV_LINER has null hl_per_unit (volume comes from the fill event).
         // is_composite=1 OR catalog_id NULL: composites/draft-pours/6C/PAD — no static chain.
-        $runTypeFmt = $sku['fmt_run_type'] ?? '';  // populated in step 2 via f.run_type
         $isKnownNullVolume = (
             $runTypeFmt === 'cuv'                                 // fill-event volume
             || !in_array($runTypeFmt, ['bot','can','can33','keg'], true) // composite, draft, tray
@@ -801,6 +889,14 @@ function compile_sku_bom_packaging(
             $slotName = $item['slot_name'];
             $scope    = $item['slot_scope'];
             $qty      = (float)$item['qty_per_unit'];
+
+            // ── cuv: suppress fixed template liner slots ─────────────────
+            // For cuv SKUs the observed-liner branch (§cuv above) already emitted
+            // a single 'liner_amortized' line. Suppress the two fixed template
+            // slots so they are not double-counted.
+            if ($isCuvSku && in_array($slotName, ['liner_client', 'liner_transport'], true)) {
+                continue;
+            }
 
             // ── Scope gate ───────────────────────────────────────────────
 
@@ -937,8 +1033,17 @@ function compile_sku_bom_packaging(
                     $costChf  = ($mi !== null && $mi['cost_chf'] !== null) ? (float)$mi['cost_chf'] : null;
                     $currency = 'CHF';
 
-                    // Refuse-don't-NULL: no_basis lines keep cost=NULL; they are flagged in the return value.
-                    $cost = ($costChf !== null) ? round($costChf * $line['qty'], 6) : null;
+                    // cost_direct: liner_amortized lines bypass the mi-lookup cost and carry
+                    // their volume-weighted average cost directly. The mi_id_fk is still set
+                    // (to the default liner MI) to satisfy the CHECK constraint, but cost
+                    // comes from the observed data, not the MI catalog price.
+                    if (isset($line['cost_direct'])) {
+                        $cost    = round($line['cost_direct'], 6);
+                        $costChf = $cost;  // price = cost for qty=1.0 lines
+                    } else {
+                        // Refuse-don't-NULL: no_basis lines keep cost=NULL; they are flagged in the return value.
+                        $cost = ($costChf !== null) ? round($costChf * $line['qty'], 6) : null;
+                    }
 
                     // row_hash: stable content key (sku_id, mi_id_fk, slot_name, qty, volume_hl, effective_from)
                     $rowHash = hash('sha256', implode('|', [
@@ -951,6 +1056,7 @@ function compile_sku_bom_packaging(
                         $today,
                     ]));
 
+                    $isLinerAmortized = ($line['slot_name'] === 'liner_amortized');
                     $ins->execute([
                         ':sku_id'         => $skuId,
                         ':mi_id'          => $line['mi_id_fk'],
@@ -959,9 +1065,9 @@ function compile_sku_bom_packaging(
                         ':slot_name'      => $line['slot_name'],
                         ':category_raw'   => $catName,
                         ':qty_per_unit'   => round($line['qty'], 6),
-                        ':ing_unit'       => 'unit',
-                        ':pricing_unit'   => $pricingUnit,
-                        ':price'          => $costChf,  // per-unit cost in CHF (from v_mi_cost)
+                        ':ing_unit'       => $isLinerAmortized ? 'HL' : 'unit',
+                        ':pricing_unit'   => $isLinerAmortized ? 'HL' : $pricingUnit,
+                        ':price'          => $costChf,  // per-unit cost in CHF (from v_mi_cost or cost_direct)
                         ':currency'       => $currency, // always 'CHF' after WAC switch
                         ':cost'           => $cost,
                         // Set on the container-role line ONLY (bottle/can slot).
@@ -969,7 +1075,7 @@ function compile_sku_bom_packaging(
                         // (reusable containers — their volume is SKU-level via v_sku_volume).
                         // NOT additive across lines — one line owns the SKU's liquid volume.
                         ':volume_hl'      => isset($line['volume_hl']) ? $line['volume_hl'] : null,
-                        ':resolution'     => 'mi_match',
+                        ':resolution'     => $isLinerAmortized ? 'observed_cuv' : 'mi_match',
                         ':row_hash'       => $rowHash,
                         ':compiled_at'    => $compiledAt,
                         ':bom_source'     => 'packaging',
