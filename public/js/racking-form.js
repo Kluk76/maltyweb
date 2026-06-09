@@ -496,6 +496,8 @@ document.addEventListener('DOMContentLoaded', function () {
   var bbtBlendSection  = document.getElementById('rf-bbt-blend-section');
   var bbtBlendGrid     = document.getElementById('rf-bbt-blend-grid');
   var bbtBlendNone     = document.getElementById('rf-bbt-blend-none');
+  var bbtVideRow       = document.getElementById('rf-bbt-vide-row');
+  var bbtVideToggle    = document.getElementById('rf-bbt-vide-toggle');
   var selectedBlendBbt = null; // currently selected blend-candidate BBT number (int | null)
 
   // Return the canonical beer name from the currently selected source card.
@@ -575,6 +577,10 @@ document.addEventListener('DOMContentLoaded', function () {
       blendHlInput.setAttribute('readonly', '');
     }
 
+    // Reveal "BBT vide" override checkbox and reset it unchecked
+    if (bbtVideRow) bbtVideRow.hidden = false;
+    if (bbtVideToggle) bbtVideToggle.checked = false;
+
     // Re-sync all dependents
     updateResultant();
     updateDestCipRequired();
@@ -583,6 +589,29 @@ document.addEventListener('DOMContentLoaded', function () {
     if (typeof window.cipUpdateVesselLabel === 'function') {
       window.cipUpdateVesselLabel('bbt', bbtNum);
     }
+  }
+
+  // "BBT vide" toggle — phantom-residual discard.
+  // Checked: scraps the tracked residual (blend_hl → 0) so sim routes through
+  //          fresh-fill branch. NOT a perte; no loss_dest path involved.
+  // Unchecked: restores the selected candidate's residual from its card dataset.
+  if (bbtVideToggle) {
+    bbtVideToggle.addEventListener('change', function () {
+      if (!blendHlInput) return;
+      if (bbtVideToggle.checked) {
+        blendHlInput.value = '0';
+      } else {
+        // Restore from the currently-selected candidate card
+        var selCard = bbtBlendGrid
+          ? bbtBlendGrid.querySelector('.rf-bbt-cand-card--selected')
+          : null;
+        if (selCard && selCard.dataset.totalHl !== undefined) {
+          blendHlInput.value = parseFloat(selCard.dataset.totalHl).toFixed(2);
+        }
+      }
+      updateResultant();
+      updateDestCipRequired();
+    });
   }
 
   // Clear the blend-candidate selection (but keep section visible if still type=BBT).
@@ -600,6 +629,10 @@ document.addEventListener('DOMContentLoaded', function () {
     if (blendHlInput) {
       blendHlInput.removeAttribute('readonly');
     }
+
+    // Hide and reset the "BBT vide" override — it no longer applies
+    if (bbtVideRow) bbtVideRow.hidden = true;
+    if (bbtVideToggle) bbtVideToggle.checked = false;
   }
 
   // Show or hide the blend-candidate section based on dest type + source card.
@@ -620,6 +653,9 @@ document.addEventListener('DOMContentLoaded', function () {
       clearBlendSelection();
       if (bbtBlendGrid) bbtBlendGrid.innerHTML = '';
       if (bbtBlendNone) bbtBlendNone.hidden = true;
+      // Ensure "BBT vide" override is hidden and unchecked when section is hidden
+      if (bbtVideRow) bbtVideRow.hidden = true;
+      if (bbtVideToggle) bbtVideToggle.checked = false;
       return;
     }
 

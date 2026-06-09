@@ -470,3 +470,24 @@ body.op-form-racking .rf-loss-balance {
   white-space: pre-line;
   line-height: 1.4;
 }
+
+/* ── C5: "BBT vide" phantom-residual override ────────────────────────────── */
+body.op-form-racking .rf-bbt-vide-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  user-select: none;
+  margin-top: 0.5rem;
+}
+body.op-form-racking .rf-bbt-vide-checkbox {
+  accent-color: var(--ember);
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+}
+body.op-form-racking .rf-bbt-vide-text {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--ink);
+}

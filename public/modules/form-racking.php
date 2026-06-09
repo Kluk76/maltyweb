@@ -179,6 +179,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         // #5 — blend_hl = residual volume in destination tank at transfer time
         $blendHl     = post_decimal('blend_hl');
+        // "BBT vide" override — operator asserts the destination tank is physically
+        // empty despite a tracked residual (phantom from a derivation discrepancy).
+        // Scrap the residual so TankSimulator routes through its fresh-fill branch.
+        // This is NOT a loss event (physical loss uses the Pertes section).
+        if (post_str('bbt_vide') === '1') {
+            $blendHl = '0';
+        }
         $avgTurbidity = post_decimal('avg_turbidity');
         // #7 — avg_speed removed from form; column kept for historical data
         $bbtPressure = post_decimal('bbt_pressure');
@@ -1469,6 +1476,15 @@ $cipConfig = [
           Aucune BBT contenant cette bière actuellement. Pour transférer vers une BBT vide
           ou une BBT avec une autre bière, utiliser <strong>Choix Hors Process</strong>.
         </div>
+        <!-- "BBT vide" override — phantom-residual discard. Shown by JS only once
+             a blend candidate is selected. When checked, the tracked residual
+             (blend_hl) is scrapped → résultant = volume transféré seul.
+             NOT a perte (physical loss uses the Pertes section). -->
+        <label id="rf-bbt-vide-row" class="rf-bbt-vide-label" hidden>
+          <input type="checkbox" id="rf-bbt-vide-toggle" name="bbt_vide" value="1"
+                 class="rf-bbt-vide-checkbox">
+          <span class="rf-bbt-vide-text">BBT vide — ignorer le résiduel suivi</span>
+        </label>
       </div>
 
     </div>
