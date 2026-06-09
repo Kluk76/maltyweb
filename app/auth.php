@@ -52,20 +52,76 @@ function maltytask_session_start(): void
 }
 
 /**
- * Verifies username + password against the users table.
- * Returns the user row on success, null on failure.
- * Updates last_login_at on success.
+ * Resolves a typed login identifier (full username, first name, or email)
+ * to a single active user row, or null when there is no match or the match
+ * is ambiguous.
+ *
+ * SAFETY INVARIANT — ambiguous → fail closed.
+ * If the normalised input matches MORE THAN ONE active user (e.g. two users
+ * share a first name), this function returns null rather than picking one
+ * arbitrarily. This protects against future first-name collisions silently
+ * granting access to the wrong account.
+ *
+ * Matching rules (all case-insensitive, whitespace-normalised):
+ *   • full username  — LOWER(username) = $norm
+ *   • email          — LOWER(email)    = $norm
+ *   • first-name     — LOWER(SUBSTRING_INDEX(username,' ',1)) = $firstToken
+ *   • email local-part — LOWER(SUBSTRING_INDEX(email,'@',1)) = $firstToken
+ *
+ * utf8mb4_unicode_ci already folds accents on the DB side; LOWER() is
+ * belt-and-suspenders for engines that might differ on case folding.
  */
-function auth_verify(string $username, string $password): ?array
+function auth_resolve_user(PDO $pdo, string $input): ?array
 {
-    $pdo = maltytask_pdo();
+    // Normalise: collapse internal whitespace, trim, lowercase.
+    $norm       = mb_strtolower(trim(preg_replace('/\s+/u', ' ', $input)));
+    $firstToken = explode(' ', $norm)[0];
+
     $stmt = $pdo->prepare(
         "SELECT id, username, email, password_hash, display_name, role, manager_scope,
                 access_preset_id_fk, is_active
-         FROM users WHERE username = ? LIMIT 1"
+           FROM users
+          WHERE is_active = 1
+            AND (
+                    LOWER(username) = ?
+                 OR LOWER(email)    = ?
+                 OR LOWER(SUBSTRING_INDEX(username, ' ', 1)) = ?
+                 OR (email IS NOT NULL AND LOWER(SUBSTRING_INDEX(email, '@', 1)) = ?)
+                )"
     );
-    $stmt->execute([$username]);
-    $user = $stmt->fetch();
+    $stmt->execute([$norm, $norm, $firstToken, $firstToken]);
+    $rows = $stmt->fetchAll();
+
+    // Deduplicate by primary key in case two match-arms land the same row.
+    $byId = [];
+    foreach ($rows as $row) {
+        $byId[(int) $row['id']] = $row;
+    }
+
+    // Exactly one distinct active user → safe to return.
+    if (count($byId) === 1) {
+        return reset($byId);
+    }
+
+    // 0 matches or ≥2 distinct users → fail closed (no enumeration signal to caller).
+    return null;
+}
+
+/**
+ * Verifies a typed identifier + password against the users table.
+ * Returns the user row on success, null on failure.
+ * Updates last_login_at on success.
+ *
+ * The identifier is resolved via auth_resolve_user() which accepts the full
+ * username ("First Last"), first-name alone ("Gonzalo"), or email address —
+ * all case-insensitive. Ambiguous matches (≥2 candidates) fail closed.
+ */
+function auth_verify(string $username, string $password): ?array
+{
+    $pdo  = maltytask_pdo();
+    $user = auth_resolve_user($pdo, $username);
+
+    // Resolver already enforces is_active=1 and uniqueness; defensive re-check.
     if (!$user) return null;
     if ((int) $user["is_active"] !== 1) return null;
     if (!password_verify($password, $user["password_hash"])) return null;
