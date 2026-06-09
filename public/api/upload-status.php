@@ -107,7 +107,14 @@ $doc_invoice_id     = null;
 $redirect_url       = null;
 $new_status         = $pipeline_status;
 
-if ($drive_file_id !== '' && !in_array($pipeline_status, ['failed', 'processed'], true)) {
+// NOTE: 'processed' is intentionally NOT excluded here. A staged invoice is
+// already 'processed' BEFORE the operator commits it, so $doc_invoice_id must
+// still resolve in that state — otherwise the commit_status block below never
+// runs and the poll stays blind to validated_at (4-min false timeout on every
+// commit). The inner status-derivation branches are guarded by
+// `if ($new_status !== 'processed')`, so re-entering when already processed is
+// a no-op apart from populating $doc_invoice_id.
+if ($drive_file_id !== '' && $pipeline_status !== 'failed') {
     // Look up doc_files row for this Drive file ID
     $fs = $pdo->prepare(
         "SELECT id FROM doc_files WHERE file_id = ? LIMIT 1"
