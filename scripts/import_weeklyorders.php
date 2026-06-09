@@ -48,20 +48,29 @@ $me  = ['id' => CLI_USER_ID, 'username' => CLI_ACTOR];
 
 // ── Load ref tables ───────────────────────────────────────────────────────────
 
-// Customers: index by bc_customer_no and by normalized name
-$customersByBc   = [];   // bc_customer_no (string) → row
-$customersByName = [];   // normalized name → row
-$allCustomers    = [];   // id → row (for fuzzy)
+// Customers: index by bc_customer_no and by normalized name.
+// Load ALL rows (including is_active=0) so we can follow merged_into chains.
+// The lookup indexes (bc, name) include tombstoned rows — resolve_customer
+// will call follow_merge_chain() after any match to arrive at the canonical
+// active record (or declare unmatched if the chain dead-ends).
+$customersByBc   = [];   // bc_customer_no (string) → row (any is_active)
+$customersByName = [];   // normalized name → row (any is_active)
+$allCustomers    = [];   // id → row (for fuzzy + chain-following)
 
 $stmt = $pdo->query(
-    "SELECT id, name, bc_customer_no, trade_channel FROM ref_customers"
+    "SELECT id, name, bc_customer_no, trade_channel, is_active, notes,
+            default_transporter_id_fk
+     FROM ref_customers"
 );
 foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $c) {
     $allCustomers[(int)$c['id']] = $c;
     if ($c['bc_customer_no'] !== null && $c['bc_customer_no'] !== '') {
+        // BC# is unique per canonical record; stubs have no bc — safe to index all
         $customersByBc[$c['bc_customer_no']] = $c;
     }
     $nk = normalize_str($c['name']);
+    // Last-write wins for name collisions; tombstoned stubs often share names
+    // with canonicals — we handle the is_active=0 case via follow_merge_chain()
     $customersByName[$nk] = $c;
 }
 
@@ -130,10 +139,46 @@ function normalize_str(string $s): string {
 }
 
 /**
- * Resolve customer by (a) BC#, (b) exact name, (c) fuzzy.
+ * Follow merged_into chains to the canonical active record.
+ *
+ * If the matched row has is_active=0 and notes contains "merged_into: N",
+ * fetch row N and repeat (cap at depth 5 to prevent loops).
+ *
  * Returns:
- *   ['resolved' => true, 'customer' => row, 'method' => string]
- *   ['resolved' => false, 'fuzzy' => row|null, 'fuzzy_score' => float|null]
+ *   ['ok' => true,  'customer' => row]            — chain resolved to is_active=1
+ *   ['ok' => false, 'reason'  => string]           — chain dead-ended on is_active=0
+ *                                                     with no merged_into pointer
+ */
+function follow_merge_chain(array $row, array $allCustomers, int $depth = 0): array {
+    if ((int)$row['is_active'] === 1) {
+        return ['ok' => true, 'customer' => $row];
+    }
+    if ($depth >= 5) {
+        return ['ok' => false, 'reason' => "merge chain depth exceeded for id={$row['id']}"];
+    }
+    $notes = $row['notes'] ?? '';
+    if (preg_match('/merged_into:\s*(\d+)/', $notes, $m)) {
+        $targetId = (int)$m[1];
+        if (!isset($allCustomers[$targetId])) {
+            return ['ok' => false, 'reason' => "merged_into target id=$targetId not found in ref_customers"];
+        }
+        return follow_merge_chain($allCustomers[$targetId], $allCustomers, $depth + 1);
+    }
+    // is_active=0 with no merged_into pointer — geographic/variant stub, never merged
+    return ['ok' => false, 'reason' => "is_active=0 with no merged_into pointer (id={$row['id']}, name=\"{$row['name']}\")"];
+}
+
+/**
+ * Resolve customer by (a) BC#, (b) exact name, (c) fuzzy.
+ * After any initial match, follow_merge_chain() is called to arrive at the
+ * canonical is_active=1 record.  If the chain dead-ends, the row is treated
+ * as UNMATCHED (surfaces in unmatched-customer bucket — operator must clarify).
+ *
+ * Returns:
+ *   ['resolved' => true,  'customer' => row, 'method' => string,
+ *    'chain_note' => string|null]          — chain_note set when merge-followed
+ *   ['resolved' => false, 'fuzzy' => row|null, 'fuzzy_score' => float|null,
+ *    'dead_end_reason' => string|null]     — dead_end_reason set when chain failed
  */
 function resolve_customer(
     string $clientRaw,
@@ -144,7 +189,17 @@ function resolve_customer(
 ): array {
     // (a) BC number exact
     if ($bcInParens !== null && isset($customersByBc[$bcInParens])) {
-        return ['resolved' => true, 'customer' => $customersByBc[$bcInParens], 'method' => "bc:{$bcInParens}"];
+        $hit = $customersByBc[$bcInParens];
+        $chain = follow_merge_chain($hit, $allCustomers);
+        if (!$chain['ok']) {
+            return ['resolved' => false, 'fuzzy' => null, 'fuzzy_score' => null,
+                    'dead_end_reason' => "bc:{$bcInParens} → " . $chain['reason']];
+        }
+        $chainNote = ((int)$chain['customer']['id'] !== (int)$hit['id'])
+            ? "bc:{$bcInParens} stub#{$hit['id']} → canonical#{$chain['customer']['id']}"
+            : null;
+        return ['resolved' => true, 'customer' => $chain['customer'],
+                'method' => "bc:{$bcInParens}", 'chain_note' => $chainNote];
     }
 
     // (b) Exact name match (normalized)
@@ -154,17 +209,39 @@ function resolve_customer(
 
     $nk = normalize_str($clientRaw);
     if (isset($customersByName[$nk])) {
-        return ['resolved' => true, 'customer' => $customersByName[$nk], 'method' => "name-exact"];
+        $hit = $customersByName[$nk];
+        $chain = follow_merge_chain($hit, $allCustomers);
+        if (!$chain['ok']) {
+            return ['resolved' => false, 'fuzzy' => null, 'fuzzy_score' => null,
+                    'dead_end_reason' => "name-exact stub#{$hit['id']} → " . $chain['reason']];
+        }
+        $chainNote = ((int)$chain['customer']['id'] !== (int)$hit['id'])
+            ? "name-exact stub#{$hit['id']} \"{$hit['name']}\" → canonical#{$chain['customer']['id']} \"{$chain['customer']['name']}\""
+            : null;
+        return ['resolved' => true, 'customer' => $chain['customer'],
+                'method' => "name-exact", 'chain_note' => $chainNote];
     }
     $nkStripped = normalize_str($stripped);
     if ($nkStripped !== $nk && isset($customersByName[$nkStripped])) {
-        return ['resolved' => true, 'customer' => $customersByName[$nkStripped], 'method' => "name-exact-stripped"];
+        $hit = $customersByName[$nkStripped];
+        $chain = follow_merge_chain($hit, $allCustomers);
+        if (!$chain['ok']) {
+            return ['resolved' => false, 'fuzzy' => null, 'fuzzy_score' => null,
+                    'dead_end_reason' => "name-exact-stripped stub#{$hit['id']} → " . $chain['reason']];
+        }
+        $chainNote = ((int)$chain['customer']['id'] !== (int)$hit['id'])
+            ? "name-exact-stripped stub#{$hit['id']} \"{$hit['name']}\" → canonical#{$chain['customer']['id']} \"{$chain['customer']['name']}\""
+            : null;
+        return ['resolved' => true, 'customer' => $chain['customer'],
+                'method' => "name-exact-stripped", 'chain_note' => $chainNote];
     }
 
     // (c) Fuzzy — token-sort similarity (simple word-overlap score)
+    // Only suggest is_active=1 customers in fuzzy (avoid suggesting tombstones)
     $best = null;
     $bestScore = 0.0;
     foreach ($allCustomers as $c) {
+        if ((int)$c['is_active'] !== 1) continue;
         $score = simple_similarity($nk, normalize_str($c['name']));
         if ($score > $bestScore) {
             $bestScore = $score;
@@ -173,12 +250,13 @@ function resolve_customer(
     }
     if ($bestScore >= 0.85) {
         return [
-            'resolved'    => false,
-            'fuzzy'       => $best,
-            'fuzzy_score' => round($bestScore, 3),
+            'resolved'       => false,
+            'fuzzy'          => $best,
+            'fuzzy_score'    => round($bestScore, 3),
+            'dead_end_reason'=> null,
         ];
     }
-    return ['resolved' => false, 'fuzzy' => null, 'fuzzy_score' => null];
+    return ['resolved' => false, 'fuzzy' => null, 'fuzzy_score' => null, 'dead_end_reason' => null];
 }
 
 /**
@@ -280,13 +358,14 @@ foreach ($raw as $row) {
             ];
         } else {
             $buckets['unmatched-customer'][] = [
-                'sheet_row'  => $sheetRow,
-                'date'       => $reqDate,
-                'client_raw' => $clientRaw,
-                'lines_count'=> count($lines),
-                'status'     => resolve_status($statusMarks),
-                'comment'    => $comment,
-                'source_ref' => $sourceRef,
+                'sheet_row'      => $sheetRow,
+                'date'           => $reqDate,
+                'client_raw'     => $clientRaw,
+                'lines_count'    => count($lines),
+                'status'         => resolve_status($statusMarks),
+                'comment'        => $comment,
+                'source_ref'     => $sourceRef,
+                'dead_end_reason'=> $custRes['dead_end_reason'] ?? null,
             ];
         }
         continue;
@@ -295,6 +374,22 @@ foreach ($raw as $row) {
     $customer = $custRes['customer'];
     $customerId = (int)$customer['id'];
     $resolveMethod = $custRes['method'];
+
+    // Safety assertion: final resolved customer must be is_active=1
+    if ((int)$customer['is_active'] !== 1) {
+        // This should never happen if follow_merge_chain() is correct, but guard anyway
+        $buckets['unmatched-customer'][] = [
+            'sheet_row'      => $sheetRow,
+            'date'           => $reqDate,
+            'client_raw'     => $clientRaw,
+            'lines_count'    => count($lines),
+            'status'         => resolve_status($statusMarks),
+            'comment'        => $comment,
+            'source_ref'     => $sourceRef,
+            'dead_end_reason'=> "BUG: resolved to is_active=0 customer id={$customerId} — should not happen",
+        ];
+        continue;
+    }
 
     // Resolve all SKUs
     $resolvedLines = [];
@@ -351,6 +446,7 @@ foreach ($raw as $row) {
         'customer_name'  => $customer['name'],
         'customer_bc'    => $customer['bc_customer_no'],
         'resolve_method' => $resolveMethod,
+        'chain_note'     => $custRes['chain_note'] ?? null,
         'status_final'   => resolve_status($statusMarks),
         'stages_reached' => reached_stages($statusMarks),
         'lines'          => $resolvedLines,
@@ -409,6 +505,7 @@ if (empty($buckets['matched'])) {
             $e['customer_bc'] ?? '—', $e['resolve_method'], $e['status_final'],
             $linesSummary, $tc
         );
+        if ($e['chain_note']) $report[] = "  _chain: " . $e['chain_note'] . "_";
         if ($e['comment']) $report[] = "  _comment: " . $e['comment'] . "_";
     }
 }
@@ -429,6 +526,7 @@ if (empty($buckets['web-overlap-collision'])) {
             $e['status_final'], $linesSummary
         );
         $report[] = "  **⚠ possible dup of web order(s) $webIds — operator decides**";
+        if ($e['chain_note']) $report[] = "  _chain: " . $e['chain_note'] . "_";
         if ($e['comment']) $report[] = "  _comment: " . $e['comment'] . "_";
     }
 }
@@ -463,6 +561,7 @@ if (empty($buckets['unmatched-customer'])) {
             "- r%d | %s | **\"%s\"** | %d line(s) | status=%s",
             $e['sheet_row'], $e['date'], $e['client_raw'], $e['lines_count'], $e['status']
         );
+        if (!empty($e['dead_end_reason'])) $report[] = "  _reason: " . $e['dead_end_reason'] . "_";
         if ($e['comment']) $report[] = "  _comment: " . $e['comment'] . "_";
     }
 }
