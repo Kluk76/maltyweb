@@ -1,0 +1,659 @@
+/**
+ * journal-saisies.css — Journal des saisies
+ *
+ * Scoped under body.journal-saisies.
+ * All colours via canonical tokens from app.css :root.
+ * No inline styles, no hardcoded hex.
+ */
+
+/* ── Page layout ────────────────────────────────────────────────────────── */
+body.journal-saisies .main {
+  align-items: stretch;   /* override .home .main's center — we want full-width */
+  max-width: 900px;
+  margin-inline: auto;
+  width: 100%;
+}
+
+/* ── Page header ─────────────────────────────────────────────────────────── */
+body.journal-saisies .js-header {
+  margin-bottom: 32px;
+}
+
+body.journal-saisies .js-eyebrow {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  margin-bottom: 8px;
+}
+
+body.journal-saisies .js-title {
+  font-family: 'Fraunces', serif;
+  font-size: clamp(1.6rem, 4vw, 2.4rem);
+  font-weight: 300;
+  font-variation-settings: "opsz" 96;
+  color: var(--ink);
+  margin: 0 0 10px;
+  line-height: 1.15;
+}
+
+body.journal-saisies .js-title em {
+  font-style: italic;
+  color: var(--oak);
+}
+
+body.journal-saisies .js-sub {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.95rem;
+  color: var(--ink-mute);
+  max-width: 56ch;
+  line-height: 1.6;
+  margin: 0;
+}
+
+/* ── Filter chips ────────────────────────────────────────────────────────── */
+body.journal-saisies .js-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+body.journal-saisies .js-chip {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.8rem;
+  font-weight: 500;
+  padding: 5px 14px;
+  border-radius: 20px;
+  border: 1.5px solid var(--bg-side);
+  background: transparent;
+  color: var(--ink-mute);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  min-height: 44px;               /* touch target */
+  display: inline-flex;
+  align-items: center;
+}
+
+body.journal-saisies .js-chip:hover {
+  background: var(--bg-elev);
+  color: var(--ink);
+}
+
+body.journal-saisies .js-chip--active {
+  background: var(--ink);
+  color: var(--bg);
+  border-color: var(--ink);
+}
+
+/* ── Live status bar ─────────────────────────────────────────────────────── */
+body.journal-saisies .js-live-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  color: var(--ink-mute);
+  margin-bottom: 16px;
+}
+
+body.journal-saisies .js-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--hop);
+  animation: js-pulse 2.5s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes js-pulse {
+  0%, 100% { opacity: 1;   transform: scale(1); }
+  50%       { opacity: 0.4; transform: scale(0.85); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.journal-saisies .js-live-dot { animation: none; }
+}
+
+/* ── Feed list ───────────────────────────────────────────────────────────── */
+body.journal-saisies .js-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border: 1.5px solid var(--bg-side);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+/* ── Feed row ────────────────────────────────────────────────────────────── */
+body.journal-saisies .js-row {
+  display: flex;
+  align-items: stretch;
+  background: var(--bg);
+  border-bottom: 1px solid var(--bg-side);
+  cursor: pointer;
+  transition: background 0.12s;
+  min-height: 64px;
+}
+
+body.journal-saisies .js-row:last-child {
+  border-bottom: none;
+}
+
+body.journal-saisies .js-row:hover,
+body.journal-saisies .js-row:focus-visible {
+  background: var(--bg-elev);
+  outline: none;
+}
+
+body.journal-saisies .js-row:focus-visible {
+  outline: 2px solid var(--hop);
+  outline-offset: -2px;
+}
+
+/* New-row pulse animation */
+@keyframes js-row-enter {
+  from { background: color-mix(in srgb, var(--hop) 18%, var(--bg)); }
+  to   { background: var(--bg); }
+}
+
+body.journal-saisies .js-row--new {
+  animation: js-row-enter 0.6s ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.journal-saisies .js-row--new { animation: none; }
+}
+
+/* Accent bar (left colour strip per form type) */
+body.journal-saisies .js-row__accent {
+  width: 4px;
+  flex-shrink: 0;
+  background: var(--ink-faint);
+}
+
+body.journal-saisies .js-row--brassage       .js-row__accent { background: var(--hop); }
+body.journal-saisies .js-row--fermentation   .js-row__accent { background: var(--cold); }
+body.journal-saisies .js-row--transfert      .js-row__accent { background: var(--bbt); }
+body.journal-saisies .js-row--conditionnement .js-row__accent { background: var(--ember); }
+
+body.journal-saisies .js-row__body {
+  flex: 1;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+body.journal-saisies .js-row__top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+
+body.journal-saisies .js-row__type {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  white-space: nowrap;
+}
+
+body.journal-saisies .js-row--brassage        .js-row__type { color: var(--hop-deep); }
+body.journal-saisies .js-row--fermentation    .js-row__type { color: var(--cold); }
+body.journal-saisies .js-row--transfert       .js-row__type { color: var(--bbt); }
+body.journal-saisies .js-row--conditionnement .js-row__type { color: var(--ember); }
+
+body.journal-saisies .js-row__time {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  color: var(--ink-faint);
+  flex-shrink: 0;
+}
+
+body.journal-saisies .js-row__label {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+body.journal-saisies .js-row__meta {
+  display: flex;
+  gap: 12px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.8rem;
+  color: var(--ink-mute);
+}
+
+body.journal-saisies .js-row__date {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  color: var(--ink-faint);
+}
+
+body.journal-saisies .js-row__chevron {
+  display: flex;
+  align-items: center;
+  padding: 0 14px 0 8px;
+  color: var(--ink-faint);
+  font-size: 1.2rem;
+  font-weight: 300;
+  flex-shrink: 0;
+  transition: color 0.12s;
+}
+
+body.journal-saisies .js-row:hover .js-row__chevron {
+  color: var(--ink-mute);
+}
+
+/* ── Load more ───────────────────────────────────────────────────────────── */
+body.journal-saisies .js-load-more-wrap {
+  display: flex;
+  justify-content: center;
+  margin-top: 24px;
+  margin-bottom: 40px;
+}
+
+body.journal-saisies .js-load-more {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.875rem;
+  font-weight: 500;
+  padding: 10px 28px;
+  min-height: 44px;
+  border-radius: 22px;
+  border: 1.5px solid var(--bg-side);
+  background: transparent;
+  color: var(--ink-mute);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+body.journal-saisies .js-load-more:hover:not(:disabled) {
+  background: var(--bg-elev);
+  color: var(--ink);
+}
+
+body.journal-saisies .js-load-more:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ── Empty state ─────────────────────────────────────────────────────────── */
+body.journal-saisies .js-empty {
+  text-align: center;
+  padding: 48px 24px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.9rem;
+  color: var(--ink-mute);
+}
+
+/* ── Detail dialog ───────────────────────────────────────────────────────── */
+
+/* Base reset — no display override outside [open] (dialog display trap) */
+body.journal-saisies #js-detail-dialog {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  max-width: none;
+  max-height: none;
+}
+
+body.journal-saisies #js-detail-dialog[open] {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  z-index: 100;
+}
+
+body.journal-saisies #js-detail-dialog::backdrop {
+  background: rgba(30, 18, 5, 0.55);
+}
+
+body.journal-saisies .jsd-inner {
+  background: var(--bg);
+  border: 1.5px solid var(--bg-side);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(30, 18, 5, 0.18);
+  width: min(760px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+body.journal-saisies .jsd-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--bg-side);
+  flex-shrink: 0;
+  gap: 12px;
+}
+
+body.journal-saisies .jsd-title {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+body.journal-saisies .jsd-close {
+  background: none;
+  border: none;
+  font-size: 1.1rem;
+  color: var(--ink-mute);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  min-width: 44px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.12s;
+}
+
+body.journal-saisies .jsd-close:hover {
+  background: var(--bg-elev);
+}
+
+body.journal-saisies .jsd-body {
+  overflow-y: auto;
+  padding: 20px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+body.journal-saisies .jsd-loading,
+body.journal-saisies .jsd-error {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.9rem;
+  color: var(--ink-mute);
+  padding: 24px 0;
+  text-align: center;
+}
+
+body.journal-saisies .jsd-error {
+  color: var(--ember);
+}
+
+/* Meta line */
+body.journal-saisies .jsd-meta {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.85rem;
+  color: var(--ink-mute);
+}
+
+body.journal-saisies .jsd-meta__op {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+body.journal-saisies .jsd-meta__ts {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+}
+
+/* Sections */
+body.journal-saisies .jsd-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+body.journal-saisies .jsd-section__title {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  margin: 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--bg-side);
+}
+
+/* Field grid */
+body.journal-saisies .jsd-fields {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 16px;
+  margin: 0;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.85rem;
+}
+
+body.journal-saisies .jsd-field__key {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  color: var(--ink-mute);
+  white-space: nowrap;
+  padding: 2px 0;
+}
+
+body.journal-saisies .jsd-field__val {
+  color: var(--ink);
+  padding: 2px 0;
+  word-break: break-word;
+}
+
+/* Pre-audit notice */
+body.journal-saisies .jsd-pre-audit {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.85rem;
+  color: var(--ink-mute);
+  font-style: italic;
+  padding: 8px 0;
+}
+
+/* Timeline */
+body.journal-saisies .jsd-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+body.journal-saisies .jsd-timeline__entry {
+  display: flex;
+  gap: 14px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--bg-side);
+  position: relative;
+}
+
+body.journal-saisies .jsd-timeline__entry:last-child {
+  border-bottom: none;
+}
+
+body.journal-saisies .jsd-timeline__node {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--bg-side);
+  border: 2px solid var(--ink-faint);
+  flex-shrink: 0;
+  margin-top: 5px;
+}
+
+body.journal-saisies .jsd-timeline__entry--elevated .jsd-timeline__node {
+  border-color: var(--oak);
+  background: color-mix(in srgb, var(--oak) 20%, var(--bg));
+}
+
+body.journal-saisies .jsd-timeline__entry--outlier .jsd-timeline__node {
+  border-color: var(--ember);
+  background: color-mix(in srgb, var(--ember) 20%, var(--bg));
+}
+
+body.journal-saisies .jsd-timeline__content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+body.journal-saisies .jsd-timeline__hdr {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.82rem;
+}
+
+body.journal-saisies .jsd-badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+body.journal-saisies .jsd-badge--insert {
+  background: color-mix(in srgb, var(--hop) 12%, var(--bg));
+  color: var(--hop-deep);
+}
+
+body.journal-saisies .jsd-badge--update {
+  background: color-mix(in srgb, var(--oak) 12%, var(--bg));
+  color: var(--oak-deep);
+}
+
+body.journal-saisies .jsd-timeline__actor {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+body.journal-saisies .jsd-timeline__ts {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  color: var(--ink-faint);
+  margin-left: auto;
+}
+
+body.journal-saisies .jsd-qc-flag {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  padding: 2px 6px;
+  border-radius: 3px;
+  text-transform: uppercase;
+}
+
+body.journal-saisies .jsd-qc-flag--elevated {
+  background: color-mix(in srgb, var(--oak) 12%, var(--bg));
+  color: var(--oak-deep);
+}
+
+body.journal-saisies .jsd-qc-flag--outlier {
+  background: color-mix(in srgb, var(--ember) 12%, var(--bg));
+  color: var(--ember);
+}
+
+body.journal-saisies .jsd-timeline__comment {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.82rem;
+  color: var(--ink-mute);
+  font-style: italic;
+  margin: 0;
+}
+
+/* Diff */
+body.journal-saisies .jsd-diff {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 12px;
+  margin: 0;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.8rem;
+}
+
+body.journal-saisies .jsd-diff dt {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  color: var(--ink-mute);
+  white-space: nowrap;
+  padding: 2px 0;
+}
+
+body.journal-saisies .jsd-diff dd {
+  padding: 2px 0;
+  margin: 0;
+}
+
+body.journal-saisies .jsd-diff__change {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+body.journal-saisies .jsd-diff__old {
+  color: var(--ink-mute);
+  text-decoration: line-through;
+}
+
+body.journal-saisies .jsd-diff__new {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+body.journal-saisies .jsd-diff__arrow {
+  color: var(--ink-faint);
+  font-size: 0.85rem;
+}
+
+body.journal-saisies .jsd-diff--snapshot .jsd-diff__new {
+  text-decoration: none;
+}
+
+body.journal-saisies .jsd-no-diff {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.8rem;
+  color: var(--ink-faint);
+  font-style: italic;
+  margin: 0;
+}
+
+/* ── Mobile ──────────────────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  body.journal-saisies .main {
+    padding: 32px 16px 48px;
+  }
+
+  body.journal-saisies .js-row__label {
+    font-size: 0.88rem;
+  }
+
+  body.journal-saisies .jsd-inner {
+    width: calc(100vw - 16px);
+    max-height: calc(100vh - 24px);
+  }
+
+  body.journal-saisies .jsd-fields {
+    grid-template-columns: 1fr;
+  }
+}
