@@ -1005,7 +1005,9 @@ $editOrder    = null;
 $editLines    = [];
 
 // Stock PF view
-$fgStock = null; // filled below if view=stock
+$fgStock            = null; // filled below if view=stock
+$fgLocationSnapshot = null; // filled below if view=stock
+$fgStockForCmds     = null; // filled below if view=commandes (for pinned summary)
 
 // Inventaire FG multi-site view
 $stSitesRows = []; // filled below if view=stocktake
@@ -1238,7 +1240,8 @@ try {
     }
 
     if ($view === 'stock') {
-        $fgStock = fg_stock_compute($pdo);
+        $fgStock            = fg_stock_compute($pdo);
+        $fgLocationSnapshot = fg_stock_location_snapshot($pdo);
     }
 
     if ($view === 'stocktake') {
@@ -1455,10 +1458,14 @@ if ($view === 'form') {
 
 // ── Live stock map for Commandes view — injected for per-order risk flags ────
 // Reuses fg_stock_compute exactly like the form view. On failure map stays '{}'.
+// Also powers the pinned summary strip ($fgStockForCmds, set here to avoid a
+// second fg_stock_compute call on the commandes view).
 $cmdStockMapJson = '{}';
 if ($view === 'commandes') {
     try {
         $fgStockData2 = fg_stock_compute($pdo);
+        // Share with the pinned summary strip (avoids a duplicate call)
+        $fgStockForCmds = $fgStockData2;
         $cmdStockMap  = [];
         foreach ($fgStockData2['rows'] as $sr) {
             $cmdStockMap[(int) $sr['sku_id']] = [
@@ -1660,6 +1667,20 @@ function exp_fmt_date(?string $d): string
     return $parts[2] . '/' . $parts[1] . '/' . $parts[0];
 }
 
+/**
+ * Human label for site_type — used by both stock and stocktake views.
+ */
+function exp_site_type_label(string $siteType): string
+{
+    return match ($siteType) {
+        'production'  => 'Production',
+        'warehouse'   => 'Logistique',
+        'pos'         => 'Taproom',
+        'consignment' => 'Consignation',
+        default       => ucfirst($siteType),
+    };
+}
+
 $isReadOnly = $editOrder !== null
     && in_array((string) $editOrder['status'], ['shipped', 'cancelled'], true);
 ?><!doctype html>
@@ -1765,6 +1786,43 @@ $isReadOnly = $editOrder !== null
   <!-- ── Range notice ──────────────────────────────────────────────────────── -->
   <?php if ($cmdRangeNotice !== ''): ?>
     <div class="db-flash db-flash--warn"><?= htmlspecialchars($cmdRangeNotice) ?></div>
+  <?php endif ?>
+
+  <!-- ── FG stock pinned summary strip ───────────────────────────────────── -->
+  <?php
+  if ($fgStockForCmds !== null && !empty($fgStockForCmds['rows'])):
+      $cmdFgPhysique = 0;
+      $cmdFgWeekQty  = 0;
+      $cmdFgFutQty   = 0;
+      foreach ($fgStockForCmds['rows'] as $fsr) {
+          $cmdFgPhysique += $fsr['physique'];
+          $cmdFgWeekQty  += $fsr['open_week_qty'];
+          $cmdFgFutQty   += $fsr['open_total_qty'];
+      }
+      $cmdFgDiSem = $cmdFgPhysique - $cmdFgWeekQty;
+      $cmdFgDiFut = $cmdFgPhysique - $cmdFgFutQty;
+  ?>
+  <div class="exp-cmd-stock-strip" role="region" aria-label="Aperçu stock PF">
+    <a href="/modules/expeditions.php?view=stock" class="exp-cmd-stock-strip__link"
+       title="Voir le tableau Stock PF complet" aria-label="Voir Stock PF">
+      <span class="exp-cmd-stock-strip__icon" aria-hidden="true">📦</span>
+      <span class="exp-cmd-stock-strip__label">Stock PF</span>
+    </a>
+    <div class="exp-cmd-stock-strip__kpi">
+      <span class="exp-cmd-stock-strip__val"><?= number_format($cmdFgPhysique) ?></span>
+      <span class="exp-cmd-stock-strip__sub">physique</span>
+    </div>
+    <div class="exp-cmd-stock-strip__sep" aria-hidden="true"></div>
+    <div class="exp-cmd-stock-strip__kpi">
+      <span class="exp-cmd-stock-strip__val<?= $cmdFgDiSem < 0 ? ' exp-cmd-stock-strip__val--neg' : '' ?>"><?= number_format($cmdFgDiSem) ?></span>
+      <span class="exp-cmd-stock-strip__sub">dispo sem. courante<?= $cmdFgDiSem < 0 ? ' ⚠' : '' ?></span>
+    </div>
+    <div class="exp-cmd-stock-strip__sep" aria-hidden="true"></div>
+    <div class="exp-cmd-stock-strip__kpi">
+      <span class="exp-cmd-stock-strip__val<?= $cmdFgDiFut < 0 ? ' exp-cmd-stock-strip__val--neg' : '' ?>"><?= number_format($cmdFgDiFut) ?></span>
+      <span class="exp-cmd-stock-strip__sub">dispo toutes cmdes<?= $cmdFgDiFut < 0 ? ' ⚠' : '' ?></span>
+    </div>
+  </div>
   <?php endif ?>
 
   <!-- ── Period toolbar ────────────────────────────────────────────────────── -->
@@ -2527,37 +2585,46 @@ $isReadOnly = $editOrder !== null
       return number_format($s, 1);
   }
 
-  // ── Family grouping — derived from format values in data ─────────────────
-  // Display order: Bot (bottles) first, then Can, Can33, Keg, Cuve, then others.
-  // These are format values from ref_skus — hardcoding display ORDER is
-  // acceptable per spec; hardcoding SKU names is not.
-  $stockFormatOrder = [
+  // ── Family grouping order — display_family (multipack aware) ─────────────
+  // Hardcoding display ORDER is acceptable per spec; hardcoding SKU names is not.
+  $stockFamilyOrder = [
       'Bot'            => 0,
       'Can'            => 1,
       'Can33'          => 2,
       'Keg'            => 3,
-      'Cuve de service'=> 4,
+      'multipack'      => 4,
+      'Cuve de service'=> 5,
   ];
 
   $stockRows   = $fgStock['rows'] ?? [];
   $anchorMonth = $fgStock['anchor_month'] ?? null;
   $anchorDate  = $fgStock['anchor_date']  ?? null;
 
-  // Collect distinct formats for family chips
-  $presentFormats = [];
-  $hasAlerts      = false;
+  // Collect distinct display_family values for filter chips
+  $presentFamilies = [];
+  $hasAlerts       = false;
   foreach ($stockRows as $sr) {
-      $presentFormats[$sr['format']] = true;
+      $fam = $sr['display_family'] ?? $sr['format'];
+      $presentFamilies[$fam] = true;
       if ($sr['flag_survendu'] || $sr['flag_low_stock']) $hasAlerts = true;
   }
-  uksort($presentFormats, function ($a, $b) use ($stockFormatOrder) {
-      $oa = $stockFormatOrder[$a] ?? 99;
-      $ob = $stockFormatOrder[$b] ?? 99;
+  uksort($presentFamilies, function ($a, $b) use ($stockFamilyOrder) {
+      $oa = $stockFamilyOrder[$a] ?? 99;
+      $ob = $stockFamilyOrder[$b] ?? 99;
       return $oa <=> $ob;
   });
 
-  // Active filter (JS-driven; PHP emits the data, JS handles visibility)
-  // Pass selected format + show_dormant to JS via a data attribute or window var.
+  // ── Totals for the TOTAL strip (computed from all rows) ───────────────────
+  $stockTotalPhysique = 0.0;
+  $stockTotalWeekQty  = 0;
+  $stockTotalFutQty   = 0;
+  foreach ($stockRows as $sr) {
+      $stockTotalPhysique += $sr['physique'];
+      $stockTotalWeekQty  += $sr['open_week_qty'];
+      $stockTotalFutQty   += $sr['open_total_qty'];
+  }
+  $stockDiSemaine = $stockTotalPhysique - $stockTotalWeekQty;
+  $stockDiFutur   = $stockTotalPhysique - $stockTotalFutQty;
   ?>
 
   <!-- ── Stock header ────────────────────────────────────────────────────── -->
@@ -2568,9 +2635,9 @@ $isReadOnly = $editOrder !== null
         STOCK PF <span class="exp-stock-header__live">live</span>
       </div>
       <div class="exp-stock-header__anchor">
-        ancre&nbsp;: inventaire
-        <strong><?= htmlspecialchars($anchorMonth) ?></strong>
-        (<?= exp_fmt_date($anchorDate) ?>)
+        ancre&nbsp;: comptage du
+        <strong><?= exp_fmt_date($anchorDate) ?></strong>
+        (<?= htmlspecialchars($anchorMonth) ?>)
         <span class="exp-stock-header__anchor-note">
           — production et expéditions depuis l'ancre
         </span>
@@ -2578,26 +2645,102 @@ $isReadOnly = $editOrder !== null
     </div>
   </div>
 
+  <!-- ── 4 Location cards ────────────────────────────────────────────────── -->
+  <?php
+  $locSnap    = $fgLocationSnapshot ?? ['anchor_date' => $anchorDate, 'locations' => []];
+  $locByIdArr = [];
+  foreach ($locSnap['locations'] as $lc) {
+      $locByIdArr[$lc['id']] = $lc;
+  }
+  // Date-of-week helper for freshness label
+  $stNowForStock = new DateTimeImmutable(date('Y-m-d'));
+  $stDowForStock = (int) $stNowForStock->format('N');
+  $stMondayStock = $stNowForStock->modify('-' . ($stDowForStock - 1) . ' days')->format('Y-m-d');
+  ?>
+  <div class="exp-loc-cards" role="region" aria-label="Stock par site">
+    <?php foreach ($locSnap['locations'] as $lc): ?>
+    <?php
+      $lcLastCounted = $lc['last_counted'];
+      if ($lcLastCounted === null) {
+          $freshChip = '<span class="exp-st-fresh-chip exp-st-fresh-chip--missing">⚠ pas encore compté</span>';
+      } elseif ($lcLastCounted >= $stMondayStock) {
+          $d = new DateTimeImmutable($lcLastCounted);
+          $freshChip = '<span class="exp-st-fresh-chip exp-st-fresh-chip--ok">✓ compté lun. ' . $d->format('d/m') . '</span>';
+      } else {
+          $d = new DateTimeImmutable($lcLastCounted);
+          $freshChip = '<span class="exp-st-fresh-chip exp-st-fresh-chip--warn">⚠ compté ' . $d->format('d/m') . '</span>';
+      }
+      $isUncounted = $lcLastCounted === null;
+    ?>
+    <div class="exp-loc-card<?= $isUncounted ? ' exp-loc-card--uncounted' : '' ?>">
+      <div class="exp-loc-card__header">
+        <span class="exp-loc-card__name"><?= htmlspecialchars($lc['name']) ?></span>
+        <span class="exp-loc-card__type"><?= htmlspecialchars(exp_site_type_label($lc['site_type'])) ?></span>
+      </div>
+      <div class="exp-loc-card__fresh"><?= $freshChip ?></div>
+      <?php if (!$isUncounted): ?>
+      <div class="exp-loc-card__totals">
+        <div class="exp-loc-card__hl"><?= number_format($lc['total_hl'], 1) ?> <span class="exp-loc-card__hl-unit">HL</span></div>
+        <div class="exp-loc-card__units"><?= number_format($lc['total_units']) ?> <span class="exp-loc-card__units-label">unités</span></div>
+      </div>
+      <?php else: ?>
+      <div class="exp-loc-card__totals exp-loc-card__totals--empty">
+        <div class="exp-loc-card__hl exp-loc-card__hl--dash">—</div>
+        <div class="exp-loc-card__units exp-loc-card__units--empty">0 unités</div>
+      </div>
+      <?php endif ?>
+    </div>
+    <?php endforeach ?>
+  </div>
+
+  <!-- ── TOTAL strip ─────────────────────────────────────────────────────── -->
+  <div class="exp-stock-total-strip" role="region" aria-label="Totaux stock PF">
+    <div class="exp-stock-total-kpi">
+      <span class="exp-stock-total-kpi__label">Physique total</span>
+      <span class="exp-stock-total-kpi__val"><?= number_format($stockTotalPhysique) ?></span>
+    </div>
+    <div class="exp-stock-total-sep" aria-hidden="true"></div>
+    <div class="exp-stock-total-kpi<?= $stockDiSemaine < 0 ? ' exp-stock-total-kpi--neg' : '' ?>">
+      <span class="exp-stock-total-kpi__label">
+        − commandes sem. courante
+        <?php if ($stockDiSemaine < 0): ?>
+          <span class="exp-stock-total-kpi__flag" aria-label="Survendu">⚠ survendu</span>
+        <?php endif ?>
+      </span>
+      <span class="exp-stock-total-kpi__val"><?= number_format($stockDiSemaine) ?></span>
+    </div>
+    <div class="exp-stock-total-sep" aria-hidden="true"></div>
+    <div class="exp-stock-total-kpi<?= $stockDiFutur < 0 ? ' exp-stock-total-kpi--neg' : '' ?>">
+      <span class="exp-stock-total-kpi__label">
+        − toutes commandes ouvertes
+        <?php if ($stockDiFutur < 0): ?>
+          <span class="exp-stock-total-kpi__flag" aria-label="Survendu">⚠ survendu</span>
+        <?php endif ?>
+      </span>
+      <span class="exp-stock-total-kpi__val"><?= number_format($stockDiFutur) ?></span>
+    </div>
+  </div>
+
   <!-- ── Family filter chips + alerts toggle ─────────────────────────────── -->
   <div class="exp-stock-filters" role="toolbar" aria-label="Filtres famille">
     <button type="button"
             class="exp-stock-chip exp-stock-chip--active"
-            data-filter-format="all"
+            data-filter-family="all"
             aria-pressed="true">Tous</button>
-    <?php foreach (array_keys($presentFormats) as $fmt): ?>
+    <?php foreach (array_keys($presentFamilies) as $fam): ?>
     <button type="button"
             class="exp-stock-chip"
-            data-filter-format="<?= htmlspecialchars($fmt) ?>"
+            data-filter-family="<?= htmlspecialchars($fam) ?>"
             aria-pressed="false">
-      <?= htmlspecialchars($fmt) ?>
+      <?= htmlspecialchars(exp_family_label(exp_format_family($fam))) ?>
     </button>
     <?php endforeach ?>
     <?php if ($hasAlerts): ?>
     <button type="button"
             class="exp-stock-chip exp-stock-chip--alert"
-            data-filter-format="alerts"
+            data-filter-family="alerts"
             aria-pressed="false">
-      ⚠ alertes
+      <span aria-hidden="true">⚠</span> alertes
     </button>
     <?php endif ?>
     <label class="exp-stock-dormant-toggle">
@@ -2610,7 +2753,31 @@ $isReadOnly = $editOrder !== null
     </label>
   </div>
 
-  <!-- ── Stock table ─────────────────────────────────────────────────────── -->
+  <!-- ── Stock table (grouped by display_family) ────────────────────────── -->
+  <?php
+  // Sort rows: by family order then sku_code
+  usort($stockRows, function ($a, $b) use ($stockFamilyOrder) {
+      $famA = $a['display_family'] ?? $a['format'];
+      $famB = $b['display_family'] ?? $b['format'];
+      $oa   = $stockFamilyOrder[$famA] ?? 99;
+      $ob   = $stockFamilyOrder[$famB] ?? 99;
+      if ($oa !== $ob) return $oa <=> $ob;
+      return strcmp($a['sku_code'], $b['sku_code']);
+  });
+
+  // Group into families for section headers
+  $stockByFamily = [];
+  foreach ($stockRows as $sr) {
+      $fam = $sr['display_family'] ?? $sr['format'];
+      $stockByFamily[$fam][] = $sr;
+  }
+  // Family order for grouped display
+  $stockFamilyKeys = array_unique(array_merge(
+      array_intersect(array_keys($stockFamilyOrder), array_keys($stockByFamily)),
+      array_diff(array_keys($stockByFamily), array_keys($stockFamilyOrder))
+  ));
+  ?>
+
   <div class="exp-stock-table-wrap">
     <table class="exp-stock-table" id="exp-stock-table">
       <thead>
@@ -2624,22 +2791,26 @@ $isReadOnly = $editOrder !== null
         </tr>
       </thead>
       <tbody id="exp-stock-tbody">
+      <?php foreach ($stockFamilyKeys as $groupFam):
+        if (empty($stockByFamily[$groupFam])) continue;
+        $groupLabel = exp_family_label(exp_format_family($groupFam));
+        $groupCount = count($stockByFamily[$groupFam]);
+      ?>
+        <tr class="exp-stock-family-header" data-family-group="<?= htmlspecialchars($groupFam) ?>" aria-hidden="true">
+          <td colspan="6" class="exp-stock-family-header__cell">
+            <span class="exp-stock-family-header__label"><?= htmlspecialchars($groupLabel) ?></span>
+            <span class="exp-stock-family-header__count"><?= $groupCount ?> SKU<?= $groupCount !== 1 ? 's' : '' ?></span>
+          </td>
+        </tr>
       <?php
-      // Sort: by format order then sku_code (default)
-      usort($stockRows, function ($a, $b) use ($stockFormatOrder) {
-          $fa = $stockFormatOrder[$a['format']] ?? 99;
-          $fb = $stockFormatOrder[$b['format']] ?? 99;
-          if ($fa !== $fb) return $fa <=> $fb;
-          return strcmp($a['sku_code'], $b['sku_code']);
-      });
-
-      foreach ($stockRows as $sr):
+        foreach ($stockByFamily[$groupFam] as $sr):
           $isDormant   = $sr['flag_dormant'];
           $isSurvendu  = $sr['flag_survendu'];
           $isLowStock  = $sr['flag_low_stock'];
           $hasFlag     = $isSurvendu || $isLowStock;
           $physique    = $sr['physique'];
           $hlPhysique  = round($physique * $sr['hl_per_unit'], 2);
+          $rowFam      = $sr['display_family'] ?? $sr['format'];
 
           $rowClass = 'exp-stock-row';
           if ($isDormant)  $rowClass .= ' exp-stock-row--dormant';
@@ -2648,142 +2819,161 @@ $isReadOnly = $editOrder !== null
 
           // Flags text
           $flags = [];
-          if ($isSurvendu) $flags[] = '<span class="exp-stock-flag exp-stock-flag--survendu" title="Stock négatif avec commandes futures">⚠ survendu</span>';
-          if ($isLowStock) $flags[] = '<span class="exp-stock-flag exp-stock-flag--low" title="Moins de 2 semaines de stock">⚠ &lt;2 sem</span>';
+          if ($isSurvendu) $flags[] = '<span class="exp-stock-flag exp-stock-flag--survendu" title="Stock négatif avec commandes futures"><span aria-hidden="true">⚠</span> survendu</span>';
+          if ($isLowStock) $flags[] = '<span class="exp-stock-flag exp-stock-flag--low" title="Moins de 2 semaines de stock"><span aria-hidden="true">⚠</span> &lt;2 sem</span>';
           if ($isDormant)  $flags[] = '<span class="exp-stock-flag exp-stock-flag--dormant">inactif</span>';
 
           // Live semaine / futur: color coding
           $semClass  = $sr['live_semaine'] < 0  ? ' exp-st-neg' : '';
           $futClass  = $sr['live_futur']   < 0  ? ' exp-st-neg' : '';
-          $semVal    = exp_fmt_semaines($sr['semaines_stock'], $physique);
+          $semVal    = exp_fmt_semaines($sr['semaines_stock'], (int) round($physique));
           $semClass2 = ($sr['semaines_stock'] !== null && $sr['semaines_stock'] < 2.0 && $physique > 0) ? ' exp-st-low' : '';
+
+          // Per-location mini-breakdown from snapshot (nice-to-have)
+          $locBreakdown = '';
+          if ($fgLocationSnapshot !== null) {
+              $parts = [];
+              foreach ($fgLocationSnapshot['locations'] as $lc) {
+                  foreach ($lc['rows'] as $lr) {
+                      if ($lr['sku_id'] === (int) $sr['sku_id'] && $lr['qty'] > 0) {
+                          $parts[] = htmlspecialchars(exp_site_type_label($lc['site_type'])[0]) . ':' . number_format($lr['qty']);
+                      }
+                  }
+              }
+              if (!empty($parts)) {
+                  $locBreakdown = '<span class="exp-st-loc-breakdown">' . implode(' ', $parts) . '</span>';
+              }
+          }
       ?>
-        <tr class="<?= $rowClass ?>"
-            data-format="<?= htmlspecialchars($sr['format']) ?>"
-            data-has-flag="<?= $hasFlag ? '1' : '0' ?>"
-            data-dormant="<?= $isDormant ? '1' : '0' ?>"
-            data-sku-id="<?= (int) $sr['sku_id'] ?>"
-            aria-expanded="false">
-          <td class="exp-st-col-sku">
-            <span class="exp-st-sku-code"><?= htmlspecialchars($sr['sku_code']) ?></span>
-            <span class="exp-st-sku-hl"><?= number_format($hlPhysique, 2) ?> HL</span>
-          </td>
-          <td class="exp-st-col-physique">
-            <span class="exp-st-num"><?= number_format($physique) ?></span>
-          </td>
-          <td class="exp-st-col-semcur">
-            <span class="exp-st-num<?= $semClass ?>"><?= number_format($sr['live_semaine']) ?></span>
-          </td>
-          <td class="exp-st-col-futur">
-            <span class="exp-st-num<?= $futClass ?>"><?= number_format($sr['live_futur']) ?></span>
-          </td>
-          <td class="exp-st-col-sem">
-            <span class="exp-st-num<?= $semClass2 ?>"><?= htmlspecialchars($semVal) ?></span>
-          </td>
-          <td class="exp-st-col-flag"><?= implode(' ', $flags) ?></td>
-        </tr>
-        <!-- Drill-down ledger (hidden by default, toggled by JS) -->
-        <tr class="exp-stock-drill" id="exp-drill-<?= (int) $sr['sku_id'] ?>" hidden>
-          <td colspan="6">
-            <div class="exp-stock-ledger">
-              <div class="exp-stock-ledger__title">
-                Détail — <?= htmlspecialchars($sr['sku_code']) ?>
+          <tr class="<?= $rowClass ?>"
+              data-family="<?= htmlspecialchars($rowFam) ?>"
+              data-format="<?= htmlspecialchars($sr['format']) ?>"
+              data-has-flag="<?= $hasFlag ? '1' : '0' ?>"
+              data-dormant="<?= $isDormant ? '1' : '0' ?>"
+              data-sku-id="<?= (int) $sr['sku_id'] ?>"
+              aria-expanded="false">
+            <td class="exp-st-col-sku">
+              <span class="exp-st-sku-code"><?= htmlspecialchars($sr['sku_code']) ?></span>
+              <span class="exp-st-sku-hl"><?= number_format($hlPhysique, 2) ?> HL</span>
+              <?= $locBreakdown ?>
+            </td>
+            <td class="exp-st-col-physique">
+              <span class="exp-st-num"><?= number_format($physique) ?></span>
+            </td>
+            <td class="exp-st-col-semcur">
+              <span class="exp-st-num<?= $semClass ?>"><?= number_format($sr['live_semaine']) ?></span>
+            </td>
+            <td class="exp-st-col-futur">
+              <span class="exp-st-num<?= $futClass ?>"><?= number_format($sr['live_futur']) ?></span>
+            </td>
+            <td class="exp-st-col-sem">
+              <span class="exp-st-num<?= $semClass2 ?>"><?= htmlspecialchars($semVal) ?></span>
+            </td>
+            <td class="exp-st-col-flag"><?= implode(' ', $flags) ?></td>
+          </tr>
+          <!-- Drill-down ledger (hidden by default, toggled by JS) -->
+          <tr class="exp-stock-drill" id="exp-drill-<?= (int) $sr['sku_id'] ?>" hidden>
+            <td colspan="6">
+              <div class="exp-stock-ledger">
+                <div class="exp-stock-ledger__title">
+                  Détail — <?= htmlspecialchars($sr['sku_code']) ?>
+                </div>
+                <table class="exp-ledger-table">
+                  <tbody>
+                    <tr class="exp-ledger-anchor">
+                      <td class="exp-ledger-label">Inventaire <?= htmlspecialchars($anchorMonth) ?> (<?= exp_fmt_date($anchorDate) ?>)</td>
+                      <td class="exp-ledger-qty exp-ledger-qty--anchor">
+                        <?= number_format($sr['anchor_qty']) ?>
+                      </td>
+                      <td class="exp-ledger-meta">ancre Σ toutes locations</td>
+                    </tr>
+                    <tr class="exp-ledger-prod">
+                      <td class="exp-ledger-label">Production (unités SKU)</td>
+                      <td class="exp-ledger-qty exp-ledger-qty--plus">
+                        +<?= number_format($sr['prod_qty'], 2) ?>
+                      </td>
+                      <td class="exp-ledger-meta">
+                        <?= $sr['prod_events'] ?> run<?= $sr['prod_events'] !== 1 ? 's' : '' ?>
+                        · event_date > <?= exp_fmt_date($anchorDate) ?>
+                      </td>
+                    </tr>
+                    <?php if ($sr['expedie_qty'] > 0 || $sr['expedie_orders'] > 0): ?>
+                    <tr class="exp-ledger-exp">
+                      <td class="exp-ledger-label">Expédié (commandes)</td>
+                      <td class="exp-ledger-qty exp-ledger-qty--minus">
+                        −<?= number_format($sr['expedie_qty']) ?>
+                      </td>
+                      <td class="exp-ledger-meta">
+                        <?= $sr['expedie_orders'] ?> commande<?= $sr['expedie_orders'] !== 1 ? 's' : '' ?> livrée<?= $sr['expedie_orders'] !== 1 ? 's' : '' ?>
+                      </td>
+                    </tr>
+                    <?php endif ?>
+                    <?php if ($sr['eshop_qty'] > 0 || $sr['eshop_orders'] > 0): ?>
+                    <tr class="exp-ledger-eshop">
+                      <td class="exp-ledger-label">Eshop (auto)</td>
+                      <td class="exp-ledger-qty exp-ledger-qty--minus">
+                        −<?= number_format($sr['eshop_qty']) ?>
+                      </td>
+                      <td class="exp-ledger-meta">
+                        <?= $sr['eshop_orders'] ?> ligne<?= $sr['eshop_orders'] !== 1 ? 's' : '' ?>
+                      </td>
+                    </tr>
+                    <?php endif ?>
+                    <?php if ($sr['taproom_qty'] > 0 || $sr['taproom_rows'] > 0): ?>
+                    <tr class="exp-ledger-tap">
+                      <td class="exp-ledger-label">Taproom (auto)</td>
+                      <td class="exp-ledger-qty exp-ledger-qty--minus">
+                        −<?= number_format($sr['taproom_qty']) ?>
+                      </td>
+                      <td class="exp-ledger-meta">
+                        <?= $sr['taproom_rows'] ?> ligne<?= $sr['taproom_rows'] !== 1 ? 's' : '' ?> inv_sales_bc
+                      </td>
+                    </tr>
+                    <?php endif ?>
+                    <tr class="exp-ledger-physique">
+                      <td class="exp-ledger-label exp-ledger-label--total">Physique</td>
+                      <td class="exp-ledger-qty exp-ledger-qty--total" colspan="2">
+                        = <?= number_format($physique) ?>
+                        <span class="exp-ledger-hl">(<?= number_format($hlPhysique, 2) ?> HL)</span>
+                      </td>
+                    </tr>
+                    <?php if ($sr['open_week_qty'] > 0 || $sr['open_total_qty'] > 0): ?>
+                    <tr class="exp-ledger-sep"><td colspan="3"></td></tr>
+                    <?php if ($sr['open_week_qty'] > 0): ?>
+                    <tr class="exp-ledger-open">
+                      <td class="exp-ledger-label">Commandes ouvertes (sem. courante)</td>
+                      <td class="exp-ledger-qty exp-ledger-qty--open">
+                        −<?= number_format($sr['open_week_qty']) ?>
+                      </td>
+                      <td class="exp-ledger-meta">→ sem. courante : <?= number_format($sr['live_semaine']) ?></td>
+                    </tr>
+                    <?php endif ?>
+                    <?php if ($sr['open_total_qty'] !== $sr['open_week_qty']): ?>
+                    <tr class="exp-ledger-open">
+                      <td class="exp-ledger-label">Toutes commandes ouvertes</td>
+                      <td class="exp-ledger-qty exp-ledger-qty--open">
+                        −<?= number_format($sr['open_total_qty']) ?>
+                      </td>
+                      <td class="exp-ledger-meta">→ avec futur : <?= number_format($sr['live_futur']) ?></td>
+                    </tr>
+                    <?php endif ?>
+                    <?php endif ?>
+                    <?php if ($sr['velocity_weekly'] !== null): ?>
+                    <tr class="exp-ledger-sep"><td colspan="3"></td></tr>
+                    <tr class="exp-ledger-vel">
+                      <td class="exp-ledger-label">Vélocité (moy. 8 sem.)</td>
+                      <td class="exp-ledger-qty">
+                        <?= number_format($sr['velocity_weekly'], 1) ?>/sem
+                      </td>
+                      <td class="exp-ledger-meta">→ <?= htmlspecialchars(exp_fmt_semaines($sr['semaines_stock'], (int) round($physique))) ?> sem. de stock</td>
+                    </tr>
+                    <?php endif ?>
+                  </tbody>
+                </table>
               </div>
-              <table class="exp-ledger-table">
-                <tbody>
-                  <tr class="exp-ledger-anchor">
-                    <td class="exp-ledger-label">Inventaire <?= htmlspecialchars($anchorMonth) ?></td>
-                    <td class="exp-ledger-qty exp-ledger-qty--anchor">
-                      <?= number_format($sr['anchor_qty']) ?>
-                    </td>
-                    <td class="exp-ledger-meta">ancre</td>
-                  </tr>
-                  <tr class="exp-ledger-prod">
-                    <td class="exp-ledger-label">Production (unités SKU)</td>
-                    <td class="exp-ledger-qty exp-ledger-qty--plus">
-                      +<?= number_format($sr['prod_qty'], 2) ?>
-                    </td>
-                    <td class="exp-ledger-meta">
-                      <?= $sr['prod_events'] ?> run<?= $sr['prod_events'] !== 1 ? 's' : '' ?>
-                      · event_date > <?= exp_fmt_date($anchorDate) ?>
-                    </td>
-                  </tr>
-                  <?php if ($sr['expedie_qty'] > 0 || $sr['expedie_orders'] > 0): ?>
-                  <tr class="exp-ledger-exp">
-                    <td class="exp-ledger-label">Expédié (commandes)</td>
-                    <td class="exp-ledger-qty exp-ledger-qty--minus">
-                      −<?= number_format($sr['expedie_qty']) ?>
-                    </td>
-                    <td class="exp-ledger-meta">
-                      <?= $sr['expedie_orders'] ?> commande<?= $sr['expedie_orders'] !== 1 ? 's' : '' ?> livrée<?= $sr['expedie_orders'] !== 1 ? 's' : '' ?>
-                    </td>
-                  </tr>
-                  <?php endif ?>
-                  <?php if ($sr['eshop_qty'] > 0 || $sr['eshop_orders'] > 0): ?>
-                  <tr class="exp-ledger-eshop">
-                    <td class="exp-ledger-label">Eshop (auto)</td>
-                    <td class="exp-ledger-qty exp-ledger-qty--minus">
-                      −<?= number_format($sr['eshop_qty']) ?>
-                    </td>
-                    <td class="exp-ledger-meta">
-                      <?= $sr['eshop_orders'] ?> ligne<?= $sr['eshop_orders'] !== 1 ? 's' : '' ?>
-                    </td>
-                  </tr>
-                  <?php endif ?>
-                  <?php if ($sr['taproom_qty'] > 0 || $sr['taproom_rows'] > 0): ?>
-                  <tr class="exp-ledger-tap">
-                    <td class="exp-ledger-label">Taproom (auto)</td>
-                    <td class="exp-ledger-qty exp-ledger-qty--minus">
-                      −<?= number_format($sr['taproom_qty']) ?>
-                    </td>
-                    <td class="exp-ledger-meta">
-                      <?= $sr['taproom_rows'] ?> ligne<?= $sr['taproom_rows'] !== 1 ? 's' : '' ?> inv_sales_bc
-                    </td>
-                  </tr>
-                  <?php endif ?>
-                  <tr class="exp-ledger-physique">
-                    <td class="exp-ledger-label exp-ledger-label--total">Physique</td>
-                    <td class="exp-ledger-qty exp-ledger-qty--total" colspan="2">
-                      = <?= number_format($physique) ?>
-                      <span class="exp-ledger-hl">(<?= number_format($hlPhysique, 2) ?> HL)</span>
-                    </td>
-                  </tr>
-                  <?php if ($sr['open_week_qty'] > 0 || $sr['open_total_qty'] > 0): ?>
-                  <tr class="exp-ledger-sep"><td colspan="3"></td></tr>
-                  <?php if ($sr['open_week_qty'] > 0): ?>
-                  <tr class="exp-ledger-open">
-                    <td class="exp-ledger-label">Commandes ouvertes (sem. courante)</td>
-                    <td class="exp-ledger-qty exp-ledger-qty--open">
-                      −<?= number_format($sr['open_week_qty']) ?>
-                    </td>
-                    <td class="exp-ledger-meta">→ sem. courante : <?= number_format($sr['live_semaine']) ?></td>
-                  </tr>
-                  <?php endif ?>
-                  <?php if ($sr['open_total_qty'] !== $sr['open_week_qty']): ?>
-                  <tr class="exp-ledger-open">
-                    <td class="exp-ledger-label">Toutes commandes ouvertes</td>
-                    <td class="exp-ledger-qty exp-ledger-qty--open">
-                      −<?= number_format($sr['open_total_qty']) ?>
-                    </td>
-                    <td class="exp-ledger-meta">→ avec futur : <?= number_format($sr['live_futur']) ?></td>
-                  </tr>
-                  <?php endif ?>
-                  <?php endif ?>
-                  <?php if ($sr['velocity_weekly'] !== null): ?>
-                  <tr class="exp-ledger-sep"><td colspan="3"></td></tr>
-                  <tr class="exp-ledger-vel">
-                    <td class="exp-ledger-label">Vélocité (moy. 8 sem.)</td>
-                    <td class="exp-ledger-qty">
-                      <?= number_format($sr['velocity_weekly'], 1) ?>/sem
-                    </td>
-                    <td class="exp-ledger-meta">→ <?= htmlspecialchars(exp_fmt_semaines($sr['semaines_stock'], $physique)) ?> sem. de stock</td>
-                  </tr>
-                  <?php endif ?>
-                </tbody>
-              </table>
-            </div>
-          </td>
-        </tr>
+            </td>
+          </tr>
+      <?php endforeach ?>
       <?php endforeach ?>
       </tbody>
     </table>
@@ -2839,17 +3029,7 @@ $isReadOnly = $editOrder !== null
       $stSelLocId = (int) $stSelLoc['id'];
   }
 
-  // ── Site type human labels ─────────────────────────────────────────────────
-  function exp_site_type_label(string $siteType): string
-  {
-      return match ($siteType) {
-          'production'  => 'Production',
-          'warehouse'   => 'Logistique',
-          'pos'         => 'Taproom',
-          'consignment' => 'Consignation',
-          default       => ucfirst($siteType),
-      };
-  }
+  // exp_site_type_label() is defined globally above (used by both stock + stocktake views).
 
   // ── Monday freshness computation ──────────────────────────────────────────
   // Current ISO week's Monday

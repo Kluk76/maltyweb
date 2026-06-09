@@ -7,8 +7,11 @@ declare(strict_types=1);
  * No new tables, no caches.
  *
  * Per-SKU physique formula:
- *   anchor      = inv_fg_stocktake qty, latest month_closed with is_active rows
- *   anchor_date = LAST DAY of the anchor month_closed
+ *   anchor      = latest count per (sku_id_fk, location_id_fk) across all
+ *                 locations — MAX(id) per pair with is_active=1. Anchor qty
+ *                 per SKU = SUM of those rows across locations.
+ *   anchor_date = MAX(counted_at) across all anchor rows (the actual count date,
+ *                 not the last day of a calendar month).
  *   production  = Σ (bd_packaging_v2.prod_total_units / ref_skus.units_per_pack)
  *                 WHERE sku_id_fk AND event_date > anchor_date AND is_tombstoned=0
  *                 NOTE: prod_total_units is in individual containers; divide by
@@ -36,22 +39,27 @@ declare(strict_types=1);
  * Pure SELECT queries only. No N+1. No writes.
  *
  * Public API:
- *   fg_stock_compute(PDO $pdo): array   — full per-SKU result + meta
- *   fg_stock_for_skus(PDO $pdo, array $skuIds): array — filtered subset
+ *   fg_stock_compute(PDO $pdo): array                      — full per-SKU result + meta
+ *   fg_stock_location_snapshot(PDO $pdo): array            — per-location breakdown
+ *   fg_stock_for_skus(PDO $pdo, array $skuIds): array      — filtered subset
  */
 
 /**
  * Compute live FG stock for all SKUs.
  *
+ * Anchor model: latest count per (sku_id_fk, location_id_fk) — the row with
+ * MAX(id) per pair among is_active=1. anchor_qty(sku) = SUM across locations.
+ * anchor_date = MAX(counted_at) across all anchor rows.
+ *
  * @return array{
- *   anchor_month: string,       e.g. '2026-04'
- *   anchor_date:  string,       e.g. '2026-04-30' (last day of anchor month)
+ *   anchor_month: string,       e.g. '2026-06'
+ *   anchor_date:  string,       e.g. '2026-06-08' (MAX counted_at of anchor rows)
  *   rows:         array,        per-SKU rows (see below)
  *   computed_at:  string,       ISO datetime
  * }
  *
  * Each row: {
- *   sku_id, sku_code, format, hl_per_unit,
+ *   sku_id, sku_code, format, display_family, hl_per_unit,
  *   anchor_qty, prod_qty, expedie_qty, eshop_qty, taproom_qty,
  *   physique,           float: anchor + prod - expedie - eshop - taproom
  *   open_week_qty,      int: Σ open order lines with requested_date ≤ end-of-current-ISO-week
@@ -72,16 +80,31 @@ declare(strict_types=1);
  */
 function fg_stock_compute(PDO $pdo): array
 {
-    // ── Step 1: find anchor month (latest month_closed with is_active rows) ──
+    // ── Step 1: anchor rows = latest count per (sku_id_fk, location_id_fk) ──
+    // Uses MAX(id) per pair (is_active=1) — replaces the old month_closed anchor
+    // which silently overwrote multi-location rows for the same SKU.
     $anchorStmt = $pdo->query(
-        'SELECT MAX(month_closed) AS mc
-           FROM inv_fg_stocktake
-          WHERE is_active = 1'
+        'SELECT s.sku_id_fk,
+                r.sku_code,
+                r.format,
+                COALESCE(pf.display_family, r.format) AS display_family,
+                r.hl_per_unit,
+                CAST(s.qty AS SIGNED) AS anchor_qty,
+                s.counted_at,
+                s.month_closed
+           FROM inv_fg_stocktake s
+           JOIN ref_skus r ON r.id = s.sku_id_fk
+           LEFT JOIN ref_packaging_formats pf ON pf.id = r.format_id
+          WHERE s.id IN (
+              SELECT MAX(t2.id)
+                FROM inv_fg_stocktake t2
+               WHERE t2.is_active = 1
+               GROUP BY t2.sku_id_fk, t2.location_id_fk
+          )'
     );
-    $anchorRow = $anchorStmt->fetch(PDO::FETCH_ASSOC);
-    $anchorMonth = $anchorRow['mc'] ?? null;
+    $anchorRows = $anchorStmt->fetchAll(PDO::FETCH_ASSOC);
 
-    if ($anchorMonth === null) {
+    if (empty($anchorRows)) {
         // No anchor exists yet — return empty state
         return [
             'anchor_month' => null,
@@ -91,46 +114,42 @@ function fg_stock_compute(PDO $pdo): array
         ];
     }
 
-    // Compute last-day-of-anchor-month
-    $anchorDate = date('Y-m-d', strtotime('last day of ' . $anchorMonth));
-
-    // ── Step 2: anchor qty per sku_id_fk ────────────────────────────────────
-    $anchorStmt2 = $pdo->prepare(
-        'SELECT s.sku_id_fk,
-                r.sku_code,
-                r.format,
-                r.hl_per_unit,
-                CAST(s.qty AS SIGNED) AS anchor_qty
-           FROM inv_fg_stocktake s
-           JOIN ref_skus r ON r.id = s.sku_id_fk
-          WHERE s.month_closed = ?
-            AND s.is_active = 1
-          ORDER BY r.format ASC, r.sku_code ASC'
-    );
-    $anchorStmt2->execute([$anchorMonth]);
-    $anchorRows = $anchorStmt2->fetchAll(PDO::FETCH_ASSOC);
-
-    // Index by sku_id for quick lookup
-    $byId = [];
+    // Build per-SKU map: SUM anchor_qty across locations (fixes the overwrite bug).
+    // anchor_date = MAX(counted_at) across all anchor rows.
+    $byId       = [];
+    $anchorDate = null;
     foreach ($anchorRows as $ar) {
         $sid = (int) $ar['sku_id_fk'];
-        $byId[$sid] = [
-            'sku_id'      => $sid,
-            'sku_code'    => $ar['sku_code'],
-            'format'      => $ar['format'],
-            'hl_per_unit' => (float) $ar['hl_per_unit'],
-            'anchor_qty'  => (int) $ar['anchor_qty'],
-            // flows (filled below)
-            'prod_qty'     => 0,
-            'prod_events'  => 0,
-            'expedie_qty'  => 0,
-            'expedie_orders' => 0,
-            'eshop_qty'    => 0,
-            'eshop_orders' => 0,
-            'taproom_qty'  => 0,
-            'taproom_rows' => 0,
-        ];
+        if (!isset($byId[$sid])) {
+            $byId[$sid] = [
+                'sku_id'         => $sid,
+                'sku_code'       => $ar['sku_code'],
+                'format'         => $ar['format'],
+                'display_family' => $ar['display_family'],
+                'hl_per_unit'    => (float) $ar['hl_per_unit'],
+                'anchor_qty'     => 0,
+                // flows (filled below)
+                'prod_qty'       => 0,
+                'prod_events'    => 0,
+                'expedie_qty'    => 0,
+                'expedie_orders' => 0,
+                'eshop_qty'      => 0,
+                'eshop_orders'   => 0,
+                'taproom_qty'    => 0,
+                'taproom_rows'   => 0,
+            ];
+        }
+        $byId[$sid]['anchor_qty'] += (int) $ar['anchor_qty'];
+        if ($ar['counted_at'] !== null) {
+            if ($anchorDate === null || $ar['counted_at'] > $anchorDate) {
+                $anchorDate = $ar['counted_at'];
+            }
+        }
     }
+
+    // anchor_month derived from anchor_date
+    $anchorDate  = $anchorDate ?? date('Y-m-d');
+    $anchorMonth = substr($anchorDate, 0, 7);
 
     // ── Step 3: production since anchor (bd_packaging_v2) ───────────────────
     // prod_total_units is in INDIVIDUAL CONTAINERS (bottles, cans, kegs).
@@ -166,7 +185,11 @@ function fg_stock_compute(PDO $pdo): array
         else {
             // Fetch SKU metadata on-the-fly (rare case; accepted extra query)
             $skuMeta = $pdo->prepare(
-                'SELECT sku_code, format, hl_per_unit, units_per_pack FROM ref_skus WHERE id = ? AND is_active = 1 LIMIT 1'
+                'SELECT s.sku_code, s.format, s.hl_per_unit, s.units_per_pack,
+                        COALESCE(pf.display_family, s.format) AS display_family
+                   FROM ref_skus s
+                   LEFT JOIN ref_packaging_formats pf ON pf.id = s.format_id
+                  WHERE s.id = ? AND s.is_active = 1 LIMIT 1'
             );
             $skuMeta->execute([$sid]);
             $meta = $skuMeta->fetch(PDO::FETCH_ASSOC);
@@ -175,6 +198,7 @@ function fg_stock_compute(PDO $pdo): array
                     'sku_id'         => $sid,
                     'sku_code'       => $meta['sku_code'],
                     'format'         => $meta['format'],
+                    'display_family' => $meta['display_family'],
                     'hl_per_unit'    => (float) $meta['hl_per_unit'],
                     'anchor_qty'     => 0,
                     'prod_qty'       => round((float) $pr['prod_qty'], 2),
@@ -397,6 +421,7 @@ function fg_stock_compute(PDO $pdo): array
             'sku_id'          => $sid,
             'sku_code'        => $r['sku_code'],
             'format'          => $r['format'],
+            'display_family'  => $r['display_family'],
             'hl_per_unit'     => $r['hl_per_unit'],
             // Anchor + flows
             'anchor_qty'      => $anchor,
@@ -465,4 +490,121 @@ function fg_stock_iso_week_end(string $date): string
     $dow    = (int) $dto->format('N');
     $sunday = $dto->modify('+' . (7 - $dow) . ' days');
     return $sunday->format('Y-m-d');
+}
+
+/**
+ * Per-location breakdown of the same anchor rows used by fg_stock_compute().
+ *
+ * Returns all holds_fg_stock=1 is_active=1 sites, including those with no
+ * counted rows (Taproom → last_counted=null, totals 0).
+ *
+ * Verification gate: Σ(all location rows' qty) == Σ(fg_stock_compute anchor_qty).
+ *
+ * @return array{
+ *   anchor_date: string|null,
+ *   locations: array<int, array{
+ *     id: int,
+ *     name: string,
+ *     site_type: string,
+ *     last_counted: string|null,
+ *     total_units: float,
+ *     total_hl: float,
+ *     rows: array<int, array{sku_id: int, sku_code: string, format: string, display_family: string, qty: float, hl: float}>
+ *   }>
+ * }
+ */
+function fg_stock_location_snapshot(PDO $pdo): array
+{
+    // Load all holds_fg_stock sites (sorted by sort_order)
+    $sitesStmt = $pdo->query(
+        'SELECT id, name, site_type, sort_order
+           FROM ref_sites
+          WHERE holds_fg_stock = 1 AND is_active = 1
+          ORDER BY sort_order ASC'
+    );
+    $sites = $sitesStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Load anchor rows (same subquery as fg_stock_compute)
+    $rowsStmt = $pdo->query(
+        'SELECT t.sku_id_fk,
+                t.location_id_fk,
+                t.qty,
+                t.counted_at,
+                r.sku_code,
+                r.format,
+                r.hl_per_unit,
+                COALESCE(pf.display_family, r.format) AS display_family
+           FROM inv_fg_stocktake t
+           JOIN ref_skus r ON r.id = t.sku_id_fk
+           LEFT JOIN ref_packaging_formats pf ON pf.id = r.format_id
+          WHERE t.id IN (
+              SELECT MAX(t2.id)
+                FROM inv_fg_stocktake t2
+               WHERE t2.is_active = 1
+               GROUP BY t2.sku_id_fk, t2.location_id_fk
+          )
+          ORDER BY t.location_id_fk ASC, r.sku_code ASC'
+    );
+    $anchorRows = $rowsStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Determine global anchor_date
+    $anchorDate = null;
+    foreach ($anchorRows as $ar) {
+        if ($ar['counted_at'] !== null && ($anchorDate === null || $ar['counted_at'] > $anchorDate)) {
+            $anchorDate = $ar['counted_at'];
+        }
+    }
+
+    // Group by location_id_fk
+    $byLocation = []; // location_id → array of rows
+    foreach ($anchorRows as $ar) {
+        $lid = (int) $ar['location_id_fk'];
+        if (!isset($byLocation[$lid])) $byLocation[$lid] = [];
+        $byLocation[$lid][] = $ar;
+    }
+
+    // Build output — include ALL sites even with zero rows
+    $locations = [];
+    foreach ($sites as $site) {
+        $lid  = (int) $site['id'];
+        $rows = $byLocation[$lid] ?? [];
+
+        $totalUnits  = 0.0;
+        $totalHl     = 0.0;
+        $lastCounted = null;
+        $outRows     = [];
+
+        foreach ($rows as $ar) {
+            $qty = (float) $ar['qty'];
+            $hl  = round($qty * (float) $ar['hl_per_unit'], 6);
+            $totalUnits  += $qty;
+            $totalHl     += $hl;
+            if ($ar['counted_at'] !== null && ($lastCounted === null || $ar['counted_at'] > $lastCounted)) {
+                $lastCounted = $ar['counted_at'];
+            }
+            $outRows[] = [
+                'sku_id'         => (int) $ar['sku_id_fk'],
+                'sku_code'       => $ar['sku_code'],
+                'format'         => $ar['format'],
+                'display_family' => $ar['display_family'],
+                'qty'            => $qty,
+                'hl'             => round($hl, 3),
+            ];
+        }
+
+        $locations[] = [
+            'id'           => $lid,
+            'name'         => $site['name'],
+            'site_type'    => $site['site_type'],
+            'last_counted' => $lastCounted,
+            'total_units'  => $totalUnits,
+            'total_hl'     => round($totalHl, 3),
+            'rows'         => $outRows,
+        ];
+    }
+
+    return [
+        'anchor_date' => $anchorDate,
+        'locations'   => $locations,
+    ];
 }

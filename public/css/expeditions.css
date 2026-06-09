@@ -3480,6 +3480,283 @@ body.expeditions .exp-st-cage-live {
   margin-top: 2px;
 }
 
+/* ── Commandes — FG stock pinned summary strip ──────────────────────────── */
+body.expeditions .exp-cmd-stock-strip {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  background: color-mix(in srgb, var(--hop) 6%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--hop) 18%, transparent);
+  border-radius: 6px;
+  padding: 10px 16px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+  min-height: 44px;
+}
+
+body.expeditions .exp-cmd-stock-strip__link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-decoration: none;
+  color: var(--hop);
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding-right: 14px;
+  border-right: 1px solid color-mix(in srgb, var(--hop) 20%, transparent);
+  margin-right: 14px;
+  min-height: 44px;
+  flex-shrink: 0;
+}
+
+body.expeditions .exp-cmd-stock-strip__link:focus-visible {
+  outline: 2px solid var(--hop);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+body.expeditions .exp-cmd-stock-strip__icon {
+  font-size: 1rem;
+}
+
+body.expeditions .exp-cmd-stock-strip__kpi {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 0 14px;
+}
+
+body.expeditions .exp-cmd-stock-strip__val {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 1rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  line-height: 1;
+}
+
+body.expeditions .exp-cmd-stock-strip__val--neg {
+  color: var(--ember);
+}
+
+body.expeditions .exp-cmd-stock-strip__sub {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.7rem;
+  color: var(--ink-mute);
+  white-space: nowrap;
+}
+
+body.expeditions .exp-cmd-stock-strip__sep {
+  width: 1px;
+  height: 32px;
+  background: color-mix(in srgb, var(--hop) 18%, transparent);
+  flex-shrink: 0;
+}
+
+/* ── Stock PF — location cards ──────────────────────────────────────────── */
+body.expeditions .exp-loc-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+body.expeditions .exp-loc-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 110px;
+}
+
+body.expeditions .exp-loc-card--uncounted {
+  opacity: 0.7;
+  border-style: dashed;
+}
+
+body.expeditions .exp-loc-card__header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+body.expeditions .exp-loc-card__name {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.2;
+}
+
+body.expeditions .exp-loc-card__type {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.7rem;
+  color: var(--ink-mute);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+body.expeditions .exp-loc-card__fresh {
+  /* freshness chip — reuses exp-st-fresh-chip classes */
+}
+
+body.expeditions .exp-loc-card__totals {
+  margin-top: auto;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+body.expeditions .exp-loc-card__totals--empty {
+  opacity: 0.45;
+}
+
+body.expeditions .exp-loc-card__hl {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 1.3rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--hop);
+  line-height: 1;
+}
+
+body.expeditions .exp-loc-card__hl--dash {
+  color: var(--ink-mute);
+}
+
+body.expeditions .exp-loc-card__hl-unit {
+  font-size: 0.7rem;
+  font-weight: 400;
+  color: var(--ink-mute);
+}
+
+body.expeditions .exp-loc-card__units {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-soft);
+}
+
+body.expeditions .exp-loc-card__units-label,
+body.expeditions .exp-loc-card__units--empty {
+  font-size: 0.72rem;
+  color: var(--ink-mute);
+}
+
+/* ── Stock PF — TOTAL strip ─────────────────────────────────────────────── */
+body.expeditions .exp-stock-total-strip {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  background: color-mix(in srgb, var(--hop) 5%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--hop) 15%, transparent);
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+
+body.expeditions .exp-stock-total-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 0 16px 0 0;
+  flex: 1 1 auto;
+}
+
+body.expeditions .exp-stock-total-kpi__label {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.72rem;
+  color: var(--ink-mute);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+body.expeditions .exp-stock-total-kpi__val {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 1.4rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  line-height: 1;
+}
+
+body.expeditions .exp-stock-total-kpi--neg .exp-stock-total-kpi__val {
+  color: var(--ember);
+}
+
+body.expeditions .exp-stock-total-kpi__flag {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--ember);
+  background: color-mix(in srgb, var(--ember) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ember) 25%, transparent);
+  border-radius: 8px;
+  padding: 1px 6px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+body.expeditions .exp-stock-total-sep {
+  width: 1px;
+  background: color-mix(in srgb, var(--hop) 15%, transparent);
+  margin: 0 16px;
+  align-self: stretch;
+  flex-shrink: 0;
+}
+
+/* ── Stock table — family group header rows ─────────────────────────────── */
+body.expeditions .exp-stock-family-header td {
+  background: color-mix(in srgb, var(--hop) 8%, var(--bg));
+  border-top: 1px solid color-mix(in srgb, var(--hop) 18%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--hop) 12%, transparent);
+  padding: 6px 10px;
+  user-select: none;
+}
+
+body.expeditions .exp-stock-family-header__cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+body.expeditions .exp-stock-family-header__label {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--hop);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+body.expeditions .exp-stock-family-header__count {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.65rem;
+  color: var(--ink-mute);
+}
+
+/* ── Per-SKU location breakdown in stock table ──────────────────────────── */
+body.expeditions .exp-st-loc-breakdown {
+  display: block;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+  letter-spacing: 0.02em;
+}
+
 /* ── Responsive ───────────────────────────────────────────────────────────── */
 @media (max-width: 600px) {
   body.expeditions .exp-st-freshness-bar {
@@ -3516,5 +3793,41 @@ body.expeditions .exp-st-cage-live {
   body.expeditions .exp-st-loc-chip {
     min-width: 100px;
     padding: 8px 12px;
+  }
+  body.expeditions .exp-loc-cards {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+  }
+  body.expeditions .exp-loc-card {
+    padding: 10px 12px;
+    min-height: 90px;
+  }
+  body.expeditions .exp-loc-card__hl {
+    font-size: 1.1rem;
+  }
+  body.expeditions .exp-stock-total-strip {
+    padding: 10px 12px;
+    gap: 8px;
+  }
+  body.expeditions .exp-stock-total-kpi {
+    padding-right: 10px;
+  }
+  body.expeditions .exp-stock-total-sep {
+    margin: 0 8px;
+  }
+  body.expeditions .exp-stock-total-kpi__val {
+    font-size: 1.1rem;
+  }
+  body.expeditions .exp-cmd-stock-strip {
+    padding: 8px 12px;
+    gap: 0;
+  }
+  body.expeditions .exp-cmd-stock-strip__link {
+    padding-right: 10px;
+    margin-right: 10px;
+    font-size: 0.72rem;
+  }
+  body.expeditions .exp-cmd-stock-strip__val {
+    font-size: 0.9rem;
   }
 }
