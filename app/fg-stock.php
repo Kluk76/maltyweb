@@ -84,7 +84,13 @@ function fg_prod_since_anchor(PDO $pdo, string $globalAnchor): array
     if (!empty($prodSiteIds)) {
         $inPlaceholders = implode(',', array_fill(0, count($prodSiteIds), '?'));
 
-        // Per-SKU cutoff = MAX(counted_at) at production site(s).
+        // Per-SKU cutoff: WINDOW-FUNCTION pick of the winning production-site
+        // count row (MAX counted_at, tie-broken by MAX id) — returns BOTH
+        // prod_anchor (DATE) and prod_anchor_ts (TIMESTAMP) from the SAME row.
+        // Blind MAX(created_at) alongside MAX(counted_at) is NOT used: it can
+        // grab a different (earlier-dated) count's timestamp and corrupt the
+        // same-date tiebreak. ROW_NUMBER pick is mandatory.
+        //
         // COALESCE(pa.prod_anchor, ?) falls back to $globalAnchor for SKUs
         // never counted at the production site.
         // FLOOR applied PER EVENT (before SUM) so partial boxes are excluded.
@@ -95,20 +101,40 @@ function fg_prod_since_anchor(PDO $pdo, string $globalAnchor): array
                FROM bd_packaging_v2 p
                JOIN ref_skus r ON r.id = p.sku_id_fk
                LEFT JOIN (
-                   SELECT sku_id_fk, MAX(counted_at) AS prod_anchor
-                     FROM inv_fg_stocktake
-                    WHERE is_active = 1
-                      AND location_id_fk IN (' . $inPlaceholders . ')
-                    GROUP BY sku_id_fk
+                   SELECT sku_id_fk, counted_at AS prod_anchor, created_at AS prod_anchor_ts
+                     FROM (
+                         SELECT sku_id_fk, counted_at, created_at,
+                                ROW_NUMBER() OVER (PARTITION BY sku_id_fk ORDER BY counted_at DESC, id DESC) AS rn
+                           FROM inv_fg_stocktake
+                          WHERE is_active = 1
+                            AND location_id_fk IN (' . $inPlaceholders . ')
+                     ) w
+                    WHERE w.rn = 1
                ) pa ON pa.sku_id_fk = p.sku_id_fk
               WHERE p.is_tombstoned = 0
                 AND p.is_white_label = 0
                 AND p.sku_id_fk IS NOT NULL
                 AND p.run_type <> ?
-                AND p.event_date > COALESCE(pa.prod_anchor, ?)
+                -- SCOPE NOTE: primary cutoff is business event_date (calendar truth).
+                -- The submitted_at > prod_anchor_ts clause ONLY resolves same-DATE
+                -- count/package ordering. Accepted residual: a packaging run done
+                -- physically BEFORE a same-day count but SUBMITTED after it would be
+                -- double-counted. Left un-clamped on purpose — a plausibility clamp
+                -- would mask real data; if it ever bites, the fix is an explicit count
+                -- timestamp, not a clamp here.
+                -- NULL-SAFE: when pa.prod_anchor IS NULL (SKU never counted at prod site),
+                -- the second OR branch is excluded (IS NOT NULL = false), so COALESCE
+                -- falls back to $globalAnchor exactly as before.
+                AND (
+                      p.event_date > COALESCE(pa.prod_anchor, ?)
+                   OR (pa.prod_anchor IS NOT NULL
+                       AND p.event_date = pa.prod_anchor
+                       AND p.submitted_at > pa.prod_anchor_ts)
+                )
               GROUP BY p.sku_id_fk'
         );
-        // Params: prodSiteIds... (for the IN), then 'cuv', then $globalAnchor (COALESCE fallback)
+        // Params: prodSiteIds... (for the IN), then 'cuv', then $globalAnchor (COALESCE fallback).
+        // pa.prod_anchor_ts comes from the join — no extra bound params needed.
         $prodParams = array_merge($prodSiteIds, ['cuv', $globalAnchor]);
         $prodStmt->execute($prodParams);
     } else {
