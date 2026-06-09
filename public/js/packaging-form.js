@@ -1252,7 +1252,42 @@ document.addEventListener('DOMContentLoaded', function () {
   }
 
   // ── FormFramework init ────────────────────────────────────────────────────
+  //
+  // Magnitude-outlier confirm token plumbing:
+  //   MagnitudeGuard.checkFormatRows() returns outlier warnings when a value
+  //   is off by ≥10× from the expected order of magnitude (e.g. HL entered where L
+  //   expected). These are level='outlier' → FormFramework forces a comment before
+  //   the confirm button is enabled.
+  //
+  //   After the operator fills the comment and clicks "Oui, enregistrer",
+  //   FormFramework calls form.submit() (native method — no DOM event fires).
+  //   We patch form.submit to set magnitude_outlier_confirmed=1 when magnitude
+  //   outliers were present in the most-recent extraWarnings() call, so the server
+  //   can accept the confirmed submission.
+  //
+  //   Edit-mode suppression: unchanged values that already passed a previous confirm
+  //   are suppressed by MagnitudeGuard (reads data-mag-confirmed-fields on the row el).
+
+  // Track whether the last extraWarnings() call found magnitude outliers.
+  var _magOutliersPending = false;
+
   if (typeof FormFramework !== 'undefined') {
+    // Override form.submit before FormFramework.init() so the patch is in place
+    // when FormFramework's confirm callback calls it.
+    var _origFormSubmit = form ? form.submit.bind(form) : null;
+    if (form && _origFormSubmit) {
+      form.submit = function () {
+        if (_magOutliersPending) {
+          var magConfInput = form.querySelector('input[name="magnitude_outlier_confirmed"]');
+          if (magConfInput) magConfInput.value = '1';
+          // Reset flag — the next fresh submit (if the server rejects for another reason
+          // and the operator re-submits) will re-evaluate via extraWarnings().
+          _magOutliersPending = false;
+        }
+        _origFormSubmit();
+      };
+    }
+
     FormFramework.init({
       formId:         'packaging-form',
       draftKey:       'packaging-draft',
@@ -1261,6 +1296,12 @@ document.addEventListener('DOMContentLoaded', function () {
       diffFields: ['event_date'],
       diffLabels: {
         event_date: 'Date conditionnement',
+      },
+      extraWarnings: function () {
+        if (typeof MagnitudeGuard === 'undefined') return [];
+        var warns = MagnitudeGuard.checkFormatRows();
+        _magOutliersPending = warns.some(function (w) { return w.level === 'outlier'; });
+        return warns;
       },
     });
   }
@@ -1523,6 +1564,25 @@ document.addEventListener('DOMContentLoaded', function () {
 
       // Re-evaluate disposition groups after all values set
       updateRowDispositionGroups(rowEl);
+
+      // ── Magnitude-guard edit-mode suppression ──────────────────────────────
+      // If this row was stored with magnitude_outlier_confirmed, inject a
+      // data-mag-confirmed-fields attribute so MagnitudeGuard.checkFormatRows()
+      // can suppress re-nag for unchanged values.
+      // The stored field keys use the generic 'formats[0][…]' prefix as a placeholder
+      // (the server doesn't know the row index ahead of time); rekey to the actual idx.
+      if (fmt.mag_confirmed_values && typeof fmt.mag_confirmed_values === 'object') {
+        var rekeyed = {};
+        var actualPrefix = 'formats[' + i + '][';
+        Object.keys(fmt.mag_confirmed_values).forEach(function (storedKey) {
+          // storedKey is the bare field name (no prefix), since PHP builds it without prefix.
+          // Build the full name as the DOM uses it.
+          rekeyed[actualPrefix + storedKey + ']'] = fmt.mag_confirmed_values[storedKey];
+        });
+        try {
+          rowEl.dataset.magConfirmedFields = JSON.stringify(rekeyed);
+        } catch (_) {}
+      }
     });
 
     // ── 3. Restore in-tank CO₂/O₂ ─────────────────────────────────────────

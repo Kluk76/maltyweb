@@ -424,6 +424,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $comments  = post_str('comments');
         $fwComment = post_str('fw_comment');
 
+        // ── Magnitude-outlier soft-confirm token ─────────────────────────────
+        // Set to '1' by magnitude-guard.js / FormFramework when the operator confirmed
+        // an order-of-magnitude outlier with a required comment.
+        // Server re-evaluates from canonical ref_packaging_formats before writing.
+        $magnitudeOutlierConfirmed = (isset($_POST['magnitude_outlier_confirmed'])
+            && $_POST['magnitude_outlier_confirmed'] === '1');
+
         // DLC/BBD — single input, single column. The selected beer already tells us
         // Nébuleuse vs contract (no need for two questions/columns like BSF had), so the
         // one value is stored in the existing neb_dlc column for every row. There is no
@@ -1077,6 +1084,85 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
+        // ── Magnitude-outlier server re-evaluation (cuv fill only) ─────────────
+        // Scope: cuv run_type ONLY. keg/bot/can counts and loss/taproom litre fields
+        // are NOT checked — no unit-slip failure mode, and 10× bands false-flag
+        // small contract runs and legitimate small losses.
+        //
+        // Band sourced fresh from ref_serving_tanks (same query as the GET path).
+        // Never trusts window.CUV_FILL_BAND from the client.
+        // If ref_serving_tanks is empty → guard fails-closed: any cuv outlier detection
+        // is skipped (the table is misconfigured; operator/admin must fix it — there is
+        // no fallback to a hardcoded number).
+        //
+        // If an outlier is detected AND $magnitudeOutlierConfirmed is false, reject
+        // with an error flash + redirect. If confirmed, record the token in audit_flags.
+        $magOutliers = [];
+        $magCuvLoL = null;
+        $magCuvHiL = null;
+
+        // Re-query ref_serving_tanks (canonical — don't reuse GET-path $cuvFillBand
+        // since that variable is only in scope on the GET path; the POST path has its own).
+        try {
+            $stMag = $pdo->query(
+                "SELECT MIN(capacity_hl) AS min_hl, MAX(capacity_hl) AS max_hl
+                   FROM ref_serving_tanks
+                  WHERE status = 'active'"
+            );
+            $tankMagAgg = $stMag ? $stMag->fetch(PDO::FETCH_ASSOC) : false;
+            if ($tankMagAgg && $tankMagAgg['min_hl'] !== null && $tankMagAgg['max_hl'] !== null
+                && (float)$tankMagAgg['min_hl'] > 0 && (float)$tankMagAgg['max_hl'] > 0
+            ) {
+                $magCuvLoL = (float)$tankMagAgg['min_hl'] * 100.0 / 10.0;
+                $magCuvHiL = (float)$tankMagAgg['max_hl'] * 100.0 * 10.0;
+            }
+        } catch (\Throwable $_magEx) {
+            $magCuvLoL = null;  // degrade gracefully — skip the guard on DB error
+            $magCuvHiL = null;
+        }
+
+        if ($magCuvLoL !== null && $magCuvHiL !== null) {
+            foreach ($formatsRaw as $idx => $f) {
+                $frt  = $f['run_type'] ?? '';
+                $forg = $f['row_origin'] ?? 'main';
+                if ($frt !== 'cuv') continue;  // only cuv rows are checked
+
+                $qtyVal = ($forg === 'main')
+                    ? ($f['prod_total_units'] ?? '')
+                    : ($f['qte_unites'] ?? '');
+                if ($qtyVal === null || $qtyVal === '' || $qtyVal === '0') continue;
+                $qtyF = (float)$qtyVal;
+                if ($qtyF <= 0) continue;
+
+                if ($qtyF < $magCuvLoL || $qtyF > $magCuvHiL) {
+                    $ffc      = $f['format_suffix'] ?? '';
+                    $rowLabel = ($forg === 'main') ? 'Format principal' : ('Format parallèle #' . ((int)$idx + 1));
+                    $loStr    = number_format($magCuvLoL, 0, '.', ' ');
+                    $hiStr    = number_format($magCuvHiL, 0, '.', ' ');
+                    $magOutliers[] = $rowLabel . ' (' . $frt . '/' . $ffc . ') — volume cuve '
+                        . $qtyVal . ' L (attendu ~' . $loStr . '–' . $hiStr . ' L)';
+                }
+            }
+        }
+
+        if (!empty($magOutliers) && !$magnitudeOutlierConfirmed) {
+            $detail = implode('; ', $magOutliers);
+            flash_set('err', 'Valeur hors ordre de grandeur — confirme via la fenêtre de dialogue avant de valider. Champs : ' . htmlspecialchars($detail));
+            // Redirect to form; preserve edit context when available (edit_id hidden field, or
+            // fall back to the form POST's own edit parameter).
+            $editIdPost = isset($_POST['edit_id']) && is_numeric($_POST['edit_id']) ? (int)$_POST['edit_id'] : null;
+            $backUrl = '/modules/form-packaging.php';
+            if ($editIdPost !== null && $editIdPost > 0) {
+                $backUrl .= '?edit=' . $editIdPost;
+            }
+            redirect_to($backUrl);
+        }
+
+        // Record confirmation token in audit flags if outlier was confirmed
+        if (!empty($magOutliers) && $magnitudeOutlierConfirmed) {
+            $baseAuditTokens[] = 'magnitude_outlier_confirmed';
+        }
+
         $nkCols = ['submitted_at', 'neb_beer', 'neb_batch', 'contract_beer', 'contract_batch', 'row_origin', 'nebuleuse_format_suffix'];
 
         $beerLabel = $nebBeer !== '' ? $nebBeer : $contractBeer;
@@ -1452,7 +1538,7 @@ if ($editId !== null) {
                         loss_container_btl_units, loss_container_can_units,
                         qa_analyses_units, qa_library_units,
                         client_fk, liner_client_mi_id_fk, liner_transport_mi_id_fk,
-                        reuses_packaging_id_fk, tank_read_id_fk
+                        reuses_packaging_id_fk, tank_read_id_fk, audit_flags
                    FROM bd_packaging_v2
                   WHERE submitted_at = ? AND is_tombstoned = 0
                   ORDER BY (row_origin = 'main') DESC, id ASC"
@@ -1487,6 +1573,34 @@ if ($editId !== null) {
 
                 // Per-format rows
                 foreach ($sessionRows as $sr) {
+                    // Build mag_confirmed_values: field→stored-value map for magnitude-guard
+                    // edit-mode suppression. Populated only when this row was saved with the
+                    // magnitude_outlier_confirmed token, to suppress re-nag on unchanged values.
+                    $magConfirmedValues = null;
+                    $rowAuditFlags = (string)($sr['audit_flags'] ?? '');
+                    if (strpos($rowAuditFlags, 'magnitude_outlier_confirmed') !== false) {
+                        $rt  = (string)($sr['run_type'] ?? '');
+                        $ffc = (string)($sr['nebuleuse_format_suffix'] ?? '');
+                        $org = (string)($sr['row_origin'] ?? 'main');
+                        $prefix = 'formats[0]['; // placeholder — JS replaces [0] with the actual row idx
+                        $magConfirmedValues = [];
+                        // Qty field
+                        $qtyField = ($org === 'main') ? 'prod_total_units' : 'qte_unites';
+                        $qtyVal   = ($org === 'main') ? $sr['prod_total_units'] : $sr['special_qty_units'];
+                        if ($qtyVal !== null && $qtyVal !== '') {
+                            $magConfirmedValues[$qtyField] = (string)$qtyVal;
+                        }
+                        // Loss/taproom fields (keg/cuv only)
+                        if ($rt === 'keg' || $rt === 'cuv') {
+                            if ($sr['loss_keg_liquid_l'] !== null && $sr['loss_keg_liquid_l'] !== '') {
+                                $magConfirmedValues['loss_keg_liquid_l'] = (string)$sr['loss_keg_liquid_l'];
+                            }
+                            if ($sr['taproom_keg_l'] !== null && $sr['taproom_keg_l'] !== '') {
+                                $magConfirmedValues['taproom_keg_l'] = (string)$sr['taproom_keg_l'];
+                            }
+                        }
+                    }
+
                     $pfStickyFormats[] = [
                         'row_origin'              => $sr['row_origin'],
                         'run_type'                => $sr['run_type'],
@@ -1520,7 +1634,12 @@ if ($editId !== null) {
                         // Per-card WL fields (both legs returned; JS strips -WL suffix for WL leg)
                         'is_white_label'          => (int)($sr['is_white_label'] ?? 0),
                         'white_label_name'        => $sr['white_label_name'] ?? null,
+                        // Magnitude-guard edit-mode suppression: non-null when this row was
+                        // stored with magnitude_outlier_confirmed. JS sets data-mag-confirmed-fields
+                        // on the row element to suppress re-nag on unchanged values.
+                        'mag_confirmed_values'    => $magConfirmedValues,
                     ];
+                    $magConfirmedValues = null; // reset for next row
                 }
 
                 // In-tank read (bd_tank_readings) — load from main row's tank_read_id_fk.
@@ -2064,6 +2183,58 @@ try {
     $linerDefaultMiId = ($linerDefaultRow && $linerDefaultRow['default_mi_id_fk'] !== null)
                           ? (int)$linerDefaultRow['default_mi_id_fk'] : 0;
 
+    // ── Format magnitudes for client-side magnitude guard ─────────────────────
+    // Sourced canonically from ref_packaging_formats (never hardcoded).
+    // Keyed by "runType:formatCode" for specificity + plain "runType" for fallback.
+    // Injected as window.FORMAT_MAGNITUDES; used by magnitude-guard.js.
+    $formatMagnitudesMap = [];
+    $fmtMagRows = $pdo->query(
+        "SELECT run_type, format_code, hl_per_unit
+           FROM ref_packaging_formats
+          WHERE is_active = 1
+            AND run_type IS NOT NULL
+            AND run_type <> ''
+          ORDER BY run_type, format_code"
+    )->fetchAll(PDO::FETCH_ASSOC);
+    foreach ($fmtMagRows as $fm) {
+        $rt  = (string)$fm['run_type'];
+        $fc  = (string)$fm['format_code'];
+        $hpu = (float)$fm['hl_per_unit'];
+        // Specific key "runType:formatCode"
+        $formatMagnitudesMap[$rt . ':' . $fc] = ['run_type' => $rt, 'hl_per_unit' => $hpu];
+        // Plain runType fallback (first entry wins — all same run_type should share magnitude class)
+        if (!isset($formatMagnitudesMap[$rt])) {
+            $formatMagnitudesMap[$rt] = ['run_type' => $rt, 'hl_per_unit' => $hpu];
+        }
+    }
+
+    // ── Cuv fill band from ref_serving_tanks (canonical — never hardcoded) ───
+    // Guard scope: cuv run_type only (serving-tank litre fill).
+    //   loL = MIN(capacity_hl) × 100 / 10  — below this means a unit slip (HL entered as L)
+    //   hiL = MAX(capacity_hl) × 100 × 10  — above this is a gross fat-finger
+    // STOP if the table is empty or missing: no fallback to a hardcoded number.
+    // $cuvFillBand = null means the guard is disabled (server error path propagates this).
+    $cuvFillBand = null;
+    $stTanks = $pdo->query(
+        "SELECT MIN(capacity_hl) AS min_hl, MAX(capacity_hl) AS max_hl
+           FROM ref_serving_tanks
+          WHERE status = 'active'"
+    );
+    $tankAgg = $stTanks ? $stTanks->fetch(PDO::FETCH_ASSOC) : false;
+    if ($tankAgg && $tankAgg['min_hl'] !== null && $tankAgg['max_hl'] !== null
+        && (float)$tankAgg['min_hl'] > 0 && (float)$tankAgg['max_hl'] > 0
+    ) {
+        $minTankL = (float)$tankAgg['min_hl'] * 100.0;
+        $maxTankL = (float)$tankAgg['max_hl'] * 100.0;
+        $cuvFillBand = [
+            'loL' => $minTankL / 10.0,   // unit-slip floor
+            'hiL' => $maxTankL * 10.0,   // fat-finger ceiling
+        ];
+    }
+    // If $cuvFillBand is null at this point, the server-side cuv guard below
+    // will refuse any cuv submission without a confirmed token (fail-closed),
+    // and the client-side guard will be disabled (window.CUV_FILL_BAND will be null).
+
     // ── Active recipes for confirmation dropdown ──────────────────────────────
     $recipes = $pdo->query(
         "SELECT id, name FROM ref_recipes WHERE is_active = 1 ORDER BY name ASC"
@@ -2101,6 +2272,8 @@ try {
     $linerMisForForm    = [];
     $allowedLinerIds    = [];
     $linerDefaultMiId   = 0;
+    $formatMagnitudesMap = [];
+    $cuvFillBand        = null;   // null = guard disabled (fail-closed on DB error)
     // Safe fallback: on DB error, disallow override display to avoid confusion
     $canOverride        = false;
     $minDays            = PACKAGING_MIN_DAYS_FALLBACK;
@@ -2121,6 +2294,7 @@ $runTypeLabelJson       = json_encode(RUN_TYPE_LABELS,     JSON_UNESCAPED_UNICOD
 $suffixLabelJson        = json_encode(FORMAT_SUFFIXES,     JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 $cuveCandidatesJson     = json_encode($cuveCandidates,     JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 $tankReadingsJson       = json_encode($tankReadings,       JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
+$formatMagnitudesJson   = json_encode($formatMagnitudesMap, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 
 // ── CIP partial config ────────────────────────────────────────────────────────
 // Packaging CIPs only the filling machine (Soutireuse / filler) and optionally
@@ -2226,6 +2400,8 @@ $cipConfig = [
     <?php if ($editMode && $pfStickySubmittedAt !== null): ?>
     <input type="hidden" name="edit_submitted_at" id="edit_submitted_at"
            value="<?= htmlspecialchars($pfStickySubmittedAt) ?>">
+    <!-- edit_id: row id for redirect-back on magnitude-outlier rejection in edit mode. -->
+    <input type="hidden" name="edit_id" value="<?= (int)($editId ?? 0) ?>">
     <?php endif ?>
 
     <!-- Hidden fields populated by JS from tank selection -->
@@ -2240,6 +2416,11 @@ $cipConfig = [
     <!-- hors_process_flag: set by JS to 1 when override checkbox is checked.
          Server enforces role: if not manager/admin, this field is ignored. -->
     <input type="hidden" id="hors_process" name="hors_process" value="0">
+    <!-- magnitude_outlier_confirmed: set to 1 by magnitude-guard.js when the operator
+         confirms a magnitude outlier with a comment via the FormFramework dialog.
+         Server re-evaluates from canonical ref_packaging_formats; rejects if outlier
+         detected AND this token is absent. -->
+    <input type="hidden" name="magnitude_outlier_confirmed" id="magnitude_outlier_confirmed" value="0">
 
     <!-- Warning panel (populated by form-framework.js) -->
     <div id="packaging-warnings" class="op-form__warnings" hidden aria-live="polite"></div>
@@ -2618,6 +2799,8 @@ window.FORMAT_SUFFIXES        = <?= $suffixLabelJson ?>;
 window.MIN_DAYS_AFTER_RACKING = <?= $minDays ?>;
 window.PF_CUVE_CANDIDATES     = <?= $cuveCandidatesJson ?>;
 window.PF_TANK_READINGS       = <?= $tankReadingsJson ?>;
+window.FORMAT_MAGNITUDES      = <?= $formatMagnitudesJson ?>;
+window.CUV_FILL_BAND          = <?= json_encode($cuvFillBand, JSON_UNESCAPED_UNICODE) ?>;
 <?php if ($editMode): ?>
 // Edit-mode: pre-seed JS from canonical DB data (loaded from bd_packaging_v2 + bd_tank_readings + bd_packaging_readings).
 window.PF_EDIT_MODE            = true;
@@ -2631,6 +2814,7 @@ window.PF_EDIT_SHARED_TANK_COUNT = <?= (int)$pfSharedTankCount ?>;
 
 <script src="/js/form-framework.js?v=<?= @filemtime(__DIR__ . '/../js/form-framework.js') ?: time() ?>" defer></script>
 <script src="/js/multi-submit-reads.js?v=<?= @filemtime(__DIR__ . '/../js/multi-submit-reads.js') ?: time() ?>" defer></script>
+<script src="/js/magnitude-guard.js?v=<?= @filemtime(__DIR__ . '/../js/magnitude-guard.js') ?: time() ?>" defer></script>
 <script src="/js/packaging-form.js?v=<?= @filemtime(__DIR__ . '/../js/packaging-form.js') ?: time() ?>" defer></script>
 
 </body>
