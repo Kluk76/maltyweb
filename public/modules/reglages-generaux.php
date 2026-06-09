@@ -43,6 +43,54 @@ function rg_sanitize_username(?string $raw): string {
     return mb_substr($s, 0, 64);
 }
 
+/**
+ * Returns the first-name token of a username — mirrors auth_resolve_user()
+ * normalization so collision detection and login resolution use identical logic.
+ */
+function rg_first_name_token(string $username): string {
+    $norm = mb_strtolower(trim(preg_replace('/\s+/u', ' ', $username)));
+    return explode(' ', $norm)[0];
+}
+
+/**
+ * Returns other users whose first-name token OR email local-part equals the
+ * first-name token of $username. Used to warn the admin that first-name login
+ * will become ambiguous for all colliding accounts (auth_resolve_user fails
+ * closed when ≥2 active users share a first-name token).
+ *
+ * @param PDO    $pdo
+ * @param string $username      The sanitized username being created/updated.
+ * @param int|null $excludeUserId  When updating, exclude this user's own id.
+ * @return array  Rows with keys: id, username, is_active.
+ */
+function rg_first_name_collisions(PDO $pdo, string $username, ?int $excludeUserId = null): array {
+    $tok = rg_first_name_token($username);
+    if ($tok === '') {
+        return [];
+    }
+    // Native prepared statements (EMULATE_PREPARES=false) do not allow the same
+    // named placeholder twice in one query — use positional ? and pass $tok twice.
+    if ($excludeUserId !== null) {
+        $stmt = $pdo->prepare(
+            "SELECT id, username, is_active
+               FROM users
+              WHERE (LOWER(SUBSTRING_INDEX(username, ' ', 1)) = ?
+                 OR (email IS NOT NULL AND LOWER(SUBSTRING_INDEX(email, '@', 1)) = ?))
+                AND id <> ?"
+        );
+        $stmt->execute([$tok, $tok, $excludeUserId]);
+    } else {
+        $stmt = $pdo->prepare(
+            "SELECT id, username, is_active
+               FROM users
+              WHERE LOWER(SUBSTRING_INDEX(username, ' ', 1)) = ?
+                 OR (email IS NOT NULL AND LOWER(SUBSTRING_INDEX(email, '@', 1)) = ?)"
+        );
+        $stmt->execute([$tok, $tok]);
+    }
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
 // ── POST handler ──────────────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!csrf_verify($_POST['csrf'] ?? null)) {
@@ -369,6 +417,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ['username' => $username, 'email' => $email, 'display_name' => $displayName, 'role' => $role, 'manager_scope' => $managerScope, 'is_active' => $isActive, 'access_preset_id_fk' => $createPresetId],
                 'normal', 'Réglages généraux: création utilisateur');
 
+            // First-name collision warning (non-blocking): if another user shares
+            // the same first-name token the login shortcut becomes ambiguous for both.
+            $collisionSuffix = '';
+            $collisions = rg_first_name_collisions($pdo, $username);
+            if ($collisions !== []) {
+                $tok   = rg_first_name_token($username);
+                $names = implode(', ', array_map(
+                    static fn($u) => htmlspecialchars((string) $u['username']),
+                    $collisions
+                ));
+                $collisionSuffix = ' — ⚠ Attention : le prénom « ' . htmlspecialchars($tok)
+                    . ' » est déjà utilisé par : ' . $names
+                    . '. La connexion par prénom seul sera ambiguë — ces utilisateurs devront se connecter avec leur nom complet ou leur e-mail.';
+            }
+
             if (!$passwordProvided) {
                 // Generate invite link — try to email it, always show copy-able fallback
                 $raw       = invite_create($pdo, $newUserId, (int) $me['id'], 'invite', 72);
@@ -386,14 +449,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
 
                 if ($email !== null && $mailSent) {
-                    flash_set('ok', "Utilisateur « " . htmlspecialchars($username) . " » créé (inactif). Invitation envoyée à " . htmlspecialchars($email) . ". · Lien de secours : " . $inviteUrl);
+                    flash_set('ok', "Utilisateur « " . htmlspecialchars($username) . " » créé (inactif). Invitation envoyée à " . htmlspecialchars($email) . ". · Lien de secours : " . $inviteUrl . $collisionSuffix);
                 } elseif ($email !== null && !$mailSent) {
-                    flash_set('ok', "Utilisateur « " . htmlspecialchars($username) . " » créé (inactif). Envoi e-mail indisponible — transmettez ce lien : " . $inviteUrl);
+                    flash_set('ok', "Utilisateur « " . htmlspecialchars($username) . " » créé (inactif). Envoi e-mail indisponible — transmettez ce lien : " . $inviteUrl . $collisionSuffix);
                 } else {
-                    flash_set('ok', "Utilisateur « " . htmlspecialchars($username) . " » créé (inactif). Lien d'invitation (valable 72 h) — copier et envoyer à l'utilisateur :\n" . $inviteUrl);
+                    flash_set('ok', "Utilisateur « " . htmlspecialchars($username) . " » créé (inactif). Lien d'invitation (valable 72 h) — copier et envoyer à l'utilisateur :\n" . $inviteUrl . $collisionSuffix);
                 }
             } else {
-                flash_set('ok', "Utilisateur « " . htmlspecialchars($username) . " » créé.");
+                flash_set('ok', "Utilisateur « " . htmlspecialchars($username) . " » créé." . $collisionSuffix);
             }
             redirect_to('/modules/reglages-generaux.php?sec=users');
         }
@@ -502,6 +565,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($usernameChanged) {
                 $flashMsg .= " Nouvel identifiant de connexion : " . htmlspecialchars($username) . ".";
             }
+
+            // First-name collision warning (non-blocking): check after the update
+            // so any username change is already stored; exclude the edited user.
+            $collisions = rg_first_name_collisions($pdo, $username, $userId);
+            if ($collisions !== []) {
+                $tok   = rg_first_name_token($username);
+                $names = implode(', ', array_map(
+                    static fn($u) => htmlspecialchars((string) $u['username']),
+                    $collisions
+                ));
+                $flashMsg .= ' — ⚠ Attention : le prénom « ' . htmlspecialchars($tok)
+                    . ' » est déjà utilisé par : ' . $names
+                    . '. La connexion par prénom seul sera ambiguë — ces utilisateurs devront se connecter avec leur nom complet ou leur e-mail.';
+            }
+
             flash_set('ok', $flashMsg);
             redirect_to('/modules/reglages-generaux.php?sec=users');
         }
