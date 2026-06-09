@@ -3093,6 +3093,69 @@ body.expeditions .exp-st-consign-note__icon {
   margin-top: 1px;
 }
 
+/* ── Manager mode note (shown to manager/admin users only) ──────────────── */
+body.expeditions .exp-st-manager-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  background: color-mix(in srgb, var(--hop) 5%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--hop) 20%, var(--hairline));
+  border-radius: 6px;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  line-height: 1.5;
+}
+
+body.expeditions .exp-st-manager-note__icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+  opacity: 0.7;
+}
+
+/* ── Editing-past-date banner ─────────────────────────────────────────────── */
+body.expeditions .exp-st-edit-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  background: color-mix(in srgb, var(--ember) 8%, var(--bg));
+  border: 1.5px solid color-mix(in srgb, var(--ember) 30%, var(--hairline));
+  border-radius: 6px;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.82rem;
+  color: var(--ink);
+  line-height: 1.5;
+}
+
+body.expeditions .exp-st-edit-banner__icon {
+  flex-shrink: 0;
+  font-style: normal;
+  margin-top: 1px;
+}
+
+body.expeditions .exp-st-edit-banner__count {
+  font-weight: 600;
+}
+
+/* ── Readonly date input (operators) ─────────────────────────────────────── */
+body.expeditions .exp-st-date-input--readonly {
+  cursor: default;
+  background: var(--bg);
+  color: var(--ink-mute);
+  border-color: var(--hairline);
+  opacity: 0.8;
+}
+
+/* ── Prefilled row highlight ─────────────────────────────────────────────── */
+body.expeditions .exp-st-row--prefilled {
+  background: color-mix(in srgb, var(--hop) 6%, var(--bg));
+  border-left: 3px solid color-mix(in srgb, var(--hop) 50%, transparent);
+}
+
 /* ── Form controls row ────────────────────────────────────────────────────── */
 body.expeditions .exp-st-controls {
   display: flex;

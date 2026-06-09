@@ -597,6 +597,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'stocktake') {
 
     $pdo = maltytask_pdo();
 
+    // ── Role gate: only managers/admins may back-date ─────────────────────
+    // Server-side enforcement — the date picker visibility is also role-gated
+    // in the render, but this is the real enforcement layer.
+    $canBackdate = is_manager() || is_admin();
+
     // ── Build allowed-sets INSIDE the POST path ───────────────────────────
     // (Anti-pattern: building allowed-sets only in the GET render path leaves
     //  them undefined when the POST handler runs.)
@@ -634,6 +639,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'stocktake') {
     $stLocId    = isset($_POST['location_id'])  ? (int) $_POST['location_id']   : 0;
     $stCountedAt = isset($_POST['counted_at']) ? trim((string) $_POST['counted_at']) : '';
 
+    // ── Back-date coercion: operators are always locked to today ─────────
+    // A forged POST from an operator that includes a past date must be
+    // silently coerced to today, not rejected — same as if they hadn't
+    // changed the locked picker at all.
+    if (!$canBackdate) {
+        $stCountedAt = date('Y-m-d');
+    }
+
     $stErrors = [];
 
     // Location must be one of the 4 holds_fg_stock sites
@@ -645,7 +658,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'stocktake') {
     if ($stCountedAt === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $stCountedAt)) {
         $stErrors[] = 'Date de comptage invalide.';
     } else {
-        // Further validate: not a future date (operator soft-check only), not absurdly old
+        // Further validate: not a future date, not absurdly old
         if ($stCountedAt > date('Y-m-d')) {
             $stErrors[] = 'La date de comptage ne peut pas être dans le futur.';
         } elseif ($stCountedAt < '2020-01-01') {
@@ -667,7 +680,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'stocktake') {
         foreach ($stSkuIds as $idx => $rawId) {
             $sid = (int) ($rawId ?? 0);
             $rawQty = isset($stQtys[$idx]) ? trim((string) $stQtys[$idx]) : '';
-            if ($rawQty === '') continue; // blank = not counted — skip
+            if ($rawQty === '') continue; // blank = not counted — skip (leaves any existing row untouched)
+            // NOTE: '0' !== '' so an explicit zero DOES write, which is correct (real stock-out).
             if ($sid <= 0 || !isset($allowedSkuIds[$sid])) continue; // safety
             // Defense-in-depth: enforce scope × site_type server-side.
             // Rejects any SKU not permitted at the selected location even if
@@ -2999,16 +3013,6 @@ $isReadOnly = $editOrder !== null
        ══════════════════════════════════════════════════════════════════════ -->
   <?php if ($view === 'stocktake'): ?>
 
-  <!-- Window globals: SKU list, prior counts, sites, freshness -->
-  <script>
-    window.EXP_ST_SKUS      = <?= $stSkusJson ?>;
-    window.EXP_ST_PRIOR     = <?= $stPriorJson ?>;
-    window.EXP_ST_SITES     = <?= $stSitesJson ?>;
-    window.EXP_ST_FRESHNESS = <?= $stFreshnessJson ?>;
-    window.EXP_ST_TODAY     = <?= json_encode(date('Y-m-d'), JSON_HEX_TAG | JSON_HEX_AMP) ?>;
-    window.EXP_CSRF         = <?= json_encode($csrf, JSON_HEX_TAG | JSON_HEX_AMP) ?>;
-  </script>
-
   <?php
   // ── Location selector: selected location from ?loc= ──────────────────────
   $stSelLocId = isset($_GET['loc']) ? (int) $_GET['loc'] : 0;
@@ -3030,6 +3034,47 @@ $isReadOnly = $editOrder !== null
   }
 
   // exp_site_type_label() is defined globally above (used by both stock + stocktake views).
+
+  // ── Role-gated date selection ─────────────────────────────────────────────
+  // Managers/admins can pass ?date=YYYY-MM-DD to edit/backfill a past date.
+  // Operators always see today; $stRenderCanBackdate mirrors the POST-handler gate.
+  $stRenderCanBackdate = is_manager() || is_admin();
+  $stToday = date('Y-m-d');
+
+  if ($stRenderCanBackdate && isset($_GET['date'])) {
+      $stDateRaw = trim((string) $_GET['date']);
+      // Validate: YYYY-MM-DD, not future, not absurdly old
+      if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $stDateRaw)
+          && $stDateRaw <= $stToday
+          && $stDateRaw >= '2020-01-01') {
+          $stSelDate = $stDateRaw;
+      } else {
+          $stSelDate = $stToday; // invalid ?date → silently fall back to today
+      }
+  } else {
+      $stSelDate = $stToday;
+  }
+
+  // ── Prefill map for the selected (location, date) ─────────────────────────
+  // When a manager picks a past date that already has counts, we show those
+  // as prefilled values (a real edit, not blind re-entry).
+  // Uses is_active=1 so tombstoned anchor rows are not surfaced.
+  // DISTINCT from $stPriorMap which shows latest-ever count for the "précéd." hint.
+  $stPrefillMap = []; // sku_id → qty (stored cage-units for cage SKUs, raw qty otherwise)
+  if ($stSelLocId > 0) {
+      $prefillStmt = $pdo->prepare(
+          'SELECT sku_id_fk, qty
+             FROM inv_fg_stocktake
+            WHERE location_id_fk = :loc
+              AND counted_at     = :sel_date
+              AND is_active      = 1'
+      );
+      $prefillStmt->execute([':loc' => $stSelLocId, ':sel_date' => $stSelDate]);
+      foreach ($prefillStmt->fetchAll(PDO::FETCH_ASSOC) as $pf) {
+          $stPrefillMap[(int) $pf['sku_id_fk']] = (float) $pf['qty'];
+      }
+  }
+  $stIsEditingPastDate = ($stSelDate !== $stToday);
 
   // ── Monday freshness computation ──────────────────────────────────────────
   // Current ISO week's Monday
@@ -3088,8 +3133,30 @@ $isReadOnly = $editOrder !== null
       array_diff(array_keys($stSkusByFamily), $stFamilyOrder)
   ));
 
-  // Default counted_at = today
-  $stDefaultCountedAt = date('Y-m-d');
+  // Default counted_at: for managers use $stSelDate (may be past date); operators always today.
+  $stDefaultCountedAt = $stSelDate;
+  ?>
+
+  <!-- Window globals: SKU list, prior counts, sites, freshness, role -->
+  <script>
+    window.EXP_ST_SKUS        = <?= $stSkusJson ?>;
+    window.EXP_ST_PRIOR       = <?= $stPriorJson ?>;
+    window.EXP_ST_SITES       = <?= $stSitesJson ?>;
+    window.EXP_ST_FRESHNESS   = <?= $stFreshnessJson ?>;
+    window.EXP_ST_TODAY       = <?= json_encode($stToday, JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+    window.EXP_CSRF           = <?= json_encode($csrf, JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+    window.EXP_ST_IS_MANAGER  = <?= json_encode($stRenderCanBackdate, JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+    window.EXP_ST_SEL_LOC_ID  = <?= json_encode($stSelLocId, JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+  </script>
+
+
+  <?php
+  // Build date query-string suffix used in navigation links.
+  // Managers: preserve ?date= when it differs from today (so location-chip
+  // clicks stay in edit mode for the same date). Operators: never append date.
+  $stDateQs = ($stRenderCanBackdate && $stSelDate !== $stToday)
+      ? '&amp;date=' . htmlspecialchars($stSelDate)
+      : '';
   ?>
 
   <!-- ── Section: freshness strips (all 4 locations) ──────────────────────── -->
@@ -3097,7 +3164,7 @@ $isReadOnly = $editOrder !== null
     <?php foreach ($stSitesRows as $sr): ?>
     <?php $locId = (int) $sr['id']; ?>
     <div class="exp-st-fresh-item<?= $locId === $stSelLocId ? ' exp-st-fresh-item--active' : '' ?>">
-      <a href="/modules/expeditions.php?view=stocktake&amp;loc=<?= $locId ?>"
+      <a href="/modules/expeditions.php?view=stocktake&amp;loc=<?= $locId ?><?= $stDateQs ?>"
          class="exp-st-fresh-link"
          aria-label="Sélectionner <?= htmlspecialchars($sr['name']) ?>">
         <span class="exp-st-fresh-site"><?= htmlspecialchars($sr['name']) ?></span>
@@ -3112,7 +3179,7 @@ $isReadOnly = $editOrder !== null
   <div class="exp-st-location-selector" role="group" aria-label="Sélection du site">
     <?php foreach ($stSitesRows as $sr): ?>
     <?php $locId = (int) $sr['id']; $isConsign = ($sr['customer_id_fk'] !== null); ?>
-    <a href="/modules/expeditions.php?view=stocktake&amp;loc=<?= $locId ?>"
+    <a href="/modules/expeditions.php?view=stocktake&amp;loc=<?= $locId ?><?= $stDateQs ?>"
        class="exp-st-loc-chip<?= $locId === $stSelLocId ? ' exp-st-loc-chip--active' : '' ?>"
        aria-pressed="<?= $locId === $stSelLocId ? 'true' : 'false' ?>"
        title="<?= $isConsign && !empty($sr['notes']) ? htmlspecialchars($sr['notes']) : htmlspecialchars($sr['name']) ?>">
@@ -3132,6 +3199,31 @@ $isReadOnly = $editOrder !== null
   </div>
   <?php endif ?>
 
+  <?php if ($stRenderCanBackdate): ?>
+  <!-- Manager mode note -->
+  <div class="exp-st-manager-note" id="exp-st-manager-note">
+    <span class="exp-st-manager-note__icon" aria-hidden="true">✎</span>
+    <span class="exp-st-manager-note__text">
+      Mode édition — vous pouvez choisir une date antérieure pour corriger ou compléter un inventaire.
+    </span>
+  </div>
+  <?php endif ?>
+
+  <?php if ($stIsEditingPastDate): ?>
+  <!-- Editing-past-date banner: visible when manager is on a past date with existing data -->
+  <div class="exp-st-edit-banner" id="exp-st-edit-banner" role="alert" aria-live="polite">
+    <span class="exp-st-edit-banner__icon" aria-hidden="true">📋</span>
+    <span class="exp-st-edit-banner__text">
+      Édition de l'inventaire du <strong><?= exp_fmt_date($stSelDate) ?></strong>
+      <?php if (!empty($stPrefillMap)): ?>
+        — <span class="exp-st-edit-banner__count"><?= count($stPrefillMap) ?> SKU<?= count($stPrefillMap) !== 1 ? 's' : '' ?> existant<?= count($stPrefillMap) !== 1 ? 's' : '' ?> prérempli<?= count($stPrefillMap) !== 1 ? 's' : '' ?></span>
+      <?php else: ?>
+        — <span class="exp-st-edit-banner__count">aucun inventaire pour cette date — nouvelle saisie</span>
+      <?php endif ?>
+    </span>
+  </div>
+  <?php endif ?>
+
   <!-- ── Count form ─────────────────────────────────────────────────────────── -->
   <form method="POST"
         action="/modules/expeditions.php?view=stocktake"
@@ -3145,12 +3237,24 @@ $isReadOnly = $editOrder !== null
     <div class="exp-st-controls">
       <div class="exp-st-date-field">
         <label class="exp-st-label" for="exp-st-counted-at">Date de comptage</label>
+        <?php if ($stRenderCanBackdate): ?>
         <input type="date" id="exp-st-counted-at" name="counted_at"
                class="exp-st-date-input"
                value="<?= htmlspecialchars($stDefaultCountedAt) ?>"
-               max="<?= date('Y-m-d') ?>"
-               min="2020-01-01">
+               max="<?= $stToday ?>"
+               min="2020-01-01"
+               data-base-url="/modules/expeditions.php?view=stocktake&amp;loc=<?= $stSelLocId ?>">
+        <span class="exp-st-date-hint">Chaque lundi de préférence · date modifiable</span>
+        <?php else: ?>
+        <input type="date" id="exp-st-counted-at" name="counted_at"
+               class="exp-st-date-input exp-st-date-input--readonly"
+               value="<?= htmlspecialchars($stDefaultCountedAt) ?>"
+               max="<?= $stToday ?>"
+               min="<?= $stToday ?>"
+               readonly
+               aria-readonly="true">
         <span class="exp-st-date-hint">Chaque lundi de préférence</span>
+        <?php endif ?>
       </div>
 
       <div class="exp-st-search-field">
@@ -3198,8 +3302,13 @@ $isReadOnly = $editOrder !== null
                   ? $priorDate
                   : exp_fmt_date($priorDate);
           }
+          // Prefill: for the selected (location, date), load the existing stored qty.
+          // Regular (non-cage) SKUs: stored qty is the direct unit count.
+          // The prefill supersedes the prior hint when editing a past date.
+          $prefillQty = isset($stPrefillMap[$sid]) ? (int) round($stPrefillMap[$sid]) : null;
           ?>
-          <div class="exp-st-row" data-sku-id="<?= $sid ?>" data-sku-code="<?= htmlspecialchars($code) ?>" data-hl="<?= $hpu ?>">
+          <div class="exp-st-row<?= $prefillQty !== null ? ' exp-st-row--prefilled' : '' ?>"
+               data-sku-id="<?= $sid ?>" data-sku-code="<?= htmlspecialchars($code) ?>" data-hl="<?= $hpu ?>">
             <label class="exp-st-row__label" for="exp-st-qty-<?= $sid ?>">
               <span class="exp-st-row__code"><?= htmlspecialchars($code) ?></span>
             </label>
@@ -3214,12 +3323,16 @@ $isReadOnly = $editOrder !== null
                      step="1"
                      placeholder=""
                      autocomplete="off"
-                     <?php if ($priorQty !== null): ?>
+                     <?php if ($prefillQty !== null): ?>
+                     value="<?= $prefillQty ?>"
+                     <?php elseif ($priorQty !== null): ?>
                      data-prior="<?= $priorQty ?>"
                      <?php endif ?>
                      aria-label="Quantité <?= htmlspecialchars($code) ?>"
                      inputmode="numeric">
-              <?php if ($priorQty !== null): ?>
+              <?php if ($prefillQty === null && $priorQty !== null && !$stIsEditingPastDate): ?>
+              <?php /* "précéd." hint suppressed when editing a past date — the latest-ever
+                       prior count may post-date the edited date and would mislead. */ ?>
               <span class="exp-st-prior-hint">
                 précéd.&nbsp;: <strong><?= number_format($priorQty, 0) ?></strong>
                 <?= $priorHint !== '' ? '<span class="exp-st-prior-date">(' . htmlspecialchars($priorHint) . ')</span>' : '' ?>
@@ -3250,10 +3363,18 @@ $isReadOnly = $editOrder !== null
           $code           = $sk['sku_code'];
           $hpu            = (float) $sk['hl_per_unit'];
           $bottlesPerCage = (float) $sk['units_per_pack']; // read from DB, not hardcoded
+          // Cage prefill: stored qty is cage-units; input is bottles.
+          // Inverse: bottles = stored_cage_units × bottles_per_cage.
+          // Only prefill when editing a past date that has existing counts.
+          $cagePrefillBottles = null;
+          if (isset($stPrefillMap[$sid]) && $bottlesPerCage > 0) {
+              // Round to nearest integer: bottles are whole units
+              $cagePrefillBottles = (int) round($stPrefillMap[$sid] * $bottlesPerCage);
+          }
           ?>
           <!-- Cage row: input in bottles, JS converts to cage-units live for summary.
-               No prefill regardless of prior counts — prevents double-count against -B SKUs. -->
-          <div class="exp-st-row exp-st-row--cage"
+               When editing a past date, prefill = stored cage-units × bottles_per_cage (inverse of save-time division). -->
+          <div class="exp-st-row exp-st-row--cage<?= $cagePrefillBottles !== null ? ' exp-st-row--prefilled' : '' ?>"
                data-sku-id="<?= $sid ?>"
                data-sku-code="<?= htmlspecialchars($code) ?>"
                data-hl="<?= $hpu ?>"
@@ -3277,6 +3398,9 @@ $isReadOnly = $editOrder !== null
                        step="1"
                        placeholder=""
                        autocomplete="off"
+                       <?php if ($cagePrefillBottles !== null): ?>
+                       value="<?= $cagePrefillBottles ?>"
+                       <?php endif ?>
                        aria-label="Bouteilles <?= htmlspecialchars($code) ?>"
                        inputmode="numeric">
                 <span class="exp-st-cage-unit">bouteilles</span>

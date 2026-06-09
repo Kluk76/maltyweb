@@ -8,11 +8,15 @@
  *   window.EXP_ST_FRESHNESS {loc_id: last_counted_date_or_null}
  *   window.EXP_ST_TODAY     'YYYY-MM-DD'
  *   window.EXP_CSRF         string
+ *   window.EXP_ST_IS_MANAGER  boolean — true for manager and admin roles
+ *   window.EXP_ST_SEL_LOC_ID  int — currently selected location id
  *
  * Responsibilities:
  *   - Running summary: count of entered SKUs + total HL
  *     Cage rows: input is bottles; HL = (bottles / bottles_per_cage) × hl_per_unit
  *   - Submit-button date label sync
+ *   - For managers: date-picker change navigates to ?view=stocktake&loc=X&date=YYYY-MM-DD
+ *     to reload the page with the correct prefill. No inline onclick.
  *   - Search/filter: show/hide rows + update family counts
  *   - Highlight rows where a qty has been entered
  *   - Family collapse (header click)
@@ -21,7 +25,6 @@
  * Cage SKUs are identified by data-is-cage="1" on the row and
  * data-bottles-per-cage on the same element. Input is in bottles.
  * The POST handler converts bottles → cage-units server-side.
- * Cage rows start with no prefill (no data-prior attribute set).
  *
  * Visibility (scope × site_type) is enforced server-side: PHP renders only
  * the SKU rows permitted at the selected location. The form never contains
@@ -37,9 +40,11 @@
 (function () {
 
   /* ── Data from server ──────────────────────────────────────────────────── */
-  const SKUS      = window.EXP_ST_SKUS      || [];
-  const PRIOR     = window.EXP_ST_PRIOR     || {};
-  const TODAY     = window.EXP_ST_TODAY     || '';
+  const SKUS       = window.EXP_ST_SKUS       || [];
+  const PRIOR      = window.EXP_ST_PRIOR      || {};
+  const TODAY      = window.EXP_ST_TODAY      || '';
+  const IS_MANAGER = window.EXP_ST_IS_MANAGER || false;
+  const SEL_LOC_ID = window.EXP_ST_SEL_LOC_ID || 0;
 
   /* ── Build sku_id → {hl_per_unit, is_cage, bottles_per_cage, stocktake_scope} lookup ── */
   const skuMeta = {};
@@ -185,6 +190,22 @@
   if (countedAtEl) {
     countedAtEl.addEventListener('change', syncSubmitDate);
     syncSubmitDate(); // initial
+
+    /* ── Manager: date-picker change reloads the page with ?date= ────────── */
+    // This triggers a GET reload so the PHP prefill map is built for the new date.
+    // Operators have a readonly picker so this listener is harmless for them but
+    // IS_MANAGER is an explicit gate.
+    if (IS_MANAGER) {
+      countedAtEl.addEventListener('change', function () {
+        var val = countedAtEl.value;
+        if (!val || val.length < 10) return;
+        // Build URL: preserve current loc, add ?date= (drop ?date= if it equals today)
+        var base = '/modules/expeditions.php?view=stocktake';
+        if (SEL_LOC_ID) base += '&loc=' + SEL_LOC_ID;
+        if (val !== TODAY) base += '&date=' + encodeURIComponent(val);
+        window.location.href = base;
+      });
+    }
   }
 
   /* ── Search filter ────────────────────────────────────────────────────── */
@@ -248,7 +269,14 @@
     });
   }
 
-  /* ── Initial recompute ─────────────────────────────────────────────────── */
+  /* ── Initial recompute (also handles prefilled values) ─────────────────── */
   recompute();
+  // For cage rows that were prefilled server-side, trigger the live hint.
+  qsa('.exp-st-row--cage .exp-st-qty-input').forEach(function (inp) {
+    var row = inp.closest('.exp-st-row');
+    if (inp.value.trim() !== '') {
+      updateCageLiveHint(row, inp);
+    }
+  });
 
 })();
