@@ -71,7 +71,7 @@ const EXP_INTERNAL_LABELS   = [
 
 // ── View routing ──────────────────────────────────────────────────────────────
 $view    = isset($_GET['view']) ? (string) $_GET['view'] : 'commandes';
-$allowedViews = ['commandes', 'form', 'stock', 'stocktake', 'clients'];
+$allowedViews = ['commandes', 'form', 'stock', 'stocktake', 'clients', 'mouvements'];
 if (!in_array($view, $allowedViews, true)) $view = 'commandes';
 
 $editId  = isset($_GET['edit']) ? (int) $_GET['edit'] : 0;
@@ -866,6 +866,189 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'stocktake') {
     }
 }
 
+// ── POST handler (Mouvements view — add_movement) ────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'mouvements') {
+
+    // CSRF — must be first
+    if (!csrf_verify($_POST['csrf'] ?? null)) {
+        flash_set('err', 'Session expirée — recharge la page.');
+        redirect_to('/modules/expeditions.php?view=mouvements');
+    }
+
+    $pdo    = maltytask_pdo();
+    $action = isset($_POST['action']) ? (string) $_POST['action'] : '';
+
+    $allowedMovActions = ['add_movement', 'tombstone_movement'];
+    if (!in_array($action, $allowedMovActions, true)) {
+        flash_set('err', 'Action non reconnue.');
+        redirect_to('/modules/expeditions.php?view=mouvements');
+    }
+
+    // ── action: tombstone_movement (ADMIN ONLY) ───────────────────────────────
+    if ($action === 'tombstone_movement') {
+        // Defense in depth: re-check admin even if the button was hidden from non-admins.
+        if (!is_admin($me)) {
+            flash_set('err', 'Action réservée aux administrateurs.');
+            redirect_to('/modules/expeditions.php?view=mouvements');
+        }
+
+        $movId = isset($_POST['movement_id']) ? (int) $_POST['movement_id'] : 0;
+        if ($movId <= 0) {
+            flash_set('err', 'Identifiant de mouvement invalide.');
+            redirect_to('/modules/expeditions.php?view=mouvements');
+        }
+
+        try {
+            $beforeMov = bd_fetch_before($pdo, 'inv_stock_movements', $movId);
+            if ($beforeMov === null) {
+                flash_set('err', 'Mouvement #' . $movId . ' introuvable.');
+                redirect_to('/modules/expeditions.php?view=mouvements');
+            }
+            if ((int) $beforeMov['is_tombstoned'] === 1) {
+                flash_set('err', 'Mouvement #' . $movId . ' déjà annulé.');
+                redirect_to('/modules/expeditions.php?view=mouvements');
+            }
+
+            $pdo->beginTransaction();
+
+            $updMov = $pdo->prepare(
+                'UPDATE inv_stock_movements SET is_tombstoned = 1, updated_at = CURRENT_TIMESTAMP
+                  WHERE id = ?'
+            );
+            $updMov->execute([$movId]);
+
+            log_revision($pdo, $me, 'inv_stock_movements', $movId, $beforeMov,
+                ['is_tombstoned' => 1], 'normal',
+                'Mouvement annulé (tombstone) par admin');
+
+            $pdo->commit();
+            flash_set('ok', 'Mouvement #' . $movId . ' annulé.');
+            redirect_to('/modules/expeditions.php?view=mouvements');
+
+        } catch (Throwable $e) {
+            if (isset($pdo) && $pdo->inTransaction()) $pdo->rollBack();
+            error_log('[expeditions mouvements tombstone] ' . $e->getMessage());
+            flash_set('err', 'Erreur : ' . pdo_friendly_error($e));
+            redirect_to('/modules/expeditions.php?view=mouvements');
+        }
+    }
+
+    // ── action: add_movement ──────────────────────────────────────────────────
+    if ($action === 'add_movement') {
+
+        // ── Build allowed-sets INSIDE the POST path ───────────────────────────
+        // Active holds_fg_stock site IDs
+        $movAllowedSiteIds = [];
+        $movSiteRows = $pdo->query(
+            'SELECT id FROM ref_sites WHERE holds_fg_stock = 1 AND is_active = 1'
+        )->fetchAll(PDO::FETCH_COLUMN);
+        foreach ($movSiteRows as $sid) {
+            $movAllowedSiteIds[(int) $sid] = true;
+        }
+
+        // Active SKU IDs
+        $movAllowedSkuIds = [];
+        $movSkuRows = $pdo->query(
+            'SELECT id FROM ref_skus WHERE is_active = 1'
+        )->fetchAll(PDO::FETCH_COLUMN);
+        foreach ($movSkuRows as $sid) {
+            $movAllowedSkuIds[(int) $sid] = true;
+        }
+
+        // ── Read params with ?? default THEN validate ─────────────────────────
+        $movSkuId       = isset($_POST['sku_id'])       ? (int) $_POST['sku_id']             : 0;
+        $movFromSiteId  = isset($_POST['from_site_id']) ? (int) $_POST['from_site_id']        : 0;
+        $movToSiteId    = isset($_POST['to_site_id'])   ? (int) $_POST['to_site_id']          : 0;
+        $movQtyRaw      = isset($_POST['qty'])          ? trim((string) $_POST['qty'])        : '';
+        $movMovedOn     = isset($_POST['moved_on'])     ? trim((string) $_POST['moved_on'])   : '';
+        $movComment     = isset($_POST['comment'])      ? trim((string) $_POST['comment'])    : '';
+
+        $movErrors = [];
+
+        // SKU must be active
+        if ($movSkuId <= 0 || !isset($movAllowedSkuIds[$movSkuId])) {
+            $movErrors[] = 'SKU invalide ou inactif.';
+        }
+
+        // from_site must be a holds_fg_stock site
+        if ($movFromSiteId <= 0 || !isset($movAllowedSiteIds[$movFromSiteId])) {
+            $movErrors[] = 'Site d\'origine invalide.';
+        }
+
+        // to_site must be a holds_fg_stock site
+        if ($movToSiteId <= 0 || !isset($movAllowedSiteIds[$movToSiteId])) {
+            $movErrors[] = 'Site de destination invalide.';
+        }
+
+        // from != to (friendly flash; the DB CHECK is the hard stop)
+        if (empty($movErrors) && $movFromSiteId === $movToSiteId) {
+            $movErrors[] = 'Le site d\'origine et le site de destination doivent être différents.';
+        }
+
+        // qty > 0 strict integer — reject fractional and negative inputs
+        // preg_match rejects "12.5", "1e3", "-1", etc. before (int) truncation.
+        $movQty = 0;
+        if ($movQtyRaw === '' || !preg_match('/^\d+$/', $movQtyRaw) || ($movQty = (int) $movQtyRaw) <= 0) {
+            $movErrors[] = 'La quantité doit être un entier > 0.';
+            $movQty = 0;
+        }
+
+        // moved_on valid date
+        if ($movMovedOn === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $movMovedOn)) {
+            $movErrors[] = 'Date de mouvement invalide (format AAAA-MM-JJ).';
+        } elseif ($movMovedOn > date('Y-m-d')) {
+            $movErrors[] = 'La date de mouvement ne peut pas être dans le futur.';
+        } elseif ($movMovedOn < '2020-01-01') {
+            $movErrors[] = 'Date de mouvement trop ancienne.';
+        }
+
+        if (!empty($movErrors)) {
+            flash_set('err', implode(' — ', $movErrors));
+            redirect_to('/modules/expeditions.php?view=mouvements');
+        }
+
+        try {
+            $pdo->beginTransaction();
+
+            $insMov = $pdo->prepare(
+                'INSERT INTO inv_stock_movements
+                    (sku_id_fk, from_site_id_fk, to_site_id_fk, qty, moved_on, comment, created_by_user_id)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)'
+            );
+            $insMov->execute([
+                $movSkuId,
+                $movFromSiteId,
+                $movToSiteId,
+                $movQty,
+                $movMovedOn,
+                $movComment !== '' ? $movComment : null,
+                (int) $me['id'],
+            ]);
+            $newMovId = (int) $pdo->lastInsertId();
+
+            log_revision($pdo, $me, 'inv_stock_movements', $newMovId, null, [
+                'sku_id_fk'        => $movSkuId,
+                'from_site_id_fk'  => $movFromSiteId,
+                'to_site_id_fk'    => $movToSiteId,
+                'qty'              => $movQty,
+                'moved_on'         => $movMovedOn,
+                'comment'          => $movComment !== '' ? $movComment : null,
+                'created_by_user_id' => (int) $me['id'],
+            ], 'normal', 'Mouvement inter-sites enregistré');
+
+            $pdo->commit();
+            flash_set('ok', 'Mouvement #' . $newMovId . ' enregistré.');
+            redirect_to('/modules/expeditions.php?view=mouvements');
+
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            error_log('[expeditions mouvements add] ' . $e->getMessage());
+            flash_set('err', 'Erreur lors de l\'enregistrement : ' . pdo_friendly_error($e));
+            redirect_to('/modules/expeditions.php?view=mouvements');
+        }
+    }
+}
+
 // ── Clients view: pagination + filter params ─────────────────────────────────
 $clientsPage      = 1;
 $clientsSearch    = '';
@@ -1064,6 +1247,11 @@ $stSitesRows = []; // filled below if view=stocktake
 $stAllSkus   = [];
 $stPriorMap  = [];
 $stLastCounted = [];
+
+// Mouvements view
+$movRows       = []; // filled below if view=mouvements
+$movFgSites    = []; // holds_fg_stock sites for the form selects
+$movSkuList    = []; // active SKUs for the form select
 
 try {
     // Active customers (for typeahead)
@@ -1429,6 +1617,43 @@ try {
         );
         $dirStmt->execute([...$dirParams, $clientsPerPage, $offset]);
         $clientsRows = $dirStmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    if ($view === 'mouvements') {
+        // holds_fg_stock sites (for form selects + list JOINs)
+        $movFgSites = $pdo->query(
+            'SELECT id, name FROM ref_sites
+              WHERE holds_fg_stock = 1 AND is_active = 1
+              ORDER BY sort_order ASC, id ASC'
+        )->fetchAll(PDO::FETCH_ASSOC);
+
+        // Active SKUs (sku_code + label for the select)
+        $movSkuList = $pdo->query(
+            'SELECT s.id, s.sku_code, s.format,
+                    COALESCE(pf.display_family, s.format, s.sku_code) AS display_family
+               FROM ref_skus s
+               LEFT JOIN ref_packaging_formats pf ON pf.id = s.format_id
+              WHERE s.is_active = 1
+              ORDER BY display_family ASC, s.sku_code ASC'
+        )->fetchAll(PDO::FETCH_ASSOC);
+
+        // Recent movements (last 100): non-tombstoned first, then tombstoned
+        $movRows = $pdo->query(
+            'SELECT m.id, m.sku_id_fk, m.from_site_id_fk, m.to_site_id_fk,
+                    m.qty, m.moved_on, m.comment, m.is_tombstoned,
+                    m.created_at, m.updated_at,
+                    sk.sku_code,
+                    sf.name AS from_site_name,
+                    st.name AS to_site_name,
+                    u.display_name AS created_by_name
+               FROM inv_stock_movements m
+               JOIN ref_skus  sk ON sk.id = m.sku_id_fk
+               JOIN ref_sites sf ON sf.id = m.from_site_id_fk
+               JOIN ref_sites st ON st.id = m.to_site_id_fk
+               LEFT JOIN users u  ON u.id  = m.created_by_user_id
+              ORDER BY m.is_tombstoned ASC, m.id DESC
+              LIMIT 100'
+        )->fetchAll(PDO::FETCH_ASSOC);
     }
 
 } catch (Throwable $e) {
@@ -1853,6 +2078,9 @@ $isReadOnly = $editOrder !== null
       Carnet clients<?= $clientsReviewCount > 0
           ? ' <span class="exp-tab-badge">' . $clientsReviewCount . '</span>' : '' ?>
     </a>
+    <a href="/modules/expeditions.php?view=mouvements"
+       class="exp-tab<?= $view === 'mouvements' ? ' exp-tab--active' : '' ?>"
+       <?= $view === 'mouvements' ? 'aria-current="page"' : '' ?>>Mouvements</a>
   </nav>
 
   <!-- ══════════════════════════════════════════════════════════════════════
@@ -4270,6 +4498,211 @@ $isReadOnly = $editOrder !== null
 
   <?php endif ?>
   <!-- /CARNET CLIENTS -->
+
+  <!-- ══════════════════════════════════════════════════════════════════════
+       MOUVEMENTS VIEW
+       ══════════════════════════════════════════════════════════════════════ -->
+  <?php if ($view === 'mouvements'): ?>
+
+  <div class="exp-mov-wrap" id="exp-mov-wrap">
+
+    <!-- ── Record form ────────────────────────────────────────────────────── -->
+    <div class="op-form__card exp-card exp-mov-card" id="exp-mov-form-card">
+      <div class="op-form__card-title">Nouveau mouvement inter-sites</div>
+
+      <form method="POST" action="/modules/expeditions.php?view=mouvements"
+            class="exp-mov-form" id="exp-mov-form" novalidate>
+        <input type="hidden" name="csrf"   value="<?= htmlspecialchars($csrf) ?>">
+        <input type="hidden" name="action" value="add_movement">
+
+        <div class="op-form__grid">
+
+          <!-- SKU -->
+          <div class="op-form__field op-form__field--full">
+            <label class="op-form__label" for="exp-mov-sku">SKU</label>
+            <select id="exp-mov-sku" name="sku_id" class="op-form__select" required>
+              <option value="">— choisir un SKU —</option>
+              <?php
+              $movPrevFamily = null;
+              foreach ($movSkuList as $ms):
+                  $msFam = (string) ($ms['display_family'] ?? $ms['format'] ?? '');
+                  if ($msFam !== $movPrevFamily):
+                      if ($movPrevFamily !== null) echo '</optgroup>';
+                      echo '<optgroup label="' . htmlspecialchars($msFam) . '">';
+                      $movPrevFamily = $msFam;
+                  endif;
+              ?>
+                <option value="<?= (int) $ms['id'] ?>">
+                  <?= htmlspecialchars($ms['sku_code']) ?>
+                </option>
+              <?php
+              endforeach;
+              if ($movPrevFamily !== null) echo '</optgroup>';
+              ?>
+            </select>
+          </div>
+
+          <!-- From site -->
+          <div class="op-form__field">
+            <label class="op-form__label" for="exp-mov-from">Site d'origine</label>
+            <select id="exp-mov-from" name="from_site_id" class="op-form__select" required>
+              <option value="">— choisir —</option>
+              <?php foreach ($movFgSites as $mst): ?>
+                <option value="<?= (int) $mst['id'] ?>">
+                  <?= htmlspecialchars($mst['name']) ?>
+                </option>
+              <?php endforeach ?>
+            </select>
+          </div>
+
+          <!-- To site -->
+          <div class="op-form__field">
+            <label class="op-form__label" for="exp-mov-to">Site de destination</label>
+            <select id="exp-mov-to" name="to_site_id" class="op-form__select" required>
+              <option value="">— choisir —</option>
+              <?php foreach ($movFgSites as $mst): ?>
+                <option value="<?= (int) $mst['id'] ?>">
+                  <?= htmlspecialchars($mst['name']) ?>
+                </option>
+              <?php endforeach ?>
+            </select>
+          </div>
+
+          <!-- Qty -->
+          <div class="op-form__field">
+            <label class="op-form__label" for="exp-mov-qty">Quantité (unités)</label>
+            <input type="number" id="exp-mov-qty" name="qty"
+                   class="op-form__input"
+                   min="1" step="1" required
+                   placeholder="ex: 12">
+          </div>
+
+          <!-- moved_on -->
+          <div class="op-form__field">
+            <label class="op-form__label" for="exp-mov-date">Date du mouvement</label>
+            <input type="date" id="exp-mov-date" name="moved_on"
+                   class="op-form__input"
+                   value="<?= htmlspecialchars(date('Y-m-d')) ?>"
+                   max="<?= htmlspecialchars(date('Y-m-d')) ?>"
+                   min="2020-01-01" required>
+          </div>
+
+          <!-- Comment -->
+          <div class="op-form__field op-form__field--full">
+            <label class="op-form__label" for="exp-mov-comment">
+              Commentaire
+              <span class="op-form__unit">optionnel</span>
+            </label>
+            <input type="text" id="exp-mov-comment" name="comment"
+                   class="op-form__input"
+                   placeholder="Motif, numéro de bon, remarque…"
+                   maxlength="500">
+          </div>
+
+        </div>
+
+        <div class="op-form__actions">
+          <button type="submit" class="op-form__submit">Enregistrer le mouvement</button>
+        </div>
+
+      </form>
+    </div>
+    <!-- /form card -->
+
+    <!-- ── Movements list ─────────────────────────────────────────────────── -->
+    <div class="exp-mov-list-wrap" id="exp-mov-list-wrap">
+      <div class="exp-mov-list-header">
+        <span class="exp-mov-list-title">Derniers mouvements</span>
+        <?php if (!empty($movRows)): ?>
+          <span class="exp-mov-list-count"><?= count($movRows) ?> entrée<?= count($movRows) > 1 ? 's' : '' ?></span>
+        <?php endif ?>
+      </div>
+
+      <?php if (empty($movRows)): ?>
+        <p class="exp-empty">Aucun mouvement enregistré.</p>
+      <?php else: ?>
+      <div class="exp-mov-table-wrap">
+        <table class="exp-mov-table" id="exp-mov-table">
+          <thead>
+            <tr>
+              <th class="exp-mov-col-date">Date</th>
+              <th class="exp-mov-col-sku">SKU</th>
+              <th class="exp-mov-col-from">Origine</th>
+              <th class="exp-mov-col-arrow" aria-hidden="true"></th>
+              <th class="exp-mov-col-to">Destination</th>
+              <th class="exp-mov-col-qty">Qté</th>
+              <th class="exp-mov-col-by">Par</th>
+              <th class="exp-mov-col-comment">Commentaire</th>
+              <?php if (is_admin($me)): ?>
+              <th class="exp-mov-col-actions"></th>
+              <?php endif ?>
+            </tr>
+          </thead>
+          <tbody>
+          <?php foreach ($movRows as $mv):
+              $mvTombed  = (bool) $mv['is_tombstoned'];
+              $mvRowCls  = 'exp-mov-row' . ($mvTombed ? ' exp-mov-row--tombstoned' : '');
+          ?>
+            <tr class="<?= $mvRowCls ?>" data-mov-id="<?= (int) $mv['id'] ?>">
+              <td class="exp-mov-col-date">
+                <span class="exp-mov-date"><?= htmlspecialchars(exp_fmt_date($mv['moved_on'])) ?></span>
+              </td>
+              <td class="exp-mov-col-sku">
+                <span class="exp-sku-pill"><?= htmlspecialchars($mv['sku_code']) ?></span>
+              </td>
+              <td class="exp-mov-col-from"><?= htmlspecialchars($mv['from_site_name']) ?></td>
+              <td class="exp-mov-col-arrow" aria-hidden="true">→</td>
+              <td class="exp-mov-col-to"><?= htmlspecialchars($mv['to_site_name']) ?></td>
+              <td class="exp-mov-col-qty">
+                <span class="exp-mov-qty"><?= number_format((float) $mv['qty'], 0) ?></span>
+              </td>
+              <td class="exp-mov-col-by">
+                <span class="exp-mov-by"><?= htmlspecialchars($mv['created_by_name'] ?? '—') ?></span>
+              </td>
+              <td class="exp-mov-col-comment">
+                <?= $mv['comment'] !== null ? htmlspecialchars($mv['comment']) : '<span class="exp-mov-empty-comment">—</span>' ?>
+                <?php if ($mvTombed): ?>
+                  <span class="exp-mov-tombstone-badge" title="Annulé">annulé</span>
+                <?php endif ?>
+              </td>
+              <?php if (is_admin($me)): ?>
+              <td class="exp-mov-col-actions">
+                <?php if (!$mvTombed): ?>
+                <form method="POST" action="/modules/expeditions.php?view=mouvements"
+                      class="exp-ct-inline-form">
+                  <input type="hidden" name="csrf"        value="<?= htmlspecialchars($csrf) ?>">
+                  <input type="hidden" name="action"      value="tombstone_movement">
+                  <input type="hidden" name="movement_id" value="<?= (int) $mv['id'] ?>">
+                  <?php
+                  $mvConfirmMsg = 'Annuler le mouvement #' . (int) $mv['id']
+                      . ' (' . $mv['sku_code']
+                      . ', ' . number_format((float) $mv['qty'], 0)
+                      . ' unité' . ((float) $mv['qty'] > 1 ? 's' : '') . ') ?';
+                  ?>
+                  <button type="submit"
+                          class="exp-clients-action-btn exp-clients-action-btn--deactivate exp-mov-cancel-btn"
+                          title="Annuler ce mouvement"
+                          onclick="return confirm(<?= json_encode($mvConfirmMsg, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>)">
+                    🚫
+                  </button>
+                </form>
+                <?php endif ?>
+              </td>
+              <?php endif ?>
+            </tr>
+          <?php endforeach ?>
+          </tbody>
+        </table>
+      </div>
+      <?php endif ?>
+    </div>
+    <!-- /list -->
+
+  </div>
+  <!-- /exp-mov-wrap -->
+
+  <?php endif ?>
+  <!-- /MOUVEMENTS -->
 
 </main>
 
