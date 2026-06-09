@@ -1673,6 +1673,34 @@ function _bom_liquid_snapshot(PDO $pdo, int $skuId): array
 }
 
 /**
+ * Snapshot the packaging + composite rows for a SKU — the domain the liquid apply
+ * must NOT touch. Used as a parity gate in the liquid apply branch: pre- and post-
+ * apply snapshots must be byte-identical (row count + SUM(cost) within 1e-6).
+ *
+ * Covers:
+ *   source = 'Packaging'  (all packaging rows, regardless of bom_source)
+ *   bom_source IN ('composite_liquid', 'composite_packaging')
+ *
+ * Returns ['rows' => int, 'cost' => float].
+ */
+function _bom_packaging_composite_snapshot(PDO $pdo, int $skuId): array
+{
+    $stmt = $pdo->prepare(
+        "SELECT COUNT(*) AS cnt, COALESCE(SUM(cost), 0) AS total_cost
+           FROM ref_sku_bom
+          WHERE sku_id = ?
+            AND (source = 'Packaging'
+                 OR bom_source IN ('composite_liquid', 'composite_packaging'))"
+    );
+    $stmt->execute([$skuId]);
+    $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+    return [
+        'rows' => (int)$row['cnt'],
+        'cost' => (float)$row['total_cost'],
+    ];
+}
+
+/**
  * Count rows that the non-composite DELETE would purge on apply (for dry-run reporting).
  *
  * Predicate MUST match the live DELETE in the apply path (~line 781):
@@ -3533,8 +3561,145 @@ function compile_sku_bom_liquid(
         'dry_hop_coverage'            => $dhCoverageSummary,
     ];
 
-    // ── 8. Apply predicate (documented, not executed) ─────────────────────────
-    $applyPredicate = <<<'SQL'
+    // ── 8. Apply branch (executes only when $dryRun=false) ────────────────────
+
+    $applyStats = [
+        'skus_applied'       => 0,
+        'lines_deleted'      => 0,
+        'lines_inserted'     => 0,
+        'parity_violations'  => 0,
+        'apply_errors'       => 0,
+    ];
+
+    if (!$dryRun) {
+        $compiledAt = gmdate('Y-m-d H:i:s');
+        $today      = date('Y-m-d');
+
+        $delStmt = $pdo->prepare(
+            "DELETE FROM ref_sku_bom
+              WHERE sku_id = :sku_id
+                AND source = 'Brewing'
+                AND (bom_source IS NULL OR bom_source = 'liquid')
+                AND mi_id IS NOT NULL"
+        );
+
+        $insStmt = $pdo->prepare(
+            "INSERT INTO ref_sku_bom
+               (sku_id, mi_id, ingredient_raw, source, slot_name, category_raw,
+                qty_per_unit, ing_unit, pricing_unit, price, currency, cost, volume_hl,
+                resolution, row_hash, compiled_at, bom_source, effective_from)
+             VALUES
+               (:sku_id, :mi_id, :ingredient_raw, :source, :slot_name, :category_raw,
+                :qty_per_unit, :ing_unit, :pricing_unit, :price, :currency, :cost, :volume_hl,
+                :resolution, :row_hash, :compiled_at, :bom_source, :effective_from)"
+        );
+
+        foreach ($skuResults as $skuId => $sr) {
+            // Skip SKUs with a compute error — do not touch their rows.
+            if ($sr['error'] !== null) {
+                $applyStats['apply_errors']++;
+                continue;
+            }
+
+            // Skip zero-window / dormant SKUs — leave their existing rows untouched.
+            if (!empty($sr['skipped_zero_window'])) {
+                continue;
+            }
+
+            $pdo->beginTransaction();
+            try {
+                // Pre-snapshot the domain we must NOT touch:
+                // packaging rows + composite rows.
+                $pkgCompBefore = _bom_packaging_composite_snapshot($pdo, $skuId);
+
+                // DELETE old liquid rows for this SKU.
+                $delStmt->execute([':sku_id' => $skuId]);
+                $deleted = $delStmt->rowCount();
+
+                // INSERT proposed lines.
+                $inserted = 0;
+                foreach ($sr['proposed_lines'] as $line) {
+                    $miIdFk  = (int)$line['mi_id_fk'];
+                    $stage   = $line['stage'];          // 'brewhouse' or 'dry_hop'
+                    $qtyRnd  = round((float)$line['qty_per_unit'], 6);
+                    $cost    = $line['cost'] !== null ? (float)$line['cost'] : null;
+
+                    // Effective per-pricing-unit CHF rate (self-consistent with cost).
+                    $price = null;
+                    if ($qtyRnd > 0 && $cost !== null) {
+                        $price = round($cost / $qtyRnd, 6);
+                    }
+
+                    // pricing_unit from $miById (loaded at compiler start).
+                    $pricingUnit = $miById[$miIdFk]['pricing_unit'] ?? null;
+
+                    // row_hash: includes stage so brewhouse+dry_hop of same MI don't collide.
+                    $rowHash = hash('sha256', implode('|', [
+                        $skuId,
+                        $miIdFk,
+                        $stage,
+                        $qtyRnd,
+                        $today,
+                    ]));
+
+                    $insStmt->execute([
+                        ':sku_id'         => $skuId,
+                        ':mi_id'          => $miIdFk,
+                        ':ingredient_raw' => $line['mi_code'],
+                        ':source'         => 'Brewing',
+                        ':slot_name'      => $stage,
+                        ':category_raw'   => $line['cat_name'],
+                        ':qty_per_unit'   => $qtyRnd,
+                        ':ing_unit'       => $line['ing_unit'],
+                        ':pricing_unit'   => $pricingUnit,
+                        ':price'          => $price,
+                        ':currency'       => 'CHF',
+                        ':cost'           => $cost,
+                        ':volume_hl'      => null,
+                        ':resolution'     => 'mi_match',
+                        ':row_hash'       => $rowHash,
+                        ':compiled_at'    => $compiledAt,
+                        ':bom_source'     => 'liquid',
+                        ':effective_from' => $today,
+                    ]);
+                    $inserted++;
+                }
+
+                // Post-snapshot: packaging+composite domain must be byte-identical.
+                $pkgCompAfter = _bom_packaging_composite_snapshot($pdo, $skuId);
+
+                if ($pkgCompAfter['rows'] !== $pkgCompBefore['rows'] ||
+                    abs($pkgCompAfter['cost'] - $pkgCompBefore['cost']) > 0.000001) {
+                    $pdo->rollBack();
+                    $applyStats['parity_violations']++;
+                    $applyStats['apply_errors']++;
+                    // Annotate the SKU result with the parity error so the caller can report it.
+                    $skuResults[$skuId]['error'] = sprintf(
+                        'PACKAGING/COMPOSITE PARITY GATE TRIPPED for sku_id=%d (%s): rows %d→%d, cost %.6f→%.6f — ROLLED BACK',
+                        $skuId, $sr['sku_code'],
+                        $pkgCompBefore['rows'], $pkgCompAfter['rows'],
+                        $pkgCompBefore['cost'], $pkgCompAfter['cost']
+                    );
+                    continue;
+                }
+
+                $pdo->commit();
+                $applyStats['skus_applied']++;
+                $applyStats['lines_deleted']  += $deleted;
+                $applyStats['lines_inserted'] += $inserted;
+
+            } catch (\Throwable $e) {
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+                $applyStats['apply_errors']++;
+                $skuResults[$skuId]['error'] = 'APPLY EXCEPTION: ' . $e->getMessage();
+            }
+        }
+    }
+
+    // ── 8b. Apply predicate (documented for reference) ────────────────────────
+    $applyPredicate = $dryRun ? <<<'SQL'
 -- Apply predicate (DRY-RUN ONLY — do NOT execute):
 -- Step 1: DELETE solo Brewing rows that will be replaced (bom_source=NULL or 'liquid')
 -- DELETE FROM ref_sku_bom
@@ -3550,7 +3715,8 @@ function compile_sku_bom_liquid(
 --   composite_liquid rows (bom_source='composite_liquid')
 --   composite_packaging rows (bom_source='composite_packaging')
 -- Note: zero-window SKUs (dormant seasonals) are excluded from the apply scope.
-SQL;
+SQL
+    : '-- Applied (see apply_stats for counts).';
 
     // ── Gate-15: finalize oldest-invoice transparency table ────────────────────
     // gate15_table is the apply-gate 15 transparency report: every (recipe, MI) pair
@@ -3566,6 +3732,7 @@ SQL;
     return [
         'dry_run'              => $dryRun,
         'generated_at'         => $generatedAt,
+        'apply_stats'          => $dryRun ? null : $applyStats,
         'scope'                => [
             'total_active_skus'  => count($allSoloById) + $compositeCnt,
             'composite_excluded' => $compositeCnt,

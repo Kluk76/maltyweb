@@ -5,23 +5,25 @@ declare(strict_types=1);
  * scripts/sku-bom-liquid-cli.php
  *
  * CLI entry point for the liquid-BOM compiler (compile_sku_bom_liquid).
- * Produces a dry-run preview + diff of proposed liquid BOM lines vs current.
- * WRITES NOTHING by default — only produces a JSON preview artifact.
+ * In dry-run mode (default): computes and reports proposed liquid BOM lines vs current
+ * without writing anything. In apply mode: executes DELETE+INSERT per SKU inside
+ * per-SKU transactions with a packaging/composite parity gate.
  *
  * Usage:
  *   sudo -u www-data php scripts/sku-bom-liquid-cli.php [--dry-run] [--sku <id,...>] [--out <path>]
+ *   sudo -u www-data php scripts/sku-bom-liquid-cli.php --apply [--sku <id,...>] [--out <path>]
  *
  * Flags:
  *   --dry-run        (default) Compute and report without DB writes.
- *   --apply          Reserved: would write to ref_sku_bom. NOT IMPLEMENTED YET.
- *                    The apply path requires operator review of this dry-run first.
+ *   --apply          Write to ref_sku_bom: DELETE old liquid rows + INSERT proposed lines.
+ *                    Requires prior operator review of the dry-run preview.
  *   --sku <ids>      Comma-separated ref_skus.id list. Omit = all in-scope solo active SKUs.
- *   --out <path>     Path for the JSON preview artifact.
+ *   --out <path>     Path for the JSON artifact.
  *                    Default: /var/www/maltytask/data/sku-bom-liquid-preview.json
  *
  * Exit codes:
- *   0  Success (or dry-run completed with 0 errors)
- *   1  Error (unresolved MIs, exception, or --apply attempted)
+ *   0  Success
+ *   1  Compute errors, parity violations, or apply errors
  */
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
@@ -35,12 +37,6 @@ require $repoRoot . '/app/sku-bom-compile.php';
 $opts   = getopt('', ['dry-run', 'apply', 'sku:', 'out:']);
 $apply  = isset($opts['apply']);
 $dryRun = !$apply;
-
-if ($apply) {
-    fwrite(STDERR, "ERROR: --apply is not yet implemented for the liquid compiler.\n");
-    fwrite(STDERR, "Review the dry-run preview first, then apply manually with the predicate.\n");
-    exit(1);
-}
 
 $skuIds = null;
 if (isset($opts['sku'])) {
@@ -57,13 +53,14 @@ $outPath = $opts['out'] ?? ($repoRoot . '/data/sku-bom-liquid-preview.json');
 
 // ── Run compiler ───────────────────────────────────────────────────────────────
 
-echo "[DRY-RUN] sku-bom-liquid-cli.php\n";
+$modeLabel = $apply ? '[APPLY]' : '[DRY-RUN]';
+echo "{$modeLabel} sku-bom-liquid-cli.php\n";
 echo "SKU scope: " . ($skuIds !== null ? implode(',', $skuIds) : "all in-scope solo active SKUs") . "\n";
 echo "Output: {$outPath}\n";
 echo str_repeat('-', 80) . "\n";
 
 $pdo    = maltytask_pdo();
-$result = compile_sku_bom_liquid($pdo, $skuIds, true);
+$result = compile_sku_bom_liquid($pdo, $skuIds, $dryRun);
 
 // ── Write JSON artifact ─────────────────────────────────────────────────────────
 
@@ -74,7 +71,8 @@ if (!is_dir($outDir)) {
 }
 
 file_put_contents($outPath, json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
-echo "JSON preview written to: {$outPath}\n\n";
+$artifactLabel = $apply ? 'JSON artifact' : 'JSON preview';
+echo "{$artifactLabel} written to: {$outPath}\n\n";
 
 // ── Console report ─────────────────────────────────────────────────────────────
 
@@ -86,7 +84,7 @@ echo "  Composite excluded:                  {$result['scope']['composite_exclud
 echo "  Recipe-missing excluded:             {$result['scope']['recipe_excluded']}\n";
 echo "  In scope:                            {$result['scope']['in_scope']}\n\n";
 
-echo "SUMMARY\n";
+echo "COMPUTE SUMMARY\n";
 echo "  SKUs gaining liquid lines:  {$s['skus_gaining_liquid']}\n";
 echo "  SKUs losing  liquid lines:  {$s['skus_losing_liquid']}\n";
 echo "  SKUs no-change (same count):{$s['skus_no_change']}\n";
@@ -94,7 +92,7 @@ echo "  Lines ADDED:                {$s['lines_added_total']}\n";
 echo "  Lines REMOVED:              {$s['lines_removed_total']}\n";
 echo "  Lines CHANGED (qty):        {$s['lines_changed_total']}\n";
 echo "  Unresolved MI flags:        " . count($s['unresolved_mi_flags']) . "\n";
-echo "  Errors:                     {$s['errors_total']}\n\n";
+echo "  Compute errors:             {$s['errors_total']}\n\n";
 
 // Gaining SKU list
 if (!empty($s['skus_gaining_codes'])) {
@@ -114,10 +112,17 @@ if (!empty($s['unresolved_mi_flags'])) {
     echo "\n";
 }
 
-// Errors
-if ($s['errors_total'] > 0) {
+// Errors (from compute or apply)
+$anyErrors = false;
+foreach ($result['skus'] as $skuRow) {
+    if ($skuRow['error'] !== null) {
+        $anyErrors = true;
+        break;
+    }
+}
+if ($anyErrors) {
     echo "ERRORS:\n";
-    foreach ($result['skus'] as $sid => $skuRow) {
+    foreach ($result['skus'] as $skuRow) {
         if ($skuRow['error'] !== null) {
             echo "  [{$skuRow['sku_code']}] {$skuRow['error']}\n";
         }
@@ -180,64 +185,128 @@ if (!empty($av['checks'])) {
     }
 }
 
-// ── Apply predicate note ────────────────────────────────────────────────────────
+if ($dryRun) {
+    // ── Apply predicate note (dry-run only) ────────────────────────────────────
 
-echo "\nAPPLY PREDICATE (when operator approves):\n";
-echo "  For each in-scope SKU:\n";
-echo "    DELETE FROM ref_sku_bom\n";
-echo "     WHERE sku_id = :sku_id\n";
-echo "       AND source = 'Brewing'\n";
-echo "       AND (bom_source IS NULL OR bom_source = 'liquid')\n";
-echo "       AND mi_id IS NOT NULL;\n";
-echo "    Then INSERT proposed lines with bom_source='liquid', source='Brewing'.\n";
-echo "    Safe-zone: NEVER touches Packaging, composite_liquid, or composite_packaging rows.\n";
+    echo "\nAPPLY PREDICATE (when operator approves):\n";
+    echo "  For each in-scope SKU:\n";
+    echo "    DELETE FROM ref_sku_bom\n";
+    echo "     WHERE sku_id = :sku_id\n";
+    echo "       AND source = 'Brewing'\n";
+    echo "       AND (bom_source IS NULL OR bom_source = 'liquid')\n";
+    echo "       AND mi_id IS NOT NULL;\n";
+    echo "    Then INSERT proposed lines with bom_source='liquid', source='Brewing'.\n";
+    echo "    Safe-zone: NEVER touches Packaging, composite_liquid, or composite_packaging rows.\n";
 
-// ── Apply-gate 15: oldest-invoice transparency table ─────────────────────────
-// Operator ruling 2026-06-07. Emitted for every (recipe, MI) pair where the
-// oldest-invoice costing rule fired. Substitution is explicit, never silent.
+    // ── Apply-gate 15: oldest-invoice transparency table ─────────────────────
+    $gate15 = $result['gate15_oldest_invoice'] ?? [];
+    echo "\n" . str_repeat('=', 80) . "\n";
+    echo "APPLY-GATE 15 — OLDEST-INVOICE COSTING TRANSPARENCY\n";
+    echo "  Rule: basis-window END < MI's earliest date_received → cost from oldest delivery.\n";
+    echo "  Operator ruling: 2026-06-07 | Dispatch: DRY-RUN ONLY (zero ref_sku_bom writes)\n";
+    echo str_repeat('=', 80) . "\n";
 
-$gate15 = $result['gate15_oldest_invoice'] ?? [];
-echo "\n" . str_repeat('=', 80) . "\n";
-echo "APPLY-GATE 15 — OLDEST-INVOICE COSTING TRANSPARENCY\n";
-echo "  Rule: basis-window END < MI's earliest date_received → cost from oldest delivery.\n";
-echo "  Operator ruling: 2026-06-07 | Dispatch: DRY-RUN ONLY (zero ref_sku_bom writes)\n";
-echo str_repeat('=', 80) . "\n";
-
-if (empty($gate15)) {
-    echo "  (no oldest-invoice substitutions triggered)\n";
-} else {
-    printf("  Total substitutions: %d (recipe/MI pairs)\n\n", count($gate15));
-    printf("%-5s %-10s %-22s %-12s %-12s %-10s %-10s %-10s\n",
-        'R_ID', 'MI_CODE', 'BASIS_END', 'MI_FIRST_DEL', 'OLDEST_CHF', 'WAC_CHF', 'DELTA_PHL', 'DEL_ID'
-    );
-    printf("%-5s %-10s %-22s %-12s %-12s %-10s %-10s %-10s\n",
-        str_repeat('-', 5), str_repeat('-', 10), str_repeat('-', 22),
-        str_repeat('-', 12), str_repeat('-', 12),
-        str_repeat('-', 10), str_repeat('-', 10), str_repeat('-', 10)
-    );
-    foreach ($gate15 as $row) {
-        $wac   = $row['current_wac_chf'] !== null ? sprintf('%.6f', $row['current_wac_chf']) : 'n/a';
-        $delta = ($row['current_wac_chf'] !== null)
-            ? sprintf('%+.6f', ($row['oldest_chf_unit'] - $row['current_wac_chf']) * $row['per_hl'])
-            : 'n/a';
-        printf("%-5d %-10s %-22s %-12s %-12.6f %-10s %-10s %-10d\n",
-            $row['recipe_id'],
-            $row['mi_code'],
-            $row['basis_window_end'] ?? 'NULL',
-            $row['mi_earliest_delivery'],
-            $row['oldest_chf_unit'],
-            $wac,
-            $delta,
-            $row['oldest_delivery_id']
+    if (empty($gate15)) {
+        echo "  (no oldest-invoice substitutions triggered)\n";
+    } else {
+        printf("  Total substitutions: %d (recipe/MI pairs)\n\n", count($gate15));
+        printf("%-5s %-10s %-22s %-12s %-12s %-10s %-10s %-10s\n",
+            'R_ID', 'MI_CODE', 'BASIS_END', 'MI_FIRST_DEL', 'OLDEST_CHF', 'WAC_CHF', 'DELTA_PHL', 'DEL_ID'
         );
+        printf("%-5s %-10s %-22s %-12s %-12s %-10s %-10s %-10s\n",
+            str_repeat('-', 5), str_repeat('-', 10), str_repeat('-', 22),
+            str_repeat('-', 12), str_repeat('-', 12),
+            str_repeat('-', 10), str_repeat('-', 10), str_repeat('-', 10)
+        );
+        foreach ($gate15 as $row) {
+            $wac   = $row['current_wac_chf'] !== null ? sprintf('%.6f', $row['current_wac_chf']) : 'n/a';
+            $delta = ($row['current_wac_chf'] !== null)
+                ? sprintf('%+.6f', ($row['oldest_chf_unit'] - $row['current_wac_chf']) * $row['per_hl'])
+                : 'n/a';
+            printf("%-5d %-10s %-22s %-12s %-12.6f %-10s %-10s %-10d\n",
+                $row['recipe_id'],
+                $row['mi_code'],
+                $row['basis_window_end'] ?? 'NULL',
+                $row['mi_earliest_delivery'],
+                $row['oldest_chf_unit'],
+                $wac,
+                $delta,
+                $row['oldest_delivery_id']
+            );
+        }
+        echo "\nColumns: R_ID=recipe_id, BASIS_END=latest basis-batch date, MI_FIRST_DEL=MI's earliest delivery,\n";
+        echo "  OLDEST_CHF=total_chf/qty_delivered of oldest delivery, WAC_CHF=current v_mi_cost.cost_chf,\n";
+        echo "  DELTA_PHL=(oldest_chf_unit - wac) × per_hl [CHF delta per HL], DEL_ID=inv_deliveries.id.\n";
     }
-    echo "\nColumns: R_ID=recipe_id, BASIS_END=latest basis-batch date, MI_FIRST_DEL=MI's earliest delivery,\n";
-    echo "  OLDEST_CHF=total_chf/qty_delivered of oldest delivery, WAC_CHF=current v_mi_cost.cost_chf,\n";
-    echo "  DELTA_PHL=(oldest_chf_unit - wac) × per_hl [CHF delta per HL], DEL_ID=inv_deliveries.id.\n";
+    echo str_repeat('=', 80) . "\n";
+
+    echo "\nAGGREGATOR LOCATION: {$result['aggregator_location']}\n";
+    echo "\n[DRY-RUN] No DB writes performed. Review JSON preview then apply with explicit --apply.\n";
+
+} else {
+    // ── Apply summary ──────────────────────────────────────────────────────────
+
+    $as = $result['apply_stats'];
+    echo "\n" . str_repeat('=', 80) . "\n";
+    echo "APPLY SUMMARY\n";
+    echo str_repeat('=', 80) . "\n";
+    echo "  SKUs applied:         {$as['skus_applied']}\n";
+    echo "  Lines deleted:        {$as['lines_deleted']}\n";
+    echo "  Lines inserted:       {$as['lines_inserted']}\n";
+    echo "  Parity violations:    {$as['parity_violations']}\n";
+    echo "  Apply errors:         {$as['apply_errors']}\n";
+    echo str_repeat('=', 80) . "\n";
+
+    // ── Post-apply verification ────────────────────────────────────────────────
+
+    echo "\nPOST-APPLY VERIFICATION\n";
+    echo str_repeat('-', 40) . "\n";
+
+    // 1. Total liquid rows now in ref_sku_bom (should be > 0).
+    $totalLiqStmt = $pdo->query(
+        "SELECT COUNT(*) FROM ref_sku_bom
+          WHERE source = 'Brewing' AND bom_source = 'liquid'"
+    );
+    $totalLiqRows = (int)$totalLiqStmt->fetchColumn();
+    $liqOk = $totalLiqRows > 0 ? 'OK' : 'WARN';
+    echo "  [{$liqOk}] Liquid rows in ref_sku_bom (source=Brewing, bom_source=liquid): {$totalLiqRows}\n";
+
+    // 2. Legacy orphan rows: source=Brewing, bom_source IS NULL, mi_id IS NOT NULL,
+    //    for the SKUs that were actually applied (zero-window/errored SKUs may legitimately
+    //    retain bom_source=NULL rows — scope this count to applied SKUs only).
+    $appliedSkuIds = [];
+    foreach ($result['skus'] as $skuId => $sr) {
+        if ($sr['error'] === null && empty($sr['skipped_zero_window'])) {
+            $appliedSkuIds[] = (int)$skuId;
+        }
+    }
+
+    $legacyOrphanCount = 0;
+    if (!empty($appliedSkuIds)) {
+        $inClause = implode(',', $appliedSkuIds);
+        $orphanStmt = $pdo->query(
+            "SELECT COUNT(*) FROM ref_sku_bom
+              WHERE source = 'Brewing'
+                AND bom_source IS NULL
+                AND mi_id IS NOT NULL
+                AND sku_id IN ({$inClause})"
+        );
+        $legacyOrphanCount = (int)$orphanStmt->fetchColumn();
+    }
+    $orphanOk = $legacyOrphanCount === 0 ? 'OK' : 'WARN';
+    echo "  [{$orphanOk}] Legacy bom_source=NULL Brewing rows for applied SKUs: {$legacyOrphanCount}"
+        . ($legacyOrphanCount > 0 ? ' (should be 0 — investigate)' : '') . "\n";
+
+    echo str_repeat('-', 40) . "\n";
 }
-echo str_repeat('=', 80) . "\n";
 
-echo "\nAGGREGATOR LOCATION: {$result['aggregator_location']}\n";
-echo "\n[DRY-RUN] No DB writes performed. Review JSON preview then apply with explicit --apply.\n";
+// ── Exit code ─────────────────────────────────────────────────────────────────
 
-exit($s['errors_total'] > 0 ? 1 : 0);
+if ($apply) {
+    $as = $result['apply_stats'];
+    $exitCode = ($as['apply_errors'] > 0 || $as['parity_violations'] > 0) ? 1 : 0;
+} else {
+    $exitCode = $s['errors_total'] > 0 ? 1 : 0;
+}
+
+exit($exitCode);
