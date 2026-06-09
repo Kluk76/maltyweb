@@ -461,8 +461,9 @@ function _role_rank(string $role): int
  * Resolution order:
  *   1. Admin bypass — admins always have access.
  *   2. Page not found in ref_pages — deny (unregistered surface).
- *   3. Role floor — user's role rank must be ≥ page's min_role rank.
- *   4. Explicit user_page_access override (per-user grant/deny).
+ *   3. Explicit user_page_access override (per-user grant/deny) — overrides
+ *      the role floor below; a deny always denies.
+ *   4. Role floor — user's role rank must be ≥ page's min_role rank.
  *   5. Preset membership — if user has a preset assigned.
  *   6. Fallback (no preset) — allow (role floor already passed).
  *      CRITICAL: all current users have access_preset_id_fk=NULL and must
@@ -482,15 +483,17 @@ function user_can_access(string $page_key, ?array $u = null): bool
 
     $page = $registry[$page_key];
 
-    // 3. Role floor check
-    if (_role_rank($u['role'] ?? '') < _role_rank($page['min_role'])) return false;
-
-    // 4. Explicit per-user override (static-cached by user id)
+    // 3. Explicit per-user override (static-cached by user id) — wins over the
+    //    role floor: a per-user grant can surface a page above the user's role,
+    //    and a per-user deny always denies.
     $userId    = (int)($u['id'] ?? 0);
     $overrides = _user_page_overrides($userId);
     if (array_key_exists($page_key, $overrides)) {
         return $overrides[$page_key];
     }
+
+    // 4. Role floor check
+    if (_role_rank($u['role'] ?? '') < _role_rank($page['min_role'])) return false;
 
     // 5. Preset membership
     $presetId = isset($u['access_preset_id_fk']) ? (int)$u['access_preset_id_fk'] : null;
