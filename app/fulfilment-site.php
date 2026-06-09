@@ -13,15 +13,19 @@ declare(strict_types=1);
  *
  *   resolve_fulfilment_site(PDO $pdo, array $ctx): int
  *     Single entry point for site resolution. $ctx keys (all optional):
- *       fulfilment_site_id_fk  — per-order operator override (wins over everything)
- *       customer_id_fk         — look up ref_customers.default_delivery_site_id_fk
- *       channel                — 'taproom'→pos, 'eshop'→warehouse, else→warehouse
+ *       fulfilment_site_id_fk      — per-order operator override (wins over everything)
+ *       customer_id_fk             — look up ref_customers.default_delivery_site_id_fk
+ *       _customer_default_site_id  — prefetched default site (skips the DB lookup in step 2;
+ *                                    use when the caller already JOINed ref_customers, e.g.
+ *                                    the expedie leg in fg_stock_location_snapshot())
+ *       channel                    — 'taproom'→pos, 'eshop'→warehouse, else→warehouse
  *
  * Three call patterns:
  *   B2B/expedié:  resolve_fulfilment_site($pdo, [
- *                   'fulfilment_site_id_fk' => $order['fulfilment_site_id_fk'],
- *                   'customer_id_fk'        => $order['customer_id_fk'],
- *                   'channel'               => $order['internal_channel'],
+ *                   'fulfilment_site_id_fk'     => $order['fulfilment_site_id_fk'],
+ *                   'customer_id_fk'             => $order['customer_id_fk'],
+ *                   'channel'                    => $order['internal_channel'],
+ *                   '_customer_default_site_id'  => $order['customer_default_site_id'], // prefetched via JOIN
  *                 ])
  *   eshop leg:    resolve_fulfilment_site($pdo, ['channel' => 'eshop'])
  *   taproom leg:  resolve_fulfilment_site($pdo, ['channel' => 'taproom'])
@@ -102,6 +106,7 @@ function fulfilment_default_sites(PDO $pdo): array
  * @param array{
  *   fulfilment_site_id_fk?: int|null,
  *   customer_id_fk?: int|null,
+ *   _customer_default_site_id?: int|null,
  *   channel?: string|null
  * } $ctx
  */
@@ -114,6 +119,16 @@ function resolve_fulfilment_site(PDO $pdo, array $ctx): int
     }
 
     // ── 2. Customer default delivery site ─────────────────────────────────
+    // Short-circuit: if the caller already JOINed ref_customers and prefetched
+    // the default site, use it directly — avoids the per-customer DB roundtrip.
+    // _customer_default_site_id takes precedence over customer_id_fk lookup.
+    $prefetchedSiteId = isset($ctx['_customer_default_site_id'])
+        ? (int)$ctx['_customer_default_site_id']
+        : 0;
+    if ($prefetchedSiteId > 0) {
+        return $prefetchedSiteId;
+    }
+
     $customerId = isset($ctx['customer_id_fk']) ? (int)$ctx['customer_id_fk'] : 0;
     if ($customerId > 0) {
         $siteId = _fulfilment_customer_default_site($pdo, $customerId);

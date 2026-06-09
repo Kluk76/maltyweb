@@ -333,6 +333,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'form') {
     )->fetchAll(PDO::FETCH_COLUMN);
     foreach ($trRows as $tid) $activeTransIds[(int)$tid] = true;
 
+    // Active holds_fg_stock site IDs (whitelist for fulfilment_site_id_fk)
+    $activeFulfilmentSiteIds = [];
+    $fsRows = $pdo->query(
+        'SELECT id FROM ref_sites WHERE holds_fg_stock = 1 AND is_active = 1'
+    )->fetchAll(PDO::FETCH_COLUMN);
+    foreach ($fsRows as $fsid) $activeFulfilmentSiteIds[(int)$fsid] = true;
+
     // Active SKU IDs (id → hl_per_unit)
     $activeSkus = [];
     $skuRows = $pdo->query(
@@ -354,6 +361,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'form') {
     $reqDate     = isset($_POST['requested_date']) ? trim((string) $_POST['requested_date']) : '';
     $transIdRaw  = isset($_POST['transporter_id']) ? (int) $_POST['transporter_id'] : 0;
     $comment     = isset($_POST['comment']) ? trim((string) $_POST['comment']) : '';
+    $fulfilSiteRaw = $_POST['fulfilment_site_id_fk'] ?? '';
 
     // Lines: parallel arrays from the form
     $lineSkuIds  = $_POST['line_sku_id']      ?? [];
@@ -398,6 +406,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'form') {
             $errors[] = 'Transporteur introuvable.';
         } else {
             $transIdFk = $transIdRaw;
+        }
+    }
+
+    // Fulfilment site (optional — empty string → NULL means "automatic")
+    $fulfilSiteIdFk = null;
+    if ($fulfilSiteRaw !== '') {
+        $fulfilSiteInt = (int) $fulfilSiteRaw;
+        if (!isset($activeFulfilmentSiteIds[$fulfilSiteInt])) {
+            // Submitted id is not a valid holds_fg_stock site — reject silently to NULL
+            $fulfilSiteIdFk = null;
+        } else {
+            $fulfilSiteIdFk = $fulfilSiteInt;
         }
     }
 
@@ -466,13 +486,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'form') {
 
             $updOrd = $pdo->prepare(
                 'UPDATE ord_orders
-                    SET order_type          = ?,
-                        customer_id_fk      = ?,
-                        internal_channel    = ?,
-                        requested_date      = ?,
-                        transporter_id_fk   = ?,
-                        comment             = ?,
-                        updated_at          = CURRENT_TIMESTAMP
+                    SET order_type               = ?,
+                        customer_id_fk           = ?,
+                        internal_channel         = ?,
+                        requested_date           = ?,
+                        transporter_id_fk        = ?,
+                        fulfilment_site_id_fk    = ?,
+                        comment                  = ?,
+                        updated_at               = CURRENT_TIMESTAMP
                   WHERE id = ?'
             );
             $updOrd->execute([
@@ -481,16 +502,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'form') {
                 ($orderType === 'internal') ? $intChannel : null,
                 $reqDate,
                 $transIdFk,
+                $fulfilSiteIdFk,
                 $comment ?: null,
                 $editId,
             ]);
             log_revision($pdo, $me, 'ord_orders', $editId, $beforeOrder, [
-                'order_type'       => $orderType,
-                'customer_id_fk'   => $customerId,
-                'internal_channel' => ($orderType === 'internal') ? $intChannel : null,
-                'requested_date'   => $reqDate,
-                'transporter_id_fk'=> $transIdFk,
-                'comment'          => $comment ?: null,
+                'order_type'            => $orderType,
+                'customer_id_fk'        => $customerId,
+                'internal_channel'      => ($orderType === 'internal') ? $intChannel : null,
+                'requested_date'        => $reqDate,
+                'transporter_id_fk'     => $transIdFk,
+                'fulfilment_site_id_fk' => $fulfilSiteIdFk,
+                'comment'               => $comment ?: null,
             ], 'normal');
 
             // ── REPLACE lines: delete existing, reinsert ──────────────────
@@ -521,8 +544,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'form') {
             $insOrd = $pdo->prepare(
                 'INSERT INTO ord_orders
                     (order_type, customer_id_fk, internal_channel, requested_date,
-                     status, transporter_id_fk, comment, source, created_by_user_id)
-                 VALUES (?, ?, ?, ?, "entered", ?, ?, "web", ?)'
+                     status, transporter_id_fk, fulfilment_site_id_fk, comment, source, created_by_user_id)
+                 VALUES (?, ?, ?, ?, "entered", ?, ?, ?, "web", ?)'
             );
             $insOrd->execute([
                 $orderType,
@@ -530,21 +553,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'form') {
                 ($orderType === 'internal') ? $intChannel : null,
                 $reqDate,
                 $transIdFk,
+                $fulfilSiteIdFk,
                 $comment ?: null,
                 (int) $me['id'],
             ]);
             $newOrderId = (int) $pdo->lastInsertId();
 
             log_revision($pdo, $me, 'ord_orders', $newOrderId, null, [
-                'order_type'       => $orderType,
-                'customer_id_fk'   => $customerId,
-                'internal_channel' => ($orderType === 'internal') ? $intChannel : null,
-                'requested_date'   => $reqDate,
-                'status'           => 'entered',
-                'transporter_id_fk'=> $transIdFk,
-                'comment'          => $comment ?: null,
-                'source'           => 'web',
-                'created_by_user_id' => (int) $me['id'],
+                'order_type'            => $orderType,
+                'customer_id_fk'        => $customerId,
+                'internal_channel'      => ($orderType === 'internal') ? $intChannel : null,
+                'requested_date'        => $reqDate,
+                'status'                => 'entered',
+                'transporter_id_fk'     => $transIdFk,
+                'fulfilment_site_id_fk' => $fulfilSiteIdFk,
+                'comment'               => $comment ?: null,
+                'source'                => 'web',
+                'created_by_user_id'    => (int) $me['id'],
             ], 'normal');
 
             // ── INSERT lines ──────────────────────────────────────────────
@@ -1009,6 +1034,7 @@ $loadErr = null;
 // Data common to multiple views
 $customers    = [];
 $transporters = [];
+$fgStockSites = [];
 $skus         = [];
 
 // Commandes view — orders + lines + eshop aggregates
@@ -1056,6 +1082,14 @@ try {
           ORDER BY sort_order ASC, name ASC'
     );
     $transporters = $transStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // holds_fg_stock sites for fulfilment site selector
+    $fgSiteStmt = $pdo->query(
+        'SELECT id, name FROM ref_sites
+          WHERE holds_fg_stock = 1 AND is_active = 1
+          ORDER BY sort_order ASC, id ASC'
+    );
+    $fgStockSites = $fgSiteStmt->fetchAll(PDO::FETCH_ASSOC);
 
     // Active SKUs
     $skuStmt = $pdo->query(
@@ -1240,6 +1274,7 @@ try {
         $ordRow = $pdo->prepare(
             'SELECT o.id, o.order_type, o.internal_channel, o.requested_date,
                     o.status, o.comment, o.customer_id_fk, o.transporter_id_fk,
+                    o.fulfilment_site_id_fk,
                     c.name AS customer_name
                FROM ord_orders o
                LEFT JOIN ref_customers c ON c.id = o.customer_id_fk
@@ -2586,6 +2621,25 @@ $isReadOnly = $editOrder !== null
           <span class="exp-trans-hint" id="exp-trans-hint" hidden>
             Transporteur par défaut du client pré-sélectionné.
           </span>
+        </div>
+
+        <div class="op-form__field">
+          <label class="op-form__label" for="exp-fulfilment-site">Site d'expédition
+            <span class="op-form__unit">optionnel</span>
+          </label>
+          <select name="fulfilment_site_id_fk"
+                  id="exp-fulfilment-site"
+                  class="op-form__select"
+                  <?= $isReadOnly ? 'disabled' : '' ?>>
+            <option value="">Automatique (selon client / canal)</option>
+            <?php foreach ($fgStockSites as $fs): ?>
+              <?php $selSite = $editOrder ? ($editOrder['fulfilment_site_id_fk'] ?? null) : null; ?>
+              <option value="<?= (int) $fs['id'] ?>"
+                      <?= ($selSite !== null && (int)$selSite === (int)$fs['id']) ? 'selected' : '' ?>>
+                <?= htmlspecialchars($fs['name']) ?>
+              </option>
+            <?php endforeach ?>
+          </select>
         </div>
 
       </div>

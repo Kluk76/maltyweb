@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__ . '/fulfilment-site.php';
 /**
  * app/fg-stock.php — FG live-stock computation helpers.
  *
@@ -626,8 +627,17 @@ function fg_stock_iso_week_end(string $date): string
  * production site(s) by calling fg_prod_since_anchor() — the SAME helper
  * used by fg_stock_compute() (single-source: no drift possible).
  *
- * Verification invariant: when all sales legs are zero,
+ * Sales are attributed per site using the SAME cutoff predicates as
+ * fg_stock_compute() steps 4/5/6 to guarantee Σ(per-site sales) == total sales.
+ * resolve_fulfilment_site() is used for all site attribution — never inline.
+ *
+ * Transfers from inv_stock_movements (is_tombstoned=0, moved_on > anchorDate)
+ * are applied: +qty to to_site_id_fk, −qty from from_site_id_fk.
+ *
+ * Verification invariant (HARD):
  *   Σ(all location row qty across all locations) == Σ(fg_stock_compute physique).
+ * This holds even when sales are non-zero because the same depletion totals
+ * distributed across sites net to the same total as the unsplit depletion.
  *
  * HL stays decimal (round to 3); unit/box quantities are integers.
  *
@@ -640,7 +650,7 @@ function fg_stock_iso_week_end(string $date): string
  *     last_counted: string|null,
  *     total_units: int,
  *     total_hl: float,
- *     rows: array<int, array{sku_id: int, sku_code: string, format: string, display_family: string, qty: int, hl: float}>
+ *     rows: array<int, array{sku_id: int, sku_code: string, format: string, display_family: string, qty: int, hl: float, sales_qty: int, transfer_in: int, transfer_out: int}>
  *   }>
  * }
  */
@@ -692,6 +702,121 @@ function fg_stock_location_snapshot(PDO $pdo): array
     $prodSiteIds   = $prodHelper['prod_site_ids'];    // int[]
     $prodBySku     = $prodHelper['by_sku'];           // sku_id => {prod_qty, prod_events}
     $prodSiteIdSet = array_flip($prodSiteIds);        // for O(1) membership test
+
+    // anchor_month for the taproom leg (period > anchorMonth comparison)
+    $anchorMonth = substr($anchorDate, 0, 7);
+
+    // ── Sales by site/SKU ────────────────────────────────────────────────────
+    // $salesBySiteSku[site_id][sku_id] = int (depletion qty attributed to that site)
+    // Three legs exactly mirror fg_stock_compute() steps 4/5/6 so that
+    // Σ(per-site sales per sku) == fg_stock_compute sales per sku.
+    $salesBySiteSku = []; // site_id => sku_id => int
+
+    // Leg 1: expédié B2B (ord_orders, status='shipped', requested_date > anchorDate)
+    // LEFT JOIN ref_customers to prefetch default_delivery_site_id_fk → avoids N+1
+    // in the resolver's customer lookup (passes prefetched value as _customer_default_site_id).
+    $expStmt = $pdo->prepare(
+        'SELECT o.id          AS order_id,
+                o.fulfilment_site_id_fk,
+                o.customer_id_fk,
+                o.internal_channel,
+                c.default_delivery_site_id_fk AS customer_default_site_id,
+                l.sku_id_fk,
+                SUM(l.qty) AS qty
+           FROM ord_order_lines l
+           JOIN ord_orders o ON o.id = l.order_id_fk
+           LEFT JOIN ref_customers c ON c.id = o.customer_id_fk
+          WHERE o.status = ?
+            AND o.requested_date > ?
+            AND l.sku_id_fk IS NOT NULL
+          GROUP BY o.id, o.fulfilment_site_id_fk, o.customer_id_fk, o.internal_channel,
+                   c.default_delivery_site_id_fk, l.sku_id_fk'
+    );
+    $expStmt->execute(['shipped', $anchorDate]);
+    $expedieOrdersResolved = 0;
+    foreach ($expStmt->fetchAll(PDO::FETCH_ASSOC) as $er) {
+        $siteId = resolve_fulfilment_site($pdo, [
+            'fulfilment_site_id_fk'    => $er['fulfilment_site_id_fk'],
+            'customer_id_fk'           => $er['customer_id_fk'],
+            'channel'                  => $er['internal_channel'],
+            '_customer_default_site_id'=> $er['customer_default_site_id'],
+        ]);
+        $sid = (int) $er['sku_id_fk'];
+        $qty = (int) round((float) $er['qty']);
+        if (!isset($salesBySiteSku[$siteId])) $salesBySiteSku[$siteId] = [];
+        $salesBySiteSku[$siteId][$sid] = ($salesBySiteSku[$siteId][$sid] ?? 0) + $qty;
+        $expedieOrdersResolved++;
+    }
+
+    // Leg 2: eshop (inv_sales_order_lines, channel='eshop', DATE(created_at) > anchorDate)
+    // Constant site: always resolves to warehouse via channel='eshop' → call once.
+    $eshopSiteId = resolve_fulfilment_site($pdo, ['channel' => 'eshop']);
+    $eshopStmt = $pdo->prepare(
+        'SELECT isol.sku_id_fk,
+                SUM(isol.qty) AS qty
+           FROM inv_sales_order_lines isol
+           JOIN inv_sales_orders iso ON iso.id = isol.order_id_fk
+          WHERE iso.channel = ?
+            AND DATE(iso.created_at) > ?
+            AND isol.sku_id_fk IS NOT NULL
+          GROUP BY isol.sku_id_fk'
+    );
+    $eshopStmt->execute(['eshop', $anchorDate]);
+    foreach ($eshopStmt->fetchAll(PDO::FETCH_ASSOC) as $es) {
+        $sid = (int) $es['sku_id_fk'];
+        $qty = (int) round((float) $es['qty']);
+        if (!isset($salesBySiteSku[$eshopSiteId])) $salesBySiteSku[$eshopSiteId] = [];
+        $salesBySiteSku[$eshopSiteId][$sid] = ($salesBySiteSku[$eshopSiteId][$sid] ?? 0) + $qty;
+    }
+
+    // Leg 3: taproom (inv_sales_bc, channel='taproom', period > anchorMonth)
+    // Constant site: always resolves to pos via channel='taproom' → call once.
+    $tapSiteId = resolve_fulfilment_site($pdo, ['channel' => 'taproom']);
+    $tapStmt = $pdo->prepare(
+        'SELECT sku_id_fk,
+                SUM(qty_invoiced) AS qty
+           FROM inv_sales_bc
+          WHERE channel   = ?
+            AND period    > ?
+            AND sku_id_fk IS NOT NULL
+          GROUP BY sku_id_fk'
+    );
+    $tapStmt->execute(['taproom', $anchorMonth]);
+    foreach ($tapStmt->fetchAll(PDO::FETCH_ASSOC) as $tr) {
+        $sid = (int) $tr['sku_id_fk'];
+        $qty = (int) round((float) $tr['qty']);
+        if (!isset($salesBySiteSku[$tapSiteId])) $salesBySiteSku[$tapSiteId] = [];
+        $salesBySiteSku[$tapSiteId][$sid] = ($salesBySiteSku[$tapSiteId][$sid] ?? 0) + $qty;
+    }
+
+    // ── Transfers by site/SKU ────────────────────────────────────────────────
+    // SCOPE NOTE: transfer cutoff uses the global $anchorDate. Precise per-(site,sku)
+    // anchor-aware transfer settlement is a refinement deferred to when real transfer
+    // data and the stock-movement saisie land.
+    // $transfersIn[site_id][sku_id] = int  (positive: stock arriving)
+    // $transfersOut[site_id][sku_id] = int (positive: stock leaving)
+    $transfersIn  = []; // site_id => sku_id => int
+    $transfersOut = []; // site_id => sku_id => int
+
+    $mvStmt = $pdo->prepare(
+        'SELECT sku_id_fk, from_site_id_fk, to_site_id_fk,
+                CAST(qty AS SIGNED) AS qty
+           FROM inv_stock_movements
+          WHERE is_tombstoned = 0
+            AND moved_on > ?'
+    );
+    $mvStmt->execute([$anchorDate]);
+    foreach ($mvStmt->fetchAll(PDO::FETCH_ASSOC) as $mv) {
+        $sid      = (int) $mv['sku_id_fk'];
+        $fromSite = (int) $mv['from_site_id_fk'];
+        $toSite   = (int) $mv['to_site_id_fk'];
+        $qty      = (int) round((float) $mv['qty']);
+        if ($qty <= 0) continue; // skip non-positive movements (tombstoning guard)
+        if (!isset($transfersOut[$fromSite])) $transfersOut[$fromSite] = [];
+        $transfersOut[$fromSite][$sid] = ($transfersOut[$fromSite][$sid] ?? 0) + $qty;
+        if (!isset($transfersIn[$toSite])) $transfersIn[$toSite] = [];
+        $transfersIn[$toSite][$sid] = ($transfersIn[$toSite][$sid] ?? 0) + $qty;
+    }
 
     // Group anchor rows by location_id_fk, with qty keyed by sku_id for easy merging
     // Structure: location_id → sku_id → anchor row data
@@ -757,6 +882,42 @@ function fg_stock_location_snapshot(PDO $pdo): array
             }
         }
 
+        // Ensure rows exist for any site/SKU that has sales or transfers but
+        // no anchor/production row at this site — those rows may go negative,
+        // which is an HONEST signal (stock shipped from a site with less attributed
+        // than was actually there; per-order override + transfers exist to correct it).
+        // SCOPE NOTE: negative qty is intentional — do NOT clamp to 0.
+        $skuIdsWithFlows = array_unique(array_merge(
+            array_keys($salesBySiteSku[$lid] ?? []),
+            array_keys($transfersIn[$lid]    ?? []),
+            array_keys($transfersOut[$lid]   ?? [])
+        ));
+        foreach ($skuIdsWithFlows as $sid) {
+            if (!isset($mergedBySkuId[$sid])) {
+                // Fetch SKU metadata on-the-fly (rare; only when there's a flow but no anchor/prod)
+                $skuMeta = $pdo->prepare(
+                    'SELECT s.sku_code, s.format, s.hl_per_unit,
+                            COALESCE(pf.display_family, s.format) AS display_family
+                       FROM ref_skus s
+                       LEFT JOIN ref_packaging_formats pf ON pf.id = s.format_id
+                      WHERE s.id = ? AND s.is_active = 1 LIMIT 1'
+                );
+                $skuMeta->execute([$sid]);
+                $meta = $skuMeta->fetch(PDO::FETCH_ASSOC);
+                if ($meta !== false) {
+                    $mergedBySkuId[$sid] = [
+                        'sku_id'         => $sid,
+                        'sku_code'       => $meta['sku_code'],
+                        'format'         => $meta['format'],
+                        'display_family' => $meta['display_family'],
+                        'hl_per_unit'    => (float) $meta['hl_per_unit'],
+                        'qty'            => 0,
+                        'counted_at'     => null,
+                    ];
+                }
+            }
+        }
+
         // Sort by sku_code for consistent output
         uasort($mergedBySkuId, fn($a, $b) => strcmp($a['sku_code'], $b['sku_code']));
 
@@ -766,8 +927,17 @@ function fg_stock_location_snapshot(PDO $pdo): array
         $outRows     = [];
 
         foreach ($mergedBySkuId as $row) {
-            $qty = (int) $row['qty'];
-            // Recompute HL after production addition; HL stays decimal
+            $sid = (int) $row['sku_id'];
+
+            // Sales and transfer terms for this site/SKU
+            $salesQty    = (int) ($salesBySiteSku[$lid][$sid] ?? 0);
+            $transferIn  = (int) ($transfersIn[$lid][$sid]    ?? 0);
+            $transferOut = (int) ($transfersOut[$lid][$sid]   ?? 0);
+
+            // Final qty = anchor_at_site + production_at_site − sales_at_site + transfers_net
+            $qty = (int) $row['qty'] - $salesQty + $transferIn - $transferOut;
+
+            // Recompute HL after production/sales/transfer adjustment; HL stays decimal
             $hl  = round($qty * $row['hl_per_unit'], 3);
             $totalUnits  += $qty;
             $totalHl     += $hl;
@@ -779,8 +949,11 @@ function fg_stock_location_snapshot(PDO $pdo): array
                 'sku_code'       => $row['sku_code'],
                 'format'         => $row['format'],
                 'display_family' => $row['display_family'],
-                'qty'            => $qty,              // integer
+                'qty'            => $qty,              // integer; may be negative (honest signal)
                 'hl'             => $hl,               // decimal
+                'sales_qty'      => $salesQty,         // units depleted via sales
+                'transfer_in'    => $transferIn,       // units arriving via transfers
+                'transfer_out'   => $transferOut,      // units leaving via transfers
             ];
         }
 
@@ -796,7 +969,8 @@ function fg_stock_location_snapshot(PDO $pdo): array
     }
 
     return [
-        'anchor_date' => $anchorDate,
-        'locations'   => $locations,
+        'anchor_date'             => $anchorDate,
+        'locations'               => $locations,
+        '_expedie_orders_resolved' => $expedieOrdersResolved, // diagnostic: resolver call count for expedie leg
     ];
 }

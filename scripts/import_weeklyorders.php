@@ -24,6 +24,7 @@ define('CLI_USER_ID', 0);
 
 require_once __DIR__ . '/../app/db.php';
 require_once __DIR__ . '/../app/db-write-helpers.php';
+require_once __DIR__ . '/../app/fulfilment-site.php';
 
 $applyMode = in_array('--apply', $argv ?? [], true);
 $inputPath = '/tmp/wo-parsed.json';
@@ -650,11 +651,13 @@ echo "\n[APPLY] Importing " . count($buckets['matched']) . " matched orders…\n
 
 $stmtOrder = $pdo->prepare(
     "INSERT INTO ord_orders
-        (order_type, customer_id_fk, requested_date, status, source, source_ref, comment, review_status)
-     VALUES ('customer', ?, ?, ?, 'import', ?, ?, 'none')
+        (order_type, customer_id_fk, requested_date, status, source, source_ref,
+         comment, review_status, fulfilment_site_id_fk)
+     VALUES ('customer', ?, ?, ?, 'import', ?, ?, 'none', ?)
      ON DUPLICATE KEY UPDATE
         status = VALUES(status),
         comment = VALUES(comment),
+        fulfilment_site_id_fk = VALUES(fulfilment_site_id_fk),
         updated_at = CURRENT_TIMESTAMP"
 );
 
@@ -685,6 +688,18 @@ foreach ($buckets['matched'] as $e) {
         $customerId  = $e['customer_id'];
         $reqDate     = $e['date'];
 
+        // Resolve fulfilment site for this order
+        $resolvedSiteId = null;
+        try {
+            $resolvedSiteId = resolve_fulfilment_site($pdo, [
+                'customer_id_fk' => $customerId,
+                'channel'        => $e['channel'] ?? null,
+            ]);
+        } catch (Throwable $siteEx) {
+            error_log('[import-weeklyorders] resolve_fulfilment_site failed: ' . $siteEx->getMessage());
+        }
+        $fulfilSiteIdFk = ($resolvedSiteId > 0) ? $resolvedSiteId : null;
+
         // Upsert ord_orders (idempotent via source_ref UNIQUE)
         $stmtOrder->execute([
             $customerId,
@@ -692,6 +707,7 @@ foreach ($buckets['matched'] as $e) {
             $finalStatus,
             $sourceRef,
             $comment,
+            $fulfilSiteIdFk,
         ]);
 
         // Fetch the order id (existing or newly inserted)
@@ -708,13 +724,14 @@ foreach ($buckets['matched'] as $e) {
             $before = $s2->fetch(PDO::FETCH_ASSOC);
         }
         $after = [
-            'order_type'     => 'customer',
-            'customer_id_fk' => $customerId,
-            'requested_date' => $reqDate,
-            'status'         => $finalStatus,
-            'source'         => 'import',
-            'source_ref'     => $sourceRef,
-            'comment'        => $comment,
+            'order_type'            => 'customer',
+            'customer_id_fk'        => $customerId,
+            'requested_date'        => $reqDate,
+            'status'                => $finalStatus,
+            'source'                => 'import',
+            'source_ref'            => $sourceRef,
+            'comment'               => $comment,
+            'fulfilment_site_id_fk' => $fulfilSiteIdFk,
         ];
         log_revision($pdo, $me, 'ord_orders', $orderId, $before, $after, 'normal', 'import:weeklyorders');
 

@@ -867,6 +867,79 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             redirect_to('/modules/reglages-generaux.php?sec=access');
         }
 
+        // ── Action: assign default delivery site to a customer ──
+        if ($action === 'assign_delivery_site') {
+            $customerId = post_int('customer_id');
+            $siteId     = post_int('site_id');
+
+            if ($customerId === null || $customerId <= 0) {
+                throw new RuntimeException('Client invalide.');
+            }
+            if ($siteId === null || $siteId <= 0) {
+                throw new RuntimeException('Site invalide.');
+            }
+
+            // Validate customer exists
+            $ckCust = $pdo->prepare("SELECT id, name FROM ref_customers WHERE id = ? AND is_active = 1");
+            $ckCust->execute([$customerId]);
+            $custRow = $ckCust->fetch(PDO::FETCH_ASSOC);
+            if ($custRow === false) {
+                throw new RuntimeException('Client introuvable ou inactif.');
+            }
+
+            // Validate site is in the holds_fg_stock whitelist
+            $ckSite = $pdo->prepare("SELECT id, name FROM ref_sites WHERE id = ? AND holds_fg_stock = 1 AND is_active = 1");
+            $ckSite->execute([$siteId]);
+            $siteRow = $ckSite->fetch(PDO::FETCH_ASSOC);
+            if ($siteRow === false) {
+                throw new RuntimeException('Site invalide — doit être un site actif avec stock PF.');
+            }
+
+            $before = bd_fetch_before($pdo, 'ref_customers', $customerId);
+
+            $upd = $pdo->prepare(
+                "UPDATE ref_customers SET default_delivery_site_id_fk = ?, updated_by = ? WHERE id = ?"
+            );
+            $upd->execute([$siteId, $me['username'], $customerId]);
+
+            log_revision($pdo, $me, 'ref_customers', $customerId,
+                ['default_delivery_site_id_fk' => $before['default_delivery_site_id_fk'] ?? null],
+                ['default_delivery_site_id_fk' => $siteId],
+                'normal', 'Réglages généraux: site de livraison par défaut assigné');
+
+            flash_set('ok', "Client « " . htmlspecialchars((string) $custRow['name']) . " » → site « " . htmlspecialchars((string) $siteRow['name']) . " ».");
+            redirect_to('/modules/reglages-generaux.php?sec=delivery_sites');
+        }
+
+        // ── Action: remove default delivery site from a customer ──
+        if ($action === 'remove_delivery_site') {
+            $customerId = post_int('customer_id');
+            if ($customerId === null || $customerId <= 0) {
+                throw new RuntimeException('Client invalide.');
+            }
+
+            $before = bd_fetch_before($pdo, 'ref_customers', $customerId);
+            if ($before === null) {
+                throw new RuntimeException('Client introuvable.');
+            }
+            if ($before['default_delivery_site_id_fk'] === null) {
+                throw new RuntimeException('Ce client n\'a pas de site de livraison par défaut.');
+            }
+
+            $upd = $pdo->prepare(
+                "UPDATE ref_customers SET default_delivery_site_id_fk = NULL, updated_by = ? WHERE id = ?"
+            );
+            $upd->execute([$me['username'], $customerId]);
+
+            log_revision($pdo, $me, 'ref_customers', $customerId,
+                ['default_delivery_site_id_fk' => $before['default_delivery_site_id_fk']],
+                ['default_delivery_site_id_fk' => null],
+                'normal', 'Réglages généraux: site de livraison par défaut retiré');
+
+            flash_set('ok', "Site de livraison par défaut retiré pour « " . htmlspecialchars((string) $before['name']) . " ».");
+            redirect_to('/modules/reglages-generaux.php?sec=delivery_sites');
+        }
+
         throw new RuntimeException("Action inconnue : " . htmlspecialchars($action));
 
     } catch (Throwable $e) {
@@ -879,7 +952,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // ── GET — load data ───────────────────────────────────────────────────────────
 header('Content-Type: text/html; charset=utf-8');
 
-$initialSec = in_array($_GET['sec'] ?? '', ['general', 'pkg_clients', 'users', 'access'], true)
+$initialSec = in_array($_GET['sec'] ?? '', ['general', 'pkg_clients', 'delivery_sites', 'users', 'access'], true)
     ? $_GET['sec']
     : 'general';
 
@@ -907,6 +980,11 @@ $editPkgClientRow = null;
 // Packaging clients
 $packagingClients        = [];
 $packagingClientsApplied = false;
+
+// Delivery site assignments
+$deliverySiteCustomers = [];   // ref_customers that have default_delivery_site_id_fk set
+$deliverySiteOptions   = [];   // ref_sites WHERE holds_fg_stock=1 AND is_active=1
+$allCustomersForSelect = [];   // ref_customers (id, name) for the assign datalist
 
 // Access control data
 $presets           = [];
@@ -967,6 +1045,44 @@ try {
         }
     } catch (Throwable) {
         $packagingClientsApplied = false;
+    }
+
+    // delivery site assignments: customers that have a default_delivery_site_id_fk
+    try {
+        $stmt = $pdo->query(
+            "SELECT rc.id, rc.name AS customer_name, rs.id AS site_id, rs.name AS site_name
+               FROM ref_customers rc
+               JOIN ref_sites rs ON rs.id = rc.default_delivery_site_id_fk
+              WHERE rc.default_delivery_site_id_fk IS NOT NULL
+              ORDER BY rc.name ASC"
+        );
+        $deliverySiteCustomers = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Throwable) {
+        $deliverySiteCustomers = [];
+    }
+
+    // ref_sites eligible for default_delivery_site_id_fk
+    try {
+        $stmt = $pdo->query(
+            "SELECT id, name FROM ref_sites
+              WHERE holds_fg_stock = 1 AND is_active = 1
+              ORDER BY name ASC"
+        );
+        $deliverySiteOptions = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Throwable) {
+        $deliverySiteOptions = [];
+    }
+
+    // all active customers for the assign datalist
+    try {
+        $stmt = $pdo->query(
+            "SELECT id, name FROM ref_customers
+              WHERE is_active = 1
+              ORDER BY name ASC"
+        );
+        $allCustomersForSelect = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Throwable) {
+        $allCustomersForSelect = [];
     }
 
     // users
@@ -1126,6 +1242,17 @@ $_breweryId = brewery_identity();
       </span>
       Clients packaging
       <span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.06em;background:color-mix(in srgb, var(--hop) 18%, transparent);color:var(--hop);padding:2px 7px;border-radius:10px;"><?= count($packagingClients) ?></span>
+    </button>
+
+    <button type="button" class="nav-item<?= $initialSec === 'delivery_sites' ? ' active' : '' ?>" data-sec="delivery_sites" onclick="switchSection('delivery_sites')"<?= $initialSec === 'delivery_sites' ? ' aria-current="true"' : '' ?>>
+      <span class="nav-icon">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <path d="M8 1.5C5.5 1.5 3.5 3.5 3.5 6c0 3.5 4.5 8.5 4.5 8.5s4.5-5 4.5-8.5c0-2.5-2-4.5-4.5-4.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+          <circle cx="8" cy="6" r="1.5" fill="currentColor" opacity=".55"/>
+        </svg>
+      </span>
+      Sites de livraison clients
+      <span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.06em;background:color-mix(in srgb, var(--hop) 18%, transparent);color:var(--hop);padding:2px 7px;border-radius:10px;"><?= count($deliverySiteCustomers) ?></span>
     </button>
 
     <button type="button" class="nav-item<?= $initialSec === 'users' ? ' active' : '' ?>" data-sec="users" onclick="switchSection('users')"<?= $initialSec === 'users' ? ' aria-current="true"' : '' ?>>
@@ -1646,6 +1773,105 @@ $_breweryId = brewery_identity();
 
       </div><!-- /.section-scroll -->
     </div><!-- /#sec-pkg_clients -->
+
+
+    <!-- ═══════════════ SECTION: Sites de livraison clients ═══════════════ -->
+    <div class="section-panel<?= $initialSec === 'delivery_sites' ? ' active' : '' ?>" id="sec-delivery_sites">
+      <div class="section-scroll">
+
+        <div class="sec-title">Sites de livraison <em>clients</em></div>
+        <div class="sec-subtitle">Site d'expédition par défaut · consignation · Nausikraft</div>
+
+        <?php
+        if ($initialSec === 'delivery_sites'):
+            $flashDs = flash_pop();
+            if ($flashDs !== null):
+                $fcDs = $flashDs['type'] === 'ok' ? 'rg-flash--ok' : 'rg-flash--err';
+                $fiDs = $flashDs['type'] === 'ok' ? '✓' : '⚠';
+        ?>
+        <div class="rg-flash <?= $fcDs ?>"><?= $fiDs ?> <?= htmlspecialchars($flashDs['msg']) ?></div>
+        <?php endif; endif ?>
+
+        <div class="rg-card">
+          <div class="rg-card-title">
+            Sites de livraison par défaut
+            <span class="rg-card-label">ref_customers · default_delivery_site_id_fk</span>
+          </div>
+
+          <p class="rg-field-desc">Définit le site d'où partent par défaut les ventes d'un client (ex. clients livrés depuis Nausikraft). Modifiable par commande.</p>
+
+          <?php if (!empty($deliverySiteCustomers)): ?>
+          <div class="rg-table-wrap">
+            <table class="rg-table">
+              <thead>
+                <tr>
+                  <th>Client</th>
+                  <th>Site par défaut</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                <?php foreach ($deliverySiteCustomers as $dsc): ?>
+                <tr>
+                  <td><?= htmlspecialchars((string) $dsc['customer_name']) ?></td>
+                  <td><span class="rg-pill-active"><?= htmlspecialchars((string) $dsc['site_name']) ?></span></td>
+                  <td>
+                    <form method="post" action="/modules/reglages-generaux.php" style="display:inline;">
+                      <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+                      <input type="hidden" name="action" value="remove_delivery_site">
+                      <input type="hidden" name="customer_id" value="<?= (int) $dsc['id'] ?>">
+                      <input type="hidden" name="sec" value="delivery_sites">
+                      <button type="submit" class="rg-action-link danger">Retirer</button>
+                    </form>
+                  </td>
+                </tr>
+                <?php endforeach ?>
+              </tbody>
+            </table>
+          </div>
+          <?php else: ?>
+          <p style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.1em;color:var(--ink-faint);text-transform:uppercase;padding:16px 0;">Aucun client avec site de livraison par défaut.</p>
+          <?php endif ?>
+
+          <!-- Assign form -->
+          <div class="rg-inline-form">
+            <div class="rg-form-title">Assigner un site de livraison par défaut</div>
+            <form method="post" action="/modules/reglages-generaux.php">
+              <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+              <input type="hidden" name="action" value="assign_delivery_site">
+              <input type="hidden" name="sec" value="delivery_sites">
+              <div class="rg-form-grid">
+                <div class="full">
+                  <label class="rg-form-label" for="ds-customer-input">Client *</label>
+                  <input class="rg-input" type="text" id="ds-customer-input" name="customer_name_hint"
+                         list="ds-customer-list" autocomplete="off"
+                         placeholder="Commencer à taper le nom du client…" required
+                         oninput="rgDsResolveCustomer(this.value)">
+                  <input type="hidden" name="customer_id" id="ds-customer-id" value="">
+                  <datalist id="ds-customer-list">
+                    <?php foreach ($allCustomersForSelect as $c): ?>
+                    <option value="<?= htmlspecialchars((string) $c['name']) ?>" data-id="<?= (int) $c['id'] ?>"></option>
+                    <?php endforeach ?>
+                  </datalist>
+                </div>
+                <div>
+                  <label class="rg-form-label" for="ds-site-select">Site de livraison *</label>
+                  <select class="rg-input" id="ds-site-select" name="site_id" required>
+                    <option value="">— choisir un site —</option>
+                    <?php foreach ($deliverySiteOptions as $so): ?>
+                    <option value="<?= (int) $so['id'] ?>"><?= htmlspecialchars((string) $so['name']) ?></option>
+                    <?php endforeach ?>
+                  </select>
+                </div>
+              </div>
+              <button type="submit" class="rg-btn rg-btn-primary" id="ds-submit-btn" disabled>Assigner</button>
+            </form>
+          </div>
+
+        </div><!-- /.rg-card delivery_sites -->
+
+      </div><!-- /.section-scroll -->
+    </div><!-- /#sec-delivery_sites -->
 
 
     <!-- ═══════════════ SECTION: Utilisateurs ═══════════════ -->
@@ -2265,6 +2491,11 @@ $_breweryId = brewery_identity();
     url.searchParams.delete('edit_pkg_client');
     url.searchParams.delete('edit_page');
     history.replaceState(null, '', url.toString());
+    // Reset datalist hidden id when switching away from delivery_sites
+    var dsId = document.getElementById('ds-customer-id');
+    var dsBtn = document.getElementById('ds-submit-btn');
+    if (dsId) dsId.value = '';
+    if (dsBtn) dsBtn.disabled = true;
   }
 
   // Expose for onclick handlers in HTML
@@ -2333,6 +2564,24 @@ $_breweryId = brewery_identity();
     if (!isManager) scopeSelect.value = '';
   }
   window.rgUpdateScopeSelect = rgUpdateScopeSelect;
+
+  // ── Delivery site assign: resolve datalist selection → hidden customer_id ──
+  // The datalist <option value="…" data-id="…"> approach: match the typed value
+  // against option text, populate the hidden field, enable/disable the submit button.
+  function rgDsResolveCustomer(val) {
+    var list    = document.getElementById('ds-customer-list');
+    var hiddenId = document.getElementById('ds-customer-id');
+    var btn      = document.getElementById('ds-submit-btn');
+    if (!list || !hiddenId || !btn) return;
+    var matched = null;
+    var opts = list.querySelectorAll('option');
+    for (var i = 0; i < opts.length; i++) {
+      if (opts[i].value === val) { matched = opts[i]; break; }
+    }
+    hiddenId.value = matched ? matched.dataset.id : '';
+    btn.disabled   = !matched;
+  }
+  window.rgDsResolveCustomer = rgDsResolveCustomer;
 })();
 </script>
 
