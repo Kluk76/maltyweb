@@ -927,6 +927,16 @@ function exp_day_name(string $date): string
     return strtoupper($days[$dow]);
 }
 
+/** French weekday abbreviation ("lun.", "mar.", …) for a date.
+ *  Top-level (compile-time hoisted) so it is available to every call site
+ *  regardless of render order — previously nested inside the stocktake view,
+ *  which made it undefined for the earlier "✓ compté" fresh-chip call. */
+function exp_dow_fr(DateTimeImmutable $d): string
+{
+    static $days = ['dim.','lun.','mar.','mer.','jeu.','ven.','sam.'];
+    return $days[(int) $d->format('w')];
+}
+
 // ---- Determine mode and period bounds ---------------------------------------
 $cmdMode = 'week'; // 'week' | 'range'
 $cmdKw   = ''; // "YYYY-Wnn" — only for mode=week
@@ -3418,13 +3428,6 @@ $isReadOnly = $editOrder !== null
   $stNow       = new DateTimeImmutable(date('Y-m-d'));
   $stDow       = (int) $stNow->format('N'); // 1=Mon, 7=Sun
   $stThisMonday = $stNow->modify('-' . ($stDow - 1) . ' days')->format('Y-m-d');
-
-/** French weekday abbreviation ("lun.", "mar.", …) for a date. */
-function exp_dow_fr(DateTimeImmutable $d): string
-{
-    static $days = ['dim.','lun.','mar.','mer.','jeu.','ven.','sam.'];
-    return $days[(int) $d->format('w')];
-}
 
   function exp_st_freshness_chip(int $locId, array $lastCounted, string $thisMonday): string
   {
