@@ -329,6 +329,36 @@ body.home .ppb-view-toggle__btn--active + .ppb-view-toggle__btn {
   border-left-color: color-mix(in srgb, var(--hop) 40%, transparent);
 }
 
+/* ── BBT-vide reconciliation sub-row ────────────────────────────── */
+/* Displayed below the main loss row when bbt_vide_scrapped_hl > 0.  */
+/* Zero CHF — volumetric reconciliation only, NOT a physical loss.    */
+body.home .ppb-row--bbt-vide {
+  background: transparent;
+}
+body.home .ppb-row--bbt-vide:hover > .ppb-td {
+  background: transparent;
+}
+body.home .ppb-td--bbt-vide-cause {
+  padding: 2px 12px 6px 24px;
+  border-bottom: 1px solid var(--hairline-2);
+}
+body.home .ppb-bbt-vide__label {
+  font-size: 0.78rem;
+  color: var(--ink-mute);
+  font-style: italic;
+}
+body.home .ppb-bbt-vide__val {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+  margin-left: 0.5rem;
+}
+body.home .ppb-bbt-vide__note {
+  font-size: 0.72rem;
+  color: var(--ink-faint);
+  margin-left: 0.5rem;
+}
+
 /* ── Responsive ─────────────────────────────────────────────────── */
 @media (max-width: 640px) {
   /* Hide "Vs effectif" total column on small screens */

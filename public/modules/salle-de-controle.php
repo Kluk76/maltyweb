@@ -1221,6 +1221,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $allowedKeys = [
                 'pertes_racking_loss_hl',
                 'pertes_packaging_loss_hl',
+                'pertes_bbt_empty_threshold_hl',
                 'pertes_rack_warn_pct',
                 'pertes_packaging_warn_pct',
                 'pertes_brewing_warn_pct',
@@ -4147,7 +4148,7 @@ window.SDC_TANK_ERR = null;
             Valider avec le brasseur avant toute modification.
           </div>
           <?php
-          $hlKeys = ['pertes_racking_loss_hl', 'pertes_packaging_loss_hl'];
+          $hlKeys = ['pertes_racking_loss_hl', 'pertes_packaging_loss_hl', 'pertes_bbt_empty_threshold_hl'];
           foreach ($hlKeys as $hk):
             if (!isset($pertesByKey[$hk])) continue;
             $ps = $pertesByKey[$hk];

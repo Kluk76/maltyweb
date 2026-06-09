@@ -320,6 +320,7 @@ function _loss_extract_format_suffix(string $rawSku, string $canonicalBeer): str
  *   brewing_loss_pct:          float|null,        // null when nominal_hl = 0; can be negative (bonus)
  *   loss_vs_effectif_pct:      float|null,        // null when cast_out_hl = 0
  *   loss_vs_nominal_pct:       float|null,        // null when nominal_hl = 0
+ *   bbt_vide_scrapped_hl:      float,             // phantom HL discarded via BBT-vide — 0.0 when none
  *   flags: array{
  *     rack:           bool,
  *     packaging:      bool,
@@ -474,21 +475,27 @@ function loss_metrics_for_batches(PDO $pdo, ?array $filter = null): array
                          && $lossVsNominalPct  > $thresholds['pertes_total_nominal_warn_pct'];
 
         $result[] = [
-            'beer'                 => $beer,
-            'batch'                => $batch,
-            'brew_date'            => $brewDate,
-            'cast_out_hl'          => $castOut,
-            'nominal_hl'           => $nominalHl,
-            'nominal_basis'        => $nominalBasis,
-            'packaged_hl'          => $packedHl,
-            'n_packaging_events'   => $nPkgEvents,
-            'complete'             => $complete,
-            'rack_loss_pct'        => $rackLossPct,
-            'packaging_loss_pct'   => $packagingLossPct,
-            'brewing_loss_pct'     => $brewingLossPct,
-            'loss_vs_effectif_pct' => $lossVsEffectifPct,
-            'loss_vs_nominal_pct'  => $lossVsNominalPct,
-            'flags'                => [
+            'beer'                  => $beer,
+            'batch'                 => $batch,
+            'brew_date'             => $brewDate,
+            'cast_out_hl'           => $castOut,
+            'nominal_hl'            => $nominalHl,
+            'nominal_basis'         => $nominalBasis,
+            'packaged_hl'           => $packedHl,
+            'n_packaging_events'    => $nPkgEvents,
+            'complete'              => $complete,
+            'rack_loss_pct'         => $rackLossPct,
+            'packaging_loss_pct'    => $packagingLossPct,
+            'brewing_loss_pct'      => $brewingLossPct,
+            'loss_vs_effectif_pct'  => $lossVsEffectifPct,
+            'loss_vs_nominal_pct'   => $lossVsNominalPct,
+            // Phantom HL discarded via BBT-vide override.  0.0 when none this batch.
+            // ZERO CHF — not valued, NOT in rack_loss_pct, NOT in loss_vs_effectif.
+            // Display-only cause surfaced separately in the Pertes report.
+            'bbt_vide_scrapped_hl'  => $rackData !== null
+                ? (float)($rackData['bbt_vide_scrapped_hl'] ?? 0.0)
+                : 0.0,
+            'flags'                 => [
                 'rack'           => $warnRack,
                 'packaging'      => $warnPkg,
                 'brewing'        => $warnBrewing,
@@ -727,7 +734,8 @@ function _loss_load_rack_map(PDO $pdo, ?array $filter): array
                 COALESCE(NULLIF(r.neb_batch, ''), r.contract_batch) AS batch,
                 SUM(COALESCE(r.racked_vol_hl, 0))                   AS racked_vol_hl,
                 SUM(COALESCE(r.loss_source_hl, 0))                  AS loss_source_hl,
-                SUM(COALESCE(r.loss_dest_hl, 0))                    AS loss_dest_hl
+                SUM(COALESCE(r.loss_dest_hl, 0))                    AS loss_dest_hl,
+                SUM(COALESCE(r.bbt_vide_scrapped_hl, 0))            AS bbt_vide_scrapped_hl
            FROM bd_racking_v2 r
           WHERE r.is_tombstoned = 0
           GROUP BY raw_beer, batch
@@ -746,9 +754,12 @@ function _loss_load_rack_map(PDO $pdo, ?array $filter): array
 
         $key       = $beer . '|' . $row['batch'];
         $map[$key] = [
-            'racked_vol_hl'   => (float)$row['racked_vol_hl'],
-            'loss_source_hl'  => (float)$row['loss_source_hl'],
-            'loss_dest_hl'    => (float)$row['loss_dest_hl'],
+            'racked_vol_hl'        => (float)$row['racked_vol_hl'],
+            'loss_source_hl'       => (float)$row['loss_source_hl'],
+            'loss_dest_hl'         => (float)$row['loss_dest_hl'],
+            // Phantom HL discarded via BBT-vide override — display-only cause.
+            // ZERO CHF: not valued, not folded into rack_loss_pct numerator.
+            'bbt_vide_scrapped_hl' => (float)$row['bbt_vide_scrapped_hl'],
         ];
     }
     return $map;
@@ -868,6 +879,7 @@ function _loss_is_complete(?float $packedHl, float $totalDrawnHl, ?float $racked
  *   avg_packaging_loss_pct:     float|null,
  *   avg_loss_vs_effectif_pct:   float|null,
  *   avg_loss_vs_nominal_pct:    float|null,
+ *   sum_bbt_vide_scrapped_hl:   float,      // total phantom HL discarded (0.0 when none)
  *   last_brew_date:             string,     // 'YYYY-MM-DD' of most recent complete batch
  * }>
  * Sorted by avg_loss_vs_nominal_pct DESC (worst-loss beers first — most actionable).
@@ -921,6 +933,13 @@ function loss_metrics_per_beer(PDO $pdo, ?array $filter = null): array
             }
         }
 
+        // Sum phantom HL across ALL batches in window (complete + incomplete).
+        // An incomplete batch may have already had a BBT-vide event; surface it.
+        $sumBbtVide = 0.0;
+        foreach ($g['complete_rows'] as $r) {
+            $sumBbtVide += (float)($r['bbt_vide_scrapped_hl'] ?? 0.0);
+        }
+
         $result[] = [
             'beer'                     => $beer,
             'n_batches'                => $nBatches,
@@ -930,6 +949,8 @@ function loss_metrics_per_beer(PDO $pdo, ?array $filter = null): array
             'avg_packaging_loss_pct'   => $avg('packaging_loss_pct'),
             'avg_loss_vs_effectif_pct' => $avg('loss_vs_effectif_pct'),
             'avg_loss_vs_nominal_pct'  => $avg('loss_vs_nominal_pct'),
+            // Sum of phantom HL discarded across the window — display-only, zero CHF.
+            'sum_bbt_vide_scrapped_hl' => $sumBbtVide,
             'last_brew_date'           => $lastBrewDate,
         ];
     }

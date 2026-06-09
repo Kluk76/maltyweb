@@ -1004,6 +1004,42 @@ document.addEventListener('DOMContentLoaded', function () {
     FormFramework.refreshWarnings();
   }
 
+  // ── BBT-vide v2 — edit-mode prefill ────────────────────────────────────
+  //
+  // When editing a row that was a BBT-vide override:
+  //   - pre-tick the checkbox (bbt_vide_scrapped_hl > 0 is the signal, NOT blend_hl=0)
+  //   - force blend_hl to '0' and readonly
+  //   - reveal the bbt-vide row
+  //   - show a note with the scrapped magnitude
+  //
+  // Must run AFTER syncBlendSection() (which would hide/reset bbtVideRow on first call).
+  // The note element is inserted adjacent to the checkbox label.
+  if (window.RF_EDIT_MODE && window.RF_EDIT_PREFILL) {
+    var scrappedHl = window.RF_EDIT_PREFILL.bbt_vide_scrapped_hl;
+    if (scrappedHl !== null && scrappedHl !== undefined && parseFloat(scrappedHl) > 0) {
+      // Pre-tick and reveal
+      if (bbtVideToggle) bbtVideToggle.checked = true;
+      if (bbtVideRow)    bbtVideRow.hidden      = false;
+      // Force blend_hl to 0 readonly
+      if (blendHlInput) {
+        blendHlInput.value = '0';
+        blendHlInput.setAttribute('readonly', '');
+      }
+      // Show note: "Talon ignoré : X.XX HL" — placed after the checkbox span
+      var noteId = 'rf-bbt-vide-note';
+      if (!document.getElementById(noteId) && bbtVideRow) {
+        var noteEl = document.createElement('span');
+        noteEl.id        = noteId;
+        noteEl.className = 'rf-bbt-vide-note';
+        noteEl.textContent = ' — Talon ignoré : ' + parseFloat(scrappedHl).toFixed(2) + ' HL';
+        bbtVideRow.appendChild(noteEl);
+      }
+      // Re-sync resultant (blend_hl changed programmatically)
+      updateResultant();
+      updateDestCipRequired();
+    }
+  }
+
   // ── Multi-entry turbidity widget (item #4) ──────────────────────────────
   // Mounts on both form-racking.php and racking-phase-in-progress.php (they share
   // this JS file). The mount div id is the same on both surfaces — only one renders

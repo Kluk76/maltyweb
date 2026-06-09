@@ -1379,6 +1379,21 @@ $today = $asOfDT;
             <?= ppb_render_pct_cell($pbr['avg_loss_vs_effectif_pct'], $flagEff,  true) ?>
             <?= ppb_render_pct_cell($pbr['avg_loss_vs_nominal_pct'],  $flagNom,  false) ?>
           </tr>
+          <?php
+            // BBT-vide reconciliation cause — display only when > 0 in the window.
+            // Zero CHF, not summed into physical losses or rack_loss_pct.
+            // Shown as a sub-row visually distinct from the main loss row.
+            $bbtVideSum = (float)($pbr['sum_bbt_vide_scrapped_hl'] ?? 0.0);
+            if ($bbtVideSum > 0.0):
+          ?>
+          <tr class="ppb-row ppb-row--bbt-vide">
+            <td class="ppb-td ppb-td--batch ppb-td--bbt-vide-cause" colspan="7">
+              <span class="ppb-bbt-vide__label">Écart de dérivation (BBT vide)</span>
+              <span class="ppb-bbt-vide__val"><?= number_format($bbtVideSum, 2, ',', ' ') ?> HL</span>
+              <span class="ppb-bbt-vide__note">réconciliation volumétrique · 0 CHF</span>
+            </td>
+          </tr>
+          <?php endif ?>
           <?php endforeach ?>
         </tbody>
       </table>

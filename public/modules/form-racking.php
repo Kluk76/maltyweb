@@ -179,11 +179,67 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         // #5 — blend_hl = residual volume in destination tank at transfer time
         $blendHl     = post_decimal('blend_hl');
+
+        // ── BBT-vide v2: magnitude capture + edit-mode invariant ────────────
+        //
         // "BBT vide" override — operator asserts the destination tank is physically
         // empty despite a tracked residual (phantom from a derivation discrepancy).
         // Scrap the residual so TankSimulator routes through its fresh-fill branch.
         // This is NOT a loss event (physical loss uses the Pertes section).
-        if (post_str('bbt_vide') === '1') {
+        //
+        // v2 adds: persist the MAGNITUDE of the scrapped residual as
+        // bbt_vide_scrapped_hl, so re-editing never silently un-scraps and
+        // genuine fresh-fills (residual truly 0) are distinguished from overrides.
+        //
+        // Edit-mode invariant: when editing a row that already has
+        // bbt_vide_scrapped_hl > 0 and the checkbox REMAINS ticked, PRESERVE the
+        // originally-stored magnitude — do NOT re-derive from live sim state.
+        // Only re-derive on a NEW tick (fresh submission, or box newly checked on a
+        // row that didn't have it).
+        //
+        // Trigger = checkbox ticked (post_str('bbt_vide') === '1') AND destType=BBT.
+        $bbtVideChecked       = (post_str('bbt_vide') === '1');
+        $bbtVideScrappedHl    = null;   // default: normal event
+
+        if ($bbtVideChecked && $destType === 'BBT' && $bbtNumber !== null) {
+            // Determine if this is "remained ticked" on an existing BBT-vide row
+            // (edit mode, row already had bbt_vide_scrapped_hl > 0).
+            $existingMagnitude = null;
+            if ($isEditMode && $editIdFromPost !== null) {
+                $existingMagnitudeStmt = $pdo->prepare(
+                    "SELECT bbt_vide_scrapped_hl FROM bd_racking_v2
+                      WHERE id = ? AND is_tombstoned = 0
+                      LIMIT 1"
+                );
+                $existingMagnitudeStmt->execute([$editIdFromPost]);
+                $existingMagnitudeRow = $existingMagnitudeStmt->fetch(PDO::FETCH_ASSOC);
+                if ($existingMagnitudeRow !== false) {
+                    $mag = $existingMagnitudeRow['bbt_vide_scrapped_hl'];
+                    if ($mag !== null && (float)$mag > 0.0) {
+                        $existingMagnitude = (float)$mag;
+                    }
+                }
+            }
+
+            if ($existingMagnitude !== null) {
+                // Edit mode: checkbox remained ticked → preserve stored magnitude.
+                $bbtVideScrappedHl = $existingMagnitude;
+            } else {
+                // New tick (fresh submission or newly checked): derive magnitude
+                // from the live simulator state for the selected dest BBT.
+                // Run a fresh TankSimulator to get current BBT residuals in POST context.
+                $postSim      = new TankSimulator($pdo);
+                $postSimState = $postSim->run(new DateTimeImmutable('today'));
+                $bbtState     = $postSimState['bbt'][$bbtNumber] ?? null;
+                $liveResidual = ($bbtState !== null) ? (float)($bbtState['volume_hl'] ?? 0.0) : 0.0;
+
+                // Invariant: residual > 0 means "actually scrapped something".
+                // If the residual is 0 (genuine empty / fresh-fill), write NULL —
+                // this is a fresh-fill, not a BBT-vide override.
+                $bbtVideScrappedHl = ($liveResidual > 0.0) ? $liveResidual : null;
+            }
+
+            // Always force blend_hl to 0 when the override is active.
             $blendHl = '0';
         }
         $avgTurbidity = post_decimal('avg_turbidity');
@@ -454,6 +510,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'flowmeter_start_hl'       => $flowStart,
             'flowmeter_end_hl'         => $flowEnd,
             'blend_hl'                 => $blendHl,  // #5 — residual in dest tank
+            'bbt_vide_scrapped_hl'     => $bbtVideScrappedHl,  // v2 — phantom HL scrapped (NULL = normal)
             'avg_turbidity'            => $avgTurbidity,
             // avg_speed intentionally absent — column kept, form removed (#7)
             'bbt_pressure'             => $bbtPressure,
@@ -622,7 +679,10 @@ try {
     $candidates = $candStmt->fetchAll(PDO::FETCH_ASSOC);
 
     // ── TankSimulator: authoritative CCT occupancy filter ─────────────────
-    $simState = (new TankSimulator($pdo))->run(new DateTimeImmutable('today'));
+    // Keep $sim as a named instance so the BBT-empty threshold is accessible
+    // for tank_bbt_composition() below (STEP 4 of BBT-vide v2).
+    $sim      = new TankSimulator($pdo);
+    $simState = $sim->run(new DateTimeImmutable('today'));
 
     /**
      * Drop CCT candidates whose source CCT is null/empty in the TankSimulator.
@@ -815,7 +875,7 @@ $active_module = 'racking';
 // Beer names are canonical (TankSimulator internal) — human-readable, never DB codes.
 $bbtBlendCandidates = [];
 try {
-    $bbtComposition = tank_bbt_composition($simState);
+    $bbtComposition = tank_bbt_composition($simState, $sim->bbtEmptyThresholdHl());
     foreach ($bbtComposition as $entry) {
         $beer = $entry['beer'];
         if (!isset($bbtBlendCandidates[$beer])) {
@@ -1013,6 +1073,10 @@ if ($editId !== null) {
                 'dest_bbt_still_clean'     => $editRow['dest_bbt_still_clean'],
                 'hors_process_flag'        => (int)($editRow['hors_process_flag'] ?? 0),
                 'hors_process_reason'      => $editRow['hors_process_reason'] ?? '',
+                // BBT-vide v2 — stored magnitude (null = normal, >0 = was overridden)
+                'bbt_vide_scrapped_hl'     => isset($editRow['bbt_vide_scrapped_hl'])
+                    ? (float)$editRow['bbt_vide_scrapped_hl']
+                    : null,
                 // Identity (for the non-editable strip + hidden fields)
                 'neb_beer'                 => $editRow['neb_beer'] ?? '',
                 'neb_batch'                => $editRow['neb_batch'] ?? '',
@@ -1869,9 +1933,12 @@ window.RF_CAN_OVERRIDE        = <?= $canOverride ? 'true' : 'false' ?>;
 window.RF_EDIT_MODE = <?= $editMode ? 'true' : 'false' ?>;
 <?php if ($editMode): ?>
 window.RF_EDIT_PREFILL = <?= json_encode([
-    'neb_beer'      => $editPrefill['neb_beer'] ?? '',
-    'neb_batch'     => $editPrefill['neb_batch'] ?? '',
-    'avg_turbidity' => $editPrefill['avg_turbidity'] ?? '',
+    'neb_beer'             => $editPrefill['neb_beer'] ?? '',
+    'neb_batch'            => $editPrefill['neb_batch'] ?? '',
+    'avg_turbidity'        => $editPrefill['avg_turbidity'] ?? '',
+    // BBT-vide v2: stored magnitude so JS can pre-tick + show scrapped figure.
+    // null = normal event; >0 = was a BBT-vide override.
+    'bbt_vide_scrapped_hl' => $editPrefill['bbt_vide_scrapped_hl'] ?? null,
 ], JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
 <?php endif ?>
 // Per-recipe QC threshold bands (field-name-keyed). "__global" is the fallback.

@@ -491,3 +491,11 @@ body.op-form-racking .rf-bbt-vide-text {
   font-weight: 600;
   color: var(--ink);
 }
+/* v2 — scrapped magnitude note shown in edit mode when bbt_vide_scrapped_hl > 0 */
+body.op-form-racking .rf-bbt-vide-note {
+  font-size: 0.82rem;
+  font-weight: 400;
+  color: var(--ember);
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 0.01em;
+}

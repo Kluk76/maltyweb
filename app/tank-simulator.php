@@ -41,6 +41,7 @@ class TankSimulator
     // Coalesce to class consts when the DB row is absent (first-run safety).
     private float $rackingLossHl;
     private float $packagingLossHl;
+    private float $bbtEmptyThresholdHl;
     private const MAX_TANK_AGE_DAYS      = 180;
     private const BBT_EMPTY_THRESHOLD_HL = 2.5;
     private const SIM_START_DATE         = '2023-10-01';
@@ -233,7 +234,8 @@ class TankSimulator
             "SELECT key_name, value_num
                FROM commissioning_settings
               WHERE section = 'pertes'
-                AND key_name IN ('pertes_racking_loss_hl', 'pertes_packaging_loss_hl')
+                AND key_name IN ('pertes_racking_loss_hl', 'pertes_packaging_loss_hl',
+                                 'pertes_bbt_empty_threshold_hl')
                 AND is_active = 1"
         );
         $stmt->execute();
@@ -241,8 +243,9 @@ class TankSimulator
         foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
             $pertes[$row['key_name']] = (float) $row['value_num'];
         }
-        $this->rackingLossHl   = $pertes['pertes_racking_loss_hl']   ?? self::RACKING_LOSS_HL;
-        $this->packagingLossHl = $pertes['pertes_packaging_loss_hl'] ?? self::PACKAGING_LOSS_HL;
+        $this->rackingLossHl       = $pertes['pertes_racking_loss_hl']        ?? self::RACKING_LOSS_HL;
+        $this->packagingLossHl     = $pertes['pertes_packaging_loss_hl']      ?? self::PACKAGING_LOSS_HL;
+        $this->bbtEmptyThresholdHl = $pertes['pertes_bbt_empty_threshold_hl'] ?? self::BBT_EMPTY_THRESHOLD_HL;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -467,7 +470,7 @@ class TankSimulator
                                 $rackedOut  = (float)($e['racked_vol'] ?? 0.0);
                                 $lostAtSrc  = (float)($e['loss_source_hl'] ?? 0.0);
                                 $remaining  = $sourceVol - $rackedOut - $lostAtSrc;
-                                if ($remaining <= self::BBT_EMPTY_THRESHOLD_HL) {
+                                if ($remaining <= $this->bbtEmptyThresholdHl) {
                                     // Remaining below dead-volume floor → treat as emptied.
                                     $cctState[$e['cct']] = null;
                                 } else {
@@ -586,7 +589,7 @@ class TankSimulator
                         $lossDestHl
                     );
                     // Null the BBT if it drops below the dead-volume threshold
-                    if ($bbtState[$bbt]['volume_hl'] < self::BBT_EMPTY_THRESHOLD_HL) {
+                    if ($bbtState[$bbt]['volume_hl'] < $this->bbtEmptyThresholdHl) {
                         $bbtState[$bbt] = null;
                     }
                 }
@@ -605,7 +608,7 @@ class TankSimulator
                         );
                     }
                     unset($pendingDeductions[$bbt]);
-                    if ($bbtState[$bbt]['volume_hl'] < self::BBT_EMPTY_THRESHOLD_HL) {
+                    if ($bbtState[$bbt]['volume_hl'] < $this->bbtEmptyThresholdHl) {
                         $bbtState[$bbt] = null;
                     }
                 }
@@ -649,7 +652,7 @@ class TankSimulator
                             $prevVol,
                             $deduct
                         );
-                        if ($bbtState[$bbt]['volume_hl'] < self::BBT_EMPTY_THRESHOLD_HL) {
+                        if ($bbtState[$bbt]['volume_hl'] < $this->bbtEmptyThresholdHl) {
                             $bbtState[$bbt] = null;
                         }
                     }
@@ -1116,6 +1119,17 @@ class TankSimulator
         $diffDays = (int)$filledDate->diff($now)->days;
         return $diffDays > self::MAX_TANK_AGE_DAYS;
     }
+
+    /**
+     * Returns the BBT-empty threshold (HL) loaded from commissioning_settings,
+     * falling back to the class-const default when the DB row is absent.
+     * Exposed so callers (e.g. form-racking.php) can pass it to
+     * tank_bbt_composition() without re-reading the DB.
+     */
+    public function bbtEmptyThresholdHl(): float
+    {
+        return $this->bbtEmptyThresholdHl;
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1147,7 +1161,7 @@ class TankSimulator
  *   ]
  *   Empty if no BBT is occupied or blend_info is absent.
  */
-function tank_bbt_composition(array $simState): array
+function tank_bbt_composition(array $simState, float $emptyThresholdHl = 2.5): array
 {
     $result = [];
 
@@ -1157,6 +1171,11 @@ function tank_bbt_composition(array $simState): array
         }
 
         $totalHl = (float)($state['volume_hl'] ?? 0.0);
+        // Gate: omit sub-threshold BBTs from blend candidates.
+        // A tank below the dead-volume floor has nothing useful to blend with.
+        if ($totalHl < $emptyThresholdHl) {
+            continue;
+        }
         $lots    = [];
 
         foreach ($state['blend_info'] as $bi) {
