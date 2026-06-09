@@ -28,6 +28,21 @@ if (!is_admin($me)) {
     redirect_to('/');
 }
 
+/**
+ * Sanitize a submitted username.
+ * Allows Unicode letters (incl. accented), digits, space, dot, underscore,
+ * straight apostrophe, curly apostrophe (U+2019), and hyphen.
+ * Collapses runs of whitespace to a single space and trims.
+ * Returns the sanitized string, or '' if it reduces to fewer than 2 chars (caller throws).
+ */
+function rg_sanitize_username(?string $raw): string {
+    $s = (string) ($raw ?? '');
+    // /u flag is required for \p{L} and \p{N} Unicode property escapes
+    $s = preg_replace('/[^\p{L}\p{N} ._\'\x{2019}-]/u', '', $s);
+    $s = trim((string) preg_replace('/\s+/u', ' ', (string) $s));
+    return mb_substr($s, 0, 64);
+}
+
 // ── POST handler ──────────────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!csrf_verify($_POST['csrf'] ?? null)) {
@@ -288,12 +303,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $scopeRaw    = post_str('manager_scope');
             $presetRaw   = post_str('access_preset_id_fk');
 
-            if ($username === null || strlen($username) < 2) {
+            if ($username === null || $username === '') {
                 throw new RuntimeException('Identifiant utilisateur obligatoire (minimum 2 caractères).');
             }
-            $username = substr(preg_replace('/[^a-z0-9._-]/i', '', $username), 0, 64);
-            if (strlen($username) < 2) {
-                throw new RuntimeException('Identifiant invalide — caractères autorisés : a-z 0-9 . _ -');
+            $username = rg_sanitize_username($username);
+            if (mb_strlen($username) < 2) {
+                throw new RuntimeException('Identifiant invalide — minimum 2 caractères, lettres/chiffres/espaces/._-\' autorisés.');
             }
             if ($displayName !== null) $displayName = substr($displayName, 0, 128);
 
@@ -386,6 +401,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // ── Action: update user ──
         if ($action === 'update_user') {
             $userId      = post_int('user_id');
+            $usernameRaw = post_str('username');
             $displayName = post_str('display_name');
             $role        = post_str('role') ?? '';
             $scopeRaw    = post_str('manager_scope');
@@ -398,6 +414,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $before = bd_fetch_before($pdo, 'users', $userId);
             if ($before === null) {
                 throw new RuntimeException('Utilisateur introuvable.');
+            }
+
+            // Username: sanitize + validate (parity with create_user)
+            if ($usernameRaw === null || $usernameRaw === '') {
+                throw new RuntimeException('Identifiant obligatoire (minimum 2 caractères).');
+            }
+            $username = rg_sanitize_username($usernameRaw);
+            if (mb_strlen($username) < 2) {
+                throw new RuntimeException('Identifiant invalide — minimum 2 caractères, lettres/chiffres/espaces/._-\' autorisés.');
+            }
+
+            // No-op: skip collision check when username unchanged
+            $usernameChanged = ($username !== (string) $before['username']);
+            if ($usernameChanged) {
+                $ck = $pdo->prepare("SELECT id FROM users WHERE username = ? AND id <> ?");
+                $ck->execute([$username, $userId]);
+                if ($ck->fetch()) {
+                    throw new RuntimeException('Cet identifiant est déjà utilisé par un autre compte.');
+                }
             }
 
             $allowedRoles = ['admin', 'operator', 'viewer', 'manager'];
@@ -442,22 +477,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             try {
                 $upd = $pdo->prepare(
-                    "UPDATE users SET display_name=?, role=?, manager_scope=?, email=?, access_preset_id_fk=? WHERE id=?"
+                    "UPDATE users SET username=?, display_name=?, role=?, manager_scope=?, email=?, access_preset_id_fk=? WHERE id=?"
                 );
-                $upd->execute([$displayName ?? ($before['display_name'] ?? $before['username']), $role, $managerScope, $email, $presetId, $userId]);
+                $upd->execute([$username, $displayName ?? ($before['display_name'] ?? $before['username']), $role, $managerScope, $email, $presetId, $userId]);
             } catch (\PDOException $pdoEx) {
                 if (str_contains($pdoEx->getMessage(), '1062')) {
-                    throw new RuntimeException('Cet e-mail est déjà utilisé par un autre compte.');
+                    throw new RuntimeException('Cet identifiant ou e-mail est déjà utilisé par un autre compte.');
                 }
                 throw $pdoEx;
             }
 
             log_revision($pdo, $me, 'users', $userId,
-                ['display_name' => $before['display_name'], 'role' => $before['role'], 'manager_scope' => $before['manager_scope'], 'email' => $before['email'] ?? null, 'access_preset_id_fk' => $before['access_preset_id_fk'] ?? null],
-                ['display_name' => $displayName, 'role' => $role, 'manager_scope' => $managerScope, 'email' => $email, 'access_preset_id_fk' => $presetId],
+                ['username' => $before['username'], 'display_name' => $before['display_name'], 'role' => $before['role'], 'manager_scope' => $before['manager_scope'], 'email' => $before['email'] ?? null, 'access_preset_id_fk' => $before['access_preset_id_fk'] ?? null],
+                ['username' => $username, 'display_name' => $displayName, 'role' => $role, 'manager_scope' => $managerScope, 'email' => $email, 'access_preset_id_fk' => $presetId],
                 'normal', 'Réglages généraux: mise à jour utilisateur');
 
-            flash_set('ok', "Utilisateur « " . htmlspecialchars((string) $before['username']) . " » mis à jour.");
+            // Self-rename: refresh session so topbar + actor stamps use the new name
+            if ((int) $me['id'] === $userId) {
+                $_SESSION['user']['username']     = $username;
+                $_SESSION['user']['display_name'] = $displayName ?? ($before['display_name'] ?? $username);
+            }
+
+            $flashMsg = "Utilisateur « " . htmlspecialchars($username) . " » mis à jour.";
+            if ($usernameChanged) {
+                $flashMsg .= " Nouvel identifiant de connexion : " . htmlspecialchars($username) . ".";
+            }
+            flash_set('ok', $flashMsg);
             redirect_to('/modules/reglages-generaux.php?sec=users');
         }
 
@@ -1625,6 +1670,12 @@ $_breweryId = brewery_identity();
                       <input type="hidden" name="sec" value="users">
                       <div class="rg-form-grid">
                         <div>
+                          <label class="rg-form-label">Identifiant (login) *</label>
+                          <input class="rg-input" type="text" name="username" maxlength="64" required
+                                 value="<?= htmlspecialchars((string) $u['username']) ?>"
+                                 title="Lettres, chiffres, espaces et . _ - ' autorisés">
+                        </div>
+                        <div>
                           <label class="rg-form-label">Nom d'affichage</label>
                           <input class="rg-input" type="text" name="display_name" maxlength="128"
                                  value="<?= htmlspecialchars((string) ($u['display_name'] ?? '')) ?>">
@@ -1778,8 +1829,8 @@ $_breweryId = brewery_identity();
                 <label class="rg-form-label">Identifiant (login) *</label>
                 <input class="rg-input" type="text" name="username" maxlength="64" required
                        autocomplete="off"
-                       placeholder="ex: jdupont"
-                       pattern="[a-zA-Z0-9._-]+" title="Caractères autorisés : a-z 0-9 . _ -">
+                       placeholder="ex: Stéphane Lemos"
+                       title="Lettres, chiffres, espaces et . _ - ' autorisés">
               </div>
               <div>
                 <label class="rg-form-label">Nom d'affichage</label>
