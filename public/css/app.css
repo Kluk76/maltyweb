@@ -3671,6 +3671,12 @@ body.auth::after {
   background: color-mix(in srgb, var(--hop) 8%, transparent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--hop) 14%, transparent);
 }
+.auth__hint {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--ink-mute);
+  margin-top: 4px;
+}
 
 /* Submit button */
 .auth__submit {

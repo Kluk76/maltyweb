@@ -169,6 +169,7 @@ $brewery  = brewery_identity();
       <label class="auth__field">
         <span class="auth__field-label">Username</span>
         <input type="text" name="username" value="<?= htmlspecialchars($username) ?>" autofocus required>
+        <small class="auth__hint">Prénom, nom complet ou e-mail</small>
       </label>
       <label class="auth__field">
         <span class="auth__field-label">Password</span>
