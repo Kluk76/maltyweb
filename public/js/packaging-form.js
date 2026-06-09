@@ -313,11 +313,15 @@ document.addEventListener('DOMContentLoaded', function () {
     { name: 'loss_container_can_units',label: 'Pertes contenant can',     unit: 'unités' },
   ];
 
-  // Disposition fields for keg/cuv
+  // Disposition fields for keg/cuv.
+  // loss_keg_liquid_l: canonical liquid-loss field for both keg and cuv (serving-tank).
+  // For cuv, this is the field to use for burst-bag / liner-rupture losses in litres.
+  // Label is overridden dynamically on run_type change in updateRowDispositionGroups():
+  //   keg → 'Perte liquide fût'  |  cuv → 'Perte liquide / poche éclatée'
   const KEG_DISPOSITION_FIELDS = [
-    { name: 'loss_keg_liquid_l', label: 'Perte liquide fût',   unit: 'L' },
-    { name: 'taproom_keg_l',     label: 'Fût taproom',         unit: 'L (taxé)' },
-    { name: 'loss_keg_save_units',label: 'Perte capuchon fût', unit: 'unités' },
+    { name: 'loss_keg_liquid_l', label: 'Perte liquide fût',               unit: 'L' },
+    { name: 'taproom_keg_l',     label: 'Fût taproom',                     unit: 'L (taxé)' },
+    { name: 'loss_keg_save_units',label: 'Perte capuchon fût',             unit: 'unités' },
   ];
 
   function buildFormatRow(idx, isMain) {
@@ -645,6 +649,32 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // Reuse banner
     if (reuseBanner) reuseBanner.hidden = !isReuse;
+
+    // Update loss_keg_liquid_l label: "poche éclatée" is cuv-specific; keg uses the
+    // plain "fût" term. The MSR-widget label has no `for` — find it via the mount div.
+    if (kegGroup) {
+      var lossKegMountEl = kegGroup.querySelector('[id$="_loss_keg_liquid_l_msr"]');
+      if (lossKegMountEl) {
+        var lossKegLabelEl = lossKegMountEl.closest('.op-form__field')
+          ? lossKegMountEl.closest('.op-form__field').querySelector('.op-form__label') : null;
+        if (lossKegLabelEl) {
+          // Preserve the <span class="op-form__unit"> child — only replace the text node.
+          var unitSpan = lossKegLabelEl.querySelector('.op-form__unit');
+          lossKegLabelEl.childNodes.forEach(function (n) {
+            if (n.nodeType === Node.TEXT_NODE) n.nodeValue = isCuv
+              ? 'Perte liquide / poche éclatée '
+              : 'Perte liquide fût ';
+          });
+          // If there is no text node (first render edge-case), prepend one.
+          if (!lossKegLabelEl.firstChild || lossKegLabelEl.firstChild === unitSpan) {
+            lossKegLabelEl.insertBefore(
+              document.createTextNode(isCuv ? 'Perte liquide / poche éclatée ' : 'Perte liquide fût '),
+              unitSpan
+            );
+          }
+        }
+      }
+    }
   }
 
   // Re-evaluate all rendered rows when session-level state changes (tank select/deselect/WL toggle).

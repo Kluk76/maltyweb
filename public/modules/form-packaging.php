@@ -294,6 +294,8 @@ function compute_packaging_vendable_hl(
         $vendableHl = bcsub($hlGross, bcdiv($lKegLiquid, '100', $scale), $scale);
         $vendableHl = bcsub($vendableHl, bcdiv($taproom, '100', $scale), $scale);
         $vendableHl = bcsub($vendableHl, bcdiv($lLiquid, '100', $scale), $scale);
+        // Floor: a pure-loss row (prod=0) must not yield negative vendable.
+        if (bccomp($vendableHl, '0', $scale) < 0) { $vendableHl = '0'; }
 
         // beer_tax_base: vendable + taproom (taproom is taxed)
         $beerTaxBaseHl = bcadd($vendableHl, bcdiv($taproom, '100', $scale), $scale);

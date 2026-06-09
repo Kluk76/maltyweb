@@ -921,6 +921,13 @@ class TankSimulator
         //      v2." Goal is correct beer identity + volumes within a few HL, not exact parity.
 
         // Load web-form rows from bd_packaging_v2.
+        // Predicate: vendable_hl > 0 OR loss_kpi_hl > 0 — broadened from pure vendable > 0
+        // to include pure-loss rows (vendable=0, loss_kpi>0) such as cuv burst-bag events
+        // where beer physically left the tank but nothing was vendable.
+        // Normal rows (vendable>0) are unaffected — drain = vendable + loss_kpi, unchanged.
+        // PHP guard below (vendableHl + lossKpiHl <= 0) prevents negative-drain rows from
+        // being added as events (e.g. rows where loss_kpi > 0 but vendable is so negative
+        // that their sum is still ≤ 0).
         $v2Rows = $this->pdo->query(
             'SELECT COALESCE(NULLIF(neb_beer, ""), contract_beer) AS beer,
                     COALESCE(NULLIF(neb_batch, ""), contract_batch) AS batch,
@@ -930,8 +937,10 @@ class TankSimulator
                     event_date
              FROM bd_packaging_v2
              WHERE event_date IS NOT NULL
-               AND vendable_hl IS NOT NULL
-               AND CAST(vendable_hl AS DECIMAL(14,4)) > 0
+               AND (
+                     (vendable_hl IS NOT NULL AND CAST(vendable_hl AS DECIMAL(14,4)) > 0)
+                  OR (loss_kpi_hl IS NOT NULL AND CAST(loss_kpi_hl AS DECIMAL(14,4)) > 0)
+               )
                AND is_tombstoned = 0
                AND reuses_packaging_id_fk IS NULL'
         )->fetchAll();
@@ -951,7 +960,11 @@ class TankSimulator
             $recipeId    = isset($row['recipe_id_fk']) && $row['recipe_id_fk'] !== null
                 ? (int)$row['recipe_id_fk'] : null;
 
-            if ($beer === '' || $date === null || $vendableHl <= 0) return;
+            // Guard: skip if total liquid leaving the tank is zero or negative.
+            // This catches rows that passed the SQL OR predicate (e.g. loss_kpi_hl > 0)
+            // but whose vendable + loss sum is still non-positive (e.g. a can row with a
+            // large loss_liquid_other_units making vendable hugely negative).
+            if ($beer === '' || $date === null || ($vendableHl + $lossKpiHl) <= 0) return;
             if ($this->isWortSale($beer)) return;
 
             $events[] = [
