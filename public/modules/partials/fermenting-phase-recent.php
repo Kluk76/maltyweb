@@ -149,7 +149,7 @@ function _ferm_recent_status_label(string $phase, string $status): string {
                       <td class="op-form__mono"><?= ($ev['ph']          !== null) ? htmlspecialchars((string)$ev['ph'])          : '—' ?></td>
                       <td class="op-form__mono"><?= ($ev['temperature'] !== null) ? htmlspecialchars((string)$ev['temperature']) . '°C' : '—' ?></td>
                       <td class="ferm-recent-note"><?= htmlspecialchars(mb_strimwidth($dhNote, 0, 60, '…')) ?></td>
-                      <td class="op-form__mono ferm-recent-email"><?= htmlspecialchars($ev['email'] ?? '') ?></td>
+                      <td class="op-form__mono ferm-recent-email"><?= htmlspecialchars($ev['operator_display'] ?? $ev['email'] ?? '') ?></td>
                       <td class="ferm-recent-action">
                         <a href="/modules/form-fermenting.php?edit=<?= (int)$ev['id'] ?>"
                            class="ferm-recent-corriger">Corriger</a>
@@ -207,7 +207,7 @@ function _ferm_recent_status_label(string $phase, string $status): string {
                 <td class="op-form__mono"><?= ($rf['gravity']     !== null) ? htmlspecialchars((string)$rf['gravity'])     . '°P' : '—' ?></td>
                 <td class="op-form__mono"><?= ($rf['ph']          !== null) ? htmlspecialchars((string)$rf['ph'])          : '—' ?></td>
                 <td class="op-form__mono"><?= ($rf['temperature'] !== null) ? htmlspecialchars((string)$rf['temperature']) . '°C' : '—' ?></td>
-                <td class="op-form__mono ferm-recent-email"><?= htmlspecialchars($rf['email'] ?? '') ?></td>
+                <td class="op-form__mono ferm-recent-email"><?= htmlspecialchars($rf['operator_display'] ?? $rf['email'] ?? '') ?></td>
                 <td class="ferm-recent-action">
                   <a href="/modules/form-fermenting.php?edit=<?= (int)$rf['id'] ?>"
                      class="ferm-recent-corriger">Corriger</a>

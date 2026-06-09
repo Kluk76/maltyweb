@@ -376,14 +376,16 @@ try {
     if (!empty($sessionIds)) {
         $inPlaceholders = implode(',', array_fill(0, count($sessionIds), '?'));
         $evtStmt = $pdo->prepare(
-            "SELECT id, session_id_fk, event_date, event_type, beer_raw, batch,
-                    gravity, ph, temperature, dh_raw_name, dh_qty, dh_unit,
-                    comment_purge, comment_cold_crash, final_comments,
-                    email, submitted_at
-               FROM bd_fermenting_v2
-              WHERE session_id_fk IN ({$inPlaceholders})
-                AND is_tombstoned = 0
-              ORDER BY submitted_at ASC"
+            "SELECT f.id, f.session_id_fk, f.event_date, f.event_type, f.beer_raw, f.batch,
+                    f.gravity, f.ph, f.temperature, f.dh_raw_name, f.dh_qty, f.dh_unit,
+                    f.comment_purge, f.comment_cold_crash, f.final_comments,
+                    f.email, f.submitted_at,
+                    COALESCE(NULLIF(u.display_name,''), f.email) AS operator_display
+               FROM bd_fermenting_v2 f
+               LEFT JOIN users u ON u.id = f.submitted_by_user_id_fk
+              WHERE f.session_id_fk IN ({$inPlaceholders})
+                AND f.is_tombstoned = 0
+              ORDER BY f.submitted_at ASC"
         );
         $evtStmt->execute($sessionIds);
         foreach ($evtStmt->fetchAll() as $ev) {
@@ -393,13 +395,15 @@ try {
 
     // Historical rows: web-entered events with NULL session_id_fk (pre-P-C submissions)
     $historicalStmt = $pdo->prepare(
-        "SELECT id, event_date, event_type, beer_raw, batch, gravity, ph, temperature,
-                dh_raw_name, dh_qty, dh_unit, email, submitted_at
-           FROM bd_fermenting_v2
-          WHERE audit_flags   LIKE '%web_entry%'
-            AND session_id_fk IS NULL
-            AND is_tombstoned = 0
-          ORDER BY submitted_at DESC
+        "SELECT f.id, f.event_date, f.event_type, f.beer_raw, f.batch, f.gravity, f.ph, f.temperature,
+                f.dh_raw_name, f.dh_qty, f.dh_unit, f.email, f.submitted_at,
+                COALESCE(NULLIF(u.display_name,''), f.email) AS operator_display
+           FROM bd_fermenting_v2 f
+           LEFT JOIN users u ON u.id = f.submitted_by_user_id_fk
+          WHERE f.audit_flags   LIKE '%web_entry%'
+            AND f.session_id_fk IS NULL
+            AND f.is_tombstoned = 0
+          ORDER BY f.submitted_at DESC
           LIMIT 20"
     );
     $historicalStmt->execute();

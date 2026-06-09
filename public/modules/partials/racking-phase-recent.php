@@ -49,7 +49,7 @@ declare(strict_types=1);
             <td class="op-form__mono"><?= htmlspecialchars($r['target_tank_raw'] ?? '—') ?></td>
             <td class="op-form__mono"><?= $r['racked_vol_hl'] !== null ? htmlspecialchars((string)$r['racked_vol_hl']) : '—' ?></td>
             <td><span class="op-form__qc-badge op-form__qc-badge--<?= $qc ?>"><?= $qc ?></span></td>
-            <td class="op-form__mono"><?= htmlspecialchars($r['email'] ?? '') ?></td>
+            <td class="op-form__mono"><?= htmlspecialchars($r['operator_display'] ?? $r['email'] ?? '') ?></td>
             <td>
               <?php if ($hpFlag || $isHorsProc): ?>
                 <span class="rf-hp-badge" title="<?= htmlspecialchars($r['hors_process_reason'] ?? '') ?>">HORS PROCESS</span>

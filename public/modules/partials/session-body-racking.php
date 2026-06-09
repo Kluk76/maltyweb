@@ -202,13 +202,15 @@ try {
 
     // Recent submissions
     $recentRows = $pdo->prepare(
-        "SELECT id, event_date, neb_beer, neb_batch, contract_beer, contract_batch,
-                rack_type, target_tank_raw, racked_vol_hl, audit_flags,
-                email, submitted_at, hors_process_flag, hors_process_reason
-         FROM bd_racking_v2
-         WHERE audit_flags LIKE '%web_entry%'
-           AND is_tombstoned = 0
-         ORDER BY submitted_at DESC LIMIT 10"
+        "SELECT r.id, r.event_date, r.neb_beer, r.neb_batch, r.contract_beer, r.contract_batch,
+                r.rack_type, r.target_tank_raw, r.racked_vol_hl, r.audit_flags,
+                r.email, r.submitted_at, r.hors_process_flag, r.hors_process_reason,
+                COALESCE(NULLIF(u.display_name,''), r.email) AS operator_display
+           FROM bd_racking_v2 r
+           LEFT JOIN users u ON u.id = r.submitted_by_user_id_fk
+          WHERE r.audit_flags LIKE '%web_entry%'
+            AND r.is_tombstoned = 0
+          ORDER BY r.submitted_at DESC LIMIT 10"
     );
     $recentRows->execute();
     $recentRackings = $recentRows->fetchAll();

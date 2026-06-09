@@ -1287,10 +1287,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                     // Operator identity: insert sets FK, edit preserves original.
                     if ($editSubmittedAt !== null && $rowBefore !== null) {
+                        // Editing an existing row: restore original operator, leave FK untouched.
                         $safeRow['email'] = $rowBefore['email'] ?? $safeRow['email'];
                         // submitted_by_user_id_fk intentionally absent — bd_upsert leaves existing FK untouched.
                         unset($safeRow['submitted_by_user_id_fk']);
-                    } elseif ($editSubmittedAt === null) {
+                    } else {
+                        // Fresh insert (new submission OR new format added in edit session): stamp current user.
                         $safeRow['submitted_by_user_id_fk'] = (int)$me['id'];
                     }
 
@@ -2255,13 +2257,15 @@ try {
 
     // ── Recent packaging events (web-sourced, last 10) ────────────────────────
     $recentStmt = $pdo->prepare(
-        "SELECT id, submitted_at, event_date, neb_beer, neb_batch, contract_beer,
-                contract_batch, run_type, row_origin, nebuleuse_format_suffix,
-                prod_total_units, special_qty_units, vendable_hl, audit_flags, email
-           FROM bd_packaging_v2
-          WHERE audit_flags LIKE '%web_entry%'
-            AND is_tombstoned = 0
-          ORDER BY submitted_at DESC
+        "SELECT p.id, p.submitted_at, p.event_date, p.neb_beer, p.neb_batch, p.contract_beer,
+                p.contract_batch, p.run_type, p.row_origin, p.nebuleuse_format_suffix,
+                p.prod_total_units, p.special_qty_units, p.vendable_hl, p.audit_flags, p.email,
+                COALESCE(NULLIF(u.display_name,''), p.email) AS operator_display
+           FROM bd_packaging_v2 p
+           LEFT JOIN users u ON u.id = p.submitted_by_user_id_fk
+          WHERE p.audit_flags LIKE '%web_entry%'
+            AND p.is_tombstoned = 0
+          ORDER BY p.submitted_at DESC
           LIMIT 10"
     );
     $recentStmt->execute();
@@ -2769,7 +2773,7 @@ $cipConfig = [
               <td class="op-form__mono"><?= htmlspecialchars($suffix !== '' ? $suffix : '—') ?></td>
               <td class="op-form__mono"><?= $units !== null ? (int)$units : '—' ?></td>
               <td class="op-form__mono"><?= $r['vendable_hl'] !== null ? htmlspecialchars($r['vendable_hl']) : '—' ?></td>
-              <td class="op-form__mono"><?= htmlspecialchars($r['email'] ?? '') ?></td>
+              <td class="op-form__mono"><?= htmlspecialchars($r['operator_display'] ?? $r['email'] ?? '') ?></td>
               <td><span class="pf-mode-badge pf-mode-badge--<?= $isDraft ? 'draft' : 'live' ?>"><?= $isDraft ? 'test' : 'live' ?></span></td>
               <td>
                 <?php if ($isHorsProcess): ?>

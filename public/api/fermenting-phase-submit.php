@@ -861,7 +861,19 @@ try {
             }
         }
 
-        $result = bd_upsert($pdo, 'bd_fermenting_v2', $entry['row'], $nkCols);
+        // Operator identity: insert sets FK, edit preserves original.
+        // Mutate a local copy so the before/after audit log is accurate.
+        $fermRow = $entry['row'];
+        if ($isEditMode && $rowBeforeFerm !== null) {
+            // Editing an existing row: restore original operator, leave FK untouched.
+            $fermRow['email'] = $rowBeforeFerm['email'] ?? $fermRow['email'];
+            // submitted_by_user_id_fk intentionally absent — bd_upsert leaves existing FK untouched.
+        } else {
+            // Fresh insert (new submission OR new line added in edit session): stamp current user.
+            $fermRow['submitted_by_user_id_fk'] = (int)$me['id'];
+        }
+
+        $result = bd_upsert($pdo, 'bd_fermenting_v2', $fermRow, $nkCols);
         if ($firstId === null) $firstId = $result['id'];
 
         // Link event to session audit trail.
@@ -875,7 +887,7 @@ try {
             'bd_fermenting_v2',
             (int)$result['id'],
             $rowBeforeFerm,
-            $entry['row'],
+            $fermRow,
             'normal',
             $fwComment ?: null
         );

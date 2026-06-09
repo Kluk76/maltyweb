@@ -102,6 +102,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $existingBrewday = $pdo->prepare(
             "SELECT b.id, b.recipe_id_fk, b.cct, b.event_date,
+                    b.email, b.submitted_by_user_id_fk,
                     r.name AS recipe_name
                FROM bd_brewing_brewday_v2 b
                LEFT JOIN ref_recipes r ON r.id = b.recipe_id_fk
@@ -180,7 +181,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $submittedAt = date('Y-m-d H:i:s.u');
 
         // In edit mode (confirmed overwrite of existing batch), append ,correction to audit flags.
-        $auditFlags = ($existingRow !== false && $confirmOverwrite) ? 'web_entry,correction' : 'web_entry';
+        $auditFlags  = ($existingRow !== false && $confirmOverwrite) ? 'web_entry,correction' : 'web_entry';
+        $isEditMode  = ($existingRow !== false && $confirmOverwrite);
+        // On edit: preserve the original operator identity (email + FK).
+        // On insert: stamp the current user.
+        $originalEmail = $isEditMode ? ($existingRow['email'] ?? $me['username']) : $me['username'];
 
         // ── 4. Brewday header row ─────────────────────────────────────────────
         // Idempotency: uq_natural_key (beer, batch) already enforced at DB level.
@@ -197,7 +202,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'row_hash'     => $brewdayHash,
             'audit_flags'  => $auditFlags,
             'submitted_at' => $submittedAt,
-            'email'        => $me['username'],
+            'email'        => $originalEmail,
             'beer'         => $beer,
             'batch'        => $batch,
             'recipe_id_fk' => $recipeId,
@@ -210,6 +215,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'yt_number'    => $ytNumber,
             'comments'     => $brewComments,
         ];
+        // Set submitted_by_user_id_fk only on insert; edit leaves existing FK untouched.
+        if (!$isEditMode) {
+            $brewdayRow['submitted_by_user_id_fk'] = (int)$me['id'];
+        }
 
         $brewdayNk = ['beer', 'batch'];
 
@@ -247,18 +256,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // for the audit trail; the parsed rows are the authoritative structured data.
         $ingHeaderHash = bd_row_hash([$beer, $batch, $eventDate, $submittedAt, 'web_entry']);
         $ingHeaderRow = [
-            'row_hash'     => $ingHeaderHash,
-            'audit_flags'  => $auditFlags,
-            'submitted_at' => $submittedAt,
-            'email'        => $me['username'],
-            'event_date'   => $eventDate,
-            'beer'         => $beer,
-            'batch'        => $batch,
-            'recipe_id_fk' => $recipeId,
-            'raw_blob_text'=> count($ingLines) > 0
+            'row_hash'                 => $ingHeaderHash,
+            'audit_flags'             => $auditFlags,
+            'submitted_at'            => $submittedAt,
+            'email'                   => $me['username'],
+            'submitted_by_user_id_fk' => (int)$me['id'],
+            'event_date'              => $eventDate,
+            'beer'                    => $beer,
+            'batch'                   => $batch,
+            'recipe_id_fk'            => $recipeId,
+            'raw_blob_text'           => count($ingLines) > 0
                 ? json_encode($ingLines, JSON_UNESCAPED_UNICODE)
                 : null,
-            'parsed_at'    => count($ingLines) > 0 ? $submittedAt : null,
+            'parsed_at'               => count($ingLines) > 0 ? $submittedAt : null,
         ];
 
         $ingHeaderNk = ['submitted_at', 'beer', 'batch'];
@@ -448,7 +458,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'row_hash'      => $timingsHash,
                 'audit_flags'   => $auditFlags,
                 'submitted_at'  => $submittedAt,
-                'email'         => $me['username'],
+                'email'         => $originalEmail,
                 'beer'          => $beer,
                 'batch'         => $batch,
                 'brew'          => $brew,
@@ -457,6 +467,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'brew_end'      => $brewEndVal,
                 'is_tombstoned' => 0,
             ];
+            if (!$isEditMode) {
+                $timingsRow['submitted_by_user_id_fk'] = (int)$me['id'];
+            }
             $timingsNk     = ['beer', 'batch', 'brew'];
             $timingsResult = bd_upsert($pdo, 'bd_brewing_timings_v2', $timingsRow, $timingsNk);
             log_revision($pdo, $me, 'bd_brewing_timings_v2', $timingsResult['id'],
@@ -471,7 +484,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'row_hash'          => $fwHash,
                     'audit_flags'       => $auditFlags,
                     'submitted_at'      => $submittedAt,
-                    'email'             => $me['username'],
+                    'email'             => $originalEmail,
                     'beer'              => $beer,
                     'batch'             => $batch,
                     'brew'              => $brew,
@@ -482,6 +495,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'firstwort_ph'      => $normDec($fwPhRaw),
                     'is_tombstoned'     => 0,
                 ];
+                if (!$isEditMode) {
+                    $fwRow['submitted_by_user_id_fk'] = (int)$me['id'];
+                }
                 $fwResult = bd_upsert($pdo, 'bd_brewing_gravity_v2', $fwRow, $gravNk);
                 log_revision($pdo, $me, 'bd_brewing_gravity_v2', $fwResult['id'],
                     null, $fwRow, 'normal', $fwComment ?: null);
@@ -494,7 +510,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'row_hash'            => $pvHash,
                     'audit_flags'         => $auditFlags,
                     'submitted_at'        => $submittedAt,
-                    'email'               => $me['username'],
+                    'email'               => $originalEmail,
                     'beer'                => $beer,
                     'batch'               => $batch,
                     'brew'                => $brew,
@@ -504,6 +520,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'pfannevoll_gravity'  => $normDec($pvGravRaw),
                     'is_tombstoned'       => 0,
                 ];
+                if (!$isEditMode) {
+                    $pvRow['submitted_by_user_id_fk'] = (int)$me['id'];
+                }
                 $pvResult = bd_upsert($pdo, 'bd_brewing_gravity_v2', $pvRow, $gravNk);
                 log_revision($pdo, $me, 'bd_brewing_gravity_v2', $pvResult['id'],
                     null, $pvRow, 'normal', $fwComment ?: null);
@@ -516,7 +535,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'row_hash'           => $kwHash,
                     'audit_flags'        => $auditFlags,
                     'submitted_at'       => $submittedAt,
-                    'email'              => $me['username'],
+                    'email'              => $originalEmail,
                     'beer'               => $beer,
                     'batch'              => $batch,
                     'brew'               => $brew,
@@ -526,6 +545,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'kochwurze_gravity'  => $normDec($kwGravRaw),
                     'is_tombstoned'      => 0,
                 ];
+                if (!$isEditMode) {
+                    $kwRow['submitted_by_user_id_fk'] = (int)$me['id'];
+                }
                 $kwResult = bd_upsert($pdo, 'bd_brewing_gravity_v2', $kwRow, $gravNk);
                 log_revision($pdo, $me, 'bd_brewing_gravity_v2', $kwResult['id'],
                     null, $kwRow, 'normal', $fwComment ?: null);
@@ -553,7 +575,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'row_hash'        => $coolHash,
                     'audit_flags'     => $auditFlags,
                     'submitted_at'    => $coolSubmittedAt,
-                    'email'           => $me['username'],
+                    'email'           => $originalEmail,
                     'beer'            => $beer,
                     'batch'           => $batch,
                     'brew'            => $brew,
@@ -566,6 +588,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'final_ph'        => $phParsed,
                     'is_tombstoned'   => 0,
                 ];
+                if (!$isEditMode) {
+                    $coolRow['submitted_by_user_id_fk'] = (int)$me['id'];
+                }
                 $coolResult = bd_upsert($pdo, 'bd_brewing_gravity_v2', $coolRow, $gravNk);
                 log_revision($pdo, $me, 'bd_brewing_gravity_v2', $coolResult['id'],
                     null, $coolRow, 'normal', $fwComment ?: null);
@@ -980,11 +1005,14 @@ try {
 
     // Recent brewing submissions (last 10 web-entered)
     $recentRows = $pdo->prepare(
-        "SELECT id, event_date, beer, batch, cct, yeast, email, submitted_at, audit_flags
-         FROM bd_brewing_brewday_v2
-         WHERE audit_flags LIKE '%web_entry%'
-         ORDER BY submitted_at DESC
-         LIMIT 10"
+        "SELECT b.id, b.event_date, b.beer, b.batch, b.cct, b.yeast,
+                b.email, b.submitted_at, b.audit_flags,
+                COALESCE(NULLIF(u.display_name,''), b.email) AS operator_display
+           FROM bd_brewing_brewday_v2 b
+           LEFT JOIN users u ON u.id = b.submitted_by_user_id_fk
+          WHERE b.audit_flags LIKE '%web_entry%'
+          ORDER BY b.submitted_at DESC
+          LIMIT 10"
     );
     $recentRows->execute();
     $recentBrews = $recentRows->fetchAll();
@@ -1418,7 +1446,7 @@ $cipConfig = [
               <td class="op-form__mono"><?= htmlspecialchars($rb['batch'] ?? '') ?></td>
               <td class="op-form__mono"><?= $rb['cct'] !== null ? 'CCT ' . (int)$rb['cct'] : '—' ?></td>
               <td><?= htmlspecialchars($rb['yeast'] ?? '—') ?></td>
-              <td class="op-form__mono"><?= htmlspecialchars($rb['email'] ?? '') ?></td>
+              <td class="op-form__mono"><?= htmlspecialchars($rb['operator_display'] ?? $rb['email'] ?? '') ?></td>
               <td class="fb-recent__edit-cell">
                 <a href="/modules/form-brewing.php?edit=<?= (int)$rb['id'] ?>"
                    class="fb-recent__edit-link">Ouvrir / compléter</a>
