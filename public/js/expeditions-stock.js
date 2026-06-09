@@ -160,13 +160,16 @@
     var fam       = row.dataset.family;
     var hasFlag   = row.dataset.hasFlag === '1';
     var isDormant = row.dataset.dormant === '1';
+    // Alert = rank 0–3 (survendu/epuise/critique/bas) — excludes sans_rotation/dormant
+    var rank      = parseInt(row.dataset.stockRank, 10);
+    var isAlert   = !isNaN(rank) && rank <= 3;
 
     // Dormant rows hidden unless checkbox is checked
     if (isDormant && !showDormantVal) return false;
 
     // Family/alert filter
     if (currentFamily === 'all')    return true;
-    if (currentFamily === 'alerts') return hasFlag;
+    if (currentFamily === 'alerts') return isAlert || hasFlag; // backward-compat with old flag
     return fam === currentFamily;
   }
 
@@ -202,10 +205,15 @@
       return;
     }
 
-    // Alerts-first: flagged rows first (across families), then non-flagged
-    var flagged    = dataRows.filter(function (r) { return r.dataset.hasFlag === '1'; });
-    var nonFlagged = dataRows.filter(function (r) { return r.dataset.hasFlag !== '1'; });
-    var sorted     = flagged.concat(nonFlagged);
+    // Alerts-first: sort by stock-health rank ASC (survendu=0 first), then sku_code
+    var sorted = dataRows.slice().sort(function (a, b) {
+      var ra = parseInt(a.dataset.stockRank, 10);
+      var rb = parseInt(b.dataset.stockRank, 10);
+      if (ra !== rb) return ra - rb;
+      var ca = a.querySelector('.exp-st-sku-code');
+      var cb = b.querySelector('.exp-st-sku-code');
+      return (ca ? ca.textContent : '').localeCompare(cb ? cb.textContent : '');
+    });
 
     // Re-insert pairs in new order (family headers hidden in alerts mode)
     var frag = document.createDocumentFragment();

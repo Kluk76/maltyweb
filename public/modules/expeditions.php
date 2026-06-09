@@ -1637,6 +1637,62 @@ function exp_st_scope_allowed(string $scope, string $siteType): bool
     };
 }
 
+// ── Stock-health thresholds — tunable presentation constants ─────────────────
+// Kouros may adjust these without touching the state model logic.
+const WEEKS_CRITICAL = 1;   // semaines_stock < 1 → Critique
+const WEEKS_LOW      = 3;   // semaines_stock < 3 → Bas
+const WEEKS_HIGH     = 10;  // semaines_stock >= 10 → Bien fourni
+
+/**
+ * Stock-health state for a single fg_stock_compute row.
+ *
+ * Priority (first match wins):
+ *   0 survendu      live_futur < 0
+ *   1 epuise        physique <= 0  (and not survendu)
+ *   2 critique      physique > 0 && semaines_stock !== null && < WEEKS_CRITICAL
+ *   3 bas           semaines_stock !== null && < WEEKS_LOW
+ *   4 suffisant     semaines_stock !== null && < WEEKS_HIGH
+ *   5 eleve         semaines_stock !== null && >= WEEKS_HIGH
+ *   6 sans_rotation physique > 0 && semaines_stock === null
+ *
+ * Returns: ['key','label','icon','class','rank']
+ * Colour-blind safe: every state carries a distinct icon shape + FR label,
+ * so shape + text disambiguate independent of hue.
+ */
+function exp_stock_level(array $row): array
+{
+    $physique      = (float) $row['physique'];
+    $liveFutur     = (float) $row['live_futur'];
+    $semaines      = $row['semaines_stock'] !== null ? (float) $row['semaines_stock'] : null;
+
+    // 0 — survendu (committed orders exceed available stock)
+    if ($liveFutur < 0) {
+        return ['key' => 'survendu',      'label' => 'Survendu',      'icon' => '⛔', 'class' => 'exp-lvl--survendu', 'rank' => 0];
+    }
+    // 1 — épuisé (nothing on hand)
+    if ($physique <= 0) {
+        return ['key' => 'epuise',        'label' => 'Épuisé',        'icon' => '○',  'class' => 'exp-lvl--epuise',   'rank' => 1];
+    }
+    // 2 — critique (very low cover)
+    if ($semaines !== null && $semaines < WEEKS_CRITICAL) {
+        return ['key' => 'critique',      'label' => 'Critique',      'icon' => '⚠',  'class' => 'exp-lvl--critique',  'rank' => 2];
+    }
+    // 3 — bas (low cover)
+    if ($semaines !== null && $semaines < WEEKS_LOW) {
+        return ['key' => 'bas',           'label' => 'Bas',           'icon' => '▼',  'class' => 'exp-lvl--bas',       'rank' => 3];
+    }
+    // 4 — suffisant
+    if ($semaines !== null && $semaines < WEEKS_HIGH) {
+        return ['key' => 'suffisant',     'label' => 'Suffisant',     'icon' => '✓',  'class' => 'exp-lvl--ok',        'rank' => 4];
+    }
+    // 5 — élevé (well stocked)
+    if ($semaines !== null && $semaines >= WEEKS_HIGH) {
+        return ['key' => 'eleve',         'label' => 'Bien fourni',   'icon' => '▲',  'class' => 'exp-lvl--eleve',     'rank' => 5];
+    }
+    // 6 — sans_rotation (stock but no velocity → can't compute cover)
+    return     ['key' => 'sans_rotation', 'label' => 'Sans rotation', 'icon' => '—',  'class' => 'exp-lvl--dormant',   'rank' => 6];
+}
+
 /**
  * Map ref_skus.format to a CSS family slug.
  * Covers all 5 distinct format values on this DB (+ fallback).
@@ -2639,6 +2695,43 @@ $isReadOnly = $editOrder !== null
   }
   $stockDiSemaine = $stockTotalPhysique - $stockTotalWeekQty;
   $stockDiFutur   = $stockTotalPhysique - $stockTotalFutQty;
+
+  // ── Pre-compute stock-health levels for ALL rows ─────────────────────────
+  // Used for: alert banner counts, row data-stock-rank, badge cells, gauge cells.
+  $stockLevels = [];           // sku_id → exp_stock_level() result
+  $alertCounts = [             // key → count (dormant/sans_rotation excluded from banner)
+      'survendu'  => 0,
+      'epuise'    => 0,
+      'critique'  => 0,
+      'bas'       => 0,
+      'suffisant' => 0,
+      'eleve'     => 0,
+  ];
+  foreach ($stockRows as $sr) {
+      $level = exp_stock_level($sr);
+      $stockLevels[(int) $sr['sku_id']] = $level;
+      if (isset($alertCounts[$level['key']])) {
+          $alertCounts[$level['key']]++;
+      }
+  }
+
+  // ── Per-location health tally for card badges ─────────────────────────────
+  // Maps loc_id → ['survendu'=>N, 'critique'=>N, 'bas'=>N]
+  // Built from the TOTAL view stock levels (velocity is global, not per-site).
+  $locHealthTally = []; // loc_id (int) → array of counts
+  if ($fgLocationSnapshot !== null) {
+      foreach ($fgLocationSnapshot['locations'] as $lc) {
+          $tally = ['survendu' => 0, 'critique' => 0, 'bas' => 0, 'epuise' => 0];
+          foreach ($lc['rows'] as $lr) {
+              $sid = (int) $lr['sku_id'];
+              if (isset($stockLevels[$sid])) {
+                  $key = $stockLevels[$sid]['key'];
+                  if (isset($tally[$key])) $tally[$key]++;
+              }
+          }
+          $locHealthTally[(int) $lc['id']] = $tally;
+      }
+  }
   ?>
 
   <!-- ── Stock header ────────────────────────────────────────────────────── -->
@@ -2677,6 +2770,31 @@ $isReadOnly = $editOrder !== null
     Stock — Tous les sites
   </p>
 
+  <!-- ── D: Alert summary banner (above location cards) ──────────────────── -->
+  <?php
+  $bannerParts = [];
+  if ($alertCounts['survendu']  > 0) $bannerParts[] = ['icon' => '⛔', 'n' => $alertCounts['survendu'],  'label' => 'survendu',  'cls' => 'exp-alert-banner__item--survendu'];
+  if ($alertCounts['epuise']    > 0) $bannerParts[] = ['icon' => '○',  'n' => $alertCounts['epuise'],    'label' => 'épuisé',    'cls' => 'exp-alert-banner__item--epuise'];
+  if ($alertCounts['critique']  > 0) $bannerParts[] = ['icon' => '⚠',  'n' => $alertCounts['critique'],  'label' => 'critique',  'cls' => 'exp-alert-banner__item--critique'];
+  if ($alertCounts['bas']       > 0) $bannerParts[] = ['icon' => '▼',  'n' => $alertCounts['bas'],       'label' => 'bas',       'cls' => 'exp-alert-banner__item--bas'];
+  if ($alertCounts['suffisant'] > 0) $bannerParts[] = ['icon' => '✓',  'n' => $alertCounts['suffisant'], 'label' => 'suffisant', 'cls' => 'exp-alert-banner__item--ok'];
+  if ($alertCounts['eleve']     > 0) $bannerParts[] = ['icon' => '▲',  'n' => $alertCounts['eleve'],     'label' => 'bien fourni','cls' => 'exp-alert-banner__item--eleve'];
+  ?>
+  <?php if (!empty($bannerParts)): ?>
+  <div class="exp-alert-banner" role="status" aria-label="Résumé santé du stock">
+    <?php foreach ($bannerParts as $bp): ?>
+    <span class="exp-alert-banner__item <?= $bp['cls'] ?>">
+      <span aria-hidden="true"><?= $bp['icon'] ?></span>
+      <strong><?= $bp['n'] ?></strong>
+      <span class="exp-alert-banner__lbl"><?= htmlspecialchars($bp['label']) ?></span>
+    </span>
+    <?php if ($bp !== end($bannerParts)): ?>
+    <span class="exp-alert-banner__sep" aria-hidden="true">·</span>
+    <?php endif ?>
+    <?php endforeach ?>
+  </div>
+  <?php endif ?>
+
   <div class="exp-loc-cards" role="group" aria-label="Filtre par site">
     <!-- "Tous les sites" is the default-active selector -->
     <button type="button"
@@ -2708,11 +2826,17 @@ $isReadOnly = $editOrder !== null
           $d = new DateTimeImmutable($lcLastCounted);
           $freshChip = '<span class="exp-st-fresh-chip exp-st-fresh-chip--warn">⚠ compté ' . $d->format('d/m') . '</span>';
       }
-      $isUncounted = $lcLastCounted === null;
+      $isUncounted  = $lcLastCounted === null;
+      $lcId         = (int) $lc['id'];
+      $lcTally      = $locHealthTally[$lcId] ?? ['survendu' => 0, 'critique' => 0, 'bas' => 0, 'epuise' => 0];
+      $lcTallyParts = [];
+      if ($lcTally['survendu'] > 0) $lcTallyParts[] = '<span class="exp-loc-health-dot exp-loc-health-dot--survendu" title="' . $lcTally['survendu'] . ' survendu">⛔' . $lcTally['survendu'] . '</span>';
+      if ($lcTally['critique'] > 0) $lcTallyParts[] = '<span class="exp-loc-health-dot exp-loc-health-dot--critique" title="' . $lcTally['critique'] . ' critique">⚠' . $lcTally['critique'] . '</span>';
+      if ($lcTally['bas']      > 0) $lcTallyParts[] = '<span class="exp-loc-health-dot exp-loc-health-dot--bas" title="' . $lcTally['bas'] . ' bas">▼' . $lcTally['bas'] . '</span>';
     ?>
     <button type="button"
             class="exp-loc-card<?= $isUncounted ? ' exp-loc-card--uncounted' : '' ?>"
-            data-loc-id="<?= (int) $lc['id'] ?>"
+            data-loc-id="<?= $lcId ?>"
             data-loc-name="<?= htmlspecialchars($lc['name']) ?>"
             data-loc-type="<?= htmlspecialchars(exp_site_type_label($lc['site_type'])) ?>"
             aria-pressed="false">
@@ -2720,7 +2844,12 @@ $isReadOnly = $editOrder !== null
         <span class="exp-loc-card__name"><?= htmlspecialchars($lc['name']) ?></span>
         <span class="exp-loc-card__type"><?= htmlspecialchars(exp_site_type_label($lc['site_type'])) ?></span>
       </div>
-      <div class="exp-loc-card__fresh"><?= $freshChip ?></div>
+      <div class="exp-loc-card__fresh">
+        <?= $freshChip ?>
+        <?php if (!empty($lcTallyParts)): ?>
+        <span class="exp-loc-health-tally" aria-label="Alertes stock à ce site"><?= implode(' ', $lcTallyParts) ?></span>
+        <?php endif ?>
+      </div>
       <?php if (!$isUncounted): ?>
       <div class="exp-loc-card__totals">
         <div class="exp-loc-card__hl"><?= number_format($lc['total_hl'], 1) ?> <span class="exp-loc-card__hl-unit">HL</span></div>
@@ -2799,10 +2928,30 @@ $isReadOnly = $editOrder !== null
     </label>
   </div>
 
+  <!-- ── E: Legend — maps 6 states to icon + label ─────────────────────────── -->
+  <details class="exp-stock-legend" aria-label="Légende niveaux de stock">
+    <summary class="exp-stock-legend__toggle">Légende niveaux de stock</summary>
+    <div class="exp-stock-legend__body" role="list">
+      <span class="exp-stock-legend__item exp-lvl--survendu" role="listitem"><span aria-hidden="true">⛔</span> Survendu — commandes > stock disponible</span>
+      <span class="exp-stock-legend__item exp-lvl--epuise"   role="listitem"><span aria-hidden="true">○</span> Épuisé — stock physique à 0</span>
+      <span class="exp-stock-legend__item exp-lvl--critique" role="listitem"><span aria-hidden="true">⚠</span> Critique — moins de <?= WEEKS_CRITICAL ?> sem. de stock</span>
+      <span class="exp-stock-legend__item exp-lvl--bas"      role="listitem"><span aria-hidden="true">▼</span> Bas — moins de <?= WEEKS_LOW ?> sem. de stock</span>
+      <span class="exp-stock-legend__item exp-lvl--ok"       role="listitem"><span aria-hidden="true">✓</span> Suffisant — moins de <?= WEEKS_HIGH ?> sem. de stock</span>
+      <span class="exp-stock-legend__item exp-lvl--eleve"    role="listitem"><span aria-hidden="true">▲</span> Bien fourni — <?= WEEKS_HIGH ?>+ sem. de stock</span>
+      <span class="exp-stock-legend__item exp-lvl--dormant"  role="listitem"><span aria-hidden="true">—</span> Sans rotation — stock sans vélocité calculée</span>
+    </div>
+  </details>
+
   <!-- ── Stock table (grouped by display_family) ────────────────────────── -->
   <?php
-  // Sort rows: by family order then sku_code
-  usort($stockRows, function ($a, $b) use ($stockFamilyOrder) {
+  // Sort rows: by health rank ASC (worst first), then family order, then sku_code.
+  // This gives worst-first order across all families by default — Kouros asked
+  // for alerts surfaced at top. The "Alertes d'abord" JS toggle (sort by rank only,
+  // ignoring family) remains available for flat rank-only ordering.
+  usort($stockRows, function ($a, $b) use ($stockFamilyOrder, $stockLevels) {
+      $rankA = $stockLevels[(int) $a['sku_id']]['rank'] ?? 99;
+      $rankB = $stockLevels[(int) $b['sku_id']]['rank'] ?? 99;
+      if ($rankA !== $rankB) return $rankA <=> $rankB;
       $famA = $a['display_family'] ?? $a['format'];
       $famB = $b['display_family'] ?? $b['format'];
       $oa   = $stockFamilyOrder[$famA] ?? 99;
@@ -2828,11 +2977,12 @@ $isReadOnly = $editOrder !== null
     <table class="exp-stock-table" id="exp-stock-table">
       <thead>
         <tr>
+          <th class="exp-st-col-badge" aria-label="Niveau de stock"></th>
           <th class="exp-st-col-sku">SKU</th>
+          <th class="exp-st-col-gauge" title="Semaines de couverture (barre = niveau de stock)">Couverture</th>
           <th class="exp-st-col-physique" title="Stock physique actuel = ancre + production − ventes depuis l'ancre">Physique</th>
           <th class="exp-st-col-semcur"  title="Physique − commandes ouvertes dues cette semaine">Sem. courante</th>
           <th class="exp-st-col-futur"   title="Physique − toutes commandes ouvertes">Avec futur</th>
-          <th class="exp-st-col-sem"     title="Semaines de stock au rythme de vente des 8 dernières semaines">Sem. stock</th>
           <th class="exp-st-col-flag"></th>
         </tr>
       </thead>
@@ -2843,7 +2993,7 @@ $isReadOnly = $editOrder !== null
         $groupCount = count($stockByFamily[$groupFam]);
       ?>
         <tr class="exp-stock-family-header" data-family-group="<?= htmlspecialchars($groupFam) ?>" aria-hidden="true">
-          <td colspan="6" class="exp-stock-family-header__cell">
+          <td colspan="7" class="exp-stock-family-header__cell">
             <span class="exp-stock-family-header__label"><?= htmlspecialchars($groupLabel) ?></span>
             <span class="exp-stock-family-header__count"><?= $groupCount ?> SKU<?= $groupCount !== 1 ? 's' : '' ?></span>
           </td>
@@ -2858,22 +3008,37 @@ $isReadOnly = $editOrder !== null
           $hlPhysique  = round($physique * $sr['hl_per_unit'], 2);
           $rowFam      = $sr['display_family'] ?? $sr['format'];
 
-          $rowClass = 'exp-stock-row';
-          if ($isDormant)  $rowClass .= ' exp-stock-row--dormant';
-          if ($isSurvendu) $rowClass .= ' exp-stock-row--survendu';
-          if ($hasFlag)    $rowClass .= ' exp-stock-row--flagged';
+          // ── Stock-health level (centralised helper) ───────────────────────
+          $slevel    = $stockLevels[(int) $sr['sku_id']] ?? exp_stock_level($sr);
+          $slKey     = $slevel['key'];
+          $slLabel   = $slevel['label'];
+          $slIcon    = $slevel['icon'];
+          $slClass   = $slevel['class'];
+          $slRank    = $slevel['rank'];
 
-          // Flags text
-          $flags = [];
-          if ($isSurvendu) $flags[] = '<span class="exp-stock-flag exp-stock-flag--survendu" title="Stock négatif avec commandes futures"><span aria-hidden="true">⚠</span> survendu</span>';
-          if ($isLowStock) $flags[] = '<span class="exp-stock-flag exp-stock-flag--low" title="Moins de 2 semaines de stock"><span aria-hidden="true">⚠</span> &lt;2 sem</span>';
-          if ($isDormant)  $flags[] = '<span class="exp-stock-flag exp-stock-flag--dormant">inactif</span>';
+          // ── Row CSS classes ───────────────────────────────────────────────
+          // C: critical-row emphasis for survendu/epuise/critique
+          $accentRow = in_array($slKey, ['survendu', 'epuise', 'critique'], true);
+          $rowClass  = 'exp-stock-row';
+          if ($isDormant)   $rowClass .= ' exp-stock-row--dormant';
+          if ($accentRow)   $rowClass .= ' exp-stock-row--accent';
+          if ($isSurvendu)  $rowClass .= ' exp-stock-row--survendu';
+          if ($hasFlag)     $rowClass .= ' exp-stock-row--flagged';
 
+          // ── B: Weeks-of-cover gauge ───────────────────────────────────────
+          // Width proportional to semaines_stock capped at WEEKS_HIGH (= 100%)
+          $semaines     = $sr['semaines_stock'];
+          $semVal       = exp_fmt_semaines($semaines, (int) round($physique));
+          $gaugeWidthPct = 0;
+          if ($semaines !== null && $physique > 0) {
+              $gaugeWidthPct = min(100, round(($semaines / WEEKS_HIGH) * 100));
+          } elseif ($physique > 0 && $semaines === null) {
+              $gaugeWidthPct = 0; // no velocity — muted display
+          }
+          // Gauge text fallback for a11y: screenreader sees "X.X sem" via aria-label on cell
           // Live semaine / futur: color coding
           $semClass  = $sr['live_semaine'] < 0  ? ' exp-st-neg' : '';
           $futClass  = $sr['live_futur']   < 0  ? ' exp-st-neg' : '';
-          $semVal    = exp_fmt_semaines($sr['semaines_stock'], (int) round($physique));
-          $semClass2 = ($sr['semaines_stock'] !== null && $sr['semaines_stock'] < 2.0 && $physique > 0) ? ' exp-st-low' : '';
 
           // Per-location mini-breakdown from snapshot (nice-to-have)
           $locBreakdown = '';
@@ -2897,11 +3062,40 @@ $isReadOnly = $editOrder !== null
               data-has-flag="<?= $hasFlag ? '1' : '0' ?>"
               data-dormant="<?= $isDormant ? '1' : '0' ?>"
               data-sku-id="<?= (int) $sr['sku_id'] ?>"
+              data-stock-rank="<?= $slRank ?>"
               aria-expanded="false">
+            <!-- A: Status badge -->
+            <td class="exp-st-col-badge" aria-label="<?= htmlspecialchars($slLabel) ?>">
+              <span class="exp-stock-badge <?= $slClass ?>"
+                    title="<?= htmlspecialchars($slLabel) ?>">
+                <span class="exp-stock-badge__icon" aria-hidden="true"><?= $slIcon ?></span>
+                <span class="exp-stock-badge__label"><?= htmlspecialchars($slLabel) ?></span>
+              </span>
+            </td>
             <td class="exp-st-col-sku">
               <span class="exp-st-sku-code"><?= htmlspecialchars($sr['sku_code']) ?></span>
               <span class="exp-st-sku-hl"><?= number_format($hlPhysique, 2) ?> HL</span>
               <?= $locBreakdown ?>
+            </td>
+            <!-- B: Weeks-of-cover gauge -->
+            <td class="exp-st-col-gauge"
+                aria-label="<?= htmlspecialchars($slLabel . ($semaines !== null ? ', ' . $semVal . ' sem.' : '')) ?>">
+              <div class="exp-gauge">
+                <div class="exp-gauge__track">
+                  <div class="exp-gauge__fill <?= $slClass ?>"
+                       style="width:<?= $gaugeWidthPct ?>%"
+                       aria-hidden="true"></div>
+                </div>
+                <span class="exp-gauge__label" aria-hidden="true">
+                  <?php if ($physique <= 0): ?>
+                    <span class="exp-gauge__label--muted">— sem</span>
+                  <?php elseif ($semaines === null): ?>
+                    <span class="exp-gauge__label--muted">∞</span>
+                  <?php else: ?>
+                    <?= htmlspecialchars($semVal) ?> sem
+                  <?php endif ?>
+                </span>
+              </div>
             </td>
             <td class="exp-st-col-physique">
               <span class="exp-st-num"><?= number_format($physique) ?></span>
@@ -2912,14 +3106,11 @@ $isReadOnly = $editOrder !== null
             <td class="exp-st-col-futur">
               <span class="exp-st-num<?= $futClass ?>"><?= number_format($sr['live_futur']) ?></span>
             </td>
-            <td class="exp-st-col-sem">
-              <span class="exp-st-num<?= $semClass2 ?>"><?= htmlspecialchars($semVal) ?></span>
-            </td>
-            <td class="exp-st-col-flag"><?= implode(' ', $flags) ?></td>
+            <td class="exp-st-col-flag"></td>
           </tr>
           <!-- Drill-down ledger (hidden by default, toggled by JS) -->
           <tr class="exp-stock-drill" id="exp-drill-<?= (int) $sr['sku_id'] ?>" hidden>
-            <td colspan="6">
+            <td colspan="7">
               <div class="exp-stock-ledger">
                 <div class="exp-stock-ledger__title">
                   Détail — <?= htmlspecialchars($sr['sku_code']) ?>
@@ -3095,17 +3286,25 @@ $isReadOnly = $editOrder !== null
               <span class="exp-stock-family-header__count"><?= $lcGroupCount ?> SKU<?= $lcGroupCount !== 1 ? 's' : '' ?></span>
             </td>
           </tr>
-          <?php foreach ($lcByFamily[$lcGroupFam] as $lr): ?>
-          <tr class="exp-stock-row exp-loc-row">
+          <?php foreach ($lcByFamily[$lcGroupFam] as $lr):
+            // Lighter single-location treatment: has-stock dot vs empty dot only.
+            // No weeks-of-cover gauge or 6-state badge (no per-site velocity).
+            $lrQty     = (float) $lr['qty'];
+            $lrHasStock = $lrQty > 0;
+            $lrDotClass = $lrHasStock ? 'exp-loc-dot--stock' : 'exp-loc-dot--empty';
+            $lrDotTitle = $lrHasStock ? 'En stock' : 'Épuisé à ce site';
+          ?>
+          <tr class="exp-stock-row exp-loc-row<?= !$lrHasStock ? ' exp-loc-row--empty' : '' ?>">
             <td class="exp-st-col-sku">
+              <span class="exp-loc-dot <?= $lrDotClass ?>" title="<?= htmlspecialchars($lrDotTitle) ?>" aria-label="<?= htmlspecialchars($lrDotTitle) ?>"></span>
               <span class="exp-st-sku-code"><?= htmlspecialchars($lr['sku_code']) ?></span>
               <span class="exp-st-sku-hl"><?= number_format($lr['hl'], 2) ?> HL</span>
             </td>
             <td class="exp-st-col-units">
-              <span class="exp-st-num"><?= number_format($lr['qty']) ?></span>
+              <span class="exp-st-num<?= !$lrHasStock ? ' exp-st-muted' : '' ?>"><?= number_format($lrQty) ?></span>
             </td>
             <td class="exp-st-col-hl">
-              <span class="exp-st-num"><?= number_format($lr['hl'], 2) ?></span>
+              <span class="exp-st-num<?= !$lrHasStock ? ' exp-st-muted' : '' ?>"><?= number_format($lr['hl'], 2) ?></span>
             </td>
           </tr>
           <?php endforeach ?>

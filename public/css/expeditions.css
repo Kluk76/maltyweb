@@ -1779,6 +1779,444 @@ body.expeditions .exp-ledger-sep td {
   }
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   STOCK-HEALTH SYSTEM — STATE TOKENS + BADGE + GAUGE + ROW EMPHASIS +
+   ALERT BANNER + LEGEND + LOCATION HEALTH TALLY + SINGLE-LOCATION DOT
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/*
+ * Colour-blind safe strategy: EVERY state carries a DISTINCT ICON SHAPE
+ * + FR LABEL, so shape + text always disambiguate independent of hue.
+ * Palette:
+ *   survendu  → --ember (red-orange)   + ⛔ shape
+ *   epuise    → --steel-mid (grey)     + ○  shape
+ *   critique  → --ember muted          + ⚠  shape
+ *   bas       → --oak (warm amber)     + ▼  shape
+ *   ok        → --hop (green)          + ✓  shape
+ *   eleve     → --cold (blue)          + ▲  shape
+ *   dormant   → --ink-faint (muted)    + —  shape
+ *
+ * Scoped --exp-lvl-* vars carry the per-state colour; badge + gauge consume them.
+ * No hardcoded hex — only var(--…) tokens.
+ */
+
+/* ── Per-state colour vars (scoped to body.expeditions for hygiene) ────────── */
+body.expeditions {
+  --exp-lvl-survendu-color: var(--ember);
+  --exp-lvl-survendu-bg:    color-mix(in srgb, var(--ember) 10%, transparent);
+  --exp-lvl-survendu-border:color-mix(in srgb, var(--ember) 40%, transparent);
+
+  --exp-lvl-epuise-color:   var(--steel-mid);
+  --exp-lvl-epuise-bg:      color-mix(in srgb, var(--steel-mid) 10%, transparent);
+  --exp-lvl-epuise-border:  color-mix(in srgb, var(--steel-mid) 35%, transparent);
+
+  --exp-lvl-critique-color: color-mix(in srgb, var(--ember) 80%, var(--oak));
+  --exp-lvl-critique-bg:    color-mix(in srgb, var(--ember) 7%, transparent);
+  --exp-lvl-critique-border:color-mix(in srgb, var(--ember) 30%, transparent);
+
+  --exp-lvl-bas-color:      var(--oak);
+  --exp-lvl-bas-bg:         color-mix(in srgb, var(--oak) 8%, transparent);
+  --exp-lvl-bas-border:     color-mix(in srgb, var(--oak) 35%, transparent);
+
+  --exp-lvl-ok-color:       var(--hop);
+  --exp-lvl-ok-bg:          color-mix(in srgb, var(--hop) 8%, transparent);
+  --exp-lvl-ok-border:      color-mix(in srgb, var(--hop) 30%, transparent);
+
+  --exp-lvl-eleve-color:    var(--cold);
+  --exp-lvl-eleve-bg:       color-mix(in srgb, var(--cold) 8%, transparent);
+  --exp-lvl-eleve-border:   color-mix(in srgb, var(--cold) 30%, transparent);
+
+  --exp-lvl-dormant-color:  var(--ink-faint);
+  --exp-lvl-dormant-bg:     transparent;
+  --exp-lvl-dormant-border: var(--hairline);
+}
+
+/* ── A: Status badge pill ──────────────────────────────────────────────────── */
+body.expeditions .exp-stock-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 20px;
+  border: 1px solid;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.03em;
+  font-weight: 600;
+  white-space: nowrap;
+  line-height: 1.3;
+  cursor: default;
+  /* Ensure 44px tap area via the cell, not the badge itself */
+}
+
+body.expeditions .exp-stock-badge__icon {
+  font-size: 0.75rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+body.expeditions .exp-stock-badge__label {
+  /* Label always visible — shape is always there too */
+}
+
+/* Badge: state colours using per-state vars */
+body.expeditions .exp-stock-badge.exp-lvl--survendu {
+  color:        var(--exp-lvl-survendu-color);
+  background:   var(--exp-lvl-survendu-bg);
+  border-color: var(--exp-lvl-survendu-border);
+}
+body.expeditions .exp-stock-badge.exp-lvl--epuise {
+  color:        var(--exp-lvl-epuise-color);
+  background:   var(--exp-lvl-epuise-bg);
+  border-color: var(--exp-lvl-epuise-border);
+}
+body.expeditions .exp-stock-badge.exp-lvl--critique {
+  color:        var(--exp-lvl-critique-color);
+  background:   var(--exp-lvl-critique-bg);
+  border-color: var(--exp-lvl-critique-border);
+}
+body.expeditions .exp-stock-badge.exp-lvl--bas {
+  color:        var(--exp-lvl-bas-color);
+  background:   var(--exp-lvl-bas-bg);
+  border-color: var(--exp-lvl-bas-border);
+}
+body.expeditions .exp-stock-badge.exp-lvl--ok {
+  color:        var(--exp-lvl-ok-color);
+  background:   var(--exp-lvl-ok-bg);
+  border-color: var(--exp-lvl-ok-border);
+}
+body.expeditions .exp-stock-badge.exp-lvl--eleve {
+  color:        var(--exp-lvl-eleve-color);
+  background:   var(--exp-lvl-eleve-bg);
+  border-color: var(--exp-lvl-eleve-border);
+}
+body.expeditions .exp-stock-badge.exp-lvl--dormant {
+  color:        var(--exp-lvl-dormant-color);
+  background:   var(--exp-lvl-dormant-bg);
+  border-color: var(--exp-lvl-dormant-border);
+  font-weight:  400;
+}
+
+/* Badge column sizing */
+body.expeditions .exp-st-col-badge {
+  width: 1px;           /* shrink-to-content */
+  white-space: nowrap;
+  padding-right: 6px !important;
+  text-align: left;
+}
+
+/* ── B: Weeks-of-cover gauge ───────────────────────────────────────────────── */
+body.expeditions .exp-st-col-gauge {
+  min-width: 110px;
+  text-align: left !important;
+}
+
+body.expeditions .exp-gauge {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 100px;
+}
+
+body.expeditions .exp-gauge__track {
+  flex: 1 1 64px;
+  height: 6px;
+  background: var(--bg-side);
+  border-radius: 3px;
+  overflow: hidden;
+  position: relative;
+}
+
+body.expeditions .exp-gauge__fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+  /* Colour driven by state class on the fill element */
+}
+
+/* Gauge fill colours — match state palette */
+body.expeditions .exp-gauge__fill.exp-lvl--survendu { background: var(--exp-lvl-survendu-color); }
+body.expeditions .exp-gauge__fill.exp-lvl--epuise   { background: var(--exp-lvl-epuise-color); }
+body.expeditions .exp-gauge__fill.exp-lvl--critique { background: var(--exp-lvl-critique-color); }
+body.expeditions .exp-gauge__fill.exp-lvl--bas      { background: var(--exp-lvl-bas-color); }
+body.expeditions .exp-gauge__fill.exp-lvl--ok       { background: var(--exp-lvl-ok-color); }
+body.expeditions .exp-gauge__fill.exp-lvl--eleve    { background: var(--exp-lvl-eleve-color); }
+body.expeditions .exp-gauge__fill.exp-lvl--dormant  { background: var(--exp-lvl-dormant-color); }
+
+body.expeditions .exp-gauge__label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.68rem;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-mute);
+  white-space: nowrap;
+  min-width: 40px;
+}
+
+body.expeditions .exp-gauge__label--muted {
+  color: var(--ink-faint);
+}
+
+/* ── C: Critical-row emphasis (left accent + subtle bg tint) ───────────────── */
+/* Reinforcement only — the badge carries the semantic meaning.
+   Applied to survendu / epuise / critique rows. */
+body.expeditions .exp-stock-row--accent {
+  border-left: 3px solid transparent; /* overridden per-state below */
+  background: transparent;            /* overridden per-state below */
+}
+
+body.expeditions .exp-stock-row--survendu.exp-stock-row--accent {
+  border-left-color: var(--exp-lvl-survendu-color);
+  background: color-mix(in srgb, var(--ember) 4%, transparent);
+}
+
+/* epuise rows (physique<=0, not survendu) — accent via data attribute */
+body.expeditions .exp-stock-row--accent:not(.exp-stock-row--survendu) {
+  /* critique or epuise */
+  border-left-color: var(--exp-lvl-critique-color);
+  background: color-mix(in srgb, var(--ember) 2%, transparent);
+}
+
+/* Keep existing hover on accent rows */
+body.expeditions .exp-stock-row--accent:hover {
+  background: var(--bg-elev);
+}
+
+/* ── D: Alert summary banner ───────────────────────────────────────────────── */
+body.expeditions .exp-alert-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-bottom: 14px;
+  padding: 9px 14px;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.02em;
+}
+
+body.expeditions .exp-alert-banner__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+body.expeditions .exp-alert-banner__lbl {
+  font-weight: 400;
+}
+
+body.expeditions .exp-alert-banner__sep {
+  color: var(--ink-faint);
+  font-weight: 300;
+}
+
+body.expeditions .exp-alert-banner__item--survendu {
+  color:        var(--exp-lvl-survendu-color);
+  background:   var(--exp-lvl-survendu-bg);
+  border-color: var(--exp-lvl-survendu-border);
+}
+body.expeditions .exp-alert-banner__item--epuise {
+  color:        var(--exp-lvl-epuise-color);
+  background:   var(--exp-lvl-epuise-bg);
+  border-color: var(--exp-lvl-epuise-border);
+}
+body.expeditions .exp-alert-banner__item--critique {
+  color:        var(--exp-lvl-critique-color);
+  background:   var(--exp-lvl-critique-bg);
+  border-color: var(--exp-lvl-critique-border);
+}
+body.expeditions .exp-alert-banner__item--bas {
+  color:        var(--exp-lvl-bas-color);
+  background:   var(--exp-lvl-bas-bg);
+  border-color: var(--exp-lvl-bas-border);
+}
+body.expeditions .exp-alert-banner__item--ok {
+  color:        var(--exp-lvl-ok-color);
+  background:   var(--exp-lvl-ok-bg);
+  border-color: var(--exp-lvl-ok-border);
+}
+body.expeditions .exp-alert-banner__item--eleve {
+  color:        var(--exp-lvl-eleve-color);
+  background:   var(--exp-lvl-eleve-bg);
+  border-color: var(--exp-lvl-eleve-border);
+}
+
+/* ── E: Legend ─────────────────────────────────────────────────────────────── */
+body.expeditions .exp-stock-legend {
+  margin-bottom: 14px;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.8rem;
+}
+
+body.expeditions .exp-stock-legend__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  color: var(--ink-mute);
+  font-size: 0.76rem;
+  font-family: "JetBrains Mono", monospace;
+  letter-spacing: 0.04em;
+  user-select: none;
+  padding: 3px 0;
+  list-style: none;
+}
+
+body.expeditions .exp-stock-legend__toggle::marker,
+body.expeditions .exp-stock-legend__toggle::-webkit-details-marker {
+  display: none;
+}
+
+body.expeditions .exp-stock-legend__toggle::before {
+  content: '▸';
+  font-size: 0.65rem;
+  transition: transform 0.15s;
+  display: inline-block;
+}
+
+body.expeditions details.exp-stock-legend[open] .exp-stock-legend__toggle::before {
+  transform: rotate(90deg);
+}
+
+body.expeditions .exp-stock-legend__body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 8px;
+  padding: 10px 14px;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 5px;
+}
+
+body.expeditions .exp-stock-legend__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.65rem;
+  letter-spacing: 0.03em;
+  padding: 2px 8px;
+  border-radius: 12px;
+  border: 1px solid;
+}
+
+/* Legend items share badge state classes */
+body.expeditions .exp-stock-legend__item.exp-lvl--survendu {
+  color: var(--exp-lvl-survendu-color); background: var(--exp-lvl-survendu-bg); border-color: var(--exp-lvl-survendu-border);
+}
+body.expeditions .exp-stock-legend__item.exp-lvl--epuise {
+  color: var(--exp-lvl-epuise-color);   background: var(--exp-lvl-epuise-bg);   border-color: var(--exp-lvl-epuise-border);
+}
+body.expeditions .exp-stock-legend__item.exp-lvl--critique {
+  color: var(--exp-lvl-critique-color); background: var(--exp-lvl-critique-bg); border-color: var(--exp-lvl-critique-border);
+}
+body.expeditions .exp-stock-legend__item.exp-lvl--bas {
+  color: var(--exp-lvl-bas-color);      background: var(--exp-lvl-bas-bg);      border-color: var(--exp-lvl-bas-border);
+}
+body.expeditions .exp-stock-legend__item.exp-lvl--ok {
+  color: var(--exp-lvl-ok-color);       background: var(--exp-lvl-ok-bg);       border-color: var(--exp-lvl-ok-border);
+}
+body.expeditions .exp-stock-legend__item.exp-lvl--eleve {
+  color: var(--exp-lvl-eleve-color);    background: var(--exp-lvl-eleve-bg);    border-color: var(--exp-lvl-eleve-border);
+}
+body.expeditions .exp-stock-legend__item.exp-lvl--dormant {
+  color: var(--exp-lvl-dormant-color);  background: var(--exp-lvl-dormant-bg);  border-color: var(--exp-lvl-dormant-border);
+}
+
+/* ── Location card: health tally mini-badges ──────────────────────────────── */
+body.expeditions .exp-loc-health-tally {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+body.expeditions .exp-loc-health-dot {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  padding: 0 4px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+
+body.expeditions .exp-loc-health-dot--survendu {
+  color: var(--exp-lvl-survendu-color);
+  background: var(--exp-lvl-survendu-bg);
+}
+body.expeditions .exp-loc-health-dot--critique {
+  color: var(--exp-lvl-critique-color);
+  background: var(--exp-lvl-critique-bg);
+}
+body.expeditions .exp-loc-health-dot--bas {
+  color: var(--exp-lvl-bas-color);
+  background: var(--exp-lvl-bas-bg);
+}
+
+/* ── Single-location view: has-stock / empty dot (lighter treatment) ───────── */
+/* No 6-state badge or gauge — just en-stock vs épuisé dot + muted qty */
+body.expeditions .exp-loc-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  vertical-align: middle;
+  margin-right: 6px;
+}
+
+body.expeditions .exp-loc-dot--stock {
+  background: var(--hop);
+}
+
+body.expeditions .exp-loc-dot--empty {
+  background: transparent;
+  border: 1.5px solid var(--hairline-2);
+}
+
+body.expeditions .exp-loc-row--empty {
+  opacity: 0.5;
+}
+
+body.expeditions .exp-st-muted {
+  color: var(--ink-faint);
+}
+
+/* ── Updated responsive — hide gauge + badge on narrow screens ─────────────── */
+@media (max-width: 860px) {
+  body.expeditions .exp-gauge__label {
+    display: none;
+  }
+}
+
+@media (max-width: 700px) {
+  body.expeditions .exp-st-col-gauge,
+  body.expeditions .exp-stock-table thead th.exp-st-col-gauge {
+    min-width: 64px;
+  }
+}
+
+@media (max-width: 540px) {
+  body.expeditions .exp-st-col-gauge,
+  body.expeditions .exp-stock-table thead th.exp-st-col-gauge {
+    display: none;
+  }
+  body.expeditions .exp-stock-badge__label {
+    display: none; /* icon only on very small screens */
+  }
+}
+
 @media (max-width: 420px) {
   body.expeditions .exp-stock-ledger {
     padding: 10px 12px;
