@@ -178,18 +178,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($city !== null) $city = substr($city, 0, 120);
             $country     = post_str('country') ?? 'CH';
             must_be_one_of('country', $country, ['CH', 'FR', 'DE', 'IT', 'BE', 'LU', 'AT', 'NL', 'US', 'GB']);
+            $siteType    = post_str('site_type') ?? 'warehouse';
+            must_be_one_of('site_type', $siteType, ['production', 'warehouse', 'pos', 'consignment']);
+            $holdsFgStock = isset($_POST['holds_fg_stock']) ? 1 : 0;
             $notes       = post_str('notes');
             if ($notes !== null) $notes = substr($notes, 0, 1000);
 
             $ins = $pdo->prepare(
-                "INSERT INTO ref_sites (name, address_line, postal_code, city, country, notes, updated_by)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)"
+                "INSERT INTO ref_sites (name, address_line, postal_code, city, country, site_type, holds_fg_stock, notes, updated_by)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
             );
-            $ins->execute([$name, $addressLine, $postalCode, $city, $country, $notes, $me['username']]);
+            $ins->execute([$name, $addressLine, $postalCode, $city, $country, $siteType, $holdsFgStock, $notes, $me['username']]);
             $newId = (int) $pdo->lastInsertId();
 
             log_revision($pdo, $me, 'ref_sites', $newId, null,
-                ['name' => $name, 'address_line' => $addressLine, 'postal_code' => $postalCode, 'city' => $city, 'country' => $country, 'notes' => $notes],
+                ['name' => $name, 'address_line' => $addressLine, 'postal_code' => $postalCode, 'city' => $city, 'country' => $country, 'site_type' => $siteType, 'holds_fg_stock' => $holdsFgStock, 'notes' => $notes],
                 'normal', 'Réglages généraux: nouveau site');
 
             flash_set('ok', "Site « " . htmlspecialchars($name) . " » ajouté.");
@@ -220,18 +223,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($city !== null) $city = substr($city, 0, 120);
             $country     = post_str('country') ?? 'CH';
             must_be_one_of('country', $country, ['CH', 'FR', 'DE', 'IT', 'BE', 'LU', 'AT', 'NL', 'US', 'GB']);
+            $siteType    = post_str('site_type') ?? 'warehouse';
+            must_be_one_of('site_type', $siteType, ['production', 'warehouse', 'pos', 'consignment']);
+            $holdsFgStock = isset($_POST['holds_fg_stock']) ? 1 : 0;
             $notes = post_str('notes');
             if ($notes !== null) $notes = substr($notes, 0, 1000);
 
             $upd = $pdo->prepare(
-                "UPDATE ref_sites SET name=?, address_line=?, postal_code=?, city=?, country=?, notes=?, updated_by=?
+                "UPDATE ref_sites SET name=?, address_line=?, postal_code=?, city=?, country=?, site_type=?, holds_fg_stock=?, notes=?, updated_by=?
                   WHERE id = ?"
             );
-            $upd->execute([$name, $addressLine, $postalCode, $city, $country, $notes, $me['username'], $siteId]);
+            $upd->execute([$name, $addressLine, $postalCode, $city, $country, $siteType, $holdsFgStock, $notes, $me['username'], $siteId]);
 
-            $after = ['name' => $name, 'address_line' => $addressLine, 'postal_code' => $postalCode, 'city' => $city, 'country' => $country, 'notes' => $notes];
+            $after = ['name' => $name, 'address_line' => $addressLine, 'postal_code' => $postalCode, 'city' => $city, 'country' => $country, 'site_type' => $siteType, 'holds_fg_stock' => $holdsFgStock, 'notes' => $notes];
             log_revision($pdo, $me, 'ref_sites', $siteId,
-                ['name' => $before['name'], 'address_line' => $before['address_line'], 'postal_code' => $before['postal_code'], 'city' => $before['city'], 'country' => $before['country'], 'notes' => $before['notes']],
+                ['name' => $before['name'], 'address_line' => $before['address_line'], 'postal_code' => $before['postal_code'], 'city' => $before['city'], 'country' => $before['country'], 'site_type' => $before['site_type'], 'holds_fg_stock' => $before['holds_fg_stock'], 'notes' => $before['notes']],
                 $after, 'normal', 'Réglages généraux: site modifié');
 
             flash_set('ok', "Site « " . htmlspecialchars($name) . " » mis à jour.");
@@ -1302,6 +1308,7 @@ $_breweryId = brewery_identity();
             Sites de production
             <span class="rg-card-label">ref_sites</span>
           </div>
+          <p class="rg-field-desc">ℹ️ Le conditionnement alimente le stock PF des sites de type « Production ».</p>
 
           <?php if (!$sitesApplied): ?>
           <div class="rg-migration-banner">
@@ -1398,6 +1405,24 @@ $_breweryId = brewery_identity();
                     <?php endforeach ?>
                   </select>
                 </div>
+                <div>
+                  <label class="rg-form-label">Type de site</label>
+                  <select class="rg-select" name="site_type">
+                    <?php foreach (['production' => 'Production', 'warehouse' => 'Entrepôt', 'pos' => 'Point de vente', 'consignment' => 'Consignation'] as $val => $lbl): ?>
+                    <option value="<?= $val ?>"<?= ($editSiteRow['site_type'] ?? 'warehouse') === $val ? ' selected' : '' ?>><?= htmlspecialchars($lbl) ?></option>
+                    <?php endforeach ?>
+                  </select>
+                </div>
+                <div>
+                  <label class="rg-form-label">Stock PF</label>
+                  <div class="rg-toggle-wrap">
+                    <label class="rg-toggle">
+                      <input type="checkbox" name="holds_fg_stock" value="1"<?= (int) ($editSiteRow['holds_fg_stock'] ?? 0) === 1 ? ' checked' : '' ?>>
+                      <span class="rg-slider"></span>
+                    </label>
+                    <span class="rg-toggle-val">Détient du stock PF</span>
+                  </div>
+                </div>
                 <div class="full">
                   <label class="rg-form-label">Notes (libre)</label>
                   <input class="rg-input" type="text" name="notes" maxlength="500"
@@ -1441,6 +1466,24 @@ $_breweryId = brewery_identity();
                     <option value="<?= $code ?>"><?= $code ?> — <?= htmlspecialchars($label) ?></option>
                     <?php endforeach ?>
                   </select>
+                </div>
+                <div>
+                  <label class="rg-form-label">Type de site</label>
+                  <select class="rg-select" name="site_type">
+                    <?php foreach (['production' => 'Production', 'warehouse' => 'Entrepôt', 'pos' => 'Point de vente', 'consignment' => 'Consignation'] as $val => $lbl): ?>
+                    <option value="<?= $val ?>"<?= $val === 'warehouse' ? ' selected' : '' ?>><?= htmlspecialchars($lbl) ?></option>
+                    <?php endforeach ?>
+                  </select>
+                </div>
+                <div>
+                  <label class="rg-form-label">Stock PF</label>
+                  <div class="rg-toggle-wrap">
+                    <label class="rg-toggle">
+                      <input type="checkbox" name="holds_fg_stock" value="1" checked>
+                      <span class="rg-slider"></span>
+                    </label>
+                    <span class="rg-toggle-val">Détient du stock PF</span>
+                  </div>
                 </div>
                 <div class="full">
                   <label class="rg-form-label">Notes (libre)</label>
