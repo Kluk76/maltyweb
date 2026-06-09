@@ -637,16 +637,16 @@ function pkg_qa_metrics(PDO $pdo, int $year): array
 /**
  * Canonical inline beer-loss % per year.
  *
- * Formula: beer_loss_hl = v.loss_kpi_hl + (b.loss_liquid_other_units / 100)
- * The loss_liquid_other_units/100 term is MANDATORY — the legacy litres bucket
- * holds most historical loss data (pre-2023 typed-col migration was not present).
+ * Formula (mig-293): beer_loss_hl = SUM(v.loss_kpi_hl)
+ * loss_kpi_hl now includes loss_liquid_other_units/100 directly (backfilled by mig-293).
+ * The old inline `+ COALESCE(b.loss_liquid_other_units, 0) / 100.0` term has been removed
+ * to avoid double-counting now that the stored column carries it.
  *
- * 2021/2022 return ~0 due to data-entry gap (operators did not fill legacy bucket
- * before 2023). Show with the incomplete_data flag; do NOT imply true 0% loss.
+ * incomplete_data flag: true for years where loss_kpi_hl is all-zero (data-entry gap
+ * before operators started filling loss fields — 2021/2022). Do NOT imply true 0% loss.
  *
  * Returns list keyed by year with: yr, beer_loss_pct, beer_loss_hl, vendable_hl,
- * incomplete_data (bool: true for years where loss_liquid_other_units is all-zero
- * and loss_kpi_hl is all-zero — data-entry gap flag).
+ * incomplete_data (bool).
  *
  * @param PDO $pdo
  * @return array<int, array{yr:int, beer_loss_pct:float|null, beer_loss_hl:float, vendable_hl:float, incomplete_data:bool}>
@@ -662,14 +662,12 @@ function pkg_beer_loss_by_year(PDO $pdo): array
         SELECT
             YEAR(b.event_date)  AS yr,
             ROUND(
-                100 * SUM(v.loss_kpi_hl + COALESCE(b.loss_liquid_other_units, 0) / 100.0)
+                100 * SUM(v.loss_kpi_hl)
                 / NULLIF(SUM(v.vendable_hl), 0)
             , 2)                AS beer_loss_pct,
-            ROUND(SUM(v.loss_kpi_hl + COALESCE(b.loss_liquid_other_units, 0) / 100.0), 3)
-                                AS beer_loss_hl,
-            ROUND(SUM(v.vendable_hl), 2) AS vendable_hl,
-            SUM(COALESCE(b.loss_liquid_other_units, 0)) AS legacy_bucket_sum,
-            SUM(COALESCE(v.loss_kpi_hl, 0))             AS typed_bucket_sum
+            ROUND(SUM(v.loss_kpi_hl), 3)         AS beer_loss_hl,
+            ROUND(SUM(v.vendable_hl), 2)          AS vendable_hl,
+            SUM(COALESCE(v.loss_kpi_hl, 0))       AS typed_bucket_sum
         FROM bd_packaging_v2 b
         JOIN v_bd_packaging_v2_vendable v ON v.id = b.id
         WHERE b.reuses_packaging_id_fk IS NULL
@@ -681,14 +679,13 @@ function pkg_beer_loss_by_year(PDO $pdo): array
 
     $rows = [];
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
-        $legacySum = (float)$row['legacy_bucket_sum'];
         $typedSum  = (float)$row['typed_bucket_sum'];
         $rows[(int)$row['yr']] = [
             'yr'              => (int)$row['yr'],
             'beer_loss_pct'   => $row['beer_loss_pct'] !== null ? (float)$row['beer_loss_pct'] : null,
             'beer_loss_hl'    => (float)$row['beer_loss_hl'],
             'vendable_hl'     => (float)$row['vendable_hl'],
-            'incomplete_data' => ($legacySum == 0.0 && $typedSum == 0.0),
+            'incomplete_data' => ($typedSum == 0.0),
         ];
     }
 
@@ -706,6 +703,8 @@ function pkg_beer_loss_by_year(PDO $pdo): array
  *
  * Uses the identical formula as pkg_beer_loss_by_year but grouped by month + run_type.
  * Allows the dashboard to draw a multi-series line per format family.
+ *
+ * Formula (mig-293): loss_kpi_hl now includes loss_liquid_other/100 — no inline add needed.
  *
  * Returns list<{mo:int, run_type:string, beer_loss_pct:float|null, beer_loss_hl:float, vendable_hl:float}>
  *
@@ -725,11 +724,10 @@ function pkg_beer_loss_by_format_month(PDO $pdo, int $year): array
             MONTH(b.event_date)  AS mo,
             v.run_type,
             ROUND(
-                100 * SUM(v.loss_kpi_hl + COALESCE(b.loss_liquid_other_units, 0) / 100.0)
+                100 * SUM(v.loss_kpi_hl)
                 / NULLIF(SUM(v.vendable_hl), 0)
             , 2)                 AS beer_loss_pct,
-            ROUND(SUM(v.loss_kpi_hl + COALESCE(b.loss_liquid_other_units, 0) / 100.0), 3)
-                                 AS beer_loss_hl,
+            ROUND(SUM(v.loss_kpi_hl), 3) AS beer_loss_hl,
             ROUND(SUM(v.vendable_hl), 2) AS vendable_hl
         FROM bd_packaging_v2 b
         JOIN v_bd_packaging_v2_vendable v ON v.id = b.id

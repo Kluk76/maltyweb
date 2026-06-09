@@ -167,19 +167,19 @@ function resolve_packaging_sku_id(
  *                  − c(qa_library) − c(qa_analyses)
  *                  // material scraps do NOT decrement vendable_units
  *   vendable_hl    = (vendable_units / units_per_pack) * hl_per_unit
- *                  − c(loss_liquid_other_units) / 100
+ *                  // loss_liquid_other is a LOSS, not a vendable subtractor (mig-293)
  *   beer_tax_base_hl = vendable_hl + c(unsaleable) / units_per_pack * hl_per_unit
- *   loss_kpi_hl    = (c(unsaleable) + c(loss_uncapped) + c(loss_half_filled)*0.5)
- *                    / units_per_pack * hl_per_unit
+ *   loss_kpi_hl    = (c(unsaleable) + c(loss_uncapped) + c(loss_half_filled)*0.5
+ *                    + c(loss_liquid_other_units)/100)
+ *                    / units_per_pack * hl_per_unit ... (see code — liquid added in HL directly)
  *
  * KEG/CUV (run_type ∈ keg, cuv):
  *   vendable_units = prod
  *   vendable_hl    = (vendable_units / units_per_pack) * hl_per_unit
- *                  − c(loss_keg_liquid_l) / 100
  *                  − c(taproom_keg_l) / 100
- *                  − c(loss_liquid_other_units) / 100
- *   beer_tax_base_hl = vendable_hl + c(taproom_keg_l) / 100
- *   loss_kpi_hl    = c(loss_keg_liquid_l) / 100
+ *                  // loss_keg_liquid and loss_liquid_other are LOSSES, not vendable subtractors
+ *   beer_tax_base_hl = vendable_hl + c(taproom_keg_l) / 100   (= hlGross)
+ *   loss_kpi_hl    = c(loss_keg_liquid_l) / 100 + c(loss_liquid_other_units) / 100
  *
  * SKU resolution paths:
  *   SKU present (sku_id_fk set)     → hl_per_unit / units_per_pack from ref_skus (existing path).
@@ -269,8 +269,8 @@ function compute_packaging_vendable_hl(
 
         $perPack    = bcdiv($vendableUnits, (string)$unitsPerPack, $scale);
         $hlGross    = bcmul($perPack, (string)$hlPerUnit, $scale);
-        $liqAdj     = bcdiv($lLiquid, '100', $scale);
-        $vendableHl = bcsub($hlGross, $liqAdj, $scale);
+        // loss_liquid_other is a LOSS, not a vendable subtractor — vendableHl = hlGross
+        $vendableHl = $hlGross;
 
         // beer_tax_base: vendable + invendable (taxed even if not sold)
         $unsaleableHl   = bcmul(bcdiv($unsaleable, (string)$unitsPerPack, $scale), (string)$hlPerUnit, $scale);
@@ -278,9 +278,11 @@ function compute_packaging_vendable_hl(
 
         // loss_kpi_hl: beer-disposition losses only (material scraps excluded)
         // untaxed_full is a full unit, counts in full (no ×0.5 unlike half_filled)
+        // loss_liquid_other added in HL directly (it is already in litres / a HL bucket)
         $lossUnits      = bcadd(bcadd($unsaleable, $lUncapped, $scale), $halfFilledEff, $scale);
         $lossUnits      = bcadd($lossUnits, $lUntaxedFull, $scale);
         $lossKpiHl      = bcmul(bcdiv($lossUnits, (string)$unitsPerPack, $scale), (string)$hlPerUnit, $scale);
+        $lossKpiHl      = bcadd($lossKpiHl, bcdiv($lLiquid, '100', $scale), $scale);
 
     } else {
         // ── KEG / CUV ─────────────────────────────────────────────────────────
@@ -291,17 +293,17 @@ function compute_packaging_vendable_hl(
 
         $perPack    = bcdiv($vendableUnits, (string)$unitsPerPack, $scale);
         $hlGross    = bcmul($perPack, (string)$hlPerUnit, $scale);
-        $vendableHl = bcsub($hlGross, bcdiv($lKegLiquid, '100', $scale), $scale);
-        $vendableHl = bcsub($vendableHl, bcdiv($taproom, '100', $scale), $scale);
-        $vendableHl = bcsub($vendableHl, bcdiv($lLiquid, '100', $scale), $scale);
-        // Floor: a pure-loss row (prod=0) must not yield negative vendable.
-        if (bccomp($vendableHl, '0', $scale) < 0) { $vendableHl = '0'; }
+        // loss_keg_liquid and loss_liquid_other are LOSSES, not vendable subtractors
+        // vendableHl = hlGross − taproom only (taproom is intentional, excluded from loss)
+        $vendableHl = bcsub($hlGross, bcdiv($taproom, '100', $scale), $scale);
+        // No floor needed: losses no longer subtracted, vendable cannot go negative
+        // unless prod_total_units itself is zero AND taproom > 0 (impossible in practice).
 
-        // beer_tax_base: vendable + taproom (taproom is taxed)
-        $beerTaxBaseHl = bcadd($vendableHl, bcdiv($taproom, '100', $scale), $scale);
+        // beer_tax_base: vendable + taproom = hlGross (taproom is taxed)
+        $beerTaxBaseHl = $hlGross;
 
-        // loss_kpi: liquid lost from the vessel (not taproom — that's intentional fill)
-        $lossKpiHl = bcdiv($lKegLiquid, '100', $scale);
+        // loss_kpi: all liquid lost from the vessel (keg burst + other liquid losses)
+        $lossKpiHl = bcadd(bcdiv($lKegLiquid, '100', $scale), bcdiv($lLiquid, '100', $scale), $scale);
     }
 
     $fmt = fn(string $v): string => number_format((float)$v, 3, '.', '');
@@ -1281,6 +1283,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         if ($prePk !== false) {
                             $rowBefore = bd_fetch_before($pdo, PACKAGING_LIVE_TABLE, (int)$prePk);
                         }
+                    }
+
+                    // Operator identity: insert sets FK, edit preserves original.
+                    if ($editSubmittedAt !== null && $rowBefore !== null) {
+                        $safeRow['email'] = $rowBefore['email'] ?? $safeRow['email'];
+                        // submitted_by_user_id_fk intentionally absent — bd_upsert leaves existing FK untouched.
+                        unset($safeRow['submitted_by_user_id_fk']);
+                    } elseif ($editSubmittedAt === null) {
+                        $safeRow['submitted_by_user_id_fk'] = (int)$me['id'];
                     }
 
                     $result           = bd_upsert($pdo, PACKAGING_LIVE_TABLE, $safeRow, $nkCols);
