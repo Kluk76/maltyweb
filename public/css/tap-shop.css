@@ -1,0 +1,399 @@
+/* ============================================================
+   tap-shop.css — Tap&Shop direct-sales tracker
+   All rules scoped under body.tap-shop
+   Palette: design-system tokens only — no raw hex.
+   ============================================================ */
+
+/* ── Page layout ─────────────────────────────────────────────── */
+body.tap-shop .main {
+  align-items: stretch;    /* override .home .main centering rule */
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  padding: 0 0 60px;
+}
+
+/* ── Page header ─────────────────────────────────────────────── */
+.ts-page-header {
+  padding: 28px 32px 16px;
+  border-bottom: 1px solid var(--hairline);
+}
+.ts-page-header__eyebrow {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  margin-bottom: 6px;
+}
+.ts-page-header h1 {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 96;
+  font-size: 2rem;
+  font-weight: 300;
+  color: var(--ink);
+  margin: 0 0 4px;
+}
+.ts-page-header h1 em {
+  font-style: italic;
+  color: var(--hop);
+}
+.ts-page-header__meta {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+  color: var(--ink-mute);
+  letter-spacing: 0.06em;
+}
+
+/* ── Data-gap notice ─────────────────────────────────────────── */
+.ts-data-notice {
+  margin: 16px 32px 0;
+  padding: 10px 14px;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-left: 3px solid var(--oak);
+  border-radius: 3px;
+  font-family: "DM Sans", sans-serif;
+  font-size: 12px;
+  color: var(--ink-soft);
+  line-height: 1.5;
+}
+.ts-data-notice strong {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+/* ── Section shell ───────────────────────────────────────────── */
+.ts-section {
+  margin: 24px 32px 0;
+}
+.ts-section__head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.ts-section__title {
+  font-family: "DM Sans", sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  margin: 0;
+}
+.ts-section__sub {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: var(--ink-mute);
+  text-transform: uppercase;
+}
+
+/* ── Period selector ─────────────────────────────────────────── */
+.ts-period-bar {
+  padding: 12px 32px 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.ts-period-bar label {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--ink-mute);
+  text-transform: uppercase;
+}
+.ts-period-btn {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+  padding: 4px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  letter-spacing: 0.06em;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.ts-period-btn:hover {
+  background: var(--bg-elev);
+  color: var(--ink);
+  border-color: var(--ink-mute);
+}
+.ts-period-btn--active {
+  background: var(--hop);
+  color: #fff;
+  border-color: var(--hop);
+}
+.ts-period-btn--active:hover {
+  background: var(--hop);
+  color: #fff;
+}
+
+/* ── Toggle row (HL / CHF) ───────────────────────────────────── */
+.ts-toggle-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.ts-toggle-btn {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px;
+  padding: 3px 9px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink-mute);
+  cursor: pointer;
+  letter-spacing: 0.06em;
+  transition: background .15s, color .15s;
+}
+.ts-toggle-btn--active {
+  background: var(--ember);
+  color: #fff;
+  border-color: var(--ember);
+}
+
+/* ── Chart container ─────────────────────────────────────────── */
+.ts-chart-wrap {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  padding: 16px 16px 8px;
+  overflow: hidden;
+}
+.ts-chart-wrap svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.ts-chart-empty {
+  height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--ink-mute);
+}
+
+/* ── Per-beer table ──────────────────────────────────────────── */
+.ts-beer-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: "DM Sans", sans-serif;
+  font-size: 12.5px;
+}
+.ts-beer-table th {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  font-weight: 500;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--hairline);
+  text-align: right;
+  white-space: nowrap;
+}
+.ts-beer-table th:first-child { text-align: left; }
+.ts-beer-table th.ts-th--left { text-align: left; }
+
+.ts-beer-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--hairline);
+  color: var(--ink);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  vertical-align: middle;
+}
+.ts-beer-table td:first-child {
+  text-align: left;
+  font-weight: 500;
+}
+.ts-beer-table tr:last-child td { border-bottom: none; }
+.ts-beer-table tr:hover td { background: rgba(30,18,5,0.025); }
+
+/* Family group header row */
+.ts-beer-table .ts-family-row td {
+  background: var(--bg-side);
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  padding: 5px 10px;
+  font-weight: 500;
+}
+/* Subtotal row */
+.ts-beer-table .ts-subtotal-row td {
+  border-top: 1px solid var(--hairline);
+  font-weight: 600;
+  background: var(--bg-elev);
+  font-size: 12px;
+}
+
+/* Non rattaché row */
+.ts-beer-table .ts-unresolved-row td {
+  color: var(--ink-mute);
+  font-style: italic;
+}
+.ts-beer-table .ts-unresolved-row td:first-child { font-style: italic; }
+
+/* SKU code pill */
+.ts-sku-pill {
+  display: inline-block;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  padding: 2px 6px;
+  background: var(--bg-side);
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  color: var(--ink-soft);
+  margin-right: 4px;
+  vertical-align: middle;
+}
+
+/* ── Flag chips ──────────────────────────────────────────────── */
+.ts-flag {
+  display: inline-block;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 8.5px;
+  letter-spacing: 0.06em;
+  padding: 2px 6px;
+  border-radius: 10px;
+  font-weight: 500;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+.ts-flag--survendu  { background: rgba(179,68,40,0.15); color: var(--ember); border: 1px solid rgba(179,68,40,0.3); }
+.ts-flag--low       { background: rgba(139,90,26,0.12); color: var(--oak);   border: 1px solid rgba(139,90,26,0.25); }
+.ts-flag--dormant   { background: rgba(30,18,5,0.07);   color: var(--ink-mute); border: 1px solid var(--hairline); }
+
+/* ── Physique number ─────────────────────────────────────────── */
+.ts-physique {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--hop);
+}
+.ts-physique--zero {
+  color: var(--ink-mute);
+}
+
+/* ── Semaines cover ──────────────────────────────────────────── */
+.ts-cover {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+  color: var(--ink-soft);
+}
+.ts-cover--inf {
+  color: var(--ink-mute);
+  font-style: italic;
+}
+
+/* ── Grand total bar ─────────────────────────────────────────── */
+.ts-totals-bar {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+  padding: 16px 32px;
+  background: var(--bg-elev);
+  border-top: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
+  margin-top: 24px;
+}
+.ts-total-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.ts-total-kpi__label {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+.ts-total-kpi__value {
+  font-family: "Fraunces", serif;
+  font-variation-settings: "opsz" 144;
+  font-size: 1.5rem;
+  font-weight: 300;
+  color: var(--ink);
+  line-height: 1.1;
+}
+.ts-total-kpi__value em {
+  font-style: normal;
+  color: var(--hop);
+}
+.ts-total-kpi__sub {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  color: var(--ink-mute);
+}
+
+/* ── Phase-2 placeholder panel ───────────────────────────────── */
+.ts-phase2-placeholder {
+  margin: 24px 32px 0;
+  padding: 20px 24px;
+  border: 1px dashed var(--hairline);
+  border-radius: 4px;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  opacity: 0.7;
+}
+.ts-phase2-placeholder__icon {
+  font-size: 1.5rem;
+  flex-shrink: 0;
+  color: var(--ink-mute);
+}
+.ts-phase2-placeholder__body {
+  flex: 1;
+}
+.ts-phase2-placeholder__title {
+  font-family: "DM Sans", sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-mute);
+  margin: 0 0 4px;
+}
+.ts-phase2-placeholder__desc {
+  font-family: "DM Sans", sans-serif;
+  font-size: 12px;
+  color: var(--ink-mute);
+  margin: 0;
+  line-height: 1.5;
+}
+.ts-phase2-placeholder__badge {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 8.5px;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  color: var(--ink-mute);
+  background: var(--bg-side);
+  flex-shrink: 0;
+}
+
+/* ── Stock table wrapper (scrollable on narrow) ──────────────── */
+.ts-table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ── Responsive ──────────────────────────────────────────────── */
+@media (max-width: 800px) {
+  .ts-section { margin: 16px 12px 0; }
+  .ts-period-bar { padding: 10px 12px 0; }
+  .ts-page-header { padding: 20px 16px 12px; }
+  .ts-totals-bar { padding: 12px 16px; gap: 16px; }
+  .ts-phase2-placeholder { margin: 16px 12px 0; }
+  .ts-data-notice { margin: 12px 12px 0; }
+}
