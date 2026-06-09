@@ -2659,7 +2659,7 @@ $isReadOnly = $editOrder !== null
     </div>
   </div>
 
-  <!-- ── 4 Location cards ────────────────────────────────────────────────── -->
+  <!-- ── 4 Location cards (clickable filters) ────────────────────────────── -->
   <?php
   $locSnap    = $fgLocationSnapshot ?? ['anchor_date' => $anchorDate, 'locations' => []];
   $locByIdArr = [];
@@ -2671,7 +2671,31 @@ $isReadOnly = $editOrder !== null
   $stDowForStock = (int) $stNowForStock->format('N');
   $stMondayStock = $stNowForStock->modify('-' . ($stDowForStock - 1) . ' days')->format('Y-m-d');
   ?>
-  <div class="exp-loc-cards" role="region" aria-label="Stock par site">
+
+  <!-- Live region: announces current view to screen readers -->
+  <p id="exp-stock-view-label" class="exp-stock-view-label" aria-live="polite" aria-atomic="true">
+    Stock — Tous les sites
+  </p>
+
+  <div class="exp-loc-cards" role="group" aria-label="Filtre par site">
+    <!-- "Tous les sites" is the default-active selector -->
+    <button type="button"
+            class="exp-loc-card exp-loc-card--total exp-loc-card--active"
+            data-loc-id="total"
+            aria-pressed="true">
+      <div class="exp-loc-card__header">
+        <span class="exp-loc-card__name">Tous les sites</span>
+        <span class="exp-loc-card__type">Total combiné</span>
+      </div>
+      <div class="exp-loc-card__fresh">
+        <span class="exp-st-fresh-chip exp-st-fresh-chip--ok">Vue complète</span>
+      </div>
+      <div class="exp-loc-card__totals">
+        <div class="exp-loc-card__hl"><?= number_format(array_sum(array_column($locSnap['locations'], 'total_hl')), 1) ?> <span class="exp-loc-card__hl-unit">HL</span></div>
+        <div class="exp-loc-card__units"><?= number_format(array_sum(array_column($locSnap['locations'], 'total_units'))) ?> <span class="exp-loc-card__units-label">unités</span></div>
+      </div>
+    </button>
+
     <?php foreach ($locSnap['locations'] as $lc): ?>
     <?php
       $lcLastCounted = $lc['last_counted'];
@@ -2686,7 +2710,12 @@ $isReadOnly = $editOrder !== null
       }
       $isUncounted = $lcLastCounted === null;
     ?>
-    <div class="exp-loc-card<?= $isUncounted ? ' exp-loc-card--uncounted' : '' ?>">
+    <button type="button"
+            class="exp-loc-card<?= $isUncounted ? ' exp-loc-card--uncounted' : '' ?>"
+            data-loc-id="<?= (int) $lc['id'] ?>"
+            data-loc-name="<?= htmlspecialchars($lc['name']) ?>"
+            data-loc-type="<?= htmlspecialchars(exp_site_type_label($lc['site_type'])) ?>"
+            aria-pressed="false">
       <div class="exp-loc-card__header">
         <span class="exp-loc-card__name"><?= htmlspecialchars($lc['name']) ?></span>
         <span class="exp-loc-card__type"><?= htmlspecialchars(exp_site_type_label($lc['site_type'])) ?></span>
@@ -2703,9 +2732,12 @@ $isReadOnly = $editOrder !== null
         <div class="exp-loc-card__units exp-loc-card__units--empty">0 unités</div>
       </div>
       <?php endif ?>
-    </div>
+    </button>
     <?php endforeach ?>
   </div>
+
+  <!-- ── Total view (default): TOTAL strip + family filters + full table ── -->
+  <div id="exp-loc-table-total" class="exp-loc-view">
 
   <!-- ── TOTAL strip ─────────────────────────────────────────────────────── -->
   <div class="exp-stock-total-strip" role="region" aria-label="Totaux stock PF">
@@ -2992,6 +3024,112 @@ $isReadOnly = $editOrder !== null
       </tbody>
     </table>
   </div>
+
+  </div><!-- /exp-loc-table-total -->
+
+  <!-- ── Per-location tables (hidden by default, toggled by JS) ────────── -->
+  <?php foreach ($locSnap['locations'] as $lc):
+    // Group this location's snapshot rows by display_family
+    $lcFamilyOrder = $stockFamilyOrder; // reuse the same order
+    $lcByFamily    = [];
+    foreach ($lc['rows'] as $lr) {
+        $fam = $lr['display_family'] ?? $lr['format'];
+        $lcByFamily[$fam][] = $lr;
+    }
+    // Sort families in canonical order
+    $lcFamilyKeys = array_unique(array_merge(
+        array_intersect(array_keys($lcFamilyOrder), array_keys($lcByFamily)),
+        array_diff(array_keys($lcByFamily), array_keys($lcFamilyOrder))
+    ));
+    // Sort SKUs within each family by sku_code
+    foreach ($lcByFamily as &$lcFamRows) {
+        usort($lcFamRows, fn($a, $b) => strcmp($a['sku_code'], $b['sku_code']));
+    }
+    unset($lcFamRows);
+    $hasLocRows = !empty($lc['rows']);
+    $locCaption = $lc['last_counted'] !== null
+        ? 'Stock physique compté au ' . exp_fmt_date($lc['last_counted']) . ' — les disponibilités (− commandes) sont sur la vue Total.'
+        : null;
+  ?>
+  <div id="exp-loc-table-<?= (int) $lc['id'] ?>"
+       class="exp-loc-view exp-loc-view--single"
+       hidden
+       data-loc-id="<?= (int) $lc['id'] ?>">
+
+    <?php if (!$hasLocRows): ?>
+    <!-- Empty state (e.g. Taproom not yet counted) -->
+    <div class="exp-loc-empty-state">
+      <p class="exp-loc-empty-state__msg">Pas encore compté</p>
+      <p class="exp-loc-empty-state__sub">Aucune entrée d'inventaire pour ce site.</p>
+    </div>
+
+    <?php else: ?>
+    <?php if ($locCaption !== null): ?>
+    <p class="exp-loc-caption"><?= htmlspecialchars($locCaption) ?></p>
+    <?php endif ?>
+
+    <div class="exp-stock-table-wrap">
+      <table class="exp-stock-table exp-stock-table--loc">
+        <thead>
+          <tr>
+            <th class="exp-st-col-sku">SKU</th>
+            <th class="exp-st-col-units">Unités</th>
+            <th class="exp-st-col-hl">HL</th>
+          </tr>
+        </thead>
+        <tbody>
+        <?php foreach ($lcFamilyKeys as $lcGroupFam):
+          if (empty($lcByFamily[$lcGroupFam])) continue;
+          $lcGroupLabel = exp_family_label(exp_format_family($lcGroupFam));
+          $lcGroupCount = count($lcByFamily[$lcGroupFam]);
+          $lcFamUnits   = 0.0;
+          $lcFamHl      = 0.0;
+          foreach ($lcByFamily[$lcGroupFam] as $lr) {
+              $lcFamUnits += $lr['qty'];
+              $lcFamHl    += $lr['hl'];
+          }
+        ?>
+          <tr class="exp-stock-family-header" aria-hidden="true">
+            <td colspan="3" class="exp-stock-family-header__cell">
+              <span class="exp-stock-family-header__label"><?= htmlspecialchars($lcGroupLabel) ?></span>
+              <span class="exp-stock-family-header__count"><?= $lcGroupCount ?> SKU<?= $lcGroupCount !== 1 ? 's' : '' ?></span>
+            </td>
+          </tr>
+          <?php foreach ($lcByFamily[$lcGroupFam] as $lr): ?>
+          <tr class="exp-stock-row exp-loc-row">
+            <td class="exp-st-col-sku">
+              <span class="exp-st-sku-code"><?= htmlspecialchars($lr['sku_code']) ?></span>
+              <span class="exp-st-sku-hl"><?= number_format($lr['hl'], 2) ?> HL</span>
+            </td>
+            <td class="exp-st-col-units">
+              <span class="exp-st-num"><?= number_format($lr['qty']) ?></span>
+            </td>
+            <td class="exp-st-col-hl">
+              <span class="exp-st-num"><?= number_format($lr['hl'], 2) ?></span>
+            </td>
+          </tr>
+          <?php endforeach ?>
+          <!-- Family subtotal -->
+          <tr class="exp-loc-family-subtotal">
+            <td class="exp-loc-subtotal-label">Sous-total <?= htmlspecialchars($lcGroupLabel) ?></td>
+            <td class="exp-st-col-units exp-loc-subtotal-val"><?= number_format($lcFamUnits) ?></td>
+            <td class="exp-st-col-hl exp-loc-subtotal-val"><?= number_format($lcFamHl, 2) ?></td>
+          </tr>
+        <?php endforeach ?>
+        </tbody>
+        <tfoot>
+          <tr class="exp-loc-total-row">
+            <td class="exp-loc-total-label">Total</td>
+            <td class="exp-st-col-units exp-loc-total-val"><?= number_format($lc['total_units']) ?></td>
+            <td class="exp-st-col-hl exp-loc-total-val"><?= number_format($lc['total_hl'], 2) ?></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    <?php endif ?>
+
+  </div><!-- /exp-loc-table-<?= (int) $lc['id'] ?> -->
+  <?php endforeach ?>
 
   <?php else: ?>
   <!-- No anchor found yet -->

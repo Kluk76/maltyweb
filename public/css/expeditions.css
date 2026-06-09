@@ -3637,11 +3637,47 @@ body.expeditions .exp-loc-card {
   flex-direction: column;
   gap: 8px;
   min-height: 110px;
+  /* Clickable card behaviour */
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+  touch-action: manipulation;
+}
+
+body.expeditions .exp-loc-card:hover {
+  border-color: var(--hop-soft);
+  background: color-mix(in srgb, var(--hop) 4%, var(--bg));
+}
+
+body.expeditions .exp-loc-card:focus-visible {
+  outline: 2px solid var(--hop);
+  outline-offset: 2px;
+}
+
+body.expeditions .exp-loc-card--active,
+body.expeditions .exp-loc-card[aria-pressed="true"] {
+  border-color: var(--hop);
+  border-width: 2px;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--hop) 20%, transparent);
+  background: color-mix(in srgb, var(--hop) 6%, var(--bg));
+}
+
+body.expeditions .exp-loc-card--total {
+  border-style: dashed;
+}
+
+body.expeditions .exp-loc-card--total[aria-pressed="true"] {
+  border-style: solid;
 }
 
 body.expeditions .exp-loc-card--uncounted {
   opacity: 0.7;
   border-style: dashed;
+}
+
+body.expeditions .exp-loc-card--uncounted[aria-pressed="true"] {
+  opacity: 1.0;
 }
 
 body.expeditions .exp-loc-card__header {
@@ -3711,6 +3747,104 @@ body.expeditions .exp-loc-card__units-label,
 body.expeditions .exp-loc-card__units--empty {
   font-size: 0.72rem;
   color: var(--ink-mute);
+}
+
+/* ── Stock PF — live region view label ─────────────────────────────────── */
+body.expeditions .exp-stock-view-label {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--ink-mute);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 0 0 10px 0;
+}
+
+/* ── Stock PF — location view wrappers ──────────────────────────────────── */
+body.expeditions .exp-loc-view[hidden] {
+  display: none;
+}
+
+/* ── Stock PF — per-location caption ───────────────────────────────────── */
+body.expeditions .exp-loc-caption {
+  font-size: 0.78rem;
+  color: var(--ink-mute);
+  border-left: 3px solid var(--hairline-2);
+  padding-left: 10px;
+  margin: 0 0 14px 0;
+  line-height: 1.45;
+}
+
+/* ── Stock PF — per-location table cols ─────────────────────────────────── */
+body.expeditions .exp-stock-table--loc .exp-st-col-units,
+body.expeditions .exp-stock-table--loc .exp-st-col-hl {
+  text-align: right;
+  width: 100px;
+}
+
+/* ── Stock PF — per-location family subtotal + total rows ───────────────── */
+body.expeditions .exp-loc-family-subtotal td {
+  background: color-mix(in srgb, var(--hop) 4%, transparent);
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  padding-top: 4px;
+  padding-bottom: 4px;
+  border-top: 1px solid var(--hairline);
+}
+
+body.expeditions .exp-loc-subtotal-label {
+  font-style: italic;
+  padding-left: 24px;
+}
+
+body.expeditions .exp-loc-subtotal-val {
+  font-family: "JetBrains Mono", monospace;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+body.expeditions .exp-loc-total-row td {
+  background: color-mix(in srgb, var(--hop) 8%, transparent);
+  border-top: 2px solid color-mix(in srgb, var(--hop) 25%, transparent);
+  font-weight: 600;
+}
+
+body.expeditions .exp-loc-total-label {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.82rem;
+  color: var(--hop);
+}
+
+body.expeditions .exp-loc-total-val {
+  font-family: "JetBrains Mono", monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.9rem;
+  color: var(--hop);
+  text-align: right;
+}
+
+/* ── Stock PF — per-location empty state ───────────────────────────────── */
+body.expeditions .exp-loc-empty-state {
+  padding: 32px 24px;
+  text-align: center;
+  background: var(--bg-elev);
+  border: 1px dashed var(--hairline-2);
+  border-radius: 6px;
+  margin: 12px 0;
+}
+
+body.expeditions .exp-loc-empty-state__msg {
+  font-family: "DM Sans", sans-serif;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+  margin: 0 0 6px 0;
+}
+
+body.expeditions .exp-loc-empty-state__sub {
+  font-size: 0.82rem;
+  color: var(--ink-mute);
+  margin: 0;
 }
 
 /* ── Stock PF — TOTAL strip ─────────────────────────────────────────────── */
@@ -3867,6 +4001,10 @@ body.expeditions .exp-st-loc-breakdown {
   }
   body.expeditions .exp-loc-card__hl {
     font-size: 1.1rem;
+  }
+  body.expeditions .exp-stock-table--loc .exp-st-col-units,
+  body.expeditions .exp-stock-table--loc .exp-st-col-hl {
+    width: 70px;
   }
   body.expeditions .exp-stock-total-strip {
     padding: 10px 12px;

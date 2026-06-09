@@ -2,7 +2,8 @@
  * expeditions-stock.js — Stock PF view interaction.
  *
  * Handles:
- *  - Family filter chips (data-filter-family — keyed by display_family)
+ *  - Location card filter buttons (data-loc-id — "total" or numeric site id)
+ *  - Family filter chips (data-filter-family — keyed by display_family), Total mode only
  *  - Family group header visibility (exp-stock-family-header rows)
  *  - ⚠ alertes chip
  *  - "Afficher SKUs dormants" toggle
@@ -11,38 +12,107 @@
  *
  * No fetches — data is fully server-rendered.
  * All DOM mutations are class-based; no style= inline writes.
+ *
+ * Location toggle model:
+ *  - Default: "total" card active → #exp-loc-table-total visible, all per-location
+ *    tables hidden, family chips visible.
+ *  - Single-location: card for site N active → #exp-loc-table-total hidden,
+ *    #exp-loc-table-{N} visible, family chips hidden (single-location tables
+ *    show physical-count-only with no dispo/velocity columns).
  */
 (function () {
   'use strict';
 
+  // ── Total-view elements ─────────────────────────────────────────────────
   var tbody       = document.getElementById('exp-stock-tbody');
   var filterWrap  = document.querySelector('.exp-stock-filters');
   var showDormant = document.getElementById('exp-stock-show-dormant');
   var sortAlerts  = document.getElementById('exp-stock-sort-alerts');
+  var totalView   = document.getElementById('exp-loc-table-total');
+  var viewLabel   = document.getElementById('exp-stock-view-label');
+  var locCards    = document.querySelectorAll('.exp-loc-card[data-loc-id]');
 
-  if (!tbody || !filterWrap) return;
+  // Collect all per-location view containers
+  var locViews = {}; // locId (string) → element
+  document.querySelectorAll('.exp-loc-view[data-loc-id]').forEach(function (el) {
+    locViews[el.dataset.locId] = el;
+  });
 
-  // Current filter state
+  // Current filter state (Total mode only)
   var currentFamily  = 'all';  // 'all' | display_family string | 'alerts'
   var showDormantVal = false;
   var sortAlertsVal  = false;
 
-  // ── Filter chips ────────────────────────────────────────────────────────
-  filterWrap.addEventListener('click', function (e) {
-    var btn = e.target.closest('button[data-filter-family]');
-    if (!btn) return;
-
-    currentFamily = btn.dataset.filterFamily;
-
-    // Update aria-pressed + active class on all chips
-    filterWrap.querySelectorAll('button[data-filter-family]').forEach(function (b) {
-      var active = b === btn;
-      b.classList.toggle('exp-stock-chip--active', active);
-      b.setAttribute('aria-pressed', active ? 'true' : 'false');
+  // ── Location card selector ──────────────────────────────────────────────
+  var locCardWrap = document.querySelector('.exp-loc-cards');
+  if (locCardWrap) {
+    locCardWrap.addEventListener('click', function (e) {
+      var card = e.target.closest('button[data-loc-id]');
+      if (!card) return;
+      var locId = card.dataset.locId; // 'total' or numeric string
+      selectLocation(locId, card);
     });
 
-    applyVisibility();
-  });
+    locCardWrap.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      var card = e.target.closest('button[data-loc-id]');
+      if (!card) return;
+      e.preventDefault();
+      card.click();
+    });
+  }
+
+  function selectLocation(locId, clickedCard) {
+    // Update aria-pressed on all cards
+    locCards.forEach(function (c) {
+      var active = c === clickedCard;
+      c.setAttribute('aria-pressed', active ? 'true' : 'false');
+      c.classList.toggle('exp-loc-card--active', active);
+    });
+
+    // Hide all views
+    if (totalView) totalView.hidden = true;
+    Object.keys(locViews).forEach(function (k) {
+      locViews[k].hidden = true;
+    });
+
+    if (locId === 'total') {
+      // Show total table + family chips
+      if (totalView) totalView.hidden = false;
+      if (filterWrap) filterWrap.hidden = false;
+      if (viewLabel) viewLabel.textContent = 'Stock — Tous les sites';
+    } else {
+      // Show single-location table
+      if (locViews[locId]) locViews[locId].hidden = false;
+      // Hide family chips — not applicable in single-location mode
+      if (filterWrap) filterWrap.hidden = true;
+      // Update live label
+      var cardName = clickedCard ? clickedCard.dataset.locName || locId : locId;
+      var cardType = clickedCard ? clickedCard.dataset.locType || '' : '';
+      if (viewLabel) {
+        viewLabel.textContent = 'Stock — ' + cardName + (cardType ? ' (' + cardType + ')' : '');
+      }
+    }
+  }
+
+  // ── Family filter chips (Total mode only) ───────────────────────────────
+  if (filterWrap) {
+    filterWrap.addEventListener('click', function (e) {
+      var btn = e.target.closest('button[data-filter-family]');
+      if (!btn) return;
+
+      currentFamily = btn.dataset.filterFamily;
+
+      // Update aria-pressed + active class on all chips
+      filterWrap.querySelectorAll('button[data-filter-family]').forEach(function (b) {
+        var active = b === btn;
+        b.classList.toggle('exp-stock-chip--active', active);
+        b.setAttribute('aria-pressed', active ? 'true' : 'false');
+      });
+
+      applyVisibility();
+    });
+  }
 
   // ── Dormant toggle ──────────────────────────────────────────────────────
   if (showDormant) {
@@ -60,8 +130,9 @@
     });
   }
 
-  // ── Apply visibility filter ─────────────────────────────────────────────
+  // ── Apply visibility filter (Total mode) ───────────────────────────────
   function applyVisibility() {
+    if (!tbody) return;
     if (sortAlertsVal) {
       applySortAndVisibility();
       return;
@@ -101,6 +172,7 @@
 
   // ── Apply sort + visibility (alerts-first mode) ──────────────────────────
   function applySortAndVisibility() {
+    if (!tbody) return;
     var allRows = Array.prototype.slice.call(
       tbody.querySelectorAll('tr.exp-stock-row, tr.exp-stock-drill, tr.exp-stock-family-header')
     );
@@ -155,44 +227,60 @@
     applyVisibility();
   }
 
-  // ── Row click → drill-down toggle ──────────────────────────────────────
-  tbody.addEventListener('click', function (e) {
-    // Ignore clicks on buttons or links inside the row
-    if (e.target.closest('a, button, input')) return;
+  // ── Row click → drill-down toggle (Total mode only) ─────────────────────
+  if (tbody) {
+    tbody.addEventListener('click', function (e) {
+      // Ignore clicks on buttons or links inside the row
+      if (e.target.closest('a, button, input')) return;
 
-    var row = e.target.closest('tr.exp-stock-row');
-    if (!row) return;
-    if (row.hidden) return;
+      var row = e.target.closest('tr.exp-stock-row');
+      if (!row) return;
+      if (row.hidden) return;
 
-    var sid   = row.dataset.skuId;
-    var drill = document.getElementById('exp-drill-' + sid);
-    if (!drill) return;
+      var sid   = row.dataset.skuId;
+      var drill = document.getElementById('exp-drill-' + sid);
+      if (!drill) return;
 
-    var isOpen = drill.hidden === false;
-    drill.hidden = isOpen;
-    row.setAttribute('aria-expanded', isOpen ? 'false' : 'true');
-    row.classList.toggle('exp-stock-row--open', !isOpen);
-  });
+      var isOpen = drill.hidden === false;
+      drill.hidden = isOpen;
+      row.setAttribute('aria-expanded', isOpen ? 'false' : 'true');
+      row.classList.toggle('exp-stock-row--open', !isOpen);
+    });
 
-  // ── Keyboard accessibility on data rows ─────────────────────────────────
-  tbody.addEventListener('keydown', function (e) {
-    if (e.key !== 'Enter' && e.key !== ' ') return;
-    var row = e.target.closest('tr.exp-stock-row');
-    if (!row) return;
-    e.preventDefault();
-    row.click();
-  });
+    // ── Keyboard accessibility on data rows ───────────────────────────────
+    tbody.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      var row = e.target.closest('tr.exp-stock-row');
+      if (!row) return;
+      e.preventDefault();
+      row.click();
+    });
 
-  // Make data rows focusable for keyboard users; stamp original PHP render order
-  // for sort-restore when "Alertes d'abord" is unchecked.
-  tbody.querySelectorAll('tr.exp-stock-row').forEach(function (row, idx) {
-    row.setAttribute('tabindex', '0');
-    row.setAttribute('role', 'button');
-    row.style.cursor = 'pointer';
-    row.dataset.sortOrder = idx;
-  });
+    // Make data rows focusable for keyboard users; stamp original PHP render order
+    // for sort-restore when "Alertes d'abord" is unchecked.
+    tbody.querySelectorAll('tr.exp-stock-row').forEach(function (row, idx) {
+      row.setAttribute('tabindex', '0');
+      row.setAttribute('role', 'button');
+      row.style.cursor = 'pointer';
+      row.dataset.sortOrder = idx;
+    });
+  }
 
-  // ── Initial: hide dormant rows (default) ────────────────────────────────
-  applyVisibility();
+  // ── Initial state: Total mode (default) ─────────────────────────────────
+  // Find the "total" card and activate it (it already has aria-pressed=true
+  // from server render; we just need to ensure JS state is consistent)
+  var totalCard = document.querySelector('button.exp-loc-card[data-loc-id="total"]');
+  if (totalCard) {
+    // Ensure total view is visible, all location views hidden
+    if (totalView) totalView.hidden = false;
+    Object.keys(locViews).forEach(function (k) {
+      locViews[k].hidden = true;
+    });
+    // Family chips visible in total mode
+    if (filterWrap) filterWrap.hidden = false;
+  }
+
+  // Apply initial visibility for dormant rows in Total mode
+  if (tbody) applyVisibility();
 
 }());
