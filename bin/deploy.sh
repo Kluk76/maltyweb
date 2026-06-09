@@ -54,8 +54,8 @@ if [[ "${1:-}" == "--apply-pipeline" ]]; then
     "sudo chown -R maltytask:www-data $PIPELINE_DST && \
      sudo find $PIPELINE_DST -type d -exec chmod 755 {} \; && \
      sudo find $PIPELINE_DST -type f -exec chmod 644 {} \; && \
-     sudo chown root:root $PIPELINE_DST/ingest-one-local.sh $PIPELINE_DST/ingest-one.sh && \
-     sudo chmod 755 $PIPELINE_DST/ingest-one-local.sh $PIPELINE_DST/ingest-one.sh"
+     sudo chown root:root $PIPELINE_DST/ingest-one-local.sh $PIPELINE_DST/ingest-one.sh $PIPELINE_DST/ingest-one-local-commit.sh && \
+     sudo chmod 755 $PIPELINE_DST/ingest-one-local.sh $PIPELINE_DST/ingest-one.sh $PIPELINE_DST/ingest-one-local-commit.sh"
 
   echo "→ running npm ci on VPS (as maltytask, includes devDeps for tsx)"
   ssh -o BatchMode=yes "$VPS_HOST" \
