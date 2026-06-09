@@ -25,6 +25,7 @@ require __DIR__ . '/../../app/csrf.php';
 require __DIR__ . '/../../app/settings-helpers.php';
 require __DIR__ . '/../../app/db-write-helpers.php';
 require_once __DIR__ . '/../../app/sku-bom-compile.php';
+require_once __DIR__ . '/../../app/recipe-ingredients-loader.php';
 require_once __DIR__ . '/../../app/yeast-eligibility.php';
 require_once __DIR__ . '/../../app/qc-thresholds.php';
 require_once __DIR__ . '/../../app/qa-tank-stats.php';
@@ -1577,13 +1578,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             // Step 2 — validate row exists and is a hop MI (category_id = 2)
+            // Fetch all fields needed to carry forward into the new version row.
             $rriStmt = $pdo->prepare(
-                "SELECT ri.id, ri.recipe_id, ri.hop_addition_stage, ri.hop_boil_time_min,
+                "SELECT ri.id, ri.recipe_id, ri.mi_id_fk,
+                        ri.qty_per_hl, ri.unit,
+                        ri.hop_addition_stage, ri.hop_boil_time_min,
                         m.category_id, m.name AS mi_name, r.name AS recipe_name
                    FROM ref_recipe_ingredients ri
                    JOIN ref_mi m ON m.id = ri.mi_id_fk
                    JOIN ref_recipes r ON r.id = ri.recipe_id
-                  WHERE ri.id = ? AND ri.is_active = 1 LIMIT 1"
+                  WHERE ri.id = ? AND ri.is_active = 1 AND ri.effective_until IS NULL
+                  LIMIT 1"
             );
             $rriStmt->execute([$rriId]);
             $rriRow = $rriStmt->fetch(PDO::FETCH_ASSOC);
@@ -1598,58 +1603,97 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 exit;
             }
 
-            // Step 3 — before-state for audit
+            // Step 3 — before-state for audit (close event)
             $before = [
                 'hop_addition_stage' => $rriRow['hop_addition_stage'],
                 'hop_boil_time_min'  => $rriRow['hop_boil_time_min'],
+                'effective_until'    => null,
             ];
 
-            // Step 4 — write.
-            // Pre-emptively remove any tombstoned row (is_active=0) that occupies the target
-            // (recipe_id, mi_id_fk, stage_key, boil_time_key) UNIQUE slot. Without this, the
-            // UPDATE below would hit ER_DUP_ENTRY 1062 because the generated columns still
-            // hold the slot even on soft-deleted rows.
-            $deadBlockerStmt = $pdo->prepare(
-                "SELECT id FROM ref_recipe_ingredients
-                  WHERE recipe_id = ? AND mi_id_fk = ?
-                    AND (hop_addition_stage <=> ?)
-                    AND (hop_boil_time_min  <=> ?)
-                    AND is_active = 0
-                  LIMIT 1"
-            );
-            $deadBlockerStmt->execute([
-                $rriRow['recipe_id'], $rriRow['mi_id_fk'], $stageOrNull, $boilMin,
-            ]);
-            $deadBlocker = $deadBlockerStmt->fetch(PDO::FETCH_ASSOC);
-            if ($deadBlocker) {
-                // Hard-delete the tombstone — it is already inactive and its existence was
-                // already captured in audit_row_revisions when it was soft-deleted.
-                $pdo->prepare("DELETE FROM ref_recipe_ingredients WHERE id = ? AND is_active = 0")
-                    ->execute([(int) $deadBlocker['id']]);
+            // Step 4 — SCD2 close-then-insert (transactional).
+            // Stage change = definition change → close old version, open new version.
+            // The open_key generated column (=1 when open, NULL when closed) releases the
+            // unique slot on close so the INSERT below cannot hit ER_DUP_ENTRY 1062.
+            // Pre-emptive dead-tombstone clear is preserved for safety (legacy is_active=0
+            // rows from before mig 289 may still occupy the new slot's key space).
+            $pdo->beginTransaction();
+            try {
+                // Close old version
+                rri_close_version($pdo, $rriId);
+                log_revision(
+                    $pdo, $me, 'ref_recipe_ingredients', $rriId,
+                    $before,
+                    ['hop_addition_stage' => $rriRow['hop_addition_stage'],
+                     'hop_boil_time_min'  => $rriRow['hop_boil_time_min'],
+                     'effective_until'    => 'CURDATE()'],
+                    'normal',
+                    "Salle de contrôle: hop stage (close v) · {$rriRow['recipe_name']} · {$rriRow['mi_name']}"
+                );
+
+                // Pre-emptively remove any legacy tombstone (is_active=0) that still
+                // occupies the target (recipe_id, mi_id_fk, stage_key, boil_time_key)
+                // slot. Post-mig-289 such rows will have open_key=NULL and won't block
+                // the INSERT, but pre-migration tombstones without open_key semantics may.
+                $deadBlockerStmt = $pdo->prepare(
+                    "SELECT id FROM ref_recipe_ingredients
+                      WHERE recipe_id = ? AND mi_id_fk = ?
+                        AND (hop_addition_stage <=> ?)
+                        AND (hop_boil_time_min  <=> ?)
+                        AND is_active = 0
+                      LIMIT 1"
+                );
+                $deadBlockerStmt->execute([
+                    $rriRow['recipe_id'], $rriRow['mi_id_fk'], $stageOrNull, $boilMin,
+                ]);
+                $deadBlocker = $deadBlockerStmt->fetch(PDO::FETCH_ASSOC);
+                if ($deadBlocker) {
+                    $pdo->prepare("DELETE FROM ref_recipe_ingredients WHERE id = ? AND is_active = 0")
+                        ->execute([(int) $deadBlocker['id']]);
+                }
+
+                // Insert new version carrying forward qty/unit
+                $insStmt = $pdo->prepare(
+                    "INSERT INTO ref_recipe_ingredients
+                         (recipe_id, mi_id_fk, qty_per_hl, unit,
+                          hop_addition_stage, hop_boil_time_min,
+                          is_active, effective_from, effective_until)
+                     VALUES (?, ?, ?, ?, ?, ?, 1, CURDATE(), NULL)"
+                );
+                $insStmt->execute([
+                    $rriRow['recipe_id'], $rriRow['mi_id_fk'],
+                    (float) $rriRow['qty_per_hl'], $rriRow['unit'],
+                    $stageOrNull, $boilMin,
+                ]);
+                $newId = (int) $pdo->lastInsertId();
+
+                $after = [
+                    'recipe_id'          => (int) $rriRow['recipe_id'],
+                    'mi_id_fk'           => (int) $rriRow['mi_id_fk'],
+                    'qty_per_hl'         => (float) $rriRow['qty_per_hl'],
+                    'unit'               => $rriRow['unit'],
+                    'hop_addition_stage' => $stageOrNull,
+                    'hop_boil_time_min'  => $boilMin,
+                    'effective_from'     => 'CURDATE()',
+                    'effective_until'    => null,
+                ];
+                log_revision(
+                    $pdo, $me, 'ref_recipe_ingredients', $newId,
+                    null,
+                    $after,
+                    'normal',
+                    "Salle de contrôle: hop stage (new v) · {$rriRow['recipe_name']} · {$rriRow['mi_name']}"
+                );
+
+                $pdo->commit();
+            } catch (Throwable $txErr) {
+                $pdo->rollBack();
+                throw $txErr;
             }
-
-            $upStmt = $pdo->prepare(
-                "UPDATE ref_recipe_ingredients
-                    SET hop_addition_stage = ?, hop_boil_time_min = ?
-                  WHERE id = ?"
-            );
-            $upStmt->execute([$stageOrNull, $boilMin, $rriId]);
-
-            $after = [
-                'hop_addition_stage' => $stageOrNull,
-                'hop_boil_time_min'  => $boilMin,
-            ];
-            log_revision(
-                $pdo, $me, 'ref_recipe_ingredients', $rriId,
-                $before,
-                $after,
-                'normal',
-                "Salle de contrôle: hop stage · {$rriRow['recipe_name']} · {$rriRow['mi_name']}"
-            );
 
             echo json_encode([
                 'ok'       => true,
-                'id'       => $rriId,
+                'id'       => $newId,
+                'old_id'   => $rriId,
                 'stage'    => $stageOrNull,
                 'boil_min' => $boilMin,
             ]);
@@ -1770,12 +1814,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 exit;
             }
 
-            // Step 3 — INSERT (UNIQUE on (recipe_id, mi_id_fk, stage_key, boil_time_key) catches dupes)
+            // Step 3 — INSERT with effective_from=CURDATE() (SCD2 v2: every row is versioned from creation)
+            // UNIQUE on (recipe_id, mi_id_fk, stage_key, boil_time_key, open_key) catches active dupes.
             try {
                 $insStmt = $pdo->prepare(
                     "INSERT INTO ref_recipe_ingredients
-                        (recipe_id, mi_id_fk, qty_per_hl, unit, hop_addition_stage, hop_boil_time_min, is_active)
-                     VALUES (?, ?, ?, ?, ?, ?, 1)"
+                        (recipe_id, mi_id_fk, qty_per_hl, unit,
+                         hop_addition_stage, hop_boil_time_min,
+                         is_active, effective_from, effective_until)
+                     VALUES (?, ?, ?, ?, ?, ?, 1, CURDATE(), NULL)"
                 );
                 $insStmt->execute([$recipeId, $miIdFk, $qtyPerHl, $unit, $stageOrNull, $boilMin]);
                 $newId = (int) $pdo->lastInsertId();
@@ -1806,7 +1853,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     exit;
                 }
 
-                // Resurrect: update the tombstoned row with new qty/unit and reactivate it.
+                // Resurrect: update the tombstoned row with new qty/unit, reactivate it,
+                // and reset SCD2 dates so it is visible under the current read predicate.
                 $newId = (int) $tombRow['id'];
                 $beforeRes = [
                     'qty_per_hl'         => $tombRow['qty_per_hl'],
@@ -1817,7 +1865,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ];
                 $pdo->prepare(
                     "UPDATE ref_recipe_ingredients
-                        SET qty_per_hl = ?, unit = ?, hop_addition_stage = ?, hop_boil_time_min = ?, is_active = 1
+                        SET qty_per_hl = ?, unit = ?, hop_addition_stage = ?, hop_boil_time_min = ?,
+                            is_active = 1, effective_from = CURDATE(), effective_until = NULL
                       WHERE id = ?"
                 )->execute([$qtyPerHl, $unit, $stageOrNull, $boilMin, $newId]);
 
@@ -1851,10 +1900,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             $after = [
-                'recipe_id' => $recipeId, 'mi_id_fk' => $miIdFk,
-                'qty_per_hl' => $qtyPerHl, 'unit' => $unit,
+                'recipe_id'          => $recipeId, 'mi_id_fk' => $miIdFk,
+                'qty_per_hl'         => $qtyPerHl, 'unit' => $unit,
                 'hop_addition_stage' => $stageOrNull, 'hop_boil_time_min' => $boilMin,
-                'is_active' => 1,
+                'is_active'          => 1,
+                'effective_from'     => 'CURDATE()',
+                'effective_until'    => null,
             ];
             log_revision(
                 $pdo, $me, 'ref_recipe_ingredients', $newId,
@@ -1894,14 +1945,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 exit;
             }
 
-            // Step 2 — validate row exists, is a hop, and is a STAGE row (not the last/only row for that mi on that recipe)
+            // Step 2 — validate row exists, is a hop, is open, and is not the last active row for this MI on this recipe
             $rriStmt2 = $pdo->prepare(
                 "SELECT ri.id, ri.recipe_id, ri.mi_id_fk, ri.hop_addition_stage, ri.hop_boil_time_min,
                         m.category_id, m.name AS mi_name, r.name AS recipe_name
                    FROM ref_recipe_ingredients ri
                    JOIN ref_mi m ON m.id = ri.mi_id_fk
                    JOIN ref_recipes r ON r.id = ri.recipe_id
-                  WHERE ri.id = ? AND ri.is_active = 1 LIMIT 1"
+                  WHERE ri.id = ? AND ri.is_active = 1 AND ri.effective_until IS NULL
+                  LIMIT 1"
             );
             $rriStmt2->execute([$rriId]);
             $rriRow2 = $rriStmt2->fetch(PDO::FETCH_ASSOC);
@@ -1916,10 +1968,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 exit;
             }
 
-            // Count how many active rows this MI has on this recipe
+            // Count how many currently-open rows this MI has on this recipe
             $countStmt = $pdo->prepare(
                 "SELECT COUNT(*) FROM ref_recipe_ingredients
-                  WHERE recipe_id = ? AND mi_id_fk = ? AND is_active = 1"
+                  WHERE recipe_id = ? AND mi_id_fk = ? AND is_active = 1 AND effective_until IS NULL"
             );
             $countStmt->execute([$rriRow2['recipe_id'], $rriRow2['mi_id_fk']]);
             $rowCount = (int) $countStmt->fetchColumn();
@@ -1929,22 +1981,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 exit;
             }
 
-            // Step 3 — soft-delete (is_active = 0)
+            // Step 3 — SCD2 close (not tombstone): set effective_until=CURDATE(), leave is_active=1.
+            // Row stays historically readable; falls out of the current read-predicate
+            // (effective_until IS NULL OR effective_until > asof) because CURDATE() is NOT > CURDATE().
+            // audit_row_revisions.action ENUM has no 'delete' — log as 'update'.
             $before = [
-                'is_active'          => 1,
+                'effective_until'    => null,
                 'hop_addition_stage' => $rriRow2['hop_addition_stage'],
                 'hop_boil_time_min'  => $rriRow2['hop_boil_time_min'],
             ];
-            $pdo->prepare("UPDATE ref_recipe_ingredients SET is_active = 0 WHERE id = ?")->execute([$rriId]);
+            $after = [
+                'effective_until'    => 'CURDATE()',
+                'hop_addition_stage' => $rriRow2['hop_addition_stage'],
+                'hop_boil_time_min'  => $rriRow2['hop_boil_time_min'],
+            ];
 
-            $after = ['is_active' => 0, '_tombstone' => 'deleted_by_sdc'];
-            log_revision(
-                $pdo, $me, 'ref_recipe_ingredients', $rriId,
-                $before,
-                $after,
-                'normal',
-                "Salle de contrôle: delete hop addition · {$rriRow2['recipe_name']} · {$rriRow2['mi_name']}"
-            );
+            $pdo->beginTransaction();
+            try {
+                rri_close_version($pdo, $rriId);
+                log_revision(
+                    $pdo, $me, 'ref_recipe_ingredients', $rriId,
+                    $before,
+                    $after,
+                    'normal',
+                    "Salle de contrôle: delete hop addition (close v) · {$rriRow2['recipe_name']} · {$rriRow2['mi_name']}"
+                );
+                $pdo->commit();
+            } catch (Throwable $txErr) {
+                $pdo->rollBack();
+                throw $txErr;
+            }
 
             echo json_encode(['ok' => true, 'id' => $rriId]);
             exit;
@@ -2147,6 +2213,7 @@ try {
                JOIN ref_mi_categories c  ON c.id = m.category_id
               WHERE ri.recipe_id IN ({$inPlaceAll})
                 AND ri.is_active = 1
+                AND ri.effective_until IS NULL
               ORDER BY ri.recipe_id, c.name, m.name,
                        CASE WHEN ri.hop_addition_stage IS NULL THEN 99
                             ELSE FIELD(ri.hop_addition_stage,'mash','first_wort','boil','whirlpool','hop_stand','dry_hop')
@@ -4588,8 +4655,8 @@ function bindHopControls(container){
         const data=await hopApiFetch('set_hop_stage',{id,stage,boil_min:''});
         if(!data.ok){if(errEl)errEl.textContent=data.error||'Erreur';return;}
         const arr=INGREDIENTS[selectedRecipeId]||[];
-        const row=arr.find(r=>r.id===parseInt(id,10));
-        if(row){row.stage=data.stage;row.boil_min=data.boil_min;}
+        const row=arr.find(r=>r.id===(data.old_id??parseInt(id,10)));
+        if(row){row.id=data.id;row.stage=data.stage;row.boil_min=data.boil_min;}
         if(window.showToast)showToast('Stage houblon enregistré.');
       }catch(e){if(errEl)errEl.textContent='Erreur réseau.';}
     });
@@ -4614,8 +4681,8 @@ function bindHopControls(container){
         const data=await hopApiFetch('set_hop_stage',{id,stage,boil_min:boilMin});
         if(!data.ok){if(errEl)errEl.textContent=data.error||'Erreur';return;}
         const arr=INGREDIENTS[selectedRecipeId]||[];
-        const row=arr.find(r=>r.id===parseInt(id,10));
-        if(row){row.stage=data.stage;row.boil_min=data.boil_min;}
+        const row=arr.find(r=>r.id===(data.old_id??parseInt(id,10)));
+        if(row){row.id=data.id;row.stage=data.stage;row.boil_min=data.boil_min;}
         if(window.showToast)showToast('Stage houblon enregistré.');
       }catch(e){if(errEl)errEl.textContent='Erreur réseau.';}
     });

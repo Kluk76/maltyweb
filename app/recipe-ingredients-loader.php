@@ -243,6 +243,40 @@ function load_recipe_ingredients_for_batch(
 }
 
 /**
+ * SCD2 write helper — close the currently-open version of a ref_recipe_ingredients row.
+ *
+ * Sets effective_until = CURDATE() on the row identified by $id, but only when the row
+ * is currently open (effective_until IS NULL). The open_key generated column flips from
+ * 1 to NULL on close, releasing the unique-slot so a new INSERT for the same
+ * (recipe_id, mi_id_fk, stage_key, boil_time_key) can proceed immediately within the
+ * same transaction.
+ *
+ * Boundary convention (must match the read predicate at L174-175 above):
+ *   effective_from INCLUSIVE, effective_until EXCLUSIVE.
+ *   Using CURDATE() server-side ensures close and open happen on the same calendar day.
+ *   Old row: effective_until = CURDATE() → fails `effective_until > CURDATE()` → excluded.
+ *   New row: effective_from  = CURDATE() → passes `effective_from <= CURDATE()`  → included.
+ *
+ * @param PDO $pdo   Active PDO connection (caller owns the transaction).
+ * @param int $id    PK of the ref_recipe_ingredients row to close.
+ * @throws RuntimeException if the row is not found or is already closed.
+ */
+function rri_close_version(PDO $pdo, int $id): void
+{
+    $stmt = $pdo->prepare(
+        "UPDATE ref_recipe_ingredients
+            SET effective_until = CURDATE()
+          WHERE id = ? AND effective_until IS NULL"
+    );
+    $stmt->execute([$id]);
+    if ($stmt->rowCount() === 0) {
+        throw new RuntimeException(
+            "rri_close_version: row id={$id} not found or already closed (effective_until IS NOT NULL)."
+        );
+    }
+}
+
+/**
  * Batched convenience wrapper. One round-trip per batch.
  *
  * @param array<array{beer_name: string, batch: string, brew_hl: float}> $batches
