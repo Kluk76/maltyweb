@@ -558,7 +558,7 @@ try {
     $feed2Items = $f2Stmt->fetchAll(PDO::FETCH_ASSOC);
 
     // ── Feed 3: SKUs with unpriced packaging lines (anomaly) ──────────────
-    // Mirrors sku-cost-detail.php anomaly detection: packaging cost = 0 due to NULL prices
+    // Mirrors the anomaly detection from the Financier BOM drilldown modal: packaging cost = 0 due to NULL prices
     $f3Stmt = $pdo->query(
         "SELECT
             s.id        AS sku_id,
