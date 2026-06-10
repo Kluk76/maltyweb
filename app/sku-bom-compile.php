@@ -803,13 +803,18 @@ function compile_sku_bom_packaging(
                 // the ref_sku_bom CHECK constraint (mi_id NOT NULL for bom_source='packaging').
                 // The actual cost comes from cost_direct (volume-weighted average), NOT the
                 // MI's catalog price — cost_direct bypasses the normal mi-lookup in the INSERT loop.
-                // qty_per_unit=1.0: with hl_per_unit=1.0, cost = liner_cost_per_hl directly.
+                // Liner row stored PER SELLABLE UNIT (mirrors the liquid branch pattern):
+                //   cost_direct = liner_cost_per_hl × hl_per_unit
+                //   qty         = hl_per_unit
+                // So cost/qty recovers per-HL liner cost for display; CHF/HL unchanged.
+                // Generalises the old hl_per_unit=1.0 special case to any hl_per_unit.
+                $skuHlPerUnit = (float)($sku['hl_per_unit'] ?? 1.0);
                 $pkgLines[] = [
                     'mi_id_fk'    => $cuvDefaultLinerId,
                     'slot_name'   => 'liner_amortized',
-                    'qty'         => 1.0,
+                    'qty'         => $skuHlPerUnit,
                     'volume_hl'   => null,
-                    'cost_direct' => round($cuvLinerCostPerHl, 6),
+                    'cost_direct' => round($cuvLinerCostPerHl * $skuHlPerUnit, 6),
                 ];
             }
             // If no observed cuv rows (new recipe, zero history), emit nothing — no liner cost yet.
