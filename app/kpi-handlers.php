@@ -237,7 +237,7 @@ function kpi_dispatch(array $tracker, PDO $pdo): array
             'packaging'    => kpi_handler_packaging($handler, $params, $label, $pdo),
             'fg_stock'     => kpi_handler_fg_stock($handler, $params, $label, $pdo),
             'sales'        => kpi_handler_sales($handler, $params, $label, $pdo),
-            'qa_qc'        => kpi_stub_handler($domain, $handler, $label),
+            'qa_qc'        => kpi_handler_qa_qc($handler, $params, $label, $pdo),
             'equipment'    => kpi_stub_handler($domain, $handler, $label),
             'logistics'    => kpi_stub_handler($domain, $handler, $label),
             default        => kpi_error_result("kpi: unknown source_domain '{$domain}'", $label),
@@ -258,7 +258,7 @@ function kpi_dispatch(array $tracker, PDO $pdo): array
  */
 function kpi_stub_domains(): array
 {
-    return ['qa_qc', 'equipment', 'logistics'];
+    return ['equipment', 'logistics'];
 }
 
 /**
@@ -9492,6 +9492,1097 @@ function kpi_sales_seasonal_curve(string $label, PDO $pdo): array
             'period_to'    => $latest,
             'source'       => 'inv_sales_bc (toutes périodes disponibles)',
             'note'         => 'Données BC depuis 2025-12 seulement; historique complet non disponible',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════════
+// HANDLER: qa_qc  (source_domain = 'qa_qc')
+// Phase 2b Batch 9 — QC reading analytics. NON-FISCAL.
+//
+// Canonical sources:
+//   bd_packaging_readings  — O₂/CO₂ at fill, per package run (5 435 rows)
+//   bd_racking_v2          — bbt_o2, bbt_co2 measured at BBT racking (407 rows)
+//   bd_tank_readings       — temp/pressure/gravity/pH through fermentation
+//   bd_brewing_gravity_v2  — OG (Cooling rows, °Plato), pH at wort
+//   bd_fermenting_v2       — gravity/pH fermentation Reads, ColdCrash events
+//
+// Thresholds: commissioning_settings section='qc_thresholds'
+//   qc_o2_warn_hi=50 ppb, qc_o2_outlier_hi=200 ppb
+//   qc_co2_warn_lo=3.5, qc_co2_warn_hi=5.0, qc_co2_outlier_lo=2.5, qc_co2_outlier_hi=6.0 g/L
+//   qc_pressure_warn_lo=0.8, qc_pressure_warn_hi=2.5 bar
+//
+// Gravity in °Plato (NOT SG). O₂ in ppb. CO₂ in g/L.
+// Identity: recipe_id_fk / sku_id_fk — never free-text beer name.
+//
+// STUB trackers (gap — no source table):
+//   151 abv_accuracy          — no OG/ABV target in ref_recipes (only co2_target present)
+//   157 micro_test_pass_rate  — no microbiology results table
+//   158 sensory_tasting_scores — no sensory/taste-panel table
+//   159 shelf_life_stability   — no shelf-life/DDM tracking table
+//   160 lab_tests_outstanding  — no external lab results table
+//   161 contamination_incidents — no contamination event table
+//   162 complaint_rate_batch   — no customer complaint table
+//   163 color_ibu_adherence    — no color/IBU measurement column in any bd_ table
+//   165 calibration_due        — no instrument calibration log table
+//   166 cip_verification_pass  — CIP recorded in bd_packaging_v2 as free text, not structured QC
+//   167 allergen_label_compliance — no allergen control table
+//   265 complaint_ppm          — no customer complaint table
+// ═════════════════════════════════════════════════════════════════════════════
+
+function kpi_handler_qa_qc(
+    string $handler,
+    array  $params,
+    string $label,
+    PDO    $pdo
+): array {
+    return match ($handler) {
+        'batches_pending_qa'      => kpi_qa_batches_pending($label, $pdo),
+        'qa_pass_fail_rate'       => kpi_qa_pass_fail_rate($params, $label, $pdo),
+        'qa_outliers_flagged'     => kpi_qa_outliers_flagged($params, $label, $pdo),
+        'out_of_spec_batches'     => kpi_qa_out_of_spec_batches($params, $label, $pdo),
+        'final_ph_deviations'     => kpi_qa_final_ph_deviations($params, $label, $pdo),
+        'do_co2_spec_compliance'  => kpi_qa_do_co2_compliance($params, $label, $pdo),
+        'batch_release_cycle_time' => kpi_qa_release_cycle_time($label, $pdo),
+        'recurring_quality_issues' => kpi_qa_recurring_issues($params, $label, $pdo),
+        'first_pass_quality_rate' => kpi_qa_first_pass_rate($params, $label, $pdo),
+        'carbonation_spec_compliance' => kpi_qa_carbonation_compliance($params, $label, $pdo),
+        'traceability_completeness' => kpi_qa_traceability_completeness($params, $label, $pdo),
+        'right_first_time_pct'    => kpi_qa_right_first_time($params, $label, $pdo),
+        // GAP trackers: no canonical source table exists
+        'abv_accuracy'            => kpi_qa_stub_gap('abv_accuracy', $label,
+            'Précision TAV nécessite un OG/ABV cible dans ref_recipes (seul co2_target présent). ' .
+            'OG mesuré disponible dans bd_brewing_gravity_v2 (Cooling rows, °Plato) mais pas de cible de comparaison.'),
+        'micro_test_pass_rate'    => kpi_qa_stub_gap('micro_test_pass_rate', $label,
+            'Aucune table de résultats microbiologiques dans la DB.'),
+        'sensory_tasting_scores'  => kpi_qa_stub_gap('sensory_tasting_scores', $label,
+            'Aucun panel dégustation enregistré dans la DB.'),
+        'shelf_life_stability'    => kpi_qa_stub_gap('shelf_life_stability', $label,
+            'Aucune table de suivi DDM / tests de stabilité dans la DB.'),
+        'lab_tests_outstanding'   => kpi_qa_stub_gap('lab_tests_outstanding', $label,
+            'Résultats labo externes (Eurofins, etc.) non structurés dans MySQL (factures invoice-log uniquement).'),
+        'contamination_incidents' => kpi_qa_stub_gap('contamination_incidents', $label,
+            'Aucune table d\'incidents contamination / altération dans la DB.'),
+        'complaint_rate_batch'    => kpi_qa_stub_gap('complaint_rate_batch', $label,
+            'Aucune table de réclamations client dans la DB.'),
+        'color_ibu_adherence'     => kpi_qa_stub_gap('color_ibu_adherence', $label,
+            'Aucune colonne couleur (EBC) ou IBU dans les tables bd_* de mesure. ' .
+            'Source absente — nécessite ajout d\'un champ de mesure au formulaire d\'analyse.'),
+        'calibration_due'         => kpi_qa_stub_gap('calibration_due', $label,
+            'Aucun journal de calibration instruments dans la DB.'),
+        'cip_verification_pass'   => kpi_qa_stub_gap('cip_verification_pass', $label,
+            'CIP enregistré dans bd_packaging_v2 sous forme de champs texte libres (cip_tank_done, cip_machines_done), ' .
+            'non structuré pour une analyse QC.'),
+        'allergen_label_compliance' => kpi_qa_stub_gap('allergen_label_compliance', $label,
+            'Aucune table de contrôle allergènes / étiquetage dans la DB.'),
+        'complaint_ppm'           => kpi_qa_stub_gap('complaint_ppm', $label,
+            'Aucune table de réclamations client dans la DB (PPM = réclamations / 1 000 000 unités vendues).'),
+        default                   => kpi_stub_handler('qa_qc', $handler, $label),
+    };
+}
+
+/** Private: stub for qa_qc GAP trackers with a specific gap-reason note. */
+function kpi_qa_stub_gap(string $handler, string $label, string $note): array
+{
+    $r = kpi_empty_result($label);
+    $r['meta'] = [
+        'stub'    => true,
+        'domain'  => 'qa_qc',
+        'handler' => $handler,
+        'note'    => $note,
+    ];
+    return $r;
+}
+
+// ─── Helper: load QC thresholds once per request ──────────────────────────────
+// Returns array keyed by key_name => value_num (float).
+// Defaults hard-coded for each key in case commissioning_settings row is missing.
+
+function kpi_qa_load_thresholds(PDO $pdo): array
+{
+    $cacheKey = 'qa_thresholds';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $stmt = $pdo->prepare(
+        "SELECT key_name, value_num FROM commissioning_settings
+          WHERE section = 'qc_thresholds'"
+    );
+    $stmt->execute();
+    $raw = $stmt->fetchAll(PDO::FETCH_KEY_PAIR);
+
+    $defaults = [
+        'qc_o2_warn_hi'          => 50.0,
+        'qc_o2_warn_lo'          => 0.0,
+        'qc_o2_outlier_hi'       => 200.0,
+        'qc_o2_outlier_lo'       => 0.0,
+        'qc_co2_warn_hi'         => 5.0,
+        'qc_co2_warn_lo'         => 3.5,
+        'qc_co2_outlier_hi'      => 6.0,
+        'qc_co2_outlier_lo'      => 2.5,
+        'qc_pressure_warn_hi'    => 2.5,
+        'qc_pressure_warn_lo'    => 0.8,
+        'qc_pressure_outlier_hi' => 3.5,
+        'qc_pressure_outlier_lo' => 0.0,
+    ];
+
+    $out = [];
+    foreach ($defaults as $k => $default) {
+        $out[$k] = isset($raw[$k]) ? (float) $raw[$k] : $default;
+    }
+
+    return kpi_cache_set($cacheKey, $out);
+}
+
+// ─── Wort/fermentation pH thresholds (no commissioning key exists) ────────────
+// Final wort pH target: 4.8–5.5. In-fermentation: 3.5–4.6.
+// No commissioning_settings keys for pH at this time — hard-coded per brewing norms.
+// Promote to commissioning_settings when operator configures them.
+const KPI_QA_WORT_PH_LO  = 4.8;
+const KPI_QA_WORT_PH_HI  = 5.5;
+const KPI_QA_FERM_PH_LO  = 3.5;
+const KPI_QA_FERM_PH_HI  = 4.6;
+
+
+// ─── #147 — Lots en attente validation QA ─────────────────────────────────────
+/**
+ * Count of batches that have entered ColdCrash (bd_fermenting_v2) but have NOT
+ * yet been racked to BBT. These are "blocked at QC gate" — beer is cold-crashing
+ * and awaiting release. Window: last 90 days.
+ */
+function kpi_qa_batches_pending(string $label, PDO $pdo): array
+{
+    $cacheKey = 'qa_batches_pending';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $stmt = $pdo->query(
+        "SELECT COUNT(*) AS pending_count,
+                MAX(DATEDIFF(CURDATE(), cc.cc_date)) AS max_days_waiting
+           FROM (
+               SELECT recipe_id_fk,
+                      COALESCE(NULLIF(batch, ''), 'unknown') AS batch,
+                      MIN(event_date) AS cc_date
+                 FROM bd_fermenting_v2
+                WHERE is_tombstoned = 0
+                  AND event_type = 'ColdCrash'
+                  AND event_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+                GROUP BY recipe_id_fk, batch
+           ) cc
+          WHERE NOT EXISTS (
+              SELECT 1 FROM bd_racking_v2 r
+               WHERE r.is_tombstoned = 0
+                 AND COALESCE(r.neb_recipe_id_fk, r.contract_recipe_id_fk) = cc.recipe_id_fk
+                 AND COALESCE(NULLIF(r.neb_batch, ''), r.contract_batch) = cc.batch
+          )"
+    );
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    $pending = (int) ($row['pending_count']    ?? 0);
+    $maxDays = $row['max_days_waiting'] !== null ? (int) $row['max_days_waiting'] : null;
+
+    $tint = match (true) {
+        $pending === 0  => 'green',
+        $pending <= 2   => 'amber',
+        default         => 'red',
+    };
+
+    $result = array_merge(kpi_empty_result($label, 'lots'), [
+        'value' => $pending,
+        'tint'  => $tint,
+        'meta'  => [
+            'period_label'     => '90 derniers jours (cold-crash sans soutirage BBT)',
+            'max_days_waiting' => $maxDays,
+            'source'           => 'bd_fermenting_v2 ColdCrash anti-join bd_racking_v2 BBT',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+
+// ─── #148 — Taux réussite / échec QA par lot ──────────────────────────────────
+/**
+ * Pass rate on wort/beer pH readings.
+ * Source: bd_brewing_gravity_v2 (wort final_ph at Cooling) +
+ *         bd_fermenting_v2 Reads (in-fermentation pH).
+ * Period defaults to rolling_3m.
+ * NOTE: no qc_ph_* key in commissioning_settings — uses KPI_QA_*_PH constants.
+ */
+function kpi_qa_pass_fail_rate(array $params, string $label, PDO $pdo): array
+{
+    $period = $params['period'] ?? 'rolling_3m';
+    $p = kpi_resolve_period($period);
+
+    $cacheKey = "qa_pass_fail_{$p['start']}_{$p['end']}";
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    // Wort final pH (Cooling rows)
+    $wortStmt = $pdo->prepare(
+        "SELECT COUNT(*) AS n,
+                SUM(CASE WHEN final_ph BETWEEN ? AND ? THEN 1 ELSE 0 END) AS pass,
+                SUM(CASE WHEN final_ph IS NOT NULL THEN 1 ELSE 0 END) AS with_ph
+           FROM bd_brewing_gravity_v2
+          WHERE is_tombstoned = 0
+            AND event_type = 'Cooling'
+            AND submitted_at BETWEEN ? AND ?"
+    );
+    $wortStmt->execute([KPI_QA_WORT_PH_LO, KPI_QA_WORT_PH_HI, $p['start'] . ' 00:00:00', $p['end'] . ' 23:59:59']);
+    $wort = $wortStmt->fetch(PDO::FETCH_ASSOC);
+
+    // Fermentation pH (Reads events)
+    $fermStmt = $pdo->prepare(
+        "SELECT COUNT(*) AS n,
+                SUM(CASE WHEN ph BETWEEN ? AND ? THEN 1 ELSE 0 END) AS pass,
+                SUM(CASE WHEN ph IS NOT NULL THEN 1 ELSE 0 END) AS with_ph
+           FROM bd_fermenting_v2
+          WHERE is_tombstoned = 0
+            AND event_type = 'Reads'
+            AND event_date BETWEEN ? AND ?"
+    );
+    $fermStmt->execute([KPI_QA_FERM_PH_LO, KPI_QA_FERM_PH_HI, $p['start'], $p['end']]);
+    $ferm = $fermStmt->fetch(PDO::FETCH_ASSOC);
+
+    $totalWithPh = (int) ($wort['with_ph'] ?? 0) + (int) ($ferm['with_ph'] ?? 0);
+    $totalPass   = (int) ($wort['pass']    ?? 0) + (int) ($ferm['pass']    ?? 0);
+    $passRate    = $totalWithPh > 0 ? round(($totalPass / $totalWithPh) * 100, 1) : null;
+
+    $tint = match (true) {
+        $passRate === null  => 'neutral',
+        $passRate >= 95.0   => 'green',
+        $passRate >= 85.0   => 'amber',
+        default             => 'red',
+    };
+
+    $result = array_merge(kpi_empty_result($label, '%'), [
+        'value' => $passRate,
+        'tint'  => $tint,
+        'meta'  => [
+            'period_label'     => $p['label'],
+            'total_readings'   => $totalWithPh,
+            'pass_count'       => $totalPass,
+            'wort_ph_spec'     => KPI_QA_WORT_PH_LO . '–' . KPI_QA_WORT_PH_HI,
+            'ferm_ph_spec'     => KPI_QA_FERM_PH_LO . '–' . KPI_QA_FERM_PH_HI,
+            'wort_readings'    => (int) ($wort['with_ph'] ?? 0),
+            'wort_pass'        => (int) ($wort['pass']    ?? 0),
+            'ferm_readings'    => (int) ($ferm['with_ph'] ?? 0),
+            'ferm_pass'        => (int) ($ferm['pass']    ?? 0),
+            'threshold_source' => 'KPI_QA_WORT_PH_LO/HI + KPI_QA_FERM_PH_LO/HI constants ' .
+                                  '(aucune clé commissioning_settings pH à ce jour)',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+
+// ─── #149 — Anomalies QA signalées ce mois ────────────────────────────────────
+/**
+ * Count of QC readings exceeding outlier thresholds this period.
+ * Sources: bd_packaging_readings (o2, co2), bd_racking_v2 (bbt_o2, bbt_co2),
+ *          bd_fermenting_v2 Reads (ph outside ferm range).
+ * Import-then-flag: every out-of-spec reading is counted, not dropped.
+ * Period defaults to current_month per params_json on tracker #149.
+ */
+function kpi_qa_outliers_flagged(array $params, string $label, PDO $pdo): array
+{
+    $period = $params['period'] ?? 'current_month';
+    $p = kpi_resolve_period($period);
+
+    $cacheKey = "qa_outliers_{$p['start']}_{$p['end']}";
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $thresh = kpi_qa_load_thresholds($pdo);
+    $o2OutlierHi  = $thresh['qc_o2_outlier_hi'];
+    $co2OutlierHi = $thresh['qc_co2_outlier_hi'];
+    $co2OutlierLo = $thresh['qc_co2_outlier_lo'];
+
+    // Fill readings: O₂ or CO₂ outside outlier bounds
+    $fillStmt = $pdo->prepare(
+        "SELECT COUNT(*) AS n
+           FROM bd_packaging_readings pr
+           JOIN bd_packaging_v2 p ON p.id = pr.packaging_v2_id
+          WHERE p.is_tombstoned = 0
+            AND p.event_date BETWEEN ? AND ?
+            AND (
+                (pr.o2  IS NOT NULL AND pr.o2  > ?)
+             OR (pr.co2 IS NOT NULL AND (pr.co2 < ? OR pr.co2 > ?))
+            )"
+    );
+    $fillStmt->execute([$p['start'], $p['end'], $o2OutlierHi, $co2OutlierLo, $co2OutlierHi]);
+    $fillOutliers = (int) $fillStmt->fetchColumn();
+
+    // Racking BBT: O₂ or CO₂ outliers
+    $rackStmt = $pdo->prepare(
+        "SELECT COUNT(*) AS n
+           FROM bd_racking_v2
+          WHERE is_tombstoned = 0
+            AND event_date BETWEEN ? AND ?
+            AND (
+                (bbt_o2  IS NOT NULL AND bbt_o2  > ?)
+             OR (bbt_co2 IS NOT NULL AND (bbt_co2 < ? OR bbt_co2 > ?))
+            )"
+    );
+    $rackStmt->execute([$p['start'], $p['end'], $o2OutlierHi, $co2OutlierLo, $co2OutlierHi]);
+    $rackOutliers = (int) $rackStmt->fetchColumn();
+
+    // Fermentation pH outside range
+    $phStmt = $pdo->prepare(
+        "SELECT COUNT(*) AS n
+           FROM bd_fermenting_v2
+          WHERE is_tombstoned = 0
+            AND event_type = 'Reads'
+            AND event_date BETWEEN ? AND ?
+            AND ph IS NOT NULL
+            AND (ph < ? OR ph > ?)"
+    );
+    $phStmt->execute([$p['start'], $p['end'], KPI_QA_FERM_PH_LO, KPI_QA_FERM_PH_HI]);
+    $phOutliers = (int) $phStmt->fetchColumn();
+
+    $total = $fillOutliers + $rackOutliers + $phOutliers;
+
+    $tint = match (true) {
+        $total === 0  => 'green',
+        $total <= 5   => 'amber',
+        default       => 'red',
+    };
+
+    $result = array_merge(kpi_empty_result($label, 'anomalies'), [
+        'value' => $total,
+        'tint'  => $tint,
+        'meta'  => [
+            'period_label'      => $p['label'],
+            'fill_outliers'     => $fillOutliers,
+            'racking_outliers'  => $rackOutliers,
+            'ph_ferm_outliers'  => $phOutliers,
+            'o2_outlier_hi_ppb' => $o2OutlierHi,
+            'co2_outlier_lo_gl' => $co2OutlierLo,
+            'co2_outlier_hi_gl' => $co2OutlierHi,
+            'threshold_source'  => 'commissioning_settings section=qc_thresholds',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+
+// ─── #150 — Lots hors spec (OG/DFE/pH) ───────────────────────────────────────
+/**
+ * Count of distinct (recipe_id_fk, batch) pairs with at least one out-of-spec
+ * wort reading (final_ph outside wort range, or OG outside 6–20°P heuristic range).
+ * No per-recipe OG target in ref_recipes (only co2_target present).
+ */
+function kpi_qa_out_of_spec_batches(array $params, string $label, PDO $pdo): array
+{
+    $period = $params['period'] ?? 'rolling_6m';
+    $p = kpi_resolve_period($period);
+
+    $cacheKey = "qa_oos_batches_{$p['start']}_{$p['end']}";
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    // Cooling rows carry OG (°Plato in final_gravity) and final wort pH
+    $stmt = $pdo->prepare(
+        "SELECT COUNT(DISTINCT CONCAT(COALESCE(recipe_id_fk, 0), '_', COALESCE(batch, ''))) AS oos_batch_count,
+                COUNT(*) AS total_rows,
+                SUM(CASE WHEN final_ph IS NOT NULL AND (final_ph < ? OR final_ph > ?) THEN 1 ELSE 0 END) AS ph_oos,
+                SUM(CASE WHEN final_gravity IS NOT NULL AND (final_gravity < 6 OR final_gravity > 20) THEN 1 ELSE 0 END) AS og_oos
+           FROM bd_brewing_gravity_v2
+          WHERE is_tombstoned = 0
+            AND event_type = 'Cooling'
+            AND submitted_at BETWEEN ? AND ?
+            AND (
+                (final_ph      IS NOT NULL AND (final_ph < ? OR final_ph > ?))
+             OR (final_gravity IS NOT NULL AND (final_gravity < 6 OR final_gravity > 20))
+            )"
+    );
+    $stmt->execute([
+        KPI_QA_WORT_PH_LO, KPI_QA_WORT_PH_HI,
+        $p['start'] . ' 00:00:00', $p['end'] . ' 23:59:59',
+        KPI_QA_WORT_PH_LO, KPI_QA_WORT_PH_HI,
+    ]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    $oosBatches = (int) ($row['oos_batch_count'] ?? 0);
+    $total      = (int) ($row['total_rows']      ?? 0);
+
+    $tint = match (true) {
+        $oosBatches === 0  => 'green',
+        $oosBatches <= 2   => 'amber',
+        default            => 'red',
+    };
+
+    $result = array_merge(kpi_empty_result($label, 'lots'), [
+        'value' => $oosBatches,
+        'tint'  => $tint,
+        'meta'  => [
+            'period_label'       => $p['label'],
+            'total_rows_checked' => $total,
+            'ph_oos_rows'        => (int) ($row['ph_oos'] ?? 0),
+            'og_oos_rows'        => (int) ($row['og_oos'] ?? 0),
+            'ph_spec'            => KPI_QA_WORT_PH_LO . '–' . KPI_QA_WORT_PH_HI,
+            'og_spec_plato'      => '6–20°P (plage de sécurité globale; pas de cible par recette disponible)',
+            'threshold_source'   => 'KPI_QA_WORT_PH_LO/HI constants; OG plage heuristique 6–20°P',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+
+// ─── #152 — Déviations pH final ───────────────────────────────────────────────
+/**
+ * Count and % of wort Cooling rows where final_ph is outside KPI_QA_WORT_PH_LO..HI.
+ * Source: bd_brewing_gravity_v2 event_type='Cooling'.
+ * No commissioning_settings pH keys exist — hard-coded thresholds.
+ */
+function kpi_qa_final_ph_deviations(array $params, string $label, PDO $pdo): array
+{
+    $period = $params['period'] ?? 'rolling_3m';
+    $p = kpi_resolve_period($period);
+
+    $cacheKey = "qa_ph_dev_{$p['start']}_{$p['end']}";
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $stmt = $pdo->prepare(
+        "SELECT COUNT(*) AS total,
+                SUM(CASE WHEN final_ph IS NOT NULL THEN 1 ELSE 0 END) AS with_ph,
+                SUM(CASE WHEN final_ph IS NOT NULL AND (final_ph < ? OR final_ph > ?) THEN 1 ELSE 0 END) AS oos_count,
+                ROUND(AVG(final_ph), 2) AS avg_ph,
+                ROUND(MIN(final_ph), 2) AS min_ph,
+                ROUND(MAX(final_ph), 2) AS max_ph
+           FROM bd_brewing_gravity_v2
+          WHERE is_tombstoned = 0
+            AND event_type = 'Cooling'
+            AND submitted_at BETWEEN ? AND ?"
+    );
+    $stmt->execute([KPI_QA_WORT_PH_LO, KPI_QA_WORT_PH_HI, $p['start'] . ' 00:00:00', $p['end'] . ' 23:59:59']);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    $withPh = (int) ($row['with_ph']   ?? 0);
+    $oos    = (int) ($row['oos_count'] ?? 0);
+    $oosPct = $withPh > 0 ? round(($oos / $withPh) * 100, 1) : null;
+
+    $tint = match (true) {
+        $oos === 0                              => 'green',
+        $oosPct !== null && $oosPct < 5.0       => 'amber',
+        default                                 => 'red',
+    };
+
+    $result = array_merge(kpi_empty_result($label, 'déviations'), [
+        'value' => $oos,
+        'tint'  => $tint,
+        'meta'  => [
+            'period_label'     => $p['label'],
+            'total_rows'       => (int) ($row['total']   ?? 0),
+            'with_ph'          => $withPh,
+            'oos_pct'          => $oosPct,
+            'avg_ph'           => $row['avg_ph'] !== null ? (float) $row['avg_ph'] : null,
+            'min_ph'           => $row['min_ph'] !== null ? (float) $row['min_ph'] : null,
+            'max_ph'           => $row['max_ph'] !== null ? (float) $row['max_ph'] : null,
+            'ph_spec'          => KPI_QA_WORT_PH_LO . '–' . KPI_QA_WORT_PH_HI,
+            'threshold_source' => 'KPI_QA_WORT_PH_LO/HI constants (aucune clé commissioning_settings pH à ce jour)',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+
+// ─── #153 — Conformité O₂ dissous / CO₂ ──────────────────────────────────────
+/**
+ * % of fill readings (bd_packaging_readings) where O₂ ≤ qc_o2_warn_hi
+ * AND CO₂ within [qc_co2_warn_lo, qc_co2_warn_hi].
+ * A reading passes both gates to count as "conform".
+ * Outlier rows excluded from denominator (same pattern as kpi_racking_do_pickup).
+ */
+function kpi_qa_do_co2_compliance(array $params, string $label, PDO $pdo): array
+{
+    $period = $params['period'] ?? 'rolling_3m';
+    $p = kpi_resolve_period($period);
+
+    $cacheKey = "qa_do_co2_{$p['start']}_{$p['end']}";
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $thresh = kpi_qa_load_thresholds($pdo);
+    $o2WarnHi     = $thresh['qc_o2_warn_hi'];
+    $o2OutlierHi  = $thresh['qc_o2_outlier_hi'];
+    $co2WarnLo    = $thresh['qc_co2_warn_lo'];
+    $co2WarnHi    = $thresh['qc_co2_warn_hi'];
+    $co2OutlierLo = $thresh['qc_co2_outlier_lo'];
+    $co2OutlierHi = $thresh['qc_co2_outlier_hi'];
+
+    // Readings where both O₂ and CO₂ are recorded and within outlier bounds
+    $stmt = $pdo->prepare(
+        "SELECT COUNT(*) AS total,
+                SUM(CASE WHEN pr.o2 <= ? AND pr.co2 BETWEEN ? AND ? THEN 1 ELSE 0 END) AS conform_count,
+                ROUND(AVG(pr.o2),  1) AS avg_o2,
+                ROUND(AVG(pr.co2), 3) AS avg_co2
+           FROM bd_packaging_readings pr
+           JOIN bd_packaging_v2 p ON p.id = pr.packaging_v2_id
+          WHERE p.is_tombstoned = 0
+            AND p.event_date BETWEEN ? AND ?
+            AND pr.o2  IS NOT NULL AND pr.o2  BETWEEN 0 AND ?
+            AND pr.co2 IS NOT NULL AND pr.co2 BETWEEN ? AND ?"
+    );
+    $stmt->execute([
+        $o2WarnHi, $co2WarnLo, $co2WarnHi,
+        $p['start'], $p['end'],
+        $o2OutlierHi, $co2OutlierLo, $co2OutlierHi,
+    ]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    $total   = (int)   ($row['total']         ?? 0);
+    $conform = (int)   ($row['conform_count'] ?? 0);
+    $compRate = $total > 0 ? round(($conform / $total) * 100, 1) : null;
+
+    $tint = match (true) {
+        $compRate === null  => 'neutral',
+        $compRate >= 90.0   => 'green',
+        $compRate >= 75.0   => 'amber',
+        default             => 'red',
+    };
+
+    $result = array_merge(kpi_empty_result($label, '%'), [
+        'value' => $compRate,
+        'tint'  => $tint,
+        'meta'  => [
+            'period_label'     => $p['label'],
+            'total_readings'   => $total,
+            'conform_count'    => $conform,
+            'avg_o2_ppb'       => $row['avg_o2']  !== null ? (float) $row['avg_o2']  : null,
+            'avg_co2_gl'       => $row['avg_co2'] !== null ? (float) $row['avg_co2'] : null,
+            'o2_spec_ppb'      => "≤{$o2WarnHi}",
+            'co2_spec_gl'      => "{$co2WarnLo}–{$co2WarnHi}",
+            'threshold_source' => 'commissioning_settings section=qc_thresholds',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+
+// ─── #154 — Délai de libération lot ───────────────────────────────────────────
+/**
+ * Average days from first ColdCrash event to BBT racking (rolling 12m).
+ * Source: bd_fermenting_v2 ColdCrash JOIN bd_racking_v2 BBT.
+ */
+function kpi_qa_release_cycle_time(string $label, PDO $pdo): array
+{
+    $cacheKey = 'qa_release_cycle_12m';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $stmt = $pdo->query(
+        "SELECT COUNT(*) AS racking_count,
+                ROUND(AVG(DATEDIFF(r.event_date, cc.cc_date)), 1) AS avg_days,
+                MIN(DATEDIFF(r.event_date, cc.cc_date))           AS min_days,
+                MAX(DATEDIFF(r.event_date, cc.cc_date))           AS max_days
+           FROM bd_racking_v2 r
+           JOIN (
+               SELECT recipe_id_fk, batch, MIN(event_date) AS cc_date
+                 FROM bd_fermenting_v2
+                WHERE is_tombstoned = 0
+                  AND event_type = 'ColdCrash'
+                GROUP BY recipe_id_fk, batch
+           ) cc
+             ON COALESCE(r.neb_recipe_id_fk, r.contract_recipe_id_fk) = cc.recipe_id_fk
+            AND COALESCE(NULLIF(r.neb_batch, ''), r.contract_batch) = cc.batch
+          WHERE r.is_tombstoned = 0
+            AND r.racking_destination_type = 'BBT'
+            AND r.event_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+            AND DATEDIFF(r.event_date, cc.cc_date) >= 0"
+    );
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    $avgDays = $row && (int)$row['racking_count'] > 0 ? (float) $row['avg_days'] : null;
+
+    $tint = match (true) {
+        $avgDays === null   => 'neutral',
+        $avgDays <= 21.0    => 'green',
+        $avgDays <= 35.0    => 'amber',
+        default             => 'red',
+    };
+
+    $result = array_merge(kpi_empty_result($label, 'jours'), [
+        'value' => $avgDays,
+        'tint'  => $tint,
+        'meta'  => [
+            'period_label'  => '12 derniers mois (ColdCrash → soutirage BBT)',
+            'racking_count' => $row ? (int) $row['racking_count'] : 0,
+            'min_days'      => $row ? (int) $row['min_days']      : null,
+            'max_days'      => $row ? (int) $row['max_days']      : null,
+            'note'          => 'Cible heuristique: ≤21j vert, ≤35j ambre.',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+
+// ─── #155 — Problèmes qualité récurrents par bière ────────────────────────────
+/**
+ * Per-recipe count of out-of-spec readings (fermentation pH or fill O₂ outlier)
+ * in rolling 6m. Returns a table breakdown keyed by recipe.
+ */
+function kpi_qa_recurring_issues(array $params, string $label, PDO $pdo): array
+{
+    $period = $params['period'] ?? 'rolling_6m';
+    $p = kpi_resolve_period($period);
+
+    $cacheKey = "qa_recurring_{$p['start']}_{$p['end']}";
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $thresh = kpi_qa_load_thresholds($pdo);
+    $o2OutlierHi = $thresh['qc_o2_outlier_hi'];
+
+    // Fermentation pH issues per recipe
+    $fermStmt = $pdo->prepare(
+        "SELECT f.recipe_id_fk,
+                r.name AS beer_name,
+                COUNT(*) AS ph_oos_count
+           FROM bd_fermenting_v2 f
+           JOIN ref_recipes r ON r.id = f.recipe_id_fk
+          WHERE f.is_tombstoned = 0
+            AND f.event_type = 'Reads'
+            AND f.event_date BETWEEN ? AND ?
+            AND f.ph IS NOT NULL
+            AND (f.ph < ? OR f.ph > ?)
+          GROUP BY f.recipe_id_fk, r.name
+          ORDER BY ph_oos_count DESC
+          LIMIT 10"
+    );
+    $fermStmt->execute([$p['start'], $p['end'], KPI_QA_FERM_PH_LO, KPI_QA_FERM_PH_HI]);
+    $fermRows = $fermStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Fill O₂ issues per recipe (via bd_packaging_v2)
+    $fillStmt = $pdo->prepare(
+        "SELECT p.recipe_id_fk,
+                r.name AS beer_name,
+                COUNT(*) AS o2_oos_count
+           FROM bd_packaging_readings pr
+           JOIN bd_packaging_v2 p  ON p.id  = pr.packaging_v2_id
+           JOIN ref_recipes     r  ON r.id  = p.recipe_id_fk
+          WHERE p.is_tombstoned = 0
+            AND p.event_date BETWEEN ? AND ?
+            AND pr.o2 IS NOT NULL
+            AND pr.o2 > ?
+          GROUP BY p.recipe_id_fk, r.name
+          ORDER BY o2_oos_count DESC
+          LIMIT 10"
+    );
+    $fillStmt->execute([$p['start'], $p['end'], $o2OutlierHi]);
+    $fillRows = $fillStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Merge by recipe
+    $byRecipe = [];
+    foreach ($fermRows as $row) {
+        $rid = (int) $row['recipe_id_fk'];
+        $byRecipe[$rid] = [
+            'key'          => (string) $rid,
+            'label'        => $row['beer_name'],
+            'ph_oos'       => (int) $row['ph_oos_count'],
+            'o2_oos'       => 0,
+            'total_issues' => (int) $row['ph_oos_count'],
+        ];
+    }
+    foreach ($fillRows as $row) {
+        $rid = (int) $row['recipe_id_fk'];
+        if (isset($byRecipe[$rid])) {
+            $byRecipe[$rid]['o2_oos']       = (int) $row['o2_oos_count'];
+            $byRecipe[$rid]['total_issues'] += (int) $row['o2_oos_count'];
+        } else {
+            $byRecipe[$rid] = [
+                'key'          => (string) $rid,
+                'label'        => $row['beer_name'],
+                'ph_oos'       => 0,
+                'o2_oos'       => (int) $row['o2_oos_count'],
+                'total_issues' => (int) $row['o2_oos_count'],
+            ];
+        }
+    }
+
+    usort($byRecipe, fn($a, $b) => $b['total_issues'] <=> $a['total_issues']);
+    $totalIssues = array_sum(array_column($byRecipe, 'total_issues'));
+
+    $result = array_merge(kpi_empty_result($label), [
+        'value'     => $totalIssues,
+        'unit'      => 'anomalies',
+        'tint'      => $totalIssues === 0 ? 'green' : ($totalIssues <= 10 ? 'amber' : 'red'),
+        'breakdown' => array_values($byRecipe),
+        'meta'      => [
+            'period_label'     => $p['label'],
+            'recipes_affected' => count($byRecipe),
+            'ph_threshold'     => KPI_QA_FERM_PH_LO . '–' . KPI_QA_FERM_PH_HI,
+            'o2_outlier_ppb'   => $o2OutlierHi,
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+
+// ─── #156 — Taux qualité premier passage ──────────────────────────────────────
+/**
+ * % of packaging runs where ALL non-outlier O₂ readings are ≤ qc_o2_warn_hi.
+ * A run "passes first time" if MAX(non-outlier o2) ≤ warn threshold.
+ * Source: bd_packaging_readings joined to bd_packaging_v2.
+ */
+function kpi_qa_first_pass_rate(array $params, string $label, PDO $pdo): array
+{
+    $period = $params['period'] ?? 'rolling_3m';
+    $p = kpi_resolve_period($period);
+
+    $cacheKey = "qa_first_pass_{$p['start']}_{$p['end']}";
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $thresh = kpi_qa_load_thresholds($pdo);
+    $o2WarnHi    = $thresh['qc_o2_warn_hi'];
+    $o2OutlierHi = $thresh['qc_o2_outlier_hi'];
+
+    // Per-run max O₂ (excluding outlier readings > outlier_hi)
+    $stmt = $pdo->prepare(
+        "SELECT COUNT(DISTINCT p.id) AS total_runs_with_readings,
+                SUM(CASE WHEN run_max.max_o2 <= ? THEN 1 ELSE 0 END) AS pass_runs
+           FROM bd_packaging_v2 p
+           JOIN (
+               SELECT pr.packaging_v2_id,
+                      MAX(CASE WHEN pr.o2 <= ? THEN pr.o2 ELSE NULL END) AS max_o2
+                 FROM bd_packaging_readings pr
+                WHERE pr.o2 IS NOT NULL AND pr.o2 <= ?
+                GROUP BY pr.packaging_v2_id
+           ) run_max ON run_max.packaging_v2_id = p.id
+          WHERE p.is_tombstoned = 0
+            AND p.event_date BETWEEN ? AND ?"
+    );
+    $stmt->execute([$o2WarnHi, $o2OutlierHi, $o2OutlierHi, $p['start'], $p['end']]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    $totalRuns = (int) ($row['total_runs_with_readings'] ?? 0);
+    $passRuns  = (int) ($row['pass_runs']                ?? 0);
+    $passRate  = $totalRuns > 0 ? round(($passRuns / $totalRuns) * 100, 1) : null;
+
+    $tint = match (true) {
+        $passRate === null  => 'neutral',
+        $passRate >= 85.0   => 'green',
+        $passRate >= 70.0   => 'amber',
+        default             => 'red',
+    };
+
+    $result = array_merge(kpi_empty_result($label, '%'), [
+        'value' => $passRate,
+        'tint'  => $tint,
+        'meta'  => [
+            'period_label'     => $p['label'],
+            'total_runs'       => $totalRuns,
+            'pass_runs'        => $passRuns,
+            'fail_runs'        => $totalRuns - $passRuns,
+            'o2_warn_hi_ppb'   => $o2WarnHi,
+            'outlier_excl_ppb' => $o2OutlierHi,
+            'threshold_source' => 'commissioning_settings section=qc_thresholds (qc_o2_warn_hi)',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+
+// ─── #164 — Conformité spec carbonatation ─────────────────────────────────────
+/**
+ * % of BBT rackings AND fill CO₂ readings within spec [qc_co2_warn_lo, qc_co2_warn_hi].
+ * Combines both measurement points for an overall carbonation pass rate.
+ * Source: bd_racking_v2.bbt_co2 + bd_packaging_readings.co2.
+ * Same thresholds as kpi_racking_carbonation (#45).
+ */
+function kpi_qa_carbonation_compliance(array $params, string $label, PDO $pdo): array
+{
+    $period = $params['period'] ?? 'rolling_3m';
+    $p = kpi_resolve_period($period);
+
+    $cacheKey = "qa_carb_{$p['start']}_{$p['end']}";
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $thresh = kpi_qa_load_thresholds($pdo);
+    $co2WarnLo    = $thresh['qc_co2_warn_lo'];
+    $co2WarnHi    = $thresh['qc_co2_warn_hi'];
+    $co2OutlierLo = $thresh['qc_co2_outlier_lo'];
+    $co2OutlierHi = $thresh['qc_co2_outlier_hi'];
+
+    // BBT racking CO₂
+    $rackStmt = $pdo->prepare(
+        "SELECT COUNT(*) AS n,
+                SUM(CASE WHEN bbt_co2 BETWEEN ? AND ? THEN 1 ELSE 0 END) AS pass
+           FROM bd_racking_v2
+          WHERE is_tombstoned = 0
+            AND bbt_co2 IS NOT NULL
+            AND bbt_co2 BETWEEN ? AND ?
+            AND event_date BETWEEN ? AND ?"
+    );
+    $rackStmt->execute([$co2WarnLo, $co2WarnHi, $co2OutlierLo, $co2OutlierHi, $p['start'], $p['end']]);
+    $rackRow = $rackStmt->fetch(PDO::FETCH_ASSOC);
+
+    // Fill CO₂ readings
+    $fillStmt = $pdo->prepare(
+        "SELECT COUNT(*) AS n,
+                SUM(CASE WHEN pr.co2 BETWEEN ? AND ? THEN 1 ELSE 0 END) AS pass
+           FROM bd_packaging_readings pr
+           JOIN bd_packaging_v2 p ON p.id = pr.packaging_v2_id
+          WHERE p.is_tombstoned = 0
+            AND pr.co2 IS NOT NULL
+            AND pr.co2 BETWEEN ? AND ?
+            AND p.event_date BETWEEN ? AND ?"
+    );
+    $fillStmt->execute([$co2WarnLo, $co2WarnHi, $co2OutlierLo, $co2OutlierHi, $p['start'], $p['end']]);
+    $fillRow = $fillStmt->fetch(PDO::FETCH_ASSOC);
+
+    $totalN    = (int) ($rackRow['n']    ?? 0) + (int) ($fillRow['n']    ?? 0);
+    $totalPass = (int) ($rackRow['pass'] ?? 0) + (int) ($fillRow['pass'] ?? 0);
+    $passRate  = $totalN > 0 ? round(($totalPass / $totalN) * 100, 1) : null;
+
+    $tint = match (true) {
+        $passRate === null  => 'neutral',
+        $passRate >= 90.0   => 'green',
+        $passRate >= 75.0   => 'amber',
+        default             => 'red',
+    };
+
+    $result = array_merge(kpi_empty_result($label, '%'), [
+        'value' => $passRate,
+        'tint'  => $tint,
+        'meta'  => [
+            'period_label'     => $p['label'],
+            'total_readings'   => $totalN,
+            'pass_count'       => $totalPass,
+            'racking_n'        => (int) ($rackRow['n']    ?? 0),
+            'racking_pass'     => (int) ($rackRow['pass'] ?? 0),
+            'fill_n'           => (int) ($fillRow['n']    ?? 0),
+            'fill_pass'        => (int) ($fillRow['pass'] ?? 0),
+            'spec_range'       => "{$co2WarnLo}–{$co2WarnHi} g/L",
+            'threshold_source' => 'commissioning_settings section=qc_thresholds (qc_co2_warn_lo/hi)',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+
+// ─── #168 — Complétude traçabilité par lot ────────────────────────────────────
+/**
+ * % of packaging runs (bd_packaging_v2) in the period that have at least one
+ * QC reading attached (bd_packaging_readings). A run with no readings is a
+ * traceability gap.
+ */
+function kpi_qa_traceability_completeness(array $params, string $label, PDO $pdo): array
+{
+    $period = $params['period'] ?? 'rolling_3m';
+    $p = kpi_resolve_period($period);
+
+    $cacheKey = "qa_trace_{$p['start']}_{$p['end']}";
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $stmt = $pdo->prepare(
+        "SELECT COUNT(DISTINCT p.id) AS total_runs,
+                COUNT(DISTINCT pr.packaging_v2_id) AS runs_with_readings
+           FROM bd_packaging_v2 p
+           LEFT JOIN bd_packaging_readings pr ON pr.packaging_v2_id = p.id
+          WHERE p.is_tombstoned = 0
+            AND p.event_date BETWEEN ? AND ?"
+    );
+    $stmt->execute([$p['start'], $p['end']]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    $total     = (int) ($row['total_runs']         ?? 0);
+    $withReads = (int) ($row['runs_with_readings'] ?? 0);
+    $coverage  = $total > 0 ? round(($withReads / $total) * 100, 1) : null;
+    $gapCount  = $total - $withReads;
+
+    $tint = match (true) {
+        $coverage === null  => 'neutral',
+        $coverage >= 90.0   => 'green',
+        $coverage >= 70.0   => 'amber',
+        default             => 'red',
+    };
+
+    $result = array_merge(kpi_empty_result($label, '%'), [
+        'value' => $coverage,
+        'tint'  => $tint,
+        'meta'  => [
+            'period_label'  => $p['label'],
+            'total_runs'    => $total,
+            'with_readings' => $withReads,
+            'gap_runs'      => $gapCount,
+            'source'        => 'bd_packaging_v2 LEFT JOIN bd_packaging_readings (packaging_v2_id)',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+
+// ─── #264 — Right-First-Time % (tous stades) ──────────────────────────────────
+/**
+ * % of batches reaching BBT in the period with NO out-of-spec reading at any stage:
+ *   1. Wort pH in-spec at Cooling (bd_brewing_gravity_v2)
+ *   2. All fermentation pH Reads in-spec (bd_fermenting_v2)
+ *   3. All fill O₂ readings ≤ warn threshold (bd_packaging_readings via bd_packaging_v2)
+ *
+ * Only batches that reached BBT racking are included (completed full process).
+ * NOTE: performs N+1 queries per batch — suitable for ≤100 batches/period;
+ *       result is cached so the cost is per request, not per page-load.
+ */
+function kpi_qa_right_first_time(array $params, string $label, PDO $pdo): array
+{
+    $period = $params['period'] ?? 'rolling_6m';
+    $p = kpi_resolve_period($period);
+
+    $cacheKey = "qa_rft_{$p['start']}_{$p['end']}";
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $thresh = kpi_qa_load_thresholds($pdo);
+    $o2WarnHi    = $thresh['qc_o2_warn_hi'];
+    $o2OutlierHi = $thresh['qc_o2_outlier_hi'];
+
+    // Batches that reached BBT in the period
+    $batchStmt = $pdo->prepare(
+        "SELECT COALESCE(r.neb_recipe_id_fk, r.contract_recipe_id_fk) AS recipe_id,
+                COALESCE(NULLIF(r.neb_batch, ''), r.contract_batch)    AS batch
+           FROM bd_racking_v2 r
+          WHERE r.is_tombstoned = 0
+            AND r.racking_destination_type = 'BBT'
+            AND r.event_date BETWEEN ? AND ?"
+    );
+    $batchStmt->execute([$p['start'], $p['end']]);
+    $batches = $batchStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    if (empty($batches)) {
+        $result = array_merge(kpi_empty_result($label, '%'), [
+            'value' => null,
+            'tint'  => 'neutral',
+            'meta'  => [
+                'period_label' => $p['label'],
+                'note'         => 'Aucun brassin sorti en BBT sur la période.',
+            ],
+        ]);
+        return kpi_cache_set($cacheKey, $result);
+    }
+
+    $total = 0;
+    $rft   = 0;
+
+    foreach ($batches as $b) {
+        $recipeId = $b['recipe_id'] !== null ? (int) $b['recipe_id'] : null;
+        $batch    = $b['batch'];
+        if ($recipeId === null || $batch === null || $batch === '') {
+            continue;
+        }
+        $total++;
+        $fail = false;
+
+        // Gate 1: wort pH at Cooling
+        $wortPh = $pdo->prepare(
+            "SELECT COUNT(*) AS oos
+               FROM bd_brewing_gravity_v2
+              WHERE is_tombstoned = 0
+                AND event_type = 'Cooling'
+                AND recipe_id_fk = ?
+                AND batch = ?
+                AND final_ph IS NOT NULL
+                AND (final_ph < ? OR final_ph > ?)"
+        );
+        $wortPh->execute([$recipeId, $batch, KPI_QA_WORT_PH_LO, KPI_QA_WORT_PH_HI]);
+        if ((int) $wortPh->fetchColumn() > 0) {
+            $fail = true;
+        }
+
+        // Gate 2: fermentation pH Reads
+        if (!$fail) {
+            $fermPh = $pdo->prepare(
+                "SELECT COUNT(*) AS oos
+                   FROM bd_fermenting_v2
+                  WHERE is_tombstoned = 0
+                    AND event_type = 'Reads'
+                    AND recipe_id_fk = ?
+                    AND batch = ?
+                    AND ph IS NOT NULL
+                    AND (ph < ? OR ph > ?)"
+            );
+            $fermPh->execute([$recipeId, $batch, KPI_QA_FERM_PH_LO, KPI_QA_FERM_PH_HI]);
+            if ((int) $fermPh->fetchColumn() > 0) {
+                $fail = true;
+            }
+        }
+
+        // Gate 3: fill O₂ (any packaging run for this batch, non-outlier O₂ range)
+        if (!$fail) {
+            $fillO2 = $pdo->prepare(
+                "SELECT COUNT(*) AS oos
+                   FROM bd_packaging_readings pr
+                   JOIN bd_packaging_v2 p ON p.id = pr.packaging_v2_id
+                  WHERE p.is_tombstoned = 0
+                    AND p.recipe_id_fk = ?
+                    AND p.neb_batch = ?
+                    AND pr.o2 IS NOT NULL
+                    AND pr.o2 > ?
+                    AND pr.o2 <= ?"
+            );
+            $fillO2->execute([$recipeId, $batch, $o2WarnHi, $o2OutlierHi]);
+            if ((int) $fillO2->fetchColumn() > 0) {
+                $fail = true;
+            }
+        }
+
+        if (!$fail) {
+            $rft++;
+        }
+    }
+
+    $rftPct = $total > 0 ? round(($rft / $total) * 100, 1) : null;
+
+    $tint = match (true) {
+        $rftPct === null   => 'neutral',
+        $rftPct >= 80.0    => 'green',
+        $rftPct >= 60.0    => 'amber',
+        default            => 'red',
+    };
+
+    $result = array_merge(kpi_empty_result($label, '%'), [
+        'value' => $rftPct,
+        'tint'  => $tint,
+        'meta'  => [
+            'period_label'     => $p['label'],
+            'batches_checked'  => $total,
+            'rft_batches'      => $rft,
+            'failed_batches'   => $total - $rft,
+            'gates_checked'    => 'pH moût (Cooling), pH fermentation (Reads), O₂ remplissage',
+            'o2_warn_ppb'      => $o2WarnHi,
+            'ph_wort_spec'     => KPI_QA_WORT_PH_LO . '–' . KPI_QA_WORT_PH_HI,
+            'ph_ferm_spec'     => KPI_QA_FERM_PH_LO . '–' . KPI_QA_FERM_PH_HI,
+            'threshold_source' => 'commissioning_settings (O₂) + KPI_QA_*_PH constants (pH)',
         ],
     ]);
 
