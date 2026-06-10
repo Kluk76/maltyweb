@@ -274,14 +274,36 @@ function fg_stock_compute(PDO $pdo): array
     }
 
     // anchor_month derived from anchor_date
-    // SCOPE NOTE: $anchorDate is the GLOBAL MAX(counted_at) across all sites. It
-    // still drives the SALES legs (expedie / eshop / taproom, Steps 4-6) and the
-    // displayed meta.anchor_date. The PRODUCTION leg (Step 3) NO LONGER uses it
-    // as the cutoff — it derives a per-SKU production-site cutoff instead (see
-    // Step 3). So a partial count (e.g. taproom-only) still coarsens the sales
-    // legs (e.g. taproom: period > anchorMonth can exclude the current month).
-    // Per-SKU/per-location settlement of the sales legs is deferred to the
-    // future stock-movement saisie arc — prod-fixed does NOT mean all-fixed.
+    // SCOPE NOTE: $anchorDate is the GLOBAL MAX(counted_at) across all sites.
+    // It drives the displayed meta.anchor_date and is the fallback cutoff for legs
+    // that have no finer per-site resolution. Each leg's effective cutoff:
+    //
+    //   Production (Step 3) — per-SKU production-site cutoff via fg_prod_since_anchor();
+    //                         globalAnchor is only the COALESCE fallback for SKUs never
+    //                         counted at the production site.
+    //
+    //   eshop (Step 5)      — per-(sku, warehouse-site) same-day tiebreak, IDENTICAL to
+    //                         the eshop leg in fg_stock_location_snapshot(). Resolved via
+    //                         fg_site_sku_anchor_map() + the warehouse site id.  Fallback
+    //                         for SKUs with no warehouse count = strict > $anchorDate.
+    //                         THIS MUST STAY SYMMETRIC with the snapshot eshop leg —
+    //                         they are intentionally the same predicate so that
+    //                         Σ(snapshot eshop deductions) == fg_stock_compute eshop
+    //                         deduction per SKU and the hard invariant Σcards==Σphysique holds.
+    //
+    //   B2B expédié (Step 4) — strict-global > $anchorDate (symmetric in both functions).
+    //                          ord_orders has no ship-time finer than requested_date;
+    //                          created_at is order-ENTRY time (can be back-dated) — using
+    //                          it as a tiebreak would admit back-dated orders silently.
+    //
+    //   taproom (Step 6)    — month-grained period > $anchorMonth; genuinely deferred
+    //                         (inv_sales_bc has no finer timestamp). Symmetric in both.
+    //
+    //   transfers           — compute has NO transfer term by construction; transfers are
+    //                         globally net-zero so they cancel in the total physique.
+    //                         The snapshot applies them per-site with a unit-gate
+    //                         (see fg_stock_location_snapshot transfer leg) that guarantees
+    //                         per-row net-zero regardless of per-site anchor divergence.
     $anchorDate  = $anchorDate ?? date('Y-m-d');
     $anchorMonth = substr($anchorDate, 0, 7);
 
@@ -367,23 +389,54 @@ function fg_stock_compute(PDO $pdo): array
     // Both tables confirmed by inspection (2026-06-07): inv_sales_orders has
     // ONLY channel='eshop'; inv_sales_bc has ONLY b2b + taproom.
     // No overlap risk.
+    //
+    // TIEBREAK: uses >= anchorDate + per-(sku, warehouse-site) same-day tiebreak,
+    // IDENTICAL to the eshop leg in fg_stock_location_snapshot() (~L814-850).
+    // This symmetry is non-negotiable: both legs must produce the same eshop
+    // deduction per SKU so that Σcards==Σphysique holds under the same-day window.
+    //
+    // Predicate (per-row, in PHP):
+    //   pass = orderDate > siteAnchorDate
+    //       || (orderDate === siteAnchorDate && orderTs > siteAnchorTs)
+    // Fallback (no warehouse count for this SKU): strict > $anchorDate.
+    //
+    // Per-site anchor map is built once here; fg_site_sku_anchor_map() is also
+    // called by fg_stock_location_snapshot() — the logic is identical by design.
+    $siteSkuAnchorMapCompute = fg_site_sku_anchor_map($pdo);
+    $eshopWarehouseSiteId    = resolve_fulfilment_site($pdo, ['channel' => 'eshop']);
+
     $eshopStmt = $pdo->prepare(
         'SELECT isol.sku_id_fk,
-                SUM(isol.qty)   AS eshop_qty,
-                COUNT(*)        AS eshop_orders
+                iso.created_at AS order_created_at,
+                isol.qty
            FROM inv_sales_order_lines isol
            JOIN inv_sales_orders iso ON iso.id = isol.order_id_fk
           WHERE iso.channel = ?
-            AND DATE(iso.created_at) > ?
-            AND isol.sku_id_fk IS NOT NULL
-          GROUP BY isol.sku_id_fk'
+            AND DATE(iso.created_at) >= ?
+            AND isol.sku_id_fk IS NOT NULL'
     );
     $eshopStmt->execute(['eshop', $anchorDate]);
     foreach ($eshopStmt->fetchAll(PDO::FETCH_ASSOC) as $es) {
-        $sid = (int) $es['sku_id_fk'];
+        $sid       = (int) $es['sku_id_fk'];
+        $orderTs   = (string) $es['order_created_at'];
+        $orderDate = substr($orderTs, 0, 10); // DATE portion of the DATETIME
+
+        // Per-(sku, warehouse-site) tiebreak — IDENTICAL predicate to snapshot Leg 2
+        $siteAnchor = $siteSkuAnchorMapCompute[$eshopWarehouseSiteId][$sid] ?? null;
+        if ($siteAnchor !== null) {
+            $siteAnchorDate = $siteAnchor['counted_at'];
+            $siteAnchorTs   = $siteAnchor['anchor_ts'];
+            $pass = ($orderDate > $siteAnchorDate)
+                || ($orderDate === $siteAnchorDate && $orderTs > $siteAnchorTs);
+            if (!$pass) continue;
+        } else {
+            // No count at warehouse site for this SKU — fall back to global anchor (strict >)
+            if ($orderDate <= $anchorDate) continue;
+        }
+
         if (isset($byId[$sid])) {
-            $byId[$sid]['eshop_qty']    = (int) $es['eshop_qty'];
-            $byId[$sid]['eshop_orders'] = (int) $es['eshop_orders'];
+            $byId[$sid]['eshop_qty']    += (int) round((float) $es['qty']);
+            $byId[$sid]['eshop_orders'] += 1;
         }
     }
 
@@ -618,6 +671,46 @@ function fg_stock_iso_week_end(string $date): string
 }
 
 /**
+ * Private helper: return the per-(site_id, sku_id) anchor info — the winning
+ * stocktake row's counted_at (DATE) AND created_at (TIMESTAMP) — via a single
+ * ROW_NUMBER window PARTITION BY (sku_id_fk, location_id_fk).
+ *
+ * This is the same coherence guarantee as fg_prod_since_anchor(): both values
+ * MUST come from the SAME window row (rn=1). Using two independent MAX()
+ * subqueries could pair a counted_at from one row with a created_at from a
+ * different row, corrupting same-day tiebreaks.
+ *
+ * @param PDO $pdo
+ * @return array<int, array<int, array{counted_at: string, anchor_ts: string}>>
+ *         [site_id][sku_id] => {counted_at, anchor_ts}
+ */
+function fg_site_sku_anchor_map(PDO $pdo): array
+{
+    $stmt = $pdo->query(
+        'SELECT sku_id_fk, location_id_fk, counted_at, created_at AS anchor_ts
+           FROM (
+               SELECT sku_id_fk, location_id_fk, counted_at, created_at,
+                      ROW_NUMBER() OVER (PARTITION BY sku_id_fk, location_id_fk
+                                        ORDER BY counted_at DESC, id DESC) AS rn
+                 FROM inv_fg_stocktake
+                WHERE is_active = 1
+           ) w
+          WHERE w.rn = 1'
+    );
+    $map = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $siteId = (int) $row['location_id_fk'];
+        $skuId  = (int) $row['sku_id_fk'];
+        if (!isset($map[$siteId])) $map[$siteId] = [];
+        $map[$siteId][$skuId] = [
+            'counted_at' => (string) $row['counted_at'],
+            'anchor_ts'  => (string) $row['anchor_ts'],
+        ];
+    }
+    return $map;
+}
+
+/**
  * Per-location breakdown of the same anchor rows used by fg_stock_compute().
  *
  * Returns all holds_fg_stock=1 is_active=1 sites, including those with no
@@ -633,6 +726,18 @@ function fg_stock_iso_week_end(string $date): string
  *
  * Transfers from inv_stock_movements (is_tombstoned=0, moved_on > anchorDate)
  * are applied: +qty to to_site_id_fk, −qty from from_site_id_fk.
+ *
+ * Same-day anchor tiebreak (Leg 2 / Transfer): a sale/transfer dated
+ * the same calendar day as the latest stocktake is included when its event
+ * timestamp is later than that count's created_at. Per-site anchor info is
+ * supplied by fg_site_sku_anchor_map() — one ROW_NUMBER window, coherent pair.
+ * Taproom (Leg 3) is intentionally excluded: its cutoff is month-grained
+ * (CHAR(7) period), so same-day collisions are impossible and there is no
+ * finer timestamp to tiebreak on.
+ *
+ * Accepted residual (mirrored from fg_prod_since_anchor): a sale/transfer that
+ * happened physically before a same-day count but was submitted after it is a
+ * rare mis-settle left un-clamped on purpose. A clamp would mask real data.
  *
  * Verification invariant (HARD):
  *   Σ(all location row qty across all locations) == Σ(fg_stock_compute physique).
@@ -697,6 +802,12 @@ function fg_stock_location_snapshot(PDO $pdo): array
     }
     $anchorDate = $anchorDate ?? date('Y-m-d');
 
+    // Per-(site, sku) anchor info for same-day tiebreaks — one ROW_NUMBER window,
+    // coherent (counted_at, created_at) pair from the same winning row.
+    // Used by Leg 2 (eshop) and the Transfer leg.
+    // Leg 1 (B2B expédié) does NOT use it — see that leg's inline comment.
+    $siteSkuAnchorMap = fg_site_sku_anchor_map($pdo);
+
     // Floored production per SKU — single-sourced, same helper as fg_stock_compute()
     $prodHelper    = fg_prod_since_anchor($pdo, $anchorDate);
     $prodSiteIds   = $prodHelper['prod_site_ids'];    // int[]
@@ -713,6 +824,11 @@ function fg_stock_location_snapshot(PDO $pdo): array
     $salesBySiteSku = []; // site_id => sku_id => int
 
     // Leg 1: expédié B2B (ord_orders, status='shipped', requested_date > anchorDate)
+    // No timestamp tiebreak for this leg: ord_orders.requested_date is the delivery date
+    // (the requested ship date), while ord_orders.created_at is when the order was ENTERED
+    // into the system — which can be a day or more later (back-dated orders). Using
+    // created_at as a same-day tiebreak would admit back-dated orders entered well after
+    // the count, producing incorrect stock values. Keep the strict > predicate.
     // LEFT JOIN ref_customers to prefetch default_delivery_site_id_fk → avoids N+1
     // in the resolver's customer lookup (passes prefetched value as _customer_default_site_id).
     $expStmt = $pdo->prepare(
@@ -748,28 +864,49 @@ function fg_stock_location_snapshot(PDO $pdo): array
         $expedieOrdersResolved++;
     }
 
-    // Leg 2: eshop (inv_sales_order_lines, channel='eshop', DATE(created_at) > anchorDate)
+    // Leg 2: eshop (inv_sales_order_lines, channel='eshop', DATE(created_at) >= anchorDate)
     // Constant site: always resolves to warehouse via channel='eshop' → call once.
+    // >= instead of > so same-day orders are fetched; the per-site tiebreak in PHP
+    // uses iso.created_at (DATETIME) as both the event-date and the timestamp.
     $eshopSiteId = resolve_fulfilment_site($pdo, ['channel' => 'eshop']);
     $eshopStmt = $pdo->prepare(
         'SELECT isol.sku_id_fk,
-                SUM(isol.qty) AS qty
+                iso.created_at AS order_created_at,
+                isol.qty
            FROM inv_sales_order_lines isol
            JOIN inv_sales_orders iso ON iso.id = isol.order_id_fk
           WHERE iso.channel = ?
-            AND DATE(iso.created_at) > ?
-            AND isol.sku_id_fk IS NOT NULL
-          GROUP BY isol.sku_id_fk'
+            AND DATE(iso.created_at) >= ?
+            AND isol.sku_id_fk IS NOT NULL'
     );
     $eshopStmt->execute(['eshop', $anchorDate]);
     foreach ($eshopStmt->fetchAll(PDO::FETCH_ASSOC) as $es) {
-        $sid = (int) $es['sku_id_fk'];
+        $sid      = (int) $es['sku_id_fk'];
+        $orderTs  = (string) $es['order_created_at'];
+        $orderDate = substr($orderTs, 0, 10); // DATE portion of the DATETIME
+        $siteAnchor = $siteSkuAnchorMap[$eshopSiteId][$sid] ?? null;
+        // Per-site tiebreak predicate (mirrors production leg):
+        //   include if date > site_anchor, OR (same date AND created_at > anchor_ts).
+        if ($siteAnchor !== null) {
+            $siteAnchorDate = $siteAnchor['counted_at'];
+            $siteAnchorTs   = $siteAnchor['anchor_ts'];
+            $pass = ($orderDate > $siteAnchorDate)
+                || ($orderDate === $siteAnchorDate && $orderTs > $siteAnchorTs);
+            if (!$pass) continue;
+        } else {
+            // No count at eshop site for this SKU → fall back to global anchor date (strict >)
+            if ($orderDate <= $anchorDate) continue;
+        }
         $qty = (int) round((float) $es['qty']);
         if (!isset($salesBySiteSku[$eshopSiteId])) $salesBySiteSku[$eshopSiteId] = [];
         $salesBySiteSku[$eshopSiteId][$sid] = ($salesBySiteSku[$eshopSiteId][$sid] ?? 0) + $qty;
     }
 
     // Leg 3: taproom (inv_sales_bc, channel='taproom', period > anchorMonth)
+    // INTENTIONALLY excluded from the same-day tiebreak: its cutoff is month-grained
+    // (CHAR(7) period field), so a same-day collision between a count and a taproom
+    // sale within the same calendar month is impossible to resolve without a finer
+    // timestamp — and inv_sales_bc has none. Leave on the global month cutoff.
     // Constant site: always resolves to pos via channel='taproom' → call once.
     $tapSiteId = resolve_fulfilment_site($pdo, ['channel' => 'taproom']);
     $tapStmt = $pdo->prepare(
@@ -790,9 +927,28 @@ function fg_stock_location_snapshot(PDO $pdo): array
     }
 
     // ── Transfers by site/SKU ────────────────────────────────────────────────
-    // SCOPE NOTE: transfer cutoff uses the global $anchorDate. Precise per-(site,sku)
-    // anchor-aware transfer settlement is a refinement deferred to when real transfer
-    // data and the stock-movement saisie land.
+    // moved_on >= anchorDate (>= not >) so same-day transfers are fetched;
+    // the per-site tiebreak in PHP uses created_at (TIMESTAMP on inv_stock_movements).
+    //
+    // UNIT-GATE SEMANTICS (non-negotiable for Σcards==Σphysique invariant):
+    //   Each transfer row affects TWO sites: +qty to to_site, −qty from from_site.
+    //   The tiebreak evaluates independently per-side ($fromPass, $toPass) using
+    //   each site's per-SKU anchor, but the ADMISSION decision is taken ATOMICALLY:
+    //     $rowPass = ($fromPass || $toPass)
+    //   When $rowPass is TRUE, BOTH the +qty (to_site) AND the −qty (from_site)
+    //   are applied together. When FALSE, NEITHER side is applied.
+    //   This guarantees per-row net-zero unconditionally.
+    //
+    //   WHY not independent per-side gates?  When two sites have divergent anchor
+    //   dates for the same SKU (e.g. site A counted yesterday, site B counted
+    //   last month), an independent gate can admit the +qty (to_site B: passes
+    //   B's old anchor) while rejecting the −qty (from_site A: fails A's newer
+    //   anchor) — or vice versa — producing a phantom net ±qty in the global
+    //   Σ. The unit-gate eliminates this class of failure: a row is in or out as
+    //   a unit, so its net contribution is always exactly zero or exactly ±qty on
+    //   both sides simultaneously.
+    //
+    // Accepted residual: same as production/sales legs (submitted-after mis-settle).
     // $transfersIn[site_id][sku_id] = int  (positive: stock arriving)
     // $transfersOut[site_id][sku_id] = int (positive: stock leaving)
     $transfersIn  = []; // site_id => sku_id => int
@@ -800,10 +956,12 @@ function fg_stock_location_snapshot(PDO $pdo): array
 
     $mvStmt = $pdo->prepare(
         'SELECT sku_id_fk, from_site_id_fk, to_site_id_fk,
-                CAST(qty AS SIGNED) AS qty
+                CAST(qty AS SIGNED) AS qty,
+                moved_on,
+                created_at AS mv_created_at
            FROM inv_stock_movements
           WHERE is_tombstoned = 0
-            AND moved_on > ?'
+            AND moved_on >= ?'
     );
     $mvStmt->execute([$anchorDate]);
     foreach ($mvStmt->fetchAll(PDO::FETCH_ASSOC) as $mv) {
@@ -811,11 +969,33 @@ function fg_stock_location_snapshot(PDO $pdo): array
         $fromSite = (int) $mv['from_site_id_fk'];
         $toSite   = (int) $mv['to_site_id_fk'];
         $qty      = (int) round((float) $mv['qty']);
+        $movedOn  = (string) $mv['moved_on'];
+        $mvTs     = (string) $mv['mv_created_at'];
         if ($qty <= 0) continue; // skip non-positive movements (tombstoning guard)
+
+        // Per-site tiebreak: from-site anchor for this SKU
+        $fromAnchor = $siteSkuAnchorMap[$fromSite][$sid] ?? null;
+        $fromPass = ($fromAnchor !== null)
+            ? ($movedOn > $fromAnchor['counted_at']
+               || ($movedOn === $fromAnchor['counted_at'] && $mvTs > $fromAnchor['anchor_ts']))
+            : ($movedOn > $anchorDate);
+        // Per-site tiebreak: to-site anchor for this SKU
+        $toAnchor = $siteSkuAnchorMap[$toSite][$sid] ?? null;
+        $toPass = ($toAnchor !== null)
+            ? ($movedOn > $toAnchor['counted_at']
+               || ($movedOn === $toAnchor['counted_at'] && $mvTs > $toAnchor['anchor_ts']))
+            : ($movedOn > $anchorDate);
+
+        // Unit-gate: admit or reject the whole row together — never one side alone.
+        // $fromPass and $toPass are preserved above for clarity; the gate is their OR.
+        $rowPass = ($fromPass || $toPass);
+        if (!$rowPass) continue;
+
+        // Apply BOTH sides atomically (guaranteed net-zero per row)
         if (!isset($transfersOut[$fromSite])) $transfersOut[$fromSite] = [];
         $transfersOut[$fromSite][$sid] = ($transfersOut[$fromSite][$sid] ?? 0) + $qty;
         if (!isset($transfersIn[$toSite])) $transfersIn[$toSite] = [];
-        $transfersIn[$toSite][$sid] = ($transfersIn[$toSite][$sid] ?? 0) + $qty;
+        $transfersIn[$toSite][$sid]  = ($transfersIn[$toSite][$sid]  ?? 0) + $qty;
     }
 
     // Group anchor rows by location_id_fk, with qty keyed by sku_id for easy merging
