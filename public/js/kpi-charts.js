@@ -18,6 +18,20 @@ function escHtml(s) {
     .replace(/'/g, '&#39;');
 }
 
+/* ── Freshness chip
+   Renders a compact provenance stamp when result.meta.computed_at is present.
+   Text: "au MM/YYYY · calculé le DD.MM.YYYY"
+   Applies kpc-freshness--stale modifier when result.meta.is_stale is true.
+   Returns empty string when the meta field is absent (generic / non-COGS tiles). */
+function freshnessChipHtml(meta) {
+  if (!meta || !meta.computed_at) return '';
+  var period  = meta.data_period    ? 'au ' + escHtml(meta.data_period) + ' · ' : '';
+  var calcd   = meta.computed_label ? 'calculé le ' + escHtml(meta.computed_label) : '';
+  if (!period && !calcd) return '';
+  var staleCls = meta.is_stale ? ' kpc-freshness--stale' : '';
+  return '<div class="kpc-freshness' + staleCls + '">' + period + calcd + '</div>';
+}
+
 /* ── Number formatter (FR-CH)
    dec: explicit decimal places (0/1/2/…) OR omit to auto-derive from unit.
    unit: optional — used only when dec is omitted.
@@ -409,10 +423,12 @@ function renderKpiNumber(container, tracker, result, tCls) {
   const unit = result.unit  ? ' <span class="kpc-unit">' + escHtml(result.unit) + '</span>' : '';
   const periodLbl = result.meta && result.meta.period_label
     ? '<div class="kpc-period">' + escHtml(result.meta.period_label) + '</div>' : '';
+  const freshness = freshnessChipHtml(result.meta);
 
   container.innerHTML =
     '<div class="kpc-card__label">' + escHtml(result.label || tracker.label) + '</div>'
     + periodLbl
+    + freshness
     + '<div class="kpc-card__value ' + tCls + '">' + val + unit + '</div>'
     + deltaHtml(result.delta, result.delta_label);
 }
@@ -488,7 +504,9 @@ function renderKpiStackedBar(container, tracker, result, tCls) {
   const breakdown = result.breakdown || [];
   const series    = result.series    || [];
 
-  container.innerHTML = '<div class="kpc-card__label">' + escHtml(result.label || tracker.label) + '</div>';
+  const freshChip = freshnessChipHtml(result.meta);
+  container.innerHTML = '<div class="kpc-card__label">' + escHtml(result.label || tracker.label) + '</div>'
+    + freshChip;
 
   if (breakdown.length) {
     /* Horizontal stacked bar showing breakdown proportions */

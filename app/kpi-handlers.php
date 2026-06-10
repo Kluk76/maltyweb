@@ -711,6 +711,65 @@ function kpi_cogs_latest_month_data(): ?array
     return kpi_cache_set($cacheKey, $month ?: null);
 }
 
+/**
+ * Build a freshness meta block from the COGS pipeline JSON.
+ * Called by each of the 4 COGS tile handlers.
+ *
+ * Returns an array with:
+ *   computed_at    — raw ISO-8601 string from generatedAt (or null)
+ *   computed_label — DD.MM.YYYY formatted (day-first, fr-CH) or null
+ *   data_period    — monthKey formatted as MM/YYYY, or null
+ *   is_stale       — true if (now − generatedAt) > 40 days
+ *
+ * Degrades gracefully: if generatedAt is absent (old JSON), all fields null
+ * and is_stale = false so the JS chip simply doesn't render.
+ */
+function kpi_cogs_freshness_meta(?string $monthKey): array
+{
+    $data = kpi_load_cogs_json();
+    $generatedAt = $data['generatedAt'] ?? null;
+
+    if (!$generatedAt || !is_string($generatedAt)) {
+        return [
+            'computed_at'    => null,
+            'computed_label' => null,
+            'data_period'    => null,
+            'is_stale'       => false,
+        ];
+    }
+
+    try {
+        $dt = new DateTimeImmutable($generatedAt, new DateTimeZone('UTC'));
+    } catch (Throwable) {
+        return [
+            'computed_at'    => null,
+            'computed_label' => null,
+            'data_period'    => null,
+            'is_stale'       => false,
+        ];
+    }
+
+    $now     = new DateTimeImmutable('now', new DateTimeZone('UTC'));
+    $ageDays = (int) $now->diff($dt)->days;
+    $isStale = $ageDays > 40;
+
+    // DD.MM.YYYY — day-first system-wide convention
+    $computedLabel = $dt->setTimezone(new DateTimeZone('Europe/Zurich'))->format('d.m.Y');
+
+    // MM/YYYY from monthKey (YYYY-MM)
+    $dataPeriod = null;
+    if ($monthKey && preg_match('/^(\d{4})-(\d{2})$/', $monthKey, $m)) {
+        $dataPeriod = $m[2] . '/' . $m[1];
+    }
+
+    return [
+        'computed_at'    => $generatedAt,
+        'computed_label' => $computedLabel,
+        'data_period'    => $dataPeriod,
+        'is_stale'       => $isStale,
+    ];
+}
+
 /** #170 (H2) — COGS / HL — reads COP section of pipeline output */
 function kpi_cogs_per_hl(array $params, string $label, PDO $pdo): array
 {
@@ -748,16 +807,17 @@ function kpi_cogs_per_hl(array $params, string $label, PDO $pdo): array
         $deltaLabel = 'vs mois précédent';
     }
 
+    $freshness = kpi_cogs_freshness_meta($month['monthKey']);
     return array_merge(kpi_empty_result($label, 'CHF/HL'), [
         'value'       => round($perHL, 2),
         'delta'       => $delta,
         'delta_label' => $deltaLabel,
         'tint'        => 'neutral',  // directional: lower is better but not inherently bad
         'series'      => $series,
-        'meta'        => [
+        'meta'        => array_merge([
             'period_label' => $month['monthKey'],
             'hl_brewed'    => round($hl, 1),
-        ],
+        ], $freshness),
     ]);
 }
 
@@ -776,10 +836,11 @@ function kpi_cogs_total_month(array $params, string $label, PDO $pdo): array
     $tvars = $cop['totalVariables'] ?? [];
     $total = is_array($tvars) ? (float) ($tvars['total'] ?? 0) : (float) $tvars;
 
+    $freshness = kpi_cogs_freshness_meta($month['monthKey']);
     return array_merge(kpi_empty_result($label, 'CHF'), [
         'value' => round($total, 2),
         'tint'  => 'neutral',
-        'meta'  => ['period_label' => $month['monthKey']],
+        'meta'  => array_merge(['period_label' => $month['monthKey']], $freshness),
     ]);
 }
 
@@ -808,6 +869,7 @@ function kpi_cogs_brewing_cost_hl(array $params, string $label, PDO $pdo): array
 
     $total = round($maltsPerHL + $hopsPerHL + $ingPerHL, 2);
 
+    $freshness = kpi_cogs_freshness_meta($month['monthKey']);
     return array_merge(kpi_empty_result($label, 'CHF/HL'), [
         'value'     => $total,
         'tint'      => 'neutral',
@@ -816,7 +878,7 @@ function kpi_cogs_brewing_cost_hl(array $params, string $label, PDO $pdo): array
             ['key' => 'hops',        'label' => 'Houblon',     'value' => round($hopsPerHL, 2)],
             ['key' => 'ingredients', 'label' => 'Ingrédients', 'value' => round($ingPerHL, 2)],
         ],
-        'meta' => ['period_label' => $month['monthKey']],
+        'meta' => array_merge(['period_label' => $month['monthKey']], $freshness),
     ]);
 }
 
@@ -844,11 +906,12 @@ function kpi_cogs_cop_breakdown(array $params, string $label, PDO $pdo): array
         $breakdown[] = ['key' => $sec, 'label' => ucfirst($sec), 'value' => round($v, 2)];
     }
 
+    $freshness = kpi_cogs_freshness_meta($month['monthKey']);
     return array_merge(kpi_empty_result($label, 'CHF'), [
         'value'     => round($total, 2),
         'breakdown' => $breakdown,
         'tint'      => 'neutral',
-        'meta'      => ['period_label' => $month['monthKey']],
+        'meta'      => array_merge(['period_label' => $month['monthKey']], $freshness),
     ]);
 }
 

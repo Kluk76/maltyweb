@@ -181,6 +181,28 @@ body.mon-tableau .kpc-period {
   margin-bottom: .3rem;
 }
 
+/* Freshness chip — provenance stamp for manually-regenerated feeds (e.g. COGS COP).
+   Mirrors .fin-freshness tokens/spacing from financier.css, scoped to KPI tiles. */
+body.mon-tableau .kpc-freshness {
+  display: inline-block;
+  padding: .2rem .5rem;
+  margin-bottom: .4rem;
+  background: color-mix(in srgb, var(--oak) 8%, var(--bg));
+  border-left: 2px solid var(--oak);
+  border-radius: 0 4px 4px 0;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: .68rem;
+  letter-spacing: .03em;
+  color: var(--ink-mute);
+  line-height: 1.4;
+}
+
+body.mon-tableau .kpc-freshness--stale {
+  background: color-mix(in srgb, var(--ember) 10%, var(--bg));
+  border-left-color: var(--ember);
+  color: var(--ember);
+}
+
 /* Tint variants */
 body.mon-tableau .kpc-tint-green { color: var(--hop); }
 body.mon-tableau .kpc-tint-red   { color: var(--ember); }
