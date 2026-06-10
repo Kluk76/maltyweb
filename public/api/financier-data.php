@@ -214,9 +214,129 @@ if ($module === 'cogs') {
     exit;
 }
 
-/* ── Modules: cop-grid / cogs-grid ────────────────────────────────────────── */
-// Both use the same GL line tree; they differ only in ÷ denominator and YTD logic.
+/* ── Module: cop-grid — Operational feed (primary) + booked GL (secondary) ── */
+if ($module === 'cop-grid') {
+    try {
+        $pdo = maltytask_pdo();
 
+        /* ── A) OPERATIONAL: load feed, build per-line tree ──────────────────── */
+        $feedData = kpi_load_cogs_json();
+        if ($feedData === null) {
+            http_response_code(503);
+            echo json_encode(['ok' => false, 'reason' => 'feed_unavailable']);
+            exit;
+        }
+
+        // Index feed by monthKey for O(1) lookups
+        $feedByMonth = [];
+        foreach ($feedData['months'] ?? [] as $entry) {
+            $mk = $entry['monthKey'] ?? null;
+            if ($mk !== null) $feedByMonth[$mk] = $entry;
+        }
+
+        // Build operational month data
+        $opMonth = fin_cop_operational_month($feedByMonth, $month);
+
+        // YTD: sum all months Jan..selected that are present in the feed
+        [$selYear] = explode('-', $month, 2);
+        $ytdMonthsOp = array_filter(
+            array_keys($feedByMonth),
+            fn($mk) => str_starts_with($mk, $selYear . '-') && $mk <= $month
+        );
+        sort($ytdMonthsOp);
+        $opYtd = fin_cop_operational_ytd($feedByMonth, array_values($ytdMonthsOp));
+
+        /* ── B) BOOKED GL: compact section-level totals only ─────────────────── */
+        // Month
+        [$year, $mo] = explode('-', $month, 2);
+        $yy = substr($year, 2);
+        $likePattern = '%01.' . $mo . '.' . $yy . '%';
+
+        $stmtBk = $pdo->prepare(
+            "SELECT gl_account_no,
+                    SUM(debit_amount) - SUM(credit_amount) AS net
+             FROM inv_charges_bc
+             WHERE is_summary = 0
+               AND period_text LIKE ?
+             GROUP BY gl_account_no"
+        );
+        $stmtBk->execute([$likePattern]);
+        $glNetsBooked = [];
+        while ($row = $stmtBk->fetch(PDO::FETCH_ASSOC)) {
+            $glNetsBooked[$row['gl_account_no']] = (float) $row['net'];
+        }
+
+        // YTD booked: intersect with GL-booked months
+        $glBookedMonths = fin_gl_booked_months($pdo);
+        $glBookedSet    = array_flip($glBookedMonths);
+        $ytdMonthsBk    = array_filter(
+            array_values($ytdMonthsOp),
+            fn($mk) => isset($glBookedSet[$mk])
+        );
+        $ytdMonthsBk = array_values($ytdMonthsBk);
+
+        $glNetsBookedYtd = [];
+        if (!empty($ytdMonthsBk)) {
+            $ytdLikes = [];
+            foreach ($ytdMonthsBk as $mk) {
+                [$y2, $m2] = explode('-', $mk, 2);
+                $ytdLikes[] = '01.' . $m2 . '.' . substr($y2, 2);
+            }
+            $orClauses  = implode(' OR ', array_fill(0, count($ytdLikes), 'period_text LIKE ?'));
+            $stmtBkYtd  = $pdo->prepare(
+                "SELECT gl_account_no, SUM(debit_amount) - SUM(credit_amount) AS net
+                 FROM inv_charges_bc
+                 WHERE is_summary = 0 AND ($orClauses)
+                 GROUP BY gl_account_no"
+            );
+            $stmtBkYtd->execute(array_map(fn($p) => '%' . $p . '%', $ytdLikes));
+            while ($row = $stmtBkYtd->fetch(PDO::FETCH_ASSOC)) {
+                $glNetsBookedYtd[$row['gl_account_no']] = (float) $row['net'];
+            }
+        }
+
+        $booked    = fin_cop_booked_totals($glNetsBooked,    $opMonth['hlPackaged']);
+        $bookedYtd = fin_cop_booked_totals($glNetsBookedYtd, $opYtd['hlPackaged']);
+
+        /* ── C) CHECK: operational total CHF − booked total CHF ─────────────── */
+        $check = [
+            'month' => [
+                'opTotalChf'     => $opMonth['totalVariableChf'],
+                'bookedTotalChf' => $booked['totalChf'],
+                'diffChf'        => $opMonth['totalVariableChf'] - $booked['totalChf'],
+            ],
+            'ytd' => [
+                'opTotalChf'     => $opYtd['totalVariableChf'],
+                'bookedTotalChf' => $bookedYtd['totalChf'],
+                'diffChf'        => $opYtd['totalVariableChf'] - $bookedYtd['totalChf'],
+            ],
+        ];
+
+        $payload = [
+            'ok'           => true,
+            'month'        => $month,
+            'ytdLabel'     => 'YTD',
+            'ytdMonths'    => array_values($ytdMonthsOp),
+            'operational'  => [
+                'month' => $opMonth,
+                'ytd'   => $opYtd,
+            ],
+            'booked'       => [
+                'month' => $booked,
+                'ytd'   => $bookedYtd,
+            ],
+            'check'        => $check,
+        ];
+        echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
+
+    } catch (Throwable $e) {
+        http_response_code(500);
+        echo json_encode(['ok' => false, 'reason' => 'db_error', 'detail' => $e->getMessage()]);
+    }
+    exit;
+}
+
+/* ── Module: cogs-grid ────────────────────────────────────────────────────── */
 try {
     $pdo = maltytask_pdo();
 
@@ -243,35 +363,27 @@ try {
         $glNets[$row['gl_account_no']] = (float) $row['net'];
     }
 
-    /* Denominator for current month */
-    if ($module === 'cogs-grid') {
-        // HL sold this month
-        $hlStmt = $pdo->prepare(
-            "SELECT COALESCE(SUM(hl_resolved), 0) AS hl FROM inv_sales_bc WHERE period = ?"
-        );
-        $hlStmt->execute([$month]);
-        $hlMonth = (float) ($hlStmt->fetch(PDO::FETCH_ASSOC)['hl'] ?? 0);
-    } else {
-        // HL brewed: use COP JSON (same source as COP tiles)
-        $hlMonth = fin_cop_hl_brewed($month);
-    }
+    // HL sold this month
+    $hlStmt = $pdo->prepare(
+        "SELECT COALESCE(SUM(hl_resolved), 0) AS hl FROM inv_sales_bc WHERE period = ?"
+    );
+    $hlStmt->execute([$month]);
+    $hlMonth = (float) ($hlStmt->fetch(PDO::FETCH_ASSOC)['hl'] ?? 0);
 
-    /* YTD / 6M-rolling data — intersect with months that have actual GL rows */
+    /* YTD — intersect with months that have actual GL rows */
     $glBookedMonths = fin_gl_booked_months($pdo);
-    $ytdMonths = fin_ytd_months($month, $module === 'cop-grid', $glBookedMonths);
+    $ytdMonths = fin_ytd_months($month, false, $glBookedMonths);
 
     $glNetsYtd  = [];
     $hlYtd      = 0.0;
 
     if (!empty($ytdMonths)) {
-        // Build LIKE patterns for all YTD months
         $ytdLikes = [];
         foreach ($ytdMonths as $mk) {
             [$y2, $m2] = explode('-', $mk, 2);
             $yy2 = substr($y2, 2);
             $ytdLikes[] = '01.' . $m2 . '.' . $yy2;
         }
-        // Build a single query with OR'd LIKE conditions
         $orClauses = implode(' OR ', array_fill(0, count($ytdLikes), 'period_text LIKE ?'));
         $stmtYtd = $pdo->prepare(
             "SELECT gl_account_no, SUM(debit_amount) - SUM(credit_amount) AS net
@@ -285,32 +397,23 @@ try {
             $glNetsYtd[$row['gl_account_no']] = (float) $row['net'];
         }
 
-        if ($module === 'cogs-grid') {
-            $inList   = implode(',', array_fill(0, count($ytdMonths), '?'));
-            $hlStmt2  = $pdo->prepare(
-                "SELECT COALESCE(SUM(hl_resolved), 0) AS hl FROM inv_sales_bc WHERE period IN ($inList)"
-            );
-            $hlStmt2->execute($ytdMonths);
-            $hlYtd = (float) ($hlStmt2->fetch(PDO::FETCH_ASSOC)['hl'] ?? 0);
-        } else {
-            // Sum hlBrewed from COP JSON for each rolling month
-            foreach ($ytdMonths as $mk) {
-                $hlYtd += fin_cop_hl_brewed($mk);
-            }
-        }
+        $inList   = implode(',', array_fill(0, count($ytdMonths), '?'));
+        $hlStmt2  = $pdo->prepare(
+            "SELECT COALESCE(SUM(hl_resolved), 0) AS hl FROM inv_sales_bc WHERE period IN ($inList)"
+        );
+        $hlStmt2->execute($ytdMonths);
+        $hlYtd = (float) ($hlStmt2->fetch(PDO::FETCH_ASSOC)['hl'] ?? 0);
     }
 
     /* Build tree rows with actuals */
-    $tree = fin_compute_tree($glTree, $glNets, $hlMonth, $glNetsYtd, $hlYtd, $module);
-
-    $ytdLabel = ($module === 'cop-grid') ? '6M ROLLING' : 'YTD';
+    $tree = fin_compute_tree($glTree, $glNets, $hlMonth, $glNetsYtd, $hlYtd, 'cogs-grid');
 
     $payload = [
         'ok'         => true,
         'month'      => $month,
         'hlMonth'    => $hlMonth,
         'hlYtd'      => $hlYtd,
-        'ytdLabel'   => $ytdLabel,
+        'ytdLabel'   => 'YTD',
         'tree'       => $tree,
         'ytdMonths'  => $ytdMonths,
     ];
@@ -356,6 +459,182 @@ function fin_cop_hl_brewed(string $monthKey): float
         }
     }
     return $copCache[$monthKey] ?? 0.0;
+}
+
+/**
+ * Board line definitions for the operational COP tree.
+ * Each entry: label, gl (array of account strings), key (for subtotal refs).
+ * Subtotals reference their constituent line keys.
+ */
+function fin_cop_board_lines(): array
+{
+    return [
+        // Brewing
+        ['type' => 'line',     'key' => 'malts',         'label' => 'Malts (4101)',                       'gl' => ['4101']],
+        ['type' => 'line',     'key' => 'hops',          'label' => 'Hops (4102)',                        'gl' => ['4102']],
+        ['type' => 'line',     'key' => 'yeast',         'label' => 'Yeast (4103)',                       'gl' => ['4103']],
+        ['type' => 'line',     'key' => 'other_ing',     'label' => 'Other Ingredients (4104)',           'gl' => ['4104']],
+        ['type' => 'subtotal', 'key' => 'sub_brewing',   'label' => 'Total Brewing',                     'lines' => ['malts','hops','yeast','other_ing']],
+        // Packaging
+        ['type' => 'line',     'key' => 'bottles',       'label' => 'Bottles inc. TEA (4200+4201)',       'gl' => ['4200','4201']],
+        ['type' => 'line',     'key' => 'cans',          'label' => 'Cans (4202)',                        'gl' => ['4202']],
+        ['type' => 'line',     'key' => 'reg_cardboard', 'label' => 'Regular cardboard (4203+4207)',      'gl' => ['4203','4207']],
+        ['type' => 'line',     'key' => 'spec_cardboard','label' => 'Special cardboard (4204)',           'gl' => ['4204']],
+        ['type' => 'line',     'key' => 'plastic',       'label' => 'Plastic wrap (4205)',                'gl' => ['4205']],
+        ['type' => 'line',     'key' => 'labels',        'label' => 'Labels (4206)',                      'gl' => ['4206']],
+        ['type' => 'line',     'key' => 'keg',           'label' => 'Keg material (4209)',                'gl' => ['4209']],
+        ['type' => 'line',     'key' => 'external',      'label' => 'External packing (4208)',            'gl' => ['4208']],
+        ['type' => 'subtotal', 'key' => 'sub_packaging', 'label' => 'Total Packaging',
+         'lines' => ['bottles','cans','reg_cardboard','spec_cardboard','plastic','labels','keg','external']],
+        // Indirect
+        ['type' => 'line',     'key' => 'co2',           'label' => 'CO2 (4300)',                         'gl' => ['4300']],
+        ['type' => 'line',     'key' => 'chemical',      'label' => 'Chemical (4301)',                    'gl' => ['4301']],
+        ['type' => 'line',     'key' => 'small_equip',   'label' => 'Small equipment (4302)',             'gl' => ['4302']],
+        ['type' => 'line',     'key' => 'transport',     'label' => 'Transport (4600)',                   'gl' => ['4600']],
+        ['type' => 'subtotal', 'key' => 'sub_indirect',  'label' => 'Total Indirect',                    'lines' => ['co2','chemical','small_equip','transport']],
+        // Utilities
+        ['type' => 'line',     'key' => 'gas_water',     'label' => 'Gaz & Water (4700)',                 'gl' => ['4700']],
+        ['type' => 'line',     'key' => 'electricity',   'label' => 'Electricity (4702)',                 'gl' => ['4702']],
+        ['type' => 'line',     'key' => 'waste',         'label' => 'Waste evacuation (4701)',            'gl' => ['4701']],
+        ['type' => 'subtotal', 'key' => 'sub_utilities', 'label' => 'Total Utilities',                   'lines' => ['gas_water','electricity','waste']],
+        // R&D
+        ['type' => 'line',     'key' => 'qa_qc',         'label' => 'QA/QC (4500)',                       'gl' => ['4500']],
+        ['type' => 'line',     'key' => 'rd_purchases',  'label' => 'Purchases (4510)',                   'gl' => ['4510']],
+        ['type' => 'subtotal', 'key' => 'sub_rd',        'label' => 'Total R&D',                         'lines' => ['qa_qc','rd_purchases']],
+        // Grand total
+        ['type' => 'grand_subtotal', 'key' => 'grand_variable', 'label' => 'TOTAL COGS VARIABLE',
+         'subtotals' => ['sub_brewing','sub_packaging','sub_indirect','sub_utilities','sub_rd']],
+    ];
+}
+
+/**
+ * Resolve CHF values for one period from glLines and return the tree rows.
+ * Returns ['lines' => [...], 'hlPackaged' => float, 'totalVariableChf' => float].
+ */
+function fin_cop_operational_month(array $feedByMonth, string $monthKey): array
+{
+    $entry    = $feedByMonth[$monthKey] ?? null;
+    $glLines  = (array) ($entry['cop']['glLines'] ?? []);
+    $hlPkg    = (float) ($entry['cop']['hlPackaged'] ?? 0.0);
+
+    return fin_cop_build_op_rows($glLines, $hlPkg);
+}
+
+/**
+ * Aggregate multiple months from the feed into a YTD slice.
+ */
+function fin_cop_operational_ytd(array $feedByMonth, array $monthKeys): array
+{
+    $glSums = [];
+    $hlPkg  = 0.0;
+    foreach ($monthKeys as $mk) {
+        $entry = $feedByMonth[$mk] ?? null;
+        if ($entry === null) continue;
+        $hlPkg += (float) ($entry['cop']['hlPackaged'] ?? 0.0);
+        foreach ((array) ($entry['cop']['glLines'] ?? []) as $acc => $val) {
+            $glSums[(string)$acc] = ($glSums[(string)$acc] ?? 0.0) + (float)$val;
+        }
+    }
+    return fin_cop_build_op_rows($glSums, $hlPkg);
+}
+
+/**
+ * Build the operational board rows from a glLines map + hlPackaged.
+ * Returns ['lines' => [...], 'hlPackaged' => float, 'totalVariableChf' => float].
+ */
+function fin_cop_build_op_rows(array $glLines, float $hlPkg): array
+{
+    $boardDef = fin_cop_board_lines();
+
+    // First pass: resolve CHF per key
+    $vals = [];
+    foreach ($boardDef as $node) {
+        $key  = $node['key'];
+        $type = $node['type'];
+        if ($type === 'line') {
+            $sum = 0.0;
+            foreach ($node['gl'] as $acc) {
+                $sum += (float)($glLines[$acc] ?? 0.0);
+            }
+            $vals[$key] = $sum;
+        } elseif ($type === 'subtotal') {
+            $sum = 0.0;
+            foreach ($node['lines'] as $lk) {
+                $sum += $vals[$lk] ?? 0.0;
+            }
+            $vals[$key] = $sum;
+        } elseif ($type === 'grand_subtotal') {
+            $sum = 0.0;
+            foreach ($node['subtotals'] as $sk) {
+                $sum += $vals[$sk] ?? 0.0;
+            }
+            $vals[$key] = $sum;
+        }
+    }
+
+    // Second pass: build output rows
+    $rows = [];
+    foreach ($boardDef as $node) {
+        $key  = $node['key'];
+        $chf  = $vals[$key] ?? 0.0;
+        $phl  = $hlPkg > 0 ? $chf / $hlPkg : null;
+        $rows[] = [
+            'type'        => $node['type'],
+            'key'         => $key,
+            'label'       => $node['label'],
+            'chf'         => round($chf, 2),
+            'perHl'       => $phl !== null ? round($phl, 4) : null,
+        ];
+    }
+
+    $totalChf = $vals['grand_variable'] ?? 0.0;
+    return [
+        'lines'            => $rows,
+        'hlPackaged'       => round($hlPkg, 2),
+        'totalVariableChf' => round($totalChf, 2),
+    ];
+}
+
+/**
+ * Compute section-level booked GL totals (compact, for Vue comptable block).
+ * GL ranges:
+ *   Brewing:   4101–4104
+ *   Packaging: 4200–4299
+ *   Indirect:  4300–4302, 4600
+ *   Utilities: 4700–4702
+ *   R&D:       4500–4510
+ */
+function fin_cop_booked_totals(array $glNets, float $hlPkg): array
+{
+    $brewing   = 0.0;
+    $packaging = 0.0;
+    $indirect  = 0.0;
+    $utilities = 0.0;
+    $rd        = 0.0;
+
+    foreach ($glNets as $acc => $net) {
+        $a = (int) $acc;
+        if ($a >= 4101 && $a <= 4104)          $brewing   += $net;
+        elseif ($a >= 4200 && $a <= 4299)      $packaging += $net;
+        elseif (($a >= 4300 && $a <= 4302) || ($a >= 4600 && $a <= 4602)) $indirect  += $net;
+        elseif ($a >= 4700 && $a <= 4702)      $utilities += $net;
+        elseif ($a >= 4500 && $a <= 4510)      $rd        += $net;
+    }
+
+    $total = $brewing + $packaging + $indirect + $utilities + $rd;
+
+    $phl = fn(float $v): ?float => $hlPkg > 0 ? round($v / $hlPkg, 4) : null;
+
+    return [
+        'brewing'   => ['chf' => round($brewing,   2), 'perHl' => $phl($brewing)],
+        'packaging' => ['chf' => round($packaging, 2), 'perHl' => $phl($packaging)],
+        'indirect'  => ['chf' => round($indirect,  2), 'perHl' => $phl($indirect)],
+        'utilities' => ['chf' => round($utilities, 2), 'perHl' => $phl($utilities)],
+        'rd'        => ['chf' => round($rd,        2), 'perHl' => $phl($rd)],
+        'totalChf'  => round($total, 2),
+        'totalPerHl'=> $phl($total),
+        'hlPackaged'=> round($hlPkg, 2),
+    ];
 }
 
 /**

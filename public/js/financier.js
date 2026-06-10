@@ -744,103 +744,67 @@
   }
 
   /**
-   * Render a P&L grid into `wrapEl`.
+   * Render a COGS P&L grid into `wrapEl`.
    * data: the endpoint response {tree, ytdLabel, hlMonth, hlYtd, month}
-   * isCop: true for COP grid (6M ROLLING), false for COGS grid (YTD)
    */
-  function renderPLGrid(wrapEl, data, isCop) {
+  function renderPLGrid(wrapEl, data) {
     if (!wrapEl || !data || !data.tree) {
       if (wrapEl) wrapEl.innerHTML = '<p class="fin-empty">Données indisponibles.</p>';
       return;
     }
 
     var tree     = data.tree;
-    var ytdLabel = data.ytdLabel || (isCop ? '6M ROLLING' : 'YTD');
+    var ytdLabel = data.ytdLabel || 'YTD';
 
     // COGS grid columns: ACTUALS[month,YTD] | BUDGET[month,YTD] | N-1[month,YTD] | Vs BUDGET[month,YTD] | Vs N-1[month,YTD]
-    // COP grid columns:  ACTUALS[month,6M]  | N-1[month,6M]     | Vs N-1[month,6M]
-
     var html = '<div class="fin-grid-scroll"><table class="fin-grid-table" aria-label="P&amp;L Grid">';
-
-    // 3-row header
     html += '<thead>';
-
-    if (!isCop) {
-      // COGS: 5 groups × 2 cols = 10 data cols + 1 label col
-      html += '<tr class="fin-grid-hdr fin-grid-hdr--group">'
-        + '<th rowspan="3" class="fin-grid-th fin-grid-th--label" scope="col"></th>'
-        + '<th colspan="2" class="fin-grid-th fin-grid-th--group fin-grid-th--actuals" scope="colgroup">ACTUALS</th>'
-        + '<th colspan="2" class="fin-grid-th fin-grid-th--group fin-grid-th--placeholder" scope="colgroup">BUDGET</th>'
-        + '<th colspan="2" class="fin-grid-th fin-grid-th--group fin-grid-th--placeholder" scope="colgroup">N-1</th>'
-        + '<th colspan="2" class="fin-grid-th fin-grid-th--group fin-grid-th--placeholder" scope="colgroup">Vs BUDGET</th>'
-        + '<th colspan="2" class="fin-grid-th fin-grid-th--group fin-grid-th--placeholder" scope="colgroup">Vs N-1</th>'
-        + '</tr>';
-      html += '<tr class="fin-grid-hdr fin-grid-hdr--sub">'
-        + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--actuals" scope="col">Mois</th>'
-        + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--actuals" scope="col">' + esc(ytdLabel) + '</th>'
-        + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--placeholder" scope="col">Mois</th>'
-        + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--placeholder" scope="col">' + esc(ytdLabel) + '</th>'
-        + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--placeholder" scope="col">Mois</th>'
-        + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--placeholder" scope="col">' + esc(ytdLabel) + '</th>'
-        + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--placeholder" scope="col">Mois</th>'
-        + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--placeholder" scope="col">' + esc(ytdLabel) + '</th>'
-        + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--placeholder" scope="col">Mois</th>'
-        + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--placeholder" scope="col">' + esc(ytdLabel) + '</th>'
-        + '</tr>';
-      html += '<tr class="fin-grid-hdr fin-grid-hdr--unit">'
-        + '<th class="fin-grid-th fin-grid-th--actuals" scope="col">CHF/HL</th>'
-        + '<th class="fin-grid-th fin-grid-th--actuals" scope="col">CHF/HL</th>'
-        + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">CHF/HL</th>'
-        + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">CHF/HL</th>'
-        + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">CHF/HL</th>'
-        + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">CHF/HL</th>'
-        + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">CHF/HL</th>'
-        + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">CHF/HL</th>'
-        + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">CHF/HL</th>'
-        + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">CHF/HL</th>'
-        + '</tr>';
-    } else {
-      // COP: 3 groups × 2 cols = 6 data cols + 1 label col
-      html += '<tr class="fin-grid-hdr fin-grid-hdr--group">'
-        + '<th rowspan="3" class="fin-grid-th fin-grid-th--label" scope="col"></th>'
-        + '<th colspan="2" class="fin-grid-th fin-grid-th--group fin-grid-th--actuals" scope="colgroup">ACTUALS</th>'
-        + '<th colspan="2" class="fin-grid-th fin-grid-th--group fin-grid-th--placeholder" scope="colgroup">N-1</th>'
-        + '<th colspan="2" class="fin-grid-th fin-grid-th--group fin-grid-th--placeholder" scope="colgroup">Vs N-1</th>'
-        + '</tr>';
-      html += '<tr class="fin-grid-hdr fin-grid-hdr--sub">'
-        + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--actuals" scope="col">Mois</th>'
-        + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--actuals" scope="col">' + esc(ytdLabel) + '</th>'
-        + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--placeholder" scope="col">Mois</th>'
-        + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--placeholder" scope="col">' + esc(ytdLabel) + '</th>'
-        + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--placeholder" scope="col">Mois</th>'
-        + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--placeholder" scope="col">' + esc(ytdLabel) + '</th>'
-        + '</tr>';
-      html += '<tr class="fin-grid-hdr fin-grid-hdr--unit">'
-        + '<th class="fin-grid-th fin-grid-th--actuals" scope="col">CHF/HL</th>'
-        + '<th class="fin-grid-th fin-grid-th--actuals" scope="col">CHF/HL</th>'
-        + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">CHF/HL</th>'
-        + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">CHF/HL</th>'
-        + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">CHF/HL</th>'
-        + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">CHF/HL</th>'
-        + '</tr>';
-    }
-
+    html += '<tr class="fin-grid-hdr fin-grid-hdr--group">'
+      + '<th rowspan="3" class="fin-grid-th fin-grid-th--label" scope="col"></th>'
+      + '<th colspan="2" class="fin-grid-th fin-grid-th--group fin-grid-th--actuals" scope="colgroup">ACTUALS</th>'
+      + '<th colspan="2" class="fin-grid-th fin-grid-th--group fin-grid-th--placeholder" scope="colgroup">BUDGET</th>'
+      + '<th colspan="2" class="fin-grid-th fin-grid-th--group fin-grid-th--placeholder" scope="colgroup">N-1</th>'
+      + '<th colspan="2" class="fin-grid-th fin-grid-th--group fin-grid-th--placeholder" scope="colgroup">Vs BUDGET</th>'
+      + '<th colspan="2" class="fin-grid-th fin-grid-th--group fin-grid-th--placeholder" scope="colgroup">Vs N-1</th>'
+      + '</tr>';
+    html += '<tr class="fin-grid-hdr fin-grid-hdr--sub">'
+      + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--actuals" scope="col">Mois</th>'
+      + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--actuals" scope="col">' + esc(ytdLabel) + '</th>'
+      + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--placeholder" scope="col">Mois</th>'
+      + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--placeholder" scope="col">' + esc(ytdLabel) + '</th>'
+      + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--placeholder" scope="col">Mois</th>'
+      + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--placeholder" scope="col">' + esc(ytdLabel) + '</th>'
+      + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--placeholder" scope="col">Mois</th>'
+      + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--placeholder" scope="col">' + esc(ytdLabel) + '</th>'
+      + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--placeholder" scope="col">Mois</th>'
+      + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--placeholder" scope="col">' + esc(ytdLabel) + '</th>'
+      + '</tr>';
+    html += '<tr class="fin-grid-hdr fin-grid-hdr--unit">'
+      + '<th class="fin-grid-th fin-grid-th--actuals" scope="col">CHF/HL</th>'
+      + '<th class="fin-grid-th fin-grid-th--actuals" scope="col">CHF/HL</th>'
+      + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">CHF/HL</th>'
+      + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">CHF/HL</th>'
+      + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">CHF/HL</th>'
+      + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">CHF/HL</th>'
+      + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">CHF/HL</th>'
+      + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">CHF/HL</th>'
+      + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">CHF/HL</th>'
+      + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">CHF/HL</th>'
+      + '</tr>';
     html += '</thead><tbody>';
-
-    var numCols = isCop ? 6 : 10;
 
     tree.forEach(function(row) {
       var rowType = row.rowType;
 
       if (rowType === 'section') {
         html += '<tr class="fin-grid-row fin-grid-row--section">'
-          + '<td colspan="' + (numCols + 1) + '" class="fin-grid-td fin-grid-td--section">'
+          + '<td colspan="11" class="fin-grid-td fin-grid-td--section">'
           + esc(row.label) + '</td></tr>';
         return;
       }
       if (rowType === 'sub_header') {
         html += '<tr class="fin-grid-row fin-grid-row--subhdr">'
-          + '<td colspan="' + (numCols + 1) + '" class="fin-grid-td fin-grid-td--subhdr">'
+          + '<td colspan="11" class="fin-grid-td fin-grid-td--subhdr">'
           + esc(row.label) + '</td></tr>';
         return;
       }
@@ -858,12 +822,11 @@
       var labelCls = 'fin-grid-td fin-grid-td--label';
       if (isSubtotal || isGrandSub || isTotal) labelCls += ' fin-grid-td--label-strong';
 
-      // Cell value helpers
-      function valCell(phl, isAct) {
+      function valCell(phl, isAct, isBold) {
         var cls = 'fin-grid-td fin-grid-td--num';
         if (isAct) cls += ' fin-grid-td--actuals';
         else       cls += ' fin-grid-td--placeholder';
-        if (isSubtotal || isGrandSub || isTotal) cls += ' fin-grid-td--bold';
+        if (isBold) cls += ' fin-grid-td--bold';
         var txt;
         if (!isAct || isPlaceholder) {
           txt = '—';
@@ -876,26 +839,219 @@
         return '<td class="' + cls + '">' + esc(txt) + '</td>';
       }
 
+      var isBold = isSubtotal || isGrandSub || isTotal;
       html += '<tr class="' + rowCls + '">';
       html += '<td class="' + labelCls + '">' + esc(row.label) + '</td>';
-
-      // ACTUALS month
-      html += valCell(row.phlMonth, true);
-      // ACTUALS YTD/6M
-      html += valCell(row.phlYtd, true);
-
-      if (!isCop) {
-        // BUDGET month, YTD; N-1 month, YTD; Vs BUDGET month, YTD; Vs N-1 month, YTD
-        for (var i = 0; i < 8; i++) html += valCell(null, false);
-      } else {
-        // N-1 month, 6M; Vs N-1 month, 6M
-        for (var j = 0; j < 4; j++) html += valCell(null, false);
-      }
-
+      html += valCell(row.phlMonth, true, isBold);
+      html += valCell(row.phlYtd,   true, isBold);
+      for (var i = 0; i < 8; i++) html += valCell(null, false, isBold);
       html += '</tr>';
     });
 
     html += '</tbody></table></div>';
+    wrapEl.innerHTML = html;
+  }
+
+  /**
+   * Render the operational COP P&L grid (primary) + Vue comptable secondary block.
+   * data: the cop-grid endpoint response {operational, booked, check, ytdLabel, month}
+   */
+  function renderCopPLGrid(wrapEl, data) {
+    if (!wrapEl || !data || !data.operational) {
+      if (wrapEl) wrapEl.innerHTML = '<p class="fin-empty">Données indisponibles.</p>';
+      return;
+    }
+
+    var op        = data.operational;
+    var bk        = data.booked    || {};
+    var chk       = data.check     || {};
+    var ytdLabel  = data.ytdLabel  || 'YTD';
+    var lines     = (op.month || {}).lines || [];
+
+    // COP grid: ACTUALS[mois,YTD] | BUDGET[mois,YTD] | N-1[mois,YTD]
+    var numCols = 6; // 3 groups × 2 cols
+    var html = '<div class="fin-grid-scroll"><table class="fin-grid-table" aria-label="P&amp;L COP Grid">';
+    html += '<thead>';
+    html += '<tr class="fin-grid-hdr fin-grid-hdr--group">'
+      + '<th rowspan="3" class="fin-grid-th fin-grid-th--label" scope="col"></th>'
+      + '<th colspan="2" class="fin-grid-th fin-grid-th--group fin-grid-th--actuals" scope="colgroup">ACTUALS</th>'
+      + '<th colspan="2" class="fin-grid-th fin-grid-th--group fin-grid-th--placeholder" scope="colgroup">BUDGET</th>'
+      + '<th colspan="2" class="fin-grid-th fin-grid-th--group fin-grid-th--placeholder" scope="colgroup">N-1</th>'
+      + '</tr>';
+    html += '<tr class="fin-grid-hdr fin-grid-hdr--sub">'
+      + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--actuals" scope="col">Mois</th>'
+      + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--actuals" scope="col">' + esc(ytdLabel) + '</th>'
+      + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--placeholder" scope="col">Mois</th>'
+      + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--placeholder" scope="col">' + esc(ytdLabel) + '</th>'
+      + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--placeholder" scope="col">Mois</th>'
+      + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--placeholder" scope="col">' + esc(ytdLabel) + '</th>'
+      + '</tr>';
+    html += '<tr class="fin-grid-hdr fin-grid-hdr--unit">'
+      + '<th class="fin-grid-th fin-grid-th--actuals" scope="col">CHF/HL</th>'
+      + '<th class="fin-grid-th fin-grid-th--actuals" scope="col">CHF/HL</th>'
+      + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">CHF/HL</th>'
+      + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">CHF/HL</th>'
+      + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">CHF/HL</th>'
+      + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">CHF/HL</th>'
+      + '</tr>';
+    html += '</thead><tbody>';
+
+    // Find YTD values by key for lookup
+    var ytdByKey = {};
+    ((op.ytd || {}).lines || []).forEach(function(r) { ytdByKey[r.key] = r; });
+
+    // Section headers map: key prefix → label
+    var sectionOf = {
+      malts: 'Brewing', hops: 'Brewing', yeast: 'Brewing', other_ing: 'Brewing', sub_brewing: 'Brewing',
+      bottles: 'Packaging', cans: 'Packaging', reg_cardboard: 'Packaging', spec_cardboard: 'Packaging',
+      plastic: 'Packaging', labels: 'Packaging', keg: 'Packaging', external: 'Packaging', sub_packaging: 'Packaging',
+      co2: 'Indirect', chemical: 'Indirect', small_equip: 'Indirect', transport: 'Indirect', sub_indirect: 'Indirect',
+      gas_water: 'Utilities', electricity: 'Utilities', waste: 'Utilities', sub_utilities: 'Utilities',
+      qa_qc: 'R&D', rd_purchases: 'R&D', sub_rd: 'R&D',
+      grand_variable: null,
+    };
+    var lastSection = null;
+    var sectionLabels = { Brewing: 'Brewing', Packaging: 'Packaging', Indirect: 'Indirect', Utilities: 'Utilities', 'R&D': 'R&D' };
+
+    lines.forEach(function(row) {
+      var type     = row.type;
+      var key      = row.key;
+      var sec      = sectionOf[key] || null;
+      var ytdRow   = ytdByKey[key] || {};
+
+      // Inject section sub-header before first line of each section
+      if (sec !== null && sec !== lastSection) {
+        lastSection = sec;
+        html += '<tr class="fin-grid-row fin-grid-row--subhdr">'
+          + '<td colspan="' + (numCols + 1) + '" class="fin-grid-td fin-grid-td--subhdr">'
+          + esc(sectionLabels[sec] || sec) + '</td></tr>';
+      }
+
+      var isSubtotal = (type === 'subtotal');
+      var isGrand    = (type === 'grand_subtotal');
+      var isBold     = isSubtotal || isGrand;
+
+      var rowCls   = 'fin-grid-row';
+      if (isSubtotal) rowCls += ' fin-grid-row--subtotal';
+      if (isGrand)    rowCls += ' fin-grid-row--grand-subtotal';
+
+      var labelCls = 'fin-grid-td fin-grid-td--label';
+      if (isBold) labelCls += ' fin-grid-td--label-strong';
+
+      function actCell(phl) {
+        var cls = 'fin-grid-td fin-grid-td--num fin-grid-td--actuals';
+        if (isBold) cls += ' fin-grid-td--bold';
+        var txt;
+        if (phl === null || phl === undefined) {
+          txt = '0.00';
+        } else {
+          if (phl < 0) cls += ' fin-grid-td--negative';
+          txt = fmt(phl, 2);
+        }
+        return '<td class="' + cls + '">' + esc(txt) + '</td>';
+      }
+      function phCell() {
+        var cls = 'fin-grid-td fin-grid-td--num fin-grid-td--placeholder';
+        if (isBold) cls += ' fin-grid-td--bold';
+        return '<td class="' + cls + '">—</td>';
+      }
+
+      html += '<tr class="' + rowCls + '">';
+      html += '<td class="' + labelCls + '">' + esc(row.label) + '</td>';
+      html += actCell(row.perHl);
+      html += actCell(ytdRow.perHl !== undefined ? ytdRow.perHl : null);
+      html += phCell() + phCell() + phCell() + phCell();
+      html += '</tr>';
+    });
+
+    html += '</tbody></table></div>';
+
+    // ── Vue comptable (GL booké) secondary block ──────────────────────────────
+    var bkMo  = bk.month  || {};
+    var bkYtd = bk.ytd    || {};
+    var chkMo = chk.month || {};
+    var chkYtd = chk.ytd  || {};
+
+    var bkSections = [
+      { key: 'brewing',   label: 'Brewing' },
+      { key: 'packaging', label: 'Packaging' },
+      { key: 'indirect',  label: 'Indirect' },
+      { key: 'utilities', label: 'Utilities' },
+      { key: 'rd',        label: 'R&D' },
+    ];
+
+    html += '<div class="fin-vue-comptable">';
+    html += '<h4 class="fin-secondary-title">Vue comptable (GL booké)</h4>';
+    html += '<p class="fin-secondary-note">Source : charges BC importées — décalage comptable possible (mois non clôturés sous-estimés).</p>';
+    html += '<div class="fin-grid-scroll"><table class="fin-grid-table fin-table-compact" aria-label="Vue comptable GL">';
+    html += '<thead><tr class="fin-grid-hdr fin-grid-hdr--group">'
+      + '<th rowspan="2" class="fin-grid-th fin-grid-th--label" scope="col">Catégorie</th>'
+      + '<th colspan="2" class="fin-grid-th fin-grid-th--group fin-grid-th--actuals" scope="colgroup">ACTUALS</th>'
+      + '<th colspan="2" class="fin-grid-th fin-grid-th--group fin-grid-th--placeholder" scope="colgroup">BUDGET</th>'
+      + '<th colspan="2" class="fin-grid-th fin-grid-th--group fin-grid-th--placeholder" scope="colgroup">N-1</th>'
+      + '</tr><tr class="fin-grid-hdr fin-grid-hdr--sub">'
+      + '<th class="fin-grid-th fin-grid-th--actuals" scope="col">Mois CHF/HL</th>'
+      + '<th class="fin-grid-th fin-grid-th--actuals" scope="col">' + esc(ytdLabel) + ' CHF/HL</th>'
+      + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">Mois</th>'
+      + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">' + esc(ytdLabel) + '</th>'
+      + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">Mois</th>'
+      + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">' + esc(ytdLabel) + '</th>'
+      + '</tr></thead><tbody>';
+
+    bkSections.forEach(function(s) {
+      var mo  = bkMo[s.key]  || {};
+      var ytd = bkYtd[s.key] || {};
+      html += '<tr class="fin-grid-row">'
+        + '<td class="fin-grid-td fin-grid-td--label">' + esc(s.label) + '</td>'
+        + '<td class="fin-grid-td fin-grid-td--num fin-grid-td--actuals">' + esc(mo.perHl  != null ? fmt(mo.perHl,  2) : '0.00') + '</td>'
+        + '<td class="fin-grid-td fin-grid-td--num fin-grid-td--actuals">' + esc(ytd.perHl != null ? fmt(ytd.perHl, 2) : '0.00') + '</td>'
+        + '<td class="fin-grid-td fin-grid-td--num fin-grid-td--placeholder">—</td>'
+        + '<td class="fin-grid-td fin-grid-td--num fin-grid-td--placeholder">—</td>'
+        + '<td class="fin-grid-td fin-grid-td--num fin-grid-td--placeholder">—</td>'
+        + '<td class="fin-grid-td fin-grid-td--num fin-grid-td--placeholder">—</td>'
+        + '</tr>';
+    });
+
+    // TOTAL row
+    var totMoPhl  = bkMo.totalPerHl  != null ? fmt(bkMo.totalPerHl,  2) : '0.00';
+    var totYtdPhl = bkYtd.totalPerHl != null ? fmt(bkYtd.totalPerHl, 2) : '0.00';
+    html += '<tr class="fin-grid-row fin-grid-row--grand-subtotal">'
+      + '<td class="fin-grid-td fin-grid-td--label fin-grid-td--label-strong">TOTAL COGS VARIABLE</td>'
+      + '<td class="fin-grid-td fin-grid-td--num fin-grid-td--actuals fin-grid-td--bold">' + esc(totMoPhl)  + '</td>'
+      + '<td class="fin-grid-td fin-grid-td--num fin-grid-td--actuals fin-grid-td--bold">' + esc(totYtdPhl) + '</td>'
+      + '<td class="fin-grid-td fin-grid-td--num fin-grid-td--placeholder">—</td>'
+      + '<td class="fin-grid-td fin-grid-td--num fin-grid-td--placeholder">—</td>'
+      + '<td class="fin-grid-td fin-grid-td--num fin-grid-td--placeholder">—</td>'
+      + '<td class="fin-grid-td fin-grid-td--num fin-grid-td--placeholder">—</td>'
+      + '</tr>';
+
+    html += '</tbody></table></div>';
+
+    // CHECK line
+    var diffMo  = chkMo.diffChf  != null ? chkMo.diffChf  : null;
+    var diffYtd = chkYtd.diffChf != null ? chkYtd.diffChf : null;
+    var diffMoPhl  = (diffMo  != null && bkMo.hlPackaged  > 0) ? diffMo  / bkMo.hlPackaged  : null;
+    var diffYtdPhl = (diffYtd != null && bkYtd.hlPackaged > 0) ? diffYtd / bkYtd.hlPackaged : null;
+
+    function checkSign(v) {
+      if (v === null) return '';
+      return v > 0 ? 'fin-check-positive' : (v < 0 ? 'fin-check-negative' : '');
+    }
+    function checkTxt(v) {
+      if (v === null) return '—';
+      return (v >= 0 ? '+' : '') + fmt(v, 2) + ' CHF/HL';
+    }
+
+    html += '<div class="fin-check-row">';
+    html += '<span class="fin-check-label">Écart opérationnel − comptable (mois sélectionné) :</span> ';
+    html += '<span class="fin-check-value ' + checkSign(diffMoPhl) + '">' + esc(checkTxt(diffMoPhl)) + '</span>';
+    html += '&ensp;<span class="fin-check-sep">|</span>&ensp;';
+    html += '<span class="fin-check-label">' + esc(ytdLabel) + ' :</span> ';
+    html += '<span class="fin-check-value ' + checkSign(diffYtdPhl) + '">' + esc(checkTxt(diffYtdPhl)) + '</span>';
+    html += '</div>';
+    html += '<p class="fin-check-note">Un écart important sur un mois non clôturé est attendu (données comptables BC incomplètes).</p>';
+    html += '</div>'; // fin-vue-comptable
+
     wrapEl.innerHTML = html;
   }
 
@@ -910,7 +1066,7 @@
     fetchGridSlice('cop-grid', monthKey, function(err, data) {
       if (copGridLoading) copGridLoading.hidden = true;
       if (!err && data) {
-        renderPLGrid(copGridWrap, data, true);
+        renderCopPLGrid(copGridWrap, data);
       } else {
         copGridWrap.innerHTML = '<p class="fin-empty">Erreur chargement grille COP (' + esc(String(err)) + ').</p>';
       }
@@ -935,7 +1091,7 @@
     fetchGridSlice('cogs-grid', monthKey, function(err, data) {
       if (cogsGridLoading) cogsGridLoading.hidden = true;
       if (!err && data) {
-        renderPLGrid(cogsGridWrap, data, false);
+        renderPLGrid(cogsGridWrap, data);
       } else {
         cogsGridWrap.innerHTML = '<p class="fin-empty">Erreur chargement grille COGS (' + esc(String(err)) + ').</p>';
       }

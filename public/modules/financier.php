@@ -399,7 +399,7 @@ $active_module = 'financier';
           <span class="fin-loading-indicator" id="cop-grid-loading" hidden aria-live="polite">Chargement…</span>
         </div>
       </div>
-      <p class="fin-grid-source-chip">ACTUALS = GL comptabilisé · mois complets uniquement</p>
+      <p class="fin-grid-source-chip">ACTUALS = pipeline opérationnel (cogs-report-data.json) · ÷ HL packagé</p>
       <div class="fin-grid-wrap" id="cop-grid-wrap">
         <p class="fin-empty">Chargement…</p>
       </div>

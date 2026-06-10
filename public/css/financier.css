@@ -1056,6 +1056,85 @@ dialog#fin-sku-modal::backdrop {
   font-style: italic;
 }
 
+/* ── Vue comptable secondary block (COP tab) ─────────────────────────────────*/
+.fin-vue-comptable {
+  margin-top: 2rem;
+  padding: 1.25rem 1.5rem 1.5rem;
+  background: color-mix(in srgb, var(--bg-side) 80%, var(--bg));
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+}
+
+.fin-secondary-title {
+  margin: 0 0 0.35rem;
+  font-size: 0.78rem;
+  font-family: 'JetBrains Mono', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--ink-mute);
+}
+
+.fin-secondary-note {
+  margin: 0 0 1rem;
+  font-size: 0.72rem;
+  font-style: italic;
+  color: var(--ink-faint);
+}
+
+.fin-table-compact {
+  font-size: 0.74rem;
+}
+
+.fin-table-compact .fin-grid-th--label {
+  min-width: 160px;
+}
+
+/* CHECK line */
+.fin-check-row {
+  margin-top: 1rem;
+  padding: 0.6rem 0.85rem;
+  background: color-mix(in srgb, var(--oak) 6%, var(--bg));
+  border-left: 3px solid var(--oak);
+  border-radius: 3px;
+  font-size: 0.78rem;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.5rem;
+}
+
+.fin-check-label {
+  color: var(--ink-mute);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+}
+
+.fin-check-sep {
+  color: var(--hairline);
+}
+
+.fin-check-value {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.fin-check-positive {
+  color: var(--hop, #3d8a42);
+}
+
+.fin-check-negative {
+  color: var(--ember, #c0392b);
+}
+
+.fin-check-note {
+  margin: 0.55rem 0 0;
+  font-size: 0.68rem;
+  font-style: italic;
+  color: var(--ink-faint);
+}
+
 /* ── Responsive ──────────────────────────────────────────────────────────────*/
 @media (max-width: 700px) {
   .fin-wrap { padding: 1rem 0.75rem 3rem; gap: 1.25rem; }
