@@ -614,6 +614,186 @@ body.financier .main {
   color: var(--bg);
 }
 
+/* ── P&L Grid ────────────────────────────────────────────────────────────────*/
+
+.fin-card--grid {
+  padding: 0;
+  overflow: hidden;
+}
+
+.fin-grid-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.fin-grid-source-chip {
+  font-size: 0.72rem;
+  color: var(--ink-mute);
+  font-style: italic;
+  margin: 0;
+  padding: 0.35rem 1.25rem;
+  background: color-mix(in srgb, var(--oak) 4%, var(--bg));
+  border-bottom: 1px solid var(--hairline);
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 0.03em;
+}
+
+.fin-grid-wrap {
+  padding: 0;
+}
+
+.fin-grid-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Grid table */
+.fin-grid-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.79rem;
+  font-family: 'DM Sans', sans-serif;
+  min-width: 680px;
+}
+
+/* Header rows */
+.fin-grid-hdr th {
+  padding: 0.45rem 0.75rem;
+  font-size: 0.68rem;
+  font-family: 'JetBrains Mono', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  white-space: nowrap;
+  vertical-align: bottom;
+  background: var(--bg-side);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.fin-grid-hdr--group th {
+  border-top: 1px solid var(--hairline);
+  text-align: center;
+}
+
+.fin-grid-hdr--sub th,
+.fin-grid-hdr--unit th {
+  text-align: right;
+  color: var(--ink-mute);
+}
+
+.fin-grid-th--label {
+  text-align: left !important;
+  min-width: 240px;
+  border-right: 1.5px solid var(--hairline);
+}
+
+.fin-grid-th--group {
+  border-left: 1px solid var(--hairline);
+  border-right: 1px solid var(--hairline);
+}
+
+.fin-grid-th--actuals {
+  color: var(--oak-deep);
+}
+
+.fin-grid-th--placeholder {
+  color: var(--ink-faint);
+}
+
+/* Body rows */
+.fin-grid-row td {
+  padding: 0.42rem 0.75rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--hairline) 50%, transparent);
+  vertical-align: middle;
+}
+
+.fin-grid-row:hover td {
+  background: color-mix(in srgb, var(--oak) 3%, var(--bg-elev));
+}
+
+/* Section header rows */
+.fin-grid-row--section td {
+  background: color-mix(in srgb, var(--oak) 10%, var(--bg-side));
+  font-size: 0.68rem;
+  font-family: 'JetBrains Mono', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--oak-deep);
+  font-weight: 600;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1.5px solid var(--hairline);
+}
+
+/* Sub-header rows */
+.fin-grid-row--subhdr td {
+  font-size: 0.72rem;
+  font-family: 'JetBrains Mono', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-mute);
+  padding: 0.35rem 0.75rem 0.25rem 1.25rem;
+  background: color-mix(in srgb, var(--oak) 4%, var(--bg));
+  border-bottom: none;
+}
+
+/* Subtotal rows */
+.fin-grid-row--subtotal td {
+  background: color-mix(in srgb, var(--oak) 5%, var(--bg-elev));
+  border-bottom: 1.5px solid var(--hairline);
+  border-top: 1px solid var(--hairline);
+}
+
+/* Grand subtotal rows */
+.fin-grid-row--grand-subtotal td {
+  background: color-mix(in srgb, var(--oak) 10%, var(--bg-elev));
+  border-top: 2px solid var(--oak);
+  border-bottom: 2px solid var(--oak);
+}
+
+/* Total row */
+.fin-grid-row--total td {
+  background: color-mix(in srgb, var(--oak) 18%, var(--bg-elev));
+  border-top: 2px solid var(--oak-deep);
+  border-bottom: 2px solid var(--oak-deep);
+}
+
+/* Cell types */
+.fin-grid-td--label {
+  color: var(--ink);
+  padding-left: 1.5rem;
+  border-right: 1.5px solid var(--hairline);
+}
+
+.fin-grid-td--label-strong {
+  font-weight: 600;
+  padding-left: 0.75rem;
+  color: var(--ink);
+}
+
+.fin-grid-td--num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.76rem;
+}
+
+.fin-grid-td--actuals {
+  color: var(--ink);
+}
+
+.fin-grid-td--placeholder {
+  color: var(--ink-faint);
+}
+
+.fin-grid-td--bold {
+  font-weight: 600;
+}
+
+/* Negative values get ember colour */
+.fin-grid-td--actuals.fin-grid-td--negative {
+  color: var(--ember);
+}
+
 /* ── SR-only helper ──────────────────────────────────────────────────────────*/
 .sr-only {
   position: absolute;
@@ -623,6 +803,257 @@ body.financier .main {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
+}
+
+/* ── SKU drilldown button (replaces <a> link) ────────────────────────────────*/
+body.financier .sku-drilldown-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+}
+
+body.financier .sku-drilldown-btn:focus-visible {
+  outline: 2px solid var(--hop);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+body.financier .sku-drilldown-btn .wort-mono {
+  color: var(--oak-deep);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+body.financier .sku-drilldown-btn:hover .wort-mono {
+  color: var(--hop-deep);
+}
+
+/* ── BOM Drilldown Modal ─────────────────────────────────────────────────────
+   Top-layer discipline (ui skill):
+   · Base `dialog#fin-sku-modal` has NO display rule — UA display:none when
+     closed is preserved. Any unconditional `display:` would make it permanently
+     visible (the <dialog> display trap).
+   · Layout lives entirely under `dialog#fin-sku-modal[open]`.
+   · Backdrop: dialog element itself is inset:0/position:fixed with semi-opaque bg.
+   · Inner content box .fin-modal-inner — click on dialog outside inner = backdrop close.
+────────────────────────────────────────────────────────────────────────────── */
+
+/* Base reset — NO display property */
+dialog#fin-sku-modal {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  max-width: none;
+  max-height: none;
+  overflow: visible;
+}
+
+/* Layout — only when open */
+dialog#fin-sku-modal[open] {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  background: rgba(30, 18, 5, 0.42);
+}
+
+dialog#fin-sku-modal::backdrop {
+  background: rgba(30, 18, 5, 0.42);
+}
+
+/* Inner content box */
+.fin-modal-inner {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(30, 18, 5, 0.22);
+  width: min(860px, 94vw);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Header */
+.fin-modal-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 1.2rem 3.5rem 1rem 1.4rem;  /* right pad for close button */
+  border-bottom: 1.5px solid var(--hairline);
+  background: var(--bg-side);
+  border-radius: 10px 10px 0 0;
+  position: relative;
+}
+
+.fin-modal-header__meta {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.fin-modal-sku-code {
+  font-size: 1.25rem;
+  font-weight: 500;
+  color: var(--oak-deep);
+  letter-spacing: 0.03em;
+}
+
+.fin-modal-recipe {
+  font-size: 0.88rem;
+  color: var(--ink-mute);
+  font-family: 'DM Sans', sans-serif;
+}
+
+.fin-modal-header__costs {
+  display: flex;
+  gap: 1.2rem;
+  flex-shrink: 0;
+}
+
+.fin-modal-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  text-align: right;
+}
+
+.fin-modal-kpi__val {
+  font-size: 1.1rem;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.fin-modal-kpi--accent .fin-modal-kpi__val {
+  color: var(--oak-deep);
+}
+
+.fin-modal-kpi__label {
+  font-size: 0.68rem;
+  color: var(--ink-mute);
+  font-family: 'JetBrains Mono', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.fin-modal-close {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.85rem;
+  background: none;
+  border: none;
+  font-size: 1rem;
+  color: var(--ink-mute);
+  cursor: pointer;
+  padding: 0;
+  border-radius: 4px;
+  line-height: 1;
+  min-width: 44px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s, color 0.12s;
+}
+
+.fin-modal-close:hover {
+  background: color-mix(in srgb, var(--ink) 8%, var(--bg-elev));
+  color: var(--ink);
+}
+
+.fin-modal-close:focus-visible {
+  outline: 2px solid var(--hop);
+  outline-offset: 2px;
+}
+
+/* Scrollable body */
+.fin-modal-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+}
+
+.fin-modal-table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Reuse .wort-table / .sku-bom-table from app.css — min-width to allow scroll */
+.fin-modal-bom-table {
+  min-width: 560px;
+}
+
+.fin-modal-loading {
+  padding: 2rem;
+  text-align: center;
+  color: var(--ink-mute);
+  font-style: italic;
+  animation: fin-pulse 1.2s ease-in-out infinite;
+}
+
+/* Subtotals */
+.fin-modal-subtotals {
+  border-top: 1.5px solid var(--hairline);
+  padding: 0.85rem 1.2rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  background: color-mix(in srgb, var(--oak) 3%, var(--bg-elev));
+}
+
+.fin-modal-subtot-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 0.82rem;
+  color: var(--ink-mute);
+}
+
+.fin-modal-subtot-row--total {
+  border-top: 1px solid var(--hairline);
+  padding-top: 0.4rem;
+  margin-top: 0.15rem;
+  font-size: 0.9rem;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.fin-modal-subtot-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.fin-modal-subtot-row--total .fin-modal-subtot-label {
+  font-size: 0.8rem;
+}
+
+.fin-modal-subtot-val {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Footer */
+.fin-modal-footer {
+  padding: 0.6rem 1.2rem;
+  border-top: 1px solid var(--hairline);
+  background: var(--bg-side);
+  border-radius: 0 0 10px 10px;
+  flex-shrink: 0;
+}
+
+.fin-modal-freshness {
+  font-size: 0.72rem;
+  color: var(--ink-faint);
+  font-style: italic;
 }
 
 /* ── Responsive ──────────────────────────────────────────────────────────────*/

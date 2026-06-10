@@ -150,6 +150,39 @@ $salesFreshnessLabel = $salesLatestKey ? fin_month_label($salesLatestKey) : null
 /* Flags JSON pour injection XSS-safe */
 $JSON_FLAGS = JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP;
 
+/* ── GL Months — months available in inv_charges_bc ──────────────────────── */
+/* Fetched once server-side and injected for the grid month pickers.          */
+$glMonths        = [];
+$glLatestMonth   = null;
+
+try {
+    $pdoGl = maltytask_pdo();
+    // Fetch month + row count to default to the most-populated (complete) month
+    $glPtRows = $pdoGl->query(
+        "SELECT period_text, COUNT(*) AS cnt FROM inv_charges_bc WHERE is_summary = 0 GROUP BY period_text ORDER BY period_text"
+    )->fetchAll(PDO::FETCH_ASSOC);
+
+    $glMonthCounts = [];   // mk → row count
+    foreach ($glPtRows as $row) {
+        $pt = $row['period_text'] ?? '';
+        if (!preg_match('/01\.(\d{2})\.(\d{2})/', $pt, $ptm)) continue;
+        $mk = '20' . $ptm[2] . '-' . $ptm[1];
+        if (!isset($glMonthCounts[$mk])) {
+            $glMonthCounts[$mk] = 0;
+            $glMonths[] = $mk;
+        }
+        $glMonthCounts[$mk] += (int) $row['cnt'];
+    }
+    sort($glMonths);
+    // Default = month with the highest row count (most complete GL export)
+    if (!empty($glMonthCounts)) {
+        arsort($glMonthCounts);
+        $glLatestMonth = array_key_first($glMonthCounts);
+    }
+} catch (Throwable $e) {
+    // Non-fatal — grid will show empty state
+}
+
 /* ── Module D — Coût par SKU (lec ture BOM compilé depuis ref_sku_bom) ────── */
 /* Même requête que sku-costs.php — lecture seule, DB canonique, jamais recalculé ici */
 
@@ -348,6 +381,31 @@ $active_module = 'financier';
       <p class="fin-empty">Données COP indisponibles.</p>
     <?php else: ?>
 
+    <!-- ── P&L Grid — COP tab (top card) ───────────────────────────────────── -->
+    <?php if (!empty($glMonths)): ?>
+    <div class="fin-card fin-card--grid" id="cop-grid-card">
+      <div class="fin-card__head">
+        <h3 class="fin-card__title">P&amp;L Grid — Coût de Production (CHF/HL)</h3>
+        <div class="fin-grid-controls">
+          <label class="fin-picker-label" for="cop-grid-month-select">Mois</label>
+          <select id="cop-grid-month-select" class="fin-month-select" aria-label="Sélection du mois P&L COP">
+            <?php foreach (array_reverse($glMonths) as $mk): ?>
+              <option value="<?= htmlspecialchars($mk) ?>"
+                <?= ($mk === $glLatestMonth) ? 'selected' : '' ?>>
+                <?= htmlspecialchars(fin_month_label($mk)) ?>
+              </option>
+            <?php endforeach ?>
+          </select>
+          <span class="fin-loading-indicator" id="cop-grid-loading" hidden aria-live="polite">Chargement…</span>
+        </div>
+      </div>
+      <p class="fin-grid-source-chip">ACTUALS = GL comptabilisé · mois complets uniquement</p>
+      <div class="fin-grid-wrap" id="cop-grid-wrap">
+        <p class="fin-empty">Chargement…</p>
+      </div>
+    </div>
+    <?php endif ?>
+
     <div class="fin-freshness">
       <span class="fin-freshness__label">
         COP au <?= htmlspecialchars($copFreshnessLabel ?? '—') ?>
@@ -398,6 +456,31 @@ $active_module = 'financier';
     <?php if (empty($salesTrendSeries)): ?>
       <p class="fin-empty">Données COGS indisponibles.</p>
     <?php else: ?>
+
+    <!-- ── P&L Grid — COGS tab (top card) ──────────────────────────────────── -->
+    <?php if (!empty($glMonths)): ?>
+    <div class="fin-card fin-card--grid" id="cogs-grid-card">
+      <div class="fin-card__head">
+        <h3 class="fin-card__title">P&amp;L Grid — COGS Variables (CHF/HL)</h3>
+        <div class="fin-grid-controls">
+          <label class="fin-picker-label" for="cogs-grid-month-select">Mois</label>
+          <select id="cogs-grid-month-select" class="fin-month-select" aria-label="Sélection du mois P&L COGS">
+            <?php foreach (array_reverse($glMonths) as $mk): ?>
+              <option value="<?= htmlspecialchars($mk) ?>"
+                <?= ($mk === $glLatestMonth) ? 'selected' : '' ?>>
+                <?= htmlspecialchars(fin_month_label($mk)) ?>
+              </option>
+            <?php endforeach ?>
+          </select>
+          <span class="fin-loading-indicator" id="cogs-grid-loading" hidden aria-live="polite">Chargement…</span>
+        </div>
+      </div>
+      <p class="fin-grid-source-chip">ACTUALS = GL comptabilisé · mois complets uniquement</p>
+      <div class="fin-grid-wrap" id="cogs-grid-wrap">
+        <p class="fin-empty">Chargement…</p>
+      </div>
+    </div>
+    <?php endif ?>
 
     <div class="fin-freshness">
       <span class="fin-freshness__label">
@@ -685,9 +768,11 @@ $active_module = 'financier';
                   <?php endif ?>
                 </td>
                 <td class="wort-td sku-td sku-td--code">
-                  <a class="sku-code-link" href="/modules/sku-cost-detail.php?sku=<?= urlencode($r['sku_code'] ?? '') ?>">
+                  <button type="button" class="sku-code-link sku-drilldown-btn"
+                          data-sku="<?= htmlspecialchars($r['sku_code'] ?? '', ENT_QUOTES) ?>"
+                          aria-label="Détail BOM — <?= htmlspecialchars($r['sku_code'] ?? '', ENT_QUOTES) ?>">
                     <span class="wort-mono"><?= htmlspecialchars($r['sku_code'] ?? '—') ?></span>
-                  </a>
+                  </button>
                 </td>
                 <td class="wort-td sku-td sku-td--format">
                   <span class="sku-format-badge sku-format-badge--<?= htmlspecialchars(strtolower($fmt)) ?>">
@@ -753,6 +838,48 @@ $active_module = 'financier';
   <?php endif ?>
 
 </div><!-- /.fin-wrap -->
+
+<!-- ── Modal BOM drilldown — opened by JS on SKU click ─────────────────────
+     Top-layer rules (ui skill):
+     · Base `dialog` has NO display property — the UA default (display:none when
+       closed) must stand; any unconditional display rule makes it permanently visible.
+     · Layout is scoped to dialog[open] only (position:fixed + display:grid).
+     · Helper elements (close button, loading spinner) are mounted INSIDE the dialog
+       so they render in the browser top layer with the modal.
+     · No loading="lazy" on any content — content is hidden until showModal(),
+       so lazy images/elements would never enter the viewport.
+──────────────────────────────────────────────────────────────────────────── -->
+<dialog id="fin-sku-modal" aria-labelledby="fin-sku-modal-title" aria-modal="true">
+  <div class="fin-modal-inner">
+    <header class="fin-modal-header">
+      <div class="fin-modal-header__meta">
+        <span id="fin-sku-modal-title" class="fin-modal-sku-code wort-mono"></span>
+        <span class="fin-modal-recipe"></span>
+        <span class="fin-modal-format-badge"></span>
+      </div>
+      <div class="fin-modal-header__costs">
+        <div class="fin-modal-kpi">
+          <span class="fin-modal-kpi__val wort-mono" id="fin-modal-total-chf"></span>
+          <span class="fin-modal-kpi__label">Total CHF</span>
+        </div>
+        <div class="fin-modal-kpi fin-modal-kpi--accent">
+          <span class="fin-modal-kpi__val wort-mono" id="fin-modal-chf-hl"></span>
+          <span class="fin-modal-kpi__label">CHF / HL</span>
+        </div>
+      </div>
+      <button type="button" class="fin-modal-close" id="fin-sku-modal-close"
+              aria-label="Fermer le détail BOM">&#x2715;</button>
+    </header>
+
+    <div class="fin-modal-body" id="fin-modal-body">
+      <!-- Populated by JS on fetch; never lazy-loaded -->
+    </div>
+
+    <footer class="fin-modal-footer">
+      <span class="fin-modal-freshness" id="fin-modal-freshness"></span>
+    </footer>
+  </div>
+</dialog>
 </main>
 
 <!-- ─── Payload JSON injecté côté serveur — consommé par financier.js ─────── -->
@@ -769,6 +896,10 @@ window.FIN_SALES_DEFAULT = <?= json_encode($salesLatestKey,  $JSON_FLAGS) ?>;
 
 /* Slice du mois par défaut pré-chargée pour rendu immédiat (dernier mois seulement) */
 window.FIN_SALES_DEFAULT_SLICE = <?= json_encode($defaultSalesSlice, $JSON_FLAGS) ?>;
+
+/* GL months — months with booked GL rows in inv_charges_bc */
+window.FIN_GL_MONTHS   = <?= json_encode($glMonths,      $JSON_FLAGS) ?>;
+window.FIN_GL_DEFAULT  = <?= json_encode($glLatestMonth, $JSON_FLAGS) ?>;
 </script>
 
 <script src="/js/kpi-charts.js?v=<?= @filemtime(__DIR__ . '/../js/kpi-charts.js') ?: time() ?>"></script>

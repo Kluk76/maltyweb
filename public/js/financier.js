@@ -724,6 +724,232 @@
   }
 
   /* ════════════════════════════════════════════════════════════════════════════
+     MODULE GL-GRID — P&L Grid (COP + COGS tabs)
+  ════════════════════════════════════════════════════════════════════════════ */
+
+  /* Simple per-module fetch cache keyed by "module:monthKey" */
+  var gridCache = {};
+
+  function fetchGridSlice(gridModule, monthKey, cb) {
+    var cacheKey = gridModule + ':' + monthKey;
+    if (gridCache[cacheKey]) { cb(null, gridCache[cacheKey]); return; }
+    fetch('/api/financier-data.php?module=' + encodeURIComponent(gridModule)
+          + '&month=' + encodeURIComponent(monthKey))
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.ok) { gridCache[cacheKey] = data; }
+        cb(data.ok ? null : (data.reason || 'error'), data);
+      })
+      .catch(function() { cb('network_error', null); });
+  }
+
+  /**
+   * Render a P&L grid into `wrapEl`.
+   * data: the endpoint response {tree, ytdLabel, hlMonth, hlYtd, month}
+   * isCop: true for COP grid (6M ROLLING), false for COGS grid (YTD)
+   */
+  function renderPLGrid(wrapEl, data, isCop) {
+    if (!wrapEl || !data || !data.tree) {
+      if (wrapEl) wrapEl.innerHTML = '<p class="fin-empty">Données indisponibles.</p>';
+      return;
+    }
+
+    var tree     = data.tree;
+    var ytdLabel = data.ytdLabel || (isCop ? '6M ROLLING' : 'YTD');
+
+    // COGS grid columns: ACTUALS[month,YTD] | BUDGET[month,YTD] | N-1[month,YTD] | Vs BUDGET[month,YTD] | Vs N-1[month,YTD]
+    // COP grid columns:  ACTUALS[month,6M]  | N-1[month,6M]     | Vs N-1[month,6M]
+
+    var html = '<div class="fin-grid-scroll"><table class="fin-grid-table" aria-label="P&amp;L Grid">';
+
+    // 3-row header
+    html += '<thead>';
+
+    if (!isCop) {
+      // COGS: 5 groups × 2 cols = 10 data cols + 1 label col
+      html += '<tr class="fin-grid-hdr fin-grid-hdr--group">'
+        + '<th rowspan="3" class="fin-grid-th fin-grid-th--label" scope="col"></th>'
+        + '<th colspan="2" class="fin-grid-th fin-grid-th--group fin-grid-th--actuals" scope="colgroup">ACTUALS</th>'
+        + '<th colspan="2" class="fin-grid-th fin-grid-th--group fin-grid-th--placeholder" scope="colgroup">BUDGET</th>'
+        + '<th colspan="2" class="fin-grid-th fin-grid-th--group fin-grid-th--placeholder" scope="colgroup">N-1</th>'
+        + '<th colspan="2" class="fin-grid-th fin-grid-th--group fin-grid-th--placeholder" scope="colgroup">Vs BUDGET</th>'
+        + '<th colspan="2" class="fin-grid-th fin-grid-th--group fin-grid-th--placeholder" scope="colgroup">Vs N-1</th>'
+        + '</tr>';
+      html += '<tr class="fin-grid-hdr fin-grid-hdr--sub">'
+        + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--actuals" scope="col">Mois</th>'
+        + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--actuals" scope="col">' + esc(ytdLabel) + '</th>'
+        + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--placeholder" scope="col">Mois</th>'
+        + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--placeholder" scope="col">' + esc(ytdLabel) + '</th>'
+        + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--placeholder" scope="col">Mois</th>'
+        + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--placeholder" scope="col">' + esc(ytdLabel) + '</th>'
+        + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--placeholder" scope="col">Mois</th>'
+        + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--placeholder" scope="col">' + esc(ytdLabel) + '</th>'
+        + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--placeholder" scope="col">Mois</th>'
+        + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--placeholder" scope="col">' + esc(ytdLabel) + '</th>'
+        + '</tr>';
+      html += '<tr class="fin-grid-hdr fin-grid-hdr--unit">'
+        + '<th class="fin-grid-th fin-grid-th--actuals" scope="col">CHF/HL</th>'
+        + '<th class="fin-grid-th fin-grid-th--actuals" scope="col">CHF/HL</th>'
+        + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">CHF/HL</th>'
+        + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">CHF/HL</th>'
+        + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">CHF/HL</th>'
+        + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">CHF/HL</th>'
+        + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">CHF/HL</th>'
+        + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">CHF/HL</th>'
+        + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">CHF/HL</th>'
+        + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">CHF/HL</th>'
+        + '</tr>';
+    } else {
+      // COP: 3 groups × 2 cols = 6 data cols + 1 label col
+      html += '<tr class="fin-grid-hdr fin-grid-hdr--group">'
+        + '<th rowspan="3" class="fin-grid-th fin-grid-th--label" scope="col"></th>'
+        + '<th colspan="2" class="fin-grid-th fin-grid-th--group fin-grid-th--actuals" scope="colgroup">ACTUALS</th>'
+        + '<th colspan="2" class="fin-grid-th fin-grid-th--group fin-grid-th--placeholder" scope="colgroup">N-1</th>'
+        + '<th colspan="2" class="fin-grid-th fin-grid-th--group fin-grid-th--placeholder" scope="colgroup">Vs N-1</th>'
+        + '</tr>';
+      html += '<tr class="fin-grid-hdr fin-grid-hdr--sub">'
+        + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--actuals" scope="col">Mois</th>'
+        + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--actuals" scope="col">' + esc(ytdLabel) + '</th>'
+        + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--placeholder" scope="col">Mois</th>'
+        + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--placeholder" scope="col">' + esc(ytdLabel) + '</th>'
+        + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--placeholder" scope="col">Mois</th>'
+        + '<th class="fin-grid-th fin-grid-th--period fin-grid-th--placeholder" scope="col">' + esc(ytdLabel) + '</th>'
+        + '</tr>';
+      html += '<tr class="fin-grid-hdr fin-grid-hdr--unit">'
+        + '<th class="fin-grid-th fin-grid-th--actuals" scope="col">CHF/HL</th>'
+        + '<th class="fin-grid-th fin-grid-th--actuals" scope="col">CHF/HL</th>'
+        + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">CHF/HL</th>'
+        + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">CHF/HL</th>'
+        + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">CHF/HL</th>'
+        + '<th class="fin-grid-th fin-grid-th--placeholder" scope="col">CHF/HL</th>'
+        + '</tr>';
+    }
+
+    html += '</thead><tbody>';
+
+    var numCols = isCop ? 6 : 10;
+
+    tree.forEach(function(row) {
+      var rowType = row.rowType;
+
+      if (rowType === 'section') {
+        html += '<tr class="fin-grid-row fin-grid-row--section">'
+          + '<td colspan="' + (numCols + 1) + '" class="fin-grid-td fin-grid-td--section">'
+          + esc(row.label) + '</td></tr>';
+        return;
+      }
+      if (rowType === 'sub_header') {
+        html += '<tr class="fin-grid-row fin-grid-row--subhdr">'
+          + '<td colspan="' + (numCols + 1) + '" class="fin-grid-td fin-grid-td--subhdr">'
+          + esc(row.label) + '</td></tr>';
+        return;
+      }
+
+      var isSubtotal    = (rowType === 'subtotal');
+      var isGrandSub    = (rowType === 'grand_subtotal');
+      var isTotal       = (rowType === 'total');
+      var isPlaceholder = !!row.placeholder;
+
+      var rowCls = 'fin-grid-row';
+      if (isSubtotal)  rowCls += ' fin-grid-row--subtotal';
+      if (isGrandSub)  rowCls += ' fin-grid-row--grand-subtotal';
+      if (isTotal)     rowCls += ' fin-grid-row--total';
+
+      var labelCls = 'fin-grid-td fin-grid-td--label';
+      if (isSubtotal || isGrandSub || isTotal) labelCls += ' fin-grid-td--label-strong';
+
+      // Cell value helpers
+      function valCell(phl, isAct) {
+        var cls = 'fin-grid-td fin-grid-td--num';
+        if (isAct) cls += ' fin-grid-td--actuals';
+        else       cls += ' fin-grid-td--placeholder';
+        if (isSubtotal || isGrandSub || isTotal) cls += ' fin-grid-td--bold';
+        var txt;
+        if (!isAct || isPlaceholder) {
+          txt = '—';
+        } else if (phl === null || phl === undefined) {
+          txt = '0.00';
+        } else {
+          if (phl < 0) cls += ' fin-grid-td--negative';
+          txt = fmt(phl, 2);
+        }
+        return '<td class="' + cls + '">' + esc(txt) + '</td>';
+      }
+
+      html += '<tr class="' + rowCls + '">';
+      html += '<td class="' + labelCls + '">' + esc(row.label) + '</td>';
+
+      // ACTUALS month
+      html += valCell(row.phlMonth, true);
+      // ACTUALS YTD/6M
+      html += valCell(row.phlYtd, true);
+
+      if (!isCop) {
+        // BUDGET month, YTD; N-1 month, YTD; Vs BUDGET month, YTD; Vs N-1 month, YTD
+        for (var i = 0; i < 8; i++) html += valCell(null, false);
+      } else {
+        // N-1 month, 6M; Vs N-1 month, 6M
+        for (var j = 0; j < 4; j++) html += valCell(null, false);
+      }
+
+      html += '</tr>';
+    });
+
+    html += '</tbody></table></div>';
+    wrapEl.innerHTML = html;
+  }
+
+  /* ── COP grid ──────────────────────────────────────────────────────────── */
+  var copGridSelect  = document.getElementById('cop-grid-month-select');
+  var copGridLoading = document.getElementById('cop-grid-loading');
+  var copGridWrap    = document.getElementById('cop-grid-wrap');
+
+  function loadAndRenderCopGrid(monthKey) {
+    if (!copGridWrap) return;
+    if (copGridLoading) copGridLoading.hidden = false;
+    fetchGridSlice('cop-grid', monthKey, function(err, data) {
+      if (copGridLoading) copGridLoading.hidden = true;
+      if (!err && data) {
+        renderPLGrid(copGridWrap, data, true);
+      } else {
+        copGridWrap.innerHTML = '<p class="fin-empty">Erreur chargement grille COP (' + esc(String(err)) + ').</p>';
+      }
+    });
+  }
+
+  if (copGridSelect) {
+    var copGridDefault = window.FIN_GL_DEFAULT || (window.FIN_GL_MONTHS && window.FIN_GL_MONTHS.length
+      ? window.FIN_GL_MONTHS[window.FIN_GL_MONTHS.length - 1] : null);
+    if (copGridDefault) loadAndRenderCopGrid(copGridDefault);
+    copGridSelect.addEventListener('change', function() { loadAndRenderCopGrid(this.value); });
+  }
+
+  /* ── COGS grid ─────────────────────────────────────────────────────────── */
+  var cogsGridSelect  = document.getElementById('cogs-grid-month-select');
+  var cogsGridLoading = document.getElementById('cogs-grid-loading');
+  var cogsGridWrap    = document.getElementById('cogs-grid-wrap');
+
+  function loadAndRenderCogsGrid(monthKey) {
+    if (!cogsGridWrap) return;
+    if (cogsGridLoading) cogsGridLoading.hidden = false;
+    fetchGridSlice('cogs-grid', monthKey, function(err, data) {
+      if (cogsGridLoading) cogsGridLoading.hidden = true;
+      if (!err && data) {
+        renderPLGrid(cogsGridWrap, data, false);
+      } else {
+        cogsGridWrap.innerHTML = '<p class="fin-empty">Erreur chargement grille COGS (' + esc(String(err)) + ').</p>';
+      }
+    });
+  }
+
+  if (cogsGridSelect) {
+    var cogsGridDefault = window.FIN_GL_DEFAULT || (window.FIN_GL_MONTHS && window.FIN_GL_MONTHS.length
+      ? window.FIN_GL_MONTHS[window.FIN_GL_MONTHS.length - 1] : null);
+    if (cogsGridDefault) loadAndRenderCogsGrid(cogsGridDefault);
+    cogsGridSelect.addEventListener('change', function() { loadAndRenderCogsGrid(this.value); });
+  }
+
+  /* ════════════════════════════════════════════════════════════════════════════
      MODULE D — Coût par SKU — filtres client-side
      Filtre les lignes déjà rendues (server-side) sans rechargement.
   ════════════════════════════════════════════════════════════════════════════ */
@@ -796,6 +1022,213 @@
         formatSel.value = '';
         classSel.value  = '';
         applyFilters();
+      });
+    }
+  }());
+
+  /* ════════════════════════════════════════════════════════════════════════════
+     MODULE D — Coût par SKU — DRILLDOWN MODAL
+     Opens an in-page <dialog> with BOM decomposition when a SKU code is clicked.
+     Lazy endpoint: /api/financier-data.php?module=sku-detail&sku=CODE
+     Cache: one entry per SKU code (same sliceCache pattern as COGS months).
+  ════════════════════════════════════════════════════════════════════════════ */
+  (function() {
+    var modal     = document.getElementById('fin-sku-modal');
+    var modalBody = document.getElementById('fin-modal-body');
+    var closeBtn  = document.getElementById('fin-sku-modal-close');
+    if (!modal) return;
+
+    /* Per-SKU response cache */
+    var skuCache = {};
+
+    /* Fetch with dedup — mirrors fetchCogsSlice pattern */
+    var skuInflight = {};
+    function fetchSkuDetail(skuCode, cb) {
+      if (skuCache[skuCode]) { cb(null, skuCache[skuCode]); return; }
+      if (skuInflight[skuCode]) { skuInflight[skuCode].push(cb); return; }
+      skuInflight[skuCode] = [cb];
+      fetch('/api/financier-data.php?module=sku-detail&sku=' + encodeURIComponent(skuCode))
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          if (data.ok) { skuCache[skuCode] = data; }
+          var cbs = skuInflight[skuCode] || [];
+          delete skuInflight[skuCode];
+          cbs.forEach(function(fn) { fn(data.ok ? null : (data.reason || 'error'), data); });
+        })
+        .catch(function(err) {
+          var cbs = skuInflight[skuCode] || [];
+          delete skuInflight[skuCode];
+          cbs.forEach(function(fn) { fn('network_error', null); });
+        });
+    }
+
+    /* Populate modal header fields */
+    function populateModalHeader(data) {
+      var titleEl = document.getElementById('fin-sku-modal-title');
+      var recipeEl = modal.querySelector('.fin-modal-recipe');
+      var fmtEl    = modal.querySelector('.fin-modal-format-badge');
+      var totalEl  = document.getElementById('fin-modal-total-chf');
+      var chlEl    = document.getElementById('fin-modal-chf-hl');
+      var freshEl  = document.getElementById('fin-modal-freshness');
+
+      if (titleEl)  titleEl.textContent  = data.sku_code || '';
+      if (recipeEl) recipeEl.textContent = data.recipe_short_name || '';
+      if (fmtEl) {
+        var fmtLow = (data.format || '').toLowerCase();
+        fmtEl.className = 'fin-modal-format-badge sku-format-badge sku-format-badge--' + esc(fmtLow);
+        fmtEl.textContent = data.format || '';
+      }
+      if (totalEl) totalEl.textContent = fmtChf(data.total || 0) + ' CHF';
+      if (chlEl)   chlEl.textContent   = data.chf_per_hl != null ? fmtChf(data.chf_per_hl) + ' CHF/HL' : '—';
+      if (freshEl) freshEl.textContent = data.freshness
+        ? 'BOM compilé le ' + data.freshness
+        : '';
+    }
+
+    /* Render BOM table + subtotals into modal body.
+       Reuses .wort-table / .sku-bom-table classes from app.css — same look as
+       sku-cost-detail.php. Every cell is run through esc() — no raw interpolation. */
+    function renderModalBody(data) {
+      if (!modalBody) return;
+      var lines   = data.lines  || [];
+      var total   = data.total  || 0;
+      var brewSub = data.brewing_subtotal   || 0;
+      var pkgSub  = data.packaging_subtotal || 0;
+
+      if (!lines.length) {
+        modalBody.innerHTML = '<p class="fin-empty">Aucune ligne BOM.</p>';
+        return;
+      }
+
+      var html = '<div class="fin-modal-table-scroll">'
+        + '<table class="wort-table sku-bom-table fin-modal-bom-table" aria-label="BOM ' + esc(data.sku_code || '') + '">'
+        + '<thead><tr>'
+        + '<th scope="col">Catégorie</th>'
+        + '<th scope="col">Ingrédient</th>'
+        + '<th scope="col">MI ID</th>'
+        + '<th scope="col" class="fin-th--num">Qté</th>'
+        + '<th scope="col">Unité</th>'
+        + '<th scope="col" class="fin-th--num">Prix</th>'
+        + '<th scope="col" class="fin-th--num">Coût CHF</th>'
+        + '</tr></thead><tbody>';
+
+      var prevSource = null;
+      for (var i = 0; i < lines.length; i++) {
+        var b      = lines[i];
+        var src    = b.source || '';
+        var cost   = typeof b.cost === 'number' ? b.cost : 0;
+        var miMatched = !!b.mi_canonical;
+
+        if (src !== prevSource) {
+          html += '<tr class="sku-bom-source-head">'
+            + '<td colspan="7" class="sku-bom-source-head__cell">' + esc(src || '—') + '</td>'
+            + '</tr>';
+          prevSource = src;
+        }
+
+        var catLabel = esc(b.category_canonical || b.category_raw || '—');
+        var ingLabel = '<span class="' + (miMatched ? 'sku-ing--matched' : 'sku-ing--unresolved') + '">'
+          + esc(b.ingredient_raw || '—') + '</span>';
+        var miLabel  = b.mi_canonical
+          ? '<span class="wort-mono wort-muted sku-bom-miid">' + esc(b.mi_canonical) + '</span>'
+          : '<span class="wort-muted">—</span>';
+        var qtyLabel = (typeof b.qty_per_unit === 'number')
+          ? '<span class="wort-mono">' + esc(fmt(b.qty_per_unit, 4)) + '</span>'
+          : '—';
+        var priceLabel = (typeof b.price === 'number')
+          ? '<span class="wort-mono wort-muted">' + esc(fmt(b.price, 4))
+            + (b.currency && b.currency !== 'CHF' ? ' <span class="sku-bom-currency">' + esc(b.currency) + '</span>' : '')
+            + '</span>'
+          : '—';
+        var costLabel = cost > 0
+          ? '<span class="wort-mono sku-total-cost">' + esc(fmt(cost, 3)) + '</span>'
+          : '—';
+
+        html += '<tr class="sku-bom-row">'
+          + '<td class="wort-td sku-bom-td sku-bom-td--cat">' + catLabel + '</td>'
+          + '<td class="wort-td sku-bom-td sku-bom-td--ing">' + ingLabel + '</td>'
+          + '<td class="wort-td sku-bom-td sku-bom-td--miid">' + miLabel + '</td>'
+          + '<td class="wort-td sku-bom-td sku-bom-td--num">' + qtyLabel + '</td>'
+          + '<td class="wort-td sku-bom-td">' + esc(b.ing_unit || '—') + '</td>'
+          + '<td class="wort-td sku-bom-td sku-bom-td--num">' + priceLabel + '</td>'
+          + '<td class="wort-td sku-bom-td sku-bom-td--num">' + costLabel + '</td>'
+          + '</tr>';
+      }
+      html += '</tbody></table></div>';
+
+      /* Subtotals section */
+      html += '<div class="fin-modal-subtotals">'
+        + '<div class="fin-modal-subtot-row">'
+        + '<span class="fin-modal-subtot-label">Brewing</span>'
+        + '<span class="fin-modal-subtot-val wort-mono">' + esc(fmtChf(brewSub)) + ' CHF</span>'
+        + '</div>'
+        + '<div class="fin-modal-subtot-row">'
+        + '<span class="fin-modal-subtot-label">Packaging</span>'
+        + '<span class="fin-modal-subtot-val wort-mono">' + esc(fmtChf(pkgSub)) + ' CHF</span>'
+        + '</div>'
+        + '<div class="fin-modal-subtot-row fin-modal-subtot-row--total">'
+        + '<span class="fin-modal-subtot-label">Total</span>'
+        + '<span class="fin-modal-subtot-val wort-mono">' + esc(fmtChf(total)) + ' CHF</span>'
+        + '</div>'
+        + '</div>';
+
+      modalBody.innerHTML = html;
+    }
+
+    /* Open modal for a given SKU code */
+    function openSkuModal(skuCode) {
+      /* Show loading state immediately; populateModalHeader with skeleton */
+      var titleEl = document.getElementById('fin-sku-modal-title');
+      if (titleEl) titleEl.textContent = skuCode;
+      if (modalBody) {
+        modalBody.innerHTML = '<p class="fin-modal-loading" aria-live="polite">Chargement…</p>';
+      }
+      /* showModal() before fetch so the dialog is in the top layer;
+         content is populated once the fetch resolves */
+      modal.showModal();
+
+      fetchSkuDetail(skuCode, function(err, data) {
+        if (!modal.open) return; // user closed before data arrived
+        if (err || !data) {
+          if (modalBody) {
+            modalBody.innerHTML = '<p class="fin-empty">Erreur chargement détail (' + esc(String(err)) + ').</p>';
+          }
+          return;
+        }
+        populateModalHeader(data);
+        renderModalBody(data);
+      });
+    }
+
+    /* Close modal helpers */
+    function closeModal() {
+      if (modal.open) modal.close();
+    }
+
+    /* Close on explicit close button */
+    if (closeBtn) {
+      closeBtn.addEventListener('click', closeModal);
+    }
+
+    /* Close on Escape is native to <dialog> — no extra handler needed.
+       Close on backdrop click: detect click on the dialog element itself
+       (outside the inner content box). */
+    modal.addEventListener('click', function(e) {
+      /* The dialog's padding/background IS the backdrop area here.
+         If the target is the <dialog> itself (not a descendant), it's a backdrop click. */
+      if (e.target === modal) {
+        closeModal();
+      }
+    });
+
+    /* Delegate click to all .sku-drilldown-btn buttons (server-rendered) */
+    var skuTable = document.getElementById('fin-sku-table');
+    if (skuTable) {
+      skuTable.addEventListener('click', function(e) {
+        var btn = e.target.closest('.sku-drilldown-btn');
+        if (!btn) return;
+        var skuCode = btn.dataset.sku;
+        if (skuCode) openSkuModal(skuCode);
       });
     }
   }());

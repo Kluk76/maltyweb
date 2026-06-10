@@ -1,22 +1,27 @@
 <?php
 declare(strict_types=1);
 /**
- * api/financier-data.php — Lazy per-month COGS slice endpoint
+ * api/financier-data.php — Lazy per-month data endpoint for Pôle Financier
  *
- * Returns a single month's COGS/Ventes slice from sales-cogs-data.json.
- * Manager+ only. JSON response, never redirects on auth failure.
+ * Modules:
+ *   cogs        — single month COGS/Ventes slice from sales-cogs-data.json
+ *   cop-grid    — GL-account P&L tree for COP tab  (÷ HL brewed)
+ *   cogs-grid   — GL-account P&L tree for COGS tab (÷ HL sold)
+ *
+ * Manager+ only. JSON, never redirects on auth failure.
  *
  * GET ?module=cogs&month=YYYY-MM
- *
- * Response shape:
- *   { ok: true,  month: "YYYY-MM", totals:{…}, bySKU:{…}, beerTax:{…},
- *     unknownSKUs:[…], nonBeerSKUs:[…] }
- * or
- *   { ok: false, reason: "…" }
+ * GET ?module=cop-grid&month=YYYY-MM
+ * GET ?module=cogs-grid&month=YYYY-MM
+ * GET ?module=cogs-grid&month=YYYY-MM&ytd=1   — includes ytd sums
+ * GET ?module=cop-grid&month=YYYY-MM&ytd=1    — includes 6M rolling sums
+ * GET ?module=gl-months                        — list of booked GL months
  */
 
 require_once __DIR__ . '/../../app/auth.php';
 require_once __DIR__ . '/../../app/kpi-handlers.php';
+require_once __DIR__ . '/../../app/db.php';
+require_once __DIR__ . '/../../app/settings.php';   // date_display_format() for BOM freshness
 
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
@@ -38,51 +43,622 @@ if (_role_rank($u['role'] ?? '') < _role_rank('manager')) {
 $module = $_GET['module'] ?? '';
 $month  = $_GET['month']  ?? '';
 
-if ($module !== 'cogs') {
+$allowedModules = ['cogs', 'cop-grid', 'cogs-grid', 'gl-months', 'sku-detail'];
+if (!in_array($module, $allowedModules, true)) {
     http_response_code(400);
     echo json_encode(['ok' => false, 'reason' => 'unknown_module']);
     exit;
 }
 
-// Validate YYYY-MM format
+/* ── gl-months: list of YYYY-MM keys present in inv_charges_bc ────────────── */
+if ($module === 'gl-months') {
+    try {
+        $pdo   = maltytask_pdo();
+        $rows  = $pdo->query(
+            "SELECT DISTINCT period_text FROM inv_charges_bc WHERE is_summary = 0 ORDER BY period_text"
+        )->fetchAll(PDO::FETCH_COLUMN);
+        $months = [];
+        foreach ($rows as $pt) {
+            $mk = fin_period_text_to_month_key($pt);
+            if ($mk !== null && !in_array($mk, $months, true)) {
+                $months[] = $mk;
+            }
+        }
+        sort($months);
+        echo json_encode(['ok' => true, 'months' => $months], JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
+    } catch (Throwable $e) {
+        http_response_code(500);
+        echo json_encode(['ok' => false, 'reason' => 'db_error']);
+    }
+    exit;
+}
+
+/* ── Module: sku-detail — BOM decomposition for one SKU ──────────────────── */
+if ($module === 'sku-detail') {
+    $skuCode = $_GET['sku'] ?? '';
+    // Sanitise: alphanumeric + hyphen/underscore, max 32 chars (matches all real SKU codes)
+    if (!preg_match('/^[A-Za-z0-9_\-]{1,32}$/', $skuCode)) {
+        http_response_code(400);
+        echo json_encode(['ok' => false, 'reason' => 'invalid_sku']);
+        exit;
+    }
+    try {
+        $pdo = maltytask_pdo();
+
+        /* Resolve sku_code → sku_id (active SKUs only) */
+        $skuStmt = $pdo->prepare(
+            "SELECT s.id, s.sku_code, s.format, s.unit_label, s.hl_per_unit,
+                    rr.recipe_short_name, rr.classification,
+                    ROUND(SUM(CASE WHEN b.source = 'Brewing'   THEN b.cost ELSE 0 END), 3) AS brewing_subtotal,
+                    ROUND(SUM(CASE WHEN b.source = 'Packaging' THEN b.cost ELSE 0 END), 3) AS packaging_subtotal,
+                    ROUND(SUM(b.cost), 3) AS total,
+                    ROUND(SUM(b.cost) / NULLIF(s.hl_per_unit, 0), 2) AS chf_per_hl
+             FROM ref_skus s
+             LEFT JOIN ref_sku_bom  b  ON b.sku_id  = s.id
+             LEFT JOIN ref_recipes  rr ON rr.id     = s.recipe_id
+             WHERE s.sku_code = :sku AND s.is_active = 1
+             GROUP BY s.id"
+        );
+        $skuStmt->execute([':sku' => $skuCode]);
+        $skuRow = $skuStmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$skuRow) {
+            http_response_code(404);
+            echo json_encode(['ok' => false, 'reason' => 'sku_not_found']);
+            exit;
+        }
+
+        /* BOM lines — VERBATIM from sku-cost-detail.php */
+        $bomStmt = $pdo->prepare(
+            "SELECT b.source, b.category_raw, b.ingredient_raw,
+                    b.qty_per_unit, b.ing_unit,
+                    b.pricing_unit, b.price, b.currency, b.cost,
+                    b.mi_id, b.resolution,
+                    m.mi_id      AS mi_canonical,
+                    c.name       AS category_canonical
+             FROM ref_sku_bom b
+             LEFT JOIN ref_mi m            ON m.id = b.mi_id
+             LEFT JOIN ref_mi_categories c ON c.id = m.category_id
+             WHERE b.sku_id = :sku_id
+             ORDER BY
+                 CASE b.source WHEN 'Brewing' THEN 1 WHEN 'Packaging' THEN 2 ELSE 3 END,
+                 b.cost DESC"
+        );
+        $bomStmt->execute([':sku_id' => $skuRow['id']]);
+        $bomLines = $bomStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        /* BOM freshness: MAX(compiled_at) for this sku_id */
+        $freshStmt = $pdo->prepare(
+            "SELECT MAX(compiled_at) AS compiled_at FROM ref_sku_bom WHERE sku_id = :sku_id"
+        );
+        $freshStmt->execute([':sku_id' => $skuRow['id']]);
+        $freshRow   = $freshStmt->fetch(PDO::FETCH_ASSOC);
+        $freshness  = (!empty($freshRow['compiled_at']))
+            ? (new DateTimeImmutable($freshRow['compiled_at']))->format(date_display_format())
+            : null;
+
+        /* Normalise numeric fields so JS receives proper types */
+        foreach ($bomLines as &$line) {
+            foreach (['qty_per_unit','price','cost'] as $f) {
+                if (isset($line[$f]) && is_string($line[$f])) {
+                    $line[$f] = $line[$f] !== '' ? (float) $line[$f] : null;
+                }
+            }
+            if (isset($line['mi_id'])) {
+                $line['mi_id'] = $line['mi_id'] !== null ? (int) $line['mi_id'] : null;
+            }
+        }
+        unset($line);
+
+        $payload = [
+            'ok'                 => true,
+            'sku_code'           => $skuRow['sku_code'],
+            'recipe_short_name'  => $skuRow['recipe_short_name'],
+            'format'             => $skuRow['format'],
+            'unit_label'         => $skuRow['unit_label'],
+            'hl_per_unit'        => $skuRow['hl_per_unit'] !== null ? (float) $skuRow['hl_per_unit'] : null,
+            'brewing_subtotal'   => $skuRow['brewing_subtotal'] !== null ? (float) $skuRow['brewing_subtotal'] : 0.0,
+            'packaging_subtotal' => $skuRow['packaging_subtotal'] !== null ? (float) $skuRow['packaging_subtotal'] : 0.0,
+            'total'              => $skuRow['total'] !== null ? (float) $skuRow['total'] : 0.0,
+            'chf_per_hl'         => $skuRow['chf_per_hl'] !== null ? (float) $skuRow['chf_per_hl'] : null,
+            'freshness'          => $freshness,
+            'lines'              => $bomLines,
+        ];
+        echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
+    } catch (Throwable $e) {
+        http_response_code(500);
+        echo json_encode(['ok' => false, 'reason' => 'db_error']);
+    }
+    exit;
+}
+
+/* ── Validate YYYY-MM for remaining modules ───────────────────────────────── */
 if (!preg_match('/^\d{4}-(?:0[1-9]|1[0-2])$/', $month)) {
     http_response_code(400);
     echo json_encode(['ok' => false, 'reason' => 'invalid_month']);
     exit;
 }
 
-/* ── Load slice ────────────────────────────────────────────────────────────── */
-$raw = kpi_sales_cogs_month_slice($month);
-if ($raw === null) {
-    http_response_code(404);
-    echo json_encode(['ok' => false, 'reason' => 'month_not_found', 'month' => $month]);
+/* ── Module: cogs (existing) ──────────────────────────────────────────────── */
+if ($module === 'cogs') {
+    $raw = kpi_sales_cogs_month_slice($month);
+    if ($raw === null) {
+        http_response_code(404);
+        echo json_encode(['ok' => false, 'reason' => 'month_not_found', 'month' => $month]);
+        exit;
+    }
+    $bySku = [];
+    foreach ($raw['bySKU'] ?? [] as $sku => $sd) {
+        $bySku[$sku] = [
+            'units'         => $sd['units']         ?? 0,
+            'HL'            => $sd['HL']             ?? 0,
+            'material_CHF'  => $sd['material_CHF']   ?? 0,
+            'beerTax_CHF'   => $sd['beerTax_CHF']    ?? 0,
+            'salesCOGS_CHF' => $sd['salesCOGS_CHF']  ?? 0,
+            'revenueCHF'    => $sd['revenueCHF']     ?? 0,
+            'unitCost'      => $sd['unitCost']       ?? 0,
+            'hlPerUnit'     => $sd['hlPerUnit']      ?? 0,
+            'beerTaxCat'    => $sd['beerTaxCat']     ?? null,
+        ];
+    }
+    $payload = [
+        'ok'          => true,
+        'month'       => $month,
+        'totals'      => $raw['totals']      ?? [],
+        'bySKU'       => $bySku,
+        'beerTax'     => $raw['beerTax']     ?? [],
+        'unknownSKUs' => $raw['unknownSKUs'] ?? [],
+        'nonBeerSKUs' => $raw['nonBeerSKUs'] ?? [],
+    ];
+    echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
     exit;
 }
 
-/* ── Trim bySKU: drop byCustomer (UI doesn't need it, saves payload) ─────── */
-$bySku = [];
-foreach ($raw['bySKU'] ?? [] as $sku => $sd) {
-    $bySku[$sku] = [
-        'units'         => $sd['units']         ?? 0,
-        'HL'            => $sd['HL']             ?? 0,
-        'material_CHF'  => $sd['material_CHF']   ?? 0,
-        'beerTax_CHF'   => $sd['beerTax_CHF']    ?? 0,
-        'salesCOGS_CHF' => $sd['salesCOGS_CHF']  ?? 0,
-        'revenueCHF'    => $sd['revenueCHF']     ?? 0,
-        'unitCost'      => $sd['unitCost']       ?? 0,
-        'hlPerUnit'     => $sd['hlPerUnit']      ?? 0,
-        'beerTaxCat'    => $sd['beerTaxCat']     ?? null,
+/* ── Modules: cop-grid / cogs-grid ────────────────────────────────────────── */
+// Both use the same GL line tree; they differ only in ÷ denominator and YTD logic.
+
+try {
+    $pdo = maltytask_pdo();
+
+    /* ── Build the GL tree for the selected month ─────────────────────────── */
+    $glTree = fin_gl_tree_definition();
+
+    // Month LIKE pattern: period_text = 'Période : 01.MM.YY..DD.MM.YY'
+    [$year, $mo] = explode('-', $month, 2);
+    $yy = substr($year, 2); // last 2 digits
+    $likePattern = '%01.' . $mo . '.' . $yy . '%';
+
+    // Fetch all net amounts for this month in one query (is_summary=0 only)
+    $stmt = $pdo->prepare(
+        "SELECT gl_account_no,
+                SUM(debit_amount) - SUM(credit_amount) AS net
+         FROM inv_charges_bc
+         WHERE is_summary = 0
+           AND period_text LIKE ?
+         GROUP BY gl_account_no"
+    );
+    $stmt->execute([$likePattern]);
+    $glNets = [];
+    while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+        $glNets[$row['gl_account_no']] = (float) $row['net'];
+    }
+
+    /* Denominator for current month */
+    if ($module === 'cogs-grid') {
+        // HL sold this month
+        $hlStmt = $pdo->prepare(
+            "SELECT COALESCE(SUM(hl_resolved), 0) AS hl FROM inv_sales_bc WHERE period = ?"
+        );
+        $hlStmt->execute([$month]);
+        $hlMonth = (float) ($hlStmt->fetch(PDO::FETCH_ASSOC)['hl'] ?? 0);
+    } else {
+        // HL brewed: use COP JSON (same source as COP tiles)
+        $hlMonth = fin_cop_hl_brewed($month);
+    }
+
+    /* YTD / 6M-rolling data — intersect with months that have actual GL rows */
+    $glBookedMonths = fin_gl_booked_months($pdo);
+    $ytdMonths = fin_ytd_months($month, $module === 'cop-grid', $glBookedMonths);
+
+    $glNetsYtd  = [];
+    $hlYtd      = 0.0;
+
+    if (!empty($ytdMonths)) {
+        // Build LIKE patterns for all YTD months
+        $ytdLikes = [];
+        foreach ($ytdMonths as $mk) {
+            [$y2, $m2] = explode('-', $mk, 2);
+            $yy2 = substr($y2, 2);
+            $ytdLikes[] = '01.' . $m2 . '.' . $yy2;
+        }
+        // Build a single query with OR'd LIKE conditions
+        $orClauses = implode(' OR ', array_fill(0, count($ytdLikes), 'period_text LIKE ?'));
+        $stmtYtd = $pdo->prepare(
+            "SELECT gl_account_no, SUM(debit_amount) - SUM(credit_amount) AS net
+             FROM inv_charges_bc
+             WHERE is_summary = 0 AND ($orClauses)
+             GROUP BY gl_account_no"
+        );
+        $params = array_map(fn($p) => '%' . $p . '%', $ytdLikes);
+        $stmtYtd->execute($params);
+        while ($row = $stmtYtd->fetch(PDO::FETCH_ASSOC)) {
+            $glNetsYtd[$row['gl_account_no']] = (float) $row['net'];
+        }
+
+        if ($module === 'cogs-grid') {
+            $inList   = implode(',', array_fill(0, count($ytdMonths), '?'));
+            $hlStmt2  = $pdo->prepare(
+                "SELECT COALESCE(SUM(hl_resolved), 0) AS hl FROM inv_sales_bc WHERE period IN ($inList)"
+            );
+            $hlStmt2->execute($ytdMonths);
+            $hlYtd = (float) ($hlStmt2->fetch(PDO::FETCH_ASSOC)['hl'] ?? 0);
+        } else {
+            // Sum hlBrewed from COP JSON for each rolling month
+            foreach ($ytdMonths as $mk) {
+                $hlYtd += fin_cop_hl_brewed($mk);
+            }
+        }
+    }
+
+    /* Build tree rows with actuals */
+    $tree = fin_compute_tree($glTree, $glNets, $hlMonth, $glNetsYtd, $hlYtd, $module);
+
+    $ytdLabel = ($module === 'cop-grid') ? '6M ROLLING' : 'YTD';
+
+    $payload = [
+        'ok'         => true,
+        'month'      => $month,
+        'hlMonth'    => $hlMonth,
+        'hlYtd'      => $hlYtd,
+        'ytdLabel'   => $ytdLabel,
+        'tree'       => $tree,
+        'ytdMonths'  => $ytdMonths,
+    ];
+    echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
+
+} catch (Throwable $e) {
+    http_response_code(500);
+    echo json_encode(['ok' => false, 'reason' => 'db_error', 'detail' => $e->getMessage()]);
+}
+exit;
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   HELPER FUNCTIONS — all top-level (never nested)
+══════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Convert 'Période : 01.MM.YY..DD.MM.YY' to 'YYYY-MM' or null if unparseable.
+ */
+function fin_period_text_to_month_key(string $pt): ?string
+{
+    // Match the opening date: 01.MM.YY
+    if (!preg_match('/01\.(\d{2})\.(\d{2})/', $pt, $m)) return null;
+    $mo   = $m[1];
+    $year = '20' . $m[2];
+    return $year . '-' . $mo;
+}
+
+/**
+ * Load hlBrewed for a monthKey from COP JSON (same source as COP tiles).
+ */
+function fin_cop_hl_brewed(string $monthKey): float
+{
+    static $copCache = null;
+    if ($copCache === null) {
+        $path = '/var/www/maltytask/interfaces/cogs-report-data.json';
+        if (!is_readable($path)) { $copCache = []; return 0.0; }
+        $data = json_decode(file_get_contents($path), true);
+        $copCache = [];
+        foreach ($data['months'] ?? [] as $mo) {
+            $mk = $mo['monthKey'] ?? null;
+            if ($mk === null) continue;
+            $copCache[$mk] = (float) ($mo['cop']['hlBrewed'] ?? 0);
+        }
+    }
+    return $copCache[$monthKey] ?? 0.0;
+}
+
+/**
+ * Return the list of months for YTD (COGS: same year up to $month)
+ * or 6M rolling (COP: last ≤6 booked months including $month).
+ *
+ * Both the calendar window (COP JSON source) AND the GL-booked set
+ * (inv_charges_bc) must contain the month — this keeps the HL denominator
+ * aligned with the cost numerator (unbooked months contribute 0 cost but
+ * real HL, producing a meaninglessly low CHF/HL figure).
+ *
+ * @param string   $month         Selected YYYY-MM
+ * @param bool     $rolling6m     true = COP 6M-rolling, false = COGS YTD
+ * @param string[] $glBookedMonths YYYY-MM months that have inv_charges_bc rows
+ */
+function fin_ytd_months(string $month, bool $rolling6m, array $glBookedMonths = []): array
+{
+    static $bookedMonths = null;
+    if ($bookedMonths === null) {
+        // Load from COP JSON (hlBrewed source for COP denominator)
+        $path = '/var/www/maltytask/interfaces/cogs-report-data.json';
+        $bookedMonths = [];
+        if (is_readable($path)) {
+            $data = json_decode(file_get_contents($path), true);
+            foreach ($data['months'] ?? [] as $mo) {
+                $mk = $mo['monthKey'] ?? null;
+                if ($mk !== null) $bookedMonths[] = $mk;
+            }
+        }
+    }
+
+    // Build a lookup set for GL-booked months so array_filter is O(1) per element
+    $glBookedSet = array_flip($glBookedMonths);
+
+    if ($rolling6m) {
+        // Last ≤6 COP-JSON months that are ≤ $month AND have GL rows
+        $eligible = array_filter(
+            $bookedMonths,
+            fn($mk) => $mk <= $month && isset($glBookedSet[$mk])
+        );
+        sort($eligible);
+        return array_values(array_slice($eligible, -6));
+    } else {
+        // Same-year months ≤ $month from COP JSON AND with GL rows
+        [$year] = explode('-', $month, 2);
+        $eligible = array_filter(
+            $bookedMonths,
+            fn($mk) => str_starts_with($mk, $year . '-') && $mk <= $month && isset($glBookedSet[$mk])
+        );
+        sort($eligible);
+        return array_values($eligible);
+    }
+}
+
+/**
+ * Return YYYY-MM keys for every month that has at least one non-summary row
+ * in inv_charges_bc.  Used to align the YTD/rolling HL denominator with the
+ * cost numerator (months without GL rows contribute 0 cost but real sold HL,
+ * which would produce a meaninglessly low CHF/HL figure).
+ */
+function fin_gl_booked_months(PDO $pdo): array
+{
+    $rows = $pdo->query(
+        "SELECT DISTINCT period_text FROM inv_charges_bc WHERE is_summary = 0"
+    )->fetchAll(PDO::FETCH_COLUMN);
+    $months = [];
+    foreach ($rows as $pt) {
+        $mk = fin_period_text_to_month_key($pt);
+        if ($mk !== null && !in_array($mk, $months, true)) {
+            $months[] = $mk;
+        }
+    }
+    sort($months);
+    return $months;
+}
+
+/**
+ * The canonical GL line tree definition.
+ * Each leaf: ['type'=>'line', 'label'=>…, 'gl'=>[…], 'placeholder'=>bool]
+ * Each subtotal: ['type'=>'subtotal', 'label'=>…, 'keys'=>[…]]
+ * Each section header: ['type'=>'section', 'label'=>…]
+ * Each grand subtotal: ['type'=>'grand_subtotal', 'label'=>…, 'keys'=>[…]]
+ * Each total: ['type'=>'total', 'label'=>…, 'placeholder'=>bool]
+ *
+ * keys refer to the 'key' field on sibling nodes for summation.
+ */
+function fin_gl_tree_definition(): array
+{
+    return [
+        // ── SECTION: COGS VARIABLES ──────────────────────────────────────────
+        ['type' => 'section', 'label' => 'COGS VARIABLES'],
+
+        // Sub: Brewing
+        ['type' => 'sub_header', 'label' => 'Brewing'],
+        ['type' => 'line', 'key' => 'gl_4100',  'label' => 'Ready Beer (4100)',                       'gl' => ['4100']],
+        ['type' => 'line', 'key' => 'gl_4101',  'label' => 'Malts (4101)',                            'gl' => ['4101']],
+        ['type' => 'line', 'key' => 'gl_4102',  'label' => 'Hops (4102)',                             'gl' => ['4102']],
+        ['type' => 'line', 'key' => 'gl_4103',  'label' => 'Yeast (4103)',                            'gl' => ['4103']],
+        ['type' => 'line', 'key' => 'gl_4104',  'label' => 'Other Ingredients (4104)',                'gl' => ['4104']],
+        ['type' => 'subtotal', 'key' => 'sub_brewing', 'label' => 'Total Brewing (419)',
+         'lines' => ['gl_4100','gl_4101','gl_4102','gl_4103','gl_4104']],
+
+        // Sub: Packaging
+        ['type' => 'sub_header', 'label' => 'Packaging'],
+        ['type' => 'line', 'key' => 'gl_4200_4201', 'label' => 'Bottles (inc TEA) (4200 + 4201)',    'gl' => ['4200','4201']],
+        ['type' => 'line', 'key' => 'gl_4202',      'label' => 'Cans inc. lids (4202)',              'gl' => ['4202']],
+        ['type' => 'line', 'key' => 'gl_4203_4207', 'label' => 'Regular packaging cardboard (4203 + 4207)', 'gl' => ['4203','4207']],
+        ['type' => 'line', 'key' => 'gl_4204',      'label' => 'Special order cardboard (4204)',     'gl' => ['4204']],
+        ['type' => 'line', 'key' => 'gl_4205',      'label' => 'Plastic wrap (4205)',                'gl' => ['4205']],
+        ['type' => 'line', 'key' => 'gl_4206',      'label' => 'Labels (4206)',                      'gl' => ['4206']],
+        ['type' => 'line', 'key' => 'gl_4209',      'label' => 'Keg packaging material (4209)',      'gl' => ['4209']],
+        ['type' => 'line', 'key' => 'gl_4208',      'label' => 'External packing services (4208)',   'gl' => ['4208']],
+        // COP-only Scotch line: no GL source
+        ['type' => 'line', 'key' => 'gl_scotch',    'label' => 'Scotch',                             'gl' => [], 'placeholder' => true, 'cop_only' => true],
+        ['type' => 'subtotal', 'key' => 'sub_packaging', 'label' => 'Total Packaging',
+         'lines' => ['gl_4200_4201','gl_4202','gl_4203_4207','gl_4204','gl_4205','gl_4206','gl_4209','gl_4208']],
+        // Note: scotch excluded from packaging subtotal (no GL, no value)
+
+        // Sub: Indirect
+        ['type' => 'sub_header', 'label' => 'Indirect'],
+        ['type' => 'line', 'key' => 'gl_4300',      'label' => 'CO2 (4300)',                         'gl' => ['4300']],
+        ['type' => 'line', 'key' => 'gl_4301',      'label' => 'Chemical (4301)',                    'gl' => ['4301']],
+        ['type' => 'line', 'key' => 'gl_4302',      'label' => 'Small production equipment (4302)',  'gl' => ['4302']],
+        ['type' => 'line', 'key' => 'gl_4600_4602', 'label' => 'Transport costs (4600+4602)',        'gl' => ['4600','4602']],
+        ['type' => 'subtotal', 'key' => 'sub_indirect', 'label' => 'Total Indirect',
+         'lines' => ['gl_4300','gl_4301','gl_4302','gl_4600_4602']],
+
+        // Sub: Utilities
+        ['type' => 'sub_header', 'label' => 'Utilities'],
+        ['type' => 'line', 'key' => 'gl_4700',      'label' => 'Gaz & Water (4700)',                 'gl' => ['4700']],
+        ['type' => 'line', 'key' => 'gl_4702',      'label' => 'Electricity (4702)',                 'gl' => ['4702']],
+        ['type' => 'line', 'key' => 'gl_4701',      'label' => 'Waste evacuation (4701)',            'gl' => ['4701']],
+        ['type' => 'subtotal', 'key' => 'sub_utilities', 'label' => 'Total Utilities',
+         'lines' => ['gl_4700','gl_4702','gl_4701']],
+
+        // Sub: R&D
+        ['type' => 'sub_header', 'label' => 'R&D'],
+        ['type' => 'line', 'key' => 'gl_4500',      'label' => 'QA / QC (4500)',                    'gl' => ['4500']],
+        ['type' => 'line', 'key' => 'gl_4510',      'label' => 'Purchases (4510)',                   'gl' => ['4510']],
+        ['type' => 'subtotal', 'key' => 'sub_rd', 'label' => 'Total R&D',
+         'lines' => ['gl_4500','gl_4510']],
+
+        // Grand subtotal: TOTAL COGS VARIABLE
+        ['type' => 'grand_subtotal', 'key' => 'grand_variable',
+         'label' => 'TOTAL COGS VARIABLE',
+         'subtotals' => ['sub_brewing','sub_packaging','sub_indirect','sub_utilities','sub_rd']],
+
+        // ── SECTION: COGS SEMI VARIABLE ─────────────────────────────────────
+        ['type' => 'section', 'label' => 'COGS SEMI VARIABLE'],
+
+        ['type' => 'sub_header', 'label' => 'WORK / Fixed Staff'],
+        ['type' => 'line', 'key' => 'semi_brew_staff',   'label' => 'Brewing',          'gl' => [], 'placeholder' => true],
+        ['type' => 'line', 'key' => 'semi_pkg_staff',    'label' => 'Packaging',         'gl' => [], 'placeholder' => true],
+        ['type' => 'line', 'key' => 'semi_vt_n1',        'label' => 'Valeur Travail N-1','gl' => [], 'placeholder' => true],
+
+        ['type' => 'sub_header', 'label' => 'Temporary Staff'],
+        ['type' => 'line', 'key' => 'semi_temp_pkg',     'label' => 'Packaging',         'gl' => [], 'placeholder' => true],
+
+        ['type' => 'grand_subtotal', 'key' => 'grand_semi',
+         'label' => 'TOTAL COGS SEMI-VARIABLE',
+         'subtotals' => [], 'placeholder' => true],
+
+        // ── TOTAL OVERALL ────────────────────────────────────────────────────
+        ['type' => 'total', 'key' => 'total_overall',
+         'label' => 'COGS OVERALL',
+         'placeholder' => true],
+
+        // ── COP extra: COST PER PACKAGING TYPE ──────────────────────────────
+        ['type' => 'section', 'label' => 'COST PER PACKAGING TYPE', 'cop_only' => true],
+        ['type' => 'line', 'key' => 'cpp_kegs',     'label' => 'Kegs',   'gl' => [], 'placeholder' => true, 'cop_only' => true],
+        ['type' => 'line', 'key' => 'cpp_bottles',  'label' => 'Bottles','gl' => [], 'placeholder' => true, 'cop_only' => true],
+        ['type' => 'line', 'key' => 'cpp_cans',     'label' => 'Cans',   'gl' => [], 'placeholder' => true, 'cop_only' => true],
+        ['type' => 'line', 'key' => 'cpp_bulk',     'label' => 'Bulk',   'gl' => [], 'placeholder' => true, 'cop_only' => true],
     ];
 }
 
-$payload = [
-    'ok'          => true,
-    'month'       => $month,
-    'totals'      => $raw['totals']      ?? [],
-    'bySKU'       => $bySku,
-    'beerTax'     => $raw['beerTax']     ?? [],
-    'unknownSKUs' => $raw['unknownSKUs'] ?? [],
-    'nonBeerSKUs' => $raw['nonBeerSKUs'] ?? [],
-];
+/**
+ * Compute tree rows: resolve GL nets, calculate subtotals, divide by HL denominator.
+ * Returns array of row objects for JSON.
+ */
+function fin_compute_tree(
+    array  $treeDef,
+    array  $glNets,
+    float  $hlMonth,
+    array  $glNetsYtd,
+    float  $hlYtd,
+    string $module
+): array {
+    $isCop = ($module === 'cop-grid');
 
-echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
+    // First pass: compute per-key CHF values (month + ytd)
+    $valMonth = [];  // key → CHF
+    $valYtd   = [];  // key → CHF
+
+    foreach ($treeDef as $node) {
+        $key  = $node['key']  ?? null;
+        $type = $node['type'] ?? '';
+        if ($key === null) continue;
+
+        if ($type === 'line') {
+            if (!empty($node['placeholder'])) {
+                $valMonth[$key] = null;
+                $valYtd[$key]   = null;
+            } else {
+                $sum = 0.0;
+                foreach ($node['gl'] as $acc) {
+                    $sum += $glNets[$acc] ?? 0.0;
+                }
+                $valMonth[$key] = $sum;
+                $sumYtd = 0.0;
+                foreach ($node['gl'] as $acc) {
+                    $sumYtd += $glNetsYtd[$acc] ?? 0.0;
+                }
+                $valYtd[$key] = $sumYtd;
+            }
+        } elseif ($type === 'subtotal') {
+            if (!empty($node['placeholder'])) {
+                $valMonth[$key] = null;
+                $valYtd[$key]   = null;
+            } else {
+                $sum = 0.0;
+                foreach ($node['lines'] as $lk) {
+                    $v = $valMonth[$lk] ?? null;
+                    if ($v !== null) $sum += $v;
+                }
+                $valMonth[$key] = $sum;
+                $sumY = 0.0;
+                foreach ($node['lines'] as $lk) {
+                    $v = $valYtd[$lk] ?? null;
+                    if ($v !== null) $sumY += $v;
+                }
+                $valYtd[$key] = $sumY;
+            }
+        } elseif ($type === 'grand_subtotal') {
+            if (!empty($node['placeholder'])) {
+                $valMonth[$key] = null;
+                $valYtd[$key]   = null;
+            } else {
+                $sum = 0.0;
+                foreach ($node['subtotals'] as $sk) {
+                    $v = $valMonth[$sk] ?? null;
+                    if ($v !== null) $sum += $v;
+                }
+                $valMonth[$key] = $sum;
+                $sumY = 0.0;
+                foreach ($node['subtotals'] as $sk) {
+                    $v = $valYtd[$sk] ?? null;
+                    if ($v !== null) $sumY += $v;
+                }
+                $valYtd[$key] = $sumY;
+            }
+        } elseif ($type === 'total') {
+            // COGS OVERALL is placeholder — semi-variable unsourced
+            $valMonth[$key] = null;
+            $valYtd[$key]   = null;
+        }
+    }
+
+    // Second pass: build output rows
+    $rows = [];
+    foreach ($treeDef as $node) {
+        $type = $node['type'] ?? '';
+        $key  = $node['key']  ?? null;
+        $isCopOnly = !empty($node['cop_only']);
+
+        // Skip COP-only rows when rendering cogs-grid
+        if ($isCopOnly && !$isCop) continue;
+
+        if ($type === 'section') {
+            $rows[] = [
+                'rowType' => 'section',
+                'label'   => $node['label'],
+            ];
+            continue;
+        }
+        if ($type === 'sub_header') {
+            $rows[] = [
+                'rowType' => 'sub_header',
+                'label'   => $node['label'],
+            ];
+            continue;
+        }
+
+        // For all value rows
+        $chfMonth = ($key !== null) ? ($valMonth[$key] ?? null) : null;
+        $chfYtd   = ($key !== null) ? ($valYtd[$key]   ?? null) : null;
+
+        $phlMonth = $hlMonth > 0 ? ($chfMonth !== null ? $chfMonth / $hlMonth : null) : null;
+        $phlYtd   = $hlYtd   > 0 ? ($chfYtd   !== null ? $chfYtd   / $hlYtd   : null) : null;
+
+        $rows[] = [
+            'rowType'   => $type,
+            'key'       => $key,
+            'label'     => $node['label'] ?? '',
+            'placeholder' => !empty($node['placeholder']),
+            // CHF actuals
+            'chfMonth'  => $chfMonth,
+            'chfYtd'    => $chfYtd,
+            // CHF/HL actuals
+            'phlMonth'  => $phlMonth,
+            'phlYtd'    => $phlYtd,
+        ];
+    }
+
+    return $rows;
+}
