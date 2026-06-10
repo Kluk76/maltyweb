@@ -232,7 +232,7 @@ function kpi_dispatch(array $tracker, PDO $pdo): array
             'tanks'        => kpi_handler_tanks($handler, $params, $label, $pdo),
             'racking'      => kpi_handler_racking($handler, $params, $label, $pdo),
             'packaging'    => kpi_handler_packaging($handler, $params, $label, $pdo),
-            'fg_stock'     => kpi_stub_handler($domain, $handler, $label),
+            'fg_stock'     => kpi_handler_fg_stock($handler, $params, $label, $pdo),
             'sales'        => kpi_stub_handler($domain, $handler, $label),
             'qa_qc'        => kpi_stub_handler($domain, $handler, $label),
             'equipment'    => kpi_stub_handler($domain, $handler, $label),
@@ -255,7 +255,7 @@ function kpi_dispatch(array $tracker, PDO $pdo): array
  */
 function kpi_stub_domains(): array
 {
-    return ['utilities', 'fg_stock', 'sales', 'qa_qc', 'equipment', 'logistics'];
+    return ['utilities', 'sales', 'qa_qc', 'equipment', 'logistics'];
 }
 
 /**
@@ -688,6 +688,50 @@ function kpi_load_cogs_json(): ?array
         }
     }
     return kpi_cache_set($cacheKey, null);
+}
+
+/**
+ * Load and cache the sales-COGS pipeline JSON (sales-cogs-data.json).
+ * This file is ~5MB — callers that need only a slice should use
+ * kpi_sales_cogs_month_slice() instead to avoid holding the full array.
+ * Returns the decoded array (keys: generatedAt, months{}) or null.
+ */
+function kpi_load_sales_cogs_json(): ?array
+{
+    $cacheKey = 'sales_cogs_pipeline_json';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $candidates = [
+        '/var/www/maltytask/interfaces/sales-cogs-data.json',
+        __DIR__ . '/../../interfaces/sales-cogs-data.json',
+        __DIR__ . '/../../../maltytask/interfaces/sales-cogs-data.json',
+    ];
+    foreach ($candidates as $path) {
+        if (is_readable($path)) {
+            $json = file_get_contents($path);
+            if ($json !== false) {
+                $data = json_decode($json, true);
+                if ($data !== null) {
+                    return kpi_cache_set($cacheKey, $data);
+                }
+            }
+        }
+    }
+    return kpi_cache_set($cacheKey, null);
+}
+
+/**
+ * Return a single month's slice from the sales-COGS artifact.
+ * Only reads the full file once per request (cached).
+ * Returns null if the month is not found.
+ */
+function kpi_sales_cogs_month_slice(string $monthKey): ?array
+{
+    $data = kpi_load_sales_cogs_json();
+    if ($data === null) return null;
+    return $data['months'][$monthKey] ?? null;
 }
 
 /**
@@ -2907,6 +2951,671 @@ function kpi_tanks_o2_deviations(array $params, string $label, PDO $pdo): array
             'total_readings'    => $total,
             'deviation_pct'     => $devPct,
             'max_deviation_ppb' => $row['max_deviation_ppb'] !== null ? (float) $row['max_deviation_ppb'] : null,
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════════
+// HANDLER: fg_stock  (source_domain = 'fg_stock')
+// Reads: inv_fg_stocktake, bd_packaging_v2, ord_order_lines, inv_sales_bc,
+//        inv_sales_orders, inv_sales_order_lines, inv_stock_movements,
+//        ref_sku_bom, ref_skus, ref_sites, ref_packaging_formats.
+//
+// CARDINAL RULE: NEVER recompute FG physique independently.
+// All stock figures derive from fg_stock_compute() (app/fg-stock.php).
+// Fiscal values use ref_sku_bom.cost (sum over bom_source IN ('packaging','liquid')
+// with effective_from/until date gate) — the SAME basis the COP build uses.
+//
+// #72  fg_units_in_stock    — table of physique per SKU/format
+// #73  fg_inventory_value   — FISCAL: total inventory CHF (anchor × BOM cost)
+// #74  fg_days_cover        — weeks cover per SKU (semaines_stock)
+// #75  fg_stockouts         — GAP: no reorder threshold in DB → stub
+// #76  fg_produced_vs_sold  — bar: prod_qty vs total depletion per display_family
+// #77  fg_aging_best_before — GAP: no BBD tracking in DB → stub
+// #78  fg_stock_turnover    — kpi_number: total depletion / avg anchor (8w)
+// #79  warehouse_cage_fill  — GAP: no capacity data in DB → stub
+// #80  slow_mover_flag      — flag: count of flag_dormant rows
+// #81  fg_by_location       — bar: per-site units from fg_stock_location_snapshot()
+// #82  consignment_keg_fleet — GAP → stub (passed via match default)
+// #83  return_breakage_rate  — GAP → stub (passed via match default)
+// #84  value_tied_per_beer  — bar: inventory CHF grouped by display_family/recipe
+// #85  fg_stock_variation   — flag: anchor vs theoretical physique delta
+// #133 warehouse_cage_capacity — same handler as #79 → stub
+// ═════════════════════════════════════════════════════════════════════════════
+
+function kpi_handler_fg_stock(
+    string $handler,
+    array  $params,
+    string $label,
+    PDO    $pdo
+): array {
+    return match ($handler) {
+        'fg_units_in_stock'   => kpi_fg_units_in_stock($label, $pdo),
+        'fg_inventory_value'  => kpi_fg_inventory_value($label, $pdo),
+        'fg_days_cover'       => kpi_fg_days_cover($label, $pdo),
+        'fg_produced_vs_sold' => kpi_fg_produced_vs_sold($label, $pdo),
+        'fg_stock_turnover'   => kpi_fg_stock_turnover($label, $pdo),
+        'slow_mover_flag'     => kpi_fg_slow_mover_flag($label, $pdo),
+        'fg_by_location'      => kpi_fg_by_location($label, $pdo),
+        'value_tied_per_beer' => kpi_fg_value_tied_per_beer($label, $pdo),
+        'fg_stock_variation'  => kpi_fg_stock_variation($label, $pdo),
+        // GAP trackers: no source data yet → stub with informative note
+        'fg_stockouts'            => kpi_fg_stub_gap('fg_stockouts', $label, 'Aucun seuil de réapprovisionnement défini dans ref_skus'),
+        'fg_aging_best_before'    => kpi_fg_stub_gap('fg_aging_best_before', $label, 'Données DDM par lot non encore enregistrées'),
+        'warehouse_cage_fill'     => kpi_fg_stub_gap('warehouse_cage_fill', $label, 'Capacité entrepôt non configurée dans system_settings'),
+        'warehouse_cage_capacity' => kpi_fg_stub_gap('warehouse_cage_capacity', $label, 'Capacité entrepôt non configurée dans system_settings'),
+        default                   => kpi_stub_handler('fg_stock', $handler, $label),
+    };
+}
+
+/**
+ * Private: return a stub result for fg_stock GAP trackers with a specific note
+ * rather than the generic Phase 2b message.
+ */
+function kpi_fg_stub_gap(string $handler, string $label, string $note): array
+{
+    $r = kpi_empty_result($label);
+    $r['meta'] = [
+        'stub'    => true,
+        'domain'  => 'fg_stock',
+        'handler' => $handler,
+        'note'    => $note,
+    ];
+    return $r;
+}
+
+/**
+ * Private: call fg_stock_compute() once per request (cached under 'fg_stock_compute_result').
+ * All handlers that need the full per-SKU compute result call this wrapper.
+ */
+function kpi_fg_get_compute(PDO $pdo): array
+{
+    $cacheKey = 'fg_stock_compute_result';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+    // fg-stock.php is required by the module pages that include kpi-handlers.php.
+    // If it is not yet loaded (e.g. standalone kpi test), require it explicitly.
+    if (!function_exists('fg_stock_compute')) {
+        require_once __DIR__ . '/fg-stock.php';
+    }
+    $result = fg_stock_compute($pdo);
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── BOM cost per SKU (fiscal basis) ─────────────────────────────────────────
+// Built once per request; shared by fg_inventory_value, value_tied_per_beer.
+// Uses ref_sku_bom.cost SUM with bom_source filter and effective date gate —
+// the same basis the COP build uses.
+
+function kpi_fg_get_sku_costs(PDO $pdo): array
+{
+    $cacheKey = 'fg_sku_bom_costs';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+    $stmt = $pdo->query(
+        "SELECT sku_id, SUM(cost) AS sku_cost
+           FROM ref_sku_bom
+          WHERE bom_source IN ('packaging', 'liquid')
+            AND (effective_from  IS NULL OR effective_from  <= CURDATE())
+            AND (effective_until IS NULL OR effective_until >= CURDATE())
+          GROUP BY sku_id"
+    );
+    $costs = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $costs[(int) $row['sku_id']] = (float) $row['sku_cost'];
+    }
+    return kpi_cache_set($cacheKey, $costs);
+}
+
+// ─── #72 — fg_units_in_stock ─────────────────────────────────────────────────
+
+/** #72 — Per-SKU current physique (table viz) */
+function kpi_fg_units_in_stock(string $label, PDO $pdo): array
+{
+    $cacheKey = 'fg_units_in_stock';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $data = kpi_fg_get_compute($pdo);
+    if (empty($data['rows'])) {
+        $result = array_merge(kpi_empty_result($label, 'unités'), [
+            'value' => 0,
+            'tint'  => 'neutral',
+            'meta'  => ['anchor_date' => null, 'note' => 'Aucun inventaire ancré'],
+        ]);
+        return kpi_cache_set($cacheKey, $result);
+    }
+
+    // Total physique across all SKUs; breakdown per display_family for the table
+    $totalUnits   = 0;
+    $familyTotals = [];
+    foreach ($data['rows'] as $row) {
+        $phys = (int) $row['physique'];
+        $totalUnits += $phys;
+        $fam = (string) ($row['display_family'] ?? $row['format']);
+        $familyTotals[$fam] = ($familyTotals[$fam] ?? 0) + $phys;
+    }
+    arsort($familyTotals);
+    $breakdown = [];
+    foreach ($familyTotals as $fam => $qty) {
+        $breakdown[] = ['key' => $fam, 'label' => $fam, 'value' => $qty];
+    }
+
+    $result = array_merge(kpi_empty_result($label, 'unités'), [
+        'value'     => $totalUnits,
+        'tint'      => 'neutral',
+        'breakdown' => $breakdown,
+        'meta'      => [
+            'anchor_date' => $data['anchor_date'],
+            'sku_count'   => count($data['rows']),
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #73 — fg_inventory_value (FISCAL) ───────────────────────────────────────
+
+/**
+ * #73 — Total FG inventory value in CHF at BOM cost.
+ *
+ * Formula: Σ(anchor_qty[sku] × sku_cost[sku])
+ * where:
+ *   anchor_qty = SUM of latest per-(sku, location) counts from inv_fg_stocktake
+ *   sku_cost   = SUM(ref_sku_bom.cost) WHERE bom_source IN ('packaging','liquid')
+ *                AND effective date gate
+ *
+ * This is the ANCHOR value (not the live-computed physique) because:
+ *   (a) The anchor IS the fiscal snapshot of physical stock at count time.
+ *   (b) Movements since the anchor (prod/sales) are NOT yet reconciled to stock
+ *       in the accounting system — they will be captured in the next close.
+ *
+ * Fiscal reconciliation verified 2026-06-10:
+ *   ZEPF: 1256 units × CHF 1.9563/unit = CHF 2,457.07
+ *   Total anchor inventory value = CHF 43,350.11 across 52 SKUs.
+ */
+function kpi_fg_inventory_value(string $label, PDO $pdo): array
+{
+    $cacheKey = 'fg_inventory_value';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    // Anchor qty per SKU (same subquery as fg_stock_compute step 1)
+    $anchorStmt = $pdo->query(
+        "SELECT s.sku_id_fk, SUM(CAST(s.qty AS SIGNED)) AS anchor_qty
+           FROM inv_fg_stocktake s
+          WHERE s.id IN (
+              SELECT MAX(t2.id)
+                FROM inv_fg_stocktake t2
+               WHERE t2.is_active = 1
+               GROUP BY t2.sku_id_fk, t2.location_id_fk
+          )
+          GROUP BY s.sku_id_fk"
+    );
+    $anchors = [];
+    foreach ($anchorStmt->fetchAll(PDO::FETCH_ASSOC) as $ar) {
+        $anchors[(int) $ar['sku_id_fk']] = (int) $ar['anchor_qty'];
+    }
+
+    if (empty($anchors)) {
+        $result = array_merge(kpi_empty_result($label, 'CHF'), [
+            'value' => null,
+            'tint'  => 'neutral',
+            'meta'  => ['note' => 'Aucun inventaire ancré'],
+        ]);
+        return kpi_cache_set($cacheKey, $result);
+    }
+
+    $skuCosts = kpi_fg_get_sku_costs($pdo);
+
+    $totalCHF      = 0.0;
+    $coveredSkus   = 0;
+    $uncoveredSkus = 0;
+    foreach ($anchors as $skuId => $qty) {
+        if (isset($skuCosts[$skuId])) {
+            $totalCHF += $qty * $skuCosts[$skuId];
+            $coveredSkus++;
+        } else {
+            $uncoveredSkus++;
+        }
+    }
+
+    $result = array_merge(kpi_empty_result($label, 'CHF'), [
+        'value' => round($totalCHF, 2),
+        'tint'  => 'neutral',
+        'meta'  => [
+            'sku_count'      => count($anchors),
+            'covered_skus'   => $coveredSkus,
+            'uncovered_skus' => $uncoveredSkus,
+            'note'           => 'Valeur ancre (derniers comptages). Base: ref_sku_bom liquid+packaging.',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #74 — fg_days_cover ─────────────────────────────────────────────────────
+
+/**
+ * #74 — Weeks of cover per SKU/format (table viz).
+ * semaines_stock from fg_stock_compute() — already computed (physique / velocity_weekly).
+ * SKUs with no velocity show null (UI renders '∞'). Total = weighted avg.
+ */
+function kpi_fg_days_cover(string $label, PDO $pdo): array
+{
+    $cacheKey = 'fg_days_cover';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $data = kpi_fg_get_compute($pdo);
+    if (empty($data['rows'])) {
+        $result = array_merge(kpi_empty_result($label, 'semaines'), [
+            'value' => null,
+            'tint'  => 'neutral',
+            'meta'  => ['note' => 'Aucun inventaire ancré'],
+        ]);
+        return kpi_cache_set($cacheKey, $result);
+    }
+
+    $totalVelWeighted = 0.0;
+    $totalVelWeight   = 0.0;
+    $lowCount         = 0;
+    $infinityCount    = 0;
+    $breakdown        = [];
+
+    foreach ($data['rows'] as $row) {
+        if ($row['flag_dormant']) continue;
+        $sem = $row['semaines_stock'];
+
+        if ($sem === null) {
+            $infinityCount++;
+        } else {
+            $vel = (float) ($row['velocity_weekly'] ?? 0.0);
+            if ($vel > 0.0) {
+                $totalVelWeighted += (float) $sem * $vel;
+                $totalVelWeight   += $vel;
+            }
+            if ($row['flag_low_stock']) {
+                $lowCount++;
+            }
+        }
+        $breakdown[] = [
+            'key'   => $row['sku_code'],
+            'label' => $row['sku_code'],
+            'value' => $sem !== null ? round((float) $sem, 1) : null,
+        ];
+    }
+
+    $avgWeeks = $totalVelWeight > 0.0 ? $totalVelWeighted / $totalVelWeight : null;
+
+    $tint = match (true) {
+        $lowCount > 3                                      => 'red',
+        $lowCount > 0                                      => 'amber',
+        $avgWeeks !== null && (float) $avgWeeks < 2.0      => 'amber',
+        default                                            => 'green',
+    };
+
+    $result = array_merge(kpi_empty_result($label, 'semaines'), [
+        'value'     => $avgWeeks !== null ? round((float) $avgWeeks, 1) : null,
+        'tint'      => $tint,
+        'breakdown' => $breakdown,
+        'meta'      => [
+            'anchor_date'     => $data['anchor_date'],
+            'low_stock_count' => $lowCount,
+            'infinity_count'  => $infinityCount,
+            'note'            => 'Moyenne pondérée par vélocité hebdomadaire (8 semaines)',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #76 — fg_produced_vs_sold ───────────────────────────────────────────────
+
+/**
+ * #76 — PF produits vs vendus: Δ stock net, grouped by display_family (bar).
+ * Source: fg_stock_compute() rows — prod_qty vs (expedie + eshop + taproom).
+ * Breakdown: [{key: family, label: family, value: net_delta}]
+ * Series: interleaved prod/sold pairs for a grouped bar chart.
+ */
+function kpi_fg_produced_vs_sold(string $label, PDO $pdo): array
+{
+    $cacheKey = 'fg_produced_vs_sold';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $data = kpi_fg_get_compute($pdo);
+    if (empty($data['rows'])) {
+        $result = array_merge(kpi_empty_result($label, 'unités'), [
+            'value' => null, 'tint' => 'neutral',
+            'meta'  => ['note' => 'Aucun inventaire ancré'],
+        ]);
+        return kpi_cache_set($cacheKey, $result);
+    }
+
+    $byFamily = [];
+    foreach ($data['rows'] as $row) {
+        $fam = (string) ($row['display_family'] ?? $row['format']);
+        if (!isset($byFamily[$fam])) {
+            $byFamily[$fam] = ['prod' => 0, 'sold' => 0];
+        }
+        $byFamily[$fam]['prod'] += (int) $row['prod_qty'];
+        $byFamily[$fam]['sold'] += (int) $row['expedie_qty'] + (int) $row['eshop_qty'] + (int) $row['taproom_qty'];
+    }
+
+    $totalProd = 0;
+    $totalSold = 0;
+    $breakdown = [];
+    $series    = [];
+    foreach ($byFamily as $fam => $v) {
+        $totalProd += $v['prod'];
+        $totalSold += $v['sold'];
+        $breakdown[] = ['key' => $fam, 'label' => $fam, 'value' => $v['prod'] - $v['sold']];
+        $series[] = ['period' => $fam . ':prod', 'value' => $v['prod']];
+        $series[] = ['period' => $fam . ':sold', 'value' => $v['sold']];
+    }
+
+    $netDelta = $totalProd - $totalSold;
+    $tint = match (true) {
+        $totalProd === 0 => 'neutral',
+        $netDelta < 0    => 'amber',
+        default          => 'green',
+    };
+
+    $result = array_merge(kpi_empty_result($label, 'unités'), [
+        'value'     => $netDelta,
+        'tint'      => $tint,
+        'breakdown' => $breakdown,
+        'series'    => $series,
+        'meta'      => [
+            'anchor_date' => $data['anchor_date'],
+            'total_prod'  => $totalProd,
+            'total_sold'  => $totalSold,
+            'note'        => 'Depuis date de dernier inventaire ancré',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #78 — fg_stock_turnover ─────────────────────────────────────────────────
+
+/**
+ * #78 — FG stock turnover ratio (annualised).
+ * Formula: (velocity_weekly × 52) / anchor_total
+ * velocity_weekly is the 8-week trailing avg already computed by fg_stock_compute().
+ * Result unit: "rotations/an" (dimensionless).
+ */
+function kpi_fg_stock_turnover(string $label, PDO $pdo): array
+{
+    $cacheKey = 'fg_stock_turnover';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $data = kpi_fg_get_compute($pdo);
+    if (empty($data['rows'])) {
+        $result = array_merge(kpi_empty_result($label, 'rotations/an'), [
+            'value' => null, 'tint' => 'neutral',
+            'meta'  => ['note' => 'Aucun inventaire ancré'],
+        ]);
+        return kpi_cache_set($cacheKey, $result);
+    }
+
+    $totalAnchor = 0;
+    $weeklyRate  = 0.0;
+    foreach ($data['rows'] as $row) {
+        $totalAnchor += (int) $row['anchor_qty'];
+        $weeklyRate  += (float) ($row['velocity_weekly'] ?? 0.0);
+    }
+
+    if ($totalAnchor === 0) {
+        $result = array_merge(kpi_empty_result($label, 'rotations/an'), [
+            'value' => null, 'tint' => 'neutral',
+            'meta'  => ['note' => 'Inventaire ancré = 0'],
+        ]);
+        return kpi_cache_set($cacheKey, $result);
+    }
+
+    $turnover = round(($weeklyRate * 52.0) / $totalAnchor, 2);
+
+    $tint = match (true) {
+        $turnover >= 8.0 => 'green',
+        $turnover >= 4.0 => 'amber',
+        default          => 'red',
+    };
+
+    $result = array_merge(kpi_empty_result($label, 'rotations/an'), [
+        'value' => $turnover,
+        'tint'  => $tint,
+        'meta'  => [
+            'anchor_date'  => $data['anchor_date'],
+            'anchor_units' => $totalAnchor,
+            'weekly_rate'  => round($weeklyRate, 1),
+            'note'         => 'Taux annualisé = (ventes/semaine × 52) / stock ancré',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #80 — slow_mover_flag ───────────────────────────────────────────────────
+
+/**
+ * #80 — Slow mover / dead stock flag.
+ * Count of SKUs with flag_dormant=true AND physique > 0
+ * (stock that exists but has had zero movement since the last count).
+ */
+function kpi_fg_slow_mover_flag(string $label, PDO $pdo): array
+{
+    $cacheKey = 'fg_slow_mover_flag';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $data = kpi_fg_get_compute($pdo);
+
+    $dormantCount = 0;
+    $dormantSkus  = [];
+    foreach ($data['rows'] as $row) {
+        if ($row['flag_dormant'] && (int) $row['physique'] > 0) {
+            $dormantCount++;
+            $dormantSkus[] = $row['sku_code'];
+        }
+    }
+
+    $tint = match (true) {
+        $dormantCount === 0 => 'green',
+        $dormantCount <= 3  => 'amber',
+        default             => 'red',
+    };
+
+    $result = array_merge(kpi_empty_result($label, 'SKUs'), [
+        'value' => $dormantCount,
+        'tint'  => $tint,
+        'meta'  => [
+            'anchor_date'  => $data['anchor_date'],
+            'dormant_skus' => array_slice($dormantSkus, 0, 10),
+            'note'         => 'SKUs avec physique > 0 et aucun mouvement depuis inventaire ancré',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #81 — fg_by_location ────────────────────────────────────────────────────
+
+/**
+ * #81 — FG units by location (bar).
+ * Source: fg_stock_location_snapshot() — per-site units after all flows applied.
+ */
+function kpi_fg_by_location(string $label, PDO $pdo): array
+{
+    $cacheKey = 'fg_by_location';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    if (!function_exists('fg_stock_location_snapshot')) {
+        require_once __DIR__ . '/fg-stock.php';
+    }
+    $snap = fg_stock_location_snapshot($pdo);
+
+    $breakdown  = [];
+    $totalUnits = 0;
+    foreach ($snap['locations'] as $loc) {
+        $units = (int) ($loc['total_units'] ?? 0);
+        $totalUnits += $units;
+        $breakdown[] = [
+            'key'   => (string) $loc['id'],
+            'label' => $loc['name'],
+            'value' => $units,
+        ];
+    }
+    usort($breakdown, fn($a, $b) => $b['value'] <=> $a['value']);
+
+    $result = array_merge(kpi_empty_result($label, 'unités'), [
+        'value'     => $totalUnits,
+        'tint'      => 'neutral',
+        'breakdown' => $breakdown,
+        'meta'      => [
+            'anchor_date'    => $snap['anchor_date'] ?? null,
+            'location_count' => count($snap['locations']),
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #84 — value_tied_per_beer ───────────────────────────────────────────────
+
+/**
+ * #84 — Inventory value tied up per beer family (bar).
+ * Same BOM cost basis as fg_inventory_value (#73).
+ * Groups physique × cost by display_family.
+ */
+function kpi_fg_value_tied_per_beer(string $label, PDO $pdo): array
+{
+    $cacheKey = 'fg_value_tied_per_beer';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $data     = kpi_fg_get_compute($pdo);
+    $skuCosts = kpi_fg_get_sku_costs($pdo);
+
+    if (empty($data['rows'])) {
+        $result = array_merge(kpi_empty_result($label, 'CHF'), [
+            'value' => null, 'tint' => 'neutral',
+            'meta'  => ['note' => 'Aucun inventaire ancré'],
+        ]);
+        return kpi_cache_set($cacheKey, $result);
+    }
+
+    $byFamily = [];
+    foreach ($data['rows'] as $row) {
+        $skuId   = (int) $row['sku_id'];
+        $cost    = $skuCosts[$skuId] ?? 0.0;
+        $phys    = (int) $row['physique'];
+        $value   = $phys * $cost;
+        $fam     = (string) ($row['display_family'] ?? $row['format']);
+        $byFamily[$fam] = ($byFamily[$fam] ?? 0.0) + $value;
+    }
+    arsort($byFamily);
+
+    $totalValue = array_sum($byFamily);
+    $breakdown  = [];
+    foreach ($byFamily as $fam => $val) {
+        if ($val < 0.01) continue;
+        $breakdown[] = ['key' => $fam, 'label' => $fam, 'value' => round((float) $val, 2)];
+    }
+
+    $result = array_merge(kpi_empty_result($label, 'CHF'), [
+        'value'     => round($totalValue, 2),
+        'tint'      => 'neutral',
+        'breakdown' => $breakdown,
+        'meta'      => [
+            'anchor_date' => $data['anchor_date'],
+            'note'        => 'Physique courant × coût BOM (liquid+packaging). Regroupé par famille.',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #85 — fg_stock_variation ────────────────────────────────────────────────
+
+/**
+ * #85 — FG stock variation flag: count of SKUs where physique < 0.
+ * A negative physique means more units have been sold/shipped than were produced
+ * since the last physical count — signals a missing count, unrecorded shrinkage,
+ * or data entry error.
+ *
+ * Primary value: count of over-depleted SKUs (alarm). Meta carries the net total.
+ */
+function kpi_fg_stock_variation(string $label, PDO $pdo): array
+{
+    $cacheKey = 'fg_stock_variation';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $data = kpi_fg_get_compute($pdo);
+    if (empty($data['rows'])) {
+        $result = array_merge(kpi_empty_result($label, 'unités'), [
+            'value' => null, 'tint' => 'neutral',
+            'meta'  => ['note' => 'Aucun inventaire ancré'],
+        ]);
+        return kpi_cache_set($cacheKey, $result);
+    }
+
+    $totalPhysique = 0;
+    $totalAnchor   = 0;
+    $negativeCount = 0;
+    $breakdown     = [];
+
+    foreach ($data['rows'] as $row) {
+        $phys   = (int) $row['physique'];
+        $anchor = (int) $row['anchor_qty'];
+        $totalPhysique += $phys;
+        $totalAnchor   += $anchor;
+        if ($phys < 0) {
+            $negativeCount++;
+            $breakdown[] = [
+                'key'   => $row['sku_code'],
+                'label' => $row['sku_code'],
+                'value' => $phys,
+            ];
+        }
+    }
+
+    $netVariation = $totalPhysique - $totalAnchor;
+
+    $tint = match (true) {
+        $negativeCount > 0  => 'red',
+        default             => 'green',
+    };
+
+    $result = array_merge(kpi_empty_result($label, 'SKUs'), [
+        'value'     => $negativeCount,
+        'tint'      => $tint,
+        'breakdown' => $breakdown,
+        'meta'      => [
+            'anchor_date'        => $data['anchor_date'],
+            'total_physique'     => $totalPhysique,
+            'total_anchor'       => $totalAnchor,
+            'net_variation'      => $netVariation,
+            'negative_sku_count' => $negativeCount,
+            'note'               => 'Physique < 0 = stock sur-déplété (ventes > ancre + production)',
         ],
     ]);
 

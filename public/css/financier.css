@@ -1,0 +1,633 @@
+/* financier.css — Pôle Financier
+ * Scoped under body.financier
+ * Kraft/manila palette via CSS custom properties (:root in app.css)
+ * No inline hex — all colours from --* tokens.
+ */
+
+/* ── Layout ──────────────────────────────────────────────────────────────────*/
+body.financier .main {
+  align-items: stretch;   /* override .home .main center-align (ui-skill anti-pattern) */
+  overflow-y: auto;
+}
+
+.fin-wrap {
+  max-width: 1140px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+/* ── Page header ─────────────────────────────────────────────────────────────*/
+.fin-page-head {
+  border-bottom: 1.5px solid var(--hairline);
+  padding-bottom: 1.25rem;
+}
+
+.fin-title {
+  font-family: 'Fraunces', serif;
+  font-optical-sizing: auto;
+  font-variation-settings: "opsz" 96;
+  font-size: clamp(1.6rem, 3vw, 2.2rem);
+  font-weight: 400;
+  color: var(--ink);
+  margin: 0 0 0.3rem;
+}
+
+.fin-desc {
+  font-size: 0.85rem;
+  color: var(--ink-mute);
+  margin: 0;
+}
+
+/* ── No-data state ───────────────────────────────────────────────────────────*/
+.fin-no-data {
+  padding: 2rem;
+  background: var(--bg-elev);
+  border-radius: 6px;
+  color: var(--ink-mute);
+  text-align: center;
+  border: 1px solid var(--hairline);
+}
+
+/* ── Tab navigation ──────────────────────────────────────────────────────────*/
+.fin-tabs {
+  display: flex;
+  gap: 0.25rem;
+  border-bottom: 2px solid var(--hairline);
+  padding-bottom: 0;
+  flex-wrap: wrap;
+}
+
+.fin-tab {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.85rem;
+  font-weight: 500;
+  padding: 0.55rem 1.1rem;
+  border: none;
+  background: transparent;
+  color: var(--ink-mute);
+  cursor: pointer;
+  border-radius: 5px 5px 0 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+  letter-spacing: 0.02em;
+  min-height: 44px;         /* touch target */
+}
+
+.fin-tab:hover {
+  color: var(--oak);
+  background: color-mix(in srgb, var(--oak) 6%, transparent);
+}
+
+.fin-tab--active,
+.fin-tab[aria-selected="true"] {
+  color: var(--oak-deep);
+  border-bottom-color: var(--oak-deep);
+  background: color-mix(in srgb, var(--oak) 8%, var(--bg));
+}
+
+/* ── Panels ──────────────────────────────────────────────────────────────────*/
+.fin-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.fin-panel--active {
+  /* visible */
+}
+
+.fin-empty {
+  color: var(--ink-mute);
+  font-style: italic;
+  padding: 1.5rem 0;
+}
+
+/* ── Freshness stamp ─────────────────────────────────────────────────────────*/
+.fin-freshness {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+  align-items: baseline;
+  padding: 0.55rem 0.9rem;
+  background: color-mix(in srgb, var(--oak) 6%, var(--bg));
+  border-left: 3px solid var(--oak);
+  border-radius: 0 5px 5px 0;
+  font-size: 0.8rem;
+}
+
+.fin-freshness__label {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 500;
+  color: var(--oak-deep);
+  letter-spacing: 0.04em;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+}
+
+.fin-freshness__ts {
+  color: var(--ink-mute);
+}
+
+.fin-freshness__source {
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+  font-style: italic;
+}
+
+.fin-freshness__hint {
+  color: var(--ink-faint);
+  font-style: italic;
+  font-size: 0.75rem;
+}
+
+/* ── Loading indicator ───────────────────────────────────────────────────────*/
+.fin-loading-indicator {
+  font-size: 0.78rem;
+  color: var(--ink-mute);
+  font-style: italic;
+  animation: fin-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes fin-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+
+/* ── Month controls ──────────────────────────────────────────────────────────*/
+.fin-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.fin-picker-label {
+  font-size: 0.8rem;
+  color: var(--ink-mute);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.fin-month-select {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.88rem;
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--hairline);
+  border-radius: 5px;
+  background: var(--bg-elev);
+  color: var(--ink);
+  cursor: pointer;
+  min-height: 44px;
+}
+
+.fin-month-select:focus {
+  outline: 2px solid var(--hop);
+  outline-offset: 2px;
+}
+
+/* ── KPI grid ────────────────────────────────────────────────────────────────*/
+.fin-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 1rem;
+}
+
+.fin-kpi-grid--cogs,
+.fin-kpi-grid--marge {
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+}
+
+/* KPI tile */
+.fin-kpi {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  padding: 1rem 1.1rem 0.9rem;
+  box-shadow: 0 1px 3px rgba(30, 18, 5, 0.07);
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.fin-kpi__label {
+  font-size: 0.72rem;
+  color: var(--ink-mute);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-family: 'JetBrains Mono', monospace;
+  line-height: 1.2;
+}
+
+.fin-kpi__value {
+  font-size: 1.45rem;
+  font-weight: 500;
+  color: var(--ink);
+  font-family: 'Fraunces', serif;
+  font-variation-settings: "opsz" 96;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+}
+
+.fin-kpi__unit {
+  font-size: 0.78rem;
+  color: var(--ink-mute);
+}
+
+.fin-kpi--accent .fin-kpi__value {
+  color: var(--oak-deep);
+}
+
+/* ── Section grid (COP sections) ─────────────────────────────────────────────*/
+.fin-sections-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(185px, 1fr));
+  gap: 0.85rem;
+}
+
+.fin-section-tile {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  padding: 0.9rem 1rem;
+  box-shadow: 0 1px 3px rgba(30, 18, 5, 0.07);
+}
+
+.fin-section-tile__name {
+  font-size: 0.7rem;
+  color: var(--ink-mute);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.fin-section-tile__total {
+  font-size: 1.2rem;
+  font-weight: 500;
+  color: var(--ink);
+  font-family: 'Fraunces', serif;
+  font-variation-settings: "opsz" 96;
+  margin-top: 0.25rem;
+}
+
+.fin-section-tile__share {
+  font-size: 0.72rem;
+  color: var(--oak);
+  margin-top: 0.15rem;
+}
+
+/* ── Cards ───────────────────────────────────────────────────────────────────*/
+.fin-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  padding: 1.25rem 1.4rem;
+  box-shadow: 0 1px 3px rgba(30, 18, 5, 0.07);
+}
+
+.fin-card--chart {
+  overflow: hidden;
+}
+
+.fin-card--warn {
+  border-left: 3px solid var(--ember);
+}
+
+.fin-card--table {
+  padding: 0;
+  overflow: hidden;
+}
+
+.fin-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  padding: 1rem 1.25rem 0.75rem;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.fin-card__title {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--ink);
+  margin: 0;
+  text-transform: none;
+  letter-spacing: 0;
+  padding: 0.25rem 0;
+}
+
+.fin-card__title--warn {
+  color: var(--ember);
+}
+
+/* ── Brewing detail card ─────────────────────────────────────────────────────*/
+.fin-card--brew {
+  padding: 1.25rem 1.4rem;
+}
+
+#cop-brew-detail {
+  display: grid;
+  grid-template-columns: auto 1fr 1fr 1fr;
+  gap: 0.85rem 1.5rem;
+  align-items: start;
+}
+
+#cop-brew-detail .fin-brew-head {
+  grid-column: 1 / -1;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--ink);
+  border-bottom: 1px solid var(--hairline);
+  padding-bottom: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.fin-brew-row {
+  display: contents; /* participates in parent grid */
+}
+
+.fin-brew-row__name {
+  font-size: 0.78rem;
+  color: var(--ink-mute);
+  font-family: 'JetBrains Mono', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding-top: 0.15rem;
+}
+
+.fin-brew-row__val {
+  font-size: 1.05rem;
+  font-weight: 500;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.fin-brew-row__sub {
+  font-size: 0.72rem;
+  color: var(--ink-mute);
+  margin-top: 0.1rem;
+}
+
+/* ── Chart area ──────────────────────────────────────────────────────────────*/
+.fin-chart-area {
+  width: 100%;
+  overflow-x: auto;
+  min-height: 160px;
+}
+
+.fin-chart-area svg {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+}
+
+/* ── Sort controls ───────────────────────────────────────────────────────────*/
+.fin-sort-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.fin-sort-label {
+  font-size: 0.72rem;
+  color: var(--ink-mute);
+  font-family: 'JetBrains Mono', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.fin-sort-select {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.8rem;
+  padding: 0.3rem 0.6rem;
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+/* ── Table ───────────────────────────────────────────────────────────────────*/
+.fin-table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.fin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+  font-family: 'DM Sans', sans-serif;
+}
+
+.fin-table thead th {
+  text-align: left;
+  padding: 0.6rem 1rem;
+  font-size: 0.7rem;
+  font-family: 'JetBrains Mono', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--ink-mute);
+  background: var(--bg-side);
+  border-bottom: 1.5px solid var(--hairline);
+  white-space: nowrap;
+}
+
+.fin-table tbody tr {
+  border-bottom: 1px solid var(--hairline);
+  transition: background 0.1s;
+}
+
+.fin-table tbody tr:hover {
+  background: color-mix(in srgb, var(--oak) 4%, var(--bg-elev));
+}
+
+.fin-table tbody td {
+  padding: 0.55rem 1rem;
+  color: var(--ink);
+  vertical-align: middle;
+  border-bottom: none;
+}
+
+.fin-th--num,
+.fin-td--num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+}
+
+.fin-td--sku {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 500;
+  font-size: 0.78rem;
+  color: var(--oak-deep);
+}
+
+.fin-td--margin-pos { color: var(--hop-deep); }
+.fin-td--margin-neg { color: var(--ember); }
+
+/* beer-tax category badge */
+.fin-taxcat {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.68rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 500;
+  padding: 0.15rem 0.45rem;
+  border-radius: 3px;
+  letter-spacing: 0.04em;
+  background: color-mix(in srgb, var(--cold) 12%, var(--bg-elev));
+  color: var(--cold);
+  white-space: nowrap;
+}
+
+.fin-taxcat--0 {
+  background: color-mix(in srgb, var(--ink-faint) 15%, var(--bg-elev));
+  color: var(--ink-mute);
+}
+
+/* ── Beer-tax breakdown grid ─────────────────────────────────────────────────*/
+.fin-beertax-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 0.85rem;
+  margin-top: 0.75rem;
+}
+
+.fin-beertax-tile {
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+}
+
+.fin-beertax-tile__cat {
+  font-size: 0.7rem;
+  font-family: 'JetBrains Mono', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--cold);
+}
+
+.fin-beertax-tile__hl {
+  font-size: 1.05rem;
+  font-weight: 500;
+  color: var(--ink);
+  font-family: 'Fraunces', serif;
+  font-variation-settings: "opsz" 96;
+}
+
+.fin-beertax-tile__tax {
+  font-size: 0.8rem;
+  color: var(--ink-mute);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Non-rattaché callout ────────────────────────────────────────────────────*/
+#cogs-unmatched-wrap {
+  padding: 1rem 1.2rem;
+}
+
+.fin-unmatched-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+
+.fin-unmatched-chip {
+  font-size: 0.75rem;
+  font-family: 'JetBrains Mono', monospace;
+  padding: 0.2rem 0.55rem;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--ember) 10%, var(--bg-elev));
+  color: var(--ember);
+  border: 1px solid color-mix(in srgb, var(--ember) 25%, var(--hairline));
+}
+
+/* ── Link-out card (Module D) ────────────────────────────────────────────────*/
+.fin-linkout-card {
+  display: flex;
+  gap: 1.5rem;
+  align-items: flex-start;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  padding: 1.8rem 2rem;
+  box-shadow: 0 2px 6px rgba(30, 18, 5, 0.09);
+  max-width: 560px;
+}
+
+.fin-linkout-card__icon {
+  font-size: 2rem;
+  color: var(--oak);
+  line-height: 1;
+  flex-shrink: 0;
+  padding-top: 0.15rem;
+}
+
+.fin-linkout-card__title {
+  font-family: 'Fraunces', serif;
+  font-size: 1.3rem;
+  font-weight: 400;
+  color: var(--ink);
+  margin: 0 0 0.5rem;
+}
+
+.fin-linkout-card__desc {
+  font-size: 0.85rem;
+  color: var(--ink-mute);
+  margin: 0 0 1.2rem;
+  line-height: 1.5;
+}
+
+.fin-linkout-btn {
+  display: inline-block;
+  padding: 0.55rem 1.2rem;
+  background: var(--hop);
+  color: var(--bg);
+  border-radius: 5px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  text-decoration: none;
+  transition: background 0.15s;
+  min-height: 44px;
+  line-height: 1.8;
+}
+
+.fin-linkout-btn:hover {
+  background: var(--hop-deep);
+  color: var(--bg);
+}
+
+/* ── SR-only helper ──────────────────────────────────────────────────────────*/
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── Responsive ──────────────────────────────────────────────────────────────*/
+@media (max-width: 700px) {
+  .fin-wrap { padding: 1rem 0.75rem 3rem; gap: 1.25rem; }
+  .fin-kpi-grid { grid-template-columns: 1fr 1fr; }
+  .fin-sections-grid { grid-template-columns: 1fr 1fr; }
+  #cop-brew-detail { grid-template-columns: 1fr 1fr; }
+  .fin-linkout-card { flex-direction: column; gap: 0.75rem; padding: 1.2rem; }
+  .fin-table thead th { padding: 0.5rem 0.65rem; }
+  .fin-table tbody td { padding: 0.45rem 0.65rem; }
+}
