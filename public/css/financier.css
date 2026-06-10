@@ -91,13 +91,17 @@ body.financier .main {
 
 /* ── Panels ──────────────────────────────────────────────────────────────────*/
 .fin-panel {
-  display: flex;
+  /* Hidden by default — only the .fin-panel--active panel shows. This must drive
+     visibility (not the HTML `hidden` attribute): a bare `.fin-panel { display:flex }`
+     overrides `[hidden]`'s UA display:none, which rendered ALL panels stacked at once
+     and made the tabs appear dead. The tab JS toggles `--active`; HTML sets it on COP. */
+  display: none;
   flex-direction: column;
   gap: 1.5rem;
 }
 
 .fin-panel--active {
-  /* visible */
+  display: flex;
 }
 
 .fin-empty {
