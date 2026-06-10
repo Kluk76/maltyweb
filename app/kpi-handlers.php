@@ -238,8 +238,8 @@ function kpi_dispatch(array $tracker, PDO $pdo): array
             'fg_stock'     => kpi_handler_fg_stock($handler, $params, $label, $pdo),
             'sales'        => kpi_handler_sales($handler, $params, $label, $pdo),
             'qa_qc'        => kpi_handler_qa_qc($handler, $params, $label, $pdo),
-            'equipment'    => kpi_stub_handler($domain, $handler, $label),
-            'logistics'    => kpi_stub_handler($domain, $handler, $label),
+            'equipment'    => kpi_handler_equipment($handler, $params, $label, $pdo),
+            'logistics'    => kpi_handler_logistics($handler, $params, $label, $pdo),
             default        => kpi_error_result("kpi: unknown source_domain '{$domain}'", $label),
         };
     } catch (Throwable $e) {
@@ -258,7 +258,9 @@ function kpi_dispatch(array $tracker, PDO $pdo): array
  */
 function kpi_stub_domains(): array
 {
-    return ['equipment', 'logistics'];
+    // 'logistics' removed: ≥1 handler built (batch 10).
+    // 'equipment' removed: ≥1 handler built (equipment_vessel_utilization, BBT).
+    return [];
 }
 
 /**
@@ -10583,6 +10585,451 @@ function kpi_qa_right_first_time(array $params, string $label, PDO $pdo): array
             'ph_wort_spec'     => KPI_QA_WORT_PH_LO . '–' . KPI_QA_WORT_PH_HI,
             'ph_ferm_spec'     => KPI_QA_FERM_PH_LO . '–' . KPI_QA_FERM_PH_HI,
             'threshold_source' => 'commissioning_settings (O₂) + KPI_QA_*_PH constants (pH)',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════════
+// HANDLER: logistics  (source_domain = 'logistics')
+// Reads: ord_orders, ord_order_lines, ord_order_status_events
+// Fulfilment-v1 tables shipped 2026-06-09.
+// BUILT (#134 #135 #138 #141): orders_to_fulfil, outbound_delivery_notes,
+//   order_backlog, pick_pack_throughput.
+// GAP: on_time_shipment_rate, shipping_cost_per_order, keg_fleet_out_returned,
+//   returns_breakage_transit, avg_delivery_lead_time, carbon_transport_footprint,
+//   delivery_density_region, cold_chain_compliance, otif_to_customer —
+//   all require a delivered_at timestamp or freight-cost feed not yet present.
+// ═════════════════════════════════════════════════════════════════════════════
+
+function kpi_handler_logistics(
+    string $handler,
+    array  $params,
+    string $label,
+    PDO    $pdo
+): array {
+    return match ($handler) {
+        'orders_to_fulfil'        => kpi_logi_orders_to_fulfil($label, $pdo),
+        'outbound_delivery_notes' => kpi_logi_outbound_delivery_notes($params, $label, $pdo),
+        'order_backlog'           => kpi_logi_order_backlog($label, $pdo),
+        'pick_pack_throughput'    => kpi_logi_pick_pack_throughput($params, $label, $pdo),
+        // GAP trackers: source absent — stub with gap reason
+        'on_time_shipment_rate'   => kpi_logi_stub_gap('on_time_shipment_rate', $label,
+            'Pas de champ delivered_at dans ord_orders; OTIF nécessite horodatage de livraison confirmée.'),
+        'shipping_cost_per_order' => kpi_logi_stub_gap('shipping_cost_per_order', $label,
+            'Aucun flux coût frêt dans la DB (ref_transporters présent mais pas de tarif ou frais facturé par commande).'),
+        'keg_fleet_out_returned'  => kpi_logi_stub_gap('keg_fleet_out_returned', $label,
+            'Aucune table de suivi retour fûts (kegs); présence non trackée dans ord_order_lines.'),
+        'returns_breakage_transit' => kpi_logi_stub_gap('returns_breakage_transit', $label,
+            'Aucune table de retours / casse en transit dans la DB.'),
+        'avg_delivery_lead_time'  => kpi_logi_stub_gap('avg_delivery_lead_time', $label,
+            'Délai de livraison nécessite delivered_at — absent de ord_orders.'),
+        'carbon_transport_footprint' => kpi_logi_stub_gap('carbon_transport_footprint', $label,
+            'Empreinte carbone nécessite distance × poids × facteur transporteur (aucune de ces données dans la DB).'),
+        'delivery_density_region' => kpi_logi_stub_gap('delivery_density_region', $label,
+            'ref_customers n\'a pas de colonne region géographique; code postal présent mais non exploité.'),
+        'cold_chain_compliance'   => kpi_logi_stub_gap('cold_chain_compliance', $label,
+            'Conformité chaîne du froid nécessite des capteurs température ou attestations transporteur (aucun dans la DB).'),
+        'packaging_for_shipping_cost' => kpi_logi_stub_gap('packaging_for_shipping_cost', $label,
+            'Coût emballage expédition non tracé séparément des emballages produit dans inv_deliveries.'),
+        'otif_to_customer'        => kpi_logi_stub_gap('otif_to_customer', $label,
+            'OTIF nécessite delivered_at et confirmation de livraison complète — absent de ord_orders.'),
+        default                   => kpi_stub_handler('logistics', $handler, $label),
+    };
+}
+
+/** Private: stub for logistics GAP trackers with a specific gap-reason note. */
+function kpi_logi_stub_gap(string $handler, string $label, string $note): array
+{
+    $r = kpi_empty_result($label);
+    $r['meta'] = [
+        'stub'    => true,
+        'domain'  => 'logistics',
+        'handler' => $handler,
+        'note'    => $note,
+    ];
+    return $r;
+}
+
+// ─── #134: orders_to_fulfil ───────────────────────────────────────────────────
+// Open orders in any pre-ship status (entered / confirmed / picked / bl_printed).
+// Primary scalar = count of orders. Breakdown by status.
+// Fix: COUNT(DISTINCT o.id) avoids fanout from the ord_order_lines JOIN inflating
+// the order count (~3× per order). SUM(ol.qty) remains correct per-status group.
+
+function kpi_logi_orders_to_fulfil(string $label, PDO $pdo): array
+{
+    // French labels for status values — kept in sync with #138 kpi_logi_order_backlog.
+    static $STATUS_LABELS = [
+        'entered'    => 'Entré',
+        'confirmed'  => 'Confirmé',
+        'picked'     => 'Préparé',
+        'bl_printed' => 'BL imprimé',
+    ];
+
+    $cacheKey = 'logi_orders_to_fulfil';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $stmt = $pdo->query(
+        "SELECT o.status, COUNT(DISTINCT o.id) AS orders, COALESCE(SUM(ol.qty), 0) AS units
+           FROM ord_orders o
+           JOIN ord_order_lines ol ON ol.order_id_fk = o.id
+          WHERE o.status IN ('entered','confirmed','picked','bl_printed')
+          GROUP BY o.status
+          ORDER BY FIELD(o.status,'entered','confirmed','picked','bl_printed')"
+    );
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $totalOrders = (int) array_sum(array_column($rows, 'orders'));
+    $totalUnits  = (float) array_sum(array_column($rows, 'units'));
+
+    $breakdown = array_map(
+        fn(array $r) => [
+            'key'   => $r['status'],
+            'label' => $STATUS_LABELS[$r['status']] ?? $r['status'],
+            'value' => (int) $r['orders'],
+        ],
+        $rows
+    );
+
+    $result = array_merge(kpi_empty_result($label, 'commandes'), [
+        'value'     => $totalOrders,
+        'tint'      => $totalOrders === 0 ? 'green' : ($totalOrders > 50 ? 'amber' : 'neutral'),
+        'breakdown' => $breakdown,
+        'meta'      => [
+            'period_label'   => 'maintenant',
+            'total_units'    => $totalUnits,
+            'status_in_scope'=> 'entered, confirmed, picked, bl_printed',
+            'source_table'   => 'ord_orders + ord_order_lines',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #135: outbound_delivery_notes ───────────────────────────────────────────
+// Orders transitioned to 'shipped' within the rolling window (default 30d).
+// Fix: use ord_order_status_events.occurred_at for the actual shipped-event time
+// instead of ord_orders.updated_at (which is refreshed by any later edit/comment).
+
+function kpi_logi_outbound_delivery_notes(array $params, string $label, PDO $pdo): array
+{
+    $windowDays = $params['window_days'] ?? 30;
+    $cacheKey   = "logi_outbound_{$windowDays}d";
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $stmt = $pdo->prepare(
+        "SELECT COUNT(DISTINCT o.id) AS shipped_orders,
+                COALESCE(SUM(ol.qty), 0) AS shipped_units
+           FROM ord_orders o
+           JOIN ord_order_status_events e ON e.order_id_fk = o.id AND e.status = 'shipped'
+           JOIN ord_order_lines ol ON ol.order_id_fk = o.id
+          WHERE o.status = 'shipped'
+            AND e.occurred_at >= DATE_SUB(CURDATE(), INTERVAL :days DAY)"
+    );
+    $stmt->execute(['days' => $windowDays]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    $shippedOrders = (int)   ($row['shipped_orders'] ?? 0);
+    $shippedUnits  = (float) ($row['shipped_units']  ?? 0.0);
+
+    // Delta: compare this window to the prior same-length window
+    $stmtPrior = $pdo->prepare(
+        "SELECT COUNT(DISTINCT o.id) AS prior_orders
+           FROM ord_orders o
+           JOIN ord_order_status_events e ON e.order_id_fk = o.id AND e.status = 'shipped'
+          WHERE o.status = 'shipped'
+            AND e.occurred_at >= DATE_SUB(CURDATE(), INTERVAL :days2 DAY)
+            AND e.occurred_at <  DATE_SUB(CURDATE(), INTERVAL :days DAY)"
+    );
+    $stmtPrior->execute(['days' => $windowDays, 'days2' => $windowDays * 2]);
+    $prior = (int) ($stmtPrior->fetch(PDO::FETCH_ASSOC)['prior_orders'] ?? 0);
+
+    $delta = ($prior > 0) ? round($shippedOrders - $prior, 0) : null;
+
+    $result = array_merge(kpi_empty_result($label, 'commandes'), [
+        'value'       => $shippedOrders,
+        'delta'       => $delta,
+        'delta_label' => "vs {$windowDays}j précédents",
+        'tint'        => 'neutral',
+        'meta'        => [
+            'period_label'   => "{$windowDays} derniers jours",
+            'window_days'    => $windowDays,
+            'shipped_units'  => $shippedUnits,
+            'source_table'   => 'ord_orders + ord_order_status_events (occurred_at)',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #138: order_backlog ──────────────────────────────────────────────────────
+// Total open orders (any non-terminal status) and pending units.
+// Separate from #134 by intent: #134 = actionable now (pre-ship), #138 = full pipeline.
+
+function kpi_logi_order_backlog(string $label, PDO $pdo): array
+{
+    $cacheKey = 'logi_order_backlog';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $stmt = $pdo->query(
+        "SELECT COUNT(DISTINCT o.id) AS open_orders,
+                COALESCE(SUM(ol.qty), 0) AS open_units,
+                SUM(CASE WHEN o.status = 'entered' THEN 1 ELSE 0 END)    AS cnt_entered,
+                SUM(CASE WHEN o.status = 'confirmed' THEN 1 ELSE 0 END)  AS cnt_confirmed,
+                SUM(CASE WHEN o.status = 'picked' THEN 1 ELSE 0 END)     AS cnt_picked,
+                SUM(CASE WHEN o.status = 'bl_printed' THEN 1 ELSE 0 END) AS cnt_bl_printed
+           FROM ord_orders o
+           JOIN ord_order_lines ol ON ol.order_id_fk = o.id
+          WHERE o.status NOT IN ('shipped','cancelled')"
+    );
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    $openOrders = (int)   ($row['open_orders'] ?? 0);
+    $openUnits  = (float) ($row['open_units']  ?? 0.0);
+
+    $breakdown = [
+        ['key' => 'entered',    'label' => 'Entré',       'value' => (int) ($row['cnt_entered']    ?? 0)],
+        ['key' => 'confirmed',  'label' => 'Confirmé',    'value' => (int) ($row['cnt_confirmed']  ?? 0)],
+        ['key' => 'picked',     'label' => 'Préparé',     'value' => (int) ($row['cnt_picked']     ?? 0)],
+        ['key' => 'bl_printed', 'label' => 'BL imprimé',  'value' => (int) ($row['cnt_bl_printed'] ?? 0)],
+    ];
+
+    $result = array_merge(kpi_empty_result($label, 'commandes'), [
+        'value'     => $openOrders,
+        'tint'      => $openOrders === 0 ? 'green' : ($openOrders > 100 ? 'amber' : 'neutral'),
+        'breakdown' => $breakdown,
+        'meta'      => [
+            'period_label' => 'maintenant',
+            'open_units'   => $openUnits,
+            'source_table' => 'ord_orders + ord_order_lines',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #141: pick_pack_throughput ───────────────────────────────────────────────
+// Orders shipped and units dispatched over the rolling window.
+// "Throughput" = orders completed (status=shipped) per period.
+// Fix: use ord_order_status_events.occurred_at for the actual shipped-event time
+// instead of ord_orders.updated_at (which is refreshed by any later edit/comment).
+
+function kpi_logi_pick_pack_throughput(array $params, string $label, PDO $pdo): array
+{
+    $windowDays = $params['window_days'] ?? 30;
+    $cacheKey   = "logi_throughput_{$windowDays}d";
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    // Shipped orders + units in window
+    $stmt = $pdo->prepare(
+        "SELECT COUNT(DISTINCT o.id) AS shipped_orders,
+                COALESCE(SUM(ol.qty), 0) AS shipped_units
+           FROM ord_orders o
+           JOIN ord_order_status_events e ON e.order_id_fk = o.id AND e.status = 'shipped'
+           JOIN ord_order_lines ol ON ol.order_id_fk = o.id
+          WHERE o.status = 'shipped'
+            AND e.occurred_at >= DATE_SUB(CURDATE(), INTERVAL :days DAY)"
+    );
+    $stmt->execute(['days' => $windowDays]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    $shipped      = (int)   ($row['shipped_orders'] ?? 0);
+    $units        = (float) ($row['shipped_units']  ?? 0.0);
+    $perDay       = $windowDays > 0 ? round($shipped / $windowDays, 2) : null;
+
+    // Daily series (group by shipped date = DATE(e.occurred_at) for sparkline)
+    $stmtSeries = $pdo->prepare(
+        "SELECT DATE(e.occurred_at) AS day, COUNT(DISTINCT o.id) AS cnt
+           FROM ord_orders o
+           JOIN ord_order_status_events e ON e.order_id_fk = o.id AND e.status = 'shipped'
+          WHERE o.status = 'shipped'
+            AND e.occurred_at >= DATE_SUB(CURDATE(), INTERVAL :days DAY)
+          GROUP BY DATE(e.occurred_at)
+          ORDER BY day"
+    );
+    $stmtSeries->execute(['days' => $windowDays]);
+    $seriesRaw = $stmtSeries->fetchAll(PDO::FETCH_ASSOC);
+    $series = array_map(fn($r) => ['period' => $r['day'], 'value' => (int) $r['cnt']], $seriesRaw);
+
+    $result = array_merge(kpi_empty_result($label, 'commandes/j'), [
+        'value'  => $perDay,
+        'series' => $series,
+        'meta'   => [
+            'period_label'   => "{$windowDays} derniers jours",
+            'window_days'    => $windowDays,
+            'shipped_orders' => $shipped,
+            'shipped_units'  => $units,
+            'source_table'   => 'ord_orders + ord_order_status_events (occurred_at)',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════════
+// HANDLER: equipment  (source_domain = 'equipment')
+// Reads: op_sessions, ref_cct, ref_bbt, ref_yt
+// BUILT (#236): equipment_vessel_utilization — BBT occupancy from op_sessions.
+//   CCT/YT occupancy is PARTIAL: fermenting op_sessions have vessel_kind=NULL
+//   (form does not record CCT number), so CCT utilization uses ref_cct.status
+//   only (all 'active' → no in-use signal from this source). Reported as
+//   data gap in meta.
+// ALL OTHER equipment trackers are GAP (no maintenance/HR/uptime pipeline).
+// ═════════════════════════════════════════════════════════════════════════════
+
+function kpi_handler_equipment(
+    string $handler,
+    array  $params,
+    string $label,
+    PDO    $pdo
+): array {
+    return match ($handler) {
+        'equipment_vessel_utilization' => kpi_equip_vessel_utilization($label, $pdo),
+        // GAP trackers: no maintenance/HR/uptime pipeline in DB
+        'equipment_uptime_downtime'    => kpi_equip_stub_gap('equipment_uptime_downtime', $label,
+            'Disponibilité équipements nécessite un journal arrêts/reprises (aucune table maintenance dans la DB).'),
+        'preventive_maintenance_due'   => kpi_equip_stub_gap('preventive_maintenance_due', $label,
+            'Maintenance préventive nécessite un calendrier de maintenance (aucune table dans la DB).'),
+        'unplanned_stops_mtbf'         => kpi_equip_stub_gap('unplanned_stops_mtbf', $label,
+            'MTBF/arrêts non planifiés nécessite un journal d\'incidents équipements (absent).'),
+        'spare_parts_inventory'        => kpi_equip_stub_gap('spare_parts_inventory', $label,
+            'Stock pièces de rechange non tracé dans la DB.'),
+        'labor_hours_cost_per_hl'      => kpi_equip_stub_gap('labor_hours_cost_per_hl', $label,
+            'Heures travail / coût main-d\'œuvre non enregistrés dans la DB.'),
+        'productivity_hl_per_fte'      => kpi_equip_stub_gap('productivity_hl_per_fte', $label,
+            'Productivité ETP nécessite données RH (ETP, heures) absentes de la DB.'),
+        'training_certification_status' => kpi_equip_stub_gap('training_certification_status', $label,
+            'Aucun journal formations/certifications dans la DB.'),
+        'safety_incidents'             => kpi_equip_stub_gap('safety_incidents', $label,
+            'Aucun registre incidents sécurité dans la DB.'),
+        'overtime_rate'                => kpi_equip_stub_gap('overtime_rate', $label,
+            'Taux heures supplémentaires nécessite données de paie (absentes).'),
+        'shift_coverage'               => kpi_equip_stub_gap('shift_coverage', $label,
+            'Couverture postes nécessite planning équipes (absent de la DB).'),
+        'cip_cleaning_cycles'          => kpi_equip_stub_gap('cip_cleaning_cycles', $label,
+            'CIP enregistré dans bd_packaging_v2 en champs texte libres (non structuré pour comptage).'),
+        'instrument_calibration_log'   => kpi_equip_stub_gap('instrument_calibration_log', $label,
+            'Aucun journal calibration instruments dans la DB.'),
+        'line_changeover_time'         => kpi_equip_stub_gap('line_changeover_time', $label,
+            'Temps changement ligne nécessite horodatages début/fin changement (absents).'),
+        'mtbf_mttr_packaging'          => kpi_equip_stub_gap('mtbf_mttr_packaging', $label,
+            'MTBF/MTTR ligne packaging nécessite journal arrêts (absent).'),
+        'safety_ltifr'                 => kpi_equip_stub_gap('safety_ltifr', $label,
+            'LTIFR nécessite registre accidents du travail avec heures-travail exposées (absent).'),
+        default                        => kpi_stub_handler('equipment', $handler, $label),
+    };
+}
+
+/** Private: stub for equipment GAP trackers with a specific gap-reason note. */
+function kpi_equip_stub_gap(string $handler, string $label, string $note): array
+{
+    $r = kpi_empty_result($label);
+    $r['meta'] = [
+        'stub'    => true,
+        'domain'  => 'equipment',
+        'handler' => $handler,
+        'note'    => $note,
+    ];
+    return $r;
+}
+
+// ─── #236: equipment_vessel_utilization ──────────────────────────────────────
+// Vessel utilization = vessels with an open op_session / total commissioned vessels.
+// Source: op_sessions (vessel_kind IN 'bbt') + ref_bbt (total commissioned).
+// LIMITATION: fermenting op_sessions do not record vessel_kind/vessel_number,
+// so CCT occupancy cannot be derived from op_sessions. ref_cct.status is used
+// to count total commissioned CCTs; occupancy is reported as "unknown" for CCTs.
+// BBT utilization is live and accurate.
+
+function kpi_equip_vessel_utilization(string $label, PDO $pdo): array
+{
+    $cacheKey = 'equip_vessel_util';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    // Total active/commissioned vessels per type
+    $stmtTotals = $pdo->query(
+        "SELECT 'cct' AS kind, COUNT(*) AS total FROM ref_cct WHERE status = 'active'
+         UNION ALL
+         SELECT 'bbt', COUNT(*) FROM ref_bbt WHERE status = 'active'
+         UNION ALL
+         SELECT 'yt', COUNT(*) FROM ref_yt WHERE status = 'active'"
+    );
+    $totals = [];
+    foreach ($stmtTotals->fetchAll(PDO::FETCH_ASSOC) as $r) {
+        $totals[$r['kind']] = (int) $r['total'];
+    }
+
+    // Occupied BBTs: distinct vessel_number with an open non-tombstoned op_session
+    $stmtOccBbt = $pdo->query(
+        "SELECT COUNT(DISTINCT vessel_number) AS occupied
+           FROM op_sessions
+          WHERE vessel_kind = 'bbt'
+            AND status = 'open'
+            AND is_tombstoned = 0"
+    );
+    $occupiedBbt = (int) ($stmtOccBbt->fetch(PDO::FETCH_ASSOC)['occupied'] ?? 0);
+
+    $totalBbt = $totals['bbt'] ?? 0;
+    $totalCct = $totals['cct'] ?? 0;
+    $totalYt  = $totals['yt']  ?? 0;
+
+    $bbtPct = $totalBbt > 0 ? round(($occupiedBbt / $totalBbt) * 100, 1) : null;
+
+    // Breakdown: BBT live, CCT/YT data-gap
+    $breakdown = [
+        [
+            'key'   => 'bbt',
+            'label' => "BBT ({$occupiedBbt}/{$totalBbt})",
+            'value' => $bbtPct,
+        ],
+        [
+            'key'   => 'cct',
+            'label' => "CCT (inconnu/{$totalCct})",
+            'value' => null,   // occupancy not derivable from op_sessions (vessel_kind=NULL for fermenting)
+        ],
+        [
+            'key'   => 'yt',
+            'label' => "YT (inconnu/{$totalYt})",
+            'value' => null,   // same gap: yt occupancy not in op_sessions
+        ],
+    ];
+
+    $tint = match (true) {
+        $bbtPct === null  => 'neutral',
+        $bbtPct >= 90.0   => 'red',
+        $bbtPct >= 70.0   => 'amber',
+        default           => 'green',
+    };
+
+    $result = array_merge(kpi_empty_result($label, '%'), [
+        'value'     => $bbtPct,
+        'tint'      => $tint,
+        'breakdown' => $breakdown,
+        'meta'      => [
+            'period_label'        => 'maintenant',
+            'bbt_occupied'        => $occupiedBbt,
+            'bbt_total'           => $totalBbt,
+            'cct_total'           => $totalCct,
+            'yt_total'            => $totalYt,
+            'primary_metric'      => 'BBT uniquement (op_sessions.vessel_kind=bbt)',
+            'cct_gap_reason'      => 'Les sessions de fermentation (bd_fermenting_v2) '
+                                   . 'n\'enregistrent pas vessel_kind/vessel_number dans op_sessions '
+                                   . '— occupancy CCT indisponible sans le port du tank-sim Node.',
+            'source_table'        => 'op_sessions + ref_bbt + ref_cct + ref_yt',
         ],
     ]);
 
