@@ -191,6 +191,10 @@ function fg_prod_since_anchor(PDO $pdo, string $globalAnchor): array
  *   open_week_qty,      int: Σ open order lines with requested_date ≤ end-of-current-ISO-week
  *   open_2wk_qty,       int: Σ open order lines with requested_date ≤ end-of-NEXT-ISO-week (cumulative)
  *   open_total_qty,     int: Σ ALL open order lines
+ *   shipped_week_qty,   int: Σ shipped order lines whose requested_date falls in the current ISO week
+ *                           — DISPLAY ONLY, already reflected in physique when the shipment predates
+ *                             the anchor; never deducted again. Use for "commandé cette semaine (total)"
+ *                             reconciliation: open_week_qty + shipped_week_qty = total week demand.
  *   live_semaine,       int: physique - open_week_qty
  *   live_2sem,          int: physique - open_2wk_qty  (physique − cumulative orders due ≤ end of next ISO week)
  *   live_futur,         int: physique - open_total_qty
@@ -293,10 +297,13 @@ function fg_stock_compute(PDO $pdo): array
     //                         Σ(snapshot eshop deductions) == fg_stock_compute eshop
     //                         deduction per SKU and the hard invariant Σcards==Σphysique holds.
     //
-    //   B2B expédié (Step 4) — strict-global > $anchorDate (symmetric in both functions).
-    //                          ord_orders has no ship-time finer than requested_date;
-    //                          created_at is order-ENTRY time (can be back-dated) — using
-    //                          it as a tiebreak would admit back-dated orders silently.
+    //   B2B expédié (Step 4) — three-tier per-(sku, ship-from-site) predicate, symmetric with
+    //                          snapshot Leg 1 (MUST stay identical — invariant coupling):
+    //                          (a) counted at ship-from site → requested_date >= site_anchor_date
+    //                          (b) counted elsewhere but not this site → >= global $anchorDate
+    //                          (c) never counted anywhere → > global $anchorDate (strict)
+    //                          Site resolved via resolve_fulfilment_site() per order.
+    //                          Accepted residual: same-day ship in count double-deducts (deferred).
     //
     //   taproom (Step 6)    — month-grained period > $anchorMonth; genuinely deferred
     //                         (inv_sales_bc has no finer timestamp). Symmetric in both.
@@ -366,22 +373,89 @@ function fg_stock_compute(PDO $pdo): array
     // ── Step 4: expédié B2B (ord_order_lines, status='shipped') ─────────────
     // ALL order_types deplete here — internal channels (cage/shop/taproom/eshop
     // manual) also decrement physical stock when their order is shipped.
+    //
+    // Three-tier predicate (symmetric with snapshot Leg 1 — MUST stay identical):
+    //   (a) counted at ship-from site → requested_date >= site_anchor_date (inclusive)
+    //   (b) counted elsewhere but not this site → requested_date >= global_anchorDate (inclusive)
+    //   (c) never counted at any site → requested_date > global_anchorDate (strict;
+    //       no morning baseline, same-day ambiguous, preserves pre-fix behaviour)
+    // Accepted residual: a same-day ship already in the count double-deducts (case a/b
+    // only; rare; only fixable with an explicit ship timestamp — deferred).
+    // Fetch per-order rows + site-resolution cols; LEFT JOIN ref_customers avoids N+1.
+    // Safe lower-bound in SQL: >= 30 days; PHP predicate is the authoritative gate.
+    //
+    // fg_site_sku_anchor_map() called once here; reused in Step 5.
+    $siteSkuAnchorMapCompute = fg_site_sku_anchor_map($pdo);
+
     $expStmt = $pdo->prepare(
-        'SELECT l.sku_id_fk,
-                SUM(l.qty)                            AS expedie_qty,
-                COUNT(DISTINCT l.order_id_fk)         AS expedie_orders
+        'SELECT o.id                                   AS order_id,
+                o.fulfilment_site_id_fk,
+                o.customer_id_fk,
+                o.internal_channel,
+                c.default_delivery_site_id_fk          AS customer_default_site_id,
+                l.sku_id_fk,
+                o.requested_date,
+                SUM(l.qty)                             AS qty
            FROM ord_order_lines l
            JOIN ord_orders o ON o.id = l.order_id_fk
+           LEFT JOIN ref_customers c ON c.id = o.customer_id_fk
           WHERE o.status = ?
-            AND o.requested_date > ?
-          GROUP BY l.sku_id_fk'
+            AND o.requested_date >= DATE_SUB(?, INTERVAL 30 DAY)
+            AND l.sku_id_fk IS NOT NULL
+          GROUP BY o.id, o.fulfilment_site_id_fk, o.customer_id_fk, o.internal_channel,
+                   c.default_delivery_site_id_fk, l.sku_id_fk, o.requested_date'
     );
     $expStmt->execute(['shipped', $anchorDate]);
+    // Build per-SKU "counted anywhere" set so the fallback predicate can distinguish:
+    //   (a) counted at ship-from site → use site anchor, inclusive >=
+    //   (b) counted somewhere but NOT at this site → global anchor, inclusive >=
+    //   (c) never counted at any site → global anchor, strict > (old behaviour;
+    //       no morning baseline for this SKU, so same-day is ambiguous)
+    $skuCountedAnywhereCompute = [];
+    foreach ($siteSkuAnchorMapCompute as $_sid_map) {
+        foreach (array_keys($_sid_map) as $_sid) {
+            $skuCountedAnywhereCompute[$_sid] = true;
+        }
+    }
+
+    $expOrdersSeen = []; // track DISTINCT order_ids per sku for expedie_orders count
     foreach ($expStmt->fetchAll(PDO::FETCH_ASSOC) as $er) {
-        $sid = (int) $er['sku_id_fk'];
+        $sid           = (int) $er['sku_id_fk'];
+        $requestedDate = (string) $er['requested_date'];
+
+        // Resolve the ship-from site for this order (same resolver as snapshot)
+        $siteId = resolve_fulfilment_site($pdo, [
+            'fulfilment_site_id_fk'    => $er['fulfilment_site_id_fk'],
+            'customer_id_fk'           => $er['customer_id_fk'],
+            'channel'                  => $er['internal_channel'],
+            '_customer_default_site_id'=> $er['customer_default_site_id'],
+        ]);
+
+        // Per-(site, sku) anchor with three-tier fallback:
+        $siteAnchor = $siteSkuAnchorMapCompute[$siteId][$sid] ?? null;
+        if ($siteAnchor !== null) {
+            // (a) counted at ship-from site — inclusive >=
+            if ($requestedDate < $siteAnchor['counted_at']) continue;
+        } elseif (isset($skuCountedAnywhereCompute[$sid])) {
+            // (b) counted elsewhere but not here — global anchor, inclusive >=
+            if ($requestedDate < $anchorDate) continue;
+        } else {
+            // (c) never counted — global anchor, strict > (no morning baseline)
+            if ($requestedDate <= $anchorDate) continue;
+        }
+
+        if (!isset($byId[$sid])) continue;
+        $qty = (int) round((float) $er['qty']);
+        $byId[$sid]['expedie_qty'] += $qty;
+        // Count distinct order_ids per sku
+        $orderId = (int) $er['order_id'];
+        if (!isset($expOrdersSeen[$sid])) $expOrdersSeen[$sid] = [];
+        $expOrdersSeen[$sid][$orderId] = true;
+    }
+    // Write distinct order counts
+    foreach ($expOrdersSeen as $sid => $orderMap) {
         if (isset($byId[$sid])) {
-            $byId[$sid]['expedie_qty']    = (int) $er['expedie_qty'];
-            $byId[$sid]['expedie_orders'] = (int) $er['expedie_orders'];
+            $byId[$sid]['expedie_orders'] = count($orderMap);
         }
     }
 
@@ -402,10 +476,8 @@ function fg_stock_compute(PDO $pdo): array
     //       || (orderDate === siteAnchorDate && orderTs > siteAnchorTs)
     // Fallback (no warehouse count for this SKU): strict > $anchorDate.
     //
-    // Per-site anchor map is built once here; fg_site_sku_anchor_map() is also
-    // called by fg_stock_location_snapshot() — the logic is identical by design.
-    $siteSkuAnchorMapCompute = fg_site_sku_anchor_map($pdo);
-    $eshopWarehouseSiteId    = resolve_fulfilment_site($pdo, ['channel' => 'eshop']);
+    // $siteSkuAnchorMapCompute already built in Step 4 — reused here, no double-call.
+    $eshopWarehouseSiteId = resolve_fulfilment_site($pdo, ['channel' => 'eshop']);
 
     $eshopStmt = $pdo->prepare(
         'SELECT isol.sku_id_fk,
@@ -467,8 +539,10 @@ function fg_stock_compute(PDO $pdo): array
     }
 
     // ── Step 7: open order lines (for live_semaine / live_2sem / live_futur) ───
-    $isoWeekEnd = fg_stock_iso_week_end(date('Y-m-d'));
-    $iso2wkEnd  = (new DateTimeImmutable($isoWeekEnd))->modify('+7 days')->format('Y-m-d');
+    $isoWeekEnd   = fg_stock_iso_week_end(date('Y-m-d'));
+    $iso2wkEnd    = (new DateTimeImmutable($isoWeekEnd))->modify('+7 days')->format('Y-m-d');
+    // ISO week Monday: Sunday - 6 days.
+    $isoWeekStart = (new DateTimeImmutable($isoWeekEnd))->modify('-6 days')->format('Y-m-d');
 
     $openStmt = $pdo->prepare(
         "SELECT l.sku_id_fk,
@@ -488,6 +562,23 @@ function fg_stock_compute(PDO $pdo): array
             'twowk_qty' => (int) $or['twowk_qty'],
             'total_qty' => (int) $or['total_qty'],
         ];
+    }
+
+    // Shipped-this-week: DISPLAY ONLY — already baked into physique via the expedie leg.
+    // Summing open_week_qty + shipped_week_qty gives the operator "total orders due this week".
+    // Uses the same ISO week bounds [isoWeekStart, isoWeekEnd].
+    $shippedWkStmt = $pdo->prepare(
+        'SELECT l.sku_id_fk, SUM(l.qty) AS shipped_week_qty
+           FROM ord_order_lines l
+           JOIN ord_orders o ON o.id = l.order_id_fk
+          WHERE o.status = ?
+            AND o.requested_date BETWEEN ? AND ?
+          GROUP BY l.sku_id_fk'
+    );
+    $shippedWkStmt->execute(['shipped', $isoWeekStart, $isoWeekEnd]);
+    $shippedWeekBySkuId = [];
+    foreach ($shippedWkStmt->fetchAll(PDO::FETCH_ASSOC) as $sw) {
+        $shippedWeekBySkuId[(int) $sw['sku_id_fk']] = (int) $sw['shipped_week_qty'];
     }
 
     // ── Step 8: velocity — trailing 56-day avg weekly depletion ─────────────
@@ -619,13 +710,14 @@ function fg_stock_compute(PDO $pdo): array
             'taproom_qty'     => $taproom,
             'taproom_rows'    => $r['taproom_rows'],
             // Computed
-            'physique'        => $physique,
-            'open_week_qty'   => $openWeek,
-            'open_2wk_qty'    => $open2wk,
-            'open_total_qty'  => $openTotal,
-            'live_semaine'    => $liveSemaine,
-            'live_2sem'       => $live2sem,
-            'live_futur'      => $liveFutur,
+            'physique'          => $physique,
+            'open_week_qty'     => $openWeek,
+            'open_2wk_qty'      => $open2wk,
+            'open_total_qty'    => $openTotal,
+            'shipped_week_qty'  => $shippedWeekBySkuId[$sid] ?? 0,
+            'live_semaine'      => $liveSemaine,
+            'live_2sem'         => $live2sem,
+            'live_futur'        => $liveFutur,
             'velocity_weekly' => $vel,
             'semaines_stock'  => $semaines,
             // Flags
@@ -811,10 +903,9 @@ function fg_stock_location_snapshot(PDO $pdo): array
     }
     $anchorDate = $anchorDate ?? date('Y-m-d');
 
-    // Per-(site, sku) anchor info for same-day tiebreaks — one ROW_NUMBER window,
-    // coherent (counted_at, created_at) pair from the same winning row.
-    // Used by Leg 2 (eshop) and the Transfer leg.
-    // Leg 1 (B2B expédié) does NOT use it — see that leg's inline comment.
+    // Per-(site, sku) anchor info — one ROW_NUMBER window, coherent
+    // (counted_at, created_at) pair from the same winning row.
+    // Used by Leg 1 (B2B expédié), Leg 2 (eshop), and the Transfer leg.
     $siteSkuAnchorMap = fg_site_sku_anchor_map($pdo);
 
     // Floored production per SKU — single-sourced, same helper as fg_stock_compute()
@@ -832,14 +923,18 @@ function fg_stock_location_snapshot(PDO $pdo): array
     // Σ(per-site sales per sku) == fg_stock_compute sales per sku.
     $salesBySiteSku = []; // site_id => sku_id => int
 
-    // Leg 1: expédié B2B (ord_orders, status='shipped', requested_date > anchorDate)
-    // No timestamp tiebreak for this leg: ord_orders.requested_date is the delivery date
-    // (the requested ship date), while ord_orders.created_at is when the order was ENTERED
-    // into the system — which can be a day or more later (back-dated orders). Using
-    // created_at as a same-day tiebreak would admit back-dated orders entered well after
-    // the count, producing incorrect stock values. Keep the strict > predicate.
-    // LEFT JOIN ref_customers to prefetch default_delivery_site_id_fk → avoids N+1
-    // in the resolver's customer lookup (passes prefetched value as _customer_default_site_id).
+    // Leg 1: expédié B2B — per-(sku, ship-from-site) anchor + inclusive >=
+    // (symmetric with fg_stock_compute() Step 4 — MUST use identical three-tier predicate).
+    //
+    // Three-tier predicate (mirrors compute Step 4 exactly — invariant coupling):
+    //   (a) counted at ship-from site → requested_date >= site_anchor_date (inclusive)
+    //   (b) counted elsewhere but not this site → requested_date >= global_anchorDate (inclusive)
+    //   (c) never counted at any site → requested_date > global_anchorDate (strict;
+    //       no morning baseline, same-day ambiguous, keeps pre-fix behaviour for uncounted SKUs)
+    // Created_at is NOT used as a tiebreak — it is order-ENTRY time, not ship time, and
+    // can be back-dated. Accepted residual: a same-day ship already in the count
+    // double-deducts (rare; only fixable with an explicit ship timestamp — deferred).
+    // LEFT JOIN ref_customers prefetches default_delivery_site_id_fk → avoids N+1.
     $expStmt = $pdo->prepare(
         'SELECT o.id          AS order_id,
                 o.fulfilment_site_id_fk,
@@ -847,16 +942,26 @@ function fg_stock_location_snapshot(PDO $pdo): array
                 o.internal_channel,
                 c.default_delivery_site_id_fk AS customer_default_site_id,
                 l.sku_id_fk,
+                o.requested_date,
                 SUM(l.qty) AS qty
            FROM ord_order_lines l
            JOIN ord_orders o ON o.id = l.order_id_fk
            LEFT JOIN ref_customers c ON c.id = o.customer_id_fk
           WHERE o.status = ?
-            AND o.requested_date > ?
+            AND o.requested_date >= DATE_SUB(?, INTERVAL 30 DAY)
             AND l.sku_id_fk IS NOT NULL
           GROUP BY o.id, o.fulfilment_site_id_fk, o.customer_id_fk, o.internal_channel,
-                   c.default_delivery_site_id_fk, l.sku_id_fk'
+                   c.default_delivery_site_id_fk, l.sku_id_fk, o.requested_date'
     );
+    // Build per-SKU "counted anywhere" set for the three-tier fallback below.
+    // Mirrors the identical set built in fg_stock_compute() Step 4.
+    $skuCountedAnywhere = [];
+    foreach ($siteSkuAnchorMap as $_sid_map) {
+        foreach (array_keys($_sid_map) as $_sid) {
+            $skuCountedAnywhere[$_sid] = true;
+        }
+    }
+
     $expStmt->execute(['shipped', $anchorDate]);
     $expedieOrdersResolved = 0;
     foreach ($expStmt->fetchAll(PDO::FETCH_ASSOC) as $er) {
@@ -866,7 +971,22 @@ function fg_stock_location_snapshot(PDO $pdo): array
             'channel'                  => $er['internal_channel'],
             '_customer_default_site_id'=> $er['customer_default_site_id'],
         ]);
-        $sid = (int) $er['sku_id_fk'];
+        $sid           = (int) $er['sku_id_fk'];
+        $requestedDate = (string) $er['requested_date'];
+
+        // Three-tier fallback (mirrors fg_stock_compute() Step 4 exactly):
+        //   (a) counted at ship-from site → use site anchor, inclusive >=
+        //   (b) counted elsewhere but not here → global anchor, inclusive >=
+        //   (c) never counted anywhere → global anchor, strict > (no morning baseline)
+        $siteAnchor = $siteSkuAnchorMap[$siteId][$sid] ?? null;
+        if ($siteAnchor !== null) {
+            if ($requestedDate < $siteAnchor['counted_at']) continue;
+        } elseif (isset($skuCountedAnywhere[$sid])) {
+            if ($requestedDate < $anchorDate) continue;
+        } else {
+            if ($requestedDate <= $anchorDate) continue;
+        }
+
         $qty = (int) round((float) $er['qty']);
         if (!isset($salesBySiteSku[$siteId])) $salesBySiteSku[$siteId] = [];
         $salesBySiteSku[$siteId][$sid] = ($salesBySiteSku[$siteId][$sid] ?? 0) + $qty;
