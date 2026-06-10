@@ -823,17 +823,24 @@ function renderKpiRecap(container, tracker, result, tCls) {
     'cuv':   'cuve'
   };
 
-  // recapRowLabel — compose "{recipe_name} · #{batch} · {run_type_fr}" for a per-run row,
-  // or just "{recipe_name} · #{batch}" for brew/rack/quality rows.
-  // Uses row.label (clean recipe name) + row.meta.batch + row.meta.run_type.
+  // recapRowLabel — compose the per-row label string.
+  // Packaging per-run rows: "{bière} · {SKU} · #{batch} · {type}"
+  //   SKU from meta.sku (null → "—", never blank — 78/2271 rows have no sku_id_fk).
+  // Wort/brew/rack/quality rows: "{recipe_name} · #{batch}" (no SKU, no run-type).
   // null / empty batch → "#—" (honest absence, never fabricated).
   function recapRowLabel(row) {
     var base     = row.label || '';
     var m        = row.meta || {};
     var batch    = (m.batch != null && m.batch !== '') ? String(m.batch) : null;
     var batchStr = escHtml(batch != null ? batch : '—');
-    var lbl = escHtml(base) + ' <span class="kpc-recap__batch">· #' + batchStr + '</span>';
-    // Append run-type for packaging per-run rows (FIX2a)
+    var lbl = escHtml(base);
+    // SKU: packaging per-run rows only (meta.sku present)
+    if (m.run_type != null) {
+      var skuStr = (m.sku != null && m.sku !== '') ? escHtml(String(m.sku)) : '—';
+      lbl += ' <span class="kpc-recap__sku">· ' + skuStr + '</span>';
+    }
+    lbl += ' <span class="kpc-recap__batch">· #' + batchStr + '</span>';
+    // Append run-type for packaging per-run rows
     if (m.run_type != null) {
       var typeFr = RUN_TYPE_FR[m.run_type] || escHtml(m.run_type);
       lbl += ' <span class="kpc-recap__run-type">· ' + escHtml(typeFr) + '</span>';

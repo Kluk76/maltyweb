@@ -5651,6 +5651,7 @@ function kpi_pkg_daily_recap(string $label, PDO $pdo): array
                 b.loss_liquid_other_units,
                 b.prod_total_units,
                 b.objective_hl,
+                rs.sku_code,
                 /* per-material 1:1 losses (unit-side; bot/can/can33 only) */
                 b.loss_label_btl_units,
                 b.loss_crown_cork_units,
@@ -5671,8 +5672,13 @@ function kpi_pkg_daily_recap(string $label, PDO $pdo): array
            FROM bd_packaging_v2 b
            JOIN v_bd_packaging_v2_vendable v ON v.id = b.id
            LEFT JOIN ref_recipes rr ON rr.id = b.recipe_id_fk
+           LEFT JOIN ref_skus rs ON rs.id = b.sku_id_fk
           WHERE b.is_tombstoned = 0
-            AND b.reuses_packaging_id_fk IS NULL
+            AND NOT EXISTS (
+                SELECT 1 FROM bd_packaging_v2 c
+                 WHERE c.reuses_packaging_id_fk = b.id
+                   AND c.is_tombstoned = 0
+            )
             AND b.event_date = ?
           ORDER BY b.id ASC"
     );
@@ -5769,6 +5775,8 @@ function kpi_pkg_daily_recap(string $label, PDO $pdo): array
             'meta'  => [
                 'run_type'     => $runType,
                 'batch'        => $batch,
+                'sku'          => isset($r['sku_code']) && $r['sku_code'] !== null
+                                    ? (string) $r['sku_code'] : null,
                 'loss_pct'     => $runLossPct,
                 'beer_loss_hl' => round($beerLossHl, 3),
                 'objective_hl' => $objHl,
