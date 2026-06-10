@@ -1356,6 +1356,24 @@ function kpi_handler_rm_procurement(
         'rm_stale_items'             => kpi_rm_stale_items($label, $pdo),
         'rm_drift_alert'             => kpi_rm_drift_alert($label, $pdo),
         'inventory_days_of_supply'   => kpi_rm_days_of_supply($params, $label, $pdo),
+        // Phase 2b Batch 2 handlers (mig-306):
+        'rm_stock_value'             => kpi_rm_stock_value($label, $pdo),
+        'rm_stock_by_category'       => kpi_rm_stock_by_category($label, $pdo),
+        'rm_days_cover'              => kpi_rm_days_cover($label, $pdo),
+        'top_suppliers_spend'        => kpi_rm_top_suppliers_spend($params, $label, $pdo),
+        'wac_trend_per_mi'           => kpi_rm_wac_trend_per_mi($label, $pdo),
+        'price_anomalies'            => kpi_rm_price_anomalies($label, $pdo),
+        'overpriced_purchase_flag'   => kpi_rm_price_anomalies($label, $pdo),   // alias
+        'consumption_per_mi_period'  => kpi_rm_consumption_per_mi_period($params, $label, $pdo),
+        'caution_deposit_balance'    => kpi_rm_caution_deposit_balance($label, $pdo),
+        'import_vat_freight_trend'   => kpi_rm_import_vat_freight_trend($label, $pdo),
+        'ingredient_cost_pct_cogs'   => kpi_rm_ingredient_cost_pct_cogs($label, $pdo),
+        'supplier_lead_time'         => kpi_rm_supplier_lead_time($label, $pdo),
+        'on_time_delivery_rate'      => kpi_rm_on_time_delivery_rate($label, $pdo),
+        'single_source_risk'         => kpi_rm_single_source_risk($label, $pdo),
+        'spend_yoy'                  => kpi_rm_spend_yoy($label, $pdo),
+        'malt_hops_cost_split'       => kpi_rm_malt_hops_cost_split($label, $pdo),
+        'fx_eur_chf_exposure'        => kpi_rm_fx_eur_chf_exposure($label, $pdo),
         default                      => kpi_stub_handler('rm_procurement', $handler, $label),
     };
 }
@@ -1646,6 +1664,846 @@ function kpi_rm_days_of_supply(array $params, string $label, PDO $pdo): array
     return kpi_cache_set($cacheKey, $result);
 }
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 2b Batch 2 — rm_procurement compute handlers (mig-306)
+// CANONICAL SOURCES (never re-derive):
+//   v_rm_stock_dynamic  — current stock qty + value per MI (anchor + flows)
+//   v_mi_cost           — WAC or catalog cost per MI in CHF (WAC resolver mig-178)
+//   wac_snapshots       — historical WAC per (mi_id_fk, period) for trend
+//   inv_consumption     — canonical consumption (source_event IN brewing/…/packaging)
+//   cogs-report-data.json — COP pipeline output (via kpi_load_cogs_json())
+//   inv_deliveries      — canonical deliveries, ingredient_fk FK join preferred
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** #106 — Valeur stock MP (CHF now): sum current_value_chf from v_rm_stock_dynamic */
+function kpi_rm_stock_value(string $label, PDO $pdo): array
+{
+    $cacheKey = 'rm_stock_value';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $stmt = $pdo->query(
+        "SELECT SUM(current_value_chf) AS total_chf,
+                COUNT(*) AS mi_count
+           FROM v_rm_stock_dynamic
+          WHERE current_qty > 0"
+    );
+    $row       = $stmt->fetch(PDO::FETCH_ASSOC);
+    $total     = $row && $row['total_chf'] !== null ? round((float) $row['total_chf'], 2) : null;
+    $miCount   = $row ? (int) $row['mi_count'] : 0;
+
+    $result = array_merge(kpi_empty_result($label, 'CHF'), [
+        'value' => $total,
+        'tint'  => 'neutral',
+        'meta'  => [
+            'mi_count'     => $miCount,
+            'period_label' => 'maintenant',
+            'source'       => 'v_rm_stock_dynamic',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/** #107 — Stock MP par catégorie (bar breakdown, CHF) */
+function kpi_rm_stock_by_category(string $label, PDO $pdo): array
+{
+    $cacheKey = 'rm_stock_by_category';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $stmt = $pdo->query(
+        "SELECT category,
+                ROUND(SUM(current_value_chf), 2) AS total_chf,
+                COUNT(*) AS mi_count
+           FROM v_rm_stock_dynamic
+          WHERE current_qty > 0
+            AND category IS NOT NULL
+          GROUP BY category
+          ORDER BY total_chf DESC"
+    );
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $total     = array_sum(array_column($rows, 'total_chf'));
+    $breakdown = array_map(fn($r) => [
+        'key'   => $r['category'],
+        'label' => $r['category'],
+        'value' => (float) $r['total_chf'],
+    ], $rows);
+
+    $result = array_merge(kpi_empty_result($label, 'CHF'), [
+        'value'     => round($total, 2),
+        'breakdown' => $breakdown,
+        'tint'      => 'neutral',
+        'meta'      => ['period_label' => 'maintenant', 'source' => 'v_rm_stock_dynamic'],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/**
+ * #110 — Jours de couverture par MP (table).
+ * For each MI with stock, compute days_cover = current_qty / daily_consumption_rate.
+ * Daily rate = consumption over trailing 90 days ÷ 90.
+ * Units: inv_consumption.qty is in the MI's input unit (grams for hops etc.);
+ * v_rm_stock_dynamic.current_qty is also in the pricing_unit (kg for hops after
+ * conversion at ingest). We stay in stock-side units: compare directly since both
+ * are sourced from the same MI's accumulated flows (stocktake used same unit).
+ */
+function kpi_rm_days_cover(string $label, PDO $pdo): array
+{
+    $cacheKey = 'rm_days_cover';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $stmt = $pdo->query(
+        "SELECT s.mi_id,
+                s.item,
+                s.category,
+                s.unit,
+                ROUND(s.current_qty, 3) AS stock_qty,
+                ROUND(
+                  SUM(c.qty) / 90.0,
+                  4
+                ) AS daily_rate,
+                CASE
+                  WHEN SUM(c.qty) > 0
+                    THEN ROUND(s.current_qty / (SUM(c.qty) / 90.0), 1)
+                  ELSE NULL
+                END AS days_cover
+           FROM v_rm_stock_dynamic s
+           LEFT JOIN inv_consumption c
+             ON c.mi_id_fk = s.mi_id_fk
+            AND c.consumed_at >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+          WHERE s.current_qty > 0
+          GROUP BY s.mi_id_fk, s.mi_id, s.item, s.category, s.unit, s.current_qty
+          ORDER BY days_cover ASC, s.item ASC"
+    );
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $series = array_map(fn($r) => [
+        'key'        => $r['mi_id'],
+        'label'      => $r['item'],
+        'category'   => $r['category'],
+        'stock_qty'  => (float) $r['stock_qty'],
+        'unit'       => $r['unit'],
+        'daily_rate' => $r['daily_rate'] !== null ? (float) $r['daily_rate'] : null,
+        'days_cover' => $r['days_cover'] !== null ? (float) $r['days_cover'] : null,
+    ], $rows);
+
+    $result = array_merge(kpi_empty_result($label, 'jours'), [
+        'value'  => count($rows),
+        'series' => $series,
+        'tint'   => 'neutral',
+        'meta'   => [
+            'period_label' => 'trailing 90j',
+            'mi_count'     => count($rows),
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/** #115 — Top fournisseurs par dépense (bar) */
+function kpi_rm_top_suppliers_spend(array $params, string $label, PDO $pdo): array
+{
+    $limit  = min(50, max(1, (int) ($params['limit'] ?? 10)));
+    $period = $params['period'] ?? 'rolling_12m';
+    $p      = kpi_resolve_period($period);
+
+    $cacheKey = "rm_top_suppliers_{$p['start']}_{$p['end']}_l{$limit}";
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $stmt = $pdo->prepare(
+        "SELECT COALESCE(rs.name, d.supplier_raw, '(inconnu)') AS supplier,
+                ROUND(SUM(d.total_chf), 2) AS total_chf,
+                COUNT(*) AS delivery_rows
+           FROM inv_deliveries d
+           LEFT JOIN ref_suppliers rs ON rs.id = d.supplier_fk
+          WHERE d.status IN ('Active', 'Consumed')
+            AND d.exclusion_class IS NULL
+            AND d.date_received BETWEEN ? AND ?
+          GROUP BY d.supplier_fk, rs.name, d.supplier_raw
+          ORDER BY total_chf DESC
+          LIMIT ?"
+    );
+    $stmt->execute([$p['start'], $p['end'], $limit]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $total     = array_sum(array_column($rows, 'total_chf'));
+    $breakdown = array_map(fn($r) => [
+        'key'   => $r['supplier'],
+        'label' => $r['supplier'],
+        'value' => (float) $r['total_chf'],
+        'rows'  => (int) $r['delivery_rows'],
+    ], $rows);
+
+    $result = array_merge(kpi_empty_result($label, 'CHF'), [
+        'value'     => round($total, 2),
+        'breakdown' => $breakdown,
+        'tint'      => 'neutral',
+        'meta'      => [
+            'period_label' => $p['label'],
+            'top_n'        => $limit,
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/**
+ * #116 — Tendance WAC par MP (sparkline, last 6 months from wac_snapshots).
+ * Returns a series of {period, mi_id, mi_name, wac_chf} rows — up to top-20
+ * by latest WAC value so the chart stays legible. Live WAC from v_mi_cost
+ * is appended as the "current" data point.
+ */
+function kpi_rm_wac_trend_per_mi(string $label, PDO $pdo): array
+{
+    $cacheKey = 'rm_wac_trend_per_mi';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    // Historical snapshots (up to 6 periods), all MIs with at least 1 snapshot.
+    $stmt = $pdo->query(
+        "SELECT ws.period,
+                rm.mi_id,
+                rm.name AS mi_name,
+                ROUND(ws.wac_chf, 4) AS wac_chf
+           FROM wac_snapshots ws
+           JOIN ref_mi rm ON rm.id = ws.mi_id_fk
+          WHERE ws.period >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 6 MONTH), '%Y-%m')
+          ORDER BY ws.period ASC, wac_chf DESC"
+    );
+    $historical = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Current live WAC from v_mi_cost.
+    $liveStmt = $pdo->query(
+        "SELECT vc.mi_id, vc.mi_name, ROUND(vc.cost_chf, 4) AS wac_chf
+           FROM v_mi_cost vc
+          WHERE vc.cost_chf IS NOT NULL
+            AND vc.cost_basis IN ('wac', 'catalog')
+          ORDER BY vc.cost_chf DESC
+          LIMIT 20"
+    );
+    $live = $liveStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $currentPeriod = date('Y-m');
+    $liveSeries    = array_map(fn($r) => array_merge($r, ['period' => $currentPeriod]), $live);
+
+    $series = array_merge($historical, $liveSeries);
+
+    $result = array_merge(kpi_empty_result($label, 'CHF'), [
+        'value'  => count($live),
+        'series' => $series,
+        'tint'   => 'neutral',
+        'meta'   => [
+            'period_label' => '6 derniers mois',
+            'live_mi_count' => count($live),
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/**
+ * #117 / #131 — Anomalies prix / Flag achat surpayé (flag + breakdown).
+ * Identifies Active deliveries where the line unit_price_chf > v_mi_cost.cost_chf * 1.20.
+ * Uses v_mi_cost (WAC or catalog) as the reference price.
+ * Excludes: NULL cost_basis (no reference), exclusion_class set, qty_delivered=0 (credits).
+ * The threshold 20% is intentionally conservative — flags real "urgent premium" buys.
+ * Both #117 price_anomalies and #131 overpriced_purchase_flag share this handler.
+ */
+function kpi_rm_price_anomalies(string $label, PDO $pdo): array
+{
+    $cacheKey = 'rm_price_anomalies';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $stmt = $pdo->query(
+        "SELECT d.id,
+                d.date_received,
+                rm.mi_id,
+                rm.name AS mi_name,
+                d.unit_price,
+                d.currency,
+                ROUND(d.unit_price * CASE WHEN d.currency = 'EUR' THEN 0.945 ELSE 1.0 END, 4) AS unit_price_chf,
+                ROUND(vc.cost_chf, 4) AS ref_cost_chf,
+                vc.cost_basis,
+                ROUND(
+                  (d.unit_price * CASE WHEN d.currency = 'EUR' THEN 0.945 ELSE 1.0 END / NULLIF(vc.cost_chf, 0) - 1.0) * 100,
+                  1
+                ) AS pct_above_ref,
+                COALESCE(rs.name, d.supplier_raw, '(inconnu)') AS supplier
+           FROM inv_deliveries d
+           JOIN ref_mi rm ON rm.id = d.ingredient_fk
+           JOIN v_mi_cost vc ON vc.mi_id_fk = rm.id
+           LEFT JOIN ref_suppliers rs ON rs.id = d.supplier_fk
+          WHERE d.status = 'Active'
+            AND d.exclusion_class IS NULL
+            AND d.qty_delivered > 0
+            AND d.unit_price > 0
+            AND vc.cost_chf > 0
+            AND d.unit_price * CASE WHEN d.currency = 'EUR' THEN 0.945 ELSE 1.0 END
+                > vc.cost_chf * 1.20
+          ORDER BY pct_above_ref DESC
+          LIMIT 50"
+    );
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $cnt       = count($rows);
+    $breakdown = array_map(fn($r) => [
+        'key'            => (string) $r['id'],
+        'label'          => $r['mi_name'],
+        'mi_id'          => $r['mi_id'],
+        'supplier'       => $r['supplier'],
+        'date'           => $r['date_received'],
+        'unit_price_chf' => (float) $r['unit_price_chf'],
+        'ref_cost_chf'   => (float) $r['ref_cost_chf'],
+        'cost_basis'     => $r['cost_basis'],
+        'pct_above_ref'  => (float) $r['pct_above_ref'],
+    ], $rows);
+
+    $result = array_merge(kpi_empty_result($label, 'alertes'), [
+        'value'     => $cnt,
+        'breakdown' => $breakdown,
+        'tint'      => $cnt === 0 ? 'green' : ($cnt > 5 ? 'red' : 'amber'),
+        'meta'      => [
+            'threshold_pct' => 20,
+            'period_label'  => 'stock actif',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/** #118 — Consommation par MP / mois (bar) */
+function kpi_rm_consumption_per_mi_period(array $params, string $label, PDO $pdo): array
+{
+    $period   = $params['period'] ?? 'current_month';
+    $p        = kpi_resolve_period($period);
+    $cacheKey = "rm_consumption_mi_{$p['start']}_{$p['end']}";
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $stmt = $pdo->prepare(
+        "SELECT rm.mi_id,
+                rm.name AS mi_name,
+                ANY_VALUE(rmc.name) AS category,
+                ANY_VALUE(c.unit) AS unit,
+                ROUND(SUM(c.qty), 4) AS total_qty
+           FROM inv_consumption c
+           JOIN ref_mi rm ON rm.id = c.mi_id_fk
+           LEFT JOIN ref_mi_categories rmc ON rmc.id = rm.category_id
+          WHERE c.consumed_at BETWEEN ? AND ?
+            AND rm.is_inventoried = 1
+          GROUP BY rm.id, rm.mi_id, rm.name
+          ORDER BY total_qty DESC
+          LIMIT 30"
+    );
+    $stmt->execute([$p['start'], $p['end']]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $breakdown = array_map(fn($r) => [
+        'key'      => $r['mi_id'],
+        'label'    => $r['mi_name'],
+        'category' => $r['category'],
+        'unit'     => $r['unit'],
+        'value'    => (float) $r['total_qty'],
+    ], $rows);
+
+    $result = array_merge(kpi_empty_result($label, 'qty'), [
+        'value'     => count($rows),
+        'breakdown' => $breakdown,
+        'tint'      => 'neutral',
+        'meta'      => [
+            'period_label' => $p['label'],
+            'mi_count'     => count($rows),
+            'note'         => 'inv_consumption: brewing+fermenting+racking+packaging; no packaging rows pre-mig-pipeline.',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/**
+ * #120 — Solde cautions / dépôts par fournisseur (table).
+ * Reads inv_deliveries rows where the MI belongs to category 'Cautions' (GL 1302).
+ * Net balance per supplier = SUM(total_chf) — positive = net deposit paid,
+ * negative = net credit received.
+ */
+function kpi_rm_caution_deposit_balance(string $label, PDO $pdo): array
+{
+    $cacheKey = 'rm_caution_deposit_balance';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $stmt = $pdo->query(
+        "SELECT COALESCE(rs.name, d.supplier_raw, '(inconnu)') AS supplier,
+                ROUND(SUM(d.total_chf), 2) AS net_balance_chf,
+                COUNT(*) AS line_count
+           FROM inv_deliveries d
+           JOIN ref_mi rm ON rm.id = d.ingredient_fk
+           JOIN ref_mi_categories rmc ON rmc.id = rm.category_id
+           LEFT JOIN ref_suppliers rs ON rs.id = d.supplier_fk
+          WHERE rmc.name = 'Cautions'
+            AND d.status IN ('Active', 'Consumed')
+          GROUP BY d.supplier_fk, rs.name, d.supplier_raw
+          ORDER BY net_balance_chf DESC"
+    );
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $total     = array_sum(array_column($rows, 'net_balance_chf'));
+    $breakdown = array_map(fn($r) => [
+        'key'             => $r['supplier'],
+        'label'           => $r['supplier'],
+        'net_balance_chf' => (float) $r['net_balance_chf'],
+        'value'           => (float) $r['net_balance_chf'],
+    ], $rows);
+
+    $result = array_merge(kpi_empty_result($label, 'CHF'), [
+        'value'     => round($total, 2),
+        'breakdown' => $breakdown,
+        'tint'      => 'neutral',
+        'meta'      => [
+            'period_label' => 'cumulé',
+            'gl_account'   => '1302',
+            'supplier_count' => count($rows),
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/**
+ * #121 — Tendance TVA import / frais transport (sparkline by month).
+ * Groups inv_deliveries for MI in category 'Transport' (12) by YYYY-MM.
+ * Excludes exclusion_class='recoverable_vat' lines.
+ */
+function kpi_rm_import_vat_freight_trend(string $label, PDO $pdo): array
+{
+    $cacheKey = 'rm_import_vat_freight_trend';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $stmt = $pdo->query(
+        "SELECT DATE_FORMAT(d.date_received, '%Y-%m') AS period,
+                ROUND(SUM(d.total_chf), 2) AS total_chf,
+                COUNT(*) AS line_count
+           FROM inv_deliveries d
+           JOIN ref_mi rm ON rm.id = d.ingredient_fk
+           JOIN ref_mi_categories rmc ON rmc.id = rm.category_id
+          WHERE rmc.name = 'Transport'
+            AND d.status IN ('Active', 'Consumed')
+            AND d.exclusion_class IS NULL
+          GROUP BY period
+          ORDER BY period ASC"
+    );
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $series = array_map(fn($r) => [
+        'period'     => $r['period'],
+        'value'      => (float) $r['total_chf'],
+        'line_count' => (int) $r['line_count'],
+    ], $rows);
+
+    $latest = !empty($series) ? end($series) : null;
+
+    $result = array_merge(kpi_empty_result($label, 'CHF'), [
+        'value'  => $latest ? $latest['value'] : null,
+        'series' => $series,
+        'tint'   => 'neutral',
+        'meta'   => [
+            'period_label' => 'dernier mois',
+            'category'     => 'Transport',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/**
+ * #122 — Coût ingrédient en % du COGS (donut, per-section).
+ * Numerator: brewing section total from COP pipeline JSON (malts + hops + ingredients).
+ * Denominator: totalVariables.total from same month.
+ * Uses kpi_load_cogs_json() — never re-derives COGS.
+ */
+function kpi_rm_ingredient_cost_pct_cogs(string $label, PDO $pdo): array
+{
+    $cacheKey = 'rm_ingredient_cost_pct_cogs';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $month = kpi_cogs_latest_month_data();
+
+    if ($month === null) {
+        $result = array_merge(kpi_empty_result($label, '%'), [
+            'meta' => ['note' => 'Pipeline COGS non disponible'],
+        ]);
+        return kpi_cache_set($cacheKey, $result);
+    }
+
+    $cop         = $month['cop']          ?? [];
+    $brewing     = $cop['brewing']        ?? [];
+    $tvars       = $cop['totalVariables'] ?? [];
+    $totalCop    = is_array($tvars) ? (float) ($tvars['total'] ?? 0) : (float) $tvars;
+
+    $maltsTotal  = (float) ($brewing['malts']['current']['total']       ?? $brewing['malts']['rolling6']['total']       ?? 0);
+    $hopsTotal   = (float) ($brewing['hops']['current']['total']        ?? $brewing['hops']['rolling6']['total']        ?? 0);
+    $ingTotal    = (float) ($brewing['ingredients']['current']['total'] ?? $brewing['ingredients']['rolling6']['total'] ?? 0);
+    $brewingTotal = $maltsTotal + $hopsTotal + $ingTotal;
+
+    $packagingTotal = (float) ($cop['packaging']['total'] ?? 0);
+
+    $ratio = $totalCop > 0 ? round($brewingTotal / $totalCop * 100, 2) : null;
+
+    $breakdown = [
+        ['key' => 'malt',      'label' => 'Malt',         'value' => round($maltsTotal, 2)],
+        ['key' => 'hops',      'label' => 'Houblon',      'value' => round($hopsTotal, 2)],
+        ['key' => 'brewing_adj', 'label' => 'Ingrédients brassage', 'value' => round($ingTotal, 2)],
+        ['key' => 'packaging', 'label' => 'Packaging',   'value' => round($packagingTotal, 2)],
+    ];
+
+    $freshness = kpi_cogs_freshness_meta($month['monthKey']);
+
+    $result = array_merge(kpi_empty_result($label, '%'), [
+        'value'     => $ratio,
+        'breakdown' => $breakdown,
+        'tint'      => 'neutral',
+        'meta'      => array_merge([
+            'brewing_total_chf'  => round($brewingTotal, 2),
+            'cop_total_chf'      => round($totalCop, 2),
+            'period_label'       => $month['monthKey'],
+        ], $freshness),
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/**
+ * #123 — Délai livraison fournisseur (table).
+ * Lead time = DATEDIFF(date_received, invoice_date) via doc_invoices join.
+ * Only rows where both dates exist and the gap is ≥ 0 (ignore data-entry noise).
+ * Grouped by supplier, showing avg + min + max lead days.
+ * Note: invoice_date is extracted from OCR — may equal date_received when the
+ * parser defaulted to the delivery date. This is the best available proxy until
+ * a PO date is recorded.
+ */
+function kpi_rm_supplier_lead_time(string $label, PDO $pdo): array
+{
+    $cacheKey = 'rm_supplier_lead_time';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $stmt = $pdo->query(
+        "SELECT COALESCE(rs.name, d.supplier_raw, '(inconnu)') AS supplier,
+                ROUND(AVG(DATEDIFF(d.date_received, di.invoice_date)), 1) AS avg_lead_days,
+                MIN(DATEDIFF(d.date_received, di.invoice_date))           AS min_lead_days,
+                MAX(DATEDIFF(d.date_received, di.invoice_date))           AS max_lead_days,
+                COUNT(*) AS sample_size
+           FROM inv_deliveries d
+           JOIN doc_files df ON df.id = d.file_id_fk
+           JOIN doc_invoices di ON di.file_id = df.id
+           LEFT JOIN ref_suppliers rs ON rs.id = d.supplier_fk
+          WHERE d.status IN ('Active', 'Consumed')
+            AND di.invoice_date IS NOT NULL
+            AND d.date_received IS NOT NULL
+            AND DATEDIFF(d.date_received, di.invoice_date) >= 0
+          GROUP BY d.supplier_fk, rs.name, d.supplier_raw
+         HAVING COUNT(*) >= 2
+          ORDER BY avg_lead_days DESC
+          LIMIT 20"
+    );
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $breakdown = array_map(fn($r) => [
+        'key'         => $r['supplier'],
+        'label'       => $r['supplier'],
+        'avg'         => (float) $r['avg_lead_days'],
+        'min'         => (int) $r['min_lead_days'],
+        'max'         => (int) $r['max_lead_days'],
+        'sample_size' => (int) $r['sample_size'],
+        'value'       => (float) $r['avg_lead_days'],
+    ], $rows);
+
+    $avgAll = count($rows) > 0
+        ? round(array_sum(array_column($rows, 'avg')) / count($rows), 1)
+        : null;
+
+    $result = array_merge(kpi_empty_result($label, 'jours'), [
+        'value'     => $avgAll,
+        'breakdown' => $breakdown,
+        'tint'      => 'neutral',
+        'meta'      => [
+            'period_label' => 'cumulé (≥2 livraisons)',
+            'note'         => 'Proxy: invoice_date (OCR) vs date_received. Peut inclure biais si invoice_date=delivery_date.',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/**
+ * #124 — Taux livraison à temps.
+ * Proxy: deliveries received within 14 days of invoice_date (positive gap ≤ 14).
+ * Without a PO-expected-date we use invoice_date as the order anchor.
+ * Returns pct on-time + sample size.
+ */
+function kpi_rm_on_time_delivery_rate(string $label, PDO $pdo): array
+{
+    $cacheKey = 'rm_on_time_delivery_rate';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $stmt = $pdo->query(
+        "SELECT COUNT(*) AS total,
+                SUM(CASE WHEN DATEDIFF(d.date_received, di.invoice_date) <= 14 THEN 1 ELSE 0 END) AS on_time
+           FROM inv_deliveries d
+           JOIN doc_files df ON df.id = d.file_id_fk
+           JOIN doc_invoices di ON di.file_id = df.id
+          WHERE d.status IN ('Active', 'Consumed')
+            AND di.invoice_date IS NOT NULL
+            AND d.date_received IS NOT NULL
+            AND DATEDIFF(d.date_received, di.invoice_date) BETWEEN 0 AND 60"
+    );
+    $row    = $stmt->fetch(PDO::FETCH_ASSOC);
+    $total  = (int) ($row['total']   ?? 0);
+    $onTime = (int) ($row['on_time'] ?? 0);
+    $pct    = $total > 0 ? round($onTime / $total * 100, 1) : null;
+
+    $result = array_merge(kpi_empty_result($label, '%'), [
+        'value' => $pct,
+        'tint'  => $pct === null ? 'neutral' : ($pct >= 90 ? 'green' : ($pct >= 70 ? 'amber' : 'red')),
+        'meta'  => [
+            'on_time'      => $onTime,
+            'total'        => $total,
+            'threshold'    => '≤14j après date facture',
+            'period_label' => 'cumulé',
+            'note'         => 'Proxy sans PO: compare date_received vs invoice_date (OCR). Écart 0–60j seulement.',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/**
+ * #127 — Flag risque fournisseur unique (flag + table).
+ * An MI is flagged as single-source if it has exactly 1 distinct supplier_fk
+ * across all Active + Consumed deliveries.
+ */
+function kpi_rm_single_source_risk(string $label, PDO $pdo): array
+{
+    $cacheKey = 'rm_single_source_risk';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $stmt = $pdo->query(
+        "SELECT rm.mi_id,
+                rm.name AS mi_name,
+                ANY_VALUE(rmc.name) AS category,
+                COUNT(DISTINCT d.supplier_fk) AS supplier_count,
+                ANY_VALUE(COALESCE(rs.name, d.supplier_raw, '(inconnu)')) AS sole_supplier
+           FROM inv_deliveries d
+           JOIN ref_mi rm ON rm.id = d.ingredient_fk
+           LEFT JOIN ref_mi_categories rmc ON rmc.id = rm.category_id
+           LEFT JOIN ref_suppliers rs ON rs.id = d.supplier_fk
+          WHERE d.status IN ('Active', 'Consumed')
+            AND d.ingredient_fk IS NOT NULL
+            AND rm.is_inventoried = 1
+          GROUP BY rm.id, rm.mi_id, rm.name
+         HAVING COUNT(DISTINCT d.supplier_fk) = 1
+          ORDER BY rmc.name ASC, rm.name ASC"
+    );
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $cnt       = count($rows);
+    $breakdown = array_map(fn($r) => [
+        'key'          => $r['mi_id'],
+        'label'        => $r['mi_name'],
+        'category'     => $r['category'],
+        'sole_supplier'=> $r['sole_supplier'],
+        'value'        => 1,
+    ], $rows);
+
+    $result = array_merge(kpi_empty_result($label, 'MP'), [
+        'value'     => $cnt,
+        'breakdown' => $breakdown,
+        'tint'      => $cnt === 0 ? 'green' : ($cnt > 10 ? 'red' : 'amber'),
+        'meta'      => [
+            'period_label' => 'historique cumulé',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/**
+ * #128 — Dépenses YoY (sparkline: month totals current year vs prior year).
+ * Reads inv_deliveries, groups by YYYY-MM, shows last 24 months.
+ */
+function kpi_rm_spend_yoy(string $label, PDO $pdo): array
+{
+    $cacheKey = 'rm_spend_yoy';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $stmt = $pdo->query(
+        "SELECT DATE_FORMAT(d.date_received, '%Y-%m') AS period,
+                YEAR(d.date_received) AS yr,
+                ROUND(SUM(d.total_chf), 2) AS total_chf
+           FROM inv_deliveries d
+          WHERE d.status IN ('Active', 'Consumed')
+            AND d.exclusion_class IS NULL
+            AND d.date_received >= DATE_SUB(CURDATE(), INTERVAL 24 MONTH)
+          GROUP BY period, yr
+          ORDER BY period ASC"
+    );
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Split into this year vs last year for delta.
+    $thisYear = (int) date('Y');
+    $byYear   = [];
+    foreach ($rows as $r) {
+        $byYear[$r['yr']][$r['period']] = (float) $r['total_chf'];
+    }
+
+    $totalThisYear = array_sum($byYear[$thisYear] ?? []);
+    $totalLastYear = array_sum($byYear[$thisYear - 1] ?? []);
+    $delta = $totalLastYear > 0 ? round($totalThisYear - $totalLastYear, 2) : null;
+
+    $series = array_map(fn($r) => [
+        'period' => $r['period'],
+        'value'  => (float) $r['total_chf'],
+    ], $rows);
+
+    $result = array_merge(kpi_empty_result($label, 'CHF'), [
+        'value'       => round($totalThisYear, 2),
+        'delta'       => $delta,
+        'delta_label' => 'vs même période N-1',
+        'series'      => $series,
+        'tint'        => 'neutral',
+        'meta'        => [
+            'ytd_this_year' => round($totalThisYear, 2),
+            'ytd_last_year' => round($totalLastYear, 2),
+            'period_label'  => 'YTD ' . $thisYear,
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/**
+ * #129 — Répartition coût malt vs houblon (donut).
+ * Reads inv_deliveries grouped by MI category 'Malt' vs 'Hops',
+ * restricted to current year Active + Consumed deliveries.
+ */
+function kpi_rm_malt_hops_cost_split(string $label, PDO $pdo): array
+{
+    $cacheKey = 'rm_malt_hops_cost_split';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $stmt = $pdo->query(
+        "SELECT rmc.name AS category,
+                ROUND(SUM(d.total_chf), 2) AS total_chf
+           FROM inv_deliveries d
+           JOIN ref_mi rm ON rm.id = d.ingredient_fk
+           JOIN ref_mi_categories rmc ON rmc.id = rm.category_id
+          WHERE rmc.name IN ('Malt', 'Hops')
+            AND d.status IN ('Active', 'Consumed')
+            AND d.exclusion_class IS NULL
+            AND YEAR(d.date_received) = YEAR(CURDATE())
+          GROUP BY rmc.name"
+    );
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $byCategory = [];
+    foreach ($rows as $r) {
+        $byCategory[$r['category']] = (float) $r['total_chf'];
+    }
+
+    $malt  = $byCategory['Malt'] ?? 0.0;
+    $hops  = $byCategory['Hops'] ?? 0.0;
+    $total = $malt + $hops;
+
+    $breakdown = [
+        ['key' => 'malt', 'label' => 'Malt',    'value' => round($malt, 2)],
+        ['key' => 'hops', 'label' => 'Houblon', 'value' => round($hops, 2)],
+    ];
+
+    $result = array_merge(kpi_empty_result($label, 'CHF'), [
+        'value'     => round($total, 2),
+        'breakdown' => $breakdown,
+        'tint'      => 'neutral',
+        'meta'      => [
+            'period_label' => 'YTD ' . date('Y'),
+            'malt_pct'     => $total > 0 ? round($malt / $total * 100, 1) : null,
+            'hops_pct'     => $total > 0 ? round($hops / $total * 100, 1) : null,
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/**
+ * #130 — Exposition FX (EUR/CHF) (kpi_number).
+ * YTD EUR-denominated spend (total_original in EUR) and its CHF equivalent,
+ * plus the implicit FX gain/loss vs 1:1 parity.
+ */
+function kpi_rm_fx_eur_chf_exposure(string $label, PDO $pdo): array
+{
+    $cacheKey = 'rm_fx_eur_chf_exposure';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $stmt = $pdo->query(
+        "SELECT ROUND(SUM(d.total_original), 2) AS total_eur,
+                ROUND(SUM(d.total_chf), 2)      AS total_chf,
+                COUNT(*) AS delivery_count
+           FROM inv_deliveries d
+          WHERE d.currency = 'EUR'
+            AND d.status IN ('Active', 'Consumed')
+            AND d.exclusion_class IS NULL
+            AND YEAR(d.date_received) = YEAR(CURDATE())"
+    );
+    $row      = $stmt->fetch(PDO::FETCH_ASSOC);
+    $totalEur = $row && $row['total_eur'] !== null ? (float) $row['total_eur'] : 0.0;
+    $totalChf = $row && $row['total_chf'] !== null ? (float) $row['total_chf'] : 0.0;
+    $rows     = $row ? (int) $row['delivery_count'] : 0;
+    // FX saving vs 1:1 parity
+    $fxSaving = round($totalEur - $totalChf, 2);
+
+    $result = array_merge(kpi_empty_result($label, 'EUR'), [
+        'value' => round($totalEur, 2),
+        'tint'  => 'neutral',
+        'meta'  => [
+            'total_eur'           => round($totalEur, 2),
+            'total_chf'           => round($totalChf, 2),
+            'fx_saving_vs_parity' => $fxSaving,
+            'delivery_count'      => $rows,
+            'period_label'        => 'YTD ' . date('Y'),
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
 
 // ═════════════════════════════════════════════════════════════════════════════
 // HANDLER: racking  (source_domain = 'racking')
