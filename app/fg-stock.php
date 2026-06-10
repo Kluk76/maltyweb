@@ -189,8 +189,10 @@ function fg_prod_since_anchor(PDO $pdo, string $globalAnchor): array
  *   anchor_qty, prod_qty, expedie_qty, eshop_qty, taproom_qty,
  *   physique,           float: anchor + prod - expedie - eshop - taproom
  *   open_week_qty,      int: Σ open order lines with requested_date ≤ end-of-current-ISO-week
+ *   open_2wk_qty,       int: Σ open order lines with requested_date ≤ end-of-NEXT-ISO-week (cumulative)
  *   open_total_qty,     int: Σ ALL open order lines
  *   live_semaine,       int: physique - open_week_qty
+ *   live_2sem,          int: physique - open_2wk_qty  (physique − cumulative orders due ≤ end of next ISO week)
  *   live_futur,         int: physique - open_total_qty
  *   velocity_weekly,    float|null: trailing 8-week avg weekly depletion (null = no data)
  *   semaines_stock,     float|null: physique / velocity_weekly (null if velocity=0 or null)
@@ -464,23 +466,26 @@ function fg_stock_compute(PDO $pdo): array
         }
     }
 
-    // ── Step 7: open order lines (for live_semaine / live_futur) ────────────
+    // ── Step 7: open order lines (for live_semaine / live_2sem / live_futur) ───
     $isoWeekEnd = fg_stock_iso_week_end(date('Y-m-d'));
+    $iso2wkEnd  = (new DateTimeImmutable($isoWeekEnd))->modify('+7 days')->format('Y-m-d');
 
     $openStmt = $pdo->prepare(
         "SELECT l.sku_id_fk,
                 SUM(CASE WHEN o.requested_date <= ? THEN l.qty ELSE 0 END) AS week_qty,
+                SUM(CASE WHEN o.requested_date <= ? THEN l.qty ELSE 0 END) AS twowk_qty,
                 SUM(l.qty)                                                   AS total_qty
            FROM ord_order_lines l
            JOIN ord_orders o ON o.id = l.order_id_fk
           WHERE o.status NOT IN ('shipped', 'cancelled')
           GROUP BY l.sku_id_fk"
     );
-    $openStmt->execute([$isoWeekEnd]);
+    $openStmt->execute([$isoWeekEnd, $iso2wkEnd]);
     $openBySkuId = [];
     foreach ($openStmt->fetchAll(PDO::FETCH_ASSOC) as $or) {
         $openBySkuId[(int) $or['sku_id_fk']] = [
             'week_qty'  => (int) $or['week_qty'],
+            'twowk_qty' => (int) $or['twowk_qty'],
             'total_qty' => (int) $or['total_qty'],
         ];
     }
@@ -576,9 +581,11 @@ function fg_stock_compute(PDO $pdo): array
         $physique = $anchor + $prod - $expedie - $eshop - $taproom;
 
         $openWeek  = $openBySkuId[$sid]['week_qty']  ?? 0;
+        $open2wk   = $openBySkuId[$sid]['twowk_qty'] ?? 0;
         $openTotal = $openBySkuId[$sid]['total_qty'] ?? 0;
 
         $liveSemaine = $physique - $openWeek;
+        $live2sem    = $physique - $open2wk;
         $liveFutur   = $physique - $openTotal;
 
         $vel     = $velWeekly[$sid] ?? null;
@@ -614,8 +621,10 @@ function fg_stock_compute(PDO $pdo): array
             // Computed
             'physique'        => $physique,
             'open_week_qty'   => $openWeek,
+            'open_2wk_qty'    => $open2wk,
             'open_total_qty'  => $openTotal,
             'live_semaine'    => $liveSemaine,
+            'live_2sem'       => $live2sem,
             'live_futur'      => $liveFutur,
             'velocity_weekly' => $vel,
             'semaines_stock'  => $semaines,

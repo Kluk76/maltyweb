@@ -2328,14 +2328,17 @@ $isReadOnly = $editOrder !== null
   if ($fgStockForCmds !== null && !empty($fgStockForCmds['rows'])):
       $cmdFgPhysique = 0;
       $cmdFgWeekQty  = 0;
+      $cmdFg2wkQty   = 0;
       $cmdFgFutQty   = 0;
       foreach ($fgStockForCmds['rows'] as $fsr) {
           $cmdFgPhysique += $fsr['physique'];
           $cmdFgWeekQty  += $fsr['open_week_qty'];
+          $cmdFg2wkQty   += $fsr['open_2wk_qty'];
           $cmdFgFutQty   += $fsr['open_total_qty'];
       }
-      $cmdFgDiSem = $cmdFgPhysique - $cmdFgWeekQty;
-      $cmdFgDiFut = $cmdFgPhysique - $cmdFgFutQty;
+      $cmdFgDiSem  = $cmdFgPhysique - $cmdFgWeekQty;
+      $cmdFgDi2sem = $cmdFgPhysique - $cmdFg2wkQty;
+      $cmdFgDiFut  = $cmdFgPhysique - $cmdFgFutQty;
   ?>
   <div class="exp-cmd-stock-strip" role="region" aria-label="Aperçu stock PF">
     <a href="/modules/expeditions.php?view=stock" class="exp-cmd-stock-strip__link"
@@ -2351,6 +2354,11 @@ $isReadOnly = $editOrder !== null
     <div class="exp-cmd-stock-strip__kpi">
       <span class="exp-cmd-stock-strip__val<?= $cmdFgDiSem < 0 ? ' exp-cmd-stock-strip__val--neg' : '' ?>"><?= number_format($cmdFgDiSem) ?></span>
       <span class="exp-cmd-stock-strip__sub">dispo sem. courante<?= $cmdFgDiSem < 0 ? ' ⚠' : '' ?></span>
+    </div>
+    <div class="exp-cmd-stock-strip__sep" aria-hidden="true"></div>
+    <div class="exp-cmd-stock-strip__kpi">
+      <span class="exp-cmd-stock-strip__val<?= $cmdFgDi2sem < 0 ? ' exp-cmd-stock-strip__val--neg' : '' ?>"><?= number_format($cmdFgDi2sem) ?></span>
+      <span class="exp-cmd-stock-strip__sub">dispo 2 sem.<?= $cmdFgDi2sem < 0 ? ' ⚠' : '' ?></span>
     </div>
     <div class="exp-cmd-stock-strip__sep" aria-hidden="true"></div>
     <div class="exp-cmd-stock-strip__kpi">
@@ -3175,13 +3183,16 @@ $isReadOnly = $editOrder !== null
   // ── Totals for the TOTAL strip (computed from all rows) ───────────────────
   $stockTotalPhysique = 0.0;
   $stockTotalWeekQty  = 0;
+  $stockTotal2wkQty   = 0;
   $stockTotalFutQty   = 0;
   foreach ($stockRows as $sr) {
       $stockTotalPhysique += $sr['physique'];
       $stockTotalWeekQty  += $sr['open_week_qty'];
+      $stockTotal2wkQty   += $sr['open_2wk_qty'];
       $stockTotalFutQty   += $sr['open_total_qty'];
   }
   $stockDiSemaine = $stockTotalPhysique - $stockTotalWeekQty;
+  $stockDi2sem    = $stockTotalPhysique - $stockTotal2wkQty;
   $stockDiFutur   = $stockTotalPhysique - $stockTotalFutQty;
 
   // ── Pre-compute stock-health levels for ALL rows ─────────────────────────
@@ -3373,6 +3384,16 @@ $isReadOnly = $editOrder !== null
       <span class="exp-stock-total-kpi__val"><?= number_format($stockDiSemaine) ?></span>
     </div>
     <div class="exp-stock-total-sep" aria-hidden="true"></div>
+    <div class="exp-stock-total-kpi<?= $stockDi2sem < 0 ? ' exp-stock-total-kpi--neg' : '' ?>">
+      <span class="exp-stock-total-kpi__label">
+        − commandes 2 semaines
+        <?php if ($stockDi2sem < 0): ?>
+          <span class="exp-stock-total-kpi__flag" aria-label="Survendu">⚠ survendu</span>
+        <?php endif ?>
+      </span>
+      <span class="exp-stock-total-kpi__val"><?= number_format($stockDi2sem) ?></span>
+    </div>
+    <div class="exp-stock-total-sep" aria-hidden="true"></div>
     <div class="exp-stock-total-kpi<?= $stockDiFutur < 0 ? ' exp-stock-total-kpi--neg' : '' ?>">
       <span class="exp-stock-total-kpi__label">
         − toutes commandes ouvertes
@@ -3477,6 +3498,7 @@ $isReadOnly = $editOrder !== null
           <th class="exp-st-col-gauge" title="Semaines de couverture (barre = niveau de stock)">Couverture</th>
           <th class="exp-st-col-physique" title="Stock physique actuel = ancre + production − ventes depuis l'ancre">Physique</th>
           <th class="exp-st-col-semcur"  title="Physique − commandes ouvertes dues cette semaine">Sem. courante</th>
+          <th class="exp-st-col-semcur"  title="Physique − commandes ouvertes dues d'ici la fin de la semaine prochaine">Sem. courante + suivante</th>
           <th class="exp-st-col-futur"   title="Physique − toutes commandes ouvertes">Avec futur</th>
           <th class="exp-st-col-flag"></th>
         </tr>
@@ -3491,7 +3513,7 @@ $isReadOnly = $editOrder !== null
         $groupCount = count($stockByFamily[$groupFam]);
       ?>
         <tr class="exp-stock-family-header" data-family-group="<?= htmlspecialchars($groupFam) ?>" aria-hidden="true">
-          <td colspan="7" class="exp-stock-family-header__cell">
+          <td colspan="8" class="exp-stock-family-header__cell">
             <span class="exp-stock-family-header__label"><?= htmlspecialchars($groupLabel) ?></span>
             <span class="exp-stock-family-header__count"><?= $groupCount ?> SKU<?= $groupCount !== 1 ? 's' : '' ?></span>
           </td>
@@ -3534,9 +3556,10 @@ $isReadOnly = $editOrder !== null
               $gaugeWidthPct = 0; // no velocity — muted display
           }
           // Gauge text fallback for a11y: screenreader sees "X.X sem" via aria-label on cell
-          // Live semaine / futur: color coding
-          $semClass  = $sr['live_semaine'] < 0  ? ' exp-st-neg' : '';
-          $futClass  = $sr['live_futur']   < 0  ? ' exp-st-neg' : '';
+          // Live semaine / 2sem / futur: color coding
+          $semClass    = $sr['live_semaine'] < 0  ? ' exp-st-neg' : '';
+          $twoSemClass = $sr['live_2sem']    < 0  ? ' exp-st-neg' : '';
+          $futClass    = $sr['live_futur']   < 0  ? ' exp-st-neg' : '';
 
           // Per-location mini-breakdown from snapshot (nice-to-have)
           $locBreakdown = '';
@@ -3601,6 +3624,9 @@ $isReadOnly = $editOrder !== null
             <td class="exp-st-col-semcur">
               <span class="exp-st-num<?= $semClass ?>"><?= number_format($sr['live_semaine']) ?></span>
             </td>
+            <td class="exp-st-col-semcur">
+              <span class="exp-st-num<?= $twoSemClass ?>"><?= number_format($sr['live_2sem']) ?></span>
+            </td>
             <td class="exp-st-col-futur">
               <span class="exp-st-num<?= $futClass ?>"><?= number_format($sr['live_futur']) ?></span>
             </td>
@@ -3608,7 +3634,7 @@ $isReadOnly = $editOrder !== null
           </tr>
           <!-- Drill-down ledger (hidden by default, toggled by JS) -->
           <tr class="exp-stock-drill" id="exp-drill-<?= (int) $sr['sku_id'] ?>" hidden>
-            <td colspan="7">
+            <td colspan="8">
               <div class="exp-stock-ledger">
                 <div class="exp-stock-ledger__title">
                   Détail — <?= htmlspecialchars($sr['sku_code']) ?>
@@ -3681,6 +3707,15 @@ $isReadOnly = $editOrder !== null
                         −<?= number_format($sr['open_week_qty']) ?>
                       </td>
                       <td class="exp-ledger-meta">→ sem. courante : <?= number_format($sr['live_semaine']) ?></td>
+                    </tr>
+                    <?php endif ?>
+                    <?php if ($sr['open_2wk_qty'] > $sr['open_week_qty']): ?>
+                    <tr class="exp-ledger-open">
+                      <td class="exp-ledger-label">Commandes ouvertes (sem. courante + suivante)</td>
+                      <td class="exp-ledger-qty exp-ledger-qty--open">
+                        −<?= number_format($sr['open_2wk_qty']) ?>
+                      </td>
+                      <td class="exp-ledger-meta">→ 2 sem. : <?= number_format($sr['live_2sem']) ?></td>
                     </tr>
                     <?php endif ?>
                     <?php if ($sr['open_total_qty'] !== $sr['open_week_qty']): ?>
