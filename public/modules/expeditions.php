@@ -78,6 +78,26 @@ const EXP_STATUS_REVERT = [
     'shipped'    => 'bl_printed',
 ];
 
+// ── Eshop fulfilment workflow constants (Phase 2A) ────────────────────────────
+// Mirrors ESHOP_FULFIL_* in public/api/eshop-fulfilment-status.php — NEVER duplicate values here.
+// Use ONLY these constants in PHP rendering; JS mirrors them in eshop-fulfilment.js.
+const EXP_ESHOP_STATUS_LABELS = [
+    'new'              => 'Nouveau',
+    'picking'          => 'En préparation',
+    'picked'           => 'Préparé',
+    'ready_for_pickup' => 'Prêt au retrait',
+    'fulfilled'        => 'Expédié',
+    'picked_up'        => 'Remis',
+    'cancelled'        => 'Annulé',
+];
+// Numeric ranks for stage comparison (NEVER compare ENUM ordinals)
+const EXP_ESHOP_STATUS_RANK_DELIVERY = [
+    'new' => 0, 'picking' => 1, 'picked' => 2, 'fulfilled' => 3, 'cancelled' => -1,
+];
+const EXP_ESHOP_STATUS_RANK_PICKUP = [
+    'new' => 0, 'picking' => 1, 'picked' => 2, 'ready_for_pickup' => 3, 'picked_up' => 4, 'cancelled' => -1,
+];
+
 // ── Allowed enum values (whitelists) ─────────────────────────────────────────
 const EXP_ORDER_TYPES       = ['customer', 'internal'];
 const EXP_INTERNAL_CHANNELS = ['taproom', 'eshop', 'cage', 'shop'];
@@ -1637,11 +1657,15 @@ try {
                     $eshopParams[] = $likeVal;
                 }
             }
+            // Phase 2A: LEFT JOIN inv_sales_fulfilment to get workflow status + sync badge.
             $eshopOrderSql = 'SELECT iso.id, iso.order_name, DATE(iso.created_at) AS sale_date,
                         iso.customer_first_name, iso.customer_last_name, iso.customer_email,
                         iso.fulfilment_mode, iso.financial_status, iso.fulfillment_status,
-                        iso.channel, iso.created_at
+                        iso.channel, iso.created_at,
+                        f.status AS fulfil_status,
+                        f.shopify_sync_state
                    FROM inv_sales_orders iso
+                   LEFT JOIN inv_sales_fulfilment f ON f.order_id_fk = iso.id
                   WHERE ' . implode(' AND ', $eshopWhere) . '
                   ORDER BY iso.created_at ' . ($findIntent ? 'DESC' : 'ASC');
             $eshopOrderStmt = $pdo->prepare($eshopOrderSql);
@@ -2618,6 +2642,7 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
   <link rel="stylesheet" href="/css/app.css?v=<?= @filemtime(__DIR__ . '/../css/app.css') ?: time() ?>">
   <link rel="stylesheet" href="/css/expeditions.css?v=<?= @filemtime(__DIR__ . '/../css/expeditions.css') ?: time() ?>">
   <link rel="stylesheet" href="/css/expeditions-sku-history.css?v=<?= @filemtime(__DIR__ . '/../css/expeditions-sku-history.css') ?: time() ?>">
+  <link rel="stylesheet" href="/css/eshop-fulfilment.css?v=<?= @filemtime(__DIR__ . '/../css/eshop-fulfilment.css') ?: time() ?>">
 </head>
 <body class="home op-form-page expeditions">
 
@@ -2713,7 +2738,104 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
   }
 
   /**
-   * Render a single eshop order row (Phase 1 Shopify integration — read-only).
+   * Render Phase 2A action chips for an eshop order.
+   * Mode-aware: delivery / pickup lifecycle, review → no chips.
+   * JS in eshop-fulfilment.js replaces innerHTML on update; must stay in sync.
+   *
+   * @param array $eo  Row from Query 3a: must include fulfilment_mode, fulfil_status, shopify_sync_state.
+   */
+  function exp_render_eshop_chips(array $eo): void
+  {
+      $eid       = (int) $eo['id'];
+      $mode      = (string) ($eo['fulfilment_mode'] ?? 'review');
+      $status    = (string) ($eo['fulfil_status']   ?? 'new');
+      $syncState = (string) ($eo['shopify_sync_state'] ?? 'idle');
+
+      // Sync badge (idle stays invisible via CSS visibility:hidden)
+      $syncCls   = 'ef-sync-badge ef-sync-badge--' . htmlspecialchars($syncState);
+      $syncLabels = [
+          'idle'    => '',
+          'pending' => '⟳ à pousser',
+          'pushed'  => '✓ Shopify',
+          'failed'  => '⚠ erreur',
+      ];
+      $syncText  = $syncLabels[$syncState] ?? '';
+
+      printf('<span class="%s" data-eshop-order-id="%d">%s</span>',
+          $syncCls, $eid, htmlspecialchars($syncText));
+
+      // review-mode: no action chips
+      if ($mode === 'review') {
+          echo '<span class="ef-classify-hint">à classer</span>';
+          return;
+      }
+
+      $rankMap  = ($mode === 'pickup') ? EXP_ESHOP_STATUS_RANK_PICKUP : EXP_ESHOP_STATUS_RANK_DELIVERY;
+      $stages   = ($mode === 'pickup')
+          ? ['picking', 'picked', 'ready_for_pickup', 'picked_up']
+          : ['picking', 'picked', 'fulfilled'];
+      $advanceMap = ($mode === 'pickup')
+          ? ['new' => 'picking', 'picking' => 'picked', 'picked' => 'ready_for_pickup', 'ready_for_pickup' => 'picked_up']
+          : ['new' => 'picking', 'picking' => 'picked', 'picked' => 'fulfilled'];
+      $revertMap = [
+          'picking' => 'new', 'picked' => 'picking',
+          'ready_for_pickup' => 'picked', 'fulfilled' => 'picked', 'picked_up' => 'ready_for_pickup',
+      ];
+      $terminals = ['fulfilled', 'picked_up', 'cancelled'];
+
+      printf('<div class="ef-chips" data-eshop-order-id="%d" data-mode="%s">',
+          $eid, htmlspecialchars($mode));
+
+      if ($status === 'cancelled') {
+          echo '<span class="ef-chip ef-chip--cancelled">Annulé</span>';
+          echo '</div>';
+          return;
+      }
+
+      $curRank = $rankMap[$status] ?? 0;
+
+      foreach ($stages as $stage) {
+          $stageRank = $rankMap[$stage] ?? 0;
+          $isPast    = $curRank >= $stageRank;
+          $isNext    = ($advanceMap[$status] ?? null) === $stage;
+          $lbl       = EXP_ESHOP_STATUS_LABELS[$stage] ?? $stage;
+          $aria      = $isPast
+              ? ('✓ ' . $lbl . ' — fait')
+              : ($isNext ? ('Marquer : ' . $lbl) : $lbl);
+
+          if ($isNext) {
+              printf('<button class="ef-chip ef-chip--next" data-eshop-order-id="%d"'
+                  . ' data-action="advance" data-target-status="%s" aria-label="%s">%s</button>',
+                  $eid, htmlspecialchars($stage), htmlspecialchars($aria), htmlspecialchars($lbl));
+          } else {
+              $cls = 'ef-chip ef-chip--' . $stage . ($isPast ? ' ef-chip--done' : '');
+              printf('<span class="%s" aria-label="%s">%s</span>',
+                  htmlspecialchars($cls), htmlspecialchars($aria),
+                  ($isPast ? '✓ ' : '') . htmlspecialchars($lbl));
+          }
+      }
+
+      // Revert chip (if not at start or terminal)
+      if ($status !== 'new' && !in_array($status, $terminals, true) && isset($revertMap[$status])) {
+          $prevSt  = $revertMap[$status];
+          $prevLbl = EXP_ESHOP_STATUS_LABELS[$prevSt] ?? $prevSt;
+          printf('<button class="ef-chip ef-chip--revert" data-eshop-order-id="%d"'
+              . ' data-action="revert" aria-label="%s">↩ %s</button>',
+              $eid, htmlspecialchars('Retour à ' . $prevLbl), htmlspecialchars($prevLbl));
+      }
+
+      // Cancel chip (if not terminal)
+      if (!in_array($status, $terminals, true)) {
+          printf('<button class="ef-chip ef-chip--cancel" data-eshop-order-id="%d"'
+              . ' data-action="cancel" aria-label="Annuler la commande">✕</button>',
+              $eid);
+      }
+
+      echo '</div>';
+  }
+
+  /**
+   * Render a single eshop order row (Phase 2A: includes workflow chips).
    * Uses data-eshop-order-id (NOT data-order-id) so existing status JS never targets it.
    */
   function exp_render_eshop_row(array $eo, array $lines): void
@@ -2762,21 +2884,18 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
       }
 
       printf(
-          '<div class="exp-order-row exp-order-row--eshop" data-eshop-order-id="%d">' .
-          '<span class="exp-eshop-order-name">%s</span>' .
-          '<span class="exp-order-party">%s</span>' .
-          '<div class="exp-sku-pills">%s</div>' .
-          '<span class="exp-fulfil-badge %s">%s %s</span>' .
-          '<span class="exp-eshop-source-tag" aria-label="Shopify (lecture seule)">Shopify</span>' .
-          '</div>',
-          $eid,
-          htmlspecialchars((string) ($eo['order_name'] ?? "#$eid")),
-          htmlspecialchars($name),
-          $pillsHtml,
-          $modeCls,
-          $modeIcon,
-          htmlspecialchars($modeLabel)
+          '<div class="exp-order-row exp-order-row--eshop" data-eshop-order-id="%d">',
+          $eid
       );
+      echo '<span class="exp-eshop-order-name">' . htmlspecialchars((string) ($eo['order_name'] ?? "#$eid")) . '</span>';
+      echo '<span class="exp-order-party">' . htmlspecialchars($name) . '</span>';
+      echo '<div class="exp-sku-pills">' . $pillsHtml . '</div>';
+      printf('<span class="exp-fulfil-badge %s">%s %s</span>',
+          $modeCls, $modeIcon, htmlspecialchars($modeLabel));
+      echo '<span class="exp-eshop-source-tag" aria-label="Shopify">Shopify</span>';
+      // Phase 2A: workflow chips
+      exp_render_eshop_chips($eo);
+      echo '</div>';
   }
   ?>
 
@@ -5941,6 +6060,7 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
   window.EXP_CMD_PULL_HL  = <?= $cmdPullTotalHlJson ?>;
 </script>
 <script src="/js/expeditions.js?v=<?= @filemtime(__DIR__ . '/../js/expeditions.js') ?: time() ?>"></script>
+<script src="/js/eshop-fulfilment.js?v=<?= @filemtime(__DIR__ . '/../js/eshop-fulfilment.js') ?: time() ?>"></script>
 <?php endif ?>
 
 <?php if ($view === 'stock'): ?>

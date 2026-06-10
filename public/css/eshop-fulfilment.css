@@ -1,0 +1,141 @@
+/* eshop-fulfilment.css — Phase 2A eshop fulfilment workflow chips + sync badge.
+ * Scoped under body.expeditions to avoid leaking across pages.
+ * Uses only canonical design-system tokens (no raw hex).
+ * New file — do NOT merge into expeditions.css (parallel session in flight).
+ */
+
+/* ── Action chips container ────────────────────────────────────────────────── */
+body.expeditions .ef-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  align-items: center;
+}
+
+/* ── Base chip ─────────────────────────────────────────────────────────────── */
+body.expeditions .ef-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25em;
+  padding: 0.2rem 0.55rem;
+  border-radius: 0.9rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.03em;
+  font-weight: 500;
+  border: 1.5px solid transparent;
+  cursor: default;
+  white-space: nowrap;
+  min-height: 28px;               /* ≥44px combined with padding on touch */
+  transition: background 0.1s, border-color 0.1s, opacity 0.1s;
+  background: var(--bg-elev);
+  color: var(--ink-soft);
+  border-color: var(--ink-faint);
+}
+
+/* ── Done chip (past) ──────────────────────────────────────────────────────── */
+body.expeditions .ef-chip--done {
+  background: color-mix(in srgb, var(--hop) 14%, var(--bg-elev));
+  color: var(--hop);
+  border-color: color-mix(in srgb, var(--hop) 30%, transparent);
+  opacity: 0.75;
+}
+
+/* ── Next chip (clickable action) ─────────────────────────────────────────── */
+body.expeditions .ef-chip--next {
+  background: var(--hop);
+  color: var(--bg);
+  border-color: var(--hop);
+  cursor: pointer;
+  min-height: 32px;
+  padding: 0.25rem 0.7rem;
+  font-weight: 600;
+  opacity: 1;
+}
+body.expeditions .ef-chip--next:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--hop) 88%, var(--ink));
+  border-color: color-mix(in srgb, var(--hop) 88%, var(--ink));
+}
+body.expeditions .ef-chip--next:active:not(:disabled) {
+  opacity: 0.85;
+}
+body.expeditions .ef-chip--next:focus-visible {
+  outline: 2px solid var(--hop);
+  outline-offset: 2px;
+}
+
+/* ── Cancelled chip ────────────────────────────────────────────────────────── */
+body.expeditions .ef-chip--cancelled {
+  background: color-mix(in srgb, var(--ember) 12%, var(--bg-elev));
+  color: var(--ember);
+  border-color: color-mix(in srgb, var(--ember) 30%, transparent);
+  opacity: 0.85;
+}
+
+/* ── Loading state (optimistic) ────────────────────────────────────────────── */
+body.expeditions .ef-chip--loading {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* ── Revert / cancel chips (secondary, smaller) ────────────────────────────── */
+body.expeditions .ef-chip--revert,
+body.expeditions .ef-chip--cancel {
+  font-size: 0.62rem;
+  padding: 0.15rem 0.45rem;
+  min-height: 24px;
+  color: var(--ink-mute);
+  border-color: var(--ink-faint);
+  cursor: pointer;
+}
+body.expeditions .ef-chip--revert:hover,
+body.expeditions .ef-chip--cancel:hover {
+  color: var(--ember);
+  border-color: var(--ember);
+  background: color-mix(in srgb, var(--ember) 8%, var(--bg-elev));
+}
+body.expeditions .ef-chip--revert:focus-visible,
+body.expeditions .ef-chip--cancel:focus-visible {
+  outline: 2px solid var(--ember);
+  outline-offset: 2px;
+}
+
+/* ── "À classer" placeholder (review mode — no chips) ─────────────────────── */
+body.expeditions .ef-classify-hint {
+  font-size: 0.68rem;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--ink-mute);
+  font-style: italic;
+}
+
+/* ── Shopify sync badge ─────────────────────────────────────────────────────── */
+body.expeditions .ef-sync-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2em;
+  font-size: 0.62rem;
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 0.02em;
+  padding: 0.1rem 0.4rem;
+  border-radius: 0.7rem;
+  white-space: nowrap;
+}
+/* idle: nothing rendered — visibility:hidden keeps layout stable */
+body.expeditions .ef-sync-badge--idle {
+  visibility: hidden;
+}
+body.expeditions .ef-sync-badge--pending {
+  background: color-mix(in srgb, var(--oak) 15%, var(--bg-elev));
+  color: var(--oak);
+  border: 1px solid color-mix(in srgb, var(--oak) 35%, transparent);
+}
+body.expeditions .ef-sync-badge--pushed {
+  background: color-mix(in srgb, var(--hop) 12%, var(--bg-elev));
+  color: var(--hop);
+  border: 1px solid color-mix(in srgb, var(--hop) 28%, transparent);
+}
+body.expeditions .ef-sync-badge--failed {
+  background: color-mix(in srgb, var(--ember) 12%, var(--bg-elev));
+  color: var(--ember);
+  border: 1px solid color-mix(in srgb, var(--ember) 30%, transparent);
+}
