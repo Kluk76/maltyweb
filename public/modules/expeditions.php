@@ -1200,6 +1200,8 @@ $filterClient  = '';
 $filterSku     = '';
 $filterStatus  = '';
 $filterChannel = '';
+$findIntent    = false; // true when cross-date search active (client search or cross-date status)
+$cmdFindLimited = false; // true when find-intent result was capped at 500
 
 if ($view === 'commandes') {
     $rawMode = isset($_GET['mode']) ? (string) $_GET['mode'] : 'week';
@@ -1239,10 +1241,17 @@ if ($view === 'commandes') {
     $filterChannel = isset($_GET['canal'])   ? (string) $_GET['canal']   : '';
 
     // Validate filter enums against whitelist
-    $allowedStatutFilters  = ['ouvertes', 'entered', 'confirmed', 'picked', 'bl_printed', 'shipped', 'cancelled'];
+    // 'expediees' = cross-date shortcut for all shipped orders (alias for status=shipped, spans all dates)
+    $allowedStatutFilters  = ['ouvertes', 'expediees', 'entered', 'confirmed', 'picked', 'bl_printed', 'shipped', 'cancelled'];
     $allowedChannelFilters = ['on_trade', 'off_trade', 'interne'];
     if (!in_array($filterStatus, $allowedStatutFilters, true))  $filterStatus  = '';
     if (!in_array($filterChannel, $allowedChannelFilters, true)) $filterChannel = '';
+
+    // Find-intent: when true, the date BETWEEN clause is dropped and the query spans ALL dates.
+    // Triggered by: non-empty client search OR a cross-date status ('ouvertes' or 'expediees').
+    $findIntent = ($filterClient !== '')
+               || ($filterStatus === 'ouvertes')
+               || ($filterStatus === 'expediees');
 
     // ---- ISO week nav: prev/next --------------------------------------------
     if ($cmdMode === 'week') {
@@ -1471,9 +1480,19 @@ try {
 
     if ($view === 'commandes') {
         // ── Query 1: order headers + customer + transporter ───────────────────
-        // Build WHERE dynamically (all via bound params — no interpolation)
-        $where  = ['o.requested_date BETWEEN ? AND ?'];
-        $params = [$cmdDu, $cmdAu];
+        // Build WHERE dynamically (all via bound params — no interpolation).
+        // When $findIntent is true the date BETWEEN clause is omitted so the
+        // query spans all dates; sort is DESC (most-recent first) for cross-date
+        // results, ASC (chronological) for normal week/range browse.
+        $where  = [];
+        $params = [];
+
+        if (!$findIntent) {
+            // Browse mode: restrict to the selected week or range
+            $where[]  = 'o.requested_date BETWEEN ? AND ?';
+            $params[] = $cmdDu;
+            $params[] = $cmdAu;
+        }
 
         // Filter: client name (substring match against customer name)
         if ($filterClient !== '') {
@@ -1491,15 +1510,22 @@ try {
             $params[] = $filterChannel;
         }
 
-        // Filter: statut (pseudo 'ouvertes' = not shipped and not cancelled)
+        // Filter: statut
+        // 'ouvertes' = cross-date: all not-shipped/not-cancelled orders
+        // 'expediees' = cross-date alias for shipped (past orders, most-recent first)
+        // specific status = exact match
         if ($filterStatus === 'ouvertes') {
             $where[] = "o.status NOT IN ('shipped', 'cancelled')";
+        } elseif ($filterStatus === 'expediees') {
+            $where[] = "o.status = 'shipped'";
         } elseif ($filterStatus !== '') {
             $where[] = 'o.status = ?';
             $params[] = $filterStatus;
         }
 
-        $whereSQL = implode(' AND ', $where);
+        $whereSQL  = !empty($where) ? implode(' AND ', $where) : '1=1';
+        $orderDir  = $findIntent ? 'DESC' : 'ASC';
+        $limitSQL  = $findIntent ? 'LIMIT 500' : '';
         $ordStmt  = $pdo->prepare(
             "SELECT o.id, o.order_type, o.internal_channel, o.requested_date,
                     o.status, o.comment, o.created_at,
@@ -1509,7 +1535,8 @@ try {
                LEFT JOIN ref_customers  c ON c.id = o.customer_id_fk
                LEFT JOIN ref_transporters t ON t.id = o.transporter_id_fk
               WHERE {$whereSQL}
-              ORDER BY o.requested_date ASC, o.id ASC"
+              ORDER BY o.requested_date {$orderDir}, o.id {$orderDir}
+              {$limitSQL}"
         );
         $ordStmt->execute($params);
         $allOrders = $ordStmt->fetchAll(PDO::FETCH_ASSOC);
@@ -1528,7 +1555,14 @@ try {
                 $cmdFilteredCusts[$ord['customer_name']] = true;
             }
         }
-        ksort($cmdByDay);
+        // For find-intent we want DESC (most-recent day first)
+        if ($findIntent) {
+            krsort($cmdByDay);
+        } else {
+            ksort($cmdByDay);
+        }
+        // Track whether the result was hard-limited (surfaced in UI)
+        $cmdFindLimited = $findIntent && (count($allOrders) >= 500);
 
         // ── Query 2: lines for all matched orders (no N+1) ───────────────────
         if (!empty($orderIds)) {
@@ -1578,24 +1612,28 @@ try {
         }
 
         // ── Query 3: eshop/taproom auto-rows — aggregate by date + channel ───
-        $eshopStmt = $pdo->prepare(
-            "SELECT DATE(iso.created_at) AS sale_date,
-                    iso.channel,
-                    COUNT(*) AS order_count,
-                    COALESCE(SUM(isol.hl_resolved), 0) AS total_hl
-               FROM inv_sales_orders iso
-               LEFT JOIN inv_sales_order_lines isol ON isol.order_id_fk = iso.id
-              WHERE DATE(iso.created_at) BETWEEN ? AND ?
-              GROUP BY DATE(iso.created_at), iso.channel"
-        );
-        $eshopStmt->execute([$cmdDu, $cmdAu]);
-        foreach ($eshopStmt->fetchAll(PDO::FETCH_ASSOC) as $er) {
-            $d = (string) $er['sale_date'];
-            if (!isset($cmdEshopByDay[$d])) $cmdEshopByDay[$d] = [];
-            $cmdEshopByDay[$d][$er['channel']] = [
-                'orders' => (int) $er['order_count'],
-                'hl'     => (float) $er['total_hl'],
-            ];
+        // Skipped in find-intent mode: eshop rows are aggregated by date and
+        // spanning all dates would be too broad + unrelated to the current search.
+        if (!$findIntent) {
+            $eshopStmt = $pdo->prepare(
+                "SELECT DATE(iso.created_at) AS sale_date,
+                        iso.channel,
+                        COUNT(*) AS order_count,
+                        COALESCE(SUM(isol.hl_resolved), 0) AS total_hl
+                   FROM inv_sales_orders iso
+                   LEFT JOIN inv_sales_order_lines isol ON isol.order_id_fk = iso.id
+                  WHERE DATE(iso.created_at) BETWEEN ? AND ?
+                  GROUP BY DATE(iso.created_at), iso.channel"
+            );
+            $eshopStmt->execute([$cmdDu, $cmdAu]);
+            foreach ($eshopStmt->fetchAll(PDO::FETCH_ASSOC) as $er) {
+                $d = (string) $er['sale_date'];
+                if (!isset($cmdEshopByDay[$d])) $cmdEshopByDay[$d] = [];
+                $cmdEshopByDay[$d][$er['channel']] = [
+                    'orders' => (int) $er['order_count'],
+                    'hl'     => (float) $er['total_hl'],
+                ];
+            }
         }
 
         // ── Period summary ────────────────────────────────────────────────────
@@ -1670,6 +1708,136 @@ try {
     if ($view === 'stock') {
         $fgStock            = fg_stock_compute($pdo);
         $fgLocationSnapshot = fg_stock_location_snapshot($pdo);
+
+        // ── "Activité récente" timeline: 3 bulk queries (one per event type) ────
+        // Pattern: bulk-load all SKUs via ROW_NUMBER window + 90-day cap, bucket
+        // into $timelineBySkuId, merge/sort/cap at render time. 3 queries total,
+        // regardless of SKU count (no per-SKU WHERE, no AJAX).
+        $timelineBySkuId = []; // [sku_id_fk => [{date, type, label, qty, sign}]]
+
+        // ── Query TL-1: customer orders (shipped + open, excl. cancelled) ────────
+        // order_type='customer' excludes internal channels (taproom/eshop/cage/shop)
+        // which are booked separately in the ledger above.
+        // Aggregate SUM(l.qty) per order so multi-line orders collapse to one event.
+        $tlOrderStmt = $pdo->prepare(
+            'SELECT l.sku_id_fk,
+                    o.requested_date AS evt_date,
+                    COALESCE(NULLIF(c.name, \'\'), \'—\') AS client_name,
+                    SUM(l.qty) AS qty
+               FROM (
+                   SELECT sku_id_fk,
+                          order_id_fk,
+                          SUM(qty) AS qty,
+                          ROW_NUMBER() OVER (PARTITION BY sku_id_fk ORDER BY order_id_fk DESC) AS rn
+                     FROM ord_order_lines
+                    GROUP BY sku_id_fk, order_id_fk
+               ) l
+               JOIN ord_orders o
+                 ON o.id = l.order_id_fk
+                AND o.status <> \'cancelled\'
+                AND o.order_type = \'customer\'
+                AND o.requested_date >= DATE_SUB(CURDATE(), INTERVAL 180 DAY)
+                AND o.requested_date <= CURDATE()
+               LEFT JOIN ref_customers c ON c.id = o.customer_id_fk
+              WHERE l.rn <= 50
+              GROUP BY l.sku_id_fk, o.id, o.requested_date, c.name
+              ORDER BY l.sku_id_fk ASC, o.requested_date DESC'
+        );
+        $tlOrderStmt->execute();
+        foreach ($tlOrderStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $sid = (int) $row['sku_id_fk'];
+            if (!isset($timelineBySkuId[$sid])) $timelineBySkuId[$sid] = [];
+            $timelineBySkuId[$sid][] = [
+                'date'  => (string) $row['evt_date'],
+                'type'  => 'order',
+                'label' => $row['client_name'],
+                'qty'   => (int) round((float) $row['qty']),
+                'sign'  => 'out',
+            ];
+        }
+
+        // ── Query TL-2: packaging / conditionnement resupply runs ─────────────
+        // Mirrors fg_prod_since_anchor() predicates EXACTLY:
+        //   p.is_tombstoned = 0
+        //   p.is_white_label = 0
+        //   p.sku_id_fk IS NOT NULL
+        //   p.run_type <> 'cuv'      ← LOAD-BEARING: cuv SKUs are excluded from
+        //                               physique ledger; showing resupply for them
+        //                               here would create a visible contradiction.
+        // INTENDED DIVERGENCE (vs fg_prod_since_anchor):
+        //   The anchor-cutoff clause (event_date > COALESCE(pa.prod_anchor, globalAnchor))
+        //   is dropped here. The timeline shows ALL recent runs in the 90-day window,
+        //   not only those after the stocktake anchor. This is correct for a history
+        //   panel — operators want to see actual recent production activity.
+        // Qty formula mirrors fg_prod_since_anchor FLOOR-per-event logic.
+        $tlPkgStmt = $pdo->prepare(
+            'SELECT p.sku_id_fk,
+                    p.event_date AS evt_date,
+                    FLOOR(p.prod_total_units / COALESCE(NULLIF(r.units_per_pack, 0), 1)) AS qty
+               FROM (
+                   SELECT sku_id_fk,
+                          event_date,
+                          prod_total_units,
+                          ROW_NUMBER() OVER (PARTITION BY sku_id_fk ORDER BY event_date DESC, id DESC) AS rn
+                     FROM bd_packaging_v2
+                    WHERE is_tombstoned = 0
+                      AND is_white_label = 0
+                      AND sku_id_fk IS NOT NULL
+                      AND run_type <> \'cuv\'
+                      AND event_date >= DATE_SUB(CURDATE(), INTERVAL 180 DAY)
+                      AND event_date <= CURDATE()
+               ) p
+               JOIN ref_skus r ON r.id = p.sku_id_fk
+              WHERE p.rn <= 50
+              ORDER BY p.sku_id_fk ASC, p.event_date DESC'
+        );
+        $tlPkgStmt->execute();
+        foreach ($tlPkgStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $sid = (int) $row['sku_id_fk'];
+            if (!isset($timelineBySkuId[$sid])) $timelineBySkuId[$sid] = [];
+            $timelineBySkuId[$sid][] = [
+                'date'  => (string) $row['evt_date'],
+                'type'  => 'pkg',
+                'label' => 'Conditionnement',
+                'qty'   => (int) $row['qty'],
+                'sign'  => 'in',
+            ];
+        }
+
+        // ── Query TL-3: stock movements ───────────────────────────────────────
+        // m.is_tombstoned = 0, date window on m.moved_on.
+        // label = "{from_site} → {to_site}". sign='neutral' (↔, no +/−).
+        $tlMoveStmt = $pdo->prepare(
+            'SELECT m.sku_id_fk,
+                    m.moved_on AS evt_date,
+                    m.qty,
+                    COALESCE(sf.name, \'?\') AS from_name,
+                    COALESCE(st.name, \'?\') AS to_name
+               FROM (
+                   SELECT sku_id_fk, moved_on, qty, from_site_id_fk, to_site_id_fk,
+                          ROW_NUMBER() OVER (PARTITION BY sku_id_fk ORDER BY moved_on DESC, id DESC) AS rn
+                     FROM inv_stock_movements
+                    WHERE is_tombstoned = 0
+                      AND moved_on >= DATE_SUB(CURDATE(), INTERVAL 180 DAY)
+                      AND moved_on <= CURDATE()
+               ) m
+               LEFT JOIN ref_sites sf ON sf.id = m.from_site_id_fk
+               LEFT JOIN ref_sites st ON st.id = m.to_site_id_fk
+              WHERE m.rn <= 50
+              ORDER BY m.sku_id_fk ASC, m.moved_on DESC'
+        );
+        $tlMoveStmt->execute();
+        foreach ($tlMoveStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $sid = (int) $row['sku_id_fk'];
+            if (!isset($timelineBySkuId[$sid])) $timelineBySkuId[$sid] = [];
+            $timelineBySkuId[$sid][] = [
+                'date'  => (string) $row['evt_date'],
+                'type'  => 'move',
+                'label' => $row['from_name'] . ' → ' . $row['to_name'],
+                'qty'   => (int) round((float) $row['qty']),
+                'sign'  => 'neutral',
+            ];
+        }
     }
 
     if ($view === 'stocktake') {
@@ -2364,6 +2532,7 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,200;0,9..144,300;0,9..144,400;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/app.css?v=<?= @filemtime(__DIR__ . '/../css/app.css') ?: time() ?>">
   <link rel="stylesheet" href="/css/expeditions.css?v=<?= @filemtime(__DIR__ . '/../css/expeditions.css') ?: time() ?>">
+  <link rel="stylesheet" href="/css/expeditions-sku-history.css?v=<?= @filemtime(__DIR__ . '/../css/expeditions-sku-history.css') ?: time() ?>">
 </head>
 <body class="home op-form-page expeditions">
 
@@ -2541,8 +2710,11 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
     </div>
 
     <?php if ($cmdMode === 'week'): ?>
-    <!-- Week navigation (links only — no form submit for nav arrows) -->
-    <div class="exp-toolbar__week-nav" aria-label="Navigation semaine">
+    <!-- Week navigation (links only — no form submit for nav arrows).
+         When find-intent is active, de-emphasize with --muted modifier so the
+         operator sees clearly that the week window is not in effect. -->
+    <div class="exp-toolbar__week-nav<?= $findIntent ? ' exp-toolbar__week-nav--muted' : '' ?>"
+         aria-label="Navigation semaine">
       <a href="<?= $weekBaseUrl ?>&amp;kw=<?= urlencode($kwPrev) ?><?= $filterQS ?>"
          class="exp-toolbar__nav-arrow" aria-label="Semaine précédente">◂</a>
       <span class="exp-toolbar__week-label"><?= exp_isoweek_label($cmdKw) ?></span>
@@ -2566,14 +2738,20 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
     </div>
     <?php endif ?>
 
-    <!-- Filters — hidden period inputs + filter fields + Appliquer -->
+    <!-- Filters — hidden period inputs + filter fields + Appliquer.
+         When find-intent is active (client search or cross-date status) the
+         mode/kw/du/au hidden inputs are omitted so the query spans all dates.
+         The server defaults to week mode when those params are absent, but
+         $findIntent suppresses the BETWEEN clause before mode matters. -->
     <div class="exp-toolbar__filters">
-      <input type="hidden" name="mode"  value="<?= htmlspecialchars($cmdMode) ?>">
-      <?php if ($cmdMode === 'week'): ?>
-        <input type="hidden" name="kw" value="<?= htmlspecialchars($cmdKw) ?>">
-      <?php else: ?>
-        <input type="hidden" name="du" value="<?= htmlspecialchars($cmdDu) ?>">
-        <input type="hidden" name="au" value="<?= htmlspecialchars($cmdAu) ?>">
+      <?php if (!$findIntent): ?>
+        <input type="hidden" name="mode" value="<?= htmlspecialchars($cmdMode) ?>">
+        <?php if ($cmdMode === 'week'): ?>
+          <input type="hidden" name="kw" value="<?= htmlspecialchars($cmdKw) ?>">
+        <?php else: ?>
+          <input type="hidden" name="du" value="<?= htmlspecialchars($cmdDu) ?>">
+          <input type="hidden" name="au" value="<?= htmlspecialchars($cmdAu) ?>">
+        <?php endif ?>
       <?php endif ?>
 
       <!-- Client datalist filter -->
@@ -2610,14 +2788,19 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
       <div class="exp-toolbar__filter-group">
         <label class="exp-toolbar__filter-label" for="exp-filter-statut">Statut</label>
         <select id="exp-filter-statut" name="statut" class="exp-toolbar__filter-select">
-          <option value="" <?= $filterStatus === '' ? 'selected' : '' ?>>Tous</option>
-          <option value="ouvertes"   <?= $filterStatus === 'ouvertes'   ? 'selected' : '' ?>>Ouvertes</option>
-          <option value="entered"    <?= $filterStatus === 'entered'    ? 'selected' : '' ?>>Saisie</option>
-          <option value="confirmed"  <?= $filterStatus === 'confirmed'  ? 'selected' : '' ?>>Confirmée</option>
-          <option value="picked"     <?= $filterStatus === 'picked'     ? 'selected' : '' ?>>Préparée</option>
-          <option value="bl_printed" <?= $filterStatus === 'bl_printed' ? 'selected' : '' ?>>BL imprimé</option>
-          <option value="shipped"    <?= $filterStatus === 'shipped'    ? 'selected' : '' ?>>Livrée</option>
-          <option value="cancelled"  <?= $filterStatus === 'cancelled'  ? 'selected' : '' ?>>Annulée</option>
+          <option value="" <?= $filterStatus === '' ? 'selected' : '' ?>>Toutes périodes</option>
+          <optgroup label="— Toutes dates —">
+            <option value="ouvertes"   <?= $filterStatus === 'ouvertes'   ? 'selected' : '' ?>>Ouvertes (toutes dates)</option>
+            <option value="expediees"  <?= $filterStatus === 'expediees'  ? 'selected' : '' ?>>Expédiées (toutes dates)</option>
+          </optgroup>
+          <optgroup label="— Cette période —">
+            <option value="entered"    <?= $filterStatus === 'entered'    ? 'selected' : '' ?>>Saisie</option>
+            <option value="confirmed"  <?= $filterStatus === 'confirmed'  ? 'selected' : '' ?>>Confirmée</option>
+            <option value="picked"     <?= $filterStatus === 'picked'     ? 'selected' : '' ?>>Préparée</option>
+            <option value="bl_printed" <?= $filterStatus === 'bl_printed' ? 'selected' : '' ?>>BL imprimé</option>
+            <option value="shipped"    <?= $filterStatus === 'shipped'    ? 'selected' : '' ?>>Livrée</option>
+            <option value="cancelled"  <?= $filterStatus === 'cancelled'  ? 'selected' : '' ?>>Annulée</option>
+          </optgroup>
         </select>
       </div>
 
@@ -2635,11 +2818,36 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
       <button type="submit" class="exp-toolbar__filter-apply">Appliquer</button>
 
       <?php if ($filterClient !== '' || $filterSku !== '' || $filterStatus !== '' || $filterChannel !== ''): ?>
-        <a href="<?= $baseUrl ?>&amp;mode=<?= htmlspecialchars($cmdMode) ?><?= $cmdMode === 'week' ? '&amp;kw=' . urlencode($cmdKw) : '&amp;du=' . $cmdDu . '&amp;au=' . $cmdAu ?>"
-           class="exp-toolbar__reset">Réinitialiser</a>
+        <?php
+        // Reset always goes back to the current ISO week (no filters)
+        $resetKw  = exp_date_to_isoweek(date('Y-m-d'));
+        $resetUrl = $baseUrl . '&amp;mode=week&amp;kw=' . urlencode($resetKw);
+        ?>
+        <a href="<?= $resetUrl ?>" class="exp-toolbar__reset">Réinitialiser</a>
       <?php endif ?>
     </div>
   </form>
+
+  <!-- ── Cross-date indicator (shown only when find-intent is active) ──────── -->
+  <?php if ($findIntent): ?>
+  <div class="exp-find-banner" role="status" aria-live="polite">
+    <span class="exp-find-banner__icon" aria-hidden="true">⊙</span>
+    <span class="exp-find-banner__text">
+      Résultats — toutes dates
+      <?php if ($cmdSummary['orders'] > 0): ?>
+        · <strong><?= $cmdSummary['orders'] ?> commande<?= $cmdSummary['orders'] !== 1 ? 's' : '' ?></strong>
+      <?php endif ?>
+      <?php if ($cmdFindLimited): ?>
+        · <em>affichage limité à 500</em>
+      <?php endif ?>
+    </span>
+    <?php
+    $resetKwBanner = exp_date_to_isoweek(date('Y-m-d'));
+    $resetUrlBanner = '/modules/expeditions.php?view=commandes&amp;mode=week&amp;kw=' . urlencode($resetKwBanner);
+    ?>
+    <a href="<?= $resetUrlBanner ?>" class="exp-find-banner__back">← Semaine courante</a>
+  </div>
+  <?php endif ?>
 
   <!-- ── Period summary band ───────────────────────────────────────────────── -->
   <?php if ($cmdSummary['orders'] > 0 || !empty($cmdEshopByDay)): ?>
@@ -2859,13 +3067,23 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
           <?php foreach ($actSummaryDefs as $actStatus => [$actLabel, $actTerminal]):
               $n = $dayActCounts[$actStatus] ?? 0;
               if ($n === 0) continue;
-              // Build filter URL: click → reload with statut filter for this day
-              $actUrl = $baseUrl . '&amp;mode=' . htmlspecialchars($cmdMode)
-                  . ($cmdMode === 'week' ? '&amp;kw=' . urlencode($cmdKw) : '&amp;du=' . $cmdDu . '&amp;au=' . $cmdAu)
-                  . '&amp;statut=' . urlencode($actStatus)
-                  . ($filterClient !== '' ? '&amp;client=' . urlencode($filterClient) : '')
-                  . ($filterSku !== '' ? '&amp;sku=' . urlencode($filterSku) : '')
-                  . ($filterChannel !== '' ? '&amp;canal=' . urlencode($filterChannel) : '');
+              // Build filter URL: click → reload with statut filter.
+              // In find-intent mode omit the week/range anchor so the result
+              // stays cross-date (only the status changes).
+              if ($findIntent) {
+                  $actUrl = $baseUrl
+                      . '&amp;statut=' . urlencode($actStatus)
+                      . ($filterClient !== '' ? '&amp;client=' . urlencode($filterClient) : '')
+                      . ($filterSku !== '' ? '&amp;sku=' . urlencode($filterSku) : '')
+                      . ($filterChannel !== '' ? '&amp;canal=' . urlencode($filterChannel) : '');
+              } else {
+                  $actUrl = $baseUrl . '&amp;mode=' . htmlspecialchars($cmdMode)
+                      . ($cmdMode === 'week' ? '&amp;kw=' . urlencode($cmdKw) : '&amp;du=' . $cmdDu . '&amp;au=' . $cmdAu)
+                      . '&amp;statut=' . urlencode($actStatus)
+                      . ($filterClient !== '' ? '&amp;client=' . urlencode($filterClient) : '')
+                      . ($filterSku !== '' ? '&amp;sku=' . urlencode($filterSku) : '')
+                      . ($filterChannel !== '' ? '&amp;canal=' . urlencode($filterChannel) : '');
+              }
           ?>
           <a href="<?= $actUrl ?>"
              class="exp-day-act-chip exp-day-act-chip--<?= $actStatus ?><?= $actTerminal ? ' exp-day-act-chip--terminal' : ' exp-day-act-chip--action' ?>"
@@ -3821,6 +4039,26 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
                 <div class="exp-stock-ledger__title">
                   Détail — <?= htmlspecialchars($sr['sku_code']) ?>
                 </div>
+                <!-- Segmented toggle: Stock | Activité -->
+                <div class="exp-evt-tabs" role="tablist" aria-label="Vues du détail">
+                  <button class="exp-evt-tab" role="tab"
+                    id="exp-tab-stock-<?= (int) $sr['sku_id'] ?>"
+                    aria-selected="true"
+                    aria-controls="exp-pane-stock-<?= (int) $sr['sku_id'] ?>"
+                    data-evt-tab="stock"
+                    tabindex="0">Stock</button>
+                  <button class="exp-evt-tab" role="tab"
+                    id="exp-tab-activite-<?= (int) $sr['sku_id'] ?>"
+                    aria-selected="false"
+                    aria-controls="exp-pane-activite-<?= (int) $sr['sku_id'] ?>"
+                    data-evt-tab="activite"
+                    tabindex="-1">Activité</button>
+                </div>
+                <!-- Stock pane: anchor/prod/sales/physique/répartition/open-orders -->
+                <div class="exp-evt-pane"
+                  id="exp-pane-stock-<?= (int) $sr['sku_id'] ?>"
+                  role="tabpanel"
+                  aria-labelledby="exp-tab-stock-<?= (int) $sr['sku_id'] ?>">
                 <table class="exp-ledger-table">
                   <tbody>
                     <tr class="exp-ledger-anchor">
@@ -3880,6 +4118,77 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
                         <span class="exp-ledger-hl">(<?= number_format($hlPhysique, 2) ?> HL)</span>
                       </td>
                     </tr>
+                    <?php
+                    // ── Per-location physique breakdown ───────────────────────────────────────
+                    // Decomposes the physique total by ref_sites location.
+                    // Gate: qty != 0 (NOT qty > 0) — deliberately surfaces negative per-location
+                    // qty as an honest oversold signal, using exp-st-neg for visual flagging.
+                    // NOTE: this is an intentional asymmetry vs the inline cell $locBreakdown above
+                    // (which gates qty > 0 for glance-only display). Do NOT "fix" this to >0 —
+                    // a future reader who does so would silently hide oversold-per-location signals.
+                    if ($fgLocationSnapshot !== null):
+                        $locPhysiqueRows = []; // [{name, qty, hl}]
+                        foreach ($fgLocationSnapshot['locations'] as $lc) {
+                            foreach ($lc['rows'] as $lr) {
+                                if ((int) $lr['sku_id'] === (int) $sr['sku_id'] && (int) $lr['qty'] !== 0) {
+                                    $locPhysiqueRows[] = [
+                                        'name'      => $lc['name'],
+                                        'site_type' => $lc['site_type'],
+                                        'qty'       => (int) $lr['qty'],
+                                        'hl'        => round($lr['qty'] * $sr['hl_per_unit'], 2),
+                                    ];
+                                }
+                            }
+                        }
+                        // Residual check: if per-location sum ≠ physique total, show a muted
+                        // écart line (same-day-transfer residual is an accepted case — do NOT assert).
+                        $locSum = array_sum(array_column($locPhysiqueRows, 'qty'));
+                    ?>
+                    <?php if (!empty($locPhysiqueRows)): ?>
+                    <tr class="exp-ledger-loc-header">
+                      <td class="exp-ledger-label exp-ledger-meta" colspan="3">Répartition par site</td>
+                    </tr>
+                    <?php foreach ($locPhysiqueRows as $locRow): ?>
+                    <tr class="exp-ledger-loc-row">
+                      <td class="exp-ledger-label exp-ledger-meta">
+                        <?= htmlspecialchars($locRow['name']) ?>
+                        <span class="exp-ledger-meta" style="opacity:.7"> · <?= htmlspecialchars(exp_site_type_label($locRow['site_type'])) ?></span>
+                      </td>
+                      <td class="exp-ledger-qty<?= $locRow['qty'] < 0 ? ' exp-st-neg' : '' ?>">
+                        <?= number_format($locRow['qty']) ?>
+                        <span class="exp-ledger-hl">(<?= number_format($locRow['hl'], 2) ?> HL)</span>
+                      </td>
+                      <td class="exp-ledger-meta"></td>
+                    </tr>
+                    <?php endforeach ?>
+                    <?php if ($locSum !== (int) round($physique)): ?>
+                    <tr class="exp-ledger-loc-ecart">
+                      <td class="exp-ledger-label exp-ledger-meta" style="opacity:.6">écart de comptage / en transit</td>
+                      <td class="exp-ledger-qty exp-ledger-meta" style="opacity:.6">
+                        <?= ($physique - $locSum >= 0 ? '+' : '') . number_format((int) round($physique) - $locSum) ?>
+                      </td>
+                      <td class="exp-ledger-meta"></td>
+                    </tr>
+                    <?php endif ?>
+                    <?php endif ?>
+                    <?php endif ?>
+                    <?php
+                    // ── "Activité récente" — merge 3 type-buckets, sort DESC, cap 15 ──
+                    // $timelineBySkuId was bulk-loaded above (3 queries, no per-SKU WHERE).
+                    $skuTimeline = [];
+                    if (!empty($timelineBySkuId[(int) $sr['sku_id']])) {
+                        $skuTimeline = $timelineBySkuId[(int) $sr['sku_id']];
+                        // Sort all events for this SKU by date DESC, then by type for stable order
+                        usort($skuTimeline, function (array $a, array $b): int {
+                            $cmp = strcmp($b['date'], $a['date']);
+                            return $cmp !== 0 ? $cmp : strcmp($a['type'], $b['type']);
+                        });
+                        // Cap at 50 most-recent events across all types
+                        if (count($skuTimeline) > 50) {
+                            $skuTimeline = array_slice($skuTimeline, 0, 50);
+                        }
+                    }
+                    ?>
                     <?php if ($sr['open_week_qty'] > 0 || $sr['open_total_qty'] > 0): ?>
                     <tr class="exp-ledger-sep"><td colspan="3"></td></tr>
                     <?php if ($sr['open_week_qty'] > 0): ?>
@@ -3932,7 +4241,53 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
                     <?php endif ?>
                   </tbody>
                 </table>
-              </div>
+                </div><!-- /exp-evt-pane stock -->
+                <!-- Activité pane: timeline events in own scrollable table -->
+                <div class="exp-evt-pane exp-evt-pane--activite"
+                  id="exp-pane-activite-<?= (int) $sr['sku_id'] ?>"
+                  role="region"
+                  aria-label="Activité récente"
+                  aria-labelledby="exp-tab-activite-<?= (int) $sr['sku_id'] ?>"
+                  tabindex="0"
+                  hidden>
+                <table class="exp-ledger-table">
+                  <tbody>
+                    <tr class="exp-ledger-loc-header exp-evt-section-header">
+                      <td class="exp-ledger-label exp-ledger-meta" colspan="3">Activité récente</td>
+                    </tr>
+                    <?php if (empty($skuTimeline)): ?>
+                    <tr class="exp-ledger-evt exp-ledger-evt--empty">
+                      <td class="exp-ledger-label exp-ledger-meta exp-evt-empty" colspan="3">Aucune activité récente</td>
+                    </tr>
+                    <?php else: ?>
+                    <?php foreach ($skuTimeline as $evt): ?>
+                    <tr class="exp-ledger-evt exp-ledger-evt--<?= htmlspecialchars($evt['type']) ?>">
+                      <td class="exp-ledger-label exp-evt-label">
+                        <span class="exp-evt-glyph exp-evt-glyph--<?= htmlspecialchars($evt['sign']) ?>"><?= match($evt['sign']) {
+                            'in'      => '↑',
+                            'out'     => '↓',
+                            'neutral' => '↔',
+                            default   => '·',
+                        } ?></span>
+                        <span class="exp-evt-date"><?= exp_fmt_date($evt['date']) ?></span>
+                        <span class="exp-evt-desc"><?= htmlspecialchars($evt['label']) ?></span>
+                      </td>
+                      <td class="exp-ledger-qty exp-evt-qty">
+                        <?= number_format($evt['qty']) ?>
+                      </td>
+                      <td class="exp-ledger-meta exp-evt-type-label"><?= match($evt['type']) {
+                          'order' => 'Commande',
+                          'pkg'   => 'Production',
+                          'move'  => 'Mouvement',
+                          default => '',
+                      } ?></td>
+                    </tr>
+                    <?php endforeach ?>
+                    <?php endif ?>
+                  </tbody>
+                </table>
+                </div><!-- /exp-evt-pane activite -->
+              </div><!-- /exp-stock-ledger -->
             </td>
           </tr>
       <?php endforeach ?>

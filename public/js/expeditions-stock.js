@@ -9,6 +9,7 @@
  *  - "Afficher SKUs dormants" toggle
  *  - "Alertes d'abord" sort toggle
  *  - Row click → expand/collapse inline drill-down ledger
+ *  - Drill-down face toggle: Stock | Activité (data-evt-tab, role="tablist")
  *
  * No fetches — data is fully server-rendered.
  * All DOM mutations are class-based; no style= inline writes.
@@ -19,6 +20,14 @@
  *  - Single-location: card for site N active → #exp-loc-table-total hidden,
  *    #exp-loc-table-{N} visible, family chips hidden (single-location tables
  *    show physical-count-only with no dispo/velocity columns).
+ *
+ * Drill face toggle model:
+ *  - Default: Stock pane visible, Activité pane hidden.
+ *  - Toggle is delegated on tbody — safe because the row click handler already
+ *    guards `if (e.target.closest('a, button, input')) return;` so tab button
+ *    clicks bypass the drill expand/collapse.
+ *  - Reset on collapse: the collapse path calls resetDrillFace(drill) to
+ *    restore Stock as the active face.
  */
 (function () {
   'use strict';
@@ -142,7 +151,7 @@
       var drill = document.getElementById('exp-drill-' + row.dataset.skuId);
       var visible = isRowVisible(row);
       row.hidden         = !visible;
-      if (drill) drill.hidden = true;  // collapse drill on filter change
+      if (drill) { resetDrillFace(drill); drill.hidden = true; }  // collapse drill on filter change
       if (visible) row.setAttribute('aria-expanded', 'false');
     });
     // Show/hide family group header rows based on whether any SKU in the group is visible
@@ -195,7 +204,7 @@
         var grp = hdr.dataset.familyGroup;
         restored.filter(function (r) { return r.dataset.family === grp; }).forEach(function (row) {
           var drill = document.getElementById('exp-drill-' + row.dataset.skuId);
-          if (drill) { drill.hidden = true; row.setAttribute('aria-expanded', 'false'); }
+          if (drill) { resetDrillFace(drill); drill.hidden = true; row.setAttribute('aria-expanded', 'false'); }
           restoreFrag.appendChild(row);
           if (drill) restoreFrag.appendChild(drill);
         });
@@ -225,7 +234,7 @@
     sorted.forEach(function (row) {
       var sid   = row.dataset.skuId;
       var drill = document.getElementById('exp-drill-' + sid);
-      if (drill) { drill.hidden = true; row.setAttribute('aria-expanded', 'false'); }
+      if (drill) { resetDrillFace(drill); drill.hidden = true; row.setAttribute('aria-expanded', 'false'); }
       frag.appendChild(row);
       if (drill) frag.appendChild(drill);
     });
@@ -233,6 +242,24 @@
 
     // Now apply visibility on top
     applyVisibility();
+  }
+
+  // ── Drill face reset helper ──────────────────────────────────────────────
+  // Called whenever a drill collapses — resets to the Stock face so next
+  // expand always starts fresh on Stock.
+  function resetDrillFace(drill) {
+    var tabs  = drill.querySelectorAll('button[data-evt-tab]');
+    var panes = drill.querySelectorAll('[id^="exp-pane-"]');
+    tabs.forEach(function (t) {
+      var isStock = t.dataset.evtTab === 'stock';
+      t.setAttribute('aria-selected', isStock ? 'true' : 'false');
+      t.setAttribute('tabindex',      isStock ? '0'    : '-1');
+    });
+    panes.forEach(function (p) {
+      // Stock pane id ends in "-stock-{N}", Activité ends in "-activite-{N}"
+      var isStock = /-stock-\d+$/.test(p.id);
+      p.hidden = !isStock;
+    });
   }
 
   // ── Row click → drill-down toggle (Total mode only) ─────────────────────
@@ -250,6 +277,10 @@
       if (!drill) return;
 
       var isOpen = drill.hidden === false;
+      if (isOpen) {
+        // Collapsing — reset face before hiding
+        resetDrillFace(drill);
+      }
       drill.hidden = isOpen;
       row.setAttribute('aria-expanded', isOpen ? 'false' : 'true');
       row.classList.toggle('exp-stock-row--open', !isOpen);
@@ -262,6 +293,50 @@
       if (!row) return;
       e.preventDefault();
       row.click();
+    });
+
+    // ── Drill face toggle — delegated click on tab buttons ────────────────
+    // The row-click handler guards `if (e.target.closest('a, button, input')) return;`
+    // so these button clicks never accidentally collapse the drill.
+    tbody.addEventListener('click', function (e) {
+      var tab = e.target.closest('button[data-evt-tab]');
+      if (!tab) return;
+
+      var drill   = tab.closest('.exp-stock-drill');
+      if (!drill) return;
+
+      var target  = tab.dataset.evtTab; // 'stock' | 'activite'
+      var allTabs = drill.querySelectorAll('button[data-evt-tab]');
+      allTabs.forEach(function (t) {
+        var active = t.dataset.evtTab === target;
+        t.setAttribute('aria-selected', active ? 'true' : 'false');
+        t.setAttribute('tabindex',      active ? '0'    : '-1');
+      });
+      drill.querySelectorAll('[id^="exp-pane-"]').forEach(function (pane) {
+        // Match pane face: stock pane id ends "-stock-{N}", activité ends "-activite-{N}"
+        var faceMatch = target === 'stock'
+          ? /-stock-\d+$/.test(pane.id)
+          : /-activite-\d+$/.test(pane.id);
+        pane.hidden = !faceMatch;
+      });
+      tab.focus();
+    });
+
+    // ── Drill tab keyboard: arrow-left/right move between tabs ───────────
+    tbody.addEventListener('keydown', function (e) {
+      var tab = e.target.closest('button[data-evt-tab]');
+      if (!tab) return;
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault();
+
+      var drill    = tab.closest('.exp-stock-drill');
+      if (!drill) return;
+      var allTabs  = Array.prototype.slice.call(drill.querySelectorAll('button[data-evt-tab]'));
+      var idx      = allTabs.indexOf(tab);
+      var newIdx   = e.key === 'ArrowRight'
+        ? (idx + 1) % allTabs.length
+        : (idx - 1 + allTabs.length) % allTabs.length;
+      allTabs[newIdx].click();
     });
 
     // Make data rows focusable for keyboard users; stamp original PHP render order
