@@ -236,7 +236,7 @@ function kpi_dispatch(array $tracker, PDO $pdo): array
             'racking'      => kpi_handler_racking($handler, $params, $label, $pdo),
             'packaging'    => kpi_handler_packaging($handler, $params, $label, $pdo),
             'fg_stock'     => kpi_handler_fg_stock($handler, $params, $label, $pdo),
-            'sales'        => kpi_stub_handler($domain, $handler, $label),
+            'sales'        => kpi_handler_sales($handler, $params, $label, $pdo),
             'qa_qc'        => kpi_stub_handler($domain, $handler, $label),
             'equipment'    => kpi_stub_handler($domain, $handler, $label),
             'logistics'    => kpi_stub_handler($domain, $handler, $label),
@@ -258,7 +258,7 @@ function kpi_dispatch(array $tracker, PDO $pdo): array
  */
 function kpi_stub_domains(): array
 {
-    return ['sales', 'qa_qc', 'equipment', 'logistics'];
+    return ['qa_qc', 'equipment', 'logistics'];
 }
 
 /**
@@ -7674,5 +7674,881 @@ function kpi_util_mass_energy_balance(string $label, PDO $pdo): array
             'source_energy'  => 'inv_energydata (delta mensuel)',
         ],
     ]);
+    return kpi_cache_set($cacheKey, $result);
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════════
+// HANDLER: sales  (source_domain = 'sales')
+//
+// CANONICAL SOURCES:
+//   inv_sales_bc   — BC export: 3 071 rows, 2025-12–2026-05
+//                    columns: period, channel(b2b/taproom), customer_no,
+//                    sku_code, sku_id_fk, qty_invoiced, sales_amount_chf,
+//                    discount_amount_chf, profit_chf, hl_resolved
+//   inv_sales_orders / inv_sales_order_lines — Shopify eshop, 2025-12–2026-04
+//                    Orders: period, channel(eshop), total_chf, subtotal_chf,
+//                    total_discount_chf, customer_email
+//
+// FISCAL SEMANTIC FLAG (Opus must verify before flipping data_ready):
+//   inv_sales_bc.profit_chf == sales_amount_chf for 100% of sampled rows.
+//   BC exports "profit" without COGS deduction — this is REVENUE, not gross margin.
+//   Handler #98 (gross_margin_sku) is stubbed accordingly with a clear note.
+//   Revenue figures (#86, #88, #94, etc.) use sales_amount_chf directly — authoritative.
+//
+// CHANNEL MODEL:
+//   inv_sales_bc.channel = 'b2b' | 'taproom'   (covers BC-invoiced sales)
+//   inv_sales_orders.channel = 'eshop'          (Shopify, tracked separately)
+//   Three-channel combined view: b2b + taproom + eshop
+//
+// ALL VALUES ARE HT (excl. VAT) — inv_sales_bc is the BC GL export which uses HT.
+//
+// Built (#86, #87, #88, #90, #91, #92, #93, #94, #96, #97, #99, #100, #102):
+// Stubbed (#89, #95, #98, #101, #103, #104, #105, #262) — see comments inline.
+// ═════════════════════════════════════════════════════════════════════════════
+
+function kpi_handler_sales(
+    string $handler,
+    array  $params,
+    string $label,
+    PDO    $pdo
+): array {
+    return match ($handler) {
+        'revenue_period'          => kpi_sales_revenue_period($params, $label, $pdo),
+        'hl_sold_period'          => kpi_sales_hl_sold_period($params, $label, $pdo),
+        'units_sold_period'       => kpi_sales_units_sold_sku($params, $label, $pdo),
+        'sales_yoy_pace'          => kpi_sales_yoy_pace($label, $pdo),
+        'revenue_by_family'       => kpi_sales_revenue_by_family($params, $label, $pdo),
+        'top_customers_revenue'   => kpi_sales_top_customers($params, $label, $pdo),
+        'top_skus_volume_revenue' => kpi_sales_top_skus($params, $label, $pdo),
+        'sales_by_channel'        => kpi_sales_by_channel($label, $pdo),
+        'contract_vs_own_brand'   => kpi_sales_contract_vs_own($params, $label, $pdo),
+        'avg_order_value'         => kpi_sales_avg_order_value($label, $pdo),
+        'revenue_per_hl_trend'    => kpi_sales_revenue_per_hl_trend($label, $pdo),
+        'discount_rebate_rate'    => kpi_sales_discount_rate($params, $label, $pdo),
+        'seasonal_demand_curve'   => kpi_sales_seasonal_curve($label, $pdo),
+        // GAP trackers: no canonical source or source incomplete → stub with note
+        'sales_velocity_sku'      => kpi_sales_stub_gap('sales_velocity_sku', $label,
+            'Vélocité nécessite cover-days (fg_stock_compute × inv_sales_bc) + seuils ref_skus non configurés'),
+        'swiss_vs_export'         => kpi_sales_stub_gap('swiss_vs_export', $label,
+            'Exclusion export non disponible dans MySQL (ExportCustomers BSF uniquement); country_code présent mais liste client incomplète'),
+        'gross_margin_sku'        => kpi_sales_stub_gap('gross_margin_sku', $label,
+            'inv_sales_bc.profit_chf = revenue (pas de COGS déduit par BC); marge réelle = ventes − COP-BOM, indisponible au niveau SKU/période dans MySQL'),
+        'days_sales_outstanding'  => kpi_sales_stub_gap('days_sales_outstanding', $label,
+            'DSO requiert la date de paiement — absente de inv_sales_bc (source: GL BC seulement)'),
+        'lost_sales_stockout'     => kpi_sales_stub_gap('lost_sales_stockout', $label,
+            'Ventes perdues nécessite un seuil de réapprovisionnement dans ref_skus (non configuré)'),
+        'forecast_vs_actual_sales' => kpi_sales_stub_gap('forecast_vs_actual_sales', $label,
+            'Aucune table de prévision ventes dans la DB'),
+        'customer_churn'          => kpi_sales_stub_gap('customer_churn', $label,
+            'Churn nécessite historique client multi-périodes >12 mois; inv_sales_orders disponible 2025-12 à 2026-04 seulement'),
+        'forecast_accuracy'       => kpi_sales_stub_gap('forecast_accuracy', $label,
+            'Aucune table de prévision ventes dans la DB'),
+        default                   => kpi_stub_handler('sales', $handler, $label),
+    };
+}
+
+/** Private: stub for sales GAP trackers with a specific gap-reason note. */
+function kpi_sales_stub_gap(string $handler, string $label, string $note): array
+{
+    $r = kpi_empty_result($label);
+    $r['meta'] = [
+        'stub'    => true,
+        'domain'  => 'sales',
+        'handler' => $handler,
+        'note'    => $note,
+    ];
+    return $r;
+}
+
+// ─── Shared loader: inv_sales_bc per-period aggregates ───────────────────────
+// Returns array keyed by period ('YYYY-MM'). Each entry:
+//   chf (sales_amount_chf), profit_chf, discount_chf, hl, line_cnt
+
+function kpi_sales_load_bc_periods(PDO $pdo): array
+{
+    $cacheKey = 'sales_bc_periods';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $stmt = $pdo->query(
+        "SELECT period,
+                SUM(sales_amount_chf)    AS chf,
+                SUM(profit_chf)          AS profit_chf,
+                SUM(discount_amount_chf) AS discount_chf,
+                SUM(hl_resolved)         AS hl,
+                COUNT(*)                 AS line_cnt
+           FROM inv_sales_bc
+          GROUP BY period
+          ORDER BY period"
+    );
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $out = [];
+    foreach ($rows as $row) {
+        $out[$row['period']] = [
+            'chf'          => (float) $row['chf'],
+            'profit_chf'   => (float) $row['profit_chf'],
+            'discount_chf' => (float) $row['discount_chf'],
+            'hl'           => (float) $row['hl'],
+            'line_cnt'     => (int)   $row['line_cnt'],
+        ];
+    }
+    return kpi_cache_set($cacheKey, $out);
+}
+
+// ─── Helper: latest and prior period from inv_sales_bc ───────────────────────
+function kpi_sales_latest_period(array $periods): ?string
+{
+    if (empty($periods)) return null;
+    $keys = array_keys($periods);
+    return end($keys);
+}
+
+function kpi_sales_prior_period(string $period): string
+{
+    // Return the calendar month before $period ('YYYY-MM')
+    $dt = new DateTimeImmutable($period . '-01');
+    return $dt->modify('-1 month')->format('Y-m');
+}
+
+// ─── #86: revenue_month ───────────────────────────────────────────────────────
+// Primary scalar = total HT CHF for the most recent period in inv_sales_bc.
+// Delta = vs prior period in the same source.
+
+function kpi_sales_revenue_period(array $params, string $label, PDO $pdo): array
+{
+    $periods = kpi_sales_load_bc_periods($pdo);
+    $latest  = kpi_sales_latest_period($periods);
+
+    if ($latest === null) {
+        return kpi_error_result('Aucune donnée inv_sales_bc', $label);
+    }
+
+    $cur   = $periods[$latest];
+    $prior = kpi_sales_prior_period($latest);
+
+    $curChf   = $cur['chf'];
+    $priorChf = isset($periods[$prior]) ? $periods[$prior]['chf'] : null;
+    $delta    = ($priorChf !== null && $priorChf > 0)
+        ? round(($curChf - $priorChf) / $priorChf * 100, 1)
+        : null;
+
+    $result = array_merge(kpi_empty_result($label, 'CHF HT'), [
+        'value'       => round($curChf, 0),
+        'delta'       => $delta,
+        'delta_label' => 'vs mois précédent',
+        'tint'        => $delta === null ? 'neutral'
+                       : ($delta >= 0 ? 'green' : 'red'),
+        'series'      => array_map(
+            fn(string $p, array $d) => ['period' => $p, 'value' => round($d['chf'], 0)],
+            array_keys($periods), array_values($periods)
+        ),
+        'meta' => [
+            'period'         => $latest,
+            'period_label'   => $latest,
+            'line_cnt'       => $cur['line_cnt'],
+            'source'         => 'inv_sales_bc',
+            'note'           => 'Montants HT (hors TVA), export GL BC',
+        ],
+    ]);
+
+    return kpi_cache_set('sales_revenue_period_' . $latest, $result);
+}
+
+// ─── #88: hl_sold_month ───────────────────────────────────────────────────────
+// Total HL sold (hl_resolved) for the latest period.
+
+function kpi_sales_hl_sold_period(array $params, string $label, PDO $pdo): array
+{
+    $periods = kpi_sales_load_bc_periods($pdo);
+    $latest  = kpi_sales_latest_period($periods);
+
+    if ($latest === null) {
+        return kpi_error_result('Aucune donnée inv_sales_bc', $label);
+    }
+
+    $cur      = $periods[$latest];
+    $prior    = kpi_sales_prior_period($latest);
+    $curHl    = $cur['hl'];
+    $priorHl  = isset($periods[$prior]) ? $periods[$prior]['hl'] : null;
+    $delta    = ($priorHl !== null && $priorHl > 0)
+        ? round(($curHl - $priorHl) / $priorHl * 100, 1)
+        : null;
+
+    return array_merge(kpi_empty_result($label, 'HL'), [
+        'value'       => round($curHl, 1),
+        'delta'       => $delta,
+        'delta_label' => 'vs mois précédent',
+        'tint'        => $delta === null ? 'neutral' : ($delta >= 0 ? 'green' : 'amber'),
+        'series'      => array_map(
+            fn(string $p, array $d) => ['period' => $p, 'value' => round($d['hl'], 1)],
+            array_keys($periods), array_values($periods)
+        ),
+        'meta' => [
+            'period'       => $latest,
+            'period_label' => $latest,
+            'source'       => 'inv_sales_bc.hl_resolved',
+        ],
+    ]);
+}
+
+// ─── #87: units_sold_sku ─────────────────────────────────────────────────────
+// Qty invoiced per sku_code for the latest period. Bar breakdown.
+
+function kpi_sales_units_sold_sku(array $params, string $label, PDO $pdo): array
+{
+    $cacheKey = 'sales_units_sku';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $periods = kpi_sales_load_bc_periods($pdo);
+    $latest  = kpi_sales_latest_period($periods);
+
+    if ($latest === null) {
+        return kpi_error_result('Aucune donnée inv_sales_bc', $label);
+    }
+
+    $stmt = $pdo->prepare(
+        "SELECT sku_code,
+                SUM(qty_invoiced)      AS qty,
+                SUM(sales_amount_chf)  AS chf
+           FROM inv_sales_bc
+          WHERE period = ?
+            AND sku_id_fk IS NOT NULL
+          GROUP BY sku_code
+          ORDER BY qty DESC
+          LIMIT 25"
+    );
+    $stmt->execute([$latest]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $total = (float) ($periods[$latest]['line_cnt'] ?? 0);
+    $totalQty = array_sum(array_column($rows, 'qty'));
+
+    $breakdown = array_map(fn(array $r) => [
+        'key'   => $r['sku_code'],
+        'label' => $r['sku_code'],
+        'value' => round((float) $r['qty'], 1),
+        'chf'   => round((float) $r['chf'], 0),
+    ], $rows);
+
+    $result = array_merge(kpi_empty_result($label, 'unités'), [
+        'value'     => round($totalQty, 0),
+        'tint'      => 'neutral',
+        'breakdown' => $breakdown,
+        'meta'      => [
+            'period'       => $latest,
+            'period_label' => $latest,
+            'source'       => 'inv_sales_bc (sku_id_fk linked only)',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #90: sales_yoy_pace ─────────────────────────────────────────────────────
+// 12-month CHF sparkline (all available periods). YoY delta if prior-year month exists.
+
+function kpi_sales_yoy_pace(string $label, PDO $pdo): array
+{
+    $cacheKey = 'sales_yoy_pace';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $periods = kpi_sales_load_bc_periods($pdo);
+    $latest  = kpi_sales_latest_period($periods);
+
+    if ($latest === null) {
+        return kpi_error_result('Aucune donnée inv_sales_bc', $label);
+    }
+
+    // YoY: same calendar month, one year prior
+    $priorYear = (new DateTimeImmutable($latest . '-01'))
+        ->modify('-12 months')->format('Y-m');
+
+    $curChf   = $periods[$latest]['chf'] ?? null;
+    $priorChf = $periods[$priorYear]['chf'] ?? null;
+    $delta    = ($curChf !== null && $priorChf !== null && $priorChf > 0)
+        ? round(($curChf - $priorChf) / $priorChf * 100, 1)
+        : null;
+
+    $series = array_map(
+        fn(string $p, array $d) => ['period' => $p, 'value' => round($d['chf'], 0)],
+        array_keys($periods), array_values($periods)
+    );
+
+    $result = array_merge(kpi_empty_result($label, 'CHF HT'), [
+        'value'       => $curChf !== null ? round($curChf, 0) : null,
+        'delta'       => $delta,
+        'delta_label' => 'vs même mois N-1',
+        'tint'        => $delta === null ? 'neutral' : ($delta >= 0 ? 'green' : 'red'),
+        'series'      => $series,
+        'meta'        => [
+            'period'           => $latest,
+            'prior_year_period' => $priorYear,
+            'prior_year_data'  => $priorChf !== null,
+            'source'           => 'inv_sales_bc',
+            'note'             => $priorChf === null
+                ? 'Données N-1 absentes de inv_sales_bc (import BC depuis 2025-12 seulement)'
+                : null,
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #91: revenue_by_family ───────────────────────────────────────────────────
+// Revenue donut by beer family (classification: Neb vs Contract) for latest period.
+// Uses inv_sales_bc × ref_skus × ref_recipes. Rows with NULL sku_id_fk shown as
+// "Autre" (cautions, non-beer articles).
+
+function kpi_sales_revenue_by_family(array $params, string $label, PDO $pdo): array
+{
+    $cacheKey = 'sales_revenue_by_family';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $periods = kpi_sales_load_bc_periods($pdo);
+    $latest  = kpi_sales_latest_period($periods);
+
+    if ($latest === null) {
+        return kpi_error_result('Aucune donnée inv_sales_bc', $label);
+    }
+
+    // Linked SKUs: group by classification + subtype
+    $stmt = $pdo->prepare(
+        "SELECT rr.classification,
+                rr.subtype,
+                SUM(s.sales_amount_chf) AS chf,
+                SUM(s.hl_resolved)      AS hl
+           FROM inv_sales_bc s
+           JOIN ref_skus rs    ON rs.id      = s.sku_id_fk
+           JOIN ref_recipes rr ON rr.id      = rs.recipe_id
+          WHERE s.period = ?
+          GROUP BY rr.classification, rr.subtype
+          ORDER BY chf DESC"
+    );
+    $stmt->execute([$latest]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Unlinked amount (cautions, non-beer articles)
+    $stmt2 = $pdo->prepare(
+        "SELECT SUM(sales_amount_chf) AS chf
+           FROM inv_sales_bc
+          WHERE period = ?
+            AND sku_id_fk IS NULL"
+    );
+    $stmt2->execute([$latest]);
+    $unlinkedChf = (float) ($stmt2->fetchColumn() ?? 0);
+
+    $breakdown = [];
+    $totalChf  = 0;
+    foreach ($rows as $r) {
+        $key = ($r['classification'] ?? 'Autre')
+             . ($r['subtype'] ? '/' . $r['subtype'] : '');
+        $chf = (float) $r['chf'];
+        $breakdown[] = [
+            'key'   => $key,
+            'label' => $r['classification'] . ($r['subtype'] ? ' · ' . $r['subtype'] : ''),
+            'value' => round($chf, 0),
+            'hl'    => round((float) $r['hl'], 1),
+        ];
+        $totalChf += $chf;
+    }
+    if ($unlinkedChf > 0) {
+        $breakdown[] = [
+            'key'   => 'Autre',
+            'label' => 'Autre (cautions, articles)',
+            'value' => round($unlinkedChf, 0),
+            'hl'    => 0,
+        ];
+        $totalChf += $unlinkedChf;
+    }
+
+    $result = array_merge(kpi_empty_result($label, 'CHF HT'), [
+        'value'     => round($totalChf, 0),
+        'tint'      => 'neutral',
+        'breakdown' => $breakdown,
+        'meta'      => [
+            'period'       => $latest,
+            'period_label' => $latest,
+            'source'       => 'inv_sales_bc × ref_skus × ref_recipes',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #92: top_customers_revenue ──────────────────────────────────────────────
+// Top-N customers by CHF for the latest period.
+
+function kpi_sales_top_customers(array $params, string $label, PDO $pdo): array
+{
+    $cacheKey = 'sales_top_customers';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $limit = $params['limit'] ?? 10;
+
+    $periods = kpi_sales_load_bc_periods($pdo);
+    $latest  = kpi_sales_latest_period($periods);
+
+    if ($latest === null) {
+        return kpi_error_result('Aucune donnée inv_sales_bc', $label);
+    }
+
+    $stmt = $pdo->prepare(
+        "SELECT s.customer_no,
+                ANY_VALUE(s.customer_name) AS customer_name,
+                SUM(s.sales_amount_chf)    AS chf,
+                SUM(s.hl_resolved)         AS hl
+           FROM inv_sales_bc s
+          WHERE s.period = ?
+          GROUP BY s.customer_no
+          ORDER BY chf DESC
+          LIMIT ?"
+    );
+    $stmt->execute([$latest, $limit]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $breakdown = array_map(fn(array $r) => [
+        'key'   => $r['customer_no'],
+        'label' => $r['customer_name'] ?? $r['customer_no'],
+        'value' => round((float) $r['chf'], 0),
+        'hl'    => round((float) $r['hl'], 1),
+    ], $rows);
+
+    $result = array_merge(kpi_empty_result($label, 'CHF HT'), [
+        'value'     => count($breakdown) > 0 ? $breakdown[0]['value'] : null,
+        'tint'      => 'neutral',
+        'breakdown' => $breakdown,
+        'meta'      => [
+            'period'       => $latest,
+            'period_label' => $latest,
+            'limit'        => $limit,
+            'source'       => 'inv_sales_bc',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #93: top_skus_volume_revenue ────────────────────────────────────────────
+// Top SKUs by CHF for the latest period (bar breakdown).
+
+function kpi_sales_top_skus(array $params, string $label, PDO $pdo): array
+{
+    $cacheKey = 'sales_top_skus';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $periods = kpi_sales_load_bc_periods($pdo);
+    $latest  = kpi_sales_latest_period($periods);
+
+    if ($latest === null) {
+        return kpi_error_result('Aucune donnée inv_sales_bc', $label);
+    }
+
+    $stmt = $pdo->prepare(
+        "SELECT sku_code,
+                ANY_VALUE(sku_description) AS sku_description,
+                SUM(qty_invoiced)          AS qty,
+                SUM(sales_amount_chf)      AS chf,
+                SUM(hl_resolved)           AS hl
+           FROM inv_sales_bc
+          WHERE period = ?
+          GROUP BY sku_code
+          ORDER BY chf DESC
+          LIMIT 20"
+    );
+    $stmt->execute([$latest]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $breakdown = array_map(fn(array $r) => [
+        'key'   => $r['sku_code'],
+        'label' => $r['sku_description'] ?? $r['sku_code'],
+        'value' => round((float) $r['chf'], 0),
+        'qty'   => round((float) $r['qty'], 1),
+        'hl'    => round((float) $r['hl'], 2),
+    ], $rows);
+
+    $result = array_merge(kpi_empty_result($label, 'CHF HT'), [
+        'value'     => array_sum(array_column($breakdown, 'value')),
+        'tint'      => 'neutral',
+        'breakdown' => $breakdown,
+        'meta'      => [
+            'period'       => $latest,
+            'period_label' => $latest,
+            'source'       => 'inv_sales_bc',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #94: sales_by_channel ────────────────────────────────────────────────────
+// Three-channel donut: b2b + taproom (inv_sales_bc) + eshop (inv_sales_orders).
+// PERIOD-CONSISTENCY RULE: b2b + taproom always come from the resolved BC period.
+// Eshop is included ONLY if inv_sales_orders has a row for that EXACT period.
+// If eshop data is absent for the resolved period, eshop = 0 and meta carries
+// eshop_pending=true + a note with the latest available eshop period.
+// This prevents mixing e.g. May-2026 BC totals with April-2026 eshop totals.
+
+function kpi_sales_by_channel(string $label, PDO $pdo): array
+{
+    $cacheKey = 'sales_by_channel';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $periods = kpi_sales_load_bc_periods($pdo);
+    $latest  = kpi_sales_latest_period($periods);
+
+    if ($latest === null) {
+        return kpi_error_result('Aucune donnée inv_sales_bc', $label);
+    }
+
+    // b2b + taproom from inv_sales_bc for the resolved period
+    $stmt = $pdo->prepare(
+        "SELECT channel, SUM(sales_amount_chf) AS chf, SUM(hl_resolved) AS hl
+           FROM inv_sales_bc
+          WHERE period = ?
+          GROUP BY channel"
+    );
+    $stmt->execute([$latest]);
+    $bcRows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $bcByChannel = [];
+    foreach ($bcRows as $r) {
+        $bcByChannel[$r['channel']] = ['chf' => (float) $r['chf'], 'hl' => (float) $r['hl']];
+    }
+
+    // eshop from inv_sales_orders — only if the EXACT same period exists.
+    // Also fetch the latest available eshop period for the pending-note.
+    $stmtEshop = $pdo->prepare(
+        "SELECT
+             SUM(CASE WHEN period = ? THEN total_chf ELSE 0 END) AS chf_exact,
+             MAX(period)                                          AS latest_orders_period
+           FROM inv_sales_orders"
+    );
+    $stmtEshop->execute([$latest]);
+    $eshopMeta = $stmtEshop->fetch(PDO::FETCH_ASSOC);
+
+    $latestOrdersPeriod = $eshopMeta['latest_orders_period'] ?? null;
+    $eshopChfExact      = (float) ($eshopMeta['chf_exact'] ?? 0);
+
+    $eshopChf     = 0.0;
+    $eshopPending = false;
+    $eshopNote    = null;
+
+    if ($eshopChfExact > 0) {
+        // Eshop data exists for the resolved period — period-consistent, include it.
+        $eshopChf = $eshopChfExact;
+    } else {
+        // Eshop data missing for the resolved period — do NOT use a stale earlier period.
+        $eshopPending = true;
+        if ($latestOrdersPeriod !== null) {
+            $eshopNote = "eshop {$latest} non encore importé (dernier: {$latestOrdersPeriod})";
+        } else {
+            $eshopNote = "eshop {$latest} non encore importé (aucune donnée inv_sales_orders)";
+        }
+    }
+
+    $b2bChf     = $bcByChannel['b2b']['chf']     ?? 0.0;
+    $taproomChf = $bcByChannel['taproom']['chf'] ?? 0.0;
+    // Headline total = b2b + taproom only when eshop is pending (period-consistent).
+    $totalChf   = $b2bChf + $taproomChf + $eshopChf;
+
+    $breakdown = [];
+    if ($b2bChf > 0) {
+        $breakdown[] = ['key' => 'b2b',     'label' => 'B2B (facturation)',  'value' => round($b2bChf, 0)];
+    }
+    if ($taproomChf > 0) {
+        $breakdown[] = ['key' => 'taproom', 'label' => 'Taproom / Tap&Shop', 'value' => round($taproomChf, 0)];
+    }
+    // Eshop always shown in breakdown (0/pending when not available for the period).
+    $breakdown[] = [
+        'key'     => 'eshop',
+        'label'   => 'Eshop (Shopify)',
+        'value'   => round($eshopChf, 0),
+        'pending' => $eshopPending,
+    ];
+
+    $meta = [
+        'period'              => $latest,
+        'period_label'        => $latest,
+        'b2b_chf'             => round($b2bChf, 2),
+        'taproom_chf'         => round($taproomChf, 2),
+        'eshop_chf'           => round($eshopChf, 2),
+        'eshop_period'        => $eshopPending ? null : $latest,
+        'latest_eshop_period' => $latestOrdersPeriod,
+        'source'              => 'inv_sales_bc (b2b/taproom) + inv_sales_orders (eshop)',
+        'note'                => $eshopNote,
+    ];
+    if ($eshopPending) {
+        $meta['eshop_pending'] = true;
+    }
+
+    $result = array_merge(kpi_empty_result($label, 'CHF HT'), [
+        'value'     => round($totalChf, 2),
+        'tint'      => 'neutral',
+        'breakdown' => $breakdown,
+        'meta'      => $meta,
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #96: contract_vs_own_brand ───────────────────────────────────────────────
+// Donut: Contract vs Neb (own-brand) CHF for the latest period.
+
+function kpi_sales_contract_vs_own(array $params, string $label, PDO $pdo): array
+{
+    $cacheKey = 'sales_contract_vs_own';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $periods = kpi_sales_load_bc_periods($pdo);
+    $latest  = kpi_sales_latest_period($periods);
+
+    if ($latest === null) {
+        return kpi_error_result('Aucune donnée inv_sales_bc', $label);
+    }
+
+    $stmt = $pdo->prepare(
+        "SELECT rr.classification,
+                SUM(s.sales_amount_chf) AS chf,
+                SUM(s.hl_resolved)      AS hl
+           FROM inv_sales_bc s
+           JOIN ref_skus rs    ON rs.id = s.sku_id_fk
+           JOIN ref_recipes rr ON rr.id = rs.recipe_id
+          WHERE s.period = ?
+          GROUP BY rr.classification
+          ORDER BY chf DESC"
+    );
+    $stmt->execute([$latest]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $breakdown = array_map(fn(array $r) => [
+        'key'   => $r['classification'],
+        'label' => $r['classification'] === 'Contract' ? 'Contract brewing' : 'La Nébuleuse (propre)',
+        'value' => round((float) $r['chf'], 0),
+        'hl'    => round((float) $r['hl'], 1),
+    ], $rows);
+
+    $totalChf = array_sum(array_column($breakdown, 'value'));
+
+    $result = array_merge(kpi_empty_result($label, 'CHF HT'), [
+        'value'     => $totalChf,
+        'tint'      => 'neutral',
+        'breakdown' => $breakdown,
+        'meta'      => [
+            'period'       => $latest,
+            'period_label' => $latest,
+            'source'       => 'inv_sales_bc × ref_skus × ref_recipes (classification)',
+            'note'         => 'Montants sans sku_id_fk (cautions, articles) exclus',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #97: avg_order_value ─────────────────────────────────────────────────────
+// Average order value from inv_sales_orders (eshop/Shopify). Uses most recent
+// available period (inv_sales_orders lags BC by ~1 month).
+
+function kpi_sales_avg_order_value(string $label, PDO $pdo): array
+{
+    $cacheKey = 'sales_aov';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    // Latest and prior period available in inv_sales_orders
+    $stmt = $pdo->query(
+        "SELECT period,
+                COUNT(*)       AS order_cnt,
+                AVG(total_chf) AS aov,
+                SUM(total_chf) AS total_chf
+           FROM inv_sales_orders
+          GROUP BY period
+          ORDER BY period DESC
+          LIMIT 2"
+    );
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    if (empty($rows)) {
+        return kpi_error_result('Aucune donnée inv_sales_orders', $label);
+    }
+
+    $cur      = $rows[0];
+    $prior    = $rows[1] ?? null;
+    $curAov   = (float) $cur['aov'];
+    $priorAov = $prior !== null ? (float) $prior['aov'] : null;
+    $delta    = ($priorAov !== null && $priorAov > 0)
+        ? round(($curAov - $priorAov) / $priorAov * 100, 1)
+        : null;
+
+    $result = array_merge(kpi_empty_result($label, 'CHF'), [
+        'value'       => round($curAov, 2),
+        'delta'       => $delta,
+        'delta_label' => 'vs mois précédent',
+        'tint'        => $delta === null ? 'neutral' : ($delta >= 0 ? 'green' : 'amber'),
+        'meta'        => [
+            'period'       => $cur['period'],
+            'period_label' => $cur['period'],
+            'order_cnt'    => (int) $cur['order_cnt'],
+            'total_chf'    => round((float) $cur['total_chf'], 2),
+            'source'       => 'inv_sales_orders (eshop Shopify uniquement)',
+            'note'         => 'Panier moyen eshop seulement; B2B exclut (montants > 10k CHF)',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #99: revenue_per_hl_trend ───────────────────────────────────────────────
+// CHF/HL sparkline over all available periods.
+
+function kpi_sales_revenue_per_hl_trend(string $label, PDO $pdo): array
+{
+    $cacheKey = 'sales_chf_per_hl_trend';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $periods = kpi_sales_load_bc_periods($pdo);
+    $latest  = kpi_sales_latest_period($periods);
+
+    if ($latest === null) {
+        return kpi_error_result('Aucune donnée inv_sales_bc', $label);
+    }
+
+    $cur      = $periods[$latest];
+    $curChfHl = $cur['hl'] > 0 ? round($cur['chf'] / $cur['hl'], 2) : null;
+
+    $series = [];
+    foreach ($periods as $p => $d) {
+        if ($d['hl'] > 0) {
+            $series[] = ['period' => $p, 'value' => round($d['chf'] / $d['hl'], 2)];
+        }
+    }
+
+    $result = array_merge(kpi_empty_result($label, 'CHF/HL'), [
+        'value'  => $curChfHl,
+        'tint'   => 'neutral',
+        'series' => $series,
+        'meta'   => [
+            'period'       => $latest,
+            'period_label' => $latest,
+            'source'       => 'inv_sales_bc (sales_amount_chf / hl_resolved)',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #100: discount_rebate_rate ───────────────────────────────────────────────
+// Discount % = total_discount / (total_sales + total_discount) for latest period.
+// Uses gross-up denominator so the rate reflects share of list price.
+
+function kpi_sales_discount_rate(array $params, string $label, PDO $pdo): array
+{
+    $cacheKey = 'sales_discount_rate';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $periods = kpi_sales_load_bc_periods($pdo);
+    $latest  = kpi_sales_latest_period($periods);
+
+    if ($latest === null) {
+        return kpi_error_result('Aucune donnée inv_sales_bc', $label);
+    }
+
+    $cur       = $periods[$latest];
+    $discount  = $cur['discount_chf'];
+    $sales     = $cur['chf'];
+    $listPrice = $sales + $discount;
+    $rate      = $listPrice > 0 ? round($discount / $listPrice * 100, 2) : null;
+
+    // Prior period rate for delta
+    $prior     = kpi_sales_prior_period($latest);
+    $priorRate = null;
+    if (isset($periods[$prior])) {
+        $pd = $periods[$prior];
+        $pl = $pd['chf'] + $pd['discount_chf'];
+        $priorRate = $pl > 0 ? round($pd['discount_chf'] / $pl * 100, 2) : null;
+    }
+    $delta = ($rate !== null && $priorRate !== null)
+        ? round($rate - $priorRate, 2)
+        : null;
+
+    $result = array_merge(kpi_empty_result($label, '%'), [
+        'value'       => $rate,
+        'delta'       => $delta,
+        'delta_label' => 'vs mois précédent (pp)',
+        'tint'        => $rate === null ? 'neutral'
+                       : ($rate <= 3 ? 'green' : ($rate <= 7 ? 'amber' : 'red')),
+        'meta'        => [
+            'period'          => $latest,
+            'period_label'    => $latest,
+            'total_discount'  => round($discount, 2),
+            'total_sales'     => round($sales, 2),
+            'list_price_base' => round($listPrice, 2),
+            'source'          => 'inv_sales_bc.discount_amount_chf',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #102: seasonal_demand_curve ─────────────────────────────────────────────
+// Full historical series: CHF + HL per period for the line chart.
+
+function kpi_sales_seasonal_curve(string $label, PDO $pdo): array
+{
+    $cacheKey = 'sales_seasonal_curve';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $periods = kpi_sales_load_bc_periods($pdo);
+
+    if (empty($periods)) {
+        return kpi_error_result('Aucune donnée inv_sales_bc', $label);
+    }
+
+    $series = array_map(
+        fn(string $p, array $d) => [
+            'period' => $p,
+            'value'  => round($d['chf'], 0),
+            'hl'     => round($d['hl'], 1),
+        ],
+        array_keys($periods), array_values($periods)
+    );
+
+    $latest = kpi_sales_latest_period($periods);
+    $result = array_merge(kpi_empty_result($label, 'CHF HT'), [
+        'value'  => $latest ? round($periods[$latest]['chf'], 0) : null,
+        'tint'   => 'neutral',
+        'series' => $series,
+        'meta'   => [
+            'period_count' => count($periods),
+            'period_from'  => array_key_first($periods),
+            'period_to'    => $latest,
+            'source'       => 'inv_sales_bc (toutes périodes disponibles)',
+            'note'         => 'Données BC depuis 2025-12 seulement; historique complet non disponible',
+        ],
+    ]);
+
     return kpi_cache_set($cacheKey, $result);
 }
