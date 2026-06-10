@@ -3397,16 +3397,17 @@ function kpi_handler_tanks(
         'cct_days_per_beer'       => kpi_tanks_cct_days_per_beer($label, $pdo),
         'beers_fermenting_now'    => kpi_tanks_beers_fermenting_now($label, $pdo),
         'tank_turns_period'       => kpi_tanks_tank_turns_period($params, $label, $pdo),
-        // Remaining tank occupancy trackers still need tank-sim port:
+        // Phase 2b Batch 3 — readings/fermentation analytics:
+        'garde_vs_target'         => kpi_tanks_garde_vs_target($label, $pdo),
+        'cold_crash_in_progress'  => kpi_tanks_cold_crash_in_progress($label, $pdo),
+        'fermentation_deviations' => kpi_tanks_fermentation_deviations($label, $pdo),
+        'suggested_next_brew'     => kpi_tanks_suggested_next_brew($label, $pdo),
+        'temp_pressure_excursions' => kpi_tanks_temp_pressure_excursions($label, $pdo),
+        // Occupancy trackers: require Node tank-sim port — NOT built yet:
         'tank_occupancy'          => kpi_stub_handler('tanks', $handler, $label),
         'cct_utilization_pct'     => kpi_stub_handler('tanks', $handler, $label),
         'cct_idle_days'           => kpi_stub_handler('tanks', $handler, $label),
         'hl_in_tank_now'          => kpi_stub_handler('tanks', $handler, $label),
-        'garde_vs_target'         => kpi_stub_handler('tanks', $handler, $label),
-        'cold_crash_in_progress'  => kpi_stub_handler('tanks', $handler, $label),
-        'fermentation_deviations' => kpi_stub_handler('tanks', $handler, $label),
-        'suggested_next_brew'     => kpi_stub_handler('tanks', $handler, $label),
-        'temp_pressure_excursions' => kpi_stub_handler('tanks', $handler, $label),
         default                   => kpi_stub_handler('tanks', $handler, $label),
     };
 }
@@ -3815,6 +3816,680 @@ function kpi_tanks_o2_deviations(array $params, string $label, PDO $pdo): array
     return kpi_cache_set($cacheKey, $result);
 }
 
+
+// ─── Phase 2b Batch 3 — readings/fermentation analytics ──────────────────────
+
+/**
+ * #19 — Garde / délai mise en fût vs cible
+ *
+ * Garde = days between first ColdCrash and BBT racking.
+ * Target: ref_recipes.garde_days_min_override when set; otherwise the
+ * default fallback of 14 days (sane minimum for most lager/clean ales;
+ * no commissioning_settings key exists for this yet — stated in meta).
+ * Window: BBT rackings in rolling 12 months that have a matching ColdCrash.
+ */
+function kpi_tanks_garde_vs_target(string $label, PDO $pdo): array
+{
+    $cacheKey = 'tanks_garde_vs_target_12m';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    // Default garde target when recipe has no override (no commissioning key):
+    $defaultGardeDays = 14;
+
+    // Pull per-recipe override so we can join it in PHP
+    $recipeStmt = $pdo->query(
+        "SELECT id, name, garde_days_min_override FROM ref_recipes WHERE is_active = 1"
+    );
+    $recipeRows   = $recipeStmt->fetchAll(PDO::FETCH_ASSOC);
+    $gardeByRecipe = [];
+    $nameByRecipe  = [];
+    foreach ($recipeRows as $rr) {
+        $rid = (int) $rr['id'];
+        $gardeByRecipe[$rid] = $rr['garde_days_min_override'] !== null
+            ? (int) $rr['garde_days_min_override']
+            : $defaultGardeDays;
+        $nameByRecipe[$rid]  = $rr['name'];
+    }
+
+    $stmt = $pdo->query("
+        SELECT
+            COALESCE(r.neb_recipe_id_fk, r.contract_recipe_id_fk) AS recipe_id,
+            COALESCE(NULLIF(r.neb_batch, ''), r.contract_batch)    AS batch,
+            r.event_date                                           AS rack_date,
+            cc.cc_date
+          FROM bd_racking_v2 r
+          JOIN (
+              SELECT recipe_id_fk, batch, MIN(event_date) AS cc_date
+                FROM bd_fermenting_v2
+               WHERE event_type = 'ColdCrash' AND is_tombstoned = 0
+               GROUP BY recipe_id_fk, batch
+          ) cc ON cc.recipe_id_fk = COALESCE(r.neb_recipe_id_fk, r.contract_recipe_id_fk)
+               AND cc.batch = COALESCE(NULLIF(r.neb_batch, ''), r.contract_batch)
+         WHERE r.is_tombstoned = 0
+           AND r.racking_destination_type = 'BBT'
+           AND r.event_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+           AND DATEDIFF(r.event_date, cc.cc_date) >= 0
+         ORDER BY r.event_date DESC
+    ");
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $series    = [];
+    $shortCount = 0;
+    $totalCount = 0;
+    foreach ($rows as $r) {
+        $rid    = (int) $r['recipe_id'];
+        $target = $gardeByRecipe[$rid] ?? $defaultGardeDays;
+        $actual = max(0, (int) round(
+            (strtotime($r['rack_date']) - strtotime($r['cc_date'])) / 86400
+        ));
+        $delta  = $actual - $target;
+        $beer   = $nameByRecipe[$rid] ?? "recipe_{$rid}";
+        $totalCount++;
+        if ($delta < 0) {
+            $shortCount++;
+        }
+        $series[] = [
+            'key'    => $beer . '-' . $r['batch'],
+            'label'  => $beer . ' #' . $r['batch'],
+            'value'  => $actual,
+            'meta'   => [
+                'target_days' => $target,
+                'delta_days'  => $delta,
+                'rack_date'   => $r['rack_date'],
+                'cc_date'     => $r['cc_date'],
+                'ok'          => $delta >= 0,
+            ],
+        ];
+    }
+
+    $shortPct = $totalCount > 0 ? round(($shortCount / $totalCount) * 100, 1) : null;
+    $tint = match (true) {
+        $shortCount === 0                   => 'green',
+        $shortPct !== null && $shortPct < 10 => 'amber',
+        default                             => 'red',
+    };
+
+    $result = array_merge(kpi_empty_result($label, 'brassins'), [
+        'value'  => $shortCount,
+        'tint'   => $tint,
+        'series' => $series,
+        'meta'   => [
+            'period_label'    => '12 derniers mois (soutirages CCT→BBT)',
+            'total_rackings'  => $totalCount,
+            'short_garde_pct' => $shortPct,
+            'default_target'  => $defaultGardeDays,
+            'value_meaning'   => 'Nombre de soutirages avec garde inférieure à la cible (14j par défaut; override par recette possible via ref_recipes.garde_days_min_override)',
+            'threshold_source' => 'ref_recipes.garde_days_min_override (NULL=0 recettes) → fallback 14j codé en dur (aucune clé commissioning_settings pour la garde à ce jour)',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/**
+ * #21 — Cold crash / dryhop en cours
+ *
+ * Counts batches that have entered ColdCrash (bd_fermenting_v2) in the last
+ * 60 days but have NOT yet been racked to BBT. Also counts batches with a
+ * recent DryHop event but no ColdCrash yet. Both are "attention" states that
+ * the brewer needs to track.
+ */
+function kpi_tanks_cold_crash_in_progress(string $label, PDO $pdo): array
+{
+    $cacheKey = 'tanks_cold_crash_in_progress';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    // Batches in cold crash: have ColdCrash event (last 60d) but no BBT racking
+    $ccStmt = $pdo->query("
+        SELECT rr.name AS beer_name, cc.batch, cc.cc_date,
+               DATEDIFF(CURDATE(), cc.cc_date) AS days_in_cc
+          FROM (
+              SELECT recipe_id_fk, batch, MIN(event_date) AS cc_date
+                FROM bd_fermenting_v2
+               WHERE event_type = 'ColdCrash' AND is_tombstoned = 0
+                 AND event_date >= DATE_SUB(CURDATE(), INTERVAL 60 DAY)
+               GROUP BY recipe_id_fk, batch
+          ) cc
+          JOIN ref_recipes rr ON rr.id = cc.recipe_id_fk
+         WHERE NOT EXISTS (
+             SELECT 1 FROM bd_racking_v2 r
+              WHERE r.is_tombstoned = 0
+                AND r.racking_destination_type = 'BBT'
+                AND COALESCE(r.neb_recipe_id_fk, r.contract_recipe_id_fk) = cc.recipe_id_fk
+                AND COALESCE(NULLIF(r.neb_batch, ''), r.contract_batch) = cc.batch
+         )
+         ORDER BY days_in_cc DESC
+    ");
+    $ccRows = $ccStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Batches in dry-hop: recent DryHop event (last 30d) but no ColdCrash yet
+    $dhStmt = $pdo->query("
+        SELECT rr.name AS beer_name, dh.batch, dh.last_dh_date,
+               DATEDIFF(CURDATE(), dh.last_dh_date) AS days_since_dh
+          FROM (
+              SELECT recipe_id_fk, batch, MAX(event_date) AS last_dh_date
+                FROM bd_fermenting_v2
+               WHERE event_type = 'DryHop' AND is_tombstoned = 0
+                 AND event_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+               GROUP BY recipe_id_fk, batch
+          ) dh
+          JOIN ref_recipes rr ON rr.id = dh.recipe_id_fk
+         WHERE NOT EXISTS (
+             SELECT 1 FROM bd_fermenting_v2 cc2
+              WHERE cc2.is_tombstoned = 0
+                AND cc2.event_type = 'ColdCrash'
+                AND cc2.recipe_id_fk = dh.recipe_id_fk
+                AND cc2.batch = dh.batch
+         )
+         ORDER BY days_since_dh ASC
+    ");
+    $dhRows = $dhStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $ccCount = count($ccRows);
+    $dhCount = count($dhRows);
+    $total   = $ccCount + $dhCount;
+
+    $seriesCC = array_map(fn($r) => [
+        'key'    => $r['beer_name'] . '-' . $r['batch'] . '-cc',
+        'label'  => $r['beer_name'] . ' #' . $r['batch'],
+        'value'  => (int) $r['days_in_cc'],
+        'meta'   => ['state' => 'cold_crash', 'since' => $r['cc_date']],
+    ], $ccRows);
+
+    $seriesDH = array_map(fn($r) => [
+        'key'    => $r['beer_name'] . '-' . $r['batch'] . '-dh',
+        'label'  => $r['beer_name'] . ' #' . $r['batch'],
+        'value'  => (int) $r['days_since_dh'],
+        'meta'   => ['state' => 'dry_hop', 'since' => $r['last_dh_date']],
+    ], $dhRows);
+
+    $tint = match (true) {
+        $total === 0 => 'neutral',
+        $total <= 3  => 'green',
+        $total <= 8  => 'amber',
+        default      => 'amber',
+    };
+
+    $result = array_merge(kpi_empty_result($label, 'brassins'), [
+        'value'  => $total,
+        'tint'   => $tint,
+        'series' => array_merge($seriesCC, $seriesDH),
+        'meta'   => [
+            'period_label'    => 'maintenant',
+            'cold_crash_count' => $ccCount,
+            'dry_hop_count'    => $dhCount,
+            'value_meaning'    => 'Cold crash en cours (ColdCrash sans soutirage BBT, ≤60j) + dry-hop en cours (DryHop sans ColdCrash, ≤30j)',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/**
+ * #22 — Déviations fermentation (DFE/atténuation/durée)
+ *
+ * Flags batches (last 12 months of completed fermentations) where at least
+ * one of these deviations occurred:
+ *
+ *   A) Temperature excursion: any Reads row with temperature outside
+ *      ref_recipes.ferm_temp_min_override / ferm_temp_max_override when set,
+ *      else commissioning default: 0–25°C (wide; no global key yet — stated).
+ *
+ *   B) Gravity deviation: minimum observed FG (°Plato) > 20% of OG (°Plato),
+ *      i.e. apparent attenuation < 80%. Threshold: hardcoded 80% apparent
+ *      attenuation floor (industry standard for most ales/lagers).
+ *      OG source: bd_brewing_gravity_v2 Cooling row final_gravity (per convention).
+ *
+ *   C) Fermentation duration outside expected range (< 5 days or > 45 days).
+ *      No recipe-level overrides exist; defaults stated in meta.
+ *
+ * Source: bd_fermenting_v2 (Reads, ColdCrash), bd_brewing_gravity_v2 (Cooling).
+ * Gravity is stored in °Plato (FW 14–22°P; FG 0–5°P typical).
+ */
+function kpi_tanks_fermentation_deviations(string $label, PDO $pdo): array
+{
+    $cacheKey = 'tanks_ferm_deviations_12m';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    // Threshold defaults (no commissioning_settings keys for these yet)
+    $tempMinDefault  = 0.0;   // °C
+    $tempMaxDefault  = 25.0;  // °C
+    $attenFloor      = 0.80;  // 80% apparent attenuation minimum
+    $fermMinDays     = 5;
+    $fermMaxDays     = 45;
+
+    // Per-recipe temperature overrides from ref_recipes
+    $recipeStmt = $pdo->query(
+        "SELECT id, name, ferm_temp_min_override, ferm_temp_max_override FROM ref_recipes"
+    );
+    $recipeRows = $recipeStmt->fetchAll(PDO::FETCH_ASSOC);
+    $tempMin = [];
+    $tempMax = [];
+    $nameMap = [];
+    foreach ($recipeRows as $rr) {
+        $rid         = (int) $rr['id'];
+        $nameMap[$rid] = $rr['name'];
+        $tempMin[$rid] = $rr['ferm_temp_min_override'] !== null
+            ? (float) $rr['ferm_temp_min_override'] : $tempMinDefault;
+        $tempMax[$rid] = $rr['ferm_temp_max_override'] !== null
+            ? (float) $rr['ferm_temp_max_override'] : $tempMaxDefault;
+    }
+
+    // A) Temperature excursions: batches with at least one out-of-range Reads row
+    //    in the last 12 months of ColdCrash events (completed fermentations)
+    $tempStmt = $pdo->query("
+        SELECT f.recipe_id_fk,
+               f.batch,
+               MIN(f.temperature) AS min_temp,
+               MAX(f.temperature) AS max_temp,
+               COUNT(*) AS read_count
+          FROM bd_fermenting_v2 f
+         WHERE f.event_type = 'Reads'
+           AND f.is_tombstoned = 0
+           AND f.temperature IS NOT NULL
+           AND f.recipe_id_fk IS NOT NULL
+           AND EXISTS (
+               SELECT 1 FROM bd_fermenting_v2 cc
+                WHERE cc.recipe_id_fk = f.recipe_id_fk
+                  AND cc.batch = f.batch
+                  AND cc.event_type = 'ColdCrash'
+                  AND cc.is_tombstoned = 0
+                  AND cc.event_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+           )
+         GROUP BY f.recipe_id_fk, f.batch
+    ");
+    $tempRows = $tempStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // B) Attenuation: OG from bd_brewing_gravity_v2 Cooling, FG from min Reads gravity
+    $attStmt = $pdo->query("
+        SELECT og.recipe_id_fk,
+               og.batch,
+               og.og_plato,
+               fg.min_fg_plato,
+               fg.read_count
+          FROM (
+              SELECT recipe_id_fk, batch, MAX(final_gravity) AS og_plato
+                FROM bd_brewing_gravity_v2
+               WHERE event_type = 'Cooling' AND is_tombstoned = 0
+                 AND final_gravity > 0
+               GROUP BY recipe_id_fk, batch
+          ) og
+          JOIN (
+              SELECT recipe_id_fk, batch,
+                     MIN(gravity) AS min_fg_plato,
+                     COUNT(*) AS read_count
+                FROM bd_fermenting_v2
+               WHERE event_type = 'Reads' AND is_tombstoned = 0
+                 AND gravity IS NOT NULL AND gravity > 0
+               GROUP BY recipe_id_fk, batch
+          ) fg ON fg.recipe_id_fk = og.recipe_id_fk AND fg.batch = og.batch
+         WHERE EXISTS (
+             SELECT 1 FROM bd_fermenting_v2 cc
+              WHERE cc.recipe_id_fk = og.recipe_id_fk
+                AND cc.batch = og.batch
+                AND cc.event_type = 'ColdCrash'
+                AND cc.is_tombstoned = 0
+                AND cc.event_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+         )
+           AND og.og_plato > 4
+    ");
+    $attRows = $attStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // C) Fermentation duration deviations (reuse shared CTEs logic inline)
+    $durStmt = $pdo->query("
+        SELECT cc.recipe_id_fk, cc.batch,
+               DATEDIFF(cc.cc_date, bw.first_cool_date) AS ferm_days
+          FROM (
+              SELECT recipe_id_fk, batch, MIN(event_date) AS cc_date
+                FROM bd_fermenting_v2
+               WHERE event_type = 'ColdCrash' AND is_tombstoned = 0
+                 AND event_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+               GROUP BY recipe_id_fk, batch
+          ) cc
+          JOIN (
+              SELECT recipe_id_fk, batch, MIN(DATE(submitted_at)) AS first_cool_date
+                FROM bd_brewing_gravity_v2
+               WHERE event_type = 'Cooling' AND is_tombstoned = 0
+               GROUP BY recipe_id_fk, batch
+          ) bw ON bw.recipe_id_fk = cc.recipe_id_fk AND bw.batch = cc.batch
+    ");
+    $durRows = $durStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Build deviation sets, keyed by (recipe_id, batch)
+    $deviations = []; // key => ['temp'=>bool, 'atten'=>bool, 'dur'=>bool, ...]
+
+    foreach ($tempRows as $r) {
+        $rid    = (int) $r['recipe_id_fk'];
+        $key    = "{$rid}:{$r['batch']}";
+        $minT   = (float) $r['min_temp'];
+        $maxT   = (float) $r['max_temp'];
+        $tMin   = $tempMin[$rid] ?? $tempMinDefault;
+        $tMax   = $tempMax[$rid] ?? $tempMaxDefault;
+        if ($minT < $tMin || $maxT > $tMax) {
+            $deviations[$key] = ($deviations[$key] ?? [
+                'recipe_id' => $rid,
+                'batch'     => $r['batch'],
+                'beer'      => $nameMap[$rid] ?? "recipe_{$rid}",
+                'flags'     => [],
+            ]);
+            $deviations[$key]['flags'][]      = 'temp';
+            $deviations[$key]['temp_min_obs'] = $minT;
+            $deviations[$key]['temp_max_obs'] = $maxT;
+            $deviations[$key]['temp_target']  = "{$tMin}–{$tMax}°C";
+        }
+    }
+
+    foreach ($attRows as $r) {
+        $rid     = (int) $r['recipe_id_fk'];
+        $key     = "{$rid}:{$r['batch']}";
+        $og      = (float) $r['og_plato'];
+        $fg      = (float) $r['min_fg_plato'];
+        // Apparent attenuation in Plato: (OG - FG) / OG
+        $atten   = $og > 0 ? ($og - $fg) / $og : null;
+        if ($atten !== null && $atten < $attenFloor) {
+            if (!isset($deviations[$key])) {
+                $deviations[$key] = [
+                    'recipe_id' => $rid,
+                    'batch'     => $r['batch'],
+                    'beer'      => $nameMap[$rid] ?? "recipe_{$rid}",
+                    'flags'     => [],
+                ];
+            }
+            $deviations[$key]['flags'][]   = 'attenuation';
+            $deviations[$key]['og_plato']  = $og;
+            $deviations[$key]['fg_plato']  = $fg;
+            $deviations[$key]['atten_pct'] = round($atten * 100, 1);
+        }
+    }
+
+    foreach ($durRows as $r) {
+        $rid  = (int) $r['recipe_id_fk'];
+        $key  = "{$rid}:{$r['batch']}";
+        $days = (int) $r['ferm_days'];
+        if ($days < $fermMinDays || $days > $fermMaxDays) {
+            if (!isset($deviations[$key])) {
+                $deviations[$key] = [
+                    'recipe_id' => $rid,
+                    'batch'     => $r['batch'],
+                    'beer'      => $nameMap[$rid] ?? "recipe_{$rid}",
+                    'flags'     => [],
+                ];
+            }
+            $deviations[$key]['flags'][]    = 'duration';
+            $deviations[$key]['ferm_days']  = $days;
+            $deviations[$key]['dur_target'] = "{$fermMinDays}–{$fermMaxDays}j";
+        }
+    }
+
+    $devCount = count($deviations);
+    $series   = [];
+    foreach ($deviations as $key => $d) {
+        $flagStr = implode('+', array_unique($d['flags']));
+        $series[] = [
+            'key'   => $key,
+            'label' => $d['beer'] . ' #' . $d['batch'],
+            'value' => count(array_unique($d['flags'])),
+            'meta'  => array_diff_key($d, array_flip(['recipe_id', 'batch', 'beer'])),
+        ];
+    }
+
+    $tint = match (true) {
+        $devCount === 0 => 'green',
+        $devCount <= 3  => 'amber',
+        default         => 'red',
+    };
+
+    $result = array_merge(kpi_empty_result($label, 'brassins'), [
+        'value'  => $devCount,
+        'tint'   => $tint,
+        'series' => array_values($series),
+        'meta'   => [
+            'period_label'       => '12 derniers mois (brassins avec ColdCrash enregistré)',
+            'value_meaning'      => 'Brassins avec au moins une déviation (temp / atténuation / durée)',
+            'temp_threshold'     => "Défaut: {$tempMinDefault}–{$tempMaxDefault}°C (override: ref_recipes.ferm_temp_min/max_override; 0 recettes avec override actif)",
+            'atten_threshold'    => "Atténuation apparente < " . ($attenFloor * 100) . "% (seuil codé en dur; °Plato source: bd_fermenting_v2 Reads + bd_brewing_gravity_v2 Cooling)",
+            'duration_threshold' => "Durée fermentation < {$fermMinDays}j ou > {$fermMaxDays}j (seuil codé en dur; pas de clé commissioning_settings)",
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/**
+ * #23 — Prochaines bières à brasser (suggestion)
+ *
+ * "Brew next" suggestions based on recency gap: active recipes whose most
+ * recent Cooling event (= last brew) is the oldest relative to the recipe's
+ * active_window_months setting. Not fiscal. Not a firewall — purely informational.
+ * Returns the top 10 candidates sorted by days since last brew (descending).
+ */
+function kpi_tanks_suggested_next_brew(string $label, PDO $pdo): array
+{
+    $cacheKey = 'tanks_suggested_next_brew';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    // active_window_months from commissioning_settings — default 12
+    $windowStmt = $pdo->query(
+        "SELECT value_num FROM commissioning_settings
+          WHERE section = 'recipe_lifecycle' AND key_name = 'active_window_months'
+          LIMIT 1"
+    );
+    $windowRow    = $windowStmt->fetch(PDO::FETCH_ASSOC);
+    $windowMonths = $windowRow ? (int) $windowRow['value_num'] : 12;
+
+    $stmt = $pdo->prepare("
+        SELECT rr.id AS recipe_id,
+               rr.name AS beer_name,
+               rr.subtype,
+               MAX(DATE(bg.submitted_at)) AS last_brew_date,
+               DATEDIFF(CURDATE(), MAX(DATE(bg.submitted_at))) AS days_since_last_brew,
+               COUNT(DISTINCT bg.batch) AS total_batches
+          FROM ref_recipes rr
+          JOIN bd_brewing_gravity_v2 bg
+               ON bg.recipe_id_fk = rr.id
+              AND bg.event_type = 'Cooling'
+              AND bg.is_tombstoned = 0
+         WHERE rr.is_active = 1
+           AND rr.lifecycle_hint = 'auto'
+           AND rr.classification = 'Neb'
+           AND rr.subtype IN ('Core', 'EPH', 'CollabIn')
+           AND bg.submitted_at >= DATE_SUB(CURDATE(), INTERVAL ? MONTH)
+         GROUP BY rr.id, rr.name, rr.subtype
+         ORDER BY days_since_last_brew DESC
+         LIMIT 10
+    ");
+    $stmt->execute([$windowMonths]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $series = array_map(fn($r) => [
+        'key'   => 'recipe_' . $r['recipe_id'],
+        'label' => $r['beer_name'],
+        'value' => (int) $r['days_since_last_brew'],
+        'meta'  => [
+            'last_brew_date'      => $r['last_brew_date'],
+            'total_batches'       => (int) $r['total_batches'],
+            'subtype'             => $r['subtype'],
+        ],
+    ], $rows);
+
+    $topCandidate = !empty($rows) ? $rows[0]['beer_name'] : null;
+
+    $result = array_merge(kpi_empty_result($label, 'recettes'), [
+        'value'  => count($rows),
+        'tint'   => 'neutral',
+        'series' => $series,
+        'meta'   => [
+            'period_label'   => "Recettes actives ({$windowMonths} derniers mois)",
+            'top_candidate'  => $topCandidate,
+            'value_meaning'  => 'Recettes Neb actives classées par ancienneté du dernier brassin (Core/EPH/CollabIn uniquement; informatif — ne remplace pas la planification du brasseur)',
+            'window_source'  => "commissioning_settings recipe_lifecycle.active_window_months = {$windowMonths}",
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/**
+ * #24 — Excursions température/pression (bd_fermenting_v2 Reads + Purge)
+ *
+ * Temperature excursions: Reads rows outside recipe ferm_temp window
+ * (ref_recipes.ferm_temp_min/max_override; fallback: 0–25°C — no
+ * commissioning_settings key exists yet for a global default, stated in meta).
+ *
+ * Pressure excursions (Purge): purge_pressure_bar outside commissioning
+ * qc_pressure_warn_lo / qc_pressure_warn_hi (0.8–2.5 bar, from migration_182).
+ * NOTE: purge_pressure_bar has 0 non-NULL values in current data — handler
+ * returns 0 for pressure until operators start filling this field.
+ *
+ * Window: rolling 30 days.
+ */
+function kpi_tanks_temp_pressure_excursions(string $label, PDO $pdo): array
+{
+    $cacheKey = 'tanks_temp_pressure_excursions_30d';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    // Load pressure thresholds from commissioning_settings
+    $csStmt = $pdo->query(
+        "SELECT key_name, value_num FROM commissioning_settings
+          WHERE section = 'qc_thresholds'
+            AND key_name IN ('qc_pressure_warn_lo', 'qc_pressure_warn_hi')
+            AND is_active = 1"
+    );
+    $cs = [];
+    foreach ($csStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $cs[$row['key_name']] = (float) $row['value_num'];
+    }
+    $pressWarnLo = $cs['qc_pressure_warn_lo'] ?? 0.8;
+    $pressWarnHi = $cs['qc_pressure_warn_hi'] ?? 2.5;
+
+    // Per-recipe temperature bounds
+    $recipeStmt = $pdo->query(
+        "SELECT id, name, ferm_temp_min_override, ferm_temp_max_override FROM ref_recipes"
+    );
+    $recipeRows = $recipeStmt->fetchAll(PDO::FETCH_ASSOC);
+    $tempMin = [];
+    $tempMax = [];
+    $nameMap = [];
+    $tempMinDefault = 0.0;
+    $tempMaxDefault = 25.0;
+    foreach ($recipeRows as $rr) {
+        $rid         = (int) $rr['id'];
+        $nameMap[$rid] = $rr['name'];
+        $tempMin[$rid] = $rr['ferm_temp_min_override'] !== null
+            ? (float) $rr['ferm_temp_min_override'] : $tempMinDefault;
+        $tempMax[$rid] = $rr['ferm_temp_max_override'] !== null
+            ? (float) $rr['ferm_temp_max_override'] : $tempMaxDefault;
+    }
+
+    // Temperature excursion rows in last 30 days
+    $tempStmt = $pdo->query("
+        SELECT f.recipe_id_fk, f.batch, f.event_date,
+               f.temperature
+          FROM bd_fermenting_v2 f
+         WHERE f.event_type = 'Reads'
+           AND f.is_tombstoned = 0
+           AND f.temperature IS NOT NULL
+           AND f.recipe_id_fk IS NOT NULL
+           AND f.event_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+    ");
+    $tempRows = $tempStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $tempExcursions = [];
+    foreach ($tempRows as $r) {
+        $rid   = (int) $r['recipe_id_fk'];
+        $temp  = (float) $r['temperature'];
+        $tMin  = $tempMin[$rid] ?? $tempMinDefault;
+        $tMax  = $tempMax[$rid] ?? $tempMaxDefault;
+        if ($temp < $tMin || $temp > $tMax) {
+            $key = "{$rid}:{$r['batch']}:{$r['event_date']}";
+            $tempExcursions[$key] = [
+                'beer'       => $nameMap[$rid] ?? "recipe_{$rid}",
+                'batch'      => $r['batch'],
+                'date'       => $r['event_date'],
+                'type'       => 'temperature',
+                'value'      => $temp,
+                'threshold'  => "{$tMin}–{$tMax}°C",
+                'direction'  => $temp < $tMin ? 'low' : 'high',
+            ];
+        }
+    }
+
+    // Pressure excursions from Purge rows (purge_pressure_bar — currently 0 non-NULL)
+    $pressStmt = $pdo->query("
+        SELECT f.recipe_id_fk, f.batch, f.event_date,
+               f.purge_pressure_bar
+          FROM bd_fermenting_v2 f
+         WHERE f.event_type = 'Purge'
+           AND f.is_tombstoned = 0
+           AND f.purge_pressure_bar IS NOT NULL
+           AND f.event_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+    ");
+    $pressRows = $pressStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $pressExcursions = [];
+    foreach ($pressRows as $r) {
+        $rid  = (int) $r['recipe_id_fk'];
+        $p    = (float) $r['purge_pressure_bar'];
+        if ($p < $pressWarnLo || $p > $pressWarnHi) {
+            $key = "{$rid}:{$r['batch']}:{$r['event_date']}:press";
+            $pressExcursions[$key] = [
+                'beer'      => $nameMap[$rid] ?? "recipe_{$rid}",
+                'batch'     => $r['batch'],
+                'date'      => $r['event_date'],
+                'type'      => 'pressure',
+                'value'     => $p,
+                'threshold' => "{$pressWarnLo}–{$pressWarnHi} bar",
+                'direction' => $p < $pressWarnLo ? 'low' : 'high',
+            ];
+        }
+    }
+
+    $allExcursions = array_merge(array_values($tempExcursions), array_values($pressExcursions));
+    $totalCount    = count($allExcursions);
+
+    // Sort by date desc for series
+    usort($allExcursions, fn($a, $b) => strcmp($b['date'], $a['date']));
+
+    $series = array_map(fn($e) => [
+        'key'   => $e['type'] . ':' . $e['beer'] . ':' . $e['date'],
+        'label' => $e['beer'] . ' #' . $e['batch'] . ' – ' . $e['type'],
+        'value' => $e['value'],
+        'meta'  => $e,
+    ], $allExcursions);
+
+    $tint = match (true) {
+        $totalCount === 0 => 'green',
+        $totalCount <= 5  => 'amber',
+        default           => 'red',
+    };
+
+    $result = array_merge(kpi_empty_result($label, 'excursions'), [
+        'value'  => $totalCount,
+        'tint'   => $tint,
+        'series' => $series,
+        'meta'   => [
+            'period_label'        => '30 derniers jours',
+            'temp_count'          => count($tempExcursions),
+            'pressure_count'      => count($pressExcursions),
+            'value_meaning'       => 'Lectures Reads hors fenêtre de température + purges hors seuil de pression sur 30 jours',
+            'temp_threshold_src'  => 'ref_recipes.ferm_temp_min/max_override (0 recettes avec override) → fallback 0–25°C (pas de clé commissioning_settings)',
+            'press_threshold_src' => "commissioning_settings qc_thresholds: qc_pressure_warn_lo={$pressWarnLo} / qc_pressure_warn_hi={$pressWarnHi} bar (migration_182)",
+            'pressure_note'       => 'purge_pressure_bar: 0 valeurs non-NULL dans les données actuelles — compteur pression toujours 0 jusqu\'à saisie opérateur',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
 
 // ═════════════════════════════════════════════════════════════════════════════
 // HANDLER: fg_stock  (source_domain = 'fg_stock')
