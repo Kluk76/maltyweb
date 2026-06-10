@@ -743,9 +743,25 @@ function compile_sku_bom_packaging(
             // MI 102 = PKG_LINER_10HL_EDS25 (the format-18 template default).
             $cuvDefaultLinerId = 102;
 
+            // ── Reassignment model (head / leaf) ─────────────────────────────
+            // HEAD  (reuses_packaging_id_fk IS NULL): original fill.
+            //   • Installs a real client liner  → client cost counted.
+            //   • Installs a real transport liner → transport cost counted.
+            //   • vendable_hl = 0 once a child (leaf) row exists.
+            //     We still include it so its liner cost enters the numerator.
+            // LEAF  (reuses_packaging_id_fk IS NOT NULL): reassignment row.
+            //   • Installs a real NEW client liner → client cost counted.
+            //   • Transport liner is the OLD liner REALLOCATED (not a new physical
+            //     consumption) → transport cost MUST NOT be counted again.
+            //   • Carries the sellable vendable_hl.
+            // Denominator = sum of vendable_hl (each HL once, on its current owner).
+            // Net: numerator = Σ heads(client+transport) + Σ leaves(client only);
+            //      denominator = Σ leaf vendable_hl (all sellable HL, counted once).
+
             $cuvStmt = $pdo->prepare(
                 "SELECT
                      p.vendable_hl,
+                     p.reuses_packaging_id_fk,
                      p.new_liner_client,    p.liner_client_mi_id_fk,
                      p.new_liner_transport, p.liner_transport_mi_id_fk,
                      vc_c.cost_chf AS client_cost_chf,
@@ -756,7 +772,7 @@ function compile_sku_bom_packaging(
                   WHERE p.recipe_id_fk = ?
                     AND p.run_type = 'cuv'
                     AND p.is_tombstoned = 0
-                    AND p.vendable_hl > 0"
+                    AND (p.reuses_packaging_id_fk IS NULL OR p.vendable_hl > 0)"
             );
             $cuvStmt->execute([$recipeId]);
             $cuvRows = $cuvStmt->fetchAll(\PDO::FETCH_ASSOC);
@@ -775,7 +791,7 @@ function compile_sku_bom_packaging(
 
             foreach ($cuvRows as $cuvRow) {
                 $hl = (float)$cuvRow['vendable_hl'];
-                $cuvTotalHl += $hl;
+                $cuvTotalHl += $hl;  // head contributes 0; leaf contributes its HL
 
                 // Liner present = (new_liner_*=1) OR (liner_*_mi_id_fk IS NOT NULL).
                 // Older rows may have NULL boolean but populated FK (or vice versa).
@@ -783,13 +799,16 @@ function compile_sku_bom_packaging(
                                  || $cuvRow['liner_client_mi_id_fk']    !== null);
                 $hasTransport = ((int)($cuvRow['new_liner_transport']  ?? 0) === 1
                                  || $cuvRow['liner_transport_mi_id_fk'] !== null);
+                // Transport liner on a LEAF is the reallocated old liner — not a new physical
+                // consumption.  Only count it for HEAD rows (reuses_packaging_id_fk IS NULL).
+                $isLeaf = ($cuvRow['reuses_packaging_id_fk'] !== null);
 
                 if ($hasClient) {
                     $cuvTotalCost += $cuvRow['client_cost_chf'] !== null
                         ? (float)$cuvRow['client_cost_chf']
                         : $cuvDefaultCostChf;
                 }
-                if ($hasTransport) {
+                if ($hasTransport && !$isLeaf) {
                     $cuvTotalCost += $cuvRow['transport_cost_chf'] !== null
                         ? (float)$cuvRow['transport_cost_chf']
                         : $cuvDefaultCostChf;

@@ -353,16 +353,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $horsProcessFlag      = ($horsProcessRequested && $horsProcessAllowed) ? 1 : 0;
         $horsProcessReason    = ($horsProcessFlag === 1) ? post_str('hors_process_reason') : null;
 
+        // ── Réassigner cuve mode ──────────────────────────────────────────────
+        // When is_reassigner_session=1, the session re-allocates one or more
+        // already-filled serving-tank rows to a new client.  There is no BBT/CCT
+        // source tank for the session — each leg carries its own source row id.
+        // This bypasses the normal source-tank + beer-identity validation below
+        // and uses a dedicated write branch inside the format loop.
+        $isReassignerMode = (post_int('is_reassigner_session') === 1);
+
         // Source tank (decision 2: type + FK ID)
         $sourceTankType = post_str('source_tank_type');   // 'BBT' or 'CCT'
         $sourceTankId   = post_int('source_tank_id');     // ref_bbt.id or ref_cct.id
         $sourceTankNum  = post_int('source_tank_num');    // display number (for summary)
 
-        if ($sourceTankType === null || !in_array($sourceTankType, ['BBT', 'CCT'], true)) {
-            throw new RuntimeException("Sélectionner un lot source (BBT ou CCT).");
-        }
-        if ($sourceTankId === null) {
-            throw new RuntimeException("Identifiant de cuve source manquant.");
+        if (!$isReassignerMode) {
+            if ($sourceTankType === null || !in_array($sourceTankType, ['BBT', 'CCT'], true)) {
+                throw new RuntimeException("Sélectionner un lot source (BBT ou CCT).");
+            }
+            if ($sourceTankId === null) {
+                throw new RuntimeException("Identifiant de cuve source manquant.");
+            }
         }
 
         $bbtSourceFk = ($sourceTankType === 'BBT') ? $sourceTankId : null;
@@ -374,7 +384,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $contractBeer = post_str('contract_beer')  ?? '';
         $contractBatch= post_str('contract_batch') ?? '';
 
-        if ($nebBeer === '' && $contractBeer === '') {
+        // In réassigner mode beer identity comes from each leg's source row (no session-level identity).
+        if (!$isReassignerMode && $nebBeer === '' && $contractBeer === '') {
             throw new RuntimeException("Identité bière manquante — resélectionner le lot.");
         }
 
@@ -451,17 +462,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             : null;
 
         // ── 1b. Reused-cuve exempt check ──────────────────────────────────────
-        // When the main format row carries reuses_packaging_id_fk != null, this is
-        // a re-allocation of an existing cuve — no new tank fill, so no in-tank read needed.
+        // When the main format row carries reuses_packaging_id_fk != null (legacy inline
+        // reuse path), or when the session is a réassigner-mode session, this is a
+        // re-allocation of an existing cuve — no new tank fill, so no in-tank read needed.
         $isReuseSession = false;
-        foreach (($_POST['formats'] ?? []) as $fRaw) {
-            if (($fRaw['row_origin'] ?? 'main') === 'main') {
-                $rawR = isset($fRaw['reuses_packaging_id_fk']) && $fRaw['reuses_packaging_id_fk'] !== ''
-                    ? (int)$fRaw['reuses_packaging_id_fk'] : null;
-                if ($rawR !== null && $rawR > 0) {
-                    $isReuseSession = true;
+        if ($isReassignerMode) {
+            // Réassigner mode bypasses the in-tank read gate entirely — no BBT/CCT sourced.
+            $isReuseSession = true;
+        } else {
+            foreach (($_POST['formats'] ?? []) as $fRaw) {
+                if (($fRaw['row_origin'] ?? 'main') === 'main') {
+                    $rawR = isset($fRaw['reuses_packaging_id_fk']) && $fRaw['reuses_packaging_id_fk'] !== ''
+                        ? (int)$fRaw['reuses_packaging_id_fk'] : null;
+                    if ($rawR !== null && $rawR > 0) {
+                        $isReuseSession = true;
+                    }
+                    break;
                 }
-                break;
             }
         }
 
@@ -664,9 +681,229 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         // Build one row per format line
         $rows = [];
+
+        // ── Head-update registry for réassigner legs ─────────────────────────
+        // Maps source_id → true to prevent double-assignment of the same source row
+        // within a multi-leg réassigner session (idempotency guard).
+        // The actual head vendable_hl=0 UPDATE is deferred to the write transaction
+        // where we have the leaf row id; we track intent here to fail-fast pre-tx.
+        $reassignerSourceIds = [];  // [ source_id => true ]
+
         foreach ($formatsRaw as $idx => $f) {
             $fRunType   = $f['run_type'] ?? '';
             $fOrigin    = $f['row_origin'] ?? 'main';
+
+            // ── RÉASSIGNER MODE: per-leg source-fetch + row-build ─────────────
+            // When is_reassigner_session=1 the form does NOT select a BBT/CCT tank.
+            // Each format leg carries its own reassign_source_id pointing at the
+            // head bd_packaging_v2 row to be re-allocated.
+            //
+            // Write model:
+            //   Leaf row: inherits recipe_id_fk, sku_id_fk, neb_beer, neb_batch,
+            //             contract_beer, contract_batch, nebuleuse_format_suffix,
+            //             prod_total_units, run_type='cuv', vendable_hl = head.vendable_hl
+            //             beer_tax_base_hl='0.000', loss_kpi_hl='0.000'
+            //             reuses_packaging_id_fk = source.id
+            //             client_fk = new client (operator input)
+            //             liner_client_mi_id_fk = new liner (operator input), new_liner_client=1
+            //             liner_transport_mi_id_fk = source.liner_client_mi_id_fk, new_liner_transport=0
+            //   Head row: SET vendable_hl='0.000' (deferred to write transaction)
+            //
+            // NEVER writes bbt_source_fk / cct_source_fk / source_tank_type on the leaf.
+            //
+            // FOLLOW-UP (out of scope, documented here for next iteration):
+            //   Tombstoning/undoing a reassignment leaf should restore the head's
+            //   stored vendable_hl from the leaf's own vendable_hl (the inherited value).
+            //   Not built — the tombstone path currently only touches the leaf row.
+            if ($isReassignerMode) {
+                if ($fRunType !== 'cuv') {
+                    // Réassigner session must only contain cuv legs.
+                    throw new RuntimeException("Réassigner cuve : le format #{$idx} doit être de type 'cuv'.");
+                }
+
+                $fReassignSourceId = isset($f['reassign_source_id']) && $f['reassign_source_id'] !== ''
+                    ? (int)$f['reassign_source_id'] : null;
+
+                if ($fReassignSourceId === null || $fReassignSourceId <= 0) {
+                    throw new RuntimeException("Réassigner cuve #{$idx} : cuve source manquante.");
+                }
+
+                // Prevent two legs targeting the same source row in a single session.
+                if (isset($reassignerSourceIds[$fReassignSourceId])) {
+                    throw new RuntimeException(
+                        "Réassigner cuve : la cuve #{$fReassignSourceId} est sélectionnée deux fois dans la même session."
+                    );
+                }
+                $reassignerSourceIds[$fReassignSourceId] = true;
+
+                // Fetch source row and validate eligibility.
+                // Guard: must be cuv, not tombstoned, not already a leaf (reuses_packaging_id_fk IS NULL),
+                //        and not already assigned (no existing non-tombstoned child).
+                $rStmt = $pdo->prepare(
+                    "SELECT id, vendable_hl, prod_total_units, sku_id_fk, recipe_id_fk,
+                            neb_beer, neb_batch, contract_beer, contract_batch,
+                            nebuleuse_format_suffix, liner_client_mi_id_fk
+                       FROM bd_packaging_v2
+                      WHERE id = ?
+                        AND run_type = 'cuv'
+                        AND is_tombstoned = 0
+                        AND reuses_packaging_id_fk IS NULL
+                      LIMIT 1"
+                );
+                $rStmt->execute([$fReassignSourceId]);
+                $srcRow = $rStmt->fetch(PDO::FETCH_ASSOC);
+                if ($srcRow === false) {
+                    throw new RuntimeException(
+                        "Réassigner cuve : source #{$fReassignSourceId} introuvable, archivée, ou déjà une réallocation."
+                    );
+                }
+
+                // Idempotency: reject if a non-tombstoned child already exists for this source.
+                $dupChk = $pdo->prepare(
+                    "SELECT COUNT(*) FROM bd_packaging_v2
+                      WHERE reuses_packaging_id_fk = ?
+                        AND is_tombstoned = 0"
+                );
+                $dupChk->execute([$fReassignSourceId]);
+                if ((int)$dupChk->fetchColumn() > 0) {
+                    throw new RuntimeException(
+                        "Réassigner cuve : la cuve #{$fReassignSourceId} a déjà été réassignée. Utiliser la liste des saisies pour annuler d'abord."
+                    );
+                }
+
+                // New client — operator-supplied, must be valid ref_packaging_clients id.
+                $fReassignNewClient = isset($f['client_fk']) && $f['client_fk'] !== ''
+                    ? (int)$f['client_fk'] : null;
+                if ($fReassignNewClient === null || $fReassignNewClient <= 0) {
+                    throw new RuntimeException("Réassigner cuve #{$idx} : nouveau client manquant.");
+                }
+
+                // New liner for client slot (operator-supplied).
+                $fReassignNewLinerClient = isset($f['liner_client_mi_id_fk']) && $f['liner_client_mi_id_fk'] !== ''
+                    ? (int)$f['liner_client_mi_id_fk'] : null;
+                if ($fReassignNewLinerClient !== null && !isset($allowedLinerIds[$fReassignNewLinerClient])) {
+                    $fReassignNewLinerClient = null;
+                }
+
+                // Source liner (becomes transport liner for the leaf).
+                $fReassignTransportLinerId = ($srcRow['liner_client_mi_id_fk'] !== null)
+                    ? (int)$srcRow['liner_client_mi_id_fk'] : null;
+                if ($fReassignTransportLinerId !== null && !isset($allowedLinerIds[$fReassignTransportLinerId])) {
+                    $fReassignTransportLinerId = null;
+                }
+
+                // Inherit identity fields from source row.
+                $rNebBeer       = (string)($srcRow['neb_beer']       ?? '');
+                $rNebBatch      = (string)($srcRow['neb_batch']      ?? '');
+                $rContractBeer  = (string)($srcRow['contract_beer']  ?? '');
+                $rContractBatch = (string)($srcRow['contract_batch'] ?? '');
+                $rRecipeIdFk    = $srcRow['recipe_id_fk'] !== null ? (int)$srcRow['recipe_id_fk'] : null;
+                $rSkuIdFk       = $srcRow['sku_id_fk']    !== null ? (int)$srcRow['sku_id_fk']    : null;
+                $rProdTotal     = $srcRow['prod_total_units'] !== null ? (int)$srcRow['prod_total_units'] : null;
+                $rSuffix        = ($srcRow['nebuleuse_format_suffix'] !== '' && $srcRow['nebuleuse_format_suffix'] !== null)
+                                    ? $srcRow['nebuleuse_format_suffix'] : null;
+                // vendable_hl inherited — leaf carries the sellable HL; head will be zeroed.
+                $rVendableHl    = (string)$srcRow['vendable_hl'];
+                if ($rVendableHl === '' || $rVendableHl === null) $rVendableHl = '0.000';
+
+                // Row hash: include source id to make leaf unique even if two sources
+                // share the same beer/batch/suffix (they differ by source id).
+                $rHashCols = [
+                    $rNebBeer, $rNebBatch,
+                    $rContractBeer, $rContractBatch,
+                    'REASSIGN', (string)$fReassignSourceId,
+                    'cuv', $fOrigin,
+                    $rSuffix ?? '',
+                    $eventDate,
+                    $submittedAt,
+                    (string)$idx,
+                ];
+                $rRowHash = bd_row_hash($rHashCols);
+
+                $rAuditTokens = $baseAuditTokens;
+                $rAuditTokens[] = 'reassign_cuv';
+                if ($fOrigin === 'parallel') $rAuditTokens[] = 'parallel';
+
+                $rows[] = [
+                    'row' => [
+                        'row_hash'               => $rRowHash,
+                        'row_origin'             => $fOrigin,
+                        'audit_flags'            => implode(',', $rAuditTokens),
+                        'submitted_at'           => $submittedAt,
+                        'email'                  => $me['username'],
+                        'event_date'             => $eventDate,
+                        // Leaf rows do NOT reference BBT/CCT — no new beer volume moved.
+                        'source_tank_type'       => null,
+                        'bbt_source_fk'          => null,
+                        'cct_source_fk'          => null,
+                        'neb_beer'               => $rNebBeer,
+                        'neb_batch'              => $rNebBatch,
+                        'neb_dlc'                => null,
+                        'contract_beer'          => $rContractBeer,
+                        'contract_batch'         => $rContractBatch,
+                        'recipe_id_fk'           => $rRecipeIdFk,
+                        'nebuleuse_format_suffix'=> $rSuffix,
+                        'run_type'               => 'cuv',
+                        'sku_id_fk'              => $rSkuIdFk,
+                        'prod_total_units'       => $rProdTotal,
+                        'special_qty_units'      => null,
+                        // Leaf carries the vendable_hl (follows the final client).
+                        // Head's vendable_hl will be set to '0.000' in the write transaction.
+                        // beer_tax_base_hl stays on the head (taxed at first packaging).
+                        // loss_kpi_hl stays on the head.
+                        'vendable_hl'            => $rVendableHl,
+                        'beer_tax_base_hl'       => '0.000',
+                        'loss_kpi_hl'            => '0.000',
+                        'unsaleable_units'       => null,
+                        'qa_analyses_units'      => 0,
+                        'qa_library_units'       => null,
+                        'loss_uncapped_units'    => null,
+                        'loss_half_filled_units' => null,
+                        'loss_untaxed_full_units'=> null,
+                        'loss_keg_liquid_l'      => null,
+                        'taproom_keg_l'          => null,
+                        'objective_hl'           => null,
+                        'loss_4pack_btl_units'   => null,
+                        'loss_4pack_can_units'   => null,
+                        'loss_wrap_btl_units'    => null,
+                        'loss_wrap_can_units'    => null,
+                        'loss_label_btl_units'   => null,
+                        'loss_keg_collar_units'  => null,
+                        'loss_crown_cork_units'  => null,
+                        'loss_can_lid_units'     => null,
+                        'loss_keg_save_units'    => null,
+                        'loss_container_btl_units'=> null,
+                        'loss_container_can_units'=> null,
+                        'loss_liquid_other_units'=> null,
+                        // Liner: new liner for client slot; source's client liner becomes transport.
+                        'new_liner_client'          => 1,
+                        'new_liner_transport'       => 0,
+                        'liner_client_mi_id_fk'     => $fReassignNewLinerClient,
+                        'liner_transport_mi_id_fk'  => $fReassignTransportLinerId,
+                        'is_white_label'            => 0,
+                        'white_label_name'          => null,
+                        'client_fk'                 => $fReassignNewClient,
+                        // Links this leaf to the head row (mig 237 FK column).
+                        'reuses_packaging_id_fk'    => $fReassignSourceId,
+                        'tank_read_id_fk'           => null,
+                        'comments'                  => ($fOrigin === 'main') ? $comments : null,
+                        'hors_process_flag'         => 0,
+                        'hors_process_reason'       => null,
+                        'submitted_by_user_id_fk'   => (int)$me['id'],
+                    ],
+                    'origin'             => $fOrigin,
+                    'computed_vendable'  => $rVendableHl,
+                    'sku_id_fk'          => $rSkuIdFk,
+                    'format_suffix_used' => $rSuffix,
+                    'side_stock_run_qty'        => null,  // no new units to bank
+                    'side_stock_complete_box'   => 0,
+                    'side_stock_units_per_pack' => null,
+                    // Réassigner extras: needed by the write path to UPDATE the head row.
+                    '_reassign_source_id'        => $fReassignSourceId,
+                    '_reassign_head_vendable_hl' => $rVendableHl,  // for flash message only
+                ];
+                continue; // Skip normal format-row processing for this leg.
+            }
 
             // ── Cuve réutilisée (mig 237) ─────────────────────────────────────
             // A cuv row may carry a reuses_packaging_id_fk pointing at the source
@@ -750,6 +987,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $fLossUntaxedFull   = isset($f['loss_untaxed_full_units'])  && $f['loss_untaxed_full_units']  !== '' ? (int)$f['loss_untaxed_full_units']  : null;
             $fLossKegLiquid  = isset($f['loss_keg_liquid_l'])        && $f['loss_keg_liquid_l']     !== '' ? $f['loss_keg_liquid_l']         : null;
             $fTaproomKeg     = isset($f['taproom_keg_l'])            && $f['taproom_keg_l']         !== '' ? $f['taproom_keg_l']             : null;
+            // Objective HL (mig 313): planning annotation — nullable, NOT fiscal.
+            // Read with two-step: isset+''+'' guard first, then coerce+validate.
+            $fObjectiveHlRaw = isset($f['objective_hl']) ? trim((string)$f['objective_hl']) : '';
+            $fObjectiveHl    = null;
+            if ($fObjectiveHlRaw !== '') {
+                $fObjectiveHl = (float)$fObjectiveHlRaw;
+                if ($fObjectiveHl <= 0.0) {
+                    $fObjectiveHl = null; // blank/zero treated as no objective
+                }
+            }
 
             must_be_one_of("formats[{$idx}][run_type]", $fRunType, RUN_TYPES);
             if (!in_array($fOrigin, ['main', 'parallel'], true)) {
@@ -927,6 +1174,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'loss_untaxed_full_units' => $fLossUntaxedFull,
                     'loss_keg_liquid_l'       => $fLossKegLiquid,
                     'taproom_keg_l'          => $fTaproomKeg,
+                    // objective_hl (mig 313): planning annotation. NOT in NK, NOT fiscal.
+                    // MagnitudeGuard (cuv band 50–30000 L ≈ 0.5–300 HL) surfaces confirm-warning
+                    // when the value looks like an order-of-magnitude slip; never a hard block.
+                    'objective_hl'           => $fObjectiveHl,
                     // Per-type material scraps (decision 6 — stored, not subtracted from vendable)
                     'loss_4pack_btl_units'   => $fLoss4packBtl,
                     'loss_4pack_can_units'   => $fLoss4packCan,
@@ -1080,6 +1331,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         'loss_container_btl_units'=> null,
                         'loss_container_can_units'=> null,
                         'loss_liquid_other_units' => null,
+                        // WL additive leg carries no objective (objective belongs to the parent row).
+                        'objective_hl'           => null,
                         'new_liner_client'       => null,
                         'new_liner_transport'    => null,
                         'liner_client_mi_id_fk'  => null,
@@ -1185,7 +1438,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $nkCols = ['submitted_at', 'neb_beer', 'neb_batch', 'contract_beer', 'contract_batch', 'row_origin', 'nebuleuse_format_suffix'];
 
-        $beerLabel = $nebBeer !== '' ? $nebBeer : $contractBeer;
+        // In réassigner mode beer identity comes from the first leg's source row.
+        if ($isReassignerMode) {
+            $firstReassignRow = reset($rows);
+            $beerLabel = ($firstReassignRow !== false)
+                ? (($firstReassignRow['row']['neb_beer'] ?? '') !== ''
+                    ? $firstReassignRow['row']['neb_beer']
+                    : ($firstReassignRow['row']['contract_beer'] ?? ''))
+                : 'réassignation';
+        } else {
+            $beerLabel = $nebBeer !== '' ? $nebBeer : $contractBeer;
+        }
 
         $cipMeta = ['submitted_at' => $submittedAt, 'email' => $me['username']];
 
@@ -1344,6 +1607,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                     // $rowBefore is non-null in edit mode → action='update'; null → action='insert'.
                     log_revision($pdo, $me, PACKAGING_LIVE_TABLE, $rowId, $rowBefore, $safeRow, $qcFlag, $revisionComment);
+
+                    // ── Step B1a: Réassigner head-row vendable_hl zero-out ────────
+                    // When the just-inserted row is a réassigner leaf: UPDATE the head row's
+                    // vendable_hl to '0.000' (the leaf now carries the sellable HL for the
+                    // final client). Log the change via audit_row_revisions.
+                    // Must run AFTER the leaf upsert (we now know $rowId = leaf.id).
+                    if (isset($rSpec['_reassign_source_id'])) {
+                        $headId       = (int)$rSpec['_reassign_source_id'];
+                        $headBefore   = bd_fetch_before($pdo, PACKAGING_LIVE_TABLE, $headId);
+                        $pdo->prepare(
+                            "UPDATE " . PACKAGING_LIVE_TABLE . "
+                                SET vendable_hl = '0.000',
+                                    updated_at  = CURRENT_TIMESTAMP
+                              WHERE id = ?"
+                        )->execute([$headId]);
+                        // Audit: only vendable_hl changes on the head row.
+                        log_revision(
+                            $pdo, $me, PACKAGING_LIVE_TABLE, $headId,
+                            $headBefore,
+                            ['vendable_hl' => '0.000'],
+                            'normal',
+                            "Réassigner cuve — vendable_hl zeroed; leaf row #{$rowId} carries the sellable HL for new client"
+                        );
+                    }
 
                     // ── Step B1b: Side-stock accrual + complete-a-box draw (mig 303) ─
                     // NOT COGS — unit counts only; never touches inv_consumption or ref_sku_bom.
@@ -1574,7 +1861,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 default    => '',
             };
             $nFmt = count($rows);
-            flash_set('ok', "Conditionnement enregistré : {$beerLabel} — {$nFmt} format(s){$qcLabel}");
+            if ($isReassignerMode) {
+                flash_set('ok', "Réassignation enregistrée : {$nFmt} cuve(s) réassignée(s){$qcLabel}");
+            } else {
+                flash_set('ok', "Conditionnement enregistré : {$beerLabel} — {$nFmt} format(s){$qcLabel}");
+            }
 
         } else {
             // ── Draft write path (safe sandbox — no real bd_packaging_v2 rows) ──
@@ -1671,6 +1962,7 @@ if ($editId !== null) {
                         loss_crown_cork_units, loss_can_lid_units, loss_keg_save_units,
                         loss_container_btl_units, loss_container_can_units,
                         qa_analyses_units, qa_library_units,
+                        objective_hl,
                         client_fk, liner_client_mi_id_fk, liner_transport_mi_id_fk,
                         reuses_packaging_id_fk, tank_read_id_fk, audit_flags
                    FROM bd_packaging_v2
@@ -1761,6 +2053,7 @@ if ($editId !== null) {
                         'loss_container_can_units'=> $sr['loss_container_can_units'],
                         'qa_analyses_units'       => $sr['qa_analyses_units'],
                         'qa_library_units'        => $sr['qa_library_units'],
+                        'objective_hl'            => $sr['objective_hl'] !== null ? (float)$sr['objective_hl'] : null,
                         'client_fk'               => $sr['client_fk'],
                         'liner_client_mi_id_fk'   => $sr['liner_client_mi_id_fk'],
                         'liner_transport_mi_id_fk'=> $sr['liner_transport_mi_id_fk'],
@@ -2253,6 +2546,69 @@ try {
         $cuveCandidates = [];
     }
 
+    // ── Réassigner cuve candidates ────────────────────────────────────────────
+    // All cuv rows eligible for reassignment (no date limit, unlike PF_CUVE_CANDIDATES).
+    // Eligible = run_type='cuv', not tombstoned, is a head row (reuses_packaging_id_fk IS NULL),
+    //            and does NOT already have a non-tombstoned child.
+    // Includes: id, beer, batch, event_date, vendable_hl, client name (via join), liner_client_mi_id_fk.
+    // Emitted as window.PF_REASSIGNER_CANDIDATES for the réassigner UI.
+    $reassignerCandidates = [];
+    try {
+        $rassCandStmt = $pdo->prepare(
+            "SELECT p.id,
+                    COALESCE(NULLIF(p.neb_beer,''), p.contract_beer)   AS beer,
+                    COALESCE(NULLIF(p.neb_batch,''), p.contract_batch) AS batch,
+                    p.recipe_id_fk,
+                    p.sku_id_fk,
+                    p.event_date,
+                    p.prod_total_units,
+                    p.vendable_hl,
+                    p.client_fk,
+                    p.keg_client_delivered,
+                    p.liner_client_mi_id_fk
+               FROM bd_packaging_v2 p
+              WHERE p.run_type       = 'cuv'
+                AND p.is_tombstoned  = 0
+                AND p.reuses_packaging_id_fk IS NULL
+                AND p.id NOT IN (
+                    SELECT DISTINCT reuses_packaging_id_fk
+                      FROM bd_packaging_v2
+                     WHERE reuses_packaging_id_fk IS NOT NULL
+                       AND is_tombstoned = 0
+                )
+              ORDER BY p.event_date DESC, p.id DESC"
+        );
+        $rassCandStmt->execute();
+        $rassCandRaw = $rassCandStmt->fetchAll(PDO::FETCH_ASSOC);
+        $rasClientCache = [];
+        foreach ($rassCandRaw as $rc) {
+            $clientLabel = $rc['keg_client_delivered'] ?? null;
+            if ($clientLabel === null && $rc['client_fk'] !== null) {
+                $cfk = (int)$rc['client_fk'];
+                if (!isset($rasClientCache[$cfk])) {
+                    $cLookup = $pdo->prepare('SELECT name FROM ref_packaging_clients WHERE id = ? LIMIT 1');
+                    $cLookup->execute([$cfk]);
+                    $rasClientCache[$cfk] = (string)($cLookup->fetchColumn() ?: '');
+                }
+                $clientLabel = $rasClientCache[$cfk];
+            }
+            $reassignerCandidates[] = [
+                'id'                     => (int)$rc['id'],
+                'beer'                   => $rc['beer'] ?? '',
+                'batch'                  => $rc['batch'] ?? '',
+                'recipe_id_fk'           => $rc['recipe_id_fk'] !== null ? (int)$rc['recipe_id_fk'] : null,
+                'sku_id_fk'              => $rc['sku_id_fk']    !== null ? (int)$rc['sku_id_fk']    : null,
+                'event_date'             => $rc['event_date'] ?? '',
+                'vendable_hl'            => $rc['vendable_hl'],
+                'client_label'           => $clientLabel,
+                'liner_client_mi_id_fk'  => $rc['liner_client_mi_id_fk'] !== null ? (int)$rc['liner_client_mi_id_fk'] : null,
+            ];
+        }
+    } catch (\Throwable $_rassEx) {
+        // Degrade gracefully if table/column absent
+        $reassignerCandidates = [];
+    }
+
     // ── In-tank readings preload (bd_tank_readings, last 60 days) ───────────
     // Used by JS to auto-fill the in-tank card when a matching lot-day read exists,
     // and to show the inherit banner. Each entry carries the single co2_gl/o2_ppb pair.
@@ -2403,8 +2759,9 @@ try {
     $recipes            = [];
     $recentPackaging    = [];
     $cipTypes           = [];
-    $cuveCandidates     = [];
-    $tankReadings       = [];
+    $cuveCandidates          = [];
+    $reassignerCandidates    = [];
+    $tankReadings            = [];
     $linerMisForForm    = [];
     $allowedLinerIds    = [];
     $linerDefaultMiId   = 0;
@@ -2429,6 +2786,7 @@ $linerMisJson           = json_encode($linerMisForForm,     JSON_UNESCAPED_UNICO
 $runTypeLabelJson       = json_encode(RUN_TYPE_LABELS,     JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 $suffixLabelJson        = json_encode(FORMAT_SUFFIXES,     JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 $cuveCandidatesJson     = json_encode($cuveCandidates,     JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
+$reassignerCandidatesJson = json_encode($reassignerCandidates, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 $tankReadingsJson       = json_encode($tankReadings,       JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 $formatMagnitudesJson   = json_encode($formatMagnitudesMap, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 
@@ -2552,6 +2910,10 @@ $cipConfig = [
     <!-- hors_process_flag: set by JS to 1 when override checkbox is checked.
          Server enforces role: if not manager/admin, this field is ignored. -->
     <input type="hidden" id="hors_process" name="hors_process" value="0">
+    <!-- is_reassigner_session: set to 1 by JS when the "Réassigner cuve" toggle is ON.
+         When 1: no BBT/CCT tank selected; each format leg carries reassign_source_id instead.
+         Server enforces: all legs must be cuv; no source_tank_type; each source validated. -->
+    <input type="hidden" id="is_reassigner_session" name="is_reassigner_session" value="0">
     <!-- magnitude_outlier_confirmed: set to 1 by magnitude-guard.js when the operator
          confirms a magnitude outlier with a comment via the FormFramework dialog.
          Server re-evaluates from canonical ref_packaging_formats; rejects if outlier
@@ -2595,8 +2957,25 @@ $cipConfig = [
       </div>
       <?php endif ?>
 
+      <!-- ── Réassigner cuve toggle ───────────────────────────────────────── -->
+      <!-- Bypasses the normal BBT/CCT tank grid entirely. Operator picks a    -->
+      <!-- filled cuv row to re-allocate to a new client (no new volume from   -->
+      <!-- tank). Wired by packaging-form.js.                                  -->
+      <div class="pf-reassign-toggle" id="pf-reassign-toggle-block">
+        <label class="pf-reassign-toggle__label">
+          <input type="checkbox" id="pf-reassign-checkbox" class="pf-reassign-toggle__checkbox"
+                 aria-describedby="pf-reassign-desc">
+          <span class="pf-reassign-toggle__text">Réassigner une cuve</span>
+          <span class="pf-reassign-toggle__badge">Cuv service</span>
+        </label>
+        <p class="pf-reassign-toggle__desc" id="pf-reassign-desc">
+          Réaffecter une cuve de service déjà remplie à un nouveau client.
+          Aucun volume n'est prélevé depuis le BBT/CCT.
+        </p>
+      </div>
+
       <?php if (empty($candidates)): ?>
-        <p class="op-form__muted" role="status">
+        <p class="op-form__muted" role="status" id="pf-candidates-empty-msg">
           Aucun lot éligible (soutirage ≥ <?= $minDays ?> jour).
           Vérifier que les soutirages récents sont enregistrés dans Saisie Soutirage.
         </p>
@@ -2657,6 +3036,22 @@ $cipConfig = [
         <button type="button" id="pf-deselect" class="pf-selected-tank__clear">✕ changer</button>
       </div>
       <?php endif ?>
+
+      <!-- ── Réassigner cuve panel (shown by JS when toggle is ON) ────────── -->
+      <!-- JS builds source-tank option cards here from PF_REASSIGNER_CANDIDATES. -->
+      <div id="pf-reassign-panel" class="pf-reassign-panel" hidden>
+        <div class="pf-reassign-panel__label">
+          Cuves de service disponibles pour réassignation
+        </div>
+        <!-- Réassigner legs rendered here by JS via buildReassignLeg() -->
+        <div id="pf-reassign-legs-container" class="pf-reassign-legs-container"></div>
+        <!-- "Ajouter une cuve" button shown only in réassigner mode (wired to addFormatBtn logic) -->
+        <button type="button" id="pf-reassign-add-leg" class="pf-reassign-add-leg-btn op-form__btn op-form__btn--secondary"
+                style="display:none;">
+          + Ajouter une deuxième cuve
+        </button>
+      </div>
+
     </div><!-- card tank -->
 
     <!-- ── Section: Date et type de session ───────────────────────── -->
@@ -2761,7 +3156,7 @@ $cipConfig = [
     </div><!-- card in-tank read -->
 
     <!-- ── Section: Formats de conditionnement (multi-format, decision 8) ── -->
-    <div class="op-form__card">
+    <div class="op-form__card" id="pf-formats-card">
       <div class="op-form__card-title">— formats conditionnés</div>
       <p class="op-form__sub pf-formats-intro">
         Un run peut produire plusieurs formats pour le même lot (ex. Bouteille + Canette).
@@ -2783,7 +3178,7 @@ $cipConfig = [
     </div><!-- card formats -->
 
     <!-- ── Section: Mesures CO₂/O₂ en cours de soutirage (in-filling) ──── -->
-    <div class="op-form__card">
+    <div class="op-form__card" id="pf-co2o2-card">
       <div class="op-form__card-title">— mesures CO₂/O₂ en cours de soutirage</div>
       <p class="op-form__hint pf-qa-hint">
         Relevés pris sur les unités en cours de remplissage (pertes QA).
@@ -2933,7 +3328,8 @@ window.PF_LINER_DEFAULT_MI    = <?= (int)$linerDefaultMiId ?>;
 window.RUN_TYPE_LABELS        = <?= $runTypeLabelJson ?>;
 window.FORMAT_SUFFIXES        = <?= $suffixLabelJson ?>;
 window.MIN_DAYS_AFTER_RACKING = <?= $minDays ?>;
-window.PF_CUVE_CANDIDATES     = <?= $cuveCandidatesJson ?>;
+window.PF_CUVE_CANDIDATES        = <?= $cuveCandidatesJson ?>;
+window.PF_REASSIGNER_CANDIDATES  = <?= $reassignerCandidatesJson ?>;
 window.PF_TANK_READINGS       = <?= $tankReadingsJson ?>;
 window.FORMAT_MAGNITUDES      = <?= $formatMagnitudesJson ?>;
 window.CUV_FILL_BAND          = <?= json_encode($cuvFillBand, JSON_UNESCAPED_UNICODE) ?>;

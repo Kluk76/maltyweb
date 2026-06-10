@@ -903,3 +903,130 @@ body.op-form-packaging .pf-shared-tank-warn__confirm input[type="checkbox"] {
   flex-shrink: 0;
   cursor: pointer;
 }
+
+/* ── Réassigner cuve toggle ────────────────────────────────────────────────── */
+/* Uses --hop (green) accent to differentiate from the orange hors-process block */
+body.op-form-packaging .pf-reassign-toggle {
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  background: color-mix(in srgb, var(--hop) 7%, var(--bg-elev));
+  border: 1px solid color-mix(in srgb, var(--hop) 28%, transparent);
+  border-radius: 6px;
+}
+body.op-form-packaging .pf-reassign-toggle__label {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  cursor: pointer;
+  user-select: none;
+}
+body.op-form-packaging .pf-reassign-toggle__checkbox {
+  width: 1.1rem;
+  height: 1.1rem;
+  accent-color: var(--hop);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+body.op-form-packaging .pf-reassign-toggle__text {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--hop);
+}
+body.op-form-packaging .pf-reassign-toggle__badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--hop) 18%, transparent);
+  color: var(--hop);
+}
+body.op-form-packaging .pf-reassign-toggle__desc {
+  font-size: 0.76rem;
+  color: var(--ink-soft);
+  margin: 0.4rem 0 0 1.7rem;
+  line-height: 1.5;
+}
+
+/* ── Réassigner active banner ──────────────────────────────────────────────── */
+body.op-form-packaging .pf-reassign-active-banner {
+  margin-bottom: 0.75rem;
+  padding: 0.65rem 1rem;
+  background: color-mix(in srgb, var(--hop) 12%, transparent);
+  border: 1.5px solid color-mix(in srgb, var(--hop) 45%, transparent);
+  border-radius: 6px;
+  font-size: 0.8rem;
+  color: var(--ink);
+  line-height: 1.5;
+}
+body.op-form-packaging .pf-reassign-active-banner strong {
+  color: var(--hop);
+}
+
+/* ── Réassigner panel + legs ───────────────────────────────────────────────── */
+body.op-form-packaging .pf-reassign-panel {
+  margin-top: 0.5rem;
+}
+body.op-form-packaging .pf-reassign-panel__label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--ink-soft);
+  margin-bottom: 0.75rem;
+}
+body.op-form-packaging .pf-reassign-legs-container {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* Per-leg container */
+body.op-form-packaging .pf-reassign-leg {
+  padding: 1rem 1rem 0.75rem;
+  background: color-mix(in srgb, var(--hop) 5%, var(--bg-elev));
+  border: 1px solid color-mix(in srgb, var(--hop) 20%, transparent);
+  border-radius: 6px;
+}
+body.op-form-packaging .pf-reassign-leg__header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+body.op-form-packaging .pf-reassign-leg__badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--hop) 18%, transparent);
+  color: var(--hop);
+}
+body.op-form-packaging .pf-reassign-leg__remove {
+  margin-left: auto;
+}
+
+/* Source-tank info line (shown after a source is picked) */
+body.op-form-packaging .pf-reassign-source-info {
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  margin-top: 0.3rem;
+  line-height: 1.4;
+}
+body.op-form-packaging .pf-reassign-source-info__beer {
+  font-family: 'Fraunces', serif;
+  font-style: italic;
+  color: var(--ink);
+}
+
+/* "Ajouter une deuxième cuve" button */
+body.op-form-packaging .pf-reassign-add-leg-btn {
+  margin-top: 0.75rem;
+}

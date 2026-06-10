@@ -78,10 +78,20 @@ document.addEventListener('DOMContentLoaded', function () {
   const horsProcessFld     = document.getElementById('hors_process');
   const tankGrid           = document.querySelector('.pf-tank-grid');
 
+  // Réassigner cuve toggle + panel
+  const reassignCheckbox    = document.getElementById('pf-reassign-checkbox');
+  const reassignSessionFld  = document.getElementById('is_reassigner_session');
+  const reassignPanel       = document.getElementById('pf-reassign-panel');
+  const reassignLegsContainer = document.getElementById('pf-reassign-legs-container');
+  const reassignAddLegBtn   = document.getElementById('pf-reassign-add-leg');
+  // Elements hidden when réassigner mode is ON (normal form sections)
+  const tankGridCard        = document.querySelector('.pf-tank-grid') && document.querySelector('.pf-tank-grid').closest('.op-form__card');
+
   // ── State ────────────────────────────────────────────────────────────────
-  let selectedCard = null;     // currently-selected tank card element
-  let isContractBeer = false;  // whether the selected lot has a contract beer
-  let formatRows = [];         // array of row-index values rendered
+  let selectedCard = null;       // currently-selected tank card element
+  let isContractBeer = false;    // whether the selected lot has a contract beer
+  let formatRows = [];           // array of row-index values rendered
+  let isReassignerMode = false;  // whether the "Réassigner cuve" toggle is ON
 
   // ── SKU mosaic ────────────────────────────────────────────────────────────
   //
@@ -528,6 +538,18 @@ document.addEventListener('DOMContentLoaded', function () {
             ' type="text" inputmode="numeric" class="op-form__input" placeholder="ex. 288">' +
         '</div>';
 
+    // objective_hl: per-run planning annotation (mig 313). Optional. Present on BOTH
+    // main and parallel rows — each is its own bd_packaging_v2 row and carries its own
+    // objective. NOT part of the natural key. NOT fiscal — recap read-only.
+    const objectiveHtml =
+      '<div class="op-form__field">' +
+        '<label class="op-form__label" for="' + idPfx + '_objective_hl">' +
+          'Objectif <span class="op-form__unit">(HL, optionnel)</span></label>' +
+        '<input id="' + idPfx + '_objective_hl" name="' + prefix + '[objective_hl]"' +
+          ' type="text" inputmode="decimal" class="op-form__input pf-objective-hl"' +
+          ' placeholder="ex. 25.0" autocomplete="off">' +
+      '</div>';
+
     const removeBtn = isMain
       ? ''
       : '<button type="button" class="pf-remove-format op-form__btn op-form__btn--danger-sm"' +
@@ -587,6 +609,7 @@ document.addEventListener('DOMContentLoaded', function () {
           '</select>' +
         '</div>' +
         qtiesHtml +
+        objectiveHtml +
       '</div>' +
       bottleDispositionHtml +
       kegDispositionHtml +
@@ -629,12 +652,15 @@ document.addEventListener('DOMContentLoaded', function () {
     //   keg group:    shown for keg/cuv, but HIDDEN for cuv-reuse rows (no volume to enter)
     //   client group: shown for cuv ONLY (mig 237 repoint — no longer contract/WL)
     //   liner group:  shown for cuv only
-    //   reuse group:  shown for cuv only
+    //   reuse group:  PERMANENTLY HIDDEN for cuv — the new "Réassigner cuve" toggle is the
+    //                 sole path for cuv reassignment. The mig-237 inline sub-block is retired
+    //                 for cuv runs. The schema column (reuses_packaging_id_fk) and server-side
+    //                 handling are preserved for non-cuv backward compatibility.
     if (bottleGroup) bottleGroup.hidden = isKegOrCuv;
     if (kegGroup)    kegGroup.hidden    = !isKegOrCuv || isReuse;
     if (clientGroup) clientGroup.hidden = !isCuv;
     if (linerGroup)  linerGroup.hidden  = !isCuv;
-    if (reuseGroup)  reuseGroup.hidden  = !isCuv;
+    if (reuseGroup)  reuseGroup.hidden  = true;  // always hidden — retired for cuv (see above)
 
     // Hide qty input for reuse rows (no volume packaged)
     const qtiesSection = rowEl.querySelector('.pf-format-top-grid');
@@ -827,9 +853,301 @@ document.addEventListener('DOMContentLoaded', function () {
 
   // ── Enable submit ─────────────────────────────────────────────────────────
   function tryEnableSubmit() {
-    const hasTank    = (fldTankType.value !== '');
-    const hasFormat  = formatRows.length > 0;
-    submitBtn.disabled = !(hasTank && hasFormat);
+    if (isReassignerMode) {
+      // Réassigner mode: submit is enabled when at least one leg has a source and a client chosen.
+      var hasValidLeg = false;
+      if (reassignLegsContainer) {
+        reassignLegsContainer.querySelectorAll('.pf-reassign-leg').forEach(function (leg) {
+          var srcSel    = leg.querySelector('.pf-reassign-source-select');
+          var clientSel = leg.querySelector('.pf-reassign-client-select');
+          if (srcSel && clientSel && srcSel.value !== '' && clientSel.value !== '') {
+            hasValidLeg = true;
+          }
+        });
+      }
+      submitBtn.disabled = !hasValidLeg;
+    } else {
+      const hasTank    = (fldTankType.value !== '');
+      const hasFormat  = formatRows.length > 0;
+      submitBtn.disabled = !(hasTank && hasFormat);
+    }
+  }
+
+  // ── Réassigner cuve ───────────────────────────────────────────────────────
+  //
+  // Build a source-tank picker + new-client + new-liner per reassignment leg.
+  // In réassigner mode: normal form sections are hidden; the réassigner panel
+  // replaces the tank-grid interaction. Legs are posted as formats[N][...] with:
+  //   formats[N][run_type] = 'cuv'
+  //   formats[N][row_origin] = 'main' (first leg) or 'parallel' (subsequent)
+  //   formats[N][reassign_source_id] = source bd_packaging_v2 id
+  //   formats[N][client_fk] = new client ref_packaging_clients id
+  //   formats[N][liner_client_mi_id_fk] = new liner MI id
+  //
+  // The inline "Cuve réutilisée" sub-block (old path, mig 237) is RETIRED for
+  // cuv rows when réassigner mode is active. The new bypass mode is the single
+  // path for cuv reassignment. The sub-block HTML is still rendered by
+  // buildFormatRow() for backward-compatibility (non-cuv rows, edit-mode reuse
+  // of the schema column) but is hidden via CSS in réassigner mode and suppressed
+  // in updateRowDispositionGroups() when this mode is on.
+  //
+  // Note: the old sub-block's posted reuses_packaging_id_fk is still handled
+  // server-side (mig 237 legacy path) for sessions NOT in réassigner mode.
+
+  var reassignLegCount = 0;  // tracks legs added in the current réassigner session
+
+  function buildReassignLinerOptions() {
+    // Builds liner <option> list for réassigner leg new-liner picker.
+    // Source: window.PF_LINER_MIS (same as the normal cuv liner dropdown).
+    var html = '<option value="">— aucun liner —</option>';
+    (window.PF_LINER_MIS || []).forEach(function (mi) {
+      html += '<option value="' + escHtml(String(mi.id)) + '">'
+             + escHtml(mi.name || mi.mi_id) + '</option>';
+    });
+    return html;
+  }
+
+  function buildClientOptions() {
+    var html = '<option value="">— sélectionner un client —</option>';
+    (window.PF_PACKAGING_CLIENTS || []).forEach(function (cl) {
+      html += '<option value="' + escHtml(String(cl.id)) + '">'
+             + escHtml(cl.name) + '</option>';
+    });
+    return html;
+  }
+
+  function buildReassignSourceOptions() {
+    var html = '<option value="">— sélectionner une cuve —</option>';
+    (window.PF_REASSIGNER_CANDIDATES || []).forEach(function (rc) {
+      var dateStr = rc.event_date
+        ? rc.event_date.replace(/^(\d{4})-(\d{2})-(\d{2})$/, '$3/$2/$1')
+        : '';
+      var hlStr = rc.vendable_hl !== null && rc.vendable_hl !== undefined
+        ? parseFloat(rc.vendable_hl).toFixed(1) + ' HL'
+        : '';
+      var clientStr = rc.client_label ? rc.client_label : '';
+      var parts = [escHtml(rc.beer || '?'), 'B.' + escHtml(rc.batch || '?')];
+      if (dateStr) parts.push(dateStr);
+      if (hlStr)   parts.push(hlStr);
+      if (clientStr) parts.push(clientStr);
+      html += '<option value="' + escHtml(String(rc.id)) + '">'
+             + parts.join(' — ') + '</option>';
+    });
+    return html;
+  }
+
+  function addReassignLeg() {
+    var legIdx = reassignLegCount;
+    reassignLegCount++;
+    var isMain = (legIdx === 0);
+    var fmtIdx = formatRows.length;
+    formatRows.push(fmtIdx);
+
+    var prefix  = 'formats[' + fmtIdx + ']';
+    var idPfx   = 'rasleg_' + fmtIdx;
+
+    var html =
+      '<div class="pf-reassign-leg" id="pf-rasleg-' + fmtIdx + '" data-fmt-idx="' + fmtIdx + '">' +
+        '<div class="pf-reassign-leg__header">' +
+          '<span class="pf-reassign-leg__badge">' + (isMain ? 'Cuve principale' : 'Cuve additionnelle') + '</span>' +
+          (!isMain
+            ? '<button type="button" class="pf-reassign-leg__remove op-form__btn op-form__btn--danger-sm"' +
+                ' data-fmt-idx="' + fmtIdx + '" title="Supprimer cette cuve">✕</button>'
+            : '') +
+        '</div>' +
+        // Hidden fields carrying the leg's identity to the server.
+        '<input type="hidden" name="' + prefix + '[run_type]" value="cuv">' +
+        '<input type="hidden" name="' + prefix + '[row_origin]" value="' + (isMain ? 'main' : 'parallel') + '">' +
+        '<div class="op-form__grid--3 op-form__grid">' +
+          // (a) Source tank picker
+          '<div class="op-form__field op-form__field--span3">' +
+            '<label class="op-form__label" for="' + idPfx + '_source">Cuve source</label>' +
+            '<select id="' + idPfx + '_source" name="' + prefix + '[reassign_source_id]"' +
+              ' class="op-form__select pf-reassign-source-select" data-fmt-idx="' + fmtIdx + '">' +
+              buildReassignSourceOptions() +
+            '</select>' +
+            '<div class="pf-reassign-source-info" id="' + idPfx + '_sourceinfo"></div>' +
+          '</div>' +
+          // (b) New client picker
+          '<div class="op-form__field op-form__field--span2">' +
+            '<label class="op-form__label" for="' + idPfx + '_client">Nouveau client</label>' +
+            '<select id="' + idPfx + '_client" name="' + prefix + '[client_fk]"' +
+              ' class="op-form__select pf-reassign-client-select">' +
+              buildClientOptions() +
+            '</select>' +
+          '</div>' +
+          // (c) New liner picker
+          '<div class="op-form__field">' +
+            '<label class="op-form__label" for="' + idPfx + '_liner">Liner client <span class="op-form__opt">(nouveau)</span></label>' +
+            '<select id="' + idPfx + '_liner" name="' + prefix + '[liner_client_mi_id_fk]"' +
+              ' class="op-form__select">' +
+              buildReassignLinerOptions() +
+            '</select>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+
+    if (reassignLegsContainer) {
+      reassignLegsContainer.insertAdjacentHTML('beforeend', html);
+    }
+
+    // Wire the remove button (parallel legs only).
+    var legEl = document.getElementById('pf-rasleg-' + fmtIdx);
+    if (legEl && !isMain) {
+      var removeBtn = legEl.querySelector('.pf-reassign-leg__remove');
+      if (removeBtn) {
+        removeBtn.addEventListener('click', function () {
+          removeReassignLeg(fmtIdx);
+        });
+      }
+    }
+
+    // Wire source-select change → show info (beer / batch / current client / vendable HL).
+    if (legEl) {
+      var srcSel = legEl.querySelector('.pf-reassign-source-select');
+      var infoEl = document.getElementById(idPfx + '_sourceinfo');
+      if (srcSel && infoEl) {
+        srcSel.addEventListener('change', function () {
+          var chosenId = parseInt(srcSel.value, 10) || 0;
+          var cand = (window.PF_REASSIGNER_CANDIDATES || []).find(function (rc) {
+            return rc.id === chosenId;
+          });
+          if (cand) {
+            var dateStr = cand.event_date
+              ? cand.event_date.replace(/^(\d{4})-(\d{2})-(\d{2})$/, '$3/$2/$1')
+              : '';
+            var hlStr = cand.vendable_hl !== null && cand.vendable_hl !== undefined
+              ? parseFloat(cand.vendable_hl).toFixed(1) + ' HL' : '';
+            infoEl.innerHTML =
+              '<span class="pf-reassign-source-info__beer">' + escHtml(cand.beer || '?') + '</span>' +
+              ' — Brassin <strong>' + escHtml(cand.batch || '?') + '</strong>' +
+              (dateStr ? ' — ' + escHtml(dateStr) : '') +
+              (hlStr   ? ' — <strong>' + escHtml(hlStr) + '</strong>' : '') +
+              (cand.client_label ? ' — client actuel : ' + escHtml(cand.client_label) : '');
+          } else {
+            infoEl.innerHTML = '';
+          }
+          tryEnableSubmit();
+        });
+      }
+      // Wire client-select change → re-check submit readiness.
+      var clientSel = legEl.querySelector('.pf-reassign-client-select');
+      if (clientSel) {
+        clientSel.addEventListener('change', function () {
+          tryEnableSubmit();
+        });
+      }
+    }
+
+    tryEnableSubmit();
+  }
+
+  function removeReassignLeg(fmtIdx) {
+    var el = document.getElementById('pf-rasleg-' + fmtIdx);
+    if (el) el.remove();
+    formatRows = formatRows.filter(function (i) { return i !== fmtIdx; });
+    tryEnableSubmit();
+  }
+
+  function toggleReassignerMode(on) {
+    isReassignerMode = on;
+    if (reassignSessionFld) reassignSessionFld.value = on ? '1' : '0';
+
+    // Sections to hide when réassigner mode is ON.
+    // Tank grid card (the whole card containing the tank selector).
+    // We can't hide the whole card because the toggle itself lives in it.
+    // Instead hide: the tank grid, the selected-tank summary, the empty-msg.
+    var tankGridEl    = document.querySelector('.pf-tank-grid');
+    var tankSelectedEl = document.getElementById('pf-selected-tank');
+    var emptyMsgEl    = document.getElementById('pf-candidates-empty-msg');
+    var skuMosaicEl   = document.getElementById('pf-sku-mosaic');
+    // Cards hidden entirely: all cards after the first (tank card).
+    // Target: tank-read card, CO2/O2 in-filling card, formats card.
+    var tankReadCard   = document.getElementById('pf-tank-read-card');
+    var formatsCard    = document.getElementById('pf-formats-card');
+    var co2o2Card      = document.getElementById('pf-co2o2-card');
+
+    if (on) {
+      // Hide normal tank selection UI.
+      if (tankGridEl)     tankGridEl.hidden     = true;
+      if (tankSelectedEl) tankSelectedEl.hidden = true;
+      if (emptyMsgEl)     emptyMsgEl.hidden     = true;
+      if (skuMosaicEl)    skuMosaicEl.hidden     = true;
+      // Hide the main form sections not applicable to réassignment.
+      if (tankReadCard)   tankReadCard.hidden   = true;
+      if (formatsCard)    formatsCard.hidden    = true;
+      if (co2o2Card)      co2o2Card.hidden      = true;
+      // Show the réassigner panel.
+      if (reassignPanel)  reassignPanel.hidden  = false;
+      if (reassignAddLegBtn) reassignAddLegBtn.style.display = '';
+
+      // Clear any existing normal tank selection.
+      deselectTank();
+
+      // Neutralise the normal format leg(s): hiding the formats card is NOT
+      // enough — the seeded normal row's hidden formats[0][row_origin]='main'
+      // input still posts and collides with the reassign leg's 'main', tripping
+      // the PHP "Exactement un format principal (main) requis" guard. Remove the
+      // normal format rows entirely while in réassigner mode (re-seeded on exit).
+      if (formatsContainer) formatsContainer.innerHTML = '';
+      formatRows = [];
+
+      // Seed the first leg if none yet.
+      if (reassignLegCount === 0) {
+        addReassignLeg();
+      }
+
+      // Show the réassigner active banner.
+      var existingBanner = document.getElementById('pf-reassign-active-banner');
+      if (!existingBanner && reassignPanel) {
+        var banner = document.createElement('div');
+        banner.id        = 'pf-reassign-active-banner';
+        banner.className = 'pf-reassign-active-banner';
+        banner.innerHTML =
+          '<strong>Réassignation active</strong> — Aucun volume prélevé depuis le BBT/CCT. ' +
+          'Chaque cuve sélectionnée ci-dessous sera réattribuée au nouveau client choisi.';
+        reassignPanel.parentNode.insertBefore(banner, reassignPanel);
+      }
+    } else {
+      // Restore normal UI.
+      if (tankGridEl)     tankGridEl.hidden     = false;
+      if (tankSelectedEl) tankSelectedEl.hidden  = true;  // keeps hidden until a tank is selected
+      if (emptyMsgEl)     emptyMsgEl.hidden     = false;
+      if (tankReadCard)   tankReadCard.hidden   = false;
+      if (formatsCard)    formatsCard.hidden    = false;
+      if (co2o2Card)      co2o2Card.hidden      = false;
+      if (reassignPanel)  reassignPanel.hidden  = true;
+      if (reassignAddLegBtn) reassignAddLegBtn.style.display = 'none';
+
+      // Clear réassigner legs + reset counter.
+      if (reassignLegsContainer) reassignLegsContainer.innerHTML = '';
+      reassignLegCount = 0;
+      formatRows = [];
+
+      // Remove the réassigner active banner.
+      var b = document.getElementById('pf-reassign-active-banner');
+      if (b) b.remove();
+
+      // Re-seed the main format row.
+      addFormatRow(true);
+      tryEnableSubmit();
+    }
+  }
+
+  // Wire the réassigner toggle checkbox.
+  if (reassignCheckbox) {
+    reassignCheckbox.addEventListener('change', function () {
+      toggleReassignerMode(reassignCheckbox.checked);
+    });
+  }
+
+  // Wire the "Ajouter une deuxième cuve" button in the réassigner panel.
+  if (reassignAddLegBtn) {
+    reassignAddLegBtn.addEventListener('click', function () {
+      addReassignLeg();
+    });
+    // Initially hidden (JS shows it in réassigner mode via toggleReassignerMode).
+    reassignAddLegBtn.style.display = 'none';
   }
 
   // ── Draft persistence helpers ─────────────────────────────────────────────
@@ -1436,7 +1754,7 @@ document.addEventListener('DOMContentLoaded', function () {
     // current field-def arrays — restored via setFmtInput if present on server data.
     var PLAIN_DISP_FIELDS = [
       'loss_liquid_other_units', 'loss_keg_collar_units',
-      'qa_analyses_units',
+      'qa_analyses_units', 'objective_hl',
     ];
     // Widget fields list (must mirror MSR_LOSS_FIELDS in buildFormatRow above)
     var WIDGET_DISP_FIELDS = [
