@@ -485,9 +485,11 @@ function fg_stock_compute(PDO $pdo): array
                 isol.qty
            FROM inv_sales_order_lines isol
            JOIN inv_sales_orders iso ON iso.id = isol.order_id_fk
+           JOIN ref_skus rs ON rs.id = isol.sku_id_fk
           WHERE iso.channel = ?
             AND DATE(iso.created_at) >= ?
-            AND isol.sku_id_fk IS NOT NULL'
+            AND isol.sku_id_fk IS NOT NULL
+            AND rs.is_non_stock = 0'
     );
     $eshopStmt->execute(['eshop', $anchorDate]);
     foreach ($eshopStmt->fetchAll(PDO::FETCH_ASSOC) as $es) {
@@ -1004,9 +1006,11 @@ function fg_stock_location_snapshot(PDO $pdo): array
                 isol.qty
            FROM inv_sales_order_lines isol
            JOIN inv_sales_orders iso ON iso.id = isol.order_id_fk
+           JOIN ref_skus rs ON rs.id = isol.sku_id_fk
           WHERE iso.channel = ?
             AND DATE(iso.created_at) >= ?
-            AND isol.sku_id_fk IS NOT NULL'
+            AND isol.sku_id_fk IS NOT NULL
+            AND rs.is_non_stock = 0'
     );
     $eshopStmt->execute(['eshop', $anchorDate]);
     foreach ($eshopStmt->fetchAll(PDO::FETCH_ASSOC) as $es) {
