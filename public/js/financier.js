@@ -1091,7 +1091,7 @@
     fetchGridSlice('cogs-grid', monthKey, function(err, data) {
       if (cogsGridLoading) cogsGridLoading.hidden = true;
       if (!err && data) {
-        renderPLGrid(cogsGridWrap, data);
+        renderCopPLGrid(cogsGridWrap, data);
       } else {
         cogsGridWrap.innerHTML = '<p class="fin-empty">Erreur chargement grille COGS (' + esc(String(err)) + ').</p>';
       }
