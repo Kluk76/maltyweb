@@ -20,6 +20,7 @@ declare(strict_types=1);
 
 require __DIR__ . '/../../app/auth.php';
 require_once __DIR__ . '/../../app/settings-helpers.php';
+require_once __DIR__ . '/../../app/settings.php';        // date_display_format() — used by the SKU-cost BOM freshness stamp
 require_once __DIR__ . '/../../app/kpi-handlers.php';
 
 require_page_access('financier');
