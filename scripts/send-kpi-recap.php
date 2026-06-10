@@ -126,9 +126,10 @@ foreach ($subs as $sub) {
         if (in_array($t['category'], ['cogs_finance', 'sales'], true) && $userRank < _role_rank_cli('manager')) {
             return false;
         }
-        // Skip stubbed domains (same list as mon-tableau)
-        $stubbedDomains = ['utilities','tanks','racking','packaging','fg_stock','sales','qa_qc','equipment','logistics'];
-        if (in_array($t['source_domain'], $stubbedDomains, true)) return false;
+        // Skip stubbed domains — read the canonical list from kpi-handlers.php
+        // (same source mon-tableau consumes), never a hardcoded copy. Returns []
+        // today; tracks future stub regressions automatically.
+        if (in_array($t['source_domain'], kpi_stub_domains(), true)) return false;
         return true;
     });
     $selectedTrackers = array_values($selectedTrackers);
