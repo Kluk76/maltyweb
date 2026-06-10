@@ -41,7 +41,7 @@ declare(strict_types=1);
 const KPI_ALLOWED_PERIODS = [
     'current_month', 'current_week', 'current_year',
     'latest_closed_month', 'rolling_3m', 'rolling_6m', 'rolling_12m',
-    'ytd',
+    'ytd', 'today',
 ];
 const KPI_ALLOWED_GROUPBY = [
     'classification', 'category', 'gl', 'sku', 'format', 'supplier',
@@ -191,6 +191,9 @@ function kpi_resolve_period(string $period): array
             $s = $now->modify('-12 months')->format('Y-m-d');
             $e = $now->format('Y-m-d');
             return ['start' => $s, 'end' => $e, 'label' => '12 derniers mois'];
+        case 'today':
+            $today = $now->format('Y-m-d');
+            return ['start' => $today, 'end' => $today, 'label' => $now->format('d.m.Y')];
         default:
             throw new RuntimeException("kpi: unsupported period token '{$period}'");
     }
@@ -228,7 +231,7 @@ function kpi_dispatch(array $tracker, PDO $pdo): array
             'cogs'         => kpi_handler_cogs($handler, $params, $label, $pdo),
             'wort'         => kpi_handler_wort($handler, $params, $label, $pdo),
             'rm_procurement' => kpi_handler_rm_procurement($handler, $params, $label, $pdo),
-            'utilities'    => kpi_stub_handler($domain, $handler, $label),
+            'utilities'    => kpi_handler_utilities($handler, $params, $label, $pdo),
             'tanks'        => kpi_handler_tanks($handler, $params, $label, $pdo),
             'racking'      => kpi_handler_racking($handler, $params, $label, $pdo),
             'packaging'    => kpi_handler_packaging($handler, $params, $label, $pdo),
@@ -255,7 +258,7 @@ function kpi_dispatch(array $tracker, PDO $pdo): array
  */
 function kpi_stub_domains(): array
 {
-    return ['utilities', 'sales', 'qa_qc', 'equipment', 'logistics'];
+    return ['sales', 'qa_qc', 'equipment', 'logistics'];
 }
 
 /**
@@ -1056,6 +1059,7 @@ function kpi_handler_wort(
         'avg_brew_duration'         => kpi_wort_avg_brew_duration($params, $label, $pdo),
         'ingredient_consumption_period' => kpi_wort_ingredient_consumption($params, $label, $pdo),
         'beer_loss_cascade'         => kpi_wort_beer_loss_cascade($params, $label, $pdo),
+        'daily_recap'               => kpi_wort_daily_recap($label, $pdo),
         // Confirmed stubs — source columns absent:
         'og_attainment'             => kpi_stub_handler('wort', $handler, $label),   // no target_og in ref_recipes
         'brewing_deviations'        => kpi_stub_handler('wort', $handler, $label),   // no deviations table/schema
@@ -1651,6 +1655,153 @@ function kpi_wort_beer_loss_cascade(array $params, string $label, PDO $pdo): arr
             'pkg_loss_hl'         => $pkgLoss,
             'total_loss_pct'      => $totalLossPct,
             'note'                => 'Pertes CCT+BBT chaînées par (recipe_id_fk, batch)',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+
+/** #270 — Brassage résumé du jour (recap)
+ *
+ * Combines three today-anchored sub-queries into one recap result:
+ *   1. HL brassés + brew count: bd_brewing_gravity_v2 Cooling rows submitted today,
+ *      split Neb/Contract via rr.classification. Keyed on (recipe_id_fk, batch).
+ *   2. HL transférés aujourd'hui: bd_racking_v2 event_date=CURDATE(), is_tombstoned=0.
+ *      Keyed on (neb_recipe_id_fk|contract_recipe_id_fk, batch).
+ *   3. Dry-hop events aujourd'hui: bd_fermenting_v2 event_type='DryHop',
+ *      event_date=CURDATE(), is_tombstoned=0. COUNT only.
+ *   4. Cold-crash events aujourd'hui: same table, event_type='ColdCrash'.
+ *
+ * Returns recap shape:
+ *   value     = HL brassés today (primary headline)
+ *   meta.sections = [{label,value,unit,tint}] — headline metrics strip
+ *   breakdown = [{key,label,value,unit,meta}] — per-recipe/run-type rows
+ *
+ * Anchor note: brewed HL uses submitted_at (form submission time) as the date
+ * anchor, consistent with all other wort handlers (kpi_wort_base_sql).
+ * Transferred HL uses event_date (the physical racking date).
+ * The subtitle "(saisi aujourd'hui)" is rendered by renderKpiRecap() in the JS.
+ */
+function kpi_wort_daily_recap(string $label, PDO $pdo): array
+{
+    $today    = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format('Y-m-d');
+    $cacheKey = "wort_daily_recap_{$today}";
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    // 1. HL brassés today (Cooling rows, submitted_at anchor — matches kpi_wort_base_sql)
+    $base = kpi_wort_base_sql();
+    $stmtBrew = $pdo->prepare(
+        "SELECT ROUND(SUM(cl.final_volume), 1)                                         AS total_hl,
+                SUM(CASE WHEN rr.classification = 'Neb'      THEN cl.final_volume ELSE 0 END) AS neb_hl,
+                SUM(CASE WHEN rr.classification = 'Contract' THEN cl.final_volume ELSE 0 END) AS contract_hl,
+                COUNT(*)                                                                AS brew_count,
+                COUNT(DISTINCT cl.recipe_id_fk, cl.batch)                              AS brassin_count
+         {$base}
+           AND DATE(cl.submitted_at) = ?"
+    );
+    $stmtBrew->execute([$today]);
+    $brewRow = $stmtBrew->fetch(PDO::FETCH_ASSOC);
+
+    $hlBrewed    = (float) ($brewRow['total_hl']      ?? 0.0);
+    $hlNeb       = round((float) ($brewRow['neb_hl']      ?? 0.0), 1);
+    $hlContract  = round((float) ($brewRow['contract_hl'] ?? 0.0), 1);
+    $brewCount   = (int)   ($brewRow['brew_count']   ?? 0);
+    $brassinCount = (int)  ($brewRow['brassin_count'] ?? 0);
+
+    // 2. HL transférés today (bd_racking_v2 event_date)
+    $stmtRack = $pdo->prepare(
+        "SELECT ROUND(SUM(r.racked_vol_hl), 1)                                       AS total_hl,
+                COUNT(*)                                                               AS rack_count,
+                SUM(CASE WHEN rr1.classification = 'Neb'      THEN r.racked_vol_hl ELSE
+                    CASE WHEN rr2.classification = 'Neb'      THEN r.racked_vol_hl ELSE 0 END
+                    END)                                                               AS neb_hl,
+                SUM(CASE WHEN rr1.classification = 'Contract' THEN r.racked_vol_hl ELSE
+                    CASE WHEN rr2.classification = 'Contract' THEN r.racked_vol_hl ELSE 0 END
+                    END)                                                               AS contract_hl
+           FROM bd_racking_v2 r
+           LEFT JOIN ref_recipes rr1 ON rr1.id = r.neb_recipe_id_fk
+           LEFT JOIN ref_recipes rr2 ON rr2.id = r.contract_recipe_id_fk
+          WHERE r.is_tombstoned = 0
+            AND r.event_date = ?"
+    );
+    $stmtRack->execute([$today]);
+    $rackRow = $stmtRack->fetch(PDO::FETCH_ASSOC);
+
+    $hlRacked    = (float) ($rackRow['total_hl']   ?? 0.0);
+    $rackCount   = (int)   ($rackRow['rack_count'] ?? 0);
+
+    // 3. Dry-hop events today (bd_fermenting_v2)
+    $stmtDh = $pdo->prepare(
+        "SELECT COUNT(DISTINCT recipe_id_fk, batch) AS batch_count,
+                COUNT(*)                             AS event_count
+           FROM bd_fermenting_v2
+          WHERE is_tombstoned = 0
+            AND event_type    = 'DryHop'
+            AND event_date    = ?"
+    );
+    $stmtDh->execute([$today]);
+    $dhRow       = $stmtDh->fetch(PDO::FETCH_ASSOC);
+    $dhBatches   = (int) ($dhRow['batch_count'] ?? 0);
+    $dhEvents    = (int) ($dhRow['event_count'] ?? 0);
+
+    // 4. Cold-crash events today
+    $stmtCc = $pdo->prepare(
+        "SELECT COUNT(DISTINCT recipe_id_fk, batch) AS batch_count
+           FROM bd_fermenting_v2
+          WHERE is_tombstoned = 0
+            AND event_type    = 'ColdCrash'
+            AND event_date    = ?"
+    );
+    $stmtCc->execute([$today]);
+    $ccBatches = (int) ($stmtCc->fetchColumn() ?? 0);
+
+    // Sections (headline metrics strip)
+    $sections = [
+        ['label' => 'HL brassés (saisi aujourd\'hui)', 'value' => $hlBrewed,    'unit' => 'HL',      'tint' => 'neutral'],
+        ['label' => 'Brassins',                         'value' => $brassinCount, 'unit' => 'brassins','tint' => 'neutral'],
+        ['label' => 'HL transférés',                    'value' => $hlRacked,    'unit' => 'HL',      'tint' => 'neutral'],
+        ['label' => 'Transferts',                       'value' => $rackCount,   'unit' => 'mises',   'tint' => 'neutral'],
+    ];
+    if ($dhBatches > 0) {
+        $sections[] = ['label' => 'Brassins dry-hoppés', 'value' => $dhBatches, 'unit' => 'lots', 'tint' => 'neutral'];
+    }
+    if ($ccBatches > 0) {
+        $sections[] = ['label' => 'Cold crash démarrés', 'value' => $ccBatches, 'unit' => 'lots', 'tint' => 'neutral'];
+    }
+
+    // Breakdown (classification split for brewed + racked)
+    $breakdown = [];
+    if ($hlNeb > 0 || $hlContract > 0) {
+        if ($hlNeb > 0) {
+            $breakdown[] = ['key' => 'brew_neb',      'label' => 'Brassin Nébuleuse', 'value' => $hlNeb,     'unit' => 'HL'];
+        }
+        if ($hlContract > 0) {
+            $breakdown[] = ['key' => 'brew_contract',  'label' => 'Brassin Contract',  'value' => $hlContract, 'unit' => 'HL'];
+        }
+    }
+    if ($rackCount > 0) {
+        $breakdown[] = ['key' => 'rack_total', 'label' => 'Transfert BBT', 'value' => round($hlRacked, 1), 'unit' => 'HL'];
+    }
+    if ($dhEvents > 0) {
+        $breakdown[] = ['key' => 'dryhop', 'label' => 'Dry-hop (lots)', 'value' => $dhBatches, 'unit' => 'lots'];
+    }
+
+    $result = array_merge(kpi_empty_result($label, 'HL'), [
+        'value'     => $hlBrewed > 0 ? $hlBrewed : ($hlRacked > 0 ? $hlRacked : null),
+        'tint'      => 'neutral',
+        'breakdown' => $breakdown ?: null,
+        'meta'      => [
+            'sections'      => $sections,
+            'period_label'  => $today,
+            'brew_count'    => $brewCount,
+            'brassin_count' => $brassinCount,
+            'rack_count'    => $rackCount,
+            'dryhop_batches'=> $dhBatches,
+            'coldcrash_batches' => $ccBatches,
+            'today'         => $today,
         ],
     ]);
 
@@ -3439,6 +3590,7 @@ function kpi_handler_packaging(
         'avg_losses_per_sku'         => kpi_pkg_avg_losses_per_sku($params, $label, $pdo),
         'packaging_cost_per_unit'    => kpi_pkg_cost_per_unit($params, $label, $pdo),
         'packaging_material_consumption' => kpi_pkg_material_consumption($params, $label, $pdo),
+        'daily_recap'                => kpi_pkg_daily_recap($label, $pdo),
         // no plan/schedule source yet — stub until tank-sim port ships
         'suggested_packaging_events' => kpi_stub_handler('packaging', $handler, $label),
         // no planned-vs-actual data source — stub until packaging schedule exists
@@ -4283,6 +4435,311 @@ function kpi_pkg_cost_per_unit(array $params, string $label, PDO $pdo): array
             'period_label' => $p['label'],
             'sku_count'    => count($rows),
             'note'         => 'Coût matériaux packaging par unité vendue (BOM packaging, base WAC)',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+
+/** #271 — Packaging résumé du jour (recap)
+ *
+ * Today's packaging activity from bd_packaging_v2 (base table) + the vendable
+ * view, for base rows only (reuses_packaging_id_fk IS NULL, is_tombstoned=0).
+ *
+ * beer_loss_hl formula (CANONICAL per §PERTES-DASHBOARD):
+ *   beer_loss_hl = v.loss_kpi_hl + (b.loss_liquid_other_units / 100)
+ *   beer_loss_pct = 100 * beer_loss_hl / v.vendable_hl
+ * The loss_liquid_other_units/100 term is MANDATORY — omit and the % is ~10× low.
+ *
+ * Per-material loss rates (1:1 consumables only — honest denominator):
+ *   consumed ≈ good units produced + wasted (valid for label/crown_cork/can_lid/container).
+ *   For 4pack/* and wrap/* → raw count + pending_rate flag (never fabricate a denominator).
+ *   loss_keg_collar/loss_keg_save → historically 0, omitted when 0.
+ *
+ * keg/cuv branch: litre-native → loss_keg_liquid_l + taproom_keg_l, not unit-side.
+ *
+ * Sections: run count, vendable HL, beer loss %, material-loss headline.
+ * Breakdown: per-run (recipe/run_type) lines + per-material loss rows.
+ */
+function kpi_pkg_daily_recap(string $label, PDO $pdo): array
+{
+    $today    = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format('Y-m-d');
+    $cacheKey = "pkg_daily_recap_{$today}";
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    // Per-run summary: join base table (has event_date, loss cols, recipe_id_fk, run_type)
+    // with the vendable view (has vendable_hl, loss_kpi_hl). Filter on base table.
+    $stmtRuns = $pdo->prepare(
+        "SELECT b.id,
+                b.run_type,
+                b.recipe_id_fk,
+                COALESCE(rr.name, 'Inconnu')              AS recipe_name,
+                COALESCE(rr.classification, 'Neb')        AS classification,
+                v.vendable_hl,
+                v.loss_kpi_hl,
+                b.loss_liquid_other_units,
+                b.prod_total_units,
+                /* per-material 1:1 losses (unit-side; bot/can/can33 only) */
+                b.loss_label_btl_units,
+                b.loss_crown_cork_units,
+                b.loss_can_lid_units,
+                b.loss_container_btl_units,
+                b.loss_container_can_units,
+                /* 4pack / wrap — non-1:1: raw counts + pending_rate */
+                b.loss_4pack_btl_units,
+                b.loss_4pack_can_units,
+                b.loss_wrap_btl_units,
+                b.loss_wrap_can_units,
+                /* keg/cuv litre-side */
+                b.loss_keg_liquid_l,
+                b.taproom_keg_l,
+                /* keg collars — historically 0 but kept for completeness */
+                b.loss_keg_collar_units,
+                b.loss_keg_save_units
+           FROM bd_packaging_v2 b
+           JOIN v_bd_packaging_v2_vendable v ON v.id = b.id
+           LEFT JOIN ref_recipes rr ON rr.id = b.recipe_id_fk
+          WHERE b.is_tombstoned = 0
+            AND b.reuses_packaging_id_fk IS NULL
+            AND b.event_date = ?
+          ORDER BY b.id ASC"
+    );
+    $stmtRuns->execute([$today]);
+    $runs = $stmtRuns->fetchAll(PDO::FETCH_ASSOC);
+
+    if (empty($runs)) {
+        $result = array_merge(kpi_empty_result($label, 'runs'), [
+            'value'  => 0,
+            'tint'   => 'neutral',
+            'meta'   => [
+                'sections'    => [['label' => 'Runs aujourd\'hui', 'value' => 0, 'unit' => 'runs', 'tint' => 'neutral']],
+                'period_label' => $today,
+                'today'        => $today,
+            ],
+        ]);
+        return kpi_cache_set($cacheKey, $result);
+    }
+
+    // Aggregate totals
+    $totalVendableHl = 0.0;
+    $totalBeerLossHl = 0.0;
+    $runCount        = count($runs);
+
+    // Material loss accumulators
+    $matLabel     = 0;  // loss_label_btl_units
+    $matCrown     = 0;  // loss_crown_cork_units  — 1:1 with bottle
+    $matCanLid    = 0;  // loss_can_lid_units      — 1:1 with can
+    $matContBtl   = 0;  // loss_container_btl_units
+    $matContCan   = 0;  // loss_container_can_units
+    $mat4packBtl  = 0;  // loss_4pack_btl_units   — non-1:1
+    $mat4packCan  = 0;  // loss_4pack_can_units   — non-1:1
+    $matWrapBtl   = 0;  // loss_wrap_btl_units    — non-1:1
+    $matWrapCan   = 0;  // loss_wrap_can_units    — non-1:1
+    $matKegLiqL   = 0.0; // loss_keg_liquid_l (litres)
+    $matKegCollar = 0;  // loss_keg_collar_units (historically 0)
+
+    // For 1:1 rate denominators
+    $prodUnitsBtl = 0; // prod units for bottle runs
+    $prodUnitsCan = 0; // prod units for can/can33 runs
+
+    // Per-run breakdown rows
+    $perRunRows = [];
+
+    foreach ($runs as $r) {
+        $vendHl    = (float) ($r['vendable_hl'] ?? 0.0);
+        $lossKpiHl = (float) ($r['loss_kpi_hl'] ?? 0.0);
+        $lossOther = (float) ($r['loss_liquid_other_units'] ?? 0.0);
+        // Canonical beer loss formula from §PERTES-DASHBOARD:
+        $beerLossHl = $lossKpiHl + ($lossOther / 100.0);
+        $runType    = $r['run_type'] ?? 'bot';
+
+        $totalVendableHl += $vendHl;
+        $totalBeerLossHl += $beerLossHl;
+
+        // Accumulate material losses
+        $matLabel     += (int) ($r['loss_label_btl_units']    ?? 0);
+        $matCrown     += (int) ($r['loss_crown_cork_units']    ?? 0);
+        $matCanLid    += (int) ($r['loss_can_lid_units']       ?? 0);
+        $matContBtl   += (int) ($r['loss_container_btl_units'] ?? 0);
+        $matContCan   += (int) ($r['loss_container_can_units'] ?? 0);
+        $mat4packBtl  += (int) ($r['loss_4pack_btl_units']     ?? 0);
+        $mat4packCan  += (int) ($r['loss_4pack_can_units']     ?? 0);
+        $matWrapBtl   += (int) ($r['loss_wrap_btl_units']      ?? 0);
+        $matWrapCan   += (int) ($r['loss_wrap_can_units']      ?? 0);
+        $matKegLiqL   += (float) ($r['loss_keg_liquid_l']      ?? 0.0);
+        $matKegCollar += (int)   ($r['loss_keg_collar_units']  ?? 0);
+
+        if (in_array($runType, ['bot'], true)) {
+            $prodUnitsBtl += (int) ($r['prod_total_units'] ?? 0);
+        } elseif (in_array($runType, ['can', 'can33'], true)) {
+            $prodUnitsCan += (int) ($r['prod_total_units'] ?? 0);
+        }
+
+        // Per-run row for breakdown
+        $runLossPct = ($vendHl > 0) ? round(100.0 * $beerLossHl / $vendHl, 1) : null;
+        $perRunRows[] = [
+            'key'   => 'run_' . $r['id'],
+            'label' => $r['recipe_name'],
+            'value' => round($vendHl, 1),
+            'unit'  => 'HL',
+            'meta'  => [
+                'run_type'    => $runType,
+                'loss_pct'    => $runLossPct,
+                'beer_loss_hl'=> round($beerLossHl, 3),
+            ],
+        ];
+    }
+
+    $totalVendableHl = round($totalVendableHl, 1);
+    $totalBeerLossHl = round($totalBeerLossHl, 3);
+    $beerLossPct     = ($totalVendableHl > 0)
+        ? round(100.0 * $totalBeerLossHl / $totalVendableHl, 1)
+        : null;
+
+    // Material loss breakdown rows (1:1 rates, non-1:1 raw, suppress 0-values)
+    $matRows = [];
+
+    // 1:1 consumables — honest rate: wasted / (good + wasted)
+    // Étiquettes (label_btl)
+    if ($matLabel > 0) {
+        $denom = $prodUnitsBtl + $matLabel;
+        $matRows[] = [
+            'key'   => 'mat_label',
+            'label' => 'Étiquettes',
+            'value' => $matLabel,
+            'unit'  => 'u',
+            'meta'  => ['rate_pct' => $denom > 0 ? round(100.0 * $matLabel / $denom, 1) : null, 'rate_type' => '1:1'],
+        ];
+    }
+    // Capsules (crown corks) — 1:1 with bottle
+    if ($matCrown > 0) {
+        $denom = $prodUnitsBtl + $matCrown;
+        $matRows[] = [
+            'key'   => 'mat_crown',
+            'label' => 'Capsules',
+            'value' => $matCrown,
+            'unit'  => 'u',
+            'meta'  => ['rate_pct' => $denom > 0 ? round(100.0 * $matCrown / $denom, 1) : null, 'rate_type' => '1:1'],
+        ];
+    }
+    // Couvercles canette — 1:1 with can
+    if ($matCanLid > 0) {
+        $denom = $prodUnitsCan + $matCanLid;
+        $matRows[] = [
+            'key'   => 'mat_can_lid',
+            'label' => 'Couvercles canette',
+            'value' => $matCanLid,
+            'unit'  => 'u',
+            'meta'  => ['rate_pct' => $denom > 0 ? round(100.0 * $matCanLid / $denom, 1) : null, 'rate_type' => '1:1'],
+        ];
+    }
+    // Bouteilles perdues (container_btl) — 1:1
+    if ($matContBtl > 0) {
+        $denom = $prodUnitsBtl + $matContBtl;
+        $matRows[] = [
+            'key'   => 'mat_cont_btl',
+            'label' => 'Bouteilles',
+            'value' => $matContBtl,
+            'unit'  => 'u',
+            'meta'  => ['rate_pct' => $denom > 0 ? round(100.0 * $matContBtl / $denom, 1) : null, 'rate_type' => '1:1'],
+        ];
+    }
+    // Canettes perdues (container_can) — 1:1
+    if ($matContCan > 0) {
+        $denom = $prodUnitsCan + $matContCan;
+        $matRows[] = [
+            'key'   => 'mat_cont_can',
+            'label' => 'Canettes',
+            'value' => $matContCan,
+            'unit'  => 'u',
+            'meta'  => ['rate_pct' => $denom > 0 ? round(100.0 * $matContCan / $denom, 1) : null, 'rate_type' => '1:1'],
+        ];
+    }
+    // 4-packs (non-1:1) — raw count + pending_rate flag
+    if ($mat4packBtl > 0) {
+        $matRows[] = [
+            'key'   => 'mat_4pack_btl',
+            'label' => 'Packs bouteille',
+            'value' => $mat4packBtl,
+            'unit'  => 'u',
+            'meta'  => ['rate_type' => 'pending'],
+        ];
+    }
+    if ($mat4packCan > 0) {
+        $matRows[] = [
+            'key'   => 'mat_4pack_can',
+            'label' => 'Packs canette',
+            'value' => $mat4packCan,
+            'unit'  => 'u',
+            'meta'  => ['rate_type' => 'pending'],
+        ];
+    }
+    // Fardelage / wrap (non-1:1) — raw count + pending_rate flag
+    if ($matWrapBtl > 0) {
+        $matRows[] = [
+            'key'   => 'mat_wrap_btl',
+            'label' => 'Fardelage bouteille',
+            'value' => $matWrapBtl,
+            'unit'  => 'u',
+            'meta'  => ['rate_type' => 'pending'],
+        ];
+    }
+    if ($matWrapCan > 0) {
+        $matRows[] = [
+            'key'   => 'mat_wrap_can',
+            'label' => 'Fardelage canette',
+            'value' => $matWrapCan,
+            'unit'  => 'u',
+            'meta'  => ['rate_type' => 'pending'],
+        ];
+    }
+    // Keg liquid loss (litres) — litre-native
+    if ($matKegLiqL > 0.0) {
+        $matRows[] = [
+            'key'   => 'mat_keg_liq',
+            'label' => 'Perte liquide fût (L)',
+            'value' => round($matKegLiqL, 1),
+            'unit'  => 'L',
+            'meta'  => ['rate_type' => 'litre'],
+        ];
+    }
+    // Keg collars — suppress when 0 (historically unused)
+    if ($matKegCollar > 0) {
+        $matRows[] = [
+            'key'   => 'mat_keg_collar',
+            'label' => 'Capuchons fût',
+            'value' => $matKegCollar,
+            'unit'  => 'u',
+            'meta'  => ['rate_type' => '1:1'],
+        ];
+    }
+
+    // Sections (headline metrics strip)
+    $sections = [
+        ['label' => 'Runs aujourd\'hui',  'value' => $runCount,         'unit' => 'runs', 'tint' => 'neutral'],
+        ['label' => 'HL vendables',        'value' => $totalVendableHl,  'unit' => 'HL',   'tint' => 'neutral'],
+        ['label' => 'Perte bière',         'value' => $beerLossPct,      'unit' => '%',    'tint' => ($beerLossPct !== null && $beerLossPct > 3.0) ? 'amber' : 'neutral'],
+        ['label' => 'Perte bière (HL)',    'value' => $totalBeerLossHl,  'unit' => 'HL',   'tint' => 'neutral'],
+    ];
+
+    // Combined breakdown: per-run rows first, then material rows
+    $breakdown = array_merge($perRunRows, $matRows);
+
+    $result = array_merge(kpi_empty_result($label, 'runs'), [
+        'value'     => $runCount,
+        'tint'      => 'neutral',
+        'breakdown' => $breakdown ?: null,
+        'meta'      => [
+            'sections'        => $sections,
+            'period_label'    => $today,
+            'run_count'       => $runCount,
+            'vendable_hl'     => $totalVendableHl,
+            'beer_loss_hl'    => $totalBeerLossHl,
+            'beer_loss_pct'   => $beerLossPct,
+            'today'           => $today,
         ],
     ]);
 
@@ -6071,5 +6528,1151 @@ function kpi_fg_stock_variation(string $label, PDO $pdo): array
         ],
     ]);
 
+    return kpi_cache_set($cacheKey, $result);
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════════
+// HANDLER: utilities  (source_domain = 'utilities')
+//
+// Consumption metrics (#192–#194, #199–#200, #202, #210, #212): read from
+// inv_energydata (cumulative meter readings, monthly via LAG() window).
+//
+// Cost metrics (#195–#198, #201, #203, #211, #269): hybrid sources:
+//   • Fiscal totals (#198, #211) → interfaces/cogs-report-data.json (COP feed),
+//     which provides utilities.total + hlPackaged + totalVariables.total per month.
+//     The COP feed uses a tariff-based predictive model for gas/elec/water and is
+//     the same source shown on the COGS dashboard — reuse, don't reimpute.
+//   • Per-type costs (#195 electricity, #196 water, #197 gas) →
+//     inv_deliveries grouped by Utilities subcategory (actual booked HT CHF).
+//     These may lag by a billing cycle; shown with a note.
+//   • CO₂ purchased (#203) → inv_deliveries, cat='Process Chemical', subcat='Gas'.
+//
+// Sustainability stubs (#205–#209, #250): no canonical source yet — gap trackers.
+//
+// Data note: inv_energydata rows go to 2026-04; May/June show as "no data".
+// ═════════════════════════════════════════════════════════════════════════════
+
+function kpi_handler_utilities(
+    string $handler,
+    array  $params,
+    string $label,
+    PDO    $pdo
+): array {
+    return match ($handler) {
+        'electricity_kwh_month'          => kpi_util_electricity_kwh($label, $pdo),
+        'peak_demand_kw'                 => kpi_util_peak_demand_kw($label, $pdo),
+        'reactive_power_kvarch'          => kpi_util_reactive_power($label, $pdo),
+        'electricity_cost_month'         => kpi_util_electricity_cost($label, $pdo),
+        'water_consumption_cost'         => kpi_util_water_cost($label, $pdo),
+        'gas_consumption_cost'           => kpi_util_gas_cost($label, $pdo),
+        'energy_cost_per_hl'             => kpi_util_energy_cost_per_hl($label, $pdo),
+        'water_to_beer_ratio'            => kpi_util_water_to_beer_ratio($label, $pdo),
+        'kwh_per_hl_trend'               => kpi_util_kwh_per_hl_trend($label, $pdo),
+        'predictive_vs_actual_utilities' => kpi_util_cost_breakdown_bar($label, $pdo),
+        'reactive_penalty_risk'          => kpi_util_reactive_penalty_risk($label, $pdo),
+        'co2_purchased_cost'             => kpi_util_co2_purchased_cost($label, $pdo),
+        'peak_shaving_opportunity'       => kpi_util_peak_shaving_opportunity($label, $pdo),
+        'utility_cost_pct_cogs'          => kpi_util_cost_pct_cogs($label, $pdo),
+        'seasonal_energy_curve'          => kpi_util_seasonal_energy_curve($label, $pdo),
+        'mass_energy_water_balance'      => kpi_util_mass_energy_balance($label, $pdo),
+        // GAP: no canonical source exists yet
+        'co2_footprint_per_hl'           => kpi_util_stub_gap('co2_footprint_per_hl', $label,
+            'Empreinte carbone non calculée — aucun facteur d\'émission lié aux MIs ou à la consommation énergie'),
+        'spent_grain_volume'             => kpi_util_stub_gap('spent_grain_volume', $label,
+            'Volume drêches non enregistré — aucune table de traçabilité drêches/trub'),
+        'wastewater_load'                => kpi_util_stub_gap('wastewater_load', $label,
+            'Charge eaux usées non mesurée — aucun capteur/registre COD/BOD'),
+        'renewable_energy_pct'           => kpi_util_stub_gap('renewable_energy_pct', $label,
+            'Part renouvelable inconnue — aucun suivi source énergie (certificat origine SIE)'),
+        'heat_recovery'                  => kpi_util_stub_gap('heat_recovery', $label,
+            'Récupération chaleur non instrumentée — aucun compteur calories'),
+        'voc_tax_exposure'               => kpi_util_stub_gap('voc_tax_exposure', $label,
+            'Taxe COV incorporée dans le prix unitaire des chimies (convention maltytask) — pas de MI séparé ni de ligne distincte délivrée'),
+        'energy_per_equipment'           => kpi_util_stub_gap('energy_per_equipment', $label,
+            'Sous-comptage par équipement non installé — un seul compteur global SIE'),
+        default                          => kpi_stub_handler('utilities', $handler, $label),
+    };
+}
+
+/** Private: stub for utilities GAP trackers with a specific gap-reason note. */
+function kpi_util_stub_gap(string $handler, string $label, string $note): array
+{
+    $r = kpi_empty_result($label);
+    $r['meta'] = [
+        'stub'    => true,
+        'domain'  => 'utilities',
+        'handler' => $handler,
+        'note'    => $note,
+    ];
+    return $r;
+}
+
+// ─── Shared loader: inv_energydata monthly consumption (LAG delta) ────────────
+// Returns array keyed by period ('YYYY-MM'), each with:
+//   eau_m3, gaz_kwh, elec_jour_kwh, elec_nuit_kwh, elec_total_kwh,
+//   peak_kw (NULL when no SIE invoice), reactive_kvarh (NULL when no SIE invoice)
+
+function kpi_util_load_energydata(PDO $pdo): array
+{
+    $cacheKey = 'util_energydata_monthly';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $stmt = $pdo->query(
+        "SELECT
+            period,
+            eau_m3    - LAG(eau_m3)    OVER (ORDER BY period) AS eau_m3,
+            gaz_kwh   - LAG(gaz_kwh)   OVER (ORDER BY period) AS gaz_kwh,
+            elec_jour_kwh - LAG(elec_jour_kwh) OVER (ORDER BY period) AS elec_jour_kwh,
+            elec_nuit_kwh - LAG(elec_nuit_kwh) OVER (ORDER BY period) AS elec_nuit_kwh,
+            (elec_jour_kwh - LAG(elec_jour_kwh) OVER (ORDER BY period))
+            + (elec_nuit_kwh - LAG(elec_nuit_kwh) OVER (ORDER BY period)) AS elec_total_kwh,
+            peak_kw,
+            reactive_kvarh,
+            source
+         FROM inv_energydata
+         ORDER BY period"
+    );
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $out = [];
+    foreach ($rows as $row) {
+        if ($row['eau_m3'] === null && $row['gaz_kwh'] === null) {
+            continue; // first row — no prior period for delta
+        }
+        $out[$row['period']] = [
+            'eau_m3'         => $row['eau_m3']         !== null ? (float) $row['eau_m3']         : null,
+            'gaz_kwh'        => $row['gaz_kwh']         !== null ? (float) $row['gaz_kwh']         : null,
+            'elec_jour_kwh'  => $row['elec_jour_kwh']  !== null ? (float) $row['elec_jour_kwh']  : null,
+            'elec_nuit_kwh'  => $row['elec_nuit_kwh']  !== null ? (float) $row['elec_nuit_kwh']  : null,
+            'elec_total_kwh' => $row['elec_total_kwh'] !== null ? (float) $row['elec_total_kwh'] : null,
+            'peak_kw'        => $row['peak_kw']         !== null ? (float) $row['peak_kw']         : null,
+            'reactive_kvarh' => $row['reactive_kvarh'] !== null ? (float) $row['reactive_kvarh'] : null,
+            'source'         => $row['source'],
+        ];
+    }
+    return kpi_cache_set($cacheKey, $out);
+}
+
+// ─── Shared loader: COP feed (cogs-report-data.json) ─────────────────────────
+// Returns array keyed by period ('YYYY-MM'), each with:
+//   utilities_total (CHF), hl_packaged, total_variables (CHF)
+
+function kpi_util_load_cop_feed(): array
+{
+    $cacheKey = 'util_cop_feed';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $path = __DIR__ . '/../interfaces/cogs-report-data.json';
+    if (!file_exists($path)) {
+        return kpi_cache_set($cacheKey, []);
+    }
+    $raw = json_decode(file_get_contents($path), true);
+    if (!is_array($raw) || empty($raw['months'])) {
+        return kpi_cache_set($cacheKey, []);
+    }
+
+    $out = [];
+    foreach ($raw['months'] as $m) {
+        $mk = $m['monthKey'] ?? null;
+        if (!$mk) continue;
+        $cop = $m['cop'] ?? [];
+        // VPS JSON: utilities = {"total": float}
+        // Local dev JSON: utilities = {gas:{...}, electricity:{...}, subtotal:{...}}
+        $utilTotal = 0.0;
+        $ut = $cop['utilities'] ?? null;
+        if (is_array($ut)) {
+            $utilTotal = isset($ut['subtotal']['current']['total'])
+                ? (float) $ut['subtotal']['current']['total']
+                : (float) ($ut['total'] ?? 0);
+        }
+        $out[$mk] = [
+            'utilities_total' => $utilTotal,
+            'hl_packaged'     => (float) ($cop['hlPackaged'] ?? 0),
+            'total_variables' => (float) ($cop['totalVariables']['total'] ?? 0),
+        ];
+    }
+    return kpi_cache_set($cacheKey, $out);
+}
+
+// ─── Shared loader: inv_deliveries Utilities costs by subcategory ─────────────
+// Returns array keyed by period => subcat_name => total_chf
+
+function kpi_util_load_delivery_costs(PDO $pdo): array
+{
+    $cacheKey = 'util_delivery_costs';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $stmt = $pdo->query(
+        "SELECT
+            DATE_FORMAT(d.date_received, '%Y-%m') AS period,
+            sc.name                               AS subcat,
+            SUM(d.total_chf)                      AS total_chf
+         FROM inv_deliveries d
+         JOIN ref_mi mi              ON mi.id = d.ingredient_fk
+         JOIN ref_mi_categories c    ON c.id  = mi.category_id
+         JOIN ref_mi_subcategories sc ON sc.id = mi.subcategory_id
+         WHERE c.name  = 'Utilities'
+           AND sc.name IN ('Electricity', 'Gas', 'Water & Sewage', 'Waste')
+           AND d.status IN ('Active', 'Consumed')
+         GROUP BY DATE_FORMAT(d.date_received, '%Y-%m'), sc.name
+         ORDER BY period"
+    );
+    $out = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $out[$row['period']][$row['subcat']] = (float) $row['total_chf'];
+    }
+    return kpi_cache_set($cacheKey, $out);
+}
+
+/** Private: latest period key from energydata array. */
+function kpi_util_latest_energy_period(array $data): ?string
+{
+    return !empty($data) ? array_key_last($data) : null;
+}
+
+// ─── #192 — electricity_kwh_month ─────────────────────────────────────────────
+
+function kpi_util_electricity_kwh(string $label, PDO $pdo): array
+{
+    $cacheKey = 'util_elec_kwh';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $data    = kpi_util_load_energydata($pdo);
+    $periods = array_keys($data);
+    $latest  = kpi_util_latest_energy_period($data);
+
+    if (!$latest) {
+        return kpi_cache_set($cacheKey, array_merge(kpi_empty_result($label, 'kWh'), [
+            'meta' => ['note' => 'Aucune donnée compteur dans inv_energydata'],
+        ]));
+    }
+
+    $current  = $data[$latest]['elec_total_kwh'];
+    $priorIdx = array_search($latest, $periods) - 1;
+    $priorKey = $priorIdx >= 0 ? $periods[$priorIdx] : null;
+    $prior    = $priorKey ? ($data[$priorKey]['elec_total_kwh'] ?? null) : null;
+    $delta    = ($current !== null && $prior !== null && $prior > 0)
+        ? round(($current - $prior) / $prior * 100, 1) : null;
+
+    $tint = match (true) {
+        $current === null => 'neutral',
+        $delta === null   => 'neutral',
+        $delta > 10       => 'red',
+        $delta > 0        => 'amber',
+        default           => 'green',
+    };
+
+    $result = array_merge(kpi_empty_result($label, 'kWh'), [
+        'value'       => $current !== null ? (int) round($current) : null,
+        'delta'       => $delta,
+        'delta_label' => 'vs mois précédent (%)',
+        'tint'        => $tint,
+        'meta'        => [
+            'period'    => $latest,
+            'jour_kwh'  => $data[$latest]['elec_jour_kwh'] !== null ? (int) round($data[$latest]['elec_jour_kwh']) : null,
+            'nuit_kwh'  => $data[$latest]['elec_nuit_kwh'] !== null ? (int) round($data[$latest]['elec_nuit_kwh']) : null,
+            'source'    => 'inv_energydata (index compteur SIE)',
+            'data_note' => 'Dernière donnée disponible : ' . $latest,
+        ],
+    ]);
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #193 — peak_demand_kw ────────────────────────────────────────────────────
+
+function kpi_util_peak_demand_kw(string $label, PDO $pdo): array
+{
+    $cacheKey = 'util_peak_kw';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $data = kpi_util_load_energydata($pdo);
+    if (empty($data)) {
+        return kpi_cache_set($cacheKey, array_merge(kpi_empty_result($label, 'kW'), [
+            'meta' => ['note' => 'Aucune donnée dans inv_energydata'],
+        ]));
+    }
+
+    $peakPeriod = null;
+    $peakVal    = null;
+    foreach (array_reverse(array_keys($data)) as $p) {
+        if ($data[$p]['peak_kw'] !== null) {
+            $peakPeriod = $p;
+            $peakVal    = $data[$p]['peak_kw'];
+            break;
+        }
+    }
+
+    if ($peakVal === null) {
+        return kpi_cache_set($cacheKey, array_merge(kpi_empty_result($label, 'kW'), [
+            'meta' => ['note' => 'Aucun pic de puissance enregistré — requiert facture SIE ingérée'],
+        ]));
+    }
+
+    $peakVals = array_filter(array_column($data, 'peak_kw'), fn($v) => $v !== null);
+    $rolling6 = count($peakVals) >= 2
+        ? array_sum(array_slice($peakVals, -6)) / min(6, count($peakVals))
+        : null;
+
+    $delta = ($rolling6 !== null && $rolling6 > 0)
+        ? round(($peakVal - $rolling6) / $rolling6 * 100, 1) : null;
+
+    $tint = match (true) {
+        $delta === null => 'neutral',
+        $delta > 15     => 'red',
+        $delta > 5      => 'amber',
+        default         => 'green',
+    };
+
+    $result = array_merge(kpi_empty_result($label, 'kW'), [
+        'value'       => round($peakVal, 1),
+        'delta'       => $delta,
+        'delta_label' => 'vs moy. 6 mois (%)',
+        'tint'        => $tint,
+        'meta'        => [
+            'period'           => $peakPeriod,
+            'rolling6_mean_kw' => $rolling6 !== null ? round($rolling6, 1) : null,
+            'peak_count'       => count($peakVals),
+            'source'           => 'inv_energydata.peak_kw (facture SIE)',
+            'data_note'        => 'Disponible uniquement sur mois avec facture SIE ingérée',
+        ],
+    ]);
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #194 — reactive_power_kvarch ────────────────────────────────────────────
+
+function kpi_util_reactive_power(string $label, PDO $pdo): array
+{
+    $cacheKey = 'util_reactive_kvarh';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $data      = kpi_util_load_energydata($pdo);
+    $period    = null;
+    $reactVal  = null;
+    $peakVal   = null;
+    foreach (array_reverse(array_keys($data)) as $p) {
+        if ($data[$p]['reactive_kvarh'] !== null) {
+            $period   = $p;
+            $reactVal = $data[$p]['reactive_kvarh'];
+            $peakVal  = $data[$p]['peak_kw'];
+            break;
+        }
+    }
+
+    if ($reactVal === null) {
+        return kpi_cache_set($cacheKey, array_merge(kpi_empty_result($label, 'kVArh'), [
+            'meta' => ['note' => 'Aucune donnée réactive — requiert facture SIE ingérée'],
+        ]));
+    }
+
+    $elecKwh     = $data[$period]['elec_total_kwh'] ?? null;
+    $powerFactor = null;
+    if ($elecKwh !== null && $elecKwh > 0) {
+        $powerFactor = round($elecKwh / sqrt($elecKwh ** 2 + $reactVal ** 2), 3);
+    }
+
+    $tint = match (true) {
+        $powerFactor === null => 'neutral',
+        $powerFactor < 0.85   => 'red',
+        $powerFactor < 0.90   => 'amber',
+        default               => 'green',
+    };
+
+    $result = array_merge(kpi_empty_result($label, 'kVArh'), [
+        'value' => (int) round($reactVal),
+        'tint'  => $tint,
+        'meta'  => [
+            'period'       => $period,
+            'peak_kw'      => $peakVal !== null ? round($peakVal, 1) : null,
+            'power_factor' => $powerFactor,
+            'elec_kwh'     => $elecKwh !== null ? (int) round($elecKwh) : null,
+            'threshold'    => 'Pénalité probable si cos φ < 0.90 (SIE)',
+            'source'       => 'inv_energydata.reactive_kvarh (facture SIE)',
+        ],
+    ]);
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #195 — electricity_cost_month ────────────────────────────────────────────
+
+function kpi_util_electricity_cost(string $label, PDO $pdo): array
+{
+    $cacheKey = 'util_elec_cost';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $costs  = kpi_util_load_delivery_costs($pdo);
+    $latest = null;
+    $value  = null;
+    foreach (array_reverse(array_keys($costs)) as $p) {
+        if (isset($costs[$p]['Electricity'])) {
+            $latest = $p;
+            $value  = $costs[$p]['Electricity'];
+            break;
+        }
+    }
+
+    if ($latest === null) {
+        return kpi_cache_set($cacheKey, array_merge(kpi_empty_result($label, 'CHF'), [
+            'meta' => ['note' => 'Aucune facture électricité dans inv_deliveries'],
+        ]));
+    }
+
+    $prior    = null;
+    $priorKey = null;
+    $found    = false;
+    foreach (array_reverse(array_keys($costs)) as $p) {
+        if ($found && isset($costs[$p]['Electricity'])) {
+            $priorKey = $p;
+            $prior    = $costs[$p]['Electricity'];
+            break;
+        }
+        if ($p === $latest) $found = true;
+    }
+
+    $delta = ($prior !== null && $prior > 0) ? round(($value - $prior) / $prior * 100, 1) : null;
+
+    $result = array_merge(kpi_empty_result($label, 'CHF'), [
+        'value'       => round($value, 2),
+        'delta'       => $delta,
+        'delta_label' => 'vs période précédente (%)',
+        'tint'        => 'neutral',
+        'meta'        => [
+            'period'    => $latest,
+            'source'    => 'inv_deliveries (Utilities / Electricity, HT)',
+            'data_note' => 'Coût comptabilisé à la date de réception facture — peut décaler d\'un mois vs consommation',
+        ],
+    ]);
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #196 — water_consumption_cost ───────────────────────────────────────────
+
+function kpi_util_water_cost(string $label, PDO $pdo): array
+{
+    $cacheKey = 'util_water_cost';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $energy     = kpi_util_load_energydata($pdo);
+    $costs      = kpi_util_load_delivery_costs($pdo);
+    $latest     = kpi_util_latest_energy_period($energy);
+    $costPeriod = null;
+    $costValue  = null;
+    foreach (array_reverse(array_keys($costs)) as $p) {
+        if (isset($costs[$p]['Water & Sewage'])) {
+            $costPeriod = $p;
+            $costValue  = $costs[$p]['Water & Sewage'];
+            break;
+        }
+    }
+
+    $eauM3 = ($latest && isset($energy[$latest])) ? $energy[$latest]['eau_m3'] : null;
+
+    if ($eauM3 === null && $costValue === null) {
+        return kpi_cache_set($cacheKey, array_merge(kpi_empty_result($label, 'm³'), [
+            'meta' => ['note' => 'Aucune donnée eau dans inv_energydata ou inv_deliveries'],
+        ]));
+    }
+
+    $result = array_merge(kpi_empty_result($label, 'm³'), [
+        'value' => $eauM3 !== null ? (int) round($eauM3) : null,
+        'tint'  => 'neutral',
+        'meta'  => [
+            'meter_period' => $latest,
+            'eau_m3'       => $eauM3 !== null ? round($eauM3, 1) : null,
+            'cost_chf'     => $costValue !== null ? round($costValue, 2) : null,
+            'cost_period'  => $costPeriod,
+            'source_meter' => 'inv_energydata (compteur SIL)',
+            'source_cost'  => 'inv_deliveries (Utilities / Water & Sewage, HT)',
+            'data_note'    => 'Dernière donnée compteur : ' . ($latest ?? 'N/A'),
+        ],
+    ]);
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #197 — gas_consumption_cost ─────────────────────────────────────────────
+
+function kpi_util_gas_cost(string $label, PDO $pdo): array
+{
+    $cacheKey = 'util_gas_cost';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $energy     = kpi_util_load_energydata($pdo);
+    $costs      = kpi_util_load_delivery_costs($pdo);
+    $latest     = kpi_util_latest_energy_period($energy);
+    $gazKwh     = ($latest && isset($energy[$latest])) ? $energy[$latest]['gaz_kwh'] : null;
+    $costPeriod = null;
+    $costValue  = null;
+    foreach (array_reverse(array_keys($costs)) as $p) {
+        if (isset($costs[$p]['Gas'])) {
+            $costPeriod = $p;
+            $costValue  = $costs[$p]['Gas'];
+            break;
+        }
+    }
+
+    if ($gazKwh === null && $costValue === null) {
+        return kpi_cache_set($cacheKey, array_merge(kpi_empty_result($label, 'kWh'), [
+            'meta' => ['note' => 'Aucune donnée gaz dans inv_energydata ou inv_deliveries'],
+        ]));
+    }
+
+    $result = array_merge(kpi_empty_result($label, 'kWh'), [
+        'value' => $gazKwh !== null ? (int) round($gazKwh) : null,
+        'tint'  => 'neutral',
+        'meta'  => [
+            'meter_period' => $latest,
+            'gaz_kwh'      => $gazKwh !== null ? round($gazKwh, 1) : null,
+            'cost_chf'     => $costValue !== null ? round($costValue, 2) : null,
+            'cost_period'  => $costPeriod,
+            'source_meter' => 'inv_energydata (compteur SIL)',
+            'source_cost'  => 'inv_deliveries (Utilities / Gas, HT)',
+            'data_note'    => 'Dernière donnée compteur : ' . ($latest ?? 'N/A'),
+        ],
+    ]);
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #198 — energy_cost_per_hl ────────────────────────────────────────────────
+
+function kpi_util_energy_cost_per_hl(string $label, PDO $pdo): array
+{
+    $cacheKey = 'util_energy_cost_hl';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $cop    = kpi_util_load_cop_feed();
+    $latest = !empty($cop) ? array_key_last($cop) : null;
+
+    if (!$latest || $cop[$latest]['hl_packaged'] <= 0) {
+        return kpi_cache_set($cacheKey, array_merge(kpi_empty_result($label, 'CHF/HL'), [
+            'meta' => ['note' => 'COP feed non disponible ou HL packagé = 0'],
+        ]));
+    }
+
+    $utilTotal = $cop[$latest]['utilities_total'];
+    $hlPack    = $cop[$latest]['hl_packaged'];
+    $perHL     = $hlPack > 0 ? round($utilTotal / $hlPack, 2) : null;
+
+    $periods  = array_keys($cop);
+    $priorIdx = array_search($latest, $periods) - 1;
+    $delta    = null;
+    if ($priorIdx >= 0) {
+        $prior = $cop[$periods[$priorIdx]];
+        if ($prior['hl_packaged'] > 0) {
+            $priorPerHL = $prior['utilities_total'] / $prior['hl_packaged'];
+            $delta = ($perHL !== null && $priorPerHL > 0)
+                ? round(($perHL - $priorPerHL) / $priorPerHL * 100, 1) : null;
+        }
+    }
+
+    $tint  = match (true) {
+        $perHL === null => 'neutral',
+        $delta === null => 'neutral',
+        $delta > 10     => 'red',
+        $delta > 3      => 'amber',
+        default         => 'green',
+    };
+    $recon = isset($cop['2026-04'])
+        ? '2026-04: ' . $cop['2026-04']['utilities_total'] . ' CHF ÷ ' . $cop['2026-04']['hl_packaged']
+          . ' HL = ' . round($cop['2026-04']['utilities_total'] / max($cop['2026-04']['hl_packaged'], 0.01), 2) . ' CHF/HL'
+        : '';
+
+    $result = array_merge(kpi_empty_result($label, 'CHF/HL'), [
+        'value'       => $perHL,
+        'delta'       => $delta,
+        'delta_label' => 'vs mois précédent (%)',
+        'tint'        => $tint,
+        'meta'        => [
+            'period'         => $latest,
+            'utilities_chf'  => round($utilTotal, 2),
+            'hl_packaged'    => round($hlPack, 1),
+            'source'         => 'COP feed (cogs-report-data.json, utilities.total ÷ cop.hlPackaged)',
+            'reconciliation' => $recon,
+        ],
+    ]);
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #199 — water_to_beer_ratio ───────────────────────────────────────────────
+
+function kpi_util_water_to_beer_ratio(string $label, PDO $pdo): array
+{
+    $cacheKey = 'util_water_beer_ratio';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $energy = kpi_util_load_energydata($pdo);
+    $latest = kpi_util_latest_energy_period($energy);
+
+    if (!$latest || $energy[$latest]['eau_m3'] === null) {
+        return kpi_cache_set($cacheKey, array_merge(kpi_empty_result($label, 'm³/HL'), [
+            'meta' => ['note' => 'Aucune donnée compteur eau pour le calcul du ratio'],
+        ]));
+    }
+
+    $eauM3 = $energy[$latest]['eau_m3'];
+    $stmt  = $pdo->prepare(
+        "SELECT COALESCE(SUM(p.vendable_hl), 0) AS hl_packaged
+           FROM bd_packaging_v2 p
+          WHERE p.is_tombstoned = 0
+            AND DATE_FORMAT(p.event_date, '%Y-%m') = ?"
+    );
+    $stmt->execute([$latest]);
+    $hlPack = (float) ($stmt->fetchColumn() ?? 0);
+
+    if ($hlPack <= 0) {
+        return kpi_cache_set($cacheKey, array_merge(kpi_empty_result($label, 'm³/HL'), [
+            'meta' => [
+                'period'      => $latest,
+                'eau_m3'      => round($eauM3, 1),
+                'hl_packaged' => 0,
+                'note'        => 'HL packagé = 0 — ratio non calculable',
+            ],
+        ]));
+    }
+
+    $ratio   = round($eauM3 / $hlPack, 3);
+    $periods = array_keys($energy);
+    $idx     = array_search($latest, $periods);
+    $delta   = null;
+    if ($idx > 0) {
+        $prevPeriod = $periods[$idx - 1];
+        $prevEau    = $energy[$prevPeriod]['eau_m3'];
+        if ($prevEau !== null) {
+            $stmt2 = $pdo->prepare(
+                "SELECT COALESCE(SUM(p.vendable_hl), 0) AS hl_packaged
+                   FROM bd_packaging_v2 p
+                  WHERE p.is_tombstoned = 0
+                    AND DATE_FORMAT(p.event_date, '%Y-%m') = ?"
+            );
+            $stmt2->execute([$prevPeriod]);
+            $prevHL = (float) ($stmt2->fetchColumn() ?? 0);
+            if ($prevHL > 0) {
+                $delta = round(($ratio - $prevEau / $prevHL) / ($prevEau / $prevHL) * 100, 1);
+            }
+        }
+    }
+
+    $tint = match (true) {
+        $delta === null => 'neutral',
+        $delta > 10     => 'red',
+        $delta > 3      => 'amber',
+        default         => 'green',
+    };
+
+    $result = array_merge(kpi_empty_result($label, 'm³/HL'), [
+        'value'       => $ratio,
+        'delta'       => $delta,
+        'delta_label' => 'vs mois précédent (%)',
+        'tint'        => $tint,
+        'meta'        => [
+            'period'       => $latest,
+            'eau_m3'       => round($eauM3, 1),
+            'hl_packaged'  => round($hlPack, 1),
+            'source_meter' => 'inv_energydata (compteur SIL)',
+            'source_hl'    => 'bd_packaging_v2 (vendable_hl)',
+        ],
+    ]);
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #200 — kwh_per_hl_trend ──────────────────────────────────────────────────
+
+function kpi_util_kwh_per_hl_trend(string $label, PDO $pdo): array
+{
+    $cacheKey = 'util_kwh_hl_trend';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $energy = kpi_util_load_energydata($pdo);
+    if (empty($energy)) {
+        return kpi_cache_set($cacheKey, array_merge(kpi_empty_result($label, 'kWh/HL'), [
+            'meta' => ['note' => 'Aucune donnée compteur'],
+        ]));
+    }
+
+    $periods      = array_slice(array_keys($energy), -12);
+    $placeholders = implode(',', array_fill(0, count($periods), '?'));
+    $stmt = $pdo->prepare(
+        "SELECT DATE_FORMAT(p.event_date, '%Y-%m') AS period,
+                SUM(p.vendable_hl)                 AS hl_packaged
+           FROM bd_packaging_v2 p
+          WHERE p.is_tombstoned = 0
+            AND DATE_FORMAT(p.event_date, '%Y-%m') IN ({$placeholders})
+          GROUP BY DATE_FORMAT(p.event_date, '%Y-%m')"
+    );
+    $stmt->execute($periods);
+    $hlByPeriod = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $hlByPeriod[$row['period']] = (float) $row['hl_packaged'];
+    }
+
+    $series    = [];
+    $latestVal = null;
+    foreach ($periods as $p) {
+        $kwh = $energy[$p]['elec_total_kwh'];
+        $hl  = $hlByPeriod[$p] ?? 0;
+        if ($kwh !== null && $hl > 0) {
+            $ratio     = round($kwh / $hl, 2);
+            $series[]  = ['period' => $p, 'value' => $ratio];
+            $latestVal = $ratio;
+        }
+    }
+
+    $latestPeriod = !empty($series) ? end($series)['period'] : null;
+    $result = array_merge(kpi_empty_result($label, 'kWh/HL'), [
+        'value'  => $latestVal,
+        'series' => $series,
+        'tint'   => 'neutral',
+        'meta'   => [
+            'latest_period' => $latestPeriod,
+            'data_points'   => count($series),
+            'source_kwh'    => 'inv_energydata (index SIE, delta mensuel)',
+            'source_hl'     => 'bd_packaging_v2 (vendable_hl)',
+        ],
+    ]);
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #201 — predictive_vs_actual_utilities ────────────────────────────────────
+
+function kpi_util_cost_breakdown_bar(string $label, PDO $pdo): array
+{
+    $cacheKey = 'util_cost_bar';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $cop     = kpi_util_load_cop_feed();
+    $periods = array_slice(array_keys($cop), -6);
+
+    if (empty($periods)) {
+        return kpi_cache_set($cacheKey, array_merge(kpi_empty_result($label, 'CHF'), [
+            'meta' => ['note' => 'COP feed non disponible'],
+        ]));
+    }
+
+    $series = [];
+    foreach ($periods as $p) {
+        $series[] = ['period' => $p, 'value' => round((float) $cop[$p]['utilities_total'], 2)];
+    }
+
+    $latest     = end($periods);
+    $latestVal  = $cop[$latest]['utilities_total'];
+    $allPeriods = array_keys($cop);
+    $priorPos   = array_search($latest, $allPeriods) - 1;
+    $priorVal   = $priorPos >= 0 ? $cop[$allPeriods[$priorPos]]['utilities_total'] : null;
+    $delta      = ($priorVal !== null && $priorVal > 0)
+        ? round(($latestVal - $priorVal) / $priorVal * 100, 1) : null;
+
+    $result = array_merge(kpi_empty_result($label, 'CHF'), [
+        'value'       => round($latestVal, 2),
+        'delta'       => $delta,
+        'delta_label' => 'vs mois précédent (%)',
+        'series'      => $series,
+        'tint'        => 'neutral',
+        'meta'        => [
+            'latest_period' => $latest,
+            'source'        => 'COP feed (cogs-report-data.json, utilities.total — modèle prédictif SIE)',
+            'note'          => '6 derniers mois clôturés. Total coûts = gaz + électricité + eau/assainissement HT.',
+        ],
+    ]);
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #202 — reactive_penalty_risk ────────────────────────────────────────────
+
+function kpi_util_reactive_penalty_risk(string $label, PDO $pdo): array
+{
+    $cacheKey = 'util_reactive_penalty';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $data       = kpi_util_load_energydata($pdo);
+    $period     = null;
+    $reactKVArh = null;
+    $elecKwh    = null;
+    foreach (array_reverse(array_keys($data)) as $p) {
+        if ($data[$p]['reactive_kvarh'] !== null) {
+            $period     = $p;
+            $reactKVArh = $data[$p]['reactive_kvarh'];
+            $elecKwh    = $data[$p]['elec_total_kwh'];
+            break;
+        }
+    }
+
+    if ($reactKVArh === null || $elecKwh === null || $elecKwh <= 0) {
+        return kpi_cache_set($cacheKey, array_merge(kpi_empty_result($label), [
+            'value' => null, 'tint' => 'neutral',
+            'meta'  => ['note' => 'Données réactives insuffisantes — requiert facture SIE ingérée'],
+        ]));
+    }
+
+    $ratio    = $reactKVArh / $elecKwh;
+    $atRisk   = $ratio > 0.60;
+    $highRisk = $ratio > 0.75;
+
+    $tint = match (true) {
+        $highRisk => 'red',
+        $atRisk   => 'amber',
+        default   => 'green',
+    };
+
+    $result = array_merge(kpi_empty_result($label), [
+        'value' => $atRisk ? 1 : 0,
+        'unit'  => $atRisk ? 'RISQUE' : 'OK',
+        'tint'  => $tint,
+        'meta'  => [
+            'period'         => $period,
+            'reactive_kvarh' => (int) round($reactKVArh),
+            'elec_kwh'       => (int) round($elecKwh),
+            'ratio_pct'      => round($ratio * 100, 1),
+            'threshold_pct'  => 60,
+            'at_risk'        => $atRisk,
+            'source'         => 'inv_energydata (facture SIE)',
+            'note'           => 'Pénalité SIE si kVArh/kWh > 60% (cos φ < 0.857)',
+        ],
+    ]);
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #203 — co2_purchased_cost ────────────────────────────────────────────────
+
+function kpi_util_co2_purchased_cost(string $label, PDO $pdo): array
+{
+    $cacheKey = 'util_co2_cost';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $stmt = $pdo->query(
+        "SELECT
+            DATE_FORMAT(d.date_received, '%Y-%m') AS period,
+            SUM(d.qty_delivered)                  AS total_qty,
+            ANY_VALUE(d.pricing_unit)             AS pricing_unit,
+            SUM(d.total_chf)                      AS total_chf
+         FROM inv_deliveries d
+         JOIN ref_mi mi               ON mi.id = d.ingredient_fk
+         JOIN ref_mi_categories c     ON c.id  = mi.category_id
+         JOIN ref_mi_subcategories sc ON sc.id = mi.subcategory_id
+         WHERE c.name  = 'Process Chemical'
+           AND sc.name = 'Gas'
+           AND d.status IN ('Active', 'Consumed')
+         GROUP BY DATE_FORMAT(d.date_received, '%Y-%m')
+         ORDER BY period DESC
+         LIMIT 1"
+    );
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$row) {
+        return kpi_cache_set($cacheKey, array_merge(kpi_empty_result($label, 'CHF'), [
+            'meta' => ['note' => 'Aucune livraison CO₂ dans inv_deliveries (cat=Process Chemical, subcat=Gas)'],
+        ]));
+    }
+
+    $stmt2 = $pdo->query(
+        "SELECT
+            DATE_FORMAT(d.date_received, '%Y-%m') AS period,
+            SUM(d.total_chf)                      AS total_chf
+         FROM inv_deliveries d
+         JOIN ref_mi mi               ON mi.id = d.ingredient_fk
+         JOIN ref_mi_categories c     ON c.id  = mi.category_id
+         JOIN ref_mi_subcategories sc ON sc.id = mi.subcategory_id
+         WHERE c.name  = 'Process Chemical'
+           AND sc.name = 'Gas'
+           AND d.status IN ('Active', 'Consumed')
+         GROUP BY DATE_FORMAT(d.date_received, '%Y-%m')
+         ORDER BY period DESC
+         LIMIT 6"
+    );
+    $seriesRows = array_reverse($stmt2->fetchAll(PDO::FETCH_ASSOC));
+    $series = array_map(
+        fn($r) => ['period' => $r['period'], 'value' => round((float) $r['total_chf'], 2)],
+        $seriesRows
+    );
+
+    $result = array_merge(kpi_empty_result($label, 'CHF'), [
+        'value'  => round((float) $row['total_chf'], 2),
+        'series' => $series,
+        'tint'   => 'neutral',
+        'meta'   => [
+            'period'       => $row['period'],
+            'total_qty'    => $row['total_qty'] !== null ? round((float) $row['total_qty'], 2) : null,
+            'pricing_unit' => $row['pricing_unit'],
+            'source'       => 'inv_deliveries (Process Chemical / Gas — PROC_CO2_*, PROC_ALIGAL2_*)',
+            'note'         => 'Inclut location réservoir + CO₂ liquide (Aligal 2). Hors CO₂ de fermentation endogène.',
+        ],
+    ]);
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #210 — peak_shaving_opportunity ─────────────────────────────────────────
+
+function kpi_util_peak_shaving_opportunity(string $label, PDO $pdo): array
+{
+    $cacheKey = 'util_peak_shaving';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $data        = kpi_util_load_energydata($pdo);
+    $peakHistory = [];
+    foreach ($data as $p => $row) {
+        if ($row['peak_kw'] !== null) {
+            $peakHistory[$p] = $row['peak_kw'];
+        }
+    }
+
+    if (count($peakHistory) < 2) {
+        return kpi_cache_set($cacheKey, array_merge(kpi_empty_result($label), [
+            'value' => null, 'tint' => 'neutral',
+            'meta'  => ['note' => 'Données pic insuffisantes (< 2 mois avec facture SIE)'],
+        ]));
+    }
+
+    $latestPeriod = array_key_last($peakHistory);
+    $latestPeak   = $peakHistory[$latestPeriod];
+    $priorVals    = array_slice(array_values($peakHistory), 0, -1);
+    $window       = array_slice($priorVals, -6);
+    $mean         = count($window) > 0 ? array_sum($window) / count($window) : null;
+    $opportunity  = ($mean !== null && $latestPeak > $mean * 1.10);
+    $pctAbove     = ($mean !== null && $mean > 0) ? round(($latestPeak - $mean) / $mean * 100, 1) : null;
+
+    $tint = match (true) {
+        $pctAbove === null => 'neutral',
+        $pctAbove > 20     => 'red',
+        $opportunity       => 'amber',
+        default            => 'green',
+    };
+
+    $result = array_merge(kpi_empty_result($label), [
+        'value' => $opportunity ? 1 : 0,
+        'unit'  => $opportunity ? 'OPPORTUNITÉ' : 'OK',
+        'tint'  => $tint,
+        'meta'  => [
+            'period'           => $latestPeriod,
+            'peak_kw'          => round($latestPeak, 1),
+            'rolling6_mean_kw' => $mean !== null ? round($mean, 1) : null,
+            'pct_above_mean'   => $pctAbove,
+            'threshold_pct'    => 10,
+            'source'           => 'inv_energydata.peak_kw',
+            'note'             => 'Pic > moy.6mois +10% → opportunité d\'écrêtage tarifaire',
+        ],
+    ]);
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #211 — utility_cost_pct_cogs ────────────────────────────────────────────
+
+function kpi_util_cost_pct_cogs(string $label, PDO $pdo): array
+{
+    $cacheKey = 'util_cost_pct_cogs';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $cop    = kpi_util_load_cop_feed();
+    $latest = !empty($cop) ? array_key_last($cop) : null;
+
+    if (!$latest || $cop[$latest]['total_variables'] <= 0) {
+        return kpi_cache_set($cacheKey, array_merge(kpi_empty_result($label, '%'), [
+            'meta' => ['note' => 'COP feed non disponible ou totalVariables = 0'],
+        ]));
+    }
+
+    $utilTotal = $cop[$latest]['utilities_total'];
+    $totalVar  = $cop[$latest]['total_variables'];
+    $pct       = $totalVar > 0 ? round($utilTotal / $totalVar * 100, 2) : null;
+
+    $periods  = array_keys($cop);
+    $priorIdx = array_search($latest, $periods) - 1;
+    $delta    = null;
+    if ($priorIdx >= 0) {
+        $prior    = $cop[$periods[$priorIdx]];
+        $priorPct = $prior['total_variables'] > 0
+            ? $prior['utilities_total'] / $prior['total_variables'] * 100 : null;
+        $delta = ($pct !== null && $priorPct !== null) ? round($pct - $priorPct, 2) : null;
+    }
+
+    $tint  = match (true) {
+        $pct === null => 'neutral',
+        $pct > 25     => 'red',
+        $pct > 20     => 'amber',
+        default       => 'green',
+    };
+    $recon = isset($cop['2026-04'])
+        ? '2026-04: ' . $cop['2026-04']['utilities_total'] . ' ÷ ' . $cop['2026-04']['total_variables']
+          . ' = ' . round($cop['2026-04']['utilities_total'] / max($cop['2026-04']['total_variables'], 0.01) * 100, 2) . '%'
+        : '';
+
+    $result = array_merge(kpi_empty_result($label, '%'), [
+        'value'       => $pct,
+        'delta'       => $delta,
+        'delta_label' => 'pts vs mois précédent',
+        'tint'        => $tint,
+        'meta'        => [
+            'period'         => $latest,
+            'utilities_chf'  => round($utilTotal, 2),
+            'total_var_chf'  => round($totalVar, 2),
+            'source'         => 'COP feed (utilities.total ÷ totalVariables.total)',
+            'reconciliation' => $recon,
+        ],
+    ]);
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #212 — seasonal_energy_curve ────────────────────────────────────────────
+
+function kpi_util_seasonal_energy_curve(string $label, PDO $pdo): array
+{
+    $cacheKey = 'util_seasonal_energy';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $energy = kpi_util_load_energydata($pdo);
+    if (empty($energy)) {
+        return kpi_cache_set($cacheKey, array_merge(kpi_empty_result($label, 'kWh'), [
+            'meta' => ['note' => 'Aucune donnée compteur'],
+        ]));
+    }
+
+    $periods = array_slice(array_keys($energy), -12);
+    $series  = [];
+    foreach ($periods as $p) {
+        $elec = $energy[$p]['elec_total_kwh'];
+        $gaz  = $energy[$p]['gaz_kwh'];
+        if ($elec !== null && $gaz !== null) {
+            $series[] = ['period' => $p, 'value' => (int) round($elec + $gaz)];
+        } elseif ($elec !== null) {
+            $series[] = ['period' => $p, 'value' => (int) round($elec)];
+        }
+    }
+
+    $latestEntry = !empty($series) ? end($series) : null;
+    $result = array_merge(kpi_empty_result($label, 'kWh'), [
+        'value'  => $latestEntry ? $latestEntry['value'] : null,
+        'series' => $series,
+        'tint'   => 'neutral',
+        'meta'   => [
+            'latest_period' => $latestEntry ? $latestEntry['period'] : null,
+            'data_points'   => count($series),
+            'source'        => 'inv_energydata (gaz_kwh + elec_jour_kwh + elec_nuit_kwh, delta mensuel)',
+            'note'          => 'Courbe saisonnière 12 mois — gaz + électricité combinés',
+        ],
+    ]);
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #269 — mass_energy_water_balance ────────────────────────────────────────
+
+function kpi_util_mass_energy_balance(string $label, PDO $pdo): array
+{
+    $cacheKey = 'util_mass_energy_balance';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $energy = kpi_util_load_energydata($pdo);
+    $latest = kpi_util_latest_energy_period($energy);
+
+    if (!$latest) {
+        return kpi_cache_set($cacheKey, array_merge(kpi_empty_result($label), [
+            'meta' => ['note' => 'Aucune donnée compteur disponible'],
+        ]));
+    }
+
+    $row = $energy[$latest];
+
+    // HL brewed from bd_brewing_gravity_v2 Cooling (submitted_at keyed, matches COP)
+    $stmt = $pdo->prepare(
+        "SELECT COALESCE(SUM(g.final_volume), 0) AS hl_brewed
+           FROM bd_brewing_gravity_v2 g
+          WHERE g.is_tombstoned = 0
+            AND g.event_type    = 'Cooling'
+            AND DATE_FORMAT(g.submitted_at, '%Y-%m') = ?"
+    );
+    $stmt->execute([$latest]);
+    $hlBrewed = (float) ($stmt->fetchColumn() ?? 0);
+
+    // HL packaged from bd_packaging_v2
+    $stmt2 = $pdo->prepare(
+        "SELECT COALESCE(SUM(p.vendable_hl), 0) AS hl_packaged
+           FROM bd_packaging_v2 p
+          WHERE p.is_tombstoned = 0
+            AND DATE_FORMAT(p.event_date, '%Y-%m') = ?"
+    );
+    $stmt2->execute([$latest]);
+    $hlPackaged = (float) ($stmt2->fetchColumn() ?? 0);
+
+    $yieldLoss = $hlBrewed > 0 ? round($hlBrewed - $hlPackaged, 1) : null;
+    $yieldPct  = ($hlBrewed > 0 && $hlPackaged > 0)
+        ? round($hlPackaged / $hlBrewed * 100, 1) : null;
+
+    $breakdown = [];
+    if ($hlBrewed > 0) {
+        $breakdown[] = ['key' => 'hl_brewed',   'label' => 'HL brassé',          'value' => round($hlBrewed, 1)];
+    }
+    if ($hlPackaged > 0) {
+        $breakdown[] = ['key' => 'hl_packaged', 'label' => 'HL emballé (livré)', 'value' => round($hlPackaged, 1)];
+    }
+    if ($yieldLoss !== null) {
+        $breakdown[] = ['key' => 'yield_loss',  'label' => 'Perte process (HL)', 'value' => $yieldLoss];
+    }
+    if ($row['eau_m3'] !== null) {
+        $breakdown[] = ['key' => 'eau_m3',      'label' => 'Eau consommée (m³)', 'value' => round($row['eau_m3'], 1)];
+    }
+    if ($row['elec_total_kwh'] !== null) {
+        $breakdown[] = ['key' => 'elec_kwh',    'label' => 'Électricité (kWh)',  'value' => (int) round($row['elec_total_kwh'])];
+    }
+    if ($row['gaz_kwh'] !== null) {
+        $breakdown[] = ['key' => 'gaz_kwh',     'label' => 'Gaz (kWh)',          'value' => (int) round($row['gaz_kwh'])];
+    }
+
+    $result = array_merge(kpi_empty_result($label), [
+        'value'     => $yieldPct,
+        'unit'      => '% rendement',
+        'breakdown' => $breakdown,
+        'tint'      => match (true) {
+            $yieldPct === null => 'neutral',
+            $yieldPct >= 90.0  => 'green',
+            $yieldPct >= 85.0  => 'amber',
+            default            => 'red',
+        },
+        'meta'      => [
+            'period'         => $latest,
+            'hl_brewed'      => round($hlBrewed, 1),
+            'hl_packaged'    => round($hlPackaged, 1),
+            'yield_pct'      => $yieldPct,
+            'eau_m3'         => $row['eau_m3'] !== null ? round($row['eau_m3'], 1) : null,
+            'elec_total_kwh' => $row['elec_total_kwh'] !== null ? (int) round($row['elec_total_kwh']) : null,
+            'gaz_kwh'        => $row['gaz_kwh'] !== null ? (int) round($row['gaz_kwh']) : null,
+            'source_hl'      => 'bd_brewing_gravity_v2 (Cooling) + bd_packaging_v2',
+            'source_energy'  => 'inv_energydata (delta mensuel)',
+        ],
+    ]);
     return kpi_cache_set($cacheKey, $result);
 }
