@@ -716,6 +716,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             ? (int)$f['qte_unites'] : null;
             $fUnsaleable= isset($f['unsaleable_units']) && $f['unsaleable_units'] !== ''
                             ? (int)$f['unsaleable_units'] : null;
+            // ── Side-stock complete-a-box draw (mig 303) ─────────────────────
+            // Units borrowed from a previous run's side-stock balance to complete boxes
+            // this run. Validated against live balance in the write loop.
+            // Per-SKU ruling (mig-265 discipline): attributed to the per-format resolved
+            // $skuIdFk, so a parallel -4/-B run maps to its OWN loose-unit pool.
+            $fCompleteBox = isset($f['side_stock_complete_box']) && $f['side_stock_complete_box'] !== ''
+                              ? max(0, (int)$f['side_stock_complete_box']) : 0;
 
             // Per-type loss fields (only collected, stored directly)
             $fLoss4packBtl   = isset($f['loss_4pack_btl_units'])    && $f['loss_4pack_btl_units']    !== '' ? (int)$f['loss_4pack_btl_units']    : null;
@@ -974,6 +981,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'computed_vendable'  => $finalVendableHl,
                 'sku_id_fk'          => $skuIdFk,
                 'format_suffix_used' => ($fSuffix !== '' && $fSuffix !== null) ? $fSuffix : null,
+                // Side-stock fields (mig 303): qty values for accrual + complete_box draw.
+                // $fRunProdQty mirrors exactly how prod_total_units is written to the row:
+                //   main rows   → $fProdTotal (the session's total production)
+                //   parallel rows → $fQteUnites (the parallel run's own qty)
+                // units_per_pack cached alongside sku_id for the write loop (avoid re-query).
+                'side_stock_run_qty'    => ($fOrigin === 'main') ? $fProdTotal : $fQteUnites,
+                'side_stock_complete_box' => $fCompleteBox,
+                'side_stock_units_per_pack' => ($skuMeta['units_per_pack'] !== null)
+                                               ? (int)$skuMeta['units_per_pack'] : null,
             ];
 
             // ── B-split: append WL units as a separate additive leg ─────────
@@ -1328,6 +1344,109 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                     // $rowBefore is non-null in edit mode → action='update'; null → action='insert'.
                     log_revision($pdo, $me, PACKAGING_LIVE_TABLE, $rowId, $rowBefore, $safeRow, $qcFlag, $revisionComment);
+
+                    // ── Step B1b: Side-stock accrual + complete-a-box draw (mig 303) ─
+                    // NOT COGS — unit counts only; never touches inv_consumption or ref_sku_bom.
+                    // Mig-265 discipline: $skuIdResolved is the per-format resolve_packaging_sku_id()
+                    // result for THIS format row; parallel -4/-B rows each carry their own SKU.
+                    $sslSkuId       = $rSpec['sku_id_fk'];
+                    $sslRunQty      = $rSpec['side_stock_run_qty'];
+                    $sslUpp         = $rSpec['side_stock_units_per_pack'];  // units_per_pack
+                    $sslCompleteBox = (int)($rSpec['side_stock_complete_box'] ?? 0);
+                    $sslFiscalYear  = substr($eventDate, 0, 4);
+
+                    // Only bank/draw when SKU is resolved, units_per_pack > 1, and qty is known.
+                    // Kegs/cuvs have units_per_pack = 1 → remainder always 0 → no accrual (correct).
+                    if (
+                        $sslSkuId !== null
+                        && $sslUpp !== null && $sslUpp > 1
+                        && $sslRunQty !== null && $sslRunQty > 0
+                    ) {
+                        // ── Re-save idempotency: tombstone this run's prior live derived rows ──
+                        // On insert: no prior rows exist → UPDATE matches 0 rows (no-op, correct).
+                        // On edit/re-save: prior accrual + complete_box for THIS bd_packaging row
+                        // are tombstoned and their accrual_key is freed (NULLed), so the fresh
+                        // INSERT below never collides on uq_ssl_accrual.
+                        // Giveaway / year_end_offered / adjustment rows are NOT touched — they are
+                        // not run-derived and each represents a distinct real-world event.
+                        $pdo->prepare(
+                            'UPDATE inv_side_stock_ledger
+                                SET is_tombstoned = 1, tombstoned_at = NOW(), accrual_key = NULL
+                              WHERE bd_packaging_id_fk = ?
+                                AND movement_type IN (\'accrual\', \'complete_box\')
+                                AND is_tombstoned = 0'
+                        )->execute([$rowId]);
+
+                        $sslRemainder = (int)$sslRunQty % (int)$sslUpp;
+
+                        // ── Accrual: bank the remainder ──────────────────────
+                        // accrual_key = "$bdPkgId:$skuId" written by PHP (plain nullable column,
+                        // not GENERATED — MySQL 8.0.46 error 1215 prevents STORED generated columns
+                        // referencing FK columns via ALTER TABLE post-creation).
+                        // Prior row was tombstoned above (accrual_key NULLed) so no live dup exists.
+                        // ON DUPLICATE KEY UPDATE id=id is kept as belt-and-suspenders only.
+                        if ($sslRemainder > 0) {
+                            $sslAccrualKey = $rowId . ':' . $sslSkuId;
+                            $stSslAccrual = $pdo->prepare(
+                                'INSERT INTO inv_side_stock_ledger
+                                    (sku_id_fk, movement_type, qty_units, bd_packaging_id_fk,
+                                     fiscal_year, accrual_key, note, submitted_by_user_fk)
+                                 VALUES (?, \'accrual\', ?, ?, ?, ?, NULL, ?)
+                                 ON DUPLICATE KEY UPDATE id = id'
+                            );
+                            $stSslAccrual->execute([
+                                $sslSkuId,
+                                $sslRemainder,
+                                $rowId,
+                                $sslFiscalYear,
+                                $sslAccrualKey,
+                                (int)$me['id'],
+                            ]);
+                        }
+                        // If $sslRemainder === 0 (e.g. edit changed prod_total to an exact multiple),
+                        // the prior accrual was already tombstoned above and we simply don't re-insert.
+
+                        // ── Complete-a-box draw ──────────────────────────────
+                        // REFUSE (not NULL) if draw would exceed live balance.
+                        // Balance query runs AFTER tombstone-prior and AFTER fresh accrual INSERT,
+                        // so it reflects the correct available units for this edit (no double-count).
+                        if ($sslCompleteBox > 0) {
+                            $stSslBal = $pdo->prepare(
+                                'SELECT COALESCE(SUM(qty_units), 0) AS bal
+                                   FROM inv_side_stock_ledger
+                                  WHERE sku_id_fk = ? AND is_tombstoned = 0'
+                            );
+                            $stSslBal->execute([$sslSkuId]);
+                            $sslLiveBal = (int)$stSslBal->fetchColumn();
+                            // Include the accrual just banked in the available balance.
+                            $sslAvailable = $sslLiveBal;
+
+                            if ($sslCompleteBox > $sslAvailable) {
+                                $pdo->rollBack();
+                                flash_set('err',
+                                    'Solde side-stock insuffisant pour compléter les boîtes '
+                                    . '(disponible : ' . $sslAvailable . ' unité(s), '
+                                    . 'demandé : ' . $sslCompleteBox . ').'
+                                );
+                                redirect_to('/modules/form-packaging.php');
+                            }
+
+                            $stSslDraw = $pdo->prepare(
+                                'INSERT INTO inv_side_stock_ledger
+                                    (sku_id_fk, movement_type, qty_units, bd_packaging_id_fk,
+                                     fiscal_year, note, submitted_by_user_fk)
+                                 VALUES (?, \'complete_box\', ?, ?, ?, NULL, ?)'
+                            );
+                            $stSslDraw->execute([
+                                $sslSkuId,
+                                -$sslCompleteBox,
+                                $rowId,
+                                $sslFiscalYear,
+                                (int)$me['id'],
+                            ]);
+                        }
+                    }
+                    // /Side-stock accrual + complete-a-box draw
                 }
 
                 // ── Step B2: Orphan-on-shrink (edit mode only) ────────────────────

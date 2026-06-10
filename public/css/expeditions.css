@@ -4610,3 +4610,223 @@ body.expeditions .exp-mov-cancel-btn {
     display: none;
   }
 }
+
+/* ── Restes d'emballage (side-stock) view — mig 303 ─────────────────────────
+   NOT COGS — unit counts only. Scoped under body.expeditions per house rules.
+   Uses only canonical palette tokens — never hardcoded hex.
+   CSS in /public/css/ only — never inline (per css-separated-from-php).
+   ─────────────────────────────────────────────────────────────────────────── */
+
+body.expeditions .exp-ssl-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+  padding: 1.25rem 1rem;
+  max-width: 900px;
+}
+
+body.expeditions .exp-ssl-section-title {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--ink);
+  margin: 0 0 0.75rem 0;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--bg-side);
+}
+
+body.expeditions .exp-ssl-note {
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+  margin: 0 0 1rem 0;
+  line-height: 1.5;
+}
+
+body.expeditions .exp-ssl-empty {
+  color: var(--ink-mute);
+  font-size: 0.88rem;
+  font-style: italic;
+  margin: 0;
+}
+
+/* ── Balance + ledger tables ─────────────────────────────────────────────── */
+
+body.expeditions .exp-ssl-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+body.expeditions .exp-ssl-table th {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+  background: var(--bg-elev);
+  padding: 0.45rem 0.7rem;
+  text-align: left;
+  border-bottom: 1px solid var(--bg-side);
+}
+
+body.expeditions .exp-ssl-th-num {
+  text-align: right;
+}
+
+body.expeditions .exp-ssl-table td {
+  padding: 0.45rem 0.7rem;
+  border-bottom: 1px solid var(--bg-side);
+  color: var(--ink);
+  vertical-align: middle;
+}
+
+body.expeditions .exp-ssl-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+body.expeditions .exp-ssl-table tbody tr:hover td {
+  background: var(--bg-elev);
+}
+
+body.expeditions .exp-ssl-row--negative td {
+  color: var(--ember);
+}
+
+body.expeditions .exp-ssl-row--tombstoned td {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
+body.expeditions .exp-ssl-sku-code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.82rem;
+  color: var(--ink);
+}
+
+body.expeditions .exp-ssl-num,
+body.expeditions .exp-ssl-id,
+body.expeditions .exp-ssl-date {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.82rem;
+  text-align: right;
+  white-space: nowrap;
+}
+
+body.expeditions .exp-ssl-id {
+  color: var(--ink-mute);
+  text-align: left;
+}
+
+body.expeditions .exp-ssl-date {
+  color: var(--ink-soft);
+  text-align: left;
+}
+
+body.expeditions .exp-ssl-balance {
+  font-weight: 600;
+}
+
+body.expeditions .exp-ssl-qty--pos {
+  color: var(--hop);
+}
+
+body.expeditions .exp-ssl-qty--neg {
+  color: var(--ember);
+}
+
+/* ── Movement type chips ─────────────────────────────────────────────────── */
+
+body.expeditions .exp-ssl-type-chip {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border-radius: 0.2rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+body.expeditions .exp-ssl-type-chip--accrual {
+  background: color-mix(in srgb, var(--hop) 12%, var(--bg));
+  color: var(--hop);
+}
+
+body.expeditions .exp-ssl-type-chip--complete_box {
+  background: color-mix(in srgb, var(--cold) 12%, var(--bg));
+  color: var(--cold);
+}
+
+body.expeditions .exp-ssl-type-chip--giveaway {
+  background: color-mix(in srgb, var(--oak) 15%, var(--bg));
+  color: var(--oak);
+}
+
+body.expeditions .exp-ssl-type-chip--year_end_offered {
+  background: color-mix(in srgb, var(--ember) 12%, var(--bg));
+  color: var(--ember);
+}
+
+body.expeditions .exp-ssl-type-chip--adjustment {
+  background: color-mix(in srgb, var(--bbt) 12%, var(--bg));
+  color: var(--bbt);
+}
+
+body.expeditions .exp-ssl-tombstoned-badge {
+  display: inline-block;
+  margin-left: 0.3rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.15rem;
+  background: color-mix(in srgb, var(--ember) 15%, var(--bg));
+  color: var(--ember);
+  font-size: 0.68rem;
+  font-family: 'JetBrains Mono', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* ── Giveaway form ───────────────────────────────────────────────────────── */
+
+body.expeditions .exp-ssl-giveaway-section {
+  background: var(--bg-elev);
+  border-radius: 0.4rem;
+  padding: 1.1rem 1.25rem;
+  box-shadow: 0 1px 4px rgba(30, 18, 5, 0.07);
+}
+
+body.expeditions .exp-ssl-form {
+  max-width: 640px;
+}
+
+/* ── Tombstone button ────────────────────────────────────────────────────── */
+
+body.expeditions .exp-ssl-tomb-form {
+  display: inline;
+  margin: 0;
+}
+
+body.expeditions .exp-ssl-tomb-btn {
+  background: none;
+  border: 1px solid color-mix(in srgb, var(--ember) 50%, var(--bg-side));
+  color: var(--ember);
+  border-radius: 0.2rem;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.75rem;
+  font-family: 'DM Sans', sans-serif;
+  cursor: pointer;
+  transition: background 0.12s ease;
+  min-height: 44px; /* touch target ≥44px per ux-quality-rules */
+  min-width: 44px;
+}
+
+body.expeditions .exp-ssl-tomb-btn:hover {
+  background: color-mix(in srgb, var(--ember) 10%, var(--bg));
+}
+
+@media (max-width: 700px) {
+  body.expeditions .exp-ssl-table th:nth-child(n+6),
+  body.expeditions .exp-ssl-table td:nth-child(n+6) {
+    display: none;
+  }
+}

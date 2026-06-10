@@ -71,7 +71,7 @@ const EXP_INTERNAL_LABELS   = [
 
 // ── View routing ──────────────────────────────────────────────────────────────
 $view    = isset($_GET['view']) ? (string) $_GET['view'] : 'commandes';
-$allowedViews = ['commandes', 'form', 'stock', 'stocktake', 'clients', 'mouvements'];
+$allowedViews = ['commandes', 'form', 'stock', 'stocktake', 'clients', 'mouvements', 'side-stock'];
 if (!in_array($view, $allowedViews, true)) $view = 'commandes';
 
 $editId  = isset($_GET['edit']) ? (int) $_GET['edit'] : 0;
@@ -1210,6 +1210,140 @@ if ($view === 'commandes') {
     }
 }
 
+// ── POST: side-stock giveaway + tombstone (view=side-stock) ──────────────────
+// NOT COGS — unit counts only. NOT sale_class (distinct from migs 300/301).
+// Actions: record_giveaway, tombstone_ssl_row.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'side-stock') {
+
+    if (!csrf_verify($_POST['csrf'] ?? null)) {
+        flash_set('err', 'Session expirée — recharge la page.');
+        redirect_to('/modules/expeditions.php?view=side-stock');
+    }
+
+    $pdo    = maltytask_pdo();
+    $action = isset($_POST['action']) ? (string) $_POST['action'] : '';
+    $allowedSslActions = ['record_giveaway', 'tombstone_ssl_row'];
+    if (!in_array($action, $allowedSslActions, true)) {
+        flash_set('err', 'Action non reconnue.');
+        redirect_to('/modules/expeditions.php?view=side-stock');
+    }
+
+    // ── action: tombstone_ssl_row (ADMIN ONLY) ───────────────────────────────
+    if ($action === 'tombstone_ssl_row') {
+        if (!is_admin($me)) {
+            flash_set('err', 'Action réservée aux administrateurs.');
+            redirect_to('/modules/expeditions.php?view=side-stock');
+        }
+        $sslId = isset($_POST['ssl_id']) ? (int) $_POST['ssl_id'] : 0;
+        if ($sslId <= 0) {
+            flash_set('err', 'Identifiant invalide.');
+            redirect_to('/modules/expeditions.php?view=side-stock');
+        }
+        try {
+            $rowBefTomb = bd_fetch_before($pdo, 'inv_side_stock_ledger', $sslId);
+            if ($rowBefTomb === null) {
+                flash_set('err', 'Ligne #' . $sslId . ' introuvable.');
+                redirect_to('/modules/expeditions.php?view=side-stock');
+            }
+            if ((int) $rowBefTomb['is_tombstoned'] === 1) {
+                flash_set('err', 'Ligne #' . $sslId . ' déjà annulée.');
+                redirect_to('/modules/expeditions.php?view=side-stock');
+            }
+            $pdo->beginTransaction();
+            $pdo->prepare(
+                'UPDATE inv_side_stock_ledger
+                    SET is_tombstoned = 1, tombstoned_at = NOW(), accrual_key = NULL
+                  WHERE id = ?'
+            )->execute([$sslId]);
+            log_revision($pdo, $me, 'inv_side_stock_ledger', $sslId, $rowBefTomb,
+                ['is_tombstoned' => 1, 'tombstoned_at' => date('Y-m-d H:i:s'), 'accrual_key' => null],
+                'normal', 'Tombstone side-stock par admin');
+            $pdo->commit();
+            flash_set('ok', 'Ligne #' . $sslId . ' annulée (tombstone).');
+        } catch (Throwable $e) {
+            if (isset($pdo) && $pdo->inTransaction()) $pdo->rollBack();
+            error_log('[expeditions ssl tombstone] ' . $e->getMessage());
+            flash_set('err', 'Erreur : ' . pdo_friendly_error($e));
+        }
+        redirect_to('/modules/expeditions.php?view=side-stock');
+    }
+
+    // ── action: record_giveaway ──────────────────────────────────────────────
+    if ($action === 'record_giveaway') {
+        // Read with ?? '' FIRST (PHP 8 NULL safety), then validate.
+        $sslSkuIdRaw  = $_POST['sku_id'] ?? '';
+        $sslQtyRaw    = $_POST['qty_units'] ?? '';
+        $sslNote      = trim((string)($_POST['note'] ?? ''));
+        $sslYear      = date('Y');  // current fiscal year (giveaway draw)
+
+        $sslSkuId = is_numeric($sslSkuIdRaw) && (int)$sslSkuIdRaw > 0
+                      ? (int)$sslSkuIdRaw : 0;
+        $sslQty   = is_numeric($sslQtyRaw) && (int)$sslQtyRaw > 0
+                      ? (int)$sslQtyRaw : 0;
+
+        if ($sslSkuId <= 0 || $sslQty <= 0) {
+            flash_set('err', 'SKU et quantité requis (quantité > 0).');
+            redirect_to('/modules/expeditions.php?view=side-stock');
+        }
+
+        // Validate sku_id against active ref_skus (whitelist — don't trust raw POST).
+        $skuCheckRow = $pdo->prepare(
+            'SELECT id FROM ref_skus WHERE id = ? AND is_active = 1 LIMIT 1'
+        );
+        $skuCheckRow->execute([$sslSkuId]);
+        if ($skuCheckRow->fetch() === false) {
+            flash_set('err', 'SKU invalide ou inactif.');
+            redirect_to('/modules/expeditions.php?view=side-stock');
+        }
+
+        // Refuse-don't-NULL: check live balance before writing.
+        $stBal = $pdo->prepare(
+            'SELECT COALESCE(SUM(qty_units), 0) AS bal
+               FROM inv_side_stock_ledger
+              WHERE sku_id_fk = ? AND is_tombstoned = 0'
+        );
+        $stBal->execute([$sslSkuId]);
+        $liveBal = (int) $stBal->fetchColumn();
+
+        if ($sslQty > $liveBal) {
+            flash_set('err',
+                'Solde side-stock insuffisant pour ce giveaway '
+                . '(disponible : ' . $liveBal . ' unité(s), demandé : ' . $sslQty . ').'
+            );
+            redirect_to('/modules/expeditions.php?view=side-stock');
+        }
+
+        try {
+            $pdo->beginTransaction();
+            $stGive = $pdo->prepare(
+                'INSERT INTO inv_side_stock_ledger
+                    (sku_id_fk, movement_type, qty_units, bd_packaging_id_fk,
+                     fiscal_year, note, submitted_by_user_fk)
+                 VALUES (?, \'giveaway\', ?, NULL, ?, ?, ?)'
+            );
+            $stGive->execute([
+                $sslSkuId,
+                -$sslQty,
+                $sslYear,
+                $sslNote !== '' ? $sslNote : null,
+                (int) $me['id'],
+            ]);
+            $newSslId = (int) $pdo->lastInsertId();
+            log_revision($pdo, $me, 'inv_side_stock_ledger', $newSslId, null,
+                ['sku_id_fk' => $sslSkuId, 'movement_type' => 'giveaway',
+                 'qty_units' => -$sslQty, 'fiscal_year' => $sslYear, 'note' => $sslNote],
+                'normal', 'Giveaway side-stock enregistré');
+            $pdo->commit();
+            flash_set('ok', 'Giveaway de ' . $sslQty . ' unité(s) enregistré.');
+        } catch (Throwable $e) {
+            if (isset($pdo) && $pdo->inTransaction()) $pdo->rollBack();
+            error_log('[expeditions ssl giveaway] ' . $e->getMessage());
+            flash_set('err', 'Erreur : ' . pdo_friendly_error($e));
+        }
+        redirect_to('/modules/expeditions.php?view=side-stock');
+    }
+}
+
 // ── GET — load data ───────────────────────────────────────────────────────────
 $pdo     = maltytask_pdo();
 $loadErr = null;
@@ -1252,6 +1386,11 @@ $stLastCounted = [];
 $movRows       = []; // filled below if view=mouvements
 $movFgSites    = []; // holds_fg_stock sites for the form selects
 $movSkuList    = []; // active SKUs for the form select
+
+// Restes d'emballage (side-stock) view (mig 303) — NOT COGS, NOT sale_class
+$sslBalanceRows = []; // per-SKU balance rows (non-zero balances)
+$sslLedgerRows  = []; // recent ledger entries
+$sslSkuDropdown = []; // active SKUs for the giveaway form select
 
 try {
     // Active customers (for typeahead)
@@ -1617,6 +1756,56 @@ try {
         );
         $dirStmt->execute([...$dirParams, $clientsPerPage, $offset]);
         $clientsRows = $dirStmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    if ($view === 'side-stock') {
+        // ── Per-SKU balance (live, non-tombstoned) ────────────────────────────
+        // Groups by SKU with display_family ordering (mirrors stock/mouvements pattern).
+        // NOT COGS — unit counts only. Out of fg_stock_compute FG legs.
+        $sslBalanceRows = $pdo->query(
+            'SELECT s.id AS sku_id, s.sku_code, s.format, s.units_per_pack,
+                    COALESCE(pf.display_family, s.format, s.sku_code) AS display_family,
+                    COALESCE(SUM(l.qty_units), 0) AS balance_units
+               FROM ref_skus s
+               LEFT JOIN ref_packaging_formats pf ON pf.id = s.format_id
+               LEFT JOIN inv_side_stock_ledger  l
+                      ON l.sku_id_fk = s.id AND l.is_tombstoned = 0
+              WHERE s.is_active = 1
+                AND s.units_per_pack > 1
+              GROUP BY s.id, s.sku_code, s.format, s.units_per_pack,
+                       COALESCE(pf.display_family, s.format, s.sku_code)
+             HAVING balance_units != 0
+              ORDER BY COALESCE(pf.display_family, s.format, s.sku_code) ASC,
+                       s.sku_code ASC'
+        )->fetchAll(PDO::FETCH_ASSOC);
+
+        // ── Recent ledger rows (last 150) ─────────────────────────────────────
+        // For giveaway tombstone: tombstoned rows shown last.
+        $sslLedgerRows = $pdo->query(
+            'SELECT l.id, l.sku_id_fk, l.movement_type, l.qty_units,
+                    l.bd_packaging_id_fk, l.fiscal_year, l.note,
+                    l.created_at, l.is_tombstoned, l.tombstoned_at,
+                    s.sku_code,
+                    COALESCE(pf.display_family, s.format, s.sku_code) AS display_family,
+                    u.display_name AS submitted_by_name
+               FROM inv_side_stock_ledger l
+               JOIN ref_skus s ON s.id = l.sku_id_fk
+               LEFT JOIN ref_packaging_formats pf ON pf.id = s.format_id
+               LEFT JOIN users u ON u.id = l.submitted_by_user_fk
+              ORDER BY l.is_tombstoned ASC, l.id DESC
+              LIMIT 150'
+        )->fetchAll(PDO::FETCH_ASSOC);
+
+        // ── Active SKU list for the giveaway form dropdown ────────────────────
+        $sslSkuDropdown = $pdo->query(
+            'SELECT s.id, s.sku_code,
+                    COALESCE(pf.display_family, s.format, s.sku_code) AS display_family
+               FROM ref_skus s
+               LEFT JOIN ref_packaging_formats pf ON pf.id = s.format_id
+              WHERE s.is_active = 1 AND s.units_per_pack > 1
+              ORDER BY COALESCE(pf.display_family, s.format, s.sku_code) ASC,
+                       s.sku_code ASC'
+        )->fetchAll(PDO::FETCH_ASSOC);
     }
 
     if ($view === 'mouvements') {
@@ -2081,6 +2270,9 @@ $isReadOnly = $editOrder !== null
     <a href="/modules/expeditions.php?view=mouvements"
        class="exp-tab<?= $view === 'mouvements' ? ' exp-tab--active' : '' ?>"
        <?= $view === 'mouvements' ? 'aria-current="page"' : '' ?>>Mouvements</a>
+    <a href="/modules/expeditions.php?view=side-stock"
+       class="exp-tab<?= $view === 'side-stock' ? ' exp-tab--active' : '' ?>"
+       <?= $view === 'side-stock' ? 'aria-current="page"' : '' ?>>Restes d'emballage</a>
   </nav>
 
   <!-- ══════════════════════════════════════════════════════════════════════
@@ -4704,6 +4896,201 @@ $isReadOnly = $editOrder !== null
   <?php endif ?>
   <!-- /MOUVEMENTS -->
 
+  <!-- ══════════════════════════════════════════════════════════════════════
+       RESTES D'EMBALLAGE (SIDE-STOCK) VIEW
+       NOT COGS — unit counts only. NOT sale_class (distinct from migs 300/301).
+       Out of fg_stock_compute() FG legs.
+       ══════════════════════════════════════════════════════════════════════ -->
+  <?php if ($view === 'side-stock'): ?>
+
+  <div class="exp-ssl-wrap" id="exp-ssl-wrap">
+
+    <!-- ── Current balances ─────────────────────────────────────────────── -->
+    <section class="exp-ssl-balances" aria-label="Soldes par SKU">
+      <h2 class="exp-ssl-section-title">Soldes actuels (unités restantes)</h2>
+      <?php if (empty($sslBalanceRows)): ?>
+        <p class="exp-ssl-empty">Aucun reste d'emballage en cours.</p>
+      <?php else: ?>
+        <table class="exp-ssl-table" role="table" aria-label="Soldes side-stock par SKU">
+          <thead>
+            <tr>
+              <th scope="col">Famille</th>
+              <th scope="col">SKU</th>
+              <th scope="col" class="exp-ssl-th-num">Unités / boîte</th>
+              <th scope="col" class="exp-ssl-th-num">Solde (unités)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <?php foreach ($sslBalanceRows as $br): ?>
+              <tr class="<?= (int)$br['balance_units'] < 0 ? 'exp-ssl-row--negative' : '' ?>">
+                <td><?= htmlspecialchars($br['display_family']) ?></td>
+                <td class="exp-ssl-sku-code"><?= htmlspecialchars($br['sku_code']) ?></td>
+                <td class="exp-ssl-num"><?= (int)$br['units_per_pack'] ?></td>
+                <td class="exp-ssl-num exp-ssl-balance"
+                    data-sku-id="<?= (int)$br['sku_id'] ?>"
+                    data-balance="<?= (int)$br['balance_units'] ?>">
+                  <?= (int)$br['balance_units'] ?>
+                </td>
+              </tr>
+            <?php endforeach ?>
+          </tbody>
+        </table>
+      <?php endif ?>
+    </section>
+
+    <!-- ── Giveaway form ────────────────────────────────────────────────── -->
+    <section class="exp-ssl-giveaway-section" aria-label="Enregistrer un giveaway">
+      <h2 class="exp-ssl-section-title">Enregistrer un giveaway</h2>
+      <p class="exp-ssl-note">
+        Un giveaway débite le solde loose-unit du SKU concerné.
+        Les giveaways de l'année sont poolés et taxés à la clôture annuelle
+        (le cron de clôture n'est pas encore construit — hook documenté).
+      </p>
+      <form method="POST" action="/modules/expeditions.php?view=side-stock"
+            class="exp-ssl-form" id="exp-ssl-give-form" novalidate>
+        <input type="hidden" name="csrf"   value="<?= htmlspecialchars($csrf) ?>">
+        <input type="hidden" name="action" value="record_giveaway">
+
+        <div class="op-form__grid">
+
+          <!-- SKU -->
+          <div class="op-form__field">
+            <label class="op-form__label" for="ssl-give-sku">SKU</label>
+            <select id="ssl-give-sku" name="sku_id" class="op-form__select" required>
+              <option value="">— choisir un SKU —</option>
+              <?php
+              $sslPrevFam = null;
+              foreach ($sslSkuDropdown as $sdRow):
+                  $sdFam = (string)($sdRow['display_family'] ?? '');
+                  if ($sdFam !== $sslPrevFam):
+                      if ($sslPrevFam !== null) echo '</optgroup>';
+                      echo '<optgroup label="' . htmlspecialchars($sdFam) . '">';
+                      $sslPrevFam = $sdFam;
+                  endif;
+              ?>
+                <option value="<?= (int)$sdRow['id'] ?>">
+                  <?= htmlspecialchars($sdRow['sku_code']) ?>
+                </option>
+              <?php
+              endforeach;
+              if ($sslPrevFam !== null) echo '</optgroup>';
+              ?>
+            </select>
+          </div>
+
+          <!-- Qty -->
+          <div class="op-form__field">
+            <label class="op-form__label" for="ssl-give-qty">Quantité (unités)</label>
+            <input type="number" id="ssl-give-qty" name="qty_units"
+                   class="op-form__input"
+                   min="1" step="1" required
+                   placeholder="ex: 3">
+          </div>
+
+          <!-- Note / bénéficiaire -->
+          <div class="op-form__field op-form__field--full">
+            <label class="op-form__label" for="ssl-give-note">Note / bénéficiaire</label>
+            <input type="text" id="ssl-give-note" name="note"
+                   class="op-form__input"
+                   maxlength="255"
+                   placeholder="ex: dégustation presse, Brasserie XY">
+          </div>
+
+        </div>
+
+        <div class="op-form__actions">
+          <button type="submit" class="op-form__btn op-form__btn--primary"
+                  id="ssl-give-submit">
+            Enregistrer le giveaway
+          </button>
+        </div>
+      </form>
+    </section>
+
+    <!-- ── Movement ledger ──────────────────────────────────────────────── -->
+    <section class="exp-ssl-ledger-section" aria-label="Historique des mouvements">
+      <h2 class="exp-ssl-section-title">Historique des mouvements</h2>
+      <?php if (empty($sslLedgerRows)): ?>
+        <p class="exp-ssl-empty">Aucun mouvement enregistré.</p>
+      <?php else: ?>
+        <table class="exp-ssl-table exp-ssl-ledger" role="table"
+               aria-label="Historique side-stock">
+          <thead>
+            <tr>
+              <th scope="col">#</th>
+              <th scope="col">SKU</th>
+              <th scope="col">Type</th>
+              <th scope="col" class="exp-ssl-th-num">Qté</th>
+              <th scope="col">Année</th>
+              <th scope="col">Note</th>
+              <th scope="col">Saisi par</th>
+              <th scope="col">Date</th>
+              <?php if (is_admin($me)): ?>
+              <th scope="col">Action</th>
+              <?php endif ?>
+            </tr>
+          </thead>
+          <tbody>
+            <?php
+            $sslTypeLbl = [
+                'accrual'          => 'Reste banqué',
+                'complete_box'     => 'Compléter boîte',
+                'giveaway'         => 'Giveaway',
+                'year_end_offered' => 'Clôture annuelle',
+                'adjustment'       => 'Ajustement',
+            ];
+            foreach ($sslLedgerRows as $lr):
+                $lrTombstoned = (int)$lr['is_tombstoned'] === 1;
+                $lrClass = $lrTombstoned ? ' exp-ssl-row--tombstoned' : '';
+                $lrQty   = (int)$lr['qty_units'];
+                $lrDate  = $lr['created_at'] ? (new DateTimeImmutable($lr['created_at']))->format('d/m/Y H:i') : '—';
+            ?>
+            <tr class="<?= ltrim($lrClass) ?>" aria-disabled="<?= $lrTombstoned ? 'true' : 'false' ?>">
+              <td class="exp-ssl-id"><?= (int)$lr['id'] ?></td>
+              <td class="exp-ssl-sku-code"><?= htmlspecialchars($lr['sku_code']) ?></td>
+              <td>
+                <span class="exp-ssl-type-chip exp-ssl-type-chip--<?= htmlspecialchars($lr['movement_type']) ?>">
+                  <?= htmlspecialchars($sslTypeLbl[$lr['movement_type']] ?? $lr['movement_type']) ?>
+                </span>
+                <?php if ($lrTombstoned): ?>
+                  <span class="exp-ssl-tombstoned-badge">Annulé</span>
+                <?php endif ?>
+              </td>
+              <td class="exp-ssl-num <?= $lrQty >= 0 ? 'exp-ssl-qty--pos' : 'exp-ssl-qty--neg' ?>">
+                <?= $lrQty >= 0 ? '+' . $lrQty : $lrQty ?>
+              </td>
+              <td><?= htmlspecialchars($lr['fiscal_year']) ?></td>
+              <td><?= htmlspecialchars($lr['note'] ?? '—') ?></td>
+              <td><?= htmlspecialchars($lr['submitted_by_name'] ?? '—') ?></td>
+              <td class="exp-ssl-date"><?= $lrDate ?></td>
+              <?php if (is_admin($me)): ?>
+              <td>
+                <?php if (!$lrTombstoned): ?>
+                <form method="POST" action="/modules/expeditions.php?view=side-stock"
+                      class="exp-ssl-tomb-form" onsubmit="return confirm('Annuler la ligne #<?= (int)$lr['id'] ?> ?')">
+                  <input type="hidden" name="csrf"    value="<?= htmlspecialchars($csrf) ?>">
+                  <input type="hidden" name="action"  value="tombstone_ssl_row">
+                  <input type="hidden" name="ssl_id"  value="<?= (int)$lr['id'] ?>">
+                  <button type="submit" class="exp-ssl-tomb-btn" aria-label="Annuler la ligne #<?= (int)$lr['id'] ?>">
+                    Annuler
+                  </button>
+                </form>
+                <?php endif ?>
+              </td>
+              <?php endif ?>
+            </tr>
+            <?php endforeach ?>
+          </tbody>
+        </table>
+      <?php endif ?>
+    </section>
+
+  </div>
+  <!-- /exp-ssl-wrap -->
+
+  <?php endif ?>
+  <!-- /RESTES D'EMBALLAGE -->
+
 </main>
 
 <?php if ($view === 'commandes'): ?>
@@ -4724,6 +5111,13 @@ $isReadOnly = $editOrder !== null
 
 <?php if ($view === 'stocktake'): ?>
 <script src="/js/expeditions-stocktake.js?v=<?= @filemtime(__DIR__ . '/../js/expeditions-stocktake.js') ?: time() ?>"></script>
+<?php endif ?>
+
+<?php if ($view === 'side-stock'): ?>
+<script>
+  window.SSL_CSRF = <?= json_encode($csrf, JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+</script>
+<script src="/js/expeditions-side-stock.js?v=<?= @filemtime(__DIR__ . '/../js/expeditions-side-stock.js') ?: time() ?>"></script>
 <?php endif ?>
 
 </body>
