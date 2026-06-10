@@ -2571,19 +2571,21 @@ function kpi_wort_daily_recap(string $label, PDO $pdo): array
         return $cached;
     }
 
-    // 1. HL brassés today (Cooling rows, submitted_at anchor — matches kpi_wort_base_sql)
-    //    GROUP BY recipe_id_fk to emit per-beer breakdown rows.
+    // 1. HL brassés today (Cooling rows, submitted_at anchor — matches kpi_wort_base_sql).
+    //    GROUP BY (recipe_id_fk, batch) so each lot is its own breakdown row.
+    //    Multi-brew: N cooling rows of one brassin share ONE batch → they collapse to
+    //    a single row with SUM(final_volume). No double-count risk (PM-verified 2026-06-10).
     $base = kpi_wort_base_sql();
     $stmtBrew = $pdo->prepare(
         "SELECT cl.recipe_id_fk,
+                cl.batch,
                 COALESCE(rr.name, 'Inconnu')               AS recipe_name,
                 COALESCE(rr.classification, 'Neb')         AS classification,
                 ROUND(SUM(cl.final_volume), 1)             AS recipe_hl,
-                COUNT(*)                                    AS brew_count,
-                COUNT(DISTINCT cl.batch)                   AS brassin_count
+                COUNT(*)                                    AS brew_count
          {$base}
            AND DATE(cl.submitted_at) = ?
-         GROUP BY cl.recipe_id_fk, rr.name, rr.classification
+         GROUP BY cl.recipe_id_fk, cl.batch, rr.name, rr.classification
          ORDER BY recipe_hl DESC"
     );
     $stmtBrew->execute([$today]);
@@ -2593,11 +2595,10 @@ function kpi_wort_daily_recap(string $label, PDO $pdo): array
     $hlNeb        = 0.0;
     $hlContract   = 0.0;
     $brewCount    = 0;
-    $brassinCount = 0;
+    $brassinCount = count($brewRecipes); // one (recipe, batch) row = one brassin
     foreach ($brewRecipes as $br) {
-        $hlBrewed     += (float) ($br['recipe_hl']     ?? 0.0);
-        $brewCount    += (int)   ($br['brew_count']    ?? 0);
-        $brassinCount += (int)   ($br['brassin_count'] ?? 0);
+        $hlBrewed  += (float) ($br['recipe_hl']  ?? 0.0);
+        $brewCount += (int)   ($br['brew_count'] ?? 0);
         if (($br['classification'] ?? '') === 'Neb') {
             $hlNeb      += (float) ($br['recipe_hl'] ?? 0.0);
         } else {
@@ -2608,20 +2609,22 @@ function kpi_wort_daily_recap(string $label, PDO $pdo): array
     $hlNeb      = round($hlNeb,      1);
     $hlContract = round($hlContract, 1);
 
-    // 2. HL transférés today (bd_racking_v2 event_date), per recipe.
-    //    COALESCE neb/contract FK exactly as the existing classification CASE.
+    // 2. HL transférés today (bd_racking_v2 event_date), per (recipe, batch).
+    //    COALESCE neb/contract FK + NULLIF empty-string sentinel on batch cols (PM-flagged trap).
     $stmtRack = $pdo->prepare(
-        "SELECT COALESCE(r.neb_recipe_id_fk, r.contract_recipe_id_fk) AS recipe_id_fk,
-                COALESCE(rr1.name, rr2.name, 'Inconnu')                AS recipe_name,
-                COALESCE(rr1.classification, rr2.classification, 'Neb') AS classification,
-                ROUND(SUM(r.racked_vol_hl), 1)                         AS recipe_hl,
-                COUNT(*)                                                AS rack_count
+        "SELECT COALESCE(r.neb_recipe_id_fk, r.contract_recipe_id_fk)      AS recipe_id_fk,
+                COALESCE(NULLIF(r.neb_batch,''), NULLIF(r.contract_batch,'')) AS batch,
+                COALESCE(rr1.name, rr2.name, 'Inconnu')                     AS recipe_name,
+                COALESCE(rr1.classification, rr2.classification, 'Neb')     AS classification,
+                ROUND(SUM(r.racked_vol_hl), 1)                              AS recipe_hl,
+                COUNT(*)                                                     AS rack_count
            FROM bd_racking_v2 r
            LEFT JOIN ref_recipes rr1 ON rr1.id = r.neb_recipe_id_fk
            LEFT JOIN ref_recipes rr2 ON rr2.id = r.contract_recipe_id_fk
           WHERE r.is_tombstoned = 0
             AND r.event_date = ?
           GROUP BY COALESCE(r.neb_recipe_id_fk, r.contract_recipe_id_fk),
+                   COALESCE(NULLIF(r.neb_batch,''), NULLIF(r.contract_batch,'')),
                    COALESCE(rr1.name, rr2.name, 'Inconnu'),
                    COALESCE(rr1.classification, rr2.classification, 'Neb')
           ORDER BY recipe_hl DESC"
@@ -2637,30 +2640,132 @@ function kpi_wort_daily_recap(string $label, PDO $pdo): array
     }
     $hlRacked = round($hlRacked, 1);
 
-    // 3. Dry-hop events today (bd_fermenting_v2)
+    // 3. Dry-hop events today (bd_fermenting_v2), per (recipe_id_fk, batch).
+    //    bd_fermenting_v2 has normalized batch + recipe_id_fk — NO text-parse needed.
     $stmtDh = $pdo->prepare(
-        "SELECT COUNT(DISTINCT recipe_id_fk, batch) AS batch_count,
-                COUNT(*)                             AS event_count
-           FROM bd_fermenting_v2
-          WHERE is_tombstoned = 0
-            AND event_type    = 'DryHop'
-            AND event_date    = ?"
+        "SELECT f.recipe_id_fk,
+                f.batch,
+                COALESCE(rr.name, 'Inconnu') AS recipe_name,
+                COUNT(*)                      AS event_count
+           FROM bd_fermenting_v2 f
+           LEFT JOIN ref_recipes rr ON rr.id = f.recipe_id_fk
+          WHERE f.is_tombstoned = 0
+            AND f.event_type    = 'DryHop'
+            AND f.event_date    = ?
+          GROUP BY f.recipe_id_fk, f.batch, rr.name
+          ORDER BY f.recipe_id_fk, f.batch"
     );
     $stmtDh->execute([$today]);
-    $dhRow       = $stmtDh->fetch(PDO::FETCH_ASSOC);
-    $dhBatches   = (int) ($dhRow['batch_count'] ?? 0);
-    $dhEvents    = (int) ($dhRow['event_count'] ?? 0);
+    $dhPerBatch = $stmtDh->fetchAll(PDO::FETCH_ASSOC);
+    $dhBatches  = count($dhPerBatch);
 
-    // 4. Cold-crash events today
+    // 4. Cold-crash events today (bd_fermenting_v2), per (recipe_id_fk, batch).
     $stmtCc = $pdo->prepare(
-        "SELECT COUNT(DISTINCT recipe_id_fk, batch) AS batch_count
-           FROM bd_fermenting_v2
-          WHERE is_tombstoned = 0
-            AND event_type    = 'ColdCrash'
-            AND event_date    = ?"
+        "SELECT f.recipe_id_fk,
+                f.batch,
+                COALESCE(rr.name, 'Inconnu') AS recipe_name,
+                COUNT(*)                      AS event_count
+           FROM bd_fermenting_v2 f
+           LEFT JOIN ref_recipes rr ON rr.id = f.recipe_id_fk
+          WHERE f.is_tombstoned = 0
+            AND f.event_type    = 'ColdCrash'
+            AND f.event_date    = ?
+          GROUP BY f.recipe_id_fk, f.batch, rr.name
+          ORDER BY f.recipe_id_fk, f.batch"
     );
     $stmtCc->execute([$today]);
-    $ccBatches = (int) ($stmtCc->fetchColumn() ?? 0);
+    $ccPerBatch = $stmtCc->fetchAll(PDO::FETCH_ASSOC);
+    $ccBatches  = count($ccPerBatch);
+
+    // 5. Quality metrics (Expansion 3, 2026-06-10):
+    //    OG (final_gravity on Cooling rows = OG-at-cooling, °Plato) + pH moût (final_ph on
+    //    same Cooling rows) + batch time from bd_brewing_timings_v2.
+    //    Multi-brew brassin: AVG across Cooling rows (concentration, never SUM).
+    //    Timings join on (batch, brew, event_date) — batch numbers are REUSED across
+    //    different brewdays (observed: batch=217 exists for 2025-07-04 AND 2026-06-10).
+    //    Without the event_date anchor the join doubles/triples timing rows, inflating
+    //    n_timed_brews and the duration average. recipe_id_fk can be NULL on timings.
+    //    Guard brew_end>brew_start before including in duration average.
+    //    CV (STDDEV/AVG×100) only when ≥2 valid durations; 1 brew → shown as "—".
+    $stmtQuality = $pdo->prepare(
+        "SELECT g.recipe_id_fk,
+                g.batch,
+                COALESCE(rr.name, 'Inconnu')         AS recipe_name,
+                COALESCE(rr.classification, 'Neb')   AS classification,
+                AVG(g.final_gravity)                  AS avg_og,
+                AVG(g.final_ph)                       AS avg_ph,
+                COUNT(DISTINCT g.id)                  AS n_cooling_rows,
+                COUNT(CASE WHEN t.brew_end IS NOT NULL AND t.brew_end > t.brew_start
+                           THEN 1 END)                AS n_timed_brews,
+                AVG(CASE WHEN t.brew_end IS NOT NULL AND t.brew_end > t.brew_start
+                         THEN TIMESTAMPDIFF(MINUTE, t.brew_start, t.brew_end) / 60.0
+                         END)                         AS avg_duration_h,
+                STDDEV(CASE WHEN t.brew_end IS NOT NULL AND t.brew_end > t.brew_start
+                            THEN TIMESTAMPDIFF(MINUTE, t.brew_start, t.brew_end) / 60.0
+                            END)                      AS std_duration_h
+           FROM bd_brewing_gravity_v2 g
+           LEFT JOIN ref_recipes rr ON rr.id = g.recipe_id_fk
+           LEFT JOIN bd_brewing_timings_v2 t
+                ON t.batch = g.batch AND t.brew = g.brew
+               AND t.event_date = ?
+               AND t.is_tombstoned = 0
+          WHERE g.is_tombstoned = 0
+            AND g.event_type    = ?
+            AND DATE(g.submitted_at) = ?
+          GROUP BY g.recipe_id_fk, g.batch, rr.name, rr.classification
+          ORDER BY g.recipe_id_fk, g.batch"
+    );
+    // Params: t.event_date, g.event_type ('Cooling'), DATE(g.submitted_at)
+    $stmtQuality->execute([$today, 'Cooling', $today]);
+    $qualityPerBatch = $stmtQuality->fetchAll(PDO::FETCH_ASSOC);
+
+    // Today's averages across all brassins (OG, pH, duration)
+    $avgOgToday     = null;
+    $avgPhToday     = null;
+    $avgDurToday    = null;
+    $cvDurToday     = null;    // CV only when ≥2 brews with valid timing
+    $nForOg         = 0;
+    $nForPh         = 0;
+    $sumOg          = 0.0;
+    $sumPh          = 0.0;
+    $nTimedBrews    = 0;
+    $sumDur         = 0.0;
+    $sumDurSq       = 0.0;
+
+    foreach ($qualityPerBatch as $qb) {
+        if ($qb['avg_og'] !== null) {
+            $sumOg += (float) $qb['avg_og'];
+            $nForOg++;
+        }
+        if ($qb['avg_ph'] !== null) {
+            $sumPh += (float) $qb['avg_ph'];
+            $nForPh++;
+        }
+        $nt = (int) ($qb['n_timed_brews'] ?? 0);
+        if ($nt > 0 && $qb['avg_duration_h'] !== null) {
+            // Weight each brassin's avg by its n_timed_brews for a flat-brew mean
+            $avgH = (float) $qb['avg_duration_h'];
+            $sumDur   += $avgH * $nt;
+            $sumDurSq += (pow($avgH, 2) + pow((float)($qb['std_duration_h'] ?? 0.0), 2)) * $nt;
+            $nTimedBrews += $nt;
+        }
+    }
+    if ($nForOg > 0) {
+        $avgOgToday = round($sumOg / $nForOg, 2);
+    }
+    if ($nForPh > 0) {
+        $avgPhToday = round($sumPh / $nForPh, 2);
+    }
+    if ($nTimedBrews > 0) {
+        $avgDurToday = round($sumDur / $nTimedBrews, 2);
+        if ($nTimedBrews >= 2) {
+            // Population STDDEV from combined mean+var formula
+            $varCombined = $sumDurSq / $nTimedBrews - pow($sumDur / $nTimedBrews, 2);
+            $stdCombined = $varCombined > 0 ? sqrt($varCombined) : 0.0;
+            $cvDurToday  = $avgDurToday > 0 ? round($stdCombined / $avgDurToday * 100.0, 1) : null;
+        }
+        // 1 brew → cvDurToday stays null → JS renders "—" (never 0%)
+    }
 
     // Sections (headline metrics strip)
     $sections = [
@@ -2675,40 +2780,171 @@ function kpi_wort_daily_recap(string $label, PDO $pdo): array
     if ($ccBatches > 0) {
         $sections[] = ['label' => 'Cold crash démarrés', 'value' => $ccBatches, 'unit' => 'lots', 'tint' => 'neutral'];
     }
+    // Quality moût headline metrics (Expansion 3): OG, pH, batch time averages.
+    // Only shown when today has Cooling rows — otherwise absent from sections.
+    if ($avgOgToday !== null) {
+        $sections[] = ['label' => 'OG moyen (densité initiale, °P)', 'value' => $avgOgToday, 'unit' => '°P', 'tint' => 'neutral'];
+    }
+    if ($avgPhToday !== null) {
+        $sections[] = ['label' => 'pH moût', 'value' => $avgPhToday, 'unit' => '', 'tint' => 'neutral'];
+    }
+    if ($avgDurToday !== null) {
+        $sections[] = ['label' => 'Durée moyenne par brassin', 'value' => $avgDurToday, 'unit' => 'h', 'tint' => 'neutral'];
+    }
+    // CV (intra-day) removed in favour of the per-brassin rolling variation (#3 refinement).
+    // The aggregate "Variation vs 10 derniers brassins" is per-brassin only (not a single number).
+    // No headline section emitted for rolling variation — it lives in the breakdown rows.
 
-    // Breakdown: per-beer brewed rows (keyed by recipe_id_fk, never by name)
-    // followed by per-beer transferred rows, then dry-hop summary.
+    // Breakdown: per-(recipe, batch) rows for each event type.
+    // meta.batch is passed to JS for label composition: "{recipe_name} · #{batch}".
+    // Blank/null batch → JS renders "#—" (honest absence, never fabricated).
     $breakdown = [];
     foreach ($brewRecipes as $br) {
-        $rId = $br['recipe_id_fk'] ?? 'unknown';
+        $rId   = $br['recipe_id_fk'] ?? 'unknown';
+        $batch = isset($br['batch']) && $br['batch'] !== '' ? (string) $br['batch'] : null;
         $breakdown[] = [
-            'key'   => 'brew_' . $rId,
+            'key'   => 'brew_' . $rId . '_' . ($batch ?? 'x'),
             'label' => $br['recipe_name'],
             'value' => (float) ($br['recipe_hl'] ?? 0.0),
             'unit'  => 'HL',
             'meta'  => [
                 'type'           => 'brew',
+                'batch'          => $batch,
                 'classification' => $br['classification'],
                 'recipe_id_fk'   => $rId,
             ],
         ];
     }
     foreach ($rackRecipes as $rr) {
-        $rId = $rr['recipe_id_fk'] ?? 'unknown';
+        $rId   = $rr['recipe_id_fk'] ?? 'unknown';
+        $batch = isset($rr['batch']) && $rr['batch'] !== '' ? (string) $rr['batch'] : null;
         $breakdown[] = [
-            'key'   => 'rack_' . $rId,
+            'key'   => 'rack_' . $rId . '_' . ($batch ?? 'x'),
             'label' => $rr['recipe_name'],
             'value' => (float) ($rr['recipe_hl'] ?? 0.0),
             'unit'  => 'HL',
             'meta'  => [
                 'type'           => 'rack',
+                'batch'          => $batch,
                 'classification' => $rr['classification'],
                 'recipe_id_fk'   => $rId,
             ],
         ];
     }
-    if ($dhEvents > 0) {
-        $breakdown[] = ['key' => 'dryhop', 'label' => 'Dry-hop (lots)', 'value' => $dhBatches, 'unit' => 'lots'];
+    foreach ($dhPerBatch as $dh) {
+        $rId   = $dh['recipe_id_fk'] ?? 'unknown';
+        $batch = isset($dh['batch']) && $dh['batch'] !== '' ? (string) $dh['batch'] : null;
+        $breakdown[] = [
+            'key'   => 'dryhop_' . $rId . '_' . ($batch ?? 'x'),
+            'label' => $dh['recipe_name'],
+            'value' => (int) ($dh['event_count'] ?? 1),
+            'unit'  => 'lots',
+            'meta'  => [
+                'type'         => 'dryhop',
+                'batch'        => $batch,
+                'recipe_id_fk' => $rId,
+            ],
+        ];
+    }
+    foreach ($ccPerBatch as $cc) {
+        $rId   = $cc['recipe_id_fk'] ?? 'unknown';
+        $batch = isset($cc['batch']) && $cc['batch'] !== '' ? (string) $cc['batch'] : null;
+        $breakdown[] = [
+            'key'   => 'coldcrash_' . $rId . '_' . ($batch ?? 'x'),
+            'label' => $cc['recipe_name'],
+            'value' => (int) ($cc['event_count'] ?? 1),
+            'unit'  => 'lots',
+            'meta'  => [
+                'type'         => 'coldcrash',
+                'batch'        => $batch,
+                'recipe_id_fk' => $rId,
+            ],
+        ];
+    }
+
+    // 6. Rolling variation vs last 10 brews of the SAME recipe (#3 refinement, 2026-06-10).
+    //    For each brassin brewed today, compare its duration to the AVG duration of the
+    //    10 most-recent brews of the SAME recipe_id_fk STRICTLY BEFORE today (event_date < today).
+    //    Source: bd_brewing_timings_v2, joined on (recipe_id_fk, batch) — NEVER beer-name.
+    //    Guard: brew_end > brew_start AND is_tombstoned=0.
+    //    Thin data: <10 priors → use available N, label "(n brassins)"; 0 priors → null ("—").
+    //    Signed %: (today_dur − avg10) / avg10 * 100 per brassin.
+    //
+    //    Build map recipe_id_fk → {avg_prior_h, n_prior} via one query per unique recipe.
+    $recipeIds = array_unique(array_filter(array_column($qualityPerBatch, 'recipe_id_fk')));
+    $rollingByRecipe = []; // recipe_id_fk (int|'unknown') => ['avg' => float|null, 'n' => int]
+    foreach ($recipeIds as $rid) {
+        if ($rid === 'unknown' || $rid === null) {
+            $rollingByRecipe[$rid] = ['avg' => null, 'n' => 0];
+            continue;
+        }
+        $stmtRolling = $pdo->prepare(
+            "SELECT AVG(dur_h) AS avg_h, COUNT(*) AS n_brews
+               FROM (
+                 SELECT TIMESTAMPDIFF(MINUTE, t.brew_start, t.brew_end) / 60.0 AS dur_h
+                   FROM bd_brewing_timings_v2 t
+                   JOIN bd_brewing_gravity_v2 g
+                     ON g.batch = t.batch
+                    AND g.recipe_id_fk = ?
+                    AND g.event_type = 'Cooling'
+                    AND g.is_tombstoned = 0
+                  WHERE t.is_tombstoned = 0
+                    AND t.brew_end > t.brew_start
+                    AND t.event_date < ?
+                  ORDER BY t.event_date DESC
+                  LIMIT 10
+               ) sub"
+        );
+        $stmtRolling->execute([(int) $rid, $today]);
+        $rollingRow = $stmtRolling->fetch(PDO::FETCH_ASSOC);
+        $rollingByRecipe[$rid] = [
+            'avg' => ($rollingRow && $rollingRow['avg_h'] !== null)
+                        ? (float) $rollingRow['avg_h'] : null,
+            'n'   => (int) ($rollingRow['n_brews'] ?? 0),
+        ];
+    }
+
+    // Quality moût: per-brassin rows (Expansion 3 + rolling variation #3, 2026-06-10).
+    // Prefixed 'quality_' so the JS row-partitioner recognises them as a distinct section.
+    foreach ($qualityPerBatch as $qb) {
+        $rId   = $qb['recipe_id_fk'] ?? 'unknown';
+        $batch = isset($qb['batch']) && $qb['batch'] !== '' ? (string) $qb['batch'] : null;
+        $og    = $qb['avg_og']  !== null ? round((float) $qb['avg_og'],  2) : null;
+        $ph    = $qb['avg_ph']  !== null ? round((float) $qb['avg_ph'],  2) : null;
+        $nt    = (int) ($qb['n_timed_brews'] ?? 0);
+        $durH  = ($nt > 0 && $qb['avg_duration_h'] !== null)
+                     ? round((float) $qb['avg_duration_h'], 2) : null;
+
+        // Rolling variation: signed % vs avg of last 10 prior brews of this recipe.
+        // null avg (0 priors) → rolling_var_pct stays null → JS renders "—".
+        $rollingVarPct = null;
+        $rollingN      = 0;
+        if (isset($rollingByRecipe[$rId])) {
+            $rollingN   = $rollingByRecipe[$rId]['n'];
+            $rollingAvg = $rollingByRecipe[$rId]['avg'];
+            if ($durH !== null && $rollingAvg !== null && $rollingAvg > 0) {
+                $rollingVarPct = round(($durH - $rollingAvg) / $rollingAvg * 100.0, 1);
+            }
+        }
+
+        $breakdown[] = [
+            'key'   => 'quality_' . $rId . '_' . ($batch ?? 'x'),
+            'label' => $qb['recipe_name'],
+            'value' => null,   // no single numeric value — display is via meta fields
+            'unit'  => '',
+            'meta'  => [
+                'type'              => 'quality',
+                'batch'             => $batch,
+                'classification'    => $qb['classification'],
+                'recipe_id_fk'      => $rId,
+                'og_plato'          => $og,           // OG °Plato — NOT FG; Cooling final_gravity = OG
+                'ph_mout'           => $ph,            // pH moût (post-boil; final_ph on Cooling)
+                'duration_h'        => $durH,          // avg brew duration (h); null = no valid timing
+                'rolling_var_pct'   => $rollingVarPct, // signed % vs avg10 prior; null = 0 priors → "—"
+                'rolling_n'         => $rollingN,      // actual N used (may be <10 for thin data)
+                'n_timed_brews'     => $nt,
+            ],
+        ];
     }
 
     $result = array_merge(kpi_empty_result($label, 'HL'), [
@@ -2716,14 +2952,19 @@ function kpi_wort_daily_recap(string $label, PDO $pdo): array
         'tint'      => 'neutral',
         'breakdown' => $breakdown ?: null,
         'meta'      => [
-            'sections'      => $sections,
-            'period_label'  => $today,
-            'brew_count'    => $brewCount,
-            'brassin_count' => $brassinCount,
-            'rack_count'    => $rackCount,
-            'dryhop_batches'=> $dhBatches,
+            'sections'          => $sections,
+            'period_label'      => $today,
+            'brew_count'        => $brewCount,
+            'brassin_count'     => $brassinCount,
+            'rack_count'        => $rackCount,
+            'dryhop_batches'    => $dhBatches,
             'coldcrash_batches' => $ccBatches,
-            'today'         => $today,
+            'today'             => $today,
+            // Quality moût daily averages (for recap email / trend use)
+            'avg_og_plato'      => $avgOgToday,
+            'avg_ph_mout'       => $avgPhToday,
+            'avg_duration_h'    => $avgDurToday,
+            'cv_duration_pct'   => $cvDurToday,
         ],
     ]);
 
@@ -5396,10 +5637,13 @@ function kpi_pkg_daily_recap(string $label, PDO $pdo): array
     // with the vendable view (has vendable_hl, loss_kpi_hl). Filter on base table.
     // objective_hl: planning annotation — read here for reach% display ONLY.
     //   It is NOT exposed to compute_packaging_vendable_hl / v_bd_packaging_v2_vendable.
+    // batch: COALESCE(NULLIF(neb_batch,''), NULLIF(contract_batch,'')) — empty-string
+    //   sentinel (not NULL) is the "absent" guard (PM-flagged trap 2026-06-10).
     $stmtRuns = $pdo->prepare(
         "SELECT b.id,
                 b.run_type,
                 b.recipe_id_fk,
+                COALESCE(NULLIF(b.neb_batch,''), NULLIF(b.contract_batch,'')) AS batch,
                 COALESCE(rr.name, 'Inconnu')              AS recipe_name,
                 COALESCE(rr.classification, 'Neb')        AS classification,
                 v.vendable_hl,
@@ -5477,9 +5721,14 @@ function kpi_pkg_daily_recap(string $label, PDO $pdo): array
         $vendHl    = (float) ($r['vendable_hl'] ?? 0.0);
         $lossKpiHl = (float) ($r['loss_kpi_hl'] ?? 0.0);
         $lossOther = (float) ($r['loss_liquid_other_units'] ?? 0.0);
-        // Canonical beer loss formula from §PERTES-DASHBOARD:
-        $beerLossHl = $lossKpiHl + ($lossOther / 100.0);
-        $runType    = $r['run_type'] ?? 'bot';
+        $runType   = $r['run_type'] ?? 'bot';
+        // BUG FIX (2026-06-10): keg/cuv — v_bd_packaging_v2_vendable already folds
+        // loss_liquid_other_units/100 into loss_kpi_hl on the keg/cuv arm.
+        // Adding it again here was a double-count. bot/can/can33 view arm does NOT
+        // include it, so the +$lossOther/100 term is correct for those only.
+        $beerLossHl = in_array($runType, ['keg', 'cuv'], true)
+            ? $lossKpiHl
+            : $lossKpiHl + ($lossOther / 100.0);
 
         $totalVendableHl += $vendHl;
         $totalBeerLossHl += $beerLossHl;
@@ -5503,10 +5752,12 @@ function kpi_pkg_daily_recap(string $label, PDO $pdo): array
             $prodUnitsCan += (int) ($r['prod_total_units'] ?? 0);
         }
 
-        // Per-run row for breakdown
+        // Per-run row for breakdown.
         // objective_hl: planning annotation — read-only, never feeds vendable/COGS/tax.
-        $objHl      = isset($r['objective_hl']) && $r['objective_hl'] !== null
-                        ? (float)$r['objective_hl'] : null;
+        // batch: display hint for JS label composition "{recipe} · #{batch}"; null → "#—".
+        $objHl   = isset($r['objective_hl']) && $r['objective_hl'] !== null
+                     ? (float)$r['objective_hl'] : null;
+        $batch   = isset($r['batch']) && $r['batch'] !== '' ? (string) $r['batch'] : null;
         $runLossPct = ($vendHl > 0) ? round(100.0 * $beerLossHl / $vendHl, 2) : null;
         $reachPct   = ($objHl !== null && $objHl > 0.0)
                         ? round($vendHl / $objHl * 100.0, 1) : null;
@@ -5517,6 +5768,7 @@ function kpi_pkg_daily_recap(string $label, PDO $pdo): array
             'unit'  => 'HL',
             'meta'  => [
                 'run_type'     => $runType,
+                'batch'        => $batch,
                 'loss_pct'     => $runLossPct,
                 'beer_loss_hl' => round($beerLossHl, 3),
                 'objective_hl' => $objHl,

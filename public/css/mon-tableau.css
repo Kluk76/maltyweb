@@ -762,6 +762,189 @@ body.mon-tableau .mt-recap-prefs__info {
   font-family: 'DM Sans', sans-serif;
 }
 
+/* ── Recap card span (viz_type='recap') — 2 cols wide like bar/line ── */
+body.mon-tableau .kpc-card--recap {
+  grid-column: span 2;
+}
+
+/* ── Recap card subtitle "(saisi aujourd'hui)" ── */
+body.mon-tableau .kpc-recap__subtitle {
+  font-family: 'DM Sans', sans-serif;
+  font-size: .72rem;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink-mute);
+  margin-left: .4em;
+}
+
+/* ── Headline metrics strip ── */
+body.mon-tableau .kpc-recap__metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem .85rem;
+  margin: .55rem 0 .6rem;
+  padding-bottom: .6rem;
+  border-bottom: 1px solid var(--hairline);
+}
+
+body.mon-tableau .kpc-recap__metric {
+  display: flex;
+  flex-direction: column;
+  min-width: 4.5rem;
+}
+
+body.mon-tableau .kpc-recap__metric-val {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.2;
+}
+
+body.mon-tableau .kpc-recap__metric--amber .kpc-recap__metric-val {
+  color: var(--ember);
+}
+
+body.mon-tableau .kpc-recap__metric-lbl {
+  font-family: 'DM Sans', sans-serif;
+  font-size: .7rem;
+  color: var(--ink-mute);
+  margin-top: .15rem;
+}
+
+/* ── Section title inside the breakdown ── */
+body.mon-tableau .kpc-recap__section-title {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: .6rem;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin: .55rem 0 .25rem;
+}
+body.mon-tableau .kpc-recap__section-title:first-child {
+  margin-top: 0;
+}
+
+/* ── Breakdown list ── */
+body.mon-tableau .kpc-recap__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+body.mon-tableau .kpc-recap__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: .4rem;
+  padding: .18rem 0;
+  font-family: 'DM Sans', sans-serif;
+  font-size: .8rem;
+  color: var(--ink-soft);
+  border-bottom: 1px solid color-mix(in srgb, var(--hairline) 60%, transparent);
+}
+body.mon-tableau .kpc-recap__row:last-child {
+  border-bottom: none;
+}
+
+body.mon-tableau .kpc-recap__row-lbl {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body.mon-tableau .kpc-recap__row-val {
+  flex: 0 0 auto;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: .78rem;
+  color: var(--ink);
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* ── Lot number badge: "{recipe} · #217" ── */
+body.mon-tableau .kpc-recap__batch {
+  color: var(--ink-mute);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: .72rem;
+  font-weight: 400;
+  letter-spacing: .01em;
+}
+
+/* ── Per-material loss rate inline + per-run objective reach ── */
+body.mon-tableau .kpc-recap__loss,
+body.mon-tableau .kpc-recap__rate,
+body.mon-tableau .kpc-recap__reach {
+  color: var(--ink-mute);
+  font-size: .72rem;
+  margin-left: .3em;
+}
+
+/* ── "taux en attente" badge ── */
+body.mon-tableau .kpc-recap__badge {
+  display: inline-block;
+  padding: .05em .4em;
+  border-radius: 3px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: .67rem;
+  font-weight: 500;
+  vertical-align: middle;
+  margin-left: .3em;
+}
+
+body.mon-tableau .kpc-recap__badge--pending {
+  background: color-mix(in srgb, var(--ember) 12%, var(--bg-elev));
+  color: var(--ember);
+  border: 1px solid color-mix(in srgb, var(--ember) 30%, transparent);
+}
+
+/* ── Run-type label (FIX2a, 2026-06-10): "bouteille / fût / cuve" tag per run row ── */
+body.mon-tableau .kpc-recap__run-type {
+  color: var(--ink-mute);
+  font-family: 'DM Sans', sans-serif;
+  font-size: .70rem;
+  font-style: italic;
+  margin-left: .2em;
+}
+
+/* ── Quality moût chips (Expansion 3, 2026-06-10) ── */
+/* Row-level wrapper: let chips wrap on narrow screens */
+body.mon-tableau .kpc-recap__row-val--quality {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .25em .4em;
+  align-items: center;
+}
+
+body.mon-tableau .kpc-recap__quality-chip {
+  display: inline-block;
+  padding: .07em .45em;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--hop) 8%, var(--bg-elev));
+  color: var(--ink-soft);
+  border: 1px solid color-mix(in srgb, var(--hop) 20%, transparent);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: .70rem;
+  font-weight: 400;
+  white-space: nowrap;
+  cursor: default;
+}
+
+body.mon-tableau .kpc-recap__quality-chip--var {
+  background: color-mix(in srgb, var(--oak) 8%, var(--bg-elev));
+  border-color: color-mix(in srgb, var(--oak) 20%, transparent);
+  color: var(--ink-mute);
+}
+
+/* ── Responsive: recap collapses to 1 col on narrow screens ── */
+@media (max-width: 768px) {
+  body.mon-tableau .kpc-card--recap {
+    grid-column: span 1;
+  }
+}
+
 /* ══════════════════════════════════════════════════════
    RESPONSIVE — tablet (≤ 960px) → 2-column grid
    ══════════════════════════════════════════════════════ */

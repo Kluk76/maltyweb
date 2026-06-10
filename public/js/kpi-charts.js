@@ -412,6 +412,9 @@ function renderKpiCard(container, tracker, result, isAdmin) {
     case 'line':
       renderKpiLine(container, tracker, result, tCls);
       break;
+    case 'recap':
+      renderKpiRecap(container, tracker, result, tCls);
+      break;
     default:
       renderKpiNumber(container, tracker, result, tCls);
   }
@@ -765,15 +768,346 @@ function renderKpiLine(container, tracker, result, tCls) {
   }
 }
 
+/* ── recap ──────────────────────────────────────────────────
+   Composite "daily summary" card.
+   meta.sections  → headline metric strips
+   breakdown[]    → per-run rows (key prefix 'run_') + per-material rows
+   Material label map keeps DB column names out of the UI.  */
+
+var KPC_RECAP_MAT_LABELS = {
+  mat_label:       'Étiquettes',
+  mat_crown:       'Capsules',
+  mat_can_lid:     'Couvercles canette',
+  mat_cont_btl:    'Bouteilles',
+  mat_cont_can:    'Canettes',
+  mat_4pack_btl:   'Packs bouteille',
+  mat_4pack_can:   'Packs canette',
+  mat_wrap_btl:    'Fardelage bouteille',
+  mat_wrap_can:    'Fardelage canette',
+  mat_keg_liq:     'Perte liquide fût (L)',
+  mat_keg_collar:  'Capuchons fût',
+};
+
+function renderKpiRecap(container, tracker, result, tCls) {
+  var meta      = result.meta      || {};
+  var sections  = meta.sections    || [];
+  var breakdown = result.breakdown || [];
+  var label     = escHtml(result.label || tracker.label);
+
+  // Wort tiles carry a "(saisi aujourd'hui)" subtitle cue
+  var isWort    = tracker.source_domain === 'wort';
+  var subtitle  = isWort
+    ? '<span class="kpc-recap__subtitle">(saisi aujourd\'hui)</span>'
+    : '';
+
+  // Headline metrics strip
+  var sectHtml = '';
+  for (var i = 0; i < sections.length; i++) {
+    var s = sections[i];
+    var v = (s.value != null) ? escHtml(fmt(s.value, null, s.unit || '')) : '—';
+    var u = s.unit ? ' <span class="kpc-unit">' + escHtml(s.unit) + '</span>' : '';
+    var tintCls = s.tint === 'amber' ? ' kpc-recap__metric--amber' : '';
+    sectHtml +=
+      '<div class="kpc-recap__metric' + tintCls + '">'
+      + '<span class="kpc-recap__metric-val">' + v + u + '</span>'
+      + '<span class="kpc-recap__metric-lbl">' + escHtml(s.label) + '</span>'
+      + '</div>';
+  }
+
+  // Run-type → French operator label (FIX2a, 2026-06-10). No DB codes in the UI.
+  var RUN_TYPE_FR = {
+    'bot':   'bouteille',
+    'can':   'canette',
+    'can33': 'canette 33cl',
+    'keg':   'fût',
+    'cuv':   'cuve'
+  };
+
+  // recapRowLabel — compose "{recipe_name} · #{batch} · {run_type_fr}" for a per-run row,
+  // or just "{recipe_name} · #{batch}" for brew/rack/quality rows.
+  // Uses row.label (clean recipe name) + row.meta.batch + row.meta.run_type.
+  // null / empty batch → "#—" (honest absence, never fabricated).
+  function recapRowLabel(row) {
+    var base     = row.label || '';
+    var m        = row.meta || {};
+    var batch    = (m.batch != null && m.batch !== '') ? String(m.batch) : null;
+    var batchStr = escHtml(batch != null ? batch : '—');
+    var lbl = escHtml(base) + ' <span class="kpc-recap__batch">· #' + batchStr + '</span>';
+    // Append run-type for packaging per-run rows (FIX2a)
+    if (m.run_type != null) {
+      var typeFr = RUN_TYPE_FR[m.run_type] || escHtml(m.run_type);
+      lbl += ' <span class="kpc-recap__run-type">· ' + escHtml(typeFr) + '</span>';
+    }
+    return lbl;
+  }
+
+  // Row partitioning:
+  //  - packaging recap: 'run_*' rows = per-run, all other = material-loss rows.
+  //  - wort recap: 'brew_*' rows = brassins par (recette, lot),
+  //    'rack_*' = transferts par (recette, lot),
+  //    'dryhop_*' = dry-hop per lot, 'coldcrash_*' = cold crash per lot.
+  var bkHtml = '';
+  var runRows       = breakdown.filter(function(r) { return r.key && r.key.indexOf('run_') === 0; });
+  var brewRows      = breakdown.filter(function(r) { return r.key && r.key.indexOf('brew_') === 0; });
+  var rackRows      = breakdown.filter(function(r) { return r.key && r.key.indexOf('rack_') === 0; });
+  var dhRows        = breakdown.filter(function(r) { return r.key && r.key.indexOf('dryhop_') === 0; });
+  var ccRows        = breakdown.filter(function(r) { return r.key && r.key.indexOf('coldcrash_') === 0; });
+  // qualityRows: per-brassin quality metrics (Expansion 3, wort recap only)
+  var qualityRows   = breakdown.filter(function(r) { return r.key && r.key.indexOf('quality_') === 0; });
+  // matRows: packaging material-loss rows — everything not one of the above event-row prefixes
+  var matRows  = breakdown.filter(function(r) {
+    if (!r.key) return true;
+    return r.key.indexOf('run_') !== 0
+        && r.key.indexOf('brew_') !== 0
+        && r.key.indexOf('rack_') !== 0
+        && r.key.indexOf('dryhop_') !== 0
+        && r.key.indexOf('coldcrash_') !== 0
+        && r.key.indexOf('quality_') !== 0;
+  });
+
+  // run_type → section title mapping (CHANGE 1, 2026-06-10).
+  // Sections are rendered in this canonical order; empty sections suppressed.
+  var RUN_TYPE_SECTION = {
+    'bot':   'Bouteille',
+    'can':   'Canette',
+    'can33': 'Canette',   // can33 lives inside the Canette section (tagged inline as "canette 33cl")
+    'keg':   'Fût',
+    'cuv':   'Cuve'
+  };
+  // Canonical section order (suppress empty; render in this sequence)
+  var SECTION_ORDER = ['Bouteille', 'Canette', 'Fût', 'Cuve'];
+
+  if (runRows.length) {
+    // Group by section title while preserving within-section order
+    var sectionMap = {};
+    for (var j = 0; j < runRows.length; j++) {
+      var row   = runRows[j];
+      var rMeta = row.meta || {};
+      var secTitle = RUN_TYPE_SECTION[rMeta.run_type] || 'Autre';
+      if (!sectionMap[secTitle]) { sectionMap[secTitle] = []; }
+      sectionMap[secTitle].push(row);
+    }
+
+    for (var si = 0; si < SECTION_ORDER.length; si++) {
+      var sTitle = SECTION_ORDER[si];
+      if (!sectionMap[sTitle] || sectionMap[sTitle].length === 0) { continue; }
+      bkHtml += '<div class="kpc-recap__section-title">' + escHtml(sTitle) + '</div>';
+      bkHtml += '<ul class="kpc-recap__list">';
+      for (var j2 = 0; j2 < sectionMap[sTitle].length; j2++) {
+        var rowS   = sectionMap[sTitle][j2];
+        var rMetaS = rowS.meta || {};
+        var hlS    = (rowS.value != null) ? escHtml(fmt(rowS.value, 1, 'HL')) + ' HL' : '—';
+        // loss% at 2 dp — server returns rMetaS.loss_pct already rounded to 2dp.
+        // Canonical label = "perte bière" (NOT "perte liquide" — that names form dispositions).
+        var lossStrS = '';
+        if (rMetaS.loss_pct != null) {
+          lossStrS = ' <span class="kpc-recap__loss" title="Perte bière (bière perdue / vendable)">'
+            + escHtml(fmt(rMetaS.loss_pct, 2, '%')) + '&thinsp;% perte</span>';
+        }
+        // reach% vs objective: show "92,0% obj." when set, "—" when no objective
+        var reachStrS = '';
+        if (rMetaS.objective_hl != null && rMetaS.objective_hl > 0) {
+          var reachValS = rMetaS.reach_pct != null ? escHtml(fmt(rMetaS.reach_pct, 1, '%')) + '% obj.' : '—';
+          reachStrS = ' <span class="kpc-recap__reach">' + reachValS + '</span>';
+        }
+        bkHtml +=
+          '<li class="kpc-recap__row">'
+          + '<span class="kpc-recap__row-lbl">' + recapRowLabel(rowS) + '</span>'
+          + '<span class="kpc-recap__row-val">' + hlS + lossStrS + reachStrS + '</span>'
+          + '</li>';
+      }
+      bkHtml += '</ul>';
+    }
+    // Catch any run_type not in SECTION_ORDER (future-proof)
+    if (sectionMap['Autre'] && sectionMap['Autre'].length > 0) {
+      bkHtml += '<div class="kpc-recap__section-title">Autre</div>';
+      bkHtml += '<ul class="kpc-recap__list">';
+      for (var jx = 0; jx < sectionMap['Autre'].length; jx++) {
+        var rowX   = sectionMap['Autre'][jx];
+        var rMetaX = rowX.meta || {};
+        var hlX    = (rowX.value != null) ? escHtml(fmt(rowX.value, 1, 'HL')) + ' HL' : '—';
+        var lossStrX = '';
+        if (rMetaX.loss_pct != null) {
+          lossStrX = ' <span class="kpc-recap__loss" title="Perte bière (bière perdue / vendable)">'
+            + escHtml(fmt(rMetaX.loss_pct, 2, '%')) + '&thinsp;% perte</span>';
+        }
+        bkHtml +=
+          '<li class="kpc-recap__row">'
+          + '<span class="kpc-recap__row-lbl">' + recapRowLabel(rowX) + '</span>'
+          + '<span class="kpc-recap__row-val">' + hlX + lossStrX + '</span>'
+          + '</li>';
+      }
+      bkHtml += '</ul>';
+    }
+  }
+
+  // Wort recap: brassins par (recette, lot)
+  if (brewRows.length) {
+    bkHtml += '<div class="kpc-recap__section-title">Brassins</div>';
+    bkHtml += '<ul class="kpc-recap__list">';
+    for (var b = 0; b < brewRows.length; b++) {
+      var brow = brewRows[b];
+      var bHl  = (brow.value != null) ? escHtml(fmt(brow.value, 1, 'HL')) + ' HL' : '—';
+      bkHtml +=
+        '<li class="kpc-recap__row">'
+        + '<span class="kpc-recap__row-lbl">' + recapRowLabel(brow) + '</span>'
+        + '<span class="kpc-recap__row-val">' + bHl + '</span>'
+        + '</li>';
+    }
+    bkHtml += '</ul>';
+  }
+
+  // Wort recap: transferts par (recette, lot)
+  if (rackRows.length) {
+    bkHtml += '<div class="kpc-recap__section-title">Transferts</div>';
+    bkHtml += '<ul class="kpc-recap__list">';
+    for (var rr = 0; rr < rackRows.length; rr++) {
+      var rarow = rackRows[rr];
+      var raHl  = (rarow.value != null) ? escHtml(fmt(rarow.value, 1, 'HL')) + ' HL' : '—';
+      bkHtml +=
+        '<li class="kpc-recap__row">'
+        + '<span class="kpc-recap__row-lbl">' + recapRowLabel(rarow) + '</span>'
+        + '<span class="kpc-recap__row-val">' + raHl + '</span>'
+        + '</li>';
+    }
+    bkHtml += '</ul>';
+  }
+
+  // Dry-hop per lot (wort recap)
+  if (dhRows.length) {
+    bkHtml += '<div class="kpc-recap__section-title">Dry-hop</div>';
+    bkHtml += '<ul class="kpc-recap__list">';
+    for (var dh = 0; dh < dhRows.length; dh++) {
+      var dhrow = dhRows[dh];
+      bkHtml +=
+        '<li class="kpc-recap__row">'
+        + '<span class="kpc-recap__row-lbl">' + recapRowLabel(dhrow) + '</span>'
+        + '<span class="kpc-recap__row-val">' + escHtml(String(dhrow.value || 0)) + ' événement(s)</span>'
+        + '</li>';
+    }
+    bkHtml += '</ul>';
+  }
+
+  // Cold crash per lot (wort recap)
+  if (ccRows.length) {
+    bkHtml += '<div class="kpc-recap__section-title">Cold crash</div>';
+    bkHtml += '<ul class="kpc-recap__list">';
+    for (var cc = 0; cc < ccRows.length; cc++) {
+      var ccrow = ccRows[cc];
+      bkHtml +=
+        '<li class="kpc-recap__row">'
+        + '<span class="kpc-recap__row-lbl">' + recapRowLabel(ccrow) + '</span>'
+        + '<span class="kpc-recap__row-val">' + escHtml(String(ccrow.value || 0)) + ' événement(s)</span>'
+        + '</li>';
+    }
+    bkHtml += '</ul>';
+  }
+
+  // Quality moût: per-brassin OG, pH, duration + rolling variation (#3, 2026-06-10).
+  // Columns: OG (°P), pH moût, Durée (h), variation vs 10 derniers brassins du même recette.
+  // NOT: FG, ABV, OG target (no source); never fabricate unavailable metrics.
+  if (qualityRows.length) {
+    bkHtml += '<div class="kpc-recap__section-title">Qualité moût</div>';
+    bkHtml += '<ul class="kpc-recap__list">';
+    for (var qi = 0; qi < qualityRows.length; qi++) {
+      var qrow  = qualityRows[qi];
+      var qm    = qrow.meta || {};
+      var qLbl  = recapRowLabel(qrow);
+      // Build quality chips: show each metric only when populated
+      var qChips = '';
+      if (qm.og_plato != null) {
+        qChips += '<span class="kpc-recap__quality-chip" title="OG moyen (densité initiale moût, °Plato — NOT densité finale)">'
+          + 'OG&nbsp;' + escHtml(fmt(qm.og_plato, 2, '')) + '&thinsp;°P</span>';
+      }
+      if (qm.ph_mout != null) {
+        qChips += '<span class="kpc-recap__quality-chip" title="pH moût (post-ébullition, mesure Cooling)">'
+          + 'pH&nbsp;' + escHtml(fmt(qm.ph_mout, 2, '')) + '</span>';
+      }
+      if (qm.duration_h != null) {
+        qChips += '<span class="kpc-recap__quality-chip" title="Durée moyenne par brassin (brew_start→brew_end)">'
+          + escHtml(fmt(qm.duration_h, 2, '')) + '&thinsp;h</span>';
+      }
+      // Rolling variation vs last N brews of same recipe (CHANGE 2, replaces intra-day CV).
+      // rolling_var_pct: signed %; null = 0 priors → "—"; rolling_n: actual prior count.
+      // Show only when duration is available (else no meaningful comparison).
+      if (qm.duration_h != null) {
+        var rollingN   = qm.rolling_n != null ? qm.rolling_n : 0;
+        var rollingLbl = rollingN >= 10 ? 'vs 10 derniers' : ('vs ' + rollingN + ' derniers');
+        var rollingDisplay;
+        if (qm.rolling_var_pct != null) {
+          // Signed format: "+4,2 %" or "−3,1 %"; use HTML minus (−) for negatives.
+          var varSign = qm.rolling_var_pct >= 0 ? '+' : '−';
+          rollingDisplay = varSign
+            + escHtml(fmt(Math.abs(qm.rolling_var_pct), 1, '')) + '&thinsp;%';
+          if (rollingN < 10 && rollingN > 0) {
+            rollingDisplay += ' <span class="kpc-recap__quality-n">(' + rollingN + ' brassins)</span>';
+          }
+        } else {
+          rollingDisplay = '—';
+        }
+        var varChipCls = (qm.rolling_var_pct != null && Math.abs(qm.rolling_var_pct) > 10)
+          ? ' kpc-recap__quality-chip--var kpc-recap__quality-chip--alert'
+          : ' kpc-recap__quality-chip--var';
+        qChips += '<span class="kpc-recap__quality-chip' + varChipCls + '" title="Variation vs 10 derniers brassins de la même recette">'
+          + escHtml(rollingLbl) + '&nbsp;' + rollingDisplay + '</span>';
+      }
+      bkHtml +=
+        '<li class="kpc-recap__row kpc-recap__row--quality">'
+        + '<span class="kpc-recap__row-lbl">' + qLbl + '</span>'
+        + '<span class="kpc-recap__row-val kpc-recap__row-val--quality">' + (qChips || '—') + '</span>'
+        + '</li>';
+    }
+    bkHtml += '</ul>';
+  }
+
+  if (matRows.length) {
+    bkHtml += '<div class="kpc-recap__section-title">Pertes matières</div>';
+    bkHtml += '<ul class="kpc-recap__list">';
+    for (var k = 0; k < matRows.length; k++) {
+      var mrow  = matRows[k];
+      var mmeta = mrow.meta || {};
+      var mLbl  = KPC_RECAP_MAT_LABELS[mrow.key] || escHtml(mrow.label);
+      var mVal  = (mrow.value != null) ? escHtml(fmt(mrow.value, 0, '')) : '—';
+      var mUnit = mrow.unit ? ' ' + escHtml(mrow.unit) : '';
+      var rateBadge = '';
+      if (mmeta.rate_type === 'pending') {
+        rateBadge = ' <span class="kpc-recap__badge kpc-recap__badge--pending">taux en attente</span>';
+      } else if (mmeta.rate_pct != null) {
+        rateBadge = ' <span class="kpc-recap__rate">' + escHtml(fmt(mmeta.rate_pct, 1, '%')) + ' %</span>';
+      }
+      bkHtml +=
+        '<li class="kpc-recap__row">'
+        + '<span class="kpc-recap__row-lbl">' + escHtml(mLbl) + '</span>'
+        + '<span class="kpc-recap__row-val">' + mVal + mUnit + rateBadge + '</span>'
+        + '</li>';
+    }
+    bkHtml += '</ul>';
+  }
+
+  // Empty-state for no activity today
+  var hasAnyRows = runRows.length || matRows.length || brewRows.length || rackRows.length || dhRows.length || ccRows.length;
+  if (!hasAnyRows && sections.length === 0) {
+    bkHtml = '<div class="kpc-no-data">Aucune activité aujourd\'hui</div>';
+  }
+
+  container.innerHTML =
+    '<div class="kpc-card__label">' + label + subtitle + '</div>'
+    + (sectHtml ? '<div class="kpc-recap__metrics">' + sectHtml + '</div>' : '')
+    + (bkHtml   ? '<div class="kpc-recap__body">'   + bkHtml   + '</div>' : '');
+}
+
+
 /* ── Public exports (consumed by wort-kpis.js and mon-tableau) ── */
 window.KpcCharts = {
-  escHtml:         escHtml,
-  fmt:             fmt,
-  svgEl:           svgEl,
-  buildBarChart:   buildBarChart,
-  buildSparkSvg:   buildSparkSvg,
-  paceTintResult:  paceTintResult,
-  renderKpiCard:   renderKpiCard,
-  kpcTok:          kpcTok,
-  KPC_MONTHS_FR:   KPC_MONTHS_FR,
+  escHtml:             escHtml,
+  fmt:                 fmt,
+  svgEl:               svgEl,
+  buildBarChart:       buildBarChart,
+  buildSparkSvg:       buildSparkSvg,
+  paceTintResult:      paceTintResult,
+  renderKpiCard:       renderKpiCard,
+  renderKpiRecap:      renderKpiRecap,
+  kpcTok:              kpcTok,
+  KPC_MONTHS_FR:       KPC_MONTHS_FR,
+  KPC_RECAP_MAT_LABELS: KPC_RECAP_MAT_LABELS,
 };
