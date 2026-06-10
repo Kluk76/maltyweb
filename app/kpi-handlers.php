@@ -1045,15 +1045,24 @@ function kpi_handler_wort(
     PDO    $pdo
 ): array {
     return match ($handler) {
-        'hl_brewed_period'     => kpi_wort_hl_brewed($params, $label, $pdo),
-        'hl_brewed_ytd'        => kpi_wort_hl_brewed_ytd($label, $pdo),
-        'brew_count_period'    => kpi_wort_brew_count($params, $label, $pdo),
-        'avg_hl_per_brew'      => kpi_wort_avg_hl_per_brew($params, $label, $pdo),
-        'production_by_beer_yoy' => kpi_wort_production_by_beer_yoy($label, $pdo),
-        'brewhouse_yield'      => kpi_stub_handler('wort', $handler, $label), // no target_hl in ref_recipes; stays stub
-        'days_since_last_brew' => kpi_wort_days_since_last_brew($label, $pdo),
-        'beer_loss_cascade'    => kpi_stub_handler('wort', $handler, $label), // needs racking+packaging delta data
-        default                => kpi_stub_handler('wort', $handler, $label),
+        'hl_brewed_period'          => kpi_wort_hl_brewed($params, $label, $pdo),
+        'hl_brewed_ytd'             => kpi_wort_hl_brewed_ytd($label, $pdo),
+        'brew_count_period'         => kpi_wort_brew_count($params, $label, $pdo),
+        'avg_hl_per_brew'           => kpi_wort_avg_hl_per_brew($params, $label, $pdo),
+        'production_by_beer_yoy'    => kpi_wort_production_by_beer_yoy($label, $pdo),
+        // Phase 2b Batch 4 — compute handlers (mig-308):
+        'brewhouse_yield'           => kpi_wort_brewhouse_yield($params, $label, $pdo),
+        'days_since_last_brew'      => kpi_wort_days_since_last_brew($label, $pdo),
+        'avg_brew_duration'         => kpi_wort_avg_brew_duration($params, $label, $pdo),
+        'ingredient_consumption_period' => kpi_wort_ingredient_consumption($params, $label, $pdo),
+        'beer_loss_cascade'         => kpi_wort_beer_loss_cascade($params, $label, $pdo),
+        // Confirmed stubs — source columns absent:
+        'og_attainment'             => kpi_stub_handler('wort', $handler, $label),   // no target_og in ref_recipes
+        'brewing_deviations'        => kpi_stub_handler('wort', $handler, $label),   // no deviations table/schema
+        'extract_efficiency_lab'    => kpi_stub_handler('wort', $handler, $label),   // gap: no lab extract data
+        'dryhop_absorption_loss'    => kpi_stub_handler('wort', $handler, $label),   // gap: no dryhop volume tracking
+        'fv_trub_loss'              => kpi_stub_handler('wort', $handler, $label),   // gap: no knock-out→FV delta
+        default                     => kpi_stub_handler('wort', $handler, $label),
     };
 }
 
@@ -1331,6 +1340,318 @@ function kpi_wort_production_by_beer_yoy(string $label, PDO $pdo): array
         'series'      => $series,
         'breakdown'   => $breakdown,
         'meta'        => ['period_label' => "YTD {$year}", 'beer_count' => count($beers)],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+
+// ─── Phase 2b Batch 4 — wort compute handlers ────────────────────────────────
+
+/**
+ * #6 — Brewhouse yield %: actual cooling HL vs brewhouse nominal size (ref_brewhouse_size).
+ * Denominator = the current nominal size in ref_brewhouse_size (most recent effective row).
+ * Numerator  = average cooling final_volume per brew row.
+ * Period is the submitted_at date window.
+ * Multi-brew batches each contribute one Cooling row → each row counted independently.
+ */
+function kpi_wort_brewhouse_yield(array $params, string $label, PDO $pdo): array
+{
+    $period = $params['period'] ?? 'current_month';
+    $p = kpi_resolve_period($period);
+
+    $cacheKey = "wort_bhouse_yield_{$p['start']}_{$p['end']}";
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    // Brewhouse nominal HL (most recent effective row, no future effective_from).
+    $nomStmt = $pdo->query(
+        "SELECT size_hl FROM ref_brewhouse_size
+          WHERE effective_from <= CURDATE()
+            AND (effective_until IS NULL OR effective_until >= CURDATE())
+          ORDER BY effective_from DESC
+          LIMIT 1"
+    );
+    $nomRow  = $nomStmt->fetch(PDO::FETCH_ASSOC);
+    $nominalHl = $nomRow ? (float) $nomRow['size_hl'] : null;
+
+    if ($nominalHl === null || $nominalHl <= 0) {
+        $result = array_merge(kpi_empty_result($label, '%'), [
+            'tint' => 'neutral',
+            'meta' => ['note' => 'Capacité nominale brasserie non configurée'],
+        ]);
+        return kpi_cache_set($cacheKey, $result);
+    }
+
+    $base = kpi_wort_base_sql();
+    $stmt = $pdo->prepare(
+        "SELECT COUNT(*) AS brew_rows,
+                ROUND(AVG(cl.final_volume), 2) AS avg_hl,
+                ROUND(SUM(cl.final_volume), 2) AS total_hl
+         {$base}
+           AND DATE(cl.submitted_at) BETWEEN ? AND ?"
+    );
+    $stmt->execute([$p['start'], $p['end']]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    $brewRows = (int) ($row['brew_rows'] ?? 0);
+    $avgHl    = $row ? (float) $row['avg_hl'] : null;
+    $yieldPct = ($avgHl !== null && $nominalHl > 0)
+                ? round(($avgHl / $nominalHl) * 100, 1)
+                : null;
+
+    $tint = match (true) {
+        $yieldPct === null  => 'neutral',
+        $yieldPct >= 95.0   => 'green',
+        $yieldPct >= 85.0   => 'amber',
+        default             => 'red',
+    };
+
+    $result = array_merge(kpi_empty_result($label, '%'), [
+        'value' => $yieldPct,
+        'tint'  => $tint,
+        'meta'  => [
+            'period_label'  => $p['label'],
+            'brew_rows'     => $brewRows,
+            'avg_hl'        => $avgHl,
+            'nominal_hl'    => $nominalHl,
+            'note'          => "Rendement moyen = HL moyen refroidissement / {$nominalHl} HL nominal",
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/**
+ * #10 — Average brew duration in hours (rolling period).
+ * Source: bd_brewing_timings_v2 brew_start / brew_end.
+ * Multi-brew batches have one row per brew; each row contributes its own duration.
+ * Filter: brew_end > brew_start, duration 1–24 h (excludes data-entry errors).
+ */
+function kpi_wort_avg_brew_duration(array $params, string $label, PDO $pdo): array
+{
+    $period = $params['period'] ?? 'rolling_3m';
+    $p = kpi_resolve_period($period);
+
+    $cacheKey = "wort_brew_dur_{$p['start']}_{$p['end']}";
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $stmt = $pdo->prepare(
+        "SELECT COUNT(*) AS brew_rows,
+                ROUND(AVG(TIMESTAMPDIFF(MINUTE, brew_start, brew_end) / 60.0), 2) AS avg_hours,
+                ROUND(MIN(TIMESTAMPDIFF(MINUTE, brew_start, brew_end) / 60.0), 2) AS min_hours,
+                ROUND(MAX(TIMESTAMPDIFF(MINUTE, brew_start, brew_end) / 60.0), 2) AS max_hours
+           FROM bd_brewing_timings_v2
+          WHERE is_tombstoned = 0
+            AND brew_start IS NOT NULL
+            AND brew_end   IS NOT NULL
+            AND brew_end > brew_start
+            AND TIMESTAMPDIFF(MINUTE, brew_start, brew_end) BETWEEN 60 AND 1440
+            AND event_date BETWEEN ? AND ?"
+    );
+    $stmt->execute([$p['start'], $p['end']]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    $avgH   = $row && (int)$row['brew_rows'] > 0 ? (float) $row['avg_hours'] : null;
+
+    $result = array_merge(kpi_empty_result($label, 'heures'), [
+        'value' => $avgH,
+        'tint'  => 'neutral',
+        'meta'  => [
+            'period_label' => $p['label'],
+            'brew_rows'    => $row ? (int)   $row['brew_rows'] : 0,
+            'min_hours'    => $row ? (float) $row['min_hours'] : null,
+            'max_hours'    => $row ? (float) $row['max_hours'] : null,
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/**
+ * #11 — Ingredient consumption by MI category for a period.
+ * Source: inv_consumption (canonical) joined to ref_mi → ref_mi_categories.
+ * Groups by category name; CHF conversion not applied (qty in mixed units).
+ * Returns breakdown by category sorted by count descending.
+ */
+function kpi_wort_ingredient_consumption(array $params, string $label, PDO $pdo): array
+{
+    $period = $params['period'] ?? 'current_month';
+    $p = kpi_resolve_period($period);
+
+    $cacheKey = "wort_ingr_conso_{$p['start']}_{$p['end']}";
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $stmt = $pdo->prepare(
+        "SELECT rmc.name AS category,
+                COUNT(*) AS line_count,
+                ROUND(SUM(ic.qty), 2) AS total_qty,
+                ic.unit
+           FROM inv_consumption ic
+           JOIN ref_mi rm ON rm.id = ic.mi_id_fk
+           JOIN ref_mi_categories rmc ON rmc.id = rm.category_id
+          WHERE ic.consumed_at BETWEEN ? AND ?
+            AND ic.source_event IN ('brewing', 'fermenting')
+          GROUP BY rmc.name, ic.unit
+          ORDER BY line_count DESC"
+    );
+    $stmt->execute([$p['start'], $p['end']]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Aggregate by category (multiple units possible per category).
+    $byCat = [];
+    foreach ($rows as $r) {
+        $cat = $r['category'];
+        if (!isset($byCat[$cat])) {
+            $byCat[$cat] = ['line_count' => 0, 'note' => []];
+        }
+        $byCat[$cat]['line_count'] += (int) $r['line_count'];
+        $byCat[$cat]['note'][]      = round((float)$r['total_qty'], 1) . ' ' . ($r['unit'] ?? '?');
+    }
+    arsort($byCat);
+
+    $totalLines = array_sum(array_column($byCat, 'line_count'));
+    $breakdown  = [];
+    foreach ($byCat as $cat => $data) {
+        $breakdown[] = [
+            'key'   => $cat,
+            'label' => $cat,
+            'value' => $data['line_count'],
+            'meta'  => ['qty_note' => implode(', ', $data['note'])],
+        ];
+    }
+
+    $result = array_merge(kpi_empty_result($label, 'lignes'), [
+        'value'     => $totalLines,
+        'tint'      => 'neutral',
+        'breakdown' => $breakdown,
+        'meta'      => [
+            'period_label' => $p['label'],
+            'category_count' => count($byCat),
+            'note'         => 'Consommations brewing+fermenting issues de inv_consumption',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/**
+ * #252 — Beer loss cascade waterfall: brassé → transféré → packagé HL.
+ * Chains bd_brewing_gravity_v2 (Cooling) → bd_racking_v2 → bd_packaging_v2
+ * keyed on (recipe_id_fk, batch). Period filter on racking event_date.
+ *
+ * Waterfall shape consumed by renderKpiWaterfall (reads result.breakdown):
+ *   [{key:'brewed',  label:'Brassé',      value: +total_brewed_hl},
+ *    {key:'rack_loss',label:'→ Transféré',value: -rack_loss_hl},
+ *    {key:'racked',  label:'Transféré',   value: +total_racked_hl},    // running step
+ *    {key:'pkg_loss',label:'→ Packagé',   value: -pkg_loss_hl},
+ *    {key:'packaged',label:'Packagé',     value: +total_packaged_hl}]
+ *
+ * Only matched pairs (brew+rack found) are included; unmatched orphans excluded.
+ * Filter: loss fractions 0–40% (excludes impossible data-entry values).
+ */
+function kpi_wort_beer_loss_cascade(array $params, string $label, PDO $pdo): array
+{
+    $period = $params['period'] ?? 'rolling_3m';
+    $p = kpi_resolve_period($period);
+
+    $cacheKey = "wort_loss_cascade_{$p['start']}_{$p['end']}";
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    // Join: racking ↔ brewing (required), packaging (optional left join).
+    // Key: (recipe_id_fk, batch) — brewing uses recipe_id_fk+batch,
+    //      racking uses COALESCE(neb_recipe_id_fk,contract_recipe_id_fk) + COALESCE(neb_batch,contract_batch),
+    //      packaging uses recipe_id_fk + COALESCE(neb_batch,contract_batch).
+    $stmt = $pdo->prepare(
+        "SELECT COUNT(*) AS pairs,
+                ROUND(SUM(bg.wort_hl), 2)  AS total_brewed_hl,
+                ROUND(SUM(r.racked_vol_hl), 2) AS total_racked_hl,
+                ROUND(SUM(COALESCE(pk.pkg_hl, 0)), 2) AS total_packaged_hl
+           FROM bd_racking_v2 r
+           JOIN (
+               SELECT recipe_id_fk, batch, SUM(final_volume) AS wort_hl
+                 FROM bd_brewing_gravity_v2
+                WHERE event_type = 'Cooling' AND is_tombstoned = 0
+                GROUP BY recipe_id_fk, batch
+           ) bg ON bg.recipe_id_fk = COALESCE(r.neb_recipe_id_fk, r.contract_recipe_id_fk)
+               AND bg.batch = COALESCE(NULLIF(r.neb_batch, ''), r.contract_batch)
+           LEFT JOIN (
+               SELECT recipe_id_fk,
+                      COALESCE(neb_batch, contract_batch) AS batch,
+                      SUM(vendable_hl) AS pkg_hl
+                 FROM bd_packaging_v2
+                WHERE is_tombstoned = 0
+                GROUP BY recipe_id_fk, batch
+           ) pk ON pk.recipe_id_fk = COALESCE(r.neb_recipe_id_fk, r.contract_recipe_id_fk)
+               AND pk.batch = COALESCE(NULLIF(r.neb_batch, ''), r.contract_batch)
+          WHERE r.is_tombstoned = 0
+            AND r.racked_vol_hl > 0
+            AND bg.wort_hl > 0
+            AND r.event_date BETWEEN ? AND ?
+            AND (bg.wort_hl - r.racked_vol_hl) / NULLIF(bg.wort_hl, 0) BETWEEN 0 AND 0.40"
+    );
+    $stmt->execute([$p['start'], $p['end']]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    $pairs    = (int)   ($row['pairs']             ?? 0);
+    $brewed   = (float) ($row['total_brewed_hl']   ?? 0.0);
+    $racked   = (float) ($row['total_racked_hl']   ?? 0.0);
+    $packaged = (float) ($row['total_packaged_hl'] ?? 0.0);
+
+    if ($pairs === 0 || $brewed <= 0) {
+        $result = array_merge(kpi_empty_result($label, '%'), [
+            'tint' => 'neutral',
+            'meta' => ['period_label' => $p['label'], 'note' => 'Aucune paire brassin+transfert trouvée'],
+        ]);
+        return kpi_cache_set($cacheKey, $result);
+    }
+
+    $rackLoss = round($brewed - $racked, 2);
+    $pkgLoss  = $packaged > 0 ? round($racked - $packaged, 2) : null;
+
+    // Overall loss % from brewed to final packaged (or to racked if no packaging matched).
+    $finalOutput = $packaged > 0 ? $packaged : $racked;
+    $totalLossPct = round((($brewed - $finalOutput) / $brewed) * 100, 1);
+
+    // Waterfall breakdown: positive bars = volumes, negative bars = losses.
+    $breakdown = [
+        ['key' => 'brewed',    'label' => 'Brassé',      'value' => round($brewed, 2)],
+        ['key' => 'rack_loss', 'label' => '- Pertes CCT', 'value' => -round($rackLoss, 2)],
+        ['key' => 'racked',    'label' => 'Transféré',   'value' => round($racked, 2)],
+    ];
+    if ($pkgLoss !== null) {
+        $breakdown[] = ['key' => 'pkg_loss',  'label' => '- Pertes BBT', 'value' => -$pkgLoss];
+        $breakdown[] = ['key' => 'packaged',  'label' => 'Packagé',      'value' => round($packaged, 2)];
+    }
+
+    $tint = match (true) {
+        $totalLossPct <= 8.0   => 'green',
+        $totalLossPct <= 15.0  => 'amber',
+        default                => 'red',
+    };
+
+    $result = array_merge(kpi_empty_result($label, '%'), [
+        'value'     => $totalLossPct,
+        'tint'      => $tint,
+        'breakdown' => $breakdown,
+        'meta'      => [
+            'period_label'        => $p['label'],
+            'pairs'               => $pairs,
+            'total_brewed_hl'     => $brewed,
+            'total_racked_hl'     => $racked,
+            'total_packaged_hl'   => $packaged,
+            'rack_loss_hl'        => $rackLoss,
+            'pkg_loss_hl'         => $pkgLoss,
+            'total_loss_pct'      => $totalLossPct,
+            'note'                => 'Pertes CCT+BBT chaînées par (recipe_id_fk, batch)',
+        ],
     ]);
 
     return kpi_cache_set($cacheKey, $result);
@@ -2527,8 +2848,12 @@ function kpi_handler_racking(
         'brew_to_rack_cycle'        => kpi_racking_brew_to_rack_cycle($params, $label, $pdo),
         'blend_rackings_count'      => kpi_racking_blend_count($params, $label, $pdo),
         'rack_to_packaging_lag'     => kpi_racking_to_packaging_lag($params, $label, $pdo),
-        'racking_yield_vs_target'   => kpi_stub_handler('racking', $handler, $label), // no target HL in ref_recipes
-        'tank_emptying_efficiency'  => kpi_stub_handler('racking', $handler, $label), // no flowmeter data in bd_racking_v2
+        // Phase 2b Batch 4 — compute handlers (mig-308):
+        'racking_yield_vs_target'   => kpi_racking_yield_vs_target($params, $label, $pdo),
+        'do_pickup_racking'         => kpi_racking_do_pickup($params, $label, $pdo),
+        'carbonation_achieved'      => kpi_racking_carbonation($params, $label, $pdo),
+        // Confirmed stub — source columns absent:
+        'tank_emptying_efficiency'  => kpi_stub_handler('racking', $handler, $label), // flowmeter_start/end: 2/406 rows; bbt_vide_scrapped_hl: 0/406
         default                     => kpi_stub_handler('racking', $handler, $label),
     };
 }
@@ -2854,6 +3179,227 @@ function kpi_racking_to_packaging_lag(array $params, string $label, PDO $pdo): a
             'pairs'        => $row ? (int) $row['pairs']    : 0,
             'min_days'     => $row ? (int) $row['min_days'] : null,
             'max_days'     => $row ? (int) $row['max_days'] : null,
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+
+// ─── Phase 2b Batch 4 — racking compute handlers ─────────────────────────────
+
+/**
+ * #43 — Racking yield vs brewed HL (per-batch bar chart, rolling 3m).
+ * Definition: racked HL / brewed HL per matched (recipe_id_fk, batch) pair.
+ * Reuses same join as kpi_racking_loss_pct (#40) for consistency.
+ * Returns: series = [{period: "RecipeName #batch", value: yield_pct}] for the bar renderer.
+ */
+function kpi_racking_yield_vs_target(array $params, string $label, PDO $pdo): array
+{
+    $period = $params['period'] ?? 'rolling_3m';
+    $p = kpi_resolve_period($period);
+
+    $cacheKey = "racking_yield_{$p['start']}_{$p['end']}";
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $stmt = $pdo->prepare(
+        "SELECT COALESCE(rr1.recipe_short_name, rr2.recipe_short_name,
+                         rr1.name, rr2.name, 'Inconnu') AS beer_name,
+                COALESCE(NULLIF(r.neb_batch,''), r.contract_batch) AS batch,
+                r.racked_vol_hl,
+                bg.wort_hl,
+                ROUND(r.racked_vol_hl / NULLIF(bg.wort_hl, 0) * 100, 1) AS yield_pct
+           FROM bd_racking_v2 r
+           JOIN (
+               SELECT recipe_id_fk, batch, SUM(final_volume) AS wort_hl
+                 FROM bd_brewing_gravity_v2
+                WHERE event_type = 'Cooling' AND is_tombstoned = 0
+                GROUP BY recipe_id_fk, batch
+           ) bg ON bg.recipe_id_fk = COALESCE(r.neb_recipe_id_fk, r.contract_recipe_id_fk)
+               AND bg.batch = COALESCE(NULLIF(r.neb_batch,''), r.contract_batch)
+           LEFT JOIN ref_recipes rr1 ON rr1.id = r.neb_recipe_id_fk
+           LEFT JOIN ref_recipes rr2 ON rr2.id = r.contract_recipe_id_fk
+          WHERE r.is_tombstoned = 0
+            AND r.racked_vol_hl > 0
+            AND bg.wort_hl > 0
+            AND r.event_date BETWEEN ? AND ?
+            AND r.racked_vol_hl / NULLIF(bg.wort_hl, 0) BETWEEN 0.6 AND 1.05
+          ORDER BY r.event_date DESC
+          LIMIT 20"
+    );
+    $stmt->execute([$p['start'], $p['end']]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $series = [];
+    $totalYield = 0.0;
+    foreach ($rows as $r) {
+        $lbl = ($r['beer_name'] ?? 'Inconnu') . ' #' . ($r['batch'] ?? '?');
+        $series[] = ['period' => $lbl, 'value' => (float) $r['yield_pct']];
+        $totalYield += (float) $r['yield_pct'];
+    }
+    $avgYield = count($rows) > 0 ? round($totalYield / count($rows), 1) : null;
+
+    $tint = match (true) {
+        $avgYield === null  => 'neutral',
+        $avgYield >= 92.0   => 'green',
+        $avgYield >= 85.0   => 'amber',
+        default             => 'red',
+    };
+
+    $result = array_merge(kpi_empty_result($label, '%'), [
+        'value'  => $avgYield,
+        'tint'   => $tint,
+        'series' => $series,
+        'meta'   => [
+            'period_label' => $p['label'],
+            'pair_count'   => count($rows),
+            'note'         => 'Rendement = HL transféré / HL brassé par (recette, brassin)',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/**
+ * #44 — O₂ dissous pickup à la mise en fût (ppb, rolling 3m).
+ * Source: bd_racking_v2.bbt_o2 (O₂ at BBT after racking).
+ * Outlier filter: uses qc_o2_outlier_hi from commissioning_settings (default 200 ppb).
+ */
+function kpi_racking_do_pickup(array $params, string $label, PDO $pdo): array
+{
+    $period = $params['period'] ?? 'rolling_3m';
+    $p = kpi_resolve_period($period);
+
+    $cacheKey = "racking_do_pickup_{$p['start']}_{$p['end']}";
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    // Fetch O₂ outlier threshold from commissioning_settings; fall back to 200 ppb.
+    $threshStmt = $pdo->query(
+        "SELECT value_num FROM commissioning_settings
+          WHERE section = 'qc_thresholds' AND key_name = 'qc_o2_outlier_hi'
+          LIMIT 1"
+    );
+    $threshRow = $threshStmt->fetch(PDO::FETCH_ASSOC);
+    $outlierHi = $threshRow ? (float) $threshRow['value_num'] : 200.0;
+
+    $stmt = $pdo->prepare(
+        "SELECT COUNT(*) AS rack_count,
+                ROUND(AVG(bbt_o2), 1) AS avg_o2,
+                ROUND(MIN(bbt_o2), 1) AS min_o2,
+                ROUND(MAX(bbt_o2), 1) AS max_o2,
+                SUM(CASE WHEN bbt_o2 > ? THEN 1 ELSE 0 END) AS outlier_count
+           FROM bd_racking_v2
+          WHERE is_tombstoned = 0
+            AND bbt_o2 IS NOT NULL
+            AND bbt_o2 > 0
+            AND bbt_o2 <= ?
+            AND event_date BETWEEN ? AND ?"
+    );
+    $stmt->execute([$outlierHi, $outlierHi, $p['start'], $p['end']]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    $avgO2     = $row && (int)$row['rack_count'] > 0 ? (float) $row['avg_o2'] : null;
+    $warnHiStmt = $pdo->query(
+        "SELECT value_num FROM commissioning_settings
+          WHERE section = 'qc_thresholds' AND key_name = 'qc_o2_warn_hi'
+          LIMIT 1"
+    );
+    $warnHiRow = $warnHiStmt->fetch(PDO::FETCH_ASSOC);
+    $warnHi    = $warnHiRow ? (float) $warnHiRow['value_num'] : 50.0;
+
+    $tint = match (true) {
+        $avgO2 === null         => 'neutral',
+        $avgO2 <= $warnHi * 0.6 => 'green',
+        $avgO2 <= $warnHi       => 'amber',
+        default                 => 'red',
+    };
+
+    $result = array_merge(kpi_empty_result($label, 'ppb'), [
+        'value' => $avgO2,
+        'tint'  => $tint,
+        'meta'  => [
+            'period_label'  => $p['label'],
+            'rack_count'    => $row ? (int)   $row['rack_count']    : 0,
+            'min_o2'        => $row ? (float) $row['min_o2']        : null,
+            'max_o2'        => $row ? (float) $row['max_o2']        : null,
+            'outlier_count' => $row ? (int)   $row['outlier_count'] : 0,
+            'warn_hi_ppb'   => $warnHi,
+            'outlier_hi_ppb' => $outlierHi,
+            'note'          => 'O₂ mesuré BBT à la mise en fût; outliers exclus (> ' . $outlierHi . ' ppb)',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/**
+ * #45 — Carbonatation atteinte (g/L, rolling 3m).
+ * Source: bd_racking_v2.bbt_co2 (CO₂ measured at BBT after racking).
+ * Outlier filter: uses qc_co2_outlier_hi from commissioning_settings (default 6 g/L).
+ */
+function kpi_racking_carbonation(array $params, string $label, PDO $pdo): array
+{
+    $period = $params['period'] ?? 'rolling_3m';
+    $p = kpi_resolve_period($period);
+
+    $cacheKey = "racking_co2_{$p['start']}_{$p['end']}";
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    // Fetch CO₂ thresholds from commissioning_settings; fall back to 2.5/6 g/L.
+    $threshStmt = $pdo->prepare(
+        "SELECT key_name, value_num FROM commissioning_settings
+          WHERE section = 'qc_thresholds'
+            AND key_name IN ('qc_co2_warn_lo', 'qc_co2_warn_hi', 'qc_co2_outlier_lo', 'qc_co2_outlier_hi')"
+    );
+    $threshStmt->execute();
+    $threshRows = $threshStmt->fetchAll(PDO::FETCH_KEY_PAIR);
+
+    $warnLo    = (float) ($threshRows['qc_co2_warn_lo']    ?? 3.5);
+    $warnHi    = (float) ($threshRows['qc_co2_warn_hi']    ?? 5.0);
+    $outlierLo = (float) ($threshRows['qc_co2_outlier_lo'] ?? 2.5);
+    $outlierHi = (float) ($threshRows['qc_co2_outlier_hi'] ?? 6.0);
+
+    $stmt = $pdo->prepare(
+        "SELECT COUNT(*) AS rack_count,
+                ROUND(AVG(bbt_co2), 2) AS avg_co2,
+                ROUND(MIN(bbt_co2), 2) AS min_co2,
+                ROUND(MAX(bbt_co2), 2) AS max_co2,
+                SUM(CASE WHEN bbt_co2 < ? OR bbt_co2 > ? THEN 1 ELSE 0 END) AS out_of_range_count
+           FROM bd_racking_v2
+          WHERE is_tombstoned = 0
+            AND bbt_co2 IS NOT NULL
+            AND bbt_co2 BETWEEN ? AND ?
+            AND event_date BETWEEN ? AND ?"
+    );
+    $stmt->execute([$warnLo, $warnHi, $outlierLo, $outlierHi, $p['start'], $p['end']]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    $avgCo2 = $row && (int)$row['rack_count'] > 0 ? (float) $row['avg_co2'] : null;
+
+    $tint = match (true) {
+        $avgCo2 === null                              => 'neutral',
+        $avgCo2 >= $warnLo && $avgCo2 <= $warnHi     => 'green',
+        $avgCo2 >= $outlierLo && $avgCo2 <= $outlierHi => 'amber',
+        default                                        => 'red',
+    };
+
+    $result = array_merge(kpi_empty_result($label, 'g/L'), [
+        'value' => $avgCo2,
+        'tint'  => $tint,
+        'meta'  => [
+            'period_label'       => $p['label'],
+            'rack_count'         => $row ? (int)   $row['rack_count']         : 0,
+            'min_co2'            => $row ? (float) $row['min_co2']            : null,
+            'max_co2'            => $row ? (float) $row['max_co2']            : null,
+            'out_of_range_count' => $row ? (int)   $row['out_of_range_count'] : 0,
+            'target_range'       => "{$warnLo}–{$warnHi} g/L",
+            'note'               => 'CO₂ mesuré BBT à la mise en fût; plage outlier ' . $outlierLo . '–' . $outlierHi . ' g/L',
         ],
     ]);
 
