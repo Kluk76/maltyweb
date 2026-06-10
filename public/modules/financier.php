@@ -149,6 +149,138 @@ $salesFreshnessLabel = $salesLatestKey ? fin_month_label($salesLatestKey) : null
 /* Flags JSON pour injection XSS-safe */
 $JSON_FLAGS = JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP;
 
+/* ── Module D — Coût par SKU (lec ture BOM compilé depuis ref_sku_bom) ────── */
+/* Même requête que sku-costs.php — lecture seule, DB canonique, jamais recalculé ici */
+
+/** Calcule la médiane d'un tableau de flottants */
+function fin_array_median(array $vals): float {
+    if (empty($vals)) return 0.0;
+    sort($vals);
+    $n   = count($vals);
+    $mid = (int) floor($n / 2);
+    return ($n % 2 === 0) ? (($vals[$mid - 1] + $vals[$mid]) / 2.0) : (float) $vals[$mid];
+}
+
+$skuRows          = [];
+$skuKpiCounts     = null;
+$skuMedianCHFperHL = 0.0;
+$skuBomFreshness  = null;
+$skuRecipeList    = [];   // pour les filtres client-side
+$skuDbError       = null;
+
+try {
+    $pdo = maltytask_pdo();
+
+    /* --- KPI counts --- */
+    $skuKpiStmt = $pdo->query("
+        SELECT
+            COUNT(DISTINCT s.id)        AS total_skus,
+            COUNT(DISTINCT s.recipe_id) AS distinct_recipes
+        FROM ref_skus s
+        WHERE s.is_active = 1
+    ");
+    $skuKpiCounts = $skuKpiStmt->fetch();
+
+    /* --- Valeurs CHF/HL pour médiane --- */
+    $skuMedRows = $pdo->query("
+        SELECT ROUND(SUM(b.cost) / NULLIF(s.hl_per_unit, 0), 2) AS chf_per_hl
+        FROM ref_skus s
+        LEFT JOIN ref_sku_bom b ON b.sku_id = s.id
+        WHERE s.is_active = 1
+        GROUP BY s.id
+    ")->fetchAll(PDO::FETCH_COLUMN);
+    $skuMedVals = array_filter(array_map('floatval', $skuMedRows), fn($v) => $v > 0);
+    $skuMedianCHFperHL = fin_array_median(array_values($skuMedVals));
+
+    /* --- Requête principale (VERBATIM depuis sku-costs.php, sans filtre server-side) --- */
+    $skuRowStmt = $pdo->query("
+        SELECT
+            s.id, s.sku_code, s.format, s.unit_label, s.hl_per_unit,
+            rr.recipe_short_name, rr.classification, rr.subtype,
+            ROUND(SUM(CASE WHEN b.source = 'Brewing'   THEN b.cost ELSE 0 END), 3) AS brewing_cost,
+            ROUND(SUM(CASE WHEN b.source = 'Packaging' THEN b.cost ELSE 0 END), 3) AS packaging_cost,
+            ROUND(SUM(b.cost), 3)                                                   AS total_cost,
+            ROUND(SUM(b.cost) / NULLIF(s.hl_per_unit, 0), 2)                        AS chf_per_hl,
+            MAX(CASE WHEN b.source = 'Brewing'
+                     THEN (b.qty_per_unit * COALESCE(m.conversion_factor, 1.0)) / NULLIF(s.hl_per_unit, 0)
+                     ELSE NULL END) AS max_qty_per_hl
+        FROM ref_skus s
+        LEFT JOIN ref_sku_bom b  ON b.sku_id  = s.id
+        LEFT JOIN ref_mi      m  ON m.id      = b.mi_id
+        LEFT JOIN ref_recipes rr ON rr.id      = s.recipe_id
+        WHERE s.is_active = 1
+        GROUP BY s.id
+        ORDER BY rr.recipe_short_name,
+                 FIELD(s.format, 'Bot', 'Can', 'Keg', 'Cuve de service'),
+                 s.sku_code
+    ");
+    $skuRows = $skuRowStmt->fetchAll();
+
+    /* --- Fraîcheur BOM --- */
+    $skuFreshRow  = $pdo->query("
+        SELECT MAX(b.compiled_at) AS compiled_at
+        FROM ref_skus s
+        LEFT JOIN ref_sku_bom b ON b.sku_id = s.id
+        WHERE s.is_active = 1
+    ")->fetch();
+    $skuBomFreshness = (!empty($skuFreshRow['compiled_at']))
+        ? (new DateTimeImmutable($skuFreshRow['compiled_at']))->format(date_display_format())
+        : null;
+
+    /* --- Liste de recettes pour filtres JS --- */
+    foreach ($skuRows as $r) {
+        $rec = $r['recipe_short_name'] ?? '';
+        if ($rec !== '' && !in_array($rec, $skuRecipeList, true)) {
+            $skuRecipeList[] = $rec;
+        }
+    }
+
+} catch (Throwable $e) {
+    $skuDbError = $e->getMessage();
+    // COP/COGS panels non affectés — le catch est local à ce bloc
+}
+
+/* --- Détection d'anomalies (même logique que sku-costs.php) --- */
+$skuBottlesByRecipe = [];
+foreach ($skuRows as $r) {
+    $rec = $r['recipe_short_name'] ?? '';
+    if ($r['format'] === 'Bot' && is_numeric($r['chf_per_hl']) && (float) $r['chf_per_hl'] > 0) {
+        $skuBottlesByRecipe[$rec][] = (float) $r['chf_per_hl'];
+    }
+}
+$skuBottleMedianByRecipe = [];
+foreach ($skuBottlesByRecipe as $rec => $vals) {
+    $skuBottleMedianByRecipe[$rec] = fin_array_median($vals);
+}
+$skuValsByFormat = [];
+foreach ($skuRows as $r) {
+    $fmt = $r['format'] ?? '';
+    if (is_numeric($r['chf_per_hl']) && (float) $r['chf_per_hl'] > 0) {
+        $skuValsByFormat[$fmt][] = (float) $r['chf_per_hl'];
+    }
+}
+$skuFormatMedians = [];
+foreach ($skuValsByFormat as $fmt => $vals) {
+    $skuFormatMedians[$fmt] = fin_array_median($vals);
+}
+foreach ($skuRows as &$r) {
+    $flags = [];
+    $val   = is_numeric($r['chf_per_hl']) ? (float) $r['chf_per_hl'] : 0.0;
+    $rec   = $r['recipe_short_name'] ?? '';
+    $fmt   = $r['format'] ?? '';
+    if ($fmt === 'Keg' && $val > 0 && isset($skuBottleMedianByRecipe[$rec]) && $skuBottleMedianByRecipe[$rec] > 0) {
+        if ($val > $skuBottleMedianByRecipe[$rec]) { $flags[] = 'keg-inverted'; }
+    }
+    if ($val > 0 && isset($skuFormatMedians[$fmt]) && $skuFormatMedians[$fmt] > 0) {
+        if ($val > 3 * $skuFormatMedians[$fmt]) { $flags[] = 'outlier'; }
+    }
+    if (is_numeric($r['max_qty_per_hl']) && (float) $r['max_qty_per_hl'] > 50) {
+        $flags[] = 'extreme-bom-line';
+    }
+    $r['_flags'] = $flags;
+}
+unset($r);
+
 $active_module = 'financier';
 ?>
 <!doctype html>
@@ -429,23 +561,192 @@ $active_module = 'financier';
   </section>
 
   <!-- ══════════════════════════════════════════════════════════════════════════
-       MODULE D — Coût par SKU (lien externe)
+       MODULE D — Coût par SKU (inline, BOM compilé — ref_sku_bom)
   ══════════════════════════════════════════════════════════════════════════ -->
   <section class="fin-panel" id="fin-panel-sku" hidden
            role="tabpanel" aria-labelledby="fin-tab-sku">
-    <div class="fin-linkout-card">
-      <div class="fin-linkout-card__icon" aria-hidden="true">◈</div>
-      <div class="fin-linkout-card__body">
-        <h3 class="fin-linkout-card__title">Coût par SKU</h3>
-        <p class="fin-linkout-card__desc">
-          Détail du coût de revient par SKU, décomposé par source (brassage, packaging).
-          Données issues du BOM actif.
-        </p>
-        <a href="/modules/sku-costs.php" class="fin-linkout-btn">
-          Ouvrir SKU Costs →
-        </a>
+
+    <?php if ($skuDbError !== null): ?>
+      <div class="wort-error">
+        Erreur base de données (module Coût par SKU)&nbsp;: <?= htmlspecialchars($skuDbError) ?>
       </div>
+    <?php else: ?>
+
+    <!-- KPI bar -->
+    <section class="wort-kpis sku-kpis" aria-label="Statistiques Coût par SKU">
+      <div class="wort-kpi">
+        <span class="wort-kpi__num"><?= htmlspecialchars((string) ($skuKpiCounts['total_skus'] ?? '—')) ?></span>
+        <span class="wort-kpi__label">SKUs actifs</span>
+      </div>
+      <div class="wort-kpi">
+        <span class="wort-kpi__num"><?= htmlspecialchars((string) ($skuKpiCounts['distinct_recipes'] ?? '—')) ?></span>
+        <span class="wort-kpi__label">Recettes avec SKUs</span>
+      </div>
+      <div class="wort-kpi">
+        <span class="wort-kpi__num sku-kpi__chf">
+          <?= $skuMedianCHFperHL > 0 ? htmlspecialchars(number_format($skuMedianCHFperHL, 2)) : '—' ?>
+        </span>
+        <span class="wort-kpi__label">CHF/HL médian</span>
+      </div>
+    </section>
+
+    <!-- Filtres client-side — show/hide les lignes sans rechargement -->
+    <div class="wort-filters fin-sku-filters" id="fin-sku-filters">
+      <div class="wort-filters__row">
+        <label class="wort-filters__field">
+          <span class="wort-filters__label">Recette</span>
+          <select id="fin-sku-filter-recipe" aria-label="Filtrer par recette">
+            <option value="">Toutes</option>
+            <?php foreach ($skuRecipeList as $rec): ?>
+              <option value="<?= htmlspecialchars($rec) ?>"><?= htmlspecialchars($rec) ?></option>
+            <?php endforeach ?>
+          </select>
+        </label>
+        <label class="wort-filters__field">
+          <span class="wort-filters__label">Format</span>
+          <select id="fin-sku-filter-format" aria-label="Filtrer par format">
+            <option value="">Tous</option>
+            <?php foreach (['Bot', 'Can', 'Keg', 'Cuve de service'] as $fmt): ?>
+              <option value="<?= htmlspecialchars($fmt) ?>"><?= htmlspecialchars($fmt) ?></option>
+            <?php endforeach ?>
+          </select>
+        </label>
+        <label class="wort-filters__field">
+          <span class="wort-filters__label">Classification</span>
+          <select id="fin-sku-filter-class" aria-label="Filtrer par classification">
+            <option value="">Toutes</option>
+            <option value="Neb">Neb</option>
+            <option value="Contract">Contract</option>
+          </select>
+        </label>
+        <button type="button" id="fin-sku-filter-reset"
+                class="wort-filters__reset" hidden>Réinitialiser</button>
+      </div>
+      <span id="fin-sku-filter-count" class="wort-filters__count" hidden></span>
     </div>
+
+    <!-- Tableau SKU -->
+    <section class="wort-section" aria-label="Coût par SKU">
+      <?php if ($skuBomFreshness !== null): ?>
+        <div class="wort-section__head">
+          <span class="sku-freshness">Coûts BOM à jour au <?= htmlspecialchars($skuBomFreshness) ?></span>
+        </div>
+      <?php endif ?>
+
+      <?php if (empty($skuRows)): ?>
+        <div class="fin-empty">Aucun SKU actif.</div>
+      <?php else: ?>
+        <div class="wort-table-wrap">
+          <table class="wort-table sku-table" id="fin-sku-table">
+            <thead>
+              <tr>
+                <th scope="col">Recette</th>
+                <th scope="col">SKU</th>
+                <th scope="col">Format</th>
+                <th scope="col">Unité</th>
+                <th scope="col">HL/unit</th>
+                <th scope="col">Brewing CHF</th>
+                <th scope="col">Packaging CHF</th>
+                <th scope="col">Total CHF</th>
+                <th scope="col">CHF / HL</th>
+                <th scope="col">Anomalies</th>
+              </tr>
+            </thead>
+            <tbody>
+              <?php
+              $prevRecipe = null;
+              foreach ($skuRows as $r):
+                  $recipe     = $r['recipe_short_name'] ?? '';
+                  $flags      = $r['_flags'];
+                  $hasFlag    = !empty($flags);
+                  $chfHL      = is_numeric($r['chf_per_hl']) ? (float) $r['chf_per_hl'] : null;
+                  $isContract = ($r['classification'] === 'Contract');
+                  $fmt        = $r['format'] ?? '';
+                  $cls        = $r['classification'] ?? '';
+              ?>
+              <?php if ($recipe !== $prevRecipe): ?>
+                <tr class="sku-group-head"
+                    data-recipe="<?= htmlspecialchars($recipe) ?>"
+                    data-classification="<?= htmlspecialchars($cls) ?>">
+                  <td colspan="10" class="sku-group-head__cell">
+                    <?= htmlspecialchars($recipe !== '' ? $recipe : '—') ?>
+                  </td>
+                </tr>
+                <?php $prevRecipe = $recipe; ?>
+              <?php endif ?>
+              <tr class="sku-row<?= $hasFlag ? ' sku-row--flagged' : '' ?>"
+                  data-recipe="<?= htmlspecialchars($recipe) ?>"
+                  data-format="<?= htmlspecialchars($fmt) ?>"
+                  data-classification="<?= htmlspecialchars($cls) ?>">
+                <td class="wort-td sku-td sku-td--recipe">
+                  <?php if ($isContract): ?>
+                    <span class="sku-badge sku-badge--contract">Contract</span>
+                  <?php endif ?>
+                </td>
+                <td class="wort-td sku-td sku-td--code">
+                  <a class="sku-code-link" href="/modules/sku-cost-detail.php?sku=<?= urlencode($r['sku_code'] ?? '') ?>">
+                    <span class="wort-mono"><?= htmlspecialchars($r['sku_code'] ?? '—') ?></span>
+                  </a>
+                </td>
+                <td class="wort-td sku-td sku-td--format">
+                  <span class="sku-format-badge sku-format-badge--<?= htmlspecialchars(strtolower($fmt)) ?>">
+                    <?= htmlspecialchars($fmt ?: '—') ?>
+                  </span>
+                </td>
+                <td class="wort-td sku-td"><?= htmlspecialchars($r['unit_label'] ?? '—') ?></td>
+                <td class="wort-td sku-td sku-td--num">
+                  <span class="wort-mono">
+                    <?= is_numeric($r['hl_per_unit']) ? htmlspecialchars(number_format((float) $r['hl_per_unit'], 4)) : '—' ?>
+                  </span>
+                </td>
+                <td class="wort-td sku-td sku-td--num">
+                  <span class="wort-mono wort-muted">
+                    <?= is_numeric($r['brewing_cost']) ? htmlspecialchars(number_format((float) $r['brewing_cost'], 2)) : '—' ?>
+                  </span>
+                </td>
+                <td class="wort-td sku-td sku-td--num">
+                  <span class="wort-mono wort-muted">
+                    <?= is_numeric($r['packaging_cost']) ? htmlspecialchars(number_format((float) $r['packaging_cost'], 2)) : '—' ?>
+                  </span>
+                </td>
+                <td class="wort-td sku-td sku-td--num">
+                  <span class="wort-mono sku-total-cost">
+                    <?= is_numeric($r['total_cost']) ? htmlspecialchars(number_format((float) $r['total_cost'], 2)) : '—' ?>
+                  </span>
+                </td>
+                <td class="wort-td sku-td sku-td--chf-hl">
+                  <span class="wort-mono sku-chf-hl<?= in_array('keg-inverted', $flags) ? ' sku-chf-hl--ember' : '' ?>">
+                    <?= $chfHL !== null ? htmlspecialchars(number_format($chfHL, 2)) : '—' ?>
+                  </span>
+                </td>
+                <td class="wort-td sku-td sku-td--flags">
+                  <?php foreach ($flags as $flag):
+                      $badgeClass = match($flag) {
+                          'keg-inverted'     => 'sku-anomaly sku-anomaly--red',
+                          'outlier'          => 'sku-anomaly sku-anomaly--amber',
+                          'extreme-bom-line' => 'sku-anomaly sku-anomaly--red',
+                          default            => 'sku-anomaly',
+                      };
+                      $badgeLabel = match($flag) {
+                          'keg-inverted'     => 'Keg inversé',
+                          'outlier'          => 'Outlier',
+                          'extreme-bom-line' => 'BOM extrême',
+                          default            => htmlspecialchars($flag),
+                      };
+                  ?>
+                    <span class="<?= htmlspecialchars($badgeClass) ?>"><?= $badgeLabel ?></span>
+                  <?php endforeach ?>
+                </td>
+              </tr>
+              <?php endforeach ?>
+            </tbody>
+          </table>
+        </div>
+        <p id="fin-sku-empty-msg" class="fin-empty" hidden>Aucun SKU pour ces filtres.</p>
+      <?php endif ?>
+    </section>
+
+    <?php endif ?>
   </section>
 
   <?php endif ?>

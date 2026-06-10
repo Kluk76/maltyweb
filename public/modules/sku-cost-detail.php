@@ -187,7 +187,7 @@ $totalCost = is_numeric($skuRow['total_cost'] ?? null) ? (float) $skuRow['total_
   <?php if ($notFound && !$dbError): ?>
     <div class="sku-detail-empty">
       <p class="sku-detail-empty__msg">SKU non trouvé.</p>
-      <a class="sku-detail-back" href="/modules/sku-costs.php">&larr; Retour à la liste</a>
+      <a class="sku-detail-back" href="/modules/financier.php">&larr; Retour à la liste</a>
     </div>
 
   <?php elseif ($skuRow): ?>
@@ -365,7 +365,7 @@ $totalCost = is_numeric($skuRow['total_cost'] ?? null) ? (float) $skuRow['total_
 
     <!-- Footer nav -->
     <div class="sku-detail-footer">
-      <a class="sku-detail-back" href="/modules/sku-costs.php">&larr; Retour</a>
+      <a class="sku-detail-back" href="/modules/financier.php">&larr; Retour</a>
     </div>
 
   <?php endif ?>

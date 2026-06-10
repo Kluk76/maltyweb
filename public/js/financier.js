@@ -723,4 +723,81 @@
     container.appendChild(svg);
   }
 
+  /* ════════════════════════════════════════════════════════════════════════════
+     MODULE D — Coût par SKU — filtres client-side
+     Filtre les lignes déjà rendues (server-side) sans rechargement.
+  ════════════════════════════════════════════════════════════════════════════ */
+  (function() {
+    var recipeSel = document.getElementById('fin-sku-filter-recipe');
+    var formatSel = document.getElementById('fin-sku-filter-format');
+    var classSel  = document.getElementById('fin-sku-filter-class');
+    var resetBtn  = document.getElementById('fin-sku-filter-reset');
+    var countEl   = document.getElementById('fin-sku-filter-count');
+    var emptyMsg  = document.getElementById('fin-sku-empty-msg');
+
+    if (!recipeSel || !formatSel || !classSel) return;  // panel not rendered (DB error)
+
+    var table = document.getElementById('fin-sku-table');
+    if (!table) return;
+
+    function applyFilters() {
+      var fRecipe = recipeSel.value;
+      var fFormat = formatSel.value;
+      var fClass  = classSel.value;
+      var anyFilter = fRecipe !== '' || fFormat !== '' || fClass !== '';
+
+      var tbody = table.querySelector('tbody');
+      if (!tbody) return;
+
+      var allRows = Array.from(tbody.querySelectorAll('tr'));
+      var visibleSkuCount = 0;
+      var activeRecipes = new Set();
+
+      // First pass: tag each sku-row visible/hidden, collect visible recipe names
+      allRows.forEach(function(tr) {
+        if (!tr.classList.contains('sku-row') && !tr.classList.contains('sku-group-head')) return;
+        if (tr.classList.contains('sku-row')) {
+          var r = tr.dataset.recipe  || '';
+          var f = tr.dataset.format  || '';
+          var c = tr.dataset.classification || '';
+          var show = (!fRecipe || r === fRecipe)
+                  && (!fFormat || f === fFormat)
+                  && (!fClass  || c === fClass);
+          tr.hidden = !show;
+          if (show) { visibleSkuCount++; activeRecipes.add(r); }
+        }
+      });
+
+      // Second pass: show group-head only if its recipe has ≥1 visible sku-row
+      allRows.forEach(function(tr) {
+        if (!tr.classList.contains('sku-group-head')) return;
+        tr.hidden = !activeRecipes.has(tr.dataset.recipe || '');
+      });
+
+      // Update count badge + reset button
+      if (resetBtn) { resetBtn.hidden = !anyFilter; }
+      if (countEl)  {
+        if (anyFilter) {
+          countEl.hidden = false;
+          countEl.textContent = visibleSkuCount + ' SKU' + (visibleSkuCount !== 1 ? 's' : '');
+        } else {
+          countEl.hidden = true;
+        }
+      }
+      if (emptyMsg) { emptyMsg.hidden = visibleSkuCount > 0; }
+    }
+
+    recipeSel.addEventListener('change', applyFilters);
+    formatSel.addEventListener('change', applyFilters);
+    classSel.addEventListener('change',  applyFilters);
+    if (resetBtn) {
+      resetBtn.addEventListener('click', function() {
+        recipeSel.value = '';
+        formatSel.value = '';
+        classSel.value  = '';
+        applyFilters();
+      });
+    }
+  }());
+
 })();
