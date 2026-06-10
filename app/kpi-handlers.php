@@ -3434,13 +3434,15 @@ function kpi_handler_packaging(
         'contract_packaging_volume'  => kpi_pkg_contract_volume($params, $label, $pdo),
         'volume_per_sku_period'      => kpi_pkg_volume_per_sku($params, $label, $pdo),
         'fg_added_inventory_period'  => kpi_pkg_fg_added($params, $label, $pdo),
-        'fill_efficiency'            => kpi_stub_handler('packaging', $handler, $label), // needs target fill volume per run
-        'avg_losses_per_category'    => kpi_stub_handler('packaging', $handler, $label), // semantics unclear: loss by MI category vs by run_type
-        'avg_losses_per_sku'         => kpi_stub_handler('packaging', $handler, $label), // loss_kpi_hl is per-run, not per-SKU
-        'suggested_packaging_events' => kpi_stub_handler('packaging', $handler, $label), // needs tank-sim port
-        'packaging_deviations'       => kpi_stub_handler('packaging', $handler, $label), // needs planned-vs-actual data source
-        'packaging_cost_per_unit'    => kpi_stub_handler('packaging', $handler, $label), // needs COGS pipeline integration
-        'packaging_material_consumption' => kpi_stub_handler('packaging', $handler, $label), // gap: no PKG material rows in inv_consumption
+        'fill_efficiency'            => kpi_pkg_fill_efficiency($params, $label, $pdo),
+        'avg_losses_per_category'    => kpi_pkg_avg_losses_per_category($params, $label, $pdo),
+        'avg_losses_per_sku'         => kpi_pkg_avg_losses_per_sku($params, $label, $pdo),
+        'packaging_cost_per_unit'    => kpi_pkg_cost_per_unit($params, $label, $pdo),
+        'packaging_material_consumption' => kpi_pkg_material_consumption($params, $label, $pdo),
+        // no plan/schedule source yet — stub until tank-sim port ships
+        'suggested_packaging_events' => kpi_stub_handler('packaging', $handler, $label),
+        // no planned-vs-actual data source — stub until packaging schedule exists
+        'packaging_deviations'       => kpi_stub_handler('packaging', $handler, $label),
         default                      => kpi_stub_handler('packaging', $handler, $label),
     };
 }
@@ -3910,6 +3912,377 @@ function kpi_pkg_fg_added(array $params, string $label, PDO $pdo): array
         'meta'  => [
             'period_label' => $p['label'],
             'total_hl'     => round($totalHl, 1),
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/** #55 — Efficacité remplissage (réel vs théorique)
+ *
+ * Theoretical HL = SUM(units / units_per_pack × hl_per_unit).
+ * prod_total_units stores individual bottles/cans; hl_per_unit is per sellable
+ * pack unit (e.g. 24-bottle carton = 0.0792 HL). Dividing by units_per_pack
+ * converts individual counts to pack units before multiplying by hl_per_unit.
+ * Kegs and cuvs have units_per_pack=1, so the division is a no-op there.
+ * Actual HL      = SUM(vendable_hl) from bd_packaging_v2.
+ * Efficiency %   = actual / theoretical × 100.
+ * Breakdown by run_type.
+ */
+function kpi_pkg_fill_efficiency(array $params, string $label, PDO $pdo): array
+{
+    $period = $params['period'] ?? 'current_month';
+    $p = kpi_resolve_period($period);
+
+    $cacheKey = "pkg_fill_eff_{$p['start']}_{$p['end']}";
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    // prod_total_units: individual unit count for this row's run (main OR parallel).
+    // special_qty_units on parallel rows mirrors prod_total_units exactly (confirmed
+    // against 70/70 parallel rows). Main rows have special_qty_units=0. Therefore
+    // theoretical HL is derived from prod_total_units alone — not summed with special.
+    $stmt = $pdo->prepare(
+        "SELECT p.run_type,
+                ROUND(SUM(p.vendable_hl), 3) AS actual_hl,
+                ROUND(SUM(
+                    COALESCE(p.prod_total_units, 0)
+                    / NULLIF(COALESCE(s.units_per_pack, 1), 0)
+                    * COALESCE(s.hl_per_unit, 0)
+                ), 3) AS theoretical_hl
+           FROM bd_packaging_v2 p
+           LEFT JOIN ref_skus s ON s.id = p.sku_id_fk
+          WHERE p.is_tombstoned = 0
+            AND p.event_date BETWEEN ? AND ?
+          GROUP BY p.run_type
+          ORDER BY actual_hl DESC"
+    );
+    $stmt->execute([$p['start'], $p['end']]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $totalActual      = 0.0;
+    $totalTheoretical = 0.0;
+    $breakdown        = [];
+    foreach ($rows as $r) {
+        $act  = (float) $r['actual_hl'];
+        $theo = (float) $r['theoretical_hl'];
+        $totalActual      += $act;
+        $totalTheoretical += $theo;
+        $pct = $theo > 0 ? round($act / $theo * 100, 2) : null;
+        $breakdown[] = [
+            'key'   => $r['run_type'],
+            'label' => $r['run_type'],
+            'value' => $pct,
+            'meta'  => ['actual_hl' => $act, 'theoretical_hl' => $theo],
+        ];
+    }
+
+    $overallPct = $totalTheoretical > 0
+        ? round($totalActual / $totalTheoretical * 100, 2)
+        : null;
+
+    $tint = match (true) {
+        $overallPct === null  => 'neutral',
+        $overallPct >= 98.0   => 'green',
+        $overallPct >= 95.0   => 'amber',
+        default               => 'red',
+    };
+
+    $result = array_merge(kpi_empty_result($label, '%'), [
+        'value'     => $overallPct,
+        'tint'      => $tint,
+        'breakdown' => $breakdown,
+        'meta'      => [
+            'period_label'    => $p['label'],
+            'actual_hl'       => round($totalActual, 1),
+            'theoretical_hl'  => round($totalTheoretical, 1),
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/** #60 — Pertes moyennes par catégorie de perte (bd_packaging_v2 loss columns)
+ *
+ * Groups the discrete loss columns into descriptive categories:
+ *   liquid   : loss_kpi_hl (liquid losses — fills, line, etc.)
+ *   label    : loss_label_btl_units
+ *   crown    : loss_crown_cork_units
+ *   can_lid  : loss_can_lid_units
+ *   container: loss_container_btl_units + loss_container_can_units
+ *   4pack    : loss_4pack_btl_units + loss_4pack_can_units
+ *   wrap     : loss_wrap_btl_units + loss_wrap_can_units
+ *   keg_save : loss_keg_save_units
+ * Values are totals (not averages) for the period, ordered by magnitude.
+ * Liquid is in HL; packaging units are in units (mixed — noted in meta).
+ */
+function kpi_pkg_avg_losses_per_category(array $params, string $label, PDO $pdo): array
+{
+    $period = $params['period'] ?? 'rolling_3m';
+    $p = kpi_resolve_period($period);
+
+    $cacheKey = "pkg_loss_cat_{$p['start']}_{$p['end']}";
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $stmt = $pdo->prepare(
+        "SELECT
+            ROUND(SUM(COALESCE(loss_kpi_hl, 0)), 3)                                          AS loss_liquid_hl,
+            SUM(COALESCE(loss_label_btl_units, 0))                                            AS loss_label,
+            SUM(COALESCE(loss_crown_cork_units, 0))                                           AS loss_crown,
+            SUM(COALESCE(loss_can_lid_units, 0))                                              AS loss_can_lid,
+            SUM(COALESCE(loss_container_btl_units, 0) + COALESCE(loss_container_can_units, 0)) AS loss_container,
+            SUM(COALESCE(loss_4pack_btl_units, 0) + COALESCE(loss_4pack_can_units, 0))        AS loss_4pack,
+            SUM(COALESCE(loss_wrap_btl_units, 0) + COALESCE(loss_wrap_can_units, 0))          AS loss_wrap,
+            SUM(COALESCE(loss_keg_save_units, 0))                                              AS loss_keg_save,
+            COUNT(*) AS run_cnt
+           FROM bd_packaging_v2
+          WHERE is_tombstoned = 0
+            AND event_date BETWEEN ? AND ?"
+    );
+    $stmt->execute([$p['start'], $p['end']]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$row || (int)$row['run_cnt'] === 0) {
+        return array_merge(kpi_empty_result($label), [
+            'meta' => ['period_label' => $p['label'], 'run_cnt' => 0],
+        ]);
+    }
+
+    $runCnt = (int) $row['run_cnt'];
+
+    $categories = [
+        ['key' => 'liquid',    'label' => 'Liquide (HL)',    'value' => (float) $row['loss_liquid_hl'], 'unit' => 'HL'],
+        ['key' => 'label',     'label' => 'Étiquettes',      'value' => (float) $row['loss_label'],     'unit' => 'u'],
+        ['key' => 'crown',     'label' => 'Capsules',         'value' => (float) $row['loss_crown'],     'unit' => 'u'],
+        ['key' => 'can_lid',   'label' => 'Couvercles canette','value' => (float) $row['loss_can_lid'],  'unit' => 'u'],
+        ['key' => 'container', 'label' => 'Contenants',       'value' => (float) $row['loss_container'], 'unit' => 'u'],
+        ['key' => '4pack',     'label' => '4-packs',          'value' => (float) $row['loss_4pack'],     'unit' => 'u'],
+        ['key' => 'wrap',      'label' => 'Film étirable',    'value' => (float) $row['loss_wrap'],      'unit' => 'u'],
+        ['key' => 'keg_save',  'label' => 'Sauv. kegs',       'value' => (float) $row['loss_keg_save'],  'unit' => 'u'],
+    ];
+
+    // Sort descending by value (mixed units — liquid HL intentionally first as largest signal)
+    usort($categories, fn($a, $b) => $b['value'] <=> $a['value']);
+
+    $topLoss = !empty($categories) ? $categories[0]['value'] : null;
+
+    $result = array_merge(kpi_empty_result($label, 'u'), [
+        'value'     => $topLoss,
+        'tint'      => 'neutral',
+        'breakdown' => $categories,
+        'meta'      => [
+            'period_label' => $p['label'],
+            'run_cnt'      => $runCnt,
+            'liquid_hl'    => (float) $row['loss_liquid_hl'],
+            'note'         => 'Liquid en HL, packaging en unités',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/** #61 — Pertes moyennes par SKU (loss_kpi_hl grouped by sku_id_fk)
+ *
+ * Reports liquid loss in HL per SKU over the period, ordered by total loss desc.
+ * loss_kpi_hl is the pre-computed liquid loss figure from bd_packaging_v2
+ * (consistent with #54 packaging_yield_pct — same column).
+ */
+function kpi_pkg_avg_losses_per_sku(array $params, string $label, PDO $pdo): array
+{
+    $period = $params['period'] ?? 'rolling_3m';
+    $p = kpi_resolve_period($period);
+
+    $cacheKey = "pkg_loss_sku_{$p['start']}_{$p['end']}";
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $stmt = $pdo->prepare(
+        "SELECT COALESCE(s.sku_code, CONCAT(p.run_type, '_unknown')) AS sku_code,
+                p.run_type,
+                COUNT(*) AS run_cnt,
+                ROUND(SUM(COALESCE(p.loss_kpi_hl, 0)), 3) AS total_loss_hl,
+                ROUND(AVG(COALESCE(p.loss_kpi_hl, 0)), 4) AS avg_loss_per_run_hl,
+                ROUND(SUM(p.vendable_hl), 3) AS total_vendable_hl
+           FROM bd_packaging_v2 p
+           LEFT JOIN ref_skus s ON s.id = p.sku_id_fk
+          WHERE p.is_tombstoned = 0
+            AND p.event_date BETWEEN ? AND ?
+          GROUP BY sku_code, p.run_type
+          ORDER BY total_loss_hl DESC
+          LIMIT 20"
+    );
+    $stmt->execute([$p['start'], $p['end']]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $totalLoss = array_sum(array_column($rows, 'total_loss_hl'));
+
+    $breakdown = array_map(fn($r) => [
+        'key'   => $r['sku_code'],
+        'label' => $r['sku_code'],
+        'value' => (float) $r['total_loss_hl'],
+        'meta'  => [
+            'avg_per_run_hl'  => (float) $r['avg_loss_per_run_hl'],
+            'run_cnt'         => (int)   $r['run_cnt'],
+            'vendable_hl'     => (float) $r['total_vendable_hl'],
+            'loss_pct'        => $r['total_vendable_hl'] > 0
+                ? round((float)$r['total_loss_hl'] / ((float)$r['total_vendable_hl'] + (float)$r['total_loss_hl']) * 100, 2)
+                : null,
+        ],
+    ], $rows);
+
+    $result = array_merge(kpi_empty_result($label, 'HL'), [
+        'value'     => round($totalLoss, 2),
+        'tint'      => 'neutral',
+        'breakdown' => $breakdown,
+        'meta'      => [
+            'period_label' => $p['label'],
+            'sku_count'    => count($rows),
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/** #58 — Consommation matériaux packaging / mois (inv_consumption source_event='packaging')
+ *
+ * Reads inv_consumption rows with source_event='packaging'.
+ * All rows are category='Packaging'; breakdown by MI name.
+ * Returns total units consumed + breakdown by top 10 ingredients.
+ */
+function kpi_pkg_material_consumption(array $params, string $label, PDO $pdo): array
+{
+    $period = $params['period'] ?? 'current_month';
+    $p = kpi_resolve_period($period);
+
+    $cacheKey = "pkg_mat_cons_{$p['start']}_{$p['end']}";
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    // Total consumed in period
+    $stmt = $pdo->prepare(
+        "SELECT SUM(c.qty) AS total_qty, COUNT(*) AS row_cnt
+           FROM inv_consumption c
+          WHERE c.source_event = 'packaging'
+            AND c.consumed_at BETWEEN ? AND ?"
+    );
+    $stmt->execute([$p['start'], $p['end']]);
+    $agg = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    // Breakdown by MI name, top 10
+    $stmt2 = $pdo->prepare(
+        "SELECT m.mi_id, m.name AS mi_name,
+                SUM(c.qty) AS total_qty,
+                ANY_VALUE(c.unit) AS unit
+           FROM inv_consumption c
+           JOIN ref_mi m ON m.id = c.mi_id_fk
+          WHERE c.source_event = 'packaging'
+            AND c.consumed_at BETWEEN ? AND ?
+          GROUP BY m.mi_id, m.name
+          ORDER BY total_qty DESC
+          LIMIT 10"
+    );
+    $stmt2->execute([$p['start'], $p['end']]);
+    $rows = $stmt2->fetchAll(PDO::FETCH_ASSOC);
+
+    $totalQty = (float) ($agg['total_qty'] ?? 0.0);
+
+    $breakdown = array_map(fn($r) => [
+        'key'   => $r['mi_id'],
+        'label' => $r['mi_name'],
+        'value' => (float) $r['total_qty'],
+        'meta'  => ['unit' => $r['unit']],
+    ], $rows);
+
+    $result = array_merge(kpi_empty_result($label, 'u'), [
+        'value'     => round($totalQty, 0),
+        'tint'      => 'neutral',
+        'breakdown' => $breakdown,
+        'meta'      => [
+            'period_label' => $p['label'],
+            'row_cnt'      => (int) ($agg['row_cnt'] ?? 0),
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/** #66 — Coût packaging / unité → COGS (ref_sku_bom bom_source='packaging')
+ *
+ * Fiscal packaging cost per SKU from ref_sku_bom.cost (pre-computed WAC ×
+ * qty_per_unit), bom_source='packaging'. This is the same basis used by the
+ * COP/COGS tiles — SUM(cost) over all packaging-BOM lines for a SKU gives
+ * the total packaging material cost per sellable unit.
+ *
+ * Period filtering: shows only SKUs that had at least one packaging run in the
+ * requested period (inner join to bd_packaging_v2 for the period).
+ * Breakdown by sku_code, ordered by packaging cost descending.
+ */
+function kpi_pkg_cost_per_unit(array $params, string $label, PDO $pdo): array
+{
+    $period = $params['period'] ?? 'rolling_3m';
+    $p = kpi_resolve_period($period);
+
+    $cacheKey = "pkg_cost_pu_{$p['start']}_{$p['end']}";
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    // SKUs active in the period
+    $stmt = $pdo->prepare(
+        "SELECT DISTINCT p.sku_id_fk
+           FROM bd_packaging_v2 p
+          WHERE p.is_tombstoned = 0
+            AND p.sku_id_fk IS NOT NULL
+            AND p.event_date BETWEEN ? AND ?"
+    );
+    $stmt->execute([$p['start'], $p['end']]);
+    $activeSku = $stmt->fetchAll(PDO::FETCH_COLUMN);
+
+    if (empty($activeSku)) {
+        return array_merge(kpi_empty_result($label, 'CHF/u'), [
+            'meta' => ['period_label' => $p['label'], 'sku_count' => 0],
+        ]);
+    }
+
+    // Placeholders for IN clause — all are integer IDs from the DB, safe
+    $placeholders = implode(',', array_fill(0, count($activeSku), '?'));
+
+    $stmt2 = $pdo->prepare(
+        "SELECT s.sku_code,
+                ROUND(SUM(b.cost), 4) AS pkg_cost_per_unit,
+                COUNT(*) AS bom_line_cnt
+           FROM ref_sku_bom b
+           JOIN ref_skus s ON s.id = b.sku_id
+          WHERE b.bom_source = 'packaging'
+            AND b.sku_id IN ({$placeholders})
+          GROUP BY s.sku_code
+          ORDER BY pkg_cost_per_unit DESC"
+    );
+    $stmt2->execute($activeSku);
+    $rows = $stmt2->fetchAll(PDO::FETCH_ASSOC);
+
+    $topCost = !empty($rows) ? (float) $rows[0]['pkg_cost_per_unit'] : null;
+
+    $breakdown = array_map(fn($r) => [
+        'key'   => $r['sku_code'],
+        'label' => $r['sku_code'],
+        'value' => (float) $r['pkg_cost_per_unit'],
+        'meta'  => ['bom_lines' => (int) $r['bom_line_cnt']],
+    ], $rows);
+
+    $result = array_merge(kpi_empty_result($label, 'CHF/u'), [
+        'value'     => $topCost,
+        'tint'      => 'neutral',
+        'breakdown' => $breakdown,
+        'meta'      => [
+            'period_label' => $p['label'],
+            'sku_count'    => count($rows),
+            'note'         => 'Coût matériaux packaging par unité vendue (BOM packaging, base WAC)',
         ],
     ]);
 
