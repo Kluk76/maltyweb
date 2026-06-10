@@ -1764,6 +1764,11 @@ body.expeditions .exp-ledger-sep td {
   border-bottom: 1px solid var(--hairline);
 }
 
+/* exp-ledger-week-total: summary row — open + shipped this week, no minus sign. */
+body.expeditions .exp-ledger-week-total .exp-ledger-label {
+  color: var(--ink-mute);
+}
+
 /* ── Responsive — stock table ─────────────────────────────────────────────── */
 @media (max-width: 700px) {
   body.expeditions .exp-st-col-sem,
@@ -3013,7 +3018,7 @@ body.expeditions .exp-order-row--overdue {
   background: color-mix(in srgb, var(--ember) 4%, var(--bg));
 }
 
-/* ── Stock risk advisory chip on order row ───────────────────────────────── */
+/* ── Stock risk advisory chip on order row — now a focusable button ─────── */
 /* Advisory only — amber informational, never blocking; reuses exp-stock-hint--over palette */
 body.expeditions .exp-stock-risk-chip {
   display: inline-flex;
@@ -3029,7 +3034,145 @@ body.expeditions .exp-stock-risk-chip {
   padding: 2px 7px;
   white-space: nowrap;
   flex-shrink: 0;
-  cursor: default;
+  cursor: pointer;
+  /* ≥44px touch target for floor tablets */
+  min-height: 44px;
+  min-width: 44px;
+  justify-content: center;
+}
+body.expeditions .exp-stock-risk-chip:hover,
+body.expeditions .exp-stock-risk-chip:focus-visible {
+  background: color-mix(in srgb, var(--ember) 20%, transparent);
+  border-color: color-mix(in srgb, var(--ember) 55%, transparent);
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ember) 40%, transparent);
+}
+
+/* ── Stock-risk detail modal ─────────────────────────────────────────────── */
+/* Base reset only — scope all layout to dialog[open] to avoid the display trap */
+dialog#exp-stock-detail-modal {
+  border: 0;
+  padding: 0;
+  background: transparent;
+}
+/* Backdrop */
+dialog#exp-stock-detail-modal::backdrop {
+  background: rgba(30, 18, 5, 0.55);
+  backdrop-filter: blur(2px);
+}
+/* Layout: only when open */
+dialog#exp-stock-detail-modal[open] {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  overflow: visible;
+}
+/* Inner card */
+body.expeditions .exp-sdm-inner {
+  background: var(--bg-elev);
+  border: 1px solid color-mix(in srgb, var(--oak) 20%, transparent);
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(30, 18, 5, 0.22);
+  padding: 1.5rem;
+  max-width: 640px;
+  width: min(96vw, 640px);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+/* Header row */
+body.expeditions .exp-sdm-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+body.expeditions .exp-sdm-title {
+  font-family: "Fraunces", serif;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--ink);
+  margin: 0;
+}
+/* Close button */
+body.expeditions .exp-sdm-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1rem;
+  color: var(--ink-soft);
+  padding: 4px 8px;
+  border-radius: 6px;
+  min-height: 44px;
+  min-width: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+body.expeditions .exp-sdm-close:hover,
+body.expeditions .exp-sdm-close:focus-visible {
+  background: color-mix(in srgb, var(--oak) 10%, transparent);
+  color: var(--ink);
+  outline: none;
+}
+/* Advisory line */
+body.expeditions .exp-sdm-advisory {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.8rem;
+  color: var(--ink-mute);
+  margin: 0;
+  font-style: italic;
+}
+/* Table wrapper (scrollable if many rows) */
+body.expeditions .exp-sdm-table-wrap {
+  overflow-y: auto;
+  flex: 1 1 auto;
+}
+/* Table */
+body.expeditions .exp-sdm-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.82rem;
+  color: var(--ink);
+}
+body.expeditions .exp-sdm-th {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  padding: 6px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--oak) 18%, transparent);
+  white-space: nowrap;
+}
+body.expeditions .exp-sdm-td {
+  padding: 6px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--oak) 10%, transparent);
+  vertical-align: middle;
+}
+body.expeditions .exp-sdm-sku {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--ink);
+}
+body.expeditions .exp-sdm-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+/* Manque column — highlighted */
+body.expeditions .exp-sdm-short {
+  font-weight: 700;
+  color: color-mix(in srgb, var(--ember) 85%, var(--ink));
 }
 
 /* ── Action summary strip ─────────────────────────────────────────────────── */
@@ -4051,6 +4194,17 @@ body.expeditions .exp-cmd-stock-strip__sub {
   white-space: nowrap;
 }
 
+/* ── Home-site companion KPI (commandes strip) ───────────────────────────── */
+body.expeditions .exp-cmd-stock-strip__kpi--home {
+  border-left: 2px solid color-mix(in srgb, var(--oak) 35%, transparent);
+  padding-left: 12px;
+  margin-left: 2px;
+}
+
+body.expeditions .exp-cmd-stock-strip__sub--home {
+  color: var(--oak);
+}
+
 body.expeditions .exp-cmd-stock-strip__sep {
   width: 1px;
   height: 32px;
@@ -4351,6 +4505,21 @@ body.expeditions .exp-stock-total-sep {
   flex-shrink: 0;
 }
 
+/* ── Home-site companion KPI (stock view) — subordinate to Physique total ── */
+body.expeditions .exp-stock-total-kpi.exp-st-home-site {
+  border-left: 2px solid color-mix(in srgb, var(--oak) 40%, transparent);
+  padding-left: 14px;
+  margin-left: 2px;
+}
+
+body.expeditions .exp-st-home-site__label {
+  color: var(--oak);
+}
+
+body.expeditions .exp-st-home-site__val {
+  color: var(--oak-deep);
+}
+
 /* ── Stock table — family group header rows ─────────────────────────────── */
 body.expeditions .exp-stock-family-header td {
   background: color-mix(in srgb, var(--hop) 8%, var(--bg));
@@ -4451,6 +4620,9 @@ body.expeditions .exp-st-loc-breakdown {
   body.expeditions .exp-stock-total-kpi {
     padding-right: 10px;
   }
+  body.expeditions .exp-stock-total-kpi.exp-st-home-site {
+    padding-left: 10px;
+  }
   body.expeditions .exp-stock-total-sep {
     margin: 0 8px;
   }
@@ -4468,6 +4640,9 @@ body.expeditions .exp-st-loc-breakdown {
   }
   body.expeditions .exp-cmd-stock-strip__val {
     font-size: 0.9rem;
+  }
+  body.expeditions .exp-cmd-stock-strip__kpi--home {
+    padding-left: 10px;
   }
 }
 
@@ -4608,6 +4783,129 @@ body.expeditions .exp-mov-cancel-btn {
   body.expeditions .exp-mov-col-by,
   body.expeditions .exp-mov-col-comment {
     display: none;
+  }
+}
+
+/* ── Mouvement multi-line section ────────────────────────────────────────────
+   Lines grid for multi-SKU mouvement form.
+   Reuses .exp-line-remove, .exp-add-line-btn, and .exp-stock-hint--ok/over tokens.
+   Touch targets: select/input ≥ 44px height; remove button 44px (floor tablet).
+   ─────────────────────────────────────────────────────────────────────────── */
+
+body.expeditions .exp-mov-lines-section {
+  margin-top: 8px;
+  margin-bottom: 4px;
+}
+
+body.expeditions .exp-mov-lines-label {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+body.expeditions .exp-mov-lines-hint {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: color-mix(in srgb, var(--ember) 85%, var(--ink));
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+body.expeditions .exp-mov-lines-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+body.expeditions .exp-mov-line-row {
+  display: grid;
+  /* SKU select (flexible) · Qty (fixed 110px) · Remove button (44px touch) */
+  grid-template-columns: 1fr 110px 44px;
+  gap: 8px 10px;
+  align-items: end;
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  border-radius: 5px;
+  padding: 10px 12px;
+  animation: exp-fade-in 0.15s ease;
+}
+
+body.expeditions .exp-mov-line-sku-field {
+  /* no extra override needed — inherits op-form__field */
+}
+
+body.expeditions .exp-mov-line-qty-field {
+  /* no extra override needed */
+}
+
+/* Hint span sits below the qty input — same palette as exp-stock-hint */
+body.expeditions .exp-mov-stock-hint {
+  display: inline-block;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  margin-top: 4px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  line-height: 1.4;
+  transition: background 0.15s, color 0.15s;
+}
+
+body.expeditions .exp-mov-stock-hint--ok {
+  background: color-mix(in srgb, var(--hop) 10%, transparent);
+  color: var(--hop);
+  border: 1px solid color-mix(in srgb, var(--hop) 25%, transparent);
+}
+
+body.expeditions .exp-mov-stock-hint--over {
+  background: color-mix(in srgb, var(--ember) 10%, transparent);
+  color: color-mix(in srgb, var(--ember) 85%, var(--ink));
+  border: 1px solid color-mix(in srgb, var(--ember) 30%, transparent);
+}
+
+/* Remove button: 44px touch target for floor tablets */
+body.expeditions .exp-mov-line-remove {
+  width: 44px;
+  height: 44px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+}
+
+/* Add-line button: full width, dashed border */
+body.expeditions #exp-mov-add-line {
+  width: 100%;
+  justify-content: center;
+  margin-top: 4px;
+}
+
+@media (max-width: 700px) {
+  body.expeditions .exp-mov-line-row {
+    grid-template-columns: 1fr 80px 44px;
+    gap: 8px;
+    padding: 8px 10px;
+  }
+}
+
+@media (max-width: 480px) {
+  body.expeditions .exp-mov-line-row {
+    grid-template-columns: 1fr;
+  }
+  body.expeditions .exp-mov-line-remove {
+    justify-self: end;
   }
 }
 
@@ -4827,6 +5125,69 @@ body.expeditions .exp-ssl-tomb-btn:hover {
 @media (max-width: 700px) {
   body.expeditions .exp-ssl-table th:nth-child(n+6),
   body.expeditions .exp-ssl-table td:nth-child(n+6) {
+    display: none;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   STOCK PF — TWO-ROW GROUPED HEADER + HAIRLINE COLUMN SEPARATORS
+   Matches tanks.php / tankboard-pertes.css ppb-th-group / ppb-th--sep idiom.
+   Added: 2026-06-10
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* Group super-header band ("Stock prévisionnel") — subordinated typography */
+body.expeditions .exp-stock-table thead th.exp-st-th-group {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  padding: 6px 14px 2px;
+  text-align: center;
+  background: color-mix(in srgb, var(--hop) 4%, var(--bg-elev));
+  /* Top border marks the band boundary */
+  border-top: 1px solid var(--hairline-2);
+  border-bottom: none;
+  /* Left hairline aligns with the separator column on its left */
+  border-left: 1px solid var(--hairline-2);
+  border-right: 1px solid var(--hairline-2);
+  white-space: nowrap;
+}
+
+/* The bottom-row th labels under the band need no top border — the band's bottom cell merges */
+body.expeditions .exp-stock-table thead tr:nth-child(2) th {
+  border-top: none;
+}
+
+/* Hairline separator column — header cells (rowspan="2" so appear only in top row) */
+body.expeditions .exp-stock-table thead th.exp-st-th--sep {
+  width: 1px;
+  padding: 0;
+  border-left: 1px solid var(--hairline-2);
+  background: color-mix(in srgb, var(--hop) 4%, var(--bg-elev));
+  /* No bottom border — the hairline runs from top header through all body rows */
+  border-bottom: none;
+}
+
+/* Hairline separator column — body cells */
+body.expeditions .exp-stock-table td.exp-st--sep {
+  width: 1px;
+  padding: 0;
+  border-left: 1px solid var(--hairline-2);
+}
+
+/* Ensure separator cells don't break responsive hide rules for semcur/futur */
+@media (max-width: 700px) {
+  body.expeditions .exp-st-col-sem,
+  body.expeditions .exp-stock-table thead th.exp-st-col-sem {
+    display: none;
+  }
+}
+
+@media (max-width: 540px) {
+  body.expeditions .exp-st-col-futur,
+  body.expeditions .exp-stock-table thead th.exp-st-col-futur {
     display: none;
   }
 }

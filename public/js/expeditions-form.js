@@ -602,7 +602,7 @@
     linesContainer.appendChild(buildLineRow(null, null, null, false));
   }
 
-  /* ── Prevent double-submit ──────────────────────────────────────────────── */
+  /* ── Prevent double-submit (order form) ─────────────────────────────────── */
   const form      = qs('#exp-order-form');
   const submitBtn = qs('#exp-submit-btn');
 
@@ -611,6 +611,178 @@
       submitBtn.disabled = true;
       submitBtn.textContent = 'Enregistrement…';
     });
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════════
+     MOUVEMENT MULTI-LINE MANAGEMENT
+     Mirrors the order-form line pattern (buildLineRow / addLineBtn / renderStockHint)
+     but for the mouvements view: simpler rows (SKU select + qty + remove button).
+     Parallel array names: mov_sku_id[] and mov_qty[] — distinct from line_sku_id[]/line_qty[].
+     Stock hint reads window.EXP_MOV_STOCK_MAP {sku_id: {physique}}: advisory amber only.
+     ══════════════════════════════════════════════════════════════════════════ */
+
+  const MOV_STOCK_MAP    = window.EXP_MOV_STOCK_MAP    || {};
+  const MOV_STOCK_ANCHOR = window.EXP_MOV_STOCK_ANCHOR || null;
+
+  const movLinesContainer = qs('#exp-mov-lines-container');
+  const movAddLineBtn     = qs('#exp-mov-add-line');
+  const movLineTemplate   = qs('#exp-mov-line-template');
+  const movStockWarn      = qs('#exp-mov-stock-warn');
+  const movSubmitBtn      = qs('#exp-mov-submit');
+  const movForm           = qs('#exp-mov-form');
+
+  /**
+   * Update the aggregate "⚠ stock insuffisant" warning for the mouvement form.
+   * Amber when at least one line has a physique-exceeded hint.
+   */
+  function updateMovStockWarn() {
+    if (!movStockWarn || !movLinesContainer) return;
+    const hasOver = movLinesContainer.querySelector('.exp-mov-stock-hint--over') !== null;
+    movStockWarn.hidden = !hasOver;
+  }
+
+  /**
+   * Render (or update) the stock hint span for a mouvement line.
+   * Hint = physique (total stock across all sites) — advisory only.
+   * @param {HTMLElement} lineRow — the .exp-mov-line-row element
+   * @param {number|null} skuId  — selected sku_id, or null/0 for none
+   * @param {number}      qty    — currently entered qty
+   */
+  function renderMovStockHint(lineRow, skuId, qty) {
+    const hint = lineRow.querySelector('.exp-mov-stock-hint');
+    if (!hint) return;
+
+    if (!skuId || !MOV_STOCK_MAP[skuId]) {
+      hint.hidden = true;
+      hint.className = 'exp-mov-stock-hint';
+      updateMovStockWarn();
+      return;
+    }
+
+    const stockEntry = MOV_STOCK_MAP[skuId];
+    const physique   = stockEntry.physique || 0;
+    const ordQty     = qty || 0;
+    const isOver     = ordQty > physique;
+    const anchorLabel = MOV_STOCK_ANCHOR ? '(ancre ' + MOV_STOCK_ANCHOR + ')' : '';
+    const tooltip     = 'Stock physique total toutes locations ' + anchorLabel;
+
+    hint.hidden = false;
+    hint.title  = tooltip;
+
+    if (isOver) {
+      hint.className   = 'exp-mov-stock-hint exp-mov-stock-hint--over';
+      hint.textContent = '⚠ stock : ' + physique + ' — saisi ' + ordQty;
+    } else {
+      hint.className   = 'exp-mov-stock-hint exp-mov-stock-hint--ok';
+      hint.textContent = 'stock : ' + physique + ' ✓';
+    }
+    updateMovStockWarn();
+  }
+
+  /**
+   * Add a new blank mouvement line row by cloning the server-rendered template.
+   * The template carries the full SKU <select> with optgroups already built server-side.
+   */
+  function addMovLine() {
+    if (!movLinesContainer || !movLineTemplate) return;
+
+    const clone = movLineTemplate.content.cloneNode(true);
+    const row   = clone.querySelector('.exp-mov-line-row');
+    if (!row) return;
+
+    const skuSelect = row.querySelector('.exp-mov-line-sku');
+    const qtyInput  = row.querySelector('.exp-mov-line-qty');
+    const removeBtn = row.querySelector('.exp-mov-line-remove');
+
+    if (skuSelect && qtyInput) {
+      skuSelect.addEventListener('change', function () {
+        const skuId = skuSelect.value ? parseInt(skuSelect.value, 10) : null;
+        const qty   = parseInt(qtyInput.value, 10) || 0;
+        renderMovStockHint(row, skuId, qty);
+      });
+      qtyInput.addEventListener('input', function () {
+        const skuId = skuSelect.value ? parseInt(skuSelect.value, 10) : null;
+        const qty   = parseInt(qtyInput.value, 10) || 0;
+        renderMovStockHint(row, skuId, qty);
+      });
+    }
+
+    if (removeBtn) {
+      removeBtn.addEventListener('click', function () {
+        row.remove();
+        updateMovStockWarn();
+      });
+    }
+
+    movLinesContainer.appendChild(row);
+    // Focus the SKU select for keyboard-first entry
+    if (skuSelect) skuSelect.focus();
+  }
+
+  // Initialise mouvement lines — deferred to DOMContentLoaded because this
+  // script is loaded at the end of the saisie view block (~L3175), BEFORE the
+  // mouvements view DOM is rendered (further down the same PHP file, ~L4790).
+  // DOMContentLoaded fires after the full document is parsed, so all elements exist.
+  function initMovLines() {
+    // Re-query after DOM is ready (IIFE-level qs() ran too early)
+    const mc   = document.querySelector('#exp-mov-lines-container');
+    const tmpl = document.querySelector('#exp-mov-line-template');
+    const addB = document.querySelector('#exp-mov-add-line');
+    const subB = document.querySelector('#exp-mov-submit');
+    const frm  = document.querySelector('#exp-mov-form');
+    if (!mc || !tmpl) return; // not the mouvements view — no-op
+
+    function doAddMovLine() {
+      const clone = tmpl.content.cloneNode(true);
+      const row   = clone.querySelector('.exp-mov-line-row');
+      if (!row) return;
+      const skuSel = row.querySelector('.exp-mov-line-sku');
+      const qtyInp = row.querySelector('.exp-mov-line-qty');
+      const remBtn = row.querySelector('.exp-mov-line-remove');
+      if (skuSel && qtyInp) {
+        skuSel.addEventListener('change', function () {
+          renderMovStockHint(row, skuSel.value ? parseInt(skuSel.value, 10) : null,
+                             parseInt(qtyInp.value, 10) || 0);
+        });
+        qtyInp.addEventListener('input', function () {
+          renderMovStockHint(row, skuSel.value ? parseInt(skuSel.value, 10) : null,
+                             parseInt(qtyInp.value, 10) || 0);
+        });
+      }
+      if (remBtn) {
+        remBtn.addEventListener('click', function () {
+          row.remove();
+          updateMovStockWarn();
+        });
+      }
+      mc.appendChild(row);
+      if (skuSel) skuSel.focus();
+    }
+
+    if (addB) addB.addEventListener('click', doAddMovLine);
+
+    // Pre-add 3 blank rows
+    doAddMovLine();
+    doAddMovLine();
+    doAddMovLine();
+    // Remove focus from last auto-added row (not operator-initiated)
+    const firstSel = mc.querySelector('.exp-mov-line-sku');
+    if (firstSel) firstSel.blur();
+
+    // Prevent double-submit
+    if (frm && subB) {
+      frm.addEventListener('submit', function () {
+        subB.disabled    = true;
+        subB.textContent = 'Enregistrement…';
+      });
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initMovLines);
+  } else {
+    // DOMContentLoaded already fired (script loaded with defer, or inline)
+    initMovLines();
   }
 
 })();

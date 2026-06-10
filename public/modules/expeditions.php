@@ -29,6 +29,25 @@ require_once __DIR__ . '/../../app/fg-stock.php';
 require_page_access('expeditions');
 $me = current_user();
 
+// ── Resolve preset_key for home-site derivation ───────────────────────────────
+// current_user() returns access_preset_id_fk (INT|null) but not the preset_key string.
+// One prepared SELECT here — used by exp_user_home_site_type() below.
+// Result is null when the user has no preset or the join finds nothing.
+$_mePresetKey = null;
+if (!empty($me['access_preset_id_fk'])) {
+    try {
+        $_presetPdo  = maltytask_pdo();
+        $_presetStmt = $_presetPdo->prepare(
+            'SELECT preset_key FROM ref_access_presets WHERE id = ? LIMIT 1'
+        );
+        $_presetStmt->execute([(int) $me['access_preset_id_fk']]);
+        $_row = $_presetStmt->fetch(PDO::FETCH_ASSOC);
+        $_mePresetKey = $_row ? (string) $_row['preset_key'] : null;
+    } catch (Throwable $e) {
+        error_log('[expeditions preset_key] ' . $e->getMessage());
+    }
+}
+
 // ── Status rank map — NEVER compare by ENUM ordinal position ─────────────────
 const EXP_STATUS_RANK = [
     'entered'    => 0,
@@ -955,45 +974,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'mouvements') {
             $movAllowedSkuIds[(int) $sid] = true;
         }
 
-        // ── Read params with ?? default THEN validate ─────────────────────────
-        $movSkuId       = isset($_POST['sku_id'])       ? (int) $_POST['sku_id']             : 0;
-        $movFromSiteId  = isset($_POST['from_site_id']) ? (int) $_POST['from_site_id']        : 0;
-        $movToSiteId    = isset($_POST['to_site_id'])   ? (int) $_POST['to_site_id']          : 0;
-        $movQtyRaw      = isset($_POST['qty'])          ? trim((string) $_POST['qty'])        : '';
-        $movMovedOn     = isset($_POST['moved_on'])     ? trim((string) $_POST['moved_on'])   : '';
-        $movComment     = isset($_POST['comment'])      ? trim((string) $_POST['comment'])    : '';
+        // ── Read shared header params ─────────────────────────────────────────
+        $movFromSiteId  = isset($_POST['from_site_id']) ? (int) $_POST['from_site_id']       : 0;
+        $movToSiteId    = isset($_POST['to_site_id'])   ? (int) $_POST['to_site_id']         : 0;
+        $movMovedOn     = isset($_POST['moved_on'])     ? trim((string) $_POST['moved_on'])  : '';
+        $movComment     = isset($_POST['comment'])      ? trim((string) $_POST['comment'])   : '';
+
+        // ── Read parallel line arrays ─────────────────────────────────────────
+        $movLineSkuIds  = $_POST['mov_sku_id'] ?? [];
+        $movLineQtys    = $_POST['mov_qty']    ?? [];
 
         $movErrors = [];
 
-        // SKU must be active
-        if ($movSkuId <= 0 || !isset($movAllowedSkuIds[$movSkuId])) {
-            $movErrors[] = 'SKU invalide ou inactif.';
-        }
-
-        // from_site must be a holds_fg_stock site
+        // ── Header validation (once) ──────────────────────────────────────────
         if ($movFromSiteId <= 0 || !isset($movAllowedSiteIds[$movFromSiteId])) {
             $movErrors[] = 'Site d\'origine invalide.';
         }
-
-        // to_site must be a holds_fg_stock site
         if ($movToSiteId <= 0 || !isset($movAllowedSiteIds[$movToSiteId])) {
             $movErrors[] = 'Site de destination invalide.';
         }
-
-        // from != to (friendly flash; the DB CHECK is the hard stop)
         if (empty($movErrors) && $movFromSiteId === $movToSiteId) {
             $movErrors[] = 'Le site d\'origine et le site de destination doivent être différents.';
         }
-
-        // qty > 0 strict integer — reject fractional and negative inputs
-        // preg_match rejects "12.5", "1e3", "-1", etc. before (int) truncation.
-        $movQty = 0;
-        if ($movQtyRaw === '' || !preg_match('/^\d+$/', $movQtyRaw) || ($movQty = (int) $movQtyRaw) <= 0) {
-            $movErrors[] = 'La quantité doit être un entier > 0.';
-            $movQty = 0;
-        }
-
-        // moved_on valid date
         if ($movMovedOn === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $movMovedOn)) {
             $movErrors[] = 'Date de mouvement invalide (format AAAA-MM-JJ).';
         } elseif ($movMovedOn > date('Y-m-d')) {
@@ -1002,11 +1004,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'mouvements') {
             $movErrors[] = 'Date de mouvement trop ancienne.';
         }
 
+        // ── Line validation (independent per line) ────────────────────────────
+        // Reject empty submit (zero lines).
+        if (!is_array($movLineSkuIds) || count($movLineSkuIds) === 0) {
+            $movErrors[] = 'Au moins une ligne SKU est requise.';
+        }
+
+        $movValidLines = [];
+        if (empty($movErrors) && is_array($movLineSkuIds)) {
+            foreach ($movLineSkuIds as $idx => $rawSkuId) {
+                $lineNum   = (int) $idx + 1;
+                $lineSkuId = (int) ($rawSkuId ?? 0);
+                $lineQtyRaw = isset($movLineQtys[$idx]) ? trim((string) $movLineQtys[$idx]) : '';
+
+                if ($lineSkuId <= 0) continue; // blank row — skip silently
+
+                if (!isset($movAllowedSkuIds[$lineSkuId])) {
+                    $movErrors[] = 'Ligne ' . $lineNum . ' : SKU invalide ou inactif.';
+                    continue;
+                }
+                $lineQty = 0;
+                if ($lineQtyRaw === '' || !preg_match('/^\d+$/', $lineQtyRaw) || ($lineQty = (int) $lineQtyRaw) <= 0) {
+                    $movErrors[] = 'Ligne ' . $lineNum . ' : quantité doit être un entier > 0.';
+                    continue;
+                }
+                $movValidLines[] = ['sku_id' => $lineSkuId, 'qty' => $lineQty];
+            }
+            if (empty($movErrors) && count($movValidLines) === 0) {
+                $movErrors[] = 'Au moins une ligne SKU valide est requise.';
+            }
+        }
+
         if (!empty($movErrors)) {
             flash_set('err', implode(' — ', $movErrors));
             redirect_to('/modules/expeditions.php?view=mouvements');
         }
 
+        // ── All-or-nothing transaction: N inserts + N log_revision calls ──────
         try {
             $pdo->beginTransaction();
 
@@ -1015,29 +1049,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'mouvements') {
                     (sku_id_fk, from_site_id_fk, to_site_id_fk, qty, moved_on, comment, created_by_user_id)
                  VALUES (?, ?, ?, ?, ?, ?, ?)'
             );
-            $insMov->execute([
-                $movSkuId,
-                $movFromSiteId,
-                $movToSiteId,
-                $movQty,
-                $movMovedOn,
-                $movComment !== '' ? $movComment : null,
-                (int) $me['id'],
-            ]);
-            $newMovId = (int) $pdo->lastInsertId();
 
-            log_revision($pdo, $me, 'inv_stock_movements', $newMovId, null, [
-                'sku_id_fk'        => $movSkuId,
-                'from_site_id_fk'  => $movFromSiteId,
-                'to_site_id_fk'    => $movToSiteId,
-                'qty'              => $movQty,
-                'moved_on'         => $movMovedOn,
-                'comment'          => $movComment !== '' ? $movComment : null,
-                'created_by_user_id' => (int) $me['id'],
-            ], 'normal', 'Mouvement inter-sites enregistré');
+            $insertedIds = [];
+            foreach ($movValidLines as $line) {
+                $insMov->execute([
+                    $line['sku_id'],
+                    $movFromSiteId,
+                    $movToSiteId,
+                    $line['qty'],
+                    $movMovedOn,
+                    $movComment !== '' ? $movComment : null,
+                    (int) $me['id'],
+                ]);
+                $newMovId = (int) $pdo->lastInsertId();
+                $insertedIds[] = $newMovId;
+
+                // Per-row audit entry — one per inserted inv_stock_movements row.
+                log_revision($pdo, $me, 'inv_stock_movements', $newMovId, null, [
+                    'sku_id_fk'          => $line['sku_id'],
+                    'from_site_id_fk'    => $movFromSiteId,
+                    'to_site_id_fk'      => $movToSiteId,
+                    'qty'                => $line['qty'],
+                    'moved_on'           => $movMovedOn,
+                    'comment'            => $movComment !== '' ? $movComment : null,
+                    'created_by_user_id' => (int) $me['id'],
+                ], 'normal', 'Mouvement inter-sites enregistré');
+            }
 
             $pdo->commit();
-            flash_set('ok', 'Mouvement #' . $newMovId . ' enregistré.');
+
+            $n = count($insertedIds);
+            flash_set('ok', $n . ' mouvement' . ($n > 1 ? 's' : '') . ' enregistré' . ($n > 1 ? 's' : '') . '.');
             redirect_to('/modules/expeditions.php?view=mouvements');
 
         } catch (Throwable $e) {
@@ -1933,21 +1975,48 @@ if ($view === 'form') {
 // Reuses fg_stock_compute exactly like the form view. On failure map stays '{}'.
 // Also powers the pinned summary strip ($fgStockForCmds, set here to avoid a
 // second fg_stock_compute call on the commandes view).
-$cmdStockMapJson = '{}';
+// Also fetches fg_stock_location_snapshot for the home-site KPI in the strip.
+$cmdStockMapJson     = '{}';
+$cmdStockDetailJson  = '{}'; // per-order short-list: {oid: [{sku_code,requested,available,physique,short_by}]}
+$fgLocationSnapshotForCmds = null; // per-location breakdown for commandes view home-site KPI
 if ($view === 'commandes') {
     try {
         $fgStockData2 = fg_stock_compute($pdo);
         // Share with the pinned summary strip (avoids a duplicate call)
         $fgStockForCmds = $fgStockData2;
+        // Location snapshot for home-site KPI in the strip (pure SELECT, operator-frequency)
+        $fgLocationSnapshotForCmds = fg_stock_location_snapshot($pdo);
         $cmdStockMap  = [];
         foreach ($fgStockData2['rows'] as $sr) {
             $cmdStockMap[(int) $sr['sku_id']] = [
                 'live_futur' => (int) round($sr['live_futur']),
+                'physique'   => (int) round($sr['physique']),
             ];
         }
         $cmdStockMapJson = json_encode($cmdStockMap, $jsonFlags);
     } catch (Throwable $e) {
         error_log('[expeditions cmd stock] ' . $e->getMessage());
+    }
+}
+
+// ── Live stock map for Mouvements form — per-line advisory hints ─────────────
+// Keyed by sku_id → {physique} (physical on-hand across all sites, for the hint).
+// Uses fg_stock_compute. On failure map stays '{}' — hints silently absent, form works.
+$movStockMapJson    = '{}';
+$movStockAnchorJson = 'null';
+if ($view === 'mouvements') {
+    try {
+        $fgStockDataMov = fg_stock_compute($pdo);
+        $movStockMap    = [];
+        foreach ($fgStockDataMov['rows'] as $sr) {
+            $movStockMap[(int) $sr['sku_id']] = [
+                'physique' => (int) round($sr['physique']),
+            ];
+        }
+        $movStockMapJson    = json_encode($movStockMap, $jsonFlags);
+        $movStockAnchorJson = json_encode($fgStockDataMov['anchor_month'], $jsonFlags);
+    } catch (Throwable $e) {
+        error_log('[expeditions mov stock] ' . $e->getMessage());
     }
 }
 
@@ -2210,8 +2279,80 @@ function exp_site_type_label(string $siteType): string
     };
 }
 
+/**
+ * Returns the ref_sites.site_type for the logged-in user's home site, or null
+ * when the user spans all sites (admin/manager-all) and has no single home.
+ *
+ * Precedence 1 — manager_scope (set for managers, null for operators):
+ *   'production' → 'production'
+ *   'logistics'  → 'warehouse'
+ *   'all'        → null (all-scope manager: no single home site)
+ *
+ * Precedence 2 — access_preset_id_fk resolved to preset_key:
+ *   'production_operator' → 'production'
+ *   'logistics_operator'  → 'warehouse'
+ *   'marketing'           → 'pos'
+ *   anything else         → null
+ *
+ * $user must carry 'manager_scope' and 'preset_key' keys.
+ * Top-level (compile-time hoisted) — NEVER nest inside a conditional or render block.
+ */
+function exp_user_home_site_type(array $user): ?string
+{
+    // Precedence 1: manager_scope
+    $scope = $user['manager_scope'] ?? null;
+    if ($scope !== null) {
+        if ($scope === 'production') return 'production';
+        if ($scope === 'logistics')  return 'warehouse';
+        // 'all' or any future value → no single home
+        return null;
+    }
+
+    // Precedence 2: preset_key
+    $preset = $user['preset_key'] ?? null;
+    if ($preset === 'production_operator') return 'production';
+    if ($preset === 'logistics_operator')  return 'warehouse';
+    if ($preset === 'marketing')           return 'pos';
+
+    // admin / viewer / manager (no manager_scope) / unmapped → no home site
+    return null;
+}
+
 $isReadOnly = $editOrder !== null
     && in_array((string) $editOrder['status'], ['shipped', 'cancelled'], true);
+
+// ── Home-site resolution (pure render-layer, no DB write, no migration) ───────
+// Build the user array that exp_user_home_site_type() needs, merging preset_key
+// resolved once at the top of this request (see $_mePresetKey above).
+$_meForHomeSite = array_merge($me ?? [], ['preset_key' => $_mePresetKey]);
+$_homeSiteType  = exp_user_home_site_type($_meForHomeSite);
+
+/**
+ * Given a location-snapshot array and a site_type string, returns
+ * ['units' => int, 'name' => string] for the matching location, or null.
+ * Pure function — no side effects.
+ */
+function exp_resolve_home_site(array $snapshot, ?string $siteType): ?array
+{
+    if ($siteType === null) return null;
+    foreach ($snapshot['locations'] as $loc) {
+        if ($loc['site_type'] === $siteType) {
+            return ['units' => (int) $loc['total_units'], 'name' => (string) $loc['name']];
+        }
+    }
+    return null;
+}
+
+// Resolve for view=stock (uses $fgLocationSnapshot)
+$fgHomeSiteStock = ($_homeSiteType !== null && $fgLocationSnapshot !== null)
+    ? exp_resolve_home_site($fgLocationSnapshot, $_homeSiteType)
+    : null;
+
+// Resolve for view=commandes (uses $fgLocationSnapshotForCmds)
+$fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds))
+    ? exp_resolve_home_site($fgLocationSnapshotForCmds, $_homeSiteType)
+    : null;
+
 ?><!doctype html>
 <html lang="fr">
 <head>
@@ -2350,18 +2491,25 @@ $isReadOnly = $editOrder !== null
       <span class="exp-cmd-stock-strip__val"><?= number_format($cmdFgPhysique) ?></span>
       <span class="exp-cmd-stock-strip__sub">physique</span>
     </div>
+    <?php if ($fgHomeSiteCmds !== null): ?>
+    <div class="exp-cmd-stock-strip__kpi exp-cmd-stock-strip__kpi--home"
+         title="Stock physique à : <?= htmlspecialchars($fgHomeSiteCmds['name']) ?>">
+      <span class="exp-cmd-stock-strip__val"><?= number_format($fgHomeSiteCmds['units']) ?></span>
+      <span class="exp-cmd-stock-strip__sub exp-cmd-stock-strip__sub--home"><?= htmlspecialchars($fgHomeSiteCmds['name']) ?></span>
+    </div>
+    <?php endif ?>
     <div class="exp-cmd-stock-strip__sep" aria-hidden="true"></div>
-    <div class="exp-cmd-stock-strip__kpi">
+    <div class="exp-cmd-stock-strip__kpi" title="Stock physique restant après commandes ouvertes dues cette semaine">
       <span class="exp-cmd-stock-strip__val<?= $cmdFgDiSem < 0 ? ' exp-cmd-stock-strip__val--neg' : '' ?>"><?= number_format($cmdFgDiSem) ?></span>
       <span class="exp-cmd-stock-strip__sub">dispo sem. courante<?= $cmdFgDiSem < 0 ? ' ⚠' : '' ?></span>
     </div>
     <div class="exp-cmd-stock-strip__sep" aria-hidden="true"></div>
-    <div class="exp-cmd-stock-strip__kpi">
+    <div class="exp-cmd-stock-strip__kpi" title="Stock physique restant après commandes ouvertes dues d'ici la fin de la semaine prochaine">
       <span class="exp-cmd-stock-strip__val<?= $cmdFgDi2sem < 0 ? ' exp-cmd-stock-strip__val--neg' : '' ?>"><?= number_format($cmdFgDi2sem) ?></span>
       <span class="exp-cmd-stock-strip__sub">dispo 2 sem.<?= $cmdFgDi2sem < 0 ? ' ⚠' : '' ?></span>
     </div>
     <div class="exp-cmd-stock-strip__sep" aria-hidden="true"></div>
-    <div class="exp-cmd-stock-strip__kpi">
+    <div class="exp-cmd-stock-strip__kpi" title="Stock physique restant après toutes les commandes ouvertes">
       <span class="exp-cmd-stock-strip__val<?= $cmdFgDiFut < 0 ? ' exp-cmd-stock-strip__val--neg' : '' ?>"><?= number_format($cmdFgDiFut) ?></span>
       <span class="exp-cmd-stock-strip__sub">dispo toutes cmdes<?= $cmdFgDiFut < 0 ? ' ⚠' : '' ?></span>
     </div>
@@ -2631,6 +2779,8 @@ $isReadOnly = $editOrder !== null
       </div>
     <?php endif ?>
 
+    <?php $cmdStockDetailByOid = []; // per-order short-list, populated per order below ?>
+
     <?php foreach ($allDates as $date): ?>
       <?php
       $dayOrderIds  = $cmdByDay[$date]  ?? [];
@@ -2738,8 +2888,8 @@ $isReadOnly = $editOrder !== null
             // Overdue: open order with requested_date < today
             $isOverdue = !$isCanc && !$isShip && $date < $todayDate;
 
-            // Per-order stock-risk: any line qty > live_futur
-            $hasStockRisk = false;
+            // Per-order stock-risk: collect ALL lines where qty > live_futur
+            $shortList    = [];
             // Decode stock map from JSON string once (lazy)
             static $cmdStockMapDecoded = null;
             if ($cmdStockMapDecoded === null) {
@@ -2749,11 +2899,21 @@ $isReadOnly = $editOrder !== null
                 foreach ($lines as $ln) {
                     $sid = (int) ($ln['sku_id_fk'] ?? 0);
                     $lf  = $cmdStockMapDecoded[$sid]['live_futur'] ?? null;
+                    $ph  = $cmdStockMapDecoded[$sid]['physique']   ?? null;
                     if ($lf !== null && (float) $ln['qty'] > $lf) {
-                        $hasStockRisk = true;
-                        break;
+                        $shortList[] = [
+                            'sku_code'  => (string) ($ln['sku_code'] ?? ''),
+                            'requested' => (float) $ln['qty'],
+                            'available' => $lf,
+                            'physique'  => $ph,
+                            'short_by'  => round((float) $ln['qty'] - $lf, 2),
+                        ];
                     }
                 }
+            }
+            $hasStockRisk = !empty($shortList);
+            if ($hasStockRisk) {
+                $cmdStockDetailByOid[$oid] = $shortList;
             }
 
             // SKU pills: up to 6 visible, +N expand — with family colour class
@@ -2795,9 +2955,10 @@ $isReadOnly = $editOrder !== null
               <span class="exp-overdue-badge" aria-label="Commande en retard">⚠ en retard</span>
             <?php endif ?>
 
-            <!-- Stock risk advisory chip -->
+            <!-- Stock risk advisory chip — clickable to show detail modal -->
             <?php if ($hasStockRisk): ?>
-              <span class="exp-stock-risk-chip" aria-label="Stock potentiellement insuffisant — advisory">⚠ stock</span>
+              <button type="button" class="exp-stock-risk-chip" data-order-id="<?= $oid ?>"
+                      aria-label="Voir le détail du risque de stock (advisory)">⚠ stock</button>
             <?php endif ?>
 
             <!-- Party -->
@@ -3373,6 +3534,13 @@ $isReadOnly = $editOrder !== null
       <span class="exp-stock-total-kpi__label">Physique total</span>
       <span class="exp-stock-total-kpi__val"><?= number_format($stockTotalPhysique) ?></span>
     </div>
+    <?php if ($fgHomeSiteStock !== null): ?>
+    <div class="exp-stock-total-kpi exp-st-home-site"
+         title="Stock physique à : <?= htmlspecialchars($fgHomeSiteStock['name']) ?>">
+      <span class="exp-stock-total-kpi__label exp-st-home-site__label"><?= htmlspecialchars($fgHomeSiteStock['name']) ?></span>
+      <span class="exp-stock-total-kpi__val exp-st-home-site__val"><?= number_format($fgHomeSiteStock['units']) ?></span>
+    </div>
+    <?php endif ?>
     <div class="exp-stock-total-sep" aria-hidden="true"></div>
     <div class="exp-stock-total-kpi<?= $stockDiSemaine < 0 ? ' exp-stock-total-kpi--neg' : '' ?>">
       <span class="exp-stock-total-kpi__label">
@@ -3492,15 +3660,26 @@ $isReadOnly = $editOrder !== null
   <div class="exp-stock-table-wrap">
     <table class="exp-stock-table" id="exp-stock-table">
       <thead>
+        <!-- Top row: group super-headers. Identity + physique columns use rowspan="2". -->
         <tr>
-          <th class="exp-st-col-badge" aria-label="Niveau de stock"></th>
-          <th class="exp-st-col-sku">SKU</th>
-          <th class="exp-st-col-gauge" title="Semaines de couverture (barre = niveau de stock)">Couverture</th>
-          <th class="exp-st-col-physique" title="Stock physique actuel = ancre + production − ventes depuis l'ancre">Physique</th>
-          <th class="exp-st-col-semcur"  title="Physique − commandes ouvertes dues cette semaine">Sem. courante</th>
-          <th class="exp-st-col-semcur"  title="Physique − commandes ouvertes dues d'ici la fin de la semaine prochaine">Sem. courante + suivante</th>
-          <th class="exp-st-col-futur"   title="Physique − toutes commandes ouvertes">Avec futur</th>
-          <th class="exp-st-col-flag"></th>
+          <th class="exp-st-col-badge" rowspan="2" aria-label="Niveau de stock"></th>
+          <th class="exp-st-col-sku"   rowspan="2">SKU</th>
+          <th class="exp-st-col-gauge" rowspan="2" title="Semaines de couverture (barre = niveau de stock)">Couverture</th>
+          <th class="exp-st-th--sep"   rowspan="2" aria-hidden="true"></th>
+          <th class="exp-st-col-physique exp-st-th-actuel" rowspan="2" title="Stock physique actuel = ancre + production − ventes depuis l'ancre">Physique</th>
+          <th class="exp-st-th--sep"   rowspan="2" aria-hidden="true"></th>
+          <th class="exp-st-th-group"  scope="colgroup" colspan="3">Dispo après commandes</th>
+          <th class="exp-st-th--sep"   rowspan="2" aria-hidden="true"></th>
+          <th class="exp-st-col-flag"  rowspan="2"></th>
+        </tr>
+        <!-- Bottom row: individual column labels under the prévisionnel band. -->
+        <tr>
+          <th class="exp-st-col-semcur" scope="col"
+              title="Stock restant après les commandes ouvertes dues cette semaine (physique − open_week_qty)">Sem. courante</th>
+          <th class="exp-st-col-semcur" scope="col"
+              title="Stock restant après les commandes ouvertes dues d'ici la fin de la semaine prochaine (physique − open_2wk_qty)">+ sem. suivante</th>
+          <th class="exp-st-col-futur"  scope="col"
+              title="Stock restant après toutes les commandes ouvertes (physique − open_total_qty)">Toutes cmdes</th>
         </tr>
       </thead>
       <tbody id="exp-stock-tbody">
@@ -3513,7 +3692,7 @@ $isReadOnly = $editOrder !== null
         $groupCount = count($stockByFamily[$groupFam]);
       ?>
         <tr class="exp-stock-family-header" data-family-group="<?= htmlspecialchars($groupFam) ?>" aria-hidden="true">
-          <td colspan="8" class="exp-stock-family-header__cell">
+          <td colspan="11" class="exp-stock-family-header__cell">
             <span class="exp-stock-family-header__label"><?= htmlspecialchars($groupLabel) ?></span>
             <span class="exp-stock-family-header__count"><?= $groupCount ?> SKU<?= $groupCount !== 1 ? 's' : '' ?></span>
           </td>
@@ -3618,9 +3797,11 @@ $isReadOnly = $editOrder !== null
                 </span>
               </div>
             </td>
+            <td class="exp-st--sep" aria-hidden="true"></td>
             <td class="exp-st-col-physique">
               <span class="exp-st-num"><?= number_format($physique) ?></span>
             </td>
+            <td class="exp-st--sep" aria-hidden="true"></td>
             <td class="exp-st-col-semcur">
               <span class="exp-st-num<?= $semClass ?>"><?= number_format($sr['live_semaine']) ?></span>
             </td>
@@ -3630,11 +3811,12 @@ $isReadOnly = $editOrder !== null
             <td class="exp-st-col-futur">
               <span class="exp-st-num<?= $futClass ?>"><?= number_format($sr['live_futur']) ?></span>
             </td>
+            <td class="exp-st--sep" aria-hidden="true"></td>
             <td class="exp-st-col-flag"></td>
           </tr>
           <!-- Drill-down ledger (hidden by default, toggled by JS) -->
           <tr class="exp-stock-drill" id="exp-drill-<?= (int) $sr['sku_id'] ?>" hidden>
-            <td colspan="8">
+            <td colspan="11">
               <div class="exp-stock-ledger">
                 <div class="exp-stock-ledger__title">
                   Détail — <?= htmlspecialchars($sr['sku_code']) ?>
@@ -3707,6 +3889,16 @@ $isReadOnly = $editOrder !== null
                         −<?= number_format($sr['open_week_qty']) ?>
                       </td>
                       <td class="exp-ledger-meta">→ sem. courante : <?= number_format($sr['live_semaine']) ?></td>
+                    </tr>
+                    <?php endif ?>
+                    <?php $totalWeekDemand = ($sr['open_week_qty'] ?? 0) + ($sr['shipped_week_qty'] ?? 0); ?>
+                    <?php if ($totalWeekDemand > 0): ?>
+                    <tr class="exp-ledger-week-total">
+                      <td class="exp-ledger-label">Commandé cette semaine (total)</td>
+                      <td class="exp-ledger-qty exp-ledger-qty--open">
+                        <?= number_format($totalWeekDemand) ?>
+                      </td>
+                      <td class="exp-ledger-meta">= commandes ouvertes + déjà expédiées cette semaine</td>
                     </tr>
                     <?php endif ?>
                     <?php if ($sr['open_2wk_qty'] > $sr['open_week_qty']): ?>
@@ -4731,6 +4923,55 @@ $isReadOnly = $editOrder !== null
        ══════════════════════════════════════════════════════════════════════ -->
   <?php if ($view === 'mouvements'): ?>
 
+  <!-- Window globals for mouvement JS — SKU list + advisory stock map. -->
+  <script>
+    window.EXP_MOV_SKUS = <?= json_encode(array_map(fn($ms) => [
+        'id'       => (int) $ms['id'],
+        'sku_code' => $ms['sku_code'],
+        'format'   => $ms['display_family'] ?? $ms['format'] ?? '',
+    ], $movSkuList), $jsonFlags) ?>;
+    // Advisory stock map: {sku_id: {physique}} — empty = compute failed, hints absent.
+    window.EXP_MOV_STOCK_MAP    = <?= $movStockMapJson ?>;
+    window.EXP_MOV_STOCK_ANCHOR = <?= $movStockAnchorJson ?>;
+  </script>
+
+  <!-- Hidden SKU select template — cloned by JS for each line row. -->
+  <template id="exp-mov-line-template">
+    <div class="exp-mov-line-row" role="group" aria-label="Ligne SKU">
+      <div class="op-form__field exp-mov-line-sku-field">
+        <label class="op-form__label">Article</label>
+        <select name="mov_sku_id[]" class="op-form__select exp-mov-line-sku" required>
+          <option value="">— choisir un SKU —</option>
+          <?php
+          $movPrevFamily = null;
+          foreach ($movSkuList as $ms):
+              $msFam = (string) ($ms['display_family'] ?? $ms['format'] ?? '');
+              if ($msFam !== $movPrevFamily):
+                  if ($movPrevFamily !== null) echo '</optgroup>';
+                  echo '<optgroup label="' . htmlspecialchars($msFam) . '">';
+                  $movPrevFamily = $msFam;
+              endif;
+          ?>
+            <option value="<?= (int) $ms['id'] ?>">
+              <?= htmlspecialchars($ms['sku_code']) ?>
+            </option>
+          <?php
+          endforeach;
+          if ($movPrevFamily !== null) echo '</optgroup>';
+          ?>
+        </select>
+      </div>
+      <div class="op-form__field exp-mov-line-qty-field">
+        <label class="op-form__label">Quantité</label>
+        <input type="number" name="mov_qty[]" class="op-form__input exp-mov-line-qty"
+               min="1" step="1" placeholder="ex: 12">
+        <span class="exp-mov-stock-hint" hidden></span>
+      </div>
+      <button type="button" class="exp-line-remove exp-mov-line-remove"
+              aria-label="Supprimer cette ligne">×</button>
+    </div>
+  </template>
+
   <div class="exp-mov-wrap" id="exp-mov-wrap">
 
     <!-- ── Record form ────────────────────────────────────────────────────── -->
@@ -4742,32 +4983,8 @@ $isReadOnly = $editOrder !== null
         <input type="hidden" name="csrf"   value="<?= htmlspecialchars($csrf) ?>">
         <input type="hidden" name="action" value="add_movement">
 
-        <div class="op-form__grid">
-
-          <!-- SKU -->
-          <div class="op-form__field op-form__field--full">
-            <label class="op-form__label" for="exp-mov-sku">SKU</label>
-            <select id="exp-mov-sku" name="sku_id" class="op-form__select" required>
-              <option value="">— choisir un SKU —</option>
-              <?php
-              $movPrevFamily = null;
-              foreach ($movSkuList as $ms):
-                  $msFam = (string) ($ms['display_family'] ?? $ms['format'] ?? '');
-                  if ($msFam !== $movPrevFamily):
-                      if ($movPrevFamily !== null) echo '</optgroup>';
-                      echo '<optgroup label="' . htmlspecialchars($msFam) . '">';
-                      $movPrevFamily = $msFam;
-                  endif;
-              ?>
-                <option value="<?= (int) $ms['id'] ?>">
-                  <?= htmlspecialchars($ms['sku_code']) ?>
-                </option>
-              <?php
-              endforeach;
-              if ($movPrevFamily !== null) echo '</optgroup>';
-              ?>
-            </select>
-          </div>
+        <!-- ── Shared header ────────────────────────────────────────────── -->
+        <div class="op-form__grid exp-mov-header-grid">
 
           <!-- From site -->
           <div class="op-form__field">
@@ -4795,15 +5012,6 @@ $isReadOnly = $editOrder !== null
             </select>
           </div>
 
-          <!-- Qty -->
-          <div class="op-form__field">
-            <label class="op-form__label" for="exp-mov-qty">Quantité (unités)</label>
-            <input type="number" id="exp-mov-qty" name="qty"
-                   class="op-form__input"
-                   min="1" step="1" required
-                   placeholder="ex: 12">
-          </div>
-
           <!-- moved_on -->
           <div class="op-form__field">
             <label class="op-form__label" for="exp-mov-date">Date du mouvement</label>
@@ -4827,9 +5035,31 @@ $isReadOnly = $editOrder !== null
           </div>
 
         </div>
+        <!-- /header grid -->
+
+        <!-- ── SKU line grid ─────────────────────────────────────────────── -->
+        <div class="exp-mov-lines-section">
+          <div class="exp-mov-lines-label">
+            Articles à transférer
+            <span class="exp-mov-lines-hint" id="exp-mov-stock-warn" hidden>
+              ⚠ stock insuffisant sur une ou plusieurs lignes
+            </span>
+          </div>
+          <div class="exp-mov-lines-container" id="exp-mov-lines-container"
+               role="group" aria-label="Lignes SKU">
+            <!-- Rows injected by JS -->
+          </div>
+          <button type="button" class="exp-add-line-btn" id="exp-mov-add-line"
+                  aria-label="Ajouter une ligne SKU">
+            + Ajouter une ligne
+          </button>
+        </div>
+        <!-- /line grid -->
 
         <div class="op-form__actions">
-          <button type="submit" class="op-form__submit">Enregistrer le mouvement</button>
+          <button type="submit" class="op-form__submit" id="exp-mov-submit">
+            Enregistrer le mouvement
+          </button>
         </div>
 
       </form>
@@ -4927,6 +5157,8 @@ $isReadOnly = $editOrder !== null
 
   </div>
   <!-- /exp-mov-wrap -->
+
+  <script src="/js/expeditions-form.js?v=<?= @filemtime(__DIR__ . '/../js/expeditions-form.js') ?: time() ?>"></script>
 
   <?php endif ?>
   <!-- /MOUVEMENTS -->
@@ -5129,10 +5361,13 @@ $isReadOnly = $editOrder !== null
 </main>
 
 <?php if ($view === 'commandes'): ?>
+<dialog id="exp-stock-detail-modal"></dialog>
 <script>
   window.EXP_CSRF         = <?= json_encode($csrf, JSON_HEX_TAG | JSON_HEX_AMP) ?>;
-  // Advisory stock map for per-order risk flags: {sku_id: {live_futur}}
+  // Advisory stock map for per-order risk flags: {sku_id: {live_futur, physique}}
   window.EXP_CMD_STOCK_MAP = <?= $cmdStockMapJson ?>;
+  // Per-order stock short-list: {oid: [{sku_code,requested,available,physique,short_by}]}
+  window.EXP_CMD_STOCK_DETAIL = <?= json_encode($cmdStockDetailByOid ?? [], $jsonFlags) ?>;
   // Pull-list aggregation: [{sku_id,sku_code,format,family,total_qty,order_count,hl_each}]
   window.EXP_CMD_PULL     = <?= $cmdPullListJson ?>;
   window.EXP_CMD_PULL_HL  = <?= $cmdPullTotalHlJson ?>;

@@ -228,6 +228,72 @@
     doRequest(currentCsrf);
   });
 
+  /* ── Stock-risk detail modal ───────────────────────────────────────────── */
+  (function () {
+    var modal = document.getElementById('exp-stock-detail-modal');
+    if (!modal || !modal.showModal) return; // guard: <dialog> not supported
+
+    var detail = window.EXP_CMD_STOCK_DETAIL || {};
+
+    // Close helpers
+    function closeModal() { modal.close(); }
+
+    // ✕ button and backdrop close — wired once
+    modal.addEventListener('click', function (e) {
+      // Close on ✕ button
+      if (e.target.closest('.exp-sdm-close')) { closeModal(); return; }
+      // Close on backdrop (click landed directly on the dialog element, not its content)
+      if (e.target === modal) { closeModal(); }
+    });
+    // Belt+suspenders: Escape (browsers fire 'cancel' natively; wire 'cancel' too)
+    modal.addEventListener('cancel', function () { closeModal(); });
+
+    // Build modal content for a given order
+    function buildContent(oid, items) {
+      var rows = '';
+      items.forEach(function (item) {
+        rows += '<tr>'
+          + '<td class="exp-sdm-td exp-sdm-sku">' + escHtml(item.sku_code) + '</td>'
+          + '<td class="exp-sdm-td exp-sdm-num">' + escHtml(item.requested) + '</td>'
+          + '<td class="exp-sdm-td exp-sdm-num">' + escHtml(item.available) + '</td>'
+          + '<td class="exp-sdm-td exp-sdm-num">' + escHtml(item.physique !== null ? item.physique : '—') + '</td>'
+          + '<td class="exp-sdm-td exp-sdm-num exp-sdm-short">' + escHtml(item.short_by) + '</td>'
+          + '</tr>';
+      });
+      return '<div class="exp-sdm-inner">'
+        + '<div class="exp-sdm-header">'
+        +   '<h2 class="exp-sdm-title">Détail du risque de stock — commande #' + escHtml(oid) + '</h2>'
+        +   '<button type="button" class="exp-sdm-close" aria-label="Fermer">✕</button>'
+        + '</div>'
+        + '<p class="exp-sdm-advisory">Indicatif — la vente à découvert reste autorisée.</p>'
+        + '<div class="exp-sdm-table-wrap">'
+        +   '<table class="exp-sdm-table">'
+        +     '<thead><tr>'
+        +       '<th class="exp-sdm-th">SKU</th>'
+        +       '<th class="exp-sdm-th exp-sdm-num">Demandé</th>'
+        +       '<th class="exp-sdm-th exp-sdm-num">Disponible (engagé)</th>'
+        +       '<th class="exp-sdm-th exp-sdm-num">Physique</th>'
+        +       '<th class="exp-sdm-th exp-sdm-num">Manque</th>'
+        +     '</tr></thead>'
+        +     '<tbody>' + rows + '</tbody>'
+        +   '</table>'
+        + '</div>'
+        + '</div>';
+    }
+
+    // Delegate chip clicks on the whole page (no duplicate listener)
+    document.addEventListener('click', function (e) {
+      var chip = e.target.closest('.exp-stock-risk-chip[data-order-id]');
+      if (!chip) return;
+      var oid   = chip.dataset.orderId;
+      var items = detail[oid];
+      if (!items || !items.length) return;
+      // Rebuild content on each open (no stale state)
+      modal.innerHTML = buildContent(oid, items);
+      modal.showModal();
+    });
+  }());
+
   /* ── Pull-list collapsible toggle ──────────────────────────────────────── */
   (function () {
     var toggleBtn = document.getElementById('exp-pull-toggle');
