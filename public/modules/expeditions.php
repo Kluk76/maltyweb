@@ -1409,11 +1409,14 @@ $skus         = [];
 $cmdOrders       = []; // header rows keyed by id
 $cmdLines        = []; // keyed by order_id => [line, …]
 $cmdByDay        = []; // keyed by date => [order_id, …]
-$cmdEshopByDay   = []; // keyed by date => [channel => {orders, hl}]
+$cmdEshopByDay   = []; // keyed by date => [channel => {orders, hl}] — taproom aggregate only
+$cmdEshopOrdersByDay = []; // keyed by date => [eshop per-order rows] (Phase 1: eshop per-order)
+$cmdEshopLinesByOrder= []; // keyed by inv_sales_orders.id => [line rows for pills]
 $cmdSummary      = [
     'total_hl' => 0.0, 'orders' => 0, 'open' => 0,
     'on_trade' => 0, 'off_trade' => 0, 'internal' => 0,
     'distinct_clients' => 0,
+    'eshop_pickup' => 0, 'eshop_delivery' => 0, 'eshop_review' => 0,
 ]; // totals for the period band
 $cmdFilteredCusts= []; // distinct customer names in result (for datalist)
 $cmdFilteredSkus = []; // distinct SKU codes in result (for datalist)
@@ -1611,11 +1614,77 @@ try {
             }
         }
 
-        // ── Query 3: eshop/taproom auto-rows — aggregate by date + channel ───
-        // Skipped in find-intent mode: eshop rows are aggregated by date and
-        // spanning all dates would be too broad + unrelated to the current search.
+        // ── Query 3a: eshop per-order rows ────────────────────────────────────
+        // Eshop is now shown as individual rows (Phase 1 Shopify integration).
+        // In browse mode, restrict to the selected date window.
+        // In find-intent mode, also include eshop orders so that searching
+        // by order_name / customer finds them cross-date.
+        {
+            $eshopWhere  = ["iso.channel = 'eshop'"];
+            $eshopParams = [];
+            if (!$findIntent) {
+                $eshopWhere[]  = 'DATE(iso.created_at) BETWEEN ? AND ?';
+                $eshopParams[] = $cmdDu;
+                $eshopParams[] = $cmdAu;
+            } else {
+                // In find-intent mode apply the client-name filter to eshop too
+                if ($filterClient !== '') {
+                    $eshopWhere[]  = "(iso.customer_first_name LIKE ? OR iso.customer_last_name LIKE ? OR iso.order_name LIKE ? OR CONCAT(iso.customer_first_name,' ',iso.customer_last_name) LIKE ?)";
+                    $likeVal = '%' . str_replace(['%', '_'], ['\%', '\_'], $filterClient) . '%';
+                    $eshopParams[] = $likeVal;
+                    $eshopParams[] = $likeVal;
+                    $eshopParams[] = $likeVal;
+                    $eshopParams[] = $likeVal;
+                }
+            }
+            $eshopOrderSql = 'SELECT iso.id, iso.order_name, DATE(iso.created_at) AS sale_date,
+                        iso.customer_first_name, iso.customer_last_name, iso.customer_email,
+                        iso.fulfilment_mode, iso.financial_status, iso.fulfillment_status,
+                        iso.channel, iso.created_at
+                   FROM inv_sales_orders iso
+                  WHERE ' . implode(' AND ', $eshopWhere) . '
+                  ORDER BY iso.created_at ' . ($findIntent ? 'DESC' : 'ASC');
+            $eshopOrderStmt = $pdo->prepare($eshopOrderSql);
+            $eshopOrderStmt->execute($eshopParams);
+            $eshopOrders = $eshopOrderStmt->fetchAll(PDO::FETCH_ASSOC);
+
+            if (!empty($eshopOrders)) {
+                // Query 3b: lines for those eshop orders (2 queries total, no N+1)
+                $eshopIds = array_column($eshopOrders, 'id');
+                $placeholders = implode(',', array_fill(0, count($eshopIds), '?'));
+                $eshopLineStmt = $pdo->prepare(
+                    "SELECT isol.order_id_fk, isol.sku_code, isol.qty, isol.hl_resolved,
+                            s.format
+                       FROM inv_sales_order_lines isol
+                       LEFT JOIN ref_skus s ON s.id = isol.sku_id_fk
+                      WHERE isol.order_id_fk IN ($placeholders)
+                      ORDER BY isol.order_id_fk ASC, isol.line_index ASC"
+                );
+                $eshopLineStmt->execute($eshopIds);
+                foreach ($eshopLineStmt->fetchAll(PDO::FETCH_ASSOC) as $el) {
+                    $eid = (int) $el['order_id_fk'];
+                    $cmdEshopLinesByOrder[$eid][] = $el;
+                }
+
+                // Group orders by date
+                foreach ($eshopOrders as $eo) {
+                    $d   = (string) $eo['sale_date'];
+                    $eid = (int) $eo['id'];
+                    // Compute HL for this order from lines
+                    $eoHl = 0.0;
+                    foreach ($cmdEshopLinesByOrder[$eid] ?? [] as $el) {
+                        $eoHl += (float) ($el['hl_resolved'] ?? 0);
+                    }
+                    $eo['total_hl'] = $eoHl;
+                    $cmdEshopOrdersByDay[$d][] = $eo;
+                }
+            }
+        }
+
+        // ── Query 3c: taproom aggregate (kept as-is for non-eshop channels) ──
+        // Skipped in find-intent mode (taproom has no per-order display yet).
         if (!$findIntent) {
-            $eshopStmt = $pdo->prepare(
+            $tapStmt = $pdo->prepare(
                 "SELECT DATE(iso.created_at) AS sale_date,
                         iso.channel,
                         COUNT(*) AS order_count,
@@ -1623,10 +1692,11 @@ try {
                    FROM inv_sales_orders iso
                    LEFT JOIN inv_sales_order_lines isol ON isol.order_id_fk = iso.id
                   WHERE DATE(iso.created_at) BETWEEN ? AND ?
+                    AND iso.channel != 'eshop'
                   GROUP BY DATE(iso.created_at), iso.channel"
             );
-            $eshopStmt->execute([$cmdDu, $cmdAu]);
-            foreach ($eshopStmt->fetchAll(PDO::FETCH_ASSOC) as $er) {
+            $tapStmt->execute([$cmdDu, $cmdAu]);
+            foreach ($tapStmt->fetchAll(PDO::FETCH_ASSOC) as $er) {
                 $d = (string) $er['sale_date'];
                 if (!isset($cmdEshopByDay[$d])) $cmdEshopByDay[$d] = [];
                 $cmdEshopByDay[$d][$er['channel']] = [
@@ -1666,6 +1736,18 @@ try {
                 }
             }
         }
+        // Eshop pickup/delivery/review totals for period summary
+        $sumEshopPickup   = 0;
+        $sumEshopDelivery = 0;
+        $sumEshopReview   = 0;
+        foreach ($cmdEshopOrdersByDay as $dayOrders) {
+            foreach ($dayOrders as $eo) {
+                $mode = (string) ($eo['fulfilment_mode'] ?? 'review');
+                if ($mode === 'pickup')   $sumEshopPickup++;
+                elseif ($mode === 'delivery') $sumEshopDelivery++;
+                else                         $sumEshopReview++;
+            }
+        }
         $cmdSummary = [
             'total_hl'        => $sumTotalHl,
             'orders'          => $sumOrders,
@@ -1674,6 +1756,9 @@ try {
             'off_trade'       => $sumOffTrade,
             'internal'        => $sumInternal,
             'distinct_clients'=> count($distinctClients),
+            'eshop_pickup'    => $sumEshopPickup,
+            'eshop_delivery'  => $sumEshopDelivery,
+            'eshop_review'    => $sumEshopReview,
         ];
     }
 
@@ -2626,6 +2711,73 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
           );
       }
   }
+
+  /**
+   * Render a single eshop order row (Phase 1 Shopify integration — read-only).
+   * Uses data-eshop-order-id (NOT data-order-id) so existing status JS never targets it.
+   */
+  function exp_render_eshop_row(array $eo, array $lines): void
+  {
+      $eid   = (int) $eo['id'];
+      $mode  = (string) ($eo['fulfilment_mode'] ?? 'review');
+      [$modeIcon, $modeLabel, $modeCls] = match ($mode) {
+          'pickup'   => ['🏬', 'Retrait',    'exp-fulfil-badge--pickup'],
+          'delivery' => ['🚚', 'Livraison',  'exp-fulfil-badge--delivery'],
+          default    => ['⚠', 'À classer',  'exp-fulfil-badge--review'],
+      };
+
+      // Customer display
+      $first = trim((string) ($eo['customer_first_name'] ?? ''));
+      $last  = trim((string) ($eo['customer_last_name']  ?? ''));
+      $name  = trim("$first $last");
+      if ($name === '') $name = (string) ($eo['customer_email'] ?? '—');
+
+      // SKU pills (up to 6 visible, +N expand) — reuse exp_format_family/exp_family_label
+      $pillsHtml = '';
+      $visLines  = array_slice($lines, 0, 6);
+      $hidLines  = array_slice($lines, 6);
+      foreach ($visLines as $ln) {
+          $qty    = (float) ($ln['qty'] ?? 0);
+          $qtyFmt = (floor($qty) == $qty) ? (int)$qty : $qty;
+          $fam    = exp_format_family((string) ($ln['format'] ?? ''));
+          $pillsHtml .= '<span class="exp-sku-pill exp-sku-pill--' . $fam
+              . '" title="' . htmlspecialchars(exp_family_label($fam)) . '">'
+              . htmlspecialchars((string) ($ln['sku_code'] ?? '?')) . '×' . $qtyFmt
+              . '</span>';
+      }
+      if (!empty($hidLines)) {
+          $hidHtml = '';
+          foreach ($hidLines as $ln) {
+              $qty    = (float) ($ln['qty'] ?? 0);
+              $qtyFmt = (floor($qty) == $qty) ? (int)$qty : $qty;
+              $fam    = exp_format_family((string) ($ln['format'] ?? ''));
+              $hidHtml .= '<span class="exp-sku-pill exp-sku-pill--' . $fam
+                  . '" title="' . htmlspecialchars(exp_family_label($fam)) . '">'
+                  . htmlspecialchars((string) ($ln['sku_code'] ?? '?')) . '×' . $qtyFmt
+                  . '</span>';
+          }
+          $pillsHtml .= '<button type="button" class="exp-sku-more" '
+              . 'data-hidden-pills="' . htmlspecialchars($hidHtml, ENT_QUOTES) . '"'
+              . ' aria-expanded="false">+' . count($hidLines) . '</button>';
+      }
+
+      printf(
+          '<div class="exp-order-row exp-order-row--eshop" data-eshop-order-id="%d">' .
+          '<span class="exp-eshop-order-name">%s</span>' .
+          '<span class="exp-order-party">%s</span>' .
+          '<div class="exp-sku-pills">%s</div>' .
+          '<span class="exp-fulfil-badge %s">%s %s</span>' .
+          '<span class="exp-eshop-source-tag" aria-label="Shopify (lecture seule)">Shopify</span>' .
+          '</div>',
+          $eid,
+          htmlspecialchars((string) ($eo['order_name'] ?? "#$eid")),
+          htmlspecialchars($name),
+          $pillsHtml,
+          $modeCls,
+          $modeIcon,
+          htmlspecialchars($modeLabel)
+      );
+  }
   ?>
 
   <!-- ── Range notice ──────────────────────────────────────────────────────── -->
@@ -2889,6 +3041,30 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
       <span class="exp-summary-kpi__value"><?= $cmdSummary['distinct_clients'] ?></span>
       <span class="exp-summary-kpi__label">client<?= $cmdSummary['distinct_clients'] !== 1 ? 's' : '' ?></span>
     </div>
+    <?php
+    $eshopTotal = $cmdSummary['eshop_pickup'] + $cmdSummary['eshop_delivery'] + $cmdSummary['eshop_review'];
+    if ($eshopTotal > 0):
+    ?>
+    <div class="exp-summary-sep"></div>
+    <?php if ($cmdSummary['eshop_pickup'] > 0): ?>
+    <div class="exp-summary-kpi exp-summary-kpi--eshop" title="Commandes Shopify retrait">
+      <span class="exp-summary-kpi__value">🏬 <?= $cmdSummary['eshop_pickup'] ?></span>
+      <span class="exp-summary-kpi__label">retrait<?= $cmdSummary['eshop_pickup'] !== 1 ? 's' : '' ?></span>
+    </div>
+    <?php endif ?>
+    <?php if ($cmdSummary['eshop_delivery'] > 0): ?>
+    <div class="exp-summary-kpi exp-summary-kpi--eshop" title="Commandes Shopify livraison">
+      <span class="exp-summary-kpi__value">🚚 <?= $cmdSummary['eshop_delivery'] ?></span>
+      <span class="exp-summary-kpi__label">livraison<?= $cmdSummary['eshop_delivery'] !== 1 ? 's' : '' ?></span>
+    </div>
+    <?php endif ?>
+    <?php if ($cmdSummary['eshop_review'] > 0): ?>
+    <div class="exp-summary-kpi exp-summary-kpi--eshop exp-summary-kpi--eshop-warn" title="Commandes Shopify à classer">
+      <span class="exp-summary-kpi__value">⚠ <?= $cmdSummary['eshop_review'] ?></span>
+      <span class="exp-summary-kpi__label">à classer</span>
+    </div>
+    <?php endif ?>
+    <?php endif ?>
   </div>
   <?php endif ?>
 
@@ -2967,10 +3143,11 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
   <div class="exp-section" id="exp-days-container">
 
     <?php
-    // Collect all dates that have either ord_orders or eshop rows
+    // Collect all dates that have ord_orders, taproom aggregates, or eshop per-order rows
     $allDates = array_unique(array_merge(
         array_keys($cmdByDay),
-        array_keys($cmdEshopByDay)
+        array_keys($cmdEshopByDay),
+        array_keys($cmdEshopOrdersByDay)
     ));
     sort($allDates);
     ?>
@@ -2991,9 +3168,10 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
 
     <?php foreach ($allDates as $date): ?>
       <?php
-      $dayOrderIds  = $cmdByDay[$date]  ?? [];
-      $dayEshop     = $cmdEshopByDay[$date] ?? [];
-      $isToday      = ($date === $todayDate);
+      $dayOrderIds      = $cmdByDay[$date]  ?? [];
+      $dayEshop         = $cmdEshopByDay[$date] ?? [];         // taproom aggregate
+      $dayEshopOrders   = $cmdEshopOrdersByDay[$date] ?? [];   // eshop per-order rows
+      $isToday          = ($date === $todayDate);
 
       // Per-day metrics (exclude cancelled from HL)
       $dayHl     = 0.0;
@@ -3020,6 +3198,16 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
                   $dayHl += (float) $ln['qty'] * (float) $ln['hl_per_unit'];
               }
           }
+      }
+      // Per-day eshop pickup/delivery/review counts
+      $dayEshopPickup   = 0;
+      $dayEshopDelivery = 0;
+      $dayEshopReview   = 0;
+      foreach ($dayEshopOrders as $eo) {
+          $mode = (string) ($eo['fulfilment_mode'] ?? 'review');
+          if ($mode === 'pickup')        $dayEshopPickup++;
+          elseif ($mode === 'delivery')  $dayEshopDelivery++;
+          else                           $dayEshopReview++;
       }
       // Labels used in action summary strip
       $actSummaryDefs = [
@@ -3055,6 +3243,26 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
               <span class="exp-day-metric exp-day-metric--open">
                 <span class="exp-day-metric__val"><?= $dayOpen ?></span>
                 <span class="exp-day-metric__unit">ouverte<?= $dayOpen > 1 ? 's' : '' ?></span>
+              </span>
+              <?php endif ?>
+            <?php endif ?>
+            <?php if ($dayEshopPickup + $dayEshopDelivery + $dayEshopReview > 0): ?>
+              <?php if ($dayEshopPickup > 0): ?>
+              <span class="exp-day-metric exp-day-metric--eshop-pickup" title="Retraits Shopify">
+                <span class="exp-day-metric__val">🏬 <?= $dayEshopPickup ?></span>
+                <span class="exp-day-metric__unit">retrait<?= $dayEshopPickup > 1 ? 's' : '' ?></span>
+              </span>
+              <?php endif ?>
+              <?php if ($dayEshopDelivery > 0): ?>
+              <span class="exp-day-metric exp-day-metric--eshop-delivery" title="Livraisons Shopify">
+                <span class="exp-day-metric__val">🚚 <?= $dayEshopDelivery ?></span>
+                <span class="exp-day-metric__unit">livraison<?= $dayEshopDelivery > 1 ? 's' : '' ?></span>
+              </span>
+              <?php endif ?>
+              <?php if ($dayEshopReview > 0): ?>
+              <span class="exp-day-metric exp-day-metric--eshop-review" title="Commandes Shopify à classer">
+                <span class="exp-day-metric__val">⚠ <?= $dayEshopReview ?></span>
+                <span class="exp-day-metric__unit">à classer</span>
               </span>
               <?php endif ?>
             <?php endif ?>
@@ -3237,7 +3445,12 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
           </div>
         <?php endforeach ?>
 
-        <!-- Eshop/taproom auto rows for this day -->
+        <!-- Eshop per-order rows (Phase 1 Shopify — read-only) -->
+        <?php foreach ($dayEshopOrders as $eo): ?>
+          <?php exp_render_eshop_row($eo, $cmdEshopLinesByOrder[(int) $eo['id']] ?? []) ?>
+        <?php endforeach ?>
+
+        <!-- Taproom/other channel auto rows (aggregate — unchanged) -->
         <?php foreach ($dayEshop as $channel => $aggr): ?>
           <?php
           $chanLabel = $channel === 'eshop' ? 'Eshop' : 'Taproom';

@@ -7,10 +7,12 @@
  */
 
 /* ── Page layout override ─────────────────────────────────────────────────── */
-/* The expeditions module can be slightly wider than the op-form default 860px
-   because the orders table benefits from extra width on desktop. */
+/* Wider column for the orders table + stock dashboard on desktop/floor-tablet.
+   Double-class selector (body.expeditions.op-form-page) ensures this touches
+   ONLY the Expéditions module — shared .home.op-form-page rule (860px in
+   app.css) is untouched and continues to govern the 5 operator-form pages. */
 body.expeditions.op-form-page .main {
-  max-width: 1040px;
+  max-width: min(1360px, 94vw);
 }
 
 /* ── Page header with actions slot ───────────────────────────────────────── */
@@ -40,7 +42,7 @@ body.expeditions .exp-new-btn {
   border: none;
   border-radius: 5px;
   font-family: "DM Sans", sans-serif;
-  font-size: 0.82rem;
+  font-size: 0.95rem;
   font-weight: 600;
   text-decoration: none;
   cursor: pointer;
@@ -70,7 +72,7 @@ body.expeditions .exp-tabs {
 
 body.expeditions .exp-tab {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.84rem;
+  font-size: 0.91rem;
   font-weight: 500;
   color: var(--ink-mute);
   text-decoration: none;
@@ -105,7 +107,7 @@ body.expeditions .exp-section {
 body.expeditions .exp-empty,
 body.expeditions .exp-placeholder-text {
   color: var(--ink-mute);
-  font-size: 0.88rem;
+  font-size: 0.95rem;
   font-family: "DM Sans", sans-serif;
   margin: 8px 0 0;
 }
@@ -126,7 +128,7 @@ body.expeditions .exp-chip {
   border-radius: 20px;
   border: 1px solid;
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.64rem;
+  font-size: 0.69rem;
   letter-spacing: 0.04em;
   font-weight: 500;
   white-space: nowrap;
@@ -155,7 +157,8 @@ body.expeditions .exp-chip--next {
   font-weight: 600;
   box-shadow: 0 1px 3px rgba(30, 18, 5, 0.1);
   touch-action: manipulation;
-  min-height: 32px;
+  min-height: 44px; /* floor-tablet touch target */
+  padding: 4px 12px;
 }
 
 body.expeditions .exp-chip--next:hover:not([disabled]) {
@@ -206,7 +209,7 @@ body.expeditions .exp-date-group:last-child {
 
 body.expeditions .exp-date-label {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.64rem;
+  font-size: 0.69rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--hop);
@@ -235,7 +238,7 @@ body.expeditions .exp-order-row:hover {
 
 body.expeditions .exp-order-id {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.72rem;
+  font-size: 0.84rem;
   color: var(--ink-mute);
   font-weight: 500;
   min-width: 44px;
@@ -244,7 +247,7 @@ body.expeditions .exp-order-id {
 
 body.expeditions .exp-order-party {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.88rem;
+  font-size: 0.95rem;
   color: var(--ink-soft);
   font-weight: 500;
   flex: 1 1 140px;
@@ -273,13 +276,13 @@ body.expeditions .exp-order-actions {
 
 body.expeditions .exp-action-btn {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.76rem;
-  padding: 5px 10px;
+  font-size: 0.88rem;
+  padding: 7px 12px; /* bumped for ≥44px touch target */
   border-radius: 4px;
   text-decoration: none;
   cursor: pointer;
   touch-action: manipulation;
-  min-height: 32px;
+  min-height: 44px; /* floor-tablet touch target */
   display: inline-flex;
   align-items: center;
   transition: background 0.12s, color 0.12s;
@@ -322,7 +325,7 @@ body.expeditions .exp-type-toggle {
 
 body.expeditions .exp-toggle-label {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.68rem;
+  font-size: 0.73rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--ink-mute);
@@ -339,7 +342,7 @@ body.expeditions .exp-toggle-group {
 
 body.expeditions .exp-toggle-btn {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.84rem;
+  font-size: 0.91rem;
   font-weight: 500;
   padding: 8px 18px;
   border: none;
@@ -393,7 +396,7 @@ body.expeditions .exp-required {
 
 /* Transporter hint */
 body.expeditions .exp-trans-hint {
-  font-size: 0.75rem;
+  font-size: 0.81rem;
   color: var(--hop);
   font-family: "DM Sans", sans-serif;
   margin-top: 4px;
@@ -443,19 +446,19 @@ body.expeditions .exp-typeahead-dropdown li[aria-selected="true"] {
 
 body.expeditions .exp-suggest-name {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.86rem;
+  font-size: 0.93rem;
   color: var(--ink-soft);
   font-weight: 500;
 }
 
 body.expeditions .exp-suggest-meta {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.62rem;
+  font-size: 0.67rem;
   color: var(--ink-mute);
 }
 
 body.expeditions .exp-suggest-badge {
-  font-size: 0.6rem;
+  font-size: 0.70rem;
   padding: 1px 6px;
   border-radius: 10px;
   font-family: "JetBrains Mono", monospace;
@@ -541,21 +544,21 @@ body.expeditions .exp-line-sku-dropdown li[aria-selected="true"] {
 
 body.expeditions .exp-line-sku-code {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.72rem;
+  font-size: 0.84rem;
   color: var(--ink-soft);
   font-weight: 600;
 }
 
 body.expeditions .exp-line-sku-format {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.78rem;
+  font-size: 0.91rem;
   color: var(--ink-mute);
 }
 
 body.expeditions .exp-line-remove {
-  width: 32px;
-  height: 32px;
-  min-height: 32px;
+  width: 44px;
+  height: 44px;
+  min-height: 44px; /* floor-tablet touch target */
   display: flex;
   align-items: center;
   justify-content: center;
@@ -585,7 +588,7 @@ body.expeditions .exp-line-remove:disabled {
 /* Lines recap bar */
 body.expeditions .exp-lines-recap {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.62rem;
+  font-size: 0.67rem;
   color: var(--hop);
   font-weight: 400;
   letter-spacing: 0.03em;
@@ -603,7 +606,7 @@ body.expeditions .exp-add-line-btn {
   border-radius: 5px;
   color: var(--ink-mute);
   font-family: "DM Sans", sans-serif;
-  font-size: 0.82rem;
+  font-size: 0.95rem;
   cursor: pointer;
   transition: border-color 0.12s, color 0.12s, background 0.12s;
   touch-action: manipulation;
@@ -632,7 +635,7 @@ body.expeditions .exp-line-comment {
 body.expeditions .exp-stock-hint {
   display: inline-block;
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.62rem;
+  font-size: 0.67rem;
   font-weight: 500;
   letter-spacing: 0.02em;
   white-space: nowrap;
@@ -658,7 +661,7 @@ body.expeditions .exp-stock-hint--over {
 /* Aggregate recap warning in the card title */
 body.expeditions .exp-stock-recap-warn {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.72rem;
+  font-size: 0.84rem;
   font-weight: 500;
   color: color-mix(in srgb, var(--ember) 85%, var(--ink));
   margin-left: 10px;
@@ -676,7 +679,7 @@ body.expeditions .exp-submit-bar {
 
 body.expeditions .exp-cancel-link {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.82rem;
+  font-size: 0.95rem;
   color: var(--ink-mute);
   text-decoration: underline;
   text-underline-offset: 2px;
@@ -698,7 +701,7 @@ body.expeditions .exp-readonly-bar {
 /* ── Inline feedback ──────────────────────────────────────────────────────── */
 body.expeditions .exp-inline-err {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.78rem;
+  font-size: 0.91rem;
   color: var(--ember);
   margin-top: 4px;
 }
@@ -730,16 +733,16 @@ body.expeditions .exp-toolbar__mode {
 
 body.expeditions .exp-toolbar__mode-btn {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.82rem;
+  font-size: 0.95rem;
   font-weight: 500;
-  padding: 7px 16px;
+  padding: 10px 16px; /* bumped for ≥44px touch target */
   text-decoration: none;
   color: var(--ink-mute);
   background: var(--bg);
   border-right: 1px solid var(--hairline-2);
   transition: background 0.12s, color 0.12s;
   touch-action: manipulation;
-  min-height: 38px;
+  min-height: 44px; /* floor-tablet touch target */
   display: flex;
   align-items: center;
 }
@@ -772,13 +775,13 @@ body.expeditions .exp-toolbar__nav-arrow {
   font-size: 1rem;
   color: var(--ink-mute);
   text-decoration: none;
-  padding: 6px 10px;
+  padding: 9px 12px; /* bumped for ≥44px touch target */
   border: 1px solid var(--hairline);
   border-radius: 4px;
   background: var(--bg);
   transition: background 0.12s, color 0.12s;
   touch-action: manipulation;
-  min-height: 38px;
+  min-height: 44px; /* floor-tablet touch target */
   display: flex;
   align-items: center;
   line-height: 1;
@@ -792,7 +795,7 @@ body.expeditions .exp-toolbar__nav-arrow:hover {
 
 body.expeditions .exp-toolbar__week-label {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.82rem;
+  font-size: 0.95rem;
   font-weight: 600;
   color: var(--ink-soft);
   letter-spacing: 0.02em;
@@ -800,7 +803,7 @@ body.expeditions .exp-toolbar__week-label {
 
 body.expeditions .exp-toolbar__today-btn {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.78rem;
+  font-size: 0.91rem;
   color: var(--hop);
   text-decoration: underline;
   text-underline-offset: 2px;
@@ -824,7 +827,7 @@ body.expeditions .exp-toolbar__range-inputs {
 
 body.expeditions .exp-toolbar__range-label {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.66rem;
+  font-size: 0.71rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--ink-mute);
@@ -832,14 +835,14 @@ body.expeditions .exp-toolbar__range-label {
 
 body.expeditions .exp-toolbar__date-input {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.84rem;
-  padding: 7px 10px;
+  font-size: 0.91rem;
+  padding: 10px 10px; /* bumped for ≥44px touch target */
   border: 1px solid var(--hairline-2);
   border-radius: 4px;
   background: var(--bg);
   color: var(--ink-soft);
   touch-action: manipulation;
-  min-height: 38px;
+  min-height: 44px; /* floor-tablet touch target */
 }
 
 body.expeditions .exp-toolbar__date-input:focus {
@@ -849,16 +852,16 @@ body.expeditions .exp-toolbar__date-input:focus {
 
 body.expeditions .exp-toolbar__range-submit {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.82rem;
+  font-size: 0.95rem;
   font-weight: 600;
-  padding: 8px 16px;
+  padding: 11px 16px; /* bumped for ≥44px touch target */
   background: var(--hop);
   color: var(--bg);
   border: none;
   border-radius: 4px;
   cursor: pointer;
   touch-action: manipulation;
-  min-height: 38px;
+  min-height: 44px; /* floor-tablet touch target */
   transition: background 0.12s;
 }
 
@@ -884,7 +887,7 @@ body.expeditions .exp-toolbar__filter-group {
 
 body.expeditions .exp-toolbar__filter-label {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.62rem;
+  font-size: 0.67rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--ink-mute);
@@ -892,14 +895,14 @@ body.expeditions .exp-toolbar__filter-label {
 
 body.expeditions .exp-toolbar__filter-input {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.82rem;
-  padding: 6px 10px;
+  font-size: 0.95rem;
+  padding: 9px 10px; /* bumped for ≥44px touch target */
   border: 1px solid var(--hairline-2);
   border-radius: 4px;
   background: var(--bg);
   color: var(--ink-soft);
   width: 160px;
-  min-height: 36px;
+  min-height: 44px; /* floor-tablet touch target */
 }
 
 body.expeditions .exp-toolbar__filter-input--narrow {
@@ -914,28 +917,28 @@ body.expeditions .exp-toolbar__filter-select:focus {
 
 body.expeditions .exp-toolbar__filter-select {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.82rem;
-  padding: 6px 10px;
+  font-size: 0.95rem;
+  padding: 9px 10px; /* bumped for ≥44px touch target */
   border: 1px solid var(--hairline-2);
   border-radius: 4px;
   background: var(--bg);
   color: var(--ink-soft);
-  min-height: 36px;
+  min-height: 44px; /* floor-tablet touch target */
   cursor: pointer;
 }
 
 body.expeditions .exp-toolbar__filter-apply {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.82rem;
+  font-size: 0.95rem;
   font-weight: 600;
-  padding: 6px 14px;
+  padding: 9px 14px; /* bumped for ≥44px touch target */
   background: var(--hop);
   color: var(--bg);
   border: none;
   border-radius: 4px;
   cursor: pointer;
   touch-action: manipulation;
-  min-height: 36px;
+  min-height: 44px; /* floor-tablet touch target */
   transition: background 0.12s;
   align-self: flex-end;
 }
@@ -946,7 +949,7 @@ body.expeditions .exp-toolbar__filter-apply:hover {
 
 body.expeditions .exp-toolbar__reset {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.78rem;
+  font-size: 0.91rem;
   color: var(--ink-mute);
   text-decoration: underline;
   text-underline-offset: 2px;
@@ -957,6 +960,65 @@ body.expeditions .exp-toolbar__reset {
 
 body.expeditions .exp-toolbar__reset:hover {
   color: var(--ember);
+  text-decoration: underline;
+}
+
+/* ── Week-nav muted (when find-intent is active) ─────────────────────────── */
+body.expeditions .exp-toolbar__week-nav--muted {
+  opacity: 0.38;
+  pointer-events: none;
+}
+
+/* ── Find-intent cross-date banner ───────────────────────────────────────── */
+body.expeditions .exp-find-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--bg-elev);
+  border: 1px solid var(--hop);
+  border-left: 3px solid var(--hop);
+  border-radius: 6px;
+  padding: 10px 16px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+body.expeditions .exp-find-banner__icon {
+  font-size: 1rem;
+  color: var(--hop);
+  flex-shrink: 0;
+}
+
+body.expeditions .exp-find-banner__text {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.93rem;
+  color: var(--ink-soft);
+  flex: 1;
+}
+
+body.expeditions .exp-find-banner__text strong {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+body.expeditions .exp-find-banner__text em {
+  font-style: normal;
+  color: var(--ember);
+  font-size: 0.88rem;
+}
+
+body.expeditions .exp-find-banner__back {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.88rem;
+  color: var(--ink-mute);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  white-space: nowrap;
+  transition: color 0.12s;
+}
+
+body.expeditions .exp-find-banner__back:hover {
+  color: var(--hop);
   text-decoration: underline;
 }
 
@@ -984,7 +1046,7 @@ body.expeditions .exp-summary-kpi {
 body.expeditions .exp-summary-kpi__value {
   font-family: "Fraunces", serif;
   font-variation-settings: "opsz" 96;
-  font-size: 1.4rem;
+  font-size: 1.51rem;
   font-weight: 400;
   color: var(--ink-soft);
   line-height: 1;
@@ -992,7 +1054,7 @@ body.expeditions .exp-summary-kpi__value {
 
 body.expeditions .exp-summary-kpi__label {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.58rem;
+  font-size: 0.67rem;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--ink-mute);
@@ -1014,16 +1076,16 @@ body.expeditions .exp-cancelled-toggle {
 
 body.expeditions .exp-cancelled-toggle__btn {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.76rem;
+  font-size: 0.88rem;
   color: var(--ink-mute);
   background: transparent;
   border: 1px solid var(--hairline);
   border-radius: 4px;
-  padding: 5px 12px;
+  padding: 8px 12px; /* bumped for ≥44px touch target */
   cursor: pointer;
   touch-action: manipulation;
   transition: background 0.12s, color 0.12s;
-  min-height: 34px;
+  min-height: 44px; /* floor-tablet touch target */
 }
 
 body.expeditions .exp-cancelled-toggle__btn:hover {
@@ -1059,7 +1121,7 @@ body.expeditions .exp-day-header__date {
 
 body.expeditions .exp-day-header__name {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.68rem;
+  font-size: 0.73rem;
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--hop);
@@ -1068,7 +1130,7 @@ body.expeditions .exp-day-header__name {
 
 body.expeditions .exp-day-header__fmt {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.62rem;
+  font-size: 0.67rem;
   letter-spacing: 0.04em;
   color: var(--ink-mute);
 }
@@ -1088,14 +1150,14 @@ body.expeditions .exp-day-metric {
 
 body.expeditions .exp-day-metric__val {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.8rem;
+  font-size: 0.93rem;
   font-weight: 600;
   color: var(--ink-soft);
 }
 
 body.expeditions .exp-day-metric__unit {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.58rem;
+  font-size: 0.67rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--ink-mute);
@@ -1138,7 +1200,7 @@ body.expeditions .exp-trade-dot--off {
 body.expeditions .exp-internal-badge {
   display: inline-block;
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.62rem;
+  font-size: 0.67rem;
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--cold);
@@ -1161,7 +1223,7 @@ body.expeditions .exp-sku-pill {
   display: inline-flex;
   align-items: center;
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.62rem;
+  font-size: 0.67rem;
   letter-spacing: 0.02em;
   color: var(--ink-soft);
   background: var(--bg-elev);
@@ -1175,12 +1237,13 @@ body.expeditions .exp-sku-more {
   display: inline-flex;
   align-items: center;
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.62rem;
+  font-size: 0.67rem;
   color: var(--hop);
   background: transparent;
   border: 1px solid color-mix(in srgb, var(--hop) 30%, transparent);
   border-radius: 4px;
-  padding: 2px 7px;
+  padding: 6px 9px; /* bumped for ≥44px touch target */
+  min-height: 44px; /* floor-tablet touch target */
   cursor: pointer;
   transition: background 0.12s;
   touch-action: manipulation;
@@ -1203,7 +1266,7 @@ body.expeditions .exp-order-comment {
 
 body.expeditions .exp-order-comment__text {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.76rem;
+  font-size: 0.88rem;
   color: var(--ink-mute);
   font-style: italic;
   white-space: nowrap;
@@ -1215,7 +1278,7 @@ body.expeditions .exp-order-comment__text {
 body.expeditions .exp-transporter-tag {
   display: inline-block;
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.6rem;
+  font-size: 0.70rem;
   letter-spacing: 0.04em;
   color: var(--ink-mute);
   border: 1px solid var(--hairline);
@@ -1251,26 +1314,26 @@ body.expeditions .exp-auto-row:last-child {
 }
 
 body.expeditions .exp-auto-row__icon {
-  font-size: 0.9rem;
+  font-size: 0.97rem;
   flex-shrink: 0;
 }
 
 body.expeditions .exp-auto-row__label {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.82rem;
+  font-size: 0.95rem;
   color: var(--ink-mute);
   font-style: italic;
   flex: 1 1 auto;
 }
 
 body.expeditions .exp-auto-badge {
-  font-size: 0.7em;
+  font-size: 0.76em;
   color: var(--ink-faint);
 }
 
 body.expeditions .exp-auto-row__meta {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.68rem;
+  font-size: 0.73rem;
   color: var(--ink-mute);
   white-space: nowrap;
 }
@@ -1279,6 +1342,100 @@ body.expeditions .exp-auto-row__meta {
 body.expeditions .exp-empty-state {
   padding: 40px 28px;
   text-align: center;
+}
+
+/* ── Eshop per-order rows (Phase 1 Shopify — read-only) ──────────────────── */
+body.expeditions .exp-order-row--eshop {
+  background: color-mix(in srgb, var(--cold, #4a9cc7) 4%, var(--bg));
+  border-left: 3px solid color-mix(in srgb, var(--cold, #4a9cc7) 45%, transparent);
+  opacity: 0.92;
+}
+
+body.expeditions .exp-order-row--eshop:hover {
+  background: color-mix(in srgb, var(--cold, #4a9cc7) 8%, var(--bg));
+}
+
+/* Shopify order name (#13560 style) */
+body.expeditions .exp-eshop-order-name {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.82rem;
+  color: var(--ink-mute);
+  font-weight: 500;
+  min-width: 68px;
+  flex-shrink: 0;
+}
+
+/* Fulfilment mode badge */
+body.expeditions .exp-fulfil-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.73rem;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+  border: 1px solid transparent;
+}
+
+body.expeditions .exp-fulfil-badge--pickup {
+  background: color-mix(in srgb, var(--cold, #4a9cc7) 12%, transparent);
+  border-color: color-mix(in srgb, var(--cold, #4a9cc7) 35%, transparent);
+  color: var(--cold, #4a9cc7);
+}
+
+body.expeditions .exp-fulfil-badge--delivery {
+  background: color-mix(in srgb, var(--ok, #5a9e6f) 10%, transparent);
+  border-color: color-mix(in srgb, var(--ok, #5a9e6f) 30%, transparent);
+  color: var(--ok, #5a9e6f);
+}
+
+body.expeditions .exp-fulfil-badge--review {
+  background: color-mix(in srgb, var(--ember, #c8792a) 10%, transparent);
+  border-color: color-mix(in srgb, var(--ember, #c8792a) 30%, transparent);
+  color: var(--ember, #c8792a);
+}
+
+/* Read-only Shopify source tag */
+body.expeditions .exp-eshop-source-tag {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.68rem;
+  color: var(--ink-faint);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  padding: 1px 5px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* Day header eshop mode metrics */
+body.expeditions .exp-day-metric--eshop-pickup .exp-day-metric__val,
+body.expeditions .exp-day-metric--eshop-delivery .exp-day-metric__val {
+  color: var(--ink-soft);
+}
+
+body.expeditions .exp-day-metric--eshop-review .exp-day-metric__val {
+  color: var(--ember, #c8792a);
+}
+
+/* Period summary eshop KPIs */
+body.expeditions .exp-summary-kpi--eshop .exp-summary-kpi__value {
+  color: var(--ink-soft);
+}
+
+body.expeditions .exp-summary-kpi--eshop-warn .exp-summary-kpi__value {
+  color: var(--ember, #c8792a);
+}
+
+/* Responsive adjustments */
+@media (max-width: 860px) {
+  body.expeditions .exp-order-row--eshop {
+    padding: 9px 14px;
+  }
 }
 
 /* ── Cancelled order rows hidden by default ───────────────────────────────── */
@@ -1334,7 +1491,7 @@ body.expeditions .exp-order-row--cancelled {
   }
 
   body.expeditions .exp-summary-kpi__value {
-    font-size: 1.1rem;
+    font-size: 1.19rem;
   }
 
   body.expeditions .exp-sku-pills {
@@ -1380,7 +1537,7 @@ body.expeditions .exp-order-row--cancelled {
 
   body.expeditions .exp-tab {
     padding: 8px 12px;
-    font-size: 0.8rem;
+    font-size: 0.93rem;
   }
 }
 
@@ -1411,7 +1568,7 @@ body.expeditions .exp-stock-header {
 body.expeditions .exp-stock-header__title {
   font-family: "Fraunces", serif;
   font-variation-settings: "opsz" 96;
-  font-size: 1.1rem;
+  font-size: 1.19rem;
   font-weight: 300;
   color: var(--ink-soft);
   letter-spacing: 0.06em;
@@ -1423,7 +1580,7 @@ body.expeditions .exp-stock-header__title {
 
 body.expeditions .exp-stock-header__live {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.58rem;
+  font-size: 0.67rem;
   letter-spacing: 0.12em;
   text-transform: uppercase;
   font-weight: 600;
@@ -1436,7 +1593,7 @@ body.expeditions .exp-stock-header__live {
 
 body.expeditions .exp-stock-header__anchor {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.84rem;
+  font-size: 0.91rem;
   color: var(--ink-soft);
   margin-top: 3px;
 }
@@ -1447,7 +1604,7 @@ body.expeditions .exp-stock-header__anchor strong {
 }
 
 body.expeditions .exp-stock-header__anchor-note {
-  font-size: 0.76rem;
+  font-size: 0.88rem;
   color: var(--ink-mute);
 }
 
@@ -1462,7 +1619,7 @@ body.expeditions .exp-stock-filters {
 
 body.expeditions .exp-stock-chip {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.68rem;
+  font-size: 0.73rem;
   letter-spacing: 0.04em;
   padding: 5px 12px;
   border-radius: 20px;
@@ -1472,7 +1629,7 @@ body.expeditions .exp-stock-chip {
   cursor: pointer;
   transition: background 0.12s, color 0.12s, border-color 0.12s;
   touch-action: manipulation;
-  min-height: 32px;
+  min-height: 44px; /* floor-tablet touch target */
   display: inline-flex;
   align-items: center;
   white-space: nowrap;
@@ -1508,7 +1665,7 @@ body.expeditions .exp-stock-sort-toggle {
   align-items: center;
   gap: 5px;
   font-family: "DM Sans", sans-serif;
-  font-size: 0.78rem;
+  font-size: 0.91rem;
   color: var(--ink-mute);
   cursor: pointer;
   user-select: none;
@@ -1535,13 +1692,13 @@ body.expeditions .exp-stock-table {
   width: 100%;
   border-collapse: collapse;
   font-family: "DM Sans", sans-serif;
-  font-size: 0.88rem;
+  font-size: 0.95rem;
   color: var(--ink-soft);
 }
 
 body.expeditions .exp-stock-table thead th {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.62rem;
+  font-size: 0.67rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--ink-mute);
@@ -1611,7 +1768,7 @@ body.expeditions .exp-st-col-sku {
 
 body.expeditions .exp-st-sku-code {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.82rem;
+  font-size: 0.95rem;
   font-weight: 600;
   color: var(--ink-soft);
   display: block;
@@ -1619,7 +1776,7 @@ body.expeditions .exp-st-sku-code {
 
 body.expeditions .exp-st-sku-hl {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.6rem;
+  font-size: 0.70rem;
   letter-spacing: 0.03em;
   color: var(--ink-mute);
   margin-top: 1px;
@@ -1628,7 +1785,7 @@ body.expeditions .exp-st-sku-hl {
 /* Number cells */
 body.expeditions .exp-st-num {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.84rem;
+  font-size: 0.91rem;
   font-weight: 500;
   font-variant-numeric: tabular-nums;
   color: var(--ink-soft);
@@ -1649,7 +1806,7 @@ body.expeditions .exp-stock-flag {
   display: inline-flex;
   align-items: center;
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.6rem;
+  font-size: 0.70rem;
   letter-spacing: 0.04em;
   padding: 2px 7px;
   border-radius: 10px;
@@ -1691,7 +1848,7 @@ body.expeditions .exp-stock-ledger {
 
 body.expeditions .exp-stock-ledger__title {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.66rem;
+  font-size: 0.71rem;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--hop);
@@ -1702,7 +1859,7 @@ body.expeditions .exp-stock-ledger__title {
 body.expeditions .exp-ledger-table {
   border-collapse: collapse;
   font-family: "DM Sans", sans-serif;
-  font-size: 0.82rem;
+  font-size: 0.95rem;
 }
 
 body.expeditions .exp-ledger-table td {
@@ -1724,7 +1881,7 @@ body.expeditions .exp-ledger-label--total {
 
 body.expeditions .exp-ledger-qty {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.82rem;
+  font-size: 0.95rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -1739,14 +1896,14 @@ body.expeditions .exp-ledger-qty--minus  { color: var(--ember); }
 body.expeditions .exp-ledger-qty--open   { color: var(--oak); }
 body.expeditions .exp-ledger-qty--total  {
   color: var(--ink-soft);
-  font-size: 0.9rem;
+  font-size: 0.97rem;
   border-top: 1px solid var(--hairline);
   padding-top: 6px !important;
 }
 
 body.expeditions .exp-ledger-hl {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.7rem;
+  font-size: 0.82rem;
   color: var(--ink-mute);
   font-weight: 400;
   margin-left: 6px;
@@ -1754,7 +1911,7 @@ body.expeditions .exp-ledger-hl {
 
 body.expeditions .exp-ledger-meta {
   color: var(--ink-mute);
-  font-size: 0.76rem;
+  font-size: 0.88rem;
   padding-left: 12px !important;
   font-style: italic;
 }
@@ -1845,7 +2002,7 @@ body.expeditions .exp-stock-badge {
   border-radius: 20px;
   border: 1px solid;
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.6rem;
+  font-size: 0.70rem;
   letter-spacing: 0.03em;
   font-weight: 600;
   white-space: nowrap;
@@ -1855,7 +2012,7 @@ body.expeditions .exp-stock-badge {
 }
 
 body.expeditions .exp-stock-badge__icon {
-  font-size: 0.75rem;
+  font-size: 0.81rem;
   line-height: 1;
   flex-shrink: 0;
 }
@@ -1950,7 +2107,7 @@ body.expeditions .exp-gauge__fill.exp-lvl--dormant  { background: var(--exp-lvl-
 
 body.expeditions .exp-gauge__label {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.68rem;
+  font-size: 0.73rem;
   font-weight: 500;
   font-variant-numeric: tabular-nums;
   color: var(--ink-mute);
@@ -1999,7 +2156,7 @@ body.expeditions .exp-alert-banner {
   border: 1px solid var(--hairline);
   border-radius: 6px;
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.68rem;
+  font-size: 0.73rem;
   letter-spacing: 0.02em;
 }
 
@@ -2058,7 +2215,7 @@ body.expeditions .exp-alert-banner__item--eleve {
 body.expeditions .exp-stock-legend {
   margin-bottom: 14px;
   font-family: "DM Sans", sans-serif;
-  font-size: 0.8rem;
+  font-size: 0.93rem;
 }
 
 body.expeditions .exp-stock-legend__toggle {
@@ -2067,7 +2224,7 @@ body.expeditions .exp-stock-legend__toggle {
   gap: 5px;
   cursor: pointer;
   color: var(--ink-mute);
-  font-size: 0.76rem;
+  font-size: 0.88rem;
   font-family: "JetBrains Mono", monospace;
   letter-spacing: 0.04em;
   user-select: none;
@@ -2082,7 +2239,7 @@ body.expeditions .exp-stock-legend__toggle::-webkit-details-marker {
 
 body.expeditions .exp-stock-legend__toggle::before {
   content: '▸';
-  font-size: 0.65rem;
+  font-size: 0.76rem;
   transition: transform 0.15s;
   display: inline-block;
 }
@@ -2107,7 +2264,7 @@ body.expeditions .exp-stock-legend__item {
   align-items: center;
   gap: 5px;
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.65rem;
+  font-size: 0.76rem;
   letter-spacing: 0.03em;
   padding: 2px 8px;
   border-radius: 12px;
@@ -2148,7 +2305,7 @@ body.expeditions .exp-loc-health-tally {
 
 body.expeditions .exp-loc-health-dot {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.62rem;
+  font-size: 0.67rem;
   font-weight: 700;
   letter-spacing: 0;
   padding: 0 4px;
@@ -2248,7 +2405,7 @@ body.expeditions .exp-tab-badge {
   background: var(--ember);
   color: var(--bg);
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.6rem;
+  font-size: 0.70rem;
   font-weight: 700;
   border-radius: 10px;
   line-height: 1;
@@ -2276,7 +2433,7 @@ body.expeditions .exp-clients-review-header {
 
 body.expeditions .exp-clients-review-title {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.72rem;
+  font-size: 0.84rem;
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -2297,13 +2454,13 @@ body.expeditions .exp-clients-review-count {
   background: var(--ember);
   color: var(--bg);
   border-radius: 11px;
-  font-size: 0.68rem;
+  font-size: 0.73rem;
   font-weight: 700;
 }
 
 body.expeditions .exp-clients-review-hint {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.8rem;
+  font-size: 0.93rem;
   color: var(--ink-mute);
   flex: 1 1 200px;
   font-style: italic;
@@ -2311,17 +2468,17 @@ body.expeditions .exp-clients-review-hint {
 
 body.expeditions .exp-clients-review-toggle {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.76rem;
+  font-size: 0.88rem;
   color: var(--ink-mute);
   background: transparent;
   border: 1px solid var(--hairline);
   border-radius: 4px;
-  padding: 4px 10px;
+  padding: 10px 12px; /* bumped for ≥44px touch target */
   cursor: pointer;
   white-space: nowrap;
   touch-action: manipulation;
   transition: background 0.12s, color 0.12s;
-  min-height: 32px;
+  min-height: 44px; /* floor-tablet touch target */
   flex-shrink: 0;
 }
 
@@ -2359,14 +2516,14 @@ body.expeditions .exp-clients-review-info {
 
 body.expeditions .exp-clients-review-name {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.88rem;
+  font-size: 0.95rem;
   font-weight: 500;
   color: var(--ink-soft);
 }
 
 body.expeditions .exp-clients-review-note {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.72rem;
+  font-size: 0.84rem;
   color: var(--ink-mute);
   font-style: italic;
 }
@@ -2388,7 +2545,7 @@ body.expeditions .exp-clients-chan {
   display: inline-flex;
   align-items: center;
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.62rem;
+  font-size: 0.67rem;
   letter-spacing: 0.04em;
   padding: 2px 8px;
   border-radius: 10px;
@@ -2424,9 +2581,9 @@ body.expeditions .exp-clients-chan--none {
 /* ── Action buttons (shared by review queue + directory) ──────────────────── */
 body.expeditions .exp-clients-action-btn {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.78rem;
+  font-size: 0.91rem;
   font-weight: 500;
-  padding: 5px 11px;
+  padding: 9px 13px; /* bumped for ≥44px touch target */
   border-radius: 4px;
   border: 1px solid var(--hairline-2);
   background: var(--bg);
@@ -2434,7 +2591,7 @@ body.expeditions .exp-clients-action-btn {
   cursor: pointer;
   text-decoration: none;
   touch-action: manipulation;
-  min-height: 32px;
+  min-height: 44px; /* floor-tablet touch target */
   display: inline-flex;
   align-items: center;
   transition: background 0.12s, color 0.12s, border-color 0.12s;
@@ -2507,7 +2664,7 @@ body.expeditions .exp-merge-panel__inner {
 
 body.expeditions .exp-merge-panel__title {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.82rem;
+  font-size: 0.95rem;
   font-weight: 600;
   color: var(--ink-soft);
   margin-bottom: 10px;
@@ -2567,7 +2724,7 @@ body.expeditions .exp-merge-preview {
 
 body.expeditions .exp-merge-preview__text {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.82rem;
+  font-size: 0.95rem;
   color: var(--ink-soft);
   font-weight: 500;
 }
@@ -2617,7 +2774,7 @@ body.expeditions .exp-clients-search-input {
   width: 100%;
   box-sizing: border-box;
   font-family: "DM Sans", sans-serif;
-  font-size: 0.86rem;
+  font-size: 0.93rem;
   padding: 8px 12px;
   border: 1px solid var(--hairline-2);
   border-radius: 4px;
@@ -2639,9 +2796,9 @@ body.expeditions .exp-clients-filter-chips {
 
 body.expeditions .exp-clients-filter-chip {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.66rem;
+  font-size: 0.71rem;
   letter-spacing: 0.04em;
-  padding: 5px 11px;
+  padding: 10px 13px; /* bumped for ≥44px touch target */
   border-radius: 16px;
   border: 1px solid var(--hairline-2);
   background: var(--bg);
@@ -2650,7 +2807,7 @@ body.expeditions .exp-clients-filter-chip {
   white-space: nowrap;
   transition: background 0.12s, color 0.12s, border-color 0.12s;
   touch-action: manipulation;
-  min-height: 30px;
+  min-height: 44px; /* floor-tablet touch target */
   display: inline-flex;
   align-items: center;
 }
@@ -2671,7 +2828,7 @@ body.expeditions .exp-clients-filter-chip--active {
 
 body.expeditions .exp-clients-search-btn {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.82rem;
+  font-size: 0.95rem;
   font-weight: 600;
   padding: 8px 16px;
   background: var(--hop);
@@ -2706,7 +2863,7 @@ body.expeditions .exp-clients-pagination-bar--bottom {
 
 body.expeditions .exp-clients-count {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.7rem;
+  font-size: 0.82rem;
   letter-spacing: 0.04em;
   color: var(--ink-mute);
 }
@@ -2719,16 +2876,16 @@ body.expeditions .exp-clients-pagination {
 
 body.expeditions .exp-clients-page-btn {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.78rem;
+  font-size: 0.91rem;
   color: var(--hop);
   text-decoration: none;
-  padding: 5px 10px;
+  padding: 9px 12px; /* bumped for ≥44px touch target */
   border: 1px solid color-mix(in srgb, var(--hop) 35%, transparent);
   border-radius: 4px;
   background: color-mix(in srgb, var(--hop) 5%, transparent);
   transition: background 0.12s;
   touch-action: manipulation;
-  min-height: 32px;
+  min-height: 44px; /* floor-tablet touch target */
   display: inline-flex;
   align-items: center;
 }
@@ -2740,7 +2897,7 @@ body.expeditions .exp-clients-page-btn:hover {
 
 body.expeditions .exp-clients-page-info {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.7rem;
+  font-size: 0.82rem;
   color: var(--ink-mute);
 }
 
@@ -2756,13 +2913,13 @@ body.expeditions .exp-clients-table {
   width: 100%;
   border-collapse: collapse;
   font-family: "DM Sans", sans-serif;
-  font-size: 0.86rem;
+  font-size: 0.93rem;
   color: var(--ink-soft);
 }
 
 body.expeditions .exp-clients-table thead th {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.6rem;
+  font-size: 0.70rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--ink-mute);
@@ -2811,7 +2968,7 @@ body.expeditions .exp-ct-name {
 }
 
 body.expeditions .exp-ct-badge {
-  font-size: 0.7rem;
+  font-size: 0.82rem;
   margin-left: 4px;
   vertical-align: middle;
 }
@@ -2819,19 +2976,19 @@ body.expeditions .exp-ct-badge {
 /* BC number mono */
 body.expeditions .exp-ct-mono {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.72rem;
+  font-size: 0.84rem;
   color: var(--ink-mute);
 }
 
 /* City */
 body.expeditions .exp-ct-city {
-  font-size: 0.84rem;
+  font-size: 0.91rem;
   color: var(--ink-soft);
 }
 
 /* Email link */
 body.expeditions .exp-ct-email {
-  font-size: 0.78rem;
+  font-size: 0.91rem;
   color: var(--hop);
   text-decoration: none;
 }
@@ -2848,14 +3005,14 @@ body.expeditions .exp-ct-muted {
 /* Inline select (trade_channel / transporter) */
 body.expeditions .exp-ct-inline-select {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.78rem;
-  padding: 4px 8px;
+  font-size: 0.91rem;
+  padding: 9px 8px; /* bumped for ≥44px touch target */
   border: 1px solid var(--hairline-2);
   border-radius: 4px;
   background: var(--bg);
   color: var(--ink-soft);
   cursor: pointer;
-  min-height: 30px;
+  min-height: 44px; /* floor-tablet touch target */
   max-width: 160px;
   transition: border-color 0.12s;
 }
@@ -2878,9 +3035,9 @@ body.expeditions .exp-ct-inline-form {
 /* Deactivate/reactivate buttons in table */
 body.expeditions .exp-ct-deactivate-btn,
 body.expeditions .exp-ct-reactivate-btn {
-  font-size: 0.72rem;
-  padding: 4px 8px;
-  min-height: 28px;
+  font-size: 0.84rem;
+  padding: 9px 10px; /* bumped for ≥44px touch target */
+  min-height: 44px; /* floor-tablet touch target */
 }
 
 /* ── Responsive — clients view ────────────────────────────────────────────── */
@@ -2985,7 +3142,7 @@ body.expeditions .exp-day-header--today {
 body.expeditions .exp-day-today-badge {
   display: inline-block;
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.58rem;
+  font-size: 0.67rem;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   font-weight: 600;
@@ -3003,7 +3160,7 @@ body.expeditions .exp-overdue-badge {
   display: inline-flex;
   align-items: center;
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.6rem;
+  font-size: 0.70rem;
   letter-spacing: 0.04em;
   font-weight: 600;
   color: color-mix(in srgb, var(--ember) 85%, var(--ink));
@@ -3024,7 +3181,7 @@ body.expeditions .exp-stock-risk-chip {
   display: inline-flex;
   align-items: center;
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.58rem;
+  font-size: 0.67rem;
   letter-spacing: 0.04em;
   font-weight: 500;
   color: color-mix(in srgb, var(--ember) 85%, var(--ink));
@@ -3095,7 +3252,7 @@ body.expeditions .exp-sdm-header {
 }
 body.expeditions .exp-sdm-title {
   font-family: "Fraunces", serif;
-  font-size: 1rem;
+  font-size: 1.06rem;
   font-weight: 600;
   color: var(--ink);
   margin: 0;
@@ -3105,7 +3262,7 @@ body.expeditions .exp-sdm-close {
   background: none;
   border: none;
   cursor: pointer;
-  font-size: 1rem;
+  font-size: 1.06rem;
   color: var(--ink-soft);
   padding: 4px 8px;
   border-radius: 6px;
@@ -3125,7 +3282,7 @@ body.expeditions .exp-sdm-close:focus-visible {
 /* Advisory line */
 body.expeditions .exp-sdm-advisory {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.8rem;
+  font-size: 0.93rem;
   color: var(--ink-mute);
   margin: 0;
   font-style: italic;
@@ -3140,12 +3297,12 @@ body.expeditions .exp-sdm-table {
   width: 100%;
   border-collapse: collapse;
   font-family: "DM Sans", sans-serif;
-  font-size: 0.82rem;
+  font-size: 0.95rem;
   color: var(--ink);
 }
 body.expeditions .exp-sdm-th {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.65rem;
+  font-size: 0.76rem;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -3161,7 +3318,7 @@ body.expeditions .exp-sdm-td {
 }
 body.expeditions .exp-sdm-sku {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.75rem;
+  font-size: 0.81rem;
   font-weight: 500;
   color: var(--ink);
 }
@@ -3190,17 +3347,17 @@ body.expeditions .exp-day-act-chip {
   display: inline-flex;
   align-items: center;
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.62rem;
+  font-size: 0.67rem;
   letter-spacing: 0.03em;
   font-weight: 500;
-  padding: 4px 10px;
+  padding: 8px 12px; /* bumped for ≥44px touch target */
   border-radius: 20px;
   border: 1px solid;
   text-decoration: none;
   white-space: nowrap;
   cursor: pointer;
   touch-action: manipulation;
-  min-height: 28px;
+  min-height: 44px; /* floor-tablet touch target */
   transition: background 0.12s, color 0.12s;
 }
 body.expeditions .exp-day-act-chip:focus-visible {
@@ -3301,7 +3458,7 @@ body.expeditions .exp-pull-toggle:focus-visible {
 
 body.expeditions .exp-pull-toggle__icon {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.72rem;
+  font-size: 0.84rem;
   color: var(--cold);
   flex-shrink: 0;
   transition: transform 0.18s ease-out;
@@ -3324,7 +3481,7 @@ body.expeditions .exp-pull-toggle__title {
 
 body.expeditions .exp-pull-toggle__meta {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.62rem;
+  font-size: 0.67rem;
   letter-spacing: 0.04em;
   color: var(--ink-mute);
   flex-shrink: 0;
@@ -3357,14 +3514,14 @@ body.expeditions .exp-pull-family:first-child .exp-pull-family__header {
 
 body.expeditions .exp-pull-family__label {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.64rem;
+  font-size: 0.69rem;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   font-weight: 600;
 }
 body.expeditions .exp-pull-family__count {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.6rem;
+  font-size: 0.70rem;
   color: var(--ink-mute);
 }
 
@@ -3414,7 +3571,7 @@ body.expeditions .exp-pull-row:last-child {
 
 body.expeditions .exp-pull-row__fmt {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.78rem;
+  font-size: 0.91rem;
   color: var(--ink-mute);
   font-style: italic;
   min-width: 80px;
@@ -3423,7 +3580,7 @@ body.expeditions .exp-pull-row__fmt {
 
 body.expeditions .exp-pull-row__qty {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.84rem;
+  font-size: 0.91rem;
   font-weight: 600;
   color: var(--ink-soft);
   font-variant-numeric: tabular-nums;
@@ -3434,7 +3591,7 @@ body.expeditions .exp-pull-row__qty {
 
 body.expeditions .exp-pull-row__unit {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.58rem;
+  font-size: 0.67rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--ink-mute);
@@ -3443,7 +3600,7 @@ body.expeditions .exp-pull-row__unit {
 
 body.expeditions .exp-pull-row__orders {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.72rem;
+  font-size: 0.84rem;
   color: var(--ink-mute);
   flex-shrink: 0;
 }
@@ -3549,7 +3706,7 @@ body.expeditions .exp-st-fresh-link:hover .exp-st-fresh-site {
 
 body.expeditions .exp-st-fresh-site {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.8rem;
+  font-size: 0.93rem;
   font-weight: 600;
   color: var(--ink);
   transition: color 0.12s;
@@ -3557,7 +3714,7 @@ body.expeditions .exp-st-fresh-site {
 
 body.expeditions .exp-st-fresh-type {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.7rem;
+  font-size: 0.82rem;
   color: var(--ink-mute);
 }
 
@@ -3566,7 +3723,7 @@ body.expeditions .exp-st-fresh-chip {
   display: inline-flex;
   align-items: center;
   font-family: "DM Sans", sans-serif;
-  font-size: 0.7rem;
+  font-size: 0.82rem;
   font-weight: 500;
   border-radius: 12px;
   padding: 2px 8px;
@@ -3625,21 +3782,21 @@ body.expeditions .exp-st-loc-chip--active {
 
 body.expeditions .exp-st-loc-name {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.82rem;
+  font-size: 0.95rem;
   font-weight: 600;
   color: var(--ink);
 }
 
 body.expeditions .exp-st-loc-type {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.7rem;
+  font-size: 0.82rem;
   color: var(--ink-mute);
 }
 
 body.expeditions .exp-st-loc-badge {
   display: inline-block;
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.6rem;
+  font-size: 0.70rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   border-radius: 4px;
@@ -3664,7 +3821,7 @@ body.expeditions .exp-st-consign-note {
   border: 1px solid color-mix(in srgb, var(--ember) 20%, var(--hairline));
   border-radius: 6px;
   font-family: "DM Sans", sans-serif;
-  font-size: 0.78rem;
+  font-size: 0.91rem;
   color: var(--ink-soft);
   line-height: 1.5;
 }
@@ -3685,7 +3842,7 @@ body.expeditions .exp-st-manager-note {
   border: 1px solid color-mix(in srgb, var(--hop) 20%, var(--hairline));
   border-radius: 6px;
   font-family: "DM Sans", sans-serif;
-  font-size: 0.78rem;
+  font-size: 0.91rem;
   color: var(--ink-soft);
   line-height: 1.5;
 }
@@ -3707,7 +3864,7 @@ body.expeditions .exp-st-edit-banner {
   border: 1.5px solid color-mix(in srgb, var(--ember) 30%, var(--hairline));
   border-radius: 6px;
   font-family: "DM Sans", sans-serif;
-  font-size: 0.82rem;
+  font-size: 0.95rem;
   color: var(--ink);
   line-height: 1.5;
 }
@@ -3753,7 +3910,7 @@ body.expeditions .exp-st-controls {
 body.expeditions .exp-st-label {
   display: block;
   font-family: "DM Sans", sans-serif;
-  font-size: 0.72rem;
+  font-size: 0.84rem;
   font-weight: 600;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -3768,7 +3925,7 @@ body.expeditions .exp-st-date-field {
 
 body.expeditions .exp-st-date-input {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.88rem;
+  font-size: 0.95rem;
   color: var(--ink);
   background: var(--bg);
   border: 1px solid var(--hairline-2);
@@ -3787,7 +3944,7 @@ body.expeditions .exp-st-date-input:focus {
 
 body.expeditions .exp-st-date-hint {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.68rem;
+  font-size: 0.73rem;
   color: var(--ink-mute);
   margin-top: 3px;
   font-style: italic;
@@ -3802,7 +3959,7 @@ body.expeditions .exp-st-search-field {
 
 body.expeditions .exp-st-search-input {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.88rem;
+  font-size: 0.95rem;
   color: var(--ink);
   background: var(--bg);
   border: 1px solid var(--hairline-2);
@@ -3824,7 +3981,7 @@ body.expeditions .exp-st-summary {
   align-items: center;
   gap: 6px;
   font-family: "DM Sans", sans-serif;
-  font-size: 0.82rem;
+  font-size: 0.95rem;
   color: var(--ink-soft);
   margin-left: auto;
   padding: 9px 14px;
@@ -3890,7 +4047,7 @@ body.expeditions .exp-st-family-header {
 
 body.expeditions .exp-st-family-label {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.76rem;
+  font-size: 0.88rem;
   font-weight: 700;
   letter-spacing: 0.07em;
   text-transform: uppercase;
@@ -3899,7 +4056,7 @@ body.expeditions .exp-st-family-label {
 
 body.expeditions .exp-st-family-count {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.72rem;
+  font-size: 0.84rem;
   color: var(--ink-mute);
   font-variant-numeric: tabular-nums;
 }
@@ -3941,7 +4098,7 @@ body.expeditions .exp-st-row__label {
 
 body.expeditions .exp-st-row__code {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.84rem;
+  font-size: 0.91rem;
   font-weight: 600;
   color: var(--ink);
   letter-spacing: 0.02em;
@@ -3958,7 +4115,7 @@ body.expeditions .exp-st-row__qty-wrap {
 /* Large touch-friendly qty input */
 body.expeditions .exp-st-qty-input {
   font-family: "JetBrains Mono", monospace;
-  font-size: 1.1rem;
+  font-size: 1.19rem;
   font-variant-numeric: tabular-nums;
   text-align: right;
   color: var(--ink);
@@ -3994,7 +4151,7 @@ body.expeditions .exp-st-qty-input:not(:placeholder-shown) {
 /* Prior-count hint */
 body.expeditions .exp-st-prior-hint {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.68rem;
+  font-size: 0.73rem;
   color: var(--ink-mute);
   text-align: right;
   font-style: italic;
@@ -4063,7 +4220,7 @@ body.expeditions .exp-st-family-header--cage {
 /* Instructional note inside the Cages section */
 body.expeditions .exp-st-cage-note {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.76rem;
+  font-size: 0.88rem;
   color: var(--ink-mute);
   padding: 8px 16px 10px;
   background: color-mix(in srgb, var(--oak) 4%, var(--bg));
@@ -4085,7 +4242,7 @@ body.expeditions .exp-st-row--cage .exp-st-row__label {
 /* Faint reference text under the SKU code: "1 cage = 1027 bouteilles · 3.389 hl" */
 body.expeditions .exp-st-cage-ref {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.62rem;
+  font-size: 0.67rem;
   color: var(--ink-faint);
   letter-spacing: 0.02em;
   font-weight: 400;
@@ -4101,7 +4258,7 @@ body.expeditions .exp-st-cage-input-wrap {
 /* "bouteilles" unit label right of the input */
 body.expeditions .exp-st-cage-unit {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.72rem;
+  font-size: 0.84rem;
   color: var(--ink-mute);
   white-space: nowrap;
   flex-shrink: 0;
@@ -4115,7 +4272,7 @@ body.expeditions .exp-st-cage-input {
 /* Live conversion hint: "= 0.667 cage · 2.26 hl" — tabular-nums, faint */
 body.expeditions .exp-st-cage-live {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.68rem;
+  font-size: 0.73rem;
   color: var(--ink-mute);
   font-variant-numeric: tabular-nums;
   text-align: right;
@@ -4145,7 +4302,7 @@ body.expeditions .exp-cmd-stock-strip__link {
   text-decoration: none;
   color: var(--hop);
   font-family: "DM Sans", sans-serif;
-  font-size: 0.78rem;
+  font-size: 0.91rem;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -4176,7 +4333,7 @@ body.expeditions .exp-cmd-stock-strip__kpi {
 
 body.expeditions .exp-cmd-stock-strip__val {
   font-family: "JetBrains Mono", monospace;
-  font-size: 1rem;
+  font-size: 1.06rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: var(--ink);
@@ -4189,7 +4346,7 @@ body.expeditions .exp-cmd-stock-strip__val--neg {
 
 body.expeditions .exp-cmd-stock-strip__sub {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.7rem;
+  font-size: 0.82rem;
   color: var(--ink-mute);
   white-space: nowrap;
 }
@@ -4280,7 +4437,7 @@ body.expeditions .exp-loc-card__header {
 
 body.expeditions .exp-loc-card__name {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.8rem;
+  font-size: 0.93rem;
   font-weight: 600;
   color: var(--ink);
   line-height: 1.2;
@@ -4288,7 +4445,7 @@ body.expeditions .exp-loc-card__name {
 
 body.expeditions .exp-loc-card__type {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.7rem;
+  font-size: 0.82rem;
   color: var(--ink-mute);
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -4311,7 +4468,7 @@ body.expeditions .exp-loc-card__totals--empty {
 
 body.expeditions .exp-loc-card__hl {
   font-family: "JetBrains Mono", monospace;
-  font-size: 1.3rem;
+  font-size: 1.40rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: var(--hop);
@@ -4323,28 +4480,28 @@ body.expeditions .exp-loc-card__hl--dash {
 }
 
 body.expeditions .exp-loc-card__hl-unit {
-  font-size: 0.7rem;
+  font-size: 0.82rem;
   font-weight: 400;
   color: var(--ink-mute);
 }
 
 body.expeditions .exp-loc-card__units {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.8rem;
+  font-size: 0.93rem;
   font-variant-numeric: tabular-nums;
   color: var(--ink-soft);
 }
 
 body.expeditions .exp-loc-card__units-label,
 body.expeditions .exp-loc-card__units--empty {
-  font-size: 0.72rem;
+  font-size: 0.84rem;
   color: var(--ink-mute);
 }
 
 /* ── Stock PF — live region view label ─────────────────────────────────── */
 body.expeditions .exp-stock-view-label {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.78rem;
+  font-size: 0.91rem;
   font-weight: 600;
   color: var(--ink-mute);
   text-transform: uppercase;
@@ -4359,7 +4516,7 @@ body.expeditions .exp-loc-view[hidden] {
 
 /* ── Stock PF — per-location caption ───────────────────────────────────── */
 body.expeditions .exp-loc-caption {
-  font-size: 0.78rem;
+  font-size: 0.91rem;
   color: var(--ink-mute);
   border-left: 3px solid var(--hairline-2);
   padding-left: 10px;
@@ -4377,7 +4534,7 @@ body.expeditions .exp-stock-table--loc .exp-st-col-hl {
 /* ── Stock PF — per-location family subtotal + total rows ───────────────── */
 body.expeditions .exp-loc-family-subtotal td {
   background: color-mix(in srgb, var(--hop) 4%, transparent);
-  font-size: 0.78rem;
+  font-size: 0.91rem;
   color: var(--ink-soft);
   padding-top: 4px;
   padding-bottom: 4px;
@@ -4403,14 +4560,14 @@ body.expeditions .exp-loc-total-row td {
 
 body.expeditions .exp-loc-total-label {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.82rem;
+  font-size: 0.95rem;
   color: var(--hop);
 }
 
 body.expeditions .exp-loc-total-val {
   font-family: "JetBrains Mono", monospace;
   font-variant-numeric: tabular-nums;
-  font-size: 0.9rem;
+  font-size: 0.97rem;
   color: var(--hop);
   text-align: right;
 }
@@ -4427,14 +4584,14 @@ body.expeditions .exp-loc-empty-state {
 
 body.expeditions .exp-loc-empty-state__msg {
   font-family: "DM Sans", sans-serif;
-  font-size: 1rem;
+  font-size: 1.06rem;
   font-weight: 600;
   color: var(--ink-soft);
   margin: 0 0 6px 0;
 }
 
 body.expeditions .exp-loc-empty-state__sub {
-  font-size: 0.82rem;
+  font-size: 0.95rem;
   color: var(--ink-mute);
   margin: 0;
 }
@@ -4462,7 +4619,7 @@ body.expeditions .exp-stock-total-kpi {
 
 body.expeditions .exp-stock-total-kpi__label {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.72rem;
+  font-size: 0.84rem;
   color: var(--ink-mute);
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -4473,7 +4630,7 @@ body.expeditions .exp-stock-total-kpi__label {
 
 body.expeditions .exp-stock-total-kpi__val {
   font-family: "JetBrains Mono", monospace;
-  font-size: 1.4rem;
+  font-size: 1.51rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: var(--ink);
@@ -4486,7 +4643,7 @@ body.expeditions .exp-stock-total-kpi--neg .exp-stock-total-kpi__val {
 
 body.expeditions .exp-stock-total-kpi__flag {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.68rem;
+  font-size: 0.73rem;
   font-weight: 600;
   color: var(--ember);
   background: color-mix(in srgb, var(--ember) 10%, transparent);
@@ -4537,7 +4694,7 @@ body.expeditions .exp-stock-family-header__cell {
 
 body.expeditions .exp-stock-family-header__label {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.72rem;
+  font-size: 0.84rem;
   font-weight: 600;
   color: var(--hop);
   text-transform: uppercase;
@@ -4546,7 +4703,7 @@ body.expeditions .exp-stock-family-header__label {
 
 body.expeditions .exp-stock-family-header__count {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.65rem;
+  font-size: 0.76rem;
   color: var(--ink-mute);
 }
 
@@ -4554,7 +4711,7 @@ body.expeditions .exp-stock-family-header__count {
 body.expeditions .exp-st-loc-breakdown {
   display: block;
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.62rem;
+  font-size: 0.67rem;
   color: var(--ink-faint);
   font-variant-numeric: tabular-nums;
   margin-top: 2px;
@@ -4586,7 +4743,7 @@ body.expeditions .exp-st-loc-breakdown {
   }
   body.expeditions .exp-st-qty-input {
     width: 80px;
-    font-size: 1rem;
+    font-size: 1.06rem;
   }
   body.expeditions .exp-st-cage-input {
     width: 90px;
@@ -4607,7 +4764,7 @@ body.expeditions .exp-st-loc-breakdown {
     min-height: 90px;
   }
   body.expeditions .exp-loc-card__hl {
-    font-size: 1.1rem;
+    font-size: 1.19rem;
   }
   body.expeditions .exp-stock-table--loc .exp-st-col-units,
   body.expeditions .exp-stock-table--loc .exp-st-col-hl {
@@ -4627,7 +4784,7 @@ body.expeditions .exp-st-loc-breakdown {
     margin: 0 8px;
   }
   body.expeditions .exp-stock-total-kpi__val {
-    font-size: 1.1rem;
+    font-size: 1.19rem;
   }
   body.expeditions .exp-cmd-stock-strip {
     padding: 8px 12px;
@@ -4636,10 +4793,10 @@ body.expeditions .exp-st-loc-breakdown {
   body.expeditions .exp-cmd-stock-strip__link {
     padding-right: 10px;
     margin-right: 10px;
-    font-size: 0.72rem;
+    font-size: 0.84rem;
   }
   body.expeditions .exp-cmd-stock-strip__val {
-    font-size: 0.9rem;
+    font-size: 0.97rem;
   }
   body.expeditions .exp-cmd-stock-strip__kpi--home {
     padding-left: 10px;
@@ -4676,13 +4833,13 @@ body.expeditions .exp-mov-list-header {
 }
 
 body.expeditions .exp-mov-list-title {
-  font-size: 0.9rem;
+  font-size: 0.97rem;
   font-weight: 600;
   color: var(--ink);
 }
 
 body.expeditions .exp-mov-list-count {
-  font-size: 0.78rem;
+  font-size: 0.91rem;
   color: var(--ink-soft);
 }
 
@@ -4696,13 +4853,13 @@ body.expeditions .exp-mov-table-wrap {
 body.expeditions .exp-mov-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.82rem;
+  font-size: 0.95rem;
 }
 
 body.expeditions .exp-mov-table thead th {
   background: var(--surface-2);
   color: var(--ink-soft);
-  font-size: 0.72rem;
+  font-size: 0.84rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -4737,7 +4894,7 @@ body.expeditions .exp-mov-tombstone-badge {
   display: inline-block;
   margin-left: 6px;
   padding: 1px 5px;
-  font-size: 0.68rem;
+  font-size: 0.73rem;
   border-radius: 3px;
   background: var(--ember, #c0392b);
   color: #fff;
@@ -4768,7 +4925,7 @@ body.expeditions .exp-mov-qty {
 
 body.expeditions .exp-mov-by {
   color: var(--ink-soft);
-  font-size: 0.78rem;
+  font-size: 0.91rem;
 }
 
 body.expeditions .exp-mov-empty-comment {
@@ -4799,7 +4956,7 @@ body.expeditions .exp-mov-lines-section {
 
 body.expeditions .exp-mov-lines-label {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.78rem;
+  font-size: 0.91rem;
   font-weight: 600;
   color: var(--ink-soft);
   text-transform: uppercase;
@@ -4812,7 +4969,7 @@ body.expeditions .exp-mov-lines-label {
 
 body.expeditions .exp-mov-lines-hint {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.72rem;
+  font-size: 0.84rem;
   font-weight: 500;
   color: color-mix(in srgb, var(--ember) 85%, var(--ink));
   text-transform: none;
@@ -4851,7 +5008,7 @@ body.expeditions .exp-mov-line-qty-field {
 body.expeditions .exp-mov-stock-hint {
   display: inline-block;
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.62rem;
+  font-size: 0.67rem;
   font-weight: 500;
   letter-spacing: 0.02em;
   white-space: nowrap;
@@ -4925,7 +5082,7 @@ body.expeditions .exp-ssl-wrap {
 
 body.expeditions .exp-ssl-section-title {
   font-family: 'DM Sans', sans-serif;
-  font-size: 1rem;
+  font-size: 1.06rem;
   font-weight: 600;
   color: var(--ink);
   margin: 0 0 0.75rem 0;
@@ -4934,7 +5091,7 @@ body.expeditions .exp-ssl-section-title {
 }
 
 body.expeditions .exp-ssl-note {
-  font-size: 0.82rem;
+  font-size: 0.95rem;
   color: var(--ink-soft);
   margin: 0 0 1rem 0;
   line-height: 1.5;
@@ -4942,7 +5099,7 @@ body.expeditions .exp-ssl-note {
 
 body.expeditions .exp-ssl-empty {
   color: var(--ink-mute);
-  font-size: 0.88rem;
+  font-size: 0.95rem;
   font-style: italic;
   margin: 0;
 }
@@ -4952,12 +5109,12 @@ body.expeditions .exp-ssl-empty {
 body.expeditions .exp-ssl-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.875rem;
+  font-size: 0.945rem;
 }
 
 body.expeditions .exp-ssl-table th {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 0.72rem;
+  font-size: 0.84rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -4998,7 +5155,7 @@ body.expeditions .exp-ssl-row--tombstoned td {
 
 body.expeditions .exp-ssl-sku-code {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 0.82rem;
+  font-size: 0.95rem;
   color: var(--ink);
 }
 
@@ -5006,7 +5163,7 @@ body.expeditions .exp-ssl-num,
 body.expeditions .exp-ssl-id,
 body.expeditions .exp-ssl-date {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 0.82rem;
+  font-size: 0.95rem;
   text-align: right;
   white-space: nowrap;
 }
@@ -5040,7 +5197,7 @@ body.expeditions .exp-ssl-type-chip {
   padding: 0.15rem 0.5rem;
   border-radius: 0.2rem;
   font-family: 'JetBrains Mono', monospace;
-  font-size: 0.72rem;
+  font-size: 0.84rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -5078,7 +5235,7 @@ body.expeditions .exp-ssl-tombstoned-badge {
   border-radius: 0.15rem;
   background: color-mix(in srgb, var(--ember) 15%, var(--bg));
   color: var(--ember);
-  font-size: 0.68rem;
+  font-size: 0.73rem;
   font-family: 'JetBrains Mono', monospace;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -5110,7 +5267,7 @@ body.expeditions .exp-ssl-tomb-btn {
   color: var(--ember);
   border-radius: 0.2rem;
   padding: 0.15rem 0.5rem;
-  font-size: 0.75rem;
+  font-size: 0.81rem;
   font-family: 'DM Sans', sans-serif;
   cursor: pointer;
   transition: background 0.12s ease;
