@@ -651,13 +651,42 @@ function kpi_handler_cogs(
     PDO    $pdo
 ): array {
     return match ($handler) {
+        // ── Existing live tiles ────────────────────────────────────────────
         'cogs_per_hl'          => kpi_cogs_per_hl($params, $label, $pdo),
         'cogs_total_month'     => kpi_cogs_total_month($params, $label, $pdo),
         'brewing_cost_chf_hl'  => kpi_cogs_brewing_cost_hl($params, $label, $pdo),
         'cop_total_breakdown'  => kpi_cogs_cop_breakdown($params, $label, $pdo),
         'maintenance_opex'       => kpi_cogs_maintenance_opex($params, $label, $pdo),
         'maintenance_opex_trend' => kpi_cogs_maintenance_opex_trend($label, $pdo),
-        default                => kpi_stub_handler('cogs', $handler, $label),
+        // ── Phase 2b Batch 8 — cogs_finance compute handlers ─────────────
+        'cogs_per_unit_sku'          => kpi_cogs_per_unit_sku($label, $pdo),
+        'gross_margin_pct'           => kpi_cogs_gross_margin_pct($label, $pdo),
+        'full_cost_breakdown_beer'   => kpi_cogs_full_cost_breakdown_beer($label, $pdo),
+        'beer_tax_hl_liability'      => kpi_cogs_beer_tax_hl_liability($params, $label, $pdo),
+        'beer_tax_by_category'       => kpi_cogs_beer_tax_by_category($label, $pdo),
+        'indirect_cost_categorization' => kpi_cogs_indirect_cost_categorization($label, $pdo),
+        'rd_qa_spend'                => kpi_cogs_rd_qa_spend($label, $pdo),
+        'wip_value'                  => kpi_cogs_wip_value($label, $pdo),
+        'total_inventory_valuation'  => kpi_cogs_total_inventory_valuation($label, $pdo),
+        'cost_variance_prior_month'  => kpi_cogs_cost_variance_prior_month($label, $pdo),
+        'cost_per_hl_trend'          => kpi_cogs_cost_per_hl_trend($label, $pdo),
+        'cogs_pct_revenue'           => kpi_cogs_pct_revenue($params, $label, $pdo),
+        // ── Confirmed stubs — source data absent ──────────────────────────
+        'break_even_volume'          => kpi_cogs_stub_gap('break_even_volume', $label,
+            'Aucune table de coûts fixes / budget en base — nécessite ref_budget ou un modèle de charges fixes'),
+        'contribution_margin_sku'    => kpi_cogs_stub_gap('contribution_margin_sku', $label,
+            'Prix de vente par SKU absent de la base — nécessite ref_sku_prices (à créer)'),
+        'price_realisation_vs_inflation' => kpi_cogs_stub_gap('price_realisation_vs_inflation', $label,
+            'Aucun index d\'inflation en base — source externe requise (e.g. IPC Swiss Federal)'),
+        'cash_tied_inventory'        => kpi_cogs_stub_gap('cash_tied_inventory', $label,
+            'Calcul DSI nécessite les données AP/AR — tables inv_ap / inv_ar non encore créées'),
+        'cost_of_quality'            => kpi_cogs_stub_gap('cost_of_quality', $label,
+            'Aucun enregistrement de gaspillage / retouches en base — nécessite table bd_quality_losses'),
+        'budget_vs_actual_pl'        => kpi_cogs_stub_gap('budget_vs_actual_pl', $label,
+            'Aucune table de budget/prévisions — readiness=gap, hors scope Batch 8'),
+        'cash_conversion_cycle'      => kpi_cogs_stub_gap('cash_conversion_cycle', $label,
+            'Cycle conversion trésorerie nécessite AP/AR/DIO — tables non créées'),
+        default                      => kpi_stub_handler('cogs', $handler, $label),
     };
 }
 
@@ -1028,6 +1057,855 @@ function kpi_cogs_maintenance_opex_trend(string $label, PDO $pdo): array
         'series' => $series,
         'tint'   => 'neutral',
         'meta'   => ['period_label' => '12 derniers mois'],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════════
+// HANDLER: cogs — Phase 2b Batch 8 (cogs_finance residual compute handlers)
+//
+// CARDINAL RULE: wrap existing canonical sources — NEVER recompute facts the
+// pipeline already owns.
+//
+// Sources used:
+//   cogs-report-data.json       — COP pipeline output (kpi_load_cogs_json())
+//   sales-cogs-data.json        — per-SKU/per-period sales COGS + beer tax
+//   inv_sales_bc                — raw BC revenue by period
+//   inv_charges_bc              — GL-coded bookkeeping charges
+//   ref_sku_bom                 — BOM costs (packaging + liquid)
+//   ref_skus                    — SKU codes
+//   v_rm_stock_dynamic          — live RM stock valuation
+//   kpi_fg_inventory_value()    — FG inventory (already built, Batch 5)
+//
+// data_ready NOT flipped here — Opus verifies fiscal numbers first.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Gap-stub: source data confirmed absent — returns a clearly-marked
+ * not-available result with a specific note for the operator.
+ */
+function kpi_cogs_stub_gap(string $handler, string $label, string $note): array
+{
+    $r = kpi_empty_result($label);
+    $r['meta'] = [
+        'stub'    => true,
+        'handler' => $handler,
+        'reason'  => 'gap',
+        'note'    => $note,
+    ];
+    return $r;
+}
+
+/**
+ * Load and cache the latest closed-month slice from sales-cogs-data.json.
+ * "Latest closed" = the most recent monthKey present in the file that also
+ * exists in the COGS pipeline JSON (both pipelines must agree on the period).
+ * Falls back to just the latest sales-cogs key if COGS JSON has no months.
+ */
+function kpi_cogs_latest_sales_cogs_month(): ?array
+{
+    $cacheKey = 'cogs_latest_sales_cogs_month';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $salesData = kpi_load_sales_cogs_json();
+    if ($salesData === null || empty($salesData['months'])) {
+        return kpi_cache_set($cacheKey, null);
+    }
+
+    // Prefer the period that matches the COGS pipeline's latest month.
+    $cogsMonth = kpi_cogs_latest_month_data();
+    $monthKey  = $cogsMonth['monthKey'] ?? null;
+
+    if ($monthKey && isset($salesData['months'][$monthKey])) {
+        $slice = $salesData['months'][$monthKey];
+        $slice['_monthKey'] = $monthKey;
+        return kpi_cache_set($cacheKey, $slice);
+    }
+
+    // Fallback: last key in sales-cogs-data.json
+    end($salesData['months']);
+    $lastKey = key($salesData['months']);
+    $slice = $salesData['months'][$lastKey];
+    $slice['_monthKey'] = $lastKey;
+    return kpi_cache_set($cacheKey, $slice);
+}
+
+// ─── #171 — cogs_per_unit_sku ─────────────────────────────────────────────────
+
+/**
+ * #171 — COGS / unité par SKU.
+ *
+ * Source: ref_sku_bom (bom_source IN liquid|packaging, effective gate).
+ * Returns a table of {sku_code, cost_chf} sorted by cost descending.
+ * NEVER recomputes: uses the same BOM costs the FG fiscal tile uses.
+ */
+function kpi_cogs_per_unit_sku(string $label, PDO $pdo): array
+{
+    $cacheKey = 'cogs_per_unit_sku';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $stmt = $pdo->query(
+        "SELECT s.sku_code, SUM(b.cost) AS cost_chf
+           FROM ref_sku_bom b
+           JOIN ref_skus s ON s.id = b.sku_id
+          WHERE b.bom_source IN ('liquid', 'packaging')
+            AND (b.effective_from  IS NULL OR b.effective_from  <= CURDATE())
+            AND (b.effective_until IS NULL OR b.effective_until >= CURDATE())
+            AND s.is_active = 1
+          GROUP BY s.sku_code
+          ORDER BY cost_chf DESC"
+    );
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    if (empty($rows)) {
+        $result = array_merge(kpi_empty_result($label, 'CHF/unité'), [
+            'meta' => ['note' => 'Aucun coût BOM résolu — re-lancer build-sku-bom.js'],
+        ]);
+        return kpi_cache_set($cacheKey, $result);
+    }
+
+    $breakdown = array_map(
+        fn(array $r) => ['key' => $r['sku_code'], 'label' => $r['sku_code'], 'value' => round((float) $r['cost_chf'], 4)],
+        $rows
+    );
+
+    $result = array_merge(kpi_empty_result($label, 'CHF/unité'), [
+        'value'     => round((float) $rows[0]['cost_chf'], 4),  // highest-cost SKU as primary
+        'breakdown' => $breakdown,
+        'tint'      => 'neutral',
+        'meta'      => [
+            'sku_count'   => count($rows),
+            'source'      => 'ref_sku_bom (bom_source=liquid|packaging)',
+            'period_label' => 'BOM actuel',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #174 — gross_margin_pct ──────────────────────────────────────────────────
+
+/**
+ * #174 — Marge brute % global + par bière.
+ *
+ * Source: sales-cogs-data.json months[latestKey].
+ * Formula: (revenueCHF − salesCOGS_CHF) / revenueCHF × 100.
+ * salesCOGS_CHF = material_CHF + beerTax_CHF (BOM cost + beer-tax liability).
+ * This is the MATERIAL gross margin — does NOT include indirect/utilities/R&D.
+ * Bar breakdown = per-beer margin from bySKU.
+ *
+ * NEVER recomputes BOM or beer tax — reads the pipeline artifact.
+ */
+function kpi_cogs_gross_margin_pct(string $label, PDO $pdo): array
+{
+    $cacheKey = 'cogs_gross_margin_pct';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $slice = kpi_cogs_latest_sales_cogs_month();
+    if ($slice === null) {
+        $result = array_merge(kpi_empty_result($label, '%'), [
+            'meta' => ['note' => 'sales-cogs-data.json non disponible — re-lancer build-sales-cogs.js'],
+        ]);
+        return kpi_cache_set($cacheKey, $result);
+    }
+
+    $monthKey = $slice['_monthKey'];
+    $totals   = $slice['totals'] ?? [];
+    $revenue  = (float) ($totals['revenueCHF'] ?? 0);
+    $cogs     = (float) ($totals['salesCOGS_CHF'] ?? 0);
+
+    $marginPct = $revenue > 0 ? round(($revenue - $cogs) / $revenue * 100, 2) : null;
+
+    // Per-beer/SKU breakdown
+    $bySku     = $slice['bySKU'] ?? [];
+    $breakdown = [];
+    foreach ($bySku as $skuCode => $skuData) {
+        $rev  = (float) ($skuData['revenueCHF']    ?? 0);
+        $cost = (float) ($skuData['salesCOGS_CHF'] ?? 0);
+        if ($rev <= 0) continue;
+        $margin = round(($rev - $cost) / $rev * 100, 2);
+        $breakdown[] = ['key' => $skuCode, 'label' => $skuCode, 'value' => $margin];
+    }
+    usort($breakdown, fn($a, $b) => $b['value'] <=> $a['value']);
+
+    $freshness = kpi_cogs_freshness_meta($monthKey);
+    $result = array_merge(kpi_empty_result($label, '%'), [
+        'value'     => $marginPct,
+        'tint'      => $marginPct === null ? 'neutral'
+                     : ($marginPct >= 70 ? 'green' : ($marginPct >= 50 ? 'amber' : 'red')),
+        'breakdown' => $breakdown,
+        'meta'      => array_merge([
+            'period_label'   => $monthKey,
+            'revenue_chf'    => round($revenue, 2),
+            'cogs_chf'       => round($cogs, 2),
+            'source'         => 'sales-cogs-data.json (material+beerTax, hors indirect/utilities)',
+            'note'           => 'Marge matières directes uniquement — exclut coûts indirects, utilities, R&D',
+        ], $freshness),
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #175 — full_cost_breakdown_beer ──────────────────────────────────────────
+
+/**
+ * #175 — Décomposition coût complet par bière/SKU (waterfall).
+ *
+ * Source: sales-cogs-data.json bySKU for the latest closed month.
+ * Breakdown: material_CHF, beerTax_CHF per SKU (+ revenue for context).
+ * Note: "full cost" in this context = all costs tracked in sales pipeline
+ * (material + beer tax). Indirect/utilities are COP-level only, not per-SKU.
+ *
+ * NEVER recomputes BOM or beer tax.
+ */
+function kpi_cogs_full_cost_breakdown_beer(string $label, PDO $pdo): array
+{
+    $cacheKey = 'cogs_full_cost_breakdown_beer';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $slice = kpi_cogs_latest_sales_cogs_month();
+    if ($slice === null) {
+        $result = array_merge(kpi_empty_result($label, 'CHF'), [
+            'meta' => ['note' => 'sales-cogs-data.json non disponible'],
+        ]);
+        return kpi_cache_set($cacheKey, $result);
+    }
+
+    $monthKey = $slice['_monthKey'];
+    $bySku    = $slice['bySKU'] ?? [];
+    $totals   = $slice['totals'] ?? [];
+
+    // Build waterfall: each SKU as one segment with material + beerTax
+    $breakdown = [];
+    foreach ($bySku as $skuCode => $skuData) {
+        $units    = (float) ($skuData['units']        ?? 0);
+        $material = (float) ($skuData['material_CHF'] ?? 0);
+        $beerTax  = (float) ($skuData['beerTax_CHF']  ?? 0);
+        $revenue  = (float) ($skuData['revenueCHF']   ?? 0);
+        if ($units <= 0 && $material <= 0) continue;
+        $breakdown[] = [
+            'key'         => $skuCode,
+            'label'       => $skuCode,
+            'value'       => round($material + $beerTax, 2),
+            'material'    => round($material, 2),
+            'beer_tax'    => round($beerTax, 2),
+            'revenue'     => round($revenue, 2),
+            'unit_cost'   => round((float) ($skuData['unitCost'] ?? 0), 4),
+            'units'       => (int) $units,
+        ];
+    }
+    usort($breakdown, fn($a, $b) => $b['value'] <=> $a['value']);
+
+    $freshness = kpi_cogs_freshness_meta($monthKey);
+    $result = array_merge(kpi_empty_result($label, 'CHF'), [
+        'value'     => round((float) ($totals['salesCOGS_CHF'] ?? 0), 2),
+        'breakdown' => $breakdown,
+        'tint'      => 'neutral',
+        'meta'      => array_merge([
+            'period_label' => $monthKey,
+            'sku_count'    => count($breakdown),
+            'source'       => 'sales-cogs-data.json bySKU',
+            'note'         => 'Coût = matières directes + taxe bière. Coûts indirects non ventilés par SKU.',
+        ], $freshness),
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #176 — beer_tax_hl_liability ────────────────────────────────────────────
+
+/**
+ * #176 — HL taxe bière / engagement ce mois.
+ *
+ * Source: sales-cogs-data.json totals for the requested period.
+ * Returns total beerTax_CHF + HL taxable for the period.
+ * NEVER re-derives tax from bd_* brewing data — uses pipeline output.
+ */
+function kpi_cogs_beer_tax_hl_liability(array $params, string $label, PDO $pdo): array
+{
+    $cacheKey = 'cogs_beer_tax_hl_liability';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $slice = kpi_cogs_latest_sales_cogs_month();
+    if ($slice === null) {
+        $result = array_merge(kpi_empty_result($label, 'CHF'), [
+            'meta' => ['note' => 'sales-cogs-data.json non disponible — re-lancer build-sales-cogs.js'],
+        ]);
+        return kpi_cache_set($cacheKey, $result);
+    }
+
+    $monthKey    = $slice['_monthKey'];
+    $totals      = $slice['totals'] ?? [];
+    $beerTaxChf  = (float) ($totals['beerTax_CHF'] ?? 0);
+    $totalHl     = (float) ($totals['HL']          ?? 0);
+
+    // Taxable HL (exclude beerTaxCat=0 skus)
+    $bySku        = $slice['bySKU'] ?? [];
+    $taxableHlSum = 0.0;
+    foreach ($bySku as $skuData) {
+        $cat = $skuData['beerTaxCat'] ?? 0;
+        if ($cat !== 0 && $cat !== '0') {
+            $taxableHlSum += (float) ($skuData['HL'] ?? 0);
+        }
+    }
+
+    $freshness = kpi_cogs_freshness_meta($monthKey);
+    $result = array_merge(kpi_empty_result($label, 'CHF'), [
+        'value'       => round($beerTaxChf, 2),
+        'tint'        => 'neutral',
+        'meta'        => array_merge([
+            'period_label'  => $monthKey,
+            'taxable_hl'    => round($taxableHlSum, 2),
+            'total_hl'      => round($totalHl, 2),
+            'source'        => 'sales-cogs-data.json totals.beerTax_CHF',
+            'note'          => 'Taxe bière sur ventes — bière suisse uniquement. Cat 0 = non taxé.',
+        ], $freshness),
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #177 — beer_tax_by_category ─────────────────────────────────────────────
+
+/**
+ * #177 — Taxe bière par catégorie (bar chart).
+ *
+ * Source: sales-cogs-data.json bySKU for the latest closed month.
+ * Groups by beerTaxCat (0=exempt, 1=≤0.5%abv, 2=0.5–8%abv, 3=>8%abv, mixed).
+ * NEVER re-derives — uses pipeline output (lib/beer-tax.js fed this JSON).
+ */
+function kpi_cogs_beer_tax_by_category(string $label, PDO $pdo): array
+{
+    $cacheKey = 'cogs_beer_tax_by_category';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $slice = kpi_cogs_latest_sales_cogs_month();
+    if ($slice === null) {
+        $result = array_merge(kpi_empty_result($label, 'CHF'), [
+            'meta' => ['note' => 'sales-cogs-data.json non disponible'],
+        ]);
+        return kpi_cache_set($cacheKey, $result);
+    }
+
+    $monthKey = $slice['_monthKey'];
+    $bySku    = $slice['bySKU'] ?? [];
+
+    // Aggregate by beerTaxCat
+    $cats = [];
+    foreach ($bySku as $skuCode => $skuData) {
+        $cat     = (string) ($skuData['beerTaxCat'] ?? '0');
+        $taxChf  = (float) ($skuData['beerTax_CHF'] ?? 0);
+        $hl      = (float) ($skuData['HL']           ?? 0);
+        if (!isset($cats[$cat])) {
+            $cats[$cat] = ['tax_chf' => 0.0, 'hl' => 0.0];
+        }
+        $cats[$cat]['tax_chf'] += $taxChf;
+        $cats[$cat]['hl']      += $hl;
+    }
+
+    // Category labels per Swiss beer-tax schedule
+    $catLabels = [
+        '0'     => 'Exonéré (cat. 0)',
+        '1'     => '≤ 0.5% vol (cat. 1)',
+        '2'     => '0.5–8% vol (cat. 2)',
+        '3'     => '> 8% vol (cat. 3)',
+        'mixed' => 'Mixte',
+    ];
+
+    $breakdown = [];
+    foreach ($cats as $cat => $agg) {
+        $catLbl      = $catLabels[$cat] ?? "Cat. {$cat}";
+        $breakdown[] = [
+            'key'     => "cat_{$cat}",
+            'label'   => $catLbl,
+            'value'   => round($agg['tax_chf'], 2),
+            'hl'      => round($agg['hl'], 2),
+        ];
+    }
+    usort($breakdown, fn($a, $b) => $b['value'] <=> $a['value']);
+
+    $totals   = $slice['totals'] ?? [];
+    $totalTax = (float) ($totals['beerTax_CHF'] ?? 0);
+
+    $freshness = kpi_cogs_freshness_meta($monthKey);
+    $result = array_merge(kpi_empty_result($label, 'CHF'), [
+        'value'     => round($totalTax, 2),
+        'breakdown' => $breakdown,
+        'tint'      => 'neutral',
+        'meta'      => array_merge([
+            'period_label' => $monthKey,
+            'source'       => 'sales-cogs-data.json bySKU.beerTaxCat + beerTax_CHF',
+        ], $freshness),
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #178 — indirect_cost_categorization ─────────────────────────────────────
+
+/**
+ * #178 — Catégorisation coûts indirects (donut).
+ *
+ * Source: inv_charges_bc GL sub-accounts for the latest 12 months.
+ * Maps GL → indirect category per cop-indirect convention:
+ *   CO2:             4300
+ *   Chimique/Levure: 4301
+ *   Petit matériel:  4302
+ *   Transport achat: 4600
+ *
+ * The cogs-report-data.json only has indirect.total — no sub-breakdown.
+ * This handler reads inv_charges_bc directly (same source the COGS pipeline
+ * reads for the indirect section), yielding a donut.
+ */
+function kpi_cogs_indirect_cost_categorization(string $label, PDO $pdo): array
+{
+    $cacheKey = 'cogs_indirect_categorization';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    // Use the last 12 months of bookkeeping data (rolling, not single-month,
+    // because the indirect section has sparse monthly data).
+    $stmt = $pdo->prepare(
+        "SELECT gl_account_no,
+                SUM(COALESCE(debit_amount, 0) - COALESCE(credit_amount, 0)) AS net_chf
+           FROM inv_charges_bc
+          WHERE gl_account_no IN ('4300', '4301', '4302', '4600')
+            AND posting_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+          GROUP BY gl_account_no
+          ORDER BY gl_account_no"
+    );
+    $stmt->execute();
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    if (empty($rows)) {
+        $result = array_merge(kpi_empty_result($label, 'CHF'), [
+            'meta' => [
+                'note'   => 'Aucune donnée inv_charges_bc GL 4300/4301/4302/4600 sur 12 mois',
+                'source' => 'inv_charges_bc',
+            ],
+        ]);
+        return kpi_cache_set($cacheKey, $result);
+    }
+
+    $glLabels = [
+        '4300' => 'CO2',
+        '4301' => 'Produits chimiques',
+        '4302' => 'Petit matériel production',
+        '4600' => 'Transport achats',
+    ];
+
+    $breakdown = [];
+    $total     = 0.0;
+    foreach ($rows as $row) {
+        $gl  = $row['gl_account_no'];
+        $net = round((float) $row['net_chf'], 2);
+        $total += $net;
+        $breakdown[] = [
+            'key'   => "gl_{$gl}",
+            'label' => $glLabels[$gl] ?? $gl,
+            'value' => $net,
+        ];
+    }
+    usort($breakdown, fn($a, $b) => $b['value'] <=> $a['value']);
+
+    $result = array_merge(kpi_empty_result($label, 'CHF'), [
+        'value'     => round($total, 2),
+        'breakdown' => $breakdown,
+        'tint'      => 'neutral',
+        'meta'      => [
+            'period_label' => '12 derniers mois',
+            'source'       => 'inv_charges_bc GL 4300/4301/4302/4600',
+            'note'         => 'Glissant 12 mois — données mensuelles trop éparses pour un seul mois',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #180 — rd_qa_spend ───────────────────────────────────────────────────────
+
+/**
+ * #180 — Dépenses R&D / QA (sparkline, 12 months).
+ *
+ * Source: inv_charges_bc GL 4500 (QA/QC) + 4510 (R&D Purchases).
+ * Returns a monthly sparkline + latest-month total.
+ */
+function kpi_cogs_rd_qa_spend(string $label, PDO $pdo): array
+{
+    $cacheKey = 'cogs_rd_qa_spend_12m';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $stmt = $pdo->query(
+        "SELECT DATE_FORMAT(posting_date, '%Y-%m') AS mo,
+                SUM(COALESCE(debit_amount, 0) - COALESCE(credit_amount, 0)) AS net_chf
+           FROM inv_charges_bc
+          WHERE gl_account_no IN ('4500', '4510')
+            AND posting_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+            AND posting_date IS NOT NULL
+          GROUP BY mo
+          ORDER BY mo"
+    );
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $series = array_map(
+        fn(array $r) => ['period' => $r['mo'], 'value' => round((float) $r['net_chf'], 2)],
+        $rows
+    );
+
+    $latest = !empty($rows) ? round((float) end($rows)['net_chf'], 2) : null;
+
+    $result = array_merge(kpi_empty_result($label, 'CHF'), [
+        'value'  => $latest,
+        'series' => $series,
+        'tint'   => 'neutral',
+        'meta'   => [
+            'period_label' => '12 derniers mois',
+            'source'       => 'inv_charges_bc GL 4500 (QA/QC) + 4510 (R&D Achats)',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #181 — wip_value ─────────────────────────────────────────────────────────
+
+/**
+ * #181 — Valeur WIP (balances cuves).
+ *
+ * Source: inv_tank_balances (volume_hl × brew_cost_per_hl per tank per month).
+ * The brew_cost_per_hl column is populated by the Node tank-simulation
+ * (parse-tank-simulation.js). As of 2026-05 this column is NULL for all
+ * tanks in the two most recent months — WIP valuation requires the Node
+ * pipeline to populate brew_cost_per_hl.
+ *
+ * Returns a stub with a note when brew_cost_per_hl is absent.
+ * When data exists, sums volume_hl × brew_cost_per_hl across all tanks
+ * for the latest month in inv_tank_balances.
+ */
+function kpi_cogs_wip_value(string $label, PDO $pdo): array
+{
+    $cacheKey = 'cogs_wip_value';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    // Find latest month with any brew_cost_per_hl populated
+    $stmt = $pdo->query(
+        "SELECT month_key,
+                COUNT(*) AS tank_count,
+                SUM(volume_hl) AS total_hl,
+                SUM(CASE WHEN brew_cost_per_hl IS NOT NULL THEN 1 ELSE 0 END) AS tanks_with_cost,
+                SUM(CASE WHEN brew_cost_per_hl IS NOT NULL THEN volume_hl * brew_cost_per_hl ELSE 0 END) AS wip_chf
+           FROM inv_tank_balances
+          WHERE month_key = (
+                    SELECT MAX(month_key) FROM inv_tank_balances
+                    WHERE brew_cost_per_hl IS NOT NULL
+                )
+          GROUP BY month_key"
+    );
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$row || (float) $row['wip_chf'] == 0) {
+        // Gated: brew_cost_per_hl absent — Node tank-sim hasn't been run or
+        // hasn't populated costs in inv_tank_balances.
+        $result = array_merge(kpi_empty_result($label, 'CHF'), [
+            'meta' => [
+                'stub'   => true,
+                'reason' => 'gap',
+                'note'   => 'brew_cost_per_hl absent dans inv_tank_balances pour les mois récents — '
+                          . 'nécessite exécution de parse-tank-simulation.js avec --write-balances',
+                'source' => 'inv_tank_balances',
+            ],
+        ]);
+        return kpi_cache_set($cacheKey, $result);
+    }
+
+    $result = array_merge(kpi_empty_result($label, 'CHF'), [
+        'value' => round((float) $row['wip_chf'], 2),
+        'tint'  => 'neutral',
+        'meta'  => [
+            'period_label'   => $row['month_key'],
+            'tank_count'     => (int) $row['tank_count'],
+            'tanks_with_cost' => (int) $row['tanks_with_cost'],
+            'total_hl'       => round((float) $row['total_hl'], 2),
+            'source'         => 'inv_tank_balances (volume_hl × brew_cost_per_hl)',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #182 — total_inventory_valuation ────────────────────────────────────────
+
+/**
+ * #182 — Valorisation totale inventaire (MP + PF + WIP).
+ *
+ * Sources: SUMS existing numbers — NEVER recomputes.
+ *   RM:  v_rm_stock_dynamic.current_value_chf (live view, already built)
+ *   FG:  kpi_fg_inventory_value() (anchor × BOM cost, Batch 5)
+ *   WIP: kpi_cogs_wip_value() — included when data available; otherwise noted
+ */
+function kpi_cogs_total_inventory_valuation(string $label, PDO $pdo): array
+{
+    $cacheKey = 'cogs_total_inventory_valuation';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    // RM valuation from view
+    $rmStmt = $pdo->query(
+        "SELECT SUM(current_value_chf) AS rm_chf
+           FROM v_rm_stock_dynamic
+          WHERE current_qty > 0"
+    );
+    $rmRow  = $rmStmt->fetch(PDO::FETCH_ASSOC);
+    $rmChf  = $rmRow ? (float) ($rmRow['rm_chf'] ?? 0) : 0.0;
+
+    // FG valuation — call existing handler (reads from cache if already computed)
+    $fgResult = kpi_fg_inventory_value($label, $pdo);
+    $fgChf    = $fgResult['value'] !== null ? (float) $fgResult['value'] : 0.0;
+    $fgCovered = $fgResult['meta']['covered_skus'] ?? 0;
+
+    // WIP valuation
+    $wipResult = kpi_cogs_wip_value($label, $pdo);
+    $wipChf    = $wipResult['value'] !== null ? (float) $wipResult['value'] : 0.0;
+    $wipGated  = isset($wipResult['meta']['stub']) && $wipResult['meta']['stub'];
+
+    $totalChf = $rmChf + $fgChf + $wipChf;
+
+    $breakdown = [
+        ['key' => 'rm',  'label' => 'Matières premières',   'value' => round($rmChf, 2)],
+        ['key' => 'fg',  'label' => 'Produits finis',       'value' => round($fgChf, 2)],
+        ['key' => 'wip', 'label' => 'En-cours (WIP)',       'value' => round($wipChf, 2)],
+    ];
+
+    $result = array_merge(kpi_empty_result($label, 'CHF'), [
+        'value'     => round($totalChf, 2),
+        'breakdown' => $breakdown,
+        'tint'      => 'neutral',
+        'meta'      => [
+            'rm_chf'          => round($rmChf, 2),
+            'fg_chf'          => round($fgChf, 2),
+            'wip_chf'         => round($wipChf, 2),
+            'wip_gated'       => $wipGated,
+            'fg_covered_skus' => $fgCovered,
+            'source_rm'       => 'v_rm_stock_dynamic.current_value_chf',
+            'source_fg'       => 'ref_sku_bom (liquid+packaging) × inv_fg_stocktake anchor',
+            'source_wip'      => $wipGated
+                ? 'inv_tank_balances (brew_cost_per_hl absent — WIP=0)'
+                : 'inv_tank_balances (volume_hl × brew_cost_per_hl)',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #183 — cost_variance_prior_month ────────────────────────────────────────
+
+/**
+ * #183 — Écart coût vs mois précédent (bar chart).
+ *
+ * Source: cogs-report-data.json months[] (last 2 entries).
+ * Shows delta per COP section (brewing, packaging, indirect, utilities, rd)
+ * and total variable cost delta month-over-month.
+ * NEVER recomputes — reads pipeline artifact.
+ */
+function kpi_cogs_cost_variance_prior_month(string $label, PDO $pdo): array
+{
+    $cacheKey = 'cogs_cost_variance_prior_month';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $data = kpi_load_cogs_json();
+    if ($data === null || count($data['months'] ?? []) < 2) {
+        $result = array_merge(kpi_empty_result($label, 'CHF'), [
+            'meta' => ['note' => 'Pipeline COGS non disponible ou moins de 2 mois'],
+        ]);
+        return kpi_cache_set($cacheKey, $result);
+    }
+
+    $months = $data['months'];
+    $curr   = end($months);
+    prev($months);
+    $prev   = current($months);
+
+    $sections   = ['brewing', 'packaging', 'indirect', 'utilities', 'rd'];
+    $secLabels  = [
+        'brewing'   => 'Brassage',
+        'packaging' => 'Packaging',
+        'indirect'  => 'Indirect',
+        'utilities' => 'Utilités',
+        'rd'        => 'R&D',
+    ];
+
+    $breakdown = [];
+    foreach ($sections as $sec) {
+        $currSec = $curr['cop'][$sec] ?? [];
+        $prevSec = $prev['cop'][$sec] ?? [];
+        $currVal = (float) ($currSec['total'] ?? 0);
+        $prevVal = (float) ($prevSec['total'] ?? 0);
+        $delta   = round($currVal - $prevVal, 2);
+        $breakdown[] = [
+            'key'       => $sec,
+            'label'     => $secLabels[$sec] ?? $sec,
+            'value'     => $delta,
+            'curr_chf'  => round($currVal, 2),
+            'prev_chf'  => round($prevVal, 2),
+        ];
+    }
+
+    $currTv = $curr['cop']['totalVariables'] ?? [];
+    $prevTv = $prev['cop']['totalVariables'] ?? [];
+    $currTotal = is_array($currTv) ? (float) ($currTv['total'] ?? 0) : (float) $currTv;
+    $prevTotal = is_array($prevTv) ? (float) ($prevTv['total'] ?? 0) : (float) $prevTv;
+    $totalDelta = round($currTotal - $prevTotal, 2);
+
+    $freshness = kpi_cogs_freshness_meta($curr['monthKey'] ?? null);
+    $result = array_merge(kpi_empty_result($label, 'CHF'), [
+        'value'       => $totalDelta,
+        'delta'       => $totalDelta,
+        'delta_label' => 'vs ' . ($prev['monthKey'] ?? 'mois précédent'),
+        'tint'        => $totalDelta <= 0 ? 'green' : 'amber',
+        'breakdown'   => $breakdown,
+        'meta'        => array_merge([
+            'period_curr'  => $curr['monthKey'] ?? null,
+            'period_prev'  => $prev['monthKey'] ?? null,
+            'curr_total'   => round($currTotal, 2),
+            'prev_total'   => round($prevTotal, 2),
+            'source'       => 'cogs-report-data.json months[] (2 dernières entrées)',
+        ], $freshness),
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #184 — cost_per_hl_trend ────────────────────────────────────────────────
+
+/**
+ * #184 — Tendance coût / HL (sparkline — all available months).
+ *
+ * Source: cogs-report-data.json months[].cop.totalVariables.perHL.
+ * Returns a series of all 31+ months for a long-form trend sparkline.
+ * NEVER recomputes — reads pipeline artifact.
+ */
+function kpi_cogs_cost_per_hl_trend(string $label, PDO $pdo): array
+{
+    $cacheKey = 'cogs_cost_per_hl_trend';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $data = kpi_load_cogs_json();
+    if ($data === null || empty($data['months'])) {
+        $result = array_merge(kpi_empty_result($label, 'CHF/HL'), [
+            'meta' => ['note' => 'Pipeline COGS non disponible'],
+        ]);
+        return kpi_cache_set($cacheKey, $result);
+    }
+
+    $series = [];
+    foreach ($data['months'] as $m) {
+        $tv  = $m['cop']['totalVariables'] ?? [];
+        $pHL = is_array($tv) ? (float) ($tv['perHL'] ?? 0) : (float) $tv;
+        if ($pHL <= 0) continue;
+        $series[] = ['period' => $m['monthKey'], 'value' => round($pHL, 2)];
+    }
+
+    $latest     = !empty($series) ? end($series)['value'] : null;
+    $freshness  = kpi_cogs_freshness_meta(!empty($series) ? end($series)['period'] : null);
+
+    $result = array_merge(kpi_empty_result($label, 'CHF/HL'), [
+        'value'  => $latest,
+        'series' => $series,
+        'tint'   => 'neutral',
+        'meta'   => array_merge([
+            'period_count' => count($series),
+            'period_from'  => !empty($series) ? $series[0]['period'] : null,
+            'source'       => 'cogs-report-data.json months[].cop.totalVariables.perHL',
+        ], $freshness),
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── #187 — cogs_pct_revenue ─────────────────────────────────────────────────
+
+/**
+ * #187 — COGS en % du CA.
+ *
+ * Sources:
+ *   Numerator:   cogs-report-data.json cop.totalVariables.total (latest closed month)
+ *   Denominator: inv_sales_bc SUM(sales_amount_chf) WHERE period = that month
+ *
+ * Both canonical sources, summed/divided — NEVER recomputed.
+ * Note: numerator is COP totalVariables (variable costs) not salesCOGS_CHF
+ * (the latter is per-sold-unit). COP total is production-period cost.
+ */
+function kpi_cogs_pct_revenue(array $params, string $label, PDO $pdo): array
+{
+    $cacheKey = 'cogs_pct_revenue';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $cogsMonth = kpi_cogs_latest_month_data();
+    if ($cogsMonth === null) {
+        $result = array_merge(kpi_empty_result($label, '%'), [
+            'meta' => ['note' => 'Pipeline COGS non disponible'],
+        ]);
+        return kpi_cache_set($cacheKey, $result);
+    }
+
+    $monthKey = $cogsMonth['monthKey'] ?? null;
+    $cop      = $cogsMonth['cop'] ?? [];
+    $tvars    = $cop['totalVariables'] ?? [];
+    $cogsChf  = is_array($tvars) ? (float) ($tvars['total'] ?? 0) : (float) $tvars;
+
+    // Revenue from inv_sales_bc for the same period
+    $stmt = $pdo->prepare(
+        "SELECT SUM(sales_amount_chf) AS revenue_chf
+           FROM inv_sales_bc
+          WHERE period = ?"
+    );
+    $stmt->execute([$monthKey]);
+    $row      = $stmt->fetch(PDO::FETCH_ASSOC);
+    $revenue  = $row && $row['revenue_chf'] !== null ? (float) $row['revenue_chf'] : null;
+
+    $pct = ($revenue !== null && $revenue > 0)
+        ? round($cogsChf / $revenue * 100, 2)
+        : null;
+
+    $freshness = kpi_cogs_freshness_meta($monthKey);
+    $result = array_merge(kpi_empty_result($label, '%'), [
+        'value'       => $pct,
+        'tint'        => $pct === null ? 'neutral'
+                       : ($pct <= 15 ? 'green' : ($pct <= 25 ? 'amber' : 'red')),
+        'meta'        => array_merge([
+            'period_label'  => $monthKey,
+            'cogs_chf'      => round($cogsChf, 2),
+            'revenue_chf'   => $revenue !== null ? round($revenue, 2) : null,
+            'source_cogs'   => 'cogs-report-data.json cop.totalVariables.total',
+            'source_revenue' => 'inv_sales_bc SUM(sales_amount_chf)',
+            'note'          => 'Numérateur = COP coûts variables production. Dénominateur = CA BC facturé.',
+        ], $freshness),
     ]);
 
     return kpi_cache_set($cacheKey, $result);
@@ -1692,46 +2570,70 @@ function kpi_wort_daily_recap(string $label, PDO $pdo): array
     }
 
     // 1. HL brassés today (Cooling rows, submitted_at anchor — matches kpi_wort_base_sql)
+    //    GROUP BY recipe_id_fk to emit per-beer breakdown rows.
     $base = kpi_wort_base_sql();
     $stmtBrew = $pdo->prepare(
-        "SELECT ROUND(SUM(cl.final_volume), 1)                                         AS total_hl,
-                SUM(CASE WHEN rr.classification = 'Neb'      THEN cl.final_volume ELSE 0 END) AS neb_hl,
-                SUM(CASE WHEN rr.classification = 'Contract' THEN cl.final_volume ELSE 0 END) AS contract_hl,
-                COUNT(*)                                                                AS brew_count,
-                COUNT(DISTINCT cl.recipe_id_fk, cl.batch)                              AS brassin_count
+        "SELECT cl.recipe_id_fk,
+                COALESCE(rr.name, 'Inconnu')               AS recipe_name,
+                COALESCE(rr.classification, 'Neb')         AS classification,
+                ROUND(SUM(cl.final_volume), 1)             AS recipe_hl,
+                COUNT(*)                                    AS brew_count,
+                COUNT(DISTINCT cl.batch)                   AS brassin_count
          {$base}
-           AND DATE(cl.submitted_at) = ?"
+           AND DATE(cl.submitted_at) = ?
+         GROUP BY cl.recipe_id_fk, rr.name, rr.classification
+         ORDER BY recipe_hl DESC"
     );
     $stmtBrew->execute([$today]);
-    $brewRow = $stmtBrew->fetch(PDO::FETCH_ASSOC);
+    $brewRecipes = $stmtBrew->fetchAll(PDO::FETCH_ASSOC);
 
-    $hlBrewed    = (float) ($brewRow['total_hl']      ?? 0.0);
-    $hlNeb       = round((float) ($brewRow['neb_hl']      ?? 0.0), 1);
-    $hlContract  = round((float) ($brewRow['contract_hl'] ?? 0.0), 1);
-    $brewCount   = (int)   ($brewRow['brew_count']   ?? 0);
-    $brassinCount = (int)  ($brewRow['brassin_count'] ?? 0);
+    $hlBrewed     = 0.0;
+    $hlNeb        = 0.0;
+    $hlContract   = 0.0;
+    $brewCount    = 0;
+    $brassinCount = 0;
+    foreach ($brewRecipes as $br) {
+        $hlBrewed     += (float) ($br['recipe_hl']     ?? 0.0);
+        $brewCount    += (int)   ($br['brew_count']    ?? 0);
+        $brassinCount += (int)   ($br['brassin_count'] ?? 0);
+        if (($br['classification'] ?? '') === 'Neb') {
+            $hlNeb      += (float) ($br['recipe_hl'] ?? 0.0);
+        } else {
+            $hlContract += (float) ($br['recipe_hl'] ?? 0.0);
+        }
+    }
+    $hlBrewed   = round($hlBrewed,   1);
+    $hlNeb      = round($hlNeb,      1);
+    $hlContract = round($hlContract, 1);
 
-    // 2. HL transférés today (bd_racking_v2 event_date)
+    // 2. HL transférés today (bd_racking_v2 event_date), per recipe.
+    //    COALESCE neb/contract FK exactly as the existing classification CASE.
     $stmtRack = $pdo->prepare(
-        "SELECT ROUND(SUM(r.racked_vol_hl), 1)                                       AS total_hl,
-                COUNT(*)                                                               AS rack_count,
-                SUM(CASE WHEN rr1.classification = 'Neb'      THEN r.racked_vol_hl ELSE
-                    CASE WHEN rr2.classification = 'Neb'      THEN r.racked_vol_hl ELSE 0 END
-                    END)                                                               AS neb_hl,
-                SUM(CASE WHEN rr1.classification = 'Contract' THEN r.racked_vol_hl ELSE
-                    CASE WHEN rr2.classification = 'Contract' THEN r.racked_vol_hl ELSE 0 END
-                    END)                                                               AS contract_hl
+        "SELECT COALESCE(r.neb_recipe_id_fk, r.contract_recipe_id_fk) AS recipe_id_fk,
+                COALESCE(rr1.name, rr2.name, 'Inconnu')                AS recipe_name,
+                COALESCE(rr1.classification, rr2.classification, 'Neb') AS classification,
+                ROUND(SUM(r.racked_vol_hl), 1)                         AS recipe_hl,
+                COUNT(*)                                                AS rack_count
            FROM bd_racking_v2 r
            LEFT JOIN ref_recipes rr1 ON rr1.id = r.neb_recipe_id_fk
            LEFT JOIN ref_recipes rr2 ON rr2.id = r.contract_recipe_id_fk
           WHERE r.is_tombstoned = 0
-            AND r.event_date = ?"
+            AND r.event_date = ?
+          GROUP BY COALESCE(r.neb_recipe_id_fk, r.contract_recipe_id_fk),
+                   COALESCE(rr1.name, rr2.name, 'Inconnu'),
+                   COALESCE(rr1.classification, rr2.classification, 'Neb')
+          ORDER BY recipe_hl DESC"
     );
     $stmtRack->execute([$today]);
-    $rackRow = $stmtRack->fetch(PDO::FETCH_ASSOC);
+    $rackRecipes = $stmtRack->fetchAll(PDO::FETCH_ASSOC);
 
-    $hlRacked    = (float) ($rackRow['total_hl']   ?? 0.0);
-    $rackCount   = (int)   ($rackRow['rack_count'] ?? 0);
+    $hlRacked  = 0.0;
+    $rackCount = 0;
+    foreach ($rackRecipes as $rr) {
+        $hlRacked  += (float) ($rr['recipe_hl']  ?? 0.0);
+        $rackCount += (int)   ($rr['rack_count'] ?? 0);
+    }
+    $hlRacked = round($hlRacked, 1);
 
     // 3. Dry-hop events today (bd_fermenting_v2)
     $stmtDh = $pdo->prepare(
@@ -1772,18 +2674,36 @@ function kpi_wort_daily_recap(string $label, PDO $pdo): array
         $sections[] = ['label' => 'Cold crash démarrés', 'value' => $ccBatches, 'unit' => 'lots', 'tint' => 'neutral'];
     }
 
-    // Breakdown (classification split for brewed + racked)
+    // Breakdown: per-beer brewed rows (keyed by recipe_id_fk, never by name)
+    // followed by per-beer transferred rows, then dry-hop summary.
     $breakdown = [];
-    if ($hlNeb > 0 || $hlContract > 0) {
-        if ($hlNeb > 0) {
-            $breakdown[] = ['key' => 'brew_neb',      'label' => 'Brassin Nébuleuse', 'value' => $hlNeb,     'unit' => 'HL'];
-        }
-        if ($hlContract > 0) {
-            $breakdown[] = ['key' => 'brew_contract',  'label' => 'Brassin Contract',  'value' => $hlContract, 'unit' => 'HL'];
-        }
+    foreach ($brewRecipes as $br) {
+        $rId = $br['recipe_id_fk'] ?? 'unknown';
+        $breakdown[] = [
+            'key'   => 'brew_' . $rId,
+            'label' => $br['recipe_name'],
+            'value' => (float) ($br['recipe_hl'] ?? 0.0),
+            'unit'  => 'HL',
+            'meta'  => [
+                'type'           => 'brew',
+                'classification' => $br['classification'],
+                'recipe_id_fk'   => $rId,
+            ],
+        ];
     }
-    if ($rackCount > 0) {
-        $breakdown[] = ['key' => 'rack_total', 'label' => 'Transfert BBT', 'value' => round($hlRacked, 1), 'unit' => 'HL'];
+    foreach ($rackRecipes as $rr) {
+        $rId = $rr['recipe_id_fk'] ?? 'unknown';
+        $breakdown[] = [
+            'key'   => 'rack_' . $rId,
+            'label' => $rr['recipe_name'],
+            'value' => (float) ($rr['recipe_hl'] ?? 0.0),
+            'unit'  => 'HL',
+            'meta'  => [
+                'type'           => 'rack',
+                'classification' => $rr['classification'],
+                'recipe_id_fk'   => $rId,
+            ],
+        ];
     }
     if ($dhEvents > 0) {
         $breakdown[] = ['key' => 'dryhop', 'label' => 'Dry-hop (lots)', 'value' => $dhBatches, 'unit' => 'lots'];
@@ -4472,6 +5392,8 @@ function kpi_pkg_daily_recap(string $label, PDO $pdo): array
 
     // Per-run summary: join base table (has event_date, loss cols, recipe_id_fk, run_type)
     // with the vendable view (has vendable_hl, loss_kpi_hl). Filter on base table.
+    // objective_hl: planning annotation — read here for reach% display ONLY.
+    //   It is NOT exposed to compute_packaging_vendable_hl / v_bd_packaging_v2_vendable.
     $stmtRuns = $pdo->prepare(
         "SELECT b.id,
                 b.run_type,
@@ -4482,6 +5404,7 @@ function kpi_pkg_daily_recap(string $label, PDO $pdo): array
                 v.loss_kpi_hl,
                 b.loss_liquid_other_units,
                 b.prod_total_units,
+                b.objective_hl,
                 /* per-material 1:1 losses (unit-side; bot/can/can33 only) */
                 b.loss_label_btl_units,
                 b.loss_crown_cork_units,
@@ -4579,16 +5502,23 @@ function kpi_pkg_daily_recap(string $label, PDO $pdo): array
         }
 
         // Per-run row for breakdown
-        $runLossPct = ($vendHl > 0) ? round(100.0 * $beerLossHl / $vendHl, 1) : null;
+        // objective_hl: planning annotation — read-only, never feeds vendable/COGS/tax.
+        $objHl      = isset($r['objective_hl']) && $r['objective_hl'] !== null
+                        ? (float)$r['objective_hl'] : null;
+        $runLossPct = ($vendHl > 0) ? round(100.0 * $beerLossHl / $vendHl, 2) : null;
+        $reachPct   = ($objHl !== null && $objHl > 0.0)
+                        ? round($vendHl / $objHl * 100.0, 1) : null;
         $perRunRows[] = [
             'key'   => 'run_' . $r['id'],
             'label' => $r['recipe_name'],
             'value' => round($vendHl, 1),
             'unit'  => 'HL',
             'meta'  => [
-                'run_type'    => $runType,
-                'loss_pct'    => $runLossPct,
-                'beer_loss_hl'=> round($beerLossHl, 3),
+                'run_type'     => $runType,
+                'loss_pct'     => $runLossPct,
+                'beer_loss_hl' => round($beerLossHl, 3),
+                'objective_hl' => $objHl,
+                'reach_pct'    => $reachPct,
             ],
         ];
     }
@@ -4596,8 +5526,22 @@ function kpi_pkg_daily_recap(string $label, PDO $pdo): array
     $totalVendableHl = round($totalVendableHl, 1);
     $totalBeerLossHl = round($totalBeerLossHl, 3);
     $beerLossPct     = ($totalVendableHl > 0)
-        ? round(100.0 * $totalBeerLossHl / $totalVendableHl, 1)
+        ? round(100.0 * $totalBeerLossHl / $totalVendableHl, 2)
         : null;
+
+    // Session-level % objectif: Σvendable_hl / Σobjective_hl for rows WITH an objective.
+    // Rows with NULL objective are excluded from BOTH numerator and denominator.
+    $objVendableSum  = 0.0;
+    $objTargetSum    = 0.0;
+    foreach ($perRunRows as $pr) {
+        $prObj = $pr['meta']['objective_hl'] ?? null;
+        if ($prObj !== null && $prObj > 0.0) {
+            $objVendableSum += (float) ($pr['value'] ?? 0.0);
+            $objTargetSum   += $prObj;
+        }
+    }
+    $sessionReachPct = ($objTargetSum > 0.0)
+        ? round($objVendableSum / $objTargetSum * 100.0, 1) : null;
 
     // Material loss breakdown rows (1:1 rates, non-1:1 raw, suppress 0-values)
     $matRows = [];
@@ -4739,6 +5683,7 @@ function kpi_pkg_daily_recap(string $label, PDO $pdo): array
             'vendable_hl'     => $totalVendableHl,
             'beer_loss_hl'    => $totalBeerLossHl,
             'beer_loss_pct'   => $beerLossPct,
+            'session_reach_pct' => $sessionReachPct,
             'today'           => $today,
         ],
     ]);
