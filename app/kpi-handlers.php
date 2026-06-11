@@ -5992,6 +5992,8 @@ function kpi_pkg_daily_recap(string $label, PDO $pdo): array
 //     (ColdCrash = fermentation end per operator ruling), bd_racking_v2 (transfers),
 //     ref_cct (active CCT count for turns-per-tank computation).
 //     Join shape: (recipe_id_fk, batch) — NEVER on beer-name strings.
+//   - Occupancy tranche (2026-06-11): tank_occupancy (#13), cct_utilization_pct (#14),
+//     cct_idle_days (#15), hl_in_tank_now (#17) — all consume TankSimulator::run().
 // ═════════════════════════════════════════════════════════════════════════════
 
 function kpi_handler_tanks(
@@ -6014,11 +6016,11 @@ function kpi_handler_tanks(
         'fermentation_deviations' => kpi_tanks_fermentation_deviations($label, $pdo),
         'suggested_next_brew'     => kpi_tanks_suggested_next_brew($label, $pdo),
         'temp_pressure_excursions' => kpi_tanks_temp_pressure_excursions($label, $pdo),
-        // Occupancy trackers: require Node tank-sim port — NOT built yet:
-        'tank_occupancy'          => kpi_stub_handler('tanks', $handler, $label),
-        'cct_utilization_pct'     => kpi_stub_handler('tanks', $handler, $label),
-        'cct_idle_days'           => kpi_stub_handler('tanks', $handler, $label),
-        'hl_in_tank_now'          => kpi_stub_handler('tanks', $handler, $label),
+        // Occupancy tiles — TankSimulator::run() (cached):
+        'tank_occupancy'          => kpi_tanks_occupancy($label, $pdo),
+        'cct_utilization_pct'     => kpi_tanks_cct_utilization($label, $pdo),
+        'cct_idle_days'           => kpi_tanks_cct_idle_days($label, $pdo),
+        'hl_in_tank_now'          => kpi_tanks_hl_in_tank($label, $pdo),
         default                   => kpi_stub_handler('tanks', $handler, $label),
     };
 }
@@ -11318,6 +11320,268 @@ function kpi_equip_vessel_utilization(string $label, PDO $pdo): array
                                    . 'n\'enregistrent pas vessel_kind/vessel_number dans op_sessions '
                                    . '— occupancy CCT indisponible sans le port du tank-sim Node.',
             'source_table'        => 'op_sessions + ref_bbt + ref_cct + ref_yt',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+// ─── Occupancy tranche helpers (TankSimulator::run()) ────────────────────────
+
+/**
+ * Helper: run TankSimulator once per request, cached under 'tanks_sim_now'.
+ * Returns ['cct' => [int => state|null, ...], 'bbt' => [int => state|null, ...]]
+ */
+function kpi_tanks_get_sim_state(PDO $pdo): array
+{
+    $cached = kpi_cache_get('tanks_sim_now');
+    if ($cached !== null) {
+        return $cached;
+    }
+    require_once __DIR__ . '/tank-simulator.php';
+    $sim   = new TankSimulator($pdo);
+    $state = $sim->run();
+    kpi_cache_set('tanks_sim_now', $state);
+    return $state;
+}
+
+/** #13 — Taux d'occupation (CCT+BBT combinés, %) */
+function kpi_tanks_occupancy(string $label, PDO $pdo): array
+{
+    $cacheKey = 'tanks_occupancy_now';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $state = kpi_tanks_get_sim_state($pdo);
+
+    // Active vessel counts from ref_cct / ref_bbt (source of truth — NOT count($state))
+    $activeCct = (int)$pdo->query("SELECT COUNT(*) FROM ref_cct WHERE status='active'")->fetchColumn();
+    $activeBbt = (int)$pdo->query("SELECT COUNT(*) FROM ref_bbt WHERE status='active'")->fetchColumn();
+    $activeTotal = $activeCct + $activeBbt;
+
+    // Occupied = sim state non-null
+    $occupiedCct = 0;
+    foreach ($state['cct'] as $s) {
+        if ($s !== null) $occupiedCct++;
+    }
+    $occupiedBbt = 0;
+    foreach ($state['bbt'] as $s) {
+        if ($s !== null) $occupiedBbt++;
+    }
+    $occupiedTotal = $occupiedCct + $occupiedBbt;
+
+    $pct = $activeTotal > 0 ? round($occupiedTotal / $activeTotal * 100, 1) : null;
+
+    $tint = 'neutral';
+    if ($pct !== null) {
+        if ($pct >= 40 && $pct <= 85) $tint = 'green';
+        elseif ($pct > 85 || $pct < 20) $tint = 'amber';
+    }
+
+    $result = array_merge(kpi_empty_result($label, '%'), [
+        'value'     => $pct,
+        'tint'      => $tint,
+        'series'    => [
+            ['period' => 'CCT', 'value' => $occupiedCct],
+            ['period' => 'BBT', 'value' => $occupiedBbt],
+        ],
+        'breakdown' => [
+            ['key' => 'cct', 'label' => 'CCT', 'value' => $occupiedCct, 'meta' => ['total' => $activeCct]],
+            ['key' => 'bbt', 'label' => 'BBT', 'value' => $occupiedBbt, 'meta' => ['total' => $activeBbt]],
+        ],
+        'meta'      => [
+            'occupied_total' => $occupiedTotal,
+            'active_total'   => $activeTotal,
+            'free_total'     => $activeTotal - $occupiedTotal,
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/** #14 — Utilisation CCT (volume occupé ÷ capacité totale active, %) */
+function kpi_tanks_cct_utilization(string $label, PDO $pdo): array
+{
+    $cacheKey = 'tanks_cct_util_now';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $state = kpi_tanks_get_sim_state($pdo);
+
+    $totalCapacity = (float)$pdo->query(
+        "SELECT COALESCE(SUM(capacity_hl), 0) FROM ref_cct WHERE status='active'"
+    )->fetchColumn();
+
+    if ($totalCapacity <= 0) {
+        return kpi_cache_set($cacheKey, array_merge(kpi_empty_result($label, '%'), [
+            'tint' => 'neutral',
+            'meta' => ['note' => 'Aucune capacité CCT active'],
+        ]));
+    }
+
+    $activeCct = (int)$pdo->query("SELECT COUNT(*) FROM ref_cct WHERE status='active'")->fetchColumn();
+
+    $hlInCct    = 0.0;
+    $occupiedCct = 0;
+    foreach ($state['cct'] as $s) {
+        if ($s !== null) {
+            $hlInCct += (float)($s['volume_hl'] ?? 0);
+            $occupiedCct++;
+        }
+    }
+
+    $pct = round($hlInCct / $totalCapacity * 100, 1);
+
+    $tint = 'neutral';
+    if ($pct >= 50 && $pct <= 90)      $tint = 'green';
+    elseif ($pct > 90 || $pct < 25)   $tint = 'amber';
+
+    $result = array_merge(kpi_empty_result($label, '%'), [
+        'value' => $pct,
+        'tint'  => $tint,
+        'meta'  => [
+            'hl_in_cct'           => round($hlInCct, 1),
+            'total_cct_capacity_hl' => $totalCapacity,
+            'occupied_cct'        => $occupiedCct,
+            'active_cct'          => $activeCct,
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/** #15 — Jours d'inactivité CCT (moyenne des CCTs vides, depuis dernier rack-out) */
+function kpi_tanks_cct_idle_days(string $label, PDO $pdo): array
+{
+    $cacheKey = 'tanks_cct_idle_now';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $state = kpi_tanks_get_sim_state($pdo);
+
+    // Identify empty CCTs from the sim.
+    $activeCcts = (array)$pdo->query(
+        "SELECT number FROM ref_cct WHERE status='active' ORDER BY number"
+    )->fetchAll(PDO::FETCH_COLUMN);
+
+    $emptyCcts = [];
+    foreach ($activeCcts as $n) {
+        $n = (int)$n;
+        if (!isset($state['cct'][$n]) || $state['cct'][$n] === null) {
+            $emptyCcts[] = $n;
+        }
+    }
+
+    if (empty($emptyCcts)) {
+        $result = array_merge(kpi_empty_result($label, 'jours'), [
+            'value' => 0.0,
+            'tint'  => 'green',
+            'meta'  => ['idle_unknown' => 0, 'empty_ccts' => 0, 'note' => 'Tous les CCTs actifs sont occupés'],
+        ]);
+        return kpi_cache_set($cacheKey, $result);
+    }
+
+    // For each empty CCT, find the MAX(event_date) of its most recent rack-out from bd_racking_v2.
+    // Source CCT = bd_brewing_brewday_v2.cct (INT), joined on (beer, batch).
+    // IMPORTANT: use _v2 tables only.
+    $placeholders = implode(',', array_fill(0, count($emptyCcts), '?'));
+    $stmt = $pdo->prepare("
+        SELECT b.cct AS cct_number,
+               MAX(r.event_date) AS last_rack_out
+          FROM bd_racking_v2 r
+          JOIN bd_brewing_brewday_v2 b
+            ON COALESCE(NULLIF(r.neb_beer,''), r.contract_beer)   = b.beer
+           AND COALESCE(NULLIF(r.neb_batch,''), r.contract_batch) = b.batch
+         WHERE b.cct IN ($placeholders)
+           AND r.event_date IS NOT NULL
+           AND (r.is_tombstoned IS NULL OR r.is_tombstoned = 0)
+         GROUP BY b.cct
+    ");
+    $stmt->execute($emptyCcts);
+    $rackOuts = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $rackOutMap = [];
+    foreach ($rackOuts as $row) {
+        $rackOutMap[(int)$row['cct_number']] = $row['last_rack_out'];
+    }
+
+    $breakdown   = [];
+    $idleDays    = [];
+    $idleUnknown = 0;
+    $today       = new DateTimeImmutable('today');
+
+    foreach ($emptyCcts as $n) {
+        if (!isset($rackOutMap[$n])) {
+            $idleUnknown++;
+            continue;
+        }
+        $lastRack = new DateTimeImmutable($rackOutMap[$n]);
+        $days     = (int)$lastRack->diff($today)->days;
+        $idleDays[] = $days;
+        $breakdown[] = ['key' => 'CCT' . $n, 'value' => $days];
+    }
+
+    if (empty($idleDays)) {
+        $meanIdle = null;
+        $maxIdle  = null;
+    } else {
+        $meanIdle = round(array_sum($idleDays) / count($idleDays), 1);
+        $maxIdle  = max($idleDays);
+    }
+
+    $tint = ($maxIdle !== null && $maxIdle > 30) ? 'amber' : 'neutral';
+
+    $result = array_merge(kpi_empty_result($label, 'jours'), [
+        'value'     => $meanIdle,
+        'tint'      => $tint,
+        'breakdown' => $breakdown,
+        'meta'      => [
+            'idle_unknown' => $idleUnknown,
+            'max_idle_days' => $maxIdle,
+            'empty_ccts'   => count($emptyCcts),
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/** #17 — Volume total en cuve (HL physique, CCT+BBT) */
+function kpi_tanks_hl_in_tank(string $label, PDO $pdo): array
+{
+    $cacheKey = 'tanks_hl_in_tank_now';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $state = kpi_tanks_get_sim_state($pdo);
+
+    $hlCct = 0.0;
+    foreach ($state['cct'] as $s) {
+        if ($s !== null) $hlCct += (float)($s['volume_hl'] ?? 0);
+    }
+    $hlBbt = 0.0;
+    foreach ($state['bbt'] as $s) {
+        if ($s !== null) $hlBbt += (float)($s['volume_hl'] ?? 0);
+    }
+    $total = round($hlCct + $hlBbt, 1);
+
+    $occupiedTotal = 0;
+    foreach ($state['cct'] as $s) { if ($s !== null) $occupiedTotal++; }
+    foreach ($state['bbt'] as $s) { if ($s !== null) $occupiedTotal++; }
+
+    $result = array_merge(kpi_empty_result($label, 'HL'), [
+        'value'     => $total,
+        'tint'      => 'neutral',
+        'breakdown' => [
+            ['key' => 'cct', 'value' => round($hlCct, 1)],
+            ['key' => 'bbt', 'value' => round($hlBbt, 1)],
+        ],
+        'meta'      => [
+            'cct_hl'         => round($hlCct, 1),
+            'bbt_hl'         => round($hlBbt, 1),
+            'occupied_total' => $occupiedTotal,
         ],
     ]);
 

@@ -179,7 +179,7 @@ function buildBarChart(container, points, series, opts) {
     const xBase = padL + mi * monthW + gap;
     const isFuture = partial && illustrative && mi >= points.length - (12 - (opts.lastDataMonth || 11));
 
-    const axisLabel = (points.length === 12) ? KPC_MONTHS_FR[mi] : ('Q' + (mi + 1));
+    const axisLabel = (opts.xLabels && opts.xLabels[mi] !== undefined) ? opts.xLabels[mi] : ((points.length === 12) ? KPC_MONTHS_FR[mi] : ('Q' + (mi + 1)));
     const lbl = svgEl('text', {
       x: padL + mi * monthW + monthW / 2,
       y: H - padB + 14,
@@ -213,7 +213,7 @@ function buildBarChart(container, points, series, opts) {
         fill: s.color, opacity: isFuture ? 0.3 : 1, rx: 2,
       });
       const totalRow = series.reduce(function(acc, _, ii) { return acc + (m[ii] || 0); }, 0);
-      const axisLabelTip = (points.length === 12) ? KPC_MONTHS_FR[mi].toUpperCase() : ('Q' + (mi + 1));
+      const axisLabelTip = (opts.xLabels && opts.xLabels[mi] !== undefined) ? opts.xLabels[mi].toUpperCase() : ((points.length === 12) ? KPC_MONTHS_FR[mi].toUpperCase() : ('Q' + (mi + 1)));
       rect.addEventListener('mouseenter', function(e) {
         showLocalTip(e, '<strong>' + axisLabelTip + '</strong> · ' + escHtml(s.labelFn()) + ' : <strong>' + fmt(val) + ' ' + escHtml(yUnit) + '</strong>');
       });
@@ -500,11 +500,13 @@ function renderKpiBar(container, tracker, result, tCls) {
   const C = kpcColors();
   const points = series.map(function(p) { return [p.value || 0]; });
   const label = result.label || tracker.label;
+  const xLabels = series.every(function(p) { return p.period; }) ? series.map(function(p) { return p.period; }) : undefined;
   buildBarChart(chartDiv, points, [
     { color: C.core, labelFn: function() { return label; } },
   ], {
     height: 140,
     yUnit: result.unit || '',
+    xLabels: xLabels,
   });
 }
 
