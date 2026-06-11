@@ -312,6 +312,13 @@ if ($module === 'cop-grid') {
             ],
         ];
 
+        /* ── D) N-1: same month/YTD window but in prior year ───────────────────── */
+        $n1MonthKey = fin_prior_year_month($month);
+        $n1YtdMonths = array_map('fin_prior_year_month', array_values($ytdMonthsOp));
+
+        $n1Month = fin_cop_operational_month($feedByMonth, $n1MonthKey);
+        $n1Ytd   = fin_cop_operational_ytd($feedByMonth, $n1YtdMonths);
+
         $payload = [
             'ok'           => true,
             'month'        => $month,
@@ -320,6 +327,10 @@ if ($module === 'cop-grid') {
             'operational'  => [
                 'month' => $opMonth,
                 'ytd'   => $opYtd,
+            ],
+            'n1'           => [
+                'month' => $n1Month,
+                'ytd'   => $n1Ytd,
             ],
             'booked'       => [
                 'month' => $booked,
@@ -430,6 +441,13 @@ try {
         ],
     ];
 
+    /* ── D) N-1: same month/YTD window but in prior year ───────────────────── */
+    $n1MonthKey  = fin_prior_year_month($month);
+    $n1YtdMonths = array_map('fin_prior_year_month', array_values($ytdMonthsOp));
+
+    $n1Month = fin_cogs_operational_month($salesByMonth, $n1MonthKey, []);
+    $n1Ytd   = fin_cogs_operational_ytd($salesByMonth, $n1YtdMonths, []);
+
     $payload = [
         'ok'           => true,
         'month'        => $month,
@@ -438,6 +456,10 @@ try {
         'operational'  => [
             'month' => $opMonth,
             'ytd'   => $opYtd,
+        ],
+        'n1'           => [
+            'month' => $n1Month,
+            'ytd'   => $n1Ytd,
         ],
         'booked'       => [
             'month' => $booked,
@@ -456,6 +478,16 @@ exit;
 /* ══════════════════════════════════════════════════════════════════════════════
    HELPER FUNCTIONS — all top-level (never nested)
 ══════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Return the prior-year equivalent of a YYYY-MM month key.
+ * e.g. '2026-04' → '2025-04'. Pure string arithmetic, no DateTime needed.
+ */
+function fin_prior_year_month(string $monthKey): string
+{
+    [$year, $mo] = explode('-', $monthKey, 2);
+    return ((int)$year - 1) . '-' . $mo;
+}
 
 /**
  * Convert 'Période : 01.MM.YY..DD.MM.YY' to 'YYYY-MM' or null if unparseable.

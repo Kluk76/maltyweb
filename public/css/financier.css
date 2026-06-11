@@ -820,6 +820,32 @@ body.financier .main {
   color: var(--hop-deep);
 }
 
+/* N-1 column (prior-year operational) */
+.fin-grid-th--n1 {
+  color: var(--ink-mute);
+}
+
+.fin-grid-td--n1 {
+  color: var(--ink-mute);
+}
+
+/* Vs N-1: over N-1 (actual > N-1) = ember; under N-1 = hop-deep */
+.fin-grid-th--vs-n1 {
+  color: var(--ink-mute);
+}
+
+.fin-grid-td--vs-n1 {
+  color: var(--ink-mute);
+}
+
+.fin-grid-td--vs-n1.fin-grid-td--vs-n1-over {
+  color: var(--ember);
+}
+
+.fin-grid-td--vs-n1.fin-grid-td--vs-n1-under {
+  color: var(--hop-deep);
+}
+
 /* ── SR-only helper ──────────────────────────────────────────────────────────*/
 .sr-only {
   position: absolute;
