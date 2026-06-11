@@ -11485,7 +11485,8 @@ function kpi_tanks_cct_idle_days(string $label, PDO $pdo): array
     }
 
     // For each empty CCT, find the MAX(event_date) of its most recent rack-out from bd_racking_v2.
-    // Source CCT = bd_brewing_brewday_v2.cct (INT), joined on (beer, batch).
+    // Source CCT = bd_brewing_brewday_v2.cct (INT), joined on (recipe_id_fk, batch) — names
+    // fragment across SKU codes and vintages; never key on beer name.
     // IMPORTANT: use _v2 tables only.
     $placeholders = implode(',', array_fill(0, count($emptyCcts), '?'));
     $stmt = $pdo->prepare("
@@ -11493,8 +11494,8 @@ function kpi_tanks_cct_idle_days(string $label, PDO $pdo): array
                MAX(r.event_date) AS last_rack_out
           FROM bd_racking_v2 r
           JOIN bd_brewing_brewday_v2 b
-            ON COALESCE(NULLIF(r.neb_beer,''), r.contract_beer)   = b.beer
-           AND COALESCE(NULLIF(r.neb_batch,''), r.contract_batch) = b.batch
+            ON COALESCE(r.neb_recipe_id_fk, r.contract_recipe_id_fk) = b.recipe_id_fk
+           AND COALESCE(NULLIF(r.neb_batch,''), r.contract_batch)    = b.batch
          WHERE b.cct IN ($placeholders)
            AND r.event_date IS NOT NULL
            AND (r.is_tombstoned IS NULL OR r.is_tombstoned = 0)
