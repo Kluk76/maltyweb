@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
-# bootstrap.sh — run by the NEW developer (Louis) on HIS OWN machine,
-# from inside his local maltyweb clone.
+# bootstrap.sh — run by the NEW developer (Louis) on HIS OWN machine, from inside
+# his local maltyweb clone.
 #
-# Installs skills + agents into ~/.claude, then rewrites all /home/kluk paths
-# to point at the new dev's home + projects directory.
+# Installs skills + agent DEFINITIONS into ~/.claude (with /home/kluk paths
+# rewritten to his home), and SYMLINKS the PM memory to the repo copy so his PM
+# reads/writes the SAME git-synced knowledge base as the keeper. The PM memory is
+# NOT copied — it lives in the repo and syncs via `git pull` / `git push`.
 #
 # Assumptions:
-#   - maltyweb and maltytask are SIBLING clones under the same parent directory.
-#     (e.g. /home/louis/projects/maltyweb  and  /home/louis/projects/maltytask)
-#   - Override the projects parent via: MALTYTASK_PARENT=/custom/path ./bootstrap.sh
+#   - maltyweb and maltytask are SIBLING clones under one parent directory
+#     (e.g. ~/projects/maltyweb and ~/projects/maltytask).
+#   - Override the projects parent with: MALTYTASK_PARENT=/path ./bootstrap.sh
 #
 # Safe to re-run after a git pull that touched claude-brain/.
 set -euo pipefail
@@ -17,7 +19,6 @@ BRAIN="$(cd "$(dirname "$0")" && pwd)"
 DEST="$HOME/.claude"
 REPO_ROOT="$(cd "$BRAIN/.." && pwd)"
 
-# Projects parent — sibling-clone assumption; override with MALTYTASK_PARENT env var.
 if [ -n "${MALTYTASK_PARENT:-}" ]; then
     PROJECTS_PARENT="$MALTYTASK_PARENT"
 else
@@ -25,58 +26,52 @@ else
 fi
 
 echo "=== claude-brain bootstrap ==="
-echo "  Brain source      : $BRAIN"
-echo "  Install target    : $DEST"
-echo "  Repo root         : $REPO_ROOT"
-echo "  Projects parent   : $PROJECTS_PARENT  (maltyweb + maltytask live here)"
-echo ""
+echo "  Brain source    : $BRAIN"
+echo "  Install target  : $DEST"
+echo "  Projects parent : $PROJECTS_PARENT  (maltyweb + maltytask live here)"
 echo "  ASSUMPTION: maltytask is at $PROJECTS_PARENT/maltytask"
-echo "  If that is wrong, re-run with: MALTYTASK_PARENT=/correct/path ./bootstrap.sh"
+echo "  (wrong? re-run with MALTYTASK_PARENT=/correct/path ./bootstrap.sh)"
 echo ""
 
-# ── Create target dirs ────────────────────────────────────────────────────────
 mkdir -p "$DEST/skills" "$DEST/agents"
 
-# ── Copy skills ───────────────────────────────────────────────────────────────
+# ── Skills ────────────────────────────────────────────────────────────────────
 echo "Installing skills..."
 if [ -d "$BRAIN/skills" ] && [ -n "$(ls -A "$BRAIN/skills" 2>/dev/null)" ]; then
     cp -a "$BRAIN/skills/." "$DEST/skills/"
-    n_skills=$(ls "$BRAIN/skills/" | wc -l)
-    echo "  Copied $n_skills skill(s) -> $DEST/skills/"
+    echo "  Copied $(ls "$BRAIN/skills" | wc -l) skill(s)."
 else
-    echo "  WARN: $BRAIN/skills/ is empty or missing — nothing to copy. Run publish.sh first."
-    n_skills=0
+    echo "  WARN: $BRAIN/skills empty — run publish.sh on the keeper machine first."
 fi
 
-# ── Copy agents ───────────────────────────────────────────────────────────────
-echo "Installing agents..."
-if [ -d "$BRAIN/agents" ] && [ -n "$(ls -A "$BRAIN/agents" 2>/dev/null)" ]; then
-    cp -a "$BRAIN/agents/." "$DEST/agents/"
-    n_agents=$(find "$DEST/agents" -maxdepth 1 -type f -name "*.md" | wc -l)
-    echo "  Copied agents -> $DEST/agents/  ($n_agents top-level .md files)"
-else
-    echo "  WARN: $BRAIN/agents/ is empty or missing — nothing to copy. Run publish.sh first."
-    n_agents=0
-fi
+# ── Agent DEFINITIONS (real files only — never the memory) ───────────────────
+echo "Installing agent definitions..."
+for f in maltyweb-pm.md maltyweb-tour-steward.md; do
+    if [ -f "$BRAIN/agents/$f" ]; then cp -a "$BRAIN/agents/$f" "$DEST/agents/$f"; echo "  [OK] $f"; fi
+done
 
-# ── Path rewrite (on the COPIES in $DEST only — never the repo) ───────────────
-echo ""
+# ── PM MEMORY: SYMLINK to the repo copy (single git-synced brain) ────────────
+# The PM knowledge base is canonical in the repo. Point ~/.claude at it via
+# symlink so your PM reads AND writes the shared, git-synced memory.
+echo "Symlinking PM memory to the git-synced repo copy..."
+rm -rf "$DEST/agents/maltyweb-pm-memory" "$DEST/agents/maltyweb-pm-memory.md"
+ln -s "$BRAIN/agents/maltyweb-pm-memory.md" "$DEST/agents/maltyweb-pm-memory.md"
+ln -s "$BRAIN/agents/maltyweb-pm-memory"    "$DEST/agents/maltyweb-pm-memory"
+echo "  [OK] ~/.claude/agents/maltyweb-pm-memory{.md,/} -> $BRAIN/agents/maltyweb-pm-memory*"
+
+# ── Path rewrite — installed DEFS + skills only ──────────────────────────────
+# find (no -L) does NOT follow the memory symlinks, so the repo's shared memory
+# is never rewritten with this machine's paths. Only real installed files change.
 echo "Rewriting /home/kluk paths in installed files..."
-
-# Collect all text files installed into $DEST/skills and $DEST/agents
-mapfile -t FILES_TO_REWRITE < <(
+mapfile -t FILES < <(
     find "$DEST/skills" "$DEST/agents" -type f \
         \( -name "*.md" -o -name "*.txt" -o -name "*.json" -o -name "*.sh" -o -name "*.php" -o -name "*.ts" -o -name "*.js" \) \
         2>/dev/null
 )
-
 rewritten=0
-for f in "${FILES_TO_REWRITE[@]}"; do
+for f in "${FILES[@]}"; do
     if grep -q "/home/kluk" "$f" 2>/dev/null; then
-        # ORDER MATTERS: longest-prefix first to prevent double-substitution.
-        # 1. Repo locations: /home/kluk/projects → $PROJECTS_PARENT
-        # 2. Everything else: /home/kluk → $HOME
-        # Use | as sed delimiter (HOME/PROJECTS_PARENT won't contain |).
+        # ORDER MATTERS: longest prefix first.
         sed -i \
             -e "s|/home/kluk/projects|${PROJECTS_PARENT}|g" \
             -e "s|/home/kluk|${HOME}|g" \
@@ -86,39 +81,23 @@ for f in "${FILES_TO_REWRITE[@]}"; do
 done
 echo "  Rewrote paths in $rewritten file(s)."
 
-# ── Verify: flag any remaining /home/kluk occurrences ────────────────────────
-echo ""
-echo "Checking for leftover /home/kluk references..."
-leftover_files=()
-for f in "${FILES_TO_REWRITE[@]}"; do
-    if grep -q "/home/kluk" "$f" 2>/dev/null; then
-        leftover_files+=("$f")
-    fi
-done
-
-if [ ${#leftover_files[@]} -gt 0 ]; then
-    echo "  WARN: the following installed files still contain /home/kluk — manual review needed:"
-    for f in "${leftover_files[@]}"; do
-        echo "    $f"
-        grep -n "/home/kluk" "$f" | head -3 | sed 's/^/      /'
-    done
+# leftover check
+leftover=$(grep -rl "/home/kluk" "$DEST/skills" "$DEST/agents" 2>/dev/null || true)
+if [ -n "$leftover" ]; then
+    echo "  WARN: residual /home/kluk references remain — review:"; echo "$leftover" | sed 's/^/    /'
 else
-    echo "  OK — no /home/kluk references remain in installed files."
+    echo "  OK — no /home/kluk references remain."
 fi
 
-# ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
-echo "=== Installation complete ==="
-echo "  Skills installed : $n_skills"
-echo "  Agents installed : $n_agents  (+ maltyweb-pm-memory/ dir)"
+echo "=== Done — restart Claude Code to load the skills + agents. ==="
 echo ""
-echo "  Restart Claude Code to pick up the new skills and agents."
+echo "Your PM shares ONE git-synced knowledge base with the team:"
+echo "  * git pull BEFORE consulting PM (get the latest build-state)"
+echo "  * after PM updates its memory, the changed files appear under"
+echo "    claude-brain/agents/maltyweb-pm-memory* — commit + push them so the"
+echo "    keeper's PM stays in sync."
 echo ""
-echo "  NOTE: The maltyweb-pm agent's knowledge base contains references to the"
-echo "  primary dev's personal auto-recall memory (a path like:"
-echo "  ~/.claude/projects/-home-kluk-projects-maltytask/memory/)"
-echo "  That path will not exist on your machine — this is expected and harmless."
-echo "  The PM agent treats those memory files as optional context."
-echo ""
-echo "  IMPORTANT: This snapshot can lag the primary dev's live PM knowledge."
-echo "  Always 'git pull' before starting a build to get the latest snapshot."
+echo "NOTE: the PM def references the primary dev's personal auto-recall memory"
+echo "(~/.claude/projects/-home-...-maltytask/memory/) which won't exist on your"
+echo "machine — expected and harmless; PM treats those as optional."

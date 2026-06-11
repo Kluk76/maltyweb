@@ -1,97 +1,50 @@
 #!/usr/bin/env bash
-# publish.sh — run by the PRIMARY developer (Kouros) to refresh the claude-brain
-# snapshot from his canonical ~/.claude into this repo folder.
+# publish.sh — sync SKILLS + AGENT DEFINITIONS from the keeper's ~/.claude into
+# this repo folder. Run by the keeper (Kouros) when a skill or an agent
+# definition changes. READ-ONLY on ~/.claude (copy-out only).
 #
-# Deliberately EXCLUDED:
-#   - skill-creator        (PM-authoring tooling, not a build skill)
-#   - parser-coder         (invoice parser scope; outside Louis's remit as sales dev)
-#   - parser-coder-workspace
-#   - *-workspace dirs     (scratch space, not distributable)
-#
-# Never modifies ~/.claude. Copy-out only.
+# PM MEMORY is deliberately NOT handled here. The PM knowledge base lives
+# canonically IN THIS REPO (claude-brain/agents/maltyweb-pm-memory{.md,/}) and is
+# edited in place — the keeper's ~/.claude path AND the new dev's are SYMLINKS to
+# it. It syncs between developers via `git pull` / `git push`, never via this
+# script. See README.md. (Copying it here would copy a symlink onto its own
+# target — hence the explicit exclusion + symlink guard below.)
 set -euo pipefail
 
 BRAIN="$(cd "$(dirname "$0")" && pwd)"
 SRC="$HOME/.claude"
 
-echo "=== claude-brain publish ==="
+# Skills (excluded: skill-creator = PM-authoring only; parser-coder = out of sales
+# scope; *-workspace = scratch).
+SKILLS_TO_COPY=(coder sql ui webapp-testing memory-hygiene skill-vetting xlsx)
+
+# Agent DEFINITIONS only — NEVER the memory (see header).
+AGENT_DEFS=(maltyweb-pm.md maltyweb-tour-steward.md)
+
+echo "=== claude-brain publish (skills + agent DEFS only; memory syncs via git) ==="
 echo "  Source : $SRC"
 echo "  Target : $BRAIN"
 echo ""
 
-# ── Skills ────────────────────────────────────────────────────────────────────
-SKILLS_TO_COPY=(
-    coder
-    sql
-    ui
-    webapp-testing
-    memory-hygiene
-    skill-vetting
-    xlsx
-)
+mkdir -p "$BRAIN/skills" "$BRAIN/agents"
 
-mkdir -p "$BRAIN/skills"
-
-echo "Copying skills..."
+echo "Skills:"
 for skill in "${SKILLS_TO_COPY[@]}"; do
-    src_path="$SRC/skills/$skill"
-    dst_path="$BRAIN/skills/$skill"
-    if [ ! -d "$src_path" ]; then
-        echo "  WARN: skill '$skill' not found at $src_path — skipping"
-        continue
-    fi
-    rm -rf "$dst_path"
-    cp -a "$src_path" "$dst_path"
-    size=$(du -sh "$dst_path" | cut -f1)
-    echo "  [OK] $skill  ($size)"
+    src="$SRC/skills/$skill"; dst="$BRAIN/skills/$skill"
+    if [ ! -d "$src" ]; then echo "  WARN: skill '$skill' not found at $src — skipping"; continue; fi
+    rm -rf "$dst"; cp -a "$src" "$dst"
+    echo "  [OK] $skill  ($(du -sh "$dst" | cut -f1))"
 done
 
-# ── Agents ────────────────────────────────────────────────────────────────────
-AGENT_FILES=(
-    maltyweb-pm.md
-    maltyweb-tour-steward.md
-    maltyweb-pm-memory.md
-)
-
-mkdir -p "$BRAIN/agents"
-
-echo ""
-echo "Copying agent files..."
-for f in "${AGENT_FILES[@]}"; do
-    src_path="$SRC/agents/$f"
-    dst_path="$BRAIN/agents/$f"
-    if [ ! -f "$src_path" ]; then
-        echo "  WARN: agent file '$f' not found at $src_path — skipping"
-        continue
-    fi
-    cp -a "$src_path" "$dst_path"
-    size=$(du -sh "$dst_path" | cut -f1)
-    echo "  [OK] $f  ($size)"
+echo "Agent definitions:"
+for f in "${AGENT_DEFS[@]}"; do
+    src="$SRC/agents/$f"; dst="$BRAIN/agents/$f"
+    if [ ! -f "$src" ]; then echo "  WARN: agent def '$f' not found at $src — skipping"; continue; fi
+    if [ -L "$src" ]; then echo "  WARN: '$f' is a symlink — skipping (defs must be real files)"; continue; fi
+    cp -a "$src" "$dst"
+    echo "  [OK] $f"
 done
 
-# maltyweb-pm-memory/ directory (recursive)
-PM_MEM_DIR="$SRC/agents/maltyweb-pm-memory"
-PM_MEM_DST="$BRAIN/agents/maltyweb-pm-memory"
-if [ -d "$PM_MEM_DIR" ]; then
-    rm -rf "$PM_MEM_DST"
-    cp -a "$PM_MEM_DIR" "$PM_MEM_DST"
-    n_files=$(find "$PM_MEM_DST" -type f | wc -l)
-    size=$(du -sh "$PM_MEM_DST" | cut -f1)
-    echo "  [OK] maltyweb-pm-memory/  ($n_files files, $size)"
-else
-    echo "  WARN: maltyweb-pm-memory/ directory not found at $PM_MEM_DIR — skipping"
-fi
-
-# ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
-n_skills=$(ls "$BRAIN/skills/" 2>/dev/null | wc -l)
-n_agents=$(find "$BRAIN/agents" -maxdepth 1 -type f | wc -l)
-total_size=$(du -sh "$BRAIN" | cut -f1)
-
-echo "=== Done ==="
-echo "  Skills copied  : $n_skills"
-echo "  Agent files    : $n_agents  (+ maltyweb-pm-memory/ dir)"
-echo "  Total size     : $total_size"
-echo ""
-echo "Next steps: review the snapshot, then commit + push."
-echo "Tell Louis: git pull + re-run bootstrap.sh inside the maltyweb clone."
+echo "Done. PM MEMORY was NOT touched (it lives in this repo and syncs via git)."
+echo "Next: review, commit, push. Louis then: git pull + ./claude-brain/bootstrap.sh"

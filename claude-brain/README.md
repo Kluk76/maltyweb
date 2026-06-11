@@ -2,46 +2,75 @@
 
 ## What this is
 
-A **published snapshot** of the team's Claude Code skills and agents, distributed via the maltyweb git repo so the second developer (Louis) can bootstrap his own `~/.claude/` with the same tools Kouros uses.
+The team's Claude Code **skills + agents**, distributed via the maltyweb git repo
+so every developer's Claude is in lockstep. The PM knowledge base lives here
+**canonically** and is shared live between developers through git.
 
 Contents:
 
-- **`skills/`** — Seven bespoke skills: `coder`, `sql`, `ui`, `webapp-testing`, `memory-hygiene`, `skill-vetting`, `xlsx`. These encode the team's coding discipline, anti-pattern catalog, MySQL conventions, UI patterns, and verification recipes.
-- **`agents/`** — The `maltyweb-pm` and `maltyweb-tour-steward` agents, plus the PM's full knowledge base (`maltyweb-pm-memory.md` + `maltyweb-pm-memory/`). The PM agent is the keeper of the canonical SQL build schema, the Le Zeppelin derivation tree, the UI build sequence, and the project roadmap.
+- **`skills/`** — Seven bespoke skills: `coder`, `sql`, `ui`, `webapp-testing`,
+  `memory-hygiene`, `skill-vetting`, `xlsx`. The team's coding discipline,
+  anti-pattern catalog, MySQL conventions, UI patterns, verification recipes.
+- **`agents/`** — the `maltyweb-pm` + `maltyweb-tour-steward` agent definitions,
+  **and the canonical PM knowledge base** (`maltyweb-pm-memory.md` +
+  `maltyweb-pm-memory/`): the SQL build schema, the Le Zeppelin derivation tree,
+  the UI build sequence, the project roadmap, and the live build-state.
 
-Skills deliberately **not included** here:
-- `skill-creator` — PM-authoring tooling; only Kouros maintains the skill library.
-- `parser-coder` — invoice parser scope; outside the sales-dev remit.
+Skills deliberately **not** included: `skill-creator` (PM-authoring tooling only)
+and `parser-coder` (invoice-parser scope; outside the sales-dev remit).
 
-## The model
+## The model — one git-synced brain (NOT a one-way snapshot)
 
-**Kouros is the single live keeper.** His `~/.claude/` is the source of truth. This folder is a published snapshot — it is NOT a live two-way sync.
+The **PM knowledge base is canonical in this repo** and is edited *in place*. On
+every developer's machine, `~/.claude/agents/maltyweb-pm-memory{.md,/}` is a
+**symlink** to this folder's copy — so each developer's PM reads AND writes the
+same files, and **`git pull` / `git push` is the sync layer**. When one PM records
+build-state, the other sees it on the next pull. PM genuinely follows everyone's work.
 
-Build state from Louis flows back **through** Kouros: Louis tells Kouros what happened in a session → Kouros records it in PM memory → Kouros re-publishes. This is intentional: PM's knowledge base is carefully curated, not crowd-sourced.
+- **Skills + agent definitions** are *copied* into `~/.claude` by `bootstrap.sh`
+  (they change rarely). Refresh them with `publish.sh` + commit when they change.
+- **PM memory** is *symlinked*, never copied — it is the single shared brain.
 
-## Primary dev workflow (Kouros)
+## Every developer's discipline (both of you)
 
-After a build session advances PM memory (a migration lands, a page ships, a convention is decided):
+- **`git pull` BEFORE consulting PM** — so you load the latest build-state.
+- **After PM updates its memory**, the changed files show up under
+  `claude-brain/agents/maltyweb-pm-memory*`. **Commit + push them** so the other
+  PM stays in sync:
+  ```bash
+  git add claude-brain/agents/maltyweb-pm-memory   # the changed memory files
+  git commit -m "chore(pm-memory): <what changed>"
+  git push
+  ```
+- Concurrent edits to the same memory file can merge-conflict — topic files keep
+  most changes isolated; resolve the index (`maltyweb-pm-memory.md`) by hand if needed.
+
+## Refreshing skills / agent defs (when they change) — `publish.sh`
+
+`publish.sh` copies the **skills + agent definitions** from the keeper's
+`~/.claude` into this folder. It does **NOT** touch the PM memory (that's
+git-synced, edited in place). Run it when a skill or an agent definition changes:
 
 ```bash
-./claude-brain/publish.sh      # snapshots ~/.claude skills + agents here
-# Review the diff (git diff claude-brain/)
-git add claude-brain/
-git commit -m "chore(claude-brain): refresh snapshot YYYY-MM-DD"
+./claude-brain/publish.sh
+git add claude-brain/skills claude-brain/agents/*.md
+git commit -m "chore(claude-brain): refresh skills/defs"
 git push
 ```
 
-## New dev workflow (Louis)
+## New-dev setup (once) — `bootstrap.sh`
 
 ```bash
-git pull                          # always pull before starting a build
-./claude-brain/bootstrap.sh       # installs into your ~/.claude/
+git pull
+./claude-brain/bootstrap.sh       # installs skills + agent defs into ~/.claude,
+                                  # and SYMLINKS the PM memory to this repo copy
 # Restart Claude Code
 ```
 
-Re-run `bootstrap.sh` after any pull that touched `claude-brain/`. It is idempotent.
+Re-run `bootstrap.sh` after any pull that touched `claude-brain/` (idempotent).
 
-**Assumption:** `maltyweb` and `maltytask` are sibling clones under the same parent directory (e.g. `/home/louis/projects/maltyweb` and `/home/louis/projects/maltytask`). If your layout differs, override:
+**Assumption:** `maltyweb` and `maltytask` are sibling clones under one parent
+(e.g. `~/projects/maltyweb` and `~/projects/maltytask`). If not, override:
 
 ```bash
 MALTYTASK_PARENT=/path/to/your/projects ./claude-brain/bootstrap.sh
@@ -49,12 +78,12 @@ MALTYTASK_PARENT=/path/to/your/projects ./claude-brain/bootstrap.sh
 
 ## Why it's not under `.claude/`
 
-A directory named `.claude/` inside the repo would be loaded automatically by Claude Code and would shadow (or fork) each developer's own user-level agents and skills. This folder is named `claude-brain/` so the install is **explicit**: Louis runs `bootstrap.sh` once and the skills land in his own `~/.claude/`, where they belong. Neither developer's live `~/.claude/` is touched without intention.
+A repo `.claude/` would auto-load and shadow/fork each developer's own user-level
+agents + skills. `claude-brain/` keeps install **explicit**: `bootstrap.sh`
+installs into your own `~/.claude/` (skills/defs copied, memory symlinked).
 
 ## Scope contract
 
-The new dev's Claude works within the scope defined in `docs/ONBOARDING-sales.md` (the canonical scope contract for the sales-dev role). The `maltyweb-pm` agent is the live source of truth for what to build and how — always consult it before starting any non-trivial build.
-
-## Snapshot lag
-
-The PM knowledge base can lag Kouros's live session by hours or days. Always `git pull` before a build to load the latest snapshot. If you're unsure whether the PM memory is current, ask Kouros to re-publish.
+The sales-dev's Claude works within `docs/ONBOARDING-sales.md` (the canonical
+scope contract). The `maltyweb-pm` agent is the live source of truth for what to
+build and how — consult it before any non-trivial build.
