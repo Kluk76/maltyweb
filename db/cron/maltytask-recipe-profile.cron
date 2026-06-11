@@ -1,25 +1,21 @@
 # /etc/cron.d/maltytask-recipe-profile
 #
-# Nightly recipe-profile rebuild: parses BrewingData ingredients then
-# refreshes the aggregated recipe_profile table in MySQL.
-# Step 2 only runs if step 1 succeeds (chained with &&).
+# Nightly recipe-profile rebuild: refreshes the aggregated ref_recipe_profile
+# table in MySQL from the v2 brewing/fermenting/racking/packaging tables.
 #
 # Source of truth: db/cron/maltytask-recipe-profile.cron in the maltyweb repo.
 # Deployed via bin/deploy.sh --apply (sudo install → /etc/cron.d/).
 #
-# NOTE: CRON IS DISABLED PENDING MANUAL SMOKE TEST.
-# Steps to enable after smoke test passes:
-#   1. ssh maltyweb
-#   2. Uncomment the active line below (remove the leading #)
-#   3. sudo cp /var/www/maltytask/db/cron/maltytask-recipe-profile.cron \
-#             /etc/cron.d/maltytask-recipe-profile
-#   OR redeploy via bin/deploy.sh --apply (which installs all cron/*.cron).
-#
-# Pre-flight checklist before enabling:
-#   - Smoke test passed: python3 scripts/python/parse_bd_ingredients.py --dry-run
-#   - Smoke test passed: python3 scripts/python/refresh_recipe_profile.py --dry-run
-#   - MySQL connection verified: SELECT 1 from pipeline succeeds
-#   - /var/log/maltytask/recipe-profile.log writable by maltytask user
+# 2026-06-11 — v1 decommission: DROPPED the former step 1
+# (parse_bd_ingredients.py --apply). That was the legacy v1 free-text parser
+# (reads v1 bd_brewing_ingredients/bd_fermenting → writes v1
+# bd_brewing_ingredients_parsed). refresh_recipe_profile.py was repointed to
+# read bd_brewing_ingredients_parsed_v2 (written by the maltyweb brewing form
+# on entry), so the v1 parser is obsolete — and the v1 writer (bsf-ingest) is
+# now disabled, so its v1 source tables are frozen. Running it would touch
+# frozen v1 tables for no benefit. Cron ENABLED; smoke-passed 2026-06-11
+# (61 recipes, 122 profile rows, 0.8s, no errors).
+# NOTE: refresh_recipe_profile.py has no --dry-run flag — omit --apply to preview.
 #
 # Timing: nightly at 03:00 UTC is appropriate — BrewingData rows are
 # entered during the day; overnight rebuild keeps recipe profiles current
@@ -36,4 +32,4 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # m   h  dom mon dow  user        command
 
-0    3   *   *   *   maltytask   cd /var/www/maltytask && /var/www/maltytask/.venv/bin/python3 scripts/python/parse_bd_ingredients.py --apply && /var/www/maltytask/.venv/bin/python3 scripts/python/refresh_recipe_profile.py --apply >> /var/log/maltytask/recipe-profile.log 2>&1
+0    3   *   *   *   maltytask   cd /var/www/maltytask && /var/www/maltytask/.venv/bin/python3 scripts/python/refresh_recipe_profile.py --apply >> /var/log/maltytask/recipe-profile.log 2>&1
