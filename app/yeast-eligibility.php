@@ -236,3 +236,90 @@ function yeast_eligibility_select_expressions(): array
         . " END AS temp_source",
     ];
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   OBSERVED-YEAST STRAIN RESOLUTION  (brewday raw observed → clean display name)
+   ═══════════════════════════════════════════════════════════════════════════
+
+   Background: on the OLD inputting forms the operator could pick the literal
+   "New Yeast" option in bd_brewing_brewday_v2.yeast and write the ACTUAL strain
+   in the sibling new_yeast column. The canonical observed strain is therefore:
+
+       IF(yeast = 'New Yeast', new_yeast, yeast)
+
+   Both columns are RAW observed data — never backfilled/overwritten. The strain
+   is derived at read time only. The tank boards (CCT in tanks.php, BBT in
+   packaging.php) both consume these helpers — no inline copies anywhere. */
+
+/**
+ * SQL fragment for the raw observed strain string off a brewday table alias.
+ *
+ *   IF(<alias>.yeast = 'New Yeast', <alias>.new_yeast, <alias>.yeast)
+ *
+ * Drop into a SELECT over bd_brewing_brewday_v2. The alias defaults to 'b';
+ * pass the actual alias the calling query uses for the brewday table.
+ *
+ * The alias is whitelisted to [A-Za-z0-9_] so it can never carry an injection.
+ */
+function yeast_observed_strain_expr(string $alias = 'b'): string
+{
+    if (!preg_match('/^[A-Za-z0-9_]+$/', $alias)) {
+        throw new InvalidArgumentException("Invalid SQL alias: {$alias}");
+    }
+    return "IF({$alias}.yeast = 'New Yeast', {$alias}.new_yeast, {$alias}.yeast)";
+}
+
+/**
+ * Resolve a raw observed (yeast, new_yeast) pair to a clean display strain name.
+ *
+ * Step 1 — coalesce: strain = (yeast === 'New Yeast') ? new_yeast : yeast
+ * Step 2 — resolve the coalesced string to a canonical display name, precedence:
+ *   (a) exact case-insensitive match on ref_yeast_strains.name        → resolved
+ *   (b) case-insensitive match in ref_yeast_strain_aliases.alias      → resolved
+ *   (c) no match                                                       → raw, unresolved
+ *
+ * NEVER invents a strain. An unresolved value is returned verbatim with
+ * resolved=false — callers render it faithfully (no guessing).
+ *
+ * Returns ['strain' => string|null, 'resolved' => bool]. A wholly empty/NULL
+ * input returns ['strain' => null, 'resolved' => false].
+ */
+function resolve_observed_yeast_strain(PDO $pdo, ?string $yeast, ?string $newYeast): array
+{
+    $yeast    = $yeast    !== null ? trim($yeast)    : '';
+    $newYeast = $newYeast !== null ? trim($newYeast) : '';
+
+    // Step 1 — coalesce the raw observed strain.
+    $raw = (strcasecmp($yeast, 'New Yeast') === 0) ? $newYeast : $yeast;
+
+    if ($raw === '') {
+        return ['strain' => null, 'resolved' => false];
+    }
+
+    // Step 2a — exact case-insensitive match on a canonical strain name.
+    $stmt = $pdo->prepare(
+        'SELECT name FROM ref_yeast_strains WHERE LOWER(name) = LOWER(?) LIMIT 1'
+    );
+    $stmt->execute([$raw]);
+    $name = $stmt->fetchColumn();
+    if ($name !== false) {
+        return ['strain' => (string) $name, 'resolved' => true];
+    }
+
+    // Step 2b — operator-curated alias → canonical strain name.
+    $stmt = $pdo->prepare(
+        'SELECT ys.name
+           FROM ref_yeast_strain_aliases al
+           JOIN ref_yeast_strains ys ON ys.id = al.strain_id
+          WHERE LOWER(al.alias) = LOWER(?)
+          LIMIT 1'
+    );
+    $stmt->execute([$raw]);
+    $name = $stmt->fetchColumn();
+    if ($name !== false) {
+        return ['strain' => (string) $name, 'resolved' => true];
+    }
+
+    // Step 2c — no match: return the raw coalesced string, faithfully unresolved.
+    return ['strain' => $raw, 'resolved' => false];
+}

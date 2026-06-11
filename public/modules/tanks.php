@@ -99,6 +99,7 @@ function fmt_date_fr_tanks(string $dateStr, array $months): string {
 // -------------------------------------------------------------------
 require __DIR__ . "/../../app/tank-simulator.php";
 require_once __DIR__ . "/../../app/loss-metrics.php";
+require_once __DIR__ . "/../../app/yeast-eligibility.php";
 
 try {
     $pdo = maltytask_pdo();
@@ -334,15 +335,26 @@ try {
         $fermStartRow = $fermStartStmt->fetch() ?: [];
         $fermStartDT  = $fermStartRow['ferm_start_dt'] ?? null;
 
-        // Yeast + generation (from brewday)
+        // Yeast + generation (from brewday).
+        // Strain is the raw observed coalesce: IF(yeast='New Yeast', new_yeast, yeast)
+        // — old forms wrote the real strain into new_yeast when "New Yeast" was picked.
         $yeastStmt = $pdo->prepare(
-            'SELECT yeast AS bd_yeast, yeast_gen AS bd_yeast_gen
-             FROM bd_brewing_brewday_v2
-             WHERE beer = :beer AND batch = :batch
-             ORDER BY event_date DESC LIMIT 1'
+            'SELECT yeast AS bd_yeast_raw, new_yeast AS bd_new_yeast,
+                    ' . yeast_observed_strain_expr('b') . ' AS bd_yeast,
+                    yeast_gen AS bd_yeast_gen
+             FROM bd_brewing_brewday_v2 b
+             WHERE b.beer = :beer AND b.batch = :batch
+             ORDER BY b.event_date DESC LIMIT 1'
         );
         $yeastStmt->execute([':beer' => $rawBeer, ':batch' => $batch]);
         $yeastRow = $yeastStmt->fetch() ?: [];
+
+        // Resolve the coalesced strain to a clean display name (exact → alias → raw).
+        $yeastResolved = resolve_observed_yeast_strain(
+            $pdo,
+            $yeastRow['bd_yeast_raw']  ?? null,
+            $yeastRow['bd_new_yeast']  ?? null
+        );
 
         // Re-pitch count: how many times this batch's yeast has been used to pitch another batch
         $pitchKey     = $beerPrefix . ' ' . $batch;
@@ -415,7 +427,7 @@ try {
             'og'               => $ogRow['og']           ?? null,
             'last_ph'          => $phRow['ph']           ?? null,
             'last_ph_date'     => $phRow['ph_date']      ?? null,
-            'yeast'            => $yeastRow['bd_yeast']  ?? null,
+            'yeast'            => $yeastResolved['strain'] ?? null,
             'yeast_gen'        => $yeastRow['bd_yeast_gen'] ?? null,
             'repitch_count'    => $repitchCount,
         ];

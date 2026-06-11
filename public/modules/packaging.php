@@ -14,6 +14,7 @@ $crumbs        = ["Accueil", "Packaging", "BBT & Conditionnement"];
 require_once __DIR__ . "/../../app/svg-tanks.php";
 require_once __DIR__ . "/../../app/packaging-stats.php";
 require_once __DIR__ . "/../../app/cip-cadence.php";
+require_once __DIR__ . "/../../app/yeast-eligibility.php";
 
 // --- Date helpers (FR locale) ---
 $monthsFR = [
@@ -102,6 +103,18 @@ try {
     $bbtSimMap = $simState['bbt'];
 
     // Per-BBT supplemental: recipe short name + blend detail
+    // Observed yeast (strain + generation) — mirrors the CCT board query (tanks.php).
+    // Strain is the raw observed coalesce IF(yeast='New Yeast', new_yeast, yeast) — old
+    // forms wrote the real strain into new_yeast when "New Yeast" was picked — then resolved
+    // to a clean display name via resolve_observed_yeast_strain() below.
+    // Reads bd_brewing_brewday_v2 (v2 canonical); prepared once, executed per BBT (≤8, N+1 fine).
+    $bbtYeastStmt = $pdo->prepare(
+        'SELECT yeast AS bd_yeast_raw, new_yeast AS bd_new_yeast, yeast_gen AS bd_yeast_gen
+         FROM bd_brewing_brewday_v2 b
+         WHERE b.beer = :beer AND b.batch = :batch
+         ORDER BY b.event_date DESC LIMIT 1'
+    );
+
     $bbtOccMap = [];
     foreach ($bbtSimMap as $num => $simRow) {
         if ($simRow === null) continue;
@@ -128,6 +141,16 @@ try {
         $recipeStmt->execute([':beer' => $rawBeer, ':batch_v' => $batch, ':beer2' => $rawBeer]);
         $recipeRow = $recipeStmt->fetch() ?: [];
 
+        $bbtYeastStmt->execute([':beer' => $rawBeer, ':batch' => $batch]);
+        $yeastRow = $bbtYeastStmt->fetch() ?: [];
+
+        // Resolve the coalesced observed strain to a clean display name (exact → alias → raw).
+        $yeastResolved = resolve_observed_yeast_strain(
+            $pdo,
+            $yeastRow['bd_yeast_raw'] ?? null,
+            $yeastRow['bd_new_yeast'] ?? null
+        );
+
         $blendStr = '';
         if (!empty($simRow['blend_info']) && count($simRow['blend_info']) > 1) {
             $parts = array_map(
@@ -146,6 +169,8 @@ try {
             'recipe_short_name'=> $recipeRow['recipe_short_name'] ?? null,
             'client_name'      => $recipeRow['client_name'] ?? null,
             'blend_str'        => $blendStr,
+            'yeast'            => $yeastResolved['strain'] ?? null,
+            'yeast_gen'        => $yeastRow['bd_yeast_gen'] ?? null,
         ];
     }
 
@@ -446,6 +471,16 @@ $fmtLabels = ['Keg' => 'Fût', 'Bot' => 'Bouteille', 'Can' => 'Canette', 'Cuve d
               ? fmt_date_fr_tanks($occ['rack_date'], $monthsFR)
               : '—';
 
+          $yeastStrain = trim((string)($occ['yeast'] ?? ''));
+          $yeastGen    = trim((string)($occ['yeast_gen'] ?? ''));
+          $yeastChip   = '';
+          if ($yeastStrain !== '') {
+              $yeastChip = 'Levure · ' . $yeastStrain;
+              if ($yeastGen !== '') {
+                  $yeastChip .= ' (G' . $yeastGen . ')';
+              }
+          }
+
           $daysInBbt = 0;
           if (!empty($occ['rack_date'])) {
               $rackDT    = new DateTimeImmutable($occ['rack_date']);
@@ -458,6 +493,9 @@ $fmtLabels = ['Keg' => 'Fût', 'Bot' => 'Bouteille', 'Can' => 'Canette', 'Cuve d
             <span class="tank-card__vol"><?= htmlspecialchars(number_format($remainHl, 1)) ?> HL</span>
             <?php if ($blendStr !== ''): ?>
               <span class="tank-card__sub tanks-mute"><?= htmlspecialchars($blendStr) ?></span>
+            <?php endif ?>
+            <?php if ($yeastChip !== ''): ?>
+              <span class="tank-card__yeast tanks-mute"><?= htmlspecialchars($yeastChip) ?></span>
             <?php endif ?>
             <span class="tank-card__brewdate tanks-mute"><?= htmlspecialchars($rackDate) ?></span>
             <span class="tank-badge tank-badge--days">J+<?= $daysInBbt ?></span>
