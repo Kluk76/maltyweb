@@ -10505,6 +10505,7 @@ body.auth::after {
 .home .cct-modal__hover-dot { transition: opacity 0.10s ease; pointer-events: none; }
 
 /* ── Floating tooltip (lives on document.body) ── */
+/* Dark-glass chip: keep dark bg, use LIGHT text tokens for legibility on near-black */
 .home .cct-modal__tooltip,
 .cct-modal__tooltip {
   position: fixed;
@@ -10522,7 +10523,7 @@ body.auth::after {
     0 4px 10px -4px rgba(60,40,20,0.12);
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 11px;
-  color: var(--ink-soft);
+  color: var(--bg-elev); /* cream base — legible on dark chip */
   pointer-events: none;
   animation: cctTooltipIn 0.14s ease-out;
 }
@@ -10545,7 +10546,7 @@ body.auth::after {
   font-size: 9px;
   letter-spacing: 0.22em;
   text-transform: uppercase;
-  color: var(--ink-mute);
+  color: var(--ink-faint); /* muted tan — readable label on dark chip */
   font-weight: 500;
   padding-bottom: 6px;
   margin-bottom: 6px;
@@ -10568,11 +10569,11 @@ body.auth::after {
   font-size: 9.5px;
   letter-spacing: 0.10em;
   text-transform: uppercase;
-  color: var(--ink-mute);
+  color: var(--ink-faint); /* muted tan label — readable on dark chip */
   font-weight: 500;
 }
 .cct-modal__tooltip-row .dd {
-  color: var(--ink);
+  color: var(--bg); /* bright cream value — WCAG AA on near-black */
   font-weight: 500;
   letter-spacing: 0.02em;
 }
@@ -10583,7 +10584,7 @@ body.auth::after {
 }
 .cct-modal__tooltip-row--cc .dt,
 .cct-modal__tooltip-row--cc .dd {
-  color: var(--bbt);
+  color: #7ec8f4; /* light sky blue — --bbt #2f6d99 fails AA on dark chip; this passes */
 }
 
 /* ============================================================
