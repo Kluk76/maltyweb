@@ -2249,8 +2249,9 @@ if (!function_exists('sdc_flash_bom_result')) {
  *   MALT_ and HOPS_ (category: Malt, Hops)
  *     → OBSERVED-ONLY from form data.
  *     → Sources:
- *         malt + hops_kettle + hops_dry  → bd_brewing_ingredients_parsed (v1)
- *                                          source_id → bd_brewing_ingredients_v2 (has recipe_id_fk)
+ *         malt + hops_kettle  → bd_brewing_ingredients_parsed_v2 (v2)
+ *                                header_id → bd_brewing_ingredients_v2 (has recipe_id_fk, batch, event_date)
+ *         hops_dry           → bd_fermenting_v2 DryHop events (see §2b3)
  *     → If a recipe/MI combo has NO observed data → DO NOT emit it (intentional drift, not gap-fill).
  *
  *   Non-MALT/non-HOPS (mineral, process, adjunct, yeast):
@@ -2510,28 +2511,28 @@ function compile_sku_bom_liquid(
         $batchEventDate[$rid][$batch] = $hl['batch_event_date'];  // 'YYYY-MM-DD' or null
     }
 
-    // ── 2b. Observed malt + kettle-hops from v1 (bd_brewing_ingredients_parsed) ──
-    // Link: source_id → bd_brewing_ingredients_v2 → recipe_id_fk + batch
-    // Categories: malt, hops_kettle ONLY (source_table='bd_brewing_ingredients').
+    // ── 2b. Observed malt + kettle-hops from v2 (bd_brewing_ingredients_parsed_v2) ──
+    // Link: header_id → bd_brewing_ingredients_v2 → recipe_id_fk + batch + event_date
+    // Categories: malt, hops_kettle ONLY.
     // hops_dry rows use a different source (bd_fermenting_v2 DryHop events — see §2b3).
-    $v1Stmt = $pdo->prepare(
-        "SELECT biv.recipe_id_fk AS recipe_id, bip.batch, bip.category,
-                bip.mi_id_fk, bip.qty, bip.unit, bip.event_date
-           FROM bd_brewing_ingredients_parsed bip
+    $maltHopsV2Stmt = $pdo->prepare(
+        "SELECT biv.recipe_id_fk AS recipe_id, biv.batch, bi.category,
+                bi.mi_id_fk, bi.qty, bi.unit, biv.event_date
+           FROM bd_brewing_ingredients_parsed_v2 bi
            JOIN bd_brewing_ingredients_v2 biv
-             ON biv.id = bip.source_id
+             ON biv.id = bi.header_id
             AND biv.is_tombstoned = 0
           WHERE biv.recipe_id_fk IN ({$recipePhRaw})
-            AND bip.category IN ('malt','hops_kettle')
-            AND bip.mi_id_fk IS NOT NULL
-          ORDER BY biv.recipe_id_fk, bip.batch, bip.category, bip.mi_id_fk"
+            AND bi.category IN ('malt','hops_kettle')
+            AND bi.mi_id_fk IS NOT NULL
+          ORDER BY biv.recipe_id_fk, biv.batch, bi.category, bi.mi_id_fk"
     );
-    $v1Stmt->execute($recipeIds);
+    $maltHopsV2Stmt->execute($recipeIds);
     // v1RawRows[recipe_id][batch][category][mi_id_fk] = [qty, unit, event_date]
     // Note: same batch can have multiple rows for same MI (e.g. multi-brew additions)
     // We SUM them per batch per MI (batch total).
     $v1RawRows = [];
-    foreach ($v1Stmt->fetchAll(\PDO::FETCH_ASSOC) as $row) {
+    foreach ($maltHopsV2Stmt->fetchAll(\PDO::FETCH_ASSOC) as $row) {
         $rid = (int)$row['recipe_id'];
         $batch = $row['batch'];
         $cat   = $row['category'];
@@ -3189,8 +3190,8 @@ function compile_sku_bom_liquid(
         }
 
         if ($hasAnyObserved) {
-            // ── MALT: observed-only from v1 ─────────────────────────────────────
-            // Aggregate v1 malt rows: [mi_id][batch] → qty
+            // ── MALT: observed-only (bd_brewing_ingredients_parsed_v2) ─────────────────────────────────────
+            // Aggregate malt rows from $v1RawRows (now populated from v2): [mi_id][batch] → qty
             // IMPORTANT: bd_brewing_ingredients_v2 has ONE header per batch regardless
             // of how many parallel brews were made. The operator enters one brew's grain
             // bill; bd_brewing_gravity_v2 (Cooling) has N rows (one per parallel brew). We must scale
@@ -3232,7 +3233,7 @@ function compile_sku_bom_liquid(
                 ];
             }
 
-            // ── HOPS (kettle only): observed-only from v1 ───────────────────────
+            // ── HOPS (kettle only): observed-only (bd_brewing_ingredients_parsed_v2) ───────────────────────
             // Dry-hop is handled separately below via the $dhMerged branch.
             // Same n_brews scaling as malt: one ingredient header per batch, N cooling rows.
             $hopsByMiBatch = [];
@@ -3291,7 +3292,7 @@ function compile_sku_bom_liquid(
                         continue;
                     }
                     if (isset($proposed[$miId])) {
-                        continue; // malt/hops from v1 already set
+                        continue; // malt/hops already set (observed from v2)
                     }
                     $result = $computePerHl($recipeBasisBatches[$recipeId] ?? [], $batchData, $hlMap);
                     if ($result === null) {
