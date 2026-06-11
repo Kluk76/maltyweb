@@ -2389,6 +2389,223 @@ body.expeditions .exp-st-muted {
   }
 }
 
+/* ── SKU-history drill: tabs + panes + activity timeline ── */
+/*
+ * Folded from the retired expeditions-sku-history.css (standalone file).
+ * Placed here co-located with the .exp-stock-* and .exp-ledger-* styles they extend.
+ * Palette: var(--…) tokens only — never hardcoded hex.
+ */
+
+/* ── Segmented tab toggle (Stock | Activité) ─────────────────────────────── */
+body.expeditions .exp-evt-tabs {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.5rem 0.75rem 0.25rem;
+}
+
+body.expeditions .exp-evt-tab {
+  min-height: 44px;       /* touch target floor for floor tablets */
+  min-width: 4rem;
+  padding: 0.35rem 1rem;
+  border: 1px solid var(--bg-side);
+  border-radius: 4px;
+  background: transparent;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  cursor: pointer;
+  transition: background 80ms ease, color 80ms ease;
+}
+
+body.expeditions .exp-evt-tab:hover {
+  background: var(--bg-side);
+  color: var(--ink-soft);
+}
+
+body.expeditions .exp-evt-tab[aria-selected="true"] {
+  background: var(--bg-side);
+  color: var(--ink);
+  border-color: var(--ink-mute);
+  font-weight: 600;
+}
+
+body.expeditions .exp-evt-tab:focus-visible {
+  outline: 2px solid var(--hop);
+  outline-offset: 2px;
+}
+
+/* ── Pane visibility (driven by JS + hidden attribute) ───────────────────── */
+/* Use display:block default; hidden attribute suppresses. The [hidden] UA rule
+   has lower specificity than any display rule we'd add, so we explicitly
+   re-enforce it here to prevent CSS from overriding the attribute. */
+body.expeditions .exp-evt-pane {
+  display: block;
+}
+
+body.expeditions .exp-evt-pane[hidden] {
+  display: none;
+}
+
+/* ── Activité pane: scrollable when many events ──────────────────────────── */
+body.expeditions .exp-evt-pane--activite {
+  max-height: 24rem;
+  overflow-y: auto;
+  /* Subtle inner-shadow scroll affordance so operator knows it scrolls */
+  background:
+    linear-gradient(to bottom, var(--bg) 30%, transparent) local,
+    linear-gradient(to bottom, transparent, var(--bg) 70%) local,
+    radial-gradient(farthest-side at 50% 0,   rgba(30,18,5,0.1), transparent) scroll,
+    radial-gradient(farthest-side at 50% 100%, rgba(30,18,5,0.1), transparent) scroll;
+  background-repeat: no-repeat;
+  background-size: 100% 40px, 100% 40px, 100% 14px, 100% 14px;
+  background-position: 0 0, 0 100%, 0 0, 0 100%;
+}
+
+/* ── Section header — matches existing .exp-ledger-loc-header treatment ─────── */
+body.expeditions .exp-evt-section-header td {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  padding-top: 0.6rem;
+  padding-bottom: 0.25rem;
+  border-top: 1px solid var(--bg-side);
+}
+
+/* ── Empty-state row ─────────────────────────────────────────────────────────── */
+body.expeditions .exp-evt-empty {
+  color: var(--ink-faint);
+  font-style: italic;
+  font-size: 0.8rem;
+  padding: 0.4rem 0.75rem;
+}
+
+/* ── Base event row — inherits exp-ledger-table row rhythm ───────────────────── */
+body.expeditions .exp-ledger-evt td {
+  padding-top: 0.22rem;
+  padding-bottom: 0.22rem;
+  vertical-align: middle;
+  border-bottom: none;
+}
+
+/* ── Label cell: glyph + date + description inline ──────────────────────────── */
+body.expeditions .exp-evt-label {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+/* Glyph — direction indicator, unicode arrows (not emoji) */
+body.expeditions .exp-evt-glyph {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  width: 1em;
+  flex-shrink: 0;
+  text-align: center;
+}
+
+body.expeditions .exp-evt-glyph--in {
+  color: var(--hop);       /* stock in — green-hop accent */
+}
+
+body.expeditions .exp-evt-glyph--out {
+  color: var(--ember);     /* stock out — ember accent */
+}
+
+body.expeditions .exp-evt-glyph--neutral {
+  color: var(--ink-soft);  /* transfer — neutral */
+}
+
+/* Date chip — compact, tabular */
+body.expeditions .exp-evt-date {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  color: var(--ink-mute);
+  white-space: nowrap;
+  flex-shrink: 0;
+  letter-spacing: 0.01em;
+}
+
+/* Description / label text */
+body.expeditions .exp-evt-desc {
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* ── Qty cell — right-aligned, tabular figures ───────────────────────────────── */
+body.expeditions .exp-evt-qty {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+/* ── Type label cell — muted category tag ────────────────────────────────────── */
+body.expeditions .exp-evt-type-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.63rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  white-space: nowrap;
+}
+
+/* ── Per-type row accent — subtle left-border differentiation ────────────────── */
+/* Keep visually subordinate to the ledger rows above (no background fills). */
+body.expeditions .exp-ledger-evt--order .exp-evt-label {
+  border-left: 2px solid var(--ember);
+  padding-left: 0.4rem;
+}
+
+body.expeditions .exp-ledger-evt--pkg .exp-evt-label {
+  border-left: 2px solid var(--hop);
+  padding-left: 0.4rem;
+}
+
+body.expeditions .exp-ledger-evt--move .exp-evt-label {
+  border-left: 2px solid var(--ink-faint);
+  padding-left: 0.4rem;
+}
+
+/* ── Per-location breakdown wrappers ─────────────────────────────────────────── */
+/*
+ * These rows piggyback on .exp-ledger-* cell classes for their cell styling.
+ * Self-describing rules below make them independent of future .exp-ledger-* tweaks.
+ */
+
+/* Header row for the "Répartition par site" sub-block */
+body.expeditions .exp-ledger-loc-header {
+  /* No additional spacing beyond the shared .exp-ledger-table td padding;
+     the .exp-evt-section-header td rule applied alongside provides the label styling. */
+}
+
+/* Individual per-site row within the Répartition block */
+body.expeditions .exp-ledger-loc-row {
+  /* Inherits row rhythm from .exp-ledger-table td (4px 14px 4px 0 padding).
+     No override needed today; explicit rule prevents a future .exp-ledger-*
+     padding change from silently distorting this block. */
+}
+
+/* Écart (counting gap / in-transit residual) row — visually subordinate */
+body.expeditions .exp-ledger-loc-ecart td {
+  opacity: 0.6;
+}
+
+/* Site-type qualifier span (e.g. "· production") appended after the site name */
+body.expeditions .exp-ledger-loc-qualifier {
+  opacity: 0.7;
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
    CARNET CLIENTS VIEW
    ══════════════════════════════════════════════════════════════════════════ */

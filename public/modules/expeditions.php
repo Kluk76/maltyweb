@@ -2641,7 +2641,6 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,200;0,9..144,300;0,9..144,400;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/app.css?v=<?= @filemtime(__DIR__ . '/../css/app.css') ?: time() ?>">
   <link rel="stylesheet" href="/css/expeditions.css?v=<?= @filemtime(__DIR__ . '/../css/expeditions.css') ?: time() ?>">
-  <link rel="stylesheet" href="/css/expeditions-sku-history.css?v=<?= @filemtime(__DIR__ . '/../css/expeditions-sku-history.css') ?: time() ?>">
   <link rel="stylesheet" href="/css/eshop-fulfilment.css?v=<?= @filemtime(__DIR__ . '/../css/eshop-fulfilment.css') ?: time() ?>">
 </head>
 <body class="home op-form-page expeditions">
@@ -4484,7 +4483,7 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
                     <tr class="exp-ledger-loc-row">
                       <td class="exp-ledger-label exp-ledger-meta">
                         <?= htmlspecialchars($locRow['name']) ?>
-                        <span class="exp-ledger-meta" style="opacity:.7"> · <?= htmlspecialchars(exp_site_type_label($locRow['site_type'])) ?></span>
+                        <span class="exp-ledger-meta exp-ledger-loc-qualifier"> · <?= htmlspecialchars(exp_site_type_label($locRow['site_type'])) ?></span>
                       </td>
                       <td class="exp-ledger-qty<?= $locRow['qty'] < 0 ? ' exp-st-neg' : '' ?>">
                         <?= number_format($locRow['qty']) ?>
@@ -4495,8 +4494,8 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
                     <?php endforeach ?>
                     <?php if ($locSum !== (int) round($physique)): ?>
                     <tr class="exp-ledger-loc-ecart">
-                      <td class="exp-ledger-label exp-ledger-meta" style="opacity:.6">écart de comptage / en transit</td>
-                      <td class="exp-ledger-qty exp-ledger-meta" style="opacity:.6">
+                      <td class="exp-ledger-label exp-ledger-meta">écart de comptage / en transit</td>
+                      <td class="exp-ledger-qty exp-ledger-meta">
                         <?= ($physique - $locSum >= 0 ? '+' : '') . number_format((int) round($physique) - $locSum) ?>
                       </td>
                       <td class="exp-ledger-meta"></td>
