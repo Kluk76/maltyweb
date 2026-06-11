@@ -60,6 +60,7 @@ require_once $baseDir . '/app/db.php';
 require_once $baseDir . '/app/settings-helpers.php';
 require_once $baseDir . '/app/kpi-handlers.php';
 require_once $baseDir . '/app/services/mailer.php';
+require_once $baseDir . '/app/kpi-email-render.php';
 
 $pdo = maltytask_pdo();
 
@@ -163,79 +164,10 @@ foreach ($subs as $sub) {
     $dn          = htmlspecialchars($displayName, ENT_QUOTES, 'UTF-8');
     $dateLabel   = date('d/m/Y');
 
-    // Build KPI tiles
+    // Build KPI tiles — rendering delegated to kpi-email-render.php
     $tilesHtml = '';
     foreach ($kpiResults as $item) {
-        $t = $item['tracker'];
-        $r = $item['result'];
-
-        $label = htmlspecialchars($t['label'], ENT_QUOTES, 'UTF-8');
-        $value = $r['value'] ?? null;
-        $unit  = htmlspecialchars((string) ($r['unit'] ?? ''), ENT_QUOTES, 'UTF-8');
-
-        // Format value
-        if ($value === null) {
-            $valueDisplay = '<span style="color:#9a8f82;">—</span>';
-        } elseif (is_float($value)) {
-            $valueDisplay = htmlspecialchars(number_format($value, 1, ',', ' '), ENT_QUOTES, 'UTF-8');
-        } elseif (is_int($value)) {
-            $valueDisplay = htmlspecialchars(number_format($value, 0, ',', ' '), ENT_QUOTES, 'UTF-8');
-        } else {
-            $valueDisplay = htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
-        }
-
-        // Delta
-        $delta = $r['delta'] ?? null;
-        $deltaHtml = '';
-        if ($delta !== null) {
-            $sign  = $delta >= 0 ? '+' : '';
-            $color = match ($r['tint'] ?? 'neutral') {
-                'green'  => '#5a8a5a',
-                'red'    => '#a04040',
-                'amber'  => '#a07020',
-                default  => '#9a8f82',
-            };
-            $deltaLabel = htmlspecialchars((string) ($r['delta_label'] ?? ''), ENT_QUOTES, 'UTF-8');
-            $deltaHtml  = '<div style="font-size:11px;color:' . $color . ';margin-top:2px;">'
-                        . htmlspecialchars($sign . number_format((float) $delta, 1, ',', ' '), ENT_QUOTES, 'UTF-8')
-                        . ' ' . $deltaLabel . '</div>';
-        }
-
-        // Inline sparkline: simple inline-SVG bar chart if series available
-        $sparkHtml = '';
-        $series = $r['series'] ?? null;
-        if (is_array($series) && count($series) >= 2) {
-            $vals = array_column($series, 'value');
-            $maxV = max(array_filter($vals, 'is_numeric')) ?: 1;
-            $w    = 80;
-            $h    = 24;
-            $barW = max(2, (int) floor($w / count($vals)) - 1);
-            $svgBars = '';
-            foreach ($vals as $i => $sv) {
-                $sv = is_numeric($sv) ? (float) $sv : 0;
-                $bh = max(1, (int) round($sv / $maxV * ($h - 2)));
-                $x  = $i * ($barW + 1);
-                $y  = $h - $bh;
-                $svgBars .= "<rect x=\"{$x}\" y=\"{$y}\" width=\"{$barW}\" height=\"{$bh}\" fill=\"#9eb060\" rx=\"1\"/>";
-            }
-            $sparkHtml = '<div style="margin-top:6px;">'
-                . "<svg width=\"{$w}\" height=\"{$h}\" viewBox=\"0 0 {$w} {$h}\" xmlns=\"http://www.w3.org/2000/svg\" style=\"display:block;\">{$svgBars}</svg>"
-                . '</div>';
-        }
-
-        $tilesHtml .= '
-        <table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-bottom:10px;background:#f9f3e8;border:1px solid #d8cbb8;border-radius:6px;">
-          <tr>
-            <td style="padding:12px 16px;">
-              <div style="font-family:\'DM Sans\',Arial,sans-serif;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#9a8f82;margin-bottom:4px;">' . $label . '</div>
-              <div style="font-family:\'JetBrains Mono\',\'Courier New\',monospace;font-size:22px;font-weight:500;color:#2c2414;line-height:1;">'
-                  . $valueDisplay . '<span style="font-size:13px;color:#9a8f82;margin-left:4px;">' . $unit . '</span>'
-              . '</div>'
-              . $deltaHtml
-              . $sparkHtml
-              . '</td>
-          </tr>
-        </table>';
+        $tilesHtml .= kpi_email_render_viz($item['tracker'], $item['result']);
     }
 
     // Full email HTML (inline styles — no external CSS in email)
