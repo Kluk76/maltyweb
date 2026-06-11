@@ -13,6 +13,7 @@ $crumbs        = ["Accueil", "Packaging", "BBT & Conditionnement"];
 
 require_once __DIR__ . "/../../app/svg-tanks.php";
 require_once __DIR__ . "/../../app/packaging-stats.php";
+require_once __DIR__ . "/../../app/cip-cadence.php";
 
 // --- Date helpers (FR locale) ---
 $monthsFR = [
@@ -254,6 +255,9 @@ try {
     $pkgQuarterlyHl = pkg_quarterly_hl($pdo, $pkgYear);
     $pkgMonthlyYtd  = pkg_monthly_hl_ytd($pdo, $pkgYear);
 
+    // CIP cadence — non-fatal, fetched inside the main try block
+    $bbtCipCadence = cadence_for_all_bbts($pdo);
+
     $dbError = null;
 
 } catch (Throwable $e) {
@@ -278,6 +282,7 @@ try {
     $pkgConsumableLossRates   = ['rateable' => [], 'raw_count' => []];
     $pkgQaTrendByMonth        = [];
     $pkgCo2o2Readings         = ['readings' => [], 'n_readings' => 0, 'n_events' => 0];
+    $bbtCipCadence  = [];
     $dbError        = $e->getMessage();
 }
 
@@ -304,6 +309,7 @@ $fmtLabels = ['Keg' => 'Fût', 'Bot' => 'Bouteille', 'Can' => 'Canette', 'Cuve d
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/app.css?v=<?= @filemtime(__DIR__ . '/../css/app.css') ?: time() ?>">
+  <link rel="stylesheet" href="/css/bbt-detail-modal.css?v=<?= @filemtime(__DIR__ . '/../css/bbt-detail-modal.css') ?: time() ?>">
 </head>
 <body class="home">
 
@@ -403,7 +409,15 @@ $fmtLabels = ['Keg' => 'Fût', 'Bot' => 'Bouteille', 'Can' => 'Canette', 'Cuve d
             $fillRatio  = $capHl > 0 ? min(1.0, $remainHl / $capHl) : 0.0;
         }
       ?>
-      <div class="tank-card <?= $stateClass ?>">
+      <?php
+        $cad = $bbtCipCadence[$num] ?? null;
+        $cipSeverity = $cad['severity'] ?? 'ok';
+      ?>
+      <?php if (!$isMaint): ?>
+        <button class="tank-card-btn tank-card <?= $stateClass ?>" data-bbt="<?= $num ?>" type="button" aria-label="Détails BBT <?= $num ?>">
+      <?php else: ?>
+        <div class="tank-card <?= $stateClass ?>">
+      <?php endif ?>
         <div class="tank-card__svg">
           <?= svg_bbt($fillRatio, $svgState, $num, (string)($occ['beer'] ?? '')) ?>
         </div>
@@ -418,6 +432,12 @@ $fmtLabels = ['Keg' => 'Fût', 'Bot' => 'Bouteille', 'Can' => 'Canette', 'Cuve d
           <div class="tank-card__info">
             <span class="tank-card__empty-label">—</span>
             <span class="tank-card__cap tanks-mute"><?= htmlspecialchars(number_format($capHl, 0)) ?> HL</span>
+            <?php if ($cad && ($cad['recommended_action'] ?? 'none') !== 'none'):
+                $badgeLabel = ($cad['next_cip_type'] ?? 'acid') === 'full' ? 'CIP complet' : 'CIP acide';
+                $badgeClass = ($cad['severity'] ?? 'ok') === 'critical' ? 'cip-badge--critical' : 'cip-badge--warn';
+            ?>
+              <span class="cip-badge <?= $badgeClass ?>"><?= $badgeLabel ?></span>
+            <?php endif ?>
           </div>
 
         <?php else:
@@ -444,9 +464,19 @@ $fmtLabels = ['Keg' => 'Fût', 'Bot' => 'Bouteille', 'Can' => 'Canette', 'Cuve d
             <?php endif ?>
             <span class="tank-card__brewdate tanks-mute"><?= htmlspecialchars($rackDate) ?></span>
             <span class="tank-badge tank-badge--days">J+<?= $daysInBbt ?></span>
+            <?php if ($cad && ($cad['recommended_action'] ?? 'none') !== 'none'):
+                $badgeLabel = ($cad['next_cip_type'] ?? 'acid') === 'full' ? 'CIP complet' : 'CIP acide';
+                $badgeClass = ($cad['severity'] ?? 'ok') === 'critical' ? 'cip-badge--critical' : 'cip-badge--warn';
+            ?>
+              <span class="cip-badge <?= $badgeClass ?>"><?= $badgeLabel ?></span>
+            <?php endif ?>
           </div>
         <?php endif ?>
-      </div>
+      <?php if (!$isMaint): ?>
+        </button>
+      <?php else: ?>
+        </div>
+      <?php endif ?>
       <?php endforeach ?>
     </div>
   </section>
@@ -599,11 +629,34 @@ $fmtLabels = ['Keg' => 'Fût', 'Bot' => 'Bouteille', 'Can' => 'Canette', 'Cuve d
 
   </section>
 
+  <!-- BBT CIP Detail Modal -->
+  <dialog class="bbt-modal" id="bbt-detail-modal">
+    <div class="bbt-modal__overlay" data-close></div>
+    <div class="bbt-modal__card" id="bbt-modal-card"><!-- populated by JS --></div>
+  </dialog>
+
 </main>
 
 <!-- Floating tooltip for SVG chart hovers -->
 <div class="pkg-tooltip" id="pkg-tooltip"></div>
 
+<?php
+$bbtCipDetails = [];
+foreach ($bbtCipCadence as $bbtNum => $cad) {
+    $occ = $bbtOccMap[$bbtNum] ?? null;
+    $entry = $cad;
+    if ($occ !== null) {
+        $entry['beer']              = $occ['beer'] ?? null;
+        $entry['batch']             = $occ['batch'] ?? null;
+        $entry['recipe_short_name'] = $occ['recipe_short_name'] ?? null;
+        $entry['remaining_hl']      = $occ['remaining_hl'] ?? null;
+    }
+    $bbtCipDetails[$bbtNum] = $entry;
+}
+?>
+<script>
+window.BBT_CIP_DETAILS = <?= json_encode((object)$bbtCipDetails, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_QUOT | JSON_HEX_APOS) ?>;
+</script>
 <script>
 window.PKG_STATS = <?= json_encode([
     'year'                        => $pkgYear,
@@ -624,6 +677,7 @@ window.PKG_STATS = <?= json_encode([
 ], JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
 </script>
 <script defer src="/js/packaging.js?v=<?= @filemtime(__DIR__ . '/../js/packaging.js') ?: time() ?>"></script>
+<script defer src="/js/bbt-detail-modal.js?v=<?= @filemtime(__DIR__ . '/../js/bbt-detail-modal.js') ?: time() ?>"></script>
 
 </body>
 </html>

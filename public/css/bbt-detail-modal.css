@@ -1,0 +1,422 @@
+/* bbt-detail-modal.css — BBT CIP cadence popup (packaging board) */
+
+/* ── Dialog base reset ──────────────────────────────────────────────────── */
+.home dialog.bbt-modal {
+  border: none;
+  padding: 0;
+  background: transparent;
+  margin: 0;
+}
+
+/* ── Open state — full-viewport centring layer ──────────────────────────── */
+.home dialog.bbt-modal[open] {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  max-width: none;
+  max-height: none;
+  display: grid;
+  place-items: center;
+  z-index: 1000;
+  overflow: hidden;
+}
+
+/* ── Overlay backdrop ───────────────────────────────────────────────────── */
+.home .bbt-modal__overlay {
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at center, rgba(10, 8, 5, 0.55) 0%, rgba(10, 8, 5, 0.80) 100%);
+  backdrop-filter: blur(6px) saturate(1.1);
+  -webkit-backdrop-filter: blur(6px) saturate(1.1);
+  animation: bbtBackdropIn 0.28s ease-out;
+  cursor: pointer;
+}
+
+@keyframes bbtBackdropIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes bbtCardIn {
+  from { opacity: 0; transform: translateY(16px) scale(0.985); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ── Modal card ─────────────────────────────────────────────────────────── */
+.home .bbt-modal__card {
+  width: min(520px, 94vw);
+  max-height: 90vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--bg-elev);
+  border-radius: 4px;
+  box-shadow:
+    inset 0 1px 0 rgba(30, 18, 5, 0.06),
+    0 32px 72px -16px rgba(30, 18, 5, 0.22),
+    0 6px 20px -6px rgba(30, 18, 5, 0.14),
+    0 0 0 1px var(--hairline-2);
+  position: relative;
+  z-index: 1;
+  animation: bbtCardIn 0.38s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Top accent strip (bbt-blue tone) */
+.home .bbt-modal__card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--bbt) 0%, var(--oak) 50%, var(--bbt) 100%);
+  border-radius: 4px 4px 0 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home .bbt-modal__overlay { animation: none; }
+  .home .bbt-modal__card    { animation: none; }
+}
+
+/* ── Close button ───────────────────────────────────────────────────────── */
+.home .bbt-modal__close {
+  position: absolute;
+  top: 16px; right: 16px;
+  width: 34px; height: 34px;
+  border: 1px solid var(--hairline-2);
+  background: var(--bg-elev);
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--ink-soft);
+  display: grid;
+  place-items: center;
+  transition: all 0.18s ease;
+  z-index: 2;
+}
+
+.home .bbt-modal__close:hover {
+  background: var(--hairline);
+  border-color: var(--ink-faint);
+  color: var(--ink);
+  transform: rotate(90deg);
+}
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+.home .bbt-modal__head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 24px 56px 20px 24px;
+  border-bottom: 1px solid var(--hairline);
+  flex-wrap: wrap;
+}
+
+.home .bbt-modal__id {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: var(--bbt);
+  color: #e8f4fd;
+  border-radius: 4px;
+  width: 52px;
+  min-width: 52px;
+  height: 52px;
+  gap: 0;
+}
+
+.home .bbt-modal__id-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  opacity: 0.75;
+  line-height: 1;
+}
+
+.home .bbt-modal__id-num {
+  font-family: 'Fraunces', serif;
+  font-size: 22px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.home .bbt-modal__title-block {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.home .bbt-modal__beer {
+  font-family: 'Fraunces', serif;
+  font-size: 16px;
+  font-style: italic;
+  color: var(--ink-soft);
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.home .bbt-modal__batch {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--ink-mute);
+  letter-spacing: 0.08em;
+}
+
+/* ── Severity chip ──────────────────────────────────────────────────────── */
+.home .bbt-modal__severity {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  border-radius: 100px;
+  white-space: nowrap;
+}
+
+.home .bbt-modal__severity--ok {
+  background: color-mix(in srgb, var(--hop-deep) 12%, transparent);
+  color: var(--hop-deep);
+  border: 1px solid color-mix(in srgb, var(--hop-deep) 25%, transparent);
+}
+
+.home .bbt-modal__severity--warn {
+  background: color-mix(in srgb, var(--oak) 14%, transparent);
+  color: var(--oak-deep);
+  border: 1px solid color-mix(in srgb, var(--oak) 30%, transparent);
+}
+
+.home .bbt-modal__severity--critical {
+  background: color-mix(in srgb, var(--ember) 14%, transparent);
+  color: var(--ember);
+  border: 1px solid color-mix(in srgb, var(--ember) 30%, transparent);
+}
+
+/* ── Stats block ────────────────────────────────────────────────────────── */
+.home .bbt-modal__stats {
+  margin: 0;
+  padding: 20px 24px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.home .bbt-modal__stat {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.home .bbt-modal__stat:last-child {
+  border-bottom: none;
+}
+
+.home .bbt-modal__stat--next .bbt-modal__stat-label {
+  color: var(--ink-mute);
+}
+
+.home .bbt-modal__stat-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  line-height: 1;
+}
+
+.home .bbt-modal__stat-value {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 14px;
+  color: var(--ink-soft);
+  line-height: 1.4;
+}
+
+.home .bbt-modal__stat-value strong {
+  font-weight: 600;
+  color: var(--ember);
+}
+
+.home .bbt-modal__stat--next .bbt-modal__stat-value {
+  font-size: 15px;
+  color: var(--ink-soft);
+}
+
+/* ── Empty state ────────────────────────────────────────────────────────── */
+.home .bbt-modal__empty {
+  padding: 24px;
+  color: var(--ink-mute);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 13px;
+  margin: 0;
+}
+
+/* ── Card-face CIP badges ───────────────────────────────────────────────── */
+.home .cip-badge {
+  display: inline-block;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 100px;
+  margin-top: 4px;
+  white-space: nowrap;
+}
+
+.home .cip-badge--warn {
+  background: color-mix(in srgb, var(--oak) 18%, transparent);
+  color: var(--oak-deep);
+  border: 1px solid color-mix(in srgb, var(--oak) 35%, transparent);
+}
+
+.home .cip-badge--critical {
+  background: color-mix(in srgb, var(--ember) 18%, transparent);
+  color: var(--ember);
+  border: 1px solid color-mix(in srgb, var(--ember) 35%, transparent);
+}
+
+/* ── Modal body wrapper ─────────────────────────────────────────────────── */
+.home .bbt-modal__body {
+  padding: 20px 24px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* ── Progress section ───────────────────────────────────────────────────── */
+.home .bbt-modal__progress-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.home .cip-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.home .cip-progress__segs {
+  display: flex;
+  gap: 4px;
+}
+
+.home .cip-seg {
+  width: 22px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--hairline);
+  border: 1px solid var(--hairline-2);
+  transition: background 0.18s ease;
+}
+
+.home .cip-seg--filled {
+  background: var(--bbt);
+  border-color: color-mix(in srgb, var(--bbt) 60%, transparent);
+}
+
+.home .cip-progress__count {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--ink-mute);
+  letter-spacing: 0.06em;
+}
+
+.home .cip-progress__overdue {
+  color: var(--ember);
+  font-weight: 600;
+}
+
+/* ── Stats block (reused for dernier/prochain rows) ─────────────────────── */
+/* .bbt-modal__stats already defined above — just remove gap:0 and adjust padding */
+.home .bbt-modal__stats {
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.home .bbt-modal__body .bbt-modal__stats {
+  padding: 0;
+}
+
+/* ── Cycle dots ─────────────────────────────────────────────────────────── */
+.home .bbt-modal__cycle {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 4px;
+  border-top: 1px solid var(--hairline);
+}
+
+.home .cip-cycle {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.home .cip-dot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.home .cip-dot__mark {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+}
+
+.home .cip-dot--done .cip-dot__mark {
+  background: color-mix(in srgb, var(--hop-deep) 15%, transparent);
+  color: var(--hop-deep);
+  border: 1px solid color-mix(in srgb, var(--hop-deep) 30%, transparent);
+}
+.home .cip-dot--done .cip-dot__mark::before { content: '✓'; }
+
+.home .cip-dot--next .cip-dot__mark {
+  background: color-mix(in srgb, var(--ember) 15%, transparent);
+  color: var(--ember);
+  border: 2px solid var(--ember);
+}
+.home .cip-dot--next .cip-dot__mark::before { content: '●'; }
+
+.home .cip-dot--later .cip-dot__mark {
+  background: transparent;
+  color: var(--ink-faint);
+  border: 1px solid var(--hairline-2);
+}
+.home .cip-dot--later .cip-dot__mark::before { content: '◌'; }
+
+.home .cip-dot__label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+.home .cip-dot__arrow {
+  font-size: 14px;
+  color: var(--ink-faint);
+  align-self: flex-start;
+  margin-top: 3px;
+}

@@ -34,9 +34,15 @@ declare(strict_types=1);
  *   'racks_since_full'   => int          (racking rows in bd_racking_v2 after last full CIP date)
  *   'racks_since_acid'   => int          (racking rows after last acid-or-fuller CIP date)
  *   'threshold_full'     => int          (from commissioning_settings)
- *   'threshold_acid'     => int          (from commissioning_settings)
+ *   'threshold_acid'     => int          (from commissioning_settings, also the per-leg blend budget)
  *   'recommended_action' => 'none' | 'acid_recommended' | 'full_recommended'
+ *                           (type follows cycle position: acid leg → next is full → full_recommended, etc.)
  *   'severity'           => 'ok' | 'warn' | 'critical'
+ *                           (a due FULL is always critical; a due acid is warn unless ≥ 2 legs overdue)
+ *   'since_last_cip'     => int          (blends since the last CIP of any kind = racks_since_acid)
+ *   'last_cip_type'      => 'acid' | 'full' | null   (the type of the most recent CIP)
+ *   'last_cip_at'        => string|null  (YYYY-MM-DD of the most-recent CIP of any kind)
+ *   'next_cip_type'      => 'acid' | 'full'          (the CIP type that is next in the 2-leg cycle)
  *
  * Dependencies: none beyond PDO (caller passes connection).
  */
@@ -290,12 +296,35 @@ function _cip_cadence_compute(PDO $pdo): array
         $threshFull = $cfg['threshold_full'];
         $threshAcid = $cfg['threshold_acid'];
 
-        if ($racksSinceFull >= $threshFull) {
-            $action   = 'full_recommended';
-            $severity = 'critical';
-        } elseif ($racksSinceAcid >= $threshAcid) {
-            $action   = 'acid_recommended';
-            $severity = 'warn';
+        // Per-leg blend budget (both thresholds equal under the confirmed 2-leg model).
+        $threshLeg = $cfg['threshold_acid'];
+
+        // "Blends since last CIP" = racks since the most recent CIP of ANY kind.
+        // racks_since_acid already counts since the latest acid-OR-full, i.e. since the last CIP.
+        $sinceLastCip = $racksSinceAcid;
+
+        // Cycle position: was the most recent CIP an acid (→ leg 2, next is full)
+        // or a full / none (→ leg 1, next is acid)?
+        if ($lastAcidAt !== null && ($lastFullAt === null || $lastAcidAt > $lastFullAt)) {
+            $lastCipType = 'acid';   // acid is the most recent CIP → we're on the second leg
+            $nextCipType = 'full';
+        } else {
+            $lastCipType = ($lastFullAt !== null) ? 'full' : null; // full most recent (or never CIP'd)
+            $nextCipType = 'acid';
+        }
+
+        // Most-recent CIP date (YYYY-MM-DD strings compare correctly).
+        $lastCipAt = null;
+        if ($lastFullAt !== null || $lastAcidAt !== null) {
+            $lastCipAt = max((string)($lastFullAt ?? ''), (string)($lastAcidAt ?? ''));
+            if ($lastCipAt === '') { $lastCipAt = null; }
+        }
+
+        // Recommendation: due at one full leg over budget; type follows cycle position.
+        // Urgency: a due FULL is critical; a due acid is warn; ANY cadence >= 2 legs overdue is critical.
+        if ($sinceLastCip >= $threshLeg) {
+            $action   = ($nextCipType === 'full') ? 'full_recommended' : 'acid_recommended';
+            $severity = ($nextCipType === 'full' || $sinceLastCip >= 2 * $threshLeg) ? 'critical' : 'warn';
         } else {
             $action   = 'none';
             $severity = 'ok';
@@ -311,6 +340,10 @@ function _cip_cadence_compute(PDO $pdo): array
             'threshold_acid'     => $threshAcid,
             'recommended_action' => $action,
             'severity'           => $severity,
+            'since_last_cip'     => $sinceLastCip,
+            'last_cip_type'      => $lastCipType,
+            'last_cip_at'        => $lastCipAt,
+            'next_cip_type'      => $nextCipType,
         ];
     }
 
@@ -364,5 +397,9 @@ function cadence_for_bbt(PDO $pdo, int $bbtNumber): array
         'threshold_acid'     => $cfg['threshold_acid'],
         'recommended_action' => 'none',
         'severity'           => 'ok',
+        'since_last_cip'     => 0,
+        'last_cip_type'      => null,
+        'last_cip_at'        => null,
+        'next_cip_type'      => 'acid',
     ];
 }
