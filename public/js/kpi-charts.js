@@ -284,11 +284,14 @@ function buildSparkSvg(curr, prev, opts) {
     'stroke-width': 0.5, opacity: 0.5,
   }));
 
-  /* Previous year — dashed grey */
-  if (prev && prev.some(function(v) { return v > 0; })) {
+  /* Previous year — dashed grey. Truncate to the same span as the current
+     series (lastDataMi) so a zero-padded prev tail doesn't crash the ghost
+     line to zero past the current month. xOf keeps the 12-month scale. */
+  const prevPoints = (prev && lastDataMi >= 0) ? prev.slice(0, lastDataMi + 1) : [];
+  if (prevPoints.some(function(v) { return v > 0; })) {
     var prevPath = '';
-    for (var i = 0; i < 12; i++) {
-      prevPath += (i === 0 ? 'M' : 'L') + xOf(i).toFixed(1) + ',' + yOf(prev[i] || 0).toFixed(1);
+    for (var i = 0; i < prevPoints.length; i++) {
+      prevPath += (i === 0 ? 'M' : 'L') + xOf(i).toFixed(1) + ',' + yOf(prevPoints[i] || 0).toFixed(1);
     }
     svg.appendChild(svgEl('path', {
       d: prevPath, fill: 'none',
