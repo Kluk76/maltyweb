@@ -1,0 +1,75 @@
+# TankSimulator occupancy fix — stale brewday→CCT binding + missing CCT drain guard
+
+**Status: SHIPPED + LIVE on VPS (2026-06-03).** Single file: `app/tank-simulator.php`. `php -l` clean, md5 local==VPS. Working tree UNCOMMITTED (operator commits). ZERO data mutation (read-side replay only). No migration.
+
+## Root cause (corrected framing)
+NOT a wrong join key — a **missing CCT drain guard** on a static brew-time binding.
+- `loadBatchCCT()` maps `beer|batch → the CCT a batch was brewed into` (static, brew-time).
+- The RACKING branch nulled `cctState[cct]` with NO check the CCT still held that batch.
+- So a late / out-of-order rack-out form drains a CCT that a NEWER batch has since refilled.
+- The BBT branch already had the analogous cross-recipe guard (~L551); the CCT branch did not. **The guard — not the key — is the fix.** (Recipe-aware identity was added as hardening so the guard compares the right thing.)
+
+## Fix applied (durable across all event steps)
+1. **CCT drain guard** on both normal-rack and interrupted-rack paths: drain/decrement only if `cctState[cct]`'s current occupant matches the event's `(recipe_id, batch)`; else no-op (still fills destination BBT). Mirrors the BBT guard.
+2. **Recipe-aware occupancy identity `(recipe_id_fk, batch)`** on every event + internal state:
+   - `loadRackingEvents` adds `COALESCE(neb_recipe_id_fk, contract_recipe_id_fk)`.
+   - `loadCoolingEvents` adds `recipe_id_fk` (gravity_v2, 100% populated).
+   - `loadBatchCCT` returns `{cct, recipe_id}` + `ORDER BY event_date ASC` (deterministic last-write-wins).
+   - COOLING implicit-evict, the CCT drain guard, and `isTrueBlend` (was `existing['beer']===e['beer']`, now recipe-aware) all key on `(recipe_id, batch)` with `(beer,batch)` fallback for sparse edges.
+3. **blend_info preserved** (per-lot, now carries recipe_id per lot — not flattened).
+4. **Public return shape FROZEN** (beer, raw_beer, batch, volume_hl, filled_date, blend_info); `recipe_id` added additively only.
+5. **loss-metrics.php: NO change needed** — it does NOT consume sim state arrays; it keys off `bd_brewing_gravity_v2`/`bd_racking_v2` directly via `_loss_normalize_beer()` (beer-name normalization, untouched). Join mathematically unaffected. Verified clean in git diff.
+
+## Pre-flight + verification (COGS gate passed)
+- recipe_id population: brewday_v2 100% (827/827), gravity_v2 Cooling 100% (2270/2270), racking_v2 99.8% (399/400; the 1 NULL falls back to batchCCT recipe_id harmlessly). Zero unresolved edges.
+- BEFORE/AFTER full-sim diff (run on VPS): **exactly two tanks corrected, no regressions** —
+  - CCT2 null→**Stirling 171** (recipe 52, 97.3 HL; the reported bug).
+  - CCT1 null→**Diversion 46** (recipe 25, 96.8 HL — same bug class; a late Speakeasy-62 rack-out 2026-06-02 was evicting it).
+  - All other CCTs/BBTs byte-identical. Assertions PASS: CCT2=Stirling171∈[90,100], BBT3=Stirling170~64.64, BBT5=Stirling166 intact.
+
+## Reusable craft → folded into `sql` skill anti-pattern #25
+"Event-sourced replay: a DRAIN/release step must gate on CURRENT occupancy, not the static brewed-into binding." Guard EACH event step symmetrically; key occupancy on FK identity `(recipe_id_fk, batch)` not a name (batch numbers recur across recipes); verify via BEFORE/AFTER full-replay diff (only known-corrupted slots change).
+
+## ✅ SECOND PASS — BBT packaging under-drain + CCT9 recency-gate drop + start_time-swap → SHIPPED + DEPLOYED + PM-VERIFIED vs operator boards (2026-06-04)
+**STATUS: LIVE on VPS.** `app/tank-simulator.php` only; NO migration, ZERO DB writes (read-side replay). Working tree uncommitted (operator commits). Live `run(today)` validated against the operator's authoritative CCT/BBT Google boards: **ALL beer identities now match** — CCT9=Div.Blanche/6 (96.7 HL restored), BBT2=Diversion/45, BBT5=Speakeasy/64 (the 3 wrong tanks fixed); BBT4 empty; BBT1 exact. Volumes within a few HL except **BBT2 (+17 HL)** = only 1 DIV45 packaging run exists in v2, rest is operator data-entry lag (NOT code → follow-up #3) and **BBT8 (+8 HL)** = half-filled losses intentionally not counted per operator. BEFORE/AFTER diff: only the 7 corrupted tanks changed; the other 27 byte-identical.
+
+### As-built (matches the briefing below, plus a bonus root cause)
+- **Packaging→BBT drain now dual-keyed `(recipe_id_fk, batch)`** in BOTH the `$batchBBT` lookup AND the cross-recipe `===` guard (stores `rid:{id}|batch` + `beer|batch`; recipe_id wins, name fallback only when NULL — mirrors the L376-537 idiom). `loadPackagingEvents` dates by `event_date` (not `submitted_at`) and deducts `vendable_hl + loss_kpi_hl`.
+- **`loadCoolingEvents` recency gate fixed:** un-racked cooling kept until racked / CCT reused / 180-day cap (was dropped at the 3-month window → the CCT9/DIB6 drop). 180-day cap + implicit-evict untouched. Public return shape FROZEN; recipe_id additive.
+- **BONUS ROOT CAUSE (RC#3 真因) — `bd_racking_v2.start_time` DD/MM↔MM/DD swap (~22 rows, the known BSF-era ingest bug, `project_racking_date_day_month_swap`).** e.g. SPY/62 future-dated to June 2 → replayed as racking BBT2 *after* DIV/45 → wrong-beer artifact. Fixed IN-SIM by dating rackings `COALESCE(event_date, DATE(submitted_at), DATE(start_time))`. **The underlying data is still swapped (not corrected this pass)** → follow-up #1.
+
+### Operator standing instruction (recorded)
+"Make sure future coding matches exactly" → codified in `feedback_match_on_recipe_id_not_beer_name` (auto-memory) AND `sql` skill anti-pattern **#27** (packaging-drain worked example + start_time-corruption addendum). Match occupancy on `(recipe_id_fk, batch)`, NEVER beer name.
+
+### Downstream re-checked (clean)
+Racking candidate query + sb-board tank views run clean on the new SELECTs; WIP moves the right direction (CCT9 +96.7 HL restored, under-drained BBTs reduced).
+
+### THREE FOLLOW-UPS (tracked — none built this pass)
+1. **Data cleanup of `bd_racking_v2.start_time` DD/MM swap (~22 rows)** — the in-sim COALESCE masks it; the raw data is still wrong (re-normalize, not blind swap — see `project_racking_date_day_month_swap`).
+2. **Port `(recipe_id_fk, batch)` keying to Node `parse-tank-simulation.ts`** (maltytask COGS/WIP replay, still name-keyed — SAME bug class, **COGS-impacting**). Until done, PHP-UI vs Node-WIP diverge on reused batch numbers. (= the standing follow-up under §Deferred follow-ups.)
+3. **Operator to confirm/enter the missing ~17 HL of Diversion/45 packaging** (the BBT2 +17 HL gap is data-entry lag, not code).
+
+---
+## (BRIEFING — retained as design record; SUPERSEDED by ✅ As-built above) 🟡 SECOND PASS consult 2026-06-04
+Operator validated the LIVE sim `run(today)` against his authoritative CCT/BBT Google boards (years-proven oracle). CCT matches on all 18 tanks to the decimal EXCEPT CCT9; BBT disagrees on 7/8 (volumes run high = under-drained; BBT2/5 show stale beer). Three root causes, two of them ONE bug:
+
+**RC#1+RC#3 (SAME bug) — packaging→BBT drain still keyed on fragmented BEER NAME.** The 2026-06-03 pass fixed CCT/racking identity to `(recipe_id_fk,batch)` but left the **PACKAGING** path on name. `loadPackagingEvents()` (~L850) selects `COALESCE(neb_beer,contract_beer)`→`normalizeBeerName()` (static BEER_NAME_MAP) which **passes SKU codes through unchanged** (`SPYF`,`STI4`,`EMB4C`…). The PACKAGING case (~L602) keys `$batchBBT["$beer|$batch"]` and guards `$bbtState[$bbt]['beer']===$e['beer']` → SKU-coded packaging key `SPYF|62` ≠ batchBBT `Speakeasy|62` → **packaging silently never drains the BBT**. PM-VERIFIED live: BBT2 SPY62 packaged 2026-02 via SPYF/SPY4/SPYB (≈81 HL, all SKU-coded, never drained) → SPY62 survives → later DIV45 (evt 2026-05-13, the board's correct beer) can't land / mis-orders → **the "filled_date=June2 mystery" is the surviving-stale-fill artifact, NOT a separate bug**. BBT5 identical (STI166 packaged via STI4/STIF/STI4C → survives → blocks SPY64). **RC#3 dissolves the moment RC#1 is fixed** — same drain, no separate trace needed. **Fix data PROVEN CLEAN:** `bd_packaging_v2.recipe_id_fk` = **2009/2009 drainable rows populated, ZERO NULL**; matches racking `neb_recipe_id_fk` (STI=52, SPY=51, DIV=25); `event_date` 100% populated (0 NULL). Batch 45 carries BOTH DIV4(rid25) AND SPYB(rid51) on 2026-05-20 → proves WHY recipe_id is mandatory (batch numbers recur across recipes). **As-briefed:** key packaging→BBT on `(recipe_id_fk,batch)`; load recipe_id in the events; compare recipe_id in the cross-recipe guard (mirrors the CCT/BBT guards). Two secondary loader fixes same pass: (a) date packaging by **`event_date` not `submitted_at`** (sim sorts events by date; racking uses event_date — mismatch is what mis-orders the BBT2/5 stale fills); (b) deduct **total-with-losses** not vendable_hl alone (pertes liquides). Operator caveat: a few HL/tank acceptable (half-filled computed-together in v2 ≠ v1 method) — **NO exact-parity chasing.**
+
+**RC#2 — CCT9 age-out is the 3-MONTH RECENCY GATE, not the 180-day hard expiry.** PM-VERIFIED: DIB6 (Diversion Blanche/6, rid=26) cooled **2026-02-06**, un-racked (0 racking rows), un-packaged (0 pkg rows) — physically still in CCT9 (~96.7 HL, slow seller). The 180-day `isExpired`/`MAX_TANK_AGE_DAYS` is NOT the culprit (Feb6→Jun4 = 118 days < 180). The culprit is `loadCoolingEvents` (L745-748): keeps a cooling event only if `$isRacked || $isRecent` where `$isRecent = date >= recentCutoff`, `recentCutoff = first-day-of -RECENT_COOLING_MONTHS(=3) months` = **2026-03-01**. DIB6 cooled Feb6 < Mar1 → not recent, not racked → **event dropped entirely** → CCT9 reads empty → real WIP lost. The recency window is an anti-resurrection heuristic for ancient un-racked brews but it wrongly evicts a legit slow-resident brew still inside the 180-day hard cap. **RULING (Q2): the recency gate is a heuristic, the 180-day cap is the real expiry.** Fix = don't drop an un-racked cooling on recency ALONE; keep it alive until racked / CCT-reused (implicit evict already exists in COOLING case) / 180-day hard expiry. Concretely: in the COOLING loader, an un-racked brew should survive the recency filter when nothing has superseded its CCT — gate the `continue` so un-racked-and-not-yet-180-days stays. Keep 180-day as the backstop (don't remove/raise it). Implicit-evict (newer brew into same CCT) and the 2026-06-03 CCT drain guard already handle the "CCT was reused" case correctly.
+
+**RULINGS for the briefing:**
+1. **Q1 APPROVE** the primary fix (recipe_id-keyed packaging drain + event_date + total-with-losses, no parity chasing). NO reason packaging can't key on recipe_id_fk — it's 100% populated, matches racking, and the rest of the sim already keys this way. This is the LAST path still on beer-name; doing it COMPLETES the 2026-06-03 normalization (which explicitly flagged BBT as the remaining name-keyed path).
+2. **Q2** CCT9 = recency-gate bug (above), fix by gating the recency `continue` for un-racked-under-180-day brews; keep the 180-day backstop; do NOT touch implicit-evict.
+3. **Q3** BBT2/5 = IN SCOPE but NOT a separate trace — it's RC#1; verify it resolves post-fix (board: BBT2=DIV45, BBT5=SPY64).
+4. **Q4 skills `coder`+`sql`** (read-side SQL in the loaders + PHP replay logic; NO `ui` — sim is pure logic, no rendered surface in this change). **NO migration** (pure read-side sim logic; all needed cols exist). Verification = BEFORE/AFTER full `run(today)` diff + assert vs operator's CCT/BBT board values (all tanks within a few HL). Same discipline as 2026-06-03: only known-corrupted slots should change.
+5. **Q5 downstream re-check:** the sim feeds (a) the **racking candidate list** (a BBT that wrongly shows occupied/wrong-beer would mis-gate which lots are rackable — re-verify the candidate list after fix), (b) **tank views / sb-board.php** occupancy cards, (c) **WIP** valuation (CCT9 dropping ~96.7 HL understated WIP; the under-drained BBTs overstated it). After the fix, spot-check WIP total moves in the right direction and sb-board fleet counts reconcile. NB the Node `parse-tank-simulation.ts` (maltytask COGS/WIP path) is a SEPARATE divergent replay — STILL not touched; the name-vs-recipe lesson MUST eventually port there or PHP-UI and Node-WIP diverge on reused batch numbers (carried forward as the standing follow-up below).
+
+**LANDMINES called out to the build:** (i) the PACKAGING guard at ~L602 has TWO comparisons to fix (the `$batchBBT` key lookup AND the `===` guard) — fix BOTH or the drain still misses; (ii) `_bbt_prorata_decrement` consumes blend_info keyed per-lot — ensure recipe_id flows into it (the 2026-06-03 pass already made blend_info carry recipe_id per lot, so reuse that); (iii) keep the public return shape FROZEN (beer, raw_beer, batch, volume_hl, filled_date, blend_info) — recipe_id additive only, same as last pass; (iv) `normalizeBeerName`/BEER_NAME_MAP stays as the FALLBACK only (when recipe_id NULL) — do NOT retire it this pass; (v) loss-metrics.php does NOT consume sim arrays (keys off bd_* directly) — confirmed no change, same as 2026-06-03.
+
+## Deferred follow-ups (TRACK)
+- **BEER_NAME_MAP retirement** NOT done — kept `normalizeBeerName` as fallback. Still the planned end-state.
+- **Node `parse-tank-simulation.ts` divergence** (maltytask repo, COGS/WIP path) NOT touched. The occupancy-keying lesson MUST eventually port there, or PHP-UI vs Node-WIP occupancy will diverge for reused batch numbers (same bug class, COGS-impacting). Flagged follow-up.
+- This is the **opening move of the racking-redesign normalization** (WS1-4 builds on a correctly-keyed sim). See `racking-redesign-ws1-4.md`.
+
+## ⚠️ A SIM-EMPTY TANK CAN ALSO BE A BAD-DATA ARTIFACT, not a sim bug (cuv hl_per_unit class — 2026-06-10)
+The sim replays PACKAGING as a BBT drain and floors a tank to null below 2.5 HL → an over-stated packaging `vendable_hl` can **wrongly drain a physically-full BBT to 0**, making it VANISH from `form-packaging.php`'s picker (which walks sim-occupied tanks only — and the "hors process" override does NOT relax the sim-empty drop, so no manual escape). Real 2026-06-10 incident: a cuv `ref_skus.hl_per_unit` flipped 0.01→1.0 made one cuv row store `vendable_hl=500` (vs 5.0) → drained BBT8 (139.65 HL Zepp b212) to 0 → unselectable. **So when a known-full tank disappears from the picker, suspect a bogus over-large packaging `vendable_hl` BEFORE suspecting the sim's keying.** Root fact + the now-permanent trigger lock that prevents the cuv flip → `volume-dimension.md` §"CUV hl_per_unit IS LITRE-CANONICAL (0.01) AND DB-TRIGGER-LOCKED". Backlog: the override walk should offer a sim-empty physical-tank escape hatch (Kouros declined for now).
