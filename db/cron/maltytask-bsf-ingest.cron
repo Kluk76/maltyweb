@@ -21,7 +21,15 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # Every 30 min: brewing / fermenting / racking / packaging — transactional tables
 # driven by operator form submissions. No-op when nothing new (INSERT IGNORE).
-*/30  *   *   *   *   maltytask   cd /var/www/maltytask && .venv/bin/python scripts/python/ingest.py --tab=all --apply >> /var/log/maltytask/ingest.log 2>&1
+#
+# DISABLED 2026-06-11 — v1 bd_* decommission (operator confirmed all brewing/
+# fermenting/racking/packaging data entry has moved to the maltyweb saisie forms,
+# which write the v2 bd_*_v2 tables directly; the BSF Google Forms are retired).
+# All readers were repointed off v1 to _v2 (commits f398163…face01f); v1 tables
+# remain in place (not yet dropped). This cron was the sole automatic writer of the
+# v1 bd_* tables — disabling it stops new v1 writes. Re-enable by uncommenting +
+# redeploy ONLY if BSF-form entry resumes. v1 DROP is a separate gated step.
+# */30  *   *   *   *   maltytask   cd /var/www/maltytask && .venv/bin/python scripts/python/ingest.py --tab=all --apply >> /var/log/maltytask/ingest.log 2>&1
 
 # Daily at 04:30 UTC: reference-table sync from BSF.
 #
