@@ -462,6 +462,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'beer'          => $beer,
                 'batch'         => $batch,
                 'brew'          => $brew,
+                'recipe_id_fk'  => $recipeId,  // canonical FK — was omitted (siblings all set it); fixed 2026-06-11
                 'event_date'    => $startDate,  // occupancy/age anchor = brew start day
                 'brew_start'    => $brewStartVal,
                 'brew_end'      => $brewEndVal,
