@@ -30,29 +30,6 @@ from lib_config import load as load_config
 from lib_db import connect
 
 
-# ---------------------------------------------------------------------------
-# Recipe → fermenting-prefix map (mirrors PREFIX_TO_RECIPE in parse_bd_ingredients.py)
-# Recipes not in this map (collabs, contracts) have no prefix-trackable fermenting
-# reads and both fetch_cc_dates / fetch_fermenting_last_pre_cc return {} for them.
-# ---------------------------------------------------------------------------
-
-RECIPE_TO_PREFIX: dict[str, str] = {
-    'Zepp':              'ZEP',
-    'Embuscade':         'EMB',
-    'Moonshine':         'MOO',
-    'Stirling':          'STI',
-    'Speakeasy':         'SPY',
-    'Diversion':         'DIV',
-    'Double Oat':        'DOA',
-    'Alternative':       'ALT',
-    'Diversion Blanche': 'DIB',
-    'Estafette':         'EST',
-    'EPH1':              'EPH1',
-    'EPH2':              'EPH2',
-    'EPH3':              'EPH3',
-    'EPH4':              'EPH4',
-}
-
 
 # ---------------------------------------------------------------------------
 # Time window definitions
@@ -124,18 +101,22 @@ def fetch_active_recipes(conn, recipe_filter: str | None) -> list[dict]:
 def fetch_cooling_batches(conn, recipe_name: str, window_sql: str, recipe_id: int) -> list[dict]:
     """
     Returns one row per cooling event for this recipe inside the window.
-    We use MAX(cool_final_gravity) as OG per batch (matches tanks.php fix).
+    We use MAX(final_gravity) as OG per batch (matches tanks.php fix).
+    Uses bd_brewing_gravity_v2 with event_type='Cooling'.
     """
+    adapted_window = window_sql.replace('event_date', 'DATE(submitted_at)')
     sql = f"""
         SELECT
-            cool_batch          AS batch,
-            MIN(event_date)     AS batch_date,
-            AVG(cool_final_ph)  AS cooling_ph,
-            MAX(cool_final_gravity) AS og
-        FROM bd_brewing_cooling
-        WHERE cool_beer = %(recipe_name)s
-          AND {window_sql}
-        GROUP BY cool_batch
+            batch                   AS batch,
+            MIN(DATE(submitted_at)) AS batch_date,
+            AVG(final_ph)           AS cooling_ph,
+            MAX(final_gravity)      AS og
+        FROM bd_brewing_gravity_v2
+        WHERE beer = %(recipe_name)s
+          AND event_type = 'Cooling'
+          AND is_tombstoned = 0
+          AND {adapted_window}
+        GROUP BY batch
     """
     with conn.cursor() as cur:
         cur.execute(sql, {"recipe_name": recipe_name, "recipe_id": recipe_id})
@@ -143,15 +124,30 @@ def fetch_cooling_batches(conn, recipe_name: str, window_sql: str, recipe_id: in
 
 
 def fetch_gravity_stage(conn, recipe_name: str, stage: str, window_sql: str, recipe_id: int) -> dict[str, dict]:
-    """Returns {batch: {gravity, ph}} for the given gravity stage."""
+    """Returns {batch: {gravity, ph}} for the given gravity stage from bd_brewing_gravity_v2."""
+    # Map stage name to the correct v2 column names
+    gravity_col_map = {
+        "FirstWort":  ("firstwort_gravity", "firstwort_ph"),
+        "Pfannevoll": ("pfannevoll_gravity", None),
+        "Kochwurze":  ("kochwurze_gravity",  None),
+        "Cooling":    ("final_gravity",       "final_ph"),
+    }
+    cols = gravity_col_map.get(stage)
+    if cols is None:
+        return {}
+    grav_col, ph_col = cols
+    ph_expr = f"AVG({ph_col})" if ph_col else "NULL"
+    # window_sql references event_date; v2 gravity uses submitted_at as the date proxy
+    adapted_window = window_sql.replace('event_date', 'DATE(submitted_at)')
     sql = f"""
         SELECT batch,
-               AVG(gravity) AS gravity,
-               AVG(ph)      AS ph
-        FROM bd_brewing_gravity
+               AVG({grav_col}) AS gravity,
+               {ph_expr}       AS ph
+        FROM bd_brewing_gravity_v2
         WHERE beer = %(recipe_name)s
-          AND stage = %(stage)s
-          AND {window_sql}
+          AND event_type = %(stage)s
+          AND is_tombstoned = 0
+          AND {adapted_window}
         GROUP BY batch
     """
     with conn.cursor() as cur:
@@ -162,64 +158,53 @@ def fetch_gravity_stage(conn, recipe_name: str, stage: str, window_sql: str, rec
 
 def fetch_fermenting_last_pre_cc(conn, recipe_name: str, batches_and_dates: list[dict]) -> dict[str, dict]:
     """
-    For each (batch, cc_date), fetch the last fermenting measurement row
+    For each (batch, cc_date), fetch the last fermenting Reads measurement
     (gravity + ph) whose event_date is strictly before cc_date.
     Returns {batch: {fg, end_ferm_ph}}.
 
-    bd_fermenting has no direct beer/batch columns.  Identity is encoded in
-    beers_to_read as '<PREFIX> <BATCH> [optional suffix]', e.g. 'EMB 233' or
-    'EMB 233 DH'.  We look up the prefix via RECIPE_TO_PREFIX, scope the SQL
-    with a LIKE filter, then parse the batch token in Python using a regex
-    anchored to the prefix so trailing suffixes are ignored.
-
-    Recipes not in RECIPE_TO_PREFIX (collabs, contracts) return {} because
-    their fermenting reads are not tracked by the standard prefix scheme.
+    bd_fermenting_v2 has direct beer_raw+batch+recipe_id_fk columns.
+    We join via ref_recipes to match by name (handles both old prefix-encoded
+    beer_raw and new bare-name format consistently).
     """
     if not batches_and_dates:
-        return {}
-
-    prefix = RECIPE_TO_PREFIX.get(recipe_name)
-    if prefix is None:
         return {}
 
     batch_cc: dict[str, Any] = {}
     for item in batches_and_dates:
         batch_cc[item["batch"]] = item.get("cc_date")
 
-    # Fetch all non-Dry-Hop reads for this prefix, newest first so we can
-    # take the first qualifying row per batch.
-    sql = """
+    batches = list(batch_cc.keys())
+    if not batches:
+        return {}
+
+    placeholders = ", ".join(["%s"] * len(batches))
+    sql = f"""
         SELECT
-            beers_to_read AS btr,
-            event_date,
-            gravity,
-            ph
-        FROM bd_fermenting
-        WHERE beers_to_read LIKE %s
-          AND event_type NOT IN ('Dry Hop')
-          AND event_date IS NOT NULL
-        ORDER BY event_date DESC
+            f.batch,
+            f.event_date,
+            f.gravity,
+            f.ph
+        FROM bd_fermenting_v2 f
+        JOIN ref_recipes r ON r.id = f.recipe_id_fk
+        WHERE r.name = %s
+          AND f.batch IN ({placeholders})
+          AND f.event_type = 'Reads'
+          AND f.is_tombstoned = 0
+          AND f.event_date IS NOT NULL
+        ORDER BY f.batch, f.event_date DESC
     """
     with conn.cursor() as cur:
-        cur.execute(sql, [f"{prefix} %"])
+        cur.execute(sql, [recipe_name] + batches)
         rows = cur.fetchall()
-
-    # Regex: anchor to prefix, capture the first whitespace-delimited token
-    # as the batch number, ignoring any trailing suffix (e.g. ' DH', ' [DH 2]').
-    batch_pat = re.compile(rf'^{re.escape(prefix)}\s+(\S+)')
 
     result: dict[str, dict] = {}
     for row in rows:
-        btr = row.get("btr") or ""
-        m = batch_pat.match(btr)
-        if not m:
-            continue
-        b = m.group(1)
+        b = row["batch"]
         if b not in batch_cc or b in result:
-            continue  # not in our target set, or already resolved
+            continue  # already resolved
         cc = batch_cc[b]
         if cc is None:
-            # no cc_date: take the latest fermenting row regardless
+            # no cc_date: take the latest Reads row regardless
             result[b] = {"fg": row["gravity"], "end_ferm_ph": row["ph"]}
         elif row["event_date"] < cc:
             result[b] = {"fg": row["gravity"], "end_ferm_ph": row["ph"]}
@@ -229,18 +214,23 @@ def fetch_fermenting_last_pre_cc(conn, recipe_name: str, batches_and_dates: list
 
 def fetch_timings(conn, recipe_name: str, batches: list[str]) -> dict[str, Any]:
     """
-    Fetch start_ferm per batch from bd_brewing_timings.
-    Returns {batch: start_ferm_str}.
+    Fetch start_ferm per batch from bd_brewing_timings_v2.
+    start_ferm is 100% NULL in v2; fall back to MIN(event_date) as ferment-start anchor.
+    Returns {batch: start_ferm_str_or_date}.
     """
     if not batches:
         return {}
     placeholders = ", ".join(["%s"] * len(batches))
     sql = f"""
-        SELECT batch, MAX(start_ferm) AS start_ferm
-        FROM bd_brewing_timings
+        SELECT batch,
+               COALESCE(
+                   MAX(STR_TO_DATE(start_ferm, '%%d.%%m.%%Y %%H:%%i:%%s')),
+                   MIN(event_date)
+               ) AS start_ferm
+        FROM bd_brewing_timings_v2
         WHERE beer = %s
           AND batch IN ({placeholders})
-          AND start_ferm IS NOT NULL AND start_ferm != ''
+          AND is_tombstoned = 0
         GROUP BY batch
     """
     with conn.cursor() as cur:
@@ -251,58 +241,37 @@ def fetch_timings(conn, recipe_name: str, batches: list[str]) -> dict[str, Any]:
 
 def fetch_cc_dates(conn, recipe_name: str, batches: list[str]) -> dict[str, Any]:
     """
-    Fetch the earliest cold-crash date per batch from bd_fermenting.
-
-    bd_fermenting has no direct beer/batch columns.  The cold-crash event is
-    identified by a non-empty beers_to_cold_crash value, encoded as
-    '<PREFIX> <BATCH>', e.g. 'EMB 233'.  We look up the prefix via
-    RECIPE_TO_PREFIX, scope the SQL with a LIKE filter, then parse the batch
-    token with rsplit(' ', 1) (cc values never carry trailing suffixes).
-
-    Recipes not in RECIPE_TO_PREFIX (collabs, contracts) return {} — they
-    have no prefix-trackable CC events in bd_fermenting.
+    Fetch the earliest cold-crash date per batch from bd_fermenting_v2.
+    event_type='ColdCrash' discriminates CC events; batch is a direct column.
+    Keys on recipe_id_fk+batch where available, else beer_raw+batch.
+    Returns {batch: earliest_cc_date}.
     """
     if not batches:
         return {}
-
-    prefix = RECIPE_TO_PREFIX.get(recipe_name)
-    if prefix is None:
-        return {}
-
-    sql = """
+    placeholders = ", ".join(["%s"] * len(batches))
+    sql = f"""
         SELECT
-            beers_to_cold_crash AS bcc,
-            event_date
-        FROM bd_fermenting
-        WHERE beers_to_cold_crash LIKE %s
-          AND event_date IS NOT NULL
+            f.batch,
+            MIN(f.event_date) AS cc_date
+        FROM bd_fermenting_v2 f
+        JOIN ref_recipes r ON r.id = f.recipe_id_fk
+        WHERE r.name = %s
+          AND f.batch IN ({placeholders})
+          AND f.event_type = 'ColdCrash'
+          AND f.is_tombstoned = 0
+          AND f.event_date IS NOT NULL
+        GROUP BY f.batch
     """
     with conn.cursor() as cur:
-        cur.execute(sql, [f"{prefix} %"])
+        cur.execute(sql, [recipe_name] + batches)
         rows = cur.fetchall()
-
-    batches_set = set(batches)
-    out: dict[str, Any] = {}
-    for r in rows:
-        bcc = r.get("bcc") or ""
-        pieces = bcc.rsplit(" ", 1)
-        if len(pieces) != 2:
-            continue
-        p, b = pieces
-        if p.strip() != prefix or b not in batches_set:
-            continue
-        # keep the earliest event_date per batch
-        if b not in out or r["event_date"] < out[b]:
-            out[b] = r["event_date"]
-
-    return out
+    return {r["batch"]: r["cc_date"] for r in rows}
 
 
 def fetch_racking_dates(conn, recipe_name: str, batches: list[str]) -> dict[str, Any]:
     """
-    Fetch the racking date per batch from bd_racking. The racking date is the
-    form-submission date (DATE(submitted_at)); start_time/end_time are null in
-    live data and bd_racking.cc_date stores a different semantic value.
+    Fetch the racking date per batch from bd_racking_v2.
+    Uses event_date directly (v2 has this column).
     Matches on neb_beer/neb_batch OR contract_beer/contract_batch.
     Returns {batch: racking_date}.
     """
@@ -312,13 +281,14 @@ def fetch_racking_dates(conn, recipe_name: str, batches: list[str]) -> dict[str,
     sql = f"""
         SELECT
             COALESCE(neb_batch, contract_batch) AS batch,
-            MIN(DATE(submitted_at))             AS racking_date
-        FROM bd_racking
+            MIN(event_date)                     AS racking_date
+        FROM bd_racking_v2
         WHERE (
             (neb_beer = %s AND neb_batch IN ({placeholders}))
             OR (contract_beer = %s AND contract_batch IN ({placeholders}))
         )
-        AND submitted_at IS NOT NULL
+        AND is_tombstoned = 0
+        AND event_date IS NOT NULL
         GROUP BY COALESCE(neb_batch, contract_batch)
     """
     params = [recipe_name] + batches + [recipe_name] + batches
@@ -331,10 +301,7 @@ def fetch_racking_dates(conn, recipe_name: str, batches: list[str]) -> dict[str,
 def fetch_packaging_window_level(conn, recipe_name: str, window_sql: str, recipe_id: int) -> dict:
     """
     Recipe-level packaging aggregates over all packaging events in the window.
-
-    bd_packaging uses a separate batch counter from bd_brewing_cooling, with no
-    bridge column, so we cannot link individual packaging events to specific
-    brewday batches. Recipe-level medians are still meaningful for KPI tracking.
+    Uses bd_packaging_v2. O2/CO2 aggregated from bd_packaging_readings child table.
 
     Returns {yield_pct: float|None, loss_pct: float|None,
              o2_ppb: float|None, co2_vol: float|None,
@@ -342,14 +309,17 @@ def fetch_packaging_window_level(conn, recipe_name: str, window_sql: str, recipe
     """
     sql = f"""
         SELECT
-            vendable_hl / NULLIF(objective_volume_hl, 0) * 100 AS yield_pct,
-            pct_loss,
-            avg_o2,
-            avg_co2
-        FROM bd_packaging
-        WHERE recipe_name = %(recipe_name)s
-          AND DATE(submitted_at) IS NOT NULL
-          AND {window_sql.replace('event_date', 'DATE(submitted_at)')}
+            p.vendable_hl / NULLIF(p.objective_hl, 0)        AS yield_pct,
+            p.loss_kpi_hl / NULLIF(p.objective_hl, 0)        AS pct_loss,
+            AVG(pr.o2)                                        AS avg_o2,
+            AVG(pr.co2)                                       AS avg_co2
+        FROM bd_packaging_v2 p
+        LEFT JOIN bd_packaging_readings pr ON pr.packaging_v2_id = p.id
+        WHERE p.recipe_id_fk = %(recipe_id)s
+          AND p.is_tombstoned = 0
+          AND p.event_date IS NOT NULL
+          AND {window_sql}
+        GROUP BY p.id, p.vendable_hl, p.objective_hl, p.loss_kpi_hl
     """
     with conn.cursor() as cur:
         cur.execute(sql, {"recipe_name": recipe_name, "recipe_id": recipe_id})
@@ -373,14 +343,15 @@ def fetch_garde_days_window(conn, recipe_name: str, window_sql: str, recipe_id: 
     """
     import bisect
 
-    # 1. Fetch all racking dates for this recipe (no window — we may need a
-    #    racking that pre-dates the window for a packaging in the window).
+    # 1. Fetch all racking dates for this recipe from bd_racking_v2 (no window —
+    #    we may need a racking that pre-dates the window for a packaging in it).
     rack_sql = """
-        SELECT DATE(submitted_at) AS racking_date
-        FROM bd_racking
+        SELECT event_date AS racking_date
+        FROM bd_racking_v2
         WHERE (neb_beer = %s OR contract_beer = %s)
-          AND submitted_at IS NOT NULL
-        ORDER BY submitted_at
+          AND is_tombstoned = 0
+          AND event_date IS NOT NULL
+        ORDER BY event_date
     """
     with conn.cursor() as cur:
         cur.execute(rack_sql, [recipe_name, recipe_name])
@@ -389,19 +360,20 @@ def fetch_garde_days_window(conn, recipe_name: str, window_sql: str, recipe_id: 
     if not racking_dates:
         return None
 
-    # 2. Fetch all packaging dates for this recipe in the window.
+    # 2. Fetch all packaging dates for this recipe in the window from bd_packaging_v2.
     pkg_sql = f"""
-        SELECT DATE(submitted_at) AS packaging_date
-        FROM bd_packaging
-        WHERE recipe_name = %(recipe_name)s
-          AND DATE(submitted_at) IS NOT NULL
-          AND {window_sql.replace('event_date', 'DATE(submitted_at)')}
+        SELECT event_date AS packaging_date
+        FROM bd_packaging_v2
+        WHERE recipe_id_fk = %(recipe_id)s
+          AND is_tombstoned = 0
+          AND event_date IS NOT NULL
+          AND {window_sql}
     """
     with conn.cursor() as cur:
         cur.execute(pkg_sql, {"recipe_name": recipe_name, "recipe_id": recipe_id})
         pkg_rows = cur.fetchall()
 
-    # 3. For each packaging date, binary-search the most recent prior racking.
+    # 3. Binary-search the most recent prior racking per packaging date.
     deltas: list[int] = []
     for r in pkg_rows:
         pd = r["packaging_date"]
@@ -441,16 +413,18 @@ def fetch_malt_per_recipe_window(
     sql = f"""
         SELECT
             p.mi_id_fk,
-            p.batch,
+            h.batch,
             SUM(
                 CASE WHEN p.unit = 'g' THEN p.qty / 1000 ELSE p.qty END
             )                       AS batch_kg
-        FROM bd_brewing_ingredients_parsed p
+        FROM bd_brewing_ingredients_parsed_v2 p
+        JOIN bd_brewing_ingredients_v2 h ON h.id = p.header_id
         WHERE p.category = 'malt'
-          AND p.beer = %s
+          AND h.beer = %s
           AND p.mi_id_fk IS NOT NULL
-          AND p.batch IN ({placeholders})
-        GROUP BY p.mi_id_fk, p.batch
+          AND h.batch IN ({placeholders})
+          AND h.is_tombstoned = 0
+        GROUP BY p.mi_id_fk, h.batch
     """
     with conn.cursor() as cur:
         cur.execute(sql, [recipe_name] + batches_in_window)
@@ -522,16 +496,18 @@ def fetch_hops_per_recipe_window(
         SELECT
             p.mi_id_fk,
             p.category,
-            p.batch,
+            h.batch,
             SUM(
                 CASE WHEN p.unit = 'kg' THEN p.qty * 1000 ELSE p.qty END
             )               AS batch_g
-        FROM bd_brewing_ingredients_parsed p
+        FROM bd_brewing_ingredients_parsed_v2 p
+        JOIN bd_brewing_ingredients_v2 h ON h.id = p.header_id
         WHERE p.category IN ('hops_kettle', 'hops_dry')
-          AND p.beer = %s
+          AND h.beer = %s
           AND p.mi_id_fk IS NOT NULL
-          AND p.batch IN ({placeholders})
-        GROUP BY p.mi_id_fk, p.category, p.batch
+          AND h.batch IN ({placeholders})
+          AND h.is_tombstoned = 0
+        GROUP BY p.mi_id_fk, p.category, h.batch
     """
     with conn.cursor() as cur:
         cur.execute(sql, [recipe_name] + batches_in_window)
@@ -703,7 +679,7 @@ def compute_profile(
     earliest = min(batch_dates) if batch_dates else None
     latest   = max(batch_dates) if batch_dates else None
 
-    # ── 2. Gravity stages (per-batch averages from bd_brewing_gravity) ──────
+    # ── 2. Gravity stages (per-batch averages from bd_brewing_gravity_v2) ───
     fw_map  = fetch_gravity_stage(conn, recipe_name, "FirstWort",  window_sql, recipe_id)
     kw_map  = fetch_gravity_stage(conn, recipe_name, "Kochwurze",  window_sql, recipe_id)
 
