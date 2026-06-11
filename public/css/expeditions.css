@@ -5565,3 +5565,376 @@ body.expeditions .exp-stock-table td.exp-st--sep {
     display: none;
   }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   STOCK PF — SEASONAL MODEL UI (burn_status, burn freshness note)
+   Added: 2026-06-11
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* Seasonal freshness note — sits between the legend and the stock table.
+   Normal state: muted 1-liner showing the index date.
+   Cold-cache state: amber advisory (uses --oak as the warm advisory tone). */
+body.expeditions .exp-burn-freshness {
+  margin: 0.35rem 0 0.5rem;
+  padding: 0.25rem 0.75rem;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.72rem;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  color: var(--ink-faint);
+  line-height: 1.5;
+}
+
+body.expeditions .exp-burn-freshness--cold {
+  color: var(--oak);
+  background: color-mix(in srgb, var(--oak) 7%, transparent);
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--oak) 25%, transparent);
+  padding: 0.3rem 0.75rem;
+}
+
+/* Provisoire chip — inline badge in the gauge cell.
+   Advisory amber; glyph "≈" ensures it's not colour-alone (deuteranopia-safe). */
+body.expeditions .exp-burn-provisoire {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  margin-top: 3px;
+  padding: 2px 6px;
+  border-radius: 10px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.65rem;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  color: var(--oak);
+  background: color-mix(in srgb, var(--oak) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--oak) 30%, transparent);
+  cursor: default;
+  /* chip is decorative-small; touch target is the <td> cell (≥44px via row height) */
+}
+
+/* Rythme de base label — muted italic in the drill-down ledger */
+body.expeditions .exp-ledger-label--rythme {
+  font-style: italic;
+  color: var(--ink-mute);
+}
+
+body.expeditions .exp-ledger-qty--rythme {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-mute);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   HISTORIQUE VIEW — per-week × per-client BC shipment history
+   Tokens: var(--…) only — no hardcoded hex.
+   Idiom: exp-day-block/exp-day-header/exp-day-metric rhythm, extended for
+   week-blocks and client rows with SKU drill-down.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+body.expeditions .exp-hist-wrap {
+  padding: 0 0 2rem;
+}
+
+/* ── Empty state ──────────────────────────────────────────────────────────── */
+body.expeditions .exp-hist-empty {
+  padding: 2rem 1.5rem;
+  color: var(--ink-mute);
+  font-size: 0.95rem;
+}
+
+body.expeditions .exp-hist-empty__sub {
+  margin-top: 0.4rem;
+  font-size: 0.82rem;
+  color: var(--ink-faint);
+}
+
+/* ── Week-block header ────────────────────────────────────────────────────── */
+body.expeditions .exp-hist-week {
+  margin-bottom: 0.25rem;
+  border-top: 1px solid var(--bg-side);
+}
+
+body.expeditions .exp-hist-week__header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem 0.5rem;
+  background: var(--bg);
+  font-size: 0.85rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--ink);
+  margin: 0;
+}
+
+body.expeditions .exp-hist-week__label {
+  min-width: 11rem;
+  flex-shrink: 0;
+}
+
+body.expeditions .exp-hist-week__meta {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  font-weight: 400;
+  color: var(--ink-mute);
+  font-size: 0.78rem;
+}
+
+body.expeditions .exp-hist-week__stat {
+  font-variant-numeric: tabular-nums;
+}
+
+body.expeditions .exp-hist-week__sep {
+  color: var(--ink-faint);
+}
+
+/* ── Client rows ──────────────────────────────────────────────────────────── */
+body.expeditions .exp-hist-clients {
+  padding: 0;
+}
+
+body.expeditions .exp-hist-client-row {
+  border-top: 1px solid var(--bg-side);
+}
+
+body.expeditions .exp-hist-client-row:first-child {
+  border-top: none;
+}
+
+/* Toggle button — full-width row, flex layout */
+body.expeditions .exp-hist-client-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.55rem 1rem 0.55rem 2rem;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  font-size: 0.88rem;
+  color: var(--ink-soft);
+  min-height: 44px; /* touch target floor */
+  transition: background 60ms ease;
+}
+
+body.expeditions .exp-hist-client-btn:hover,
+body.expeditions .exp-hist-client-btn:focus-visible {
+  background: var(--bg-side);
+}
+
+body.expeditions .exp-hist-client-btn:focus-visible {
+  outline: 2px solid var(--hop);
+  outline-offset: -2px;
+}
+
+body.expeditions .exp-hist-client-name {
+  font-weight: 500;
+  color: var(--ink);
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Channel badge (on trade / off trade) */
+body.expeditions .exp-hist-channel-badge {
+  flex-shrink: 0;
+  font-size: 0.68rem;
+  font-family: 'JetBrains Mono', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-mute);
+  border: 1px solid var(--bg-side);
+  border-radius: 3px;
+  padding: 0.1rem 0.35rem;
+}
+
+/* "Historique BC" badge — muted, identifies source lane */
+body.expeditions .exp-hist-bc-badge {
+  flex-shrink: 0;
+  font-size: 0.68rem;
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 0.04em;
+  color: var(--ink-faint);
+  border: 1px dashed var(--bg-side);
+  border-radius: 3px;
+  padding: 0.1rem 0.35rem;
+}
+
+/* Metric cluster — mirrors exp-day-metric rhythm */
+body.expeditions .exp-hist-client-metrics {
+  display: flex;
+  align-items: baseline;
+  gap: 0.25rem;
+  flex-shrink: 0;
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-mute);
+}
+
+body.expeditions .exp-hist-metric {
+  white-space: nowrap;
+}
+
+body.expeditions .exp-hist-metric__sep {
+  color: var(--ink-faint);
+}
+
+/* Toggle icon — rotates when aria-expanded=true */
+body.expeditions .exp-hist-toggle-icon {
+  flex-shrink: 0;
+  font-size: 0.72rem;
+  color: var(--ink-faint);
+  transition: transform 120ms ease;
+}
+
+body.expeditions .exp-hist-client-btn[aria-expanded="true"] .exp-hist-toggle-icon {
+  transform: rotate(90deg);
+}
+
+/* ── SKU drill-down panel ─────────────────────────────────────────────────── */
+/* Use display:block + [hidden]=none pattern (same as exp-evt-pane) to avoid
+   the CSS overriding [hidden] specificity trap documented in the UI skill. */
+body.expeditions .exp-hist-drill {
+  display: block;
+  background: var(--bg-elev);
+  border-top: 1px solid var(--bg-side);
+  padding: 0.5rem 1rem 0.75rem 2.5rem;
+}
+
+body.expeditions .exp-hist-drill[hidden] {
+  display: none;
+}
+
+body.expeditions .exp-hist-drill__empty {
+  font-size: 0.82rem;
+  color: var(--ink-mute);
+  margin: 0.25rem 0;
+}
+
+body.expeditions .exp-hist-drill__table {
+  width: 100%;
+  max-width: 32rem;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+}
+
+body.expeditions .exp-hist-drill__table thead th {
+  text-align: left;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-mute);
+  padding: 0.25rem 0.5rem 0.25rem 0;
+  border-bottom: 1px solid var(--bg-side);
+}
+
+body.expeditions .exp-hist-drill__table tbody td {
+  padding: 0.2rem 0.5rem 0.2rem 0;
+  border-bottom: 1px solid var(--bg-side);
+  color: var(--ink-soft);
+}
+
+body.expeditions .exp-hist-drill__table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+body.expeditions .exp-hist-sku-code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+  color: var(--ink);
+  letter-spacing: 0.02em;
+}
+
+body.expeditions .exp-hist-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+body.expeditions .exp-hist-th-num {
+  text-align: right;
+}
+
+/* ── Unresolved footnote (collapsible <details>) ──────────────────────────── */
+body.expeditions .exp-hist-unresolved {
+  margin: 1.5rem 1rem 0;
+  border: 1px solid var(--bg-side);
+  border-radius: 4px;
+  background: var(--bg);
+}
+
+body.expeditions .exp-hist-unresolved__summary {
+  padding: 0.6rem 0.75rem;
+  font-size: 0.78rem;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--ink-faint);
+  cursor: pointer;
+  list-style: none; /* Chrome default triangle already removed by [hidden] pattern */
+  user-select: none;
+}
+
+body.expeditions .exp-hist-unresolved__summary::-webkit-details-marker {
+  display: none;
+}
+
+body.expeditions .exp-hist-unresolved[open] .exp-hist-unresolved__summary {
+  border-bottom: 1px solid var(--bg-side);
+  color: var(--ink-mute);
+}
+
+body.expeditions .exp-hist-unresolved__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  padding: 0.5rem 0.75rem;
+}
+
+body.expeditions .exp-hist-unresolved__table thead th {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-mute);
+  padding: 0.4rem 0.5rem;
+  text-align: left;
+  border-bottom: 1px solid var(--bg-side);
+}
+
+body.expeditions .exp-hist-unresolved__table tbody td {
+  padding: 0.25rem 0.5rem;
+  color: var(--ink-mute);
+  border-bottom: 1px solid var(--bg-side);
+  font-size: 0.75rem;
+}
+
+body.expeditions .exp-hist-unresolved__table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+body.expeditions .exp-hist-raw-code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  color: var(--ink-faint);
+}
+
+/* Responsive: collapse metrics on narrow screens */
+@media (max-width: 600px) {
+  body.expeditions .exp-hist-client-metrics {
+    display: none;
+  }
+
+  body.expeditions .exp-hist-drill {
+    padding-left: 1rem;
+  }
+}
+/* END HISTORIQUE */

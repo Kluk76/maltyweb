@@ -154,6 +154,47 @@ These views cover the **shipment-document grain** (physical deliveries). The All
 basis (invoice grain, `doc_type='invoice'`) is a separate audit scope and is NOT
 wired here — it is the reconciliation counterpart, not the Commandes surface.
 
+### `v_sales_ledger_weekly_client` — weekly per-client aggregate (mig 329)
+
+One row per `(iso_yearweek, customer_id_fk)`. Used by the **Historique tab** in
+`expeditions.php`. Groups shipment lines to ISO week × customer, giving the
+week-block → client-row → SKU-drill hierarchy.
+
+| Column           | Notes                                                          |
+|------------------|----------------------------------------------------------------|
+| `iso_yearweek`   | `YEARWEEK(posting_date, 3)` — ISO week integer (e.g. 202623) |
+| `iso_year`       | Year part of the ISO week                                      |
+| `iso_week`       | Week number (ISO-8601 mode 3)                                  |
+| `week_start`     | Monday date of the ISO week (`STR_TO_DATE(…, '%X%V %W')`)     |
+| `customer_id_fk` | FK → `ref_customers.id`                                       |
+| `customer_name`  | Denormalized from `ref_customers.name`                         |
+| `trade_channel`  | `on_trade` / `off_trade` / NULL                               |
+| `doc_count`      | Distinct BC document numbers in this week × client             |
+| `total_units`    | `ROUND(-SUM(qty_signed))` — positive outbound units            |
+| `total_hl`       | `ROUND(-SUM(hl_resolved),2)` — total HL                       |
+
+Same scope as the other three views: shipment docs, resolved-FG, B2B scope,
+`posting_date < '2026-06-08'`. `ONLY_FULL_GROUP_BY` on derived columns
+(`iso_year`, `iso_week`, `week_start`) handled via `ANY_VALUE()` — they are
+deterministic on `iso_yearweek`.
+
+## Historique tab wiring (expeditions.php, mig 329)
+
+The **Historique** view (`?view=historique`) in `expeditions.php` renders
+week-blocks → client-rows → SKU-drill using the four views above:
+
+- **Period toolbar**: reuses `exp_parse_isoweek()` / `exp_date_to_isoweek()` /
+  `exp_isoweek_label()` helpers and the shared `$cmdMode`/`$cmdKw`/`$cmdDu`/
+  `$cmdAu` variables. Default week = last week before cutover (2026-06-07).
+- **Week aggregate**: `v_sales_ledger_weekly_client WHERE week_start BETWEEN ? AND ?`.
+- **SKU drill**: direct `inv_sales_ledger GROUP BY (YEARWEEK, customer_id_fk, sku_code)`,
+  filtered to the same date window + customer IDs in scope. Pre-fetched in one query;
+  indexed by `"{iso_yearweek}:{customer_id_fk}"` for O(1) render lookup.
+- **Unresolved footnote**: `v_sales_ledger_unresolved` (no date filter — global).
+- **JS**: `public/js/expeditions-historique.js` — delegated click toggle on
+  `.exp-hist-client-btn` / `aria-expanded` / `[hidden]` panel.
+- **CSS**: `public/css/expeditions.css` — `.exp-hist-*` token namespace.
+
 ## Schema metadata
 
 Views are read-only lenses over `inv_sales_ledger` (classified `source` /

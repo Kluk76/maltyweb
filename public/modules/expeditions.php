@@ -110,7 +110,7 @@ const EXP_INTERNAL_LABELS   = [
 
 // ── View routing ──────────────────────────────────────────────────────────────
 $view    = isset($_GET['view']) ? (string) $_GET['view'] : 'commandes';
-$allowedViews = ['commandes', 'form', 'stock', 'stocktake', 'clients', 'mouvements', 'side-stock'];
+$allowedViews = ['commandes', 'form', 'stock', 'stocktake', 'clients', 'mouvements', 'side-stock', 'historique'];
 if (!in_array($view, $allowedViews, true)) $view = 'commandes';
 
 $editId  = isset($_GET['edit']) ? (int) $_GET['edit'] : 0;
@@ -1281,6 +1281,48 @@ if ($view === 'commandes') {
     }
 }
 
+// ── Historique view: week/range filter — reuses the same ISO helpers and
+//    $cmdMode/$cmdKw/$cmdDu/$cmdAu/$kwPrev/$kwNext variables ──────────────────
+// Default: current ISO week, stepping back through historical data.
+// Cutover cap: all data is < 2026-06-08 (enforced by the view itself).
+if ($view === 'historique') {
+    $rawMode = isset($_GET['mode']) ? (string) $_GET['mode'] : 'week';
+    $cmdMode = in_array($rawMode, ['week', 'range'], true) ? $rawMode : 'week';
+
+    if ($cmdMode === 'range') {
+        $rawDu = isset($_GET['du']) ? trim((string) $_GET['du']) : '';
+        $rawAu = isset($_GET['au']) ? trim((string) $_GET['au']) : '';
+        $parseDu = (preg_match('/^\d{4}-\d{2}-\d{2}$/', $rawDu) && $rawDu >= '2020-01-01') ? $rawDu : date('Y-m-d');
+        $parseAu = (preg_match('/^\d{4}-\d{2}-\d{2}$/', $rawAu) && $rawAu >= '2020-01-01') ? $rawAu : $parseDu;
+        if ($parseAu < $parseDu) $parseAu = $parseDu;
+        // Clamp to 92 days (≈ 13 weeks) — same policy as commandes
+        $diffDays = (int) round((strtotime($parseAu) - strtotime($parseDu)) / 86400);
+        if ($diffDays > 92) {
+            $parseAu = date('Y-m-d', strtotime($parseDu . ' +92 days'));
+            $cmdRangeNotice = 'Plage limitée à 92 jours.';
+        }
+        $cmdDu = $parseDu;
+        $cmdAu = $parseAu;
+    } else {
+        // Default: most-recent week that has historical data (last week before cutover)
+        $rawKw = isset($_GET['kw']) ? trim((string) $_GET['kw']) : '';
+        if ($rawKw === '' || exp_parse_isoweek($rawKw) === null) {
+            // Default to the week containing the cutover minus one (last BC week)
+            $rawKw = exp_date_to_isoweek('2026-06-07');
+        }
+        $cmdKw = $rawKw;
+        $parsed = exp_parse_isoweek($cmdKw);
+        $cmdDu = $parsed[0];
+        $cmdAu = $parsed[1];
+    }
+
+    if ($cmdMode === 'week') {
+        $dto    = new DateTimeImmutable($cmdDu);
+        $kwPrev = exp_date_to_isoweek($dto->modify('-7 days')->format('Y-m-d'));
+        $kwNext = exp_date_to_isoweek($dto->modify('+7 days')->format('Y-m-d'));
+    }
+}
+
 // ── POST: side-stock giveaway + tombstone (view=side-stock) ──────────────────
 // NOT COGS — unit counts only. NOT sale_class (distinct from migs 300/301).
 // Actions: record_giveaway, tombstone_ssl_row.
@@ -1465,6 +1507,13 @@ $movSkuList    = []; // active SKUs for the form select
 $sslBalanceRows = []; // per-SKU balance rows (non-zero balances)
 $sslLedgerRows  = []; // recent ledger entries
 $sslSkuDropdown = []; // active SKUs for the giveaway form select
+
+// Historique BC view (mig 329) — read-only, no status chips, no CHF
+// Populated only when view=historique.
+$histWeekRows      = []; // rows from v_sales_ledger_weekly_client for the period
+$histByWeek        = []; // [iso_yearweek => [row, ...]] keyed for week-blocks
+$histLinesByKey    = []; // ["{iso_yearweek}:{customer_id_fk}" => [{sku_code,qty,hl}, ...]]
+$histUnresolved    = []; // v_sales_ledger_unresolved rows for the footnote
 
 try {
     // Active customers (for typeahead)
@@ -2127,6 +2176,87 @@ try {
         )->fetchAll(PDO::FETCH_ASSOC);
     }
 
+    // ── Historique view: per-week-per-client BC shipment history (mig 329) ────
+    // Read-only. No writes, no status chips, no CHF. Source: v_sales_ledger_weekly_client
+    // (shipment grain, resolved-FG, B2B scope, posting_date < 2026-06-08).
+    // Queries:
+    //   1. Weekly client rows for the selected period (week or range).
+    //   2. Per-SKU lines for drill-down, keyed "{iso_yearweek}:{customer_id_fk}".
+    //   3. Unresolved footnote total (always; one query, no filter).
+    if ($view === 'historique') {
+
+        // ── 1. Weekly aggregate rows for the period ───────────────────────────
+        // Filter by iso_yearweek integer range (YEARWEEK mode 3) to stay consistent
+        // with how the view buckets rows. Filtering by week_start DATE is unreliable
+        // because STR_TO_DATE(CONCAT(YEARWEEK(d,3),' Monday'),'%X%V %W') can map the
+        // same yearweek integer to the WRONG Monday in some MySQL builds — using the
+        // integer directly bypasses that mismatch.
+        // Rows sorted most-recent ISO week first, then by total_hl desc within each week.
+        $histWeekStmt = $pdo->prepare(
+            'SELECT iso_yearweek, iso_year, iso_week, week_start,
+                    customer_id_fk, customer_name, trade_channel,
+                    doc_count, total_units, total_hl
+               FROM v_sales_ledger_weekly_client
+              WHERE iso_yearweek BETWEEN YEARWEEK(?, 3) AND YEARWEEK(?, 3)
+              ORDER BY iso_yearweek DESC, total_hl DESC'
+        );
+        $histWeekStmt->execute([$cmdDu, $cmdAu]);
+        $histWeekRows = $histWeekStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // Index by week for rendering; also collect yw set + cid set for drill pre-fetch
+        $histVisibleKeys = []; // array of "iso_yearweek:customer_id_fk"
+        $histYwSet       = []; // distinct iso_yearweek integers seen in this period
+        foreach ($histWeekRows as $wr) {
+            $yw  = (int) $wr['iso_yearweek'];
+            $cid = (int) $wr['customer_id_fk'];
+            if (!isset($histByWeek[$yw])) $histByWeek[$yw] = [];
+            $histByWeek[$yw][] = $wr;
+            $histVisibleKeys[] = (string) $yw . ':' . (string) $cid;
+            $histYwSet[$yw]    = $yw;
+        }
+        $histYwSet = array_values($histYwSet); // dense int array for placeholders
+
+        // ── 2. Per-SKU drill lines for all visible (week × client) pairs ──────
+        // Filter by YEARWEEK integer IN (...) — exact same bucket logic as the view.
+        // This guarantees drill key "{iso_yearweek}:{cid}" matches $histByWeek keys.
+        if (!empty($histWeekRows)) {
+            $histCidSet = array_unique(array_map('intval', array_column($histWeekRows, 'customer_id_fk')));
+            $histCidPlaceholders = implode(',', array_fill(0, count($histCidSet), '?'));
+            $histYwPlaceholders  = implode(',', array_fill(0, count($histYwSet),  '?'));
+
+            $histLineStmt = $pdo->prepare(
+                "SELECT YEARWEEK(l.posting_date, 3)   AS iso_yearweek,
+                        l.customer_id_fk,
+                        s.sku_code,
+                        ROUND(-SUM(l.qty_signed))      AS qty,
+                        ROUND(-SUM(l.hl_resolved),2)   AS hl
+                   FROM inv_sales_ledger l
+                   JOIN ref_skus s ON s.id = l.sku_id_fk
+                   JOIN ref_customers c ON c.id = l.customer_id_fk
+                  WHERE l.doc_type       = 'shipment'
+                    AND l.sku_id_fk      IS NOT NULL
+                    AND YEARWEEK(l.posting_date, 3) IN ($histYwPlaceholders)
+                    AND l.customer_id_fk IN ($histCidPlaceholders)
+                    AND c.sale_class NOT IN ('eshop','taproom','customs_artifact','transfer','sample')
+                  GROUP BY iso_yearweek, l.customer_id_fk, s.sku_code
+                  ORDER BY iso_yearweek DESC, l.customer_id_fk ASC, hl DESC"
+            );
+            $histLineStmt->execute([...$histYwSet, ...$histCidSet]);
+            foreach ($histLineStmt->fetchAll(PDO::FETCH_ASSOC) as $ln) {
+                $key = (string) $ln['iso_yearweek'] . ':' . (string) $ln['customer_id_fk'];
+                if (!isset($histLinesByKey[$key])) $histLinesByKey[$key] = [];
+                $histLinesByKey[$key][] = $ln;
+            }
+        }
+
+        // ── 3. Unresolved footnote (always; summarised by sku_code_raw + yr) ──
+        $histUnresolved = $pdo->query(
+            'SELECT sku_code_raw, yr, line_count, units
+               FROM v_sales_ledger_unresolved
+              ORDER BY yr DESC, units DESC'
+        )->fetchAll(PDO::FETCH_ASSOC);
+    }
+
     if ($view === 'mouvements') {
         // holds_fg_stock sites (for form selects + list JOINs)
         $movFgSites = $pdo->query(
@@ -2671,6 +2801,9 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
     <a href="/modules/expeditions.php"
        class="exp-tab<?= $view === 'commandes' ? ' exp-tab--active' : '' ?>"
        <?= $view === 'commandes' ? 'aria-current="page"' : '' ?>>Commandes</a>
+    <a href="/modules/expeditions.php?view=historique"
+       class="exp-tab<?= $view === 'historique' ? ' exp-tab--active' : '' ?>"
+       <?= $view === 'historique' ? 'aria-current="page"' : '' ?>>Historique</a>
     <a href="/modules/expeditions.php?view=form"
        class="exp-tab<?= $view === 'form' ? ' exp-tab--active' : '' ?>"
        <?= $view === 'form' ? 'aria-current="page"' : '' ?>>Saisie</a>
@@ -4168,6 +4301,34 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
     </div>
   </details>
 
+  <?php
+  // ── Seasonal freshness note ───────────────────────────────────────────────
+  // Read burn_cache_cold and burn_index_computed_at from the first stock row.
+  // Both fields share the same value across all rows (index is global, not per-SKU).
+  $firstStockRow         = $stockRows[0] ?? null;
+  $burnCacheCold         = !empty($firstStockRow) && !empty($firstStockRow['burn_cache_cold']);
+  $burnIndexComputedAt   = $firstStockRow['burn_index_computed_at'] ?? null;
+  // Format the timestamp day-first JJ/MM (house convention: day-first fr-CH).
+  $burnIndexDateLabel = null;
+  if ($burnIndexComputedAt !== null) {
+      $burnIndexTs = strtotime((string) $burnIndexComputedAt);
+      if ($burnIndexTs !== false) {
+          $burnIndexDateLabel = date('d/m', $burnIndexTs);
+      }
+  }
+  ?>
+  <?php if (!empty($stockRows)): ?>
+  <p class="exp-burn-freshness<?= $burnCacheCold ? ' exp-burn-freshness--cold' : '' ?>">
+    <?php if ($burnCacheCold): ?>
+      <span aria-hidden="true">⏳</span>
+      Courbe saisonnière en cours de préparation — estimations provisoires
+    <?php else: ?>
+      <span aria-hidden="true">〜</span>
+      Projection saisonnière<?= $burnIndexDateLabel !== null ? ' · indice au&nbsp;' . htmlspecialchars($burnIndexDateLabel) : '' ?>
+    <?php endif ?>
+  </p>
+  <?php endif ?>
+
   <!-- ── Stock table (grouped by display_family) ────────────────────────── -->
   <?php
   // Resolve effective family for a stock row — BU/CU suffix → singles group.
@@ -4213,7 +4374,7 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
         <tr>
           <th class="exp-st-col-badge" rowspan="2" aria-label="Niveau de stock"></th>
           <th class="exp-st-col-sku"   rowspan="2">SKU</th>
-          <th class="exp-st-col-gauge" rowspan="2" title="Semaines de couverture (barre = niveau de stock)">Couverture</th>
+          <th class="exp-st-col-gauge" rowspan="2" title="Semaines de couverture — projetée sur la saisonnalité des 24 derniers mois (barre = niveau de stock)">Couverture</th>
           <th class="exp-st-th--sep"   rowspan="2" aria-hidden="true"></th>
           <th class="exp-st-col-physique exp-st-th-actuel" rowspan="2" title="Stock physique actuel = ancre + production − ventes depuis l'ancre">Physique</th>
           <th class="exp-st-th--sep"   rowspan="2" aria-hidden="true"></th>
@@ -4345,6 +4506,11 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
                   <?php endif ?>
                 </span>
               </div>
+              <?php if (($sr['burn_status'] ?? null) === 'provisoire'): ?>
+              <span class="exp-burn-provisoire"
+                    aria-label="Estimation provisoire"
+                    title="Historique insuffisant — estimation provisoire (SKU récent ou peu de ventes)">≈ provisoire</span>
+              <?php endif ?>
             </td>
             <td class="exp-st--sep" aria-hidden="true"></td>
             <td class="exp-st-col-physique">
@@ -4560,14 +4726,18 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
                     </tr>
                     <?php endif ?>
                     <?php endif ?>
-                    <?php if ($sr['velocity_weekly'] !== null): ?>
+                    <?php
+                    // rythme_base = deseasonalized weekly run-rate; same value as velocity_weekly (back-compat alias).
+                    $rythmBase = $sr['rythme_base'] ?? $sr['velocity_weekly'] ?? null;
+                    ?>
+                    <?php if ($rythmBase !== null): ?>
                     <tr class="exp-ledger-sep"><td colspan="3"></td></tr>
                     <tr class="exp-ledger-vel">
-                      <td class="exp-ledger-label">Vélocité (moy. 8 sem.)</td>
-                      <td class="exp-ledger-qty">
-                        <?= number_format($sr['velocity_weekly'], 1) ?>/sem
+                      <td class="exp-ledger-label exp-ledger-label--rythme">rythme de base</td>
+                      <td class="exp-ledger-qty exp-ledger-qty--rythme">
+                        <?= number_format((float) $rythmBase, 1) ?>/sem
                       </td>
-                      <td class="exp-ledger-meta">→ <?= htmlspecialchars(exp_fmt_semaines($sr['semaines_stock'], (int) round($physique))) ?> sem. de stock</td>
+                      <td class="exp-ledger-meta">→ <?= htmlspecialchars(exp_fmt_semaines($sr['semaines_stock'], (int) round($physique))) ?> sem. de stock (saisonnier)</td>
                     </tr>
                     <?php endif ?>
                   </tbody>
@@ -6044,6 +6214,214 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
   <?php endif ?>
   <!-- /RESTES D'EMBALLAGE -->
 
+  <!-- ══════════════════════════════════════════════════════════════════════
+       HISTORIQUE VIEW — per-week × per-client BC shipment history
+       Read-only (BC canonical source). No status chips. No CHF amounts.
+       Source: v_sales_ledger_weekly_client (mig 329) over inv_sales_ledger.
+       Cutover: posting_date < 2026-06-08.
+       ══════════════════════════════════════════════════════════════════════ -->
+  <?php if ($view === 'historique'): ?>
+
+  <?php
+  // ── Period toolbar base URLs (mirrors commandes toolbar idiom) ───────────
+  $histBaseUrl      = '/modules/expeditions.php?view=historique';
+  $histWeekBaseUrl  = $histBaseUrl . '&amp;mode=week';
+  $histRangeBaseUrl = $histBaseUrl . '&amp;mode=range';
+  ?>
+
+  <div class="exp-hist-wrap" id="exp-hist-wrap">
+
+    <!-- ── Period toolbar ──────────────────────────────────────────────────── -->
+    <form class="exp-toolbar" method="GET" action="/modules/expeditions.php" id="exp-hist-toolbar-form">
+      <input type="hidden" name="view" value="historique">
+
+      <!-- Mode toggle -->
+      <div class="exp-toolbar__mode" role="group" aria-label="Mode de période">
+        <a href="<?= $histWeekBaseUrl ?>"
+           class="exp-toolbar__mode-btn<?= $cmdMode === 'week' ? ' exp-toolbar__mode-btn--active' : '' ?>"
+           aria-pressed="<?= $cmdMode === 'week' ? 'true' : 'false' ?>">Semaine</a>
+        <a href="<?= $histRangeBaseUrl . ($cmdDu ? '&amp;du=' . $cmdDu . '&amp;au=' . $cmdAu : '') ?>"
+           class="exp-toolbar__mode-btn<?= $cmdMode === 'range' ? ' exp-toolbar__mode-btn--active' : '' ?>"
+           aria-pressed="<?= $cmdMode === 'range' ? 'true' : 'false' ?>">Plage de dates</a>
+      </div>
+
+      <?php if ($cmdMode === 'week'): ?>
+      <!-- Week navigation: arrows step through historical ISO weeks -->
+      <div class="exp-toolbar__week-nav" aria-label="Navigation semaine">
+        <a href="<?= $histWeekBaseUrl ?>&amp;kw=<?= urlencode($kwPrev) ?>"
+           class="exp-toolbar__nav-arrow" aria-label="Semaine précédente">◂</a>
+        <span class="exp-toolbar__week-label"><?= exp_isoweek_label($cmdKw) ?></span>
+        <a href="<?= $histWeekBaseUrl ?>&amp;kw=<?= urlencode($kwNext) ?>"
+           class="exp-toolbar__nav-arrow" aria-label="Semaine suivante">▸</a>
+        <a href="<?= $histWeekBaseUrl ?>&amp;kw=<?= urlencode(exp_date_to_isoweek('2026-06-07')) ?>"
+           class="exp-toolbar__today-btn">Dernière semaine BC</a>
+      </div>
+      <?php else: ?>
+      <!-- Range inputs -->
+      <div class="exp-toolbar__range-inputs" id="exp-hist-range-inputs">
+        <label class="exp-toolbar__range-label" for="exp-hist-range-du">Du</label>
+        <input type="date" id="exp-hist-range-du" name="du" class="exp-toolbar__date-input"
+               value="<?= htmlspecialchars($cmdDu) ?>"
+               min="2021-01-01" max="2026-06-07">
+        <label class="exp-toolbar__range-label" for="exp-hist-range-au">Au</label>
+        <input type="date" id="exp-hist-range-au" name="au" class="exp-toolbar__date-input"
+               value="<?= htmlspecialchars($cmdAu) ?>"
+               min="2021-01-01" max="2026-06-07">
+        <button type="submit" class="exp-toolbar__range-submit" name="mode" value="range">Afficher</button>
+      </div>
+      <?php if ($cmdRangeNotice !== ''): ?>
+      <span class="exp-toolbar__range-notice"><?= htmlspecialchars($cmdRangeNotice) ?></span>
+      <?php endif ?>
+      <?php endif ?>
+    </form>
+
+    <!-- ── Week blocks ─────────────────────────────────────────────────────── -->
+    <?php if (empty($histByWeek)): ?>
+      <div class="exp-hist-empty">
+        <p>Aucune livraison BC pour cette période.</p>
+        <p class="exp-hist-empty__sub">Les données historiques couvrent la période 2021-W01 — 2026-W22 (avant le 8 juin 2026).</p>
+      </div>
+    <?php else: ?>
+
+    <?php foreach ($histByWeek as $yw => $weekClientRows):
+        // Derive display label directly from the iso_yearweek integer (YEARWEEK mode 3).
+        // Do NOT use $wr['week_start'] from the view — its STR_TO_DATE computation can
+        // map the same yearweek integer to the wrong Monday in some MySQL builds.
+        // YEARWEEK integer format is YYYYWW (e.g. 202623 → 2026-W23).
+        $ywStr     = str_pad((string) $yw, 6, '0', STR_PAD_LEFT);
+        $weekKw    = substr($ywStr, 0, 4) . '-W' . substr($ywStr, 4, 2);
+        $weekLabel = exp_isoweek_label($weekKw);
+
+        // Week-level totals
+        $weekTotalHl    = 0.0;
+        $weekTotalUnits = 0;
+        $weekDocCount   = 0;
+        foreach ($weekClientRows as $wr) {
+            $weekTotalHl    += (float) $wr['total_hl'];
+            $weekTotalUnits += (int)   $wr['total_units'];
+            $weekDocCount   += (int)   $wr['doc_count'];
+        }
+    ?>
+
+    <section class="exp-hist-week" aria-label="<?= htmlspecialchars($weekLabel) ?>">
+      <h3 class="exp-hist-week__header">
+        <span class="exp-hist-week__label"><?= htmlspecialchars($weekLabel) ?></span>
+        <span class="exp-hist-week__meta">
+          <span class="exp-hist-week__stat"><?= number_format($weekTotalHl, 2) ?> HL</span>
+          <span class="exp-hist-week__sep" aria-hidden="true">·</span>
+          <span class="exp-hist-week__stat"><?= number_format($weekTotalUnits) ?> unités</span>
+          <span class="exp-hist-week__sep" aria-hidden="true">·</span>
+          <span class="exp-hist-week__stat"><?= $weekDocCount ?> doc<?= $weekDocCount > 1 ? 's' : '' ?> BC</span>
+        </span>
+      </h3>
+
+      <!-- Client rows -->
+      <div class="exp-hist-clients" role="list">
+        <?php foreach ($weekClientRows as $idx => $wr):
+            $cid        = (int) $wr['customer_id_fk'];
+            $drillKey   = (string) $yw . ':' . (string) $cid;
+            $drillId    = 'exp-hist-drill-' . $yw . '-' . $cid;
+            $toggleId   = 'exp-hist-toggle-' . $yw . '-' . $cid;
+            $clientLines = $histLinesByKey[$drillKey] ?? [];
+            $channelLabel = match ($wr['trade_channel'] ?? '') {
+                'on_trade'  => 'On trade',
+                'off_trade' => 'Off trade',
+                default     => '',
+            };
+        ?>
+        <div class="exp-hist-client-row" role="listitem"
+             data-yw="<?= (int) $yw ?>" data-cid="<?= $cid ?>">
+          <button type="button"
+                  class="exp-hist-client-btn"
+                  id="<?= $toggleId ?>"
+                  aria-expanded="false"
+                  aria-controls="<?= $drillId ?>">
+            <span class="exp-hist-client-name"><?= htmlspecialchars((string) $wr['customer_name']) ?></span>
+            <?php if ($channelLabel !== ''): ?>
+              <span class="exp-hist-channel-badge"><?= htmlspecialchars($channelLabel) ?></span>
+            <?php endif ?>
+            <span class="exp-hist-bc-badge" aria-label="Source : Historique BC">Historique BC</span>
+            <span class="exp-hist-client-metrics" aria-label="<?= number_format((float) $wr['total_hl'], 2) ?> HL, <?= (int) $wr['total_units'] ?> unités, <?= (int) $wr['doc_count'] ?> doc(s) BC">
+              <span class="exp-hist-metric"><?= number_format((float) $wr['total_hl'], 2) ?> HL</span>
+              <span class="exp-hist-metric__sep" aria-hidden="true">·</span>
+              <span class="exp-hist-metric"><?= number_format((int) $wr['total_units']) ?> u.</span>
+              <span class="exp-hist-metric__sep" aria-hidden="true">·</span>
+              <span class="exp-hist-metric"><?= (int) $wr['doc_count'] ?> doc<?= $wr['doc_count'] > 1 ? 's' : '' ?></span>
+            </span>
+            <span class="exp-hist-toggle-icon" aria-hidden="true">▸</span>
+          </button>
+
+          <!-- SKU drill-down panel (hidden by default) -->
+          <div class="exp-hist-drill" id="<?= $drillId ?>" hidden>
+            <?php if (empty($clientLines)): ?>
+              <p class="exp-hist-drill__empty">Aucune ligne SKU trouvée pour cette semaine.</p>
+            <?php else: ?>
+              <table class="exp-hist-drill__table" role="table"
+                     aria-label="Détail SKU — <?= htmlspecialchars((string) $wr['customer_name']) ?>">
+                <thead>
+                  <tr>
+                    <th scope="col">SKU</th>
+                    <th scope="col" class="exp-hist-th-num">Unités</th>
+                    <th scope="col" class="exp-hist-th-num">HL</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <?php foreach ($clientLines as $cl): ?>
+                  <tr>
+                    <td class="exp-hist-sku-code"><?= htmlspecialchars((string) $cl['sku_code']) ?></td>
+                    <td class="exp-hist-num"><?= number_format((int) $cl['qty']) ?></td>
+                    <td class="exp-hist-num"><?= number_format((float) $cl['hl'], 2) ?></td>
+                  </tr>
+                  <?php endforeach ?>
+                </tbody>
+              </table>
+            <?php endif ?>
+          </div>
+        </div>
+        <?php endforeach ?>
+      </div>
+    </section>
+
+    <?php endforeach ?>
+    <?php endif ?>
+
+    <!-- ── Unresolved footnote ──────────────────────────────────────────────── -->
+    <?php if (!empty($histUnresolved)):
+        $histUnresTotal = array_sum(array_column($histUnresolved, 'line_count'));
+    ?>
+    <details class="exp-hist-unresolved">
+      <summary class="exp-hist-unresolved__summary">
+        <?= $histUnresTotal ?> ligne<?= $histUnresTotal !== 1 ? 's' : '' ?> BC non rattachée<?= $histUnresTotal !== 1 ? 's' : '' ?> à un SKU — codes retirés / dépôts / CO₂
+      </summary>
+      <table class="exp-hist-unresolved__table" role="table" aria-label="Lignes BC non rattachées">
+        <thead>
+          <tr>
+            <th scope="col">Code brut BC</th>
+            <th scope="col" class="exp-hist-th-num">Année</th>
+            <th scope="col" class="exp-hist-th-num">Lignes</th>
+            <th scope="col" class="exp-hist-th-num">Unités</th>
+          </tr>
+        </thead>
+        <tbody>
+          <?php foreach ($histUnresolved as $ur): ?>
+          <tr>
+            <td class="exp-hist-raw-code"><?= htmlspecialchars((string) $ur['sku_code_raw']) ?></td>
+            <td class="exp-hist-num"><?= (int) $ur['yr'] ?></td>
+            <td class="exp-hist-num"><?= (int) $ur['line_count'] ?></td>
+            <td class="exp-hist-num"><?= number_format((int) $ur['units']) ?></td>
+          </tr>
+          <?php endforeach ?>
+        </tbody>
+      </table>
+    </details>
+    <?php endif ?>
+
+  </div>
+  <!-- /exp-hist-wrap -->
+
+  <?php endif ?>
+  <!-- /HISTORIQUE -->
+
 </main>
 
 <?php if ($view === 'commandes'): ?>
@@ -6075,6 +6453,10 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
   window.SSL_CSRF = <?= json_encode($csrf, JSON_HEX_TAG | JSON_HEX_AMP) ?>;
 </script>
 <script src="/js/expeditions-side-stock.js?v=<?= @filemtime(__DIR__ . '/../js/expeditions-side-stock.js') ?: time() ?>"></script>
+<?php endif ?>
+
+<?php if ($view === 'historique'): ?>
+<script src="/js/expeditions-historique.js?v=<?= @filemtime(__DIR__ . '/../js/expeditions-historique.js') ?: time() ?>"></script>
 <?php endif ?>
 
 </body>
