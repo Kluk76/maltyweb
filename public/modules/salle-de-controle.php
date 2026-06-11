@@ -967,6 +967,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($volOutlierHi < $volWarnHi) throw new RuntimeException('racked_vol_outlier_hi doit être ≥ warn_hi.');
             }
 
+            // ── New design targets (independent point-targets, no pairing guard) ──
+            // OG/FG in °Plato (matching bd_* gravity which stores °Plato, not SG)
+            $rawOgTarget  = post_decimal('og_target');
+            $ogTarget     = $rawOgTarget  !== null ? (float) $rawOgTarget  : null;
+            if ($ogTarget !== null && ($ogTarget < 0.0 || $ogTarget > 35.0)) {
+                throw new RuntimeException('og_target doit être entre 0 et 35 °P.');
+            }
+
+            $rawFgTarget  = post_decimal('fg_target');
+            $fgTarget     = $rawFgTarget  !== null ? (float) $rawFgTarget  : null;
+            if ($fgTarget !== null && ($fgTarget < -2.0 || $fgTarget > 15.0)) {
+                throw new RuntimeException('fg_target doit être entre −2 et 15 °P.');
+            }
+
+            $rawPhTarget  = post_decimal('ph_target');
+            $phTarget     = $rawPhTarget  !== null ? (float) $rawPhTarget  : null;
+            if ($phTarget !== null && ($phTarget < 3.0 || $phTarget > 6.0)) {
+                throw new RuntimeException('ph_target doit être entre 3,0 et 6,0.');
+            }
+
+            $rawAbvTarget = post_decimal('abv_target');
+            $abvTarget    = $rawAbvTarget !== null ? (float) $rawAbvTarget : null;
+            if ($abvTarget !== null && ($abvTarget < 0.0 || $abvTarget > 15.0)) {
+                throw new RuntimeException('abv_target doit être entre 0 et 15 % vol.');
+            }
+
             // ── Step 2: validate recipe exists ──────────────────────────────
             $recStmt = $pdo->prepare(
                 "SELECT id, name FROM ref_recipes WHERE id = ? AND is_active = 1 LIMIT 1"
@@ -981,7 +1007,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $beforeStmt = $pdo->prepare(
                 "SELECT co2_target, co2_tolerance,
                         racked_vol_warn_lo, racked_vol_warn_hi,
-                        racked_vol_outlier_lo, racked_vol_outlier_hi
+                        racked_vol_outlier_lo, racked_vol_outlier_hi,
+                        og_target, fg_target, ph_target, abv_target
                    FROM ref_recipes WHERE id = ? LIMIT 1"
             );
             $beforeStmt->execute([$recipeId]);
@@ -994,6 +1021,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'racked_vol_warn_hi'   => $volWarnHi,
                 'racked_vol_outlier_lo'=> $volOutlierLo,
                 'racked_vol_outlier_hi'=> $volOutlierHi,
+                'og_target'            => $ogTarget,
+                'fg_target'            => $fgTarget,
+                'ph_target'            => $phTarget,
+                'abv_target'           => $abvTarget,
                 'last_modified_by'     => 'web',
             ];
 
@@ -1006,12 +1037,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         racked_vol_warn_hi    = ?,
                         racked_vol_outlier_lo = ?,
                         racked_vol_outlier_hi = ?,
+                        og_target             = ?,
+                        fg_target             = ?,
+                        ph_target             = ?,
+                        abv_target            = ?,
                         last_modified_by      = 'web'
                   WHERE id = ?"
             );
             $upStmt->execute([
                 $co2Target, $co2Tolerance,
                 $volWarnLo, $volWarnHi, $volOutlierLo, $volOutlierHi,
+                $ogTarget, $fgTarget, $phTarget, $abvTarget,
                 $recipeId,
             ]);
 
@@ -1028,6 +1064,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             elseif ($co2Target === null) $parts[] = 'CO₂ → global';
             if ($volWarnLo !== null) $parts[] = "vol [{$volWarnLo}–{$volWarnHi} HL]";
             else $parts[] = 'vol → auto';
+            if ($ogTarget !== null) $parts[] = "OG {$ogTarget} °P";
+            if ($fgTarget !== null) $parts[] = "FG {$fgTarget} °P";
 
             flash_set('ok',
                 "Seuils QC enregistrés — «{$recRow['name']}» · " . implode(', ', $parts) . '.'
@@ -2458,7 +2496,8 @@ try {
         $qcStmt = $pdo->prepare(
             "SELECT id, co2_target, co2_tolerance,
                     racked_vol_warn_lo, racked_vol_warn_hi,
-                    racked_vol_outlier_lo, racked_vol_outlier_hi
+                    racked_vol_outlier_lo, racked_vol_outlier_hi,
+                    og_target, fg_target, ph_target, abv_target
                FROM ref_recipes
               WHERE id IN ({$inPlace3})"
         );
@@ -2471,6 +2510,10 @@ try {
                 'racked_vol_warn_hi'    => $qcr['racked_vol_warn_hi'] !== null ? (float) $qcr['racked_vol_warn_hi'] : null,
                 'racked_vol_outlier_lo' => $qcr['racked_vol_outlier_lo'] !== null ? (float) $qcr['racked_vol_outlier_lo'] : null,
                 'racked_vol_outlier_hi' => $qcr['racked_vol_outlier_hi'] !== null ? (float) $qcr['racked_vol_outlier_hi'] : null,
+                'og_target'             => $qcr['og_target']  !== null ? (float) $qcr['og_target']  : null,
+                'fg_target'             => $qcr['fg_target']  !== null ? (float) $qcr['fg_target']  : null,
+                'ph_target'             => $qcr['ph_target']  !== null ? (float) $qcr['ph_target']  : null,
+                'abv_target'            => $qcr['abv_target'] !== null ? (float) $qcr['abv_target'] : null,
             ];
         }
 
@@ -3167,6 +3210,54 @@ window.SDC_TANK_ERR = null;
                                class="yg-num-input" min="0" max="500" step="0.5" placeholder="—">
                         <span class="yg-unit">HL</span>
                       </div>
+                    </div>
+                  </div>
+
+                  <!-- ── Cibles / Targets ─────────────────────────────── -->
+                  <div class="yg-section-head" style="margin-top:18px;margin-bottom:4px;">
+                    <span class="yg-section-title">Cibles <em>/ Targets</em></span>
+                    <span class="yg-section-sub">Valeurs de conception — °Plato pour OG/FG (identique aux mesures bd_*) · saisie humaine uniquement</span>
+                  </div>
+                  <div class="yg-overrides-grid yg-targets-grid">
+                    <div class="yg-override-field">
+                      <label class="yg-label" for="qcOgTarget">OG cible</label>
+                      <div class="yg-input-row">
+                        <input type="number" name="og_target" id="qcOgTarget"
+                               class="yg-num-input" min="0" max="35" step="0.01" placeholder="—" value="">
+                        <span class="yg-unit">°P</span>
+                      </div>
+                    </div>
+                    <div class="yg-override-field">
+                      <label class="yg-label" for="qcFgTarget">FG cible</label>
+                      <div class="yg-input-row">
+                        <input type="number" name="fg_target" id="qcFgTarget"
+                               class="yg-num-input" min="-2" max="15" step="0.01" placeholder="—" value="">
+                        <span class="yg-unit">°P</span>
+                      </div>
+                    </div>
+                    <div class="yg-override-field">
+                      <label class="yg-label" for="qcPhTarget">pH cible</label>
+                      <div class="yg-input-row">
+                        <input type="number" name="ph_target" id="qcPhTarget"
+                               class="yg-num-input" min="3.0" max="6.0" step="0.01" placeholder="—" value="">
+                        <span class="yg-unit">pH</span>
+                      </div>
+                    </div>
+                    <div class="yg-override-field">
+                      <label class="yg-label" for="qcAbvTarget">ABV cible</label>
+                      <div class="yg-input-row">
+                        <input type="number" name="abv_target" id="qcAbvTarget"
+                               class="yg-num-input" min="0" max="15" step="0.01" placeholder="—" value="">
+                        <span class="yg-unit">% vol</span>
+                      </div>
+                    </div>
+                    <div class="yg-override-field">
+                      <label class="yg-label">Att. app.</label>
+                      <div class="yg-input-row">
+                        <span class="yg-num-input yg-num-readonly" id="qcAttenDisplay">—</span>
+                        <span class="yg-unit">%</span>
+                      </div>
+                      <div class="yg-resolved-line" style="font-size:10px;color:var(--ink-mute);">(OG−FG)/OG×100</div>
                     </div>
                   </div>
 
@@ -5107,6 +5198,15 @@ function renderProcessPane(id,profile){
     setNum('qcVolOutlierLo', qc ? qc.racked_vol_outlier_lo : null);
     setNum('qcVolOutlierHi', qc ? qc.racked_vol_outlier_hi : null);
 
+    // Design target fields
+    setNum('qcOgTarget',  qc ? qc.og_target  : null);
+    setNum('qcFgTarget',  qc ? qc.fg_target  : null);
+    setNum('qcPhTarget',  qc ? qc.ph_target  : null);
+    setNum('qcAbvTarget', qc ? qc.abv_target : null);
+
+    // Att. app. derived display: (OG−FG)/OG×100, only when both set
+    updateAttenDisplay();
+
     // Vol band info (history-derived, read-only)
     const vbInfo = document.getElementById('qcVolBandInfo');
     const vbDisp = document.getElementById('qcVolBandDisplay');
@@ -5153,10 +5253,28 @@ function renderProcessPane(id,profile){
     }
   }
 
+  function updateAttenDisplay(){
+    const attenEl = document.getElementById('qcAttenDisplay');
+    if(!attenEl) return;
+    const og = parseFloat(document.getElementById('qcOgTarget') ? document.getElementById('qcOgTarget').value : '');
+    const fg = parseFloat(document.getElementById('qcFgTarget') ? document.getElementById('qcFgTarget').value : '');
+    if(!isNaN(og) && !isNaN(fg) && og > 0){
+      attenEl.textContent = ((og - fg) / og * 100).toFixed(1);
+    } else {
+      attenEl.textContent = '—';
+    }
+  }
+
   // Wire live CO₂ preview to the two inputs
   ['qcCo2Target','qcCo2Tolerance'].forEach(function(id){
     const el = document.getElementById(id);
     if(el) el.addEventListener('input', updateCo2Preview);
+  });
+
+  // Wire live attenuation display to OG/FG inputs
+  ['qcOgTarget','qcFgTarget'].forEach(function(id){
+    const el = document.getElementById(id);
+    if(el) el.addEventListener('input', updateAttenDisplay);
   });
 })();
 
