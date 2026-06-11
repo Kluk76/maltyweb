@@ -2006,7 +2006,7 @@ function kpi_wort_hl_brewed(array $params, string $label, PDO $pdo): array
     return kpi_cache_set($cacheKey, $result);
 }
 
-/** #2 — HL brewed YTD vs prior year YTD (sparkline) */
+/** #2 — HL brewed YTD vs prior year YTD (sparkline, 12-element cumulative monthly) */
 function kpi_wort_hl_brewed_ytd(string $label, PDO $pdo): array
 {
     $cacheKey = 'wort_hl_ytd';
@@ -2014,45 +2014,73 @@ function kpi_wort_hl_brewed_ytd(string $label, PDO $pdo): array
         return $cached;
     }
 
-    $now  = new DateTimeImmutable('now', new DateTimeZone('UTC'));
-    $year = (int) $now->format('Y');
+    $now         = new DateTimeImmutable('now', new DateTimeZone('UTC'));
+    $year        = (int) $now->format('Y');
+    $currMonth   = (int) $now->format('n');  // 1-12
 
-    $base = kpi_wort_base_sql();
+    // Monthly HL for both years, YTD cutoff applied (same day-of-year).
     $stmt = $pdo->prepare(
         "SELECT YEAR(DATE(cl.submitted_at)) AS yr,
-                ROUND(SUM(cl.final_volume), 1) AS total_hl
-         {$base}
-           AND YEAR(DATE(cl.submitted_at)) IN (?, ?)
-           AND DATE_FORMAT(DATE(cl.submitted_at), '%m-%d') <= DATE_FORMAT(CURDATE(), '%m-%d')
-         GROUP BY yr
-         ORDER BY yr"
+                MONTH(DATE(cl.submitted_at)) AS mo,
+                ROUND(SUM(cl.final_volume), 1) AS hl
+           FROM bd_brewing_gravity_v2 cl
+           JOIN ref_recipes rr ON rr.id = cl.recipe_id_fk
+          WHERE cl.event_type = 'Cooling'
+            AND cl.is_tombstoned = 0
+            AND YEAR(DATE(cl.submitted_at)) IN (?, ?)
+            AND DATE_FORMAT(DATE(cl.submitted_at), '%m-%d') <= DATE_FORMAT(CURDATE(), '%m-%d')
+          GROUP BY yr, mo
+          ORDER BY yr, mo"
     );
     $stmt->execute([$year - 1, $year]);
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    $byYear = [];
+    // Index monthly HL by year → month (1-12).
+    $byMonth = [$year - 1 => [], $year => []];
     foreach ($rows as $r) {
-        $byYear[(int)$r['yr']] = (float)$r['total_hl'];
+        $byMonth[(int)$r['yr']][(int)$r['mo']] = (float)$r['hl'];
     }
 
-    $currYtd = $byYear[$year]       ?? null;
-    $prevYtd = $byYear[$year - 1]   ?? null;
-    $delta   = ($currYtd !== null && $prevYtd !== null && $prevYtd > 0)
+    // Build 12-element cumulative series for current year.
+    $currSeries = [];
+    $runningCurr = 0.0;
+    for ($mo = 1; $mo <= 12; $mo++) {
+        if ($mo <= $currMonth) {
+            $runningCurr += $byMonth[$year][$mo] ?? 0.0;
+            $currSeries[] = ['period' => sprintf('%02d', $mo), 'value' => round($runningCurr, 1)];
+        } else {
+            $currSeries[] = ['period' => sprintf('%02d', $mo), 'value' => 0.0];
+        }
+    }
+
+    // Build 12-element cumulative series for prior year (same YTD cutoff).
+    $prevSeries = [];
+    $runningPrev = 0.0;
+    for ($mo = 1; $mo <= 12; $mo++) {
+        if ($mo <= $currMonth) {
+            $runningPrev += $byMonth[$year - 1][$mo] ?? 0.0;
+            $prevSeries[] = ['period' => sprintf('%02d', $mo), 'value' => round($runningPrev, 1)];
+        } else {
+            $prevSeries[] = ['period' => sprintf('%02d', $mo), 'value' => 0.0];
+        }
+    }
+
+    $currYtd = $currSeries[$currMonth - 1]['value'];  // last non-zero cumulative
+    $prevYtd = $prevSeries[$currMonth - 1]['value'];
+    $delta   = ($prevYtd > 0)
                ? round((($currYtd - $prevYtd) / $prevYtd) * 100, 1)
                : null;
 
-    $series = [];
-    foreach ($byYear as $yr => $hl) {
-        $series[] = ['period' => (string)$yr, 'value' => $hl];
-    }
-
     $result = array_merge(kpi_empty_result($label, 'HL'), [
-        'value'       => $currYtd,
+        'value'       => $currYtd > 0 ? $currYtd : null,
         'delta'       => $delta,
         'delta_label' => 'vs N-1 YTD',
         'tint'        => $delta === null ? 'neutral' : ($delta >= 0 ? 'green' : 'amber'),
-        'series'      => $series,
-        'meta'        => ['period_label' => 'YTD ' . $year],
+        'series'      => $currSeries,
+        'meta'        => [
+            'period_label' => 'YTD ' . $year,
+            'prev_series'  => $prevSeries,
+        ],
     ]);
 
     return kpi_cache_set($cacheKey, $result);

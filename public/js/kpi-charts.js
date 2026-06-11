@@ -415,6 +415,9 @@ function renderKpiCard(container, tracker, result, isAdmin) {
     case 'recap':
       renderKpiRecap(container, tracker, result, tCls);
       break;
+    case 'grouped_bar':
+      renderKpiGroupedBar(container, tracker, result, tCls);
+      break;
     default:
       renderKpiNumber(container, tracker, result, tCls);
   }
@@ -551,6 +554,103 @@ function renderKpiStackedBar(container, tracker, result, tCls) {
     valDiv.className = 'kpc-card__value ' + tCls;
     valDiv.innerHTML = escHtml(fmt(result.value, 0))
       + (result.unit ? ' <span class="kpc-unit">' + escHtml(result.unit) + '</span>' : '');
+    container.appendChild(valDiv);
+  }
+  if (result.delta != null) {
+    const dDiv = document.createElement('div');
+    dDiv.innerHTML = deltaHtml(result.delta, result.delta_label);
+    container.appendChild(dDiv);
+  }
+}
+
+/* ── grouped_bar ─────────────────────────────────────────── */
+/* Horizontal per-beer bar rows: solid current year, ghost prior year.
+   Reads result.breakdown[]{key, label, value, meta:{prior_year, classification}}
+   sorted desc (already sorted by handler).
+   Cap: show top 12 rows max; if truncated show "+N autres" line. */
+function renderKpiGroupedBar(container, tracker, result, tCls) {
+  const label = result.label || tracker.label;
+  container.innerHTML = '<div class="kpc-card__label">' + escHtml(label) + '</div>';
+
+  const breakdown = result.breakdown || [];
+
+  if (!breakdown.length) {
+    const noData = document.createElement('div');
+    noData.className = 'kpc-no-data';
+    noData.textContent = '—';
+    container.appendChild(noData);
+    if (result.value != null) {
+      const valDiv = document.createElement('div');
+      valDiv.className = 'kpc-card__value ' + tCls;
+      valDiv.innerHTML = escHtml(fmt(result.value, 1)) + (result.unit ? ' <span class="kpc-unit">' + escHtml(result.unit) + '</span>' : '');
+      container.appendChild(valDiv);
+    }
+    return;
+  }
+
+  const CAP = 12;
+  const shown     = breakdown.slice(0, CAP);
+  const truncated = breakdown.length - shown.length;
+
+  const maxCurr = shown.reduce(function(m, b) { return Math.max(m, b.value || 0); }, 0.01);
+  const maxGhost = shown.reduce(function(m, b) {
+    return Math.max(m, (b.meta && b.meta.prior_year) ? b.meta.prior_year : 0);
+  }, 0.01);
+  const maxScale = Math.max(maxCurr, maxGhost);
+
+  const wrap = document.createElement('div');
+  wrap.className = 'kpc-grouped-list';
+
+  shown.forEach(function(b) {
+    const curr  = b.value || 0;
+    const prior = (b.meta && b.meta.prior_year != null) ? b.meta.prior_year : null;
+    const currPct  = maxScale > 0 ? (curr  / maxScale * 100) : 0;
+    const ghostPct = (prior != null && maxScale > 0) ? (prior / maxScale * 100) : 0;
+
+    var chipHtml = '';
+    if (prior === null || prior === 0) {
+      if (curr > 0) {
+        chipHtml = '<span class="kpc-grouped-delta kpc-grouped-delta--new">nouveau</span>';
+      } else {
+        chipHtml = '<span class="kpc-grouped-delta kpc-grouped-delta--neutral">—</span>';
+      }
+    } else {
+      const dpct = Math.round((curr - prior) / prior * 100);
+      if (dpct >= 0) {
+        chipHtml = '<span class="kpc-grouped-delta kpc-grouped-delta--up">▲ +' + dpct + '%</span>';
+      } else {
+        chipHtml = '<span class="kpc-grouped-delta kpc-grouped-delta--down">▼ ' + dpct + '%</span>';
+      }
+    }
+
+    const row = document.createElement('div');
+    row.className = 'kpc-grouped-row';
+    row.innerHTML =
+      '<div class="kpc-grouped-row__lbl">' + escHtml(b.label) + '</div>'
+      + '<div class="kpc-grouped-row__track">'
+      +   (ghostPct > 0 ? '<div class="kpc-grouped-bar kpc-grouped-bar--ghost" style="width:' + ghostPct.toFixed(1) + '%"></div>' : '')
+      +   '<div class="kpc-grouped-bar kpc-grouped-bar--curr" style="width:' + currPct.toFixed(1) + '%"></div>'
+      + '</div>'
+      + '<div class="kpc-grouped-row__val">'
+      +   escHtml(fmt(curr, 1)) + (result.unit ? '&nbsp;<span class="kpc-unit">' + escHtml(result.unit) + '</span>' : '')
+      + '</div>'
+      + '<div class="kpc-grouped-row__delta">' + chipHtml + '</div>';
+    wrap.appendChild(row);
+  });
+
+  if (truncated > 0) {
+    const more = document.createElement('div');
+    more.className = 'kpc-grouped-more';
+    more.textContent = '+' + truncated + ' autres';
+    wrap.appendChild(more);
+  }
+
+  container.appendChild(wrap);
+
+  if (result.value != null) {
+    const valDiv = document.createElement('div');
+    valDiv.className = 'kpc-card__value ' + tCls;
+    valDiv.innerHTML = escHtml(fmt(result.value, 1)) + (result.unit ? ' <span class="kpc-unit">' + escHtml(result.unit) + '</span>' : '');
     container.appendChild(valDiv);
   }
   if (result.delta != null) {
@@ -1112,9 +1212,10 @@ window.KpcCharts = {
   buildBarChart:       buildBarChart,
   buildSparkSvg:       buildSparkSvg,
   paceTintResult:      paceTintResult,
-  renderKpiCard:       renderKpiCard,
-  renderKpiRecap:      renderKpiRecap,
-  kpcTok:              kpcTok,
-  KPC_MONTHS_FR:       KPC_MONTHS_FR,
+  renderKpiCard:        renderKpiCard,
+  renderKpiRecap:       renderKpiRecap,
+  renderKpiGroupedBar:  renderKpiGroupedBar,
+  kpcTok:               kpcTok,
+  KPC_MONTHS_FR:        KPC_MONTHS_FR,
   KPC_RECAP_MAT_LABELS: KPC_RECAP_MAT_LABELS,
 };

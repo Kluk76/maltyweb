@@ -116,7 +116,8 @@ body.mon-tableau .mt-kpi-grid--empty {
    ── */
 body.mon-tableau .kpc-card--bar,
 body.mon-tableau .kpc-card--line,
-body.mon-tableau .kpc-card--stacked_bar {
+body.mon-tableau .kpc-card--stacked_bar,
+body.mon-tableau .kpc-card--grouped_bar {
   grid-column: span 2;
 }
 
@@ -326,6 +327,93 @@ body.mon-tableau .kpc-stacked-legend__sw {
   height: 10px;
   border-radius: 2px;
   flex-shrink: 0;
+}
+
+/* Grouped bar (production par bière YoY) */
+body.mon-tableau .kpc-card--grouped_bar {
+  min-height: 220px;
+}
+body.mon-tableau .kpc-grouped-list {
+  margin: .5rem 0 .4rem;
+  display: flex;
+  flex-direction: column;
+  gap: .35rem;
+}
+body.mon-tableau .kpc-grouped-row {
+  display: grid;
+  grid-template-columns: 7rem 1fr 3.5rem 3.5rem;
+  align-items: center;
+  gap: .3rem;
+  font-size: .75rem;
+}
+body.mon-tableau .kpc-grouped-row__lbl {
+  color: var(--ink-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: .72rem;
+}
+body.mon-tableau .kpc-grouped-row__track {
+  position: relative;
+  height: 10px;
+  background: color-mix(in srgb, var(--hairline) 30%, transparent);
+  border-radius: 2px;
+  overflow: hidden;
+}
+body.mon-tableau .kpc-grouped-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  border-radius: 2px;
+  transition: width .3s ease;
+}
+body.mon-tableau .kpc-grouped-bar--curr {
+  background: var(--hop);
+  z-index: 2;
+}
+body.mon-tableau .kpc-grouped-bar--ghost {
+  background: var(--ink-faint);
+  opacity: .3;
+  z-index: 1;
+}
+body.mon-tableau .kpc-grouped-row__val {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: .7rem;
+  color: var(--ink-mute);
+  text-align: right;
+  white-space: nowrap;
+}
+body.mon-tableau .kpc-grouped-row__delta {
+  text-align: right;
+}
+body.mon-tableau .kpc-grouped-delta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: .65rem;
+  white-space: nowrap;
+  border-radius: 3px;
+  padding: 1px 4px;
+}
+body.mon-tableau .kpc-grouped-delta--up {
+  color: var(--hop);
+}
+body.mon-tableau .kpc-grouped-delta--down {
+  color: var(--ember);
+}
+body.mon-tableau .kpc-grouped-delta--new {
+  color: var(--cold, #2f5575);
+  font-style: italic;
+}
+body.mon-tableau .kpc-grouped-delta--neutral {
+  color: var(--ink-faint);
+}
+body.mon-tableau .kpc-grouped-more {
+  font-size: .68rem;
+  color: var(--ink-faint);
+  text-align: right;
+  padding-top: .2rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-style: italic;
 }
 
 /* Donut */
@@ -972,6 +1060,7 @@ body.mon-tableau .kpc-recap__quality-chip--var {
   body.mon-tableau .kpc-card--bar,
   body.mon-tableau .kpc-card--line,
   body.mon-tableau .kpc-card--stacked_bar,
+  body.mon-tableau .kpc-card--grouped_bar,
   body.mon-tableau .kpc-card--table,
   body.mon-tableau .kpc-card--waterfall {
     grid-column: span 1;
