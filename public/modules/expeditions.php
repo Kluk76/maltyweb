@@ -4550,6 +4550,12 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
                     aria-controls="exp-pane-activite-<?= (int) $sr['sku_id'] ?>"
                     data-evt-tab="activite"
                     tabindex="-1">Activité</button>
+                  <button class="exp-evt-tab" role="tab"
+                    id="exp-tab-couverture-<?= (int) $sr['sku_id'] ?>"
+                    aria-selected="false"
+                    aria-controls="exp-pane-couverture-<?= (int) $sr['sku_id'] ?>"
+                    data-evt-tab="couverture"
+                    tabindex="-1">Couverture</button>
                 </div>
                 <!-- Stock pane: anchor/prod/sales/physique/répartition/open-orders -->
                 <div class="exp-evt-pane"
@@ -4788,6 +4794,255 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
                   </tbody>
                 </table>
                 </div><!-- /exp-evt-pane activite -->
+                <!-- Couverture pane: order-aware stock projection -->
+                <?php
+                $cov          = $sr['couverture'] ?? [];
+                $covPhysique  = isset($cov['physique'])    ? (float) $cov['physique']    : null;
+                $covAnchor    = isset($cov['anchor_qty'])  ? (int)   $cov['anchor_qty']  : null;
+                $covProd      = isset($cov['prod_qty'])    ? (int)   $cov['prod_qty']    : 0;
+                $covExp       = isset($cov['expedie_qty']) ? (int)   $cov['expedie_qty'] : 0;
+                $covEshop     = isset($cov['eshop_qty'])   ? (int)   $cov['eshop_qty']   : 0;
+                $covTaproom   = isset($cov['taproom_qty']) ? (int)   $cov['taproom_qty'] : 0;
+                $covOpenTotal = isset($cov['open_total'])  ? (int)   $cov['open_total']  : 0;
+                $covOpenBook  = $cov['open_book']  ?? [];
+                $covLiveFutur = isset($cov['live_futur'])  ? (int)   $cov['live_futur']  : null;
+                $covRythme    = isset($cov['rythme_base']) ? (float) $cov['rythme_base'] : null;
+                $covNonzero   = $cov['nonzero_weeks']  ?? null;
+                $covWeeks     = $cov['weeks_present']  ?? null;
+                $covSpike     = isset($cov['recent_spike']) ? (float) $cov['recent_spike'] : null;
+                $covSeasonal  = $cov['seasonal']    ?? [];
+                $covProj      = $cov['projection']  ?? [];
+                $covBurnSt    = $cov['burn_status'] ?? null;
+
+                // Status-label map (order statuses → French)
+                $covStatusLabels = [
+                    'entered'    => 'Saisie',
+                    'confirmed'  => 'Confirmée',
+                    'picked'     => 'Préparée',
+                    'bl_printed' => 'BL',
+                ];
+                ?>
+                <div class="exp-evt-pane exp-evt-pane--couverture"
+                  id="exp-pane-couverture-<?= (int) $sr['sku_id'] ?>"
+                  role="tabpanel"
+                  aria-labelledby="exp-tab-couverture-<?= (int) $sr['sku_id'] ?>"
+                  hidden>
+
+                  <!-- ① Explainer -->
+                  <p class="exp-cov-explainer">
+                    Couverture = stock physique − commandes engagées, projetée sur la saisonnalité
+                  </p>
+
+                  <?php if (empty($cov)): ?>
+                  <p class="exp-cov-empty">Données de couverture non disponibles pour ce SKU.</p>
+                  <?php else: ?>
+
+                  <!-- ② Stock physique block -->
+                  <table class="exp-ledger-table exp-cov-block">
+                    <tbody>
+                      <?php if ($covAnchor !== null): ?>
+                      <tr class="exp-ledger-anchor">
+                        <td class="exp-ledger-label">Ancre inventaire</td>
+                        <td class="exp-ledger-qty exp-ledger-qty--anchor"><?= number_format($covAnchor) ?></td>
+                        <td class="exp-ledger-meta"></td>
+                      </tr>
+                      <?php if ($covProd > 0): ?>
+                      <tr class="exp-ledger-prod">
+                        <td class="exp-ledger-label">+ Production</td>
+                        <td class="exp-ledger-qty exp-ledger-qty--plus">+<?= number_format($covProd) ?></td>
+                        <td class="exp-ledger-meta"></td>
+                      </tr>
+                      <?php endif ?>
+                      <?php if ($covExp > 0): ?>
+                      <tr class="exp-ledger-exp">
+                        <td class="exp-ledger-label">− Expédié</td>
+                        <td class="exp-ledger-qty exp-ledger-qty--minus">−<?= number_format($covExp) ?></td>
+                        <td class="exp-ledger-meta"></td>
+                      </tr>
+                      <?php endif ?>
+                      <?php if ($covEshop > 0): ?>
+                      <tr class="exp-ledger-eshop">
+                        <td class="exp-ledger-label">− Eshop</td>
+                        <td class="exp-ledger-qty exp-ledger-qty--minus">−<?= number_format($covEshop) ?></td>
+                        <td class="exp-ledger-meta"></td>
+                      </tr>
+                      <?php endif ?>
+                      <?php if ($covTaproom > 0): ?>
+                      <tr class="exp-ledger-tap">
+                        <td class="exp-ledger-label">− Taproom</td>
+                        <td class="exp-ledger-qty exp-ledger-qty--minus">−<?= number_format($covTaproom) ?></td>
+                        <td class="exp-ledger-meta"></td>
+                      </tr>
+                      <?php endif ?>
+                      <?php endif ?>
+                      <?php if ($covPhysique !== null): ?>
+                      <tr class="exp-ledger-physique">
+                        <td class="exp-ledger-label exp-ledger-label--total">Physique</td>
+                        <td class="exp-ledger-qty exp-ledger-qty--total" colspan="2">
+                          = <?= number_format($covPhysique) ?>
+                        </td>
+                      </tr>
+                      <?php endif ?>
+                    </tbody>
+                  </table>
+
+                  <!-- ③ Carnet de commandes engagées -->
+                  <div class="exp-cov-section">
+                    <div class="exp-cov-section-title">Commandes engagées</div>
+                    <?php if (empty($covOpenBook)): ?>
+                    <p class="exp-evt-empty">Aucune commande ouverte.</p>
+                    <?php else: ?>
+                    <table class="exp-ledger-table exp-cov-open-table">
+                      <thead>
+                        <tr>
+                          <th class="exp-cov-th">Échéance</th>
+                          <th class="exp-cov-th exp-cov-th--num">Quantité</th>
+                          <th class="exp-cov-th">Statut</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <?php foreach ($covOpenBook as $obRow): ?>
+                        <?php
+                        $obDate   = isset($obRow['date'])   ? exp_fmt_date((string) $obRow['date']) : '—';
+                        $obQty    = isset($obRow['qty'])    ? (int) $obRow['qty']                   : 0;
+                        $obStatus = isset($obRow['status']) ? (string) $obRow['status']             : '';
+                        $obLabel  = $covStatusLabels[$obStatus] ?? htmlspecialchars($obStatus);
+                        ?>
+                        <tr class="exp-cov-open-row">
+                          <td class="exp-cov-td"><?= htmlspecialchars($obDate) ?></td>
+                          <td class="exp-cov-td exp-cov-td--num"><?= number_format($obQty) ?></td>
+                          <td class="exp-cov-td exp-cov-status"><?= htmlspecialchars($obLabel) ?></td>
+                        </tr>
+                        <?php endforeach ?>
+                      </tbody>
+                      <tfoot>
+                        <tr class="exp-cov-open-total">
+                          <td class="exp-cov-td exp-cov-td--foot">Total engagé</td>
+                          <td class="exp-cov-td exp-cov-td--num exp-cov-td--foot"><?= number_format($covOpenTotal) ?></td>
+                          <td class="exp-cov-td exp-cov-td--foot"></td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                    <?php endif ?>
+
+                    <!-- live_futur indicator -->
+                    <?php if ($covLiveFutur !== null): ?>
+                    <?php if ($covLiveFutur < 0): ?>
+                    <div class="exp-cov-futur exp-cov-futur--survendu" role="status">
+                      <span aria-hidden="true">⚠</span>
+                      Survendu (−<?= number_format(abs($covLiveFutur)) ?>)
+                    </div>
+                    <?php else: ?>
+                    <div class="exp-cov-futur exp-cov-futur--ok" role="status">
+                      <span aria-hidden="true">✓</span>
+                      Disponible après commandes&nbsp;: <?= number_format($covLiveFutur) ?>
+                    </div>
+                    <?php endif ?>
+                    <?php endif ?>
+                  </div>
+
+                  <!-- ④ Rythme & régularité -->
+                  <?php if ($covRythme !== null || $covNonzero !== null): ?>
+                  <div class="exp-cov-section">
+                    <div class="exp-cov-section-title">Rythme &amp; régularité</div>
+                    <?php if ($covRythme !== null): ?>
+                    <div class="exp-cov-rythme">
+                      Rythme de base&nbsp;: <span class="exp-cov-rythme-val"><?= number_format($covRythme, 1) ?>/sem</span>
+                    </div>
+                    <?php endif ?>
+                    <?php if ($covNonzero !== null && $covWeeks !== null): ?>
+                    <div class="exp-cov-lumpiness">
+                      Ventes sur <?= (int) $covNonzero ?>/<?= (int) $covWeeks ?> semaines
+                    </div>
+                    <?php endif ?>
+                    <?php
+                    // Show amber spike note when recent_spike > rythme_base × 3 (and both exist)
+                    $spikeThreshold = ($covRythme !== null) ? $covRythme * 3 : null;
+                    $showSpike      = ($covSpike !== null && $covSpike > 0
+                                       && $spikeThreshold !== null && $covSpike > $spikeThreshold);
+                    ?>
+                    <?php if ($showSpike): ?>
+                    <div class="exp-cov-spike" role="status">
+                      <span aria-hidden="true">⚡</span>
+                      <?= number_format($covSpike, 1) ?> unités vendues ces 3 dernières semaines
+                    </div>
+                    <?php endif ?>
+                  </div>
+                  <?php endif ?>
+
+                  <!-- ⑤ Saisonnalité -->
+                  <?php if (!empty($covSeasonal)): ?>
+                  <div class="exp-cov-section exp-cov-seasonal">
+                    <span class="exp-cov-seasonal-label">Indice saisonnier actuel&nbsp;: </span>
+                    <span class="exp-cov-seasonal-val">×<?= number_format((float) ($covSeasonal['now_index'] ?? 0), 2) ?></span>
+                    <span class="exp-cov-seasonal-muted"> (semaine <?= (int) ($covSeasonal['now_week'] ?? 0) ?>)</span>
+                    <span class="exp-cov-seasonal-sep"> · </span>
+                    <span class="exp-cov-seasonal-muted">pic ×<?= number_format((float) ($covSeasonal['peak_index'] ?? 0), 2) ?> (semaine <?= (int) ($covSeasonal['peak_week'] ?? 0) ?>)</span>
+                  </div>
+                  <?php endif ?>
+
+                  <!-- ⑥ Projection semaine par semaine -->
+                  <div class="exp-cov-section">
+                    <div class="exp-cov-section-title">Projection</div>
+                    <?php if (empty($covProj)): ?>
+                    <p class="exp-evt-empty">Pas de projection — SKU sans rotation.</p>
+                    <?php else: ?>
+                    <?php
+                    // Find the first stockout row index (stock_after <= 0)
+                    $stockoutIdx = null;
+                    foreach ($covProj as $pi => $pw) {
+                        if (isset($pw['stock_after']) && (float) $pw['stock_after'] <= 0) {
+                            $stockoutIdx = $pi;
+                            break;
+                        }
+                    }
+                    ?>
+                    <div class="exp-cov-proj-wrap">
+                    <table class="exp-ledger-table exp-cov-proj-table">
+                      <thead>
+                        <tr>
+                          <th class="exp-cov-th">Semaine</th>
+                          <th class="exp-cov-th exp-cov-th--num">Burn prévu</th>
+                          <th class="exp-cov-th exp-cov-th--num">Commandes</th>
+                          <th class="exp-cov-th exp-cov-th--num">Demande</th>
+                          <th class="exp-cov-th exp-cov-th--num">Stock après</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <?php foreach ($covProj as $pi => $pw): ?>
+                        <?php
+                        $pwStart  = isset($pw['week_start'])    ? exp_fmt_date(substr((string) $pw['week_start'], 0, 10)) : '—';
+                        $pwIso    = isset($pw['iso_week'])      ? (int) $pw['iso_week']                                   : null;
+                        $pwBurn   = isset($pw['expected_burn']) ? (float) $pw['expected_burn']                            : 0.0;
+                        $pwOrders = isset($pw['open_orders'])   ? (float) $pw['open_orders']                             : 0.0;
+                        $pwDemand = isset($pw['demand'])        ? (float) $pw['demand']                                  : 0.0;
+                        $pwAfter  = isset($pw['stock_after'])   ? (float) $pw['stock_after']                             : null;
+                        $isStockout = ($pi === $stockoutIdx);
+                        $rowClass   = $isStockout ? ' exp-cov-proj-stockout' : '';
+                        ?>
+                        <tr class="exp-cov-proj-row<?= $rowClass ?>">
+                          <td class="exp-cov-td">
+                            <?php if ($isStockout): ?><span class="exp-cov-stockout-glyph" aria-hidden="true">⚠</span><?php endif ?>
+                            <?= htmlspecialchars($pwStart) ?>
+                            <?php if ($pwIso !== null): ?><span class="exp-cov-week-iso"> S<?= $pwIso ?></span><?php endif ?>
+                          </td>
+                          <td class="exp-cov-td exp-cov-td--num"><?= number_format($pwBurn, 1) ?></td>
+                          <td class="exp-cov-td exp-cov-td--num"><?= number_format($pwOrders, 1) ?></td>
+                          <td class="exp-cov-td exp-cov-td--num"><?= number_format($pwDemand, 1) ?></td>
+                          <td class="exp-cov-td exp-cov-td--num<?= ($pwAfter !== null && $pwAfter <= 0) ? ' exp-cov-td--neg' : '' ?>">
+                            <?= $pwAfter !== null ? number_format($pwAfter, 1) : '—' ?>
+                          </td>
+                        </tr>
+                        <?php endforeach ?>
+                      </tbody>
+                    </table>
+                    </div><!-- /exp-cov-proj-wrap -->
+                    <?php endif ?>
+                  </div>
+
+                  <?php endif ?><!-- /couverture non-empty -->
+
+                </div><!-- /exp-evt-pane couverture -->
               </div><!-- /exp-stock-ledger -->
             </td>
           </tr>

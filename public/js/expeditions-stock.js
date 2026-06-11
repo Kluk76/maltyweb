@@ -256,9 +256,8 @@
       t.setAttribute('tabindex',      isStock ? '0'    : '-1');
     });
     panes.forEach(function (p) {
-      // Stock pane id ends in "-stock-{N}", Activité ends in "-activite-{N}"
-      var isStock = /-stock-\d+$/.test(p.id);
-      p.hidden = !isStock;
+      // Reset always shows the stock face; id ends "-stock-{N}".
+      p.hidden = !/-stock-\d+$/.test(p.id);
     });
   }
 
@@ -305,19 +304,17 @@
       var drill   = tab.closest('.exp-stock-drill');
       if (!drill) return;
 
-      var target  = tab.dataset.evtTab; // 'stock' | 'activite'
+      var target  = tab.dataset.evtTab; // 'stock' | 'activite' | 'couverture'
       var allTabs = drill.querySelectorAll('button[data-evt-tab]');
       allTabs.forEach(function (t) {
         var active = t.dataset.evtTab === target;
         t.setAttribute('aria-selected', active ? 'true' : 'false');
         t.setAttribute('tabindex',      active ? '0'    : '-1');
       });
+      // Generic face-match: pane id ends "-{face}-{skuId}" — works for any face name.
+      var faceRe = new RegExp('-' + target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '-\\d+$');
       drill.querySelectorAll('[id^="exp-pane-"]').forEach(function (pane) {
-        // Match pane face: stock pane id ends "-stock-{N}", activité ends "-activite-{N}"
-        var faceMatch = target === 'stock'
-          ? /-stock-\d+$/.test(pane.id)
-          : /-activite-\d+$/.test(pane.id);
-        pane.hidden = !faceMatch;
+        pane.hidden = !faceRe.test(pane.id);
       });
       tab.focus();
     });

@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/fulfilment-site.php';
+require_once __DIR__ . '/seasonal-burn.php';
 /**
  * app/fg-stock.php — FG live-stock computation helpers.
  *
@@ -33,12 +34,15 @@ require_once __DIR__ . '/fulfilment-site.php';
  *                 eshop source per inspection 2026-06-07); inv_sales_bc taproom
  *                 is the sole fiscal-grade taproom depletion source.
  *
- * Velocity:
- *   trailing 8-week avg weekly depletion = (b2b_qty + taproom_qty + eshop_qty)
- *   over the 56 days ending at the most recent depletion data.
- *   Source: inv_sales_bc (b2b+taproom, period-based → map to days in period)
- *           + inv_sales_order_lines (eshop, date-based).
- *   If the 56-day window spans periods with no data → velocity = null → "∞".
+ * Velocity (forward-seasonal burn model, replaced 2026-06-11):
+ *   Forward depletion simulation using a classical multiplicative seasonal
+ *   decomposition over inv_sales_ledger (2021→now, ~44k rows).
+ *   Level L = EW-mean of deseasonalized weekly burn over a trailing 52-week window.
+ *   Index  S = per-family (recipe_id) or global fallback, pre-computed weekly
+ *             by scripts/seasonal-index-cli.php → kpi_sku_seasonal_index.
+ *   Sim    = step forward week by week: stock − L × S[w] until zero.
+ *   Cold-cache safety: if kpi_sku_seasonal_index is empty (cron not yet run),
+ *   sb_resolve_family_index() returns flat 1.0 → sim degenerates to physique/L.
  *
  * Pure SELECT queries only. No N+1. No writes.
  *
@@ -198,8 +202,11 @@ function fg_prod_since_anchor(PDO $pdo, string $globalAnchor): array
  *   live_semaine,       int: physique - open_week_qty
  *   live_2sem,          int: physique - open_2wk_qty  (physique − cumulative orders due ≤ end of next ISO week)
  *   live_futur,         int: physique - open_total_qty
- *   velocity_weekly,    float|null: trailing 8-week avg weekly depletion (null = no data)
- *   semaines_stock,     float|null: physique / velocity_weekly (null if velocity=0 or null)
+ *   velocity_weekly,    float|null: deseasonalized weekly run-rate L (null = no data)
+ *   rythme_base,        float|null: same as velocity_weekly (semantic alias for render layer)
+ *   semaines_stock,     float|null: forward sim result in weeks (null if no data / eol)
+ *   burn_status,        string: 'normal'|'provisoire'|'eol'
+ *   burn_cache_cold,    bool: true when kpi_sku_seasonal_index is empty (cron not yet run)
  *   flag_survendu,      bool: live_futur < 0
  *   flag_low_stock,     bool: semaines_stock < 2 AND physique > 0
  *   flag_dormant,       bool: physique=0 AND no movement since anchor
@@ -221,6 +228,7 @@ function fg_stock_compute(PDO $pdo): array
                 r.format,
                 COALESCE(pf.display_family, r.format) AS display_family,
                 r.hl_per_unit,
+                r.recipe_id,
                 CAST(s.qty AS SIGNED) AS anchor_qty,
                 s.counted_at,
                 s.month_closed
@@ -259,6 +267,7 @@ function fg_stock_compute(PDO $pdo): array
                 'format'         => $ar['format'],
                 'display_family' => $ar['display_family'],
                 'hl_per_unit'    => (float) $ar['hl_per_unit'],
+                'recipe_id'      => ($ar['recipe_id'] !== null) ? (int) $ar['recipe_id'] : null,
                 'anchor_qty'     => 0,
                 // flows (filled below)
                 'prod_qty'       => 0,
@@ -540,12 +549,20 @@ function fg_stock_compute(PDO $pdo): array
         }
     }
 
+    // $today is used by Steps 7 and 8; define once here.
+    $today = date('Y-m-d');
+
     // ── Step 7: open order lines (for live_semaine / live_2sem / live_futur) ───
-    $isoWeekEnd   = fg_stock_iso_week_end(date('Y-m-d'));
+    // ONE query supplies BOTH the display aggregates (week_qty/twowk_qty/total_qty)
+    // AND the per-line detail needed to bucket orders by sim-week offset h.
+    // Filter is IDENTICAL to Step 9's couverture sim: same FROM/JOIN/WHERE —
+    // both lenses must never diverge.
+    $isoWeekEnd   = fg_stock_iso_week_end($today);
     $iso2wkEnd    = (new DateTimeImmutable($isoWeekEnd))->modify('+7 days')->format('Y-m-d');
     // ISO week Monday: Sunday - 6 days.
     $isoWeekStart = (new DateTimeImmutable($isoWeekEnd))->modify('-6 days')->format('Y-m-d');
 
+    // Aggregate query (display: week/2wk/total) — unchanged from before
     $openStmt = $pdo->prepare(
         "SELECT l.sku_id_fk,
                 SUM(CASE WHEN o.requested_date <= ? THEN l.qty ELSE 0 END) AS week_qty,
@@ -566,6 +583,76 @@ function fg_stock_compute(PDO $pdo): array
         ];
     }
 
+    // Per-line detail query for sim bucketing and drill payload.
+    // EXACT same FROM/JOIN/WHERE as the aggregate above — filter parity is the invariant.
+    $openDetailStmt = $pdo->prepare(
+        "SELECT l.sku_id_fk, o.requested_date, o.status, SUM(l.qty) AS qty
+           FROM ord_order_lines l
+           JOIN ord_orders o ON o.id = l.order_id_fk
+          WHERE o.status NOT IN ('shipped', 'cancelled')
+          GROUP BY l.sku_id_fk, o.requested_date, o.status
+          ORDER BY l.sku_id_fk, o.requested_date"
+    );
+    $openDetailStmt->execute();
+
+    $todayMidnight    = strtotime($today . ' 00:00:00');
+    $openByWeekBySku  = []; // [sku_id][h] => float qty  (for sim)
+    $openBookBySku    = []; // [sku_id][] => [date,qty,status] (for drill)
+
+    foreach ($openDetailStmt->fetchAll(PDO::FETCH_ASSOC) as $dl) {
+        $sid       = (int) $dl['sku_id_fk'];
+        $qty       = (float) $dl['qty'];
+        $reqDate   = $dl['requested_date'];   // YYYY-MM-DD or null
+        $status    = $dl['status'];
+
+        // Bucket offset h: overdue/current-week orders → h=1
+        if ($reqDate === null) {
+            $h = 1;
+        } else {
+            $diffDays = (int) ceil((strtotime($reqDate . ' 00:00:00') - $todayMidnight) / 86400);
+            $h        = max(1, (int) ceil($diffDays / 7));
+        }
+
+        $openByWeekBySku[$sid][$h] = ($openByWeekBySku[$sid][$h] ?? 0.0) + $qty;
+        $openBookBySku[$sid][]     = [
+            'date'   => $reqDate,
+            'qty'    => $qty,
+            'status' => $status,
+        ];
+    }
+
+    // BUILD-TIME ASSERTION: Σ(openByWeekBySku[sid]) == openBySkuId[sid].total_qty per SKU.
+    // Filter-drift between the two queries would silently mis-bucket the sim.
+    foreach ($openBySkuId as $sid => $agg) {
+        $simSum = array_sum($openByWeekBySku[$sid] ?? []);
+        if (abs($simSum - (float) $agg['total_qty']) > 0.01) {
+            error_log(sprintf(
+                '[fg-stock] ASSERTION FAIL sku_id=%d: openByWeekBySku sum=%.2f != total_qty=%.2f — filter drift between open-order queries',
+                $sid,
+                $simSum,
+                (float) $agg['total_qty']
+            ));
+        }
+    }
+
+    // Trailing-3-ISO-week net-out per SKU (for couverture drill recent_spike).
+    // Same burn semantics: -SUM(qty_signed), exclude customs_artifact.
+    $recentSpikeStmt = $pdo->prepare(
+        "SELECT l.sku_id_fk,
+                GREATEST(0, -SUM(l.qty_signed)) AS spike_qty
+           FROM inv_sales_ledger l
+           LEFT JOIN ref_customers c ON c.id = l.customer_id_fk
+          WHERE l.sku_id_fk IS NOT NULL
+            AND l.posting_date >= DATE_SUB(CURDATE(), INTERVAL 3 WEEK)
+            AND (c.sale_class IS NULL OR c.sale_class NOT IN ('customs_artifact'))
+          GROUP BY l.sku_id_fk"
+    );
+    $recentSpikeStmt->execute();
+    $recentSpikeBySku = [];
+    foreach ($recentSpikeStmt->fetchAll(PDO::FETCH_ASSOC) as $rs) {
+        $recentSpikeBySku[(int) $rs['sku_id_fk']] = (float) $rs['spike_qty'];
+    }
+
     // Shipped-this-week: DISPLAY ONLY — already baked into physique via the expedie leg.
     // Summing open_week_qty + shipped_week_qty gives the operator "total orders due this week".
     // Uses the same ISO week bounds [isoWeekStart, isoWeekEnd].
@@ -583,85 +670,29 @@ function fg_stock_compute(PDO $pdo): array
         $shippedWeekBySkuId[(int) $sw['sku_id_fk']] = (int) $sw['shipped_week_qty'];
     }
 
-    // ── Step 8: velocity — trailing 56-day avg weekly depletion ─────────────
-    // Data sources:
-    //   inv_sales_bc  — b2b + taproom (period-based YYYY-MM, use days_in_period)
-    //   inv_sales_order_lines/orders — eshop (date-based)
-    //
-    // We compute the depletion over the trailing 56 calendar days ending on
-    // the last date we have data (= MAX date in each source), then divide by 8.
-    // If no data at all for a SKU → velocity = null → semaines_stock shown as "∞".
-    //
-    // For inv_sales_bc (period-based): allocate the period's qty evenly across
-    // days of the month, then multiply by the days that fall in our window.
-    // E.g. 2026-04 (30 days): if window covers 2026-03-13..2026-05-07, that
-    // period contributes (days of April in window / 30) × total_qty.
-    //
-    // Trailing window: [today−56 days, today] (inclusive).
-    $today   = date('Y-m-d');
-    $winStart = date('Y-m-d', strtotime('-56 days', strtotime($today)));
-    $winEnd   = $today;
+    // ── Step 8: forward-seasonal burn (order-aware, 2026-06-11) ─────────────
+    // sb_forward_sim() is the core engine in app/seasonal-burn.php.
+    // Per-SKU openByWeekBySku (built in Step 7) is fed into the sim so committed
+    // open orders floor each week's demand — preventing falsely rosy coverage
+    // numbers when the order book exceeds seasonal baseline.
+    // Cold-cache safety: if kpi_sku_seasonal_index is empty, flat 1.0 index.
+    $burnParams = sb_load_params();
+    $indexMap   = sb_load_index_map($pdo);
+    $skuLevels  = sb_all_sku_levels($pdo, $indexMap, $burnParams);
 
-    // inv_sales_bc b2b + taproom (period = YYYY-MM CHAR(7))
-    // We only need periods that OVERLAP with our window.
-    // period >= month(winStart) AND period <= month(winEnd) covers it.
-    $winStartMonth = substr($winStart, 0, 7);
-    $winEndMonth   = substr($winEnd, 0, 7);
-
-    $velBcStmt = $pdo->prepare(
-        'SELECT sku_id_fk,
-                period,
-                SUM(qty_invoiced) AS qty
-           FROM inv_sales_bc
-          WHERE period >= ?
-            AND period <= ?
-            AND sku_id_fk IS NOT NULL
-          GROUP BY sku_id_fk, period'
-    );
-    $velBcStmt->execute([$winStartMonth, $winEndMonth]);
-    // Accumulate fractional days contribution per SKU
-    $velQty = []; // sku_id => total qty-days / 7 (weekly equiv)
-    foreach ($velBcStmt->fetchAll(PDO::FETCH_ASSOC) as $vr) {
-        $sid    = (int) $vr['sku_id_fk'];
-        $period = (string) $vr['period'];
-        $qty    = (float) $vr['qty'];
-        // Days in this period's month
-        $daysInMonth = (int) date('t', strtotime($period . '-01'));
-        // Overlap of this month with [winStart, winEnd]
-        $monthStart = $period . '-01';
-        $monthEnd   = $period . '-' . sprintf('%02d', $daysInMonth);
-        $overlapStart = max($winStart, $monthStart);
-        $overlapEnd   = min($winEnd, $monthEnd);
-        $overlapDays = max(0, (int) round(
-            (strtotime($overlapEnd) - strtotime($overlapStart)) / 86400
-        ) + 1);
-        if ($overlapDays <= 0 || $daysInMonth <= 0) continue;
-        $contribution = $qty * ($overlapDays / $daysInMonth);
-        $velQty[$sid] = ($velQty[$sid] ?? 0.0) + $contribution;
-    }
-
-    // eshop from inv_sales_order_lines (date-based, 56-day window)
-    $velEshopStmt = $pdo->prepare(
-        'SELECT isol.sku_id_fk,
-                SUM(isol.qty) AS qty
-           FROM inv_sales_order_lines isol
-           JOIN inv_sales_orders iso ON iso.id = isol.order_id_fk
-          WHERE iso.channel = ?
-            AND DATE(iso.created_at) >= ?
-            AND DATE(iso.created_at) <= ?
-            AND isol.sku_id_fk IS NOT NULL
-          GROUP BY isol.sku_id_fk'
-    );
-    $velEshopStmt->execute(['eshop', $winStart, $winEnd]);
-    foreach ($velEshopStmt->fetchAll(PDO::FETCH_ASSOC) as $ve) {
-        $sid = (int) $ve['sku_id_fk'];
-        $velQty[$sid] = ($velQty[$sid] ?? 0.0) + (float) $ve['qty'];
-    }
-    // Convert 56-day total to per-week average (/8)
-    $velWeekly = [];
-    foreach ($velQty as $sid => $total) {
-        $velWeekly[$sid] = $total / 8.0;
-    }
+    // Peak week for the seasonal drill payload: derive per-family from indexMap.
+    // Returns [peak_week => int, peak_index => float] for a given familyIndex array.
+    $peakOfFamilyIndex = static function (array $fi): array {
+        $peakW = 1;
+        $peakI = 0.0;
+        foreach ($fi as $w => $idx) {
+            if ($idx > $peakI) {
+                $peakI = $idx;
+                $peakW = $w;
+            }
+        }
+        return ['peak_week' => $peakW, 'peak_index' => $peakI];
+    };
 
     // ── Step 9: assemble output rows ─────────────────────────────────────────
     $rows = [];
@@ -681,10 +712,28 @@ function fg_stock_compute(PDO $pdo): array
         $live2sem    = $physique - $open2wk;
         $liveFutur   = $physique - $openTotal;
 
-        $vel     = $velWeekly[$sid] ?? null;
-        $semaines = null;
-        if ($vel !== null && $vel > 0.0 && $physique > 0) {
-            $semaines = $physique / $vel;
+        // Forward-seasonal burn simulation — order-aware (Step 8 → Step 9 handoff)
+        $lvl        = $skuLevels[$sid] ?? null;
+        $familyIdx  = sb_resolve_family_index($indexMap, $r['recipe_id'] ?? null);
+        $rythmeBase = $lvl !== null ? $lvl['level'] : null;
+        $burnStatus = $lvl ? sb_status($lvl, $burnParams) : 'provisoire';
+
+        // EOL short-circuit: eol → null regardless of open orders (tier 6 "sans rotation").
+        $simResult  = null;
+        $semaines   = null;
+        if ($burnStatus !== 'eol') {
+            $openByWeek = $openByWeekBySku[$sid] ?? [];
+            // sb_forward_sim owns the null decision (rule 5):
+            // returns null only when level<=0 AND no open orders.
+            $simResult = sb_forward_sim(
+                $physique,
+                (float) ($rythmeBase ?? 0.0),
+                $familyIdx,
+                $today,
+                $burnParams,
+                $openByWeek
+            );
+            $semaines = $simResult['weeks'];
         }
 
         // Dormant: physique=0 AND no movement (prod=0, expedie=0, eshop=0, taproom=0)
@@ -694,6 +743,34 @@ function fg_stock_compute(PDO $pdo): array
             && ($expedie === 0)
             && ($eshop === 0)
             && ($taproom === 0);
+
+        // Couverture drill payload (per-SKU drilldown for the UI)
+        $nowIsoWeek   = (int) (new DateTimeImmutable($today))->format('W');
+        $nowIdx       = $familyIdx[$nowIsoWeek] ?? 1.0;
+        $peakInfo     = $peakOfFamilyIndex($familyIdx);
+        $couverture   = [
+            'physique'      => $physique,
+            'anchor_qty'    => $anchor,
+            'prod_qty'      => $prod,
+            'expedie_qty'   => $expedie,
+            'eshop_qty'     => $eshop,
+            'taproom_qty'   => $taproom,
+            'open_total'    => $openTotal,
+            'open_book'     => $openBookBySku[$sid] ?? [],
+            'live_futur'    => $liveFutur,
+            'rythme_base'   => $rythmeBase,
+            'nonzero_weeks' => $lvl['nonzero_weeks'] ?? null,
+            'weeks_present' => $lvl['weeks_present'] ?? null,
+            'recent_spike'  => $recentSpikeBySku[$sid] ?? 0.0,
+            'seasonal'      => [
+                'now_week'   => $nowIsoWeek,
+                'now_index'  => round($nowIdx, 4),
+                'peak_week'  => $peakInfo['peak_week'],
+                'peak_index' => round($peakInfo['peak_index'], 4),
+            ],
+            'projection'    => $simResult['trace'] ?? [],
+            'burn_status'   => $burnStatus,
+        ];
 
         $rows[] = [
             'sku_id'          => $sid,
@@ -720,12 +797,18 @@ function fg_stock_compute(PDO $pdo): array
             'live_semaine'      => $liveSemaine,
             'live_2sem'         => $live2sem,
             'live_futur'        => $liveFutur,
-            'velocity_weekly' => $vel,
-            'semaines_stock'  => $semaines,
+            'velocity_weekly'            => $rythmeBase,
+            'rythme_base'                => $rythmeBase,
+            'semaines_stock'             => $semaines,
+            'burn_status'                => $burnStatus,
+            'burn_cache_cold'            => $indexMap['empty'],
+            'burn_index_computed_at'     => $indexMap['computed_at'],
             // Flags
             'flag_survendu'   => $liveFutur < 0,
             'flag_low_stock'  => ($semaines !== null && $semaines < 2.0 && $physique > 0),
             'flag_dormant'    => $isDormant,
+            // Drill payload
+            'couverture'      => $couverture,
         ];
     }
 
