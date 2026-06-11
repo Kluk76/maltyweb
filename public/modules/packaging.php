@@ -158,24 +158,18 @@ try {
         $hlInBbts += (float)($row['remaining_hl'] ?? 0);
     }
 
-    // Packaging KPIs — year-filtered totals.
-    // LEGACY-ONLY (v2 cutover blocker, 2026-05-24): bd_packaging_v2 has NO `format`
-    // or `year` column (now run_type enum + nebuleuse_format_suffix; year via
-    // YEAR(submitted_at)) AND vendable_hl is 100% NULL — the per-row HL valuation
-    // has not been computed/backfilled into v2 yet. All three packaging HL queries
-    // below (totals, by-format, top-5) sum vendable_hl, so repointing to v2 now
-    // would zero out the entire dashboard. Stays on bd_packaging until v2.vendable_hl
-    // is populated and the format→run_type/suffix remap is wired.
+    // Packaging KPIs — repointed to bd_packaging_v2 (v1 bd_packaging retired 2026-06-11).
+    // Format mapping: run_type enum ('can','can33','bot','keg','cuv') replaces v1 `format` varchar.
+    // Year filter: YEAR(event_date) replaces v1 `year` column.
+    // vendable_hl: 2194/2275 rows populated (96.4%) as of 2026-06-11 — ready for use.
     $pkgTotalsStmt = $pdo->prepare("
         SELECT
           COALESCE(SUM(vendable_hl), 0)   AS hl_total,
-          COUNT(DISTINCT CONCAT(
-            COALESCE(neb_beer, contract_beer), '|', format, '|',
-            COALESCE(sel_pack_bot, sel_pack_can, '')
-          ))                               AS distinct_skus,
+          COUNT(DISTINCT CONCAT(COALESCE(neb_beer, contract_beer), '|', run_type))  AS distinct_skus,
           COUNT(*)                         AS pkg_events
-        FROM bd_packaging
-        WHERE year = :year
+        FROM bd_packaging_v2
+        WHERE YEAR(event_date) = :year
+          AND is_tombstoned = 0
           AND COALESCE(neb_beer, contract_beer) IS NOT NULL
           AND vendable_hl IS NOT NULL
     ");
@@ -185,14 +179,16 @@ try {
     // HL by format — consolidated
     $pkgFmtStmt = $pdo->prepare("
         SELECT
-          CASE WHEN format IN ('Can','Can33') THEN 'Can'
-               WHEN format IN ('Bot')         THEN 'Bot'
-               WHEN format IN ('Keg')         THEN 'Keg'
-               WHEN format IN ('Cuve de service') THEN 'Cuve de service'
-               ELSE format END AS fmt,
+          CASE WHEN run_type IN ('can','can33') THEN 'Can'
+               WHEN run_type = 'bot'            THEN 'Bot'
+               WHEN run_type = 'keg'            THEN 'Keg'
+               WHEN run_type = 'cuv'            THEN 'Cuve de service'
+               ELSE run_type END AS fmt,
           SUM(vendable_hl) AS hl
-        FROM bd_packaging
-        WHERE year = :year AND vendable_hl IS NOT NULL
+        FROM bd_packaging_v2
+        WHERE YEAR(event_date) = :year
+          AND is_tombstoned = 0
+          AND vendable_hl IS NOT NULL
         GROUP BY fmt
         ORDER BY hl DESC
     ");
@@ -203,16 +199,17 @@ try {
     $pkgTop5Stmt = $pdo->prepare("
         WITH grouped AS (
           SELECT
-            CASE WHEN format IN ('Can','Can33') THEN 'Can' ELSE format END AS fmt,
+            CASE WHEN run_type IN ('can','can33') THEN 'Can' ELSE run_type END AS fmt,
             COALESCE(neb_beer, contract_beer) AS sku_code,
             SUM(vendable_hl) AS hl_sum,
             COUNT(*) AS n_events
-          FROM bd_packaging
-          WHERE year = :year
+          FROM bd_packaging_v2
+          WHERE YEAR(event_date) = :year
+            AND is_tombstoned = 0
             AND vendable_hl IS NOT NULL
             AND COALESCE(neb_beer, contract_beer) IS NOT NULL
           GROUP BY
-            CASE WHEN format IN ('Can','Can33') THEN 'Can' ELSE format END,
+            CASE WHEN run_type IN ('can','can33') THEN 'Can' ELSE run_type END,
             COALESCE(neb_beer, contract_beer)
         ),
         ranked AS (

@@ -2261,7 +2261,7 @@ if (!function_exists('sdc_flash_bom_result')) {
  * Per-HL basis: volume-weighted trailing average.
  *   Window: last 8 brews of each recipe (or all if < 8) where BOTH ingredient data
  *           AND cooling HL are available. Minimum: 1 brew (we report n_brews in output).
- *   Batch HL: SUM(bd_brewing_cooling.cool_final_volume_hl) per (cool_beer_recipe_id, cool_batch).
+ *   Batch HL: SUM(bd_brewing_gravity_v2.final_volume) WHERE event_type='Cooling' per (recipe_id_fk, batch).
  *   Per brew: per_hl = canonical_qty_in_pricing_unit / batch_hl
  *   Outlier rejection: drop brews whose per_hl > 2 × MAD from median (min 4 brews required).
  *   Volume-weighted average: SUM(per_hl_i × batch_hl_i) / SUM(batch_hl_i)
@@ -2475,23 +2475,26 @@ function compile_sku_bom_liquid(
 
     // ── 2a. Batch HL index ─────────────────────────────────────────────────────
     // For each (recipe_id, batch): total cooling HL across all brews of that batch.
-    // bd_brewing_cooling.cool_batch (varchar) matches bd_brewing_ingredients_v2.batch (varchar).
+    // bd_brewing_gravity_v2 WHERE event_type='Cooling' — canonical source (v1 bd_brewing_cooling retired).
+    // batch (varchar) matches bd_brewing_ingredients_v2.batch (varchar).
     $hlStmt = $pdo->prepare(
-        "SELECT cool_beer_recipe_id AS recipe_id, cool_batch AS batch,
-                SUM(cool_final_volume_hl) AS batch_hl,
+        "SELECT recipe_id_fk AS recipe_id, batch,
+                SUM(final_volume) AS batch_hl,
                 COUNT(*) AS n_brews,
-                MIN(event_date) AS batch_event_date
-           FROM bd_brewing_cooling
-          WHERE cool_beer_recipe_id IN ({$recipePhRaw})
-            AND cool_final_volume_hl IS NOT NULL
-            AND cool_final_volume_hl > 0
-          GROUP BY cool_beer_recipe_id, cool_batch"
+                MIN(DATE(submitted_at)) AS batch_event_date
+           FROM bd_brewing_gravity_v2
+          WHERE recipe_id_fk IN ({$recipePhRaw})
+            AND event_type = 'Cooling'
+            AND is_tombstoned = 0
+            AND final_volume IS NOT NULL
+            AND final_volume > 0
+          GROUP BY recipe_id_fk, batch"
     );
     $hlStmt->execute($recipeIds);
     // batchHl[recipe_id][batch] = float hl
     // batchNBrews[recipe_id][batch] = int — number of parallel brews in that batch.
     //   bd_brewing_ingredients_v2 has ONE header per batch (the operator enters the
-    //   grain bill once, for a single brew's charge). bd_brewing_cooling has one row
+    //   grain bill once, for a single brew's charge). bd_brewing_gravity_v2 (Cooling) has one row
     //   per physical brew. For a 4-brew batch the ingredient qty is ONE brew's charge
     //   but the total batch HL is 4 brews' HL — the numerator must be scaled ×n_brews
     //   before per-HL division (done in the malt/hops_kettle accumulator below).
@@ -2647,7 +2650,7 @@ function compile_sku_bom_liquid(
     // ── 2d-post. Apply per-recipe floor-date guard (G2) ──────────────────────
     // For recipes with liquid_basis_floor_date set, exclude batches whose brew
     // event_date is strictly before the floor from batchHl, v1RawRows, v2RawRows.
-    // Sourced from bd_brewing_cooling.event_date (MIN per batch).
+    // Sourced from bd_brewing_gravity_v2 MIN(DATE(submitted_at)) per batch.
     //
     // Zero-surviving batches → recipe is skipped (per-recipe note, not an error).
     //
@@ -2837,7 +2840,7 @@ function compile_sku_bom_liquid(
             $recipeWindowEndDate[$rid] = null;
             continue;
         }
-        // batchEventDate[rid][batch] was populated from bd_brewing_cooling MIN(event_date).
+        // batchEventDate[rid][batch] was populated from bd_brewing_gravity_v2 MIN(DATE(submitted_at)).
         // The "end" of the basis window is the LATEST date among the selected batches.
         $maxDate = null;
         foreach ($batches as $batch) {
@@ -3190,7 +3193,7 @@ function compile_sku_bom_liquid(
             // Aggregate v1 malt rows: [mi_id][batch] → qty
             // IMPORTANT: bd_brewing_ingredients_v2 has ONE header per batch regardless
             // of how many parallel brews were made. The operator enters one brew's grain
-            // bill; bd_brewing_cooling has N rows (one per parallel brew). We must scale
+            // bill; bd_brewing_gravity_v2 (Cooling) has N rows (one per parallel brew). We must scale
             // the observed qty × n_brews so the per-batch numerator reflects the full
             // batch charge before dividing by total batch HL.
             $maltByMiBatch = [];  // mi_id → batch → {qty, unit}
