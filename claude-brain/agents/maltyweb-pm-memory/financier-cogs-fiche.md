@@ -1,6 +1,9 @@
 # Financier — Fiche COGS (variation de stock) build
 
-> Read when a task touches the Financier page (`public/modules/financier.php`), the Fiche COGS / variation-de-stock tab, or the `cogs_fiche_*` / `ref_cogs_fiche_categories` tables. Verified live 2026-06-11.
+> Read when a task touches the Financier page (`public/modules/financier.php`), the Fiche COGS / variation-de-stock tab, the `cogs_fiche_*` / `ref_cogs_fiche_categories` tables, or the monthly-compile engine `scripts/cogs-monthly-compile.ts` (maltytask repo). Verified live 2026-06-11.
+
+## ⚡ STATUS HEADLINE (2026-06-11) — ARC SHIPPED + DEPLOYED + SMOKE-TESTED, awaiting operator May FG census then git commit
+Full pipeline is LIVE on the VPS (deployed, NOT yet git-committed — awaiting Kouros's go). Migs 330 + 332 applied. Fiche COGS tab (5th tab) renders April, ties to the cent, smoke-tested 13/14 on app.maltytask.ch. Engine built + May dry-run validated. **Only remaining work is operator-gated:** Kouros enters the May-31 FG census via the now-surfaced stocktake form → then finalize `basis_adjustment_chf`, run engine `--apply` for 2026-05, reconcile, publish. Detail below.
 
 ## Page placement (Le Zeppelin IA)
 - **`financier.php` = "Pôle Financier", `ref_pages` id=239, page_key=`financier`, label "Financier", `min_role='manager'`, `domain='general'`, is_active=1.** Belongs to **Le Cockpit** (commercial/financial family). Read-only fiscal hub — NEVER recalculates fiscal numbers; consumes pre-computed JSON artifacts (`interfaces/cogs-report-data.json` COP, `interfaces/sales-cogs-data.json` COGS/Marge) + lazy `/api/financier-data.php`.
@@ -29,10 +32,23 @@
 12 categories in display order: Malt(1200.1/4101,brewing) · Hops(1200.2/4102,brewing) · Ingredients/Ingrédients(1200.3/4104,brewing) · Yeast/Levures(1200.4/4103,brewing) · Cartons(1201.1/4207) · Inliner(1201.2/4205) · Capsules(1201.3/4200) · Verres(1203.0/6607) · Bouteilles(1204/4200) · Etiquettes(1205/4206) · Canettes(1207/4202) · CapsFuts(1221/4209). First 4 `is_brewing=1`, rest packaging.
 
 ### `cogs_fiche_seed` (mig 332) — 12 rows = the EXT-April-signed anchor (one per category for month 2026-04)
-`id`, `month_key`(char7 MUL), `category_key`(varchar32 MUL), `rm_chf` `wip_chf` `fg_chf`(decimal14,4), `total_chf`, `opening_chf`, `variation_chf`, `seed_source`(varchar64 def 'EXT-April-signed'), `seeded_at`. **This is the immutable April-2026 signed anchor (opening of May = closing of April).** e.g. Malt total 54351.88 / opening 50604 / variation +3747.88.
+`id`, `month_key`(char7 MUL), `category_key`(varchar32 MUL), `rm_chf` `wip_chf` `fg_chf`(**DECIMAL(14,4) — chosen for cent-perfect sums**), `total_chf`, `opening_chf`, `variation_chf`, `seed_source`(varchar64 def 'EXT-April-signed'), `seeded_at`. **This is the immutable April-2026 signed anchor (opening of May = closing of April).** e.g. Malt total 54351.88 / opening 50604 / variation +3747.88. schema_meta: `cogs_fiche_seed` = **reference / allowed**.
+- **April seed TIE-OUT PASSED to the cent** (cross-read against EXT): ΣJ (Total Inventaire) = 394 367.74 · ΣK = 431 354.00 · ΣL (Variation) = −36 986.26 · ΣRM = 329 852.08 · ΣWIP = 22 364.27 · ΣFG = 42 151.39. The EXT cross-read caught a −356.625 half-rounding on Levures — DECIMAL(14,4) is why it ties.
 
-### `cogs_fiche_monthly` (mig 332) — 0 rows (EMPTY — compute not yet wired)
-Same shape as seed + `basis_adjustment_chf`(decimal14,4 NULL), `computed_at`(datetime), `row_hash`(char64 UNIQUE — idempotency key). This is where computed per-month per-category variation-de-stock rows will land. **Currently empty — the compute pipeline that populates it is the next build, and the Fiche tab reads seed (April) + monthly (May onward).**
+### `cogs_fiche_monthly` (mig 332) — 0 rows (EMPTY until May `--apply`)
+Same shape as seed + `basis_adjustment_chf`(decimal14,4 NULL), `computed_at`(datetime), `row_hash`(char64 UNIQUE — idempotency key). Computed per-month per-category variation-de-stock rows land here. schema_meta: `cogs_fiche_monthly` = **derived / blocked_with_redirect**, writer = `cogs-monthly-compile.ts`. **Currently EMPTY — the May `--apply` is the first row-write into it; the Fiche tab reads seed (April) ∪ monthly (May onward).**
+
+### mig 332 provenance notes (don't re-derive)
+- **mig 332 was RENUMBERED from 331** — a concurrent `331_kpi_grouped_bar_viztype.sql` (the MON TABLEAU #5 grouped-bar work) had already taken 331. The file on disk is `332_cogs_fiche_seed_and_monthly.sql`.
+- **mig 332 DROPPED `cogs_fiche_opening_anchor`** (a table mig 330 had created) and removed its `schema_meta` row — the opening is now resolved live by UNION(seed ∪ monthly), so a separate anchor table was a redundant parallel store. Do NOT re-create `cogs_fiche_opening_anchor`.
+
+## Engine — `scripts/cogs-monthly-compile.ts` (maltytask repo, TS) — BUILT, May dry-run validated
+Computes RM/WIP/FG per category → `cogs_fiche_monthly`. Guards:
+- **Opening resolver reads UNION(seed ∪ monthly)** — opening of month N = closing of N-1 from whichever home holds it (April from seed, May+ from monthly).
+- **Immutability guard:** refuses to recompute ANY month present in `cogs_fiche_seed` (closed-periods-never-recomputed = standing policy).
+- **FG-MISSING guard:** refuses to fabricate a zero close when the FG census for the month is absent (no fabricated zero close).
+- **May dry-run validated:** RM Yeast = 1 496 (sane — **confirms the earlier g→kg yeast blowup is a CLOSED-PERIOD-ONLY artifact**, not live), WIP computes, opening resolves from the April seed.
+- **🟡 LATENT UNIT-INVARIANT ASSUMPTION (open follow-up to harden):** engine currently uses naive `final_qty × cost_chf`, NOT `loadRM`. Correct for OPEN months where stocktake qty is already in the current pricing unit; but it silently assumes unit-consistency. HARDEN by switching to `loadRM` OR adding a unit-consistency assert before this is relied on for a closed month. Flag at next touch.
 
 ## Build verdict / sequencing for the Fiche tab
 - The Fiche tab is render-only over `cogs_fiche_seed` + `cogs_fiche_monthly`; both are canonical single-home tables, no parallel store. SOUND.
@@ -40,13 +56,30 @@ Same shape as seed + `basis_adjustment_chf`(decimal14,4 NULL), `computed_at`(dat
 - Categories/GLs come from `ref_cogs_fiche_categories` — JOIN, never hardcode the 12 labels or GLs.
 - EQUIP ui+sql+coder (+webapp-testing for deployed-page smoke).
 
-## ✅ B4 + B5 SHIPPED (built + verified 2026-06-11, LOCAL-ONLY — not yet deployed)
-**Tasks B4 (Finance fiche tab) + B5 (CSV download) DONE. B6 (immutability guard + May publish) STILL PENDING.** Code is local in `/home/kluk/projects/maltyweb/`, NOT yet on VPS — gated on `bin/deploy.sh --apply` + operator smoke-test. 4 files:
+## ✅ B4 + B5 SHIPPED + DEPLOYED + SMOKE-TESTED (2026-06-11) — deployed not yet git-committed
+**Tasks B4 (Finance fiche tab) + B5 (CSV download) DONE, on the VPS, smoke-tested 13/14 on app.maltytask.ch.** April renders, ties to 394 367.74 / −36 986.26, 12 rows + GLs, provenance chip ("Clôture signée (référence)" vs "Calculé"), incomplete-month banner. **Two bugs found + fixed during smoke:** (1) CSV 500 — duplicate `:month` named param under native prepares → fixed; (2) false incomplete-banner on seed months → now gated on `provenance ≠ seed`. **NOT yet git-committed — awaiting Kouros's go.** 4 files:
 - **`public/modules/financier.php`** (edited): L199 `fin_fmt_chf(float):string` helper (number_format, space thousands, 2 dec). L323–391 Fiche PDO data block (UNION over `cogs_fiche_seed` ∪ `cogs_fiche_monthly` × `ref_cogs_fiche_categories`) → `$ficheMonths/$ficheData/$ficheTotals/$ficheLatestKey/$ficheIsIncomplete/$ficheProvenance/$ficheBasisRows`. L448–452 5th nav tab button `data-tab="fiche"` (reuses the existing delegated tab loop — no JS rewrite, as the pattern predicted). L919+ `#fin-panel-fiche` section **PHP-rendered table PER MONTH, server-side, NO JS recompute** (`hidden` attr correct). L1095–1101 7 `window.FIN_FICHE_*` globals injected.
 - **`public/js/financier.js`** (edited): L1579+ Module E IIFE — month switcher (show/hide `.fin-fiche-month-block`), provenance-chip update, incomplete-month warning, CSV href update on select change. **Switcher only — table itself is server-rendered, NOT hydrated.**
 - **`public/css/financier.css`** (edited): ~120 lines before `@media` — `.fin-fiche-controls`, `.fin-fiche-provenance-chip` (seed/computed variants), `.fin-fiche-csv-btn`, `.fin-fiche-warn`, column sizing, variation coloring, total row, basis row.
 - **`public/api/cogs-fiche-csv.php`** (NEW): auth-gated `require_page_access('financier')`, validates `?month=YYYY-MM` against actual DB months, **re-queries server-side (never echoes client floats)**, UTF-8 BOM for Excel, comma+double-quote CSV (mirrors warehouse-export convention as documented), totals + basis-adjustment rows.
-- Both PHP files pass `php -l` (VPS PHP). **No deployed-page smoke yet** — REQUIRED before declaring done (php -l ≠ runtime; nested-fn / undefined-fn class of bug only surfaces in browser). 
+- Both PHP files pass `php -l` (VPS PHP) AND deployed-page smoke (13/14) — done.
 - **April 2026 anchor totals confirmed from `cogs_fiche_seed`:** Valeur Stock (RM) 329 852.08 / Total Inventaire 394 367.74 / Variation Stock −36 986.26 CHF.
 - **Architecture verdict: SOUND.** Render-only over the two canonical single-home tables; CSV re-queries server-side (no float-laundering); categories JOINed not hardcoded; tab reuses delegated loop. As-built matches the documented pattern.
-- **B6 NEXT (still pending):** immutability guard on `cogs_fiche_seed`/published `cogs_fiche_monthly` rows + May publish. `cogs_fiche_monthly` still EMPTY — May publish is the first row-write into it. Don't fabricate; the seed April row is the immutable anchor (opening of May = closing of April).
+
+## ✅ Saisies entry-point — 6th card "Inventaire produits finis (PF)" (2026-06-11, deployed + smoke-tested)
+New card on the Saisies page → `expeditions.php?view=stocktake` (operator-gated). This surfaces the FG-census stocktake form the operator needs to enter the May-31 count. Deployed + smoke-tested. (This is the form Kouros uses to unblock the May publish below.)
+
+## Kouros ratifications (2026-06-11) — standing decisions
+- (a) **Seed April from EXT + engine proves-on-May** (don't recompute April; prove the engine by recomputing May from April opening).
+- (b) The one-time WAC/F2 basis change is shown as a **separate "Ajustement de base (non récurrent)"** line (= `basis_adjustment_chf`), not folded into the recurring variation.
+- (c) **Closed-periods-never-recomputed is standing policy** (mirrored by the engine's immutability guard).
+
+## ⏭ STILL PENDING — blocked on operator (the only open work)
+**Kouros enters the May-31 FG census** via the now-surfaced stocktake form (Saisies → PF card). Once in, PM/agent finalizes:
+- `basis_adjustment_chf`: FG/F2 delta ≈ **+1 809**; the RM/yeast portion = **"non isolable — base héritée"** (never fabricated, surfaced as inherited-basis, not a number).
+- Run engine `cogs-monthly-compile.ts --apply` for **2026-05** (first row-write into `cogs_fiche_monthly`).
+- Reconcile May to its own inputs (opening = April J), then it publishes on the Finance Fiche tab automatically.
+- Then git-commit the whole arc (deployed-not-committed today).
+
+## 🎫 TOUR (PM tour-steward standing duty)
+`scripts/tour-gap-check.php` flags `financier` + `journal-saisies` as **pre-existing CRITICAL gaps** (NOT caused by this arc's changes — both lacked tour cards before). The new **Fiche COGS tab may want a tour card** — note for the next `maltyweb-tour-steward` dispatch. financier is a sensitive class (COGS/COP) → steward STOPS pre-deploy + returns `PM-RATIFY: financier` for PM ratification.
