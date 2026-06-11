@@ -115,14 +115,13 @@ try {
     // ---- Per-beer fermentation stats ----
     $fermStmt = $pdo->prepare("
         WITH fer_end AS (
-          -- LEGACY-ONLY (v2 cutover blocker, 2026-05-24): bd_brewing_timings_v2.start_ferm
-          -- is 100% NULL — the fermentation-start timestamp was not carried into v2
-          -- (v2 populates brew_start/brew_end, a DIFFERENT event). Every fermentation
-          -- duration / CC-offset calc on this page keys off start_ferm, so these timings
-          -- reads stay on bd_brewing_timings until start_ferm is populated in v2.
-          SELECT beer, batch, MAX(STR_TO_DATE(start_ferm, '%d.%m.%Y %H:%i:%s')) AS ferm_start_dt
-          FROM bd_brewing_timings
-          WHERE start_ferm IS NOT NULL AND beer IS NOT NULL AND batch IS NOT NULL
+          -- Reads from bd_brewing_timings_v2 (v1 retired).
+          -- start_ferm is 100% NULL in v2; COALESCE falls back to MIN(event_date) as day-0 anchor.
+          -- (beer, batch) key — recipe_id_fk is NULL on recent rows, so we do NOT key on it.
+          SELECT beer, batch,
+                 COALESCE(MAX(STR_TO_DATE(start_ferm, '%d.%m.%Y %H:%i:%s')), MIN(event_date)) AS ferm_start_dt
+          FROM bd_brewing_timings_v2
+          WHERE is_tombstoned = 0 AND beer IS NOT NULL AND batch IS NOT NULL
           GROUP BY beer, batch
         ),
         cc_canon AS (
@@ -325,11 +324,11 @@ try {
         }
         $ccRow = $ccStmt->fetch() ?: [];
 
-        // LEGACY-ONLY: bd_brewing_timings_v2.start_ferm is 100% NULL (see fer_end note).
+        // Reads bd_brewing_timings_v2; start_ferm is NULL so COALESCE falls back to MIN(event_date).
         $fermStartStmt = $pdo->prepare(
-            'SELECT MAX(STR_TO_DATE(start_ferm, \'%d.%m.%Y %H:%i:%s\')) AS ferm_start_dt
-             FROM bd_brewing_timings
-             WHERE beer = :beer AND batch = :batch AND start_ferm IS NOT NULL'
+            'SELECT COALESCE(MAX(STR_TO_DATE(start_ferm, \'%d.%m.%Y %H:%i:%s\')), MIN(event_date)) AS ferm_start_dt
+             FROM bd_brewing_timings_v2
+             WHERE beer = :beer AND batch = :batch AND is_tombstoned = 0'
         );
         $fermStartStmt->execute([':beer' => $rawBeer, ':batch' => $batch]);
         $fermStartRow = $fermStartStmt->fetch() ?: [];
@@ -462,16 +461,19 @@ try {
             $daysIn = null;
             $fermStartDT = $occ['ferm_start_dt'] ?? null;
             if ($fermStartDT === null) {
-                // fetch from DB
-                // LEGACY-ONLY: bd_brewing_timings_v2.start_ferm is 100% NULL (see fer_end note).
+                // Reads bd_brewing_timings_v2; start_ferm is NULL so COALESCE falls back to MIN(event_date).
                 $fsStmt = $pdo->prepare(
-                    'SELECT MAX(STR_TO_DATE(start_ferm, \'%d.%m.%Y %H:%i:%s\')) AS fsd
-                     FROM bd_brewing_timings
-                     WHERE beer = :beer AND batch = :batch AND start_ferm IS NOT NULL'
+                    'SELECT COALESCE(MAX(STR_TO_DATE(start_ferm, \'%d.%m.%Y %H:%i:%s\')), MIN(event_date)) AS fsd
+                     FROM bd_brewing_timings_v2
+                     WHERE beer = :beer AND batch = :batch AND is_tombstoned = 0'
                 );
                 $fsStmt->execute([':beer' => $rawBeer, ':batch' => $batch]);
                 $fsRow = $fsStmt->fetch();
                 $fermStartDT = $fsRow['fsd'] ?? null;
+            }
+            // Fallback 1: use brewday/cooling date as day-0 anchor when start_ferm absent
+            if ($fermStartDT === null && !empty($occ['brewday_date'])) {
+                $fermStartDT = $occ['brewday_date'];
             }
             if ($fermStartDT !== null) {
                 $daysIn = (int)(new DateTimeImmutable($fermStartDT))->diff($asOfDT)->days;
@@ -541,6 +543,11 @@ try {
             }
             $rawReads = $readsStmt->fetchAll(PDO::FETCH_ASSOC);
 
+            // Fallback 2: use earliest read date as day-0 anchor when still absent
+            if ($fermStartDT === null && !empty($rawReads)) {
+                $fermStartDT = $rawReads[0]['event_date'];
+            }
+
             $currentReads = [];
             if ($fermStartDT !== null) {
                 // Day-0 read from cooling OG
@@ -580,11 +587,11 @@ try {
                 $hPrefix    = $beerPrefix . ' ' . $hb;
                 $hWithTrail = $hPrefix . ' %';
 
-                // LEGACY-ONLY: bd_brewing_timings_v2.start_ferm is 100% NULL (see fer_end note).
+                // Reads bd_brewing_timings_v2; start_ferm is NULL so COALESCE falls back to MIN(event_date).
                 $hFermStmt = $pdo->prepare(
-                    'SELECT MAX(STR_TO_DATE(start_ferm, \'%d.%m.%Y %H:%i:%s\')) AS fsd
-                     FROM bd_brewing_timings
-                     WHERE beer = :beer AND batch = :batch AND start_ferm IS NOT NULL'
+                    'SELECT COALESCE(MAX(STR_TO_DATE(start_ferm, \'%d.%m.%Y %H:%i:%s\')), MIN(event_date)) AS fsd
+                     FROM bd_brewing_timings_v2
+                     WHERE beer = :beer AND batch = :batch AND is_tombstoned = 0'
                 );
                 $hFermStmt->execute([':beer' => $rawBeer, ':batch' => $hb]);
                 $hFermRow = $hFermStmt->fetch();
