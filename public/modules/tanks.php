@@ -125,36 +125,21 @@ try {
           WHERE start_ferm IS NOT NULL AND beer IS NOT NULL AND batch IS NOT NULL
           GROUP BY beer, batch
         ),
-        cc AS (
-          -- bd_fermenting → bd_fermenting_v2: ColdCrash rows carry the 'PREFIX BATCH'
-          -- text in beer_raw (event_type discriminator replaces the beers_to_cold_crash col).
-          -- GROUP BY the full derived expressions, NOT the aliases: bd_fermenting_v2 has
-          -- a physical `batch` column, so GROUP BY batch would bind to it and trip
-          -- ONLY_FULL_GROUP_BY on the beer_raw-derived prefix.
-          SELECT
-            TRIM(SUBSTRING_INDEX(beer_raw, ' ', -1)) AS batch,
-            TRIM(SUBSTRING(beer_raw, 1, LENGTH(beer_raw) - LENGTH(SUBSTRING_INDEX(beer_raw, ' ', -1)) - 1)) AS prefix,
-            MIN(event_date) AS cc_date
-          FROM bd_fermenting_v2
-          WHERE event_type = 'ColdCrash' AND beer_raw IS NOT NULL AND beer_raw != ''
-            AND event_date IS NOT NULL
-          GROUP BY TRIM(SUBSTRING(beer_raw, 1, LENGTH(beer_raw) - LENGTH(SUBSTRING_INDEX(beer_raw, ' ', -1)) - 1)),
-                   TRIM(SUBSTRING_INDEX(beer_raw, ' ', -1))
-        ),
         cc_canon AS (
-          -- Prefix → canonical recipe name via ref_recipe_aliases (single source of truth).
-          -- JOIN is on alias column; only aliases that match a Core active recipe are used.
+          -- Re-keyed to (recipe_id_fk, batch) — immune to beer_raw spelling drift
+          -- (saisie flipped beer_raw to bare canonical names ~2026-05-29).
+          -- Join ref_recipes for canonical name to bridge back to fer_end.beer.
           SELECT
             rr.name AS beer,
-            cc.batch, cc.cc_date
-          FROM cc
-          JOIN ref_recipe_aliases ra
-            ON ra.alias COLLATE utf8mb4_unicode_ci = cc.prefix COLLATE utf8mb4_unicode_ci
-          JOIN ref_recipes rr
-            ON rr.id = ra.recipe_id
-           AND rr.subtype = 'Core'
-           AND rr.is_active = 1
-           AND rr.vintage = ''
+            bfv.batch,
+            MIN(bfv.event_date) AS cc_date
+          FROM bd_fermenting_v2 bfv
+          JOIN ref_recipes rr ON rr.id = bfv.recipe_id_fk
+          WHERE bfv.event_type = 'ColdCrash'
+            AND bfv.recipe_id_fk IS NOT NULL
+            AND bfv.batch IS NOT NULL AND bfv.batch != ''
+            AND bfv.event_date IS NOT NULL
+          GROUP BY rr.name, bfv.batch
         )
         SELECT
           rr.name              AS beer,
@@ -182,72 +167,63 @@ try {
     // ---- Per-recipe averages of last gravity + last pH before cold-crash ----
     $avgFinalsStmt = $pdo->query("
         WITH cc_per_batch AS (
-          -- bd_fermenting → bd_fermenting_v2: ColdCrash rows, 'PREFIX BATCH' in beer_raw.
-          -- GROUP BY full expressions (physical `batch` column collides with the alias).
+          -- Re-keyed to (recipe_id_fk, batch) — immune to beer_raw spelling drift.
           SELECT
-            TRIM(SUBSTRING(beer_raw, 1, LENGTH(beer_raw) - LENGTH(SUBSTRING_INDEX(beer_raw, ' ', -1)) - 1)) AS prefix,
-            TRIM(SUBSTRING_INDEX(beer_raw, ' ', -1)) AS batch,
+            recipe_id_fk,
+            batch,
             MIN(event_date) AS cc_date
           FROM bd_fermenting_v2
-          WHERE event_type = 'ColdCrash' AND beer_raw IS NOT NULL AND beer_raw != ''
+          WHERE event_type = 'ColdCrash'
+            AND recipe_id_fk IS NOT NULL
+            AND batch IS NOT NULL AND batch != ''
             AND event_date IS NOT NULL
-          GROUP BY TRIM(SUBSTRING(beer_raw, 1, LENGTH(beer_raw) - LENGTH(SUBSTRING_INDEX(beer_raw, ' ', -1)) - 1)),
-                   TRIM(SUBSTRING_INDEX(beer_raw, ' ', -1))
+          GROUP BY recipe_id_fk, batch
         ),
         reads_with_parse AS (
-          -- Reads rows, 'PREFIX BATCH' in beer_raw (event_type='Reads').
+          -- Re-keyed to (recipe_id_fk, batch) — no beer_raw parsing needed.
           SELECT
-            TRIM(SUBSTRING(beer_raw, 1, LENGTH(beer_raw) - LENGTH(SUBSTRING_INDEX(beer_raw, ' ', -1)) - 1)) AS prefix,
-            TRIM(SUBSTRING_INDEX(beer_raw, ' ', -1)) AS batch,
+            recipe_id_fk,
+            batch,
             event_date, gravity, ph
           FROM bd_fermenting_v2
-          WHERE event_type = 'Reads' AND beer_raw IS NOT NULL AND beer_raw != ''
+          WHERE event_type = 'Reads'
+            AND recipe_id_fk IS NOT NULL
         ),
         last_grav_before_cc AS (
-          SELECT r.prefix, r.batch, r.gravity,
-                 ROW_NUMBER() OVER (PARTITION BY r.prefix, r.batch ORDER BY r.event_date DESC) AS rk
+          SELECT r.recipe_id_fk, r.batch, r.gravity,
+                 ROW_NUMBER() OVER (PARTITION BY r.recipe_id_fk, r.batch ORDER BY r.event_date DESC) AS rk
           FROM reads_with_parse r
-          JOIN cc_per_batch c ON c.prefix = r.prefix AND c.batch = r.batch
+          JOIN cc_per_batch c ON c.recipe_id_fk = r.recipe_id_fk AND c.batch = r.batch
           WHERE r.event_date < c.cc_date AND r.gravity IS NOT NULL
         ),
         last_ph_before_cc AS (
-          SELECT r.prefix, r.batch, r.ph,
-                 ROW_NUMBER() OVER (PARTITION BY r.prefix, r.batch ORDER BY r.event_date DESC) AS rk
+          SELECT r.recipe_id_fk, r.batch, r.ph,
+                 ROW_NUMBER() OVER (PARTITION BY r.recipe_id_fk, r.batch ORDER BY r.event_date DESC) AS rk
           FROM reads_with_parse r
-          JOIN cc_per_batch c ON c.prefix = r.prefix AND c.batch = r.batch
+          JOIN cc_per_batch c ON c.recipe_id_fk = r.recipe_id_fk AND c.batch = r.batch
           WHERE r.event_date < c.cc_date AND r.ph IS NOT NULL
         ),
         grav_avg AS (
-          SELECT prefix, AVG(gravity) AS avg_final_grav, COUNT(*) AS n_grav
+          SELECT recipe_id_fk, AVG(gravity) AS avg_final_grav, COUNT(*) AS n_grav
           FROM last_grav_before_cc WHERE rk = 1
-          GROUP BY prefix
+          GROUP BY recipe_id_fk
         ),
         ph_avg AS (
-          SELECT prefix, AVG(ph) AS avg_final_ph, COUNT(*) AS n_ph
+          SELECT recipe_id_fk, AVG(ph) AS avg_final_ph, COUNT(*) AS n_ph
           FROM last_ph_before_cc WHERE rk = 1
-          GROUP BY prefix
-        ),
-        prefix_to_recipe AS (
-          -- Derive prefix→canonical mapping from ref_recipe_aliases (single source of truth).
-          -- Scope: Core active recipes with a non-empty vintage='' row (base recipe).
-          SELECT ra.alias AS prefix, rr.name AS beer
-            FROM ref_recipe_aliases ra
-            JOIN ref_recipes rr
-              ON rr.id = ra.recipe_id
-             AND rr.subtype = 'Core'
-             AND rr.is_active = 1
-             AND rr.vintage = ''
-           WHERE ra.alias REGEXP '^[A-Z]{2,4}[0-9]?$'
+          GROUP BY recipe_id_fk
         )
         SELECT
-          p.beer AS beer,
+          rr.name AS beer,
           g.avg_final_grav,
           ph.avg_final_ph,
           g.n_grav,
           ph.n_ph
-        FROM prefix_to_recipe p
-        LEFT JOIN grav_avg g ON g.prefix = p.prefix
-        LEFT JOIN ph_avg ph ON ph.prefix = p.prefix
+        FROM ref_recipes rr
+        LEFT JOIN grav_avg g ON g.recipe_id_fk = rr.id
+        LEFT JOIN ph_avg ph ON ph.recipe_id_fk = rr.id
+        WHERE (g.recipe_id_fk IS NOT NULL OR ph.recipe_id_fk IS NOT NULL)
+          AND rr.is_active = 1
     ");
     $avgFinalsByBeer = [];
     foreach ($avgFinalsStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
@@ -267,6 +243,7 @@ try {
         $beer    = $simRow['beer'];
         $rawBeer = $simRow['raw_beer'] ?? TankSimulator::rawBeerName($beer);
         $batch   = $simRow['batch'];
+        $recipeId = isset($simRow['recipe_id']) ? (int)$simRow['recipe_id'] : null;
 
         $brewdayDate = $pdo->prepare(
             'SELECT event_date FROM bd_brewing_brewday_v2
@@ -305,31 +282,47 @@ try {
         $exactMatch = $beerPrefix . ' ' . $batch;
         $withTrail  = $beerPrefix . ' ' . $batch . ' %';
 
-        $gravStmt = $pdo->prepare(
-            'SELECT gravity AS last_gravity, event_date AS last_gravity_date
-             FROM bd_fermenting_v2
-             WHERE event_type = "Reads"
-               AND (beer_raw = :exact OR beer_raw LIKE :withTrail)
-               AND gravity IS NOT NULL
-             ORDER BY event_date DESC LIMIT 1'
-        );
-        $gravStmt->execute([
-            ':exact'     => $exactMatch,
-            ':withTrail' => $withTrail,
-        ]);
+        if ($recipeId !== null) {
+            $gravStmt = $pdo->prepare(
+                'SELECT gravity AS last_gravity, event_date AS last_gravity_date
+                 FROM bd_fermenting_v2
+                 WHERE event_type = "Reads"
+                   AND recipe_id_fk = :rid AND batch = :batch
+                   AND gravity IS NOT NULL
+                 ORDER BY event_date DESC LIMIT 1'
+            );
+            $gravStmt->execute([':rid' => $recipeId, ':batch' => $batch]);
+        } else {
+            $gravStmt = $pdo->prepare(
+                'SELECT gravity AS last_gravity, event_date AS last_gravity_date
+                 FROM bd_fermenting_v2
+                 WHERE event_type = "Reads"
+                   AND (beer_raw = :exact OR beer_raw LIKE :withTrail)
+                   AND gravity IS NOT NULL
+                 ORDER BY event_date DESC LIMIT 1'
+            );
+            $gravStmt->execute([':exact' => $exactMatch, ':withTrail' => $withTrail]);
+        }
         $gravRow = $gravStmt->fetch() ?: [];
 
-        $ccStmt = $pdo->prepare(
-            'SELECT MAX(event_date) AS last_cc_date
-             FROM bd_fermenting_v2
-             WHERE event_type = "ColdCrash"
-               AND (beer_raw = :exact OR beer_raw LIKE :withTrail)
-               AND beer_raw IS NOT NULL AND beer_raw != \'\''
-        );
-        $ccStmt->execute([
-            ':exact'     => $exactMatch,
-            ':withTrail' => $withTrail,
-        ]);
+        if ($recipeId !== null) {
+            $ccStmt = $pdo->prepare(
+                'SELECT MAX(event_date) AS last_cc_date
+                 FROM bd_fermenting_v2
+                 WHERE event_type = "ColdCrash"
+                   AND recipe_id_fk = :rid AND batch = :batch'
+            );
+            $ccStmt->execute([':rid' => $recipeId, ':batch' => $batch]);
+        } else {
+            $ccStmt = $pdo->prepare(
+                'SELECT MAX(event_date) AS last_cc_date
+                 FROM bd_fermenting_v2
+                 WHERE event_type = "ColdCrash"
+                   AND (beer_raw = :exact OR beer_raw LIKE :withTrail)
+                   AND beer_raw IS NOT NULL AND beer_raw != \'\''
+            );
+            $ccStmt->execute([':exact' => $exactMatch, ':withTrail' => $withTrail]);
+        }
         $ccRow = $ccStmt->fetch() ?: [];
 
         // LEGACY-ONLY: bd_brewing_timings_v2.start_ferm is 100% NULL (see fer_end note).
@@ -371,15 +364,27 @@ try {
         $ogRow = $ogStmt->fetch() ?: [];
 
         // Latest pH from fermenting reads
-        $phStmt = $pdo->prepare(
-            'SELECT ph, event_date AS ph_date
-             FROM bd_fermenting_v2
-             WHERE event_type = "Reads"
-               AND (beer_raw = :exact OR beer_raw LIKE :withTrail)
-               AND ph IS NOT NULL
-             ORDER BY event_date DESC LIMIT 1'
-        );
-        $phStmt->execute([':exact' => $exactMatch, ':withTrail' => $withTrail]);
+        if ($recipeId !== null) {
+            $phStmt = $pdo->prepare(
+                'SELECT ph, event_date AS ph_date
+                 FROM bd_fermenting_v2
+                 WHERE event_type = "Reads"
+                   AND recipe_id_fk = :rid AND batch = :batch
+                   AND ph IS NOT NULL
+                 ORDER BY event_date DESC LIMIT 1'
+            );
+            $phStmt->execute([':rid' => $recipeId, ':batch' => $batch]);
+        } else {
+            $phStmt = $pdo->prepare(
+                'SELECT ph, event_date AS ph_date
+                 FROM bd_fermenting_v2
+                 WHERE event_type = "Reads"
+                   AND (beer_raw = :exact OR beer_raw LIKE :withTrail)
+                   AND ph IS NOT NULL
+                 ORDER BY event_date DESC LIMIT 1'
+            );
+            $phStmt->execute([':exact' => $exactMatch, ':withTrail' => $withTrail]);
+        }
         $phRow = $phStmt->fetch() ?: [];
 
         $avgDays   = $avgFermDaysByBeer[$rawBeer] ?? null;
@@ -396,6 +401,7 @@ try {
             'bd_beer'          => $beer,
             'bd_beer_raw'      => $rawBeer,
             'bd_batch'         => $batch,
+            'recipe_id'        => $recipeId,
             'volume_hl'        => $simRow['volume_hl'],
             'brewday_date'     => $brewRow['event_date'] ?? null,
             'recipe_short_name'=> $recipeRow['recipe_short_name'] ?? null,
@@ -433,6 +439,7 @@ try {
             $rawBeer    = $occ['bd_beer_raw'] ?? ($occ['bd_beer'] ?? '');
             $batch      = $occ['bd_batch'] ?? '';
             $beerCanon  = $occ['bd_beer']  ?? '';
+            $recipeId   = isset($occ['recipe_id']) ? (int)$occ['recipe_id'] : null;
 
             $beerPrefix = canonical_to_short_code($pdo, $beerCanon)
                 ?? canonical_to_short_code($pdo, $rawBeer)
@@ -511,15 +518,27 @@ try {
             $pitchedFromRow = $pitchedFromStmt->fetch() ?: [];
 
             // Current reads
-            $readsStmt = $pdo->prepare(
-                'SELECT event_date, gravity, ph
-                 FROM bd_fermenting_v2
-                 WHERE event_type = "Reads"
-                   AND (beer_raw = :exact OR beer_raw LIKE :trail)
-                   AND (gravity IS NOT NULL OR ph IS NOT NULL)
-                 ORDER BY event_date ASC'
-            );
-            $readsStmt->execute([':exact' => $exactMatch, ':trail' => $withTrail]);
+            if ($recipeId !== null) {
+                $readsStmt = $pdo->prepare(
+                    'SELECT event_date, gravity, ph
+                     FROM bd_fermenting_v2
+                     WHERE event_type = "Reads"
+                       AND recipe_id_fk = :rid AND batch = :batch
+                       AND (gravity IS NOT NULL OR ph IS NOT NULL)
+                     ORDER BY event_date ASC'
+                );
+                $readsStmt->execute([':rid' => $recipeId, ':batch' => $batch]);
+            } else {
+                $readsStmt = $pdo->prepare(
+                    'SELECT event_date, gravity, ph
+                     FROM bd_fermenting_v2
+                     WHERE event_type = "Reads"
+                       AND (beer_raw = :exact OR beer_raw LIKE :trail)
+                       AND (gravity IS NOT NULL OR ph IS NOT NULL)
+                     ORDER BY event_date ASC'
+                );
+                $readsStmt->execute([':exact' => $exactMatch, ':trail' => $withTrail]);
+            }
             $rawReads = $readsStmt->fetchAll(PDO::FETCH_ASSOC);
 
             $currentReads = [];
@@ -572,15 +591,27 @@ try {
                 $hFermStart = $hFermRow['fsd'] ?? null;
                 if ($hFermStart === null) continue;
 
-                $hReadsStmt = $pdo->prepare(
-                    'SELECT event_date, gravity, ph
-                     FROM bd_fermenting_v2
-                     WHERE event_type = "Reads"
-                       AND (beer_raw = :exact OR beer_raw LIKE :trail)
-                       AND (gravity IS NOT NULL OR ph IS NOT NULL)
-                     ORDER BY event_date ASC'
-                );
-                $hReadsStmt->execute([':exact' => $hPrefix, ':trail' => $hWithTrail]);
+                if ($recipeId !== null) {
+                    $hReadsStmt = $pdo->prepare(
+                        'SELECT event_date, gravity, ph
+                         FROM bd_fermenting_v2
+                         WHERE event_type = "Reads"
+                           AND recipe_id_fk = :rid AND batch = :hb
+                           AND (gravity IS NOT NULL OR ph IS NOT NULL)
+                         ORDER BY event_date ASC'
+                    );
+                    $hReadsStmt->execute([':rid' => $recipeId, ':hb' => $hb]);
+                } else {
+                    $hReadsStmt = $pdo->prepare(
+                        'SELECT event_date, gravity, ph
+                         FROM bd_fermenting_v2
+                         WHERE event_type = "Reads"
+                           AND (beer_raw = :exact OR beer_raw LIKE :trail)
+                           AND (gravity IS NOT NULL OR ph IS NOT NULL)
+                         ORDER BY event_date ASC'
+                    );
+                    $hReadsStmt->execute([':exact' => $hPrefix, ':trail' => $hWithTrail]);
+                }
                 $hRawReads = $hReadsStmt->fetchAll(PDO::FETCH_ASSOC);
 
                 $hReads = [];
@@ -600,14 +631,24 @@ try {
                 $hReads = array_values($dedupH);
 
                 // CC day
-                $hCcStmt = $pdo->prepare(
-                    'SELECT MIN(event_date) AS cc_date
-                     FROM bd_fermenting_v2
-                     WHERE event_type = "ColdCrash"
-                       AND (beer_raw = :exact OR beer_raw LIKE :trail)
-                       AND beer_raw IS NOT NULL AND beer_raw != \'\''
-                );
-                $hCcStmt->execute([':exact' => $hPrefix, ':trail' => $hWithTrail]);
+                if ($recipeId !== null) {
+                    $hCcStmt = $pdo->prepare(
+                        'SELECT MIN(event_date) AS cc_date
+                         FROM bd_fermenting_v2
+                         WHERE event_type = "ColdCrash"
+                           AND recipe_id_fk = :rid AND batch = :hb'
+                    );
+                    $hCcStmt->execute([':rid' => $recipeId, ':hb' => $hb]);
+                } else {
+                    $hCcStmt = $pdo->prepare(
+                        'SELECT MIN(event_date) AS cc_date
+                         FROM bd_fermenting_v2
+                         WHERE event_type = "ColdCrash"
+                           AND (beer_raw = :exact OR beer_raw LIKE :trail)
+                           AND beer_raw IS NOT NULL AND beer_raw != \'\''
+                    );
+                    $hCcStmt->execute([':exact' => $hPrefix, ':trail' => $hWithTrail]);
+                }
                 $hCcRow    = $hCcStmt->fetch();
                 $hCcDay    = null;
                 if (!empty($hCcRow['cc_date'])) {
