@@ -36,6 +36,27 @@ ale(garde 7, prod 1) · lager(garde 14, prod 1) · non_alcool(garde 7, prod 1) �
 ## FK fan-out into ref_yeast_strains = 3 FKs
 `ref_recipes.yeast_strain_id_fk` (recipe→strain) · `bd_brewing_brewday.bd_yeast` (v1, FK'd) · `ref_yeast_strain_aliases.strain_id` (CASCADE). `bd_brewing_brewday_v2` yeast cols are free-text, NOT FK'd. **MIGRATION LESSON below was caught on the bd_brewing_brewday.bd_yeast guard.**
 
+## §OBSERVED-STRAIN DERIVE-AT-READ — BBT + CCT boards (SHIPPED 2026-06-11, render-only)
+The CCT board (`tanks.php` + `cct-detail-modal.js`) and the BBT board (`packaging.php`) both surface the OBSERVED yeast strain (+ generation) for the beer in tank, read from `bd_brewing_brewday_v2` (the free-text yeast cols — NOT FK'd, per the FK fan-out section above). ROOT problem solved: the OLD brewing forms let the operator pick the literal sentinel `yeast='New Yeast'` and write the real strain into a separate `new_yeast` column (51 rows / ~10 recipes, all with non-blank new_yeast; the new form can't reproduce the sentinel). Reading `yeast` alone leaked "New Yeast" onto the boards.
+
+**Resolution is single-homed in `app/yeast-eligibility.php` (the established yeast-resolution module — "never invents a fallback"), helpers added ~L264-325. Boards CALL it; neither board carries an inline coalesce or alias map (canonical-call-not-copy).**
+- `yeast_observed_strain_expr($alias='b')` → SQL fragment `IF(<alias>.yeast='New Yeast',<alias>.new_yeast,<alias>.yeast)`. The `$alias` is whitelisted to `[A-Za-z0-9_]` before interpolation (injection-safe). Use in the board SELECT so the coalesce happens in-query.
+- `resolve_observed_yeast_strain(PDO, $yeast, $newYeast)` → run AFTER fetch. Coalesce (New Yeast→new_yeast) THEN precedence: (a) exact case-insensitive `ref_yeast_strains.name`; (b) case-insensitive `ref_yeast_strain_aliases.alias` JOIN to strain; (c) else return the RAW value with `resolved:false`. Returns `['strain'=>…, 'resolved'=>bool]`. NEVER fabricates a strain (refuse-don't-invent).
+
+Wiring (all render-only, NO raw mutation, NO migration):
+- **CCT** — `tanks.php` query L335-356 selects via `yeast_observed_strain_expr('b')` + `new_yeast`/`gen`; resolves post-fetch; stores `['strain']` → flows into the `detail.yeast.strain` JSON the modal reads. `cct-detail-modal.js` is UNTOUCHED (inherits via the existing `'yeast'=>[...]` payload).
+- **BBT** — `packaging.php` `$bbtYeastStmt` selects raw `yeast`+`new_yeast`+`gen`, runs `resolve_observed_yeast_strain()`, renders an htmlspecialchars-escaped muted chip "Levure · {strain} (G{gen})". (This supersedes / is the canonical home for the earlier BBT-chip ship recorded in packaging-page-dashboard.md §OBSERVED YEAST ON BBT CARDS — the chip now reads the resolver, not a raw verbatim copy.)
+
+Verified live 2026-06-11: Speakeasy b64 → "Pomona" (resolved), Diversion b46 → "Pinnacle Low Alcohol" (resolved); alias spot-checks pass (POMONA→Pomona, exact US-05, unknown→raw). Render smoke (real operator session + Playwright) on both boards: 0 console errors, 0 "New Yeast" leaks; BBT 5 → "Levure · Pomona (G7)", BBT 2 → "Levure · Pinnacle Low Alcohol (G1)".
+
+**⚠️ DIVERGENCE FROM THE PRE-BUILD RULING (working-as-designed, NOT a bug):** the ruling predicted `apinnacle` would render raw-as-ambiguous. It does NOT — `ref_yeast_strain_aliases` id=34 (`apinnacle` → strain_id 15 Pinnacle Low Alcohol, operator-curated 2026-05-11; consistent with the Atom A / mig 228 Pinnacle merge above) resolves it at step (b). That is the precedence working correctly on a curated operator decision, not a guess. If `apinnacle` should ever show raw-as-ambiguous, the lever is deleting alias id=34 (operator call). As of 2026-06-11 NO live in-tank new_yeast value renders unresolved.
+
+**Still-open follow-ups (gated, NOT done):**
+1. Retire bogus `ref_yeast_strains` id=69 "New Yeast" (is_active=0, no family). Separate migration, gated on apply-time RE-VERIFY of 0 live FK refs (v1 FK constraint still live mid-decommission — see the Q4 ruling + the VARCHAR-literal lesson below).
+2. Alias seeds for any HISTORICAL messy `new_yeast` lacking a canonical/alias match — operator-gated, explicit mappings only, NEVER guess. None currently in-tank; only matters for historical board views / completeness.
+
+GIT state at ship: 3 files modified + UNSTAGED (`app/yeast-eligibility.php`, `public/modules/tanks.php`, `public/modules/packaging.php`); the earlier BBT yeast-chip build (`packaging.php` chip + `app.css .tank-card__yeast`) is part of this same uncommitted set. Tree also carried unrelated parallel-session work (financier.*, saisies.php, mig 330) left untouched — deploy-pushes-working-tree, so `git status` before any `--apply`.
+
 ## ⚠️ Open scrapping candidate (flagged, NOT touched this session)
 - `public/admin/settings/yeasts.php` — LEGACY admin CRUD, parallel writer to Biochimie; does a HARD `DELETE` of strains with NO tombstone / NO log_revision / NO audit. Violates refuse-don't-NULL + one-fact-one-writer. RETIREMENT CANDIDATE — retire once Biochimie covers create/delete AND nothing routes here. Until then it can silently destroy strain rows — keep it on the kill-list.
 

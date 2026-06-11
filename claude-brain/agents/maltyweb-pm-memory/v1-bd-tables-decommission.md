@@ -4,8 +4,20 @@
 >
 > **🔴 STANDING RULE (the root lesson — D below): the `beer_raw` write-encoding flipped ~2026-05-29 to bare-canonical-name + a SEPARATE batch column. ANY surface still reverse-parsing `beer_raw` in `'PREFIX BATCH'` shape SILENTLY DROPS all post-May reads. AND: never read v1 `bd_*` tables — v2 is canonical AND cleaner (dedup'd, complete); GREP for v1 table names before declaring any `bd_*` read correct.**
 
-## 🟢 ALL v1 CONSUMERS REPOINTED — STAGE 1 COMPLETE (2026-06-11, final reader wave)
-**Verified by full both-repo grep.** Every v1 `bd_*` CONSUMER is now on `_v2`: tanks.php, sku-bom-compile.php, packaging.php, beer-tax.js, build-efficiency-data.ts, refresh_recipe_profile.py, parse-tank-simulation.ts. **Only the WRITER-STOP (Stage 3) and DROP (Stage 4) remain — both gated on operator go-ahead.**
+## 🟢 STAGE 1 + STAGE 3 COMPLETE — v1 TABLES NOW FROZEN (no readers, no writer; 2026-06-11)
+**Verified by full both-repo grep.** Every v1 `bd_*` CONSUMER is on `_v2` (Stage 1), AND **the v1 writer is now DISABLED (Stage 3 DONE, commit `0449a95` maltyweb)**: v1 `bd_*` tables receive NO new writes and have NO readers — they sit FROZEN, intact. **Only Stage 4 (snapshot → soak → DROP) remains — gated on a soak period + final re-grep + operator go-ahead.**
+
+### ✅ STAGE 3 — v1 WRITER STOPPED (2026-06-11, commit `0449a95`)
+- **Operator CONFIRMED (2026-06-11):** ALL brewing/fermenting/racking/packaging data entry has fully moved to the maltyweb **saisie forms** (which write `bd_*_v2` directly). The BSF Google Forms are **RETIRED.** This clears the **BSF-exit Phase 6 operator hard-gate** for these tables.
+- **The v1 writer** was the `maltytask-bsf-ingest` cron (`/etc/cron.d/maltytask-bsf-ingest`, source `db/cron/maltytask-bsf-ingest.cron`): every 30 min, BSF Sheets → `ingest.py --tab=all --apply` → v1 `bd_*` tables. **NOW DISABLED** (active line commented with a dated rationale), deployed, **verified on VPS (no active bsf-ingest line remains).** The daily ref-table sync lines in that cron were already disabled since 2026-05-12.
+- **v1↔v2 reconciliation run BEFORE disabling — CLEAN:** v2 ≥ v1 everywhere except brewday (835 v1 / 831 v2), cooling (2322 / 2286), timings (2306 / 2271). The v1-only rows there are **ALL 2021-2022 contract/collab brews with `batch=NULL`** (BLZ, Chien Bleu, Brasserie du Château, NYL, Les Combières, MeltingPote, BadFish) — legacy un-batched aggregation artifacts that **v2 already normalized under proper batch numbers, read by NO consumer.** No real data lost.
+
+### Stage 4 prep (for when the gate clears)
+- **Re-run the FULL both-repo v1-reader grep** (the tank-sim miss this arc proved this is mandatory before the gate — never trust a prior grep).
+- **Snapshot each v1 `bd_*` table BEFORE DROP** (CREATE TABLE …_v1_archive AS SELECT, or mysqldump).
+- **Remove the `db-correct.php` v1 `ingredients_parsed` UPDATE branch** (its only remaining v1 reference) + the `validate_fk_candidates.py` dev-utility refs.
+- **`schema_meta` cleanup** for the dropped tables (mark retired / remove rows).
+- **Soak:** now that v1 isn't topped up, watch ~1-2 weeks for any operator-visible issue before DROP.
 
 Final-wave commits (2026-06-11):
 - **`b17c686` (maltyweb)** — `app/sku-bom-compile.php` §2b observed malt/hops → `bd_brewing_ingredients_parsed_v2` (header_id → `bd_brewing_ingredients_v2`). **0 v1-only keys lost, 75 v2-only gained, 1496 identical.** The **6 differing keys were a v1 DATA BUG** (v1 stored 1g/2g/5g for hops additions physically 1/2/5 **kg**; v2 has correct 1000/2000/5000 g) → repoint **CORRECTS (raises) observed hops COGS for 6 batches** (rid 51 b45, rid 57 b126 ×4, rid 30 b48). sku-bom-compile.php is now **FULLY off v1** (batch-HL + malt/hops + dry-hop all v2).
@@ -38,9 +50,9 @@ Three commits landed; cooling (1b) and packaging (1d) reader-repoints complete a
 ## Live audit (Kouros, 2026-06-11) + PM verification (2026-06-11, read-only against prod)
 All figures PM-verified live unless noted.
 
-### v1 still ACTIVELY WRITTEN (not dormant)
-- Writer = `scripts/python/ingest.py` (+ `tab_brewing.py`, `tab_packaging.py`) — BSF Google-Form ingest. Writes v1: bd_brewing_brewday, bd_brewing_gravity, bd_brewing_cooling, bd_brewing_ingredients, bd_brewing_timings, bd_fermenting, bd_packaging.
-- PM-verified freshness: `bd_brewing_brewday` 835 rows, MAX(event_date)=**2026-06-08**; `bd_fermenting` 6606; `bd_packaging` 2204; `bd_brewing_cooling` 2322 rows. v2 siblings fresh to 06-10/06-11. → ingest dual-populates v1+v2. **Stopping/repointing this writer is the same job as BSF-exit Phase 6.**
+### v1 writer — ✅ STOPPED 2026-06-11 (was: ACTIVELY WRITTEN)
+- Writer was the `maltytask-bsf-ingest` cron (`/etc/cron.d/maltytask-bsf-ingest`, source `db/cron/maltytask-bsf-ingest.cron`) every 30 min → `scripts/python/ingest.py --tab=all --apply` (+ `tab_brewing.py`, `tab_packaging.py`) — BSF Google-Form ingest. Wrote v1: bd_brewing_brewday, bd_brewing_gravity, bd_brewing_cooling, bd_brewing_ingredients, bd_brewing_timings, bd_fermenting, bd_packaging. **NOW DISABLED (commit `0449a95`), deployed, VPS-verified no active bsf-ingest line.** Data entry has fully moved to the maltyweb saisie forms (write `bd_*_v2` directly); BSF Google Forms RETIRED.
+- Pre-stop PM-verified freshness (historical): `bd_brewing_brewday` 835 rows, MAX(event_date)=2026-06-08; `bd_fermenting` 6606; `bd_packaging` 2204; `bd_brewing_cooling` 2322 rows. **v1 tables are now FROZEN at these counts.** v1↔v2 reconciliation pre-stop was CLEAN (v1-only rows = 2021-22 batch=NULL legacy artifacts, no consumer, no real data lost — see Stage 3 block above). **Stopping this writer WAS the same job as BSF-exit Phase 6 — now done for these tables.**
 
 ### start_ferm BLOCKER — ⚠️ CORRECTED 2026-06-11: backfill is LARGELY MOOT (A)
 **Earlier "resolve via v1→v2 backfill" plan was WRONG — verified live this session:**
@@ -99,22 +111,22 @@ All figures PM-verified live unless noted.
 - The v1→v2 `start_ferm` backfill is NOT viable (v2 `start_ferm` 100% NULL by design; v1 has gaps AND zero rows for recent batches). tanks.php already uses the v2-native `event_date` anchor with NO backfill.
 - **REMAINING TASK = the SINGLE Stage-2 item: decide whether `refresh_recipe_profile.py` can adopt the same `event_date` anchor.** If yes → **DROP the backfill stage entirely** (no migration). If `refresh_recipe_profile` genuinely needs a true ferment-start date that `event_date` can't proxy, escalate as a data-model gap (capture ferment-start in the v2 form), do NOT resurrect a v1 backfill. **After Stage 1 + this decision, NO live reader touches any v1 table.**
 
-**Stage 3 — STOP THE v1 WRITER (gated on Stages 1+2 = zero v1 readers):**
-- Repoint/disable ingest.py v1 writes (= BSF-exit Phase 6 work; if Phase 6 form-rebuild isn't ready, minimal step = make ingest.py write v2 only / stop v1 INSERTs). v1 tables now frozen (no new writes, no reads).
+**Stage 3 — STOP THE v1 WRITER — ✅ DONE (2026-06-11, commit `0449a95`):**
+- DISABLED the `maltytask-bsf-ingest` cron (`/etc/cron.d/maltytask-bsf-ingest`) that drove `ingest.py --tab=all --apply` → v1 tables every 30 min. Active line commented with dated rationale, deployed, VPS-verified (no active bsf-ingest line). Operator CONFIRMED all data entry moved to maltyweb saisie forms (→ `bd_*_v2`); BSF Google Forms RETIRED → **BSF-exit Phase 6 hard-gate CLEARED for these tables.** v1↔v2 reconciliation pre-stop CLEAN. **v1 tables now FROZEN — no new writes, no reads.**
 
-**Stage 4 — SNAPSHOT + DROP (gated on Stage 3 + a soak period):**
-- Let v1 sit frozen ≥1–2 weeks (catch any missed reader via a grep + an error-log watch). Snapshot each v1 table (CREATE TABLE …_v1_archive AS SELECT, or mysqldump) before DROP. Then DROP the v1 tables. schema_meta rows for dropped tables → mark retired/remove.
+**Stage 4 — SNAPSHOT + DROP (gated on Stage 3 ✅ + a soak period + final re-grep + operator go-ahead):**
+- Let v1 sit frozen ≥1–2 weeks (now that it isn't topped up — catch any missed reader via a re-grep + an error-log watch). Re-run the FULL both-repo v1-reader grep (mandatory — the tank-sim miss proved it). Snapshot each v1 table (CREATE TABLE …_v1_archive AS SELECT, or mysqldump) before DROP. Then DROP the v1 tables. Remove the `db-correct.php` v1 ingredients_parsed UPDATE branch + `validate_fk_candidates.py` dev refs. schema_meta rows for dropped tables → mark retired/remove. **No DROP without operator go-ahead — COGS-critical.**
 
 ## What can be done NOW vs gated (updated 2026-06-11 — STAGE 1 COMPLETE)
 - **✅ DONE — ALL READERS REPOINTED (Stage 1 complete):** tanks.php (`f398163`+`e063ddf`); sku-bom-compile cooling (`aa6fb0f`) + ingredients (`b17c686`); packaging.php (`aa6fb0f`); beer-tax.js + build-efficiency-data.ts cooling (`262945a`); parse-tank-simulation.ts cooling (`face01f`); refresh_recipe_profile.py whole-file (`ed41319`). **ZERO v1 CONSUMERS REMAIN.**
 - **Stage 2** = MOOT (start_ferm anchored on `event_date`; refresh_recipe_profile adopted it). No migration.
-- **🟢 READY (gated on operator go-ahead) — Stage 3 = STOP THE v1 WRITER:** ingest.py + parse_bd_ingredients.py + tab_*.py. Zero consumers depend on v1 reads now, so freezing the writes is safe. = BSF-exit Phase 6 work; minimal step = make ingest.py write v2 only / stop v1 INSERTs.
-- **GATED — Stage 4 = SNAPSHOT + SOAK + DROP** (gated on Stage 3 + a ≥1-2wk soak): snapshot each v1 table, watch error logs, then DROP; remove the db-correct.php v1 UPDATE branch; mark schema_meta rows retired. **No DROP without operator go-ahead — COGS-critical.**
+- **✅ DONE — Stage 3 = STOP THE v1 WRITER (commit `0449a95`):** DISABLED the `maltytask-bsf-ingest` cron (drove `ingest.py --tab=all --apply` → v1 every 30 min); deployed; VPS-verified no active line. Operator confirmed data entry fully on maltyweb saisie forms (→ v2); BSF Google Forms RETIRED → **BSF-exit Phase 6 hard-gate CLEARED for these tables.** Pre-stop v1↔v2 reconciliation CLEAN. v1 tables now FROZEN.
+- **🟢 NOW THE ONLY OPEN STAGE — GATED — Stage 4 = SNAPSHOT + SOAK + DROP** (gated on the ≥1-2wk soak now ticking + a final full both-repo re-grep + operator go-ahead): re-grep, snapshot each v1 table, watch error logs, then DROP; remove the db-correct.php v1 UPDATE branch + validate_fk_candidates.py refs; mark schema_meta rows retired. **No DROP without operator go-ahead — COGS-critical.**
 - **🔴 OPERATOR ACTION ITEM (independent of the gate):** re-enable `/etc/cron.d/maltytask-recipe-profile` — it is DISABLED pending a manual smoke of the v2-repointed `refresh_recipe_profile.py` (`ed41319`). Until re-enabled, the recipe-profile table is NOT refreshing nightly.
 - **Separate ingest-root ticket:** recent `bd_brewing_timings_v2` rows have NULL `recipe_id_fk` — fix at the writer.
 
 ## Missing-reader hunt (PM standing concern — high blast radius)
-PM rule = grep the FULL VPS/both repos for every v1 table name before declaring zero-readers. **Full both-repo grep 2026-06-11 confirms ZERO v1 CONSUMERS remain** — the only v1 references left are the writer chain (ingest.py + parse_bd_ingredients.py + tab_*.py), the two deferred refs (db-correct.php UPDATE, validate_fk_candidates.py dev utility), and one comment (loss-metrics.php:42). The `parse-tank-simulation.ts` cooling reader (`face01f`) was a real catch this session — an earlier grep had truncated and missed it — so **STILL re-grep before the Stage-3 writer-stop and again before Stage-4 DROP** (KPI handlers, verify/backfill scripts, any other `lib/` Node over the tunnel). All COGS/tax-bearing repoints in this arc were Opus numeric-verified (cooling OG 0.0°P / 0 tax shifts; ingredients 6-batch g/kg correction; batch-HL delta operator-signed-off).
+PM rule = grep the FULL VPS/both repos for every v1 table name before declaring zero-readers. **Full both-repo grep 2026-06-11 confirmed ZERO v1 CONSUMERS** — and the writer (Stage 3) is now STOPPED too (`0449a95`). The only v1 references left are the two deferred refs (db-correct.php UPDATE, validate_fk_candidates.py dev utility) and one comment (loss-metrics.php:42). The `parse-tank-simulation.ts` cooling reader (`face01f`) was a real catch this arc — an earlier grep had truncated and missed it — so **the Stage-4 re-grep before DROP is MANDATORY, never trust a prior grep** (KPI handlers, verify/backfill scripts, any other `lib/` Node over the tunnel). All COGS/tax-bearing repoints in this arc were Opus numeric-verified (cooling OG 0.0°P / 0 tax shifts; ingredients 6-batch g/kg correction; batch-HL delta operator-signed-off).
 
 ## EQUIP
 Repoints: `coder`+`sql` (+`ui`+`webapp-testing` for tanks.php/packaging.php deployed-page smoke). Python crons (refresh_recipe_profile, parse_bd_ingredients, ingest): `coder`+`sql`. Migration (start_ferm backfill, DROPs): `sql`. COGS-bearing repoints (1b/1c, beer-tax): Opus independent numeric verify per the checklist.
