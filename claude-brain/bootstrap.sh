@@ -89,6 +89,37 @@ else
     echo "  OK — no /home/kluk references remain."
 fi
 
+# ── Auto-sync hook: push PM-memory changes on every git commit/push ───────────
+# Keeps the shared brain in sync without anyone remembering to commit it.
+# Idempotent; merges into ~/.claude/settings.json. Needs python3 (else: manual, see README).
+echo ""
+echo "Installing PM-memory auto-sync hook (~/.claude/settings.json)..."
+if command -v python3 >/dev/null 2>&1; then
+    BRAIN="$BRAIN" python3 - <<'PY'
+import json, os
+brain = os.environ["BRAIN"]
+p = os.path.expanduser("~/.claude/settings.json")
+cmd = "input=$(cat); printf '%s' \"$input\" | grep -qE 'git (commit|push)' && " + brain + "/pm-sync.sh; true"
+d = {}
+if os.path.exists(p):
+    try:
+        with open(p) as f: d = json.load(f)
+    except Exception:
+        d = {}
+pt = d.setdefault("hooks", {}).setdefault("PostToolUse", [])
+present = any("pm-sync.sh" in h.get("command", "") for blk in pt for h in blk.get("hooks", []))
+if present:
+    print("  hook already present — skipped")
+else:
+    pt.append({"matcher": "Bash", "hooks": [{"type": "command", "command": cmd}]})
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p, "w") as f: json.dump(d, f, indent=2)
+    print("  hook added -> runs pm-sync.sh after your git commit/push")
+PY
+else
+    echo "  WARN: python3 not found. Add the hook manually (see claude-brain/README.md)."
+fi
+
 echo ""
 echo "=== Done — restart Claude Code to load the skills + agents. ==="
 echo ""

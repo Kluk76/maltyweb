@@ -45,6 +45,19 @@ build-state, the other sees it on the next pull. PM genuinely follows everyone's
 - Concurrent edits to the same memory file can merge-conflict — topic files keep
   most changes isolated; resolve the index (`maltyweb-pm-memory.md`) by hand if needed.
 
+## Auto-sync hook — `pm-sync.sh` (so nobody has to remember)
+
+`bootstrap.sh` installs a Claude Code `PostToolUse` hook into your
+`~/.claude/settings.json` that runs `claude-brain/pm-sync.sh` after every
+`git commit` / `git push`. The script commits **only** the PM-memory paths and
+best-effort pushes — it's a no-op when memory is unchanged, never touches your
+code, and always exits clean. Net effect: PM memory rides out automatically
+whenever you do git. Run it manually any time too: `./claude-brain/pm-sync.sh`.
+
+The hook only auto-**pushes**; `git pull` before consulting PM is still on you
+(that's how you load the other dev's updates). The keeper installs the same hook
+in their own user settings.
+
 ## Refreshing skills / agent defs (when they change) — `publish.sh`
 
 `publish.sh` copies the **skills + agent definitions** from the keeper's
