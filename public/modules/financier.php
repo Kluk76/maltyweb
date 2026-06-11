@@ -195,6 +195,11 @@ function fin_array_median(array $vals): float {
     return ($n % 2 === 0) ? (($vals[$mid - 1] + $vals[$mid]) / 2.0) : (float) $vals[$mid];
 }
 
+/** Formate un montant CHF en style suisse : 2 décimales, espace pour les milliers */
+function fin_fmt_chf(float $val): string {
+    return number_format($val, 2, '.', ' ');
+}
+
 $skuRows          = [];
 $skuKpiCounts     = null;
 $skuMedianCHFperHL = 0.0;
@@ -315,6 +320,79 @@ foreach ($skuRows as &$r) {
 }
 unset($r);
 
+/* ── Fiche COGS data ─────────────────────────────────────────────────── */
+$ficheDbError      = null;
+$ficheMonths       = [];
+$ficheData         = [];
+$ficheTotals       = [];
+$ficheLatestKey    = null;
+$ficheIsIncomplete = [];
+$ficheProvenance   = [];
+$ficheBasisRows    = [];
+
+try {
+    $pdo_fiche = maltytask_pdo();
+    $stmt_fiche = $pdo_fiche->query("
+        SELECT
+            c.category_key, c.label_fr, c.inv_gl, c.charge_gl, c.display_order,
+            all_mk.month_key,
+            COALESCE(m.rm_chf,        s.rm_chf)        AS rm_chf,
+            COALESCE(m.wip_chf,       s.wip_chf)       AS wip_chf,
+            COALESCE(m.fg_chf,        s.fg_chf)        AS fg_chf,
+            COALESCE(m.total_chf,     s.total_chf)     AS total_chf,
+            COALESCE(m.opening_chf,   s.opening_chf)   AS opening_chf,
+            COALESCE(m.variation_chf, s.variation_chf) AS variation_chf,
+            m.basis_adjustment_chf,
+            CASE WHEN m.id IS NOT NULL THEN 'computed' ELSE 'seed' END AS provenance
+        FROM (
+            SELECT DISTINCT month_key FROM cogs_fiche_seed
+            UNION
+            SELECT DISTINCT month_key FROM cogs_fiche_monthly
+        ) AS all_mk
+        CROSS JOIN ref_cogs_fiche_categories c
+        LEFT JOIN cogs_fiche_seed s     ON s.month_key = all_mk.month_key AND s.category_key = c.category_key
+        LEFT JOIN cogs_fiche_monthly m  ON m.month_key = all_mk.month_key AND m.category_key = c.category_key
+        WHERE c.is_active = 1
+        ORDER BY all_mk.month_key, c.display_order
+    ");
+    $ficheRows = $stmt_fiche->fetchAll(PDO::FETCH_ASSOC);
+
+    foreach ($ficheRows as $row) {
+        $mk = $row['month_key'];
+        if (!in_array($mk, $ficheMonths, true)) {
+            $ficheMonths[] = $mk;
+        }
+        $ficheData[$mk][] = $row;
+    }
+
+    sort($ficheMonths);
+    $ficheLatestKey = !empty($ficheMonths) ? end($ficheMonths) : null;
+
+    foreach ($ficheMonths as $mk) {
+        $rows_mk = $ficheData[$mk] ?? [];
+        // Totals
+        $t = ['rm_chf'=>0.0,'wip_chf'=>0.0,'fg_chf'=>0.0,'total_chf'=>0.0,'opening_chf'=>0.0,'variation_chf'=>0.0];
+        foreach ($rows_mk as $r) {
+            foreach (array_keys($t) as $k) { $t[$k] += (float)($r[$k] ?? 0); }
+        }
+        $ficheTotals[$mk] = $t;
+
+        // Provenance — computed first so the incomplete gate can use it
+        $hasComputed = !empty(array_filter($rows_mk, fn($r) => $r['provenance'] === 'computed'));
+        $hasSeed     = !empty(array_filter($rows_mk, fn($r) => $r['provenance'] === 'seed'));
+        $ficheProvenance[$mk] = ($hasComputed && $hasSeed) ? 'mixed' : ($hasComputed ? 'computed' : 'seed');
+
+        // Incomplete: only applies to computed months (seed months are signed+complete by definition)
+        $ficheIsIncomplete[$mk] = ($ficheProvenance[$mk] !== 'seed')
+            && !array_filter(array_column($rows_mk, 'fg_chf'), fn($v) => (float)$v > 0.0);
+
+        // Basis rows
+        $ficheBasisRows[$mk] = array_values(array_filter($rows_mk, fn($r) => $r['basis_adjustment_chf'] !== null));
+    }
+} catch (Throwable $e) {
+    $ficheDbError = $e->getMessage();
+}
+
 $active_module = 'financier';
 ?>
 <!doctype html>
@@ -345,7 +423,7 @@ $active_module = 'financier';
     </p>
   </header>
 
-  <?php if ($copData === null && $salesData === null): ?>
+  <?php if ($copData === null && $salesData === null && empty($ficheMonths)): ?>
   <div class="fin-no-data">
     <p>Aucun artefact JSON disponible. Lance le pipeline maltytask pour générer les données.</p>
   </div>
@@ -368,6 +446,10 @@ $active_module = 'financier';
     <button class="fin-tab" role="tab" aria-selected="false"
             aria-controls="fin-panel-sku" id="fin-tab-sku" data-tab="sku">
       Coût par SKU
+    </button>
+    <button class="fin-tab" role="tab" aria-selected="false"
+            aria-controls="fin-panel-fiche" id="fin-tab-fiche" data-tab="fiche">
+      Fiche COGS
     </button>
   </nav>
 
@@ -835,6 +917,116 @@ $active_module = 'financier';
     <?php endif ?>
   </section>
 
+    <section class="fin-panel" id="fin-panel-fiche" role="tabpanel" aria-labelledby="fin-tab-fiche" hidden>
+      <?php if (!empty($ficheDbError)): ?>
+        <p class="fin-empty">Erreur base de données : <?= htmlspecialchars($ficheDbError) ?></p>
+      <?php elseif (empty($ficheMonths)): ?>
+        <p class="fin-empty">Aucune donnée Fiche COGS disponible.</p>
+      <?php else: ?>
+
+      <div class="fin-fiche-controls">
+        <div class="fin-controls">
+          <label class="fin-picker-label" for="fiche-month-select">Mois</label>
+          <select id="fiche-month-select" class="fin-month-select" aria-label="Sélection du mois Fiche COGS">
+            <?php foreach (array_reverse($ficheMonths) as $mk): ?>
+              <option value="<?= htmlspecialchars($mk) ?>" <?= ($mk === $ficheLatestKey) ? 'selected' : '' ?>>
+                <?= htmlspecialchars(fin_month_label($mk)) ?>
+              </option>
+            <?php endforeach ?>
+          </select>
+        </div>
+        <span class="fin-fiche-provenance-chip" id="fiche-provenance-chip" aria-live="polite"></span>
+        <a class="fin-fiche-csv-btn" id="fiche-csv-btn"
+           href="/api/cogs-fiche-csv.php?month=<?= htmlspecialchars($ficheLatestKey ?? '') ?>"
+           download aria-label="Télécharger la fiche CSV">
+          ↓ Télécharger CSV
+        </a>
+      </div>
+
+      <div class="fin-fiche-warn" id="fiche-incomplete-warn" hidden role="alert">
+        <span class="fin-fiche-warn__icon" aria-hidden="true">⚠</span>
+        Données incomplètes : les bières prêtes (FG) ne sont pas encore saisies pour ce mois.
+      </div>
+
+      <?php foreach ($ficheMonths as $mk):
+          $rows    = $ficheData[$mk] ?? [];
+          $totals  = $ficheTotals[$mk] ?? [];
+          $basisRows = $ficheBasisRows[$mk] ?? [];
+          $isActive = ($mk === $ficheLatestKey);
+      ?>
+      <div class="fin-fiche-month-block" data-month="<?= htmlspecialchars($mk) ?>"
+           <?= $isActive ? '' : 'hidden' ?>>
+
+        <div class="fin-table-scroll">
+          <table class="fin-table fin-fiche-table" aria-label="Fiche COGS <?= htmlspecialchars(fin_month_label($mk)) ?>">
+            <thead>
+              <tr>
+                <th class="fin-th--label">Catégorie</th>
+                <th class="fin-th--gl">Comptes Inv.</th>
+                <th class="fin-th--gl">Cptes Charge</th>
+                <th class="fin-th--num">Valeur Stock</th>
+                <th class="fin-th--num">Bières en cours</th>
+                <th class="fin-th--num">Bières prêtes</th>
+                <th class="fin-th--num fin-th--total">Total Inventaire</th>
+                <th class="fin-th--num">Compta mois préc.</th>
+                <th class="fin-th--num fin-th--variation">Variation Stock</th>
+              </tr>
+            </thead>
+            <tbody>
+              <?php foreach ($rows as $row):
+                  $variation = (float) $row['variation_chf'];
+                  $varClass  = $variation < 0 ? ' fin-td--variation-neg' : ($variation > 0 ? ' fin-td--variation-pos' : '');
+              ?>
+              <tr>
+                <td class="fin-td--label"><?= htmlspecialchars($row['label_fr']) ?></td>
+                <td class="fin-td--gl fin-td--mono"><?= htmlspecialchars($row['inv_gl'] ?? '') ?></td>
+                <td class="fin-td--gl fin-td--mono"><?= htmlspecialchars($row['charge_gl'] ?? '') ?></td>
+                <td class="fin-td--num"><?= fin_fmt_chf((float) $row['rm_chf']) ?></td>
+                <td class="fin-td--num"><?= fin_fmt_chf((float) $row['wip_chf']) ?></td>
+                <td class="fin-td--num"><?= fin_fmt_chf((float) $row['fg_chf']) ?></td>
+                <td class="fin-td--num fin-td--total"><?= fin_fmt_chf((float) $row['total_chf']) ?></td>
+                <td class="fin-td--num"><?= fin_fmt_chf((float) $row['opening_chf']) ?></td>
+                <td class="fin-td--num fin-td--variation<?= $varClass ?>"><?= fin_fmt_chf($variation) ?></td>
+              </tr>
+              <?php endforeach ?>
+            </tbody>
+            <tfoot>
+              <tr class="fin-fiche-total-row">
+                <td class="fin-td--label fin-td--total-label"><strong>Total</strong></td>
+                <td class="fin-td--gl"></td>
+                <td class="fin-td--gl"></td>
+                <td class="fin-td--num fin-td--total-sum"><?= fin_fmt_chf($totals['rm_chf'] ?? 0) ?></td>
+                <td class="fin-td--num fin-td--total-sum"><?= fin_fmt_chf($totals['wip_chf'] ?? 0) ?></td>
+                <td class="fin-td--num fin-td--total-sum"><?= fin_fmt_chf($totals['fg_chf'] ?? 0) ?></td>
+                <td class="fin-td--num fin-td--total fin-td--total-sum"><?= fin_fmt_chf($totals['total_chf'] ?? 0) ?></td>
+                <td class="fin-td--num fin-td--total-sum"><?= fin_fmt_chf($totals['opening_chf'] ?? 0) ?></td>
+                <?php $totalVar = (float)($totals['variation_chf'] ?? 0);
+                      $totalVarClass = $totalVar < 0 ? ' fin-td--variation-neg' : ($totalVar > 0 ? ' fin-td--variation-pos' : ''); ?>
+                <td class="fin-td--num fin-td--variation fin-td--total-sum<?= $totalVarClass ?>"><?= fin_fmt_chf($totalVar) ?></td>
+              </tr>
+              <?php if (!empty($basisRows)): ?>
+              <tr class="fin-fiche-basis-row">
+                <td colspan="9" class="fin-fiche-basis-note">
+                  <span class="fin-fiche-basis-label">Ajustement de base (WAC + révision BOM F2, non récurrent)</span>
+                  <?php foreach ($basisRows as $br):
+                      if ($br['basis_adjustment_chf'] === null) continue; ?>
+                    <span class="fin-fiche-basis-item">
+                      <?= htmlspecialchars($br['label_fr']) ?> : <?= fin_fmt_chf((float) $br['basis_adjustment_chf']) ?>
+                    </span>
+                  <?php endforeach ?>
+                  <em class="fin-fiche-basis-disclaimer">Ce mois inclut un ajustement non récurrent (rebasage WAC/F2). La variation ci-dessus l'intègre ; elle ne reflète pas un mouvement réel équivalent.</em>
+                </td>
+              </tr>
+              <?php endif ?>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+      <?php endforeach ?>
+
+      <?php endif ?>
+    </section>
+
   <?php endif ?>
 
 </div><!-- /.fin-wrap -->
@@ -900,6 +1092,12 @@ window.FIN_SALES_DEFAULT_SLICE = <?= json_encode($defaultSalesSlice, $JSON_FLAGS
 /* GL months — months with booked GL rows in inv_charges_bc */
 window.FIN_GL_MONTHS   = <?= json_encode($glMonths,      $JSON_FLAGS) ?>;
 window.FIN_GL_DEFAULT  = <?= json_encode($glLatestMonth, $JSON_FLAGS) ?>;
+
+/* Fiche COGS — variation de stock (source: cogs_fiche_seed + cogs_fiche_monthly) */
+window.FIN_FICHE_MONTHS     = <?= json_encode($ficheMonths ?? [],      $JSON_FLAGS) ?>;
+window.FIN_FICHE_DEFAULT    = <?= json_encode($ficheLatestKey ?? null,  $JSON_FLAGS) ?>;
+window.FIN_FICHE_PROVENANCE = <?= json_encode($ficheProvenance ?? [],   $JSON_FLAGS) ?>;
+window.FIN_FICHE_INCOMPLETE = <?= json_encode($ficheIsIncomplete ?? [], $JSON_FLAGS) ?>;
 </script>
 
 <script src="/js/kpi-charts.js?v=<?= @filemtime(__DIR__ . '/../js/kpi-charts.js') ?: time() ?>"></script>

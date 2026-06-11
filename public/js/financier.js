@@ -1574,3 +1574,49 @@
   }());
 
 })();
+
+/* ════════════════════════════════════════════════════════════════════════════
+   MODULE E — FICHE COGS (variation de stock)
+═══════════════════════════════════════════════════════════════════════════ */
+(function () {
+  var monthSel       = document.getElementById('fiche-month-select');
+  var provenanceChip = document.getElementById('fiche-provenance-chip');
+  var incompleteWarn = document.getElementById('fiche-incomplete-warn');
+  var csvBtn         = document.getElementById('fiche-csv-btn');
+  if (!monthSel) return; // panel not present
+
+  function updateFicheMonth(mk) {
+    document.querySelectorAll('.fin-fiche-month-block').forEach(function (el) {
+      el.hidden = el.dataset.month !== mk;
+    });
+
+    var prov = (window.FIN_FICHE_PROVENANCE || {})[mk];
+    if (provenanceChip) {
+      if (prov === 'seed') {
+        provenanceChip.textContent = 'Clôture signée (référence)';
+        provenanceChip.className   = 'fin-fiche-provenance-chip fin-fiche-provenance-chip--seed';
+      } else if (prov === 'computed') {
+        provenanceChip.textContent = 'Calculé';
+        provenanceChip.className   = 'fin-fiche-provenance-chip fin-fiche-provenance-chip--computed';
+      } else {
+        provenanceChip.textContent = '';
+        provenanceChip.className   = 'fin-fiche-provenance-chip';
+      }
+    }
+
+    if (incompleteWarn) {
+      incompleteWarn.hidden = !(window.FIN_FICHE_INCOMPLETE || {})[mk];
+    }
+
+    if (csvBtn) {
+      csvBtn.href = '/api/cogs-fiche-csv.php?month=' + encodeURIComponent(mk);
+    }
+  }
+
+  var defaultMk = window.FIN_FICHE_DEFAULT || monthSel.value;
+  updateFicheMonth(defaultMk);
+
+  monthSel.addEventListener('change', function () {
+    updateFicheMonth(this.value);
+  });
+}());

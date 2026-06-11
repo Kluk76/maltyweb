@@ -8,6 +8,7 @@ declare(strict_types=1);
  *               Brassage       (/modules/form-brewing.php)
  *               Fermentation   (/modules/form-fermenting.php)
  *               Inventaire RM  (/modules/form-rm-stocktake.php)
+ *               Inventaire PF  (/modules/expeditions.php?view=stocktake)
  *
  * All forms are active. No placeholder cards remain.
  */
@@ -108,6 +109,16 @@ $active_module = 'saisies';
       <div class="sh-card__desc">
         Saisie du stock physique de matières premières : comptage mensuel par
         ingrédient pour le suivi d'inventaire.
+      </div>
+      <div class="sh-card__arrow">Ouvrir →</div>
+    </a>
+
+    <a class="sh-card" href="/modules/expeditions.php?view=stocktake">
+      <div class="sh-card__icon">🏭</div>
+      <div class="sh-card__name">Inventaire produits finis (PF)</div>
+      <div class="sh-card__desc">
+        Comptage mensuel du stock de produits finis (bouteilles, canettes, fûts)
+        par SKU, pour la clôture COGS.
       </div>
       <div class="sh-card__arrow">Ouvrir →</div>
     </a>
