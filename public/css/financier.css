@@ -696,6 +696,14 @@ body.financier .main {
   color: var(--oak-deep);
 }
 
+.fin-grid-th--budget {
+  color: var(--ink-mute);
+}
+
+.fin-grid-th--vs-budget {
+  color: var(--ink-mute);
+}
+
 .fin-grid-th--placeholder {
   color: var(--ink-faint);
 }
@@ -792,6 +800,24 @@ body.financier .main {
 /* Negative values get ember colour */
 .fin-grid-td--actuals.fin-grid-td--negative {
   color: var(--ember);
+}
+
+/* Budget column */
+.fin-grid-td--budget {
+  color: var(--ink-mute);
+}
+
+/* Vs Budget: over budget (actual > budget) = ember; under = hop-deep */
+.fin-grid-td--vs-budget {
+  color: var(--ink-mute);
+}
+
+.fin-grid-td--vs-budget.fin-grid-td--vs-budget-over {
+  color: var(--ember);
+}
+
+.fin-grid-td--vs-budget.fin-grid-td--vs-budget-under {
+  color: var(--hop-deep);
 }
 
 /* ── SR-only helper ──────────────────────────────────────────────────────────*/

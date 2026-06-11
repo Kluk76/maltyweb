@@ -475,7 +475,7 @@ $active_module = 'financier';
           <span class="fin-loading-indicator" id="cogs-grid-loading" hidden aria-live="polite">Chargement…</span>
         </div>
       </div>
-      <p class="fin-grid-source-chip">ACTUALS = pipeline opérationnel (sales-cogs-data.json) · ÷ HL vendu (ventes BC)</p>
+      <p class="fin-grid-source-chip">ACTUALS = pipeline opérationnel (sales-cogs-data.json) · ÷ HL vendu (ventes BC) · BUDGET = budget 2026 board, CHF/HL annuel (ref_budget_cogs)</p>
       <div class="fin-grid-wrap" id="cogs-grid-wrap">
         <p class="fin-empty">Chargement…</p>
       </div>

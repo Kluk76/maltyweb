@@ -351,17 +351,20 @@ try {
     // Index by monthKey for O(1) lookups
     $salesByMonth = $salesFeedData['months'] ?? [];
 
+    // Load budget CHF/HL map keyed by line_key (fiscal_year derived from $month)
+    [$selYear] = explode('-', $month, 2);
+    $budgetMap = fin_load_budget_cogs($pdo, (int) $selYear);
+
     // Build operational month data
-    $opMonth = fin_cogs_operational_month($salesByMonth, $month);
+    $opMonth = fin_cogs_operational_month($salesByMonth, $month, $budgetMap);
 
     // YTD: sum all months Jan..selected present in the feed
-    [$selYear] = explode('-', $month, 2);
     $ytdMonthsOp = array_filter(
         array_keys($salesByMonth),
         fn($mk) => str_starts_with($mk, $selYear . '-') && $mk <= $month
     );
     sort($ytdMonthsOp);
-    $opYtd = fin_cogs_operational_ytd($salesByMonth, array_values($ytdMonthsOp));
+    $opYtd = fin_cogs_operational_ytd($salesByMonth, array_values($ytdMonthsOp), $budgetMap);
 
     /* ── B) BOOKED GL: compact section-level totals (secondary / Vue comptable) */
     [$year, $mo] = explode('-', $month, 2);
@@ -665,6 +668,30 @@ function fin_cop_booked_totals(array $glNets, float $hlPkg): array
 /* ── COGS-grid helpers (operational, sold-driven) ─────────────────────────── */
 
 /**
+ * Load budget CHF/HL rows from ref_budget_cogs for a given fiscal year.
+ * Returns ['line_key' => float budget_chf_per_hl, …].
+ * Falls back to [] on DB error so the grid degrades gracefully (shows '—' for budget cols).
+ */
+function fin_load_budget_cogs(PDO $pdo, int $fiscalYear): array
+{
+    try {
+        $stmt = $pdo->prepare(
+            'SELECT line_key, budget_chf_per_hl
+               FROM ref_budget_cogs
+              WHERE fiscal_year = ?'
+        );
+        $stmt->execute([$fiscalYear]);
+        $map = [];
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            $map[$row['line_key']] = (float) $row['budget_chf_per_hl'];
+        }
+        return $map;
+    } catch (Throwable $e) {
+        return [];
+    }
+}
+
+/**
  * Load the sales-cogs-data.json feed.
  * Returns the full decoded array, or null if the file is missing/unreadable.
  */
@@ -731,38 +758,61 @@ function fin_cogs_board_lines(): array
  * Build operational COGS rows for one month from the sales-cogs feed.
  * Returns ['lines' => [...], 'hlSold' => float, 'totalVariableChf' => float].
  * glLines in the feed already contains both material and overhead lines.
+ *
+ * $budgetMap: ['line_key' => float budget_chf_per_hl, …] — attached to each row.
+ * Subtotal/grand_subtotal budget = sum of child line budgets.
+ * beer_tax has no budget (null).
  */
-function fin_cogs_build_op_rows(array $glLines, float $hlSold, float $beerTaxChf): array
+function fin_cogs_build_op_rows(array $glLines, float $hlSold, float $beerTaxChf, array $budgetMap = []): array
 {
     $boardDef = fin_cogs_board_lines();
 
     // First pass: resolve CHF per key
-    $vals = [];
+    $vals       = [];
+    $budgetVals = [];
     foreach ($boardDef as $node) {
         $key  = $node['key'];
         $type = $node['type'];
         if ($type === 'line') {
             if ($key === 'beer_tax') {
-                $vals[$key] = $beerTaxChf;
+                $vals[$key]       = $beerTaxChf;
+                $budgetVals[$key] = null; // no budget for beer_tax
             } else {
                 $sum = 0.0;
                 foreach ($node['gl'] as $acc) {
                     $sum += (float) ($glLines[$acc] ?? 0.0);
                 }
-                $vals[$key] = $sum;
+                $vals[$key]       = $sum;
+                $budgetVals[$key] = isset($budgetMap[$key]) ? (float) $budgetMap[$key] : null;
             }
         } elseif ($type === 'subtotal') {
             $sum = 0.0;
+            $bgt = 0.0;
+            $bgtNull = false;
             foreach ($node['lines'] as $lk) {
                 $sum += $vals[$lk] ?? 0.0;
+                if ($budgetVals[$lk] === null) {
+                    $bgtNull = true;
+                } else {
+                    $bgt += (float) ($budgetVals[$lk] ?? 0.0);
+                }
             }
-            $vals[$key] = $sum;
+            $vals[$key]       = $sum;
+            $budgetVals[$key] = $bgtNull ? null : $bgt;
         } elseif ($type === 'grand_subtotal') {
             $sum = 0.0;
+            $bgt = 0.0;
+            $bgtNull = false;
             foreach ($node['subtotals'] as $sk) {
                 $sum += $vals[$sk] ?? 0.0;
+                if ($budgetVals[$sk] === null) {
+                    $bgtNull = true;
+                } else {
+                    $bgt += (float) ($budgetVals[$sk] ?? 0.0);
+                }
             }
-            $vals[$key] = $sum;
+            $vals[$key]       = $sum;
+            $budgetVals[$key] = $bgtNull ? null : $bgt;
         }
     }
 
@@ -773,11 +823,12 @@ function fin_cogs_build_op_rows(array $glLines, float $hlSold, float $beerTaxChf
         $chf  = $vals[$key] ?? 0.0;
         $phl  = $hlSold > 0 ? $chf / $hlSold : null;
         $rows[] = [
-            'type'   => $node['type'],
-            'key'    => $key,
-            'label'  => $node['label'],
-            'chf'    => round($chf, 2),
-            'perHl'  => $phl !== null ? round($phl, 4) : null,
+            'type'          => $node['type'],
+            'key'           => $key,
+            'label'         => $node['label'],
+            'chf'           => round($chf, 2),
+            'perHl'         => $phl !== null ? round($phl, 4) : null,
+            'budgetPerHl'   => $budgetVals[$key] !== null ? round((float) $budgetVals[$key], 4) : null,
         ];
     }
 
@@ -792,21 +843,23 @@ function fin_cogs_build_op_rows(array $glLines, float $hlSold, float $beerTaxChf
 /**
  * Build operational COGS data for a single month from the sales-cogs feed.
  * $salesByMonth = $salesFeedData['months'] (keyed by YYYY-MM).
+ * $budgetMap: ['line_key' => float] from fin_load_budget_cogs().
  */
-function fin_cogs_operational_month(array $salesByMonth, string $monthKey): array
+function fin_cogs_operational_month(array $salesByMonth, string $monthKey, array $budgetMap = []): array
 {
     $entry     = $salesByMonth[$monthKey] ?? null;
     $glLines   = (array) ($entry['glLines'] ?? []);
     $hlSold    = (float) ($entry['hlSold']  ?? 0.0);
     $beerTax   = (float) ($entry['beerTax']['total'] ?? 0.0);
 
-    return fin_cogs_build_op_rows($glLines, $hlSold, $beerTax);
+    return fin_cogs_build_op_rows($glLines, $hlSold, $beerTax, $budgetMap);
 }
 
 /**
  * Aggregate multiple months into a YTD COGS slice.
+ * Budget CHF/HL is the annual flat rate — same value for both month and YTD.
  */
-function fin_cogs_operational_ytd(array $salesByMonth, array $monthKeys): array
+function fin_cogs_operational_ytd(array $salesByMonth, array $monthKeys, array $budgetMap = []): array
 {
     $glSums  = [];
     $hlSold  = 0.0;
@@ -820,7 +873,7 @@ function fin_cogs_operational_ytd(array $salesByMonth, array $monthKeys): array
             $glSums[(string)$acc] = ($glSums[(string)$acc] ?? 0.0) + (float)$val;
         }
     }
-    return fin_cogs_build_op_rows($glSums, $hlSold, $beerTax);
+    return fin_cogs_build_op_rows($glSums, $hlSold, $beerTax, $budgetMap);
 }
 
 /**
