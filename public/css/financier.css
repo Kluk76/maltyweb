@@ -1256,6 +1256,12 @@ dialog#fin-sku-modal::backdrop {
   color: var(--ember-deep, var(--ember));
 }
 
+/* The display:flex above overrides the UA [hidden]{display:none}; restore it so
+   the incomplete-data banner actually hides when the month is complete. */
+.fin-fiche-warn[hidden] {
+  display: none;
+}
+
 .fin-fiche-warn__icon {
   font-size: 1.1rem;
   flex-shrink: 0;
