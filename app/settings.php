@@ -93,6 +93,22 @@ function date_parse_dayfirst(): bool
 }
 
 /**
+ * Feature flag: whether repack-event depletion is live on FG stock.
+ *
+ * Returns FALSE (safe default) until the operator explicitly sets
+ *   system_settings.section='features', key_name='repack_depletion_live', value_num=1
+ * (e.g. after the 2026-06-15 cage count). No redeploy needed to flip.
+ *
+ * Used in app/fg-stock.php to gate Step 5.5 in fg_stock_compute() and
+ * the repack leg in fg_stock_location_snapshot().
+ */
+function repack_depletion_live(): bool
+{
+    $v = system_setting('repack_depletion_live', 'features', 0.0);
+    return ((float) $v) >= 1.0;
+}
+
+/**
  * Internal: load all active rows for a section into a [key_name => row] map.
  * Returns an empty array (not an exception) when the table does not yet exist.
  */

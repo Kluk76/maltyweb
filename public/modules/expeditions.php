@@ -25,6 +25,7 @@ require_once __DIR__ . '/../../app/settings-helpers.php';
 require_once __DIR__ . '/../../app/db-write-helpers.php';
 require_once __DIR__ . '/../../app/csrf.php';
 require_once __DIR__ . '/../../app/fg-stock.php';
+require_once __DIR__ . '/../../app/repack.php';
 
 require_page_access('expeditions');
 $me = current_user();
@@ -110,7 +111,7 @@ const EXP_INTERNAL_LABELS   = [
 
 // ── View routing ──────────────────────────────────────────────────────────────
 $view    = isset($_GET['view']) ? (string) $_GET['view'] : 'commandes';
-$allowedViews = ['commandes', 'form', 'stock', 'stocktake', 'clients', 'mouvements', 'side-stock', 'historique'];
+$allowedViews = ['commandes', 'form', 'stock', 'stocktake', 'clients', 'mouvements', 'side-stock', 'historique', 'repack'];
 if (!in_array($view, $allowedViews, true)) $view = 'commandes';
 
 $editId  = isset($_GET['edit']) ? (int) $_GET['edit'] : 0;
@@ -2176,6 +2177,65 @@ try {
         )->fetchAll(PDO::FETCH_ASSOC);
     }
 
+    // ── Repack view: advisory eshop repacking proposals ──────────────────────
+    // Calls repack_decompose_orders() for the chosen day (default today).
+    // Loads existing logged events for the same day (advisory display only).
+    // No writes here — writes go through /api/expeditions-repack.php.
+    $rkpDate          = date('Y-m-d');
+    if (isset($_GET['rkp_date']) && preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) $_GET['rkp_date'])) {
+        $rkpDate = (string) $_GET['rkp_date'];
+    }
+    $rkpProposals         = [];
+    $rkpLoggedEvents      = [];
+    $rkpOrderMeta         = [];  // order_id => {id, fulfilment_mode, order_name}
+    $rkpFlagLive          = false;
+    if ($view === 'repack') {
+        $rkpFlagLive  = repack_depletion_live();
+        $rkpProposals = repack_decompose_orders($pdo, $rkpDate);
+
+        // Group proposals by order_id; collect order metadata
+        $rkpByOrder = []; // order_id => rows
+        foreach ($rkpProposals as $pr) {
+            $oid = (int) $pr['source_order_id'];
+            if (!isset($rkpByOrder[$oid])) $rkpByOrder[$oid] = [];
+            $rkpByOrder[$oid][] = $pr;
+        }
+
+        // Fetch order metadata (name + mode) for all order ids
+        if (!empty($rkpByOrder)) {
+            $oidList = array_keys($rkpByOrder);
+            $oidPlaceholders = implode(',', array_fill(0, count($oidList), '?'));
+            $rkpOrderMetaStmt = $pdo->prepare(
+                "SELECT id, fulfilment_mode,
+                        COALESCE(shopify_order_name, CONCAT('#', id)) AS order_name
+                   FROM inv_sales_orders
+                  WHERE id IN ($oidPlaceholders)"
+            );
+            $rkpOrderMetaStmt->execute($oidList);
+            foreach ($rkpOrderMetaStmt->fetchAll(PDO::FETCH_ASSOC) as $om) {
+                $rkpOrderMeta[(int) $om['id']] = $om;
+            }
+        }
+
+        // Fetch logged events for the day (advisory: show what has already been logged)
+        $rkpLoggedStmt = $pdo->prepare(
+            "SELECT rk.id, rk.from_sku_id_fk, rk.from_qty, rk.to_sku_id_fk,
+                    rk.to_qty, rk.loose_units, rk.to_kind, rk.source_order_id_fk,
+                    rk.moved_on, rk.is_tombstoned, rk.repack_key, rk.created_at,
+                    fs.sku_code AS from_sku_code,
+                    COALESCE(ts.sku_code, '(loose)') AS to_sku_code,
+                    u.display_name AS submitted_by_name
+               FROM inv_repack_events rk
+               JOIN ref_skus fs ON fs.id = rk.from_sku_id_fk
+               LEFT JOIN ref_skus ts ON ts.id = rk.to_sku_id_fk
+               LEFT JOIN users u  ON u.id = rk.submitted_by_user_fk
+              WHERE rk.moved_on = ?
+              ORDER BY rk.id ASC"
+        );
+        $rkpLoggedStmt->execute([$rkpDate]);
+        $rkpLoggedEvents = $rkpLoggedStmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
     // ── Historique view: per-week-per-client BC shipment history (mig 329) ────
     // Read-only. No writes, no status chips, no CHF. Source: v_sales_ledger_weekly_client
     // (shipment grain, resolved-FG, B2B scope, posting_date < 2026-06-08).
@@ -2772,6 +2832,7 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
   <link rel="stylesheet" href="/css/app.css?v=<?= @filemtime(__DIR__ . '/../css/app.css') ?: time() ?>">
   <link rel="stylesheet" href="/css/expeditions.css?v=<?= @filemtime(__DIR__ . '/../css/expeditions.css') ?: time() ?>">
   <link rel="stylesheet" href="/css/eshop-fulfilment.css?v=<?= @filemtime(__DIR__ . '/../css/eshop-fulfilment.css') ?: time() ?>">
+  <link rel="stylesheet" href="/css/repack.css?v=<?= @filemtime(__DIR__ . '/../css/repack.css') ?: time() ?>">
 </head>
 <body class="home op-form-page expeditions">
 
@@ -2825,6 +2886,9 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
     <a href="/modules/expeditions.php?view=side-stock"
        class="exp-tab<?= $view === 'side-stock' ? ' exp-tab--active' : '' ?>"
        <?= $view === 'side-stock' ? 'aria-current="page"' : '' ?>>Restes d'emballage</a>
+    <a href="/modules/expeditions.php?view=repack"
+       class="exp-tab<?= $view === 'repack' ? ' exp-tab--active' : '' ?>"
+       <?= $view === 'repack' ? 'aria-current="page"' : '' ?>>Reconditionnement</a>
   </nav>
 
   <!-- ══════════════════════════════════════════════════════════════════════
@@ -3028,6 +3092,92 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
       // Phase 2A: workflow chips
       exp_render_eshop_chips($eo);
       echo '</div>';
+  }
+
+  /**
+   * Render a fulfilment mode badge for a repack proposal row.
+   * Mirrors the mode badges used in exp_render_eshop_row.
+   */
+  function exp_render_repack_mode_badge(string $mode): void
+  {
+      if ($mode === 'pickup') {
+          echo '<span class="exp-eshop-mode-badge exp-eshop-mode-badge--pickup" title="Retrait boutique">🏬</span>';
+      } else {
+          echo '<span class="exp-eshop-mode-badge exp-eshop-mode-badge--delivery" title="Livraison">🚚</span>';
+      }
+  }
+
+  /**
+   * Render a single repack proposal block for one order.
+   * Groups all proposal rows by order_id; called once per order.
+   *
+   * @param array  $orderMeta  {id, fulfilment_mode, order_name}
+   * @param array  $rows       Proposal rows for this order (from repack_decompose_orders)
+   * @param string $csrf       CSRF token for the log-event form
+   */
+  function exp_render_repack_order_block(array $orderMeta, array $rows, string $csrf): void
+  {
+      $oid      = (int) $orderMeta['id'];
+      $mode     = (string) ($orderMeta['fulfilment_mode'] ?? 'delivery');
+      $label    = htmlspecialchars((string) ($orderMeta['order_name'] ?? "#$oid"));
+      ?>
+      <div class="rkp-order-block" data-order-id="<?= $oid ?>" role="group"
+           aria-label="Commande <?= $label ?>">
+        <div class="rkp-order-header">
+          <?php exp_render_repack_mode_badge($mode) ?>
+          <span class="rkp-order-name"><?= $label ?></span>
+          <button class="rkp-confirm-btn ef-chip ef-chip--next"
+                  data-order-id="<?= $oid ?>"
+                  data-mode="<?= htmlspecialchars($mode) ?>"
+                  aria-label="Confirmer le reconditionnement pour la commande <?= $label ?>">
+            Confirmer la décomposition
+          </button>
+        </div>
+        <table class="rkp-proposal-table" role="table" aria-label="Décomposition commande <?= $label ?>">
+          <thead>
+            <tr>
+              <th scope="col">Boîte source</th>
+              <th scope="col">Qté ouverte</th>
+              <th scope="col">Résultat</th>
+              <th scope="col">Type</th>
+              <th scope="col">Loose</th>
+              <th scope="col" class="rkp-col-bal">Équilibre</th>
+            </tr>
+          </thead>
+          <tbody>
+          <?php foreach ($rows as $row): ?>
+            <?php
+              $toKind = (string) $row['to_kind'];
+              $kindLabel = match($toKind) {
+                  'bundle' => 'Bundle',
+                  'pd8'    => 'PD8',
+                  'loose'  => 'Loose',
+                  default  => htmlspecialchars($toKind),
+              };
+              $balanced = (bool) ($row['balanced'] ?? false);
+            ?>
+            <tr class="rkp-proposal-row<?= $balanced ? '' : ' rkp-proposal-row--unbalanced' ?>"
+                data-from-sku-id="<?= (int) $row['from_sku_id'] ?>"
+                data-from-qty="<?= (int) $row['from_qty'] ?>"
+                data-to-sku-id="<?= (int) $row['to_sku_id'] ?>"
+                data-to-qty="<?= (int) $row['to_qty'] ?>"
+                data-component-bottles="<?= (int) $row['component_bottles'] ?>"
+                data-loose-units="<?= (int) $row['loose_units'] ?>"
+                data-to-kind="<?= htmlspecialchars($toKind) ?>"
+                data-site-id="<?= (int) $row['site_id'] ?>">
+              <td class="rkp-sku-from"><span class="rkp-sku-code"><?= htmlspecialchars($row['from_sku_code']) ?></span></td>
+              <td class="rkp-qty-from"><?= (int) $row['from_qty'] ?></td>
+              <td class="rkp-sku-to"><span class="rkp-sku-code"><?= htmlspecialchars($row['to_sku_code']) ?></span>
+                  <span class="rkp-qty-to">×<?= (int) $row['to_qty'] ?></span></td>
+              <td class="rkp-to-kind"><span class="rkp-kind-badge rkp-kind-badge--<?= htmlspecialchars($toKind) ?>"><?= $kindLabel ?></span></td>
+              <td class="rkp-loose"><?= (int) $row['loose_units'] > 0 ? ('+' . (int)$row['loose_units'] . '&nbsp;u.') : '—' ?></td>
+              <td class="rkp-col-bal"><?= $balanced ? '<span class="rkp-bal-ok" aria-label="Équilibré">✓</span>' : '<span class="rkp-bal-warn" aria-label="Reste loose">≠</span>' ?></td>
+            </tr>
+          <?php endforeach ?>
+          </tbody>
+        </table>
+      </div>
+      <?php
   }
   ?>
 
@@ -6677,6 +6827,102 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
   <?php endif ?>
   <!-- /HISTORIQUE -->
 
+  <!-- ══════════════════════════════════════════════════════════════════════
+       RECONDITIONNEMENT VIEW
+       ══════════════════════════════════════════════════════════════════════ -->
+  <?php if ($view === 'repack'): ?>
+
+  <!-- ── Advisory banner — depletion gated until 2026-06-15 ─────────────── -->
+  <?php if (!$rkpFlagLive): ?>
+  <div class="rkp-advisory-banner" role="status" aria-live="polite">
+    <span class="rkp-advisory-banner__icon" aria-hidden="true">⚠</span>
+    <span class="rkp-advisory-banner__text">
+      <strong>Pré-lancement — Mode consultatif</strong><br>
+      Le reconditionnement n'affecte pas encore le stock physique.
+      Activation prévue au comptage des cages, <strong>le 15.06</strong>.
+    </span>
+  </div>
+  <?php endif ?>
+
+  <!-- ── Day selector ──────────────────────────────────────────────────── -->
+  <div class="rkp-day-bar">
+    <form method="GET" action="" class="rkp-day-form">
+      <input type="hidden" name="view" value="repack">
+      <label for="rkp-date-input" class="rkp-day-label">Journée :</label>
+      <input id="rkp-date-input" type="date" name="rkp_date"
+             value="<?= htmlspecialchars($rkpDate) ?>"
+             class="rkp-date-input op-form__input">
+      <button type="submit" class="rkp-day-btn ef-chip ef-chip--next">Afficher</button>
+    </form>
+    <span class="rkp-day-count">
+      <?= count($rkpByOrder ?? []) ?> commande<?= count($rkpByOrder ?? []) !== 1 ? 's' : '' ?>
+      · <?= count($rkpProposals) ?> ligne<?= count($rkpProposals) !== 1 ? 's' : '' ?>
+    </span>
+  </div>
+
+  <!-- ── Proposals ─────────────────────────────────────────────────────── -->
+  <?php if (!empty($rkpByOrder)): ?>
+  <div class="rkp-proposals-wrap" id="rkp-proposals" aria-label="Propositions de reconditionnement">
+    <?php foreach ($rkpByOrder as $orderId => $orderRows):
+        $meta = $rkpOrderMeta[$orderId] ?? ['id' => $orderId, 'fulfilment_mode' => 'delivery', 'order_name' => "#$orderId"];
+        exp_render_repack_order_block($meta, $orderRows, $csrf);
+    endforeach ?>
+  </div>
+  <?php else: ?>
+  <div class="rkp-empty-state">
+    <span class="rkp-empty-state__icon" aria-hidden="true">📦</span>
+    <p>Aucune commande eshop à reconditionner pour le <strong><?= htmlspecialchars($rkpDate) ?></strong>.</p>
+  </div>
+  <?php endif ?>
+
+  <!-- ── Already-logged events for the day ────────────────────────────── -->
+  <?php if (!empty($rkpLoggedEvents)): ?>
+  <section class="rkp-logged-section" aria-label="Événements déjà enregistrés">
+    <h2 class="rkp-section-title">Événements journaliers enregistrés</h2>
+    <table class="rkp-logged-table" role="table">
+      <thead>
+        <tr>
+          <th scope="col">Source</th>
+          <th scope="col">Boîte ouverte</th>
+          <th scope="col">Qté</th>
+          <th scope="col">Résultat</th>
+          <th scope="col">Type</th>
+          <th scope="col">Loose</th>
+          <th scope="col">Par</th>
+          <th scope="col">Statut</th>
+        </tr>
+      </thead>
+      <tbody>
+      <?php foreach ($rkpLoggedEvents as $ev): ?>
+        <?php
+          $evTombstoned = (bool) (int) $ev['is_tombstoned'];
+          $evToKind     = (string) $ev['to_kind'];
+          $evKindLabel  = match($evToKind) {
+              'bundle' => 'Bundle',
+              'pd8'    => 'PD8',
+              'loose'  => 'Loose',
+              default  => htmlspecialchars($evToKind),
+          };
+        ?>
+        <tr class="rkp-logged-row<?= $evTombstoned ? ' rkp-logged-row--tombstoned' : '' ?>">
+          <td><?= $ev['source_order_id_fk'] !== null ? '#' . (int) $ev['source_order_id_fk'] : '—' ?></td>
+          <td><span class="rkp-sku-code"><?= htmlspecialchars($ev['from_sku_code']) ?></span></td>
+          <td><?= (int) $ev['from_qty'] ?></td>
+          <td><span class="rkp-sku-code"><?= htmlspecialchars($ev['to_sku_code']) ?></span></td>
+          <td><span class="rkp-kind-badge rkp-kind-badge--<?= htmlspecialchars($evToKind) ?>"><?= $evKindLabel ?></span></td>
+          <td><?= (int) $ev['loose_units'] > 0 ? ('+' . (int) $ev['loose_units']) : '—' ?></td>
+          <td><?= htmlspecialchars((string) ($ev['submitted_by_name'] ?? '—')) ?></td>
+          <td><?= $evTombstoned ? '<span class="rkp-tombstone-badge">Annulé</span>' : '<span class="rkp-active-badge">Actif</span>' ?></td>
+        </tr>
+      <?php endforeach ?>
+      </tbody>
+    </table>
+  </section>
+  <?php endif ?>
+
+  <?php endif ?>
+  <!-- /RECONDITIONNEMENT -->
+
 </main>
 
 <?php if ($view === 'commandes'): ?>
@@ -6712,6 +6958,15 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
 
 <?php if ($view === 'historique'): ?>
 <script src="/js/expeditions-historique.js?v=<?= @filemtime(__DIR__ . '/../js/expeditions-historique.js') ?: time() ?>"></script>
+<?php endif ?>
+
+<?php if ($view === 'repack'): ?>
+<script>
+  window.RKP_CSRF      = <?= json_encode($csrf, JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+  window.RKP_DATE      = <?= json_encode($rkpDate, JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+  window.RKP_FLAG_LIVE = <?= json_encode($rkpFlagLive) ?>;
+</script>
+<script src="/js/repack.js?v=<?= @filemtime(__DIR__ . '/../js/repack.js') ?: time() ?>"></script>
 <?php endif ?>
 
 </body>

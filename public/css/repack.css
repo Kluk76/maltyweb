@@ -1,0 +1,297 @@
+/* repack.css — Reconditionnement (eshop repacking) advisory panel.
+ * Scoped under body.expeditions to avoid leaking across pages.
+ * Uses only canonical design-system tokens (no raw hex).
+ * Mirrors eshop-fulfilment.css styling for chip/button consistency.
+ */
+
+/* ── Advisory pre-launch banner ─────────────────────────────────────────── */
+body.expeditions .rkp-advisory-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.9rem 1.1rem;
+  margin: 1rem 0 1.5rem;
+  background: color-mix(in srgb, var(--oak) 12%, var(--bg-elev));
+  border: 1.5px solid color-mix(in srgb, var(--oak) 40%, transparent);
+  border-radius: 0.5rem;
+  color: var(--ink);
+}
+
+body.expeditions .rkp-advisory-banner__icon {
+  font-size: 1.15rem;
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+}
+
+body.expeditions .rkp-advisory-banner__text {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+/* ── Day selector bar ────────────────────────────────────────────────────── */
+body.expeditions .rkp-day-bar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+  flex-wrap: wrap;
+}
+
+body.expeditions .rkp-day-form {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+body.expeditions .rkp-day-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+body.expeditions .rkp-date-input {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.35rem;
+  border: 1.5px solid var(--ink-faint);
+  background: var(--bg-elev);
+  color: var(--ink);
+  min-height: 32px;
+}
+
+body.expeditions .rkp-day-btn {
+  /* inherits from ef-chip ef-chip--next */
+  font-size: 0.72rem;
+}
+
+body.expeditions .rkp-day-count {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.68rem;
+  color: var(--ink-mute);
+}
+
+/* ── Order block ─────────────────────────────────────────────────────────── */
+body.expeditions .rkp-proposals-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  margin-bottom: 2rem;
+}
+
+body.expeditions .rkp-order-block {
+  background: var(--bg-elev);
+  border: 1.5px solid var(--ink-faint);
+  border-radius: 0.5rem;
+  padding: 0.85rem 1rem;
+  box-shadow: 0 2px 6px rgba(30,18,5,0.07);
+}
+
+body.expeditions .rkp-order-header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+}
+
+body.expeditions .rkp-order-name {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: 0.02em;
+}
+
+/* ── Mode badges (reuse eshop-fulfilment pattern) ───────────────────────── */
+body.expeditions .exp-eshop-mode-badge {
+  font-size: 1rem;
+  line-height: 1;
+}
+
+/* ── Confirm button state ────────────────────────────────────────────────── */
+body.expeditions .rkp-confirm-btn {
+  margin-left: auto;
+}
+
+body.expeditions .rkp-confirm-btn--loading {
+  opacity: 0.5;
+  pointer-events: none;
+  cursor: wait;
+}
+
+body.expeditions .rkp-confirm-btn--done {
+  background: color-mix(in srgb, var(--hop) 14%, var(--bg-elev));
+  color: var(--hop);
+  border-color: color-mix(in srgb, var(--hop) 30%, transparent);
+  cursor: default;
+  pointer-events: none;
+}
+
+/* ── Proposal table ──────────────────────────────────────────────────────── */
+body.expeditions .rkp-proposal-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  font-family: 'DM Sans', sans-serif;
+}
+
+body.expeditions .rkp-proposal-table th {
+  text-align: left;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  letter-spacing: 0.05em;
+  color: var(--ink-mute);
+  padding: 0.25rem 0.5rem;
+  border-bottom: 1px solid var(--ink-faint);
+  white-space: nowrap;
+}
+
+body.expeditions .rkp-proposal-table td {
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--ink-faint) 50%, transparent);
+  vertical-align: middle;
+  color: var(--ink);
+}
+
+body.expeditions .rkp-proposal-row--unbalanced td {
+  background: color-mix(in srgb, var(--oak) 6%, transparent);
+}
+
+body.expeditions .rkp-col-bal {
+  text-align: center;
+  width: 3rem;
+}
+
+body.expeditions .rkp-sku-code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--hop);
+}
+
+body.expeditions .rkp-qty-to {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  color: var(--ink-soft);
+  margin-left: 0.3em;
+}
+
+/* ── Balance indicators ──────────────────────────────────────────────────── */
+body.expeditions .rkp-bal-ok {
+  color: var(--hop);
+  font-weight: 700;
+}
+
+body.expeditions .rkp-bal-warn {
+  color: var(--oak);
+  font-weight: 700;
+}
+
+/* ── Kind badge ──────────────────────────────────────────────────────────── */
+body.expeditions .rkp-kind-badge {
+  display: inline-block;
+  padding: 0.1rem 0.4rem;
+  border-radius: 0.5rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  letter-spacing: 0.03em;
+  font-weight: 600;
+}
+
+body.expeditions .rkp-kind-badge--bundle {
+  background: color-mix(in srgb, var(--hop) 14%, var(--bg-elev));
+  color: var(--hop);
+}
+
+body.expeditions .rkp-kind-badge--pd8 {
+  background: color-mix(in srgb, var(--bbt) 14%, var(--bg-elev));
+  color: var(--bbt);
+}
+
+body.expeditions .rkp-kind-badge--loose {
+  background: color-mix(in srgb, var(--oak) 14%, var(--bg-elev));
+  color: var(--oak);
+}
+
+body.expeditions .rkp-kind-badge--adjustment {
+  background: color-mix(in srgb, var(--ember) 14%, var(--bg-elev));
+  color: var(--ember);
+}
+
+/* ── Empty state ─────────────────────────────────────────────────────────── */
+body.expeditions .rkp-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 2.5rem 1rem;
+  gap: 0.5rem;
+  color: var(--ink-mute);
+  font-family: 'DM Sans', sans-serif;
+}
+
+body.expeditions .rkp-empty-state__icon {
+  font-size: 2rem;
+  opacity: 0.5;
+}
+
+/* ── Logged events section ───────────────────────────────────────────────── */
+body.expeditions .rkp-logged-section {
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--ink-faint);
+}
+
+body.expeditions .rkp-section-title {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  margin-bottom: 0.75rem;
+}
+
+body.expeditions .rkp-logged-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  font-family: 'DM Sans', sans-serif;
+}
+
+body.expeditions .rkp-logged-table th {
+  text-align: left;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  letter-spacing: 0.05em;
+  color: var(--ink-mute);
+  padding: 0.25rem 0.5rem;
+  border-bottom: 1px solid var(--ink-faint);
+}
+
+body.expeditions .rkp-logged-table td {
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--ink-faint) 40%, transparent);
+  color: var(--ink);
+  vertical-align: middle;
+}
+
+body.expeditions .rkp-logged-row--tombstoned td {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
+body.expeditions .rkp-tombstone-badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  color: var(--ember);
+}
+
+body.expeditions .rkp-active-badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  color: var(--hop);
+}

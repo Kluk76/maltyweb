@@ -10,8 +10,9 @@ require_once __DIR__ . '/seasonal-burn.php';
  *
  * Per-SKU physique formula:
  *   anchor      = latest count per (sku_id_fk, location_id_fk) across all
- *                 locations — MAX(id) per pair with is_active=1. Anchor qty
- *                 per SKU = SUM of those rows across locations.
+ *                 locations — latest by counted_at DESC, id DESC (same-date
+ *                 tiebreak) among is_active=1 rows. Anchor qty per SKU = SUM
+ *                 of those rows across locations.
  *   anchor_date = MAX(counted_at) across all anchor rows (the actual count date,
  *                 not the last day of a calendar month).
  *   production  = Σ FLOOR(bd_packaging_v2.prod_total_units / ref_skus.units_per_pack)
@@ -177,8 +178,9 @@ function fg_prod_since_anchor(PDO $pdo, string $globalAnchor): array
 /**
  * Compute live FG stock for all SKUs.
  *
- * Anchor model: latest count per (sku_id_fk, location_id_fk) — the row with
- * MAX(id) per pair among is_active=1. anchor_qty(sku) = SUM across locations.
+ * Anchor model: latest count per (sku_id_fk, location_id_fk) — latest by
+ * counted_at DESC, id DESC (same-date tiebreak) among is_active=1 rows.
+ * anchor_qty(sku) = SUM across locations.
  * anchor_date = MAX(counted_at) across all anchor rows.
  *
  * @return array{
@@ -220,8 +222,9 @@ function fg_prod_since_anchor(PDO $pdo, string $globalAnchor): array
 function fg_stock_compute(PDO $pdo): array
 {
     // ── Step 1: anchor rows = latest count per (sku_id_fk, location_id_fk) ──
-    // Uses MAX(id) per pair (is_active=1) — replaces the old month_closed anchor
-    // which silently overwrote multi-location rows for the same SKU.
+    // Latest-by-counted_at (id as same-date tiebreak), is_active=1.
+    // ROW_NUMBER() matches the pattern already used in fg_prod_since_anchor()
+    // and fg_site_sku_anchor_map() for internal consistency.
     $anchorStmt = $pdo->query(
         'SELECT s.sku_id_fk,
                 r.sku_code,
@@ -236,10 +239,13 @@ function fg_stock_compute(PDO $pdo): array
            JOIN ref_skus r ON r.id = s.sku_id_fk
            LEFT JOIN ref_packaging_formats pf ON pf.id = r.format_id
           WHERE s.id IN (
-              SELECT MAX(t2.id)
-                FROM inv_fg_stocktake t2
-               WHERE t2.is_active = 1
-               GROUP BY t2.sku_id_fk, t2.location_id_fk
+              SELECT id FROM (
+                  SELECT id,
+                         ROW_NUMBER() OVER (PARTITION BY sku_id_fk, location_id_fk
+                                            ORDER BY counted_at DESC, id DESC) AS rn
+                    FROM inv_fg_stocktake
+                   WHERE is_active = 1
+              ) z WHERE z.rn = 1
           )'
     );
     $anchorRows = $anchorStmt->fetchAll(PDO::FETCH_ASSOC);
@@ -270,14 +276,15 @@ function fg_stock_compute(PDO $pdo): array
                 'recipe_id'      => ($ar['recipe_id'] !== null) ? (int) $ar['recipe_id'] : null,
                 'anchor_qty'     => 0,
                 // flows (filled below)
-                'prod_qty'       => 0,
-                'prod_events'    => 0,
-                'expedie_qty'    => 0,
-                'expedie_orders' => 0,
-                'eshop_qty'      => 0,
-                'eshop_orders'   => 0,
-                'taproom_qty'    => 0,
-                'taproom_rows'   => 0,
+                'prod_qty'          => 0,
+                'prod_events'       => 0,
+                'expedie_qty'       => 0,
+                'expedie_orders'    => 0,
+                'eshop_qty'         => 0,
+                'eshop_orders'      => 0,
+                'taproom_qty'       => 0,
+                'taproom_rows'      => 0,
+                'repack_open_qty'   => 0,
             ];
         }
         $byId[$sid]['anchor_qty'] += (int) $ar['anchor_qty'];
@@ -360,20 +367,21 @@ function fg_stock_compute(PDO $pdo): array
             $meta = $skuMeta->fetch(PDO::FETCH_ASSOC);
             if ($meta !== false) {
                 $byId[$sid] = [
-                    'sku_id'         => $sid,
-                    'sku_code'       => $meta['sku_code'],
-                    'format'         => $meta['format'],
-                    'display_family' => $meta['display_family'],
-                    'hl_per_unit'    => (float) $meta['hl_per_unit'],
-                    'anchor_qty'     => 0,
-                    'prod_qty'       => $pdata['prod_qty'],    // int
-                    'prod_events'    => $pdata['prod_events'],
-                    'expedie_qty'    => 0,
-                    'expedie_orders' => 0,
-                    'eshop_qty'      => 0,
-                    'eshop_orders'   => 0,
-                    'taproom_qty'    => 0,
-                    'taproom_rows'   => 0,
+                    'sku_id'           => $sid,
+                    'sku_code'         => $meta['sku_code'],
+                    'format'           => $meta['format'],
+                    'display_family'   => $meta['display_family'],
+                    'hl_per_unit'      => (float) $meta['hl_per_unit'],
+                    'anchor_qty'       => 0,
+                    'prod_qty'         => $pdata['prod_qty'],    // int
+                    'prod_events'      => $pdata['prod_events'],
+                    'expedie_qty'      => 0,
+                    'expedie_orders'   => 0,
+                    'eshop_qty'        => 0,
+                    'eshop_orders'     => 0,
+                    'taproom_qty'      => 0,
+                    'taproom_rows'     => 0,
+                    'repack_open_qty'  => 0,
                 ];
             }
         }
@@ -522,6 +530,54 @@ function fg_stock_compute(PDO $pdo): array
         if (isset($byId[$sid])) {
             $byId[$sid]['eshop_qty']    += (int) round((float) $es['qty']);
             $byId[$sid]['eshop_orders'] += 1;
+        }
+    }
+
+    // ── Step 5.5: repack box-opens (inv_repack_events) ──────────────────────
+    // FEATURE-GATED: only active when repack_depletion_live() === true.
+    // Until the 2026-06-15 cage count the flag stays OFF so physique is
+    // byte-identical to the pre-repack-leg state. Set
+    //   system_settings (section='features', key_name='repack_depletion_live', value_num=1)
+    // to activate without a redeploy.
+    //
+    // A repack converts −from_qty BASE BOXES into bundles/loose.
+    // Net contribution: −from_qty on from_sku_id (base box only).
+    // The +to_sku (bundle) side has stocktake_scope='none' and is already
+    // suppressed everywhere by the rs.stocktake_scope <> 'none' JOINs.
+    // Do NOT add a positive term for to_sku here.
+    //
+    // Same-day tiebreak predicate (BYTE-IDENTICAL to snapshot repack leg):
+    //   pass = moved_on > site_anchor_date
+    //       || (moved_on === site_anchor_date && created_at > anchor_ts)
+    // Fallback (no anchor for this (site, sku)): strict moved_on > $anchorDate.
+    //
+    // $siteSkuAnchorMapCompute already built in Step 4 — reused here.
+    if (repack_depletion_live()) {
+        $repackStmt = $pdo->prepare(
+            'SELECT from_sku_id_fk, site_id_fk, from_qty, moved_on, created_at
+               FROM inv_repack_events
+              WHERE is_tombstoned = 0
+                AND moved_on >= ?'
+        );
+        $repackStmt->execute([$anchorDate]);
+        foreach ($repackStmt->fetchAll(PDO::FETCH_ASSOC) as $rk) {
+            $sid     = (int) $rk['from_sku_id_fk'];
+            $siteId  = (int) $rk['site_id_fk'];
+            $movedOn = (string) $rk['moved_on'];
+            $rkTs    = (string) $rk['created_at'];
+
+            // Per-(site, sku) anchor gate — BYTE-IDENTICAL predicate to snapshot repack leg
+            $siteAnchor = $siteSkuAnchorMapCompute[$siteId][$sid] ?? null;
+            if ($siteAnchor !== null) {
+                $pass = ($movedOn > $siteAnchor['counted_at'])
+                    || ($movedOn === $siteAnchor['counted_at'] && $rkTs > $siteAnchor['anchor_ts']);
+                if (!$pass) continue;
+            } else {
+                if ($movedOn <= $anchorDate) continue;
+            }
+
+            if (!isset($byId[$sid])) continue;
+            $byId[$sid]['repack_open_qty'] += (int) $rk['from_qty'];
         }
     }
 
@@ -698,12 +754,13 @@ function fg_stock_compute(PDO $pdo): array
     // ── Step 9: assemble output rows ─────────────────────────────────────────
     $rows = [];
     foreach ($byId as $sid => $r) {
-        $anchor   = $r['anchor_qty'];
-        $prod     = $r['prod_qty'];
-        $expedie  = $r['expedie_qty'];
-        $eshop    = $r['eshop_qty'];
-        $taproom  = $r['taproom_qty'];
-        $physique = $anchor + $prod - $expedie - $eshop - $taproom;
+        $anchor       = $r['anchor_qty'];
+        $prod         = $r['prod_qty'];
+        $expedie      = $r['expedie_qty'];
+        $eshop        = $r['eshop_qty'];
+        $taproom      = $r['taproom_qty'];
+        $repackOpen   = $r['repack_open_qty'];
+        $physique     = $anchor + $prod - $expedie - $eshop - $taproom - $repackOpen;
 
         $openWeek  = $openBySkuId[$sid]['week_qty']  ?? 0;
         $open2wk   = $openBySkuId[$sid]['twowk_qty'] ?? 0;
@@ -737,13 +794,14 @@ function fg_stock_compute(PDO $pdo): array
             $semaines = $simResult['weeks'];
         }
 
-        // Dormant: physique=0 AND no movement (prod=0, expedie=0, eshop=0, taproom=0)
+        // Dormant: physique=0 AND no movement (prod=0, expedie=0, eshop=0, taproom=0, repack=0)
         // Use == 0 (loose) to handle float physique (e.g. 0.0 === 0 is false in PHP).
         $isDormant = ($physique == 0)
             && ($prod == 0)
             && ($expedie === 0)
             && ($eshop === 0)
-            && ($taproom === 0);
+            && ($taproom === 0)
+            && ($repackOpen === 0);
 
         // Couverture drill payload (per-SKU drilldown for the UI)
         $nowIsoWeek   = (int) (new DateTimeImmutable($today))->format('W');
@@ -755,9 +813,10 @@ function fg_stock_compute(PDO $pdo): array
             'prod_qty'      => $prod,
             'expedie_qty'   => $expedie,
             'eshop_qty'     => $eshop,
-            'taproom_qty'   => $taproom,
-            'open_total'    => $openTotal,
-            'open_book'     => $openBookBySku[$sid] ?? [],
+            'taproom_qty'    => $taproom,
+            'repack_open_qty'=> $repackOpen,
+            'open_total'     => $openTotal,
+            'open_book'      => $openBookBySku[$sid] ?? [],
             'live_futur'    => $liveFutur,
             'rythme_base'   => $rythmeBase,
             'nonzero_weeks' => $lvl['nonzero_weeks'] ?? null,
@@ -787,8 +846,9 @@ function fg_stock_compute(PDO $pdo): array
             'expedie_orders'  => $r['expedie_orders'],
             'eshop_qty'       => $eshop,
             'eshop_orders'    => $r['eshop_orders'],
-            'taproom_qty'     => $taproom,
-            'taproom_rows'    => $r['taproom_rows'],
+            'taproom_qty'      => $taproom,
+            'taproom_rows'     => $r['taproom_rows'],
+            'repack_open_qty'  => $repackOpen,
             // Computed
             'physique'          => $physique,
             'open_week_qty'     => $openWeek,
@@ -957,7 +1017,10 @@ function fg_stock_location_snapshot(PDO $pdo): array
     );
     $sites = $sitesStmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // Load anchor rows (same subquery as fg_stock_compute)
+    // Load anchor rows (same subquery logic as fg_stock_compute Step 1 —
+    // latest by counted_at DESC, id DESC per (sku_id_fk, location_id_fk),
+    // is_active=1; MUST stay byte-symmetric with the compute function or
+    // the Σcards==Σphysique invariant breaks).
     $rowsStmt = $pdo->query(
         'SELECT t.sku_id_fk,
                 t.location_id_fk,
@@ -971,10 +1034,13 @@ function fg_stock_location_snapshot(PDO $pdo): array
            JOIN ref_skus r ON r.id = t.sku_id_fk
            LEFT JOIN ref_packaging_formats pf ON pf.id = r.format_id
           WHERE t.id IN (
-              SELECT MAX(t2.id)
-                FROM inv_fg_stocktake t2
-               WHERE t2.is_active = 1
-               GROUP BY t2.sku_id_fk, t2.location_id_fk
+              SELECT id FROM (
+                  SELECT id,
+                         ROW_NUMBER() OVER (PARTITION BY sku_id_fk, location_id_fk
+                                            ORDER BY counted_at DESC, id DESC) AS rn
+                    FROM inv_fg_stocktake
+                   WHERE is_active = 1
+              ) z WHERE z.rn = 1
           )
           ORDER BY t.location_id_fk ASC, r.sku_code ASC'
     );
@@ -1216,6 +1282,49 @@ function fg_stock_location_snapshot(PDO $pdo): array
         $transfersIn[$toSite][$sid]  = ($transfersIn[$toSite][$sid]  ?? 0) + $qty;
     }
 
+    // ── Repack box-opens by site/SKU ────────────────────────────────────────
+    // FEATURE-GATED: only active when repack_depletion_live() === true (mirrors
+    // compute Step 5.5 gate — both must be toggled in lockstep to preserve the
+    // Σcards==Σphysique invariant).
+    // $repackOpens[site_id][from_sku_id] = int (box-opens since site anchor)
+    // Net: −from_qty on the base-box SKU at its site. The +to_sku (bundle)
+    // has stocktake_scope='none' and is already excluded from both functions
+    // by the rs.stocktake_scope <> 'none' JOINs — do NOT emit a +to row here.
+    //
+    // Anchor gate predicate (BYTE-IDENTICAL to Step 5.5 in fg_stock_compute):
+    //   pass = moved_on > site_anchor_date
+    //       || (moved_on === site_anchor_date && created_at > anchor_ts)
+    // Fallback (no anchor for this (site, sku)): strict moved_on > $anchorDate.
+    $repackOpens = []; // site_id => sku_id => int
+    if (repack_depletion_live()) {
+        $rkMvStmt = $pdo->prepare(
+            'SELECT from_sku_id_fk, site_id_fk, from_qty, moved_on, created_at
+               FROM inv_repack_events
+              WHERE is_tombstoned = 0
+                AND moved_on >= ?'
+        );
+        $rkMvStmt->execute([$anchorDate]);
+        foreach ($rkMvStmt->fetchAll(PDO::FETCH_ASSOC) as $rk) {
+            $sid     = (int) $rk['from_sku_id_fk'];
+            $siteId  = (int) $rk['site_id_fk'];
+            $movedOn = (string) $rk['moved_on'];
+            $rkTs    = (string) $rk['created_at'];
+
+            // Per-(site, sku) anchor gate — BYTE-IDENTICAL predicate to compute Step 5.5
+            $siteAnchor = $siteSkuAnchorMap[$siteId][$sid] ?? null;
+            if ($siteAnchor !== null) {
+                $pass = ($movedOn > $siteAnchor['counted_at'])
+                    || ($movedOn === $siteAnchor['counted_at'] && $rkTs > $siteAnchor['anchor_ts']);
+                if (!$pass) continue;
+            } else {
+                if ($movedOn <= $anchorDate) continue;
+            }
+
+            if (!isset($repackOpens[$siteId])) $repackOpens[$siteId] = [];
+            $repackOpens[$siteId][$sid] = ($repackOpens[$siteId][$sid] ?? 0) + (int) $rk['from_qty'];
+        }
+    }
+
     // Group anchor rows by location_id_fk, with qty keyed by sku_id for easy merging
     // Structure: location_id → sku_id → anchor row data
     $byLocation = []; // location_id → sku_id → row array
@@ -1288,7 +1397,8 @@ function fg_stock_location_snapshot(PDO $pdo): array
         $skuIdsWithFlows = array_unique(array_merge(
             array_keys($salesBySiteSku[$lid] ?? []),
             array_keys($transfersIn[$lid]    ?? []),
-            array_keys($transfersOut[$lid]   ?? [])
+            array_keys($transfersOut[$lid]   ?? []),
+            array_keys($repackOpens[$lid]    ?? [])
         ));
         foreach ($skuIdsWithFlows as $sid) {
             if (!isset($mergedBySkuId[$sid])) {
@@ -1327,13 +1437,14 @@ function fg_stock_location_snapshot(PDO $pdo): array
         foreach ($mergedBySkuId as $row) {
             $sid = (int) $row['sku_id'];
 
-            // Sales and transfer terms for this site/SKU
+            // Sales, transfer, and repack terms for this site/SKU
             $salesQty    = (int) ($salesBySiteSku[$lid][$sid] ?? 0);
             $transferIn  = (int) ($transfersIn[$lid][$sid]    ?? 0);
             $transferOut = (int) ($transfersOut[$lid][$sid]   ?? 0);
+            $repackOpen  = (int) ($repackOpens[$lid][$sid]    ?? 0);
 
-            // Final qty = anchor_at_site + production_at_site − sales_at_site + transfers_net
-            $qty = (int) $row['qty'] - $salesQty + $transferIn - $transferOut;
+            // Final qty = anchor_at_site + production_at_site − sales_at_site + transfers_net − repack_opens
+            $qty = (int) $row['qty'] - $salesQty + $transferIn - $transferOut - $repackOpen;
 
             // Recompute HL after production/sales/transfer adjustment; HL stays decimal
             $hl  = round($qty * $row['hl_per_unit'], 3);
@@ -1352,6 +1463,7 @@ function fg_stock_location_snapshot(PDO $pdo): array
                 'sales_qty'      => $salesQty,         // units depleted via sales
                 'transfer_in'    => $transferIn,       // units arriving via transfers
                 'transfer_out'   => $transferOut,      // units leaving via transfers
+                'repack_open'    => $repackOpen,       // base-box units opened for repack
             ];
         }
 
