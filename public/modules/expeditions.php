@@ -701,8 +701,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'stocktake') {
     }
 
     // ── Coerce + validate inputs ─────────────────────────────────────────
-    $stLocId    = isset($_POST['location_id'])  ? (int) $_POST['location_id']   : 0;
-    $stCountedAt = isset($_POST['counted_at']) ? trim((string) $_POST['counted_at']) : '';
+    $stLocId     = isset($_POST['location_id'])  ? (int) $_POST['location_id']   : 0;
+    $stCountedAt = isset($_POST['counted_at'])  ? trim((string) $_POST['counted_at']) : '';
+    $stCountType = isset($_POST['month_end_census']) ? 'month_end' : 'operational';
 
     // ── Back-date coercion: operators are always locked to today ─────────
     // A forged POST from an operator that includes a past date must be
@@ -824,13 +825,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'stocktake') {
         $insSt = $pdo->prepare(
             'INSERT INTO inv_fg_stocktake
                 (sku, sku_id_fk, source, counted_at, month_closed, qty, submitted_by,
-                 source_form_response_id, location_id_fk, is_active)
-             VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, 1)
+                 source_form_response_id, location_id_fk, is_active, count_type)
+             VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, 1, ?)
              ON DUPLICATE KEY UPDATE
-                qty        = VALUES(qty),
+                qty          = VALUES(qty),
                 submitted_by = VALUES(submitted_by),
-                counted_at = VALUES(counted_at),
-                updated_at = CURRENT_TIMESTAMP'
+                counted_at   = VALUES(counted_at),
+                count_type   = VALUES(count_type),
+                updated_at   = CURRENT_TIMESTAMP'
         );
 
         foreach ($stValidLines as $line) {
@@ -858,6 +860,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'stocktake') {
                 $qty,
                 $me['username'],
                 $stLocId,
+                $stCountType,
             ]);
 
             // Fetch PK after upsert
@@ -877,6 +880,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'stocktake') {
                         'qty'             => $qty,
                         'source'          => 'maltyweb-form',
                         'submitted_by'    => $me['username'],
+                        'count_type'      => $stCountType,
                     ],
                     'normal',
                     'Saisie inventaire FG multi-site');
@@ -5739,6 +5743,17 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
         </div>
       </div>
     <?php endif ?>
+    </div>
+
+    <!-- ── Clôture mensuelle ─────────────────────────────────────────────── -->
+    <div class="exp-st-month-end">
+      <label class="exp-st-month-end__label">
+        <input type="checkbox" name="month_end_census" value="1" class="exp-st-month-end__checkbox">
+        <span class="exp-st-month-end__text">
+          Inventaire de clôture mensuelle (COGS)
+          <span class="exp-st-month-end__hint">— cocher uniquement pour le comptage de fin de mois · laisser décoché pour les relevés hebdomadaires habituels</span>
+        </span>
+      </label>
     </div>
 
     <!-- ── Submit bar ─────────────────────────────────────────────────────── -->

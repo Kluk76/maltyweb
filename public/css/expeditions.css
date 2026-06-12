@@ -4383,6 +4383,53 @@ body.expeditions .exp-st-prior-date {
   color: var(--ink-faint);
 }
 
+/* ── Clôture mensuelle checkbox ───────────────────────────────────────────── */
+body.expeditions .exp-st-month-end {
+  margin: 16px 0 4px;
+  padding: 12px 14px;
+  background: var(--bg-elev);
+  border: 1px solid var(--ink-faint);
+  border-radius: 8px;
+}
+
+body.expeditions .exp-st-month-end__label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+body.expeditions .exp-st-month-end__checkbox {
+  flex-shrink: 0;
+  margin-top: 2px;
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+  accent-color: var(--hop);
+}
+
+body.expeditions .exp-st-month-end__text {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.4;
+}
+
+body.expeditions .exp-st-month-end__hint {
+  display: block;
+  font-weight: 400;
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+  margin-top: 2px;
+}
+
+/* Highlight the block when checked */
+body.expeditions .exp-st-month-end:has(.exp-st-month-end__checkbox:checked) {
+  border-color: var(--hop);
+  background: color-mix(in srgb, var(--hop) 8%, var(--bg-elev));
+}
+
 /* ── Submit bar ───────────────────────────────────────────────────────────── */
 body.expeditions .exp-st-submit-bar {
   position: sticky;
