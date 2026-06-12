@@ -8981,6 +8981,11 @@ function kpi_handler_sales(
             'Churn nécessite historique client multi-périodes >12 mois; inv_sales_orders disponible 2025-12 à 2026-04 seulement'),
         'forecast_accuracy'       => kpi_sales_stub_gap('forecast_accuracy', $label,
             'Aucune table de prévision ventes dans la DB'),
+        'hl_sold_monthly_series'  => kpi_sales_hl_monthly_series($label, $pdo),
+        'hl_by_sku_prod'          => kpi_sales_hl_by_sku_prod($label, $pdo),
+        'units_by_sku_month'      => kpi_sales_units_by_sku_month($label, $pdo),
+        'hl_by_trade_channel'     => kpi_sales_hl_by_trade_channel($label, $pdo),
+        'hl_by_recipe'            => kpi_sales_hl_by_recipe($label, $pdo),
         default                   => kpi_stub_handler('sales', $handler, $label),
     };
 }
@@ -9030,6 +9035,45 @@ function kpi_sales_load_bc_periods(PDO $pdo): array
             'discount_chf' => (float) $row['discount_chf'],
             'hl'           => (float) $row['hl'],
             'line_cnt'     => (int)   $row['line_cnt'],
+        ];
+    }
+    return kpi_cache_set($cacheKey, $out);
+}
+
+// ─── Shared loader: inv_sales_ledger production-filtered, per-period ──────────
+// "Production beer": sku_id_fk NOT NULL (JOIN drops CAUF/non-FG), recipe_id NOT NULL
+// (drops PD8/XMASPACK/PAL/PAC/COLLAB* non-beer packs), units_per_pack < 100
+// (drops -X cages). NO is_active filter (history refs retired-but-sold SKUs).
+// Sign convention: outbound = -SUM(hl_resolved) / -SUM(qty_signed).
+// Returns array keyed by period 'YYYY-MM', sorted chronological.
+// Each entry: hl FLOAT, units INT, period STRING.
+
+function kpi_sales_load_ledger_prod(PDO $pdo): array
+{
+    $cacheKey = 'sales_ledger_prod_periods';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $stmt = $pdo->query(
+        "SELECT DATE_FORMAT(l.posting_date,'%Y-%m') AS period,
+                -SUM(l.hl_resolved)  AS hl,
+                -SUM(l.qty_signed)   AS units
+           FROM inv_sales_ledger l
+           JOIN ref_skus rs ON rs.id = l.sku_id_fk
+          WHERE rs.recipe_id IS NOT NULL
+            AND rs.units_per_pack < 100
+          GROUP BY DATE_FORMAT(l.posting_date,'%Y-%m')
+          ORDER BY period"
+    );
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $out = [];
+    foreach ($rows as $row) {
+        $out[$row['period']] = [
+            'period' => $row['period'],
+            'hl'     => (float) $row['hl'],
+            'units'  => (int)   $row['units'],
         ];
     }
     return kpi_cache_set($cacheKey, $out);
@@ -11587,4 +11631,350 @@ function kpi_tanks_hl_in_tank(string $label, PDO $pdo): array
     ]);
 
     return kpi_cache_set($cacheKey, $result);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// LEDGER-BASED SALES TRACKERS (#272–#276)
+// Source: inv_sales_ledger (canonical SoT — years of history, pre-computed HL)
+// Filter: kpi_sales_load_ledger_prod() — production beer only (recipe_id NOT NULL,
+//         units_per_pack < 100, sku_id_fk NOT NULL). NOT inv_sales_bc.
+// data_ready=0 — Opus verifies fiscal numbers before flipping.
+// ═════════════════════════════════════════════════════════════════════════════
+
+// ─── #272: hl_sold_monthly_series — "Ventes HL par mois" ────────────────────
+// Series: production HL per month, trailing 24 months, chronological.
+// value = latest full month HL, delta vs prior month, unit 'HL'.
+
+function kpi_sales_hl_monthly_series(string $label, PDO $pdo): array
+{
+    $periods = kpi_sales_load_ledger_prod($pdo);
+
+    if (empty($periods)) {
+        return kpi_error_result('Aucune donnée inv_sales_ledger (production)', $label);
+    }
+
+    $keys   = array_keys($periods);
+    $latest = end($keys);
+    $prev   = kpi_sales_prior_period($latest);
+
+    $curHl  = $periods[$latest]['hl'];
+    $prevHl = isset($periods[$prev]) ? $periods[$prev]['hl'] : null;
+    $delta  = $prevHl !== null ? round($curHl - $prevHl, 2) : null;
+
+    // Build series: all periods in order (loader already chronological)
+    $series = [];
+    foreach ($periods as $p => $data) {
+        $series[] = ['period' => $p, 'value' => round($data['hl'], 2)];
+    }
+
+    return array_merge(kpi_empty_result($label, 'HL'), [
+        'value'  => round($curHl, 2),
+        'delta'  => $delta,
+        'unit'   => 'HL',
+        'series' => $series,
+        'meta'   => [
+            'period_label'   => $latest,
+            'source'         => 'inv_sales_ledger (production filter)',
+            'filter_note'    => 'recipe_id NOT NULL + units_per_pack < 100',
+        ],
+    ]);
+}
+
+// ─── #273: hl_by_sku_prod — "Ventes HL par SKU (production)" ─────────────────
+// For the latest month: breakdown per production SKU, sorted desc.
+// Top 12 + "+N autres" tail. value = month total.
+
+function kpi_sales_hl_by_sku_prod(string $label, PDO $pdo): array
+{
+    $periods = kpi_sales_load_ledger_prod($pdo);
+
+    if (empty($periods)) {
+        return kpi_error_result('Aucune donnée inv_sales_ledger (production)', $label);
+    }
+
+    $keys   = array_keys($periods);
+    $latest = end($keys);
+
+    // Per-SKU query for the latest month
+    $stmt = $pdo->prepare(
+        "SELECT rs.sku_code                        AS sku,
+                -SUM(l.hl_resolved)                AS hl
+           FROM inv_sales_ledger l
+           JOIN ref_skus rs ON rs.id = l.sku_id_fk
+          WHERE rs.recipe_id IS NOT NULL
+            AND rs.units_per_pack < 100
+            AND DATE_FORMAT(l.posting_date,'%Y-%m') = ?
+          GROUP BY rs.sku_code
+          ORDER BY hl DESC"
+    );
+    $stmt->execute([$latest]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $monthTotal = $periods[$latest]['hl'];
+    $cap = 12;
+    $breakdown = [];
+    $tailHl    = 0.0;
+    $tailCount = 0;
+
+    foreach ($rows as $i => $row) {
+        $hl = (float) $row['hl'];
+        if ($i < $cap) {
+            $breakdown[] = ['key' => $row['sku'], 'label' => $row['sku'], 'value' => round($hl, 2)];
+        } else {
+            $tailHl    += $hl;
+            $tailCount++;
+        }
+    }
+    if ($tailCount > 0) {
+        $breakdown[] = [
+            'key'   => '_autres',
+            'label' => "+{$tailCount} autres",
+            'value' => round($tailHl, 2),
+        ];
+    }
+
+    return array_merge(kpi_empty_result($label, 'HL'), [
+        'value'     => round($monthTotal, 2),
+        'unit'      => 'HL',
+        'series'    => $breakdown, // viz=bar reads series
+        'breakdown' => $breakdown,
+        'meta'      => [
+            'period_label' => $latest,
+            'source'       => 'inv_sales_ledger (production filter)',
+            'sku_count'    => count($rows),
+        ],
+    ]);
+}
+
+// ─── #274: units_by_sku_month — "Ventes unités par SKU (MoM)" ────────────────
+// Per production SKU for the latest month: value=units this month,
+// meta.prior_units = units prior month. Top-12 + autres. unit 'unités'.
+// viz=grouped_bar: current + prior-month ghost per SKU.
+
+function kpi_sales_units_by_sku_month(string $label, PDO $pdo): array
+{
+    $periods = kpi_sales_load_ledger_prod($pdo);
+
+    if (empty($periods)) {
+        return kpi_error_result('Aucune donnée inv_sales_ledger (production)', $label);
+    }
+
+    $keys   = array_keys($periods);
+    $latest = end($keys);
+    $prev   = kpi_sales_prior_period($latest);
+
+    // Query current month
+    $stmtCur = $pdo->prepare(
+        "SELECT rs.sku_code AS sku, -SUM(l.qty_signed) AS units
+           FROM inv_sales_ledger l
+           JOIN ref_skus rs ON rs.id = l.sku_id_fk
+          WHERE rs.recipe_id IS NOT NULL
+            AND rs.units_per_pack < 100
+            AND DATE_FORMAT(l.posting_date,'%Y-%m') = ?
+          GROUP BY rs.sku_code
+          ORDER BY units DESC"
+    );
+    $stmtCur->execute([$latest]);
+    $curRows = $stmtCur->fetchAll(PDO::FETCH_ASSOC);
+    $curMap  = [];
+    foreach ($curRows as $r) $curMap[$r['sku']] = (int) $r['units'];
+
+    // Query prior month
+    $stmtPrv = $pdo->prepare(
+        "SELECT rs.sku_code AS sku, -SUM(l.qty_signed) AS units
+           FROM inv_sales_ledger l
+           JOIN ref_skus rs ON rs.id = l.sku_id_fk
+          WHERE rs.recipe_id IS NOT NULL
+            AND rs.units_per_pack < 100
+            AND DATE_FORMAT(l.posting_date,'%Y-%m') = ?
+          GROUP BY rs.sku_code"
+    );
+    $stmtPrv->execute([$prev]);
+    $prvRows = $stmtPrv->fetchAll(PDO::FETCH_ASSOC);
+    $prvMap  = [];
+    foreach ($prvRows as $r) $prvMap[$r['sku']] = (int) $r['units'];
+
+    $totalUnits = $periods[$latest]['units'];
+    $cap        = 12;
+    $breakdown  = [];
+    $tailUnits  = 0;
+    $tailCount  = 0;
+
+    foreach ($curRows as $i => $row) {
+        $sku      = $row['sku'];
+        $units    = (int) $row['units'];
+        $prior    = $prvMap[$sku] ?? 0;
+        $delta    = $units - $prior;
+        if ($i < $cap) {
+            $breakdown[] = [
+                'key'         => $sku,
+                'label'       => $sku,
+                'value'       => $units,
+                'meta'        => [
+                    'prior_units'  => $prior,
+                    'prior_period' => $prev,
+                    'delta'        => $delta,
+                ],
+            ];
+        } else {
+            $tailUnits += $units;
+            $tailCount++;
+        }
+    }
+    if ($tailCount > 0) {
+        $breakdown[] = [
+            'key'   => '_autres',
+            'label' => "+{$tailCount} autres",
+            'value' => $tailUnits,
+            'meta'  => ['prior_units' => null, 'prior_period' => $prev, 'delta' => null],
+        ];
+    }
+
+    $hasPrior = isset($periods[$prev]);
+
+    return array_merge(kpi_empty_result($label, 'unités'), [
+        'value'     => $totalUnits,
+        'unit'      => 'unités',
+        'breakdown' => $breakdown,
+        'series'    => $breakdown,
+        'meta'      => [
+            'period_label'  => $latest,
+            'prior_period'  => $prev,
+            'has_prior'     => $hasPrior,
+            'source'        => 'inv_sales_ledger (production filter)',
+        ],
+    ]);
+}
+
+// ─── #275: hl_by_trade_channel — "Ventes HL on-trade vs off-trade" ────────────
+// Latest month, 3 buckets: on_trade / off_trade / non_classé (NULL trade_channel).
+// non_classé bucket is MANDATORY — never drop (78% of customers unclassified).
+// viz=stacked_bar. value = month total.
+
+function kpi_sales_hl_by_trade_channel(string $label, PDO $pdo): array
+{
+    $periods = kpi_sales_load_ledger_prod($pdo);
+
+    if (empty($periods)) {
+        return kpi_error_result('Aucune donnée inv_sales_ledger (production)', $label);
+    }
+
+    $keys   = array_keys($periods);
+    $latest = end($keys);
+
+    $stmt = $pdo->prepare(
+        "SELECT COALESCE(rc.trade_channel, '__non_classe__') AS channel,
+                -SUM(l.hl_resolved)                          AS hl
+           FROM inv_sales_ledger l
+           JOIN ref_skus rs ON rs.id = l.sku_id_fk
+           JOIN ref_customers rc ON rc.id = l.customer_id_fk
+          WHERE rs.recipe_id IS NOT NULL
+            AND rs.units_per_pack < 100
+            AND DATE_FORMAT(l.posting_date,'%Y-%m') = ?
+          GROUP BY COALESCE(rc.trade_channel, '__non_classe__')"
+    );
+    $stmt->execute([$latest]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $buckets = [
+        'on_trade'       => 0.0,
+        'off_trade'      => 0.0,
+        '__non_classe__' => 0.0,
+    ];
+    foreach ($rows as $row) {
+        $ch = $row['channel'];
+        $buckets[$ch] = (float) $row['hl'];
+    }
+
+    $monthTotal   = $periods[$latest]['hl'];
+    $nonClasseHl  = $buckets['__non_classe__'];
+
+    $breakdown = [
+        ['key' => 'on_trade',  'label' => 'On-trade',    'value' => round($buckets['on_trade'], 2)],
+        ['key' => 'off_trade', 'label' => 'Off-trade',   'value' => round($buckets['off_trade'], 2)],
+        ['key' => 'non_classe','label' => 'Non classé',  'value' => round($nonClasseHl, 2)],
+    ];
+
+    return array_merge(kpi_empty_result($label, 'HL'), [
+        'value'     => round($monthTotal, 2),
+        'unit'      => 'HL',
+        'breakdown' => $breakdown,
+        'series'    => $breakdown,
+        'meta'      => [
+            'period_label'       => $latest,
+            'non_classe_hl'      => round($nonClasseHl, 2),
+            'non_classe_note'    => 'trade_channel IS NULL — clients non classifiés (~78%); bucket obligatoire',
+            'source'             => 'inv_sales_ledger × ref_customers.trade_channel',
+        ],
+    ]);
+}
+
+// ─── #276: hl_by_recipe — "Ventes HL par recette" ─────────────────────────────
+// Latest month, per recipe (JOIN via rs.recipe_id). Top-12 + autres. value = month total.
+
+function kpi_sales_hl_by_recipe(string $label, PDO $pdo): array
+{
+    $periods = kpi_sales_load_ledger_prod($pdo);
+
+    if (empty($periods)) {
+        return kpi_error_result('Aucune donnée inv_sales_ledger (production)', $label);
+    }
+
+    $keys   = array_keys($periods);
+    $latest = end($keys);
+
+    $stmt = $pdo->prepare(
+        "SELECT COALESCE(rr.recipe_short_name, rr.name) AS recipe_label,
+                rr.id                                    AS recipe_id,
+                -SUM(l.hl_resolved)                      AS hl
+           FROM inv_sales_ledger l
+           JOIN ref_skus rs ON rs.id = l.sku_id_fk
+           JOIN ref_recipes rr ON rr.id = rs.recipe_id
+          WHERE rs.recipe_id IS NOT NULL
+            AND rs.units_per_pack < 100
+            AND DATE_FORMAT(l.posting_date,'%Y-%m') = ?
+          GROUP BY rr.id, COALESCE(rr.recipe_short_name, rr.name)
+          ORDER BY hl DESC"
+    );
+    $stmt->execute([$latest]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $monthTotal = $periods[$latest]['hl'];
+    $cap        = 12;
+    $breakdown  = [];
+    $tailHl     = 0.0;
+    $tailCount  = 0;
+
+    foreach ($rows as $i => $row) {
+        $hl = (float) $row['hl'];
+        if ($i < $cap) {
+            $breakdown[] = [
+                'key'   => 'recipe_' . $row['recipe_id'],
+                'label' => $row['recipe_label'],
+                'value' => round($hl, 2),
+            ];
+        } else {
+            $tailHl    += $hl;
+            $tailCount++;
+        }
+    }
+    if ($tailCount > 0) {
+        $breakdown[] = [
+            'key'   => '_autres',
+            'label' => "+{$tailCount} autres",
+            'value' => round($tailHl, 2),
+        ];
+    }
+
+    return array_merge(kpi_empty_result($label, 'HL'), [
+        'value'     => round($monthTotal, 2),
+        'unit'      => 'HL',
+        'breakdown' => $breakdown,
+        'series'    => $breakdown,
+        'meta'      => [
+            'period_label'  => $latest,
+            'recipe_count'  => count($rows),
+            'source'        => 'inv_sales_ledger × ref_recipes (via rs.recipe_id FK)',
+        ],
+    ]);
 }
