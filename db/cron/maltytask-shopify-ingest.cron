@@ -1,0 +1,38 @@
+# /etc/cron.d/maltytask-shopify-ingest
+#
+# Shopify eshop order ingest — pulls new/changed orders from the Shopify Admin
+# API into inv_sales_orders + inv_sales_order_lines (with shipping_lines →
+# fulfilment_mode classification, row_hash idempotency, reverse-reconcile).
+#
+# REHOMED 2026-06-12 from a local-WSL `*/15` crontab-over-SSH-tunnel (fragile:
+# stalled silently when the operator's machine was off — produced a 2-day-stale
+# board). Now runs on the VPS where MySQL is local (no tunnel), independent of
+# any workstation. The Expéditions board's "Dernier import Shopify" freshness
+# chip is the staleness sentinel.
+#
+# Runtime: Node via nvm (node v22 at /var/www/maltytask/.nvm), tsx from
+# /opt/maltytask-pipeline/node_modules — same idiom as maltytask-document-ingest.
+# DB creds: /var/www/maltytask/config/db.env (DB_HOST=127.0.0.1, DB_PORT=3306 —
+# direct, no tunnel), read because the maltytask user's primary group is www-data.
+# Shopify creds: /opt/maltytask-pipeline/secrets/shopify.env (mode 640,
+# maltytask:www-data — SHOPIFY_STORE + SHOPIFY_ADMIN_TOKEN). Not committed.
+#
+# Idempotent: line-level row_hash UNIQUE + INSERT IGNORE, header upsert on
+# (source, external_order_id) with a real UPDATE branch. Overlapping --since
+# windows are no-ops on unchanged rows. Safe to run frequently.
+#
+# --since "2 days ago": trailing window catches new orders + recent status
+# changes; --until defaults to now. Verified by a clean VPS dry-run 2026-06-12
+# (98 June orders pulled, classified, rolled back).
+#
+# Source of truth: db/cron/maltytask-shopify-ingest.cron in the maltyweb repo.
+# Deployed via bin/deploy.sh --apply (sudo install -m 0644 → /etc/cron.d/).
+# Manual edits to /etc/cron.d/* are overwritten on next deploy — edit here.
+#
+# Note: /etc/cron.d/* requires the user column (m h dom mon dow user command).
+# Times are UTC (VPS timezone Etc/UTC). In cron.d, % must be escaped as \%.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# m    h  dom mon dow  user        command
+*/15   *   *   *   *   maltytask   cd /opt/maltytask-pipeline && HOME=/var/www/maltytask NVM_DIR=/var/www/maltytask/.nvm bash -c '. $NVM_DIR/nvm.sh && node_modules/.bin/tsx scripts/ingest-shopify-orders.ts --since $(date -d "2 days ago" +\%Y-\%m-\%d)' >> /var/log/maltytask/shopify-ingest.log 2>&1
