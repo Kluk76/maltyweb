@@ -407,6 +407,7 @@ function fg_stock_compute(PDO $pdo): array
                 SUM(l.qty)                             AS qty
            FROM ord_order_lines l
            JOIN ord_orders o ON o.id = l.order_id_fk
+           JOIN ref_skus rs ON rs.id = l.sku_id_fk AND rs.stocktake_scope <> ?
            LEFT JOIN ref_customers c ON c.id = o.customer_id_fk
           WHERE o.status = ?
             AND o.requested_date >= DATE_SUB(?, INTERVAL 30 DAY)
@@ -414,7 +415,7 @@ function fg_stock_compute(PDO $pdo): array
           GROUP BY o.id, o.fulfilment_site_id_fk, o.customer_id_fk, o.internal_channel,
                    c.default_delivery_site_id_fk, l.sku_id_fk, o.requested_date'
     );
-    $expStmt->execute(['shipped', $anchorDate]);
+    $expStmt->execute(['none', 'shipped', $anchorDate]);
     // Build per-SKU "counted anywhere" set so the fallback predicate can distinguish:
     //   (a) counted at ship-from site → use site anchor, inclusive >=
     //   (b) counted somewhere but NOT at this site → global anchor, inclusive >=
@@ -494,13 +495,12 @@ function fg_stock_compute(PDO $pdo): array
                 isol.qty
            FROM inv_sales_order_lines isol
            JOIN inv_sales_orders iso ON iso.id = isol.order_id_fk
-           JOIN ref_skus rs ON rs.id = isol.sku_id_fk
+           JOIN ref_skus rs ON rs.id = isol.sku_id_fk AND rs.stocktake_scope <> ?
           WHERE iso.channel = ?
             AND DATE(iso.created_at) >= ?
-            AND isol.sku_id_fk IS NOT NULL
-            AND rs.is_non_stock = 0'
+            AND isol.sku_id_fk IS NOT NULL'
     );
-    $eshopStmt->execute(['eshop', $anchorDate]);
+    $eshopStmt->execute(['none', 'eshop', $anchorDate]);
     foreach ($eshopStmt->fetchAll(PDO::FETCH_ASSOC) as $es) {
         $sid       = (int) $es['sku_id_fk'];
         $orderTs   = (string) $es['order_created_at'];
@@ -531,16 +531,17 @@ function fg_stock_compute(PDO $pdo): array
     // channel ENUM only contains 'eshop'. inv_sales_bc has taproom since 2026-01.
     // Filter: period > anchor_month (YYYY-MM comparison on CHAR(7) is safe).
     $tapStmt = $pdo->prepare(
-        'SELECT sku_id_fk,
-                SUM(qty_invoiced)    AS taproom_qty,
+        'SELECT b.sku_id_fk,
+                SUM(b.qty_invoiced)  AS taproom_qty,
                 COUNT(*)             AS taproom_rows
-           FROM inv_sales_bc
-          WHERE channel    = ?
-            AND period     > ?
-            AND sku_id_fk IS NOT NULL
-          GROUP BY sku_id_fk'
+           FROM inv_sales_bc b
+           JOIN ref_skus rs ON rs.id = b.sku_id_fk AND rs.stocktake_scope <> ?
+          WHERE b.channel    = ?
+            AND b.period     > ?
+            AND b.sku_id_fk IS NOT NULL
+          GROUP BY b.sku_id_fk'
     );
-    $tapStmt->execute(['taproom', $anchorMonth]);
+    $tapStmt->execute(['none', 'taproom', $anchorMonth]);
     foreach ($tapStmt->fetchAll(PDO::FETCH_ASSOC) as $tr) {
         $sid = (int) $tr['sku_id_fk'];
         if (isset($byId[$sid])) {
@@ -1031,6 +1032,7 @@ function fg_stock_location_snapshot(PDO $pdo): array
                 SUM(l.qty) AS qty
            FROM ord_order_lines l
            JOIN ord_orders o ON o.id = l.order_id_fk
+           JOIN ref_skus rs ON rs.id = l.sku_id_fk AND rs.stocktake_scope <> ?
            LEFT JOIN ref_customers c ON c.id = o.customer_id_fk
           WHERE o.status = ?
             AND o.requested_date >= DATE_SUB(?, INTERVAL 30 DAY)
@@ -1047,7 +1049,7 @@ function fg_stock_location_snapshot(PDO $pdo): array
         }
     }
 
-    $expStmt->execute(['shipped', $anchorDate]);
+    $expStmt->execute(['none', 'shipped', $anchorDate]);
     $expedieOrdersResolved = 0;
     foreach ($expStmt->fetchAll(PDO::FETCH_ASSOC) as $er) {
         $siteId = resolve_fulfilment_site($pdo, [
@@ -1089,13 +1091,12 @@ function fg_stock_location_snapshot(PDO $pdo): array
                 isol.qty
            FROM inv_sales_order_lines isol
            JOIN inv_sales_orders iso ON iso.id = isol.order_id_fk
-           JOIN ref_skus rs ON rs.id = isol.sku_id_fk
+           JOIN ref_skus rs ON rs.id = isol.sku_id_fk AND rs.stocktake_scope <> ?
           WHERE iso.channel = ?
             AND DATE(iso.created_at) >= ?
-            AND isol.sku_id_fk IS NOT NULL
-            AND rs.is_non_stock = 0'
+            AND isol.sku_id_fk IS NOT NULL'
     );
-    $eshopStmt->execute(['eshop', $anchorDate]);
+    $eshopStmt->execute(['none', 'eshop', $anchorDate]);
     foreach ($eshopStmt->fetchAll(PDO::FETCH_ASSOC) as $es) {
         $sid      = (int) $es['sku_id_fk'];
         $orderTs  = (string) $es['order_created_at'];
@@ -1126,15 +1127,16 @@ function fg_stock_location_snapshot(PDO $pdo): array
     // Constant site: always resolves to pos via channel='taproom' → call once.
     $tapSiteId = resolve_fulfilment_site($pdo, ['channel' => 'taproom']);
     $tapStmt = $pdo->prepare(
-        'SELECT sku_id_fk,
-                SUM(qty_invoiced) AS qty
-           FROM inv_sales_bc
-          WHERE channel   = ?
-            AND period    > ?
-            AND sku_id_fk IS NOT NULL
-          GROUP BY sku_id_fk'
+        'SELECT b.sku_id_fk,
+                SUM(b.qty_invoiced) AS qty
+           FROM inv_sales_bc b
+           JOIN ref_skus rs ON rs.id = b.sku_id_fk AND rs.stocktake_scope <> ?
+          WHERE b.channel   = ?
+            AND b.period    > ?
+            AND b.sku_id_fk IS NOT NULL
+          GROUP BY b.sku_id_fk'
     );
-    $tapStmt->execute(['taproom', $anchorMonth]);
+    $tapStmt->execute(['none', 'taproom', $anchorMonth]);
     foreach ($tapStmt->fetchAll(PDO::FETCH_ASSOC) as $tr) {
         $sid = (int) $tr['sku_id_fk'];
         $qty = (int) round((float) $tr['qty']);
