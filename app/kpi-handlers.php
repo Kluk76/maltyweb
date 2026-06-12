@@ -9040,11 +9040,15 @@ function kpi_sales_load_bc_periods(PDO $pdo): array
     return kpi_cache_set($cacheKey, $out);
 }
 
-// ─── Shared loader: inv_sales_ledger production-filtered, per-period ──────────
+// ─── Canonical production filter — defined ONCE, used by loader + all 5 breakdown queries ──
+// Reuse via: "JOIN ref_skus rs ON rs.id = l.sku_id_fk" + "WHERE " . KPI_SALES_PROD_FILTER
 // "Production beer": sku_id_fk NOT NULL (JOIN drops CAUF/non-FG), recipe_id NOT NULL
 // (drops PD8/XMASPACK/PAL/PAC/COLLAB* non-beer packs), units_per_pack < 100
 // (drops -X cages). NO is_active filter (history refs retired-but-sold SKUs).
 // Sign convention: outbound = -SUM(hl_resolved) / -SUM(qty_signed).
+define('KPI_SALES_PROD_FILTER', 'rs.recipe_id IS NOT NULL AND rs.units_per_pack < 100');
+
+// ─── Shared loader: inv_sales_ledger production-filtered, per-period ──────────
 // Returns array keyed by period 'YYYY-MM', sorted chronological.
 // Each entry: hl FLOAT, units INT, period STRING.
 
@@ -9061,8 +9065,7 @@ function kpi_sales_load_ledger_prod(PDO $pdo): array
                 -SUM(l.qty_signed)   AS units
            FROM inv_sales_ledger l
            JOIN ref_skus rs ON rs.id = l.sku_id_fk
-          WHERE rs.recipe_id IS NOT NULL
-            AND rs.units_per_pack < 100
+          WHERE " . KPI_SALES_PROD_FILTER . "
           GROUP BY DATE_FORMAT(l.posting_date,'%Y-%m')
           ORDER BY period"
     );
@@ -11701,8 +11704,7 @@ function kpi_sales_hl_by_sku_prod(string $label, PDO $pdo): array
                 -SUM(l.hl_resolved)                AS hl
            FROM inv_sales_ledger l
            JOIN ref_skus rs ON rs.id = l.sku_id_fk
-          WHERE rs.recipe_id IS NOT NULL
-            AND rs.units_per_pack < 100
+          WHERE " . KPI_SALES_PROD_FILTER . "
             AND DATE_FORMAT(l.posting_date,'%Y-%m') = ?
           GROUP BY rs.sku_code
           ORDER BY hl DESC"
@@ -11768,8 +11770,7 @@ function kpi_sales_units_by_sku_month(string $label, PDO $pdo): array
         "SELECT rs.sku_code AS sku, -SUM(l.qty_signed) AS units
            FROM inv_sales_ledger l
            JOIN ref_skus rs ON rs.id = l.sku_id_fk
-          WHERE rs.recipe_id IS NOT NULL
-            AND rs.units_per_pack < 100
+          WHERE " . KPI_SALES_PROD_FILTER . "
             AND DATE_FORMAT(l.posting_date,'%Y-%m') = ?
           GROUP BY rs.sku_code
           ORDER BY units DESC"
@@ -11784,8 +11785,7 @@ function kpi_sales_units_by_sku_month(string $label, PDO $pdo): array
         "SELECT rs.sku_code AS sku, -SUM(l.qty_signed) AS units
            FROM inv_sales_ledger l
            JOIN ref_skus rs ON rs.id = l.sku_id_fk
-          WHERE rs.recipe_id IS NOT NULL
-            AND rs.units_per_pack < 100
+          WHERE " . KPI_SALES_PROD_FILTER . "
             AND DATE_FORMAT(l.posting_date,'%Y-%m') = ?
           GROUP BY rs.sku_code"
     );
@@ -11868,8 +11868,7 @@ function kpi_sales_hl_by_trade_channel(string $label, PDO $pdo): array
            FROM inv_sales_ledger l
            JOIN ref_skus rs ON rs.id = l.sku_id_fk
            JOIN ref_customers rc ON rc.id = l.customer_id_fk
-          WHERE rs.recipe_id IS NOT NULL
-            AND rs.units_per_pack < 100
+          WHERE " . KPI_SALES_PROD_FILTER . "
             AND DATE_FORMAT(l.posting_date,'%Y-%m') = ?
           GROUP BY COALESCE(rc.trade_channel, '__non_classe__')"
     );
@@ -11930,8 +11929,7 @@ function kpi_sales_hl_by_recipe(string $label, PDO $pdo): array
            FROM inv_sales_ledger l
            JOIN ref_skus rs ON rs.id = l.sku_id_fk
            JOIN ref_recipes rr ON rr.id = rs.recipe_id
-          WHERE rs.recipe_id IS NOT NULL
-            AND rs.units_per_pack < 100
+          WHERE " . KPI_SALES_PROD_FILTER . "
             AND DATE_FORMAT(l.posting_date,'%Y-%m') = ?
           GROUP BY rr.id, COALESCE(rr.recipe_short_name, rr.name)
           ORDER BY hl DESC"
