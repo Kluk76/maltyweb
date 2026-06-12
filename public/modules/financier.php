@@ -22,6 +22,7 @@ require __DIR__ . '/../../app/auth.php';
 require_once __DIR__ . '/../../app/settings-helpers.php';
 require_once __DIR__ . '/../../app/settings.php';        // date_display_format() — used by the SKU-cost BOM freshness stamp
 require_once __DIR__ . '/../../app/kpi-handlers.php';
+require_once __DIR__ . '/../../app/finance-period.php';
 
 require_page_access('financier');
 $me = current_user();
@@ -29,6 +30,14 @@ $me = current_user();
 /* ── Charge les artefacts JSON ────────────────────────────────────────────── */
 $copData   = kpi_load_cogs_json();
 $salesData = kpi_load_sales_cogs_json();
+
+/* ── Dernier mois clôturé (source canonique : fiche COGS) ─────────────────── */
+try {
+    $_fin_pdo_lc = maltytask_pdo();
+    $lastClosedMonth = fin_last_closed_month($_fin_pdo_lc);
+} catch (\Throwable $e) {
+    $lastClosedMonth = null;
+}
 
 /* ── Fonctions utilitaires ─────────────────────────────────────────────────── */
 
@@ -50,6 +59,10 @@ if ($copData !== null && !empty($copData['months'])) {
         if (isset($mo['monthKey'])) $copMonths[] = $mo['monthKey'];
     }
     $copLatestKey = end($copMonths) ?: null;
+    // Repoint to last-closed-month if available
+    if ($lastClosedMonth !== null && in_array($lastClosedMonth, $copMonths, true)) {
+        $copLatestKey = $lastClosedMonth;
+    }
 }
 
 $copArtifactPath = '/var/www/maltytask/interfaces/cogs-report-data.json';
@@ -88,6 +101,10 @@ if ($salesData !== null && !empty($salesData['months'])) {
     $salesMonths      = array_keys($salesData['months']);
     sort($salesMonths);
     $salesLatestKey   = end($salesMonths) ?: null;
+    // Repoint to last-closed-month if available
+    if ($lastClosedMonth !== null && in_array($lastClosedMonth, $salesMonths, true)) {
+        $salesLatestKey = $lastClosedMonth;
+    }
     $salesGeneratedAt = $salesData['generatedAt'] ?? null;
 
     foreach ($salesData['months'] as $mk => $mo) {
@@ -152,8 +169,9 @@ $JSON_FLAGS = JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP;
 
 /* ── GL Months — months available in inv_charges_bc ──────────────────────── */
 /* Fetched once server-side and injected for the grid month pickers.          */
-$glMonths        = [];
-$glLatestMonth   = null;
+$glMonths              = [];
+$glLatestMonth         = null;
+$glMonthCountsForDisplay = [];
 
 try {
     $pdoGl = maltytask_pdo();
@@ -174,13 +192,38 @@ try {
         $glMonthCounts[$mk] += (int) $row['cnt'];
     }
     sort($glMonths);
-    // Default = month with the highest row count (most complete GL export)
+    // Default = last-closed-month if available in GL data, else most-populated
     if (!empty($glMonthCounts)) {
         arsort($glMonthCounts);
-        $glLatestMonth = array_key_first($glMonthCounts);
+        $glMostPopulated = array_key_first($glMonthCounts);
+        $glMonthCountsForDisplay = $glMonthCounts; // preserve for pending state
+        $glLatestMonth = ($lastClosedMonth !== null && in_array($lastClosedMonth, $glMonths, true))
+            ? $lastClosedMonth
+            : $glMostPopulated;
     }
 } catch (Throwable $e) {
     // Non-fatal — grid will show empty state
+}
+
+/* ── Pending state: is $lastClosedMonth sparse in GL data? ──────────────────── */
+// Gate only on GL-backed views (COP P&L grid + COGS P&L grid).
+// A month is "en attente d'import" when its is_summary=0 row count falls below
+// GL_PENDING_THRESHOLD of the maximum monthly count across all available months.
+// With March=323 / April=15 / May=17 this flags April+May as pending and leaves
+// March (and any real ~300-row month) complete.
+const GL_PENDING_THRESHOLD = 0.25;   // tunable: fraction of max monthly count
+
+$glPendingForLastClosed = false;
+$glPendingRowCount      = 0;
+$glPendingMaxCount      = 0;
+$glPendingMonthLabel    = null;
+if ($lastClosedMonth !== null && !empty($glMonthCounts)) {
+    $glMaxMonthCount            = max($glMonthCounts);
+    $glPendingRowCount          = $glMonthCountsForDisplay[$lastClosedMonth] ?? 0;
+    $glPendingMaxCount          = $glMaxMonthCount;
+    $glPendingMonthLabel        = fin_month_label($lastClosedMonth);
+    // Absent months (count=0) or months below threshold are both flagged pending
+    $glPendingForLastClosed = $glPendingRowCount < (GL_PENDING_THRESHOLD * $glMaxMonthCount);
 }
 
 /* ── Module D — Coût par SKU (lec ture BOM compilé depuis ref_sku_bom) ────── */
@@ -367,6 +410,10 @@ try {
 
     sort($ficheMonths);
     $ficheLatestKey = !empty($ficheMonths) ? end($ficheMonths) : null;
+    // Route through canonical last-closed-month helper for consistency
+    if ($lastClosedMonth !== null && in_array($lastClosedMonth, $ficheMonths, true)) {
+        $ficheLatestKey = $lastClosedMonth;
+    }
 
     foreach ($ficheMonths as $mk) {
         $rows_mk = $ficheData[$mk] ?? [];
@@ -466,6 +513,18 @@ $active_module = 'financier';
     <!-- ── P&L Grid — COP tab (top card) ───────────────────────────────────── -->
     <?php if (!empty($glMonths)): ?>
     <div class="fin-card fin-card--grid" id="cop-grid-card">
+      <?php if ($glPendingForLastClosed): ?>
+      <div class="fin-pending-import" role="alert">
+        <span class="fin-pending-import__icon" aria-hidden="true">&#x23F3;</span>
+        <span class="fin-pending-import__text">
+          <strong>Charges comptables en attente d&rsquo;import</strong> &mdash;
+          Charges comptables de <?= htmlspecialchars(mb_strtolower($glPendingMonthLabel ?? '')) ?>
+          &mdash; <?= (int) $glPendingRowCount ?> lignes import&eacute;es
+          (un mois complet en compte ~<?= (int) $glPendingMaxCount ?>).
+          Vue ci-dessous&nbsp;: mois le plus complet disponible.
+        </span>
+      </div>
+      <?php endif ?>
       <div class="fin-card__head">
         <h3 class="fin-card__title">P&amp;L Grid — Coût de Production (CHF/HL)</h3>
         <div class="fin-grid-controls">
@@ -542,6 +601,18 @@ $active_module = 'financier';
     <!-- ── P&L Grid — COGS tab (top card) ──────────────────────────────────── -->
     <?php if (!empty($glMonths)): ?>
     <div class="fin-card fin-card--grid" id="cogs-grid-card">
+      <?php if ($glPendingForLastClosed): ?>
+      <div class="fin-pending-import" role="alert">
+        <span class="fin-pending-import__icon" aria-hidden="true">&#x23F3;</span>
+        <span class="fin-pending-import__text">
+          <strong>Charges comptables en attente d&rsquo;import</strong> &mdash;
+          Charges comptables de <?= htmlspecialchars(mb_strtolower($glPendingMonthLabel ?? '')) ?>
+          &mdash; <?= (int) $glPendingRowCount ?> lignes import&eacute;es
+          (un mois complet en compte ~<?= (int) $glPendingMaxCount ?>).
+          Vue ci-dessous&nbsp;: mois le plus complet disponible.
+        </span>
+      </div>
+      <?php endif ?>
       <div class="fin-card__head">
         <h3 class="fin-card__title">P&amp;L Grid — COGS Variables (CHF/HL)</h3>
         <div class="fin-grid-controls">

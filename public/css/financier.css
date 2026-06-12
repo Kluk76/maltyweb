@@ -1267,6 +1267,35 @@ dialog#fin-sku-modal::backdrop {
   flex-shrink: 0;
 }
 
+/* ── Pending-import panel (GL-backed views: COP + COGS P&L grids) ──────────*/
+.fin-pending-import {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.5rem;
+  background: color-mix(in srgb, var(--oak) 10%, var(--bg));
+  border-left: 3px solid var(--oak);
+  border-radius: 0 5px 5px 0;
+  font-size: 0.83rem;
+  color: var(--ink);
+}
+
+/* display:flex above overrides UA [hidden]{display:none}; restore it */
+.fin-pending-import[hidden] {
+  display: none;
+}
+
+.fin-pending-import__icon {
+  font-size: 1.1rem;
+  flex-shrink: 0;
+  margin-top: 0.05rem;
+}
+
+.fin-pending-import__text {
+  line-height: 1.45;
+}
+
 .fin-fiche-table .fin-td--label { min-width: 120px; }
 .fin-fiche-table .fin-td--gl,
 .fin-fiche-table .fin-th--gl {
