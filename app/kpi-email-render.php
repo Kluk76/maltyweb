@@ -42,8 +42,9 @@ function kpi_email_render_viz(array $tracker, array $result): string
         case 'sparkline':    return _kpi_render_sparkline($tracker, $result);
         case 'line':         return _kpi_render_line($tracker, $result);
         case 'bar':          return _kpi_render_bar($tracker, $result);
-        case 'grouped_bar':  return _kpi_render_grouped_bar($tracker, $result);
-        case 'stacked_bar':  return _kpi_render_stacked_bar($tracker, $result);
+        case 'grouped_bar':      return _kpi_render_grouped_bar($tracker, $result);
+        case 'stacked_bar':      return _kpi_render_stacked_bar($tracker, $result);
+        case 'stacked_columns':  return _kpi_render_stacked_columns($tracker, $result);
         case 'donut':        return _kpi_render_donut($tracker, $result);
         case 'flag':         return _kpi_render_flag($tracker, $result);
         case 'table':        return _kpi_render_table($tracker, $result);
@@ -968,6 +969,127 @@ function _kpi_render_stacked_bar(array $tracker, array $result): string
             . $totHtml . $deltaHtml . '</div>';
 
     return _kpi_tile_open($label) . $segBar . $legendTable . $footer . _kpi_tile_close();
+}
+
+// ── stacked_columns ───────────────────────────────────────────────────────────
+// 12-month horizontal stacked bars (one row per month), width proportional to
+// column.total vs maxTotal, each bar segmented by category. Pure projection —
+// NO $pdo, NO SELECT.
+function _kpi_render_stacked_columns(array $tracker, array $result): string
+{
+    $columns  = $result['meta']['columns']  ?? [];
+    $breakdown = $result['breakdown'] ?? [];
+
+    if (empty($columns)) {
+        return _kpi_render_scalar($tracker, $result);
+    }
+
+    $label       = $tracker['label'] ?? '';
+    $unit        = htmlspecialchars((string) ($result['unit'] ?? ''), ENT_QUOTES, 'UTF-8');
+    $periodLabel = htmlspecialchars((string) ($result['meta']['period_label'] ?? ''), ENT_QUOTES, 'UTF-8');
+    $delta       = $result['delta'] ?? null;
+    $deltaLabel  = $result['delta_label'] ?? null;
+    $tint        = $result['tint'] ?? 'neutral';
+
+    $palette = ['#9eb060', '#a07020', '#6e8b4e', '#c9b352', '#b08d57', '#5a8a5a', '#c9d6a3', '#d4a868'];
+
+    // Max total for proportional scaling
+    $totals    = array_column($columns, 'total');
+    $maxTotal  = $totals ? max(array_map('floatval', $totals)) : 0;
+    if ($maxTotal <= 0) { $maxTotal = 1; }
+
+    // Build legend index: key → palette index
+    $legendIndex = [];
+    $capLegend   = min(8, count($breakdown));
+    for ($i = 0; $i < $capLegend; $i++) {
+        $legendIndex[$breakdown[$i]['key']] = $i;
+    }
+
+    // Month rows
+    $rows = '';
+    foreach ($columns as $col) {
+        $period   = $col['period'] ?? '';
+        $colTotal = (float) ($col['total'] ?? 0);
+        $segments = $col['segments'] ?? [];
+
+        // Format period as mm/YY
+        $parts   = explode('-', $period);
+        $mmYY    = isset($parts[0], $parts[1]) ? $parts[1] . '/' . substr($parts[0], 2) : $period;
+        $mmYYEsc = htmlspecialchars($mmYY, ENT_QUOTES, 'UTF-8');
+
+        // Bar width as % of table (proportional to maxTotal)
+        $barWidthPct = round($colTotal / $maxTotal * 100, 1);
+
+        // Build segments — track $sumSegW to compute remainder without rounding drift
+        $segCells = '';
+        $sumSegW  = 0.0;
+        foreach ($segments as $seg) {
+            $key    = $seg['key'] ?? '';
+            $segVal = (float) ($seg['value'] ?? 0);
+            if ($segVal <= 0 || $colTotal <= 0) { continue; }
+            $idx  = $legendIndex[$key] ?? (count($legendIndex) % count($palette));
+            $c    = $palette[$idx % count($palette)];
+            $cEsc = htmlspecialchars($c, ENT_QUOTES, 'UTF-8');
+            $segW = round($segVal / $colTotal * $barWidthPct, 1);
+            if ($segW <= 0) { continue; }
+            $sumSegW  += $segW;
+            $segCells .= '<td bgcolor="' . $cEsc . '" style="background:' . $cEsc . ';height:14px;" width="' . $segW . '%"></td>';
+        }
+        // Remainder is computed from actual rendered segment widths, not barWidthPct alone,
+        // preventing per-segment rounding drift from pushing sum(segW)+remainder above 100%.
+        $remainderPct  = max(0, round(100 - $sumSegW, 1));
+        $remainderCell = $remainderPct > 0
+            ? '<td bgcolor="#e8dcc6" style="background:#e8dcc6;height:14px;" width="' . $remainderPct . '%"></td>'
+            : '';
+
+        $valEsc = htmlspecialchars(number_format($colTotal, 1, ',', ' '), ENT_QUOTES, 'UTF-8');
+
+        $rows .= '
+        <tr>
+          <td style="font-family:\'JetBrains Mono\',\'Courier New\',monospace;font-size:10px;color:#9a8f82;white-space:nowrap;padding-right:6px;vertical-align:middle;width:40px;">' . $mmYYEsc . '</td>
+          <td style="vertical-align:middle;">
+            <table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-radius:2px;overflow:hidden;"><tr>'
+              . $segCells . $remainderCell .
+            '</tr></table>
+          </td>
+          <td style="font-family:\'JetBrains Mono\',\'Courier New\',monospace;font-size:10px;color:#2c2414;white-space:nowrap;padding-left:6px;text-align:right;vertical-align:middle;width:52px;">'
+            . $valEsc . ($unit !== '' ? '<span style="font-size:9px;color:#9a8f82;"> ' . $unit . '</span>' : '') .
+          '</td>
+        </tr>';
+    }
+
+    $monthTable = '
+    <table cellpadding="0" cellspacing="4" border="0" width="100%">'
+        . ($periodLabel !== '' ? '<tr><td colspan="3" style="font-family:\'DM Sans\',Arial,sans-serif;font-size:10px;color:#9a8f82;padding-bottom:4px;">' . $periodLabel . '</td></tr>' : '')
+        . $rows .
+    '</table>';
+
+    // Legend
+    $legendRows = '';
+    $extraLeg   = count($breakdown) - $capLegend;
+    for ($i = 0; $i < $capLegend; $i++) {
+        $b      = $breakdown[$i];
+        $bLabel = htmlspecialchars((string) ($b['label'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $c      = $palette[$i % count($palette)];
+        $legendRows .= '<tr>' . _kpi_swatch($c) . '<td style="font-family:\'DM Sans\',Arial,sans-serif;font-size:11px;color:#2c2414;padding:1px 0;">' . $bLabel . '</td></tr>';
+    }
+    if ($extraLeg > 0) {
+        $legendRows .= '<tr><td colspan="2" style="font-family:\'DM Sans\',Arial,sans-serif;font-size:10px;color:#9a8f82;padding-top:2px;">+' . $extraLeg . ' autres…</td></tr>';
+    }
+    $legendTable = $legendRows !== ''
+        ? '<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top:8px;">' . $legendRows . '</table>'
+        : '';
+
+    // Footer: total (latest month) + delta
+    $latestCol   = end($columns);
+    $latestTotal = (float) ($latestCol['total'] ?? 0);
+    $totHtml     = _kpi_fmt_val($latestTotal, 1, false)
+                 . ($unit !== '' ? ' <span style="font-size:11px;color:#9a8f82;">' . $unit . '</span>' : '');
+    $deltaHtml   = $delta !== null ? '&nbsp;&nbsp;' . _kpi_delta_inline($delta, $deltaLabel, $tint) : '';
+    $footer      = '<div style="margin-top:8px;padding-top:6px;border-top:1px solid #e8dcc6;font-family:\'JetBrains Mono\',\'Courier New\',monospace;font-size:15px;color:#2c2414;">'
+                 . $totHtml . $deltaHtml . '</div>';
+
+    return _kpi_tile_open($label) . $monthTable . $legendTable . $footer . _kpi_tile_close();
 }
 
 // ── donut ─────────────────────────────────────────────────────────────────────

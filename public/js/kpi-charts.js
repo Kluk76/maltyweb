@@ -421,6 +421,9 @@ function renderKpiCard(container, tracker, result, isAdmin) {
     case 'grouped_bar':
       renderKpiGroupedBar(container, tracker, result, tCls);
       break;
+    case 'stacked_columns':
+      renderKpiStackedColumns(container, tracker, result, tCls);
+      break;
     default:
       renderKpiNumber(container, tracker, result, tCls);
   }
@@ -662,6 +665,143 @@ function renderKpiGroupedBar(container, tracker, result, tCls) {
     const dDiv = document.createElement('div');
     dDiv.innerHTML = deltaHtml(result.delta, result.delta_label);
     container.appendChild(dDiv);
+  }
+}
+
+/* ── stacked_columns ──────────────────────────────────────────────────────── */
+/* 12-month vertical stacked column chart. result.meta.columns = array of    */
+/* { period, total, segments: [{key, value}] }. result.breakdown = legend.   */
+function renderKpiStackedColumns(container, tracker, result, tCls) {
+  const label = result.label || tracker.label;
+  container.innerHTML = '<div class="kpc-card__label">' + escHtml(label) + '</div>';
+
+  const columns   = (result.meta && result.meta.columns) ? result.meta.columns : [];
+  const breakdown = result.breakdown || [];
+
+  if (!columns.length) {
+    const nd = document.createElement('div');
+    nd.className = 'kpc-no-data';
+    nd.textContent = '—';
+    container.appendChild(nd);
+    return;
+  }
+
+  /* Inject CSS once */
+  if (!document.getElementById('kpc-stacked-col-style')) {
+    const s = document.createElement('style');
+    s.id = 'kpc-stacked-col-style';
+    s.textContent = [
+      '.kpc-stacked-col-wrap{margin:6px 0 4px;}',
+      '.kpc-stacked-col-chart{display:flex;align-items:flex-end;gap:2px;height:120px;overflow:hidden;}',
+      '.kpc-stacked-col-month{display:flex;flex-direction:column;align-items:center;flex:1;min-width:0;}',
+      '.kpc-stacked-col-bar{display:flex;flex-direction:column-reverse;width:100%;border-radius:2px 2px 0 0;overflow:hidden;min-height:2px;}',
+      '.kpc-stacked-col-seg{width:100%;flex-shrink:0;}',
+      '.kpc-stacked-col-axis{font-size:9px;color:var(--ink-faint,#7a6647);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;text-align:center;}',
+      '.kpc-stacked-col-legend{display:flex;flex-wrap:wrap;gap:3px 10px;margin-top:8px;}',
+      '.kpc-stacked-col-legend-item{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--ink-soft,#3d2f1f);}',
+      '.kpc-stacked-col-legend-swatch{width:10px;height:10px;border-radius:2px;flex-shrink:0;}',
+    ].join('');
+    document.head.appendChild(s);
+  }
+
+  const C = kpcColors();
+  const SEG_COLORS = [C.core, C.spec, C.contract, C.amber, C.ok, C.ember || '#b34428', '#c9b352', '#b08d57'];
+
+  const maxTotal = Math.max.apply(null, columns.map(function(c) { return c.total || 0; }).concat([1]));
+
+  /* Chart */
+  const chartDiv = document.createElement('div');
+  chartDiv.className = 'kpc-stacked-col-chart';
+
+  columns.forEach(function(col) {
+    const total    = col.total || 0;
+    const segments = col.segments || [];
+    const barH     = maxTotal > 0 ? (total / maxTotal * 100) : 0; // % of 120px container
+
+    const monthDiv = document.createElement('div');
+    monthDiv.className = 'kpc-stacked-col-month';
+
+    const barDiv = document.createElement('div');
+    barDiv.className = 'kpc-stacked-col-bar';
+    barDiv.style.height = barH.toFixed(1) + '%';
+
+    /* segments in top-to-bottom order inside the column-reverse flex */
+    segments.forEach(function(seg, i) {
+      const segH = (total > 0 && seg.value > 0) ? (seg.value / total * 100) : 0;
+      if (segH <= 0) return;
+      const segDiv = document.createElement('div');
+      segDiv.className = 'kpc-stacked-col-seg';
+      segDiv.style.height     = segH.toFixed(1) + '%';
+      segDiv.style.background = SEG_COLORS[i % SEG_COLORS.length];
+      barDiv.appendChild(segDiv);
+    });
+
+    const periodStr = col.period || '';
+    const mm = periodStr.length >= 7 ? parseInt(periodStr.slice(5), 10) - 1 : -1;
+    const axisDiv = document.createElement('div');
+    axisDiv.className = 'kpc-stacked-col-axis';
+    axisDiv.textContent = (mm >= 0 && KPC_MONTHS_FR[mm]) ? KPC_MONTHS_FR[mm] : (periodStr.slice(5) || '?');
+
+    monthDiv.appendChild(barDiv);
+    monthDiv.appendChild(axisDiv);
+    chartDiv.appendChild(monthDiv);
+  });
+
+  const wrap = document.createElement('div');
+  wrap.className = 'kpc-stacked-col-wrap';
+  wrap.appendChild(chartDiv);
+
+  /* Period label + delta */
+  const periodLbl = (result.meta && result.meta.period_label) ? result.meta.period_label : '';
+  if (periodLbl) {
+    const pl = document.createElement('div');
+    pl.className = 'kpc-period';
+    pl.textContent = periodLbl;
+    wrap.appendChild(pl);
+  }
+  if (result.delta != null) {
+    const dDiv = document.createElement('div');
+    dDiv.innerHTML = deltaHtml(result.delta, result.delta_label);
+    wrap.appendChild(dDiv);
+  }
+
+  /* Legend */
+  const CAP_LEGEND = 8;
+  const shownLegend   = breakdown.slice(0, CAP_LEGEND);
+  const extraLegend   = breakdown.length - shownLegend.length;
+  if (shownLegend.length) {
+    const legendDiv = document.createElement('div');
+    legendDiv.className = 'kpc-stacked-col-legend';
+    shownLegend.forEach(function(b, i) {
+      const item = document.createElement('div');
+      item.className = 'kpc-stacked-col-legend-item';
+      const sw = document.createElement('div');
+      sw.className = 'kpc-stacked-col-legend-swatch';
+      sw.style.background = SEG_COLORS[i % SEG_COLORS.length];
+      const lbl = document.createElement('span');
+      lbl.textContent = b.label;
+      item.appendChild(sw);
+      item.appendChild(lbl);
+      legendDiv.appendChild(item);
+    });
+    if (extraLegend > 0) {
+      const more = document.createElement('div');
+      more.className = 'kpc-stacked-col-legend-item';
+      more.style.color = 'var(--ink-faint,#7a6647)';
+      more.textContent = '+' + extraLegend + ' autres';
+      legendDiv.appendChild(more);
+    }
+    wrap.appendChild(legendDiv);
+  }
+
+  container.appendChild(wrap);
+
+  /* Scalar value footer */
+  if (result.value != null) {
+    const valDiv = document.createElement('div');
+    valDiv.className = 'kpc-card__value ' + tCls;
+    valDiv.innerHTML = escHtml(fmt(result.value, 1)) + (result.unit ? ' <span class="kpc-unit">' + escHtml(result.unit) + '</span>' : '');
+    container.appendChild(valDiv);
   }
 }
 
@@ -1219,7 +1359,8 @@ window.KpcCharts = {
   paceTintResult:      paceTintResult,
   renderKpiCard:        renderKpiCard,
   renderKpiRecap:       renderKpiRecap,
-  renderKpiGroupedBar:  renderKpiGroupedBar,
+  renderKpiGroupedBar:       renderKpiGroupedBar,
+  renderKpiStackedColumns:   renderKpiStackedColumns,
   kpcTok:               kpcTok,
   KPC_MONTHS_FR:        KPC_MONTHS_FR,
   KPC_RECAP_MAT_LABELS: KPC_RECAP_MAT_LABELS,

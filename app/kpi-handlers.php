@@ -8984,9 +8984,13 @@ function kpi_handler_sales(
         'hl_sold_monthly_series'  => kpi_sales_hl_monthly_series($label, $pdo),
         'hl_by_sku_prod'          => kpi_sales_hl_by_sku_prod($label, $pdo),
         'units_by_sku_month'      => kpi_sales_units_by_sku_month($label, $pdo),
-        'hl_by_trade_channel'     => kpi_sales_hl_by_trade_channel($label, $pdo),
-        'hl_by_recipe'            => kpi_sales_hl_by_recipe($label, $pdo),
-        default                   => kpi_stub_handler('sales', $handler, $label),
+        'hl_by_trade_channel'        => kpi_sales_hl_by_trade_channel($label, $pdo),
+        'hl_by_recipe'               => kpi_sales_hl_by_recipe($label, $pdo),
+        'hl_by_channel_monthly'      => kpi_sales_hl_by_channel_monthly($label, $pdo),
+        'hl_by_recipe_monthly'       => kpi_sales_hl_by_recipe_monthly($label, $pdo),
+        'hl_by_sku_monthly'          => kpi_sales_hl_by_sku_monthly($label, $pdo),
+        'units_by_sku_monthly_matrix' => kpi_sales_units_by_sku_monthly_matrix($label, $pdo),
+        default                      => kpi_stub_handler('sales', $handler, $label),
     };
 }
 
@@ -11968,11 +11972,287 @@ function kpi_sales_hl_by_recipe(string $label, PDO $pdo): array
         'value'     => round($monthTotal, 2),
         'unit'      => 'HL',
         'breakdown' => $breakdown,
-        'series'    => array_map(fn($b) => ['period' => $b['label'], 'value' => $b['value']], $breakdown), // viz=bar labels x-axis from period
+        'series'    => array_map(fn($b) => ['period' => $b['label'], 'value' => $b['value']], $breakdown),
         'meta'      => [
             'period_label'  => $latest,
             'recipe_count'  => count($rows),
             'source'        => 'inv_sales_ledger × ref_recipes (via rs.recipe_id FK)',
         ],
     ]);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Monthly-matrix trackers #277–280: stacked_columns viz, 12-month window
+// ─────────────────────────────────────────────────────────────────────────────
+// All 4 handlers share the same result shape (stacked_columns):
+//   value     = latest-month total
+//   unit      = 'HL' or 'unités'
+//   delta     = MoM % change on total (or null)
+//   breakdown = [{key, label}] — legend order, NO value (values in meta.columns)
+//   meta.columns = [{period, total, segments:[{key,value}]}] × 12
+//   meta.period_label, meta.source
+//
+// Shared helper: kpi_sales_monthly_matrix() builds the canonical result shape.
+// Each handler calls it with a closure that returns [{period,key,label,metric}].
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Build the standard stacked_columns result for a 12-month sales matrix.
+ *
+ * @param PDO      $pdo
+ * @param string   $label
+ * @param string   $unit        'HL' or 'unités'
+ * @param array    $fixedLegend If non-empty: fixed ordered legend [{key,label}] — no top-N.
+ * @param int      $topN        Used only when $fixedLegend is empty.
+ * @param callable $queryFn     fn(PDO $pdo, string $start, string $latest): array
+ *                              Returns flat rows: ['period'=>'YYYY-MM','key'=>string,'label'=>string,'value'=>float]
+ * @return array
+ */
+function kpi_sales_monthly_matrix(
+    PDO      $pdo,
+    string   $label,
+    string   $unit,
+    array    $fixedLegend,
+    int      $topN,
+    callable $queryFn
+): array {
+    $periods = kpi_sales_load_ledger_prod($pdo);
+    if (empty($periods)) {
+        return kpi_error_result('Aucune donnée inv_sales_ledger (production)', $label);
+    }
+
+    $keys   = array_keys($periods);
+    $latest = end($keys);
+    $start  = (new DateTimeImmutable($latest . '-01'))->modify('-11 months')->format('Y-m');
+
+    // Build the 12-period list (chronological, all months present even if empty)
+    $allPeriods = [];
+    $cur = new DateTimeImmutable($start . '-01');
+    for ($i = 0; $i < 12; $i++) {
+        $allPeriods[] = $cur->format('Y-m');
+        $cur = $cur->modify('+1 month');
+    }
+
+    // Run the per-tracker SQL query
+    $rows = $queryFn($pdo, $start, $latest);
+
+    // Accumulate into [period][key] = value + collect labels
+    $matrix    = [];  // [period][key] => float
+    $labelMap  = [];  // key => label
+    $keyTotals = [];  // key => total across 12m (for top-N ranking)
+
+    foreach ($allPeriods as $p) {
+        $matrix[$p] = [];
+    }
+
+    foreach ($rows as $row) {
+        $p   = (string) $row['period'];
+        $k   = (string) $row['key'];
+        $v   = (float)  $row['value'];
+        $lbl = (string) $row['label'];
+        if (!isset($matrix[$p])) { continue; } // outside window — skip
+        $matrix[$p][$k]  = ($matrix[$p][$k] ?? 0.0) + $v;
+        $labelMap[$k]     = $lbl;
+        $keyTotals[$k]    = ($keyTotals[$k] ?? 0.0) + $v;
+    }
+
+    // Determine legend
+    if (!empty($fixedLegend)) {
+        $legend = $fixedLegend;
+    } else {
+        // Top-N keys by 12-month total, then 'autres' bucket for the rest
+        arsort($keyTotals);
+        $topKeys  = array_slice(array_keys($keyTotals), 0, $topN);
+        $legend   = [];
+        foreach ($topKeys as $k) {
+            $legend[] = ['key' => $k, 'label' => $labelMap[$k] ?? $k];
+        }
+    }
+
+    $legendKeys = array_column($legend, 'key');
+    $hasAutres  = empty($fixedLegend) && count($keyTotals) > $topN;
+
+    // Build meta.columns
+    $columns = [];
+    foreach ($allPeriods as $p) {
+        $pData    = $matrix[$p];
+        $segments = [];
+        $colTotal = 0.0;
+        $autresV  = 0.0;
+
+        foreach ($legendKeys as $k) {
+            $v = $pData[$k] ?? 0.0;
+            $segments[] = ['key' => $k, 'value' => round($v, 2)];
+            $colTotal  += $v;
+        }
+
+        if ($hasAutres) {
+            // Sum all keys NOT in top-N
+            foreach ($pData as $k => $v) {
+                if (!in_array($k, $legendKeys, true)) {
+                    $autresV  += $v;
+                    $colTotal += $v;
+                }
+            }
+            $segments[] = ['key' => '_autres', 'value' => round($autresV, 2)];
+        }
+
+        $columns[] = [
+            'period'   => $p,
+            'total'    => round($colTotal, 2),
+            'segments' => $segments,
+        ];
+    }
+
+    // Append 'autres' to legend if needed
+    $breakdownLegend = $legend;
+    if ($hasAutres) {
+        $extraCount      = count($keyTotals) - $topN;
+        $breakdownLegend[] = ['key' => '_autres', 'label' => "+{$extraCount} autres"];
+    }
+
+    // value = latest month total; delta = MoM %
+    $latestCol  = end($columns);
+    $prevPeriod = (new DateTimeImmutable($latest . '-01'))->modify('-1 month')->format('Y-m');
+    $prevIdx    = array_search($prevPeriod, $allPeriods, true);
+    $prevTotal  = ($prevIdx !== false) ? $columns[$prevIdx]['total'] : null;
+    $latestTot  = $latestCol['total'];
+    $delta      = ($prevTotal !== null && $prevTotal > 0)
+        ? round(($latestTot - $prevTotal) / $prevTotal * 100, 1)
+        : null;
+
+    $periodLabel = date('m/Y', strtotime($start . '-01')) . ' – ' . date('m/Y', strtotime($latest . '-01'));
+
+    return array_merge(kpi_empty_result($label, $unit), [
+        'value'     => round($latestTot, 2),
+        'unit'      => $unit,
+        'delta'     => $delta,
+        'breakdown' => $breakdownLegend,
+        'meta'      => [
+            'columns'      => $columns,
+            'period_label' => $periodLabel,
+            'source'       => 'inv_sales_ledger (production filter)',
+            'filter_note'  => 'recipe_id NOT NULL + units_per_pack < 100',
+        ],
+    ]);
+}
+
+// ─── #277: hl_by_channel_monthly ─────────────────────────────────────────────
+// HL sold by trade channel, 12-month monthly matrix.
+// 3 fixed channels: on_trade / off_trade / non_classé (always present).
+
+function kpi_sales_hl_by_channel_monthly(string $label, PDO $pdo): array
+{
+    $fixedLegend = [
+        ['key' => 'on_trade',    'label' => 'On-trade'],
+        ['key' => 'off_trade',   'label' => 'Off-trade'],
+        ['key' => 'non_classé',  'label' => 'Non classé'],
+    ];
+
+    // $topN=0: ignored when $fixedLegend is non-empty (no top-N ranking needed for 3 fixed channels)
+    return kpi_sales_monthly_matrix(
+        $pdo, $label, 'HL', $fixedLegend, 0,
+        function (PDO $pdo, string $start, string $latest): array {
+            // LEFT JOIN: rows with customer_id_fk IS NULL land in non_classé, not silently dropped
+            $stmt = $pdo->prepare(
+                "SELECT DATE_FORMAT(l.posting_date,'%Y-%m')             AS period,
+                        COALESCE(rc.trade_channel, 'non_classé')        AS `key`,
+                        COALESCE(rc.trade_channel, 'non_classé')        AS label,
+                        -SUM(l.hl_resolved)                             AS value
+                   FROM inv_sales_ledger l
+                   JOIN ref_skus rs ON rs.id = l.sku_id_fk
+                   LEFT JOIN ref_customers rc ON rc.id = l.customer_id_fk
+                  WHERE " . KPI_SALES_PROD_FILTER . "
+                    AND DATE_FORMAT(l.posting_date,'%Y-%m') >= ?
+                    AND DATE_FORMAT(l.posting_date,'%Y-%m') <= ?
+                  GROUP BY DATE_FORMAT(l.posting_date,'%Y-%m'), COALESCE(rc.trade_channel, 'non_classé')
+                  ORDER BY period"
+            );
+            $stmt->execute([$start, $latest]);
+            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        }
+    );
+}
+
+// ─── #278: hl_by_recipe_monthly ──────────────────────────────────────────────
+// HL sold per recipe, 12-month monthly matrix. Top-8 + autres.
+
+function kpi_sales_hl_by_recipe_monthly(string $label, PDO $pdo): array
+{
+    return kpi_sales_monthly_matrix(
+        $pdo, $label, 'HL', [], 8,
+        function (PDO $pdo, string $start, string $latest): array {
+            $stmt = $pdo->prepare(
+                "SELECT DATE_FORMAT(l.posting_date,'%Y-%m')             AS period,
+                        CONCAT('recipe_', rr.id)                        AS `key`,
+                        COALESCE(rr.recipe_short_name, rr.name)         AS label,
+                        -SUM(l.hl_resolved)                             AS value
+                   FROM inv_sales_ledger l
+                   JOIN ref_skus rs ON rs.id = l.sku_id_fk
+                   JOIN ref_recipes rr ON rr.id = rs.recipe_id
+                  WHERE " . KPI_SALES_PROD_FILTER . "
+                    AND DATE_FORMAT(l.posting_date,'%Y-%m') >= ?
+                    AND DATE_FORMAT(l.posting_date,'%Y-%m') <= ?
+                  GROUP BY DATE_FORMAT(l.posting_date,'%Y-%m'), rr.id, COALESCE(rr.recipe_short_name, rr.name)
+                  ORDER BY period"
+            );
+            $stmt->execute([$start, $latest]);
+            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        }
+    );
+}
+
+// ─── #279: hl_by_sku_monthly ─────────────────────────────────────────────────
+// HL sold per SKU, 12-month monthly matrix. Top-8 + autres.
+
+function kpi_sales_hl_by_sku_monthly(string $label, PDO $pdo): array
+{
+    return kpi_sales_monthly_matrix(
+        $pdo, $label, 'HL', [], 8,
+        function (PDO $pdo, string $start, string $latest): array {
+            $stmt = $pdo->prepare(
+                "SELECT DATE_FORMAT(l.posting_date,'%Y-%m') AS period,
+                        rs.sku_code                          AS `key`,
+                        rs.sku_code                          AS label,
+                        -SUM(l.hl_resolved)                  AS value
+                   FROM inv_sales_ledger l
+                   JOIN ref_skus rs ON rs.id = l.sku_id_fk
+                  WHERE " . KPI_SALES_PROD_FILTER . "
+                    AND DATE_FORMAT(l.posting_date,'%Y-%m') >= ?
+                    AND DATE_FORMAT(l.posting_date,'%Y-%m') <= ?
+                  GROUP BY DATE_FORMAT(l.posting_date,'%Y-%m'), rs.sku_code
+                  ORDER BY period"
+            );
+            $stmt->execute([$start, $latest]);
+            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        }
+    );
+}
+
+// ─── #280: units_by_sku_monthly_matrix ───────────────────────────────────────
+// Units sold per SKU, 12-month monthly matrix. Top-8 + autres.
+// Slug: units_by_sku_monthly_matrix (distinct from #274 units_by_sku_month).
+
+function kpi_sales_units_by_sku_monthly_matrix(string $label, PDO $pdo): array
+{
+    return kpi_sales_monthly_matrix(
+        $pdo, $label, 'unités', [], 8,
+        function (PDO $pdo, string $start, string $latest): array {
+            $stmt = $pdo->prepare(
+                "SELECT DATE_FORMAT(l.posting_date,'%Y-%m') AS period,
+                        rs.sku_code                          AS `key`,
+                        rs.sku_code                          AS label,
+                        -SUM(l.qty_signed)                   AS value
+                   FROM inv_sales_ledger l
+                   JOIN ref_skus rs ON rs.id = l.sku_id_fk
+                  WHERE " . KPI_SALES_PROD_FILTER . "
+                    AND DATE_FORMAT(l.posting_date,'%Y-%m') >= ?
+                    AND DATE_FORMAT(l.posting_date,'%Y-%m') <= ?
+                  GROUP BY DATE_FORMAT(l.posting_date,'%Y-%m'), rs.sku_code
+                  ORDER BY period"
+            );
+            $stmt->execute([$start, $latest]);
+            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        }
+    );
 }
