@@ -37,6 +37,19 @@ function kpi_email_render_viz(array $tracker, array $result): string
         }
     }
 
+    // ── Dispatch to typed renderers ──────────────────────────────────────────
+    switch ($vizType) {
+        case 'sparkline':    return _kpi_render_sparkline($tracker, $result);
+        case 'line':         return _kpi_render_line($tracker, $result);
+        case 'bar':          return _kpi_render_bar($tracker, $result);
+        case 'grouped_bar':  return _kpi_render_grouped_bar($tracker, $result);
+        case 'stacked_bar':  return _kpi_render_stacked_bar($tracker, $result);
+        case 'donut':        return _kpi_render_donut($tracker, $result);
+        case 'flag':         return _kpi_render_flag($tracker, $result);
+        case 'table':        return _kpi_render_table($tracker, $result);
+        case 'waterfall':    return _kpi_render_waterfall($tracker, $result);
+    }
+
     // ── Default scalar card ───────────────────────────────────────────────────
     return _kpi_render_scalar($tracker, $result);
 }
@@ -138,6 +151,12 @@ function _kpi_render_recap_sectioned(array $tracker, array $result): string
         return isset($rowMeta['run_type']) || isset($rowMeta['type']);
     });
     $renderRows = array_values($renderRows);
+
+    // Cap at 20 render rows (prevents runaway emails on high-volume recap periods)
+    $renderExtra = count($renderRows) > 20 ? count($renderRows) - 20 : 0;
+    if ($renderExtra > 0) {
+        $renderRows = array_slice($renderRows, 0, 20);
+    }
 
     // Compute domainMax (for bar scaling) across all render rows
     $domainMax = 0;
@@ -324,6 +343,10 @@ function _kpi_render_recap_sectioned(array $tracker, array $result): string
         $groupsHtml .= $groupHeader . $rowsHtml;
     }
 
+    if ($renderExtra > 0) {
+        $groupsHtml .= '<div style="font-family:\'DM Sans\',Arial,sans-serif;font-size:10px;color:#9a8f82;margin-top:4px;">+ ' . $renderExtra . ' autres runs…</div>';
+    }
+
     $breakdownSection = '
     <table cellpadding="0" cellspacing="0" border="0" width="100%">
       <tr>
@@ -378,27 +401,9 @@ function _kpi_render_scalar(array $tracker, array $result): string
                     . ' ' . $deltaLabel . '</div>';
     }
 
-    // Inline sparkline: simple inline-SVG bar chart if series available
+    // No inline sparkline in the scalar card — SVG is not email-safe (Outlook drops it).
+    // KPIs with series data use viz_type='sparkline' which has its own CSS-bar renderer.
     $sparkHtml = '';
-    $series    = $result['series'] ?? null;
-    if (is_array($series) && count($series) >= 2) {
-        $vals = array_column($series, 'value');
-        $maxV = max(array_filter($vals, 'is_numeric')) ?: 1;
-        $w    = 80;
-        $h    = 24;
-        $barW = max(2, (int) floor($w / count($vals)) - 1);
-        $svgBars = '';
-        foreach ($vals as $i => $sv) {
-            $sv = is_numeric($sv) ? (float) $sv : 0;
-            $bh = max(1, (int) round($sv / $maxV * ($h - 2)));
-            $x  = $i * ($barW + 1);
-            $y  = $h - $bh;
-            $svgBars .= "<rect x=\"{$x}\" y=\"{$y}\" width=\"{$barW}\" height=\"{$bh}\" fill=\"#9eb060\" rx=\"1\"/>";
-        }
-        $sparkHtml = '<div style="margin-top:6px;">'
-            . "<svg width=\"{$w}\" height=\"{$h}\" viewBox=\"0 0 {$w} {$h}\" xmlns=\"http://www.w3.org/2000/svg\" style=\"display:block;\">{$svgBars}</svg>"
-            . '</div>';
-    }
 
     return '
         <table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-bottom:10px;background:#f9f3e8;border:1px solid #d8cbb8;border-radius:6px;">
@@ -413,4 +418,808 @@ function _kpi_render_scalar(array $tracker, array $result): string
               . '</td>
           </tr>
         </table>';
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── Shared helper functions ──────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** Emit a 12×12 px color swatch table cell */
+function _kpi_swatch(string $color): string
+{
+    $c = htmlspecialchars($color, ENT_QUOTES, 'UTF-8');
+    return '<td width="12" style="padding:0 4px 0 0;vertical-align:middle;">'
+         . '<table cellpadding="0" cellspacing="0" border="0"><tr>'
+         . '<td bgcolor="' . $c . '" style="background:' . $c . ';width:12px;height:12px;border-radius:2px;font-size:1px;line-height:1px;">&nbsp;</td>'
+         . '</tr></table>'
+         . '</td>';
+}
+
+/**
+ * Format a numeric value in FR locale.
+ * NULL → muted dash. Loss metrics ($isLoss) get 2dp forced.
+ */
+function _kpi_fmt_val(mixed $val, int $dp = 1, bool $isLoss = false): string
+{
+    if ($val === null) {
+        return '<span style="color:#9a8f82;">—</span>';
+    }
+    if (!is_numeric($val)) {
+        return htmlspecialchars((string) $val, ENT_QUOTES, 'UTF-8');
+    }
+    $decimals = $isLoss ? max($dp, 2) : $dp;
+    return htmlspecialchars(number_format((float) $val, $decimals, ',', ' '), ENT_QUOTES, 'UTF-8');
+}
+
+/**
+ * Render a horizontal bar row: label | bar | value (right).
+ * $barPct: 0-100, $height: px, $valHtml: pre-escaped value HTML.
+ */
+function _kpi_hbar_row(string $label, int $barPct, string $color, int $height, string $valHtml): string
+{
+    $barPct   = max(0, min(100, $barPct));
+    $remPct   = 100 - $barPct;
+    $h        = htmlspecialchars((string) $height, ENT_QUOTES, 'UTF-8');
+    $c        = htmlspecialchars($color, ENT_QUOTES, 'UTF-8');
+    $labelEsc = htmlspecialchars($label, ENT_QUOTES, 'UTF-8');
+
+    if ($barPct <= 0) {
+        $barCells = '<td bgcolor="#e8dcc6" style="background:#e8dcc6;height:' . $h . 'px;" width="100%"></td>';
+    } elseif ($barPct >= 100) {
+        $barCells = '<td bgcolor="' . $c . '" style="background:' . $c . ';height:' . $h . 'px;border-radius:2px;" width="100%"></td>';
+    } else {
+        $barCells = '<td bgcolor="' . $c . '" style="background:' . $c . ';height:' . $h . 'px;border-radius:2px 0 0 2px;" width="' . $barPct . '%"></td>'
+                  . '<td bgcolor="#e8dcc6" style="background:#e8dcc6;height:' . $h . 'px;" width="' . $remPct . '%"></td>';
+    }
+
+    return '
+    <table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-bottom:3px;">
+      <tr>
+        <td width="80" style="font-family:\'DM Sans\',Arial,sans-serif;font-size:12px;color:#2c2414;white-space:nowrap;padding-right:6px;">' . $labelEsc . '</td>
+        <td style="padding:0 6px;">
+          <table cellpadding="0" cellspacing="0" border="0" width="100%"><tr>' . $barCells . '</tr></table>
+        </td>
+        <td width="80" style="font-family:\'JetBrains Mono\',\'Courier New\',monospace;font-size:12px;color:#2c2414;text-align:right;white-space:nowrap;">' . $valHtml . '</td>
+      </tr>
+    </table>';
+}
+
+/**
+ * Render an inline delta string: "▲ +3,2% vs N-1" or "▼ −1,1%"
+ */
+function _kpi_delta_inline(mixed $delta, ?string $deltaLabel, string $tint = 'neutral'): string
+{
+    if ($delta === null) {
+        return '';
+    }
+    $color = match ($tint) {
+        'green'  => '#5a8a5a',
+        'red'    => '#a04040',
+        'amber'  => '#a07020',
+        default  => '#9a8f82',
+    };
+    $fDelta = (float) $delta;
+    $arrow  = $fDelta >= 0 ? '▲' : '▼';
+    $sign   = $fDelta >= 0 ? '+' : '';
+    $fmtD   = htmlspecialchars($sign . number_format($fDelta, 1, ',', ' '), ENT_QUOTES, 'UTF-8');
+    $lbl    = $deltaLabel !== null ? ' ' . htmlspecialchars($deltaLabel, ENT_QUOTES, 'UTF-8') : '';
+    return '<span style="font-family:\'DM Sans\',Arial,sans-serif;font-size:11px;color:' . $color . ';">'
+         . $arrow . ' ' . $fmtD . $lbl
+         . '</span>';
+}
+
+/**
+ * Render a colored delta chip for grouped_bar: "▲ +12,2%" green / "▼ −2,5%" red / "nouveau" amber.
+ * Returns a <span> with background + white text.
+ */
+function _kpi_delta_chip(mixed $delta, ?string $tint = null, ?float $priorYear = null): string
+{
+    if ($priorYear === null || $priorYear == 0) {
+        // No prior year data → "nouveau" amber chip
+        $bg = '#a07020';
+        return '<span style="font-family:\'DM Sans\',Arial,sans-serif;font-size:10px;background:' . $bg . ';color:#fff;padding:1px 5px;border-radius:3px;">nouveau</span>';
+    }
+    if ($delta === null) {
+        return '';
+    }
+    $fDelta = (float) $delta;
+    if ($tint === null) {
+        $tint = $fDelta >= 0 ? 'green' : 'red';
+    }
+    $bg = match ($tint) {
+        'green'  => '#5a8a5a',
+        'red'    => '#a04040',
+        'amber'  => '#a07020',
+        default  => '#9a8f82',
+    };
+    $arrow = $fDelta >= 0 ? '▲' : '▼';
+    $sign  = $fDelta >= 0 ? '+' : '';
+    $fmtD  = htmlspecialchars($sign . number_format($fDelta, 1, ',', ' '), ENT_QUOTES, 'UTF-8');
+    return '<span style="font-family:\'DM Sans\',Arial,sans-serif;font-size:10px;background:' . $bg . ';color:#fff;padding:1px 5px;border-radius:3px;">'
+         . $arrow . ' ' . $fmtD
+         . '</span>';
+}
+
+/** Standard dark-header tile wrapper */
+function _kpi_tile_open(string $label): string
+{
+    $l = htmlspecialchars($label, ENT_QUOTES, 'UTF-8');
+    return '
+<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-bottom:10px;background:#f9f3e8;border:1px solid #d8cbb8;border-radius:6px;overflow:hidden;">
+  <tr><td>
+    <table cellpadding="0" cellspacing="0" border="0" width="100%">
+      <tr><td style="background:#2c2414;padding:10px 16px;">
+        <span style="font-family:\'JetBrains Mono\',\'Courier New\',monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#f1e8d4;">' . $l . '</span>
+      </td></tr>
+    </table>
+    <table cellpadding="0" cellspacing="0" border="0" width="100%">
+      <tr><td style="padding:10px 16px 12px;">';
+}
+
+function _kpi_tile_close(): string
+{
+    return '      </td></tr>
+    </table>
+  </td></tr>
+</table>';
+}
+
+/** FR month abbreviations for period labels */
+function _kpi_months_fr(): array
+{
+    return [
+        '01' => 'Jan', '02' => 'Fév', '03' => 'Mar', '04' => 'Avr',
+        '05' => 'Mai', '06' => 'Jun', '07' => 'Jul', '08' => 'Aoû',
+        '09' => 'Sep', '10' => 'Oct', '11' => 'Nov', '12' => 'Déc',
+    ];
+}
+
+/** Extract last 2 chars of a period string as the month key */
+function _kpi_period_month(string $period): string
+{
+    return substr($period, -2);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── Viz renderers ────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ── sparkline ────────────────────────────────────────────────────────────────
+// 12 paired monthly columns (curr hop-green + ghost N-1), padding-top baseline.
+// Legend row, then value+delta below.
+function _kpi_render_sparkline(array $tracker, array $result): string
+{
+    $series = $result['series'] ?? [];
+    if (empty($series)) {
+        return _kpi_render_scalar($tracker, $result);
+    }
+
+    $series     = array_slice($series, -12);
+    $meta       = $result['meta'] ?? [];
+    $prevSeries = $meta['prev_series'] ?? [];
+    $label      = $tracker['label'] ?? '';
+    $value      = $result['value'] ?? null;
+    $unit       = $result['unit'] ?? '';
+    $delta      = $result['delta'] ?? null;
+    $deltaLabel = $result['delta_label'] ?? null;
+    $tint       = $result['tint'] ?? 'neutral';
+
+    $monthsFr  = _kpi_months_fr();
+    $maxBarPx  = 40;
+    $outerH    = 44; // fixed outer td height
+
+    // Build prev_series lookup by period
+    $prevByPeriod = [];
+    foreach ($prevSeries as $ps) {
+        $k = _kpi_period_month((string) ($ps['period'] ?? ''));
+        $prevByPeriod[$k] = $ps['value'] ?? null;
+    }
+
+    // Compute combined domain max
+    $allVals = [];
+    foreach ($series as $pt) {
+        if (is_numeric($pt['value'] ?? null)) { $allVals[] = (float) $pt['value']; }
+    }
+    foreach ($prevSeries as $pt) {
+        if (is_numeric($pt['value'] ?? null)) { $allVals[] = (float) $pt['value']; }
+    }
+    $domainMax = !empty($allVals) ? max($allVals) : 1;
+    if ($domainMax <= 0) { $domainMax = 1; }
+
+    // Build column cells
+    $cols    = '';
+    $labels  = '';
+    foreach ($series as $pt) {
+        $period  = (string) ($pt['period'] ?? '');
+        $mKey    = _kpi_period_month($period);
+        $mLabel  = htmlspecialchars($monthsFr[$mKey] ?? $mKey, ENT_QUOTES, 'UTF-8');
+        $currVal = is_numeric($pt['value'] ?? null) ? (float) $pt['value'] : 0;
+        $prevVal = is_numeric($prevByPeriod[$mKey] ?? null) ? (float) $prevByPeriod[$mKey] : 0;
+
+        $currPx = (int) round($currVal / $domainMax * $maxBarPx);
+        $prevPx = (int) round($prevVal / $domainMax * $maxBarPx);
+        $currPt = $maxBarPx - $currPx;  // padding-top
+        $prevPt = $maxBarPx - $prevPx;
+
+        $cols .= '<td style="padding:0 1px;vertical-align:top;">
+          <table cellpadding="0" cellspacing="0" border="0"><tr>
+            <td style="padding-top:' . $currPt . 'px;vertical-align:top;">
+              <table cellpadding="0" cellspacing="0" border="0"><tr>
+                <td bgcolor="#9eb060" style="background:#9eb060;width:7px;height:' . $currPx . 'px;font-size:1px;line-height:1px;display:block;">&nbsp;</td>
+              </tr></table>
+            </td>
+            <td style="padding-top:' . $prevPt . 'px;vertical-align:top;padding-left:1px;">
+              <table cellpadding="0" cellspacing="0" border="0"><tr>
+                <td bgcolor="#c9d6a3" style="background:#c9d6a3;width:7px;height:' . $prevPx . 'px;font-size:1px;line-height:1px;display:block;">&nbsp;</td>
+              </tr></table>
+            </td>
+          </tr></table>
+        </td>';
+        $labels .= '<td style="font-family:\'DM Sans\',Arial,sans-serif;font-size:9px;color:#9a8f82;text-align:center;padding:2px 1px 0;">' . $mLabel . '</td>';
+    }
+
+    // Legend row
+    $legend = '
+    <table cellpadding="0" cellspacing="0" border="0" style="margin-top:6px;">
+      <tr>'
+      . _kpi_swatch('#9eb060')
+      . '<td style="font-family:\'DM Sans\',Arial,sans-serif;font-size:10px;color:#9a8f82;padding-right:10px;">Cette année</td>'
+      . _kpi_swatch('#c9d6a3')
+      . '<td style="font-family:\'DM Sans\',Arial,sans-serif;font-size:10px;color:#9a8f82;">N−1</td>'
+      . '</tr>
+    </table>';
+
+    // Value + delta row
+    $isLoss   = (bool) preg_match('/perte/i', $label);
+    $valHtml  = _kpi_fmt_val($value, 1, $isLoss);
+    $unitEsc  = htmlspecialchars((string) $unit, ENT_QUOTES, 'UTF-8');
+    $unitSpan = $unitEsc !== '' ? ' <span style="font-size:11px;color:#9a8f82;">' . $unitEsc . '</span>' : '';
+    $deltaHtml = $delta !== null ? '&nbsp;&nbsp;' . _kpi_delta_inline($delta, $deltaLabel, $tint) : '';
+
+    $content = '
+    <table cellpadding="0" cellspacing="0" border="0" style="height:' . $outerH . 'px;"><tr>' . $cols . '</tr></table>
+    <table cellpadding="0" cellspacing="0" border="0" width="100%"><tr>' . $labels . '</tr></table>'
+    . $legend
+    . '<div style="margin-top:6px;font-family:\'JetBrains Mono\',\'Courier New\',monospace;font-size:16px;color:#2c2414;">'
+    . $valHtml . $unitSpan . $deltaHtml
+    . '</div>';
+
+    return _kpi_tile_open($label) . $content . _kpi_tile_close();
+}
+
+// ── line ─────────────────────────────────────────────────────────────────────
+// Single-series mini-bar chart, 28px wide bars, taller (50px max height).
+function _kpi_render_line(array $tracker, array $result): string
+{
+    $series = $result['series'] ?? [];
+    if (empty($series)) {
+        return _kpi_render_scalar($tracker, $result);
+    }
+
+    $series    = array_slice($series, -12);
+    $label     = $tracker['label'] ?? '';
+    $value     = $result['value'] ?? null;
+    $unit      = $result['unit'] ?? '';
+    $delta     = $result['delta'] ?? null;
+    $deltaLabel = $result['delta_label'] ?? null;
+    $tint      = $result['tint'] ?? 'neutral';
+
+    $monthsFr = _kpi_months_fr();
+    $maxBarPx = 50;
+    $outerH   = 54;
+
+    $vals = array_map(fn($pt) => is_numeric($pt['value'] ?? null) ? (float) $pt['value'] : 0, $series);
+    $domainMax = !empty($vals) ? max($vals) : 1;
+    if ($domainMax <= 0) { $domainMax = 1; }
+
+    $cols   = '';
+    $labels = '';
+    foreach ($series as $pt) {
+        $period = (string) ($pt['period'] ?? '');
+        $mKey   = _kpi_period_month($period);
+        $mLabel = htmlspecialchars($monthsFr[$mKey] ?? $mKey, ENT_QUOTES, 'UTF-8');
+        $v      = is_numeric($pt['value'] ?? null) ? (float) $pt['value'] : 0;
+        $barPx  = (int) round($v / $domainMax * $maxBarPx);
+        $pt2    = $maxBarPx - $barPx;
+
+        $cols .= '<td style="padding:0 2px;vertical-align:top;">
+          <table cellpadding="0" cellspacing="0" border="0"><tr>
+            <td style="padding-top:' . $pt2 . 'px;vertical-align:top;">
+              <table cellpadding="0" cellspacing="0" border="0"><tr>
+                <td bgcolor="#9eb060" style="background:#9eb060;width:14px;height:' . $barPx . 'px;font-size:1px;line-height:1px;">&nbsp;</td>
+              </tr></table>
+            </td>
+          </tr></table>
+        </td>';
+        $labels .= '<td style="font-family:\'DM Sans\',Arial,sans-serif;font-size:9px;color:#9a8f82;text-align:center;padding:2px 2px 0;">' . $mLabel . '</td>';
+    }
+
+    $isLoss    = (bool) preg_match('/perte/i', $label);
+    $valHtml   = _kpi_fmt_val($value, 1, $isLoss);
+    $unitEsc   = htmlspecialchars((string) $unit, ENT_QUOTES, 'UTF-8');
+    $unitSpan  = $unitEsc !== '' ? ' <span style="font-size:11px;color:#9a8f82;">' . $unitEsc . '</span>' : '';
+    $deltaHtml = $delta !== null ? '&nbsp;&nbsp;' . _kpi_delta_inline($delta, $deltaLabel, $tint) : '';
+
+    $content = '
+    <table cellpadding="0" cellspacing="0" border="0" style="height:' . $outerH . 'px;"><tr>' . $cols . '</tr></table>
+    <table cellpadding="0" cellspacing="0" border="0" width="100%"><tr>' . $labels . '</tr></table>
+    <div style="margin-top:8px;font-family:\'JetBrains Mono\',\'Courier New\',monospace;font-size:16px;color:#2c2414;">'
+    . $valHtml . $unitSpan . $deltaHtml
+    . '</div>';
+
+    return _kpi_tile_open($label) . $content . _kpi_tile_close();
+}
+
+// ── bar ──────────────────────────────────────────────────────────────────────
+// Horizontal CSS bars: label 80px | bar fills middle | value 80px right.
+function _kpi_render_bar(array $tracker, array $result): string
+{
+    // Some bar handlers return named items in 'series' rather than 'breakdown'
+    $breakdown = $result['breakdown'] ?? $result['series'] ?? [];
+    if (empty($breakdown)) {
+        return _kpi_render_scalar($tracker, $result);
+    }
+
+    $label = $tracker['label'] ?? '';
+    $unit  = htmlspecialchars((string) ($result['unit'] ?? ''), ENT_QUOTES, 'UTF-8');
+
+    $vals = array_filter(array_column($breakdown, 'value'), 'is_numeric');
+    $maxV = !empty($vals) ? max(array_map('floatval', $vals)) : 1;
+    if ($maxV <= 0) { $maxV = 1; }
+
+    $rows = '';
+    $cap  = array_slice($breakdown, 0, 12);
+    $rem  = count($breakdown) - count($cap);
+    foreach ($cap as $item) {
+        $iLabel  = (string) ($item['label'] ?? '');
+        $iVal    = $item['value'] ?? null;
+        $isLoss  = (bool) preg_match('/perte/i', $iLabel);
+        $barPct  = is_numeric($iVal) ? (int) round((float) $iVal / $maxV * 100) : 0;
+        $valHtml = _kpi_fmt_val($iVal, 1, $isLoss);
+        if ($unit !== '') {
+            $valHtml .= ' <span style="font-size:10px;color:#9a8f82;">' . $unit . '</span>';
+        }
+        $rows .= _kpi_hbar_row($iLabel, $barPct, '#9eb060', 14, $valHtml);
+    }
+    if ($rem > 0) {
+        $rows .= '<div style="font-family:\'DM Sans\',Arial,sans-serif;font-size:10px;color:#9a8f82;padding:2px 0;">+' . $rem . ' autres…</div>';
+    }
+
+    return _kpi_tile_open($label) . $rows . _kpi_tile_close();
+}
+
+// ── grouped_bar ───────────────────────────────────────────────────────────────
+// Per row: current bar (hop-green) + 4px spacer + prior-year ghost bar.
+// Delta chip floated right. 120px label column.
+function _kpi_render_grouped_bar(array $tracker, array $result): string
+{
+    $breakdown = $result['breakdown'] ?? [];
+    if (empty($breakdown)) {
+        return _kpi_render_scalar($tracker, $result);
+    }
+
+    $label      = $tracker['label'] ?? '';
+    $value      = $result['value'] ?? null;
+    $unit       = htmlspecialchars((string) ($result['unit'] ?? ''), ENT_QUOTES, 'UTF-8');
+    $delta      = $result['delta'] ?? null;
+    $deltaLabel = $result['delta_label'] ?? null;
+    $tint       = $result['tint'] ?? 'neutral';
+
+    $cap = array_slice($breakdown, 0, 12);
+    $rem = count($breakdown) - count($cap);
+
+    // Domain max across both curr and prior-year
+    $allVals = [];
+    foreach ($cap as $item) {
+        if (is_numeric($item['value'] ?? null))                  { $allVals[] = (float) $item['value']; }
+        if (is_numeric($item['meta']['prior_year'] ?? null))     { $allVals[] = (float) $item['meta']['prior_year']; }
+    }
+    $domainMax = !empty($allVals) ? max($allVals) : 1;
+    if ($domainMax <= 0) { $domainMax = 1; }
+
+    $rows = '';
+    foreach ($cap as $item) {
+        $iLabel    = (string) ($item['label'] ?? '');
+        $iVal      = $item['value'] ?? null;
+        $iPrior    = $item['meta']['prior_year'] ?? null;
+        $iDelta    = $item['delta'] ?? null;
+        $iTint     = $item['tint'] ?? null;
+
+        $currPct  = is_numeric($iVal)   ? (int) round((float) $iVal   / $domainMax * 100) : 0;
+        $priorPct = is_numeric($iPrior) ? (int) round((float) $iPrior / $domainMax * 100) : 0;
+        $remCurr  = max(0, 100 - $currPct);
+        $remPrior = max(0, 100 - $priorPct);
+
+        $isLoss  = (bool) preg_match('/perte/i', $iLabel);
+        $valHtml = _kpi_fmt_val($iVal, 1, $isLoss)
+                 . ($unit !== '' ? ' <span style="font-size:10px;color:#9a8f82;">' . $unit . '</span>' : '');
+
+        $chip = _kpi_delta_chip($iDelta, $iTint, is_numeric($iPrior) ? (float) $iPrior : null);
+
+        $labelEsc = htmlspecialchars($iLabel, ENT_QUOTES, 'UTF-8');
+
+        // Current bar row
+        $currBar = $currPct >= 100
+            ? '<td bgcolor="#9eb060" style="background:#9eb060;height:12px;border-radius:2px;" width="100%"></td>'
+            : '<td bgcolor="#9eb060" style="background:#9eb060;height:12px;border-radius:2px 0 0 2px;" width="' . $currPct . '%"></td>'
+              . '<td bgcolor="#e8dcc6" style="background:#e8dcc6;height:12px;" width="' . $remCurr . '%"></td>';
+
+        // Prior-year bar row
+        $priorBar = $priorPct >= 100
+            ? '<td bgcolor="#c9d6a3" style="background:#c9d6a3;height:12px;border-radius:2px;" width="100%"></td>'
+            : '<td bgcolor="#c9d6a3" style="background:#c9d6a3;height:12px;border-radius:2px 0 0 2px;" width="' . $priorPct . '%"></td>'
+              . '<td bgcolor="#e8dcc6" style="background:#e8dcc6;height:12px;" width="' . $remPrior . '%"></td>';
+
+        $rows .= '
+        <table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-bottom:6px;">
+          <tr>
+            <td width="120" rowspan="3" style="font-family:\'DM Sans\',Arial,sans-serif;font-size:12px;color:#2c2414;vertical-align:middle;white-space:nowrap;padding-right:8px;">'
+              . $labelEsc . '</td>
+            <td style="padding-bottom:0;">
+              <table cellpadding="0" cellspacing="0" border="0" width="100%"><tr>' . $currBar . '</tr></table>
+            </td>
+            <td width="60" rowspan="3" style="text-align:right;vertical-align:middle;padding-left:6px;">'
+              . $valHtml . '<br>' . $chip . '</td>
+          </tr>
+          <tr><td style="height:4px;"></td></tr>
+          <tr>
+            <td>
+              <table cellpadding="0" cellspacing="0" border="0" width="100%"><tr>' . $priorBar . '</tr></table>
+            </td>
+          </tr>
+        </table>';
+    }
+
+    if ($rem > 0) {
+        $rows .= '<div style="font-family:\'DM Sans\',Arial,sans-serif;font-size:10px;color:#9a8f82;padding:2px 0;">+' . $rem . ' autres…</div>';
+    }
+
+    // Legend
+    $legend = '
+    <table cellpadding="0" cellspacing="0" border="0" style="margin-bottom:8px;">'
+      . '<tr>' . _kpi_swatch('#9eb060') . '<td style="font-family:\'DM Sans\',Arial,sans-serif;font-size:10px;color:#9a8f82;padding-right:10px;">Cette année</td>'
+      . _kpi_swatch('#c9d6a3') . '<td style="font-family:\'DM Sans\',Arial,sans-serif;font-size:10px;color:#9a8f82;">N−1</td></tr>
+    </table>';
+
+    $isLoss    = (bool) preg_match('/perte/i', $tracker['label'] ?? '');
+    $totHtml   = _kpi_fmt_val($value, 1, $isLoss)
+               . ($unit !== '' ? ' <span style="font-size:11px;color:#9a8f82;">' . $unit . '</span>' : '');
+    $deltaHtml = $delta !== null ? '&nbsp;&nbsp;' . _kpi_delta_inline($delta, $deltaLabel, $tint) : '';
+
+    $footer = '<div style="margin-top:6px;padding-top:6px;border-top:1px solid #e8dcc6;font-family:\'JetBrains Mono\',\'Courier New\',monospace;font-size:15px;color:#2c2414;">'
+            . $totHtml . $deltaHtml . '</div>';
+
+    return _kpi_tile_open($label) . $legend . $rows . $footer . _kpi_tile_close();
+}
+
+// ── stacked_bar ───────────────────────────────────────────────────────────────
+// ONE full-width segmented proportion bar 20px + legend table + total+delta.
+function _kpi_render_stacked_bar(array $tracker, array $result): string
+{
+    $breakdown = $result['breakdown'] ?? [];
+    if (empty($breakdown)) {
+        return _kpi_render_scalar($tracker, $result);
+    }
+
+    $label      = $tracker['label'] ?? '';
+    $value      = $result['value'] ?? null;
+    $unit       = htmlspecialchars((string) ($result['unit'] ?? ''), ENT_QUOTES, 'UTF-8');
+    $delta      = $result['delta'] ?? null;
+    $deltaLabel = $result['delta_label'] ?? null;
+    $tint       = $result['tint'] ?? 'neutral';
+
+    $palette = ['#9eb060', '#a07020', '#6e8b4e', '#c9b352', '#b08d57', '#5a8a5a'];
+
+    $cap   = array_slice($breakdown, 0, 12);
+    $extra = count($breakdown) - count($cap);
+
+    // Total for proportions
+    $total = array_sum(array_filter(array_column($cap, 'value'), 'is_numeric'));
+    if ($total <= 0) { $total = 1; }
+
+    // Build segmented bar
+    $segs = '';
+    foreach ($cap as $i => $item) {
+        $v    = is_numeric($item['value'] ?? null) ? (float) $item['value'] : 0;
+        $pct  = max(0, (float) round($v / $total * 100, 1));
+        $c    = $palette[$i % count($palette)];
+        $cEsc = htmlspecialchars($c, ENT_QUOTES, 'UTF-8');
+        if ($pct <= 0) { continue; }
+        $segs .= '<td bgcolor="' . $cEsc . '" style="background:' . $cEsc . ';height:20px;" width="' . $pct . '%"></td>';
+    }
+    $segBar = '
+    <table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-radius:3px;overflow:hidden;">
+      <tr>' . $segs . '</tr>
+    </table>';
+
+    // Legend table
+    $legendRows = '';
+    foreach ($cap as $i => $item) {
+        $iLabel = htmlspecialchars((string) ($item['label'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $iVal   = $item['value'] ?? null;
+        $v      = is_numeric($iVal) ? (float) $iVal : 0;
+        $pct    = $total > 0 ? round($v / $total * 100, 1) : 0;
+        $c      = $palette[$i % count($palette)];
+        $isLoss = (bool) preg_match('/perte/i', (string) ($item['label'] ?? ''));
+        $valFmt = _kpi_fmt_val($iVal, 1, $isLoss)
+                . ($unit !== '' ? ' <span style="font-size:10px;color:#9a8f82;">' . $unit . '</span>' : '');
+        $pctFmt = htmlspecialchars(number_format($pct, 1, ',', ' '), ENT_QUOTES, 'UTF-8') . ' %';
+
+        $legendRows .= '<tr>
+          ' . _kpi_swatch($c) . '
+          <td style="font-family:\'DM Sans\',Arial,sans-serif;font-size:12px;color:#2c2414;padding:1px 0;">' . $iLabel . '</td>
+          <td style="font-family:\'JetBrains Mono\',\'Courier New\',monospace;font-size:11px;color:#2c2414;text-align:right;padding-left:8px;white-space:nowrap;">' . $valFmt . '</td>
+          <td style="font-family:\'JetBrains Mono\',\'Courier New\',monospace;font-size:11px;color:#9a8f82;text-align:right;padding-left:8px;white-space:nowrap;">' . $pctFmt . '</td>
+        </tr>';
+    }
+    if ($extra > 0) {
+        $legendRows .= '<tr><td colspan="4" style="font-family:\'DM Sans\',Arial,sans-serif;font-size:10px;color:#9a8f82;padding-top:2px;">+' . $extra . ' autres…</td></tr>';
+    }
+
+    $legendTable = '
+    <table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top:8px;">' . $legendRows . '</table>';
+
+    $isLoss    = (bool) preg_match('/perte/i', $tracker['label'] ?? '');
+    $totHtml   = _kpi_fmt_val($value, 1, $isLoss)
+               . ($unit !== '' ? ' <span style="font-size:11px;color:#9a8f82;">' . $unit . '</span>' : '');
+    $deltaHtml = $delta !== null ? '&nbsp;&nbsp;' . _kpi_delta_inline($delta, $deltaLabel, $tint) : '';
+
+    $footer = '<div style="margin-top:8px;padding-top:6px;border-top:1px solid #e8dcc6;font-family:\'JetBrains Mono\',\'Courier New\',monospace;font-size:15px;color:#2c2414;">'
+            . $totHtml . $deltaHtml . '</div>';
+
+    return _kpi_tile_open($label) . $segBar . $legendTable . $footer . _kpi_tile_close();
+}
+
+// ── donut ─────────────────────────────────────────────────────────────────────
+// NO segmented bar. Ranked legend: swatch | label | value | bold large %.
+// Sorted desc by value. Total at bottom.
+function _kpi_render_donut(array $tracker, array $result): string
+{
+    // Some donut handlers return items in 'series' rather than 'breakdown'
+    $breakdown = $result['breakdown'] ?? $result['series'] ?? [];
+    if (empty($breakdown)) {
+        return _kpi_render_scalar($tracker, $result);
+    }
+
+    $label   = $tracker['label'] ?? '';
+    $value   = $result['value'] ?? null;
+    $unit    = htmlspecialchars((string) ($result['unit'] ?? ''), ENT_QUOTES, 'UTF-8');
+    $palette = ['#9eb060', '#a07020', '#6e8b4e', '#c9b352', '#b08d57', '#5a8a5a'];
+
+    // Sort desc by value
+    $sorted = $breakdown;
+    usort($sorted, fn($a, $b) => ($b['value'] ?? 0) <=> ($a['value'] ?? 0));
+    $cap   = array_slice($sorted, 0, 12);
+    $extra = count($sorted) - count($cap);
+
+    $total = array_sum(array_filter(array_column($cap, 'value'), 'is_numeric'));
+    if ($total <= 0) { $total = 1; }
+
+    $rows = '';
+    foreach ($cap as $i => $item) {
+        $iLabel = htmlspecialchars((string) ($item['label'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $iVal   = $item['value'] ?? null;
+        $v      = is_numeric($iVal) ? (float) $iVal : 0;
+        $pct    = round($v / $total * 100, 1);
+        $c      = $palette[$i % count($palette)];
+        $isLoss = (bool) preg_match('/perte/i', (string) ($item['label'] ?? ''));
+        $valFmt = _kpi_fmt_val($iVal, 1, $isLoss)
+                . ($unit !== '' ? ' <span style="font-size:10px;color:#9a8f82;">' . $unit . '</span>' : '');
+        $pctFmt = htmlspecialchars(number_format($pct, 1, ',', ' '), ENT_QUOTES, 'UTF-8') . ' %';
+
+        $rows .= '<tr>
+          ' . _kpi_swatch($c) . '
+          <td style="font-family:\'DM Sans\',Arial,sans-serif;font-size:12px;color:#2c2414;padding:2px 0;">' . $iLabel . '</td>
+          <td style="font-family:\'JetBrains Mono\',\'Courier New\',monospace;font-size:11px;color:#2c2414;text-align:right;padding-left:8px;white-space:nowrap;">' . $valFmt . '</td>
+          <td style="font-family:\'JetBrains Mono\',\'Courier New\',monospace;font-size:13px;font-weight:bold;color:#2c2414;text-align:right;padding-left:8px;white-space:nowrap;">' . $pctFmt . '</td>
+        </tr>';
+    }
+    if ($extra > 0) {
+        $rows .= '<tr><td colspan="4" style="font-family:\'DM Sans\',Arial,sans-serif;font-size:10px;color:#9a8f82;padding-top:2px;">+' . $extra . ' autres…</td></tr>';
+    }
+
+    // Total row
+    $isLoss  = (bool) preg_match('/perte/i', $tracker['label'] ?? '');
+    $totFmt  = _kpi_fmt_val($value, 1, $isLoss)
+             . ($unit !== '' ? ' <span style="font-size:10px;color:#9a8f82;">' . $unit . '</span>' : '');
+    $rows .= '<tr style="border-top:1px solid #e8dcc6;">
+      <td colspan="2" style="font-family:\'DM Sans\',Arial,sans-serif;font-size:12px;color:#2c2414;font-weight:bold;padding-top:4px;">Total</td>
+      <td style="font-family:\'JetBrains Mono\',\'Courier New\',monospace;font-size:12px;color:#2c2414;text-align:right;padding-left:8px;padding-top:4px;white-space:nowrap;">' . $totFmt . '</td>
+      <td style="font-family:\'JetBrains Mono\',\'Courier New\',monospace;font-size:13px;font-weight:bold;color:#2c2414;text-align:right;padding-left:8px;padding-top:4px;">100 %</td>
+    </tr>';
+
+    $content = '
+    <table cellpadding="0" cellspacing="0" border="0" width="100%">' . $rows . '</table>';
+
+    return _kpi_tile_open($label) . $content . _kpi_tile_close();
+}
+
+// ── flag ──────────────────────────────────────────────────────────────────────
+// Colored chip block: amber/red/green background, white text, big value, small-caps label.
+function _kpi_render_flag(array $tracker, array $result): string
+{
+    $label = $tracker['label'] ?? '';
+    $value = $result['value'] ?? null;
+    $unit  = htmlspecialchars((string) ($result['unit'] ?? ''), ENT_QUOTES, 'UTF-8');
+    $tint  = $result['tint'] ?? 'neutral';
+
+    $bg = match ($tint) {
+        'amber'  => '#a07020',
+        'red'    => '#a04040',
+        'green'  => '#5a8a5a',
+        default  => ($value == 0 ? '#5a8a5a' : '#a07020'),
+    };
+
+    $isLoss   = (bool) preg_match('/perte/i', $label);
+    $valHtml  = _kpi_fmt_val($value, 1, $isLoss);
+    $unitSpan = $unit !== '' ? '<span style="font-size:12px;opacity:.8;margin-left:4px;">' . $unit . '</span>' : '';
+    $labelEsc = htmlspecialchars($label, ENT_QUOTES, 'UTF-8');
+    $bgEsc    = htmlspecialchars($bg, ENT_QUOTES, 'UTF-8');
+
+    $chip = '
+    <table cellpadding="0" cellspacing="0" border="0" width="100%">
+      <tr>
+        <td bgcolor="' . $bgEsc . '" style="background:' . $bgEsc . ';padding:14px 20px;border-radius:4px;text-align:center;">
+          <div style="font-family:\'DM Sans\',Arial,sans-serif;font-size:10px;letter-spacing:.1em;text-transform:small-caps;color:#fff;opacity:.85;margin-bottom:4px;">' . $labelEsc . '</div>
+          <div style="font-family:\'JetBrains Mono\',\'Courier New\',monospace;font-size:28px;font-weight:600;color:#fff;line-height:1;">'
+               . $valHtml . $unitSpan
+          . '</div>
+        </td>
+      </tr>
+    </table>';
+
+    return _kpi_tile_open($label) . $chip . _kpi_tile_close();
+}
+
+// ── table ─────────────────────────────────────────────────────────────────────
+// Dark header row, alternating rows, 12-row cap, optional total.
+function _kpi_render_table(array $tracker, array $result): string
+{
+    $breakdown = $result['breakdown'] ?? $result['series'] ?? [];
+    if (empty($breakdown)) {
+        return _kpi_render_scalar($tracker, $result);
+    }
+
+    $label = $tracker['label'] ?? '';
+    $value = $result['value'] ?? null;
+    $unit  = htmlspecialchars((string) ($result['unit'] ?? ''), ENT_QUOTES, 'UTF-8');
+
+    $cap   = array_slice($breakdown, 0, 12);
+    $extra = count($breakdown) - count($cap);
+
+    $rows = '';
+    foreach ($cap as $i => $item) {
+        $bg     = $i % 2 === 0 ? '#faf5ec' : '#f9f3e8';
+        $bgEsc  = htmlspecialchars($bg, ENT_QUOTES, 'UTF-8');
+
+        // Support both series {period,value} and breakdown {label,value}
+        $iLabel = htmlspecialchars((string) ($item['label'] ?? $item['period'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $iVal   = $item['value'] ?? null;
+        $isLoss = (bool) preg_match('/perte/i', (string) ($item['label'] ?? ''));
+        $valFmt = _kpi_fmt_val($iVal, 1, $isLoss)
+                . ($unit !== '' ? ' <span style="font-size:10px;color:#9a8f82;">' . $unit . '</span>' : '');
+
+        $rows .= '<tr>
+          <td bgcolor="' . $bgEsc . '" style="background:' . $bgEsc . ';padding:4px 10px;font-family:\'DM Sans\',Arial,sans-serif;font-size:12px;color:#2c2414;">' . $iLabel . '</td>
+          <td bgcolor="' . $bgEsc . '" style="background:' . $bgEsc . ';padding:4px 10px;font-family:\'JetBrains Mono\',\'Courier New\',monospace;font-size:12px;color:#2c2414;text-align:right;white-space:nowrap;">' . $valFmt . '</td>
+        </tr>';
+    }
+
+    if ($extra > 0) {
+        $rows .= '<tr>
+          <td colspan="2" style="padding:3px 10px;font-family:\'DM Sans\',Arial,sans-serif;font-size:10px;color:#9a8f82;">+' . $extra . ' lignes…</td>
+        </tr>';
+    }
+
+    if ($value !== null) {
+        $isLoss = (bool) preg_match('/perte/i', $tracker['label'] ?? '');
+        $totFmt = _kpi_fmt_val($value, 1, $isLoss)
+                . ($unit !== '' ? ' <span style="font-size:10px;color:#9a8f82;">' . $unit . '</span>' : '');
+        $rows .= '<tr>
+          <td bgcolor="#2c2414" style="background:#2c2414;padding:5px 10px;font-family:\'DM Sans\',Arial,sans-serif;font-size:12px;color:#f1e8d4;font-weight:bold;">Total</td>
+          <td bgcolor="#2c2414" style="background:#2c2414;padding:5px 10px;font-family:\'JetBrains Mono\',\'Courier New\',monospace;font-size:12px;color:#f1e8d4;text-align:right;white-space:nowrap;">' . $totFmt . '</td>
+        </tr>';
+    }
+
+    $tbl = '
+    <table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-radius:3px;overflow:hidden;">
+      <tr>
+        <td colspan="2" bgcolor="#2c2414" style="background:#2c2414;padding:5px 10px;font-family:\'DM Sans\',Arial,sans-serif;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#f1e8d4;">Détail</td>
+      </tr>'
+      . $rows .
+    '</table>';
+
+    return _kpi_tile_open($label) . $tbl . _kpi_tile_close();
+}
+
+// ── waterfall ─────────────────────────────────────────────────────────────────
+// Signed-contribution rows: positive → right hop-green, negative → left amber.
+// Caption "(décomposition — cumul non figuré)". Total at bottom.
+function _kpi_render_waterfall(array $tracker, array $result): string
+{
+    $breakdown = $result['breakdown'] ?? [];
+    if (empty($breakdown)) {
+        return _kpi_render_scalar($tracker, $result);
+    }
+
+    $label = $tracker['label'] ?? '';
+    $value = $result['value'] ?? null;
+    $unit  = htmlspecialchars((string) ($result['unit'] ?? ''), ENT_QUOTES, 'UTF-8');
+
+    // Cap at 12 rows
+    $allRows  = $breakdown;
+    $cap      = array_slice($allRows, 0, 12);
+    $extra    = count($allRows) - count($cap);
+
+    // Domain max across abs values
+    $absVals = array_filter(
+        array_map(fn($item) => is_numeric($item['value'] ?? null) ? abs((float) $item['value']) : 0, $cap),
+        fn($v) => $v > 0
+    );
+    $domainMax = !empty($absVals) ? max($absVals) : 1;
+
+    $rows = '';
+    foreach ($cap as $item) {
+        $iLabel  = (string) ($item['label'] ?? '');
+        $iVal    = $item['value'] ?? null;
+        $v       = is_numeric($iVal) ? (float) $iVal : 0;
+        $absV    = abs($v);
+        $pct     = (int) round($absV / $domainMax * 100);
+        $pct     = min(100, $pct);
+        $remPct  = 100 - $pct;
+        $isLoss  = (bool) preg_match('/perte/i', $iLabel);
+        $labelEsc = htmlspecialchars($iLabel, ENT_QUOTES, 'UTF-8');
+        $sign    = $v >= 0 ? '+' : '−';
+        $color   = $v >= 0 ? '#2c2414' : '#a07020';
+        $valFmt  = '<span style="color:' . $color . ';">'
+                 . $sign . _kpi_fmt_val($absV, 1, $isLoss)
+                 . ($unit !== '' ? ' <span style="font-size:10px;color:#9a8f82;">' . $unit . '</span>' : '')
+                 . '</span>';
+
+        if ($v >= 0) {
+            // Positive: bar grows RIGHT from left
+            $barCell = $pct >= 100
+                ? '<td bgcolor="#9eb060" style="background:#9eb060;height:12px;border-radius:2px;" width="100%"></td>'
+                : '<td bgcolor="#9eb060" style="background:#9eb060;height:12px;border-radius:2px 0 0 2px;" width="' . $pct . '%"></td>'
+                  . '<td bgcolor="#e8dcc6" style="background:#e8dcc6;height:12px;" width="' . $remPct . '%"></td>';
+        } else {
+            // Negative: bar grows LEFT from right (spacer | amber bar)
+            $barCell = $pct >= 100
+                ? '<td bgcolor="#a07020" style="background:#a07020;height:12px;border-radius:2px;" width="100%"></td>'
+                : '<td bgcolor="#e8dcc6" style="background:#e8dcc6;height:12px;" width="' . $remPct . '%"></td>'
+                  . '<td bgcolor="#a07020" style="background:#a07020;height:12px;border-radius:0 2px 2px 0;" width="' . $pct . '%"></td>';
+        }
+
+        $rows .= '
+        <table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-bottom:4px;">
+          <tr>
+            <td width="100" style="font-family:\'DM Sans\',Arial,sans-serif;font-size:12px;color:#2c2414;white-space:nowrap;padding-right:6px;">' . $labelEsc . '</td>
+            <td style="padding:0 6px;">
+              <table cellpadding="0" cellspacing="0" border="0" width="100%"><tr>' . $barCell . '</tr></table>
+            </td>
+            <td width="80" style="font-family:\'JetBrains Mono\',\'Courier New\',monospace;font-size:12px;text-align:right;white-space:nowrap;">' . $valFmt . '</td>
+          </tr>
+        </table>';
+    }
+
+    // Overflow row
+    if ($extra > 0) {
+        $rows .= '<div style="font-family:\'DM Sans\',Arial,sans-serif;font-size:10px;color:#9a8f82;margin-top:2px;margin-bottom:2px;">+ ' . $extra . ' autres…</div>';
+    }
+
+    // Caption
+    $caption = '<div style="font-family:\'DM Sans\',Arial,sans-serif;font-size:10px;color:#9a8f82;font-style:italic;margin-bottom:6px;">'
+             . '(décomposition — cumul non figuré)</div>';
+
+    // Total
+    $isLoss  = (bool) preg_match('/perte/i', $tracker['label'] ?? '');
+    $totHtml = '';
+    if ($value !== null) {
+        $totFmt  = _kpi_fmt_val($value, 1, $isLoss)
+                 . ($unit !== '' ? ' <span style="font-size:11px;color:#9a8f82;">' . $unit . '</span>' : '');
+        $totHtml = '<div style="margin-top:6px;padding-top:6px;border-top:1px solid #e8dcc6;font-family:\'JetBrains Mono\',\'Courier New\',monospace;font-size:14px;color:#2c2414;">'
+                 . '<span style="font-family:\'DM Sans\',Arial,sans-serif;font-size:11px;color:#9a8f82;margin-right:6px;">Total</span>' . $totFmt . '</div>';
+    }
+
+    return _kpi_tile_open($label) . $caption . $rows . $totHtml . _kpi_tile_close();
 }
