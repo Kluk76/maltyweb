@@ -1855,7 +1855,7 @@ function kpi_cogs_cost_per_hl_trend(string $label, PDO $pdo): array
  *
  * Sources:
  *   Numerator:   cogs-report-data.json cop.totalVariables.total (latest closed month)
- *   Denominator: inv_sales_bc SUM(sales_amount_chf) WHERE period = that month
+ *   Denominator: inv_sales_ledger SUM(sales_amount_chf) WHERE period = that month
  *
  * Both canonical sources, summed/divided — NEVER recomputed.
  * Note: numerator is COP totalVariables (variable costs) not salesCOGS_CHF
@@ -1881,11 +1881,11 @@ function kpi_cogs_pct_revenue(array $params, string $label, PDO $pdo): array
     $tvars    = $cop['totalVariables'] ?? [];
     $cogsChf  = is_array($tvars) ? (float) ($tvars['total'] ?? 0) : (float) $tvars;
 
-    // Revenue from inv_sales_bc for the same period
+    // Revenue from inv_sales_ledger for the same period
     $stmt = $pdo->prepare(
         "SELECT SUM(sales_amount_chf) AS revenue_chf
-           FROM inv_sales_bc
-          WHERE period = ?"
+           FROM inv_sales_ledger
+          WHERE DATE_FORMAT(posting_date,'%Y-%m') = ?"
     );
     $stmt->execute([$monthKey]);
     $row      = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -1905,7 +1905,7 @@ function kpi_cogs_pct_revenue(array $params, string $label, PDO $pdo): array
             'cogs_chf'      => round($cogsChf, 2),
             'revenue_chf'   => $revenue !== null ? round($revenue, 2) : null,
             'source_cogs'   => 'cogs-report-data.json cop.totalVariables.total',
-            'source_revenue' => 'inv_sales_bc SUM(sales_amount_chf)',
+            'source_revenue' => 'inv_sales_ledger SUM(sales_amount_chf)',
             'note'          => 'Numérateur = COP coûts variables production. Dénominateur = CA BC facturé.',
         ], $freshness),
     ]);
@@ -9007,42 +9007,6 @@ function kpi_sales_stub_gap(string $handler, string $label, string $note): array
     return $r;
 }
 
-// ─── Shared loader: inv_sales_bc per-period aggregates ───────────────────────
-// Returns array keyed by period ('YYYY-MM'). Each entry:
-//   chf (sales_amount_chf), profit_chf, discount_chf, hl, line_cnt
-
-function kpi_sales_load_bc_periods(PDO $pdo): array
-{
-    $cacheKey = 'sales_bc_periods';
-    if (($cached = kpi_cache_get($cacheKey)) !== null) {
-        return $cached;
-    }
-
-    $stmt = $pdo->query(
-        "SELECT period,
-                SUM(sales_amount_chf)    AS chf,
-                SUM(profit_chf)          AS profit_chf,
-                SUM(discount_amount_chf) AS discount_chf,
-                SUM(hl_resolved)         AS hl,
-                COUNT(*)                 AS line_cnt
-           FROM inv_sales_bc
-          GROUP BY period
-          ORDER BY period"
-    );
-    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-    $out = [];
-    foreach ($rows as $row) {
-        $out[$row['period']] = [
-            'chf'          => (float) $row['chf'],
-            'profit_chf'   => (float) $row['profit_chf'],
-            'discount_chf' => (float) $row['discount_chf'],
-            'hl'           => (float) $row['hl'],
-            'line_cnt'     => (int)   $row['line_cnt'],
-        ];
-    }
-    return kpi_cache_set($cacheKey, $out);
-}
 
 // ─── Canonical production filter — defined ONCE, used by loader + all 5 breakdown queries ──
 // Reuse via: "JOIN ref_skus rs ON rs.id = l.sku_id_fk" + "WHERE " . KPI_SALES_PROD_FILTER
@@ -9086,7 +9050,41 @@ function kpi_sales_load_ledger_prod(PDO $pdo): array
     return kpi_cache_set($cacheKey, $out);
 }
 
-// ─── Helper: latest and prior period from inv_sales_bc ───────────────────────
+// ─── Shared loader: inv_sales_ledger all-sales, per-period ────────────────────
+// No production filter — full revenue universe (all sku_id_fk, including NULL).
+// Returns array keyed by period 'YYYY-MM'. Each entry: chf, hl, units, period.
+
+function kpi_sales_load_ledger_all(PDO $pdo): array
+{
+    $cacheKey = 'sales_ledger_all_periods';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $stmt = $pdo->query(
+        "SELECT DATE_FORMAT(posting_date,'%Y-%m') AS period,
+                SUM(sales_amount_chf)              AS chf,
+                -SUM(hl_resolved)                  AS hl,
+                -SUM(qty_signed)                   AS units
+           FROM inv_sales_ledger
+          GROUP BY DATE_FORMAT(posting_date,'%Y-%m')
+          ORDER BY period"
+    );
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $out = [];
+    foreach ($rows as $row) {
+        $out[$row['period']] = [
+            'period' => $row['period'],
+            'chf'    => (float) $row['chf'],
+            'hl'     => (float) $row['hl'],
+            'units'  => (int)   $row['units'],
+        ];
+    }
+    return kpi_cache_set($cacheKey, $out);
+}
+
+// ─── Helper: latest and prior period from a periods array ────────────────────
 function kpi_sales_latest_period(array $periods): ?string
 {
     if (empty($periods)) return null;
@@ -9102,16 +9100,16 @@ function kpi_sales_prior_period(string $period): string
 }
 
 // ─── #86: revenue_month ───────────────────────────────────────────────────────
-// Primary scalar = total HT CHF for the most recent period in inv_sales_bc.
+// Primary scalar = total HT CHF for the most recent period in inv_sales_ledger.
 // Delta = vs prior period in the same source.
 
 function kpi_sales_revenue_period(array $params, string $label, PDO $pdo): array
 {
-    $periods = kpi_sales_load_bc_periods($pdo);
+    $periods = kpi_sales_load_ledger_all($pdo);
     $latest  = kpi_sales_latest_period($periods);
 
     if ($latest === null) {
-        return kpi_error_result('Aucune donnée inv_sales_bc', $label);
+        return kpi_error_result('Aucune donnée inv_sales_ledger', $label);
     }
 
     $cur   = $periods[$latest];
@@ -9136,8 +9134,7 @@ function kpi_sales_revenue_period(array $params, string $label, PDO $pdo): array
         'meta' => [
             'period'         => $latest,
             'period_label'   => $latest,
-            'line_cnt'       => $cur['line_cnt'],
-            'source'         => 'inv_sales_bc',
+            'source'         => 'inv_sales_ledger',
             'note'           => 'Montants HT (hors TVA), export GL BC',
         ],
     ]);
@@ -9146,15 +9143,15 @@ function kpi_sales_revenue_period(array $params, string $label, PDO $pdo): array
 }
 
 // ─── #88: hl_sold_month ───────────────────────────────────────────────────────
-// Total HL sold (hl_resolved) for the latest period.
+// Total HL sold (hl_resolved, production beer only) for the latest period.
 
 function kpi_sales_hl_sold_period(array $params, string $label, PDO $pdo): array
 {
-    $periods = kpi_sales_load_bc_periods($pdo);
+    $periods = kpi_sales_load_ledger_prod($pdo);
     $latest  = kpi_sales_latest_period($periods);
 
     if ($latest === null) {
-        return kpi_error_result('Aucune donnée inv_sales_bc', $label);
+        return kpi_error_result('Aucune donnée inv_sales_ledger (production)', $label);
     }
 
     $cur      = $periods[$latest];
@@ -9177,13 +9174,13 @@ function kpi_sales_hl_sold_period(array $params, string $label, PDO $pdo): array
         'meta' => [
             'period'       => $latest,
             'period_label' => $latest,
-            'source'       => 'inv_sales_bc.hl_resolved',
+            'source'       => 'inv_sales_ledger (production filter)',
         ],
     ]);
 }
 
 // ─── #87: units_sold_sku ─────────────────────────────────────────────────────
-// Qty invoiced per sku_code for the latest period. Bar breakdown.
+// Qty sold per sku_code (production beer only) for the latest period. Bar breakdown.
 
 function kpi_sales_units_sold_sku(array $params, string $label, PDO $pdo): array
 {
@@ -9192,28 +9189,28 @@ function kpi_sales_units_sold_sku(array $params, string $label, PDO $pdo): array
         return $cached;
     }
 
-    $periods = kpi_sales_load_bc_periods($pdo);
+    $periods = kpi_sales_load_ledger_prod($pdo);
     $latest  = kpi_sales_latest_period($periods);
 
     if ($latest === null) {
-        return kpi_error_result('Aucune donnée inv_sales_bc', $label);
+        return kpi_error_result('Aucune donnée inv_sales_ledger (production)', $label);
     }
 
     $stmt = $pdo->prepare(
-        "SELECT sku_code,
-                SUM(qty_invoiced)      AS qty,
-                SUM(sales_amount_chf)  AS chf
-           FROM inv_sales_bc
-          WHERE period = ?
-            AND sku_id_fk IS NOT NULL
-          GROUP BY sku_code
+        "SELECT rs.sku_code,
+                -SUM(l.qty_signed)     AS qty,
+                SUM(l.sales_amount_chf) AS chf
+           FROM inv_sales_ledger l
+           JOIN ref_skus rs ON rs.id = l.sku_id_fk
+          WHERE " . KPI_SALES_PROD_FILTER . "
+            AND DATE_FORMAT(l.posting_date,'%Y-%m') = ?
+          GROUP BY rs.sku_code
           ORDER BY qty DESC
           LIMIT 25"
     );
     $stmt->execute([$latest]);
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    $total = (float) ($periods[$latest]['line_cnt'] ?? 0);
     $totalQty = array_sum(array_column($rows, 'qty'));
 
     $breakdown = array_map(fn(array $r) => [
@@ -9227,10 +9224,14 @@ function kpi_sales_units_sold_sku(array $params, string $label, PDO $pdo): array
         'value'     => round($totalQty, 0),
         'tint'      => 'neutral',
         'breakdown' => $breakdown,
+        'series'    => array_map(
+            fn(array $b) => ['period' => $b['label'], 'value' => $b['value']],
+            $breakdown
+        ),
         'meta'      => [
             'period'       => $latest,
             'period_label' => $latest,
-            'source'       => 'inv_sales_bc (sku_id_fk linked only)',
+            'source'       => 'inv_sales_ledger (production filter)',
         ],
     ]);
 
@@ -9238,7 +9239,7 @@ function kpi_sales_units_sold_sku(array $params, string $label, PDO $pdo): array
 }
 
 // ─── #90: sales_yoy_pace ─────────────────────────────────────────────────────
-// 12-month CHF sparkline (all available periods). YoY delta if prior-year month exists.
+// Full CHF sparkline (all available periods). YoY delta vs same month N-1.
 
 function kpi_sales_yoy_pace(string $label, PDO $pdo): array
 {
@@ -9247,11 +9248,11 @@ function kpi_sales_yoy_pace(string $label, PDO $pdo): array
         return $cached;
     }
 
-    $periods = kpi_sales_load_bc_periods($pdo);
+    $periods = kpi_sales_load_ledger_all($pdo);
     $latest  = kpi_sales_latest_period($periods);
 
     if ($latest === null) {
-        return kpi_error_result('Aucune donnée inv_sales_bc', $label);
+        return kpi_error_result('Aucune donnée inv_sales_ledger', $label);
     }
 
     // YoY: same calendar month, one year prior
@@ -9276,12 +9277,12 @@ function kpi_sales_yoy_pace(string $label, PDO $pdo): array
         'tint'        => $delta === null ? 'neutral' : ($delta >= 0 ? 'green' : 'red'),
         'series'      => $series,
         'meta'        => [
-            'period'           => $latest,
+            'period'            => $latest,
             'prior_year_period' => $priorYear,
-            'prior_year_data'  => $priorChf !== null,
-            'source'           => 'inv_sales_bc',
-            'note'             => $priorChf === null
-                ? 'Données N-1 absentes de inv_sales_bc (import BC depuis 2025-12 seulement)'
+            'prior_year_data'   => $priorChf !== null,
+            'source'            => 'inv_sales_ledger',
+            'note'              => $priorChf === null
+                ? 'Données N-1 absentes pour cette période'
                 : null,
         ],
     ]);
@@ -9291,7 +9292,7 @@ function kpi_sales_yoy_pace(string $label, PDO $pdo): array
 
 // ─── #91: revenue_by_family ───────────────────────────────────────────────────
 // Revenue donut by beer family (classification: Neb vs Contract) for latest period.
-// Uses inv_sales_bc × ref_skus × ref_recipes. Rows with NULL sku_id_fk shown as
+// Uses inv_sales_ledger × ref_skus × ref_recipes. Rows with NULL sku_id_fk shown as
 // "Autre" (cautions, non-beer articles).
 
 function kpi_sales_revenue_by_family(array $params, string $label, PDO $pdo): array
@@ -9301,23 +9302,24 @@ function kpi_sales_revenue_by_family(array $params, string $label, PDO $pdo): ar
         return $cached;
     }
 
-    $periods = kpi_sales_load_bc_periods($pdo);
+    $periods = kpi_sales_load_ledger_prod($pdo);
     $latest  = kpi_sales_latest_period($periods);
 
     if ($latest === null) {
-        return kpi_error_result('Aucune donnée inv_sales_bc', $label);
+        return kpi_error_result('Aucune donnée inv_sales_ledger (production)', $label);
     }
 
     // Linked SKUs: group by classification + subtype
     $stmt = $pdo->prepare(
         "SELECT rr.classification,
                 rr.subtype,
-                SUM(s.sales_amount_chf) AS chf,
-                SUM(s.hl_resolved)      AS hl
-           FROM inv_sales_bc s
-           JOIN ref_skus rs    ON rs.id      = s.sku_id_fk
-           JOIN ref_recipes rr ON rr.id      = rs.recipe_id
-          WHERE s.period = ?
+                SUM(l.sales_amount_chf) AS chf,
+                -SUM(l.hl_resolved)     AS hl
+           FROM inv_sales_ledger l
+           JOIN ref_skus rs    ON rs.id = l.sku_id_fk
+           JOIN ref_recipes rr ON rr.id = rs.recipe_id
+          WHERE " . KPI_SALES_PROD_FILTER . "
+            AND DATE_FORMAT(l.posting_date,'%Y-%m') = ?
           GROUP BY rr.classification, rr.subtype
           ORDER BY chf DESC"
     );
@@ -9327,8 +9329,8 @@ function kpi_sales_revenue_by_family(array $params, string $label, PDO $pdo): ar
     // Unlinked amount (cautions, non-beer articles)
     $stmt2 = $pdo->prepare(
         "SELECT SUM(sales_amount_chf) AS chf
-           FROM inv_sales_bc
-          WHERE period = ?
+           FROM inv_sales_ledger
+          WHERE DATE_FORMAT(posting_date,'%Y-%m') = ?
             AND sku_id_fk IS NULL"
     );
     $stmt2->execute([$latest]);
@@ -9365,7 +9367,7 @@ function kpi_sales_revenue_by_family(array $params, string $label, PDO $pdo): ar
         'meta'      => [
             'period'       => $latest,
             'period_label' => $latest,
-            'source'       => 'inv_sales_bc × ref_skus × ref_recipes',
+            'source'       => 'inv_sales_ledger × ref_skus × ref_recipes',
         ],
     ]);
 
@@ -9373,7 +9375,7 @@ function kpi_sales_revenue_by_family(array $params, string $label, PDO $pdo): ar
 }
 
 // ─── #92: top_customers_revenue ──────────────────────────────────────────────
-// Top-N customers by CHF for the latest period.
+// Top-N customers by CHF for the latest period (all-sales universe).
 
 function kpi_sales_top_customers(array $params, string $label, PDO $pdo): array
 {
@@ -9384,21 +9386,23 @@ function kpi_sales_top_customers(array $params, string $label, PDO $pdo): array
 
     $limit = $params['limit'] ?? 10;
 
-    $periods = kpi_sales_load_bc_periods($pdo);
+    $periods = kpi_sales_load_ledger_all($pdo);
     $latest  = kpi_sales_latest_period($periods);
 
     if ($latest === null) {
-        return kpi_error_result('Aucune donnée inv_sales_bc', $label);
+        return kpi_error_result('Aucune donnée inv_sales_ledger', $label);
     }
 
     $stmt = $pdo->prepare(
-        "SELECT s.customer_no,
-                ANY_VALUE(s.customer_name) AS customer_name,
-                SUM(s.sales_amount_chf)    AS chf,
-                SUM(s.hl_resolved)         AS hl
-           FROM inv_sales_bc s
-          WHERE s.period = ?
-          GROUP BY s.customer_no
+        "SELECT COALESCE(rc.bc_customer_no, l.bc_source_no, '(inconnu)') AS customer_no,
+                COALESCE(rc.name, '(client non résolu)')                  AS customer_name,
+                SUM(l.sales_amount_chf)                                   AS chf,
+                -SUM(l.hl_resolved)                                       AS hl
+           FROM inv_sales_ledger l
+           LEFT JOIN ref_customers rc ON rc.id = l.customer_id_fk
+          WHERE DATE_FORMAT(l.posting_date,'%Y-%m') = ?
+          GROUP BY COALESCE(rc.bc_customer_no, l.bc_source_no, '(inconnu)'),
+                   COALESCE(rc.name, '(client non résolu)')
           ORDER BY chf DESC
           LIMIT ?"
     );
@@ -9407,7 +9411,7 @@ function kpi_sales_top_customers(array $params, string $label, PDO $pdo): array
 
     $breakdown = array_map(fn(array $r) => [
         'key'   => $r['customer_no'],
-        'label' => $r['customer_name'] ?? $r['customer_no'],
+        'label' => $r['customer_name'],
         'value' => round((float) $r['chf'], 0),
         'hl'    => round((float) $r['hl'], 1),
     ], $rows);
@@ -9420,7 +9424,7 @@ function kpi_sales_top_customers(array $params, string $label, PDO $pdo): array
             'period'       => $latest,
             'period_label' => $latest,
             'limit'        => $limit,
-            'source'       => 'inv_sales_bc',
+            'source'       => 'inv_sales_ledger × ref_customers',
         ],
     ]);
 
@@ -9428,7 +9432,7 @@ function kpi_sales_top_customers(array $params, string $label, PDO $pdo): array
 }
 
 // ─── #93: top_skus_volume_revenue ────────────────────────────────────────────
-// Top SKUs by CHF for the latest period (bar breakdown).
+// Top SKUs by CHF (production beer only) for the latest period (bar breakdown).
 
 function kpi_sales_top_skus(array $params, string $label, PDO $pdo): array
 {
@@ -9437,22 +9441,23 @@ function kpi_sales_top_skus(array $params, string $label, PDO $pdo): array
         return $cached;
     }
 
-    $periods = kpi_sales_load_bc_periods($pdo);
+    $periods = kpi_sales_load_ledger_prod($pdo);
     $latest  = kpi_sales_latest_period($periods);
 
     if ($latest === null) {
-        return kpi_error_result('Aucune donnée inv_sales_bc', $label);
+        return kpi_error_result('Aucune donnée inv_sales_ledger (production)', $label);
     }
 
     $stmt = $pdo->prepare(
-        "SELECT sku_code,
-                ANY_VALUE(sku_description) AS sku_description,
-                SUM(qty_invoiced)          AS qty,
-                SUM(sales_amount_chf)      AS chf,
-                SUM(hl_resolved)           AS hl
-           FROM inv_sales_bc
-          WHERE period = ?
-          GROUP BY sku_code
+        "SELECT rs.sku_code,
+                -SUM(l.qty_signed)      AS qty,
+                SUM(l.sales_amount_chf) AS chf,
+                -SUM(l.hl_resolved)     AS hl
+           FROM inv_sales_ledger l
+           JOIN ref_skus rs ON rs.id = l.sku_id_fk
+          WHERE " . KPI_SALES_PROD_FILTER . "
+            AND DATE_FORMAT(l.posting_date,'%Y-%m') = ?
+          GROUP BY rs.sku_code
           ORDER BY chf DESC
           LIMIT 20"
     );
@@ -9461,7 +9466,7 @@ function kpi_sales_top_skus(array $params, string $label, PDO $pdo): array
 
     $breakdown = array_map(fn(array $r) => [
         'key'   => $r['sku_code'],
-        'label' => $r['sku_description'] ?? $r['sku_code'],
+        'label' => $r['sku_code'],
         'value' => round((float) $r['chf'], 0),
         'qty'   => round((float) $r['qty'], 1),
         'hl'    => round((float) $r['hl'], 2),
@@ -9471,10 +9476,14 @@ function kpi_sales_top_skus(array $params, string $label, PDO $pdo): array
         'value'     => array_sum(array_column($breakdown, 'value')),
         'tint'      => 'neutral',
         'breakdown' => $breakdown,
+        'series'    => array_map(
+            fn(array $b) => ['period' => $b['label'], 'value' => $b['value']],
+            $breakdown
+        ),
         'meta'      => [
             'period'       => $latest,
             'period_label' => $latest,
-            'source'       => 'inv_sales_bc',
+            'source'       => 'inv_sales_ledger (production filter)',
         ],
     ]);
 
@@ -9482,6 +9491,7 @@ function kpi_sales_top_skus(array $params, string $label, PDO $pdo): array
 }
 
 // ─── #94: sales_by_channel ────────────────────────────────────────────────────
+// #94 RETIRED 2026-06-12 — superseded by #275 hl_by_trade_channel (inv_sales_ledger). Function kept; is_active=0 prevents dispatch.
 // Three-channel donut: b2b + taproom (inv_sales_bc) + eshop (inv_sales_orders).
 // PERIOD-CONSISTENCY RULE: b2b + taproom always come from the resolved BC period.
 // Eshop is included ONLY if inv_sales_orders has a row for that EXACT period.
@@ -9604,21 +9614,22 @@ function kpi_sales_contract_vs_own(array $params, string $label, PDO $pdo): arra
         return $cached;
     }
 
-    $periods = kpi_sales_load_bc_periods($pdo);
+    $periods = kpi_sales_load_ledger_prod($pdo);
     $latest  = kpi_sales_latest_period($periods);
 
     if ($latest === null) {
-        return kpi_error_result('Aucune donnée inv_sales_bc', $label);
+        return kpi_error_result('Aucune donnée inv_sales_ledger (production)', $label);
     }
 
     $stmt = $pdo->prepare(
         "SELECT rr.classification,
-                SUM(s.sales_amount_chf) AS chf,
-                SUM(s.hl_resolved)      AS hl
-           FROM inv_sales_bc s
-           JOIN ref_skus rs    ON rs.id = s.sku_id_fk
+                SUM(l.sales_amount_chf) AS chf,
+                -SUM(l.hl_resolved)     AS hl
+           FROM inv_sales_ledger l
+           JOIN ref_skus rs    ON rs.id = l.sku_id_fk
            JOIN ref_recipes rr ON rr.id = rs.recipe_id
-          WHERE s.period = ?
+          WHERE " . KPI_SALES_PROD_FILTER . "
+            AND DATE_FORMAT(l.posting_date,'%Y-%m') = ?
           GROUP BY rr.classification
           ORDER BY chf DESC"
     );
@@ -9641,7 +9652,7 @@ function kpi_sales_contract_vs_own(array $params, string $label, PDO $pdo): arra
         'meta'      => [
             'period'       => $latest,
             'period_label' => $latest,
-            'source'       => 'inv_sales_bc × ref_skus × ref_recipes (classification)',
+            'source'       => 'inv_sales_ledger × ref_skus × ref_recipes (classification)',
             'note'         => 'Montants sans sku_id_fk (cautions, articles) exclus',
         ],
     ]);
@@ -9704,7 +9715,7 @@ function kpi_sales_avg_order_value(string $label, PDO $pdo): array
 }
 
 // ─── #99: revenue_per_hl_trend ───────────────────────────────────────────────
-// CHF/HL sparkline over all available periods.
+// CHF/HL sparkline over all available periods (production beer only).
 
 function kpi_sales_revenue_per_hl_trend(string $label, PDO $pdo): array
 {
@@ -9713,20 +9724,30 @@ function kpi_sales_revenue_per_hl_trend(string $label, PDO $pdo): array
         return $cached;
     }
 
-    $periods = kpi_sales_load_bc_periods($pdo);
-    $latest  = kpi_sales_latest_period($periods);
+    $stmt = $pdo->query(
+        "SELECT DATE_FORMAT(l.posting_date,'%Y-%m') AS period,
+                SUM(l.sales_amount_chf)              AS chf,
+                -SUM(l.hl_resolved)                  AS hl
+           FROM inv_sales_ledger l
+           JOIN ref_skus rs ON rs.id = l.sku_id_fk
+          WHERE " . KPI_SALES_PROD_FILTER . "
+          GROUP BY DATE_FORMAT(l.posting_date,'%Y-%m')
+          ORDER BY period"
+    );
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    if ($latest === null) {
-        return kpi_error_result('Aucune donnée inv_sales_bc', $label);
+    if (empty($rows)) {
+        return kpi_error_result('Aucune donnée inv_sales_ledger (production)', $label);
     }
 
-    $cur      = $periods[$latest];
-    $curChfHl = $cur['hl'] > 0 ? round($cur['chf'] / $cur['hl'], 2) : null;
+    $latest   = $rows[count($rows) - 1]['period'];
+    $lastRow  = $rows[count($rows) - 1];
+    $curChfHl = $lastRow['hl'] > 0 ? round($lastRow['chf'] / $lastRow['hl'], 2) : null;
 
     $series = [];
-    foreach ($periods as $p => $d) {
-        if ($d['hl'] > 0) {
-            $series[] = ['period' => $p, 'value' => round($d['chf'] / $d['hl'], 2)];
+    foreach ($rows as $r) {
+        if ((float) $r['hl'] > 0) {
+            $series[] = ['period' => $r['period'], 'value' => round((float) $r['chf'] / (float) $r['hl'], 2)];
         }
     }
 
@@ -9737,7 +9758,8 @@ function kpi_sales_revenue_per_hl_trend(string $label, PDO $pdo): array
         'meta'   => [
             'period'       => $latest,
             'period_label' => $latest,
-            'source'       => 'inv_sales_bc (sales_amount_chf / hl_resolved)',
+            'period_from'  => $rows[0]['period'],
+            'source'       => 'inv_sales_ledger (sales_amount_chf / hl_resolved, production filter)',
         ],
     ]);
 
@@ -9745,6 +9767,7 @@ function kpi_sales_revenue_per_hl_trend(string $label, PDO $pdo): array
 }
 
 // ─── #100: discount_rebate_rate ───────────────────────────────────────────────
+// #100 RETIRED 2026-06-12 — discount_amount_chf not available in inv_sales_ledger. Blocked until column lands.
 // Discount % = total_discount / (total_sales + total_discount) for latest period.
 // Uses gross-up denominator so the rate reflects share of list price.
 
@@ -9800,7 +9823,7 @@ function kpi_sales_discount_rate(array $params, string $label, PDO $pdo): array
 }
 
 // ─── #102: seasonal_demand_curve ─────────────────────────────────────────────
-// Full historical series: CHF + HL per period for the line chart.
+// Full historical series: CHF + HL per period for the line chart (all-sales, 66+ months).
 
 function kpi_sales_seasonal_curve(string $label, PDO $pdo): array
 {
@@ -9809,32 +9832,38 @@ function kpi_sales_seasonal_curve(string $label, PDO $pdo): array
         return $cached;
     }
 
-    $periods = kpi_sales_load_bc_periods($pdo);
+    $stmt = $pdo->query(
+        "SELECT DATE_FORMAT(l.posting_date,'%Y-%m') AS period,
+                SUM(l.sales_amount_chf)              AS chf,
+                -SUM(l.hl_resolved)                  AS hl
+           FROM inv_sales_ledger l
+           JOIN ref_skus rs ON rs.id = l.sku_id_fk
+          WHERE " . KPI_SALES_PROD_FILTER . "
+          GROUP BY DATE_FORMAT(l.posting_date,'%Y-%m')
+          ORDER BY period"
+    );
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    if (empty($periods)) {
-        return kpi_error_result('Aucune donnée inv_sales_bc', $label);
+    if (empty($rows)) {
+        return kpi_error_result('Aucune donnée inv_sales_ledger (production)', $label);
     }
 
-    $series = array_map(
-        fn(string $p, array $d) => [
-            'period' => $p,
-            'value'  => round($d['chf'], 0),
-            'hl'     => round($d['hl'], 1),
-        ],
-        array_keys($periods), array_values($periods)
-    );
+    $series = array_map(fn(array $r) => [
+        'period' => $r['period'],
+        'value'  => round((float) $r['chf'], 0),
+        'hl'     => round((float) $r['hl'], 1),
+    ], $rows);
 
-    $latest = kpi_sales_latest_period($periods);
+    $latest = $rows[count($rows) - 1]['period'];
     $result = array_merge(kpi_empty_result($label, 'CHF HT'), [
-        'value'  => $latest ? round($periods[$latest]['chf'], 0) : null,
+        'value'  => round((float) $rows[count($rows) - 1]['chf'], 0),
         'tint'   => 'neutral',
         'series' => $series,
         'meta'   => [
-            'period_count' => count($periods),
-            'period_from'  => array_key_first($periods),
+            'period_count' => count($rows),
+            'period_from'  => $rows[0]['period'],
             'period_to'    => $latest,
-            'source'       => 'inv_sales_bc (toutes périodes disponibles)',
-            'note'         => 'Données BC depuis 2025-12 seulement; historique complet non disponible',
+            'source'       => 'inv_sales_ledger (production filter, toutes périodes disponibles)',
         ],
     ]);
 
