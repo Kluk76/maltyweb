@@ -2,15 +2,17 @@
 
 > Read when a task touches the Financier page (`public/modules/financier.php`), the Fiche COGS / variation-de-stock tab, the `cogs_fiche_*` / `ref_cogs_fiche_categories` tables, or the monthly-compile engine `scripts/cogs-monthly-compile.ts` (maltytask repo). Verified live 2026-06-11.
 
-## ⚡ STATUS HEADLINE (2026-06-12 — VERIFIED LIVE) — MAY `--apply` ALREADY LANDED; now verify + git-commit engine
-**GROUND TRUTH (probed 2026-06-12):** `cogs_fiche_monthly` has **12 May rows already written** (computed_at 2026-06-12 06:42:50). May FG census IS in (`inv_fg_stocktake` month_closed=2026-05 = 34 rows); May RM stocktake = 130 rows. Engine on disk = 1270 lines, modified 2026-06-12 08:39, **uncommitted (` M scripts/cogs-monthly-compile.ts`)**; committed base = maltytask `fcad639`. Preview `data/cogs-fiche-preview-2026-05.json` (mode=APPLY, regen 08:42) **ties exactly to the DB rows** → idempotent, no drift.
-- **May headline (DB == preview):** RM **282 368.74** · WIP **21 814.28** · FG **47 701.56** · TOTAL **351 884.58** · OPENING **394 367.74** (== April seed close → continuity holds) · VARIATION **−42 483.16** · BASIS_ADJ **+1 808.82**.
-- **basis_adjustment is COMPUTED BY THE ENGINE, not an operator input** (memory was stale): `computeBasisAdjustment()` revalues April FG at CURRENT ref_sku_bom cost − seeded April fg_chf; FG/F2 portion only, RM/yeast = "non isolable — base héritée". The +1 808.82 is an OUTPUT. There is no CLI flag / config row for it.
-- **g→kg/loadRM hardening is DONE in-engine:** RM now flows through `loadRmStock` (lib/rm-stock-mysql.js); formula = `finalQty × costChf` (NO conversionFactor — finalQty already in pricing unit); a SANITY GUARD throws if Yeast RM ≥ 50 000 (catches conversionFactor creep); 27 unit-mismatch items tracked as diagnostics only.
-- **B4/B5 financier UI + Saisies PF card = ALREADY COMMITTED** maltyweb `ad9c14b` (status clean). The "deployed-not-committed" note below is STALE.
-- **⏭ REMAINING (this session):** (1) Opus independently verifies the 7 headline figures (continuity, EXT-delta sanity, RM guard, idempotent re-run) → (2) Kouros's one ratification (these numbers are the publishable May fiche) → (3) git-commit the engine delta `scripts/cogs-monthly-compile.ts` on maltytask (the deferred commit). No re-apply needed unless verification finds drift. Detail below.
+## ✅ STATUS HEADLINE (2026-06-12 — MAY CLOSE FULLY FINALIZED: SHIPPED + RATIFIED + VERIFIED + COMMITTED + PUSHED)
+**The financier-fiche arc keystone is CLOSED.** May 2026 COGS-fiche close is done end-to-end. **Engine COMMITTED + PUSHED — `423a660 feat(cogs): finalize May-2026 close — RM unit-consistency diagnostic + basis-change line` is HEAD on maltytask `main`; `origin/main..HEAD` empty; working tree clean.** (Correction to a prior brief that said the engine was uncommitted at base `fcad639` — a concurrent session committed + pushed it; the deferred commit is DONE, nothing left to commit.) The `cogs_fiche_monthly` May rows (written 06:45 2026-06-12) are **RATIFIED BY KOUROS and INDEPENDENTLY VERIFIED by Opus** (gate), all checks PASS.
+- **May headline (DB, published, verified):** RM **282 368.74** · WIP **21 814.28** · FG **47 701.56** · TOTAL **351 884.58** · OPENING **394 367.74** · VARIATION **−42 483.16** · BASIS_ADJ **+1 808.82**. 12 rows. (rm+wip+fg=total ✓; total−opening=variation ✓.)
+- **Opus verification record (all PASS):** (1) 12 rows, rm+wip+fg=351 884.58=total ✓; (2) total−opening=−42 483.16=variation ✓; (3) **April-seed continuity EXACT — April seed SUM(total_chf)=394 367.74 == May opening ✓ (the key fiscal invariant)**; (4) Yeast RM=1 496.03, g→kg hardening held (engine diagnostics label naive=CORRECT / conv=WRONG; 27 unit-mismatch items SURFACED as diagnostics, NOT applied) ✓; (5) **engine dry-run reproduces the published DB rows TO THE CENT → HEAD engine `423a660` == what's published, no drift** ✓; (6) basis adjustment +1 808.82 = FG/F2 restatement ONLY (3 pure-RM categories correctly carry 0) ✓.
+- **Noted to Kouros (NOT a blocker):** engine May valuation diverges from legacy EXT (RM ≈ −47k vs EXT) — EXPECTED; engine supersedes EXT. Correctness rests on the April-seed tie-out + internal identities, NOT on EXT match.
+- **basis_adjustment is COMPUTED BY THE ENGINE, not an operator input:** `computeBasisAdjustment()` revalues April FG at CURRENT ref_sku_bom cost − seeded April fg_chf; FG/F2 portion only, RM/yeast = "non isolable — base héritée". The +1 808.82 is an OUTPUT; no CLI flag / config row for it.
+- **g→kg/loadRM hardening is DONE in-engine:** RM flows through `loadRmStock` (lib/rm-stock-mysql.js); formula = `finalQty × costChf` (NO conversionFactor — finalQty already in pricing unit); SANITY GUARD throws if Yeast RM ≥ 50 000 (catches conversionFactor creep); 27 unit-mismatch items = diagnostics only.
+- **B4/B5 financier UI + Saisies PF card = COMMITTED** maltyweb `ad9c14b`.
+- **⏭ NEXT MONTHLY CLOSE = JUNE** — gated on June FG census at month-end (operator enters via Saisies → PF card → `expeditions.php?view=stocktake`). Then engine `--apply 2026-06`, reconcile (opening = May close 351 884.58), auto-publishes on the Fiche tab. Closed-periods-never-recomputed remains standing policy — May is now immutable.
 
-## ⚡ (SUPERSEDED) STATUS HEADLINE (2026-06-11) — ARC SHIPPED + DEPLOYED + SMOKE-TESTED, awaiting operator May FG census then git commit
+## ⚡ (SUPERSEDED — May close now FULLY FINALIZED, see headline above) STATUS HEADLINE (2026-06-11) — awaiting operator May FG census then git commit
 Full pipeline is LIVE on the VPS (deployed, NOT yet git-committed — awaiting Kouros's go). Migs 330 + 332 applied. Fiche COGS tab (5th tab) renders April, ties to the cent, smoke-tested 13/14 on app.maltytask.ch. Engine built + May dry-run validated. **Only remaining work is operator-gated:** Kouros enters the May-31 FG census via the now-surfaced stocktake form → then finalize `basis_adjustment_chf`, run engine `--apply` for 2026-05, reconcile, publish. Detail below.
 
 ## Page placement (Le Zeppelin IA)
@@ -50,13 +52,13 @@ Same shape as seed + `basis_adjustment_chf`(decimal14,4 NULL), `computed_at`(dat
 - **mig 332 was RENUMBERED from 331** — a concurrent `331_kpi_grouped_bar_viztype.sql` (the MON TABLEAU #5 grouped-bar work) had already taken 331. The file on disk is `332_cogs_fiche_seed_and_monthly.sql`.
 - **mig 332 DROPPED `cogs_fiche_opening_anchor`** (a table mig 330 had created) and removed its `schema_meta` row — the opening is now resolved live by UNION(seed ∪ monthly), so a separate anchor table was a redundant parallel store. Do NOT re-create `cogs_fiche_opening_anchor`.
 
-## Engine — `scripts/cogs-monthly-compile.ts` (maltytask repo, TS) — BUILT, May dry-run validated
+## Engine — `scripts/cogs-monthly-compile.ts` (maltytask repo, TS) — ✅ COMMITTED + PUSHED `423a660`, May `--apply` LANDED + VERIFIED
 Computes RM/WIP/FG per category → `cogs_fiche_monthly`. Guards:
 - **Opening resolver reads UNION(seed ∪ monthly)** — opening of month N = closing of N-1 from whichever home holds it (April from seed, May+ from monthly).
 - **Immutability guard:** refuses to recompute ANY month present in `cogs_fiche_seed` (closed-periods-never-recomputed = standing policy).
 - **FG-MISSING guard:** refuses to fabricate a zero close when the FG census for the month is absent (no fabricated zero close).
 - **May dry-run validated:** RM Yeast = 1 496 (sane — **confirms the earlier g→kg yeast blowup is a CLOSED-PERIOD-ONLY artifact**, not live), WIP computes, opening resolves from the April seed.
-- **🟡 LATENT UNIT-INVARIANT ASSUMPTION (open follow-up to harden):** engine currently uses naive `final_qty × cost_chf`, NOT `loadRM`. Correct for OPEN months where stocktake qty is already in the current pricing unit; but it silently assumes unit-consistency. HARDEN by switching to `loadRM` OR adding a unit-consistency assert before this is relied on for a closed month. Flag at next touch.
+- **✅ UNIT-INVARIANT HARDENED (was LATENT):** engine now flows RM through `loadRmStock` (lib/rm-stock-mysql.js), formula `finalQty × costChf` (finalQty already in pricing unit, NO conversionFactor), plus a sanity guard throwing if Yeast RM ≥ 50 000 and a unit-consistency DIAGNOSTIC (27 mismatch items surfaced, labelled naive=CORRECT/conv=WRONG, NOT applied). Verified May: Yeast RM=1 496.03. Resolved in `423a660`.
 
 ## Build verdict / sequencing for the Fiche tab
 - The Fiche tab is render-only over `cogs_fiche_seed` + `cogs_fiche_monthly`; both are canonical single-home tables, no parallel store. SOUND.
@@ -82,12 +84,8 @@ New card on the Saisies page → `expeditions.php?view=stocktake` (operator-gate
 - (b) The one-time WAC/F2 basis change is shown as a **separate "Ajustement de base (non récurrent)"** line (= `basis_adjustment_chf`), not folded into the recurring variation.
 - (c) **Closed-periods-never-recomputed is standing policy** (mirrored by the engine's immutability guard).
 
-## ⏭ STILL PENDING — blocked on operator (the only open work)
-**Kouros enters the May-31 FG census** via the now-surfaced stocktake form (Saisies → PF card). Once in, PM/agent finalizes:
-- `basis_adjustment_chf`: FG/F2 delta ≈ **+1 809**; the RM/yeast portion = **"non isolable — base héritée"** (never fabricated, surfaced as inherited-basis, not a number).
-- Run engine `cogs-monthly-compile.ts --apply` for **2026-05** (first row-write into `cogs_fiche_monthly`).
-- Reconcile May to its own inputs (opening = April J), then it publishes on the Finance Fiche tab automatically.
-- Then git-commit the whole arc (deployed-not-committed today).
+## ✅ DONE (was "STILL PENDING") — May close finalized 2026-06-12
+May-31 FG census entered (`inv_fg_stocktake` month_closed=2026-05, 34 rows); `basis_adjustment_chf` = +1 808.82 (FG/F2; RM/yeast = "non isolable — base héritée"); engine `--apply 2026-05` landed 12 rows into `cogs_fiche_monthly`; reconciled (opening=April seed 394 367.74); published on the Fiche tab; engine committed+pushed `423a660`. **Next monthly close = JUNE (gated on June FG census at month-end) — see headline.**
 
 ## 🎫 TOUR (PM tour-steward standing duty)
 `scripts/tour-gap-check.php` flags `financier` + `journal-saisies` as **pre-existing CRITICAL gaps** (NOT caused by this arc's changes — both lacked tour cards before). The new **Fiche COGS tab may want a tour card** — note for the next `maltyweb-tour-steward` dispatch. financier is a sensitive class (COGS/COP) → steward STOPS pre-deploy + returns `PM-RATIFY: financier` for PM ratification.
