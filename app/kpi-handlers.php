@@ -8940,7 +8940,8 @@ function kpi_util_mass_energy_balance(string $label, PDO $pdo): array
 //
 // ALL VALUES ARE HT (excl. VAT) — inv_sales_bc is the BC GL export which uses HT.
 //
-// Built (#86, #87, #88, #90, #91, #92, #93, #94, #96, #97, #99, #100, #102):
+// Built (#86, #87, #88, #90, #91, #92, #93, #96, #97, #99, #102): repointed to inv_sales_ledger 2026-06-12.
+// Retired (#94 superseded by #275, #100 discount col absent from ledger): stub bodies, is_active=0.
 // Stubbed (#89, #95, #98, #101, #103, #104, #105, #262) — see comments inline.
 // ═════════════════════════════════════════════════════════════════════════════
 
@@ -9501,107 +9502,9 @@ function kpi_sales_top_skus(array $params, string $label, PDO $pdo): array
 
 function kpi_sales_by_channel(string $label, PDO $pdo): array
 {
-    $cacheKey = 'sales_by_channel';
-    if (($cached = kpi_cache_get($cacheKey)) !== null) {
-        return $cached;
-    }
-
-    $periods = kpi_sales_load_bc_periods($pdo);
-    $latest  = kpi_sales_latest_period($periods);
-
-    if ($latest === null) {
-        return kpi_error_result('Aucune donnée inv_sales_bc', $label);
-    }
-
-    // b2b + taproom from inv_sales_bc for the resolved period
-    $stmt = $pdo->prepare(
-        "SELECT channel, SUM(sales_amount_chf) AS chf, SUM(hl_resolved) AS hl
-           FROM inv_sales_bc
-          WHERE period = ?
-          GROUP BY channel"
-    );
-    $stmt->execute([$latest]);
-    $bcRows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-    $bcByChannel = [];
-    foreach ($bcRows as $r) {
-        $bcByChannel[$r['channel']] = ['chf' => (float) $r['chf'], 'hl' => (float) $r['hl']];
-    }
-
-    // eshop from inv_sales_orders — only if the EXACT same period exists.
-    // Also fetch the latest available eshop period for the pending-note.
-    $stmtEshop = $pdo->prepare(
-        "SELECT
-             SUM(CASE WHEN period = ? THEN total_chf ELSE 0 END) AS chf_exact,
-             MAX(period)                                          AS latest_orders_period
-           FROM inv_sales_orders"
-    );
-    $stmtEshop->execute([$latest]);
-    $eshopMeta = $stmtEshop->fetch(PDO::FETCH_ASSOC);
-
-    $latestOrdersPeriod = $eshopMeta['latest_orders_period'] ?? null;
-    $eshopChfExact      = (float) ($eshopMeta['chf_exact'] ?? 0);
-
-    $eshopChf     = 0.0;
-    $eshopPending = false;
-    $eshopNote    = null;
-
-    if ($eshopChfExact > 0) {
-        // Eshop data exists for the resolved period — period-consistent, include it.
-        $eshopChf = $eshopChfExact;
-    } else {
-        // Eshop data missing for the resolved period — do NOT use a stale earlier period.
-        $eshopPending = true;
-        if ($latestOrdersPeriod !== null) {
-            $eshopNote = "eshop {$latest} non encore importé (dernier: {$latestOrdersPeriod})";
-        } else {
-            $eshopNote = "eshop {$latest} non encore importé (aucune donnée inv_sales_orders)";
-        }
-    }
-
-    $b2bChf     = $bcByChannel['b2b']['chf']     ?? 0.0;
-    $taproomChf = $bcByChannel['taproom']['chf'] ?? 0.0;
-    // Headline total = b2b + taproom only when eshop is pending (period-consistent).
-    $totalChf   = $b2bChf + $taproomChf + $eshopChf;
-
-    $breakdown = [];
-    if ($b2bChf > 0) {
-        $breakdown[] = ['key' => 'b2b',     'label' => 'B2B (facturation)',  'value' => round($b2bChf, 0)];
-    }
-    if ($taproomChf > 0) {
-        $breakdown[] = ['key' => 'taproom', 'label' => 'Taproom / Tap&Shop', 'value' => round($taproomChf, 0)];
-    }
-    // Eshop always shown in breakdown (0/pending when not available for the period).
-    $breakdown[] = [
-        'key'     => 'eshop',
-        'label'   => 'Eshop (Shopify)',
-        'value'   => round($eshopChf, 0),
-        'pending' => $eshopPending,
-    ];
-
-    $meta = [
-        'period'              => $latest,
-        'period_label'        => $latest,
-        'b2b_chf'             => round($b2bChf, 2),
-        'taproom_chf'         => round($taproomChf, 2),
-        'eshop_chf'           => round($eshopChf, 2),
-        'eshop_period'        => $eshopPending ? null : $latest,
-        'latest_eshop_period' => $latestOrdersPeriod,
-        'source'              => 'inv_sales_bc (b2b/taproom) + inv_sales_orders (eshop)',
-        'note'                => $eshopNote,
-    ];
-    if ($eshopPending) {
-        $meta['eshop_pending'] = true;
-    }
-
-    $result = array_merge(kpi_empty_result($label, 'CHF HT'), [
-        'value'     => round($totalChf, 2),
-        'tint'      => 'neutral',
-        'breakdown' => $breakdown,
-        'meta'      => $meta,
-    ]);
-
-    return kpi_cache_set($cacheKey, $result);
+    // #94 RETIRED 2026-06-12 — superseded by #275 hl_by_trade_channel (inv_sales_ledger).
+    // is_active=0 prevents dispatch; stub body prevents fatal if ever reached.
+    return kpi_error_result('KPI #94 retraité — utiliser #275 hl_by_trade_channel', $label);
 }
 
 // ─── #96: contract_vs_own_brand ───────────────────────────────────────────────
@@ -9773,53 +9676,9 @@ function kpi_sales_revenue_per_hl_trend(string $label, PDO $pdo): array
 
 function kpi_sales_discount_rate(array $params, string $label, PDO $pdo): array
 {
-    $cacheKey = 'sales_discount_rate';
-    if (($cached = kpi_cache_get($cacheKey)) !== null) {
-        return $cached;
-    }
-
-    $periods = kpi_sales_load_bc_periods($pdo);
-    $latest  = kpi_sales_latest_period($periods);
-
-    if ($latest === null) {
-        return kpi_error_result('Aucune donnée inv_sales_bc', $label);
-    }
-
-    $cur       = $periods[$latest];
-    $discount  = $cur['discount_chf'];
-    $sales     = $cur['chf'];
-    $listPrice = $sales + $discount;
-    $rate      = $listPrice > 0 ? round($discount / $listPrice * 100, 2) : null;
-
-    // Prior period rate for delta
-    $prior     = kpi_sales_prior_period($latest);
-    $priorRate = null;
-    if (isset($periods[$prior])) {
-        $pd = $periods[$prior];
-        $pl = $pd['chf'] + $pd['discount_chf'];
-        $priorRate = $pl > 0 ? round($pd['discount_chf'] / $pl * 100, 2) : null;
-    }
-    $delta = ($rate !== null && $priorRate !== null)
-        ? round($rate - $priorRate, 2)
-        : null;
-
-    $result = array_merge(kpi_empty_result($label, '%'), [
-        'value'       => $rate,
-        'delta'       => $delta,
-        'delta_label' => 'vs mois précédent (pp)',
-        'tint'        => $rate === null ? 'neutral'
-                       : ($rate <= 3 ? 'green' : ($rate <= 7 ? 'amber' : 'red')),
-        'meta'        => [
-            'period'          => $latest,
-            'period_label'    => $latest,
-            'total_discount'  => round($discount, 2),
-            'total_sales'     => round($sales, 2),
-            'list_price_base' => round($listPrice, 2),
-            'source'          => 'inv_sales_bc.discount_amount_chf',
-        ],
-    ]);
-
-    return kpi_cache_set($cacheKey, $result);
+    // #100 RETIRED 2026-06-12 — discount_amount_chf absent from inv_sales_ledger.
+    // is_active=0, data_ready=0 in ref_kpi_trackers. Stub prevents fatal if reached.
+    return kpi_error_result('KPI #100 retraité — discount_amount_chf absent de inv_sales_ledger', $label);
 }
 
 // ─── #102: seasonal_demand_curve ─────────────────────────────────────────────
