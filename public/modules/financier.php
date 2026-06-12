@@ -1012,6 +1012,11 @@ $active_module = 'financier';
            download aria-label="Télécharger la fiche CSV">
           ↓ Télécharger CSV
         </a>
+        <a class="fin-fiche-csv-btn" id="fiche-comprehensive-csv-btn"
+           href="/api/cogs-comprehensive-csv.php?month=<?= htmlspecialchars($ficheLatestKey ?? '') ?>"
+           download aria-label="Télécharger le COGS complet CSV">
+          ↓ COGS complet (CSV)
+        </a>
       </div>
 
       <div class="fin-fiche-warn" id="fiche-incomplete-warn" hidden role="alert">

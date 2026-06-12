@@ -1611,6 +1611,11 @@
     if (csvBtn) {
       csvBtn.href = '/api/cogs-fiche-csv.php?month=' + encodeURIComponent(mk);
     }
+
+    var compCsvBtn = document.getElementById('fiche-comprehensive-csv-btn');
+    if (compCsvBtn) {
+      compCsvBtn.href = '/api/cogs-comprehensive-csv.php?month=' + encodeURIComponent(mk);
+    }
   }
 
   var defaultMk = window.FIN_FICHE_DEFAULT || monthSel.value;

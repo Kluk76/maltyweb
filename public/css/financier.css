@@ -1236,6 +1236,10 @@ dialog#fin-sku-modal::backdrop {
   border-radius: 5px;
   text-decoration: none;
   transition: background 0.12s, border-color 0.12s;
+}
+
+/* Push the first download button (and everything after it) to the right */
+#fiche-csv-btn {
   margin-left: auto;
 }
 
