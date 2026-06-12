@@ -11738,7 +11738,7 @@ function kpi_sales_hl_by_sku_prod(string $label, PDO $pdo): array
     return array_merge(kpi_empty_result($label, 'HL'), [
         'value'     => round($monthTotal, 2),
         'unit'      => 'HL',
-        'series'    => $breakdown, // viz=bar reads series
+        'series'    => array_map(fn($b) => ['period' => $b['label'], 'value' => $b['value']], $breakdown), // viz=bar labels x-axis from period
         'breakdown' => $breakdown,
         'meta'      => [
             'period_label' => $latest,
@@ -11968,7 +11968,7 @@ function kpi_sales_hl_by_recipe(string $label, PDO $pdo): array
         'value'     => round($monthTotal, 2),
         'unit'      => 'HL',
         'breakdown' => $breakdown,
-        'series'    => $breakdown,
+        'series'    => array_map(fn($b) => ['period' => $b['label'], 'value' => $b['value']], $breakdown), // viz=bar labels x-axis from period
         'meta'      => [
             'period_label'  => $latest,
             'recipe_count'  => count($rows),
