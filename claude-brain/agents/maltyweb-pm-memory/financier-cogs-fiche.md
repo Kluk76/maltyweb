@@ -2,7 +2,15 @@
 
 > Read when a task touches the Financier page (`public/modules/financier.php`), the Fiche COGS / variation-de-stock tab, the `cogs_fiche_*` / `ref_cogs_fiche_categories` tables, or the monthly-compile engine `scripts/cogs-monthly-compile.ts` (maltytask repo). Verified live 2026-06-11.
 
-## ⚡ STATUS HEADLINE (2026-06-11) — ARC SHIPPED + DEPLOYED + SMOKE-TESTED, awaiting operator May FG census then git commit
+## ⚡ STATUS HEADLINE (2026-06-12 — VERIFIED LIVE) — MAY `--apply` ALREADY LANDED; now verify + git-commit engine
+**GROUND TRUTH (probed 2026-06-12):** `cogs_fiche_monthly` has **12 May rows already written** (computed_at 2026-06-12 06:42:50). May FG census IS in (`inv_fg_stocktake` month_closed=2026-05 = 34 rows); May RM stocktake = 130 rows. Engine on disk = 1270 lines, modified 2026-06-12 08:39, **uncommitted (` M scripts/cogs-monthly-compile.ts`)**; committed base = maltytask `fcad639`. Preview `data/cogs-fiche-preview-2026-05.json` (mode=APPLY, regen 08:42) **ties exactly to the DB rows** → idempotent, no drift.
+- **May headline (DB == preview):** RM **282 368.74** · WIP **21 814.28** · FG **47 701.56** · TOTAL **351 884.58** · OPENING **394 367.74** (== April seed close → continuity holds) · VARIATION **−42 483.16** · BASIS_ADJ **+1 808.82**.
+- **basis_adjustment is COMPUTED BY THE ENGINE, not an operator input** (memory was stale): `computeBasisAdjustment()` revalues April FG at CURRENT ref_sku_bom cost − seeded April fg_chf; FG/F2 portion only, RM/yeast = "non isolable — base héritée". The +1 808.82 is an OUTPUT. There is no CLI flag / config row for it.
+- **g→kg/loadRM hardening is DONE in-engine:** RM now flows through `loadRmStock` (lib/rm-stock-mysql.js); formula = `finalQty × costChf` (NO conversionFactor — finalQty already in pricing unit); a SANITY GUARD throws if Yeast RM ≥ 50 000 (catches conversionFactor creep); 27 unit-mismatch items tracked as diagnostics only.
+- **B4/B5 financier UI + Saisies PF card = ALREADY COMMITTED** maltyweb `ad9c14b` (status clean). The "deployed-not-committed" note below is STALE.
+- **⏭ REMAINING (this session):** (1) Opus independently verifies the 7 headline figures (continuity, EXT-delta sanity, RM guard, idempotent re-run) → (2) Kouros's one ratification (these numbers are the publishable May fiche) → (3) git-commit the engine delta `scripts/cogs-monthly-compile.ts` on maltytask (the deferred commit). No re-apply needed unless verification finds drift. Detail below.
+
+## ⚡ (SUPERSEDED) STATUS HEADLINE (2026-06-11) — ARC SHIPPED + DEPLOYED + SMOKE-TESTED, awaiting operator May FG census then git commit
 Full pipeline is LIVE on the VPS (deployed, NOT yet git-committed — awaiting Kouros's go). Migs 330 + 332 applied. Fiche COGS tab (5th tab) renders April, ties to the cent, smoke-tested 13/14 on app.maltytask.ch. Engine built + May dry-run validated. **Only remaining work is operator-gated:** Kouros enters the May-31 FG census via the now-surfaced stocktake form → then finalize `basis_adjustment_chf`, run engine `--apply` for 2026-05, reconcile, publish. Detail below.
 
 ## Page placement (Le Zeppelin IA)
