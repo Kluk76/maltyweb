@@ -1,5 +1,6 @@
 # secrets — never commit
 config/db.env
+config/bc.env
 config/*.local.*
 .env
 .env.*

@@ -1,0 +1,40 @@
+-- 341_unique_entry_no_inv_sales_ledger.sql
+--
+-- Add UNIQUE KEY on inv_sales_ledger.bc_line_seq.
+--
+-- Background:
+--   bc_line_seq holds the BC Item-Ledger Entry_No (the "N° séquence" column in
+--   the historical xlsx export). It is BC's natural primary key for item-ledger
+--   entries — monotonic, dense, issued once per entry, never reused.
+--
+--   Pre-flight verification (2026-06-12):
+--     SELECT COUNT(*) total, COUNT(DISTINCT bc_line_seq) distinct_seq
+--     FROM inv_sales_ledger;
+--     → total = 44164, distinct_seq = 44164, dupes = 0, nulls = 0.
+--   This confirms the constraint is safe to add without any data cleanup.
+--
+-- Why now:
+--   The new OData incremental connector (ingest_bc_sales_ledger.py --source api)
+--   uses Entry_No as its watermark and upserts on bc_line_seq.  Without this
+--   index the ON DUPLICATE KEY UPDATE in INSERT_SQL only deduplicates on the
+--   dedup_key GENERATED column (= CONCAT_WS('|', source_file, bc_line_seq)).
+--   source_file differs between the historical xlsx loader ('Écritures comptables
+--   article.xlsx') and the API path ('odata:Écritures_comptables_article_Excel'),
+--   so a re-ingest from the API would INSERT new rows for already-loaded entries.
+--   uq_bc_line_seq closes that gap: any insert whose Entry_No is already present
+--   collapses to an UPDATE regardless of source_file.
+--
+-- The existing dedup_key UNIQUE (uniq_sales_ledger_dedup) is preserved — it
+-- continues to serve the xlsx-source path and provides a secondary uniqueness
+-- guarantee within a single source_file.
+--
+-- schema_meta: this index lives on inv_sales_ledger, which already has a
+-- schema_meta row (corrections_policy drives the table); a per-index schema_meta
+-- row is not the convention (schema_meta is per-table), so no schema_meta change.
+--
+-- MySQL 8 syntax note: no ADD COLUMN IF NOT EXISTS — standard ADD UNIQUE KEY.
+-- The migration runner (scripts/migrate.php) provides idempotency via
+-- schema_migrations.
+
+ALTER TABLE inv_sales_ledger
+  ADD UNIQUE KEY uq_bc_line_seq (bc_line_seq);

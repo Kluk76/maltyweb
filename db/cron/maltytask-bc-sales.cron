@@ -1,0 +1,38 @@
+# /etc/cron.d/maltytask-bc-sales
+#
+# Incremental BC item-ledger → inv_sales_ledger connector.
+# Anti-joins the in-scope (Posting_Date ge MIN(posting_date)) BC Sale Entry_Nos
+# against inv_sales_ledger.bc_line_seq and upserts the missing rows. Catches
+# "holes below the high-water mark" that a MAX-watermark pull would miss.
+#
+# Idempotent: ON DUPLICATE KEY UPDATE on uq_bc_line_seq (Entry_No) and
+# uniq_sales_ledger_dedup (source_file|bc_line_seq) — safe to re-run at any
+# frequency; a run that finds no new entries exits cleanly.
+#
+# ENABLED 2026-06-12 after GATE A (--verify-overlap, zero field-diff on 1474
+# common rows) + GATE B (--dry-run) + a clean first --apply (166 rows inserted:
+# 27 sub-watermark holes + 139 above; total 44,164 → 44,330; operator-approved).
+#
+# BC credentials: /var/www/maltytask/config/bc.env (mode 640, group www-data).
+# DB credentials: /var/www/maltytask/config/db.env (mode 640, group www-data).
+# Source of truth: db/cron/maltytask-bc-sales.cron in the maltyweb repo.
+# Deployed via bin/deploy.sh --apply (sudo install -m 0644 → /etc/cron.d/).
+# Manual edits to /etc/cron.d/* are overwritten on next deploy — edit here.
+#
+# Log: /var/log/maltytask/bc-sales.log (must be pre-created; see preflight below).
+# Preflight:
+#   sudo touch /var/log/maltytask/bc-sales.log
+#   sudo chown maltytask:www-data /var/log/maltytask/bc-sales.log
+#
+# Frequency: every 4 hours. BC ledger entries are posted in near-real-time
+# but a 4-hour window keeps the fulfilment and COGS views current intra-day
+# without hammering the API.
+#
+# Times UTC (VPS timezone Etc/UTC). maltytask user primary group www-data.
+# Python at /usr/bin/python3 (absolute — cron PATH is minimal).
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# m   h         dom mon dow  user        command
+0   0,4,8,12,16,20  *   *   *   maltytask   cd /var/www/maltytask && /usr/bin/python3 scripts/python/ingest_bc_sales_ledger.py --apply >> /var/log/maltytask/bc-sales.log 2>&1
