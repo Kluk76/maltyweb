@@ -1,0 +1,474 @@
+/*
+ * email-orders.css — Commandes e-mail validation module styles.
+ *
+ * Scoped under body.email-orders-page. Uses palette tokens from app.css :root.
+ * No inline styles. No hardcoded hex — only var(--…) tokens.
+ * eo-* prefix throughout.
+ */
+
+/* ── Page header ──────────────────────────────────────────────────────────── */
+
+body.email-orders-page .eo-header {
+  margin-bottom: 1.5rem;
+}
+
+body.email-orders-page .eo-header__eyebrow {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  margin-bottom: 0.25rem;
+}
+
+body.email-orders-page .eo-header__title {
+  font-family: "Fraunces", serif;
+  font-size: 2rem;
+  font-weight: 300;
+  color: var(--ink);
+  margin: 0 0 0.25rem;
+  line-height: 1.15;
+}
+
+body.email-orders-page .eo-header__title em {
+  font-style: italic;
+  font-weight: 200;
+}
+
+body.email-orders-page .eo-header__sub {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.875rem;
+  color: var(--ink-mute);
+  margin: 0;
+}
+
+/* ── Flash ────────────────────────────────────────────────────────────────── */
+
+body.email-orders-page .eo-flash {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-radius: 6px;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.9rem;
+  margin-bottom: 1.25rem;
+}
+
+body.email-orders-page .eo-flash--ok {
+  background: var(--green-tint, #edfaf3);
+  border: 1px solid var(--green-border, #7dd3a8);
+  color: var(--green-ink, #155c34);
+}
+
+body.email-orders-page .eo-flash--err {
+  background: var(--red-tint, #fef2f2);
+  border: 1px solid var(--red-border, #fca5a5);
+  color: var(--red-ink, #991b1b);
+}
+
+/* ── Bucket sections ──────────────────────────────────────────────────────── */
+
+body.email-orders-page .eo-section {
+  margin-bottom: 2.5rem;
+}
+
+body.email-orders-page .eo-section__header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+body.email-orders-page .eo-section__title {
+  font-family: "Fraunces", serif;
+  font-size: 1.25rem;
+  font-weight: 300;
+  color: var(--ink);
+  margin: 0;
+}
+
+body.email-orders-page .eo-section__badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+body.email-orders-page .eo-badge--review {
+  background: var(--amber-tint, #fffbeb);
+  border: 1px solid var(--amber-border, #fbbf24);
+  color: var(--amber-ink, #92400e);
+}
+
+body.email-orders-page .eo-badge--error {
+  background: var(--red-tint, #fef2f2);
+  border: 1px solid var(--red-border, #fca5a5);
+  color: var(--red-ink, #991b1b);
+}
+
+body.email-orders-page .eo-badge--done {
+  background: var(--surface-2, #f3f4f6);
+  border: 1px solid var(--border, #e5e7eb);
+  color: var(--ink-mute);
+}
+
+body.email-orders-page .eo-empty {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.875rem;
+  color: var(--ink-mute);
+  padding: 1rem 0;
+}
+
+/* ── Review card: two-column layout ──────────────────────────────────────── */
+
+body.email-orders-page .eo-review-card {
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 8px;
+  margin-bottom: 1.25rem;
+  overflow: hidden;
+  background: var(--surface, #fff);
+}
+
+body.email-orders-page .eo-review-card__meta {
+  padding: 0.6rem 1rem;
+  background: var(--surface-2, #f9fafb);
+  border-bottom: 1px solid var(--border, #e5e7eb);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.72rem;
+  color: var(--ink-mute);
+}
+
+body.email-orders-page .eo-review-card__meta strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+body.email-orders-page .eo-review-card__columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  min-height: 200px;
+}
+
+@media (max-width: 860px) {
+  body.email-orders-page .eo-review-card__columns {
+    grid-template-columns: 1fr;
+  }
+}
+
+body.email-orders-page .eo-review-card__raw {
+  padding: 1rem;
+  border-right: 1px solid var(--border, #e5e7eb);
+  overflow: auto;
+}
+
+body.email-orders-page .eo-review-card__raw-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--ink-mute);
+  margin-bottom: 0.4rem;
+}
+
+body.email-orders-page .eo-review-card__raw-body {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--ink);
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--surface-2, #f9fafb);
+  border-radius: 4px;
+  padding: 0.75rem;
+}
+
+body.email-orders-page .eo-review-card__form {
+  padding: 1rem;
+}
+
+body.email-orders-page .eo-review-card__form-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--ink-mute);
+  margin-bottom: 0.5rem;
+}
+
+/* ── Form field layout ────────────────────────────────────────────────────── */
+
+body.email-orders-page .eo-field {
+  margin-bottom: 0.85rem;
+}
+
+body.email-orders-page .eo-field__label {
+  display: block;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--ink-mute);
+  margin-bottom: 0.25rem;
+}
+
+body.email-orders-page .eo-field__label--required::after {
+  content: " *";
+  color: var(--red-ink, #991b1b);
+}
+
+body.email-orders-page .eo-field__hint {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem;
+  color: var(--ink-mute);
+  margin-bottom: 0.25rem;
+}
+
+body.email-orders-page .eo-input {
+  width: 100%;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--border, #d1d5db);
+  border-radius: 5px;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.875rem;
+  color: var(--ink);
+  background: var(--surface, #fff);
+  box-sizing: border-box;
+}
+
+body.email-orders-page .eo-input:focus {
+  outline: none;
+  border-color: var(--accent, #3b82f6);
+  box-shadow: 0 0 0 2px var(--accent-ring, rgba(59,130,246,.2));
+}
+
+/* ── Typeahead ────────────────────────────────────────────────────────────── */
+
+body.email-orders-page .eo-typeahead-wrap {
+  position: relative;
+}
+
+body.email-orders-page .eo-typeahead-dropdown {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  z-index: 200;
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #d1d5db);
+  border-radius: 5px;
+  box-shadow: 0 4px 12px rgba(0,0,0,.1);
+  list-style: none;
+  margin: 0;
+  padding: 0.25rem 0;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+body.email-orders-page .eo-typeahead-dropdown li {
+  padding: 0.45rem 0.75rem;
+  cursor: pointer;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.875rem;
+  color: var(--ink);
+}
+
+body.email-orders-page .eo-typeahead-dropdown li:hover,
+body.email-orders-page .eo-typeahead-dropdown li[aria-selected="true"] {
+  background: var(--surface-2, #f3f4f6);
+}
+
+/* ── Lines table ──────────────────────────────────────────────────────────── */
+
+body.email-orders-page .eo-lines {
+  margin-bottom: 0.75rem;
+}
+
+body.email-orders-page .eo-line-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: 0.5rem;
+  align-items: start;
+  margin-bottom: 0.5rem;
+}
+
+body.email-orders-page .eo-line-raw {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem;
+  color: var(--ink-mute);
+  margin-top: 0.15rem;
+  grid-column: 1 / -1;
+}
+
+body.email-orders-page .eo-qty-input {
+  width: 72px;
+}
+
+body.email-orders-page .eo-line-remove {
+  background: none;
+  border: 1px solid var(--border, #d1d5db);
+  border-radius: 4px;
+  color: var(--ink-mute);
+  font-size: 0.9rem;
+  cursor: pointer;
+  padding: 0.4rem 0.5rem;
+  line-height: 1;
+}
+
+body.email-orders-page .eo-line-remove:hover {
+  background: var(--red-tint, #fef2f2);
+  border-color: var(--red-border, #fca5a5);
+  color: var(--red-ink, #991b1b);
+}
+
+body.email-orders-page .eo-add-line-btn {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.8rem;
+  padding: 0.35rem 0.75rem;
+  border: 1px dashed var(--border, #d1d5db);
+  border-radius: 5px;
+  background: none;
+  color: var(--ink-mute);
+  cursor: pointer;
+  margin-bottom: 0.5rem;
+}
+
+body.email-orders-page .eo-add-line-btn:hover {
+  background: var(--surface-2, #f9fafb);
+  color: var(--ink);
+}
+
+/* ── Submit / actions ─────────────────────────────────────────────────────── */
+
+body.email-orders-page .eo-form-actions {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border, #e5e7eb);
+}
+
+body.email-orders-page .eo-btn-validate {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.9rem;
+  font-weight: 600;
+  padding: 0.55rem 1.25rem;
+  border-radius: 6px;
+  border: none;
+  background: var(--accent, #3b82f6);
+  color: #fff;
+  cursor: pointer;
+}
+
+body.email-orders-page .eo-btn-validate:hover {
+  background: var(--accent-dark, #2563eb);
+}
+
+body.email-orders-page .eo-btn-validate:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Twin-check warning ───────────────────────────────────────────────────── */
+
+body.email-orders-page .eo-twin-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.65rem 0.85rem;
+  background: var(--amber-tint, #fffbeb);
+  border: 1px solid var(--amber-border, #fbbf24);
+  border-radius: 6px;
+  color: var(--amber-ink, #92400e);
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.82rem;
+  margin-bottom: 0.75rem;
+}
+
+/* ── No-match / error cards ───────────────────────────────────────────────── */
+
+body.email-orders-page .eo-raw-card {
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 8px;
+  margin-bottom: 1rem;
+  overflow: hidden;
+  background: var(--surface, #fff);
+}
+
+body.email-orders-page .eo-raw-card__meta {
+  padding: 0.6rem 1rem;
+  background: var(--surface-2, #f9fafb);
+  border-bottom: 1px solid var(--border, #e5e7eb);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.72rem;
+  color: var(--ink-mute);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.25rem;
+}
+
+body.email-orders-page .eo-raw-card__meta strong {
+  color: var(--ink);
+}
+
+body.email-orders-page .eo-raw-card__body {
+  padding: 1rem;
+}
+
+body.email-orders-page .eo-raw-card__text {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--ink);
+  max-height: 200px;
+  overflow-y: auto;
+  background: var(--surface-2, #f9fafb);
+  border-radius: 4px;
+  padding: 0.6rem 0.75rem;
+}
+
+body.email-orders-page .eo-raw-card__error {
+  margin-top: 0.6rem;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.8rem;
+  color: var(--red-ink, #991b1b);
+}
+
+/* ── Done bucket (collapsed accordion) ───────────────────────────────────── */
+
+body.email-orders-page .eo-done-list {
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+body.email-orders-page .eo-done-item {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.55rem 1rem;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.82rem;
+  color: var(--ink-mute);
+}
+
+body.email-orders-page .eo-done-item:last-child {
+  border-bottom: none;
+}
+
+body.email-orders-page .eo-done-item__subject {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--ink);
+}
