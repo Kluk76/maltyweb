@@ -314,6 +314,10 @@ function kpi_handler_ops_health(
         'pending_deliveries_aging'  => kpi_ops_pending_deliveries_aging($label, $pdo),
         'docs_processed_month'      => kpi_ops_docs_processed_month($params, $label, $pdo),
         'active_users_logins'       => kpi_ops_active_users_logins($label, $pdo),
+        'supplier_mi_resolution_failures' => kpi_ops_supplier_mi_resolution_failures($label, $pdo),
+        'auto_write_vs_manual_ratio'      => kpi_ops_auto_write_vs_manual_ratio($label, $pdo),
+        'data_freshness'                  => kpi_ops_data_freshness($label, $pdo),
+        'avg_triage_time'                 => kpi_ops_avg_triage_time($label, $pdo),
         default                     => kpi_stub_handler('ops_health', $handler, $label),
     };
 }
@@ -374,6 +378,231 @@ function kpi_ops_rq_aging_oldest(string $label, PDO $pdo): array
         'value' => $days,
         'tint'  => $days === null ? 'green' : ($days > 30 ? 'red' : ($days > 7 ? 'amber' : 'green')),
         'meta'  => ['oldest_date' => $row['oldest_date'] ?? null],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/** #226 — Supplier/MI resolution failures (open RQ backlog for sales-sku-unknown + sku-bom-unresolved) */
+function kpi_ops_supplier_mi_resolution_failures(string $label, PDO $pdo): array
+{
+    $cacheKey = 'ops_resolution_failures';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    // Count open/in_progress rows of the two unresolved-mapping types.
+    // These types are verified live in the ENUM: 'sales-sku-unknown', 'sku-bom-unresolved'
+    $stmt = $pdo->prepare(
+        "SELECT type, COUNT(*) AS cnt
+           FROM doc_review_queue
+          WHERE status IN ('open','in_progress')
+            AND type IN ('sales-sku-unknown','sku-bom-unresolved')
+          GROUP BY type
+          ORDER BY cnt DESC"
+    );
+    $stmt->execute();
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $total = (int) array_sum(array_column($rows, 'cnt'));
+    $breakdown = array_map(
+        fn(array $r) => ['key' => $r['type'], 'label' => $r['type'], 'value' => (int) $r['cnt']],
+        $rows
+    );
+
+    // Tint: green if backlog is small (resolved mappings stay low), red if large.
+    // Thresholds: <=50 green, <=500 amber, >500 red.
+    $tint = $total <= 50 ? 'green' : ($total <= 500 ? 'amber' : 'red');
+
+    $result = array_merge(kpi_empty_result($label, null), [
+        'value'     => $total,
+        'tint'      => $tint,
+        'breakdown' => $breakdown,
+        'meta'      => ['period_label' => 'maintenant'],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/** #228 — Auto-write vs manual ratio: % of inv_deliveries rows with source='Invoice-OCR' */
+function kpi_ops_auto_write_vs_manual_ratio(string $label, PDO $pdo): array
+{
+    $cacheKey = 'ops_auto_write_ratio';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    // VERIFIED sources: Invoice-OCR (553), manual-triage (3), triage-alias (1)
+    // WHERE source IS NOT NULL guards against legacy bsf-mirror rows with no source set.
+    $stmt = $pdo->query(
+        "SELECT source, COUNT(*) AS cnt
+           FROM inv_deliveries
+          WHERE source IS NOT NULL
+          GROUP BY source
+          ORDER BY cnt DESC"
+    );
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $total = (int) array_sum(array_column($rows, 'cnt'));
+    $ocr   = 0;
+    foreach ($rows as $r) {
+        if ($r['source'] === 'Invoice-OCR') {
+            $ocr = (int) $r['cnt'];
+        }
+    }
+
+    $ratio = $total > 0 ? round(100.0 * $ocr / $total, 1) : null;
+
+    $breakdown = array_map(
+        fn(array $r) => ['key' => $r['source'], 'label' => $r['source'], 'value' => (int) $r['cnt']],
+        $rows
+    );
+
+    // Tint: green if automation is high (>=90%), amber mid, red if low (<70%).
+    $tint = $ratio === null ? 'neutral' : ($ratio >= 90.0 ? 'green' : ($ratio >= 70.0 ? 'amber' : 'red'));
+
+    $result = array_merge(kpi_empty_result($label, '%'), [
+        'value'     => $ratio,
+        'tint'      => $tint,
+        'breakdown' => $breakdown,
+        'meta'      => [
+            'ocr_count'   => $ocr,
+            'total_count' => $total,
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/** #224 — Data freshness: last-write age in days per canonical pipeline table */
+function kpi_ops_data_freshness(string $label, PDO $pdo): array
+{
+    $cacheKey = 'ops_data_freshness';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    // FIXED WHITELIST — no free-SQL / no params-driven table names (house rule).
+    // Each entry: [table, friendly label, freshness SQL (must return a date or datetime)]
+    // Freshness column chosen per table after inspecting SHOW COLUMNS on 2026-06-15.
+    // Each entry: [tableKey, friendlyLabel, freshnessSql, needsDayAppend]
+    // needsDayAppend=true for inv_rm_stocktake whose period column is CHAR(7) 'YYYY-MM'
+    // — DateTimeImmutable requires a full date; we append '-01' to parse as first of month.
+    $sources = [
+        ['inv_deliveries',        'Livraisons',         "SELECT MAX(date_received) FROM inv_deliveries",                                        false],
+        ['inv_fg_stocktake',      'Stocktake PF',       "SELECT DATE(MAX(counted_at)) FROM inv_fg_stocktake",                                   false],
+        ['inv_rm_stocktake',      'Stocktake MP',       "SELECT MAX(period) FROM inv_rm_stocktake",                                             true],
+        ['bd_brewing_gravity_v2', 'Brassin (Cooling)',  "SELECT DATE(MAX(submitted_at)) FROM bd_brewing_gravity_v2 WHERE event_type='Cooling'", false],
+        ['bd_packaging_v2',       'Conditionnement',    "SELECT DATE(MAX(submitted_at)) FROM bd_packaging_v2",                                  false],
+        ['inv_sales_ledger',      'Grand livre ventes', "SELECT MAX(posting_date) FROM inv_sales_ledger",                                       false],
+        ['inv_sales_invoice_lines','Factures ventes',   "SELECT DATE(MAX(ingested_at)) FROM inv_sales_invoice_lines",                           false],
+        ['ord_orders',            'Commandes',          "SELECT DATE(MAX(created_at)) FROM ord_orders",                                         false],
+    ];
+
+    $breakdownRows = [];
+    $staleCount    = 0;
+    $today         = new DateTimeImmutable('today', new DateTimeZone('UTC'));
+
+    foreach ($sources as [$tableKey, $friendlyLabel, $sql, $needsDayAppend]) {
+        $lastRaw = $pdo->query($sql)->fetchColumn();
+        if ($lastRaw === null || $lastRaw === false) {
+            $ageDays = null;
+            $rowTint = 'amber';
+        } else {
+            $dateStr  = $needsDayAppend ? $lastRaw . '-01' : $lastRaw;
+            $lastDate = new DateTimeImmutable($dateStr, new DateTimeZone('UTC'));
+            $interval = $today->diff($lastDate);
+            // $today->diff($lastDate): invert=1 means $lastDate is in the past (normal case).
+            // invert=0 means $lastDate is in the future (clock drift / bad insert) — treat as 0 days old.
+            $ageDays  = $interval->invert === 1 ? (int) $interval->days : 0;
+            // Tint per row: <=7d green, <=30d amber, >30d red
+            $rowTint = $ageDays <= 7 ? 'green' : ($ageDays <= 30 ? 'amber' : 'red');
+            if ($ageDays > 30) {
+                $staleCount++;
+            }
+        }
+
+        $breakdownRows[] = [
+            'key'   => $tableKey,
+            'label' => $friendlyLabel,
+            'value' => $ageDays,   // age in days for this table
+            'meta'  => [
+                'last'  => $lastRaw,
+                'tint'  => $rowTint,
+            ],
+        ];
+    }
+
+    // value = count of stale (>30d) tables; null if all fresh
+    $value = $staleCount > 0 ? $staleCount : null;
+    $tintOverall = $staleCount === 0 ? 'green' : ($staleCount <= 2 ? 'amber' : 'red');
+
+    $result = array_merge(kpi_empty_result($label, 'jours'), [
+        'value'     => $value,
+        'tint'      => $tintOverall,
+        'breakdown' => $breakdownRows,
+        'meta'      => [
+            'period_label' => 'maintenant',
+            'stale_count'  => $staleCount,
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/** #229 — Average triage time by RQ type (bar), cap top-12 */
+function kpi_ops_avg_triage_time(string $label, PDO $pdo): array
+{
+    $cacheKey = 'ops_avg_triage_time';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    // Per-type average triage latency in hours, capped at top-12 by avg DESC.
+    // series[].period = the RQ type (bar x-axis label), series[].value = avg hours
+    $stmt = $pdo->query(
+        "SELECT type,
+                ROUND(AVG(TIMESTAMPDIFF(HOUR, created_at, decided_at)), 1) AS avg_hours,
+                COUNT(*) AS cnt
+           FROM doc_review_queue
+          WHERE status IN ('resolved','rejected')
+            AND decided_at IS NOT NULL
+          GROUP BY type
+          ORDER BY avg_hours DESC
+          LIMIT 12"
+    );
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // series shape: [{period: <type>, value: <avg_hours>}] — period carries the RQ type for x-axis labels
+    $series = array_map(
+        fn(array $r) => [
+            'period' => $r['type'],
+            'value'  => $r['avg_hours'] !== null ? (float) $r['avg_hours'] : null,
+        ],
+        $rows
+    );
+
+    // Second query is intentional: computes overall avg across ALL types (not just the top-12
+    // returned by the per-type query), giving a meaningful headline scalar for the tile.
+    $stmtOverall = $pdo->query(
+        "SELECT ROUND(AVG(TIMESTAMPDIFF(HOUR, created_at, decided_at)), 1) AS overall
+           FROM doc_review_queue
+          WHERE status IN ('resolved','rejected')
+            AND decided_at IS NOT NULL"
+    );
+    $overall = $stmtOverall->fetchColumn();
+    $overallHours = ($overall !== null && $overall !== false) ? (float) $overall : null;
+
+    // Tint: informational for this chart — no hard threshold makes sense per admin.
+    // Use neutral; the chart itself conveys urgency via bar height.
+    $result = array_merge(kpi_empty_result($label, 'h'), [
+        'value'  => $overallHours,
+        'tint'   => 'neutral',
+        'series' => $series,
+        'meta'   => [
+            'period_label' => 'résolutions à ce jour',
+            'row_count'    => count($rows),
+        ],
     ]);
 
     return kpi_cache_set($cacheKey, $result);
