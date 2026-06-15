@@ -109,7 +109,7 @@ from lib_config import load as load_config  # noqa: E402
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
-SCRIPT_VERSION = "1.3.0"
+SCRIPT_VERSION = "1.4.0"
 ACTOR = "bc-sync"  # used in RQ context / audit fields
 
 # BC OData service name (É encoded — Python urllib raises InvalidURL on raw non-ASCII)
@@ -370,13 +370,15 @@ def load_existing_non_bc_active_orders(
 ) -> list[dict]:
     """
     Returns active (non-shipped/cancelled) orders from sources web/email/import,
-    with their sku_id_fk sets, for the collision report.
+    with their sku_id_fk sets and divergence_status, for the collision report.
+    divergence_status is needed so snapshot_and_diff_collision can check whether
+    the kept row's flag has already been set.
     """
     with conn.cursor() as c:
         c.execute(
             """
             SELECT o.id, o.source, o.source_ref, o.customer_id_fk, o.status,
-                   o.requested_date,
+                   o.requested_date, o.divergence_status,
                    GROUP_CONCAT(l.sku_id_fk ORDER BY l.sku_id_fk) AS sku_ids
               FROM ord_orders o
               LEFT JOIN ord_order_lines l ON l.order_id_fk = o.id
@@ -389,13 +391,14 @@ def load_existing_non_bc_active_orders(
         result = []
         for r in rows:
             result.append({
-                "id":              r["id"],
-                "source":          r["source"],
-                "source_ref":      r["source_ref"],
-                "customer_id_fk":  r["customer_id_fk"],
-                "status":          r["status"],
-                "requested_date":  str(r["requested_date"]),
-                "sku_ids":         set(
+                "id":               r["id"],
+                "source":           r["source"],
+                "source_ref":       r["source_ref"],
+                "customer_id_fk":   r["customer_id_fk"],
+                "status":           r["status"],
+                "requested_date":   str(r["requested_date"]),
+                "divergence_status": r["divergence_status"] or "none",
+                "sku_ids":          set(
                     int(x) for x in (r["sku_ids"] or "").split(",") if x
                 ),
             })
@@ -783,20 +786,35 @@ def upsert_bc_lines(
     direct_map: dict,
     alias_map: dict,
     apply_mode: bool,
+    *,
+    order_id_override: int | None = None,
+    bc_source_ref_override: str | None = None,
 ) -> int:
     """
     Upsert BC-side line snapshot into ord_order_bc_lines.
-    Only called for bc-sourced orders that are in existing_bc (i.e. already have a DB row).
-    For new inserts, the caller fetches the order_id after INSERT and calls this.
+
+    Normal path (source='bc' orders):
+      order_id_override and bc_source_ref_override are None;
+      order_id comes from existing_bc[order.source_ref], and bc_source_ref = order.source_ref.
+
+    Collision path (kept non-bc row):
+      order_id_override = id of the KEPT maltytask row.
+      bc_source_ref_override = 'bc:<skippedBcNo>' (the twin's source_ref).
+      In this case existing_bc is not consulted for the id.
+
     Returns the count of lines upserted (or would-upsert in dry-run).
     """
-    source_ref = order["source_ref"]
-    existing   = existing_bc.get(source_ref)
-    if existing is None:
-        # New order just INSERTed — caller must re-load order_id; handled after commit in apply.
-        return 0
-
-    order_id = existing["id"]
+    if order_id_override is not None:
+        order_id      = order_id_override
+        bc_source_ref = bc_source_ref_override or order["source_ref"]
+    else:
+        source_ref = order["source_ref"]
+        existing   = existing_bc.get(source_ref)
+        if existing is None:
+            # New order just INSERTed — caller must re-load order_id; handled after commit.
+            return 0
+        order_id      = existing["id"]
+        bc_source_ref = source_ref
 
     if not apply_mode:
         return len(bc_raw_lines)
@@ -817,8 +835,9 @@ def upsert_bc_lines(
             c.execute(
                 """
                 INSERT INTO ord_order_bc_lines
-                    (order_id_fk, bc_line_no, bc_item_no, uom_code, bc_qty, resolved_sku_id, snapshot_at)
-                VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                    (order_id_fk, bc_source_ref, bc_line_no, bc_item_no, uom_code,
+                     bc_qty, resolved_sku_id, snapshot_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
                 ON DUPLICATE KEY UPDATE
                     bc_item_no       = VALUES(bc_item_no),
                     uom_code         = VALUES(uom_code),
@@ -826,7 +845,7 @@ def upsert_bc_lines(
                     resolved_sku_id  = VALUES(resolved_sku_id),
                     snapshot_at      = NOW()
                 """,
-                (order_id, bc_line_no, bc_item, uom, bc_qty, sku_id),
+                (order_id, bc_source_ref, bc_line_no, bc_item, uom, bc_qty, sku_id),
             )
     return len(bc_raw_lines)
 
@@ -835,10 +854,16 @@ def detect_line_divergence(
     conn: pymysql.connections.Connection,
     order: dict,
     existing_bc: dict[str, dict],
+    *,
+    order_id_override: int | None = None,
+    bc_source_ref_override: str | None = None,
 ) -> tuple[bool, str | None]:
     """
-    Diff BC snapshot (ord_order_bc_lines with resolved_sku_id NOT NULL)
-    vs operational lines (ord_order_lines) for this order.
+    Diff BC snapshot (ord_order_bc_lines with resolved_sku_id NOT NULL, scoped to
+    bc_source_ref) vs operational lines (ord_order_lines) for the given order.
+
+    Normal path: order_id comes from existing_bc[order.source_ref], bc_source_ref = order.source_ref.
+    Collision path: order_id_override = kept row id, bc_source_ref_override = skipped BC twin ref.
 
     Returns (diverged: bool, detail_json: str | None).
     Diverged = True when:
@@ -849,23 +874,29 @@ def detect_line_divergence(
     Only compares lines with resolved_sku_id (unresolved BC items are excluded
     from the diff — they were never written to ord_order_lines either).
     """
-    source_ref = order["source_ref"]
-    existing   = existing_bc.get(source_ref)
-    if existing is None:
-        return False, None
-
-    order_id = existing["id"]
+    if order_id_override is not None:
+        order_id      = order_id_override
+        bc_source_ref = bc_source_ref_override or order["source_ref"]
+    else:
+        source_ref = order["source_ref"]
+        existing   = existing_bc.get(source_ref)
+        if existing is None:
+            return False, None
+        order_id      = existing["id"]
+        bc_source_ref = source_ref
 
     with conn.cursor() as c:
-        # BC snapshot totals (resolved SKUs only; sum in case multiple bc_line_no → same sku)
+        # BC snapshot totals (resolved SKUs only; scoped to this bc_source_ref;
+        # sum in case multiple bc_line_no → same sku)
         c.execute(
             """
             SELECT resolved_sku_id, SUM(bc_qty) AS total_qty
               FROM ord_order_bc_lines
-             WHERE order_id_fk = %s AND resolved_sku_id IS NOT NULL
+             WHERE order_id_fk = %s AND bc_source_ref = %s
+               AND resolved_sku_id IS NOT NULL
              GROUP BY resolved_sku_id
             """,
-            (order_id,),
+            (order_id, bc_source_ref),
         )
         bc_totals: dict[int, float] = {
             int(r["resolved_sku_id"]): float(r["total_qty"])
@@ -916,21 +947,35 @@ def apply_divergence_flag(
     diverged: bool,
     detail_json: str | None,
     apply_mode: bool,
+    *,
+    order_id_override: int | None = None,
+    current_div_status_override: str | None = None,
+    rq_dedup_suffix: str | None = None,
 ) -> bool:
     """
     Write divergence_status + divergence_detail to ord_orders.
     Also emits a doc_review_queue row (dedup per order) when diverged=True.
     Clears the flag when diverged=False (re-alignment detected).
     Returns True if the flag changed.
-    """
-    source_ref = order["source_ref"]
-    existing   = existing_bc.get(source_ref)
-    if existing is None:
-        return False
 
-    order_id        = existing["id"]
-    new_status      = "correction_compta_requise" if diverged else "none"
-    current_div_status = existing.get("divergence_status", "none") or "none"
+    Normal path (source='bc' orders): order_id comes from existing_bc[order.source_ref].
+    Collision path (kept non-bc row):
+      order_id_override = kept row id.
+      current_div_status_override = current divergence_status of the kept row.
+      rq_dedup_suffix = 'bc:<skippedBcNo>' so the RQ dedup key is per (kept_row, bc_twin).
+    """
+    if order_id_override is not None:
+        order_id           = order_id_override
+        current_div_status = (current_div_status_override or "none")
+    else:
+        source_ref = order["source_ref"]
+        existing   = existing_bc.get(source_ref)
+        if existing is None:
+            return False
+        order_id           = existing["id"]
+        current_div_status = existing.get("divergence_status", "none") or "none"
+
+    new_status = "correction_compta_requise" if diverged else "none"
 
     if new_status == current_div_status:
         return False  # no change
@@ -951,10 +996,13 @@ def apply_divergence_flag(
         )
 
         if diverged:
-            # Emit RQ row — dedup by (type, dedup_key) where dedup_key = 'bc-order:<order_id>'
-            dedup_key  = f"bc-order:{order_id}"
-            queue_id   = f"bc-ord-corr-{order_id}"
-            rq_value   = f"BC {order['bc_no']} → divergence lignes (correction compta requise)"
+            # Dedup key: 'bc-order:<order_id>' for normal bc orders;
+            # 'bc-order:<order_id>:<bc_twin_ref>' for collision doubles so each
+            # (kept_row, bc_twin) pair gets its own RQ slot.
+            suffix    = f":{rq_dedup_suffix}" if rq_dedup_suffix else ""
+            dedup_key = f"bc-order:{order_id}{suffix}"
+            queue_id  = f"bc-ord-corr-{order_id}{suffix.replace(':', '-')}"
+            rq_value  = f"BC {order['bc_no']} → divergence lignes (correction compta requise)"
             rq_context = detail_json or ""
             c.execute(
                 """
@@ -973,8 +1021,9 @@ def apply_divergence_flag(
                 (queue_id, rq_value, rq_context, dedup_key),
             )
         else:
-            # Re-alignment: auto-resolve any open RQ row for this order
-            dedup_key = f"bc-order:{order_id}"
+            # Re-alignment: auto-resolve the open RQ row for this (order, twin) pair
+            suffix    = f":{rq_dedup_suffix}" if rq_dedup_suffix else ""
+            dedup_key = f"bc-order:{order_id}{suffix}"
             c.execute(
                 """
                 UPDATE doc_review_queue
@@ -1024,6 +1073,77 @@ def write_bc_mirror_fields(
             """,
             (completely_shipped, order_id),
         )
+
+
+# ── Collision-snapshot helper ─────────────────────────────────────────────────
+
+def snapshot_and_diff_collision(
+    conn: pymysql.connections.Connection,
+    bc_order: dict,
+    kept_row_id: int,
+    kept_div_status: str,
+    lines_by_order: dict[str, list[dict]],
+    direct_map: dict,
+    alias_map: dict,
+    apply_mode: bool,
+) -> tuple[int, bool]:
+    """
+    For a collision-skipped BC order, snapshot its lines against the KEPT non-bc
+    maltytask row (kept_row_id) and diff them.
+
+    - Snapshots into ord_order_bc_lines with order_id_fk=kept_row_id and
+      bc_source_ref='bc:<bc_no>' (the twin's ref).
+    - Diffs the snapshot against the kept row's ord_order_lines.
+    - If divergent: sets divergence_status='correction_compta_requise' on the kept row
+      + emits RQ deduped by (kept_row_id, bc_source_ref).
+    - Does NOT insert/update ord_orders for the BC order (collision skip still applies).
+    - Does NOT touch operational lines (ord_order_lines) — read-only reference only.
+
+    Returns (n_snapshot_lines, diverged).
+    """
+    bc_no         = bc_order["bc_no"]
+    bc_source_ref = bc_order["source_ref"]  # 'bc:<bc_no>'
+
+    bc_raw_lines = lines_by_order.get(bc_no, [])
+    bc_item_lines = [
+        ln for ln in bc_raw_lines
+        if str(ln.get("Type", "")).strip() == "Item"
+        and float(ln.get("Quantity", 0) or 0) > 0
+    ]
+
+    if not bc_item_lines:
+        return 0, False
+
+    # Snapshot the BC twin's lines against the kept row
+    n_snap = upsert_bc_lines(
+        conn, bc_order, {},  # existing_bc not used (override path)
+        bc_item_lines, direct_map, alias_map, apply_mode,
+        order_id_override=kept_row_id,
+        bc_source_ref_override=bc_source_ref,
+    )
+
+    # Diff: kept row's operational lines vs BC twin's snapshot
+    diverged, detail_json = detect_line_divergence(
+        conn, bc_order, {},
+        order_id_override=kept_row_id,
+        bc_source_ref_override=bc_source_ref,
+    )
+
+    # Embed the BC twin ref in divergence_detail so admin knows which BC order to credit-note
+    if diverged and detail_json:
+        detail_obj = json.loads(detail_json)
+        detail_obj["bc_twin_source_ref"] = bc_source_ref
+        detail_json = json.dumps(detail_obj, default=str)
+
+    apply_divergence_flag(
+        conn, bc_order, {},
+        diverged, detail_json, apply_mode,
+        order_id_override=kept_row_id,
+        current_div_status_override=kept_div_status,
+        rq_dedup_suffix=bc_source_ref,
+    )
+
+    return n_snap, diverged
 
 
 # ── Review CSV writer ─────────────────────────────────────────────────────────
@@ -1156,8 +1276,10 @@ def print_reconciliation_report(
             print(f"    item={u['bc_item']!r}, uom={u['uom']!r}, desc={u['description']!r}")
         print(f"  → Review CSV: {review_csv_path}")
     print()
-    print("── COLLISION DETAIL (WeeklyOrders rows kept; BC orders SKIPPED) ─────")
+    print("── COLLISION DETAIL (WeeklyOrders rows kept; BC orders SKIPPED + snapshotted) ─")
     print(f"  Collisions auto-skipped: {would_skip_collision}")
+    print(f"  (Each collision-skipped BC order is snapshotted against its kept row")
+    print(f"   and diffed — divergences appear in DIVERGENCE DETECTION above)")
     if collisions:
         for c in collisions:
             print()
@@ -1281,6 +1403,19 @@ def main() -> None:
             print(f"  Collision BC order nos ({len(collision_bc_nos)}): "
                   f"{sorted(collision_bc_nos)}")
 
+        # Build collision_kept_row map: bc_no → {id, divergence_status} of the KEPT non-bc row
+        # Used to snapshot BC twin lines against the kept row and diff.
+        non_bc_by_id = {eo["id"]: eo for eo in existing_non_bc}
+        collision_kept_row: dict[str, dict] = {}
+        for col in collisions:
+            kept_id = col["existing_id"]
+            kept_eo = non_bc_by_id.get(kept_id)
+            if kept_eo:
+                collision_kept_row[col["bc_no"]] = {
+                    "id":               kept_id,
+                    "divergence_status": kept_eo.get("divergence_status", "none") or "none",
+                }
+
         # ── Build reconciliation counters and (optionally) write ──────────────
         print("[6/6] Upserting / simulating …")
         would_insert          = 0
@@ -1328,8 +1463,30 @@ def main() -> None:
             # For existing bc-sourced orders (not skipped), write BC mirror fields
             # and run the divergence diff.  New inserts are excluded from divergence
             # diff on the same pull (no ord_order_lines exist yet).
-            is_skipped = action in ("skip_collision", "skip_backlog")
-            if not is_skipped:
+            #
+            # For collision-skipped BC orders: snapshot the BC twin's lines against
+            # the KEPT non-bc row and diff — so transitional doubles get flagged.
+            if action == "skip_collision":
+                kept = collision_kept_row.get(bc_no)
+                if kept:
+                    n_snap, diverged = snapshot_and_diff_collision(
+                        conn, order,
+                        kept_row_id     = kept["id"],
+                        kept_div_status = kept["divergence_status"],
+                        lines_by_order  = lines_by_order,
+                        direct_map      = direct_map,
+                        alias_map       = alias_map,
+                        apply_mode      = apply_mode,
+                    )
+                    bc_snapshot_count += n_snap
+                    if diverged:
+                        divergences_flagged.append(
+                            f"{bc_no} [collision-twin→kept id={kept['id']}]: "
+                            f"correction_compta_requise"
+                        )
+
+            elif action not in ("skip_backlog",):
+                # Non-skipped bc orders: mirror fields + snapshot + divergence diff
 
                 # BC-mirror field: bc_completely_shipped (allowed, per ruling-4)
                 write_bc_mirror_fields(conn, order, existing_bc, apply_mode)

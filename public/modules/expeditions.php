@@ -3775,8 +3775,10 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
                       aria-label="Voir le détail du risque de stock (advisory)">⚠ stock</button>
             <?php endif ?>
 
-            <!-- BC divergence badge: operator corrected lines after BC BL lock -->
-            <?php if (($ord['source'] ?? '') === 'bc' && ($ord['divergence_status'] ?? '') === 'correction_compta_requise'): ?>
+            <!-- BC divergence badge: operator corrected lines after BC BL lock.
+                 Shown for any source (bc = own lines differ; web/import = collision-twin
+                 BC order carries different SKUs → credit-note + re-invoice required). -->
+            <?php if (($ord['divergence_status'] ?? '') === 'correction_compta_requise'): ?>
               <span class="exp-bc-divergence-badge"
                     title="Les lignes ont été corrigées après verrouillage BC — émettre un avoir + nouvelle facture dans BC">
                 ⚠ correction compta requise
