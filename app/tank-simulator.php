@@ -316,10 +316,17 @@ class TankSimulator
         $batchBBT = [];
         foreach ($events as $e) {
             if ($e['type'] === 'RACKING' && $e['date'] <= $now) {
+                // Only BBT-dest racks are recorded here — the batchBBT map drives
+                // PACKAGING→BBT lookup. CCT-dest racks (CCT→CCT transfers) never
+                // reach a BBT, so they must NOT be stored here (a CCT-dest rack on
+                // the same (beer|batch) key would silently overwrite the real BBT
+                // index from a prior BBT rack, causing packaging events to drain the
+                // wrong tank).
+                if ($e['dest_type'] !== 'BBT') continue;
                 // Store under both key forms for lookup fallback compatibility.
-                $batchBBT[$e['beer'] . '|' . $e['batch']] = $e['bbt'];
+                $batchBBT[$e['beer'] . '|' . $e['batch']] = $e['dest_index'];
                 if (($e['recipe_id'] ?? null) !== null) {
-                    $batchBBT['rid:' . $e['recipe_id'] . '|' . $e['batch']] = $e['bbt'];
+                    $batchBBT['rid:' . $e['recipe_id'] . '|' . $e['batch']] = $e['dest_index'];
                 }
             }
         }
@@ -483,134 +490,165 @@ class TankSimulator
                 }
 
                 $netRacked = max(0.0, $e['racked_vol'] - $this->rackingLossHl);
-                $bbt       = $e['bbt'];
-                $existing  = $bbtState[$bbt] ?? null;
 
-                // A true blend requires: (a) blend_vol > 0, (b) the BBT is occupied,
-                // AND (c) the existing content is the same recipe.  The MySQL
-                // blend_volume_hl field is populated on every racking row (set equal to
-                // racked_vol_hl by the form), so we cannot use it alone to infer that a
-                // prior BBT volume is being preserved.  Checking same-recipe guards against
-                // cascading rescale of unrelated batches.
-                // Identity: (recipe_id, batch) when both sides have recipe_id; (beer)
-                // otherwise — a blended BBT can hold multiple batches of the same recipe.
-                $existingBbtRecipeId = $existing['recipe_id'] ?? null;
-                $eventRecipeId       = $e['recipe_id'] ?? null;
-                $sameRecipe = ($existingBbtRecipeId !== null && $eventRecipeId !== null)
-                    ? ($existingBbtRecipeId === $eventRecipeId)
-                    : ($existing !== null && $existing['beer'] === $e['beer']);
-                $isTrueBlend = $e['blend_vol'] > 0
-                    && $existing !== null
-                    && $sameRecipe;
+                if ($e['dest_type'] === 'BBT') {
+                    // ── Destination: BBT (standard rack out of CCT into bright tank) ──
+                    $bbt      = $e['dest_index'];
+                    $existing = $bbtState[$bbt] ?? null;
 
-                if ($isTrueBlend) {
-                    // Blending into existing BBT (same recipe, multi-batch)
-                    $blendVol  = (float)$e['blend_vol'];
-                    $newTotal  = $netRacked + $blendVol;
+                    // A true blend requires: (a) blend_vol > 0, (b) the BBT is occupied,
+                    // AND (c) the existing content is the same recipe.  The MySQL
+                    // blend_volume_hl field is populated on every racking row (set equal to
+                    // racked_vol_hl by the form), so we cannot use it alone to infer that a
+                    // prior BBT volume is being preserved.  Checking same-recipe guards against
+                    // cascading rescale of unrelated batches.
+                    // Identity: (recipe_id, batch) when both sides have recipe_id; (beer)
+                    // otherwise — a blended BBT can hold multiple batches of the same recipe.
+                    $existingBbtRecipeId = $existing['recipe_id'] ?? null;
+                    $eventRecipeId       = $e['recipe_id'] ?? null;
+                    $sameRecipe = ($existingBbtRecipeId !== null && $eventRecipeId !== null)
+                        ? ($existingBbtRecipeId === $eventRecipeId)
+                        : ($existing !== null && $existing['beer'] === $e['beer']);
+                    $isTrueBlend = $e['blend_vol'] > 0
+                        && $existing !== null
+                        && $sameRecipe;
 
-                    // Rescale existing blend info proportionally; preserve recipe_id per lot.
-                    $newBlend = [];
-                    if (!empty($existing['blend_info']) && $existing['volume_hl'] > 0) {
-                        foreach ($existing['blend_info'] as $bi) {
+                    if ($isTrueBlend) {
+                        // Blending into existing BBT (same recipe, multi-batch)
+                        $blendVol  = (float)$e['blend_vol'];
+                        $newTotal  = $netRacked + $blendVol;
+
+                        // Rescale existing blend info proportionally; preserve recipe_id per lot.
+                        $newBlend = [];
+                        if (!empty($existing['blend_info']) && $existing['volume_hl'] > 0) {
+                            foreach ($existing['blend_info'] as $bi) {
+                                $newBlend[] = [
+                                    'batch'     => $bi['batch'],
+                                    'recipe_id' => $bi['recipe_id'] ?? null,
+                                    'vol'       => $bi['vol'] * ($blendVol / $existing['volume_hl']),
+                                ];
+                            }
+                        } else {
                             $newBlend[] = [
-                                'batch'     => $bi['batch'],
-                                'recipe_id' => $bi['recipe_id'] ?? null,
-                                'vol'       => $bi['vol'] * ($blendVol / $existing['volume_hl']),
+                                'batch'     => $existing['batch'],
+                                'recipe_id' => $existing['recipe_id'] ?? null,
+                                'vol'       => $blendVol,
                             ];
                         }
-                    } else {
                         $newBlend[] = [
-                            'batch'     => $existing['batch'],
-                            'recipe_id' => $existing['recipe_id'] ?? null,
-                            'vol'       => $blendVol,
+                            'batch'     => $e['batch'],
+                            'recipe_id' => $e['recipe_id'] ?? null,
+                            'vol'       => $netRacked,
+                        ];
+
+                        $bbtState[$bbt] = [
+                            'beer'        => $e['beer'],
+                            'raw_beer'    => $existing['raw_beer'] ?? $e['beer'],
+                            'batch'       => $e['batch'],
+                            'recipe_id'   => $e['recipe_id'] ?? null,
+                            'volume_hl'   => $newTotal,
+                            'filled_date' => $e['date'],
+                            'blend_info'  => $newBlend,
+                        ];
+                    } else {
+                        // Fresh fill or different-recipe replacement
+                        $bbtState[$bbt] = [
+                            'beer'        => $e['beer'],
+                            'raw_beer'    => $e['beer'],
+                            'batch'       => $e['batch'],
+                            'recipe_id'   => $e['recipe_id'] ?? null,
+                            'volume_hl'   => $netRacked,
+                            'filled_date' => $e['date'],
+                            'blend_info'  => [[
+                                'batch'     => $e['batch'],
+                                'recipe_id' => $e['recipe_id'] ?? null,
+                                'vol'       => $netRacked,
+                            ]],
                         ];
                     }
-                    $newBlend[] = [
-                        'batch'     => $e['batch'],
-                        'recipe_id' => $e['recipe_id'] ?? null,
-                        'vol'       => $netRacked,
-                    ];
 
-                    $bbtState[$bbt] = [
-                        'beer'        => $e['beer'],
-                        'raw_beer'    => $existing['raw_beer'] ?? $e['beer'],
-                        'batch'       => $e['batch'],
-                        'recipe_id'   => $e['recipe_id'] ?? null,
-                        'volume_hl'   => $newTotal,
-                        'filled_date' => $e['date'],
-                        'blend_info'  => $newBlend,
-                    ];
-                } else {
-                    // Fresh fill or different-recipe replacement
-                    $bbtState[$bbt] = [
+                    $batchBBT[$e['beer'] . '|' . $e['batch']] = $bbt;
+                    if (($e['recipe_id'] ?? null) !== null) {
+                        $batchBBT['rid:' . $e['recipe_id'] . '|' . $e['batch']] = $bbt;
+                    }
+
+                    // C3 — Apply loss_dest_hl AFTER the fill/blend-in.
+                    // Semantics: operator-entered volume lost at/inside the destination tank
+                    // (spillage, dead-leg, etc.). Draw-down is pro-rata across the newly blended
+                    // lot composition so that sum(blend_info[].vol) == volume_hl is maintained.
+                    // Order: fill/blend-in first (above), THEN loss_dest decrement — this is the
+                    // correct physical sequence (liquid entered the tank, then some was lost).
+                    //
+                    // loss_source_hl: accounted for in the CCT partial-decrement above (C4).
+                    // Normal racking full-empties the source CCT; interrupted racking uses
+                    // (source_vol − racked_vol − loss_source_hl) to derive the remaining volume.
+                    //
+                    // dest_bbt_still_clean: an event-sourced BBT clean-state attestation captured
+                    // when interrupted_flag=1 AND racked_vol=0. This flag is NOT consumed by the
+                    // simulator itself (no stored dirty/clean column on the tank state). Instead,
+                    // cip_dest_bbt_is_clean() in cip-events.php reads bd_racking_v2 + bd_cip_events
+                    // chronologically to derive the current clean-state of any BBT at query time.
+                    // The simulator only stores the event; the CIP gate reads from the event log.
+                    $lossDestHl = (float)($e['loss_dest_hl'] ?? 0.0);
+                    if ($lossDestHl > 0.0 && $bbtState[$bbt] !== null) {
+                        $prevVol = $bbtState[$bbt]['volume_hl'];
+                        $bbtState[$bbt]['volume_hl'] = max(0.0, $prevVol - $lossDestHl);
+                        $this->_bbt_prorata_decrement(
+                            $bbtState[$bbt]['blend_info'],
+                            $prevVol,
+                            $lossDestHl
+                        );
+                        // Null the BBT if it drops below the dead-volume threshold
+                        if ($bbtState[$bbt]['volume_hl'] < $this->bbtEmptyThresholdHl) {
+                            $bbtState[$bbt] = null;
+                        }
+                    }
+
+                    // Apply deferred packaging deductions (racking form arrived late).
+                    // Each deduction must also shrink blend_info pro-rata so that
+                    // lot volumes stay consistent with the updated volume_hl.
+                    if (!empty($pendingDeductions[$bbt])) {
+                        foreach ($pendingDeductions[$bbt] as $deduct) {
+                            $prevVol = $bbtState[$bbt]['volume_hl'];
+                            $bbtState[$bbt]['volume_hl'] = max(0.0, $prevVol - $deduct);
+                            $this->_bbt_prorata_decrement(
+                                $bbtState[$bbt]['blend_info'],
+                                $prevVol,
+                                $deduct
+                            );
+                        }
+                        unset($pendingDeductions[$bbt]);
+                        if ($bbtState[$bbt]['volume_hl'] < $this->bbtEmptyThresholdHl) {
+                            $bbtState[$bbt] = null;
+                        }
+                    }
+
+                } elseif ($e['dest_type'] === 'CCT') {
+                    // ── Destination: CCT (conical-to-conical transfer) ──
+                    // Source CCT was already drained above. Fill the destination CCT slot.
+                    // No blend support for CCT destinations in this model (CCTs hold one
+                    // batch at a time). No batchBBT write — this batch has not reached a BBT.
+                    // No loss_dest / pendingDeductions — those are BBT-specific.
+                    //
+                    // If source == dest (beer racked back into its own conical), the drain above
+                    // nulled it; this repopulates it — correct. If source != dest (true transfer),
+                    // drain emptied the source and this fills the new dest — also correct.
+                    $destCct = $e['dest_index'];
+                    $cctState[$destCct] = [
                         'beer'        => $e['beer'],
                         'raw_beer'    => $e['beer'],
                         'batch'       => $e['batch'],
                         'recipe_id'   => $e['recipe_id'] ?? null,
                         'volume_hl'   => $netRacked,
                         'filled_date' => $e['date'],
-                        'blend_info'  => [[
-                            'batch'     => $e['batch'],
-                            'recipe_id' => $e['recipe_id'] ?? null,
-                            'vol'       => $netRacked,
-                        ]],
+                        'blend_info'  => null,
                     ];
-                }
 
-                $batchBBT[$e['beer'] . '|' . $e['batch']] = $bbt;
-                if (($e['recipe_id'] ?? null) !== null) {
-                    $batchBBT['rid:' . $e['recipe_id'] . '|' . $e['batch']] = $bbt;
-                }
-
-                // C3 — Apply loss_dest_hl AFTER the fill/blend-in.
-                // Semantics: operator-entered volume lost at/inside the destination tank
-                // (spillage, dead-leg, etc.). Draw-down is pro-rata across the newly blended
-                // lot composition so that sum(blend_info[].vol) == volume_hl is maintained.
-                // Order: fill/blend-in first (above), THEN loss_dest decrement — this is the
-                // correct physical sequence (liquid entered the tank, then some was lost).
-                //
-                // loss_source_hl: accounted for in the CCT partial-decrement above (C4).
-                // Normal racking full-empties the source CCT; interrupted racking uses
-                // (source_vol − racked_vol − loss_source_hl) to derive the remaining volume.
-                //
-                // dest_bbt_still_clean: an event-sourced BBT clean-state attestation captured
-                // when interrupted_flag=1 AND racked_vol=0. This flag is NOT consumed by the
-                // simulator itself (no stored dirty/clean column on the tank state). Instead,
-                // cip_dest_bbt_is_clean() in cip-events.php reads bd_racking_v2 + bd_cip_events
-                // chronologically to derive the current clean-state of any BBT at query time.
-                // The simulator only stores the event; the CIP gate reads from the event log.
-                $lossDestHl = (float)($e['loss_dest_hl'] ?? 0.0);
-                if ($lossDestHl > 0.0 && $bbtState[$bbt] !== null) {
-                    $prevVol = $bbtState[$bbt]['volume_hl'];
-                    $bbtState[$bbt]['volume_hl'] = max(0.0, $prevVol - $lossDestHl);
-                    $this->_bbt_prorata_decrement(
-                        $bbtState[$bbt]['blend_info'],
-                        $prevVol,
-                        $lossDestHl
-                    );
-                    // Null the BBT if it drops below the dead-volume threshold
-                    if ($bbtState[$bbt]['volume_hl'] < $this->bbtEmptyThresholdHl) {
-                        $bbtState[$bbt] = null;
-                    }
-                }
-
-                // Apply deferred packaging deductions (racking form arrived late).
-                // Each deduction must also shrink blend_info pro-rata so that
-                // lot volumes stay consistent with the updated volume_hl.
-                if (!empty($pendingDeductions[$bbt])) {
-                    foreach ($pendingDeductions[$bbt] as $deduct) {
-                        $prevVol = $bbtState[$bbt]['volume_hl'];
-                        $bbtState[$bbt]['volume_hl'] = max(0.0, $prevVol - $deduct);
-                        $this->_bbt_prorata_decrement(
-                            $bbtState[$bbt]['blend_info'],
-                            $prevVol,
-                            $deduct
-                        );
-                    }
-                    unset($pendingDeductions[$bbt]);
-                    if ($bbtState[$bbt]['volume_hl'] < $this->bbtEmptyThresholdHl) {
-                        $bbtState[$bbt] = null;
-                    }
+                } else {
+                    // ── Destination: YT (serving tank / cuv) ──
+                    // TODO: YT (serving-tank / cuv) destination not modelled by the simulator
+                    //       — 0 YT-dest rows today; defensive skip. Source-CCT drain already ran.
+                    break;
                 }
                 break;
 
@@ -833,6 +871,10 @@ class TankSimulator
                     COALESCE(neb_recipe_id_fk, contract_recipe_id_fk)                 AS recipe_id_fk,
                     target_tank_raw                                                    AS bbt,
                     bbt_old,
+                    racking_destination_type,
+                    bbt_number,
+                    cct_number,
+                    yt_number,
                     racked_vol_hl,
                     blend_hl                                                           AS blend_text,
                     loss_source_hl,
@@ -848,14 +890,34 @@ class TankSimulator
         foreach ($rows as $row) {
             $beer     = $this->normalizeBeerName($row['beer'] ?? '');
             $batch    = trim($row['batch'] ?? '');
-            $bbt      = $this->extractBbtNumber($row['bbt'] ?? null, $row['bbt_old'] ?? null);
             $rackedVol = (float)($row['racked_vol_hl'] ?? 0);
             // blend_text is stored as VARCHAR — coerce to float, falling back to 0
             // for non-numeric content (e.g. operator wrote text instead of a number).
             $blendVol  = is_numeric($row['blend_text'] ?? '') ? (float)$row['blend_text'] : 0.0;
             $date      = $this->parseDate($row['rack_date'] ?? '');
 
-            if ($beer === '' || $batch === '' || $bbt === null || $date === null) continue;
+            // Destination type: NULL/empty legacy rows are all BBT racks.
+            $destType = ($row['racking_destination_type'] ?? '') ?: 'BBT';
+
+            // Resolve destination index: prefer the typed *_number column; fall back to
+            // extractBbtNumber() on target_tank_raw / bbt_old (legacy text fallback).
+            $legacyFallback = fn() => $this->extractBbtNumber($row['bbt'] ?? null, $row['bbt_old'] ?? null);
+            if ($destType === 'CCT') {
+                $typedNum  = isset($row['cct_number']) && (int)$row['cct_number'] > 0
+                    ? (int)$row['cct_number'] : null;
+                $destIndex = $typedNum ?? $legacyFallback();
+            } elseif ($destType === 'YT') {
+                $typedNum  = isset($row['yt_number']) && (int)$row['yt_number'] > 0
+                    ? (int)$row['yt_number'] : null;
+                $destIndex = $typedNum ?? $legacyFallback();
+            } else {
+                // BBT (explicit or legacy NULL → 'BBT')
+                $typedNum  = isset($row['bbt_number']) && (int)$row['bbt_number'] > 0
+                    ? (int)$row['bbt_number'] : null;
+                $destIndex = $typedNum ?? $legacyFallback();
+            }
+
+            if ($beer === '' || $batch === '' || $destIndex === null || $date === null) continue;
             if ($this->isWortSale($beer)) continue;
 
             $key           = $beer . '|' . $batch;
@@ -885,7 +947,8 @@ class TankSimulator
                 'batch'              => $batch,
                 'recipe_id'          => $recipeId,
                 'cct'                => $cct,
-                'bbt'                => (string)$bbt,
+                'dest_type'          => $destType,
+                'dest_index'         => (string)$destIndex,
                 'racked_vol'         => $rackedVol,
                 'blend_vol'          => $blendVol,
                 'loss_source_hl'     => $lossSourceHl,
