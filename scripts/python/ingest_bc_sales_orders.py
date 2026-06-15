@@ -106,6 +106,7 @@ except ImportError:
     sys.exit(1)
 
 from lib_config import load as load_config  # noqa: E402
+from bc_echo import bc_echo_format, bc_echo_parse  # noqa: E402
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -267,6 +268,7 @@ def fetch_sales_orders(bc: dict[str, str]) -> list[dict]:
         "Shipping_Agent_Code", "Shipment_Date",
         "Completely_Shipped", "ShpfyOrderNo",
         "Salesperson_Code", "Order_Date",
+        "Your_Reference",  # echo field: 'mt:<local_id>' for maltytask-native orders
     ])
     select_enc = quote(select_fields, safe="")
     url = f"{base}/SalesOrder?$select={select_enc}"
@@ -363,6 +365,26 @@ def load_existing_bc_orders(
             str(r["source_ref"]): dict(r) for r in c.fetchall()
             if r["source_ref"]
         }
+
+
+def load_maltytask_order_by_id(
+    conn: pymysql.connections.Connection,
+    local_id: int,
+) -> dict | None:
+    """
+    Return the ord_orders row for a maltytask-native order by PK.
+    Used by the echo-leg to confirm the local row exists before rekeying.
+    Returns None if no row with that id and source='maltytask' exists.
+    """
+    with conn.cursor() as c:
+        c.execute(
+            "SELECT id, source_ref, status, bc_no, customer_id_fk, requested_date, "
+            "       bc_completely_shipped, divergence_status "
+            "FROM ord_orders WHERE id = %s AND source = 'maltytask'",
+            (local_id,),
+        )
+        row = c.fetchone()
+        return dict(row) if row else None
 
 
 def load_existing_non_bc_active_orders(
@@ -582,6 +604,9 @@ def classify_orders(
             "ship_to_post_code":str(o.get("Ship_to_Post_Code", "") or ""),
             "ship_to_country":  str(o.get("Ship_to_Country_Region_Code", "") or ""),
             "resolved_lines":   resolved_lines,
+            # Echo-tag field — 'mt:<id>' when this order was pushed by push_bc_sales_orders.py,
+            # empty/None for BC-native orders.  Used by the echo-leg in the reader.
+            "your_reference":   str(o.get("Your_Reference", "") or "").strip(),
         })
 
     return {
@@ -645,6 +670,100 @@ def detect_collisions(
 
 
 # ── Database write helpers ─────────────────────────────────────────────────────
+
+def echo_leg_upsert(
+    conn: pymysql.connections.Connection,
+    order: dict,
+    apply_mode: bool,
+) -> tuple[bool, str | None]:
+    """
+    Echo-tag leg (Ruling 2, precedence 1 — runs BEFORE the source_ref='bc:<No>' leg).
+
+    If the pulled BC order's Your_Reference parses to 'mt:<id>' AND a local
+    ord_orders row with that id (source='maltytask') exists:
+      → This IS the match by invariant PK, regardless of the local row's current
+        source_ref (handles the race/rekey-failure state where source_ref is still
+        'mt:<id>' even though the BC order was already created).
+      → In ONE transaction: set bc_no=<No>, rekey source_ref → 'bc:<No>',
+        touch updated_at, and refresh header fields that are normally refreshable
+        (requested_date).
+      → Writes NO status and NO status_events (Ruling 4: never advance/clobber
+        operator status).
+      → If the local row already has a beyond-refreshable status (≥ 'picked'),
+        does key-recovery only (bc_no/source_ref), not a full header refresh.
+      → Returns (True, 'echo_matched') so the caller can skip the normal upsert_order
+        and upsert_lines paths for this order.
+
+    Returns (False, None) if Your_Reference does not parse to a valid local id,
+    or if no matching maltytask row exists.
+    """
+    your_ref = order.get("your_reference", "")
+    local_id = bc_echo_parse(your_ref)
+    if local_id is None:
+        return False, None
+
+    local_row = load_maltytask_order_by_id(conn, local_id)
+    if local_row is None:
+        return False, None
+
+    # Match confirmed by invariant PK — this BC order belongs to local_id.
+    bc_no  = order["bc_no"]
+    bc_ref = f"bc:{bc_no}"
+
+    if not apply_mode:
+        # Dry-run: report what WOULD happen
+        print(
+            f"  [echo-leg] Would rekey local_id={local_id} "
+            f"(source_ref={local_row.get('source_ref')!r} → {bc_ref!r}, "
+            f"bc_no=None → {bc_no!r}). NO status write."
+        )
+        return True, "echo_matched"
+
+    current_status = local_row.get("status", "entered")
+    key_recovery_only = current_status not in _REFRESH_LINE_STATUSES
+
+    with conn.cursor() as c:
+        if key_recovery_only:
+            # Beyond-refreshable status: key-recovery only, no date/comment refresh
+            c.execute(
+                """
+                UPDATE ord_orders
+                   SET bc_no      = %s,
+                       source_ref = %s,
+                       updated_at = CURRENT_TIMESTAMP
+                 WHERE id     = %s
+                   AND source = 'maltytask'
+                """,
+                (bc_no, bc_ref, local_id),
+            )
+        else:
+            # Refreshable status: recover keys + refresh header commercial fields
+            # NO status write, NO status_events (Ruling 4)
+            c.execute(
+                """
+                UPDATE ord_orders
+                   SET bc_no         = %s,
+                       source_ref    = %s,
+                       requested_date = %s,
+                       updated_at    = CURRENT_TIMESTAMP
+                 WHERE id     = %s
+                   AND source = 'maltytask'
+                """,
+                (bc_no, bc_ref, order.get("shipment_date") or None, local_id),
+            )
+
+        rows_updated = c.rowcount
+
+    conn.commit()
+
+    action_label = "key-recovery-only" if key_recovery_only else "rekey+header-refresh"
+    print(
+        f"  [echo-leg] Rekeyed local_id={local_id}: {action_label}. "
+        f"source_ref → {bc_ref!r}, bc_no={bc_no!r}. "
+        f"Rows updated: {rows_updated}. NO status written."
+    )
+    return True, "echo_matched"
+
 
 def upsert_order(
     conn: pymysql.connections.Connection,
@@ -758,21 +877,34 @@ def upsert_lines(
     if not apply_mode:
         return len(order["resolved_lines"])
 
-    # Delete existing lines and re-insert (safe because we freeze above picked)
+    # Delete existing lines and re-insert (safe because we freeze above picked).
+    # Preserve any operator-set line_status (non_livre/rupture) across the refresh:
+    # snapshot existing (sku_id_fk → line_status) before deletion, reapply on INSERT.
+    # New BC lines that didn't exist before default to 'to_fulfil' (column default).
     with conn.cursor() as c:
+        c.execute(
+            "SELECT sku_id_fk, line_status FROM ord_order_lines WHERE order_id_fk = %s",
+            (order_id,),
+        )
+        existing_line_statuses = {
+            row["sku_id_fk"]: row["line_status"] for row in c.fetchall()
+        }
+
         c.execute("DELETE FROM ord_order_lines WHERE order_id_fk = %s", (order_id,))
         for ln in order["resolved_lines"]:
+            preserved_status = existing_line_statuses.get(ln["sku_id"], "to_fulfil")
             c.execute(
                 """
                 INSERT INTO ord_order_lines
-                    (order_id_fk, sku_id_fk, qty, line_comment)
-                VALUES (%s, %s, %s, %s)
+                    (order_id_fk, sku_id_fk, qty, line_comment, line_status)
+                VALUES (%s, %s, %s, %s, %s)
                 """,
                 (
                     order_id,
                     ln["sku_id"],
                     ln["qty"],
                     f"BC {order['bc_no']} L{ln['line_no']} — {ln['bc_item']} {ln['uom']}",
+                    preserved_status,
                 ),
             )
     return len(order["resolved_lines"])
@@ -1435,29 +1567,64 @@ def main() -> None:
             bc_no      = order["bc_no"]
             source_ref = order["source_ref"]
 
-            action = upsert_order(conn, order, existing_bc, collision_bc_nos, apply_mode)
-            if action == "insert":
-                would_insert += 1
-                hl_total = sum(ln["hl"] or 0.0 for ln in order["resolved_lines"])
-                insert_candidates.append({
-                    "bc_no":              bc_no,
-                    "customer_name":      order["bc_customer_name"],
-                    "shipment_date":      order["shipment_date"],
-                    "order_date":         order["order_date"],
-                    "completely_shipped": order["completely_shipped"],
-                    "n_lines":            len(order["resolved_lines"]),
-                    "hl_total":           round(hl_total, 2),
-                })
-            elif action == "update":
+            # ── Ruling 2: echo-tag leg FIRST ──────────────────────────────────
+            # If Your_Reference = 'mt:<id>' AND a local maltytask row id=<id> exists:
+            #   → match by invariant PK; rekey bc_no + source_ref; NO status write.
+            #   → skip normal upsert_order + upsert_lines (the row is now 'bc' keyed).
+            # This prevents a duplicate INSERT even when the writer's own rekey failed
+            # (race/rekey-failure state: source_ref='mt:<id>' not yet 'bc:<No>').
+            echo_matched, _echo_action = echo_leg_upsert(conn, order, apply_mode)
+            if echo_matched:
+                # After echo-leg rekey, the row is now visible in the 'bc' namespace.
+                # Update our in-memory existing_bc map so downstream steps (mirror
+                # fields, divergence diff) can find it by the new source_ref.
+                # Re-load from DB on apply; on dry-run build a synthetic entry.
+                if apply_mode:
+                    with conn.cursor() as c:
+                        c.execute(
+                            "SELECT id, source_ref, status, customer_id_fk, "
+                            "       requested_date, bc_completely_shipped, divergence_status "
+                            "FROM ord_orders WHERE source_ref = %s",
+                            (source_ref,),
+                        )
+                        refreshed = c.fetchone()
+                        if refreshed:
+                            existing_bc[source_ref] = dict(refreshed)
+                # Count as 'update' for reporting
                 would_update += 1
-            elif action == "skip_collision":
-                would_skip_collision += 1
-            elif action == "skip_backlog":
-                would_skip_backlog += 1
+                # Still run mirror-fields + divergence diff below (no lines refresh
+                # since operator may already have set line statuses post-echo-match)
+                action = "update"
+                # Skip normal upsert_order + upsert_lines paths
+                # (fall through to the mirror/divergence block below)
             else:
-                would_skip += 1
+                action = upsert_order(conn, order, existing_bc, collision_bc_nos, apply_mode)
+                # Count action only when not handled by echo-leg (echo-leg already
+                # incremented would_update above and set action='update')
+                if action == "insert":
+                    would_insert += 1
+                    hl_total = sum(ln["hl"] or 0.0 for ln in order["resolved_lines"])
+                    insert_candidates.append({
+                        "bc_no":              bc_no,
+                        "customer_name":      order["bc_customer_name"],
+                        "shipment_date":      order["shipment_date"],
+                        "order_date":         order["order_date"],
+                        "completely_shipped": order["completely_shipped"],
+                        "n_lines":            len(order["resolved_lines"]),
+                        "hl_total":           round(hl_total, 2),
+                    })
+                elif action == "update":
+                    would_update += 1
+                elif action == "skip_collision":
+                    would_skip_collision += 1
+                elif action == "skip_backlog":
+                    would_skip_backlog += 1
+                else:
+                    would_skip += 1
 
-            upsert_lines(conn, order, existing_bc, collision_bc_nos, apply_mode)
+            # Skip line upsert for echo-matched orders (operator already manages lines)
+            if not echo_matched:
+                upsert_lines(conn, order, existing_bc, collision_bc_nos, apply_mode)
 
             # ── Ruling-4 COMPLIANT block (no status writes): ──────────────────
             # For existing bc-sourced orders (not skipped), write BC mirror fields
