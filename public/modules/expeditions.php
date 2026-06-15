@@ -1479,6 +1479,7 @@ $cmdByDay        = []; // keyed by date => [order_id, …]
 $cmdEshopByDay   = []; // keyed by date => [channel => {orders, hl}] — taproom aggregate only
 $cmdEshopOrdersByDay = []; // keyed by date => [eshop per-order rows] (Phase 1: eshop per-order)
 $cmdEshopLinesByOrder= []; // keyed by inv_sales_orders.id => [line rows for pills]
+$eshopLastImport = null; // DateTime|null — MAX(imported_at) for channel='eshop'
 $cmdSummary      = [
     'total_hl' => 0.0, 'orders' => 0, 'open' => 0,
     'on_trade' => 0, 'off_trade' => 0, 'internal' => 0,
@@ -1731,7 +1732,7 @@ try {
                 $eshopIds = array_column($eshopOrders, 'id');
                 $placeholders = implode(',', array_fill(0, count($eshopIds), '?'));
                 $eshopLineStmt = $pdo->prepare(
-                    "SELECT isol.order_id_fk, isol.sku_code, isol.qty, isol.hl_resolved,
+                    "SELECT isol.order_id_fk, isol.sku_code, isol.title, isol.qty, isol.hl_resolved,
                             s.format
                        FROM inv_sales_order_lines isol
                        LEFT JOIN ref_skus s ON s.id = isol.sku_id_fk
@@ -1782,6 +1783,22 @@ try {
                     'hl'     => (float) $er['total_hl'],
                 ];
             }
+        }
+
+        // ── Shopify freshness: MAX(imported_at) for channel='eshop' ─────────────
+        // Used by the "Dernier import Shopify" chip in the commandes view header.
+        // Runs unconditionally inside the commandes block (cheap single-row MAX).
+        try {
+            $fiStmt = $pdo->prepare(
+                "SELECT MAX(imported_at) AS last_import FROM inv_sales_orders WHERE channel='eshop'"
+            );
+            $fiStmt->execute();
+            $fiRow = $fiStmt->fetch(PDO::FETCH_ASSOC);
+            if ($fiRow && $fiRow['last_import'] !== null) {
+                $eshopLastImport = new DateTime($fiRow['last_import']);
+            }
+        } catch (Throwable $e) {
+            error_log('[expeditions freshness] ' . $e->getMessage());
         }
 
         // ── Period summary ────────────────────────────────────────────────────
@@ -3055,28 +3072,49 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
       if ($name === '') $name = (string) ($eo['customer_email'] ?? '—');
 
       // SKU pills (up to 6 visible, +N expand) — reuse exp_format_family/exp_family_label
+      // Lines with sku_id_fk=NULL (tap machines, Caution, gift cards …) fall back
+      // to isol.title for the label and get a greyed "matériel" badge instead of a
+      // family colour, so they no longer render as "?×1".
       $pillsHtml = '';
       $visLines  = array_slice($lines, 0, 6);
       $hidLines  = array_slice($lines, 6);
       foreach ($visLines as $ln) {
-          $qty    = (float) ($ln['qty'] ?? 0);
-          $qtyFmt = (floor($qty) == $qty) ? (int)$qty : $qty;
-          $fam    = exp_format_family((string) ($ln['format'] ?? ''));
-          $pillsHtml .= '<span class="exp-sku-pill exp-sku-pill--' . $fam
-              . '" title="' . htmlspecialchars(exp_family_label($fam)) . '">'
-              . htmlspecialchars((string) ($ln['sku_code'] ?? '?')) . '×' . $qtyFmt
-              . '</span>';
+          $qty      = (float) ($ln['qty'] ?? 0);
+          $qtyFmt   = (floor($qty) == $qty) ? (int)$qty : $qty;
+          $isMat    = empty($ln['sku_code']);
+          if ($isMat) {
+              $label = htmlspecialchars(trim((string) ($ln['title'] ?? '')) ?: '?');
+              $pillsHtml .= '<span class="exp-sku-pill exp-sku-pill--materiel">'
+                  . $label . '×' . $qtyFmt
+                  . '<span class="exp-sku-materiel-badge">matériel</span>'
+                  . '</span>';
+          } else {
+              $fam = exp_format_family((string) ($ln['format'] ?? ''));
+              $pillsHtml .= '<span class="exp-sku-pill exp-sku-pill--' . $fam
+                  . '" title="' . htmlspecialchars(exp_family_label($fam)) . '">'
+                  . htmlspecialchars((string) $ln['sku_code']) . '×' . $qtyFmt
+                  . '</span>';
+          }
       }
       if (!empty($hidLines)) {
           $hidHtml = '';
           foreach ($hidLines as $ln) {
               $qty    = (float) ($ln['qty'] ?? 0);
               $qtyFmt = (floor($qty) == $qty) ? (int)$qty : $qty;
-              $fam    = exp_format_family((string) ($ln['format'] ?? ''));
-              $hidHtml .= '<span class="exp-sku-pill exp-sku-pill--' . $fam
-                  . '" title="' . htmlspecialchars(exp_family_label($fam)) . '">'
-                  . htmlspecialchars((string) ($ln['sku_code'] ?? '?')) . '×' . $qtyFmt
-                  . '</span>';
+              $isMat  = empty($ln['sku_code']);
+              if ($isMat) {
+                  $label = htmlspecialchars(trim((string) ($ln['title'] ?? '')) ?: '?');
+                  $hidHtml .= '<span class="exp-sku-pill exp-sku-pill--materiel">'
+                      . $label . '×' . $qtyFmt
+                      . '<span class="exp-sku-materiel-badge">matériel</span>'
+                      . '</span>';
+              } else {
+                  $fam = exp_format_family((string) ($ln['format'] ?? ''));
+                  $hidHtml .= '<span class="exp-sku-pill exp-sku-pill--' . $fam
+                      . '" title="' . htmlspecialchars(exp_family_label($fam)) . '">'
+                      . htmlspecialchars((string) $ln['sku_code']) . '×' . $qtyFmt
+                      . '</span>';
+              }
           }
           $pillsHtml .= '<button type="button" class="exp-sku-more" '
               . 'data-hidden-pills="' . htmlspecialchars($hidHtml, ENT_QUOTES) . '"'
@@ -3470,6 +3508,32 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
     </div>
     <?php endif ?>
     <?php endif ?>
+  </div>
+  <?php endif ?>
+
+  <!-- ── "Dernier import Shopify" freshness chip ────────────────────────────
+       Always shown on commandes view so a stalled sync never looks like "no
+       new orders". Amber/warning when last import > 90 min ago.
+  ─────────────────────────────────────────────────────────────────────────── -->
+  <?php if ($eshopLastImport !== null):
+      $now           = new DateTime();
+      $diffMinutes   = (int) round(($now->getTimestamp() - $eshopLastImport->getTimestamp()) / 60);
+      $isStale       = $diffMinutes > 90;
+      $chipCls       = 'exp-shopify-freshness-chip' . ($isStale ? ' exp-shopify-freshness-chip--stale' : '');
+      // Format time as HH:MM (24h, system DMY convention)
+      $timeStr       = $eshopLastImport->format('H:i');
+      $dateStr       = $eshopLastImport->format('d/m');
+      $todayStr      = (new DateTime())->format('d/m');
+      $importLabel   = ($dateStr === $todayStr)
+          ? 'Import Shopify ' . $timeStr
+          : 'Import Shopify ' . $dateStr . ' ' . $timeStr;
+      $titleAttr     = $isStale
+          ? 'Dernier import il y a ' . $diffMinutes . ' min — sync peut-être en retard'
+          : 'Dernier import il y a ' . $diffMinutes . ' min';
+  ?>
+  <div class="<?= htmlspecialchars($chipCls) ?>" title="<?= htmlspecialchars($titleAttr) ?>"
+       aria-label="<?= htmlspecialchars($importLabel) ?>">
+    <?= $isStale ? '<span aria-hidden="true">⚠</span> ' : '' ?><?= htmlspecialchars($importLabel) ?>
   </div>
   <?php endif ?>
 

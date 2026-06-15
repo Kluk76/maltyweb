@@ -6239,4 +6239,49 @@ body.expeditions .exp-cov-week-iso {
     display: none;
   }
 }
+
+/* ── Non-stock / tap-machine pill (Change 1: sku_id_fk=NULL lines) ────────── */
+body.expeditions .exp-sku-pill--materiel {
+  background: var(--bg-elev);
+  border-color: var(--hairline-2);
+  color: var(--ink-mute);
+  gap: 5px;
+}
+
+body.expeditions .exp-sku-materiel-badge {
+  display: inline-block;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.58rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  background: color-mix(in srgb, var(--ink-faint) 18%, var(--bg-elev));
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  padding: 1px 4px;
+  line-height: 1.4;
+}
+
+/* ── Shopify freshness chip (Change 2: dernier import) ─────────────────────── */
+body.expeditions .exp-shopify-freshness-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.02em;
+  color: var(--ink-mute);
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 5px;
+  padding: 4px 10px;
+  margin-bottom: 10px;
+  white-space: nowrap;
+}
+
+body.expeditions .exp-shopify-freshness-chip--stale {
+  color: var(--ember);
+  background: color-mix(in srgb, var(--ember) 8%, var(--bg-elev));
+  border-color: color-mix(in srgb, var(--ember) 35%, transparent);
+}
 /* END HISTORIQUE */
