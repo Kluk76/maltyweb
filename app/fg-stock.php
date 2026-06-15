@@ -420,6 +420,7 @@ function fg_stock_compute(PDO $pdo): array
           WHERE o.status = ?
             AND o.requested_date >= DATE_SUB(?, INTERVAL 30 DAY)
             AND l.sku_id_fk IS NOT NULL
+            AND l.line_status = \'to_fulfil\'
           GROUP BY o.id, o.fulfilment_site_id_fk, o.customer_id_fk, o.internal_channel,
                    c.default_delivery_site_id_fk, l.sku_id_fk, o.requested_date'
     );
@@ -620,6 +621,7 @@ function fg_stock_compute(PDO $pdo): array
     $isoWeekStart = (new DateTimeImmutable($isoWeekEnd))->modify('-6 days')->format('Y-m-d');
 
     // Aggregate query (display: week/2wk/total) — unchanged from before
+    // line_status filter: non_livre/rupture lines will not be fulfilled; exclude from demand sim.
     $openStmt = $pdo->prepare(
         "SELECT l.sku_id_fk,
                 SUM(CASE WHEN o.requested_date <= ? THEN l.qty ELSE 0 END) AS week_qty,
@@ -628,6 +630,7 @@ function fg_stock_compute(PDO $pdo): array
            FROM ord_order_lines l
            JOIN ord_orders o ON o.id = l.order_id_fk
           WHERE o.status NOT IN ('shipped', 'cancelled')
+            AND l.line_status = 'to_fulfil'
           GROUP BY l.sku_id_fk"
     );
     $openStmt->execute([$isoWeekEnd, $iso2wkEnd]);
@@ -647,6 +650,7 @@ function fg_stock_compute(PDO $pdo): array
            FROM ord_order_lines l
            JOIN ord_orders o ON o.id = l.order_id_fk
           WHERE o.status NOT IN ('shipped', 'cancelled')
+            AND l.line_status = 'to_fulfil'
           GROUP BY l.sku_id_fk, o.requested_date, o.status
           ORDER BY l.sku_id_fk, o.requested_date"
     );
@@ -719,6 +723,7 @@ function fg_stock_compute(PDO $pdo): array
            JOIN ord_orders o ON o.id = l.order_id_fk
           WHERE o.status = ?
             AND o.requested_date BETWEEN ? AND ?
+            AND l.line_status = \'to_fulfil\'
           GROUP BY l.sku_id_fk'
     );
     $shippedWkStmt->execute(['shipped', $isoWeekStart, $isoWeekEnd]);
@@ -1103,6 +1108,7 @@ function fg_stock_location_snapshot(PDO $pdo): array
           WHERE o.status = ?
             AND o.requested_date >= DATE_SUB(?, INTERVAL 30 DAY)
             AND l.sku_id_fk IS NOT NULL
+            AND l.line_status = \'to_fulfil\'
           GROUP BY o.id, o.fulfilment_site_id_fk, o.customer_id_fk, o.internal_channel,
                    c.default_delivery_site_id_fk, l.sku_id_fk, o.requested_date'
     );

@@ -338,13 +338,15 @@
     return li;
   }
 
-  function buildLineRow(skuId, qty, comment, disabled) {
+  function buildLineRow(skuId, qty, comment, disabled, lineId) {
     lineCounter++;
     const idx = lineCounter;
 
     const row = document.createElement('div');
     row.className = 'exp-line-row';
     row.dataset.lineIdx = String(idx);
+    // Expose persisted line id so expeditions-line-status.js can wire the status control
+    if (lineId) row.dataset.lineId = String(lineId);
 
     // SKU typeahead wrap
     const skuWrap = document.createElement('div');
@@ -593,7 +595,7 @@
     // Lines
     EDIT_LINES.forEach(function (line) {
       const disabled = false; // read-only state is handled at PHP level via disabled attrs on form fields
-      const row = buildLineRow(line.sku_id, line.qty, line.comment, false);
+      const row = buildLineRow(line.sku_id, line.qty, line.comment, false, line.line_id || null);
       linesContainer.appendChild(row);
     });
     updateRecap();

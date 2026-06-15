@@ -109,6 +109,13 @@ const EXP_INTERNAL_LABELS   = [
     'shop'    => 'Shop',
 ];
 
+// ── Line-status label map — operator labels; never expose DB enum literals in UI ─
+const EXP_LINE_STATUS_LABELS = [
+    'to_fulfil'  => 'À livrer',
+    'non_livre'  => 'Non livré',
+    'rupture'    => 'Rupture',
+];
+
 // ── View routing ──────────────────────────────────────────────────────────────
 $view    = isset($_GET['view']) ? (string) $_GET['view'] : 'commandes';
 $allowedViews = ['commandes', 'shopify', 'form', 'stock', 'stocktake', 'clients', 'mouvements', 'side-stock', 'historique', 'repack'];
@@ -1664,7 +1671,8 @@ try {
             $placeholders = implode(',', array_fill(0, count($orderIds), '?'));
             $lineStmt = $pdo->prepare(
                 "SELECT l.order_id_fk, l.sku_id_fk, l.qty,
-                        s.sku_code, s.format, s.hl_per_unit
+                        s.sku_code, s.format, s.hl_per_unit,
+                        l.line_status
                    FROM ord_order_lines l
                    JOIN ref_skus s ON s.id = l.sku_id_fk
                   WHERE l.order_id_fk IN ({$placeholders})
@@ -1871,7 +1879,7 @@ try {
 
         if ($editOrder !== null) {
             $lineStmt = $pdo->prepare(
-                'SELECT l.id, l.sku_id_fk, l.qty, l.line_comment,
+                'SELECT l.id, l.sku_id_fk, l.qty, l.line_comment, l.line_status,
                         s.sku_code, s.format, s.hl_per_unit
                    FROM ord_order_lines l
                    JOIN ref_skus s ON s.id = l.sku_id_fk
@@ -2425,12 +2433,22 @@ $editOrderJson    = $editOrder !== null
     ? json_encode($editOrder, $jsonFlags) : 'null';
 $editLinesJson    = $editLines
     ? json_encode(array_map(fn($l) => [
+        'line_id'     => (int) $l['id'],
         'sku_id'      => (int) $l['sku_id_fk'],
         'sku_code'    => $l['sku_code'],
         'format'      => $l['format'] ?? '',
         'hl_per_unit' => (float) $l['hl_per_unit'],
         'qty'         => (float) $l['qty'],
         'comment'     => $l['line_comment'] ?? '',
+        'line_status' => $l['line_status'] ?? 'to_fulfil',
+    ], $editLines), $jsonFlags) : '[]';
+
+// ── Line-status data for expeditions-line-status.js ──────────────────────────
+// Separate from EXP_EDIT_LINES to keep form JS and status JS decoupled.
+$lineStatusDataJson = $editLines
+    ? json_encode(array_map(fn($l) => [
+        'line_id' => (int) $l['id'],
+        'status'  => $l['line_status'] ?? 'to_fulfil',
     ], $editLines), $jsonFlags) : '[]';
 
 // ── Live stock map for Saisie form (injected only when view=form) ─────────────
@@ -3730,6 +3748,25 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
                 $cmdStockDetailByOid[$oid] = $shortList;
             }
 
+            // Backorder detection: collect lines with line_status ≠ 'to_fulfil'
+            // Board read is UNGATED — these lines are always shown (flagged, not hidden).
+            // Depletion (fg-stock.php) already excludes them; this surface is informational.
+            $backorderLines = [];
+            foreach ($lines as $ln) {
+                $ls = (string) ($ln['line_status'] ?? 'to_fulfil');
+                if ($ls !== 'to_fulfil') {
+                    $qty    = (float) $ln['qty'];
+                    $qtyFmt = (floor($qty) == $qty) ? (int) $qty : $qty;
+                    $backorderLines[] = [
+                        'sku_code' => (string) ($ln['sku_code'] ?? ''),
+                        'qty'      => $qtyFmt,
+                        'status'   => $ls,
+                        'label'    => EXP_LINE_STATUS_LABELS[$ls] ?? $ls,
+                    ];
+                }
+            }
+            $hasBackorder = !empty($backorderLines);
+
             // SKU pills: up to 6 visible, +N expand — with family colour class
             $pillsHtml = '';
             $pillCount = count($lines);
@@ -3773,6 +3810,26 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
             <?php if ($hasStockRisk): ?>
               <button type="button" class="exp-stock-risk-chip" data-order-id="<?= $oid ?>"
                       aria-label="Voir le détail du risque de stock (advisory)">⚠ stock</button>
+            <?php endif ?>
+
+            <!-- Backorder / lost-sales badge — lines flagged non_livre or rupture.
+                 Board read is UNGATED: lines always show here (flagged, not dropped).
+                 Depletion is gated (fg-stock.php) — these lines don't burn stock. -->
+            <?php if ($hasBackorder): ?>
+              <?php
+              $ruptureCnt   = count(array_filter($backorderLines, fn($bl) => $bl['status'] === 'rupture'));
+              $nonLivreCnt  = count($backorderLines) - $ruptureCnt;
+              $boBadgeTitle = implode('; ', array_map(
+                  fn($bl) => $bl['sku_code'] . '×' . $bl['qty'] . ' — ' . $bl['label'],
+                  $backorderLines
+              ));
+              ?>
+              <span class="exp-backorder-badge<?= $ruptureCnt > 0 ? ' exp-backorder-badge--rupture' : '' ?>"
+                    title="<?= htmlspecialchars($boBadgeTitle) ?>"
+                    aria-label="<?= $ruptureCnt > 0 ? 'Rupture de stock' : 'Non livré' ?> : <?= count($backorderLines) ?> ligne<?= count($backorderLines) > 1 ? 's' : '' ?>">
+                <?= $ruptureCnt > 0 ? '⊘ rupture' : '↷ non livré' ?>
+                (<?= count($backorderLines) ?>)
+              </span>
             <?php endif ?>
 
             <!-- BC divergence badge: operator corrected lines after BC BL lock.
@@ -4153,6 +4210,8 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
     // Lets JS add back the original qty to live_futur so editing doesn't
     // false-flag its own lines as over-stock.
     window.EXP_EDIT_ORIG_QTY = <?= $editOrigQtyJson ?>;
+    // Line-status data for expeditions-line-status.js: [{line_id, status}, …]
+    window.EXP_LINE_STATUS_DATA = <?= $lineStatusDataJson ?>;
   </script>
 
   <?php if ($isReadOnly): ?>
@@ -4395,6 +4454,9 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
   </form>
 
   <script src="/js/expeditions-form.js?v=<?= @filemtime(__DIR__ . '/../js/expeditions-form.js') ?: time() ?>"></script>
+  <?php if (!empty($editLines)): ?>
+  <script src="/js/expeditions-line-status.js?v=<?= @filemtime(__DIR__ . '/../js/expeditions-line-status.js') ?: time() ?>"></script>
+  <?php endif ?>
 
   <?php endif ?>
 
