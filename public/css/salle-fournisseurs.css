@@ -409,7 +409,7 @@ body.salle-fournisseurs .sf-row-gl {
 body.salle-fournisseurs .sf-row-cur {
   font-family: "JetBrains Mono", monospace;
   font-size: 9px;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   border: 1px solid var(--hairline-2);
   border-radius: 3px;
   padding: 0 3px;
@@ -474,7 +474,7 @@ body.salle-fournisseurs .sf-empty-label {
 }
 body.salle-fournisseurs .sf-empty-sub {
   font-size: 12px;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   text-align: center;
   line-height: 1.6;
   max-width: 300px;
@@ -543,7 +543,7 @@ body.salle-fournisseurs .sf-doc-stamp {
   font-family: "JetBrains Mono", monospace;
   font-size: 7px;
   letter-spacing: .14em;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   text-transform: uppercase;
   writing-mode: vertical-lr;
   transform: rotate(180deg);
@@ -613,7 +613,7 @@ body.salle-fournisseurs .sf-no-parser {
   font-family: "JetBrains Mono", monospace;
   font-size: 9px;
   letter-spacing: .06em;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   padding: 3px 8px;
   border: 1px dashed var(--hairline-2);
   border-radius: 4px;
@@ -708,7 +708,7 @@ body.salle-fournisseurs .sf-doc-field-value.mono {
   letter-spacing: .04em;
 }
 body.salle-fournisseurs .sf-doc-field-value.gap {
-  color: var(--ink-faint);
+  color: var(--ink-label);
   font-style: italic;
 }
 
@@ -742,7 +742,7 @@ body.salle-fournisseurs .sf-doc-field.sf-field-gap {
   background: color-mix(in srgb, var(--ember) 5%, transparent) !important;
 }
 body.salle-fournisseurs .sf-doc-field.sf-field-gap .sf-doc-field-value {
-  color: var(--ink-faint);
+  color: var(--ink-label);
   font-style: italic;
 }
 
@@ -905,7 +905,7 @@ body.salle-fournisseurs .sf-gl-excluded-tag {
 body.salle-fournisseurs .sf-gl-note {
   margin-top: 8px;
   font-size: 10.5px;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   line-height: 1.5;
   padding: 6px 10px;
   border: 1px solid color-mix(in srgb, var(--hairline) 30%, transparent);
@@ -920,7 +920,7 @@ body.salle-fournisseurs .sf-gl-multi-note {
   border-radius: 0 5px 5px 0;
   background: color-mix(in srgb, var(--bbt) 6%, transparent);
 }
-body.salle-fournisseurs .sf-gl-multi-note p { font-size: 10.5px; color: var(--ink-faint); line-height: 1.5; }
+body.salle-fournisseurs .sf-gl-multi-note p { font-size: 10.5px; color: var(--ink-label); line-height: 1.5; }
 
 /* ── CATALOGUE TABLE ─────────────────────────────────────────────────── */
 body.salle-fournisseurs .sf-cat-head {
@@ -989,7 +989,7 @@ body.salle-fournisseurs .sf-line-num {
   position: absolute; left: 0;
   font-family: "JetBrains Mono", monospace;
   font-size: 8px;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   width: 40px;
   text-align: right;
   padding-right: 6px;
@@ -1009,7 +1009,7 @@ body.salle-fournisseurs .sf-td-del {
 body.salle-fournisseurs .sf-empty-cat {
   padding: 14px 18px 14px 52px;
   font-size: 12px;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   font-style: italic;
   border-bottom: 1px solid color-mix(in srgb, var(--hairline) 20%, transparent);
 }
@@ -1070,7 +1070,7 @@ body.salle-fournisseurs .sf-gov-field-label {
   margin-bottom: 4px;
 }
 body.salle-fournisseurs .sf-gov-field-value { font-size: 12.5px; color: var(--ink-soft); }
-body.salle-fournisseurs .sf-gov-field-value.sf-gap { color: var(--ink-faint); font-style: italic; }
+body.salle-fournisseurs .sf-gov-field-value.sf-gap { color: var(--ink-label); font-style: italic; }
 body.salle-fournisseurs .sf-gov-field-value.sf-guess { color: var(--oak); }
 body.salle-fournisseurs .sf-gov-field-value.sf-locked { color: var(--bbt); }
 
@@ -1079,7 +1079,7 @@ body.salle-fournisseurs .sf-pin-detail {
   margin-top: 4px;
   font-family: "JetBrains Mono", monospace;
   font-size: 9px;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   line-height: 1.4;
 }
 
@@ -1171,7 +1171,7 @@ body.salle-fournisseurs .sf-log-entries.open { display: block; }
 body.salle-fournisseurs .sf-log-entry {
   font-family: "JetBrains Mono", monospace;
   font-size: 10px;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   padding: 3px 0;
   border-bottom: 1px solid var(--hairline);
   line-height: 1.4;

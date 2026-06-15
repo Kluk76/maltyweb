@@ -155,7 +155,7 @@ body.mon-tableau .kpc-card__label {
   font-size: .62rem;
   letter-spacing: .1em;
   text-transform: uppercase;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   margin-bottom: .45rem;
 }
 
@@ -218,7 +218,7 @@ body.mon-tableau .kpc-delta {
 }
 body.mon-tableau .kpc-delta--up   { color: var(--hop); }
 body.mon-tableau .kpc-delta--down { color: var(--ember); }
-body.mon-tableau .kpc-delta-lbl   { color: var(--ink-faint); font-size: .7rem; }
+body.mon-tableau .kpc-delta-lbl   { color: var(--ink-label); font-size: .7rem; }
 
 /* Error / stub states */
 body.mon-tableau .kpc-card__error {
@@ -245,7 +245,7 @@ body.mon-tableau .kpc-card__stub-note code {
 
 /* No data placeholder */
 body.mon-tableau .kpc-no-data {
-  color: var(--ink-faint);
+  color: var(--ink-label);
   font-size: 1.2rem;
   margin: .5rem 0;
 }
@@ -405,11 +405,11 @@ body.mon-tableau .kpc-grouped-delta--new {
   font-style: italic;
 }
 body.mon-tableau .kpc-grouped-delta--neutral {
-  color: var(--ink-faint);
+  color: var(--ink-label);
 }
 body.mon-tableau .kpc-grouped-more {
   font-size: .68rem;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   text-align: right;
   padding-top: .2rem;
   font-family: 'JetBrains Mono', monospace;
@@ -454,7 +454,7 @@ body.mon-tableau .kpc-table th {
   font-size: .6rem;
   letter-spacing: .08em;
   text-transform: uppercase;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   text-align: left;
   padding: .2rem .4rem;
   border-bottom: 1px solid var(--hairline);
@@ -465,7 +465,7 @@ body.mon-tableau .kpc-table td {
   border-bottom: 1px solid color-mix(in srgb, var(--hairline) 50%, transparent);
 }
 body.mon-tableau .kpc-table td:last-child { text-align: right; font-family: 'JetBrains Mono', monospace; }
-body.mon-tableau .kpc-table__more td { color: var(--ink-faint); font-size: .7rem; }
+body.mon-tableau .kpc-table__more td { color: var(--ink-label); font-size: .7rem; }
 
 /* Waterfall */
 body.mon-tableau .kpc-waterfall-svg {
@@ -484,7 +484,7 @@ body.mon-tableau .kpc-card__drag {
   top: .4rem;
   right: .4rem;
   cursor: grab;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   font-size: .9rem;
   opacity: 0;
   transition: opacity .15s;
@@ -505,7 +505,7 @@ body.mon-tableau .kpc-card__remove {
   position: absolute;
   top: .4rem;
   right: 1.6rem;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   font-size: .75rem;
   line-height: 1;
   padding: 2px 4px;
@@ -620,7 +620,7 @@ body.mon-tableau .mt-picker__group-toggle {
   font-size: .58rem;
   letter-spacing: .12em;
   text-transform: uppercase;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   text-align: left;
 }
 @media (hover: hover) and (pointer: fine) {
@@ -729,7 +729,7 @@ body.mon-tableau .mt-tracker-item__label {
 body.mon-tableau .mt-tracker-item__meta {
   font-size: .66rem;
   font-family: 'JetBrains Mono', monospace;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   letter-spacing: .04em;
   margin-top: .2rem;
 }
@@ -906,7 +906,7 @@ body.mon-tableau .kpc-recap__section-title {
   font-size: .6rem;
   letter-spacing: .08em;
   text-transform: uppercase;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   margin: .55rem 0 .25rem;
 }
 body.mon-tableau .kpc-recap__section-title:first-child {

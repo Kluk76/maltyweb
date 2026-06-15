@@ -109,7 +109,7 @@ body.home .ppb-th-group {
   font-weight: 500;
   letter-spacing: 0.2em;
   text-transform: uppercase;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   padding: 6px 14px 0;
   text-align: center;
   border-top: 1px solid var(--hairline-2);
@@ -192,7 +192,7 @@ body.home .ppb-batch__meta {
 }
 
 body.home .ppb-batch__meta--incomplete {
-  color: var(--ink-faint);
+  color: var(--ink-label);
 }
 
 /* Percentage cells — right-aligned monospace */
@@ -206,7 +206,7 @@ body.home .ppb-td--pct {
 
 /* NULL / empty cell */
 body.home .ppb-pct--null {
-  color: var(--ink-faint);
+  color: var(--ink-label);
   font-style: italic;
   font-family: "DM Sans", system-ui, sans-serif;
   font-size: 11px;
@@ -266,7 +266,7 @@ body.home .ppb-pill--oddity {
 /* Unit suffix */
 body.home .ppb-unit {
   font-size: 10px;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   margin-left: 1px;
 }
 
@@ -355,7 +355,7 @@ body.home .ppb-bbt-vide__val {
 }
 body.home .ppb-bbt-vide__note {
   font-size: 0.72rem;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   margin-left: 0.5rem;
 }
 

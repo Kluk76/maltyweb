@@ -62,7 +62,7 @@ body.sb-mother .smh-not-found__inner {
 
 body.sb-mother .smh-not-found__code {
   font-size: 3rem;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   margin-bottom: 16px;
 }
 
@@ -120,7 +120,7 @@ body.sb-mother .smh-archive-banner__meta {
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 0.56rem;
   letter-spacing: 0.06em;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   display: flex;
   gap: 8px;
   align-items: center;
@@ -240,7 +240,7 @@ body.sb-mother .smh-status-pill--merged {
 }
 
 body.sb-mother .smh-status-pill--archived {
-  color: var(--ink-faint);
+  color: var(--ink-label);
   background: color-mix(in srgb, var(--hairline) 20%, transparent);
   border-color: var(--hairline);
 }
@@ -265,7 +265,7 @@ body.sb-mother .smh-eta-chip {
 }
 
 body.sb-mother .smh-eta-chip__delta {
-  color: var(--ink-faint);
+  color: var(--ink-label);
   margin-left: 3px;
 }
 
@@ -289,7 +289,7 @@ body.sb-mother .smh-header__days {
 
 body.sb-mother .smh-header__meta-sep { color: var(--hairline-2); }
 
-body.sb-mother .smh-header__last-activity { color: var(--ink-faint); }
+body.sb-mother .smh-header__last-activity { color: var(--ink-label); }
 
 /* ══════════════════════════════════════════════════════════════
    PHASE ARC — standard 4-zone strip
@@ -325,7 +325,7 @@ body.sb-mother .smh-arc__zone:last-child { border-right: none; }
 body.sb-mother .smh-arc__icon {
   font-size: 0.9rem;
   flex-shrink: 0;
-  color: var(--ink-faint);
+  color: var(--ink-label);
 }
 
 body.sb-mother .smh-arc__name {
@@ -340,7 +340,7 @@ body.sb-mother .smh-arc__detail {
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 0.52rem;
   letter-spacing: 0.04em;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   display: block;
   white-space: nowrap;
   overflow: hidden;
@@ -362,15 +362,15 @@ body.sb-mother .smh-arc__zone--active {
 body.sb-mother .smh-arc__zone--active .smh-arc__icon { color: var(--cold); }
 body.sb-mother .smh-arc__zone--active .smh-arc__name { color: var(--cold); font-weight: 600; }
 
-body.sb-mother .smh-arc__zone--future .smh-arc__icon { color: var(--ink-faint); }
-body.sb-mother .smh-arc__zone--future .smh-arc__name { color: var(--ink-faint); }
+body.sb-mother .smh-arc__zone--future .smh-arc__icon { color: var(--ink-label); }
+body.sb-mother .smh-arc__zone--future .smh-arc__name { color: var(--ink-label); }
 
 body.sb-mother .smh-arc__zone--disabled {
   opacity: 0.4;
   border: 1px dashed var(--hairline);
   background: transparent;
 }
-body.sb-mother .smh-arc__zone--disabled .smh-arc__name { color: var(--ink-faint); }
+body.sb-mother .smh-arc__zone--disabled .smh-arc__name { color: var(--ink-label); }
 
 /* Merged arc label strip */
 body.sb-mother .smh-arc-merged__label-strip {
@@ -500,10 +500,10 @@ body.sb-mother .smh-section-meta {
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 0.52rem;
   letter-spacing: 0.06em;
-  color: var(--ink-faint);
+  color: var(--ink-label);
 }
 
-body.sb-mother .smh-section-meta--muted { color: var(--ink-faint); }
+body.sb-mother .smh-section-meta--muted { color: var(--ink-label); }
 
 body.sb-mother .smh-divider {
   height: 1px;
@@ -517,7 +517,7 @@ body.sb-mother .smh-divider {
 body.sb-mother .smh-simple-composition {
   font-family: "DM Sans", sans-serif;
   font-size: 0.8rem;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   font-style: italic;
   margin: 0 0 18px;
 }
@@ -599,7 +599,7 @@ body.sb-mother .smh-comp-tag--absorbed {
 }
 
 body.sb-mother .smh-comp-tag--closed {
-  color: var(--ink-faint);
+  color: var(--ink-label);
   border: 1px dashed var(--hairline);
 }
 
@@ -636,7 +636,7 @@ body.sb-mother .smh-comp-source__detail {
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 0.52rem;
   letter-spacing: 0.04em;
-  color: var(--ink-faint);
+  color: var(--ink-label);
 }
 
 body.sb-mother .smh-comp-source__actions {
@@ -710,7 +710,7 @@ body.sb-mother .smh-mini-event {
 
 body.sb-mother .smh-mini-event__type { font-weight: 600; color: var(--ink); }
 body.sb-mother .smh-mini-event__vessel { color: var(--cold); }
-body.sb-mother .smh-mini-event__date { color: var(--ink-faint); margin-left: auto; }
+body.sb-mother .smh-mini-event__date { color: var(--ink-label); margin-left: auto; }
 
 body.sb-mother .smh-mini-event__status--closed { color: var(--hop-deep); }
 body.sb-mother .smh-mini-event__status--open   { color: var(--cold); }
@@ -719,7 +719,7 @@ body.sb-mother .smh-mini-event__status--abandoned { color: var(--ember); }
 body.sb-mother .smh-mini-timeline-empty {
   font-family: "DM Sans", sans-serif;
   font-size: 0.76rem;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   font-style: italic;
 }
 
@@ -727,7 +727,7 @@ body.sb-mother .smh-comp-expanded__footer {
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 0.50rem;
   letter-spacing: 0.06em;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   padding-top: 10px;
   border-top: 1px dashed var(--hairline);
   margin-top: 10px;
@@ -827,12 +827,12 @@ body.sb-mother .smh-child-card__meta {
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 0.52rem;
   letter-spacing: 0.04em;
-  color: var(--ink-faint);
+  color: var(--ink-label);
 }
 
 body.sb-mother .smh-child-card__vessel { color: var(--cold); font-weight: 600; }
 body.sb-mother .smh-child-meta-sep { color: var(--hairline-2); }
-body.sb-mother .smh-child-card__last-act { color: var(--ink-faint); }
+body.sb-mother .smh-child-card__last-act { color: var(--ink-label); }
 
 body.sb-mother .smh-child-card__actions {
   margin-top: 8px;
@@ -859,14 +859,14 @@ body.sb-mother .smh-no-children {
 
 body.sb-mother .smh-no-children__icon {
   font-size: 1.5rem;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   margin-bottom: 8px;
 }
 
 body.sb-mother .smh-no-children__msg {
   font-family: "DM Sans", sans-serif;
   font-size: 0.8rem;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   font-style: italic;
 }
 
@@ -916,7 +916,7 @@ body.sb-mother .smh-wort-disabled-zones__label {
   font-size: 0.52rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   margin-bottom: 8px;
 }
 
@@ -930,7 +930,7 @@ body.sb-mother .smh-wort-zone-disabled {
 body.sb-mother .smh-wort-zone-disabled__name {
   font-family: "DM Sans", sans-serif;
   font-size: 0.78rem;
-  color: var(--ink-faint);
+  color: var(--ink-label);
 }
 
 body.sb-mother .smh-wort-zone-disabled__badge {
@@ -938,7 +938,7 @@ body.sb-mother .smh-wort-zone-disabled__badge {
   font-size: 0.48rem;
   letter-spacing: 0.10em;
   text-transform: uppercase;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   border: 1px dashed var(--hairline);
   padding: 1px 5px;
   border-radius: 2px;
@@ -966,14 +966,14 @@ body.sb-mother .smh-placeholder-zone__label {
   font-size: 0.52rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   margin-bottom: 4px;
 }
 
 body.sb-mother .smh-placeholder-zone__sub {
   font-family: "DM Sans", sans-serif;
   font-size: 0.76rem;
-  color: var(--ink-faint);
+  color: var(--ink-label);
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -997,13 +997,13 @@ body.sb-mother .smh-face-placeholder__label {
   font-size: 0.56rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--ink-faint);
+  color: var(--ink-label);
 }
 
 body.sb-mother .smh-face-placeholder__msg {
   font-family: "DM Sans", sans-serif;
   font-size: 0.78rem;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   line-height: 1.55;
 }
 
@@ -1015,7 +1015,7 @@ body.sb-mother .smh-rail-head {
   font-size: 0.52rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   border-bottom: 1px solid var(--hairline);
   padding-bottom: 5px;
   margin: 0 0 10px;
@@ -1046,7 +1046,7 @@ body.sb-mother .smh-rail-item__label {
   font-size: 0.48rem;
   letter-spacing: 0.10em;
   text-transform: uppercase;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   flex-shrink: 0;
 }
 
@@ -1590,7 +1590,7 @@ body.sb-mother .sb-merge-label {
 
 body.sb-mother .sb-merge-hint {
   font-size: 0.68rem;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   margin: 0;
   line-height: 1.4;
 }
@@ -1922,7 +1922,7 @@ body.sb-mother .sb-fc-textarea:focus {
 
 body.sb-mother .sb-fc-hint {
   font-size: 0.68rem;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   margin: 0;
   line-height: 1.4;
 }

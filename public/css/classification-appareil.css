@@ -137,7 +137,7 @@ body.auth.classification-appareil .ca-other-input:focus {
 }
 
 body.auth.classification-appareil .ca-other-input::placeholder {
-  color: var(--ink-faint);
+  color: var(--ink-label);
 }
 
 /* ── Subtext / info strip above choices ─────────────────────────── */

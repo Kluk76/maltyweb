@@ -161,7 +161,7 @@ body.sdc-page .nav-rail::before {
 }
 body.sdc-page .nav-section-label {
   font-family: "JetBrains Mono", monospace; font-size: 9px; letter-spacing: .32em;
-  color: var(--ink-faint); text-transform: uppercase; padding: 0 20px 8px; margin-top: 4px;
+  color: var(--ink-label); text-transform: uppercase; padding: 0 20px 8px; margin-top: 4px;
 }
 body.sdc-page .nav-item {
   display: flex; align-items: center; gap: 12px; padding: 11px 20px;
@@ -234,7 +234,7 @@ body.sdc-page .col-subtitle { font-family: "JetBrains Mono", monospace; font-siz
 body.sdc-page .recipe-scroll { flex: 1; overflow-y: auto; scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--lab) 35%, transparent) transparent; }
 body.sdc-page .recipe-scroll::-webkit-scrollbar { width: 4px; }
 body.sdc-page .recipe-scroll::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--lab) 35%, transparent); border-radius: 2px; }
-body.sdc-page .recipe-group-label { font-family: "JetBrains Mono", monospace; font-size: 8px; letter-spacing: .28em; color: var(--ink-faint); text-transform: uppercase; padding: 10px 16px 6px; border-bottom: 1px solid var(--hairline); }
+body.sdc-page .recipe-group-label { font-family: "JetBrains Mono", monospace; font-size: 8px; letter-spacing: .28em; color: var(--ink-label); text-transform: uppercase; padding: 10px 16px 6px; border-bottom: 1px solid var(--hairline); }
 body.sdc-page .recipe-item { display: flex; align-items: center; gap: 10px; padding: 11px 16px; border-bottom: 1px solid var(--hairline); cursor: pointer; transition: background .15s; position: relative; }
 body.sdc-page .recipe-item:hover { background: color-mix(in srgb, var(--lab) 10%, transparent); }
 body.sdc-page .recipe-item.sel { background: color-mix(in srgb, var(--lab) 16%, transparent); border-left: 2px solid var(--lab); }
@@ -260,7 +260,7 @@ body.sdc-page .rdh-title em { font-style: italic; color: var(--lab); }
 body.sdc-page .rdh-title-input { font-family: "Fraunces", serif; font-variation-settings: "opsz" 144; font-style: italic; font-weight: 400; font-size: 28px; color: var(--lab); background: none; border: none; border-bottom: 1px dashed transparent; outline: none; padding: 0 2px; width: 100%; max-width: 420px; line-height: 1; transition: border-color .2s; }
 body.sdc-page .rdh-title-input:not([readonly]):focus { border-bottom-color: var(--lab); }
 body.sdc-page .rdh-title-input[readonly] { pointer-events: none; color: var(--ink-mute); }
-body.sdc-page .rdh-title-input::placeholder { color: var(--ink-faint); font-style: italic; }
+body.sdc-page .rdh-title-input::placeholder { color: var(--ink-label); font-style: italic; }
 body.sdc-page .rdh-meta { font-family: "JetBrains Mono", monospace; font-size: 9px; letter-spacing: .15em; color: var(--ink-mute); text-transform: uppercase; margin-left: 16px; margin-bottom: 5px; }
 body.sdc-page .rdh-abv { margin-left: auto; font-family: "Fraunces", serif; font-variation-settings: "opsz" 72; font-size: 22px; font-weight: 400; color: var(--lab); margin-bottom: 4px; }
 body.sdc-page .rdh-abv-label { font-family: "JetBrains Mono", monospace; font-size: 8px; letter-spacing: .2em; color: var(--ink-mute); text-align: right; margin-bottom: 6px; }
@@ -268,7 +268,7 @@ body.sdc-page .rdh-abv-label { font-family: "JetBrains Mono", monospace; font-si
 body.sdc-page .rdh-style-row { display: flex; align-items: center; gap: 8px; margin-top: 5px; margin-bottom: 4px; }
 body.sdc-page .rdh-style-input { font-family: "Fraunces", serif; font-variation-settings: "opsz" 72; font-size: 14px; font-style: italic; color: var(--lab); background: none; border: none; border-bottom: 1px dashed color-mix(in srgb, var(--lab) 45%, transparent); outline: none; padding: 0 2px; min-width: 160px; max-width: 260px; transition: border-color .2s; }
 body.sdc-page .rdh-style-input:focus { border-bottom-color: var(--lab); }
-body.sdc-page .rdh-style-input::placeholder { color: var(--ink-faint); font-style: italic; }
+body.sdc-page .rdh-style-input::placeholder { color: var(--ink-label); font-style: italic; }
 body.sdc-page[data-role="operateur"] .rdh-style-input { pointer-events: none; border-bottom-color: transparent; }
 
 body.sdc-page .btn-new-recipe { display: flex; align-items: center; gap: 6px; margin: 10px 16px 6px; padding: 7px 12px; border: 1px dashed color-mix(in srgb, var(--hop) 50%, transparent); border-radius: 7px; background: none; color: var(--ink-mute); font-family: "JetBrains Mono", monospace; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; cursor: pointer; transition: all .2s; width: calc(100% - 32px); }
@@ -301,7 +301,7 @@ body.sdc-page .ish-total { font-family: "JetBrains Mono", monospace; font-size: 
 body.sdc-page .ingr-row { display: flex; align-items: center; gap: 12px; padding: 7px 10px; border-radius: 7px; margin-bottom: 3px; transition: background .15s; }
 body.sdc-page .ingr-row:hover { background: color-mix(in srgb, var(--ink) 4%, transparent); }
 body.sdc-page .ingr-name { font-family: "DM Sans", sans-serif; font-size: 13px; color: var(--ink-soft); flex: 1; }
-body.sdc-page .ingr-mid { font-family: "JetBrains Mono", monospace; font-size: 9px; letter-spacing: .06em; color: var(--ink-faint); flex: 0 0 120px; }
+body.sdc-page .ingr-mid { font-family: "JetBrains Mono", monospace; font-size: 9px; letter-spacing: .06em; color: var(--ink-label); flex: 0 0 120px; }
 body.sdc-page .ingr-qty { font-family: "JetBrains Mono", monospace; font-size: 12px; color: var(--ink); flex: 0 0 80px; text-align: right; }
 body.sdc-page .ingr-unit { font-family: "JetBrains Mono", monospace; font-size: 10px; color: var(--oak); width: 28px; }
 body.sdc-page .ingr-bar-wrap { flex: 0 0 80px; height: 4px; background: color-mix(in srgb, var(--ink) 10%, transparent); border-radius: 2px; overflow: hidden; }
@@ -341,7 +341,7 @@ body.sdc-page .new-field-tag { display: inline-flex; align-items: center; gap: 5
 body.sdc-page .abv-display { display: flex; align-items: baseline; gap: 6px; margin-bottom: 4px; }
 body.sdc-page .abv-big { font-family: "Fraunces", serif; font-variation-settings: "opsz" 144; font-size: 32px; color: var(--lab); font-weight: 300; line-height: 1; }
 body.sdc-page .abv-pct { font-family: "JetBrains Mono", monospace; font-size: 14px; color: var(--lab); opacity: .7; }
-body.sdc-page .abv-calc-note { font-family: "JetBrains Mono", monospace; font-size: 8px; letter-spacing: .1em; color: var(--ink-faint); text-transform: uppercase; }
+body.sdc-page .abv-calc-note { font-family: "JetBrains Mono", monospace; font-size: 8px; letter-spacing: .1em; color: var(--ink-label); text-transform: uppercase; }
 
 /* ═══════════════════════════════════════════
    BIOCHIMIE SECTION
@@ -411,7 +411,7 @@ body.sdc-page .csr-label { font-family: "DM Sans", sans-serif; font-size: 13px; 
 body.sdc-page .csr-label small { display: block; font-family: "JetBrains Mono", monospace; font-size: 9px; letter-spacing: .1em; color: var(--ink-mute); text-transform: uppercase; margin-top: 3px; }
 body.sdc-page .csr-value { font-family: "Fraunces", serif; font-variation-settings: "opsz" 72; font-size: 26px; color: var(--lab); line-height: 1; flex: 0 0 auto; }
 body.sdc-page .csr-unit { font-family: "JetBrains Mono", monospace; font-size: 11px; color: var(--oak); margin-left: 2px; }
-body.sdc-page .csr-default-note { font-family: "JetBrains Mono", monospace; font-size: 9px; color: var(--ink-faint); margin-left: 6px; }
+body.sdc-page .csr-default-note { font-family: "JetBrains Mono", monospace; font-size: 9px; color: var(--ink-label); margin-left: 6px; }
 
 body.sdc-page .cond-note { font-family: "DM Sans", sans-serif; font-size: 12px; color: var(--ink-mute); line-height: 1.6; border-top: 1px solid var(--hairline); padding-top: 12px; margin-top: 4px; }
 body.sdc-page .cond-note b { color: var(--ink-soft); }
@@ -425,9 +425,9 @@ body.sdc-page .cond-edit-input { width: 5rem; padding: 7px 10px; background: col
 body.sdc-page .cond-edit-input:focus { border-color: var(--lab); box-shadow: 0 0 0 2px color-mix(in srgb, var(--lab) 22%, transparent); }
 body.sdc-page .cond-edit-btn { padding: 7px 18px; background: color-mix(in srgb, var(--lab) 26%, transparent); border: 1px solid var(--lab-deep); border-radius: 7px; color: var(--lab); font-family: "JetBrains Mono", monospace; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; cursor: pointer; transition: background .2s; }
 body.sdc-page .cond-edit-btn:hover { background: color-mix(in srgb, var(--lab) 36%, transparent); }
-body.sdc-page .cond-edit-hint { font-size: 11px; color: var(--ink-faint); line-height: 1.55; margin: 0; }
+body.sdc-page .cond-edit-hint { font-size: 11px; color: var(--ink-label); line-height: 1.55; margin: 0; }
 
-body.sdc-page .cond-readonly-note { font-family: "JetBrains Mono", monospace; font-size: 9px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-faint); margin-top: 10px; border-top: 1px solid var(--hairline); padding-top: 10px; }
+body.sdc-page .cond-readonly-note { font-family: "JetBrains Mono", monospace; font-size: 9px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-label); margin-top: 10px; border-top: 1px solid var(--hairline); padding-top: 10px; }
 
 /* override gate card */
 body.sdc-page .override-gate-card { background: color-mix(in srgb, var(--ember) 6%, transparent); border: 1px solid color-mix(in srgb, var(--ember) 28%, transparent); border-radius: 12px; padding: 18px 22px; margin-bottom: 16px; }
@@ -478,7 +478,7 @@ body.sdc-page .modal-form-select option { background: var(--bg-elev); }
 /* non-produite yeast family — de-emphasized */
 body.sdc-page .yf-card--non-produite { opacity: .65; }
 body.sdc-page .yf-card--non-produite:hover { opacity: 1; }
-body.sdc-page .yf-non-produite-badge { display: inline-block; font-family: "JetBrains Mono", monospace; font-size: 8px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-faint); background: color-mix(in srgb, var(--ink) 8%, transparent); border: 1px solid var(--hairline); padding: 2px 7px; border-radius: 10px; margin-left: 6px; vertical-align: middle; }
+body.sdc-page .yf-non-produite-badge { display: inline-block; font-family: "JetBrains Mono", monospace; font-size: 8px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-label); background: color-mix(in srgb, var(--ink) 8%, transparent); border: 1px solid var(--hairline); padding: 2px 7px; border-radius: 10px; margin-left: 6px; vertical-align: middle; }
 
 /* biochem inline edit form — admin only (mirrors cond-edit-form pattern) */
 body.sdc-page .yf-edit-form { margin-top: 14px; border-top: 1px solid var(--hairline); padding-top: 14px; }
@@ -492,7 +492,7 @@ body.sdc-page .yf-edit-unit { font-family: "JetBrains Mono", monospace; font-siz
 body.sdc-page .yf-edit-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 body.sdc-page .yf-edit-btn { padding: 6px 16px; background: color-mix(in srgb, var(--lab) 26%, transparent); border: 1px solid var(--lab-deep); border-radius: 7px; color: var(--lab); font-family: "JetBrains Mono", monospace; font-size: 9px; letter-spacing: .1em; text-transform: uppercase; cursor: pointer; transition: background .2s; }
 body.sdc-page .yf-edit-btn:hover { background: color-mix(in srgb, var(--lab) 36%, transparent); }
-body.sdc-page .yf-edit-hint { font-size: 10.5px; color: var(--ink-faint); line-height: 1.5; margin: 0; flex: 1; }
+body.sdc-page .yf-edit-hint { font-size: 10.5px; color: var(--ink-label); line-height: 1.5; margin: 0; flex: 1; }
 
 /* operateur: disable pointer events on inputs managed by role-gate CSS */
 body.sdc-page[data-role="operateur"] .yf-def-v input,
@@ -519,7 +519,7 @@ body.sdc-page .fmt-pane-inner {
 /* Placeholder */
 body.sdc-page .fmt-placeholder {
   display: flex; align-items: center; justify-content: center; height: 100%;
-  color: var(--ink-faint); font-family: "JetBrains Mono", monospace;
+  color: var(--ink-label); font-family: "JetBrains Mono", monospace;
   font-size: 11px; letter-spacing: .15em; text-transform: uppercase;
 }
 
@@ -562,7 +562,7 @@ body.sdc-page .fmt-section-label {
 }
 body.sdc-page .fmt-section-sub {
   font-family: "JetBrains Mono", monospace; font-size: 9px;
-  letter-spacing: .08em; color: var(--ink-faint);
+  letter-spacing: .08em; color: var(--ink-label);
 }
 body.sdc-page .fmt-bindings-head { margin-top: 28px; }
 
@@ -570,7 +570,7 @@ body.sdc-page .fmt-bindings-head { margin-top: 28px; }
 body.sdc-page .fmt-run-group { margin-bottom: 18px; }
 body.sdc-page .fmt-run-label {
   font-family: "JetBrains Mono", monospace; font-size: 8px;
-  letter-spacing: .28em; text-transform: uppercase; color: var(--ink-faint);
+  letter-spacing: .28em; text-transform: uppercase; color: var(--ink-label);
   margin-bottom: 8px;
 }
 body.sdc-page .fmt-tiles {
@@ -603,13 +603,13 @@ body.sdc-page .fmt-tile-name {
 body.sdc-page .fmt-tile--active .fmt-tile-name { color: var(--ink); }
 body.sdc-page .fmt-tile-code {
   font-family: "JetBrains Mono", monospace; font-size: 9px;
-  letter-spacing: .1em; color: var(--ink-faint);
+  letter-spacing: .1em; color: var(--ink-label);
   background: color-mix(in srgb, var(--ink) 8%, transparent); padding: 1px 6px; border-radius: 4px;
   align-self: flex-start; margin-top: 2px;
 }
 body.sdc-page .fmt-tile-meta {
   font-family: "JetBrains Mono", monospace; font-size: 9px;
-  color: var(--ink-faint); margin-top: 2px;
+  color: var(--ink-label); margin-top: 2px;
 }
 body.sdc-page .fmt-tile-sku {
   font-family: "JetBrains Mono", monospace; font-size: 11px;
@@ -619,7 +619,7 @@ body.sdc-page .fmt-tile-sku {
 }
 body.sdc-page .fmt-tile-sku-preview {
   font-family: "JetBrains Mono", monospace; font-size: 10px;
-  letter-spacing: .06em; color: var(--ink-faint);
+  letter-spacing: .06em; color: var(--ink-label);
   background: color-mix(in srgb, var(--ink) 6%, transparent); border: 1px dashed var(--hairline-2);
   border-radius: 5px; padding: 3px 8px; margin-top: 5px; align-self: flex-start;
 }
@@ -642,7 +642,7 @@ body.sdc-page .fmt-tile-deactivate {
 body.sdc-page .fmt-tile-deactivate:hover { background: color-mix(in srgb, var(--ember) 20%, transparent); }
 body.sdc-page .fmt-tile-readonly-note {
   font-family: "JetBrains Mono", monospace; font-size: 8px;
-  color: var(--ink-faint); letter-spacing: .08em; text-transform: uppercase;
+  color: var(--ink-label); letter-spacing: .08em; text-transform: uppercase;
 }
 
 /* BOM template select (admin only) */
@@ -679,7 +679,7 @@ body.sdc-page .fmt-binding-label {
 }
 body.sdc-page .fmt-binding-scope {
   font-family: "JetBrains Mono", monospace; font-size: 8px;
-  letter-spacing: .08em; color: var(--ink-faint); display: block;
+  letter-spacing: .08em; color: var(--ink-label); display: block;
   margin-left: 6px;
 }
 body.sdc-page .fmt-gap-flag {
@@ -690,14 +690,14 @@ body.sdc-page .fmt-gap-flag {
 }
 body.sdc-page .fmt-binding-hint {
   font-family: "JetBrains Mono", monospace; font-size: 8px;
-  letter-spacing: .06em; color: var(--ink-faint);
+  letter-spacing: .06em; color: var(--ink-label);
   display: block; margin-left: 4px; font-style: italic;
 }
 body.sdc-page .fmt-binding-value {
   flex: 1; min-width: 120px; display: flex; flex-direction: column; gap: 2px;
 }
 body.sdc-page .fmt-binding-value--empty {
-  color: var(--ink-faint); font-family: "JetBrains Mono", monospace;
+  color: var(--ink-label); font-family: "JetBrains Mono", monospace;
   font-size: 10px; letter-spacing: .08em;
 }
 body.sdc-page .fmt-bound-name {
@@ -705,7 +705,7 @@ body.sdc-page .fmt-bound-name {
 }
 body.sdc-page .fmt-bound-code {
   font-family: "JetBrains Mono", monospace; font-size: 9px;
-  letter-spacing: .08em; color: var(--ink-faint);
+  letter-spacing: .08em; color: var(--ink-label);
 }
 body.sdc-page .fmt-binding-select-wrap {
   display: flex; align-items: center; gap: 8px; flex: 0 0 auto;
@@ -729,11 +729,11 @@ body.sdc-page .fmt-binding-save {
 body.sdc-page .fmt-binding-save:hover { background: color-mix(in srgb, var(--lab) 30%, transparent); }
 body.sdc-page .fmt-binding-no-candidates {
   font-family: "JetBrains Mono", monospace; font-size: 9px;
-  color: var(--ink-faint); letter-spacing: .08em; flex: 0 0 auto;
+  color: var(--ink-label); letter-spacing: .08em; flex: 0 0 auto;
 }
 body.sdc-page .fmt-binding-readonly {
   font-family: "JetBrains Mono", monospace; font-size: 8px;
-  color: var(--ink-faint); letter-spacing: .08em; text-transform: uppercase;
+  color: var(--ink-label); letter-spacing: .08em; text-transform: uppercase;
 }
 
 /* ── Levure & garde panel (pane-yeast) ───────────────────────────────────── */
@@ -802,7 +802,7 @@ body.sdc-page .yg-unit {
   font-family: "JetBrains Mono", monospace; font-size: 9px; color: var(--oak);
 }
 body.sdc-page .yg-resolved-line {
-  font-family: "JetBrains Mono", monospace; font-size: 8px; color: var(--ink-faint);
+  font-family: "JetBrains Mono", monospace; font-size: 8px; color: var(--ink-label);
   letter-spacing: .08em;
 }
 body.sdc-page .yg-effective-row { margin-top: 4px; }
@@ -848,7 +848,7 @@ body.sdc-page .cip-table-card { background: linear-gradient(135deg, var(--bg-ele
 body.sdc-page .cip-table-head { display: flex; align-items: center; gap: 10px; padding: 14px 20px 12px; border-bottom: 1px solid var(--hairline-2); }
 body.sdc-page .cip-table-title { font-family: "JetBrains Mono", monospace; font-size: 9px; letter-spacing: .18em; text-transform: uppercase; color: var(--lab); }
 body.sdc-page .cip-count { font-family: "JetBrains Mono", monospace; font-size: 9px; letter-spacing: .1em; color: var(--ink-mute); margin-left: auto; }
-body.sdc-page .cip-empty { padding: 32px; text-align: center; font-family: "JetBrains Mono", monospace; font-size: 9px; letter-spacing: .15em; text-transform: uppercase; color: var(--ink-faint); }
+body.sdc-page .cip-empty { padding: 32px; text-align: center; font-family: "JetBrains Mono", monospace; font-size: 9px; letter-spacing: .15em; text-transform: uppercase; color: var(--ink-label); }
 
 body.sdc-page .cip-table { width: 100%; border-collapse: collapse; }
 body.sdc-page .cip-th { font-family: "JetBrains Mono", monospace; font-size: 8px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink-mute); text-align: left; padding: 8px 16px; border-bottom: 1px solid var(--hairline-2); font-weight: 500; }
@@ -865,7 +865,7 @@ body.sdc-page .cip-td--status {}
 body.sdc-page .cip-td--actions {}
 body.sdc-page .cip-order-badge { font-family: "JetBrains Mono", monospace; font-size: 11px; color: var(--ink-mute); background: color-mix(in srgb, var(--ink-faint) 30%, transparent); border-radius: 5px; padding: 1px 7px; }
 body.sdc-page .cip-name { font-family: "DM Sans", sans-serif; font-size: 14px; color: var(--ink-soft); }
-body.sdc-page .cip-by { font-family: "JetBrains Mono", monospace; font-size: 9px; color: var(--ink-faint); margin-left: 6px; }
+body.sdc-page .cip-by { font-family: "JetBrains Mono", monospace; font-size: 9px; color: var(--ink-label); margin-left: 6px; }
 body.sdc-page .cip-badge { font-family: "JetBrains Mono", monospace; font-size: 8px; letter-spacing: .12em; text-transform: uppercase; border-radius: 5px; padding: 2px 8px; }
 body.sdc-page .cip-badge--active { color: var(--lab); background: color-mix(in srgb, var(--lab) 14%, transparent); border: 1px solid color-mix(in srgb, var(--lab) 30%, transparent); }
 body.sdc-page .cip-badge--inactive { color: var(--ink-mute); background: color-mix(in srgb, var(--ink-faint) 18%, transparent); border: 1px solid var(--hairline-2); }
@@ -920,7 +920,7 @@ body.sdc-page .sc-family-chip--non_alcool { color: var(--lab); background: color
 body.sdc-page .sc-family-chip--spontane { color: var(--ember); background: color-mix(in srgb, var(--ember) 14%, transparent); border: 1px solid color-mix(in srgb, var(--ember) 28%, transparent); }
 body.sdc-page .sc-family-chip--mixte { color: var(--pkg-band, var(--hop)); background: color-mix(in srgb, var(--pkg-band, var(--hop)) 14%, transparent); border: 1px solid color-mix(in srgb, var(--pkg-band, var(--hop)) 28%, transparent); }
 body.sdc-page .sc-type-chip { font-family: "JetBrains Mono", monospace; font-size: 9px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-mute); }
-body.sdc-page .sc-null { color: var(--ink-faint); }
+body.sdc-page .sc-null { color: var(--ink-label); }
 body.sdc-page .sc-unit { font-family: "JetBrains Mono", monospace; font-size: 9px; color: var(--oak); margin-left: 2px; }
 
 body.sdc-page .sc-edit-btn { padding: 4px 12px; font-family: "JetBrains Mono", monospace; font-size: 9px; letter-spacing: .1em; text-transform: uppercase; color: var(--lab); background: color-mix(in srgb, var(--lab) 12%, transparent); border: 1px solid color-mix(in srgb, var(--lab) 30%, transparent); border-radius: 6px; cursor: pointer; transition: background .15s; white-space: nowrap; }
@@ -976,10 +976,10 @@ body.sdc-page .hop-stage-err { font-family: "DM Sans", sans-serif; font-size: 10
 
 body.sdc-page .ingr-hop-stage-ro { flex: 0 0 auto; }
 body.sdc-page .hop-stage-chip { display: inline-block; font-family: "JetBrains Mono", monospace; font-size: 8px; letter-spacing: .1em; text-transform: uppercase; color: var(--hop); background: color-mix(in srgb, var(--hop) 12%, transparent); border: 1px solid color-mix(in srgb, var(--hop) 28%, transparent); padding: 1px 8px; border-radius: 10px; white-space: nowrap; }
-body.sdc-page .hop-stage-none { color: var(--ink-faint); font-family: "JetBrains Mono", monospace; font-size: 10px; }
+body.sdc-page .hop-stage-none { color: var(--ink-label); font-family: "JetBrains Mono", monospace; font-size: 10px; }
 
 body.sdc-page .ingr-hop-del { flex: 0 0 22px; display: flex; align-items: center; justify-content: center; }
-body.sdc-page .hop-del-btn { width: 22px; height: 22px; border: none; background: none; color: var(--ink-faint); font-size: 16px; line-height: 1; cursor: pointer; border-radius: 4px; transition: color .15s, background .15s; display: flex; align-items: center; justify-content: center; padding: 0; }
+body.sdc-page .hop-del-btn { width: 22px; height: 22px; border: none; background: none; color: var(--ink-label); font-size: 16px; line-height: 1; cursor: pointer; border-radius: 4px; transition: color .15s, background .15s; display: flex; align-items: center; justify-content: center; padding: 0; }
 body.sdc-page .hop-del-btn:hover { color: var(--ember); background: color-mix(in srgb, var(--ember) 10%, transparent); }
 
 body.sdc-page .ingr-hop-add-row { padding: 3px 10px 8px 10px; }
@@ -1017,7 +1017,7 @@ body.sdc-page .sdc-conf-sel-group-label {
   font-size: 8px;
   letter-spacing: .18em;
   text-transform: uppercase;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   padding: 10px 14px 4px;
 }
 
@@ -1083,7 +1083,7 @@ body.sdc-page .sdc-conf-sel-spec {
   font-size: 9px;
 }
 body.sdc-page .sdc-conf-sel-nospec {
-  color: var(--ink-faint);
+  color: var(--ink-label);
   font-style: italic;
   font-size: 9px;
 }
@@ -1205,7 +1205,7 @@ body.sdc-page .sdc-conf-chart-unit {
   font-size: 8px;
 }
 body.sdc-page .sdc-conf-chart-note {
-  color: var(--ink-faint);
+  color: var(--ink-label);
   font-size: 8px;
   letter-spacing: .06em;
   text-transform: none;

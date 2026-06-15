@@ -7,6 +7,7 @@
   --ink-soft:  #3a2a18;
   --ink-mute:  #4a3820;
   --ink-faint: #c8b48a;        /* role flips: now a light divider tone */
+  --ink-label: #8a7250;   /* faint TEXT/labels/overlines — darker than --ink-faint for legibility; --ink-faint stays divider/border/tint only */
   --hairline:  #c8b48a;
   --hairline-2:#a08060;
   --oak:       #8b5e2a;        /* links / secondary accent */
@@ -1112,7 +1113,7 @@ body.home::after {
 .home .top__sep {
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 10.5px;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   letter-spacing: 0;
   margin: 0 2px;
 }
@@ -1790,7 +1791,7 @@ body.home::after {
   white-space: nowrap;
 }
 .home .db-table tbody tr:hover .db-td { background: color-mix(in srgb, var(--hop) 5%, transparent); }
-.home .db-cell--null { color: var(--ink-faint); font-style: italic; }
+.home .db-cell--null { color: var(--ink-label); font-style: italic; }
 
 /* Pagination */
 .home .db-pagination {
@@ -1806,7 +1807,7 @@ body.home::after {
 }
 .home .db-pagination__link { color: var(--hop); }
 .home .db-pagination__link:hover { text-decoration: underline; }
-.home .db-pagination__link--off { color: var(--ink-faint); cursor: not-allowed; }
+.home .db-pagination__link--off { color: var(--ink-label); cursor: not-allowed; }
 .home .db-pagination__pos { color: var(--ink-mute); text-transform: uppercase; letter-spacing: 0.22em; font-size: 10px; }
 
 /* Correction form — wraps the data table + the action panel below.
@@ -2590,7 +2591,7 @@ body.home::after {
   color: var(--ink-soft);
 }
 .home .sku-header-meta__sep {
-  color: var(--ink-faint);
+  color: var(--ink-label);
   align-self: center;
   padding-bottom: 2px;
 }
@@ -2946,13 +2947,13 @@ body.home::after {
 }
 .home .settings-pill--active     { color: var(--hop); border-color: color-mix(in srgb, var(--hop) 36%, transparent); background: color-mix(in srgb, var(--hop) 10%, transparent); }
 .home .settings-pill--maintenance{ color: var(--oak); border-color: rgba(160, 122, 72, 0.32); background: color-mix(in srgb, var(--oak) 10%, transparent); }
-.home .settings-pill--retired    { color: var(--ink-faint); border-color: var(--hairline-2); background: rgba(36,27,16,0.12); }
+.home .settings-pill--retired    { color: var(--ink-label); border-color: var(--hairline-2); background: rgba(36,27,16,0.12); }
 
 .home .settings-pill--ale     { color: var(--hop);  border-color: color-mix(in srgb, var(--hop) 36%, transparent); background: color-mix(in srgb, var(--hop) 10%, transparent); }
 .home .settings-pill--lager   { color: var(--steel-mid); border-color: color-mix(in srgb, var(--steel) 35%, transparent); background: color-mix(in srgb, var(--steel) 7%, transparent); }
 .home .settings-pill--wild    { color: var(--ember); border-color: rgba(197, 102, 74, 0.32); background: color-mix(in srgb, var(--ember) 10%, transparent); }
 .home .settings-pill--hybrid  { color: var(--oak);  border-color: rgba(160, 122, 72, 0.32); background: color-mix(in srgb, var(--oak) 10%, transparent); }
-.home .settings-pill--unknown { color: var(--ink-faint); border-color: var(--hairline-2); background: rgba(36,27,16,0.12); }
+.home .settings-pill--unknown { color: var(--ink-label); border-color: var(--hairline-2); background: rgba(36,27,16,0.12); }
 
 .home .settings-mono { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12px; }
 .home .settings-muted { color: var(--ink-mute); font-style: italic; }
@@ -5784,7 +5785,7 @@ body.auth::after {
   text-decoration: none;
 }
 .home.triage .inbox-pagination__link:hover { text-decoration: underline; }
-.home.triage .inbox-pagination__link--off { color: var(--ink-faint); cursor: not-allowed; }
+.home.triage .inbox-pagination__link--off { color: var(--ink-label); cursor: not-allowed; }
 
 .home.triage .inbox-pagination__pos {
   font-family: "JetBrains Mono", ui-monospace, monospace;
@@ -5937,7 +5938,7 @@ body.auth::after {
 .home.triage .detail-rqid {
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 10px;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   letter-spacing: 0.06em;
 }
 
@@ -6091,7 +6092,7 @@ body.auth::after {
 .home.triage .detail-line__status {
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 10px;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   white-space: nowrap;
   flex-shrink: 0;
   align-self: center;
@@ -6170,19 +6171,19 @@ body.auth::after {
 
 .home.triage .detail-btn--stub {
   background: transparent;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   border: 1px solid var(--hairline-2);
   cursor: not-allowed;
   opacity: 0.5;
 }
 
 .home.triage .detail-btn--reject.detail-btn--stub {
-  color: var(--ink-faint);
+  color: var(--ink-label);
   border-color: var(--hairline);
 }
 
 .home.triage .detail-actions--disabled .detail-actions__label {
-  color: var(--ink-faint);
+  color: var(--ink-label);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -7269,7 +7270,7 @@ body.auth::after {
   font-size: 8.5px;
   letter-spacing: 0.06em;
   text-transform: none;
-  color: var(--ink-faint);
+  color: var(--ink-label);
 }
 
 .home.triage .mi-modal-input,
@@ -7509,7 +7510,7 @@ body.auth::after {
 .home.triage .upload-zone__sep {
   font-family: "JetBrains Mono", monospace;
   font-size: 11px;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   flex-shrink: 0;
 }
 
@@ -7946,7 +7947,7 @@ body.auth::after {
   font-family: "Fraunces", serif;
   font-style: italic;
   font-size: 13px;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -8534,7 +8535,7 @@ body.auth::after {
 
 .home.triage .stock-pagination__link:hover { text-decoration: underline; }
 .home.triage .stock-pagination__link--off {
-  color: var(--ink-faint);
+  color: var(--ink-label);
   cursor: not-allowed;
 }
 
@@ -10659,7 +10660,7 @@ body.auth::after {
   color: var(--ink-mute); display: flex; align-items: center; gap: 6px;
 }
 .op-form__unit {
-  font-size: 0.62rem; color: var(--ink-faint); font-weight: 400; text-transform: none;
+  font-size: 0.62rem; color: var(--ink-label); font-weight: 400; text-transform: none;
   letter-spacing: 0; background: var(--bg-elev); border-radius: 3px;
   padding: 1px 5px; font-family: "JetBrains Mono", monospace;
 }
@@ -10699,7 +10700,7 @@ body.auth::after {
   cursor: default;
 }
 .op-form__unit--derived {
-  color: var(--ink-faint);
+  color: var(--ink-label);
   font-style: italic;
 }
 
@@ -10764,7 +10765,7 @@ body.auth::after {
 .op-form__recent-table th {
   font-family: "JetBrains Mono", monospace;
   font-size: 0.62rem; letter-spacing: 0.08em; text-transform: uppercase;
-  color: var(--ink-faint); font-weight: 400;
+  color: var(--ink-label); font-weight: 400;
   text-align: left; padding: 6px 10px;
   border-bottom: 1px solid var(--hairline);
 }
@@ -10776,7 +10777,7 @@ body.auth::after {
 .op-form__recent-table tr:last-child td { border-bottom: none; }
 .op-form__recent-table tr:hover td { background: var(--bg-elev); }
 .op-form__mono { font-family: "JetBrains Mono", monospace; font-size: 0.78rem; color: var(--ink-mute); }
-.op-form__muted { color: var(--ink-faint); }
+.op-form__muted { color: var(--ink-label); }
 
 /* ── Diff dialog ────────────────────────────────────────────── */
 #fw-diff-dialog {
@@ -10825,16 +10826,16 @@ body.auth::after {
 }
 .fw-dialog__section-title--warn { color: var(--ember); }
 .fw-dialog__section--warn { border-left: 2px solid var(--ember); }
-.fw-dialog__nodiff { font-size: 0.82rem; color: var(--ink-faint); }
+.fw-dialog__nodiff { font-size: 0.82rem; color: var(--ink-label); }
 
 /* Diff table */
 .fw-diff-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
 .fw-diff-table td { padding: 3px 6px; vertical-align: middle; }
 .fw-diff-label { color: var(--ink-mute); width: 40%; font-family: "JetBrains Mono", monospace; font-size: 0.72rem; }
 .fw-diff-from  { color: var(--ink-mute); text-decoration: line-through; max-width: 100px; }
-.fw-diff-arrow { color: var(--ink-faint); width: 24px; text-align: center; }
+.fw-diff-arrow { color: var(--ink-label); width: 24px; text-align: center; }
 .fw-diff-to    { color: var(--hop); }
-.fw-empty      { font-style: italic; color: var(--ink-faint); }
+.fw-empty      { font-style: italic; color: var(--ink-label); }
 
 /* Comment textarea in dialog */
 .fw-dialog__comment-label {
@@ -12085,7 +12086,7 @@ body.approv-fournisseurs .af-zoom-level {
   font-family: "JetBrains Mono", monospace;
   font-size: 10px;
   letter-spacing: 0.08em;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   margin: 0;
   padding: 8px 0;
 }
@@ -12207,13 +12208,13 @@ body.approv-fournisseurs .af-zoom-level {
 }
 
 .home .pkg-week-td-null {
-  color: var(--ink-faint);
+  color: var(--ink-label);
   font-size: 11px;
 }
 
 .home .pkg-week-td-sub {
   font-size: 9px;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   margin-left: 3px;
   letter-spacing: 0.04em;
 }
@@ -12275,7 +12276,7 @@ body.approv-fournisseurs .af-zoom-level {
   font-family: "JetBrains Mono", monospace;
   font-size: 9px;
   letter-spacing: 0.06em;
-  color: var(--ink-faint);
+  color: var(--ink-label);
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -12405,7 +12406,7 @@ body.approv-fournisseurs .af-zoom-level {
   font-size: 8.5px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   text-align: center;
   padding: 5px 3px 6px;
   font-weight: 400;
@@ -12447,7 +12448,7 @@ body.approv-fournisseurs .af-zoom-level {
   font-family: "DM Sans", sans-serif;
   font-size: 9px;
   letter-spacing: 0;
-  color: var(--ink-faint);
+  color: var(--ink-label);
 }
 
 /* Month data cells */
@@ -12489,7 +12490,7 @@ body.approv-fournisseurs .af-zoom-level {
 }
 
 .home .pkg-skuheat__row--autres .pkg-skuheat__total {
-  color: var(--ink-faint);
+  color: var(--ink-label);
 }
 
 /* Row separator (light line between data rows) */
@@ -12551,7 +12552,7 @@ body.approv-fournisseurs .af-zoom-level {
 
 .home .pkg-co2-card__date {
   font-size: 9px;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   margin-left: 5px;
 }
 
@@ -12571,7 +12572,7 @@ body.approv-fournisseurs .af-zoom-level {
 .home .pkg-co2-card__n {
   font-family: "JetBrains Mono", monospace;
   font-size: 8.5px;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   margin-top: 3px;
   letter-spacing: 0.04em;
 }

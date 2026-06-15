@@ -217,7 +217,7 @@ body.sb-board .main {
   border-radius: 10px;
 }
 .sb-zone__count--zero {
-  color: var(--ink-faint);
+  color: var(--ink-label);
   background: transparent;
   border-color: var(--hairline);
 }
@@ -322,7 +322,7 @@ body.sb-board .main {
 .sb-zone--placeholder .sb-zone__header {
   background: color-mix(in srgb, var(--bg-side) 60%, transparent);
 }
-.sb-zone--placeholder .sb-zone__label { color: var(--ink-faint); }
+.sb-zone--placeholder .sb-zone__label { color: var(--ink-label); }
 
 .sb-placeholder-msg {
   text-align: center;
@@ -335,11 +335,11 @@ body.sb-board .main {
 .sb-placeholder-msg__label {
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 0.55rem; letter-spacing: 0.14em; text-transform: uppercase;
-  color: var(--ink-faint);
+  color: var(--ink-label);
 }
 .sb-placeholder-msg__phase {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.72rem; color: var(--ink-faint);
+  font-size: 0.72rem; color: var(--ink-label);
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -349,7 +349,7 @@ body.sb-board .main {
   position: absolute;
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 0.44rem; letter-spacing: 0.10em; text-transform: uppercase;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   pointer-events: none; z-index: 0;
 }
 .sb-annotation--br { bottom: 8px; right: 10px; }
@@ -525,7 +525,7 @@ body.sb-board .main {
 .sb-zone-empty__icon { opacity: 0.2; font-size: 22px; }
 .sb-zone-empty__msg {
   font-family: "DM Sans", sans-serif;
-  font-size: 0.72rem; color: var(--ink-faint);
+  font-size: 0.72rem; color: var(--ink-label);
   line-height: 1.4;
 }
 .sb-zone-empty__cta {
@@ -552,12 +552,12 @@ body.sb-board .main {
 /*
  * Secondary/sub empty-state line (Fermentation "N CCTs disponibles",
  * BBT "N BBTs disponibles").
- * Replaces the two former inline style="font-size:0.66rem;color:var(--ink-faint);"
+ * Replaces the two former inline style="font-size:0.66rem;color: var(--ink-label);"
  * attributes — house rule: no inline CSS.
  */
 body.sb-board .sb-zone-empty__msg--sub {
   font-size: 0.66rem;
-  color: var(--ink-faint);
+  color: var(--ink-label);
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -654,7 +654,7 @@ body.sb-board .sb-observed-chip__meta {
   gap: 4px;
   font-size: 0.58rem;
   letter-spacing: 0.05em;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -663,7 +663,7 @@ body.sb-board .sb-observed-chip__meta {
 /* Assemblage glyph — inline in the meta line */
 body.sb-board .sb-observed-chip__assemblage {
   font-size: 0.62rem;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   opacity: 0.75;
   flex-shrink: 0;
 }
@@ -747,7 +747,7 @@ body.sb-board .sb-avail-widget__note {
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 0.46rem;
   letter-spacing: 0.06em;
-  color: var(--ink-faint);
+  color: var(--ink-label);
 }
 
 body.sb-board .sb-avail-widget__note--assemblage {
@@ -805,7 +805,7 @@ body.sb-board .sb-avail-widget__note--assemblage {
   filter: saturate(0.25);
 }
 .sb-vessel--stale-heel .sb-vessel__label {
-  color: var(--ink-faint);
+  color: var(--ink-label);
   font-style: italic;
 }
 .sb-vessel__heel-badge {
@@ -817,7 +817,7 @@ body.sb-board .sb-avail-widget__note--assemblage {
   font-size: 0.44rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   background: color-mix(in srgb, var(--ink-faint) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--ink-faint) 30%, transparent);
   border-radius: 2px;
@@ -916,7 +916,7 @@ body.sb-board .sb-avail-widget__note--assemblage {
 .sb-closed-strip__label {
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 0.54rem; letter-spacing: 0.14em; text-transform: uppercase;
-  color: var(--ink-faint); flex-shrink: 0;
+  color: var(--ink-label); flex-shrink: 0;
 }
 
 .sb-ghost-card {
@@ -935,7 +935,7 @@ body.sb-board .sb-avail-widget__note--assemblage {
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 0.48rem; letter-spacing: 0.14em; text-transform: uppercase;
   padding: 1px 5px; border: 1px solid var(--ink-faint);
-  border-radius: 1px; color: var(--ink-faint);
+  border-radius: 1px; color: var(--ink-label);
   transform: rotate(-1deg); display: inline-block;
 }
 .sb-ghost-card__name {
@@ -945,7 +945,7 @@ body.sb-board .sb-avail-widget__note--assemblage {
 }
 .sb-ghost-card__meta {
   font-family: "JetBrains Mono", ui-monospace, monospace;
-  font-size: 0.52rem; letter-spacing: 0.04em; color: var(--ink-faint);
+  font-size: 0.52rem; letter-spacing: 0.04em; color: var(--ink-label);
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -994,7 +994,7 @@ body.sb-board .sb-avail-widget__note--assemblage {
 
 /* ── Zone count zero-state chip ── */
 .sb-zone__count--zero {
-  color: var(--ink-faint);
+  color: var(--ink-label);
   background: transparent;
   border-color: var(--hairline);
 }
@@ -1003,7 +1003,7 @@ body.sb-board .sb-avail-widget__note--assemblage {
 .sb-kb-hint {
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 0.52rem; letter-spacing: 0.08em;
-  color: var(--ink-faint); padding: 2px 5px;
+  color: var(--ink-label); padding: 2px 5px;
   border: 1px solid var(--hairline); border-radius: 2px;
 }
 
@@ -1169,7 +1169,7 @@ body.sb-board.sb-batch .sb-batch-stub__label {
   font-size: 0.52rem;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   margin-bottom: 6px;
 }
 body.sb-board.sb-batch .sb-batch-stub__title {
@@ -1204,7 +1204,7 @@ body.sb-board.sb-batch .sb-batch-stub__placeholder-sub {
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 0.54rem;
   letter-spacing: 0.05em;
-  color: var(--ink-faint);
+  color: var(--ink-label);
 }
 
 /*
@@ -1503,7 +1503,7 @@ body.sb-board .sb-rl-badge--create {
 }
 body.sb-board .sb-rl-badge--skip {
   background: var(--bg-elev);
-  color: var(--ink-faint);
+  color: var(--ink-label);
   border: 1px solid var(--hairline);
 }
 
@@ -1523,7 +1523,7 @@ body.sb-board .sb-rl-footer-micro {
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 0.56rem;
   letter-spacing: 0.06em;
-  color: var(--ink-faint);
+  color: var(--ink-label);
 }
 body.sb-board .sb-rl-footer-actions {
   display: flex;

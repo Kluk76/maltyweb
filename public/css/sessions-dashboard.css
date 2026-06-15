@@ -246,7 +246,7 @@ body.sessions-dashboard .sd-day-label {
   font-size: 9px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   white-space: nowrap;
 }
 body.sessions-dashboard .sd-day-line {
@@ -445,7 +445,7 @@ body.sessions-dashboard .sd-step-row {
 body.sessions-dashboard .sd-step-row .sd-step-time {
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 9px;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   flex-shrink: 0;
 }
 body.sessions-dashboard .sd-step-row .sd-step-actor {
@@ -518,7 +518,7 @@ body.sessions-dashboard .sd-vc-vessel-badge {
   flex-shrink: 0;
 }
 body.sessions-dashboard .sd-vc-vessel-badge.no-vessel {
-  color: var(--ink-faint);
+  color: var(--ink-label);
   border-style: dashed;
 }
 
@@ -594,7 +594,7 @@ body.sessions-dashboard .sd-empty-sub {
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 9.5px;
   letter-spacing: 0.1em;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   text-transform: uppercase;
 }
 

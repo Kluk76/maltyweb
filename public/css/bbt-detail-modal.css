@@ -400,7 +400,7 @@
 
 .home .cip-dot--later .cip-dot__mark {
   background: transparent;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   border: 1px solid var(--hairline-2);
 }
 .home .cip-dot--later .cip-dot__mark::before { content: '◌'; }
@@ -416,7 +416,7 @@
 
 .home .cip-dot__arrow {
   font-size: 14px;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   align-self: flex-start;
   margin-top: 3px;
 }
