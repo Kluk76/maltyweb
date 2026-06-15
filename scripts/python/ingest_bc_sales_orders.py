@@ -110,7 +110,7 @@ from bc_echo import bc_echo_format, bc_echo_parse  # noqa: E402
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
-SCRIPT_VERSION = "1.4.0"
+SCRIPT_VERSION = "1.6.0"
 ACTOR = "bc-sync"  # used in RQ context / audit fields
 
 # BC OData service name (É encoded — Python urllib raises InvalidURL on raw non-ASCII)
@@ -254,7 +254,8 @@ def fetch_sales_orders(bc: dict[str, str]) -> list[dict]:
     Fields: No, Document_Type, Status, Sell_to_Customer_No, Sell_to_Customer_Name,
             Ship_to_Name, Ship_to_Address, Ship_to_City, Ship_to_Post_Code,
             Ship_to_Country_Region_Code, Shipping_Agent_Code, Shipment_Date,
-            Completely_Shipped, ShpfyOrderNo, Salesperson_Code, Order_Date.
+            Completely_Shipped, ShpfyOrderNo, Salesperson_Code, Order_Date,
+            Document_Date (operator-confirmed chargement/livraison date → requested_date).
     """
     token = _get_token(bc)
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
@@ -268,6 +269,7 @@ def fetch_sales_orders(bc: dict[str, str]) -> list[dict]:
         "Shipping_Agent_Code", "Shipment_Date",
         "Completely_Shipped", "ShpfyOrderNo",
         "Salesperson_Code", "Order_Date",
+        "Document_Date",   # operator-confirmed loading/delivery date (chargement/livraison)
         "Your_Reference",  # echo field: 'mt:<local_id>' for maltytask-native orders
     ])
     select_enc = quote(select_fields, safe="")
@@ -585,6 +587,11 @@ def classify_orders(
 
         # Parse dates
         shipment_date       = str(o.get("Shipment_Date", "") or "").strip()
+        # Document_Date = operator-confirmed chargement/livraison date ("la date du document
+        # est la date de chargement/livraison chez client").  Maps to requested_date.
+        # Falls back to shipment_date when blank (rare; Shipment_Date mirrors Order_Date
+        # in BC so this fallback is order-creation-date, not a real delivery date).
+        document_date       = str(o.get("Document_Date", "") or "").strip() or shipment_date
         completely_shipped  = bool(o.get("Completely_Shipped", False))
 
         pull.append({
@@ -594,7 +601,8 @@ def classify_orders(
             "customer_id":      customer_id,
             "bc_customer_no":   cust_no,
             "bc_customer_name": str(o.get("Sell_to_Customer_Name", "")),
-            "shipment_date":    shipment_date,
+            "document_date":    document_date,   # → requested_date (real delivery/loading date)
+            "shipment_date":    shipment_date,   # retained for display / collision report
             "order_date":       order_date,
             "completely_shipped": completely_shipped,
             "agent_code":       agent_code,
@@ -632,7 +640,9 @@ def detect_collisions(
     """
     collisions = []
 
-    # Build map: customer_id → list of (bc_no, shipment_date, sku_id_set)
+    # Build map: customer_id → list of (bc_no, document_date, sku_id_set)
+    # existing_date (requested_date) = Document_Date after the fix; compare against
+    # bc_ship_date (document_date) so the date semantics are consistent on both sides.
     bc_by_cust: dict[int, list[dict]] = {}
     for po in classified["pull"]:
         cid = po["customer_id"]
@@ -640,9 +650,9 @@ def detect_collisions(
             continue
         bc_skus = {ln["sku_id"] for ln in po["resolved_lines"]}
         bc_by_cust.setdefault(cid, []).append({
-            "bc_no":         po["bc_no"],
-            "shipment_date": po["shipment_date"],
-            "bc_skus":       bc_skus,
+            "bc_no":           po["bc_no"],
+            "document_date":   po["document_date"],
+            "bc_skus":         bc_skus,
         })
 
     for eo in existing_non_bc:
@@ -657,11 +667,11 @@ def detect_collisions(
                 "existing_id":     eo["id"],
                 "existing_source": eo["source"],
                 "existing_ref":    eo["source_ref"],
-                "existing_date":   eo["requested_date"],
+                "existing_date":   eo["requested_date"],   # = Document_Date after fix
                 "existing_status": eo["status"],
                 "existing_skus":   sorted(eo["sku_ids"]),
                 "bc_no":           bc_entry["bc_no"],
-                "bc_ship_date":    bc_entry["shipment_date"],
+                "bc_ship_date":    bc_entry["document_date"],  # Document_Date — same semantic
                 "bc_skus":         sorted(bc_entry["bc_skus"]),
                 "sku_overlap":     sorted(overlap),
             })
@@ -742,14 +752,21 @@ def echo_leg_upsert(
             c.execute(
                 """
                 UPDATE ord_orders
-                   SET bc_no         = %s,
-                       source_ref    = %s,
-                       requested_date = %s,
-                       updated_at    = CURRENT_TIMESTAMP
+                   SET bc_no              = %s,
+                       source_ref         = %s,
+                       requested_date     = %s,
+                       order_created_date = %s,
+                       updated_at         = CURRENT_TIMESTAMP
                  WHERE id     = %s
                    AND source = 'maltytask'
                 """,
-                (bc_no, bc_ref, order.get("shipment_date") or None, local_id),
+                (
+                    bc_no,
+                    bc_ref,
+                    order.get("document_date") or None,
+                    order.get("order_date") or None,
+                    local_id,
+                ),
             )
 
         rows_updated = c.rowcount
@@ -797,11 +814,16 @@ def upsert_order(
                 c.execute(
                     """
                     UPDATE ord_orders
-                       SET requested_date = %s,
-                           updated_at     = CURRENT_TIMESTAMP
+                       SET requested_date     = %s,
+                           order_created_date = %s,
+                           updated_at         = CURRENT_TIMESTAMP
                      WHERE source_ref = %s
                     """,
-                    (order["shipment_date"] or None, source_ref),
+                    (
+                        order["document_date"] or None,
+                        order.get("order_date") or None,
+                        source_ref,
+                    ),
                 )
         return "update"
 
@@ -822,13 +844,14 @@ def upsert_order(
             c.execute(
                 """
                 INSERT INTO ord_orders
-                    (order_type, customer_id_fk, requested_date, status,
-                     source, source_ref, created_by_user_id, comment)
-                VALUES ('customer', %s, %s, 'entered', 'bc', %s, NULL, %s)
+                    (order_type, customer_id_fk, requested_date, order_created_date,
+                     status, source, source_ref, created_by_user_id, comment)
+                VALUES ('customer', %s, %s, %s, 'entered', 'bc', %s, NULL, %s)
                 """,
                 (
                     order["customer_id"],
-                    order["shipment_date"] or None,
+                    order["document_date"] or None,
+                    order.get("order_date") or None,
                     source_ref,
                     f"BC {order['bc_no']} — auto-ingested from Business Central",
                 ),
@@ -1452,6 +1475,159 @@ def print_reconciliation_report(
     print()
 
 
+# ── Backfill: requested_date ← Document_Date  +  order_created_date ← Order_Date ──
+
+def backfill_dates(apply_mode: bool) -> None:
+    """
+    One-shot: fetch all currently-open BC SalesOrders and UPDATE ord_orders for any
+    source='bc' row where requested_date or order_created_date diverges from BC truth.
+
+    Sources of truth (single BC fetch — no double round-trip):
+      requested_date     ← BC Document_Date (operator-confirmed delivery/loading date)
+      order_created_date ← BC Order_Date    (when the order was placed)
+
+    Orders no longer in the BC open endpoint (invoiced/closed) cannot be fetched —
+    they are reported as skipped.
+
+    --dry-run (apply_mode=False): prints proposed diffs, no writes.
+    --apply   (apply_mode=True):  applies UPDATEs.
+    """
+    mode_label = "** APPLY **" if apply_mode else "DRY-RUN"
+    print(f"\nBC Dates Backfill (requested_date + order_created_date) — v{SCRIPT_VERSION}")
+    print(f"Mode: {mode_label}")
+    print()
+
+    print("[1/3] Loading BC credentials + fetching open SalesOrders …")
+    bc = _load_bc_env()
+    bc_orders = fetch_sales_orders(bc)
+
+    # Build {bc_no: (document_date, order_date)} from BC — open orders only
+    bc_dates: dict[str, tuple[str, str]] = {}
+    for o in bc_orders:
+        no = str(o.get("No", "")).strip()
+        if not no:
+            continue
+        shipment_date = str(o.get("Shipment_Date", "") or "").strip()
+        doc_date      = str(o.get("Document_Date", "") or "").strip() or shipment_date
+        order_date    = str(o.get("Order_Date", "") or "").strip()
+        bc_dates[no] = (doc_date, order_date)
+
+    print(f"  BC open orders fetched: {len(bc_dates)}")
+
+    print("[2/3] Loading ord_orders (source='bc') from DB …")
+    cfg  = load_config()
+    conn = pymysql.connect(
+        host=cfg.db_host, port=cfg.db_port,
+        user=cfg.db_user, password=cfg.db_password,
+        database=cfg.db_name,
+        charset="utf8mb4", cursorclass=DictCursor, autocommit=False,
+    )
+    try:
+        with conn.cursor() as c:
+            c.execute(
+                "SELECT id, source_ref, requested_date, order_created_date "
+                "FROM ord_orders WHERE source = 'bc'"
+            )
+            db_rows = c.fetchall()
+
+        # Parse bc_no from source_ref = 'bc:<No>'
+        updates_needed: list[dict] = []
+        skipped_gone: list[str] = []
+
+        for row in db_rows:
+            source_ref = str(row["source_ref"] or "")
+            if not source_ref.startswith("bc:"):
+                continue
+            bc_no = source_ref[3:]
+            if bc_no not in bc_dates:
+                # Order no longer in BC open endpoint (invoiced/gone) — skip
+                skipped_gone.append(bc_no)
+                continue
+            bc_req_date, bc_created_date = bc_dates[bc_no]
+
+            old_req     = str(row["requested_date"])     if row["requested_date"]     else ""
+            old_created = str(row["order_created_date"]) if row["order_created_date"] else ""
+
+            req_changed     = bc_req_date     and bc_req_date     != old_req
+            created_changed = bc_created_date and bc_created_date != old_created
+
+            if not req_changed and not created_changed:
+                continue  # already correct — no update needed
+
+            updates_needed.append({
+                "id":              row["id"],
+                "source_ref":      source_ref,
+                "bc_no":           bc_no,
+                # requested_date
+                "old_req":         old_req,
+                "new_req":         bc_req_date if bc_req_date else None,
+                "req_changed":     req_changed,
+                # order_created_date
+                "old_created":     old_created,
+                "new_created":     bc_created_date if bc_created_date else None,
+                "created_changed": created_changed,
+            })
+
+        print(f"  DB bc-rows total      : {len(db_rows)}")
+        print(f"  Updates needed        : {len(updates_needed)}")
+        print(f"  Skipped (gone from BC): {len(skipped_gone)}")
+        print()
+
+        if updates_needed:
+            print("── PROPOSED DIFFS ───────────────────────────────────────────────────")
+            for u in updates_needed:
+                parts = []
+                if u["req_changed"]:
+                    parts.append(
+                        f"requested_date: {u['old_req'] or 'NULL'} → {u['new_req']}"
+                    )
+                if u["created_changed"]:
+                    parts.append(
+                        f"order_created_date: {u['old_created'] or 'NULL'} → {u['new_created']}"
+                    )
+                print(f"  {u['bc_no']}  (ord_orders.id={u['id']})  " + "  |  ".join(parts))
+            print()
+
+        print(f"[3/3] {'Applying' if apply_mode else 'Simulating'} UPDATEs …")
+        updated_count = 0
+        if apply_mode and updates_needed:
+            with conn.cursor() as c:
+                for u in updates_needed:
+                    c.execute(
+                        """
+                        UPDATE ord_orders
+                           SET requested_date     = %s,
+                               order_created_date = %s,
+                               updated_at         = CURRENT_TIMESTAMP
+                         WHERE id = %s AND source = 'bc'
+                        """,
+                        (u["new_req"], u["new_created"], u["id"]),
+                    )
+                    updated_count += c.rowcount
+            conn.commit()
+            print(f"  ✓ Updated {updated_count} row(s).")
+        elif not apply_mode:
+            print(f"  DRY-RUN: would update {len(updates_needed)} row(s). Re-run with --apply to write.")
+        else:
+            print("  Nothing to update.")
+
+        if skipped_gone:
+            print(f"\n  Skipped (no longer in BC open endpoint — invoiced/closed): "
+                  f"{len(skipped_gone)} order(s)")
+            for s in skipped_gone:
+                print(f"    {s}")
+
+    except Exception as exc:
+        conn.rollback()
+        print(f"\nERROR: {exc}", file=sys.stderr)
+        raise
+    finally:
+        conn.close()
+
+    print()
+    print("Done.")
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -1467,7 +1643,25 @@ def main() -> None:
         "--limit", type=int, default=0,
         help="Process at most N orders from the pull list (0 = all).",
     )
+    parser.add_argument(
+        "--backfill-dates", action="store_true",
+        help=(
+            "One-shot backfill: fetch open BC orders, update ord_orders.requested_date "
+            "← Document_Date AND order_created_date ← Order_Date for all source='bc' rows. "
+            "Use --apply to write; default is dry-run."
+        ),
+    )
+    # Legacy alias kept for backward compatibility
+    parser.add_argument(
+        "--backfill-requested-date", action="store_true",
+        help=argparse.SUPPRESS,  # hidden — use --backfill-dates instead
+    )
     args = parser.parse_args()
+
+    # ── Backfill mode (early exit — separate code path) ──────────────────────
+    if args.backfill_dates or args.backfill_requested_date:
+        backfill_dates(apply_mode=args.apply)
+        return
 
     apply_mode = args.apply
     limit      = args.limit
