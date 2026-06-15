@@ -63,6 +63,7 @@ $PAGE_DESCRIPTIONS = [
     'mon-tableau'      => 'Votre tableau de bord personnel — et votre <strong>page d\'accueil</strong>. Choisissez vos indicateurs parmi le catalogue (production, stocks…) et suivez-les en un coup d\'œil. Vous pouvez aussi recevoir un récapitulatif par e-mail, à la cadence de votre choix.',
     'sb-board'         => 'La vue d\'ensemble de la production : chaque lot en cours apparaît sur le plateau, zone par zone — <strong>brassage, fermentation, garde, conditionnement</strong> — avec ses cuves. Cliquez une carte pour ouvrir le détail du lot.',
     'sb-guerre'        => 'La vue d\'alerte : les <strong>anomalies critiques</strong> qui demandent une action. Si la salle est vide, tout va bien.',
+    'planning'         => 'Le <strong>calendrier de production hebdomadaire</strong> : les managers de production et de logistique y planifient leurs intentions pour la semaine — brassage, fermentation, transferts, conditionnement et livraisons. Le planning est <strong>dynamique</strong> : une opération saisie en début de semaine déverrouille automatiquement les étapes suivantes (par exemple, un transfert planifié rend la bière éligible au conditionnement le lendemain). Un bouton « Suggérer un plan » propose une répartition à partir des données de couverture de stock. Les opérateurs voient le planning en lecture seule — rien à saisir ici.',
     'zeppelin'         => 'Le hub des données de référence : <strong>Salle des Machines</strong> (cuves et équipements), <strong>Salle de contrôle</strong> (QA/QC). C\'est ici que vivent les recettes et les capacités de la brasserie.',
     'wort'             => 'Les indicateurs de brassage : <strong>volumes, densités, rendements</strong> par brassin. Alimenté directement par vos saisies.',
     'fermentation'     => 'L\'état des cuves : quelle bière est dans quelle cuve, depuis combien de temps, et les <strong>pertes par étape</strong>.',
@@ -84,6 +85,7 @@ $PAGE_ICONS = [
     'mon-tableau'      => '<svg viewBox="0 0 24 24"><rect x="4" y="14" width="4" height="6" rx="1"/><rect x="10" y="10" width="4" height="10" rx="1"/><rect x="16" y="6" width="4" height="14" rx="1"/><path d="M4 21h16"/></svg>',
     'sb-board'         => '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="5" rx="1"/><rect x="13" y="3" width="8" height="5" rx="1"/><rect x="3" y="10" width="8" height="11" rx="1"/><rect x="13" y="10" width="8" height="5" rx="1"/></svg>',
     'sb-guerre'        => '<svg viewBox="0 0 24 24"><path d="M5 3v18M5 3h12l-3 5 3 5H5"/></svg>',
+    'planning'         => '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18"/><path d="M8 2v4M16 2v4"/><path d="M7 13h2M11 13h2M15 13h2"/><path d="M7 17h2M11 17h2"/><circle cx="16" cy="17" r="1.5"/></svg>',
     'zeppelin'         => '<svg viewBox="0 0 24 24"><path d="M12 2l2.5 7.5H22l-6 4.5 2.5 7.5L12 17l-6.5 4.5 2.5-7.5L2 9.5h7.5z"/></svg>',
     'wort'             => '<svg viewBox="0 0 24 24"><path d="M12 22V10"/><path d="M12 10C12 7 10 5 7 5c0 3 2 5 5 5z"/><path d="M12 10C12 7 14 5 17 5c0 3-2 5-5 5z"/><path d="M12 16c0-2-1.5-3.5-4-4 0 2 1.5 3.5 4 4z"/><path d="M12 16c0-2 1.5-3.5 4-4 0 2-1.5 3.5-4 4z"/></svg>',
     'fermentation'     => '<svg viewBox="0 0 24 24"><ellipse cx="12" cy="14" rx="8" ry="6"/><path d="M4 14V8a8 2 0 0 1 16 0v6"/><path d="M8 12c0-1 1-2 2-2s2 1 3 1 2-1 2-1"/></svg>',
@@ -130,6 +132,36 @@ function vg_vignette_for(string $key): string
               <div class="vign-alert-row" style="border-color:color-mix(in srgb,var(--ember) 40%,var(--hairline))"><div class="vign-alert-dot vign-alert-dot--red"></div><div class="vign-alert-text"><div class="vign-alert-line vign-alert-line--med"></div><div class="vign-alert-line vign-alert-line--short"></div></div></div>
               <div class="vign-alert-row"><div class="vign-alert-dot vign-alert-dot--warn"></div><div class="vign-alert-text"><div class="vign-alert-line vign-alert-line--med"></div><div class="vign-alert-line vign-alert-line--short"></div></div></div>
               <div style="padding:4px 8px;font-family:\'JetBrains Mono\',monospace;font-size:8px;color:var(--ink-mute);letter-spacing:0.06em;text-transform:uppercase;">2 alertes actives</div>
+            </div>';
+        case 'planning':
+            return '<div class="vg-vignette" aria-hidden="true" style="background:var(--bg);padding:10px;display:flex;flex-direction:column;gap:5px;justify-content:center;">
+              <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:3px;margin-bottom:2px;">
+                <div style="text-align:center;font-family:\'JetBrains Mono\',monospace;font-size:6px;color:var(--ink-label);letter-spacing:0.05em;text-transform:uppercase;">Lu</div>
+                <div style="text-align:center;font-family:\'JetBrains Mono\',monospace;font-size:6px;color:var(--ink-label);letter-spacing:0.05em;text-transform:uppercase;">Ma</div>
+                <div style="text-align:center;font-family:\'JetBrains Mono\',monospace;font-size:6px;color:var(--ink-label);letter-spacing:0.05em;text-transform:uppercase;">Me</div>
+                <div style="text-align:center;font-family:\'JetBrains Mono\',monospace;font-size:6px;color:var(--ink-label);letter-spacing:0.05em;text-transform:uppercase;">Je</div>
+                <div style="text-align:center;font-family:\'JetBrains Mono\',monospace;font-size:6px;color:var(--ink-label);letter-spacing:0.05em;text-transform:uppercase;">Ve</div>
+              </div>
+              <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:3px;">
+                <div style="background:color-mix(in srgb,var(--hop) 35%,var(--hairline));border-radius:3px;height:18px;"></div>
+                <div style="background:color-mix(in srgb,var(--hop) 25%,var(--hairline));border-radius:3px;height:18px;"></div>
+                <div style="background:var(--hairline);border-radius:3px;height:18px;"></div>
+                <div style="background:color-mix(in srgb,var(--bbt) 30%,var(--hairline));border-radius:3px;height:18px;"></div>
+                <div style="background:color-mix(in srgb,var(--hop) 25%,var(--hairline));border-radius:3px;height:18px;"></div>
+              </div>
+              <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:3px;">
+                <div style="background:var(--hairline);border-radius:3px;height:18px;"></div>
+                <div style="background:color-mix(in srgb,var(--oak) 30%,var(--hairline));border-radius:3px;height:18px;"></div>
+                <div style="background:color-mix(in srgb,var(--bbt) 30%,var(--hairline));border-radius:3px;height:18px;"></div>
+                <div style="background:color-mix(in srgb,var(--oak) 25%,var(--hairline));border-radius:3px;height:18px;"></div>
+                <div style="background:var(--hairline);border-radius:3px;height:18px;"></div>
+              </div>
+              <div style="margin-top:3px;display:flex;gap:4px;align-items:center;">
+                <div style="width:8px;height:8px;border-radius:2px;background:color-mix(in srgb,var(--hop) 40%,var(--hairline));flex-shrink:0;"></div>
+                <div style="font-family:\'JetBrains Mono\',monospace;font-size:6px;color:var(--ink-mute);letter-spacing:0.03em;">Production</div>
+                <div style="width:8px;height:8px;border-radius:2px;background:color-mix(in srgb,var(--bbt) 35%,var(--hairline));flex-shrink:0;margin-left:4px;"></div>
+                <div style="font-family:\'JetBrains Mono\',monospace;font-size:6px;color:var(--ink-mute);letter-spacing:0.03em;">Logistique</div>
+              </div>
             </div>';
         case 'zeppelin':
             return '<div class="vg-vignette vign-zeppelin" aria-hidden="true">
