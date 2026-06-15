@@ -9670,15 +9670,88 @@ function kpi_sales_revenue_per_hl_trend(string $label, PDO $pdo): array
 }
 
 // ─── #100: discount_rebate_rate ───────────────────────────────────────────────
-// #100 RETIRED 2026-06-12 — discount_amount_chf not available in inv_sales_ledger. Blocked until column lands.
-// Discount % = total_discount / (total_sales + total_discount) for latest period.
-// Uses gross-up denominator so the rate reflects share of list price.
+// Rate% = Σ(discount_amount_chf + invoice_disc_alloc_chf) / gross CHF (inv_sales_ledger).
+// Credit-memo rows already NEGATIVE in inv_sales_invoice_lines — plain SUM nets.
+// is_active=0, data_ready=0 in ref_kpi_trackers (Opus flips after verifying ingest).
 
 function kpi_sales_discount_rate(array $params, string $label, PDO $pdo): array
 {
-    // #100 RETIRED 2026-06-12 — discount_amount_chf absent from inv_sales_ledger.
-    // is_active=0, data_ready=0 in ref_kpi_trackers. Stub prevents fatal if reached.
-    return kpi_error_result('KPI #100 retraité — discount_amount_chf absent de inv_sales_ledger', $label);
+    // Load gross denominator (all-sales, no prod filter — same universe as discount)
+    $allPeriods = kpi_sales_load_ledger_all($pdo);
+    if (empty($allPeriods)) {
+        return kpi_error_result('Aucune donnée inv_sales_ledger', $label);
+    }
+
+    // Load discount numerator from inv_sales_invoice_lines, grouped by month.
+    // Credits already NEGATIVE — plain SUM nets.
+    $stmt = $pdo->query(
+        "SELECT DATE_FORMAT(posting_date,'%Y-%m')                AS period,
+                SUM(discount_amount_chf + invoice_disc_alloc_chf) AS total_discount,
+                COUNT(DISTINCT document_no)                       AS inv_count
+           FROM inv_sales_invoice_lines
+          GROUP BY DATE_FORMAT(posting_date,'%Y-%m')
+          ORDER BY period"
+    );
+    $discountRows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    if (empty($discountRows)) {
+        return kpi_error_result('Aucune donnée inv_sales_invoice_lines', $label);
+    }
+
+    // Build series: rate% per month, only for periods with both discount + gross data.
+    $series = [];
+    foreach ($discountRows as $row) {
+        $period = $row['period'];
+        $disc   = (float) $row['total_discount'];
+        $gross  = isset($allPeriods[$period]) ? $allPeriods[$period]['chf'] : null;
+        if ($gross === null || $gross <= 0) continue;
+        $series[] = [
+            'period' => $period,
+            'value'  => round($disc / $gross * 100, 2),
+        ];
+    }
+
+    if (empty($series)) {
+        return kpi_error_result('Périodes discount sans correspondance ledger', $label);
+    }
+
+    // Latest full period — last in discount rows that has a ledger match.
+    $latest    = $series[count($series) - 1]['period'];
+    $latestVal = $series[count($series) - 1]['value'];
+
+    // Sub-line meta: abs CHF + gross + count for latest period.
+    $latestDiscRow = null;
+    foreach ($discountRows as $r) {
+        if ($r['period'] === $latest) { $latestDiscRow = $r; break; }
+    }
+    $latestDisc  = $latestDiscRow ? (float) $latestDiscRow['total_discount'] : 0.0;
+    $latestGross = $allPeriods[$latest]['chf'] ?? 0.0;
+    $latestCount = $latestDiscRow ? (int) $latestDiscRow['inv_count'] : 0;
+
+    // Tint: a rising discount rate is a margin drag.
+    $prevSeries = count($series) >= 2 ? $series[count($series) - 2] : null;
+    $delta      = ($prevSeries !== null) ? round($latestVal - $prevSeries['value'], 2) : null;
+    $tint       = $latestVal <= 5 ? 'green' : ($latestVal <= 10 ? 'amber' : 'red');
+
+    // Trailing 18 months.
+    $cutoff   = date('Y-m', strtotime('-17 months'));
+    $series18 = array_values(array_filter($series, fn($s) => $s['period'] >= $cutoff));
+
+    return array_merge(kpi_empty_result($label, '%'), [
+        'value'       => round($latestVal, 2),
+        'delta'       => $delta,
+        'delta_label' => 'vs mois précédent (pp)',
+        'tint'        => $tint,
+        'series'      => $series18,
+        'meta'        => [
+            'period'        => $latest,
+            'discount_chf'  => round($latestDisc, 2),
+            'gross_chf'     => round($latestGross, 2),
+            'invoice_count' => $latestCount,
+            'source'        => 'inv_sales_invoice_lines + inv_sales_ledger',
+            'note'          => 'Taux = (remises ligne + allocation) / CA brut HT. Crédits déjà négatifs.',
+        ],
+    ]);
 }
 
 // ─── #102: seasonal_demand_curve ─────────────────────────────────────────────
