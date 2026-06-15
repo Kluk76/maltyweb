@@ -75,7 +75,8 @@ $PAGE_DESCRIPTIONS = [
     'rm-comparison'    => 'Le bilan de clôture matières premières : comptage physique vs stock théorique, écarts par ingrédient.',
     'expeditions'      => 'Le centre logistique : <strong>saisie des commandes clients</strong> (autocomplétion clients et SKU), suivi des statuts d\'un clic — confirmée, préparée, BL imprimé, livrée — et <strong>Stock PF en direct</strong> : stock physique, disponible cette semaine, disponible après commandes futures, semaines de couverture.',
     'tap-shop'         => 'Tap&amp;Shop réunit en une seule vue les ventes directes de la brasserie : les commandes de la boutique en ligne et les ventes du taproom, mises en regard du stock de produits finis réellement disponible. C\'est une page de consultation : rien ne s\'y saisit. Elle vous sert à voir d\'un coup d\'œil ce qui s\'est vendu en direct et ce qu\'il reste, sans avoir à croiser plusieurs écrans.',
-    'qa'               => 'Le suivi qualité de la brasserie : contrôles et analyses sur les lots, de la production au produit fini. Les résultats hors seuils sont signalés pour vérification.',
+    'journal-saisies'  => 'Le fil en direct de toutes les saisies de production : brassage, fermentation, transferts, conditionnement. Chaque événement apparaît avec l\'opérateur, l\'heure et le lot concerné — la page se rafraîchit automatiquement. Utile pour vérifier qu\'une saisie est bien enregistrée, ou pour suivre l\'activité de l\'équipe en temps réel.',
+    'qa'               => 'Le registre des <strong>autocontrôles qualité</strong> de la brasserie, dans le cadre du programme HACCP. Trois types de contrôles sont enregistrés ici : le <strong>contrôle poids / volume au conditionnement</strong> (unités prélevées en cours de run, comparées à la cible — conformité signalée automatiquement), le <strong>contrôle nettoyage et désinfection PRP-04</strong> (tests ATP, visuel ou eau de rinçage sur les surfaces nettoyées, avec résultat et action corrective si nécessaire) et le <strong>contrôle réception verre</strong> (vérification poids et volume à l\'arrivée des bouteilles, passe / recalage). Aucune de ces saisies n\'affecte le stock ni les coûts — c\'est un registre de traçabilité qualité.',
 ];
 
 /* SVG icons per page_key — inline SVG matching mockup styles */
@@ -96,6 +97,7 @@ $PAGE_ICONS = [
     'saisies'          => '<svg viewBox="0 0 24 24"><path d="M15 5l4 4L7 21H3v-4L15 5z"/><path d="M12 8l4 4"/></svg>',
     'invoice-validate' => '<svg viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12l2 2 4-4"/></svg>',
     'tap-shop'         => '<svg viewBox="0 0 24 24"><path d="M3 9l1.5-5h15L21 9M3 9h18M3 9v11h18V9M9 20v-6h6v6"/></svg>',
+    'journal-saisies'  => '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="12" height="16" rx="2"/><path d="M7 8h6M7 12h6M7 16h3"/><circle cx="18" cy="16" r="4"/><path d="M18 14v2l1 1"/></svg>',
     'qa'               => '<svg viewBox="0 0 24 24"><path d="M9 3h6M10 3v6l-5 9a1 1 0 0 0 1 1.5h12a1 1 0 0 0 1-1.5l-5-9V3"/><path d="M7.5 14h9"/></svg>',
     '_default'         => '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>',
 ];
@@ -161,6 +163,42 @@ function vg_vignette_for(string $key): string
               <div class="vign-table-row"><div class="vign-td vign-td--bold"></div><div class="vign-td vign-td--75"></div><div class="vign-td vign-td--full vign-td--hop"></div><div class="vign-td vign-td--50"></div></div>
               <div class="vign-table-row"><div class="vign-td" style="width:90%;background:color-mix(in srgb,var(--cold) 40%,var(--hairline))"></div><div class="vign-td vign-td--full"></div><div class="vign-td vign-td--75 vign-td--hop"></div><div class="vign-td vign-td--50"></div></div>
               <div class="vign-table-row"><div class="vign-td vign-td--bold"></div><div class="vign-td vign-td--75"></div><div class="vign-td vign-td--full"></div><div class="vign-td vign-td--50 vign-td--ember"></div></div>
+            </div>';
+        case 'journal-saisies':
+            return '<div class="vg-vignette" aria-hidden="true" style="background:var(--bg);padding:12px;display:flex;flex-direction:column;gap:6px;justify-content:center;">
+              <div style="display:flex;align-items:center;gap:8px;padding:5px 8px;background:var(--bg-elev);border:1px solid var(--hairline);border-radius:6px;">
+                <div style="width:6px;height:6px;border-radius:50%;background:var(--hop);flex-shrink:0;"></div>
+                <div style="display:flex;flex-direction:column;gap:3px;flex:1;"><div style="height:5px;width:55%;border-radius:3px;background:color-mix(in srgb,var(--hop) 40%,var(--hairline))"></div><div style="height:4px;width:35%;border-radius:2px;background:var(--hairline)"></div></div>
+                <div style="font-family:\'JetBrains Mono\',monospace;font-size:6px;color:var(--ink-mute);letter-spacing:0.04em;white-space:nowrap;">il y a 2 min</div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;padding:5px 8px;background:var(--bg-elev);border:1px solid var(--hairline);border-radius:6px;">
+                <div style="width:6px;height:6px;border-radius:50%;background:var(--bbt);flex-shrink:0;"></div>
+                <div style="display:flex;flex-direction:column;gap:3px;flex:1;"><div style="height:5px;width:62%;border-radius:3px;background:color-mix(in srgb,var(--bbt) 40%,var(--hairline))"></div><div style="height:4px;width:40%;border-radius:2px;background:var(--hairline)"></div></div>
+                <div style="font-family:\'JetBrains Mono\',monospace;font-size:6px;color:var(--ink-mute);letter-spacing:0.04em;white-space:nowrap;">il y a 18 min</div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;padding:5px 8px;background:var(--bg-elev);border:1px solid var(--hairline);border-radius:6px;opacity:0.7;">
+                <div style="width:6px;height:6px;border-radius:50%;background:var(--oak);flex-shrink:0;"></div>
+                <div style="display:flex;flex-direction:column;gap:3px;flex:1;"><div style="height:5px;width:48%;border-radius:3px;background:color-mix(in srgb,var(--oak) 40%,var(--hairline))"></div><div style="height:4px;width:30%;border-radius:2px;background:var(--hairline)"></div></div>
+                <div style="font-family:\'JetBrains Mono\',monospace;font-size:6px;color:var(--ink-mute);letter-spacing:0.04em;white-space:nowrap;">il y a 1 h</div>
+              </div>
+            </div>';
+        case 'qa':
+            return '<div class="vg-vignette" aria-hidden="true" style="background:var(--bg);padding:12px;display:flex;flex-direction:column;gap:6px;justify-content:center;">
+              <div style="display:flex;align-items:center;gap:8px;padding:5px 8px;background:color-mix(in srgb,var(--ok) 6%,var(--bg-elev));border:1px solid color-mix(in srgb,var(--ok) 30%,var(--hairline));border-radius:6px;">
+                <div style="width:8px;height:8px;border-radius:50%;background:var(--ok);flex-shrink:0;"></div>
+                <div style="height:5px;flex:1;border-radius:3px;background:color-mix(in srgb,var(--ok) 30%,var(--hairline))"></div>
+                <div style="font-family:\'JetBrains Mono\',monospace;font-size:7px;color:var(--ok);letter-spacing:0.04em;white-space:nowrap;">OK</div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;padding:5px 8px;background:color-mix(in srgb,var(--ok) 6%,var(--bg-elev));border:1px solid color-mix(in srgb,var(--ok) 30%,var(--hairline));border-radius:6px;">
+                <div style="width:8px;height:8px;border-radius:50%;background:var(--ok);flex-shrink:0;"></div>
+                <div style="height:5px;flex:1;border-radius:3px;background:color-mix(in srgb,var(--ok) 30%,var(--hairline))"></div>
+                <div style="font-family:\'JetBrains Mono\',monospace;font-size:7px;color:var(--ok);letter-spacing:0.04em;white-space:nowrap;">OK</div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;padding:5px 8px;background:color-mix(in srgb,var(--ember) 6%,var(--bg-elev));border:1px solid color-mix(in srgb,var(--ember) 30%,var(--hairline));border-radius:6px;">
+                <div style="width:8px;height:8px;border-radius:50%;background:var(--ember);flex-shrink:0;"></div>
+                <div style="height:5px;flex:1;border-radius:3px;background:color-mix(in srgb,var(--ember) 30%,var(--hairline))"></div>
+                <div style="font-family:\'JetBrains Mono\',monospace;font-size:7px;color:var(--ember);letter-spacing:0.04em;white-space:nowrap;">Signalé</div>
+              </div>
             </div>';
         default:
             return '<div class="vg-vignette" aria-hidden="true" style="background:var(--bg);display:flex;align-items:center;justify-content:center;">
