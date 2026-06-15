@@ -50,7 +50,7 @@ body.mon-tableau .mt-section-head {
   font-size: .65rem;
   letter-spacing: .12em;
   text-transform: uppercase;
-  color: var(--ink-faint);
+  color: var(--ink-mute);
   margin: 1.75rem 0 .75rem;
   padding-bottom: .35rem;
   border-bottom: 1px solid var(--hairline);
@@ -76,7 +76,7 @@ body.mon-tableau .mt-cat-section__head {
   font-size: .58rem;
   letter-spacing: .14em;
   text-transform: uppercase;
-  color: var(--ink-faint);
+  color: var(--ink-mute);
   margin: 0 0 .6rem;
   padding-bottom: .3rem;
   border-bottom: 1px solid color-mix(in srgb, var(--hairline) 55%, transparent);

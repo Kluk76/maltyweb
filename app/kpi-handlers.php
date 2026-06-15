@@ -3039,7 +3039,7 @@ function kpi_wort_daily_recap(string $label, PDO $pdo): array
         ['label' => 'HL brassés (saisi aujourd\'hui)', 'value' => $hlBrewed,    'unit' => 'HL',      'tint' => 'neutral'],
         ['label' => 'Brassins',                         'value' => $brassinCount, 'unit' => 'brassins','tint' => 'neutral'],
         ['label' => 'HL transférés',                    'value' => $hlRacked,    'unit' => 'HL',      'tint' => 'neutral'],
-        ['label' => 'Transferts',                       'value' => $rackCount,   'unit' => 'mises',   'tint' => 'neutral'],
+        ['label' => 'Transferts',                       'value' => $rackCount,   'unit' => 'batch',   'tint' => 'neutral'],
     ];
     if ($dhBatches > 0) {
         $sections[] = ['label' => 'Brassins dry-hoppés', 'value' => $dhBatches, 'unit' => 'lots', 'tint' => 'neutral'];
