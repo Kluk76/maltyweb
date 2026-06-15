@@ -15,15 +15,11 @@
 #   'picked'+ → lines frozen; BC Completely_Shipped=True → auto-advance to 'bl_printed';
 #   'shipped' set ONLY by operator (depletion trigger); BC invoicing naturally drops the order.
 #
-# PENDING SMOKE TEST — enable after:
-#   1. Human reviews the dry-run collision report + SKU resolution output.
-#   2. Operator independently verifies no fg-stock double-deplete risk.
-#   3. First --apply run confirmed clean (check ord_orders for new bc-source rows).
-#   4. Uncomment the schedule line below AND update the repo source, then redeploy.
-#
-# Enable command (on VPS, after review):
-#   sudo sed -i '/ingest_bc_sales_orders.py --apply/s/^#//' /etc/cron.d/maltytask-bc-orders
-#   (also uncomment in db/cron/maltytask-bc-orders.cron and commit + redeploy)
+# ENABLED 2026-06-15 after: dry-run reviewed (16 open → 3 INSERT / 10 collision-skip /
+# 2 backlog / 1 recency; customer 15/15, SKU 65/65), fg-stock no-double-deplete verified
+# (Step 4 keys on status='shipped' only; collisions keep their web/import row; ShpfyOrderNo
+# excluded), and a clean first --apply (3 rows: id=142 ORD210067, id=143 ORD210068,
+# id=144 ORD210069; operator-approved). WeeklyOrders sheet retired → BC is the sole source.
 #
 # Log: /var/log/maltytask/bc-orders.log
 # Preflight:
@@ -46,4 +42,4 @@ SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # m   h    dom mon dow  user        command
-# */15  *    *   *   *   maltytask   cd /var/www/maltytask && /usr/bin/python3 scripts/python/ingest_bc_sales_orders.py --apply >> /var/log/maltytask/bc-orders.log 2>&1
+*/15  *    *   *   *   maltytask   cd /var/www/maltytask && /usr/bin/python3 scripts/python/ingest_bc_sales_orders.py --apply >> /var/log/maltytask/bc-orders.log 2>&1
