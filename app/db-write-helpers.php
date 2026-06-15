@@ -297,3 +297,17 @@ function bd_lookup_pk_by_nk(PDO $pdo, string $table, array $nkCols, array $row):
     $id = $stmt->fetchColumn();
     return $id !== false ? (int) $id : null;
 }
+
+/**
+ * Parses a POST decimal field: normalises comma→dot, returns null when empty
+ * or non-numeric. Used by QA write-handlers (qa-net-content, qa-cleaning-efficacy,
+ * qa-bottle-reception) and any other form that accepts nullable decimal inputs.
+ */
+function parse_nullable_decimal(string $raw): ?string
+{
+    $clean = str_replace(',', '.', trim($raw));
+    if ($clean === '' || !is_numeric($clean)) {
+        return null;
+    }
+    return $clean;
+}
