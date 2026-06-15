@@ -1,6 +1,6 @@
 # Planning Page Arc — schema, engine, conventions (load when touching planning)
 
-> Surface: `public/modules/planning.php` (908 lines) + engine `app/planning-eligibility.php` (405 lines). Phase 1 (manual week calendar) + Phase 2 (dynamic process-eligibility) SHIPPED+COMMITTED 2026-06-15 (`da202a9`, mig **364** `364_planning_tables.sql`). `ref_pages.planning` is **is_active=0** (domain='general') — NOT reachable yet; no tour card due until activated (RULE 3 predicate needs is_active=1). MIG HEAD verified 364, 0 pending (2026-06-15). All facts below VPS/source-verified 2026-06-15.
+> Surface: `public/modules/planning.php` + engine `app/planning-eligibility.php` (PURE-READ) + **Phase-3 producer `app/planning-predict.php`**. Phase 1 (manual week calendar) + Phase 2 (dynamic process-eligibility) SHIPPED+COMMITTED 2026-06-15 (`da202a9`, mig **364** `364_planning_tables.sql`). **Phase 3 (predictive suggestions) SHIPPED+COMMITTED 2026-06-15 (`d102a0d`, mig 365 `365_planning_suggest_settings.sql` — APPLIED on VPS).** `ref_pages.planning` is **is_active=0** (domain='general') — NOT reachable yet; orchestrator activates after final verification; no tour card due until activated (RULE 3 predicate needs is_active=1). MIG HEAD verified **365**, 0 pending (2026-06-15). All facts below VPS/source-verified 2026-06-15.
 
 ## Table DDL (live)
 
@@ -22,7 +22,8 @@
 - `logistics_text` VARCHAR(1000) NULL (only for section=logistics)
 - `hors_process` TINYINT(1) NOT NULL DEFAULT 0 · `hors_process_reason` VARCHAR(255) NULL
 - `source` ENUM('manual','predictive') NOT NULL DEFAULT 'manual'  ← **Phase 3 writes 'predictive'**
-- `status` ENUM('proposed','planned','done','cancelled') NOT NULL DEFAULT 'planned'  ← **Phase 3 suggestions write 'proposed'** (the ENUM was provisioned for exactly this; 'planned' is the only value used by Phase 1)
+- `status` ENUM('proposed','planned','done','cancelled') NOT NULL DEFAULT 'planned'  ← **Phase 3 suggestions write 'proposed'** (the ENUM was provisioned for exactly this; Phase 1 uses 'planned', Phase 3 writes 'proposed' then accept flips → 'planned')
+- `suggest_reason` VARCHAR(255) NULL  ← **added by mig 365** — human-readable why-this-was-suggested string stamped by Phase-3 producer; rendered as a hint on proposed cards.
 - `linked_event_table` VARCHAR(40) NULL · `linked_event_id` BIGINT UNSIGNED NULL (reserved — not yet populated)
 - `is_active` TINYINT(1) NOT NULL DEFAULT 1 (soft-delete flag; all reads filter is_active=1; delete_item sets 0)
 - `created_by_user_id_fk` INT UNSIGNED → users ON DELETE SET NULL · created_at/updated_at
@@ -39,7 +40,7 @@ Returns keyed by 'YYYY-MM-DD':
  'brewing'=>['cct_conflicts'=>[int, ...]]]            // currently-occupied CCT numbers
 ```
 Gates: racking = cold_crash_date set AND effective_garde known AND day−cold_crash ≥ garde AND not already in BBT (same recipe_id+batch). packaging = racked_on set AND day−racked_on ≥ `min_days_after_racking` (commissioning_settings section='packaging'). kze = any BBT occupant; dry_hopping = any CCT occupant. garde via `planning_load_garde_map()` → yeast_eligibility_join_fragment()/select_expressions() (app/yeast-eligibility.php), returns ['by_rid'=>[rid=>garde|null], 'by_beer'=>[name=>garde|null]]. `source` per slot = 'real' (from sim) or 'in_plan' (from a prior-day plan item that created the occupancy).
-**Phase 3 hook:** this is the read side Phase 3 turns into suggestions — eligible-but-not-yet-planned slots become `source='predictive', status='proposed'` rows.
+**Phase 3 consumer:** `planning_generate_suggestions()` (in `app/planning-predict.php`, NOT here — engine stays pure-read) calls this engine; eligible-but-not-yet-planned slots become `source='predictive', status='proposed'` rows.
 
 ## pkg_type mapping — NOT from ref_skus.format/run_type
 There is **no format→pkg_type helper**. The planning page derives offerable pkg_types from **commissioned fillers**, keyed on `ref_process_machines.machine_type`:
@@ -52,12 +53,22 @@ There is **no format→pkg_type helper**. The planning page derives offerable pk
 - Query-param read with `??` default THEN validate (week regex `^\d{4}-\d{2}-\d{2}$`).
 - All section-specific cols left NULL when not applicable (semantic NULL, fine).
 
-## Phase 3 architectural notes / warnings
-- **source='predictive' + status='proposed' is the designed lane** — ENUMs already carry both; no migration needed for the lane itself.
-- **Engine is pure-read by design (CARDINAL).** Phase 3's suggestion-WRITER must be a SEPARATE surface (handler/cron), NOT inside planning-eligibility.php — keep the engine a pure projection. Suggestions are the delta: eligible slot with no matching planned/proposed item.
-- **Divergence guard:** a 'proposed' row that the operator accepts should flip to status='planned' (and likely source stays 'predictive' for provenance) — do NOT create a second 'planned' duplicate. Dedup proposals against existing items on (plan_date, section, recipe_id_fk/beer, batch, wort_process/pkg_type).
-- **Refuse-don't-NULL:** if a suggestion can't resolve a recipe_id, fall to beer_free_text (engine already supports beer-name fallback) — never write a half-identified COGS-irrelevant row that later confuses occupancy matching.
-- **is_active=0 on the page** → Phase 3 can build/test but the surface stays hidden; when operator activates, RULE 3 fires → dispatch maltyweb-tour-steward for a tour card.
-- Engine recomputes per-call (no cache); a proposal-generator that calls it per week is fine for a 7-day window.
+## Phase 3 — AS-BUILT (SHIPPED 2026-06-15, `d102a0d`, mig 365)
+Producer: **`app/planning-predict.php` — `planning_generate_suggestions(PDO $pdo, DateTimeImmutable $weekStart, int $targetWeeks): array`** (SEPARATE surface; the engine stays a pure projection — CARDINAL honored).
+Algorithm (as built):
+1. `fg_stock_compute()` → aggregate per recipe: **worst_semaines = MIN across that recipe's formats** (worst-case coverage, deliberately NOT MAX).
+2. Filter recipes whose worst_semaines is below target weeks (`$targetWeeks` ← system_settings section='stock', key='plan_suggest_target_weeks', value=3.0w, mig 365).
+3. `planning_week_eligibility($pdo,$weekStart)` (the pure-read engine) for the week's slot map.
+4. Per under-stocked recipe: **packaging proposal if a BBT for it is packaging-eligible; else brewing proposal** — brewing does per-iteration CCT allocation from a running `$allocatedCcts` set; logs `brewing_skipped`/`no_free_cct` when no free CCT.
+5. INSERT `pl_plan_items` with `source='predictive', status='proposed'`, `suggest_reason` populated. **Dedup against existing ACTIVE items for the week** (no second copy of an already-planned/proposed action). `log_revision()` on every insert.
+Page handlers (`public/modules/planning.php`): **generate_suggestions** (calls producer, flashes result) · **accept_proposal** (status 'proposed'→'planned', role-gated, log_revision) · **reject_proposal** (is_active=0, log_revision). `delete_item` now **EXCLUDES status='proposed'** — proposed items MUST go through reject (preserves audit trail). GET path adds `$proposedItems` + `$hasProposals`. Render: dashed card, "Proposé" badge, suggest_reason hint, Accept/Reject controls. `public/js/planning.js` adds confirm() on `.pl-proposed-reject`. `public/css/planning.css` proposed-card styles use **--oak palette tokens only**.
+**CARDINAL RULE preserved (verified):** Planning reads canonical state, writes ONLY to pl_* tables — never feeds COGS/COP/WAC/BOM/beer-tax/inventory.
+
+### Standing notes / guards (carry forward)
+- Engine remains pure-read; the producer is the only suggestion writer. Never push suggestion logic back into planning-eligibility.php.
+- Accept flips status 'proposed'→'planned' in place (source stays 'predictive' for provenance) — no duplicate 'planned' row.
+- Refuse-don't-NULL: a suggestion that can't resolve recipe_id falls to beer_free_text (engine supports the beer-name fallback) — never a half-identified row.
+- **is_active=0 on the page** → built+committed but surface stays hidden; orchestrator activates after final verification → THEN RULE 3 fires → PM dispatches maltyweb-tour-steward for a tour card. (general/non-admin domain ⇒ a tour card IS due once active.)
+- Engine recomputes per-call (no cache); producer calling it once per week is fine for a 7-day window.
 
 system_settings (for reference): UNIQUE (section,key_name); value_text XOR value_num (CHECK); read via app/settings.php::system_setting(). commissioning_settings is a SEPARATE table (same shape) holding min_days_after_racking under section='packaging'.
