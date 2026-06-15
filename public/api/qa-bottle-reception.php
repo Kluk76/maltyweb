@@ -3,8 +3,41 @@ declare(strict_types=1);
 /**
  * POST /api/qa-bottle-reception.php
  *
- * PRG handler — records one QA bottle-reception check into qa_bottle_reception_checks.
+ * Async JSON handler — records one QA bottle-reception check into qa_bottle_reception_checks.
  * Idempotent: duplicate row_hash (SQLSTATE 23000) is treated as success.
+ *
+ * Request (POST body):
+ *   csrf             — session CSRF token
+ *   delivery_id_fk   — INT > 0|'' (optional, must exist in inv_deliveries)
+ *   mi_id_fk         — INT > 0|'' (optional, must exist in ref_mi)
+ *   reception_date   — 'YYYY-MM-DD'
+ *   lot_ref          — string (max 64)|'' (optional)
+ *   measure_type     — 'weight'|'volume'
+ *   sample_size      — INT > 0|'' (optional)
+ *   measured_value   — numeric (comma→dot normalised)
+ *   target_value     — numeric|'' (optional)
+ *   tolerance_abs    — numeric|'' (optional)
+ *   outcome          — 'pass'|'fail'|'marginal'
+ *   comments         — string|'' (optional)
+ *
+ * Response 200 OK:
+ *   { ok: true, id, reception_date, mi_id_fk, measure_type,
+ *     measured_value, outcome, csrf: <fresh token> }
+ *
+ * Duplicate row_hash:
+ *   { ok: true, duplicate: true, id: <existing id>, csrf: <fresh token> }
+ *
+ * CSRF expired:
+ *   { ok: false, reason: 'expired', csrf: <fresh token> }
+ *   HTTP 401
+ *
+ * Validation error:
+ *   { ok: false, error: '...' }
+ *   HTTP 400
+ *
+ * Server error:
+ *   { ok: false, error: 'Erreur serveur : ...' }
+ *   HTTP 500
  */
 
 require __DIR__ . '/../../app/auth.php';
@@ -12,23 +45,25 @@ require __DIR__ . '/../../app/csrf.php';
 require_once __DIR__ . '/../../app/db-write-helpers.php';
 require_once __DIR__ . '/../../app/settings-helpers.php';
 
+header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
+
+// ── Method guard ──────────────────────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    http_response_code(405);
+    echo json_encode(['ok' => false, 'error' => 'Méthode non autorisée.']);
+    exit;
+}
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 require_page_access('qa');
 $me = current_user();
 
-// ── Method guard ──────────────────────────────────────────────────────────────
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    http_response_code(405);
-    echo 'Méthode non autorisée.';
-    exit;
-}
-
-// ── CSRF ──────────────────────────────────────────────────────────────────────
+// ── CSRF (must be first validation — return fresh token on fail so JS can retry) ─
 if (!csrf_verify($_POST['csrf'] ?? null)) {
-    flash_set('err', 'Session expirée — recharge la page.');
-    redirect_to('/?page=qa');
+    http_response_code(401);
+    echo json_encode(['ok' => false, 'reason' => 'expired', 'csrf' => csrf_token()]);
+    exit;
 }
 
 // ── Read inputs ───────────────────────────────────────────────────────────────
@@ -56,22 +91,25 @@ if ($miIdFkRaw !== '' && (int) $miIdFkRaw > 0) {
 }
 
 if ($receptionDateRaw === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $receptionDateRaw)) {
-    flash_set('err', 'Date de réception invalide (format YYYY-MM-DD requis).');
-    redirect_to('/?page=qa');
+    http_response_code(400);
+    echo json_encode(['ok' => false, 'error' => 'Date de réception invalide (format YYYY-MM-DD requis).']);
+    exit;
 }
 $receptionDate = $receptionDateRaw;
 
 $lotRef = ($lotRefRaw !== '') ? $lotRefRaw : null;
 if ($lotRef !== null && mb_strlen($lotRef) > 64) {
-    flash_set('err', 'Référence de lot trop longue (max 64 caractères).');
-    redirect_to('/?page=qa');
+    http_response_code(400);
+    echo json_encode(['ok' => false, 'error' => 'Référence de lot trop longue (max 64 caractères).']);
+    exit;
 }
 
 try {
     $measureType = must_be_one_of('measure_type', $measureTypeRaw, ['weight', 'volume']);
 } catch (RuntimeException $e) {
-    flash_set('err', 'Type de mesure invalide (weight ou volume).');
-    redirect_to('/?page=qa');
+    http_response_code(400);
+    echo json_encode(['ok' => false, 'error' => 'Type de mesure invalide (weight ou volume).']);
+    exit;
 }
 
 $sampleSize = null;
@@ -81,8 +119,9 @@ if ($sampleSizeRaw !== '' && (int) $sampleSizeRaw > 0) {
 
 $measuredValueStr = str_replace(',', '.', trim((string) $measuredValueRaw));
 if (!is_numeric($measuredValueStr) || $measuredValueStr === '') {
-    flash_set('err', 'Valeur mesurée invalide.');
-    redirect_to('/?page=qa');
+    http_response_code(400);
+    echo json_encode(['ok' => false, 'error' => 'Valeur mesurée invalide.']);
+    exit;
 }
 $measuredValue = $measuredValueStr;
 
@@ -92,8 +131,9 @@ $toleranceAbs = parse_nullable_decimal((string) $toleranceAbsRaw);
 try {
     $outcome = must_be_one_of('outcome', $outcomeRaw, ['pass', 'fail', 'marginal']);
 } catch (RuntimeException $e) {
-    flash_set('err', 'Résultat invalide (pass, fail, marginal).');
-    redirect_to('/?page=qa');
+    http_response_code(400);
+    echo json_encode(['ok' => false, 'error' => 'Résultat invalide (pass, fail, marginal).']);
+    exit;
 }
 
 $comments = ($commentsRaw !== null && trim((string) $commentsRaw) !== '')
@@ -112,82 +152,100 @@ $rowHash = hash('sha256',
 );
 
 // ── DB ────────────────────────────────────────────────────────────────────────
-$pdo = maltytask_pdo();
-
-// Validate delivery_id_fk if provided
-if ($deliveryIdFk !== null) {
-    $chkStmt = $pdo->prepare('SELECT id FROM inv_deliveries WHERE id = ? LIMIT 1');
-    $chkStmt->execute([$deliveryIdFk]);
-    if ($chkStmt->fetch() === false) {
-        flash_set('err', 'delivery_id_fk introuvable dans inv_deliveries.');
-        redirect_to('/?page=qa');
-    }
-}
-
-// Validate mi_id_fk if provided
-if ($miIdFk !== null) {
-    $chkStmt = $pdo->prepare('SELECT id FROM ref_mi WHERE id = ? LIMIT 1');
-    $chkStmt->execute([$miIdFk]);
-    if ($chkStmt->fetch() === false) {
-        flash_set('err', 'mi_id_fk introuvable dans ref_mi.');
-        redirect_to('/?page=qa');
-    }
-}
-
-// ── INSERT ────────────────────────────────────────────────────────────────────
 try {
-    $stmt = $pdo->prepare(
-        'INSERT INTO qa_bottle_reception_checks
-             (delivery_id_fk, mi_id_fk, reception_date, lot_ref,
-              measure_type, sample_size, measured_value, target_value,
-              tolerance_abs, outcome, submitted_by_user_id_fk, comments, row_hash)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-    );
-    $stmt->execute([
-        $deliveryIdFk,
-        $miIdFk,
-        $receptionDate,
-        $lotRef,
-        $measureType,
-        $sampleSize,
-        $measuredValue,
-        $targetValue,
-        $toleranceAbs,
-        $outcome,
-        $submittedByUserIdFk,
-        $comments,
-        $rowHash,
-    ]);
+    $pdo = maltytask_pdo();
 
-    $insertedId = (int) $pdo->lastInsertId();
-
-    $afterArr = [
-        'delivery_id_fk'          => $deliveryIdFk,
-        'mi_id_fk'                => $miIdFk,
-        'reception_date'          => $receptionDate,
-        'lot_ref'                 => $lotRef,
-        'measure_type'            => $measureType,
-        'sample_size'             => $sampleSize,
-        'measured_value'          => $measuredValue,
-        'target_value'            => $targetValue,
-        'tolerance_abs'           => $toleranceAbs,
-        'outcome'                 => $outcome,
-        'submitted_by_user_id_fk' => $submittedByUserIdFk,
-        'comments'                => $comments,
-        'row_hash'                => $rowHash,
-    ];
-
-    log_revision($pdo, $me, 'qa_bottle_reception_checks', $insertedId, null, $afterArr, 'normal', 'QA bottle reception check');
-
-} catch (PDOException $e) {
-    if ($e->getCode() === '23000') {
-        // Duplicate row_hash — idempotent re-submit, treat as success.
-        flash_set('ok', 'Observation enregistrée.');
-        redirect_to('/?page=qa');
+    // Validate delivery_id_fk if provided
+    if ($deliveryIdFk !== null) {
+        $chkStmt = $pdo->prepare('SELECT id FROM inv_deliveries WHERE id = ? LIMIT 1');
+        $chkStmt->execute([$deliveryIdFk]);
+        if ($chkStmt->fetch() === false) {
+            http_response_code(400);
+            echo json_encode(['ok' => false, 'error' => 'delivery_id_fk introuvable dans inv_deliveries.']);
+            exit;
+        }
     }
-    flash_set('err', 'Erreur : ' . pdo_friendly_error($e, 'qa-bottle-reception'));
-    redirect_to('/?page=qa');
-}
 
-flash_set('ok', 'Observation enregistrée.');
-redirect_to('/?page=qa');
+    // Validate mi_id_fk if provided
+    if ($miIdFk !== null) {
+        $chkStmt = $pdo->prepare('SELECT id FROM ref_mi WHERE id = ? LIMIT 1');
+        $chkStmt->execute([$miIdFk]);
+        if ($chkStmt->fetch() === false) {
+            http_response_code(400);
+            echo json_encode(['ok' => false, 'error' => 'mi_id_fk introuvable dans ref_mi.']);
+            exit;
+        }
+    }
+
+    // ── INSERT ────────────────────────────────────────────────────────────────
+    try {
+        $stmt = $pdo->prepare(
+            'INSERT INTO qa_bottle_reception_checks
+                 (delivery_id_fk, mi_id_fk, reception_date, lot_ref,
+                  measure_type, sample_size, measured_value, target_value,
+                  tolerance_abs, outcome, submitted_by_user_id_fk, comments, row_hash)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        );
+        $stmt->execute([
+            $deliveryIdFk,
+            $miIdFk,
+            $receptionDate,
+            $lotRef,
+            $measureType,
+            $sampleSize,
+            $measuredValue,
+            $targetValue,
+            $toleranceAbs,
+            $outcome,
+            $submittedByUserIdFk,
+            $comments,
+            $rowHash,
+        ]);
+
+        $insertedId = (int) $pdo->lastInsertId();
+
+        $afterArr = [
+            'delivery_id_fk'          => $deliveryIdFk,
+            'mi_id_fk'                => $miIdFk,
+            'reception_date'          => $receptionDate,
+            'lot_ref'                 => $lotRef,
+            'measure_type'            => $measureType,
+            'sample_size'             => $sampleSize,
+            'measured_value'          => $measuredValue,
+            'target_value'            => $targetValue,
+            'tolerance_abs'           => $toleranceAbs,
+            'outcome'                 => $outcome,
+            'submitted_by_user_id_fk' => $submittedByUserIdFk,
+            'comments'                => $comments,
+            'row_hash'                => $rowHash,
+        ];
+
+        log_revision($pdo, $me, 'qa_bottle_reception_checks', $insertedId, null, $afterArr, 'normal', 'QA bottle reception check');
+
+        echo json_encode([
+            'ok'             => true,
+            'id'             => $insertedId,
+            'reception_date' => $receptionDate,
+            'mi_id_fk'       => $miIdFk,
+            'measure_type'   => $measureType,
+            'measured_value' => $measuredValue,
+            'outcome'        => $outcome,
+            'csrf'           => csrf_token(),
+        ], JSON_UNESCAPED_UNICODE);
+
+    } catch (PDOException $e) {
+        if ($e->getCode() === '23000') {
+            // Duplicate row_hash — idempotent re-submit, treat as success.
+            $dupStmt = $pdo->prepare('SELECT id FROM qa_bottle_reception_checks WHERE row_hash = ? LIMIT 1');
+            $dupStmt->execute([$rowHash]);
+            $existingId = (int) $dupStmt->fetchColumn();
+            echo json_encode(['ok' => true, 'duplicate' => true, 'id' => $existingId, 'csrf' => csrf_token()], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+        throw $e;
+    }
+
+} catch (Throwable $e) {
+    http_response_code(500);
+    echo json_encode(['ok' => false, 'error' => 'Erreur serveur : ' . pdo_friendly_error($e, 'qa-bottle-reception')]);
+}
