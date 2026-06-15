@@ -186,5 +186,14 @@
         initPackagingForm(form);
       }
     });
+
+    // Confirm on reject proposal buttons
+    document.querySelectorAll('.pl-proposed-reject').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        if (!confirm('Rejeter cette suggestion ?')) {
+          e.preventDefault();
+        }
+      });
+    });
   });
 }());

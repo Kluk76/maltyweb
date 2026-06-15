@@ -111,9 +111,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             redirect_to('/modules/planning.php' . $weekQuery);
         }
 
-        // Fetch the item (before-state)
+        // Fetch the item (before-state); exclude proposed items — those must be rejected via reject_proposal
         $fetchStmt = $pdo->prepare(
-            'SELECT * FROM pl_plan_items WHERE id = ? AND is_active = 1 LIMIT 1'
+            "SELECT * FROM pl_plan_items WHERE id = ? AND is_active = 1 AND status != 'proposed' LIMIT 1"
         );
         $fetchStmt->execute([$itemId]);
         $item = $fetchStmt->fetch(PDO::FETCH_ASSOC);
@@ -495,6 +495,137 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         redirect_to('/modules/planning.php' . $weekQuery);
     }
 
+    // ── generate_suggestions ─────────────────────────────────────────────────
+    if ($action === 'generate_suggestions') {
+        if (!$canWort) {
+            http_response_code(403);
+            flash_set('err', 'Accès refusé.');
+            redirect_to('/modules/planning.php' . $weekQuery);
+        }
+
+        require_once __DIR__ . '/../../app/planning-predict.php';
+
+        $weekRawPost = isset($_POST['week']) ? (string)$_POST['week'] : '';
+        $weekParamDt = null;
+        if ($weekRawPost !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $weekRawPost)) {
+            $dt = DateTime::createFromFormat('Y-m-d', $weekRawPost);
+            if ($dt !== false) {
+                $dow = (int)$dt->format('N');
+                $dt->modify('-' . ($dow - 1) . ' days');
+                $weekParamDt = DateTimeImmutable::createFromMutable($dt)->setTime(0,0,0);
+            }
+        }
+        if ($weekParamDt === null) {
+            $now = new DateTime();
+            $dow = (int)$now->format('N');
+            $now->modify('-' . ($dow - 1) . ' days');
+            $weekParamDt = DateTimeImmutable::createFromMutable($now)->setTime(0,0,0);
+        }
+
+        $result = planning_generate_suggestions($pdo, $weekParamDt, (int)$me['id']);
+
+        if ($result['inserted'] > 0) {
+            flash_set('ok', $result['inserted'] . ' suggestion(s) générée(s). Examinez et acceptez ou rejetez ci-dessous.');
+        } elseif ($result['skipped_dedup'] > 0) {
+            flash_set('ok', 'Aucune nouvelle suggestion — des propositions existent déjà pour cette semaine.');
+        } else {
+            flash_set('ok', 'Aucune suggestion à générer — couverture de stock suffisante pour toutes les bières.');
+        }
+        redirect_to('/modules/planning.php' . $weekQuery);
+    }
+
+    // ── accept_proposal ───────────────────────────────────────────────────────
+    if ($action === 'accept_proposal') {
+        $itemId = (int)($_POST['item_id'] ?? 0);
+        if ($itemId < 1) {
+            flash_set('err', "Identifiant invalide.");
+            redirect_to('/modules/planning.php' . $weekQuery);
+        }
+
+        $fetchStmt = $pdo->prepare(
+            "SELECT * FROM pl_plan_items WHERE id = ? AND is_active = 1
+              AND source = 'predictive' AND status = 'proposed' LIMIT 1"
+        );
+        $fetchStmt->execute([$itemId]);
+        $item = $fetchStmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($item === false) {
+            flash_set('err', 'Proposition introuvable ou déjà traitée.');
+            redirect_to('/modules/planning.php' . $weekQuery);
+        }
+
+        $section = (string)($item['section'] ?? '');
+        if ($section === 'logistics') {
+            if (!$canLog) {
+                http_response_code(403);
+                flash_set('err', 'Accès refusé.');
+                redirect_to('/modules/planning.php' . $weekQuery);
+            }
+        } else {
+            if (!$canWort) {
+                http_response_code(403);
+                flash_set('err', 'Accès refusé.');
+                redirect_to('/modules/planning.php' . $weekQuery);
+            }
+        }
+
+        $before = $item;
+        $updStmt = $pdo->prepare(
+            "UPDATE pl_plan_items SET status = 'planned', updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+        );
+        $updStmt->execute([$itemId]);
+
+        log_revision($pdo, $me, 'pl_plan_items', $itemId, $before, array_merge($before, ['status' => 'planned']), 'normal', null);
+        flash_set('ok', 'Proposition acceptée et ajoutée au plan.');
+        redirect_to('/modules/planning.php' . $weekQuery);
+    }
+
+    // ── reject_proposal ───────────────────────────────────────────────────────
+    if ($action === 'reject_proposal') {
+        $itemId = (int)($_POST['item_id'] ?? 0);
+        if ($itemId < 1) {
+            flash_set('err', "Identifiant invalide.");
+            redirect_to('/modules/planning.php' . $weekQuery);
+        }
+
+        $fetchStmt = $pdo->prepare(
+            "SELECT * FROM pl_plan_items WHERE id = ? AND is_active = 1
+              AND source = 'predictive' AND status = 'proposed' LIMIT 1"
+        );
+        $fetchStmt->execute([$itemId]);
+        $item = $fetchStmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($item === false) {
+            flash_set('err', 'Proposition introuvable ou déjà traitée.');
+            redirect_to('/modules/planning.php' . $weekQuery);
+        }
+
+        $section = (string)($item['section'] ?? '');
+        if ($section === 'logistics') {
+            if (!$canLog) {
+                http_response_code(403);
+                flash_set('err', 'Accès refusé.');
+                redirect_to('/modules/planning.php' . $weekQuery);
+            }
+        } else {
+            if (!$canWort) {
+                http_response_code(403);
+                flash_set('err', 'Accès refusé.');
+                redirect_to('/modules/planning.php' . $weekQuery);
+            }
+        }
+
+        $before = $item;
+        $delStmt = $pdo->prepare(
+            'UPDATE pl_plan_items SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+        );
+        $delStmt->execute([$itemId]);
+
+        log_revision($pdo, $me, 'pl_plan_items', $itemId, $before, array_merge($before, ['is_active' => 0]), 'normal', null);
+        flash_set('ok', 'Proposition rejetée.');
+        redirect_to('/modules/planning.php' . $weekQuery);
+    }
+
     // Unknown action — redirect silently
     redirect_to('/modules/planning.php' . $weekQuery);
 }
@@ -547,6 +678,15 @@ $itemsByDaySection = [];
 foreach ($allItems as $item) {
     $itemsByDaySection[(string)$item['plan_date']][(string)$item['section']][] = $item;
 }
+
+// ── Proposed (predictive) items for the week ──────────────────────────────────
+$proposedItems = [];
+foreach ($allItems as $item) {
+    if ((string)($item['source'] ?? '') === 'predictive' && (string)($item['status'] ?? '') === 'proposed') {
+        $proposedItems[] = $item;
+    }
+}
+$hasProposals = !empty($proposedItems);
 
 // ── Flash: pop from session (via canonical helper) ────────────────────────────
 $flashData = flash_pop();
@@ -604,6 +744,21 @@ $weekLabel = 'Semaine du '
     </div>
   <?php endif ?>
 
+  <!-- ── Predictive suggestions button ───────────────────────────────────── -->
+  <?php if ($canWort): ?>
+    <form method="POST"
+          action="/modules/planning.php?week=<?= htmlspecialchars($weekStartStr, ENT_QUOTES | ENT_HTML5) ?>"
+          class="pl-suggest-form">
+      <input type="hidden" name="csrf"   value="<?= htmlspecialchars(csrf_token(), ENT_QUOTES | ENT_HTML5) ?>">
+      <input type="hidden" name="action" value="generate_suggestions">
+      <input type="hidden" name="week"   value="<?= htmlspecialchars($weekStartStr, ENT_QUOTES | ENT_HTML5) ?>">
+      <button type="submit" class="pl-suggest-btn"
+              title="Analyser la couverture de stock et générer des suggestions de planification">
+        ✦ Suggérer un plan <span class="pl-suggest-btn__sub">données de vente</span>
+      </button>
+    </form>
+  <?php endif ?>
+
   <!-- ── Page header ────────────────────────────────────────────────────────── -->
   <div class="pl-header">
     <div class="pl-header__eyebrow">Production · Organisation</div>
@@ -649,8 +804,14 @@ $weekLabel = 'Semaine du '
           <div class="pl-section__label">Brasserie</div>
 
           <?php foreach ($dayItems['wort'] ?? [] as $item): ?>
-            <div class="pl-item-card">
-              <?php if ($canWort): ?>
+            <?php $isProposed = ($item['source'] ?? '') === 'predictive' && ($item['status'] ?? '') === 'proposed'; ?>
+            <div class="pl-item-card<?= $isProposed ? ' pl-item-card--proposed' : '' ?>">
+              <?php if ($isProposed && $canWort): ?>
+                <div class="pl-proposed-badge">Proposé</div>
+                <?php if (!empty($item['suggest_reason'])): ?>
+                  <div class="pl-proposed-hint"><?= htmlspecialchars($item['suggest_reason'], ENT_QUOTES | ENT_HTML5) ?></div>
+                <?php endif ?>
+              <?php elseif ($canWort): ?>
                 <form method="POST"
                       action="/modules/planning.php?week=<?= htmlspecialchars($weekStartStr, ENT_QUOTES | ENT_HTML5) ?>"
                       class="pl-item-card__del-form"
@@ -686,6 +847,24 @@ $weekLabel = 'Semaine du '
                     <?= htmlspecialchars($item['hors_process_reason'], ENT_QUOTES | ENT_HTML5) ?>
                   </div>
                 <?php endif ?>
+              <?php endif ?>
+              <?php if ($isProposed && $canWort): ?>
+                <div class="pl-proposed-actions">
+                  <form method="POST" action="/modules/planning.php?week=<?= htmlspecialchars($weekStartStr, ENT_QUOTES | ENT_HTML5) ?>" class="pl-proposed-action-form">
+                    <input type="hidden" name="csrf"    value="<?= htmlspecialchars(csrf_token(), ENT_QUOTES | ENT_HTML5) ?>">
+                    <input type="hidden" name="action"  value="accept_proposal">
+                    <input type="hidden" name="item_id" value="<?= (int)$item['id'] ?>">
+                    <input type="hidden" name="week"    value="<?= htmlspecialchars($weekStartStr, ENT_QUOTES | ENT_HTML5) ?>">
+                    <button type="submit" class="pl-proposed-accept">✓ Accepter</button>
+                  </form>
+                  <form method="POST" action="/modules/planning.php?week=<?= htmlspecialchars($weekStartStr, ENT_QUOTES | ENT_HTML5) ?>" class="pl-proposed-action-form">
+                    <input type="hidden" name="csrf"    value="<?= htmlspecialchars(csrf_token(), ENT_QUOTES | ENT_HTML5) ?>">
+                    <input type="hidden" name="action"  value="reject_proposal">
+                    <input type="hidden" name="item_id" value="<?= (int)$item['id'] ?>">
+                    <input type="hidden" name="week"    value="<?= htmlspecialchars($weekStartStr, ENT_QUOTES | ENT_HTML5) ?>">
+                    <button type="submit" class="pl-proposed-reject">✕ Rejeter</button>
+                  </form>
+                </div>
               <?php endif ?>
             </div>
           <?php endforeach ?>
@@ -761,8 +940,14 @@ $weekLabel = 'Semaine du '
           <div class="pl-section__label">Conditionnement</div>
 
           <?php foreach ($dayItems['packaging'] ?? [] as $item): ?>
-            <div class="pl-item-card">
-              <?php if ($canWort): ?>
+            <?php $isProposed = ($item['source'] ?? '') === 'predictive' && ($item['status'] ?? '') === 'proposed'; ?>
+            <div class="pl-item-card<?= $isProposed ? ' pl-item-card--proposed' : '' ?>">
+              <?php if ($isProposed && $canWort): ?>
+                <div class="pl-proposed-badge">Proposé</div>
+                <?php if (!empty($item['suggest_reason'])): ?>
+                  <div class="pl-proposed-hint"><?= htmlspecialchars($item['suggest_reason'], ENT_QUOTES | ENT_HTML5) ?></div>
+                <?php endif ?>
+              <?php elseif ($canWort): ?>
                 <form method="POST"
                       action="/modules/planning.php?week=<?= htmlspecialchars($weekStartStr, ENT_QUOTES | ENT_HTML5) ?>"
                       class="pl-item-card__del-form"
@@ -777,6 +962,15 @@ $weekLabel = 'Semaine du '
               <div class="pl-item-card__type">
                 <?= htmlspecialchars(PKG_TYPE_LABELS[$item['pkg_type']] ?? $item['pkg_type'], ENT_QUOTES | ENT_HTML5) ?>
               </div>
+              <?php if (!empty($item['recipe_name'])): ?>
+                <div class="pl-item-card__recipe"><?= htmlspecialchars($item['recipe_name'], ENT_QUOTES | ENT_HTML5) ?></div>
+              <?php endif ?>
+              <?php if (!empty($item['batch'])): ?>
+                <div class="pl-item-card__meta">Brassin : <?= htmlspecialchars($item['batch'], ENT_QUOTES | ENT_HTML5) ?></div>
+              <?php endif ?>
+              <?php if ($item['bbt_number'] !== null): ?>
+                <div class="pl-item-card__meta">BBT <?= (int)$item['bbt_number'] ?></div>
+              <?php endif ?>
               <?php if ($item['target_volume_hl'] !== null): ?>
                 <div class="pl-item-card__meta">
                   <?= htmlspecialchars(number_format((float)$item['target_volume_hl'], 1, '.', ''), ENT_QUOTES | ENT_HTML5) ?> hl
@@ -789,6 +983,24 @@ $weekLabel = 'Semaine du '
                     <?= htmlspecialchars($item['hors_process_reason'], ENT_QUOTES | ENT_HTML5) ?>
                   </div>
                 <?php endif ?>
+              <?php endif ?>
+              <?php if ($isProposed && $canWort): ?>
+                <div class="pl-proposed-actions">
+                  <form method="POST" action="/modules/planning.php?week=<?= htmlspecialchars($weekStartStr, ENT_QUOTES | ENT_HTML5) ?>" class="pl-proposed-action-form">
+                    <input type="hidden" name="csrf"    value="<?= htmlspecialchars(csrf_token(), ENT_QUOTES | ENT_HTML5) ?>">
+                    <input type="hidden" name="action"  value="accept_proposal">
+                    <input type="hidden" name="item_id" value="<?= (int)$item['id'] ?>">
+                    <input type="hidden" name="week"    value="<?= htmlspecialchars($weekStartStr, ENT_QUOTES | ENT_HTML5) ?>">
+                    <button type="submit" class="pl-proposed-accept">✓ Accepter</button>
+                  </form>
+                  <form method="POST" action="/modules/planning.php?week=<?= htmlspecialchars($weekStartStr, ENT_QUOTES | ENT_HTML5) ?>" class="pl-proposed-action-form">
+                    <input type="hidden" name="csrf"    value="<?= htmlspecialchars(csrf_token(), ENT_QUOTES | ENT_HTML5) ?>">
+                    <input type="hidden" name="action"  value="reject_proposal">
+                    <input type="hidden" name="item_id" value="<?= (int)$item['id'] ?>">
+                    <input type="hidden" name="week"    value="<?= htmlspecialchars($weekStartStr, ENT_QUOTES | ENT_HTML5) ?>">
+                    <button type="submit" class="pl-proposed-reject">✕ Rejeter</button>
+                  </form>
+                </div>
               <?php endif ?>
             </div>
           <?php endforeach ?>
