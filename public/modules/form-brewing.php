@@ -62,7 +62,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // ── 1. Coerce header inputs ───────────────────────────────────────────
         $beer        = post_str('beer_select') ?? '';
         $batch       = post_str('batch')       ?? '';
-        $recipeId    = post_int('recipe_id_fk');
+        $recipeId    = post_int('recipe_id_fk'); // overridden below by server-side resolution
         $eventDateRaw = post_str('event_date');
 
         if ($beer === '') {
@@ -71,6 +71,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($batch === '') {
             throw new RuntimeException("Le numéro de brassin est obligatoire.");
         }
+
+        // ── Recipe resolution (server-side, authoritative) ─────────────────────
+        // The JS hidden field (recipe_id_fk) is only populated on dropdown change;
+        // if the operator doesn't re-pick the recipe the field stays empty → NULL.
+        // Resolve authorita­tively here by matching $beer to the unique active recipe
+        // in ref_recipes. HAVING COUNT(*)=1 ensures we never guess for ambiguous names.
+        $recipeStmt = $pdo->prepare(
+            "SELECT id FROM ref_recipes
+              WHERE name = ? AND is_active = 1
+              GROUP BY name
+             HAVING COUNT(*) = 1"
+        );
+        $recipeStmt->execute([$beer]);
+        $recipeRow = $recipeStmt->fetch(PDO::FETCH_ASSOC);
+        if ($recipeRow === false) {
+            throw new RuntimeException(
+                "Recette introuvable ou ambiguë pour « {$beer} » — impossible d'enregistrer le brassin sans recette valide."
+            );
+        }
+        $recipeId = (int) $recipeRow['id'];
 
         // Date: always store as Y-m-d in DB; HTML date input always returns Y-m-d
         $eventDate = $eventDateRaw ?? date('Y-m-d');
