@@ -38,6 +38,7 @@ require_once __DIR__ . '/../../app/auth.php';
 require_once __DIR__ . '/../../app/settings-helpers.php';
 require_once __DIR__ . '/../../app/db-write-helpers.php';
 require_once __DIR__ . '/../../app/csrf.php';
+require_once __DIR__ . '/../../app/email-order-promote.php';
 
 require_page_access('email-orders');
 $me            = current_user();
@@ -80,53 +81,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $canWrite) {
     }
 
     // ── 2. Coerce inputs ──────────────────────────────────────────────────────
-    $emailMsgId  = isset($_POST['email_msg_id']) ? (int) $_POST['email_msg_id'] : 0;
-    $custIdRaw   = isset($_POST['customer_id'])  ? (int) $_POST['customer_id']  : 0;
-    $reqDate     = isset($_POST['requested_date']) ? trim((string) $_POST['requested_date']) : '';
+    $emailMsgId  = (int) ($_POST['email_msg_id'] ?? 0);
+    $custIdRaw   = (int) ($_POST['customer_id']  ?? 0);
+    $reqDate     = trim((string) ($_POST['requested_date'] ?? ''));
     $lineSkuIds  = $_POST['line_sku_id'] ?? [];
     $lineQtys    = $_POST['line_qty']    ?? [];
+    $allowTwin   = !empty($_POST['confirm_twin']);
 
-    // ── 3. Validate — refuse-don't-NULL ──────────────────────────────────────
+    // ── 3. Module-layer whitelist validation (defense in depth) ──────────────
+    // The helper also validates, but the module owns the active-whitelist gate
+    // (customer ∈ active ref_customers, each SKU ∈ active ref_skus).
     $errors = [];
 
-    // email_msg_id must point to a real parsed row
-    $emailRow = null;
     if ($emailMsgId <= 0) {
         $errors[] = 'Identifiant de message invalide.';
-    } else {
-        $stmtMsg = $pdo->prepare(
-            "SELECT id, message_id, raw_body, parse_status
-               FROM doc_email_messages
-              WHERE id = ? AND parse_status = 'parsed'
-              LIMIT 1"
-        );
-        $stmtMsg->execute([$emailMsgId]);
-        $emailRow = $stmtMsg->fetch(PDO::FETCH_ASSOC);
-        if ($emailRow === false || $emailRow === null) {
-            $errors[] = 'Message introuvable ou déjà traité.';
-        }
     }
 
-    // Customer — must be picked from active set
     if ($custIdRaw <= 0 || !isset($activeCustIds[$custIdRaw])) {
         $errors[] = 'Client non résolu — sélectionne un client dans la liste.';
     }
 
-    // Date
     if ($reqDate === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $reqDate)) {
         $errors[] = 'Date de livraison requise (format AAAA-MM-JJ).';
     }
 
-    // Lines — at least 1, every line fully resolved
-    $validLines = [];
+    // Build $lines in the shape the helper expects.
+    $lines = [];
     if (!is_array($lineSkuIds) || count($lineSkuIds) === 0) {
         $errors[] = 'Au moins une ligne article est requise.';
     } else {
         foreach ($lineSkuIds as $i => $rawSkuId) {
             $skuId = (int) ($rawSkuId ?? 0);
-            $qty   = isset($lineQtys[$i]) ? (float) $lineQtys[$i] : 0.0;
+            $qty   = (float) ($lineQtys[$i] ?? 0);
 
-            if ($skuId <= 0) continue; // blank row — skip silently
+            if ($skuId <= 0) continue; // blank picker row — skip
             if (!isset($activeSkuIds[$skuId])) {
                 $errors[] = 'Ligne ' . ((int)$i + 1) . ' : SKU introuvable.';
                 continue;
@@ -135,9 +123,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $canWrite) {
                 $errors[] = 'Ligne ' . ((int)$i + 1) . ' : quantité doit être > 0.';
                 continue;
             }
-            $validLines[] = ['sku_id' => $skuId, 'qty' => $qty];
+            $lines[] = ['sku_id' => $skuId, 'qty' => $qty];
         }
-        if (count($validLines) === 0 && count($errors) === 0) {
+        if (count($lines) === 0 && count($errors) === 0) {
             $errors[] = 'Au moins une ligne article valide est requise.';
         }
     }
@@ -147,150 +135,72 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $canWrite) {
         redirect_to('/modules/email-orders.php');
     }
 
-    // ── 4. Twin-check (XOR no-double-deplete) ────────────────────────────────
-    // Check if a Shopify/eshop order already exists for the same requested_date.
-    // inv_sales_orders has no customer_id_fk so we correlate on date only.
-    $twinWarnMsg = null;
+    // ── 4. Delegate to the canonical helper ──────────────────────────────────
+    // email_order_promote() owns: FOR UPDATE row-locking, source_ref idempotency,
+    // dup-key(1062/uniq_ord_source_ref) translation, the correct Shopify-pickup
+    // twin-check (customer_email + SKU overlap + ±7d), and all ord_orders writes.
     try {
-        $stmtTwin = $pdo->prepare(
-            "SELECT COUNT(*) AS cnt
-               FROM inv_sales_orders
-              WHERE channel = 'eshop'
-                AND DATE(created_at) = ?
-              LIMIT 1"
-        );
-        $stmtTwin->execute([$reqDate]);
-        $twinRow = $stmtTwin->fetch(PDO::FETCH_ASSOC);
-        if ($twinRow && (int)$twinRow['cnt'] > 0) {
-            $twinWarnMsg = 'Un ou plusieurs ordres e-shop Shopify existent pour la date '
-                . htmlspecialchars($reqDate, ENT_QUOTES | ENT_HTML5)
-                . ' — veuillez vérifier qu\'il ne s\'agit pas d\'un doublon avant de valider.';
-        }
-    } catch (Throwable $e) {
-        error_log('[email-orders twin-check] ' . $e->getMessage());
-        // Non-fatal: twin-check failure doesn't block creation, just means we skip the warning.
-    }
-
-    // If a twin candidate exists, store warning in session and redirect back to show it.
-    // The operator must re-submit with a ?confirm_twin=1 flag to override.
-    $confirmTwin = isset($_POST['confirm_twin']) && (int)$_POST['confirm_twin'] === 1;
-    if ($twinWarnMsg !== null && !$confirmTwin) {
-        flash_set('err', '⚠ Doublon potentiel e-shop : ' . strip_tags($twinWarnMsg)
-            . ' — Resoumettez avec la case "Confirmer malgré le doublon" cochée pour forcer.');
-        redirect_to('/modules/email-orders.php');
-    }
-
-    // ── 5. Build source_ref ───────────────────────────────────────────────────
-    $messageId = $emailRow['message_id'] ?? '';
-    $sourceRef = 'email:' . $messageId;
-
-    // ── 6. Atomic transaction ─────────────────────────────────────────────────
-    try {
-        $pdo->beginTransaction();
-
-        // INSERT ord_orders
-        $insOrd = $pdo->prepare(
-            'INSERT INTO ord_orders
-                (order_type, customer_id_fk, internal_channel, requested_date,
-                 status, source, source_email_id_fk, source_ref,
-                 review_status, created_by_user_id)
-             VALUES (?, ?, NULL, ?, "entered", "email", ?, ?, "accepted", ?)'
-        );
-        $insOrd->execute([
-            'customer',
+        $newOrderId = email_order_promote(
+            $pdo,
+            $me,
+            $emailMsgId,
             $custIdRaw,
             $reqDate,
-            $emailMsgId,
-            $sourceRef,
-            (int) $me['id'],
-        ]);
-        $newOrderId = (int) $pdo->lastInsertId();
-
-        log_revision($pdo, $me, 'ord_orders', $newOrderId, null, [
-            'order_type'          => 'customer',
-            'customer_id_fk'      => $custIdRaw,
-            'internal_channel'    => null,
-            'requested_date'      => $reqDate,
-            'status'              => 'entered',
-            'source'              => 'email',
-            'source_email_id_fk'  => $emailMsgId,
-            'source_ref'          => $sourceRef,
-            'review_status'       => 'accepted',
-            'created_by_user_id'  => (int) $me['id'],
-        ], 'normal', 'Commande créée via validation e-mail');
-
-        // INSERT ord_order_lines
-        $insLine = $pdo->prepare(
-            'INSERT INTO ord_order_lines (order_id_fk, sku_id_fk, qty)
-             VALUES (?, ?, ?)'
+            $lines,
+            null,       // order-level comment — no form field yet
+            $allowTwin
         );
-        foreach ($validLines as $line) {
-            $insLine->execute([$newOrderId, $line['sku_id'], $line['qty']]);
-            $lineId = (int) $pdo->lastInsertId();
-            log_revision($pdo, $me, 'ord_order_lines', $lineId, null, [
-                'order_id_fk' => $newOrderId,
-                'sku_id_fk'   => $line['sku_id'],
-                'qty'         => $line['qty'],
-            ], 'normal');
-        }
 
-        // INSERT ord_order_status_events
-        $insEv = $pdo->prepare(
-            'INSERT INTO ord_order_status_events (order_id_fk, status, occurred_at, user_id_fk, comment)
-             VALUES (?, "entered", NOW(), ?, ?)'
-        );
-        $insEv->execute([$newOrderId, (int) $me['id'], 'Commande saisie via validation e-mail']);
-        $evId = (int) $pdo->lastInsertId();
-        log_revision($pdo, $me, 'ord_order_status_events', $evId, null, [
-            'order_id_fk' => $newOrderId,
-            'status'      => 'entered',
-            'comment'     => 'Commande saisie via validation e-mail',
-        ], 'normal');
-
-        // UPDATE doc_email_messages → order_created (atomic flip)
-        $updEmail = $pdo->prepare(
-            "UPDATE doc_email_messages SET parse_status = 'order_created', updated_at = NOW()
-              WHERE id = ?"
-        );
-        $updEmail->execute([$emailMsgId]);
-        log_revision($pdo, $me, 'doc_email_messages', $emailMsgId,
-            ['parse_status' => 'parsed'],
-            ['parse_status' => 'order_created'],
-            'normal', 'Commande #' . $newOrderId . ' créée depuis cet e-mail');
-
-        $pdo->commit();
+        // Clear any pending twin state for this card.
+        maltytask_session_start();
+        unset($_SESSION['eo_twin_pending_id']);
 
         flash_set('ok', 'Commande #' . $newOrderId . ' créée avec succès (source e-mail).');
         redirect_to('/modules/email-orders.php');
 
+    } catch (EmailOrderTwinException $e) {
+        // Store the email id so the GET render can reveal the confirm_twin affordance
+        // on exactly the card that triggered the warning.
+        maltytask_session_start();
+        $_SESSION['eo_twin_pending_id'] = $emailMsgId;
+        flash_set('err', '⚠ Doublon eshop possible — cochez "Confirmer malgré le doublon" sur cette commande pour forcer la création.');
+        redirect_to('/modules/email-orders.php');
+
+    } catch (EmailOrderAlreadyPromotedException $e) {
+        // Idempotent: the order exists — treat as success.
+        // Heal any partial-failure where the ord_orders committed but the email
+        // status flip did not (e.g. old network/process kill between steps 8 and 9).
+        try {
+            $pdo->prepare(
+                "UPDATE doc_email_messages SET parse_status = 'order_created' WHERE id = ? AND parse_status = 'parsed'"
+            )->execute([$emailMsgId]);
+        } catch (Throwable $_) { /* non-fatal heal attempt */ }
+        maltytask_session_start();
+        unset($_SESSION['eo_twin_pending_id']);
+        flash_set('ok', 'Commande déjà créée depuis cet e-mail (aucune action nécessaire).');
+        redirect_to('/modules/email-orders.php');
+
+    } catch (EmailOrderNoCustomerException | EmailOrderInvalidLineException | EmailOrderNotParsedException $e) {
+        flash_set('err', 'Erreur de validation : ' . $e->getMessage());
+        redirect_to('/modules/email-orders.php');
+
     } catch (Throwable $e) {
-        if ($pdo->inTransaction()) $pdo->rollBack();
         error_log('[email-orders POST] ' . $e->getMessage());
-
-        // Graceful duplicate-key: source_ref already exists → order already created
-        if (str_contains($e->getMessage(), '1062')) {
-            // Find the existing order to show a helpful message
-            try {
-                $dupStmt = $pdo->prepare(
-                    "SELECT id FROM ord_orders WHERE source_ref = ? LIMIT 1"
-                );
-                $dupStmt->execute([$sourceRef]);
-                $dupRow = $dupStmt->fetch(PDO::FETCH_ASSOC);
-                if ($dupRow) {
-                    // Flip the email status if it didn't get flipped
-                    try {
-                        $pdo->prepare("UPDATE doc_email_messages SET parse_status='order_created' WHERE id=?")->execute([$emailMsgId]);
-                    } catch (Throwable $_) { /* ignore */ }
-                    flash_set('ok', 'Commande déjà créée (#' . (int)$dupRow['id'] . ') depuis cet e-mail.');
-                    redirect_to('/modules/email-orders.php');
-                }
-            } catch (Throwable $_) { /* ignore nested */ }
-        }
-
         flash_set('err', 'Erreur lors de la création : ' . pdo_friendly_error($e));
         redirect_to('/modules/email-orders.php');
     }
 }
+
+// ── Twin-pending state (survives the PRG; cleared on next successful submit) ──────
+// When a submit throws EmailOrderTwinException, the POST handler stores the email id
+// in the session so the GET render can reveal the confirm_twin affordance on that card.
+maltytask_session_start();
+$twinPendingEmailId = isset($_SESSION['eo_twin_pending_id'])
+    ? (int) $_SESSION['eo_twin_pending_id']
+    : 0;
+// Pop it — if the operator does anything else (submits another card, refreshes),
+// the affordance disappears naturally. The session key is re-set on each twin hit.
+unset($_SESSION['eo_twin_pending_id']);
 
 // ── Load data for GET render ───────────────────────────────────────────────────
 
@@ -407,7 +317,10 @@ $flashMsg  = $flash['msg'] ?? '';
           $receivedAt   = htmlspecialchars($em['received_at'] ?? '', ENT_QUOTES | ENT_HTML5);
           $rawBody      = htmlspecialchars($em['raw_body'] ?? '', ENT_QUOTES | ENT_HTML5);
         ?>
-        <div class="eo-review-card" id="eo-card-<?= (int)$em['id'] ?>">
+        <?php $isTwinPending = ($twinPendingEmailId > 0 && (int)$em['id'] === $twinPendingEmailId); ?>
+        <div class="eo-review-card<?= $isTwinPending ? ' eo-review-card--twin-pending' : '' ?>"
+             id="eo-card-<?= (int)$em['id'] ?>"
+             <?= $isTwinPending ? 'data-twin-pending="1"' : '' ?>>
           <!-- Card meta bar -->
           <div class="eo-review-card__meta">
             <span><strong>De :</strong> <?= $fromAddr ?></span>
@@ -457,7 +370,7 @@ $flashMsg  = $flash['msg'] ?? '';
                            placeholder="Rechercher un client…"
                            autocomplete="off"
                            value=""><!-- ALWAYS start empty — human must pick -->
-                    <ul class="eo-typeahead-dropdown" role="listbox" aria-label="Clients" hidden></ul>
+                    <ul class="eo-typeahead-dropdown eo-cust-dropdown" role="listbox" aria-label="Clients" hidden></ul>
                     <!-- customer_id starts at 0 — only set when operator picks from dropdown -->
                     <input type="hidden" name="customer_id" class="eo-customer-id" value="0">
                   </div>
@@ -524,10 +437,14 @@ $flashMsg  = $flash['msg'] ?? '';
                   </div><!-- /.eo-lines -->
                 </div>
 
-                <!-- Twin confirmation checkbox (hidden by default; shown by flash when twin detected) -->
-                <div class="eo-field" style="display:none;" id="eo-twin-confirm-<?= (int)$em['id'] ?>">
+                <!-- Twin confirmation affordance — visible only when a twin was flagged for this card -->
+                <div class="eo-twin-confirm<?= $isTwinPending ? ' eo-twin-confirm--visible' : '' ?>"
+                     id="eo-twin-confirm-<?= (int)$em['id'] ?>">
+                  <div class="eo-twin-warn">
+                    ⚠ Doublon eshop possible — une commande Shopify/pickup avec les mêmes SKUs existe dans la fenêtre ±7 jours.
+                  </div>
                   <label class="eo-field__label">
-                    <input type="checkbox" name="confirm_twin" value="1">
+                    <input type="checkbox" name="confirm_twin" value="1"<?= $isTwinPending ? ' checked' : '' ?>>
                     Confirmer malgré le doublon potentiel e-shop
                   </label>
                 </div>

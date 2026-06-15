@@ -376,6 +376,17 @@ body.email-orders-page .eo-btn-validate:disabled {
   cursor: not-allowed;
 }
 
+/* ── Twin confirm affordance (hidden until server flags it for a specific card) ── */
+
+body.email-orders-page .eo-twin-confirm {
+  display: none;
+  margin-bottom: 0.75rem;
+}
+
+body.email-orders-page .eo-twin-confirm--visible {
+  display: block;
+}
+
 /* ── Twin-check warning ───────────────────────────────────────────────────── */
 
 body.email-orders-page .eo-twin-warn {
