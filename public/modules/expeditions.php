@@ -22,6 +22,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../../app/auth.php';
 require_once __DIR__ . '/../../app/settings-helpers.php';
+require_once __DIR__ . '/../../app/settings.php';
 require_once __DIR__ . '/../../app/db-write-helpers.php';
 require_once __DIR__ . '/../../app/csrf.php';
 require_once __DIR__ . '/../../app/fg-stock.php';
@@ -1623,6 +1624,7 @@ try {
                     o.source,
                     o.bc_completely_shipped,
                     o.divergence_status,
+                    o.order_created_date,
                     c.name AS customer_name, c.trade_channel,
                     t.name AS transporter_name
                FROM ord_orders o
@@ -1634,6 +1636,10 @@ try {
         );
         $ordStmt->execute($params);
         $allOrders = $ordStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // Lead-time badge thresholds (hors-process flag)
+        $leadCritical = (float) system_setting('order_lead_time_critical_days', 'fulfilment', 1);
+        $leadWarn     = (float) system_setting('order_lead_time_warn_days', 'fulfilment', 2);
 
         // Group headers into a map and build day index
         $orderIds = [];
@@ -3775,6 +3781,21 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
             }
             $hasBackorder = !empty($backorderLines);
 
+            // Lead-time badge: hors-process flag
+            // lead_days = requested_date − order_created_date (signed day count).
+            // NULL order_created_date → no badge (never fabricate a lead from today).
+            $leadDays = null;
+            if (!empty($ord['order_created_date']) && !empty($ord['requested_date'])) {
+                $created  = new DateTime($ord['order_created_date']);
+                $deliver  = new DateTime($ord['requested_date']);
+                $leadDays = (int) $created->diff($deliver)->format('%r%a');
+            }
+            $leadTier = null; // 'critical' | 'warn' | null
+            if ($leadDays !== null) {
+                if ($leadDays < $leadCritical)      $leadTier = 'critical';
+                elseif ($leadDays < $leadWarn)      $leadTier = 'warn';
+            }
+
             // SKU pills: up to 6 visible, +N expand — with family colour class
             $pillsHtml = '';
             $pillCount = count($lines);
@@ -3856,6 +3877,17 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
                     title="BC indique Completely_Shipped=True (BL imprimé dans BC) — signal informatif, statut opérationnel inchangé">
                 BC&nbsp;: BL imprimé ✓
               </span>
+            <?php endif ?>
+
+            <!-- Lead-time badge: hors-process (short processing window) -->
+            <?php if ($leadTier === 'critical'): ?>
+              <span class="exp-lead-badge exp-lead-badge--critical"
+                    title="<?= $leadDays < 0 ? 'Anomalie : date de livraison antérieure à la création' : 'Commande sous 24h / jour même — délai hors-process' ?>"
+                    aria-label="Commande critique sous 24h">&#9889; &lt;24h</span>
+            <?php elseif ($leadTier === 'warn'): ?>
+              <span class="exp-lead-badge exp-lead-badge--warn"
+                    title="Commande sous 48h — délai de traitement court"
+                    aria-label="Commande tardive sous 48h">&#8987; 24-48h</span>
             <?php endif ?>
 
             <!-- Party -->
