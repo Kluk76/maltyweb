@@ -60,6 +60,9 @@ function svgEl(tag, attrs) {
 /* ── French month short labels ── */
 const KPC_MONTHS_FR = ['jan','fév','mar','avr','mai','jun','jul','aoû','sep','oct','nov','déc'];
 
+/* ── High-cardinality bar threshold ── */
+const KPC_HBAR_THRESHOLD = 15;
+
 /* ── Palette — read from CSS tokens at runtime ── */
 function kpcTok(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -77,6 +80,8 @@ function kpcColors() {
     ink_faint: kpcTok('--ink-faint')    || '#7a6647',
     ink_mute:  kpcTok('--ink-mute')     || '#4a3820',
     ink_soft:  kpcTok('--ink-soft')     || '#3d2f1f',
+    ink_label: kpcTok('--ink-label')    || '#8a7250',
+    ink:       kpcTok('--ink')          || '#241b10',
   };
 }
 
@@ -102,6 +107,94 @@ function deltaHtml(delta, deltaLabel) {
   return '<span class="kpc-delta ' + cls + '">' + sign + ' ' + escHtml(disp)
     + (deltaLabel ? ' <span class="kpc-delta-lbl">' + escHtml(deltaLabel) + '</span>' : '')
     + '</span>';
+}
+
+/* ═══════════════════════════════════════════════════════════
+   buildRankedBarList — shared horizontal ranked-row renderer
+   Used by renderKpiBar (high-cardinality, single-series: no ghost/chip)
+   and renderKpiGroupedBar (with ghost + chip).
+   rows:  array of { label, value, unit?, meta? } — sorted desc by caller
+   opts:  { cap, unit, showGhost, showChip, maxScale }
+   Returns a <div class="kpc-grouped-list"> DOM node.
+   ═══════════════════════════════════════════════════════════ */
+function buildRankedBarList(rows, opts) {
+  opts = opts || {};
+  const CAP = opts.cap != null ? opts.cap : 20;
+  const unit = opts.unit || '';
+  const showGhost = !!opts.showGhost;
+  const showChip  = !!opts.showChip;
+
+  /* Sort descending by value for ranked single-series lists. grouped_bar passes
+     sort:false to preserve the handler's emit order (some order by name/period,
+     not value — re-sorting would reorder rows and change which top-N show). */
+  const sorted = (opts.sort === false)
+    ? rows.slice()
+    : rows.slice().sort(function(a, b) { return (b.value || 0) - (a.value || 0); });
+  const shown     = sorted.slice(0, CAP);
+  const truncated = sorted.length - shown.length;
+
+  const maxCurr = shown.reduce(function(m, b) { return Math.max(m, b.value || 0); }, 0.01);
+  const maxGhost = showGhost ? shown.reduce(function(m, b) {
+    return Math.max(m, (b.meta && b.meta.prior_year) ? b.meta.prior_year : 0);
+  }, 0.01) : 0.01;
+  const maxScale = opts.maxScale != null ? opts.maxScale : Math.max(maxCurr, maxGhost);
+
+  const wrap = document.createElement('div');
+  wrap.className = 'kpc-grouped-list';
+
+  shown.forEach(function(b) {
+    const curr  = b.value || 0;
+    const prior = (showGhost && b.meta && b.meta.prior_year != null) ? b.meta.prior_year : null;
+    const currPct  = maxScale > 0 ? (curr  / maxScale * 100) : 0;
+    const ghostPct = (prior != null && maxScale > 0) ? (prior / maxScale * 100) : 0;
+
+    /* YoY chip — only when showChip */
+    var chipHtml = '';
+    if (showChip) {
+      if (b.meta && b.meta.chip_label != null) {
+        chipHtml = '<span class="kpc-grouped-delta kpc-grouped-delta--neutral">' + escHtml(b.meta.chip_label) + '</span>';
+      } else if (prior === null || prior === 0) {
+        if (curr > 0) {
+          chipHtml = '<span class="kpc-grouped-delta kpc-grouped-delta--new">nouveau</span>';
+        } else {
+          chipHtml = '<span class="kpc-grouped-delta kpc-grouped-delta--neutral">—</span>';
+        }
+      } else {
+        const dpct = Math.round((curr - prior) / prior * 100);
+        if (dpct >= 0) {
+          chipHtml = '<span class="kpc-grouped-delta kpc-grouped-delta--up">▲ +' + dpct + '%</span>';
+        } else {
+          chipHtml = '<span class="kpc-grouped-delta kpc-grouped-delta--down">▼ ' + dpct + '%</span>';
+        }
+      }
+    }
+
+    /* Row unit: use per-item b.unit if present, else opts.unit */
+    const rowUnit = (b.unit != null) ? b.unit : unit;
+
+    const row = document.createElement('div');
+    row.className = 'kpc-grouped-row' + (showChip ? '' : ' kpc-grouped-row--simple');
+    row.innerHTML =
+      '<div class="kpc-grouped-row__lbl">' + escHtml(b.label) + '</div>'
+      + '<div class="kpc-grouped-row__track">'
+      +   (ghostPct > 0 ? '<div class="kpc-grouped-bar kpc-grouped-bar--ghost" style="width:' + ghostPct.toFixed(1) + '%"></div>' : '')
+      +   '<div class="kpc-grouped-bar kpc-grouped-bar--curr" style="width:' + currPct.toFixed(1) + '%"></div>'
+      + '</div>'
+      + '<div class="kpc-grouped-row__val">'
+      +   escHtml(fmt(curr, 1)) + (rowUnit ? '&nbsp;<span class="kpc-unit">' + escHtml(rowUnit) + '</span>' : '')
+      + '</div>'
+      + (showChip ? '<div class="kpc-grouped-row__delta">' + chipHtml + '</div>' : '');
+    wrap.appendChild(row);
+  });
+
+  if (truncated > 0) {
+    const more = document.createElement('div');
+    more.className = 'kpc-grouped-more';
+    more.textContent = '+' + truncated + ' autres';
+    wrap.appendChild(more);
+  }
+
+  return wrap;
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -496,21 +589,42 @@ function renderKpiBar(container, tracker, result, tCls) {
   }
 
   container.innerHTML = '<div class="kpc-card__label">' + escHtml(result.label || tracker.label) + '</div>';
-  const chartDiv = document.createElement('div');
-  chartDiv.className = 'kpc-bar-wrap';
-  container.appendChild(chartDiv);
 
-  const C = kpcColors();
-  const points = series.map(function(p) { return [p.value || 0]; });
-  const label = result.label || tracker.label;
-  const xLabels = series.every(function(p) { return p.period; }) ? series.map(function(p) { return p.period; }) : undefined;
-  buildBarChart(chartDiv, points, [
-    { color: C.core, labelFn: function() { return label; } },
-  ], {
-    height: 140,
-    yUnit: result.unit || '',
-    xLabels: xLabels,
-  });
+  if (series.length > KPC_HBAR_THRESHOLD) {
+    /* High-cardinality: render as sorted horizontal ranked list */
+    const rows = series.map(function(p) {
+      return { label: p.label || p.period || p.key || '', value: p.value || 0, unit: p.unit };
+    });
+    /* buildRankedBarList sorts desc internally */
+    const wrap = buildRankedBarList(rows, {
+      cap:       20,
+      unit:      result.unit || '',
+      showGhost: false,
+      showChip:  false,
+    });
+    /* Wrap in kpc-bar-wrap so overflow-y:auto CSS applies */
+    const barWrap = document.createElement('div');
+    barWrap.className = 'kpc-bar-wrap kpc-bar-wrap--ranked';
+    barWrap.appendChild(wrap);
+    container.appendChild(barWrap);
+  } else {
+    /* Low-cardinality: keep existing vertical SVG bar chart */
+    const chartDiv = document.createElement('div');
+    chartDiv.className = 'kpc-bar-wrap';
+    container.appendChild(chartDiv);
+
+    const C = kpcColors();
+    const points = series.map(function(p) { return [p.value || 0]; });
+    const label = result.label || tracker.label;
+    const xLabels = series.every(function(p) { return p.period; }) ? series.map(function(p) { return p.period; }) : undefined;
+    buildBarChart(chartDiv, points, [
+      { color: C.core, labelFn: function() { return label; } },
+    ], {
+      height: 140,
+      yUnit: result.unit || '',
+      xLabels: xLabels,
+    });
+  }
 }
 
 /* ── stacked_bar ─────────────────────────────────────────── */
@@ -596,66 +710,15 @@ function renderKpiGroupedBar(container, tracker, result, tCls) {
     return;
   }
 
-  const CAP = 12;
-  const shown     = breakdown.slice(0, CAP);
-  const truncated = breakdown.length - shown.length;
-
-  const maxCurr = shown.reduce(function(m, b) { return Math.max(m, b.value || 0); }, 0.01);
-  const maxGhost = shown.reduce(function(m, b) {
-    return Math.max(m, (b.meta && b.meta.prior_year) ? b.meta.prior_year : 0);
-  }, 0.01);
-  const maxScale = Math.max(maxCurr, maxGhost);
-
-  const wrap = document.createElement('div');
-  wrap.className = 'kpc-grouped-list';
-
-  shown.forEach(function(b) {
-    const curr  = b.value || 0;
-    const prior = (b.meta && b.meta.prior_year != null) ? b.meta.prior_year : null;
-    const currPct  = maxScale > 0 ? (curr  / maxScale * 100) : 0;
-    const ghostPct = (prior != null && maxScale > 0) ? (prior / maxScale * 100) : 0;
-
-    var chipHtml = '';
-    if (b.meta && b.meta.chip_label != null) {
-      // Custom verbatim chip — neutral, no computed YoY
-      chipHtml = '<span class="kpc-grouped-delta kpc-grouped-delta--neutral">' + escHtml(b.meta.chip_label) + '</span>';
-    } else if (prior === null || prior === 0) {
-      if (curr > 0) {
-        chipHtml = '<span class="kpc-grouped-delta kpc-grouped-delta--new">nouveau</span>';
-      } else {
-        chipHtml = '<span class="kpc-grouped-delta kpc-grouped-delta--neutral">—</span>';
-      }
-    } else {
-      const dpct = Math.round((curr - prior) / prior * 100);
-      if (dpct >= 0) {
-        chipHtml = '<span class="kpc-grouped-delta kpc-grouped-delta--up">▲ +' + dpct + '%</span>';
-      } else {
-        chipHtml = '<span class="kpc-grouped-delta kpc-grouped-delta--down">▼ ' + dpct + '%</span>';
-      }
-    }
-
-    const row = document.createElement('div');
-    row.className = 'kpc-grouped-row';
-    row.innerHTML =
-      '<div class="kpc-grouped-row__lbl">' + escHtml(b.label) + '</div>'
-      + '<div class="kpc-grouped-row__track">'
-      +   (ghostPct > 0 ? '<div class="kpc-grouped-bar kpc-grouped-bar--ghost" style="width:' + ghostPct.toFixed(1) + '%"></div>' : '')
-      +   '<div class="kpc-grouped-bar kpc-grouped-bar--curr" style="width:' + currPct.toFixed(1) + '%"></div>'
-      + '</div>'
-      + '<div class="kpc-grouped-row__val">'
-      +   escHtml(fmt(curr, 1)) + ((b.unit != null ? b.unit : result.unit) ? '&nbsp;<span class="kpc-unit">' + escHtml(b.unit != null ? b.unit : result.unit) + '</span>' : '')
-      + '</div>'
-      + '<div class="kpc-grouped-row__delta">' + chipHtml + '</div>';
-    wrap.appendChild(row);
+  /* Build the ranked list: showGhost + showChip true for grouped_bar (YoY context).
+     Cap = 12, rows pre-sorted desc by the PHP handler. */
+  const wrap = buildRankedBarList(breakdown, {
+    cap:       12,
+    unit:      result.unit || '',
+    showGhost: true,
+    showChip:  true,
+    sort:      false,   /* preserve handler emit order — byte-identical to pre-refactor grouped_bar */
   });
-
-  if (truncated > 0) {
-    const more = document.createElement('div');
-    more.className = 'kpc-grouped-more';
-    more.textContent = '+' + truncated + ' autres';
-    wrap.appendChild(more);
-  }
-
   container.appendChild(wrap);
 
   if (result.value != null) {
