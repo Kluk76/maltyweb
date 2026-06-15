@@ -1,0 +1,1167 @@
+#!/usr/bin/env python3
+"""
+ingest_bc_sales_orders.py — BC open sales orders → ord_orders / ord_order_lines.
+
+Pulls ALL uninvoiced (open) sales orders from the BC OData SalesOrder / SalesOrderSalesLines
+endpoints and upserts them into the maltytask operational tables.  Designed as a SEPARATE
+script from ingest_bc_sales_ledger.py — does NOT touch inv_sales_ledger.
+
+SOURCE:
+  /ODataV4/Company('NEBULEUSE')/SalesOrder          — order headers (29 rows, naturally scoped)
+  /ODataV4/Company('NEBULEUSE')/SalesOrderSalesLines — order lines (134 Item-type rows)
+
+  BC deletes invoiced orders from SalesOrder automatically, so this endpoint is always
+  scoped to open/uninvoiced orders with no filter needed.  Every pull is a FULL snapshot.
+
+EXCLUSIONS (XOR / no-double-deplete guard):
+  - Orders with non-empty ShpfyOrderNo → Shopify lane (inv_sales_orders); skip.
+  - Sell_to_Customer_No IN ('1080','3822') → eshop/taproom system accounts; skip.
+  - Lines where Type ≠ 'Item' → comment/charge lines; skip.
+
+STATUS MODEL (operator-confirmed):
+  - New BC order  → maltytask status 'entered'
+  - Header + lines refreshed while status IN ('entered','confirmed')
+  - Once 'picked'+ → FREEZE lines (operator started physical work); header commercial fields
+    may still refresh but lines are not touched
+  - BC Completely_Shipped=True + current status below 'bl_printed' → advance to 'bl_printed'
+    (BL was printed for physical loading day; NOT a depletion trigger)
+  - Status 'shipped' is set ONLY by the operator; the pull NEVER writes it
+  - A BC order leaves the active set when BC invoices it (disappears from SalesOrder)
+
+UPSERT KEY:
+  ord_orders.source_ref = 'bc:<No>' (e.g. 'bc:ORD210064')
+  Unique index uniq_ord_source_ref ensures idempotency.
+
+SKU RESOLUTION:
+  BC Item code alone is NOT sufficient — the same Item appears in multiple UoM formats.
+  However, Item code DIRECTLY maps to sku_code in ref_skus (BC item codes are the canonical
+  SKU codes), so UoM is used for validation only (not routing).  Unresolved → review CSV.
+
+  Known non-beer items that are ALWAYS skipped (deposits, CO2 charges — no hl_per_unit):
+    CAUF   (Caution - Fût Inox 20L)
+    CAUAL  (Caution - Bouteille Aligal)
+    CO2- FO (Forfait CO2)
+    V25    (Box 6 Verres — glassware)
+    EPH1021 (seasonal variant not in ref_skus — needs alias added)
+
+COLLISION REPORT:
+  Checks existing ord_orders rows (source IN ('web','email','import')) for potential
+  double-entry vs incoming BC orders using heuristic: same customer_id_fk AND overlapping
+  resolved SKU set. Reports for operator review before --apply.
+
+Credentials:
+  /var/www/maltytask/config/bc.env  (BC OAuth2)
+  /var/www/maltytask/config/db.env  (MySQL)
+
+Usage:
+  # Dry-run (default) — full reconciliation + collision report, no writes:
+  python3 scripts/python/ingest_bc_sales_orders.py
+
+  # Apply — write to ord_orders / ord_order_lines / ord_order_status_events:
+  python3 scripts/python/ingest_bc_sales_orders.py --apply
+
+  # Limit (for smoke-testing):
+  python3 scripts/python/ingest_bc_sales_orders.py --limit 5
+  python3 scripts/python/ingest_bc_sales_orders.py --limit 5 --apply
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import io
+import json
+import os
+import sys
+from datetime import datetime
+from decimal import Decimal
+from pathlib import Path
+from typing import Any
+from urllib.parse import quote
+
+# Allow running from /var/www/maltytask (adds scripts/python to path for lib_*)
+_SCRIPT_DIR = Path(__file__).parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+
+import pymysql  # noqa: E402 — after sys.path fix
+from pymysql.cursors import DictCursor
+
+try:
+    import requests  # noqa: E402
+except ImportError:
+    print("ERROR: requests not installed. Run: pip install requests", file=sys.stderr)
+    sys.exit(1)
+
+from lib_config import load as load_config  # noqa: E402
+
+# ── Constants ──────────────────────────────────────────────────────────────────
+
+SCRIPT_VERSION = "1.2.0"
+ACTOR = "bc-sync"  # written to ord_order_status_events.comment / audit context
+
+# BC OData service name (É encoded — Python urllib raises InvalidURL on raw non-ASCII)
+_BC_ENV_PATH = Path("/var/www/maltytask/config/bc.env")
+
+# System customers to exclude (eshop / taproom — their orders live in inv_sales_orders)
+SYSTEM_CUSTOMER_NOS = frozenset({"1080", "3822"})
+
+# Items that are not beer SKUs and must always be skipped (deposits, CO2 charges, glassware).
+# These are non-inventoried items with no hl_per_unit.  The caller cannot add them to
+# ord_order_lines (FK → ref_skus requires a real sku_id, and they have no beer stock impact).
+# Include them in the unresolved-line log but do NOT fail the order over them.
+NON_BEER_BC_ITEMS = frozenset({"CAUF", "CAUAL", "CO2- FO", "V25"})
+
+# ── Cutover / standing-import constants ───────────────────────────────────────
+#
+# WeeklyOrders sheet was retired on CUTOVER_DATE; BC is now the sole order source.
+# CUTOVER_DATE drives two standing-import rules:
+#
+#   1. RECENCY JUNK FLOOR — orders with Order_Date < RECENCY_FLOOR are always
+#      ignored regardless of any other criterion (kills stale lingering orders
+#      like ORD201126 that were placed in 2020–2025 and never invoiced in BC).
+#
+#   2. BACKLOG SKIP — orders with Order_Date < CUTOVER_DATE AND
+#      Completely_Shipped=True are skipped (historical orders shipped before
+#      cutover; already done / captured in the sales ledger — not active
+#      logistics work; importing would clutter the queue at bl_printed forever).
+#      Orders with Order_Date < CUTOVER_DATE AND Completely_Shipped=False ARE
+#      imported (genuine active pre-cutover non-collision work-in-progress).
+#
+# These two rules are permanent — no special "first-run" mode.  The logic is
+# fully deterministic and self-maintaining:
+#   - New BC orders → born not-shipped post-cutover → INSERT.
+#   - Historical shipped backlog → pre-cutover+shipped → permanently SKIP.
+#   - 12 WeeklyOrders collisions → SKIP (operator keeps their in-progress row).
+#   - Stale/ancient orders → RECENCY FLOOR → permanently SKIP.
+CUTOVER_DATE   = "2026-06-15"   # WeeklyOrders retirement date; BC is sole source from here
+RECENCY_FLOOR  = "2026-01-01"   # Absolute floor: orders older than this are always ignored
+
+# Status ordering for advance-guard logic (must not regress)
+_STATUS_RANK: dict[str, int] = {
+    "entered":    0,
+    "confirmed":  1,
+    "picked":     2,
+    "bl_printed": 3,
+    "shipped":    4,
+    "cancelled":  5,
+}
+
+# Statuses where line refresh is still safe (operator hasn't started physical work)
+_REFRESH_LINE_STATUSES = frozenset({"entered", "confirmed"})
+
+# Batch size for OR-chained $filter requests (BC rejects the `in` operator — HTTP 501)
+OR_CHAIN_BATCH = 50
+
+
+# ── BC config + OAuth2 ────────────────────────────────────────────────────────
+
+def _load_bc_env() -> dict[str, str]:
+    path = _BC_ENV_PATH
+    override = Path(os.environ.get("MALTYTASK_BC_ENV", ""))
+    if override.name:
+        path = override
+    if not path.exists():
+        raise RuntimeError(
+            f"BC credentials not found at {path}.\n"
+            f"Expected keys: BC_TENANT_ID, BC_CLIENT_ID, BC_CLIENT_SECRET, BC_ENVIRONMENT.\n"
+            f"See: config/bc.env.example"
+        )
+    cfg: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        cfg[k.strip()] = v.strip()
+    for key in ("BC_TENANT_ID", "BC_CLIENT_ID", "BC_CLIENT_SECRET", "BC_ENVIRONMENT"):
+        if key not in cfg:
+            raise RuntimeError(f"Missing key in bc.env: {key}")
+    return cfg
+
+
+def _get_token(bc: dict[str, str]) -> str:
+    """Fetch OAuth2 client-credentials token.  Token never logged."""
+    tenant = bc["BC_TENANT_ID"]
+    url = f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
+    data = {
+        "grant_type":    "client_credentials",
+        "client_id":     bc["BC_CLIENT_ID"],
+        "client_secret": bc["BC_CLIENT_SECRET"],
+        "scope":         "https://api.businesscentral.dynamics.com/.default",
+    }
+    resp = requests.post(url, data=data, timeout=30)
+    if resp.status_code != 200:
+        raise RuntimeError(
+            f"Token request failed: HTTP {resp.status_code} — {resp.text[:200]}"
+        )
+    j = resp.json()
+    print(f"  [OAuth2] token acquired, expires_in={j.get('expires_in', '?')}s", flush=True)
+    return j["access_token"]
+
+
+def _odata_base(bc: dict[str, str]) -> str:
+    tenant = bc["BC_TENANT_ID"]
+    env    = bc["BC_ENVIRONMENT"]
+    return (
+        f"https://api.businesscentral.dynamics.com/v2.0/{tenant}/{env}"
+        f"/ODataV4/Company('NEBULEUSE')"
+    )
+
+
+# ── OData fetchers ─────────────────────────────────────────────────────────────
+
+def _fetch_all_pages(url: str, headers: dict, label: str) -> list[dict]:
+    """Follow @odata.nextLink until exhausted.  NO $top — would suppress paging."""
+    all_rows: list[dict] = []
+    page = 0
+    while url:
+        resp = requests.get(url, headers=headers, timeout=120)
+        if resp.status_code != 200:
+            raise RuntimeError(
+                f"OData {label} failed: HTTP {resp.status_code} — {resp.text[:300]}"
+            )
+        j = resp.json()
+        rows = j.get("value", [])
+        all_rows.extend(rows)
+        page += 1
+        print(
+            f"  [OData] {label} page {page}: {len(rows)} rows "
+            f"(total so far: {len(all_rows)})",
+            flush=True,
+        )
+        url = j.get("@odata.nextLink", "")
+    print(f"  [OData] {label} complete: {len(all_rows)} rows.", flush=True)
+    return all_rows
+
+
+def fetch_sales_orders(bc: dict[str, str]) -> list[dict]:
+    """
+    Fetch ALL rows from SalesOrder (no filter — BC naturally scopes to open/uninvoiced).
+    Fields: No, Document_Type, Status, Sell_to_Customer_No, Sell_to_Customer_Name,
+            Ship_to_Name, Ship_to_Address, Ship_to_City, Ship_to_Post_Code,
+            Ship_to_Country_Region_Code, Shipping_Agent_Code, Shipment_Date,
+            Completely_Shipped, ShpfyOrderNo, Salesperson_Code, Order_Date.
+    """
+    token = _get_token(bc)
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    base = _odata_base(bc)
+
+    select_fields = ",".join([
+        "No", "Document_Type", "Status",
+        "Sell_to_Customer_No", "Sell_to_Customer_Name",
+        "Ship_to_Name", "Ship_to_Address", "Ship_to_City",
+        "Ship_to_Post_Code", "Ship_to_Country_Region_Code",
+        "Shipping_Agent_Code", "Shipment_Date",
+        "Completely_Shipped", "ShpfyOrderNo",
+        "Salesperson_Code", "Order_Date",
+    ])
+    select_enc = quote(select_fields, safe="")
+    url = f"{base}/SalesOrder?$select={select_enc}"
+    return _fetch_all_pages(url, headers, "SalesOrder")
+
+
+def fetch_sales_lines(bc: dict[str, str]) -> list[dict]:
+    """
+    Fetch ALL rows from SalesOrderSalesLines.
+    Fields: Document_No, Line_No, Type, No, Description, Quantity,
+            Unit_of_Measure_Code, Unit_of_Measure, Unit_Price, Line_Amount,
+            Quantity_Shipped, Unit_Volume.
+    """
+    token = _get_token(bc)
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    base = _odata_base(bc)
+
+    select_fields = ",".join([
+        "Document_No", "Line_No", "Type", "No", "Description",
+        "Quantity", "Unit_of_Measure_Code", "Unit_of_Measure",
+        "Unit_Price", "Line_Amount", "Quantity_Shipped", "Unit_Volume",
+    ])
+    select_enc = quote(select_fields, safe="")
+    url = f"{base}/SalesOrderSalesLines?$select={select_enc}"
+    return _fetch_all_pages(url, headers, "SalesOrderSalesLines")
+
+
+# ── Reference-data loaders ─────────────────────────────────────────────────────
+
+def load_customers(conn: pymysql.connections.Connection) -> dict[str, int]:
+    """Returns {bc_customer_no: ref_customers.id} for all customers (incl. inactive)."""
+    with conn.cursor() as c:
+        c.execute(
+            "SELECT bc_customer_no, id FROM ref_customers "
+            "WHERE bc_customer_no IS NOT NULL"
+        )
+        return {str(r["bc_customer_no"]).strip(): int(r["id"]) for r in c.fetchall()}
+
+
+def load_skus(
+    conn: pymysql.connections.Connection,
+) -> tuple[dict[str, tuple[int, float | None]], dict[str, tuple[int, float | None]]]:
+    """
+    Returns:
+      direct_map : {sku_code: (id, hl_per_unit)}   — active ref_skus
+      alias_map  : {alias:    (canonical_id, hl)}   — ref_sku_aliases
+    Resolution order: direct match → alias.
+    """
+    with conn.cursor() as c:
+        c.execute("SELECT sku_code, id, hl_per_unit FROM ref_skus WHERE is_active = 1")
+        direct_map: dict[str, tuple[int, float | None]] = {
+            str(r["sku_code"]).strip(): (
+                int(r["id"]),
+                float(r["hl_per_unit"]) if r["hl_per_unit"] is not None else None,
+            )
+            for r in c.fetchall()
+        }
+        c.execute(
+            "SELECT ra.alias, ra.canonical_sku_id, rs.hl_per_unit "
+            "FROM ref_sku_aliases ra JOIN ref_skus rs ON rs.id = ra.canonical_sku_id"
+        )
+        alias_map: dict[str, tuple[int, float | None]] = {
+            str(r["alias"]).strip(): (
+                int(r["canonical_sku_id"]),
+                float(r["hl_per_unit"]) if r["hl_per_unit"] is not None else None,
+            )
+            for r in c.fetchall()
+        }
+    return direct_map, alias_map
+
+
+def load_transporters(conn: pymysql.connections.Connection) -> dict[str, int]:
+    """Returns {name_upper: id} for all active transporters."""
+    with conn.cursor() as c:
+        c.execute("SELECT id, name FROM ref_transporters WHERE is_active = 1")
+        return {str(r["name"]).upper(): int(r["id"]) for r in c.fetchall()}
+
+
+def load_existing_bc_orders(
+    conn: pymysql.connections.Connection,
+) -> dict[str, dict]:
+    """
+    Returns {source_ref: {id, status, customer_id_fk, requested_date}}
+    for all existing ord_orders where source='bc'.
+    """
+    with conn.cursor() as c:
+        c.execute(
+            "SELECT id, source_ref, status, customer_id_fk, requested_date "
+            "FROM ord_orders WHERE source = 'bc'"
+        )
+        return {
+            str(r["source_ref"]): dict(r) for r in c.fetchall()
+            if r["source_ref"]
+        }
+
+
+def load_existing_non_bc_active_orders(
+    conn: pymysql.connections.Connection,
+) -> list[dict]:
+    """
+    Returns active (non-shipped/cancelled) orders from sources web/email/import,
+    with their sku_id_fk sets, for the collision report.
+    """
+    with conn.cursor() as c:
+        c.execute(
+            """
+            SELECT o.id, o.source, o.source_ref, o.customer_id_fk, o.status,
+                   o.requested_date,
+                   GROUP_CONCAT(l.sku_id_fk ORDER BY l.sku_id_fk) AS sku_ids
+              FROM ord_orders o
+              LEFT JOIN ord_order_lines l ON l.order_id_fk = o.id
+             WHERE o.source IN ('web','email','import')
+               AND o.status NOT IN ('shipped','cancelled')
+             GROUP BY o.id
+            """
+        )
+        rows = c.fetchall()
+        result = []
+        for r in rows:
+            result.append({
+                "id":              r["id"],
+                "source":          r["source"],
+                "source_ref":      r["source_ref"],
+                "customer_id_fk":  r["customer_id_fk"],
+                "status":          r["status"],
+                "requested_date":  str(r["requested_date"]),
+                "sku_ids":         set(
+                    int(x) for x in (r["sku_ids"] or "").split(",") if x
+                ),
+            })
+        return result
+
+
+# ── SKU resolver ──────────────────────────────────────────────────────────────
+
+def resolve_sku(
+    item_no: str,
+    uom_code: str,
+    direct_map: dict,
+    alias_map: dict,
+) -> tuple[int | None, float | None, str]:
+    """
+    Resolve a (BC item_no, uom_code) pair to (sku_id, hl_per_unit, resolution_method).
+    Resolution: direct match on item_no → alias match on item_no.
+    Returns (None, None, 'unresolved') on failure — NEVER guesses.
+    """
+    item = item_no.strip()
+    if item in direct_map:
+        sku_id, hl = direct_map[item]
+        return sku_id, hl, "direct"
+    if item in alias_map:
+        sku_id, hl = alias_map[item]
+        return sku_id, hl, "alias"
+    return None, None, "unresolved"
+
+
+# ── Data classification ───────────────────────────────────────────────────────
+
+def classify_orders(
+    orders: list[dict],
+    customers: dict[str, int],
+    direct_map: dict,
+    alias_map: dict,
+    lines_by_order: dict[str, list[dict]],
+) -> dict:
+    """
+    Classify all BC orders into pull / exclude buckets and resolve customers + SKUs.
+
+    Exclusion order (XOR — first match wins):
+      1. ShpfyOrderNo non-empty                           → excluded_shopify
+      2. Sell_to_Customer_No IN SYSTEM_CUSTOMER_NOS       → excluded_system
+      3. Order_Date < RECENCY_FLOOR (2026-01-01)          → excluded_recency  (junk floor)
+      4. Customer not in ref_customers                    → unresolved_customers (skip)
+      5. Reaches pull list; upsert function applies:
+           a. Existing bc source_ref → UPDATE (status-gated)
+           b. Same customer + overlapping SKUs (collision) → SKIP_COLLISION
+           c. Order_Date < CUTOVER_DATE AND Completely_Shipped=True → SKIP_BACKLOG
+           d. Otherwise → INSERT
+
+    Returns a dict with:
+      'pull'                — list of orders that passed all pre-filters (customers resolved)
+      'excluded_shopify'    — orders with non-empty ShpfyOrderNo
+      'excluded_system'     — orders for system customers 1080/3822
+      'excluded_recency'    — orders with Order_Date < RECENCY_FLOOR
+      'unresolved_customers'— orders whose customer bc_no has no ref_customers match
+      'unresolved_lines'    — all unresolved (item, uom) pairs (for review CSV)
+    """
+    excluded_shopify   = []
+    excluded_system    = []
+    excluded_recency   = []
+    pull               = []
+    unresolved_custs   = []
+    unresolved_lines   = []
+
+    for o in orders:
+        no       = str(o.get("No", "")).strip()
+        shpfy_no = str(o.get("ShpfyOrderNo", "")).strip()
+        cust_no  = str(o.get("Sell_to_Customer_No", "")).strip()
+
+        # 1. Shopify lane
+        if shpfy_no:
+            excluded_shopify.append({"no": no, "shpfy_no": shpfy_no, "cust_no": cust_no})
+            continue
+
+        # 2. System customers (eshop / taproom)
+        if cust_no in SYSTEM_CUSTOMER_NOS:
+            excluded_system.append({"no": no, "cust_no": cust_no})
+            continue
+
+        # 3. Recency junk floor — stale lingering orders placed before 2026
+        order_date = str(o.get("Order_Date", "") or "").strip()
+        if order_date and order_date < RECENCY_FLOOR:
+            excluded_recency.append({
+                "no":         no,
+                "cust_no":    cust_no,
+                "order_date": order_date,
+            })
+            continue
+
+        # 4. Customer resolution
+        customer_id = customers.get(cust_no)
+        if customer_id is None:
+            unresolved_custs.append({
+                "bc_order_no": no,
+                "bc_customer_no": cust_no,
+                "bc_customer_name": str(o.get("Sell_to_Customer_Name", "")),
+            })
+            # refuse-don't-NULL: skip unresolved customer orders entirely
+            continue
+
+        # Transporter
+        agent_code = str(o.get("Shipping_Agent_Code", "")).strip()
+
+        # Resolve lines
+        order_lines = lines_by_order.get(no, [])
+        resolved_lines = []
+        for ln in order_lines:
+            if str(ln.get("Type", "")).strip() != "Item":
+                continue
+            item    = str(ln.get("No", "")).strip()
+            uom     = str(ln.get("Unit_of_Measure_Code", "")).strip()
+            qty_raw = ln.get("Quantity", 0)
+            try:
+                qty = float(qty_raw)
+            except (TypeError, ValueError):
+                qty = 0.0
+
+            if qty <= 0:
+                continue
+
+            # Known non-beer items — silently categorised as skip (not an error)
+            if item in NON_BEER_BC_ITEMS:
+                unresolved_lines.append({
+                    "bc_order_no":   no,
+                    "bc_item":       item,
+                    "uom":           uom,
+                    "qty":           qty,
+                    "description":   str(ln.get("Description", ""))[:60],
+                    "reason":        "non-beer-item (deposit/co2/glassware)",
+                })
+                continue
+
+            sku_id, hl_per_unit, method = resolve_sku(item, uom, direct_map, alias_map)
+            if sku_id is None:
+                unresolved_lines.append({
+                    "bc_order_no":   no,
+                    "bc_item":       item,
+                    "uom":           uom,
+                    "qty":           qty,
+                    "description":   str(ln.get("Description", ""))[:60],
+                    "reason":        "unresolved-sku",
+                })
+                # Don't skip the order, but flag it (lines with unresolved SKUs are omitted)
+                continue
+
+            hl = qty * hl_per_unit if hl_per_unit is not None else None
+            resolved_lines.append({
+                "line_no":     int(ln.get("Line_No", 0)),
+                "sku_id":      sku_id,
+                "qty":         qty,
+                "hl":          round(hl, 5) if hl is not None else None,
+                "bc_item":     item,
+                "uom":         uom,
+                "description": str(ln.get("Description", ""))[:60],
+                "unit_price":  float(ln.get("Unit_Price", 0) or 0),
+                "line_amount": float(ln.get("Line_Amount", 0) or 0),
+                "method":      method,
+            })
+
+        # Parse dates
+        shipment_date       = str(o.get("Shipment_Date", "") or "").strip()
+        completely_shipped  = bool(o.get("Completely_Shipped", False))
+
+        pull.append({
+            "bc_no":            no,
+            "source_ref":       f"bc:{no}",
+            "bc_status":        str(o.get("Status", "")),
+            "customer_id":      customer_id,
+            "bc_customer_no":   cust_no,
+            "bc_customer_name": str(o.get("Sell_to_Customer_Name", "")),
+            "shipment_date":    shipment_date,
+            "order_date":       order_date,
+            "completely_shipped": completely_shipped,
+            "agent_code":       agent_code,
+            "ship_to_name":     str(o.get("Ship_to_Name", "") or ""),
+            "ship_to_address":  str(o.get("Ship_to_Address", "") or ""),
+            "ship_to_city":     str(o.get("Ship_to_City", "") or ""),
+            "ship_to_post_code":str(o.get("Ship_to_Post_Code", "") or ""),
+            "ship_to_country":  str(o.get("Ship_to_Country_Region_Code", "") or ""),
+            "resolved_lines":   resolved_lines,
+        })
+
+    return {
+        "pull":                   pull,
+        "excluded_shopify":       excluded_shopify,
+        "excluded_system":        excluded_system,
+        "excluded_recency":       excluded_recency,
+        "unresolved_customers":   unresolved_custs,
+        "unresolved_lines":       unresolved_lines,
+    }
+
+
+# ── Collision detection ────────────────────────────────────────────────────────
+
+def detect_collisions(
+    classified: dict,
+    existing_non_bc: list[dict],
+) -> list[dict]:
+    """
+    Find existing ord_orders (web/email/import) that likely represent the same real-world
+    order as an incoming BC order.  Heuristic: same customer_id_fk AND overlapping resolved
+    SKU set.  Returns a list of collision dicts for the reconciliation report.
+    """
+    collisions = []
+
+    # Build map: customer_id → list of (bc_no, shipment_date, sku_id_set)
+    bc_by_cust: dict[int, list[dict]] = {}
+    for po in classified["pull"]:
+        cid = po["customer_id"]
+        if cid is None:
+            continue
+        bc_skus = {ln["sku_id"] for ln in po["resolved_lines"]}
+        bc_by_cust.setdefault(cid, []).append({
+            "bc_no":         po["bc_no"],
+            "shipment_date": po["shipment_date"],
+            "bc_skus":       bc_skus,
+        })
+
+    for eo in existing_non_bc:
+        cid = eo["customer_id_fk"]
+        if cid is None or cid not in bc_by_cust:
+            continue
+        for bc_entry in bc_by_cust[cid]:
+            overlap = eo["sku_ids"] & bc_entry["bc_skus"]
+            if not overlap:
+                continue
+            collisions.append({
+                "existing_id":     eo["id"],
+                "existing_source": eo["source"],
+                "existing_ref":    eo["source_ref"],
+                "existing_date":   eo["requested_date"],
+                "existing_status": eo["status"],
+                "existing_skus":   sorted(eo["sku_ids"]),
+                "bc_no":           bc_entry["bc_no"],
+                "bc_ship_date":    bc_entry["shipment_date"],
+                "bc_skus":         sorted(bc_entry["bc_skus"]),
+                "sku_overlap":     sorted(overlap),
+            })
+
+    return collisions
+
+
+# ── Status advance logic ──────────────────────────────────────────────────────
+
+def should_advance_to_bl_printed(
+    current_status: str,
+    completely_shipped: bool,
+) -> bool:
+    """
+    Return True iff BC says Completely_Shipped=True AND maltytask status is below bl_printed.
+    Never regresses; never touches 'shipped' or 'cancelled'.
+    """
+    if not completely_shipped:
+        return False
+    rank_current = _STATUS_RANK.get(current_status, 99)
+    rank_target  = _STATUS_RANK["bl_printed"]
+    return rank_current < rank_target
+
+
+# ── Database write helpers ─────────────────────────────────────────────────────
+
+def upsert_order(
+    conn: pymysql.connections.Connection,
+    order: dict,
+    existing_bc: dict[str, dict],
+    collision_bc_nos: set[str],
+    apply_mode: bool,
+) -> str:
+    """
+    INSERT or UPDATE one ord_orders row.
+    Returns 'insert', 'update', 'skip', 'skip_collision', or 'skip_backlog'.
+
+    Logic (XOR — first match wins):
+    1. If existing bc source_ref AND status IN ('entered','confirmed'): UPDATE header.
+    2. If existing bc source_ref AND status >= 'picked': skip (frozen; bl_printed handled
+       separately by advance_status()).
+    3. New order — collision (same customer + SKU overlap with active non-bc row): skip_collision.
+    4. New order — Order_Date < CUTOVER_DATE AND Completely_Shipped=True: skip_backlog.
+    5. Otherwise: INSERT (status='entered').
+    """
+    source_ref = order["source_ref"]
+    existing   = existing_bc.get(source_ref)
+
+    if existing is not None:
+        # UPDATE — only if status is refreshable
+        current_status = existing.get("status", "entered")
+        if current_status not in _REFRESH_LINE_STATUSES:
+            return "skip"
+        if apply_mode:
+            with conn.cursor() as c:
+                c.execute(
+                    """
+                    UPDATE ord_orders
+                       SET requested_date = %s,
+                           updated_at     = CURRENT_TIMESTAMP
+                     WHERE source_ref = %s
+                    """,
+                    (order["shipment_date"] or None, source_ref),
+                )
+        return "update"
+
+    # New order — apply standing import rules
+    bc_no = order["bc_no"]
+
+    # COLLISION SKIP — operator keeps their in-progress WeeklyOrders row
+    if bc_no in collision_bc_nos:
+        return "skip_collision"
+
+    # BACKLOG SKIP — pre-cutover + shipped: historical, already in sales ledger
+    if order["order_date"] < CUTOVER_DATE and order["completely_shipped"]:
+        return "skip_backlog"
+
+    # INSERT
+    if apply_mode:
+        with conn.cursor() as c:
+            c.execute(
+                """
+                INSERT INTO ord_orders
+                    (order_type, customer_id_fk, requested_date, status,
+                     source, source_ref, created_by_user_id, comment)
+                VALUES ('customer', %s, %s, 'entered', 'bc', %s, NULL, %s)
+                """,
+                (
+                    order["customer_id"],
+                    order["shipment_date"] or None,
+                    source_ref,
+                    f"BC {order['bc_no']} — auto-ingested from Business Central",
+                ),
+            )
+    return "insert"
+
+
+def upsert_lines(
+    conn: pymysql.connections.Connection,
+    order: dict,
+    existing_bc: dict[str, dict],
+    collision_bc_nos: set[str],
+    apply_mode: bool,
+) -> int:
+    """
+    Replace ord_order_lines for an order, but ONLY if status IN ('entered','confirmed').
+    Mirrors upsert_order skip logic: returns 0 for collision/backlog/frozen orders.
+    Returns count of lines written (or would-write in dry-run).
+    """
+    source_ref = order["source_ref"]
+    existing   = existing_bc.get(source_ref)
+    bc_no      = order["bc_no"]
+
+    # Determine order_id
+    if existing is not None:
+        current_status = existing.get("status", "entered")
+        if current_status not in _REFRESH_LINE_STATUSES:
+            return 0  # freeze lines
+        order_id = existing["id"]
+    else:
+        # Mirror the standing import skip rules from upsert_order
+        if bc_no in collision_bc_nos:
+            return 0  # skip_collision — no lines to write
+        if order["order_date"] < CUTOVER_DATE and order["completely_shipped"]:
+            return 0  # skip_backlog — no lines to write
+        if not apply_mode:
+            return len(order["resolved_lines"])
+        # New INSERT — get the id we just created
+        with conn.cursor() as c:
+            c.execute("SELECT id FROM ord_orders WHERE source_ref = %s", (source_ref,))
+            row = c.fetchone()
+            if not row:
+                return 0
+            order_id = row["id"]
+
+    if not apply_mode:
+        return len(order["resolved_lines"])
+
+    # Delete existing lines and re-insert (safe because we freeze above picked)
+    with conn.cursor() as c:
+        c.execute("DELETE FROM ord_order_lines WHERE order_id_fk = %s", (order_id,))
+        for ln in order["resolved_lines"]:
+            c.execute(
+                """
+                INSERT INTO ord_order_lines
+                    (order_id_fk, sku_id_fk, qty, line_comment)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (
+                    order_id,
+                    ln["sku_id"],
+                    ln["qty"],
+                    f"BC {order['bc_no']} L{ln['line_no']} — {ln['bc_item']} {ln['uom']}",
+                ),
+            )
+    return len(order["resolved_lines"])
+
+
+def advance_status(
+    conn: pymysql.connections.Connection,
+    order: dict,
+    existing_bc: dict[str, dict],
+    apply_mode: bool,
+) -> bool:
+    """
+    If BC says Completely_Shipped=True and current maltytask status is below bl_printed,
+    advance to bl_printed and write an ord_order_status_events row.
+    Returns True if an advance would/did fire.
+    """
+    source_ref = order["source_ref"]
+    existing   = existing_bc.get(source_ref)
+    if existing is None:
+        return False  # new order just inserted as 'entered'
+
+    current_status = existing.get("status", "entered")
+    if not should_advance_to_bl_printed(current_status, order["completely_shipped"]):
+        return False
+
+    if apply_mode:
+        order_id = existing["id"]
+        with conn.cursor() as c:
+            c.execute(
+                """
+                UPDATE ord_orders
+                   SET status     = 'bl_printed',
+                       updated_at = CURRENT_TIMESTAMP
+                 WHERE id = %s
+                """,
+                (order_id,),
+            )
+            c.execute(
+                """
+                INSERT INTO ord_order_status_events
+                    (order_id_fk, status, occurred_at, user_id_fk, comment)
+                VALUES (%s, 'bl_printed', NOW(), NULL, %s)
+                """,
+                (
+                    order_id,
+                    f"{ACTOR}: BC Completely_Shipped=True; auto-advanced from {current_status}",
+                ),
+            )
+    return True
+
+
+# ── Review CSV writer ─────────────────────────────────────────────────────────
+
+def _write_review_csv(path: Path, rows: list[dict], fieldnames: list[str]) -> None:
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(rows)
+    path.write_text(buf.getvalue(), encoding="utf-8")
+
+
+# ── Reconciliation report ─────────────────────────────────────────────────────
+
+def print_reconciliation_report(
+    classified:           dict,
+    existing_bc:          dict[str, dict],
+    collisions:           list[dict],
+    would_insert:         int,
+    would_update:         int,
+    would_skip:           int,
+    would_skip_collision: int,
+    would_skip_backlog:   int,
+    insert_candidates:    list[dict],
+    bl_advances:          list[str],
+    review_csv_path:      Path,
+    cust_review_csv_path: Path,
+) -> None:
+    pull          = classified["pull"]
+    unres_lines   = classified["unresolved_lines"]
+    unres_custs   = classified["unresolved_customers"]
+    excluded_rec  = classified.get("excluded_recency", [])
+
+    all_bc_count = (
+        len(pull)
+        + len(classified["excluded_shopify"])
+        + len(classified["excluded_system"])
+        + len(excluded_rec)
+        + len(unres_custs)
+    )
+
+    total_items  = sum(1 for u in unres_lines if u["reason"] == "unresolved-sku")
+    total_nonbeer= sum(1 for u in unres_lines if u["reason"] != "unresolved-sku")
+    total_lines_resolved = sum(len(o["resolved_lines"]) for o in pull)
+    total_lines_attempted = total_lines_resolved + total_items
+
+    cust_resolved    = len(pull)
+    cust_unresolved  = len(unres_custs)
+    cust_total       = cust_resolved + cust_unresolved
+    cust_pct = round(100.0 * cust_resolved / cust_total, 1) if cust_total else 0.0
+    sku_pct  = round(100.0 * total_lines_resolved / total_lines_attempted, 1) if total_lines_attempted else 0.0
+
+    print()
+    print("=" * 72)
+    print("  RECONCILIATION REPORT — BC Sales Orders (DRY-RUN)")
+    print("=" * 72)
+    print(f"  Script version : {SCRIPT_VERSION}")
+    print(f"  Timestamp      : {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}")
+    print(f"  CUTOVER_DATE   : {CUTOVER_DATE}  |  RECENCY_FLOOR: {RECENCY_FLOOR}")
+    print()
+    print("── PULL SUMMARY ─────────────────────────────────────────────────────")
+    print(f"  BC open orders total           : {all_bc_count}")
+    print(f"  Excluded — Shopify             : {len(classified['excluded_shopify'])}")
+    print(f"  Excluded — system cust (1080/3822): {len(classified['excluded_system'])}")
+    print(f"  Excluded — recency floor (<2026): {len(excluded_rec)}")
+    if excluded_rec:
+        for r in excluded_rec:
+            print(f"    {r['no']} cust={r['cust_no']} order_date={r['order_date']}")
+    print(f"  Excluded — cust unresolved     : {cust_unresolved}")
+    print(f"  Orders reaching upsert logic   : {len(pull)}")
+    print()
+    print("── ORDER UPSERT COUNTS (standing import rule) ──────────────────────")
+    print(f"  Would INSERT (new active)                : {would_insert}")
+    print(f"  Would UPDATE (existing bc, refreshable)  : {would_update}")
+    print(f"  Would SKIP (existing bc, frozen ≥picked) : {would_skip}")
+    print(f"  Would SKIP-COLLISION (non-bc row kept)   : {would_skip_collision}")
+    print(f"  Would SKIP-BACKLOG (pre-cutover+shipped) : {would_skip_backlog}")
+    print()
+    print("── INSERT CANDIDATES (orders that WOULD be created) ─────────────────")
+    if insert_candidates:
+        for ic in insert_candidates:
+            shipped_flag = " [Completely_Shipped=True→bl_printed]" if ic["completely_shipped"] else ""
+            print(f"  {ic['bc_no']}  cust={ic['customer_name']!r}  "
+                  f"ship={ic['shipment_date']}  order_date={ic['order_date']}  "
+                  f"lines={ic['n_lines']}  hl={ic['hl_total']:.2f}{shipped_flag}")
+    else:
+        print("  (none)")
+    print()
+    print("── STATUS ADVANCES ─────────────────────────────────────────────────")
+    print(f"  Completely_Shipped → bl_printed advances: {len(bl_advances)}")
+    if bl_advances:
+        for a in bl_advances:
+            print(f"    {a}")
+    print()
+    print("── CUSTOMER RESOLUTION ──────────────────────────────────────────────")
+    print(f"  Resolved   : {cust_resolved}/{cust_total} ({cust_pct}%)")
+    if unres_custs:
+        print(f"  Unresolved : {cust_unresolved}")
+        for u in unres_custs:
+            print(f"    bc_no={u['bc_customer_no']}, name={u['bc_customer_name']!r}, order={u['bc_order_no']}")
+        print(f"  → Review CSV: {cust_review_csv_path}")
+    print()
+    print("── SKU RESOLUTION ───────────────────────────────────────────────────")
+    print(f"  Resolved beer lines : {total_lines_resolved}/{total_lines_attempted} ({sku_pct}%)")
+    print(f"  Non-beer items skip : {total_nonbeer} (deposits/CO2/glassware — expected)")
+    if total_items:
+        print(f"  Unresolved beer SKUs: {total_items}")
+        seen = set()
+        for u in unres_lines:
+            if u["reason"] != "unresolved-sku":
+                continue
+            k = (u["bc_item"], u["uom"])
+            if k in seen:
+                continue
+            seen.add(k)
+            print(f"    item={u['bc_item']!r}, uom={u['uom']!r}, desc={u['description']!r}")
+        print(f"  → Review CSV: {review_csv_path}")
+    print()
+    print("── COLLISION DETAIL (WeeklyOrders rows kept; BC orders SKIPPED) ─────")
+    print(f"  Collisions auto-skipped: {would_skip_collision}")
+    if collisions:
+        for c in collisions:
+            print()
+            print(f"  SKIP-COLLISION: BC {c['bc_no']} (ship={c['bc_ship_date']})")
+            print(f"    → kept row: ord_orders.id={c['existing_id']} "
+                  f"(source={c['existing_source']}, ref={c['existing_ref']})")
+            print(f"      status={c['existing_status']}, date={c['existing_date']}, "
+                  f"sku_ids={c['existing_skus']}")
+            print(f"    Overlapping sku_ids: {c['sku_overlap']}")
+    else:
+        print("  (none)")
+    print()
+    print("── NON-BEER LINES (informational) ──────────────────────────────────")
+    nonbeer = [u for u in unres_lines if u["reason"] != "unresolved-sku"]
+    if nonbeer:
+        seen_nb = set()
+        for u in nonbeer:
+            k = (u["bc_item"], u["uom"])
+            if k in seen_nb: continue
+            seen_nb.add(k)
+            print(f"  item={u['bc_item']!r}, uom={u['uom']!r}, "
+                  f"desc={u['description']!r} — skipped (non-beer)")
+    else:
+        print("  None")
+    print()
+    print("── RECOMMENDATION ──────────────────────────────────────────────────")
+    if cust_unresolved == 0 and total_items == 0:
+        print("  Safe to --apply. All customers + SKUs resolved.")
+        print(f"  Collisions ({would_skip_collision}) and backlog ({would_skip_backlog}) "
+              f"handled deterministically by standing import rule.")
+    else:
+        if cust_unresolved:
+            print(f"  HUMAN REVIEW REQUIRED: {cust_unresolved} unresolved customer(s).")
+        if total_items:
+            print(f"  HUMAN REVIEW REQUIRED: {total_items} unresolved SKU line(s).")
+        print("  Resolve the above, then re-run --dry-run, then --apply.")
+    print("=" * 72)
+    print()
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="BC open sales orders → ord_orders / ord_order_lines (Phase 1).",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--apply", action="store_true",
+        help="Write to database (default: dry-run, no writes).",
+    )
+    parser.add_argument(
+        "--limit", type=int, default=0,
+        help="Process at most N orders from the pull list (0 = all).",
+    )
+    args = parser.parse_args()
+
+    apply_mode = args.apply
+    limit      = args.limit
+
+    mode_label = "** APPLY **" if apply_mode else "DRY-RUN"
+    print(f"\nBC Sales Orders Ingest — v{SCRIPT_VERSION}")
+    print(f"Mode: {mode_label}")
+    print()
+
+    # ── Load BC credentials + token ───────────────────────────────────────────
+    print("[1/6] Loading BC credentials …")
+    bc = _load_bc_env()
+
+    # ── Fetch BC data ─────────────────────────────────────────────────────────
+    print("[2/6] Fetching BC SalesOrder + SalesOrderSalesLines …")
+    bc_orders = fetch_sales_orders(bc)
+    bc_lines  = fetch_sales_lines(bc)
+
+    # Group lines by Document_No
+    lines_by_order: dict[str, list[dict]] = {}
+    for ln in bc_lines:
+        doc_no = str(ln.get("Document_No", "")).strip()
+        lines_by_order.setdefault(doc_no, []).append(ln)
+
+    # ── Load DB reference data ────────────────────────────────────────────────
+    print("[3/6] Loading reference data from DB …")
+    cfg  = load_config()
+    conn = pymysql.connect(
+        host=cfg.db_host, port=cfg.db_port,
+        user=cfg.db_user, password=cfg.db_password,
+        database=cfg.db_name,
+        charset="utf8mb4", cursorclass=DictCursor, autocommit=False,
+    )
+    try:
+        customers   = load_customers(conn)
+        direct_map, alias_map = load_skus(conn)
+        transporters = load_transporters(conn)
+        existing_bc  = load_existing_bc_orders(conn)
+        existing_non_bc = load_existing_non_bc_active_orders(conn)
+
+        print(f"  Customers loaded   : {len(customers)}")
+        print(f"  SKUs loaded        : {len(direct_map)} direct + {len(alias_map)} aliases")
+        print(f"  Transporters       : {len(transporters)}")
+        print(f"  Existing BC orders : {len(existing_bc)}")
+        print(f"  Non-BC active ords : {len(existing_non_bc)}")
+
+        # ── Classify orders ───────────────────────────────────────────────────
+        print("[4/6] Classifying orders …")
+        classified = classify_orders(
+            bc_orders, customers, direct_map, alias_map, lines_by_order
+        )
+
+        pull = classified["pull"]
+        if limit > 0:
+            pull = pull[:limit]
+            print(f"  --limit {limit}: processing {len(pull)} orders only")
+
+        # ── Collision detection ───────────────────────────────────────────────
+        print("[5/6] Detecting collisions …")
+        collisions = detect_collisions(classified, existing_non_bc)
+
+        # Build collision_bc_nos set — the deterministic SKIP set for the import loop
+        collision_bc_nos: set[str] = {c["bc_no"] for c in collisions}
+        if collision_bc_nos:
+            print(f"  Collision BC order nos ({len(collision_bc_nos)}): "
+                  f"{sorted(collision_bc_nos)}")
+
+        # ── Build reconciliation counters and (optionally) write ──────────────
+        print("[6/6] Upserting / simulating …")
+        would_insert          = 0
+        would_update          = 0
+        would_skip            = 0
+        would_skip_collision  = 0
+        would_skip_backlog    = 0
+        insert_candidates: list[dict] = []
+        bl_advances: list[str]        = []
+
+        for order in pull:
+            action = upsert_order(conn, order, existing_bc, collision_bc_nos, apply_mode)
+            if action == "insert":
+                would_insert += 1
+                hl_total = sum(ln["hl"] or 0.0 for ln in order["resolved_lines"])
+                insert_candidates.append({
+                    "bc_no":              order["bc_no"],
+                    "customer_name":      order["bc_customer_name"],
+                    "shipment_date":      order["shipment_date"],
+                    "order_date":         order["order_date"],
+                    "completely_shipped": order["completely_shipped"],
+                    "n_lines":            len(order["resolved_lines"]),
+                    "hl_total":           round(hl_total, 2),
+                })
+            elif action == "update":
+                would_update += 1
+            elif action == "skip_collision":
+                would_skip_collision += 1
+            elif action == "skip_backlog":
+                would_skip_backlog += 1
+            else:
+                would_skip += 1
+
+            upsert_lines(conn, order, existing_bc, collision_bc_nos, apply_mode)
+
+            if advance_status(conn, order, existing_bc, apply_mode):
+                source_ref     = order["source_ref"]
+                existing       = existing_bc.get(source_ref)
+                current_status = existing["status"] if existing else "entered"
+                bl_advances.append(
+                    f"{order['bc_no']}: {current_status!r} → 'bl_printed' "
+                    f"(BC Completely_Shipped=True)"
+                )
+
+        if apply_mode:
+            conn.commit()
+            print(f"  Committed: {would_insert} inserted, {would_update} updated, "
+                  f"{would_skip} skipped, {would_skip_collision} skip-collision, "
+                  f"{would_skip_backlog} skip-backlog, {len(bl_advances)} bl_printed advances")
+        else:
+            conn.rollback()
+
+        # ── Write review CSVs ─────────────────────────────────────────────────
+        # Prefer /var/www/maltytask/data/ when writable; dry-run as maltytask
+        # may not have write access there (www-data-owned), so fall back to /tmp/.
+        _data_dir = Path("/var/www/maltytask/data")
+        csv_dir = _data_dir if _data_dir.exists() and os.access(_data_dir, os.W_OK) else Path("/tmp")
+        review_csv_path      = csv_dir / "bc-orders-unresolved-skus.csv"
+        cust_review_csv_path = csv_dir / "bc-orders-unresolved-customers.csv"
+
+        if classified["unresolved_lines"]:
+            _write_review_csv(
+                review_csv_path,
+                classified["unresolved_lines"],
+                ["bc_order_no", "bc_item", "uom", "qty", "description", "reason"],
+            )
+
+        if classified["unresolved_customers"]:
+            _write_review_csv(
+                cust_review_csv_path,
+                classified["unresolved_customers"],
+                ["bc_order_no", "bc_customer_no", "bc_customer_name"],
+            )
+
+        # ── Print reconciliation report ───────────────────────────────────────
+        print_reconciliation_report(
+            classified           = classified,
+            existing_bc          = existing_bc,
+            collisions           = collisions,
+            would_insert         = would_insert,
+            would_update         = would_update,
+            would_skip           = would_skip,
+            would_skip_collision = would_skip_collision,
+            would_skip_backlog   = would_skip_backlog,
+            insert_candidates    = insert_candidates,
+            bl_advances          = bl_advances,
+            review_csv_path      = review_csv_path,
+            cust_review_csv_path = cust_review_csv_path,
+        )
+
+    except Exception as exc:
+        conn.rollback()
+        print(f"\nERROR: {exc}", file=sys.stderr)
+        raise
+    finally:
+        conn.close()
+
+
+if __name__ == "__main__":
+    main()

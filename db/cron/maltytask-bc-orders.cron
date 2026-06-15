@@ -1,0 +1,49 @@
+# /etc/cron.d/maltytask-bc-orders
+#
+# BC open sales orders → ord_orders / ord_order_lines connector.
+# Pulls ALL uninvoiced (open) BC SalesOrder rows (naturally ~29, grows and shrinks
+# as orders are placed and invoiced), classifies, and upserts into the maltytask
+# ord_orders / ord_order_lines tables for logistics work in the Expéditions "Commandes" tab.
+#
+# EXCLUSIONS (XOR / no-double-deplete guard):
+#   - ShpfyOrderNo non-empty → Shopify lane (inv_sales_orders); not loaded here.
+#   - Sell_to_Customer_No IN ('1080','3822') → eshop/taproom system accounts; not loaded.
+#   - Lines with Type ≠ 'Item' → comment/charge lines; skipped.
+#
+# STATUS MODEL:
+#   New order → 'entered'; header + lines refreshed while status IN ('entered','confirmed');
+#   'picked'+ → lines frozen; BC Completely_Shipped=True → auto-advance to 'bl_printed';
+#   'shipped' set ONLY by operator (depletion trigger); BC invoicing naturally drops the order.
+#
+# PENDING SMOKE TEST — enable after:
+#   1. Human reviews the dry-run collision report + SKU resolution output.
+#   2. Operator independently verifies no fg-stock double-deplete risk.
+#   3. First --apply run confirmed clean (check ord_orders for new bc-source rows).
+#   4. Uncomment the schedule line below AND update the repo source, then redeploy.
+#
+# Enable command (on VPS, after review):
+#   sudo sed -i '/ingest_bc_sales_orders.py --apply/s/^#//' /etc/cron.d/maltytask-bc-orders
+#   (also uncomment in db/cron/maltytask-bc-orders.cron and commit + redeploy)
+#
+# Log: /var/log/maltytask/bc-orders.log
+# Preflight:
+#   sudo touch /var/log/maltytask/bc-orders.log
+#   sudo chown maltytask:www-data /var/log/maltytask/bc-orders.log
+#
+# BC credentials: /var/www/maltytask/config/bc.env (mode 640, group www-data).
+# DB credentials: /var/www/maltytask/config/db.env (mode 640, group www-data).
+# Source of truth: db/cron/maltytask-bc-orders.cron in the maltyweb repo.
+# Deployed via bin/deploy.sh --apply (sudo install -m 0644 → /etc/cron.d/).
+# Manual edits to /etc/cron.d/* are overwritten on next deploy — edit here.
+#
+# Frequency: every 15 minutes — BC order state changes are near-real-time
+# (order placed, released, Completely_Shipped flipped for BL print).
+#
+# Times UTC (VPS timezone Etc/UTC). maltytask user primary group www-data.
+# Python at /usr/bin/python3 (absolute — cron PATH is minimal).
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# m   h    dom mon dow  user        command
+# */15  *    *   *   *   maltytask   cd /var/www/maltytask && /usr/bin/python3 scripts/python/ingest_bc_sales_orders.py --apply >> /var/log/maltytask/bc-orders.log 2>&1
