@@ -616,7 +616,10 @@ function renderKpiGroupedBar(container, tracker, result, tCls) {
     const ghostPct = (prior != null && maxScale > 0) ? (prior / maxScale * 100) : 0;
 
     var chipHtml = '';
-    if (prior === null || prior === 0) {
+    if (b.meta && b.meta.chip_label != null) {
+      // Custom verbatim chip — neutral, no computed YoY
+      chipHtml = '<span class="kpc-grouped-delta kpc-grouped-delta--neutral">' + escHtml(b.meta.chip_label) + '</span>';
+    } else if (prior === null || prior === 0) {
       if (curr > 0) {
         chipHtml = '<span class="kpc-grouped-delta kpc-grouped-delta--new">nouveau</span>';
       } else {
@@ -640,7 +643,7 @@ function renderKpiGroupedBar(container, tracker, result, tCls) {
       +   '<div class="kpc-grouped-bar kpc-grouped-bar--curr" style="width:' + currPct.toFixed(1) + '%"></div>'
       + '</div>'
       + '<div class="kpc-grouped-row__val">'
-      +   escHtml(fmt(curr, 1)) + (result.unit ? '&nbsp;<span class="kpc-unit">' + escHtml(result.unit) + '</span>' : '')
+      +   escHtml(fmt(curr, 1)) + ((b.unit != null ? b.unit : result.unit) ? '&nbsp;<span class="kpc-unit">' + escHtml(b.unit != null ? b.unit : result.unit) + '</span>' : '')
       + '</div>'
       + '<div class="kpc-grouped-row__delta">' + chipHtml + '</div>';
     wrap.appendChild(row);

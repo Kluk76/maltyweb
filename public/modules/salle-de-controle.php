@@ -29,6 +29,7 @@ require_once __DIR__ . '/../../app/recipe-ingredients-loader.php';
 require_once __DIR__ . '/../../app/yeast-eligibility.php';
 require_once __DIR__ . '/../../app/qc-thresholds.php';
 require_once __DIR__ . '/../../app/qa-tank-stats.php';
+require_once __DIR__ . '/../../app/production-targets.php';
 
 require_login();
 $me = current_user();
@@ -147,8 +148,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         ? 'recettes'
         : (in_array($action, ['update_yeast_family','update_yeast_strain'], true) ? 'biochem'
         : ($action === 'update_pertes_config' ? 'pertes'
+        : ($action === 'update_production_target' ? 'objectifs'
         : (in_array($action, ['cip_type_add','cip_type_update','cip_type_deactivate','cip_type_reactivate','update_cip_cadence'], true)
-            ? 'cip' : 'conditionnement')));
+            ? 'cip' : 'conditionnement'))));
 
     // Selection state threaded through PRG so the page can restore position on reload.
     $redirectRecipeId = 0; // carried as &recipe=<id> on recettes section
@@ -1446,6 +1448,83 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $label = htmlspecialchars((string) $existing['label_fr']);
             flash_set('ok', "Cadence CIP — « {$label} » mis à jour : {$displayVal}.");
 
+        // ── update_production_target ─────────────────────────────────────────
+        // Edits system_settings rows for section='production_targets'.
+        // Role gate: admin or manager.
+        // Input: key_name (validated against allowed list) + value_num (≥ 0).
+        // Pattern: read-then-validate → UPDATE → log_revision audit (before/after) → PRG.
+        } elseif ($action === 'update_production_target') {
+            if (!is_admin($me) && !is_manager($me)) {
+                flash_set('err', 'Modification réservée aux administrateurs et managers.');
+                redirect_to('/modules/salle-de-controle.php?sec=objectifs');
+            }
+
+            // Allowed keys — whitelist prevents arbitrary key_name injection.
+            $allowedKeys = [
+                'wort_hl_year',
+                'wort_brews_year',
+                'operating_weeks',
+                'operating_months',
+                'pkg_keg_hl_year',
+                'pkg_bottle_hl_year',
+                'pkg_can_hl_year',
+            ];
+
+            // Step 1: read with defaults, then validate (PHP 8 strict — never NULL before string ops)
+            $rawKey  = post_str('key_name');
+            $keyName = must_be_one_of('key_name', (string) $rawKey, $allowedKeys);
+
+            $rawVal = post_decimal('value_num');
+            if ($rawVal === null) {
+                throw new RuntimeException('Valeur requise.');
+            }
+            $newVal = (float) $rawVal;
+            if ($newVal < 0.0) {
+                throw new RuntimeException('La valeur doit être ≥ 0.');
+            }
+
+            // Step 2: fetch current row for before-state
+            $fetchStmt = $pdo->prepare(
+                "SELECT id, value_num, label_fr
+                   FROM system_settings
+                  WHERE section = 'production_targets' AND key_name = ? AND is_active = 1
+                  LIMIT 1"
+            );
+            $fetchStmt->execute([$keyName]);
+            $existing = $fetchStmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$existing) {
+                throw new RuntimeException(
+                    'Paramètre introuvable — la migration 346 doit être appliquée.'
+                );
+            }
+
+            $before = ['value_num' => $existing['value_num']];
+            $after  = ['value_num' => $newVal];
+
+            // Step 3: UPDATE
+            $upStmt = $pdo->prepare(
+                "UPDATE system_settings
+                    SET value_num = ?, updated_by = ?
+                  WHERE section = 'production_targets' AND key_name = ? AND is_active = 1"
+            );
+            $upStmt->execute([$newVal, $me['username'], $keyName]);
+
+            // Step 4: audit
+            log_revision(
+                $pdo,
+                $me,
+                'system_settings',
+                (int) $existing['id'],
+                $before,
+                $after,
+                'normal',
+                'Salle de contrôle: production_targets.' . $keyName
+            );
+
+            $label = htmlspecialchars((string) $existing['label_fr']);
+            flash_set('ok', "Objectif « {$label} » mis à jour : {$newVal}.");
+
         // ── update_recipe_style ──────────────────────────────────────────────
         } elseif ($action === 'update_recipe_style') {
             if (!is_admin($me) && !is_manager($me)) {
@@ -2115,6 +2194,78 @@ try {
     $pertesLoadErr = $e->getMessage();
 }
 
+// --- Production targets settings (section='production_targets') ---------------
+$prodTargetsSettings  = [];
+$prodTargetsByKey     = [];
+$prodTargetsLoadErr   = null;
+try {
+    $pdo = maltytask_pdo();
+    $ptStmt = $pdo->prepare(
+        "SELECT key_name, label_fr, description_fr, value_num, default_num, unit_fr
+           FROM system_settings
+          WHERE section = 'production_targets' AND is_active = 1
+          ORDER BY id ASC"
+    );
+    $ptStmt->execute();
+    $prodTargetsSettings = $ptStmt->fetchAll(PDO::FETCH_ASSOC);
+    foreach ($prodTargetsSettings as $pts) {
+        $prodTargetsByKey[$pts['key_name']] = $pts;
+    }
+} catch (Throwable $e) {
+    $prodTargetsLoadErr = $e->getMessage();
+}
+
+// --- obj_cell() helper — top-level (unconditional) for PHP hoisting ----------
+// Renders a single tracker cell (actual vs objective + progress bar + footer).
+// Must live here at file top-level so it is available everywhere in the render.
+if (!function_exists('obj_cell')) {
+    function obj_cell(float $actual, float $objective, string $unit, ?array $secondary = null): string
+    {
+        $pct = $objective > 0 ? min(200.0, $actual / $objective * 100) : 0.0;
+        $displayPct = $objective > 0 ? round($actual / $objective * 100, 1) : 0.0;
+        $barWidth   = min(100.0, $pct);
+        $reste      = max(0.0, $objective - $actual);
+        $overTarget = ($actual > $objective && $objective > 0);
+
+        $barClass = $overTarget ? 'obj-bar-fill obj-bar-fill--over' : 'obj-bar-fill';
+
+        $secondaryHtml = '';
+        if ($secondary !== null) {
+            $sAct = (float) $secondary['actual'];
+            $sObj = (float) $secondary['objective'];
+            $sUnit= htmlspecialchars($secondary['unit']);
+            $sReste = max(0.0, $sObj - $sAct);
+            $secondaryHtml = '<div class="obj-cell-secondary">'
+                . '<span class="obj-sec-label">' . htmlspecialchars($secondary['label']) . '</span>'
+                . ' <span class="obj-sec-val">' . number_format($sAct, 0, ',', '\'')
+                . ' / ' . number_format($sObj, 0, ',', '\'') . ' ' . $sUnit . '</span>'
+                . ' <span class="obj-sec-reste">reste ' . number_format($sReste, 0, ',', '\'') . '</span>'
+                . '</div>';
+        }
+
+        return '<div class="obj-cell">'
+            . '<div class="obj-cell-produit">'
+            .   '<span class="obj-val-actual">' . number_format($actual, 1, ',', '\'') . '</span>'
+            .   '<span class="obj-val-sep"> / </span>'
+            .   '<span class="obj-val-obj">' . number_format($objective, 1, ',', '\'') . '</span>'
+            .   '<span class="obj-val-unit"> ' . htmlspecialchars($unit) . '</span>'
+            . '</div>'
+            . $secondaryHtml
+            . '<div class="obj-bar-track">'
+            .   '<div class="' . $barClass . '" style="width:' . number_format($barWidth, 2, '.', '') . '%"></div>'
+            . '</div>'
+            . '<div class="obj-cell-footer">'
+            .   '<span class="obj-reste' . ($reste > 0 ? '' : ' obj-reste--done') . '">reste '
+            .     number_format($reste, 1, ',', '\'') . ' ' . htmlspecialchars($unit)
+            .   '</span>'
+            .   '<span class="obj-pct' . ($overTarget ? ' obj-pct--over' : '') . '">'
+            .     number_format($displayPct, 1, ',', '\'') . ' %'
+            .   '</span>'
+            . '</div>'
+            . '</div>';
+    }
+}
+
 // --- Biochimie data (ref_yeast_family_defaults) ------------------------------
 $yeastFamilies  = [];
 $biochemLoadErr = null;
@@ -2634,7 +2785,7 @@ $csrf = csrf_token();
 
 // Active section from query string (for PRG redirect after save)
 $sec = $_GET['sec'] ?? '';
-$initialSec = in_array($sec, ['recettes', 'biochem', 'conditionnement', 'cip', 'pertes', 'conformite'], true)
+$initialSec = in_array($sec, ['recettes', 'biochem', 'conditionnement', 'cip', 'pertes', 'conformite', 'objectifs'], true)
     ? $sec : 'recettes';
 
 // Brewery identity from system_settings (canonical, never hardcoded).
@@ -2820,6 +2971,17 @@ window.SDC_TANK_ERR = null;
         </svg>
       </span>
       CO₂/O₂ conformité
+    </div>
+
+    <div class="nav-item" data-sec="objectifs" onclick="switchSection('objectifs')">
+      <span class="nav-icon">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.2"/>
+          <circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="1.1"/>
+          <circle cx="8" cy="8" r="1" fill="currentColor"/>
+        </svg>
+      </span>
+      Objectifs
     </div>
 
     <div class="nav-section-label" style="margin-top:16px;">À venir</div>
@@ -4425,6 +4587,216 @@ window.SDC_TANK_ERR = null;
         <?php endif ?>
       </div><!-- /cip-layout -->
     </div><!-- /sec-conformite -->
+
+    <!-- ════════════════════════════════ OBJECTIFS DE PRODUCTION SECTION -->
+    <div class="section-panel" id="sec-objectifs">
+      <div class="cip-layout">
+        <div class="cip-header">
+          <h2>Objectifs <em>de production</em></h2>
+          <div class="cip-header-sub">Planification · system_settings section='production_targets' · indicateurs hebdo / mensuel / annuel</div>
+        </div>
+
+        <?php if ($initialSec === 'objectifs'): ?>
+          <?php $flashMsg = flash_pop(); if ($flashMsg): ?>
+          <div class="sdc-flash sdc-flash--<?= $flashMsg['type'] === 'ok' ? 'ok' : 'err' ?>">
+            <?= $flashMsg['type'] === 'ok' ? '✓' : '⚠' ?> <?= htmlspecialchars($flashMsg['msg']) ?>
+          </div>
+          <?php endif ?>
+        <?php endif ?>
+
+        <?php if ($prodTargetsLoadErr): ?>
+          <div class="sdc-flash sdc-flash--err">Erreur DB Objectifs : <?= htmlspecialchars($prodTargetsLoadErr) ?></div>
+        <?php elseif (empty($prodTargetsSettings)): ?>
+          <div class="sdc-flash sdc-flash--err">Migration 346 non appliquée — objectifs de production indisponibles.</div>
+        <?php else: ?>
+
+        <?php
+        // ── Call shared compute helper (single source of truth) ──────────────
+        $pdo2    = maltytask_pdo();
+        $_ptData = production_targets_compute($pdo2);
+
+        // Unpack objectives for render compatibility
+        $obj         = $_ptData['objectives'];
+        $act         = $_ptData['actuals'];
+
+        $wortWeekHl  = $obj['wort_hl']['week'];
+        $wortMonthHl = $obj['wort_hl']['month'];
+        $wortYearHl  = $obj['wort_hl']['year'];
+        $brewsWeek   = $obj['brews']['week'];
+        $brewsMonth  = $obj['brews']['month'];
+        $brewsYear   = (int) $obj['brews']['year'];
+        $kegWeekHl   = $obj['keg_hl']['week'];
+        $kegMonthHl  = $obj['keg_hl']['month'];
+        $kegYearHl   = $obj['keg_hl']['year'];
+        $botWeekHl   = $obj['bottle_hl']['week'];
+        $botMonthHl  = $obj['bottle_hl']['month'];
+        $botYearHl   = $obj['bottle_hl']['year'];
+        $canWeekHl   = $obj['can_hl']['week'];
+        $canMonthHl  = $obj['can_hl']['month'];
+        $canYearHl   = $obj['can_hl']['year'];
+
+        // Unpack actuals for render compatibility
+        $wortWk = ['hl' => $act['wort_hl']['week'],  'brews' => $act['brews']['week']];
+        $wortMo = ['hl' => $act['wort_hl']['month'], 'brews' => $act['brews']['month']];
+        $wortYr = ['hl' => $act['wort_hl']['year'],  'brews' => $act['brews']['year']];
+        $pkgWk  = ['keg' => $act['keg_hl']['week'],  'bot' => $act['bottle_hl']['week'],  'can' => $act['can_hl']['week']];
+        $pkgMo  = ['keg' => $act['keg_hl']['month'], 'bot' => $act['bottle_hl']['month'], 'can' => $act['can_hl']['month']];
+        $pkgYr  = ['keg' => $act['keg_hl']['year'],  'bot' => $act['bottle_hl']['year'],  'can' => $act['can_hl']['year']];
+        ?>
+
+        <!-- TRACKER MATRIX -->
+        <div class="obj-matrix-wrap">
+          <table class="obj-matrix">
+            <thead>
+              <tr>
+                <th class="obj-th-domain">Indicateur</th>
+                <th class="obj-th-period">Semaine</th>
+                <th class="obj-th-period">Mois</th>
+                <th class="obj-th-period">Année 2026</th>
+              </tr>
+            </thead>
+            <tbody>
+              <!-- ── Moût ── -->
+              <tr class="obj-row obj-row--wort">
+                <td class="obj-td-label">
+                  <span class="obj-domain-name">Moût</span>
+                  <span class="obj-domain-unit">hl</span>
+                </td>
+                <td class="obj-td-cell">
+                  <?= obj_cell(
+                        $wortWk['hl'], $wortWeekHl, 'hl',
+                        ['label' => 'Brassins', 'actual' => $wortWk['brews'], 'objective' => $brewsWeek, 'unit' => 'brassins']
+                  ) ?>
+                </td>
+                <td class="obj-td-cell">
+                  <?= obj_cell(
+                        $wortMo['hl'], $wortMonthHl, 'hl',
+                        ['label' => 'Brassins', 'actual' => $wortMo['brews'], 'objective' => $brewsMonth, 'unit' => 'brassins']
+                  ) ?>
+                </td>
+                <td class="obj-td-cell">
+                  <?= obj_cell(
+                        $wortYr['hl'], $wortYearHl, 'hl',
+                        ['label' => 'Brassins', 'actual' => $wortYr['brews'], 'objective' => $brewsYear, 'unit' => 'brassins']
+                  ) ?>
+                </td>
+              </tr>
+
+              <!-- ── Fûts ── -->
+              <tr class="obj-row obj-row--keg">
+                <td class="obj-td-label">
+                  <span class="obj-domain-name">Fûts</span>
+                  <span class="obj-domain-unit">hl</span>
+                </td>
+                <td class="obj-td-cell"><?= obj_cell($pkgWk['keg'], $kegWeekHl, 'hl') ?></td>
+                <td class="obj-td-cell"><?= obj_cell($pkgMo['keg'], $kegMonthHl, 'hl') ?></td>
+                <td class="obj-td-cell"><?= obj_cell($pkgYr['keg'], $kegYearHl,  'hl') ?></td>
+              </tr>
+
+              <!-- ── Bouteilles ── -->
+              <tr class="obj-row obj-row--bot">
+                <td class="obj-td-label">
+                  <span class="obj-domain-name">Bouteilles</span>
+                  <span class="obj-domain-unit">hl</span>
+                </td>
+                <td class="obj-td-cell"><?= obj_cell($pkgWk['bot'], $botWeekHl, 'hl') ?></td>
+                <td class="obj-td-cell"><?= obj_cell($pkgMo['bot'], $botMonthHl, 'hl') ?></td>
+                <td class="obj-td-cell"><?= obj_cell($pkgYr['bot'], $botYearHl,  'hl') ?></td>
+              </tr>
+
+              <!-- ── Canettes ── -->
+              <tr class="obj-row obj-row--can">
+                <td class="obj-td-label">
+                  <span class="obj-domain-name">Canettes</span>
+                  <span class="obj-domain-unit">hl</span>
+                </td>
+                <td class="obj-td-cell"><?= obj_cell($pkgWk['can'], $canWeekHl, 'hl') ?></td>
+                <td class="obj-td-cell"><?= obj_cell($pkgMo['can'], $canMonthHl, 'hl') ?></td>
+                <td class="obj-td-cell"><?= obj_cell($pkgYr['can'], $canYearHl,  'hl') ?></td>
+              </tr>
+            </tbody>
+          </table>
+        </div><!-- /obj-matrix-wrap -->
+
+        <!-- SETTINGS FORM (admin/manager only) -->
+        <div class="cip-table-card" style="margin-top:24px;">
+          <div class="cip-table-head">
+            <span class="cip-table-title">Paramètres objectifs</span>
+            <span class="cip-count">7 valeurs racines · dérivation hebdo/mensuel en temps réel</span>
+          </div>
+          <div style="padding:10px 16px 4px;font-size:11px;line-height:1.5;color:var(--ink-soft);background:rgba(0,0,0,.03);border-bottom:1px solid rgba(0,0,0,.06);">
+            Ces valeurs sont des objectifs de planification uniquement. Elles n'influencent ni le COGS, ni la taxe bière, ni aucun calcul fiscal.
+          </div>
+          <?php
+          $canEdit = is_admin($me) || is_manager($me);
+          $targetKeys = [
+              'wort_hl_year', 'wort_brews_year',
+              'operating_weeks', 'operating_months',
+              'pkg_keg_hl_year', 'pkg_bottle_hl_year', 'pkg_can_hl_year',
+          ];
+          foreach ($targetKeys as $tkey):
+              if (!isset($prodTargetsByKey[$tkey])) continue;
+              $pts    = $prodTargetsByKey[$tkey];
+              $curVal = (float) $pts['value_num'];
+              $defVal = $pts['default_num'] !== null ? (float) $pts['default_num'] : null;
+          ?>
+          <div style="padding:12px 16px;border-bottom:1px solid rgba(0,0,0,.05);">
+            <div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
+              <div>
+                <span style="font-weight:500;color:var(--ink);"><?= htmlspecialchars((string)$pts['label_fr']) ?></span>
+                <?php if ($defVal !== null): ?>
+                  <span class="csr-default-note" style="margin-left:6px;">(défaut : <?= number_format($defVal, 0, ',', '\'') ?> <?= htmlspecialchars((string)($pts['unit_fr'] ?? '')) ?>)</span>
+                <?php endif ?>
+              </div>
+              <span style="font-family:'JetBrains Mono',monospace;font-size:15px;font-weight:600;color:var(--hop);">
+                <?= number_format($curVal, 0, ',', '\'') ?> <span style="font-size:10px;font-weight:400;"><?= htmlspecialchars((string)($pts['unit_fr'] ?? '')) ?></span>
+              </span>
+            </div>
+            <?php if ($pts['description_fr']): ?>
+            <p style="font-size:11px;color:var(--ink-soft);margin:0 0 8px;"><?= htmlspecialchars((string)$pts['description_fr']) ?></p>
+            <?php endif ?>
+            <?php if ($canEdit): ?>
+            <form method="post" action="/modules/salle-de-controle.php" class="cond-edit-form" novalidate>
+              <input type="hidden" name="csrf"       value="<?= htmlspecialchars($csrf) ?>">
+              <input type="hidden" name="action"     value="update_production_target">
+              <input type="hidden" name="key_name"   value="<?= htmlspecialchars($tkey) ?>">
+              <div class="cond-edit-row">
+                <label class="cond-edit-label" for="pt_val_<?= htmlspecialchars($tkey) ?>">
+                  Nouvelle valeur
+                  <span class="cond-edit-unit">(<?= htmlspecialchars((string)($pts['unit_fr'] ?? '')) ?>)</span>
+                </label>
+                <input
+                  id="pt_val_<?= htmlspecialchars($tkey) ?>"
+                  name="value_num"
+                  type="number"
+                  min="0"
+                  step="1"
+                  class="cond-edit-input"
+                  value="<?= htmlspecialchars(number_format($curVal, 0, '.', '')) ?>"
+                  required
+                >
+                <button type="submit" class="cond-edit-btn">Enregistrer</button>
+              </div>
+            </form>
+            <?php else: ?>
+            <p class="cond-readonly-note">Modification réservée aux administrateurs et managers.</p>
+            <?php endif ?>
+          </div>
+          <?php endforeach ?>
+        </div><!-- /settings card -->
+
+        <div class="impl-note" style="margin-top:20px;">
+          <div class="impl-note-head">Planification uniquement</div>
+          <div class="impl-note-body">
+            Ces objectifs sont des annotations de pilotage. Ils ne sont jamais lus par les modules COGS, taxe bière, COGS/COP, ou inventaire.
+            Les valeurs hebdomadaires et mensuelles sont dérivées des racines annuelles en temps réel (aucun stockage intermédiaire).
+            Chaque modification est journalisée dans <code>audit_row_revisions</code>.
+          </div>
+        </div>
+
+        <?php endif ?><!-- /prodTargetsSettings empty check -->
+      </div><!-- /cip-layout -->
+    </div><!-- /sec-objectifs -->
 
   </div><!-- /content-area -->
 </div><!-- /sdc-stage -->

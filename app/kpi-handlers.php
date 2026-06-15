@@ -34,6 +34,8 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/production-targets.php';
+
 // ─── Param whitelist ──────────────────────────────────────────────────────────
 // Allowed values per params_json key. Handlers validate against this before
 // using any param. Unknown keys → handler refuses/returns error, never silently runs.
@@ -97,6 +99,13 @@ function kpi_validate_params(array $params): array
             case 'filter':
                 // reserved — no values allowed yet
                 throw new RuntimeException("kpi: 'filter' param not yet supported");
+            case 'scope':
+                $allowed = ['wort', 'packaging'];
+                if (!in_array($v, $allowed, true)) {
+                    throw new RuntimeException("kpi: scope must be 'wort' or 'packaging', got '{$v}'");
+                }
+                $out['scope'] = $v;
+                break;
             default:
                 throw new RuntimeException("kpi: unknown param key '{$k}'");
         }
@@ -240,6 +249,7 @@ function kpi_dispatch(array $tracker, PDO $pdo): array
             'qa_qc'        => kpi_handler_qa_qc($handler, $params, $label, $pdo),
             'equipment'    => kpi_handler_equipment($handler, $params, $label, $pdo),
             'logistics'    => kpi_handler_logistics($handler, $params, $label, $pdo),
+            'production_targets' => kpi_handler_production_targets($handler, $params, $label, $pdo),
             default        => kpi_error_result("kpi: unknown source_domain '{$domain}'", $label),
         };
     } catch (Throwable $e) {
@@ -12216,4 +12226,190 @@ function kpi_sales_units_by_sku_monthly_matrix(string $label, PDO $pdo): array
             return $stmt->fetchAll(PDO::FETCH_ASSOC);
         }
     );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// HANDLER: production_targets  (source_domain = 'production_targets')
+// Reads: system_settings (section='production_targets'), bd_brewing_gravity_v2,
+//        bd_packaging_v2 — via production_targets_compute() (app/production-targets.php)
+// NON-FISCAL: read-only overlay; never writes; never feeds COGS/tax.
+// ═════════════════════════════════════════════════════════════════════════════
+
+function kpi_handler_production_targets(
+    string $handler,
+    array  $params,
+    string $label,
+    PDO    $pdo
+): array {
+    $scope = $params['scope'] ?? 'wort';
+
+    return match ($scope) {
+        'wort'      => kpi_pt_wort($label, $pdo),
+        'packaging' => kpi_pt_packaging($label, $pdo),
+        default     => kpi_error_result("production_targets: unknown scope '{$scope}'", $label),
+    };
+}
+
+/**
+ * Wort grouped_bar: 3 groups (Semaine / Mois / Année),
+ * 2 series per group (Produit / Objectif), unit = HL.
+ * meta.brews carries brews Produit/Objectif per horizon for secondary display.
+ */
+function kpi_pt_wort(string $label, PDO $pdo): array
+{
+    $cacheKey = 'production_targets_wort';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $d = production_targets_compute($pdo);
+    $obj = $d['objectives'];
+    $act = $d['actuals'];
+
+    $wortWkAct  = (float)$act['wort_hl']['week'];
+    $wortWkObj  = (float)$obj['wort_hl']['week'];
+    $wortMoAct  = (float)$act['wort_hl']['month'];
+    $wortMoObj  = (float)$obj['wort_hl']['month'];
+    $wortYrAct  = (float)$act['wort_hl']['year'];
+    $wortYrObj  = (float)$obj['wort_hl']['year'];
+    $brewsAct   = (int)$act['brews']['year'];
+    $brewsObj   = (int)$obj['brews']['year'];
+
+    $wortWkPct = $wortWkObj > 0 ? round($wortWkAct / $wortWkObj * 100, 1) : 0.0;
+    $wortMoPct = $wortMoObj > 0 ? round($wortMoAct / $wortMoObj * 100, 1) : 0.0;
+    $wortYrPct = $wortYrObj > 0 ? round($wortYrAct / $wortYrObj * 100, 1) : 0.0;
+
+    $yearPct = $wortYrObj > 0 ? $wortYrPct : null;
+
+    $breakdown = [
+        [
+            'key'   => 'week',
+            'label' => 'Semaine · ' . number_format($wortWkAct, 0, ',', ' ') . '/' . number_format($wortWkObj, 0, ',', ' ') . ' hl',
+            'value' => $wortWkPct,
+            'unit'  => '%',
+            'meta'  => ['prior_year' => 100, 'chip_label' => 'reste ' . number_format(max(0, round($wortWkObj - $wortWkAct)), 0, ',', ' ') . ' hl'],
+        ],
+        [
+            'key'   => 'month',
+            'label' => 'Mois · ' . number_format($wortMoAct, 0, ',', ' ') . '/' . number_format($wortMoObj, 0, ',', ' ') . ' hl',
+            'value' => $wortMoPct,
+            'unit'  => '%',
+            'meta'  => ['prior_year' => 100, 'chip_label' => 'reste ' . number_format(max(0, round($wortMoObj - $wortMoAct)), 0, ',', ' ') . ' hl'],
+        ],
+        [
+            'key'   => 'year',
+            'label' => 'Année · ' . number_format($wortYrAct, 0, ',', ' ') . '/' . number_format($wortYrObj, 0, ',', ' ') . ' hl',
+            'value' => $wortYrPct,
+            'unit'  => '%',
+            'meta'  => ['prior_year' => 100, 'chip_label' => 'reste ' . number_format(max(0, round($wortYrObj - $wortYrAct)), 0, ',', ' ') . ' hl'],
+        ],
+    ];
+
+    $result = array_merge(kpi_empty_result($label, 'HL'), [
+        'value'       => $wortYrAct,
+        'delta'       => $yearPct,
+        'delta_label' => '% objectif annuel',
+        'tint'        => $yearPct === null ? 'neutral'
+                       : ($yearPct >= 100 ? 'green' : ($yearPct >= 70 ? 'amber' : 'neutral')),
+        'series'      => null,
+        'breakdown'   => $breakdown,
+        'meta'        => [
+            'period_label' => 'Semaine / Mois / Année 2026',
+            'unit'         => 'HL',
+            'brews' => [
+                'produit'  => [
+                    'week'  => $act['brews']['week'],
+                    'month' => $act['brews']['month'],
+                    'year'  => $act['brews']['year'],
+                ],
+                'objectif' => [
+                    'week'  => $obj['brews']['week'],
+                    'month' => $obj['brews']['month'],
+                    'year'  => $obj['brews']['year'],
+                ],
+            ],
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/**
+ * Packaging grouped_bar: 6 series (Produit+Objectif per container type)
+ * × 3 groups (Semaine / Mois / Année).
+ */
+function kpi_pt_packaging(string $label, PDO $pdo): array
+{
+    $cacheKey = 'production_targets_packaging';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $d = production_targets_compute($pdo);
+    $obj = $d['objectives'];
+    $act = $d['actuals'];
+
+    // Total actuals per horizon
+    $pkgWkAct = (float)$act['keg_hl']['week']  + (float)$act['bottle_hl']['week']  + (float)$act['can_hl']['week'];
+    $pkgMoAct = (float)$act['keg_hl']['month'] + (float)$act['bottle_hl']['month'] + (float)$act['can_hl']['month'];
+    $pkgYrAct = (float)$act['keg_hl']['year']  + (float)$act['bottle_hl']['year']  + (float)$act['can_hl']['year'];
+
+    // Total objectives per horizon
+    $pkgWkObj = (float)$obj['keg_hl']['week']  + (float)$obj['bottle_hl']['week']  + (float)$obj['can_hl']['week'];
+    $pkgMoObj = (float)$obj['keg_hl']['month'] + (float)$obj['bottle_hl']['month'] + (float)$obj['can_hl']['month'];
+    $pkgYrObj = (float)$obj['keg_hl']['year']  + (float)$obj['bottle_hl']['year']  + (float)$obj['can_hl']['year'];
+
+    $pkgWkPct = $pkgWkObj > 0 ? round($pkgWkAct / $pkgWkObj * 100, 1) : 0.0;
+    $pkgMoPct = $pkgMoObj > 0 ? round($pkgMoAct / $pkgMoObj * 100, 1) : 0.0;
+    $pkgYrPct = $pkgYrObj > 0 ? round($pkgYrAct / $pkgYrObj * 100, 1) : 0.0;
+
+    $yearPct = $pkgYrObj > 0 ? $pkgYrPct : null;
+
+    $breakdown = [
+        [
+            'key'   => 'week',
+            'label' => 'Semaine · ' . number_format($pkgWkAct, 0, ',', ' ') . '/' . number_format($pkgWkObj, 0, ',', ' ') . ' hl',
+            'value' => $pkgWkPct,
+            'unit'  => '%',
+            'meta'  => ['prior_year' => 100, 'chip_label' => 'reste ' . number_format(max(0, round($pkgWkObj - $pkgWkAct)), 0, ',', ' ') . ' hl'],
+        ],
+        [
+            'key'   => 'month',
+            'label' => 'Mois · ' . number_format($pkgMoAct, 0, ',', ' ') . '/' . number_format($pkgMoObj, 0, ',', ' ') . ' hl',
+            'value' => $pkgMoPct,
+            'unit'  => '%',
+            'meta'  => ['prior_year' => 100, 'chip_label' => 'reste ' . number_format(max(0, round($pkgMoObj - $pkgMoAct)), 0, ',', ' ') . ' hl'],
+        ],
+        [
+            'key'   => 'year',
+            'label' => 'Année · ' . number_format($pkgYrAct, 0, ',', ' ') . '/' . number_format($pkgYrObj, 0, ',', ' ') . ' hl',
+            'value' => $pkgYrPct,
+            'unit'  => '%',
+            'meta'  => ['prior_year' => 100, 'chip_label' => 'reste ' . number_format(max(0, round($pkgYrObj - $pkgYrAct)), 0, ',', ' ') . ' hl'],
+        ],
+    ];
+
+    $result = array_merge(kpi_empty_result($label, 'HL'), [
+        'value'       => round($pkgYrAct, 1),
+        'delta'       => $yearPct,
+        'delta_label' => '% objectif annuel (total)',
+        'tint'        => $yearPct === null ? 'neutral'
+                       : ($yearPct >= 100 ? 'green' : ($yearPct >= 70 ? 'amber' : 'neutral')),
+        'series'      => null,
+        'breakdown'   => $breakdown,
+        'meta'        => [
+            'period_label' => 'Semaine / Mois / Année 2026',
+            'unit'         => 'HL',
+            'per_container' => [
+                'keg'    => ['act' => ['week' => (float)$act['keg_hl']['week'],    'month' => (float)$act['keg_hl']['month'],    'year' => (float)$act['keg_hl']['year']],
+                             'obj' => ['week' => (float)$obj['keg_hl']['week'],    'month' => (float)$obj['keg_hl']['month'],    'year' => (float)$obj['keg_hl']['year']]],
+                'bottle' => ['act' => ['week' => (float)$act['bottle_hl']['week'], 'month' => (float)$act['bottle_hl']['month'], 'year' => (float)$act['bottle_hl']['year']],
+                             'obj' => ['week' => (float)$obj['bottle_hl']['week'], 'month' => (float)$obj['bottle_hl']['month'], 'year' => (float)$obj['bottle_hl']['year']]],
+                'can'    => ['act' => ['week' => (float)$act['can_hl']['week'],    'month' => (float)$act['can_hl']['month'],    'year' => (float)$act['can_hl']['year']],
+                             'obj' => ['week' => (float)$obj['can_hl']['week'],    'month' => (float)$obj['can_hl']['month'],    'year' => (float)$obj['can_hl']['year']]],
+            ],
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
 }

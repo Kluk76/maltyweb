@@ -341,7 +341,7 @@ body.mon-tableau .kpc-grouped-list {
 }
 body.mon-tableau .kpc-grouped-row {
   display: grid;
-  grid-template-columns: 7rem 1fr 3.5rem 3.5rem;
+  grid-template-columns: 11rem 1fr 3.5rem 5.5rem;
   align-items: center;
   gap: .3rem;
   font-size: .75rem;
