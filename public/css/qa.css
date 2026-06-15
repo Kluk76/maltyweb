@@ -1,0 +1,297 @@
+/*
+ * qa.css — QA/QC controls page styles.
+ * Scoped under body.qa-page. Extends .op-form__* from app.css.
+ */
+
+/* ── View filter tabs ──────────────────────────────────────────────────────── */
+
+body.qa-page .qa-view-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+}
+
+body.qa-page .qa-tab {
+  display: inline-block;
+  padding: 7px 16px;
+  border-radius: 20px;
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--ink-soft);
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  text-decoration: none;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+  min-height: 44px;
+  line-height: 30px;
+}
+
+body.qa-page .qa-tab:hover {
+  background: color-mix(in srgb, var(--hop) 10%, var(--bg-elev));
+  border-color: var(--hop);
+  color: var(--ink);
+}
+
+body.qa-page .qa-tab--active {
+  background: color-mix(in srgb, var(--hop) 15%, var(--bg-elev));
+  border-color: var(--hop);
+  color: var(--hop);
+  font-weight: 600;
+}
+
+/* ── Panel sections ────────────────────────────────────────────────────────── */
+
+body.qa-page .qa-panel {
+  margin-bottom: 40px;
+}
+
+body.qa-page .qa-panel__header {
+  margin-bottom: 16px;
+}
+
+body.qa-page .qa-panel__title {
+  font-family: "Fraunces", Georgia, serif;
+  font-size: 1.2rem;
+  font-weight: 400;
+  color: var(--ink);
+  margin: 0 0 4px;
+}
+
+body.qa-page .qa-panel__desc {
+  font-size: 0.82rem;
+  color: var(--ink-mute);
+  margin: 0;
+}
+
+/* ── Form grid ─────────────────────────────────────────────────────────────── */
+
+body.qa-page .qa-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px 20px;
+  margin-bottom: 16px;
+}
+
+body.qa-page .qa-field--wide {
+  grid-column: 1 / -1;
+}
+
+/* ── Form actions row ──────────────────────────────────────────────────────── */
+
+body.qa-page .qa-form-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+/* ── Inline feedback message ───────────────────────────────────────────────── */
+
+body.qa-page .qa-inline-msg {
+  font-size: 0.83rem;
+  padding: 6px 12px;
+  border-radius: 4px;
+  line-height: 1.4;
+}
+
+body.qa-page .qa-inline-msg--ok {
+  color: var(--hop);
+  background: color-mix(in srgb, var(--hop) 8%, var(--bg));
+  border-left: 3px solid var(--hop);
+}
+
+body.qa-page .qa-inline-msg--err {
+  color: var(--ember);
+  background: color-mix(in srgb, var(--ember) 8%, var(--bg));
+  border-left: 3px solid var(--ember);
+}
+
+/* ── Required / optional badges ───────────────────────────────────────────── */
+
+body.qa-page .qa-req {
+  color: var(--ember);
+  font-size: 0.8em;
+}
+
+body.qa-page .qa-opt {
+  font-size: 0.75rem;
+  color: var(--ink-mute);
+  font-weight: 400;
+  font-style: italic;
+}
+
+/* ── Unit label inline with field label ────────────────────────────────────── */
+
+body.qa-page .qa-unit {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.72rem;
+  color: var(--ink-mute);
+  letter-spacing: 0.04em;
+}
+
+/* ── Textarea ──────────────────────────────────────────────────────────────── */
+
+body.qa-page .qa-textarea {
+  resize: vertical;
+  min-height: 54px;
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-size: 0.88rem;
+}
+
+/* ── Readback card ─────────────────────────────────────────────────────────── */
+
+body.qa-page .qa-readback-card {
+  margin-top: 4px;
+  margin-bottom: 8px;
+}
+
+/* ── Scrollable table wrapper ──────────────────────────────────────────────── */
+
+body.qa-page .qa-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ── QA table ──────────────────────────────────────────────────────────────── */
+
+body.qa-page .qa-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.83rem;
+  font-family: "DM Sans", system-ui, sans-serif;
+}
+
+body.qa-page .qa-table th {
+  text-align: left;
+  padding: 8px 10px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-mute);
+  border-bottom: 2px solid var(--hairline);
+  white-space: nowrap;
+}
+
+body.qa-page .qa-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--hairline);
+  color: var(--ink-soft);
+  vertical-align: middle;
+}
+
+body.qa-page .qa-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+body.qa-page .qa-table tbody tr:hover td {
+  background: color-mix(in srgb, var(--hop) 4%, var(--bg));
+}
+
+body.qa-page .qa-mono {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+body.qa-page .qa-comment {
+  font-size: 0.78rem;
+  color: var(--ink-mute);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Conformity cell ───────────────────────────────────────────────────────── */
+
+body.qa-page .qa-conform {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+body.qa-page .qa-conform-ok {
+  color: var(--hop);
+  background: color-mix(in srgb, var(--hop) 10%, var(--bg));
+}
+
+body.qa-page .qa-conform-fail {
+  color: var(--ember);
+  background: color-mix(in srgb, var(--ember) 10%, var(--bg));
+}
+
+body.qa-page .qa-conform-na {
+  color: var(--ink-mute);
+}
+
+/* ── Outcome pill ──────────────────────────────────────────────────────────── */
+
+body.qa-page .qa-outcome {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+body.qa-page .qa-outcome-pass {
+  color: var(--hop);
+  background: color-mix(in srgb, var(--hop) 12%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--hop) 30%, var(--bg));
+}
+
+body.qa-page .qa-outcome-fail {
+  color: var(--ember);
+  background: color-mix(in srgb, var(--ember) 12%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--ember) 30%, var(--bg));
+}
+
+body.qa-page .qa-outcome-marginal {
+  color: var(--oak);
+  background: color-mix(in srgb, var(--oak) 12%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--oak) 30%, var(--bg));
+}
+
+body.qa-page .qa-outcome-pending {
+  color: var(--ink-mute);
+  background: color-mix(in srgb, var(--ink-mute) 10%, var(--bg));
+  border: 1px solid var(--hairline);
+}
+
+/* ── Empty state ───────────────────────────────────────────────────────────── */
+
+body.qa-page .qa-empty {
+  color: var(--ink-mute);
+  font-size: 0.88rem;
+  font-style: italic;
+  text-align: center;
+  padding: 20px 0;
+}
+
+/* ── DB-flash error (already in app.css, reinforced here) ─────────────────── */
+
+body.qa-page .db-flash.db-flash--err {
+  margin-bottom: 20px;
+}
+
+/* ── Mobile responsive ─────────────────────────────────────────────────────── */
+
+@media (max-width: 640px) {
+  body.qa-page .qa-form-grid {
+    grid-template-columns: 1fr;
+  }
+  body.qa-page .qa-field--wide {
+    grid-column: 1;
+  }
+  body.qa-page .qa-table th,
+  body.qa-page .qa-table td {
+    padding: 6px 7px;
+  }
+}
