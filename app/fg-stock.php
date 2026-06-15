@@ -232,7 +232,8 @@ function fg_stock_compute(PDO $pdo): array
                 COALESCE(pf.display_family, r.format) AS display_family,
                 r.hl_per_unit,
                 r.recipe_id,
-                CAST(s.qty AS SIGNED) AS anchor_qty,
+                s.qty AS anchor_qty,
+                r.stocktake_scope,
                 s.counted_at,
                 s.month_closed
            FROM inv_fg_stocktake s
@@ -275,6 +276,7 @@ function fg_stock_compute(PDO $pdo): array
                 'hl_per_unit'    => (float) $ar['hl_per_unit'],
                 'recipe_id'      => ($ar['recipe_id'] !== null) ? (int) $ar['recipe_id'] : null,
                 'anchor_qty'     => 0,
+                'stocktake_scope'=> '',
                 // flows (filled below)
                 'prod_qty'          => 0,
                 'prod_events'       => 0,
@@ -287,7 +289,8 @@ function fg_stock_compute(PDO $pdo): array
                 'repack_open_qty'   => 0,
             ];
         }
-        $byId[$sid]['anchor_qty'] += (int) $ar['anchor_qty'];
+        $byId[$sid]['anchor_qty'] += (float) $ar['anchor_qty'];
+        $byId[$sid]['stocktake_scope'] = $ar['stocktake_scope'] ?? '';
         if ($ar['counted_at'] !== null) {
             if ($anchorDate === null || $ar['counted_at'] > $anchorDate) {
                 $anchorDate = $ar['counted_at'];
@@ -843,6 +846,7 @@ function fg_stock_compute(PDO $pdo): array
             'format'          => $r['format'],
             'display_family'  => $r['display_family'],
             'hl_per_unit'     => $r['hl_per_unit'],
+            'stocktake_scope' => $r['stocktake_scope'] ?? '',
             // Anchor + flows
             'anchor_qty'      => $anchor,
             'prod_qty'        => $prod,
@@ -1034,6 +1038,7 @@ function fg_stock_location_snapshot(PDO $pdo): array
                 r.sku_code,
                 r.format,
                 r.hl_per_unit,
+                r.stocktake_scope,
                 COALESCE(pf.display_family, r.format) AS display_family
            FROM inv_fg_stocktake t
            JOIN ref_skus r ON r.id = t.sku_id_fk
@@ -1246,7 +1251,7 @@ function fg_stock_location_snapshot(PDO $pdo): array
 
     $mvStmt = $pdo->prepare(
         'SELECT sku_id_fk, from_site_id_fk, to_site_id_fk,
-                CAST(qty AS SIGNED) AS qty,
+                qty,
                 moved_on,
                 created_at AS mv_created_at
            FROM inv_stock_movements
@@ -1450,7 +1455,7 @@ function fg_stock_location_snapshot(PDO $pdo): array
             $repackOpen  = (int) ($repackOpens[$lid][$sid]    ?? 0);
 
             // Final qty = anchor_at_site + production_at_site − sales_at_site + transfers_net − repack_opens
-            $qty = (int) $row['qty'] - $salesQty + $transferIn - $transferOut - $repackOpen;
+            $qty = (float) $row['qty'] - $salesQty + $transferIn - $transferOut - $repackOpen;
 
             // Recompute HL after production/sales/transfer adjustment; HL stays decimal
             $hl  = round($qty * $row['hl_per_unit'], 3);
@@ -1464,7 +1469,8 @@ function fg_stock_location_snapshot(PDO $pdo): array
                 'sku_code'       => $row['sku_code'],
                 'format'         => $row['format'],
                 'display_family' => $row['display_family'],
-                'qty'            => $qty,              // integer; may be negative (honest signal)
+                'stocktake_scope'=> $row['stocktake_scope'] ?? '',
+                'qty'            => $qty,              // float for cage SKUs; may be negative (honest signal)
                 'hl'             => $hl,               // decimal
                 'sales_qty'      => $salesQty,         // units depleted via sales
                 'transfer_in'    => $transferIn,       // units arriving via transfers

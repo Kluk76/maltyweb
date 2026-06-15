@@ -13,18 +13,18 @@
  *
  * Responsibilities:
  *   - Running summary: count of entered SKUs + total HL
- *     Cage rows: input is bottles; HL = (bottles / bottles_per_cage) × hl_per_unit
+ *     Cage rows: input is cage-units; HL = cage_units × hl_per_unit
  *   - Submit-button date label sync
  *   - For managers: date-picker change navigates to ?view=stocktake&loc=X&date=YYYY-MM-DD
  *     to reload the page with the correct prefill. No inline onclick.
  *   - Search/filter: show/hide rows + update family counts
  *   - Highlight rows where a qty has been entered
  *   - Family collapse (header click)
- *   - Cage live hint: bottles → "= X.XX cage · Y.YY hl"
+ *   - Cage live hint: cage-units → "= Y.YY hl"
  *
  * Cage SKUs are identified by data-is-cage="1" on the row and
- * data-bottles-per-cage on the same element. Input is in bottles.
- * The POST handler converts bottles → cage-units server-side.
+ * data-bottles-per-cage on the same element (informational only — not used for math).
+ * Input is in cage-units (decimals accepted). No conversion — stored as-entered.
  *
  * Visibility (scope × site_type) is enforced server-side: PHP renders only
  * the SKU rows permitted at the selected location. The form never contains
@@ -90,7 +90,7 @@
     return val.toLocaleString('fr-CH', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
   }
 
-  /* ── Cage live hint: update "= X.XXX cage · Y.YY hl" for one row ──────── */
+  /* ── Cage live hint: update "= Y.YY hl" for one row ─────────────────── */
   function updateCageLiveHint(row, inp) {
     var sid = parseInt(row.dataset.skuId, 10);
     var meta = skuMeta[sid];
@@ -104,14 +104,14 @@
       hintEl.textContent = '';
       return;
     }
-    var bottles = parseFloat(raw);
-    if (isNaN(bottles) || bottles < 0) {
+    var cageUnits = parseFloat(raw);
+    if (isNaN(cageUnits) || cageUnits < 0) {
       hintEl.textContent = '';
       return;
     }
-    var cageUnits = bottles / meta.bottles_per_cage;
-    var hlVal     = cageUnits * meta.hl_per_unit;
-    hintEl.textContent = '= ' + formatCageUnits(cageUnits) + ' cage · ' + formatHl(hlVal) + ' hl';
+    // Input IS cage-units — no division needed.
+    var hlVal = cageUnits * meta.hl_per_unit;
+    hintEl.textContent = '= ' + formatHl(hlVal) + ' hl';
   }
 
   /* ── Running summary ──────────────────────────────────────────────────── */
@@ -131,10 +131,8 @@
       var hpu  = meta.hl_per_unit || 0;
 
       if (meta.is_cage) {
-        // input is bottles; convert to cage-units first, then to HL
-        var bottlesPerCage = meta.bottles_per_cage || 1;
-        var cageUnits = qty / bottlesPerCage;
-        totalHl += cageUnits * hpu;
+        // input is cage-units directly — no conversion needed
+        totalHl += qty * hpu;
       } else {
         totalHl += qty * hpu;
       }

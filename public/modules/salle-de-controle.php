@@ -196,9 +196,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $fmt = $fmtStmt->fetch(PDO::FETCH_ASSOC);
             if (!$fmt) throw new RuntimeException('Format introuvable.');
 
-            // Compute sku_code
+            // Compute sku_code (cage format_code='X' → no hyphen: ZEPX not ZEP-X, mig363)
             $skuCode = ($fmt['format_code'] === 'X')
-                ? $prefix . '-X'
+                ? $prefix . 'X'
                 : $prefix . $fmt['format_code'];
 
             // run_type → format label
@@ -2540,10 +2540,11 @@ try {
         }
 
         // Compute expected sku_code per gated format for this recipe
+        // cage format_code='X' → no hyphen: ZEPX not ZEP-X (mig363)
         $expectedSkus = [];
         foreach ($gatedFormats as $f) {
             $expectedSkus[$f['id']] = $f['format_code'] === 'X'
-                ? $prefix . '-X' : $prefix . $f['format_code'];
+                ? $prefix . 'X' : $prefix . $f['format_code'];
         }
 
         $recipeFormatsData[$rid] = [
