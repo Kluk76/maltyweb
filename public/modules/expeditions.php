@@ -1621,6 +1621,9 @@ try {
         $ordStmt  = $pdo->prepare(
             "SELECT o.id, o.order_type, o.internal_channel, o.requested_date,
                     o.status, o.comment, o.created_at,
+                    o.source,
+                    o.bc_completely_shipped,
+                    o.divergence_status,
                     c.name AS customer_name, c.trade_channel,
                     t.name AS transporter_name
                FROM ord_orders o
@@ -3770,6 +3773,22 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
             <?php if ($hasStockRisk): ?>
               <button type="button" class="exp-stock-risk-chip" data-order-id="<?= $oid ?>"
                       aria-label="Voir le détail du risque de stock (advisory)">⚠ stock</button>
+            <?php endif ?>
+
+            <!-- BC divergence badge: operator corrected lines after BC BL lock -->
+            <?php if (($ord['source'] ?? '') === 'bc' && ($ord['divergence_status'] ?? '') === 'correction_compta_requise'): ?>
+              <span class="exp-bc-divergence-badge"
+                    title="Les lignes ont été corrigées après verrouillage BC — émettre un avoir + nouvelle facture dans BC">
+                ⚠ correction compta requise
+              </span>
+            <?php endif ?>
+
+            <!-- BC mirror signal: BC says BL imprimé (informational only — not operational status) -->
+            <?php if (($ord['source'] ?? '') === 'bc' && (int)($ord['bc_completely_shipped'] ?? 0) === 1): ?>
+              <span class="exp-bc-shipped-badge"
+                    title="BC indique Completely_Shipped=True (BL imprimé dans BC) — signal informatif, statut opérationnel inchangé">
+                BC&nbsp;: BL imprimé ✓
+              </span>
             <?php endif ?>
 
             <!-- Party -->

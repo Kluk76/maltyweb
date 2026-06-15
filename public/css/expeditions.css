@@ -3414,6 +3414,46 @@ body.expeditions .exp-order-row--overdue {
   background: color-mix(in srgb, var(--ember) 4%, var(--bg));
 }
 
+/* ── BC divergence badge — correction compta requise ─────────────────────── */
+/* Shown when BC-sourced order lines diverge from BC snapshot after BL lock.
+   Operator must issue a credit note + re-invoice in BC.
+   Uses ember (warning) palette — same intensity as the overdue badge. */
+body.expeditions .exp-bc-divergence-badge {
+  display: inline-flex;
+  align-items: center;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.70rem;
+  letter-spacing: 0.03em;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--ember) 90%, var(--ink));
+  background: color-mix(in srgb, var(--ember) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ember) 40%, transparent);
+  border-radius: 10px;
+  padding: 2px 8px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  cursor: default;
+}
+
+/* ── BC shipped mirror badge — BC : BL imprimé ✓ ─────────────────────────── */
+/* Informational only — reflects BC Completely_Shipped mirror field.
+   Muted style: does NOT drive operational status (operator must still advance). */
+body.expeditions .exp-bc-shipped-badge {
+  display: inline-flex;
+  align-items: center;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.03em;
+  color: var(--ink-mute);
+  background: color-mix(in srgb, var(--hop) 6%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--hop) 35%, transparent);
+  border-radius: 10px;
+  padding: 2px 8px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  cursor: default;
+}
+
 /* ── Stock risk advisory chip on order row — now a focusable button ─────── */
 /* Advisory only — amber informational, never blocking; reuses exp-stock-hint--over palette */
 body.expeditions .exp-stock-risk-chip {

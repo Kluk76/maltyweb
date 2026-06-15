@@ -18,15 +18,27 @@ EXCLUSIONS (XOR / no-double-deplete guard):
   - Sell_to_Customer_No IN ('1080','3822') → eshop/taproom system accounts; skip.
   - Lines where Type ≠ 'Item' → comment/charge lines; skip.
 
-STATUS MODEL (operator-confirmed):
+STATUS MODEL (operator-confirmed, ruling-4 applied):
   - New BC order  → maltytask status 'entered'
   - Header + lines refreshed while status IN ('entered','confirmed')
   - Once 'picked'+ → FREEZE lines (operator started physical work); header commercial fields
     may still refresh but lines are not touched
-  - BC Completely_Shipped=True + current status below 'bl_printed' → advance to 'bl_printed'
-    (BL was printed for physical loading day; NOT a depletion trigger)
-  - Status 'shipped' is set ONLY by the operator; the pull NEVER writes it
+  - BC Completely_Shipped=True → stored in bc_completely_shipped mirror field only;
+    displayed as a signal in the UI ("BC : BL imprimé ✓") but NEVER advances operational status
+  - Operational status is EXCLUSIVELY operator-controlled; the pull NEVER writes status or
+    ord_order_status_events rows (Ruling-4)
+  - Status 'shipped' is set ONLY by the operator (depletion trigger)
   - A BC order leaves the active set when BC invoices it (disappears from SalesOrder)
+
+DIVERGENCE DETECTION (build B):
+  - On every pull, BC lines are upserted into ord_order_bc_lines (snapshot)
+  - The snapshot is diffed against ord_order_lines (operator-maintained truth)
+  - When they diverge (sku changed, qty changed, line added/removed):
+    → ord_orders.divergence_status = 'correction_compta_requise'
+    → doc_review_queue row emitted (type='bc-order-correction-required', dedup per order)
+    → UI shows "⚠ correction compta requise" badge on the order card
+  - When re-aligned (subsequent pull finds no diff):
+    → divergence_status reset to 'none', RQ row auto-resolved
 
 UPSERT KEY:
   ord_orders.source_ref = 'bc:<No>' (e.g. 'bc:ORD210064')
@@ -97,8 +109,8 @@ from lib_config import load as load_config  # noqa: E402
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
-SCRIPT_VERSION = "1.2.0"
-ACTOR = "bc-sync"  # written to ord_order_status_events.comment / audit context
+SCRIPT_VERSION = "1.3.0"
+ACTOR = "bc-sync"  # used in RQ context / audit fields
 
 # BC OData service name (É encoded — Python urllib raises InvalidURL on raw non-ASCII)
 _BC_ENV_PATH = Path("/var/www/maltytask/config/bc.env")
@@ -337,12 +349,14 @@ def load_existing_bc_orders(
     conn: pymysql.connections.Connection,
 ) -> dict[str, dict]:
     """
-    Returns {source_ref: {id, status, customer_id_fk, requested_date}}
+    Returns {source_ref: {id, status, customer_id_fk, requested_date,
+             bc_completely_shipped, divergence_status}}
     for all existing ord_orders where source='bc'.
     """
     with conn.cursor() as c:
         c.execute(
-            "SELECT id, source_ref, status, customer_id_fk, requested_date "
+            "SELECT id, source_ref, status, customer_id_fk, requested_date, "
+            "       bc_completely_shipped, divergence_status "
             "FROM ord_orders WHERE source = 'bc'"
         )
         return {
@@ -627,23 +641,6 @@ def detect_collisions(
     return collisions
 
 
-# ── Status advance logic ──────────────────────────────────────────────────────
-
-def should_advance_to_bl_printed(
-    current_status: str,
-    completely_shipped: bool,
-) -> bool:
-    """
-    Return True iff BC says Completely_Shipped=True AND maltytask status is below bl_printed.
-    Never regresses; never touches 'shipped' or 'cancelled'.
-    """
-    if not completely_shipped:
-        return False
-    rank_current = _STATUS_RANK.get(current_status, 99)
-    rank_target  = _STATUS_RANK["bl_printed"]
-    return rank_current < rank_target
-
-
 # ── Database write helpers ─────────────────────────────────────────────────────
 
 def upsert_order(
@@ -778,50 +775,255 @@ def upsert_lines(
     return len(order["resolved_lines"])
 
 
-def advance_status(
+def upsert_bc_lines(
     conn: pymysql.connections.Connection,
     order: dict,
     existing_bc: dict[str, dict],
+    bc_raw_lines: list[dict],
+    direct_map: dict,
+    alias_map: dict,
     apply_mode: bool,
-) -> bool:
+) -> int:
     """
-    If BC says Completely_Shipped=True and current maltytask status is below bl_printed,
-    advance to bl_printed and write an ord_order_status_events row.
-    Returns True if an advance would/did fire.
+    Upsert BC-side line snapshot into ord_order_bc_lines.
+    Only called for bc-sourced orders that are in existing_bc (i.e. already have a DB row).
+    For new inserts, the caller fetches the order_id after INSERT and calls this.
+    Returns the count of lines upserted (or would-upsert in dry-run).
     """
     source_ref = order["source_ref"]
     existing   = existing_bc.get(source_ref)
     if existing is None:
-        return False  # new order just inserted as 'entered'
+        # New order just INSERTed — caller must re-load order_id; handled after commit in apply.
+        return 0
 
-    current_status = existing.get("status", "entered")
-    if not should_advance_to_bl_printed(current_status, order["completely_shipped"]):
+    order_id = existing["id"]
+
+    if not apply_mode:
+        return len(bc_raw_lines)
+
+    with conn.cursor() as c:
+        for ln in bc_raw_lines:
+            bc_line_no = int(ln.get("Line_No", 0))
+            bc_item    = str(ln.get("No", "")).strip()
+            uom        = str(ln.get("Unit_of_Measure_Code", "")).strip()
+            try:
+                bc_qty = float(ln.get("Quantity", 0))
+            except (TypeError, ValueError):
+                bc_qty = 0.0
+
+            # Resolve sku_id (same logic as classify_orders, but without skipping)
+            sku_id, _, _ = resolve_sku(bc_item, uom, direct_map, alias_map)
+
+            c.execute(
+                """
+                INSERT INTO ord_order_bc_lines
+                    (order_id_fk, bc_line_no, bc_item_no, uom_code, bc_qty, resolved_sku_id, snapshot_at)
+                VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                ON DUPLICATE KEY UPDATE
+                    bc_item_no       = VALUES(bc_item_no),
+                    uom_code         = VALUES(uom_code),
+                    bc_qty           = VALUES(bc_qty),
+                    resolved_sku_id  = VALUES(resolved_sku_id),
+                    snapshot_at      = NOW()
+                """,
+                (order_id, bc_line_no, bc_item, uom, bc_qty, sku_id),
+            )
+    return len(bc_raw_lines)
+
+
+def detect_line_divergence(
+    conn: pymysql.connections.Connection,
+    order: dict,
+    existing_bc: dict[str, dict],
+) -> tuple[bool, str | None]:
+    """
+    Diff BC snapshot (ord_order_bc_lines with resolved_sku_id NOT NULL)
+    vs operational lines (ord_order_lines) for this order.
+
+    Returns (diverged: bool, detail_json: str | None).
+    Diverged = True when:
+      - A BC sku_id is absent from ord_order_lines
+      - An ord_order_lines sku_id is absent from BC snapshot
+      - A shared sku_id has different total qty
+
+    Only compares lines with resolved_sku_id (unresolved BC items are excluded
+    from the diff — they were never written to ord_order_lines either).
+    """
+    source_ref = order["source_ref"]
+    existing   = existing_bc.get(source_ref)
+    if existing is None:
+        return False, None
+
+    order_id = existing["id"]
+
+    with conn.cursor() as c:
+        # BC snapshot totals (resolved SKUs only; sum in case multiple bc_line_no → same sku)
+        c.execute(
+            """
+            SELECT resolved_sku_id, SUM(bc_qty) AS total_qty
+              FROM ord_order_bc_lines
+             WHERE order_id_fk = %s AND resolved_sku_id IS NOT NULL
+             GROUP BY resolved_sku_id
+            """,
+            (order_id,),
+        )
+        bc_totals: dict[int, float] = {
+            int(r["resolved_sku_id"]): float(r["total_qty"])
+            for r in c.fetchall()
+        }
+
+        # Operational lines totals
+        c.execute(
+            """
+            SELECT sku_id_fk, SUM(qty) AS total_qty
+              FROM ord_order_lines
+             WHERE order_id_fk = %s
+             GROUP BY sku_id_fk
+            """,
+            (order_id,),
+        )
+        op_totals: dict[int, float] = {
+            int(r["sku_id_fk"]): float(r["total_qty"])
+            for r in c.fetchall()
+        }
+
+    if not bc_totals and not op_totals:
+        return False, None
+
+    all_skus = set(bc_totals.keys()) | set(op_totals.keys())
+    diffs = []
+    for sku_id in sorted(all_skus):
+        bc_qty = bc_totals.get(sku_id)
+        op_qty = op_totals.get(sku_id)
+        if bc_qty is None:
+            diffs.append({"sku_id": sku_id, "bc_qty": None, "op_qty": op_qty, "delta": op_qty})
+        elif op_qty is None:
+            diffs.append({"sku_id": sku_id, "bc_qty": bc_qty, "op_qty": None, "delta": -bc_qty})
+        elif abs(bc_qty - op_qty) > 0.001:
+            diffs.append({"sku_id": sku_id, "bc_qty": bc_qty, "op_qty": op_qty, "delta": op_qty - bc_qty})
+
+    if not diffs:
+        return False, None
+
+    detail = json.dumps({"bc_order_no": order["bc_no"], "line_diffs": diffs}, default=str)
+    return True, detail
+
+
+def apply_divergence_flag(
+    conn: pymysql.connections.Connection,
+    order: dict,
+    existing_bc: dict[str, dict],
+    diverged: bool,
+    detail_json: str | None,
+    apply_mode: bool,
+) -> bool:
+    """
+    Write divergence_status + divergence_detail to ord_orders.
+    Also emits a doc_review_queue row (dedup per order) when diverged=True.
+    Clears the flag when diverged=False (re-alignment detected).
+    Returns True if the flag changed.
+    """
+    source_ref = order["source_ref"]
+    existing   = existing_bc.get(source_ref)
+    if existing is None:
         return False
 
-    if apply_mode:
-        order_id = existing["id"]
-        with conn.cursor() as c:
+    order_id        = existing["id"]
+    new_status      = "correction_compta_requise" if diverged else "none"
+    current_div_status = existing.get("divergence_status", "none") or "none"
+
+    if new_status == current_div_status:
+        return False  # no change
+
+    if not apply_mode:
+        return True
+
+    with conn.cursor() as c:
+        c.execute(
+            """
+            UPDATE ord_orders
+               SET divergence_status = %s,
+                   divergence_detail = %s,
+                   updated_at = CURRENT_TIMESTAMP
+             WHERE id = %s
+            """,
+            (new_status, detail_json, order_id),
+        )
+
+        if diverged:
+            # Emit RQ row — dedup by (type, dedup_key) where dedup_key = 'bc-order:<order_id>'
+            dedup_key  = f"bc-order:{order_id}"
+            queue_id   = f"bc-ord-corr-{order_id}"
+            rq_value   = f"BC {order['bc_no']} → divergence lignes (correction compta requise)"
+            rq_context = detail_json or ""
             c.execute(
                 """
-                UPDATE ord_orders
-                   SET status     = 'bl_printed',
-                       updated_at = CURRENT_TIMESTAMP
-                 WHERE id = %s
+                INSERT INTO doc_review_queue
+                    (queue_id, type, value, context, dedup_key, status, decision, last_seen_at)
+                VALUES (%s, 'bc-order-correction-required', %s, %s, %s, 'open', 'pending', CURDATE())
+                ON DUPLICATE KEY UPDATE
+                    value        = VALUES(value),
+                    context      = VALUES(context),
+                    last_seen_at = CURDATE(),
+                    status       = 'open',
+                    decision     = 'pending',
+                    count_obs    = count_obs + 1,
+                    updated_at   = CURRENT_TIMESTAMP
                 """,
-                (order_id,),
+                (queue_id, rq_value, rq_context, dedup_key),
             )
+        else:
+            # Re-alignment: auto-resolve any open RQ row for this order
+            dedup_key = f"bc-order:{order_id}"
             c.execute(
                 """
-                INSERT INTO ord_order_status_events
-                    (order_id_fk, status, occurred_at, user_id_fk, comment)
-                VALUES (%s, 'bl_printed', NOW(), NULL, %s)
+                UPDATE doc_review_queue
+                   SET status    = 'resolved',
+                       decision  = 'auto-resolved',
+                       decided_at = NOW()
+                 WHERE dedup_key = %s
+                   AND type      = 'bc-order-correction-required'
+                   AND status    = 'open'
                 """,
-                (
-                    order_id,
-                    f"{ACTOR}: BC Completely_Shipped=True; auto-advanced from {current_status}",
-                ),
+                (dedup_key,),
             )
+
     return True
+
+
+def write_bc_mirror_fields(
+    conn: pymysql.connections.Connection,
+    order: dict,
+    existing_bc: dict[str, dict],
+    apply_mode: bool,
+) -> None:
+    """
+    Write BC-mirror fields that are ALWAYS allowed regardless of operational status:
+      - bc_completely_shipped (TINYINT mirror of BC Completely_Shipped)
+    This is a BC-mirror field, not an operational status field.
+    Called for every bc-sourced order on every pull.
+    """
+    source_ref = order["source_ref"]
+    existing   = existing_bc.get(source_ref)
+    if existing is None:
+        return
+
+    order_id          = existing["id"]
+    completely_shipped = 1 if order["completely_shipped"] else 0
+
+    if not apply_mode:
+        return
+
+    with conn.cursor() as c:
+        c.execute(
+            """
+            UPDATE ord_orders
+               SET bc_completely_shipped = %s,
+                   updated_at = CURRENT_TIMESTAMP
+             WHERE id = %s
+            """,
+            (completely_shipped, order_id),
+        )
 
 
 # ── Review CSV writer ─────────────────────────────────────────────────────────
@@ -846,7 +1048,10 @@ def print_reconciliation_report(
     would_skip_collision: int,
     would_skip_backlog:   int,
     insert_candidates:    list[dict],
-    bl_advances:          list[str],
+    bc_shipped_signals:   list[str],
+    divergences_flagged:  list[str],
+    divergences_cleared:  list[str],
+    bc_snapshot_count:    int,
     review_csv_path:      Path,
     cust_review_csv_path: Path,
 ) -> None:
@@ -903,18 +1108,29 @@ def print_reconciliation_report(
     print("── INSERT CANDIDATES (orders that WOULD be created) ─────────────────")
     if insert_candidates:
         for ic in insert_candidates:
-            shipped_flag = " [Completely_Shipped=True→bl_printed]" if ic["completely_shipped"] else ""
+            shipped_flag = " [BC:Completely_Shipped=True → bc_completely_shipped=1 signal]" if ic["completely_shipped"] else ""
             print(f"  {ic['bc_no']}  cust={ic['customer_name']!r}  "
                   f"ship={ic['shipment_date']}  order_date={ic['order_date']}  "
                   f"lines={ic['n_lines']}  hl={ic['hl_total']:.2f}{shipped_flag}")
     else:
         print("  (none)")
     print()
-    print("── STATUS ADVANCES ─────────────────────────────────────────────────")
-    print(f"  Completely_Shipped → bl_printed advances: {len(bl_advances)}")
-    if bl_advances:
-        for a in bl_advances:
-            print(f"    {a}")
+    print("── BC MIRROR SIGNALS (Ruling-4 compliant — ZERO operational status writes) ─")
+    print(f"  bc_completely_shipped signals    : {len(bc_shipped_signals)}")
+    if bc_shipped_signals:
+        for s in bc_shipped_signals:
+            print(f"    {s}")
+    print(f"  BC line snapshots (ord_order_bc_lines) : {bc_snapshot_count} line(s)")
+    print()
+    print("── DIVERGENCE DETECTION ─────────────────────────────────────────────")
+    print(f"  Divergences flagged (correction_compta_requise): {len(divergences_flagged)}")
+    if divergences_flagged:
+        for d in divergences_flagged:
+            print(f"    {d}")
+    print(f"  Divergences cleared (re-aligned)                : {len(divergences_cleared)}")
+    if divergences_cleared:
+        for d in divergences_cleared:
+            print(f"    {d}")
     print()
     print("── CUSTOMER RESOLUTION ──────────────────────────────────────────────")
     print(f"  Resolved   : {cust_resolved}/{cust_total} ({cust_pct}%)")
@@ -1073,15 +1289,23 @@ def main() -> None:
         would_skip_collision  = 0
         would_skip_backlog    = 0
         insert_candidates: list[dict] = []
-        bl_advances: list[str]        = []
+        # BC mirror signals (informational — never operational status)
+        bc_shipped_signals: list[str]  = []
+        # Divergence tracking
+        divergences_flagged:   list[str] = []
+        divergences_cleared:   list[str] = []
+        bc_snapshot_count = 0
 
         for order in pull:
+            bc_no      = order["bc_no"]
+            source_ref = order["source_ref"]
+
             action = upsert_order(conn, order, existing_bc, collision_bc_nos, apply_mode)
             if action == "insert":
                 would_insert += 1
                 hl_total = sum(ln["hl"] or 0.0 for ln in order["resolved_lines"])
                 insert_candidates.append({
-                    "bc_no":              order["bc_no"],
+                    "bc_no":              bc_no,
                     "customer_name":      order["bc_customer_name"],
                     "shipment_date":      order["shipment_date"],
                     "order_date":         order["order_date"],
@@ -1100,20 +1324,85 @@ def main() -> None:
 
             upsert_lines(conn, order, existing_bc, collision_bc_nos, apply_mode)
 
-            if advance_status(conn, order, existing_bc, apply_mode):
-                source_ref     = order["source_ref"]
-                existing       = existing_bc.get(source_ref)
-                current_status = existing["status"] if existing else "entered"
-                bl_advances.append(
-                    f"{order['bc_no']}: {current_status!r} → 'bl_printed' "
-                    f"(BC Completely_Shipped=True)"
-                )
+            # ── Ruling-4 COMPLIANT block (no status writes): ──────────────────
+            # For existing bc-sourced orders (not skipped), write BC mirror fields
+            # and run the divergence diff.  New inserts are excluded from divergence
+            # diff on the same pull (no ord_order_lines exist yet).
+            is_skipped = action in ("skip_collision", "skip_backlog")
+            if not is_skipped:
+
+                # BC-mirror field: bc_completely_shipped (allowed, per ruling-4)
+                write_bc_mirror_fields(conn, order, existing_bc, apply_mode)
+                if order["completely_shipped"]:
+                    bc_shipped_signals.append(
+                        f"{bc_no}: BC Completely_Shipped=True → bc_completely_shipped=1 (signal only)"
+                    )
+
+                # BC line snapshot (for existing rows; new inserts need a second pass)
+                if action != "insert":
+                    bc_raw_lines = lines_by_order.get(bc_no, [])
+                    # Only Item-type lines with qty > 0
+                    bc_item_lines = [
+                        ln for ln in bc_raw_lines
+                        if str(ln.get("Type", "")).strip() == "Item"
+                        and float(ln.get("Quantity", 0) or 0) > 0
+                    ]
+                    n_snap = upsert_bc_lines(
+                        conn, order, existing_bc, bc_item_lines,
+                        direct_map, alias_map, apply_mode,
+                    )
+                    bc_snapshot_count += n_snap
+
+                    # Divergence detection (only after snapshot is committed for apply_mode,
+                    # or against existing snapshot for dry-run)
+                    diverged, detail = detect_line_divergence(conn, order, existing_bc)
+                    changed = apply_divergence_flag(
+                        conn, order, existing_bc, diverged, detail, apply_mode
+                    )
+                    if changed:
+                        if diverged:
+                            divergences_flagged.append(
+                                f"{bc_no} (ord_orders.id={existing_bc[source_ref]['id']}): "
+                                f"correction_compta_requise"
+                            )
+                        else:
+                            divergences_cleared.append(
+                                f"{bc_no}: re-aligned, flag cleared"
+                            )
 
         if apply_mode:
             conn.commit()
+            # After commit, process NEW inserts for BC line snapshot + divergence
+            # (we need the order_id from the committed row)
+            if would_insert > 0:
+                # Reload existing_bc to get newly inserted rows' IDs
+                existing_bc_updated = load_existing_bc_orders(conn)
+                for order in pull:
+                    source_ref = order["source_ref"]
+                    if source_ref not in existing_bc and source_ref in existing_bc_updated:
+                        # This was a new insert — now snapshot its BC lines
+                        # Temporarily inject into existing_bc so helpers can find the id
+                        existing_bc[source_ref] = existing_bc_updated[source_ref]
+                        bc_raw_lines = lines_by_order.get(order["bc_no"], [])
+                        bc_item_lines = [
+                            ln for ln in bc_raw_lines
+                            if str(ln.get("Type", "")).strip() == "Item"
+                            and float(ln.get("Quantity", 0) or 0) > 0
+                        ]
+                        n_snap = upsert_bc_lines(
+                            conn, order, existing_bc, bc_item_lines,
+                            direct_map, alias_map, apply_mode,
+                        )
+                        bc_snapshot_count += n_snap
+                conn.commit()
+
             print(f"  Committed: {would_insert} inserted, {would_update} updated, "
                   f"{would_skip} skipped, {would_skip_collision} skip-collision, "
-                  f"{would_skip_backlog} skip-backlog, {len(bl_advances)} bl_printed advances")
+                  f"{would_skip_backlog} skip-backlog")
+            print(f"  BC snapshots written: {bc_snapshot_count} line(s)")
+            print(f"  Divergences flagged : {len(divergences_flagged)}")
+            print(f"  Divergences cleared : {len(divergences_cleared)}")
+            print(f"  BC shipped signals  : {len(bc_shipped_signals)} (mirror only, no status write)")
         else:
             conn.rollback()
 
@@ -1141,18 +1430,21 @@ def main() -> None:
 
         # ── Print reconciliation report ───────────────────────────────────────
         print_reconciliation_report(
-            classified           = classified,
-            existing_bc          = existing_bc,
-            collisions           = collisions,
-            would_insert         = would_insert,
-            would_update         = would_update,
-            would_skip           = would_skip,
-            would_skip_collision = would_skip_collision,
-            would_skip_backlog   = would_skip_backlog,
-            insert_candidates    = insert_candidates,
-            bl_advances          = bl_advances,
-            review_csv_path      = review_csv_path,
-            cust_review_csv_path = cust_review_csv_path,
+            classified            = classified,
+            existing_bc           = existing_bc,
+            collisions            = collisions,
+            would_insert          = would_insert,
+            would_update          = would_update,
+            would_skip            = would_skip,
+            would_skip_collision  = would_skip_collision,
+            would_skip_backlog    = would_skip_backlog,
+            insert_candidates     = insert_candidates,
+            bc_shipped_signals    = bc_shipped_signals,
+            divergences_flagged   = divergences_flagged,
+            divergences_cleared   = divergences_cleared,
+            bc_snapshot_count     = bc_snapshot_count,
+            review_csv_path       = review_csv_path,
+            cust_review_csv_path  = cust_review_csv_path,
         )
 
     except Exception as exc:
