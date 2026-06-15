@@ -1,0 +1,37 @@
+# /etc/cron.d/maltytask-bc-customers
+#
+# Daily BC standard-API → ref_customers drift-reconciliation connector.
+# Classifies each BC customer into: MATCH (update BC-OWNED fields), NEW (insert
+# needs_review=1), DRIFT-AUTO (correct phantom bc_customer_no), DRIFT-REVIEW
+# (emit doc_review_queue type='bc-customer-identity-drift').
+#
+# Field ownership:
+#   BC-OWNED   : address_line1/2, city, postal_code, country_code, phone, email,
+#                is_active (BC blocked→0), bc_last_synced_at.
+#   CURATED    : name, trade_channel, sale_class, is_private, needs_review, notes.
+#                (Curated fields are NEVER overwritten by this cron.)
+#
+# ENABLED 2026-06-15 after operator-approved go-live:
+#   --dry-run reviewed: 2619 MATCH / 481 field-updates / 1 NEW / 0 DRIFT-AUTO /
+#   0 DRIFT-REVIEW (68 both-sides-retired suppressed) / 372 maltytask-only.
+#   Stoked Mountain dedup applied (id=3056 bc=3951, id=3060 deleted).
+#   --apply run: 481 updated / 1 inserted (CHS Container Handel GmbH) / 0 RQ.
+#
+# Preflight (one-time, before enabling):
+#   sudo touch /var/log/maltytask/bc-customers.log
+#   sudo chown maltytask:www-data /var/log/maltytask/bc-customers.log
+#
+# BC credentials : /var/www/maltytask/config/bc.env (mode 640, group www-data)
+# DB credentials : /var/www/maltytask/config/db.env (mode 640, group www-data)
+# Source of truth: db/cron/maltytask-bc-customers.cron in the maltyweb repo.
+# Deployed via bin/deploy.sh --apply (sudo install -m 0644 → /etc/cron.d/).
+# Manual edits to /etc/cron.d/* are overwritten on next deploy — edit here.
+#
+# Log: /var/log/maltytask/bc-customers.log
+# Frequency: daily at 04:00 UTC (before the working day; BC data is stable overnight).
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# m  h    dom mon dow  user       command
+0  4    *   *   *   maltytask   cd /var/www/maltytask && /usr/bin/python3 scripts/python/sync_bc_customers.py --apply >> /var/log/maltytask/bc-customers.log 2>&1
