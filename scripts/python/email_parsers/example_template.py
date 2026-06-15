@@ -7,11 +7,15 @@ Match on from_address first.  Keep deterministic — no LLM, ever.
 Step-by-step:
   1. Copy this file to <sender_slug>.py (e.g. customer_acme.py).
   2. Set name = '<sender_slug>' (shows in parser_matched column).
-  3. Implement matches() — from_address domain/exact-address is the primary
-     discriminator.  Add subject/body guards only when needed.
-  4. Implement parse() — extract customer_hint, requested_date, lines, notes
-     as HINTS (no ID resolution here).
-  5. Import your class in __init__.py and add it to REGISTRY.
+  3. Implement matches(ctx, env) — from_address domain/exact-address is the
+     primary discriminator.  Add subject/body guards only when needed.
+     env.vocab is available if you need product vocabulary for pre-matching.
+  4. Implement parse(ctx, env) — extract customer_hint, requested_date, lines,
+     notes as HINTS (no ID resolution here).
+     Return None to DECLINE (matches() fired but body layout not parseable here)
+     — the dispatcher continues to the next registered parser (e.g. generic_vocab).
+  5. Import your class in __init__.py and INSERT it into REGISTRY BEFORE
+     GenericVocabParser (which is always last).
   6. Add a .eml fixture to tests/fixtures/email_parsers/<sender_slug>/
      and a corresponding expected_output.json.
   7. Run: python3 -m pytest tests/test_email_parsers.py -k <sender_slug>
@@ -28,7 +32,7 @@ from __future__ import annotations
 import re
 from datetime import date
 
-from .base import EmailContext, ParsedLine, ParsedOrder, SenderParser
+from .base import EmailContext, ParsedLine, ParsedOrder, ParserEnv, SenderParser
 
 # REGISTERED = False  ← this parser is intentionally excluded from the registry
 
@@ -44,12 +48,13 @@ class ExampleTemplateSenderParser(SenderParser):
 
     name = "example_template"  # change this to your sender slug
 
-    def matches(self, ctx: EmailContext) -> bool:
+    def matches(self, ctx: EmailContext, env: ParserEnv) -> bool:
         """
         TEMPLATE: return True when this email is from the target sender
         and looks like an order (not a confirmation, invoice, etc.).
 
         Primary check: from_address.
+        env is available but not needed for sender matching in most cases.
         """
         # ── Primary: from_address domain or exact address ──────────────────
         # from_addr = (ctx.from_address or "").lower()
@@ -64,7 +69,7 @@ class ExampleTemplateSenderParser(SenderParser):
         # This template never matches — it is not registered.
         return False
 
-    def parse(self, ctx: EmailContext) -> ParsedOrder:
+    def parse(self, ctx: EmailContext, env: ParserEnv) -> ParsedOrder | None:
         """
         TEMPLATE: extract order hints from the email body.
 
@@ -74,11 +79,16 @@ class ExampleTemplateSenderParser(SenderParser):
           lines          — list of ParsedLine(sku_hint, qty, raw)
           notes          — any free-text notes for the logistics team
 
+        Return None to DECLINE (matched sender, but can't parse this layout).
+        The dispatcher will fall through to the next parser (e.g. generic_vocab).
+
         Rules:
           • All returned values are HINTS — no ID resolution.
           • Raise ValueError on unrecoverable parse failure.
+          • Return None to decline (soft failure, not an error).
           • NO LLM calls, ever.
           • Be deterministic: same input → same output.
+          • Use env.vocab / env.dayfirst if needed; NO DB calls inside parse().
         """
         body = ctx.body_text or ""
 
@@ -92,7 +102,8 @@ class ExampleTemplateSenderParser(SenderParser):
         requested_date: date | None = None
         # date_match = re.search(r'(\d{2})\.(\d{2})\.(\d{4})', body)
         # if date_match:
-        #     requested_date = date(int(date_match[3]), int(date_match[2]), int(date_match[1]))
+        #     d, m, y = int(date_match[1]), int(date_match[2]), int(date_match[3])
+        #     requested_date = date(y, m, d) if env.dayfirst else date(y, d, m)
 
         # ── Order lines ───────────────────────────────────────────────────
         lines: list[ParsedLine] = []

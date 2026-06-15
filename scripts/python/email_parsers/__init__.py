@@ -1,14 +1,30 @@
 """
 email_parsers/__init__.py — Sender-parser registry + dispatcher.
 
-Dispatch contract (mirrors lib/invoice-parsers/index.js doctrine):
+Dispatch contract (Model B — decline-fall-through):
   • REGISTRY is an ordered list of SenderParser instances.
-  • dispatch(ctx) iterates REGISTRY in declaration order.
-  • The FIRST parser whose matches(ctx) returns True wins; its parse(ctx) is called.
-  • If parse(ctx) raises, the exception propagates — the caller catches it and
-    records parse_status='error' with the message.  No swallowing.
-  • If no parser matches, dispatch returns None — the caller records
-    parse_status='no_match'.
+  • dispatch(ctx, env) iterates REGISTRY in declaration order.
+  • For each parser whose matches(ctx, env) is True:
+      - call parse(ctx, env)
+      - if it returns a ParsedOrder → return it immediately (winner)
+      - if it returns None → parser DECLINES ("matched my sender but can't read
+        this body") → continue to the NEXT parser
+      - if it raises → propagate (caller marks parse_status='error')
+  • If all matched parsers declined, or no parser matched at all → return None
+    (caller marks parse_status='no_match').
+
+Why decline-fall-through?
+  A sender-specific parser may recognise the from_address but be unable to parse
+  this particular body layout (a confirmation email, a format change, etc.).  By
+  returning None instead of raising, it passes control to the next parser rather
+  than short-circuiting to 'error'.  This allows the generic_vocab parser (always
+  registered LAST) to attempt a best-effort parse as a layer-2 fallback.
+
+Parser registration order MATTERS:
+  • Most-specific per-sender parsers go FIRST.
+  • generic_vocab is always LAST — it is the universal layer-2 fallback.
+  • Forwarder / system-email guards go before generic parsers (mirrors
+    lib/invoice-parsers/index.js ordering discipline).
 
 NO LLM FALLBACK — EVER.
   A no-match email goes to the review bucket (parse_status='no_match').
@@ -21,10 +37,8 @@ NO LLM FALLBACK — EVER.
 Adding a new sender parser
 ──────────────────────────
   1. Copy scripts/python/email_parsers/example_template.py to <sender_slug>.py.
-  2. Implement name / matches() / parse() per the template docstring.
-  3. Import it here and append an instance to REGISTRY (order matters — more
-     specific matchers go before more generic ones, exactly as in the invoice
-     parser dispatcher).
+  2. Implement name / matches(ctx, env) / parse(ctx, env) per the template.
+  3. Import it here and INSERT an instance into REGISTRY BEFORE GenericVocabParser.
   4. Add a .eml fixture under tests/fixtures/email_parsers/<sender_slug>/ and
      a corresponding expected_output.json for regression testing.
   5. Run py_compile + the fixture test before committing.
@@ -32,36 +46,55 @@ Adding a new sender parser
 
 from __future__ import annotations
 
-from .base import EmailContext, ParsedOrder, SenderParser
+from typing import TYPE_CHECKING
+
+from .base import EmailContext, ParsedOrder, ParserEnv, SenderParser
+
+if TYPE_CHECKING:
+    pass
 
 # ── Sender-parser imports ──────────────────────────────────────────────────────
-# Uncomment each line as real parsers are added.
+# Uncomment each line as real parsers are added (insert BEFORE generic_vocab).
 # from .example_template import ExampleTemplateSenderParser  # NOT registered (template)
 # from .customer_acme import AcmeSenderParser
 
+from .generic_vocab import GenericVocabParser  # always last
+
 # ── Registry ──────────────────────────────────────────────────────────────────
-# Ordered list: first match wins.
+# Ordered list: first match-and-parse wins.
+# generic_vocab is intentionally LAST — per-sender parsers go before it.
 # NEVER add ExampleTemplateSenderParser here — it is a template, not a real parser.
 REGISTRY: list[SenderParser] = [
     # AcmeSenderParser(),  # add real parsers here, ordered most-specific first
+    GenericVocabParser(),  # layer-2 universal fallback — always last
 ]
 
 
 # ── Dispatcher ────────────────────────────────────────────────────────────────
 
-def dispatch(ctx: EmailContext) -> ParsedOrder | None:
+def dispatch(ctx: EmailContext, env: ParserEnv) -> ParsedOrder | None:
     """
-    Run ctx through the registry; return the first ParsedOrder produced,
-    or None when no parser matches.
+    Run ctx through the registry with the decline-fall-through protocol.
 
-    Raises: whatever the winning parser's parse() raises (ValueError, etc.).
-    Caller is responsible for catching and recording parse_status='error'.
+    For each parser whose matches(ctx, env) returns True:
+      - call parse(ctx, env)
+      - ParsedOrder returned → return it (winner)
+      - None returned       → parser DECLINED → continue to next parser
+      - exception raised    → propagate (caller marks parse_status='error')
 
-    NO LLM FALLBACK.  A None return means parse_status='no_match'.
+    Returns None when:
+      - no parser matched at all, OR
+      - all matched parsers declined.
+
+    A None return means parse_status='no_match'.
     The caller must NEVER escalate a None to an LLM call.
+
+    NO LLM FALLBACK — EVER.
     """
     for parser in REGISTRY:
-        if parser.matches(ctx):
-            # Propagate exceptions — caller records parse_status='error'
-            return parser.parse(ctx)
+        if parser.matches(ctx, env):
+            result = parser.parse(ctx, env)
+            if result is not None:
+                return result
+            # None = declined — continue to next parser in registry
     return None
