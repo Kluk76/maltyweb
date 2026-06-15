@@ -416,6 +416,27 @@ body.mon-tableau .kpc-grouped-more {
   font-style: italic;
 }
 
+/* Ranked bar list — high-cardinality single-series bar
+   Uses the grouped-bar row markup but without chip/ghost.
+   kpc-bar-wrap--ranked caps height + scrolls internally. */
+body.mon-tableau .kpc-bar-wrap--ranked {
+  max-height: 340px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  margin-top: .4rem;
+}
+body.mon-tableau .kpc-grouped-row--simple {
+  /* 3-col layout: label | track | value (no delta chip column) */
+  grid-template-columns: 11rem 1fr 3.5rem;
+}
+body.mon-tableau .kpc-grouped-row--simple .kpc-grouped-row__lbl {
+  color: var(--ink-label, #8a7250);
+}
+body.mon-tableau .kpc-grouped-row--simple .kpc-grouped-row__val {
+  color: var(--ink, #241b10);
+  font-weight: 600;
+}
+
 /* Donut */
 body.mon-tableau .kpc-donut-svg {
   display: block;
