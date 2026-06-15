@@ -111,7 +111,7 @@ const EXP_INTERNAL_LABELS   = [
 
 // ── View routing ──────────────────────────────────────────────────────────────
 $view    = isset($_GET['view']) ? (string) $_GET['view'] : 'commandes';
-$allowedViews = ['commandes', 'form', 'stock', 'stocktake', 'clients', 'mouvements', 'side-stock', 'historique', 'repack'];
+$allowedViews = ['commandes', 'shopify', 'form', 'stock', 'stocktake', 'clients', 'mouvements', 'side-stock', 'historique', 'repack'];
 if (!in_array($view, $allowedViews, true)) $view = 'commandes';
 
 $editId  = isset($_GET['edit']) ? (int) $_GET['edit'] : 0;
@@ -1220,15 +1220,15 @@ $cmdAu   = ''; // 'YYYY-MM-DD'
 $cmdRangeNotice = ''; // non-empty when range was clamped
 $kwPrev  = '';
 $kwNext  = '';
-// Filter params (only populated for commandes view)
+// Filter params (commandes + shopify views share date/client; commandes has extra status/channel)
 $filterClient  = '';
 $filterSku     = '';
 $filterStatus  = '';
 $filterChannel = '';
-$findIntent    = false; // true when cross-date search active (client search or cross-date status)
+$findIntent    = false; // true when cross-date search active (client name search)
 $cmdFindLimited = false; // true when find-intent result was capped at 500
 
-if ($view === 'commandes') {
+if ($view === 'commandes' || $view === 'shopify') {
     $rawMode = isset($_GET['mode']) ? (string) $_GET['mode'] : 'week';
     $cmdMode = in_array($rawMode, ['week', 'range'], true) ? $rawMode : 'week';
 
@@ -1259,24 +1259,31 @@ if ($view === 'commandes') {
         $cmdAu = $parsed[1];
     }
 
-    // ---- Filter params (GET, sanitised) -------------------------------------
-    $filterClient  = isset($_GET['client'])  ? trim((string) $_GET['client'])  : '';
-    $filterSku     = isset($_GET['sku'])     ? strtoupper(trim((string) $_GET['sku'])) : '';
-    $filterStatus  = isset($_GET['statut'])  ? (string) $_GET['statut']  : '';
-    $filterChannel = isset($_GET['canal'])   ? (string) $_GET['canal']   : '';
-
-    // Validate filter enums against whitelist
-    // 'expediees' = cross-date shortcut for all shipped orders (alias for status=shipped, spans all dates)
-    $allowedStatutFilters  = ['ouvertes', 'expediees', 'entered', 'confirmed', 'picked', 'bl_printed', 'shipped', 'cancelled'];
-    $allowedChannelFilters = ['on_trade', 'off_trade', 'interne'];
-    if (!in_array($filterStatus, $allowedStatutFilters, true))  $filterStatus  = '';
-    if (!in_array($filterChannel, $allowedChannelFilters, true)) $filterChannel = '';
+    // Client filter — shared by both commandes and shopify (tab-local search)
+    $filterClient = isset($_GET['client']) ? trim((string) $_GET['client']) : '';
 
     // Find-intent: when true, the date BETWEEN clause is dropped and the query spans ALL dates.
-    // Triggered by: non-empty client search OR a cross-date status ('ouvertes' or 'expediees').
-    $findIntent = ($filterClient !== '')
-               || ($filterStatus === 'ouvertes')
-               || ($filterStatus === 'expediees');
+    // On both tabs: triggered by non-empty client name search.
+    $findIntent = ($filterClient !== '');
+
+    if ($view === 'commandes') {
+        // ---- Commandes-only filter params (GET, sanitised) ------------------
+        $filterSku     = isset($_GET['sku'])    ? strtoupper(trim((string) $_GET['sku'])) : '';
+        $filterStatus  = isset($_GET['statut']) ? (string) $_GET['statut']  : '';
+        $filterChannel = isset($_GET['canal'])  ? (string) $_GET['canal']   : '';
+
+        // Validate filter enums against whitelist
+        // 'expediees' = cross-date shortcut for all shipped orders (alias for status=shipped, spans all dates)
+        $allowedStatutFilters  = ['ouvertes', 'expediees', 'entered', 'confirmed', 'picked', 'bl_printed', 'shipped', 'cancelled'];
+        $allowedChannelFilters = ['on_trade', 'off_trade', 'interne'];
+        if (!in_array($filterStatus, $allowedStatutFilters, true))  $filterStatus  = '';
+        if (!in_array($filterChannel, $allowedChannelFilters, true)) $filterChannel = '';
+
+        // Commandes also enters find-intent for cross-date status shortcuts
+        $findIntent = $findIntent
+                   || ($filterStatus === 'ouvertes')
+                   || ($filterStatus === 'expediees');
+    }
 
     // ---- ISO week nav: prev/next --------------------------------------------
     if ($cmdMode === 'week') {
@@ -1484,8 +1491,7 @@ $cmdSummary      = [
     'total_hl' => 0.0, 'orders' => 0, 'open' => 0,
     'on_trade' => 0, 'off_trade' => 0, 'internal' => 0,
     'distinct_clients' => 0,
-    'eshop_pickup' => 0, 'eshop_delivery' => 0, 'eshop_review' => 0,
-]; // totals for the period band
+]; // totals for the B2B + taproom period band (eshop on Shopify tab)
 $cmdFilteredCusts= []; // distinct customer names in result (for datalist)
 $cmdFilteredSkus = []; // distinct SKU codes in result (for datalist)
 
@@ -1689,77 +1695,6 @@ try {
             }
         }
 
-        // ── Query 3a: eshop per-order rows ────────────────────────────────────
-        // Eshop is now shown as individual rows (Phase 1 Shopify integration).
-        // In browse mode, restrict to the selected date window.
-        // In find-intent mode, also include eshop orders so that searching
-        // by order_name / customer finds them cross-date.
-        {
-            $eshopWhere  = ["iso.channel = 'eshop'"];
-            $eshopParams = [];
-            if (!$findIntent) {
-                $eshopWhere[]  = 'DATE(iso.created_at) BETWEEN ? AND ?';
-                $eshopParams[] = $cmdDu;
-                $eshopParams[] = $cmdAu;
-            } else {
-                // In find-intent mode apply the client-name filter to eshop too
-                if ($filterClient !== '') {
-                    $eshopWhere[]  = "(iso.customer_first_name LIKE ? OR iso.customer_last_name LIKE ? OR iso.order_name LIKE ? OR CONCAT(iso.customer_first_name,' ',iso.customer_last_name) LIKE ?)";
-                    $likeVal = '%' . str_replace(['%', '_'], ['\%', '\_'], $filterClient) . '%';
-                    $eshopParams[] = $likeVal;
-                    $eshopParams[] = $likeVal;
-                    $eshopParams[] = $likeVal;
-                    $eshopParams[] = $likeVal;
-                }
-            }
-            // Phase 2A: LEFT JOIN inv_sales_fulfilment to get workflow status + sync badge.
-            $eshopOrderSql = 'SELECT iso.id, iso.order_name, DATE(iso.created_at) AS sale_date,
-                        iso.customer_first_name, iso.customer_last_name, iso.customer_email,
-                        iso.fulfilment_mode, iso.financial_status, iso.fulfillment_status,
-                        iso.channel, iso.created_at,
-                        f.status AS fulfil_status,
-                        f.shopify_sync_state
-                   FROM inv_sales_orders iso
-                   LEFT JOIN inv_sales_fulfilment f ON f.order_id_fk = iso.id
-                  WHERE ' . implode(' AND ', $eshopWhere) . '
-                  ORDER BY iso.created_at ' . ($findIntent ? 'DESC' : 'ASC');
-            $eshopOrderStmt = $pdo->prepare($eshopOrderSql);
-            $eshopOrderStmt->execute($eshopParams);
-            $eshopOrders = $eshopOrderStmt->fetchAll(PDO::FETCH_ASSOC);
-
-            if (!empty($eshopOrders)) {
-                // Query 3b: lines for those eshop orders (2 queries total, no N+1)
-                $eshopIds = array_column($eshopOrders, 'id');
-                $placeholders = implode(',', array_fill(0, count($eshopIds), '?'));
-                $eshopLineStmt = $pdo->prepare(
-                    "SELECT isol.order_id_fk, isol.sku_code, isol.title, isol.qty, isol.hl_resolved,
-                            s.format
-                       FROM inv_sales_order_lines isol
-                       LEFT JOIN ref_skus s ON s.id = isol.sku_id_fk
-                      WHERE isol.order_id_fk IN ($placeholders)
-                      ORDER BY isol.order_id_fk ASC, isol.line_index ASC"
-                );
-                $eshopLineStmt->execute($eshopIds);
-                foreach ($eshopLineStmt->fetchAll(PDO::FETCH_ASSOC) as $el) {
-                    $eid = (int) $el['order_id_fk'];
-                    $cmdEshopLinesByOrder[$eid][] = $el;
-                }
-
-                // Group orders by date
-                foreach ($eshopOrders as $eo) {
-                    $d   = (string) $eo['sale_date'];
-                    $eid = (int) $eo['id'];
-                    // Compute HL for this order from lines
-                    $eoHl = 0.0;
-                    foreach ($cmdEshopLinesByOrder[$eid] ?? [] as $el) {
-                        $eoHl += (float) ($el['hl_resolved'] ?? 0);
-                    }
-                    $eo['total_hl'] = $eoHl;
-                    $cmdEshopOrdersByDay[$d][] = $eo;
-                }
-            }
-        }
-
         // ── Query 3c: taproom aggregate (kept as-is for non-eshop channels) ──
         // Skipped in find-intent mode (taproom has no per-order display yet).
         if (!$findIntent) {
@@ -1785,23 +1720,7 @@ try {
             }
         }
 
-        // ── Shopify freshness: MAX(imported_at) for channel='eshop' ─────────────
-        // Used by the "Dernier import Shopify" chip in the commandes view header.
-        // Runs unconditionally inside the commandes block (cheap single-row MAX).
-        try {
-            $fiStmt = $pdo->prepare(
-                "SELECT MAX(imported_at) AS last_import FROM inv_sales_orders WHERE channel='eshop'"
-            );
-            $fiStmt->execute();
-            $fiRow = $fiStmt->fetch(PDO::FETCH_ASSOC);
-            if ($fiRow && $fiRow['last_import'] !== null) {
-                $eshopLastImport = new DateTime($fiRow['last_import']);
-            }
-        } catch (Throwable $e) {
-            error_log('[expeditions freshness] ' . $e->getMessage());
-        }
-
-        // ── Period summary ────────────────────────────────────────────────────
+        // ── Period summary (B2B + taproom only — eshop is on the Shopify tab) ─
         $sumTotalHl    = 0.0;
         $sumOrders     = 0;
         $sumOpen       = 0;
@@ -1831,18 +1750,6 @@ try {
                 }
             }
         }
-        // Eshop pickup/delivery/review totals for period summary
-        $sumEshopPickup   = 0;
-        $sumEshopDelivery = 0;
-        $sumEshopReview   = 0;
-        foreach ($cmdEshopOrdersByDay as $dayOrders) {
-            foreach ($dayOrders as $eo) {
-                $mode = (string) ($eo['fulfilment_mode'] ?? 'review');
-                if ($mode === 'pickup')   $sumEshopPickup++;
-                elseif ($mode === 'delivery') $sumEshopDelivery++;
-                else                         $sumEshopReview++;
-            }
-        }
         $cmdSummary = [
             'total_hl'        => $sumTotalHl,
             'orders'          => $sumOrders,
@@ -1851,10 +1758,90 @@ try {
             'off_trade'       => $sumOffTrade,
             'internal'        => $sumInternal,
             'distinct_clients'=> count($distinctClients),
-            'eshop_pickup'    => $sumEshopPickup,
-            'eshop_delivery'  => $sumEshopDelivery,
-            'eshop_review'    => $sumEshopReview,
         ];
+    }
+
+    if ($view === 'shopify') {
+        // ── Shopify tab: eshop per-order rows (Query 3a) ─────────────────────
+        // READ-ONLY view of inv_sales_orders WHERE channel='eshop'. Never writes
+        // to ord_orders, never calls fg_stock_compute / depletion legs.
+        {
+            $eshopWhere  = ["iso.channel = 'eshop'"];
+            $eshopParams = [];
+            if (!$findIntent) {
+                $eshopWhere[]  = 'DATE(iso.created_at) BETWEEN ? AND ?';
+                $eshopParams[] = $cmdDu;
+                $eshopParams[] = $cmdAu;
+            } else {
+                // In find-intent mode apply the client-name filter
+                if ($filterClient !== '') {
+                    $eshopWhere[]  = "(iso.customer_first_name LIKE ? OR iso.customer_last_name LIKE ? OR iso.order_name LIKE ? OR CONCAT(iso.customer_first_name,' ',iso.customer_last_name) LIKE ?)";
+                    $likeVal = '%' . str_replace(['%', '_'], ['\%', '\_'], $filterClient) . '%';
+                    $eshopParams[] = $likeVal;
+                    $eshopParams[] = $likeVal;
+                    $eshopParams[] = $likeVal;
+                    $eshopParams[] = $likeVal;
+                }
+            }
+            $eshopOrderSql = 'SELECT iso.id, iso.order_name, DATE(iso.created_at) AS sale_date,
+                        iso.customer_first_name, iso.customer_last_name, iso.customer_email,
+                        iso.fulfilment_mode, iso.financial_status, iso.fulfillment_status,
+                        iso.channel, iso.created_at,
+                        f.status AS fulfil_status,
+                        f.shopify_sync_state
+                   FROM inv_sales_orders iso
+                   LEFT JOIN inv_sales_fulfilment f ON f.order_id_fk = iso.id
+                  WHERE ' . implode(' AND ', $eshopWhere) . '
+                  ORDER BY iso.created_at ' . ($findIntent ? 'DESC' : 'ASC');
+            $eshopOrderStmt = $pdo->prepare($eshopOrderSql);
+            $eshopOrderStmt->execute($eshopParams);
+            $eshopOrders = $eshopOrderStmt->fetchAll(PDO::FETCH_ASSOC);
+
+            if (!empty($eshopOrders)) {
+                // Query 3b: lines for those eshop orders (2 queries, no N+1)
+                $eshopIds = array_column($eshopOrders, 'id');
+                $placeholders = implode(',', array_fill(0, count($eshopIds), '?'));
+                $eshopLineStmt = $pdo->prepare(
+                    "SELECT isol.order_id_fk, isol.sku_code, isol.title, isol.qty, isol.hl_resolved,
+                            s.format
+                       FROM inv_sales_order_lines isol
+                       LEFT JOIN ref_skus s ON s.id = isol.sku_id_fk
+                      WHERE isol.order_id_fk IN ($placeholders)
+                      ORDER BY isol.order_id_fk ASC, isol.line_index ASC"
+                );
+                $eshopLineStmt->execute($eshopIds);
+                foreach ($eshopLineStmt->fetchAll(PDO::FETCH_ASSOC) as $el) {
+                    $eid = (int) $el['order_id_fk'];
+                    $cmdEshopLinesByOrder[$eid][] = $el;
+                }
+
+                // Group orders by date
+                foreach ($eshopOrders as $eo) {
+                    $d   = (string) $eo['sale_date'];
+                    $eid = (int) $eo['id'];
+                    $eoHl = 0.0;
+                    foreach ($cmdEshopLinesByOrder[$eid] ?? [] as $el) {
+                        $eoHl += (float) ($el['hl_resolved'] ?? 0);
+                    }
+                    $eo['total_hl'] = $eoHl;
+                    $cmdEshopOrdersByDay[$d][] = $eo;
+                }
+            }
+        }
+
+        // ── Shopify freshness: MAX(imported_at) for channel='eshop' ──────────
+        try {
+            $fiStmt = $pdo->prepare(
+                "SELECT MAX(imported_at) AS last_import FROM inv_sales_orders WHERE channel='eshop'"
+            );
+            $fiStmt->execute();
+            $fiRow = $fiStmt->fetch(PDO::FETCH_ASSOC);
+            if ($fiRow && $fiRow['last_import'] !== null) {
+                $eshopLastImport = new DateTime($fiRow['last_import']);
+            }
+        } catch (Throwable $e) {
+            error_log('[expeditions freshness] ' . $e->getMessage());
+        }
     }
 
     if ($view === 'form' && $editId > 0) {
@@ -2883,6 +2870,9 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
     <a href="/modules/expeditions.php"
        class="exp-tab<?= $view === 'commandes' ? ' exp-tab--active' : '' ?>"
        <?= $view === 'commandes' ? 'aria-current="page"' : '' ?>>Commandes</a>
+    <a href="/modules/expeditions.php?view=shopify"
+       class="exp-tab<?= $view === 'shopify' ? ' exp-tab--active' : '' ?>"
+       <?= $view === 'shopify' ? 'aria-current="page"' : '' ?>><?= EXP_INTERNAL_LABELS['eshop'] ?></a>
     <a href="/modules/expeditions.php?view=historique"
        class="exp-tab<?= $view === 'historique' ? ' exp-tab--active' : '' ?>"
        <?= $view === 'historique' ? 'aria-current="page"' : '' ?>>Historique</a>
@@ -3484,56 +3474,6 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
       <span class="exp-summary-kpi__value"><?= $cmdSummary['distinct_clients'] ?></span>
       <span class="exp-summary-kpi__label">client<?= $cmdSummary['distinct_clients'] !== 1 ? 's' : '' ?></span>
     </div>
-    <?php
-    $eshopTotal = $cmdSummary['eshop_pickup'] + $cmdSummary['eshop_delivery'] + $cmdSummary['eshop_review'];
-    if ($eshopTotal > 0):
-    ?>
-    <div class="exp-summary-sep"></div>
-    <?php if ($cmdSummary['eshop_pickup'] > 0): ?>
-    <div class="exp-summary-kpi exp-summary-kpi--eshop" title="Commandes Shopify retrait">
-      <span class="exp-summary-kpi__value">🏬 <?= $cmdSummary['eshop_pickup'] ?></span>
-      <span class="exp-summary-kpi__label">retrait<?= $cmdSummary['eshop_pickup'] !== 1 ? 's' : '' ?></span>
-    </div>
-    <?php endif ?>
-    <?php if ($cmdSummary['eshop_delivery'] > 0): ?>
-    <div class="exp-summary-kpi exp-summary-kpi--eshop" title="Commandes Shopify livraison">
-      <span class="exp-summary-kpi__value">🚚 <?= $cmdSummary['eshop_delivery'] ?></span>
-      <span class="exp-summary-kpi__label">livraison<?= $cmdSummary['eshop_delivery'] !== 1 ? 's' : '' ?></span>
-    </div>
-    <?php endif ?>
-    <?php if ($cmdSummary['eshop_review'] > 0): ?>
-    <div class="exp-summary-kpi exp-summary-kpi--eshop exp-summary-kpi--eshop-warn" title="Commandes Shopify à classer">
-      <span class="exp-summary-kpi__value">⚠ <?= $cmdSummary['eshop_review'] ?></span>
-      <span class="exp-summary-kpi__label">à classer</span>
-    </div>
-    <?php endif ?>
-    <?php endif ?>
-  </div>
-  <?php endif ?>
-
-  <!-- ── "Dernier import Shopify" freshness chip ────────────────────────────
-       Always shown on commandes view so a stalled sync never looks like "no
-       new orders". Amber/warning when last import > 90 min ago.
-  ─────────────────────────────────────────────────────────────────────────── -->
-  <?php if ($eshopLastImport !== null):
-      $now           = new DateTime();
-      $diffMinutes   = (int) round(($now->getTimestamp() - $eshopLastImport->getTimestamp()) / 60);
-      $isStale       = $diffMinutes > 90;
-      $chipCls       = 'exp-shopify-freshness-chip' . ($isStale ? ' exp-shopify-freshness-chip--stale' : '');
-      // Format time as HH:MM (24h, system DMY convention)
-      $timeStr       = $eshopLastImport->format('H:i');
-      $dateStr       = $eshopLastImport->format('d/m');
-      $todayStr      = (new DateTime())->format('d/m');
-      $importLabel   = ($dateStr === $todayStr)
-          ? 'Import Shopify ' . $timeStr
-          : 'Import Shopify ' . $dateStr . ' ' . $timeStr;
-      $titleAttr     = $isStale
-          ? 'Dernier import il y a ' . $diffMinutes . ' min — sync peut-être en retard'
-          : 'Dernier import il y a ' . $diffMinutes . ' min';
-  ?>
-  <div class="<?= htmlspecialchars($chipCls) ?>" title="<?= htmlspecialchars($titleAttr) ?>"
-       aria-label="<?= htmlspecialchars($importLabel) ?>">
-    <?= $isStale ? '<span aria-hidden="true">⚠</span> ' : '' ?><?= htmlspecialchars($importLabel) ?>
   </div>
   <?php endif ?>
 
@@ -3612,11 +3552,10 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
   <div class="exp-section" id="exp-days-container">
 
     <?php
-    // Collect all dates that have ord_orders, taproom aggregates, or eshop per-order rows
+    // Collect all dates that have ord_orders or taproom aggregates (eshop is on Shopify tab)
     $allDates = array_unique(array_merge(
         array_keys($cmdByDay),
-        array_keys($cmdEshopByDay),
-        array_keys($cmdEshopOrdersByDay)
+        array_keys($cmdEshopByDay)
     ));
     sort($allDates);
     ?>
@@ -3638,8 +3577,7 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
     <?php foreach ($allDates as $date): ?>
       <?php
       $dayOrderIds      = $cmdByDay[$date]  ?? [];
-      $dayEshop         = $cmdEshopByDay[$date] ?? [];         // taproom aggregate
-      $dayEshopOrders   = $cmdEshopOrdersByDay[$date] ?? [];   // eshop per-order rows
+      $dayEshop         = $cmdEshopByDay[$date] ?? [];   // taproom aggregate
       $isToday          = ($date === $todayDate);
 
       // Per-day metrics (exclude cancelled from HL)
@@ -3667,16 +3605,6 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
                   $dayHl += (float) $ln['qty'] * (float) $ln['hl_per_unit'];
               }
           }
-      }
-      // Per-day eshop pickup/delivery/review counts
-      $dayEshopPickup   = 0;
-      $dayEshopDelivery = 0;
-      $dayEshopReview   = 0;
-      foreach ($dayEshopOrders as $eo) {
-          $mode = (string) ($eo['fulfilment_mode'] ?? 'review');
-          if ($mode === 'pickup')        $dayEshopPickup++;
-          elseif ($mode === 'delivery')  $dayEshopDelivery++;
-          else                           $dayEshopReview++;
       }
       // Labels used in action summary strip
       $actSummaryDefs = [
@@ -3712,26 +3640,6 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
               <span class="exp-day-metric exp-day-metric--open">
                 <span class="exp-day-metric__val"><?= $dayOpen ?></span>
                 <span class="exp-day-metric__unit">ouverte<?= $dayOpen > 1 ? 's' : '' ?></span>
-              </span>
-              <?php endif ?>
-            <?php endif ?>
-            <?php if ($dayEshopPickup + $dayEshopDelivery + $dayEshopReview > 0): ?>
-              <?php if ($dayEshopPickup > 0): ?>
-              <span class="exp-day-metric exp-day-metric--eshop-pickup" title="Retraits Shopify">
-                <span class="exp-day-metric__val">🏬 <?= $dayEshopPickup ?></span>
-                <span class="exp-day-metric__unit">retrait<?= $dayEshopPickup > 1 ? 's' : '' ?></span>
-              </span>
-              <?php endif ?>
-              <?php if ($dayEshopDelivery > 0): ?>
-              <span class="exp-day-metric exp-day-metric--eshop-delivery" title="Livraisons Shopify">
-                <span class="exp-day-metric__val">🚚 <?= $dayEshopDelivery ?></span>
-                <span class="exp-day-metric__unit">livraison<?= $dayEshopDelivery > 1 ? 's' : '' ?></span>
-              </span>
-              <?php endif ?>
-              <?php if ($dayEshopReview > 0): ?>
-              <span class="exp-day-metric exp-day-metric--eshop-review" title="Commandes Shopify à classer">
-                <span class="exp-day-metric__val">⚠ <?= $dayEshopReview ?></span>
-                <span class="exp-day-metric__unit">à classer</span>
               </span>
               <?php endif ?>
             <?php endif ?>
@@ -3914,11 +3822,6 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
           </div>
         <?php endforeach ?>
 
-        <!-- Eshop per-order rows (Phase 1 Shopify — read-only) -->
-        <?php foreach ($dayEshopOrders as $eo): ?>
-          <?php exp_render_eshop_row($eo, $cmdEshopLinesByOrder[(int) $eo['id']] ?? []) ?>
-        <?php endforeach ?>
-
         <!-- Taproom/other channel auto rows (aggregate — unchanged) -->
         <?php foreach ($dayEshop as $channel => $aggr): ?>
           <?php
@@ -3938,6 +3841,259 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
               <span class="exp-chip exp-chip--auto">auto</span>
             </div>
           </div>
+        <?php endforeach ?>
+
+      </div>
+    <?php endforeach ?>
+
+  </div>
+
+  <?php endif ?>
+
+
+  <!-- ══════════════════════════════════════════════════════════════════════
+       SHOPIFY VIEW — read-only; renders inv_sales_orders WHERE channel='eshop'
+       XOR: never writes to ord_orders, never calls fg_stock_compute/depletion.
+       ══════════════════════════════════════════════════════════════════════ -->
+  <?php if ($view === 'shopify'): ?>
+
+  <?php
+  $sfBaseUrl   = '/modules/expeditions.php?view=shopify';
+  $sfFilterQS  = '';
+  if ($filterClient !== '') $sfFilterQS .= '&amp;client=' . urlencode($filterClient);
+  $sfWeekBaseUrl  = $sfBaseUrl . '&amp;mode=week';
+  $sfRangeBaseUrl = $sfBaseUrl . '&amp;mode=range';
+  ?>
+
+  <!-- ── Toolbar (date navigation + client search) ───────────────────────── -->
+  <form class="exp-toolbar" method="GET" action="/modules/expeditions.php" id="exp-shopify-toolbar-form">
+    <input type="hidden" name="view" value="shopify">
+
+    <div class="exp-toolbar__mode" role="group" aria-label="Mode de période">
+      <a href="<?= $sfWeekBaseUrl ?><?= $sfFilterQS ?>"
+         class="exp-toolbar__mode-btn<?= $cmdMode === 'week' ? ' exp-toolbar__mode-btn--active' : '' ?>"
+         aria-pressed="<?= $cmdMode === 'week' ? 'true' : 'false' ?>">Semaine</a>
+      <a href="<?= $sfRangeBaseUrl ?><?= ($cmdDu ? '&amp;du=' . $cmdDu . '&amp;au=' . $cmdAu : '') ?><?= $sfFilterQS ?>"
+         class="exp-toolbar__mode-btn<?= $cmdMode === 'range' ? ' exp-toolbar__mode-btn--active' : '' ?>"
+         aria-pressed="<?= $cmdMode === 'range' ? 'true' : 'false' ?>">Plage de dates</a>
+    </div>
+
+    <?php if ($cmdMode === 'week'): ?>
+    <div class="exp-toolbar__week-nav<?= $findIntent ? ' exp-toolbar__week-nav--muted' : '' ?>"
+         aria-label="Navigation semaine">
+      <a href="<?= $sfWeekBaseUrl ?>&amp;kw=<?= urlencode($kwPrev) ?><?= $sfFilterQS ?>"
+         class="exp-toolbar__nav-arrow" aria-label="Semaine précédente">◂</a>
+      <span class="exp-toolbar__week-label"><?= exp_isoweek_label($cmdKw) ?></span>
+      <a href="<?= $sfWeekBaseUrl ?>&amp;kw=<?= urlencode($kwNext) ?><?= $sfFilterQS ?>"
+         class="exp-toolbar__nav-arrow" aria-label="Semaine suivante">▸</a>
+      <a href="<?= $sfWeekBaseUrl ?><?= $sfFilterQS ?>"
+         class="exp-toolbar__today-btn">Aujourd'hui</a>
+    </div>
+    <?php else: ?>
+    <div class="exp-toolbar__range-inputs" id="exp-shopify-range-inputs">
+      <label class="exp-toolbar__range-label" for="exp-sf-range-du">Du</label>
+      <input type="date" id="exp-sf-range-du" name="du" class="exp-toolbar__date-input"
+             value="<?= htmlspecialchars($cmdDu) ?>"
+             min="2020-01-01" max="2030-12-31">
+      <label class="exp-toolbar__range-label" for="exp-sf-range-au">Au</label>
+      <input type="date" id="exp-sf-range-au" name="au" class="exp-toolbar__date-input"
+             value="<?= htmlspecialchars($cmdAu) ?>"
+             min="2020-01-01" max="2030-12-31">
+      <button type="submit" class="exp-toolbar__range-submit" name="mode" value="range">Afficher</button>
+    </div>
+    <?php endif ?>
+
+    <!-- Client / order name search -->
+    <div class="exp-toolbar__filters">
+      <?php if (!$findIntent): ?>
+        <input type="hidden" name="mode" value="<?= htmlspecialchars($cmdMode) ?>">
+        <?php if ($cmdMode === 'week'): ?>
+          <input type="hidden" name="kw" value="<?= htmlspecialchars($cmdKw) ?>">
+        <?php else: ?>
+          <input type="hidden" name="du" value="<?= htmlspecialchars($cmdDu) ?>">
+          <input type="hidden" name="au" value="<?= htmlspecialchars($cmdAu) ?>">
+        <?php endif ?>
+      <?php endif ?>
+
+      <div class="exp-toolbar__filter-group">
+        <label class="exp-toolbar__filter-label" for="exp-sf-filter-client">Client / commande</label>
+        <input type="text" id="exp-sf-filter-client" name="client"
+               class="exp-toolbar__filter-input"
+               value="<?= htmlspecialchars($filterClient) ?>"
+               placeholder="Tous…" autocomplete="off">
+      </div>
+      <button type="submit" class="exp-toolbar__apply-btn">Appliquer</button>
+      <?php if ($filterClient !== ''): ?>
+        <a href="<?= $sfWeekBaseUrl ?>" class="exp-toolbar__clear-btn" aria-label="Effacer les filtres">✕</a>
+      <?php endif ?>
+    </div>
+  </form>
+
+  <!-- ── Find-intent banner ──────────────────────────────────────────────── -->
+  <?php if ($findIntent): ?>
+  <div class="exp-find-banner" role="status">
+    <span class="exp-find-banner__text">Résultats — toutes dates</span>
+    <?php
+    $sfResetUrl = $sfWeekBaseUrl . '&amp;mode=week&amp;kw=' . urlencode(exp_date_to_isoweek(date('Y-m-d')));
+    ?>
+    <a href="<?= $sfResetUrl ?>" class="exp-find-banner__back">← Semaine courante</a>
+  </div>
+  <?php endif ?>
+
+  <!-- ── Shopify freshness chip ────────────────────────────────────────────
+       Always shown on the Shopify tab; amber/warning when last import > 90 min.
+  ──────────────────────────────────────────────────────────────────────────── -->
+  <?php if ($eshopLastImport !== null):
+      $now           = new DateTime();
+      $diffMinutes   = (int) round(($now->getTimestamp() - $eshopLastImport->getTimestamp()) / 60);
+      $isStale       = $diffMinutes > 90;
+      $chipCls       = 'exp-shopify-freshness-chip' . ($isStale ? ' exp-shopify-freshness-chip--stale' : '');
+      $timeStr       = $eshopLastImport->format('H:i');
+      $dateStr       = $eshopLastImport->format('d/m');
+      $todayStr      = (new DateTime())->format('d/m');
+      $importLabel   = ($dateStr === $todayStr)
+          ? 'Import Shopify ' . $timeStr
+          : 'Import Shopify ' . $dateStr . ' ' . $timeStr;
+      $titleAttr     = $isStale
+          ? 'Dernier import il y a ' . $diffMinutes . ' min — sync peut-être en retard'
+          : 'Dernier import il y a ' . $diffMinutes . ' min';
+  ?>
+  <div class="<?= htmlspecialchars($chipCls) ?>" title="<?= htmlspecialchars($titleAttr) ?>"
+       aria-label="<?= htmlspecialchars($importLabel) ?>">
+    <?= $isStale ? '<span aria-hidden="true">⚠</span> ' : '' ?><?= htmlspecialchars($importLabel) ?>
+  </div>
+  <?php endif ?>
+
+  <!-- ── Shopify period summary ────────────────────────────────────────────── -->
+  <?php
+  $sfPickup   = 0;
+  $sfDelivery = 0;
+  $sfReview   = 0;
+  $sfTotalHl  = 0.0;
+  foreach ($cmdEshopOrdersByDay as $dayOrders) {
+      foreach ($dayOrders as $eo) {
+          $mode = (string) ($eo['fulfilment_mode'] ?? 'review');
+          if ($mode === 'pickup')        $sfPickup++;
+          elseif ($mode === 'delivery')  $sfDelivery++;
+          else                           $sfReview++;
+          $sfTotalHl += (float) ($eo['total_hl'] ?? 0);
+      }
+  }
+  $sfTotal = $sfPickup + $sfDelivery + $sfReview;
+  ?>
+  <?php if ($sfTotal > 0): ?>
+  <div class="exp-summary-band exp-summary-band--shopify" role="region" aria-label="Résumé Boutique en ligne">
+    <div class="exp-summary-kpi">
+      <span class="exp-summary-kpi__value"><?= number_format($sfTotalHl, 2) ?></span>
+      <span class="exp-summary-kpi__label">HL</span>
+    </div>
+    <div class="exp-summary-kpi">
+      <span class="exp-summary-kpi__value"><?= $sfTotal ?></span>
+      <span class="exp-summary-kpi__label">commande<?= $sfTotal !== 1 ? 's' : '' ?></span>
+    </div>
+    <div class="exp-summary-sep"></div>
+    <?php if ($sfPickup > 0): ?>
+    <div class="exp-summary-kpi exp-summary-kpi--eshop" title="Retraits boutique">
+      <span class="exp-summary-kpi__value">🏬 <?= $sfPickup ?></span>
+      <span class="exp-summary-kpi__label">retrait<?= $sfPickup !== 1 ? 's' : '' ?></span>
+    </div>
+    <?php endif ?>
+    <?php if ($sfDelivery > 0): ?>
+    <div class="exp-summary-kpi exp-summary-kpi--eshop" title="Livraisons">
+      <span class="exp-summary-kpi__value">🚚 <?= $sfDelivery ?></span>
+      <span class="exp-summary-kpi__label">livraison<?= $sfDelivery !== 1 ? 's' : '' ?></span>
+    </div>
+    <?php endif ?>
+    <?php if ($sfReview > 0): ?>
+    <div class="exp-summary-kpi exp-summary-kpi--eshop exp-summary-kpi--eshop-warn" title="À classer">
+      <span class="exp-summary-kpi__value">⚠ <?= $sfReview ?></span>
+      <span class="exp-summary-kpi__label">à classer</span>
+    </div>
+    <?php endif ?>
+  </div>
+  <?php endif ?>
+
+  <!-- ── Day blocks ────────────────────────────────────────────────────────── -->
+  <div class="exp-section" id="exp-shopify-days">
+
+    <?php
+    $sfDates = array_keys($cmdEshopOrdersByDay);
+    if ($findIntent) { krsort($cmdEshopOrdersByDay); rsort($sfDates); }
+    else             { ksort($cmdEshopOrdersByDay);  sort($sfDates); }
+    ?>
+
+    <?php if (empty($sfDates)): ?>
+      <div class="op-form__card exp-empty-state">
+        <p class="exp-empty">
+          <?php if ($filterClient !== ''): ?>
+            Aucune commande <?= htmlspecialchars(EXP_INTERNAL_LABELS['eshop']) ?> ne correspond à la recherche.
+          <?php else: ?>
+            Aucune commande <?= htmlspecialchars(EXP_INTERNAL_LABELS['eshop']) ?> pour cette période.
+          <?php endif ?>
+        </p>
+      </div>
+    <?php endif ?>
+
+    <?php foreach ($sfDates as $sfDate): ?>
+      <?php
+      $sfDayOrders = $cmdEshopOrdersByDay[$sfDate] ?? [];
+      $sfIsToday   = ($sfDate === $todayDate);
+
+      // Per-day bucket counts
+      $sfDayPickup   = 0;
+      $sfDayDelivery = 0;
+      $sfDayReview   = 0;
+      $sfDayHl       = 0.0;
+      foreach ($sfDayOrders as $eo) {
+          $m = (string) ($eo['fulfilment_mode'] ?? 'review');
+          if ($m === 'pickup')       $sfDayPickup++;
+          elseif ($m === 'delivery') $sfDayDelivery++;
+          else                       $sfDayReview++;
+          $sfDayHl += (float) ($eo['total_hl'] ?? 0);
+      }
+      $sfDayTotal = $sfDayPickup + $sfDayDelivery + $sfDayReview;
+      ?>
+      <div class="exp-day-block<?= $sfIsToday ? ' exp-day-block--today' : '' ?>">
+        <!-- Day header -->
+        <div class="exp-day-header<?= $sfIsToday ? ' exp-day-header--today' : '' ?>">
+          <div class="exp-day-header__date">
+            <span class="exp-day-header__name"><?= exp_day_name($sfDate) ?></span>
+            <span class="exp-day-header__fmt"><?= exp_fmt_date($sfDate) ?></span>
+            <?php if ($sfIsToday): ?>
+              <span class="exp-day-today-badge" aria-label="Aujourd'hui">Aujourd'hui</span>
+            <?php endif ?>
+          </div>
+          <div class="exp-day-header__metrics">
+            <?php if ($sfDayHl > 0): ?>
+              <span class="exp-day-metric">
+                <span class="exp-day-metric__val"><?= number_format($sfDayHl, 2) ?></span>
+                <span class="exp-day-metric__unit">HL</span>
+              </span>
+            <?php endif ?>
+            <?php if ($sfDayPickup > 0): ?>
+              <span class="exp-day-metric exp-day-metric--eshop-pickup" title="Retraits boutique">
+                <span class="exp-day-metric__val">🏬 <?= $sfDayPickup ?></span>
+                <span class="exp-day-metric__unit">retrait<?= $sfDayPickup > 1 ? 's' : '' ?></span>
+              </span>
+            <?php endif ?>
+            <?php if ($sfDayDelivery > 0): ?>
+              <span class="exp-day-metric exp-day-metric--eshop-delivery" title="Livraisons">
+                <span class="exp-day-metric__val">🚚 <?= $sfDayDelivery ?></span>
+                <span class="exp-day-metric__unit">livraison<?= $sfDayDelivery > 1 ? 's' : '' ?></span>
+              </span>
+            <?php endif ?>
+            <?php if ($sfDayReview > 0): ?>
+              <span class="exp-day-metric exp-day-metric--eshop-review" title="À classer">
+                <span class="exp-day-metric__val">⚠ <?= $sfDayReview ?></span>
+                <span class="exp-day-metric__unit">à classer</span>
+              </span>
+            <?php endif ?>
+          </div>
+        </div>
+
+        <!-- Eshop per-order rows — reuses exp_render_eshop_row() helper -->
+        <?php foreach ($sfDayOrders as $eo): ?>
+          <?php exp_render_eshop_row($eo, $cmdEshopLinesByOrder[(int) $eo['id']] ?? []) ?>
         <?php endforeach ?>
 
       </div>
