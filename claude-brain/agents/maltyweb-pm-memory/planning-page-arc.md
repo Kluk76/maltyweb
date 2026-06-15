@@ -1,6 +1,16 @@
-# Planning Page Arc — schema, engine, conventions (load when touching planning)
+# Planning Page Arc — schema, engine, conventions (load when touching planning) — ✅ ARC CLOSED 2026-06-15
 
-> Surface: `public/modules/planning.php` + engine `app/planning-eligibility.php` (PURE-READ) + **Phase-3 producer `app/planning-predict.php`**. Phase 1 (manual week calendar) + Phase 2 (dynamic process-eligibility) SHIPPED+COMMITTED 2026-06-15 (`da202a9`, mig **364** `364_planning_tables.sql`). **Phase 3 (predictive suggestions) SHIPPED+COMMITTED 2026-06-15 (`d102a0d`, mig 365 `365_planning_suggest_settings.sql` — APPLIED on VPS).** `ref_pages.planning` is **is_active=0** (domain='general') — NOT reachable yet; orchestrator activates after final verification; no tour card due until activated (RULE 3 predicate needs is_active=1). MIG HEAD verified **365**, 0 pending (2026-06-15). All facts below VPS/source-verified 2026-06-15.
+> **✅ SHIPPED & LIVE 2026-06-15 — all three phases built, deployed, verified, committed.** Surface: `public/modules/planning.php` + engine `app/planning-eligibility.php` (PURE-READ) + **Phase-3 producer `app/planning-predict.php`**. Phase 1 (manual week calendar) + Phase 2 (dynamic process-eligibility): mig **364** (`364_planning_tables.sql` — `pl_plan_days`+`pl_plan_items`, INTENT-layer, schema_meta source class). Phase 3 (predictive suggestions): mig **365** (`365_planning_suggest_settings.sql` — `suggest_reason` col + system_settings `stock`/`plan_suggest_target_weeks`=3.0w). **Preset access: mig 367** (`367_*` — grants `planning` to access presets manager / production_operator / logistics_operator; idempotent via `uniq_preset_page` + `INSERT IGNORE`).
+> **Commits:** `da202a9` (P1+P2 superset after a history reorg/merge) · `d102a0d` (P3) · `beec798` (mig 367 + tour card). MIG HEAD = **367**.
+> `ref_pages.planning` is now **is_active=1** (domain='general'). Tables a **clean slate (0 rows — test fixtures cleaned)**. **CARDINAL RULE enforced in schema_meta + code comments: Planning is INTENT, never read by COGS/COP/WAC/BOM/beer-tax/inventory.** All facts below VPS/source-verified 2026-06-15.
+
+## 🔴 DURABLE LEARNING — a new ref_pages row is INVISIBLE until added to a user's access PRESET (applies to ALL future new pages)
+`user_can_access()` only falls through to the **role-floor** for preset-LESS users (i.e. admins). For any onboarded user (who has a preset), a freshly-added/activated `ref_pages` row returns **403** until that page is added to their access preset via `ref_access_preset_pages`. **Adding the page to the relevant access presets (by migration) is a REQUIRED ship step, not optional.** This bit the Planning arc: operators/managers got 403 after `is_active=1` until mig 367 granted the page to the presets. → Ship checklist for any new page: (1) `ref_pages` row + is_active, (2) `ref_access_preset_pages` grant rows for every preset that should see it, (3) RULE 3 tour card.
+
+## Access policy (Kouros decided 2026-06-15) — prod/logistics presets only
+- **manager preset → WRITE**, section-gated: `canWort = is_admin || manager_can('production')`, `canLog = is_admin || manager_can('logistics')`. NB the `manager_can` hierarchy makes production ⊇ logistics, so production managers ALSO get logistics write.
+- **production_operator + logistics_operator → READ-ONLY** (granted view, no write controls).
+- **sales_manager + marketing presets INTENTIONALLY NOT granted.** Currently-excluded humans: **Louis Maechler & Thierry Stierli** (tagged manager/logistics but sitting on the sales_manager preset) and **Olivier Barral** (operator on the marketing preset) — these three have **NO access** to Planning. Revisit at onboarding if access is desired (open follow-up).
 
 ## Table DDL (live)
 
@@ -28,8 +38,9 @@
 - `is_active` TINYINT(1) NOT NULL DEFAULT 1 (soft-delete flag; all reads filter is_active=1; delete_item sets 0)
 - `created_by_user_id_fk` INT UNSIGNED → users ON DELETE SET NULL · created_at/updated_at
 
-## Eligibility engine — `app/planning-eligibility.php`
+## Eligibility engine — `app/planning-eligibility.php` (✅ VERIFIED LIVE 2026-06-15)
 **CARDINAL: PURE-READ, zero writes anywhere.** Entry `planning_week_eligibility(PDO $pdo, DateTimeImmutable $weekStart): array`.
+**LIVE-VERIFIED behaviour:** forward-replay over `TankSimulator->run()` snapshot + in-plan items keyed on (recipe_id,batch). Confirmed: a CCT beer is ABSENT from packaging-eligible; inserting an in-plan racking UNLOCKS it for packaging from `racked_on + commissioning_settings(packaging, min_days_after_racking=1)` onward; racking respects garde via yeast-eligibility (`effective_garde` = COALESCE(override → family)); all gates overridable via `hors_process` + reason; **server-side re-check on POST**.
 Forward-replay: seeds CCT/BBT working state from `TankSimulator->run(weekStart)` snapshot (+ derives cold_crash_date from bd_fermenting_v2 ColdCrash, racked_on from bd_racking_v2), then for each of 7 days computes eligibility BEFORE applying that day's pl_plan_items, THEN mutates working state from in-plan items (even hors_process=1 propagate occupancy — a planned racking unlocks packaging on later days; a planned brewing occupies a CCT; a planned packaging drains a BBT).
 Returns keyed by 'YYYY-MM-DD':
 ```
@@ -53,8 +64,9 @@ There is **no format→pkg_type helper**. The planning page derives offerable pk
 - Query-param read with `??` default THEN validate (week regex `^\d{4}-\d{2}-\d{2}$`).
 - All section-specific cols left NULL when not applicable (semantic NULL, fine).
 
-## Phase 3 — AS-BUILT (SHIPPED 2026-06-15, `d102a0d`, mig 365)
+## Phase 3 — AS-BUILT (SHIPPED 2026-06-15, `d102a0d`, mig 365 — ✅ VERIFIED LIVE)
 Producer: **`app/planning-predict.php` — `planning_generate_suggestions(PDO $pdo, DateTimeImmutable $weekStart, int $targetWeeks): array`** (SEPARATE surface; the engine stays a pure projection — CARDINAL honored).
+**LIVE-VERIFIED:** `fg_stock_compute` coverage → proposes packaging (eligible beers) OR brewing (low-coverage, no eligible liquid); writes `status='proposed' source='predictive'` with `suggest_reason`; manager Accept/Edit/Reject; **never auto-commits**; dedup per beer+section+week; **NO cron** (an optional disabled cron is noted as future). Commit-stage review caught + fixed **2 criticals**: (a) a `$freeCct` shared across brewing proposals (each proposal must allocate its own free CCT), (b) a best→worst-coverage filter inversion (must filter on WORST-coverage format).
 Algorithm (as built):
 1. `fg_stock_compute()` → aggregate per recipe: **worst_semaines = MIN across that recipe's formats** (worst-case coverage, deliberately NOT MAX).
 2. Filter recipes whose worst_semaines is below target weeks (`$targetWeeks` ← system_settings section='stock', key='plan_suggest_target_weeks', value=3.0w, mig 365).
@@ -68,7 +80,18 @@ Page handlers (`public/modules/planning.php`): **generate_suggestions** (calls p
 - Engine remains pure-read; the producer is the only suggestion writer. Never push suggestion logic back into planning-eligibility.php.
 - Accept flips status 'proposed'→'planned' in place (source stays 'predictive' for provenance) — no duplicate 'planned' row.
 - Refuse-don't-NULL: a suggestion that can't resolve recipe_id falls to beer_free_text (engine supports the beer-name fallback) — never a half-identified row.
-- **is_active=0 on the page** → built+committed but surface stays hidden; orchestrator activates after final verification → THEN RULE 3 fires → PM dispatches maltyweb-tour-steward for a tour card. (general/non-admin domain ⇒ a tour card IS due once active.)
 - Engine recomputes per-call (no cache); producer calling it once per week is fine for a 7-day window.
+
+## ✅ Tour (RULE 3 satisfied)
+`maltyweb-tour-steward` shipped the **Planning Visite guidée card** (description + icon + vignette) when `is_active=1` fired the RULE 3 predicate — gap closed. (Separately, the steward drafted a **`financier` tour card held for PM ratification** — that belongs to the **COGS-fiche arc**, NOT Planning; ratify it there.)
+
+## Final state + OPEN follow-ups (2026-06-15)
+- **State:** page LIVE (`is_active=1`), `pl_plan_days`/`pl_plan_items` a clean slate (0 rows; test fixtures cleaned).
+- (a) **3 excluded users** (Louis Maechler, Thierry Stierli, Olivier Barral) pending an onboarding decision on whether to grant Planning access.
+- (b) **Optional predictive cron** — disabled by default (mirrors the fulfilment ships-cron pattern); build only on operator request.
+- (c) **Real authenticated browser UAT of the page JS** (dropdowns / generate / accept-reject) — recommended to Kouros; needs a manager login (a subagent can't auth as a manager).
+
+## 🟡 Heads-up (NOT from this arc) — tank-simulator.php in-flight refactor
+`app/tank-simulator.php` has a **large uncommitted refactor in the shared working tree from a PARALLEL session** (CCT-destination racking + BBT-overwrite fix). It **preserves the `run()` contract**, so the eligibility engine is unaffected — but flag it as IN-FLIGHT if you sequence anything on the sim. (Pairs with the deploy-pushes-the-working-tree hazard: a deploy from this clone carries that uncommitted refactor live.)
 
 system_settings (for reference): UNIQUE (section,key_name); value_text XOR value_num (CHECK); read via app/settings.php::system_setting(). commissioning_settings is a SEPARATE table (same shape) holding min_days_after_racking under section='packaging'.
