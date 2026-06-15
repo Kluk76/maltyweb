@@ -411,6 +411,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'form') {
     // ── Validation ────────────────────────────────────────────────────────
     $errors = [];
 
+    // B2B-create block (Phase 1 live — BC is the sole source for customer orders).
+    // Only NEW customer orders are blocked; editing an existing order (any source,
+    // incl. bc-sourced) is still allowed. Internal-channel creation is never blocked.
+    if (!$isEdit && $orderType === 'customer') {
+        flash_set('err', 'Les commandes clients proviennent désormais de Business Central. La création manuelle de commandes B2B est désactivée.');
+        redirect_to('/modules/expeditions.php?view=form');
+    }
+
     // Order type
     if (!in_array($orderType, EXP_ORDER_TYPES, true)) {
         $errors[] = 'Type de commande invalide.';
@@ -4145,72 +4153,92 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
         <?= $editId ? 'Modifier commande #' . $editId : 'Nouvelle commande' ?>
       </div>
 
-      <div class="exp-type-toggle">
-        <label class="exp-toggle-label">Type de commande</label>
-        <div class="exp-toggle-group" role="radiogroup" aria-label="Type de commande">
-          <?php $selType = $editOrder ? $editOrder['order_type'] : 'customer'; ?>
-          <button type="button" class="exp-toggle-btn <?= $selType === 'customer' ? 'exp-toggle-btn--active' : '' ?>"
-                  id="exp-type-customer" role="radio"
-                  aria-checked="<?= $selType === 'customer' ? 'true' : 'false' ?>"
-                  <?= $isReadOnly ? 'disabled' : '' ?>>
-            Client
-          </button>
-          <button type="button" class="exp-toggle-btn <?= $selType === 'internal' ? 'exp-toggle-btn--active' : '' ?>"
-                  id="exp-type-internal" role="radio"
-                  aria-checked="<?= $selType === 'internal' ? 'true' : 'false' ?>"
-                  <?= $isReadOnly ? 'disabled' : '' ?>>
-            Canal interne
-          </button>
+      <?php
+        // In create mode (no editId): customer/B2B creation is blocked — BC is the
+        // sole source for customer orders since Phase 1 went live. We hide the
+        // "Client" toggle and lock order_type to 'internal'.
+        // In edit mode: the full toggle is shown so existing customer orders (incl.
+        // bc-sourced) can still be corrected by the logistics team.
+        $selType = $editOrder ? $editOrder['order_type'] : 'internal';
+        $createMode = ($editId === 0);
+      ?>
+
+      <?php if ($createMode): ?>
+        <!-- BC notice — customer-order create is disabled; only internal channels -->
+        <div class="exp-bc-notice">
+          Les commandes clients sont désormais importées automatiquement depuis Business Central.
+          La création manuelle est réservée aux canaux internes.
         </div>
-        <input type="hidden" name="order_type" id="exp-order-type" value="<?= htmlspecialchars($selType) ?>">
-      </div>
+        <input type="hidden" name="order_type" id="exp-order-type" value="internal">
 
-      <!-- Client mode -->
-      <div id="exp-customer-panel" class="exp-party-panel <?= $selType !== 'customer' ? 'exp-party-panel--hidden' : '' ?>">
-        <div class="op-form__grid">
+      <?php else: ?>
+        <!-- Edit mode: full toggle (allows editing customer orders from any source) -->
+        <div class="exp-type-toggle">
+          <label class="exp-toggle-label">Type de commande</label>
+          <div class="exp-toggle-group" role="radiogroup" aria-label="Type de commande">
+            <button type="button" class="exp-toggle-btn <?= $selType === 'customer' ? 'exp-toggle-btn--active' : '' ?>"
+                    id="exp-type-customer" role="radio"
+                    aria-checked="<?= $selType === 'customer' ? 'true' : 'false' ?>"
+                    <?= $isReadOnly ? 'disabled' : '' ?>>
+              Client
+            </button>
+            <button type="button" class="exp-toggle-btn <?= $selType === 'internal' ? 'exp-toggle-btn--active' : '' ?>"
+                    id="exp-type-internal" role="radio"
+                    aria-checked="<?= $selType === 'internal' ? 'true' : 'false' ?>"
+                    <?= $isReadOnly ? 'disabled' : '' ?>>
+              Canal interne
+            </button>
+          </div>
+          <input type="hidden" name="order_type" id="exp-order-type" value="<?= htmlspecialchars($selType) ?>">
+        </div>
 
-          <div class="op-form__field op-form__field--full">
-            <label class="op-form__label" for="exp-cust-search">Client</label>
-            <div class="exp-typeahead-wrap" id="exp-cust-wrap">
-              <input type="text"
-                     id="exp-cust-search"
-                     class="op-form__input exp-typeahead-input"
-                     placeholder="Rechercher un client…"
-                     autocomplete="off"
-                     autocorrect="off"
-                     spellcheck="false"
+        <!-- Client mode (edit only) -->
+        <div id="exp-customer-panel" class="exp-party-panel <?= $selType !== 'customer' ? 'exp-party-panel--hidden' : '' ?>">
+          <div class="op-form__grid">
+
+            <div class="op-form__field op-form__field--full">
+              <label class="op-form__label" for="exp-cust-search">Client</label>
+              <div class="exp-typeahead-wrap" id="exp-cust-wrap">
+                <input type="text"
+                       id="exp-cust-search"
+                       class="op-form__input exp-typeahead-input"
+                       placeholder="Rechercher un client…"
+                       autocomplete="off"
+                       autocorrect="off"
+                       spellcheck="false"
+                       value="<?= $editOrder && $editOrder['order_type'] === 'customer'
+                           ? htmlspecialchars($editOrder['customer_name'] ?? '') : '' ?>"
+                       <?= $isReadOnly ? 'disabled' : '' ?>>
+                <ul id="exp-cust-dropdown" class="exp-typeahead-dropdown" role="listbox"
+                    aria-label="Clients" hidden></ul>
+              </div>
+              <input type="hidden" name="customer_id" id="exp-customer-id"
                      value="<?= $editOrder && $editOrder['order_type'] === 'customer'
-                         ? htmlspecialchars($editOrder['customer_name'] ?? '') : '' ?>"
-                     <?= $isReadOnly ? 'disabled' : '' ?>>
-              <ul id="exp-cust-dropdown" class="exp-typeahead-dropdown" role="listbox"
-                  aria-label="Clients" hidden></ul>
+                         ? (int) $editOrder['customer_id_fk'] : 0 ?>">
             </div>
-            <input type="hidden" name="customer_id" id="exp-customer-id"
-                   value="<?= $editOrder && $editOrder['order_type'] === 'customer'
-                       ? (int) $editOrder['customer_id_fk'] : 0 ?>">
-          </div>
 
-          <!-- Inline new customer -->
-          <div class="op-form__field op-form__field--full" id="exp-new-cust-panel" hidden>
-            <label class="op-form__label" for="exp-new-cust-name">
-              Nouveau client
-              <span class="op-form__unit">sera créé avec needs_review=1</span>
-            </label>
-            <input type="text"
-                   id="exp-new-cust-name"
-                   name="new_customer_name"
-                   class="op-form__input"
-                   placeholder="Nom du client…"
-                   maxlength="200"
-                   <?= $isReadOnly ? 'disabled' : '' ?>>
-          </div>
+            <!-- Inline new customer -->
+            <div class="op-form__field op-form__field--full" id="exp-new-cust-panel" hidden>
+              <label class="op-form__label" for="exp-new-cust-name">
+                Nouveau client
+                <span class="op-form__unit">sera créé avec needs_review=1</span>
+              </label>
+              <input type="text"
+                     id="exp-new-cust-name"
+                     name="new_customer_name"
+                     class="op-form__input"
+                     placeholder="Nom du client…"
+                     maxlength="200"
+                     <?= $isReadOnly ? 'disabled' : '' ?>>
+            </div>
 
+          </div>
         </div>
-      </div>
+      <?php endif ?>
 
-      <!-- Internal channel mode -->
+      <!-- Internal channel mode (always rendered — create uses this exclusively) -->
       <?php $selChan = $editOrder ? ($editOrder['internal_channel'] ?? '') : ''; ?>
-      <div id="exp-internal-panel" class="exp-party-panel <?= $selType !== 'internal' ? 'exp-party-panel--hidden' : '' ?>">
+      <div id="exp-internal-panel" class="exp-party-panel <?= ($selType !== 'internal' && !$createMode) ? 'exp-party-panel--hidden' : '' ?>">
         <div class="op-form__field">
           <label class="op-form__label" for="exp-internal-channel">Canal</label>
           <select name="internal_channel"
