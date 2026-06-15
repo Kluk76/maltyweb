@@ -160,7 +160,7 @@ body.rg-page .nav-rail::before {
 
 body.rg-page .nav-section-label {
   font-family: "JetBrains Mono", monospace; font-size: 9px; letter-spacing: .32em;
-  color: var(--ink-faint); text-transform: uppercase;
+  color: var(--ink-label); text-transform: uppercase;
   padding: 0 22px 10px; margin-top: 6px;
 }
 
@@ -254,7 +254,7 @@ body.rg-page .rg-card-title {
 
 body.rg-page .rg-card-title .rg-card-label {
   font-family: "JetBrains Mono", monospace; font-size: 8px; letter-spacing: .14em;
-  text-transform: uppercase; color: var(--ink-faint); margin-left: auto;
+  text-transform: uppercase; color: var(--ink-label); margin-left: auto;
 }
 
 /* ── Settings field rows ─────────────────────────────────────────────────────── */
@@ -355,7 +355,7 @@ body.rg-page .rg-table {
 }
 body.rg-page .rg-table th {
   font-family: "JetBrains Mono", monospace; font-size: 9px; letter-spacing: .18em;
-  text-transform: uppercase; color: var(--ink-faint); text-align: left;
+  text-transform: uppercase; color: var(--ink-label); text-align: left;
   padding: 8px 12px; border-bottom: 1px solid var(--hairline); white-space: nowrap;
 }
 body.rg-page .rg-table td {
@@ -445,7 +445,7 @@ body.rg-page .rg-create-user .rg-form-title {
 
 body.rg-page .rg-pw-hint {
   font-family: "JetBrains Mono", monospace; font-size: 10px; letter-spacing: .06em;
-  color: var(--ink-faint); margin-top: 4px; display: block;
+  color: var(--ink-label); margin-top: 4px; display: block;
 }
 
 /* ── Responsive narrow ───────────────────────────────────────────────────────── */
@@ -464,7 +464,7 @@ body.rg-page .rg-preset-badge {
 }
 body.rg-page .rg-preset-bypass {
   font-family: "JetBrains Mono", monospace; font-size: 8.5px; letter-spacing: .06em;
-  text-transform: uppercase; color: var(--ink-faint); font-style: italic;
+  text-transform: uppercase; color: var(--ink-label); font-style: italic;
 }
 
 /* ── Inline access row ───────────────────────────────────────────────────────── */
@@ -590,7 +590,7 @@ body.rg-page .rg-preset-name {
 
 body.rg-page .rg-preset-key {
   font-family: "JetBrains Mono", monospace; font-size: 9px; letter-spacing: .12em;
-  text-transform: uppercase; color: var(--ink-faint);
+  text-transform: uppercase; color: var(--ink-label);
   background: color-mix(in srgb, var(--ink) 7%, transparent);
   padding: 2px 8px; border-radius: 6px;
 }
@@ -618,7 +618,7 @@ body.rg-page .rg-preset-page-chip.in-preset {
   border-color: color-mix(in srgb, var(--hop) 28%, transparent);
 }
 body.rg-page .rg-preset-page-chip.out-preset {
-  background: transparent; color: var(--ink-faint);
+  background: transparent; color: var(--ink-label);
   border-color: var(--hairline);
 }
 

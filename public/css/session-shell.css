@@ -224,10 +224,10 @@ body.session-shell .ss-step--active .ss-step__sub { color: var(--ink-soft); }
 body.session-shell .ss-step--future .ss-step__circle {
   background: var(--bg-elev);
   border-color: var(--hairline);
-  color: var(--ink-faint);
+  color: var(--ink-label);
 }
-body.session-shell .ss-step--future .ss-step__label { color: var(--ink-faint); }
-body.session-shell .ss-step--future .ss-step__sub { color: var(--ink-faint); }
+body.session-shell .ss-step--future .ss-step__label { color: var(--ink-label); }
+body.session-shell .ss-step--future .ss-step__sub { color: var(--ink-label); }
 
 /* The numbered/checkmark circle */
 body.session-shell .ss-step__circle {
@@ -351,10 +351,10 @@ body.session-shell .ss-slot-placeholder {
 body.session-shell .ss-slot-placeholder__label {
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 9.5px; letter-spacing: 0.22em; text-transform: uppercase;
-  color: var(--ink-faint);
+  color: var(--ink-label);
 }
 body.session-shell .ss-slot-placeholder__hint {
-  font-size: 12px; color: var(--ink-faint);
+  font-size: 12px; color: var(--ink-label);
   max-width: 280px; text-align: center; line-height: 1.5;
 }
 
@@ -383,7 +383,7 @@ body.session-shell .ss-rail__title {
 }
 body.session-shell .ss-rail__count {
   font-family: "JetBrains Mono", ui-monospace, monospace;
-  font-size: 9.5px; color: var(--ink-faint);
+  font-size: 9.5px; color: var(--ink-label);
 }
 
 /* Step entries in the rail */
@@ -433,7 +433,7 @@ body.session-shell .ss-rail__entry-actor {
 }
 body.session-shell .ss-rail__entry-time {
   font-family: "JetBrains Mono", ui-monospace, monospace;
-  font-size: 9px; color: var(--ink-faint);
+  font-size: 9px; color: var(--ink-label);
   display: block; margin-top: 1px;
 }
 body.session-shell .ss-rail__entry-payload {
@@ -1046,7 +1046,7 @@ body.session-shell .ss-recap-badge--pending {
 }
 
 body.session-shell .ss-recap-badge--unknown {
-  color: var(--ink-faint);
+  color: var(--ink-label);
   background: none;
   border: none;
   padding: 0;

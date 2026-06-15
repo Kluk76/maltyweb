@@ -313,7 +313,7 @@ body.salle-des-machines .sdm-croqui .floorlabel {
   font-family: "JetBrains Mono", monospace;
   font-size: 9px;
   letter-spacing: .18em;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   text-transform: uppercase;
 }
 body.salle-des-machines .sdm-config {
@@ -435,7 +435,7 @@ body.salle-des-machines .sdm-cont-badge {
 
 /* delete btn */
 body.salle-des-machines .sdm-del {
-  background: none; border: 1px solid transparent; border-radius: 5px; color: var(--ink-faint);
+  background: none; border: 1px solid transparent; border-radius: 5px; color: var(--ink-label);
   font-size: 12px; cursor: pointer; width: 24px; height: 24px; flex: 0 0 24px;
   display: flex; align-items: center; justify-content: center; transition: .2s;
 }
@@ -576,7 +576,7 @@ body.salle-des-machines svg.sdm-draw .dim {
 body.salle-des-machines .sdm-titleblock {
   position: fixed; bottom: 16px; right: 50px; z-index: 4;
   text-align: right; font-family: "JetBrains Mono", monospace; font-size: 9px;
-  letter-spacing: .14em; color: var(--ink-faint); line-height: 1.7;
+  letter-spacing: .14em; color: var(--ink-label); line-height: 1.7;
   text-transform: uppercase; border-right: 2px solid var(--hairline-2); padding-right: 10px;
 }
 

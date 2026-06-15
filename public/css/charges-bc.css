@@ -131,7 +131,7 @@ body.charges-bc .main {
 .cbc-dropzone__icon {
   width: 40px;
   height: 40px;
-  color: var(--ink-faint);
+  color: var(--ink-label);
 }
 
 .cbc-dropzone__text {
@@ -285,7 +285,7 @@ body.charges-bc .main {
   font-size: 0.7rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--ink-faint);
+  color: var(--ink-label);
 }
 
 .cbc-preview-stats .stat-value {

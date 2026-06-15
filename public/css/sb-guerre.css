@@ -105,7 +105,7 @@ body.sb-guerre .sb-guerre-banner__refresh {
   font-family: "JetBrains Mono", monospace;
   font-size: 0.52rem;
   letter-spacing: 0.06em;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   white-space: nowrap;
 }
 
@@ -349,7 +349,7 @@ body.sb-guerre .sb-guerre-action-snooze {
   font-family: "JetBrains Mono", monospace;
   font-size: 0.52rem;
   letter-spacing: 0.06em;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   background: none;
   border: 1px dashed var(--hairline);
   border-radius: 2px;
@@ -427,7 +427,7 @@ body.sb-guerre .sb-guerre-about__label {
   font-size: 0.52rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   margin-bottom: 4px;
 }
 

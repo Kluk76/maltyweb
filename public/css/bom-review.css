@@ -609,7 +609,7 @@ body.bom-review .main {
 .br-browse-sub-empty {
     font-family: 'DM Sans', sans-serif;
     font-size:   0.78rem;
-    color:       var(--ink-faint);
+    color: var(--ink-label);
     padding:     0.3rem 0.5rem;
     font-style:  italic;
 }

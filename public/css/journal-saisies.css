@@ -212,7 +212,7 @@ body.journal-saisies .js-row--conditionnement .js-row__type { color: var(--ember
 body.journal-saisies .js-row__time {
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.7rem;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   flex-shrink: 0;
 }
 
@@ -237,14 +237,14 @@ body.journal-saisies .js-row__meta {
 body.journal-saisies .js-row__date {
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.75rem;
-  color: var(--ink-faint);
+  color: var(--ink-label);
 }
 
 body.journal-saisies .js-row__chevron {
   display: flex;
   align-items: center;
   padding: 0 14px 0 8px;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   font-size: 1.2rem;
   font-weight: 300;
   flex-shrink: 0;
@@ -551,7 +551,7 @@ body.journal-saisies .jsd-timeline__actor {
 body.journal-saisies .jsd-timeline__ts {
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.72rem;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   margin-left: auto;
 }
 
@@ -622,7 +622,7 @@ body.journal-saisies .jsd-diff__new {
 }
 
 body.journal-saisies .jsd-diff__arrow {
-  color: var(--ink-faint);
+  color: var(--ink-label);
   font-size: 0.85rem;
 }
 
@@ -633,7 +633,7 @@ body.journal-saisies .jsd-diff--snapshot .jsd-diff__new {
 body.journal-saisies .jsd-no-diff {
   font-family: 'DM Sans', sans-serif;
   font-size: 0.8rem;
-  color: var(--ink-faint);
+  color: var(--ink-label);
   font-style: italic;
   margin: 0;
 }

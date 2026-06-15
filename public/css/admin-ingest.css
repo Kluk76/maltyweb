@@ -200,7 +200,7 @@
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 10px;
   letter-spacing: 0.14em;
-  color: var(--ink-faint);
+  color: var(--ink-label);
 }
 .home .ia-section__filter-tag {
   display: inline-flex;
@@ -372,11 +372,11 @@
   background: color-mix(in srgb, var(--hop) 4%, transparent);
 }
 .home .ia-tr--resolved .ia-td {
-  color: var(--ink-faint);
+  color: var(--ink-label);
 }
 .home .ia-mono   { font-family: "JetBrains Mono", ui-monospace, monospace; }
 .home .ia-nowrap { white-space: nowrap; }
-.home .ia-muted  { color: var(--ink-faint); font-style: italic; }
+.home .ia-muted  { color: var(--ink-label); font-style: italic; }
 .home .ia-ok     { color: var(--hop); }
 .home .ia-bad    { color: var(--ember); }
 .home .ia-msg    {

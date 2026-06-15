@@ -78,7 +78,7 @@
   outline: none;
   border-color: var(--oak);
 }
-.msr-field__input::placeholder { color: var(--ink-faint); }
+.msr-field__input::placeholder { color: var(--ink-label); }
 
 /* ── Remove button (danger-sm style) ─────────────────────────────────────── */
 .msr-remove {
