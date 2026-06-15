@@ -1,6 +1,10 @@
 # /etc/cron.d/maltytask-bc-sales
 #
-# Incremental BC item-ledger → inv_sales_ledger connector.
+# Incremental BC sale-side connectors (run in lockstep, one line):
+#   1. item-ledger → inv_sales_ledger        (gross, the rate denominator)
+#   2. sales-invoice-lines → inv_sales_invoice_lines (discount, the rate numerator)
+# Chained with && so the discount numerator can never refresh against a stale
+# ledger gross (KPI #100 discount-rate divides one by the other).
 # Anti-joins the in-scope (Posting_Date ge MIN(posting_date)) BC Sale Entry_Nos
 # against inv_sales_ledger.bc_line_seq and upserts the missing rows. Catches
 # "holes below the high-water mark" that a MAX-watermark pull would miss.
@@ -35,4 +39,4 @@ SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # m   h         dom mon dow  user        command
-0   0,4,8,12,16,20  *   *   *   maltytask   cd /var/www/maltytask && /usr/bin/python3 scripts/python/ingest_bc_sales_ledger.py --apply >> /var/log/maltytask/bc-sales.log 2>&1
+0   0,4,8,12,16,20  *   *   *   maltytask   cd /var/www/maltytask && /usr/bin/python3 scripts/python/ingest_bc_sales_ledger.py --apply && /usr/bin/python3 scripts/python/ingest_bc_sales_invoice_lines.py --apply >> /var/log/maltytask/bc-sales.log 2>&1
