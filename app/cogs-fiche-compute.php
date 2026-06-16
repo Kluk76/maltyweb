@@ -572,9 +572,14 @@ function _cogs_wip_compute(PDO $pdo, string $month): array
 /**
  * Load prior-month opening total_chf per category.
  *
- * Source: UNION cogs_fiche_seed ∪ cogs_fiche_monthly for (month − 1).
- * monthly overrides seed (most recently computed close takes precedence).
- * Chains back to the immutable April cogs_fiche_seed anchor.
+ * Precedence: sealed > monthly(live cache) > seed.
+ *   1. If the prior month has an active seal in cogs_fiche_sealed, use those values
+ *      (frozen by operator — must never be overridden by a recompute).
+ *   2. Otherwise, fall back to cogs_fiche_monthly (live cache).
+ *   3. Otherwise, fall back to cogs_fiche_seed (immutable April anchor).
+ *
+ * This ensures that once a month is sealed, its closing value propagates correctly
+ * as the opening of the following month, even if the live cache is later invalidated.
  *
  * @return array{by_category: array<string,float>, notes: string[]}
  */
@@ -585,7 +590,42 @@ function _cogs_opening_load(PDO $pdo, string $month): array
 
     $priorMonth = cogs_fiche_prev_month($month);
 
-    // Seed rows (immutable operator-seeded opening)
+    // 1. Try active seal for prior month (highest precedence).
+    // Active seal = event with the latest sealed_at; reads all 12 rows in that event.
+    $sealedStmt = $pdo->prepare("
+        SELECT s.category_key, s.total_chf
+        FROM cogs_fiche_sealed s
+        INNER JOIN (
+            SELECT sealed_at, sealed_by, supersedes_seal_id
+            FROM cogs_fiche_sealed
+            WHERE month_key = ?
+            ORDER BY id DESC
+            LIMIT 1
+        ) latest
+            ON  s.sealed_at           = latest.sealed_at
+            AND s.sealed_by           <=> latest.sealed_by
+            AND s.supersedes_seal_id  <=> latest.supersedes_seal_id
+        WHERE s.month_key = ?
+    ");
+    $sealedStmt->execute([$priorMonth, $priorMonth]);
+    $sealedRows = $sealedStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    if (!empty($sealedRows)) {
+        foreach ($sealedRows as $r) {
+            $ck = (string)$r['category_key'];
+            if (in_array($ck, COGS_FICHE_CATEGORIES, true)) {
+                $byCategory[$ck] = (float)$r['total_chf'];
+            }
+        }
+        $notes[] = sprintf(
+            'Opening (prior month %s): sealed=%d rows (sealed takes precedence)',
+            $priorMonth,
+            count($sealedRows)
+        );
+        return ['by_category' => $byCategory, 'notes' => $notes];
+    }
+
+    // 2. Seed rows (immutable operator-seeded opening)
     $stmt = $pdo->prepare("
         SELECT category_key, total_chf
         FROM cogs_fiche_seed
@@ -594,7 +634,7 @@ function _cogs_opening_load(PDO $pdo, string $month): array
     $stmt->execute([$priorMonth]);
     $seedRows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // Monthly rows (computed closes — override seed if present)
+    // 3. Monthly rows (computed closes — override seed if present)
     $stmt2 = $pdo->prepare("
         SELECT category_key, total_chf
         FROM cogs_fiche_monthly
@@ -617,7 +657,7 @@ function _cogs_opening_load(PDO $pdo, string $month): array
     }
 
     $notes[] = sprintf(
-        'Opening (prior month %s): seed=%d rows, monthly=%d rows',
+        'Opening (prior month %s): no seal — seed=%d rows, monthly=%d rows',
         $priorMonth,
         count($seedRows),
         count($monthlyRows)
@@ -925,7 +965,7 @@ function cogs_fiche_compute_month(PDO $pdo, string $month): array
         'wip_beers_missing_cost'  => $wipResult['beers_missing_cost'],
         'wip_beers_no_bom'        => $wipResult['beers_no_bom'],
         'opening_prior_month'     => cogs_fiche_prev_month($month),
-        'opening_resolver'        => 'UNION cogs_fiche_seed ∪ cogs_fiche_monthly — monthly overrides seed',
+        'opening_resolver'        => 'sealed > cogs_fiche_monthly > cogs_fiche_seed — sealed prior month takes precedence',
         'basis_adjustment_total_chf' => $basisResult['total_adj'],
         'basis_adjustment_scope'  => 'FG/F2 restatement only — RM portion non-isolable (base héritée)',
         'basis_adjustment_notes'  => $basisResult['notes'],

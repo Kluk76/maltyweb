@@ -1221,6 +1221,35 @@ dialog#fin-sku-modal::backdrop {
   border-color: color-mix(in srgb, var(--oak) 25%, transparent);
 }
 
+/* Sealed = strongest state — ember-gold accent signals "figé/signé" */
+.fin-fiche-provenance-chip--sealed {
+  background: color-mix(in srgb, var(--ember) 12%, var(--bg));
+  color: color-mix(in srgb, var(--ember) 80%, var(--oak-deep));
+  border-color: color-mix(in srgb, var(--ember) 40%, transparent);
+}
+
+/* Seal / Restate action button */
+.fin-fiche-seal-btn {
+  display: inline-flex;
+  align-items: center;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 0.4rem 0.85rem;
+  min-height: 44px;
+  background: color-mix(in srgb, var(--ember) 10%, var(--bg));
+  color: color-mix(in srgb, var(--ember) 80%, var(--oak-deep));
+  border: 1px solid color-mix(in srgb, var(--ember) 40%, transparent);
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.fin-fiche-seal-btn:hover {
+  background: color-mix(in srgb, var(--ember) 18%, var(--bg));
+  border-color: color-mix(in srgb, var(--ember) 60%, transparent);
+}
+.fin-fiche-seal-btn[hidden] { display: none; }
+
 .fin-fiche-csv-btn {
   display: inline-flex;
   align-items: center;
@@ -1372,4 +1401,179 @@ dialog#fin-sku-modal::backdrop {
   .fin-linkout-card { flex-direction: column; gap: 0.75rem; padding: 1.2rem; }
   .fin-table thead th { padding: 0.5rem 0.65rem; }
   .fin-table tbody td { padding: 0.45rem 0.65rem; }
+}
+
+/* ── Seal / Restate modal ────────────────────────────────────────────────────
+   dialog[open] layout — base reset only; layout scoped to [open] so the UA
+   default display:none wins when closed (ui skill: no unconditional display).
+──────────────────────────────────────────────────────────────────────────── */
+dialog#fiche-seal-modal {
+  border: 0;
+  padding: 0;
+  background: transparent;
+}
+
+dialog#fiche-seal-modal[open] {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  z-index: 1000;
+  background: rgba(30, 18, 5, 0.45);
+}
+
+dialog#fiche-seal-modal::backdrop {
+  background: rgba(30, 18, 5, 0.45);
+}
+
+.fin-seal-modal-inner {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  box-shadow: 0 4px 24px rgba(30, 18, 5, 0.18);
+  width: min(480px, 96vw);
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  overflow: hidden;
+}
+
+.fin-seal-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.25rem 0.75rem;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.fin-seal-modal-title {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--ink);
+  margin: 0;
+}
+
+.fin-seal-modal-close {
+  background: none;
+  border: none;
+  color: var(--ink-soft);
+  font-size: 1.2rem;
+  cursor: pointer;
+  padding: 0.25rem;
+  line-height: 1;
+  min-width: 44px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.fin-seal-modal-close:hover { color: var(--ink); }
+
+.fin-seal-modal-body {
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.fin-seal-modal-summary {
+  font-size: 0.9rem;
+  color: var(--ink-soft);
+  margin: 0;
+  line-height: 1.5;
+}
+
+.fin-seal-modal-restate-info {
+  font-size: 0.82rem;
+  color: color-mix(in srgb, var(--ember) 80%, var(--oak-deep));
+  background: color-mix(in srgb, var(--ember) 8%, var(--bg));
+  border-left: 3px solid color-mix(in srgb, var(--ember) 50%, transparent);
+  padding: 0.5rem 0.75rem;
+  border-radius: 0 4px 4px 0;
+  margin: 0;
+}
+.fin-seal-modal-restate-info[hidden] { display: none; }
+
+.fin-seal-modal-note-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.fin-seal-modal-note-row[hidden] { display: none; }
+
+.fin-seal-modal-label {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--ink-soft);
+}
+
+.fin-seal-modal-required {
+  color: var(--ember);
+  margin-left: 0.15em;
+}
+
+.fin-seal-modal-note {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.87rem;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  border-radius: 5px;
+  padding: 0.5rem 0.7rem;
+  resize: vertical;
+  width: 100%;
+  box-sizing: border-box;
+}
+.fin-seal-modal-note:focus {
+  outline: 2px solid var(--ember);
+  border-color: transparent;
+}
+
+.fin-seal-modal-actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: flex-end;
+}
+
+.fin-seal-modal-cancel {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.85rem;
+  font-weight: 500;
+  padding: 0.5rem 1rem;
+  min-height: 44px;
+  background: none;
+  border: 1px solid var(--hairline);
+  border-radius: 5px;
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.fin-seal-modal-cancel:hover { background: var(--bg); }
+
+.fin-seal-modal-submit {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0.5rem 1.1rem;
+  min-height: 44px;
+  background: color-mix(in srgb, var(--ember) 14%, var(--bg));
+  color: color-mix(in srgb, var(--ember) 80%, var(--oak-deep));
+  border: 1px solid color-mix(in srgb, var(--ember) 45%, transparent);
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.fin-seal-modal-submit:hover {
+  background: color-mix(in srgb, var(--ember) 22%, var(--bg));
+}
+.fin-seal-modal-submit:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }

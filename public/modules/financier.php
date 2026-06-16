@@ -23,6 +23,7 @@ require_once __DIR__ . '/../../app/settings-helpers.php';
 require_once __DIR__ . '/../../app/settings.php';        // date_display_format() — used by the SKU-cost BOM freshness stamp
 require_once __DIR__ . '/../../app/kpi-handlers.php';
 require_once __DIR__ . '/../../app/finance-period.php';
+require_once __DIR__ . '/../../app/cogs-fiche-resolve.php';
 
 require_page_access('financier');
 $me = current_user();
@@ -363,7 +364,11 @@ foreach ($skuRows as &$r) {
 }
 unset($r);
 
-/* ── Fiche COGS data ─────────────────────────────────────────────────── */
+/* ── Fiche COGS data — routed through cogs_fiche_resolve_month() ────────────
+ * Precedence: sealed > seed > live(cache-backed) > unavailable.
+ * The direct cogs_fiche_monthly JOIN has been replaced — all reads go through
+ * the resolver so sealed months, seed, and live compute are handled uniformly.
+ * ────────────────────────────────────────────────────────────────────────── */
 $ficheDbError      = null;
 $ficheMonths       = [];
 $ficheData         = [];
@@ -372,73 +377,121 @@ $ficheLatestKey    = null;
 $ficheIsIncomplete = [];
 $ficheProvenance   = [];
 $ficheBasisRows    = [];
+$ficheSealedBy     = [];   // keyed by month_key → string|null
+$ficheSealedAt     = [];   // keyed by month_key → string|null
 
 try {
     $pdo_fiche = maltytask_pdo();
-    $stmt_fiche = $pdo_fiche->query("
-        SELECT
-            c.category_key, c.label_fr, c.inv_gl, c.charge_gl, c.display_order,
-            all_mk.month_key,
-            COALESCE(m.rm_chf,        s.rm_chf)        AS rm_chf,
-            COALESCE(m.wip_chf,       s.wip_chf)       AS wip_chf,
-            COALESCE(m.fg_chf,        s.fg_chf)        AS fg_chf,
-            COALESCE(m.total_chf,     s.total_chf)     AS total_chf,
-            COALESCE(m.opening_chf,   s.opening_chf)   AS opening_chf,
-            COALESCE(m.variation_chf, s.variation_chf) AS variation_chf,
-            m.basis_adjustment_chf,
-            CASE WHEN m.id IS NOT NULL THEN 'computed' ELSE 'seed' END AS provenance
-        FROM (
-            SELECT DISTINCT month_key FROM cogs_fiche_seed
-            UNION
-            SELECT DISTINCT month_key FROM cogs_fiche_monthly
-        ) AS all_mk
-        CROSS JOIN ref_cogs_fiche_categories c
-        LEFT JOIN cogs_fiche_seed s     ON s.month_key = all_mk.month_key AND s.category_key = c.category_key
-        LEFT JOIN cogs_fiche_monthly m  ON m.month_key = all_mk.month_key AND m.category_key = c.category_key
-        WHERE c.is_active = 1
-        ORDER BY all_mk.month_key, c.display_order
-    ");
-    $ficheRows = $stmt_fiche->fetchAll(PDO::FETCH_ASSOC);
 
-    foreach ($ficheRows as $row) {
-        $mk = $row['month_key'];
-        if (!in_array($mk, $ficheMonths, true)) {
-            $ficheMonths[] = $mk;
+    // Step 1: Enumerate months that have any Fiche data.
+    // Union of seed months + monthly-cache months + closeable months.
+    $stmtMk = $pdo_fiche->query("
+        SELECT DISTINCT month_key FROM (
+            SELECT month_key FROM cogs_fiche_seed
+            UNION
+            SELECT month_key FROM cogs_fiche_monthly
+        ) AS all_mk
+        ORDER BY month_key ASC
+    ");
+    $ficheMonths = $stmtMk->fetchAll(PDO::FETCH_COLUMN) ?: [];
+
+    // Also add closeable months that aren't in seed/monthly yet
+    $closeableMonths = fin_closeable_months($pdo_fiche);
+    foreach ($closeableMonths as $cmk) {
+        if (!in_array($cmk, $ficheMonths, true)) {
+            $ficheMonths[] = $cmk;
         }
-        $ficheData[$mk][] = $row;
+    }
+    sort($ficheMonths);
+
+    // Step 2: Fetch category metadata (label_fr, GL accounts, display_order) — once.
+    $stmtCat = $pdo_fiche->query("
+        SELECT category_key, label_fr, inv_gl, charge_gl, display_order
+        FROM ref_cogs_fiche_categories
+        WHERE is_active = 1
+        ORDER BY display_order
+    ");
+    $catMeta = [];
+    foreach ($stmtCat->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $catMeta[$row['category_key']] = $row;
     }
 
-    sort($ficheMonths);
+    // Step 3: Resolve each month via the canonical accessor.
+    foreach ($ficheMonths as $mk) {
+        $resolved = cogs_fiche_resolve_month($pdo_fiche, $mk);
+
+        if ($resolved['provenance'] === 'unavailable') {
+            // Remove from the displayable list
+            $ficheMonths = array_values(array_filter($ficheMonths, fn($m) => $m !== $mk));
+            continue;
+        }
+
+        $prov = $resolved['provenance'];
+        $ficheProvenance[$mk] = $prov;
+        $ficheSealedBy[$mk]   = $resolved['sealed_by'];
+        $ficheSealedAt[$mk]   = $resolved['sealed_at'];
+
+        // Build the per-category rows in the shape the template expects.
+        $rows_mk = [];
+        foreach ($catMeta as $ck => $meta) {
+            $catVals = $resolved['categories'][$ck] ?? [
+                'rm_chf' => 0.0, 'wip_chf' => 0.0, 'fg_chf' => 0.0,
+                'total_chf' => 0.0, 'opening_chf' => 0.0,
+                'variation_chf' => 0.0, 'basis_adjustment_chf' => 0.0,
+            ];
+            $rows_mk[] = [
+                'category_key'         => $ck,
+                'label_fr'             => $meta['label_fr'],
+                'inv_gl'               => $meta['inv_gl'],
+                'charge_gl'            => $meta['charge_gl'],
+                'display_order'        => $meta['display_order'],
+                'month_key'            => $mk,
+                'rm_chf'               => $catVals['rm_chf'],
+                'wip_chf'              => $catVals['wip_chf'],
+                'fg_chf'               => $catVals['fg_chf'],
+                'total_chf'            => $catVals['total_chf'],
+                'opening_chf'          => $catVals['opening_chf'],
+                'variation_chf'        => $catVals['variation_chf'],
+                'basis_adjustment_chf' => $catVals['basis_adjustment_chf'] != 0.0
+                    ? $catVals['basis_adjustment_chf']
+                    : null,
+            ];
+        }
+        $ficheData[$mk] = $rows_mk;
+
+        // Totals from the resolver (already summed)
+        $rt = $resolved['totals'];
+        $ficheTotals[$mk] = [
+            'rm_chf'       => $rt['rm_chf'],
+            'wip_chf'      => $rt['wip_chf'],
+            'fg_chf'       => $rt['fg_chf'],
+            'total_chf'    => $rt['total_chf'],
+            'opening_chf'  => $rt['opening_chf'],
+            'variation_chf'=> $rt['variation_chf'],
+        ];
+
+        // Incomplete: only for live months — sealed/seed are by definition complete
+        $ficheIsIncomplete[$mk] = ($prov === 'live')
+            && !array_filter(array_column($rows_mk, 'fg_chf'), fn($v) => (float)$v > 0.0);
+
+        // Basis rows (non-zero basis_adjustment_chf only)
+        $ficheBasisRows[$mk] = array_values(
+            array_filter($rows_mk, fn($r) => $r['basis_adjustment_chf'] !== null)
+        );
+    }
+
     $ficheLatestKey = !empty($ficheMonths) ? end($ficheMonths) : null;
     // Route through canonical last-closed-month helper for consistency
     if ($lastClosedMonth !== null && in_array($lastClosedMonth, $ficheMonths, true)) {
         $ficheLatestKey = $lastClosedMonth;
     }
 
-    foreach ($ficheMonths as $mk) {
-        $rows_mk = $ficheData[$mk] ?? [];
-        // Totals
-        $t = ['rm_chf'=>0.0,'wip_chf'=>0.0,'fg_chf'=>0.0,'total_chf'=>0.0,'opening_chf'=>0.0,'variation_chf'=>0.0];
-        foreach ($rows_mk as $r) {
-            foreach (array_keys($t) as $k) { $t[$k] += (float)($r[$k] ?? 0); }
-        }
-        $ficheTotals[$mk] = $t;
-
-        // Provenance — computed first so the incomplete gate can use it
-        $hasComputed = !empty(array_filter($rows_mk, fn($r) => $r['provenance'] === 'computed'));
-        $hasSeed     = !empty(array_filter($rows_mk, fn($r) => $r['provenance'] === 'seed'));
-        $ficheProvenance[$mk] = ($hasComputed && $hasSeed) ? 'mixed' : ($hasComputed ? 'computed' : 'seed');
-
-        // Incomplete: only applies to computed months (seed months are signed+complete by definition)
-        $ficheIsIncomplete[$mk] = ($ficheProvenance[$mk] !== 'seed')
-            && !array_filter(array_column($rows_mk, 'fg_chf'), fn($v) => (float)$v > 0.0);
-
-        // Basis rows
-        $ficheBasisRows[$mk] = array_values(array_filter($rows_mk, fn($r) => $r['basis_adjustment_chf'] !== null));
-    }
 } catch (Throwable $e) {
     $ficheDbError = $e->getMessage();
 }
+
+// Gate: can this user seal/restate the Fiche?
+$canSealFiche = is_admin() || manager_can('finance');
 
 $active_module = 'financier';
 ?>
@@ -459,6 +512,7 @@ $active_module = 'financier';
 <?php require __DIR__ . '/../../app/partials/topbar.php'; ?>
 
 <main id="main-content" class="main">
+<?php flash_render() ?>
 <div class="fin-wrap">
 
   <!-- ── En-tête de page ──────────────────────────────────────────────────── -->
@@ -1007,6 +1061,12 @@ $active_module = 'financier';
           </select>
         </div>
         <span class="fin-fiche-provenance-chip" id="fiche-provenance-chip" aria-live="polite"></span>
+        <?php if ($canSealFiche): ?>
+        <button type="button" class="fin-fiche-seal-btn" id="fiche-seal-btn"
+                aria-label="Sceller ou restater la fiche COGS pour ce mois" hidden>
+          Sceller
+        </button>
+        <?php endif ?>
         <a class="fin-fiche-csv-btn" id="fiche-csv-btn"
            href="/api/cogs-fiche-csv.php?month=<?= htmlspecialchars($ficheLatestKey ?? '') ?>"
            download aria-label="Télécharger la fiche CSV">
@@ -1148,6 +1208,41 @@ $active_module = 'financier';
     </footer>
   </div>
 </dialog>
+<?php if ($canSealFiche): ?>
+<!-- ── Modal de scellement / restatement de la fiche COGS ──────────────────────
+     Ouvert par JS sur clic du bouton "Sceller".
+     ui skill rules: dialog[open] layout, no loading="lazy", no inline style/script.
+─────────────────────────────────────────────────────────────────────────────── -->
+<dialog id="fiche-seal-modal" aria-labelledby="fiche-seal-modal-title" aria-modal="true">
+  <div class="fin-seal-modal-inner">
+    <header class="fin-seal-modal-header">
+      <h2 id="fiche-seal-modal-title" class="fin-seal-modal-title"></h2>
+      <button type="button" class="fin-seal-modal-close" id="fiche-seal-modal-close"
+              aria-label="Annuler">&times;</button>
+    </header>
+    <div class="fin-seal-modal-body">
+      <p class="fin-seal-modal-summary" id="fiche-seal-summary"></p>
+      <p class="fin-seal-modal-restate-info" id="fiche-seal-restate-info" hidden></p>
+      <form id="fiche-seal-form" method="POST" action="/api/cogs-fiche-seal.php">
+        <input type="hidden" name="csrf" value="<?= htmlspecialchars(csrf_token()) ?>">
+        <input type="hidden" name="month" id="fiche-seal-month-input" value="">
+        <div class="fin-seal-modal-note-row" id="fiche-seal-note-row">
+          <label for="fiche-seal-note" class="fin-seal-modal-label">
+            Motif de restatement <span class="fin-seal-modal-required" aria-hidden="true">*</span>
+          </label>
+          <textarea id="fiche-seal-note" name="note" class="fin-seal-modal-note"
+                    rows="2" maxlength="255" placeholder="Raison de la correction…"
+                    aria-required="true"></textarea>
+        </div>
+        <div class="fin-seal-modal-actions">
+          <button type="button" class="fin-seal-modal-cancel" id="fiche-seal-cancel">Annuler</button>
+          <button type="submit" class="fin-seal-modal-submit" id="fiche-seal-submit">Sceller définitivement</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</dialog>
+<?php endif ?>
 </main>
 
 <!-- ─── Payload JSON injecté côté serveur — consommé par financier.js ─────── -->
@@ -1169,11 +1264,15 @@ window.FIN_SALES_DEFAULT_SLICE = <?= json_encode($defaultSalesSlice, $JSON_FLAGS
 window.FIN_GL_MONTHS   = <?= json_encode($glMonths,      $JSON_FLAGS) ?>;
 window.FIN_GL_DEFAULT  = <?= json_encode($glLatestMonth, $JSON_FLAGS) ?>;
 
-/* Fiche COGS — variation de stock (source: cogs_fiche_seed + cogs_fiche_monthly) */
+/* Fiche COGS — variation de stock (source: resolver precedence sealed > seed > live) */
 window.FIN_FICHE_MONTHS     = <?= json_encode($ficheMonths ?? [],      $JSON_FLAGS) ?>;
 window.FIN_FICHE_DEFAULT    = <?= json_encode($ficheLatestKey ?? null,  $JSON_FLAGS) ?>;
 window.FIN_FICHE_PROVENANCE = <?= json_encode($ficheProvenance ?? [],   $JSON_FLAGS) ?>;
 window.FIN_FICHE_INCOMPLETE = <?= json_encode($ficheIsIncomplete ?? [], $JSON_FLAGS) ?>;
+window.FIN_FICHE_SEALED_BY  = <?= json_encode($ficheSealedBy ?? [],    $JSON_FLAGS) ?>;
+window.FIN_FICHE_SEALED_AT  = <?= json_encode($ficheSealedAt ?? [],    $JSON_FLAGS) ?>;
+window.FIN_FICHE_TOTALS     = <?= json_encode(array_map(fn($t) => $t['total_chf'] ?? 0.0, $ficheTotals ?? []), $JSON_FLAGS) ?>;
+window.FIN_CAN_SEAL         = <?= json_encode($canSealFiche ?? false,  $JSON_FLAGS) ?>;
 </script>
 
 <script src="/js/kpi-charts.js?v=<?= @filemtime(__DIR__ . '/../js/kpi-charts.js') ?: time() ?>"></script>

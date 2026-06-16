@@ -1583,20 +1583,50 @@
   var provenanceChip = document.getElementById('fiche-provenance-chip');
   var incompleteWarn = document.getElementById('fiche-incomplete-warn');
   var csvBtn         = document.getElementById('fiche-csv-btn');
+  var sealBtn        = document.getElementById('fiche-seal-btn');
   if (!monthSel) return; // panel not present
+
+  // ── Month-label helper (matches PHP fin_month_label) ──────────────────────
+  var FR_MONTHS = ['Jan.','Fév.','Mar.','Avr.','Mai','Jun.','Jul.','Aoû.','Sep.','Oct.','Nov.','Déc.'];
+  function fmtMonthLabel(mk) {
+    if (!mk) return mk;
+    var parts = mk.split('-');
+    var mIdx = parseInt(parts[1], 10) - 1;
+    return FR_MONTHS[mIdx] + ' ' + parts[0];
+  }
+
+  // ── CHF formatter (2 decimals, thousands separator) ───────────────────────
+  function fmtChfVal(n) {
+    return new Intl.NumberFormat('fr-CH', {
+      minimumFractionDigits: 2, maximumFractionDigits: 2
+    }).format(n) + ' CHF';
+  }
 
   function updateFicheMonth(mk) {
     document.querySelectorAll('.fin-fiche-month-block').forEach(function (el) {
       el.hidden = el.dataset.month !== mk;
     });
 
-    var prov = (window.FIN_FICHE_PROVENANCE || {})[mk];
+    var prov     = (window.FIN_FICHE_PROVENANCE || {})[mk];
+    var sealedBy = (window.FIN_FICHE_SEALED_BY  || {})[mk];
+    var sealedAt = (window.FIN_FICHE_SEALED_AT  || {})[mk];
+
     if (provenanceChip) {
-      if (prov === 'seed') {
-        provenanceChip.textContent = 'Clôture signée (référence)';
+      if (prov === 'sealed') {
+        // Format sealed_at as dd.mm.yyyy for fr-CH display
+        var dateLabel = '';
+        if (sealedAt) {
+          var d = new Date(sealedAt.replace(' ', 'T'));
+          dateLabel = d.toLocaleDateString('fr-CH');
+        }
+        var byLabel = sealedBy ? sealedBy : '';
+        provenanceChip.textContent = 'Clôturé · signé' + (byLabel ? ' ' + byLabel : '') + (dateLabel ? ' · ' + dateLabel : '');
+        provenanceChip.className   = 'fin-fiche-provenance-chip fin-fiche-provenance-chip--sealed';
+      } else if (prov === 'seed') {
+        provenanceChip.textContent = 'Référence d\'ouverture';
         provenanceChip.className   = 'fin-fiche-provenance-chip fin-fiche-provenance-chip--seed';
-      } else if (prov === 'computed') {
-        provenanceChip.textContent = 'Calculé';
+      } else if (prov === 'live') {
+        provenanceChip.textContent = 'Calculé (live)';
         provenanceChip.className   = 'fin-fiche-provenance-chip fin-fiche-provenance-chip--computed';
       } else {
         provenanceChip.textContent = '';
@@ -1616,6 +1646,13 @@
     if (compCsvBtn) {
       compCsvBtn.href = '/api/cogs-comprehensive-csv.php?month=' + encodeURIComponent(mk);
     }
+
+    // Seal button: visible only to eligible users, only for live/sealed months
+    if (sealBtn) {
+      var canSeal = !!window.FIN_CAN_SEAL && (prov === 'live' || prov === 'sealed');
+      sealBtn.hidden = !canSeal;
+      sealBtn.textContent = (prov === 'sealed') ? 'Restater' : 'Sceller';
+    }
   }
 
   var defaultMk = window.FIN_FICHE_DEFAULT || monthSel.value;
@@ -1623,5 +1660,87 @@
 
   monthSel.addEventListener('change', function () {
     updateFicheMonth(this.value);
+  });
+
+  // ── Seal / Restate modal logic ─────────────────────────────────────────────
+  var sealModal   = document.getElementById('fiche-seal-modal');
+  if (!sealModal || !sealBtn) return;
+
+  var sealForm    = document.getElementById('fiche-seal-form');
+  var sealMonthIn = document.getElementById('fiche-seal-month-input');
+  var sealTitle   = document.getElementById('fiche-seal-modal-title');
+  var sealSummary = document.getElementById('fiche-seal-summary');
+  var restateInfo = document.getElementById('fiche-seal-restate-info');
+  var noteRow     = document.getElementById('fiche-seal-note-row');
+  var noteField   = document.getElementById('fiche-seal-note');
+  var sealSubmit  = document.getElementById('fiche-seal-submit');
+  var sealCancel  = document.getElementById('fiche-seal-cancel');
+  var sealClose   = document.getElementById('fiche-seal-modal-close');
+
+  sealBtn.addEventListener('click', function () {
+    var mk   = monthSel.value;
+    var prov = (window.FIN_FICHE_PROVENANCE || {})[mk];
+    var tot  = (window.FIN_FICHE_TOTALS    || {})[mk] || 0;
+    var totFmt = fmtChfVal(tot);
+    var mkLabel = fmtMonthLabel(mk);
+
+    sealMonthIn.value = mk;
+    noteField.value   = '';
+
+    if (prov === 'sealed') {
+      // Restatement
+      var prevSealedBy = (window.FIN_FICHE_SEALED_BY || {})[mk];
+      var prevSealedAt = (window.FIN_FICHE_SEALED_AT || {})[mk];
+      var prevDate = '';
+      if (prevSealedAt) {
+        prevDate = new Date(prevSealedAt.replace(' ', 'T')).toLocaleDateString('fr-CH');
+      }
+      sealTitle.textContent = 'Restater la fiche — ' + mkLabel;
+      sealSummary.textContent = 'Ce mois a déjà été scellé'
+        + (prevSealedBy ? ' par ' + prevSealedBy : '')
+        + (prevDate ? ' le ' + prevDate : '')
+        + '. Un nouveau scellement remplacera les valeurs figées par : '
+        + totFmt + '.';
+      restateInfo.hidden = false;
+      restateInfo.textContent = 'Le motif de restatement est obligatoire.';
+      noteRow.hidden = false;
+      noteField.required = true;
+      sealSubmit.textContent = 'Restater définitivement';
+    } else {
+      // First seal
+      sealTitle.textContent = 'Sceller la fiche — ' + mkLabel;
+      sealSummary.textContent = 'Figer définitivement ' + mkLabel + ' à ' + totFmt + '.';
+      restateInfo.hidden = true;
+      noteRow.hidden = false;
+      noteField.required = false;
+      sealSubmit.textContent = 'Sceller définitivement';
+    }
+
+    sealModal.showModal();
+    noteField.focus();
+  });
+
+  function closeSealModal() { sealModal.close(); }
+  sealCancel.addEventListener('click', closeSealModal);
+  sealClose.addEventListener('click', closeSealModal);
+  sealModal.addEventListener('click', function (e) {
+    if (e.target === sealModal) closeSealModal();
+  });
+  sealModal.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') closeSealModal();
+  });
+
+  // Form submit: validate mandatory note on restate, then let it POST naturally (PRG)
+  sealForm.addEventListener('submit', function (e) {
+    var prov = (window.FIN_FICHE_PROVENANCE || {})[sealMonthIn.value];
+    if (prov === 'sealed' && noteField.value.trim().length === 0) {
+      e.preventDefault();
+      noteField.setCustomValidity('Le motif de restatement est obligatoire.');
+      noteField.reportValidity();
+      return;
+    }
+    noteField.setCustomValidity('');
+    sealSubmit.disabled = true;
+    sealSubmit.textContent = 'En cours…';
   });
 }());

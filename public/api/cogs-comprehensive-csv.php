@@ -13,6 +13,7 @@ declare(strict_types=1);
 
 require __DIR__ . '/../../app/auth.php';
 require_once __DIR__ . '/../../app/settings-helpers.php';
+require_once __DIR__ . '/../../app/cogs-fiche-resolve.php';
 
 require_page_access('financier');
 
@@ -48,53 +49,55 @@ function blank_rows($out, int $n = 2): void
     }
 }
 
-// ── Section 1: load from MySQL ───────────────────────────────────────────────
+// ── Section 1: load from MySQL via resolver (sealed > seed > live) ────────────
 
-$ficheRows = [];
-$ficheTotals = ['rm_chf' => 0.0, 'wip_chf' => 0.0, 'fg_chf' => 0.0,
-                'total_chf' => 0.0, 'opening_chf' => 0.0, 'variation_chf' => 0.0];
+$ficheRows      = [];
+$ficheTotals    = ['rm_chf' => 0.0, 'wip_chf' => 0.0, 'fg_chf' => 0.0,
+                   'total_chf' => 0.0, 'opening_chf' => 0.0, 'variation_chf' => 0.0];
 $ficheBasisRows = [];
+$ficheProvenance = '';
 
 try {
-    $pdo = maltytask_pdo();
+    $pdo      = maltytask_pdo();
+    $resolved = cogs_fiche_resolve_month($pdo, $month);
 
-    // Validate month exists in data
-    $stmt_months = $pdo->query("
-        SELECT DISTINCT month_key FROM (
-            SELECT month_key FROM cogs_fiche_seed
-            UNION
-            SELECT month_key FROM cogs_fiche_monthly
-        ) AS all_months
-    ");
-    $valid_months = $stmt_months->fetchAll(PDO::FETCH_COLUMN);
-
-    if (!in_array($month, $valid_months, true)) {
+    if ($resolved['provenance'] === 'unavailable') {
         http_response_code(404);
         header('Content-Type: application/json');
         echo json_encode(['ok' => false, 'reason' => 'No COGS fiche data for ' . $month]);
         exit;
     }
 
-    $stmt = $pdo->prepare("
-        SELECT
-            c.category_key, c.label_fr, c.inv_gl, c.charge_gl, c.display_order,
-            COALESCE(m.rm_chf,        s.rm_chf)        AS rm_chf,
-            COALESCE(m.wip_chf,       s.wip_chf)       AS wip_chf,
-            COALESCE(m.fg_chf,        s.fg_chf)        AS fg_chf,
-            COALESCE(m.total_chf,     s.total_chf)     AS total_chf,
-            COALESCE(m.opening_chf,   s.opening_chf)   AS opening_chf,
-            COALESCE(m.variation_chf, s.variation_chf) AS variation_chf,
-            m.basis_adjustment_chf,
-            CASE WHEN m.id IS NOT NULL THEN 'computed' ELSE 'seed' END AS provenance
-        FROM ref_cogs_fiche_categories c
-        LEFT JOIN cogs_fiche_seed s    ON s.month_key = :month  AND s.category_key = c.category_key
-        LEFT JOIN cogs_fiche_monthly m ON m.month_key = :month2 AND m.category_key = c.category_key
-        WHERE c.is_active = 1
-          AND (s.month_key IS NOT NULL OR m.month_key IS NOT NULL)
-        ORDER BY c.display_order
+    $ficheProvenance = $resolved['provenance'];
+
+    // Fetch category metadata (ordered by display_order)
+    $stmtCat = $pdo->prepare("
+        SELECT category_key, label_fr, inv_gl, charge_gl, display_order
+        FROM ref_cogs_fiche_categories
+        WHERE is_active = 1
+        ORDER BY display_order
     ");
-    $stmt->execute([':month' => $month, ':month2' => $month]);
-    $ficheRows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $stmtCat->execute();
+    $catMeta = [];
+    foreach ($stmtCat->fetchAll(PDO::FETCH_ASSOC) as $r) {
+        $catMeta[$r['category_key']] = $r;
+    }
+
+    foreach ($catMeta as $ck => $meta) {
+        $catVals = $resolved['categories'][$ck] ?? [
+            'rm_chf'=>0.0,'wip_chf'=>0.0,'fg_chf'=>0.0,'total_chf'=>0.0,
+            'opening_chf'=>0.0,'variation_chf'=>0.0,'basis_adjustment_chf'=>0.0,
+        ];
+        $row = array_merge($meta, $catVals);
+        $ficheRows[] = $row;
+        foreach (array_keys($ficheTotals) as $k) {
+            $ficheTotals[$k] += (float)($catVals[$k] ?? 0);
+        }
+        if (abs((float)($catVals['basis_adjustment_chf'] ?? 0)) > 0.0001) {
+            $row['basis_adjustment_chf'] = $catVals['basis_adjustment_chf'];
+            $ficheBasisRows[] = $row;
+        }
+    }
 } catch (Throwable $e) {
     error_log('[cogs-comprehensive-csv] DB error: ' . $e->getMessage());
     http_response_code(500);
@@ -108,15 +111,6 @@ if (empty($ficheRows)) {
     header('Content-Type: application/json');
     echo json_encode(['ok' => false, 'reason' => 'No fiche data for ' . $month]);
     exit;
-}
-
-foreach ($ficheRows as $row) {
-    foreach (array_keys($ficheTotals) as $k) {
-        $ficheTotals[$k] += (float)($row[$k] ?? 0);
-    }
-    if ($row['basis_adjustment_chf'] !== null) {
-        $ficheBasisRows[] = $row;
-    }
 }
 
 // ── Section 2: load from sales-cogs-data.json ────────────────────────────────
@@ -155,11 +149,26 @@ header('Cache-Control: no-store');
 $out = fopen('php://output', 'w');
 fwrite($out, "\xEF\xBB\xBF"); // UTF-8 BOM for Excel
 
+// Provenance string for CSV header
+$today = date('Y-m-d');
+if ($ficheProvenance === 'sealed') {
+    $sealedAt = $resolved['sealed_at'] ?? '';
+    $sealedBy = $resolved['sealed_by'] ?? '';
+    $ficheProvenanceLabel = 'Clôturé (signé) le ' . $sealedAt
+        . ($sealedBy !== '' ? ' par ' . $sealedBy : '');
+} elseif ($ficheProvenance === 'live') {
+    $ficheProvenanceLabel = 'Calculé en direct le ' . $today;
+} else {
+    $ficheProvenanceLabel = 'Référence d\'ouverture';
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // SECTION 1 — FICHE COGS — VARIATION DE STOCK
 // ════════════════════════════════════════════════════════════════════════════
 
 sec_title($out, 'FICHE COGS — VARIATION DE STOCK (' . $month . ')');
+fputcsv($out, ['Provenance', $ficheProvenanceLabel], ',', '"');
+fputcsv($out, [], ',', '"');
 
 fputcsv($out, [
     'Catégorie', 'Comptes Inv.', 'Cptes Charge',
