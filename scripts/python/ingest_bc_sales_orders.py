@@ -393,8 +393,13 @@ def load_existing_non_bc_active_orders(
     conn: pymysql.connections.Connection,
 ) -> list[dict]:
     """
-    Returns active (non-shipped/cancelled) orders from sources web/email/import,
+    Returns non-cancelled orders from sources web/email/import (active OR shipped),
     with their sku_id_fk sets and divergence_status, for the collision report.
+
+    Includes shipped rows so that a BC order that duplicates an already-shipped manual
+    order can be caught by detect_collisions() (two-tier match: shipped rows require
+    customer+date+SKU overlap; active rows require only customer+SKU overlap).
+
     divergence_status is needed so snapshot_and_diff_collision can check whether
     the kept row's flag has already been set.
     """
@@ -407,7 +412,7 @@ def load_existing_non_bc_active_orders(
               FROM ord_orders o
               LEFT JOIN ord_order_lines l ON l.order_id_fk = o.id
              WHERE o.source IN ('web','email','import')
-               AND o.status NOT IN ('shipped','cancelled')
+               AND o.status != 'cancelled'
              GROUP BY o.id
             """
         )
@@ -635,8 +640,19 @@ def detect_collisions(
 ) -> list[dict]:
     """
     Find existing ord_orders (web/email/import) that likely represent the same real-world
-    order as an incoming BC order.  Heuristic: same customer_id_fk AND overlapping resolved
-    SKU set.  Returns a list of collision dicts for the reconciliation report.
+    order as an incoming BC order.  Two-tier heuristic:
+
+    - Active candidates (status NOT IN ('shipped','cancelled')):
+        collide on customer_id_fk + SKU overlap (date NOT required).
+        This preserves the existing WeeklyOrders collision-skip behaviour.
+
+    - Shipped candidates (status == 'shipped'):
+        collide ONLY when customer_id_fk + SKU overlap + requested_date == BC document_date.
+        The exact date triple is required to avoid flagging a customer's unrelated past orders.
+
+    Cancelled candidates are excluded entirely (already excluded by load_existing_non_bc_active_orders).
+
+    Returns a list of collision dicts for the reconciliation report.
     """
     collisions = []
 
@@ -659,9 +675,14 @@ def detect_collisions(
         cid = eo["customer_id_fk"]
         if cid is None or cid not in bc_by_cust:
             continue
+        eo_is_shipped = (eo["status"] == "shipped")
         for bc_entry in bc_by_cust[cid]:
             overlap = eo["sku_ids"] & bc_entry["bc_skus"]
             if not overlap:
+                continue
+            # Two-tier date gate: shipped rows require exact date match to avoid
+            # flagging a customer's unrelated past shipped orders.
+            if eo_is_shipped and eo["requested_date"] != bc_entry["document_date"]:
                 continue
             collisions.append({
                 "existing_id":     eo["id"],
