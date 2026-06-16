@@ -181,6 +181,8 @@ Work the layers in order; each step bisects the problem. **Network-first**: the 
 
 A throw partway through a render function leaves a half-built UI: earlier DOM (and `<a href>` links) work, but everything after the throw (e.g. `img.src=`) never runs — which looks exactly like "the modal opens and the PDF link works but the image is stuck."
 
+**Dropdown/popover invisible though it "opened" — ANCESTOR OVERFLOW CLIP (2026-06-16, topbar `d1895e6`).** A `position:absolute` panel that drops *below* its container (`top: calc(100% + 4px)`) is clipped invisible if ANY ancestor has a non-`visible` overflow on either axis. CSS spec: setting `overflow-x` to `auto|scroll|hidden` forces `overflow-y` to compute non-`visible` too (and vice-versa) — so a short scroll-container (e.g. a 56px topbar `nav` with `overflow-x:auto` for horizontal scroll) clips the menu that escapes its box. Symptom is maximally confusing: the click fires, the open-class IS added, `hidden=false`, the panel's `getBoundingClientRect()` is correct and on-screen, `opacity:1`/`z-index` fine — yet nothing shows. **Diagnose** by walking computed `overflow-x`/`overflow-y` from the panel up to `body`; the first ancestor with a non-`visible` axis is the culprit (not the panel's own styles, not the JS). **Fix** = make that ancestor `overflow: visible` (or portal the panel into a non-clipping layer). Class-toggle and `display` are red herrings here.
+
 ## Verification before declaring a UI change done
 
 **If any box below cannot be honestly ticked, the surface is not done — fix before delivering.**
