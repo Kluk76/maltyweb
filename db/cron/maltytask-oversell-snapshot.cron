@@ -1,0 +1,24 @@
+# /etc/cron.d/maltytask-oversell-snapshot
+#
+# ATP-breach (oversell) daily snapshot: runs at 06:00 UTC; writes one row per
+# oversold SKU into ops_oversell_snapshot for trend/history analysis.
+# Exits silently when no breaches are detected — safe to run daily.
+#
+# DISABLED — uncomment the schedule line below to enable.
+# To enable: uncomment the cron line, commit, then run bin/deploy.sh --apply
+# to deploy to /etc/cron.d/maltytask-oversell-snapshot.
+#
+# Source of truth: db/cron/maltytask-oversell-snapshot.cron in the maltyweb repo.
+# Deployed via bin/deploy.sh --apply (sudo install → /etc/cron.d/).
+#
+# Note: cron syntax for /etc/cron.d/* requires the user column.
+# Times are UTC (VPS timezone is Etc/UTC).
+#
+# Manual edits will be overwritten on next deploy. Edit the source file
+# in the repo, commit, then run bin/deploy.sh --apply.
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# m   h  dom mon dow  user       command
+# 0   6   *   *   *   maltytask  flock -n /tmp/maltytask-oversell-snapshot.lock /usr/bin/php /var/www/maltytask/scripts/snapshot-oversell.php >> /var/log/maltytask/oversell-snapshot.log 2>&1
