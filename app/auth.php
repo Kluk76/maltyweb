@@ -323,6 +323,20 @@ function manager_can(string $domain, ?array $user = null): bool
 }
 
 /**
+ * Expéditions write gate.
+ * Write access is granted to admins, operators, and logistics/production managers.
+ * A manager with scope=NULL (read-only financial viewer) is denied.
+ */
+function can_write_expeditions(?array $user = null): bool
+{
+    $u = $user ?? current_user();
+    if (!$u) return false;
+    return is_admin($u)
+        || ($u['role'] ?? '') === 'operator'
+        || manager_can('logistics', $u);
+}
+
+/**
  * Hard role gates. require_login() first, then 403 if role mismatch.
  */
 function require_admin(): void

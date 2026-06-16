@@ -63,7 +63,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
-require_admin();
+require_page_access('charges-bc');
 $me = current_user();
 if ($me === null) {
     http_response_code(403);

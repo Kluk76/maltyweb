@@ -42,6 +42,18 @@ if ($me === null) {
     exit;
 }
 
+if (!user_can_access('expeditions', $me)) {
+    http_response_code(403);
+    echo json_encode(['ok' => false, 'error' => 'Accès non autorisé.']);
+    exit;
+}
+
+if (!can_write_expeditions($me)) {
+    http_response_code(403);
+    echo json_encode(['ok' => false, 'error' => 'Accès en lecture seule.']);
+    exit;
+}
+
 // ── Decode JSON body ──────────────────────────────────────────────────────────
 $raw  = file_get_contents('php://input');
 $data = json_decode((string) $raw, true);
