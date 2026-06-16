@@ -376,13 +376,14 @@ body.home::after {
 .home .tb__nav {
   flex: 1 1 0;
   min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-  -webkit-overflow-scrolling: touch;
-  /* right-edge gradient fade for overflow hint */
-  -webkit-mask-image: linear-gradient(to right, black calc(100% - 32px), transparent 100%);
-  mask-image: linear-gradient(to right, black calc(100% - 32px), transparent 100%);
+  /* overflow MUST be visible so the absolutely-positioned .tb__cat-panel
+     can drop below the 56px nav box without being clipped.
+     The nav used to scroll 17 individual links — now it holds ~6 category
+     buttons which fit comfortably, so horizontal scroll is no longer needed.
+     (2026-06-16: overflow-x:auto was clipping the dropdown panels.) */
+  overflow: visible;
 }
+/* scrollbar rule kept for safety but is now a no-op since overflow is visible */
 .home .tb__nav::-webkit-scrollbar { display: none; }
 .home .tb__nav ul {
   display: flex;
