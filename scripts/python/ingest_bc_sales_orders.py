@@ -53,7 +53,8 @@ SKU RESOLUTION:
     CAUF   (Caution - Fût Inox 20L)
     CAUAL  (Caution - Bouteille Aligal)
     CO2- FO (Forfait CO2)
-    V25    (Box 6 Verres — glassware)
+    V25    (Box 6 Verres 0.25/0.33 — glassware)
+    V50    (Box 6 Verres 0.50 — glassware)
     EPH1021 (seasonal variant not in ref_skus — needs alias added)
 
 COLLISION REPORT:
@@ -123,7 +124,7 @@ SYSTEM_CUSTOMER_NOS = frozenset({"1080", "3822"})
 # These are non-inventoried items with no hl_per_unit.  The caller cannot add them to
 # ord_order_lines (FK → ref_skus requires a real sku_id, and they have no beer stock impact).
 # Include them in the unresolved-line log but do NOT fail the order over them.
-NON_BEER_BC_ITEMS = frozenset({"CAUF", "CAUAL", "CO2- FO", "V25"})
+NON_BEER_BC_ITEMS = frozenset({"CAUF", "CAUAL", "CO2- FO", "V25", "V50"})
 
 # ── Cutover / standing-import constants ───────────────────────────────────────
 #

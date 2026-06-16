@@ -215,8 +215,8 @@ function build_email(array $cred, int $daysLeft, int $stage, array $brewery): ar
 sudo nano /var/www/maltytask/config/bc.env
 # 3. Rearmer le rappel (remplace AAAA-MM-JJ) :
 cd /var/www/maltytask &amp;&amp; sudo -u maltytask php -r 'require "app/db.php"; maltytask_pdo()->prepare("UPDATE ops_credential_expiry SET expires_on=?, last_reminded_stage=NULL WHERE label=?")->execute(["AAAA-MM-JJ","BC Entra client_secret"]);'
-# 4. Verifier que l auth BC passe :
-cd /var/www/maltytask &amp;&amp; sudo -u maltytask /usr/bin/python3 scripts/python/ingest_bc_sales_orders.py --dry-run | tail -15
+# 4. Verifier que l auth BC passe (sans --apply = mode apercu, recupere le token) :
+cd /var/www/maltytask &amp;&amp; sudo -u maltytask /usr/bin/python3 scripts/python/ingest_bc_sales_orders.py | tail -15
 # 5. Confirme -> supprimer l ancien secret dans Azure</div>
       </td></tr>
 HTML;
