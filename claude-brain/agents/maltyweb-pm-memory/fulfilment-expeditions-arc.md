@@ -1210,13 +1210,39 @@ Live pending backlog = **414 beer-credit lines** (includes rebates to dismiss + 
 - 🔴 **`public/modules/expeditions.php` + `public/css/expeditions.css` are DEFERRED FROM COMMIT** — they carry THIS session's P1 queue + P3 synthèse-panel changes INTERMINGLED with the CONCURRENT session's repack-helper-hoist + 11-tab-wrap refactor; committing would STEAL parallel work. They are **DEPLOYED + smoke-passed on the VPS (md5 parity)** — **the VPS copy is the frontend source of truth until the two-session merge reconciles them.**
 - **PM RECOMMENDATION (STRONG, recorded): do the two-session merge from a SEPARATE WORKTREE.** The SHARED CLONE is the root cause of the churn (orphaned `222cbb9`, the shared-index race, and now this expeditions.php/.css intermingling). Reinforces the standing separate-worktrees + commit-by-pathspec rules.
 
-**OPEN ITEMS (carry forward):**
-- (a) **P3-RATE — the true return-RATE % ratio still DEFERRED** — needs a denominator + return↔origin-sale matching (Kouros decision; SURFACE don't guess). Volume-first synthèse shipped INSTEAD.
-- (b) **P2b — burn-velocity latent bug** — the seasonal-burn engine's blanket `−SUM` over-nets beer-credit `rebate`s into velocity (forecast-only, low urgency; `app/seasonal-burn.php`).
+**OPEN ITEMS — STATUS as of 2026-06-16 (PART A/B/C ALL THREE BACKENDS SHIPPED+PUSHED+Opus-verified; see §PART A/B/C AS-BUILT below):**
+- (a) **P3-RATE — SHIPPED `e76e21a`** (returns RATE block added to `returns_synthese()`). No longer deferred.
+- (b) **P2b — burn-rebate over-net fix SHIPPED `5cd9788`** (rebate-disposition NOT-EXISTS guard, 3 netting sites). No longer open. LATENT (0 rebates dispositioned today) but byte-verified.
+- **Newly OPEN (deferred UI/KPI wiring only — see §DEFERRED WIRING below):** (i) register an OVERSELL KPI tracker (mirror #283); (ii) surface returns-RATE on the Retours synthèse panel + oversell short-list on the Couverture drilldown. Both BLOCKED on the concurrent topbar-categories session holding `kpi-handlers.php`/`expeditions.css`/`mon-tableau.css`/`kpi-charts.js` dirty. Mechanical wiring atop existing computes; wire once that session commits.
 
 **EQUIP for any follow-up:** sql + coder + ui + webapp-testing.
 
-## 🆕 PART A/B/C BUILD SPEC — burn-rebate fix · returns RATE · OVERSELL/ATP tracker (PM architecture read 2026-06-16, Kouros-approved 3-part build; live-probed)
+## ✅ PART A/B/C — AS-BUILT 2026-06-16 (ALL THREE BACKENDS SHIPPED + PUSHED + Opus-verified; only UI/KPI WIRING deferred)
+
+**All three backends SHIPPED + PUSHED + Opus-verified 2026-06-16. The SPEC below (retained as the architecture record) was followed; ONE spec deviation noted on Part B.**
+
+- **PART A — burn-rebate over-net fix: `5cd9788`.** `app/seasonal-burn.php` — `NOT EXISTS (disposition='rebate')` guard joined on `bc_document_no + sku`, applied at all **3** netting sites (per spec). LATENT today (0 rebates dispositioned). Byte-identical verified.
+- **PART B — returns RATE: `e76e21a`.** Added a `'rate'` key to `returns_synthese()` (EXTENDED the fn per spec, no new fn). Trailing-365d. **Numerator = returned units (rebate EXCLUDED)** ÷ **denominator = gross BC sales `doc_type IN ('shipment','invoice')` beer SKUs.** Per-beer + per-channel (`trade_channel` → on_trade / off_trade / non classé). Carries `basis_count` for honesty (so a fake-low rate from un-triaged backlog reads as low-N). Verified sold=222792; 2 units→on_trade. **🔴 SPEC DEVIATION (correct, recorded): `inv_sales_ledger` has NO `sale_class` column** — so the spec's `sale_class='customs_artifact'` exclusion was DROPPED. No such doc_type exists anyway; `inv_sales_ledger.doc_type` values are `shipment / credit / invoice / return_receipt` (NB: NOT `customs_artifact`). The customs-artifact channel-hygiene line in the spec/Part B denominator is **moot — disregard it.** (`sale_class` lives on `ref_customers`, not the ledger; the burn-engine "customs_artifact exclusion" precedent does not transfer to ledger-grain sales queries.)
+- **PART C — OVERSELL / ATP-breach: `e80648d` (+ mig 384).** Built per spec Q1-Q4 AS A COMPLETE UNIT — including Q4's snapshot table (spec had flagged Q4 as a separate Kouros-gated follow-on; it was built now, deployed DISABLED, so no scope creep — the cron is inert until the operator enables it).
+  - **mig 384 `ops_oversell_snapshot`** — UNIQUE(date, sku) + `schema_meta` (source/allowed classification). MIG HEAD now 384.
+  - **`app/oversell.php::oversell_current()`** — READS `fg_stock_compute()` `flag_survendu` (NO parallel calc — the divergence guard honored exactly); attributes shortfall to channel **proportional to open-commitment share**, using fg-stock Step 7's exact open-order gates (`status NOT IN('shipped','cancelled') AND line_status='to_fulfil'`).
+  - **`scripts/snapshot-oversell.php`** — idempotent, flock'd.
+  - **`db/cron/maltytask-oversell-snapshot.cron`** — DEPLOYED DISABLED.
+  - **Opus-verified:** 5 breaches today (111 units short, 98.9% on-trade); oversold set == `flag_survendu` set; channel attribution sums exact; snapshot idempotent.
+
+**CUSTOMER backfill (2026-06-16):** 20 active customers → `trade_channel='on_trade'`. **🔴 DELIBERATE NULL: Brasserie du Chien Bleu (id 385) left `trade_channel=NULL` — it is a CONTRACT-BREWING PARTNER, not a sales channel.** ROADMAP FLAG (PM): contract-brewing returns may warrant EXCLUSION from return-rate AND oversell entirely — different dynamics (contract logistics, not event over-booking). Revisit as a future modeling decision; do NOT let contract-brewing volume pollute the on/off-trade return-rate or ATP buckets. (Consistent with the existing `ref_clients` vs `ref_customers` separation — Chien Bleu is a `ref_clients` contract company that also has a `ref_customers` row.)
+
+### 🔴 DEFERRED WIRING (mechanical, blocked on a concurrent session — wire once it commits)
+The concurrent **topbar-categories** session holds dirty: `kpi-handlers.php`, `expeditions.css`, `mon-tableau.css`, `kpi-charts.js`. Both deferred items touch those files, so they wait (avoid the shared-tree intermingling that bit the synthèse frontend commit):
+- **(a)** register an OVERSELL KPI tracker — mirror #283; logistics-domain handler `kpi_logi_*` in `kpi-handlers.php`; viz bar; reads `oversell_current()` (already built, just needs the handler + seed + viz wiring).
+- **(b)** surface the returns-RATE on the Retours synthèse panel + an oversell short-list on the Couverture drilldown — both atop existing computes (`returns_synthese()['rate']` + `oversell_current()`).
+Both are pure wiring atop computes that already ship. PM will wire when the topbar session commits + the shared tree is clean (or do it from a SEPARATE WORKTREE — standing rec).
+
+### 🟡 OPERATOR ACTIONS STILL PENDING
+- (i) **Enable the oversell cron** (`maltytask-oversell-snapshot.cron`) after review — it ships DISABLED.
+- (ii) **Triage the ~413 return backlog** (beer-credit lines: rebates to dismiss + real returns to disposition). Until triaged, the return-RATE reads ~0 with low `basis_count` (honest, not a bug). NB: P2b burn-rebate guard + the return-RATE numerator both stay latent until rebates start getting dispositioned.
+
+## 🆕 PART A/B/C BUILD SPEC — burn-rebate fix · returns RATE · OVERSELL/ATP tracker (PM architecture read 2026-06-16, Kouros-approved 3-part build; live-probed) — SPEC RETAINED; see AS-BUILT above for what shipped + the Part B sale_class deviation
 
 **LEDGER FACTS (live-verified 2026-06-16, the SoT for all 3 parts):**
 - `inv_sales_ledger.doc_type` ∈ {`shipment` (n=31543, qty_signed mostly NEG = depletion), `invoice` (n=6329, mostly NEG), `credit` (n=6619, mostly POS = reversal), `return_receipt` (n=18, mostly POS)}. **shipment & invoice are DISJOINT document populations (0 bc_document_no overlap at sku grain) — burn summing both does NOT double-count.**
