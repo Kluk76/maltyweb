@@ -1521,6 +1521,66 @@ document.addEventListener('DOMContentLoaded', function () {
     return 0;                             // normal
   }
 
+  // ── Production-volume guard ───────────────────────────────────────────────
+  // Blocks submission when any format row has a missing or zero unit count.
+  // Réassigner mode and cuve-réutilisée rows are exempt (no new volume expected).
+  if (form) {
+    form.addEventListener('submit', function (e) {
+      if (isReassignerMode) return; // réassigner mode: no volume required
+
+      // Clear stale errors from a previous failed attempt.
+      form.querySelectorAll('.pf-qty-error').forEach(function (el) {
+        el.style.display = 'none';
+      });
+
+      for (var i = 0; i < formatRows.length; i++) {
+        var idx = formatRows[i];
+        var rowEl = document.getElementById('pf-fmt-' + idx);
+        if (!rowEl) continue;
+
+        // Skip cuve-réutilisée rows — zero new volume is expected there.
+        if (rowIsReuse(rowEl)) continue;
+
+        // Determine origin: main or parallel.
+        var originInput = rowEl.querySelector('input[name$="[row_origin]"]');
+        var origin = originInput ? originInput.value : (i === 0 ? 'main' : 'parallel');
+        var isMain = (origin === 'main');
+
+        // Read the appropriate qty input.
+        var qtyInput = isMain
+          ? rowEl.querySelector('[name*="prod_total_units"]')
+          : rowEl.querySelector('[name*="qte_unites"]');
+
+        if (!qtyInput) continue; // input not rendered (unusual) — skip
+
+        var qtyVal = parseInt(qtyInput.value, 10);
+        var isEmpty = (qtyInput.value === '' || isNaN(qtyVal) || qtyVal <= 0);
+
+        if (isEmpty) {
+          e.preventDefault();
+
+          var msg = isMain
+            ? 'Run principal : le volume (unités) est obligatoire et doit être > 0.'
+            : 'Format parallèle #' + idx + ' : le volume (unités) est obligatoire et doit être > 0.';
+
+          // Find or create the inline error element.
+          var existingErr = rowEl.querySelector('.pf-qty-error');
+          if (!existingErr) {
+            existingErr = document.createElement('p');
+            existingErr.className = 'pf-qty-error op-form__error';
+            qtyInput.parentNode.insertBefore(existingErr, qtyInput.nextSibling);
+          }
+          existingErr.textContent = msg;
+          existingErr.style.display = 'block';
+
+          qtyInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          qtyInput.focus();
+          return; // one error at a time
+        }
+      }
+    });
+  }
+
   if (form) {
     form.addEventListener('submit', function (e) {
       if (co2o2InversionConfirmed) return; // operator already confirmed — let through

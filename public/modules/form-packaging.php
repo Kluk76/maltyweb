@@ -951,6 +951,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             ? (int)$f['prod_total_units'] : null;
             $fQteUnites = isset($f['qte_unites']) && $f['qte_unites'] !== ''
                             ? (int)$f['qte_unites'] : null;
+            // Guard: production volume (units) must be present and > 0.
+            // Skip for réassigner mode (legs carry no new volume by design)
+            // and for cuve-réutilisée rows (zero new volume expected).
+            if (!$isReassignerMode && $fReusesPackagingIdFk === null) {
+                if ($fOrigin === 'main') {
+                    if ($fProdTotal === null || $fProdTotal <= 0) {
+                        throw new RuntimeException(
+                            "Run principal : volume (unités) manquant ou nul."
+                        );
+                    }
+                } else {
+                    if ($fQteUnites === null || $fQteUnites <= 0) {
+                        throw new RuntimeException(
+                            "Format parallèle #{$idx} : volume (unités) manquant ou nul."
+                        );
+                    }
+                }
+            }
             $fUnsaleable= isset($f['unsaleable_units']) && $f['unsaleable_units'] !== ''
                             ? (int)$f['unsaleable_units'] : null;
             // ── Side-stock complete-a-box draw (mig 303) ─────────────────────

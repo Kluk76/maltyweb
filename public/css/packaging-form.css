@@ -1030,3 +1030,12 @@ body.op-form-packaging .pf-reassign-source-info__beer {
 body.op-form-packaging .pf-reassign-add-leg-btn {
   margin-top: 0.75rem;
 }
+
+/* Inline production-volume error (JS guard) */
+body.op-form-packaging .pf-qty-error {
+  font-size: 0.75rem;
+  color: var(--ember);
+  font-family: "DM Sans", system-ui, sans-serif;
+  margin-top: 4px;
+  line-height: 1.3;
+}
