@@ -6482,3 +6482,115 @@ body.expeditions .exp-lead-badge--warn {
   border: 1px solid color-mix(in srgb, var(--ember) 35%, transparent);
 }
 
+/* ── Retours view ────────────────────────────────────────────────────────────── */
+body.expeditions .exp-ret-section {
+  max-width: 900px;
+}
+body.expeditions .exp-ret-title {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin: 0 0 1rem;
+  color: var(--color-text);
+}
+body.expeditions .exp-ret-title--sub {
+  margin-top: 2rem;
+}
+body.expeditions .exp-ret-list-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+body.expeditions .exp-ret-list-table th,
+body.expeditions .exp-ret-list-table td {
+  padding: 0.45rem 0.6rem;
+  text-align: left;
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+}
+body.expeditions .exp-ret-list-table thead th {
+  font-weight: 600;
+  background: var(--color-surface-2, #f9fafb);
+}
+body.expeditions .exp-ret-lines-summary {
+  color: var(--color-text-muted, #6b7280);
+  font-size: 0.85rem;
+}
+body.expeditions .exp-ret-empty {
+  color: var(--color-text-muted, #6b7280);
+  font-style: italic;
+  margin: 1rem 0;
+}
+body.expeditions .exp-ret-lines-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 1.25rem;
+  font-size: 0.9rem;
+}
+body.expeditions .exp-ret-lines-table th,
+body.expeditions .exp-ret-lines-table td {
+  padding: 0.45rem 0.6rem;
+  text-align: left;
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+}
+body.expeditions .exp-ret-lines-table thead th {
+  font-weight: 600;
+  background: var(--color-surface-2, #f9fafb);
+  white-space: nowrap;
+}
+body.expeditions .exp-ret-sku-code {
+  font-family: monospace;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+body.expeditions .exp-ret-line-row:hover {
+  background: var(--color-surface-2, #f9fafb);
+}
+body.expeditions .exp-ret-disp-select {
+  min-width: 140px;
+}
+body.expeditions .exp-ret-line-comment {
+  min-width: 140px;
+}
+body.expeditions .exp-ret-actions {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  margin-top: 0.5rem;
+}
+body.expeditions .exp-ret-card {
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 6px;
+  margin-bottom: 1.5rem;
+  overflow: hidden;
+}
+body.expeditions .exp-ret-card-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  align-items: baseline;
+  padding: 0.6rem 0.9rem;
+  background: var(--color-surface-2, #f9fafb);
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+}
+body.expeditions .exp-ret-card-date {
+  color: var(--color-text-muted, #6b7280);
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+body.expeditions .exp-ret-card-customer {
+  font-weight: 600;
+  flex: 1 1 auto;
+}
+body.expeditions .exp-ret-card-docno {
+  font-family: monospace;
+  font-size: 0.88rem;
+  color: var(--color-text-muted, #6b7280);
+  white-space: nowrap;
+}
+body.expeditions .exp-ret-card .exp-ret-form {
+  padding: 0.75rem 0.9rem;
+}
+body.expeditions .exp-ret-qty-bc {
+  font-weight: 600;
+  text-align: right;
+}
+

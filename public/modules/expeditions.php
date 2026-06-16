@@ -119,7 +119,7 @@ const EXP_LINE_STATUS_LABELS = [
 
 // ── View routing ──────────────────────────────────────────────────────────────
 $view    = isset($_GET['view']) ? (string) $_GET['view'] : 'commandes';
-$allowedViews = ['commandes', 'shopify', 'form', 'stock', 'stocktake', 'clients', 'mouvements', 'side-stock', 'historique', 'repack'];
+$allowedViews = ['commandes', 'shopify', 'form', 'stock', 'stocktake', 'clients', 'mouvements', 'side-stock', 'historique', 'repack', 'retours'];
 if (!in_array($view, $allowedViews, true)) $view = 'commandes';
 
 $editId  = isset($_GET['edit']) ? (int) $_GET['edit'] : 0;
@@ -130,6 +130,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'clients') {
 
     if (!csrf_verify($_POST['csrf'] ?? null)) {
         flash_set('err', 'Session expirée — recharge la page.');
+        redirect_to('/modules/expeditions.php?view=clients');
+    }
+
+    if (!can_write_expeditions($me)) {
+        flash_set('err', 'Accès en lecture seule — modifications non autorisées.');
         redirect_to('/modules/expeditions.php?view=clients');
     }
 
@@ -358,6 +363,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'form') {
     // CSRF — must be first
     if (!csrf_verify($_POST['csrf'] ?? null)) {
         flash_set('err', 'Session expirée — recharge la page.');
+        redirect_to('/modules/expeditions.php?view=form' . ($editId ? '&edit=' . $editId : ''));
+    }
+
+    if (!can_write_expeditions($me)) {
+        flash_set('err', 'Accès en lecture seule — modifications non autorisées.');
         redirect_to('/modules/expeditions.php?view=form' . ($editId ? '&edit=' . $editId : ''));
     }
 
@@ -676,6 +686,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'stocktake') {
         redirect_to('/modules/expeditions.php?view=stocktake');
     }
 
+    if (!can_write_expeditions($me)) {
+        flash_set('err', 'Accès en lecture seule — modifications non autorisées.');
+        redirect_to('/modules/expeditions.php?view=stocktake');
+    }
+
     $pdo = maltytask_pdo();
 
     // ── Role gate: only managers/admins may back-date ─────────────────────
@@ -924,6 +939,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'mouvements') {
     // CSRF — must be first
     if (!csrf_verify($_POST['csrf'] ?? null)) {
         flash_set('err', 'Session expirée — recharge la page.');
+        redirect_to('/modules/expeditions.php?view=mouvements');
+    }
+
+    if (!can_write_expeditions($me)) {
+        flash_set('err', 'Accès en lecture seule — modifications non autorisées.');
         redirect_to('/modules/expeditions.php?view=mouvements');
     }
 
@@ -1353,6 +1373,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'side-stock') {
         redirect_to('/modules/expeditions.php?view=side-stock');
     }
 
+    if (!can_write_expeditions($me)) {
+        flash_set('err', 'Accès en lecture seule — modifications non autorisées.');
+        redirect_to('/modules/expeditions.php?view=side-stock');
+    }
+
     $pdo    = maltytask_pdo();
     $action = isset($_POST['action']) ? (string) $_POST['action'] : '';
     $allowedSslActions = ['record_giveaway', 'tombstone_ssl_row'];
@@ -1477,6 +1502,180 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'side-stock') {
     }
 }
 
+// ── POST handler (Retours view) ──────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'retours') {
+    // Step 1: CSRF check
+    if (!csrf_verify($_POST['csrf'] ?? null)) {
+        flash_set('err', 'Session expirée — recharge la page.');
+        redirect_to('/modules/expeditions.php?view=retours');
+    }
+
+    if (!can_write_expeditions($me)) {
+        flash_set('err', 'Accès en lecture seule — modifications non autorisées.');
+        redirect_to('/modules/expeditions.php?view=retours');
+    }
+
+    $pdo = null;
+    $pdo = maltytask_pdo();
+
+    // Step 2: Read + validate bc_document_no (two-step: ?? default then validate)
+    $bcDocNo = trim($_POST['bc_document_no'] ?? '');
+    if ($bcDocNo === '') {
+        flash_set('err', 'Numéro d\'avoir BC manquant.');
+        redirect_to('/modules/expeditions.php?view=retours');
+    }
+
+    try {
+        // Step 3: Re-validate against ledger (bc_document_no must exist as beer-SKU return)
+        // and derive posting_date from ledger (never trust POST)
+        $ledgerChkStmt = $pdo->prepare(
+            'SELECT l.sku_id_fk, l.sku_code_raw, l.qty_signed, l.posting_date
+               FROM inv_sales_ledger l
+               JOIN ref_skus rs ON rs.id = l.sku_id_fk
+              WHERE l.bc_document_no = ?
+                AND l.doc_type IN (\'credit\', \'return_receipt\')
+                AND l.qty_signed > 0
+                AND rs.recipe_id IS NOT NULL
+                AND l.sku_id_fk IS NOT NULL'
+        );
+        $ledgerChkStmt->execute([$bcDocNo]);
+        $ledgerLines = $ledgerChkStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        if (empty($ledgerLines)) {
+            flash_set('err', 'Avoir ' . htmlspecialchars($bcDocNo) . ' introuvable dans le grand livre BC.');
+            redirect_to('/modules/expeditions.php?view=retours');
+        }
+
+        // Derive posting_date from ledger (first row — all rows share same posting_date for a bc_document_no)
+        $ledgerPostingDate = $ledgerLines[0]['posting_date'];
+
+        // Build a map: sku_id_fk => {qty_signed, sku_code_raw} from ledger (server-authoritative)
+        $ledgerMap = [];
+        foreach ($ledgerLines as $ll) {
+            $skuId = (int) $ll['sku_id_fk'];
+            $ledgerMap[$skuId] = [
+                'qty'          => (float) $ll['qty_signed'],
+                'sku_code_raw' => (string) $ll['sku_code_raw'],
+            ];
+        }
+
+        // Step 4: Idempotency check — does an ord_returns row already exist for this bc_document_no?
+        $existStmt = $pdo->prepare(
+            'SELECT id FROM ord_returns WHERE origin_bc_document_no = ? LIMIT 1'
+        );
+        $existStmt->execute([$bcDocNo]);
+        $existingReturn = $existStmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($existingReturn !== false) {
+            // Check if ALL lines are already dispositioned
+            $existingReturnId = (int) $existingReturn['id'];
+            $existingLineStmt = $pdo->prepare(
+                'SELECT sku_id_fk FROM ord_return_lines WHERE return_id_fk = ?'
+            );
+            $existingLineStmt->execute([$existingReturnId]);
+            $dispositionedSkus = [];
+            foreach ($existingLineStmt->fetchAll(PDO::FETCH_ASSOC) as $el) {
+                $dispositionedSkus[(int) $el['sku_id_fk']] = true;
+            }
+            // Filter ledgerMap to only not-yet-dispositioned lines
+            $ledgerMap = array_filter($ledgerMap, fn($_, $skuId) => !isset($dispositionedSkus[$skuId]), ARRAY_FILTER_USE_BOTH);
+            if (empty($ledgerMap)) {
+                flash_set('err', 'Avoir ' . htmlspecialchars($bcDocNo) . ' déjà entièrement traité.');
+                redirect_to('/modules/expeditions.php?view=retours');
+            }
+        }
+
+        // Step 5: Parse submitted dispositions — validate each line
+        // POST fields: ret_sku_id[] (hidden), ret_disp[] (select), ret_line_comment[] (text)
+        $retSkuIds       = array_values((array) ($_POST['ret_sku_id']       ?? []));
+        $retDisps        = array_values((array) ($_POST['ret_disp']         ?? []));
+        $retLineComments = array_values((array) ($_POST['ret_line_comment'] ?? []));
+
+        $validLines = [];
+        foreach ($retSkuIds as $idx => $rawSkuId) {
+            $skuId      = (int) $rawSkuId;
+            $disp       = trim($retDisps[$idx] ?? '');
+            $lineComment= trim($retLineComments[$idx] ?? '');
+            $lineComment= $lineComment !== '' ? mb_substr($lineComment, 0, 500) : null;
+
+            // Must exist in ledger (server-authoritative whitelist)
+            if (!isset($ledgerMap[$skuId])) continue;
+            // Validate disposition
+            if (!in_array($disp, ['restock', 'scrap', 'quarantine', 'rebate'], true)) continue;
+
+            $validLines[] = [
+                'sku_id_fk'             => $skuId,
+                'qty'                   => $ledgerMap[$skuId]['qty'],   // from ledger — never POST
+                'disposition'           => $disp,
+                'line_comment'          => $lineComment,
+                'origin_ledger_sku_code'=> $ledgerMap[$skuId]['sku_code_raw'],
+            ];
+        }
+
+        if (empty($validLines)) {
+            flash_set('err', 'Aucune ligne valide soumise.');
+            redirect_to('/modules/expeditions.php?view=retours');
+        }
+
+        $pdo->beginTransaction();
+
+        // Step 6a: Insert ord_returns header (or reuse existing)
+        if ($existingReturn !== false) {
+            $newReturnId = (int) $existingReturn['id'];
+        } else {
+            $insRetStmt = $pdo->prepare(
+                'INSERT INTO ord_returns
+                    (origin_bc_document_no, origin_posting_date, returned_on, comment, created_by_user_id)
+                 VALUES (?, ?, ?, NULL, ?)'
+            );
+            $insRetStmt->execute([$bcDocNo, $ledgerPostingDate, $ledgerPostingDate, (int) $me['id']]);
+            $newReturnId = (int) $pdo->lastInsertId();
+            log_revision($pdo, $me, 'ord_returns', $newReturnId, null, [
+                'origin_bc_document_no' => $bcDocNo,
+                'origin_posting_date'   => $ledgerPostingDate,
+                'returned_on'           => $ledgerPostingDate,
+                'created_by_user_id'    => (int) $me['id'],
+            ], 'normal');
+        }
+
+        // Step 6b: Insert ord_return_lines
+        $insLineStmt = $pdo->prepare(
+            'INSERT INTO ord_return_lines
+                (return_id_fk, sku_id_fk, qty, disposition, line_comment, origin_ledger_sku_code)
+             VALUES (?, ?, ?, ?, ?, ?)'
+        );
+        foreach ($validLines as $vl) {
+            $insLineStmt->execute([
+                $newReturnId,
+                $vl['sku_id_fk'],
+                $vl['qty'],
+                $vl['disposition'],
+                $vl['line_comment'],
+                $vl['origin_ledger_sku_code'],
+            ]);
+            $newLineId = (int) $pdo->lastInsertId();
+            log_revision($pdo, $me, 'ord_return_lines', $newLineId, null, [
+                'return_id_fk'              => $newReturnId,
+                'sku_id_fk'                 => $vl['sku_id_fk'],
+                'qty'                       => $vl['qty'],
+                'disposition'               => $vl['disposition'],
+                'origin_ledger_sku_code'    => $vl['origin_ledger_sku_code'],
+            ], 'normal');
+        }
+
+        $pdo->commit();
+        $lineCount = count($validLines);
+        flash_set('ok', 'Retour ' . htmlspecialchars($bcDocNo) . ' traité (' . $lineCount . ' ligne' . ($lineCount !== 1 ? 's' : '') . ').');
+        redirect_to('/modules/expeditions.php?view=retours');
+
+    } catch (Throwable $e) {
+        if ($pdo !== null && $pdo->inTransaction()) $pdo->rollBack();
+        error_log('[expeditions retours POST] ' . $e->getMessage());
+        flash_set('err', 'Erreur lors de l\'enregistrement : ' . pdo_friendly_error($e));
+        redirect_to('/modules/expeditions.php?view=retours');
+    }
+}
+
 // ── GET — load data ───────────────────────────────────────────────────────────
 $pdo     = maltytask_pdo();
 $loadErr = null;
@@ -1534,6 +1733,10 @@ $histWeekRows      = []; // rows from v_sales_ledger_weekly_client for the perio
 $histByWeek        = []; // [iso_yearweek => [row, ...]] keyed for week-blocks
 $histLinesByKey    = []; // ["{iso_yearweek}:{customer_id_fk}" => [{sku_code,qty,hl}, ...]]
 $histUnresolved    = []; // v_sales_ledger_unresolved rows for the footnote
+
+// Retours view
+$retPendingGroups = []; // bc_document_no => ['customer_name', 'posting_date', 'lines' => [[sku_id_fk, sku_code, format, qty_signed, sku_code_raw], ...]]
+$retProcessed     = []; // last 30 dispositioned returns: [returned_on, origin_bc_document_no, customer_name, lines_summary]
 
 try {
     // Active customers (for typeahead)
@@ -2379,6 +2582,78 @@ try {
         )->fetchAll(PDO::FETCH_ASSOC);
     }
 
+    // ── Retours view ─────────────────────────────────────────────────────────
+    if ($view === 'retours') {
+        // A. Pending queue: BC return lines awaiting disposition
+        //    Group by bc_document_no; exclude already-dispositioned (bc_document_no+sku_id_fk pair in ord_return_lines)
+        $pendingStmt = $pdo->prepare(
+            'SELECT l.bc_document_no, l.posting_date, l.sku_id_fk, l.sku_code_raw, l.qty_signed,
+                    rs.sku_code, rs.format,
+                    COALESCE(c.name, l.sku_code_raw) AS customer_name
+               FROM inv_sales_ledger l
+               JOIN ref_skus rs ON rs.id = l.sku_id_fk
+               LEFT JOIN ref_customers c ON c.id = l.customer_id_fk
+              WHERE l.doc_type IN (\'credit\', \'return_receipt\')
+                AND l.qty_signed > 0
+                AND rs.recipe_id IS NOT NULL
+                AND l.sku_id_fk IS NOT NULL
+                AND l.posting_date >= DATE_SUB(CURDATE(), INTERVAL 180 DAY)
+                AND NOT EXISTS (
+                    SELECT 1 FROM ord_returns r
+                    JOIN ord_return_lines rl ON rl.return_id_fk = r.id
+                    WHERE r.origin_bc_document_no = l.bc_document_no
+                      AND rl.sku_id_fk = l.sku_id_fk
+                )
+              ORDER BY l.posting_date DESC, l.bc_document_no'
+        );
+        $pendingStmt->execute();
+        $pendingRows = $pendingStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // Group by bc_document_no
+        $retPendingGroups = [];
+        foreach ($pendingRows as $pr) {
+            $key = (string) $pr['bc_document_no'];
+            if (!isset($retPendingGroups[$key])) {
+                $retPendingGroups[$key] = [
+                    'bc_document_no' => $key,
+                    'posting_date'   => $pr['posting_date'],
+                    'customer_name'  => $pr['customer_name'],
+                    'lines'          => [],
+                ];
+            }
+            $retPendingGroups[$key]['lines'][] = [
+                'sku_id_fk'   => (int) $pr['sku_id_fk'],
+                'sku_code'    => $pr['sku_code'],
+                'sku_code_raw'=> $pr['sku_code_raw'],
+                'format'      => $pr['format'] ?? '',
+                'qty'         => (float) $pr['qty_signed'],
+            ];
+        }
+
+        // B. Processed list: last 30 dispositioned returns
+        $processedStmt = $pdo->query(
+            'SELECT r.id, r.returned_on, r.origin_bc_document_no,
+                    (SELECT COALESCE(MIN(c2.name), MIN(l2.sku_code_raw))
+                       FROM inv_sales_ledger l2
+                       LEFT JOIN ref_customers c2 ON c2.id = l2.customer_id_fk
+                      WHERE l2.bc_document_no = r.origin_bc_document_no
+                        AND l2.doc_type IN (\'credit\', \'return_receipt\')
+                    ) AS customer_name,
+                    GROUP_CONCAT(
+                        CONCAT(s.sku_code, \'×\', CAST(rl.qty AS CHAR), \' [\', rl.disposition, \']\')
+                        ORDER BY rl.id SEPARATOR \' · \'
+                    ) AS lines_summary
+               FROM ord_returns r
+               LEFT JOIN ord_return_lines rl ON rl.return_id_fk = r.id
+               LEFT JOIN ref_skus s ON s.id = rl.sku_id_fk
+              WHERE r.origin_bc_document_no IS NOT NULL
+              GROUP BY r.id, r.returned_on, r.origin_bc_document_no
+              ORDER BY r.returned_on DESC, r.id DESC
+              LIMIT 30'
+        );
+        $retProcessed = $processedStmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
 } catch (Throwable $e) {
     $loadErr = $e->getMessage();
     error_log('[expeditions GET] ' . $e->getMessage());
@@ -2943,6 +3218,9 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
     <a href="/modules/expeditions.php?view=repack"
        class="exp-tab<?= $view === 'repack' ? ' exp-tab--active' : '' ?>"
        <?= $view === 'repack' ? 'aria-current="page"' : '' ?>>Reconditionnement</a>
+    <a href="/modules/expeditions.php?view=retours"
+       class="exp-tab<?= $view === 'retours' ? ' exp-tab--active' : '' ?>"
+       <?= $view === 'retours' ? 'aria-current="page"' : '' ?>>&#8629; Retours</a>
   </nav>
 
   <!-- ══════════════════════════════════════════════════════════════════════
@@ -4473,7 +4751,7 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
     </div><!-- /card 4 -->
 
     <!-- ── Submit bar ──────────────────────────────────────────────────── -->
-    <?php if (!$isReadOnly): ?>
+    <?php if (!$isReadOnly && can_write_expeditions($me)): ?>
     <div class="op-form__submit-bar exp-submit-bar">
       <button type="submit" class="op-form__btn op-form__btn--primary" id="exp-submit-btn">
         <?= $editId ? 'Enregistrer les modifications' : 'Créer la commande' ?>
@@ -6123,6 +6401,7 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
     </div>
 
     <!-- ── Submit bar ─────────────────────────────────────────────────────── -->
+    <?php if (can_write_expeditions($me)): ?>
     <div class="exp-st-submit-bar">
       <button type="submit" class="exp-st-submit-btn" id="exp-st-submit">
         Enregistrer l'inventaire —
@@ -6130,6 +6409,7 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
         au <span id="exp-st-submit-date"><?= exp_fmt_date($stDefaultCountedAt) ?></span>
       </button>
     </div>
+    <?php endif ?>
 
   </form>
 
@@ -6233,6 +6513,7 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
         </div>
 
         <!-- Actions -->
+        <?php if (can_write_expeditions($me)): ?>
         <div class="exp-clients-review-actions">
 
           <!-- Fusionner button → opens inline merge panel -->
@@ -6270,8 +6551,10 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
           </form>
 
         </div>
+        <?php endif ?>
 
         <!-- Inline merge panel (hidden by default, opened by JS) -->
+        <?php if (can_write_expeditions($me)): ?>
         <div class="exp-merge-panel" id="exp-merge-panel-<?= $rvId ?>" hidden>
           <div class="exp-merge-panel__inner">
             <div class="exp-merge-panel__title">
@@ -6317,6 +6600,7 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
             </form>
           </div>
         </div>
+        <?php endif ?>
 
       </div>
     <?php endforeach ?>
@@ -6433,6 +6717,7 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
 
             <!-- Canal — inline editable -->
             <td class="exp-ct-col-chan">
+              <?php if (can_write_expeditions($me)): ?>
               <form method="POST" action="/modules/expeditions.php?view=clients"
                     class="exp-ct-inline-form">
                 <input type="hidden" name="csrf"      value="<?= htmlspecialchars($csrf) ?>">
@@ -6451,6 +6736,9 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
                   <option value="off_trade"<?= ($cr['trade_channel'] === 'off_trade') ? 'selected' : '' ?>>Off-trade</option>
                 </select>
               </form>
+              <?php else: ?>
+              <span class="exp-ct-muted"><?= htmlspecialchars($cr['trade_channel'] ?? '—') ?></span>
+              <?php endif ?>
             </td>
 
             <!-- City -->
@@ -6471,6 +6759,7 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
 
             <!-- Transporter — inline editable -->
             <td class="exp-ct-col-trans">
+              <?php if (can_write_expeditions($me)): ?>
               <form method="POST" action="/modules/expeditions.php?view=clients"
                     class="exp-ct-inline-form">
                 <input type="hidden" name="csrf"      value="<?= htmlspecialchars($csrf) ?>">
@@ -6493,10 +6782,23 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
                   <?php endforeach ?>
                 </select>
               </form>
+              <?php else: ?>
+              <?php
+                $trName = '—';
+                foreach ($transporters as $t) {
+                    if ((int) $t['id'] === (int) $cr['default_transporter_id_fk']) {
+                        $trName = $t['name'];
+                        break;
+                    }
+                }
+              ?>
+              <span class="exp-ct-muted"><?= htmlspecialchars($trName) ?></span>
+              <?php endif ?>
             </td>
 
             <!-- Actions -->
             <td class="exp-ct-col-actions">
+              <?php if (can_write_expeditions($me)): ?>
               <?php if (!$inactive): ?>
               <form method="POST" action="/modules/expeditions.php?view=clients"
                     class="exp-ct-inline-form">
@@ -6527,6 +6829,7 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
                   ✓ Réactiver
                 </button>
               </form>
+              <?php endif ?>
               <?php endif ?>
             </td>
 
@@ -6617,6 +6920,7 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
   <div class="exp-mov-wrap" id="exp-mov-wrap">
 
     <!-- ── Record form ────────────────────────────────────────────────────── -->
+    <?php if (can_write_expeditions($me)): ?>
     <div class="op-form__card exp-card exp-mov-card" id="exp-mov-form-card">
       <div class="op-form__card-title">Nouveau mouvement inter-sites</div>
 
@@ -6706,6 +7010,7 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
 
       </form>
     </div>
+    <?php endif ?>
     <!-- /form card -->
 
     <!-- ── Movements list ─────────────────────────────────────────────────── -->
@@ -6848,6 +7153,7 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
     </section>
 
     <!-- ── Giveaway form ────────────────────────────────────────────────── -->
+    <?php if (can_write_expeditions($me)): ?>
     <section class="exp-ssl-giveaway-section" aria-label="Enregistrer un giveaway">
       <h2 class="exp-ssl-section-title">Enregistrer un giveaway</h2>
       <p class="exp-ssl-note">
@@ -6915,6 +7221,7 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
         </div>
       </form>
     </section>
+    <?php endif ?>
 
     <!-- ── Movement ledger ──────────────────────────────────────────────── -->
     <section class="exp-ssl-ledger-section" aria-label="Historique des mouvements">
@@ -7303,6 +7610,104 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
 
   <?php endif ?>
   <!-- /RECONDITIONNEMENT -->
+
+  <!-- ══════════════════════════════════════════════════════════════════════
+       RETOURS VIEW
+       ══════════════════════════════════════════════════════════════════════ -->
+  <?php if ($view === 'retours'): ?>
+  <div class="exp-section exp-ret-section">
+
+  <?php if (!empty($retPendingGroups)): ?>
+    <h2 class="exp-ret-title">Retours à traiter</h2>
+
+    <?php foreach ($retPendingGroups as $bcGroup): ?>
+    <div class="exp-ret-card">
+      <div class="exp-ret-card-header">
+        <span class="exp-ret-card-date"><?= htmlspecialchars(exp_fmt_date($bcGroup['posting_date'])) ?></span>
+        <span class="exp-ret-card-customer"><?= htmlspecialchars((string) $bcGroup['customer_name']) ?></span>
+        <span class="exp-ret-card-docno"><?= htmlspecialchars((string) $bcGroup['bc_document_no']) ?></span>
+      </div>
+      <?php if (can_write_expeditions($me)): ?>
+      <form method="POST" action="/modules/expeditions.php?view=retours" class="exp-ret-form">
+        <input type="hidden" name="csrf"           value="<?= htmlspecialchars($csrf) ?>">
+        <input type="hidden" name="bc_document_no" value="<?= htmlspecialchars((string) $bcGroup['bc_document_no']) ?>">
+        <table class="exp-ret-lines-table" role="table">
+          <thead>
+            <tr>
+              <th scope="col">SKU</th>
+              <th scope="col">Format</th>
+              <th scope="col">Qté retournée</th>
+              <th scope="col">Disposition</th>
+              <th scope="col">Note ligne</th>
+            </tr>
+          </thead>
+          <tbody>
+          <?php foreach ($bcGroup['lines'] as $bl): ?>
+            <tr class="exp-ret-line-row">
+              <td>
+                <span class="exp-ret-sku-code"><?= htmlspecialchars($bl['sku_code']) ?></span>
+                <input type="hidden" name="ret_sku_id[]" value="<?= (int) $bl['sku_id_fk'] ?>">
+              </td>
+              <td><?= htmlspecialchars((string) $bl['format']) ?></td>
+              <td class="exp-ret-qty-bc"><?= number_format($bl['qty'], fmod((float) $bl['qty'], 1.0) === 0.0 ? 0 : 2) ?></td>
+              <td>
+                <select name="ret_disp[]" class="op-form__input exp-ret-disp-select"
+                        aria-label="Disposition pour <?= htmlspecialchars($bl['sku_code']) ?>">
+                  <option value="quarantine" selected>Quarantaine</option>
+                  <option value="restock">Remise en stock</option>
+                  <option value="scrap">Rebut</option>
+                  <option value="rebate">Pas un retour physique (avoir/rabais)</option>
+                </select>
+              </td>
+              <td>
+                <input type="text" name="ret_line_comment[]" value=""
+                       class="op-form__input exp-ret-line-comment"
+                       maxlength="500"
+                       aria-label="Note pour <?= htmlspecialchars($bl['sku_code']) ?>">
+              </td>
+            </tr>
+          <?php endforeach ?>
+          </tbody>
+        </table>
+        <div class="exp-ret-actions">
+          <button type="submit" class="op-form__btn op-form__btn--primary">Enregistrer</button>
+        </div>
+      </form>
+      <?php endif ?>
+    </div>
+    <?php endforeach ?>
+
+  <?php else: ?>
+    <p class="exp-ret-empty">Aucun retour en attente de traitement.</p>
+  <?php endif ?>
+
+  <?php if (!empty($retProcessed)): ?>
+    <h2 class="exp-ret-title exp-ret-title--sub">Retours traités</h2>
+    <table class="exp-ret-list-table" role="table">
+      <thead>
+        <tr>
+          <th scope="col">Date retour</th>
+          <th scope="col">N° avoir BC</th>
+          <th scope="col">Client</th>
+          <th scope="col">Lignes</th>
+        </tr>
+      </thead>
+      <tbody>
+      <?php foreach ($retProcessed as $rp): ?>
+        <tr>
+          <td><?= htmlspecialchars(exp_fmt_date($rp['returned_on'])) ?></td>
+          <td><span class="exp-ret-sku-code"><?= htmlspecialchars((string) ($rp['origin_bc_document_no'] ?? '—')) ?></span></td>
+          <td><?= htmlspecialchars((string) ($rp['customer_name'] ?? '—')) ?></td>
+          <td><span class="exp-ret-lines-summary"><?= htmlspecialchars((string) ($rp['lines_summary'] ?? '—')) ?></span></td>
+        </tr>
+      <?php endforeach ?>
+      </tbody>
+    </table>
+  <?php endif ?>
+
+  </div>
+  <?php endif ?>
+  <!-- /RETOURS -->
 
 </main>
 
