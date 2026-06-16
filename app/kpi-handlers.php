@@ -35,6 +35,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/production-targets.php';
+require_once __DIR__ . '/returns-synthese.php';
 
 // ─── Param whitelist ──────────────────────────────────────────────────────────
 // Allowed values per params_json key. Handlers validate against this before
@@ -11177,6 +11178,7 @@ function kpi_handler_logistics(
             'Coût emballage expédition non tracé séparément des emballages produit dans inv_deliveries.'),
         'otif_to_customer'        => kpi_logi_stub_gap('otif_to_customer', $label,
             'OTIF nécessite delivered_at et confirmation de livraison complète — absent de ord_orders.'),
+        'returns_synthese'        => kpi_logi_returns_synthese($params, $label, $pdo),
         default                   => kpi_stub_handler('logistics', $handler, $label),
     };
 }
@@ -11192,6 +11194,49 @@ function kpi_logi_stub_gap(string $handler, string $label, string $note): array
         'note'    => $note,
     ];
     return $r;
+}
+
+// ─── #283: returns_synthese ───────────────────────────────────────────────────
+
+function kpi_logi_returns_synthese(array $params, string $label, PDO $pdo): array
+{
+    $periodDays = isset($params['period_days']) ? (int) $params['period_days'] : 90;
+    $cacheKey   = "logi_returns_synthese_{$periodDays}d";
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $data = returns_synthese($pdo, $periodDays);
+    $mix  = $data['mix'];
+
+    // breakdown for 'bar' viz_type: disposition mix (3 physical dispositions)
+    $breakdown = [];
+    if ($mix['total_units'] > 0) {
+        $breakdown = [
+            ['key' => 'restock',    'label' => 'Remise en stock', 'value' => $mix['restock_pct']],
+            ['key' => 'scrap',      'label' => 'Rebut',           'value' => $mix['scrap_pct']],
+            ['key' => 'quarantine', 'label' => 'Quarantaine',     'value' => $mix['quarantine_pct']],
+        ];
+    }
+
+    $result = array_merge(kpi_empty_result($label, 'unités'), [
+        'value'     => (int) round($mix['total_units']),
+        'tint'      => $mix['total_units'] === 0.0 ? 'green' : 'neutral',
+        'breakdown' => $breakdown ?: null,
+        'meta'      => [
+            'period_days'      => $periodDays,
+            'pending_count'    => $data['pending_count'],
+            'restock_units'    => $mix['restock_units'],
+            'scrap_units'      => $mix['scrap_units'],
+            'quarantine_units' => $mix['quarantine_units'],
+            'restock_pct'      => $mix['restock_pct'],
+            'scrap_pct'        => $mix['scrap_pct'],
+            'quarantine_pct'   => $mix['quarantine_pct'],
+            'source_tables'    => 'ord_returns + ord_return_lines',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
 }
 
 // ─── #134: orders_to_fulfil ───────────────────────────────────────────────────
