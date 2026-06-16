@@ -1362,7 +1362,7 @@ function fg_stock_location_snapshot(PDO $pdo): array
                 'format'         => $ar['format'],
                 'display_family' => $ar['display_family'],
                 'hl_per_unit'    => (float) $ar['hl_per_unit'],
-                'qty'            => (int) $ar['qty'],
+                'qty'            => (float) $ar['qty'],   // float, NOT (int): cages are decimal cage-units (mig 363); flooring here broke Σcards==Σphysique
                 'counted_at'     => $ar['counted_at'],
             ];
         }
