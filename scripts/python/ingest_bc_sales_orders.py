@@ -435,6 +435,23 @@ def load_existing_non_bc_active_orders(
         return result
 
 
+def load_customer_identity_map(
+    conn: pymysql.connections.Connection,
+) -> dict[int, int]:
+    """
+    Loads ref_customer_identity: {member_customer_id_fk: canonical_customer_id_fk}.
+    Used by detect_collisions() to collapse geographic ship-to accounts to their
+    Cobra distributor bill-to canonical account for collision-key normalisation.
+    """
+    with conn.cursor() as c:
+        c.execute(
+            "SELECT member_customer_id_fk, canonical_customer_id_fk "
+            "FROM ref_customer_identity"
+        )
+        rows = c.fetchall()
+    return {int(r["member_customer_id_fk"]): int(r["canonical_customer_id_fk"]) for r in rows}
+
+
 # ── SKU resolver ──────────────────────────────────────────────────────────────
 
 def resolve_sku(
@@ -638,6 +655,7 @@ def classify_orders(
 def detect_collisions(
     classified: dict,
     existing_non_bc: list[dict],
+    identity_map: dict[int, int] | None = None,
 ) -> list[dict]:
     """
     Find existing ord_orders (web/email/import) that likely represent the same real-world
@@ -653,8 +671,17 @@ def detect_collisions(
 
     Cancelled candidates are excluded entirely (already excluded by load_existing_non_bc_active_orders).
 
+    identity_map collapses geographic ship-to accounts (member) to their Cobra distributor
+    bill-to canonical account so that BC bill-to orders and import ship-to rows share the
+    same collision key.
+
     Returns a list of collision dicts for the reconciliation report.
     """
+    def canon(cid: int | None) -> int | None:
+        if cid is None:
+            return None
+        return (identity_map or {}).get(cid, cid)
+
     collisions = []
 
     # Build map: customer_id → list of (bc_no, document_date, sku_id_set)
@@ -662,7 +689,7 @@ def detect_collisions(
     # bc_ship_date (document_date) so the date semantics are consistent on both sides.
     bc_by_cust: dict[int, list[dict]] = {}
     for po in classified["pull"]:
-        cid = po["customer_id"]
+        cid = canon(po["customer_id"])
         if cid is None:
             continue
         bc_skus = {ln["sku_id"] for ln in po["resolved_lines"]}
@@ -673,7 +700,7 @@ def detect_collisions(
         })
 
     for eo in existing_non_bc:
-        cid = eo["customer_id_fk"]
+        cid = canon(eo["customer_id_fk"])
         if cid is None or cid not in bc_by_cust:
             continue
         eo_is_shipped = (eo["status"] == "shipped")
@@ -1723,6 +1750,8 @@ def main() -> None:
         transporters = load_transporters(conn)
         existing_bc  = load_existing_bc_orders(conn)
         existing_non_bc = load_existing_non_bc_active_orders(conn)
+        identity_map = load_customer_identity_map(conn)
+        print(f"  Customer identity map loaded: {len(identity_map)} member→canonical links")
 
         print(f"  Customers loaded   : {len(customers)}")
         print(f"  SKUs loaded        : {len(direct_map)} direct + {len(alias_map)} aliases")
@@ -1743,7 +1772,7 @@ def main() -> None:
 
         # ── Collision detection ───────────────────────────────────────────────
         print("[5/6] Detecting collisions …")
-        collisions = detect_collisions(classified, existing_non_bc)
+        collisions = detect_collisions(classified, existing_non_bc, identity_map=identity_map)
 
         # Build collision_bc_nos set — the deterministic SKIP set for the import loop
         collision_bc_nos: set[str] = {c["bc_no"] for c in collisions}
