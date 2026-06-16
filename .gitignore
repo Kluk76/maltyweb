@@ -1,6 +1,8 @@
 # secrets — never commit
 config/db.env
 config/bc.env
+config/gmail.env
+config/gmail-sa.json
 config/*.local.*
 .env
 .env.*
