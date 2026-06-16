@@ -57,6 +57,14 @@
       sel.appendChild(opt);
     });
 
+    // If no eligible beers and includeOverride, show explanatory disabled option
+    if (elig.length === 0 && includeOverride) {
+      var noElig = document.createElement('option');
+      noElig.disabled = true;
+      noElig.textContent = '— Aucune bière éligible (garde / état cuve) —';
+      sel.appendChild(noElig);
+    }
+
     if (includeOverride) {
       var sep = document.createElement('option');
       sep.disabled = true;
@@ -194,6 +202,63 @@
           e.preventDefault();
         }
       });
+    });
+
+    // ── P0-1: Add-form collapse/expand ────────────────────────────────────────
+
+    // Trigger chips toggle forms open
+    document.querySelectorAll('.pl-add-trigger').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var section = btn.dataset.section;
+        // Find the sibling .pl-add-form with matching data-section
+        var form = btn.parentElement.querySelector('.pl-add-form[data-section="' + section + '"]');
+        if (!form) return;
+        form.classList.add('pl-add-form--open');
+        btn.classList.add('pl-add-trigger--open');
+        // Focus the first focusable input in the form
+        var firstInput = form.querySelector('select, input:not([type="hidden"]), textarea');
+        if (firstInput) firstInput.focus();
+      });
+    });
+
+    // Before each add-form submits, save last-add state to sessionStorage
+    document.querySelectorAll('.pl-add-form').forEach(function (form) {
+      form.addEventListener('submit', function () {
+        var date = form.dataset.planDate;
+        var section = form.dataset.section;
+        if (date && section) {
+          try {
+            sessionStorage.setItem('pl-last-add', JSON.stringify({ date: date, section: section }));
+          } catch (e) {}
+        }
+      });
+    });
+
+    // On load, reopen the form that was last submitted (after PRG redirect)
+    (function () {
+      var flashOk = document.querySelector('.pl-flash--ok');
+      if (!flashOk) return;
+      var stored;
+      try { stored = JSON.parse(sessionStorage.getItem('pl-last-add') || 'null'); } catch (e) {}
+      if (!stored) return;
+      var form = document.querySelector(
+        '.pl-add-form[data-plan-date="' + stored.date + '"][data-section="' + stored.section + '"]'
+      );
+      if (!form) { sessionStorage.removeItem('pl-last-add'); return; }
+      form.classList.add('pl-add-form--open');
+      var trigger = form.parentElement.querySelector('.pl-add-trigger[data-section="' + stored.section + '"]');
+      if (trigger) trigger.classList.add('pl-add-trigger--open');
+      form.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      sessionStorage.removeItem('pl-last-add');
+    }());
+
+    // P1-6: Delete confirm — delegated, no inline JS
+    document.addEventListener('submit', function (e) {
+      var form = e.target.closest('.pl-item-card__del-form');
+      if (!form) return;
+      if (!confirm('Supprimer cet élément ?')) {
+        e.preventDefault();
+      }
     });
   });
 }());

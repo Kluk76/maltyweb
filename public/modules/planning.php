@@ -805,7 +805,7 @@ $weekLabel = 'Semaine du '
 
           <?php foreach ($dayItems['wort'] ?? [] as $item): ?>
             <?php $isProposed = ($item['source'] ?? '') === 'predictive' && ($item['status'] ?? '') === 'proposed'; ?>
-            <div class="pl-item-card<?= $isProposed ? ' pl-item-card--proposed' : '' ?>">
+            <div class="pl-item-card<?= $isProposed ? ' pl-item-card--proposed' : '' ?><?= $item['hors_process'] ? ' pl-item-card--hors-process' : '' ?>">
               <?php if ($isProposed && $canWort): ?>
                 <div class="pl-proposed-badge">Proposé</div>
                 <?php if (!empty($item['suggest_reason'])): ?>
@@ -814,8 +814,7 @@ $weekLabel = 'Semaine du '
               <?php elseif ($canWort): ?>
                 <form method="POST"
                       action="/modules/planning.php?week=<?= htmlspecialchars($weekStartStr, ENT_QUOTES | ENT_HTML5) ?>"
-                      class="pl-item-card__del-form"
-                      onsubmit="return confirm('Supprimer cet élément ?');">
+                      class="pl-item-card__del-form">
                   <input type="hidden" name="csrf"      value="<?= htmlspecialchars(csrf_token(), ENT_QUOTES | ENT_HTML5) ?>">
                   <input type="hidden" name="action"    value="delete_item">
                   <input type="hidden" name="item_id"   value="<?= (int)$item['id'] ?>">
@@ -869,15 +868,23 @@ $weekLabel = 'Semaine du '
             </div>
           <?php endforeach ?>
 
+          <?php if (empty($dayItems['wort']) && !$canWort): ?>
+            <div class="pl-section__empty">—</div>
+          <?php endif ?>
+
           <?php if ($canWort): ?>
+            <button type="button" class="pl-add-trigger" data-section="wort">＋ Ajouter</button>
             <!-- Add wort form -->
             <form method="POST"
                   action="/modules/planning.php?week=<?= htmlspecialchars($weekStartStr, ENT_QUOTES | ENT_HTML5) ?>"
-                  class="pl-add-form pl-wort-form">
+                  class="pl-add-form pl-wort-form"
+                  data-plan-date="<?= htmlspecialchars($dayDateStr, ENT_QUOTES | ENT_HTML5) ?>"
+                  data-section="wort">
               <input type="hidden" name="csrf"      value="<?= htmlspecialchars(csrf_token(), ENT_QUOTES | ENT_HTML5) ?>">
               <input type="hidden" name="action"    value="add_wort">
               <input type="hidden" name="plan_date" value="<?= htmlspecialchars($dayDateStr, ENT_QUOTES | ENT_HTML5) ?>">
               <input type="hidden" name="week"      value="<?= htmlspecialchars($weekStartStr, ENT_QUOTES | ENT_HTML5) ?>">
+              <div class="pl-add-form__day-label"><?= htmlspecialchars($dayName . ' ' . $dayNum . ' ' . $monthName, ENT_QUOTES | ENT_HTML5) ?></div>
 
               <select name="wort_process" class="pl-input pl-select" required aria-label="Processus">
                 <?php foreach (WORT_PROCESSES as $wp): ?>
@@ -907,7 +914,7 @@ $weekLabel = 'Semaine du '
 
               <!-- Non-brewing fields (shown when wort_process != brewing) -->
               <!-- Uses distinct name recipe_id_fk_nonbrew to avoid collision with brewing select -->
-              <div class="pl-nonbrewing-fields">
+              <div class="pl-nonbrewing-fields" hidden>
                 <!-- PHP renders all active recipes as no-JS fallback.
                      JS (initWortProcessToggle) clears and repopulates this select
                      with eligibility-filtered options from window.PLANNING_ELIGIBILITY. -->
@@ -941,7 +948,7 @@ $weekLabel = 'Semaine du '
 
           <?php foreach ($dayItems['packaging'] ?? [] as $item): ?>
             <?php $isProposed = ($item['source'] ?? '') === 'predictive' && ($item['status'] ?? '') === 'proposed'; ?>
-            <div class="pl-item-card<?= $isProposed ? ' pl-item-card--proposed' : '' ?>">
+            <div class="pl-item-card<?= $isProposed ? ' pl-item-card--proposed' : '' ?><?= $item['hors_process'] ? ' pl-item-card--hors-process' : '' ?>">
               <?php if ($isProposed && $canWort): ?>
                 <div class="pl-proposed-badge">Proposé</div>
                 <?php if (!empty($item['suggest_reason'])): ?>
@@ -950,8 +957,7 @@ $weekLabel = 'Semaine du '
               <?php elseif ($canWort): ?>
                 <form method="POST"
                       action="/modules/planning.php?week=<?= htmlspecialchars($weekStartStr, ENT_QUOTES | ENT_HTML5) ?>"
-                      class="pl-item-card__del-form"
-                      onsubmit="return confirm('Supprimer cet élément ?');">
+                      class="pl-item-card__del-form">
                   <input type="hidden" name="csrf"      value="<?= htmlspecialchars(csrf_token(), ENT_QUOTES | ENT_HTML5) ?>">
                   <input type="hidden" name="action"    value="delete_item">
                   <input type="hidden" name="item_id"   value="<?= (int)$item['id'] ?>">
@@ -1005,15 +1011,23 @@ $weekLabel = 'Semaine du '
             </div>
           <?php endforeach ?>
 
+          <?php if (empty($dayItems['packaging']) && !$canWort): ?>
+            <div class="pl-section__empty">—</div>
+          <?php endif ?>
+
           <?php if ($canWort && !empty($activePkgTypes)): ?>
+            <button type="button" class="pl-add-trigger" data-section="packaging">＋ Ajouter</button>
             <!-- Add packaging form -->
             <form method="POST"
                   action="/modules/planning.php?week=<?= htmlspecialchars($weekStartStr, ENT_QUOTES | ENT_HTML5) ?>"
-                  class="pl-add-form">
+                  class="pl-add-form"
+                  data-plan-date="<?= htmlspecialchars($dayDateStr, ENT_QUOTES | ENT_HTML5) ?>"
+                  data-section="packaging">
               <input type="hidden" name="csrf"      value="<?= htmlspecialchars(csrf_token(), ENT_QUOTES | ENT_HTML5) ?>">
               <input type="hidden" name="action"    value="add_packaging">
               <input type="hidden" name="plan_date" value="<?= htmlspecialchars($dayDateStr, ENT_QUOTES | ENT_HTML5) ?>">
               <input type="hidden" name="week"      value="<?= htmlspecialchars($weekStartStr, ENT_QUOTES | ENT_HTML5) ?>">
+              <div class="pl-add-form__day-label"><?= htmlspecialchars($dayName . ' ' . $dayNum . ' ' . $monthName, ENT_QUOTES | ENT_HTML5) ?></div>
 
               <select name="recipe_id_fk" class="pl-input pl-select pl-pkg-recipe-select" aria-label="Bière (BBT éligible)">
                 <option value="">— Bière en BBT —</option>
@@ -1050,12 +1064,11 @@ $weekLabel = 'Semaine du '
           <div class="pl-section__label">Logistique</div>
 
           <?php foreach ($dayItems['logistics'] ?? [] as $item): ?>
-            <div class="pl-item-card">
+            <div class="pl-item-card<?= $item['hors_process'] ? ' pl-item-card--hors-process' : '' ?>">
               <?php if ($canLog): ?>
                 <form method="POST"
                       action="/modules/planning.php?week=<?= htmlspecialchars($weekStartStr, ENT_QUOTES | ENT_HTML5) ?>"
-                      class="pl-item-card__del-form"
-                      onsubmit="return confirm('Supprimer cet élément ?');">
+                      class="pl-item-card__del-form">
                   <input type="hidden" name="csrf"      value="<?= htmlspecialchars(csrf_token(), ENT_QUOTES | ENT_HTML5) ?>">
                   <input type="hidden" name="action"    value="delete_item">
                   <input type="hidden" name="item_id"   value="<?= (int)$item['id'] ?>">
@@ -1079,15 +1092,23 @@ $weekLabel = 'Semaine du '
             </div>
           <?php endforeach ?>
 
+          <?php if (empty($dayItems['logistics']) && !$canLog): ?>
+            <div class="pl-section__empty">—</div>
+          <?php endif ?>
+
           <?php if ($canLog): ?>
+            <button type="button" class="pl-add-trigger" data-section="logistics">＋ Ajouter</button>
             <!-- Add logistics form -->
             <form method="POST"
                   action="/modules/planning.php?week=<?= htmlspecialchars($weekStartStr, ENT_QUOTES | ENT_HTML5) ?>"
-                  class="pl-add-form">
+                  class="pl-add-form"
+                  data-plan-date="<?= htmlspecialchars($dayDateStr, ENT_QUOTES | ENT_HTML5) ?>"
+                  data-section="logistics">
               <input type="hidden" name="csrf"      value="<?= htmlspecialchars(csrf_token(), ENT_QUOTES | ENT_HTML5) ?>">
               <input type="hidden" name="action"    value="add_logistics">
               <input type="hidden" name="plan_date" value="<?= htmlspecialchars($dayDateStr, ENT_QUOTES | ENT_HTML5) ?>">
               <input type="hidden" name="week"      value="<?= htmlspecialchars($weekStartStr, ENT_QUOTES | ENT_HTML5) ?>">
+              <div class="pl-add-form__day-label"><?= htmlspecialchars($dayName . ' ' . $dayNum . ' ' . $monthName, ENT_QUOTES | ENT_HTML5) ?></div>
 
               <textarea name="logistics_text" class="pl-input pl-textarea"
                         rows="2" required
