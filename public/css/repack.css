@@ -295,3 +295,259 @@ body.expeditions .rkp-active-badge {
   font-size: 0.65rem;
   color: var(--hop);
 }
+
+/* ── Assembler un pack panel ─────────────────────────────────────────────── */
+body.expeditions .rkpa-toggle-btn {
+  margin-bottom: 1rem;
+  background: color-mix(in srgb, var(--oak) 15%, var(--bg-elev));
+  border: 1.5px solid color-mix(in srgb, var(--oak) 40%, transparent);
+  color: var(--ink);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.875rem;
+  padding: 0.6rem 1.1rem;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  min-height: 44px;
+}
+body.expeditions .rkpa-toggle-btn:hover {
+  background: color-mix(in srgb, var(--oak) 25%, var(--bg-elev));
+}
+
+body.expeditions .rkpa-panel {
+  background: var(--bg-elev);
+  border: 1.5px solid var(--ink-faint);
+  border-radius: 0.6rem;
+  padding: 1.25rem 1.25rem 1rem;
+  margin-bottom: 1.5rem;
+  box-shadow: 0 2px 8px rgba(30,18,5,0.10);
+}
+
+body.expeditions .rkpa-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+  align-items: flex-end;
+  margin-bottom: 1rem;
+}
+
+body.expeditions .rkpa-pack-label {
+  font-family: 'Fraunces', serif;
+  font-size: 1.05rem;
+  color: var(--ink);
+}
+
+body.expeditions .rkpa-pack-select,
+body.expeditions .rkpa-date-input,
+body.expeditions .rkpa-site-select {
+  min-height: 44px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.875rem;
+}
+
+body.expeditions .rkpa-field-label {
+  display: block;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-label);
+  margin-bottom: 0.2rem;
+}
+
+body.expeditions .rkpa-qty-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+body.expeditions .rkpa-qty-input {
+  width: 4.5rem;
+  min-height: 44px;
+  text-align: center;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 1rem;
+  border: 1.5px solid var(--ink-faint);
+  border-radius: 0.35rem;
+  background: var(--bg);
+  color: var(--ink);
+  padding: 0.25rem 0.4rem;
+}
+body.expeditions .rkpa-qty-btn {
+  min-width: 44px;
+  min-height: 44px;
+  background: var(--bg);
+  border: 1.5px solid var(--ink-faint);
+  border-radius: 0.35rem;
+  font-size: 1.2rem;
+  color: var(--ink);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+body.expeditions .rkpa-qty-btn:disabled { opacity: 0.4; cursor: default; }
+
+body.expeditions .rkpa-shortcut-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+body.expeditions .rkpa-default-btn {
+  min-height: 44px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.875rem;
+  background: color-mix(in srgb, var(--hop) 12%, var(--bg-elev));
+  border: 1.5px solid color-mix(in srgb, var(--hop) 40%, transparent);
+  border-radius: 0.5rem;
+  color: var(--ink);
+  cursor: pointer;
+  padding: 0.5rem 1rem;
+}
+body.expeditions .rkpa-default-btn:disabled { opacity: 0.4; cursor: default; }
+body.expeditions .rkpa-needed-info {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.82rem;
+  color: var(--ink-mute);
+}
+
+/* Per-beer rows */
+body.expeditions .rkpa-beer-table {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  margin-bottom: 1rem;
+}
+body.expeditions .rkpa-beer-row {
+  background: var(--bg);
+  border: 1px solid var(--ink-faint);
+  border-radius: 0.45rem;
+  padding: 0.65rem 0.75rem;
+}
+body.expeditions .rkpa-beer-row--err {
+  border-color: var(--ember);
+  background: color-mix(in srgb, var(--ember) 6%, var(--bg));
+}
+body.expeditions .rkpa-beer-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  margin-bottom: 0.5rem;
+}
+body.expeditions .rkpa-beer-name {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+body.expeditions .rkpa-beer-needed {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  color: var(--ink-label);
+}
+body.expeditions .rkpa-tally {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  margin-left: auto;
+}
+body.expeditions .rkpa-tally--ok { color: var(--hop); }
+body.expeditions .rkpa-tally--err { color: var(--ember); font-weight: 700; }
+
+body.expeditions .rkpa-src-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+body.expeditions .rkpa-src-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+body.expeditions .rkpa-src-select {
+  flex: 1 1 auto;
+  min-height: 44px;
+  font-size: 0.82rem;
+  font-family: 'DM Sans', sans-serif;
+}
+body.expeditions .rkpa-src-qty {
+  width: 5rem;
+  min-height: 44px;
+  text-align: right;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.9rem;
+}
+body.expeditions .rkpa-add-row-btn,
+body.expeditions .rkpa-del-row-btn {
+  min-height: 44px;
+  min-width: 44px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  border-radius: 0.35rem;
+  border: 1.5px solid var(--ink-faint);
+  background: var(--bg-elev);
+  color: var(--ink-mute);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 0.5rem;
+  white-space: nowrap;
+}
+body.expeditions .rkpa-add-row-btn { color: var(--hop); border-color: color-mix(in srgb, var(--hop) 30%, transparent); }
+body.expeditions .rkpa-del-row-btn:disabled { opacity: 0.3; cursor: default; }
+body.expeditions .rkpa-warn-inline {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  color: var(--ember);
+}
+
+/* Footer */
+body.expeditions .rkpa-footer {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.82rem;
+  color: var(--ink-mute);
+  padding: 0.6rem 0;
+  border-top: 1px solid var(--ink-faint);
+  margin-bottom: 0.75rem;
+}
+body.expeditions .rkpa-footer-label { font-weight: 600; color: var(--ink); }
+body.expeditions .rkpa-footer-note { color: var(--ink-label); font-size: 0.72rem; }
+
+body.expeditions .rkpa-warn {
+  background: color-mix(in srgb, var(--ember) 10%, var(--bg-elev));
+  border: 1px solid color-mix(in srgb, var(--ember) 40%, transparent);
+  border-radius: 0.35rem;
+  padding: 0.5rem 0.75rem;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.8rem;
+  color: var(--ink);
+  margin-bottom: 0.75rem;
+}
+
+body.expeditions .rkpa-flash {
+  min-height: 1.5rem;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.85rem;
+  margin-bottom: 0.5rem;
+}
+body.expeditions .rkpa-flash--ok { color: var(--hop); }
+body.expeditions .rkpa-flash--err { color: var(--ember); }
+
+body.expeditions .rkpa-actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: flex-end;
+}
+
+body.expeditions .rkpa-success {
+  padding: 0.75rem;
+  text-align: center;
+}
+body.expeditions .rkpa-success-msg {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.9rem;
+  color: var(--hop);
+  margin-bottom: 0.75rem;
+}
+body.expeditions .rkpa-new-btn { min-height: 44px; }

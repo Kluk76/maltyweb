@@ -2471,6 +2471,118 @@ try {
         );
         $rkpLoggedStmt->execute([$rkpDate]);
         $rkpLoggedEvents = $rkpLoggedStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // ── Assembly panel data ───────────────────────────────────────────────────
+        // Load composite packs + their member beers + per-beer source SKUs with live physique.
+
+        // 1. Composite pack list (only scope='base' packs enter physique when assembled)
+        $rkpaPacksStmt = $pdo->query(
+            "SELECT rs.id, rs.sku_code, rs.unit_label, rs.units_per_pack
+               FROM ref_skus rs
+              WHERE rs.is_active = 1
+                AND rs.stocktake_scope = 'base'
+                AND EXISTS (SELECT 1 FROM ref_sku_composite_slots cs WHERE cs.sku_id = rs.id)
+              ORDER BY rs.id ASC"
+        );
+        $rkpaPacks = $rkpaPacksStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // 2. For each pack, load slots + source SKUs
+        $rkpaPackData = [];
+        foreach ($rkpaPacks as $pk) {
+            $pkId = (int) $pk['id'];
+
+            $slotsStmt = $pdo->prepare(
+                "SELECT cs.slot_order, cs.recipe_id, cs.units_per_recipe, rr.name AS beer_name
+                   FROM ref_sku_composite_slots cs
+                   JOIN ref_recipes rr ON rr.id = cs.recipe_id
+                  WHERE cs.sku_id = ?
+                  ORDER BY cs.slot_order ASC"
+            );
+            $slotsStmt->execute([$pkId]);
+            $slots = $slotsStmt->fetchAll(PDO::FETCH_ASSOC);
+
+            $allSourceSkuIds = [];
+            $slotSources = [];
+            foreach ($slots as $sl) {
+                $srcStmt = $pdo->prepare(
+                    "SELECT rs.id AS sku_id, rs.sku_code, rs.stocktake_scope, rs.units_per_pack, rs.unit_label
+                       FROM ref_skus rs
+                      WHERE rs.recipe_id = ?
+                        AND rs.format = 'Bot'
+                        AND rs.stocktake_scope IN ('cage','base','single')
+                        AND rs.is_active = 1
+                      ORDER BY FIELD(rs.stocktake_scope, 'cage', 'base', 'single'), rs.id ASC"
+                );
+                $srcStmt->execute([(int) $sl['recipe_id']]);
+                $srcs = $srcStmt->fetchAll(PDO::FETCH_ASSOC);
+                $slotSources[(int) $sl['recipe_id']] = $srcs;
+                foreach ($srcs as $s) { $allSourceSkuIds[] = (int) $s['sku_id']; }
+            }
+
+            // live physique for all source SKUs in this pack
+            // fg_stock_for_skus() is already available (fg-stock.php is required earlier in expeditions.php)
+            $stockResult = fg_stock_for_skus($pdo, array_unique($allSourceSkuIds));
+            $stockBySkuId = [];
+            foreach ($stockResult['rows'] as $sr) {
+                $stockBySkuId[(int) $sr['sku_id']] = (int) round((float) $sr['physique']);
+            }
+
+            $memberBeers = [];
+            foreach ($slots as $sl) {
+                $recipeId = (int) $sl['recipe_id'];
+                $srcs = $slotSources[$recipeId] ?? [];
+                $srcsWithStock = [];
+                foreach ($srcs as $s) {
+                    $sid = (int) $s['sku_id'];
+                    $srcsWithStock[] = [
+                        'sku_id'         => $sid,
+                        'sku_code'       => $s['sku_code'],
+                        'scope'          => $s['stocktake_scope'],
+                        'units_per_pack' => (float) $s['units_per_pack'],
+                        'unit_label'     => $s['unit_label'],
+                        'dispo'          => $stockBySkuId[$sid] ?? 0,
+                    ];
+                }
+                $memberBeers[] = [
+                    'slot_order'       => (int) $sl['slot_order'],
+                    'beer_name'        => $sl['beer_name'],
+                    'units_per_recipe' => (int) $sl['units_per_recipe'],
+                    'recipe_id'        => $recipeId,
+                    'sources'          => $srcsWithStock,
+                ];
+            }
+
+            $rkpaPackData[] = [
+                'pack_sku_id'  => $pkId,
+                'sku_code'     => $pk['sku_code'],
+                'unit_label'   => $pk['unit_label'],
+                'member_beers' => $memberBeers,
+            ];
+        }
+
+        // 3. Sites (holds_fg_stock=1)
+        $rkpaSitesStmt = $pdo->query(
+            "SELECT id, name FROM ref_sites WHERE holds_fg_stock = 1 AND is_active = 1 ORDER BY sort_order, id"
+        );
+        $rkpaSites = $rkpaSitesStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $rkpaDefaultSiteId = 0;
+        foreach ($rkpaSites as $st) {
+            if (stripos((string) $st['name'], 'logistique') !== false) {
+                $rkpaDefaultSiteId = (int) $st['id'];
+                break;
+            }
+        }
+        if ($rkpaDefaultSiteId === 0 && !empty($rkpaSites)) {
+            $rkpaDefaultSiteId = (int) $rkpaSites[0]['id'];
+        }
+
+        $rkpaData = [
+            'packs'           => $rkpaPackData,
+            'sites'           => $rkpaSites,
+            'default_site_id' => $rkpaDefaultSiteId,
+            'today'           => $rkpDate,
+        ];
     }
 
     // ── Historique view: per-week-per-client BC shipment history (mig 329) ────
@@ -7617,6 +7729,14 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
     </span>
   </div>
 
+  <!-- ── Assembly panel ───────────────────────────────────────────────── -->
+  <button class="rkpa-toggle-btn ef-chip ef-chip--next" id="rkpa-toggle" type="button">
+    + Assembler un pack
+  </button>
+  <div class="rkpa-panel" id="rkpa-panel" hidden>
+    <!-- form injected by JS from window.RKPA_DATA -->
+  </div>
+
   <!-- ── Proposals ─────────────────────────────────────────────────────── -->
   <?php if (!empty($rkpByOrder)): ?>
   <div class="rkp-proposals-wrap" id="rkp-proposals" aria-label="Propositions de reconditionnement">
@@ -7899,6 +8019,7 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
   window.RKP_CSRF      = <?= json_encode($csrf, JSON_HEX_TAG | JSON_HEX_AMP) ?>;
   window.RKP_DATE      = <?= json_encode($rkpDate, JSON_HEX_TAG | JSON_HEX_AMP) ?>;
   window.RKP_FLAG_LIVE = <?= json_encode($rkpFlagLive) ?>;
+  window.RKPA_DATA     = <?= json_encode($rkpaData, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
 </script>
 <script src="/js/repack.js?v=<?= @filemtime(__DIR__ . '/../js/repack.js') ?: time() ?>"></script>
 <?php endif ?>

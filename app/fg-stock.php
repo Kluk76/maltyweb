@@ -287,6 +287,7 @@ function fg_stock_compute(PDO $pdo): array
                 'taproom_qty'           => 0,
                 'taproom_rows'          => 0,
                 'repack_open_qty'       => 0,
+                'repack_assembled_qty'  => 0,
                 'returns_restock_qty'   => 0,
             ];
         }
@@ -386,6 +387,7 @@ function fg_stock_compute(PDO $pdo): array
                     'taproom_qty'           => 0,
                     'taproom_rows'          => 0,
                     'repack_open_qty'       => 0,
+                    'repack_assembled_qty'  => 0,
                     'returns_restock_qty'   => 0,
                 ];
             }
@@ -546,11 +548,9 @@ function fg_stock_compute(PDO $pdo): array
     //   system_settings (section='features', key_name='repack_depletion_live', value_num=1)
     // to activate without a redeploy.
     //
-    // A repack converts −from_qty BASE BOXES into bundles/loose.
-    // Net contribution: −from_qty on from_sku_id (base box only).
-    // The +to_sku (bundle) side has stocktake_scope='none' and is already
-    // suppressed everywhere by the rs.stocktake_scope <> 'none' JOINs.
-    // Do NOT add a positive term for to_sku here.
+    // A repack event: −from_qty on from_sku (base-box depleted), +to_qty on to_sku when
+    // to_sku.stocktake_scope='base' (assembled pack enters physique). For to_sku.scope='none'
+    // (bundles/loose excluded from stocktake JOINs) no positive term is emitted.
     //
     // Same-day tiebreak predicate (BYTE-IDENTICAL to snapshot repack leg):
     //   pass = moved_on > site_anchor_date
@@ -560,10 +560,12 @@ function fg_stock_compute(PDO $pdo): array
     // $siteSkuAnchorMapCompute already built in Step 4 — reused here.
     if (repack_depletion_live()) {
         $repackStmt = $pdo->prepare(
-            'SELECT from_sku_id_fk, site_id_fk, from_qty, moved_on, created_at
-               FROM inv_repack_events
-              WHERE is_tombstoned = 0
-                AND moved_on >= ?'
+            'SELECT r.from_sku_id_fk, r.site_id_fk, r.from_qty, r.moved_on, r.created_at,
+                    r.to_sku_id_fk, r.to_qty, rs_to.stocktake_scope AS to_scope
+               FROM inv_repack_events r
+               LEFT JOIN ref_skus rs_to ON rs_to.id = r.to_sku_id_fk
+              WHERE r.is_tombstoned = 0
+                AND r.moved_on >= ?'
         );
         $repackStmt->execute([$anchorDate]);
         foreach ($repackStmt->fetchAll(PDO::FETCH_ASSOC) as $rk) {
@@ -584,6 +586,22 @@ function fg_stock_compute(PDO $pdo): array
 
             if (!isset($byId[$sid])) continue;
             $byId[$sid]['repack_open_qty'] += (int) $rk['from_qty'];
+
+            // +to_qty for scope='base' targets (e.g. PD8): assembled packs increment physique.
+            // Predicate uses the SAME anchor gate already applied above — byte-symmetric with −from_qty.
+            // scope='none' targets (bundles/loose excluded from stocktake JOINs) get no positive term.
+            // scope='cage'/'single' targets: not expected per to_kind ENUM ('bundle','pd8','loose',
+            // 'adjustment') — if a future repack type produces a cage/single target, extend here.
+            // SAME-SITE: inv_repack_events.site_id_fk is the single site for both source and target
+            // (schema_meta notes "Same-site bottle-count-conserving conversion").
+            // ANCHOR GUARD: `isset($byId[$toSid])` — if to_sku has no stocktake anchor, the
+            // +to_qty is silently dropped here (R1 asymmetry with snapshot). Acceptable because
+            // repacking a SKU with no anchor violates operational prerequisites; PD8 always has one.
+            $toSid   = isset($rk['to_sku_id_fk']) ? (int) $rk['to_sku_id_fk'] : null;
+            $toScope = $rk['to_scope'] ?? '';
+            if ($toSid !== null && $toScope === 'base' && isset($byId[$toSid])) {
+                $byId[$toSid]['repack_assembled_qty'] += (int) $rk['to_qty'];
+            }
         }
     }
 
@@ -678,6 +696,7 @@ function fg_stock_compute(PDO $pdo): array
                     'taproom_qty'           => 0,
                     'taproom_rows'          => 0,
                     'repack_open_qty'       => 0,
+                    'repack_assembled_qty'  => 0,
                     'returns_restock_qty'   => $qty,
                 ];
             }
@@ -842,8 +861,9 @@ function fg_stock_compute(PDO $pdo): array
         $eshop           = $r['eshop_qty'];
         $taproom         = $r['taproom_qty'];
         $repackOpen      = $r['repack_open_qty'];
+        $repackAssembled = $r['repack_assembled_qty'];
         $returnsRestock  = $r['returns_restock_qty'];
-        $physique        = $anchor + $prod + $returnsRestock - $expedie - $eshop - $taproom - $repackOpen;
+        $physique        = $anchor + $prod + $returnsRestock + $repackAssembled - $expedie - $eshop - $taproom - $repackOpen;
 
         $openWeek  = $openBySkuId[$sid]['week_qty']  ?? 0;
         $open2wk   = $openBySkuId[$sid]['twowk_qty'] ?? 0;
@@ -885,6 +905,7 @@ function fg_stock_compute(PDO $pdo): array
             && ($eshop === 0)
             && ($taproom === 0)
             && ($repackOpen === 0)
+            && ($repackAssembled === 0)
             && ($returnsRestock === 0);
 
         // Couverture drill payload (per-SKU drilldown for the UI)
@@ -899,6 +920,7 @@ function fg_stock_compute(PDO $pdo): array
             'eshop_qty'     => $eshop,
             'taproom_qty'           => $taproom,
             'repack_open_qty'       => $repackOpen,
+            'repack_assembled_qty'  => $repackAssembled,
             'returns_restock_qty'   => $returnsRestock,
             'open_total'            => $openTotal,
             'open_book'      => $openBookBySku[$sid] ?? [],
@@ -935,6 +957,7 @@ function fg_stock_compute(PDO $pdo): array
             'taproom_qty'           => $taproom,
             'taproom_rows'          => $r['taproom_rows'],
             'repack_open_qty'       => $repackOpen,
+            'repack_assembled_qty'  => $repackAssembled,
             'returns_restock_qty'   => $returnsRestock,
             // Computed
             'physique'          => $physique,
@@ -1376,21 +1399,26 @@ function fg_stock_location_snapshot(PDO $pdo): array
     // compute Step 5.5 gate — both must be toggled in lockstep to preserve the
     // Σcards==Σphysique invariant).
     // $repackOpens[site_id][from_sku_id] = int (box-opens since site anchor)
-    // Net: −from_qty on the base-box SKU at its site. The +to_sku (bundle)
-    // has stocktake_scope='none' and is already excluded from both functions
-    // by the rs.stocktake_scope <> 'none' JOINs — do NOT emit a +to row here.
+    // $repackAssembled[site_id][to_sku_id] = int (assembled packs for scope='base' targets)
+    //
+    // A repack event: −from_qty on from_sku (base-box depleted), +to_qty on to_sku when
+    // to_sku.stocktake_scope='base' (assembled pack enters physique). For to_sku.scope='none'
+    // (bundles/loose excluded from stocktake JOINs) no positive term is emitted.
     //
     // Anchor gate predicate (BYTE-IDENTICAL to Step 5.5 in fg_stock_compute):
     //   pass = moved_on > site_anchor_date
     //       || (moved_on === site_anchor_date && created_at > anchor_ts)
     // Fallback (no anchor for this (site, sku)): strict moved_on > $anchorDate.
-    $repackOpens = []; // site_id => sku_id => int
+    $repackOpens    = []; // site_id => sku_id => int
+    $repackAssembled = []; // site_id => sku_id => int
     if (repack_depletion_live()) {
         $rkMvStmt = $pdo->prepare(
-            'SELECT from_sku_id_fk, site_id_fk, from_qty, moved_on, created_at
-               FROM inv_repack_events
-              WHERE is_tombstoned = 0
-                AND moved_on >= ?'
+            'SELECT r.from_sku_id_fk, r.site_id_fk, r.from_qty, r.moved_on, r.created_at,
+                    r.to_sku_id_fk, r.to_qty, rs_to.stocktake_scope AS to_scope
+               FROM inv_repack_events r
+               LEFT JOIN ref_skus rs_to ON rs_to.id = r.to_sku_id_fk
+              WHERE r.is_tombstoned = 0
+                AND r.moved_on >= ?'
         );
         $rkMvStmt->execute([$anchorDate]);
         foreach ($rkMvStmt->fetchAll(PDO::FETCH_ASSOC) as $rk) {
@@ -1411,6 +1439,16 @@ function fg_stock_location_snapshot(PDO $pdo): array
 
             if (!isset($repackOpens[$siteId])) $repackOpens[$siteId] = [];
             $repackOpens[$siteId][$sid] = ($repackOpens[$siteId][$sid] ?? 0) + (int) $rk['from_qty'];
+
+            // +to_qty for scope='base' targets — BYTE-SYMMETRIC to fg_stock_compute Step 5.5.
+            // Same-site: site_id_fk belongs to both source and target (same-site-only constraint).
+            // scope='cage'/'single': not expected per to_kind ENUM; extend if new target types added.
+            $toSid   = isset($rk['to_sku_id_fk']) ? (int) $rk['to_sku_id_fk'] : null;
+            $toScope = $rk['to_scope'] ?? '';
+            if ($toSid !== null && $toScope === 'base') {
+                if (!isset($repackAssembled[$siteId])) $repackAssembled[$siteId] = [];
+                $repackAssembled[$siteId][$toSid] = ($repackAssembled[$siteId][$toSid] ?? 0) + (int) $rk['to_qty'];
+            }
         }
     }
 
@@ -1527,6 +1565,7 @@ function fg_stock_location_snapshot(PDO $pdo): array
             array_keys($transfersIn[$lid]            ?? []),
             array_keys($transfersOut[$lid]           ?? []),
             array_keys($repackOpens[$lid]            ?? []),
+            array_keys($repackAssembled[$lid]        ?? []),
             array_keys($returnsBySiteSku[$lid]       ?? [])
         ));
         foreach ($skuIdsWithFlows as $sid) {
@@ -1567,18 +1606,19 @@ function fg_stock_location_snapshot(PDO $pdo): array
             $sid = (int) $row['sku_id'];
 
             // Sales, transfer, repack, and returns terms for this site/SKU
-            $salesQty       = (int) ($salesBySiteSku[$lid][$sid]   ?? 0);
-            $transferIn     = (int) ($transfersIn[$lid][$sid]       ?? 0);
-            $transferOut    = (int) ($transfersOut[$lid][$sid]      ?? 0);
-            $repackOpen     = (int) ($repackOpens[$lid][$sid]       ?? 0);
-            $returnsRestock = (int) ($returnsBySiteSku[$lid][$sid]  ?? 0);
+            $salesQty        = (int) ($salesBySiteSku[$lid][$sid]   ?? 0);
+            $transferIn      = (int) ($transfersIn[$lid][$sid]       ?? 0);
+            $transferOut     = (int) ($transfersOut[$lid][$sid]      ?? 0);
+            $repackOpen      = (int) ($repackOpens[$lid][$sid]       ?? 0);
+            $repackAssembly  = (int) ($repackAssembled[$lid][$sid]   ?? 0);
+            $returnsRestock  = (int) ($returnsBySiteSku[$lid][$sid]  ?? 0);
 
             // Final qty = anchor_at_site + production_at_site + returns_restock_at_site
-            //           − sales_at_site + transfers_net − repack_opens
+            //           + repack_assembled_at_site − sales_at_site + transfers_net − repack_opens
             // INVARIANT: Σ(qty across all locations) == Σ(fg_stock_compute physique).
             // The returns term contributes only at the warehouse site (Leg 4 assumption);
             // fg_stock_compute() Step 6.7 adds the same global total — match by construction.
-            $qty = (float) $row['qty'] + $returnsRestock - $salesQty + $transferIn - $transferOut - $repackOpen;
+            $qty = (float) $row['qty'] + $returnsRestock + $repackAssembly - $salesQty + $transferIn - $transferOut - $repackOpen;
 
             // Recompute HL after production/sales/transfer adjustment; HL stays decimal
             $hl  = round($qty * $row['hl_per_unit'], 3);
@@ -1598,7 +1638,8 @@ function fg_stock_location_snapshot(PDO $pdo): array
                 'sales_qty'      => $salesQty,         // units depleted via sales
                 'transfer_in'    => $transferIn,       // units arriving via transfers
                 'transfer_out'   => $transferOut,      // units leaving via transfers
-                'repack_open'    => $repackOpen,       // base-box units opened for repack
+                'repack_open'     => $repackOpen,       // base-box units opened for repack
+                'repack_assembled'=> $repackAssembly,  // scope='base' packs assembled from repack events
                 'returns_qty'    => $returnsRestock,   // units restocked from returns (Leg 4)
             ];
         }
