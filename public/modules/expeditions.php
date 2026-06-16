@@ -1765,6 +1765,12 @@ try {
     );
     $fgStockSites = $fgSiteStmt->fetchAll(PDO::FETCH_ASSOC);
 
+    // Site id → name map for fulfilment chip rendering
+    $fgSiteNameMap = [];
+    foreach ($fgStockSites as $fs) {
+        $fgSiteNameMap[(int)$fs['id']] = $fs['name'];
+    }
+
     // Active SKUs
     $skuStmt = $pdo->query(
         'SELECT s.id, s.sku_code, s.format, s.hl_per_unit
@@ -1829,7 +1835,9 @@ try {
                     o.bc_completely_shipped,
                     o.divergence_status,
                     o.order_created_date,
+                    o.fulfilment_site_id_fk,
                     c.name AS customer_name, c.trade_channel,
+                    c.default_delivery_site_id_fk AS customer_default_site_id,
                     t.name AS transporter_name
                FROM ord_orders o
                LEFT JOIN ref_customers  c ON c.id = o.customer_id_fk
@@ -4091,6 +4099,18 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
                 elseif ($leadDays < $leadWarn)      $leadTier = 'warn';
             }
 
+            // Fulfilment site chip — ALWAYS call the resolver, never inline precedence
+            $resolvedSiteId   = resolve_fulfilment_site($pdo, [
+                'fulfilment_site_id_fk'     => $ord['fulfilment_site_id_fk'] ?? null,
+                '_customer_default_site_id' => $ord['customer_default_site_id'] ?? null,
+                'channel'                   => $ord['internal_channel'] ?? null,
+            ]);
+            $resolvedSiteName  = $fgSiteNameMap[$resolvedSiteId] ?? '—';
+            $isSiteOverride    = !empty($ord['fulfilment_site_id_fk']);
+            $isSiteUnassigned  = ($ord['order_type'] ?? '') === 'customer'
+                && empty($ord['fulfilment_site_id_fk'])
+                && ($ord['customer_default_site_id'] === null || $ord['customer_default_site_id'] === '');
+
             // SKU pills: up to 6 visible, +N expand — with family colour class
             $pillsHtml = '';
             $pillCount = count($lines);
@@ -4184,6 +4204,38 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
                     title="Commande sous 48h — délai de traitement court"
                     aria-label="Commande tardive sous 48h">&#8987; 24-48h</span>
             <?php endif ?>
+
+            <!-- Fulfilment site chip — ship from -->
+            <div class="exp-site-chip-wrap"
+                 data-order-id="<?= $oid ?>"
+                 data-current-site-id="<?= (int)($ord['fulfilment_site_id_fk'] ?? 0) ?>">
+              <?php if ($isSiteOverride): ?>
+                <span class="exp-site-chip exp-site-chip--override"
+                      title="Site forcé manuellement — cliquer pour modifier">
+                  ✎ <?= htmlspecialchars($resolvedSiteName) ?>
+                </span>
+              <?php elseif ($isSiteUnassigned): ?>
+                <span class="exp-site-chip exp-site-chip--unassigned"
+                      title="Aucun lieu de départ — renseigner pour l'enregistrer comme défaut du client">
+                  ⚠ à renseigner
+                </span>
+              <?php else: ?>
+                <span class="exp-site-chip exp-site-chip--auto"
+                      title="Site résolu automatiquement — cliquer pour forcer">
+                  📍 <?= htmlspecialchars($resolvedSiteName) ?>
+                </span>
+              <?php endif ?>
+              <!-- Inline override select — shown on chip click, JS-driven -->
+              <select class="exp-site-select" aria-label="Site d'expédition" hidden>
+                <option value="">Automatique</option>
+                <?php foreach ($fgStockSites as $fs): ?>
+                  <option value="<?= (int)$fs['id'] ?>"
+                          <?= ((int)($ord['fulfilment_site_id_fk'] ?? 0) === (int)$fs['id']) ? 'selected' : '' ?>>
+                    <?= htmlspecialchars($fs['name']) ?>
+                  </option>
+                <?php endforeach ?>
+              </select>
+            </div>
 
             <!-- Party -->
             <?php if ($ord['order_type'] === 'customer'): ?>
@@ -7816,8 +7868,10 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
   // Pull-list aggregation: [{sku_id,sku_code,format,family,total_qty,order_count,hl_each}]
   window.EXP_CMD_PULL     = <?= $cmdPullListJson ?>;
   window.EXP_CMD_PULL_HL  = <?= $cmdPullTotalHlJson ?>;
+  window.EXP_FG_SITES     = <?= json_encode(array_values($fgStockSites), JSON_HEX_TAG | JSON_HEX_AMP) ?>;
 </script>
 <script src="/js/expeditions.js?v=<?= @filemtime(__DIR__ . '/../js/expeditions.js') ?: time() ?>"></script>
+<script src="/js/expeditions-set-site.js?v=<?= @filemtime(__DIR__ . '/../js/expeditions-set-site.js') ?: time() ?>"></script>
 <script src="/js/eshop-fulfilment.js?v=<?= @filemtime(__DIR__ . '/../js/eshop-fulfilment.js') ?: time() ?>"></script>
 <?php endif ?>
 

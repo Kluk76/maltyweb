@@ -10,12 +10,30 @@
 /* Board views (table-heavy): wide canvas so order grids use the full screen.
    Form views (Saisie + Carnet clients): comfortable mid-width, same as before.
    Double-class selectors ensure ZERO blast-radius on shared .home.op-form-page
-   (860px in app.css) which governs the 5 other operator-form pages. */
+   (860px in app.css) which governs the 5 other operator-form pages.
+   Fix 2026-06-16: the nav bar's white-space:nowrap content has intrinsic width
+   ~2128px which forces the body grid's 1fr track to expand to that width, then
+   .main is centered INSIDE that bloated track — visible as a 1100px left gap
+   at 1280px viewport. Fix: header.tb and .main declare min-width:0 so the 1fr
+   track resolves to viewport width; .main uses width:100%+box-sizing:border-box
+   so 56px side-padding is absorbed inside the viewport width, not added on top. */
+body.expeditions header.tb {
+  min-width: 0;
+}
+body.expeditions .main {
+  min-width: 0;
+}
 body.expeditions.op-form-page.exp-view--board .main {
-  max-width: min(1760px, 96vw);
+  max-width: 1760px;
+  width: 100%;
+  box-sizing: border-box;
+  margin-inline: auto;
 }
 body.expeditions.op-form-page.exp-view--form .main {
-  max-width: min(1360px, 94vw);
+  max-width: 1360px;
+  width: 100%;
+  box-sizing: border-box;
+  margin-inline: auto;
 }
 
 /* ── Page header with actions slot ───────────────────────────────────────── */
@@ -6659,5 +6677,73 @@ body.expeditions .exp-ret-synth-pending {
   font-size: 0.88rem;
   color: var(--color-text-muted, #6b7280);
   font-style: italic;
+}
+
+/* ── Fulfilment site chip — ship-from departure site on Commandes board ──────
+   Two variants: auto (plain, 📍 prefix) and override (✎ prefix, accent border).
+   Inline <select> appears on chip click; JS hides/shows each side.
+   Colour: cold/steel palette for site context (distinct from risk/status chips). */
+body.expeditions .exp-site-chip-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+body.expeditions .exp-site-chip {
+  display: inline-flex;
+  align-items: center;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.03em;
+  color: var(--ink-mute);
+  background: color-mix(in srgb, var(--cold, #4a8fa8) 8%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--cold, #4a8fa8) 30%, transparent);
+  border-radius: 10px;
+  padding: 2px 8px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  cursor: pointer;
+  min-height: 24px;
+}
+
+body.expeditions .exp-site-chip:hover {
+  background: color-mix(in srgb, var(--cold, #4a8fa8) 14%, transparent);
+  border-style: solid;
+}
+
+body.expeditions .exp-site-chip--override {
+  color: color-mix(in srgb, var(--cold, #4a8fa8) 90%, var(--ink));
+  background: color-mix(in srgb, var(--cold, #4a8fa8) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--cold, #4a8fa8) 40%, transparent);
+}
+
+body.expeditions .exp-site-chip--override:hover {
+  background: color-mix(in srgb, var(--cold, #4a8fa8) 18%, transparent);
+}
+
+/* Third state: customer has no default site — muted amber advisory, not blocking */
+body.expeditions .exp-site-chip--unassigned {
+  color: color-mix(in srgb, var(--oak, #8a6a20) 90%, var(--ink));
+  background: color-mix(in srgb, var(--oak, #8a6a20) 8%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--oak, #8a6a20) 35%, transparent);
+}
+
+body.expeditions .exp-site-chip--unassigned:hover {
+  background: color-mix(in srgb, var(--oak, #8a6a20) 14%, transparent);
+  border-style: solid;
+}
+
+body.expeditions .exp-site-select {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.68rem;
+  color: var(--ink);
+  background: var(--bg-elev);
+  border: 1px solid color-mix(in srgb, var(--cold, #4a8fa8) 40%, transparent);
+  border-radius: 8px;
+  padding: 2px 6px;
+  min-height: 28px;
+  cursor: pointer;
+  max-width: 220px;
 }
 
