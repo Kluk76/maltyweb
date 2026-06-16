@@ -76,21 +76,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // The JS hidden field (recipe_id_fk) is only populated on dropdown change;
         // if the operator doesn't re-pick the recipe the field stays empty → NULL.
         // Resolve authorita­tively here by matching $beer to the unique active recipe
-        // in ref_recipes. HAVING COUNT(*)=1 ensures we never guess for ambiguous names.
+        // in ref_recipes. An exact-count-of-1 check ensures we never guess for ambiguous names.
         $recipeStmt = $pdo->prepare(
             "SELECT id FROM ref_recipes
-              WHERE name = ? AND is_active = 1
-              GROUP BY name
-             HAVING COUNT(*) = 1"
+              WHERE name = ? AND is_active = 1"
         );
         $recipeStmt->execute([$beer]);
-        $recipeRow = $recipeStmt->fetch(PDO::FETCH_ASSOC);
-        if ($recipeRow === false) {
+        $recipeRows = $recipeStmt->fetchAll(PDO::FETCH_ASSOC);
+        // Exactly one active recipe must match — ambiguous or missing names are refused,
+        // never guessed (the resolved id becomes recipe_id_fk, a load-bearing FK).
+        if (count($recipeRows) !== 1) {
             throw new RuntimeException(
                 "Recette introuvable ou ambiguë pour « {$beer} » — impossible d'enregistrer le brassin sans recette valide."
             );
         }
-        $recipeId = (int) $recipeRow['id'];
+        $recipeId = (int) $recipeRows[0]['id'];
 
         // Date: always store as Y-m-d in DB; HTML date input always returns Y-m-d
         $eventDate = $eventDateRaw ?? date('Y-m-d');
