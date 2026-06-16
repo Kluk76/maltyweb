@@ -9,10 +9,12 @@ require_once __DIR__ . '/seasonal-burn.php';
  * No new tables, no caches.
  *
  * Per-SKU physique formula:
- *   anchor      = latest count per (sku_id_fk, location_id_fk) across all
- *                 locations — latest by counted_at DESC, id DESC (same-date
- *                 tiebreak) among is_active=1 rows. Anchor qty per SKU = SUM
- *                 of those rows across locations.
+ *   anchor      = census-date model: for each location, the anchor is every
+ *                 is_active=1 row whose counted_at = MAX(counted_at) for that
+ *                 location (the "census date"). A SKU absent from the latest
+ *                 census = 0 — no phantom carry-over from prior counts.
+ *                 Within a census, ties broken by MAX(id) DESC (latest row).
+ *                 Anchor qty per SKU = SUM of census rows across locations.
  *   anchor_date = MAX(counted_at) across all anchor rows (the actual count date,
  *                 not the last day of a calendar month).
  *   production  = Σ FLOOR(bd_packaging_v2.prod_total_units / ref_skus.units_per_pack)
@@ -65,9 +67,11 @@ require_once __DIR__ . '/seasonal-burn.php';
  * only; loose units within a run are not counted as PF stock).
  * For kegs and cuves (units_per_pack=1), FLOOR is a no-op.
  *
- * Per-SKU cutoff = MAX(counted_at) at production site(s) for that SKU,
- * with COALESCE fallback to $globalAnchor for SKUs never counted at
- * a production site.
+ * Production cutoff = MAX(counted_at) across ALL is_active=1 rows at production
+ * site(s), regardless of SKU. This is a site-level census date, not a per-SKU
+ * date. A packaging run after this date counts for ALL SKUs — SKU-independence
+ * is correct because the census is a complete location snapshot.
+ * COALESCE fallback to $globalAnchor when no prod-site census exists at all.
  *
  * @param PDO    $pdo
  * @param string $globalAnchor  YYYY-MM-DD — global fallback cutoff date
@@ -90,15 +94,18 @@ function fg_prod_since_anchor(PDO $pdo, string $globalAnchor): array
     if (!empty($prodSiteIds)) {
         $inPlaceholders = implode(',', array_fill(0, count($prodSiteIds), '?'));
 
-        // Per-SKU cutoff: WINDOW-FUNCTION pick of the winning production-site
-        // count row (MAX counted_at, tie-broken by MAX id) — returns BOTH
-        // prod_anchor (DATE) and prod_anchor_ts (TIMESTAMP) from the SAME row.
-        // Blind MAX(created_at) alongside MAX(counted_at) is NOT used: it can
-        // grab a different (earlier-dated) count's timestamp and corrupt the
-        // same-date tiebreak. ROW_NUMBER pick is mandatory.
+        // Production cutoff (census-date model): site-level MAX(counted_at) at
+        // production sites, applied to ALL SKUs. A single scalar pa.prod_anchor
+        // is CROSS JOINed to every packaging event row.
         //
-        // COALESCE(pa.prod_anchor, ?) falls back to $globalAnchor for SKUs
-        // never counted at the production site.
+        // prod_anchor_ts is set to NULL because the cutoff is now site-level, not
+        // per-SKU — there is no meaningful per-SKU anchor timestamp to tiebreak on.
+        // The same-day branch (p.submitted_at > pa.prod_anchor_ts) fires only when
+        // pa.prod_anchor_ts IS NOT NULL, so setting it to NULL disables the branch
+        // (conservative and correct: no double-count risk from the same-day path).
+        //
+        // COALESCE(pa.prod_anchor, ?) falls back to $globalAnchor when no prod-site
+        // census exists at all.
         // FLOOR applied PER EVENT (before SUM) so partial boxes are excluded.
         $prodStmt = $pdo->prepare(
             'SELECT p.sku_id_fk,
@@ -107,26 +114,23 @@ function fg_prod_since_anchor(PDO $pdo, string $globalAnchor): array
                FROM bd_packaging_v2 p
                JOIN ref_skus r ON r.id = p.sku_id_fk
                LEFT JOIN (
-                   SELECT sku_id_fk, counted_at AS prod_anchor, created_at AS prod_anchor_ts
-                     FROM (
-                         SELECT sku_id_fk, counted_at, created_at,
-                                ROW_NUMBER() OVER (PARTITION BY sku_id_fk ORDER BY counted_at DESC, id DESC) AS rn
-                           FROM inv_fg_stocktake
-                          WHERE is_active = 1
-                            AND location_id_fk IN (' . $inPlaceholders . ')
-                     ) w
-                    WHERE w.rn = 1
-               ) pa ON pa.sku_id_fk = p.sku_id_fk
+                   SELECT MAX(counted_at) AS prod_anchor, NULL AS prod_anchor_ts
+                     FROM inv_fg_stocktake
+                    WHERE is_active = 1
+                      AND counted_at IS NOT NULL
+                      AND location_id_fk IN (' . $inPlaceholders . ')
+               ) pa ON 1=1
               WHERE p.is_tombstoned = 0
                 AND p.is_white_label = 0
                 AND p.sku_id_fk IS NOT NULL
                 AND p.run_type <> ?
                 -- SCOPE NOTE: primary cutoff is business event_date (calendar truth).
-                -- The submitted_at > prod_anchor_ts clause ONLY resolves same-DATE
-                -- count/package ordering. Accepted residual: a packaging run done
-                -- physically BEFORE a same-day count but SUBMITTED after it would be
-                -- double-counted. Left un-clamped on purpose — a plausibility clamp
-                -- would mask real data; if it ever bites, the fix is an explicit count
+                -- pa.prod_anchor_ts is always NULL (site-level anchor, not per-SKU),
+                -- so the same-day submitted_at tiebreak is disabled (conservative).
+                -- Accepted residual: a packaging run done physically BEFORE a same-day
+                -- count but SUBMITTED after it would be double-counted. Left un-clamped
+                -- on purpose — a plausibility clamp would mask real data; if it ever
+                -- bites, the fix is an explicit count
                 -- timestamp, not a clamp here.
                 -- NULL-SAFE: when pa.prod_anchor IS NULL (SKU never counted at prod site),
                 -- the second OR branch is excluded (IS NOT NULL = false), so COALESCE
@@ -139,8 +143,9 @@ function fg_prod_since_anchor(PDO $pdo, string $globalAnchor): array
                 )
               GROUP BY p.sku_id_fk'
         );
-        // Params: prodSiteIds... (for the IN), then 'cuv', then $globalAnchor (COALESCE fallback).
-        // pa.prod_anchor_ts comes from the join — no extra bound params needed.
+        // Params: prodSiteIds... (for the IN clause in pa subquery), then 'cuv',
+        // then $globalAnchor (COALESCE fallback). pa.prod_anchor_ts = NULL literal,
+        // no extra bound params needed.
         $prodParams = array_merge($prodSiteIds, ['cuv', $globalAnchor]);
         $prodStmt->execute($prodParams);
     } else {
@@ -178,8 +183,10 @@ function fg_prod_since_anchor(PDO $pdo, string $globalAnchor): array
 /**
  * Compute live FG stock for all SKUs.
  *
- * Anchor model: latest count per (sku_id_fk, location_id_fk) — latest by
- * counted_at DESC, id DESC (same-date tiebreak) among is_active=1 rows.
+ * Anchor model: census-date model. For each location L, the anchor is every
+ * is_active=1 row whose counted_at = MAX(counted_at) for that location (the
+ * location's latest census). A SKU absent from the census = 0 (no row, no
+ * anchor_qty contribution). Within a census, ties broken by MAX(id) DESC.
  * anchor_qty(sku) = SUM across locations.
  * anchor_date = MAX(counted_at) across all anchor rows.
  *
@@ -221,10 +228,14 @@ function fg_prod_since_anchor(PDO $pdo, string $globalAnchor): array
  */
 function fg_stock_compute(PDO $pdo): array
 {
-    // ── Step 1: anchor rows = latest count per (sku_id_fk, location_id_fk) ──
-    // Latest-by-counted_at (id as same-date tiebreak), is_active=1.
-    // ROW_NUMBER() matches the pattern already used in fg_prod_since_anchor()
-    // and fg_site_sku_anchor_map() for internal consistency.
+    // ── Step 1: anchor rows = census-date model ──────────────────────────────
+    // Anchor for location L = ALL rows whose counted_at equals that location's
+    // MAX(counted_at) (census_date). A SKU absent from that census = 0 (no row
+    // here, no anchor_qty contribution). This replaces the old per-(sku,location)
+    // ROW_NUMBER() pattern that carried phantom quantities forward for absent SKUs.
+    //
+    // Within a census (same location + same counted_at), ties are broken by MAX(id)
+    // DESC — picks the latest-inserted row, same as before.
     $anchorStmt = $pdo->query(
         'SELECT s.sku_id_fk,
                 r.sku_code,
@@ -240,13 +251,23 @@ function fg_stock_compute(PDO $pdo): array
            JOIN ref_skus r ON r.id = s.sku_id_fk
            LEFT JOIN ref_packaging_formats pf ON pf.id = r.format_id
           WHERE s.id IN (
-              SELECT id FROM (
-                  SELECT id,
-                         ROW_NUMBER() OVER (PARTITION BY sku_id_fk, location_id_fk
-                                            ORDER BY counted_at DESC, id DESC) AS rn
-                    FROM inv_fg_stocktake
-                   WHERE is_active = 1
-              ) z WHERE z.rn = 1
+              SELECT s.id FROM inv_fg_stocktake s
+              JOIN (
+                SELECT location_id_fk, MAX(counted_at) AS census_date
+                  FROM inv_fg_stocktake
+                 WHERE is_active = 1
+                   AND counted_at IS NOT NULL
+                 GROUP BY location_id_fk
+              ) lc ON lc.location_id_fk = s.location_id_fk AND lc.census_date = s.counted_at
+             WHERE s.is_active = 1
+               AND s.id = (
+                 SELECT s2.id FROM inv_fg_stocktake s2
+                  WHERE s2.is_active = 1
+                    AND s2.sku_id_fk = s.sku_id_fk
+                    AND s2.location_id_fk = s.location_id_fk
+                    AND s2.counted_at = s.counted_at
+                  ORDER BY s2.id DESC LIMIT 1
+               )
           )'
     );
     $anchorRows = $anchorStmt->fetchAll(PDO::FETCH_ASSOC);
@@ -1029,13 +1050,16 @@ function fg_stock_iso_week_end(string $date): string
 
 /**
  * Private helper: return the per-(site_id, sku_id) anchor info — the winning
- * stocktake row's counted_at (DATE) AND created_at (TIMESTAMP) — via a single
- * ROW_NUMBER window PARTITION BY (sku_id_fk, location_id_fk).
+ * stocktake row's counted_at (DATE) AND created_at (TIMESTAMP) — using the
+ * census-date model (same semantics as fg_stock_compute Step 1).
  *
- * This is the same coherence guarantee as fg_prod_since_anchor(): both values
- * MUST come from the SAME window row (rn=1). Using two independent MAX()
- * subqueries could pair a counted_at from one row with a created_at from a
- * different row, corrupting same-day tiebreaks.
+ * Only rows from each location's latest census date (MAX counted_at) are
+ * returned. A SKU absent from the latest census has no entry in the map
+ * (callers treat absence as "no census for this SKU at this site").
+ *
+ * Within a census (same location + same counted_at), the highest id wins
+ * (latest-inserted row), which guarantees a coherent (counted_at, created_at)
+ * pair from a single row — same correctness guarantee as the old ROW_NUMBER pick.
  *
  * @param PDO $pdo
  * @return array<int, array<int, array{counted_at: string, anchor_ts: string}>>
@@ -1043,16 +1067,30 @@ function fg_stock_iso_week_end(string $date): string
  */
 function fg_site_sku_anchor_map(PDO $pdo): array
 {
+    // Census-date anchor: only rows from each location's latest census date
+    // (MAX counted_at per location_id_fk) are returned. SKUs absent from the
+    // latest census have no entry — callers treat absence as no census.
+    // Tie-break within a census: highest id (latest-inserted) wins, giving a
+    // coherent (counted_at, created_at) pair from a single row.
     $stmt = $pdo->query(
-        'SELECT sku_id_fk, location_id_fk, counted_at, created_at AS anchor_ts
-           FROM (
-               SELECT sku_id_fk, location_id_fk, counted_at, created_at,
-                      ROW_NUMBER() OVER (PARTITION BY sku_id_fk, location_id_fk
-                                        ORDER BY counted_at DESC, id DESC) AS rn
-                 FROM inv_fg_stocktake
-                WHERE is_active = 1
-           ) w
-          WHERE w.rn = 1'
+        'SELECT s.sku_id_fk, s.location_id_fk, s.counted_at, s.created_at AS anchor_ts
+           FROM inv_fg_stocktake s
+           JOIN (
+             SELECT location_id_fk, MAX(counted_at) AS census_date
+               FROM inv_fg_stocktake
+              WHERE is_active = 1
+                AND counted_at IS NOT NULL
+              GROUP BY location_id_fk
+           ) lc ON lc.location_id_fk = s.location_id_fk AND lc.census_date = s.counted_at
+          WHERE s.is_active = 1
+            AND s.id = (
+              SELECT s2.id FROM inv_fg_stocktake s2
+               WHERE s2.is_active = 1
+                 AND s2.sku_id_fk = s.sku_id_fk
+                 AND s2.location_id_fk = s.location_id_fk
+                 AND s2.counted_at = s.counted_at
+               ORDER BY s2.id DESC LIMIT 1
+            )'
     );
     $map = [];
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
@@ -1127,10 +1165,11 @@ function fg_stock_location_snapshot(PDO $pdo): array
     );
     $sites = $sitesStmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // Load anchor rows (same subquery logic as fg_stock_compute Step 1 —
-    // latest by counted_at DESC, id DESC per (sku_id_fk, location_id_fk),
-    // is_active=1; MUST stay byte-symmetric with the compute function or
-    // the Σcards==Σphysique invariant breaks).
+    // Load anchor rows (census-date model — same semantics as fg_stock_compute
+    // Step 1; MUST stay byte-symmetric with the compute function or the
+    // Σcards==Σphysique invariant breaks). For each location, only rows whose
+    // counted_at = MAX(counted_at) for that location are included. SKUs absent
+    // from the latest census contribute 0 (no row returned here).
     $rowsStmt = $pdo->query(
         'SELECT t.sku_id_fk,
                 t.location_id_fk,
@@ -1145,13 +1184,23 @@ function fg_stock_location_snapshot(PDO $pdo): array
            JOIN ref_skus r ON r.id = t.sku_id_fk
            LEFT JOIN ref_packaging_formats pf ON pf.id = r.format_id
           WHERE t.id IN (
-              SELECT id FROM (
-                  SELECT id,
-                         ROW_NUMBER() OVER (PARTITION BY sku_id_fk, location_id_fk
-                                            ORDER BY counted_at DESC, id DESC) AS rn
-                    FROM inv_fg_stocktake
-                   WHERE is_active = 1
-              ) z WHERE z.rn = 1
+              SELECT s.id FROM inv_fg_stocktake s
+              JOIN (
+                SELECT location_id_fk, MAX(counted_at) AS census_date
+                  FROM inv_fg_stocktake
+                 WHERE is_active = 1
+                   AND counted_at IS NOT NULL
+                 GROUP BY location_id_fk
+              ) lc ON lc.location_id_fk = s.location_id_fk AND lc.census_date = s.counted_at
+             WHERE s.is_active = 1
+               AND s.id = (
+                 SELECT s2.id FROM inv_fg_stocktake s2
+                  WHERE s2.is_active = 1
+                    AND s2.sku_id_fk = s.sku_id_fk
+                    AND s2.location_id_fk = s.location_id_fk
+                    AND s2.counted_at = s.counted_at
+                  ORDER BY s2.id DESC LIMIT 1
+               )
           )
           ORDER BY t.location_id_fk ASC, r.sku_code ASC'
     );
