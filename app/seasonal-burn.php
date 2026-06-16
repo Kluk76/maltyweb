@@ -114,6 +114,12 @@ function sb_family_weekly_series(PDO $pdo, int $recipeId): array
           LEFT JOIN ref_customers c ON c.id = l.customer_id_fk
          WHERE l.sku_id_fk IS NOT NULL
            AND (c.sale_class IS NULL OR c.sale_class NOT IN ('customs_artifact'))
+           AND NOT EXISTS (
+               SELECT 1 FROM ord_returns r
+               JOIN ord_return_lines rl ON rl.return_id_fk = r.id
+               WHERE r.origin_bc_document_no = l.bc_document_no
+                 AND rl.sku_id_fk = l.sku_id_fk
+                 AND rl.disposition = 'rebate')
            $familyClause
          GROUP BY YEARWEEK(l.posting_date, 3), WEEK(l.posting_date, 3)
          ORDER BY yw ASC
@@ -445,6 +451,12 @@ function sb_all_sku_levels(PDO $pdo, array $indexMap, array $params): array
          WHERE l.sku_id_fk IS NOT NULL
            AND l.posting_date >= ?
            AND (c.sale_class IS NULL OR c.sale_class NOT IN ('customs_artifact'))
+           AND NOT EXISTS (
+               SELECT 1 FROM ord_returns r
+               JOIN ord_return_lines rl ON rl.return_id_fk = r.id
+               WHERE r.origin_bc_document_no = l.bc_document_no
+                 AND rl.sku_id_fk = l.sku_id_fk
+                 AND rl.disposition = 'rebate')
          GROUP BY l.sku_id_fk, s.recipe_id, YEARWEEK(l.posting_date, 3), WEEK(l.posting_date, 3)
          ORDER BY l.sku_id_fk, yw
     ");
@@ -461,6 +473,12 @@ function sb_all_sku_levels(PDO $pdo, array $indexMap, array $params): array
           LEFT JOIN ref_customers c ON c.id = l.customer_id_fk
          WHERE l.sku_id_fk IS NOT NULL
            AND (c.sale_class IS NULL OR c.sale_class NOT IN ('customs_artifact'))
+           AND NOT EXISTS (
+               SELECT 1 FROM ord_returns r
+               JOIN ord_return_lines rl ON rl.return_id_fk = r.id
+               WHERE r.origin_bc_document_no = l.bc_document_no
+                 AND rl.sku_id_fk = l.sku_id_fk
+                 AND rl.disposition = 'rebate')
          GROUP BY l.sku_id_fk
     ");
     $lifetimeStmt->execute();
