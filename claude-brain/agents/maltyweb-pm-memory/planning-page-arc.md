@@ -103,11 +103,31 @@ Page handlers (`public/modules/planning.php`): **generate_suggestions** (calls p
 - **Render (l.783+):** groups `$itemsByDaySection[date][section][]` then `foreach ($dayItems['wort'] ?? [] as $item)` / same for packaging/logistics → renders a LIST of `.pl-item-card`s, each with its own delete (and accept/reject for proposed), with the `.pl-add-form` placed AFTER the list. This IS the "list of added items + an add-another row" house pattern (matches saisies.php / expeditions.php multi-row surfaces).
 - **Eligibility engine (`app/planning-eligibility.php`):** ALREADY multi-item-deterministic. SELECT `ORDER BY plan_date, section, seq, id` (l.201); indexed `$planByDay[date][section][]` (l.207). Forward replay (l.214): for each day it (a) computes eligibility from working CCT/BBT state BEFORE applying that day's items, then (b) applies ALL wort items via `foreach ($dayPlanItems['wort'] ?? [] as $pi)` (l.313, seq order) THEN ALL packaging items `foreach (... ['packaging'] ...)` (l.377). **Intra-day order is fixed = compute-elig → all wort (seq) → all packaging; replay is stable.** So the deterministic intra-day ordering the operator asked about (brewing-then-racking same day) EXISTS — wort items apply in seq order, so the operator controls relative order via add order, and packaging always sees the post-wort tank state. Brewing occupies a CCT, racking drains CCT→BBT, packaging drains BBT — all compose correctly across multiple same-day items.
 
-**Conclusion:** the shipped page very likely ALREADY does what Kouros wants. The honest next step is the still-open follow-up (c): an authenticated manager browser UAT. Only genuinely-possible gaps are UX polish, NOT architecture:
-1. After submitting one add-form, does the operator land back cleanly able to add the next (PRG preserves `?week=`; confirm the add-form re-renders empty and focus isn't lost)?
-2. When 3+ cards stack in one narrow day-column, is the density readable on a floor tablet (CSS — `planning.css`)?
+**Conclusion (PRE-BUILD):** the shipped page ALREADY did what Kouros wanted at the data/engine layer. The verdict held: the gap was UX-polish only, NOT architecture.
 
-If a real gap surfaces → `planning.php` + `planning.css` + `planning.js` ONLY. Do NOT add a migration, do NOT touch the eligibility engine, do NOT add a batch/group table (one fact = one row, append-by-seq is the model). CARDINAL still holds (Planning = INTENT only). EQUIP ui+coder (+webapp-testing for the manager UAT).
+### ✅ SHIPPED 2026-06-16 — UX HARDENING (P0+P1) — render-layer ONLY, NO schema, NO engine. Commit `f0361d4` on main (maltyweb). Deployed to VPS (targeted rsync + chown www-data; php -l clean; page 302 auth-redirect no-fatal; assets 200). **NOT git-pushed yet** (held, consistent with prior planning-arc commits awaiting review/merge).
+Files touched — `public/modules/planning.php` + `public/css/planning.css` + `public/js/planning.js` ONLY. (Verdict vindicated: zero schema, zero eligibility-engine change.)
+
+**P0:**
+- Add-forms collapsed behind a `＋ Ajouter` trigger; reopen the SAME day/section after the PRG round-trip via `sessionStorage`.
+- Full-width grid — reset the `.home .main` centering that was constraining the calendar.
+- Touch targets ≥44px (× delete / add btn / accept-reject) — floor-tablet compliance.
+- No-JS field-visibility bug fixed: `.pl-nonbrewing-fields` now SERVER-RENDERED hidden to match the default brewing selection (previously visible until JS ran).
+
+**P1:**
+- Hors-process cards get an ember left-border.
+- Empty eligibility dropdown now EXPLAINS why ("garde / état cuve") instead of rendering blank.
+- Proposed (predictive) cards get a 2px border + ⟳ glyph.
+- Per-form day-label.
+- Em-dash empty-state for read-only sections.
+- Delete-confirm moved OUT of inline `onsubmit` into delegated JS.
+- `.pl-section` dropped `flex:1` → sizes to content.
+
+**P2 polish DEFERRED** pending Kouros's manager-login UAT: beer-name/process hierarchy, `<label>`s, `role=grid`→`group`, flash auto-dismiss.
+
+🔴 **STILL-OPEN follow-up (= the original (c)): authenticated MANAGER browser UAT.** The JS interactions (trigger toggle, sessionStorage reopen, eligibility dropdown, accept/reject) were REASONED about, not clicked — no manager session available to the build agent. UAT must verify these live before P2 / before push. EQUIP webapp-testing once a manager session exists (or Kouros clicks through).
+
+If further gaps surface → `planning.php` + `planning.css` + `planning.js` ONLY. Do NOT add a migration, do NOT touch the eligibility engine, do NOT add a batch/group table (one fact = one row, append-by-seq is the model). CARDINAL still holds (Planning = INTENT only). EQUIP ui+coder (+webapp-testing for the manager UAT).
 
 ---
 
