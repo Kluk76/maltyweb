@@ -116,11 +116,174 @@ function returns_synthese(PDO $pdo, int $periodDays = 90): array
     $pendingStmt->execute();
     $pendingCount = (int) ($pendingStmt->fetch(PDO::FETCH_ASSOC)['cnt'] ?? 0);
 
+    // ── rate: trailing-365-day return-rate block ──────────────────────────────
+    // Window is hardcoded to 365 days (full trailing year) regardless of $periodDays,
+    // same precedent as pending_count pinning 180d.
+    // NOTE: sale_class column does not exist on inv_sales_ledger; customs-artifact
+    // filter is omitted.
+
+    // Numerator: returned units (restock + scrap + quarantine, beer SKUs only)
+    $rateNumStmt = $pdo->query(
+        "SELECT SUM(rl.qty) AS returned_units,
+                COUNT(rl.id) AS basis_count
+           FROM ord_return_lines rl
+           JOIN ord_returns r  ON r.id = rl.return_id_fk
+           JOIN ref_skus s     ON s.id = rl.sku_id_fk
+          WHERE r.origin_posting_date >= DATE_SUB(CURDATE(), INTERVAL 365 DAY)
+            AND rl.disposition IN ('restock', 'scrap', 'quarantine')
+            AND s.recipe_id IS NOT NULL"
+    );
+    $rateNumRow     = $rateNumStmt->fetch(PDO::FETCH_ASSOC);
+    $rateReturned   = (float) ($rateNumRow['returned_units'] ?? 0);
+    $rateBasisCount = (int)   ($rateNumRow['basis_count']   ?? 0);
+
+    // Denominator: sold units (shipments + invoices, beer SKUs only)
+    // sale_class column does not exist on inv_sales_ledger — no customs-artifact filter
+    $rateDenStmt = $pdo->query(
+        "SELECT GREATEST(0, -SUM(l.qty_signed)) AS sold_units
+           FROM inv_sales_ledger l
+           JOIN ref_skus rs ON rs.id = l.sku_id_fk
+          WHERE l.doc_type IN ('shipment', 'invoice')
+            AND l.sku_id_fk IS NOT NULL
+            AND rs.recipe_id IS NOT NULL
+            AND l.posting_date >= DATE_SUB(CURDATE(), INTERVAL 365 DAY)"
+    );
+    $rateDenRow  = $rateDenStmt->fetch(PDO::FETCH_ASSOC);
+    $rateSold    = (float) ($rateDenRow['sold_units'] ?? 0);
+
+    $rateOverallPct = $rateSold > 0
+        ? round($rateReturned / $rateSold * 100, 3)
+        : 0.0;
+
+    // Per-beer numerator (returned units by recipe)
+    $rateBeerNumStmt = $pdo->query(
+        "SELECT s.recipe_id,
+                COALESCE(rr.name, s.sku_code) AS beer_label,
+                SUM(rl.qty)                    AS returned_units
+           FROM ord_return_lines rl
+           JOIN ord_returns r    ON r.id = rl.return_id_fk
+           JOIN ref_skus s       ON s.id = rl.sku_id_fk
+           LEFT JOIN ref_recipes rr ON rr.id = s.recipe_id
+          WHERE r.origin_posting_date >= DATE_SUB(CURDATE(), INTERVAL 365 DAY)
+            AND rl.disposition IN ('restock', 'scrap', 'quarantine')
+            AND s.recipe_id IS NOT NULL
+          GROUP BY s.recipe_id, COALESCE(rr.name, s.sku_code)"
+    );
+    $rateBeerNum = $rateBeerNumStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Per-beer denominator (sold units by recipe)
+    $rateBeerDenStmt = $pdo->query(
+        "SELECT rs.recipe_id,
+                COALESCE(rr.name, rs.sku_code)      AS beer_label,
+                GREATEST(0, -SUM(l.qty_signed))      AS sold_units
+           FROM inv_sales_ledger l
+           JOIN ref_skus rs    ON rs.id = l.sku_id_fk
+           LEFT JOIN ref_recipes rr ON rr.id = rs.recipe_id
+          WHERE l.doc_type IN ('shipment', 'invoice')
+            AND l.sku_id_fk IS NOT NULL
+            AND rs.recipe_id IS NOT NULL
+            AND l.posting_date >= DATE_SUB(CURDATE(), INTERVAL 365 DAY)
+          GROUP BY rs.recipe_id, COALESCE(rr.name, rs.sku_code)"
+    );
+    // Index denominator by recipe_id for O(1) merge
+    $rateBeerDenIdx = [];
+    foreach ($rateBeerDenStmt->fetchAll(PDO::FETCH_ASSOC) as $denRow) {
+        $rateBeerDenIdx[(int) $denRow['recipe_id']] = (float) $denRow['sold_units'];
+    }
+
+    $byBeerRate = [];
+    foreach ($rateBeerNum as $numRow) {
+        $recipeId    = (int)   $numRow['recipe_id'];
+        $beerLabel   = (string) $numRow['beer_label'];
+        $beerRet     = (float)  $numRow['returned_units'];
+        $beerSold    = $rateBeerDenIdx[$recipeId] ?? 0.0;
+        $beerRatePct = $beerSold > 0 ? round($beerRet / $beerSold * 100, 3) : 0.0;
+        $byBeerRate[] = [
+            'beer_label'      => $beerLabel,
+            'returned_units'  => $beerRet,
+            'sold_units'      => $beerSold,
+            'rate_pct'        => $beerRatePct,
+        ];
+    }
+    // DESC by returned_units
+    usort($byBeerRate, fn($a, $b) => $b['returned_units'] <=> $a['returned_units']);
+
+    // Per-channel numerator
+    // origin_bc_document_no → inv_sales_ledger.bc_document_no → customer_id_fk → trade_channel
+    $rateChanNumStmt = $pdo->query(
+        "SELECT rc.trade_channel,
+                SUM(rl.qty) AS returned_units
+           FROM ord_return_lines rl
+           JOIN ord_returns r ON r.id = rl.return_id_fk
+           JOIN ref_skus s    ON s.id = rl.sku_id_fk
+           LEFT JOIN (
+               SELECT DISTINCT bc_document_no, customer_id_fk
+                 FROM inv_sales_ledger
+                WHERE customer_id_fk IS NOT NULL
+           ) sl ON sl.bc_document_no = r.origin_bc_document_no
+           LEFT JOIN ref_customers rc ON rc.id = sl.customer_id_fk
+          WHERE r.origin_posting_date >= DATE_SUB(CURDATE(), INTERVAL 365 DAY)
+            AND rl.disposition IN ('restock', 'scrap', 'quarantine')
+            AND s.recipe_id IS NOT NULL
+          GROUP BY rc.trade_channel"
+    );
+    $rateChanNumRaw = $rateChanNumStmt->fetchAll(PDO::FETCH_ASSOC);
+    // Index by channel key (NULL → 'non classé')
+    $rateChanNumIdx = [];
+    foreach ($rateChanNumRaw as $chanRow) {
+        $key = $chanRow['trade_channel'] ?? 'non classé';
+        $rateChanNumIdx[$key] = (float) $chanRow['returned_units'];
+    }
+
+    // Per-channel denominator
+    $rateChanDenStmt = $pdo->query(
+        "SELECT rc.trade_channel,
+                GREATEST(0, -SUM(l.qty_signed)) AS sold_units
+           FROM inv_sales_ledger l
+           JOIN ref_skus rs    ON rs.id = l.sku_id_fk
+           LEFT JOIN ref_customers rc ON rc.id = l.customer_id_fk
+          WHERE l.doc_type IN ('shipment', 'invoice')
+            AND l.sku_id_fk IS NOT NULL
+            AND rs.recipe_id IS NOT NULL
+            AND l.posting_date >= DATE_SUB(CURDATE(), INTERVAL 365 DAY)
+          GROUP BY rc.trade_channel"
+    );
+    $rateChanDenRaw = $rateChanDenStmt->fetchAll(PDO::FETCH_ASSOC);
+    $rateChanDenIdx = [];
+    foreach ($rateChanDenRaw as $chanRow) {
+        $key = $chanRow['trade_channel'] ?? 'non classé';
+        $rateChanDenIdx[$key] = (float) $chanRow['sold_units'];
+    }
+
+    // Build all three buckets, always emit all three
+    $byChannelRate = [];
+    foreach (['on_trade', 'off_trade', 'non classé'] as $chanKey) {
+        $chanRet  = $rateChanNumIdx[$chanKey] ?? 0.0;
+        $chanSold = $rateChanDenIdx[$chanKey] ?? 0.0;
+        $byChannelRate[] = [
+            'channel'        => $chanKey,
+            'returned_units' => $chanRet,
+            'sold_units'     => $chanSold,
+            'rate_pct'       => $chanSold > 0 ? round($chanRet / $chanSold * 100, 3) : 0.0,
+        ];
+    }
+
+    $rate = [
+        'window_days'    => 365,
+        'overall_pct'    => $rateOverallPct,
+        'returned_units' => $rateReturned,
+        'sold_units'     => $rateSold,
+        'basis_count'    => $rateBasisCount,
+        'by_beer'        => $byBeerRate,
+        'by_channel'     => $byChannelRate,
+    ];
+
     return [
         'by_client'     => $byClient,
         'by_beer'       => $byBeer,
         'mix'           => $mix,
         'period_days'   => $periodDays,
         'pending_count' => $pendingCount,
+        'rate'          => $rate,
     ];
 }
