@@ -134,7 +134,8 @@ Two operator-ratified features; PM rulings below. EQUIP coder+sql+ui+xlsx+webapp
 - **Note:** close stays OFF Données générales. A future MANUAL display-freeze override ("freeze finance at month X regardless of fiche") would be a display PREFERENCE (legit `system_settings` row) — different feature, do NOT pre-build.
 
 ## 🎫 TOUR (PM tour-steward standing duty)
-`scripts/tour-gap-check.php` flags `financier` + `journal-saisies` as **pre-existing CRITICAL gaps** (NOT caused by this arc's changes — both lacked tour cards before). The new **Fiche COGS tab may want a tour card** — note for the next `maltyweb-tour-steward` dispatch. financier is a sensitive class (COGS/COP) → steward STOPS pre-deploy + returns `PM-RATIFY: financier` for PM ratification.
+**✅ FINANCIER TOUR CARD SHIPPED 2026-06-16 — `4aa6fa7` `feat(tour): add Visite-guidée card for the Financier (Fiche COGS) page`.** Closes the open "tour-steward card for financier" item. `maltyweb-tour-steward` authored `$PAGE_DESCRIPTIONS['financier']` + `$PAGE_ICONS['financier']` in `public/modules/visite-guidee.php`, deployed surgically (single-file rsync, md5 local↔VPS parity), and `scripts/tour-gap-check.php` now reports **critical=0**. (financier is a sensitive COGS/COP class → the steward returned the draft `PM-RATIFY: financier`; PM ratified, then it shipped.) `journal-saisies` is special-cased by the tour into the saisies opener/form chapters (not a freestanding card gap). Committed by pathspec + pushed.
+_(historical)_ `scripts/tour-gap-check.php` had flagged `financier` + `journal-saisies` as pre-existing CRITICAL gaps (predating this arc); the Fiche COGS tab lives on the financier page, so the financier card covers it.
 
 ## 🗂️ ARCHIVED INDEX HEADER BANNER (compacted from index 2026-06-15)
 _Verbatim header banner relocated from the index during memory compaction. Detail above is the canonical record; this preserves the exact index wording._

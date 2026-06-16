@@ -894,7 +894,7 @@ Per-order eshop rows on Commandes board (customer, SKU pills, 🏬/🚚/⚠ badg
 
 **MIGRATIONS (APPLIED):** mig **336** `inv_repack_events` (the repack ledger); mig **337** `doc_review_queue` type `repack-unresolved-bundle` (refuse-don't-NULL channel). MIGRATION HEAD now **337** — re-`--status` at next build (this leapfrogs the 329 documented in the §SEMAINES-RESTANTES era line; parallel sessions live).
 
-**WHAT LANDED:**
+**WHAT LANDED:** *(bundle COMPOSITIONS — PD8/PBD/COLLAB*/ESTB12 members + the COLLAB rotation/repoint rule — are NOT defined here; the ONE authoritative home is §ESHOP BUNDLE COMPOSITION REGISTRY → [sku-decomposition-tree.md](sku-decomposition-tree.md). This section is the repack-DECOMPOSER as-built only.)*
 - `app/repack.php` — pure `repack_decompose_orders()`: bundle→component via `units_per_pack`+recipe (single-recipe path) OR `ref_sku_composite_slots` (PD8 multi-member path); `ref_sku_aliases` resolves PACKDEC/PACKDECX8/FRPACKDEC → PD8 (id 137). **Refuse-don't-NULL → RQ `repack-unresolved-bundle`** for any unresolvable bundle AND for recipe-NULL bundles (collabs COLLAB12/4PACK/24 + PBD still need operator-seeded `ref_sku_aliases` rows; PACKDEC still RQs on recipe=6 ALT4-vs-ALTB slot ambiguity — operator must refine the PD8 recipe=6 slot's `member_format_id`).
 - `app/fg-stock.php` — symmetric repack leg in BOTH `fg_stock_compute()` (Step 5.5) AND `fg_stock_location_snapshot()`, **FEATURE-GATED behind `repack_depletion_live()`** (`system_settings` features.repack_depletion_live, **default 0**). **Opus independently verified flag-OFF = FG byte-unchanged** (Σcards==Σphysique, insert-event delta=0, tombstone restores). Base-box target for now (flips to cage at 06-15).
 - `app/settings.php` — `repack_depletion_live()` accessor.
