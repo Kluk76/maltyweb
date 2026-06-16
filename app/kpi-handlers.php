@@ -11213,7 +11213,9 @@ function kpi_logi_stub_gap(string $handler, string $label, string $note): array
 
 function kpi_logi_returns_synthese(array $params, string $label, PDO $pdo): array
 {
-    $periodDays = isset($params['period_days']) ? (int) $params['period_days'] : 90;
+    // canonical trailing-window key is 'window_days' (whitelisted in kpi_validate_params);
+    // accept legacy 'period_days' too for any unmigrated tracker rows.
+    $periodDays = (int) ($params['window_days'] ?? $params['period_days'] ?? 90);
     $cacheKey   = "logi_returns_synthese_{$periodDays}d";
     if (($cached = kpi_cache_get($cacheKey)) !== null) {
         return $cached;
