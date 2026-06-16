@@ -61,6 +61,18 @@ SELECT ANY_VALUE(m.id), ANY_VALUE(m.name), ANY_VALUE(m.price), SUM(d.qty) AS tot
 
 Adding all columns to GROUP BY also works but is verbose and slower.
 
+**⚠️ `ANY_VALUE` is WRONG when the selected column is load-bearing.** It returns an *arbitrary* row among the group's duplicates — fine for display-only aggregates, but a silent-wrong-mapping bug when the value feeds something downstream (a FK written to a table, an id that drives an insert, a price used in COGS). If the GROUP BY exists to *dedupe-and-pick-one* (e.g. `GROUP BY name HAVING COUNT(*)=1` to resolve a name → unique id), `ANY_VALUE` defeats the very contract the `HAVING` was enforcing. Instead resolve deterministically and refuse on ambiguity: drop the GROUP BY, `fetchAll()`, and throw unless exactly one row.
+
+```sql
+-- BROKEN (1055): id is non-aggregated; name → unique active recipe
+SELECT id FROM ref_recipes WHERE name=? AND is_active=1 GROUP BY name HAVING COUNT(*)=1
+-- WRONG fix: ANY_VALUE(id) — silently picks one of several ambiguous recipes, writes a bad recipe_id_fk
+-- RIGHT fix: deterministic + refuse-don't-guess (form-brewing.php, 2026-06-16)
+SELECT id FROM ref_recipes WHERE name=? AND is_active=1   -- then PHP: count($rows)!==1 → throw
+```
+
+Rule of thumb: display column → `ANY_VALUE`; identity/FK/money column → deterministic select + count-check.
+
 ### 2. Collation mismatch on JOIN (hit 2026-05-21 on WIP)
 
 Two tables created at different times may have different default collations. Joining VARCHAR columns across them throws:
@@ -518,3 +530,40 @@ if row["Selection Recette"] and resolved != main_recipe_id:
 **Test that actually catches it:** submit a card that is *already a parallel format line* with a carve-out, then assert BOTH rows survive as distinct PKs (the NK genuinely differs on the marker, neither was upserted away). A happy-path main-card test passes while the bug is live.
 
 **Additive vs subtractive footnote (same incident).** The split was first built subtractive (card total − wl = remainder) then changed to **additive** on operator round-trip (card field = the Neb run as-is; wl is a separate leg added on top; session total = card + wl). Additive is cleaner: it collapses into the existing parallel-leg "ADD not subtract" convention with zero new arithmetic, so every consumer that already `SUM`s per-row `prod_total_units` is correct for free — but it makes #31 *more* exposed, because under additive both legs carry their own full qty as `row_origin='parallel'` and the suffix marker is the **sole** thing keeping them apart.
+
+### 33. A ledger credit/avoir line is NOT a physical event — same-day booking reversals pollute any event-derived metric (hit 2026-06-16 on the returned-FG metric; corrected a "return rate" 3.6× too high). Companion to #32 (which covers the burn/depletion side; this is the returns side).
+
+**Relation to #32.** #32 establishes that for *net depletion* you SUM all doc_types because credit/return rows net correctly (a ±N reversal pair self-cancels — burn is unaffected, leave it). This entry is the inverse hazard: when you want the *gross physical return count* (not a net), those same self-cancelling reversal credits must be EXCLUDED, because each is counted on its own as a "return" that never happened.
+
+**Setup.** `inv_sales_ledger` is the BC item-ledger mirror: `doc_type IN ('shipment','invoice','credit','return_receipt')`, `qty_signed` negative for sales / positive for credits. The returned-FG arc derived "physical returns" = beer-SKU credit/return_receipt lines (`qty_signed>0`, `ref_skus.recipe_id IS NOT NULL`). Return rate came out 6.6% — operator's gut said "that's too many."
+
+**Problem.** **~72% of those credit lines (10,662 of 14,712 units / 365d) were SAME-DAY BOOKING REVERSALS, not physical returns.** Business Central's normal posting workflow is post a shipment → immediately credit it → re-invoice (price fix, doc correction, re-bill) — three lines, **same `posting_date`, same `customer_id_fk`, same `sku_id_fk`**, the credit's `+qty` exactly offsetting the shipment's `−qty`. Counting the credit as a "return" double-counts a clerical churn that never moved a keg. The reversal is **indistinguishable by `doc_type_raw`** (both real returns and reversal credits read "Avoir vente"), and there is **no reversed-document FK** (`bc_source_no` is a customer number — 0 joins). So the only signal is the structural same-day opposing-sign triple.
+
+**Why it's a class, not a one-off.** Any metric built on a financial ledger's *credit/contra/reversal* rows inherits this: the ledger faithfully records bookkeeping motion (corrections, re-bills, rebates), which is a superset of the *physical* event you want. AR write-offs, inventory adjustment reversals, refunded-then-rebilled invoices — same shape. The ledger is correct; your event filter is naive.
+
+**Rule.** When deriving a *physical* / *operational* count from a *financial* ledger, exclude bookkeeping reversals structurally, and **encapsulate the filter in ONE canonical SQL VIEW** so every consumer (rate, watchlist, queue, KPI) reads the same definition — never copy the WHERE clause into each query (it drifts; see the canonical-list-call rule).
+
+```sql
+CREATE OR REPLACE VIEW v_physical_returns AS
+SELECT l.*
+FROM inv_sales_ledger l
+WHERE l.doc_type IN ('credit','return_receipt')
+  AND l.qty_signed > 0
+  AND l.sku_id_fk IS NOT NULL
+  -- exclude same-day booking reversals: a shipment/invoice on the SAME day,
+  -- SAME customer, SAME sku with the opposing sign = clerical churn, not a return
+  AND NOT EXISTS (
+    SELECT 1 FROM inv_sales_ledger s
+    WHERE s.posting_date    = l.posting_date
+      AND s.customer_id_fk  = l.customer_id_fk
+      AND s.sku_id_fk       = l.sku_id_fk
+      AND s.doc_type IN ('shipment','invoice')
+  )
+  AND NOT EXISTS ( /* rebate-tagged lines — financial-only, not physical */ … );
+```
+
+Index the reversal check: `(customer_id_fk, sku_id_fk, posting_date, doc_type)` (the correlated subquery probes exactly that tuple — covering composite, ~1505 rows pass on a 44k-row ledger). Result: rate **6.60% → 1.818%** (14,712 → 4,050 real units), and a per-customer watchlist that had been topped by a 82.3% "returner" (pure reversals) cleared to genuine over-shippers.
+
+**Read-time now → ingest-time later.** Same-day-opposing-sign detection at *read* is correct but recomputed every query. When you control ingest (here: the BC-API auto-pull, a later arc), promote it to a stored fact — an `is_reversal` / `reversed_doc_no` flag stamped at load — and flip the view body to read the flag. The view is the seam that lets you change the *how* without touching any consumer.
+
+**Verification recipe.** Quantify the pollution before and after as a sanity gate: `SELECT SUM(qty) FROM <naive>` vs `SELECT SUM(qty) FROM v_physical_returns` — if the view drops ~70% you've confirmed the reversal hypothesis, not silently under-counted real returns. Spot-check one big "returner": pull its raw same-day triples and eyeball that the credits pair to shipments.

@@ -81,9 +81,6 @@ with sync_playwright() as p:
 ❌ **Don't** inspect the DOM before waiting for `networkidle` on dynamic apps
 ✅ **Do** wait for `page.wait_for_load_state('networkidle')` before inspection
 
-❌ **Don't** assert a dropdown/menu/popover "opened" by checking only its `.open`/`tb-panel--open` class, `hidden` attribute, or `display` — a panel can have the open-class, `hidden=false`, `opacity:1` and a correct `getBoundingClientRect()` yet be CLIPPED INVISIBLE by an ancestor's `overflow` (see the `ui` skill's overflow-clip gotcha). A class-only smoke FALSE-PASSES while the operator sees nothing.
-✅ **Do** verify REAL visibility: screenshot the expanded state, assert the panel's `getBoundingClientRect()` is on-screen with non-zero size, AND walk ancestor computed `overflow-x`/`overflow-y` for a clipping container. (maltyweb topbar dropdowns, 2026-06-16 — a prior agent's smoke "passed" on the class toggle while the live menu was clipped.)
-
 ## Best Practices
 
 - **Use bundled scripts as black boxes** - To accomplish a task, consider whether one of the scripts available in `scripts/` can help. These scripts handle common, complex workflows reliably without cluttering the context window. Use `--help` to see usage, then invoke directly. 

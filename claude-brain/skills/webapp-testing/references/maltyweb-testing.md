@@ -156,25 +156,59 @@ password = os.environ.get("MALTYWEB_PASS") or input("Password: ")
 
 Save state after login so subsequent scripts reuse the session (see Part A §4).
 
-### Canonical smoke account + reaching role-gated pages
+### Canonical smoke accounts — viewer bot (default) + manager bot (manager-tier widgets only)
 
-There is a permanent, operator-blessed smoke account — use it, don't invent one:
+> **CREDENTIAL SAFETY — NON-NEGOTIABLE**
+>
+> Only the two bot accounts below may be used by webapp-testing agents. **NEVER read,
+> set, or restore any real user's `password_hash`** for the purpose of running a smoke
+> test. That is a production security incident regardless of intent.
+>
+> **Default account for ALL smoke tests: `smoketest` (viewer bot, id=16).** Use it
+> for pages, viewer-tier widgets, and any test that does not specifically require
+> manager-tier KPI rendering.
+>
+> **Manager bot (`smoketest_mgr`, id=23): ONLY for rendering manager-tier KPI widgets**
+> (sales, COGS/financier widgets on Mon-tableau, and the financier page). Strictly
+> read-only — NEVER submit forms, NEVER mutate prod data, NEVER seal/approve.
+>
+> If a page is inaccessible to `smoketest`, that is a **scoping bug** — fix it by adding
+> the page_key to the `smoke_viewer` access preset via a new migration
+> (`db/migrations/NNN_smoketest_add_page.sql`). Do NOT escalate by touching another
+> user's credentials. The "temp-password capture/restore" pattern below is reserved for
+> verifying a SPECIFIC real user's render — not for bypassing the smoke accounts.
 
-- **`users.id=16`**, username **`smoketest`**, `display_name='Smoke Test (bot)'`, **`role='viewer'`**, no `user_page_access` grants, `access_preset_id_fk=NULL`.
-- Credentials live in **`/home/kluk/projects/maltytask/secrets/maltyweb-smoketest.env`**
-  (the **maltytask** repo, not maltyweb), keys `MALTYWEB_USER` / `MALTYWEB_PASS`, mode 600, gitignored.
+#### Viewer bot (safe default)
 
-**Page access is role-floor gated.** `app/auth.php::user_can_access()` order: admin bypass → per-user `user_page_access` override → role-floor (`_role_rank(user) >= _role_rank(page.min_role)` from `ref_pages`) → preset membership → **fallback: NULL preset + role-floor passed ⇒ allow**. Since all current users (incl. id=16) have `access_preset_id_fk=NULL` and no override rows, **role alone decides** for them. Ranks: viewer 0, operator 1, manager 2, admin 3.
+- **`users.id=16`**, username **`smoketest`**, `display_name='Smoke Test (bot)'`, **`role='viewer'`**, `access_preset_id_fk=11` (`smoke_viewer` preset, 12 pages granted, mig 385).
+- 8 viewer-tier KPI trackers in `user_kpi_selections` (positions 1–8, mig 388): ids 1,2,3,8,39,49,50,52 — all `min_role='viewer'`, all `data_ready=1`. Mon-tableau renders widgets fully.
+- Credentials: **`/home/kluk/projects/maltytask/secrets/maltyweb-smoketest.env`** (maltytask repo), keys `MALTYWEB_USER` / `MALTYWEB_PASS`, mode 600, gitignored.
 
-So the viewer smoke account can VIEW any `min_role='viewer'` / login-only page, but is redirected off operator-gated pages (e.g. `form-racking.php`, `tanks.php` = operator floor). To smoke an **operator-gated** page read-only, temporarily elevate and revert in the same run — one reversible UPDATE, no grant rows needed:
+**Pages accessible to smoketest (via `smoke_viewer` preset, mig 385):**
+`mon-tableau`, `sb-board`, `sb-guerre`, `journal-saisies` (viewer-floor) +
+`zeppelin`, `qa`, `approvisionnement`, `expeditions`, `warehouse`, `planning`, `rm-comparison` (operator-floor) +
+`financier` (manager-floor) — the preset bypasses the role-floor for granted pages.
 
+#### Manager bot (manager-tier KPI rendering only)
+
+- **`users.id=23`**, username **`smoketest_mgr`**, `display_name='Smoke Test Manager (bot)'`, **`role='manager'`**, `manager_scope=NULL`, `access_preset_id_fk=NULL` (role floor grants all non-admin pages), `is_active=1`. Created by mig 388.
+- `manager_scope=NULL` design: role=manager rank passes all `min_role <= manager` checks, so ALL manager-tier KPI widgets render. However `manager_can(scope)` always returns `false` when scope is NULL — so scope-gated write controls (COGS "Sceller", finance actions gated by `manager_can('finance')`) are absent. Confirmed by smoke 2026-06-16: seal button not in DOM, 0 visible "Sceller" buttons.
+- 8 KPI trackers spanning tiers (positions 1–8, mig 388): ids 1 (viewer/wort), 13 (operator/tanks), 85,86,92,72,168,172 (manager/sales+fg_stock+cogs). The two sales target widgets **units_sold_sku (86)** and **top_skus_volume_revenue (92)** are confirmed rendering with data.
+- Credentials: **`/home/kluk/projects/maltytask/secrets/maltyweb-smoketest-manager.env`** (maltytask repo), keys `MALTYWEB_USER` / `MALTYWEB_PASS`, mode 600, gitignored.
+- **NEVER read or modify any other user's `password_hash`.** Never set `manager_scope` for this account. Never test write paths as this user.
+
+**Page access is role-floor gated.** `app/auth.php::user_can_access()` order: admin bypass → per-user `user_page_access` override → role-floor (`_role_rank(user) >= _role_rank(page.min_role)` from `ref_pages`) → preset membership → **fallback: NULL preset + role-floor passed ⇒ allow**. A preset grant bypasses the role-floor — that is how smoketest (viewer) reaches operator- and manager-floor pages. The manager bot reaches all non-admin pages via role-floor directly.
+
+**Admin-only pages are HARD-gated in PHP code** (`is_admin()`/`require_admin()` — e.g. `ingest.php`, `charges-bc.php`, `db-browser.php`). These cannot be granted via presets or role. Do not attempt to smoke them as either bot.
+
+If a page added after mig 385 needs smoking, add a new migration:
 ```sql
-UPDATE users SET role='operator' WHERE id=16;   -- elevate
---   ... run the read-only Playwright smoke ...
-UPDATE users SET role='viewer' WHERE id=16;      -- ALWAYS revert, even if smoke fails
+-- NNN_smoketest_add_<page>.sql
+INSERT IGNORE INTO ref_access_preset_pages (preset_id_fk, page_id_fk)
+SELECT p.id, rp.id FROM ref_access_presets p JOIN ref_pages rp
+  ON rp.page_key = '<new-page-key>'
+WHERE p.preset_key = 'smoke_viewer';
 ```
-
-Flag the elevation to the operator (it touches an account), and have the **parent** — not the smoke subagent — own the revert so it happens regardless of smoke outcome.
 
 ### Smoking as a SPECIFIC existing user (role/preset matters) — temp-password capture/restore
 
