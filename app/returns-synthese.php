@@ -17,6 +17,9 @@ declare(strict_types=1);
  *   'mix'          => {restock_units, scrap_units, quarantine_units, total_units, restock_pct, scrap_pct, quarantine_pct}
  *   'period_days'  => int
  *   'pending_count'=> int (always over 180-day window to match the pending queue)
+ *   'rate'         => {window_days, overall_pct, returned_units, sold_units, basis_count, by_beer, by_channel}
+ *                     Numerator: physical-returns (rebate-excluded) from inv_sales_ledger
+ *   'overship'     => {window_days, min_shipped_floor, watchlist[top 25 by overship_pct], excluded_low_basis}
  * ]
  */
 function returns_synthese(PDO $pdo, int $periodDays = 90): array
@@ -122,16 +125,26 @@ function returns_synthese(PDO $pdo, int $periodDays = 90): array
     // NOTE: sale_class column does not exist on inv_sales_ledger; customs-artifact
     // filter is omitted.
 
-    // Numerator: returned units (restock + scrap + quarantine, beer SKUs only)
+    // physical-returns numerator (rebate-excluded), distinct from disposition-based mix
+    // Uses inv_sales_ledger directly — captures all physical returns even when not yet
+    // dispositioned in ord_return_lines (which only ~1 return has been through).
     $rateNumStmt = $pdo->query(
-        "SELECT SUM(rl.qty) AS returned_units,
-                COUNT(rl.id) AS basis_count
-           FROM ord_return_lines rl
-           JOIN ord_returns r  ON r.id = rl.return_id_fk
-           JOIN ref_skus s     ON s.id = rl.sku_id_fk
-          WHERE r.origin_posting_date >= DATE_SUB(CURDATE(), INTERVAL 365 DAY)
-            AND rl.disposition IN ('restock', 'scrap', 'quarantine')
-            AND s.recipe_id IS NOT NULL"
+        "SELECT SUM(l.qty_signed) AS returned_units,
+                COUNT(*) AS basis_count
+           FROM inv_sales_ledger l
+           JOIN ref_skus rs ON rs.id = l.sku_id_fk
+          WHERE l.doc_type IN ('credit','return_receipt')
+            AND l.qty_signed > 0
+            AND rs.recipe_id IS NOT NULL
+            AND l.sku_id_fk IS NOT NULL
+            AND l.posting_date >= DATE_SUB(CURDATE(), INTERVAL 365 DAY)
+            AND NOT EXISTS (
+                SELECT 1 FROM ord_returns r
+                JOIN ord_return_lines rl ON rl.return_id_fk = r.id
+                WHERE r.origin_bc_document_no = l.bc_document_no
+                  AND rl.sku_id_fk = l.sku_id_fk
+                  AND rl.disposition = 'rebate'
+            )"
     );
     $rateNumRow     = $rateNumStmt->fetch(PDO::FETCH_ASSOC);
     $rateReturned   = (float) ($rateNumRow['returned_units'] ?? 0);
@@ -155,19 +168,27 @@ function returns_synthese(PDO $pdo, int $periodDays = 90): array
         ? round($rateReturned / $rateSold * 100, 3)
         : 0.0;
 
-    // Per-beer numerator (returned units by recipe)
+    // Per-beer numerator: physical-returns numerator (rebate-excluded) grouped by recipe
     $rateBeerNumStmt = $pdo->query(
-        "SELECT s.recipe_id,
-                COALESCE(rr.name, s.sku_code) AS beer_label,
-                SUM(rl.qty)                    AS returned_units
-           FROM ord_return_lines rl
-           JOIN ord_returns r    ON r.id = rl.return_id_fk
-           JOIN ref_skus s       ON s.id = rl.sku_id_fk
-           LEFT JOIN ref_recipes rr ON rr.id = s.recipe_id
-          WHERE r.origin_posting_date >= DATE_SUB(CURDATE(), INTERVAL 365 DAY)
-            AND rl.disposition IN ('restock', 'scrap', 'quarantine')
-            AND s.recipe_id IS NOT NULL
-          GROUP BY s.recipe_id, COALESCE(rr.name, s.sku_code)"
+        "SELECT rs.recipe_id,
+                COALESCE(rr.name, rs.sku_code) AS beer_label,
+                SUM(l.qty_signed)              AS returned_units
+           FROM inv_sales_ledger l
+           JOIN ref_skus rs ON rs.id = l.sku_id_fk
+           LEFT JOIN ref_recipes rr ON rr.id = rs.recipe_id
+          WHERE l.doc_type IN ('credit','return_receipt')
+            AND l.qty_signed > 0
+            AND rs.recipe_id IS NOT NULL
+            AND l.sku_id_fk IS NOT NULL
+            AND l.posting_date >= DATE_SUB(CURDATE(), INTERVAL 365 DAY)
+            AND NOT EXISTS (
+                SELECT 1 FROM ord_returns r
+                JOIN ord_return_lines rl ON rl.return_id_fk = r.id
+                WHERE r.origin_bc_document_no = l.bc_document_no
+                  AND rl.sku_id_fk = l.sku_id_fk
+                  AND rl.disposition = 'rebate'
+            )
+          GROUP BY rs.recipe_id, COALESCE(rr.name, rs.sku_code)"
     );
     $rateBeerNum = $rateBeerNumStmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -208,23 +229,25 @@ function returns_synthese(PDO $pdo, int $periodDays = 90): array
     // DESC by returned_units
     usort($byBeerRate, fn($a, $b) => $b['returned_units'] <=> $a['returned_units']);
 
-    // Per-channel numerator
-    // origin_bc_document_no → inv_sales_ledger.bc_document_no → customer_id_fk → trade_channel
+    // Per-channel numerator: physical-returns numerator (rebate-excluded) grouped by trade_channel
     $rateChanNumStmt = $pdo->query(
         "SELECT rc.trade_channel,
-                SUM(rl.qty) AS returned_units
-           FROM ord_return_lines rl
-           JOIN ord_returns r ON r.id = rl.return_id_fk
-           JOIN ref_skus s    ON s.id = rl.sku_id_fk
-           LEFT JOIN (
-               SELECT DISTINCT bc_document_no, customer_id_fk
-                 FROM inv_sales_ledger
-                WHERE customer_id_fk IS NOT NULL
-           ) sl ON sl.bc_document_no = r.origin_bc_document_no
-           LEFT JOIN ref_customers rc ON rc.id = sl.customer_id_fk
-          WHERE r.origin_posting_date >= DATE_SUB(CURDATE(), INTERVAL 365 DAY)
-            AND rl.disposition IN ('restock', 'scrap', 'quarantine')
-            AND s.recipe_id IS NOT NULL
+                SUM(l.qty_signed) AS returned_units
+           FROM inv_sales_ledger l
+           JOIN ref_skus rs ON rs.id = l.sku_id_fk
+           LEFT JOIN ref_customers rc ON rc.id = l.customer_id_fk
+          WHERE l.doc_type IN ('credit','return_receipt')
+            AND l.qty_signed > 0
+            AND rs.recipe_id IS NOT NULL
+            AND l.sku_id_fk IS NOT NULL
+            AND l.posting_date >= DATE_SUB(CURDATE(), INTERVAL 365 DAY)
+            AND NOT EXISTS (
+                SELECT 1 FROM ord_returns r
+                JOIN ord_return_lines rl ON rl.return_id_fk = r.id
+                WHERE r.origin_bc_document_no = l.bc_document_no
+                  AND rl.sku_id_fk = l.sku_id_fk
+                  AND rl.disposition = 'rebate'
+            )
           GROUP BY rc.trade_channel"
     );
     $rateChanNumRaw = $rateChanNumStmt->fetchAll(PDO::FETCH_ASSOC);
@@ -278,6 +301,74 @@ function returns_synthese(PDO $pdo, int $periodDays = 90): array
         'by_channel'     => $byChannelRate,
     ];
 
+    // ── overship: per-customer over-ship watchlist (trailing 365 days) ────────
+    // Documented floor constant — customers below this shipped volume are excluded to kill noise
+    $minShipped = 12;
+
+    $overshipStmt = $pdo->query(
+        "SELECT
+            l.customer_id_fk,
+            rc.name AS customer_name,
+            rc.trade_channel,
+            -- physical returned units (rebate-excluded), same def as rate numerator
+            SUM(CASE WHEN l.doc_type IN ('credit','return_receipt') AND l.qty_signed > 0
+                         AND NOT EXISTS (
+                             SELECT 1 FROM ord_returns r2
+                             JOIN ord_return_lines rl2 ON rl2.return_id_fk = r2.id
+                             WHERE r2.origin_bc_document_no = l.bc_document_no
+                               AND rl2.sku_id_fk = l.sku_id_fk
+                               AND rl2.disposition = 'rebate'
+                         )
+                     THEN l.qty_signed ELSE 0 END) AS returned_units,
+            -- shipped units
+            GREATEST(0, -SUM(CASE WHEN l.doc_type IN ('shipment','invoice') THEN l.qty_signed ELSE 0 END)) AS shipped_units,
+            -- count of return ledger lines
+            SUM(CASE WHEN l.doc_type IN ('credit','return_receipt') AND l.qty_signed > 0 THEN 1 ELSE 0 END) AS return_lines
+        FROM inv_sales_ledger l
+        JOIN ref_skus rs ON rs.id = l.sku_id_fk
+        LEFT JOIN ref_customers rc ON rc.id = l.customer_id_fk
+        WHERE l.sku_id_fk IS NOT NULL
+          AND rs.recipe_id IS NOT NULL
+          AND l.posting_date >= DATE_SUB(CURDATE(), INTERVAL 365 DAY)
+          AND l.customer_id_fk IS NOT NULL
+        GROUP BY l.customer_id_fk, rc.name, rc.trade_channel
+        HAVING returned_units > 0"
+    );
+    $overshipRaw = $overshipStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $overshipWatchlist  = [];
+    $excludedLowBasis   = 0;
+    foreach ($overshipRaw as $osRow) {
+        $shippedUnits = (float) $osRow['shipped_units'];
+        if ($shippedUnits < $minShipped) {
+            $excludedLowBasis++;
+            continue;
+        }
+        $returnedUnits = (float) $osRow['returned_units'];
+        $overshipPct   = $shippedUnits > 0
+            ? round(100 * $returnedUnits / $shippedUnits, 1)
+            : 0.0;
+        $overshipWatchlist[] = [
+            'customer_id'    => (int)    $osRow['customer_id_fk'],
+            'customer_name'  => (string) ($osRow['customer_name'] ?? ''),
+            'trade_channel'  => (string) ($osRow['trade_channel'] ?? 'non classé'),
+            'shipped_units'  => $shippedUnits,
+            'returned_units' => $returnedUnits,
+            'overship_pct'   => $overshipPct,
+            'return_lines'   => (int) $osRow['return_lines'],
+        ];
+    }
+    // Sort by overship_pct DESC, limit to top 25
+    usort($overshipWatchlist, fn($a, $b) => $b['overship_pct'] <=> $a['overship_pct']);
+    $overshipWatchlist = array_slice($overshipWatchlist, 0, 25);
+
+    $overship = [
+        'window_days'        => 365,
+        'min_shipped_floor'  => $minShipped,
+        'watchlist'          => $overshipWatchlist,
+        'excluded_low_basis' => $excludedLowBasis,
+    ];
+
     return [
         'by_client'     => $byClient,
         'by_beer'       => $byBeer,
@@ -285,5 +376,6 @@ function returns_synthese(PDO $pdo, int $periodDays = 90): array
         'period_days'   => $periodDays,
         'pending_count' => $pendingCount,
         'rate'          => $rate,
+        'overship'      => $overship,
     ];
 }
