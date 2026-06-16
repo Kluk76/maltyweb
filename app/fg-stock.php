@@ -615,13 +615,57 @@ function fg_stock_compute(PDO $pdo): array
             // 'adjustment') — if a future repack type produces a cage/single target, extend here.
             // SAME-SITE: inv_repack_events.site_id_fk is the single site for both source and target
             // (schema_meta notes "Same-site bottle-count-conserving conversion").
-            // ANCHOR GUARD: `isset($byId[$toSid])` — if to_sku has no stocktake anchor, the
-            // +to_qty is silently dropped here (R1 asymmetry with snapshot). Acceptable because
-            // repacking a SKU with no anchor violates operational prerequisites; PD8 always has one.
+            // UN-ANCHORED STUB: if to_sku has no stocktake anchor yet, create a zero-anchor
+            // $byId entry so the +to_qty is not silently dropped (R1 symmetry with snapshot).
+            // The stub uses the same full default shape as all other $byId entries (~L292-313).
+            // Gate: same $pass predicate already applied above to the −from_qty term, so no
+            // phantom physique is injected for events outside the anchor window.
+            // scope='none'/'cage'/'single' targets still get no positive term (per to_kind ENUM).
             $toSid   = isset($rk['to_sku_id_fk']) ? (int) $rk['to_sku_id_fk'] : null;
             $toScope = $rk['to_scope'] ?? '';
-            if ($toSid !== null && $toScope === 'base' && isset($byId[$toSid])) {
-                $byId[$toSid]['repack_assembled_qty'] += (int) $rk['to_qty'];
+            if ($toSid !== null && $toScope === 'base') {
+                // If to_sku has no anchor yet, create a zero-anchor stub so the
+                // +to_qty is not silently dropped (R1 symmetry with snapshot).
+                // Gate: same $pass predicate already applied above (anchor/movedOn).
+                // Shape mirrors the prod-placeholder init block (~L395-413).
+                if (!isset($byId[$toSid])) {
+                    $toMeta = $pdo->prepare(
+                        'SELECT s.sku_code, s.format, s.hl_per_unit,
+                                s.recipe_id,
+                                COALESCE(pf.display_family, s.format) AS display_family
+                           FROM ref_skus s
+                           LEFT JOIN ref_packaging_formats pf ON pf.id = s.format_id
+                          WHERE s.id = ? AND s.is_active = 1 LIMIT 1'
+                    );
+                    $toMeta->execute([$toSid]);
+                    $toMetaRow = $toMeta->fetch(PDO::FETCH_ASSOC);
+                    if ($toMetaRow !== false) {
+                        $byId[$toSid] = [
+                            'sku_id'               => $toSid,
+                            'sku_code'             => $toMetaRow['sku_code'],
+                            'format'               => $toMetaRow['format'],
+                            'display_family'       => $toMetaRow['display_family'],
+                            'hl_per_unit'          => (float) $toMetaRow['hl_per_unit'],
+                            'recipe_id'            => ($toMetaRow['recipe_id'] !== null) ? (int) $toMetaRow['recipe_id'] : null,
+                            'anchor_qty'           => 0,
+                            'stocktake_scope'      => 'base',
+                            'prod_qty'             => 0,
+                            'prod_events'          => 0,
+                            'expedie_qty'          => 0,
+                            'expedie_orders'       => 0,
+                            'eshop_qty'            => 0,
+                            'eshop_orders'         => 0,
+                            'taproom_qty'          => 0,
+                            'taproom_rows'         => 0,
+                            'repack_open_qty'      => 0,
+                            'repack_assembled_qty' => 0,
+                            'returns_restock_qty'  => 0,
+                        ];
+                    }
+                }
+                if (isset($byId[$toSid])) {
+                    $byId[$toSid]['repack_assembled_qty'] += (int) $rk['to_qty'];
+                }
             }
         }
     }

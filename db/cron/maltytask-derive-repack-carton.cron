@@ -1,0 +1,43 @@
+# /etc/cron.d/maltytask-derive-repack-carton
+#
+# Monthly rebuild of inv_consumption rows for box-break carton events
+# (source_event='repack'). Derives packaging-material consumption from
+# inv_repack_events (to_kind='pd8'): the outer carton of a box broken to
+# harvest member bottles for a Pack Découverte assembly.
+#
+# Idempotent: DELETE WHERE source_event='repack' + rebuild from scratch.
+# Safe to re-run at any time. Runs monthly near close (27th) so the
+# repack carton is included in the month-end packaging-material KPI (#58).
+#
+# NOTE: CRON IS DISABLED PENDING MANUAL SMOKE TEST.
+# Steps to enable after smoke test passes:
+#   1. ssh maltyweb
+#   2. Confirm log file writable:
+#        sudo touch /var/log/maltytask/derive-repack-carton.log
+#        sudo chown maltytask:www-data /var/log/maltytask/derive-repack-carton.log
+#   3. Dry-run:
+#        cd /opt/maltytask-pipeline && HOME=/var/www/maltytask NVM_DIR=/var/www/maltytask/.nvm \
+#          bash -c '. $NVM_DIR/nvm.sh && node_modules/.bin/tsx scripts/derive-repack-carton-consumption.ts --dry-run'
+#   4. Live run: replace --dry-run with --apply, confirm row counts.
+#   5. Uncomment the active line below (remove the leading #).
+#   6. sudo cp /var/www/maltytask/db/cron/maltytask-derive-repack-carton.cron \
+#             /etc/cron.d/maltytask-derive-repack-carton
+#      OR redeploy via bin/deploy.sh --apply (which installs all cron/*.cron).
+#
+# Runtime: Node via nvm (node v22 at /var/www/maltytask/.nvm), tsx from
+# /opt/maltytask-pipeline/node_modules — same idiom as maltytask-shopify-ingest.
+# DB creds: /var/www/maltytask/config/db.env (DB_HOST=127.0.0.1, DB_PORT=3306 —
+# direct, no tunnel), read because the maltytask user's primary group is www-data.
+#
+# Source of truth: db/cron/maltytask-derive-repack-carton.cron in the maltyweb repo.
+# Deployed via bin/deploy.sh --apply (sudo install -m 0644 → /etc/cron.d/).
+# Manual edits to /etc/cron.d/* are overwritten on next deploy — edit here.
+#
+# Note: /etc/cron.d/* requires the user column (m h dom mon dow user command).
+# Times are UTC (VPS timezone Etc/UTC).
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# m   h   dom mon dow  user        command
+#0   2   27   *   *   maltytask   flock -n /tmp/maltytask-derive-repack.lock -c 'cd /opt/maltytask-pipeline && HOME=/var/www/maltytask NVM_DIR=/var/www/maltytask/.nvm bash -c ". $NVM_DIR/nvm.sh && node_modules/.bin/tsx scripts/derive-repack-carton-consumption.ts --apply"' >> /var/log/maltytask/derive-repack-carton.log 2>&1

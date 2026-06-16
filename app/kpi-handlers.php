@@ -5734,9 +5734,10 @@ function kpi_pkg_avg_losses_per_sku(array $params, string $label, PDO $pdo): arr
     return kpi_cache_set($cacheKey, $result);
 }
 
-/** #58 — Consommation matériaux packaging / mois (inv_consumption source_event='packaging')
+/** #58 — Consommation matériaux packaging / mois (inv_consumption source_event IN packaging/repack)
  *
- * Reads inv_consumption rows with source_event='packaging'.
+ * Reads inv_consumption rows with source_event IN ('packaging','repack').
+ * 'packaging' = box-production events; 'repack' = box-break carton events (disjoint, no double-count).
  * All rows are category='Packaging'; breakdown by MI name.
  * Returns total units consumed + breakdown by top 10 ingredients.
  */
@@ -5754,7 +5755,7 @@ function kpi_pkg_material_consumption(array $params, string $label, PDO $pdo): a
     $stmt = $pdo->prepare(
         "SELECT SUM(c.qty) AS total_qty, COUNT(*) AS row_cnt
            FROM inv_consumption c
-          WHERE c.source_event = 'packaging'
+          WHERE c.source_event IN ('packaging', 'repack')
             AND c.consumed_at BETWEEN ? AND ?"
     );
     $stmt->execute([$p['start'], $p['end']]);
@@ -5767,7 +5768,7 @@ function kpi_pkg_material_consumption(array $params, string $label, PDO $pdo): a
                 ANY_VALUE(c.unit) AS unit
            FROM inv_consumption c
            JOIN ref_mi m ON m.id = c.mi_id_fk
-          WHERE c.source_event = 'packaging'
+          WHERE c.source_event IN ('packaging', 'repack')
             AND c.consumed_at BETWEEN ? AND ?
           GROUP BY m.mi_id, m.name
           ORDER BY total_qty DESC
