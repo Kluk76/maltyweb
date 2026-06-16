@@ -31,3 +31,51 @@ function fin_last_closed_month(PDO $pdo): ?string
         return null;
     }
 }
+
+/**
+ * Returns month_keys that have the FULL triplet required for COGS fiche computation:
+ *   - at least one active inv_rm_stocktake row (RM census)
+ *   - at least one inv_fg_stocktake row with count_type='month_end' (FG census)
+ *   - at least one inv_tank_balances row (WIP census)
+ *
+ * Excludes months that are already in cogs_fiche_seed (immutable/seeded months
+ * cannot be recomputed — the TS engine enforces this; PHP mirrors the same rule).
+ *
+ * Returns months sorted ascending. Returns empty array on DB error (never throws).
+ *
+ * Today (2026-06): returns ['2026-05'] (2026-04 is seeded; 2026-06 lacks FG month_end).
+ * Will grow as each month's FG census lands.
+ *
+ * @return string[]  YYYY-MM strings, sorted ascending
+ */
+function fin_closeable_months(PDO $pdo): array
+{
+    try {
+        $stmt = $pdo->query("
+            SELECT DISTINCT rm.period AS month_key
+            FROM (
+                SELECT DISTINCT period
+                FROM inv_rm_stocktake
+                WHERE is_active = 1 AND final_qty > 0
+            ) rm
+            INNER JOIN (
+                SELECT DISTINCT month_closed
+                FROM inv_fg_stocktake
+                WHERE count_type = 'month_end'
+            ) fg ON fg.month_closed = rm.period
+            INNER JOIN (
+                SELECT DISTINCT month_key
+                FROM inv_tank_balances
+            ) wip ON wip.month_key = rm.period
+            WHERE rm.period NOT IN (
+                SELECT DISTINCT month_key FROM cogs_fiche_seed
+            )
+            ORDER BY month_key ASC
+        ");
+        if ($stmt === false) return [];
+        return $stmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
+    } catch (\Throwable $e) {
+        error_log('fin_closeable_months: DB read failed — ' . $e->getMessage());
+        return [];
+    }
+}
