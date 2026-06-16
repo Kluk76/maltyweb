@@ -101,9 +101,9 @@ function kpi_validate_params(array $params): array
                 // reserved — no values allowed yet
                 throw new RuntimeException("kpi: 'filter' param not yet supported");
             case 'scope':
-                $allowed = ['wort', 'packaging'];
+                $allowed = ['wort', 'packaging', 'packaging_keg', 'packaging_bot', 'packaging_can'];
                 if (!in_array($v, $allowed, true)) {
-                    throw new RuntimeException("kpi: scope must be 'wort' or 'packaging', got '{$v}'");
+                    throw new RuntimeException("kpi: scope must be one of " . implode(', ', $allowed) . ", got '{$v}'");
                 }
                 $out['scope'] = $v;
                 break;
@@ -12534,9 +12534,12 @@ function kpi_handler_production_targets(
     $scope = $params['scope'] ?? 'wort';
 
     return match ($scope) {
-        'wort'      => kpi_pt_wort($label, $pdo),
-        'packaging' => kpi_pt_packaging($label, $pdo),
-        default     => kpi_error_result("production_targets: unknown scope '{$scope}'", $label),
+        'wort'          => kpi_pt_wort($label, $pdo),
+        'packaging'     => kpi_pt_packaging($label, $pdo),
+        'packaging_keg' => kpi_pt_packaging_format($label, $pdo, 'keg_hl'),
+        'packaging_bot' => kpi_pt_packaging_format($label, $pdo, 'bottle_hl'),
+        'packaging_can' => kpi_pt_packaging_format($label, $pdo, 'can_hl'),
+        default         => kpi_error_result("production_targets: unknown scope '{$scope}'", $label),
     };
 }
 
@@ -12698,6 +12701,76 @@ function kpi_pt_packaging(string $label, PDO $pdo): array
                 'can'    => ['act' => ['week' => (float)$act['can_hl']['week'],    'month' => (float)$act['can_hl']['month'],    'year' => (float)$act['can_hl']['year']],
                              'obj' => ['week' => (float)$obj['can_hl']['week'],    'month' => (float)$obj['can_hl']['month'],    'year' => (float)$obj['can_hl']['year']]],
             ],
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
+}
+
+/**
+ * Per-format packaging grouped_bar: 3 rows (Semaine / Mois / Année), % d'atteinte.
+ * $fmt must be one of: 'keg_hl', 'bottle_hl', 'can_hl'.
+ * Mirrors kpi_pt_packaging() exactly but scoped to one container format.
+ */
+function kpi_pt_packaging_format(string $label, PDO $pdo, string $fmt): array
+{
+    $cacheKey = 'production_targets_packaging_' . $fmt;
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    $d = production_targets_compute($pdo);
+    $obj = $d['objectives'];
+    $act = $d['actuals'];
+
+    $fmtWkAct = (float)($act[$fmt]['week']  ?? 0);
+    $fmtMoAct = (float)($act[$fmt]['month'] ?? 0);
+    $fmtYrAct = (float)($act[$fmt]['year']  ?? 0);
+    $fmtWkObj = (float)($obj[$fmt]['week']  ?? 0);
+    $fmtMoObj = (float)($obj[$fmt]['month'] ?? 0);
+    $fmtYrObj = (float)($obj[$fmt]['year']  ?? 0);
+
+    $fmtWkPct = $fmtWkObj > 0 ? round($fmtWkAct / $fmtWkObj * 100, 1) : 0.0;
+    $fmtMoPct = $fmtMoObj > 0 ? round($fmtMoAct / $fmtMoObj * 100, 1) : 0.0;
+    $fmtYrPct = $fmtYrObj > 0 ? round($fmtYrAct / $fmtYrObj * 100, 1) : 0.0;
+
+    $yearPct = $fmtYrObj > 0 ? $fmtYrPct : null;
+
+    $breakdown = [
+        [
+            'key'   => 'week',
+            'label' => 'Semaine · ' . number_format($fmtWkAct, 0, ',', ' ') . '/' . number_format($fmtWkObj, 0, ',', ' ') . ' hl',
+            'value' => $fmtWkPct,
+            'unit'  => '%',
+            'meta'  => ['prior_year' => 100, 'chip_label' => 'reste ' . number_format(max(0, round($fmtWkObj - $fmtWkAct)), 0, ',', ' ') . ' hl'],
+        ],
+        [
+            'key'   => 'month',
+            'label' => 'Mois · ' . number_format($fmtMoAct, 0, ',', ' ') . '/' . number_format($fmtMoObj, 0, ',', ' ') . ' hl',
+            'value' => $fmtMoPct,
+            'unit'  => '%',
+            'meta'  => ['prior_year' => 100, 'chip_label' => 'reste ' . number_format(max(0, round($fmtMoObj - $fmtMoAct)), 0, ',', ' ') . ' hl'],
+        ],
+        [
+            'key'   => 'year',
+            'label' => 'Année · ' . number_format($fmtYrAct, 0, ',', ' ') . '/' . number_format($fmtYrObj, 0, ',', ' ') . ' hl',
+            'value' => $fmtYrPct,
+            'unit'  => '%',
+            'meta'  => ['prior_year' => 100, 'chip_label' => 'reste ' . number_format(max(0, round($fmtYrObj - $fmtYrAct)), 0, ',', ' ') . ' hl'],
+        ],
+    ];
+
+    $result = array_merge(kpi_empty_result($label, 'HL'), [
+        'value'       => round($fmtYrAct, 1),
+        'delta'       => $yearPct,
+        'delta_label' => '% objectif annuel',
+        'tint'        => $yearPct === null ? 'neutral'
+                       : ($yearPct >= 100 ? 'green' : ($yearPct >= 70 ? 'amber' : 'neutral')),
+        'series'      => null,
+        'breakdown'   => $breakdown,
+        'meta'        => [
+            'period_label' => 'Semaine / Mois / Année 2026',
+            'unit'         => 'HL',
         ],
     ]);
 
