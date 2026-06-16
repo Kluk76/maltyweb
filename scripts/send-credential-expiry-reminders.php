@@ -196,6 +196,31 @@ function build_email(array $cred, int $daysLeft, int $stage, array $brewery): ar
                   . "<strong>Notes&nbsp;:</strong> {$notesEsc}</td></tr>";
     }
 
+    $renewalBlock = <<<'HTML'
+      <!-- Renewal steps -->
+      <tr><td style="padding:0 28px 20px;">
+        <div style="font-size:13px;font-weight:700;color:#2c2414;margin:4px 0 10px;border-top:1px solid #ddd2c0;padding-top:16px;">&#128273; Comment renouveler le secret</div>
+
+        <div style="font-size:12px;font-weight:600;color:#6a5f52;margin:0 0 4px;">Partie A &mdash; Azure (~3 min)</div>
+        <ol style="margin:0 0 14px;padding-left:18px;font-size:13px;color:#2c2414;line-height:1.5;">
+          <li><a href="https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/Credentials/appId/9a68b9e5-e3a0-49d7-b2ca-82504718820b" style="color:#9eb060;">Ouvrir Certificates &amp; secrets</a> (app maltytask)</li>
+          <li>Onglet <strong>Client secrets</strong> &rarr; <strong>New client secret</strong></li>
+          <li>Description &laquo;&nbsp;BC API S2S &mdash; renouvel&eacute; {mois-ann&eacute;e}&nbsp;&raquo;, expiration <strong>24 mois</strong> &rarr; <strong>Add</strong></li>
+          <li>Copier imm&eacute;diatement la <strong>Value</strong> (pas le Secret ID) &mdash; affich&eacute;e une seule fois</li>
+        </ol>
+
+        <div style="font-size:12px;font-weight:600;color:#6a5f52;margin:0 0 4px;">Partie B &mdash; Serveur</div>
+        <div style="font-family:'Courier New',monospace;font-size:11px;color:#f1e8d4;background:#2c2414;border-radius:6px;padding:12px 14px;line-height:1.6;white-space:pre-wrap;word-break:break-word;"># 1. ssh maltyweb
+# 2. Remplacer la ligne BC_CLIENT_SECRET= par la nouvelle Value :
+sudo nano /var/www/maltytask/config/bc.env
+# 3. Rearmer le rappel (remplace AAAA-MM-JJ) :
+cd /var/www/maltytask &amp;&amp; sudo -u maltytask php -r 'require "app/db.php"; maltytask_pdo()->prepare("UPDATE ops_credential_expiry SET expires_on=?, last_reminded_stage=NULL WHERE label=?")->execute(["AAAA-MM-JJ","BC Entra client_secret"]);'
+# 4. Verifier que l auth BC passe :
+cd /var/www/maltytask &amp;&amp; sudo -u maltytask /usr/bin/python3 scripts/python/ingest_bc_sales_orders.py --dry-run | tail -15
+# 5. Confirme -> supprimer l ancien secret dans Azure</div>
+      </td></tr>
+HTML;
+
     $htmlBody = <<<HTML
 <!DOCTYPE html>
 <html lang="fr">
@@ -229,6 +254,8 @@ function build_email(array $cred, int $daysLeft, int $stage, array $brewery): ar
           {$notesRow}
         </table>
       </td></tr>
+
+      {$renewalBlock}
 
       <!-- Footer -->
       <tr><td style="background:#f0e8d8;padding:14px 28px;border-top:1px solid #d8cbb8;">
