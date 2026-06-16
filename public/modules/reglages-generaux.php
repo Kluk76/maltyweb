@@ -18,6 +18,7 @@ require_once __DIR__ . '/../../app/settings-helpers.php';
 require_once __DIR__ . '/../../app/db-write-helpers.php';
 require_once __DIR__ . '/../../app/services/invite_token.php';
 require_once __DIR__ . '/../../app/services/mailer.php';
+require_once __DIR__ . '/../../app/page-categories.php';
 // app/db.php + app/services/remember_token.php are already included transitively via auth.php
 
 require_login();
@@ -776,11 +777,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $before = bd_fetch_before($pdo, 'ref_pages', $pageId);
             if ($before === null) throw new RuntimeException('Page introuvable.');
 
-            $label   = post_str('label');
-            $href    = post_str('href');
-            $minRole = post_str('min_role') ?? '';
-            $domain  = post_str('domain');
-            $sort    = post_int('sort') ?? 0;
+            $label       = post_str('label');
+            $href        = post_str('href');
+            $minRole     = post_str('min_role') ?? '';
+            $domain      = post_str('domain');
+            $sort        = post_int('sort') ?? 0;
+            $categoryKey = post_str('category_key');
+            $categorySort = post_int('category_sort') ?? 0;
 
             if ($label === null || strlen(trim($label)) < 1) throw new RuntimeException('Label obligatoire.');
             $label = substr(trim($label), 0, 64);
@@ -792,15 +795,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             } else {
                 $domain = null;
             }
+            // Validate category_key against the canonical accessor (NULL = standalone/brand)
+            if ($categoryKey !== null && $categoryKey !== '') {
+                must_be_one_of('category_key', $categoryKey, array_keys(page_categories()));
+            } else {
+                $categoryKey = null;
+            }
 
             $upd = $pdo->prepare(
-                "UPDATE ref_pages SET label=?, href=?, min_role=?, domain=?, sort=? WHERE id=?"
+                "UPDATE ref_pages SET label=?, href=?, min_role=?, domain=?, sort=?, category_key=?, category_sort=? WHERE id=?"
             );
-            $upd->execute([$label, $href, $minRole, $domain, $sort, $pageId]);
+            $upd->execute([$label, $href, $minRole, $domain, $sort, $categoryKey, $categorySort, $pageId]);
 
             log_revision($pdo, $me, 'ref_pages', $pageId,
-                ['label' => $before['label'], 'href' => $before['href'], 'min_role' => $before['min_role'], 'domain' => $before['domain'], 'sort' => $before['sort']],
-                ['label' => $label, 'href' => $href, 'min_role' => $minRole, 'domain' => $domain, 'sort' => $sort],
+                ['label' => $before['label'], 'href' => $before['href'], 'min_role' => $before['min_role'], 'domain' => $before['domain'], 'sort' => $before['sort'], 'category_key' => $before['category_key'] ?? null, 'category_sort' => $before['category_sort'] ?? 0],
+                ['label' => $label, 'href' => $href, 'min_role' => $minRole, 'domain' => $domain, 'sort' => $sort, 'category_key' => $categoryKey, 'category_sort' => $categorySort],
                 'normal', 'Réglages généraux: page modifiée');
 
             flash_set('ok', "Page « " . htmlspecialchars($label) . " » mise à jour.");
@@ -809,12 +818,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         // ── Action: create page registry row ──
         if ($action === 'create_page') {
-            $pageKey = post_str('page_key');
-            $label   = post_str('label');
-            $href    = post_str('href');
-            $minRole = post_str('min_role') ?? 'viewer';
-            $domain  = post_str('domain');
-            $sort    = post_int('sort') ?? 0;
+            $pageKey     = post_str('page_key');
+            $label       = post_str('label');
+            $href        = post_str('href');
+            $minRole     = post_str('min_role') ?? 'viewer';
+            $domain      = post_str('domain');
+            $sort        = post_int('sort') ?? 0;
+            $categoryKey  = post_str('category_key');
+            $categorySort = post_int('category_sort') ?? 0;
 
             if ($pageKey === null || !preg_match('/^[a-z0-9-]+$/', $pageKey)) {
                 throw new RuntimeException('page_key invalide — caractères autorisés : a-z 0-9 -');
@@ -830,16 +841,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             } else {
                 $domain = null;
             }
+            if ($categoryKey !== null && $categoryKey !== '') {
+                must_be_one_of('category_key', $categoryKey, array_keys(page_categories()));
+            } else {
+                $categoryKey = null;
+            }
 
             $ins = $pdo->prepare(
-                "INSERT INTO ref_pages (page_key, label, href, min_role, domain, sort, is_active)
-                 VALUES (?, ?, ?, ?, ?, ?, 1)"
+                "INSERT INTO ref_pages (page_key, label, href, min_role, domain, sort, is_active, category_key, category_sort)
+                 VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)"
             );
-            $ins->execute([$pageKey, $label, $href, $minRole, $domain, $sort]);
+            $ins->execute([$pageKey, $label, $href, $minRole, $domain, $sort, $categoryKey, $categorySort]);
             $newId = (int) $pdo->lastInsertId();
 
             log_revision($pdo, $me, 'ref_pages', $newId, null,
-                ['page_key' => $pageKey, 'label' => $label, 'href' => $href, 'min_role' => $minRole, 'domain' => $domain, 'sort' => $sort, 'is_active' => 1],
+                ['page_key' => $pageKey, 'label' => $label, 'href' => $href, 'min_role' => $minRole, 'domain' => $domain, 'sort' => $sort, 'is_active' => 1, 'category_key' => $categoryKey, 'category_sort' => $categorySort],
                 'normal', 'Réglages généraux: nouvelle page créée');
 
             flash_set('ok', "Page « " . htmlspecialchars($label) . " » (key: " . htmlspecialchars($pageKey) . ") créée.");
@@ -1108,7 +1124,7 @@ try {
     // ref_pages (for access matrix + page registry)
     try {
         $stmt     = $pdo->query(
-            "SELECT id, page_key, label, icon, href, min_role, domain, is_active, sort
+            "SELECT id, page_key, label, icon, href, min_role, domain, is_active, sort, category_key, category_sort
                FROM ref_pages ORDER BY sort ASC, page_key ASC"
         );
         $refPages = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -2316,15 +2332,20 @@ $_breweryId = brewery_identity();
                   <th>URL</th>
                   <th>min_role</th>
                   <th>Domaine</th>
+                  <th>Catégorie nav</th>
                   <th>Sort</th>
                   <th>Statut</th>
                   <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                <?php foreach ($refPages as $rp):
+                <?php
+                $_rgPageCats = page_categories();
+                foreach ($refPages as $rp):
                     $rpId = (int)$rp['id'];
                     $rpActive = (bool)(int)$rp['is_active'];
+                    $rpCatKey = $rp['category_key'] ?? null;
+                    $rpCatLabel = ($rpCatKey && isset($_rgPageCats[$rpCatKey])) ? $_rgPageCats[$rpCatKey]['label'] : null;
                 ?>
                 <tr class="<?= !$rpActive ? 'rg-row-inactive' : '' ?>">
                   <td style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-mute);"><?= htmlspecialchars($rp['page_key']) ?></td>
@@ -2332,6 +2353,7 @@ $_breweryId = brewery_identity();
                   <td style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-mute);"><?= htmlspecialchars($rp['href']) ?></td>
                   <td><span class="rg-minrole-badge rg-minrole-<?= htmlspecialchars($rp['min_role']) ?>"><?= htmlspecialchars($rp['min_role']) ?></span></td>
                   <td><?php if ($rp['domain']): ?><span class="rg-domain-badge rg-domain-<?= htmlspecialchars($rp['domain']) ?>"><?= htmlspecialchars($rp['domain']) ?></span><?php else: ?>—<?php endif ?></td>
+                  <td style="font-size:11px;color:var(--ink-mute);"><?php if ($rpCatLabel): ?><span class="rg-domain-badge"><?= htmlspecialchars($rpCatLabel) ?></span><?php else: ?>—<?php endif ?></td>
                   <td style="font-family:'JetBrains Mono',monospace;font-size:11px;text-align:right;"><?= (int)$rp['sort'] ?></td>
                   <td><?= $rpActive ? '<span class="rg-pill-active">Actif</span>' : '<span class="rg-pill-inactive">Inactif</span>' ?></td>
                   <td>
@@ -2393,6 +2415,20 @@ $_breweryId = brewery_identity();
                   </select>
                 </div>
                 <div>
+                  <label class="rg-form-label">Catégorie nav</label>
+                  <select class="rg-select" name="category_key">
+                    <option value="">— autonome / aucune —</option>
+                    <?php foreach (page_categories() as $ck => $cm): ?>
+                    <option value="<?= htmlspecialchars($ck) ?>"<?= ($editPageRow['category_key'] ?? '') === $ck ? ' selected' : '' ?>><?= htmlspecialchars($cm['icon'] . ' ' . $cm['label']) ?></option>
+                    <?php endforeach ?>
+                  </select>
+                </div>
+                <div>
+                  <label class="rg-form-label">Ordre dans catégorie</label>
+                  <input class="rg-input" type="number" name="category_sort" min="0" max="9999"
+                         value="<?= (int)($editPageRow['category_sort'] ?? 0) ?>">
+                </div>
+                <div>
                   <label class="rg-form-label">Ordre d'affichage</label>
                   <input class="rg-input" type="number" name="sort" min="0" max="9999"
                          value="<?= (int)$editPageRow['sort'] ?>">
@@ -2446,6 +2482,19 @@ $_breweryId = brewery_identity();
                     <option value="admin">Admin</option>
                     <option value="general">Général</option>
                   </select>
+                </div>
+                <div>
+                  <label class="rg-form-label">Catégorie nav</label>
+                  <select class="rg-select" name="category_key">
+                    <option value="">— autonome / aucune —</option>
+                    <?php foreach (page_categories() as $ck => $cm): ?>
+                    <option value="<?= htmlspecialchars($ck) ?>"><?= htmlspecialchars($cm['icon'] . ' ' . $cm['label']) ?></option>
+                    <?php endforeach ?>
+                  </select>
+                </div>
+                <div>
+                  <label class="rg-form-label">Ordre dans catégorie</label>
+                  <input class="rg-input" type="number" name="category_sort" min="0" max="9999" value="0">
                 </div>
                 <div>
                   <label class="rg-form-label">Ordre d'affichage</label>

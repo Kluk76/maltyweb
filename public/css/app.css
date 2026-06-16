@@ -467,6 +467,166 @@ body.home::after {
   letter-spacing: 0.01em;
 }
 
+/* ── Standalone primary nav buttons (Le Zeppelin, Saisies) ── */
+.home .tb__standalone {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px;
+  height: 56px;
+  text-decoration: none;
+  color: var(--ink-soft);
+  position: relative;
+  white-space: nowrap;
+  flex: 0 0 auto;
+  border-right: 1px solid var(--hairline);
+  transition: color .18s, background .18s;
+  font-family: "DM Sans", sans-serif;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.home .tb__standalone::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 14px;
+  right: 14px;
+  height: 2px;
+  background: var(--hop);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform .18s cubic-bezier(0.4, 0, 0.2, 1);
+  border-radius: 1px 1px 0 0;
+}
+.home .tb__standalone:hover {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--hop) 8%, transparent);
+}
+.home .tb__standalone:hover::after {
+  transform: scaleX(0.6);
+}
+.home .tb__standalone:focus-visible {
+  outline: 2px solid var(--hop);
+  outline-offset: -2px;
+}
+.home .tb__standalone--active {
+  color: var(--hop);
+}
+.home .tb__standalone--active::after {
+  transform: scaleX(1);
+}
+/* Zeppelin gets a slight accent tint to distinguish it as the hub entry */
+.home .tb__standalone--zep {
+  color: var(--ink);
+}
+.home .tb__standalone--zep .tb__midx {
+  color: var(--hop);
+}
+
+/* ── Category dropdown buttons ── */
+.tb__cat-wrap {
+  position: relative;
+  /* overflow visible — panel must escape this container */
+}
+.tb__cat-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px;
+  height: 56px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  color: var(--ink-soft);
+  cursor: pointer;
+  font-family: "DM Sans", sans-serif;
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  position: relative;
+  transition: color .18s, background .18s;
+}
+.tb__cat-btn::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 14px;
+  right: 14px;
+  height: 2px;
+  background: var(--hop);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform .18s cubic-bezier(0.4, 0, 0.2, 1);
+  border-radius: 1px 1px 0 0;
+}
+.tb__cat-btn:hover {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--hop) 8%, transparent);
+}
+.tb__cat-btn:hover::after {
+  transform: scaleX(0.6);
+}
+.tb__cat-btn:focus-visible {
+  outline: 2px solid var(--hop);
+  outline-offset: -2px;
+}
+.tb__cat-btn--active {
+  color: var(--hop);
+}
+.tb__cat-btn--active::after {
+  transform: scaleX(1);
+}
+.tb__cat-btn[aria-expanded="true"] {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--hop) 10%, transparent);
+}
+.tb__cat-btn[aria-expanded="true"] .tb__cat-caret {
+  transform: rotate(180deg);
+}
+.tb__cat-caret {
+  flex: 0 0 auto;
+  color: var(--ink-mute);
+  transition: transform .18s;
+}
+
+/* ── Category dropdown panel (cloned from tb__admin-panel pattern) ── */
+.home .tb__cat-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 180px;
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline-2);
+  border-radius: 3px;
+  padding: 6px 0;
+  z-index: 200;
+  box-shadow: 0 8px 24px rgba(60,40,20,0.18), 0 2px 4px rgba(60,40,20,0.10);
+  transform-origin: top left;
+  opacity: 0;
+  transform: scale(0.96) translateY(-4px);
+  transition: opacity .12s, transform .12s;
+  pointer-events: none;
+}
+.home .tb__cat-panel.tb-panel--open {
+  opacity: 1;
+  transform: scale(1) translateY(0);
+  pointer-events: auto;
+}
+.home .tb__cat-panel[hidden] {
+  display: none;
+}
+
+/* ── Overflow hardening: ensure nav chain never pushes body wider than viewport ── */
+/* The prior fix scoped min-width:0 to .home .main > * (2026-05-31 fit guard).   */
+/* Here we fix the HEADER chain: topbar + nav must also have min-width:0 so       */
+/* a long category label cannot overflow the header grid track.                    */
+.home header.tb,
+.home .tb__nav,
+.home .tb__nav ul {
+  min-width: 0;
+}
+
 /* ── Right cluster ── */
 .home .tb__right {
   flex: 0 0 auto;
@@ -694,6 +854,35 @@ body.home::after {
   padding: 16px 20px 10px;
 }
 .home .tb-drawer__section-label--admin { padding-top: 20px; }
+/* Category section headers in drawer — interactive, collapsible */
+.home .tb-drawer__section-label--cat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 20px;
+  cursor: pointer;
+  user-select: none;
+  transition: color .15s;
+}
+.home .tb-drawer__section-label--cat:hover {
+  color: var(--ink);
+}
+.home .tb-drawer__cat-icon {
+  font-size: 13px;
+  flex: 0 0 auto;
+}
+.home .tb-drawer__cat-caret {
+  margin-left: auto;
+  color: var(--ink-mute);
+  transition: transform .18s;
+  flex: 0 0 auto;
+}
+.home .tb-drawer__section-label--cat[aria-expanded="true"] .tb-drawer__cat-caret {
+  transform: rotate(180deg);
+}
+.home .tb-drawer__list--cat {
+  padding-left: 16px; /* indent children under category */
+}
 .home .tb-drawer__list {
   list-style: none;
   padding: 0;
@@ -1080,10 +1269,11 @@ body.home::after {
 /* ============== RESPONSIVE — mobile (≤ 768px) ============== */
 
 @media (max-width: 768px) {
-  /* Show burger, hide desktop nav */
-  .home .tb__burger { display: flex; }
-  .home .tb__nav    { display: none; }
-  .home .tb__admin-wrap { display: none; } /* admin items live in drawer */
+  /* Show burger, hide desktop nav + standalone buttons */
+  .home .tb__burger     { display: flex; }
+  .home .tb__nav        { display: none; }
+  .home .tb__standalone { display: none; } /* standalones live in drawer */
+  .home .tb__admin-wrap { display: none; } /* kept for backward-compat during transition */
 
   /* Topbar shrinks to [burger] [brand] [user] */
   .home .tb { padding: 0 12px; }
