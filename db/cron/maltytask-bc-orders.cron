@@ -32,8 +32,11 @@
 # Deployed via bin/deploy.sh --apply (sudo install -m 0644 → /etc/cron.d/).
 # Manual edits to /etc/cron.d/* are overwritten on next deploy — edit here.
 #
-# Frequency: every 15 minutes — BC order state changes are near-real-time
-# (order placed, released, Completely_Shipped flipped for BL print).
+# Frequency: every 1 minute (flock single-flight guarded).
+# Rationale: operator-directed near-real-time polling for the logistics Commandes tab;
+# webhook deliberately not chosen (subscription-renewal + silent-death overhead not
+# justified vs ≤60s poll latency for a human picker); PM-ratified 2026-06-16.
+# flock -n: if a prior run still holds the lock, the new tick exits immediately (no pileup).
 #
 # Times UTC (VPS timezone Etc/UTC). maltytask user primary group www-data.
 # Python at /usr/bin/python3 (absolute — cron PATH is minimal).
@@ -42,4 +45,4 @@ SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # m   h    dom mon dow  user        command
-*/15  *    *   *   *   maltytask   cd /var/www/maltytask && /usr/bin/python3 scripts/python/ingest_bc_sales_orders.py --apply >> /var/log/maltytask/bc-orders.log 2>&1
+*/1   *    *   *   *   maltytask   flock -n /tmp/maltytask-bc-orders.lock -c 'cd /var/www/maltytask && /usr/bin/python3 scripts/python/ingest_bc_sales_orders.py --apply' >> /var/log/maltytask/bc-orders.log 2>&1

@@ -1,0 +1,32 @@
+# /etc/logrotate.d/maltytask
+#
+# Log rotation for the maltytask application logs under /var/log/maltytask/.
+#
+# Source of truth: db/logrotate/maltytask in the maltyweb repo.
+# Deploy surgically (deploy.sh does NOT install logrotate automatically):
+#   sudo install -m 0644 db/logrotate/maltytask /etc/logrotate.d/maltytask
+# Test after deploy:
+#   sudo logrotate -d /etc/logrotate.d/maltytask
+
+# Auth log — low-frequency (web login events); weekly, 8 weeks retention.
+/var/log/maltytask/auth.log {
+    weekly
+    rotate 8
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 www-data adm
+}
+
+# BC open-orders poll log — high-frequency (every 1 min via cron); daily, 14 days retention.
+# At ~1440 ticks/day the file grows ~600 KB/day; 14 rotations = ~8.4 MB compressed.
+/var/log/maltytask/bc-orders.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 maltytask www-data
+}
