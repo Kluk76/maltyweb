@@ -119,7 +119,7 @@ Verified field names (form at `/login.php`, confirmed 2026-06-10):
 - hidden CSRF input is `name="csrf"` (NOT `csrf_token` — that name does not exist)
 - `name="username"` is a **text** input — login is by **username**, not email
 - `name="password"`, and `name="remember_me"` (checkbox, value `1`)
-- submit button label: "Se connecter"
+- submit button label: **"Connexion"** (re-verified 2026-06-16 — NOT "Se connecter")
 
 ```python
 import os
@@ -132,8 +132,17 @@ def login(page, username: str, password: str) -> None:
     csrf = page.locator("input[name='csrf']").get_attribute("value")  # field is 'csrf'
     page.locator("input[name='username']").fill(username)             # username, not email
     page.locator("input[name='password']").fill(password)
-    page.get_by_role("button", name="Se connecter").click()
-    page.wait_for_load_state("networkidle")
+    # Submit is "Connexion". The post-submit navigation can be slow over the
+    # SSH-tunnel+proxy — don't let click() block on it; bump timeouts.
+    try:
+        with page.expect_navigation(timeout=60000):
+            page.get_by_role("button", name="Connexion").click(no_wait_after=True)
+    except Exception:
+        pass
+    try:
+        page.wait_for_load_state("networkidle", timeout=30000)
+    except Exception:
+        pass
     # Post-login does NOT land on /dashboard. A fresh/never-classified account
     # redirects to /modules/classification-appareil.php?next=/modules/mon-tableau.php
     # (first-login device-classification interstitial). It does NOT block direct
@@ -166,6 +175,59 @@ UPDATE users SET role='viewer' WHERE id=16;      -- ALWAYS revert, even if smoke
 ```
 
 Flag the elevation to the operator (it touches an account), and have the **parent** — not the smoke subagent — own the revert so it happens regardless of smoke outcome.
+
+### Smoking as a SPECIFIC existing user (role/preset matters) — temp-password capture/restore
+
+The viewer smoke account (id=16) has `access_preset_id_fk=NULL`, so it does NOT reflect a
+real user's **preset** (page-grant set) or **manager_scope** (within-page write gating). To
+verify what a *particular* user actually sees — e.g. a new CFO/finance_viewer role, a sales
+manager, an operator with a custom preset — you must log in AS that user. There is **no
+impersonation feature** (`grep -ri impersonate app/ public/` = none; login is hard
+`password_verify`). The safe, non-destructive pattern: capture their current `password_hash`,
+set a temp one for the smoke, then **restore the exact original hash** so their real password
+keeps working. Verified live 2026-06-16 (CFO smoke).
+
+Discipline:
+- **DB access needs `www-data`** — `config/db.env` is mode 640, unreadable by `ubuntu`. Run
+  `ssh maltyweb 'sudo -u www-data php -r "require \"/var/www/maltytask/app/db.php\"; ... maltytask_pdo() ..."'`.
+- **Argon2 hashes contain `$`** — they get mangled by shell/PHP double-quote interpolation.
+  **base64-encode the hash** to move it between shells, `base64_decode()` inside PHP. (Same
+  trick the password-restore needs.) Never paste a raw `$argon2id$...` string into a
+  double-quoted `php -r`.
+- **Capture → set temp → smoke → restore**, and the **parent** owns the restore (run it even
+  if the smoke fails), exactly like the role-elevation revert above. Confirm `restored hash ===
+  original` before declaring done.
+
+```bash
+# 1. CAPTURE (prints the original hash — keep it)
+ssh maltyweb 'sudo -u www-data php -r "
+  require \"/var/www/maltytask/app/db.php\"; \$p=maltytask_pdo();
+  \$h=\$p->query(\"SELECT password_hash FROM users WHERE id=22\")->fetchColumn();
+  echo \$h;"'
+
+# 2. SET TEMP
+ssh maltyweb 'sudo -u www-data php -r "
+  require \"/var/www/maltytask/app/db.php\"; \$p=maltytask_pdo();
+  \$t=password_hash(\"SmokeTmp!pw\", PASSWORD_ARGON2ID);
+  \$p->prepare(\"UPDATE users SET password_hash=? WHERE id=22\")->execute([\$t]);"'
+
+#    ... run the read-only Playwright smoke as that user ...
+
+# 3. RESTORE — base64 the captured hash so $ survives the round-trip
+HASH='$argon2id$v=19$m=...'                       # the value from step 1
+B64=$(printf '%s' "$HASH" | base64 -w0)
+ssh maltyweb "sudo -u www-data php -r '
+  require \"/var/www/maltytask/app/db.php\"; \$p=maltytask_pdo();
+  \$o=base64_decode(\"'$B64'\");
+  \$p->prepare(\"UPDATE users SET password_hash=? WHERE id=22\")->execute([\$o]);
+  \$c=\$p->query(\"SELECT password_hash FROM users WHERE id=22\")->fetchColumn();
+  echo \$c===\$o?\"restored OK\":\"MISMATCH\";'"
+```
+
+Reusing `manager_can()` / a custom gate helper in a PHP harness (no browser) is a cheaper way
+to assert *write* gating per user — `require_once app/auth.php; echo can_write_x($me)?...` —
+but only a real browser login confirms the **render** (a write button hidden vs merely
+API-gated). Both matter: the data can be API-protected while the button still shows.
 
 ### Read-only discipline for smoke tests against production
 

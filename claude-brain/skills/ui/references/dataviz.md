@@ -119,3 +119,48 @@ switching to Canvas — the data-quality rules already require this (§8 of ux-q
   - Heatmaps: choose a perceptually-uniform sequential scale (viridis-style) rather than a
     red-to-green diverging scale; add numeric annotations in cells where space allows.
 - Run any new chart palette through a deuteranopia simulator before shipping.
+
+---
+
+## 7. Shared-renderer contract for `kpi-charts.js` (the KpcCharts payload rules)
+
+`public/js/kpi-charts.js` is a **pure viz layer keyed off `viz_type`** — it renders whatever shape
+the PHP handler returns and must NEVER fetch or recompute. Each `viz_type` has a fixed payload
+contract; a handler that emits the wrong shape renders blank or wrong. These are the contracts and
+the anti-patterns we have actually hit:
+
+- **`bar` reads `result.series[]` (each `{period, value}`); `grouped_bar` reads `result.breakdown[]`**
+  (each `{key, label, value, meta:{prior_year}}`). They are NOT interchangeable. A `bar` handler
+  that emits `breakdown` with no `period` draws unlabeled bars; a `grouped_bar` handler that emits
+  `series/groups` renders headline-only (no bars). When you author a handler, match its `viz_type`'s
+  shape exactly.
+- **`grouped_bar` shares ONE max-scale across every row.** Feeding absolute values of very different
+  magnitudes (e.g. a weekly figure beside an annual one) makes the small bars invisible. Feed a
+  **magnitude-independent measure** (e.g. % d'atteinte) so all rows are comparable on a common scale.
+- **NEVER re-sort a handler's emit order inside a shared renderer.** Emit order is **handler-defined**
+  — some handlers `ORDER BY name`, some by period, some by value. A shared list/bar builder must
+  PRESERVE that order; only a dedicated ranked/sorted path may impose its own sort, and it must do so
+  via an explicit opt-in flag (default the flag so existing callers keep their order). (We shipped a
+  `buildRankedBarList(rows, {sort})` where the ranked single-series path passes `sort:true` and the
+  `grouped_bar` call site passes `sort:false` → grouped output stays byte-identical.)
+- **Extending a SHARED renderer must be additive / opt-in.** New behaviour goes behind per-row or
+  per-call hooks (e.g. `b.unit || result.unit`, `b.meta.chip_label`, an `opts.sort` flag) so every
+  OTHER tracker using that renderer stays byte-stable. Before shipping a change to a shared renderer,
+  list its other consumers and confirm them unchanged before/after.
+- **High-cardinality single-series bars (> ~15 categories) read better horizontal + ranked.** A
+  vertical bar chart with many thin columns is illegible on a floor tablet; flip to a horizontal
+  sorted-descending list with internal scroll. Keep time-series and low-cardinality data vertical.
+- **The email mirror is a pure projection.** `app/kpi-email-render.php` must mirror the on-screen viz
+  vocab WITHOUT querying or recomputing — a new on-screen `viz_type` adds ONE case there; any missing
+  number is added to the HANDLER's `meta`, never recomputed in the email renderer.
+- **The email is a SEPARATE renderer, not the dashboard's output.** `app/kpi-email-render.php` has its
+  OWN `_kpi_render_<viz>()` PHP functions with **inline styles** (the no-inline-CSS house rule is
+  waived for email bodies) — it shares NO code, NO classes (`.kpc-*`), and NO JS with
+  `public/js/kpi-charts.js`. So a change to a dashboard chart's **layout/appearance** (the `>15`
+  horizontal flip, the `.kpc-bar-wrap--ranked` `max-height`+scroll, a color, a cap) does **NOT**
+  propagate to the email — if you want the email to match, edit `kpi-email-render.php` too. Both read
+  the SAME `$result` from `kpi_dispatch()` (so values/units stay identical — that's the projection
+  part), but they DRAW it independently. Corollary: **email clients can't scroll**, so the email
+  **caps** long lists (top-12 + a `"+N autres…"` line) instead of using an overflow container — never
+  port a `max-height`/`overflow` scroll wrapper into an email (it clips silently). Dashboard scrolls;
+  email truncates. Both are correct for their medium.
