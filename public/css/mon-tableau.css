@@ -171,7 +171,7 @@ body.mon-tableau .kpc-card__value {
 body.mon-tableau .kpc-unit {
   font-size: .8rem;
   font-weight: 400;
-  color: var(--ink-mute);
+  color: var(--ink-soft);
   font-family: 'JetBrains Mono', monospace;
   letter-spacing: .04em;
 }
@@ -427,7 +427,7 @@ body.mon-tableau .kpc-bar-wrap--ranked {
 }
 body.mon-tableau .kpc-grouped-row--simple {
   /* 3-col layout: label | track | value (no delta chip column) */
-  grid-template-columns: 11rem 1fr 3.5rem;
+  grid-template-columns: 11rem 1fr minmax(6rem, max-content);
 }
 body.mon-tableau .kpc-grouped-row--simple .kpc-grouped-row__lbl {
   color: var(--ink-label, #8a7250);
@@ -435,6 +435,27 @@ body.mon-tableau .kpc-grouped-row--simple .kpc-grouped-row__lbl {
 body.mon-tableau .kpc-grouped-row--simple .kpc-grouped-row__val {
   color: var(--ink, #241b10);
   font-weight: 600;
+}
+
+/* Dual-list subheading for #93 style two-panel ranked bars */
+body.mon-tableau .kpc-dual-list-heading {
+  font-size: .7rem;
+  font-weight: 600;
+  color: var(--ink-label, #8a7250);
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  padding: .6rem 0 .2rem 0;
+  border-top: 1px solid var(--ink-faint, #c8b48a);
+  margin-top: .4rem;
+}
+body.mon-tableau .kpc-dual-list-heading:first-child {
+  border-top: none;
+  margin-top: 0;
+  padding-top: .1rem;
+}
+body.mon-tableau .kpc-bar-wrap--dual {
+  max-height: 620px;  /* taller to accommodate two lists */
 }
 
 /* Donut */

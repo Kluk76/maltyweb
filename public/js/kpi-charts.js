@@ -96,7 +96,7 @@ function tintClass(tint) {
 }
 
 /* ── Delta arrow + sign ── */
-function deltaHtml(delta, deltaLabel) {
+function deltaHtml(delta, deltaLabel, deltaUnit) {
   if (delta == null) return '';
   const sign = delta >= 0 ? '▲' : '▼';
   const cls  = delta >= 0 ? 'kpc-delta--up' : 'kpc-delta--down';
@@ -105,6 +105,7 @@ function deltaHtml(delta, deltaLabel) {
   const dec  = Number.isInteger(val) ? 0 : 1;
   const disp = fmt(val, dec);
   return '<span class="kpc-delta ' + cls + '">' + sign + ' ' + escHtml(disp)
+    + (deltaUnit ? '&nbsp;' + escHtml(deltaUnit) : '')
     + (deltaLabel ? ' <span class="kpc-delta-lbl">' + escHtml(deltaLabel) + '</span>' : '')
     + '</span>';
 }
@@ -535,7 +536,7 @@ function renderKpiNumber(container, tracker, result, tCls) {
     + periodLbl
     + freshness
     + '<div class="kpc-card__value ' + tCls + '">' + val + unit + '</div>'
-    + deltaHtml(result.delta, result.delta_label);
+    + deltaHtml(result.delta, result.delta_label, result.delta_unit);
 }
 
 /* ── sparkline ───────────────────────────────────────────── */
@@ -574,7 +575,7 @@ function renderKpiSparkline(container, tracker, result, tCls) {
   }
   if (result.delta != null) {
     const dDiv = document.createElement('div');
-    dDiv.innerHTML = deltaHtml(result.delta, result.delta_label);
+    dDiv.innerHTML = deltaHtml(result.delta, result.delta_label, result.delta_unit);
     container.appendChild(dDiv);
   }
 }
@@ -589,6 +590,39 @@ function renderKpiBar(container, tracker, result, tCls) {
   }
 
   container.innerHTML = '<div class="kpc-card__label">' + escHtml(result.label || tracker.label) + '</div>';
+
+  if (result.dual_lists && result.dual_lists.length && result.breakdown && result.breakdown.length) {
+    /* Dual ranked lists: one panel per list descriptor */
+    const outerWrap = document.createElement('div');
+    outerWrap.className = 'kpc-bar-wrap kpc-bar-wrap--ranked kpc-bar-wrap--dual';
+
+    result.dual_lists.forEach(function(listDef) {
+      /* Build rows for this list from breakdown, mapping listDef.field → value */
+      const rows = result.breakdown.map(function(b) {
+        return {
+          label: b.label || b.key || '',
+          value: parseFloat(b[listDef.field]) || 0,
+          unit:  listDef.unit,
+        };
+      });
+      /* Subheading */
+      const heading = document.createElement('div');
+      heading.className = 'kpc-dual-list-heading';
+      heading.textContent = listDef.title;
+      outerWrap.appendChild(heading);
+      /* Ranked list, capped at 10, sorted desc by its own field */
+      const listEl = buildRankedBarList(rows, {
+        cap:       10,
+        unit:      listDef.unit,
+        showGhost: false,
+        showChip:  false,
+      });
+      outerWrap.appendChild(listEl);
+    });
+
+    container.appendChild(outerWrap);
+    return;  /* skip the normal high-cardinality / low-cardinality path */
+  }
 
   if (series.length > KPC_HBAR_THRESHOLD) {
     /* High-cardinality: render as sorted horizontal ranked list */
@@ -680,7 +714,7 @@ function renderKpiStackedBar(container, tracker, result, tCls) {
   }
   if (result.delta != null) {
     const dDiv = document.createElement('div');
-    dDiv.innerHTML = deltaHtml(result.delta, result.delta_label);
+    dDiv.innerHTML = deltaHtml(result.delta, result.delta_label, result.delta_unit);
     container.appendChild(dDiv);
   }
 }
@@ -729,7 +763,7 @@ function renderKpiGroupedBar(container, tracker, result, tCls) {
   }
   if (result.delta != null) {
     const dDiv = document.createElement('div');
-    dDiv.innerHTML = deltaHtml(result.delta, result.delta_label);
+    dDiv.innerHTML = deltaHtml(result.delta, result.delta_label, result.delta_unit);
     container.appendChild(dDiv);
   }
 }
@@ -827,7 +861,7 @@ function renderKpiStackedColumns(container, tracker, result, tCls) {
   }
   if (result.delta != null) {
     const dDiv = document.createElement('div');
-    dDiv.innerHTML = deltaHtml(result.delta, result.delta_label);
+    dDiv.innerHTML = deltaHtml(result.delta, result.delta_label, result.delta_unit);
     wrap.appendChild(dDiv);
   }
 
@@ -1074,7 +1108,7 @@ function renderKpiLine(container, tracker, result, tCls) {
   }
   if (result.delta != null) {
     const dDiv = document.createElement('div');
-    dDiv.innerHTML = deltaHtml(result.delta, result.delta_label);
+    dDiv.innerHTML = deltaHtml(result.delta, result.delta_label, result.delta_unit);
     container.appendChild(dDiv);
   }
 }

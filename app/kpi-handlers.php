@@ -144,6 +144,7 @@ function kpi_empty_result(string $label = '', string $unit = null): array
         'label'       => $label,
         'delta'       => null,
         'delta_label' => null,
+        'delta_unit'  => '%',
         'tint'        => 'neutral',
         'series'      => null,
         'breakdown'   => null,
@@ -1130,6 +1131,7 @@ function kpi_cogs_per_hl(array $params, string $label, PDO $pdo): array
         'value'       => round($perHL, 2),
         'delta'       => $delta,
         'delta_label' => $deltaLabel,
+        'delta_unit'  => 'CHF/HL',
         'tint'        => 'neutral',  // directional: lower is better but not inherently bad
         'series'      => $series,
         'meta'        => array_merge([
@@ -2025,6 +2027,7 @@ function kpi_cogs_cost_variance_prior_month(string $label, PDO $pdo): array
         'value'       => $totalDelta,
         'delta'       => $totalDelta,
         'delta_label' => 'vs ' . ($prev['monthKey'] ?? 'mois précédent'),
+        'delta_unit'  => 'CHF',
         'tint'        => $totalDelta <= 0 ? 'green' : 'amber',
         'breakdown'   => $breakdown,
         'meta'        => array_merge([
@@ -4298,6 +4301,7 @@ function kpi_rm_spend_yoy(string $label, PDO $pdo): array
         'value'       => round($totalThisYear, 2),
         'delta'       => $delta,
         'delta_label' => 'vs même période N-1',
+        'delta_unit'  => 'CHF',
         'series'      => $series,
         'tint'        => 'neutral',
         'meta'        => [
@@ -9009,6 +9013,7 @@ function kpi_util_cost_pct_cogs(string $label, PDO $pdo): array
         'value'       => $pct,
         'delta'       => $delta,
         'delta_label' => 'pts vs mois précédent',
+        'delta_unit'  => 'pts',
         'tint'        => $tint,
         'meta'        => [
             'period'         => $latest,
@@ -9439,30 +9444,33 @@ function kpi_sales_units_sold_sku(array $params, string $label, PDO $pdo): array
 
     $stmt = $pdo->prepare(
         "SELECT rs.sku_code,
-                -SUM(l.qty_signed)     AS qty,
-                SUM(l.sales_amount_chf) AS chf
+                -SUM(l.qty_signed)      AS qty,
+                SUM(l.sales_amount_chf) AS chf,
+                -SUM(l.hl_resolved)     AS hl
            FROM inv_sales_ledger l
            JOIN ref_skus rs ON rs.id = l.sku_id_fk
           WHERE " . KPI_SALES_PROD_FILTER . "
             AND DATE_FORMAT(l.posting_date,'%Y-%m') = ?
           GROUP BY rs.sku_code
-          ORDER BY qty DESC
+          ORDER BY hl DESC
           LIMIT 25"
     );
     $stmt->execute([$latest]);
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    $totalQty = array_sum(array_column($rows, 'qty'));
+    $totalHl = array_sum(array_column($rows, 'hl'));
 
     $breakdown = array_map(fn(array $r) => [
         'key'   => $r['sku_code'],
         'label' => $r['sku_code'],
-        'value' => round((float) $r['qty'], 1),
+        'value' => round((float) $r['hl'], 2),
+        'qty'   => round((float) $r['qty'], 1),
         'chf'   => round((float) $r['chf'], 0),
+        'hl'    => round((float) $r['hl'], 2),
     ], $rows);
 
-    $result = array_merge(kpi_empty_result($label, 'unités'), [
-        'value'     => round($totalQty, 0),
+    $result = array_merge(kpi_empty_result($label, 'HL'), [
+        'value'     => round($totalHl, 1),
         'tint'      => 'neutral',
         'breakdown' => $breakdown,
         'series'    => array_map(
@@ -9714,14 +9722,18 @@ function kpi_sales_top_skus(array $params, string $label, PDO $pdo): array
     ], $rows);
 
     $result = array_merge(kpi_empty_result($label, 'CHF HT'), [
-        'value'     => array_sum(array_column($breakdown, 'value')),
-        'tint'      => 'neutral',
-        'breakdown' => $breakdown,
-        'series'    => array_map(
+        'value'      => array_sum(array_column($breakdown, 'value')),
+        'tint'       => 'neutral',
+        'breakdown'  => $breakdown,
+        'series'     => array_map(
             fn(array $b) => ['period' => $b['label'], 'value' => $b['value']],
             $breakdown
         ),
-        'meta'      => [
+        'dual_lists' => [
+            ['title' => 'Par volume (HL)', 'unit' => 'HL',     'field' => 'hl'],
+            ['title' => 'Par CA (CHF HT)', 'unit' => 'CHF HT', 'field' => 'value'],
+        ],
+        'meta'       => [
             'period'       => $latest,
             'period_label' => $latest,
             'source'       => 'inv_sales_ledger (production filter)',
@@ -9981,6 +9993,7 @@ function kpi_sales_discount_rate(array $params, string $label, PDO $pdo): array
         'value'       => round($latestVal, 2),
         'delta'       => $delta,
         'delta_label' => 'vs mois précédent (pp)',
+        'delta_unit'  => 'pp',
         'tint'        => $tint,
         'series'      => $series18,
         'meta'        => [
@@ -11343,6 +11356,7 @@ function kpi_logi_outbound_delivery_notes(array $params, string $label, PDO $pdo
         'value'       => $shippedOrders,
         'delta'       => $delta,
         'delta_label' => "vs {$windowDays}j précédents",
+        'delta_unit'  => 'commandes',
         'tint'        => 'neutral',
         'meta'        => [
             'period_label'   => "{$windowDays} derniers jours",
