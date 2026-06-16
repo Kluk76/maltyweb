@@ -100,6 +100,8 @@ function returns_synthese(PDO $pdo, int $periodDays = 90): array
     // ── pending_count: ALWAYS 180-day window (must match the P1 pending queue) ─
     // Do NOT use $periodDays here — the operator sees a queue over 180 days;
     // using a narrower window would make this count disagree with the visible queue.
+    // NOTE: pending_count intentionally NOT view-backed — must stay consistent with the disposition-queue
+    // render in expeditions.php which is being fixed separately (queue-consistency deferral, mig 387).
     $pendingStmt = $pdo->prepare(
         "SELECT COUNT(*) AS cnt
            FROM inv_sales_ledger l
@@ -128,23 +130,14 @@ function returns_synthese(PDO $pdo, int $periodDays = 90): array
     // physical-returns numerator (rebate-excluded), distinct from disposition-based mix
     // Uses inv_sales_ledger directly — captures all physical returns even when not yet
     // dispositioned in ord_return_lines (which only ~1 return has been through).
+    // physical returns via v_physical_returns (same-day reversals + rebates excluded) — see mig 387
     $rateNumStmt = $pdo->query(
         "SELECT SUM(l.qty_signed) AS returned_units,
                 COUNT(*) AS basis_count
-           FROM inv_sales_ledger l
+           FROM v_physical_returns l
            JOIN ref_skus rs ON rs.id = l.sku_id_fk
-          WHERE l.doc_type IN ('credit','return_receipt')
-            AND l.qty_signed > 0
-            AND rs.recipe_id IS NOT NULL
-            AND l.sku_id_fk IS NOT NULL
-            AND l.posting_date >= DATE_SUB(CURDATE(), INTERVAL 365 DAY)
-            AND NOT EXISTS (
-                SELECT 1 FROM ord_returns r
-                JOIN ord_return_lines rl ON rl.return_id_fk = r.id
-                WHERE r.origin_bc_document_no = l.bc_document_no
-                  AND rl.sku_id_fk = l.sku_id_fk
-                  AND rl.disposition = 'rebate'
-            )"
+          WHERE rs.recipe_id IS NOT NULL
+            AND l.posting_date >= DATE_SUB(CURDATE(), INTERVAL 365 DAY)"
     );
     $rateNumRow     = $rateNumStmt->fetch(PDO::FETCH_ASSOC);
     $rateReturned   = (float) ($rateNumRow['returned_units'] ?? 0);
@@ -168,26 +161,16 @@ function returns_synthese(PDO $pdo, int $periodDays = 90): array
         ? round($rateReturned / $rateSold * 100, 3)
         : 0.0;
 
-    // Per-beer numerator: physical-returns numerator (rebate-excluded) grouped by recipe
+    // physical returns via v_physical_returns (same-day reversals + rebates excluded) — see mig 387
     $rateBeerNumStmt = $pdo->query(
         "SELECT rs.recipe_id,
                 COALESCE(rr.name, rs.sku_code) AS beer_label,
                 SUM(l.qty_signed)              AS returned_units
-           FROM inv_sales_ledger l
+           FROM v_physical_returns l
            JOIN ref_skus rs ON rs.id = l.sku_id_fk
            LEFT JOIN ref_recipes rr ON rr.id = rs.recipe_id
-          WHERE l.doc_type IN ('credit','return_receipt')
-            AND l.qty_signed > 0
-            AND rs.recipe_id IS NOT NULL
-            AND l.sku_id_fk IS NOT NULL
+          WHERE rs.recipe_id IS NOT NULL
             AND l.posting_date >= DATE_SUB(CURDATE(), INTERVAL 365 DAY)
-            AND NOT EXISTS (
-                SELECT 1 FROM ord_returns r
-                JOIN ord_return_lines rl ON rl.return_id_fk = r.id
-                WHERE r.origin_bc_document_no = l.bc_document_no
-                  AND rl.sku_id_fk = l.sku_id_fk
-                  AND rl.disposition = 'rebate'
-            )
           GROUP BY rs.recipe_id, COALESCE(rr.name, rs.sku_code)"
     );
     $rateBeerNum = $rateBeerNumStmt->fetchAll(PDO::FETCH_ASSOC);
@@ -229,25 +212,15 @@ function returns_synthese(PDO $pdo, int $periodDays = 90): array
     // DESC by returned_units
     usort($byBeerRate, fn($a, $b) => $b['returned_units'] <=> $a['returned_units']);
 
-    // Per-channel numerator: physical-returns numerator (rebate-excluded) grouped by trade_channel
+    // physical returns via v_physical_returns (same-day reversals + rebates excluded) — see mig 387
     $rateChanNumStmt = $pdo->query(
         "SELECT rc.trade_channel,
                 SUM(l.qty_signed) AS returned_units
-           FROM inv_sales_ledger l
+           FROM v_physical_returns l
            JOIN ref_skus rs ON rs.id = l.sku_id_fk
            LEFT JOIN ref_customers rc ON rc.id = l.customer_id_fk
-          WHERE l.doc_type IN ('credit','return_receipt')
-            AND l.qty_signed > 0
-            AND rs.recipe_id IS NOT NULL
-            AND l.sku_id_fk IS NOT NULL
+          WHERE rs.recipe_id IS NOT NULL
             AND l.posting_date >= DATE_SUB(CURDATE(), INTERVAL 365 DAY)
-            AND NOT EXISTS (
-                SELECT 1 FROM ord_returns r
-                JOIN ord_return_lines rl ON rl.return_id_fk = r.id
-                WHERE r.origin_bc_document_no = l.bc_document_no
-                  AND rl.sku_id_fk = l.sku_id_fk
-                  AND rl.disposition = 'rebate'
-            )
           GROUP BY rc.trade_channel"
     );
     $rateChanNumRaw = $rateChanNumStmt->fetchAll(PDO::FETCH_ASSOC);
@@ -305,28 +278,19 @@ function returns_synthese(PDO $pdo, int $periodDays = 90): array
     // Documented floor constant — customers below this shipped volume are excluded to kill noise
     $minShipped = 12;
 
+    // physical returns via v_physical_returns (same-day reversals + rebates excluded) — see mig 387
     $overshipStmt = $pdo->query(
         "SELECT
             l.customer_id_fk,
             rc.name AS customer_name,
             rc.trade_channel,
-            -- physical returned units (rebate-excluded), same def as rate numerator
-            SUM(CASE WHEN l.doc_type IN ('credit','return_receipt') AND l.qty_signed > 0
-                         AND NOT EXISTS (
-                             SELECT 1 FROM ord_returns r2
-                             JOIN ord_return_lines rl2 ON rl2.return_id_fk = r2.id
-                             WHERE r2.origin_bc_document_no = l.bc_document_no
-                               AND rl2.sku_id_fk = l.sku_id_fk
-                               AND rl2.disposition = 'rebate'
-                         )
-                     THEN l.qty_signed ELSE 0 END) AS returned_units,
-            -- shipped units
+            COALESCE(SUM(CASE WHEN vpr.id IS NOT NULL THEN vpr.qty_signed ELSE 0 END), 0) AS returned_units,
             GREATEST(0, -SUM(CASE WHEN l.doc_type IN ('shipment','invoice') THEN l.qty_signed ELSE 0 END)) AS shipped_units,
-            -- count of return ledger lines
-            SUM(CASE WHEN l.doc_type IN ('credit','return_receipt') AND l.qty_signed > 0 THEN 1 ELSE 0 END) AS return_lines
+            COUNT(CASE WHEN vpr.id IS NOT NULL THEN 1 END) AS return_lines
         FROM inv_sales_ledger l
         JOIN ref_skus rs ON rs.id = l.sku_id_fk
         LEFT JOIN ref_customers rc ON rc.id = l.customer_id_fk
+        LEFT JOIN v_physical_returns vpr ON vpr.id = l.id
         WHERE l.sku_id_fk IS NOT NULL
           AND rs.recipe_id IS NOT NULL
           AND l.posting_date >= DATE_SUB(CURDATE(), INTERVAL 365 DAY)
