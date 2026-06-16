@@ -2,11 +2,44 @@
 
 > Read when a task touches the Financier page (`public/modules/financier.php`), the Fiche COGS / variation-de-stock tab, the `cogs_fiche_*` / `ref_cogs_fiche_categories` tables, or the monthly-compile engine `scripts/cogs-monthly-compile.ts` (maltytask repo). Verified live 2026-06-11.
 
-## 🔴🔴 ACTIVE ARC (LIVE, PM-SEQUENCED 2026-06-16) — DYNAMIC-FINANCIER REBUILD + `cogs_fiche_sealed` (Kouros-APPROVED)
-**The arc is RE-OPENED.** The keystone "May close shipped" record below STILL HOLDS as the published baseline — but the architecture is being rebuilt: the live financier path moves from the LOCAL-via-tunnel TS engine (`scripts/cogs-monthly-compile.ts`) into an **in-app PHP compute** so the Fiche + both CSV endpoints render LIVE, and published-month immutability becomes **STRUCTURAL** via an append-only `cogs_fiche_sealed` table — not honor-system.
+## 🟢 ARC ~CLOSED (CUTOVER SHIPPED + OPUS-VERIFIED 2026-06-16) — DYNAMIC-FINANCIER REBUILD + `cogs_fiche_sealed` (Kouros-APPROVED)
+**The dynamic-financier rebuild is SHIPPED, verified, LIVE on the VPS. NOT pushed (held on maltyweb main — two-session-merge / hold-for-review discipline; flag if it should push).** The live financier path now renders via in-app PHP compute through the resolver; published-month immutability is STRUCTURAL via append-only `cogs_fiche_sealed`. The keystone "May close shipped" record below holds as the published baseline; governance: **May DISPLAYS live 355 331.86, NOT cutover-sealed at old 353 867.69 — Thierry (CFO) seals on validation.**
 
-### ✅ DATA LAYER BUILT + DEPLOYED + OPUS-VERIFIED (2026-06-16, all green) — only the financier.php CUTOVER remains
-Steps 1–5's DATA/RESOLVER layer is done, on the VPS, migs applied, Opus-verified end-to-end. CUTOVER (repoint financier.php read-site + both CSV endpoints to the resolver) is the LAST step, about to be dispatched to a Sonnet coder.
+### ✅ CUTOVER COMMIT — `646641e` (maltyweb) "feat(cogs): wire resolver + seal/restate to Fiche COGS financier surface" — 12 files
+- **`app/cogs-fiche-resolve.php`** — canonical accessor (precedence sealed > seed > live > unavailable).
+- **`app/cogs-fiche-compute.php`** — opening chain now SEAL-AWARE: prior-month closing resolved **sealed > live-cache > seed**.
+- **`public/modules/financier.php`** — resolver wired @L421; **dead direct `cogs_fiche_monthly` Fiche JOIN REMOVED per RULE 1** (only the month-selector discovery query still references the table → minor follow-up #1 below).
+- **`public/js/financier.js`** — sealed-provenance branch + seal/restate modal.
+- **`public/css/financier.css`** — `.fin-fiche-provenance-chip--sealed` (ember/gold variant).
+- **`public/api/cogs-fiche-csv.php` + `cogs-comprehensive-csv.php`** — both route through resolver + stamp a Provenance header.
+- **`public/api/cogs-fiche-seal.php`** (NEW POST handler) — CSRF + gate + `cogs_fiche_seal_month` + `log_revision` + PRG.
+- **Migs 374/375/378/379** (see below).
+
+### ✅ MIGS — all tracked + applied on VPS
+- **374** `cogs_fiche_monthly.source_fingerprint` (fingerprint cache). **375** `cogs_fiche_sealed` append-only seal/restate store (schema_meta: reference / allowed-append-only; one seal = 12 rows; `supersedes_seal_id` FK chains restatements).
+- **378** `finance_viewer` preset. **379** added `'finance'` to `users.manager_scope` ENUM → **now `enum('production','logistics','all','finance')`**.
+- **Migration numbering note:** coder used 378/379; **373/376/377 belong to the parallel returns+shopify-variants session** (committed by them in `e7e0fca`). No collision.
+
+### ✅ SEAL/RESTATE GATE — LIVE (CFO cross-dependency RESOLVED)
+- Gate = **`is_admin() OR manager_can('finance')`** (the `'finance'` scope is now real, via mig 379). This RESOLVES the open Step-5 cross-dependency that flagged scope=NULL CFO would fail the gate.
+- **To enable Thierry to seal/restate:** `UPDATE users SET role='manager', manager_scope='finance' WHERE id=<thierry>` (or Données générales → Utilisateurs → Manager / Finance). Admin already passes via `is_admin()`.
+
+### ✅ OPUS VERIFICATION (all green, 2026-06-16)
+- **May parity post-cutover:** provenance `live`, total **355 331.86**, Hops RM naive **29 668.66** (loadRM-inversion tripwire HELD), opening **394 367.74**, variation **−39 035.88**, basis **+1 808.82**. April → seed; future → unavailable.
+- `cogs_fiche_sealed` = **0 rows** (coder spot-check self-cleaned, FK-aware).
+- All **8 deployed files md5-match local.** Commit clean — parallel-session files (auth.php, charges-bc, expeditions-line-status) untouched.
+
+### 🟡 MINOR NON-BLOCKING FOLLOW-UPS (recorded, not actioned)
+1. **month-selector discovers months via `cogs_fiche_monthly`** — a never-resolved closeable month won't list until first resolve (the only remaining `cogs_fiche_monthly` reference on the page).
+2. **cross-month opening staleness** only for an UNSEALED prior feeding an open next month — **sealing the prior eliminates it** (this is exactly what the seal mechanism is for).
+
+### TS COMPILER — DEPRECATED as live path
+`scripts/cogs-monthly-compile.ts` (maltytask) is now the **parity oracle ONLY** — no longer the production compute path (that's `app/cogs-fiche-compute.php` in-app PHP).
+
+---
+
+### (historical, pre-cutover) DATA LAYER record — superseded by the shipped commit above
+The pre-cutover record below is retained for the build trail; the resolver `app/cogs-fiche-resolve.php` and `app/cogs-fiche-compute.php` are now committed in `646641e`.
 - **mig 374 `374_cogs_fiche_fingerprint.sql`** (APPLIED) — `cogs_fiche_monthly.source_fingerprint VARCHAR(64)` (SHA1 over RM/FG/WIP source counts + MAX(updated_at); NULL = stale → recompute).
 - **mig 375 `375_cogs_fiche_sealed.sql`** (APPLIED) — append-only seal/restatement store. **One seal event = 12 rows** (one per `COGS_FICHE_CATEGORIES`). Active seal = latest event per month_key. `supersedes_seal_id` FK chains restatements (ON DELETE RESTRICT). schema_meta row written: **class=reference, corrections_policy=allowed/append-only**. (NB mig 376 `376_returns_bc_derived_origin.sql` is a PARALLEL-session ord_returns mig — NOT this arc. MIG HEAD now ≥376; re-`--status` at build start.)
 - **`app/cogs-fiche-resolve.php`** (deployed, NOT yet committed) — the public surface, precedence **sealed > seed > live > unavailable**:

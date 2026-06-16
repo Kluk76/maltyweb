@@ -94,4 +94,21 @@ Page handlers (`public/modules/planning.php`): **generate_suggestions** (calls p
 ## 🟡 Heads-up (NOT from this arc) — tank-simulator.php in-flight refactor
 `app/tank-simulator.php` has a **large uncommitted refactor in the shared working tree from a PARALLEL session** (CCT-destination racking + BBT-overwrite fix). It **preserves the `run()` contract**, so the eligibility engine is unaffected — but flag it as IN-FLIGHT if you sequence anything on the sim. (Pairs with the deploy-pushes-the-working-tree hazard: a deploy from this clone carries that uncommitted refactor live.)
 
+## §MULTI-PROCESS-PER-DAY — overlap shifts (Kouros 2026-06-16, ARC RE-OPENED as continuation)
+**Requirement:** a single planning day must hold MULTIPLE items per section at once — overlap shifts do racking + brewing + dry-hopping (all section=wort) AND bottling + kegging (both section=packaging) on the same day.
+
+**🔑 PM verdict — VPS-verified 2026-06-16: ALREADY SUPPORTED END-TO-END. NO migration, NO eligibility-engine change.** Verified against live VPS files:
+- **Schema:** `pl_plan_items` is already N-rows-per-(plan_date,section) — `plan_date` is keyed by value (NOT FK to pl_plan_days), `seq` INT, idx `idx_pitems_date_section_seq`. No 1-per-section UNIQUE anywhere. Nothing to migrate.
+- **Handlers (`public/modules/planning.php` add_wort l.161 / add_packaging l.300 / add_logistics l.415):** each already does `SELECT COALESCE(MAX(seq),0)+1 ... WHERE plan_date=? AND section=? AND is_active=1` then INSERTs a NEW row — pure append, never an upsert/replace. Adding a 2nd wort item to a day just makes seq=2. Soft-delete per item (is_active=0), scope-gated.
+- **Render (l.783+):** groups `$itemsByDaySection[date][section][]` then `foreach ($dayItems['wort'] ?? [] as $item)` / same for packaging/logistics → renders a LIST of `.pl-item-card`s, each with its own delete (and accept/reject for proposed), with the `.pl-add-form` placed AFTER the list. This IS the "list of added items + an add-another row" house pattern (matches saisies.php / expeditions.php multi-row surfaces).
+- **Eligibility engine (`app/planning-eligibility.php`):** ALREADY multi-item-deterministic. SELECT `ORDER BY plan_date, section, seq, id` (l.201); indexed `$planByDay[date][section][]` (l.207). Forward replay (l.214): for each day it (a) computes eligibility from working CCT/BBT state BEFORE applying that day's items, then (b) applies ALL wort items via `foreach ($dayPlanItems['wort'] ?? [] as $pi)` (l.313, seq order) THEN ALL packaging items `foreach (... ['packaging'] ...)` (l.377). **Intra-day order is fixed = compute-elig → all wort (seq) → all packaging; replay is stable.** So the deterministic intra-day ordering the operator asked about (brewing-then-racking same day) EXISTS — wort items apply in seq order, so the operator controls relative order via add order, and packaging always sees the post-wort tank state. Brewing occupies a CCT, racking drains CCT→BBT, packaging drains BBT — all compose correctly across multiple same-day items.
+
+**Conclusion:** the shipped page very likely ALREADY does what Kouros wants. The honest next step is the still-open follow-up (c): an authenticated manager browser UAT. Only genuinely-possible gaps are UX polish, NOT architecture:
+1. After submitting one add-form, does the operator land back cleanly able to add the next (PRG preserves `?week=`; confirm the add-form re-renders empty and focus isn't lost)?
+2. When 3+ cards stack in one narrow day-column, is the density readable on a floor tablet (CSS — `planning.css`)?
+
+If a real gap surfaces → `planning.php` + `planning.css` + `planning.js` ONLY. Do NOT add a migration, do NOT touch the eligibility engine, do NOT add a batch/group table (one fact = one row, append-by-seq is the model). CARDINAL still holds (Planning = INTENT only). EQUIP ui+coder (+webapp-testing for the manager UAT).
+
+---
+
 system_settings (for reference): UNIQUE (section,key_name); value_text XOR value_num (CHECK); read via app/settings.php::system_setting(). commissioning_settings is a SEPARATE table (same shape) holding min_days_after_racking under section='packaging'.
