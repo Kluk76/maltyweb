@@ -284,9 +284,10 @@ function fg_stock_compute(PDO $pdo): array
                 'expedie_orders'    => 0,
                 'eshop_qty'         => 0,
                 'eshop_orders'      => 0,
-                'taproom_qty'       => 0,
-                'taproom_rows'      => 0,
-                'repack_open_qty'   => 0,
+                'taproom_qty'           => 0,
+                'taproom_rows'          => 0,
+                'repack_open_qty'       => 0,
+                'returns_restock_qty'   => 0,
             ];
         }
         $byId[$sid]['anchor_qty'] += (float) $ar['anchor_qty'];
@@ -378,13 +379,14 @@ function fg_stock_compute(PDO $pdo): array
                     'anchor_qty'       => 0,
                     'prod_qty'         => $pdata['prod_qty'],    // int
                     'prod_events'      => $pdata['prod_events'],
-                    'expedie_qty'      => 0,
-                    'expedie_orders'   => 0,
-                    'eshop_qty'        => 0,
-                    'eshop_orders'     => 0,
-                    'taproom_qty'      => 0,
-                    'taproom_rows'     => 0,
-                    'repack_open_qty'  => 0,
+                    'expedie_qty'           => 0,
+                    'expedie_orders'        => 0,
+                    'eshop_qty'             => 0,
+                    'eshop_orders'          => 0,
+                    'taproom_qty'           => 0,
+                    'taproom_rows'          => 0,
+                    'repack_open_qty'       => 0,
+                    'returns_restock_qty'   => 0,
                 ];
             }
         }
@@ -610,6 +612,78 @@ function fg_stock_compute(PDO $pdo): array
         }
     }
 
+    // ── Step 6.7: returns restock (ord_return_lines, disposition='restock') ─────
+    // Restocked returns are physical kegs/units that come back into FG stock.
+    // They are an ADDITION to physique — the additive mirror of the depletion legs.
+    //
+    // Cutoff: strict > $anchorDate (same global-anchor rule used for never-counted
+    // SKUs in the expédié leg, case (c)). Returns are not site-resolved, so the
+    // global anchor is the only defensible cutoff. A return posted on/before
+    // the anchor date is already baked into that count — do NOT double-add it.
+    //
+    // qty is in SKU pack units already (kegs: units_per_pack=1 — the operator
+    // dispositions whole BC ledger lines; no unit conversion needed unlike
+    // production which is in containers).
+    //
+    // One grouped query — no N+1. Pure SELECT.
+    //
+    // Symmetry note: the SAME query + SAME predicate (strict > $anchorDate) is
+    // used in fg_stock_location_snapshot() Leg 4, assigned 100% to the warehouse
+    // site. By construction Σ(returns added in compute) == Σ(returns added in
+    // snapshot) — the Σcards==Σphysique invariant holds.
+    $restockStmt = $pdo->prepare(
+        'SELECT rl.sku_id_fk,
+                SUM(rl.qty) AS restock_qty
+           FROM ord_return_lines rl
+           JOIN ord_returns r ON r.id = rl.return_id_fk
+          WHERE rl.disposition = ?
+            AND r.origin_posting_date > ?
+            AND rl.sku_id_fk IS NOT NULL
+          GROUP BY rl.sku_id_fk'
+    );
+    $restockStmt->execute(['restock', $anchorDate]);
+    foreach ($restockStmt->fetchAll(PDO::FETCH_ASSOC) as $rr) {
+        $sid = (int) $rr['sku_id_fk'];
+        $qty = (int) round((float) $rr['restock_qty']);
+        if (isset($byId[$sid])) {
+            $byId[$sid]['returns_restock_qty'] += $qty;
+        } else {
+            // Restocked SKU not yet in $byId (no anchor, no production).
+            // Add a placeholder so the snapshot total can match (invariant).
+            $skuMeta = $pdo->prepare(
+                'SELECT s.sku_code, s.format, s.hl_per_unit, s.units_per_pack,
+                        COALESCE(pf.display_family, s.format) AS display_family
+                   FROM ref_skus s
+                   LEFT JOIN ref_packaging_formats pf ON pf.id = s.format_id
+                  WHERE s.id = ? AND s.is_active = 1 LIMIT 1'
+            );
+            $skuMeta->execute([$sid]);
+            $meta = $skuMeta->fetch(PDO::FETCH_ASSOC);
+            if ($meta !== false) {
+                $byId[$sid] = [
+                    'sku_id'                => $sid,
+                    'sku_code'              => $meta['sku_code'],
+                    'format'                => $meta['format'],
+                    'display_family'        => $meta['display_family'],
+                    'hl_per_unit'           => (float) $meta['hl_per_unit'],
+                    'recipe_id'             => null,
+                    'anchor_qty'            => 0,
+                    'stocktake_scope'       => '',
+                    'prod_qty'              => 0,
+                    'prod_events'           => 0,
+                    'expedie_qty'           => 0,
+                    'expedie_orders'        => 0,
+                    'eshop_qty'             => 0,
+                    'eshop_orders'          => 0,
+                    'taproom_qty'           => 0,
+                    'taproom_rows'          => 0,
+                    'repack_open_qty'       => 0,
+                    'returns_restock_qty'   => $qty,
+                ];
+            }
+        }
+    }
+
     // $today is used by Steps 7 and 8; define once here.
     $today = date('Y-m-d');
 
@@ -762,13 +836,14 @@ function fg_stock_compute(PDO $pdo): array
     // ── Step 9: assemble output rows ─────────────────────────────────────────
     $rows = [];
     foreach ($byId as $sid => $r) {
-        $anchor       = $r['anchor_qty'];
-        $prod         = $r['prod_qty'];
-        $expedie      = $r['expedie_qty'];
-        $eshop        = $r['eshop_qty'];
-        $taproom      = $r['taproom_qty'];
-        $repackOpen   = $r['repack_open_qty'];
-        $physique     = $anchor + $prod - $expedie - $eshop - $taproom - $repackOpen;
+        $anchor          = $r['anchor_qty'];
+        $prod            = $r['prod_qty'];
+        $expedie         = $r['expedie_qty'];
+        $eshop           = $r['eshop_qty'];
+        $taproom         = $r['taproom_qty'];
+        $repackOpen      = $r['repack_open_qty'];
+        $returnsRestock  = $r['returns_restock_qty'];
+        $physique        = $anchor + $prod + $returnsRestock - $expedie - $eshop - $taproom - $repackOpen;
 
         $openWeek  = $openBySkuId[$sid]['week_qty']  ?? 0;
         $open2wk   = $openBySkuId[$sid]['twowk_qty'] ?? 0;
@@ -802,14 +877,15 @@ function fg_stock_compute(PDO $pdo): array
             $semaines = $simResult['weeks'];
         }
 
-        // Dormant: physique=0 AND no movement (prod=0, expedie=0, eshop=0, taproom=0, repack=0)
+        // Dormant: physique=0 AND no movement (prod=0, expedie=0, eshop=0, taproom=0, repack=0, restock=0)
         // Use == 0 (loose) to handle float physique (e.g. 0.0 === 0 is false in PHP).
         $isDormant = ($physique == 0)
             && ($prod == 0)
             && ($expedie === 0)
             && ($eshop === 0)
             && ($taproom === 0)
-            && ($repackOpen === 0);
+            && ($repackOpen === 0)
+            && ($returnsRestock === 0);
 
         // Couverture drill payload (per-SKU drilldown for the UI)
         $nowIsoWeek   = (int) (new DateTimeImmutable($today))->format('W');
@@ -821,9 +897,10 @@ function fg_stock_compute(PDO $pdo): array
             'prod_qty'      => $prod,
             'expedie_qty'   => $expedie,
             'eshop_qty'     => $eshop,
-            'taproom_qty'    => $taproom,
-            'repack_open_qty'=> $repackOpen,
-            'open_total'     => $openTotal,
+            'taproom_qty'           => $taproom,
+            'repack_open_qty'       => $repackOpen,
+            'returns_restock_qty'   => $returnsRestock,
+            'open_total'            => $openTotal,
             'open_book'      => $openBookBySku[$sid] ?? [],
             'live_futur'    => $liveFutur,
             'rythme_base'   => $rythmeBase,
@@ -855,9 +932,10 @@ function fg_stock_compute(PDO $pdo): array
             'expedie_orders'  => $r['expedie_orders'],
             'eshop_qty'       => $eshop,
             'eshop_orders'    => $r['eshop_orders'],
-            'taproom_qty'      => $taproom,
-            'taproom_rows'     => $r['taproom_rows'],
-            'repack_open_qty'  => $repackOpen,
+            'taproom_qty'           => $taproom,
+            'taproom_rows'          => $r['taproom_rows'],
+            'repack_open_qty'       => $repackOpen,
+            'returns_restock_qty'   => $returnsRestock,
             // Computed
             'physique'          => $physique,
             'open_week_qty'     => $openWeek,
@@ -1336,6 +1414,45 @@ function fg_stock_location_snapshot(PDO $pdo): array
         }
     }
 
+    // ── Leg 4: returns restock (ord_return_lines, disposition='restock') ────────
+    // Symmetry invariant: this leg uses the IDENTICAL query and cutoff predicate
+    // (strict > $anchorDate) as Step 6.7 in fg_stock_compute(). Because 100% of
+    // the restock qty is attributed to the warehouse site (assumption below), and
+    // fg_stock_compute() adds the same total globally, Σ(snapshot location qty) ==
+    // Σ(compute physique) — the Σcards==Σphysique invariant holds by construction.
+    //
+    // WAREHOUSE-SITE ASSUMPTION: restocked kegs are received at the main FG
+    // warehouse (the same site that handles eshop fulfilment). This is resolved via
+    // resolve_fulfilment_site($pdo, ['channel'=>'eshop']) — the identical call used
+    // by Leg 2. If a future deployment routes returns to a different site, this
+    // resolve call must be updated AND fg_stock_compute() Step 6.7 must stay in
+    // lockstep. Flag: ASSUMPTION-restock-site-warehouse-2026-06-16.
+    //
+    // One grouped query — no N+1. Pure SELECT.
+    $restockWarehouseSiteId = resolve_fulfilment_site($pdo, ['channel' => 'eshop']);
+    $returnsBySiteSku = []; // site_id => sku_id => int
+
+    $restockSnapshotStmt = $pdo->prepare(
+        'SELECT rl.sku_id_fk,
+                SUM(rl.qty) AS restock_qty
+           FROM ord_return_lines rl
+           JOIN ord_returns r ON r.id = rl.return_id_fk
+          WHERE rl.disposition = ?
+            AND r.origin_posting_date > ?
+            AND rl.sku_id_fk IS NOT NULL
+          GROUP BY rl.sku_id_fk'
+    );
+    $restockSnapshotStmt->execute(['restock', $anchorDate]);
+    foreach ($restockSnapshotStmt->fetchAll(PDO::FETCH_ASSOC) as $rr) {
+        $sid = (int) $rr['sku_id_fk'];
+        $qty = (int) round((float) $rr['restock_qty']);
+        if (!isset($returnsBySiteSku[$restockWarehouseSiteId])) {
+            $returnsBySiteSku[$restockWarehouseSiteId] = [];
+        }
+        $returnsBySiteSku[$restockWarehouseSiteId][$sid] =
+            ($returnsBySiteSku[$restockWarehouseSiteId][$sid] ?? 0) + $qty;
+    }
+
     // Group anchor rows by location_id_fk, with qty keyed by sku_id for easy merging
     // Structure: location_id → sku_id → anchor row data
     $byLocation = []; // location_id → sku_id → row array
@@ -1406,10 +1523,11 @@ function fg_stock_location_snapshot(PDO $pdo): array
         // than was actually there; per-order override + transfers exist to correct it).
         // SCOPE NOTE: negative qty is intentional — do NOT clamp to 0.
         $skuIdsWithFlows = array_unique(array_merge(
-            array_keys($salesBySiteSku[$lid] ?? []),
-            array_keys($transfersIn[$lid]    ?? []),
-            array_keys($transfersOut[$lid]   ?? []),
-            array_keys($repackOpens[$lid]    ?? [])
+            array_keys($salesBySiteSku[$lid]        ?? []),
+            array_keys($transfersIn[$lid]            ?? []),
+            array_keys($transfersOut[$lid]           ?? []),
+            array_keys($repackOpens[$lid]            ?? []),
+            array_keys($returnsBySiteSku[$lid]       ?? [])
         ));
         foreach ($skuIdsWithFlows as $sid) {
             if (!isset($mergedBySkuId[$sid])) {
@@ -1448,14 +1566,19 @@ function fg_stock_location_snapshot(PDO $pdo): array
         foreach ($mergedBySkuId as $row) {
             $sid = (int) $row['sku_id'];
 
-            // Sales, transfer, and repack terms for this site/SKU
-            $salesQty    = (int) ($salesBySiteSku[$lid][$sid] ?? 0);
-            $transferIn  = (int) ($transfersIn[$lid][$sid]    ?? 0);
-            $transferOut = (int) ($transfersOut[$lid][$sid]   ?? 0);
-            $repackOpen  = (int) ($repackOpens[$lid][$sid]    ?? 0);
+            // Sales, transfer, repack, and returns terms for this site/SKU
+            $salesQty       = (int) ($salesBySiteSku[$lid][$sid]   ?? 0);
+            $transferIn     = (int) ($transfersIn[$lid][$sid]       ?? 0);
+            $transferOut    = (int) ($transfersOut[$lid][$sid]      ?? 0);
+            $repackOpen     = (int) ($repackOpens[$lid][$sid]       ?? 0);
+            $returnsRestock = (int) ($returnsBySiteSku[$lid][$sid]  ?? 0);
 
-            // Final qty = anchor_at_site + production_at_site − sales_at_site + transfers_net − repack_opens
-            $qty = (float) $row['qty'] - $salesQty + $transferIn - $transferOut - $repackOpen;
+            // Final qty = anchor_at_site + production_at_site + returns_restock_at_site
+            //           − sales_at_site + transfers_net − repack_opens
+            // INVARIANT: Σ(qty across all locations) == Σ(fg_stock_compute physique).
+            // The returns term contributes only at the warehouse site (Leg 4 assumption);
+            // fg_stock_compute() Step 6.7 adds the same global total — match by construction.
+            $qty = (float) $row['qty'] + $returnsRestock - $salesQty + $transferIn - $transferOut - $repackOpen;
 
             // Recompute HL after production/sales/transfer adjustment; HL stays decimal
             $hl  = round($qty * $row['hl_per_unit'], 3);
@@ -1476,6 +1599,7 @@ function fg_stock_location_snapshot(PDO $pdo): array
                 'transfer_in'    => $transferIn,       // units arriving via transfers
                 'transfer_out'   => $transferOut,      // units leaving via transfers
                 'repack_open'    => $repackOpen,       // base-box units opened for repack
+                'returns_qty'    => $returnsRestock,   // units restocked from returns (Leg 4)
             ];
         }
 
