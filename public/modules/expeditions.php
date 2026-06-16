@@ -1737,6 +1737,7 @@ $histUnresolved    = []; // v_sales_ledger_unresolved rows for the footnote
 // Retours view
 $retPendingGroups = []; // bc_document_no => ['customer_name', 'posting_date', 'lines' => [[sku_id_fk, sku_code, format, qty_signed, sku_code_raw], ...]]
 $retProcessed     = []; // last 30 dispositioned returns: [returned_on, origin_bc_document_no, customer_name, lines_summary]
+$retSynth         = null; // returns_synthese() result; null if query failed or view != retours
 
 try {
     // Active customers (for typeahead)
@@ -2435,7 +2436,7 @@ try {
             $oidPlaceholders = implode(',', array_fill(0, count($oidList), '?'));
             $rkpOrderMetaStmt = $pdo->prepare(
                 "SELECT id, fulfilment_mode,
-                        COALESCE(shopify_order_name, CONCAT('#', id)) AS order_name
+                        COALESCE(order_name, CONCAT('#', id)) AS order_name
                    FROM inv_sales_orders
                   WHERE id IN ($oidPlaceholders)"
             );
@@ -2652,6 +2653,10 @@ try {
               LIMIT 30'
         );
         $retProcessed = $processedStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // C. Synthèse (90 j) — shared compute, single source of truth
+        require_once __DIR__ . '/../../app/returns-synthese.php';
+        $retSynth = returns_synthese($pdo, 90);
     }
 
 } catch (Throwable $e) {
@@ -3160,7 +3165,7 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
   <link rel="stylesheet" href="/css/eshop-fulfilment.css?v=<?= @filemtime(__DIR__ . '/../css/eshop-fulfilment.css') ?: time() ?>">
   <link rel="stylesheet" href="/css/repack.css?v=<?= @filemtime(__DIR__ . '/../css/repack.css') ?: time() ?>">
 </head>
-<body class="home op-form-page expeditions">
+<body class="home op-form-page expeditions <?= in_array($view, ['form', 'clients'], true) ? 'exp-view--form' : 'exp-view--board' ?>">
 
 <?php require __DIR__ . '/../../app/partials/topbar.php' ?>
 
@@ -3223,6 +3228,100 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
        <?= $view === 'retours' ? 'aria-current="page"' : '' ?>>&#8629; Retours</a>
   </nav>
 
+  <?php
+  /* ── Repack render helpers — FILE SCOPE (hoisted, available to every view) ──
+     These MUST live outside any `if ($view === ...)` block: the ?view=repack
+     render calls exp_render_repack_order_block(), but PHP only defines a
+     function nested inside a conditional when that conditional runs. Defining
+     them here (top level) guarantees they exist regardless of $view. */
+
+  /**
+   * Render a fulfilment mode badge for a repack proposal row.
+   * Mirrors the mode badges used in exp_render_eshop_row.
+   */
+  function exp_render_repack_mode_badge(string $mode): void
+  {
+      if ($mode === 'pickup') {
+          echo '<span class="exp-eshop-mode-badge exp-eshop-mode-badge--pickup" title="Retrait boutique">🏬</span>';
+      } else {
+          echo '<span class="exp-eshop-mode-badge exp-eshop-mode-badge--delivery" title="Livraison">🚚</span>';
+      }
+  }
+
+  /**
+   * Render a single repack proposal block for one order.
+   * Groups all proposal rows by order_id; called once per order.
+   *
+   * @param array  $orderMeta  {id, fulfilment_mode, order_name}
+   * @param array  $rows       Proposal rows for this order (from repack_decompose_orders)
+   * @param string $csrf       CSRF token for the log-event form
+   */
+  function exp_render_repack_order_block(array $orderMeta, array $rows, string $csrf): void
+  {
+      $oid      = (int) $orderMeta['id'];
+      $mode     = (string) ($orderMeta['fulfilment_mode'] ?? 'delivery');
+      $label    = htmlspecialchars((string) ($orderMeta['order_name'] ?? "#$oid"));
+      ?>
+      <div class="rkp-order-block" data-order-id="<?= $oid ?>" role="group"
+           aria-label="Commande <?= $label ?>">
+        <div class="rkp-order-header">
+          <?php exp_render_repack_mode_badge($mode) ?>
+          <span class="rkp-order-name"><?= $label ?></span>
+          <button class="rkp-confirm-btn ef-chip ef-chip--next"
+                  data-order-id="<?= $oid ?>"
+                  data-mode="<?= htmlspecialchars($mode) ?>"
+                  aria-label="Confirmer le reconditionnement pour la commande <?= $label ?>">
+            Confirmer la décomposition
+          </button>
+        </div>
+        <table class="rkp-proposal-table" role="table" aria-label="Décomposition commande <?= $label ?>">
+          <thead>
+            <tr>
+              <th scope="col">Boîte source</th>
+              <th scope="col">Qté ouverte</th>
+              <th scope="col">Résultat</th>
+              <th scope="col">Type</th>
+              <th scope="col">Loose</th>
+              <th scope="col" class="rkp-col-bal">Équilibre</th>
+            </tr>
+          </thead>
+          <tbody>
+          <?php foreach ($rows as $row): ?>
+            <?php
+              $toKind = (string) $row['to_kind'];
+              $kindLabel = match($toKind) {
+                  'bundle' => 'Bundle',
+                  'pd8'    => 'PD8',
+                  'loose'  => 'Loose',
+                  default  => htmlspecialchars($toKind),
+              };
+              $balanced = (bool) ($row['balanced'] ?? false);
+            ?>
+            <tr class="rkp-proposal-row<?= $balanced ? '' : ' rkp-proposal-row--unbalanced' ?>"
+                data-from-sku-id="<?= (int) $row['from_sku_id'] ?>"
+                data-from-qty="<?= (int) $row['from_qty'] ?>"
+                data-to-sku-id="<?= (int) $row['to_sku_id'] ?>"
+                data-to-qty="<?= (int) $row['to_qty'] ?>"
+                data-component-bottles="<?= (int) $row['component_bottles'] ?>"
+                data-loose-units="<?= (int) $row['loose_units'] ?>"
+                data-to-kind="<?= htmlspecialchars($toKind) ?>"
+                data-site-id="<?= (int) $row['site_id'] ?>">
+              <td class="rkp-sku-from"><span class="rkp-sku-code"><?= htmlspecialchars($row['from_sku_code']) ?></span></td>
+              <td class="rkp-qty-from"><?= (int) $row['from_qty'] ?></td>
+              <td class="rkp-sku-to"><span class="rkp-sku-code"><?= htmlspecialchars($row['to_sku_code']) ?></span>
+                  <span class="rkp-qty-to">×<?= (int) $row['to_qty'] ?></span></td>
+              <td class="rkp-to-kind"><span class="rkp-kind-badge rkp-kind-badge--<?= htmlspecialchars($toKind) ?>"><?= $kindLabel ?></span></td>
+              <td class="rkp-loose"><?= (int) $row['loose_units'] > 0 ? ('+' . (int)$row['loose_units'] . '&nbsp;u.') : '—' ?></td>
+              <td class="rkp-col-bal"><?= $balanced ? '<span class="rkp-bal-ok" aria-label="Équilibré">✓</span>' : '<span class="rkp-bal-warn" aria-label="Reste loose">≠</span>' ?></td>
+            </tr>
+          <?php endforeach ?>
+          </tbody>
+        </table>
+      </div>
+      <?php
+  }
+  ?>
+
   <!-- ══════════════════════════════════════════════════════════════════════
        COMMANDES VIEW
        ══════════════════════════════════════════════════════════════════════ -->
@@ -3252,7 +3351,7 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
           $aria = $isDone
               ? ('✓ ' . $lbl . ' — fait')
               : ($isNext ? ('Marquer : ' . $lbl) : $lbl);
-          $dis = ($isDone || !$isNext) ? ' disabled aria-disabled="true"' : '';
+          $dis = ($isDone || !$isNext || !can_write_expeditions()) ? ' disabled aria-disabled="true"' : '';
           printf(
               '<button class="%s" data-order-id="%d" data-action="advance" data-status="%s"%s aria-label="%s">%s</button>',
               htmlspecialchars($cls),
@@ -3447,91 +3546,9 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
       echo '</div>';
   }
 
-  /**
-   * Render a fulfilment mode badge for a repack proposal row.
-   * Mirrors the mode badges used in exp_render_eshop_row.
-   */
-  function exp_render_repack_mode_badge(string $mode): void
-  {
-      if ($mode === 'pickup') {
-          echo '<span class="exp-eshop-mode-badge exp-eshop-mode-badge--pickup" title="Retrait boutique">🏬</span>';
-      } else {
-          echo '<span class="exp-eshop-mode-badge exp-eshop-mode-badge--delivery" title="Livraison">🚚</span>';
-      }
-  }
-
-  /**
-   * Render a single repack proposal block for one order.
-   * Groups all proposal rows by order_id; called once per order.
-   *
-   * @param array  $orderMeta  {id, fulfilment_mode, order_name}
-   * @param array  $rows       Proposal rows for this order (from repack_decompose_orders)
-   * @param string $csrf       CSRF token for the log-event form
-   */
-  function exp_render_repack_order_block(array $orderMeta, array $rows, string $csrf): void
-  {
-      $oid      = (int) $orderMeta['id'];
-      $mode     = (string) ($orderMeta['fulfilment_mode'] ?? 'delivery');
-      $label    = htmlspecialchars((string) ($orderMeta['order_name'] ?? "#$oid"));
-      ?>
-      <div class="rkp-order-block" data-order-id="<?= $oid ?>" role="group"
-           aria-label="Commande <?= $label ?>">
-        <div class="rkp-order-header">
-          <?php exp_render_repack_mode_badge($mode) ?>
-          <span class="rkp-order-name"><?= $label ?></span>
-          <button class="rkp-confirm-btn ef-chip ef-chip--next"
-                  data-order-id="<?= $oid ?>"
-                  data-mode="<?= htmlspecialchars($mode) ?>"
-                  aria-label="Confirmer le reconditionnement pour la commande <?= $label ?>">
-            Confirmer la décomposition
-          </button>
-        </div>
-        <table class="rkp-proposal-table" role="table" aria-label="Décomposition commande <?= $label ?>">
-          <thead>
-            <tr>
-              <th scope="col">Boîte source</th>
-              <th scope="col">Qté ouverte</th>
-              <th scope="col">Résultat</th>
-              <th scope="col">Type</th>
-              <th scope="col">Loose</th>
-              <th scope="col" class="rkp-col-bal">Équilibre</th>
-            </tr>
-          </thead>
-          <tbody>
-          <?php foreach ($rows as $row): ?>
-            <?php
-              $toKind = (string) $row['to_kind'];
-              $kindLabel = match($toKind) {
-                  'bundle' => 'Bundle',
-                  'pd8'    => 'PD8',
-                  'loose'  => 'Loose',
-                  default  => htmlspecialchars($toKind),
-              };
-              $balanced = (bool) ($row['balanced'] ?? false);
-            ?>
-            <tr class="rkp-proposal-row<?= $balanced ? '' : ' rkp-proposal-row--unbalanced' ?>"
-                data-from-sku-id="<?= (int) $row['from_sku_id'] ?>"
-                data-from-qty="<?= (int) $row['from_qty'] ?>"
-                data-to-sku-id="<?= (int) $row['to_sku_id'] ?>"
-                data-to-qty="<?= (int) $row['to_qty'] ?>"
-                data-component-bottles="<?= (int) $row['component_bottles'] ?>"
-                data-loose-units="<?= (int) $row['loose_units'] ?>"
-                data-to-kind="<?= htmlspecialchars($toKind) ?>"
-                data-site-id="<?= (int) $row['site_id'] ?>">
-              <td class="rkp-sku-from"><span class="rkp-sku-code"><?= htmlspecialchars($row['from_sku_code']) ?></span></td>
-              <td class="rkp-qty-from"><?= (int) $row['from_qty'] ?></td>
-              <td class="rkp-sku-to"><span class="rkp-sku-code"><?= htmlspecialchars($row['to_sku_code']) ?></span>
-                  <span class="rkp-qty-to">×<?= (int) $row['to_qty'] ?></span></td>
-              <td class="rkp-to-kind"><span class="rkp-kind-badge rkp-kind-badge--<?= htmlspecialchars($toKind) ?>"><?= $kindLabel ?></span></td>
-              <td class="rkp-loose"><?= (int) $row['loose_units'] > 0 ? ('+' . (int)$row['loose_units'] . '&nbsp;u.') : '—' ?></td>
-              <td class="rkp-col-bal"><?= $balanced ? '<span class="rkp-bal-ok" aria-label="Équilibré">✓</span>' : '<span class="rkp-bal-warn" aria-label="Reste loose">≠</span>' ?></td>
-            </tr>
-          <?php endforeach ?>
-          </tbody>
-        </table>
-      </div>
-      <?php
-  }
+  /* repack render helpers relocated to file scope (see top of file, before the
+     COMMANDES view) — they must be defined for the ?view=repack render too, and
+     this block only runs when $view === 'commandes'. */
   ?>
 
   <!-- ── Range notice ──────────────────────────────────────────────────────── -->
@@ -7704,6 +7721,83 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
       </tbody>
     </table>
   <?php endif ?>
+
+  <?php if ($retSynth !== null): ?>
+  <?php /* Synthèse (90 j) */ ?>
+  <h2 class="exp-ret-title exp-ret-title--sub">Synthèse — 90 derniers jours</h2>
+
+  <?php if (empty($retSynth['by_client']) && $retSynth['pending_count'] === 0): ?>
+    <p class="exp-ret-empty">Aucun retour enregistré sur les 90 derniers jours.</p>
+  <?php else: ?>
+
+  <?php if (!empty($retSynth['by_client'])): ?>
+  <div class="exp-ret-synth-block">
+    <h3 class="exp-ret-synth-subtitle">Par client</h3>
+    <table class="exp-ret-synth-table" role="table">
+      <thead>
+        <tr>
+          <th scope="col">Client</th>
+          <th scope="col" class="exp-ret-synth-num">Unités</th>
+          <th scope="col" class="exp-ret-synth-num">Remise en stock</th>
+          <th scope="col" class="exp-ret-synth-num">Rebut</th>
+          <th scope="col" class="exp-ret-synth-num">Quarantaine</th>
+        </tr>
+      </thead>
+      <tbody>
+      <?php foreach ($retSynth['by_client'] as $sc): ?>
+        <tr>
+          <td><?= htmlspecialchars((string) $sc['customer_name']) ?></td>
+          <td class="exp-ret-synth-num"><?= number_format($sc['total_units'], 0) ?></td>
+          <td class="exp-ret-synth-num"><?= number_format($sc['restock_units'], 0) ?></td>
+          <td class="exp-ret-synth-num"><?= number_format($sc['scrap_units'], 0) ?></td>
+          <td class="exp-ret-synth-num"><?= number_format($sc['quarantine_units'], 0) ?></td>
+        </tr>
+      <?php endforeach ?>
+      </tbody>
+    </table>
+  </div>
+  <?php endif ?>
+
+  <?php if (!empty($retSynth['by_beer'])): ?>
+  <div class="exp-ret-synth-block">
+    <h3 class="exp-ret-synth-subtitle">Par bière</h3>
+    <table class="exp-ret-synth-table exp-ret-synth-table--narrow" role="table">
+      <thead>
+        <tr>
+          <th scope="col">Bière</th>
+          <th scope="col" class="exp-ret-synth-num">Unités</th>
+        </tr>
+      </thead>
+      <tbody>
+      <?php foreach ($retSynth['by_beer'] as $sb): ?>
+        <tr>
+          <td><?= htmlspecialchars((string) $sb['beer_label']) ?></td>
+          <td class="exp-ret-synth-num"><?= number_format($sb['total_units'], 0) ?></td>
+        </tr>
+      <?php endforeach ?>
+      </tbody>
+    </table>
+  </div>
+  <?php endif ?>
+
+  <?php if ($retSynth['mix']['total_units'] > 0): ?>
+  <p class="exp-ret-synth-mix">
+    Mix disposition :
+    <strong><?= $retSynth['mix']['restock_pct'] ?>%</strong> remise en stock
+    · <strong><?= $retSynth['mix']['scrap_pct'] ?>%</strong> rebut
+    · <strong><?= $retSynth['mix']['quarantine_pct'] ?>%</strong> quarantaine
+  </p>
+  <?php endif ?>
+
+  <?php if ($retSynth['pending_count'] > 0): ?>
+  <p class="exp-ret-synth-pending">
+    <?= $retSynth['pending_count'] ?> retour<?= $retSynth['pending_count'] > 1 ? 's' : '' ?>
+    en attente de disposition (180 j).
+  </p>
+  <?php endif ?>
+
+  <?php endif /* else: not empty */ ?>
+  <?php endif /* $retSynth !== null */ ?>
 
   </div>
   <?php endif ?>

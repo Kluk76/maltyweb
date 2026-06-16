@@ -7,11 +7,14 @@
  */
 
 /* ── Page layout override ─────────────────────────────────────────────────── */
-/* Wider column for the orders table + stock dashboard on desktop/floor-tablet.
-   Double-class selector (body.expeditions.op-form-page) ensures this touches
-   ONLY the Expéditions module — shared .home.op-form-page rule (860px in
-   app.css) is untouched and continues to govern the 5 operator-form pages. */
-body.expeditions.op-form-page .main {
+/* Board views (table-heavy): wide canvas so order grids use the full screen.
+   Form views (Saisie + Carnet clients): comfortable mid-width, same as before.
+   Double-class selectors ensure ZERO blast-radius on shared .home.op-form-page
+   (860px in app.css) which governs the 5 other operator-form pages. */
+body.expeditions.op-form-page.exp-view--board .main {
+  max-width: min(1760px, 96vw);
+}
+body.expeditions.op-form-page.exp-view--form .main {
   max-width: min(1360px, 94vw);
 }
 
@@ -61,13 +64,27 @@ body.expeditions .exp-new-btn--active {
 }
 
 /* ── Tab navigation ───────────────────────────────────────────────────────── */
+/* flex-wrap: wrap lets 11 tabs flow onto two rows at narrow widths.
+   Hairline is drawn via ::after pinned to the BOTTOM of the whole nav block
+   (not on the flex container itself) so it never bisects a wrapped row.
+   Active tab's border-bottom sits on top via position:relative + z-index:1. */
 body.expeditions .exp-tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 0;
-  border-bottom: 2px solid var(--hairline);
   margin-bottom: 24px;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
+  position: relative;
+}
+
+body.expeditions .exp-tabs::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--hairline);
+  pointer-events: none;
 }
 
 body.expeditions .exp-tab {
@@ -78,13 +95,14 @@ body.expeditions .exp-tab {
   text-decoration: none;
   padding: 10px 18px;
   border-bottom: 2px solid transparent;
-  margin-bottom: -2px;
   white-space: nowrap;
   transition: color 0.15s, border-color 0.15s;
   touch-action: manipulation;
   min-height: 44px;
   display: flex;
   align-items: center;
+  position: relative;
+  z-index: 1;
 }
 
 body.expeditions .exp-tab:hover {
@@ -6592,5 +6610,54 @@ body.expeditions .exp-ret-card .exp-ret-form {
 body.expeditions .exp-ret-qty-bc {
   font-weight: 600;
   text-align: right;
+}
+
+/* ── Retours synthèse ─────────────────────────────────────────────────────── */
+body.expeditions .exp-ret-synth-block {
+  margin-top: 1.75rem;
+}
+body.expeditions .exp-ret-synth-subtitle {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--color-text-muted, #6b7280);
+  margin: 0 0 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+body.expeditions .exp-ret-synth-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+  margin-bottom: 0.25rem;
+}
+body.expeditions .exp-ret-synth-table--narrow {
+  max-width: 360px;
+}
+body.expeditions .exp-ret-synth-table th,
+body.expeditions .exp-ret-synth-table td {
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+}
+body.expeditions .exp-ret-synth-table thead th {
+  font-weight: 600;
+  background: var(--color-surface-2, #f9fafb);
+  white-space: nowrap;
+}
+body.expeditions .exp-ret-synth-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+body.expeditions .exp-ret-synth-mix {
+  margin-top: 1.25rem;
+  font-size: 0.92rem;
+  color: var(--color-text, #111827);
+}
+body.expeditions .exp-ret-synth-pending {
+  margin-top: 0.6rem;
+  font-size: 0.88rem;
+  color: var(--color-text-muted, #6b7280);
+  font-style: italic;
 }
 
