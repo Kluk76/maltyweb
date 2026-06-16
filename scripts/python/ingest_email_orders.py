@@ -801,6 +801,22 @@ def main() -> None:
         except RuntimeError as exc:
             print(f"\nERROR: {exc}\n", file=sys.stderr)
             sys.exit(1)
+        except Exception as exc:  # noqa: BLE001 — surface auth failures cleanly
+            msg = str(exc)
+            if "unauthorized_client" in msg or "not authorized for any of the scopes" in msg:
+                print(
+                    "\nERROR: Gmail domain-wide delegation not yet active.\n"
+                    f"  The service account cannot yet impersonate "
+                    f"{gmail_cfg.get('GMAIL_DELEGATED_USER')} for scope gmail.readonly.\n"
+                    "  → A Google Workspace super-admin must authorize this service\n"
+                    "    account's Client ID with scope\n"
+                    "      https://www.googleapis.com/auth/gmail.readonly\n"
+                    "    in Admin console → Security → API controls → Domain-wide delegation.\n"
+                    "    (Allow a few minutes for propagation after the grant.)\n",
+                    file=sys.stderr,
+                )
+                sys.exit(2)
+            raise
         if limit:
             contexts = contexts[:limit]
 
