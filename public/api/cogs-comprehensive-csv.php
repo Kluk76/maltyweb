@@ -14,6 +14,7 @@ declare(strict_types=1);
 require __DIR__ . '/../../app/auth.php';
 require_once __DIR__ . '/../../app/settings-helpers.php';
 require_once __DIR__ . '/../../app/cogs-fiche-resolve.php';
+require_once __DIR__ . '/../../app/utilities-estimate.php';
 
 require_page_access('financier');
 
@@ -139,6 +140,58 @@ foreach ($cogsJson['months'] ?? [] as $m) {
     }
 }
 $cop = $monthEntry['cop'] ?? null;
+
+// Override utilities with live estimate for COP section — eliminates stale-JSON 0 for months
+// without an invoice yet. utilities_cop_ht_for_month() returns null when no readings exist,
+// in which case we emit 0 (not stale JSON noise).
+$liveUtil = utilities_cop_ht_for_month($pdo, $month);
+
+if ($cop !== null) {
+    // Read the pre-override utilities total from JSON for change detection.
+    $ut = $cop['utilities'] ?? [];
+    $jsonUtilTotal = is_array($ut)
+        ? (isset($ut['subtotal']['current']['total'])
+            ? (float)$ut['subtotal']['current']['total']
+            : (float)($ut['total'] ?? 0))
+        : 0.0;
+
+    // Inject live utility figures into the COP array read from JSON.
+    $gasWaterLive  = $liveUtil !== null ? (float)$liveUtil['gas_water']   : 0.0;
+    $elecLive      = $liveUtil !== null ? (float)$liveUtil['electricity'] : 0.0;
+    $utilTotalLive = $gasWaterLive + $elecLive;
+
+    // Preserve waste (4701) from JSON if present — waste remains booked-only.
+    $wasteChf = 0.0;
+    if (is_array($ut)) {
+        if (isset($ut['waste']['current']['total'])) {
+            $wasteChf = (float)$ut['waste']['current']['total'];
+        } elseif (isset($ut['waste']) && is_numeric($ut['waste'])) {
+            $wasteChf = (float)$ut['waste'];
+        }
+    }
+
+    $cop['utilities'] = [
+        'gas_water'   => round($gasWaterLive, 2),
+        'electricity' => round($elecLive, 2),
+        'waste'       => round($wasteChf, 2),
+        'total'       => round($utilTotalLive + $wasteChf, 2),
+        'subtotal'    => ['current' => ['total' => round($utilTotalLive + $wasteChf, 2)]],
+    ];
+
+    // Only recompute totalVariables when utilities actually changed (was 0, now non-zero).
+    // When JSON already had a correct utilities figure the original totalVariables is authoritative.
+    $utilDelta = round($utilTotalLive, 2) - round($jsonUtilTotal, 2);
+    if (abs($utilDelta) > 0.005 && isset($cop['totalVariables'])) {
+        $origTv   = (float)($cop['totalVariables']['total'] ?? 0.0);
+        $newTotal = round($origTv + $utilDelta, 2);
+        $hlBrewed_for_tv = (float)($cop['hlBrewed'] ?? 0);
+        $perHL_for_tv = ($hlBrewed_for_tv > 0) ? round($newTotal / $hlBrewed_for_tv, 2) : null;
+        $cop['totalVariables'] = array_merge($cop['totalVariables'] ?? [], [
+            'total' => $newTotal,
+            'perHL' => $perHL_for_tv,
+        ]);
+    }
+}
 
 // ── Emit CSV ─────────────────────────────────────────────────────────────────
 
@@ -315,6 +368,7 @@ $lineLabels = [
     'maintenance'       => 'Maintenance',
     'sales'             => 'Ventes',
     // utilities
+    'gas_water'         => 'Gaz + Eau/assainissement',
     'gas'               => 'Gaz',
     'electricity'       => 'Électricité',
     'waterSewage'       => 'Eau/assainissement',

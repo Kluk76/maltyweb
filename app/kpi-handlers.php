@@ -36,6 +36,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/production-targets.php';
 require_once __DIR__ . '/returns-synthese.php';
+require_once __DIR__ . '/utilities-estimate.php';
 
 // ─── Param whitelist ──────────────────────────────────────────────────────────
 // Allowed values per params_json key. Handlers validate against this before
@@ -8142,7 +8143,7 @@ function kpi_util_load_energydata(PDO $pdo): array
 // Returns array keyed by period ('YYYY-MM'), each with:
 //   utilities_total (CHF), hl_packaged, total_variables (CHF)
 
-function kpi_util_load_cop_feed(): array
+function kpi_util_load_cop_feed(PDO $pdo): array
 {
     $cacheKey = 'util_cop_feed';
     if (($cached = kpi_cache_get($cacheKey)) !== null) {
@@ -8177,6 +8178,20 @@ function kpi_util_load_cop_feed(): array
             'hl_packaged'     => (float) ($cop['hlPackaged'] ?? 0),
             'total_variables' => (float) ($cop['totalVariables']['total'] ?? 0),
         ];
+        // Override utilities_total with live estimate when the JSON shows 0 (no invoice yet).
+        // This fills 2026-05/06 without changing 2026-04 (live==JSON==13548.07).
+        if ($out[$mk]['utilities_total'] == 0.0) {
+            $liveUtil = utilities_cop_ht_for_month($pdo, $mk);
+            if ($liveUtil !== null) {
+                $liveUtilTotal = (float)$liveUtil['gas_water'] + (float)$liveUtil['electricity'];
+                $out[$mk]['utilities_total'] = round($liveUtilTotal, 2);
+                // Recompute total_variables to reflect the override.
+                $out[$mk]['total_variables'] = round(
+                    ($out[$mk]['total_variables'] ?? 0.0) + $liveUtilTotal,
+                    2
+                );
+            }
+        }
     }
     return kpi_cache_set($cacheKey, $out);
 }
@@ -8542,7 +8557,7 @@ function kpi_util_energy_cost_per_hl(string $label, PDO $pdo): array
         return $cached;
     }
 
-    $cop    = kpi_util_load_cop_feed();
+    $cop    = kpi_util_load_cop_feed($pdo);
     $latest = !empty($cop) ? array_key_last($cop) : null;
 
     if (!$latest || $cop[$latest]['hl_packaged'] <= 0) {
@@ -8747,7 +8762,7 @@ function kpi_util_cost_breakdown_bar(string $label, PDO $pdo): array
         return $cached;
     }
 
-    $cop     = kpi_util_load_cop_feed();
+    $cop     = kpi_util_load_cop_feed($pdo);
     $periods = array_slice(array_keys($cop), -6);
 
     if (empty($periods)) {
@@ -8976,7 +8991,7 @@ function kpi_util_cost_pct_cogs(string $label, PDO $pdo): array
         return $cached;
     }
 
-    $cop    = kpi_util_load_cop_feed();
+    $cop    = kpi_util_load_cop_feed($pdo);
     $latest = !empty($cop) ? array_key_last($cop) : null;
 
     if (!$latest || $cop[$latest]['total_variables'] <= 0) {

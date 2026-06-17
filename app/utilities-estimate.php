@@ -494,3 +494,29 @@ function utilities_estimate_month(PDO $pdo, string $monthKey, bool $readonly = t
     'notes'          => $notes,
   ];
 }
+
+/**
+ * Canonical accessor for COP utilities cost for a given month (HT only).
+ *
+ * Returns ['gas_water' => float, 'electricity' => float] where:
+ *   gas_water    = gas.ht + waterSewage.ht  (GL 4700)
+ *   electricity  = electricity.ht           (GL 4702)
+ * Returns null on failure (no readings, no tariff, future month).
+ * 4701 (waste) is intentionally excluded — waste remains booked-only.
+ *
+ * This is the single canonical entry point for all COP-utilities consumers.
+ * All surfaces (CSV §3, KPI tiles, financier board) MUST call this function —
+ * never inline-copy the override logic.
+ */
+function utilities_cop_ht_for_month(PDO $pdo, string $monthKey): ?array
+{
+    try {
+        $est = utilities_estimate_month($pdo, $monthKey, true);
+        return [
+            'gas_water'   => (float)$est['gas']['ht'] + (float)$est['waterSewage']['ht'],
+            'electricity' => (float)$est['electricity']['ht'],
+        ];
+    } catch (\Throwable $e) {
+        return null;
+    }
+}

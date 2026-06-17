@@ -368,7 +368,7 @@ try {
     $budgetMap = fin_load_budget_cogs($pdo, (int) $selYear);
 
     // Build operational month data
-    $opMonth = fin_cogs_operational_month($salesByMonth, $month, $budgetMap);
+    $opMonth = fin_cogs_operational_month($salesByMonth, $month, $budgetMap, $pdo);
 
     // YTD: sum all months Jan..selected present in the feed
     $ytdMonthsOp = array_filter(
@@ -376,7 +376,7 @@ try {
         fn($mk) => str_starts_with($mk, $selYear . '-') && $mk <= $month
     );
     sort($ytdMonthsOp);
-    $opYtd = fin_cogs_operational_ytd($salesByMonth, array_values($ytdMonthsOp), $budgetMap);
+    $opYtd = fin_cogs_operational_ytd($salesByMonth, array_values($ytdMonthsOp), $budgetMap, $pdo);
 
     /* ── B) BOOKED GL: compact section-level totals (secondary / Vue comptable) */
     [$year, $mo] = explode('-', $month, 2);
@@ -446,8 +446,8 @@ try {
     $n1MonthKey  = fin_prior_year_month($month);
     $n1YtdMonths = array_map('fin_prior_year_month', array_values($ytdMonthsOp));
 
-    $n1Month = fin_cogs_operational_month($salesByMonth, $n1MonthKey, []);
-    $n1Ytd   = fin_cogs_operational_ytd($salesByMonth, $n1YtdMonths, []);
+    $n1Month = fin_cogs_operational_month($salesByMonth, $n1MonthKey, [], $pdo);
+    $n1Ytd   = fin_cogs_operational_ytd($salesByMonth, $n1YtdMonths, [], $pdo);
 
     $payload = [
         'ok'           => true,
@@ -896,12 +896,20 @@ function fin_cogs_build_op_rows(array $glLines, float $hlSold, float $beerTaxChf
  * $salesByMonth = $salesFeedData['months'] (keyed by YYYY-MM).
  * $budgetMap: ['line_key' => float] from fin_load_budget_cogs().
  */
-function fin_cogs_operational_month(array $salesByMonth, string $monthKey, array $budgetMap = []): array
+function fin_cogs_operational_month(array $salesByMonth, string $monthKey, array $budgetMap = [], ?PDO $pdo = null): array
 {
     $entry     = $salesByMonth[$monthKey] ?? null;
     $glLines   = (array) ($entry['glLines'] ?? []);
     $hlSold    = (float) ($entry['hlSold']  ?? 0.0);
     $beerTax   = (float) ($entry['beerTax']['total'] ?? 0.0);
+
+    if ($pdo !== null) {
+        $utilEst = _fin_cop_try_estimate($pdo, $monthKey);
+        if ($utilEst !== null) {
+            $glLines['4700'] = $utilEst['gas_water'];
+            $glLines['4702'] = $utilEst['electricity'];
+        }
+    }
 
     return fin_cogs_build_op_rows($glLines, $hlSold, $beerTax, $budgetMap);
 }
@@ -910,7 +918,7 @@ function fin_cogs_operational_month(array $salesByMonth, string $monthKey, array
  * Aggregate multiple months into a YTD COGS slice.
  * Budget CHF/HL is the annual flat rate — same value for both month and YTD.
  */
-function fin_cogs_operational_ytd(array $salesByMonth, array $monthKeys, array $budgetMap = []): array
+function fin_cogs_operational_ytd(array $salesByMonth, array $monthKeys, array $budgetMap = [], ?PDO $pdo = null): array
 {
     $glSums  = [];
     $hlSold  = 0.0;
@@ -920,7 +928,15 @@ function fin_cogs_operational_ytd(array $salesByMonth, array $monthKeys, array $
         if ($entry === null) continue;
         $hlSold  += (float) ($entry['hlSold']  ?? 0.0);
         $beerTax += (float) ($entry['beerTax']['total'] ?? 0.0);
-        foreach ((array) ($entry['glLines'] ?? []) as $acc => $val) {
+        $glLines  = (array) ($entry['glLines'] ?? []);
+        if ($pdo !== null) {
+            $utilEst = _fin_cop_try_estimate($pdo, $mk);
+            if ($utilEst !== null) {
+                $glLines['4700'] = $utilEst['gas_water'];
+                $glLines['4702'] = $utilEst['electricity'];
+            }
+        }
+        foreach ($glLines as $acc => $val) {
             $glSums[(string)$acc] = ($glSums[(string)$acc] ?? 0.0) + (float)$val;
         }
     }
@@ -1046,15 +1062,7 @@ function fin_gl_booked_months(PDO $pdo): array
  */
 function _fin_cop_try_estimate(PDO $pdo, string $monthKey): ?array
 {
-    try {
-        $est = utilities_estimate_month($pdo, $monthKey, true);
-        return [
-            'gas_water'   => (float)$est['gas']['ht'] + (float)$est['waterSewage']['ht'],
-            'electricity' => (float)$est['electricity']['ht'],
-        ];
-    } catch (\Throwable $e) {
-        return null;
-    }
+    return utilities_cop_ht_for_month($pdo, $monthKey);
 }
 
 /**
