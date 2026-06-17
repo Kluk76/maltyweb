@@ -25,6 +25,13 @@
 # changes; --until defaults to now. Verified by a clean VPS dry-run 2026-06-12
 # (98 June orders pulled, classified, rolled back).
 #
+# Frequency: every 1 minute (flock single-flight guarded) — operator wants eshop
+# orders to land near-real-time on the Expéditions board (2026-06-17, PM-ratified).
+# Bumped from */15. A run (2-day-window pull + reverse-reconcile) can exceed 60s,
+# so flock -n /tmp/maltytask-shopify-ingest.lock makes an overlapping tick a clean
+# no-op instead of stacking concurrent tsx processes against MySQL + the Shopify
+# Admin API. Mirrors the maltytask-bc-orders cron (*/1 + flock, same rationale).
+#
 # Source of truth: db/cron/maltytask-shopify-ingest.cron in the maltyweb repo.
 # Deployed via bin/deploy.sh --apply (sudo install -m 0644 → /etc/cron.d/).
 # Manual edits to /etc/cron.d/* are overwritten on next deploy — edit here.
@@ -35,4 +42,4 @@ SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # m    h  dom mon dow  user        command
-*/15   *   *   *   *   maltytask   cd /opt/maltytask-pipeline && HOME=/var/www/maltytask NVM_DIR=/var/www/maltytask/.nvm bash -c '. $NVM_DIR/nvm.sh && node_modules/.bin/tsx scripts/ingest-shopify-orders.ts --since $(date -d "2 days ago" +\%Y-\%m-\%d)' >> /var/log/maltytask/shopify-ingest.log 2>&1
+*/1    *   *   *   *   maltytask   flock -n /tmp/maltytask-shopify-ingest.lock bash -c 'export HOME=/var/www/maltytask NVM_DIR=/var/www/maltytask/.nvm && cd /opt/maltytask-pipeline && . $NVM_DIR/nvm.sh && node_modules/.bin/tsx scripts/ingest-shopify-orders.ts --since $(date -d "2 days ago" +\%Y-\%m-\%d)' >> /var/log/maltytask/shopify-ingest.log 2>&1
