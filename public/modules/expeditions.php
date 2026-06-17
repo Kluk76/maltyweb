@@ -3433,14 +3433,12 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
       </div>
       <?php
   }
-  ?>
 
-  <!-- ══════════════════════════════════════════════════════════════════════
-       COMMANDES VIEW
-       ══════════════════════════════════════════════════════════════════════ -->
-  <?php if ($view === 'commandes'): ?>
-
-  <?php
+  /* ── Eshop render helpers — FILE SCOPE (hoisted, available to every view) ──
+     Same rule as the repack helpers above: ?view=shopify (boutique en ligne)
+     calls exp_render_eshop_row(), but PHP only defines a function nested inside
+     an `if ($view === 'commandes')` block when that block runs. Defining the
+     three eshop helpers here (top level) guarantees they exist for every view. */
   // ── Helper: render the status progress chips (shared by commandes view) ────
   function exp_render_chips(array $ord): void
   {
@@ -3659,8 +3657,18 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
       echo '</div>';
   }
 
-  /* repack render helpers relocated to file scope (see top of file, before the
-     COMMANDES view) — they must be defined for the ?view=repack render too, and
+  ?>
+
+  <!-- ══════════════════════════════════════════════════════════════════════
+       COMMANDES VIEW
+       ══════════════════════════════════════════════════════════════════════ -->
+  <?php if ($view === 'commandes'): ?>
+
+  <?php
+
+  /* repack AND eshop render helpers relocated to file scope (see top of file,
+     before the COMMANDES view) — exp_render_chips / exp_render_eshop_chips /
+     exp_render_eshop_row must be defined for the ?view=shopify render too, and
      this block only runs when $view === 'commandes'. */
   ?>
 
