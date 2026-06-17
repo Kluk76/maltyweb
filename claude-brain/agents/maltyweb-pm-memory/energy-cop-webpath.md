@@ -23,11 +23,33 @@
 ### 🔴 DATA-GAP FINDING (follow-up, NOT a migration defect; PRE-EXISTING — Node does identical, parity 0.0000 proves it)
 Closed months 2026-01/02/03 have `actual-invoice` snapshots in `ops_utility_closures` (peak 63/70.5/72) but their `inv_energydata` rows LACK peak_kw (only 2026-04 has peak_kw=66 on the row). `resolvePeakKW` branch-1 keys on the ROW's col-G peak_kw — an actual-invoice closure whose row lost peak_kw is IGNORED → recomputes rolling mean (=66, the only populated peak) → those 3 closed months use peak 66 instead of their real invoiced peaks → electricity off ~30-60 CHF/month (~1%). **Recommended fix = backfill `inv_energydata.peak_kw` for 2026-01/02/03 from the seeded closures** (then branch-1 honors them). 🔴 **Awaiting Kouros decision.**
 
-## 🔴 FOLLOW-UP ARC (scoped 2026-06-17, NOT built) — (A) audit-breakdown panel + (B) estimate must ENTER COGS surfaces
+## ✅ FOLLOW-UP ARC — (A) audit-breakdown panel + (B) estimate INTO COGS surfaces — SHIPPED+LIVE+Opus-verified 2026-06-17 (maltyweb main `f7dd965` + `12f89e1`; submit-500 fix `00f4238`; COMMITTED + PUSHED)
+
+> Kouros's two new requirements, BOTH SHIPPED 2026-06-17: **(A)** FULL calc breakdown on saisie-energie + **(B)** estimate ENTERS COGS surfaces via ONE shared accessor. As-built below; original scope follows for provenance.
+
+### ✅ AS-BUILT (2026-06-17)
+
+**(A) Auditable detail panel — LIVE on saisie-energie.php (+ saisie-energie.css).** Collapsible breakdown per selected month: per-meter `index_now−index_prev ×coefficient → consumption`, per-component tariff line items, HT subtotals, peak kW + source label, grand total HT. PURE render over `utilities_estimate_month()`'s existing `breakdown` arrays; graceful for no-readings + invoice-source months. No new compute, no migration.
+
+**(B) Energy INTO all COP/COGS surfaces via ONE shared accessor** `utilities_cop_ht_for_month(PDO,$month): ?array` (= `{gas_water, electricity}` HT → GL 4700/4702; null→0). Added to `app/utilities-estimate.php`; extracted from `_fin_cop_try_estimate` so all consumers call ONE accessor (canonical-accessor-call-not-copy rule honored).
+
+🔴🔴 **CORRECTION to the earlier PM scope below — THREE surfaces under-report, not two.** My earlier map (table below) found only (1) comprehensive CSV §3 + (2) KPI tiles and declared "financier COP board done". I **MISSED a THIRD surface: the financier COGS board** (`fin_cogs_board_lines` / `fin_cogs_operational_month` / `_ytd` in `financier-data.php`) ALSO carries utilities lines (Gaz&Water 4700, Electricity 4702, Total Utilities → TOTAL COGS VARIABLE), sourced from `sales-cogs-data.json` glLines, and was NOT wired. It is NOW wired (override 4700/4702 from the accessor, same as the COP board; ÷HL **sold** denominator unchanged). 🔴 **STANDING SCOPING RULE going forward: the financier has TWO operational boards — COP (÷hlBrewed) AND COGS (÷hlSold) — both share the GL utilities line structure and BOTH must get any utilities/energy estimate. Future COP/COGS-feed work checks BOTH boards.**
+
+**All consumers wired to the ONE accessor:** financier COP board (via `_fin_cop_try_estimate`→accessor), financier COGS board (NEW, via accessor), `cogs-comprehensive-csv.php` §3 COP + re-summed COP total, `kpi-handlers.php` COP utilities tiles.
+
+**Correctly UNTOUCHED (energy = period charge, never inventory-capitalized):** `cogs_fiche_*` (excludes utilities), WIP/FG `brew_cost_per_hl` (material only), per-SKU, waste 4701, booked-GL comparison.
+
+**Opus independent verification:** accessor returns 2026-04 = 8615.93/4932.14 (total 13548.07, == legacy), 2026-05 = 10773.60/5578.16 (total 16351.76, was 0 — newly surfaced), 2026-06 = null→0. Logged-in smoke confirmed all surfaces consume it: COP board, COGS board (TOTAL COGS VARIABLE up), comprehensive CSV §3 (COP total 2026-05 = 87928.19 incl. utilities), detail panel grand total 16351.76. No 500s.
+
+**STILL OPEN (unchanged):** peak_kw backfill for closed 2026-01/02/03 (deferred by Kouros); RULE 1 scrap-log of `data/utility-tariffs.json` + `utility-closures.json` (superseded for web path; Node still reads them). The submit-500 (`qc_flag='web_entry'`→`'normal'`) is FIXED (`00f4238`).
+
+---
+
+## (ORIGINAL FOLLOW-UP SCOPE — provenance; note the two-surface map below was INCOMPLETE, see correction above)
 
 > Kouros's two new requirements: **(A)** show the FULL calculation breakdown of the anticipated energy cost on the saisie-energie page (operator must trace index_now−index_prev → conso → ×coeff → ×rate → CHF, line by line). **(B)** the anticipated estimate must ENTER THE COGS figures (not just the financier COP tiles) until real SIE/SIL invoices arrive.
 
-### (B) — THE COGS-SURFACE MAP (verified live 2026-06-17)
+### (B) — THE COGS-SURFACE MAP (verified live 2026-06-17) — ⚠️ INCOMPLETE: missed the financier COGS board; see AS-BUILT correction above
 "COGS" is represented by these surfaces. Verdict per surface:
 | Surface | File | Reads utilities from | Live estimate? | Action |
 |---|---|---|---|---|
