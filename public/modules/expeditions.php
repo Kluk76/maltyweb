@@ -4527,22 +4527,34 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
   <?php endif ?>
 
   <!-- ── Shopify freshness chip ────────────────────────────────────────────
-       Always shown on the Shopify tab; amber/warning when last import > 90 min.
+       Shown when $eshopLastImport (MAX imported_at) is known.
+       Stale alarm (amber + ⚠) is driven by the ingest HEARTBEAT from system_settings
+       ('fulfilment', 'shopify_ingest_last_run_at') compared to UTC now, NOT by order recency.
+       Threshold: system_settings 'shopify_ingest_stale_minutes' (default 10 min).
+       NULL/missing/unparseable heartbeat → neutral (green/normal chip).
   ──────────────────────────────────────────────────────────────────────────── -->
   <?php if ($eshopLastImport !== null):
-      $now           = new DateTime();
-      $diffMinutes   = (int) round(($now->getTimestamp() - $eshopLastImport->getTimestamp()) / 60);
-      $isStale       = $diffMinutes > 90;
-      $chipCls       = 'exp-shopify-freshness-chip' . ($isStale ? ' exp-shopify-freshness-chip--stale' : '');
-      $timeStr       = $eshopLastImport->format('H:i');
-      $dateStr       = $eshopLastImport->format('d/m');
-      $todayStr      = (new DateTime())->format('d/m');
-      $importLabel   = ($dateStr === $todayStr)
+      $hbStr       = system_setting('shopify_ingest_last_run_at', 'fulfilment', null);
+      $staleMin    = (float) system_setting('shopify_ingest_stale_minutes', 'fulfilment', 10);
+      $hb          = ($hbStr !== null && $hbStr !== '')
+          ? DateTime::createFromFormat('Y-m-d H:i:s', $hbStr, new DateTimeZone('UTC'))
+          : null;
+      $nowUtc      = new DateTime('now', new DateTimeZone('UTC'));
+      $isStale     = ($hb !== false && $hb !== null)
+          && (($nowUtc->getTimestamp() - $hb->getTimestamp()) > $staleMin * 60);
+      $chipCls     = 'exp-shopify-freshness-chip' . ($isStale ? ' exp-shopify-freshness-chip--stale' : '');
+      $timeStr     = $eshopLastImport->format('H:i');
+      $dateStr     = $eshopLastImport->format('d/m');
+      $todayStr    = (new DateTime())->format('d/m');
+      $importLabel = ($dateStr === $todayStr)
           ? 'Import Shopify ' . $timeStr
           : 'Import Shopify ' . $dateStr . ' ' . $timeStr;
-      $titleAttr     = $isStale
-          ? 'Dernier import il y a ' . $diffMinutes . ' min — sync peut-être en retard'
-          : 'Dernier import il y a ' . $diffMinutes . ' min';
+      if ($isStale && $hb !== false && $hb !== null) {
+          $hbMinutesAgo = (int) round(($nowUtc->getTimestamp() - $hb->getTimestamp()) / 60);
+          $titleAttr    = 'Heartbeat ingestion il y a ' . $hbMinutesAgo . ' min — sync en retard';
+      } else {
+          $titleAttr    = 'Dernier import ' . $importLabel;
+      }
   ?>
   <div class="<?= htmlspecialchars($chipCls) ?>" title="<?= htmlspecialchars($titleAttr) ?>"
        aria-label="<?= htmlspecialchars($importLabel) ?>">
