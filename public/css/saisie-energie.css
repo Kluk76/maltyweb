@@ -1,0 +1,491 @@
+/* saisie-energie.css — Saisie mensuelle index compteurs énergie
+ * Scoped under body.saisie-energie
+ * Light kraft palette via CSS custom properties from :root (app.css)
+ * No inline hex — only var(--…) tokens.
+ */
+
+/* ── Layout override ──────────────────────────────────────────────────────────*/
+/* Required: .home .main centers its children (app.css:669); we must stretch.  */
+body.saisie-energie .main {
+  align-items: stretch;
+  overflow-y: auto;
+}
+
+/* ── Wrapper ──────────────────────────────────────────────────────────────────*/
+.se-wrap {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+/* ── Page header ──────────────────────────────────────────────────────────────*/
+.se-page-head {
+  border-bottom: 1.5px solid var(--hairline);
+  padding-bottom: 1.25rem;
+}
+
+.se-page-title {
+  font-family: 'Fraunces', serif;
+  font-size: 1.75rem;
+  font-variation-settings: "opsz" 96;
+  color: var(--ink);
+  margin: 0 0 0.35rem;
+  line-height: 1.15;
+}
+
+.se-page-sub {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.875rem;
+  color: var(--ink-mute);
+  margin: 0;
+}
+
+/* ── Flash messages ───────────────────────────────────────────────────────────*/
+.se-flash {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.9rem;
+  padding: 0.875rem 1.25rem;
+  border-radius: 6px;
+  border-left: 4px solid;
+}
+
+.se-flash--ok {
+  background: color-mix(in srgb, var(--hop) 12%, transparent);
+  border-color: var(--hop);
+  color: var(--ink);
+}
+
+.se-flash--err {
+  background: color-mix(in srgb, var(--ember) 12%, transparent);
+  border-color: var(--ember);
+  color: var(--ink);
+}
+
+/* ── Period selector ──────────────────────────────────────────────────────────*/
+.se-period-selector {
+  display: flex;
+  align-items: center;
+}
+
+.se-period-form {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.se-period-label {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--ink-soft);
+}
+
+.se-month-input {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.9rem;
+  color: var(--ink);
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  min-height: 44px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.se-month-input:focus {
+  outline: 2px solid var(--hop);
+  outline-offset: 2px;
+  border-color: var(--hop);
+}
+
+.se-period-btn {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  padding: 0.5rem 1rem;
+  min-height: 44px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.se-period-btn:hover {
+  background: color-mix(in srgb, var(--oak) 10%, var(--bg-elev));
+  border-color: var(--oak);
+}
+
+.se-period-btn:focus-visible {
+  outline: 2px solid var(--hop);
+  outline-offset: 2px;
+}
+
+/* ── Form card ────────────────────────────────────────────────────────────────*/
+.se-form-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.se-form-title {
+  font-family: 'Fraunces', serif;
+  font-size: 1.2rem;
+  font-variation-settings: "opsz" 96;
+  color: var(--ink);
+  margin: 0;
+}
+
+/* ── Invoice-locked notice ────────────────────────────────────────────────────*/
+.se-invoice-notice {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.9rem;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--ember) 10%, var(--bg-elev));
+  border-left: 4px solid var(--ember);
+  border-radius: 0 6px 6px 0;
+  padding: 0.875rem 1.25rem;
+}
+
+/* ── Existing estimate notice ─────────────────────────────────────────────────*/
+.se-edit-notice {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.875rem;
+  color: var(--ink-mute);
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  background: color-mix(in srgb, var(--cold) 8%, var(--bg-elev));
+  border-left: 3px solid var(--cold);
+  border-radius: 0 4px 4px 0;
+}
+
+/* ── Readonly grid (invoice-locked display) ───────────────────────────────────*/
+.se-readonly-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem 1.5rem;
+}
+
+.se-readonly-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.se-readonly-label {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--ink-label);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.se-readonly-val {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 1rem;
+  color: var(--ink);
+}
+
+/* ── Entry form ───────────────────────────────────────────────────────────────*/
+.se-entry-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* Field row: label | input | hint | delta */
+.se-field-row {
+  display: grid;
+  grid-template-columns: 220px 180px 1fr auto;
+  gap: 0.5rem 1rem;
+  align-items: center;
+}
+
+.se-field-label {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--ink-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  cursor: pointer;
+}
+
+.se-field-unit {
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--ink-label);
+  font-family: 'DM Sans', sans-serif;
+}
+
+.se-field-input {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.95rem;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  min-height: 44px;
+  width: 100%;
+  transition: border-color 0.15s;
+  /* Tabular figures for alignment */
+  font-variant-numeric: tabular-nums;
+}
+
+.se-field-input:focus {
+  outline: 2px solid var(--hop);
+  outline-offset: 2px;
+  border-color: var(--hop);
+}
+
+.se-field-input::placeholder {
+  color: var(--ink-faint);
+  font-style: italic;
+}
+
+/* Previous month hint */
+.se-prev-hint {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+  color: var(--ink-label);
+  white-space: nowrap;
+}
+
+/* Live delta */
+.se-delta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-mute);
+  min-width: 80px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.se-delta--pos {
+  color: var(--hop);
+}
+
+.se-delta--neg {
+  color: var(--ember);
+}
+
+.se-delta--zero {
+  color: var(--ink-mute);
+}
+
+/* Form actions */
+.se-form-actions {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--hairline);
+}
+
+.se-submit-btn {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--bg);
+  background: var(--hop);
+  border: none;
+  border-radius: 7px;
+  padding: 0.65rem 1.5rem;
+  min-height: 44px;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.se-submit-btn:hover {
+  background: color-mix(in srgb, var(--hop) 85%, var(--ink));
+}
+
+.se-submit-btn:focus-visible {
+  outline: 2px solid var(--hop);
+  outline-offset: 3px;
+}
+
+.se-submit-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.se-form-note {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.8rem;
+  color: var(--ink-label);
+  margin: 0;
+}
+
+/* ── History section ──────────────────────────────────────────────────────────*/
+.se-history-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.se-history-title {
+  font-family: 'Fraunces', serif;
+  font-size: 1.1rem;
+  font-variation-settings: "opsz" 96;
+  color: var(--ink);
+  margin: 0;
+}
+
+.se-history-empty {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.875rem;
+  color: var(--ink-mute);
+  margin: 0;
+}
+
+.se-table-wrap {
+  overflow-x: auto;
+  border-radius: 8px;
+  border: 1px solid var(--hairline);
+}
+
+.se-history {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.875rem;
+}
+
+.se-history thead {
+  background: var(--bg-elev);
+  border-bottom: 2px solid var(--hairline);
+}
+
+.se-history thead th {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--ink-label);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.65rem 0.85rem;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.se-history tbody tr {
+  border-bottom: 1px solid var(--hairline);
+  transition: background 0.1s;
+}
+
+.se-history tbody tr:last-child {
+  border-bottom: none;
+}
+
+.se-history tbody tr:hover {
+  background: color-mix(in srgb, var(--oak) 5%, transparent);
+}
+
+.se-cell {
+  padding: 0.6rem 0.85rem;
+  color: var(--ink-soft);
+  vertical-align: middle;
+}
+
+.se-cell--period {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.85rem;
+  color: var(--ink);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.se-cell--num {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.se-cell--delta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--ink-mute);
+  white-space: nowrap;
+}
+
+.se-cell--delta.se-delta-neg {
+  color: var(--ember);
+}
+
+.se-cell--meta {
+  font-size: 0.8rem;
+  color: var(--ink-label);
+}
+
+/* Row states */
+.se-row--selected {
+  border-left: 3px solid var(--hop);
+  background: color-mix(in srgb, var(--hop) 6%, transparent);
+}
+
+.se-row--warn {
+  background: color-mix(in srgb, var(--ember) 8%, transparent);
+}
+
+.se-row--selected.se-row--warn {
+  background: color-mix(in srgb, var(--ember) 8%, color-mix(in srgb, var(--hop) 6%, transparent));
+}
+
+/* Badges */
+.se-badge {
+  display: inline-block;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.2em 0.65em;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.se-badge--invoice {
+  background: color-mix(in srgb, var(--cold) 18%, var(--bg-elev));
+  color: var(--cold);
+  border: 1px solid color-mix(in srgb, var(--cold) 35%, transparent);
+}
+
+.se-badge--estimate {
+  background: color-mix(in srgb, var(--oak) 15%, var(--bg-elev));
+  color: var(--ink-mute);
+  border: 1px solid var(--hairline);
+}
+
+/* ── Responsive ───────────────────────────────────────────────────────────────*/
+@media (max-width: 700px) {
+  .se-field-row {
+    grid-template-columns: 1fr;
+  }
+
+  .se-readonly-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .se-form-actions {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

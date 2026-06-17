@@ -24,6 +24,7 @@ require_once __DIR__ . '/../../app/settings.php';        // date_display_format(
 require_once __DIR__ . '/../../app/kpi-handlers.php';
 require_once __DIR__ . '/../../app/finance-period.php';
 require_once __DIR__ . '/../../app/cogs-fiche-resolve.php';
+require_once __DIR__ . '/../../app/utilities-estimate.php';
 
 require_page_access('financier');
 $me = current_user();
@@ -49,6 +50,25 @@ function fin_month_label(string $key): string {
            '11'=>'Nov.','12'=>'Déc.'];
     [$y, $m] = explode('-', $key, 2);
     return ($fr[$m] ?? $m) . ' ' . $y;
+}
+
+/**
+ * Fetch live utility estimate for a month.
+ * Returns ['gas_water' => float, 'electricity' => float, 'total' => float] or null on error.
+ * Null is returned when readings are missing (e.g. future months) — callers fall back to JSON.
+ */
+function fin_utilities_live_estimate(PDO $pdo, string $monthKey): ?array
+{
+    try {
+        $est = utilities_estimate_month($pdo, $monthKey, true);
+        return [
+            'gas_water'   => (float)$est['gas']['ht'] + (float)$est['waterSewage']['ht'],
+            'electricity' => (float)$est['electricity']['ht'],
+            'total'       => (float)$est['total'],
+        ];
+    } catch (\Throwable $e) {
+        return null;
+    }
 }
 
 /* ── COP : mois et dernier mois ───────────────────────────────────────────── */
@@ -123,6 +143,13 @@ if ($copData !== null && !empty($copData['months'])) {
             $tvAugmented['perHL'] = $tvPerHL;
         }
 
+        $utilEst   = fin_utilities_live_estimate($_fin_pdo_lc, $mk);
+        $utilTotal = $utilEst !== null
+            ? $utilEst['total']
+            : (isset($cop['utilities']['subtotal']['current']['total'])
+                ? (float) $cop['utilities']['subtotal']['current']['total']
+                : null);
+
         $copPayload[$mk] = [
             'hlBrewed'       => $cop['hlBrewed']                ?? null,
             'hlPackaged'     => $cop['hlPackaged']              ?? null,
@@ -132,7 +159,7 @@ if ($copData !== null && !empty($copData['months'])) {
                 ['total' => $pkgTotal, 'repack' => $hasRepack ? $rpChf : null]
             ),
             'indirect'       => ['total' => $cop['indirect']['total']  ?? null],
-            'utilities'      => ['total' => $cop['utilities']['total'] ?? null],
+            'utilities'      => ['total' => $utilTotal],
             'rd'             => ['total' => $cop['rd']['total']        ?? null],
             'totalVariables' => $tvAugmented,
         ];

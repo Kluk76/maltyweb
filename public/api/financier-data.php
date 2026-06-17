@@ -22,6 +22,7 @@ require_once __DIR__ . '/../../app/auth.php';
 require_once __DIR__ . '/../../app/kpi-handlers.php';
 require_once __DIR__ . '/../../app/db.php';
 require_once __DIR__ . '/../../app/settings.php';   // date_display_format() for BOM freshness
+require_once __DIR__ . '/../../app/utilities-estimate.php';
 
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
@@ -235,7 +236,7 @@ if ($module === 'cop-grid') {
         }
 
         // Build operational month data
-        $opMonth = fin_cop_operational_month($feedByMonth, $month);
+        $opMonth = fin_cop_operational_month($feedByMonth, $month, $pdo);
 
         // YTD: sum all months Jan..selected that are present in the feed
         [$selYear] = explode('-', $month, 2);
@@ -244,7 +245,7 @@ if ($module === 'cop-grid') {
             fn($mk) => str_starts_with($mk, $selYear . '-') && $mk <= $month
         );
         sort($ytdMonthsOp);
-        $opYtd = fin_cop_operational_ytd($feedByMonth, array_values($ytdMonthsOp));
+        $opYtd = fin_cop_operational_ytd($feedByMonth, array_values($ytdMonthsOp), $pdo);
 
         /* ── B) BOOKED GL: compact section-level totals only ─────────────────── */
         // Month
@@ -316,8 +317,8 @@ if ($module === 'cop-grid') {
         $n1MonthKey = fin_prior_year_month($month);
         $n1YtdMonths = array_map('fin_prior_year_month', array_values($ytdMonthsOp));
 
-        $n1Month = fin_cop_operational_month($feedByMonth, $n1MonthKey);
-        $n1Ytd   = fin_cop_operational_ytd($feedByMonth, $n1YtdMonths);
+        $n1Month = fin_cop_operational_month($feedByMonth, $n1MonthKey, $pdo);
+        $n1Ytd   = fin_cop_operational_ytd($feedByMonth, $n1YtdMonths, $pdo);
 
         $payload = [
             'ok'           => true,
@@ -570,20 +571,30 @@ function fin_cop_board_lines(): array
 /**
  * Resolve CHF values for one period from glLines and return the tree rows.
  * Returns ['lines' => [...], 'hlPackaged' => float, 'totalVariableChf' => float].
+ * When $pdo is supplied, overrides 4700/4702 from the live PHP estimator.
  */
-function fin_cop_operational_month(array $feedByMonth, string $monthKey): array
+function fin_cop_operational_month(array $feedByMonth, string $monthKey, ?PDO $pdo = null): array
 {
     $entry    = $feedByMonth[$monthKey] ?? null;
     $glLines  = (array) ($entry['cop']['glLines'] ?? []);
     $hlPkg    = (float) ($entry['cop']['hlPackaged'] ?? 0.0);
+
+    if ($pdo !== null) {
+        $utilEst = _fin_cop_try_estimate($pdo, $monthKey);
+        if ($utilEst !== null) {
+            $glLines['4700'] = $utilEst['gas_water'];
+            $glLines['4702'] = $utilEst['electricity'];
+        }
+    }
 
     return fin_cop_build_op_rows($glLines, $hlPkg);
 }
 
 /**
  * Aggregate multiple months from the feed into a YTD slice.
+ * When $pdo is supplied, overrides 4700/4702 per month from the live PHP estimator.
  */
-function fin_cop_operational_ytd(array $feedByMonth, array $monthKeys): array
+function fin_cop_operational_ytd(array $feedByMonth, array $monthKeys, ?PDO $pdo = null): array
 {
     $glSums = [];
     $hlPkg  = 0.0;
@@ -591,7 +602,15 @@ function fin_cop_operational_ytd(array $feedByMonth, array $monthKeys): array
         $entry = $feedByMonth[$mk] ?? null;
         if ($entry === null) continue;
         $hlPkg += (float) ($entry['cop']['hlPackaged'] ?? 0.0);
-        foreach ((array) ($entry['cop']['glLines'] ?? []) as $acc => $val) {
+        $glLines = (array) ($entry['cop']['glLines'] ?? []);
+        if ($pdo !== null) {
+            $utilEst = _fin_cop_try_estimate($pdo, $mk);
+            if ($utilEst !== null) {
+                $glLines['4700'] = $utilEst['gas_water'];
+                $glLines['4702'] = $utilEst['electricity'];
+            }
+        }
+        foreach ($glLines as $acc => $val) {
             $glSums[(string)$acc] = ($glSums[(string)$acc] ?? 0.0) + (float)$val;
         }
     }
@@ -1018,6 +1037,24 @@ function fin_gl_booked_months(PDO $pdo): array
     }
     sort($months);
     return $months;
+}
+
+/**
+ * Try to get live utility estimate for a month; returns null on failure (future months, no readings).
+ * Returns ['gas_water' => float, 'electricity' => float] or null.
+ * 4701 (waste) is intentionally excluded — waste remains booked-only.
+ */
+function _fin_cop_try_estimate(PDO $pdo, string $monthKey): ?array
+{
+    try {
+        $est = utilities_estimate_month($pdo, $monthKey, true);
+        return [
+            'gas_water'   => (float)$est['gas']['ht'] + (float)$est['waterSewage']['ht'],
+            'electricity' => (float)$est['electricity']['ht'],
+        ];
+    } catch (\Throwable $e) {
+        return null;
+    }
 }
 
 /**
