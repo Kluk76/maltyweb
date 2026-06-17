@@ -134,7 +134,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'last_modified_by' => 'web',
         'row_hash'        => $rowHash,
     ];
-    log_revision($pdoPost, $me, 'inv_energydata', $pk, $before, $after, 'web_entry', 'saisie manuelle index compteur');
+    log_revision($pdoPost, $me, 'inv_energydata', $pk, $before, $after, 'normal', 'saisie manuelle index compteur');
 
     // 10. Flash + redirect
     flash_set('ok', 'Index enregistré pour ' . $period);
