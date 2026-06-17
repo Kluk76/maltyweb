@@ -1,4 +1,37 @@
-# Energy / Utilities COP web-path — LOCKED BUILD DIRECTION
+# Energy / Utilities COP web-path — SHIPPED + LIVE + Opus-verified 2026-06-17
+
+> Created 2026-06-17 as the locked build brief; **SHIPPED+LIVE+Opus-verified same day**. As-built below; the original brief follows for provenance. Kouros built BOTH (a) monthly meter-reading saisie + (b) PHP-native estimator into the financier COP, together.
+
+## ✅ AS-BUILT (2026-06-17, LIVE on app.maltytask.ch, Opus-verified)
+
+🔴 **Shipped as mig 396, NOT 395** (the brief said 395 — parallel sessions moved the number; HEAD also past 392). File `396_energy_cop_webpath_foundations.sql`.
+
+**Mig 396 — APPLIED LIVE.** Created+seeded:
+- `ref_utility_tariffs` — 1 row, JSON `tariff_json`, effective_from 2026-01-01, byte-faithful from `data/utility-tariffs.json` versions[0]. + schema_meta.
+- `ops_utility_closures` — 31 rows seeded from `data/utility-closures.json` (5 `actual-invoice` + 26 `rolling-at-closure`). + schema_meta.
+- `ref_pages` page_key `saisie-energie`, label **'Index énergie'**, icon ⚡, min_role **manager**, domain **general**, category **finance**, sort 128 / category_sort 40. Granted to **manager(id=1)** + **finance_viewer(id=10)** presets (required ship step — preset-CANNOT-bypass-floor, but these are preset grants so page is visible to those preset-holders).
+- **DECISION LOCKED: source ENUM stays `('invoice','estimate')`** — manual = `source='estimate'` + `last_modified_by='web'`, NO new ENUM value (as ratified in brief). Tariffs canonicalized to the MySQL table (rejected JSON-on-VPS + system_settings).
+
+**② saisie-energie page — LIVE.** `public/modules/saisie-energie.php` + `public/css/saisie-energie.css` + `public/js/saisie-energie.js`. Captures the 4 CUMULATIVE meter indexes (eau m³, gaz m³, élec jour/HP, élec nuit/HC) → upsert `inv_energydata` on `period` UNIQUE, `source='estimate'`/`last_modified_by='web'`, COALESCE-preserves blank fields + peak_kw/reactive_kvarh (absent from the write). **Refuse-with-notice if existing row source='invoice'** (PM rec adopted — invoice/real wins over manual/estimate). row_hash recipe = `sha256("manual-meter|{period}|{eau}|{gaz}|{jour}|{nuit}")` — PREFIXED, zero collision with ingest hashes. UX: prev-month index hint + live JS delta per field; read-only history table w/ source badge + MoM delta + soft warn on negative/outlier delta. Helpers (all real): require_page_access, current_user, csrf_token/csrf_verify, log_revision, flash_set/pop, redirect_to, maltytask_pdo. 🔴 NO snapshot helper exists for `inv_energydata` → `log_revision` ONLY (acceptable — append-trace via revisions).
+
+**③ estimator — LIVE.** `app/utilities-estimate.php` → `utilities_estimate_month(PDO,$monthKey,$readonly=true)`, ports `lib/utilities.js` 1:1 (computeConsumption ×10.6079 gas m³ + ×15 elec, computeGas/Water/Electricity, resolvePeakKW 4-branch reading/writing `ops_utility_closures`, toByMonthHT). r2 rounding via `floor($n*100+0.5)/100` to match JS Math.round. closedMonths derived live = all `ops_utility_closures` periods. Readonly flag gates the snapshot UPSERT (harness ran readonly).
+
+**④ PARITY GATE PASSED — max abs delta 0.0000 CHF** across 5 months (2025-12, 2026-01..04) × 3 components (gas/waterSewage/electricity) PHP vs Node. Canary 2026-02 gas 4968 m³ ×10.6079=52699.83 kWh→7509.92 CHF confirmed. **Opus independently re-ran the PHP estimator on VPS — matched.**
+
+**④ financier switch — LIVE + logged-in-smoke-verified.** `financier-data.php` (`fin_cop_operational_month/_ytd` gained `?PDO` param; override glLines 4700←gas+water HT / 4702←electricity HT via new `_fin_cop_try_estimate`; 4701 waste + `fin_cop_booked_totals` UNTOUCHED) + `financier.php` (utilities.total ← `fin_utilities_live_estimate` w/ JSON fallback). Live smoke: COP **April 2026 = 4700 8615.93 / 4702 4932.14 / total 13548.07 / 4701 0** — exactly the estimator; **May 2026 = 0** (no readings yet, correct). Replaces the dead stale JSON (`cogs-report-data.json` utilities.total was 0 for 2026-05/06).
+
+### 🔴 DATA-GAP FINDING (follow-up, NOT a migration defect; PRE-EXISTING — Node does identical, parity 0.0000 proves it)
+Closed months 2026-01/02/03 have `actual-invoice` snapshots in `ops_utility_closures` (peak 63/70.5/72) but their `inv_energydata` rows LACK peak_kw (only 2026-04 has peak_kw=66 on the row). `resolvePeakKW` branch-1 keys on the ROW's col-G peak_kw — an actual-invoice closure whose row lost peak_kw is IGNORED → recomputes rolling mean (=66, the only populated peak) → those 3 closed months use peak 66 instead of their real invoiced peaks → electricity off ~30-60 CHF/month (~1%). **Recommended fix = backfill `inv_energydata.peak_kw` for 2026-01/02/03 from the seeded closures** (then branch-1 honors them). 🔴 **Awaiting Kouros decision.**
+
+### STILL OPEN
+- (a) **git commit pending** — work is DEPLOYED but UNCOMMITTED in BOTH repos: maltyweb mig396 + saisie-energie.{php,css,js} + app/utilities-estimate.php + financier.php + financier-data.php. Commit by PATHSPEC (shared dirty tree — parallel sessions; never `-A`, never bare `git commit`).
+- (b) **tour-steward card for saisie-energie** (RULE 3 — migrate hook flagged the gap) — HELD until commit (steward won't deploy on a dirty tree). PM to dispatch maltyweb-tour-steward (manager-visible, domain=general → needs a card; non-sensitive → steward can auto-deploy once tree clean).
+- (c) **peak_kw backfill decision** (above).
+- (d) **RULE 1 scrap-log:** `data/utility-tariffs.json` + `data/utility-closures.json` now superseded-for-web-path (Node still reads them until COP pipeline retired). Already gated "Node COP pipeline retired" — confirm logged in scrapping-backlog.md.
+
+---
+
+# (ORIGINAL BUILD BRIEF — provenance) Energy / Utilities COP web-path — LOCKED BUILD DIRECTION
 
 > Created 2026-06-17. Kouros DECIDED: build BOTH (a) monthly meter-reading saisie + (b) PHP-native anticipated-energy estimator into the financier COP, together. This file holds the ratified architecture + the concrete build brief. Verify against live DB at build-start (`migrate.php --status`, `SHOW COLUMNS FROM inv_energydata`).
 
