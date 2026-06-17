@@ -64,6 +64,26 @@ body.expeditions .ef-chip--next:focus-visible {
   outline-offset: 2px;
 }
 
+/* ── Classify chips (review mode → set pickup/delivery) ───────────────────── */
+body.expeditions .ef-chips--classify { display: inline-flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; }
+body.expeditions .ef-chip--classify {
+  background: var(--bg-elev);
+  color: var(--ink);
+  border: 1px solid var(--hop);
+  cursor: pointer;
+  min-height: 32px;
+  padding: 0.25rem 0.7rem;
+  font-weight: 600;
+}
+body.expeditions .ef-chip--classify:hover {
+  background: var(--hop);
+  color: var(--bg);
+}
+body.expeditions .ef-chip--classify:focus-visible {
+  outline: 2px solid var(--hop);
+  outline-offset: 2px;
+}
+
 /* ── Cancelled chip ────────────────────────────────────────────────────────── */
 body.expeditions .ef-chip--cancelled {
   background: color-mix(in srgb, var(--ember) 12%, var(--bg-elev));

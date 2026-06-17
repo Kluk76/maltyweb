@@ -3502,9 +3502,13 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
       printf('<span class="%s" data-eshop-order-id="%d">%s</span>',
           $syncCls, $eid, htmlspecialchars($syncText));
 
-      // review-mode: no action chips
+      // review-mode: classify chips (operator sets pickup vs delivery)
       if ($mode === 'review') {
-          echo '<span class="ef-classify-hint">à classer</span>';
+          printf('<div class="ef-chips ef-chips--classify" data-eshop-order-id="%d">', $eid);
+          echo '<span class="ef-classify-hint">à classer :</span>';
+          printf('<button class="ef-chip ef-chip--classify" data-eshop-order-id="%d" data-action="classify" data-mode="pickup" aria-label="Classer en retrait">🏬 Retrait</button>', $eid);
+          printf('<button class="ef-chip ef-chip--classify" data-eshop-order-id="%d" data-action="classify" data-mode="delivery" aria-label="Classer en livraison">🚚 Livraison</button>', $eid);
+          echo '</div>';
           return;
       }
 

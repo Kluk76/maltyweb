@@ -226,7 +226,64 @@
     const mode = container.dataset.mode || 'delivery';
 
     e.preventDefault();
-    postAction(eshopOrderId, action, container, mode);
+    if (action === 'classify') {
+      // Mode comes from the button's own data-mode (container has none for classify)
+      postClassify(eshopOrderId, btn.dataset.mode, container);
+    } else {
+      postAction(eshopOrderId, action, container, mode);
+    }
   });
+
+  // ── Classify (review → pickup|delivery) ─────────────────────────────────────
+  async function postClassify(eshopOrderId, mode, container) {
+    container.classList.add('ef-chip--loading');
+
+    let retried = false;
+
+    async function attempt(csrf) {
+      const res = await fetch('/api/eshop-fulfilment-status.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          csrf:           csrf,
+          eshop_order_id: eshopOrderId,
+          action:         'classify',
+          mode:           mode,
+        }),
+      });
+      return res.json();
+    }
+
+    try {
+      let json = await attempt(csrfToken);
+
+      // CSRF retry once
+      if (!json.ok && json.reason === 'expired' && !retried) {
+        retried = true;
+        if (json.csrf) updateCsrf(json.csrf);
+        json = await attempt(csrfToken);
+      }
+
+      if (!json.ok) {
+        container.classList.remove('ef-chip--loading');
+        const errSpan = document.createElement('span');
+        errSpan.className = 'ef-classify-hint';
+        errSpan.textContent = json.error || 'Erreur';
+        container.innerHTML = '';
+        container.appendChild(errSpan);
+        setTimeout(function () { location.reload(); }, 2000);
+        return;
+      }
+
+      // Success: update CSRF then reload so card re-renders with full workflow chips
+      if (json.csrf) updateCsrf(json.csrf);
+      location.reload();
+
+    } catch (err) {
+      container.classList.remove('ef-chip--loading');
+      console.error('[eshop-fulfilment] classify error:', err);
+    }
+  }
 
 })();
