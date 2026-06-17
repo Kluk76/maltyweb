@@ -89,65 +89,99 @@ function fg_prod_since_anchor(PDO $pdo, string $globalAnchor): array
     $prodSiteStmt->execute(['production']);
     $prodSiteIds = array_map('intval', array_column($prodSiteStmt->fetchAll(PDO::FETCH_ASSOC), 'id'));
 
+    // Per-(production-site, sku) anchor model with submitted_at tiebreak.
+    //
+    // For each SKU, the anchor is the latest census row at a production site
+    // (keyed by fg_site_sku_anchor_map(), filtered to $prodSiteIds).
+    // Anchor carries both counted_at (DATE) and created_at (the census timestamp, anchor_ts).
+    //
+    // Inclusion predicate per event:
+    //   - anchor exists for sku: event_date > anchor.counted_at
+    //                         OR (event_date == anchor.counted_at AND submitted_at > anchor_ts)
+    //   - no anchor for sku:    event_date > $globalAnchor (strict, no tiebreak)
+    //
+    // Multi-plant guard: if multiple production sites have divergent counted_at for the
+    // same sku, the EARLIEST (most conservative) anchor wins; error_log() is emitted.
+    // La Nébuleuse has one production site (site 1) so this guard is defensive-only.
+    //
+    // Accepted residual: a packaging run physically done BEFORE a same-day census but
+    // SUBMITTED after it would be counted — same residual all other legs accept;
+    // submitted_at is the only available timestamp on bd_packaging_v2.
+
     $bySkuRaw = [];
 
     if (!empty($prodSiteIds)) {
-        $inPlaceholders = implode(',', array_fill(0, count($prodSiteIds), '?'));
+        // Step 1: build per-sku anchor map from production sites
+        $fullMap = fg_site_sku_anchor_map($pdo);
+        $prodSkuAnchor  = []; // sku_id => ['counted_at' => DATE, 'anchor_ts' => DATETIME]
+        $divergentSites = 0;  // multi-production-site safety counter
 
-        // Production cutoff (census-date model): site-level MAX(counted_at) at
-        // production sites, applied to ALL SKUs. A single scalar pa.prod_anchor
-        // is CROSS JOINed to every packaging event row.
-        //
-        // prod_anchor_ts is set to NULL because the cutoff is now site-level, not
-        // per-SKU — there is no meaningful per-SKU anchor timestamp to tiebreak on.
-        // The same-day branch (p.submitted_at > pa.prod_anchor_ts) fires only when
-        // pa.prod_anchor_ts IS NOT NULL, so setting it to NULL disables the branch
-        // (conservative and correct: no double-count risk from the same-day path).
-        //
-        // COALESCE(pa.prod_anchor, ?) falls back to $globalAnchor when no prod-site
-        // census exists at all.
-        // FLOOR applied PER EVENT (before SUM) so partial boxes are excluded.
+        foreach ($prodSiteIds as $psid) {
+            if (!isset($fullMap[$psid])) continue;
+            foreach ($fullMap[$psid] as $skuId => $entry) {
+                if (isset($prodSkuAnchor[$skuId])) {
+                    // Multiple production sites have DIVERGENT counted_at for this sku —
+                    // take the EARLIEST (most conservative) anchor to exclude less.
+                    if ($entry['counted_at'] < $prodSkuAnchor[$skuId]['counted_at']) {
+                        $prodSkuAnchor[$skuId] = $entry;
+                    }
+                    $divergentSites++;
+                } else {
+                    $prodSkuAnchor[$skuId] = $entry;
+                }
+            }
+        }
+        if ($divergentSites > 0) {
+            error_log("fg_prod_since_anchor: {$divergentSites} sku(s) with divergent per-production-site census dates — used earliest (most conservative) anchor. Multi-plant config unsupported.");
+        }
+
+        // Step 2: fetch all candidate packaging events (no date cutoff — applied in PHP)
+        // FLOOR applied PER EVENT (before aggregation) so partial boxes are excluded.
         $prodStmt = $pdo->prepare(
             'SELECT p.sku_id_fk,
-                    SUM(FLOOR(p.prod_total_units / COALESCE(NULLIF(r.units_per_pack,0),1))) AS prod_qty,
-                    COUNT(*) AS prod_events
+                    FLOOR(p.prod_total_units / COALESCE(NULLIF(r.units_per_pack,0),1)) AS floored_units,
+                    p.event_date,
+                    p.submitted_at
                FROM bd_packaging_v2 p
                JOIN ref_skus r ON r.id = p.sku_id_fk
-               LEFT JOIN (
-                   SELECT MAX(counted_at) AS prod_anchor, NULL AS prod_anchor_ts
-                     FROM inv_fg_stocktake
-                    WHERE is_active = 1
-                      AND counted_at IS NOT NULL
-                      AND location_id_fk IN (' . $inPlaceholders . ')
-               ) pa ON 1=1
               WHERE p.is_tombstoned = 0
                 AND p.is_white_label = 0
                 AND p.sku_id_fk IS NOT NULL
-                AND p.run_type <> ?
-                -- SCOPE NOTE: primary cutoff is business event_date (calendar truth).
-                -- pa.prod_anchor_ts is always NULL (site-level anchor, not per-SKU),
-                -- so the same-day submitted_at tiebreak is disabled (conservative).
-                -- Accepted residual: a packaging run done physically BEFORE a same-day
-                -- count but SUBMITTED after it would be double-counted. Left un-clamped
-                -- on purpose — a plausibility clamp would mask real data; if it ever
-                -- bites, the fix is an explicit count
-                -- timestamp, not a clamp here.
-                -- NULL-SAFE: when pa.prod_anchor IS NULL (SKU never counted at prod site),
-                -- the second OR branch is excluded (IS NOT NULL = false), so COALESCE
-                -- falls back to $globalAnchor exactly as before.
-                AND (
-                      p.event_date > COALESCE(pa.prod_anchor, ?)
-                   OR (pa.prod_anchor IS NOT NULL
-                       AND p.event_date = pa.prod_anchor
-                       AND p.submitted_at > pa.prod_anchor_ts)
-                )
-              GROUP BY p.sku_id_fk'
+                AND p.run_type <> ?'
         );
-        // Params: prodSiteIds... (for the IN clause in pa subquery), then 'cuv',
-        // then $globalAnchor (COALESCE fallback). pa.prod_anchor_ts = NULL literal,
-        // no extra bound params needed.
-        $prodParams = array_merge($prodSiteIds, ['cuv', $globalAnchor]);
-        $prodStmt->execute($prodParams);
+        $prodStmt->execute(['cuv']);
+        $rows = $prodStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // Step 3: aggregate in PHP applying per-sku anchor + submitted_at tiebreak
+        foreach ($rows as $pr) {
+            $skuId       = (int)    $pr['sku_id_fk'];
+            $eventDate   = (string) $pr['event_date'];    // 'YYYY-MM-DD'
+            $submittedAt = (string) $pr['submitted_at'];  // 'YYYY-MM-DD HH:MM:SS'
+            $flooredUnits = (int)   $pr['floored_units'];
+
+            if (isset($prodSkuAnchor[$skuId])) {
+                // Per-(prod-site, sku) anchor exists — apply tiebreak
+                $anchorDate = $prodSkuAnchor[$skuId]['counted_at'];  // 'YYYY-MM-DD'
+                $anchorTs   = $prodSkuAnchor[$skuId]['anchor_ts'];   // 'YYYY-MM-DD HH:MM:SS'
+
+                $include = false;
+                if ($eventDate > $anchorDate) {
+                    $include = true;  // strictly after census date
+                } elseif ($eventDate === $anchorDate && $anchorTs !== '' && $submittedAt > $anchorTs) {
+                    $include = true;  // same-day, submitted after census timestamp
+                }
+                if (!$include) continue;
+            } else {
+                // SKU never counted at a production site — use global fallback (strict)
+                if ($eventDate <= $globalAnchor) continue;
+            }
+
+            if (!isset($bySkuRaw[$skuId])) {
+                $bySkuRaw[$skuId] = ['prod_qty' => 0, 'prod_events' => 0];
+            }
+            $bySkuRaw[$skuId]['prod_qty']    += $flooredUnits;
+            $bySkuRaw[$skuId]['prod_events'] += 1;
+        }
     } else {
         // No production site found — fall back to global cutoff for all SKUs.
         // run_type='cuv' still excluded.
@@ -165,13 +199,13 @@ function fg_prod_since_anchor(PDO $pdo, string $globalAnchor): array
               GROUP BY p.sku_id_fk'
         );
         $prodStmt->execute([$globalAnchor, 'cuv']);
-    }
 
-    foreach ($prodStmt->fetchAll(PDO::FETCH_ASSOC) as $pr) {
-        $bySkuRaw[(int) $pr['sku_id_fk']] = [
-            'prod_qty'    => (int) $pr['prod_qty'],    // FLOOR guarantees integer
-            'prod_events' => (int) $pr['prod_events'],
-        ];
+        foreach ($prodStmt->fetchAll(PDO::FETCH_ASSOC) as $pr) {
+            $bySkuRaw[(int) $pr['sku_id_fk']] = [
+                'prod_qty'    => (int) $pr['prod_qty'],    // FLOOR guarantees integer
+                'prod_events' => (int) $pr['prod_events'],
+            ];
+        }
     }
 
     return [
@@ -1250,14 +1284,22 @@ function fg_stock_location_snapshot(PDO $pdo): array
     );
     $anchorRows = $rowsStmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // Determine global anchor_date
-    $anchorDate = null;
+    // Determine global anchor_date (MAX counted_at across all active sites) and
+    // anchorFloor (MIN counted_at across all active sites).
+    // anchorFloor is used to bound the transfer/movement prefilter so that the
+    // per-site gate (siteSkuAnchorMap tiebreak in the transfer PHP loop) is the
+    // sole arbiter of admission — not the global MAX which would drop legitimate
+    // transfers recorded against earlier per-site anchors.
+    $anchorDate  = null;
+    $anchorFloor = null;
     foreach ($anchorRows as $ar) {
-        if ($ar['counted_at'] !== null && ($anchorDate === null || $ar['counted_at'] > $anchorDate)) {
-            $anchorDate = $ar['counted_at'];
+        if ($ar['counted_at'] !== null) {
+            if ($anchorDate  === null || $ar['counted_at'] > $anchorDate)  $anchorDate  = $ar['counted_at'];
+            if ($anchorFloor === null || $ar['counted_at'] < $anchorFloor) $anchorFloor = $ar['counted_at'];
         }
     }
-    $anchorDate = $anchorDate ?? date('Y-m-d');
+    $anchorDate  = $anchorDate  ?? date('Y-m-d');
+    $anchorFloor = $anchorFloor ?? $anchorDate;
 
     // Per-(site, sku) anchor info — one ROW_NUMBER window, coherent
     // (counted_at, created_at) pair from the same winning row.
@@ -1416,8 +1458,11 @@ function fg_stock_location_snapshot(PDO $pdo): array
     }
 
     // ── Transfers by site/SKU ────────────────────────────────────────────────
-    // moved_on >= anchorDate (>= not >) so same-day transfers are fetched;
-    // the per-site tiebreak in PHP uses created_at (TIMESTAMP on inv_stock_movements).
+    // Prefilter: moved_on >= anchorFloor (MIN per-site census date, not the global MAX).
+    // Using the global MAX (anchorDate) would drop transfers recorded against any
+    // earlier per-site anchor before the per-site gate ever evaluates them.
+    // The per-site tiebreak below (siteSkuAnchorMap) is the sole admission arbiter;
+    // the prefilter just bounds the scan to rows that could possibly pass it.
     //
     // UNIT-GATE SEMANTICS (non-negotiable for Σcards==Σphysique invariant):
     //   Each transfer row affects TWO sites: +qty to to_site, −qty from from_site.
@@ -1452,7 +1497,7 @@ function fg_stock_location_snapshot(PDO $pdo): array
           WHERE is_tombstoned = 0
             AND moved_on >= ?'
     );
-    $mvStmt->execute([$anchorDate]);
+    $mvStmt->execute([$anchorFloor]);
     foreach ($mvStmt->fetchAll(PDO::FETCH_ASSOC) as $mv) {
         $sid      = (int) $mv['sku_id_fk'];
         $fromSite = (int) $mv['from_site_id_fk'];
