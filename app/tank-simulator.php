@@ -699,6 +699,24 @@ class TankSimulator
                 } elseif ($bbt !== null && empty($bbtState[$bbt])) {
                     // Racking form not yet seen — defer
                     $pendingDeductions[$bbt][] = $e['hl'] + $this->packagingLossHl;
+                } else {
+                    // No BBT mapped — batch may have been packaged directly from a CCT
+                    // (CCT→CCT transfer rack, or never racked to a BBT at all).
+                    foreach ($cctState as $cctIdx => &$cctSlot) {
+                        if ($cctSlot === null) continue;
+                        $cctRecipeId  = $cctSlot['recipe_id'] ?? null;
+                        $sameOccupant = ($cctRecipeId !== null && $eventRecipeId !== null)
+                            ? ($cctRecipeId === $eventRecipeId && $cctSlot['batch'] === $e['batch'])
+                            : ($cctSlot['beer'] === $e['beer'] && $cctSlot['batch'] === $e['batch']);
+                        if (!$sameOccupant) continue;
+                        $deduct = $e['hl'] + $this->packagingLossHl;
+                        $cctSlot['volume_hl'] = max(0.0, $cctSlot['volume_hl'] - $deduct);
+                        if ($cctSlot['volume_hl'] < $this->bbtEmptyThresholdHl) {
+                            $cctState[$cctIdx] = null;
+                        }
+                        break;
+                    }
+                    unset($cctSlot);
                 }
                 break;
         }
