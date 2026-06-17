@@ -489,3 +489,277 @@ body.saisie-energie .main {
     align-items: flex-start;
   }
 }
+
+/* ── Breakdown panel ──────────────────────────────────────────────────────────*/
+body.saisie-energie .se-breakdown-section {
+  /* positioned between form card and history, same vertical rhythm */
+}
+
+body.saisie-energie .se-bd-details {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+body.saisie-energie .se-bd-summary {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem 1.5rem;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  background: var(--bg-elev);
+  border-bottom: 1px solid transparent;
+  transition: background 0.15s;
+}
+
+body.saisie-energie .se-bd-summary::-webkit-details-marker { display: none; }
+
+body.saisie-energie .se-bd-details[open] > .se-bd-summary {
+  border-bottom-color: var(--hairline);
+  background: color-mix(in srgb, var(--oak) 5%, var(--bg-elev));
+}
+
+body.saisie-energie .se-bd-summary:hover {
+  background: color-mix(in srgb, var(--oak) 6%, var(--bg-elev));
+}
+
+body.saisie-energie .se-bd-title {
+  font-family: 'Fraunces', serif;
+  font-size: 1rem;
+  font-variation-settings: "opsz" 96;
+  color: var(--ink);
+  flex: 1;
+}
+
+body.saisie-energie .se-bd-total {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.875rem;
+  color: var(--ink-mute);
+  white-space: nowrap;
+}
+
+body.saisie-energie .se-bd-total strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+body.saisie-energie .se-bd-chevron {
+  font-size: 0.75rem;
+  color: var(--ink-label);
+  transition: transform 0.2s;
+}
+
+body.saisie-energie .se-bd-details[open] > .se-bd-summary .se-bd-chevron {
+  transform: rotate(90deg);
+}
+
+body.saisie-energie .se-bd-placeholder {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.875rem;
+  color: var(--ink-mute);
+  padding: 1.25rem 1.5rem;
+  font-style: italic;
+}
+
+body.saisie-energie .se-bd-body {
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.75rem;
+}
+
+/* Component blocks (gas / water / elec) */
+body.saisie-energie .se-bd-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+body.saisie-energie .se-bd-block-title {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+}
+
+body.saisie-energie .se-bd-ht {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.9rem;
+  font-weight: 400;
+  color: var(--ink);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* Consumption derivation rows */
+body.saisie-energie .se-bd-conso-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+body.saisie-energie .se-bd-conso-row {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 0.5rem 1rem;
+  align-items: baseline;
+}
+
+body.saisie-energie .se-bd-conso-label {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--ink-label);
+  white-space: nowrap;
+}
+
+body.saisie-energie .se-bd-conso-math {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+}
+
+body.saisie-energie .se-bd-conso-math strong {
+  color: var(--ink);
+}
+
+/* Tariff breakdown table */
+body.saisie-energie .se-bd-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.875rem;
+}
+
+body.saisie-energie .se-bd-table tr {
+  border-bottom: 1px solid var(--hairline);
+}
+
+body.saisie-energie .se-bd-table tr:last-child {
+  border-bottom: none;
+}
+
+body.saisie-energie .se-bd-line-label {
+  color: var(--ink-soft);
+  padding: 0.4rem 0.5rem 0.4rem 0;
+  width: 75%;
+}
+
+body.saisie-energie .se-bd-line-val {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  text-align: right;
+  padding: 0.4rem 0;
+  white-space: nowrap;
+}
+
+body.saisie-energie .se-bd-subtotal {
+  font-weight: 600;
+  border-top: 2px solid var(--hairline);
+}
+
+body.saisie-energie .se-bd-subtotal td {
+  padding-top: 0.5rem;
+  color: var(--ink);
+}
+
+body.saisie-energie .se-bd-subtotal td:last-child {
+  font-family: 'JetBrains Mono', monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Peak demand note */
+body.saisie-energie .se-bd-peak-note {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.82rem;
+  color: var(--ink-mute);
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  background: color-mix(in srgb, var(--cold) 8%, var(--bg-elev));
+  border-left: 3px solid var(--cold);
+  border-radius: 0 4px 4px 0;
+}
+
+body.saisie-energie .se-bd-peak-kw {
+  color: var(--ink);
+}
+
+body.saisie-energie .se-bd-peak-src {
+  font-style: italic;
+}
+
+body.saisie-energie .se-bd-peak-src--real {
+  color: var(--hop);
+}
+
+body.saisie-energie .se-bd-peak-src--est {
+  color: var(--ink-mute);
+}
+
+/* Grand total */
+body.saisie-energie .se-bd-grand-total {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem 1rem;
+  padding: 1rem 1.25rem;
+  background: color-mix(in srgb, var(--hop) 8%, var(--bg-elev));
+  border: 1px solid color-mix(in srgb, var(--hop) 25%, transparent);
+  border-radius: 6px;
+}
+
+body.saisie-energie .se-bd-gt-label {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--ink);
+  flex: 1;
+  min-width: 200px;
+}
+
+body.saisie-energie .se-bd-gt-caption {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.78rem;
+  color: var(--ink-mute);
+  width: 100%;
+  order: 3;
+  margin-top: -0.25rem;
+}
+
+body.saisie-energie .se-bd-gt-value {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 1.1rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+/* Mobile */
+@media (max-width: 700px) {
+  body.saisie-energie .se-bd-conso-row {
+    grid-template-columns: 1fr;
+  }
+
+  body.saisie-energie .se-bd-summary {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  body.saisie-energie .se-bd-total {
+    font-size: 0.8rem;
+  }
+}

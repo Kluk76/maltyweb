@@ -175,6 +175,20 @@ $prevRow           = $allRows[$prevPeriod] ?? null;
 $isInvoiceLocked   = $selectedRow !== null && $selectedRow['source'] === 'invoice';
 $isExistingEstimate = $selectedRow !== null && $selectedRow['source'] === 'estimate';
 
+// ── Utilities breakdown panel data ────────────────────────────────────────────
+$seEstimate    = null;
+$seEstimateErr = null;
+if ($selectedRow !== null && $prevRow !== null) {
+    if (!function_exists('utilities_estimate_month')) {
+        require_once __DIR__ . '/../../app/utilities-estimate.php';
+    }
+    try {
+        $seEstimate = utilities_estimate_month($pdo, $selectedPeriod, true);
+    } catch (\Throwable $e) {
+        $seEstimateErr = $e->getMessage();
+    }
+}
+
 // ── Compute trailing-3-month mean for each field (for warn threshold) ──────────
 // Used in history table for delta outlier detection
 $fields3 = ['eau_m3', 'gaz_kwh', 'elec_jour_kwh', 'elec_nuit_kwh'];
@@ -478,6 +492,189 @@ function se_month_label(string $period, array $frMonths): string
               </p>
             </div>
           </form>
+        <?php endif; ?>
+      </section>
+
+      <!-- ── Breakdown panel ────────────────────────────────────────────────────── -->
+      <section class="se-breakdown-section" aria-labelledby="se-breakdown-heading">
+        <?php if ($selectedRow === null || $prevRow === null): ?>
+          <details class="se-bd-details">
+            <summary class="se-bd-summary" id="se-breakdown-heading">
+              <span class="se-bd-title">Détail du calcul</span>
+              <span class="se-bd-chevron" aria-hidden="true">▸</span>
+            </summary>
+            <div class="se-bd-placeholder">
+              Saisir les index pour voir le calcul du coût énergie anticipé.
+            </div>
+          </details>
+
+        <?php elseif ($seEstimateErr !== null): ?>
+          <details class="se-bd-details">
+            <summary class="se-bd-summary" id="se-breakdown-heading">
+              <span class="se-bd-title">Détail du calcul</span>
+              <span class="se-bd-chevron" aria-hidden="true">▸</span>
+            </summary>
+            <div class="se-bd-placeholder">
+              Calcul indisponible : <?= htmlspecialchars($seEstimateErr) ?>
+            </div>
+          </details>
+
+        <?php else: ?>
+          <?php
+            /* Determine panel framing: invoice source = confirmed values, else estimate */
+            $seIsInvoice  = $isInvoiceLocked;
+            $seTitle      = $seIsInvoice
+              ? 'Détail du calcul — Valeurs issues de la facture'
+              : 'Détail du calcul — Coût anticipé';
+
+            $seC  = $seEstimate['consumption'];
+            $seG  = $seEstimate['gas'];
+            $seW  = $seEstimate['waterSewage'];
+            $seE  = $seEstimate['electricity'];
+
+            /* Raw meter deltas for consumption derivation display */
+            $seRawEau  = (float)($selectedRow['eau_m3']        ?? 0) - (float)($prevRow['eau_m3']        ?? 0);
+            $seRawGaz  = (float)($selectedRow['gaz_kwh']       ?? 0) - (float)($prevRow['gaz_kwh']       ?? 0);
+            $seRawJour = (float)($selectedRow['elec_jour_kwh'] ?? 0) - (float)($prevRow['elec_jour_kwh'] ?? 0);
+            $seRawNuit = (float)($selectedRow['elec_nuit_kwh'] ?? 0) - (float)($prevRow['elec_nuit_kwh'] ?? 0);
+
+            /* Gas coefficient back-derived from raw delta and consumption result */
+            $seGazCoeff  = ($seRawGaz  > 0) ? round($seC['gas_kWh']     / $seRawGaz,  4) : 10.6079;
+            $seElecCoeff = ($seRawJour > 0) ? round($seC['elec_hp_kWh'] / $seRawJour, 4) : 15.0;
+
+            /* Helper: format CHF */
+            $seFmt = fn(float $v): string => number_format($v, 2, '.', "'");
+            /* Helper: format raw meter values */
+            $seFmtRaw = fn(float $v): string => number_format($v, 3, '.', ' ');
+            /* Helper: format consumption values */
+            $seFmtCons = fn(float $v): string => number_format($v, 1, '.', ' ');
+
+            /* Peak source label */
+            $sePeakLabels = [
+              'actual-invoice'     => 'relevé facture réelle',
+              'frozen-rolling'     => 'moyenne glissante figée (mois clôturé)',
+              'rolling-at-closure' => 'moyenne glissante à la clôture (estimé)',
+              'rolling-live'       => 'moyenne glissante en cours (estimé)',
+              'fallback'           => 'valeur tarifaire par défaut',
+            ];
+            $sePeakLabel = $sePeakLabels[$seEstimate['peakSource']] ?? $seEstimate['peakSource'];
+          ?>
+
+          <details class="se-bd-details">
+            <summary class="se-bd-summary" id="se-breakdown-heading">
+              <span class="se-bd-title"><?= htmlspecialchars($seTitle) ?></span>
+              <span class="se-bd-total">
+                Total HT :
+                <strong><?= $seFmt($seEstimate['total']) ?> CHF</strong>
+              </span>
+              <span class="se-bd-chevron" aria-hidden="true">▸</span>
+            </summary>
+
+            <div class="se-bd-body">
+
+              <!-- ── Consumption derivation ────────────────────────────────────────── -->
+              <div class="se-bd-block">
+                <h3 class="se-bd-block-title">Dérivation de la consommation</h3>
+                <div class="se-bd-conso-grid">
+
+                  <div class="se-bd-conso-row">
+                    <span class="se-bd-conso-label">Eau</span>
+                    <code class="se-bd-conso-math">
+                      <?= $seFmtRaw((float)($selectedRow['eau_m3'] ?? 0)) ?> − <?= $seFmtRaw((float)($prevRow['eau_m3'] ?? 0)) ?>
+                      = <?= $seFmtRaw($seRawEau) ?> m³ × 1 = <strong><?= $seFmtCons($seC['water_m3']) ?> m³</strong>
+                    </code>
+                  </div>
+
+                  <div class="se-bd-conso-row">
+                    <span class="se-bd-conso-label">Gaz</span>
+                    <code class="se-bd-conso-math">
+                      <?= $seFmtRaw((float)($selectedRow['gaz_kwh'] ?? 0)) ?> − <?= $seFmtRaw((float)($prevRow['gaz_kwh'] ?? 0)) ?>
+                      = <?= $seFmtRaw($seRawGaz) ?> m³ × <?= htmlspecialchars((string)$seGazCoeff) ?> kWh/m³ = <strong><?= $seFmtCons($seC['gas_kWh']) ?> kWh</strong>
+                    </code>
+                  </div>
+
+                  <div class="se-bd-conso-row">
+                    <span class="se-bd-conso-label">Élec. Jour HP</span>
+                    <code class="se-bd-conso-math">
+                      <?= $seFmtRaw((float)($selectedRow['elec_jour_kwh'] ?? 0)) ?> − <?= $seFmtRaw((float)($prevRow['elec_jour_kwh'] ?? 0)) ?>
+                      = <?= $seFmtRaw($seRawJour) ?> × <?= htmlspecialchars((string)$seElecCoeff) ?> = <strong><?= $seFmtCons($seC['elec_hp_kWh']) ?> kWh</strong>
+                    </code>
+                  </div>
+
+                  <div class="se-bd-conso-row">
+                    <span class="se-bd-conso-label">Élec. Nuit HC</span>
+                    <code class="se-bd-conso-math">
+                      <?= $seFmtRaw((float)($selectedRow['elec_nuit_kwh'] ?? 0)) ?> − <?= $seFmtRaw((float)($prevRow['elec_nuit_kwh'] ?? 0)) ?>
+                      = <?= $seFmtRaw($seRawNuit) ?> × <?= htmlspecialchars((string)$seElecCoeff) ?> = <strong><?= $seFmtCons($seC['elec_hc_kWh']) ?> kWh</strong>
+                    </code>
+                  </div>
+
+                </div>
+              </div>
+
+              <!-- ── Gas ───────────────────────────────────────────────────────────── -->
+              <div class="se-bd-block">
+                <h3 class="se-bd-block-title">Gaz <span class="se-bd-ht"><?= $seFmt($seG['ht']) ?> CHF HT</span></h3>
+                <table class="se-bd-table" aria-label="Détail gaz">
+                  <tbody>
+                    <tr><td class="se-bd-line-label">Abonnement mensuel</td>          <td class="se-bd-line-val"><?= $seFmt($seG['breakdown']['subscription']) ?></td></tr>
+                    <tr><td class="se-bd-line-label">Clause puissance souscrite</td>  <td class="se-bd-line-val"><?= $seFmt($seG['breakdown']['powerClause']) ?></td></tr>
+                    <tr><td class="se-bd-line-label">Conso. (<?= $seFmtCons($seC['gas_kWh']) ?> kWh)</td> <td class="se-bd-line-val"><?= $seFmt($seG['breakdown']['consumption']) ?></td></tr>
+                    <tr><td class="se-bd-line-label">Taxe CO₂</td>                    <td class="se-bd-line-val"><?= $seFmt($seG['breakdown']['co2Tax']) ?></td></tr>
+                    <tr class="se-bd-subtotal"><td>Sous-total HT</td>                 <td><?= $seFmt($seG['ht']) ?></td></tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <!-- ── Water + Sewage ────────────────────────────────────────────────── -->
+              <div class="se-bd-block">
+                <h3 class="se-bd-block-title">Eau &amp; égouts <span class="se-bd-ht"><?= $seFmt($seW['ht']) ?> CHF HT</span></h3>
+                <table class="se-bd-table" aria-label="Détail eau et égouts">
+                  <tbody>
+                    <tr><td class="se-bd-line-label">Frais fixes mensuels</td>         <td class="se-bd-line-val"><?= $seFmt($seW['breakdown']['fixedMonthly']) ?></td></tr>
+                    <tr><td class="se-bd-line-label">Consommation (<?= $seFmtCons($seC['water_m3']) ?> m³)</td> <td class="se-bd-line-val"><?= $seFmt($seW['breakdown']['waterVariable']) ?></td></tr>
+                    <tr><td class="se-bd-line-label">Fonds solidarité</td>             <td class="se-bd-line-val"><?= $seFmt($seW['breakdown']['solidarityFund']) ?></td></tr>
+                    <tr><td class="se-bd-line-label">Égouts (avec rabais non-potable)</td> <td class="se-bd-line-val"><?= $seFmt($seW['breakdown']['sewage']) ?></td></tr>
+                    <tr class="se-bd-subtotal"><td>Sous-total HT</td>                  <td><?= $seFmt($seW['ht']) ?></td></tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <!-- ── Electricity ───────────────────────────────────────────────────── -->
+              <div class="se-bd-block">
+                <h3 class="se-bd-block-title">Électricité <span class="se-bd-ht"><?= $seFmt($seE['ht']) ?> CHF HT</span></h3>
+
+                <!-- Peak demand basis notice -->
+                <p class="se-bd-peak-note">
+                  Puissance de pointe :
+                  <strong class="se-bd-peak-kw"><?= htmlspecialchars(number_format($seEstimate['peakKW'], 1)) ?> kW</strong>
+                  —
+                  <span class="se-bd-peak-src <?= $seEstimate['peakSource'] === 'actual-invoice' ? 'se-bd-peak-src--real' : 'se-bd-peak-src--est' ?>">
+                    <?= htmlspecialchars($sePeakLabel) ?>
+                  </span>
+                </p>
+
+                <table class="se-bd-table" aria-label="Détail électricité">
+                  <tbody>
+                    <tr><td class="se-bd-line-label">Énergie (HP + HC)</td>                    <td class="se-bd-line-val"><?= $seFmt($seE['breakdown']['energy']) ?></td></tr>
+                    <tr><td class="se-bd-line-label">ACHEM régional (réseau local SIE)</td>    <td class="se-bd-line-val"><?= $seFmt($seE['breakdown']['achemRegional']) ?></td></tr>
+                    <tr><td class="se-bd-line-label">ACHEM national (réseau Swissgrid)</td>    <td class="se-bd-line-val"><?= $seFmt($seE['breakdown']['achemNational']) ?></td></tr>
+                    <tr><td class="se-bd-line-label">Taxes fédérales / cantonales / comm. (TVA)</td> <td class="se-bd-line-val"><?= $seFmt($seE['breakdown']['taxesTvable']) ?></td></tr>
+                    <tr><td class="se-bd-line-label">Taxe cantonale LVLEne + comm. spécifique (exonéré TVA)</td> <td class="se-bd-line-val"><?= $seFmt($seE['breakdown']['taxesTvaExempt']) ?></td></tr>
+                    <tr class="se-bd-subtotal"><td>Sous-total HT</td>                          <td><?= $seFmt($seE['ht']) ?></td></tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <!-- ── Grand total ───────────────────────────────────────────────────── -->
+              <div class="se-bd-grand-total">
+                <span class="se-bd-gt-label">Coût énergie anticipé (HT)</span>
+                <span class="se-bd-gt-caption">Gaz + Eau &amp; égouts + Électricité — repris dans le COP/COGS jusqu'à l'arrivée de la facture</span>
+                <span class="se-bd-gt-value"><?= $seFmt($seEstimate['total']) ?> CHF</span>
+              </div>
+
+            </div><!-- /.se-bd-body -->
+          </details>
         <?php endif; ?>
       </section>
 
