@@ -1998,7 +1998,7 @@ try {
             $eshopWhere  = ["iso.channel = 'eshop'"];
             $eshopParams = [];
             if (!$findIntent) {
-                $eshopWhere[]  = 'DATE(iso.created_at) BETWEEN ? AND ?';
+                $eshopWhere[]  = 'COALESCE(iso.fulfilment_date, DATE(iso.created_at)) BETWEEN ? AND ?';
                 $eshopParams[] = $cmdDu;
                 $eshopParams[] = $cmdAu;
             } else {
@@ -2012,16 +2012,16 @@ try {
                     $eshopParams[] = $likeVal;
                 }
             }
-            $eshopOrderSql = 'SELECT iso.id, iso.order_name, DATE(iso.created_at) AS sale_date,
+            $eshopOrderSql = 'SELECT iso.id, iso.order_name, COALESCE(iso.fulfilment_date, DATE(iso.created_at)) AS sale_date,
                         iso.customer_first_name, iso.customer_last_name, iso.customer_email,
                         iso.fulfilment_mode, iso.financial_status, iso.fulfillment_status,
-                        iso.channel, iso.created_at,
+                        iso.channel, iso.created_at, iso.fulfilment_date, iso.fulfilment_date_end,
                         f.status AS fulfil_status,
                         f.shopify_sync_state
                    FROM inv_sales_orders iso
                    LEFT JOIN inv_sales_fulfilment f ON f.order_id_fk = iso.id
                   WHERE ' . implode(' AND ', $eshopWhere) . '
-                  ORDER BY iso.created_at ' . ($findIntent ? 'DESC' : 'ASC');
+                  ORDER BY COALESCE(iso.fulfilment_date, DATE(iso.created_at)) ' . ($findIntent ? 'DESC' : 'ASC');
             $eshopOrderStmt = $pdo->prepare($eshopOrderSql);
             $eshopOrderStmt->execute($eshopParams);
             $eshopOrders = $eshopOrderStmt->fetchAll(PDO::FETCH_ASSOC);
@@ -3647,6 +3647,23 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
           $eid
       );
       echo '<span class="exp-eshop-order-name">' . htmlspecialchars((string) ($eo['order_name'] ?? "#$eid")) . '</span>';
+      $fd  = trim((string) ($eo['fulfilment_date'] ?? ''));
+      $fde = trim((string) ($eo['fulfilment_date_end'] ?? ''));
+      if ($fd !== '') {
+          $moisFr = [1=>'janv.',2=>'févr.',3=>'mars',4=>'avr.',5=>'mai',6=>'juin',7=>'juil.',8=>'août',9=>'sept.',10=>'oct.',11=>'nov.',12=>'déc.'];
+          $fmtDay = static function (string $iso) use ($moisFr): string {
+              $ts = strtotime($iso);
+              if ($ts === false) return $iso;
+              $d = (int) date('j', $ts); $m = (int) date('n', $ts);
+              return $d . ' ' . ($moisFr[$m] ?? '');
+          };
+          if ($fde !== '' && $fde !== $fd) {
+              $rangeLabel = $fmtDay($fd) . '→' . $fmtDay($fde);
+          } else {
+              $rangeLabel = $fmtDay($fd);
+          }
+          echo '<span class="exp-fulfil-badge exp-fulfil-badge--rental" title="Date de location (tireuse portative)">📅 Tireuse ' . htmlspecialchars($rangeLabel) . '</span>';
+      }
       echo '<span class="exp-order-party">' . htmlspecialchars($name) . '</span>';
       echo '<div class="exp-sku-pills">' . $pillsHtml . '</div>';
       printf('<span class="exp-fulfil-badge %s">%s %s</span>',

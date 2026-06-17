@@ -1456,6 +1456,12 @@ body.expeditions .exp-fulfil-badge--review {
   color: var(--ember, #c8792a);
 }
 
+body.expeditions .exp-fulfil-badge--rental {
+  background: color-mix(in srgb, var(--hop, #6a8a3a) 12%, transparent);
+  border-color: color-mix(in srgb, var(--hop, #6a8a3a) 35%, transparent);
+  color: var(--hop, #6a8a3a);
+}
+
 /* Read-only Shopify source tag */
 body.expeditions .exp-eshop-source-tag {
   font-family: "JetBrains Mono", monospace;
