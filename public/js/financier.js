@@ -21,13 +21,16 @@
   const esc    = window.KpcCharts ? window.KpcCharts.escHtml : function(s) {
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   };
-  const fmt    = window.KpcCharts ? window.KpcCharts.fmt : function(n, dec) {
+  const _fmtRaw = window.KpcCharts ? window.KpcCharts.fmt : function(n, dec) {
     if (n == null) return '—';
     return Number(n).toLocaleString('fr-CH', {
       minimumFractionDigits:  dec != null ? dec : 2,
       maximumFractionDigits:  dec != null ? dec : 2,
     });
   };
+  // Wrap every format call so the fr-CH thousands separator is always visible
+  // (fr-CH uses a narrow no-break space U+202F some fonts render zero-width).
+  function fmt(n, dec, unit) { return grp(_fmtRaw(n, dec, unit)); }
   const svgEl  = window.KpcCharts ? window.KpcCharts.svgEl : function(tag, attrs) {
     var el = document.createElementNS('http://www.w3.org/2000/svg', tag);
     for (var k in (attrs || {})) el.setAttribute(k, attrs[k]);
@@ -37,7 +40,12 @@
     return getComputedStyle(document.documentElement).getPropertyValue(n).trim();
   };
 
+  /* fr-CH groups with a narrow no-break space (U+202F) that some fonts render
+     zero-width → digits look unseparated. Normalise to a normal non-breaking
+     space (U+00A0) so the thousands separator is always visible. */
+  function grp(s)     { return String(s).replace(/[\u202f\u00a0]/g, String.fromCharCode(0x00a0)); }
   function fmtChf(v)  { return fmt(v, 2); }
+  function fmtChf0(v) { return fmt(v, 0); }
   function fmtHl(v)   { return fmt(v, 1); }
   function fmtPct(v)  { return fmt(v, 1) + ' %'; }
   function fmtUnits(v){ return fmt(v, 0); }
@@ -95,7 +103,7 @@
 
     /* ── KPI tiles ─────────────────────────────────────────────────────────── */
     var kpis = [
-      { label: 'COP total', value: fmtChf(total),  unit: 'CHF', accent: true },
+      { label: 'COP total', value: fmtChf0(total), unit: 'CHF', accent: true },
       { label: 'COP / HL',  value: fmtChf(perHL),  unit: 'CHF/HL', accent: true },
       { label: 'HL brassés',value: fmtHl(hlBrewed), unit: 'HL' },
       { label: 'HL packagés',value: fmtHl(hlPkg),   unit: 'HL' },
@@ -209,10 +217,10 @@
     var kpiDefs = [
       { label: 'Unités vendues',  value: fmtUnits(totals.units || 0),       unit: 'u' },
       { label: 'HL vendus',       value: fmtHl(totals.HL || 0),             unit: 'HL' },
-      { label: 'CA',              value: fmtChf(totals.revenueCHF || 0),    unit: 'CHF', accent: true },
-      { label: 'Matières',        value: fmtChf(totals.material_CHF || 0),  unit: 'CHF' },
-      { label: 'Taxe bière',      value: fmtChf(totals.beerTax_CHF || 0),   unit: 'CHF' },
-      { label: 'COGS total',      value: fmtChf(totals.salesCOGS_CHF || 0), unit: 'CHF', accent: true },
+      { label: 'CA',              value: fmtChf0(totals.revenueCHF || 0),    unit: 'CHF', accent: true },
+      { label: 'Matières',        value: fmtChf0(totals.material_CHF || 0),  unit: 'CHF' },
+      { label: 'Taxe bière',      value: fmtChf0(totals.beerTax_CHF || 0),   unit: 'CHF' },
+      { label: 'COGS total',      value: fmtChf0(totals.salesCOGS_CHF || 0), unit: 'CHF', accent: true },
     ];
     var grid = document.getElementById('cogs-kpis');
     if (grid) {
@@ -397,9 +405,9 @@
 
     /* ── KPI tiles ─────────────────────────────────────────────────────────── */
     var kpiDefs = [
-      { label: 'CA',           value: fmtChf(rev),   unit: 'CHF', accent: true },
-      { label: 'COGS',         value: fmtChf(cogs),  unit: 'CHF' },
-      { label: 'Marge brute',  value: fmtChf(gross), unit: 'CHF', accent: true },
+      { label: 'CA',           value: fmtChf0(rev),  unit: 'CHF', accent: true },
+      { label: 'COGS',         value: fmtChf0(cogs), unit: 'CHF' },
+      { label: 'Marge brute',  value: fmtChf0(gross),unit: 'CHF', accent: true },
       { label: 'Marge %',      value: fmtPct(pct),   unit: '',    accent: pct > 0 },
       { label: 'ASP',          value: fmtChf(asp),   unit: 'CHF/u' },
     ];
