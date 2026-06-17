@@ -98,7 +98,9 @@ function fg_prod_since_anchor(PDO $pdo, string $globalAnchor): array
     // Inclusion predicate per event:
     //   - anchor exists for sku: event_date > anchor.counted_at
     //                         OR (event_date == anchor.counted_at AND submitted_at > anchor_ts)
-    //   - no anchor for sku:    event_date > $globalAnchor (strict, no tiebreak)
+    //   - no anchor for sku:    event_date > $prodCensusFloor (MIN MAX(counted_at) across
+    //                           production sites — NOT $globalAnchor, which may be from a
+    //                           non-production site like Taproom with a later date)
     //
     // Multi-plant guard: if multiple production sites have divergent counted_at for the
     // same sku, the EARLIEST (most conservative) anchor wins; error_log() is emitted.
@@ -133,6 +135,31 @@ function fg_prod_since_anchor(PDO $pdo, string $globalAnchor): array
         }
         if ($divergentSites > 0) {
             error_log("fg_prod_since_anchor: {$divergentSites} sku(s) with divergent per-production-site census dates — used earliest (most conservative) anchor. Multi-plant config unsupported.");
+        }
+
+        // Step 1b: derive the production-site census floor — MIN(MAX(counted_at)) across
+        // production sites — used as fallback cutoff for SKUs absent from the production
+        // census. A SKU absent from a complete census = zero on census day, so events
+        // AFTER census day must count. Using $globalAnchor here is wrong when the global
+        // is driven by a non-production site (e.g. Taproom, 2026-06-16) that has a later
+        // date than the production census (2026-06-15) — it would silently exclude same-day
+        // packaging events that logically fall after the production census.
+        $prodCensusFloor = $globalAnchor; // safe default: fall back to global if no census found
+        $inPlaceholders  = implode(',', array_fill(0, count($prodSiteIds), '?'));
+        $pcStmt = $pdo->prepare(
+            "SELECT MIN(max_date) AS census_floor
+               FROM (
+                 SELECT MAX(counted_at) AS max_date
+                   FROM inv_fg_stocktake
+                  WHERE is_active = 1 AND counted_at IS NOT NULL
+                    AND location_id_fk IN ({$inPlaceholders})
+                 GROUP BY location_id_fk
+               ) sub"
+        );
+        $pcStmt->execute($prodSiteIds);
+        $pcRow = $pcStmt->fetch(PDO::FETCH_ASSOC);
+        if ($pcRow && $pcRow['census_floor'] !== null) {
+            $prodCensusFloor = (string) $pcRow['census_floor'];
         }
 
         // Step 2: fetch all candidate packaging events (no date cutoff — applied in PHP)
@@ -172,8 +199,10 @@ function fg_prod_since_anchor(PDO $pdo, string $globalAnchor): array
                 }
                 if (!$include) continue;
             } else {
-                // SKU never counted at a production site — use global fallback (strict)
-                if ($eventDate <= $globalAnchor) continue;
+                // SKU absent from production-site census (zero on census day) — use the
+                // production-site's own census date, not $globalAnchor which may be from
+                // a non-production site (e.g. Taproom) with a later date.
+                if ($eventDate <= $prodCensusFloor) continue;
             }
 
             if (!isset($bySkuRaw[$skuId])) {
