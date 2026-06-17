@@ -116,7 +116,8 @@
     /* ── Section tiles ─────────────────────────────────────────────────────── */
     var sections = [
       { name: 'Brassage',     val: (cop.brewing   || {}).total  || 0 },
-      { name: 'Packaging',    val: (cop.packaging || {}).total  || 0 },
+      { name: 'Packaging',    val: (cop.packaging || {}).total  || 0,
+        repack: (cop.packaging || {}).repack || 0 },
       { name: 'Indirect',     val: (cop.indirect  || {}).total  || 0 },
       { name: 'Services',     val: (cop.utilities || {}).total  || 0 },
       { name: 'R&D',          val: (cop.rd        || {}).total  || 0 },
@@ -125,10 +126,16 @@
     if (secGrid) {
       secGrid.innerHTML = sections.map(function(s) {
         var pct = total > 0 ? (s.val / total * 100) : 0;
+        var noteHtml = '';
+        if (s.repack > 0) {
+          noteHtml = '<div class="fin-section-tile__note">dont '
+            + esc(fmtChf(s.repack)) + ' CHF reconditionnement PD8</div>';
+        }
         return '<div class="fin-section-tile">'
           + '<div class="fin-section-tile__name">' + esc(s.name) + '</div>'
           + '<div class="fin-section-tile__total">' + esc(fmtChf(s.val)) + ' CHF</div>'
           + '<div class="fin-section-tile__share">' + esc(fmtPct(pct)) + ' du COP</div>'
+          + noteHtml
           + '</div>';
       }).join('');
     }

@@ -283,6 +283,13 @@ body.financier .main {
   color: var(--oak);
   margin-top: 0.15rem;
 }
+.fin-section-tile__note {
+  font-size: 0.68rem;
+  color: var(--ink-label);
+  margin-top: 0.2rem;
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 0.02em;
+}
 
 /* ── Cards ───────────────────────────────────────────────────────────────────*/
 .fin-card {

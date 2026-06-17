@@ -71,6 +71,28 @@ $copFileMtime    = is_readable($copArtifactPath) ? filemtime($copArtifactPath) :
 $copFreshnessTs  = $copFileMtime ? date('d.m.Y H:i', $copFileMtime) : null;
 $copFreshnessLabel = $copLatestKey ? fin_month_label($copLatestKey) : null;
 
+/* ── Repack carton cost by month (PD8 box-break) ─────────────────────────── */
+/* Read-only augment: qty × WAC from inv_consumption WHERE source_event='repack' */
+$repackByMonth = [];
+try {
+    $rpRows = $_fin_pdo_lc->query(
+        "SELECT DATE_FORMAT(ic.consumed_at, '%Y-%m') AS mk,
+                SUM(ic.qty * v.cost_chf)             AS chf
+         FROM   inv_consumption ic
+         JOIN   v_mi_cost v ON v.mi_id_fk = ic.mi_id_fk
+         WHERE  ic.source_event = 'repack'
+         GROUP  BY mk"
+    )->fetchAll(PDO::FETCH_ASSOC);
+    foreach ($rpRows as $rpRow) {
+        if (isset($rpRow['mk']) && $rpRow['chf'] !== null) {
+            $repackByMonth[$rpRow['mk']] = (float) $rpRow['chf'];
+        }
+    }
+} catch (\Throwable $e) {
+    // Non-fatal — repack augment skipped if DB unreachable
+    $repackByMonth = [];
+}
+
 /* ── COP payload complet (petit — 31 mois × ~10 champs) ──────────────────── */
 $copPayload = [];
 if ($copData !== null && !empty($copData['months'])) {
@@ -78,15 +100,41 @@ if ($copData !== null && !empty($copData['months'])) {
         $mk  = $mo['monthKey'] ?? null;
         $cop = $mo['cop']      ?? [];
         if ($mk === null) continue;
+        $hasRepack = isset($repackByMonth[$mk]);
+        $rpChf     = $hasRepack ? $repackByMonth[$mk] : 0.0;
+        $pkgTotal  = ($cop['packaging']['total'] ?? null);
+        $tvTotal   = ($cop['totalVariables']['total'] ?? null);
+        $tvPerHL   = ($cop['totalVariables']['perHL'] ?? null);
+
+        // Augment packaging and COP grand total when repack cost exists
+        if ($hasRepack) {
+            $pkgTotal = ($pkgTotal !== null) ? $pkgTotal + $rpChf : $rpChf;
+            $tvTotal  = ($tvTotal  !== null) ? $tvTotal  + $rpChf : $rpChf;
+            // Recompute perHL: totalVariables.total / hlPackaged
+            $hlPkgd = $cop['hlPackaged'] ?? null;
+            $tvPerHL = ($hlPkgd !== null && $hlPkgd > 0)
+                ? $tvTotal / $hlPkgd
+                : $tvPerHL;
+        }
+
+        $tvAugmented = $cop['totalVariables'] ?? [];
+        if ($hasRepack) {
+            $tvAugmented['total'] = $tvTotal;
+            $tvAugmented['perHL'] = $tvPerHL;
+        }
+
         $copPayload[$mk] = [
             'hlBrewed'       => $cop['hlBrewed']                ?? null,
-            'hlPackaged'     => $cop['hlPackaged']               ?? null,
-            'brewing'        => $cop['brewing']                  ?? [],
-            'packaging'      => ['total' => $cop['packaging']['total'] ?? null],
+            'hlPackaged'     => $cop['hlPackaged']              ?? null,
+            'brewing'        => $cop['brewing']                 ?? [],
+            'packaging'      => array_merge(
+                $cop['packaging'] ?? [],
+                ['total' => $pkgTotal, 'repack' => $hasRepack ? $rpChf : null]
+            ),
             'indirect'       => ['total' => $cop['indirect']['total']  ?? null],
             'utilities'      => ['total' => $cop['utilities']['total'] ?? null],
             'rd'             => ['total' => $cop['rd']['total']        ?? null],
-            'totalVariables' => $cop['totalVariables']           ?? [],
+            'totalVariables' => $tvAugmented,
         ];
     }
 }
