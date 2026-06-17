@@ -113,11 +113,15 @@ if ($eshopOrderId <= 0) {
     echo json_encode(['ok' => false, 'error' => 'eshop_order_id invalide.']);
     exit;
 }
-if (!in_array($action, ['advance', 'revert', 'cancel'], true)) {
+if (!in_array($action, ['advance', 'revert', 'cancel', 'classify'], true)) {
     http_response_code(400);
     echo json_encode(['ok' => false, 'error' => 'Action invalide.']);
     exit;
 }
+
+// 'classify' param — read near other inputs; named $newMode to avoid collision with
+// $mode (the order's current fulfilment_mode, assigned later inside the try block).
+$newMode = isset($data['mode']) ? (string) $data['mode'] : '';
 
 // ── DB ────────────────────────────────────────────────────────────────────────
 $pdo = maltytask_pdo();
@@ -137,6 +141,46 @@ try {
     }
 
     $mode = (string) ($eshopOrder['fulfilment_mode'] ?? 'review');
+
+    // ── classify action — ALLOWED on review-mode orders; early-return branch ────
+    // Must be placed BEFORE the review-refuse block: classify is the ONE action
+    // intended for orders currently in 'review' mode.
+    if ($action === 'classify') {
+        // Server-side whitelist: only pickup|delivery are valid targets.
+        // 'review' and anything else are rejected — operator can't classify to review.
+        if (!in_array($newMode, ['pickup', 'delivery'], true)) {
+            http_response_code(400);
+            echo json_encode(['ok' => false, 'error' => 'Mode invalide.']);
+            exit;
+        }
+        // Review-only guard: can only classify an order currently in review mode.
+        if ($mode !== 'review') {
+            http_response_code(400);
+            echo json_encode(['ok' => false, 'error' => 'Commande déjà classée.']);
+            exit;
+        }
+        // ONE transaction: update fulfilment_mode + source stamp + audit.
+        // NOTE: inv_sales_orders has no updated_by column (confirmed via SHOW COLUMNS);
+        // it is omitted from the SET clause deliberately.
+        $pdo->beginTransaction();
+        $updOrd = $pdo->prepare(
+            'UPDATE inv_sales_orders
+                SET fulfilment_mode        = ?,
+                    fulfilment_mode_source = \'manual\'
+              WHERE id = ? AND channel = \'eshop\''
+        );
+        $updOrd->execute([$newMode, $eshopOrderId]);
+        log_revision(
+            $pdo, $me, 'inv_sales_orders', $eshopOrderId,
+            ['fulfilment_mode' => $mode,    'fulfilment_mode_source' => 'auto'],
+            ['fulfilment_mode' => $newMode, 'fulfilment_mode_source' => 'manual'],
+            'normal',
+            'Classé manuellement: ' . $newMode
+        );
+        $pdo->commit();
+        echo json_encode(['ok' => true, 'mode' => $newMode, 'csrf' => csrf_token()]);
+        exit;
+    }
 
     // REFUSE review-mode orders — operator must classify first
     if ($mode === 'review') {
