@@ -80,6 +80,7 @@ $PAGE_DESCRIPTIONS = [
     'qa'               => 'Le registre des <strong>autocontrôles qualité</strong> de la brasserie, dans le cadre du programme HACCP. Trois types de contrôles sont enregistrés ici : le <strong>contrôle poids / volume au conditionnement</strong> (unités prélevées en cours de run, comparées à la cible — conformité signalée automatiquement), le <strong>contrôle nettoyage et désinfection PRP-04</strong> (tests ATP, visuel ou eau de rinçage sur les surfaces nettoyées, avec résultat et action corrective si nécessaire) et le <strong>contrôle réception verre</strong> (vérification poids et volume à l\'arrivée des bouteilles, passe / recalage). Aucune de ces saisies n\'affecte le stock ni les coûts — c\'est un registre de traçabilité qualité.',
     'email-orders'     => 'La validation des <strong>commandes reçues par e-mail</strong>. Chaque message entrant est analysé et déposé dans l\'un des trois volets : <strong>À valider</strong> (commandes lues et interprétées, affichées côte à côte avec l\'e-mail d\'origine), <strong>Non parsé</strong> (messages que le système n\'a pas pu lire — à traiter manuellement) et <strong>Créées</strong> (commandes déjà converties). Pour chaque ligne à valider, l\'opérateur confirme le vrai client, le bon SKU et la date de livraison — rien n\'est supposé automatiquement — puis clique <em>Valider</em> pour créer la commande. La page signale aussi si une commande déjà saisie en boutique en ligne semble être un doublon.',
     'financier'        => 'La <strong>fiche de calcul COGS mensuelle</strong> à destination du fiduciaire : stock d\'ouverture (= clôture du mois précédent), mouvement de la période, ajustement de base et stock de clôture. Deux exports CSV sont disponibles — la fiche seule et un export complet en quatre sections (fiche, détail par référence, coût de production, taxe bière) — pour le classeur comptable. La page affiche le dernier mois clôturé par défaut ; la sélection du mois reste possible pour consulter l\'historique. Aucune donnée ne s\'y saisit : tout est calculé en amont.',
+    'saisie-energie'   => 'La <strong>saisie mensuelle des index compteurs</strong> : eau (m³), gaz (m³) et électricité (jour &amp; nuit). L\'opérateur note ce que les compteurs physiques affichent en fin de mois. L\'écart avec le relevé précédent est calculé en direct pendant la saisie, et une <strong>estimation prévisionnelle du coût énergétique</strong> est mise à jour sur le Financier en temps réel — jusqu\'à ce que la facture réelle arrive et prenne le relais automatiquement. Un historique par période, avec les consommations mois par mois, est affiché en bas de page. Si le mois a déjà été chargé depuis une facture SIE ou SIL, les champs sont en lecture seule : la facture fait foi.',
 ];
 
 /* SVG icons per page_key — inline SVG matching mockup styles */
@@ -103,6 +104,7 @@ $PAGE_ICONS = [
     'tap-shop'         => '<svg viewBox="0 0 24 24"><path d="M3 9l1.5-5h15L21 9M3 9h18M3 9v11h18V9M9 20v-6h6v6"/></svg>',
     'email-orders'     => '<svg viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 8l10 7 10-7"/><path d="M14 14l2 2 4-4"/></svg>',
     'financier'        => '<svg viewBox="0 0 24 24"><rect x="3" y="2" width="14" height="18" rx="2"/><path d="M7 7h6M7 11h4"/><path d="M15 16h6M15 19h6"/><path d="M18 14l-3 2 2 3 3-2"/></svg>',
+    'saisie-energie'   => '<svg viewBox="0 0 24 24"><path d="M13 2L5 14h7l-1 8 8-12h-7l1-8z"/><circle cx="19" cy="5" r="2"/><path d="M19 7v3M17 9h4"/></svg>',
     'journal-saisies'  => '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="12" height="16" rx="2"/><path d="M7 8h6M7 12h6M7 16h3"/><circle cx="18" cy="16" r="4"/><path d="M18 14v2l1 1"/></svg>',
     'qa'               => '<svg viewBox="0 0 24 24"><path d="M9 3h6M10 3v6l-5 9a1 1 0 0 0 1 1.5h12a1 1 0 0 0 1-1.5l-5-9V3"/><path d="M7.5 14h9"/></svg>',
     '_default'         => '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>',
@@ -234,6 +236,25 @@ function vg_vignette_for(string $key): string
                 <div style="width:8px;height:8px;border-radius:50%;background:var(--ember);flex-shrink:0;"></div>
                 <div style="height:5px;flex:1;border-radius:3px;background:color-mix(in srgb,var(--ember) 30%,var(--hairline))"></div>
                 <div style="font-family:\'JetBrains Mono\',monospace;font-size:7px;color:var(--ember);letter-spacing:0.04em;white-space:nowrap;">Signalé</div>
+              </div>
+            </div>';
+        case 'saisie-energie':
+            return '<div class="vg-vignette" aria-hidden="true" style="background:var(--bg);padding:10px 12px;display:flex;flex-direction:column;gap:5px;justify-content:center;">
+              <div style="display:grid;grid-template-columns:1fr auto;align-items:center;gap:6px;padding:4px 8px;background:var(--bg-elev);border:1px solid var(--hairline);border-radius:5px;">
+                <div style="display:flex;flex-direction:column;gap:2px;"><div style="font-family:\'JetBrains Mono\',monospace;font-size:6px;color:var(--ink-label);letter-spacing:0.05em;text-transform:uppercase;">Eau</div><div style="height:5px;width:70%;border-radius:3px;background:color-mix(in srgb,var(--cold) 50%,var(--hairline));"></div></div>
+                <div style="font-family:\'JetBrains Mono\',monospace;font-size:7px;color:var(--ink-soft);letter-spacing:0.04em;white-space:nowrap;">+38 m³</div>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr auto;align-items:center;gap:6px;padding:4px 8px;background:var(--bg-elev);border:1px solid var(--hairline);border-radius:5px;">
+                <div style="display:flex;flex-direction:column;gap:2px;"><div style="font-family:\'JetBrains Mono\',monospace;font-size:6px;color:var(--ink-label);letter-spacing:0.05em;text-transform:uppercase;">Gaz</div><div style="height:5px;width:55%;border-radius:3px;background:color-mix(in srgb,var(--ember) 50%,var(--hairline));"></div></div>
+                <div style="font-family:\'JetBrains Mono\',monospace;font-size:7px;color:var(--ink-soft);letter-spacing:0.04em;white-space:nowrap;">+124 m³</div>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr auto;align-items:center;gap:6px;padding:4px 8px;background:color-mix(in srgb,var(--hop) 8%,var(--bg-elev));border:1px solid color-mix(in srgb,var(--hop) 25%,var(--hairline));border-radius:5px;">
+                <div style="display:flex;flex-direction:column;gap:2px;"><div style="font-family:\'JetBrains Mono\',monospace;font-size:6px;color:var(--ink-label);letter-spacing:0.05em;text-transform:uppercase;">Élec. jour</div><div style="height:5px;width:80%;border-radius:3px;background:color-mix(in srgb,var(--hop) 55%,var(--hairline));"></div></div>
+                <div style="font-family:\'JetBrains Mono\',monospace;font-size:7px;color:var(--hop);letter-spacing:0.04em;white-space:nowrap;">+612 kWh</div>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr auto;align-items:center;gap:6px;padding:4px 8px;background:var(--bg-elev);border:1px solid var(--hairline);border-radius:5px;">
+                <div style="display:flex;flex-direction:column;gap:2px;"><div style="font-family:\'JetBrains Mono\',monospace;font-size:6px;color:var(--ink-label);letter-spacing:0.05em;text-transform:uppercase;">Élec. nuit</div><div style="height:5px;width:42%;border-radius:3px;background:color-mix(in srgb,var(--bbt) 45%,var(--hairline));"></div></div>
+                <div style="font-family:\'JetBrains Mono\',monospace;font-size:7px;color:var(--ink-soft);letter-spacing:0.04em;white-space:nowrap;">+294 kWh</div>
               </div>
             </div>';
         default:
