@@ -2,7 +2,7 @@
  * expeditions-stocktake.js — FG Inventaire multi-site saisie JS.
  *
  * Reads:
- *   window.EXP_ST_SKUS      [{id, sku_code, format, hl_per_unit, is_cage, bottles_per_cage, stocktake_scope}]
+ *   window.EXP_ST_SKUS      [{id, sku_code, format, hl_per_unit, is_cage, stocktake_scope}]
  *   window.EXP_ST_PRIOR     {loc_id: {sku_id: {qty, counted_at, month_closed}}}
  *   window.EXP_ST_SITES     [{id, name, site_type, sort_order, notes, is_consignment}]
  *   window.EXP_ST_FRESHNESS {loc_id: last_counted_date_or_null}
@@ -13,18 +13,17 @@
  *
  * Responsibilities:
  *   - Running summary: count of entered SKUs + total HL
- *     Cage rows: input is cage-units; HL = cage_units × hl_per_unit
+ *     Cage rows: input is whole bottles; HL = bottles × hl_per_unit (0.00330 post-redenomination)
  *   - Submit-button date label sync
  *   - For managers: date-picker change navigates to ?view=stocktake&loc=X&date=YYYY-MM-DD
  *     to reload the page with the correct prefill. No inline onclick.
  *   - Search/filter: show/hide rows + update family counts
  *   - Highlight rows where a qty has been entered
  *   - Family collapse (header click)
- *   - Cage live hint: cage-units → "= Y.YY hl"
+ *   - Cage live hint: bottles → "= Y.YY hl"
  *
- * Cage SKUs are identified by data-is-cage="1" on the row and
- * data-bottles-per-cage on the same element (informational only — not used for math).
- * Input is in cage-units (decimals accepted). No conversion — stored as-entered.
+ * Cage SKUs are identified by data-is-cage="1" on the row.
+ * Input is in whole bottles (integers), stored as-entered (post-redenomination).
  *
  * Visibility (scope × site_type) is enforced server-side: PHP renders only
  * the SKU rows permitted at the selected location. The form never contains
@@ -46,14 +45,13 @@
   const IS_MANAGER = window.EXP_ST_IS_MANAGER || false;
   const SEL_LOC_ID = window.EXP_ST_SEL_LOC_ID || 0;
 
-  /* ── Build sku_id → {hl_per_unit, is_cage, bottles_per_cage, stocktake_scope} lookup ── */
+  /* ── Build sku_id → {hl_per_unit, is_cage, stocktake_scope} lookup ── */
   const skuMeta = {};
   SKUS.forEach(function (s) {
     skuMeta[s.id] = {
-      hl_per_unit:      s.hl_per_unit,
-      is_cage:          s.is_cage || false,
-      bottles_per_cage: s.bottles_per_cage || 1,
-      stocktake_scope:  s.stocktake_scope || 'none',
+      hl_per_unit:     s.hl_per_unit,
+      is_cage:         s.is_cage || false,
+      stocktake_scope: s.stocktake_scope || 'none',
     };
   });
 
@@ -85,12 +83,8 @@
     return val.toLocaleString('fr-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
-  /* ── Format cage-units: always 3 decimal places (tabular) ───────────────── */
-  function formatCageUnits(val) {
-    return val.toLocaleString('fr-CH', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
-  }
-
   /* ── Cage live hint: update "= Y.YY hl" for one row ─────────────────── */
+  // Post-redenomination: input is integer bottles; hl_per_unit = 0.00330 per bottle.
   function updateCageLiveHint(row, inp) {
     var sid = parseInt(row.dataset.skuId, 10);
     var meta = skuMeta[sid];
@@ -104,13 +98,13 @@
       hintEl.textContent = '';
       return;
     }
-    var cageUnits = parseFloat(raw);
-    if (isNaN(cageUnits) || cageUnits < 0) {
+    var bottles = parseFloat(raw);
+    if (isNaN(bottles) || bottles < 0) {
       hintEl.textContent = '';
       return;
     }
-    // Input IS cage-units — no division needed.
-    var hlVal = cageUnits * meta.hl_per_unit;
+    // Input is bottles; hl_per_unit = 0.00330/bottle post-redenomination.
+    var hlVal = bottles * meta.hl_per_unit;
     hintEl.textContent = '= ' + formatHl(hlVal) + ' hl';
   }
 
@@ -130,12 +124,9 @@
       var meta = skuMeta[sid] || {};
       var hpu  = meta.hl_per_unit || 0;
 
-      if (meta.is_cage) {
-        // input is cage-units directly — no conversion needed
-        totalHl += qty * hpu;
-      } else {
-        totalHl += qty * hpu;
-      }
+      // All SKU types: qty × hl_per_unit. Post-redenomination cage units = bottles,
+      // hl_per_unit = 0.00330/bottle. Non-cage: qty in pack units, hl_per_unit per pack.
+      totalHl += qty * hpu;
 
       // Highlight row when entered
       row.classList.add('exp-st-row--entered');

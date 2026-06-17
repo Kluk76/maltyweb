@@ -714,8 +714,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'stocktake') {
         $allowedLocationIds[(int) $sr['id']] = $sr;
     }
 
-    // Active SKUs (id → {sku_code, hl_per_unit, is_cage, bottles_per_cage, stocktake_scope})
-    // units_per_pack is used for cage SKUs: submitted value is bottles, stored as cage-units.
+    // Active SKUs (id → {sku_code, hl_per_unit, is_cage, stocktake_scope})
+    // Cage SKUs (stocktake_scope='cage'): units_per_pack=1, hl_per_unit=0.00330/btl.
+    // Operator enters integer bottle count; stored directly as bottles.
     $stSkuRows = $pdo->query(
         'SELECT id, sku_code, hl_per_unit, units_per_pack, stocktake_scope FROM ref_skus WHERE is_active = 1'
     )->fetchAll(PDO::FETCH_ASSOC);
@@ -723,11 +724,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'stocktake') {
     foreach ($stSkuRows as $sr) {
         $isCage = ($sr['stocktake_scope'] === 'cage');
         $allowedSkuIds[(int) $sr['id']] = [
-            'sku_code'         => $sr['sku_code'],
-            'hl_per_unit'      => (float) $sr['hl_per_unit'],
-            'is_cage'          => $isCage,
-            'bottles_per_cage' => $isCage ? (float) $sr['units_per_pack'] : 1.0,
-            'stocktake_scope'  => $sr['stocktake_scope'],
+            'sku_code'        => $sr['sku_code'],
+            'hl_per_unit'     => (float) $sr['hl_per_unit'],
+            'is_cage'         => $isCage,
+            'stocktake_scope' => $sr['stocktake_scope'],
         ];
     }
 
@@ -788,9 +788,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'stocktake') {
             $qty = (float) $rawQty;
             if ($qty < 0) continue; // negative qty not accepted
 
-            // Cage SKUs: operator enters cage-units directly (decimals accepted).
-            // No conversion — store qty as-entered (cage-units already).
-            // Negative already rejected above; is_cage flag kept for other uses.
+            // Cage SKUs (stocktake_scope='cage'): operator enters integer bottle count.
+            // units_per_pack=1 post-redenomination — store qty as-entered (bottles).
+            // Negative already rejected above.
 
             $stValidLines[] = ['sku_id' => $sid, 'qty' => $qty];
         }
@@ -2246,7 +2246,7 @@ try {
         )->fetchAll(PDO::FETCH_ASSOC);
 
         // ── Active SKUs ordered by format family then code ────────────────────
-        // units_per_pack is fetched here for cage-SKU bottle→cage-unit conversion.
+        // hl_per_unit on cage SKUs = 0.00330 (per bottle, post-redenomination).
         // stocktake_scope is fetched for per-location visibility filtering.
         $stAllSkus = $pdo->query(
             'SELECT s.id, s.sku_code, s.format, s.hl_per_unit, s.units_per_pack, s.stocktake_scope,
@@ -2377,7 +2377,7 @@ try {
                LEFT JOIN inv_side_stock_ledger  l
                       ON l.sku_id_fk = s.id AND l.is_tombstoned = 0
               WHERE s.is_active = 1
-                AND s.units_per_pack > 1
+                AND s.stocktake_scope != \'cage\'
               GROUP BY s.id, s.sku_code, s.format, s.units_per_pack,
                        COALESCE(pf.display_family, s.format, s.sku_code)
              HAVING balance_units != 0
@@ -2408,7 +2408,7 @@ try {
                     COALESCE(pf.display_family, s.format, s.sku_code) AS display_family
                FROM ref_skus s
                LEFT JOIN ref_packaging_formats pf ON pf.id = s.format_id
-              WHERE s.is_active = 1 AND s.units_per_pack > 1
+              WHERE s.is_active = 1 AND s.stocktake_scope != \'cage\'
               ORDER BY COALESCE(pf.display_family, s.format, s.sku_code) ASC,
                        s.sku_code ASC'
         )->fetchAll(PDO::FETCH_ASSOC);
@@ -2860,10 +2860,9 @@ if ($view === 'form') {
         $fgStockData = fg_stock_compute($pdo);
         $fgStockMap  = [];
         foreach ($fgStockData['rows'] as $sr) {
-            $isCageSr = (($sr['stocktake_scope'] ?? '') === 'cage');
             $fgStockMap[(int) $sr['sku_id']] = [
-                'live_futur' => $isCageSr ? round((float) $sr['live_futur'], 2) : (int) round($sr['live_futur']),
-                'physique'   => $isCageSr ? round((float) $sr['physique'], 2)   : (int) round($sr['physique']),
+                'live_futur' => (int) round($sr['live_futur']),
+                'physique'   => (int) round($sr['physique']),
             ];
         }
         $fgStockMapJson    = json_encode($fgStockMap, $jsonFlags);
@@ -2891,10 +2890,9 @@ if ($view === 'commandes') {
         $fgLocationSnapshotForCmds = fg_stock_location_snapshot($pdo);
         $cmdStockMap  = [];
         foreach ($fgStockData2['rows'] as $sr) {
-            $isCageSr = (($sr['stocktake_scope'] ?? '') === 'cage');
             $cmdStockMap[(int) $sr['sku_id']] = [
-                'live_futur' => $isCageSr ? round((float) $sr['live_futur'], 2) : (int) round($sr['live_futur']),
-                'physique'   => $isCageSr ? round((float) $sr['physique'], 2)   : (int) round($sr['physique']),
+                'live_futur' => (int) round($sr['live_futur']),
+                'physique'   => (int) round($sr['physique']),
             ];
         }
         $cmdStockMapJson = json_encode($cmdStockMap, $jsonFlags);
@@ -2913,9 +2911,8 @@ if ($view === 'mouvements') {
         $fgStockDataMov = fg_stock_compute($pdo);
         $movStockMap    = [];
         foreach ($fgStockDataMov['rows'] as $sr) {
-            $isCageSr = (($sr['stocktake_scope'] ?? '') === 'cage');
             $movStockMap[(int) $sr['sku_id']] = [
-                'physique' => $isCageSr ? round((float) $sr['physique'], 2) : (int) round($sr['physique']),
+                'physique' => (int) round($sr['physique']),
             ];
         }
         $movStockMapJson    = json_encode($movStockMap, $jsonFlags);
@@ -2996,19 +2993,18 @@ $stPriorJson     = '{}';
 $stSitesJson     = '[]';
 $stFreshnessJson = '{}';
 if ($view === 'stocktake') {
-    // SKU list for JS: [{id, sku_code, format, hl_per_unit, is_cage, bottles_per_cage, stocktake_scope}]
-    // Cage SKUs (suffix -X) get is_cage=true + bottles_per_cage from DB units_per_pack.
+    // SKU list for JS: [{id, sku_code, format, hl_per_unit, is_cage, stocktake_scope}]
+    // Cage SKUs (stocktake_scope='cage'): is_cage=true; hl_per_unit=0.00330/btl post-redenomination.
     // stocktake_scope is included so JS can reflect server-side visibility logic if needed.
     $stSkusForJs = array_map(function ($s) {
         $isCage = (($s['stocktake_scope'] ?? '') === 'cage');
         return [
-            'id'               => (int) $s['id'],
-            'sku_code'         => $s['sku_code'],
-            'format'           => $s['format'] ?? '',
-            'hl_per_unit'      => (float) $s['hl_per_unit'],
-            'is_cage'          => $isCage,
-            'bottles_per_cage' => $isCage ? (float) $s['units_per_pack'] : null,
-            'stocktake_scope'  => $s['stocktake_scope'],
+            'id'              => (int) $s['id'],
+            'sku_code'        => $s['sku_code'],
+            'format'          => $s['format'] ?? '',
+            'hl_per_unit'     => (float) $s['hl_per_unit'],
+            'is_cage'         => $isCage,
+            'stocktake_scope' => $s['stocktake_scope'],
         ];
     }, $stAllSkus ?? []);
     $stSkusJson = json_encode($stSkusForJs, $jsonFlags);
@@ -3172,14 +3168,11 @@ function exp_fmt_date(?string $d): string
 
 /**
  * Format a stock quantity for display.
- * Cage SKUs (stocktake_scope='cage'): show 2 dp.
- * All others: integer.
+ * All SKU types (including cages) render as integer units.
+ * Cage SKUs store integer bottles post-redenomination (units_per_pack=1).
  */
 function exp_fmt_stock_qty(float $qty, bool $isCage): string
 {
-    if ($isCage) {
-        return number_format($qty, 2, '.', ' ');
-    }
     return number_format((int) round($qty), 0, '.', ' ');
 }
 
@@ -5499,7 +5492,7 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
             </td>
             <td class="exp-st--sep" aria-hidden="true"></td>
             <td class="exp-st-col-physique">
-              <span class="exp-st-num"><?= exp_fmt_stock_qty($physique, $isCage) ?><?php if ($isCage): ?> <span class="exp-ledger-hl">cage</span><?php endif ?></span>
+              <span class="exp-st-num"><?= exp_fmt_stock_qty($physique, $isCage) ?></span>
             </td>
             <td class="exp-st--sep" aria-hidden="true"></td>
             <td class="exp-st-col-semcur">
@@ -5552,7 +5545,7 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
                     <tr class="exp-ledger-anchor">
                       <td class="exp-ledger-label">Inventaire <?= htmlspecialchars($anchorMonth) ?> (<?= exp_fmt_date($anchorDate) ?>)</td>
                       <td class="exp-ledger-qty exp-ledger-qty--anchor">
-                        <?= exp_fmt_stock_qty((float) $sr['anchor_qty'], $isCage) ?><?php if ($isCage): ?> <span class="exp-ledger-hl">cage</span><?php endif ?>
+                        <?= exp_fmt_stock_qty((float) $sr['anchor_qty'], $isCage) ?>
                       </td>
                       <td class="exp-ledger-meta">ancre Σ toutes locations</td>
                     </tr>
@@ -5602,7 +5595,7 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
                     <tr class="exp-ledger-physique">
                       <td class="exp-ledger-label exp-ledger-label--total">Physique</td>
                       <td class="exp-ledger-qty exp-ledger-qty--total" colspan="2">
-                        = <?= exp_fmt_stock_qty($physique, $isCage) ?><?php if ($isCage): ?> <span class="exp-ledger-hl">cage</span><?php endif ?>
+                        = <?= exp_fmt_stock_qty($physique, $isCage) ?>
                         <span class="exp-ledger-hl">(<?= number_format($hlPhysique, 2) ?> HL)</span>
                       </td>
                     </tr>
@@ -6126,7 +6119,7 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
               <span class="exp-st-sku-hl"><?= number_format($lr['hl'], 2) ?> HL</span>
             </td>
             <td class="exp-st-col-units">
-              <span class="exp-st-num<?= !$lrHasStock ? ' exp-st-muted' : '' ?>"><?= exp_fmt_stock_qty($lrQty, $lrIsCage) ?><?php if ($lrIsCage && $lrHasStock): ?> <span class="exp-ledger-hl">cage</span><?php endif ?></span>
+              <span class="exp-st-num<?= !$lrHasStock ? ' exp-st-muted' : '' ?>"><?= exp_fmt_stock_qty($lrQty, $lrIsCage) ?></span>
             </td>
             <td class="exp-st-col-hl">
               <span class="exp-st-num<?= !$lrHasStock ? ' exp-st-muted' : '' ?>"><?= number_format($lr['hl'], 2) ?></span>
@@ -6222,7 +6215,7 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
   // as prefilled values (a real edit, not blind re-entry).
   // Uses is_active=1 so tombstoned anchor rows are not surfaced.
   // DISTINCT from $stPriorMap which shows latest-ever count for the "précéd." hint.
-  $stPrefillMap = []; // sku_id → qty (stored cage-units for cage SKUs, raw qty otherwise)
+  $stPrefillMap = []; // sku_id → qty (bottles for cage SKUs post-redenomination, raw qty for others)
   if ($stSelLocId > 0) {
       $prefillStmt = $pdo->prepare(
           'SELECT sku_id_fk, qty
@@ -6515,8 +6508,7 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
           <span class="exp-st-family-count" id="exp-st-fc-cage"></span>
         </div>
         <div class="exp-st-cage-note" role="note">
-          Saisie en <strong>cages (unités)</strong> — décimales acceptées (ex.&nbsp;: 0,5 = demi-cage).
-          ≈&nbsp;1&nbsp;027&nbsp;btl/cage selon remplissage — non utilisé pour le calcul.
+          Saisie en <strong>bouteilles</strong> — entiers, 0 = rupture.
         </div>
         <div class="exp-st-family-rows">
         <?php foreach ($stCageSkus as $sk): ?>
@@ -6524,21 +6516,19 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
           $sid            = (int) $sk['id'];
           $code           = $sk['sku_code'];
           $hpu            = (float) $sk['hl_per_unit'];
-          // Cage prefill: stored qty is cage-units; input is now cage-units directly.
-          // No inverse conversion — prefill the stored cage-unit value as-is.
-          $cagePrefillCageUnits = isset($stPrefillMap[$sid]) ? (float) $stPrefillMap[$sid] : null;
+          // Cage prefill: stored qty is now integer bottles (post-redenomination).
+          $cagePrefillBottles = isset($stPrefillMap[$sid]) ? (int) round((float) $stPrefillMap[$sid]) : null;
           ?>
-          <!-- Cage row: input in cage-units (decimals accepted), stored as-entered. No conversion. -->
-          <div class="exp-st-row exp-st-row--cage<?= $cagePrefillCageUnits !== null ? ' exp-st-row--prefilled' : '' ?>"
+          <!-- Cage row: input in whole bottles, stored as-entered (integer). -->
+          <div class="exp-st-row exp-st-row--cage<?= $cagePrefillBottles !== null ? ' exp-st-row--prefilled' : '' ?>"
                data-sku-id="<?= $sid ?>"
                data-sku-code="<?= htmlspecialchars($code) ?>"
                data-hl="<?= $hpu ?>"
-               data-is-cage="1"
-               data-bottles-per-cage="<?= $bottlesPerCage ?>">
+               data-is-cage="1">
             <label class="exp-st-row__label" for="exp-st-qty-<?= $sid ?>">
               <span class="exp-st-row__code"><?= htmlspecialchars($code) ?></span>
               <span class="exp-st-cage-ref">
-                <?= number_format($hpu, 3) ?>&nbsp;hl/cage
+                <?= number_format($hpu, 5) ?>&nbsp;hl/btl
               </span>
             </label>
             <!-- Hidden parallel-array id field (always submitted so POST knows this SKU exists) -->
@@ -6550,15 +6540,15 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
                        name="sku_qty_val[]"
                        class="exp-st-qty-input exp-st-cage-input"
                        min="0"
-                       step="0.01"
+                       step="1"
                        placeholder=""
                        autocomplete="off"
-                       <?php if ($cagePrefillCageUnits !== null): ?>
-                       value="<?= number_format($cagePrefillCageUnits, 4, '.', '') ?>"
+                       <?php if ($cagePrefillBottles !== null): ?>
+                       value="<?= $cagePrefillBottles ?>"
                        <?php endif ?>
-                       aria-label="Cages (unités) <?= htmlspecialchars($code) ?>"
-                       inputmode="decimal">
-                <span class="exp-st-cage-unit">cages</span>
+                       aria-label="Bouteilles <?= htmlspecialchars($code) ?>"
+                       inputmode="numeric">
+                <span class="exp-st-cage-unit">btl</span>
               </div>
               <!-- Live hint: JS writes this from input value -->
               <span class="exp-st-cage-live" id="exp-st-cage-live-<?= $sid ?>" aria-live="polite"></span>

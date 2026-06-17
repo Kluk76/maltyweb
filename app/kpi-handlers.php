@@ -9258,10 +9258,11 @@ function kpi_sales_stub_gap(string $handler, string $label, string $note): array
 // ─── Canonical production filter — defined ONCE, used by loader + all 5 breakdown queries ──
 // Reuse via: "JOIN ref_skus rs ON rs.id = l.sku_id_fk" + "WHERE " . KPI_SALES_PROD_FILTER
 // "Production beer": sku_id_fk NOT NULL (JOIN drops CAUF/non-FG), recipe_id NOT NULL
-// (drops PD8/XMASPACK/PAL/PAC/COLLAB* non-beer packs), units_per_pack < 100
-// (drops -X cages). NO is_active filter (history refs retired-but-sold SKUs).
+// (drops PD8/XMASPACK/PAL/PAC/COLLAB* non-beer packs), stocktake_scope != 'cage'
+// (drops -X cages — explicit scope guard survives the units_per_pack=1 redenomination).
+// NO is_active filter (history refs retired-but-sold SKUs).
 // Sign convention: outbound = -SUM(hl_resolved) / -SUM(qty_signed).
-define('KPI_SALES_PROD_FILTER', 'rs.recipe_id IS NOT NULL AND rs.units_per_pack < 100');
+define('KPI_SALES_PROD_FILTER', "rs.recipe_id IS NOT NULL AND rs.stocktake_scope != 'cage'");
 
 // ─── Shared loader: inv_sales_ledger production-filtered, per-period ──────────
 // Returns array keyed by period 'YYYY-MM', sorted chronological.
@@ -11906,7 +11907,7 @@ function kpi_tanks_hl_in_tank(string $label, PDO $pdo): array
 // LEDGER-BASED SALES TRACKERS (#272–#276)
 // Source: inv_sales_ledger (canonical SoT — years of history, pre-computed HL)
 // Filter: kpi_sales_load_ledger_prod() — production beer only (recipe_id NOT NULL,
-//         units_per_pack < 100, sku_id_fk NOT NULL). NOT inv_sales_bc.
+//         stocktake_scope != 'cage', sku_id_fk NOT NULL). NOT inv_sales_bc.
 // data_ready=0 — Opus verifies fiscal numbers before flipping.
 // ═════════════════════════════════════════════════════════════════════════════
 
@@ -11944,7 +11945,7 @@ function kpi_sales_hl_monthly_series(string $label, PDO $pdo): array
         'meta'   => [
             'period_label'   => $latest,
             'source'         => 'inv_sales_ledger (production filter)',
-            'filter_note'    => 'recipe_id NOT NULL + units_per_pack < 100',
+            'filter_note'    => 'stocktake_scope != cage (post-redenomination; was units_per_pack < 100)',
         ],
     ]);
 }
@@ -12394,7 +12395,7 @@ function kpi_sales_monthly_matrix(
             'columns'      => $columns,
             'period_label' => $periodLabel,
             'source'       => 'inv_sales_ledger (production filter)',
-            'filter_note'  => 'recipe_id NOT NULL + units_per_pack < 100',
+            'filter_note'  => 'stocktake_scope != cage (post-redenomination; was units_per_pack < 100)',
         ],
     ]);
 }
