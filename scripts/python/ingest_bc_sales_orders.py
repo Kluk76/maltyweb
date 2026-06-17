@@ -18,16 +18,14 @@ EXCLUSIONS (XOR / no-double-deplete guard):
   - Sell_to_Customer_No IN ('1080','3822') → eshop/taproom system accounts; skip.
   - Lines where Type ≠ 'Item' → comment/charge lines; skip.
 
-STATUS MODEL (operator-confirmed, ruling-4 applied):
+STATUS MODEL (operator-confirmed):
   - New BC order  → maltytask status 'entered'
   - Header + lines refreshed while status IN ('entered','confirmed')
   - Once 'picked'+ → FREEZE lines (operator started physical work); header commercial fields
     may still refresh but lines are not touched
-  - BC Completely_Shipped=True → stored in bc_completely_shipped mirror field only;
-    displayed as a signal in the UI ("BC : BL imprimé ✓") but NEVER advances operational status
-  - Operational status is EXCLUSIVELY operator-controlled; the pull NEVER writes status or
-    ord_order_status_events rows (Ruling-4)
-  - Status 'shipped' is set ONLY by the operator (depletion trigger)
+  - BC Completely_Shipped=True + current status below 'bl_printed' → advance to 'bl_printed'
+    (BL was printed for physical loading day; NOT a depletion trigger)
+  - Status 'shipped' is set ONLY by the operator; the pull NEVER writes it
   - A BC order leaves the active set when BC invoices it (disappears from SalesOrder)
 
 DIVERGENCE DETECTION (build B):
@@ -164,6 +162,99 @@ _STATUS_RANK: dict[str, int] = {
 # Statuses where line refresh is still safe (operator hasn't started physical work)
 _REFRESH_LINE_STATUSES = frozenset({"entered", "confirmed"})
 
+
+# ── Status advance helpers ────────────────────────────────────────────────────
+
+def should_advance_to_bl_printed(
+    current_status: str,
+    completely_shipped: bool,
+) -> bool:
+    """
+    Return True iff BC says Completely_Shipped=True AND maltytask status is below bl_printed.
+    Never regresses; never touches 'shipped' or 'cancelled'.
+    """
+    if not completely_shipped:
+        return False
+    rank_current = _STATUS_RANK.get(current_status, 99)
+    rank_target  = _STATUS_RANK["bl_printed"]
+    return rank_current < rank_target
+
+
+# INVARIANT: NEVER extend this auto-advance to 'shipped'. fg-stock.php depletes
+# FG/COGS/WAC/beer-tax ONLY on status='shipped' — bl_printed is pre-depletion.
+# Auto-advancing to shipped would burn canonical facts without operator confirmation.
+def advance_status(
+    conn: "pymysql.connections.Connection",
+    order: dict,
+    existing_bc: dict[str, dict],
+    apply_mode: bool,
+) -> "str | None":
+    """
+    If BC says Completely_Shipped=True and current status is below bl_printed,
+    advance to bl_printed by emitting one ord_order_status_events row per crossed
+    intermediate stage (entered→confirmed→picked→bl_printed as needed), then
+    updating ord_orders.status = 'bl_printed'.
+
+    In dry-run mode: no DB writes, but runs a read-only SELECT for existing events
+    so the preview is accurate.  Returns a human-readable summary string, or None
+    if no advance is needed.
+    """
+    source_ref = order["source_ref"]
+    existing   = existing_bc.get(source_ref)
+    if existing is None:
+        return None  # new order just inserted as 'entered'
+
+    current_status = existing.get("status", "entered")
+    if not should_advance_to_bl_printed(current_status, order["completely_shipped"]):
+        return None
+
+    order_id     = existing["id"]
+    rank_current = _STATUS_RANK[current_status]
+    rank_target  = _STATUS_RANK["bl_printed"]
+
+    # Build ordered list of stages to cross (strictly between current and bl_printed, inclusive)
+    stages_ordered = sorted(
+        [s for s, r in _STATUS_RANK.items() if rank_current < r <= rank_target],
+        key=lambda s: _STATUS_RANK[s],
+    )
+
+    # Read existing events (read-only SELECT — safe in both apply and dry-run)
+    with conn.cursor() as c:
+        c.execute(
+            "SELECT status FROM ord_order_status_events WHERE order_id_fk = %s",
+            (order_id,),
+        )
+        existing_event_statuses = {row["status"] for row in c.fetchall()}
+
+    stages_to_emit = [s for s in stages_ordered if s not in existing_event_statuses]
+
+    if apply_mode:
+        with conn.cursor() as c:
+            for stage in stages_to_emit:
+                c.execute(
+                    """
+                    INSERT INTO ord_order_status_events
+                        (order_id_fk, status, occurred_at, user_id_fk, comment)
+                    VALUES (%s, %s, NOW(), NULL, 'auto:bc-shipped')
+                    """,
+                    (order_id, stage),
+                )
+            c.execute(
+                """
+                UPDATE ord_orders
+                   SET status     = 'bl_printed',
+                       updated_at = CURRENT_TIMESTAMP
+                 WHERE id = %s
+                """,
+                (order_id,),
+            )
+
+    stages_label = ",".join(stages_to_emit) if stages_to_emit else "(all already present)"
+    return (
+        f"{order['bc_no']}: {current_status} -> bl_printed [auto:bc-shipped]"
+        f" (events: {stages_label})"
+    )
+
 # Batch size for OR-chained $filter requests (BC rejects the `in` operator — HTTP 501)
 OR_CHAIN_BATCH = 50
 
@@ -256,7 +347,8 @@ def fetch_sales_orders(bc: dict[str, str]) -> list[dict]:
             Ship_to_Name, Ship_to_Address, Ship_to_City, Ship_to_Post_Code,
             Ship_to_Country_Region_Code, Shipping_Agent_Code, Shipment_Date,
             Completely_Shipped, ShpfyOrderNo, Salesperson_Code, Order_Date,
-            Document_Date (operator-confirmed chargement/livraison date → requested_date).
+            Posting_Date (date de comptabilisation = jour de chargement effectif → requested_date),
+            Document_Date (fallback for requested_date when Posting_Date is blank).
     """
     token = _get_token(bc)
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
@@ -270,7 +362,8 @@ def fetch_sales_orders(bc: dict[str, str]) -> list[dict]:
         "Shipping_Agent_Code", "Shipment_Date",
         "Completely_Shipped", "ShpfyOrderNo",
         "Salesperson_Code", "Order_Date",
-        "Document_Date",   # operator-confirmed loading/delivery date (chargement/livraison)
+        "Posting_Date",    # date de comptabilisation = jour de chargement effectif → requested_date
+        "Document_Date",   # fallback for requested_date when Posting_Date is blank
         "Your_Reference",  # echo field: 'mt:<local_id>' for maltytask-native orders
     ])
     select_enc = quote(select_fields, safe="")
@@ -610,11 +703,15 @@ def classify_orders(
 
         # Parse dates
         shipment_date       = str(o.get("Shipment_Date", "") or "").strip()
-        # Document_Date = operator-confirmed chargement/livraison date ("la date du document
-        # est la date de chargement/livraison chez client").  Maps to requested_date.
-        # Falls back to shipment_date when blank (rare; Shipment_Date mirrors Order_Date
-        # in BC so this fallback is order-creation-date, not a real delivery date).
-        document_date       = str(o.get("Document_Date", "") or "").strip() or shipment_date
+        # Posting_Date = date de comptabilisation = jour de chargement effectif (operator,
+        # 2026-06-17). Cascade fallback Document_Date → Shipment_Date pour ne jamais laisser
+        # requested_date NULL (sinon le burn engine perd la commande de son bucket forward).
+        # Posting_Date sondé peuplé 20/20 sur commandes ouvertes ; fallbacks = ceinture.
+        posting_date = (
+            str(o.get("Posting_Date", "") or "").strip()
+            or str(o.get("Document_Date", "") or "").strip()
+            or shipment_date
+        )
         completely_shipped  = bool(o.get("Completely_Shipped", False))
 
         pull.append({
@@ -624,7 +721,7 @@ def classify_orders(
             "customer_id":      customer_id,
             "bc_customer_no":   cust_no,
             "bc_customer_name": str(o.get("Sell_to_Customer_Name", "")),
-            "document_date":    document_date,   # → requested_date (real delivery/loading date)
+            "posting_date":     posting_date,    # → requested_date (real delivery/loading date)
             "shipment_date":    shipment_date,   # retained for display / collision report
             "order_date":       order_date,
             "completely_shipped": completely_shipped,
@@ -666,7 +763,7 @@ def detect_collisions(
         This preserves the existing WeeklyOrders collision-skip behaviour.
 
     - Shipped candidates (status == 'shipped'):
-        collide ONLY when customer_id_fk + SKU overlap + requested_date == BC document_date.
+        collide ONLY when customer_id_fk + SKU overlap + requested_date == BC posting_date.
         The exact date triple is required to avoid flagging a customer's unrelated past orders.
 
     Cancelled candidates are excluded entirely (already excluded by load_existing_non_bc_active_orders).
@@ -684,9 +781,9 @@ def detect_collisions(
 
     collisions = []
 
-    # Build map: customer_id → list of (bc_no, document_date, sku_id_set)
-    # existing_date (requested_date) = Document_Date after the fix; compare against
-    # bc_ship_date (document_date) so the date semantics are consistent on both sides.
+    # Build map: customer_id → list of (bc_no, posting_date, sku_id_set)
+    # existing_date (requested_date) = Posting_Date (new primary); compare against
+    # bc_ship_date (posting_date) so the date semantics are consistent on both sides.
     bc_by_cust: dict[int, list[dict]] = {}
     for po in classified["pull"]:
         cid = canon(po["customer_id"])
@@ -695,7 +792,7 @@ def detect_collisions(
         bc_skus = {ln["sku_id"] for ln in po["resolved_lines"]}
         bc_by_cust.setdefault(cid, []).append({
             "bc_no":           po["bc_no"],
-            "document_date":   po["document_date"],
+            "posting_date":    po["posting_date"],
             "bc_skus":         bc_skus,
         })
 
@@ -710,17 +807,17 @@ def detect_collisions(
                 continue
             # Two-tier date gate: shipped rows require exact date match to avoid
             # flagging a customer's unrelated past shipped orders.
-            if eo_is_shipped and eo["requested_date"] != bc_entry["document_date"]:
+            if eo_is_shipped and eo["requested_date"] != bc_entry["posting_date"]:
                 continue
             collisions.append({
                 "existing_id":     eo["id"],
                 "existing_source": eo["source"],
                 "existing_ref":    eo["source_ref"],
-                "existing_date":   eo["requested_date"],   # = Document_Date after fix
+                "existing_date":   eo["requested_date"],   # = Posting_Date (primary)
                 "existing_status": eo["status"],
                 "existing_skus":   sorted(eo["sku_ids"]),
                 "bc_no":           bc_entry["bc_no"],
-                "bc_ship_date":    bc_entry["document_date"],  # Document_Date — same semantic
+                "bc_ship_date":    bc_entry["posting_date"],   # Posting_Date — same semantic
                 "bc_skus":         sorted(bc_entry["bc_skus"]),
                 "sku_overlap":     sorted(overlap),
             })
@@ -812,7 +909,7 @@ def echo_leg_upsert(
                 (
                     bc_no,
                     bc_ref,
-                    order.get("document_date") or None,
+                    order.get("posting_date") or None,
                     order.get("order_date") or None,
                     local_id,
                 ),
@@ -869,7 +966,7 @@ def upsert_order(
                      WHERE source_ref = %s
                     """,
                     (
-                        order["document_date"] or None,
+                        order["posting_date"] or None,
                         order.get("order_date") or None,
                         source_ref,
                     ),
@@ -899,7 +996,7 @@ def upsert_order(
                 """,
                 (
                     order["customer_id"],
-                    order["document_date"] or None,
+                    order["posting_date"] or None,
                     order.get("order_date") or None,
                     source_ref,
                     f"BC {order['bc_no']} — auto-ingested from Business Central",
@@ -1373,6 +1470,7 @@ def print_reconciliation_report(
     would_skip_backlog:   int,
     insert_candidates:    list[dict],
     bc_shipped_signals:   list[str],
+    bl_advances:          list[str],
     divergences_flagged:  list[str],
     divergences_cleared:  list[str],
     bc_snapshot_count:    int,
@@ -1445,6 +1543,14 @@ def print_reconciliation_report(
         for s in bc_shipped_signals:
             print(f"    {s}")
     print(f"  BC line snapshots (ord_order_bc_lines) : {bc_snapshot_count} line(s)")
+    print()
+    print("── AUTO STATUS ADVANCES (Completely_Shipped=True → bl_printed) ─────")
+    print(f"  Orders advanced to bl_printed : {len(bl_advances)}")
+    if bl_advances:
+        for s in bl_advances:
+            print(f"    {s}")
+    else:
+        print("  (none)")
     print()
     print("── DIVERGENCE DETECTION ─────────────────────────────────────────────")
     print(f"  Divergences flagged (correction_compta_requise): {len(divergences_flagged)}")
@@ -1524,7 +1630,7 @@ def print_reconciliation_report(
     print()
 
 
-# ── Backfill: requested_date ← Document_Date  +  order_created_date ← Order_Date ──
+# ── Backfill: requested_date ← Posting_Date  +  order_created_date ← Order_Date ──
 
 def backfill_dates(apply_mode: bool) -> None:
     """
@@ -1532,7 +1638,7 @@ def backfill_dates(apply_mode: bool) -> None:
     source='bc' row where requested_date or order_created_date diverges from BC truth.
 
     Sources of truth (single BC fetch — no double round-trip):
-      requested_date     ← BC Document_Date (operator-confirmed delivery/loading date)
+      requested_date     ← BC Posting_Date (date de comptabilisation = jour de chargement effectif ; fallback Document_Date → Shipment_Date)
       order_created_date ← BC Order_Date    (when the order was placed)
 
     Orders no longer in the BC open endpoint (invoiced/closed) cannot be fetched —
@@ -1550,16 +1656,20 @@ def backfill_dates(apply_mode: bool) -> None:
     bc = _load_bc_env()
     bc_orders = fetch_sales_orders(bc)
 
-    # Build {bc_no: (document_date, order_date)} from BC — open orders only
+    # Build {bc_no: (posting_date, order_date)} from BC — open orders only
     bc_dates: dict[str, tuple[str, str]] = {}
     for o in bc_orders:
         no = str(o.get("No", "")).strip()
         if not no:
             continue
         shipment_date = str(o.get("Shipment_Date", "") or "").strip()
-        doc_date      = str(o.get("Document_Date", "") or "").strip() or shipment_date
+        posting_date  = (
+            str(o.get("Posting_Date", "") or "").strip()
+            or str(o.get("Document_Date", "") or "").strip()
+            or shipment_date
+        )
         order_date    = str(o.get("Order_Date", "") or "").strip()
-        bc_dates[no] = (doc_date, order_date)
+        bc_dates[no] = (posting_date, order_date)
 
     print(f"  BC open orders fetched: {len(bc_dates)}")
 
@@ -1696,7 +1806,7 @@ def main() -> None:
         "--backfill-dates", action="store_true",
         help=(
             "One-shot backfill: fetch open BC orders, update ord_orders.requested_date "
-            "← Document_Date AND order_created_date ← Order_Date for all source='bc' rows. "
+            "← Posting_Date AND order_created_date ← Order_Date for all source='bc' rows. "
             "Use --apply to write; default is dry-run."
         ),
     )
@@ -1803,6 +1913,8 @@ def main() -> None:
         insert_candidates: list[dict] = []
         # BC mirror signals (informational — never operational status)
         bc_shipped_signals: list[str]  = []
+        # Auto bl_printed advances (BC Completely_Shipped → status advance)
+        bl_advances: list[str] = []
         # Divergence tracking
         divergences_flagged:   list[str] = []
         divergences_cleared:   list[str] = []
@@ -1907,6 +2019,16 @@ def main() -> None:
                         f"{bc_no}: BC Completely_Shipped=True → bc_completely_shipped=1 (signal only)"
                     )
 
+                # Auto status advance: Completely_Shipped=True → bl_printed.
+                # Skip brand-new inserts on this pull (no existing_bc entry yet — the
+                # advance fires on the next pull); mirrors the divergence block's
+                # `action != "insert"` gate below. advance_status also self-guards via
+                # `existing is None`, so this is belt-and-suspenders.
+                if action != "insert":
+                    advance_summary = advance_status(conn, order, existing_bc, apply_mode)
+                    if advance_summary is not None:
+                        bl_advances.append(advance_summary)
+
                 # BC line snapshot (for existing rows; new inserts need a second pass)
                 if action != "insert":
                     bc_raw_lines = lines_by_order.get(bc_no, [])
@@ -1972,6 +2094,7 @@ def main() -> None:
             print(f"  Divergences flagged : {len(divergences_flagged)}")
             print(f"  Divergences cleared : {len(divergences_cleared)}")
             print(f"  BC shipped signals  : {len(bc_shipped_signals)} (mirror only, no status write)")
+            print(f"  bl_printed advances : {len(bl_advances)}")
         else:
             conn.rollback()
 
@@ -2009,6 +2132,7 @@ def main() -> None:
             would_skip_backlog    = would_skip_backlog,
             insert_candidates     = insert_candidates,
             bc_shipped_signals    = bc_shipped_signals,
+            bl_advances           = bl_advances,
             divergences_flagged   = divergences_flagged,
             divergences_cleared   = divergences_cleared,
             bc_snapshot_count     = bc_snapshot_count,
