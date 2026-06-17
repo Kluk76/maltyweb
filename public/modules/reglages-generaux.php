@@ -164,6 +164,53 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             redirect_to('/modules/reglages-generaux.php?sec=general');
         }
 
+        // ── Action: save fulfilment settings (section='fulfilment') ──
+        // Only the editable numeric keys; the shopify_ingest_last_run_at heartbeat
+        // (value_text, cron-written) is intentionally NOT writable here.
+        if ($action === 'save_fulfilment') {
+            $fulfilmentKeys = [
+                'order_lead_time_critical_days' => 'Délai de préparation critique (jours)',
+                'order_lead_time_warn_days'     => 'Délai de préparation — alerte (jours)',
+                'shopify_ingest_stale_minutes'  => 'Import Shopify — seuil de fraîcheur (minutes)',
+            ];
+
+            foreach ($fulfilmentKeys as $key => $label) {
+                // Read-with-default FIRST, then validate (never trust raw POST).
+                $raw = post_str($key);
+                if ($raw === null) continue; // field absent from submission → leave unchanged
+                // Positive integer ≥ 1, anchored — rejects blank, 0, negatives, decimals, leading zeros.
+                if (!preg_match('/^[1-9]\d*$/', trim($raw))) {
+                    throw new RuntimeException("« {$label} » doit être un entier supérieur ou égal à 1.");
+                }
+                $val = (int) trim($raw);
+
+                $sel = $pdo->prepare(
+                    "SELECT id, value_text, value_num FROM system_settings
+                      WHERE section = 'fulfilment' AND key_name = ? AND is_active = 1
+                      LIMIT 1"
+                );
+                $sel->execute([$key]);
+                $existing = $sel->fetch(PDO::FETCH_ASSOC);
+
+                if (!$existing) continue; // key not seeded — never create new keys here
+
+                $before = ['value_text' => $existing['value_text'], 'value_num' => $existing['value_num']];
+
+                $upd = $pdo->prepare(
+                    "UPDATE system_settings SET value_num = ?, value_text = NULL, updated_by = ?
+                      WHERE id = ?"
+                );
+                $upd->execute([(float) $val, $me['username'], (int) $existing['id']]);
+                $after = ['value_text' => null, 'value_num' => (float) $val];
+
+                log_revision($pdo, $me, 'system_settings', (int) $existing['id'], $before, $after, 'normal',
+                    "Réglages: fulfilment.{$key}");
+            }
+
+            flash_set('ok', 'Paramètres logistique & synchronisation mis à jour.');
+            redirect_to('/modules/reglages-generaux.php?sec=general');
+        }
+
         // ── Action: add site ──
         if ($action === 'add_site') {
             $name = post_str('name');
@@ -978,6 +1025,10 @@ $settingsByKey    = [];
 $migrationApplied = false;
 $loadErr          = null;
 
+// Load system_settings (section=fulfilment)
+$fulfilmentByKey   = [];
+$fulfilmentApplied = false;
+
 // Load sites
 $sites       = [];
 $sitesApplied = false;
@@ -1029,6 +1080,30 @@ try {
         $migrationApplied = !empty($systemSettings);
     } catch (Throwable $e2) {
         $loadErr = $e2->getMessage();
+    }
+
+    // system_settings (section=fulfilment) — logistics + Shopify-sync thresholds
+    try {
+        $stmt = $pdo->query(
+            "SELECT key_name, label_fr, description_fr,
+                    value_text, value_num, unit_fr, default_text, default_num
+               FROM system_settings
+              WHERE section = 'fulfilment' AND is_active = 1
+              ORDER BY id ASC"
+        );
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $s) {
+            $fulfilmentByKey[$s['key_name']] = $s;
+        }
+        // Render the editable card only when all three editable keys are seeded —
+        // a partial seed (e.g. heartbeat-only) would otherwise show stale fallback
+        // defaults and silently no-op the missing keys on save.
+        $fulfilmentApplied = isset(
+            $fulfilmentByKey['order_lead_time_critical_days'],
+            $fulfilmentByKey['order_lead_time_warn_days'],
+            $fulfilmentByKey['shopify_ingest_stale_minutes']
+        );
+    } catch (Throwable) {
+        $fulfilmentApplied = false;
     }
 
     // ref_sites
@@ -1443,6 +1518,88 @@ $_breweryId = brewery_identity();
             </div>
           </form>
         </div><!-- /.rg-card settings -->
+        <?php endif ?>
+
+        <!-- ── Fulfilment settings form (section='fulfilment') ── -->
+        <?php if ($fulfilmentApplied): ?>
+        <?php
+          // Editable numeric thresholds (value_num). Effective value via eff_val,
+          // rendered as a plain integer. The shopify_ingest_last_run_at heartbeat
+          // (value_text, cron-written) is shown read-only below, never editable.
+          $critRow = $fulfilmentByKey['order_lead_time_critical_days'] ?? null;
+          $warnRow = $fulfilmentByKey['order_lead_time_warn_days'] ?? null;
+          $staleRow = $fulfilmentByKey['shopify_ingest_stale_minutes'] ?? null;
+          $lastRunRow = $fulfilmentByKey['shopify_ingest_last_run_at'] ?? null;
+          $critVal  = $critRow  !== null ? (int) round((float) eff_val($critRow))  : 1;
+          $warnVal  = $warnRow  !== null ? (int) round((float) eff_val($warnRow))  : 2;
+          $staleVal = $staleRow !== null ? (int) round((float) eff_val($staleRow)) : 10;
+          $lastRunVal = ($lastRunRow !== null && $lastRunRow['value_text'] !== null && $lastRunRow['value_text'] !== '')
+              ? (string) $lastRunRow['value_text'] : null;
+        ?>
+        <div class="rg-card">
+          <div class="rg-card-title">
+            Logistique &amp; synchronisation
+            <span class="rg-card-label">section · fulfilment</span>
+          </div>
+          <form method="post" action="/modules/reglages-generaux.php">
+            <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+            <input type="hidden" name="action" value="save_fulfilment">
+            <input type="hidden" name="sec" value="general">
+
+            <div class="rg-field-group">
+
+              <div class="rg-field">
+                <div>
+                  <div class="rg-field-label">Délai de préparation critique (jours)</div>
+                  <div class="rg-field-desc">Une commande dont l'échéance est à ce nombre de jours (ou moins) est signalée comme critique sur les expéditions.</div>
+                </div>
+                <input class="rg-input" type="number" name="order_lead_time_critical_days"
+                       value="<?= htmlspecialchars((string) $critVal) ?>"
+                       min="1" step="1" inputmode="numeric" required>
+              </div>
+
+              <hr class="rg-divider">
+
+              <div class="rg-field">
+                <div>
+                  <div class="rg-field-label">Délai de préparation — alerte (jours)</div>
+                  <div class="rg-field-desc">Seuil d'alerte (non critique) pour une commande dont la préparation approche.</div>
+                </div>
+                <input class="rg-input" type="number" name="order_lead_time_warn_days"
+                       value="<?= htmlspecialchars((string) $warnVal) ?>"
+                       min="1" step="1" inputmode="numeric" required>
+              </div>
+
+              <hr class="rg-divider">
+
+              <div class="rg-field">
+                <div>
+                  <div class="rg-field-label">Import Shopify — seuil d'alerte de fraîcheur (minutes)</div>
+                  <div class="rg-field-desc">Au-delà de ce délai sans import Shopify réussi, le système signale une synchronisation périmée.</div>
+                </div>
+                <input class="rg-input" type="number" name="shopify_ingest_stale_minutes"
+                       value="<?= htmlspecialchars((string) $staleVal) ?>"
+                       min="1" step="1" inputmode="numeric" required>
+              </div>
+
+              <?php if ($lastRunVal !== null): ?>
+              <hr class="rg-divider">
+              <div class="rg-field">
+                <div>
+                  <div class="rg-field-label">Dernier import Shopify</div>
+                  <div class="rg-field-desc">Horodatage écrit automatiquement par le cron d'import (lecture seule).</div>
+                </div>
+                <span class="rg-pill-active"><?= htmlspecialchars($lastRunVal) ?></span>
+              </div>
+              <?php endif ?>
+
+            </div><!-- /.rg-field-group -->
+
+            <div class="rg-save-row">
+              <button type="submit" class="rg-btn rg-btn-primary">Enregistrer la logistique</button>
+            </div>
+          </form>
+        </div><!-- /.rg-card fulfilment -->
         <?php endif ?>
 
         <!-- ── Sites block ── -->
