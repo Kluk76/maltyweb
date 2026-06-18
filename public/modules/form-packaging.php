@@ -1083,6 +1083,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 null  // whiteLabelSkuCode: form doesn't collect this yet
             );
 
+            // ── Cage run MUST resolve to a cage SKU ──────────────────────────
+            // A cage run (suffix 'X') derives its packaged volume and beer-tax
+            // base from the cage SKU's hl_per_unit; the run_type fallback cannot
+            // produce a per-cage volume. Without a resolved SKU the row would
+            // write at 0 HL and be mis-filed under Bouteille (PM finding
+            // 2026-06-18, run 6800). Refuse with an actionable message instead
+            // of silently under-reporting. WL rows (may legitimately lack a SKU)
+            // and cuve-reuse rows (vendable forced to 0) are exempt.
+            if ($fSuffix === 'X' && $skuIdFk === null
+                && !(bool)$fIsWl && $fReusesPackagingIdFk === null) {
+                // Raw label — flash_render() htmlspecialchars()-escapes the message at output.
+                $beerLbl = $nebBeer !== ''
+                    ? $nebBeer
+                    : ($contractBeer !== '' ? $contractBeer : ('recette #' . (string)$recipeIdFk));
+                throw new RuntimeException(
+                    "Aucun SKU cage (format « X ») n'existe pour « {$beerLbl} ». "
+                    . "Sans lui, le volume packagé et la base taxe-bière ne peuvent pas être calculés, "
+                    . "et le run serait enregistré à 0 HL. "
+                    . "Un administrateur doit d'abord créer ce SKU dans "
+                    . "Admin → Paramètres → SKU (recette « {$beerLbl} », format « X »), "
+                    . "puis ce run pourra être saisi."
+                );
+            }
+
             // ── SKU meta (hl_per_unit, units_per_pack) ────────────────────────
             // Loaded once per distinct sku_id within this POST (cached in $skuMetaCache).
             $skuMeta = ['hl_per_unit' => null, 'units_per_pack' => null];
