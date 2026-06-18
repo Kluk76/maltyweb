@@ -72,7 +72,7 @@ $params    = $scopeId !== null ? [$scopeId] : [];
 $dueFilter = $dryRun ? '' : ' AND (s.next_due_at IS NULL OR s.next_due_at <= NOW())';
 
 $stmt = $pdo->prepare(
-    "SELECT s.id, s.user_id_fk, s.cadence, s.last_sent_at, s.next_due_at,
+    "SELECT s.id, s.user_id_fk, s.cadence, s.send_hour_local, s.last_sent_at, s.next_due_at,
             u.email, u.display_name, u.username, u.role
        FROM user_kpi_recap_subs s
        JOIN users u ON u.id = s.user_id_fk
@@ -225,12 +225,23 @@ foreach ($subs as $sub) {
         fwrite(STDERR, "[kpi-recap]   → FAILED to send to {$userEmail}\n");
     }
 
-    // ── Compute next_due_at ────────────────────────────────────────────────────
+    // ── Compute next_due_at (anchored to send_hour_local, Europe/Zurich → UTC) ─
+    // Advance to the next occurrence of H:00 Zurich, then shift by the cadence.
+    // Storing UTC ensures MySQL comparisons (next_due_at <= NOW()) are correct
+    // regardless of the VPS system timezone.
+    $sendHour = isset($sub['send_hour_local']) ? (int) $sub['send_hour_local'] : 8;
+    $tz   = new DateTimeZone('Europe/Zurich');
+    $utc  = new DateTimeZone('UTC');
+    $now  = new DateTimeImmutable('now', $tz);
+    // Candidate: today at H:00 Zurich; bump to tomorrow if that slot has passed.
+    $cand = $now->setTime($sendHour, 0, 0);
+    if ($cand <= $now) {
+        $cand = $cand->modify('+1 day');
+    }
     $nextDue = match ($cadence) {
-        'daily'   => date('Y-m-d H:i:s', strtotime('+1 day')),
-        'weekly'  => date('Y-m-d H:i:s', strtotime('+7 days')),
-        'monthly' => date('Y-m-d H:i:s', strtotime('+1 month')),
-        default   => date('Y-m-d H:i:s', strtotime('+1 day')),
+        'weekly'  => $cand->modify('+6 days')->setTimezone($utc)->format('Y-m-d H:i:s'),
+        'monthly' => $cand->modify('+1 month')->setTimezone($utc)->format('Y-m-d H:i:s'),
+        default   => $cand->setTimezone($utc)->format('Y-m-d H:i:s'),
     };
 
     // ── Update subscription timestamps ─────────────────────────────────────────

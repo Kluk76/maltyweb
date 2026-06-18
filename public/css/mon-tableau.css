@@ -891,6 +891,31 @@ body.mon-tableau .mt-recap-prefs__info {
   color: var(--ink-mute);
   font-family: 'DM Sans', sans-serif;
 }
+body.mon-tableau .mt-recap-prefs__hour-row {
+  margin-top: .65rem;
+  gap: .5rem;
+}
+body.mon-tableau .mt-recap-prefs__hour-lbl {
+  font-size: .82rem;
+  color: var(--ink-soft);
+  font-family: 'DM Sans', sans-serif;
+  white-space: nowrap;
+}
+body.mon-tableau .mt-recap-prefs__hour-sel {
+  padding: .25rem .55rem;
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: .82rem;
+  color: var(--ink);
+  background: var(--bg);
+  cursor: pointer;
+  appearance: auto;
+}
+body.mon-tableau .mt-recap-prefs__hour-sel:focus {
+  outline: 2px solid color-mix(in srgb, var(--hop) 40%, transparent);
+  border-color: var(--hop);
+}
 
 /* ── Recap card span (viz_type='recap') — 2 cols wide like bar/line ── */
 body.mon-tableau .kpc-card--recap {

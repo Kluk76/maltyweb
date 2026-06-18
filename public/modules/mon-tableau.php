@@ -183,6 +183,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             flash_set('err', 'Cadence invalide.');
             redirect_to('/modules/mon-tableau.php');
         }
+        $rawHour = (int) (post_str('send_hour') ?? '8');
+        if ($rawHour < 0 || $rawHour > 23) {
+            flash_set('err', 'Heure d\'envoi invalide (0-23).');
+            redirect_to('/modules/mon-tableau.php');
+        }
 
         /* Snapshot before write */
         $snapStmt = $pdo->prepare(
@@ -207,19 +212,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             /* Upsert subscription: set cadence + clear next_due_at so cron fires on next check */
             $upsSql = $before !== null
-                ? "UPDATE user_kpi_recap_subs SET cadence = ?, next_due_at = NOW(), is_active = 1 WHERE user_id_fk = ?"
-                : "INSERT INTO user_kpi_recap_subs (cadence, next_due_at, is_active, user_id_fk) VALUES (?, NOW(), 1, ?)";
-            $pdo->prepare($upsSql)->execute([$rawCadence, $myUserId]);
+                ? "UPDATE user_kpi_recap_subs SET cadence = ?, send_hour_local = ?, next_due_at = NOW(), is_active = 1 WHERE user_id_fk = ?"
+                : "INSERT INTO user_kpi_recap_subs (cadence, send_hour_local, next_due_at, is_active, user_id_fk) VALUES (?, ?, NOW(), 1, ?)";
+            $pdo->prepare($upsSql)->execute([$rawCadence, $rawHour, $myUserId]);
 
             $afterId = $before !== null ? (int) $before['id'] : (int) $pdo->lastInsertId();
-            $after   = ['cadence' => $rawCadence, 'next_due_at' => date('Y-m-d H:i:s'), 'is_active' => 1];
+            $after   = ['cadence' => $rawCadence, 'send_hour_local' => $rawHour, 'next_due_at' => date('Y-m-d H:i:s'), 'is_active' => 1];
             log_revision(
                 $pdo, $me,
                 'user_kpi_recap_subs', $afterId,
                 $before,
                 $after,
                 'normal',
-                "mon-tableau recap cadence: set to {$rawCadence}"
+                "mon-tableau recap cadence: set to {$rawCadence}, heure={$rawHour}h"
             );
         }
 
@@ -327,7 +332,7 @@ foreach ($CATEGORY_ORDER as $cat) {
 $recapSub = null;
 try {
     $recapStmt = $pdo->prepare(
-        "SELECT cadence, last_sent_at, next_due_at, is_active FROM user_kpi_recap_subs WHERE user_id_fk = ? LIMIT 1"
+        "SELECT cadence, send_hour_local, last_sent_at, next_due_at, is_active FROM user_kpi_recap_subs WHERE user_id_fk = ? LIMIT 1"
     );
     $recapStmt->execute([$myUserId]);
     $recapSub = $recapStmt->fetch(PDO::FETCH_ASSOC) ?: null;
@@ -335,7 +340,8 @@ try {
     /* Non-fatal: cadence selector shows 'none' */
     error_log('[mon-tableau] recap sub load failed: ' . $e->getMessage());
 }
-$currentCadence = ($recapSub && (int) $recapSub['is_active'] === 1) ? (string) $recapSub['cadence'] : 'none';
+$currentCadence  = ($recapSub && (int) $recapSub['is_active'] === 1) ? (string) $recapSub['cadence'] : 'none';
+$currentSendHour = ($recapSub && isset($recapSub['send_hour_local'])) ? (int) $recapSub['send_hour_local'] : 8;
 
 $csrfToken = csrf_token();
 $flash     = flash_pop();
@@ -522,16 +528,33 @@ require __DIR__ . '/../../app/partials/topbar.php';
         <?php endforeach ?>
         <button type="submit" class="mt-recap-prefs__save">Enregistrer</button>
       </div>
+      <?php /* Heure d'envoi : visible seulement si cadence ≠ none */ ?>
+      <div class="mt-recap-prefs__row mt-recap-prefs__hour-row" id="mt-recap-hour-row">
+        <label for="mt-recap-send-hour" class="mt-recap-prefs__hour-lbl">Heure d'envoi</label>
+        <select name="send_hour" id="mt-recap-send-hour" class="mt-recap-prefs__hour-sel">
+          <?php for ($h = 0; $h <= 23; $h++): ?>
+          <option value="<?= $h ?>"<?= $currentSendHour === $h ? ' selected' : '' ?>><?= sprintf('%02d:00', $h) ?></option>
+          <?php endfor ?>
+        </select>
+      </div>
       <?php if ($recapSub && $currentCadence !== 'none'): ?>
       <p class="mt-recap-prefs__info">
         Prochain envoi :
         <?php if ($recapSub['next_due_at']): ?>
-          <?= htmlspecialchars(date('d/m/Y H:i', strtotime($recapSub['next_due_at']))) ?>
+          <?php
+          $nextDt = new DateTimeImmutable($recapSub['next_due_at'], new DateTimeZone('UTC'));
+          $nextDt = $nextDt->setTimezone(new DateTimeZone('Europe/Zurich'));
+          ?>
+          <?= htmlspecialchars($nextDt->format('d/m/Y H:i')) ?>
         <?php else: ?>
           dès le prochain passage du cron
         <?php endif ?>
         <?php if ($recapSub['last_sent_at']): ?>
-          · Dernier envoi : <?= htmlspecialchars(date('d/m/Y H:i', strtotime($recapSub['last_sent_at']))) ?>
+          <?php
+          $lastDt = new DateTimeImmutable($recapSub['last_sent_at'], new DateTimeZone('UTC'));
+          $lastDt = $lastDt->setTimezone(new DateTimeZone('Europe/Zurich'));
+          ?>
+          · Dernier envoi : <?= htmlspecialchars($lastDt->format('d/m/Y H:i')) ?>
         <?php endif ?>
       </p>
       <?php endif ?>
@@ -549,6 +572,24 @@ require __DIR__ . '/../../app/partials/topbar.php';
 
 <!-- Server-injected KPI payload — consumed by kpi-charts.js -->
 <script>
+/* ── Recap hour row: show when cadence ≠ none, hide otherwise ── */
+(function () {
+  var hourRow   = document.getElementById('mt-recap-hour-row');
+  var radios    = document.querySelectorAll('input[name="cadence"]');
+
+  function applyVisibility() {
+    var sel = document.querySelector('input[name="cadence"]:checked');
+    if (!hourRow) return;
+    hourRow.style.display = (sel && sel.value !== 'none') ? '' : 'none';
+  }
+
+  radios.forEach(function (r) {
+    r.addEventListener('change', applyVisibility);
+  });
+
+  applyVisibility(); /* initial state on page load */
+})();
+
 window.MY_KPIS = <?= json_encode([
     'trackers' => array_values(array_map(function($t) {
         return [
