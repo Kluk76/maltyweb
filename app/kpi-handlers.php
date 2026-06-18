@@ -5926,6 +5926,7 @@ function kpi_pkg_daily_recap(string $label, PDO $pdo): array
                 b.prod_total_units,
                 b.objective_hl,
                 rs.sku_code,
+                rs.stocktake_scope,
                 /* per-material 1:1 losses (unit-side; bot/can/can33 only) */
                 b.loss_label_btl_units,
                 b.loss_crown_cork_units,
@@ -6002,6 +6003,9 @@ function kpi_pkg_daily_recap(string $label, PDO $pdo): array
         $lossKpiHl = (float) ($r['loss_kpi_hl'] ?? 0.0);
         $lossOther = (float) ($r['loss_liquid_other_units'] ?? 0.0);
         $runType   = $r['run_type'] ?? 'bot';
+        $displayRunType = ($runType === 'bot' && ($r['stocktake_scope'] ?? '') === 'cage')
+            ? 'cage'
+            : $runType;
         // BUG FIX (2026-06-10): keg/cuv — v_bd_packaging_v2_vendable already folds
         // loss_liquid_other_units/100 into loss_kpi_hl on the keg/cuv arm.
         // Adding it again here was a double-count. bot/can/can33 view arm does NOT
@@ -6047,7 +6051,7 @@ function kpi_pkg_daily_recap(string $label, PDO $pdo): array
             'value' => round($vendHl, 1),
             'unit'  => 'HL',
             'meta'  => [
-                'run_type'     => $runType,
+                'run_type'     => $displayRunType,
                 'batch'        => $batch,
                 'sku'          => isset($r['sku_code']) && $r['sku_code'] !== null
                                     ? (string) $r['sku_code'] : null,

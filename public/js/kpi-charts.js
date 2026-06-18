@@ -1162,6 +1162,7 @@ function renderKpiRecap(container, tracker, result, tCls) {
   // Run-type → French operator label (FIX2a, 2026-06-10). No DB codes in the UI.
   var RUN_TYPE_FR = {
     'bot':   'bouteille',
+    'cage':  'coffret',
     'can':   'canette',
     'can33': 'canette 33cl',
     'keg':   'fût',
@@ -1221,13 +1222,14 @@ function renderKpiRecap(container, tracker, result, tCls) {
   // Sections are rendered in this canonical order; empty sections suppressed.
   var RUN_TYPE_SECTION = {
     'bot':   'Bouteille',
+    'cage':  'Cage',
     'can':   'Canette',
     'can33': 'Canette',   // can33 lives inside the Canette section (tagged inline as "canette 33cl")
     'keg':   'Fût',
     'cuv':   'Cuve'
   };
   // Canonical section order (suppress empty; render in this sequence)
-  var SECTION_ORDER = ['Bouteille', 'Canette', 'Fût', 'Cuve'];
+  var SECTION_ORDER = ['Bouteille', 'Cage', 'Canette', 'Fût', 'Cuve'];
 
   if (runRows.length) {
     // Group by section title while preserving within-section order

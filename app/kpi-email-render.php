@@ -172,8 +172,8 @@ function _kpi_render_recap_sectioned(array $tracker, array $result): string
     // Group rows
     if ($hasRunType) {
         // PACKAGING grouping
-        $groupOrder  = ['keg', 'cuv', 'bot', 'can'];
-        $groupLabels = ['keg' => 'Fût', 'cuv' => 'Cuve', 'bot' => 'Bouteille', 'can' => 'Canette'];
+        $groupOrder  = ['keg', 'cuv', 'bot', 'cage', 'can'];
+        $groupLabels = ['keg' => 'Fût', 'cuv' => 'Cuve', 'bot' => 'Bouteille', 'cage' => 'Cage', 'can' => 'Canette'];
         $groups      = [];
         foreach ($renderRows as $row) {
             $rt = $row['meta']['run_type'] ?? 'autre';
