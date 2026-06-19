@@ -128,7 +128,13 @@ function sdc_redirect_url(string $sec, int $recipeId = 0, string $sub = '', int 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = post_str('action') ?? '';  // read action early so gate can inspect it
 
-    if (!is_admin($me) && !($action === 'submit_change_request' && is_manager($me)) && !($action === 'withdraw_change_request' && is_manager($me))) {
+    // Managers may ONLY file/withdraw change requests. They must NEVER reach a
+    // direct-write action (hop/format/binding/qc/yeast/name) — those handlers'
+    // inner gates allow managers, so listing them here would silently grant
+    // direct writes and bypass the approval flow. approve/reject are admin-only
+    // (inner gate blocks managers regardless; not listed = least privilege).
+    $managerAllowedActions = ['submit_change_request', 'withdraw_change_request'];
+    if (!is_admin($me) && !(is_manager($me) && in_array($action, $managerAllowedActions, true))) {
         flash_set('err', 'Modification réservée aux administrateurs.');
         redirect_to('/modules/salle-de-controle.php?sec=recettes');
     }
@@ -1618,7 +1624,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
 
                 // Refuse unsupported change kinds (P3c/P3d later)
-                $supportedKinds = ['recipe_field', 'qc_target', 'yeast'];
+                $supportedKinds = ['recipe_field', 'qc_target', 'yeast', 'ingredient_add', 'ingredient_update', 'ingredient_remove'];
                 if (!in_array($req['change_kind'], $supportedKinds, true)) {
                     $pdo->rollBack();
                     // Leave status=pending — do NOT 409
@@ -1697,6 +1703,133 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         'temp_max_override' => isset($fields['temp_max_override']) && $fields['temp_max_override'] !== '' ? (float) $fields['temp_max_override'] : null,
                     ];
                     sdc_apply_yeast($pdo, $me, $recipeId, $yeastFields, false);
+                } elseif ($changeKind === 'ingredient_update') {
+                    foreach ($lines as $ln) {
+                        if (($ln['field'] ?? '') !== 'hop_stage_boil') {
+                            throw new RuntimeException("Champ ingredient_update non supporté dans le replay : " . ($ln['field'] ?? ''));
+                        }
+                        $miIdFk = (int)($ln['mi_id_fk'] ?? 0);
+                        if ($miIdFk <= 0) throw new RuntimeException('mi_id_fk manquant sur la ligne ingredient_update.');
+
+                        $oldPayload = json_decode((string)($ln['old_value'] ?? '{}'), true) ?: [];
+                        $newPayload = json_decode((string)($ln['new_value'] ?? '{}'), true) ?: [];
+                        $oldStage  = $oldPayload['stage'] ?? null;
+                        $oldBoil   = isset($oldPayload['boil_min']) && $oldPayload['boil_min'] !== null ? (int)$oldPayload['boil_min'] : null;
+                        $newStage  = $newPayload['stage'] ?? null;
+                        $newBoil   = isset($newPayload['boil_min']) && $newPayload['boil_min'] !== null ? (int)$newPayload['boil_min'] : null;
+
+                        // STALE GUARD: re-resolve current open row by (recipe_id, mi_id_fk, stage, open)
+                        $staleStmt = $pdo->prepare(
+                            "SELECT ri.id, ri.recipe_id, ri.mi_id_fk, ri.qty_per_hl, ri.unit,
+                                    ri.hop_addition_stage, ri.hop_boil_time_min,
+                                    m.name AS mi_name, r.name AS recipe_name
+                               FROM ref_recipe_ingredients ri
+                               JOIN ref_mi m ON m.id = ri.mi_id_fk
+                               JOIN ref_recipes r ON r.id = ri.recipe_id
+                              WHERE ri.recipe_id = ? AND ri.mi_id_fk = ?
+                                AND (ri.hop_addition_stage <=> ?)
+                                AND (ri.hop_boil_time_min  <=> ?)
+                                AND ri.is_active = 1 AND ri.effective_until IS NULL
+                              LIMIT 1"
+                        );
+                        $staleStmt->execute([$recipeId, $miIdFk, $oldStage, $oldBoil]);
+                        $resolvedRri = $staleStmt->fetch(PDO::FETCH_ASSOC);
+
+                        if (!$resolvedRri) {
+                            $pdo->rollBack();
+                            http_response_code(409);
+                            echo json_encode(['ok' => false, 'error' => 'Demande périmée : la source a changé depuis la demande (ligne introuvable).']);
+                            exit;
+                        }
+                        $curStage = $resolvedRri['hop_addition_stage'];
+                        $curBoil  = $resolvedRri['hop_boil_time_min'] !== null ? (int)$resolvedRri['hop_boil_time_min'] : null;
+                        if ($curStage !== $oldStage || $curBoil !== $oldBoil) {
+                            $pdo->rollBack();
+                            http_response_code(409);
+                            echo json_encode(['ok' => false, 'error' => 'Demande périmée : la valeur source a changé.']);
+                            exit;
+                        }
+
+                        sdc_apply_hop_set_stage($pdo, $me, (int)$resolvedRri['id'], $resolvedRri, $newStage, $newBoil, false);
+                    }
+                } elseif ($changeKind === 'ingredient_remove') {
+                    foreach ($lines as $ln) {
+                        $miIdFk = (int)($ln['mi_id_fk'] ?? 0);
+                        if ($miIdFk <= 0) throw new RuntimeException('mi_id_fk manquant sur la ligne ingredient_remove.');
+
+                        $oldPayload = json_decode((string)($ln['old_value'] ?? '{}'), true) ?: [];
+                        $oldStage   = $oldPayload['stage'] ?? null;
+                        $oldBoil    = isset($oldPayload['boil_min']) && $oldPayload['boil_min'] !== null ? (int)$oldPayload['boil_min'] : null;
+
+                        // STALE GUARD: re-resolve open row
+                        $staleStmt2 = $pdo->prepare(
+                            "SELECT ri.id, ri.recipe_id, ri.mi_id_fk, ri.hop_addition_stage, ri.hop_boil_time_min,
+                                    m.name AS mi_name, r.name AS recipe_name
+                               FROM ref_recipe_ingredients ri
+                               JOIN ref_mi m ON m.id = ri.mi_id_fk
+                               JOIN ref_recipes r ON r.id = ri.recipe_id
+                              WHERE ri.recipe_id = ? AND ri.mi_id_fk = ?
+                                AND (ri.hop_addition_stage <=> ?)
+                                AND (ri.hop_boil_time_min  <=> ?)
+                                AND ri.is_active = 1 AND ri.effective_until IS NULL
+                              LIMIT 1"
+                        );
+                        $staleStmt2->execute([$recipeId, $miIdFk, $oldStage, $oldBoil]);
+                        $resolvedRri2 = $staleStmt2->fetch(PDO::FETCH_ASSOC);
+
+                        if (!$resolvedRri2) {
+                            $pdo->rollBack();
+                            http_response_code(409);
+                            echo json_encode(['ok' => false, 'error' => 'Demande périmée : déjà supprimée ou modifiée.']);
+                            exit;
+                        }
+
+                        sdc_apply_hop_remove($pdo, $me, (int)$resolvedRri2['id'], $resolvedRri2, false);
+                    }
+                } elseif ($changeKind === 'ingredient_add') {
+                    foreach ($lines as $ln) {
+                        $miIdFk = (int)($ln['mi_id_fk'] ?? 0);
+                        if ($miIdFk <= 0) throw new RuntimeException('mi_id_fk manquant sur la ligne ingredient_add.');
+
+                        $newPayload = json_decode((string)($ln['new_value'] ?? '{}'), true) ?: [];
+                        $stage      = $newPayload['stage'] ?? null;
+                        $boilMin    = isset($newPayload['boil_min']) && $newPayload['boil_min'] !== null ? (int)$newPayload['boil_min'] : null;
+                        $qtyPerHl   = isset($newPayload['qty_per_hl']) ? (float)$newPayload['qty_per_hl'] : 0.0;
+                        $unit       = $newPayload['unit'] ?? 'kg';
+
+                        if ($qtyPerHl <= 0) throw new RuntimeException('qty_per_hl invalide dans la ligne ingredient_add.');
+                        $allowedUnitsAdd = ['kg', 'g', 'ml', 'L'];
+                        if (!in_array($unit, $allowedUnitsAdd, true)) throw new RuntimeException('Unité invalide dans la ligne ingredient_add.');
+
+                        // STALE GUARD: check no open row already exists for this (recipe, mi, stage, boil)
+                        $dupStmt = $pdo->prepare(
+                            "SELECT COUNT(*) FROM ref_recipe_ingredients
+                              WHERE recipe_id = ? AND mi_id_fk = ?
+                                AND (hop_addition_stage <=> ?)
+                                AND (hop_boil_time_min  <=> ?)
+                                AND is_active = 1 AND effective_until IS NULL"
+                        );
+                        $dupStmt->execute([$recipeId, $miIdFk, $stage, $boilMin]);
+                        if ((int)$dupStmt->fetchColumn() > 0) {
+                            $pdo->rollBack();
+                            http_response_code(409);
+                            echo json_encode(['ok' => false, 'error' => 'Demande périmée : cette addition existe déjà.']);
+                            exit;
+                        }
+
+                        // Resolve $miRow and $recRow for the callable
+                        $miAddStmt = $pdo->prepare("SELECT id, mi_id, name FROM ref_mi WHERE id = ? LIMIT 1");
+                        $miAddStmt->execute([$miIdFk]);
+                        $miRow = $miAddStmt->fetch(PDO::FETCH_ASSOC);
+                        if (!$miRow) throw new RuntimeException("MI introuvable : id={$miIdFk}");
+
+                        $recAddStmt = $pdo->prepare("SELECT id, name FROM ref_recipes WHERE id = ? AND is_active = 1 LIMIT 1");
+                        $recAddStmt->execute([$recipeId]);
+                        $recRow = $recAddStmt->fetch(PDO::FETCH_ASSOC);
+                        if (!$recRow) throw new RuntimeException("Recette introuvable : id={$recipeId}");
+
+                        sdc_apply_hop_upsert($pdo, $me, $recipeId, $miIdFk, $stage, $boilMin, $qtyPerHl, $unit, $miRow, $recRow, false);
+                    }
                 }
 
                 // Mark approved
@@ -4697,11 +4830,38 @@ window.SDC_TANK_ERR = null;
               <?php if ($cr['lines']): ?>
               <div class="cr-lines">
                 <?php foreach ($cr['lines'] as $ln): ?>
+                <?php
+                $hopStageLabels = ['mash'=>'Maische','first_wort'=>'Première moût','boil'=>'Ébullition','whirlpool'=>'Tourbillon','hop_stand'=>'Infusion','dry_hop'=>'Houblonnage à froid'];
+                $lnField = $ln['field'] ?? '';
+                if ($lnField === 'hop_stage_boil') {
+                    $oldP = json_decode((string)($ln['old_value'] ?? '{}'), true) ?: [];
+                    $newP = json_decode((string)($ln['new_value'] ?? '{}'), true) ?: [];
+                    $fmtStage = fn($s,$b) => ($s ? ($hopStageLabels[$s] ?? $s) : '—') . ($s === 'boil' && $b !== null ? " {$b}min" : '');
+                    $lineDisplay = $fmtStage($oldP['stage'] ?? null, $oldP['boil_min'] ?? null) . ' → ' . $fmtStage($newP['stage'] ?? null, $newP['boil_min'] ?? null);
+                } elseif ($lnField === 'hop_add') {
+                    $newP = json_decode((string)($ln['new_value'] ?? '{}'), true) ?: [];
+                    $stageLabel = isset($newP['stage']) ? ($hopStageLabels[$newP['stage']] ?? $newP['stage']) : '—';
+                    $lineDisplay = 'Ajout : ' . $stageLabel . ($newP['stage'] === 'boil' && isset($newP['boil_min']) ? " {$newP['boil_min']}min" : '') . ', ' . ($newP['qty_per_hl'] ?? '?') . ' ' . ($newP['unit'] ?? '') . '/hl';
+                } elseif ($lnField === 'hop_remove') {
+                    $oldP = json_decode((string)($ln['old_value'] ?? '{}'), true) ?: [];
+                    $stageLabel = isset($oldP['stage']) ? ($hopStageLabels[$oldP['stage']] ?? $oldP['stage']) : '—';
+                    $lineDisplay = 'Retrait : ' . $stageLabel . ($oldP['stage'] === 'boil' && isset($oldP['boil_min']) ? " {$oldP['boil_min']}min" : '');
+                } else {
+                    $lineDisplay = null;
+                }
+                ?>
                 <div class="cr-line">
+                  <?php if ($lineDisplay !== null):
+                    $hopFieldLabel = ['hop_stage_boil'=>'Stage houblon','hop_add'=>'Addition houblon','hop_remove'=>'Retrait houblon'][$lnField] ?? $lnField;
+                  ?>
+                  <span class="cr-field"><?= htmlspecialchars($hopFieldLabel) ?></span>
+                  <span class="cr-hop-desc"><?= htmlspecialchars($lineDisplay) ?></span>
+                  <?php else: ?>
                   <span class="cr-field"><?= htmlspecialchars($ln['field'] ?? '—') ?></span>
                   <span class="cr-old"><?= htmlspecialchars($ln['old_value'] ?? '') ?></span>
                   <span class="cr-arrow">→</span>
                   <span class="cr-new"><?= htmlspecialchars($ln['new_value'] ?? '') ?></span>
+                  <?php endif ?>
                 </div>
                 <?php endforeach ?>
               </div>
@@ -5063,6 +5223,57 @@ async function hopApiFetch(action,body){
   return resp.json();
 }
 
+/* ── Manager hop change-request helper ───────────────────────────────────── */
+async function submitHopChangeRequest(kind, recipeId, rriId, miIdFk, oldStage, oldBoilMin, newStage, newBoilMin, qtyPerHl, unit) {
+  let lines = [];
+  if (kind === 'ingredient_update') {
+    lines = [{
+      target_table: 'ref_recipe_ingredients',
+      target_pk: rriId !== null ? parseInt(rriId, 10) : null,
+      mi_id_fk: miIdFk,
+      field: 'hop_stage_boil',
+      old_value: JSON.stringify({stage: oldStage, boil_min: oldBoilMin !== undefined ? oldBoilMin : null}),
+      new_value: JSON.stringify({stage: newStage, boil_min: newBoilMin !== undefined ? newBoilMin : null}),
+    }];
+  } else if (kind === 'ingredient_add') {
+    lines = [{
+      target_table: 'ref_recipe_ingredients',
+      target_pk: null,
+      mi_id_fk: miIdFk,
+      field: 'hop_add',
+      old_value: null,
+      new_value: JSON.stringify({stage: newStage, boil_min: newBoilMin !== undefined ? newBoilMin : null, qty_per_hl: qtyPerHl, unit: unit}),
+    }];
+  } else if (kind === 'ingredient_remove') {
+    lines = [{
+      target_table: 'ref_recipe_ingredients',
+      target_pk: rriId !== null ? parseInt(rriId, 10) : null,
+      mi_id_fk: miIdFk,
+      field: 'hop_remove',
+      old_value: JSON.stringify({stage: oldStage, boil_min: oldBoilMin !== undefined ? oldBoilMin : null}),
+      new_value: null,
+    }];
+  }
+  const body = new URLSearchParams({
+    csrf: window.SDC_CSRF || '',
+    action: 'submit_change_request',
+    recipe_id: recipeId,
+    change_kind: kind,
+    lines: JSON.stringify(lines),
+  });
+  try {
+    const resp = await fetch('/modules/salle-de-controle.php', {method: 'POST', body});
+    const data = await resp.json();
+    if (data.ok) {
+      if (window.showToast) showToast('Demande envoyée (#' + data.request_id + ') — en attente d\'approbation');
+    } else {
+      if (window.showToast) showToast('Erreur : ' + (data.error || 'Demande non enregistrée'));
+    }
+  } catch(e) {
+    if (window.showToast) showToast('Erreur réseau — demande non envoyée');
+  }
+}
+
 /* ── Bind hop controls (called after re-render) ──────────────────────────── */
 function bindHopControls(container){
   // Stage select: show/hide boil-min, then save on change (non-boil stages save immediately)
@@ -5078,6 +5289,16 @@ function bindHopControls(container){
       if(isBoil) return; // wait for boil-min blur
       const errEl=container.querySelector(`.hop-stage-err[data-rri-id="${id}"]`);
       if(errEl)errEl.textContent='';
+      if(SDC_ROLE==='manager'){
+        const arr=INGREDIENTS[selectedRecipeId]||[];
+        const ingr=arr.find(r=>r.id===parseInt(id,10));
+        const oldStage=ingr?ingr.stage:null;
+        const oldBoilMin=ingr?ingr.boil_min:null;
+        const miIdFk=ingr?ingr.mi_id_fk:null;
+        await submitHopChangeRequest('ingredient_update',selectedRecipeId,id,miIdFk,oldStage,oldBoilMin,stage,null);
+        this.value=oldStage||'';
+        return;
+      }
       try{
         const data=await hopApiFetch('set_hop_stage',{id,stage,boil_min:''});
         if(!data.ok){if(errEl)errEl.textContent=data.error||'Erreur';return;}
@@ -5104,6 +5325,16 @@ function bindHopControls(container){
         if(errEl)errEl.textContent='Entrer les minutes (0–90, 0=flameout).';
         return;
       }
+      if(SDC_ROLE==='manager'){
+        const arr=INGREDIENTS[selectedRecipeId]||[];
+        const ingr=arr.find(r=>r.id===parseInt(id,10));
+        const oldStage=ingr?ingr.stage:null;
+        const oldBoilMin=ingr?ingr.boil_min:null;
+        const miIdFk=ingr?ingr.mi_id_fk:null;
+        await submitHopChangeRequest('ingredient_update',selectedRecipeId,id,miIdFk,oldStage,oldBoilMin,'boil',parseInt(boilMin,10));
+        this.value=oldBoilMin!==null?oldBoilMin:'';
+        return;
+      }
       try{
         const data=await hopApiFetch('set_hop_stage',{id,stage,boil_min:boilMin});
         if(!data.ok){if(errEl)errEl.textContent=data.error||'Erreur';return;}
@@ -5119,7 +5350,7 @@ function bindHopControls(container){
   container.querySelectorAll('.hop-add-btn').forEach(btn=>{
     btn.addEventListener('click',async function(){
       const recipeId=parseInt(this.dataset.recipeId,10);
-      const miIdFk=this.dataset.miIdFk;
+      const miIdFk=parseInt(this.dataset.miIdFk,10);
       // Ask per-brassin — storage stays per-HL, server converts
       const brassinHl=BRASSIN_HL;
       const qtyBrassin=window.prompt(`Quantité par brassin (${brassinHl} hl) :`);
@@ -5129,15 +5360,20 @@ function bindHopControls(container){
       const stageIdx=window.prompt('Stage:\n0=non classé\n1=mash\n2=first_wort\n3=boil\n4=whirlpool\n5=hop_stand\n6=dry_hop\n\nEntrer le numéro:','');
       const stageMap=['','mash','first_wort','boil','whirlpool','hop_stand','dry_hop'];
       const stage=stageMap[parseInt(stageIdx,10)]??'';
-      let boilMin='';
+      let boilMin=null;
       if(stage==='boil'){
         const bm=window.prompt('Minutes de houblonnage (0=flameout, max 90):');
         if(!bm||isNaN(parseInt(bm,10))||parseInt(bm,10)<0||parseInt(bm,10)>90){window.alert('Minutes invalides.');return;}
-        boilMin=bm;
+        boilMin=parseInt(bm,10);
+      }
+      if(SDC_ROLE==='manager'){
+        const qtyPerHl=parseFloat(qtyBrassin)/brassinHl;
+        await submitHopChangeRequest('ingredient_add',recipeId,null,miIdFk,null,null,stage||null,boilMin,qtyPerHl,unit);
+        return;
       }
       try{
         // Send per-brassin qty + brassin_hl — server divides to store qty_per_hl
-        const data=await hopApiFetch('add_hop_addition',{recipe_id:recipeId,mi_id_fk:miIdFk,qty_per_brassin:qtyBrassin,brassin_hl:brassinHl,unit,stage,boil_min:boilMin});
+        const data=await hopApiFetch('add_hop_addition',{recipe_id:recipeId,mi_id_fk:miIdFk,qty_per_brassin:qtyBrassin,brassin_hl:brassinHl,unit,stage,boil_min:boilMin!==null?boilMin:''});
         if(!data.ok){window.alert(data.error||'Erreur');return;}
         const arr=INGREDIENTS[recipeId]||(INGREDIENTS[recipeId]=[]);
         arr.push({id:data.id,mi:data.mi,name:data.name,cat:'Hops',qty:data.qty,unit:data.unit,is_hop:true,stage:data.stage,boil_min:data.boil_min});
@@ -5152,6 +5388,15 @@ function bindHopControls(container){
     btn.addEventListener('click',async function(){
       const id=this.dataset.rriId;
       if(!window.confirm('Supprimer cette addition de houblon ?')) return;
+      if(SDC_ROLE==='manager'){
+        const arr=INGREDIENTS[selectedRecipeId]||[];
+        const ingr=arr.find(r=>r.id===parseInt(id,10));
+        const oldStage=ingr?ingr.stage:null;
+        const oldBoilMin=ingr?ingr.boil_min:null;
+        const miIdFk=ingr?ingr.mi_id_fk:null;
+        await submitHopChangeRequest('ingredient_remove',selectedRecipeId,id,miIdFk,oldStage,oldBoilMin,null,null);
+        return;
+      }
       try{
         const data=await hopApiFetch('delete_hop_addition',{id});
         if(!data.ok){window.alert(data.error||'Erreur');return;}

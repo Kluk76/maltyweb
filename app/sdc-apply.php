@@ -773,7 +773,8 @@ function sdc_apply_hop_set_stage(
     int $rriId,
     array $rriRow,
     ?string $stageOrNull,
-    ?int $boilMin
+    ?int $boilMin,
+    bool $ownTxn = true
 ): array {
     // Before-state for audit (close event)
     $before = [
@@ -782,7 +783,7 @@ function sdc_apply_hop_set_stage(
         'effective_until'    => null,
     ];
 
-    $pdo->beginTransaction();
+    if ($ownTxn) $pdo->beginTransaction();
     try {
         // Close old version
         rri_close_version($pdo, $rriId);
@@ -847,9 +848,9 @@ function sdc_apply_hop_set_stage(
             "Salle de contrôle: hop stage (new v) · {$rriRow['recipe_name']} · {$rriRow['mi_name']}"
         );
 
-        $pdo->commit();
+        if ($ownTxn) $pdo->commit();
     } catch (Throwable $txErr) {
-        $pdo->rollBack();
+        if ($ownTxn && $pdo->inTransaction()) $pdo->rollBack();
         throw $txErr;
     }
 
@@ -875,7 +876,8 @@ function sdc_apply_hop_upsert(
     float $qtyPerHl,
     string $unit,
     array $miRow,
-    array $recRow
+    array $recRow,
+    bool $ownTxn = true
 ): array {
     try {
         $insStmt = $pdo->prepare(
@@ -993,7 +995,8 @@ function sdc_apply_hop_remove(
     PDO $pdo,
     array $me,
     int $rriId,
-    array $rriRow
+    array $rriRow,
+    bool $ownTxn = true
 ): array {
     $before = [
         'effective_until'    => null,
@@ -1006,7 +1009,7 @@ function sdc_apply_hop_remove(
         'hop_boil_time_min'  => $rriRow['hop_boil_time_min'],
     ];
 
-    $pdo->beginTransaction();
+    if ($ownTxn) $pdo->beginTransaction();
     try {
         rri_close_version($pdo, $rriId);
         log_revision(
@@ -1016,9 +1019,9 @@ function sdc_apply_hop_remove(
             'normal',
             "Salle de contrôle: delete hop addition (close v) · {$rriRow['recipe_name']} · {$rriRow['mi_name']}"
         );
-        $pdo->commit();
+        if ($ownTxn) $pdo->commit();
     } catch (Throwable $txErr) {
-        $pdo->rollBack();
+        if ($ownTxn && $pdo->inTransaction()) $pdo->rollBack();
         throw $txErr;
     }
 
