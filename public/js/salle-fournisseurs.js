@@ -580,6 +580,7 @@
       ${changeLog}
       ${validateBtn}
     </div>`;
+    renderEvalSection(id);
   }
 
   /* ── List rendering ──────────────────────────────────────────────── */
@@ -1087,5 +1088,671 @@
       setTimeout(() => openFiche(firstGood.id), 350);
     }
   });
+
+  /* ── EVAL SECTION (Wave 3) ───────────────────────────────────────────── */
+
+  const EVAL_TYPE_LABELS = {
+    'initial':      'Initiale',
+    'annuel':       'Annuelle',
+    'biennal':      'Biennale',
+    'evenementiel': 'Événementielle',
+  };
+
+  const NC_TYPE_LABELS = {
+    'food_safety':   'Sécurité alimentaire',
+    'quality':       'Qualité',
+    'delivery':      'Livraison',
+    'documentation': 'Documentation',
+    'esg':           'RSE/ESG',
+    'other':         'Autre',
+  };
+
+  const NC_STATUS_LABELS = {
+    'open':        'Ouverte',
+    'in_progress': 'En cours',
+    'closed':      'Clôturée',
+  };
+
+  function evalResultBadge(result, totalPct) {
+    if (!result) return '';
+    const classMap = {
+      'agree':                  'agree',
+      'agree_sous_surveillance': 'agree-surv',
+      'non_agree':              'non-agree',
+      'draft':                  'draft',
+    };
+    const labelMap = {
+      'agree':                  'Agréé',
+      'agree_sous_surveillance': 'Agréé sous surveillance',
+      'non_agree':              'Non agréé',
+      'draft':                  'Brouillon',
+    };
+    const cls   = classMap[result]  || 'draft';
+    const label = labelMap[result]  || escHtml(result);
+    const pctStr = totalPct != null
+      ? ` · ${parseFloat(totalPct).toFixed(1)} %`
+      : '';
+    return `<span class="sf-eval-result-badge ${cls}">${label}${escHtml(pctStr)}</span>`;
+  }
+
+  async function renderEvalSection(supplierId) {
+    const ficheEl = document.getElementById('sf-fiche');
+    if (!ficheEl) return;
+
+    // Remove any existing eval section
+    const existing = document.getElementById('sf-eval-section');
+    if (existing) existing.remove();
+
+    // Append placeholder
+    const placeholder = document.createElement('div');
+    placeholder.id = 'sf-eval-section';
+    placeholder.className = 'sf-eval-section';
+    placeholder.innerHTML = '<div class="sf-eval-loading">Chargement évaluation…</div>';
+    ficheEl.querySelector('.sf-doc-paper').appendChild(placeholder);
+
+    try {
+      const resp = await fetch(`/api/sf-supplier-evaluation.php?supplier_id=${encodeURIComponent(supplierId)}`);
+      if (!resp.ok) {
+        placeholder.innerHTML = `<div class="sf-eval-loading">Impossible de charger les données d'évaluation.</div>`;
+        return;
+      }
+      const data = await resp.json();
+      if (!data.ok) {
+        placeholder.innerHTML = `<div class="sf-eval-loading">Erreur : ${escHtml(data.error || 'inconnue')}</div>`;
+        return;
+      }
+
+      placeholder.innerHTML = renderEvalContent(data);
+      wireEvalEvents(placeholder, data, supplierId);
+    } catch (e) {
+      placeholder.innerHTML = `<div class="sf-eval-loading">Erreur réseau : ${escHtml(e.message)}</div>`;
+    }
+  }
+
+  function renderEvalContent(data) {
+    return [
+      renderEvalStatus(data),
+      renderAutofeed(data.autofeed),
+      data.grid ? renderEvalForm(data) : '',
+      renderEvalHistory(data.history),
+      renderNcSection(data),
+      renderCertsSection(data),
+    ].join('');
+  }
+
+  /* ── A. Status bandeau ─────────────────────────────────────────────── */
+  function renderEvalStatus(data) {
+    const s        = data.supplier || {};
+    const latest   = data.latest_evaluation || null;
+    const today    = new Date().toISOString().slice(0, 10);
+
+    // Criticality badge
+    let critHtml = '';
+    if (s.criticality === 'critique') {
+      const src = (data.autofeed || {}).is_critical_derived ? 'dérivé' : 'manuel';
+      critHtml = `<span class="sf-crit-badge critique">${escHtml(src)} : critique</span>`;
+    } else if (s.criticality === 'non_critique') {
+      const src = (data.autofeed || {}).is_critical_derived ? 'dérivé' : 'manuel';
+      critHtml = `<span class="sf-crit-badge non-critique">${escHtml(src)} : non critique</span>`;
+    } else {
+      critHtml = `<span class="sf-eval-crit-undef">Criticité à définir</span>`;
+    }
+
+    // Override form (admin only)
+    let overrideHtml = '';
+    if (ROLE === 'admin') {
+      overrideHtml = `
+        <button class="sf-eval-add-toggle" id="sf-crit-override-toggle">→ Modifier criticité</button>
+        <div class="sf-crit-override-form" id="sf-crit-override-form">
+          <label><input type="radio" name="sf-crit-val" value="critique"> Critique</label>
+          <label><input type="radio" name="sf-crit-val" value="non_critique"> Non critique</label>
+          <button class="sf-btn-finalize" id="sf-crit-override-apply">Appliquer</button>
+        </div>`;
+    }
+
+    // Latest result
+    let latestHtml = '';
+    let koHtml     = '';
+    let flagHtml   = '';
+    if (latest) {
+      latestHtml = evalResultBadge(latest.result, latest.total_pct);
+      if (latest.food_safety_ko) {
+        koHtml = `<div class="sf-eval-ko-banner">Critère éliminatoire — NON AGRÉÉ</div>`;
+      }
+      if (!latest.valid_until || latest.valid_until < today) {
+        flagHtml = `<div class="sf-eval-flag-banner">⚑ À évaluer / À réévaluer</div>`;
+      }
+    } else {
+      latestHtml = `<em class="sf-eval-empty">Aucune évaluation enregistrée</em>`;
+      flagHtml   = `<div class="sf-eval-flag-banner">⚑ À évaluer / À réévaluer</div>`;
+    }
+
+    return `<div class="sf-eval-subsection">
+      <div class="sf-eval-subsection-title">Statut évaluation</div>
+      <div class="sf-eval-status-row">
+        ${critHtml}
+        ${latestHtml}
+      </div>
+      ${overrideHtml}
+      ${koHtml}
+      ${flagHtml}
+    </div>`;
+  }
+
+  /* ── B. Autofeed panel ─────────────────────────────────────────────── */
+  function renderAutofeed(autofeed) {
+    if (!autofeed) return '';
+    const items = [];
+
+    if (autofeed.delivery_count != null) {
+      items.push(`<div class="sf-autofeed-item">
+        <span class="sf-autofeed-item-label">Livraisons</span>
+        <span class="sf-autofeed-item-value">${escHtml(String(autofeed.delivery_count))}</span>
+      </div>`);
+    }
+    if (autofeed.last_delivery_date) {
+      items.push(`<div class="sf-autofeed-item">
+        <span class="sf-autofeed-item-label">Dernière livraison</span>
+        <span class="sf-autofeed-item-value">${escHtml(fmtDate(autofeed.last_delivery_date))}</span>
+      </div>`);
+    }
+    if (Array.isArray(autofeed.distinct_mi_categories) && autofeed.distinct_mi_categories.length > 0) {
+      const chips = autofeed.distinct_mi_categories
+        .map(c => `<span class="sf-mi-cat-chip">${escHtml(c)}</span>`)
+        .join('');
+      items.push(`<div class="sf-autofeed-item">
+        <span class="sf-autofeed-item-label">Catégories MI</span>
+        <span class="sf-autofeed-item-value">${chips}</span>
+      </div>`);
+    }
+    if (autofeed.open_nc_count != null || autofeed.total_nc_count != null) {
+      const open  = autofeed.open_nc_count  != null ? escHtml(String(autofeed.open_nc_count))  : '—';
+      const total = autofeed.total_nc_count != null ? escHtml(String(autofeed.total_nc_count)) : '—';
+      items.push(`<div class="sf-autofeed-item">
+        <span class="sf-autofeed-item-label">Non-conformités</span>
+        <span class="sf-autofeed-item-value">${open} ouvertes / ${total} total</span>
+      </div>`);
+    }
+
+    if (items.length === 0) return '';
+
+    return `<div class="sf-eval-subsection">
+      <div class="sf-eval-subsection-title">Données automatiques</div>
+      <div class="sf-autofeed-panel">
+        <div class="sf-autofeed-grid">${items.join('')}</div>
+      </div>
+    </div>`;
+  }
+
+  /* ── C. Evaluation form ────────────────────────────────────────────── */
+  function renderEvalForm(data) {
+    const grid   = data.grid;
+    const latest = data.latest_evaluation || null;
+    const today  = new Date().toISOString().slice(0, 10);
+
+    // Group criteria by pillar
+    const pillars = {};
+    (grid.criteria || []).forEach(c => {
+      if (!pillars[c.pillar]) pillars[c.pillar] = [];
+      pillars[c.pillar].push(c);
+    });
+
+    // Pre-fill map
+    const prefill = {};
+    if (latest && Array.isArray(latest.criteria_scores)) {
+      latest.criteria_scores.forEach(cs => {
+        prefill[cs.grid_criterion_id_fk] = cs;
+      });
+    }
+
+    let criteriaHtml = '';
+    Object.entries(pillars).sort((a, b) => a[0].localeCompare(b[0])).forEach(([pillar, crits]) => {
+      criteriaHtml += `<div class="sf-eval-pillar-head">Pilier ${escHtml(pillar)}</div>`;
+      crits.forEach(c => {
+        const pf       = prefill[c.id] || {};
+        const scoreVal = pf.score != null ? pf.score : '';
+        const eviVal   = pf.evidence_note || '';
+
+        let scoreOpts = `<option value="">— sans objet —</option>`;
+        for (let i = 0; i <= (c.max_score || 4); i++) {
+          const sel = String(scoreVal) === String(i) ? 'selected' : '';
+          scoreOpts += `<option value="${i}" ${sel}>${i}</option>`;
+        }
+
+        const koTag = c.is_ko_flag
+          ? `<span class="sf-eval-crit-ko-tag">éliminatoire</span>`
+          : '';
+
+        criteriaHtml += `<div class="sf-eval-crit-row">
+          <span class="sf-eval-crit-label">${escHtml(c.label || c.criterion_label || '')}</span>
+          ${koTag}
+          <select class="sf-eval-score-select" name="scores[${c.id}]" data-pillar="${escHtml(pillar)}" data-max="${c.max_score || 4}">${scoreOpts}</select>
+          <input class="sf-eval-evidence-input" type="text" name="evidence_note[${c.id}]" placeholder="Note de preuve…" value="${escHtml(eviVal)}">
+        </div>`;
+      });
+    });
+
+    const evalTypeOpts = Object.entries(EVAL_TYPE_LABELS).map(([v, l]) =>
+      `<option value="${v}">${escHtml(l)}</option>`
+    ).join('');
+
+    const koCheckedAttr = (latest && latest.explicit_ko) ? 'checked' : '';
+    const commentVal    = (latest && latest.comment)     ? escHtml(latest.comment) : '';
+
+    return `<div class="sf-eval-subsection">
+      <div class="sf-eval-subsection-title">Évaluation</div>
+      <div class="sf-eval-form" id="sf-eval-form-wrap">
+        <div class="sf-eval-form-row">
+          <label class="sf-eval-form-label">Type d'évaluation</label>
+          <select id="sf-eval-type">${evalTypeOpts}</select>
+        </div>
+        <div class="sf-eval-form-row">
+          <label class="sf-eval-form-label">Date d'évaluation</label>
+          <input type="date" id="sf-eval-date" value="${today}">
+        </div>
+        ${criteriaHtml}
+        <div class="sf-eval-subtotal" id="sf-eval-subtotal">—</div>
+        <div class="sf-eval-form-row">
+          <label class="sf-eval-form-check">
+            <input type="checkbox" id="sf-eval-ko" ${koCheckedAttr}> Manquement grave constaté
+          </label>
+        </div>
+        <div class="sf-eval-form-row">
+          <label class="sf-eval-form-label">Commentaire</label>
+          <textarea id="sf-eval-comment" rows="3">${commentVal}</textarea>
+        </div>
+        <div class="sf-eval-form-footer">
+          <button class="sf-btn-draft"    id="sf-eval-btn-draft">Enregistrer brouillon</button>
+          <button class="sf-btn-finalize" id="sf-eval-btn-finalize">Finaliser</button>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  /* ── D. History ────────────────────────────────────────────────────── */
+  function renderEvalHistory(history) {
+    if (!Array.isArray(history) || history.length === 0) {
+      return `<div class="sf-eval-subsection">
+        <div class="sf-eval-subsection-title">Historique évaluations</div>
+        <div class="sf-eval-empty">Aucune évaluation enregistrée</div>
+      </div>`;
+    }
+
+    const rows = history.map(h => {
+      const typeLabel  = EVAL_TYPE_LABELS[h.evaluation_type] || escHtml(h.evaluation_type || '—');
+      const scorePct   = h.total_pct != null ? `${parseFloat(h.total_pct).toFixed(1)} %` : '—';
+      const superseded = h.superseded_by_id != null
+        ? `<span class="sf-eval-history-superseded">remplacée</span>`
+        : '';
+      return `<tr>
+        <td class="sf-eval-history-td sf-eval-history-td-date">${escHtml(fmtDate(h.evaluated_at))}</td>
+        <td class="sf-eval-history-td">${escHtml(typeLabel)}</td>
+        <td class="sf-eval-history-td sf-eval-history-td-mono">${escHtml(scorePct)}</td>
+        <td class="sf-eval-history-td">${evalResultBadge(h.result, null)} ${superseded}</td>
+      </tr>`;
+    }).join('');
+
+    return `<div class="sf-eval-subsection">
+      <div class="sf-eval-subsection-title">Historique évaluations</div>
+      <table class="sf-eval-history-table">
+        <thead><tr>
+          <th class="sf-eval-history-th">Date</th>
+          <th class="sf-eval-history-th">Type</th>
+          <th class="sf-eval-history-th">Score</th>
+          <th class="sf-eval-history-th">Résultat</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+  }
+
+  /* ── E. Non-conformités ────────────────────────────────────────────── */
+  function renderNcSection(data) {
+    const ncs = data.ncs || [];
+    const today = new Date().toISOString().slice(0, 10);
+
+    let ncListHtml = '';
+    if (ncs.length === 0) {
+      ncListHtml = `<div class="sf-eval-empty">Aucune NC enregistrée</div>`;
+    } else {
+      ncListHtml = `<div class="sf-nc-list">` + ncs.map(nc => {
+        const desc = nc.description && nc.description.length > 120
+          ? nc.description.slice(0, 120) + '…'
+          : (nc.description || '');
+        const capaHtml = nc.capa_ref
+          ? `<div class="sf-nc-capa">CAPA : ${escHtml(nc.capa_ref)}</div>`
+          : '';
+        return `<div class="sf-nc-row">
+          <div class="sf-nc-row-head">
+            <span class="sf-nc-detected-date">${escHtml(fmtDate(nc.detected_on))}</span>
+            <span class="sf-nc-severity ${escHtml(nc.severity || '')}">${escHtml(nc.severity || '—')}</span>
+            <span class="sf-nc-status">${escHtml(NC_STATUS_LABELS[nc.status] || nc.status || '—')}</span>
+            <span class="sf-nc-type-label">${escHtml(NC_TYPE_LABELS[nc.nc_type] || nc.nc_type || '—')}</span>
+          </div>
+          <div class="sf-nc-desc">${escHtml(desc)}</div>
+          ${capaHtml}
+        </div>`;
+      }).join('') + `</div>`;
+    }
+
+    const ncTypeOpts = Object.entries(NC_TYPE_LABELS).map(([v, l]) =>
+      `<option value="${v}">${escHtml(l)}</option>`
+    ).join('');
+
+    const ncForm = `
+      <button class="sf-eval-add-toggle" id="sf-nc-add-toggle">+ Ajouter une NC</button>
+      <div class="sf-eval-collapsible-form" id="sf-nc-add-form">
+        <div class="sf-eval-form-row">
+          <label class="sf-eval-form-label">Date détection</label>
+          <input type="date" id="sf-nc-detected-on" value="${today}">
+        </div>
+        <div class="sf-eval-form-row">
+          <label class="sf-eval-form-label">Type</label>
+          <select id="sf-nc-type">${ncTypeOpts}</select>
+        </div>
+        <div class="sf-eval-form-row">
+          <label class="sf-eval-form-label">Sévérité</label>
+          <select id="sf-nc-severity">
+            <option value="mineure">Mineure</option>
+            <option value="majeure">Majeure</option>
+            <option value="critique">Critique</option>
+          </select>
+        </div>
+        <div class="sf-eval-form-row">
+          <label class="sf-eval-form-label">Description *</label>
+          <textarea id="sf-nc-description" rows="3" required></textarea>
+        </div>
+        <div class="sf-eval-form-row">
+          <label class="sf-eval-form-label">Registre CAPA (optionnel)</label>
+          <input type="text" id="sf-nc-capa-register">
+        </div>
+        <div class="sf-eval-form-row">
+          <label class="sf-eval-form-label">Réf. CAPA (optionnel)</label>
+          <input type="text" id="sf-nc-capa-ref">
+        </div>
+        <div class="sf-eval-form-row">
+          <label class="sf-eval-form-check">
+            <input type="checkbox" id="sf-nc-triggered-eval"> Déclencher évaluation
+          </label>
+        </div>
+        <div class="sf-eval-form-footer">
+          <button class="sf-btn-finalize" id="sf-nc-submit">Enregistrer NC</button>
+        </div>
+      </div>`;
+
+    return `<div class="sf-eval-subsection">
+      <div class="sf-eval-subsection-title">Non-conformités</div>
+      ${ncListHtml}
+      ${ncForm}
+    </div>`;
+  }
+
+  /* ── F. Certificats / Documents ────────────────────────────────────── */
+  function renderCertsSection(data) {
+    const certs = data.certs || [];
+    const today = new Date().toISOString().slice(0, 10);
+    const in90  = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+    let certListHtml = '';
+    if (certs.length === 0) {
+      certListHtml = `<div class="sf-eval-empty">Aucun certificat enregistré</div>`;
+    } else {
+      certListHtml = `<div class="sf-cert-list">` + certs.map(cert => {
+        const isExpired  = cert.expires_on && cert.expires_on < today;
+        const isExpiring = cert.expires_on && !isExpired && cert.expires_on < in90;
+        const dateClass  = isExpired ? 'sf-cert-expired' : isExpiring ? 'sf-cert-expiring' : '';
+        const expiresHtml = cert.expires_on
+          ? `<span class="sf-cert-date ${dateClass}">exp. ${escHtml(fmtDate(cert.expires_on))}</span>`
+          : '';
+        const issuedHtml = cert.issued_on
+          ? `<span class="sf-cert-date">émis ${escHtml(fmtDate(cert.issued_on))}</span>`
+          : '';
+        const fileHtml = cert.file_name
+          ? `<span class="sf-cert-filename">${escHtml(cert.file_name)}</span>`
+          : '';
+        return `<div class="sf-cert-row ${dateClass}">
+          <span class="sf-cert-type">${escHtml(cert.doc_type || '—')}</span>
+          <span class="sf-cert-ref">${escHtml(cert.reference_label || '—')}</span>
+          ${issuedHtml}
+          ${expiresHtml}
+          ${fileHtml}
+        </div>`;
+      }).join('') + `</div>`;
+    }
+
+    const certForm = `
+      <button class="sf-eval-add-toggle" id="sf-cert-link-toggle">+ Lier un document</button>
+      <div class="sf-eval-collapsible-form" id="sf-cert-link-form">
+        <div class="sf-eval-form-row">
+          <label class="sf-eval-form-label">Type document</label>
+          <input type="text" id="sf-cert-doc-type">
+        </div>
+        <div class="sf-eval-form-row">
+          <label class="sf-eval-form-label">Référence / libellé</label>
+          <input type="text" id="sf-cert-ref-label">
+        </div>
+        <div class="sf-eval-form-row">
+          <label class="sf-eval-form-label">Date d'émission</label>
+          <input type="date" id="sf-cert-issued-on">
+        </div>
+        <div class="sf-eval-form-row">
+          <label class="sf-eval-form-label">Date d'expiration</label>
+          <input type="date" id="sf-cert-expires-on">
+        </div>
+        <div class="sf-eval-form-row">
+          <label class="sf-eval-form-label">ID fichier (optionnel)</label>
+          <input type="number" id="sf-cert-file-id">
+        </div>
+        <div class="sf-eval-form-row">
+          <label class="sf-eval-form-label">ID évaluation liée (optionnel)</label>
+          <input type="number" id="sf-cert-eval-id">
+        </div>
+        <div class="sf-eval-form-footer">
+          <button class="sf-btn-finalize" id="sf-cert-submit">Lier document</button>
+        </div>
+      </div>`;
+
+    return `<div class="sf-eval-subsection">
+      <div class="sf-eval-subsection-title">Documents / Certificats</div>
+      ${certListHtml}
+      ${certForm}
+    </div>`;
+  }
+
+  /* ── Event wiring ──────────────────────────────────────────────────── */
+  function wireEvalEvents(sectionEl, data, supplierId) {
+    // Criticality override toggle (admin only)
+    const critToggle = sectionEl.querySelector('#sf-crit-override-toggle');
+    const critForm   = sectionEl.querySelector('#sf-crit-override-form');
+    if (critToggle && critForm) {
+      critToggle.addEventListener('click', () => critForm.classList.toggle('open'));
+
+      const applyBtn = sectionEl.querySelector('#sf-crit-override-apply');
+      if (applyBtn) {
+        applyBtn.addEventListener('click', async () => {
+          const selected = sectionEl.querySelector('input[name="sf-crit-val"]:checked');
+          if (!selected) return;
+          applyBtn.disabled = true;
+          applyBtn.textContent = '…';
+          try {
+            const res = await sfPost('/api/sf-criticality-override.php', {
+              supplier_id_fk: String(supplierId),
+              criticality:    selected.value,
+            });
+            if (res.ok) {
+              await renderEvalSection(supplierId);
+            } else {
+              sfToast('Erreur : ' + (res.error || 'inconnue'));
+              applyBtn.disabled = false;
+              applyBtn.textContent = 'Appliquer';
+            }
+          } catch (e) {
+            sfToast('Erreur réseau : ' + e.message);
+            applyBtn.disabled = false;
+            applyBtn.textContent = 'Appliquer';
+          }
+        });
+      }
+    }
+
+    // NC add toggle
+    const ncToggle = sectionEl.querySelector('#sf-nc-add-toggle');
+    const ncForm   = sectionEl.querySelector('#sf-nc-add-form');
+    if (ncToggle && ncForm) {
+      ncToggle.addEventListener('click', () => ncForm.classList.toggle('open'));
+    }
+
+    // NC submit
+    const ncSubmit = sectionEl.querySelector('#sf-nc-submit');
+    if (ncSubmit) {
+      ncSubmit.addEventListener('click', async () => {
+        const desc = sectionEl.querySelector('#sf-nc-description');
+        if (!desc || !desc.value.trim()) {
+          sfToast('La description est obligatoire.');
+          return;
+        }
+        ncSubmit.disabled = true;
+        ncSubmit.textContent = '…';
+        try {
+          const res = await sfPost('/api/sf-nc-save.php', {
+            supplier_id_fk:       String(supplierId),
+            detected_on:          sectionEl.querySelector('#sf-nc-detected-on').value,
+            nc_type:              sectionEl.querySelector('#sf-nc-type').value,
+            severity:             sectionEl.querySelector('#sf-nc-severity').value,
+            description:          desc.value.trim(),
+            capa_register:        (sectionEl.querySelector('#sf-nc-capa-register').value || '').trim(),
+            capa_ref:             (sectionEl.querySelector('#sf-nc-capa-ref').value || '').trim(),
+            triggered_evaluation: sectionEl.querySelector('#sf-nc-triggered-eval').checked ? '1' : '0',
+          });
+          if (res.ok) {
+            await renderEvalSection(supplierId);
+          } else {
+            sfToast('Erreur : ' + (res.error || 'inconnue'));
+            ncSubmit.disabled = false;
+            ncSubmit.textContent = 'Enregistrer NC';
+          }
+        } catch (e) {
+          sfToast('Erreur réseau : ' + e.message);
+          ncSubmit.disabled = false;
+          ncSubmit.textContent = 'Enregistrer NC';
+        }
+      });
+    }
+
+    // Cert link toggle
+    const certToggle = sectionEl.querySelector('#sf-cert-link-toggle');
+    const certForm   = sectionEl.querySelector('#sf-cert-link-form');
+    if (certToggle && certForm) {
+      certToggle.addEventListener('click', () => certForm.classList.toggle('open'));
+    }
+
+    // Cert submit
+    const certSubmit = sectionEl.querySelector('#sf-cert-submit');
+    if (certSubmit) {
+      certSubmit.addEventListener('click', async () => {
+        certSubmit.disabled = true;
+        certSubmit.textContent = '…';
+        try {
+          const fileIdEl = sectionEl.querySelector('#sf-cert-file-id');
+          const evalIdEl = sectionEl.querySelector('#sf-cert-eval-id');
+          const body = {
+            supplier_id_fk:  String(supplierId),
+            doc_type:        (sectionEl.querySelector('#sf-cert-doc-type').value || '').trim(),
+            reference_label: (sectionEl.querySelector('#sf-cert-ref-label').value || '').trim(),
+            issued_on:       sectionEl.querySelector('#sf-cert-issued-on').value,
+            expires_on:      sectionEl.querySelector('#sf-cert-expires-on').value,
+          };
+          if (fileIdEl && fileIdEl.value) body.doc_file_id_fk = fileIdEl.value;
+          if (evalIdEl && evalIdEl.value) body.linked_evaluation_id_fk = evalIdEl.value;
+
+          const res = await sfPost('/api/sf-cert-link.php', body);
+          if (res.ok) {
+            await renderEvalSection(supplierId);
+          } else {
+            sfToast('Erreur : ' + (res.error || 'inconnue'));
+            certSubmit.disabled = false;
+            certSubmit.textContent = 'Lier document';
+          }
+        } catch (e) {
+          sfToast('Erreur réseau : ' + e.message);
+          certSubmit.disabled = false;
+          certSubmit.textContent = 'Lier document';
+        }
+      });
+    }
+
+    // Eval form score selects → subtotals
+    if (data.grid) {
+      const grid    = data.grid;
+      const selects = sectionEl.querySelectorAll('select[name^="scores["]');
+      const updateSubtotals = () => calcSubtotals(sectionEl, grid);
+      selects.forEach(sel => sel.addEventListener('change', updateSubtotals));
+      updateSubtotals();
+    }
+
+    // Eval form submit buttons
+    const btnDraft    = sectionEl.querySelector('#sf-eval-btn-draft');
+    const btnFinalize = sectionEl.querySelector('#sf-eval-btn-finalize');
+
+    function submitEval(status) {
+      return async () => {
+        if (btnDraft)    { btnDraft.disabled    = true; btnDraft.textContent    = '…'; }
+        if (btnFinalize) { btnFinalize.disabled = true; btnFinalize.textContent = '…'; }
+
+        const body = {
+          supplier_id_fk:  String(supplierId),
+          evaluation_type: (sectionEl.querySelector('#sf-eval-type')    || {}).value || 'annuel',
+          evaluated_at:    (sectionEl.querySelector('#sf-eval-date')    || {}).value || new Date().toISOString().slice(0, 10),
+          comment:         (sectionEl.querySelector('#sf-eval-comment') || {}).value || '',
+          status:          status,
+          explicit_ko:     (sectionEl.querySelector('#sf-eval-ko')      || {}).checked ? '1' : '0',
+        };
+
+        // Collect scores and evidence
+        sectionEl.querySelectorAll('select[name^="scores["]').forEach(sel => {
+          if (sel.name && sel.value !== '') body[sel.name] = sel.value;
+        });
+        sectionEl.querySelectorAll('input[name^="evidence_note["]').forEach(inp => {
+          if (inp.name && inp.value.trim()) body[inp.name] = inp.value.trim();
+        });
+
+        try {
+          const res = await sfPost('/api/sf-evaluation-save.php', body);
+          if (res.ok) {
+            await renderEvalSection(supplierId);
+          } else {
+            sfToast('Erreur : ' + (res.error || 'inconnue'));
+            if (btnDraft)    { btnDraft.disabled    = false; btnDraft.textContent    = 'Enregistrer brouillon'; }
+            if (btnFinalize) { btnFinalize.disabled = false; btnFinalize.textContent = 'Finaliser'; }
+          }
+        } catch (e) {
+          sfToast('Erreur réseau : ' + e.message);
+          if (btnDraft)    { btnDraft.disabled    = false; btnDraft.textContent    = 'Enregistrer brouillon'; }
+          if (btnFinalize) { btnFinalize.disabled = false; btnFinalize.textContent = 'Finaliser'; }
+        }
+      };
+    }
+
+    if (btnDraft)    btnDraft.addEventListener('click',    submitEval('draft'));
+    if (btnFinalize) btnFinalize.addEventListener('click', submitEval('final'));
+  }
+
+  function calcSubtotals(sectionEl, grid) {
+    const pillars = {};
+    (grid.criteria || []).forEach(c => {
+      if (!pillars[c.pillar]) pillars[c.pillar] = { score: 0, max: 0 };
+      const sel = sectionEl.querySelector(`select[name="scores[${c.id}]"]`);
+      const val = sel ? parseInt(sel.value) : NaN;
+      pillars[c.pillar].max += (c.max_score || 4);
+      if (!isNaN(val)) pillars[c.pillar].score += val;
+    });
+    const subtotalEl = sectionEl.querySelector('.sf-eval-subtotal');
+    if (subtotalEl) {
+      subtotalEl.textContent = Object.entries(pillars)
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([p, v]) => `${p}: ${v.score}/${v.max}`)
+        .join(' — ');
+    }
+  }
 
 })();
