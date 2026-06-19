@@ -1023,3 +1023,38 @@
   window.sdcConf = { init, selectBeer };
 
 })();
+
+/* ═══════════════════════════════════════════
+   CR PENDING BADGE — live poll every 60s
+   Keeps the "Demandes" nav badge in sync for
+   admin and manager roles without a page reload.
+   ═══════════════════════════════════════════ */
+(function(){
+  function updateCrBadge(count){
+    const navItem = document.querySelector('[data-sec="demandes"]');
+    if(!navItem) return;
+    let badge = navItem.querySelector('.nav-badge');
+    if(count > 0){
+      if(!badge){
+        badge = document.createElement('span');
+        badge.className = 'nav-badge nav-badge--alert';
+        navItem.appendChild(badge);
+      }
+      badge.textContent = count;
+      badge.style.display = '';
+    } else {
+      if(badge) badge.style.display = 'none';
+    }
+  }
+
+  function pollCrCount(){
+    fetch('/modules/salle-de-controle.php?action=cr_pending_count', {credentials:'same-origin'})
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if(d && d.ok) updateCrBadge(d.count); })
+      .catch(()=>{ /* silent */ });
+  }
+
+  if(typeof window.SDC_ROLE !== 'undefined' && (window.SDC_ROLE === 'admin' || window.SDC_ROLE === 'manager')){
+    setInterval(pollCrCount, 60000);
+  }
+})();

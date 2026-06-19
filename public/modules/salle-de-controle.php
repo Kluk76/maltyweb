@@ -66,6 +66,50 @@ function sdc_gated_format_ids(PDO $pdo): array
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// HELPER: send a recipe change-request notification email (best-effort).
+// $kind: 'filed' | 'decided'
+// Best-effort: any exception is silently swallowed — email failure must NEVER
+// fail or roll back a committed action.
+// ─────────────────────────────────────────────────────────────────────────────
+function sdc_cr_email_send(PDO $pdo, string $kind, array $args): void {
+    try {
+        require_once __DIR__ . '/../../app/services/mailer.php';
+        $mode = (string)system_setting('recipe_cr_email_mode', 'recipes', 'off');
+        if ($mode === 'off') return;
+
+        $tpl = mail_recipe_change_template($kind, $args);
+
+        if ($mode === 'test') {
+            $testTo = (string)system_setting('recipe_cr_email_test_to', 'recipes', 'kouros@lanebuleuse.ch');
+            $recipients = array_filter(
+                array_map('trim', explode(';', $testTo)),
+                fn($e) => filter_var($e, FILTER_VALIDATE_EMAIL) !== false
+            );
+        } elseif ($mode === 'live') {
+            if ($kind === 'filed') {
+                $stmt = $pdo->query(
+                    "SELECT email FROM users WHERE role='admin' AND is_active=1 AND email IS NOT NULL AND email <> '' LIMIT 20"
+                );
+                $recipients = array_column($stmt->fetchAll(PDO::FETCH_ASSOC), 'email');
+            } else {
+                $requesterEmail = $args['requester_email'] ?? '';
+                $recipients = ($requesterEmail !== '' && filter_var($requesterEmail, FILTER_VALIDATE_EMAIL))
+                    ? [$requesterEmail]
+                    : [];
+            }
+        } else {
+            return;
+        }
+
+        foreach ($recipients as $to) {
+            send_mail($to, $tpl['subject'], $tpl['html'], $tpl['text']);
+        }
+    } catch (Throwable $_) {
+        // Best-effort — email failure must NEVER fail or roll back the action
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // HELPER: compute bom_template_id from run_type
 // bottle→dec_int=0, can/can33→dec_int=1, keg/cuv→dec_int=0
 // ─────────────────────────────────────────────────────────────────────────────
@@ -121,6 +165,29 @@ function sdc_redirect_url(string $sec, int $recipeId = 0, string $sub = '', int 
         $url .= '&strain=' . $strainId;
     }
     return $url;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// cr_pending_count — GET-style read; dispatched BEFORE the POST wall
+// Inner gate: admin or manager only (not operateur/viewer)
+// ─────────────────────────────────────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && ($_GET['action'] ?? '') === 'cr_pending_count') {
+    if (!is_admin($me) && !is_manager($me)) {
+        http_response_code(403);
+        echo json_encode(['ok' => false, 'error' => 'Accès refusé.']);
+        exit;
+    }
+    header('Content-Type: application/json; charset=utf-8');
+    try {
+        $cntPdo = maltytask_pdo();
+        $cnt = (int)$cntPdo->query(
+            "SELECT COUNT(*) FROM recipe_change_requests WHERE status='pending'"
+        )->fetchColumn();
+        echo json_encode(['ok' => true, 'count' => $cnt]);
+    } catch (Throwable $_) {
+        echo json_encode(['ok' => true, 'count' => 0]);
+    }
+    exit;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1576,6 +1643,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw $txErr;
             }
 
+            // Email hook: notify admins of new request (best-effort)
+            try {
+                $changeKindLabels = ['ingredient_add'=>'Ajout ingrédient','ingredient_update'=>'Modification ingrédient','ingredient_remove'=>'Suppression ingrédient','recipe_field'=>'Champ recette','qc_target'=>'Objectif QC','yeast'=>'Levure','format_activate'=>'Activation format','format_deactivate'=>'Désactivation format','bom_binding'=>'Liaison BOM'];
+                sdc_cr_email_send($pdo, 'filed', [
+                    'manager_name'      => $me['display_name'] ?? $me['username'] ?? 'Gestionnaire',
+                    'recipe_name'       => $recRow['name'],
+                    'change_kind_label' => $changeKindLabels[$changeKind] ?? $changeKind,
+                    'summary'           => $_POST['summary'] ?? '',
+                    'deep_link'         => 'https://app.maltytask.ch/modules/salle-de-controle.php?sec=demandes',
+                ]);
+            } catch (Throwable $_) {}
+
             echo json_encode([
                 'ok'          => true,
                 'request_id'  => $requestId,
@@ -1876,6 +1955,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 $pdo->commit();
 
+                // Email hook: notify requester of approval (best-effort)
+                try {
+                    $requesterStmt = $pdo->prepare("SELECT email, display_name, username FROM users WHERE id=? LIMIT 1");
+                    $requesterStmt->execute([(int)$req['requested_by_fk']]);
+                    $requesterRow = $requesterStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+                    $changeKindLabels = ['ingredient_add'=>'Ajout ingrédient','ingredient_update'=>'Modification ingrédient','ingredient_remove'=>'Suppression ingrédient','recipe_field'=>'Champ recette','qc_target'=>'Objectif QC','yeast'=>'Levure','format_activate'=>'Activation format','format_deactivate'=>'Désactivation format','bom_binding'=>'Liaison BOM'];
+                    sdc_cr_email_send($pdo, 'decided', [
+                        'recipe_name'       => $req['recipe_name'] ?? "recette #{$req['recipe_id_fk']}",
+                        'change_kind_label' => $changeKindLabels[$changeKind] ?? $changeKind,
+                        'decision'          => 'approuvée',
+                        'decision_note'     => '',
+                        'decided_by_name'   => $me['display_name'] ?? $me['username'] ?? 'Admin',
+                        'requester_email'   => $requesterRow['email'] ?? '',
+                    ]);
+                } catch (Throwable $_) {}
+
                 // One recompile after the outer commit for format/BOM kinds.
                 $postCommitBomErr = null;
                 if (in_array($changeKind, ['format_activate', 'format_deactivate', 'bom_binding'], true)) {
@@ -1912,7 +2007,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $pdo->beginTransaction();
             try {
-                $reqStmt = $pdo->prepare("SELECT id, status, recipe_id_fk FROM recipe_change_requests WHERE id = ? FOR UPDATE");
+                $reqStmt = $pdo->prepare("SELECT r.id, r.status, r.recipe_id_fk, r.change_kind, r.requested_by_fk, rec.name AS recipe_name FROM recipe_change_requests r LEFT JOIN ref_recipes rec ON rec.id = r.recipe_id_fk WHERE r.id = ? FOR UPDATE");
                 $reqStmt->execute([$requestId]);
                 $req = $reqStmt->fetch(PDO::FETCH_ASSOC);
                 if (!$req) { $pdo->rollBack(); http_response_code(404); echo json_encode(['ok'=>false,'error'=>'Demande introuvable.']); exit; }
@@ -1928,6 +2023,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     "Demande rejetée · recette #{$req['recipe_id_fk']}"
                 );
                 $pdo->commit();
+
+                // Email hook: notify requester of rejection (best-effort)
+                try {
+                    $rejRequesterStmt = $pdo->prepare("SELECT email, display_name, username FROM users WHERE id=? LIMIT 1");
+                    $rejRequesterStmt->execute([(int)$req['requested_by_fk']]);
+                    $rejRequesterRow = $rejRequesterStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+                    $changeKindLabels = ['ingredient_add'=>'Ajout ingrédient','ingredient_update'=>'Modification ingrédient','ingredient_remove'=>'Suppression ingrédient','recipe_field'=>'Champ recette','qc_target'=>'Objectif QC','yeast'=>'Levure','format_activate'=>'Activation format','format_deactivate'=>'Désactivation format','bom_binding'=>'Liaison BOM'];
+                    sdc_cr_email_send($pdo, 'decided', [
+                        'recipe_name'       => $req['recipe_name'] ?? "recette #{$req['recipe_id_fk']}",
+                        'change_kind_label' => $changeKindLabels[$req['change_kind'] ?? ''] ?? ($req['change_kind'] ?? ''),
+                        'decision'          => 'refusée',
+                        'decision_note'     => $decisionNote,
+                        'decided_by_name'   => $me['display_name'] ?? $me['username'] ?? 'Admin',
+                        'requester_email'   => $rejRequesterRow['email'] ?? '',
+                    ]);
+                } catch (Throwable $_) {}
+
                 echo json_encode(['ok' => true]);
             } catch (Throwable $e) {
                 if ($pdo->inTransaction()) $pdo->rollBack();
@@ -2729,17 +2841,20 @@ if (is_admin($me) || is_manager($me)) {
                     $pvSkuIds = array_values(array_unique(array_merge($pvSoloIds, $pvCompositeIds, $pvCollabIds)));
 
                     if (!empty($pvSkuIds)) {
-                        $pvInList = implode(',', array_map('intval', $pvSkuIds));
-                        $pvBeforeStmt = $crPdo->query(
-                            "SELECT b.sku_id, s.sku_code, ROUND(SUM(b.cost),4) AS cost
-                               FROM ref_sku_bom b
-                               JOIN ref_skus s ON s.id = b.sku_id
-                              WHERE b.sku_id IN ({$pvInList}) AND b.source='Packaging'
-                              GROUP BY b.sku_id, s.sku_code"
-                        );
+                        // BEFORE = fresh dryRun with no mutation (avoids stale ref_sku_bom values)
+                        $pvBeforeResult = compile_sku_bom_packaging($crPdo, $pvSkuIds, true, true);
                         $pvBefore = [];
-                        foreach ($pvBeforeStmt->fetchAll(PDO::FETCH_ASSOC) as $r2) {
-                            $pvBefore[(int)$r2['sku_id']] = ['sku_code' => $r2['sku_code'], 'cost' => (float)$r2['cost']];
+                        $pvSkuCodeStmt = $crPdo->prepare(
+                            "SELECT id, sku_code FROM ref_skus WHERE id IN (" . implode(',', array_map('intval', $pvSkuIds)) . ")"
+                        );
+                        $pvSkuCodeStmt->execute();
+                        foreach ($pvSkuCodeStmt->fetchAll(PDO::FETCH_ASSOC) as $pvSr) {
+                            $sid = (int)$pvSr['id'];
+                            $compiledBefore = $pvBeforeResult['skus'][$sid] ?? null;
+                            $pvBefore[$sid] = [
+                                'sku_code' => $pvSr['sku_code'],
+                                'cost' => ($compiledBefore !== null && isset($compiledBefore['pkg_cost'])) ? (float)$compiledBefore['pkg_cost'] : 0.0,
+                            ];
                         }
 
                         $crPdo->beginTransaction();
@@ -2790,11 +2905,12 @@ if (is_admin($me) || is_manager($me)) {
                                 ? $compiledSku['pkg_cost']
                                 : null;  // null = format_deactivate (SKU dropped from active set) or no cost basis
                             $pvSkuPreview[] = [
-                                'sku_id'   => $sid,
-                                'sku_code' => $skuCode,
-                                'before'   => $beforeCost,
-                                'after'    => $afterCost,
-                                'delta'    => $afterCost !== null ? round($afterCost - $beforeCost, 4) : null,
+                                'sku_id'      => $sid,
+                                'sku_code'    => $skuCode,
+                                'before'      => $beforeCost,
+                                'after'       => $afterCost,
+                                'delta'       => $afterCost !== null ? round($afterCost - $beforeCost, 4) : null,
+                                'deactivated' => ($afterCost === null && $change_kind_pv === 'format_deactivate'),
                             ];
                         }
 
@@ -5051,7 +5167,11 @@ window.SDC_TANK_ERR = null;
                     <span class="cr-cogs-before"><?= number_format((float)$pvSku['before'], 4, '.', "'") ?> CHF</span>
                     <span class="cr-cogs-arrow">&#x2192;</span>
                     <?php if ($pvSku['after'] === null): ?>
+                    <?php if (!empty($pvSku['deactivated'])): ?>
+                    <span class="cr-cogs-deactivated">→ retiré</span>
+                    <?php else: ?>
                     <span class="cr-cogs-after cr-cogs-after--removed">retiré</span>
+                    <?php endif ?>
                     <?php else: ?>
                     <span class="cr-cogs-after"><?= number_format((float)$pvSku['after'], 4, '.', "'") ?> CHF</span>
                     <span class="cr-cogs-delta <?= $pvSku['delta'] > 0 ? 'cr-cogs-delta--up' : ($pvSku['delta'] < 0 ? 'cr-cogs-delta--down' : '') ?>">
@@ -6283,7 +6403,10 @@ function crApprove(requestId){
     .then(r=>r.json())
     .then(d=>{
       if(d.ok){
-        showToast('Demande approuvée — recette mise à jour.');
+        const msg = d.bom_err
+          ? 'Approuvée — recompile BOM échouée : ' + d.bom_err + ' (relance au prochain cron)'
+          : 'Demande approuvée — recette mise à jour.';
+        showToast(msg);
         const card = document.getElementById('cr-card-' + requestId);
         if(card) card.style.opacity = '.4';
         setTimeout(()=>location.reload(), 1200);
