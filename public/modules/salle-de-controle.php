@@ -125,7 +125,9 @@ function sdc_redirect_url(string $sec, int $recipeId = 0, string $sub = '', int 
 // POST handler
 // ─────────────────────────────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (!is_admin($me)) {
+    $action = post_str('action') ?? '';  // read action early so gate can inspect it
+
+    if (!is_admin($me) && !($action === 'submit_change_request' && is_manager($me))) {
         flash_set('err', 'Modification réservée aux administrateurs.');
         redirect_to('/modules/salle-de-controle.php?sec=recettes');
     }
@@ -135,10 +137,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         redirect_to('/modules/salle-de-controle.php?sec=recettes');
     }
 
-    $action = post_str('action') ?? '';
-
     // JSON-API actions respond directly (no PRG redirect)
-    $jsonActions = ['set_hop_stage', 'add_hop_addition', 'delete_hop_addition'];
+    $jsonActions = ['set_hop_stage', 'add_hop_addition', 'delete_hop_addition', 'submit_change_request'];
     if (in_array($action, $jsonActions, true)) {
         header('Content-Type: application/json; charset=utf-8');
     }
@@ -2182,10 +2182,177 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             echo json_encode(['ok' => true, 'id' => $rriId]);
             exit;
 
+        } elseif ($action === 'submit_change_request') {
+            // P2: manager or admin files a change request (stored only; no replay yet)
+            if (!is_admin($me) && !is_manager($me)) {
+                http_response_code(403);
+                echo json_encode(['ok' => false, 'error' => 'Modification réservée aux administrateurs et managers.']);
+                exit;
+            }
+
+            $recipeId = post_int('recipe_id') ?? 0;
+            if ($recipeId <= 0) {
+                http_response_code(400);
+                echo json_encode(['ok' => false, 'error' => 'recipe_id requis.']);
+                exit;
+            }
+
+            $validChangeKinds = ['ingredient_add','ingredient_update','ingredient_remove','recipe_field','qc_target','yeast','format_activate','format_deactivate','bom_binding'];
+            $changeKind = substr((string)(post_str('change_kind') ?? ''), 0, 64);
+            if (!in_array($changeKind, $validChangeKinds, true)) {
+                http_response_code(400);
+                echo json_encode(['ok' => false, 'error' => "change_kind invalide: {$changeKind}"]);
+                exit;
+            }
+
+            // Validate recipe exists
+            $recStmt = $pdo->prepare("SELECT id, name FROM ref_recipes WHERE id = ? AND is_active = 1 LIMIT 1");
+            $recStmt->execute([$recipeId]);
+            $recRow = $recStmt->fetch(PDO::FETCH_ASSOC);
+            if (!$recRow) {
+                http_response_code(400);
+                echo json_encode(['ok' => false, 'error' => "Recette introuvable ou inactive : id={$recipeId}"]);
+                exit;
+            }
+
+            // Parse lines from JSON
+            $rawLines = post_str('lines') ?? '[]';
+            $lines = json_decode($rawLines, true);
+            if (!is_array($lines) || count($lines) === 0) {
+                http_response_code(400);
+                echo json_encode(['ok' => false, 'error' => 'Au moins une ligne requise.']);
+                exit;
+            }
+            if (count($lines) > 50) {
+                http_response_code(400);
+                echo json_encode(['ok' => false, 'error' => 'Trop de lignes (max 50 par demande).']);
+                exit;
+            }
+
+            $validTargetTables = ['ref_recipes','ref_recipe_ingredients','ref_packaging_formats','ref_sku_bom'];
+            // Cost-affecting category keywords (generous — anything feeding COP)
+            $costCats = ['malt','hops','houblon','yeast','levure','finings','colle','packaging','conditionnement','process','cautions','auxiliaires'];
+
+            $preparedLines = [];
+            foreach ($lines as $i => $ln) {
+                $tt = $ln['target_table'] ?? '';
+                if (!in_array($tt, $validTargetTables, true)) {
+                    http_response_code(400);
+                    echo json_encode(['ok' => false, 'error' => "Ligne {$i}: target_table invalide."]);
+                    exit;
+                }
+                $targetPk  = isset($ln['target_pk'])  && $ln['target_pk']  !== '' ? (int) $ln['target_pk']  : null;
+                $miIdFk    = isset($ln['mi_id_fk'])   && $ln['mi_id_fk']   !== '' ? (int) $ln['mi_id_fk']   : null;
+                $field     = isset($ln['field'])       && $ln['field']      !== '' ? substr((string)$ln['field'], 0, 64) : null;
+                $oldValue  = isset($ln['old_value'])                               ? substr((string)$ln['old_value'], 0, 255) : null;
+                $newValue  = isset($ln['new_value'])                               ? substr((string)$ln['new_value'], 0, 255) : null;
+
+                // Resolve MI and cost-affecting flag
+                $isCostAffecting = 0;
+                if ($miIdFk !== null) {
+                    $miStmt = $pdo->prepare(
+                        "SELECT m.id, c.name AS cat_name FROM ref_mi m
+                           JOIN ref_mi_categories c ON c.id = m.category_id
+                          WHERE m.id = ? AND m.is_active = 1 LIMIT 1"
+                    );
+                    $miStmt->execute([$miIdFk]);
+                    $miRow = $miStmt->fetch(PDO::FETCH_ASSOC);
+                    if (!$miRow) {
+                        http_response_code(400);
+                        echo json_encode(['ok' => false, 'error' => "Ligne {$i}: MI id={$miIdFk} introuvable ou inactif."]);
+                        exit;
+                    }
+                    $catLower = strtolower((string) $miRow['cat_name']);
+                    foreach ($costCats as $kw) {
+                        if (str_contains($catLower, $kw)) { $isCostAffecting = 1; break; }
+                    }
+                }
+                // Format / BOM lines are always cost-affecting
+                if (in_array($tt, ['ref_packaging_formats','ref_sku_bom'], true)) {
+                    $isCostAffecting = 1;
+                }
+
+                $preparedLines[] = [
+                    'target_table'      => $tt,
+                    'target_pk'         => $targetPk,
+                    'mi_id_fk'          => $miIdFk,
+                    'field'             => $field,
+                    'old_value'         => $oldValue,
+                    'new_value'         => $newValue,
+                    'is_cost_affecting' => $isCostAffecting,
+                ];
+            }
+
+            // Summary — caller-provided or auto-built
+            $rawSummary = post_str('summary') ?? '';
+            $summary = trim($rawSummary) !== ''
+                ? substr(trim($rawSummary), 0, 255)
+                : "{$changeKind} · recette #{$recipeId} ({$recRow['name']})";
+
+            // Insert in a single transaction
+            $pdo->beginTransaction();
+            try {
+                $envStmt = $pdo->prepare(
+                    "INSERT INTO recipe_change_requests
+                       (recipe_id_fk, requested_by_fk, status, change_kind, summary)
+                     VALUES (?, ?, 'pending', ?, ?)"
+                );
+                $envStmt->execute([$recipeId, (int)$me['id'], $changeKind, $summary]);
+                $requestId = (int) $pdo->lastInsertId();
+
+                $lineStmt = $pdo->prepare(
+                    "INSERT INTO recipe_change_request_lines
+                       (request_id_fk, target_table, target_pk, mi_id_fk, field, old_value, new_value, is_cost_affecting)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                );
+                foreach ($preparedLines as $pl) {
+                    $lineStmt->execute([
+                        $requestId,
+                        $pl['target_table'],
+                        $pl['target_pk'],
+                        $pl['mi_id_fk'],
+                        $pl['field'],
+                        $pl['old_value'],
+                        $pl['new_value'],
+                        $pl['is_cost_affecting'],
+                    ]);
+                }
+
+                log_revision(
+                    $pdo, $me, 'recipe_change_requests', $requestId,
+                    [],
+                    ['status' => 'pending', 'change_kind' => $changeKind, 'recipe_id_fk' => $recipeId],
+                    'normal',
+                    "Demande de modification soumise · recette #{$recipeId} ({$recRow['name']})"
+                );
+
+                $pdo->commit();
+            } catch (Throwable $txErr) {
+                $pdo->rollBack();
+                throw $txErr;
+            }
+
+            echo json_encode([
+                'ok'          => true,
+                'request_id'  => $requestId,
+                'change_kind' => $changeKind,
+                'lines_count' => count($preparedLines),
+            ]);
+            exit;
+
         } else {
             throw new RuntimeException('Action inconnue.');
         }
     } catch (Throwable $e) {
+        // JSON actions must return JSON even on unexpected exceptions — never fall through to flash+redirect
+        if (in_array($action, $jsonActions, true)) {
+            if (!headers_sent()) {
+                http_response_code(500);
+                header('Content-Type: application/json; charset=utf-8');
+            }
+            echo json_encode(['ok' => false, 'error' => pdo_friendly_error($e, 'salle-de-controle')]);
+            exit;
+        }
         flash_set('err', pdo_friendly_error($e, 'salle-de-controle'));
     }
 
@@ -5807,18 +5974,57 @@ function applyModal(){
   pendingModal=null;
   document.getElementById('modalOverlay').classList.remove('open');
   if((pm.isStyle||pm.isName)&&pm.recipeId){
-    // Build and submit a hidden form for the real POST (PRG — page will reload to sec=recettes)
-    const f=document.createElement('form');
-    f.method='post';f.action='/modules/salle-de-controle.php';f.style.display='none';
-    const add=(n,v)=>{const i=document.createElement('input');i.type='hidden';i.name=n;i.value=v;f.appendChild(i);};
-    add('csrf',window.SDC_CSRF||'');
-    add('recipe_id',pm.recipeId);
-    if(pm.isStyle){add('action','update_recipe_style');add('style',pm.newVal);}
-    else{add('action','update_recipe_name');add('name',pm.newVal);}
-    document.body.appendChild(f);
-    f.submit();
+    if(SDC_ROLE==='admin'){
+      // Admin: direct PRG write (unchanged)
+      const f=document.createElement('form');
+      f.method='post';f.action='/modules/salle-de-controle.php';f.style.display='none';
+      const add=(n,v)=>{const i=document.createElement('input');i.type='hidden';i.name=n;i.value=v;f.appendChild(i);};
+      add('csrf',window.SDC_CSRF||'');
+      add('recipe_id',pm.recipeId);
+      if(pm.isStyle){add('action','update_recipe_style');add('style',pm.newVal);}
+      else{add('action','update_recipe_name');add('name',pm.newVal);}
+      document.body.appendChild(f);
+      f.submit();
+    } else {
+      // Manager: file a change request via JSON fetch
+      const fieldName = pm.isStyle ? 'style' : 'name';
+      const lines = [{
+        target_table: 'ref_recipes',
+        target_pk: pm.recipeId,
+        field: fieldName,
+        old_value: pm.oldVal,
+        new_value: pm.newVal
+      }];
+      const summary = (pm.isStyle ? 'Style' : 'Nom') + ' · recette #' + pm.recipeId + ' : «' + pm.oldVal + '» → «' + pm.newVal + '»';
+      const body = new URLSearchParams({
+        csrf: window.SDC_CSRF || '',
+        action: 'submit_change_request',
+        recipe_id: pm.recipeId,
+        change_kind: 'recipe_field',
+        lines: JSON.stringify(lines),
+        summary: summary
+      });
+      // Optimistically reflect the new value; revert on error
+      pm.inp.defaultValue = pm.newVal;
+      fetch('/modules/salle-de-controle.php', {method:'POST', body})
+        .then(r => r.json())
+        .then(d => {
+          if(d.ok){
+            showToast('Demande envoyée (#' + d.request_id + ') — en attente d\'approbation');
+          } else {
+            pm.inp.value = pm.oldVal;
+            pm.inp.defaultValue = pm.oldVal;
+            showToast('Erreur : ' + (d.error || 'Demande non enregistrée'));
+          }
+        })
+        .catch(()=>{
+          pm.inp.value = pm.oldVal;
+          pm.inp.defaultValue = pm.oldVal;
+          showToast('Erreur réseau — demande non envoyée');
+        });
+    }
   } else {
-    // Fallback for any other pending field (currently none — onFieldBlur is still mock)
+    // Fallback for any other pending field (currently none — onFieldBlur is still mock for non-name/style)
     pm.inp.defaultValue=pm.newVal;
   }
 }
