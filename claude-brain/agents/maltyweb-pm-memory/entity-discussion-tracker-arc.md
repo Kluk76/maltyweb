@@ -2,7 +2,9 @@
 
 > Read when touching: a chronological mail/document thread on a supplier or customer fiche; `comm_threads`/`comm_messages`/`comm_message_docs`; linking `kouros@lanebuleuse.ch` (or any personal/shared Workspace mailbox) into maltyweb; the customer-fiche surface (does not exist yet); matching an inbound/outbound email to an entity. Companions: [email-order-ingestion-arc.md](email-order-ingestion-arc.md) (Gmail DWD substrate — REUSE the auth, NOT the order tables), [sales-commercial-surface/README.md](sales-commercial-surface/README.md) (ref_customers canonical), [ingestion-validation-gate-arc.md](ingestion-validation-gate-arc.md) (doc_files model).
 >
-> **STATUS: BUILT + DEPLOYED (supplier-first v1), NOT git-committed — 2026-06-19.** P0/P1a/P1b/P2 all landed on `/var/www/maltytask` (per-file rsync; parallel session active on planning.*/email-order parsers — those UNtouched). Opus commits at milestone (shared dirty tree). Customer side = P3, still deferred. The PROPOSED-MODEL / OPEN-QUESTIONS / SEQUENCING sections below are the as-designed record; §AS-BUILT (next) is the authority on what shipped.
+> **STATUS: SUPPLIER-SIDE TWO-WAY HUB COMPLETE + DEPLOYED — P0/P1a/P1b/P2/P2.5/P3-SEND all landed on `/var/www/maltytask` 2026-06-19. NOT git-committed (commit by PATHSPEC pending Kouros go).** Per-file rsync (shared dirty tree, parallel sessions active). **gmail.send grant GRANTED + verified; real self-send proven.** Only OPEN on supplier side: Kouros's authed click-through (real drag-drop + a real send to a supplier). Customer side (P3-cust) still deferred (no customer fiche). The PROPOSED-MODEL / OPEN-QUESTIONS / SEQUENCING sections below are the as-designed record; §AS-BUILT + §P3-SEND AS-BUILT are the authority on what shipped.
+>
+> **⚠️ MIGRATION NUMBER = 420, NOT 414.** The send-schema delta planned as "mig 414+" landed as **mig 420** `420_comm_send_outbound.sql` — parallel sessions had taken 414-419. (Reinforces the standing rule: re-`migrate.php --status` at build-start; the number leads.)
 >
 > **AS-BUILT decisions held:** mailbox = `kouros@lanebuleuse.ch` ONLY (v1); capture + manual-notes, NO outbound compose; 180-day backfill (`newer_than:180d`, not 6mo-as-days — same intent); SUPPLIER-FIRST (grafted onto salle-fournisseurs `#sf-fiche`); manual call-notes in the same timeline = YES; NO LLM; privacy = persist ONLY external-counterparty mail that resolves OR lands in the review bucket, drop internal-only + bulk (List-Unsubscribe).
 
@@ -26,6 +28,28 @@
 - Edited `salle-fournisseurs.js` (`renderDiscussionSection` after renderEvalSection, called in openFiche ~line 584) + `salle-fournisseurs.css` (appended scoped `.sf-disc-*` block, dark aged-oak). Merged render = ONE ordered list, docs inline beneath their message (chips → `/api/document.php?file_id=UUID`), manual-note compose box, admin review-triage strip with supplier picker, **45s live-refresh** (interval cleared on fiche switch — honors live-visibility default).
 - **🔴 HTML-email XSS safety: bodies rendered as ESCAPED PLAIN TEXT** (server-side `strip_tags` for html bodies + `escHtml`) — raw HTML NEVER injected. Rich-HTML allowlist DEFERRED.
 - Deployed per-file; PHP syntax clean; GET → 302 login redirect (no 500).
+
+## §P3-SEND AS-BUILT (2026-06-19) — outbound reply + attach SHIPPED + DEPLOYED (NOT committed)
+**Migration 420** `420_comm_send_outbound.sql` APPLIED: `comm_messages.source` ENUM += `'sent'`; + `send_status ENUM('sent','failed')`, + `send_error VARCHAR(512)`, + `sent_by_user_id INT UNSIGNED` FK→users(id). (Planned as 414; landed as 420 — parallel sessions took 414-419.)
+
+**gmail.send scope GRANTED + verified.** Requesting `[readonly, send]` TOGETHER mints a token impersonating a real operator (alex@→alex@, kouros@→kouros@) → per-user "reply as yourself" send CONFIRMED working. (Durable: the SAME DWD client now carries both readonly + send; request the pair together.)
+
+**Python sender** `scripts/python/send_email_comm.py`: impersonates the operator's OWN @lanebuleuse.ch address; builds multipart/mixed MIME; sets own deterministic Message-ID; In-Reply-To/References from the parent inbound message; **DROPS Gmail threadId (cross-mailbox)** per Ruling A; `--dry-run`; JSON stdin/stdout. Real self-send proven (kouros@→kouros@, returned Message-ID + gmail id, delivered).
+
+**API** `sf-comm-thread.php` gained: GET `?supplier_docs=<id>` (UNION certs + thread-docs + invoices/DNs, deduped); POST `action=send_reply` (admin|manager SERVER-enforced, re-validates current_user email @lanebuleuse.ch, recipient = most-recent inbound from_address, subject Re:, confirm-then-send, writes comm_messages row ONLY on Gmail 2xx with source='sent'/send_status/sent_by_user_id, comm_message_docs direction='out'; NO row on failure, error returned to UI); GET supplier timeline now returns `sent_by` display name → "Envoyé par X".
+
+**Composer UI** in salle-fournisseurs.js/.css: "Répondre par e-mail" box in the conversation pane (DISTINCT from internal-note box — blue `--bbt` vs green `--hop`), gated on (inbound exists AND admin|manager AND @lanebuleuse.ch email; `window.SF_USER_EMAIL` hydrated in salle-fournisseurs.php); read-only recipient display; body textarea; attachments zone; confirm-then-send; errors surfaced; outbound bubbles show "par <name>".
+
+**🔴 ATTACH-PATH FIX + DURABLE LESSON.** A first build of the composer was BROKEN: it routed desktop uploads through `upload-document.php`'s **doc_uploads INGESTION pipeline** + polled `?supplier_docs=` for the UUID — which can NEVER resolve for a generic attachment. REPLACED with a synchronous **`action=attach_upload`** on sf-comm-thread.php: writes real bytes to `/var/www/maltytask/data/email-attachments/YYYY-MM/`, sha256 file_hash dedup, INSERT doc_files (source_folder='email-comm-attach', row_hash, file_size_bytes), returns the **BIGINT doc_file_id immediately**; JS attaches the BIGINT directly (no poll). Verified: real bytes (not symlink), dedup, BIGINT returned, test data cleaned. **DURABLE: email attachments must write STRAIGHT to doc_files, NOT through the doc_uploads/upload-document.php invoice-ingestion pipeline. The supplier-docs PICKER path (returns real BIGINTs) was always fine.** (NB: this SUPERSEDES the §SCOPE-EXPANSION "(1) Fresh desktop uploads → REUSE upload-document.php" plan — that reuse was the bug; the fix is the dedicated attach_upload action.)
+
+**🔴 GIT — 413 SWEPT BY A PARALLEL SESSION (cautionary).** A parallel session ran `git add -A` and swept migration **413 into its commit `bce4e6b "style(expeditions)…"`** — 413 is now in history under a WRONG message. The remaining P3-send files (420, ingest_email_comm.py, send_email_comm.py, gmail-comm.env.example, sf-comm-thread.php, salle-fournisseurs.js/.css/.php) are STILL UNCOMMITTED and at risk of the same sweep. Awaiting Kouros's go to commit by explicit pathspec. (Live proof of the standing "commit by PATHSPEC, never `git add -A`" rule — a foreign session's `-A` ate our migration.)
+
+### §P3-SEND still OPEN (as-built)
+- Kouros's full authed click-through (real in-session drag-drop + a real send to a SUPPLIER — backend self-send already proven).
+- Commit by PATHSPEC (pending Kouros go) — name the 8 files; never `-A`.
+- **Bounces invisible under write-on-2xx** (known v1 gap — 2xx = accepted-for-send, not delivered).
+- 2 users with blank emails can't send (UI gated + server enforced — by design).
+- Customer side (P3-cust) still deferred (no customer fiche).
 
 ## §SCOPE EXPANSION (2026-06-19) — TWO-WAY COMMS HUB (Kouros wants SEND + drag-drop attach)
 Kouros looked at the layout options and, rather than pick one, ADDED a requirement: **operators reply to suppliers by email FROM within maltyweb**, with **drag-and-drop documents to attach** (especially docs we previously generated FOR the supplier). This forces a real composer + attachment zone → forces **Layout = Option A (tabbed fiche: Fiche / Évaluation / Discussions, two-pane inbox inside Discussions).** PM CONFIRMED Option A (only layout with composer room). Planning only; not yet built.
@@ -56,8 +80,8 @@ fresh desktop uploads + supplier certs/spec sheets + supplier invoices/DNs + doc
 
 **REVISED SEQUENCING (capture v1 is live):**
 - **P2.5 — tabbed-fiche layout refactor — 🔵 BUILDING NOW (background Sonnet agent, pure UI, NO new scope).** Convert openFiche to TabStrip→Panel, fold Fiche/Évaluation/Discussions, move the existing `.sf-disc-*` timeline into the Discussions tab's two-pane shell (still read+note only). Safe to ship WHILE the gmail.send grant is being processed — zero send capability. ⚠️ touches the two shared files (salle-fournisseurs.js/.css) — single-owner during this build vs the supplier-eval parallel session.
-- **gmail.send scope:** steps sent to Kouros; awaiting his Google-Admin grant + PM verify-probe before P3-send build starts.
-- **P3-send — outbound reply + attach (GATED on the gmail.send grant + verify-probe passing).** mig 414+ (source ENUM 'sent' + send_status/send_error + sent_by_user_id); Python sender (per-operator impersonation subject, multipart/mixed, In-Reply-To/References, NO cross-mailbox threadId); sf-comm-thread.php `send_reply` action (role-gate admin|manager, validate operator @lanebuleuse.ch email server-side, confirm-then-send, row-on-2xx, failure→UI); drag-drop zone (reuse upload-document.php) + 4-source supplier-doc picker; send UI disabled w/ reason when operator email blank/non-domain. EQUIP sql+coder+ui+webapp-testing (+ light parser-coder envelope for MIME assembly).
+- **gmail.send scope:** ✅ GRANTED + verified (see §P3-SEND AS-BUILT).
+- **P3-send — ✅ SHIPPED + DEPLOYED 2026-06-19 (mig 420, send_email_comm.py, sf-comm-thread.php send_reply + attach_upload, composer UI). See §P3-SEND AS-BUILT above for the authority record + the attach-path fix.** Note: the "drag-drop = reuse upload-document.php" plan below was the BUG — the fix is a dedicated `attach_upload` action writing straight to doc_files.
 - Customer side (P3-cust, the original P3) still the bigger lift, still deferred.
 
 **OPERATOR DECISIONS — ALL LOCKED (Kouros, 2026-06-19):**
