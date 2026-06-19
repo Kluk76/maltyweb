@@ -129,6 +129,140 @@ function predict_load_free_serving_tank_count(PDO $pdo): int
     return (int)$stmt->fetchColumn();
 }
 
+/**
+ * Returns serving-tank client data with cadence and next-fill prediction.
+ * Each returned entry: [
+ *   'client_id'       => int,
+ *   'client_name'     => string,
+ *   'recipe_id'       => int,
+ *   'recipe_name'     => string,
+ *   'last_fill_date'  => string (Y-m-d),
+ *   'cadence_days'    => int,
+ *   'next_expected'   => string (Y-m-d),
+ *   'target_volume_hl'=> float,
+ * ]
+ * Clients with < 2 fill events are skipped (cadence cannot be derived).
+ * Fill events are collapsed per posting_date (one fill = one day even if multi-line).
+ * Cadence = MEDIAN interval (days) between consecutive distinct fill dates.
+ * Target volume = MEDIAN HL of the last up-to-6 fills.
+ * Beer = recipe_id of the client's most recent fill row.
+ */
+function predict_load_serving_tank_clients(PDO $pdo): array
+{
+    // Load flagged active clients
+    $clientStmt = $pdo->prepare(
+        'SELECT id, name FROM ref_customers
+          WHERE is_serving_tank_client = 1 AND is_active = 1
+          ORDER BY id'
+    );
+    $clientStmt->execute();
+    $clients = $clientStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    if (empty($clients)) {
+        return [];
+    }
+
+    // Load all recipe names once
+    $recipeStmt = $pdo->query('SELECT id, name FROM ref_recipes WHERE is_active = 1');
+    $recipeNames = []; // id => name
+    foreach ($recipeStmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
+        $recipeNames[(int)$r['id']] = (string)$r['name'];
+    }
+
+    $result = [];
+
+    foreach ($clients as $client) {
+        $cid = (int)$client['id'];
+
+        // Load all Cuve de service fills for this client, negative qty only (sales), ordered ascending
+        $fillStmt = $pdo->prepare(
+            'SELECT l.posting_date, s.recipe_id, SUM(ABS(l.qty_signed)) AS day_qty_litres
+               FROM inv_sales_ledger l
+               JOIN ref_skus s ON s.id = l.sku_id_fk AND s.format = \'Cuve de service\'
+              WHERE l.customer_id_fk = ? AND l.qty_signed < 0
+              GROUP BY l.posting_date, s.recipe_id
+              ORDER BY l.posting_date ASC'
+        );
+        $fillStmt->execute([$cid]);
+        $fills = $fillStmt->fetchAll(PDO::FETCH_ASSOC); // each row: posting_date, recipe_id, day_qty_litres
+
+        if (count($fills) < 2) {
+            // Cannot derive cadence
+            continue;
+        }
+
+        // Collapse by posting_date: one fill event per day (sum qty, take last recipe_id seen)
+        // (already grouped by posting_date in the query above, but handle edge case of same-day different recipe)
+        $byDate = []; // Y-m-d => ['recipe_id' => int, 'qty_litres' => float]
+        foreach ($fills as $f) {
+            $d = (string)$f['posting_date'];
+            if (!isset($byDate[$d])) {
+                $byDate[$d] = ['recipe_id' => (int)$f['recipe_id'], 'qty_litres' => 0.0];
+            }
+            $byDate[$d]['qty_litres'] += (float)$f['day_qty_litres'];
+            $byDate[$d]['recipe_id'] = (int)$f['recipe_id']; // last recipe wins (same-day multi-recipe edge)
+        }
+        ksort($byDate); // ensure ascending date order
+        $dates = array_keys($byDate);
+
+        if (count($dates) < 2) {
+            continue; // need >= 2 distinct fill dates for >= 1 interval
+        }
+
+        // Compute intervals (days) between consecutive distinct fill dates
+        $intervals = [];
+        for ($i = 1; $i < count($dates); $i++) {
+            $prev = new DateTimeImmutable($dates[$i - 1]);
+            $curr = new DateTimeImmutable($dates[$i]);
+            $intervals[] = (int)$prev->diff($curr)->days;
+        }
+
+        // Median interval
+        sort($intervals);
+        $n = count($intervals);
+        $cadenceDays = ($n % 2 === 1)
+            ? (int)$intervals[($n - 1) / 2]
+            : (int)round(($intervals[$n / 2 - 1] + $intervals[$n / 2]) / 2);
+
+        if ($cadenceDays <= 0) {
+            continue; // degenerate cadence
+        }
+
+        // Last fill date
+        $lastFillDate = end($dates);
+        // Most recent fill recipe
+        $lastRecipeId = $byDate[$lastFillDate]['recipe_id'];
+
+        // Target volume = MEDIAN of last up-to-6 fills' HL
+        $lastSixDates = array_slice($dates, -6);
+        $hlValues = [];
+        foreach ($lastSixDates as $d) {
+            $hlValues[] = $byDate[$d]['qty_litres'] / 100.0;
+        }
+        sort($hlValues);
+        $nhl = count($hlValues);
+        $targetHl = ($nhl % 2 === 1)
+            ? $hlValues[($nhl - 1) / 2]
+            : ($hlValues[$nhl / 2 - 1] + $hlValues[$nhl / 2]) / 2.0;
+        $targetHl = round($targetHl, 2);
+
+        $nextExpected = (new DateTimeImmutable($lastFillDate))->modify("+{$cadenceDays} days")->format('Y-m-d');
+
+        $result[] = [
+            'client_id'        => $cid,
+            'client_name'      => (string)$client['name'],
+            'recipe_id'        => $lastRecipeId,
+            'recipe_name'      => $recipeNames[$lastRecipeId] ?? 'Recette #' . $lastRecipeId,
+            'last_fill_date'   => $lastFillDate,
+            'cadence_days'     => $cadenceDays,
+            'next_expected'    => $nextExpected,
+            'target_volume_hl' => $targetHl,
+        ];
+    }
+
+    return $result;
+}
+
 // ── Dry-hop spec helpers ───────────────────────────────────────────────────────
 
 /**
@@ -407,7 +541,7 @@ function planning_generate_suggestions(PDO $pdo, DateTimeImmutable $weekStart, i
     // ── Step 7: Combined dedup + netting query ────────────────────────────────
     // Single query builds dedupSet + capacity netting counters + per-day seeds.
     $existStmt = $pdo->prepare(
-        "SELECT section, recipe_id_fk, pkg_type, target_volume_hl, plan_date
+        "SELECT section, recipe_id_fk, pkg_type, target_volume_hl, plan_date, customer_id_fk
            FROM pl_plan_items
           WHERE plan_date BETWEEN ? AND ?
             AND is_active = 1
@@ -423,12 +557,13 @@ function planning_generate_suggestions(PDO $pdo, DateTimeImmutable $weekStart, i
         'serving_tank' => null,
     ];
 
-    $dedupSet            = [];
-    $existingBrewCount   = 0;
-    $existingPkgHl       = ['bottle_hl' => 0.0, 'can_hl' => 0.0, 'keg_hl' => 0.0];
-    $placedBrewsByDate   = []; // dateStr => int (existing brew rows per day)
-    $pkgCountByDate      = []; // dateStr => int (existing packaging rows per day — seeds load-balance)
-    $pkgTypeByDate       = []; // dateStr => [pkg_type => true] (packaging types already on that day)
+    $dedupSet                       = [];
+    $existingBrewCount              = 0;
+    $existingPkgHl                  = ['bottle_hl' => 0.0, 'can_hl' => 0.0, 'keg_hl' => 0.0];
+    $placedBrewsByDate              = []; // dateStr => int (existing brew rows per day)
+    $pkgCountByDate                 = []; // dateStr => int (existing packaging rows per day — seeds load-balance)
+    $pkgTypeByDate                  = []; // dateStr => [pkg_type => true] (packaging types already on that day)
+    $existingServingTankCustomers   = []; // customer_id => true
 
     foreach ($existRows as $ei) {
         $section  = (string)$ei['section'];
@@ -453,6 +588,10 @@ function planning_generate_suggestions(PDO $pdo, DateTimeImmutable $weekStart, i
             if ($ptKey !== null) {
                 $hl = $ei['target_volume_hl'] !== null ? (float)$ei['target_volume_hl'] : $proxyHl;
                 $existingPkgHl[$ptKey] += $hl;
+            }
+            // Also track serving_tank customer dedup
+            if ($eiPkgType === 'serving_tank' && !empty($ei['customer_id_fk'])) {
+                $existingServingTankCustomers[(int)$ei['customer_id_fk']] = true;
             }
         }
     }
@@ -664,18 +803,11 @@ function planning_generate_suggestions(PDO $pdo, DateTimeImmutable $weekStart, i
             continue;
         }
 
-        // For serving_tank: gate on free tank count
+        // serving_tank proposals come from Pass 2.5 (client-recurrence), never from coverage
         if ($pkgType === 'serving_tank') {
-            if ($freeServingTankCount <= 0) {
-                $decisions[] = [
-                    'beer'     => $rd['beer_name'],
-                    'decision' => 'deferred',
-                    'reason'   => 'aucune cuve de service libre',
-                    'semaines' => $rd['worst_semaines'],
-                ];
-                continue;
-            }
-        } elseif ($budgetKey !== null && $pkgBudgetHl[$budgetKey] < $proxyHl) {
+            continue;
+        }
+        if ($budgetKey !== null && $pkgBudgetHl[$budgetKey] < $proxyHl) {
             $decisions[] = [
                 'beer'     => $rd['beer_name'],
                 'decision' => 'deferred',
@@ -799,9 +931,7 @@ function planning_generate_suggestions(PDO $pdo, DateTimeImmutable $weekStart, i
 
         // Update state
         $dedupSet[$dedupKey] = true;
-        if ($pkgType === 'serving_tank') {
-            $freeServingTankCount--;
-        } elseif ($budgetKey !== null) {
+        if ($budgetKey !== null) {
             $pkgBudgetHl[$budgetKey] -= $proxyHl;
         }
         $pkgCountByDate[$planDate] = ($pkgCountByDate[$planDate] ?? 0) + 1;
@@ -828,6 +958,173 @@ function planning_generate_suggestions(PDO $pdo, DateTimeImmutable $weekStart, i
             'bbt'      => $bbtNum,
             'pkg_type' => $pkgType,
             'semaines' => $rd['best_semaines'],
+        ];
+    }
+
+    // ── Pass 2.5: Serving-tank proposals (client-recurrence) ─────────────────
+    // Propose a cuve fill per recurring client whose next fill is due within the planned week
+    // (or overdue). Cadence derived from sales history — cadence column ignored.
+    $servingTankClients  = predict_load_serving_tank_clients($pdo);
+    $remainingTankSlots  = $freeServingTankCount; // count of free in-house serving tanks (week-level cap)
+
+    foreach ($servingTankClients as $stc) {
+        $clientId   = $stc['client_id'];
+        $clientName = $stc['client_name'];
+
+        // Skip if client already has a serving_tank proposal/plan this week
+        if (isset($existingServingTankCustomers[$clientId])) {
+            $decisions[] = [
+                'client'   => $clientName,
+                'decision' => 'skipped',
+                'reason'   => 'déjà planifié cette semaine',
+            ];
+            continue;
+        }
+
+        $nextExpected = $stc['next_expected'];
+
+        // Due test: next_expected must be <= weekEnd (includes overdue)
+        if ($nextExpected > $weekEndStr) {
+            $decisions[] = [
+                'client'   => $clientName,
+                'decision' => 'skipped',
+                'reason'   => sprintf('pas encore dû (%s)', $nextExpected),
+            ];
+            continue;
+        }
+
+        // Cap: bound by free serving-tank count
+        if ($remainingTankSlots <= 0) {
+            $decisions[] = [
+                'client'   => $clientName,
+                'decision' => 'deferred',
+                'reason'   => 'aucune cuve de service libre',
+            ];
+            continue;
+        }
+
+        // Determine placement day:
+        // - If next_expected is within [weekStart, weekEnd] and is a working day → that day
+        // - If overdue (< weekStart) → earliest working day in week
+        // - If due-in-week but not a working day → nearest working day within week
+        $planDate = null;
+        if ($nextExpected < $weekStartStr) {
+            // Overdue: earliest working day
+            $planDate = $workingDays[0]->format('Y-m-d');
+        } elseif (isset($workingDaySet[$nextExpected])) {
+            // Due this week on a working day
+            $planDate = $nextExpected;
+        } else {
+            // Due this week but not a working day — find nearest working day in week
+            $targetDt = new DateTimeImmutable($nextExpected);
+            $nearestDay = null;
+            $nearestDiff = PHP_INT_MAX;
+            foreach ($workingDays as $wd) {
+                $diff = abs((int)(new DateTimeImmutable($wd->format('Y-m-d')))->diff($targetDt)->days);
+                if ($diff < $nearestDiff) {
+                    $nearestDiff = $diff;
+                    $nearestDay  = $wd->format('Y-m-d');
+                }
+            }
+            $planDate = $nearestDay ?? $workingDays[0]->format('Y-m-d');
+        }
+
+        // Per-day packaging cap check
+        if (($pkgCountByDate[$planDate] ?? 0) >= $maxPkgRunsPerDay) {
+            // Try other working days
+            $fallbackDate = null;
+            foreach ($workingDays as $wd) {
+                $wdStr = $wd->format('Y-m-d');
+                if (($pkgCountByDate[$wdStr] ?? 0) < $maxPkgRunsPerDay) {
+                    $fallbackDate = $wdStr;
+                    break;
+                }
+            }
+            if ($fallbackDate === null) {
+                $decisions[] = [
+                    'client'   => $clientName,
+                    'decision' => 'deferred',
+                    'reason'   => 'cap journalier conditionnement atteint tous les jours ouvrés',
+                ];
+                continue;
+            }
+            $planDate = $fallbackDate;
+        }
+
+        $rid        = $stc['recipe_id'];
+        $recipeName = $stc['recipe_name'];
+        $targetHl   = $stc['target_volume_hl'];
+
+        $suggestReason = substr(
+            sprintf(
+                'Cuve de service — %s (dû %s, cadence %dj)',
+                $clientName,
+                $nextExpected,
+                $stc['cadence_days']
+            ),
+            0, 255
+        );
+
+        // Get next seq
+        $seqStmt = $pdo->prepare(
+            "SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq
+               FROM pl_plan_items
+              WHERE plan_date = ? AND section = 'packaging' AND is_active = 1"
+        );
+        $seqStmt->execute([$planDate]);
+        $nextSeq = (int)($seqStmt->fetchColumn() ?: 1);
+
+        // Upsert pl_plan_days
+        $dayStmt = $pdo->prepare(
+            'INSERT INTO pl_plan_days (plan_date, created_by_user_id_fk)
+             VALUES (?, ?)
+             ON DUPLICATE KEY UPDATE updated_at = CURRENT_TIMESTAMP'
+        );
+        $dayStmt->execute([$planDate, $createdByUserId]);
+
+        $insStmt = $pdo->prepare(
+            "INSERT INTO pl_plan_items
+               (plan_date, section, seq, pkg_type, recipe_id_fk, customer_id_fk,
+                target_volume_hl, hors_process, suggest_reason, source, status, created_by_user_id_fk)
+             VALUES (?, 'packaging', ?, 'serving_tank', ?, ?, ?, 0, ?, 'predictive', 'proposed', ?)"
+        );
+        $insStmt->execute([
+            $planDate, $nextSeq, $rid, $clientId, $targetHl, $suggestReason, $createdByUserId,
+        ]);
+        $newId = (int)$pdo->lastInsertId();
+
+        $afterData = [
+            'plan_date'             => $planDate,
+            'section'               => 'packaging',
+            'seq'                   => $nextSeq,
+            'pkg_type'              => 'serving_tank',
+            'recipe_id_fk'          => $rid,
+            'customer_id_fk'        => $clientId,
+            'target_volume_hl'      => $targetHl,
+            'hors_process'          => 0,
+            'suggest_reason'        => $suggestReason,
+            'source'                => 'predictive',
+            'status'                => 'proposed',
+            'created_by_user_id_fk' => $createdByUserId,
+        ];
+        log_revision($pdo, $me, 'pl_plan_items', $newId, null, $afterData, 'normal', null);
+
+        // Update state
+        $existingServingTankCustomers[$clientId] = true;
+        $remainingTankSlots--;
+        $pkgCountByDate[$planDate] = ($pkgCountByDate[$planDate] ?? 0) + 1;
+        $pkgTypeByDate[$planDate]['serving_tank'] = true;
+
+        $inserted++;
+        $rows[]      = array_merge($afterData, ['id' => $newId]);
+        $decisions[] = [
+            'client'    => $clientName,
+            'beer'      => $recipeName,
+            'decision'  => 'serving_tank',
+            'day'       => $planDate,
+            'target_hl' => $targetHl,
+            'cadence'   => $stc['cadence_days'],
+            'next_exp'  => $nextExpected,
         ];
     }
 

@@ -673,6 +673,23 @@ $itemsStmt = $pdo->prepare(
 $itemsStmt->execute([$weekStartStr, $weekEnd->format('Y-m-d')]);
 $allItems = $itemsStmt->fetchAll(PDO::FETCH_ASSOC);
 
+// Load customer names for serving-tank packaging proposals
+$servingTankCustomerNames = []; // customer_id => name
+$stCustIds = [];
+foreach ($allItems as $item) {
+    if (!empty($item['customer_id_fk']) && (string)($item['pkg_type'] ?? '') === 'serving_tank') {
+        $stCustIds[(int)$item['customer_id_fk']] = true;
+    }
+}
+if (!empty($stCustIds)) {
+    $stInPh  = implode(',', array_fill(0, count($stCustIds), '?'));
+    $stStmt  = $pdo->prepare("SELECT id, name FROM ref_customers WHERE id IN ({$stInPh})");
+    $stStmt->execute(array_keys($stCustIds));
+    foreach ($stStmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
+        $servingTankCustomerNames[(int)$r['id']] = (string)$r['name'];
+    }
+}
+
 // Group by plan_date → section → items
 $itemsByDaySection = [];
 foreach ($allItems as $item) {
@@ -968,6 +985,14 @@ $weekLabel = 'Semaine du '
               <div class="pl-item-card__type">
                 <?= htmlspecialchars(PKG_TYPE_LABELS[$item['pkg_type']] ?? $item['pkg_type'], ENT_QUOTES | ENT_HTML5) ?>
               </div>
+              <?php
+                $stClientName = (!empty($item['customer_id_fk']) && (string)($item['pkg_type'] ?? '') === 'serving_tank')
+                    ? ($servingTankCustomerNames[(int)$item['customer_id_fk']] ?? null)
+                    : null;
+              ?>
+              <?php if ($stClientName !== null): ?>
+                <div class="pl-item-card__meta"><?= htmlspecialchars($stClientName, ENT_QUOTES | ENT_HTML5) ?></div>
+              <?php endif ?>
               <?php if (!empty($item['recipe_name'])): ?>
                 <div class="pl-item-card__recipe"><?= htmlspecialchars($item['recipe_name'], ENT_QUOTES | ENT_HTML5) ?></div>
               <?php endif ?>
