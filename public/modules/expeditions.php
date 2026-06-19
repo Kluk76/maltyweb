@@ -273,6 +273,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'clients') {
             $editableFields = [
                 'trade_channel', 'default_transporter_id_fk', 'is_active',
                 'is_private', 'email', 'notes',
+                'is_serving_tank_client', 'serving_tank_count',
+                'serving_tank_size_hl', 'serving_tank_budget_hl',
             ];
             $field = isset($_POST['field']) ? (string) $_POST['field'] : '';
             if (!in_array($field, $editableFields, true)) {
@@ -327,6 +329,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'clients') {
                 }
             } elseif ($field === 'notes') {
                 $coerced = ($rawVal === '' || $rawVal === null) ? null : substr(trim((string) $rawVal), 0, 2000);
+            } elseif ($field === 'is_serving_tank_client') {
+                $coerced = in_array($rawVal, ['0', '1', 0, 1], true) ? (int) $rawVal : null;
+                if ($coerced === null) {
+                    flash_set('err', 'Valeur invalide pour is_serving_tank_client.');
+                    redirect_to('/modules/expeditions.php?view=clients');
+                }
+            } elseif ($field === 'serving_tank_count') {
+                if ($rawVal === '' || $rawVal === null) {
+                    $coerced = null;
+                } else {
+                    $iv = (int) $rawVal;
+                    if ($iv < 0 || $iv > 255) {
+                        flash_set('err', 'Nombre de cuves invalide (0–255).');
+                        redirect_to('/modules/expeditions.php?view=clients');
+                    }
+                    $coerced = $iv;
+                }
+            } elseif ($field === 'serving_tank_size_hl') {
+                if ($rawVal === '' || $rawVal === null) {
+                    $coerced = null;
+                } else {
+                    $fv = (float) str_replace(',', '.', (string) $rawVal);
+                    if ($fv < 0) {
+                        flash_set('err', 'Taille de cuve invalide (valeur positive requise).');
+                        redirect_to('/modules/expeditions.php?view=clients');
+                    }
+                    $coerced = $fv;
+                }
+            } elseif ($field === 'serving_tank_budget_hl') {
+                if ($rawVal === '' || $rawVal === null) {
+                    $coerced = null;
+                } else {
+                    $fv = (float) str_replace(',', '.', (string) $rawVal);
+                    if ($fv < 0) {
+                        flash_set('err', 'Budget HL invalide (valeur positive requise).');
+                        redirect_to('/modules/expeditions.php?view=clients');
+                    }
+                    $coerced = $fv;
+                }
             }
 
             $before = $clientRow;
@@ -2355,6 +2396,8 @@ try {
                     c.is_private, c.default_transporter_id_fk,
                     c.needs_review, c.is_active, c.notes,
                     c.email, c.city, c.canton,
+                    c.is_serving_tank_client, c.serving_tank_count,
+                    c.serving_tank_size_hl, c.serving_tank_budget_hl,
                     t.name AS transporter_name
                FROM ref_customers c
                LEFT JOIN ref_transporters t ON t.id = c.default_transporter_id_fk
@@ -2364,6 +2407,34 @@ try {
         );
         $dirStmt->execute([...$dirParams, $clientsPerPage, $offset]);
         $clientsRows = $dirStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // Réel du mois: actual Cuve-de-service HL consumed by each client in the current calendar month.
+        // 1 ledger unit = 1 L → /100 = HL. qty_signed<0 = sales; returns positive excluded.
+        // Computed Europe/Zurich calendar month.
+        $servingTankRealMonth = [];
+        try {
+            $tzZ   = new DateTimeZone('Europe/Zurich');
+            $now   = new DateTime('now', $tzZ);
+            $mstart = $now->format('Y-m-01');
+            $mnext  = (new DateTime('first day of next month', $tzZ))->format('Y-m-d');
+            $stRealStmt = $pdo->prepare(
+                'SELECT l.customer_id_fk,
+                        ROUND(SUM(ABS(l.qty_signed)) / 100, 2) AS hl_month
+                   FROM inv_sales_ledger l
+                   JOIN ref_skus s ON s.id = l.sku_id_fk AND s.format = \'Cuve de service\'
+                  WHERE l.qty_signed < 0
+                    AND l.posting_date >= :mstart
+                    AND l.posting_date <  :mnext
+                  GROUP BY l.customer_id_fk'
+            );
+            $stRealStmt->execute([':mstart' => $mstart, ':mnext' => $mnext]);
+            foreach ($stRealStmt->fetchAll(PDO::FETCH_ASSOC) as $stRow) {
+                $servingTankRealMonth[(int) $stRow['customer_id_fk']] = (float) $stRow['hl_month'];
+            }
+        } catch (Throwable $stEx) {
+            // Non-fatal: réel display falls back to 0 if the query fails
+            error_log('[expeditions serving_tank_real] ' . $stEx->getMessage());
+        }
     }
 
     if ($view === 'side-stock') {
@@ -7061,6 +7132,115 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
             </td>
 
           </tr>
+          <?php
+          // Serving-tank fiche sub-row (always rendered for write users; hidden for read-only)
+          $stIsClient  = (bool) $cr['is_serving_tank_client'];
+          $stCount     = $cr['serving_tank_count']     !== null ? (int) $cr['serving_tank_count'] : null;
+          $stSizeHl    = $cr['serving_tank_size_hl']   !== null ? (float) $cr['serving_tank_size_hl'] : null;
+          $stBudgetHl  = $cr['serving_tank_budget_hl'] !== null ? (float) $cr['serving_tank_budget_hl'] : null;
+          $stRealHl    = $servingTankRealMonth[$crid] ?? 0.0;
+          if (can_write_expeditions($me)):
+          ?>
+          <tr class="exp-ct-row exp-ct-row--serving-tank-fiche<?= !$stIsClient ? ' exp-ct-st-hidden' : '' ?>"
+              data-client-st-row="<?= $crid ?>">
+            <td colspan="7" class="exp-ct-st-cell">
+              <div class="exp-ct-st-block">
+                <!-- Toggle: Cuve de service -->
+                <span class="exp-ct-st-label">Cuve de service :</span>
+                <form method="POST" action="/modules/expeditions.php?view=clients"
+                      class="exp-ct-inline-form exp-ct-st-toggle-form">
+                  <input type="hidden" name="csrf"         value="<?= htmlspecialchars($csrf) ?>">
+                  <input type="hidden" name="action"       value="client_update">
+                  <input type="hidden" name="client_id"    value="<?= $crid ?>">
+                  <input type="hidden" name="field"        value="is_serving_tank_client">
+                  <input type="hidden" name="return_page"   value="<?= $clientsPage ?>">
+                  <input type="hidden" name="return_search" value="<?= htmlspecialchars($clientsSearch) ?>">
+                  <input type="hidden" name="return_filter" value="<?= htmlspecialchars($clientsFilter) ?>">
+                  <button type="submit" name="value" value="<?= $stIsClient ? '0' : '1' ?>"
+                          class="exp-ct-st-toggle<?= $stIsClient ? ' exp-ct-st-toggle--on' : '' ?>"
+                          title="<?= $stIsClient ? 'Désactiver client cuve de service' : 'Activer client cuve de service' ?>"
+                          aria-label="Client cuve de service : <?= $stIsClient ? 'Oui' : 'Non' ?>">
+                    <?= $stIsClient ? 'Oui' : 'Non' ?>
+                  </button>
+                </form>
+                <?php if ($stIsClient): ?>
+                <!-- Count: Nb de cuves -->
+                <span class="exp-ct-st-sep">·</span>
+                <span class="exp-ct-st-label">Nb cuves :</span>
+                <form method="POST" action="/modules/expeditions.php?view=clients"
+                      class="exp-ct-inline-form exp-ct-st-num-form">
+                  <input type="hidden" name="csrf"         value="<?= htmlspecialchars($csrf) ?>">
+                  <input type="hidden" name="action"       value="client_update">
+                  <input type="hidden" name="client_id"    value="<?= $crid ?>">
+                  <input type="hidden" name="field"        value="serving_tank_count">
+                  <input type="hidden" name="return_page"   value="<?= $clientsPage ?>">
+                  <input type="hidden" name="return_search" value="<?= htmlspecialchars($clientsSearch) ?>">
+                  <input type="hidden" name="return_filter" value="<?= htmlspecialchars($clientsFilter) ?>">
+                  <input type="number" name="value"
+                         class="exp-ct-st-num-input"
+                         value="<?= $stCount !== null ? htmlspecialchars((string) $stCount) : '' ?>"
+                         min="0" max="255" step="1"
+                         placeholder="—"
+                         aria-label="Nombre de cuves pour <?= htmlspecialchars($cr['name'], ENT_QUOTES) ?>">
+                  <button type="submit" class="exp-ct-st-num-save" aria-label="Enregistrer">✓</button>
+                </form>
+                <!-- Size: Taille HL -->
+                <span class="exp-ct-st-sep">·</span>
+                <span class="exp-ct-st-label">Taille :</span>
+                <form method="POST" action="/modules/expeditions.php?view=clients"
+                      class="exp-ct-inline-form exp-ct-st-num-form">
+                  <input type="hidden" name="csrf"         value="<?= htmlspecialchars($csrf) ?>">
+                  <input type="hidden" name="action"       value="client_update">
+                  <input type="hidden" name="client_id"    value="<?= $crid ?>">
+                  <input type="hidden" name="field"        value="serving_tank_size_hl">
+                  <input type="hidden" name="return_page"   value="<?= $clientsPage ?>">
+                  <input type="hidden" name="return_search" value="<?= htmlspecialchars($clientsSearch) ?>">
+                  <input type="hidden" name="return_filter" value="<?= htmlspecialchars($clientsFilter) ?>">
+                  <input type="number" name="value"
+                         class="exp-ct-st-num-input"
+                         value="<?= $stSizeHl !== null ? htmlspecialchars(number_format($stSizeHl, 2, '.', '')) : '' ?>"
+                         min="0" step="0.01"
+                         placeholder="—"
+                         aria-label="Taille de cuve en HL pour <?= htmlspecialchars($cr['name'], ENT_QUOTES) ?>">
+                  <span class="exp-ct-st-unit">hl</span>
+                  <button type="submit" class="exp-ct-st-num-save" aria-label="Enregistrer">✓</button>
+                </form>
+                <!-- Budget: HL/mois -->
+                <span class="exp-ct-st-sep">·</span>
+                <span class="exp-ct-st-label">Budget :</span>
+                <form method="POST" action="/modules/expeditions.php?view=clients"
+                      class="exp-ct-inline-form exp-ct-st-num-form">
+                  <input type="hidden" name="csrf"         value="<?= htmlspecialchars($csrf) ?>">
+                  <input type="hidden" name="action"       value="client_update">
+                  <input type="hidden" name="client_id"    value="<?= $crid ?>">
+                  <input type="hidden" name="field"        value="serving_tank_budget_hl">
+                  <input type="hidden" name="return_page"   value="<?= $clientsPage ?>">
+                  <input type="hidden" name="return_search" value="<?= htmlspecialchars($clientsSearch) ?>">
+                  <input type="hidden" name="return_filter" value="<?= htmlspecialchars($clientsFilter) ?>">
+                  <input type="number" name="value"
+                         class="exp-ct-st-num-input"
+                         value="<?= $stBudgetHl !== null ? htmlspecialchars(number_format($stBudgetHl, 2, '.', '')) : '' ?>"
+                         min="0" step="0.01"
+                         placeholder="—"
+                         aria-label="Budget mensuel en HL pour <?= htmlspecialchars($cr['name'], ENT_QUOTES) ?>">
+                  <span class="exp-ct-st-unit">hl/mois</span>
+                  <button type="submit" class="exp-ct-st-num-save" aria-label="Enregistrer">✓</button>
+                </form>
+                <!-- Réel du mois (read-only) -->
+                <span class="exp-ct-st-sep">·</span>
+                <span class="exp-ct-st-label">Réel mois :</span>
+                <span class="exp-ct-st-reel<?= ($stBudgetHl !== null && $stBudgetHl > 0 && $stRealHl > $stBudgetHl) ? ' exp-ct-st-reel--over' : '' ?>">
+                  <?= htmlspecialchars(number_format($stRealHl, 1, '.', '')) ?> hl
+                  <?php if ($stBudgetHl !== null && $stBudgetHl > 0): ?>
+                    / <?= htmlspecialchars(number_format($stBudgetHl, 1, '.', '')) ?> hl
+                    · <?= htmlspecialchars(number_format(($stRealHl / $stBudgetHl) * 100, 0)) ?>%
+                  <?php endif ?>
+                </span>
+                <?php endif ?>
+              </div>
+            </td>
+          </tr>
+          <?php endif ?>
         <?php endforeach ?>
         </tbody>
       </table>
