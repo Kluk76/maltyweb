@@ -1,5 +1,23 @@
 # Fulfilment — Shopify⇄maltyweb fulfilment integration (RE2 roadmap + full build)
 
+## ✅ DRAFT-ORDER SKIP-FILTER BUG — DIAGNOSED + FIXED + LIVE 2026-06-19 (the "missing John Penman order #13662")
+> Trigger "missing order"/"John Penman"/"#13662"/"draft order"/"shopify_draft_order"/"source_name"/"SKIP_SOURCE_NAMES"/"admin-created sale"/"phone/event/counter sale"/"Expedition gratuite" → read THIS block first.
+
+**ROOT CAUSE (architectural — a silent feed-completeness hole):** `scripts/ingest-shopify-orders.ts` (maltytask) hard-skipped every order with `source_name='shopify_draft_order'` (old `const SKIP_SOURCE_NAMES = new Set(['shopify_draft_order'])`, comment "not real eshop transactions"). **That assumption was wrong.** Shopify's `/orders.json` only returns *completed* draft orders (OPEN drafts live in `/draft_orders.json`, which the ingest never queries) — so a draft-sourced order appearing in the feed is a REAL completed sale created via the Shopify admin (phone / event / counter / comp). The filter silently dropped ~2 admin-created sales/day from the board, FG depletion, and fulfilment. This is the same class as the §APR-30 `--until` gap and the §INGEST LINE-IDEMPOTENCY bug: a feed-completeness hole that makes the canonical `inv_sales_orders` store under-count real sales.
+
+**FIX (deployed + LIVE):** `SKIP_SOURCE_NAMES` emptied to `new Set<string>([])` (documenting comment). Draft-sourced orders now flow through the SAME `shipping_lines→fulfilment_mode` classifier as web orders (`ref_shipping_methods` → unmapped/null = `'review'`). No special-casing — no other `source_name` branch exists in classification, so single-homed-fact discipline preserved. Operator-chosen behavior.
+
+**DEPLOY/BACKFILL:** file scp'd to `/opt/maltytask-pipeline/scripts/ingest-shopify-orders.ts` (md5-matched local↔VPS); live `--since 2026-06-01` backfill = 33 inserts (the `*/15` VPS cron had already auto-grabbed #13662 in its trailing 2-day window). VERIFIED in DB: #13662 John Penman present, paid CHF 168, `fulfilment_mode='pickup'` (auto). 37 draft-sourced orders now in `inv_sales_orders` (23 pickup / 10 delivery / 4 review).
+
+**🔴 OPEN ITEMS (tracked):**
+1. **LOCAL maltytask repo edit NOT committed** — deployed VPS copy is AHEAD of git HEAD (the `/opt`-vs-git divergence smell). Same deployed-but-uncommitted footgun as the Circea parsers. Operator decides on commit; nudge to commit by pathspec (`scripts/ingest-shopify-orders.ts`) to close the divergence.
+2. **Backfill only covered ≥ 2026-06-01.** Draft-sourced orders OLDER than that (back to commit `bac5501` Phase-0, when shipping_lines/the skip-filter landed) are STILL MISSING from `inv_sales_orders` → under-counts historical FG depletion + sales for those months. A wider `--since` backfill recovers them IF historical completeness matters (verify FG delta on a dry-run first — these are real depleting sales).
+3. **4 orders in `'review'` = `ref_shipping_methods` GAP, not this bug.** Unmapped shipping title **"Expedition gratuite"** → add a mapping row (almost certainly `delivery`; CONFIRM with operator, never guess — it reads as free-delivery, but "gratuite" titles can be either; never-guess-a-mapping canon). This is normal Phase-3a `review`-bucket triage, separate from the skip-filter fix.
+
+**DURABLE LESSON:** a hardcoded skip-list on an ingest is a silent feed-completeness hazard — every `SKIP_*`/`--until`/`--since`/source_name filter on a canonical-store writer is a place real facts can be dropped without an error. When auditing "a sale is missing from the board," check the ingest's exclusion filters FIRST (skip-set, date bound, source_name branch), then classification (`review` bucket), then XOR membership. The `/orders.json` vs `/draft_orders.json` distinction is the key Shopify fact: completed drafts surface in `/orders.json` and ARE real sales.
+
+
+
 ## ✅ SHOPIFY ⇄ maltyweb FULFILMENT INTEGRATION — ROADMAP APPROVED 2026-06-10 (Kouros; plan `~/.claude/plans/sleepy-snuggling-brooks.md`). RESOLVES the long-PARKED ④ Phase-2 / pickup-signal ON-HOLD gate (the §① "FORWARD HAZARD" at lines ~310 + MEMORY active-arc).
 > Trigger "Shopify"/"pickup"/"click&collect"/"retrait"/"shipping_lines"/"fulfilment_mode"/"eshop picking"/"push-shopify"/"write-back"/"ref_shipping_methods"/"inv_sales_fulfilment" → read THIS section first.
 
