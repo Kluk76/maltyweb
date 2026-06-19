@@ -75,7 +75,7 @@ const MONTH_NAMES_FR = [
 ];
 const WORT_PROCESS_LABELS = [
     'brewing'      => 'Brassage',
-    'racking'      => 'Soutirage',
+    'racking'      => 'Transferts',
     'kze'          => 'KZE',
     'dry_hopping'  => 'Houblonnage à cru',
 ];

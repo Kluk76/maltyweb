@@ -27,6 +27,12 @@ require_once __DIR__ . '/production-targets.php';
 require_once __DIR__ . '/settings.php';
 require_once __DIR__ . '/db-write-helpers.php';
 
+// ── Plant-physics constraints ──────────────────────────────────────────────
+// Bottling and canning share the same physical line — they cannot run the same day.
+// Kegging and serving_tank are unconstrained (parallel with anything).
+// Extensible: add pairs here, never scattered ifs.
+const MUTEX_PKG_PAIRS = [['bottling', 'canning']];
+
 // ── Format → pkg_type map ─────────────────────────────────────────────────────
 
 /**
@@ -139,6 +145,20 @@ function predict_load_dry_hop_recipe_ids(PDO $pdo): array
 }
 
 /**
+ * Returns recipe_ids (int[]) for STRICT Core beers only:
+ * classification='Neb' AND subtype='Core' AND is_active=1.
+ * Collabs, contracts, EPH, white-label and archive are excluded.
+ */
+function predict_load_core_recipe_ids(PDO $pdo): array
+{
+    $stmt = $pdo->query(
+        "SELECT id FROM ref_recipes
+          WHERE is_active=1 AND classification='Neb' AND subtype='Core'"
+    );
+    return array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
+}
+
+/**
  * Given an array of ['recipe_id'=>int, 'batch'=>string] pairs,
  * returns a set array ['recipe_id:batch' => true] for pairs that already have
  * a DryHop event in bd_fermenting_v2.
@@ -222,6 +242,7 @@ function planning_generate_suggestions(PDO $pdo, DateTimeImmutable $weekStart, i
     $freeServingTankCount  = predict_load_free_serving_tank_count($pdo);
     $maxPkgRunsPerDay      = max(1, (int) system_setting('max_packaging_runs_per_day', 'production_targets', 4));
     $dryHopRecipeIds       = predict_load_dry_hop_recipe_ids($pdo);
+    $coreRecipeIds         = array_flip(predict_load_core_recipe_ids($pdo)); // [recipe_id => true]
 
     // ── Step 2: FG stock coverage ─────────────────────────────────────────────
     $fgResult = fg_stock_compute($pdo);
@@ -262,6 +283,7 @@ function planning_generate_suggestions(PDO $pdo, DateTimeImmutable $weekStart, i
     // ── Step 3: Aggregate to recipe level ─────────────────────────────────────
     // Per recipe: track the best (highest) semaines_stock and worst (lowest) physique
     // across all its SKUs. We use 'format' and 'velocity' from the best-coverage SKU.
+    $decisions = []; // Initialize before Step 3 so core-skip audit entries are not lost
     $byRecipe = []; // recipe_id (int) => [recipe_id, beer_name, best_semaines, worst_physique, format, velocity]
     foreach ($fgRows as $row) {
         $skuId = (int)($row['sku_id'] ?? 0);
@@ -270,6 +292,14 @@ function planning_generate_suggestions(PDO $pdo, DateTimeImmutable $weekStart, i
             continue; // cannot suggest without recipe FK
         }
         $rid = (int) $rid;
+        if (!isset($coreRecipeIds[$rid])) {
+            $decisions[] = [
+                'beer'     => $recipeNameMap[$rid] ?? 'Recette #' . $rid,
+                'decision' => 'skipped',
+                'reason'   => 'hors périmètre core',
+            ];
+            continue;
+        }
 
         $semaines = $row['semaines_stock']; // float|null
         $physique = (float) ($row['physique'] ?? 0);
@@ -356,7 +386,6 @@ function planning_generate_suggestions(PDO $pdo, DateTimeImmutable $weekStart, i
     $isoToKey = [1=>'mon',2=>'tue',3=>'wed',4=>'thu',5=>'fri',6=>'sat',7=>'sun'];
     $defaultEnabled = [1=>1,2=>1,3=>1,4=>1,5=>1,6=>0,7=>0];
     $workingDays = [];
-    $decisions   = [];
 
     for ($i = 0; $i < 7; $i++) {
         $d   = $weekStart->modify("+{$i} days");
@@ -399,6 +428,7 @@ function planning_generate_suggestions(PDO $pdo, DateTimeImmutable $weekStart, i
     $existingPkgHl       = ['bottle_hl' => 0.0, 'can_hl' => 0.0, 'keg_hl' => 0.0];
     $placedBrewsByDate   = []; // dateStr => int (existing brew rows per day)
     $pkgCountByDate      = []; // dateStr => int (existing packaging rows per day — seeds load-balance)
+    $pkgTypeByDate       = []; // dateStr => [pkg_type => true] (packaging types already on that day)
 
     foreach ($existRows as $ei) {
         $section  = (string)$ei['section'];
@@ -415,7 +445,11 @@ function planning_generate_suggestions(PDO $pdo, DateTimeImmutable $weekStart, i
             $placedBrewsByDate[$eiDate] = ($placedBrewsByDate[$eiDate] ?? 0) + 1;
         } elseif ($section === 'packaging') {
             $pkgCountByDate[$eiDate] = ($pkgCountByDate[$eiDate] ?? 0) + 1;
-            $ptKey = $pkgTypeToBudgetKey[$ei['pkg_type'] ?? ''] ?? null;
+            $eiPkgType = (string)($ei['pkg_type'] ?? '');
+            if ($eiPkgType !== '') {
+                $pkgTypeByDate[$eiDate][$eiPkgType] = true;
+            }
+            $ptKey = $pkgTypeToBudgetKey[$eiPkgType] ?? null;
             if ($ptKey !== null) {
                 $hl = $ei['target_volume_hl'] !== null ? (float)$ei['target_volume_hl'] : $proxyHl;
                 $existingPkgHl[$ptKey] += $hl;
@@ -490,6 +524,15 @@ function planning_generate_suggestions(PDO $pdo, DateTimeImmutable $weekStart, i
             $batch = (string)($entry['batch'] ?? '');
             $cctN  = isset($entry['cct_number']) ? (int)$entry['cct_number'] : null;
             if ($rid === null || $cctN === null) continue;
+            if (!isset($coreRecipeIds[$rid])) {
+                $decisions[] = [
+                    'beer'     => $entry['beer'] ?? '?',
+                    'decision' => 'skipped',
+                    'reason'   => 'hors périmètre core',
+                    'batch'    => $batch,
+                ];
+                continue;
+            }
 
             $dedupKey = 'wort:rack:' . $rid . ':' . $batch;
             if (isset($dedupSet[$dedupKey])) continue;
@@ -507,7 +550,7 @@ function planning_generate_suggestions(PDO $pdo, DateTimeImmutable $weekStart, i
                 $decisions[] = [
                     'beer'     => $entry['beer'] ?? '?',
                     'decision' => 'deferred',
-                    'reason'   => 'aucun BBT libre pour soutirage',
+                    'reason'   => 'aucun BBT libre pour transfert',
                     'batch'    => $batch,
                 ];
                 $dedupSet[$dedupKey] = true; // mark as evaluated — don't re-emit on later days
@@ -515,7 +558,7 @@ function planning_generate_suggestions(PDO $pdo, DateTimeImmutable $weekStart, i
             }
 
             $suggestReason = substr(
-                'Garde atteinte — soutirage CCT→BBT (BBT libre)',
+                'Garde atteinte — transfert CCT→BBT (BBT libre)',
                 0, 255
             );
 
@@ -646,8 +689,21 @@ function planning_generate_suggestions(PDO $pdo, DateTimeImmutable $weekStart, i
         $pkgSlot  = null;
         $minCount = PHP_INT_MAX;
         foreach ($eligSlots as $slot) {
-            if (($pkgCountByDate[$slot['day']] ?? 0) >= $maxPkgRunsPerDay) continue;
-            $cnt = $pkgCountByDate[$slot['day']] ?? 0;
+            $slotDay = $slot['day'];
+            if (($pkgCountByDate[$slotDay] ?? 0) >= $maxPkgRunsPerDay) continue;
+            // Mutex: bottling+canning cannot share a day
+            $mutexBlocked = false;
+            if ($pkgType !== null) {
+                foreach (MUTEX_PKG_PAIRS as [$typeA, $typeB]) {
+                    $conflict = ($pkgType === $typeA) ? $typeB : (($pkgType === $typeB) ? $typeA : null);
+                    if ($conflict !== null && isset($pkgTypeByDate[$slotDay][$conflict])) {
+                        $mutexBlocked = true;
+                        break;
+                    }
+                }
+            }
+            if ($mutexBlocked) continue;
+            $cnt = $pkgCountByDate[$slotDay] ?? 0;
             if ($cnt < $minCount) {
                 $minCount = $cnt;
                 $pkgSlot  = $slot;
@@ -655,10 +711,30 @@ function planning_generate_suggestions(PDO $pdo, DateTimeImmutable $weekStart, i
         }
 
         if ($pkgSlot === null) {
+            // Determine if mutex was the blocking cause (all slots had a mutex conflict)
+            $mutexCause = false;
+            if ($pkgType !== null && !empty($eligSlots)) {
+                foreach (MUTEX_PKG_PAIRS as [$typeA, $typeB]) {
+                    $conflict = ($pkgType === $typeA) ? $typeB : (($pkgType === $typeB) ? $typeA : null);
+                    if ($conflict !== null) {
+                        $allMutexBlocked = true;
+                        foreach ($eligSlots as $slot) {
+                            if (!isset($pkgTypeByDate[$slot['day']][$conflict])) {
+                                $allMutexBlocked = false;
+                                break;
+                            }
+                        }
+                        if ($allMutexBlocked) { $mutexCause = true; break; }
+                    }
+                }
+            }
+            $deferReason = $mutexCause
+                ? 'ligne partagée occupée (embouteillage/canettes)'
+                : 'cap journalier conditionnement atteint ou aucun créneau';
             $decisions[] = [
                 'beer'     => $rd['beer_name'],
                 'decision' => 'deferred',
-                'reason'   => 'cap journalier conditionnement atteint ou aucun créneau',
+                'reason'   => $deferReason,
                 'semaines' => $rd['worst_semaines'],
             ];
             continue;
@@ -729,6 +805,7 @@ function planning_generate_suggestions(PDO $pdo, DateTimeImmutable $weekStart, i
             $pkgBudgetHl[$budgetKey] -= $proxyHl;
         }
         $pkgCountByDate[$planDate] = ($pkgCountByDate[$planDate] ?? 0) + 1;
+        $pkgTypeByDate[$planDate][$pkgType] = true;
 
         // Mutate ledger: BBT is freed from planDate onwards
         if ($bbtNum !== null) {
@@ -911,6 +988,7 @@ function planning_generate_suggestions(PDO $pdo, DateTimeImmutable $weekStart, i
             $batch = (string)($entry['batch'] ?? '');
             $cctN  = isset($entry['cct_number']) ? (int)$entry['cct_number'] : null;
             if ($rid === null || $cctN === null) continue;
+            if (!isset($coreRecipeIds[$rid])) continue;
             // Only keep if recipe is in dry-hop spec
             if (!in_array($rid, $dryHopRecipeIds, true)) continue;
             $key = $rid . ':' . $batch;
