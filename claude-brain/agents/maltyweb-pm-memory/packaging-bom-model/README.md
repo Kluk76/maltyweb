@@ -1,0 +1,12 @@
+# packaging-bom-model — directory index
+
+> Load when: touching the packaging BOM (`ref_sku_bom` packaging side, `ref_packaging_items` slots, `ref_recipe_packaging_bindings`, `ref_packaging_bom_templates`), the recompute service (`app/sku-bom-compile.php`), the scotch/sticker model, the cuv/serving-tank gate, or any `-4` carton / outer-box question. Operator-corrected facts, verified against the live DB, COGS-impacting.
+
+> **Split from a single 92KB file into a directory on 2026-06-19 (memory compaction).** Read the sub-file whose triggers fire; nothing deleted — content relocated verbatim.
+
+## Sub-files (read on demand)
+
+- [pd8-and-bom-review-surface.md](packaging-bom-model/pd8-and-bom-review-surface.md) — PD8 pack-assembly slice + 4 follow-ups (LIVE 2026-06-16); BOM review surface (`7730bc4`) + DIV33C can-fix; the three SKU-identity layers a packaging event carries; slot taxonomy. Triggers: PD8/pack assembly/BOM review surface/DIV33C/SKU identity layers/slot taxonomy/ref_sku_composite_slots.
+- [cage-x-format-and-guard.md](packaging-bom-model/cage-x-format-and-guard.md) — `-X` cage = 1 unit = 1 bottle (re-denominated 2026-06-17, mig 392, SUPERSEDES 1027-bottles model); cage SKU per-recipe completeness (DIBX created); form-packaging cage silent-NULL-FK guard (`db422d3`, refuse-à-la-source); PKG_CAGE future SKU; multipack→`-X` cage stock-pull by sales channel. Triggers: -X cage/cage SKU/DIBX/re-denomination/form-packaging guard/NULL-FK/PKG_CAGE/multipack stock-pull/coffret.
+- [scotch-sticker-and-slots.md](packaging-bom-model/scotch-sticker-and-slots.md) — Three scotch/sticker buckets; scotch model §8.1; `-4` 3-layer carton + outer_box slot (mig 145); BLO/ZEP 6×4 carton-MI gap; EPH BC→C canonical fold (mig 187); scotch either/or (mig 141); CUV serving tanks gate-in (mig 142). Triggers: scotch/sticker/étiquette/3-layer carton/outer_box/EPH BC→C/either-or/CUV serving tank/gate-in.
+- [contract-packaging-and-recompile.md](packaging-bom-model/contract-packaging-and-recompile.md) — ZEP6C liquid-only + compiler gate-honor (mig 191); contracted-out packaging recurrence model; contract event sku_id_fk correctly-NULL; format→SKU residual-gap triage (#44, migs 185/186); BLA4 white-label (mig 148); log_scotch_eshop; recompute service `compile_sku_bom_packaging`; on-save recompute trigger; deferred observed-liquid recompute. Triggers: ZEP6C/contracted-out/contract packaging/sku_id_fk NULL/format-SKU gap/BLA4/white-label/log_scotch_eshop/compile_sku_bom_packaging/recompute.

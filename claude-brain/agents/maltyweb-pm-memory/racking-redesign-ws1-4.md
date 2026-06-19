@@ -241,7 +241,7 @@ NO new TABLE. NO composition store. NO clean-state store. NO cadence-counter sto
 
 ### 🟡 FINDING 3 — `bd_packaging_v2.vendable_hl` 100% NULL (2236/2236) — confirms PM's hypothesis on the residual 226 DRAWN_SHORT.
 - The 226 DRAWN_SHORT batches in the post-PPB-fix census trace to `vendable_hl` being 100% NULL — recent batches are under-credited on packaged volume because the column carrying that fact is empty across the entire table.
-- **NOT a PPB fix; NOT a C8 build item.** Belongs to the **packaging-pre-framework-pass** (re-homed into the packaging pilot under the session framework). Cross-ref packaging-bom-model.md + packaging-brewing-pre-framework-pass.md as the new packaged-volume-fidelity gate.
+- **NOT a PPB fix; NOT a C8 build item.** Belongs to the **packaging-pre-framework-pass** (re-homed into the packaging pilot under the session framework). Cross-ref packaging-bom-model/README.md + packaging-brewing-pre-framework-pass.md as the new packaged-volume-fidelity gate.
 - Same family as Finding 1 (Cuv same-day dedup, RESOLVED) and the RM-retro prereq-2 (production-SKU depletion gap). All three are "packaged-volume keying is not yet faithful".
 
 

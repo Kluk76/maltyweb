@@ -1,6 +1,6 @@
 # Email-order ingestion arc (`commandes@lanebuleuse.ch` → ord_orders → BC)
 
-> Read when touching: `commandes@` mailbox ingestion, per-sender email-order parsers, `doc_email_messages`/email-order producer, the Phase-1 BC-orders link from email, the logistics mail↔BC validation surface. Companion: [fulfilment-expeditions-arc.md](fulfilment-expeditions-arc.md) (D1/D2 BC spine, ord_orders schema, fg_stock XOR), [sales-commercial-surface.md](sales-commercial-surface.md) (ref_customers, BC two-source). PM-SCOPED 2026-06-15 (not yet built). Kouros: "lance" — next arc after Phase 2 (D1+D2 complete).
+> Read when touching: `commandes@` mailbox ingestion, per-sender email-order parsers, `doc_email_messages`/email-order producer, the Phase-1 BC-orders link from email, the logistics mail↔BC validation surface. Companion: [fulfilment-expeditions-arc/README.md](fulfilment-expeditions-arc/README.md) (D1/D2 BC spine, ord_orders schema, fg_stock XOR), [sales-commercial-surface/README.md](sales-commercial-surface/README.md) (ref_customers, BC two-source). PM-SCOPED 2026-06-15 (not yet built). Kouros: "lance" — next arc after Phase 2 (D1+D2 complete).
 
 ## ✅ AS-BUILT — P3 VALIDATION UI SHIPPED 2026-06-15 (commits `172fd95` + `6ef9df0` on origin; mig 372 applied) — ARC P3 = DONE
 **MIG HEAD now 372 (next free = 373).** Model B realized **end-to-end**: parsed candidate → operator-validated → `ord_orders` row → email flipped, all atomic. P3 = ✅ DONE.

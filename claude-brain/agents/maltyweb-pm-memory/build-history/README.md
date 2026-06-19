@@ -10,24 +10,24 @@
 - `539bad3` — live-BOM UI: packaging-form dynamic active-SKU picker + on-save recompute trigger. RULE 2 commit-stage reviewer exercised for the FIRST time (1 should-fix + nits, all addressed pre-commit).
 
 ## STAGE-1 SEQUENCE (§8.4 — all steps DONE)
-1. ✅ Migration 141 (scotch either/or) — applied, committed `56361e1`. Detail in packaging-bom-model.md.
+1. ✅ Migration 141 (scotch either/or) — applied, committed `56361e1`. Detail in packaging-bom-model/README.md.
 2. ✅ Scotch-model fix in Formats UI — applied, committed `56361e1`.
-3. ✅ Cuv serving-tank card + cuv gating (migration 142) — applied, committed `5f69e34`. Detail in packaging-bom-model.md.
+3. ✅ Cuv serving-tank card + cuv gating (migration 142) — applied, committed `5f69e34`. Detail in packaging-bom-model/README.md.
 4. ✅ Pre-seed bindings via backfill — 30 rows (label 15, can 11, sticker 4, scotch 0). PM-verified, operator-approved.
-5. ✅ `ref_sku_bom` packaging-only recompute service — SHIPPED + RUN, NULL 26→0, 6 RQ rows, migration 139 then applied. Committed `ba817ed`. Detail in packaging-bom-model.md.
+5. ✅ `ref_sku_bom` packaging-only recompute service — SHIPPED + RUN, NULL 26→0, 6 RQ rows, migration 139 then applied. Committed `ba817ed`. Detail in packaging-bom-model/README.md.
 ORDER CONFIRMED with one correction: a migration WAS needed for scotch (step 1 before step 2 — UI reads slots from `ref_packaging_items`). Steps 1-2 and step 3 independent + parallelizable.
 
 ## DB SCHEMA — applied migrations (BOM/SKU arc)
 - `ref_packaging_bom_templates` (131, seeded 132), `ref_packaging_items.slot_scope` (133), `ref_skus.bom_template_id` (134), `ref_recipe_packaging_bindings` (135), `ref_sku_aliases` (136: EPH24P→EPH24PB, PACKDECX8→PD8), `ref_sku_composite_slots` +units_per_recipe/+member_format_id (137), SPY12C50→12C/0.06 (138). Equipment seed (140): `ref_process_machines` (6 machines) + `ref_filler_containers` (bottling→33cl glass; canning→33+50cl alu; kegging→20L keg).
 - **139 APPLIED + ENFORCED:** `chk_rsb_mi_id_not_null` CHECK on `ref_sku_bom` = `(mi_id IS NOT NULL) OR (bom_source='liquid')` (PM-verified information_schema). Refuse-don't-NULL hard floor. Was gated until the recompute cleared the 26 NULL printed-can lines.
-- **141 APPLIED** — scotch either/or model (packaging-bom-model.md).
-- **142 APPLIED** — cuv serving tanks + gate-in (packaging-bom-model.md).
+- **141 APPLIED** — scotch either/or model (packaging-bom-model/README.md).
+- **142 APPLIED** — cuv serving tanks + gate-in (packaging-bom-model/README.md).
 - **143 APPLIED** — `doc_review_queue.type` ENUM +`sku-bom-unresolved` (same-list-plus-one MODIFY, idempotent; no schema_meta change).
 - **144** — `ref_sku_bom.volume_hl` column applied, but NOT recorded in `schema_migrations` (CREATE VIEW denied — see volume-dimension.md build-state; orchestrator fixing privilege + idempotency 2026-05-26).
 
 ## RESOLVED DIVERGENCES (§7 — were operator-pending, now built)
-1. **scotch had no recipe-level SoT** — RESOLVED: scotch is 24-box-only, either/or (A branded vs B TRANSP+sticker), NOT "all bottle recipes". `uses_branded_scotch` column exists on `ref_recipes`. Built in migration 141 + UI. Detail in packaging-bom-model.md.
-2. **cuv (V) gated OUT of the activation UI** — RESOLVED: built the in-house serving-tank capacity card + wired cuv gating IN via a real filler_cuv↔CUV_LINER `ref_filler_containers` row (migration 142). Gate stays sacrosanct (no bypass path). Detail in packaging-bom-model.md.
+1. **scotch had no recipe-level SoT** — RESOLVED: scotch is 24-box-only, either/or (A branded vs B TRANSP+sticker), NOT "all bottle recipes". `uses_branded_scotch` column exists on `ref_recipes`. Built in migration 141 + UI. Detail in packaging-bom-model/README.md.
+2. **cuv (V) gated OUT of the activation UI** — RESOLVED: built the in-house serving-tank capacity card + wired cuv gating IN via a real filler_cuv↔CUV_LINER `ref_filler_containers` row (migration 142). Gate stays sacrosanct (no bypass path). Detail in packaging-bom-model/README.md.
 
 ## OPERATIONAL LESSON — interrupted migration recovery (§8.7, bit us twice 2026-05-25; folded into `sql` skill anti-pattern #20)
 A build agent's result was lost to a harness "internal error" TWICE; in one case `migrate.php` (over SSH) was interrupted mid-file — leaving migration 142 PARTIALLY applied (MySQL DDL auto-commits, so the ENUM-extend + 3 INSERTs persisted while CREATE TABLE + seed did NOT, and `schema_migrations` was NOT recorded → a naive re-run would have DUPLICATED the 3 INSERTs). Durable conventions:
