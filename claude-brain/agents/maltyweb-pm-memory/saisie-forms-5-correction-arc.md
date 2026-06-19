@@ -6,8 +6,34 @@ arc-start; this file is the locked decision record + as-found code map + final l
 
 ---
 
-## 🔴🔴 BREWING-FORM INGREDIENT-LINE RUNAWAY DUPLICATION BUG — DIAGNOSED 2026-06-19 (Speakeasy batch 67), FIX PENDING
+## ✅ BREWING-FORM INGREDIENT-LINE RUNAWAY DUPLICATION BUG — FIXED + DATA-CORRECTED 2026-06-19 (Speakeasy batch 67) — AS-BUILT
 > Triggers: "trop de lignes" / "ingredient lines duplicate" / "deleted rows reinput" / "form-brewing" / "bd_brewing_ingredients_parsed_v2" / "line_idx" / "corriger ingredient" / Charles + brewing form. READ before any form-brewing.php ingredient-line touch.
+
+**STATUS: both briefs LANDED + verified live 2026-06-19.** Code fix deployed+committed (`5ad8929` maltyweb); 65→6 data correction done with audit rows; clean window confirmed (no derived COP rows existed yet). Original diagnosis retained below the AS-BUILT block for the root-cause record.
+
+### AS-BUILT — Brief A (CODE FIX, `form-brewing.php`, commit `5ad8929`)
+- **§5-§7 now wrapped in an explicit transaction** via the `$ownTx = !$pdo->inTransaction()` guard; `rollBack()` in the catch (nested-txn-safe — only commits/rolls back the txn it opened).
+- **DELETE-then-reinsert is now the line-write contract** (PM verdict implemented): **§7a** captures a pre-image of all parsed lines under ALL non-tombstoned headers for `(beer,batch)`; **§7b** hard-DELETEs them; **§7c** reinserts the submitted set with a **plain INSERT (`ON DUPLICATE KEY UPDATE` removed)**. Result: stored lines == EXACTLY the submitted lines — never a union across corriger submits. The positional-`line_idx`-append runaway is structurally impossible now.
+- **FIRST audit coverage the parsed-lines write ever had:** §7c emits ONE `log_revision` on `bd_brewing_ingredients_parsed_v2` row=`ingHeaderId`, before=pre-image, after=new set, action derived `'update'` (non-null before).
+- **Verified:** invariant test 6→6→6→5 passed (clean submit, two corriger re-saves, then a shrink — all yield exactly the submitted set); `php8.1 -l` clean; md5 `34e66df3` local↔VPS match.
+- **LIVE webapp regression confirmed:** reopened Speakeasy 67 via `?edit=1513` (that is the **brewday header id**; the **ingredient header is 1137**) — form renders exactly 6 rows; re-saved unchanged → DB stays 6 under header 1137, NO new header spawned. Non-accumulation proven on real operator data.
+- **🔑 DIAGNOSIS NUANCE (corrects the commit message + the original diagnosis below):** the header upsert keeps the **SAME header id (1137) across all corriger cycles** (NK is `(beer,batch)`). The accumulation was **purely line-append under that ONE header**, NOT new-header-per-cycle as the commit message speculated. The fix is robust either way — §7b deletes under ALL non-tombstoned headers for the beer/batch, so even a stray duplicate header would be cleaned.
+
+### AS-BUILT — Brief B (DATA CORRECTION, header_id=1137, 65→6)
+- Collapsed **65→6 lines in one audited transaction.** Final 6: malt **PILSENER 260kg / OAT_FLAKES 60kg / WHEAT 140kg** (single WHEAT — stray 30kg dropped); hops_kettle **HOPS_C_INCOGNITO 2000g**; process **YEASTVIT 240g / PHOSPHORIQUE 700g** (final corrections kept, 850g copies dropped). `line_idx` contiguous 0-based per category. All 6 `mi_id_fk` resolved from `ref_mi` (ids **3, 20, 6, 51, 82, 80**).
+- `raw_blob_text` on the header rewritten to a clean 6-element array (`JSON_LENGTH=6`).
+- **2 `audit_row_revisions`** written (one for the lines, one for the blob), action=`'update'`, `qc_flag='elevated'`, actor `user_id=1`.
+- 65-line pre-image snapshots kept on VPS `/tmp/b67_ingredients_pre_1137_*.json`. **No helper scripts left in either repo.**
+
+### DOWNSTREAM / COP — clean window, no recompute now
+`inv_consumption` had **0 derived rows** for these lines (the June derive has not run yet), so the correction landed in the clean window. The next June derive / `run-month-close` picks up the clean 6 lines automatically — no recompute needed now; that's Kouros's later month-close step.
+
+### 🔴 LATENT GAP TO TRACK (deriver orphan-prune) — BACKLOG
+`derive-bd-consumption.ts` does **NOT prune derived rows whose `source_row_id` no longer exists** in the parsed table — it only deletes legacy `source_row_id IS NULL` rows. So a **parsed-line DELETE that happens AFTER a derive would orphan derived COP rows** (the deleted line's old COP cost lingers). Moot for batch 67 (corrected pre-derive), **but the new form-brewing DELETE+reinsert path means ANY future `corriger` on an already-derived batch hits this** — every re-save deletes+reinserts the whole line set, orphaning the prior derive's rows by `source_row_id`. RESOLUTION OPTIONS (for Kouros / next build): (a) give the deriver an orphan-prune (delete derived rows whose `source_row_id` is absent from the live parsed table for that source), OR (b) have the form block ingredient edits post-derive. EQUIP coder+sql when built.
+
+---
+
+### ORIGINAL DIAGNOSIS (2026-06-19, retained for the root-cause record)
 
 **Symptom (Kouros via Charles):** yesterday's Speakeasy brewing form — Charles deleted ingredient rows to re-input, the line count exploded. **CONFIRMED LIVE: header id=1137 (Speakeasy, batch 67, 2026-06-18) has 65 child lines in `bd_brewing_ingredients_parsed_v2` for what should be ~8** (4 malt + 1 hop + 2 process ≈ 7-8). Breakdown: malt=4 (correct, line_idx 0-3 contiguous), **hops_kettle=21 (all identical HOPS_C_INCOGNITO 2000g, line_idx 3-37 with GAPS), process=40 (PROC_YEASTVIT/PROC_PHOSPHORIQUE duplicated, line_idx 4-45 with gaps).** Gaps in line_idx (12,14,18,21,…) + multiple `imported_at` waves (09:59 / 12:03 / 12:09 / 13:08 / 14:24 / 06:12 / 06:14 next-day) = the corriger-loop signature.
 
@@ -22,7 +48,7 @@ arc-start; this file is the locked decision record + as-found code map + final l
 
 **WHY MALT DIDN'T EXPLODE but hops/process did:** malt stayed 4 contiguous (line_idx 0-3) — those were entered once and the positional index for category=malt kept landing 0-3 (idempotent UPDATE). The hops + process lines are the ones Charles repeatedly deleted/re-added, so their positional indices drifted upward each cycle and never overwrote the originals.
 
-**THE FIX (PM verdict — NOT yet built; this is read-only diagnosis):** mirror the fermenting DryHop shrink-tombstone discipline, but stronger — for brewing the right pattern is **DELETE-then-reinsert the full line set per (header_id) inside the submit txn** (or tombstone-all-then-upsert), so the stored lines == EXACTLY the submitted lines, never a union across submits. Because these lines feed COP (dry-hop/kettle-hop/process consumption derives downstream via `derive-bd-consumption.ts` keyed `brewing|<id>|<mi>` — VERIFY the derivation key/grain before touching, a wrong dedup there mis-costs COP), this is a COGS/COP-bearing fix → INVARIANT-test that a clean single submit + a corriger-loop submit yield IDENTICAL stored line sets. Equip ui+coder+sql(+webapp-testing corriger-loop smoke). The current 65 Speakeasy-67 lines need a DATA CORRECTION (collapse to the true ~8) with audit rows — Kouros to confirm the true ingredient list (read `raw_blob_text` on header 1137 for the operator's last intended state, or ask Charles) BEFORE deleting; do NOT guess which of the 65 to keep (COGS-impacting).
+**THE FIX (PM verdict — ✅ BUILT, see AS-BUILT block above):** mirror the fermenting DryHop shrink-tombstone discipline, but stronger — for brewing the right pattern is **DELETE-then-reinsert the full line set per (header_id) inside the submit txn** (or tombstone-all-then-upsert), so the stored lines == EXACTLY the submitted lines, never a union across submits. This was implemented as §7a/§7b/§7c in `5ad8929` (delete under ALL non-tombstoned headers for the beer/batch, plain INSERT, one log_revision). The 65-line data correction was done too (header 1137 → 6). One **latent COP gap remains** (deriver doesn't orphan-prune on `source_row_id` absence) — see the §LATENT GAP backlog note above.
 
 ---
 
