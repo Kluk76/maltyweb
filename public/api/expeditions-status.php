@@ -43,6 +43,13 @@ if ($me === null) {
     exit;
 }
 
+// ── Write-role gate ───────────────────────────────────────────────────────────
+if (!can_write_expeditions($me)) {
+    http_response_code(403);
+    echo json_encode(['ok' => false, 'error' => 'Droits insuffisants pour modifier une commande.']);
+    exit;
+}
+
 // ── Decode JSON body ──────────────────────────────────────────────────────────
 $raw  = file_get_contents('php://input');
 $data = json_decode((string) $raw, true);
@@ -101,7 +108,7 @@ if ($orderId <= 0) {
     echo json_encode(['ok' => false, 'error' => 'order_id invalide.']);
     exit;
 }
-if (!in_array($action, ['advance', 'cancel', 'revert'], true)) {
+if (!in_array($action, ['advance', 'cancel', 'revert', 'set_comment'], true)) {
     http_response_code(400);
     echo json_encode(['ok' => false, 'error' => 'Action invalide.']);
     exit;
@@ -181,6 +188,68 @@ try {
             exit;
         }
         $comment = 'Retour depuis ' . ($statusLabels[$currentStatus] ?? $currentStatus);
+    }
+
+    // ── set_comment: update order comment (no status change) ─────────────
+    if ($action === 'set_comment') {
+        $newComment = trim((string) ($data['comment'] ?? ''));
+        if (mb_strlen($newComment) > 2000) {
+            http_response_code(400);
+            echo json_encode(['ok' => false, 'error' => 'Commentaire trop long (max 2000 caractères).']);
+            exit;
+        }
+
+        // Fetch current order (comment + status for before-value and event)
+        $ordStmt2 = $pdo->prepare(
+            'SELECT id, status, comment FROM ord_orders WHERE id = ? LIMIT 1'
+        );
+        $ordStmt2->execute([$orderId]);
+        $order2 = $ordStmt2->fetch(PDO::FETCH_ASSOC);
+
+        if ($order2 === false) {
+            http_response_code(400);
+            echo json_encode(['ok' => false, 'error' => 'Commande introuvable.']);
+            exit;
+        }
+
+        $beforeComment  = $order2['comment'];
+        $currentStatus2 = (string) $order2['status'];
+        $storeComment   = $newComment !== '' ? $newComment : null;
+
+        $pdo->beginTransaction();
+
+        $updCom = $pdo->prepare(
+            'UPDATE ord_orders SET comment = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+        );
+        $updCom->execute([$storeComment, $orderId]);
+
+        $insEv2 = $pdo->prepare(
+            'INSERT INTO ord_order_status_events (order_id_fk, status, occurred_at, user_id_fk, comment)
+             VALUES (?, ?, NOW(), ?, ?)'
+        );
+        $insEv2->execute([$orderId, $currentStatus2, (int) $me['id'], 'Commentaire modifié']);
+        $evId2 = (int) $pdo->lastInsertId();
+
+        log_revision($pdo, $me, 'ord_orders', $orderId,
+            ['comment' => $beforeComment],
+            ['comment' => $storeComment],
+            'normal',
+            'Commentaire modifié'
+        );
+        log_revision($pdo, $me, 'ord_order_status_events', $evId2, null,
+            ['order_id_fk' => $orderId, 'status' => $currentStatus2, 'comment' => 'Commentaire modifié'],
+            'normal'
+        );
+
+        $pdo->commit();
+
+        $freshCsrf = csrf_token();
+        echo json_encode([
+            'ok'      => true,
+            'comment' => $storeComment ?? '',
+            'csrf'    => $freshCsrf,
+        ]);
+        exit;
     }
 
     // ── ONE transaction: status event + cache update + audit ─────────────

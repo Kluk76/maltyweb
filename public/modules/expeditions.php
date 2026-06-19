@@ -1834,6 +1834,7 @@ try {
                     o.status, o.comment, o.created_at,
                     o.source,
                     o.bc_completely_shipped,
+                    o.external_document_no,
                     o.divergence_status,
                     o.order_created_date,
                     o.fulfilment_site_id_fk,
@@ -4321,14 +4322,6 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
               </span>
             <?php endif ?>
 
-            <!-- BC mirror signal: BC says BL imprimé (informational only — not operational status) -->
-            <?php if (($ord['source'] ?? '') === 'bc' && (int)($ord['bc_completely_shipped'] ?? 0) === 1): ?>
-              <span class="exp-bc-shipped-badge"
-                    title="BC indique Completely_Shipped=True (BL imprimé dans BC) — signal informatif, statut opérationnel inchangé">
-                BC&nbsp;: BL imprimé ✓
-              </span>
-            <?php endif ?>
-
             <!-- Lead-time badge: hors-process (short processing window) -->
             <?php if ($leadTier === 'critical'): ?>
               <span class="exp-lead-badge exp-lead-badge--critical"
@@ -4397,16 +4390,37 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
               <?= $pillsHtml ?>
             </div>
 
-            <!-- Comment -->
-            <?php if (!empty($ord['comment'])): ?>
-              <span class="exp-order-comment" title="<?= htmlspecialchars($ord['comment']) ?>">
-                💬 <span class="exp-order-comment__text"><?= htmlspecialchars(mb_substr($ord['comment'], 0, 40)) ?><?= mb_strlen($ord['comment']) > 40 ? '…' : '' ?></span>
-              </span>
-            <?php endif ?>
+            <!-- Comment + edit affordance -->
+            <span class="exp-order-comment<?= empty($ord['comment']) ? ' exp-order-comment--empty' : '' ?>"
+                  data-order-id="<?= $oid ?>">
+              <?php if (!empty($ord['comment'])): ?>
+                <span class="exp-order-comment__icon" aria-hidden="true">💬</span>
+                <span class="exp-order-comment__text"
+                      title="<?= htmlspecialchars($ord['comment']) ?>"><?= htmlspecialchars(mb_substr($ord['comment'], 0, 40)) ?><?= mb_strlen($ord['comment']) > 40 ? '…' : '' ?></span>
+              <?php else: ?>
+                <span class="exp-order-comment__icon exp-order-comment__icon--placeholder" aria-hidden="true">💬</span>
+              <?php endif ?>
+              <?php if (!$isCanc && can_write_expeditions()): ?>
+                <button type="button"
+                        class="exp-comment-edit-btn"
+                        data-action="set_comment"
+                        data-order-id="<?= $oid ?>"
+                        data-current-comment="<?= htmlspecialchars($ord['comment'] ?? '') ?>"
+                        aria-label="Modifier le commentaire de la commande #<?= $oid ?>"
+                        title="Modifier le commentaire">✎</button>
+              <?php endif ?>
+            </span>
 
             <!-- Transporter tag -->
             <?php if (!empty($ord['transporter_name'])): ?>
               <span class="exp-transporter-tag"><?= htmlspecialchars($ord['transporter_name']) ?></span>
+            <?php endif ?>
+
+            <!-- External document number (BC mirror) -->
+            <?php if (!empty($ord['external_document_no'])): ?>
+              <span class="exp-transporter-tag"
+                    title="Numéro de document externe BC"
+              >Doc externe&nbsp;: <?= htmlspecialchars($ord['external_document_no']) ?></span>
             <?php endif ?>
 
             <!-- Status chips -->

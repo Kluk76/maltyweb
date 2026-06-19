@@ -125,6 +125,19 @@
       .catch(function (err) { callback(err, null); });
   }
 
+  /* ── POST helper for set_comment (carries extra `comment` field) ───────── */
+  function postWithComment(orderId, comment, csrf, callback) {
+    fetch('/api/expeditions-status.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ csrf: csrf, order_id: orderId, action: 'set_comment', comment: comment }),
+    })
+      .then(function (res) { return res.json(); })
+      .then(function (data) { callback(null, data); })
+      .catch(function (err) { callback(err, null); });
+  }
+
   /* ── Inline error notice ────────────────────────────────────────────────── */
   function showOrderError(orderRow, msg) {
     let notice = orderRow.querySelector('.exp-inline-err');
@@ -182,6 +195,133 @@
 
     const orderRow = btn.closest('.exp-order-row');
     if (!orderRow) return;
+
+    // ── Comment edit: open inline editor ─────────────────────────────────── //
+    if (action === 'set_comment') {
+      const editBtn = btn;
+      const commentSpan = editBtn.closest('.exp-order-comment');
+      if (!commentSpan) return;
+      // Prevent opening a second editor
+      if (commentSpan.querySelector('.exp-comment-editor')) return;
+
+      const currentComment = editBtn.dataset.currentComment || '';
+
+      const editor = document.createElement('div');
+      editor.className = 'exp-comment-editor';
+      editor.innerHTML =
+        '<textarea class="exp-comment-textarea" maxlength="2000" rows="2" placeholder="Commentaire…">'
+        + escHtml(currentComment)
+        + '</textarea>'
+        + '<div class="exp-comment-editor-actions">'
+        +   '<button type="button" class="exp-comment-save-btn">Sauvegarder</button>'
+        +   '<button type="button" class="exp-comment-cancel-btn">Annuler</button>'
+        + '</div>';
+
+      // Hide the edit button + text while editing
+      editBtn.hidden = true;
+      const textEl = commentSpan.querySelector('.exp-order-comment__text');
+      if (textEl) textEl.hidden = true;
+
+      commentSpan.appendChild(editor);
+
+      const textarea  = editor.querySelector('.exp-comment-textarea');
+      const saveBtn   = editor.querySelector('.exp-comment-save-btn');
+      const cancelBtn = editor.querySelector('.exp-comment-cancel-btn');
+
+      // Focus textarea and place cursor at end
+      textarea.focus();
+      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+
+      function closeEditor(restoreText) {
+        editor.remove();
+        editBtn.hidden = false;
+        // restoreText=true only on Cancel — on Save the caller already set correct visibility
+        if (restoreText && textEl) textEl.hidden = false;
+      }
+
+      cancelBtn.addEventListener('click', function () { closeEditor(true); });
+
+      saveBtn.addEventListener('click', function () {
+        const newComment = textarea.value.trim();
+        saveBtn.disabled = true;
+        cancelBtn.disabled = true;
+
+        function doSave(csrf) {
+          postWithComment(orderId, newComment, csrf, function (err, data) {
+            if (err) {
+              saveBtn.disabled = false;
+              cancelBtn.disabled = false;
+              showOrderError(orderRow, 'Erreur réseau — réessaie.');
+              return;
+            }
+            if (!data.ok) {
+              if (data.reason === 'expired' && data.csrf) {
+                currentCsrf = data.csrf;
+                doSave(currentCsrf);
+                return;
+              }
+              saveBtn.disabled = false;
+              cancelBtn.disabled = false;
+              showOrderError(orderRow, data.error || 'Erreur inconnue.');
+              return;
+            }
+            // Success
+            if (data.csrf) currentCsrf = data.csrf;
+            const savedComment = data.comment || '';
+
+            // Update data-current-comment on the edit button
+            editBtn.setAttribute('data-current-comment', savedComment);
+
+            // Update displayed text
+            const MAX = 40;
+            const truncated = savedComment.length > MAX ? savedComment.slice(0, MAX) + '…' : savedComment;
+
+            if (textEl) {
+              textEl.textContent = truncated;
+              textEl.setAttribute('title', savedComment);
+            }
+
+            // Update icon placeholder visibility
+            const iconPlaceholder = commentSpan.querySelector('.exp-order-comment__icon--placeholder');
+            if (iconPlaceholder) iconPlaceholder.remove();
+            if (savedComment && !commentSpan.querySelector('.exp-order-comment__icon:not(.exp-order-comment__icon--placeholder)')) {
+              const icon = document.createElement('span');
+              icon.className = 'exp-order-comment__icon';
+              icon.setAttribute('aria-hidden', 'true');
+              icon.textContent = '💬';
+              commentSpan.insertBefore(icon, commentSpan.firstChild);
+            }
+
+            // Update the --empty class
+            commentSpan.classList.toggle('exp-order-comment--empty', !savedComment);
+
+            if (textEl) {
+              if (savedComment) textEl.hidden = false;
+              else textEl.hidden = true;
+            } else if (savedComment) {
+              // No textEl yet (was empty before), create it
+              const newTextEl = document.createElement('span');
+              newTextEl.className = 'exp-order-comment__text';
+              newTextEl.textContent = truncated;
+              newTextEl.setAttribute('title', savedComment);
+              commentSpan.insertBefore(newTextEl, editBtn);
+            }
+
+            closeEditor(false);
+          });
+        }
+
+        doSave(currentCsrf);
+      });
+
+      // Keyboard: Ctrl+Enter to save, Escape to cancel
+      textarea.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Escape') { closeEditor(); ev.preventDefault(); }
+        if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter') { saveBtn.click(); }
+      });
+
+      return; // don't fall through to status-advance logic
+    }
 
     // Disable all action buttons on this row while the request is in flight
     const actionBtns = orderRow.querySelectorAll('[data-action]');

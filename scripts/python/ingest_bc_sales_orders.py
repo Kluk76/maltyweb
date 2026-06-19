@@ -365,6 +365,7 @@ def fetch_sales_orders(bc: dict[str, str]) -> list[dict]:
         "Posting_Date",    # date de comptabilisation = jour de chargement effectif → requested_date
         "Document_Date",   # fallback for requested_date when Posting_Date is blank
         "Your_Reference",  # echo field: 'mt:<local_id>' for maltytask-native orders
+        "External_Document_No",
     ])
     select_enc = quote(select_fields, safe="")
     url = f"{base}/SalesOrder?$select={select_enc}"
@@ -735,6 +736,7 @@ def classify_orders(
             # Echo-tag field — 'mt:<id>' when this order was pushed by push_bc_sales_orders.py,
             # empty/None for BC-native orders.  Used by the echo-leg in the reader.
             "your_reference":   str(o.get("Your_Reference", "") or "").strip(),
+            "external_document_no": (o.get("External_Document_No") or None) or None,
         })
 
     return {
@@ -1350,7 +1352,8 @@ def write_bc_mirror_fields(
     """
     Write BC-mirror fields that are ALWAYS allowed regardless of operational status:
       - bc_completely_shipped (TINYINT mirror of BC Completely_Shipped)
-    This is a BC-mirror field, not an operational status field.
+      - external_document_no  (VARCHAR mirror of BC External_Document_No)
+    These are BC-mirror fields, not operational status fields.
     Called for every bc-sourced order on every pull.
     """
     source_ref = order["source_ref"]
@@ -1358,8 +1361,9 @@ def write_bc_mirror_fields(
     if existing is None:
         return
 
-    order_id          = existing["id"]
+    order_id           = existing["id"]
     completely_shipped = 1 if order["completely_shipped"] else 0
+    external_document_no = order.get("external_document_no")
 
     if not apply_mode:
         return
@@ -1368,11 +1372,12 @@ def write_bc_mirror_fields(
         c.execute(
             """
             UPDATE ord_orders
-               SET bc_completely_shipped = %s,
-                   updated_at = CURRENT_TIMESTAMP
+               SET bc_completely_shipped  = %s,
+                   external_document_no   = %s,
+                   updated_at             = CURRENT_TIMESTAMP
              WHERE id = %s
             """,
-            (completely_shipped, order_id),
+            (completely_shipped, external_document_no, order_id),
         )
 
 

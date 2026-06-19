@@ -1332,6 +1332,111 @@ body.expeditions .exp-order-comment__text {
   text-overflow: ellipsis;
 }
 
+body.expeditions .exp-order-comment--empty .exp-order-comment__text {
+  display: none;
+}
+
+body.expeditions .exp-order-comment__icon--placeholder {
+  opacity: 0.35;
+}
+
+/* ── Comment edit button ─────────────────────────────────────────────────── */
+body.expeditions .exp-comment-edit-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  margin-left: 2px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--ink-label);
+  font-size: 0.95rem;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+}
+
+body.expeditions .exp-comment-edit-btn:hover {
+  background: color-mix(in srgb, var(--hop) 10%, transparent);
+  color: var(--ink-soft);
+}
+
+/* ── Inline comment editor ───────────────────────────────────────────────── */
+body.expeditions .exp-comment-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+  width: 100%;
+}
+
+body.expeditions .exp-comment-textarea {
+  width: 100%;
+  min-height: 56px;
+  padding: 6px 10px;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.88rem;
+  color: var(--ink);
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+body.expeditions .exp-comment-textarea:focus {
+  outline: 2px solid var(--hop);
+  outline-offset: 1px;
+  border-color: transparent;
+}
+
+body.expeditions .exp-comment-editor-actions {
+  display: flex;
+  gap: 6px;
+}
+
+body.expeditions .exp-comment-save-btn,
+body.expeditions .exp-comment-cancel-btn {
+  min-height: 44px;
+  padding: 6px 14px;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.85rem;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid var(--hairline);
+  transition: background 0.12s;
+}
+
+body.expeditions .exp-comment-save-btn {
+  background: var(--hop);
+  color: #fff;
+  border-color: var(--hop);
+}
+
+body.expeditions .exp-comment-save-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--hop) 85%, #000);
+}
+
+body.expeditions .exp-comment-cancel-btn {
+  background: var(--bg-elev);
+  color: var(--ink-mute);
+}
+
+body.expeditions .exp-comment-cancel-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ink-faint) 20%, var(--bg-elev));
+}
+
+body.expeditions .exp-comment-save-btn:disabled,
+body.expeditions .exp-comment-cancel-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* ── Transporter tag ──────────────────────────────────────────────────────── */
 body.expeditions .exp-transporter-tag {
   display: inline-block;
@@ -3470,25 +3575,6 @@ body.expeditions .exp-bc-divergence-badge {
   color: color-mix(in srgb, var(--ember) 90%, var(--ink));
   background: color-mix(in srgb, var(--ember) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--ember) 40%, transparent);
-  border-radius: 10px;
-  padding: 2px 8px;
-  white-space: nowrap;
-  flex-shrink: 0;
-  cursor: default;
-}
-
-/* ── BC shipped mirror badge — BC : BL imprimé ✓ ─────────────────────────── */
-/* Informational only — reflects BC Completely_Shipped mirror field.
-   Muted style: does NOT drive operational status (operator must still advance). */
-body.expeditions .exp-bc-shipped-badge {
-  display: inline-flex;
-  align-items: center;
-  font-family: "JetBrains Mono", monospace;
-  font-size: 0.68rem;
-  letter-spacing: 0.03em;
-  color: var(--ink-mute);
-  background: color-mix(in srgb, var(--hop) 6%, transparent);
-  border: 1px dashed color-mix(in srgb, var(--hop) 35%, transparent);
   border-radius: 10px;
   padding: 2px 8px;
   white-space: nowrap;
