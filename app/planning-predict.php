@@ -121,12 +121,39 @@ function predict_load_active_bbt_numbers(PDO $pdo): array
 }
 
 /**
- * Returns count of free (in_house, active) serving tanks.
+ * Returns count of free (in_house, active) serving tanks as of $asOf.
+ *
+ * ESTIMATE — no physical return/pickup event exists.  A fill is considered
+ * occupied for N days (serving_tank_turnaround_days, default 14) after
+ * event_date.  free = max(0, in_house_active_total − occupied_count).
  */
-function predict_load_free_serving_tank_count(PDO $pdo): int
+function predict_load_free_serving_tank_count(PDO $pdo, DateTimeImmutable $asOf): int
 {
-    $stmt = $pdo->query("SELECT COUNT(*) FROM ref_serving_tanks WHERE location='in_house' AND status='active'");
-    return (int)$stmt->fetchColumn();
+    $totalStmt = $pdo->query("SELECT COUNT(*) FROM ref_serving_tanks WHERE location='in_house' AND status='active'");
+    $total = (int)$totalStmt->fetchColumn();
+
+    // N-day turnaround window (tunable; 14 = ~2-week rotation estimate)
+    $n = max(1, (int) system_setting('serving_tank_turnaround_days', 'production_targets', 14));
+
+    $asOfStr  = $asOf->format('Y-m-d');
+    $cutoff   = $asOf->modify("-{$n} days")->format('Y-m-d');
+
+    // Count fills whose occupancy window overlaps the week start:
+    //   event_date > cutoff  → fill is less than N days old (still occupied)
+    //   event_date <= asOf   → fill happened at or before the planning week start
+    //   is_tombstoned = 0, reuses_packaging_id_fk IS NULL → original fills only (not repacks)
+    $occStmt = $pdo->prepare(
+        "SELECT COUNT(*) FROM bd_packaging_v2
+          WHERE run_type = 'cuv'
+            AND is_tombstoned = 0
+            AND reuses_packaging_id_fk IS NULL
+            AND event_date > :cutoff
+            AND event_date <= :asof"
+    );
+    $occStmt->execute([':cutoff' => $cutoff, ':asof' => $asOfStr]);
+    $occupied = (int)$occStmt->fetchColumn();
+
+    return max(0, $total - $occupied);
 }
 
 /**
@@ -380,7 +407,7 @@ function planning_generate_suggestions(PDO $pdo, DateTimeImmutable $weekStart, i
 
     $activeCctNumbers      = predict_load_active_cct_numbers($pdo);
     $activeBbtNumbers      = predict_load_active_bbt_numbers($pdo);
-    $freeServingTankCount  = predict_load_free_serving_tank_count($pdo);
+    $freeServingTankCount  = predict_load_free_serving_tank_count($pdo, $weekStart);
     $maxPkgRunsPerDay      = max(1, (int) system_setting('max_packaging_runs_per_day', 'production_targets', 4));
     $dryHopRecipeIds       = predict_load_dry_hop_recipe_ids($pdo);
     $coreRecipeIds         = array_flip(predict_load_core_recipe_ids($pdo)); // [recipe_id => true]
