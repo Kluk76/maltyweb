@@ -128,7 +128,7 @@ function sdc_redirect_url(string $sec, int $recipeId = 0, string $sub = '', int 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = post_str('action') ?? '';  // read action early so gate can inspect it
 
-    if (!is_admin($me) && !($action === 'submit_change_request' && is_manager($me))) {
+    if (!is_admin($me) && !($action === 'submit_change_request' && is_manager($me)) && !($action === 'withdraw_change_request' && is_manager($me))) {
         flash_set('err', 'Modification réservée aux administrateurs.');
         redirect_to('/modules/salle-de-controle.php?sec=recettes');
     }
@@ -139,7 +139,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     // JSON-API actions respond directly (no PRG redirect)
-    $jsonActions = ['set_hop_stage', 'add_hop_addition', 'delete_hop_addition', 'submit_change_request'];
+    $jsonActions = ['set_hop_stage', 'add_hop_addition', 'delete_hop_addition', 'submit_change_request', 'approve_change_request', 'reject_change_request', 'withdraw_change_request'];
     if (in_array($action, $jsonActions, true)) {
         header('Content-Type: application/json; charset=utf-8');
     }
@@ -1577,6 +1577,242 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ]);
             exit;
 
+        } elseif ($action === 'approve_change_request') {
+            // ADMIN only
+            if (!is_admin($me)) {
+                http_response_code(403);
+                echo json_encode(['ok' => false, 'error' => 'Approbation réservée aux administrateurs.']);
+                exit;
+            }
+
+            $requestId = post_int('request_id') ?? 0;
+            if ($requestId <= 0) {
+                http_response_code(400);
+                echo json_encode(['ok' => false, 'error' => 'request_id requis.']);
+                exit;
+            }
+
+            // Load + lock request
+            $reqStmt = $pdo->prepare(
+                "SELECT r.*, rec.name AS recipe_name
+                   FROM recipe_change_requests r
+                   JOIN ref_recipes rec ON rec.id = r.recipe_id_fk
+                  WHERE r.id = ?
+                    FOR UPDATE"
+            );
+            $pdo->beginTransaction();
+            try {
+                $reqStmt->execute([$requestId]);
+                $req = $reqStmt->fetch(PDO::FETCH_ASSOC);
+                if (!$req) {
+                    $pdo->rollBack();
+                    http_response_code(404);
+                    echo json_encode(['ok' => false, 'error' => 'Demande introuvable.']);
+                    exit;
+                }
+                if ($req['status'] !== 'pending') {
+                    $pdo->rollBack();
+                    http_response_code(409);
+                    echo json_encode(['ok' => false, 'error' => "Demande déjà traitée (statut : {$req['status']})."]);
+                    exit;
+                }
+
+                // Refuse unsupported change kinds (P3c/P3d later)
+                $supportedKinds = ['recipe_field', 'qc_target', 'yeast'];
+                if (!in_array($req['change_kind'], $supportedKinds, true)) {
+                    $pdo->rollBack();
+                    // Leave status=pending — do NOT 409
+                    http_response_code(422);
+                    echo json_encode(['ok' => false, 'error' => "Type pas encore pris en charge (P3c/P3d) : {$req['change_kind']}"]);
+                    exit;
+                }
+
+                // Load lines
+                $lineStmt = $pdo->prepare(
+                    "SELECT * FROM recipe_change_request_lines WHERE request_id_fk = ? ORDER BY id"
+                );
+                $lineStmt->execute([$requestId]);
+                $lines = $lineStmt->fetchAll(PDO::FETCH_ASSOC);
+
+                $recipeId   = (int) $req['recipe_id_fk'];
+                $changeKind = $req['change_kind'];
+
+                // Dispatch — callables run INSIDE our transaction (ownTxn=false)
+                if ($changeKind === 'recipe_field') {
+                    foreach ($lines as $ln) {
+                        $field    = $ln['field'] ?? '';
+                        $newValue = $ln['new_value'] ?? null;
+                        if ($field === 'style') {
+                            sdc_apply_recipe_style($pdo, $me, $recipeId, $newValue !== '' ? $newValue : null, false);
+                        } elseif ($field === 'name') {
+                            if ($newValue === null || $newValue === '') {
+                                throw new RuntimeException('Nouveau nom vide — approbation refusée.');
+                            }
+                            sdc_apply_recipe_name($pdo, $me, $recipeId, (string) $newValue, false);
+                        } else {
+                            throw new RuntimeException("Champ recipe_field non supporté dans le replay : {$field}");
+                        }
+                    }
+                } elseif ($changeKind === 'qc_target') {
+                    $fields = [];
+                    foreach ($lines as $ln) {
+                        $fields[(string)($ln['field'] ?? '')] = $ln['new_value'];
+                    }
+                    // Fill missing keys with null (sdc_apply_qc_target expects all keys)
+                    $qcKeys = ['co2_target','co2_tolerance','racked_vol_warn_lo','racked_vol_warn_hi',
+                               'racked_vol_outlier_lo','racked_vol_outlier_hi','og_target','fg_target','ph_target','abv_target'];
+                    foreach ($qcKeys as $k) {
+                        if (!array_key_exists($k, $fields)) {
+                            $fields[$k] = null;
+                        } else {
+                            $fields[$k] = $fields[$k] !== '' && $fields[$k] !== null ? (float) $fields[$k] : null;
+                        }
+                    }
+                    sdc_apply_qc_target($pdo, $me, $recipeId, $fields);
+                    // sdc_apply_qc_target has no own txn — runs inside ours fine
+                } elseif ($changeKind === 'yeast') {
+                    $rawFields = [];
+                    foreach ($lines as $ln) {
+                        $rawFields[(string)($ln['field'] ?? '')] = $ln['new_value'];
+                    }
+                    // Normalize stored field names (form input names) → callable-canonical key names.
+                    // The manager IIFE stores form field names verbatim; sdc_apply_yeast expects its own keys.
+                    $yeastFieldMap = [
+                        'yeast_strain_id_fk'      => 'strain_id_fk',
+                        'strain_family'            => 'new_family',
+                        'garde_days_min_override'  => 'garde_override',
+                        'ferm_temp_min_override'   => 'temp_min_override',
+                        'ferm_temp_max_override'   => 'temp_max_override',
+                    ];
+                    $fields = [];
+                    foreach ($rawFields as $rawKey => $val) {
+                        $canonKey = $yeastFieldMap[$rawKey] ?? $rawKey;
+                        $fields[$canonKey] = $val;
+                    }
+                    $yeastFields = [
+                        'strain_id_fk'      => isset($fields['strain_id_fk']) && $fields['strain_id_fk'] !== '' ? (int) $fields['strain_id_fk'] : null,
+                        'new_family'        => $fields['new_family'] ?? null,
+                        'garde_override'    => isset($fields['garde_override']) && $fields['garde_override'] !== '' ? (int) $fields['garde_override'] : null,
+                        'temp_min_override' => isset($fields['temp_min_override']) && $fields['temp_min_override'] !== '' ? (float) $fields['temp_min_override'] : null,
+                        'temp_max_override' => isset($fields['temp_max_override']) && $fields['temp_max_override'] !== '' ? (float) $fields['temp_max_override'] : null,
+                    ];
+                    sdc_apply_yeast($pdo, $me, $recipeId, $yeastFields, false);
+                }
+
+                // Mark approved
+                $updStmt = $pdo->prepare(
+                    "UPDATE recipe_change_requests
+                        SET status = 'approved', decided_by_fk = ?, decided_at = NOW()
+                      WHERE id = ?"
+                );
+                $updStmt->execute([(int) $me['id'], $requestId]);
+
+                log_revision(
+                    $pdo, $me, 'recipe_change_requests', $requestId,
+                    ['status' => 'pending'],
+                    ['status' => 'approved', 'decided_by_fk' => (int) $me['id']],
+                    'normal',
+                    "Demande approuvée · recette #{$recipeId} ({$req['recipe_name']})"
+                );
+
+                $pdo->commit();
+                echo json_encode(['ok' => true]);
+
+            } catch (Throwable $approveErr) {
+                if ($pdo->inTransaction()) $pdo->rollBack();
+                throw $approveErr;  // caught by outer catch which returns JSON
+            }
+            exit;
+
+        } elseif ($action === 'reject_change_request') {
+            if (!is_admin($me)) {
+                http_response_code(403);
+                echo json_encode(['ok' => false, 'error' => 'Rejet réservé aux administrateurs.']);
+                exit;
+            }
+
+            $requestId    = post_int('request_id') ?? 0;
+            $decisionNote = substr(trim((string)(post_str('decision_note') ?? '')), 0, 1000);
+
+            if ($requestId <= 0) {
+                http_response_code(400);
+                echo json_encode(['ok' => false, 'error' => 'request_id requis.']);
+                exit;
+            }
+
+            $pdo->beginTransaction();
+            try {
+                $reqStmt = $pdo->prepare("SELECT id, status, recipe_id_fk FROM recipe_change_requests WHERE id = ? FOR UPDATE");
+                $reqStmt->execute([$requestId]);
+                $req = $reqStmt->fetch(PDO::FETCH_ASSOC);
+                if (!$req) { $pdo->rollBack(); http_response_code(404); echo json_encode(['ok'=>false,'error'=>'Demande introuvable.']); exit; }
+                if ($req['status'] !== 'pending') { $pdo->rollBack(); http_response_code(409); echo json_encode(['ok'=>false,'error'=>"Demande déjà traitée (statut : {$req['status']})"]); exit; }
+
+                $pdo->prepare("UPDATE recipe_change_requests SET status='rejected', decided_by_fk=?, decided_at=NOW(), decision_note=? WHERE id=?")
+                    ->execute([(int)$me['id'], $decisionNote !== '' ? $decisionNote : null, $requestId]);
+
+                log_revision($pdo, $me, 'recipe_change_requests', $requestId,
+                    ['status'=>'pending'],
+                    ['status'=>'rejected','decided_by_fk'=>(int)$me['id'],'decision_note'=>$decisionNote],
+                    'normal',
+                    "Demande rejetée · recette #{$req['recipe_id_fk']}"
+                );
+                $pdo->commit();
+                echo json_encode(['ok' => true]);
+            } catch (Throwable $e) {
+                if ($pdo->inTransaction()) $pdo->rollBack();
+                throw $e;
+            }
+            exit;
+
+        } elseif ($action === 'withdraw_change_request') {
+            // Manager (own pending request) OR admin
+            if (!is_admin($me) && !is_manager($me)) {
+                http_response_code(403);
+                echo json_encode(['ok' => false, 'error' => 'Action non autorisée.']);
+                exit;
+            }
+
+            $requestId = post_int('request_id') ?? 0;
+            if ($requestId <= 0) {
+                http_response_code(400);
+                echo json_encode(['ok' => false, 'error' => 'request_id requis.']);
+                exit;
+            }
+
+            $pdo->beginTransaction();
+            try {
+                $reqStmt = $pdo->prepare("SELECT id, status, requested_by_fk, recipe_id_fk FROM recipe_change_requests WHERE id = ? FOR UPDATE");
+                $reqStmt->execute([$requestId]);
+                $req = $reqStmt->fetch(PDO::FETCH_ASSOC);
+                if (!$req) { $pdo->rollBack(); http_response_code(404); echo json_encode(['ok'=>false,'error'=>'Demande introuvable.']); exit; }
+                if ($req['status'] !== 'pending') { $pdo->rollBack(); http_response_code(409); echo json_encode(['ok'=>false,'error'=>"Demande déjà traitée (statut : {$req['status']})"]); exit; }
+
+                // Manager can only withdraw own request
+                if (!is_admin($me) && (int)$req['requested_by_fk'] !== (int)$me['id']) {
+                    $pdo->rollBack();
+                    http_response_code(403);
+                    echo json_encode(['ok' => false, 'error' => 'Vous ne pouvez retirer que vos propres demandes.']);
+                    exit;
+                }
+
+                $pdo->prepare("UPDATE recipe_change_requests SET status='withdrawn', decided_by_fk=?, decided_at=NOW() WHERE id=?")
+                    ->execute([(int)$me['id'], $requestId]);
+
+                log_revision($pdo, $me, 'recipe_change_requests', $requestId,
+                    ['status'=>'pending'],
+                    ['status'=>'withdrawn','decided_by_fk'=>(int)$me['id']],
+                    'normal',
+                    "Demande retirée · recette #{$req['recipe_id_fk']}"
+                );
+                $pdo->commit();
+                echo json_encode(['ok' => true]);
+            } catch (Throwable $e) {
+                if ($pdo->inTransaction()) $pdo->rollBack();
+                throw $e;
+            }
+            exit;
+
         } else {
             throw new RuntimeException('Action inconnue.');
         }
@@ -2238,9 +2474,57 @@ try {
 
 $csrf = csrf_token();
 
+// ─── Demandes — pending + recently decided change requests (admin/manager) ───
+$changeRequestsData = [];
+$changeRequestsErr  = null;
+if (is_admin($me) || is_manager($me)) {
+    try {
+        $crPdo = maltytask_pdo();
+        // pending first, then decided in last 30 days
+        $crStmt = $crPdo->prepare(
+            "SELECT r.id, r.recipe_id_fk, r.change_kind, r.summary, r.status,
+                    r.requested_at, r.decided_at, r.decision_note, r.requested_by_fk,
+                    rec.name AS recipe_name,
+                    req_u.display_name AS requester_name,
+                    dec_u.display_name AS decider_name
+               FROM recipe_change_requests r
+               JOIN ref_recipes rec ON rec.id = r.recipe_id_fk
+               JOIN users req_u ON req_u.id = r.requested_by_fk
+               LEFT JOIN users dec_u ON dec_u.id = r.decided_by_fk
+              WHERE r.status = 'pending'
+                 OR (r.status IN ('approved','rejected','withdrawn') AND r.decided_at >= DATE_SUB(NOW(), INTERVAL 30 DAY))
+              ORDER BY (r.status='pending') DESC, r.requested_at DESC
+              LIMIT 200"
+        );
+        $crStmt->execute();
+        $crRows = $crStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // Fetch lines for each request
+        $crIds = array_column($crRows, 'id');
+        $crLines = [];
+        if ($crIds) {
+            $inList = implode(',', array_map('intval', $crIds));
+            $lnStmt = $crPdo->query(
+                "SELECT * FROM recipe_change_request_lines WHERE request_id_fk IN ({$inList}) ORDER BY id"
+            );
+            foreach ($lnStmt->fetchAll(PDO::FETCH_ASSOC) as $ln) {
+                $crLines[(int)$ln['request_id_fk']][] = $ln;
+            }
+        }
+
+        foreach ($crRows as &$row) {
+            $row['lines'] = $crLines[(int)$row['id']] ?? [];
+        }
+        unset($row);
+        $changeRequestsData = $crRows;
+    } catch (Throwable $crErr) {
+        $changeRequestsErr = $crErr->getMessage();
+    }
+}
+
 // Active section from query string (for PRG redirect after save)
 $sec = $_GET['sec'] ?? '';
-$initialSec = in_array($sec, ['recettes', 'biochem', 'conditionnement', 'cip', 'pertes', 'conformite', 'objectifs'], true)
+$initialSec = in_array($sec, ['recettes', 'biochem', 'conditionnement', 'cip', 'pertes', 'conformite', 'objectifs', 'demandes'], true)
     ? $sec : 'recettes';
 
 // Brewery identity from system_settings (canonical, never hardcoded).
@@ -2265,6 +2549,27 @@ window.SDC_FORMATS_DATA = null;
 window.SDC_FORMATS_ERR  = <?= json_encode($formatsLoadErr ?? 'Erreur inconnue', JSON_HEX_TAG | JSON_HEX_AMP) ?>;
 <?php endif ?>
 window.SDC_CSRF = <?= json_encode($csrf ?? csrf_token(), JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+window.SDC_CHANGE_REQUESTS = <?= json_encode(array_map(fn($r) => [
+    'id'             => (int) $r['id'],
+    'recipe_id'      => (int) $r['recipe_id_fk'],
+    'recipe_name'    => (string) $r['recipe_name'],
+    'change_kind'    => (string) $r['change_kind'],
+    'summary'        => (string) $r['summary'],
+    'status'         => (string) $r['status'],
+    'requested_at'   => (string) $r['requested_at'],
+    'decided_at'     => $r['decided_at'],
+    'decision_note'  => $r['decision_note'],
+    'requester_name' => (string) $r['requester_name'],
+    'decider_name'   => $r['decider_name'],
+    'requested_by_fk'=> (int) ($r['requested_by_fk'] ?? 0),
+    'lines'          => array_map(fn($l) => [
+        'field'        => $l['field'],
+        'old_value'    => $l['old_value'],
+        'new_value'    => $l['new_value'],
+        'target_table' => $l['target_table'],
+    ], $r['lines']),
+], $changeRequestsData), JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+window.SDC_CURRENT_USER_ID = <?= json_encode((int)$me['id']) ?>;
 window.SDC_YEAST_STRAINS = <?= json_encode(
     array_map(fn($s) => [
         'id'              => (int)    $s['id'],
@@ -2438,6 +2743,22 @@ window.SDC_TANK_ERR = null;
       </span>
       Objectifs
     </div>
+
+    <?php if (is_admin($me) || is_manager($me)): ?>
+    <div class="nav-item" data-sec="demandes" onclick="switchSection('demandes')">
+      <span class="nav-icon">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <rect x="2" y="2" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.2"/>
+          <path d="M5 5h6M5 7.5h4M5 10h3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+        </svg>
+      </span>
+      Demandes
+      <?php $pendingCount = count(array_filter($changeRequestsData, fn($r) => $r['status'] === 'pending')); ?>
+      <?php if ($pendingCount > 0): ?>
+        <span class="nav-badge nav-badge--alert"><?= $pendingCount ?></span>
+      <?php endif ?>
+    </div>
+    <?php endif ?>
 
     <div class="nav-section-label" style="margin-top:16px;">À venir</div>
     <div class="nav-item" style="opacity:.4;pointer-events:none;">
@@ -4320,6 +4641,126 @@ window.SDC_TANK_ERR = null;
       </div><!-- /cip-layout -->
     </div><!-- /sec-objectifs -->
 
+    <?php
+    $changeKindLabels = [
+        'recipe_field'      => 'Champ recette',
+        'qc_target'         => 'Cible QC',
+        'yeast'             => 'Levure',
+        'ingredient_add'    => 'Ajout ingrédient',
+        'ingredient_update' => 'Modif. ingrédient',
+        'ingredient_remove' => 'Retrait ingrédient',
+        'format_activate'   => 'Activation format',
+        'format_deactivate' => 'Désactivation format',
+        'bom_binding'       => 'Liaison BOM',
+    ];
+    $statusLabels   = ['pending'=>'En attente','approved'=>'Approuvée','rejected'=>'Rejetée','withdrawn'=>'Retirée'];
+    $statusCssClass = ['pending'=>'pending','approved'=>'approved','rejected'=>'rejected','withdrawn'=>'withdrawn'];
+    $pendingRequests = array_filter($changeRequestsData, fn($r) => $r['status'] === 'pending');
+    $decidedRequests = array_filter($changeRequestsData, fn($r) => $r['status'] !== 'pending');
+    ?>
+    <div class="section-panel" id="sec-demandes">
+      <?php if ($initialSec === 'demandes'): ?>
+      <?php $flashMsg = flash_pop(); if ($flashMsg): ?>
+      <div class="sdc-flash sdc-flash--<?= $flashMsg['type'] === 'ok' ? 'ok' : 'err' ?>">
+        <?= $flashMsg['type'] === 'ok' ? '✓' : '⚠' ?> <?= htmlspecialchars($flashMsg['msg']) ?>
+      </div>
+      <?php endif; endif ?>
+
+      <div class="sc-content-header">
+        <h1 class="sc-title">Demandes de modification</h1>
+      </div>
+
+      <?php if (!is_admin($me) && !is_manager($me)): ?>
+        <div style="padding:40px;color:var(--ink-label);text-align:center;">Accès réservé aux managers et administrateurs.</div>
+      <?php elseif ($changeRequestsErr): ?>
+        <div class="sdc-flash sdc-flash--err"><?= htmlspecialchars($changeRequestsErr) ?></div>
+      <?php else: ?>
+
+      <div style="padding:16px 20px;">
+        <?php if (empty($pendingRequests)): ?>
+          <div style="padding:32px;text-align:center;color:var(--ink-label);font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;">Aucune demande en attente</div>
+        <?php else: ?>
+          <h2 class="cr-section-title">En attente <span style="color:var(--ember);">(<?= count($pendingRequests) ?>)</span></h2>
+          <div class="cr-list">
+            <?php foreach ($pendingRequests as $cr): ?>
+            <?php $kindLabel = $changeKindLabels[$cr['change_kind']] ?? htmlspecialchars($cr['change_kind']); ?>
+            <div class="cr-card cr-card--pending" id="cr-card-<?= (int)$cr['id'] ?>">
+              <div class="cr-card-header">
+                <span class="cr-kind-chip"><?= htmlspecialchars($kindLabel) ?></span>
+                <span class="cr-recipe-name"><?= htmlspecialchars($cr['recipe_name']) ?></span>
+                <span class="cr-requester">par <?= htmlspecialchars($cr['requester_name']) ?></span>
+                <span class="cr-date"><?= htmlspecialchars(substr($cr['requested_at'], 0, 16)) ?></span>
+              </div>
+              <?php if ($cr['summary']): ?>
+              <div class="cr-summary"><?= htmlspecialchars($cr['summary']) ?></div>
+              <?php endif ?>
+              <?php if ($cr['lines']): ?>
+              <div class="cr-lines">
+                <?php foreach ($cr['lines'] as $ln): ?>
+                <div class="cr-line">
+                  <span class="cr-field"><?= htmlspecialchars($ln['field'] ?? '—') ?></span>
+                  <span class="cr-old"><?= htmlspecialchars($ln['old_value'] ?? '') ?></span>
+                  <span class="cr-arrow">→</span>
+                  <span class="cr-new"><?= htmlspecialchars($ln['new_value'] ?? '') ?></span>
+                </div>
+                <?php endforeach ?>
+              </div>
+              <?php endif ?>
+              <div class="cr-card-actions">
+                <?php if (is_admin($me)): ?>
+                <button class="cr-btn cr-btn--approve" onclick="crApprove(<?= (int)$cr['id'] ?>)">Approuver</button>
+                <button class="cr-btn cr-btn--reject"  onclick="crRejectOpen(<?= (int)$cr['id'] ?>)">Rejeter</button>
+                <?php endif ?>
+                <?php if (is_admin($me) || (int)$cr['requested_by_fk'] === (int)$me['id']): ?>
+                <button class="cr-btn cr-btn--withdraw" onclick="crWithdraw(<?= (int)$cr['id'] ?>)">Retirer</button>
+                <?php endif ?>
+              </div>
+              <?php if (is_admin($me)): ?>
+              <div class="cr-reject-note-row" id="cr-reject-row-<?= (int)$cr['id'] ?>">
+                <input type="text" class="cr-reject-note" placeholder="Motif de rejet (optionnel)"
+                       id="cr-reject-note-<?= (int)$cr['id'] ?>">
+                <button class="cr-btn cr-btn--reject" onclick="crRejectConfirm(<?= (int)$cr['id'] ?>)">Confirmer rejet</button>
+                <button class="cr-btn cr-btn--withdraw" onclick="crRejectCancel(<?= (int)$cr['id'] ?>)">Annuler</button>
+              </div>
+              <?php endif ?>
+            </div>
+            <?php endforeach ?>
+          </div>
+        <?php endif ?>
+
+        <?php if (!empty($decidedRequests)): ?>
+        <div class="cr-decided-section">
+          <div class="cr-decided-title">Traitées récemment (30 derniers jours)</div>
+          <div class="cr-list">
+            <?php foreach ($decidedRequests as $cr): ?>
+            <?php
+            $kindLabel   = $changeKindLabels[$cr['change_kind']] ?? htmlspecialchars($cr['change_kind']);
+            $statusSlug  = $statusCssClass[$cr['status']] ?? 'unknown';
+            ?>
+            <div class="cr-card cr-card--<?= htmlspecialchars($statusSlug) ?>">
+              <div class="cr-card-header">
+                <span class="cr-status-badge cr-status-badge--<?= htmlspecialchars($statusSlug) ?>"><?= htmlspecialchars($statusLabels[$cr['status']] ?? $cr['status']) ?></span>
+                <span class="cr-kind-chip"><?= htmlspecialchars($kindLabel) ?></span>
+                <span class="cr-recipe-name"><?= htmlspecialchars($cr['recipe_name']) ?></span>
+                <span class="cr-requester">par <?= htmlspecialchars($cr['requester_name']) ?></span>
+                <span class="cr-date"><?= htmlspecialchars(substr($cr['decided_at'] ?? $cr['requested_at'], 0, 16)) ?></span>
+              </div>
+              <?php if ($cr['summary']): ?>
+              <div class="cr-summary" style="margin:0;"><?= htmlspecialchars($cr['summary']) ?></div>
+              <?php endif ?>
+              <?php if ($cr['decision_note']): ?>
+              <div style="font-size:12px;color:var(--ink-mute);margin-top:4px;font-style:italic;"><?= htmlspecialchars($cr['decision_note']) ?></div>
+              <?php endif ?>
+            </div>
+            <?php endforeach ?>
+          </div>
+        </div>
+        <?php endif ?>
+      </div>
+
+      <?php endif ?>
+    </div><!-- /sec-demandes -->
+
   </div><!-- /content-area -->
 </div><!-- /sdc-stage -->
 
@@ -5386,6 +5827,144 @@ function createRecipe(){
   });
 
   // Close on Escape is native to <dialog> — no extra listener needed
+})();
+
+/* ═══════════════════════════════════════════
+   CHANGE REQUESTS — Demandes panel actions
+   ═══════════════════════════════════════════ */
+function crApprove(requestId){
+  const btn = document.querySelector('#cr-card-' + requestId + ' .cr-btn--approve');
+  if(btn) btn.disabled = true;
+  const body = new URLSearchParams({csrf: window.SDC_CSRF||'', action:'approve_change_request', request_id: requestId});
+  fetch('/modules/salle-de-controle.php', {method:'POST', body})
+    .then(r=>r.json())
+    .then(d=>{
+      if(d.ok){
+        showToast('Demande approuvée — recette mise à jour.');
+        const card = document.getElementById('cr-card-' + requestId);
+        if(card) card.style.opacity = '.4';
+        setTimeout(()=>location.reload(), 1200);
+      } else {
+        if(btn) btn.disabled = false;
+        showToast('Erreur : ' + (d.error || 'Approbation échouée'));
+      }
+    })
+    .catch(()=>{ if(btn) btn.disabled=false; showToast('Erreur réseau'); });
+}
+
+function crRejectOpen(requestId){
+  const row = document.getElementById('cr-reject-row-' + requestId);
+  if(row){ row.classList.add('open'); const inp = document.getElementById('cr-reject-note-' + requestId); if(inp) inp.focus(); }
+}
+function crRejectCancel(requestId){
+  const row = document.getElementById('cr-reject-row-' + requestId);
+  if(row) row.classList.remove('open');
+}
+function crRejectConfirm(requestId){
+  const note = (document.getElementById('cr-reject-note-' + requestId)||{}).value || '';
+  const body = new URLSearchParams({csrf: window.SDC_CSRF||'', action:'reject_change_request', request_id: requestId, decision_note: note});
+  fetch('/modules/salle-de-controle.php', {method:'POST', body})
+    .then(r=>r.json())
+    .then(d=>{
+      if(d.ok){
+        showToast('Demande rejetée.');
+        const card = document.getElementById('cr-card-' + requestId);
+        if(card) card.style.opacity = '.4';
+        setTimeout(()=>location.reload(), 1200);
+      } else { showToast('Erreur : ' + (d.error || 'Rejet échoué')); }
+    })
+    .catch(()=>showToast('Erreur réseau'));
+}
+function crWithdraw(requestId){
+  if(!confirm('Retirer cette demande ?')) return;
+  const body = new URLSearchParams({csrf: window.SDC_CSRF||'', action:'withdraw_change_request', request_id: requestId});
+  fetch('/modules/salle-de-controle.php', {method:'POST', body})
+    .then(r=>r.json())
+    .then(d=>{
+      if(d.ok){
+        showToast('Demande retirée.');
+        setTimeout(()=>location.reload(), 900);
+      } else { showToast('Erreur : ' + (d.error || 'Retrait échoué')); }
+    })
+    .catch(()=>showToast('Erreur réseau'));
+}
+
+/* ═══════════════════════════════════════════
+   MANAGER FORM INTERCEPT — yeast + QC
+   ═══════════════════════════════════════════ */
+(function(){
+  if(SDC_ROLE !== 'manager') return;
+
+  // Intercept ygForm (yeast)
+  const ygForm = document.getElementById('ygForm');
+  if(ygForm){
+    ygForm.addEventListener('submit', function(e){
+      e.preventDefault();
+      const recipeId = document.getElementById('ygRecipeId').value;
+      if(!recipeId) return;
+      const fd = new FormData(ygForm);
+      const lines = [];
+      // Read all yeast fields and build lines
+      const yeastFields = ['yeast_strain_id_fk','strain_family','garde_days_min_override','ferm_temp_min_override','ferm_temp_max_override'];
+      yeastFields.forEach(f => {
+        const val = fd.get(f);
+        if(val !== null && val !== '') {
+          lines.push({target_table:'ref_recipes', target_pk: parseInt(recipeId), field: f, old_value:'', new_value: val});
+        }
+      });
+      if(!lines.length){ showToast('Aucune modification détectée.'); return; }
+      const body = new URLSearchParams({
+        csrf: window.SDC_CSRF || '',
+        action: 'submit_change_request',
+        recipe_id: recipeId,
+        change_kind: 'yeast',
+        lines: JSON.stringify(lines),
+        summary: 'Levure & garde · recette #' + recipeId,
+      });
+      fetch('/modules/salle-de-controle.php', {method:'POST', body})
+        .then(r => r.json())
+        .then(d => {
+          if(d.ok){ showToast('Demande envoyée (#' + d.request_id + ') — en attente d\'approbation'); }
+          else { showToast('Erreur : ' + (d.error || 'Demande non enregistrée')); }
+        })
+        .catch(() => showToast('Erreur réseau — demande non envoyée'));
+    });
+  }
+
+  // Intercept qcForm (QC targets)
+  const qcForm = document.getElementById('qcForm');
+  if(qcForm){
+    qcForm.addEventListener('submit', function(e){
+      e.preventDefault();
+      const recipeId = document.getElementById('qcRecipeId').value;
+      if(!recipeId) return;
+      const fd = new FormData(qcForm);
+      const lines = [];
+      const qcFields = ['co2_target','co2_tolerance','racked_vol_warn_lo','racked_vol_warn_hi','racked_vol_outlier_lo','racked_vol_outlier_hi','og_target','fg_target','ph_target','abv_target'];
+      qcFields.forEach(f => {
+        const val = fd.get(f);
+        if(val !== null && val !== '') {
+          lines.push({target_table:'ref_recipes', target_pk: parseInt(recipeId), field: f, old_value:'', new_value: val});
+        }
+      });
+      if(!lines.length){ showToast('Aucune modification détectée.'); return; }
+      const body = new URLSearchParams({
+        csrf: window.SDC_CSRF || '',
+        action: 'submit_change_request',
+        recipe_id: recipeId,
+        change_kind: 'qc_target',
+        lines: JSON.stringify(lines),
+        summary: 'Seuils QC · recette #' + recipeId,
+      });
+      fetch('/modules/salle-de-controle.php', {method:'POST', body})
+        .then(r => r.json())
+        .then(d => {
+          if(d.ok){ showToast('Demande envoyée (#' + d.request_id + ') — en attente d\'approbation'); }
+          else { showToast('Erreur : ' + (d.error || 'Demande non enregistrée')); }
+        })
+        .catch(() => showToast('Erreur réseau — demande non envoyée'));
+    });
+  }
 })();
 
 /* ═══════════════════════════════════════════

@@ -1506,3 +1506,155 @@ body.sdc-page .yg-num-readonly {
   color: var(--ember);
   font-weight: 700;
 }
+
+/* ── Change requests (Demandes) panel ── */
+.cr-section-title {
+  font-family: 'Fraunces', serif;
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--ink);
+  margin: 0 0 16px;
+}
+.cr-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.cr-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+.cr-card--pending  { border-left: 3px solid var(--ember); }
+.cr-card--approved { border-left: 3px solid var(--hop); opacity: .85; }
+.cr-card--rejected { border-left: 3px solid #9e3030; opacity: .75; }
+.cr-card--withdrawn { border-left: 3px solid var(--ink-faint); opacity: .65; }
+.cr-card-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.cr-kind-chip {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--ink-label);
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+.cr-recipe-name {
+  font-family: 'Fraunces', serif;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ink);
+}
+.cr-requester {
+  font-size: 12px;
+  color: var(--ink-mute);
+}
+.cr-date {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--ink-label);
+  margin-left: auto;
+}
+.cr-summary {
+  font-size: 13px;
+  color: var(--ink-soft);
+  margin-bottom: 8px;
+}
+.cr-lines {
+  margin-bottom: 10px;
+}
+.cr-line {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--ink-mute);
+  padding: 3px 0;
+  border-top: 1px solid var(--hairline);
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.cr-line:first-child { border-top: none; }
+.cr-field  { color: var(--ink-label); min-width: 140px; }
+.cr-old    { text-decoration: line-through; opacity: .6; }
+.cr-arrow  { color: var(--ink-faint); }
+.cr-new    { color: var(--hop); font-weight: 500; }
+.cr-card-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.cr-btn {
+  font-size: 12px;
+  font-family: 'DM Sans', sans-serif;
+  border: none;
+  border-radius: 6px;
+  padding: 5px 12px;
+  cursor: pointer;
+  font-weight: 500;
+  transition: opacity .15s;
+}
+.cr-btn:disabled { opacity: .5; cursor: default; }
+.cr-btn--approve  { background: var(--hop); color: #fff; }
+.cr-btn--reject   { background: #9e3030; color: #fff; }
+.cr-btn--withdraw { background: var(--bg); border: 1px solid var(--hairline); color: var(--ink-soft); }
+.cr-status-badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 4px;
+}
+.cr-status-badge--approved  { background: rgba(74,140,120,.15); color: var(--hop); }
+.cr-status-badge--rejected  { background: rgba(158,48,48,.12); color: #9e3030; }
+.cr-status-badge--withdrawn { background: var(--bg); color: var(--ink-label); border: 1px solid var(--hairline); }
+.cr-reject-note-row {
+  display: none;
+  margin-top: 6px;
+  gap: 6px;
+  align-items: center;
+}
+.cr-reject-note-row.open { display: flex; }
+.cr-reject-note {
+  flex: 1;
+  font-size: 12px;
+  font-family: 'DM Sans', sans-serif;
+  padding: 5px 9px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--ink);
+}
+.cr-decided-section {
+  margin-top: 24px;
+}
+.cr-decided-title {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--ink-label);
+  margin-bottom: 10px;
+}
+.nav-badge--alert {
+  background: var(--ember);
+  color: #fff;
+}
+/* Demandes section — flash positioning (mirrors other sections) */
+#sec-demandes .sdc-flash {
+  position: absolute;
+  top: 76px;
+  left: 240px;
+  right: 20px;
+  z-index: 10;
+}

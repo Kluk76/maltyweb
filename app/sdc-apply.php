@@ -341,7 +341,8 @@ function sdc_apply_yeast(
     PDO $pdo,
     array $me,
     int $recipeId,
-    array $fields
+    array $fields,
+    bool $ownTxn = true
 ): array {
     $strainIdFk  = $fields['strain_id_fk'];
     $newFamily   = $fields['new_family'];
@@ -398,7 +399,7 @@ function sdc_apply_yeast(
     }
 
     // Write
-    $pdo->beginTransaction();
+    if ($ownTxn) $pdo->beginTransaction();
     try {
         $upRecStmt = $pdo->prepare(
             "UPDATE ref_recipes
@@ -447,9 +448,9 @@ function sdc_apply_yeast(
             );
         }
 
-        $pdo->commit();
+        if ($ownTxn) $pdo->commit();
     } catch (Throwable $e) {
-        $pdo->rollBack();
+        if ($ownTxn && $pdo->inTransaction()) $pdo->rollBack();
         throw $e;
     }
 
@@ -662,7 +663,8 @@ function sdc_apply_recipe_style(
     PDO $pdo,
     array $me,
     int $recipeId,
-    ?string $styleOrNull
+    ?string $styleOrNull,
+    bool $ownTxn = true
 ): array {
     // Validate recipe exists and is active
     $recStmt = $pdo->prepare(
@@ -712,7 +714,8 @@ function sdc_apply_recipe_name(
     PDO $pdo,
     array $me,
     int $recipeId,
-    string $newName
+    string $newName,
+    bool $ownTxn = true
 ): array {
     // Validate recipe exists and is active
     $recStmt = $pdo->prepare(
