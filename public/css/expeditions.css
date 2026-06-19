@@ -6839,3 +6839,106 @@ body.expeditions .exp-site-select {
   max-width: 220px;
 }
 
+/* ── Serving-tank fiche sub-row ────────────────────────────────────────────── */
+
+body.expeditions .exp-ct-row--serving-tank-fiche {
+  border-bottom: none;
+  background: var(--bg);
+}
+
+body.expeditions .exp-ct-row--serving-tank-fiche.exp-ct-st-hidden {
+  display: none;
+}
+
+body.expeditions .exp-ct-st-cell {
+  padding: 4px 12px 8px 24px;
+}
+
+body.expeditions .exp-ct-st-block {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  font-size: 0.82rem;
+}
+
+body.expeditions .exp-ct-st-label {
+  color: var(--ink-label);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+body.expeditions .exp-ct-st-sep {
+  color: var(--ink-faint);
+  user-select: none;
+}
+
+body.expeditions .exp-ct-st-toggle {
+  padding: 2px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--ink-faint);
+  background: var(--bg-elev);
+  color: var(--ink-soft);
+  cursor: pointer;
+  font-size: 0.8rem;
+  min-height: 28px;
+}
+
+body.expeditions .exp-ct-st-toggle--on {
+  background: var(--hop);
+  color: #fff;
+  border-color: var(--hop);
+}
+
+body.expeditions .exp-ct-st-toggle-form {
+  display: inline-flex;
+  align-items: center;
+}
+
+body.expeditions .exp-ct-st-num-form {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+body.expeditions .exp-ct-st-num-input {
+  width: 64px;
+  padding: 2px 4px;
+  border: 1px solid var(--ink-faint);
+  border-radius: 3px;
+  background: var(--bg-elev);
+  color: var(--ink);
+  font-size: 0.82rem;
+  text-align: right;
+  min-height: 28px;
+}
+
+body.expeditions .exp-ct-st-unit {
+  color: var(--ink-label);
+  font-size: 0.78rem;
+}
+
+body.expeditions .exp-ct-st-num-save {
+  padding: 2px 6px;
+  background: var(--hop);
+  color: #fff;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  min-height: 28px;
+  min-width: 28px;
+}
+
+body.expeditions .exp-ct-st-reel {
+  color: var(--ink);
+  font-size: 0.82rem;
+}
+
+body.expeditions .exp-ct-st-reel--over {
+  color: var(--ember);
+  font-weight: 600;
+}
+
