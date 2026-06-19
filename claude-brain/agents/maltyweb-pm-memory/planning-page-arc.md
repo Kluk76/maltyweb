@@ -131,4 +131,28 @@ If further gaps surface → `planning.php` + `planning.css` + `planning.js` ONLY
 
 ---
 
+## §FULLER PRODUCTION PLANNER — round-3 PM ruling (2026-06-19, design-only, NOT yet built)
+Kouros: planner must factor tank space, packaging output capacity, anticipate racks + dry-hops, compute serving tanks. Today producer ONLY proposes brewing (demand) + packaging (demand). VERIFIED against live schema. Build all in `app/planning-predict.php` + ONE additive engine change.
+
+**Trigger class per process:**
+- Brewing/Packaging = demand-driven (unchanged).
+- **Racking = process-driven**: engine `racking` list non-empty for day AND **free BBT exists** (new gate) → propose regardless of sales. Engine already computes readiness (garde+cold_crash+not-in-BBT); producer just stops ignoring it.
+- **Dry-hop = process-driven, GATED — REFUSE-DON'T-GUESS.** Engine `dry_hopping` list = ALL CCT (over-proposes). Canonical "is dry-hopped" signal = **`ref_recipe_ingredients.hop_addition_stage='dry_hop'` (is_active=1) — only 9 of 61 active recipes.** `ref_recipe_profile_hops.stage='dry_hop'` is EMPTY (0 — nightly compute writes only stage='kettle'; do NOT rely on it). Observed `bd_fermenting_v2 DryHop` = 288 events ~12+ recipes = retrospective per-batch, NOT a forward trigger (do NOT use as trigger — guessing). RULE: propose dry-hop ONLY for recipe-spec-flagged recipe ∩ batch has NO `bd_fermenting_v2 DryHop` event yet. NO day-window rule (no canonical window exists). Under-propose, never wrong-propose; SURFACE partial coverage (9 vs 12+ divergence) to Kouros.
+- **KZE = REFUSE auto-propose.** Engine `kze` list = ALL BBT (over-proposes). NO canonical "is KZE'd" flag anywhere in schema. Leave manual-only in the dropdown (already works). Same justification as dry-hop-without-signal.
+- **Serving-tank fill = process-driven, capacity-gated by free serving-tank count** (see below).
+
+**Tank fleets (VERIFIED live, all in Salle des Machines; status ENUM active/maintenance/retired; cols number/capacity_hl/status):** `ref_cct`=18 (fermenters; producer hardcodes 1..10 — WRONG, fix), `ref_bbt`=8, `ref_yt`=3 (yeast tanks, catalog 8, NOT serving), **`ref_serving_tanks`=8 = THE serving fleet** (extra col `location enum('in_house','client')` — gate free-count on `location='in_house' AND status='active'`; client tanks live at customer, not fillable). `ref_cuv` ABSENT, `ref_brewhouse_vessels`=0. NEVER hardcode fleet size — read active fleet.
+
+**Occupancy reuse (VERIFIED):** `TankSimulator->run()` returns ONLY `['cct'=>,'bbt'=>]`; **serving tanks EXPLICITLY NOT modelled** (literal TODO ~L648-649). CCT free = active CCT − engine `brewing.cct_conflicts` − this-run allocations (producer already does via `$allocatedCctsByDate`). BBT free = derive from engine working state. **ONE sanctioned engine change (additive): add per-day `occupancy` block (`cct_occupied`/`bbt_occupied`/`bbt_eligible_count`) to return — existing keys untouched, pure-read preserved.** Do NOT have producer re-derive tank state from raw tables (divergent reader, forbidden).
+
+**Serving-tank capacity rule:** NO HL budget (cuv excluded from production_targets), NO débit, sim doesn't model occupancy → gate on **physical free serving-tank count** (`ref_serving_tanks` in_house+active), one fill = one tank in producer working model. v1 LIMITATION (flag to Kouros): free-count starts "all in_house active" each run (assumes empty at week start, over-estimate). Proper fix = extend TankSimulator serving-tank dest (the existing TODO) — separate larger piece; do NOT bodge a `bd_packaging_v2` occupancy reader.
+
+**Packaging throughput rule:** KEEP weekly HL budget (`production_targets_compute` bottle/can/keg_hl.week) as v1 ceiling — it already encodes throughput (annual÷48). Do NOT build `speed_units_h` débit path (needs a NEW shift-hours setting + units↔HL conversion = new sub-system, out of scope). DO add `max_packaging_runs_per_day` system_setting (section='production_targets', mirrors max_brews_per_day) + per-day packaging cap.
+
+**Occupancy-feedback model:** engine plan query has NO status filter → applies BOTH proposed+planned, but producer calls engine ONCE before inserts. **RULE: one eligibility pass + in-producer working-occupancy ledger; do NOT re-run engine per proposal.** Apply proposals in unlock order so feedback composes: **racking (frees CCT, occupies BBT) → packaging/serving (frees BBT) → brewing (occupies CCT) → dry-hop (neutral)**. CRITICAL refactor: today's producer treats packaging/brewing as per-recipe either/or (`if eligSlots… else brewing`) — WRONG once racking added; a recipe can warrant racking + brewing + sibling-batch packaging independently. Restructure into per-PROCESS passes over the working model, not per-recipe if/else.
+
+**Build order:** (1) engine additive occupancy block; (2) producer fleet reads from ref_cct/ref_bbt/ref_serving_tanks active; (3) working-occupancy ledger seeded from engine block; (4) per-process passes; (5) `max_packaging_runs_per_day` setting + per-day pkg cap. Mig: 1 system_setting row, NO new table (no schema_meta needed). Re-`migrate.php --status` at build-start. EQUIP coder+sql+webapp-testing (manager-login UAT — outstanding from P0/P1). CARDINAL unchanged: INTENT-only, writes status='proposed', feeds nothing into COGS/COP/WAC/BOM/beer-tax/inventory.
+
+---
+
 system_settings (for reference): UNIQUE (section,key_name); value_text XOR value_num (CHECK); read via app/settings.php::system_setting(). commissioning_settings is a SEPARATE table (same shape) holding min_days_after_racking under section='packaging'.
