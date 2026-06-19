@@ -131,7 +131,29 @@ If further gaps surface → `planning.php` + `planning.css` + `planning.js` ONLY
 
 ---
 
-## §FULLER PRODUCTION PLANNER — round-3 PM ruling (2026-06-19, design-only, NOT yet built)
+## §FULLER PRODUCTION PLANNER — ✅ SHIPPED + DEPLOYED + COMMITTED 2026-06-19 (commit `521ccbf`, maltytask main, NOT pushed — awaiting operator "push"; mig 401 APPLIED on VPS)
+**AS-BUILT (all 3 rounds folded into ONE commit `521ccbf`):** the round-3 ruling below is now BUILT. The planner now factors tank space, packaging output capacity, anticipated racks + dry-hops, and serving-tank count. Producer no longer proposes only brewing+packaging demand.
+
+**What landed:**
+- **`db/migrations/401_planning_working_days_and_brew_cap.sql` (APPLIED on VPS):** seeds 9 `system_settings` rows section='production_targets' — `workday_mon..workday_sun` (Mon–Fri=1, Sat/Sun=0), `max_brews_per_day`=5, `max_packaging_runs_per_day`=4. Idempotent `INSERT...ON DUPLICATE KEY UPDATE` preserving `value_num`.
+- **`public/modules/salle-de-controle.php` (?sec=objectifs):** whitelist + validation (workday∈{0,1}, ≥1 working-day guard, caps≥1) + render — 7-day toggle card + the two numeric cap editors, reusing the existing `update_production_target` handler.
+- **`app/planning-eligibility.php`:** additive per-day `occupancy` block (`cct_occupied`=array_keys(workingCct), `bbt_occupied`=array_keys(workingBbt)) at the `$result[$dayStr]` assignment. Pure-read PRESERVED; existing keys untouched (the ONE sanctioned engine change from the ruling — exactly as scoped).
+- **`app/planning-predict.php`:** FULL refactor to 4 ordered per-process passes (**racking → packaging/serving → brewing → dry-hop**) with an in-producer occupancy ledger seeded from the engine block. Weekly budgets via `production_targets_compute` netted against already-planned items. Working-day round-robin spread + per-day caps. REAL fleet reads: `ref_cct`(18)/`ref_bbt`(8)/`ref_serving_tanks`(8 in_house+active) — **hardcoded CCT 1..10 bug FIXED.** Dry-hop gate: `ref_recipe_ingredients.hop_addition_stage='dry_hop'` (col is `recipe_id`, NOT recipe_id_fk) ∩ NOT IN `bd_fermenting_v2` event_type='DryHop' (literal verified). **KZE auto-propose REFUSED** (manual-only, as ruled). Capacity deferrals → `decisions[]` (NOT silent).
+
+**VERIFIED LIVE (Opus, rollback harness then deleted):** week 2026-06-15 → 7 proposals spread Mon–Thu (brews on 3 distinct days within cap, packaging load-balanced) — Monday-dump fixed; brewing used CCTs 1/3/5 from the real 18-fleet.
+
+🔴 **KNOWN v1 LIMITATIONS (keep flagged to future-me + Kouros):**
+1. Serving-tank free-count assumes empty-at-week-start (TankSimulator serving-tank dest still a TODO ~L648) — over-estimate, as the ruling predicted.
+2. Dry-hop coverage PARTIAL (9 spec-flagged recipes vs ~12+ observed) — under-proposes BY DESIGN (refuse-don't-guess).
+3. Packaging throughput = HL/week budget only (`speed_units_h` débit path deferred — out of scope, as ruled).
+
+🔴 **STILL-OPEN GATE (carried from P0/P1 + new surfaces): authenticated MANAGER browser UAT** — the planning-page interactions + the new Suggérer-un-plan output + the salle-de-controle `?sec=objectifs` toggles. Opus can verify structurally/rollback but cannot click as a manager. Needs Kouros (or a manager session) to click through. EQUIP webapp-testing once a manager session exists.
+
+🔴 **PUSH STILL PENDING:** `521ccbf` is on maltytask main LOCAL only — operator hasn't said "push". Commit-by-pathspec discipline held.
+
+---
+
+### §FULLER PRODUCTION PLANNER — round-3 PM ruling (2026-06-19, ORIGINAL design — kept for provenance; now BUILT per AS-BUILT above)
 Kouros: planner must factor tank space, packaging output capacity, anticipate racks + dry-hops, compute serving tanks. Today producer ONLY proposes brewing (demand) + packaging (demand). VERIFIED against live schema. Build all in `app/planning-predict.php` + ONE additive engine change.
 
 **Trigger class per process:**
