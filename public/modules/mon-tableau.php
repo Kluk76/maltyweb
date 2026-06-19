@@ -20,6 +20,7 @@ require_once __DIR__ . '/../../app/csrf.php';
 require_once __DIR__ . '/../../app/settings-helpers.php';
 require_once __DIR__ . '/../../app/db-write-helpers.php';
 require_once __DIR__ . '/../../app/kpi-handlers.php';
+require_once __DIR__ . '/../../app/kpi-recap-schedule.php';
 
 require_page_access('mon-tableau');
 $me  = current_user();
@@ -210,14 +211,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 );
             }
         } else {
-            /* Upsert subscription: set cadence + clear next_due_at so cron fires on next check */
+            /* Upsert subscription: compute next_due_at anchored to send_hour_local */
+            $nextDue = kpi_recap_next_due((int) $rawHour, $rawCadence);
             $upsSql = $before !== null
-                ? "UPDATE user_kpi_recap_subs SET cadence = ?, send_hour_local = ?, next_due_at = NOW(), is_active = 1 WHERE user_id_fk = ?"
-                : "INSERT INTO user_kpi_recap_subs (cadence, send_hour_local, next_due_at, is_active, user_id_fk) VALUES (?, ?, NOW(), 1, ?)";
-            $pdo->prepare($upsSql)->execute([$rawCadence, $rawHour, $myUserId]);
+                ? "UPDATE user_kpi_recap_subs SET cadence = ?, send_hour_local = ?, next_due_at = ?, is_active = 1 WHERE user_id_fk = ?"
+                : "INSERT INTO user_kpi_recap_subs (cadence, send_hour_local, next_due_at, is_active, user_id_fk) VALUES (?, ?, ?, 1, ?)";
+            $pdo->prepare($upsSql)->execute([$rawCadence, $rawHour, $nextDue, $myUserId]);
 
             $afterId = $before !== null ? (int) $before['id'] : (int) $pdo->lastInsertId();
-            $after   = ['cadence' => $rawCadence, 'send_hour_local' => $rawHour, 'next_due_at' => date('Y-m-d H:i:s'), 'is_active' => 1];
+            $after   = ['cadence' => $rawCadence, 'send_hour_local' => $rawHour, 'next_due_at' => $nextDue, 'is_active' => 1];
             log_revision(
                 $pdo, $me,
                 'user_kpi_recap_subs', $afterId,

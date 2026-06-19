@@ -61,6 +61,7 @@ require_once $baseDir . '/app/settings-helpers.php';
 require_once $baseDir . '/app/kpi-handlers.php';
 require_once $baseDir . '/app/services/mailer.php';
 require_once $baseDir . '/app/kpi-email-render.php';
+require_once $baseDir . '/app/kpi-recap-schedule.php';
 
 $pdo = maltytask_pdo();
 
@@ -225,24 +226,9 @@ foreach ($subs as $sub) {
         fwrite(STDERR, "[kpi-recap]   → FAILED to send to {$userEmail}\n");
     }
 
-    // ── Compute next_due_at (anchored to send_hour_local, Europe/Zurich → UTC) ─
-    // Advance to the next occurrence of H:00 Zurich, then shift by the cadence.
-    // Storing UTC ensures MySQL comparisons (next_due_at <= NOW()) are correct
-    // regardless of the VPS system timezone.
+    // ── Compute next_due_at via shared helper (app/kpi-recap-schedule.php) ──────
     $sendHour = isset($sub['send_hour_local']) ? (int) $sub['send_hour_local'] : 8;
-    $tz   = new DateTimeZone('Europe/Zurich');
-    $utc  = new DateTimeZone('UTC');
-    $now  = new DateTimeImmutable('now', $tz);
-    // Candidate: today at H:00 Zurich; bump to tomorrow if that slot has passed.
-    $cand = $now->setTime($sendHour, 0, 0);
-    if ($cand <= $now) {
-        $cand = $cand->modify('+1 day');
-    }
-    $nextDue = match ($cadence) {
-        'weekly'  => $cand->modify('+6 days')->setTimezone($utc)->format('Y-m-d H:i:s'),
-        'monthly' => $cand->modify('+1 month')->setTimezone($utc)->format('Y-m-d H:i:s'),
-        default   => $cand->setTimezone($utc)->format('Y-m-d H:i:s'),
-    };
+    $nextDue  = kpi_recap_next_due($sendHour, $cadence);
 
     // ── Update subscription timestamps ─────────────────────────────────────────
     $upd = $pdo->prepare(
