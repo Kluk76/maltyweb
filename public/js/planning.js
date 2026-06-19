@@ -176,6 +176,22 @@
         bbtHidden.value = (opt && opt.dataset.bbtNumber) ? opt.dataset.bbtNumber : '';
       });
     }
+
+    // Show/hide serving-tank client field based on pkg_type
+    var pkgTypeSel = form.querySelector('select[name="pkg_type"]');
+    var stClientWrap = form.querySelector('.pl-serving-tank-client-field');
+    var stClientSel = stClientWrap ? stClientWrap.querySelector('select[name="customer_id_fk"]') : null;
+    if (pkgTypeSel && stClientWrap) {
+      function toggleStClient() {
+        var isServingTank = pkgTypeSel.value === 'serving_tank';
+        stClientWrap.hidden = !isServingTank;
+        if (!isServingTank && stClientSel) {
+          stClientSel.value = '';
+        }
+      }
+      pkgTypeSel.addEventListener('change', toggleStClient);
+      toggleStClient(); // initialise on page load
+    }
   }
 
   // ── boot ──────────────────────────────────────────────────────────────────

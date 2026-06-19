@@ -315,6 +315,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                           ? (int)$_POST['recipe_id_fk'] : null;
         $pkgBbtNumber   = isset($_POST['bbt_number']) && $_POST['bbt_number'] !== ''
                           ? (int)$_POST['bbt_number'] : null;
+        $customerIdRaw = trim((string)($_POST['customer_id_fk'] ?? ''));
 
         // Validate date
         if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $planDate) ||
@@ -333,6 +334,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($horsProcess && $horsProcessReason === '') {
             flash_set('err', 'La raison hors process est obligatoire.');
             redirect_to('/modules/planning.php' . $weekQuery);
+        }
+
+        // Validate customer_id_fk — only for serving_tank, must be a real serving-tank client
+        $customerIdFk = null;
+        if ($pkgType === 'serving_tank' && $customerIdRaw !== '' && ctype_digit($customerIdRaw)) {
+            $custChk = $pdo->prepare(
+                'SELECT 1 FROM ref_customers WHERE id = ? AND is_serving_tank_client = 1 AND is_active = 1 LIMIT 1'
+            );
+            $custChk->execute([(int)$customerIdRaw]);
+            if ($custChk->fetchColumn() !== false) {
+                $customerIdFk = (int)$customerIdRaw;
+            }
         }
 
         // Server-side eligibility check for packaging items
@@ -374,9 +387,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $insStmt = $pdo->prepare(
             "INSERT INTO pl_plan_items
                (plan_date, section, seq, pkg_type, recipe_id_fk, bbt_number, target_volume_hl,
-                hors_process, hors_process_reason,
+                hors_process, hors_process_reason, customer_id_fk,
                 source, status, created_by_user_id_fk)
-             VALUES (?, 'packaging', ?, ?, ?, ?, ?, ?, ?, 'manual', 'planned', ?)"
+             VALUES (?, 'packaging', ?, ?, ?, ?, ?, ?, ?, ?, 'manual', 'planned', ?)"
         );
         $insStmt->execute([
             $planDate,
@@ -387,6 +400,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $targetVolumeHl,
             $horsProcess ? 1 : 0,
             $horsProcessReason !== '' ? $horsProcessReason : null,
+            $customerIdFk,
             (int)$me['id'],
         ]);
         $lastId = (int)$pdo->lastInsertId();
@@ -401,6 +415,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'target_volume_hl'    => $targetVolumeHl,
             'hors_process'        => $horsProcess ? 1 : 0,
             'hors_process_reason' => $horsProcessReason !== '' ? $horsProcessReason : null,
+            'customer_id_fk'      => $customerIdFk,
             'source'              => 'manual',
             'status'              => 'planned',
             'created_by_user_id_fk' => (int)$me['id'],
@@ -689,6 +704,13 @@ if (!empty($stCustIds)) {
         $servingTankCustomerNames[(int)$r['id']] = (string)$r['name'];
     }
 }
+
+// ── Serving-tank client roster for the add-packaging dropdown ─────────────────
+$servingTankClientsStmt = $pdo->prepare(
+    'SELECT id, name FROM ref_customers WHERE is_serving_tank_client = 1 AND is_active = 1 ORDER BY name'
+);
+$servingTankClientsStmt->execute();
+$servingTankClients = $servingTankClientsStmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Group by plan_date → section → items
 $itemsByDaySection = [];
@@ -1066,6 +1088,16 @@ $weekLabel = 'Semaine du '
                   </option>
                 <?php endforeach ?>
               </select>
+              <div class="pl-serving-tank-client-field" hidden>
+                <select name="customer_id_fk" class="pl-input pl-select" aria-label="Client cuve de service">
+                  <option value="">— Client cuve —</option>
+                  <?php foreach ($servingTankClients as $stc): ?>
+                    <option value="<?= (int)$stc['id'] ?>">
+                      <?= htmlspecialchars($stc['name'], ENT_QUOTES | ENT_HTML5) ?>
+                    </option>
+                  <?php endforeach ?>
+                </select>
+              </div>
 
               <input type="number" name="target_volume_hl" class="pl-input"
                      step="0.1" min="0" placeholder="Volume cible (hl)"
