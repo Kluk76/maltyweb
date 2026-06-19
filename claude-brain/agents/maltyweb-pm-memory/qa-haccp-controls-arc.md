@@ -55,7 +55,18 @@ All panels render; dropdowns populated (A:50, B:30, C:50/125); 3 write round-tri
 4. `financier` tour card still open (its arc owns it — COGS-fiche / financier-cogs-fiche.md).
 5. Push: commits are LOCAL-only pending Kouros (cage-session interleave).
 
-## 🆕 PENDING BUILD (PM design RULED 2026-06-19) — 4th panel "Analyse de l'eau" (HACCP CCP-1 / `CAPA-2026-005`)
+## ✅ SHIPPED + LIVE 2026-06-19 — 4th panel "Analyse de l'eau" (HACCP CCP-1 / `CAPA-2026-005`)
+> **AS-BUILT (Opus-verified on VPS 2026-06-19):** the PENDING BUILD below was BUILT, applied, and deployed. Files all timestamped Jun-19 10:23–10:31 on VPS.
+> - **Migrations 403/404/405** (NOT 402 — a parallel session took `402_refold-shipping-title-norm.sql`; the build correctly took the next free numbers). All applied (`schema_migrations` confirms) + present LOCAL untracked. `403_ref_water_sample_points` / `404_ref_water_parameters` / `405_qa_water_analysis`.
+> - **Tables verified:** ref_water_sample_points = 6 rows (PS-1/3/5 active; PS-2/4/6 is_active=0 per `le cas échéant` ruling — HONORED), ref_water_parameters = 10 rows, qa_water_analysis = 0 rows (clean, no test residue). PS-3 is_ccp=1 (CCP-1) ✓.
+> - **schema_meta** all 3 rows present: qa_water_analysis=source/allowed; both lookups=reference/allowed. ✓ classifier col `table_class` used.
+> - **Endpoint `public/api/qa-water-analysis.php`** deployed (16 243 B), `php8.1 -l` clean, POST → 302 auth-redirect (NOT 500/404). `?view=eau` page → 302 (healthy). 4th `qa-tab` wired (13 tab refs in qa.php), `?view=eau` switch + form `#qa-form-eau` action=`/api/qa-water-analysis.php`, `initEauParamToggle()` presence/absence ↔ numeric toggle in qa.js.
+> - **RULE 3 (tour):** NO new tour card needed — water analysis is a 4th tab WITHIN the existing `qa` page (no new ref_pages row, as the verdict predicted). `tour-gap-check.php` = critical=0 minor=0 (clean). The qa tour copy still describes only the 3 original controls; refreshing it to mention water is OPTIONAL polish (not a RULE-3 gate), gated on operator validating the PS list.
+> 🔴 **OPEN:** (1) commits LOCAL-only / NOT pushed — `qa.php`/`qa.css`/`qa.js` modified + 4 untracked files (migs 403/404/405 + qa-water-analysis.php); shared-tree interleave, commit by PATHSPEC. (2) OPERATOR-GATE STILL OPEN: definitive PS list + parameter action-limits must be validated by operator against his hydraulic schema before this is treated as audit-ready (PS-2/4/6 stay inactive until then). (3) Optional: qa tour copy refresh to mention the 4th control; minimal lookup admin-CRUD (v1 is seed-by-SQL).
+>
+> ---
+> ### Original design ruling (PM, 2026-06-19) — kept for provenance
+> 🆕 PENDING BUILD (PM design RULED 2026-06-19) — 4th panel "Analyse de l'eau" (HACCP CCP-1 / `CAPA-2026-005`)
 > AUDIT DRIVER: La Nébuleuse HACCP — commune water analyses stop at the meter; NO internal analysis at sensitive points = "point faible déterminant". Inspector requires an internal water-analysis programme DERIVED FROM the risk analysis (CCP-1 open item, logged MA-01 register). Operator wants it in maltyweb. Companion doc AE-01 defines sensitive points PS-1..PS-6 + parameters.
 >
 > **PM VERDICT: 4th panel on `qa.php` (`?view=eau`), NOT a separate surface.** Same QA observation family / security pattern / async-JSON handler shape. `qa` already is_active=1, already preset-granted, already tour-covered → NO ref_pages row, NO preset grant, NO tour-steward dispatch (RULE 3 satisfied; optional copy refresh only). **NON-FISCAL — NEVER feeds COGS/stock/WAC/BOM/beer-tax** (CARDINAL preserved).
