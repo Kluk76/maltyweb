@@ -993,7 +993,8 @@ function stock_qs(array $extra): string
                                   <input class="line-alias-form__num<?= $aliasBothKnown ? '' : ' line-alias-form__num--required' ?>"
                                          type="number" name="unit_price" step="any" min="0"
                                          value="<?= htmlspecialchars($aliasPriceVal) ?>"
-                                         placeholder="PU<?= $aliasBothKnown ? '' : ' *' ?>"
+                                         placeholder="PU HT<?= $aliasBothKnown ? '' : ' *' ?>"
+                                         title="Prix unitaire HT — net de TVA et de remise"
                                          <?= $aliasBothKnown ? '' : 'required' ?>>
                                   <label class="line-alias-form__skip">
                                     <input type="checkbox" name="skip_delivery" value="1"
@@ -1004,11 +1005,12 @@ function stock_qs(array $extra): string
                                     Sauvegarder
                                   </button>
                                 </div>
-                                <?php if (!$aliasBothKnown): ?>
-                                  <p class="line-alias-form__hint">
-                                    OCR n'a pas extrait qty/prix — saisir manuellement, ou cocher «&nbsp;Alias seul&nbsp;».
-                                  </p>
-                                <?php endif ?>
+                                <p class="line-alias-form__hint">
+                                  <?php if (!$aliasBothKnown): ?>
+                                    OCR n'a pas extrait qty/prix — saisir manuellement.
+                                  <?php endif ?>
+                                  Prix unitaire : <strong>HT</strong> — net de TVA et de remise.
+                                </p>
                               </form>
                             </details>
 
@@ -1123,7 +1125,7 @@ function stock_qs(array $extra): string
                               <th class="ml-th ml-th--desc">Description</th>
                               <th class="ml-th ml-th--mi">MI</th>
                               <th class="ml-th ml-th--qty">Qté</th>
-                              <th class="ml-th ml-th--price">Prix unit.</th>
+                              <th class="ml-th ml-th--price">Prix unit. (HT)</th>
                               <th class="ml-th ml-th--total">Total</th>
                               <th class="ml-th ml-th--remove"></th>
                             </tr>
