@@ -224,17 +224,34 @@ system_settings (for reference): UNIQUE (section,key_name); value_text XOR value
 **VERIFIED LIVE (Opus rollback harness, then deleted):** Les Docks due 2026-06-19, cadence 23j, 10hl Zepp, `customer_id_fk` set; clients with <2 fills SKIPPED (can't derive cadence); v1 empty-at-week-start limitation surfaced in `decisions[]`.
 
 🔴 **OPEN FOLLOW-UPS (carry forward):**
-1. **Customer-fiche UI to toggle `is_serving_tank_client`** — 🟡 ADDRESSED BY Round-6 ruling 2026-06-19 (mirror `client_update` inline-edit in expeditions.php?view=clients; +3 cols count/size_hl/budget_hl). See §SERVING-TANK CLIENT FICHE (Round-6). Build pending.
+1. **Customer-fiche UI to toggle `is_serving_tank_client`** — ✅ SHIPPED 2026-06-19 (mig 411 + expeditions.php?view=clients, fiche commit `43abfce`, PUSHED; +3 cols count/size_hl/budget_hl + monthly réel-vs-budget). See §SERVING-TANK CLIENT FICHE (Round-6) AS-BUILT.
 2. **Manual serving_tank add-form has NO client picker** — manual rows stay `customer_id_fk` NULL. (Separate from Round-6 fiche; still open.)
 3. **`serving_tank_cadence_days` override UNUSED** (derived-only per operator) — wire if they later want a fixed cadence.
 4. **v1 empty-at-week-start free-count limitation** — TankSimulator serving-dest TODO ~L648 STILL unbuilt (shared with the round-3 v1 limitation #1).
 5. 🔴 **MASTER OPEN GATE — authenticated MANAGER browser UAT of the WHOLE planner (all 5 rounds):** Suggérer-un-plan output incl. serving-tank cards + the salle-de-controle objectifs settings/toggles. Structurally + rollback verified; needs a manager click-through. (This is the same master UAT gate carried since P0/P1 — now spans all 5 rounds.)
 
-🔴 **FULL PLANNER COMMIT CHAIN on main (all UNPUSHED):** `521ccbf`(r1-3) → `6eb25a7`(r4) → `2e02d1d`(mig 407) → `652bbae`(mig 408) → `982f298`(producer+render). Awaiting operator "push".
+✅ **FULL PLANNER COMMIT CHAIN on main (ALL PUSHED 2026-06-19):** `521ccbf`(r1-3) → `6eb25a7`(r4) → `2e02d1d`(mig 407) → `652bbae`(mig 408) → `982f298`(producer+render); pushed `73b5634..982f298`. Round-6 fiche `43abfce` (mig 411) pushed `fa50eb5..43abfce`.
 
 ---
 
-## §SERVING-TANK CLIENT FICHE (Round-6) — PM ruling 2026-06-19 (VERIFIED LIVE; closes open-followup #1 + #2)
+## §SERVING-TANK CLIENT FICHE (Round-6) — ✅ SHIPPED + DEPLOYED + COMMITTED + PUSHED 2026-06-19 (maltyweb main; mig 411 APPLIED)
+**AS-BUILT (closes open-followup #1 + #2). KEY DEVIATION from the original ruling below: budget is MONTHLY (not annual) AND is NOT informational-only — Kouros wants budget-vs-réel COMPARÉ on the fiche.**
+- **Mig `411_ref_customers_serving_tank_fiche.sql` (APPLIED):** `ALTER ref_customers ADD serving_tank_count TINYINT UNSIGNED NULL, ADD serving_tank_size_hl DECIMAL(6,2) NULL, ADD serving_tank_budget_hl DECIMAL(8,2) NULL`. **`serving_tank_budget_hl` = PER MONTH** (deviation from PM-lean ANNUAL — operator decided monthly). App-owned curated; 🔴 NEVER add these (or is_serving_tank_client / serving_tank_cadence_days) to the BC-sync UPDATE allowlist. **Mig number = 411, NOT 410** — parallel sessions took 409/410 (re-`--status` always proves the point: the number leads).
+- **Fiche = `public/modules/expeditions.php?view=clients`** (as PM located). Added: SELECT of the 4 cols; inline-edit forms (toggle `is_serving_tank_client` + numeric count/size/budget) mirroring the `client_update` whitelist+validation+log_revision shape; **+ a computed RÉEL DU MOIS line** = current-calendar-month cuve-de-service HL from `inv_sales_ledger` (JOIN ref_skus format='Cuve de service', qty_signed<0, ÷100=HL, GROUP BY customer) shown vs the MONTHLY budget with an over-budget indicator. Render gated on `can_write_expeditions`. **Serving-tank flag kept INDEPENDENT of BC-owned `is_active`** (the caveat held).
+- **Réel smoke (June 2026, live):** Arches 30.00 hl, Jardins de Louis 35.70 hl, etc. The 4 cols seeded NULL (operator fills via fiche).
+- **Planner (`planning-predict.php`) NOT changed this round** — count/size/budget still not consumed by the engine (capture + display only; matches the Q2 "v1 = capture, v2 = wire" lean, except budget is now displayed-vs-réel rather than purely informational).
+
+**Commits — all on maltyweb main, ALL PUSHED:** planner chain `521ccbf`→`6eb25a7`→`2e02d1d`→`652bbae`→`982f298` (pushed earlier `73b5634..982f298`), then fiche `43abfce` (mig 411 + expeditions.php), pushed `fa50eb5..43abfce`. **🔴 NOTE: the whole planner commit chain that the index/§AS-BUILT recorded as "UNPUSHED, awaiting operator push" is now PUSHED.**
+
+🔴 **OPEN FOLLOW-UPS (carry on arc):**
+- **V2 planner wiring of budget/size/count** — pace-check (Σ proposed+actual vs MONTHLY budget → over/under-pace in `decisions[]`); `serving_tank_size_hl` caps a single fill; `serving_tank_count` bounds same-day fills. Deferred per Round-6 ruling; now carries MONTHLY budget semantics.
+- **MASTER GATE STILL OPEN — authenticated MANAGER browser UAT of:** (a) the WHOLE planner all 5 rounds incl. serving-tank cards; (b) the salle-de-controle objectifs settings/toggles; (c) the NEW serving-tank fiche block (toggle + count/size/budget + réel-vs-budget). Structurally + rollback verified only; needs a manager click-through.
+- **Manual serving_tank add-form still has NO client picker** (rows stay customer-NULL) — separate, still open. (Add/remove of a customer AS a serving-tank client is now RESOLVED — the fiche toggle does it.)
+- `serving_tank_cadence_days` override col still UNUSED; v1 empty-at-week-start free-count limitation still open (TankSimulator serving-dest TODO ~L648).
+
+---
+
+### §SERVING-TANK CLIENT FICHE (Round-6) — ORIGINAL PM ruling 2026-06-19 (kept for provenance; superseded by AS-BUILT above)
 Kouros expanded the field set: per serving-tank client the fiche must set is_serving_tank_client (toggle) + **number of tanks** + **size of tanks** + **budgeted HL**. Build = mig (additive cols on ref_customers) + render+handler on the EXISTING customer fiche (no new page). NO engine/predict change in this round (the new fields are operator metadata; planner wiring is a SEPARATE later step — see Q2).
 
 **1. MODELING — SCALAR cols on ref_customers, NOT a child table.** Evidence settles it: per-client cuve fills are SINGLE-SIZE in practice — each client's fills cluster on ONE nominal tank size (Arches/Docks≈1000L; Rincette≈500L; Jetée≈500L w/ occasional double=2 tanks; Jardins 500–1700L = multiple 500-ish fills). Variance is # of tanks filled per visit, NOT mixed tank sizes. A child table (one row/tank) is over-modeling for v1; the operator stated "size" singular. **ADD to ref_customers (additive, classified table → NO schema_meta):**
