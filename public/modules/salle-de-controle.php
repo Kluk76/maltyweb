@@ -26,6 +26,7 @@ require __DIR__ . '/../../app/settings-helpers.php';
 require __DIR__ . '/../../app/db-write-helpers.php';
 require_once __DIR__ . '/../../app/sku-bom-compile.php';
 require_once __DIR__ . '/../../app/recipe-ingredients-loader.php';
+require_once __DIR__ . '/../../app/sdc-apply.php';
 require_once __DIR__ . '/../../app/yeast-eligibility.php';
 require_once __DIR__ . '/../../app/qc-thresholds.php';
 require_once __DIR__ . '/../../app/qa-tank-stats.php';
@@ -171,130 +172,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new RuntimeException('recipe_id et format_id requis.');
             }
 
-            // Re-run gate server-side
-            $gatedIds = sdc_gated_format_ids($pdo);
-            if (!in_array($formatId, $gatedIds, true)) {
-                throw new RuntimeException('Format non commissionné — activation refusée.');
-            }
-
-            // Fetch recipe, require sku_prefix
-            $recStmt = $pdo->prepare(
-                "SELECT id, sku_prefix, name FROM ref_recipes WHERE id = ? AND is_active=1 LIMIT 1"
-            );
-            $recStmt->execute([$recipeId]);
-            $recipe = $recStmt->fetch(PDO::FETCH_ASSOC);
-            if (!$recipe || empty($recipe['sku_prefix'])) {
-                throw new RuntimeException('Préfixe SKU manquant — à définir dans la fiche recette.');
-            }
-            $prefix = (string) $recipe['sku_prefix'];
-
-            // Fetch format_code and run_type
-            $fmtStmt = $pdo->prepare(
-                "SELECT format_code, run_type, hl_per_unit FROM ref_packaging_formats WHERE id = ? LIMIT 1"
-            );
-            $fmtStmt->execute([$formatId]);
-            $fmt = $fmtStmt->fetch(PDO::FETCH_ASSOC);
-            if (!$fmt) throw new RuntimeException('Format introuvable.');
-
-            // Compute sku_code (cage format_code='X' → no hyphen: ZEPX not ZEP-X, mig363)
-            $skuCode = ($fmt['format_code'] === 'X')
-                ? $prefix . 'X'
-                : $prefix . $fmt['format_code'];
-
-            // run_type → format label
-            $runLabel = [
-                'bot'   => 'Bot',
-                'can'   => 'Can',
-                'can33' => 'Can33',
-                'keg'   => 'Keg',
-                'cuv'   => 'Cuv',
-            ][$fmt['run_type']] ?? $fmt['run_type'];
-
-            // Check for existing (recipe_id, format_id) row
-            $existStmt = $pdo->prepare(
-                "SELECT id, sku_code, is_active FROM ref_skus
-                  WHERE recipe_id = ? AND format_id = ? LIMIT 1"
-            );
-            $existStmt->execute([$recipeId, $formatId]);
-            $existRow = $existStmt->fetch(PDO::FETCH_ASSOC);
-
-            // Check for sku_code collision on DIFFERENT (recipe, format)
-            $collStmt = $pdo->prepare(
-                "SELECT id, recipe_id, format_id FROM ref_skus
-                  WHERE sku_code = ?
-                    AND NOT (recipe_id = ? AND format_id = ?)
-                  LIMIT 1"
-            );
-            $collStmt->execute([$skuCode, $recipeId, $formatId]);
-            $collision = $collStmt->fetch(PDO::FETCH_ASSOC);
-            if ($collision) {
-                throw new RuntimeException(
-                    "Code SKU «{$skuCode}» déjà utilisé par une autre combinaison "
-                    . "(recette #{$collision['recipe_id']}, format #{$collision['format_id']}) "
-                    . "— anomalie historique à traiter manuellement."
-                );
-            }
-
-            // BOM template
-            $bomTemplateId = $bomOverride ?? sdc_bom_template_for_format($pdo, $formatId);
-
-            $activateMsg = '';
-            $pdo->beginTransaction();
-            try {
-                if ($existRow) {
-                    // Re-activate
-                    $before = $existRow;
-                    $after  = ['is_active' => 1, 'last_modified_by' => 'web',
-                               'bom_template_id' => $bomTemplateId];
-                    $updStmt = $pdo->prepare(
-                        "UPDATE ref_skus SET is_active=1, last_modified_by='web',
-                                bom_template_id=?
-                          WHERE id=?"
-                    );
-                    $updStmt->execute([$bomTemplateId, (int) $existRow['id']]);
-                    log_revision($pdo, $me, 'ref_skus', (int) $existRow['id'],
-                        $before, $after, 'normal',
-                        "Salle de contrôle: réactivation format {$fmt['format_code']} / recette {$recipe['name']}");
-                    $activateMsg = "Format «{$skuCode}» réactivé.";
-                } else {
-                    // Insert
-                    $rowHash = hash('sha256',
-                        implode('|', [(string)$recipeId, (string)$formatId, $skuCode]));
-                    $insStmt = $pdo->prepare(
-                        "INSERT INTO ref_skus
-                            (sku_code, recipe_id, format_id, format, hl_per_unit,
-                             is_active, row_hash, bom_template_id,
-                             last_modified_by, last_seen_at, imported_at)
-                         VALUES (?, ?, ?, ?, ?, 1, ?, ?, 'web', NOW(), NOW())"
-                    );
-                    $insStmt->execute([
-                        $skuCode, $recipeId, $formatId, $runLabel,
-                        $fmt['hl_per_unit'], $rowHash, $bomTemplateId,
-                    ]);
-                    $newId = (int) $pdo->lastInsertId();
-                    log_revision($pdo, $me, 'ref_skus', $newId, null,
-                        ['sku_code' => $skuCode, 'recipe_id' => $recipeId,
-                         'format_id' => $formatId, 'bom_template_id' => $bomTemplateId],
-                        'normal',
-                        "Salle de contrôle: activation format {$fmt['format_code']} / recette {$recipe['name']}");
-                    $activateMsg = "Format «{$skuCode}» activé.";
-                }
-                $pdo->commit();
-            } catch (Throwable $e) {
-                $pdo->rollBack();
-                throw $e;
-            }
-            // Recompute packaging BOM — runs AFTER commit so a failure here never
-            // loses the saved activation. compile_sku_bom_packaging runs its own
-            // internal transaction and liquid-parity gate.
-            try {
-                $r = sdc_recompile_recipe_packaging($pdo, $recipeId);
-                sdc_flash_bom_result($activateMsg, $r);
-            } catch (Throwable $bomErr) {
-                // Recompute failed but the format activation is durable (already committed).
-                // Warn the operator; the nightly cron will retry.
-                flash_set('ok', $activateMsg
-                    . " · BOM recompilation échouée (la sauvegarde est conservée — relance en cron).");
+            $r = sdc_apply_activate_format($pdo, $me, $recipeId, $formatId, $bomOverride);
+            if ($r['bom_err'] !== null) {
+                flash_set('ok', $r['msg'] . ' · BOM recompilation échouée (la sauvegarde est conservée — relance en cron).');
+            } else {
+                sdc_flash_bom_result($r['msg'], $r['bom']);
             }
             $redirectRecipeId = $recipeId;
             $redirectSub      = 'formats';
@@ -307,38 +189,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new RuntimeException('recipe_id et format_id requis.');
             }
 
-            $existStmt = $pdo->prepare(
-                "SELECT id, sku_code, is_active FROM ref_skus
-                  WHERE recipe_id = ? AND format_id = ? LIMIT 1"
-            );
-            $existStmt->execute([$recipeId, $formatId]);
-            $existRow = $existStmt->fetch(PDO::FETCH_ASSOC);
-            if (!$existRow) {
-                throw new RuntimeException('Aucun SKU trouvé pour cette combinaison.');
-            }
-
-            $pdo->beginTransaction();
-            try {
-                $before = $existRow;
-                $pdo->prepare("UPDATE ref_skus SET is_active=0, last_modified_by='web' WHERE id=?")
-                    ->execute([(int) $existRow['id']]);
-                log_revision($pdo, $me, 'ref_skus', (int) $existRow['id'],
-                    $before, ['is_active' => 0, 'last_modified_by' => 'web'], 'normal',
-                    "Salle de contrôle: désactivation SKU {$existRow['sku_code']}");
-                $pdo->commit();
-            } catch (Throwable $e) {
-                $pdo->rollBack();
-                throw $e;
-            }
-            $deactivateMsg = "Format «{$existRow['sku_code']}» désactivé.";
-            // Recompute packaging BOM — runs AFTER commit so a failure here never
-            // loses the saved deactivation.
-            try {
-                $r = sdc_recompile_recipe_packaging($pdo, $recipeId);
-                sdc_flash_bom_result($deactivateMsg, $r);
-            } catch (Throwable $bomErr) {
-                flash_set('ok', $deactivateMsg
-                    . " · BOM recompilation échouée (la sauvegarde est conservée — relance en cron).");
+            $r = sdc_apply_deactivate_format($pdo, $me, $recipeId, $formatId);
+            if ($r['bom_err'] !== null) {
+                flash_set('ok', $r['msg'] . ' · BOM recompilation échouée (la sauvegarde est conservée — relance en cron).');
+            } else {
+                sdc_flash_bom_result($r['msg'], $r['bom']);
             }
             $redirectRecipeId = $recipeId;
             $redirectSub      = 'formats';
@@ -352,101 +207,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new RuntimeException('recipe_id, role et mi_id_fk requis.');
             }
 
-            $validRoles = ['label','can','sticker','holder','outer_tray','scotch'];
-            $role = must_be_one_of('role', $role, $validRoles);
-
-            // Validate MI exists
-            $miStmt = $pdo->prepare("SELECT id, mi_id FROM ref_mi WHERE id=? LIMIT 1");
-            $miStmt->execute([$miIdFk]);
-            $miRow = $miStmt->fetch(PDO::FETCH_ASSOC);
-            if (!$miRow) throw new RuntimeException('MI introuvable.');
-
-            // Validate MI matches the {beer} pattern for this role
-            $recStmt = $pdo->prepare(
-                "SELECT sku_prefix FROM ref_recipes WHERE id=? AND is_active=1 LIMIT 1"
-            );
-            $recStmt->execute([$recipeId]);
-            $prefix = $recStmt->fetchColumn();
-            if (!$prefix) throw new RuntimeException('Recette introuvable ou sans préfixe SKU.');
-
-            $patternStmt = $pdo->prepare(
-                "SELECT mi_filter_pattern FROM ref_packaging_items
-                  WHERE slot_name = ? AND mi_filter_pattern LIKE '%{beer}%' LIMIT 1"
-            );
-            $patternStmt->execute([$role]);
-            $rawPattern = $patternStmt->fetchColumn();
-            if ($rawPattern) {
-                // The scotch pattern is PKG_SCOTCH_(TRANSP|{beer})% — a LIKE alternation
-                // that MySQL cannot evaluate as regex. Detect this form and build two
-                // LIKE clauses OR'd: one for TRANSP (always valid), one for the branded MI.
-                // Other roles use simple substitution (PKG_LABEL_{beer}%, PKG_STICKER_{beer}%, etc.)
-                $rawPatternStr = (string) $rawPattern;
-                if (str_contains($rawPatternStr, '(TRANSP|{beer})')) {
-                    // Scotch: accept PKG_SCOTCH_TRANSP OR PKG_SCOTCH_{prefix}
-                    $brandedPattern = 'PKG_SCOTCH_' . (string) $prefix . '%';
-                    $checkStmt = $pdo->prepare(
-                        "SELECT COUNT(*) FROM ref_mi
-                          WHERE id = ?
-                            AND (mi_id LIKE 'PKG_SCOTCH_TRANSP%' OR mi_id LIKE ?)"
-                    );
-                    $checkStmt->execute([$miIdFk, $brandedPattern]);
-                } else {
-                    // Standard substitution: PKG_LABEL_{beer}%, PKG_STICKER_{beer}%, etc.
-                    $resolved = str_replace('{beer}', (string) $prefix, $rawPatternStr);
-                    $checkStmt = $pdo->prepare(
-                        "SELECT COUNT(*) FROM ref_mi WHERE id=? AND mi_id LIKE ?"
-                    );
-                    $checkStmt->execute([$miIdFk, $resolved]);
-                }
-                if ((int) $checkStmt->fetchColumn() === 0) {
-                    $displayPattern = str_contains($rawPatternStr, '(TRANSP|{beer})')
-                        ? "PKG_SCOTCH_TRANSP% OR PKG_SCOTCH_{$prefix}%"
-                        : str_replace('{beer}', (string) $prefix, $rawPatternStr);
-                    throw new RuntimeException(
-                        "L'ingrédient sélectionné ne correspond pas au pattern attendu "
-                        . "pour le rôle «{$role}» (pattern: {$displayPattern})."
-                    );
-                }
-            }
-
-            $pdo->beginTransaction();
-            try {
-                // Expire current active binding for same (recipe, role)
-                $pdo->prepare(
-                    "UPDATE ref_recipe_packaging_bindings
-                        SET effective_until = CURDATE()
-                      WHERE recipe_id=? AND role=?
-                        AND (effective_until IS NULL OR effective_until >= CURDATE())"
-                )->execute([$recipeId, $role]);
-
-                // Insert new binding
-                $todayStr = (new DateTimeImmutable())->format('Y-m-d');
-                $insStmt = $pdo->prepare(
-                    "INSERT INTO ref_recipe_packaging_bindings
-                        (recipe_id, role, mi_id_fk, effective_from, effective_until, notes)
-                     VALUES (?, ?, ?, ?, NULL, ?)"
-                );
-                $notes = "Défini via Salle de contrôle · recette #{$recipeId}";
-                $insStmt->execute([$recipeId, $role, $miIdFk, $todayStr, $notes]);
-                $newId = (int) $pdo->lastInsertId();
-                log_revision($pdo, $me, 'ref_recipe_packaging_bindings', $newId, null,
-                    ['recipe_id'=>$recipeId,'role'=>$role,'mi_id_fk'=>$miIdFk,
-                     'effective_from'=>$todayStr], 'normal',
-                    "Liaison packaging: rôle={$role}, recette={$recipeId}, MI={$miRow['mi_id']}");
-                $pdo->commit();
-            } catch (Throwable $e) {
-                $pdo->rollBack();
-                throw $e;
-            }
-            $bindingMsg = "Liaison «{$role}» enregistrée.";
-            // Recompute packaging BOM — runs AFTER commit so a failure here never
-            // loses the saved binding.
-            try {
-                $r = sdc_recompile_recipe_packaging($pdo, $recipeId);
-                sdc_flash_bom_result($bindingMsg, $r);
-            } catch (Throwable $bomErr) {
-                flash_set('ok', $bindingMsg
-                    . " · BOM recompilation échouée (la sauvegarde est conservée — relance en cron).");
+            $r = sdc_apply_set_binding($pdo, $me, $recipeId, $role, $miIdFk);
+            if ($r['bom_err'] !== null) {
+                flash_set('ok', $r['msg'] . ' · BOM recompilation échouée (la sauvegarde est conservée — relance en cron).');
+            } else {
+                sdc_flash_bom_result($r['msg'], $r['bom']);
             }
             $redirectRecipeId = $recipeId;
             $redirectSub      = 'formats';
@@ -644,122 +409,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new RuntimeException('ferm_temp_min_override ne peut pas être supérieur à ferm_temp_max_override.');
             }
 
-            // ── Step 2: validate recipe exists and is active ─────────────────
-            $recStmt = $pdo->prepare(
-                "SELECT id, name FROM ref_recipes WHERE id = ? AND is_active = 1 LIMIT 1"
-            );
-            $recStmt->execute([$recipeId]);
-            $recRow = $recStmt->fetch(PDO::FETCH_ASSOC);
-            if (!$recRow) {
-                throw new RuntimeException("Recette introuvable ou inactive : id={$recipeId}");
-            }
-
-            // ── Step 3: validate strain id exists (if provided) ──────────────
-            $strainRow = null;
-            if ($strainIdFk !== null) {
-                $strStmt = $pdo->prepare(
-                    "SELECT id, name, family FROM ref_yeast_strains WHERE id = ? LIMIT 1"
-                );
-                $strStmt->execute([$strainIdFk]);
-                $strainRow = $strStmt->fetch(PDO::FETCH_ASSOC);
-                if (!$strainRow) {
-                    throw new RuntimeException("Souche levurienne introuvable : id={$strainIdFk}");
-                }
-            }
-
-            // Validate that newFamily applies to the same strain as strainIdFk
-            if ($newFamily !== null && $strainIdFk === null) {
-                throw new RuntimeException(
-                    'Une souche doit être sélectionnée avant de définir sa famille.'
-                );
-            }
-
-            // ── Step 4: fetch before-states for audit ────────────────────────
-            $beforeRecStmt = $pdo->prepare(
-                "SELECT yeast_strain_id_fk, garde_days_min_override,
-                        ferm_temp_min_override, ferm_temp_max_override
-                   FROM ref_recipes WHERE id = ? LIMIT 1"
-            );
-            $beforeRecStmt->execute([$recipeId]);
-            $beforeRec = $beforeRecStmt->fetch(PDO::FETCH_ASSOC);
-
-            $beforeStrain = null;
-            if ($strainIdFk !== null && $newFamily !== null) {
-                $bsStmt = $pdo->prepare(
-                    "SELECT id, family FROM ref_yeast_strains WHERE id = ? LIMIT 1"
-                );
-                $bsStmt->execute([$strainIdFk]);
-                $beforeStrain = $bsStmt->fetch(PDO::FETCH_ASSOC);
-            }
-
-            // ── Step 5: write ────────────────────────────────────────────────
-            $pdo->beginTransaction();
-            try {
-                // 5a. Update ref_recipes
-                $upRecStmt = $pdo->prepare(
-                    "UPDATE ref_recipes
-                        SET yeast_strain_id_fk       = ?,
-                            garde_days_min_override  = ?,
-                            ferm_temp_min_override   = ?,
-                            ferm_temp_max_override   = ?,
-                            last_modified_by         = 'web'
-                      WHERE id = ?"
-                );
-                $upRecStmt->execute([
-                    $strainIdFk,
-                    $gardeOverride,
-                    $tempMinOvr,
-                    $tempMaxOvr,
-                    $recipeId,
-                ]);
-
-                $afterRec = [
-                    'yeast_strain_id_fk'     => $strainIdFk,
-                    'garde_days_min_override'=> $gardeOverride,
-                    'ferm_temp_min_override' => $tempMinOvr,
-                    'ferm_temp_max_override' => $tempMaxOvr,
-                    'last_modified_by'       => 'web',
-                ];
-                log_revision(
-                    $pdo, $me, 'ref_recipes', $recipeId,
-                    $beforeRec ?: [],
-                    $afterRec,
-                    'normal',
-                    "Salle de contrôle: yeast assignment · recette {$recRow['name']}"
-                );
-
-                // 5b. Update ref_yeast_strains.family if a new family was supplied
-                if ($newFamily !== null && $strainIdFk !== null) {
-                    $upStrainStmt = $pdo->prepare(
-                        "UPDATE ref_yeast_strains SET family = ? WHERE id = ?"
-                    );
-                    $upStrainStmt->execute([$newFamily, $strainIdFk]);
-
-                    log_revision(
-                        $pdo, $me, 'ref_yeast_strains', $strainIdFk,
-                        $beforeStrain ?: [],
-                        ['family' => $newFamily],
-                        'normal',
-                        "Salle de contrôle: strain family set to '{$newFamily}' for strain id={$strainIdFk}"
-                    );
-                }
-
-                $pdo->commit();
-            } catch (Throwable $e) {
-                $pdo->rollBack();
-                throw $e;
-            }
-
-            $strainLabel = $strainRow ? (string) $strainRow['name'] : 'aucune';
-            flash_set('ok',
-                "Levure & garde enregistrés — recette «{$recRow['name']}» "
-                . "· souche : {$strainLabel}"
-                . ($gardeOverride !== null ? " · garde override : {$gardeOverride}j" : '')
-                . ($newFamily !== null ? " · famille souche : {$newFamily}" : '')
-                . '.'
-            );
             $redirectRecipeId = $recipeId;
             $redirectSub      = 'yeast';
+            $r = sdc_apply_yeast($pdo, $me, $recipeId, [
+                'strain_id_fk'      => $strainIdFk,
+                'new_family'        => $newFamily,
+                'garde_override'    => $gardeOverride,
+                'temp_min_override' => $tempMinOvr,
+                'temp_max_override' => $tempMaxOvr,
+            ]);
+            flash_set('ok', $r['msg']);
 
         // ── update_yeast_strain ──────────────────────────────────────────────
         // Per-strain catalog editor in the Biochimie section.
@@ -831,71 +490,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new RuntimeException('temp_min ne peut pas être supérieur à temp_max.');
             }
 
-            // Step 2 — confirm strain exists and is active
-            $strFetchStmt = $pdo->prepare(
-                "SELECT id, name FROM ref_yeast_strains WHERE id = ? AND is_active = 1 LIMIT 1"
-            );
-            $strFetchStmt->execute([$strainId]);
-            $strainRow = $strFetchStmt->fetch(PDO::FETCH_ASSOC);
-            if (!$strainRow) {
-                throw new RuntimeException("Souche levurienne introuvable ou inactive : id={$strainId}");
-            }
-
-            // Step 3 — fetch before-state for audit
-            $beforeStmt = $pdo->prepare(
-                "SELECT family, flocculation, attenuation_min, attenuation_max, temp_min, temp_max
-                   FROM ref_yeast_strains
-                  WHERE id = ?
-                  LIMIT 1"
-            );
-            $beforeStmt->execute([$strainId]);
-            $beforeState = $beforeStmt->fetch(PDO::FETCH_ASSOC);
-
-            // Step 4 — write
-            // 'type' column intentionally omitted: deprecated (all=unknown), UI removed,
-            // DEFAULT='unknown' so omitting preserves the existing value.
-            $upStrainStmt = $pdo->prepare(
-                "UPDATE ref_yeast_strains
-                    SET family          = ?,
-                        flocculation    = ?,
-                        attenuation_min = ?,
-                        attenuation_max = ?,
-                        temp_min        = ?,
-                        temp_max        = ?
-                  WHERE id = ?"
-            );
-            $upStrainStmt->execute([
-                $newFamily,
-                $newFloc,
-                $attMin,
-                $attMax,
-                $tempMin,
-                $tempMax,
-                $strainId,
-            ]);
-
-            $afterState = [
+            $r = sdc_apply_yeast_strain($pdo, $me, $strainId, [
                 'family'          => $newFamily,
                 'flocculation'    => $newFloc,
                 'attenuation_min' => $attMin,
                 'attenuation_max' => $attMax,
                 'temp_min'        => $tempMin,
                 'temp_max'        => $tempMax,
-            ];
-
-            log_revision(
-                $pdo,
-                $me,
-                'ref_yeast_strains',
-                $strainId,
-                $beforeState ?: [],
-                $afterState,
-                'normal',
-                "Salle de contrôle: biochimie catalogue souche · {$strainRow['name']}"
-            );
-
-            flash_set('ok', "Souche «{$strainRow['name']}» mise à jour.");
-            $redirectStrainId = $strainId;
+            ]);
+            flash_set('ok', $r['msg']);
+            $redirectStrainId = $r['strain_id'];
 
         // ── update_recipe_qc ─────────────────────────────────────────────────
         // Editor for per-recipe CO₂ target/tolerance and optional racked_vol overrides.
@@ -995,85 +599,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new RuntimeException('abv_target doit être entre 0 et 15 % vol.');
             }
 
-            // ── Step 2: validate recipe exists ──────────────────────────────
-            $recStmt = $pdo->prepare(
-                "SELECT id, name FROM ref_recipes WHERE id = ? AND is_active = 1 LIMIT 1"
-            );
-            $recStmt->execute([$recipeId]);
-            $recRow = $recStmt->fetch(PDO::FETCH_ASSOC);
-            if (!$recRow) {
-                throw new RuntimeException("Recette introuvable ou inactive : id={$recipeId}");
-            }
-
-            // ── Step 3: fetch before-state for audit ─────────────────────────
-            $beforeStmt = $pdo->prepare(
-                "SELECT co2_target, co2_tolerance,
-                        racked_vol_warn_lo, racked_vol_warn_hi,
-                        racked_vol_outlier_lo, racked_vol_outlier_hi,
-                        og_target, fg_target, ph_target, abv_target
-                   FROM ref_recipes WHERE id = ? LIMIT 1"
-            );
-            $beforeStmt->execute([$recipeId]);
-            $before = $beforeStmt->fetch(PDO::FETCH_ASSOC) ?: [];
-
-            $after = [
-                'co2_target'           => $co2Target,
-                'co2_tolerance'        => $co2Tolerance,
-                'racked_vol_warn_lo'   => $volWarnLo,
-                'racked_vol_warn_hi'   => $volWarnHi,
-                'racked_vol_outlier_lo'=> $volOutlierLo,
-                'racked_vol_outlier_hi'=> $volOutlierHi,
-                'og_target'            => $ogTarget,
-                'fg_target'            => $fgTarget,
-                'ph_target'            => $phTarget,
-                'abv_target'           => $abvTarget,
-                'last_modified_by'     => 'web',
-            ];
-
-            // ── Step 4: write ─────────────────────────────────────────────────
-            $upStmt = $pdo->prepare(
-                "UPDATE ref_recipes
-                    SET co2_target            = ?,
-                        co2_tolerance         = ?,
-                        racked_vol_warn_lo    = ?,
-                        racked_vol_warn_hi    = ?,
-                        racked_vol_outlier_lo = ?,
-                        racked_vol_outlier_hi = ?,
-                        og_target             = ?,
-                        fg_target             = ?,
-                        ph_target             = ?,
-                        abv_target            = ?,
-                        last_modified_by      = 'web'
-                  WHERE id = ?"
-            );
-            $upStmt->execute([
-                $co2Target, $co2Tolerance,
-                $volWarnLo, $volWarnHi, $volOutlierLo, $volOutlierHi,
-                $ogTarget, $fgTarget, $phTarget, $abvTarget,
-                $recipeId,
-            ]);
-
-            log_revision(
-                $pdo, $me, 'ref_recipes', $recipeId,
-                $before,
-                $after,
-                'normal',
-                "Salle de contrôle: QC seuils · recette {$recRow['name']}"
-            );
-
-            $parts = [];
-            if ($co2Target !== null) $parts[] = "CO₂ cible {$co2Target} ±{$co2Tolerance} g/L";
-            elseif ($co2Target === null) $parts[] = 'CO₂ → global';
-            if ($volWarnLo !== null) $parts[] = "vol [{$volWarnLo}–{$volWarnHi} HL]";
-            else $parts[] = 'vol → auto';
-            if ($ogTarget !== null) $parts[] = "OG {$ogTarget} °P";
-            if ($fgTarget !== null) $parts[] = "FG {$fgTarget} °P";
-
-            flash_set('ok',
-                "Seuils QC enregistrés — «{$recRow['name']}» · " . implode(', ', $parts) . '.'
-            );
             $redirectRecipeId = $recipeId;
             $redirectSub      = 'yeast';
+            $r = sdc_apply_qc_target($pdo, $me, $recipeId, [
+                'co2_target'            => $co2Target,
+                'co2_tolerance'         => $co2Tolerance,
+                'racked_vol_warn_lo'    => $volWarnLo,
+                'racked_vol_warn_hi'    => $volWarnHi,
+                'racked_vol_outlier_lo' => $volOutlierLo,
+                'racked_vol_outlier_hi' => $volOutlierHi,
+                'og_target'             => $ogTarget,
+                'fg_target'             => $fgTarget,
+                'ph_target'             => $phTarget,
+                'abv_target'            => $abvTarget,
+            ]);
+            flash_set('ok', $r['msg']);
 
         // ── cip_type_add ─────────────────────────────────────────────────────
         } elseif ($action === 'cip_type_add') {
@@ -1595,40 +1135,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             $styleOrNull = $style !== '' ? $style : null;
 
-            // Step 2 — validate recipe exists and is active
-            $recStmt = $pdo->prepare(
-                "SELECT id, name FROM ref_recipes WHERE id = ? AND is_active = 1 LIMIT 1"
-            );
-            $recStmt->execute([$recipeId]);
-            $recRow = $recStmt->fetch(PDO::FETCH_ASSOC);
-            if (!$recRow) {
-                throw new RuntimeException("Recette introuvable ou inactive : id={$recipeId}");
-            }
-
-            // Step 3 — fetch before-state for audit
-            $beforeStmt = $pdo->prepare("SELECT style FROM ref_recipes WHERE id = ? LIMIT 1");
-            $beforeStmt->execute([$recipeId]);
-            $before = $beforeStmt->fetch(PDO::FETCH_ASSOC) ?: [];
-
-            // Step 4 — write
-            $upStmt = $pdo->prepare(
-                "UPDATE ref_recipes SET style = ?, last_modified_by = 'web' WHERE id = ?"
-            );
-            $upStmt->execute([$styleOrNull, $recipeId]);
-
-            $after = ['style' => $styleOrNull, 'last_modified_by' => 'web'];
-            log_revision(
-                $pdo, $me, 'ref_recipes', $recipeId,
-                $before,
-                $after,
-                'normal',
-                "Salle de contrôle: style · recette {$recRow['name']}"
-            );
-
-            $styleLabel = $styleOrNull ?? '(vide)';
-            flash_set('ok', "Style enregistré — «{$recRow['name']}» · {$styleLabel}.");
             $redirectRecipeId = $recipeId;
             $redirectSub      = 'ingr';
+            $r = sdc_apply_recipe_style($pdo, $me, $recipeId, $styleOrNull);
+            flash_set('ok', $r['msg']);
 
         // ── update_recipe_name ───────────────────────────────────────────────
         } elseif ($action === 'update_recipe_name') {
@@ -1653,50 +1163,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new RuntimeException('Nom trop long (max 128 caractères).');
             }
 
-            // Step 2 — validate recipe exists and is active
-            $recStmt = $pdo->prepare(
-                "SELECT id, name, classification FROM ref_recipes WHERE id = ? AND is_active = 1 LIMIT 1"
-            );
-            $recStmt->execute([$recipeId]);
-            $recRow = $recStmt->fetch(PDO::FETCH_ASSOC);
-            if (!$recRow) {
-                throw new RuntimeException("Recette introuvable ou inactive : id={$recipeId}");
-            }
-
-            // Rename is restricted to CONTRACT recipes. Nébuleuse recipe names are
-            // DB join keys: tanks.php attributes fermentation via ref_recipes.name =
-            // f.beer (subtype='Core'), and recipe-ingredients-loader.php gap-fills
-            // COGS via ref_recipes.name = beer_name. Renaming a Neb recipe would
-            // silently break tank attribution and COGS gap-fill. Contracts are
-            // single-vintage, subtype NULL, brew-linked by recipe_id_fk — safe.
-            if (($recRow['classification'] ?? '') !== 'Contract') {
-                flash_set('err', 'Renommage réservé aux recettes sous contrat — les noms des recettes Nébuleuse sont des clés de jointure (attribution cuves / COGS).');
-                redirect_to(sdc_redirect_url('recettes', $recipeId, 'ingr'));
-            }
-
-            // Step 3 — fetch before-state for audit
-            $beforeStmt = $pdo->prepare("SELECT name FROM ref_recipes WHERE id = ? LIMIT 1");
-            $beforeStmt->execute([$recipeId]);
-            $before = $beforeStmt->fetch(PDO::FETCH_ASSOC) ?: [];
-
-            // Step 4 — write
-            $upStmt = $pdo->prepare(
-                "UPDATE ref_recipes SET name = ?, last_modified_by = 'web' WHERE id = ?"
-            );
-            $upStmt->execute([$newName, $recipeId]);
-
-            $after = ['name' => $newName, 'last_modified_by' => 'web'];
-            log_revision(
-                $pdo, $me, 'ref_recipes', $recipeId,
-                $before,
-                $after,
-                'normal',
-                "Salle de contrôle: renommage · {$before['name']} → {$newName}"
-            );
-
-            flash_set('ok', "Recette renommée : «{$before['name']}» → «{$newName}».");
             $redirectRecipeId = $recipeId;
             $redirectSub      = 'ingr';
+            $r = sdc_apply_recipe_name($pdo, $me, $recipeId, $newName);
+            flash_set('ok', $r['msg']);
 
         // ── set_hop_stage ────────────────────────────────────────────────────
         } elseif ($action === 'set_hop_stage') {
@@ -1770,100 +1240,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 exit;
             }
 
-            // Step 3 — before-state for audit (close event)
-            $before = [
-                'hop_addition_stage' => $rriRow['hop_addition_stage'],
-                'hop_boil_time_min'  => $rriRow['hop_boil_time_min'],
-                'effective_until'    => null,
-            ];
-
-            // Step 4 — SCD2 close-then-insert (transactional).
-            // Stage change = definition change → close old version, open new version.
-            // The open_key generated column (=1 when open, NULL when closed) releases the
-            // unique slot on close so the INSERT below cannot hit ER_DUP_ENTRY 1062.
-            // Pre-emptive dead-tombstone clear is preserved for safety (legacy is_active=0
-            // rows from before mig 289 may still occupy the new slot's key space).
-            $pdo->beginTransaction();
-            try {
-                // Close old version
-                rri_close_version($pdo, $rriId);
-                log_revision(
-                    $pdo, $me, 'ref_recipe_ingredients', $rriId,
-                    $before,
-                    ['hop_addition_stage' => $rriRow['hop_addition_stage'],
-                     'hop_boil_time_min'  => $rriRow['hop_boil_time_min'],
-                     'effective_until'    => 'CURDATE()'],
-                    'normal',
-                    "Salle de contrôle: hop stage (close v) · {$rriRow['recipe_name']} · {$rriRow['mi_name']}"
-                );
-
-                // Pre-emptively remove any legacy tombstone (is_active=0) that still
-                // occupies the target (recipe_id, mi_id_fk, stage_key, boil_time_key)
-                // slot. Post-mig-289 such rows will have open_key=NULL and won't block
-                // the INSERT, but pre-migration tombstones without open_key semantics may.
-                $deadBlockerStmt = $pdo->prepare(
-                    "SELECT id FROM ref_recipe_ingredients
-                      WHERE recipe_id = ? AND mi_id_fk = ?
-                        AND (hop_addition_stage <=> ?)
-                        AND (hop_boil_time_min  <=> ?)
-                        AND is_active = 0
-                      LIMIT 1"
-                );
-                $deadBlockerStmt->execute([
-                    $rriRow['recipe_id'], $rriRow['mi_id_fk'], $stageOrNull, $boilMin,
-                ]);
-                $deadBlocker = $deadBlockerStmt->fetch(PDO::FETCH_ASSOC);
-                if ($deadBlocker) {
-                    $pdo->prepare("DELETE FROM ref_recipe_ingredients WHERE id = ? AND is_active = 0")
-                        ->execute([(int) $deadBlocker['id']]);
-                }
-
-                // Insert new version carrying forward qty/unit
-                $insStmt = $pdo->prepare(
-                    "INSERT INTO ref_recipe_ingredients
-                         (recipe_id, mi_id_fk, qty_per_hl, unit,
-                          hop_addition_stage, hop_boil_time_min,
-                          is_active, effective_from, effective_until)
-                     VALUES (?, ?, ?, ?, ?, ?, 1, CURDATE(), NULL)"
-                );
-                $insStmt->execute([
-                    $rriRow['recipe_id'], $rriRow['mi_id_fk'],
-                    (float) $rriRow['qty_per_hl'], $rriRow['unit'],
-                    $stageOrNull, $boilMin,
-                ]);
-                $newId = (int) $pdo->lastInsertId();
-
-                $after = [
-                    'recipe_id'          => (int) $rriRow['recipe_id'],
-                    'mi_id_fk'           => (int) $rriRow['mi_id_fk'],
-                    'qty_per_hl'         => (float) $rriRow['qty_per_hl'],
-                    'unit'               => $rriRow['unit'],
-                    'hop_addition_stage' => $stageOrNull,
-                    'hop_boil_time_min'  => $boilMin,
-                    'effective_from'     => 'CURDATE()',
-                    'effective_until'    => null,
-                ];
-                log_revision(
-                    $pdo, $me, 'ref_recipe_ingredients', $newId,
-                    null,
-                    $after,
-                    'normal',
-                    "Salle de contrôle: hop stage (new v) · {$rriRow['recipe_name']} · {$rriRow['mi_name']}"
-                );
-
-                $pdo->commit();
-            } catch (Throwable $txErr) {
-                $pdo->rollBack();
-                throw $txErr;
-            }
-
-            echo json_encode([
-                'ok'       => true,
-                'id'       => $newId,
-                'old_id'   => $rriId,
-                'stage'    => $stageOrNull,
-                'boil_min' => $boilMin,
-            ]);
+            $r = sdc_apply_hop_set_stage($pdo, $me, $rriId, $rriRow, $stageOrNull, $boilMin);
+            echo json_encode($r);
             exit;
 
         // ── add_hop_addition ─────────────────────────────────────────────────
@@ -1981,119 +1359,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 exit;
             }
 
-            // Step 3 — INSERT with effective_from=CURDATE() (SCD2 v2: every row is versioned from creation)
-            // UNIQUE on (recipe_id, mi_id_fk, stage_key, boil_time_key, open_key) catches active dupes.
-            try {
-                $insStmt = $pdo->prepare(
-                    "INSERT INTO ref_recipe_ingredients
-                        (recipe_id, mi_id_fk, qty_per_hl, unit,
-                         hop_addition_stage, hop_boil_time_min,
-                         is_active, effective_from, effective_until)
-                     VALUES (?, ?, ?, ?, ?, ?, 1, CURDATE(), NULL)"
-                );
-                $insStmt->execute([$recipeId, $miIdFk, $qtyPerHl, $unit, $stageOrNull, $boilMin]);
-                $newId = (int) $pdo->lastInsertId();
-            } catch (PDOException $e) {
-                if (!str_contains($e->getMessage(), '1062') && !str_contains($e->getMessage(), 'Duplicate')) {
-                    throw $e;
-                }
-                // UNIQUE collision: the slot (recipe_id, mi_id_fk, stage_key, boil_time_key) is occupied.
-                // Check whether the occupant is a soft-deleted (is_active=0) row — if so, resurrect it
-                // rather than blocking the operator permanently. The DELETE flow soft-deletes rows, which
-                // leaves their UNIQUE slot occupied; re-adding the same hop+stage+minutes must succeed.
-                $tombStmt = $pdo->prepare(
-                    "SELECT id, qty_per_hl, unit, hop_addition_stage, hop_boil_time_min
-                       FROM ref_recipe_ingredients
-                      WHERE recipe_id = ? AND mi_id_fk = ?
-                        AND (hop_addition_stage <=> ?)
-                        AND (hop_boil_time_min  <=> ?)
-                        AND is_active = 0
-                      LIMIT 1"
-                );
-                $tombStmt->execute([$recipeId, $miIdFk, $stageOrNull, $boilMin]);
-                $tombRow = $tombStmt->fetch(PDO::FETCH_ASSOC);
-
-                if (!$tombRow) {
-                    // Collision is with an ACTIVE row — genuinely duplicate submission.
-                    http_response_code(409);
-                    echo json_encode(['ok' => false, 'error' => "Cette combinaison houblon + stage + minutes existe déjà pour cette recette."]);
-                    exit;
-                }
-
-                // Resurrect: update the tombstoned row with new qty/unit, reactivate it,
-                // and reset SCD2 dates so it is visible under the current read predicate.
-                $newId = (int) $tombRow['id'];
-                $beforeRes = [
-                    'qty_per_hl'         => $tombRow['qty_per_hl'],
-                    'unit'               => $tombRow['unit'],
-                    'hop_addition_stage' => $tombRow['hop_addition_stage'],
-                    'hop_boil_time_min'  => $tombRow['hop_boil_time_min'],
-                    'is_active'          => 0,
-                ];
-                $pdo->prepare(
-                    "UPDATE ref_recipe_ingredients
-                        SET qty_per_hl = ?, unit = ?, hop_addition_stage = ?, hop_boil_time_min = ?,
-                            is_active = 1, effective_from = CURDATE(), effective_until = NULL
-                      WHERE id = ?"
-                )->execute([$qtyPerHl, $unit, $stageOrNull, $boilMin, $newId]);
-
-                $after = [
-                    'recipe_id'          => $recipeId, 'mi_id_fk' => $miIdFk,
-                    'qty_per_hl'         => $qtyPerHl, 'unit' => $unit,
-                    'hop_addition_stage' => $stageOrNull, 'hop_boil_time_min' => $boilMin,
-                    'is_active'          => 1,
-                ];
-                log_revision(
-                    $pdo, $me, 'ref_recipe_ingredients', $newId,
-                    $beforeRes,
-                    $after,
-                    'normal',
-                    "Salle de contrôle: add hop addition (ressuscité) · {$recRow2['name']} · {$miRow['name']}"
-                );
-
-                echo json_encode([
-                    'ok'       => true,
-                    'id'       => $newId,
-                    'mi'       => (string) $miRow['mi_id'],
-                    'name'     => (string) $miRow['name'],
-                    'cat'      => 'Hops',
-                    'qty'      => $qtyPerHl,
-                    'unit'     => $unit,
-                    'is_hop'   => true,
-                    'stage'    => $stageOrNull,
-                    'boil_min' => $boilMin,
-                ]);
-                exit;
-            }
-
-            $after = [
-                'recipe_id'          => $recipeId, 'mi_id_fk' => $miIdFk,
-                'qty_per_hl'         => $qtyPerHl, 'unit' => $unit,
-                'hop_addition_stage' => $stageOrNull, 'hop_boil_time_min' => $boilMin,
-                'is_active'          => 1,
-                'effective_from'     => 'CURDATE()',
-                'effective_until'    => null,
-            ];
-            log_revision(
-                $pdo, $me, 'ref_recipe_ingredients', $newId,
-                null,
-                $after,
-                'normal',
-                "Salle de contrôle: add hop addition · {$recRow2['name']} · {$miRow['name']}"
-            );
-
-            echo json_encode([
-                'ok'       => true,
-                'id'       => $newId,
-                'mi'       => (string) $miRow['mi_id'],
-                'name'     => (string) $miRow['name'],
-                'cat'      => 'Hops',
-                'qty'      => $qtyPerHl,
-                'unit'     => $unit,
-                'is_hop'   => true,
-                'stage'    => $stageOrNull,
-                'boil_min' => $boilMin,
-            ]);
+            $r = sdc_apply_hop_upsert($pdo, $me, $recipeId, $miIdFk, $stageOrNull, $boilMin, $qtyPerHl, $unit, $miRow, $recRow2);
+            echo json_encode($r);
             exit;
 
         // ── delete_hop_addition ──────────────────────────────────────────────
@@ -2148,38 +1415,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 exit;
             }
 
-            // Step 3 — SCD2 close (not tombstone): set effective_until=CURDATE(), leave is_active=1.
-            // Row stays historically readable; falls out of the current read-predicate
-            // (effective_until IS NULL OR effective_until > asof) because CURDATE() is NOT > CURDATE().
-            // audit_row_revisions.action ENUM has no 'delete' — log as 'update'.
-            $before = [
-                'effective_until'    => null,
-                'hop_addition_stage' => $rriRow2['hop_addition_stage'],
-                'hop_boil_time_min'  => $rriRow2['hop_boil_time_min'],
-            ];
-            $after = [
-                'effective_until'    => 'CURDATE()',
-                'hop_addition_stage' => $rriRow2['hop_addition_stage'],
-                'hop_boil_time_min'  => $rriRow2['hop_boil_time_min'],
-            ];
-
-            $pdo->beginTransaction();
-            try {
-                rri_close_version($pdo, $rriId);
-                log_revision(
-                    $pdo, $me, 'ref_recipe_ingredients', $rriId,
-                    $before,
-                    $after,
-                    'normal',
-                    "Salle de contrôle: delete hop addition (close v) · {$rriRow2['recipe_name']} · {$rriRow2['mi_name']}"
-                );
-                $pdo->commit();
-            } catch (Throwable $txErr) {
-                $pdo->rollBack();
-                throw $txErr;
-            }
-
-            echo json_encode(['ok' => true, 'id' => $rriId]);
+            $r = sdc_apply_hop_remove($pdo, $me, $rriId, $rriRow2);
+            echo json_encode($r);
             exit;
 
         } elseif ($action === 'submit_change_request') {
@@ -2347,7 +1584,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // JSON actions must return JSON even on unexpected exceptions — never fall through to flash+redirect
         if (in_array($action, $jsonActions, true)) {
             if (!headers_sent()) {
-                http_response_code(500);
+                $httpCode = ($e instanceof SdcException) ? $e->getHttpCode() : 500;
+                http_response_code($httpCode);
                 header('Content-Type: application/json; charset=utf-8');
             }
             echo json_encode(['ok' => false, 'error' => pdo_friendly_error($e, 'salle-de-controle')]);
