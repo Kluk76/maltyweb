@@ -133,7 +133,41 @@ EQUIP (when built): sql+coder+ui (fiche tab is a rendered surface) + webapp-test
 
 **Parallelizable:** W2 read-endpoint ∥ W2 write-endpoints; W3 ∥ W4. Everything gates on W1.
 
-### ✅ BUILD STATUS (2026-06-19)
+### ✅ BUILD STATUS — FULL BUILD SHIPPED + LIVE (all 5 waves, smoke 8/8 PASS) 2026-06-19
+**DONE/LIVE. Carry-forward: commits LOCAL-only (NOT pushed) — push deferred to Kouros; operator enables cron + sets system_settings recipient/lead; first real evaluation campaign is operator/quality-team work.**
+
+**As-built migs/DDL (as-built deviations from the PLAN, captured):**
+- **Mig 409** = the 6 tables EXACTLY per the DDL above (`supplier_evaluation_grids`[SMALLINT PK] / `_grid_criteria` / `supplier_evaluations` / `supplier_evaluation_criteria` / `supplier_cert_documents`[FK `doc_file_id_fk`→doc_files.id BIGINT] / `supplier_nc`[`capa_ref` soft text + `capa_register` col]) + `ref_suppliers.criticality ENUM` additive + **EF-01 grid seed (Pilier A 22-max / B 13-max, thresholds 75/50)** + 6 schema_meta rows. **Mig 410** = KO flags on the seeded criteria.
+- 🔴 **As-built correction to the DDL: `inv_deliveries.id` is BIGINT (not INT)** → `supplier_nc.delivery_id_fk` landed **BIGINT UNSIGNED** (the DDL above said "confirm inv_deliveries PK type at build" — it was BIGINT). Any future FK to inv_deliveries.id must be BIGINT UNSIGNED.
+- **KO criteria ratified by operator** = **A2 (COA) + A5 (traçabilité)** are the `is_food_safety_ko` criteria (resolves the "ASK operator which criterion is the KO" open in the DDL grid-seed note). A KO on either forces result='non_agree' regardless of weighted score.
+
+**Criticality (ratified + seeded one-off):**
+- **Critical category set RATIFIED** = {Malt, Hops, Yeast, Brewing Adjunct, Brewing Mineral, **Packaging (ALL)**, **Cleaning Chemical (CIP)**}. Process Chemical + Taproom stay **non-critique** (resolves the §4 grey-zone asks: ALL packaging counts; CIP IS critique by residue risk; Process Chemical is NOT).
+- **One-off seed result: 24 critique / 35 non_critique / 77 NULL.** The 77 NULL = no-delivery suppliers → get a MANUAL override as used (derived-with-override working as designed; no-delivery edge resolved by override not by widening the set).
+
+**Wave 2 (endpoints) — shared pure scoring engine:**
+- `app/supplier-eval-helpers.php`::`supplier_eval_compute()` = **server-side score authority** — applicable-max % (handles "sans objet" criteria), **KO-forces-non_agree**, threshold tiers. Single source for the math; UI is display-only.
+- Handlers: `sf-evaluation-save` (supersession chain, `valid_until` set by criticality cadence — critique=annuel/non_critique=biennal), `sf-nc-save`, `sf-cert-link`, `sf-criticality-override` (writes ref_suppliers.criticality ONLY — additive guard honoured), read `sf-supplier-evaluation` (autofeed: delivery_count, last_delivery, MI categories, is_critical_derived, NC counts). All mirror the existing `sf-validate-supplier` shape (JSON `{ok,error}` envelope, `is_admin` gate).
+
+**Wave 4 — cron + export (SHIPPED):**
+- Cron `scripts/send-supplier-review-reminders.php` (clone of the credential-expiry watchdog; `--dry-run` default; **deployed DISABLED**; dry-run emitted the 24 critique never-evaluated in bucket C). Recipient = `system_settings.ops.supplier_review_alert_recipient` → admin fallback; lead = `ops.supplier_review_lead_days` (default 60).
+- Export `public/api/supplier-evaluation-export.php` = pure-PHP CSV, 11 cols, critique-first ordering, all suppliers (operator standing CSV ruling honoured).
+
+**Wave 5 — smoke 8/8 PASS:** render, happy-path (hand-calc **68.57% == displayed** — Opus independent spot-check satisfied), KO (A2=0 → 88.57% raw forced to non_agree + banner), supersession tag, criticality override+restore, NC, cert, CSV export. **All test rows self-cleaned** (COUNTs=0), criticality distribution restored 24/35/77, throwaway admin purged, no real user touched.
+
+**Commits (maltyweb, LOCAL-only — NOT pushed; push deferred to Kouros; parallel planning/expeditions session commits interleaved in the shared clone):**
+- `d0a11dc` (mig 409/410) · `561ba4f` (handlers) · `7b10538` (UI) · `b522ec8` (cron+export).
+
+**🔴 CARRY-FORWARD OPEN:**
+- Push deferred (shared clone has interleaved parallel-session commits) → Kouros pushes.
+- Operator enables the cron + sets `system_settings.ops.supplier_review_alert_recipient` / `supplier_review_lead_days`.
+- 24 critique suppliers flagged "à évaluer" — first real campaign is operator/quality-team work.
+- **A6 (NC handling) score stays MANUAL** — autofeed shows NC count as evidence but does NOT auto-score A6.
+- 77 NULL-criticality (no-delivery) suppliers get manual override as used.
+- `supplier_nc.capa_ref` is soft text (MA-01 doc-only) — if a CAPA DB register is ever built, wire it (the `-- FUTURE FK` hook).
+- Companion doc: **EF-01** (`Procedure-Evaluation-Fournisseurs-2026.pdf`).
+
+#### Original landing note (W1+W2 — superseded by the FULL-BUILD block above, kept for the endpoint paths)
 - **W1 (SQL foundation) + W2 (endpoints) = LANDED/LIVE.** All five endpoints exist on the VPS+repo: read `public/api/sf-supplier-evaluation.php` + writers `sf-evaluation-save.php` / `sf-nc-save.php` / `sf-cert-link.php` / `sf-criticality-override.php`.
 - **✅ W3 (Fournisseur-fiche Évaluation UI) = SHIPPED + LIVE 2026-06-19.** Render layer only — NO PHP changes (smoke = 302→login, not 500). Files deployed + md5-verified local↔VPS:
   - `public/js/salle-fournisseurs.js` md5 `98707eeb28d3f75ab063821efdeda83b` (1758 lines, +667)

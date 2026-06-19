@@ -301,6 +301,28 @@ EQUIP sql+coder+ui+webapp-testing (manager-login UAT — the master gate already
 
 ---
 
+## §SERVING-TANK OCCUPANCY IN TankSimulator (Round-8) — PM ruling 2026-06-19 (NOT yet built). Removes the "all serving tanks empty at week start" falsehood (the v1 limitation flagged rounds 3-7; TODO ~L648 in app/tank-simulator.php).
+
+**VERIFIED FILL/EMPTY EVENT MAPPING (live DB 2026-06-19):**
+- **Cuve FILLED = `bd_packaging_v2 WHERE run_type='cuv'`** (enum verified `('bot','can','can33','keg','cuv')`; 264 cuv rows; ~16-19 fills/mo, ~100-117 hl/mo Mar-Jun). Records event_date, recipe_id_fk (beer), vendable_hl (volume), client_fk. Cuv fills DRAIN a BBT/CCT (source_tank_type BBT on 24, NULL on 240) — they go through the **PACKAGING path, NOT racking**.
+- **WHICH physical serving tank: ❌ NO COLUMN ANYWHERE.** No serving-tank-id on any event. The only `yt_number` cols (bd_brewing_brewday_v2, bd_racking_v2) are YEAST tanks, not serving tanks. Cannot build per-physical-tank occupancy — no source data.
+- **EMPTY / at-client / return / pickup: ❌ NO EVENT, NO TABLE.** `ord_returns`/`ord_return_lines`/`v_physical_returns` = the FG **sales**-return arc, unrelated to physical cuve return. Zero "cuve came back" signal.
+- **The L648 TODO is DEAD for this purpose:** it's in the racking dest-switch (`dest_type==='YT'`), but `bd_racking_v2.racking_destination_type` has the 'YT' enum value with **0 rows** (411 rows: 409 BBT/2 CCT/3 NULL). Cuves are NOT filled via racking. Serving occupancy must be derived in the simulator's PACKAGING (run_type='cuv') handling, not at L648. Leave a redirect comment at L648; don't build there.
+- 🔴 **DIVERGENCE FLAG (surfaced to Kouros) — THREE client ID spaces:** `bd_packaging_v2.client_fk → ref_packaging_clients.id` (MICA/Nausikraft/Café Saint Pierre — id 1/2/18/20…), while the serving-tank-client flag lives on `ref_customers` (845/2612/1827/1848/6), and `ref_clients` is a third legacy table. **The cuv-fill event and the serving-tank-client roster DO NOT JOIN today.** Round-5 recurrence trigger keys off inv_sales_ledger (ref_customers space); physical fills key off ref_packaging_clients = two stores for "who got a cuve." Latent divergence, backlog note. (Does NOT block count-based occupancy — count needs no client join.)
+
+**RULING — TRACTABLE MODEL = count-based decay, NOT per-physical-tank:**
+- A serving tank is presumed occupied for **N days after a cuv fill**, then auto-freed. `occupied_count = COUNT(distinct cuv fills in last N days)`, capped at in-house active fleet (8). `free = 8 − occupied_count`.
+- **Derivable now:** fill events + dates + N-day decay. **ASK Kouros = N** (cuve turnaround days before re-fillable — NOT the inter-fill median, that's cadence not tenure). One `system_settings` row (section 'production_targets', e.g. `serving_tank_tenure_days`, lean default 14), NO new table.
+- Residual assumption = decay heuristic (no real return event) — acceptable, far better than "always 8 free"; note in decisions[].
+
+**WHERE IT LIVES: new `serving` block in `TankSimulator::run()` return, symmetric with cct/bbt** (pure-read derivation over cuv events; CARDINAL preserved — writes nothing). Producer SUBTRACTS the occupied_count; do NOT have the producer re-derive from raw tables (divergent reader, forbidden — same as Round-3). Nothing feeds COGS/COP/WAC/BOM/beer-tax.
+
+**PRODUCER CAP CHANGE = minimal:** `free = in_house_active_count − serving_block.occupied_count`. **Count suffices — physical per-tank identity does NOT matter for the secondary cap** (and isn't derivable). Keep it the SECONDARY cap (trigger stays client-recurrence Round-5). Heterogeneous tank sizes (5×5hl/2×10hl/1×30hl) ignored in v1 — capacity-aware cap = later refinement.
+
+**SCOPE — contained IFF held to count-based.** v1 slice: (1) `serving_tank_tenure_days` system_setting; (2) `serving` block in run() (cuv-fill decay); (3) producer subtraction + existing decisions[] msg; (4) ASK Kouros N. **DEFER explicitly:** per-physical-tank occupancy (no source); cuve return/empty/pickup event capture (separate logistics arc — a "retour cuve" form); capacity-aware cap; joining client_fk↔ref_customers (blocked on ID-space mismatch). EQUIP coder+sql (+webapp-testing only within the still-open master manager UAT).
+
+---
+
 ### §SERVING-TANK SUGGESTIONS — Round-5 PM ruling (2026-06-19, ORIGINAL design — kept for provenance; now BUILT per AS-BUILT above)
 Kouros: serving-tank (cuve de service) fills must be DEMAND-driven by a fixed set of recurring cuve-de-service CLIENTS + their cadence, NOT by physical free-tank count (the v1 gate `predict_load_free_serving_tank_count` is wrong as a TRIGGER). New 3rd trigger class = **client-recurrence-driven** (distinct from demand/FG-coverage and process/tank-state).
 
