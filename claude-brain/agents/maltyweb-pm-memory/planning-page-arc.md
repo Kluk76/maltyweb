@@ -153,7 +153,7 @@ If further gaps surface → `planning.php` + `planning.css` + `planning.js` ONLY
 
 ---
 
-## §FULLER PRODUCTION PLANNER — Round-4 REFINEMENTS (PM ruling 2026-06-19; verified live, NOT yet built). All 3 confined to `app/planning-predict.php` (+1 label in `public/modules/planning.php`); NO schema/migration/engine change; pure-read CARDINAL preserved.
+## §FULLER PRODUCTION PLANNER — Round-4 REFINEMENTS — ✅ SHIPPED (commit `6eb25a7`, maltytask main, NOT pushed; part of the full planner chain). PM ruling 2026-06-19. All 3 confined to `app/planning-predict.php` (+1 label in `public/modules/planning.php`); NO schema/migration/engine change; pure-read CARDINAL preserved.
 
 **1. Core-only filter — recipe_id self-filter on `ref_recipes`, NOT a name-join to ref_beer_types.**
 - 🔴 **VERIFIED: there is NO FK between `ref_recipes` and `ref_beer_types`** (checked information_schema both directions — ref_recipes FKs only → ref_yeast_strains, ref_clients; nothing references ref_beer_types). The only link would be `ref_recipes.name = ref_beer_types.beer_name` = **forbidden name-match**. DO NOT touch ref_beer_types for this.
@@ -197,7 +197,44 @@ system_settings (for reference): UNIQUE (section,key_name); value_text XOR value
 
 ---
 
-## §SERVING-TANK SUGGESTIONS — Round-5 PM ruling (2026-06-19; VERIFIED live, NOT yet built)
+## §SERVING-TANK SUGGESTIONS — ✅ SHIPPED + DEPLOYED + COMMITTED 2026-06-19 (maltytask main, NOT pushed — awaiting operator "push"). The Round-5 ruling below is now BUILT.
+
+**AS-BUILT — commits (maltytask main, unpushed):**
+- **`2e02d1d` mig 407** `ref_customers.is_serving_tank_client TINYINT(1) NOT NULL DEFAULT 0` + `serving_tank_cadence_days SMALLINT UNSIGNED NULL` (NULL=derive). Seeded 5 clients `WHERE id IN (845,2612,1827,1848,6)`. **APPLIED on VPS.**
+- **`652bbae` mig 408** `pl_plan_items.customer_id_fk INT UNSIGNED NULL` FK→ref_customers ON DELETE SET NULL (serving-tank client identity; NULL for ALL other rows). **APPLIED on VPS.** 🔴 **NOT in the round-5 ruling — operator ADDED it deliberately:** without per-client identity the per-(section,recipe) dedup collapses multiple same-week same-beer (Zepp) clients into ONE row → operator can't tell which fill is whose. Durable FK, consistent with `inv_sales_ledger.customer_id_fk`. PM ratifies: correct call — a Zepp fill for Arches and a Zepp fill for Docks are TWO distinct facts; identity belongs on the row.
+- **`982f298`** producer Pass 2.5 (client-recurrence) + `planning.php` render.
+
+**OPERATOR DECISIONS locked (answers to the 5 cadence questions in the ruling):**
+1. **Cadence = DERIVED ONLY** (median inter-fill interval). The `serving_tank_cadence_days` override col EXISTS but is IGNORED by the producer for now (future hook).
+2. **Multi-beer = MOOT** — "on ne fait plus que ZEPV" (only Zepp cuve now). Producer derives beer from the client's MOST-RECENT cuve fill (NOT hardcoded) → yields Zepp today, auto-adapts if that changes.
+3. **Horizon = due within the planned week (+ overdue):** `next_expected = last_fill + median_cadence`; propose if `<= weekEnd`.
+4. **Content = client + beer + estimated volume** (median HL of last 6 fills as `target_volume_hl`).
+
+**AS-BUILT producer (`app/planning-predict.php`):**
+- New `predict_load_serving_tank_clients()` helper (reads `ref_customers WHERE is_serving_tank_client=1 AND is_active=1` — NEVER hardcodes the 5).
+- **Pass 2.5 (client-recurrence)** inserted BETWEEN the packaging and brewing passes.
+- FG-coverage pass now **bare-`continue`s on `pkg_type='serving_tank'`** (no longer emits serving_tank from the coverage path — recurrence pass owns it).
+- Free-serving-tank count **DEMOTED to a weekly secondary cap** (per ruling — kept, not deleted).
+- Per-client dedup via `existingServingTankCustomers`.
+- Respects working-days + `max_packaging_runs_per_day` (cuv fill = a packaging run).
+- `serving_tank` STAYS OUTSIDE `MUTEX_PKG_PAIRS` (cuv parallels freely — unchanged, correct).
+
+**AS-BUILT render (`public/modules/planning.php`):** batch-fetches customer names and renders the client on serving-tank cards.
+
+**VERIFIED LIVE (Opus rollback harness, then deleted):** Les Docks due 2026-06-19, cadence 23j, 10hl Zepp, `customer_id_fk` set; clients with <2 fills SKIPPED (can't derive cadence); v1 empty-at-week-start limitation surfaced in `decisions[]`.
+
+🔴 **OPEN FOLLOW-UPS (carry forward):**
+1. **Customer-fiche UI to toggle `is_serving_tank_client`** — currently DB-only; operator can't add/remove serving-tank clients without SQL.
+2. **Manual serving_tank add-form has NO client picker** — manual rows stay `customer_id_fk` NULL.
+3. **`serving_tank_cadence_days` override UNUSED** (derived-only per operator) — wire if they later want a fixed cadence.
+4. **v1 empty-at-week-start free-count limitation** — TankSimulator serving-dest TODO ~L648 STILL unbuilt (shared with the round-3 v1 limitation #1).
+5. 🔴 **MASTER OPEN GATE — authenticated MANAGER browser UAT of the WHOLE planner (all 5 rounds):** Suggérer-un-plan output incl. serving-tank cards + the salle-de-controle objectifs settings/toggles. Structurally + rollback verified; needs a manager click-through. (This is the same master UAT gate carried since P0/P1 — now spans all 5 rounds.)
+
+🔴 **FULL PLANNER COMMIT CHAIN on main (all UNPUSHED):** `521ccbf`(r1-3) → `6eb25a7`(r4) → `2e02d1d`(mig 407) → `652bbae`(mig 408) → `982f298`(producer+render). Awaiting operator "push".
+
+---
+
+### §SERVING-TANK SUGGESTIONS — Round-5 PM ruling (2026-06-19, ORIGINAL design — kept for provenance; now BUILT per AS-BUILT above)
 Kouros: serving-tank (cuve de service) fills must be DEMAND-driven by a fixed set of recurring cuve-de-service CLIENTS + their cadence, NOT by physical free-tank count (the v1 gate `predict_load_free_serving_tank_count` is wrong as a TRIGGER). New 3rd trigger class = **client-recurrence-driven** (distinct from demand/FG-coverage and process/tank-state).
 
 **Customers live in `ref_customers`** (canonical; PK id INT UNSIGNED, has trade_channel on_trade/off_trade + sale_class enum, NO serving-tank flag). The 5 named clients (ALL resolved by LEDGER BILL-TO TEST, never by name — each has 2-4 INACTIVE name-duplicate stubs w/ no bc + zero sales that would mis-match):

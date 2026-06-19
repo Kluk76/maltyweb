@@ -33,3 +33,131 @@
 - **Full build (follow-up):** grid-definition versioning; structured COA/cert document links; supplier-NC/CAPA surface feeding the food-safety pillar; periodic-review cron emitting "à réévaluer" alerts (clone the credential-expiry/recap cron shape); reporting/export for the auditor.
 
 EQUIP (when built): sql+coder+ui (fiche tab is a rendered surface) + webapp-testing (deployed-page smoke). Tour: confirm whether the Fournisseur surface is a ref_pages row before assuming RULE-3 applies.
+
+---
+
+## 🔨 FULL-BUILD READY PLAN (operator chose FULL BUILD, 2026-06-19) — DDL + WAVES (PLAN ONLY, awaiting category ratification then Wave 1 dispatch)
+
+### LIVE FACTS RE-VERIFIED 2026-06-19 (read-only probe)
+- **MIG HEAD: 408 applied** (files go to `408_pl_plan_items_customer_fk.sql`; 407=`ref_customers_serving_tank_flag`, 408 parallel-session). **next free = 409** — but PARALLEL SESSIONS LEAD; re-`migrate.php --status` + `ls db/migrations` at Wave-1 start, take whatever is actually free.
+- **Doc store EXISTS = `doc_files`** (PK `id` BIGINT UNSIGNED, UUID `file_id` VARCHAR(255) UNI, file_name/local_path/file_hash/mime_type/source_folder/is_active). FK the COA/cert link table to **`doc_files.id`** (dual-key rule: FK→`.id`, NEVER the UUID). Operator-upload path = **`doc_uploads`** (id BIGINT, user_id, drive_file_id, pipeline_status enum) → pipeline lands bytes in `doc_files`. So a manual cert upload flows doc_uploads→pipeline→doc_files; the link table references the resulting doc_files.id. v1 may also allow a lighter direct upload — but reuse doc_files, do NOT build a parallel cert store.
+- **NO CAPA / MA-01 / corrective-action table exists** (grep capa|ma01|corrective|nonconf = 0). MA-01 is DOC-ONLY. ⇒ `supplier_nc` CANNOT FK to a CAPA register. v1 carries a **soft text ref `capa_ref VARCHAR(64)` + `capa_register='MA-01'`** (the doc id in the paper register), with a `-- FUTURE FK` comment for when a CAPA table lands. Do NOT invent a CAPA table in this build (out of scope; would be a guessed parallel store).
+- **Host fiche = `public/modules/salle-fournisseurs.php`** (555 lines; `require_page_access('approvisionnement')`; admin=full / manager=read+propose / opérateur→redirect). Fiche is **JS-HYDRATED**: registry list on left, `#sf-fiche` panel rendered fully CLIENT-SIDE by `public/js/salle-fournisseurs.js` (47KB) from a `window.SF_*` payload the PHP prints; AJAX write endpoints = `public/api/sf-*.php` (e.g. `sf-validate-supplier.php`). **There is NO GET fiche-data endpoint today** — fiche builds from the page-printed payload. ⇒ evaluation tab = a new JS-rendered panel inside `#sf-fiche`, fed EITHER by extending the page payload OR (cleaner for the heavier eval/criteria/NC data) a NEW `public/api/sf-supplier-evaluation.php?supplier_id=` GET endpoint. RECOMMEND the dedicated GET endpoint (keeps the page payload lean; eval data is tab-on-demand).
+- **NO `fournisseur`/`supplier`/`capacités` ref_pages row** — salle-fournisseurs is NOT in ref_pages (gated via the `approvisionnement` key, comment says "not in topbar yet — intentional"). ⇒ **RULE-3 tour does NOT trigger** (no new ref_pages row). Confirm no topbar/nav change is wanted; if operator later promotes it to a real page_key, tour applies then.
+- **ref_suppliers has NO criticality col** (no crit/food/eval cols). Add ONE additive col (below). 136 suppliers, all commissioning_state='active'.
+- **Criticality-derive JOIN VERIFIED LIVE:** `inv_deliveries d JOIN ref_mi m ON m.id=d.ingredient_fk JOIN ref_mi_categories rmc ON rmc.id=m.category_id`. ⚠️ `inv_deliveries` has **`ingredient_fk` (resolved MI id) + `mi_id_raw`/`category_raw` — NO `mi_id_fk` col.** Confirmed counts: Malt→2 supp, Hops→5, Yeast→2, Brewing Adjunct→3, Packaging→11, Brewing Mineral→1.
+
+### 1) DDL — every new table (MySQL 8; no IF NOT EXISTS on ALTER; FK types EXACT; schema_meta row each)
+
+**`supplier_evaluation_grids`** — grid-definition versioning (weights are DATA, evolve without rescoring past evals).
+- `id` SMALLINT UNSIGNED AUTO_INCREMENT PK
+- `version_label` VARCHAR(40) NOT NULL (e.g. 'EF-01 v1.0')
+- `effective_from` DATE NOT NULL
+- `is_active` TINYINT(1) NOT NULL DEFAULT 0 (exactly one active; enforce in handler, not CHECK)
+- `pillar_a_max` SMALLINT UNSIGNED NOT NULL DEFAULT 22, `pillar_b_max` SMALLINT UNSIGNED NOT NULL DEFAULT 13
+- `agree_min_pct` DECIMAL(5,2) NOT NULL DEFAULT 75.00, `surveillance_min_pct` DECIMAL(5,2) NOT NULL DEFAULT 50.00
+- `notes` VARCHAR(500) NULL, `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP, `created_by` INT UNSIGNED NULL (→users.id, soft)
+- UNIQUE `uniq_grid_version (version_label)`. schema_meta: **reference / allowed**.
+
+**`supplier_evaluation_grid_criteria`** — the A1-A6/B1-B5 rows for a grid version (weights data-driven).
+- `id` INT UNSIGNED AUTO_INCREMENT PK
+- `grid_id_fk` SMALLINT UNSIGNED NOT NULL → `supplier_evaluation_grids.id` (EXACT SMALLINT UNSIGNED) ON DELETE CASCADE
+- `pillar` ENUM('A','B') NOT NULL
+- `code` VARCHAR(8) NOT NULL ('A1'…'A6','B1'…'B5')
+- `label` VARCHAR(200) NOT NULL ('Certification système /4', …)
+- `max_score` SMALLINT UNSIGNED NOT NULL (A1=4,A2=4,A3=4,A4=3,A5=4,A6=3,B1=3,B2=3,B3=2,B4=2,B5=3)
+- `evidence_source` ENUM('auto_delivery','auto_criticality','manual_cert','manual_coa','manual_nc','manual_esg','manual') NOT NULL DEFAULT 'manual' (drives which criteria the UI auto-fills vs prompts)
+- `is_food_safety_ko` TINYINT(1) NOT NULL DEFAULT 0 (A-pillar food-safety criteria that can trigger the knock-out)
+- `display_order` SMALLINT UNSIGNED NOT NULL
+- UNIQUE `uniq_grid_code (grid_id_fk, code)`. schema_meta: **reference / allowed**.
+
+**`supplier_evaluations`** — one row per evaluation EVENT (the assessment header).
+- `id` INT UNSIGNED AUTO_INCREMENT PK
+- `supplier_id_fk` INT UNSIGNED NOT NULL → `ref_suppliers.id` (EXACT INT UNSIGNED) ON DELETE CASCADE
+- `grid_id_fk` SMALLINT UNSIGNED NOT NULL → `supplier_evaluation_grids.id` (which grid version scored this — so past evals never rescore when the grid evolves) ON DELETE RESTRICT
+- `evaluation_type` ENUM('initial','annuel','biennal','evenementiel') NOT NULL
+- `pillar_a_score` SMALLINT UNSIGNED NULL, `pillar_b_score` SMALLINT UNSIGNED NULL (computed from criteria; NULL while draft)
+- `total_pct` DECIMAL(5,2) NULL
+- `food_safety_ko` TINYINT(1) NOT NULL DEFAULT 0 (the knock-out flag → forces non_agree)
+- `result` ENUM('agree','agree_sous_surveillance','non_agree','draft') NOT NULL DEFAULT 'draft'
+- `evaluated_at` DATE NULL (date of assessment; NULL while draft), `valid_until` DATE NULL (cadence-driven next-review date)
+- `evaluator_user_id` INT UNSIGNED NULL → users.id (soft), `comment` TEXT NULL
+- `status` ENUM('draft','final') NOT NULL DEFAULT 'draft' (draft editable; final = sealed assessment, supersede via NEW row)
+- `superseded_by_id` INT UNSIGNED NULL → self (restate chain; old row retained, never in-place rewrite of a final eval)
+- `created_at`/`updated_at` TIMESTAMP. row_hash CHAR(64) NULL idempotency optional.
+- INDEX `ix_se_supplier (supplier_id_fk, evaluated_at)`, INDEX `ix_se_valid (valid_until, status)` (cron scans this). schema_meta: **source / allowed** (assessments; typo-correct allowed, validity-restate via new row).
+
+**`supplier_evaluation_criteria`** — child scores, one per criterion per evaluation.
+- `id` INT UNSIGNED AUTO_INCREMENT PK
+- `evaluation_id_fk` INT UNSIGNED NOT NULL → `supplier_evaluations.id` (EXACT) ON DELETE CASCADE
+- `grid_criterion_id_fk` INT UNSIGNED NOT NULL → `supplier_evaluation_grid_criteria.id` (EXACT) ON DELETE RESTRICT (snapshots WHICH criterion def, not its label — read label by JOIN, NO string copy)
+- `score` SMALLINT UNSIGNED NULL (0..max_score; NULL=not yet scored), `score_source` ENUM('auto','manual') NOT NULL DEFAULT 'manual'
+- `evidence_note` VARCHAR(500) NULL
+- UNIQUE `uniq_eval_criterion (evaluation_id_fk, grid_criterion_id_fk)`. schema_meta: **source / allowed**.
+
+**`supplier_cert_documents`** — structured COA/cert links (reuse doc_files, NO parallel store).
+- `id` INT UNSIGNED AUTO_INCREMENT PK
+- `supplier_id_fk` INT UNSIGNED NOT NULL → `ref_suppliers.id` ON DELETE CASCADE
+- `doc_file_id_fk` BIGINT UNSIGNED NULL → `doc_files.id` (EXACT BIGINT UNSIGNED; dual-key rule → `.id` not UUID) ON DELETE SET NULL (NULL allowed: a cert recorded as held-on-paper before upload)
+- `doc_type` ENUM('cert_iso22000','cert_fssc','cert_ifs','cert_bio','cert_brc','coa','spec_sheet','code_conduite','esg_report','other') NOT NULL
+- `reference_label` VARCHAR(200) NULL (cert number / lab ref), `issued_on` DATE NULL, `expires_on` DATE NULL (feeds re-review + a future expiry watchdog row)
+- `linked_evaluation_id_fk` INT UNSIGNED NULL → `supplier_evaluations.id` ON DELETE SET NULL (which eval cited this evidence; soft)
+- `is_active` TINYINT(1) NOT NULL DEFAULT 1, `created_at`/`created_by`
+- INDEX `ix_scd_supplier (supplier_id_fk, doc_type)`. schema_meta: **reference / allowed**.
+
+**`supplier_nc`** — supplier non-conformities (feeds A6 food-safety pillar; soft CAPA link until a register exists).
+- `id` INT UNSIGNED AUTO_INCREMENT PK
+- `supplier_id_fk` INT UNSIGNED NOT NULL → `ref_suppliers.id` ON DELETE CASCADE
+- `detected_on` DATE NOT NULL, `nc_type` ENUM('food_safety','quality','delivery','documentation','esg','other') NOT NULL
+- `severity` ENUM('mineure','majeure','critique') NOT NULL
+- `description` TEXT NOT NULL
+- `delivery_id_fk` INT UNSIGNED NULL → `inv_deliveries.id` (EXACT — confirm inv_deliveries PK type at build; soft link to the offending delivery) ON DELETE SET NULL
+- `capa_register` VARCHAR(20) NULL DEFAULT 'MA-01', `capa_ref` VARCHAR(64) NULL (-- FUTURE: replace with capa_id_fk when a CAPA register table lands; NO FK now — MA-01 is doc-only)
+- `status` ENUM('open','in_progress','closed') NOT NULL DEFAULT 'open', `closed_on` DATE NULL, `resolution` TEXT NULL
+- `triggered_evaluation` TINYINT(1) NOT NULL DEFAULT 0 (a majeure/critique NC arms an événementiel re-eval)
+- `created_at`/`created_by`
+- INDEX `ix_snc_supplier (supplier_id_fk, detected_on)`, INDEX `ix_snc_open (status, severity)`. schema_meta: **source / allowed**.
+
+**ALTER `ref_suppliers` — additive ONLY (one col, derived-with-override):**
+- `ADD COLUMN criticality ENUM('critique','non_critique') NULL` (NULL = not yet ratified/derived; default to derived value via a one-shot seed AFTER operator ratifies the category set; manual override via a pin / governance write follows the creation≠trust discipline). Do NOT add a second flag — one ENUM, NULL-as-unset. Do NOT touch vat_regime/gl_account/hors_perimetre_cogs/parser_key.
+- schema_meta unaffected (ref_suppliers already classified). The col is governance metadata; criticality drives cadence (critique=annuel, non_critique=biennal).
+
+**Grid seed (Wave 1, in the migration):** insert EF-01 v1.0 grid + its 11 criteria rows with the exact max_scores above and `is_food_safety_ko=1` on the A food-safety criteria the operator designates (A1/A2/A3/A5/A6 are candidates — confirm which single criterion (or set) is the KO trigger from EF-01; the doc says "critère éliminatoire food-safety" → likely A3 conformité livraisons + A2 COA OR a dedicated KO. ASK operator which criteria carry the KO; do NOT guess.).
+
+### 2) WAVE SEQUENCE
+- **Wave 1 — SQL foundation (BLOCKING, serial).** ONE migration: 6 new tables + ref_suppliers ALTER + grid+criteria seed + 6 schema_meta rows. EQUIP **sql+coder**. Gate: `migrate.php --status` clean, all FK types match, schema_meta rows present. NB criticality seed (the derive UPDATE) is a SEPARATE step AFTER operator ratifies categories — Wave 1 lands the col NULL; do not auto-seed criticality until ratification.
+- **Wave 2 — handlers / write endpoints (depends W1).** `public/api/sf-evaluation-save.php` (create/update eval header + criteria; recompute pillar scores + total_pct + KO + result server-side; require_login+role gate (admin write / manager propose)+csrf_verify+log_revision+snapshot+PRG), `sf-nc-save.php`, `sf-cert-link.php`, `sf-criticality-override.php`. Plus a READ endpoint `sf-supplier-evaluation.php?supplier_id=` (auto-feed: delivery conformity/lead-time from inv_deliveries + derived criticality + eval history + NC list + certs). EQUIP **coder+sql**. Auto-feed compute lives here (server-side, read-only over canonical tables). Can build the read endpoint + write endpoints in PARALLEL (distinct files).
+- **Wave 3 — Fournisseur-fiche evaluation TAB UI (depends W2 read endpoint).** New JS-rendered panel in `#sf-fiche` (salle-fournisseurs.js + salle-fournisseurs.css; PHP page only adds the tab shell + nav). Renders the grid (auto-filled criteria pre-scored, manual criteria as inputs), classification badge (Agréé/sous-surveillance/non-agréé + KO banner), NC list, cert links, criticality (derived + override toggle), valid_until + "⚑ à réévaluer" state. EQUIP **ui+coder** (CSS in /public/css, JS in /public/js — never inline). Single-owner rule on salle-fournisseurs.js/.css.
+- **Wave 4 — periodic-review cron + auditor export (depends W1+W2; PARALLEL with W3).** Cron `scripts/send-supplier-review-reminders.php` (CLONE `scripts/send-credential-expiry-reminders.php` — same flock/user=maltytask/--dry-run-default/deployed-DISABLED/send_mail()+mail_account_template() shape; scans `supplier_evaluations` WHERE status='final' AND valid_until ≤ today+lead → emails "à réévaluer" + writes/refreshes a dashboard/intake signal). Export `public/api/supplier-evaluation-export.php` (CLONE `public/api/cogs-comprehensive-csv.php` — pure-PHP fputcsv, no xlsx, operator standing ruling; one row per supplier × latest eval + criteria + result + valid_until + NC count, for the auditor). EQUIP **coder+sql** (cron), **coder+sql** (export). Cron and export are independent files → parallel.
+- **Wave 5 — smoke + verify (depends W1-W4).** EQUIP **webapp-testing** (READ-ONLY vs prod): fiche tab renders for a sample supplier, score recompute + KO behave, cert link resolves a doc_files row, NC entry persists, export downloads, cron `--dry-run` emits the right "à réévaluer" set. Opus independently spot-checks: a hand-scored eval matches the engine's total_pct + classification; KO forces non_agree regardless of score; criticality derive matches the JOIN counts.
+
+**Parallelizable:** W2 read-endpoint ∥ W2 write-endpoints; W3 ∥ W4. Everything gates on W1.
+
+### 3) PATTERNS TO CLONE (paths)
+- **Periodic-review cron** ← `scripts/send-credential-expiry-reminders.php` (the ops_credential_expiry watchdog, BUILT 2026-06-16, 17KB) — near-exact shape: flock, user=maltytask, lead-day stages, `--dry-run` default, deployed DISABLED + pre-flight header, reuses `send_mail()` + `mail_account_template()`. Recipient precedence: row → system_setting → admins.
+- **Alert surface:** primary = **email** (the cron, like credential-expiry/recap). SECONDARY = a **"⚑ à réévaluer" intake state ON the fiche** (mirrors the "à valider" draft-pool pattern — the eval row with `valid_until ≤ today` renders a flag in the registry list). Do NOT use doc_review_queue (that's document-triage-typed; a supplier re-review is not a doc-classify event — a parallel-purpose misuse). A dashboard KPI card is OPTIONAL future (could add a ref_kpi_trackers tracker "fournisseurs à réévaluer" later — out of v1 full-build scope unless operator asks).
+- **Auditor export** ← `public/api/cogs-comprehensive-csv.php` (pure-PHP fputcsv, Content-Type text/csv + Content-Disposition attachment, no xlsx dependency — operator standing CSV ruling). Lighter sibling `public/api/cogs-fiche-csv.php` if a single-section export suffices.
+
+### 4) CRITICALITY RATIFICATION — candidate category list (operator yes/no BEFORE the seed)
+JOIN path CONFIRMED: `inv_deliveries.supplier_fk → ingredient_fk → ref_mi.category_id → ref_mi_categories` (NO mi_id_fk; ingredient_fk is the resolved MI id). Live `ref_mi_categories` (24 rows). **Candidate FOOD-CONTACT / food-safety-critical set (put to operator as a checklist):**
+- **1 Malt** ✓ (direct ingredient) — 2 suppliers
+- **2 Hops** ✓ — 5 suppliers
+- **3 Yeast** ✓ — 2 suppliers
+- **4 Brewing Adjunct** ✓ — 3 suppliers
+- **11 Brewing Mineral** ✓ (water treatment salts, ingested) — 1 supplier
+- **8 Packaging** ✓ DIRECT FOOD CONTACT (bottles/caps/cans touch the beer) — 11 suppliers — **operator must confirm: ALL packaging, or only primary-contact (bottle/can/cap) vs secondary (cartons/labels/film)?** The category doesn't sub-split contact vs non-contact — flag this as the one nuance to resolve.
+- **GREY / operator-decide:** 5 Process Chemical (CO₂, filtration aids — some contact product), 7 Cleaning Chemical (CIP — indirect, residue risk), 35 Taproom & Foodtour (food service). Default: 5/7 = NON-critique (indirect) unless operator says CIP residue makes them critical.
+- **CLEARLY non-critique:** 6 Sales, 9 Logistics, 10 Utilities, 12 Transport, 13 NonBeer, 14 Maintenance, 15 R&D, 31 Cautions, 33 Immobilisation, 34 Tax, 36 Cliches, 37 Matériel prod, 39 Frais admin, 40 Inspections.
+- **RATIFICATION ASK:** "Critique = food-contact ⇒ these category ids: {1,2,3,4,11,8?} — confirm each, especially whether ALL Packaging (8) counts or only primary-contact, and whether Process Chemical (5)/Cleaning Chemical (7) are in or out." Once ratified → one-shot UPDATE seeds `ref_suppliers.criticality` from the JOIN (any supplier with ≥1 delivery line in a critical category = critique), then manual override available. Edge cases (logistics supplier handling food, one-off) resolved by override, NOT by widening the category set.
+
+### 5) RISK / DIVERGENCE FLAGS (full-build specific)
+- **ADDITIVE ONLY — one col on ref_suppliers** (`criticality` ENUM, NULL-as-unset). MUST NOT touch vat_regime/gl_account/hors_perimetre_cogs/parser_key/commissioning_state or the pin/ingest write paths. The eval layer is a NON-FISCAL observation layer: NEVER feeds COGS/COP/WAC/BOM/beer-tax/stock. Encode that in schema_meta + code comments (like Planning/QA).
+- **NO parallel supplier store:** eval/NC/cert tables read identity from ref_suppliers by FK; criticality reads MI category by the live JOIN. Do NOT snapshot supplier name/GL/category/MI-category into eval tables — read by JOIN every time (string-copy = silent divergence).
+- **NO parallel doc store:** cert links FK `doc_files.id` (the canonical store). Do NOT build a `supplier_documents` blob/file store. Uploads route doc_uploads→pipeline→doc_files.
+- **NO guessed CAPA table:** MA-01 is doc-only; `supplier_nc.capa_ref` is a soft text ref, NO FK. Building a CAPA register is a SEPARATE arc — don't infer its schema here.
+- **Grid versioning is the anti-rescore guard:** each eval pins `grid_id_fk`; criteria pin `grid_criterion_id_fk`. When the grid evolves, a NEW grid version row is added (old retained, is_active flips) — past evals keep their old grid + scores. NEVER mutate a grid_criteria row's max_score in place after evals reference it (would silently rescore history) — add a new grid version.
+- **Score recompute is server-side, never trust client totals:** the save handler recomputes pillar_a/b_score, total_pct, KO, result from the criteria rows + the pinned grid maxes. KO (food_safety_ko) forces result='non_agree' regardless of total_pct — assert this in Wave 5.
+- **`inv_deliveries` has NO mi_id_fk** — the auto-feed + criticality JOIN MUST use `ingredient_fk` (resolved) not a non-existent mi_id_fk. A builder copying a stale JOIN from elsewhere will silently get 0 rows.
+- **RULE-3 tour: does NOT trigger** (no new ref_pages row — salle-fournisseurs isn't in ref_pages). If operator later promotes it to a real page_key + topbar, tour applies then.
+- **MIG HEAD 408; next free 409 — RE-VERIFY at Wave-1 start** (parallel sessions lead; 397 was a known pending-parallel landmine — never re-number/apply another session's file).
+- **Commit by PATHSPEC** (shared dirty tree, parallel sessions); deploy surgically per-file (deploy.sh pushes the whole working tree). md5 local↔VPS after deploy.
