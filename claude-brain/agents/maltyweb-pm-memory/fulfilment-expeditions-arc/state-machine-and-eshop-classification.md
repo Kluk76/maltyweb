@@ -43,6 +43,27 @@ Classify the 72 `inv_sales_orders.fulfilment_mode='review'` eshop orders (63 are
 - **EQUIP: sql + coder + ui + webapp-testing.** Migration+UPDATE+SELECT/UPDATE-guard = sql; classifier TS + classify action PHP = coder; buttons = ui; survives-re-ingest smoke = webapp-testing. Files: `db/migrations/NNN_inv_sales_orders_fulfilment_mode_source.sql` (new), `maltytask/scripts/ingest-shopify-orders.ts` (classifier L399 + SELECT L575 + UPDATE leg L597-618), `public/api/eshop-fulfilment-status.php` (new classify action), `public/modules/expeditions.php` (review-card buttons), `public/js/eshop-fulfilment.js`.
 - Trigger "classer"/"review orders"/"à classer"/"fulfilment_mode review"/"izyrent classify"/"fulfilment_mode_source"/"Retrait/Livraison buttons"/"classify eshop" → this section.
 
+## ✅ THREE EXPÉDITIONS-CARD UPGRADES SHIPPED 2026-06-19 (`971471c` maltyweb main — committed; doc-externe + per-order comments + single BL-imprimé tag)
+Three operator/PM asks built (Sonnet agents), verified, deployed SURGICALLY (per-file rsync; parallel KPI-recap session's dirty tree untouched), committed by pathspec as `971471c`. 5 code files all md5-match local↔VPS; both PHP files `php8.1 -l` clean on VPS; php-fpm reloaded clean. No browser smoke (Tailscale+auth-gated; operator eyeballs in-session).
+
+### #1 — Doc externe display (PM ask #1) — LIVE
+- **Mig 400** `db/migrations/400_ord_external_document_no.sql` = `ALTER TABLE ord_orders ADD COLUMN external_document_no VARCHAR(50) NULL`. 🔴 **Applied SURGICALLY** (manual ALTER + manual `INSERT INTO schema_migrations`) because `migrate.php` applies ALL pending and **397 is STILL pending** (parallel-session WIP) — 397 was NOT applied and remains pending. MIG HEAD = 400 applied; 397 pending; next free = 401.
+- **Connector:** `External_Document_No` added to the OData `$select`, the order dict, and persisted via `write_bc_mirror_fields` (EVERY-pull mirror → stays in sync post-close). NOT in `push_bc_sales_orders.py` (push-reservation honoured; read-only back from BC).
+- **Pull LIVE:** `maltytask-bc-orders` cron (every minute); deployed connector ran 07:41:03 and populated `external_document_no` for **13 of 61** BC orders with real values (e.g. "ROMANEL / 69514", "BAR DU STAFF", "STREET STAGE", "WARM UP"). Clean run, no tracebacks.
+- **Render:** "Doc externe : <value>" pill on the card, reusing `exp-transporter-tag` class (NO new CSS), shown only when non-empty.
+
+### #2 — Per-order comments (PM ask #2) — LIVE
+- New **`set_comment`** action on `public/api/expeditions-status.php`: ONE txn = UPDATE `ord_orders.comment` (empty→NULL) + INSERT `ord_order_status_events` (status UNCHANGED, comment="Commentaire modifié", cols order_id_fk/status/occurred_at/user_id_fk/comment) + `log_revision` (8-arg for the ord_orders update, 7-arg insert for the event). REUSED `ord_orders.comment` — NO new table, NO migration.
+- **UI:** inline ✎ edit button + inline textarea editor on every non-cancelled card (gated `can_write_expeditions()`); CSRF auto-retry reuses the existing `postStatus` machinery; in-place DOM update on success.
+- 🔴 **SECURITY HOLE CLOSED:** `expeditions-status.php` previously gated on AUTHENTICATION ONLY. Added `can_write_expeditions($me)` → 403 covering ALL branches (advance/cancel/revert AND set_comment) — the pre-existing advance/cancel/revert branches are now write-gated too, not just the new action.
+
+### #3 — Single "BL imprimé" tag (operator's 3rd ask) — LIVE
+- Removed the left `exp-bc-shipped-badge` block (`expeditions.php`) + its dead `.exp-bc-shipped-badge` CSS. Divergence badge `.exp-bc-divergence-badge` UNTOUCHED; `bc_completely_shipped` column + connector auto-advance (#4) UNTOUCHED. The operational `bl_printed` chip is now the SINGLE, BC-automated tag.
+- DID NOT close the one-pull insert-lag (PM Q2 recommendation followed — deferred; zero orders stuck).
+
+**Deferred follow-ups:** (a) connector one-pull insert-lag close (two-pass insert) if ever wanted; (b) browser smoke of the comment editor on a real session.
+**Trigger** "doc externe"/"external_document_no"/"External_Document_No"/"per-order comment"/"set_comment"/"commentaire"/"BL imprimé tag"/"exp-bc-shipped-badge"/"can_write_expeditions gate" → this section.
+
 ## 🆕 STATE-MACHINE AUTOMATION — #4 DELIVERED; #2 RE-PIVOT #2 FINAL → MAIL-ON-CONFIRM-CLICK, From=commandes@lanebuleuse.ch via Google relay (design RATIFIED 2026-06-17, build disarmed/not-launched)
 ### §CHANTIER #2 CONFIRMATION MAIL FINAL — what RE-PIVOT #2 FINAL changed vs the prior record below
 🔴 The mail-on-confirm-click skeleton (graft on `advance`, off-txn best-effort, idempotence via event comment, `confirmation_email_mode` flag, recap JOINs) STANDS. RE-PIVOT #2 FINAL (Kouros 2026-06-17) overrides ONLY the **From address + routing** (line 54 below is now SUPERSEDED):
