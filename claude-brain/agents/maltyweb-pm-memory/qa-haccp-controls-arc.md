@@ -2,7 +2,7 @@
 
 > Salle de contrôle (QA/QC) family. **NON-FISCAL observation layer — NEVER feeds COGS / stock / WAC / BOM / beer-tax.** This is the first real build on the `qa` page (previously an inactive ref_pages placeholder with pre-written tour copy). SHIPPED + LIVE on the VPS 2026-06-15.
 >
-> Last updated: 2026-06-15.
+> Last updated: 2026-06-19 (4th panel "Analyse de l'eau" SHIPPED + LIVE — see foot of file).
 
 ## STATUS — DONE & LIVE 2026-06-15 (commits LOCAL-only, NOT pushed)
 
@@ -56,13 +56,19 @@ All panels render; dropdowns populated (A:50, B:30, C:50/125); 3 write round-tri
 5. Push: commits are LOCAL-only pending Kouros (cage-session interleave).
 
 ## ✅ SHIPPED + LIVE 2026-06-19 — 4th panel "Analyse de l'eau" (HACCP CCP-1 / `CAPA-2026-005`)
-> **AS-BUILT (Opus-verified on VPS 2026-06-19):** the PENDING BUILD below was BUILT, applied, and deployed. Files all timestamped Jun-19 10:23–10:31 on VPS.
-> - **Migrations 403/404/405** (NOT 402 — a parallel session took `402_refold-shipping-title-norm.sql`; the build correctly took the next free numbers). All applied (`schema_migrations` confirms) + present LOCAL untracked. `403_ref_water_sample_points` / `404_ref_water_parameters` / `405_qa_water_analysis`.
-> - **Tables verified:** ref_water_sample_points = 6 rows (PS-1/3/5 active; PS-2/4/6 is_active=0 per `le cas échéant` ruling — HONORED), ref_water_parameters = 10 rows, qa_water_analysis = 0 rows (clean, no test residue). PS-3 is_ccp=1 (CCP-1) ✓.
-> - **schema_meta** all 3 rows present: qa_water_analysis=source/allowed; both lookups=reference/allowed. ✓ classifier col `table_class` used.
-> - **Endpoint `public/api/qa-water-analysis.php`** deployed (16 243 B), `php8.1 -l` clean, POST → 302 auth-redirect (NOT 500/404). `?view=eau` page → 302 (healthy). 4th `qa-tab` wired (13 tab refs in qa.php), `?view=eau` switch + form `#qa-form-eau` action=`/api/qa-water-analysis.php`, `initEauParamToggle()` presence/absence ↔ numeric toggle in qa.js.
-> - **RULE 3 (tour):** NO new tour card needed — water analysis is a 4th tab WITHIN the existing `qa` page (no new ref_pages row, as the verdict predicted). `tour-gap-check.php` = critical=0 minor=0 (clean). The qa tour copy still describes only the 3 original controls; refreshing it to mention water is OPTIONAL polish (not a RULE-3 gate), gated on operator validating the PS list.
-> 🔴 **OPEN:** (1) commits LOCAL-only / NOT pushed — `qa.php`/`qa.css`/`qa.js` modified + 4 untracked files (migs 403/404/405 + qa-water-analysis.php); shared-tree interleave, commit by PATHSPEC. (2) OPERATOR-GATE STILL OPEN: definitive PS list + parameter action-limits must be validated by operator against his hydraulic schema before this is treated as audit-ready (PS-2/4/6 stay inactive until then). (3) Optional: qa tour copy refresh to mention the 4th control; minimal lookup admin-CRUD (v1 is seed-by-SQL).
+> **AS-BUILT (build-team report + Opus-verified on VPS 2026-06-19; commit `70cc016` maltyweb, LOCAL-only NOT pushed):** the PENDING BUILD below was BUILT, applied, and deployed.
+> - **Migrations 403/404/405** (NOT 402 — parallel session took `402_refold-shipping-title-norm.sql`; **401 still in-flight from a parallel session, left untouched**; the build correctly took the next free trio). All applied (`schema_migrations` confirms). `403_ref_water_sample_points` / `404_ref_water_parameters` / `405_qa_water_analysis`. All FKs INT UNSIGNED → users.id.
+> - **`ref_water_sample_points`** (reference/allowed): PS-1..6 seeded; **PS-2/4/6 is_active=0** pending hydraulic-schema validation; PS-3 = CCP-1 (`is_ccp=1`). ✓
+> - **`ref_water_parameters`** (reference/allowed): 10 params; `limit_operator` ENUM **lte/gte/range/presence_absence**; **`limit_min`/`limit_max`** left NULL with `limit_basis='… à confirmer'` where OPBD value unverified (no invented numbers — refuse-don't-guess honored). ⚠️ AS-BUILT uses RANGE columns `limit_min`/`limit_max`, NOT the single `default_action_limit` the original ruling sketched — range model is the better fit (pH 6.5–9.5 etc.).
+> - **`qa_water_analysis`** (source/allowed, NEVER-COGS): `action_limit` VARCHAR snapshot-at-write; `is_conforming` TINYINT NULL derived; `row_hash` UNIQUE (idempotency). 0 rows (clean, no test residue).
+> - **schema_meta** all 3 rows present (classifier col `table_class` ✓): qa_water_analysis=source/allowed; both lookups=reference/allowed.
+> - ⚠️ **NAMING DIVERGENCE recorded (built as-is, works):** this obs table uses **`created_by_fk`** for the user FK, whereas sibling qa_* tables use **`submitted_by_user_id_fk`**. Noted for consistency awareness — NOT a defect; do not churn it unless a normalization pass touches all qa_* tables.
+> - **Endpoint `public/api/qa-water-analysis.php`** — mirrors `qa-cleaning-efficacy.php` envelope; 4 derivation branches; row_hash idempotency; calls `parse_nullable_decimal()` (single-homed, not copied); FK + is_active validation; **400-not-500 on bad input**. `php8.1 -l` clean.
+> - **UI** — 4th `qa-tab` on `qa.php` (`?view=eau`) + `qa.js` param-toggle (presence_absence `<select>` vs numeric+limit-hint) + `qa.css`; PHP→`window.QA_WATER_PARAMS`→JS hydration; 25-recent readback with conformity badge (green/red/neutral "—").
+> - **Smoke (webapp-testing): 9/9 PASS** — render, dropdowns (3 active points incl. PS-3 CCP-1; 10 params), input toggle, write round-trips (conform + neutral badges), validation 400, idempotency duplicate. Test rows self-cleaned (COUNT=0); throwaway operator used + purged (no real user elevated).
+> - **RULE 3 (tour):** NO new tour card — water analysis is a 4th tab WITHIN the existing `qa` page (no new ref_pages row, as the verdict predicted). `tour-gap-check.php` critical=0 minor=0. qa tour copy still describes only the 3 original controls — refreshing to mention water is OPTIONAL polish, not a RULE-3 gate.
+> - **Companion HACCP docs** delivered to operator Desktop: **AE-01** (plan d'analyse interne de l'eau, defines PS-1..6) + **MU-EAU-01** (operator manual for the panel).
+> 🔴 **OPEN (carry forward):** (1) commit `70cc016` LOCAL-only / NOT pushed — shared-clone/cage-session interleave; push deferred to Kouros, commit by PATHSPEC. (2) **OPERATOR-GATE STILL OPEN:** operator must validate the definitive PS list against his real hydraulic installation before activating PS-2/4/6; numeric OPBD limits stay NULL until AQ fills them. (3) **Admin-CRUD for the two lookups NOT built** — seed-by-SQL v1; CRUD is the flagged fast-follow. (4) Optional qa tour copy refresh to mention the 4th control.
 >
 > ---
 > ### Original design ruling (PM, 2026-06-19) — kept for provenance
