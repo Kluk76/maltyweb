@@ -48,6 +48,7 @@ const ING_UNITS = ['kg','g','ml'];
 // this variable to inject the WARNING banner and preserve all POST values as
 // sticky defaults, so the operator does not have to retype anything.
 $overwriteConflict = null;  // ['recipe_name'=>string, 'cct'=>int|null, 'event_date'=>string]
+$ownTx = false;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
@@ -274,6 +275,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // ── 5. Ingredients header row ─────────────────────────────────────────
         // raw_blob_text stores a JSON snapshot of the submitted ingredient lines
         // for the audit trail; the parsed rows are the authoritative structured data.
+        // Open transaction wrapping §5-§7 so DELETE+reinsert is atomic.
+        $ownTx = !$pdo->inTransaction();
+        if ($ownTx) $pdo->beginTransaction();
         $ingHeaderHash = bd_row_hash([$beer, $batch, $eventDate, $submittedAt, 'web_entry']);
         $ingHeaderRow = [
             'row_hash'                 => $ingHeaderHash,
@@ -324,6 +328,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // ── 7. Insert parsed ingredient rows ─────────────────────────────────
         // Each line goes to bd_brewing_ingredients_parsed_v2.
         // Natural key: (header_id, line_idx) — guaranteed unique per submission.
+
+        // ── 7a. Pre-image snapshot for audit ─────────────────────────────────────
+        // Capture existing lines under ALL non-tombstoned headers for this (beer, batch)
+        // before we clear them. Used as before_json in the log_revision below.
+        $existingHeaderIds = [];
+        $ehStmt = $pdo->prepare(
+            "SELECT id FROM bd_brewing_ingredients_v2
+              WHERE beer = ? AND batch = ? AND is_tombstoned = 0"
+        );
+        $ehStmt->execute([$beer, $batch]);
+        foreach ($ehStmt->fetchAll(PDO::FETCH_COLUMN) as $ehId) {
+            $existingHeaderIds[] = (int)$ehId;
+        }
+        $beforeLinesJson = null;
+        if (!empty($existingHeaderIds)) {
+            $ehPlaceholders = implode(',', array_fill(0, count($existingHeaderIds), '?'));
+            $blStmt = $pdo->prepare(
+                "SELECT * FROM bd_brewing_ingredients_parsed_v2
+                  WHERE header_id IN ($ehPlaceholders)
+                  ORDER BY header_id ASC, line_idx ASC"
+            );
+            $blStmt->execute($existingHeaderIds);
+            $beforeLines = $blStmt->fetchAll(PDO::FETCH_ASSOC);
+            $beforeLinesJson = !empty($beforeLines) ? $beforeLines : null;
+        }
+
+        // ── 7b. Delete ALL existing parsed lines for this (beer, batch) ───────
+        // Hard DELETE (no tombstone column on parsed lines). The new lines are
+        // reinserted immediately below. Atomic with the header upsert via the
+        // transaction opened above.
+        if (!empty($existingHeaderIds)) {
+            $ehPlaceholders2 = implode(',', array_fill(0, count($existingHeaderIds), '?'));
+            $pdo->prepare(
+                "DELETE FROM bd_brewing_ingredients_parsed_v2
+                  WHERE header_id IN ($ehPlaceholders2)"
+            )->execute($existingHeaderIds);
+        }
+
         foreach ($ingLines as $lineIdx => $line) {
             $miIdStr  = $line['mi_id'] ?? '';
             $miFk     = $miIdStr !== '' ? ($miIdFkMap[$miIdStr] ?? null) : null;
@@ -346,19 +388,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'source_row' => null,
             ];
 
-            // UPSERT on (header_id, line_idx) — if form is resubmitted with the
-            // same submitted_at (which feeds header_id), updates the line.
+            // Plain INSERT — old lines were DELETEd above (§7b), so no collision possible.
             $pdo->prepare(
                 "INSERT INTO bd_brewing_ingredients_parsed_v2
                    (header_id, line_idx, category, mi_id_fk, raw_name, qty, unit, lot,
                     confidence, parse_note, source_row)
-                 VALUES (?,?,?,?,?,?,?,?,?,?,?)
-                 ON DUPLICATE KEY UPDATE
-                   category=VALUES(category), mi_id_fk=VALUES(mi_id_fk),
-                   raw_name=VALUES(raw_name), qty=VALUES(qty), unit=VALUES(unit),
-                   lot=VALUES(lot), confidence=VALUES(confidence),
-                   parse_note=VALUES(parse_note),
-                   updated_at=CURRENT_TIMESTAMP"
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?)"
             )->execute([
                 $ingHeaderId,
                 $lineIdx,
@@ -373,6 +408,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $parsedRow['source_row'],
             ]);
         }
+
+        // ── 7c. Audit: one revision record for the line-set replacement ───────
+        // action='update' (non-null before_json); action='insert' if no prior lines.
+        // Uses the ingHeaderId (the NEW header, canonical anchor for this submission).
+        $afterLines = [];
+        if (!empty($ingLines)) {
+            $alStmt = $pdo->prepare(
+                "SELECT * FROM bd_brewing_ingredients_parsed_v2
+                  WHERE header_id = ?
+                  ORDER BY line_idx ASC"
+            );
+            $alStmt->execute([$ingHeaderId]);
+            $afterLines = $alStmt->fetchAll(PDO::FETCH_ASSOC);
+        }
+        log_revision(
+            $pdo,
+            $me,
+            'bd_brewing_ingredients_parsed_v2',
+            $ingHeaderId,
+            $beforeLinesJson,
+            ['lines' => $afterLines, 'count' => count($afterLines)],
+            'normal',
+            'Line-set replaced via form-brewing DELETE+reinsert'
+        );
 
         // ── 8. Per-sub-brew: gravity + timings rows ──────────────────────────
         //
@@ -682,6 +741,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
+        if ($ownTx) $pdo->commit();
+
         // ── 9. Success flash ──────────────────────────────────────────────────
         $nLines = count($ingLines);
         $lineLabel = $nLines > 0 ? " — {$nLines} ingrédient" . ($nLines > 1 ? 's' : '') : '';
@@ -696,6 +757,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         flash_set('ok', "Brassage enregistré : {$beer} (B{$batch}){$lineLabel}{$coolLabel}{$notesSuffix}");
 
     } catch (Throwable $e) {
+        if ($ownTx && $pdo->inTransaction()) $pdo->rollBack();
         flash_set('err', pdo_friendly_error($e, 'form-brewing'));
     }
 
