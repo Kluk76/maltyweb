@@ -24,6 +24,7 @@ require_once __DIR__ . '/../../app/auth.php';
 require_once __DIR__ . '/../../app/csrf.php';
 require_once __DIR__ . '/../../app/db-write-helpers.php';
 require_once __DIR__ . '/../../app/settings-helpers.php';
+require_once __DIR__ . '/../../app/settings.php';
 
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
@@ -280,13 +281,146 @@ try {
 
     $pdo->commit();
 
+    // ── Confirmation email (entered→confirmed only, best-effort) ────────────
+    $emailSent   = false;
+    $emailReason = null;
+    if ($action === 'advance' && $currentStatus === 'entered' && $newStatus === 'confirmed') {
+        require_once __DIR__ . '/../../app/services/mailer.php';
+        $mode = (string) system_setting('confirmation_email_mode', 'fulfilment', 'off');
+        if ($mode === 'off') {
+            $emailReason = 'mode_off';
+        } else {
+            // Idempotence: only send once
+            $dupChk = $pdo->prepare(
+                "SELECT COUNT(*) FROM ord_order_status_events
+                  WHERE order_id_fk = ? AND comment LIKE '%[email:confirmation:sent]%'"
+            );
+            $dupChk->execute([$orderId]);
+            if ((int) $dupChk->fetchColumn() > 0) {
+                $emailReason = 'already_sent';
+            } else {
+                // Load order + lines
+                $ordRow = $pdo->prepare(
+                    'SELECT o.id, o.bc_no, o.source_ref, o.requested_date,
+                            c.name AS customer_name,
+                            c.address_line1, c.address_line2, c.postal_code, c.city, c.canton
+                       FROM ord_orders o
+                  LEFT JOIN ref_customers c ON c.id = o.customer_id_fk
+                      WHERE o.id = ? LIMIT 1'
+                );
+                $ordRow->execute([$orderId]);
+                $ord = $ordRow->fetch(PDO::FETCH_ASSOC);
+
+                $linesStmt = $pdo->prepare(
+                    'SELECT s.sku_code AS ref, CONCAT(s.sku_code, IF(s.format IS NOT NULL AND s.format != "", CONCAT(" ", s.format), "")) AS designation, l.qty AS qty
+                       FROM ord_order_lines l
+                       JOIN ref_skus s ON s.id = l.sku_id_fk
+                      WHERE l.order_id_fk = ? ORDER BY l.id'
+                );
+                $linesStmt->execute([$orderId]);
+                $linesData = $linesStmt->fetchAll(PDO::FETCH_ASSOC);
+
+                // Format order data for template
+                $bcNo    = trim((string)($ord['bc_no']      ?? ''));
+                $srcRef  = trim((string)($ord['source_ref'] ?? ''));
+                $orderNo = $bcNo ?: $srcRef ?: ('CMD-' . (string) $orderId);
+
+                $rawDate = trim((string)($ord['requested_date'] ?? ''));
+                $dateFr  = '';
+                if ($rawDate !== '' && $rawDate !== '0000-00-00') {
+                    $dt = DateTime::createFromFormat('Y-m-d', substr($rawDate, 0, 10));
+                    if ($dt !== false) $dateFr = $dt->format('d/m/Y');
+                }
+
+                $orderData = [
+                    'order_no'          => $orderNo,
+                    'customer_name'     => (string)($ord['customer_name'] ?? ''),
+                    'requested_date_fr' => $dateFr,
+                ];
+
+                $address = null;
+                if (!empty($ord['city']) || !empty($ord['address_line1'])) {
+                    $address = [
+                        'line1'       => (string)($ord['address_line1'] ?? ''),
+                        'line2'       => (string)($ord['address_line2'] ?? ''),
+                        'postal_code' => (string)($ord['postal_code']   ?? ''),
+                        'city'        => (string)($ord['city']          ?? ''),
+                        'canton'      => (string)($ord['canton']        ?? ''),
+                    ];
+                }
+
+                $tpl = mail_order_confirmation_template($orderData, $linesData, $address);
+
+                // Recipients
+                $fromAddr = (string) system_setting('confirmation_email_from', 'fulfilment', 'commandes@lanebuleuse.ch');
+                $fromName = 'La Nébuleuse';
+                if ($mode === 'test') {
+                    $testTo = (string) system_setting('confirmation_email_test_to', 'fulfilment', 'kouros@lanebuleuse.ch');
+                    $recipients = array_filter(explode(';', $testTo), fn($e) => filter_var(trim($e), FILTER_VALIDATE_EMAIL));
+                    $recipients = array_map('trim', $recipients);
+                } else {
+                    $rawEmail = '';
+                    try {
+                        $cStmt = $pdo->prepare('SELECT c.email FROM ref_customers c JOIN ord_orders o ON o.customer_id_fk=c.id WHERE o.id=? LIMIT 1');
+                        $cStmt->execute([$orderId]);
+                        $rawEmail = trim((string)($cStmt->fetchColumn() ?: ''));
+                    } catch (Throwable $ce) { $rawEmail = ''; }
+                    $recipients = ($rawEmail !== '' && filter_var($rawEmail, FILTER_VALIDATE_EMAIL))
+                        ? [$rawEmail]
+                        : [];
+                    if (empty($recipients)) {
+                        $emailReason = 'no_email';
+                    }
+                }
+
+                if ($emailReason === null && !empty($recipients)) {
+                    $logoPath = __DIR__ . '/../../app/services/email-assets/nebuleuse-logo.png';
+                    $inlineImages = is_readable($logoPath)
+                        ? [['path' => $logoPath, 'cid' => 'nebuleuse-logo', 'mime' => 'image/png']]
+                        : [];
+
+                    $sentCount = 0;
+                    foreach ($recipients as $recipAddr) {
+                        $r = send_mail(
+                            $recipAddr,
+                            $tpl['subject'],
+                            $tpl['html'],
+                            $tpl['text'],
+                            $fromAddr,
+                            $fromName,
+                            $fromAddr,
+                            $inlineImages ?: null
+                        );
+                        if ($r) $sentCount++;
+                    }
+
+                    if ($sentCount > 0) {
+                        $emailSent = true;
+                        // Tag idempotence sentinel in the status-events log
+                        $tagEv = $pdo->prepare(
+                            'INSERT INTO ord_order_status_events (order_id_fk, status, occurred_at, user_id_fk, comment)
+                             VALUES (?, ?, NOW(), ?, ?)'
+                        );
+                        $tagEv->execute([$orderId, 'confirmed', (int) $me['id'], '[email:confirmation:sent]']);
+                        log_revision($pdo, $me, 'ord_orders', $orderId, [], ['email_confirmation_sent' => true], 'normal', '[email:confirmation:sent]');
+                        $emailReason = 'sent';
+                    } else {
+                        $emailReason = 'send_failed';
+                    }
+                }
+            }
+        }
+    }
+
     // Return fresh CSRF token so client stays hot
     $freshCsrf = csrf_token();
     echo json_encode([
-        'ok'     => true,
-        'status' => $newStatus,
-        'label'  => $statusLabels[$newStatus] ?? $newStatus,
-        'csrf'   => $freshCsrf,
+        'ok'           => true,
+        'status'       => $newStatus,
+        'label'        => $statusLabels[$newStatus] ?? $newStatus,
+        'csrf'         => $freshCsrf,
+        'email_sent'   => $emailSent,
+        'email_reason' => $emailReason,
     ]);
 
 } catch (Throwable $e) {

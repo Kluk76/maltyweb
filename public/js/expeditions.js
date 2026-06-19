@@ -352,6 +352,11 @@
         if (data.csrf) currentCsrf = data.csrf;
         applyStatusToRow(orderRow, data.status);
 
+        // Non-blocking email notice (mode=test|live only; mode=off is silent)
+        if (data.email_sent === false && data.email_reason && !['mode_off','not_applicable','already_sent'].includes(data.email_reason)) {
+          showOrderError(orderRow, 'Mail de confirmation non envoyé (' + data.email_reason + ')');
+        }
+
         // After cancel: mark row as cancelled for the toggle to work
         if (data.status === 'cancelled') {
           orderRow.classList.add('exp-order-row--cancelled');
