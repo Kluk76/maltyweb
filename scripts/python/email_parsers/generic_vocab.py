@@ -305,6 +305,29 @@ _NUM_RE = re.compile(r"\b(\d+(?:[.,]\d+)?)\b")
 # Regex: volume suffix like 20L / 30HL / 5HL (often after SKU code in email)
 _VOL_RE = re.compile(r"\b(\d+)\s*(?:HL|L)\b", re.IGNORECASE)
 
+# Regex: "Nx" quantity prefix (e.g. "2x", "1X", "3×")
+# Change 4: extract qty from "Nx" prefix before product/unit matching
+_QTY_X_RE = re.compile(r"(?<!\d)(\d+)\s*[xX×]\s*")
+
+# Regex: address/phone/email lines to skip in _try_line()
+# Change 3: guard against NPA/street/phone/email generating spurious qty
+_ADDRESS_LINE_RE = re.compile(
+    r"(?:"
+    r"\b(?:route|chemin|rue|avenue|place|boulevard|voie|impasse|allee|allée)\b"
+    r"|@\S+\.\S+"           # email address
+    r"|\+\d[\d\s]{6,}"      # phone starting with +
+    r"|\b\d{4}\s+\w+"       # NPA followed by town (e.g. "1936 Verbier")
+    r"|\b0\d\d[\d\s]{5,}"   # Swiss local phone without + (e.g. "079 252 77 11")
+    r")",
+    re.IGNORECASE,
+)
+
+# Regex: price / discount instruction lines (for notes extraction)
+_PRICE_INSTRUCTION_RE = re.compile(
+    r"\b(?:rabais|remise|discount|reduction|réduction|prix|price|del-|livraison|delais|délai)\b.*",
+    re.IGNORECASE,
+)
+
 
 # ── Date parsing ───────────────────────────────────────────────────────────────
 
@@ -401,6 +424,188 @@ def _parse_date(text: str, reference: date | None, dayfirst: bool) -> date | Non
     return None
 
 
+# ── Quoted-history stripper ────────────────────────────────────────────────────
+
+# Change 1: strip quoted email history and signature before parsing
+def strip_quoted_history(body: str) -> str:
+    """
+    Strip quoted email history and signature from a body string.
+
+    Removes everything from the first quote-intro marker onward:
+    - Lines starting with > (quoted lines)
+    - Gmail "On ... wrote:" patterns (single or two-line, with \\r\\n or \\n)
+    - French "Le ... a écrit :" patterns
+    - Outlook separator lines (16+ underscores)
+    - "-----Message d'origine-----" Outlook French separator
+    - "De : ... Envoyé : ..." Outlook French header blocks
+
+    Also strips email signature (everything after standalone '-- ' or '--' line).
+    """
+    # Normalise line endings to \n for uniform processing
+    body = body.replace("\r\n", "\n").replace("\r", "\n")
+
+    # Find the earliest cut point among all quote-intro markers.
+    # We scan for each pattern and take the minimum position.
+    cut_pos = len(body)
+
+    # 1. First line starting with >
+    m = re.search(r"^>", body, re.MULTILINE)
+    if m:
+        cut_pos = min(cut_pos, m.start())
+
+    # 2. Gmail "On ... wrote:" — may be split across two lines.
+    #    Pattern: line starting with "On " followed eventually by "wrote:" which may
+    #    be on the same line or on the very next non-empty continuation line.
+    #    We match "On <stuff>wrote:" with optional whitespace/newline in between.
+    m = re.search(
+        r"^(On .{5,}?wrote:\s*)$",
+        body,
+        re.MULTILINE | re.DOTALL,
+    )
+    if m:
+        cut_pos = min(cut_pos, m.start())
+    else:
+        # Two-line variant: "On <stuff>\n" then "wrote:\s*" on the next line
+        m = re.search(
+            r"^(On [^\n]{5,})\n([^\n]*\n)*?wrote:\s*$",
+            body,
+            re.MULTILINE,
+        )
+        if m:
+            cut_pos = min(cut_pos, m.start())
+
+    # 3. French Gmail "Le ... a écrit :"
+    m = re.search(r"^Le .{5,}a [eé]crit\s*:", body, re.MULTILINE | re.IGNORECASE)
+    if m:
+        cut_pos = min(cut_pos, m.start())
+
+    # 4. Outlook French separator
+    m = re.search(r"^-----Message d.origine-----", body, re.MULTILINE | re.IGNORECASE)
+    if m:
+        cut_pos = min(cut_pos, m.start())
+
+    # 5. Long underscore separator line (16+)
+    m = re.search(r"^_{16,}", body, re.MULTILINE)
+    if m:
+        cut_pos = min(cut_pos, m.start())
+
+    # 6. Outlook French "De : ... Envoyé : ..." header block
+    m = re.search(r"^De\s*:\s*.+\n.*Envoy", body, re.MULTILINE | re.IGNORECASE)
+    if m:
+        cut_pos = min(cut_pos, m.start())
+
+    top_post = body[:cut_pos]
+
+    # Strip email signature: everything from standalone "-- " or "--" on its own line
+    # "-- " (with trailing space) is the RFC-standard sig delimiter
+    sig_m = re.search(r"\n--[ \t]*\n", top_post)
+    if sig_m:
+        top_post = top_post[:sig_m.start()]
+
+    return top_post.strip()
+
+
+# ── Customer hint resolution ───────────────────────────────────────────────────
+
+# Change 2: multi-signal customer resolution
+
+# Patterns to detect inline client info blocks
+_CLIENT_BLOCK_RE = re.compile(
+    r"(?:infos?\s+client|nouveau\s+client|client\s+[aà]\s+cr[eé]er)\s*[:\n]",
+    re.IGNORECASE,
+)
+
+# Email address pattern
+_EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w.-]+\.[a-zA-Z]{2,}\b")
+
+# Phone line pattern (pure phone number, possibly with spaces)
+_PHONE_LINE_RE = re.compile(r"^\s*(?:\+?\d[\d\s]{6,})\s*$")
+
+# NPA / address line detection for client block scanning
+_CLIENT_ADDR_LINE_RE = re.compile(
+    r"(?:\b\d{4}\s+\w|\b(?:route|chemin|rue|avenue|place|boulevard)\b|"
+    r"@\S+\.\S+|\+?\d[\d\s]{6,})",
+    re.IGNORECASE,
+)
+
+
+def _resolve_customer_hint(ctx: EmailContext, top_post: str) -> str:
+    """
+    Resolve the best customer hint using multi-signal priority:
+
+    Priority a — Inline client block in top_post (highest)
+    Priority b — Forwarded message external sender
+    Priority c — External direct sender (from_address not @lanebuleuse.ch)
+    Priority d — Fall through → ''
+
+    Hard rule: any @lanebuleuse.ch address is NEVER the customer.
+    """
+    nebuleuse_domain = "@lanebuleuse.ch"
+
+    # Priority a: inline client block
+    m = _CLIENT_BLOCK_RE.search(top_post)
+    if m:
+        # Look at the next 6 lines after the match position for name/email
+        after = top_post[m.end():]
+        lines = [ln.strip() for ln in after.splitlines()]
+        # Take up to 8 lines to find name + email
+        candidate_lines = lines[:8]
+
+        found_name: str | None = None
+        found_email: str | None = None
+
+        for ln in candidate_lines:
+            if not ln:
+                continue
+            # Check if this line is an email
+            em = _EMAIL_RE.search(ln)
+            if em:
+                addr = em.group(0)
+                if nebuleuse_domain not in addr:
+                    found_email = addr
+                continue
+            # Check if this line is a phone (skip)
+            if _PHONE_LINE_RE.match(ln):
+                continue
+            # Check if this line looks like an address (skip)
+            if _CLIENT_ADDR_LINE_RE.search(ln):
+                continue
+            # First non-empty, non-phone, non-address, non-email line → name
+            if found_name is None:
+                found_name = ln
+
+        if found_name:
+            if found_email and nebuleuse_domain not in found_email:
+                return f"{found_name} <{found_email}>"
+            return found_name
+
+    # Priority b: forwarded message — look in subject for Fwd/Fw/Tr markers
+    subject = (ctx.subject or "")
+    fwd_re = re.compile(
+        r"^(?:fwd|fw|tr|re\s*:\s*tr|re\s*:\s*fwd)\s*:",
+        re.IGNORECASE,
+    )
+    if fwd_re.match(subject.strip()):
+        # Look in the full body for a forwarded-header From: line with external email
+        from_header_re = re.compile(
+            r"^(?:De|From)\s*:\s*(.+)",
+            re.MULTILINE | re.IGNORECASE,
+        )
+        for fh in from_header_re.finditer(ctx.body_text or ""):
+            line_val = fh.group(1).strip()
+            em = _EMAIL_RE.search(line_val)
+            if em and nebuleuse_domain not in em.group(0):
+                return line_val  # return the full "Name <email>" string
+
+    # Priority c: external direct sender
+    from_addr = ctx.from_address or ""
+    if from_addr and nebuleuse_domain not in from_addr:
+        return from_addr
+
+    # Priority d: no customer hint available
+    return ""
+
+
 # ── Line extraction ────────────────────────────────────────────────────────────
 
 def _extract_num(s: str) -> float | None:
@@ -440,14 +645,32 @@ def _scan_lines(body: str, vocab: VocabIndex) -> tuple[list[ParsedLine], list[st
 
     def _try_line(segment: str) -> None:
         """Try to extract a product + qty from one text segment."""
-        norm_seg = _normalise(segment)
+
+        # Change 3: Address guard — skip lines that look like addresses/phones/emails
+        if _ADDRESS_LINE_RE.search(segment):
+            return
+        # Also skip pure phone-number lines (no leading +)
+        if re.match(r"^\s*\+?\d[\d\s]{6,}\s*$", segment):
+            return
+
+        # Change 4: "Nx" quantity prefix extraction
+        # Work on a local copy so we don't shadow the outer parameter
+        seg = segment
+        qty_from_x: float | None = None
+        qty_x_match = _QTY_X_RE.search(seg)
+        if qty_x_match:
+            qty_from_x = float(qty_x_match.group(1))
+            # Remove the "Nx" prefix — operate on the remainder for unit/product matching
+            seg = seg[qty_x_match.end():]
+
+        norm_seg = _normalise(seg)
         if not norm_seg:
             return
 
-        # Find unit keyword(s) in segment
-        unit_matches = list(_UNIT_PATTERN.finditer(segment))
-        # Find numbers in segment
-        num_matches  = list(_NUM_RE.finditer(segment))
+        # Find unit keyword(s) in the (possibly trimmed) segment
+        unit_matches = list(_UNIT_PATTERN.finditer(seg))
+        # Find numbers in the (possibly trimmed) segment
+        num_matches  = list(_NUM_RE.finditer(seg))
 
         # Find all candidate product spans in this segment via fuzzy vocab match
         # We slide a window over the segment words and look for matches.
@@ -473,11 +696,14 @@ def _scan_lines(body: str, vocab: VocabIndex) -> tuple[list[ParsedLine], list[st
             return
 
         # Find the qty:
-        # Primary: look for a number adjacent to a unit keyword
+        # If we got a qty from the "Nx" prefix, use it directly.
+        # Otherwise use unit-adjacency or single-number fallback.
         qty: float | None = None
         raw_qty: str = ""
 
-        if unit_matches and num_matches:
+        if qty_from_x is not None:
+            qty = qty_from_x
+        elif unit_matches and num_matches:
             # Find num closest (in character position) to any unit keyword
             for um in unit_matches:
                 u_pos = um.start()
@@ -597,7 +823,14 @@ class GenericVocabParser(SenderParser):
         if not body.strip():
             return None
 
-        # Extract date from body
+        # Change 1: Strip quoted history and signature before any processing.
+        # This prevents quoted-reply content (previous emails) from generating
+        # spurious order lines or customer hints.
+        top_post = strip_quoted_history(body)
+        if not top_post.strip():
+            return None
+
+        # Extract date from top-post only
         reference: date | None = None
         if ctx.received_at is not None:
             try:
@@ -608,24 +841,36 @@ class GenericVocabParser(SenderParser):
                 except Exception:
                     reference = None
 
-        requested_date = _parse_date(body, reference, env.dayfirst)
+        requested_date = _parse_date(top_post, reference, env.dayfirst)
 
-        # Extract confident lines and dropped fragments
-        confident_lines, dropped_frags = _scan_lines(body, env.vocab)
+        # Extract confident lines and dropped fragments from top-post only
+        confident_lines, dropped_frags = _scan_lines(top_post, env.vocab)
 
         if not confident_lines:
             # No product+qty pairs found → decline → no_match
             return None
 
-        # Customer hint: From display name or address
-        customer_hint = ctx.from_address or ""
+        # Change 2: Multi-signal customer resolution
+        customer_hint = _resolve_customer_hint(ctx, top_post)
 
-        # Compose notes: dropped fragments + any instructional text
+        # Compose notes: dropped fragments + price/discount instructions
         notes_parts: list[str] = []
         if dropped_frags:
             notes_parts.append(
                 "Fragments avec produit identifié mais quantité manquante :\n"
                 + "\n".join(f"  • {f}" for f in dropped_frags)
+            )
+
+        # Scan top-post lines for price/discount instructions and add to notes
+        price_instructions: list[str] = []
+        for ln in top_post.splitlines():
+            ln_stripped = ln.strip()
+            if ln_stripped and _PRICE_INSTRUCTION_RE.search(ln_stripped):
+                price_instructions.append(ln_stripped)
+        if price_instructions:
+            notes_parts.append(
+                "Instructions tarifaires :\n"
+                + "\n".join(f"  • {p}" for p in price_instructions)
             )
 
         return ParsedOrder(
