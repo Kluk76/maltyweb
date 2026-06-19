@@ -30,7 +30,8 @@ function sdc_apply_activate_format(
     array $me,
     int $recipeId,
     int $formatId,
-    ?int $bomOverride = null
+    ?int $bomOverride = null,
+    bool $ownTxn = true
 ): array {
     // Re-run gate server-side
     $gatedIds = sdc_gated_format_ids($pdo);
@@ -102,7 +103,7 @@ function sdc_apply_activate_format(
     $bomTemplateId = $bomOverride ?? sdc_bom_template_for_format($pdo, $formatId);
 
     $activateMsg = '';
-    $pdo->beginTransaction();
+    if ($ownTxn) $pdo->beginTransaction();
     try {
         if ($existRow) {
             // Re-activate
@@ -142,19 +143,21 @@ function sdc_apply_activate_format(
                 "Salle de contrôle: activation format {$fmt['format_code']} / recette {$recipe['name']}");
             $activateMsg = "Format «{$skuCode}» activé.";
         }
-        $pdo->commit();
+        if ($ownTxn) $pdo->commit();
     } catch (Throwable $e) {
-        $pdo->rollBack();
+        if ($ownTxn && $pdo->inTransaction()) $pdo->rollBack();
         throw $e;
     }
 
-    // Recompile packaging BOM — runs AFTER commit so a failure here never loses the activation.
+    // Recompile packaging BOM (skipped when called from within an outer transaction).
     $bomResult  = null;
     $bomErrMsg  = null;
-    try {
-        $bomResult = sdc_recompile_recipe_packaging($pdo, $recipeId);
-    } catch (Throwable $bomErr) {
-        $bomErrMsg = $bomErr->getMessage();
+    if ($ownTxn) {
+        try {
+            $bomResult = sdc_recompile_recipe_packaging($pdo, $recipeId);
+        } catch (Throwable $bomErr) {
+            $bomErrMsg = $bomErr->getMessage();
+        }
     }
 
     return [
@@ -173,7 +176,8 @@ function sdc_apply_deactivate_format(
     PDO $pdo,
     array $me,
     int $recipeId,
-    int $formatId
+    int $formatId,
+    bool $ownTxn = true
 ): array {
     $existStmt = $pdo->prepare(
         "SELECT id, sku_code, is_active FROM ref_skus
@@ -185,7 +189,7 @@ function sdc_apply_deactivate_format(
         throw new RuntimeException('Aucun SKU trouvé pour cette combinaison.');
     }
 
-    $pdo->beginTransaction();
+    if ($ownTxn) $pdo->beginTransaction();
     try {
         $before = $existRow;
         $pdo->prepare("UPDATE ref_skus SET is_active=0, last_modified_by='web' WHERE id=?")
@@ -193,9 +197,9 @@ function sdc_apply_deactivate_format(
         log_revision($pdo, $me, 'ref_skus', (int) $existRow['id'],
             $before, ['is_active' => 0, 'last_modified_by' => 'web'], 'normal',
             "Salle de contrôle: désactivation SKU {$existRow['sku_code']}");
-        $pdo->commit();
+        if ($ownTxn) $pdo->commit();
     } catch (Throwable $e) {
-        $pdo->rollBack();
+        if ($ownTxn && $pdo->inTransaction()) $pdo->rollBack();
         throw $e;
     }
 
@@ -203,10 +207,12 @@ function sdc_apply_deactivate_format(
 
     $bomResult = null;
     $bomErrMsg = null;
-    try {
-        $bomResult = sdc_recompile_recipe_packaging($pdo, $recipeId);
-    } catch (Throwable $bomErr) {
-        $bomErrMsg = $bomErr->getMessage();
+    if ($ownTxn) {
+        try {
+            $bomResult = sdc_recompile_recipe_packaging($pdo, $recipeId);
+        } catch (Throwable $bomErr) {
+            $bomErrMsg = $bomErr->getMessage();
+        }
     }
 
     return [
@@ -226,7 +232,8 @@ function sdc_apply_set_binding(
     array $me,
     int $recipeId,
     string $role,
-    int $miIdFk
+    int $miIdFk,
+    bool $ownTxn = true
 ): array {
     $validRoles = ['label', 'can', 'sticker', 'holder', 'outer_tray', 'scotch'];
     $role = must_be_one_of('role', $role, $validRoles);
@@ -285,7 +292,7 @@ function sdc_apply_set_binding(
         }
     }
 
-    $pdo->beginTransaction();
+    if ($ownTxn) $pdo->beginTransaction();
     try {
         // Expire current active binding for same (recipe, role)
         $pdo->prepare(
@@ -309,9 +316,9 @@ function sdc_apply_set_binding(
             ['recipe_id' => $recipeId, 'role' => $role, 'mi_id_fk' => $miIdFk,
              'effective_from' => $todayStr], 'normal',
             "Liaison packaging: rôle={$role}, recette={$recipeId}, MI={$miRow['mi_id']}");
-        $pdo->commit();
+        if ($ownTxn) $pdo->commit();
     } catch (Throwable $e) {
-        $pdo->rollBack();
+        if ($ownTxn && $pdo->inTransaction()) $pdo->rollBack();
         throw $e;
     }
 
@@ -319,10 +326,12 @@ function sdc_apply_set_binding(
 
     $bomResult = null;
     $bomErrMsg = null;
-    try {
-        $bomResult = sdc_recompile_recipe_packaging($pdo, $recipeId);
-    } catch (Throwable $bomErr) {
-        $bomErrMsg = $bomErr->getMessage();
+    if ($ownTxn) {
+        try {
+            $bomResult = sdc_recompile_recipe_packaging($pdo, $recipeId);
+        } catch (Throwable $bomErr) {
+            $bomErrMsg = $bomErr->getMessage();
+        }
     }
 
     return [

@@ -1019,6 +1019,28 @@ function compile_sku_bom_packaging(
             // Parity: by definition unchanged since we're not writing — just report baseline
             $liqAfter = $liqBefore;
             $parityOk = true;
+
+            // Dry-run cost sum: mirror the INSERT-loop cost logic exactly.
+            // NULL-aware: if ANY line has no cost basis, the total is NULL (unknown, not 0).
+            $pkgCost    = 0.0;
+            $pkgCostNull = false;
+            foreach ($pkgLines as $line) {
+                $mi      = $miById[$line['mi_id_fk']] ?? null;
+                $costChf = ($mi !== null && $mi['cost_chf'] !== null) ? (float)$mi['cost_chf'] : null;
+                if (isset($line['cost_direct'])) {
+                    $lineCost = round($line['cost_direct'], 6);
+                } else {
+                    $lineCost = ($costChf !== null) ? round($costChf * $line['qty'], 6) : null;
+                }
+                if ($lineCost === null) {
+                    $pkgCostNull = true;
+                } else {
+                    $pkgCost += $lineCost;
+                }
+            }
+            if ($pkgCostNull) {
+                $pkgCost = null;
+            }
         } else {
             $pdo->beginTransaction();
             try {
@@ -1137,6 +1159,7 @@ function compile_sku_bom_packaging(
                         'liq_cost_after'  => $liqAfter['cost'],
                         'parity_ok'       => false,
                         'error'           => $error,
+                        'pkg_cost'        => null,
                     ];
                     continue;
                 }
@@ -1214,6 +1237,7 @@ function compile_sku_bom_packaging(
             'liq_cost_after'  => isset($liqAfter) ? $liqAfter['cost'] : $liqBefore['cost'],
             'parity_ok'       => $parityOk && $error === null,
             'error'           => $error,
+            'pkg_cost'        => ($dryRun ? $pkgCost : null),
         ];
     }
 

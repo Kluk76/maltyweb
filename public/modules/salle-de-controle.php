@@ -27,6 +27,7 @@ require __DIR__ . '/../../app/db-write-helpers.php';
 require_once __DIR__ . '/../../app/sku-bom-compile.php';
 require_once __DIR__ . '/../../app/recipe-ingredients-loader.php';
 require_once __DIR__ . '/../../app/sdc-apply.php';
+require_once __DIR__ . '/../../app/finance-period.php';
 require_once __DIR__ . '/../../app/yeast-eligibility.php';
 require_once __DIR__ . '/../../app/qc-thresholds.php';
 require_once __DIR__ . '/../../app/qa-tank-stats.php';
@@ -1624,7 +1625,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
 
                 // Refuse unsupported change kinds (P3c/P3d later)
-                $supportedKinds = ['recipe_field', 'qc_target', 'yeast', 'ingredient_add', 'ingredient_update', 'ingredient_remove'];
+                $supportedKinds = ['recipe_field', 'qc_target', 'yeast', 'ingredient_add', 'ingredient_update', 'ingredient_remove', 'format_activate', 'format_deactivate', 'bom_binding'];
                 if (!in_array($req['change_kind'], $supportedKinds, true)) {
                     $pdo->rollBack();
                     // Leave status=pending — do NOT 409
@@ -1830,6 +1831,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                         sdc_apply_hop_upsert($pdo, $me, $recipeId, $miIdFk, $stage, $boilMin, $qtyPerHl, $unit, $miRow, $recRow, false);
                     }
+                } elseif ($changeKind === 'format_activate') {
+                    if (count($lines) === 0) throw new RuntimeException('Aucune ligne pour format_activate.');
+                    $ln = $lines[0];
+                    $formatId = (int)($ln['new_value'] ?? 0);
+                    if ($formatId <= 0) throw new RuntimeException('format_id invalide dans la ligne format_activate.');
+                    $bomOverride = null;
+                    foreach ($lines as $extraLn) {
+                        if (($extraLn['field'] ?? '') === 'bom_template_id' && ($extraLn['new_value'] ?? '') !== '') {
+                            $bomOverride = (int)$extraLn['new_value'];
+                        }
+                    }
+                    sdc_apply_activate_format($pdo, $me, $recipeId, $formatId, $bomOverride, false);
+                } elseif ($changeKind === 'format_deactivate') {
+                    if (count($lines) === 0) throw new RuntimeException('Aucune ligne pour format_deactivate.');
+                    $ln = $lines[0];
+                    $formatId = (int)($ln['new_value'] ?? 0);
+                    if ($formatId <= 0) throw new RuntimeException('format_id invalide dans la ligne format_deactivate.');
+                    sdc_apply_deactivate_format($pdo, $me, $recipeId, $formatId, false);
+                } elseif ($changeKind === 'bom_binding') {
+                    foreach ($lines as $ln) {
+                        $role    = (string)($ln['field'] ?? '');
+                        $miIdFk  = (int)($ln['mi_id_fk'] ?? 0);
+                        if ($role === '' || $miIdFk <= 0) throw new RuntimeException('role ou mi_id_fk manquant dans la ligne bom_binding.');
+                        sdc_apply_set_binding($pdo, $me, $recipeId, $role, $miIdFk, false);
+                    }
                 }
 
                 // Mark approved
@@ -1849,7 +1875,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 );
 
                 $pdo->commit();
-                echo json_encode(['ok' => true]);
+
+                // One recompile after the outer commit for format/BOM kinds.
+                $postCommitBomErr = null;
+                if (in_array($changeKind, ['format_activate', 'format_deactivate', 'bom_binding'], true)) {
+                    try {
+                        sdc_recompile_recipe_packaging($pdo, $recipeId);
+                    } catch (Throwable $bomRecompErr) {
+                        $postCommitBomErr = $bomRecompErr->getMessage();
+                    }
+                }
+
+                echo json_encode(['ok' => true, 'bom_err' => $postCommitBomErr]);
 
             } catch (Throwable $approveErr) {
                 if ($pdo->inTransaction()) $pdo->rollBack();
@@ -2645,8 +2682,133 @@ if (is_admin($me) || is_manager($me)) {
             }
         }
 
+        // For format/BOM pending CRs: compute rollback'd COGS preview (admin only)
+        $lastClosedMonth = null;
+        if (is_admin($me)) {
+            try {
+                $lastClosedMonth = fin_last_closed_month($crPdo);
+            } catch (Throwable $_) { /* non-fatal */ }
+        }
+
         foreach ($crRows as &$row) {
             $row['lines'] = $crLines[(int)$row['id']] ?? [];
+            $row['cogs_preview'] = null;
+            if (is_admin($me)
+                && $row['status'] === 'pending'
+                && in_array($row['change_kind'], ['format_activate', 'format_deactivate', 'bom_binding'], true)
+            ) {
+                try {
+                    $pvRecipeId = (int)$row['recipe_id_fk'];
+
+                    $pvStmt = $crPdo->prepare(
+                        "SELECT id FROM ref_skus WHERE recipe_id = ? AND is_active = 1"
+                    );
+                    $pvStmt->execute([$pvRecipeId]);
+                    $pvSoloIds = array_map('intval', array_column($pvStmt->fetchAll(PDO::FETCH_ASSOC), 'id'));
+
+                    $pvCompStmt = $crPdo->prepare(
+                        "SELECT DISTINCT cs.sku_id FROM ref_sku_composite_slots cs
+                           JOIN ref_skus s ON s.id = cs.sku_id AND s.is_active = 1
+                          WHERE cs.recipe_id = ?
+                            AND (cs.effective_until IS NULL OR cs.effective_until > CURDATE())"
+                    );
+                    $pvCompStmt->execute([$pvRecipeId]);
+                    $pvCompositeIds = array_map('intval', array_column($pvCompStmt->fetchAll(PDO::FETCH_ASSOC), 'sku_id'));
+
+                    $pvCollabStmt = $crPdo->prepare(
+                        "SELECT DISTINCT s.id FROM ref_skus s
+                           JOIN ref_sku_collab_temporal ct ON ct.sku_code = s.sku_code
+                            AND ct.recipe_id = ?
+                            AND ct.effective_from <= CURDATE()
+                            AND (ct.effective_until IS NULL OR ct.effective_until > CURDATE())
+                          WHERE s.recipe_id IS NULL AND s.is_active = 1"
+                    );
+                    $pvCollabStmt->execute([$pvRecipeId]);
+                    $pvCollabIds = array_map('intval', array_column($pvCollabStmt->fetchAll(PDO::FETCH_ASSOC), 'id'));
+
+                    $pvSkuIds = array_values(array_unique(array_merge($pvSoloIds, $pvCompositeIds, $pvCollabIds)));
+
+                    if (!empty($pvSkuIds)) {
+                        $pvInList = implode(',', array_map('intval', $pvSkuIds));
+                        $pvBeforeStmt = $crPdo->query(
+                            "SELECT b.sku_id, s.sku_code, ROUND(SUM(b.cost),4) AS cost
+                               FROM ref_sku_bom b
+                               JOIN ref_skus s ON s.id = b.sku_id
+                              WHERE b.sku_id IN ({$pvInList}) AND b.source='Packaging'
+                              GROUP BY b.sku_id, s.sku_code"
+                        );
+                        $pvBefore = [];
+                        foreach ($pvBeforeStmt->fetchAll(PDO::FETCH_ASSOC) as $r2) {
+                            $pvBefore[(int)$r2['sku_id']] = ['sku_code' => $r2['sku_code'], 'cost' => (float)$r2['cost']];
+                        }
+
+                        $crPdo->beginTransaction();
+                        try {
+                            $change_kind_pv = $row['change_kind'];
+                            $pvLines = $row['lines'];
+                            if ($change_kind_pv === 'format_activate') {
+                                $pvLn = $pvLines[0] ?? [];
+                                $pvFmtId = (int)($pvLn['new_value'] ?? 0);
+                                $pvBomOvr = null;
+                                foreach ($pvLines as $pvEl) {
+                                    if (($pvEl['field'] ?? '') === 'bom_template_id' && ($pvEl['new_value'] ?? '') !== '') {
+                                        $pvBomOvr = (int)$pvEl['new_value'];
+                                    }
+                                }
+                                if ($pvFmtId > 0) {
+                                    sdc_apply_activate_format($crPdo, $me, $pvRecipeId, $pvFmtId, $pvBomOvr, false);
+                                }
+                            } elseif ($change_kind_pv === 'format_deactivate') {
+                                $pvLn = $pvLines[0] ?? [];
+                                $pvFmtId = (int)($pvLn['new_value'] ?? 0);
+                                if ($pvFmtId > 0) {
+                                    sdc_apply_deactivate_format($crPdo, $me, $pvRecipeId, $pvFmtId, false);
+                                }
+                            } elseif ($change_kind_pv === 'bom_binding') {
+                                foreach ($pvLines as $pvLn) {
+                                    $pvRole   = (string)($pvLn['field'] ?? '');
+                                    $pvMiIdFk = (int)($pvLn['mi_id_fk'] ?? 0);
+                                    if ($pvRole !== '' && $pvMiIdFk > 0) {
+                                        sdc_apply_set_binding($crPdo, $me, $pvRecipeId, $pvRole, $pvMiIdFk, false);
+                                    }
+                                }
+                            }
+
+                            // dryRun=TRUE: sees the mutated binding in the open txn, sums cost, writes nothing, opens no txn.
+                            $pvCompileResult = compile_sku_bom_packaging($crPdo, $pvSkuIds, true, true);
+
+                        } finally {
+                            if ($crPdo->inTransaction()) $crPdo->rollBack(); // ALWAYS rollback — preview only
+                        }
+
+                        $pvSkuPreview = [];
+                        foreach ($pvSkuIds as $sid) {
+                            $skuCode    = $pvBefore[$sid]['sku_code'] ?? "SKU#{$sid}";
+                            $beforeCost = $pvBefore[$sid]['cost'] ?? 0.0;
+                            $compiledSku = $pvCompileResult['skus'][$sid] ?? null;
+                            $afterCost   = ($compiledSku !== null && isset($compiledSku['pkg_cost']))
+                                ? $compiledSku['pkg_cost']
+                                : null;  // null = format_deactivate (SKU dropped from active set) or no cost basis
+                            $pvSkuPreview[] = [
+                                'sku_id'   => $sid,
+                                'sku_code' => $skuCode,
+                                'before'   => $beforeCost,
+                                'after'    => $afterCost,
+                                'delta'    => $afterCost !== null ? round($afterCost - $beforeCost, 4) : null,
+                            ];
+                        }
+
+                        $row['cogs_preview'] = [
+                            'sku_ids'     => $pvSkuIds,
+                            'skus'        => $pvSkuPreview,
+                            'closed_month'=> $lastClosedMonth,
+                        ];
+                    }
+                } catch (Throwable $pvErr) {
+                    if ($crPdo->inTransaction()) $crPdo->rollBack();
+                    $row['cogs_preview'] = ['error' => 'Aperçu COGS indisponible'];
+                }
+            }
         }
         unset($row);
         $changeRequestsData = $crRows;
@@ -2682,6 +2844,7 @@ window.SDC_FORMATS_DATA = null;
 window.SDC_FORMATS_ERR  = <?= json_encode($formatsLoadErr ?? 'Erreur inconnue', JSON_HEX_TAG | JSON_HEX_AMP) ?>;
 <?php endif ?>
 window.SDC_CSRF = <?= json_encode($csrf ?? csrf_token(), JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+window.SDC_ROLE = <?= json_encode($me['role'] ?? 'operateur', JSON_HEX_TAG | JSON_HEX_AMP) ?>;
 window.SDC_CHANGE_REQUESTS = <?= json_encode(array_map(fn($r) => [
     'id'             => (int) $r['id'],
     'recipe_id'      => (int) $r['recipe_id_fk'],
@@ -2700,7 +2863,9 @@ window.SDC_CHANGE_REQUESTS = <?= json_encode(array_map(fn($r) => [
         'old_value'    => $l['old_value'],
         'new_value'    => $l['new_value'],
         'target_table' => $l['target_table'],
+        'mi_id_fk'     => isset($l['mi_id_fk']) ? (int)$l['mi_id_fk'] : null,
     ], $r['lines']),
+    'cogs_preview'   => $r['cogs_preview'] ?? null,
 ], $changeRequestsData), JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
 window.SDC_CURRENT_USER_ID = <?= json_encode((int)$me['id']) ?>;
 window.SDC_YEAST_STRAINS = <?= json_encode(
@@ -4865,6 +5030,39 @@ window.SDC_TANK_ERR = null;
                 </div>
                 <?php endforeach ?>
               </div>
+              <?php endif ?>
+              <?php if (is_admin($me) && isset($cr['cogs_preview']) && $cr['cogs_preview'] !== null): ?>
+              <?php $pv = $cr['cogs_preview']; ?>
+              <?php if (isset($pv['error'])): ?>
+              <div class="cr-cogs-preview cr-cogs-preview--err">
+                <span class="cr-cogs-preview-label">Aperçu COGS</span>
+                <span class="cr-cogs-preview-err">Calcul indisponible : <?= htmlspecialchars($pv['error']) ?></span>
+              </div>
+              <?php elseif (!empty($pv['skus'])): ?>
+              <div class="cr-cogs-preview">
+                <div class="cr-cogs-preview-label">Impact COGS packaging (simulation)</div>
+                <?php if ($pv['closed_month']): ?>
+                <div class="cr-cogs-preview-warning">&#x26a0; Dernier mois clôturé : <?= htmlspecialchars($pv['closed_month']) ?> — cette modification est effective dès aujourd'hui (pas de retraitement rétroactif)</div>
+                <?php endif ?>
+                <div class="cr-cogs-preview-table">
+                  <?php foreach ($pv['skus'] as $pvSku): ?>
+                  <div class="cr-cogs-preview-row">
+                    <span class="cr-cogs-sku"><?= htmlspecialchars($pvSku['sku_code']) ?></span>
+                    <span class="cr-cogs-before"><?= number_format((float)$pvSku['before'], 4, '.', "'") ?> CHF</span>
+                    <span class="cr-cogs-arrow">&#x2192;</span>
+                    <?php if ($pvSku['after'] === null): ?>
+                    <span class="cr-cogs-after cr-cogs-after--removed">retiré</span>
+                    <?php else: ?>
+                    <span class="cr-cogs-after"><?= number_format((float)$pvSku['after'], 4, '.', "'") ?> CHF</span>
+                    <span class="cr-cogs-delta <?= $pvSku['delta'] > 0 ? 'cr-cogs-delta--up' : ($pvSku['delta'] < 0 ? 'cr-cogs-delta--down' : '') ?>">
+                      <?= ($pvSku['delta'] >= 0 ? '+' : '') . number_format((float)$pvSku['delta'], 4, '.', "'") ?> CHF
+                    </span>
+                    <?php endif ?>
+                  </div>
+                  <?php endforeach ?>
+                </div>
+              </div>
+              <?php endif ?>
               <?php endif ?>
               <div class="cr-card-actions">
                 <?php if (is_admin($me)): ?>

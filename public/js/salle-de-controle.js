@@ -62,6 +62,33 @@
     f.submit();
   }
 
+  function submitChangeRequest(payload) {
+    return fetch('/modules/salle-de-controle.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        action:  'submit_change_request',
+        csrf:    window.SDC_CSRF || '',
+        recipe_id:   payload.recipe_id,
+        change_kind: payload.change_kind,
+        summary:     payload.summary || '',
+        lines: JSON.stringify(payload.lines || []),
+      }).toString(),
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (data.ok) {
+          if (window.showToast) showToast('Demande envoyée — en attente d\'approbation administrateur.');
+          setTimeout(() => location.reload(), 1200);
+        } else {
+          if (window.showToast) showToast('Erreur : ' + (data.error || 'Erreur inconnue'));
+        }
+      })
+      .catch(err => {
+        if (window.showToast) showToast('Erreur réseau : ' + err.message);
+      });
+  }
+
   /* ── Main render ─────────────────────────────────────────────────────── */
   function render(recipeId) {
     const container = document.getElementById('fmtPaneInner');
@@ -161,7 +188,7 @@
 
         // Toggle button
         let toggleBtn = '';
-        if (isAdmin) {
+        if (isAdmin || isManager) {
           if (isActive) {
             toggleBtn = '<button class="fmt-tile-deactivate" '
               + 'data-recipe-id="' + escHtml(recData.id) + '" '
@@ -173,8 +200,6 @@
               + 'data-recipe-id="' + escHtml(recData.id) + '" '
               + 'data-format-id="' + escHtml(f.id) + '">Activer</button>';
           }
-        } else if (isManager) {
-          toggleBtn = '<span class="fmt-tile-readonly-note">Modification : admin requis</span>';
         }
 
         html += '<div class="fmt-tile' + (isActive ? ' fmt-tile--active' : '') + '">'
@@ -279,8 +304,7 @@
           html += '<div class="fmt-binding-value fmt-binding-value--empty">— non défini —</div>';
         }
 
-        // Dropdown (admin only)
-        if (isAdmin && candidates.length > 0) {
+        if ((isAdmin || isManager) && candidates.length > 0) {
           html += '<div class="fmt-binding-select-wrap">'
             + '<select class="fmt-binding-select" '
             + 'data-recipe-id="' + escHtml(recData.id) + '" '
@@ -301,7 +325,7 @@
           html += '<div class="fmt-binding-no-candidates">Aucun MI «'
             + escHtml(recData.sku_prefix) + '» trouvé pour ce rôle</div>';
         } else {
-          // manager / opérateur: read only
+          // opérateur: read only
           html += '<div class="fmt-binding-readonly">Modification : admin requis</div>';
         }
 
@@ -317,21 +341,36 @@
   /* ── Post-render event bindings ────────────────────────────────────────── */
   function bindBindingDropdowns(recipeId, recData, data) {
     // Activate buttons
+    const isManager = (window.SDC_ROLE === 'manager');
+    const isAdmin   = (window.SDC_ROLE === 'admin');
     document.querySelectorAll('.fmt-tile-activate').forEach(btn => {
       btn.addEventListener('click', () => {
         const fid = btn.dataset.formatId;
         const rid = btn.dataset.recipeId;
-        // Get bom_template_id from sibling select if present
         const tile = btn.closest('.fmt-tile');
         const bomSel = tile ? tile.querySelector('.fmt-bom-select') : null;
         const bomVal = bomSel ? bomSel.value : '';
-        postForm({
-          action: 'activate_format',
-          recipe_id: rid,
-          format_id: fid,
-          bom_template_id: bomVal,
-          csrf: window.SDC_CSRF || '',
-        });
+        if (isManager && !isAdmin) {
+          submitChangeRequest({
+            recipe_id:   rid,
+            change_kind: 'format_activate',
+            summary:     'Activation format #' + fid,
+            lines: [{
+              target_table: 'ref_packaging_formats',
+              field:        'format_id',
+              old_value:    '',
+              new_value:    fid,
+            }],
+          });
+        } else {
+          postForm({
+            action: 'activate_format',
+            recipe_id: rid,
+            format_id: fid,
+            bom_template_id: bomVal,
+            csrf: window.SDC_CSRF || '',
+          });
+        }
       });
     });
 
@@ -339,14 +378,30 @@
     document.querySelectorAll('.fmt-tile-deactivate').forEach(btn => {
       btn.addEventListener('click', () => {
         const sku = btn.dataset.skuCode;
+        const fid = btn.dataset.formatId;
+        const rid = btn.dataset.recipeId;
         if (!confirm('Désactiver le format «' + sku + '» ?\n'
           + 'Le SKU restera en base, non-actif.')) return;
-        postForm({
-          action: 'deactivate_format',
-          recipe_id: btn.dataset.recipeId,
-          format_id: btn.dataset.formatId,
-          csrf: window.SDC_CSRF || '',
-        });
+        if (isManager && !isAdmin) {
+          submitChangeRequest({
+            recipe_id:   rid,
+            change_kind: 'format_deactivate',
+            summary:     'Désactivation format ' + sku,
+            lines: [{
+              target_table: 'ref_packaging_formats',
+              field:        'format_id',
+              old_value:    '',
+              new_value:    fid,
+            }],
+          });
+        } else {
+          postForm({
+            action: 'deactivate_format',
+            recipe_id: rid,
+            format_id: fid,
+            csrf: window.SDC_CSRF || '',
+          });
+        }
       });
     });
 
@@ -360,13 +415,29 @@
           if (window.showToast) showToast('Choisir un ingrédient avant d\'enregistrer');
           return;
         }
-        postForm({
-          action: 'set_binding',
-          recipe_id: rid,
-          role: role,
-          mi_id_fk: sel.value,
-          csrf: window.SDC_CSRF || '',
-        });
+        const miId = sel.value;
+        if (isManager && !isAdmin) {
+          submitChangeRequest({
+            recipe_id:   rid,
+            change_kind: 'bom_binding',
+            summary:     'Liaison packaging rôle ' + role,
+            lines: [{
+              target_table: 'ref_sku_bom',
+              field:        role,
+              mi_id_fk:     miId,
+              old_value:    '',
+              new_value:    miId,
+            }],
+          });
+        } else {
+          postForm({
+            action: 'set_binding',
+            recipe_id: rid,
+            role: role,
+            mi_id_fk: miId,
+            csrf: window.SDC_CSRF || '',
+          });
+        }
       });
     });
   }
