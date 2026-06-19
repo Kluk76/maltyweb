@@ -194,3 +194,26 @@ Kouros: planner must factor tank space, packaging output capacity, anticipate ra
 ---
 
 system_settings (for reference): UNIQUE (section,key_name); value_text XOR value_num (CHECK); read via app/settings.php::system_setting(). commissioning_settings is a SEPARATE table (same shape) holding min_days_after_racking under section='packaging'.
+
+---
+
+## §SERVING-TANK SUGGESTIONS — Round-5 PM ruling (2026-06-19; VERIFIED live, NOT yet built)
+Kouros: serving-tank (cuve de service) fills must be DEMAND-driven by a fixed set of recurring cuve-de-service CLIENTS + their cadence, NOT by physical free-tank count (the v1 gate `predict_load_free_serving_tank_count` is wrong as a TRIGGER). New 3rd trigger class = **client-recurrence-driven** (distinct from demand/FG-coverage and process/tank-state).
+
+**Customers live in `ref_customers`** (canonical; PK id INT UNSIGNED, has trade_channel on_trade/off_trade + sale_class enum, NO serving-tank flag). The 5 named clients (ALL resolved by LEDGER BILL-TO TEST, never by name — each has 2-4 INACTIVE name-duplicate stubs w/ no bc + zero sales that would mis-match):
+- **845** Carte Blanche SA / Les Arches (bc 2009) — 98 Cuve lines, dominant
+- **2612** Association Les Jardins de Louis (bc 3872) — new since 2026-05-28
+- **1827** La Rincette Sàrl (bc 3053)
+- **1848** Jetée de la compagnie (bc 3075) — multi-beer (Zepp/Embuscade/Moonshine)
+- **6** Les Docks (bc 1010)
+
+**Serving-tank sale marker = `ref_skus.format='Cuve de service'`** — 3 SKUs only: EMBV(recipe 32 Embuscade)/MOOV(recipe 44 Moonshine)/ZEPV(recipe 57 Zepp), all `hl_per_unit=0.01` → **1 ledger unit = 1 LITRE** (÷100 for HL). 🔴 `inv_sales_ledger.qty_signed` is NEGATIVE for sales, positive=returns/reversals → filter `<0` or net same-day. 🔴 format≠recurring-client: SAME 3 SKUs bought by ~14 ONE-SHOT FESTIVALS (Paléo/Blues/Fête de la Musique) → format identifies a sale, the FLAG identifies recurrence. Canonical fills query:
+`SELECT l.posting_date,s.recipe_id,s.beer_raw,l.qty_signed FROM inv_sales_ledger l JOIN ref_skus s ON s.id=l.sku_id_fk AND s.format='Cuve de service' WHERE l.customer_id_fk=:cid AND l.qty_signed<0 ORDER BY l.posting_date`.
+
+**Cadence model:** DERIVABLE = per-client median inter-fill interval (Arches~weekly@1000L 18mo, Jetée~weekly multi-beer, Docks~3-4wk, Rincette~2-3wk; Jardins too new); next_expected=last_fill+cadence; beer=most-recent (mode). ASK Kouros (5): (1) derived-rolling vs fixed-per-client cadence; (2) new-client default cadence until N≥4 fills; (3) per-client vs per-(client,beer) [Jetée edge]; (4) horizon=within-planned-week vs soonest-due; (5) propose volume/tank or just client+beer.
+
+**Canonical client-list home = FLAG ON `ref_customers`** (NOT a parallel ref table, NOT a system_setting name-list = re-introduces name-match trap). Migration scope (small, no schema_meta — col add on classified table): `ALTER ref_customers ADD is_serving_tank_client TINYINT(1) NOT NULL DEFAULT 0, ADD serving_tank_cadence_days SMALLINT UNSIGNED NULL` (NULL=derive); seed `WHERE id IN (845,2612,1827,1848,6)` w/ log_revision; producer reads `WHERE is_serving_tank_client=1 AND is_active=1` (NEVER hardcode 5). Operator maintains via a checkbox on the customer fiche (small follow-up, separate from predict engine).
+
+**Free-tank gate ruling: DEMOTE primary-trigger→secondary CAP, do NOT delete.** Trigger = clients due this week; cap = free serving-tank count bounds proposals/week, surplus→decisions[] "aucune cuve de service libre" (msg exists L668). Keep v1 limitation note (free-count assumes empty-at-week-start; TankSimulator serving-dest TODO ~L648 UNCHANGED — do NOT bodge a bd_packaging_v2 reader). Still respects working-days + max_packaging_runs_per_day (cuv fill = a packaging run). **serving_tank STAYS OUTSIDE MUTEX_PKG_PAIRS** (only bottling/canning) — cuv parallels freely (correct, unchanged).
+
+Build: confine to mig (ALTER ref_customers + seed) + `app/planning-predict.php` (replace coverage-driven serving_tank branch w/ client-recurrence pass; keep free-count as cap, working-day/cap/mutex behaviour) + customer-fiche checkbox follow-up. NO engine change (planning-eligibility.php pure-read; reading inv_sales_ledger for a trigger is a READ — CARDINAL intact, still INTENT-only status='proposed', feeds nothing into COGS/COP/WAC/BOM/beer-tax). EQUIP coder+sql(+webapp-testing manager UAT, outstanding). Re-`migrate.php --status` at build-start.
