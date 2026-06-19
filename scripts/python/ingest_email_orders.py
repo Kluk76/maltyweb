@@ -159,6 +159,33 @@ def _load_gmail_env() -> dict[str, str]:
     return cfg
 
 
+# ── Attachment detection helper ────────────────────────────────────────────────
+
+def _is_attachment_part(part) -> bool:
+    """
+    Return True when a MIME part should be treated as an attachment.
+
+    Covers two cases:
+      1. Content-Disposition: attachment (the standard case — Migros XLSX).
+      2. No Content-Disposition header but part has a filename parameter
+         (the Bevanar case: application/octet-stream with filename= but
+         no disposition header).
+
+    Excludes multipart container parts and text/plain + text/html body
+    parts that carry no filename (those feed body_text / body_html).
+    """
+    cd = str(part.get_content_disposition() or "")
+    if "attachment" in cd:
+        return True
+    fn = part.get_filename()
+    if fn:
+        # Only treat as attachment when it's not a body part
+        ct = part.get_content_type()
+        if ct not in ("text/plain", "text/html") and not ct.startswith("multipart/"):
+            return True
+    return False
+
+
 # ── EML parser (fixtures mode) ────────────────────────────────────────────────
 
 def _parse_eml(path: Path) -> EmailContext:
@@ -195,13 +222,21 @@ def _parse_eml(path: Path) -> EmailContext:
     if msg.is_multipart():
         for part in msg.walk():
             ct = part.get_content_type()
-            cd = str(part.get_content_disposition() or "")
-            if "attachment" in cd:
+            if _is_attachment_part(part):
+                _raw = part.get_payload(decode=True) or b""
+                _size = len(_raw)
+                _MAX = 25 * 1024 * 1024
+                if _size > _MAX:
+                    log.warning(
+                        "  Attachment %s skipped: %d bytes > 25 MB cap",
+                        part.get_filename() or "", _size,
+                    )
+                    _raw = None
                 attachments.append({
                     "filename":     part.get_filename() or "",
                     "content_type": ct,
-                    "size_bytes":   None,
-                    "content":      None,
+                    "size_bytes":   _size if _raw is not None else None,
+                    "content":      _raw,
                 })
                 continue
             if ct == "text/plain" and not body_text:
@@ -303,13 +338,21 @@ def _fetch_gmail_messages(gmail_cfg: dict[str, str]) -> list[EmailContext]:
         if email_msg.is_multipart():
             for part in email_msg.walk():
                 ct = part.get_content_type()
-                cd = str(part.get_content_disposition() or "")
-                if "attachment" in cd:
+                if _is_attachment_part(part):
+                    _raw = part.get_payload(decode=True) or b""
+                    _size = len(_raw)
+                    _MAX = 25 * 1024 * 1024
+                    if _size > _MAX:
+                        log.warning(
+                            "  Attachment %s skipped: %d bytes > 25 MB cap",
+                            part.get_filename() or "", _size,
+                        )
+                        _raw = None
                     attachments.append({
                         "filename":     part.get_filename() or "",
                         "content_type": ct,
-                        "size_bytes":   None,
-                        "content":      None,
+                        "size_bytes":   _size if _raw is not None else None,
+                        "content":      _raw,
                     })
                     continue
                 if ct == "text/plain" and not body_text:

@@ -58,6 +58,8 @@ if TYPE_CHECKING:
 # from .example_template import ExampleTemplateSenderParser  # NOT registered (template)
 # from .customer_acme import AcmeSenderParser
 
+from .attachment_pdf import BevanarPdfParser
+from .attachment_xlsx import MigrosFroidevilleXlsxParser
 from .generic_vocab import GenericVocabParser  # always last
 
 # ── Registry ──────────────────────────────────────────────────────────────────
@@ -65,8 +67,9 @@ from .generic_vocab import GenericVocabParser  # always last
 # generic_vocab is intentionally LAST — per-sender parsers go before it.
 # NEVER add ExampleTemplateSenderParser here — it is a template, not a real parser.
 REGISTRY: list[SenderParser] = [
-    # AcmeSenderParser(),  # add real parsers here, ordered most-specific first
-    GenericVocabParser(),  # layer-2 universal fallback — always last
+    BevanarPdfParser(),             # Bevanar/CDDS supplier order PDFs
+    MigrosFroidevilleXlsxParser(),  # Migros / MP Froideville XLSX orders
+    GenericVocabParser(),           # layer-2 universal fallback — always last
 ]
 
 
