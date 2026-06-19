@@ -151,9 +151,13 @@ function predict_load_serving_tank_clients(PDO $pdo): array
 {
     // Load flagged active clients
     $clientStmt = $pdo->prepare(
-        'SELECT id, name FROM ref_customers
-          WHERE is_serving_tank_client = 1 AND is_active = 1
-          ORDER BY id'
+        'SELECT id, name,
+                 serving_tank_budget_hl,
+                 serving_tank_count,
+                 serving_tank_size_hl
+            FROM ref_customers
+           WHERE is_serving_tank_client = 1 AND is_active = 1
+           ORDER BY id'
     );
     $clientStmt->execute();
     $clients = $clientStmt->fetchAll(PDO::FETCH_ASSOC);
@@ -257,6 +261,9 @@ function predict_load_serving_tank_clients(PDO $pdo): array
             'cadence_days'     => $cadenceDays,
             'next_expected'    => $nextExpected,
             'target_volume_hl' => $targetHl,
+            'budget_hl'        => isset($client['serving_tank_budget_hl']) ? (float)$client['serving_tank_budget_hl'] : null,
+            'tank_count'       => isset($client['serving_tank_count']) ? (int)$client['serving_tank_count'] : null,
+            'tank_size_hl'     => isset($client['serving_tank_size_hl']) ? (float)$client['serving_tank_size_hl'] : null,
         ];
     }
 
@@ -1051,16 +1058,94 @@ function planning_generate_suggestions(PDO $pdo, DateTimeImmutable $weekStart, i
             $planDate = $fallbackDate;
         }
 
+        // Budget pace-check + capacity cap
+        $budgetHl   = $stc['budget_hl'];
+        $tankCount  = $stc['tank_count'];
+        $tankSizeHl = $stc['tank_size_hl'];
+        $targetHl   = $stc['target_volume_hl']; // base from median
+
+        // Capacity cap (only when both count AND size are set and > 0)
+        if ($tankCount !== null && $tankSizeHl !== null && $tankCount > 0 && $tankSizeHl > 0) {
+            $maxCapacity = $tankCount * $tankSizeHl;
+            $targetHl = min($targetHl, $maxCapacity);
+        }
+
+        // Budget pace-check (only when budget is set and > 0)
+        if ($budgetHl !== null && $budgetHl > 0) {
+            // actual_month_hl: real cuve consumption this client had this month in inv_sales_ledger
+            $mstart = (new DateTimeImmutable($planDate))->modify('first day of this month')->format('Y-m-d');
+            $mnext  = (new DateTimeImmutable($planDate))->modify('first day of next month')->format('Y-m-d');
+
+            $actualStmt = $pdo->prepare(
+                'SELECT COALESCE(SUM(ABS(l.qty_signed)), 0) / 100
+                   FROM inv_sales_ledger l
+                   JOIN ref_skus s ON s.id = l.sku_id_fk AND s.format = \'Cuve de service\'
+                  WHERE l.customer_id_fk = ? AND l.qty_signed < 0
+                    AND l.posting_date >= ? AND l.posting_date < ?'
+            );
+            $actualStmt->execute([$clientId, $mstart, $mnext]);
+            $actualMonthHl = (float)$actualStmt->fetchColumn();
+
+            // planned_month_hl: active pl_plan_items for this client this month
+            $plannedStmt = $pdo->prepare(
+                "SELECT COALESCE(SUM(target_volume_hl), 0)
+                   FROM pl_plan_items
+                  WHERE pkg_type = 'serving_tank'
+                    AND customer_id_fk = ?
+                    AND plan_date >= ? AND plan_date < ?
+                    AND is_active = 1"
+            );
+            $plannedStmt->execute([$clientId, $mstart, $mnext]);
+            $plannedMonthHl = (float)$plannedStmt->fetchColumn();
+
+            $usedHl    = $actualMonthHl + $plannedMonthHl;
+            $remaining = $budgetHl - $usedHl;
+
+            if ($remaining <= 0) {
+                $decisions[] = [
+                    'client'   => $clientName,
+                    'decision' => 'skipped',
+                    'reason'   => sprintf(
+                        'budget mensuel atteint (%.1f/%.1f hl)',
+                        $usedHl,
+                        $budgetHl
+                    ),
+                ];
+                continue;
+            }
+
+            // Cap volume to remaining budget
+            $targetHl = min($targetHl, $remaining);
+        }
+
+        $targetHl = round($targetHl, 2);
+
+        // Safety: never propose non-positive volume
+        if ($targetHl <= 0) {
+            $decisions[] = [
+                'client'   => $clientName,
+                'decision' => 'skipped',
+                'reason'   => 'volume calculé nul ou négatif après plafonds',
+            ];
+            continue;
+        }
+
         $rid        = $stc['recipe_id'];
         $recipeName = $stc['recipe_name'];
-        $targetHl   = $stc['target_volume_hl'];
+        // $targetHl already computed above (after caps applied)
+
+        $paceCtx = '';
+        if (isset($budgetHl) && $budgetHl !== null && $budgetHl > 0) {
+            $paceCtx = sprintf(' (mois %.1f/%.1f hl)', $usedHl, $budgetHl);
+        }
 
         $suggestReason = substr(
             sprintf(
-                'Cuve de service — %s (dû %s, cadence %dj)',
+                'Cuve de service — %s (dû %s, cadence %dj)%s',
                 $clientName,
                 $nextExpected,
-                $stc['cadence_days']
+                $stc['cadence_days'],
+                $paceCtx
             ),
             0, 255
         );
