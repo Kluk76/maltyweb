@@ -207,6 +207,7 @@
                 // Re-initialise datetime-local to now
                 if (formId === 'qa-form-net')  setNow('net-at');
                 if (formId === 'qa-form-cip')  setNow('cip-measured-at');
+                if (formId === 'qa-form-eau')  setNow('eau-at');
 
                 // Re-sync unit labels after reset
                 if (formId === 'qa-form-net') {
@@ -309,6 +310,115 @@
             '<td class="qa-mono">' + targVal + '</td>' +
             '<td><span class="qa-outcome ' + outcomeClass(r.outcome || 'pass') + '">' + outcomeLabel(r.outcome || 'pass') + '</span></td>'
         );
+    });
+
+    // ── Panel D — Water analysis param toggle ──────────────────────────────────
+
+    function initEauParamToggle() {
+        var paramSel  = document.getElementById('eau-param');
+        var numWrap   = document.getElementById('eau-num-wrap');
+        var paWrap    = document.getElementById('eau-pa-wrap');
+        var numInput  = document.getElementById('eau-val');
+        var paInput   = document.getElementById('eau-pa');
+        var unitSpan  = document.getElementById('eau-val-unit');
+        var hintSpan  = document.getElementById('eau-limit-hint');
+        if (!paramSel) return;
+
+        function applyParam() {
+            var id = paramSel.value;
+            var params = (window.QA_WATER_PARAMS && id) ? window.QA_WATER_PARAMS[id] : null;
+            if (!params) {
+                // No selection — show numeric, clear decorations
+                numWrap.hidden = false;
+                paWrap.hidden  = true;
+                numInput.required = true;
+                paInput.required  = false;
+                if (unitSpan) unitSpan.textContent = '';
+                if (hintSpan) hintSpan.textContent = '';
+                return;
+            }
+            var isPA = params.limit_operator === 'presence_absence';
+            numWrap.hidden = isPA;
+            paWrap.hidden  = !isPA;
+            numInput.required = !isPA;
+            paInput.required  = isPA;
+
+            // Unit suffix
+            if (unitSpan) unitSpan.textContent = params.unit ? params.unit : '';
+
+            // Limit hint
+            if (hintSpan) {
+                var hint = '';
+                if (isPA) {
+                    hint = '';
+                } else if (params.limit_min !== null && params.limit_max !== null) {
+                    hint = 'Limite : ' + params.limit_min + '–' + params.limit_max
+                        + (params.unit ? ' ' + escHtml(params.unit) : '');
+                } else if (params.limit_max !== null) {
+                    hint = 'Limite : ≤ ' + params.limit_max
+                        + (params.unit ? ' ' + escHtml(params.unit) : '');
+                } else if (params.limit_min !== null) {
+                    hint = 'Limite : ≥ ' + params.limit_min
+                        + (params.unit ? ' ' + escHtml(params.unit) : '');
+                } else if (params.limit_basis) {
+                    hint = escHtml(params.limit_basis) + ' (à confirmer)';
+                }
+                hintSpan.textContent = hint;
+            }
+        }
+
+        paramSel.addEventListener('change', applyParam);
+        applyParam(); // run on init to match default-selected state
+    }
+
+    initEauParamToggle();
+
+    // Default sampled_at to now
+    setNow('eau-at');
+
+    // ── Panel D — Water analysis submit ────────────────────────────────────────
+
+    wireForm('qa-form-eau', 'qa-eau-submit', 'qa-eau-msg', 'qa-eau-tbody', function (tbody, data) {
+        // Handle duplicate
+        if (data.duplicate) {
+            showMsg(document.getElementById('qa-eau-msg'), 'Déjà enregistré (doublon détecté).', false);
+            return;
+        }
+        var r = data.analysis || {};
+
+        // Result display
+        var resultStr;
+        if (r.measured_value !== null && r.measured_value !== undefined) {
+            resultStr = escHtml(parseFloat(r.measured_value).toFixed(4).replace('.', ','));
+            if (r.unit) resultStr += ' ' + escHtml(r.unit);
+        } else if (r.measured_text) {
+            resultStr = escHtml(r.measured_text);
+        } else {
+            resultStr = '—';
+        }
+
+        // Conformity badge
+        var isCon = (r.is_conforming !== null && r.is_conforming !== undefined) ? !!r.is_conforming : null;
+        var conBadge = '<span class="qa-conform ' + conformClass(isCon) + '">' + conformLabel(isCon) + '</span>';
+
+        var limitStr = r.action_limit ? escHtml(r.action_limit) : '—';
+        var sampledAt = r.sampled_at ? escHtml(String(r.sampled_at).substring(0, 16)) : '—';
+        var spLabel = r.sp_code ? escHtml(r.sp_code + ' — ' + (r.sp_label || '')) : '—';
+        var pLabel  = r.p_label ? escHtml(r.p_label) : '—';
+
+        prependRow(tbody,
+            '<td class="qa-mono">' + sampledAt + '</td>' +
+            '<td>' + spLabel + '</td>' +
+            '<td>' + pLabel + '</td>' +
+            '<td class="qa-mono">' + resultStr + '</td>' +
+            '<td class="qa-mono qa-comment">' + limitStr + '</td>' +
+            '<td>' + conBadge + '</td>' +
+            '<td class="qa-comment">' + escHtml(r.lab_name || '—') + '</td>' +
+            '<td class="qa-mono qa-comment">' + escHtml(r.report_ref || '—') + '</td>'
+        );
+
+        // Re-init toggle after form reset
+        initEauParamToggle();
     });
 
 })();

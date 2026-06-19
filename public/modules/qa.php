@@ -27,7 +27,7 @@ header('Content-Type: text/html; charset=utf-8');
 
 // View param — read THEN validate
 $view = $_GET['view'] ?? 'all';
-if (!in_array($view, ['all', 'net', 'cip', 'recep'], true)) {
+if (!in_array($view, ['all', 'net', 'cip', 'recep', 'eau'], true)) {
     $view = 'all';
 }
 
@@ -114,15 +114,43 @@ try {
           ORDER BY b.id DESC LIMIT 20"
     )->fetchAll(PDO::FETCH_ASSOC);
 
+    // Panel D: sample points
+    $waterSamplePoints = $pdo->query(
+        "SELECT id, code, label, is_ccp FROM ref_water_sample_points WHERE is_active=1 ORDER BY sort_order"
+    )->fetchAll(PDO::FETCH_ASSOC);
+
+    // Panel D: parameters
+    $waterParams = $pdo->query(
+        "SELECT id, code, label, unit, limit_operator, limit_min, limit_max, limit_basis FROM ref_water_parameters WHERE is_active=1 ORDER BY sort_order"
+    )->fetchAll(PDO::FETCH_ASSOC);
+
+    // Panel D: recent 25 water analyses
+    $waterAnalyses = $pdo->query(
+        "SELECT w.id, w.sample_point_id_fk, w.parameter_id_fk,
+                w.measured_value, w.measured_text, w.unit, w.action_limit,
+                w.is_conforming, w.lab_name, w.method, w.sampled_at,
+                w.report_ref, w.comments,
+                sp.code AS sp_code, sp.label AS sp_label,
+                p.label AS p_label, p.unit AS p_unit
+           FROM qa_water_analysis w
+           JOIN ref_water_sample_points sp ON sp.id = w.sample_point_id_fk
+           JOIN ref_water_parameters p ON p.id = w.parameter_id_fk
+          ORDER BY w.sampled_at DESC, w.id DESC
+          LIMIT 25"
+    )->fetchAll(PDO::FETCH_ASSOC);
+
 } catch (Throwable $e) {
-    $loadErr      = $e->getMessage();
-    $pkgRows      = [];
-    $netReadings  = [];
-    $cipRows      = [];
-    $cipChecks    = [];
-    $pkgMiRows    = [];
-    $deliveryRows = [];
-    $bottleChecks = [];
+    $loadErr           = $e->getMessage();
+    $pkgRows           = [];
+    $netReadings       = [];
+    $cipRows           = [];
+    $cipChecks         = [];
+    $pkgMiRows         = [];
+    $deliveryRows      = [];
+    $bottleChecks      = [];
+    $waterSamplePoints = [];
+    $waterParams       = [];
+    $waterAnalyses     = [];
 }
 
 $csrf          = csrf_token();
@@ -246,6 +274,7 @@ function qa_method_label(string $method): string
     <a href="?view=net"   class="qa-tab <?= $view === 'net'   ? 'qa-tab--active' : '' ?>">Poids / Volume</a>
     <a href="?view=cip"   class="qa-tab <?= $view === 'cip'   ? 'qa-tab--active' : '' ?>">Nettoyage (PRP-04)</a>
     <a href="?view=recep" class="qa-tab <?= $view === 'recep' ? 'qa-tab--active' : '' ?>">Réception verre</a>
+    <a href="?view=eau" class="qa-tab <?= $view === 'eau' ? 'qa-tab--active' : '' ?>">Analyse de l'eau</a>
   </nav>
 
   <!-- ═══════════════════════════════════════════════════════════════════════
@@ -735,8 +764,186 @@ function qa_method_label(string $method): string
   </section>
   <?php endif ?>
 
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       PANEL D — Analyse de l'eau
+  ════════════════════════════════════════════════════════════════════════ -->
+  <?php if ($view === 'all' || $view === 'eau'): ?>
+  <section class="qa-panel" id="qa-panel-eau">
+    <div class="qa-panel__header">
+      <h2 class="qa-panel__title">Analyse de l'eau</h2>
+      <p class="qa-panel__desc">Suivi des points de contrôle eau (CCP et PRP) — pH, turbidité, micro, etc.</p>
+    </div>
+
+    <div class="op-form__card qa-form-card">
+      <div class="op-form__card-title">Nouveau résultat d'analyse</div>
+      <form id="qa-form-eau" action="/api/qa-water-analysis.php" method="post" novalidate>
+        <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+
+        <div class="qa-form-grid">
+
+          <!-- sample_point_id_fk -->
+          <div class="op-form__field">
+            <label class="op-form__label" for="eau-point">Point de prélèvement <span class="qa-req">*</span></label>
+            <select class="op-form__input" id="eau-point" name="sample_point_id_fk" required>
+              <option value="">— Sélectionner —</option>
+              <?php foreach ($waterSamplePoints as $sp): ?>
+              <option value="<?= (int) $sp['id'] ?>">
+                <?= htmlspecialchars($sp['code'] . ' — ' . $sp['label']) ?>
+                <?php if ($sp['is_ccp']): ?> <span class="qa-ccp-tag">CCP</span><?php endif ?>
+              </option>
+              <?php endforeach ?>
+            </select>
+          </div>
+
+          <!-- parameter_id_fk -->
+          <div class="op-form__field">
+            <label class="op-form__label" for="eau-param">Paramètre <span class="qa-req">*</span></label>
+            <select class="op-form__input" id="eau-param" name="parameter_id_fk" required>
+              <option value="">— Sélectionner —</option>
+              <?php foreach ($waterParams as $wp): ?>
+              <option value="<?= (int) $wp['id'] ?>"><?= htmlspecialchars($wp['code'] . ' — ' . $wp['label']) ?></option>
+              <?php endforeach ?>
+            </select>
+          </div>
+
+          <!-- measured_value (numeric) — shown/hidden by JS -->
+          <div class="op-form__field" id="eau-num-wrap">
+            <label class="op-form__label" for="eau-val">
+              Valeur mesurée <span class="qa-req">*</span>
+              <span class="qa-unit" id="eau-val-unit"></span>
+            </label>
+            <input type="number" class="op-form__input" id="eau-val" name="measured_value"
+                   step="any" placeholder="0.00">
+            <span class="qa-limit-hint" id="eau-limit-hint"></span>
+          </div>
+
+          <!-- measured_text (presence/absence select) — shown/hidden by JS -->
+          <div class="op-form__field" id="eau-pa-wrap" hidden>
+            <label class="op-form__label" for="eau-pa">Résultat <span class="qa-req">*</span></label>
+            <select class="op-form__input" id="eau-pa" name="measured_text">
+              <option value="Absence" selected>Absence</option>
+              <option value="Présence">Présence</option>
+            </select>
+          </div>
+
+          <!-- sampled_at -->
+          <div class="op-form__field">
+            <label class="op-form__label" for="eau-at">Date / heure de prélèvement <span class="qa-req">*</span></label>
+            <input type="datetime-local" class="op-form__input" id="eau-at" name="sampled_at" required>
+          </div>
+
+          <!-- lab_name -->
+          <div class="op-form__field">
+            <label class="op-form__label" for="eau-lab">Laboratoire <span class="qa-opt">(opt.)</span></label>
+            <input type="text" class="op-form__input" id="eau-lab" name="lab_name"
+                   maxlength="190" placeholder="ex. Eurofins, interne…">
+          </div>
+
+          <!-- method -->
+          <div class="op-form__field">
+            <label class="op-form__label" for="eau-method">Méthode <span class="qa-opt">(opt.)</span></label>
+            <input type="text" class="op-form__input" id="eau-method" name="method"
+                   maxlength="190" placeholder="ex. ISO 7027">
+          </div>
+
+          <!-- report_ref -->
+          <div class="op-form__field">
+            <label class="op-form__label" for="eau-ref">Réf. rapport <span class="qa-opt">(opt.)</span></label>
+            <input type="text" class="op-form__input" id="eau-ref" name="report_ref"
+                   maxlength="120" placeholder="ex. LAB-2026-042">
+          </div>
+
+          <!-- comments -->
+          <div class="op-form__field qa-field--wide">
+            <label class="op-form__label" for="eau-comments">Commentaires <span class="qa-opt">(opt.)</span></label>
+            <textarea class="op-form__input qa-textarea" id="eau-comments" name="comments"
+                      rows="2" placeholder="Observations éventuelles…"></textarea>
+          </div>
+
+        </div>
+
+        <div class="qa-form-actions">
+          <button type="submit" class="op-form__btn op-form__btn--primary" id="qa-eau-submit">
+            Enregistrer l'analyse
+          </button>
+          <span class="qa-inline-msg" id="qa-eau-msg" hidden></span>
+        </div>
+      </form>
+    </div>
+
+    <!-- Readback table -->
+    <div class="op-form__card qa-readback-card">
+      <div class="op-form__card-title">25 dernières analyses</div>
+      <?php if (empty($waterAnalyses)): ?>
+        <p class="qa-empty">Aucune analyse enregistrée.</p>
+      <?php else: ?>
+      <div class="qa-table-wrap">
+        <table class="qa-table" id="qa-eau-table">
+          <thead>
+            <tr>
+              <th>Date prélèvement</th>
+              <th>Point</th>
+              <th>Paramètre</th>
+              <th>Résultat</th>
+              <th>Limite</th>
+              <th>Conformité</th>
+              <th>Labo</th>
+              <th>Réf.</th>
+            </tr>
+          </thead>
+          <tbody id="qa-eau-tbody">
+            <?php foreach ($waterAnalyses as $wa): ?>
+            <?php
+              $waConforming = (isset($wa['is_conforming']) && $wa['is_conforming'] !== null)
+                ? (int) $wa['is_conforming'] : null;
+              $waResult = ($wa['measured_value'] !== null)
+                ? htmlspecialchars(number_format((float) $wa['measured_value'], 4, ',', ' '))
+                  . (!empty($wa['unit']) ? ' ' . htmlspecialchars($wa['unit']) : '')
+                : htmlspecialchars($wa['measured_text'] ?? '—');
+              $waLimit = htmlspecialchars($wa['action_limit'] ?? '—');
+            ?>
+            <tr>
+              <td class="qa-mono"><?= htmlspecialchars($wa['sampled_at'] ? substr($wa['sampled_at'], 0, 16) : '—') ?></td>
+              <td><?= htmlspecialchars($wa['sp_code'] . ' — ' . $wa['sp_label']) ?></td>
+              <td><?= htmlspecialchars($wa['p_label']) ?></td>
+              <td class="qa-mono"><?= $waResult ?></td>
+              <td class="qa-mono qa-comment"><?= $waLimit ?></td>
+              <td>
+                <span class="qa-conform <?= qa_conform_class($waConforming) ?>">
+                  <?= qa_conform_label($waConforming) ?>
+                </span>
+              </td>
+              <td class="qa-comment"><?= htmlspecialchars($wa['lab_name'] ?? '—') ?></td>
+              <td class="qa-mono qa-comment"><?= htmlspecialchars($wa['report_ref'] ?? '—') ?></td>
+            </tr>
+            <?php endforeach ?>
+          </tbody>
+        </table>
+      </div>
+      <?php endif ?>
+    </div>
+  </section>
+  <?php endif ?>
+
 </main>
 
+<?php
+// Build params map for JS
+$waterParamsMap = [];
+foreach ($waterParams as $wp) {
+    $waterParamsMap[$wp['id']] = [
+        'label'          => $wp['label'],
+        'unit'           => $wp['unit'],
+        'limit_operator' => $wp['limit_operator'],
+        'limit_min'      => $wp['limit_min'] !== null ? (float) $wp['limit_min'] : null,
+        'limit_max'      => $wp['limit_max'] !== null ? (float) $wp['limit_max'] : null,
+        'limit_basis'    => $wp['limit_basis'],
+    ];
+}
+?>
+<script>
+window.QA_WATER_PARAMS = <?= json_encode($waterParamsMap, JSON_HEX_TAG | JSON_HEX_AMP | JSON_UNESCAPED_UNICODE) ?>;
+</script>
 <script>
 window.QA = {
     csrf: <?= json_encode($csrf, JSON_HEX_TAG | JSON_HEX_AMP) ?>,

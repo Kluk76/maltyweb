@@ -295,3 +295,40 @@ body.qa-page .db-flash.db-flash--err {
     padding: 6px 7px;
   }
 }
+
+/* ── Water analysis — limit hint text ──────────────────────────────────────── */
+
+body.qa-page .qa-limit-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.75rem;
+  color: var(--ink-label);
+  font-family: "JetBrains Mono", monospace;
+  letter-spacing: 0.02em;
+  min-height: 1em;
+}
+
+/* ── Water analysis — CCP tag in option (styled on the label span) ─────────── */
+
+body.qa-page .qa-ccp-tag {
+  display: inline-block;
+  font-size: 0.65rem;
+  font-family: "JetBrains Mono", monospace;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+  letter-spacing: 0.06em;
+  background: color-mix(in srgb, var(--ember) 15%, var(--bg));
+  color: var(--ember);
+  border: 1px solid color-mix(in srgb, var(--ember) 30%, var(--bg));
+  vertical-align: middle;
+  margin-left: 4px;
+}
+
+/* ── Neutral conformity badge (for NULL is_conforming) ─────────────────────── */
+
+body.qa-page .qa-badge--neutral {
+  color: var(--ink-mute);
+  background: color-mix(in srgb, var(--ink-mute) 10%, var(--bg));
+  border: 1px solid var(--hairline);
+}
