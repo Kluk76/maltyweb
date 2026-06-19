@@ -454,7 +454,7 @@ def _already_seen(conn: pymysql.connections.Connection, message_id: str) -> int 
         return int(row["id"]) if row else None
 
 
-def _serialise_parsed_order(order: ParsedOrder) -> str:
+def _serialise_parsed_order(order: ParsedOrder, extra_hints: dict | None = None) -> str:
     """
     Serialise a ParsedOrder to JSON for storage in doc_email_messages.parsed_json.
 
@@ -468,23 +468,30 @@ def _serialise_parsed_order(order: ParsedOrder) -> str:
       "lines": [
         {"sku_hint": "<product hint>", "qty": <float>, "raw": "<verbatim>"},
         ...
-      ]
+      ],
+      // optional extra keys injected by call site (e.g. _internal_rep, _rep_email):
+      "_internal_rep": true,          // present only when sender is internal rep
+      "_rep_email": "<email>",        // normalised from-address email
     }
+
+    extra_hints: optional dict of additional top-level fields to merge into the
+    output (used by the ingest layer to inject internal-rep flags without
+    modifying the frozen ParsedOrder dataclass).
     """
-    return json.dumps(
-        {
-            "_kind":           "parsed_order_hints",
-            "_schema_version": 1,
-            "customer_hint":   order.customer_hint,
-            "requested_date":  order.requested_date.isoformat() if order.requested_date else None,
-            "notes":           order.notes,
-            "lines": [
-                {"sku_hint": ln.sku_hint, "qty": ln.qty, "raw": ln.raw}
-                for ln in order.lines
-            ],
-        },
-        ensure_ascii=False,
-    )
+    d: dict = {
+        "_kind":           "parsed_order_hints",
+        "_schema_version": 1,
+        "customer_hint":   order.customer_hint,
+        "requested_date":  order.requested_date.isoformat() if order.requested_date else None,
+        "notes":           order.notes,
+        "lines": [
+            {"sku_hint": ln.sku_hint, "qty": ln.qty, "raw": ln.raw}
+            for ln in order.lines
+        ],
+    }
+    if extra_hints:
+        d.update(extra_hints)
+    return json.dumps(d, ensure_ascii=False)
 
 
 def _upsert_email_message(
@@ -649,7 +656,19 @@ def process_message(
             parsed_order   = result
             parse_status   = "parsed"
             parser_matched = _resolve_parser_name(ctx, env)
-            parsed_json    = _serialise_parsed_order(result)
+            # Internal-rep detection: when customer_hint='' AND From is @lanebuleuse.ch,
+            # the sender IS the customer (internal sales rep ordering for themselves).
+            # ParsedOrder is frozen so flags are injected via extra_hints at serialisation.
+            _extra_hints: dict = {}
+            # Extract bare email from "Name <email>" or bare "email@domain" FIRST,
+            # then test the address — From headers usually carry a display name so a
+            # raw endswith() on the full header would miss "<…@lanebuleuse.ch>".
+            _rep_email = (ctx.from_address or "").strip().lower()
+            if "<" in _rep_email and ">" in _rep_email:
+                _rep_email = _rep_email[_rep_email.index("<") + 1 : _rep_email.index(">")].strip()
+            if result.customer_hint == "" and _rep_email.endswith("@lanebuleuse.ch"):
+                _extra_hints = {"_internal_rep": True, "_rep_email": _rep_email}
+            parsed_json    = _serialise_parsed_order(result, _extra_hints or None)
             log.info(
                 "  [parsed] %s — parser=%s customer_hint=%r lines=%d",
                 message_id[:60],

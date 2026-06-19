@@ -316,6 +316,28 @@ $flashMsg  = $flash['msg'] ?? '';
           $subject      = htmlspecialchars($em['subject'] ?? '(sans objet)', ENT_QUOTES | ENT_HTML5);
           $receivedAt   = htmlspecialchars($em['received_at'] ?? '', ENT_QUOTES | ENT_HTML5);
           $rawBody      = htmlspecialchars($em['raw_body'] ?? '', ENT_QUOTES | ENT_HTML5);
+          // Internal-rep pre-fill: when _internal_rep=true in parsed_json (sender IS the customer)
+          $prefilledCustId   = 0;
+          $prefilledCustName = '';
+          if (!empty($hints['_internal_rep'])) {
+              $repEmail = strtolower(trim((string)($hints['_rep_email'] ?? '')));
+              if ($repEmail !== '') {
+                  $repStmt = $pdo->prepare(
+                      'SELECT r.customer_id_fk, c.name
+                         FROM ref_internal_order_accounts r
+                         JOIN ref_customers c ON c.id = r.customer_id_fk
+                        WHERE r.sender_email = ?
+                          AND r.is_active = 1
+                        LIMIT 1'
+                  );
+                  $repStmt->execute([$repEmail]);
+                  $repRow = $repStmt->fetch(PDO::FETCH_ASSOC);
+                  if ($repRow) {
+                      $prefilledCustId   = (int) $repRow['customer_id_fk'];
+                      $prefilledCustName = htmlspecialchars($repRow['name'], ENT_QUOTES | ENT_HTML5);
+                  }
+              }
+          }
         ?>
         <?php $isTwinPending = ($twinPendingEmailId > 0 && (int)$em['id'] === $twinPendingEmailId); ?>
         <div class="eo-review-card<?= $isTwinPending ? ' eo-review-card--twin-pending' : '' ?>"
@@ -355,12 +377,19 @@ $flashMsg  = $flash['msg'] ?? '';
                 <input type="hidden" name="action"       value="validate">
                 <input type="hidden" name="email_msg_id" value="<?= (int)$em['id'] ?>">
 
-                <!-- Customer — MUST be picked from typeahead, never auto-resolved -->
+                <!-- Customer — MUST be picked from typeahead, never auto-resolved
+                     Exception: internal-rep orders pre-fill customer_id + name from
+                     ref_internal_order_accounts when _internal_rep=true in parsed_json.
+                     Operator can still override by typing a new name and picking. -->
                 <div class="eo-field">
                   <label class="eo-field__label eo-field__label--required" for="eo-cust-<?= (int)$em['id'] ?>">
                     Client
                   </label>
-                  <?php if ($custHint): ?>
+                  <?php if ($prefilledCustId > 0): ?>
+                    <div class="eo-field__hint eo-field__hint--prefilled">
+                      Pré-rempli depuis le compte interne de l'expéditeur — confirme ou modifie.
+                    </div>
+                  <?php elseif ($custHint): ?>
                     <div class="eo-field__hint">Indice parsé : « <?= $custHint ?> » — confirme en sélectionnant dans la liste</div>
                   <?php endif ?>
                   <div class="eo-typeahead-wrap">
@@ -369,10 +398,10 @@ $flashMsg  = $flash['msg'] ?? '';
                            class="eo-input eo-cust-search"
                            placeholder="Rechercher un client…"
                            autocomplete="off"
-                           value=""><!-- ALWAYS start empty — human must pick -->
+                           value="<?= $prefilledCustId > 0 ? $prefilledCustName : '' ?>">
                     <ul class="eo-typeahead-dropdown eo-cust-dropdown" role="listbox" aria-label="Clients" hidden></ul>
-                    <!-- customer_id starts at 0 — only set when operator picks from dropdown -->
-                    <input type="hidden" name="customer_id" class="eo-customer-id" value="0">
+                    <!-- customer_id: pre-filled for internal-rep orders; 0 until operator picks for external orders -->
+                    <input type="hidden" name="customer_id" class="eo-customer-id" value="<?= $prefilledCustId ?>">
                   </div>
                 </div>
 

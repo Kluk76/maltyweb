@@ -230,6 +230,14 @@ body.email-orders-page .eo-field__hint {
   margin-bottom: 0.25rem;
 }
 
+body.email-orders-page .eo-field__hint--prefilled {
+  color: var(--hop-deep);
+  background: color-mix(in srgb, var(--hop) 8%, transparent);
+  border: 1px solid var(--hop-soft);
+  border-radius: 4px;
+  padding: 0.2rem 0.5rem;
+}
+
 body.email-orders-page .eo-input {
   width: 100%;
   padding: 0.45rem 0.65rem;
