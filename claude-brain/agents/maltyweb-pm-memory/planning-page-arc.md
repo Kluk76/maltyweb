@@ -244,7 +244,7 @@ system_settings (for reference): UNIQUE (section,key_name); value_text XOR value
 **Commits — all on maltyweb main, ALL PUSHED:** planner chain `521ccbf`→`6eb25a7`→`2e02d1d`→`652bbae`→`982f298` (pushed earlier `73b5634..982f298`), then fiche `43abfce` (mig 411 + expeditions.php), pushed `fa50eb5..43abfce`. **🔴 NOTE: the whole planner commit chain that the index/§AS-BUILT recorded as "UNPUSHED, awaiting operator push" is now PUSHED.**
 
 🔴 **OPEN FOLLOW-UPS (carry on arc):**
-- **V2 planner wiring of budget/size/count** — pace-check (Σ proposed+actual vs MONTHLY budget → over/under-pace in `decisions[]`); `serving_tank_size_hl` caps a single fill; `serving_tank_count` bounds same-day fills. Deferred per Round-6 ruling; now carries MONTHLY budget semantics.
+- ~~**V2 planner wiring of budget/size/count**~~ — ✅ DONE Round-7 2026-06-19 (`50e4eb3`): pace-check (remaining = MONTHLY budget − actual_month − planned_month, month-scoped) + count×size capacity cap, all folded into target_volume_hl min(). Graceful NULL degradation = pre-round-7 median. See §BUDGET→PLANNER WIRING (Round-7) AS-BUILT.
 - **MASTER GATE STILL OPEN — authenticated MANAGER browser UAT of:** (a) the WHOLE planner all 5 rounds incl. serving-tank cards; (b) the salle-de-controle objectifs settings/toggles; (c) the NEW serving-tank fiche block (toggle + count/size/budget + réel-vs-budget). Structurally + rollback verified only; needs a manager click-through.
 - **Manual serving_tank add-form still has NO client picker** (rows stay customer-NULL) — separate, still open. (Add/remove of a customer AS a serving-tank client is now RESOLVED — the fiche toggle does it.)
 - `serving_tank_cadence_days` override col still UNUSED; v1 empty-at-week-start free-count limitation still open (TankSimulator serving-dest TODO ~L648).
@@ -275,6 +275,31 @@ All NULL-default, app-owned. Migration = ONE `ALTER ref_customers ADD … , ADD 
 **4. BC-SYNC CLOBBER — SAFE BY DESIGN, no protection needed beyond keeping the cols off the sync allowlist.** Verified: `scripts/python/sync_bc_customers.py` is the BC→ref_customers writer (daily drift-reconciliation). Its UPDATE allowlists are BOUNDED and explicit — `_apply_match_full` (L663-689) and `apply_drift_auto` (L729-743) write ONLY address_line1/2, city, postal_code, country_code, phone, email, is_active, bc_customer_no, bc_last_synced_at, updated_by='sync_bc_customers'. The code even carries the comment "NEVER touches curated fields (name, trade_channel, etc.)". So is_serving_tank_client + the 3 new tank cols (like trade_channel, sale_class, is_private, is_serving_tank_client already) are APP-OWNED and the sync will not clobber them. **Ruling: the new cols are curated/app-owned; the sync's bounded allowlist already protects them. The ONLY discipline = NEVER add these cols to the sync's UPDATE allowlist.** (Same governance as the existing curated fields — the sync model is allowlist-write, not full-row-overwrite, so app-owned cols are safe.) ⚠️ One caveat: `is_active` IS BC-owned (sync writes it) — do NOT conflate the serving-tank flag with is_active; they're independent.
 
 EQUIP sql+coder+ui+webapp-testing (manager-login UAT — the master gate already outstanding for the whole planner). Mig: ONE ALTER ref_customers (3 new cols; the flag + cadence already exist from mig 407). Commit by PATHSPEC.
+
+---
+
+## §BUDGET→PLANNER WIRING (Round-7) — ✅ SHIPPED + DEPLOYED + COMMITTED + PUSHED 2026-06-19 (maltyweb main). Closes the Round-6 V2 follow-up (budget/size/count now CONSUMED by the producer). MONTHLY budget semantics.
+**AS-BUILT — `app/planning-predict.php` Pass 2.5 (serving-tank) now consumes the 3 fiche cols when set; GRACEFUL NULL degradation = identical to pre-round-7 when unset (all 3 NULL in prod today — operator hasn't filled them).**
+- **`target_volume_hl = min(median fill, serving_tank_count × serving_tank_size_hl, remaining_budget)`** where `remaining_budget = serving_tank_budget_hl − actual_month_hl − planned_month_hl`, **scoped to the MONTH of the fill date (Europe/Zurich).**
+  - `actual_month_hl` = month-to-date cuve sales from `inv_sales_ledger` for that customer (the réel-du-mois basis, same as the Round-6 fiche line).
+  - `planned_month_hl` = sum of active `pl_plan_items` section=serving_tank for that customer × month (folds in already-proposed/planned fills so the pace-check doesn't double-spend the envelope).
+- **`remaining ≤ 0` → NO proposal** + `decisions[]` 'budget mensuel atteint (X/Y hl)'. Else proposal emitted with pace context '(mois X/Y hl)' appended to `suggest_reason`.
+- `predict_load_serving_tank_clients()` SELECT extended to fetch budget/count/size alongside the flag.
+- **Capacity cap (count×size) = DONE this round** (the size_hl single-fill cap + count bound, folded into the same min()).
+- **VERIFIED LIVE (Opus rollback harness, then rolled back):** Les Docks id=6 with budget=5/count=2/size=10 → fill capped 10→5 hl, reason '(mois 0.0/5.0 hl)'; prod untouched (rollback). NULL-path = exact pre-round-7 median behaviour confirmed.
+
+**Commits — maltyweb main, PUSHED `69c747f..50e4eb3`:**
+- `bce4e6b` — Round-6 fiche CSS (`.exp-ct-st-*` classes that were DEPLOYED with `43abfce` but OMITTED from that commit's pathspec — now committed/recorded; classic commit-by-pathspec miss, fixed).
+- `50e4eb3` — Round-7 pace-check + capacity cap.
+
+🔴 **OPEN FOLLOW-UPS after Round-7 (carry on arc):**
+- **MASTER GATE STILL OPEN** — authenticated MANAGER browser UAT of the WHOLE arc: planner 5 rounds + serving-tank cards + salle-de-controle objectifs settings + the Round-6 serving-tank fiche block + the Round-7 budget pace-check effect ONCE budgets are entered. Structurally + rollback verified only.
+- **Operator must ENTER serving_tank_count/size/budget per client** for the pace-check + capacity cap to take effect — all 3 NULL today, so the producer currently still uses the median (graceful degradation working as designed).
+- **Manual serving_tank add-form still has NO client picker** (rows stay customer-NULL) — still open.
+- **`serving_tank_cadence_days` override col still UNUSED** (derived-only) — still open.
+- **v1 empty-at-week-start free serving-tank-count limitation** — TankSimulator serving-dest TODO ~L648 STILL unbuilt — still open.
+
+---
 
 ### §SERVING-TANK SUGGESTIONS — Round-5 PM ruling (2026-06-19, ORIGINAL design — kept for provenance; now BUILT per AS-BUILT above)
 Kouros: serving-tank (cuve de service) fills must be DEMAND-driven by a fixed set of recurring cuve-de-service CLIENTS + their cadence, NOT by physical free-tank count (the v1 gate `predict_load_free_serving_tank_count` is wrong as a TRIGGER). New 3rd trigger class = **client-recurrence-driven** (distinct from demand/FG-coverage and process/tank-state).
