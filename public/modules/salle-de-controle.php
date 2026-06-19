@@ -1468,6 +1468,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'pkg_keg_hl_year',
                 'pkg_bottle_hl_year',
                 'pkg_can_hl_year',
+                'workday_mon',
+                'workday_tue',
+                'workday_wed',
+                'workday_thu',
+                'workday_fri',
+                'workday_sat',
+                'workday_sun',
+                'max_brews_per_day',
+                'max_packaging_runs_per_day',
             ];
 
             // Step 1: read with defaults, then validate (PHP 8 strict — never NULL before string ops)
@@ -1481,6 +1490,46 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $newVal = (float) $rawVal;
             if ($newVal < 0.0) {
                 throw new RuntimeException('La valeur doit être ≥ 0.');
+            }
+
+            // Workday toggle validation
+            if (str_starts_with($keyName, 'workday_')) {
+                if ($newVal !== 0.0 && $newVal !== 1.0) {
+                    throw new RuntimeException('Valeur jour ouvré invalide (0 ou 1).');
+                }
+                // Guard: at least one working day must remain active
+                if ($newVal === 0.0) {
+                    $chkStmt = $pdo->prepare(
+                        "SELECT COUNT(*) FROM system_settings
+                          WHERE section = 'production_targets'
+                            AND key_name LIKE 'workday\\_%'
+                            AND value_num = 1
+                            AND is_active = 1"
+                    );
+                    $chkStmt->execute();
+                    $enabledCount = (int) $chkStmt->fetchColumn();
+                    // If this key is currently enabled (1) and turning it off would leave 0 enabled
+                    $currentStmt = $pdo->prepare(
+                        "SELECT value_num FROM system_settings
+                          WHERE section = 'production_targets' AND key_name = ? AND is_active = 1
+                          LIMIT 1"
+                    );
+                    $currentStmt->execute([$keyName]);
+                    $currentVal = (float) ($currentStmt->fetchColumn() ?? 0);
+                    if ($currentVal === 1.0 && $enabledCount <= 1) {
+                        throw new RuntimeException('Au moins un jour ouvré doit rester actif.');
+                    }
+                }
+            }
+
+            // Brew-cap validation
+            if ($keyName === 'max_brews_per_day' && $newVal < 1.0) {
+                throw new RuntimeException('Au moins 1 brassin/jour.');
+            }
+
+            // Packaging-cap validation
+            if ($keyName === 'max_packaging_runs_per_day' && $newVal < 1.0) {
+                throw new RuntimeException('Au moins 1 conditionnement/jour.');
             }
 
             // Step 2: fetch current row for before-state
@@ -4723,7 +4772,7 @@ window.SDC_TANK_ERR = null;
         <div class="cip-table-card" style="margin-top:24px;">
           <div class="cip-table-head">
             <span class="cip-table-title">Paramètres objectifs</span>
-            <span class="cip-count">7 valeurs racines · dérivation hebdo/mensuel en temps réel</span>
+            <span class="cip-count">10 paramètres · 7 jours ouvrés + 2 plafonds · dérivation hebdo/mensuel en temps réel</span>
           </div>
           <div style="padding:10px 16px 4px;font-size:11px;line-height:1.5;color:var(--ink-soft);background:rgba(0,0,0,.03);border-bottom:1px solid rgba(0,0,0,.06);">
             Ces valeurs sont des objectifs de planification uniquement. Elles n'influencent ni le COGS, ni la taxe bière, ni aucun calcul fiscal.
@@ -4734,6 +4783,8 @@ window.SDC_TANK_ERR = null;
               'wort_hl_year', 'wort_brews_year',
               'operating_weeks', 'operating_months',
               'pkg_keg_hl_year', 'pkg_bottle_hl_year', 'pkg_can_hl_year',
+              'max_brews_per_day',
+              'max_packaging_runs_per_day',
           ];
           foreach ($targetKeys as $tkey):
               if (!isset($prodTargetsByKey[$tkey])) continue;
@@ -4770,7 +4821,7 @@ window.SDC_TANK_ERR = null;
                   id="pt_val_<?= htmlspecialchars($tkey) ?>"
                   name="value_num"
                   type="number"
-                  min="0"
+                  min="<?= in_array($tkey, ['max_brews_per_day', 'max_packaging_runs_per_day'], true) ? '1' : '0' ?>"
                   step="1"
                   class="cond-edit-input"
                   value="<?= htmlspecialchars(number_format($curVal, 0, '.', '')) ?>"
@@ -4785,6 +4836,71 @@ window.SDC_TANK_ERR = null;
           </div>
           <?php endforeach ?>
         </div><!-- /settings card -->
+
+        <!-- JOURS OUVRÉS (working-day toggles) -->
+        <?php
+        $workdayDefs = [
+            'workday_mon' => 'Lun',
+            'workday_tue' => 'Mar',
+            'workday_wed' => 'Mer',
+            'workday_thu' => 'Jeu',
+            'workday_fri' => 'Ven',
+            'workday_sat' => 'Sam',
+            'workday_sun' => 'Dim',
+        ];
+        ?>
+        <div class="cip-table-card" style="margin-top:16px;">
+          <div class="cip-table-head">
+            <span class="cip-table-title">Jours ouvrés</span>
+            <span class="cip-count">7 jours · moteur de suggestions de planning</span>
+          </div>
+          <div style="padding:10px 16px 4px;font-size:11px;line-height:1.5;color:var(--ink-soft);background:rgba(0,0,0,.03);border-bottom:1px solid rgba(0,0,0,.06);">
+            Le moteur de suggestions ne propose des brassins que les jours marqués comme ouvrés.
+          </div>
+          <div style="padding:16px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+            <?php foreach ($workdayDefs as $wdKey => $wdLabel):
+              $wdVal = isset($prodTargetsByKey[$wdKey]) ? (float)$prodTargetsByKey[$wdKey]['value_num'] : 0.0;
+              $wdOn  = ($wdVal === 1.0);
+            ?>
+            <?php if ($canEdit): ?>
+            <form method="post" action="/modules/salle-de-controle.php" style="margin:0;">
+              <input type="hidden" name="csrf"      value="<?= htmlspecialchars($csrf) ?>">
+              <input type="hidden" name="action"    value="update_production_target">
+              <input type="hidden" name="key_name"  value="<?= htmlspecialchars($wdKey) ?>">
+              <input type="hidden" name="value_num" value="<?= $wdOn ? '0' : '1' ?>">
+              <button
+                type="submit"
+                title="<?= $wdOn ? 'Désactiver ' . $wdLabel : 'Activer ' . $wdLabel ?>"
+                style="
+                  min-width:44px;min-height:44px;
+                  padding:10px 14px;
+                  border-radius:8px;
+                  border: 1px solid <?= $wdOn ? 'var(--hop)' : 'var(--hairline-2)' ?>;
+                  background: <?= $wdOn ? 'color-mix(in srgb, var(--hop) 18%, transparent)' : 'transparent' ?>;
+                  color: <?= $wdOn ? 'var(--hop)' : 'var(--ink-mute)' ?>;
+                  font-family:'JetBrains Mono',monospace;
+                  font-size:11px;font-weight:600;letter-spacing:.08em;
+                  cursor:pointer;
+                  transition:background .15s,border-color .15s,color .15s;
+                "
+              ><?= htmlspecialchars($wdLabel) ?></button>
+            </form>
+            <?php else: ?>
+            <span style="
+              display:inline-flex;align-items:center;justify-content:center;
+              min-width:44px;min-height:44px;
+              padding:10px 14px;
+              border-radius:8px;
+              border: 1px solid <?= $wdOn ? 'var(--hop)' : 'var(--hairline-2)' ?>;
+              background: <?= $wdOn ? 'color-mix(in srgb, var(--hop) 18%, transparent)' : 'transparent' ?>;
+              color: <?= $wdOn ? 'var(--hop)' : 'var(--ink-mute)' ?>;
+              font-family:'JetBrains Mono',monospace;
+              font-size:11px;font-weight:600;letter-spacing:.08em;
+            "><?= htmlspecialchars($wdLabel) ?></span>
+            <?php endif ?>
+            <?php endforeach ?>
+          </div>
+        </div><!-- /jours ouvrés -->
 
         <div class="impl-note" style="margin-top:20px;">
           <div class="impl-note-head">Planification uniquement</div>

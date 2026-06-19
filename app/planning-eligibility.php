@@ -304,6 +304,10 @@ function planning_week_eligibility(PDO $pdo, DateTimeImmutable $weekStart): arra
             'dry_hopping' => array_values($dryHopElig),
             'packaging'   => array_values($packagingElig),
             'brewing'     => ['cct_conflicts' => $cctConflicts],
+            'occupancy'   => [
+                'cct_occupied' => array_keys($workingCct),
+                'bbt_occupied' => array_keys($workingBbt),
+            ],
         ];
 
         // ── Apply plan items for day D ────────────────────────────────────────

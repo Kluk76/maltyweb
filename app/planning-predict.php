@@ -13,15 +13,17 @@ declare(strict_types=1);
  * Returns ['inserted'=>int, 'skipped_dedup'=>int, 'rows'=>[...pl_plan_items rows...], 'decisions'=>[...debug...]]
  *
  * Dependencies:
- *   app/fg-stock.php          (fg_stock_compute)
- *   app/planning-eligibility.php (planning_week_eligibility)
- *   app/settings.php          (system_setting)
- *   app/db-write-helpers.php  (log_revision)
- *   app/db.php                (maltytask_pdo — transitively via the above)
+ *   app/fg-stock.php              (fg_stock_compute)
+ *   app/planning-eligibility.php  (planning_week_eligibility)
+ *   app/production-targets.php    (production_targets_compute)
+ *   app/settings.php              (system_setting)
+ *   app/db-write-helpers.php      (log_revision)
+ *   app/db.php                    (maltytask_pdo — transitively via the above)
  */
 
 require_once __DIR__ . '/fg-stock.php';
 require_once __DIR__ . '/planning-eligibility.php';
+require_once __DIR__ . '/production-targets.php';
 require_once __DIR__ . '/settings.php';
 require_once __DIR__ . '/db-write-helpers.php';
 
@@ -92,24 +94,113 @@ function predict_load_user(PDO $pdo, int $userId): array
     return ['id' => $userId, 'username' => 'system'];
 }
 
+// ── Fleet reads ────────────────────────────────────────────────────────────────
+
+/**
+ * Returns sorted int array of active CCT numbers from ref_cct.
+ */
+function predict_load_active_cct_numbers(PDO $pdo): array
+{
+    $stmt = $pdo->query("SELECT number FROM ref_cct WHERE status='active' ORDER BY number");
+    return array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
+}
+
+/**
+ * Returns sorted int array of active BBT numbers from ref_bbt.
+ */
+function predict_load_active_bbt_numbers(PDO $pdo): array
+{
+    $stmt = $pdo->query("SELECT number FROM ref_bbt WHERE status='active' ORDER BY number");
+    return array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
+}
+
+/**
+ * Returns count of free (in_house, active) serving tanks.
+ */
+function predict_load_free_serving_tank_count(PDO $pdo): int
+{
+    $stmt = $pdo->query("SELECT COUNT(*) FROM ref_serving_tanks WHERE location='in_house' AND status='active'");
+    return (int)$stmt->fetchColumn();
+}
+
+// ── Dry-hop spec helpers ───────────────────────────────────────────────────────
+
+/**
+ * Returns recipe_ids (int[]) that have a dry_hop stage in ref_recipe_ingredients.
+ * NOTE: column is recipe_id, NOT recipe_id_fk.
+ */
+function predict_load_dry_hop_recipe_ids(PDO $pdo): array
+{
+    $stmt = $pdo->query(
+        "SELECT DISTINCT recipe_id FROM ref_recipe_ingredients
+          WHERE hop_addition_stage='dry_hop' AND is_active=1"
+    );
+    return array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
+}
+
+/**
+ * Given an array of ['recipe_id'=>int, 'batch'=>string] pairs,
+ * returns a set array ['recipe_id:batch' => true] for pairs that already have
+ * a DryHop event in bd_fermenting_v2.
+ * Returns [] for empty input.
+ */
+function predict_batches_already_dry_hopped(PDO $pdo, array $recipeBatchPairs): array
+{
+    if (empty($recipeBatchPairs)) {
+        return [];
+    }
+    $inClauses = [];
+    $params    = [];
+    foreach ($recipeBatchPairs as $pair) {
+        $inClauses[] = '(?,?)';
+        $params[]    = (int)$pair['recipe_id'];
+        $params[]    = (string)$pair['batch'];
+    }
+    $sql = "SELECT DISTINCT recipe_id_fk, batch FROM bd_fermenting_v2
+             WHERE event_type='DryHop' AND is_tombstoned=0
+               AND (recipe_id_fk, batch) IN (" . implode(',', $inClauses) . ")";
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    $result = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $result[(int)$row['recipe_id_fk'] . ':' . (string)$row['batch']] = true;
+    }
+    return $result;
+}
+
 // ── Main entry point ──────────────────────────────────────────────────────────
 
 /**
  * Generate predictive plan suggestions for the given week.
  *
  * Algorithm:
- *   1. Read plan_suggest_target_weeks from system_settings (default 3.0).
- *   2. Read fg_stock_compute() per-SKU coverage.
- *   3. Aggregate to recipe level: track best_semaines (highest), worst_physique,
- *      format (from best-coverage SKU), velocity, beer display name.
- *   4. Filter: recipe needs replenishment when best_semaines < target OR
- *      (best_semaines === null AND worst_physique <= 0).
- *   5. Load planning_week_eligibility for the week.
- *   6. Dedup: skip if active item for same recipe+section already exists this week.
- *   7. For each needing recipe:
- *      a. If packaging-eligible → propose packaging on earliest eligible day.
- *      b. Else → propose brewing (section=wort, wort_process=brewing) on Monday.
- *   8. INSERT with source='predictive', status='proposed'. log_revision on each.
+ *   1.  Config — read plan_suggest_target_weeks; load active fillers, user, fleet.
+ *   2.  FG stock — fg_stock_compute(); build sku→recipe map; aggregate to recipe level.
+ *   3.  Filter — recipes below coverage threshold or with no stock.
+ *   4.  Capacity inputs — production_targets_compute() weekly objectives;
+ *       max_brews_per_day + workday_* toggles from system_settings (section='production_targets');
+ *       ref_brewhouse_size.size_hl as proxy HL per packaging run (fallback 30.0).
+ *   5.  Working days — build $workingDays (DateTimeImmutable[]) from weekStart..+6
+ *       restricted to days where workday_<iso> = 1. Fallback: Monday only.
+ *   6.  Combined dedup + netting query — single SELECT over pl_plan_items
+ *       (plan_date BETWEEN weekStart..weekEnd, is_active=1, section IN wort/packaging).
+ *       Builds simultaneously:
+ *         • $dedupSet        (section:rid:N → true)
+ *         • $existingBrewCount / $existingPkgHl[fmt] (capacity netting)
+ *         • $placedBrewsByDate[dateStr] (per-day brew count, seeds cap check)
+ *         • $pkgCountByDate[dateStr]   (per-day packaging count, seeds load-balance)
+ *   7.  Net weekly budgets:
+ *         • $brewWeekBudget  = floor(obj.brews.week) − existing_brew_rows  (≥0)
+ *         • $pkgBudgetHl[fmt] = obj.<fmt>_hl.week − existing_pkg_hl[fmt]   (≥0)
+ *   8.  Eligibility — planning_week_eligibility(); restrict packaging slots to
+ *       working days; build $packagingEligByRecipe[recipe_id] = sorted eligible slots.
+ *       Seed occupancy ledgers from eligibility engine output.
+ *   9.  Sort — $needingRecipes ascending by worst_semaines (null → −INF first).
+ *  10.  Pass 1: Racking (process-driven) — place racking proposals using live BBT fleet.
+ *  11.  Pass 2: Packaging (demand-driven) — demand-driven with per-day cap + BBT ledger.
+ *  12.  Pass 3: Brewing (demand-driven, round-robin) — CCT from fleet, not hardcoded 1..10.
+ *  13.  Pass 4: Dry-hop (process-driven, HARD-GATED) — spec check + bd_fermenting_v2 gate.
+ *  14.  Return ['inserted', 'skipped_dedup', 'rows', 'decisions'].
  *
  * @param PDO               $pdo
  * @param DateTimeImmutable $weekStart  Monday of the target week (00:00:00)
@@ -121,12 +212,18 @@ function planning_generate_suggestions(PDO $pdo, DateTimeImmutable $weekStart, i
     $weekStartStr = $weekStart->format('Y-m-d');
     $weekEndStr   = $weekStart->modify('+6 days')->format('Y-m-d');
 
-    // ── Step 0: Config ────────────────────────────────────────────────────────
+    // ── Step 1: Config ────────────────────────────────────────────────────────
     $targetWeeks    = (float) system_setting('plan_suggest_target_weeks', 'stock', 3.0);
     $activePkgTypes = predict_load_active_pkg_types($pdo);
     $me             = predict_load_user($pdo, $createdByUserId);
 
-    // ── Step 1: FG stock coverage ─────────────────────────────────────────────
+    $activeCctNumbers      = predict_load_active_cct_numbers($pdo);
+    $activeBbtNumbers      = predict_load_active_bbt_numbers($pdo);
+    $freeServingTankCount  = predict_load_free_serving_tank_count($pdo);
+    $maxPkgRunsPerDay      = max(1, (int) system_setting('max_packaging_runs_per_day', 'production_targets', 4));
+    $dryHopRecipeIds       = predict_load_dry_hop_recipe_ids($pdo);
+
+    // ── Step 2: FG stock coverage ─────────────────────────────────────────────
     $fgResult = fg_stock_compute($pdo);
     $fgRows   = $fgResult['rows'] ?? [];
 
@@ -162,7 +259,7 @@ function planning_generate_suggestions(PDO $pdo, DateTimeImmutable $weekStart, i
         $recipeNameMap = [];
     }
 
-    // ── Step 2: Aggregate to recipe level ─────────────────────────────────────
+    // ── Step 3: Aggregate to recipe level ─────────────────────────────────────
     // Per recipe: track the best (highest) semaines_stock and worst (lowest) physique
     // across all its SKUs. We use 'format' and 'velocity' from the best-coverage SKU.
     $byRecipe = []; // recipe_id (int) => [recipe_id, beer_name, best_semaines, worst_physique, format, velocity]
@@ -216,7 +313,7 @@ function planning_generate_suggestions(PDO $pdo, DateTimeImmutable $weekStart, i
         }
     }
 
-    // ── Step 3: Filter needing replenishment ──────────────────────────────────
+    // ── Step 4: Filter needing replenishment ──────────────────────────────────
     $needingRecipes = [];
     foreach ($byRecipe as $rid => $rd) {
         $needs  = false;
@@ -242,205 +339,183 @@ function planning_generate_suggestions(PDO $pdo, DateTimeImmutable $weekStart, i
         ];
     }
 
-    // ── Step 4: Eligibility for the week ──────────────────────────────────────
-    $eligibility = planning_week_eligibility($pdo, $weekStart);
+    // ── Step 5: Capacity inputs ───────────────────────────────────────────────
+    $targets = production_targets_compute($pdo);
+    $obj     = $targets['objectives'];
 
-    // Build packaging-eligible recipe → earliest {day, bbt_number, beer_name, batch}
-    $packagingByRecipe = [];
-    foreach ($eligibility as $dayStr => $dayElig) {
-        foreach ($dayElig['packaging'] ?? [] as $slot) {
-            $rid = isset($slot['recipe_id']) ? (int)$slot['recipe_id'] : null;
-            if ($rid === null) {
-                continue;
-            }
-            // Keep only the earliest day for each recipe
-            if (!isset($packagingByRecipe[$rid])) {
-                $packagingByRecipe[$rid] = [
-                    'day'        => $dayStr,
-                    'bbt_number' => (int)($slot['bbt_number'] ?? 0),
-                    'beer_name'  => (string)($slot['beer'] ?? ''),
-                    'batch'      => (string)($slot['batch'] ?? ''),
-                ];
-            }
+    $maxBrewsPerDay = max(1, (int) system_setting('max_brews_per_day', 'production_targets', 5));
+
+    // Proxy HL per packaging run from brewhouse size
+    $proxyHl = 30.0;
+    $phStmt  = $pdo->query('SELECT size_hl FROM ref_brewhouse_size ORDER BY id DESC LIMIT 1');
+    if ($phStmt && ($phRow = $phStmt->fetch(PDO::FETCH_ASSOC))) {
+        $proxyHl = (float)$phRow['size_hl'];
+    }
+
+    // ── Step 6: Working days ──────────────────────────────────────────────────
+    $isoToKey = [1=>'mon',2=>'tue',3=>'wed',4=>'thu',5=>'fri',6=>'sat',7=>'sun'];
+    $defaultEnabled = [1=>1,2=>1,3=>1,4=>1,5=>1,6=>0,7=>0];
+    $workingDays = [];
+    $decisions   = [];
+
+    for ($i = 0; $i < 7; $i++) {
+        $d   = $weekStart->modify("+{$i} days");
+        $iso = (int)$d->format('N');
+        $key = 'workday_' . $isoToKey[$iso];
+        $enabled = (int) system_setting($key, 'production_targets', $defaultEnabled[$iso]);
+        if ($enabled === 1) {
+            $workingDays[] = $d;
         }
     }
 
-    // Build the set of CCTs already in conflict on Monday (from eligibility + existing planned items)
-    $brewDayConflicts = array_merge(
-        $eligibility[$weekStartStr]['brewing']['cct_conflicts'] ?? [],
-        []
-    );
-    // $allocatedCcts tracks CCTs assigned by THIS generator run (to avoid duplicates within the run)
-    $allocatedCcts = [];
+    if (empty($workingDays)) {
+        $workingDays = [$weekStart]; // fallback: Monday
+        $decisions[] = ['note' => 'Aucun jour ouvré configuré, repli sur lundi'];
+    }
 
-    // ── Step 5: Dedup check — existing active items for the week ──────────────
+    $workingDaySet = array_flip(array_map(fn($d) => $d->format('Y-m-d'), $workingDays));
+
+    // ── Step 7: Combined dedup + netting query ────────────────────────────────
+    // Single query builds dedupSet + capacity netting counters + per-day seeds.
     $existStmt = $pdo->prepare(
-        "SELECT section, recipe_id_fk
+        "SELECT section, recipe_id_fk, pkg_type, target_volume_hl, plan_date
            FROM pl_plan_items
           WHERE plan_date BETWEEN ? AND ?
             AND is_active = 1
             AND section IN ('wort','packaging')"
     );
     $existStmt->execute([$weekStartStr, $weekEndStr]);
+    $existRows = $existStmt->fetchAll(PDO::FETCH_ASSOC);
 
-    $dedupSet = [];
-    foreach ($existStmt->fetchAll(PDO::FETCH_ASSOC) as $ei) {
-        if (!empty($ei['recipe_id_fk'])) {
-            $dedupSet[$ei['section'] . ':rid:' . (int)$ei['recipe_id_fk']] = true;
+    $pkgTypeToBudgetKey = [
+        'bottling'     => 'bottle_hl',
+        'canning'      => 'can_hl',
+        'kegging'      => 'keg_hl',
+        'serving_tank' => null,
+    ];
+
+    $dedupSet            = [];
+    $existingBrewCount   = 0;
+    $existingPkgHl       = ['bottle_hl' => 0.0, 'can_hl' => 0.0, 'keg_hl' => 0.0];
+    $placedBrewsByDate   = []; // dateStr => int (existing brew rows per day)
+    $pkgCountByDate      = []; // dateStr => int (existing packaging rows per day — seeds load-balance)
+
+    foreach ($existRows as $ei) {
+        $section  = (string)$ei['section'];
+        $eiDate   = (string)$ei['plan_date'];
+        $eiRid    = !empty($ei['recipe_id_fk']) ? (int)$ei['recipe_id_fk'] : null;
+
+        // Dedup set
+        if ($eiRid !== null) {
+            $dedupSet[$section . ':rid:' . $eiRid] = true;
+        }
+
+        if ($section === 'wort') {
+            $existingBrewCount++;
+            $placedBrewsByDate[$eiDate] = ($placedBrewsByDate[$eiDate] ?? 0) + 1;
+        } elseif ($section === 'packaging') {
+            $pkgCountByDate[$eiDate] = ($pkgCountByDate[$eiDate] ?? 0) + 1;
+            $ptKey = $pkgTypeToBudgetKey[$ei['pkg_type'] ?? ''] ?? null;
+            if ($ptKey !== null) {
+                $hl = $ei['target_volume_hl'] !== null ? (float)$ei['target_volume_hl'] : $proxyHl;
+                $existingPkgHl[$ptKey] += $hl;
+            }
         }
     }
 
-    // ── Step 6: Build and insert proposals ────────────────────────────────────
-    $inserted     = 0;
-    $skippedDedup = 0;
-    $rows         = [];
-    $decisions    = [];
+    // ── Step 8: Net weekly budgets ────────────────────────────────────────────
+    $brewWeekBudget = max(0, (int)floor($obj['brews']['week']) - $existingBrewCount);
+    $pkgBudgetHl    = [
+        'bottle_hl' => max(0.0, ($obj['bottle_hl']['week'] ?? 0.0) - $existingPkgHl['bottle_hl']),
+        'can_hl'    => max(0.0, ($obj['can_hl']['week']    ?? 0.0) - $existingPkgHl['can_hl']),
+        'keg_hl'    => max(0.0, ($obj['keg_hl']['week']    ?? 0.0) - $existingPkgHl['keg_hl']),
+    ];
 
-    foreach ($needingRecipes as $rid => $rd) {
-        $pkgSlot = $packagingByRecipe[$rid] ?? null;
+    // ── Step 9: Eligibility ───────────────────────────────────────────────────
+    $eligibility = planning_week_eligibility($pdo, $weekStart);
 
-        if ($pkgSlot !== null) {
-            // ── Packaging proposal ────────────────────────────────────────────
-            $planDate  = $pkgSlot['day'];
-            $dedupKey  = 'packaging:rid:' . $rid;
-
-            if (isset($dedupSet[$dedupKey])) {
-                $skippedDedup++;
-                $decisions[] = [
-                    'beer'    => $rd['beer_name'],
-                    'decision'=> 'packaging',
-                    'day'     => $planDate,
-                    'skipped' => 'dedup',
-                ];
-                continue;
-            }
-
-            // Determine pkg_type from format → active fillers
-            $formatPkgType = predict_format_to_pkg_type($rd['format']);
-            $pkgType = null;
-            if ($formatPkgType !== null && in_array($formatPkgType, $activePkgTypes, true)) {
-                $pkgType = $formatPkgType;
-            } elseif (!empty($activePkgTypes)) {
-                // Fallback: first active pkg_type
-                $pkgType = $activePkgTypes[0];
-            }
-
-            if ($pkgType === null) {
-                $decisions[] = [
-                    'beer'    => $rd['beer_name'],
-                    'decision'=> 'packaging_skipped',
-                    'reason'  => 'no_active_filler',
-                ];
-                continue;
-            }
-
-            $bbtNum        = $pkgSlot['bbt_number'] > 0 ? $pkgSlot['bbt_number'] : null;
-            $batchVal      = $pkgSlot['batch'] !== '' ? $pkgSlot['batch'] : null;
-            $suggestReason = substr(
-                sprintf('%s — BBT %s', $rd['reason'], $bbtNum !== null ? (string)$bbtNum : '?'),
-                0, 255
-            );
-
-            // Get next seq
-            $seqStmt = $pdo->prepare(
-                "SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq
-                   FROM pl_plan_items
-                  WHERE plan_date = ? AND section = 'packaging' AND is_active = 1"
-            );
-            $seqStmt->execute([$planDate]);
-            $nextSeq = (int)($seqStmt->fetchColumn() ?: 1);
-
-            // Upsert pl_plan_days
-            $dayStmt = $pdo->prepare(
-                'INSERT INTO pl_plan_days (plan_date, created_by_user_id_fk)
-                 VALUES (?, ?)
-                 ON DUPLICATE KEY UPDATE updated_at = CURRENT_TIMESTAMP'
-            );
-            $dayStmt->execute([$planDate, $createdByUserId]);
-
-            // Insert proposal
-            $insStmt = $pdo->prepare(
-                "INSERT INTO pl_plan_items
-                   (plan_date, section, seq, pkg_type, recipe_id_fk, batch, bbt_number,
-                    hors_process, suggest_reason, source, status, created_by_user_id_fk)
-                 VALUES (?, 'packaging', ?, ?, ?, ?, ?, 0, ?, 'predictive', 'proposed', ?)"
-            );
-            $insStmt->execute([
-                $planDate,
-                $nextSeq,
-                $pkgType,
-                $rid,
-                $batchVal,
-                $bbtNum,
-                $suggestReason,
-                $createdByUserId,
-            ]);
-            $newId = (int)$pdo->lastInsertId();
-
-            $afterData = [
-                'plan_date'             => $planDate,
-                'section'               => 'packaging',
-                'seq'                   => $nextSeq,
-                'pkg_type'              => $pkgType,
-                'recipe_id_fk'          => $rid,
-                'batch'                 => $batchVal,
-                'bbt_number'            => $bbtNum,
-                'hors_process'          => 0,
-                'suggest_reason'        => $suggestReason,
-                'source'                => 'predictive',
-                'status'                => 'proposed',
-                'created_by_user_id_fk' => $createdByUserId,
+    // Build $packagingEligByRecipe: recipe_id => sorted array of eligible working-day slots
+    $packagingEligByRecipe = []; // recipe_id => [['day'=>..., 'bbt_number'=>..., 'beer_name'=>..., 'batch'=>...], ...]
+    foreach ($eligibility as $dayStr => $dayElig) {
+        if (!isset($workingDaySet[$dayStr])) continue; // skip non-working days
+        foreach ($dayElig['packaging'] ?? [] as $slot) {
+            $rid = isset($slot['recipe_id']) ? (int)$slot['recipe_id'] : null;
+            if ($rid === null) continue;
+            $packagingEligByRecipe[$rid][] = [
+                'day'        => $dayStr,
+                'bbt_number' => (int)($slot['bbt_number'] ?? 0),
+                'beer_name'  => (string)($slot['beer'] ?? ''),
+                'batch'      => (string)($slot['batch'] ?? ''),
             ];
-            log_revision($pdo, $me, 'pl_plan_items', $newId, null, $afterData, 'normal', null);
+        }
+    }
+    // Sort each recipe's eligible slots ascending by day
+    foreach ($packagingEligByRecipe as $rid => &$slots) {
+        usort($slots, fn($a, $b) => strcmp($a['day'], $b['day']));
+    }
+    unset($slots);
 
-            $dedupSet[$dedupKey] = true;
-            $inserted++;
-            $rows[]      = array_merge($afterData, ['id' => $newId]);
-            $decisions[] = [
-                'beer'    => $rd['beer_name'],
-                'decision'=> 'packaging',
-                'day'     => $planDate,
-                'bbt'     => $bbtNum,
-                'pkg_type'=> $pkgType,
-                'semaines'=> $rd['best_semaines'],
-            ];
+    // Per-day occupied CCT/BBT ledger, seeded from eligibility engine output.
+    // As proposals are placed, we mutate this ledger forward from the proposed day.
+    // Do NOT re-derive from raw tables — the engine is the only occupancy source.
+    $occupiedCctByDate = []; // dateStr => int[] (CCT numbers occupied)
+    $occupiedBbtByDate = []; // dateStr => int[] (BBT numbers occupied)
+    foreach ($eligibility as $dayStr => $dayData) {
+        $occupiedCctByDate[$dayStr] = $dayData['occupancy']['cct_occupied'] ?? [];
+        $occupiedBbtByDate[$dayStr] = $dayData['occupancy']['bbt_occupied'] ?? [];
+    }
 
-        } else {
-            // ── Brewing proposal ──────────────────────────────────────────────
-            $planDate  = $weekStartStr; // suggest Monday
-            $dedupKey  = 'wort:rid:' . $rid;
+    // ── Step 10: Sort needing recipes by worst_semaines asc (null → −INF first) ─
+    uasort($needingRecipes, function($a, $b) {
+        $sa = $a['worst_semaines'] !== null ? (float)$a['worst_semaines'] : -INF;
+        $sb = $b['worst_semaines'] !== null ? (float)$b['worst_semaines'] : -INF;
+        return $sa <=> $sb;
+    });
 
-            // Pick a free CCT not in conflicts AND not already allocated this run
-            $freeCct = null;
-            for ($cctNum = 1; $cctNum <= 10; $cctNum++) {
-                if (!in_array($cctNum, $brewDayConflicts, true)
-                    && !in_array($cctNum, $allocatedCcts, true)) {
-                    $freeCct = $cctNum;
+    // ── Step 11: Build and insert proposals (4 ordered passes) ───────────────
+    $inserted          = 0;
+    $skippedDedup      = 0;
+    $rows              = [];
+
+    // Round-robin state for brewing placement
+    $brewRoundRobinIdx    = 0;
+    $allocatedCctsByDate  = []; // dateStr => int[] (CCTs allocated this run per day)
+
+    // ── Pass 1: Racking (process-driven) ──────────────────────────────────────
+    foreach ($eligibility as $dayStr => $dayData) {
+        if (!isset($workingDaySet[$dayStr])) continue;
+
+        foreach ($dayData['racking'] ?? [] as $entry) {
+            $rid   = isset($entry['recipe_id']) ? (int)$entry['recipe_id'] : null;
+            $batch = (string)($entry['batch'] ?? '');
+            $cctN  = isset($entry['cct_number']) ? (int)$entry['cct_number'] : null;
+            if ($rid === null || $cctN === null) continue;
+
+            $dedupKey = 'wort:rack:' . $rid . ':' . $batch;
+            if (isset($dedupSet[$dedupKey])) continue;
+
+            // Check a free BBT exists
+            $occupiedBbts = $occupiedBbtByDate[$dayStr] ?? [];
+            $freeBbt = null;
+            foreach ($activeBbtNumbers as $bbtNum) {
+                if (!in_array($bbtNum, $occupiedBbts, true)) {
+                    $freeBbt = $bbtNum;
                     break;
                 }
             }
-            if ($freeCct === null) {
+            if ($freeBbt === null) {
                 $decisions[] = [
-                    'beer'    => $rd['beer_name'],
-                    'decision'=> 'brewing_skipped',
-                    'reason'  => 'no_free_cct',
+                    'beer'     => $entry['beer'] ?? '?',
+                    'decision' => 'deferred',
+                    'reason'   => 'aucun BBT libre pour soutirage',
+                    'batch'    => $batch,
                 ];
-                continue;
-            }
-
-            if (isset($dedupSet[$dedupKey])) {
-                $skippedDedup++;
-                $decisions[] = [
-                    'beer'    => $rd['beer_name'],
-                    'decision'=> 'brewing',
-                    'day'     => $planDate,
-                    'skipped' => 'dedup',
-                ];
+                $dedupSet[$dedupKey] = true; // mark as evaluated — don't re-emit on later days
                 continue;
             }
 
             $suggestReason = substr(
-                sprintf('%s — pas de liquid éligible cette semaine', $rd['reason']),
+                'Garde atteinte — soutirage CCT→BBT (BBT libre)',
                 0, 255
             );
 
@@ -450,7 +525,7 @@ function planning_generate_suggestions(PDO $pdo, DateTimeImmutable $weekStart, i
                    FROM pl_plan_items
                   WHERE plan_date = ? AND section = 'wort' AND is_active = 1"
             );
-            $seqStmt->execute([$planDate]);
+            $seqStmt->execute([$dayStr]);
             $nextSeq = (int)($seqStmt->fetchColumn() ?: 1);
 
             // Upsert pl_plan_days
@@ -459,32 +534,28 @@ function planning_generate_suggestions(PDO $pdo, DateTimeImmutable $weekStart, i
                  VALUES (?, ?)
                  ON DUPLICATE KEY UPDATE updated_at = CURRENT_TIMESTAMP'
             );
-            $dayStmt->execute([$planDate, $createdByUserId]);
+            $dayStmt->execute([$dayStr, $createdByUserId]);
 
-            // Insert brewing proposal
             $insStmt = $pdo->prepare(
                 "INSERT INTO pl_plan_items
-                   (plan_date, section, seq, wort_process, recipe_id_fk, cct_number,
-                    hors_process, suggest_reason, source, status, created_by_user_id_fk)
-                 VALUES (?, 'wort', ?, 'brewing', ?, ?, 0, ?, 'predictive', 'proposed', ?)"
+                   (plan_date, section, seq, wort_process, recipe_id_fk, batch,
+                    cct_number, bbt_number, hors_process, suggest_reason, source, status, created_by_user_id_fk)
+                 VALUES (?, 'wort', ?, 'racking', ?, ?, ?, ?, 0, ?, 'predictive', 'proposed', ?)"
             );
             $insStmt->execute([
-                $planDate,
-                $nextSeq,
-                $rid,
-                $freeCct,
-                $suggestReason,
-                $createdByUserId,
+                $dayStr, $nextSeq, $rid, $batch, $cctN, $freeBbt, $suggestReason, $createdByUserId,
             ]);
             $newId = (int)$pdo->lastInsertId();
 
             $afterData = [
-                'plan_date'             => $planDate,
+                'plan_date'             => $dayStr,
                 'section'               => 'wort',
                 'seq'                   => $nextSeq,
-                'wort_process'          => 'brewing',
+                'wort_process'          => 'racking',
                 'recipe_id_fk'          => $rid,
-                'cct_number'            => $freeCct,
+                'batch'                 => $batch,
+                'cct_number'            => $cctN,
+                'bbt_number'            => $freeBbt,
                 'hors_process'          => 0,
                 'suggest_reason'        => $suggestReason,
                 'source'                => 'predictive',
@@ -493,18 +564,467 @@ function planning_generate_suggestions(PDO $pdo, DateTimeImmutable $weekStart, i
             ];
             log_revision($pdo, $me, 'pl_plan_items', $newId, null, $afterData, 'normal', null);
 
+            // Mutate ledger FORWARD from $dayStr through working week
+            foreach ($workingDays as $wd) {
+                $wdStr = $wd->format('Y-m-d');
+                if ($wdStr >= $dayStr) {
+                    // CCT is freed
+                    $occupiedCctByDate[$wdStr] = array_values(
+                        array_filter($occupiedCctByDate[$wdStr] ?? [], fn($n) => $n !== $cctN)
+                    );
+                    // BBT is now occupied
+                    if (!in_array($freeBbt, $occupiedBbtByDate[$wdStr] ?? [], true)) {
+                        $occupiedBbtByDate[$wdStr][] = $freeBbt;
+                    }
+                }
+            }
+
             $dedupSet[$dedupKey] = true;
-            $allocatedCcts[] = $freeCct;
             $inserted++;
             $rows[]      = array_merge($afterData, ['id' => $newId]);
             $decisions[] = [
-                'beer'    => $rd['beer_name'],
-                'decision'=> 'brewing',
-                'day'     => $planDate,
-                'cct'     => $freeCct,
-                'semaines'=> $rd['best_semaines'],
+                'beer'     => $entry['beer'] ?? '?',
+                'decision' => 'racking',
+                'day'      => $dayStr,
+                'cct'      => $cctN,
+                'bbt'      => $freeBbt,
+                'batch'    => $batch,
             ];
         }
+    }
+
+    // ── Pass 2: Packaging (demand-driven) ─────────────────────────────────────
+    foreach ($needingRecipes as $rid => $rd) {
+        $eligSlots = $packagingEligByRecipe[$rid] ?? [];
+
+        $formatPkgType = predict_format_to_pkg_type($rd['format']);
+        $pkgType = null;
+        if ($formatPkgType !== null && in_array($formatPkgType, $activePkgTypes, true)) {
+            $pkgType = $formatPkgType;
+        } elseif (!empty($activePkgTypes)) {
+            $pkgType = $activePkgTypes[0];
+        }
+
+        $budgetKey = ($pkgType !== null) ? ($pkgTypeToBudgetKey[$pkgType] ?? null) : null;
+
+        if (empty($eligSlots) || $pkgType === null) continue;
+
+        $dedupKey = 'packaging:rid:' . $rid;
+        if (isset($dedupSet[$dedupKey])) {
+            $skippedDedup++;
+            $decisions[] = [
+                'beer'     => $rd['beer_name'],
+                'decision' => 'packaging',
+                'day'      => $eligSlots[0]['day'],
+                'skipped'  => 'dedup',
+            ];
+            continue;
+        }
+
+        // For serving_tank: gate on free tank count
+        if ($pkgType === 'serving_tank') {
+            if ($freeServingTankCount <= 0) {
+                $decisions[] = [
+                    'beer'     => $rd['beer_name'],
+                    'decision' => 'deferred',
+                    'reason'   => 'aucune cuve de service libre',
+                    'semaines' => $rd['worst_semaines'],
+                ];
+                continue;
+            }
+        } elseif ($budgetKey !== null && $pkgBudgetHl[$budgetKey] < $proxyHl) {
+            $decisions[] = [
+                'beer'     => $rd['beer_name'],
+                'decision' => 'deferred',
+                'reason'   => 'budget conditionnement hebdo atteint',
+                'semaines' => $rd['worst_semaines'],
+            ];
+            continue;
+        }
+
+        // Load-balance: find eligible slot with fewest current pkg items; also check per-day cap
+        $pkgSlot  = null;
+        $minCount = PHP_INT_MAX;
+        foreach ($eligSlots as $slot) {
+            if (($pkgCountByDate[$slot['day']] ?? 0) >= $maxPkgRunsPerDay) continue;
+            $cnt = $pkgCountByDate[$slot['day']] ?? 0;
+            if ($cnt < $minCount) {
+                $minCount = $cnt;
+                $pkgSlot  = $slot;
+            }
+        }
+
+        if ($pkgSlot === null) {
+            $decisions[] = [
+                'beer'     => $rd['beer_name'],
+                'decision' => 'deferred',
+                'reason'   => 'cap journalier conditionnement atteint ou aucun créneau',
+                'semaines' => $rd['worst_semaines'],
+            ];
+            continue;
+        }
+
+        $planDate = $pkgSlot['day'];
+        $bbtNum   = $pkgSlot['bbt_number'] > 0 ? $pkgSlot['bbt_number'] : null;
+        $batchVal = $pkgSlot['batch'] !== '' ? $pkgSlot['batch'] : null;
+
+        $budgetDisplay = $budgetKey !== null ? $pkgBudgetHl[$budgetKey] : null;
+        $budgetSuffix  = $budgetDisplay !== null
+            ? sprintf(' (cap %.0fhl/sem)', $budgetDisplay)
+            : '';
+        $suggestReason = substr(
+            sprintf('%s — conditionnement BBT %s%s', $rd['reason'], $bbtNum !== null ? (string)$bbtNum : '?', $budgetSuffix),
+            0, 255
+        );
+
+        $seqStmt = $pdo->prepare(
+            "SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq
+               FROM pl_plan_items
+              WHERE plan_date = ? AND section = 'packaging' AND is_active = 1"
+        );
+        $seqStmt->execute([$planDate]);
+        $nextSeq = (int)($seqStmt->fetchColumn() ?: 1);
+
+        $dayStmt = $pdo->prepare(
+            'INSERT INTO pl_plan_days (plan_date, created_by_user_id_fk)
+             VALUES (?, ?)
+             ON DUPLICATE KEY UPDATE updated_at = CURRENT_TIMESTAMP'
+        );
+        $dayStmt->execute([$planDate, $createdByUserId]);
+
+        $insStmt = $pdo->prepare(
+            "INSERT INTO pl_plan_items
+               (plan_date, section, seq, pkg_type, recipe_id_fk, batch, bbt_number,
+                hors_process, target_volume_hl, suggest_reason, source, status, created_by_user_id_fk)
+             VALUES (?, 'packaging', ?, ?, ?, ?, ?, 0, ?, ?, 'predictive', 'proposed', ?)"
+        );
+        $insStmt->execute([
+            $planDate, $nextSeq, $pkgType, $rid, $batchVal, $bbtNum,
+            $proxyHl, $suggestReason, $createdByUserId,
+        ]);
+        $newId = (int)$pdo->lastInsertId();
+
+        $afterData = [
+            'plan_date'             => $planDate,
+            'section'               => 'packaging',
+            'seq'                   => $nextSeq,
+            'pkg_type'              => $pkgType,
+            'recipe_id_fk'          => $rid,
+            'batch'                 => $batchVal,
+            'bbt_number'            => $bbtNum,
+            'hors_process'          => 0,
+            'target_volume_hl'      => $proxyHl,
+            'suggest_reason'        => $suggestReason,
+            'source'                => 'predictive',
+            'status'                => 'proposed',
+            'created_by_user_id_fk' => $createdByUserId,
+        ];
+        log_revision($pdo, $me, 'pl_plan_items', $newId, null, $afterData, 'normal', null);
+
+        // Update state
+        $dedupSet[$dedupKey] = true;
+        if ($pkgType === 'serving_tank') {
+            $freeServingTankCount--;
+        } elseif ($budgetKey !== null) {
+            $pkgBudgetHl[$budgetKey] -= $proxyHl;
+        }
+        $pkgCountByDate[$planDate] = ($pkgCountByDate[$planDate] ?? 0) + 1;
+
+        // Mutate ledger: BBT is freed from planDate onwards
+        if ($bbtNum !== null) {
+            foreach ($workingDays as $wd) {
+                $wdStr = $wd->format('Y-m-d');
+                if ($wdStr >= $planDate) {
+                    $occupiedBbtByDate[$wdStr] = array_values(
+                        array_filter($occupiedBbtByDate[$wdStr] ?? [], fn($n) => $n !== $bbtNum)
+                    );
+                }
+            }
+        }
+
+        $inserted++;
+        $rows[]      = array_merge($afterData, ['id' => $newId]);
+        $decisions[] = [
+            'beer'     => $rd['beer_name'],
+            'decision' => 'packaging',
+            'day'      => $planDate,
+            'bbt'      => $bbtNum,
+            'pkg_type' => $pkgType,
+            'semaines' => $rd['best_semaines'],
+        ];
+    }
+
+    // ── Pass 3: Brewing (demand-driven, round-robin) ───────────────────────────
+    foreach ($needingRecipes as $rid => $rd) {
+        // Only brew if no packaging slot was found (or budget exhausted)
+        if (!empty($packagingEligByRecipe[$rid] ?? [])) {
+            // Packaging was the preferred path — skip brewing unless packaging was skipped
+            // (dedup check already happened in pass 2; don't double-count)
+            if (isset($dedupSet['packaging:rid:' . $rid])) continue;
+            // packaging eligible but not yet placed — brewing not needed
+            continue;
+        }
+
+        $dedupKey = 'wort:rid:' . $rid;
+        if (isset($dedupSet[$dedupKey])) {
+            $skippedDedup++;
+            $decisions[] = [
+                'beer'     => $rd['beer_name'],
+                'decision' => 'brewing',
+                'day'      => null,
+                'skipped'  => 'dedup',
+            ];
+            continue;
+        }
+
+        if ($brewWeekBudget <= 0) {
+            $decisions[] = [
+                'beer'     => $rd['beer_name'],
+                'decision' => 'deferred',
+                'reason'   => 'capacité brassins semaine atteinte',
+                'semaines' => $rd['worst_semaines'],
+            ];
+            continue;
+        }
+
+        $wdCount      = count($workingDays);
+        $freeCct      = null;
+        $planDate     = null;
+        $chosenDayIdx = null;
+
+        for ($attempt = 0; $attempt < $wdCount; $attempt++) {
+            $dayIdx = ($brewRoundRobinIdx + $attempt) % $wdCount;
+            $wd     = $workingDays[$dayIdx];
+            $dayStr = $wd->format('Y-m-d');
+
+            if (($placedBrewsByDate[$dayStr] ?? 0) >= $maxBrewsPerDay) continue;
+
+            $eligConflicts = $occupiedCctByDate[$dayStr] ?? [];
+            $runConflicts  = $allocatedCctsByDate[$dayStr] ?? [];
+            $allConflicts  = array_unique(array_merge($eligConflicts, $runConflicts));
+
+            foreach ($activeCctNumbers as $cctNum) {
+                if (!in_array($cctNum, $allConflicts, true)) {
+                    $freeCct      = $cctNum;
+                    $planDate     = $dayStr;
+                    $chosenDayIdx = $dayIdx;
+                    break 2;
+                }
+            }
+        }
+
+        if ($freeCct === null || $planDate === null) {
+            $decisions[] = [
+                'beer'     => $rd['beer_name'],
+                'decision' => 'deferred',
+                'reason'   => 'aucun CCT libre ou capacité journalière atteinte',
+                'semaines' => $rd['worst_semaines'],
+            ];
+            continue;
+        }
+
+        $dayOffset     = (int)$weekStart->diff(new DateTimeImmutable($planDate))->days;
+        $suggestReason = substr(
+            sprintf('%s — brassin J+%d (cap %d/j)', $rd['reason'], $dayOffset, $maxBrewsPerDay),
+            0, 255
+        );
+
+        $seqStmt = $pdo->prepare(
+            "SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq
+               FROM pl_plan_items
+              WHERE plan_date = ? AND section = 'wort' AND is_active = 1"
+        );
+        $seqStmt->execute([$planDate]);
+        $nextSeq = (int)($seqStmt->fetchColumn() ?: 1);
+
+        $dayStmt = $pdo->prepare(
+            'INSERT INTO pl_plan_days (plan_date, created_by_user_id_fk)
+             VALUES (?, ?)
+             ON DUPLICATE KEY UPDATE updated_at = CURRENT_TIMESTAMP'
+        );
+        $dayStmt->execute([$planDate, $createdByUserId]);
+
+        $insStmt = $pdo->prepare(
+            "INSERT INTO pl_plan_items
+               (plan_date, section, seq, wort_process, recipe_id_fk, cct_number,
+                hors_process, suggest_reason, source, status, created_by_user_id_fk)
+             VALUES (?, 'wort', ?, 'brewing', ?, ?, 0, ?, 'predictive', 'proposed', ?)"
+        );
+        $insStmt->execute([
+            $planDate, $nextSeq, $rid, $freeCct, $suggestReason, $createdByUserId,
+        ]);
+        $newId = (int)$pdo->lastInsertId();
+
+        $afterData = [
+            'plan_date'             => $planDate,
+            'section'               => 'wort',
+            'seq'                   => $nextSeq,
+            'wort_process'          => 'brewing',
+            'recipe_id_fk'          => $rid,
+            'cct_number'            => $freeCct,
+            'hors_process'          => 0,
+            'suggest_reason'        => $suggestReason,
+            'source'                => 'predictive',
+            'status'                => 'proposed',
+            'created_by_user_id_fk' => $createdByUserId,
+        ];
+        log_revision($pdo, $me, 'pl_plan_items', $newId, null, $afterData, 'normal', null);
+
+        $dedupSet[$dedupKey] = true;
+        $brewWeekBudget--;
+        $placedBrewsByDate[$planDate] = ($placedBrewsByDate[$planDate] ?? 0) + 1;
+        $allocatedCctsByDate[$planDate][] = $freeCct;
+        // Mutate ledger: CCT is now occupied from planDate forward
+        foreach ($workingDays as $wd) {
+            $wdStr = $wd->format('Y-m-d');
+            if ($wdStr >= $planDate) {
+                if (!in_array($freeCct, $occupiedCctByDate[$wdStr] ?? [], true)) {
+                    $occupiedCctByDate[$wdStr][] = $freeCct;
+                }
+            }
+        }
+        $brewRoundRobinIdx = ($chosenDayIdx + 1) % $wdCount;
+
+        $inserted++;
+        $rows[]      = array_merge($afterData, ['id' => $newId]);
+        $decisions[] = [
+            'beer'     => $rd['beer_name'],
+            'decision' => 'brewing',
+            'day'      => $planDate,
+            'cct'      => $freeCct,
+            'semaines' => $rd['best_semaines'],
+        ];
+    }
+
+    // ── Pass 4: Dry-hop (process-driven, HARD-GATED) ──────────────────────────
+    // v1 LIMITATION: serving-tank free count assumes all in-house active tanks are empty at
+    // week start. TankSimulator does not model serving-tank occupancy (TODO ~L648 tank-simulator.php).
+    // This may over-propose serving-tank packaging. Do not bodge a bd_packaging_v2 occupancy reader.
+
+    $decisions[] = ['note' => 'v1 limitation: serving tank count assumes all in-house tanks empty at week start (TankSimulator gap)'];
+
+    // Collect dry-hop candidates: (recipe_id, batch) pairs from all days' dry_hopping lists
+    $dhCandidates = []; // 'rid:batch' => ['recipe_id'=>int, 'batch'=>string, 'cct_number'=>int, 'beer'=>string]
+    foreach ($eligibility as $dayStr => $dayData) {
+        foreach ($dayData['dry_hopping'] ?? [] as $entry) {
+            $rid   = isset($entry['recipe_id']) ? (int)$entry['recipe_id'] : null;
+            $batch = (string)($entry['batch'] ?? '');
+            $cctN  = isset($entry['cct_number']) ? (int)$entry['cct_number'] : null;
+            if ($rid === null || $cctN === null) continue;
+            // Only keep if recipe is in dry-hop spec
+            if (!in_array($rid, $dryHopRecipeIds, true)) continue;
+            $key = $rid . ':' . $batch;
+            if (!isset($dhCandidates[$key])) {
+                $dhCandidates[$key] = [
+                    'recipe_id'  => $rid,
+                    'batch'      => $batch,
+                    'cct_number' => $cctN,
+                    'beer'       => (string)($entry['beer'] ?? ''),
+                ];
+            }
+        }
+    }
+
+    // Check which are already dry-hopped
+    $alreadyDryHopped = predict_batches_already_dry_hopped($pdo, array_values($dhCandidates));
+
+    foreach ($dhCandidates as $key => $candidate) {
+        $rid   = $candidate['recipe_id'];
+        $batch = $candidate['batch'];
+        $cctN  = $candidate['cct_number'];
+
+        // Gate: must not already be dry-hopped
+        if (isset($alreadyDryHopped[$rid . ':' . $batch])) {
+            $decisions[] = [
+                'beer'     => $candidate['beer'],
+                'decision' => 'deferred',
+                'reason'   => 'dry-hop déjà effectué (bd_fermenting_v2)',
+                'batch'    => $batch,
+            ];
+            continue;
+        }
+
+        $dedupKey = 'wort:dryhop:' . $rid . ':' . $batch;
+        if (isset($dedupSet[$dedupKey])) continue;
+
+        // Find first working day where this CCT is still occupied
+        $planDate = null;
+        foreach ($workingDays as $wd) {
+            $wdStr = $wd->format('Y-m-d');
+            if (in_array($cctN, $occupiedCctByDate[$wdStr] ?? [], true)) {
+                $planDate = $wdStr;
+                break;
+            }
+        }
+
+        if ($planDate === null) {
+            $decisions[] = [
+                'beer'     => $candidate['beer'],
+                'decision' => 'deferred',
+                'reason'   => 'CCT non occupé sur aucun jour ouvré de la semaine',
+                'batch'    => $batch,
+            ];
+            continue;
+        }
+
+        $suggestReason = substr(
+            'Recette sèche — dry-hop non encore effectué',
+            0, 255
+        );
+
+        $seqStmt = $pdo->prepare(
+            "SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq
+               FROM pl_plan_items
+              WHERE plan_date = ? AND section = 'wort' AND is_active = 1"
+        );
+        $seqStmt->execute([$planDate]);
+        $nextSeq = (int)($seqStmt->fetchColumn() ?: 1);
+
+        $dayStmt = $pdo->prepare(
+            'INSERT INTO pl_plan_days (plan_date, created_by_user_id_fk)
+             VALUES (?, ?)
+             ON DUPLICATE KEY UPDATE updated_at = CURRENT_TIMESTAMP'
+        );
+        $dayStmt->execute([$planDate, $createdByUserId]);
+
+        $insStmt = $pdo->prepare(
+            "INSERT INTO pl_plan_items
+               (plan_date, section, seq, wort_process, recipe_id_fk, batch,
+                cct_number, hors_process, suggest_reason, source, status, created_by_user_id_fk)
+             VALUES (?, 'wort', ?, 'dry_hopping', ?, ?, ?, 0, ?, 'predictive', 'proposed', ?)"
+        );
+        $insStmt->execute([
+            $planDate, $nextSeq, $rid, $batch, $cctN, $suggestReason, $createdByUserId,
+        ]);
+        $newId = (int)$pdo->lastInsertId();
+
+        $afterData = [
+            'plan_date'             => $planDate,
+            'section'               => 'wort',
+            'seq'                   => $nextSeq,
+            'wort_process'          => 'dry_hopping',
+            'recipe_id_fk'          => $rid,
+            'batch'                 => $batch,
+            'cct_number'            => $cctN,
+            'hors_process'          => 0,
+            'suggest_reason'        => $suggestReason,
+            'source'                => 'predictive',
+            'status'                => 'proposed',
+            'created_by_user_id_fk' => $createdByUserId,
+        ];
+        log_revision($pdo, $me, 'pl_plan_items', $newId, null, $afterData, 'normal', null);
+
+        // Dry-hop is occupancy-neutral: do NOT mutate ledger
+        $dedupSet[$dedupKey] = true;
+        $inserted++;
+        $rows[]      = array_merge($afterData, ['id' => $newId]);
+        $decisions[] = [
+            'beer'     => $candidate['beer'],
+            'decision' => 'dry_hopping',
+            'day'      => $planDate,
+            'cct'      => $cctN,
+            'batch'    => $batch,
+        ];
     }
 
     return [
