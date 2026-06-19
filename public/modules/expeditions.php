@@ -1742,7 +1742,8 @@ $retSynth         = null; // returns_synthese() result; null if query failed or 
 try {
     // Active customers (for typeahead)
     $custStmt = $pdo->query(
-        'SELECT id, name, bc_customer_no, trade_channel, default_transporter_id_fk
+        'SELECT id, name, bc_customer_no, trade_channel, default_transporter_id_fk,
+                needs_review
            FROM ref_customers
           WHERE is_active = 1
           ORDER BY name ASC'
@@ -2799,8 +2800,8 @@ $expCustomers = array_map(fn($c) => [
                            ? (int) $c['default_transporter_id_fk'] : null,
     'rank'          => ($c['bc_customer_no'] !== null && $c['bc_customer_no'] !== '')
                            ? 0
-                           : ((bool)$c['needs_review'] ? 2 : 1),
-    'needs_review'  => (bool) $c['needs_review'],
+                           : ((bool)($c['needs_review'] ?? 0) ? 2 : 1),
+    'needs_review'  => (bool) ($c['needs_review'] ?? 0),
 ], $customers);
 
 // SKU typeahead data
