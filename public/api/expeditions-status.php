@@ -312,7 +312,7 @@ try {
                 $ord = $ordRow->fetch(PDO::FETCH_ASSOC);
 
                 $linesStmt = $pdo->prepare(
-                    'SELECT s.sku_code AS ref, CONCAT(s.sku_code, IF(s.format IS NOT NULL AND s.format != "", CONCAT(" ", s.format), "")) AS designation, l.qty AS qty
+                    'SELECT s.sku_code AS ref, CONCAT(s.beer_raw, \' – \', s.unit_label) AS designation, l.qty AS qty
                        FROM ord_order_lines l
                        JOIN ref_skus s ON s.id = l.sku_id_fk
                       WHERE l.order_id_fk = ? ORDER BY l.id'
