@@ -17,15 +17,15 @@ declare(strict_types=1);
  *   3. Twin-check: if a probable eshop/Shopify order exists for the same date,
  *      warn and do NOT auto-create.
  *   4. Atomic transaction:
- *        INSERT ord_orders (source='email', review_status='accepted', …)
+ *        INSERT ord_orders (source='maltytask', review_status='accepted', …)
  *        INSERT ord_order_lines (per resolved line)
  *        INSERT ord_order_status_events (status='entered')
  *        UPDATE doc_email_messages SET parse_status='order_created'
  *      With log_revision() on each write.
- *      UNIQUE uniq_ord_source_ref is idempotency backstop (handled gracefully).
- *   5. Redirect with success flash (PRG).
+ *      Idempotency guard: source_email_id_fk + source='maltytask' (source_ref set post-INSERT).
+ *   5. BC push (disarmed — email_order_bc_push_mode=off by default; armed = live POST to BC).
+ *   6. Redirect with success flash (PRG).
  *
- * NO BC push (D1 stays triple-gated separately).
  * NO COGS/fg_stock writes.
  *
  * Auth:  require_page_access('email-orders')
@@ -273,9 +273,78 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $canWrite) {
     }
     // action=force_create also falls through here
 
+    // ── 4c. Final dedup gate for force_create (validate already ran step 4) ──
+    if ($action === 'force_create') {
+        $pythonBin     = '/var/www/maltytask/.venv/bin/python';
+        $matcherScript = '/var/www/maltytask/scripts/python/bc_order_match.py';
+        $fcCmd = sprintf(
+            '%s %s --match-one --email-id %d --customer-id %d 2>/dev/null',
+            escapeshellcmd($pythonBin),
+            escapeshellarg($matcherScript),
+            $emailMsgId,
+            $custIdRaw
+        );
+        $fcMatchJson = null; $fcMatchExit = -1;
+        $fcDesc = [0 => ['pipe','r'], 1 => ['pipe','w'], 2 => ['pipe','w']];
+        $fcProc = proc_open($fcCmd, $fcDesc, $fcPipes);
+        if (is_resource($fcProc)) {
+            fclose($fcPipes[0]);
+            stream_set_blocking($fcPipes[1], false);
+            stream_set_blocking($fcPipes[2], false);
+            $fcOut = ''; $fcDeadline = microtime(true) + 20; $fcTimedOut = false;
+            while (true) {
+                if (microtime(true) >= $fcDeadline) { $fcTimedOut = true; break; }
+                $fcChunk = fread($fcPipes[1], 8192);
+                if ($fcChunk !== false && $fcChunk !== '') { $fcOut .= $fcChunk; continue; }
+                $fcSt = proc_get_status($fcProc);
+                if (!$fcSt['running'] && feof($fcPipes[1])) break;
+                usleep(50000);
+            }
+            fclose($fcPipes[1]); fclose($fcPipes[2]);
+            if ($fcTimedOut) { proc_terminate($fcProc, 9); proc_close($fcProc); $fcMatchExit = -1; }
+            else { $fcMatchExit = proc_close($fcProc); if ($fcMatchExit === 0) $fcMatchJson = json_decode($fcOut, true); }
+        }
+        if ($fcMatchJson !== null && ($fcMatchJson['status'] ?? '') === 'matched') {
+            $fcBcId = (int) ($fcMatchJson['bc_id'] ?? 0);
+            maltytask_session_start();
+            $_SESSION['eo_bc_interstitial_' . $emailMsgId] = [
+                'bc_id'           => $fcBcId,
+                'external_doc_no' => (string) ($fcMatchJson['bc_order']['external_document_no'] ?? ''),
+                'order_date'      => (string) ($fcMatchJson['bc_order']['order_date'] ?? ''),
+                'total'           => $fcMatchJson['bc_order']['total'] ?? null,
+                'customer_id'     => $custIdRaw,
+                'requested_date'  => $reqDate,
+                'line_sku_ids'    => $lineSkuIds,
+                'line_qtys'       => $lineQtys,
+            ];
+            flash_set('warn', 'Correspondance BC détectée au moment de la création — confirme l\'action ci-dessous.');
+            redirect_to('/modules/email-orders.php');
+        } elseif ($fcMatchJson === null || $fcMatchExit !== 0) {
+            maltytask_session_start();
+            $_SESSION['eo_bc_check_failed_' . $emailMsgId] = [
+                'customer_id'    => $custIdRaw,
+                'requested_date' => $reqDate,
+                'line_sku_ids'   => $lineSkuIds,
+                'line_qtys'      => $lineQtys,
+            ];
+            flash_set('warn', 'Vérification BC indisponible — décision manuelle requise.');
+            redirect_to('/modules/email-orders.php');
+        }
+        // status=unmatched → fall through to promote
+    }
+
+    // ── 4b. bc_customer_no guard — customer must exist in BC before we push ──
+    $bcCustNoStmt = $pdo->prepare('SELECT bc_customer_no FROM ref_customers WHERE id = ? LIMIT 1');
+    $bcCustNoStmt->execute([$custIdRaw]);
+    $bcCustNoRow = $bcCustNoStmt->fetch(PDO::FETCH_ASSOC);
+    if (!$bcCustNoRow || empty($bcCustNoRow['bc_customer_no'])) {
+        flash_set('err', 'Client sans compte BC — à créer dans BC d\'abord.');
+        redirect_to('/modules/email-orders.php');
+    }
+
     // ── 5. Delegate to the canonical helper ──────────────────────────────────
-    // email_order_promote() owns: FOR UPDATE row-locking, source_ref idempotency,
-    // dup-key(1062/uniq_ord_source_ref) translation, the correct Shopify-pickup
+    // email_order_promote() owns: FOR UPDATE row-locking on doc_email_messages,
+    // idempotency via source_email_id_fk + source='maltytask' check, the Shopify-pickup
     // twin-check (customer_email + SKU overlap + ±7d), and all ord_orders writes.
     try {
         $newOrderId = email_order_promote(
@@ -289,11 +358,52 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $canWrite) {
             $allowTwin
         );
 
-        // Clear any pending twin state for this card.
+        // ── 6. BC push ────────────────────────────────────────────────────────
+        $bcPushMode = (string) system_setting('email_order_bc_push_mode', 'logistics', 'off');
+        $pythonBin  = '/var/www/maltytask/.venv/bin/python';
+        $pushScript = '/var/www/maltytask/scripts/python/push_bc_sales_orders.py';
+        if ($bcPushMode === 'armed') {
+            $pushCmd = sprintf('%s %s --apply --i-have-kouros-go 2>&1',
+                escapeshellcmd($pythonBin), escapeshellarg($pushScript));
+        } else {
+            $pushCmd = sprintf('%s %s 2>&1',
+                escapeshellcmd($pythonBin), escapeshellarg($pushScript));
+        }
+        $pushOutput = ''; $pushExitCode = -1;
+        // stderr merged into stdout via 2>&1 in $pushCmd; pipe[2] unused → /dev/null.
+        $pushDesc = [0 => ['pipe','r'], 1 => ['pipe','w'], 2 => ['file', '/dev/null', 'w']];
+        $pushProc = proc_open($pushCmd, $pushDesc, $pushPipes);
+        if (is_resource($pushProc)) {
+            fclose($pushPipes[0]);
+            stream_set_blocking($pushPipes[1], false);
+            $pushDeadline = microtime(true) + 20; $pushTimedOut = false;
+            while (true) {
+                if (microtime(true) >= $pushDeadline) { $pushTimedOut = true; break; }
+                $pushChunk = fread($pushPipes[1], 8192);
+                if ($pushChunk !== false && $pushChunk !== '') { $pushOutput .= $pushChunk; continue; }
+                $pushSt = proc_get_status($pushProc);
+                if (!$pushSt['running'] && feof($pushPipes[1])) break;
+                usleep(50000);
+            }
+            fclose($pushPipes[1]);
+            if ($pushTimedOut) { proc_terminate($pushProc, 9); proc_close($pushProc); $pushExitCode = -1; }
+            else { $pushExitCode = proc_close($pushProc); }
+        }
+        error_log('[email-orders BC push] mode=' . $bcPushMode . ' order=' . $newOrderId
+            . ' exit=' . $pushExitCode . ' output=' . substr($pushOutput, 0, 500));
+
         maltytask_session_start();
         unset($_SESSION['eo_twin_pending_id']);
 
-        flash_set('ok', 'Commande #' . $newOrderId . ' créée avec succès (source e-mail).');
+        if ($bcPushMode === 'armed') {
+            if ($pushExitCode === 0) {
+                flash_set('ok', 'Commande #' . $newOrderId . ' créée et envoyée vers BC.');
+            } else {
+                flash_set('warn', 'Commande #' . $newOrderId . ' créée localement. Envoi BC échoué — voir les logs.');
+            }
+        } else {
+            flash_set('ok', 'Commande #' . $newOrderId . ' créée localement (envoi BC en attente — mode désarmé).');
+        }
         redirect_to('/modules/email-orders.php');
 
     } catch (EmailOrderTwinException $e) {
@@ -385,6 +495,21 @@ foreach ($allEmails as $em) {
         $unparsedEmails[] = $em;
     } elseif (in_array($status, ['order_created', 'reconciled'], true)) {
         $doneEmails[] = $em;
+    }
+}
+
+// Load BC state (ord_orders.bc_no + source_ref) for done emails, keyed by email id.
+$doneEmailIds = array_column($doneEmails, 'id');
+$bcStateByEmailId = [];
+if (!empty($doneEmailIds)) {
+    $inPh = implode(',', array_fill(0, count($doneEmailIds), '?'));
+    $bcStmt = $pdo->prepare(
+        "SELECT source_email_id_fk, bc_no, source_ref FROM ord_orders
+          WHERE source = 'maltytask' AND source_email_id_fk IN ({$inPh})"
+    );
+    $bcStmt->execute($doneEmailIds);
+    foreach ($bcStmt->fetchAll(PDO::FETCH_ASSOC) as $bcRow) {
+        $bcStateByEmailId[(int)$bcRow['source_email_id_fk']] = $bcRow;
     }
 }
 
@@ -692,7 +817,7 @@ $flashMsg  = $flash['msg'] ?? '';
                     <?php endforeach ?>
 
                     <!-- Add line button -->
-                    <button type="button" class="eo-add-line-btn eo-add-line-btn">＋ Ajouter une ligne</button>
+                    <button type="button" class="eo-add-line-btn">＋ Ajouter une ligne</button>
 
                   </div><!-- /.eo-lines -->
                 </div>
@@ -797,6 +922,15 @@ $flashMsg  = $flash['msg'] ?? '';
                 $bcRef = $em['bc_matched_order_id'] ? ' #' . (int)$em['bc_matched_order_id'] : '';
                 $statusLabel = 'Rapproché BC' . $bcRef;
                 $statusClass = 'eo-done-item__status-badge--reconciled';
+            } elseif (($em['parse_status'] ?? '') === 'order_created') {
+                $bcOrdState = $bcStateByEmailId[(int)$em['id']] ?? null;
+                if ($bcOrdState && !empty($bcOrdState['bc_no'])) {
+                    $statusLabel = 'Créé — BC #' . htmlspecialchars((string)$bcOrdState['bc_no'], ENT_QUOTES | ENT_HTML5);
+                    $statusClass = 'eo-done-item__status-badge--sent-bc';
+                } else {
+                    $statusLabel = 'En attente d\'envoi BC';
+                    $statusClass = 'eo-done-item__status-badge--pending-bc';
+                }
             } else {
                 $statusLabel = 'Commande créée';
                 $statusClass = 'eo-done-item__status-badge--created';

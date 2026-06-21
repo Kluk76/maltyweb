@@ -6,7 +6,8 @@ declare(strict_types=1);
  *
  * Public surface:
  *   email_order_promote(PDO, array $me, int $emailId, int $customerId,
- *                       string $requestedDate, array $lines, ?string $comment): int
+ *                       string $requestedDate, array $lines, ?string $comment,
+ *                       bool $allowTwin = false): int
  *
  * Dependencies: app/db-write-helpers.php (log_revision).
  * The caller (harness / maltyweb handler) owns the PDO and requires app/db.php itself.
@@ -53,6 +54,7 @@ class EmailOrderNoCustomerException extends EmailOrderPromoteException {}
  * @param string  $requestedDate Requested delivery date ('YYYY-MM-DD').
  * @param array   $lines         [['sku_id' => int, 'qty' => float, 'comment' => ?string], ...]
  * @param ?string $comment       Optional order-level comment.
+ * @param bool    $allowTwin    If true, skip the Shopify-pickup twin-check.
  * @return int                   New ord_orders.id.
  *
  * @throws EmailOrderNotParsedException       Email not found or parse_status ≠ 'parsed'.
@@ -68,7 +70,8 @@ function email_order_promote(
     int     $customerId,
     string  $requestedDate,
     array   $lines,
-    ?string $comment
+    ?string $comment,
+    bool    $allowTwin = false
 ): int {
 
     // ── Guard: customer must be a positive FK ─────────────────────────────────
@@ -139,21 +142,18 @@ function email_order_promote(
             );
         }
 
-        $messageId = (string) $emailRow['message_id'];
-
         // ── Step 2: Idempotency pre-check ─────────────────────────────────────
-        // source_ref is keyed on the RFC822 message_id (NOT the row id, NOT the subject).
-        $sourceRef = 'email:' . $messageId;
-
+        // Keyed on source_email_id_fk + source='maltytask' (source_ref is assigned
+        // post-INSERT as 'mt:<id>' so it cannot be the idempotency key here).
         $stmtExist = $pdo->prepare(
-            'SELECT id FROM ord_orders WHERE source_ref = ? LIMIT 1'
+            "SELECT id FROM ord_orders WHERE source_email_id_fk = ? AND source = 'maltytask' LIMIT 1"
         );
-        $stmtExist->execute([$sourceRef]);
+        $stmtExist->execute([$emailId]);
         $existingId = $stmtExist->fetchColumn();
         if ($existingId !== false) {
             throw new EmailOrderAlreadyPromotedException(
-                "Une commande existe déjà pour source_ref='{$sourceRef}' "
-                . "(ord_orders.id={$existingId})."
+                "Une commande existe déjà pour cet e-mail (source_email_id_fk={$emailId}, "
+                . "ord_orders.id={$existingId})."
             );
         }
 
@@ -171,7 +171,7 @@ function email_order_promote(
         //   4. Otherwise query inv_sales_orders JOIN inv_sales_order_lines on email
         //      + source='shopify' + fulfilment_mode='pickup' + created_at ±7d of
         //      requestedDate + SKU overlap.
-        if (!empty($resolvedSkuIds)) {
+        if (!$allowTwin && !empty($resolvedSkuIds)) {
             $stmtEmail2 = $pdo->prepare(
                 'SELECT email FROM ref_customers WHERE id = ? LIMIT 1'
             );
@@ -214,7 +214,7 @@ function email_order_promote(
 
         // ── Step 5: INSERT ord_orders ─────────────────────────────────────────
         // Mirrors expeditions.php lines 599-655 exactly; deltas vs that pattern:
-        //   source='email', source_email_id_fk set, source_ref set, review_status='accepted'.
+        //   source='maltytask', source_email_id_fk set, source_ref='mt:<id>' (set post-INSERT), review_status='accepted'.
         // transporter_id_fk and fulfilment_site_id_fk are left NULL (email orders
         // don't have these at promotion time — they can be set at the confirm step).
         $insOrd = $pdo->prepare(
@@ -222,7 +222,7 @@ function email_order_promote(
                 (order_type, customer_id_fk, internal_channel, requested_date,
                  status, transporter_id_fk, fulfilment_site_id_fk, comment,
                  source, source_email_id_fk, source_ref, review_status, created_by_user_id)
-             VALUES (?, ?, ?, ?, "entered", ?, ?, ?, "email", ?, ?, "accepted", ?)'
+             VALUES (?, ?, ?, ?, "entered", ?, ?, ?, "maltytask", ?, ?, "accepted", ?)'
         );
         $insOrd->execute([
             'customer',
@@ -233,10 +233,15 @@ function email_order_promote(
             null,                   // fulfilment_site_id_fk
             $comment ?: null,
             $emailId,
-            $sourceRef,
+            null,                   // source_ref — set below after INSERT to 'mt:<id>'
             (int) $me['id'],
         ]);
         $newOrderId = (int) $pdo->lastInsertId();
+
+        // Assign source_ref = 'mt:<id>' now that we have the PK.
+        $sourceRef = 'mt:' . $newOrderId;
+        $pdo->prepare('UPDATE ord_orders SET source_ref = ? WHERE id = ?')
+            ->execute([$sourceRef, $newOrderId]);
 
         $afterOrder = [
             'order_type'            => 'customer',
@@ -247,7 +252,7 @@ function email_order_promote(
             'transporter_id_fk'     => null,
             'fulfilment_site_id_fk' => null,
             'comment'               => $comment ?: null,
-            'source'                => 'email',
+            'source'                => 'maltytask',
             'source_email_id_fk'    => $emailId,
             'source_ref'            => $sourceRef,
             'review_status'         => 'accepted',
@@ -324,19 +329,6 @@ function email_order_promote(
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) {
             $pdo->rollBack();
-        }
-
-        // Translate a duplicate-key violation on the uniq_ord_source_ref UNIQUE to the typed exception.
-        // SQLSTATE 23000 covers several integrity errors, so the index-name in the message is the
-        // discriminator (matches the project's str-based pattern in settings-helpers.php).
-        if ($e instanceof PDOException
-            && strpos($e->getMessage(), 'uniq_ord_source_ref') !== false
-        ) {
-            throw new EmailOrderAlreadyPromotedException(
-                "Doublon de source_ref détecté (UNIQUE violation) — commande déjà créée.",
-                0,
-                $e
-            );
         }
 
         throw $e;
