@@ -42,6 +42,27 @@ require_once __DIR__ . '/../../app/email-order-promote.php';
 
 require_page_access('email-orders');
 $me            = current_user();
+
+// ── ?counts=1 lightweight poll endpoint ──────────────────────────────────
+if (isset($_GET['counts'])) {
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store');
+    $pdo2 = maltytask_pdo();
+    $counts = $pdo2->query(
+        "SELECT
+           SUM(parse_status='parsed') AS parsed,
+           SUM(parse_status IN ('no_match','error','unparsed')) AS no_match,
+           SUM(parse_status IN ('order_created','reconciled')) AS done
+         FROM doc_email_messages"
+    )->fetch(PDO::FETCH_ASSOC);
+    echo json_encode([
+        'parsed'   => (int)($counts['parsed'] ?? 0),
+        'no_match' => (int)($counts['no_match'] ?? 0),
+        'done'     => (int)($counts['done'] ?? 0),
+    ], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
 $active_module = 'email-orders';
 
 // ── Write-scope flag ──────────────────────────────────────────────────────────
@@ -61,7 +82,7 @@ foreach ($custRows as $cr) {
 
 // ── Active SKU set (whitelist — built before POST handler) ────────────────────
 $skuRows = $pdo->query(
-    'SELECT id, sku_code, hl_per_unit, units_per_pack, stocktake_scope
+    'SELECT id, sku_code, beer_raw, unit_label, hl_per_unit, units_per_pack, stocktake_scope
        FROM ref_skus
       WHERE is_active = 1
       ORDER BY sku_code'
@@ -598,6 +619,68 @@ if (!empty($doneEmailIds)) {
     }
 }
 
+// ── SKU human-label builder ───────────────────────────────────────────────
+function eo_make_sku_label(string $beerRaw, string $unitLabel, string $skuCode): string {
+    $ul = strtolower($unitLabel);
+    $beer = trim($beerRaw);
+
+    // Derive French format string from unit_label
+    $fmt = '';
+
+    if (str_contains($ul, 'keg')) {
+        // Extract size e.g. "1 keg (20L)" → "20 L"
+        if (preg_match('/\((\d+)\s*l\)/i', $unitLabel, $m)) {
+            $fmt = 'Fût ' . $m[1] . ' L';
+        } else {
+            $fmt = 'Fût';
+        }
+    } elseif (str_contains($ul, 'cuve') || str_contains($ul, 'cuv')) {
+        $fmt = 'Cuve de service';
+    } elseif (str_contains($ul, '6×4') || str_contains($ul, '6x4') || str_contains($ul, '6*4')) {
+        $fmt = 'Pack 6×4 (24 × 33 cl)';
+    } elseif (str_contains($ul, '24-pack') || (str_contains($ul, '24') && str_contains($ul, 'pack') && str_contains($ul, 'box'))) {
+        $fmt = 'Boîte 24 × 33 cl';
+    } elseif (str_contains($ul, '12-pack') || (str_contains($ul, '12') && str_contains($ul, 'pack') && str_contains($ul, 'box'))) {
+        $fmt = 'Boîte 12 × 33 cl';
+    } elseif (str_contains($ul, '4-pack') || (str_contains($ul, '4') && str_contains($ul, 'pack') && str_contains($ul, 'loose'))) {
+        $fmt = 'Pack 4 × 33 cl';
+    } elseif (str_contains($ul, 'pack') && preg_match('/(\d+)\s*[×x\*]\s*(\d+)\s*cl/i', $unitLabel, $m)) {
+        $fmt = 'Pack ' . $m[1] . ' × ' . $m[2] . ' cl';
+    } elseif (str_contains($ul, 'can')) {
+        if (preg_match('/\(?\s*(\d+)\s*cl\s*\)?/i', $unitLabel, $m)) {
+            $fmt = 'Canette ' . $m[1] . ' cl';
+        } else {
+            $fmt = 'Canette';
+        }
+    } elseif (str_contains($ul, 'bottle') || str_contains($ul, 'bot')) {
+        if (preg_match('/(\d+)\s*cl/i', $unitLabel, $m)) {
+            $fmt = 'Bouteille ' . $m[1] . ' cl';
+        } else {
+            $fmt = 'Bouteille';
+        }
+    } elseif (str_contains($ul, 'draft pour') || str_contains($ul, 'pour')) {
+        if (preg_match('/(\d+)\s*cl/i', $unitLabel, $m)) {
+            $fmt = 'Pression ' . $m[1] . ' cl';
+        } else {
+            $fmt = 'Pression';
+        }
+    } elseif (str_contains($ul, 'crate')) {
+        if (preg_match('/(\d+)/i', $unitLabel, $m)) {
+            $fmt = 'Caisse ' . $m[1];
+        } else {
+            $fmt = 'Caisse';
+        }
+    } else {
+        // Fallback: use raw unit_label or sku_code
+        $fmt = $unitLabel !== '' ? $unitLabel : $skuCode;
+    }
+
+    if ($beer !== '') {
+        return $beer . ' — ' . $fmt;
+    }
+    return $fmt !== '' ? $fmt : $skuCode;
+}
+
 // ── JSON hydration for JS ─────────────────────────────────────────────────────
 $jsonFlags = JSON_HEX_TAG | JSON_HEX_AMP | JSON_UNESCAPED_UNICODE;
 
@@ -609,6 +692,7 @@ $customersForJs = array_values(array_map(fn($cr) => [
 $skusForJs = array_values(array_map(fn($sr) => [
     'id'              => (int) $sr['id'],
     'sku_code'        => $sr['sku_code'],
+    'label'           => eo_make_sku_label((string)($sr['beer_raw'] ?? ''), (string)($sr['unit_label'] ?? ''), $sr['sku_code']),
     'hl_per_unit'     => (float) ($sr['hl_per_unit'] ?? 0),
     'units_per_pack'  => (int) ($sr['units_per_pack'] ?? 1),
     'stocktake_scope' => $sr['stocktake_scope'] ?? '',
@@ -641,6 +725,9 @@ $flashMsg  = $flash['msg'] ?? '';
 
 <main id="main-content" class="main">
 
+  <!-- ── New-orders poll banner ──────────────────────────────────────────────── -->
+  <div id="eo-new-orders-banner" class="eo-new-orders-banner" hidden aria-live="polite"></div>
+
   <!-- ── Flash ──────────────────────────────────────────────────────────────── -->
   <?php if ($flashType !== null): ?>
     <div class="eo-flash eo-flash--<?= htmlspecialchars($flashType, ENT_QUOTES | ENT_HTML5) ?>">
@@ -662,7 +749,7 @@ $flashMsg  = $flash['msg'] ?? '';
   <section class="eo-section" aria-label="Commandes à valider">
     <div class="eo-section__header">
       <h2 class="eo-section__title">À valider</h2>
-      <span class="eo-section__badge eo-badge--review"><?= count($parsedEmails) ?></span>
+      <span id="eo-badge-review" class="eo-section__badge eo-badge--review"><?= count($parsedEmails) ?></span>
     </div>
 
     <?php if (empty($parsedEmails)): ?>
@@ -725,7 +812,7 @@ $flashMsg  = $flash['msg'] ?? '';
                     $subLineHints = $sub['lines'] ?? [];
                   ?>
                   <div class="eo-suborder" data-sub-index="<?= (int)$si ?>">
-                    <div class="eo-suborder__heading">Commande <?= $si + 1 ?></div>
+                    <div class="eo-suborder__heading">Commande <?= $si + 1 ?><span class="eo-progress-badge" data-sub-index="<?= $si ?>">0 / <?= 1 + count($subLineHints) ?> résolu</span></div>
                     <?php if ($subNotes !== ''): ?>
                       <div class="eo-suborder__notes"><?= htmlspecialchars($subNotes, ENT_QUOTES | ENT_HTML5) ?></div>
                     <?php endif ?>
@@ -733,18 +820,20 @@ $flashMsg  = $flash['msg'] ?? '';
                     <!-- Customer -->
                     <div class="eo-field">
                       <label class="eo-field__label eo-field__label--required">Client</label>
-                      <?php if ($subCustHint): ?>
-                        <div class="eo-field__hint">Indice parsé : « <?= $subCustHint ?> » — confirme en sélectionnant dans la liste</div>
-                      <?php endif ?>
-                      <div class="eo-typeahead-wrap">
-                        <input type="text"
-                               class="eo-input eo-cust-search"
-                               placeholder="Rechercher un client…"
-                               autocomplete="off"
-                               value="">
-                        <ul class="eo-typeahead-dropdown eo-cust-dropdown" role="listbox" aria-label="Clients" hidden></ul>
-                        <input type="hidden" name="sub[<?= (int)$si ?>][customer_id]" class="eo-customer-id" value="0">
+                      <div class="eo-cust-chips" data-cust-hint="<?= $subCustHint ?>" aria-label="Suggestions client"></div>
+                      <div class="eo-cust-manual" hidden>
+                        <div class="eo-typeahead-wrap">
+                          <input type="text" class="eo-input eo-cust-search"
+                                 placeholder="Rechercher un client…" autocomplete="off" value="">
+                          <ul class="eo-typeahead-dropdown eo-cust-dropdown" role="listbox" aria-label="Clients" hidden></ul>
+                        </div>
                       </div>
+                      <button type="button" class="eo-cust-autre-btn">Autre…</button>
+                      <div class="eo-cust-resolved" hidden>
+                        <span class="eo-cust-resolved__label"></span>
+                        <button type="button" class="eo-cust-resolved__clear" aria-label="Changer">✎</button>
+                      </div>
+                      <input type="hidden" name="sub[<?= (int)$si ?>][customer_id]" class="eo-customer-id" value="0">
                     </div>
 
                     <!-- Date -->
@@ -770,17 +859,26 @@ $flashMsg  = $flash['msg'] ?? '';
                             $rawEsc     = htmlspecialchars($lineHint['raw'] ?? '', ENT_QUOTES | ENT_HTML5);
                             $hintQty    = (float) ($lineHint['qty'] ?? 0);
                           ?>
-                          <div class="eo-line-row" data-line-idx="<?= (int)$li ?>">
-                            <div class="eo-typeahead-wrap">
-                              <input type="text"
-                                     class="eo-input eo-sku-search"
-                                     placeholder="SKU…"
-                                     autocomplete="off"
-                                     title="Indice parsé : <?= $skuHintEsc ?>"
-                                     value="">
-                              <ul class="eo-typeahead-dropdown eo-sku-dropdown" role="listbox" hidden></ul>
-                              <input type="hidden" name="sub[<?= (int)$si ?>][line_sku_id][]" class="eo-sku-id" value="0">
+                          <div class="eo-line-row" data-line-idx="<?= (int)$li ?>" data-sku-hint="<?= $skuHintEsc ?>">
+                            <?php if ($skuHintEsc): ?>
+                            <div class="eo-line-hint-row" style="grid-column:1/-1">
+                              <span class="eo-line-hint-label">Indice : <em>«&nbsp;<?= $skuHintEsc ?>&nbsp;»</em></span>
+                              <?php if ($hintQty > 0): ?><span class="eo-line-hint-qty">Qté parsée : <?= htmlspecialchars((string)$hintQty, ENT_QUOTES | ENT_HTML5) ?></span><?php endif ?>
                             </div>
+                            <?php endif ?>
+                            <div class="eo-sku-chips" aria-label="Suggestions SKU"></div>
+                            <div class="eo-sku-manual" hidden>
+                              <div class="eo-typeahead-wrap">
+                                <input type="text" class="eo-input eo-sku-search" placeholder="Rechercher un SKU…" autocomplete="off" value="">
+                                <ul class="eo-typeahead-dropdown eo-sku-dropdown" role="listbox" hidden></ul>
+                              </div>
+                            </div>
+                            <button type="button" class="eo-autre-btn">Autre…</button>
+                            <div class="eo-sku-resolved" hidden>
+                              <span class="eo-sku-resolved__label"></span>
+                              <button type="button" class="eo-sku-resolved__clear" aria-label="Changer">✎</button>
+                            </div>
+                            <input type="hidden" name="sub[<?= (int)$si ?>][line_sku_id][]" class="eo-sku-id" value="0">
                             <input type="number"
                                    name="sub[<?= (int)$si ?>][line_qty][]"
                                    class="eo-input eo-qty-input"
@@ -788,9 +886,6 @@ $flashMsg  = $flash['msg'] ?? '';
                                    value="<?= $hintQty > 0 ? htmlspecialchars((string)$hintQty, ENT_QUOTES | ENT_HTML5) : '' ?>"
                                    placeholder="Qté">
                             <button type="button" class="eo-line-remove" aria-label="Supprimer la ligne">×</button>
-                            <?php if ($skuHintEsc): ?>
-                              <div class="eo-line-raw">Indice : <?= $skuHintEsc ?><?= $rawEsc ? ' — « ' . $rawEsc . ' »' : '' ?></div>
-                            <?php endif ?>
                           </div>
                         <?php endforeach ?>
                         <button type="button" class="eo-add-line-btn">＋ Ajouter une ligne</button>
@@ -799,13 +894,11 @@ $flashMsg  = $flash['msg'] ?? '';
                   </div><!-- /.eo-suborder -->
                 <?php endforeach ?>
 
-                <div class="eo-form-actions">
+                <div class="eo-sticky-validate">
+                  <div class="eo-sticky-validate__blocker"></div>
                   <button type="submit" class="eo-btn-validate" disabled>
                     ✓ Valider les <?= count($hints['orders'] ?? []) ?> commandes
                   </button>
-                  <span style="font-family:'JetBrains Mono',monospace;font-size:.7rem;color:var(--ink-mute);">
-                    Client + date + chaque SKU doivent être résolus pour chaque commande
-                  </span>
                 </div>
               </form>
               <?php endif ?>
@@ -956,28 +1049,45 @@ $flashMsg  = $flash['msg'] ?? '';
 
                 <div class="eo-suborder">
 
+                <div class="eo-card-progress">
+                  <span class="eo-progress-badge">0 / <?= 1 + count($lineHints) ?> résolu</span>
+                </div>
+
                 <!-- Customer -->
                 <div class="eo-field">
                   <label class="eo-field__label eo-field__label--required" for="eo-cust-<?= (int)$em['id'] ?>">
                     Client
                   </label>
                   <?php if ($prefilledCustId > 0): ?>
-                    <div class="eo-field__hint eo-field__hint--prefilled">
-                      Pré-rempli depuis le compte interne de l'expéditeur — confirme ou modifie.
+                    <!-- Pre-filled from internal rep: show resolved immediately -->
+                    <div class="eo-cust-chips" data-cust-hint="" aria-label="Suggestions client" hidden></div>
+                    <div class="eo-cust-manual" hidden>
+                      <div class="eo-typeahead-wrap">
+                        <input type="text" id="eo-cust-<?= (int)$em['id'] ?>" class="eo-input eo-cust-search"
+                               placeholder="Rechercher un client…" autocomplete="off" value="<?= $prefilledCustName ?>">
+                        <ul class="eo-typeahead-dropdown eo-cust-dropdown" role="listbox" aria-label="Clients" hidden></ul>
+                      </div>
                     </div>
-                  <?php elseif ($custHint): ?>
-                    <div class="eo-field__hint">Indice parsé : « <?= $custHint ?> » — confirme en sélectionnant dans la liste</div>
+                    <div class="eo-cust-resolved">
+                      <span class="eo-cust-resolved__label"><?= $prefilledCustName ?></span>
+                      <button type="button" class="eo-cust-resolved__clear" aria-label="Changer">✎</button>
+                    </div>
+                  <?php else: ?>
+                    <div class="eo-cust-chips" data-cust-hint="<?= $custHint ?>" aria-label="Suggestions client"></div>
+                    <div class="eo-cust-manual" hidden>
+                      <div class="eo-typeahead-wrap">
+                        <input type="text" id="eo-cust-<?= (int)$em['id'] ?>" class="eo-input eo-cust-search"
+                               placeholder="Rechercher un client…" autocomplete="off" value="">
+                        <ul class="eo-typeahead-dropdown eo-cust-dropdown" role="listbox" aria-label="Clients" hidden></ul>
+                      </div>
+                    </div>
+                    <button type="button" class="eo-cust-autre-btn">Autre…</button>
+                    <div class="eo-cust-resolved" hidden>
+                      <span class="eo-cust-resolved__label"></span>
+                      <button type="button" class="eo-cust-resolved__clear" aria-label="Changer">✎</button>
+                    </div>
                   <?php endif ?>
-                  <div class="eo-typeahead-wrap">
-                    <input type="text"
-                           id="eo-cust-<?= (int)$em['id'] ?>"
-                           class="eo-input eo-cust-search"
-                           placeholder="Rechercher un client…"
-                           autocomplete="off"
-                           value="<?= $prefilledCustId > 0 ? $prefilledCustName : '' ?>">
-                    <ul class="eo-typeahead-dropdown eo-cust-dropdown" role="listbox" aria-label="Clients" hidden></ul>
-                    <input type="hidden" name="customer_id" class="eo-customer-id" value="<?= $prefilledCustId ?>">
-                  </div>
+                  <input type="hidden" name="customer_id" class="eo-customer-id" value="<?= $prefilledCustId ?>">
                 </div>
 
                 <!-- Requested date -->
@@ -1007,17 +1117,26 @@ $flashMsg  = $flash['msg'] ?? '';
                         $rawEsc     = htmlspecialchars($lineHint['raw'] ?? '', ENT_QUOTES | ENT_HTML5);
                         $hintQty    = (float) ($lineHint['qty'] ?? 0);
                       ?>
-                      <div class="eo-line-row" data-line-idx="<?= (int)$li ?>">
-                        <div class="eo-typeahead-wrap">
-                          <input type="text"
-                                 class="eo-input eo-sku-search"
-                                 placeholder="SKU…"
-                                 autocomplete="off"
-                                 title="Indice parsé : <?= $skuHintEsc ?>"
-                                 value="">
-                          <ul class="eo-typeahead-dropdown eo-sku-dropdown" role="listbox" hidden></ul>
-                          <input type="hidden" name="line_sku_id[]" class="eo-sku-id" value="0">
+                      <div class="eo-line-row" data-line-idx="<?= (int)$li ?>" data-sku-hint="<?= $skuHintEsc ?>">
+                        <?php if ($skuHintEsc): ?>
+                        <div class="eo-line-hint-row" style="grid-column:1/-1">
+                          <span class="eo-line-hint-label">Indice : <em>«&nbsp;<?= $skuHintEsc ?>&nbsp;»</em></span>
+                          <?php if ($hintQty > 0): ?><span class="eo-line-hint-qty">Qté parsée : <?= htmlspecialchars((string)$hintQty, ENT_QUOTES | ENT_HTML5) ?></span><?php endif ?>
                         </div>
+                        <?php endif ?>
+                        <div class="eo-sku-chips" aria-label="Suggestions SKU"></div>
+                        <div class="eo-sku-manual" hidden>
+                          <div class="eo-typeahead-wrap">
+                            <input type="text" class="eo-input eo-sku-search" placeholder="Rechercher un SKU…" autocomplete="off" value="">
+                            <ul class="eo-typeahead-dropdown eo-sku-dropdown" role="listbox" hidden></ul>
+                          </div>
+                        </div>
+                        <button type="button" class="eo-autre-btn">Autre…</button>
+                        <div class="eo-sku-resolved" hidden>
+                          <span class="eo-sku-resolved__label"></span>
+                          <button type="button" class="eo-sku-resolved__clear" aria-label="Changer">✎</button>
+                        </div>
+                        <input type="hidden" name="line_sku_id[]" class="eo-sku-id" value="0">
                         <input type="number"
                                name="line_qty[]"
                                class="eo-input eo-qty-input"
@@ -1025,9 +1144,6 @@ $flashMsg  = $flash['msg'] ?? '';
                                value="<?= $hintQty > 0 ? htmlspecialchars((string)$hintQty, ENT_QUOTES | ENT_HTML5) : '' ?>"
                                placeholder="Qté">
                         <button type="button" class="eo-line-remove" aria-label="Supprimer la ligne">×</button>
-                        <?php if ($skuHintEsc): ?>
-                          <div class="eo-line-raw">Indice : <?= $skuHintEsc ?><?= $rawEsc ? ' — « ' . $rawEsc . ' »' : '' ?></div>
-                        <?php endif ?>
                       </div>
                     <?php endforeach ?>
 
@@ -1051,13 +1167,11 @@ $flashMsg  = $flash['msg'] ?? '';
                 </div>
 
                 <!-- Actions -->
-                <div class="eo-form-actions">
+                <div class="eo-sticky-validate">
+                  <div class="eo-sticky-validate__blocker"></div>
                   <button type="submit" class="eo-btn-validate" disabled>
                     ✓ Valider la commande
                   </button>
-                  <span style="font-family:'JetBrains Mono',monospace;font-size:.7rem;color:var(--ink-mute);">
-                    Client + date + chaque SKU doivent être résolus
-                  </span>
                 </div>
 
               </form>
@@ -1078,7 +1192,7 @@ $flashMsg  = $flash['msg'] ?? '';
   <section class="eo-section" aria-label="E-mails non parsés">
     <div class="eo-section__header">
       <h2 class="eo-section__title">Non parsé</h2>
-      <span class="eo-section__badge eo-badge--error"><?= count($unparsedEmails) ?></span>
+      <span id="eo-badge-error" class="eo-section__badge eo-badge--error"><?= count($unparsedEmails) ?></span>
     </div>
 
     <?php if (empty($unparsedEmails)): ?>
@@ -1122,7 +1236,7 @@ $flashMsg  = $flash['msg'] ?? '';
   <section class="eo-section" aria-label="Commandes traitées">
     <div class="eo-section__header">
       <h2 class="eo-section__title">Traités</h2>
-      <span class="eo-section__badge eo-badge--done"><?= count($doneEmails) ?></span>
+      <span id="eo-badge-done" class="eo-section__badge eo-badge--done"><?= count($doneEmails) ?></span>
     </div>
 
     <?php if (empty($doneEmails)): ?>

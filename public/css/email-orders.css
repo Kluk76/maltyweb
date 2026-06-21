@@ -646,3 +646,252 @@ body.email-orders-page .eo-suborder__notes {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* ── Suggestion chips ──────────────────────────────────────────────────── */
+
+body.email-orders-page .eo-sku-chips,
+body.email-orders-page .eo-cust-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.5rem;
+}
+
+body.email-orders-page .eo-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.65rem;
+  border-radius: 999px;
+  border: 1px solid var(--border, #e5e7eb);
+  background: var(--surface-2, #f9fafb);
+  cursor: pointer;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.8rem;
+  color: var(--ink);
+  transition: border-color 0.12s, background 0.12s;
+  text-align: left;
+  min-height: 44px;
+}
+
+body.email-orders-page .eo-chip:hover {
+  background: var(--surface, #fff);
+  border-color: var(--accent, #3b82f6);
+}
+
+body.email-orders-page .eo-chip__label {
+  font-weight: 500;
+  color: var(--ink);
+}
+
+body.email-orders-page .eo-chip__code {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem;
+  color: var(--ink-mute);
+}
+
+body.email-orders-page .eo-chip__conf {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.65rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+}
+
+body.email-orders-page .eo-chip__conf--forte {
+  background: var(--green-tint, #edfaf3);
+  color: var(--green-ink, #155c34);
+  border: 1px solid var(--green-border, #7dd3a8);
+}
+
+body.email-orders-page .eo-chip__conf--moyenne {
+  background: var(--amber-tint, #fffbeb);
+  color: var(--amber-ink, #92400e);
+  border: 1px solid var(--amber-border, #fbbf24);
+}
+
+/* ── "Autre…" button ─────────────────────────────────────────────────── */
+
+body.email-orders-page .eo-autre-btn,
+body.email-orders-page .eo-cust-autre-btn {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.78rem;
+  padding: 0.3rem 0.7rem;
+  border: 1px dashed var(--border, #d1d5db);
+  border-radius: 5px;
+  background: none;
+  color: var(--ink-mute);
+  cursor: pointer;
+  margin-bottom: 0.4rem;
+  min-height: 44px;
+}
+
+body.email-orders-page .eo-autre-btn:hover,
+body.email-orders-page .eo-cust-autre-btn:hover {
+  background: var(--surface-2, #f9fafb);
+  color: var(--ink);
+}
+
+/* ── Resolved display ────────────────────────────────────────────────── */
+
+body.email-orders-page .eo-sku-resolved,
+body.email-orders-page .eo-cust-resolved {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.65rem;
+  border-radius: 5px;
+  background: var(--green-tint, #edfaf3);
+  border: 1px solid var(--green-border, #7dd3a8);
+  margin-bottom: 0.4rem;
+}
+
+body.email-orders-page .eo-sku-resolved__label,
+body.email-orders-page .eo-cust-resolved__label {
+  flex: 1;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.875rem;
+  color: var(--ink);
+  font-weight: 500;
+}
+
+body.email-orders-page .eo-sku-resolved__clear,
+body.email-orders-page .eo-cust-resolved__clear {
+  background: none;
+  border: none;
+  color: var(--ink-mute);
+  cursor: pointer;
+  font-size: 0.9rem;
+  padding: 0.2rem 0.4rem;
+  min-height: 44px;
+}
+
+body.email-orders-page .eo-sku-resolved__clear:hover,
+body.email-orders-page .eo-cust-resolved__clear:hover {
+  color: var(--ink);
+}
+
+/* ── Resolved row state ──────────────────────────────────────────────── */
+
+body.email-orders-page .eo-line-row--resolved {
+  background: var(--green-tint, #edfaf3);
+  border-radius: 5px;
+  padding: 0.25rem;
+}
+
+/* ── Progress badge ──────────────────────────────────────────────────── */
+
+body.email-orders-page .eo-progress-badge {
+  display: inline-block;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.68rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: var(--surface-2, #f3f4f6);
+  border: 1px solid var(--border, #e5e7eb);
+  color: var(--ink-mute);
+  margin-left: 0.5rem;
+}
+
+body.email-orders-page .eo-progress-badge--complete {
+  background: var(--green-tint, #edfaf3);
+  border-color: var(--green-border, #7dd3a8);
+  color: var(--green-ink, #155c34);
+}
+
+body.email-orders-page .eo-card-progress {
+  margin-bottom: 0.75rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+}
+
+/* ── Sticky validate bar ─────────────────────────────────────────────── */
+
+body.email-orders-page .eo-sticky-validate {
+  position: sticky;
+  bottom: 0;
+  background: var(--surface, #fff);
+  border-top: 1px solid var(--border, #e5e7eb);
+  padding: 0.75rem 1rem;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  z-index: 10;
+  border-radius: 0 0 6px 6px;
+  box-shadow: 0 -2px 8px rgba(30,18,5,0.07);
+}
+
+body.email-orders-page .eo-sticky-validate__blocker {
+  flex: 1;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.72rem;
+  color: var(--ink-mute);
+}
+
+/* ── Live poll new-orders banner ─────────────────────────────────────── */
+
+body.email-orders-page .eo-new-orders-banner {
+  background: var(--amber-tint, #fffbeb);
+  border: 1px solid var(--amber-border, #fbbf24);
+  border-radius: 6px;
+  padding: 0.6rem 1rem;
+  margin-bottom: 1rem;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.875rem;
+  color: var(--amber-ink, #92400e);
+  cursor: pointer;
+  font-weight: 500;
+}
+
+body.email-orders-page .eo-new-orders-banner:hover {
+  background: var(--amber-border, #fbbf24);
+  color: var(--surface, #fff);
+}
+
+/* ── Typeahead label + code in dropdown ──────────────────────────────── */
+
+body.email-orders-page .eo-typeahead-dropdown li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+body.email-orders-page .eo-typeahead-label {
+  flex: 1;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.875rem;
+  color: var(--ink);
+}
+
+body.email-orders-page .eo-typeahead-code {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem;
+  color: var(--ink-mute);
+  flex-shrink: 0;
+}
+
+/* ── Line hint row ──────────────────────────────────────────────────── */
+
+body.email-orders-page .eo-line-hint-row {
+  display: flex;
+  gap: 1rem;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem;
+  color: var(--ink-mute);
+  margin-bottom: 0.3rem;
+  grid-column: 1 / -1;
+}
+
+body.email-orders-page .eo-line-hint-label em {
+  font-style: normal;
+  color: var(--ink);
+}
+
+/* ── Update eo-line-row grid for new structure ──────────────────────── */
+
+body.email-orders-page .eo-line-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 0.5rem;
+  align-items: start;
+  margin-bottom: 0.75rem;
+}
