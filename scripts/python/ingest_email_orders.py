@@ -502,6 +502,25 @@ def _already_seen(conn: pymysql.connections.Connection, message_id: str) -> int 
         return int(row["id"]) if row else None
 
 
+def _order_to_dict(order: ParsedOrder) -> dict:
+    """
+    Build the per-order dict WITHOUT _kind / _schema_version envelope keys.
+
+    Used by both _serialise_parsed_order (single-order path) and
+    _serialise_parsed_orders_multi (multi-order path) so neither path
+    duplicates the field-mapping logic.
+    """
+    return {
+        "customer_hint":  order.customer_hint,
+        "requested_date": order.requested_date.isoformat() if order.requested_date else None,
+        "notes":          order.notes,
+        "lines": [
+            {"sku_hint": ln.sku_hint, "qty": ln.qty, "raw": ln.raw}
+            for ln in order.lines
+        ],
+    }
+
+
 def _serialise_parsed_order(order: ParsedOrder, extra_hints: dict | None = None) -> str:
     """
     Serialise a ParsedOrder to JSON for storage in doc_email_messages.parsed_json.
@@ -529,17 +548,45 @@ def _serialise_parsed_order(order: ParsedOrder, extra_hints: dict | None = None)
     d: dict = {
         "_kind":           "parsed_order_hints",
         "_schema_version": 1,
-        "customer_hint":   order.customer_hint,
-        "requested_date":  order.requested_date.isoformat() if order.requested_date else None,
-        "notes":           order.notes,
-        "lines": [
-            {"sku_hint": ln.sku_hint, "qty": ln.qty, "raw": ln.raw}
-            for ln in order.lines
-        ],
+        **_order_to_dict(order),
     }
     if extra_hints:
         d.update(extra_hints)
     return json.dumps(d, ensure_ascii=False)
+
+
+def _serialise_parsed_orders_multi(orders: list, original_sender: str | None) -> str:
+    """
+    Serialise a list of ParsedOrders to JSON for multi-order emails.
+
+    Shape:
+    {
+      "_kind": "parsed_order_hints_multi",
+      "_schema_version": 1,
+      "orders": [
+        {
+          "customer_hint": "<raw sender string>",
+          "requested_date": "<YYYY-MM-DD>" | null,
+          "notes": "<free text>",
+          "lines": [{"sku_hint": "...", "qty": <float>, "raw": "..."}, ...]
+        },
+        ...
+      ]
+    }
+
+    When an individual order has an empty customer_hint and original_sender is
+    available, original_sender is injected as the customer_hint for that order.
+    """
+    order_dicts = []
+    for o in orders:
+        d = _order_to_dict(o)
+        if not d["customer_hint"] and original_sender:
+            d["customer_hint"] = original_sender
+        order_dicts.append(d)
+    return json.dumps(
+        {"_kind": "parsed_order_hints_multi", "_schema_version": 1, "orders": order_dicts},
+        ensure_ascii=False,
+    )
 
 
 def _upsert_email_message(
@@ -720,7 +767,22 @@ def process_message(
         if result is None:
             parse_status = "no_match"
             log.info("  [no_match] %s — no parser matched or all declined", message_id[:60])
+        elif isinstance(result, list):
+            if len(result) == 0:
+                parse_status = "no_match"
+                log.info("  [no_match] %s — multi parser returned empty list", message_id[:60])
+            else:
+                parse_status   = "parsed"
+                parser_matched = _resolve_parser_name(ctx, env)
+                parsed_json    = _serialise_parsed_orders_multi(result, original_sender)
+                log.info(
+                    "  [parsed-multi] %s — parser=%s orders=%d",
+                    message_id[:60],
+                    parser_matched,
+                    len(result),
+                )
         else:
+            # single ParsedOrder — existing path UNCHANGED
             parsed_order   = result
             parse_status   = "parsed"
             parser_matched = _resolve_parser_name(ctx, env)

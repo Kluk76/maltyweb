@@ -62,6 +62,7 @@ from .alloboissons import AlloboissonsParser
 from .amstein import AmsteinPdfParser
 from .attachment_pdf import BevanarPdfParser
 from .attachment_xlsx import MigrosFroidevilleXlsxParser
+from .boissons_gds import BoissonsGdsPdfParser
 from .cobra import CobraBodyParser
 from .nausikraft import NausikraftPdfParser
 from .petitecave import PetiteCavePdfParser
@@ -79,21 +80,23 @@ REGISTRY: list[SenderParser] = [
     PetiteCavePdfParser(),          # Petite Cave born-digital PDF purchase orders
     AmsteinPdfParser(),             # Amstein SA born-digital PDF purchase orders
     AlloboissonsParser(),           # Alloboissons SA born-digital PDF purchase orders
+    BoissonsGdsPdfParser(),         # Boissons GDS multi-PDF purchase orders
     GenericVocabParser(),           # layer-2 universal fallback — always last
 ]
 
 
 # ── Dispatcher ────────────────────────────────────────────────────────────────
 
-def dispatch(ctx: EmailContext, env: ParserEnv) -> ParsedOrder | None:
+def dispatch(ctx: EmailContext, env: ParserEnv) -> ParsedOrder | list[ParsedOrder] | None:
     """
     Run ctx through the registry with the decline-fall-through protocol.
 
     For each parser whose matches(ctx, env) returns True:
       - call parse(ctx, env)
-      - ParsedOrder returned → return it (winner)
-      - None returned       → parser DECLINED → continue to next parser
-      - exception raised    → propagate (caller marks parse_status='error')
+      - ParsedOrder returned        → return it (winner, single-order path)
+      - list[ParsedOrder] returned  → return it (winner, multi-order path)
+      - None returned               → parser DECLINED → continue to next parser
+      - exception raised            → propagate (caller marks parse_status='error')
 
     Returns None when:
       - no parser matched at all, OR
