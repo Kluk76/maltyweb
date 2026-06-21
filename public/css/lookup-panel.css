@@ -312,3 +312,42 @@
     padding: 0.25rem 0.35rem;
   }
 }
+
+/* ── Packaging lookup page — labelled header block ──────────────────────── */
+/* Scoped under body.home so tokens resolve against the kraft-paper theme.  */
+body.home .pkg-lkp-header {
+  margin-bottom: 2rem;
+}
+
+body.home .pkg-lkp-eyebrow {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-label);
+  margin: 0 0 0.4rem;
+}
+
+body.home .pkg-lkp-title {
+  font-family: 'Fraunces', serif;
+  font-variation-settings: "opsz" 96;
+  font-size: 2rem;
+  font-weight: 300;
+  color: var(--ink);
+  margin: 0 0 0.5rem;
+  line-height: 1.15;
+}
+
+body.home .pkg-lkp-title em {
+  font-style: italic;
+  font-weight: 400;
+}
+
+body.home .pkg-lkp-sub {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.9rem;
+  color: var(--ink-label);
+  margin: 0;
+  max-width: 56ch;
+}

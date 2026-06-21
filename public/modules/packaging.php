@@ -355,6 +355,14 @@ $lookupConfig = [
         ['name' => 'batch',  'label' => 'Lot',   'type' => 'text'],
     ],
 ];
+?>
+  <!-- ── Packaging lookup — labelled header ──────────────────────────────── -->
+  <div class="pkg-lkp-header">
+    <p class="pkg-lkp-eyebrow">MaltyTask · Conditionnement</p>
+    <h2 class="pkg-lkp-title">Consulter un <em>packaging</em></h2>
+    <p class="pkg-lkp-sub">Recherchez les données d'un conditionnement par date ou par SKU et numéro de lot.</p>
+  </div>
+<?php
 require __DIR__ . '/partials/lookup-panel.php';
 ?>
 
@@ -540,9 +548,6 @@ require __DIR__ . '/partials/lookup-panel.php';
         Packaging
         <span class="tanks-section__tag">Conditionnement</span>
       </h2>
-      <a href="/modules/form-packaging.php" class="wort-filters__reset tanks-filters__reset">
-        + Saisir un conditionnement
-      </a>
       <form class="ferm-stats__year-form" method="get" action="<?= htmlspecialchars($_SERVER['PHP_SELF']) ?>">
         <?php if (isset($_GET['year']))  : ?><input type="hidden" name="year"  value="<?= htmlspecialchars($_GET['year'])  ?>"><?php endif ?>
         <?php if (isset($_GET['month'])) : ?><input type="hidden" name="month" value="<?= htmlspecialchars($_GET['month']) ?>"><?php endif ?>
