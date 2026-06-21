@@ -18,7 +18,7 @@ header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
-require_page_access('saisies');
+require_page_access('brewing-lookup');
 
 // ── Method guard ──────────────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] !== 'GET') {

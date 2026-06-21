@@ -1,0 +1,41 @@
+/**
+ * brewing-lookup.css — Page-level layout for the standalone brewing lookup page.
+ * Scoped under body.brewing-lookup to avoid collisions.
+ * The shared lookup panel styles live in lookup-panel.css.
+ */
+
+body.brewing-lookup .bl-header {
+  margin-bottom: 2rem;
+}
+
+body.brewing-lookup .bl-eyebrow {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-muted, #8a7f72);
+  margin-bottom: 0.4rem;
+}
+
+body.brewing-lookup .bl-title {
+  font-family: 'Fraunces', serif;
+  font-size: 2rem;
+  font-weight: 300;
+  color: var(--color-text-primary, #f0ebe4);
+  margin: 0 0 0.5rem;
+  line-height: 1.15;
+}
+
+body.brewing-lookup .bl-title em {
+  font-style: italic;
+  font-weight: 400;
+}
+
+body.brewing-lookup .bl-sub {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.9rem;
+  color: var(--color-text-muted, #8a7f72);
+  margin: 0;
+  max-width: 56ch;
+}

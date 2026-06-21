@@ -1155,7 +1155,6 @@ $cipConfig = [
   <link rel="stylesheet" href="/css/app.css?v=<?= @filemtime(__DIR__ . '/../css/app.css') ?: time() ?>">
   <link rel="stylesheet" href="/css/cip-section.css?v=<?= @filemtime(__DIR__ . '/../css/cip-section.css') ?: time() ?>">
   <link rel="stylesheet" href="/css/form-brewing.css?v=<?= @filemtime(__DIR__ . '/../css/form-brewing.css') ?: time() ?>">
-  <link rel="stylesheet" href="/css/lookup-panel.css?v=<?= @filemtime(__DIR__ . '/../css/lookup-panel.css') ?: time() ?>">
 </head>
 <body class="home op-form-page form-brewing">
 
@@ -1581,22 +1580,6 @@ window.BREWING_STICKY_ING = <?= json_encode([
 <script src="/js/form-framework.js?v=<?= @filemtime(__DIR__ . '/../js/form-framework.js') ?: time() ?>" defer></script>
 <script src="/js/form-brewing.js?v=<?= @filemtime(__DIR__ . '/../js/form-brewing.js') ?: time() ?>" defer></script>
 
-<?php
-$recipeStmt = maltytask_pdo()->query("SELECT id, name FROM ref_recipes WHERE is_active=1 ORDER BY name");
-$recipeOptions = $recipeStmt->fetchAll(PDO::FETCH_ASSOC);
-$lookupConfig = [
-    'panel_id'         => 'brewing-lookup',
-    'api_endpoint'     => '/api/brewing-lookup.php',
-    'mode_batch_label' => 'Par recette + lot',
-    'type'             => 'brewing',
-    'batch_fields'     => [
-        ['name' => 'recipe_id', 'label' => 'Recette', 'type' => 'select', 'options' => $recipeOptions, 'value_col' => 'id', 'label_col' => 'name'],
-        ['name' => 'batch',     'label' => 'Lot',      'type' => 'text'],
-    ],
-];
-require __DIR__ . '/partials/lookup-panel.php';
-?>
-<script defer src="/js/lookup-panel.js?v=<?= @filemtime(__DIR__ . '/../js/lookup-panel.js') ?: time() ?>"></script>
 
 </body>
 </html>
