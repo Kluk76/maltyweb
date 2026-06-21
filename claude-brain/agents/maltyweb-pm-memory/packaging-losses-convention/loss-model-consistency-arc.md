@@ -188,8 +188,30 @@ The loss-model commit briefly swept the parallel WeeklyOrders session's staged m
 
 ---
 
-## ✅ UNIT-LOSS REDISTRIBUTION ACROSS PARALLEL RUNS — PM RULING 2026-06-19 (the CORRECTED target; supersedes the mis-scoped liquid-loss work)
+## 🟢 RESOLVED — REAL ISSUE WAS DATA-ENTRY + A MIS-LABELLED FIELD, NOT A REDISTRIBUTION FEATURE (2026-06-21; commit `461867a`, pushed to main, LIVE on VPS)
 
+> **AUTHORITATIVE CLOSE-OUT — supersedes the §UNIT-LOSS REDISTRIBUTION ruling below (now DEFERRED/NOT-BUILT).** Kouros's real complaint ("recap shows 0.33% for STIB, nothing for STI4") was NOT liquid loss and NOT a missing dilution feature. Root cause, found by reading data + source:
+> 1. **A MIS-LABELLED FORM FIELD.** DB col `loss_untaxed_full_units` = "full unit lost" (mig 233 — counts as loss, EXCLUDED from beer-tax base = Yves's "unité perdue"), but `public/js/packaging-form.js` LABELLED it **"Perte liquide autre"**. An operator mis-entered **4** there for Stirling STIB (id 6802) when the true unit-lost was **1** → inflated loss 0.18%→0.22%.
+> 2. The recap also wasn't grouping parallel runs → all breakage showed on the single row the operator typed it into (STIB), nothing on STI4.
+>
+> **Terminology that caused a long detour:** "liquid loss" in our schema (`loss_liquid_other_units`) is a NARROW spillage field; **Kouros/Yves mean UNVENDABLE / UNIT losses** (invendable + unit-lost + half-filled). QA pulls (qa_analyses/qa_library) were correctly already excluded from loss_kpi.
+>
+> ### What actually SHIPPED (commit `461867a`, pushed to main, all LIVE on VPS)
+> - **Data fix:** `bd_packaging_v2.id=6802` (Stirling b171 STIB) `loss_untaxed_full_units` **4→1**, audited (`audit_row_revisions` #21727); stored vendable / tax / loss_kpi re-materialised to match the view.
+> - **Relabel:** "Perte liquide autre" → **"Unité perdue (pleine)"** in `public/js/packaging-form.js` + `public/modules/visite-guidee.php`.
+> - **Recap parallel-run grouping (DISPLAY-ONLY):** `kpi_pkg_daily_recap()` (`app/kpi-handlers.php` ~L6001-6074) groups by `(recipe_id_fk, batch, event_date, fam=bot|can|run_type)`; each row shows `loss_pct = Σgroup loss_kpi / Σgroup vendable` + volume-share `loss_hl`; **headline totals unchanged.** Result: STIB & STI4 both show 0.18% (= Yves's 15/8145). NOTE: this grouping was partly authored by a PARALLEL session that had `kpi-handlers.php` dirty; it coexists with the earlier liquid double-count fix — both committed in `461867a`.
+> - **Liquid work KEPT:** migs 415/416/417/419 + form-packaging recompute + the Pertes double-count fix were RETAINED (harmless, correct for liquid loss, the double-count fix is real) — part of the same commit.
+>
+> ### Decisions recorded
+> - The heavyweight **"redistribute unit COUNTS across all history (incl. sealed months)"** build ruled below = **NOT BUILT — DEFERRED.** The display-grouping + data fix + relabel met the need. Keep the ruling on file as the path IF per-SKU STORED vendable/COGS ever needs to truly split (not just display).
+> - **DURABLE LESSON (codify-worthy):** operator/operator-term "loss %" = unit/invendable losses over TOTAL parallel-run production (Yves: Σloss_units / Σ(B+4 produced)). **CONFIRM FIELD SEMANTICS vs LABELS before building** — the `loss_untaxed_full_units` ↔ "Perte liquide autre" label mismatch cost a full wrong-target build.
+
+---
+
+## 🟡 DEFERRED / NOT BUILT — UNIT-LOSS REDISTRIBUTION ACROSS PARALLEL RUNS — PM RULING 2026-06-19 (kept on file; the path IF per-SKU STORED split is ever needed)
+
+> **🟡 STATUS 2026-06-21: NOT BUILT — DEFERRED.** This whole STORED-redistribution build proved UNNECESSARY: the symptom was a data-entry error (`id=6802` 4→1) + a mis-labelled field + a missing DISPLAY grouping, all fixed in `461867a` (see §RESOLVED above). This ruling stands as the blessed PLAN should a future need require splitting per-SKU STORED vendable/tax/COGS across a parallel group (not just the recap display). Do NOT execute it without a fresh operator ask + the §Q4 OPEN-MONTH/HISTORICAL fiscal re-verify.
+>
 > **Terminology correction.** Migs **415/416/417/419** (LIVE on VPS, all `--status ✓`) redistributed `loss_liquid_other_units` across parallel runs via a `loss_liquid_other_units_alloc` derived col + `recompute_group_liquid_alloc()` (form-packaging.php) + view COALESCE(_alloc,raw) + a loss_kpi re-materialize. **That was the WRONG field.** `loss_liquid_other_units` is a PURE loss term that (since mig 293) does NOT touch vendable or beer_tax_base — only `loss_kpi_hl`. So that redistribution was display/loss-KPI-only and fiscally inert. Kouros's actual target = the **UNIT losses** (`unsaleable_units`, `loss_half_filled_units`, `loss_untaxed_full_units`, `loss_uncapped_units`) which DO move vendable + tax + COGS. Live proof: Stirling batch 171 — STIB (id 6802, prod 5533) carries unsaleable 1 / half 26 / untaxed 4 / qa 2+5 → loss_kpi 0.0594, vendable 18.1764, tax 18.1797; STI4 (id 6803, prod 2592, same recipe/batch/date/fmt=bot) shows loss_kpi 0.0000. Operator lumped all breakage on STIB.
 
 ### Q1 — WHAT gets redistributed: the COUNTS. (verified vs live view mig 317/417 + compute fn form-packaging.php L247-289)
