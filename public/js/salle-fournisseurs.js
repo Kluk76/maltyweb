@@ -23,7 +23,8 @@
   /* ── Payload ──────────────────────────────────────────────────────── */
   const SUPPLIERS = window.SF_SUPPLIERS || [];
   const ROLE      = window.SF_ROLE || 'manager';
-  const CSRF      = window.SF_CSRF || '';
+  const CSRF       = window.SF_CSRF || '';
+  const USER_EMAIL = window.SF_USER_EMAIL || '';
 
   /* ── GL label map (static supplement — DB-driven preferred) ───────── */
   const GL_LABELS = {
@@ -501,86 +502,146 @@
         </button>`
       : '';
 
-    ficheEl.innerHTML = `<div class="sf-doc-paper sf-reveal">
-      ${intakeBanner}
-      ${horsBanner}
-      <div class="sf-doc-head">
-        <div class="sf-doc-stamp">BON FOURNISSEUR</div>
-        <div class="sf-doc-head-main">
-          <div class="sf-doc-sup-name">${escHtml(s.name)}</div>
-          <div class="sf-doc-sup-id">${escHtml(s.supplier_id)}</div>
-        </div>
-        <div class="sf-doc-head-meta">
-          ${activeBadge}
-          ${commBadge}
-          ${completenessRing(s)}
-          ${parserChip}
-        </div>
+    ficheEl.innerHTML = `<div class="sf-fiche-tabs">
+      <!-- Tab strip -->
+      <div class="sf-tab-strip" role="tablist">
+        <button class="sf-tab sf-tab--active" role="tab" data-tab="fiche" aria-selected="true">Fiche</button>
+        <button class="sf-tab" role="tab" data-tab="eval" aria-selected="false">Évaluation</button>
+        <button class="sf-tab" role="tab" data-tab="disc" aria-selected="false">Discussions</button>
       </div>
 
-      ${statsStrip}
-
-      <div class="sf-doc-fields">
-
-        <div class="sf-doc-field ${!s.gl_account ? 'sf-field-gap' : ''}">
-          ${provBadge(s, 'gl_account')}
-          <div class="sf-doc-field-label">Compte GL</div>
-          <div class="sf-doc-field-value mono">
-            ${s.gl_account
-              ? escHtml(s.gl_account) + ' · ' + escHtml(glLabel(s.gl_account, s.gl_label))
-              : '<em style="color:var(--ink-faint)">non défini</em>'}
+      <!-- Panel: Fiche (default active) -->
+      <div class="sf-panel sf-panel--active" id="sf-panel-fiche" role="tabpanel">
+        <div class="sf-doc-paper sf-reveal">
+          ${intakeBanner}
+          ${horsBanner}
+          <div class="sf-doc-head">
+            <div class="sf-doc-stamp">BON FOURNISSEUR</div>
+            <div class="sf-doc-head-main">
+              <div class="sf-doc-sup-name">${escHtml(s.name)}</div>
+              <div class="sf-doc-sup-id">${escHtml(s.supplier_id)}</div>
+            </div>
+            <div class="sf-doc-head-meta">
+              ${activeBadge}
+              ${commBadge}
+              ${completenessRing(s)}
+              ${parserChip}
+            </div>
           </div>
-          ${fieldActions(s, 'gl_account')}
+
+          ${statsStrip}
+
+          <div class="sf-doc-fields">
+
+            <div class="sf-doc-field ${!s.gl_account ? 'sf-field-gap' : ''}">
+              ${provBadge(s, 'gl_account')}
+              <div class="sf-doc-field-label">Compte GL</div>
+              <div class="sf-doc-field-value mono">
+                ${s.gl_account
+                  ? escHtml(s.gl_account) + ' · ' + escHtml(glLabel(s.gl_account, s.gl_label))
+                  : '<em style="color:var(--ink-faint)">non défini</em>'}
+              </div>
+              ${fieldActions(s, 'gl_account')}
+            </div>
+
+            <div class="sf-doc-field ${!s.currency ? 'sf-field-gap' : ''}">
+              ${provBadge(s, 'currency')}
+              <div class="sf-doc-field-label">Devise</div>
+              <div class="sf-doc-field-value mono">${s.currency ? escHtml(s.currency) : '<em style="color:var(--ink-faint)">à renseigner</em>'}</div>
+              ${fieldActions(s, 'currency')}
+            </div>
+
+            <div class="sf-doc-field ${!s.country ? 'sf-field-gap' : ''}">
+              ${provBadge(s, 'country')}
+              <div class="sf-doc-field-label">Pays</div>
+              <div class="sf-doc-field-value">${ctryDisplay}</div>
+              ${fieldActions(s, 'country')}
+            </div>
+
+            <div class="sf-doc-field">
+              <div class="sf-doc-field-label">ID interne</div>
+              <div class="sf-doc-field-value mono">${s.id}</div>
+            </div>
+
+            ${s.notes ? `<div class="sf-doc-field sf-span2">
+              <div class="sf-doc-field-label">Notes</div>
+              <div class="sf-doc-field-value" style="font-size:11.5px;color:var(--ink-mute)">${escHtml(s.notes)}</div>
+            </div>` : ''}
+
+          </div>
+
+          ${glSection}
+
+          <div class="sf-explainer">
+            <p><strong>Pourquoi cette fiche ?</strong> C'est la référence canonique que l'ingestion et les parseurs lisent à chaque réception de document pour résoudre l'identité fournisseur, l'affectation comptable, le régime TVA et le catalogue MI — la résolution est déterministe, jamais devinée.</p>
+          </div>
+
+          ${aliasStrip}
+
+          <div class="sf-cat-head">
+            <div class="sf-cat-title">Catalogue MI</div>
+            <div class="sf-cat-sub">${cat.length} article${cat.length !== 1 ? 's' : ''} · résolution parseur</div>
+          </div>
+          ${cat.length > 0 ? `<div class="sf-cat-callout">
+            <b>Liste de résolution parseur.</b> Le parseur OCR résout les lignes de facture <em>contre cette liste</em>, pas contre l'intégralité de l'univers MI.
+          </div>` : ''}
+          ${catalogueHtml}
+
+          ${govSection}
+          ${changeLog}
+          ${validateBtn}
         </div>
-
-        <div class="sf-doc-field ${!s.currency ? 'sf-field-gap' : ''}">
-          ${provBadge(s, 'currency')}
-          <div class="sf-doc-field-label">Devise</div>
-          <div class="sf-doc-field-value mono">${s.currency ? escHtml(s.currency) : '<em style="color:var(--ink-faint)">à renseigner</em>'}</div>
-          ${fieldActions(s, 'currency')}
-        </div>
-
-        <div class="sf-doc-field ${!s.country ? 'sf-field-gap' : ''}">
-          ${provBadge(s, 'country')}
-          <div class="sf-doc-field-label">Pays</div>
-          <div class="sf-doc-field-value">${ctryDisplay}</div>
-          ${fieldActions(s, 'country')}
-        </div>
-
-        <div class="sf-doc-field">
-          <div class="sf-doc-field-label">ID interne</div>
-          <div class="sf-doc-field-value mono">${s.id}</div>
-        </div>
-
-        ${s.notes ? `<div class="sf-doc-field sf-span2">
-          <div class="sf-doc-field-label">Notes</div>
-          <div class="sf-doc-field-value" style="font-size:11.5px;color:var(--ink-mute)">${escHtml(s.notes)}</div>
-        </div>` : ''}
-
       </div>
 
-      ${glSection}
+      <!-- Panel: Évaluation (lazy-loaded on first click) -->
+      <div class="sf-panel" id="sf-panel-eval" role="tabpanel"></div>
 
-      <div class="sf-explainer">
-        <p><strong>Pourquoi cette fiche ?</strong> C'est la référence canonique que l'ingestion et les parseurs lisent à chaque réception de document pour résoudre l'identité fournisseur, l'affectation comptable, le régime TVA et le catalogue MI — la résolution est déterministe, jamais devinée.</p>
-      </div>
-
-      ${aliasStrip}
-
-      <div class="sf-cat-head">
-        <div class="sf-cat-title">Catalogue MI</div>
-        <div class="sf-cat-sub">${cat.length} article${cat.length !== 1 ? 's' : ''} · résolution parseur</div>
-      </div>
-      ${cat.length > 0 ? `<div class="sf-cat-callout">
-        <b>Liste de résolution parseur.</b> Le parseur OCR résout les lignes de facture <em>contre cette liste</em>, pas contre l'intégralité de l'univers MI.
-      </div>` : ''}
-      ${catalogueHtml}
-
-      ${govSection}
-      ${changeLog}
-      ${validateBtn}
+      <!-- Panel: Discussions (lazy-loaded on first click) -->
+      <div class="sf-panel" id="sf-panel-disc" role="tabpanel"></div>
     </div>`;
-    renderEvalSection(id);
+
+    _wireTabStrip(ficheEl, id);
+  }
+
+  /* ── Tab strip wiring ───────────────────────────────────────────── */
+  function _wireTabStrip(ficheEl, supplierId) {
+    const tabs = ficheEl.querySelectorAll('.sf-tab-strip [data-tab]');
+    const _loaded = new Set(['fiche']); // fiche panel is always pre-rendered
+
+    tabs.forEach(tabBtn => {
+      tabBtn.addEventListener('click', () => {
+        const tab = tabBtn.dataset.tab;
+
+        // Update tab active state
+        tabs.forEach(t => { t.classList.remove('sf-tab--active'); t.setAttribute('aria-selected', 'false'); });
+        tabBtn.classList.add('sf-tab--active');
+        tabBtn.setAttribute('aria-selected', 'true');
+
+        // Update panel visibility
+        ficheEl.querySelectorAll('.sf-panel').forEach(p => p.classList.remove('sf-panel--active'));
+        const panel = ficheEl.querySelector(`#sf-panel-${tab}`);
+        if (panel) panel.classList.add('sf-panel--active');
+
+        // Poll management: pause poll when leaving disc tab
+        if (tab !== 'disc') {
+          if (_discPollInterval) {
+            clearInterval(_discPollInterval); _discPollInterval = null;
+          }
+        }
+
+        // Lazy-load
+        if (tab === 'eval' && !_loaded.has('eval')) {
+          _loaded.add('eval');
+          renderEvalSection(supplierId);
+        }
+
+        if (tab === 'disc') {
+          // Always re-call renderDiscussionSection when switching to disc
+          // (re-fetches + re-starts poll; idempotent — removes existing section first)
+          renderDiscussionSection(supplierId);
+        }
+      });
+    });
   }
 
   /* ── List rendering ──────────────────────────────────────────────── */
@@ -1148,7 +1209,8 @@
     placeholder.id = 'sf-eval-section';
     placeholder.className = 'sf-eval-section';
     placeholder.innerHTML = '<div class="sf-eval-loading">Chargement évaluation…</div>';
-    ficheEl.querySelector('.sf-doc-paper').appendChild(placeholder);
+    const evalPanel = ficheEl.querySelector('#sf-panel-eval') || ficheEl.querySelector('.sf-doc-paper');
+    evalPanel.appendChild(placeholder);
 
     try {
       const resp = await fetch(`/api/sf-supplier-evaluation.php?supplier_id=${encodeURIComponent(supplierId)}`);
@@ -1167,6 +1229,617 @@
     } catch (e) {
       placeholder.innerHTML = `<div class="sf-eval-loading">Erreur réseau : ${escHtml(e.message)}</div>`;
     }
+  }
+
+  /* ── Discussion timeline section ────────────────────────────────── */
+  let _discPollInterval = null;
+
+  async function renderDiscussionSection(supplierId) {
+    if (_discPollInterval) { clearInterval(_discPollInterval); _discPollInterval = null; }
+
+    const ficheEl = document.getElementById('sf-fiche');
+    if (!ficheEl) return;
+    const existing = document.getElementById('sf-disc-section');
+    if (existing) existing.remove();
+
+    const placeholder = document.createElement('div');
+    placeholder.id = 'sf-disc-section';
+    placeholder.className = 'sf-disc-section';
+    placeholder.innerHTML = '<div class="sf-disc-loading">Chargement des discussions…</div>';
+    const discPanel = ficheEl.querySelector('#sf-panel-disc') || ficheEl.querySelector('.sf-doc-paper');
+    discPanel.appendChild(placeholder);
+
+    await _loadDiscussionSection(supplierId, placeholder);
+
+    _discPollInterval = setInterval(async () => {
+      const sec = document.getElementById('sf-disc-section');
+      const dPanel = document.getElementById('sf-panel-disc');
+      if (!sec || !sec.closest('#sf-fiche.sf-visible')) {
+        clearInterval(_discPollInterval); _discPollInterval = null; return;
+      }
+      // Only poll if disc panel is active
+      if (dPanel && !dPanel.classList.contains('sf-panel--active')) {
+        return; // skip this tick, don't clear — panel may become active again
+      }
+      await _loadDiscussionSection(supplierId, sec);
+    }, 45000);
+  }
+
+  async function _loadDiscussionSection(supplierId, container) {
+    try {
+      const resp = await fetch(`/api/sf-comm-thread.php?supplier_id=${encodeURIComponent(supplierId)}`);
+      if (!resp.ok) { container.innerHTML = `<div class="sf-disc-loading">Impossible de charger les discussions.</div>`; return; }
+      const data = await resp.json();
+      if (!data.ok) { container.innerHTML = `<div class="sf-disc-loading">Erreur : ${escHtml(data.error || 'inconnue')}</div>`; return; }
+      container.innerHTML = _renderDiscContent(supplierId, data);
+      container.__sfDiscData = data;
+      _wireDiscEvents(container, supplierId);
+      // Update Discussions tab badge
+      const discTab = document.querySelector('.sf-tab-strip [data-tab="disc"]');
+      if (discTab) {
+        const total = (data.threads || []).length + (data.review_threads || []).length;
+        const hasReview = (data.review_threads || []).length > 0 && ROLE === 'admin';
+        discTab.dataset.discCount = total;
+        discTab.innerHTML = `Discussions${total > 0 ? ` <span class="sf-tab-badge">${total}</span>` : ''}${hasReview ? ' <span class="sf-tab-warn">⚠</span>' : ''}`;
+      }
+    } catch (e) {
+      container.innerHTML = `<div class="sf-disc-loading">Erreur réseau : ${escHtml(e.message)}</div>`;
+    }
+  }
+
+  function _renderDiscContent(supplierId, data) {
+    const timeline      = data.timeline || [];
+    const reviewThreads = data.review_threads || [];
+    const threads       = data.threads || [];
+
+    // ── Left rail: thread list ──────────────────────────────────────────
+    let railHtml = '';
+
+    // Review-bucket group (admin only)
+    if (ROLE === 'admin' && reviewThreads.length > 0) {
+      const reviewItems = reviewThreads.map(t => {
+        const supplierOpts = (SUPPLIERS || []).map(s =>
+          `<option value="${s.id}">${escHtml(s.name)}</option>`
+        ).join('');
+        const dateShort = t.last_message_at
+          ? new Date(t.last_message_at).toLocaleDateString('fr-CH', { day: 'numeric', month: 'short' })
+          : '—';
+        return `<div class="sf-disc-rail-item sf-disc-rail-review" data-thread-id="${t.id}" data-is-review="1" role="button" tabindex="0">
+          <div class="sf-disc-rail-subject">⚠ ${escHtml(t.subject || '(sans objet)')}</div>
+          <div class="sf-disc-rail-meta">
+            <span class="sf-disc-rail-addr">${escHtml(t.counterparty_addresses || '—')}</span>
+            <span class="sf-disc-rail-date">${escHtml(dateShort)}</span>
+            <span class="sf-disc-rail-count">${t.message_count} msg</span>
+          </div>
+        </div>`;
+      }).join('');
+      railHtml += `<div class="sf-disc-rail-group-head">À rattacher</div>${reviewItems}`;
+    }
+
+    // Normal assigned threads
+    if (threads.length > 0) {
+      const threadItems = threads.map(t => {
+        const dateShort = t.last_message_at
+          ? new Date(t.last_message_at).toLocaleDateString('fr-CH', { day: 'numeric', month: 'short' })
+          : '—';
+        return `<div class="sf-disc-rail-item" data-thread-id="${t.thread_id}" data-is-review="0" role="button" tabindex="0">
+          <div class="sf-disc-rail-subject">${escHtml(t.subject || '(sans objet)')}</div>
+          <div class="sf-disc-rail-meta">
+            <span class="sf-disc-rail-addr">${escHtml(t.counterparty_addresses || '—')}</span>
+            <span class="sf-disc-rail-date">${escHtml(dateShort)}</span>
+            <span class="sf-disc-rail-count">${t.message_count} msg</span>
+          </div>
+        </div>`;
+      }).join('');
+      // Only show "Discussions" group header if there are also review threads (to disambiguate)
+      if (ROLE === 'admin' && reviewThreads.length > 0) {
+        railHtml += `<div class="sf-disc-rail-group-head">Discussions</div>`;
+      }
+      railHtml += threadItems;
+    }
+
+    if (!railHtml) {
+      railHtml = `<div class="sf-disc-rail-empty">Aucune discussion enregistrée.</div>`;
+    }
+
+    // ── Right pane: default placeholder ────────────────────────────────
+    const convoPanelHtml = `<div class="sf-disc-convo-placeholder">
+      <span>Sélectionnez une discussion</span>
+    </div>`;
+
+    return `<div class="sf-disc-inbox">
+      <div class="sf-disc-rail" role="navigation" aria-label="Fils de discussion">
+        ${railHtml}
+      </div>
+      <div class="sf-disc-convo" role="region" aria-label="Conversation" id="sf-disc-convo-pane">
+        ${convoPanelHtml}
+      </div>
+    </div>`;
+  }
+
+  function _renderConvoMessages(threadId, timeline, isReview, reviewThread) {
+    const msgs = threadId != null
+      ? timeline.filter(item => item.thread_id === threadId)
+      : [];
+
+    // Triage bar for review-bucket threads (admin only)
+    let triageHtml = '';
+    if (isReview && ROLE === 'admin' && reviewThread) {
+      const supplierOpts = (SUPPLIERS || []).map(s =>
+        `<option value="${s.id}">${escHtml(s.name)}</option>`
+      ).join('');
+      triageHtml = `<div class="sf-disc-triage-bar" data-thread-id="${reviewThread.id}">
+        <span class="sf-disc-triage-label">⚠ Rattacher ce fil :</span>
+        <select class="sf-disc-review-supplier-pick">
+          <option value="">— Choisir fournisseur —</option>
+          ${supplierOpts}
+        </select>
+        <button class="sf-disc-btn-assign">Rattacher</button>
+      </div>`;
+    }
+
+    let msgsHtml = '';
+    if (msgs.length === 0) {
+      msgsHtml = `<div class="sf-disc-empty">Aucun message dans ce fil.</div>`;
+    } else {
+      msgsHtml = msgs.map(item => {
+        const dirClass = item.direction === 'in' ? 'sf-disc-in' : 'sf-disc-out';
+        const dirLabel = item.direction === 'in' ? '← Reçu' : '→ Envoyé';
+        const sourceLabel = item.source === 'manual' ? 'Note manuelle' : 'Email';
+        const srcClass = item.source === 'manual' ? 'sf-disc-source-manual' : 'sf-disc-source-email';
+
+        const docsHtml = (item.docs || []).map(doc => {
+          const viewUrl = doc.doc_file_uuid
+            ? `/api/document.php?file_id=${encodeURIComponent(doc.doc_file_uuid)}`
+            : '#';
+          const target = doc.doc_file_uuid ? ' target="_blank" rel="noopener"' : '';
+          return `<a class="sf-disc-doc-chip" href="${escHtml(viewUrl)}"${target}>
+            <span class="sf-disc-doc-icon">📎</span>
+            <span class="sf-disc-doc-name">${escHtml(doc.attachment_filename)}</span>
+          </a>`;
+        }).join('');
+
+        const bodyHtml = item.body_plain
+          ? `<div class="sf-disc-body">${escHtml(item.body_plain)}</div>`
+          : '';
+
+        const sentByHtml = (item.direction === 'out' && item.sent_by_display)
+          ? `<span class="sf-disc-sent-by">par ${escHtml(item.sent_by_display)}</span>`
+          : '';
+
+        return `<div class="sf-disc-item ${dirClass}">
+          <div class="sf-disc-item-head">
+            <span class="sf-disc-dir-badge ${dirClass}">${dirLabel}</span>
+            <span class="sf-disc-from">${escHtml(item.from_address || '—')}</span>
+            <span class="sf-disc-date">${fmtDate(item.sent_at)}</span>
+            <span class="sf-disc-source ${srcClass}">${sourceLabel}</span>
+            ${sentByHtml}
+          </div>
+          ${bodyHtml}
+          ${docsHtml ? `<div class="sf-disc-docs">${docsHtml}</div>` : ''}
+        </div>`;
+      }).join('');
+    }
+
+    const composeHtml = `<div class="sf-disc-convo-compose">
+      <div class="sf-disc-compose-head">Ajouter une note</div>
+      <textarea id="sf-disc-note-text" class="sf-disc-note-textarea" rows="3" placeholder="Note, appel téléphonique, décision…"></textarea>
+      <div class="sf-disc-compose-row">
+        <input type="date" id="sf-disc-note-date" class="sf-disc-note-date" title="Date (optionnelle — défaut : maintenant)">
+        <button id="sf-disc-note-submit" class="sf-disc-btn-submit">Ajouter une note</button>
+      </div>
+    </div>`;
+
+    // Reply composer (P3-send)
+    const _canReply = () => {
+      if (ROLE !== 'admin' && ROLE !== 'manager') return { can: false, reason: 'role' };
+      if (!USER_EMAIL || !USER_EMAIL.endsWith('@lanebuleuse.ch')) return { can: false, reason: 'email' };
+      const hasInbound = msgs.some(m => m.direction === 'in');
+      if (!hasInbound) return { can: false, reason: 'no_inbound' };
+      const lastInbound = [...msgs].reverse().find(m => m.direction === 'in');
+      const recipient = lastInbound ? (lastInbound.from_address || '') : '';
+      return { can: true, recipient };
+    };
+
+    const replyGate = _canReply();
+    let replyHtml = '';
+    if (!replyGate.can) {
+      if (replyGate.reason === 'email') {
+        replyHtml = `<div class="sf-disc-reply-gate">
+          <div class="sf-disc-reply-gate-msg">Votre compte n'a pas d'adresse e-mail @lanebuleuse.ch — l'envoi est indisponible.</div>
+        </div>`;
+      } else if (replyGate.reason === 'no_inbound') {
+        replyHtml = `<div class="sf-disc-reply-gate">
+          <div class="sf-disc-reply-gate-msg">Pas de destinataire pour répondre à ce fil.</div>
+        </div>`;
+      }
+      // role gate: no UI shown (no send affordance for viewers)
+    } else {
+      const recipientEsc = escHtml(replyGate.recipient);
+      replyHtml = `<div class="sf-disc-reply-compose" id="sf-disc-reply-compose">
+          <div class="sf-disc-reply-head">
+            <span class="sf-disc-reply-label">Répondre par e-mail</span>
+            <span class="sf-disc-reply-distinguish">Ceci envoie un email réel au fournisseur</span>
+          </div>
+          <div class="sf-disc-reply-to">À : <span id="sf-disc-reply-recipient">${recipientEsc}</span></div>
+          <textarea id="sf-disc-reply-body" class="sf-disc-reply-textarea" rows="4" placeholder="Corps du message…"></textarea>
+
+          <div class="sf-disc-attach-zone" id="sf-disc-attach-zone">
+            <div class="sf-disc-attach-drop" id="sf-disc-attach-drop" role="button" tabindex="0" aria-label="Glisser-déposer des fichiers ou cliquer pour parcourir">
+              <span class="sf-disc-attach-drop-icon">📎</span>
+              <span>Glisser-déposer ou <u>parcourir</u></span>
+              <input type="file" id="sf-disc-attach-input" multiple hidden>
+            </div>
+            <button class="sf-disc-attach-picker-btn" id="sf-disc-attach-picker-btn" type="button">
+              + Joindre un document du fournisseur
+            </button>
+            <div class="sf-disc-attach-chips" id="sf-disc-attach-chips"></div>
+            <div class="sf-disc-supplier-docs-picker" id="sf-disc-supplier-docs-picker" style="display:none">
+              <div class="sf-disc-sdp-loading" id="sf-disc-sdp-loading">Chargement…</div>
+              <div class="sf-disc-sdp-list" id="sf-disc-sdp-list"></div>
+            </div>
+            <div class="sf-disc-attach-errors" id="sf-disc-attach-errors"></div>
+          </div>
+
+          <div class="sf-disc-reply-actions" id="sf-disc-reply-actions">
+            <div class="sf-disc-reply-confirm" id="sf-disc-reply-confirm" style="display:none">
+              <span class="sf-disc-reply-confirm-text">Confirmer l'envoi à <strong id="sf-disc-reply-confirm-addr"></strong> ?</span>
+              <button class="sf-disc-reply-confirm-yes" id="sf-disc-reply-confirm-yes">Confirmer</button>
+              <button class="sf-disc-reply-confirm-no" id="sf-disc-reply-confirm-no">Annuler</button>
+            </div>
+            <button class="sf-disc-reply-send-btn" id="sf-disc-reply-send-btn" type="button">Envoyer</button>
+          </div>
+          <div class="sf-disc-reply-error" id="sf-disc-reply-error" style="display:none"></div>
+        </div>`;
+    }
+
+    return `${triageHtml}<div class="sf-disc-convo-messages">${msgsHtml}</div>${composeHtml}${replyHtml}`;
+  }
+
+  function _wireDiscEvents(container, supplierId) {
+    // Cache the last-loaded data so convo rendering can filter timeline client-side
+    // Data is embedded via closure — we re-read from container's data attribute
+    let _cachedData = null;
+
+    // Helper: fetch current data from the section's stored reference
+    function getCachedData() { return _cachedData; }
+
+    // Store data reference on container for retrieval in rail click handlers
+    // We pass data in via a closure from _loadDiscussionSection; wire it after render
+    // The actual data binding happens when _wireDiscEvents is called from _loadDiscussionSection
+    // which has the data in scope — we capture it by setting container.__sfDiscData
+    const data = container.__sfDiscData || { timeline: [], threads: [], review_threads: [] };
+    _cachedData = data;
+
+    let _selectedThreadId = null;
+
+    function _selectThread(threadId, isReview) {
+      _selectedThreadId = threadId;
+
+      // Update rail selection styling
+      container.querySelectorAll('.sf-disc-rail-item').forEach(item => {
+        const matches = parseInt(item.dataset.threadId, 10) === threadId;
+        item.classList.toggle('sf-disc-rail-selected', matches);
+      });
+
+      // Find review thread metadata if applicable
+      const reviewThread = isReview
+        ? (data.review_threads || []).find(t => t.id === threadId) || null
+        : null;
+
+      // Render conversation pane
+      const convoPane = container.querySelector('#sf-disc-convo-pane');
+      if (!convoPane) return;
+      convoPane.innerHTML = _renderConvoMessages(threadId, data.timeline || [], isReview, reviewThread);
+
+      // Wire compose submit in the convo pane
+      const submitBtn = convoPane.querySelector('#sf-disc-note-submit');
+      const textEl    = convoPane.querySelector('#sf-disc-note-text');
+      const dateEl    = convoPane.querySelector('#sf-disc-note-date');
+      if (submitBtn && textEl) {
+        submitBtn.addEventListener('click', async () => {
+          const text = (textEl.value || '').trim();
+          if (!text) { sfToast('Le texte de la note est requis.'); textEl.focus(); return; }
+          submitBtn.disabled = true;
+          submitBtn.textContent = '…';
+          try {
+            const body = { supplier_id: String(supplierId), text };
+            if (_selectedThreadId != null) body.thread_id = String(_selectedThreadId);
+            if (dateEl && dateEl.value) body.note_date = dateEl.value;
+            const res = await sfPost('/api/sf-comm-thread.php', { action: 'add_note', ...body });
+            if (res.ok) {
+              textEl.value = '';
+              if (dateEl) dateEl.value = '';
+              const sec = document.getElementById('sf-disc-section');
+              if (sec) await _loadDiscussionSection(supplierId, sec);
+            } else {
+              sfToast('Erreur : ' + (res.error || 'inconnue'));
+              submitBtn.disabled = false;
+              submitBtn.textContent = 'Ajouter une note';
+            }
+          } catch (e) {
+            sfToast('Erreur réseau : ' + e.message);
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Ajouter une note';
+          }
+        });
+      }
+
+      // Wire assign button for review threads (shown in triage bar)
+      const triageBar = convoPane.querySelector('.sf-disc-triage-bar');
+      if (triageBar) {
+        const btn  = triageBar.querySelector('.sf-disc-btn-assign');
+        const pick = triageBar.querySelector('.sf-disc-review-supplier-pick');
+        const tid  = triageBar.dataset.threadId;
+        if (btn && pick && tid) {
+          btn.addEventListener('click', async () => {
+            const selectedSupplierId = pick.value;
+            if (!selectedSupplierId) { sfToast('Veuillez sélectionner un fournisseur.'); return; }
+            btn.disabled = true;
+            btn.textContent = '…';
+            try {
+              const res = await sfPost('/api/sf-comm-thread.php', {
+                action:      'assign_thread',
+                thread_id:   tid,
+                supplier_id: selectedSupplierId,
+              });
+              if (res.ok) {
+                sfToast('Fil rattaché.');
+                const sec = document.getElementById('sf-disc-section');
+                if (sec) await _loadDiscussionSection(supplierId, sec);
+              } else {
+                sfToast('Erreur : ' + (res.error || 'inconnue'));
+                btn.disabled = false;
+                btn.textContent = 'Rattacher';
+              }
+            } catch (e) {
+              sfToast('Erreur réseau : ' + e.message);
+              btn.disabled = false;
+              btn.textContent = 'Rattacher';
+            }
+          });
+        }
+      }
+    }
+
+      // ── Reply composer wiring (P3-send) ─────────────────────────────────
+      const replyCompose = convoPane.querySelector('#sf-disc-reply-compose');
+      if (replyCompose) {
+        const bodyEl      = convoPane.querySelector('#sf-disc-reply-body');
+        const dropEl      = convoPane.querySelector('#sf-disc-attach-drop');
+        const inputEl     = convoPane.querySelector('#sf-disc-attach-input');
+        const pickerBtn   = convoPane.querySelector('#sf-disc-attach-picker-btn');
+        const chipsEl     = convoPane.querySelector('#sf-disc-attach-chips');
+        const sdpEl       = convoPane.querySelector('#sf-disc-supplier-docs-picker');
+        const sdpList     = convoPane.querySelector('#sf-disc-sdp-list');
+        const sdpLoading  = convoPane.querySelector('#sf-disc-sdp-loading');
+        const errorsEl    = convoPane.querySelector('#sf-disc-attach-errors');
+        const sendBtn     = convoPane.querySelector('#sf-disc-reply-send-btn');
+        const confirmEl   = convoPane.querySelector('#sf-disc-reply-confirm');
+        const confirmAddr = convoPane.querySelector('#sf-disc-reply-confirm-addr');
+        const confirmYes  = convoPane.querySelector('#sf-disc-reply-confirm-yes');
+        const confirmNo   = convoPane.querySelector('#sf-disc-reply-confirm-no');
+        const replyErrEl  = convoPane.querySelector('#sf-disc-reply-error');
+        const recipientEl = convoPane.querySelector('#sf-disc-reply-recipient');
+
+        let _sdpLoaded = false;
+
+        // Dropzone
+        if (dropEl && inputEl) {
+          dropEl.addEventListener('click', () => inputEl.click());
+          dropEl.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); inputEl.click(); } });
+          dropEl.addEventListener('dragover', e => { e.preventDefault(); dropEl.classList.add('sf-disc-attach-drop--over'); });
+          dropEl.addEventListener('dragleave', () => dropEl.classList.remove('sf-disc-attach-drop--over'));
+          dropEl.addEventListener('drop', e => {
+            e.preventDefault();
+            dropEl.classList.remove('sf-disc-attach-drop--over');
+            if (e.dataTransfer.files.length) _handleFileUploads(e.dataTransfer.files);
+          });
+          inputEl.addEventListener('change', () => {
+            if (inputEl.files.length) _handleFileUploads(inputEl.files);
+            inputEl.value = '';
+          });
+        }
+
+        // Supplier docs picker
+        if (pickerBtn && sdpEl) {
+          pickerBtn.addEventListener('click', async () => {
+            const visible = sdpEl.style.display !== 'none';
+            sdpEl.style.display = visible ? 'none' : 'block';
+            if (!visible && !_sdpLoaded) {
+              _sdpLoaded = true;
+              try {
+                const resp = await fetch(`/api/sf-comm-thread.php?supplier_docs=${encodeURIComponent(supplierId)}`);
+                const json = await resp.json();
+                if (!json.ok) { sdpList.innerHTML = `<div class="sf-disc-sdp-empty">Erreur chargement.</div>`; return; }
+                if (sdpLoading) sdpLoading.style.display = 'none';
+                const docs = json.docs || [];
+                if (docs.length === 0) {
+                  sdpList.innerHTML = `<div class="sf-disc-sdp-empty">Aucun document disponible.</div>`;
+                } else {
+                  // Group by source_label
+                  const groups = {};
+                  docs.forEach(d => {
+                    const g = d.source_label || 'Autre';
+                    if (!groups[g]) groups[g] = [];
+                    groups[g].push(d);
+                  });
+                  let listHtml = '';
+                  Object.entries(groups).forEach(([grp, items]) => {
+                    listHtml += `<div class="sf-disc-sdp-group-head">${escHtml(grp)}</div>`;
+                    items.forEach(d => {
+                      listHtml += `<div class="sf-disc-sdp-item" data-doc-file-id="${escHtml(String(d.doc_file_id))}" data-file-name="${escHtml(d.file_name || '')}">
+                        <span class="sf-disc-sdp-item-name">${escHtml(d.file_name || '—')}</span>
+                        <span class="sf-disc-sdp-item-date">${d.dated ? escHtml(String(d.dated).slice(0, 10)) : ''}</span>
+                      </div>`;
+                    });
+                  });
+                  sdpList.innerHTML = listHtml;
+                  // Wire item clicks
+                  sdpList.querySelectorAll('.sf-disc-sdp-item').forEach(itemEl => {
+                    itemEl.addEventListener('click', () => {
+                      const docFileId = itemEl.dataset.docFileId;
+                      const fileName  = itemEl.dataset.fileName;
+                      // Dedupe: check if already in chips
+                      const existing = chipsEl.querySelector(`[data-doc-file-id="${CSS.escape(docFileId)}"]`);
+                      if (!existing) {
+                        _addDocChip(docFileId, fileName);
+                      }
+                      sdpEl.style.display = 'none';
+                    });
+                  });
+                }
+              } catch (e2) {
+                if (sdpList) sdpList.innerHTML = `<div class="sf-disc-sdp-empty">Erreur réseau.</div>`;
+              }
+            }
+          });
+        }
+
+        // Send flow
+        if (sendBtn) {
+          sendBtn.addEventListener('click', () => {
+            if (!bodyEl || !bodyEl.value.trim()) {
+              sfToast('Le corps du message est requis.');
+              return;
+            }
+            const uploading = chipsEl ? chipsEl.querySelector('[data-uploading="1"]') : null;
+            if (uploading) {
+              sfToast('Attendez la fin des téléversements.');
+              return;
+            }
+            const recipient = recipientEl ? recipientEl.textContent : '';
+            if (confirmAddr) confirmAddr.textContent = recipient;
+            if (confirmEl) confirmEl.style.display = 'flex';
+            sendBtn.disabled = true;
+          });
+        }
+
+        if (confirmNo) {
+          confirmNo.addEventListener('click', () => {
+            if (confirmEl) confirmEl.style.display = 'none';
+            if (sendBtn) sendBtn.disabled = false;
+          });
+        }
+
+        if (confirmYes) {
+          confirmYes.addEventListener('click', async () => {
+            if (confirmYes) confirmYes.disabled = true;
+            if (confirmNo) confirmNo.disabled = true;
+            if (sendBtn) sendBtn.disabled = true;
+            await _doSendReply();
+          });
+        }
+
+        // _addDocChip: helper to add a resolved doc chip
+        function _addDocChip(docFileId, fileName) {
+          if (!chipsEl) return;
+          const chip = document.createElement('div');
+          chip.className = 'sf-disc-attach-chip';
+          chip.dataset.docFileId = String(docFileId);
+          chip.innerHTML = `<span class="sf-disc-chip-name">${escHtml(fileName)}</span>
+            <button class="sf-disc-chip-remove" type="button" title="Retirer">✕</button>`;
+          chip.querySelector('.sf-disc-chip-remove').addEventListener('click', () => chip.remove());
+          chipsEl.appendChild(chip);
+        }
+
+        async function _handleFileUploads(files) {
+          const fileArray = Array.from(files);
+          for (const file of fileArray) {
+            const chip = document.createElement('div');
+            chip.className = 'sf-disc-attach-chip sf-disc-attach-chip--uploading';
+            chip.dataset.uploading = '1';
+            chip.innerHTML = `<span class="sf-disc-chip-name">${escHtml(file.name)}</span> <span class="sf-disc-chip-spinner">…</span>`;
+            if (chipsEl) chipsEl.appendChild(chip);
+
+            try {
+              const fd = new FormData();
+              fd.append('csrf', CSRF);
+              fd.append('action', 'attach_upload');
+              fd.append('file', file);
+              const resp = await fetch('/api/sf-comm-thread.php', { method: 'POST', body: fd });
+              const json = await resp.json();
+              if (!json.ok) throw new Error(json.error || 'Upload échoué');
+
+              chip.className = 'sf-disc-attach-chip';
+              delete chip.dataset.uploading;
+              chip.dataset.docFileId = String(json.doc_file_id);
+              chip.innerHTML = `<span class="sf-disc-chip-name">${escHtml(file.name)}</span>
+                <button class="sf-disc-chip-remove" type="button" title="Retirer">✕</button>`;
+              chip.querySelector('.sf-disc-chip-remove').addEventListener('click', () => chip.remove());
+            } catch (err) {
+              chip.className = 'sf-disc-attach-chip sf-disc-attach-chip--error';
+              delete chip.dataset.uploading;
+              chip.innerHTML = `<span class="sf-disc-chip-name">${escHtml(file.name)} — ${escHtml(err.message)}</span>
+                <button class="sf-disc-chip-remove" type="button" title="Retirer">✕</button>`;
+              chip.querySelector('.sf-disc-chip-remove').addEventListener('click', () => chip.remove());
+            }
+          }
+        }
+
+        // _doSendReply: POST send_reply action
+        async function _doSendReply() {
+          const body = bodyEl ? bodyEl.value.trim() : '';
+          const docFileIds = chipsEl
+            ? Array.from(chipsEl.querySelectorAll('[data-doc-file-id]')).map(c => c.dataset.docFileId)
+            : [];
+
+          try {
+            const params = new URLSearchParams({
+              csrf:         CSRF,
+              action:       'send_reply',
+              thread_id:    String(threadId),
+              body:         body,
+              doc_file_ids: JSON.stringify(docFileIds),
+            });
+            const resp = await fetch('/api/sf-comm-thread.php', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+              body: params.toString(),
+            });
+            const json = await resp.json();
+            if (json.ok) {
+              // Clear composer
+              if (bodyEl) bodyEl.value = '';
+              if (chipsEl) chipsEl.innerHTML = '';
+              if (errorsEl) errorsEl.textContent = '';
+              if (confirmEl) confirmEl.style.display = 'none';
+              if (replyErrEl) replyErrEl.style.display = 'none';
+              sfToast('Réponse envoyée.');
+              // Reload discussion section
+              const sec = document.getElementById('sf-disc-section');
+              if (sec) await _loadDiscussionSection(supplierId, sec);
+            } else {
+              if (replyErrEl) {
+                replyErrEl.textContent = json.error || 'Erreur inconnue.';
+                replyErrEl.style.display = 'block';
+              }
+              // Re-enable buttons
+              if (confirmYes) confirmYes.disabled = false;
+              if (confirmNo) confirmNo.disabled = false;
+              if (sendBtn) sendBtn.disabled = false;
+            }
+          } catch (e) {
+            if (replyErrEl) {
+              replyErrEl.textContent = 'Erreur réseau : ' + e.message;
+              replyErrEl.style.display = 'block';
+            }
+            if (confirmYes) confirmYes.disabled = false;
+            if (confirmNo) confirmNo.disabled = false;
+            if (sendBtn) sendBtn.disabled = false;
+          }
+        }
+      }
+      // ── End reply composer wiring ────────────────────────────────────────
+
+    // Wire rail item clicks
+    container.querySelectorAll('.sf-disc-rail-item').forEach(item => {
+      const threadId = parseInt(item.dataset.threadId, 10);
+      const isReview = item.dataset.isReview === '1';
+      const activate = () => _selectThread(threadId, isReview);
+      item.addEventListener('click', activate);
+      item.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(); } });
+    });
   }
 
   function renderEvalContent(data) {

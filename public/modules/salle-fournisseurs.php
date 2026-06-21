@@ -549,6 +549,7 @@ header("Content-Type: text/html; charset=utf-8");
 window.SF_SUPPLIERS = <?= json_encode($suppliers, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
 window.SF_ROLE      = <?= json_encode($bodyRole,  JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
 window.SF_CSRF      = <?= json_encode(csrf_token(), JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+window.SF_USER_EMAIL = <?= json_encode($me['email'] ?? '', JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
 </script>
 <script src="/js/salle-fournisseurs.js?v=<?= @filemtime(__DIR__ . '/../../public/js/salle-fournisseurs.js') ?: time() ?>" defer></script>
 </body>
