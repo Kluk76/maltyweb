@@ -84,6 +84,7 @@ import io
 import json
 import os
 import sys
+import tempfile
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -2103,27 +2104,42 @@ def main() -> None:
         else:
             conn.rollback()
 
-        # ── Write review CSVs ─────────────────────────────────────────────────
+        # ── Write review CSVs (non-fatal side artifact, written AFTER commit) ──
         # Prefer /var/www/maltytask/data/ when writable; dry-run as maltytask
-        # may not have write access there (www-data-owned), so fall back to /tmp/.
+        # may not have write access there (www-data-owned), so fall back to a
+        # PER-USER tmp subdir. A SHARED /tmp filename collides with another
+        # user's stale file → PermissionError, and /tmp's sticky bit forbids
+        # unlinking it; a uid-scoped subdir is owned by the running user and is
+        # always overwritable. These CSVs are a non-critical review aid emitted
+        # after the DB commit, so a write failure must NEVER abort the run.
         _data_dir = Path("/var/www/maltytask/data")
-        csv_dir = _data_dir if _data_dir.exists() and os.access(_data_dir, os.W_OK) else Path("/tmp")
+        if _data_dir.exists() and os.access(_data_dir, os.W_OK):
+            csv_dir = _data_dir
+        else:
+            csv_dir = Path(tempfile.gettempdir()) / f"bc-review-{os.getuid()}"
+            try:
+                csv_dir.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                csv_dir = Path(tempfile.gettempdir())
         review_csv_path      = csv_dir / "bc-orders-unresolved-skus.csv"
         cust_review_csv_path = csv_dir / "bc-orders-unresolved-customers.csv"
 
-        if classified["unresolved_lines"]:
-            _write_review_csv(
-                review_csv_path,
-                classified["unresolved_lines"],
-                ["bc_order_no", "bc_item", "uom", "qty", "description", "reason"],
-            )
+        try:
+            if classified["unresolved_lines"]:
+                _write_review_csv(
+                    review_csv_path,
+                    classified["unresolved_lines"],
+                    ["bc_order_no", "bc_item", "uom", "qty", "description", "reason"],
+                )
 
-        if classified["unresolved_customers"]:
-            _write_review_csv(
-                cust_review_csv_path,
-                classified["unresolved_customers"],
-                ["bc_order_no", "bc_customer_no", "bc_customer_name"],
-            )
+            if classified["unresolved_customers"]:
+                _write_review_csv(
+                    cust_review_csv_path,
+                    classified["unresolved_customers"],
+                    ["bc_order_no", "bc_customer_no", "bc_customer_name"],
+                )
+        except OSError as exc:
+            print(f"  ⚠ review CSV write skipped (non-fatal): {exc}")
 
         # ── Print reconciliation report ───────────────────────────────────────
         print_reconciliation_report(
