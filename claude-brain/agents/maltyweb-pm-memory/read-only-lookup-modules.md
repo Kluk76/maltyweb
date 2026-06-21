@@ -1,6 +1,8 @@
-# Read-only lookup modules (packaging + brewing) + Neb/Contract SKU filter + filter-reactive FG dual-view — SHIPPED + LIVE + COMMITTED + PUSHED (revised 2026-06-21)
+# Read-only lookup modules (packaging + brewing) + Neb/Contract SKU filter + filter-reactive FG dual-view — SHIPPED + LIVE + COMMITTED + PUSHED (revised 2026-06-21; +SELECTION-DROPDOWN behavioral principle `45b0871`)
 
-> Read when touching: the shared lookup-panel component (`public/modules/partials/lookup-panel.php` / `public/js/lookup-panel.js` / `public/css/lookup-panel.css`); the packaging "Consulter un packaging" section on `packaging.php` (`public/api/packaging-lookup.php`); the brewing "Consulter" tab on `wort.php` (`public/api/brewing-lookup.php`); or any "consulter/rechercher une saisie passée" read surface. Triggers: lookup panel / consulter saisie / consulter un brassin / consulter un packaging / lookup-panel / packaging-lookup / brewing-lookup / recherche par jour / SKU+lot lookup / recipe+lot lookup / read-only consultation / wort consulter tab / wort no data / wort blank page / var alias / KpcCharts.
+> 🔴 BEHAVIORAL PRINCIPLE (owner ruling 2026-06-21, LIVE): the Neb/Contract filter is a **SELECTION-DROPDOWN filter** (narrows what a user can PICK), **NOT a visual activity filter** — it NEVER hides date-activity results. Lookups filter the DROPDOWN ONLY; "Par date" shows ALL activity (control absent there). CARVE-OUT: warehouse PF inventory (a stock LIST) keeps the row-filter + dual-view. Full ruling in §BEHAVIORAL PRINCIPLE below.
+
+> Read when touching: the shared lookup-panel component (`public/modules/partials/lookup-panel.php` / `public/js/lookup-panel.js` / `public/css/lookup-panel.css`); the packaging "Consulter un packaging" section on `packaging.php` (`public/api/packaging-lookup.php`); the brewing "Consulter" tab on `wort.php` (`public/api/brewing-lookup.php`); or any "consulter/rechercher une saisie passée" read surface. Triggers: lookup panel / consulter saisie / consulter un brassin / consulter un packaging / lookup-panel / packaging-lookup / brewing-lookup / recherche par jour / SKU+lot lookup / recipe+lot lookup / read-only consultation / wort consulter tab / wort no data / wort blank page / var alias / KpcCharts / Neb-Contract filter / Nébuleuse Contract filter / sku-class-filter / selection-dropdown filter / activity filter / par date shows all / filter hides activity / warehouse PF row filter / data-sku-class.
 
 Operator wanted an in-page way to LOOK UP past entries without leaving the production pages. One shared component, two host pages. ALL read-only (no DB writes, no fiscal lane, no COGS/COP/WAC/BOM surface). Both endpoints PARAMETERIZED, prod-query-validated.
 
@@ -65,10 +67,19 @@ Built as the two-request consult ruled. AS-BUILT below; PM ruling honored with t
 - `public/css/sku-class-filter.css`.
 - 🟢 **DECISION (owner): default = Nébuleuse, memorized per user.**
 
-### WIRED SURFACES (display only)
-- PF inventory board (`warehouse.php` FG view — rows carry `data-sku-class`, control above the board).
-- Consulter-packaging + Consulter-brassin lookups (filter-aware dropdown + cards + live summary recompute).
+### WIRED SURFACES (display only) — REFINED by the 2026-06-21 owner ruling (see §BEHAVIORAL PRINCIPLE below)
+- PF inventory board (`warehouse.php` FG view — rows carry `data-sku-class`, control above the board). **This is a stock LIST (not an activity log) → the control DOES filter rows + drives the dual-view reactive totals.** Owner explicitly confirmed keep-row-filter here.
+- Consulter-packaging + Consulter-brassin lookups — **the control filters the SELECTION DROPDOWN ONLY** (`select[data-sku-filterable]` + its `data-sku-class` options). It lives INSIDE the "Par SKU/recette + lot" batch pane, is ABSENT in "Par date" mode, and NEVER hides date-activity result cards. (See §BEHAVIORAL PRINCIPLE — this supersedes the earlier "filter-aware cards + live summary recompute" wording.)
 - 🔴 **DELIBERATELY NOT filtered: data-entry "saisie" SKU dropdowns** — operators must keep selecting Contract SKUs to record runs. (Verified: saisie dropdown unaffected.)
+
+### 🔴🔴 BEHAVIORAL PRINCIPLE — SELECTION-DROPDOWN filter, NOT a visual activity filter (owner ruling 2026-06-21; LANDED + LIVE + VERIFIED, commit `45b0871`, origin/main)
+The Nébuleuse/Contract filter is a **SELECTION-DROPDOWN filter**: it narrows the list of SKUs/recipes a user can PICK, to declutter choices. It is **NOT a visual activity filter — it must NEVER hide actual activity/results.** Concretely:
+- **Date-based consultation ("Par date" in consulter brassin / packaging): ALL activity for that day shows regardless of classification.** A day with both Contract and Nébuleuse events shows BOTH — no card hiding, no summary recompute by class. **The control is not even present in "Par date" mode.**
+- **The control lives INSIDE the "Par SKU/recette + lot" batch pane** and filters ONLY the selection dropdown (the `data-sku-filterable` select + its `data-sku-class` options, rebuilt by `sku-class-filter.js`). **Classification PILLS on result cards STAY** (they are a visual LABEL, not a filter).
+- **CARVE-OUT (still true): the PF inventory (warehouse FG) is a stock LIST, not activity → there the control DOES filter rows + drives the dual-view reactive totals** (owner explicitly confirmed). 
+- 🔑 **Rule of thumb: a row/list/inventory OF SKUs = filterable; a date-activity LOG = never filtered, dropdown-selection only.**
+
+**Implementation note (as-built, `45b0871`):** `lookup-panel.js` **no longer emits `data-sku-class` on result cards** nor listens for `skufilter:change` (date results are never hidden). The control **moved from above-the-tabs to INSIDE the batch pane** in `lookup-panel.php`. `sku-class-filter.js` + the warehouse PF row-filtering are UNCHANGED.
 
 ### 🔴🔴 HARD RULE (recorded as-built) — classification filter is DISPLAY / UX-LAYER ONLY
 **NEVER in a COGS/fiscal/compute query** (would silently drop Contract beer tax). Confirmed untouched: `cogs-fiche-compute`, `sku-bom-compile`, `financier`, `fg-stock` compute queries.
