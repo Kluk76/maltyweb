@@ -1,0 +1,36 @@
+# /etc/cron.d/maltytask-bc-vendors
+#
+# Daily BC standard-API → ref_suppliers enrichment connector.
+# Classifies each BC vendor into: MATCH (refresh BC-OWNED fields),
+# NAME_SEED_HIGH (exact name match → seed bc_vendor_no + enrichment),
+# NAME_SEED_REVIEW (fuzzy match, operator-ratified via --apply-review),
+# BC_ONLY (report only, no writes), MALTYTASK_ONLY (report count only).
+#
+# Field ownership:
+#   BC-OWNED   : bc_vendor_no, email, phone, address_line1/2, postal_code,
+#                city, bc_last_synced_at.
+#                country (existing column): written via COALESCE only (fills
+#                if NULL; a manually-set value is preserved).
+#   CURATED    : name, gl_account, category, currency, vat_regime,
+#                hors_perimetre_cogs, commissioning_state, criticality,
+#                parser_key, notes, supplier_id, sporadique, row_hash.
+#                (Curated fields are NEVER overwritten by this cron.)
+#
+# ────────────────────────────────────────────────────────────────────────────
+# STATUS: ENABLED — 2026-06-21, after human-ratified BC seed applied (130 links).
+# ────────────────────────────────────────────────────────────────────────────
+#
+# BC credentials : /var/www/maltytask/config/bc.env (mode 640, group www-data)
+# DB credentials : /var/www/maltytask/config/db.env (mode 640, group www-data)
+# Source of truth: db/cron/maltytask-bc-vendors.cron in the maltyweb repo.
+# Deployed via bin/deploy.sh --apply (sudo install -m 0644 → /etc/cron.d/).
+# Manual edits to /etc/cron.d/* are overwritten on next deploy — edit here.
+#
+# Log: /var/log/maltytask/bc-vendors.log
+# Frequency: daily at 05:00 UTC (offset from bc-customers at 04:00 to avoid collision).
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# m  h    dom mon dow  user       command
+0  5    *   *   *   maltytask   cd /var/www/maltytask && /usr/bin/python3 scripts/python/sync_bc_vendors.py --apply >> /var/log/maltytask/bc-vendors.log 2>&1
