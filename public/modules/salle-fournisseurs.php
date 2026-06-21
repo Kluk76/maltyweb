@@ -550,6 +550,7 @@ window.SF_SUPPLIERS = <?= json_encode($suppliers, JSON_UNESCAPED_UNICODE | JSON_
 window.SF_ROLE      = <?= json_encode($bodyRole,  JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
 window.SF_CSRF      = <?= json_encode(csrf_token(), JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
 window.SF_USER_EMAIL = <?= json_encode($me['email'] ?? '', JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+window.SF_CAN_COMM  = <?= can_use_comm_tracker($me) ? 'true' : 'false' ?>;
 </script>
 <script src="/js/salle-fournisseurs.js?v=<?= @filemtime(__DIR__ . '/../../public/js/salle-fournisseurs.js') ?: time() ?>" defer></script>
 </body>

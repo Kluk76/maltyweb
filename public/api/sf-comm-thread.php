@@ -24,9 +24,9 @@ header('Content-Type: application/json; charset=utf-8');
 
 require_login();
 $me = current_user();
-if (!is_admin($me) && !is_manager($me)) {
+if (!can_use_comm_tracker($me)) {
     http_response_code(403);
-    echo json_encode(['ok' => false, 'error' => 'Accès réservé.']);
+    echo json_encode(['ok' => false, 'error' => 'Accès réservé aux managers et administrateurs.']);
     exit;
 }
 

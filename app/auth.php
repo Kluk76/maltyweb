@@ -337,6 +337,19 @@ function can_write_expeditions(?array $user = null): bool
 }
 
 /**
+ * Entity Discussion Tracker gate (comm_threads / comm_messages).
+ * Grants access to managers and admins only — operators are excluded.
+ * This surface exposes private supplier email correspondence and is
+ * intentionally not available to production/logistics operators.
+ */
+function can_use_comm_tracker(?array $user = null): bool
+{
+    $u = $user ?? current_user();
+    if (!$u) return false;
+    return is_admin($u) || is_manager($u);
+}
+
+/**
  * Hard role gates. require_login() first, then 403 if role mismatch.
  */
 function require_admin(): void

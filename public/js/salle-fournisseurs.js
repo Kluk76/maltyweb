@@ -21,10 +21,11 @@
   'use strict';
 
   /* ── Payload ──────────────────────────────────────────────────────── */
-  const SUPPLIERS = window.SF_SUPPLIERS || [];
-  const ROLE      = window.SF_ROLE || 'manager';
+  const SUPPLIERS  = window.SF_SUPPLIERS || [];
+  const ROLE       = window.SF_ROLE || 'manager';
   const CSRF       = window.SF_CSRF || '';
   const USER_EMAIL = window.SF_USER_EMAIL || '';
+  const CAN_COMM   = window.SF_CAN_COMM === true;
 
   /* ── GL label map (static supplement — DB-driven preferred) ───────── */
   const GL_LABELS = {
@@ -507,7 +508,7 @@
       <div class="sf-tab-strip" role="tablist">
         <button class="sf-tab sf-tab--active" role="tab" data-tab="fiche" aria-selected="true">Fiche</button>
         <button class="sf-tab" role="tab" data-tab="eval" aria-selected="false">Évaluation</button>
-        <button class="sf-tab" role="tab" data-tab="disc" aria-selected="false">Discussions</button>
+        ${CAN_COMM ? '<button class="sf-tab" role="tab" data-tab="disc" aria-selected="false">Discussions</button>' : ''}
       </div>
 
       <!-- Panel: Fiche (default active) -->
@@ -596,8 +597,8 @@
       <!-- Panel: Évaluation (lazy-loaded on first click) -->
       <div class="sf-panel" id="sf-panel-eval" role="tabpanel"></div>
 
-      <!-- Panel: Discussions (lazy-loaded on first click) -->
-      <div class="sf-panel" id="sf-panel-disc" role="tabpanel"></div>
+      <!-- Panel: Discussions (lazy-loaded on first click, manager+/admin only) -->
+      ${CAN_COMM ? '<div class="sf-panel" id="sf-panel-disc" role="tabpanel"></div>' : ''}
     </div>`;
 
     _wireTabStrip(ficheEl, id);
@@ -635,7 +636,7 @@
           renderEvalSection(supplierId);
         }
 
-        if (tab === 'disc') {
+        if (tab === 'disc' && CAN_COMM) {
           // Always re-call renderDiscussionSection when switching to disc
           // (re-fetches + re-starts poll; idempotent — removes existing section first)
           renderDiscussionSection(supplierId);
