@@ -83,7 +83,19 @@ Context: capture/inbox/reply LIVE; 180-day backfill done = **2660 msgs / 1151 th
 - Discussion-module access = manager+/admin CAPABILITY FLAG (Ruling A — `can_use_comm_tracker($me)`, not a ref_pages row).
 - Customer side: `ref_customers` already has `email` + `bc_customer_no` → cheap exact-match identity (Ruling D).
 
-## §AS-BUILT — SEED (Piece 5) + CONNECTOR RE-SCOPE/BACKFILL (Pieces 2+3) SHIPPED+COMMITTED 2026-06-21. Pieces 1/4 (mig 429 LIVE) + purge + access-flag + unknown-domain UI STILL OPEN. Trigger "seed comm registry"/"comm_domains"/"CONSUMER_DOMAINS"/"backfilled_at"/"2y retro-pull"/"unknown domain log".
+## §AS-BUILT — SEED (Piece 5) + CONNECTOR RE-SCOPE/BACKFILL (Pieces 2+3) SHIPPED+COMMITTED 2026-06-21. Piece-4 PURGE PHASE-1 SHIPPED+COMMITTED 2026-06-21 (`6449cd8`, see §PURGE-PHASE-1 below). Pieces 1/2/3/5 + Phase-1 DONE; Phase-2 hard-delete (gated +7d) + access-flag + unknown-domain UI STILL OPEN. Trigger "seed comm registry"/"comm_domains"/"CONSUMER_DOMAINS"/"backfilled_at"/"2y retro-pull"/"unknown domain log"/"purge"/"soft_purged"/"migrated_customer".
+
+## §PURGE-PHASE-1 AS-BUILT (Piece 4 Phase-1) — SHIPPED+COMMITTED 2026-06-21 (`6449cd8`). Trigger "purge"/"purge_comm_backlog"/"soft_purged"/"migrated_customer"/"comm review bucket"/"phase 2 hard delete".
+**REVERSIBLE flag-only (no byte movement) — soft 3-way classify of the 1161 pre-registry review-bucket threads, single txn, log_revision + snapshot-before.** `scripts/python/purge_comm_backlog.py` (committed).
+- **KEEP 343** → `supplier_id_fk` set, stay `purge_status='live'` (retroactively rescued threads that predate the registry).
+- **MIGRATE 60** → `customer_id_fk` set + `purge_status='migrated_customer'` (real customers; NEVER deleted — the deferred customer leg wants them).
+- **DELETE-NOISE 752** → `purge_status='soft_purged'` (gmail/hotmail personal · shopify/stripe/docusign platform · maltytask.ch recaps · operator-RULED purge: glocknercapital.com+minmet.ch board/investor 91 threads, getraenke.ch trade-assoc 53).
+- **AMBIGUOUS 6** → left `live`, both-NULL (mixed-supplier threads → manual triage; refuse-don't-purge held).
+- **0 errors.**
+- **Operator gate decisions:** board/investor + getraenke → PURGE (NOT preserved); `lorin@nausikraft.ch` → RESCUED via a `comm_address_pins` row (customer_id=1 Nausikraft), moved 17 threads NOISE→MIGRATE (→ final MIGRATE 60).
+- **Post-state:** comm_threads **live=833** (827 supplier + 6 ambiguous both-NULL) / **soft_purged=752** / **migrated_customer=60**.
+- **`public/api/sf-comm-thread.php`** (same commit): added `purge_status='live'` guard to ALL 4 user-facing comm_threads reads (timeline, review bucket, supplier threads, doc corpus). Review bucket 758→6. comm_threads referenced ONLY in this file (grep-confirmed). POST/write actions untouched.
+- 🔴 **Phase-2 = HARD DELETE of the 752 soft_purged — GATED +7 days (after 2026-06-28) + operator go.** Children-first (docs→messages→threads); only orphan a doc_files row whose bytes nothing else references (invoice-shared docs survive). OPTIONAL: leaving them soft_purged forever is a valid hidden-but-recoverable end state.
 
 **✅ SEED (Piece 5) — SHIPPED, committed (seed SCRIPTS only; CSV deliberately NOT committed — operator email PII, lives on VPS).**
 - `scripts/python/seed_comm_registry.py` + `scripts/python/comm_domains.py` (shared `CONSUMER_DOMAINS` frozenset + `domain_of()`, imported by BOTH seed AND connector — the "call the canonical list, never inline-copy twice" rule HELD).
@@ -102,11 +114,11 @@ Context: capture/inbox/reply LIVE; 180-day backfill done = **2660 msgs / 1151 th
 
 **Unknown-domain log working — 14 domains logged first run.** Mostly genuine noise (vd.ch/renens.ch/unil.ch gov+uni, maltytask.ch system). 🔴 **BUT 3 high-hit candidates NOT in ref_suppliers — possible unregistered suppliers for operator triage** (via the still-to-build unknown-domain admin surface): `dalumequipment.com` (23 hits), `henriot.fr` (13), `unitronics.io` (12).
 
-**STILL OPEN in this arc (post-seed/connector):**
-1. Two-phase purge (Piece 4) of the original ~1152 pre-rescope review-bucket threads — 3-way classify: keep supplier / migrate client / delete noise.
-2. Unknown-domain admin surface (+ui) — surfaces `comm_unknown_domain_seen` for one-click triage (the dalum/henriot/unitronics candidates land here).
-3. Manager+/admin capability gate `can_use_comm_tracker($me)` (Ruling A).
-4. Operator decisions PENDING: (a) 2y-retro-all? (b) promote the 3 high-hit domains? (c) merge stretchfolienprofi 72/168?
+**STILL OPEN in this arc (post-seed/connector/purge-phase-1):**
+1. **Purge Phase-2 — HARD DELETE of the 752 soft_purged** (Piece 4 Phase-1 DONE, see §PURGE-PHASE-1) — GATED +7 days (after 2026-06-28) + operator go; children-first, only orphan doc_files whose bytes nothing else references (invoice-shared survive). OPTIONAL (soft_purged-forever is a valid recoverable end state).
+2. Unknown-domain admin surface (+ui) — surfaces `comm_unknown_domain_seen` for one-click triage (the dalum/henriot/unitronics 3 high-hit candidates land here).
+3. Manager+/admin capability gate `can_use_comm_tracker($me)` (Ruling A) — Kouros's privacy concern; the discussion SECTION on the supplier fiche manager-gated; mirror `can_write_expeditions`.
+4. Operator follow-ups PENDING: (a) 2y-retro-all? (declined for now — stay 6mo); (b) promote the 3 high-hit domains? (c) merge stretchfolienprofi 72/168?
 
 ## §REGISTRY + CONNECTOR-RESCOPE + 2-PHASE-PURGE BUILD SPEC — PM-RULED 2026-06-21 (authoritative; Pieces 1/2/3/5 NOW BUILT, see §AS-BUILT above; Piece 4 + access-flag + unknown-domain UI still open). Trigger "ref_entity_email_domains"/"registry table"/"connector rescope"/"comm_unknown_domain_seen"/"two-phase purge"/"seed comm registry"/"purge_status".
 **LIVE FACTS verified 2026-06-21 (the spec hinges on these):** MIG HEAD applied=**427**; `428_retire_brewing_lookup_page.sql` sits in repo UNAPPLIED (parallel session) → use **429** for this slice (re-`--status` at build-start regardless). Registry + unknown-log tables ABSENT (greenfield). Backfill = **1152 threads / 2661 msgs / 4974 docs / 0 pins**, all review-bucket. `ref_suppliers`: 136 rows, 130 bc_vendor_no, **only 21 emails** (BC email sparse → SHEET is primary registry source, NOT BC). `ref_customers`: 3064 rows, 1284 emails, 2692 bc_customer_no. `comm_threads_chk_one_party` PERMITS both-NULL (review bucket — DO NOT TOUCH); `comm_pins_chk_one_party` FORBIDS both-NULL; `comm_address_pins.email` = UNIQUE NK varchar(320) lowercase. `comm_messages.source` ENUM already `('gmail','manual','sent')`; messages table has NO status col. schema_meta col = `table_class` (not classification); ref_suppliers already two-writer policy=allowed.
