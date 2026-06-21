@@ -1,4 +1,4 @@
-# Read-only lookup modules (packaging + brewing) — SHIPPED + LIVE + COMMITTED + PUSHED (revised 2026-06-21)
+# Read-only lookup modules (packaging + brewing) + Neb/Contract SKU filter — SHIPPED + LIVE + COMMITTED + PUSHED (revised 2026-06-21)
 
 > Read when touching: the shared lookup-panel component (`public/modules/partials/lookup-panel.php` / `public/js/lookup-panel.js` / `public/css/lookup-panel.css`); the packaging "Consulter un packaging" section on `packaging.php` (`public/api/packaging-lookup.php`); the brewing "Consulter" tab on `wort.php` (`public/api/brewing-lookup.php`); or any "consulter/rechercher une saisie passée" read surface. Triggers: lookup panel / consulter saisie / consulter un brassin / consulter un packaging / lookup-panel / packaging-lookup / brewing-lookup / recherche par jour / SKU+lot lookup / recipe+lot lookup / read-only consultation / wort consulter tab / wort no data / wort blank page / var alias / KpcCharts.
 
@@ -42,10 +42,48 @@ Operator wanted an in-page way to LOOK UP past entries without leaving the produ
 
 **DURABLE RULE worth carrying:** when two classic (non-module) scripts share globals, alias shared funcs with **`var`, never `const`/`let`**. `kpi-charts.js` exposes its funcs BOTH as top-level `function` AND on `window.KpcCharts`, so ANY consumer of KpcCharts must use `var` aliases. The three live consumers — **wort, packaging, mon-tableau** — were all re-verified rendering clean after the fix. (This durable lesson is also encoded in the index banner and should be folded into the `ui` skill's rendering-bug catalog on the next `ui` touch — it is the same family as the nested-fn-not-hoisted 500 class.)
 
-## 🆕 LOOKUP REDESIGN + NEB/CONTRACT SKU FILTER — PM-RULED 2026-06-21 (Kouros two-request consult; NOT built)
+## 🟢 LOOKUP REDESIGN + NEB/CONTRACT SKU FILTER — SHIPPED + LIVE + VERIFIED 2026-06-21 (commit `7c3392c`, origin/main `f8ed60a`; Playwright-verified)
 
-**REQUEST 1 — lookup panel redesign (visual/component polish of the SHARED `lookup-panel`).** AS-VERIFIED: `lookup-panel.js` renders results as **plain `lp-table` HTML tables** (flat — Kouros right). Chrome = collapsible toggle + 2-tab mode bar. RULING: **keep the two-mode toggle** (day = "what happened this day"; batch = "trace this lot" — distinct operator intents, don't merge into one fuzzy search). Redesign = **cards for the primary unit, nested table only for dense sub-lists**: a day result = a STACK of event cards (one per run/brewday) aligned to the EXISTING daily-recap widget vocabulary (`kpi_pkg_daily_recap()` app/kpi-handlers.php L5882 / `kpi_wort_daily_recap()` L2838 + `displayRunType` cage/bouteille/keg split). Packaging card = SKU(JBMono)+recipe(Fraunces)+run-type chip+vendable units/HL/loss stat row+CO₂/O₂ secondary. Brewing card = recipe+batch title, **OG labelled (never FG)**, gravity timeline, parsed-ingredients as a nested `lp-table`. Card header carries a Neb/Contract pill (doc-externe pill pattern `971471c`). `--bg-elev` + warm-tint shadow (not black); inset focus rings (`outline-offset:-2px`); restyle existing `lp-empty/lp-loading/lp-error` to house empty-state. 🔴 If redesigned JS aliases any `window.KpcCharts` primitive → `var` not `const`/`let` (the wort blank-page bug above). **PLACEMENT UNCHANGED: brewing = Consulter tab on wort.php (mig 428); packaging = labelled section on packaging.php (`61a0130`). ONE shared component, both hosts inherit — do NOT fork per-host.** EQUIP ui+coder+webapp-testing(+sql only if endpoints change).
+Built as the two-request consult ruled. AS-BUILT below; PM ruling honored with the noted minor deviations from the pre-build sketch.
 
-**REQUEST 2 — Neb-vs-Contract filter across ALL SKU lists.** 🟢 **CANONICAL SKU-LEVEL CLASSIFICATION = `ref_skus.recipe_id → ref_recipes.classification` ENUM('Neb','Contract')** (live-verified 2026-06-21). `ref_recipes` ALSO has `subtype` ENUM(Core/EPH/CollabIn/CollabOut/WhiteLabel/Archive). 🔴 **NOT `ref_beer_types` for SKU filtering** — that table is name-keyed (`beer_name`, NO SKU FK); it's the beer-tax classifier SoT. The two NEVER disagree on their name-join (verified) but only `ref_recipes.classification` is FK-reachable from a SKU. Live coverage: 207 SKUs/186 active = 147 Neb + 33 Contract + **6 NULL recipe_id** (composites PD8/XMASPACK/PAC/PAL/EXP12C/EXP24C — Neb by construction); **0 recipe_orphans**. 🔴 **LEFT JOIN + `COALESCE(r.classification,'Neb')` — NEVER INNER JOIN** (an INNER JOIN drops the 6 composites = broken-FK trap). **NO shared SKU-list accessor exists today** — every page hand-rolls `SELECT FROM ref_skus`. BUILD ONE canonical `app/sku-catalog.php` `sku_catalog($pdo,$opts)` (returns id/sku_code/unit_label/recipe_id/classification/subtype/stocktake_scope/format/hl_per_unit/is_active; $opts classification=Neb|Contract|all, active_only, scope_in…); repoint all list sites to call it ("call the accessor, never copy the literal"). UX = **3-way segmented `Toutes|Nébuleuse|Contract`, default Nébuleuse, persisted per-user**, ONE shared control (`partials/sku-class-filter.php`+JS) — same segmented-component family the lookup mode-toggle reuses. 🔴🔴 **CARDINAL DIVERGENCE FLAG: the filter is DISPLAY-LAYER ONLY — NEVER in a compute/fiscal query.** No-touch (would silently drop Contract beer tax/COGS): `app/cogs-fiche-compute.php`, `app/sku-bom-compile.php`, `public/api/financier-data.php`, `app/seasonal-burn.php`, `app/returns-synthese.php`, `app/packaging-stats.php`, **`app/fg-stock.php` COMPUTE queries** (filter at the render sites that CONSUME fg-stock, not in its queries — corrupts totals).
-**EXHAUSTIVE SKU-LIST RENDER INVENTORY (filter targets, Tier 1):** (1) packaging.php L346 saisie SKU `<select>`; (2) consulter-packaging lookup (same `$skuOptions`→`$lookupConfig`); (3) warehouse.php L497-508 Stock-PF/FG board (already LEFT JOINs ref_recipes — surface classification); (4) expeditions.php L445/L758/L1818/L1927 (fulfilment + returns-disposition + command SKU lists); (5) form-packaging.php L2688/L2714 SKU picker (Contract still needed for contract runs → default-Neb+toggle, NOT hide); (6) tap-shop.php direct-sales list; (7) kpi-handlers.php per-SKU DISPLAY widgets only. Tier 2 (helper, filter optional, admin-all): admin/settings/skus.php, bom-review.php, warehouse-export.php.
-**SEQUENCING: Request 2 FIRST.** Step1 `sku_catalog()` helper + classification column, repoint Tier-1 builders, dry-verify counts (147+33+6) [coder+sql]. Step2 shared segmented filter control + wiring + per-user persist [coder+sql+ui+webapp-testing]. Step3 lookup redesign — inherits the filter + reuses the segmented component [ui+coder+webapp-testing]. Rationale: redesigned packaging lookup ships filter-aware in one pass; the toggle component is shared; single-source layer lands before the cosmetic layer.
+### CANONICAL CLASSIFICATION (CONFIRMED + CORRECTED)
+🟢 **SKU-level Neb-vs-Contract = `ref_skus.recipe_id → ref_recipes.classification` ENUM('Neb','Contract').** `ref_recipes` also has `subtype` ENUM(Core/EPH/CollabIn/CollabOut/WhiteLabel/Archive). 🔴 **NOT `ref_beer_types` for SKU filtering** — that table is NAME-keyed (`beer_name`, NO SKU FK) and stays the **beer-tax classifier SoT**; only `ref_recipes.classification` is FK-reachable from a SKU. The two never disagree on their name-join, but per-SKU filtering MUST use the recipe path. 🔴 **6 composite SKUs have `recipe_id` NULL → 'Neb' by construction** (PD8/XMASPACK/PAC/PAL/EXP12C/EXP24C). 🔴 **ALWAYS `LEFT JOIN ref_recipes + COALESCE(classification,'Neb')` — NEVER INNER JOIN** (INNER drops the 6 composites = broken-FK trap). Live split: **153 Neb (147 real + 6 composite) / 33 Contract / 186 active.**
+
+### NEW CANONICAL ACCESSOR — `app/sku_catalog.php` (closes the "every page hand-rolls SELECT FROM ref_skus" gap)
+- `sku_catalog(PDO $pdo, array $opts)` → SKU rows incl. `classification`/`subtype`/`beer_name`. `$opts`: `active_only`, `classification` 'all'|'Neb'|'Contract', `packaging_line_only`, `order_by` 'sku_code'|'beer'.
+- `sku_classification_label()` → 'Nébuleuse'|'Contract'.
+- 🔴 **NEW SKU-list consumers MUST call `sku_catalog()`** — do not re-inline `SELECT FROM ref_skus` ("call the accessor, never copy the literal"). (Deviation from ruling: filename is `sku_catalog.php` underscore, not `sku-catalog.php`; return shape adds beer_name, drops the speculative scope_in opt — `packaging_line_only` covers the real need.)
+
+### NEW GENERIC PER-USER UI-PREF STORE — mig 430 `user_ui_prefs` (REUSABLE)
+- mig **430** `user_ui_prefs` (id, `user_id_fk` FK users.id ON DELETE CASCADE, `pref_key`, `pref_value`, UNIQUE(user_id_fk,pref_key)); schema_meta class=**config**. Next-free mig after this = 431.
+- Helpers `app/user-prefs.php`: `user_pref_get()` / `user_pref_set()`.
+- Writer endpoint `public/api/ui-pref.php` (POST {csrf,key,value}; key whitelist currently just `'sku_class_filter'`; value whitelist all|Neb|Contract). **Generic store — reuse for any future per-user UI pref** (add to the key/value whitelists).
+
+### SHARED FILTER CONTROL (one component, multi-host)
+- `public/modules/partials/sku-class-filter.php` — 3-way segmented **Toutes | Nébuleuse | Contract**; caller sets `$skuClassFilterValue` from the pref; self-contained CSRF via its own `window.SKUF_CSRF`.
+- `public/js/sku-class-filter.js` — filters `[data-sku-class]` elements via `.skuf-hidden`; rebuilds `select[data-sku-filterable]` options (keeps placeholders); persists pref via ui-pref.php; dispatches document `'skufilter:change'`; exposes `window.SkuClassFilter.apply`.
+- `public/css/sku-class-filter.css`.
+- 🟢 **DECISION (owner): default = Nébuleuse, memorized per user.**
+
+### WIRED SURFACES (display only)
+- PF inventory board (`warehouse.php` FG view — rows carry `data-sku-class`, control above the board).
+- Consulter-packaging + Consulter-brassin lookups (filter-aware dropdown + cards + live summary recompute).
+- 🔴 **DELIBERATELY NOT filtered: data-entry "saisie" SKU dropdowns** — operators must keep selecting Contract SKUs to record runs. (Verified: saisie dropdown unaffected.)
+
+### 🔴🔴 HARD RULE (recorded as-built) — classification filter is DISPLAY / UX-LAYER ONLY
+**NEVER in a COGS/fiscal/compute query** (would silently drop Contract beer tax). Confirmed untouched: `cogs-fiche-compute`, `sku-bom-compile`, `financier`, `fg-stock` compute queries.
+
+### LOOKUP REDESIGN (Request 1) — plain tables → aged-oak CARDS
+- `public/modules/partials/lookup-panel.php` + `public/js/lookup-panel.js` + `public/css/lookup-panel.css` — results now render as polished cards: `.lp-card`, classification pill `.lp-pill-neb`/`.lp-pill-contract`, `.lp-stat-grid`. **Brewing batch view keeps gravity/ingredients tabular.**
+- `lookup-panel.php` gained config keys `show_class_filter` and per-`batch_field` `class_col` + `filterable`.
+- APIs `packaging-lookup.php` + `brewing-lookup.php` now return `COALESCE(r.classification,'Neb')` per row.
+- Two-mode toggle KEPT (day vs batch). Placement UNCHANGED: brewing = Consulter tab on wort.php (mig 428); packaging = labelled section on packaging.php (`61a0130`). ONE shared component, both hosts inherit.
+
+### KNOWN v1 LIMITATION (flagged to owner — possible follow-up)
+🟡 The warehouse FG **headline KPI tiles + GL recap `tfoot` remain PORTFOLIO-WIDE** — they do NOT react to the filter; only the row list filters. Reactive totals = candidate follow-up.
+
+### VERIFIED LIVE (Playwright, `smoketest_mgr`)
+All three surfaces PASS; per-user persistence via ui-pref.php works; fresh-load default = Nébuleuse on both lookup pages; zero app JS console errors; saisie dropdown unaffected.
+
+### TOUR
+No new `ref_pages` added (lookup folded into existing pages; warehouse pre-existing) → no Visite-guidée card needed.
