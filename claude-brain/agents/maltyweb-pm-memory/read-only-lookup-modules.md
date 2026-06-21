@@ -1,4 +1,4 @@
-# Read-only lookup modules (packaging + brewing) + Neb/Contract SKU filter — SHIPPED + LIVE + COMMITTED + PUSHED (revised 2026-06-21)
+# Read-only lookup modules (packaging + brewing) + Neb/Contract SKU filter + filter-reactive FG dual-view — SHIPPED + LIVE + COMMITTED + PUSHED (revised 2026-06-21)
 
 > Read when touching: the shared lookup-panel component (`public/modules/partials/lookup-panel.php` / `public/js/lookup-panel.js` / `public/css/lookup-panel.css`); the packaging "Consulter un packaging" section on `packaging.php` (`public/api/packaging-lookup.php`); the brewing "Consulter" tab on `wort.php` (`public/api/brewing-lookup.php`); or any "consulter/rechercher une saisie passée" read surface. Triggers: lookup panel / consulter saisie / consulter un brassin / consulter un packaging / lookup-panel / packaging-lookup / brewing-lookup / recherche par jour / SKU+lot lookup / recipe+lot lookup / read-only consultation / wort consulter tab / wort no data / wort blank page / var alias / KpcCharts.
 
@@ -79,8 +79,13 @@ Built as the two-request consult ruled. AS-BUILT below; PM ruling honored with t
 - APIs `packaging-lookup.php` + `brewing-lookup.php` now return `COALESCE(r.classification,'Neb')` per row.
 - Two-mode toggle KEPT (day vs batch). Placement UNCHANGED: brewing = Consulter tab on wort.php (mig 428); packaging = labelled section on packaging.php (`61a0130`). ONE shared component, both hosts inherit.
 
-### KNOWN v1 LIMITATION (flagged to owner — possible follow-up)
-🟡 The warehouse FG **headline KPI tiles + GL recap `tfoot` remain PORTFOLIO-WIDE** — they do NOT react to the filter; only the row list filters. Reactive totals = candidate follow-up.
+### ✅ FILTER-REACTIVE FG TILES + GL RECAP — DUAL VIEW SHIPPED + LIVE + VERIFIED 2026-06-21 (commit `2ff03f5`, on origin/main; Playwright-verified)
+The prior v1 limitation (FG headline tiles + GL recap staying portfolio-wide) is **CLOSED**. The warehouse FG (PF inventory) **5 KPI tiles + GL recap are now FILTER-REACTIVE with a DUAL VIEW** (operator decision: keep BOTH the filtered figure AND the portfolio total visible).
+- **Server** computes the 5 tiles + GL recap per classification bucket (`all` / `Neb` / `Contract`) inside the EXISTING FG row loop — bucket `all` == Neb + Contract (a TRUE partition; same per-row valuation, NO new SQL, NO compute-query change). Emitted display-ready as `window.WH_FG_BUCKETS`.
+- **Each tile:** filtered figure (primary) + a muted `Total : …` portfolio sub-line (hidden when filter = Toutes). GL recap rebuilds per class with a `(portefeuille : …)` reference (hidden on Toutes).
+- **`public/js/warehouse-fg-kpis.js`** listens for `skufilter:change` and swaps figures from `window.WH_FG_BUCKETS`. CSS scoped under `.wh-kpis--5` / `.wh-fg-gl-recap` in app.css.
+- Honors the §HARD RULE above: this is DISPLAY-layer bucketing only (a true partition of the same FG valuation), NOT a COGS/fiscal compute change.
+- **Verified live (Playwright):** tiles + GL react; Neb+Contract == Toutes exact; sub-lines hide on Toutes; no app JS errors. (Dataset currently has 0 Contract FG stock → Contract bucket = 0 / Nébuleuse = portfolio; mechanism still proven via the Contract=0-vs-Total contrast.)
 
 ### VERIFIED LIVE (Playwright, `smoketest_mgr`)
 All three surfaces PASS; per-user persistence via ui-pref.php works; fresh-load default = Nébuleuse on both lookup pages; zero app JS console errors; saisie dropdown unaffected.
