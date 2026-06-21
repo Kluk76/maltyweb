@@ -132,6 +132,12 @@ $fgRows       = [];   // each entry: sku, beer, format, unit_label, qty, hl_equi
                       // packaging_per_unit, total_per_unit, total_chf, gl_breakdown, cost_source_month, no_cost_basis
 $fgKpis       = ['valeur_fg' => 0.0, 'hl_total' => 0.0, 'sku_count' => 0, 'valeur_liquide' => 0.0, 'valeur_emballage' => 0.0];
 $fgGlRecap    = [];   // GL account => total CHF
+$fgKpisByClass = [
+    'all'      => ['valeur_fg' => 0.0, 'hl_total' => 0.0, 'sku_count' => 0, 'valeur_liquide' => 0.0, 'valeur_emballage' => 0.0],
+    'Neb'      => ['valeur_fg' => 0.0, 'hl_total' => 0.0, 'sku_count' => 0, 'valeur_liquide' => 0.0, 'valeur_emballage' => 0.0],
+    'Contract' => ['valeur_fg' => 0.0, 'hl_total' => 0.0, 'sku_count' => 0, 'valeur_liquide' => 0.0, 'valeur_emballage' => 0.0],
+];
+$fgGlRecapByClass = ['all' => [], 'Neb' => [], 'Contract' => []];
 
 try {
 
@@ -495,6 +501,9 @@ try {
 
         // Per-user SKU classification filter preference
         $skuClassFilterValue = user_pref_get($pdo, (int) $me['id'], 'sku_class_filter', 'Neb');
+        if (!in_array($skuClassFilterValue, ['all', 'Neb', 'Contract'], true)) {
+            $skuClassFilterValue = 'Neb';
+        }
 
         // ── Step 3a — fetch FG counts joined to ref_skus + ref_recipes ────────
         $fgSt = $pdo->prepare("
@@ -709,9 +718,12 @@ try {
                     }
                 }
 
-                // Accumulate GL recap
+                // Accumulate GL recap (all + by classification)
+                $cls = ($r['classification'] === 'Contract') ? 'Contract' : 'Neb';
                 foreach ($glBreakdown as $gl => $chf) {
                     $fgGlRecap[$gl] = ($fgGlRecap[$gl] ?? 0.0) + $chf;
+                    $fgGlRecapByClass['all'][$gl] = ($fgGlRecapByClass['all'][$gl] ?? 0.0) + $chf;
+                    $fgGlRecapByClass[$cls][$gl]  = ($fgGlRecapByClass[$cls][$gl]  ?? 0.0) + $chf;
                 }
 
                 $fgRows[] = [
@@ -735,6 +747,18 @@ try {
                 $fgKpis['hl_total']        += $hlEquiv;
                 $fgKpis['valeur_liquide']  += ($liquidPerUnit !== null) ? $qty * $liquidPerUnit : 0.0;
                 $fgKpis['valeur_emballage'] += $qty * $packagingPerUnit;
+
+                $liqVal = ($liquidPerUnit !== null) ? $qty * $liquidPerUnit : 0.0;
+                $fgKpisByClass['all']['valeur_fg']        += $totalChf;
+                $fgKpisByClass['all']['hl_total']         += $hlEquiv;
+                $fgKpisByClass['all']['valeur_liquide']   += $liqVal;
+                $fgKpisByClass['all']['valeur_emballage'] += $qty * $packagingPerUnit;
+                $fgKpisByClass['all']['sku_count']++;
+                $fgKpisByClass[$cls]['valeur_fg']        += $totalChf;
+                $fgKpisByClass[$cls]['hl_total']         += $hlEquiv;
+                $fgKpisByClass[$cls]['valeur_liquide']   += $liqVal;
+                $fgKpisByClass[$cls]['valeur_emballage'] += $qty * $packagingPerUnit;
+                $fgKpisByClass[$cls]['sku_count']++;
             }
             $fgKpis['sku_count'] = count($fgRows);
         }
@@ -1251,27 +1275,69 @@ try {
 
     <?php else: ?>
 
+      <?php
+        $glLabelsFG = [
+            '4101' => 'Malt',
+            '4102' => 'Houblon',
+            '4103' => 'Levure',
+            '4104' => 'Ingrédients',
+            '4200' => 'Emballage',
+        ];
+        $fgBucketsJs = [];
+        foreach (['all', 'Neb', 'Contract'] as $bk) {
+            $k     = $fgKpisByClass[$bk];
+            $glMap = $fgGlRecapByClass[$bk];
+            ksort($glMap);
+            $glTotal = 0.0;
+            $glArr   = [];
+            foreach ($glMap as $gl => $chf) {
+                $glTotal += $chf;
+                $glStr    = (string) $gl;
+                $glArr[]  = [
+                    'gl'    => $glStr,
+                    'label' => (string) ($glLabelsFG[$glStr] ?? $glStr),
+                    'chf'   => wh_num_smart($chf, 2, 2, '0.00'),
+                ];
+            }
+            $fgBucketsJs[$bk] = [
+                'valeur_fg'        => wh_num_smart($k['valeur_fg'],        0, 0, '0'),
+                'hl_total'         => wh_num_smart($k['hl_total'],          1, 1, '0'),
+                'sku_count'        => (string) $k['sku_count'],
+                'valeur_liquide'   => wh_num_smart($k['valeur_liquide'],    0, 0, '0'),
+                'valeur_emballage' => wh_num_smart($k['valeur_emballage'],  0, 0, '0'),
+                'gl'               => $glArr,
+                'gl_total'         => wh_num_smart($glTotal, 2, 2, '0.00'),
+            ];
+        }
+        $initBucket = $fgBucketsJs[$skuClassFilterValue] ?? $fgBucketsJs['all'];
+        $isAll      = ($skuClassFilterValue === 'all');
+      ?>
       <!-- KPI strip (5 tiles) -->
       <section class="wort-kpis wh-kpis--5" aria-label="Indicateurs produits finis">
-        <div class="wort-kpi">
-          <span class="wort-kpi__num"><?= wh_num_smart($fgKpis['valeur_fg'], 0, 0, '0') ?></span>
+        <div class="wort-kpi" data-fg-tile="valeur_fg">
+          <span class="wort-kpi__num" data-fg-num><?= htmlspecialchars($fgBucketsJs[$skuClassFilterValue]['valeur_fg'] ?? $fgBucketsJs['all']['valeur_fg']) ?></span>
           <span class="wort-kpi__label">Valeur FG (CHF)</span>
+          <span class="wort-kpi__total" data-fg-total<?= $isAll ? ' hidden' : '' ?>>Total : <?= htmlspecialchars($fgBucketsJs['all']['valeur_fg']) ?></span>
         </div>
-        <div class="wort-kpi">
-          <span class="wort-kpi__num"><?= wh_num_smart($fgKpis['hl_total'], 1, 1, '0') ?></span>
+        <div class="wort-kpi" data-fg-tile="hl_total">
+          <span class="wort-kpi__num" data-fg-num><?= htmlspecialchars($fgBucketsJs[$skuClassFilterValue]['hl_total'] ?? $fgBucketsJs['all']['hl_total']) ?></span>
           <span class="wort-kpi__label">HL équivalent total</span>
+          <span class="wort-kpi__total" data-fg-total<?= $isAll ? ' hidden' : '' ?>>Total : <?= htmlspecialchars($fgBucketsJs['all']['hl_total']) ?></span>
         </div>
-        <div class="wort-kpi">
-          <span class="wort-kpi__num"><?= $fgKpis['sku_count'] ?></span>
+        <div class="wort-kpi" data-fg-tile="sku_count">
+          <span class="wort-kpi__num" data-fg-num><?= htmlspecialchars($fgBucketsJs[$skuClassFilterValue]['sku_count'] ?? $fgBucketsJs['all']['sku_count']) ?></span>
           <span class="wort-kpi__label">SKUs en stock</span>
+          <span class="wort-kpi__total" data-fg-total<?= $isAll ? ' hidden' : '' ?>>Total : <?= htmlspecialchars($fgBucketsJs['all']['sku_count']) ?></span>
         </div>
-        <div class="wort-kpi">
-          <span class="wort-kpi__num"><?= wh_num_smart($fgKpis['valeur_liquide'], 0, 0, '0') ?></span>
+        <div class="wort-kpi" data-fg-tile="valeur_liquide">
+          <span class="wort-kpi__num" data-fg-num><?= htmlspecialchars($fgBucketsJs[$skuClassFilterValue]['valeur_liquide'] ?? $fgBucketsJs['all']['valeur_liquide']) ?></span>
           <span class="wort-kpi__label">Valeur liquide (CHF)</span>
+          <span class="wort-kpi__total" data-fg-total<?= $isAll ? ' hidden' : '' ?>>Total : <?= htmlspecialchars($fgBucketsJs['all']['valeur_liquide']) ?></span>
         </div>
-        <div class="wort-kpi">
-          <span class="wort-kpi__num"><?= wh_num_smart($fgKpis['valeur_emballage'], 0, 0, '0') ?></span>
+        <div class="wort-kpi" data-fg-tile="valeur_emballage">
+          <span class="wort-kpi__num" data-fg-num><?= htmlspecialchars($fgBucketsJs[$skuClassFilterValue]['valeur_emballage'] ?? $fgBucketsJs['all']['valeur_emballage']) ?></span>
           <span class="wort-kpi__label">Valeur emballage (CHF)</span>
+          <span class="wort-kpi__total" data-fg-total<?= $isAll ? ' hidden' : '' ?>>Total : <?= htmlspecialchars($fgBucketsJs['all']['valeur_emballage']) ?></span>
         </div>
       </section>
 
@@ -1339,17 +1405,6 @@ try {
           <span class="wort-section__label">— récap GL</span>
         </div>
         <div class="wort-table-wrap">
-          <?php
-            $glLabelsFG = [
-                '4101' => 'Malt',
-                '4102' => 'Houblon',
-                '4103' => 'Levure',
-                '4104' => 'Ingrédients',
-                '4200' => 'Emballage',
-            ];
-            $fgGlGrandTotal = 0.0;
-            ksort($fgGlRecap);
-          ?>
           <table class="wort-table wh-fg-gl-recap wh-gl-recap">
             <thead>
               <tr>
@@ -1358,28 +1413,32 @@ try {
                 <th scope="col">Total CHF</th>
               </tr>
             </thead>
-            <tbody>
-              <?php foreach ($fgGlRecap as $gl => $total):
-                    $fgGlGrandTotal += $total;
-                    $glStr = (string) $gl; ?>
+            <tbody data-fg-gl-body>
+              <?php foreach ($initBucket['gl'] as $glRow): ?>
                 <tr>
-                  <td class="wort-td"><span class="wort-mono"><?= htmlspecialchars($glStr) ?></span></td>
-                  <td class="wort-td"><?= htmlspecialchars((string) ($glLabelsFG[$glStr] ?? $glLabelsFG[$gl] ?? $glStr)) ?></td>
-                  <td class="wort-td wh-td--num"><?= wh_num_smart($total, 2, 2, '0.00') ?></td>
+                  <td class="wort-td"><span class="wort-mono"><?= htmlspecialchars($glRow['gl']) ?></span></td>
+                  <td class="wort-td"><?= htmlspecialchars($glRow['label']) ?></td>
+                  <td class="wort-td wh-td--num"><?= htmlspecialchars($glRow['chf']) ?></td>
                 </tr>
               <?php endforeach ?>
             </tbody>
             <tfoot>
               <tr class="wh-gl-recap__total">
                 <td class="wort-td" colspan="2">TOTAL</td>
-                <td class="wort-td wh-td--num"><?= wh_num_smart($fgGlGrandTotal, 2, 2, '0.00') ?></td>
+                <td class="wort-td wh-td--num">
+                  <span data-fg-gl-total><?= htmlspecialchars($initBucket['gl_total']) ?></span>
+                  <span class="wh-gl-recap__ref" data-fg-gl-ref<?= $isAll ? ' hidden' : '' ?>>(portefeuille : <?= htmlspecialchars($fgBucketsJs['all']['gl_total']) ?>)</span>
+                </td>
               </tr>
             </tfoot>
           </table>
         </div>
       </section>
 
+      <script>window.WH_FG_BUCKETS = <?= json_encode($fgBucketsJs, JSON_HEX_TAG | JSON_HEX_AMP | JSON_UNESCAPED_UNICODE) ?>;</script>
+
     <script defer src="/js/sku-class-filter.js?v=<?= @filemtime(__DIR__ . '/../js/sku-class-filter.js') ?: time() ?>"></script>
+    <script defer src="/js/warehouse-fg-kpis.js?v=<?= @filemtime(__DIR__ . '/../js/warehouse-fg-kpis.js') ?: time() ?>"></script>
 
     <?php endif ?>
 

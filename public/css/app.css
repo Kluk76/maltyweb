@@ -9085,6 +9085,27 @@ body.auth::after {
   grid-template-columns: repeat(5, 1fr);
 }
 
+/* FG KPI dual-view: filtered sub-line and GL portfolio ref */
+.home .wh-kpis--5 .wort-kpi__total {
+  display: block;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.7rem;
+  color: var(--ink-label);
+  margin-top: 4px;
+  letter-spacing: 0.01em;
+}
+.home .wh-kpis--5 .wort-kpi__total[hidden] {
+  display: none;
+}
+.home .wh-fg-gl-recap .wh-gl-recap__ref {
+  font-size: 0.72rem;
+  color: var(--ink-label);
+  margin-left: 0.4rem;
+}
+.home .wh-fg-gl-recap .wh-gl-recap__ref[hidden] {
+  display: none;
+}
+
 /* Detail-view section spacing */
 .home .wh-section--mt {
   margin-top: 36px;
