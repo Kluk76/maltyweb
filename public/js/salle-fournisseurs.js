@@ -1601,7 +1601,6 @@
           });
         }
       }
-    }
 
       // ── Reply composer wiring (P3-send) ─────────────────────────────────
       const replyCompose = convoPane.querySelector('#sf-disc-reply-compose');
@@ -1832,6 +1831,7 @@
         }
       }
       // ── End reply composer wiring ────────────────────────────────────────
+    }
 
     // Wire rail item clicks
     container.querySelectorAll('.sf-disc-rail-item').forEach(item => {
