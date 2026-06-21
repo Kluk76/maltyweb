@@ -529,18 +529,32 @@ _CLIENT_ADDR_LINE_RE = re.compile(
 )
 
 
-def _resolve_customer_hint(ctx: EmailContext, top_post: str) -> str:
+def _resolve_customer_hint(
+    ctx: EmailContext,
+    top_post: str,
+    original_sender: str | None = None,
+) -> str:
     """
     Resolve the best customer hint using multi-signal priority:
 
     Priority a — Inline client block in top_post (highest)
     Priority b — Forwarded message external sender
-    Priority c — External direct sender (from_address not @lanebuleuse.ch)
-    Priority d — Fall through → ''
+    Priority c — original_sender from via-Commandes header recovery
+                 (X-Original-Sender / X-Original-From / Reply-To, already extracted
+                 and pre-guarded by _extract_original_sender in the ingest layer)
+    Priority d — External direct sender (from_address not @lanebuleuse.ch)
+    Priority e — Fall through → ''
 
     Hard rule: any @lanebuleuse.ch address is NEVER the customer.
     """
+    from email.utils import parseaddr
+
     nebuleuse_domain = "@lanebuleuse.ch"
+    _SYSTEM_ADDRESSES = {
+        "commandes@lanebuleuse.ch",
+        "production@lanebuleuse.ch",
+        "info@lanebuleuse.ch",
+    }
 
     # Priority a: inline client block
     m = _CLIENT_BLOCK_RE.search(top_post)
@@ -597,12 +611,22 @@ def _resolve_customer_hint(ctx: EmailContext, top_post: str) -> str:
             if em and nebuleuse_domain not in em.group(0):
                 return line_val  # return the full "Name <email>" string
 
-    # Priority c: external direct sender
+    # Priority c: original_sender from via-Commandes header recovery.
+    # The value is already pre-extracted as a bare lowercase email and pre-guarded
+    # (not @lanebuleuse.ch, not a system address) by _extract_original_sender() in
+    # the ingest layer.  Apply a defensive re-check here to be safe.
+    if original_sender:
+        _name, _addr = parseaddr(original_sender)
+        _addr = (_addr or original_sender).strip().lower()
+        if _addr and "@" in _addr and not _addr.endswith(nebuleuse_domain) and _addr not in _SYSTEM_ADDRESSES:
+            return _addr
+
+    # Priority d: external direct sender
     from_addr = ctx.from_address or ""
     if from_addr and nebuleuse_domain not in from_addr:
         return from_addr
 
-    # Priority d: no customer hint available
+    # Priority e: no customer hint available
     return ""
 
 
@@ -850,8 +874,13 @@ class GenericVocabParser(SenderParser):
             # No product+qty pairs found → decline → no_match
             return None
 
-        # Change 2: Multi-signal customer resolution
-        customer_hint = _resolve_customer_hint(ctx, top_post)
+        # Change 2: Multi-signal customer resolution.
+        # original_sender is threaded from the ingest layer via env (set per-message
+        # as env.original_sender by process_message before calling dispatch).
+        customer_hint = _resolve_customer_hint(
+            ctx, top_post,
+            original_sender=getattr(env, "original_sender", None),
+        )
 
         # Compose notes: dropped fragments + price/discount instructions
         notes_parts: list[str] = []

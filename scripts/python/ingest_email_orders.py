@@ -188,10 +188,52 @@ def _is_attachment_part(part) -> bool:
 
 # ── EML parser (fixtures mode) ────────────────────────────────────────────────
 
-def _parse_eml(path: Path) -> EmailContext:
+def _extract_original_sender(msg: EmailMessage) -> str | None:
+    """
+    Extract the real external sender from via-Commandes rewritten email headers.
+
+    Google Groups rewrites From: to "'Name' via Commandes <commandes@lanebuleuse.ch>",
+    masking the actual customer. The real sender survives in X-Original-Sender,
+    X-Original-From, or Reply-To (tried in that order).
+
+    Returns a bare lowercase email address, or None when:
+      - No header found, or
+      - The extracted address belongs to @lanebuleuse.ch (internal / system address).
+
+    Critical: always extract the bare email via parseaddr FIRST, then apply the
+    domain guard — never run endswith() on a raw header value like "Name <addr>".
+    """
+    from email.utils import parseaddr
+
+    _SYSTEM_ADDRESSES = {
+        "commandes@lanebuleuse.ch",
+        "production@lanebuleuse.ch",
+        "info@lanebuleuse.ch",
+    }
+
+    for _hdr in ("X-Original-Sender", "X-Original-From", "Reply-To"):
+        _hdr_val = str(msg.get(_hdr, "") or "")
+        if not _hdr_val.strip():
+            continue
+        _name, _addr = parseaddr(_hdr_val)
+        _addr = _addr.strip().lower()
+        if not _addr or "@" not in _addr:
+            continue
+        if _addr.endswith("@lanebuleuse.ch") or _addr in _SYSTEM_ADDRESSES:
+            continue
+        return _addr
+
+    return None
+
+
+def _parse_eml(path: Path) -> tuple[EmailContext, str | None]:
     """
     Parse a .eml file into an EmailContext using Python stdlib `email`.
     Handles multipart messages; extracts text/plain and text/html parts.
+
+    Returns (EmailContext, original_sender) where original_sender is the real
+    external sender extracted from X-Original-Sender / X-Original-From / Reply-To
+    headers (None when not a via-Commandes rewritten message).
     """
     raw = path.read_bytes()
     msg: EmailMessage = message_from_bytes(raw, policy=email_policy.default)  # type: ignore[arg-type]
@@ -260,6 +302,9 @@ def _parse_eml(path: Path) -> EmailContext:
         else:
             body_text = content
 
+    # Extract original_sender from via-Commandes rewritten headers
+    original_sender = _extract_original_sender(msg)
+
     return EmailContext(
         message_id=message_id,
         from_address=from_address,
@@ -269,12 +314,12 @@ def _parse_eml(path: Path) -> EmailContext:
         body_text=body_text or "",
         body_html=body_html or "",
         attachments=attachments,
-    )
+    ), original_sender
 
 
 # ── Gmail API fetcher (live mode — lazy import) ───────────────────────────────
 
-def _fetch_gmail_messages(gmail_cfg: dict[str, str]) -> list[EmailContext]:
+def _fetch_gmail_messages(gmail_cfg: dict[str, str]) -> list[tuple[EmailContext, str | None]]:
     """
     Fetch unread messages from Gmail via the Gmail API with domain-wide delegation.
     google-api-python-client is imported lazily so fixtures mode runs without it.
@@ -304,7 +349,7 @@ def _fetch_gmail_messages(gmail_cfg: dict[str, str]) -> list[EmailContext]:
     messages = results.get("messages", [])
     log.info("Gmail API: %d message(s) matched query %r", len(messages), query)
 
-    contexts: list[EmailContext] = []
+    contexts: list[tuple[EmailContext, str | None]] = []
     for msg_stub in messages:
         msg_id  = msg_stub["id"]
         raw_msg = (
@@ -376,7 +421,10 @@ def _fetch_gmail_messages(gmail_cfg: dict[str, str]) -> list[EmailContext]:
             else:
                 body_text = content
 
-        contexts.append(EmailContext(
+        # Extract original_sender from via-Commandes rewritten headers
+        gmail_original_sender = _extract_original_sender(email_msg)
+
+        contexts.append((EmailContext(
             message_id=message_id,
             from_address=from_address,
             to_address=to_address,
@@ -385,7 +433,7 @@ def _fetch_gmail_messages(gmail_cfg: dict[str, str]) -> list[EmailContext]:
             body_text=body_text or "",
             body_html=body_html or "",
             attachments=attachments,
-        ))
+        ), gmail_original_sender))
 
     return contexts
 
@@ -501,16 +549,20 @@ def _upsert_email_message(
     parser_matched: str | None,
     parse_error: str | None,
     parsed_json: str | None,
+    original_sender: str | None,
     apply_mode: bool,
 ) -> int | None:
     """
     INSERT doc_email_messages row.  Returns the new id (or None in dry-run).
 
-    parse_status  : 'unparsed' | 'parsed' | 'no_match' | 'error' | 'order_created'
-    parse_error   : Error message string — ONLY set for parse_status='error'.
-                    NULL for all other statuses (not repurposed for hints).
-    parsed_json   : Serialised ParsedOrder — set for parse_status='parsed'.
-                    NULL for all other statuses.
+    parse_status     : 'unparsed' | 'parsed' | 'no_match' | 'error' | 'order_created'
+    parse_error      : Error message string — ONLY set for parse_status='error'.
+                       NULL for all other statuses (not repurposed for hints).
+    parsed_json      : Serialised ParsedOrder — set for parse_status='parsed'.
+                       NULL for all other statuses.
+    original_sender  : Bare lowercase email extracted from X-Original-Sender /
+                       X-Original-From / Reply-To when Google Groups rewrites From:.
+                       NULL when not a via-Commandes rewritten message.
     """
     received_at_str: str | None = None
     if ctx.received_at is not None:
@@ -543,14 +595,15 @@ def _upsert_email_message(
         c.execute(
             """
             INSERT INTO doc_email_messages
-                (message_id, from_address, to_address, subject, received_at,
+                (message_id, from_address, original_sender, to_address, subject, received_at,
                  body_format, raw_body, attachments_json,
                  parser_matched, parse_status, parse_error, parsed_json)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 ctx.message_id,
                 ctx.from_address or None,
+                original_sender or None,
                 ctx.to_address   or None,
                 ctx.subject      or None,
                 received_at_str,
@@ -574,6 +627,7 @@ def _update_email_message(
     parser_matched: str | None,
     parse_error: str | None,
     parsed_json: str | None,
+    original_sender: str | None,
     apply_mode: bool,
 ) -> None:
     """Update parse fields on an existing doc_email_messages row (--force path)."""
@@ -583,14 +637,15 @@ def _update_email_message(
         c.execute(
             """
             UPDATE doc_email_messages
-               SET parser_matched = %s,
-                   parse_status   = %s,
-                   parse_error    = %s,
-                   parsed_json    = %s,
-                   updated_at     = CURRENT_TIMESTAMP
+               SET parser_matched   = %s,
+                   parse_status     = %s,
+                   parse_error      = %s,
+                   parsed_json      = %s,
+                   original_sender  = %s,
+                   updated_at       = CURRENT_TIMESTAMP
              WHERE id = %s
             """,
-            (parser_matched, parse_status, parse_error, parsed_json, email_id),
+            (parser_matched, parse_status, parse_error, parsed_json, original_sender or None, email_id),
         )
     conn.commit()
 
@@ -615,6 +670,7 @@ def process_message(
     env: ParserEnv,
     apply_mode: bool,
     force: bool,
+    original_sender: str | None = None,
 ) -> dict[str, Any]:
     """
     Process one EmailContext through the full pipeline (Model B).
@@ -626,6 +682,12 @@ def process_message(
       no_match    — no parser matched / all matched parsers declined
       parsed      — parser produced a ParsedOrder → parsed_json written
       error       — parser matched but raised an exception
+
+    original_sender: bare lowercase email extracted from X-Original-Sender /
+      X-Original-From / Reply-To when Google Groups rewrites From: to
+      "'Name' via Commandes <commandes@lanebuleuse.ch>".  None otherwise.
+      Stored on env so the generic_vocab parser can promote it into customer_hint
+      when the parser's own resolution returns an empty hint.
     """
     message_id = ctx.message_id
 
@@ -634,6 +696,12 @@ def process_message(
     if existing_id is not None and not force:
         log.debug("  [skip] %s — already in DB (id=%d)", message_id[:60], existing_id)
         return {"outcome": "skipped", "message_id": message_id}
+
+    # ── Thread original_sender into env so the parser can access it ───────────
+    # ParserEnv is a plain @dataclass (no slots=True) so we can set arbitrary
+    # attributes per-message.  generic_vocab._resolve_customer_hint reads it via
+    # getattr(env, 'original_sender', None).
+    env.original_sender = original_sender  # type: ignore[attr-defined]
 
     # ── Dispatch (Model B: decline-fall-through) ───────────────────────────────
     parse_status:   str           = "no_match"
@@ -656,8 +724,9 @@ def process_message(
             parsed_order   = result
             parse_status   = "parsed"
             parser_matched = _resolve_parser_name(ctx, env)
-            # Internal-rep detection: when customer_hint='' AND From is @lanebuleuse.ch,
-            # the sender IS the customer (internal sales rep ordering for themselves).
+            # Internal-rep detection: when customer_hint='' AND From is @lanebuleuse.ch
+            # AND original_sender is also None (a real external customer was NOT
+            # recovered from headers), the sender IS an internal sales rep.
             # ParsedOrder is frozen so flags are injected via extra_hints at serialisation.
             _extra_hints: dict = {}
             # Extract bare email from "Name <email>" or bare "email@domain" FIRST,
@@ -666,14 +735,25 @@ def process_message(
             _rep_email = (ctx.from_address or "").strip().lower()
             if "<" in _rep_email and ">" in _rep_email:
                 _rep_email = _rep_email[_rep_email.index("<") + 1 : _rep_email.index(">")].strip()
-            if result.customer_hint == "" and _rep_email.endswith("@lanebuleuse.ch"):
-                _extra_hints = {"_internal_rep": True, "_rep_email": _rep_email}
-            parsed_json    = _serialise_parsed_order(result, _extra_hints or None)
+            # Determine effective customer_hint: result.customer_hint as set by the
+            # parser (may already contain original_sender via generic_vocab cascade),
+            # or override here if parser returned empty and we have original_sender.
+            _effective_hint = result.customer_hint
+            if not _effective_hint and original_sender:
+                _effective_hint = original_sender
+                _extra_hints["customer_hint"] = original_sender
+            # _internal_rep only fires when BOTH customer_hint AND original_sender are
+            # absent — a real external customer was truly not identifiable.
+            if not _effective_hint and original_sender is None and _rep_email.endswith("@lanebuleuse.ch"):
+                _extra_hints["_internal_rep"] = True
+                _extra_hints["_rep_email"] = _rep_email
+            parsed_json = _serialise_parsed_order(result, _extra_hints or None)
             log.info(
-                "  [parsed] %s — parser=%s customer_hint=%r lines=%d",
+                "  [parsed] %s — parser=%s customer_hint=%r original_sender=%r lines=%d",
                 message_id[:60],
                 parser_matched,
-                result.customer_hint,
+                _effective_hint,
+                original_sender,
                 len(result.lines),
             )
 
@@ -682,20 +762,22 @@ def process_message(
         if existing_id is not None and force:
             _update_email_message(
                 conn, existing_id, parse_status, parser_matched,
-                parse_error, parsed_json, apply_mode
+                parse_error, parsed_json, original_sender, apply_mode
             )
             email_db_id = existing_id
         else:
             email_db_id = _upsert_email_message(
                 conn, ctx, parse_status, parser_matched,
-                parse_error, parsed_json, apply_mode
+                parse_error, parsed_json, original_sender, apply_mode
             )
         log.debug("  → doc_email_messages.id=%s", email_db_id)
     else:
         action = "UPDATE" if (existing_id is not None and force) else "INSERT"
         log.info(
-            "  [dry-run] Would %s doc_email_messages: message_id=%s parse_status=%s parser=%s",
+            "  [dry-run] Would %s doc_email_messages: message_id=%s parse_status=%s "
+            "parser=%s original_sender=%s",
             action, message_id[:60], parse_status, parser_matched or "NULL",
+            original_sender or "NULL",
         )
 
     return {
@@ -841,11 +923,11 @@ def main() -> None:
         if limit:
             eml_files = eml_files[:limit]
             log.info("  --limit %d applied: processing %d file(s).", limit, len(eml_files))
-        contexts: list[EmailContext] = []
+        contexts: list[tuple[EmailContext, str | None]] = []
         for f in eml_files:
             try:
-                ctx = _parse_eml(f)
-                contexts.append(ctx)
+                ctx, orig_sender = _parse_eml(f)
+                contexts.append((ctx, orig_sender))
                 log.info("  Parsed: %s → message_id=%s", f.name, ctx.message_id[:60])
             except Exception as exc:
                 log.error("  Failed to parse %s: %s", f.name, exc)
@@ -917,8 +999,8 @@ def main() -> None:
     log.info("[4/4] Processing %d message(s) …", len(contexts))
     results: list[dict[str, Any]] = []
     try:
-        for ctx in contexts:
-            result = process_message(ctx, conn, env, apply_mode, force)
+        for ctx, original_sender in contexts:
+            result = process_message(ctx, conn, env, apply_mode, force, original_sender)
             results.append(result)
     except Exception as exc:
         if conn is not None:

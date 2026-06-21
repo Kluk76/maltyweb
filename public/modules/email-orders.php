@@ -206,7 +206,7 @@ unset($_SESSION['eo_twin_pending_id']);
 
 // Fetch all email messages grouped by parse_status, newest first
 $allEmailsStmt = $pdo->query(
-    "SELECT id, message_id, from_address, subject, received_at,
+    "SELECT id, message_id, from_address, original_sender, subject, received_at,
             raw_body, parse_status, parse_error, parsed_json,
             created_at, updated_at
        FROM doc_email_messages
@@ -313,6 +313,7 @@ $flashMsg  = $flash['msg'] ?? '';
           $notesHint    = htmlspecialchars($hints['notes'] ?? '', ENT_QUOTES | ENT_HTML5);
           $lineHints    = $hints['lines'] ?? [];
           $fromAddr     = htmlspecialchars($em['from_address'] ?? '', ENT_QUOTES | ENT_HTML5);
+          $origSender   = htmlspecialchars($em['original_sender'] ?? '', ENT_QUOTES | ENT_HTML5);
           $subject      = htmlspecialchars($em['subject'] ?? '(sans objet)', ENT_QUOTES | ENT_HTML5);
           $receivedAt   = htmlspecialchars($em['received_at'] ?? '', ENT_QUOTES | ENT_HTML5);
           $rawBody      = htmlspecialchars($em['raw_body'] ?? '', ENT_QUOTES | ENT_HTML5);
@@ -345,7 +346,11 @@ $flashMsg  = $flash['msg'] ?? '';
              <?= $isTwinPending ? 'data-twin-pending="1"' : '' ?>>
           <!-- Card meta bar -->
           <div class="eo-review-card__meta">
-            <span><strong>De :</strong> <?= $fromAddr ?></span>
+            <span><strong>De :</strong> <?= $fromAddr ?>
+              <?php if ($origSender !== '' && stripos($em['from_address'] ?? '', $em['original_sender'] ?? '') === false): ?>
+                <span class="eo-original-sender">Expéditeur réel : <?= $origSender ?></span>
+              <?php endif ?>
+            </span>
             <span><strong>Objet :</strong> <?= $subject ?></span>
             <?php if ($receivedAt): ?><span><strong>Reçu :</strong> <?= $receivedAt ?></span><?php endif ?>
           </div>
@@ -511,9 +516,10 @@ $flashMsg  = $flash['msg'] ?? '';
     <?php else: ?>
       <?php foreach ($unparsedEmails as $em): ?>
         <?php
-          $status   = htmlspecialchars($em['parse_status'] ?? 'unparsed', ENT_QUOTES | ENT_HTML5);
-          $fromAddr = htmlspecialchars($em['from_address'] ?? '', ENT_QUOTES | ENT_HTML5);
-          $subject  = htmlspecialchars($em['subject'] ?? '(sans objet)', ENT_QUOTES | ENT_HTML5);
+          $status     = htmlspecialchars($em['parse_status'] ?? 'unparsed', ENT_QUOTES | ENT_HTML5);
+          $fromAddr   = htmlspecialchars($em['from_address'] ?? '', ENT_QUOTES | ENT_HTML5);
+          $origSender = htmlspecialchars($em['original_sender'] ?? '', ENT_QUOTES | ENT_HTML5);
+          $subject    = htmlspecialchars($em['subject'] ?? '(sans objet)', ENT_QUOTES | ENT_HTML5);
           $received = htmlspecialchars($em['received_at'] ?? '', ENT_QUOTES | ENT_HTML5);
           $errMsg   = htmlspecialchars($em['parse_error'] ?? '', ENT_QUOTES | ENT_HTML5);
           $rawBody  = htmlspecialchars($em['raw_body'] ?? '', ENT_QUOTES | ENT_HTML5);
@@ -521,7 +527,11 @@ $flashMsg  = $flash['msg'] ?? '';
         <div class="eo-raw-card">
           <div class="eo-raw-card__meta">
             <span><strong>Statut :</strong> <?= $status ?></span>
-            <span><strong>De :</strong> <?= $fromAddr ?></span>
+            <span><strong>De :</strong> <?= $fromAddr ?>
+              <?php if ($origSender !== '' && stripos($em['from_address'] ?? '', $em['original_sender'] ?? '') === false): ?>
+                <span class="eo-original-sender">Expéditeur réel : <?= $origSender ?></span>
+              <?php endif ?>
+            </span>
             <span><strong>Objet :</strong> <?= $subject ?></span>
             <?php if ($received): ?><span><strong>Reçu :</strong> <?= $received ?></span><?php endif ?>
           </div>
@@ -551,13 +561,18 @@ $flashMsg  = $flash['msg'] ?? '';
       <div class="eo-done-list">
         <?php foreach ($doneEmails as $em): ?>
           <?php
-            $fromAddr = htmlspecialchars($em['from_address'] ?? '', ENT_QUOTES | ENT_HTML5);
-            $subject  = htmlspecialchars($em['subject'] ?? '(sans objet)', ENT_QUOTES | ENT_HTML5);
-            $updAt    = htmlspecialchars($em['updated_at'] ?? '', ENT_QUOTES | ENT_HTML5);
+            $fromAddr   = htmlspecialchars($em['from_address'] ?? '', ENT_QUOTES | ENT_HTML5);
+            $origSender = htmlspecialchars($em['original_sender'] ?? '', ENT_QUOTES | ENT_HTML5);
+            $subject    = htmlspecialchars($em['subject'] ?? '(sans objet)', ENT_QUOTES | ENT_HTML5);
+            $updAt      = htmlspecialchars($em['updated_at'] ?? '', ENT_QUOTES | ENT_HTML5);
           ?>
           <div class="eo-done-item">
             <span class="eo-done-item__subject"><?= $subject ?></span>
-            <span><?= $fromAddr ?></span>
+            <span><?= $fromAddr ?>
+              <?php if ($origSender !== '' && stripos($em['from_address'] ?? '', $em['original_sender'] ?? '') === false): ?>
+                <span class="eo-original-sender">Expéditeur réel : <?= $origSender ?></span>
+              <?php endif ?>
+            </span>
             <span><?= $updAt ?></span>
           </div>
         <?php endforeach ?>

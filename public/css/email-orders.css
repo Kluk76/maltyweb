@@ -491,3 +491,13 @@ body.email-orders-page .eo-done-item__subject {
   text-overflow: ellipsis;
   color: var(--ink);
 }
+
+/* ── Original sender (Google-Groups rewrite recovery) ────────────────────── */
+
+body.email-orders-page .eo-original-sender {
+  display: block;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.68rem;
+  color: var(--ink-label);
+  margin-top: 0.15rem;
+}
