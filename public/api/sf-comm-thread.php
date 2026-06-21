@@ -55,7 +55,7 @@ function build_supplier_timeline(PDO $pdo, int $supplierId): array
     $stThreads = $pdo->prepare(
         'SELECT id, subject, gmail_thread_id, last_message_at, is_active, created_at
            FROM comm_threads
-          WHERE supplier_id_fk = ? AND is_active = 1
+          WHERE supplier_id_fk = ? AND is_active = 1 AND purge_status = \'live\'
           ORDER BY last_message_at ASC'
     );
     $stThreads->execute([$supplierId]);
@@ -183,6 +183,7 @@ function load_review_threads(PDO $pdo, int $limit = 50): array
           WHERE supplier_id_fk IS NULL
             AND customer_id_fk IS NULL
             AND is_active = 1
+            AND purge_status = \'live\'
           ORDER BY last_message_at DESC
           LIMIT ?'
     );
@@ -234,7 +235,7 @@ function build_supplier_threads(PDO $pdo, int $supplierId): array
         'SELECT id, subject, last_message_at,
                 (SELECT COUNT(*) FROM comm_messages WHERE thread_id_fk = t.id) AS message_count
            FROM comm_threads t
-          WHERE supplier_id_fk = ? AND is_active = 1
+          WHERE supplier_id_fk = ? AND is_active = 1 AND purge_status = \'live\'
           ORDER BY last_message_at DESC'
     );
     $stThreads->execute([$supplierId]);
@@ -322,7 +323,7 @@ try {
                    JOIN doc_files df ON df.id = cmd.doc_file_id_fk
                    JOIN comm_messages cm ON cm.id = cmd.message_id_fk
                    JOIN comm_threads ct ON ct.id = cm.thread_id_fk
-                  WHERE ct.supplier_id_fk = ?'
+                  WHERE ct.supplier_id_fk = ? AND ct.purge_status = \'live\''
             );
             $stDisc->execute([$supplierId]);
             foreach ($stDisc->fetchAll(PDO::FETCH_ASSOC) as $row) {
