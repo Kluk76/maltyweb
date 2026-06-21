@@ -130,9 +130,10 @@ Context: capture/inbox/reply LIVE; 180-day backfill done = **2660 msgs / 1151 th
 
 **✅ ENTIRE REGISTRY + RESCOPE + PURGE + GATE SLICE = DONE 2026-06-21.** Pieces 1/2/3/5 (mig 429 + seed + connector rescope/backfill), Purge Phase-1 (`6449cd8`) AND Phase-2 hard-delete (`7f132bc`), AND the Ruling-A manager-access gate (`f8eeee7`) are ALL shipped+committed. The supplier-side comm-tracker build is structurally complete.
 
-**STILL OPEN in the broader arc (post-slice — record only; not yet built):**
-1. **Unknown-domain admin surface (+ui)** — surfaces `comm_unknown_domain_seen` for one-click view/promote (the 3 high-hit candidates `dalumequipment.com`/`henriot.fr`/`unitronics.io` land here).
-2. **Operator follow-ups PENDING:** (a) promote those 3 high-hit domains; (b) merge `stretchfolienprofi` 72/168 duplicate supplier; (c) 2y-retro-all? (declined for now — stay 6mo).
+**STILL OPEN in the broader arc (post-slice — record only):**
+1. ✅ **DONE 2026-06-21 — Unknown-domain triage screen SHIPPED+COMMITTED** (see §UNKNOWN-DOMAIN TRIAGE SCREEN AS-BUILT below). 4 new files; URL-only manager-gated page that surfaces `comm_unknown_domain_seen` → search existing ref_suppliers/ref_customers → promote (writes a `ref_entity_email_domains` row, `source='manual'`, `backfilled_at=NULL` so next connector tick retro-pulls) + a `comm_address_pins` row, then dismisses. The 3 high-hit candidates `dalumequipment.com`/`henriot.fr`/`unitronics.io` land here for operator promotion. RESOLVES the "unknown-domain admin surface" item.
+2. ✅ **DONE 2026-06-21 — stretchfolienprofi 72/168 RESOLVED as a MERGE** (see §STRETCHFOLIENPROFI MERGE below). Operator ruled 72 (Enzensberger, FOURN-000674) canonical; 168 (FOURN-000902, ZERO fiscal history) merged in (repoint 4 CRM FKs + deactivate). NOT a duplicate avoided — a real merge executed.
+3. **Operator follow-ups PENDING:** (a) promote those 3 high-hit domains via the new triage screen; (b) 2y-retro-all? (declined for now — stay 6mo).
 3. **Customer-side fiche (P3-cust) — DEFERRED.** The standalone customer Discussions/CRM surface (would earn a real ref_pages row); the 60 `migrated_customer` threads await it.
 
 ## §REGISTRY + CONNECTOR-RESCOPE + 2-PHASE-PURGE BUILD SPEC — PM-RULED 2026-06-21 (authoritative; Pieces 1/2/3/5 NOW BUILT, see §AS-BUILT above; Piece 4 + access-flag + unknown-domain UI still open). Trigger "ref_entity_email_domains"/"registry table"/"connector rescope"/"comm_unknown_domain_seen"/"two-phase purge"/"seed comm registry"/"purge_status".
@@ -351,3 +352,22 @@ Kouros said link `kouros@`. But supplier/customer correspondence likely flows th
 
 ## RECOMMENDATION (short)
 Build supplier-side first (P0→P1→P2) — the fiche surface already exists, it's the cheaper proof. Reuse the live Gmail DWD substrate; new separate poller + comm_* tables (don't touch doc_email_messages); attachments → doc_files; entity match = pin→exact→review, never fuzzy-auto-link. Render = one ordered timeline keyed on sent_at with docs interleaved via their parent message's timestamp. Customer side (P3) is a follow-on that requires building a customer fiche first. Get the 7 OPEN QUESTIONS answered before P0 — especially #1 (which mailboxes) and #4 (customer card surface), which size the whole build.
+
+## §STRETCHFOLIENPROFI MERGE — AS-BUILT 2026-06-21 (RESOLVED as a real merge, NOT a duplicate avoided). Trigger "stretchfolienprofi"/"72/168"/"Enzensberger"/"vendor merge"/"GL-distinct vendor"/"zero-fiscal-history merge".
+- **Investigation:** the website `stretchfolienprofi.de` mapped to TWO DISTINCT BC vendors: **72 = Enzensberger GmbH** (FOURN-000674, GL **4600**, email info@stretchfolienprofi.de) vs **168 = Stretchfolienprofi** (FOURN-000902, GL **4302**). Different GLs = fiscal-merge RISK → surfaced to Kouros, did NOT auto-merge.
+- **Operator RULING:** they ARE the same company; **72 (Enzensberger) is canonical; MERGE 168 → 72.**
+- **Why the merge was SAFE (verified):** 168 had **ZERO fiscal history** — 0 invoices / 0 deliveries / 0 GL rows across all 15 FK tables checked; only 4 CRM rows from today's seed. So a CRM-only merge.
+- **Executed (direct SQL, DB-only, NOT committed):** repointed 168's 2 `ref_entity_email_domains` + 1 `comm_address_pins` + 1 `comm_thread` → 72 (no UNIQUE collisions; 72 owns enzensberger.eu, 168 owned stretchfolienprofi.de → now BOTH under 72). Deactivated 168 (`is_active=0` + merge note).
+- **DURABILITY VERIFIED:** `sync_bc_vendors.py` `_apply_match` (existing-row enrich path) writes ONLY email/phone/address/bc_last_synced_at — **NOT is_active** — so the daily BC sync will NOT resurrect 168. No sync code change needed; deactivation STICKS.
+- 🔴 **DURABLE LESSON for this arc:** (i) two BC vendors can share a website yet be GL-DISTINCT — NEVER auto-merge GL-distinct vendors; surface to operator (GL-distinct = fiscal-merge risk). (ii) A CRM merge of a ZERO-fiscal-history dupe = just repoint the CRM FKs (entity_email_domains + address_pins + comm_thread) + deactivate; the BC sync's match-path doesn't touch is_active, so deactivation holds.
+
+## §UNKNOWN-DOMAIN TRIAGE SCREEN — AS-BUILT 2026-06-21 (SHIPPED+COMMITTED, latest commit, 4 new files). RESOLVES the "unknown-domain admin surface" STILL-OPEN item. Trigger "unknown domain"/"comm-unknown-domains"/"comm-unknown"/"domain triage"/"promote domain"/"comm_unknown_domain_seen UI"/"dalumequipment"/"henriot"/"unitronics".
+- **4 new files:**
+  - `public/modules/comm-unknown-domains.php` — manager-gated page (body class `comm-unknown`).
+  - `public/api/comm-unknown-domain.php` — actions: `list` / `search_supplier` / `search_customer` / `promote_supplier` / `promote_customer` / `dismiss`. `can_use_comm_tracker` 403 fires BEFORE `maltytask_pdo`; `csrf_verify` on POST.
+  - `public/css/comm-unknown.css`
+  - `public/js/comm-unknown.js` — 30s auto-refresh + refresh-after-action (honors the maltyweb "prefer live/dynamic visibility" default).
+- **Promote semantics (one txn, log_revision + bd_fetch_before snapshot, idempotent ON DUPLICATE):** writes a `ref_entity_email_domains` domain row (`source='manual'`, `backfilled_at=NULL` → next connector tick retro-pulls that domain's history) + a `comm_address_pins` row for the sample_address, then dismisses the log row.
+- 🔴 **Picker offers EXISTING ref_suppliers/ref_customers ONLY — never mints a NULL-gl supplier** (honors Ruling B; a BC-only vendor must first be triaged INTO ref_suppliers, then promoted here). This is the architecturally-correct closure of the "they're on BC, capture them" frustration: visibility + one-click promote to an EXISTING entity, never a fiscal-engine-hazardous mint.
+- **URL-only** at `/modules/comm-unknown-domains.php` (no nav entry; mirrors the tracker's URL-only access pattern).
+- **STATUS:** the entire supplier-side Entity Discussion Tracker (capture → inbox → reply → registry → rescope → purge → manager-gate → unknown-domain-triage) is now COMPLETE. Only remaining arc item = **customer-side fiche (P3-cust, DEFERRED)** — needs a customer fiche surface; the 60 `migrated_customer` threads + the customer registry rows wait for it.
