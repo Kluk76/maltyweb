@@ -81,7 +81,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $canWrite) {
     }
 
     $action     = trim((string) ($_POST['action'] ?? 'validate'));
-    if (!in_array($action, ['archive', 'validate', 'force_create'], true)) {
+    if (!in_array($action, ['archive', 'validate', 'force_create', 'validate_multi'], true)) {
         flash_set('err', 'Action non reconnue.');
         redirect_to('/modules/email-orders.php');
     }
@@ -139,6 +139,91 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $canWrite) {
             redirect_to('/modules/email-orders.php');
         }
     }
+
+    // ── validate_multi handler ────────────────────────────────────────────────
+    if ($action === 'validate_multi') {
+        $rawSubs = $_POST['sub'] ?? [];
+        if (!is_array($rawSubs) || count($rawSubs) < 1) {
+            flash_set('err', 'Aucune sous-commande reçue.');
+            redirect_to('/modules/email-orders.php');
+        }
+
+        $subOrders  = [];
+        $errors     = [];
+        $allowTwin  = !empty($_POST['confirm_twin']);
+
+        if ($emailMsgId <= 0) {
+            $errors[] = 'Identifiant de message invalide.';
+        }
+
+        foreach ($rawSubs as $si => $sub) {
+            $custId  = (int) ($sub['customer_id'] ?? 0);
+            $reqDate = trim((string) ($sub['requested_date'] ?? ''));
+            $skuIds  = $sub['line_sku_id'] ?? [];
+            $qtys    = $sub['line_qty']    ?? [];
+
+            if ($custId <= 0 || !isset($activeCustIds[$custId])) {
+                $errors[] = 'Commande ' . ((int)$si + 1) . ' : client non résolu.';
+            }
+            if ($reqDate === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $reqDate)) {
+                $errors[] = 'Commande ' . ((int)$si + 1) . ' : date requise (AAAA-MM-JJ).';
+            }
+            $lines = [];
+            if (!is_array($skuIds) || count($skuIds) === 0) {
+                $errors[] = 'Commande ' . ((int)$si + 1) . ' : au moins une ligne requise.';
+            } else {
+                foreach ($skuIds as $li => $rawSkuId) {
+                    $skuId = (int) ($rawSkuId ?? 0);
+                    $qty   = (float) ($qtys[$li] ?? 0);
+                    if ($skuId <= 0) continue;
+                    if (!isset($activeSkuIds[$skuId])) {
+                        $errors[] = 'Commande ' . ((int)$si + 1) . ' ligne ' . ((int)$li + 1) . ' : SKU introuvable.';
+                        continue;
+                    }
+                    if ($qty <= 0) {
+                        $errors[] = 'Commande ' . ((int)$si + 1) . ' ligne ' . ((int)$li + 1) . ' : quantité > 0 requise.';
+                        continue;
+                    }
+                    $lines[] = ['sku_id' => $skuId, 'qty' => $qty, 'comment' => null];
+                }
+                if (count($lines) === 0 && count($errors) === 0) {
+                    $errors[] = 'Commande ' . ((int)$si + 1) . ' : aucune ligne valide.';
+                }
+            }
+            $subOrders[] = [
+                'customer_id'    => $custId,
+                'requested_date' => $reqDate,
+                'lines'          => $lines,
+                'comment'        => null,
+            ];
+        }
+
+        if (!empty($errors)) {
+            flash_set('err', implode(' — ', $errors));
+            redirect_to('/modules/email-orders.php');
+        }
+
+        try {
+            $newOrderIds = email_order_promote_multi($pdo, $me, $subOrders, $emailMsgId, $allowTwin);
+            $idList = '#' . implode(', #', $newOrderIds);
+            flash_set('ok', count($newOrderIds) . ' commande(s) créée(s) (' . $idList . ').');
+            redirect_to('/modules/email-orders.php');
+        } catch (EmailOrderAlreadyPromotedException $e) {
+            flash_set('ok', 'Commandes déjà créées depuis cet e-mail (aucune action nécessaire).');
+            redirect_to('/modules/email-orders.php');
+        } catch (EmailOrderTwinException $e) {
+            flash_set('err', '⚠ Doublon eshop possible : ' . $e->getMessage());
+            redirect_to('/modules/email-orders.php');
+        } catch (EmailOrderNoCustomerException | EmailOrderInvalidLineException | EmailOrderNotParsedException $e) {
+            flash_set('err', 'Erreur de validation : ' . $e->getMessage());
+            redirect_to('/modules/email-orders.php');
+        } catch (Throwable $e) {
+            error_log('[email-orders multi POST] ' . $e->getMessage());
+            flash_set('err', 'Erreur lors de la création : ' . pdo_friendly_error($e));
+            redirect_to('/modules/email-orders.php');
+        }
+    }
+    // End validate_multi
 
     // ── 2. Coerce inputs ──────────────────────────────────────────────────────
     $custIdRaw   = (int) ($_POST['customer_id']  ?? 0);
@@ -586,16 +671,157 @@ $flashMsg  = $flash['msg'] ?? '';
       <?php foreach ($parsedEmails as $em): ?>
         <?php
           $hints        = $em['_hints'] ?? [];
-          $custHint     = htmlspecialchars($hints['customer_hint'] ?? '', ENT_QUOTES | ENT_HTML5);
-          $dateHint     = htmlspecialchars($hints['requested_date'] ?? '', ENT_QUOTES | ENT_HTML5);
-          $notesHint    = htmlspecialchars($hints['notes'] ?? '', ENT_QUOTES | ENT_HTML5);
-          $lineHints    = $hints['lines'] ?? [];
+          $kind         = $hints['_kind'] ?? 'parsed_order_hints';
           $fromAddr     = htmlspecialchars($em['from_address'] ?? '', ENT_QUOTES | ENT_HTML5);
           $origSender   = htmlspecialchars($em['original_sender'] ?? '', ENT_QUOTES | ENT_HTML5);
           $subject      = htmlspecialchars($em['subject'] ?? '(sans objet)', ENT_QUOTES | ENT_HTML5);
           $receivedAt   = htmlspecialchars($em['received_at'] ?? '', ENT_QUOTES | ENT_HTML5);
           $rawBody      = htmlspecialchars($em['raw_body'] ?? '', ENT_QUOTES | ENT_HTML5);
-          // Internal-rep pre-fill: when _internal_rep=true in parsed_json (sender IS the customer)
+          $isTwinPending  = ($twinPendingEmailId > 0 && (int)$em['id'] === $twinPendingEmailId);
+          $bcInterstitial = $bcInterstitialStates[(int)$em['id']] ?? null;
+          $bcCheckFailed  = $bcCheckFailedStates[(int)$em['id']] ?? null;
+        ?>
+
+        <?php if ($kind === 'parsed_order_hints_multi'): ?>
+
+        <!-- ── MULTI-ORDER CARD ──────────────────────────────────────────── -->
+        <div class="eo-review-card"
+             id="eo-card-<?= (int)$em['id'] ?>">
+          <div class="eo-review-card__meta">
+            <span><strong>De :</strong> <?= $fromAddr ?>
+              <?php if ($origSender !== '' && stripos($em['from_address'] ?? '', $em['original_sender'] ?? '') === false): ?>
+                <span class="eo-original-sender">Expéditeur réel : <?= $origSender ?></span>
+              <?php endif ?>
+            </span>
+            <span><strong>Objet :</strong> <?= $subject ?></span>
+            <?php if ($receivedAt): ?><span><strong>Reçu :</strong> <?= $receivedAt ?></span><?php endif ?>
+          </div>
+
+          <div class="eo-review-card__columns">
+            <!-- Left: raw email body -->
+            <div class="eo-review-card__raw">
+              <div class="eo-review-card__raw-label">Corps de l'e-mail (brut)</div>
+              <pre class="eo-review-card__raw-body"><?= $rawBody ?></pre>
+            </div>
+
+            <!-- Right: multi-order form -->
+            <div class="eo-review-card__form">
+              <div class="eo-review-card__form-label">Candidat multi — vérifier et résoudre</div>
+              <?php if (!$canWrite): ?>
+                <p style="font-family:'DM Sans',sans-serif;font-size:.85rem;color:var(--ink-mute);">
+                  Lecture seule — vous n'avez pas les droits pour valider.
+                </p>
+              <?php else: ?>
+              <form method="POST" action="/modules/email-orders.php">
+                <input type="hidden" name="csrf"         value="<?= htmlspecialchars(csrf_token(), ENT_QUOTES | ENT_HTML5) ?>">
+                <input type="hidden" name="action"       value="validate_multi">
+                <input type="hidden" name="email_msg_id" value="<?= (int)$em['id'] ?>">
+
+                <?php foreach (($hints['orders'] ?? []) as $si => $sub): ?>
+                  <?php
+                    $subCustHint  = htmlspecialchars($sub['customer_hint'] ?? '', ENT_QUOTES | ENT_HTML5);
+                    $subDateHint  = htmlspecialchars($sub['requested_date'] ?? '', ENT_QUOTES | ENT_HTML5);
+                    $subNotes     = $sub['notes'] ?? '';
+                    $subLineHints = $sub['lines'] ?? [];
+                  ?>
+                  <div class="eo-suborder" data-sub-index="<?= (int)$si ?>">
+                    <div class="eo-suborder__heading">Commande <?= $si + 1 ?></div>
+                    <?php if ($subNotes !== ''): ?>
+                      <div class="eo-suborder__notes"><?= htmlspecialchars($subNotes, ENT_QUOTES | ENT_HTML5) ?></div>
+                    <?php endif ?>
+
+                    <!-- Customer -->
+                    <div class="eo-field">
+                      <label class="eo-field__label eo-field__label--required">Client</label>
+                      <?php if ($subCustHint): ?>
+                        <div class="eo-field__hint">Indice parsé : « <?= $subCustHint ?> » — confirme en sélectionnant dans la liste</div>
+                      <?php endif ?>
+                      <div class="eo-typeahead-wrap">
+                        <input type="text"
+                               class="eo-input eo-cust-search"
+                               placeholder="Rechercher un client…"
+                               autocomplete="off"
+                               value="">
+                        <ul class="eo-typeahead-dropdown eo-cust-dropdown" role="listbox" aria-label="Clients" hidden></ul>
+                        <input type="hidden" name="sub[<?= (int)$si ?>][customer_id]" class="eo-customer-id" value="0">
+                      </div>
+                    </div>
+
+                    <!-- Date -->
+                    <div class="eo-field">
+                      <label class="eo-field__label eo-field__label--required">Date de livraison souhaitée</label>
+                      <?php if ($subDateHint): ?>
+                        <div class="eo-field__hint">Indice parsé : « <?= $subDateHint ?> »</div>
+                      <?php endif ?>
+                      <input type="date"
+                             name="sub[<?= (int)$si ?>][requested_date]"
+                             class="eo-input eo-requested-date"
+                             value="<?= $subDateHint ?>"
+                             required>
+                    </div>
+
+                    <!-- Lines -->
+                    <div class="eo-field">
+                      <label class="eo-field__label eo-field__label--required">Lignes</label>
+                      <div class="eo-lines">
+                        <?php foreach ($subLineHints as $li => $lineHint): ?>
+                          <?php
+                            $skuHintEsc = htmlspecialchars($lineHint['sku_hint'] ?? '', ENT_QUOTES | ENT_HTML5);
+                            $rawEsc     = htmlspecialchars($lineHint['raw'] ?? '', ENT_QUOTES | ENT_HTML5);
+                            $hintQty    = (float) ($lineHint['qty'] ?? 0);
+                          ?>
+                          <div class="eo-line-row" data-line-idx="<?= (int)$li ?>">
+                            <div class="eo-typeahead-wrap">
+                              <input type="text"
+                                     class="eo-input eo-sku-search"
+                                     placeholder="SKU…"
+                                     autocomplete="off"
+                                     title="Indice parsé : <?= $skuHintEsc ?>"
+                                     value="">
+                              <ul class="eo-typeahead-dropdown eo-sku-dropdown" role="listbox" hidden></ul>
+                              <input type="hidden" name="sub[<?= (int)$si ?>][line_sku_id][]" class="eo-sku-id" value="0">
+                            </div>
+                            <input type="number"
+                                   name="sub[<?= (int)$si ?>][line_qty][]"
+                                   class="eo-input eo-qty-input"
+                                   min="0.01" step="0.5"
+                                   value="<?= $hintQty > 0 ? htmlspecialchars((string)$hintQty, ENT_QUOTES | ENT_HTML5) : '' ?>"
+                                   placeholder="Qté">
+                            <button type="button" class="eo-line-remove" aria-label="Supprimer la ligne">×</button>
+                            <?php if ($skuHintEsc): ?>
+                              <div class="eo-line-raw">Indice : <?= $skuHintEsc ?><?= $rawEsc ? ' — « ' . $rawEsc . ' »' : '' ?></div>
+                            <?php endif ?>
+                          </div>
+                        <?php endforeach ?>
+                        <button type="button" class="eo-add-line-btn">＋ Ajouter une ligne</button>
+                      </div>
+                    </div>
+                  </div><!-- /.eo-suborder -->
+                <?php endforeach ?>
+
+                <div class="eo-form-actions">
+                  <button type="submit" class="eo-btn-validate" disabled>
+                    ✓ Valider les <?= count($hints['orders'] ?? []) ?> commandes
+                  </button>
+                  <span style="font-family:'JetBrains Mono',monospace;font-size:.7rem;color:var(--ink-mute);">
+                    Client + date + chaque SKU doivent être résolus pour chaque commande
+                  </span>
+                </div>
+              </form>
+              <?php endif ?>
+            </div><!-- /.eo-review-card__form -->
+          </div><!-- /.eo-review-card__columns -->
+        </div><!-- /.eo-review-card (multi) -->
+
+        <?php else: /* SINGLE-ORDER CARD */ ?>
+
+        <!-- ── SINGLE-ORDER CARD ─────────────────────────────────────────── -->
+        <?php
+          $custHint     = htmlspecialchars($hints['customer_hint'] ?? '', ENT_QUOTES | ENT_HTML5);
+          $dateHint     = htmlspecialchars($hints['requested_date'] ?? '', ENT_QUOTES | ENT_HTML5);
+          $notesHint    = htmlspecialchars($hints['notes'] ?? '', ENT_QUOTES | ENT_HTML5);
+          $lineHints    = $hints['lines'] ?? [];
+          // Internal-rep pre-fill
           $prefilledCustId   = 0;
           $prefilledCustName = '';
           if (!empty($hints['_internal_rep'])) {
@@ -617,11 +843,6 @@ $flashMsg  = $flash['msg'] ?? '';
                   }
               }
           }
-        ?>
-        <?php $isTwinPending = ($twinPendingEmailId > 0 && (int)$em['id'] === $twinPendingEmailId); ?>
-        <?php
-        $bcInterstitial = $bcInterstitialStates[(int)$em['id']] ?? null;
-        $bcCheckFailed  = $bcCheckFailedStates[(int)$em['id']] ?? null;
         ?>
         <div class="eo-review-card<?= $isTwinPending ? ' eo-review-card--twin-pending' : '' ?>"
              id="eo-card-<?= (int)$em['id'] ?>"
@@ -733,10 +954,9 @@ $flashMsg  = $flash['msg'] ?? '';
                 <input type="hidden" name="action"       value="validate">
                 <input type="hidden" name="email_msg_id" value="<?= (int)$em['id'] ?>">
 
-                <!-- Customer — MUST be picked from typeahead, never auto-resolved
-                     Exception: internal-rep orders pre-fill customer_id + name from
-                     ref_internal_order_accounts when _internal_rep=true in parsed_json.
-                     Operator can still override by typing a new name and picking. -->
+                <div class="eo-suborder">
+
+                <!-- Customer -->
                 <div class="eo-field">
                   <label class="eo-field__label eo-field__label--required" for="eo-cust-<?= (int)$em['id'] ?>">
                     Client
@@ -756,12 +976,11 @@ $flashMsg  = $flash['msg'] ?? '';
                            autocomplete="off"
                            value="<?= $prefilledCustId > 0 ? $prefilledCustName : '' ?>">
                     <ul class="eo-typeahead-dropdown eo-cust-dropdown" role="listbox" aria-label="Clients" hidden></ul>
-                    <!-- customer_id: pre-filled for internal-rep orders; 0 until operator picks for external orders -->
                     <input type="hidden" name="customer_id" class="eo-customer-id" value="<?= $prefilledCustId ?>">
                   </div>
                 </div>
 
-                <!-- Requested date — pre-filled from hint but operator must confirm -->
+                <!-- Requested date -->
                 <div class="eo-field">
                   <label class="eo-field__label eo-field__label--required" for="eo-date-<?= (int)$em['id'] ?>">
                     Date de livraison souhaitée
@@ -777,7 +996,7 @@ $flashMsg  = $flash['msg'] ?? '';
                          required>
                 </div>
 
-                <!-- Lines — each SKU MUST be resolved via typeahead -->
+                <!-- Lines -->
                 <div class="eo-field">
                   <label class="eo-field__label eo-field__label--required">Lignes</label>
                   <div class="eo-lines">
@@ -789,26 +1008,22 @@ $flashMsg  = $flash['msg'] ?? '';
                         $hintQty    = (float) ($lineHint['qty'] ?? 0);
                       ?>
                       <div class="eo-line-row" data-line-idx="<?= (int)$li ?>">
-                        <!-- SKU picker — pre-filled text only, id=0 until picked -->
                         <div class="eo-typeahead-wrap">
                           <input type="text"
                                  class="eo-input eo-sku-search"
                                  placeholder="SKU…"
                                  autocomplete="off"
                                  title="Indice parsé : <?= $skuHintEsc ?>"
-                                 value=""><!-- Always start empty — human must pick -->
+                                 value="">
                           <ul class="eo-typeahead-dropdown eo-sku-dropdown" role="listbox" hidden></ul>
-                          <!-- sku_id starts at 0 — only set when operator picks -->
                           <input type="hidden" name="line_sku_id[]" class="eo-sku-id" value="0">
                         </div>
-                        <!-- Qty — pre-filled from hint -->
                         <input type="number"
                                name="line_qty[]"
                                class="eo-input eo-qty-input"
                                min="0.01" step="0.5"
                                value="<?= $hintQty > 0 ? htmlspecialchars((string)$hintQty, ENT_QUOTES | ENT_HTML5) : '' ?>"
                                placeholder="Qté">
-                        <!-- Remove button -->
                         <button type="button" class="eo-line-remove" aria-label="Supprimer la ligne">×</button>
                         <?php if ($skuHintEsc): ?>
                           <div class="eo-line-raw">Indice : <?= $skuHintEsc ?><?= $rawEsc ? ' — « ' . $rawEsc . ' »' : '' ?></div>
@@ -816,13 +1031,14 @@ $flashMsg  = $flash['msg'] ?? '';
                       </div>
                     <?php endforeach ?>
 
-                    <!-- Add line button -->
                     <button type="button" class="eo-add-line-btn">＋ Ajouter une ligne</button>
 
                   </div><!-- /.eo-lines -->
                 </div>
 
-                <!-- Twin confirmation affordance — visible only when a twin was flagged for this card -->
+                </div><!-- /.eo-suborder -->
+
+                <!-- Twin confirmation affordance -->
                 <div class="eo-twin-confirm<?= $isTwinPending ? ' eo-twin-confirm--visible' : '' ?>"
                      id="eo-twin-confirm-<?= (int)$em['id'] ?>">
                   <div class="eo-twin-warn">
@@ -848,7 +1064,10 @@ $flashMsg  = $flash['msg'] ?? '';
               <?php endif ?>
             </div><!-- /.eo-review-card__form -->
           </div><!-- /.eo-review-card__columns -->
-        </div><!-- /.eo-review-card -->
+        </div><!-- /.eo-review-card (single) -->
+
+        <?php endif /* multi vs single */ ?>
+
       <?php endforeach ?>
     <?php endif ?>
   </section>

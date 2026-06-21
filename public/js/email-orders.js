@@ -9,6 +9,7 @@
  *   - SKU typeahead per line row (pre-filled from sku_hint best match, id empty until picked)
  *   - Dynamic line add/remove
  *   - Prevent submission when any required FK is unresolved
+ *   - Multi-order: scoped per .eo-suborder within the card
  *
  * Never-guess contract:
  *   - customer_id hidden input starts EMPTY (0) regardless of pre-fill text.
@@ -50,10 +51,15 @@
     }).slice(0, 20);
   }
 
-  function buildCustTypeahead(card) {
-    const searchInput = qs('.eo-cust-search', card);
-    const dropdown    = qs('.eo-cust-dropdown', card);
-    const hiddenId    = qs('.eo-customer-id', card);
+  /**
+   * Build customer typeahead scoped to `scope` (.eo-suborder or card for single).
+   * validateCard is called on the parent card.
+   */
+  function buildCustTypeahead(scope, card) {
+    card = card || scope;
+    const searchInput = qs('.eo-cust-search', scope);
+    const dropdown    = qs('.eo-cust-dropdown', scope);
+    const hiddenId    = qs('.eo-customer-id', scope);
 
     if (!searchInput || !dropdown || !hiddenId) return;
 
@@ -106,7 +112,6 @@
       items[selIdx].scrollIntoView({ block: 'nearest' });
     }
 
-    // When operator types, clear the hidden id (they are no longer using the pre-fill)
     searchInput.addEventListener('input', function () {
       hiddenId.value = '0';
       validateCard(card);
@@ -146,7 +151,12 @@
     }).slice(0, 30);
   }
 
-  function buildSkuTypeahead(row, card) {
+  /**
+   * Build SKU typeahead scoped to `row`. Scope is the .eo-suborder (or card for
+   * backward compat). validateCard is called on the parent card.
+   */
+  function buildSkuTypeahead(row, scope, card) {
+    card = card || scope;
     const searchInput = qs('.eo-sku-search', row);
     const dropdown    = qs('.eo-sku-dropdown', row);
     const hiddenId    = qs('.eo-sku-id', row);
@@ -235,80 +245,98 @@
 
   /* ── Validate card (enable/disable submit) ──────────────────────────────── */
 
+  /**
+   * Checks ALL .eo-suborder elements in the card.
+   * For a single-order card: exactly one .eo-suborder with no data-sub-index.
+   * For a multi-order card: N .eo-suborder elements each with data-sub-index.
+   */
   function validateCard(card) {
-    const submitBtn   = qs('.eo-btn-validate', card);
-    const customerId  = qs('.eo-customer-id', card);
-    const dateInput   = qs('.eo-requested-date', card);
+    const submitBtn = qs('.eo-btn-validate', card);
     if (!submitBtn) return;
 
-    const custOk = customerId && parseInt(customerId.value, 10) > 0;
-    const dateOk = dateInput && dateInput.value.match(/^\d{4}-\d{2}-\d{2}$/);
+    var allOk = true;
+    var suborders = qsa('.eo-suborder', card);
 
-    // Every visible line must have a resolved SKU id and qty > 0
-    const lineRows = qsa('.eo-line-row', card);
-    let linesOk = true;
-    lineRows.forEach(function (row) {
-      const skuId = qs('.eo-sku-id', row);
-      const qty   = qs('.eo-qty-input', row);
-      if (!skuId || parseInt(skuId.value, 10) <= 0) linesOk = false;
-      if (!qty   || parseFloat(qty.value) <= 0)     linesOk = false;
+    if (suborders.length === 0) {
+      submitBtn.disabled = true;
+      return;
+    }
+
+    suborders.forEach(function (suborder) {
+      var customerId = qs('.eo-customer-id', suborder);
+      var dateInput  = qs('.eo-requested-date', suborder);
+      var custOk = customerId && parseInt(customerId.value, 10) > 0;
+      var dateOk = dateInput && dateInput.value.match(/^\d{4}-\d{2}-\d{2}$/);
+      if (!custOk || !dateOk) { allOk = false; return; }
+      var lineRows = qsa('.eo-line-row', suborder);
+      if (lineRows.length === 0) { allOk = false; return; }
+      lineRows.forEach(function (row) {
+        var skuId = qs('.eo-sku-id', row);
+        var qty   = qs('.eo-qty-input', row);
+        if (!skuId || parseInt(skuId.value, 10) <= 0) allOk = false;
+        if (!qty   || parseFloat(qty.value) <= 0)     allOk = false;
+      });
     });
-    if (lineRows.length === 0) linesOk = false;
 
-    submitBtn.disabled = !(custOk && dateOk && linesOk);
+    submitBtn.disabled = !allOk;
   }
 
   /* ── Line management ────────────────────────────────────────────────────── */
 
-  let globalLineCounter = 1000; // avoid collisions with server-rendered indices
+  var globalLineCounter = 1000; // avoid collisions with server-rendered indices
 
-  function buildLineRow(card, skuHint, qty) {
+  /**
+   * Build a new line row scoped to `scope` (.eo-suborder or card).
+   * Field names use sub[N][...] if data-sub-index is present, else flat names.
+   */
+  function buildLineRow(scope, card, skuHint, qty) {
+    card = card || scope;
     globalLineCounter++;
-    const idx = globalLineCounter;
+    var idx      = globalLineCounter;
+    var subIndex = scope.dataset && scope.dataset.subIndex;
+    var skuName  = subIndex !== undefined && subIndex !== '' ? 'sub[' + subIndex + '][line_sku_id][]' : 'line_sku_id[]';
+    var qtyName  = subIndex !== undefined && subIndex !== '' ? 'sub[' + subIndex + '][line_qty][]'    : 'line_qty[]';
 
-    const row = document.createElement('div');
+    var row = document.createElement('div');
     row.className = 'eo-line-row';
     row.dataset.lineIdx = String(idx);
 
-    // SKU typeahead wrap
-    const skuWrap = document.createElement('div');
+    var skuWrap = document.createElement('div');
     skuWrap.className = 'eo-typeahead-wrap';
 
-    const skuInput = document.createElement('input');
+    var skuInput = document.createElement('input');
     skuInput.type = 'text';
     skuInput.className = 'eo-input eo-sku-search';
     skuInput.placeholder = 'SKU…';
     skuInput.autocomplete = 'off';
     skuInput.value = skuHint || '';
 
-    const skuDrop = document.createElement('ul');
+    var skuDrop = document.createElement('ul');
     skuDrop.className = 'eo-typeahead-dropdown eo-sku-dropdown';
     skuDrop.setAttribute('role', 'listbox');
     skuDrop.hidden = true;
 
-    const skuHiddenId = document.createElement('input');
+    var skuHiddenId = document.createElement('input');
     skuHiddenId.type = 'hidden';
     skuHiddenId.className = 'eo-sku-id';
-    skuHiddenId.name = 'line_sku_id[]';
-    skuHiddenId.value = '0'; // always start unresolved — human must pick
+    skuHiddenId.name = skuName;
+    skuHiddenId.value = '0';
 
     skuWrap.appendChild(skuInput);
     skuWrap.appendChild(skuDrop);
     skuWrap.appendChild(skuHiddenId);
 
-    // Qty input
-    const qtyInput = document.createElement('input');
+    var qtyInput = document.createElement('input');
     qtyInput.type = 'number';
     qtyInput.className = 'eo-input eo-qty-input';
-    qtyInput.name = 'line_qty[]';
+    qtyInput.name = qtyName;
     qtyInput.min = '0.01';
     qtyInput.step = '0.5';
     qtyInput.placeholder = 'Qté';
     qtyInput.value = qty > 0 ? String(qty) : '';
     qtyInput.addEventListener('input', function () { validateCard(card); });
 
-    // Remove button
-    const removeBtn = document.createElement('button');
+    var removeBtn = document.createElement('button');
     removeBtn.type = 'button';
     removeBtn.className = 'eo-line-remove';
     removeBtn.setAttribute('aria-label', 'Supprimer la ligne');
@@ -322,57 +350,51 @@
     row.appendChild(qtyInput);
     row.appendChild(removeBtn);
 
-    buildSkuTypeahead(row, card);
+    buildSkuTypeahead(row, scope, card);
     return row;
   }
 
   /* ── Init per card ──────────────────────────────────────────────────────── */
 
   function initCard(card) {
-    // Customer typeahead
-    buildCustTypeahead(card);
+    qsa('.eo-suborder', card).forEach(function (suborder) {
+      buildCustTypeahead(suborder, card);
 
-    // Date input watcher
-    const dateInput = qs('.eo-requested-date', card);
-    if (dateInput) {
-      dateInput.addEventListener('input', function () { validateCard(card); });
-    }
-
-    // Wire SKU typeahead on server-rendered line rows
-    qsa('.eo-line-row', card).forEach(function (row) {
-      buildSkuTypeahead(row, card);
-
-      // Qty change on pre-rendered rows
-      const qtyInput = qs('.eo-qty-input', row);
-      if (qtyInput) {
-        qtyInput.addEventListener('input', function () { validateCard(card); });
+      var dateInput = qs('.eo-requested-date', suborder);
+      if (dateInput) {
+        dateInput.addEventListener('input', function () { validateCard(card); });
       }
 
-      // Remove button on pre-rendered rows
-      const removeBtn = qs('.eo-line-remove', row);
-      if (removeBtn) {
-        removeBtn.addEventListener('click', function () {
-          row.remove();
+      qsa('.eo-line-row', suborder).forEach(function (row) {
+        buildSkuTypeahead(row, suborder, card);
+
+        var qtyInput = qs('.eo-qty-input', row);
+        if (qtyInput) {
+          qtyInput.addEventListener('input', function () { validateCard(card); });
+        }
+
+        var removeBtn = qs('.eo-line-remove', row);
+        if (removeBtn) {
+          removeBtn.addEventListener('click', function () {
+            row.remove();
+            validateCard(card);
+          });
+        }
+      });
+
+      var addBtn        = qs('.eo-add-line-btn', suborder);
+      var linesContainer = qs('.eo-lines', suborder);
+      if (addBtn && linesContainer) {
+        addBtn.addEventListener('click', function () {
+          var newRow = buildLineRow(suborder, card, '', 0);
+          linesContainer.insertBefore(newRow, addBtn);
           validateCard(card);
+          var newSkuInput = qs('.eo-sku-search', newRow);
+          if (newSkuInput) newSkuInput.focus();
         });
       }
     });
 
-    // Add line button
-    const addBtn      = qs('.eo-add-line-btn', card);
-    const linesContainer = qs('.eo-lines', card);
-    if (addBtn && linesContainer) {
-      addBtn.addEventListener('click', function () {
-        const newRow = buildLineRow(card, '', 0);
-        linesContainer.insertBefore(newRow, addBtn);
-        validateCard(card);
-        // Focus the new SKU input
-        const newSkuInput = qs('.eo-sku-search', newRow);
-        if (newSkuInput) newSkuInput.focus();
-      });
-    }
-
-    // Initial state: disable submit until operator resolves FKs
     validateCard(card);
   }
 
