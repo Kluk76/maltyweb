@@ -121,7 +121,7 @@ set-password) OR read it from DB at use-time — PREFER the DB-read for low-freq
 **2. `db2da33` sub-page ACL hardening — 15 sub-pages gated** with `require_page_access()` inheriting the
 parent page_key: forms+sessions+session-shell→`saisies`; sb-batch/sb-mother→`sb-board`;
 sku-cost-detail→`sku-costs`; warehouse-export→`warehouse`; salle-des-machines→`zeppelin`;
-salle-fournisseurs→`approvisionnement` (⚠️ FLAGGED: NO nav link anywhere — `ref_pages` registration QUEUED);
+salle-fournisseurs→`approvisionnement` (🔧 UPDATE 2026-06-22: NAV `ref_pages` row NOW ADDED via mig **431** — page_key='salle-fournisseurs', label 'Fournisseurs', min_role='manager', category 'logistique' — but it is **NAV-DISPLAY ONLY**; the page's ACCESS GATE is STILL `require_page_access('approvisionnement')` + manual operator-redirect, PHP unchanged. So `approvisionnement` remains the auth ANCHOR. Latent: page has its own nav row [manager] yet gates on approvisionnement's key — should eventually converge to `require_page_access('salle-fournisseurs')` for defense-in-depth, flagged not actioned);
 triage partials→`triage` (these had NO auth bootstrap at all on direct access).
 **3. Data fix:** users id=9 `'Stphane'`→`'Stéphane'` (typo; audit row written; collation is
 accent/case-insensitive so login was forgiving either way).
