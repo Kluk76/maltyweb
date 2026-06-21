@@ -172,63 +172,114 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         redirect_to('/modules/mon-tableau.php');
     }
 
-    if ($action === 'update_recap_cadence') {
+    if ($action === 'update_recap_config') {
         /* Guard: only users with an email can set a recap subscription */
         if (empty($myEmail)) {
             flash_set('err', 'Aucune adresse e-mail associée à ton compte.');
             redirect_to('/modules/mon-tableau.php');
         }
-        $rawCadence = post_str('cadence') ?? '';
-        $allowed    = ['none', 'daily', 'weekly', 'monthly'];
-        if (!in_array($rawCadence, $allowed, true)) {
-            flash_set('err', 'Cadence invalide.');
-            redirect_to('/modules/mon-tableau.php');
-        }
-        $rawHour = (int) (post_str('send_hour') ?? '8');
-        if ($rawHour < 0 || $rawHour > 23) {
-            flash_set('err', 'Heure d\'envoi invalide (0-23).');
-            redirect_to('/modules/mon-tableau.php');
-        }
 
-        /* Snapshot before write */
-        $snapStmt = $pdo->prepare(
-            "SELECT id, cadence, is_active FROM user_kpi_recap_subs WHERE user_id_fk = ?"
-        );
-        $snapStmt->execute([$myUserId]);
-        $before = $snapStmt->fetch(PDO::FETCH_ASSOC) ?: null;
+        $allowedSet = mt_build_allowed_set($pdo, $myRole);
+        $cadences   = ['daily', 'weekly', 'monthly'];
 
-        if ($rawCadence === 'none') {
-            /* Remove subscription row (sparse — absence = no recap) */
-            if ($before !== null) {
-                $pdo->prepare("DELETE FROM user_kpi_recap_subs WHERE user_id_fk = ?")->execute([$myUserId]);
-                log_revision(
-                    $pdo, $me,
-                    'user_kpi_recap_subs', (int) $before['id'],
-                    $before,
-                    null,
-                    'normal',
-                    'mon-tableau recap cadence: removed'
+        $pdo->beginTransaction();
+        try {
+            foreach ($cadences as $cad) {
+                $enabledKey  = 'recap_' . $cad . '_enabled';
+                $hourKey     = 'recap_' . $cad . '_hour';
+                $dowKey      = 'recap_' . $cad . '_dow';
+                $trackersKey = 'recap_' . $cad . '_trackers';
+
+                $isEnabled = !empty($_POST[$enabledKey]);
+
+                /* Snapshot before */
+                $snapStmt = $pdo->prepare(
+                    "SELECT id, cadence, is_active FROM user_kpi_recap_subs WHERE user_id_fk = ? AND cadence = ?"
                 );
-            }
-        } else {
-            /* Upsert subscription: compute next_due_at anchored to send_hour_local */
-            $nextDue = kpi_recap_next_due((int) $rawHour, $rawCadence);
-            $upsSql = $before !== null
-                ? "UPDATE user_kpi_recap_subs SET cadence = ?, send_hour_local = ?, next_due_at = ?, is_active = 1 WHERE user_id_fk = ?"
-                : "INSERT INTO user_kpi_recap_subs (cadence, send_hour_local, next_due_at, is_active, user_id_fk) VALUES (?, ?, ?, 1, ?)";
-            $pdo->prepare($upsSql)->execute([$rawCadence, $rawHour, $nextDue, $myUserId]);
+                $snapStmt->execute([$myUserId, $cad]);
+                $existingRow = $snapStmt->fetch(PDO::FETCH_ASSOC) ?: null;
 
-            $afterId = $before !== null ? (int) $before['id'] : (int) $pdo->lastInsertId();
-            $after   = ['cadence' => $rawCadence, 'send_hour_local' => $rawHour, 'next_due_at' => $nextDue, 'is_active' => 1];
-            log_revision(
-                $pdo, $me,
-                'user_kpi_recap_subs', $afterId,
-                $before,
-                $after,
-                'normal',
-                "mon-tableau recap cadence: set to {$rawCadence}, heure={$rawHour}h"
-            );
+                if (!$isEnabled) {
+                    /* Deactivate (not delete) — keeps historical next_due_at, just turns off */
+                    if ($existingRow !== null) {
+                        $pdo->prepare(
+                            "UPDATE user_kpi_recap_subs SET is_active = 0 WHERE user_id_fk = ? AND cadence = ?"
+                        )->execute([$myUserId, $cad]);
+                    }
+                    /* Remove per-cadence tracker selections */
+                    $pdo->prepare(
+                        "DELETE FROM user_recap_tracker_selections WHERE user_id_fk = ? AND cadence = ?"
+                    )->execute([$myUserId, $cad]);
+                    continue;
+                }
+
+                /* Validate hour */
+                $rawHour = (int) ($_POST[$hourKey] ?? 8);
+                if ($rawHour < 0 || $rawHour > 23) $rawHour = 8;
+
+                /* Validate DOW (weekly only) */
+                $rawDow = null;
+                if ($cad === 'weekly') {
+                    $rawDow = isset($_POST[$dowKey]) ? (int) $_POST[$dowKey] : null;
+                    if ($rawDow !== null && ($rawDow < 1 || $rawDow > 7)) $rawDow = null;
+                }
+
+                /* Upsert subscription row */
+                $nextDue = kpi_recap_next_due($rawHour, $cad, $rawDow);
+                if ($existingRow !== null) {
+                    $pdo->prepare(
+                        "UPDATE user_kpi_recap_subs
+                            SET is_active = 1, send_hour_local = ?, send_dow = ?, next_due_at = ?
+                          WHERE user_id_fk = ? AND cadence = ?"
+                    )->execute([$rawHour, $rawDow, $nextDue, $myUserId, $cad]);
+                } else {
+                    $pdo->prepare(
+                        "INSERT INTO user_kpi_recap_subs
+                           (user_id_fk, cadence, send_hour_local, send_dow, next_due_at, is_active)
+                         VALUES (?, ?, ?, ?, ?, 1)"
+                    )->execute([$myUserId, $cad, $rawHour, $rawDow, $nextDue]);
+                }
+
+                /* Sanitize tracker IDs for this cadence */
+                $rawTrackers = $_POST[$trackersKey] ?? [];
+                if (!is_array($rawTrackers)) $rawTrackers = [];
+                $validIds = [];
+                foreach ($rawTrackers as $raw) {
+                    $tid = (int) $raw;
+                    if ($tid > 0 && isset($allowedSet[$tid])
+                        && !in_array($allowedSet[$tid]['source_domain'], kpi_stub_domains(), true)) {
+                        $validIds[] = $tid;
+                    }
+                }
+                $validIds = array_unique($validIds);
+
+                /* Replace tracker selections for this cadence */
+                $pdo->prepare(
+                    "DELETE FROM user_recap_tracker_selections WHERE user_id_fk = ? AND cadence = ?"
+                )->execute([$myUserId, $cad]);
+                $insCad = $pdo->prepare(
+                    "INSERT INTO user_recap_tracker_selections (user_id_fk, cadence, tracker_id_fk, position)
+                     VALUES (?, ?, ?, ?)"
+                );
+                foreach ($validIds as $pos => $tid) {
+                    $insCad->execute([$myUserId, $cad, $tid, $pos]);
+                }
+            }
+            $pdo->commit();
+        } catch (\Throwable $e) {
+            $pdo->rollBack();
+            flash_set('err', 'Erreur lors de la sauvegarde — réessaie.');
+            redirect_to('/modules/mon-tableau.php');
         }
+
+        log_revision(
+            $pdo, $me,
+            'user_kpi_recap_subs', $myUserId,
+            null,
+            ['action' => 'update_recap_config', 'cadences' => $cadences],
+            'normal',
+            'mon-tableau recap config: per-cadence update'
+        );
 
         flash_set('ok', 'Préférences de récap enregistrées.');
         redirect_to('/modules/mon-tableau.php');
@@ -330,20 +381,37 @@ foreach ($CATEGORY_ORDER as $cat) {
     }
 }
 
-/* Current recap subscription (for cadence selector display) */
-$recapSub = null;
+/* Current recap subscriptions — one row per active cadence */
+$recapSubsByC = [];  /* keyed by cadence string */
 try {
-    $recapStmt = $pdo->prepare(
-        "SELECT cadence, send_hour_local, last_sent_at, next_due_at, is_active FROM user_kpi_recap_subs WHERE user_id_fk = ? LIMIT 1"
+    $subStmt = $pdo->prepare(
+        "SELECT cadence, send_hour_local, send_dow, last_sent_at, next_due_at, is_active
+           FROM user_kpi_recap_subs
+          WHERE user_id_fk = ?"
     );
-    $recapStmt->execute([$myUserId]);
-    $recapSub = $recapStmt->fetch(PDO::FETCH_ASSOC) ?: null;
+    $subStmt->execute([$myUserId]);
+    foreach ($subStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $recapSubsByC[$row['cadence']] = $row;
+    }
 } catch (\Throwable $e) {
-    /* Non-fatal: cadence selector shows 'none' */
     error_log('[mon-tableau] recap sub load failed: ' . $e->getMessage());
 }
-$currentCadence  = ($recapSub && (int) $recapSub['is_active'] === 1) ? (string) $recapSub['cadence'] : 'none';
-$currentSendHour = ($recapSub && isset($recapSub['send_hour_local'])) ? (int) $recapSub['send_hour_local'] : 8;
+
+/* Per-cadence current selections (tracker IDs) */
+$recapSelsByC = [];  /* keyed by cadence → int[] tracker_id_fk */
+try {
+    $rselStmt = $pdo->prepare(
+        "SELECT cadence, tracker_id_fk FROM user_recap_tracker_selections
+          WHERE user_id_fk = ? ORDER BY cadence, position"
+    );
+    $rselStmt->execute([$myUserId]);
+    foreach ($rselStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $recapSelsByC[$row['cadence']][] = (int) $row['tracker_id_fk'];
+    }
+} catch (\Throwable $e) {
+    /* Non-fatal: table may not exist before migration — show empty selection */
+    error_log('[mon-tableau] recap tracker selections load failed: ' . $e->getMessage());
+}
 
 $csrfToken = csrf_token();
 $flash     = flash_pop();
@@ -501,65 +569,123 @@ require __DIR__ . '/../../app/partials/topbar.php';
   </div><!-- /.mt-picker -->
 
   <!-- ═══════════════════════════════════════════════════
-       RECAP EMAIL CADENCE — per-user preference
+       RECAP EMAIL CADENCE — per-cadence config (daily/weekly/monthly)
        ═══════════════════════════════════════════════════ -->
   <?php if (!empty($myEmail)): ?>
   <div class="mt-recap-prefs">
     <h3 class="mt-recap-prefs__head">Récap par e-mail</h3>
     <p class="mt-recap-prefs__sub">
-      Reçois un résumé de tes indicateurs sélectionnés directement dans ta boîte mail.
+      Configure trois récaps indépendants — chacun avec ses propres indicateurs et son heure d'envoi.
     </p>
-    <form method="post" action="/modules/mon-tableau.php" novalidate>
+    <form method="post" action="/modules/mon-tableau.php" id="mt-recap-form" novalidate>
       <input type="hidden" name="csrf"   value="<?= htmlspecialchars($csrfToken) ?>">
-      <input type="hidden" name="action" value="update_recap_cadence">
-      <div class="mt-recap-prefs__row">
-        <?php
-        $cadenceOptions = [
-            'none'    => 'Aucun',
-            'daily'   => 'Quotidien',
-            'weekly'  => 'Hebdomadaire',
-            'monthly' => 'Mensuel',
-        ];
-        foreach ($cadenceOptions as $val => $label):
-            $checked = $currentCadence === $val ? ' checked' : '';
-        ?>
-        <label class="mt-recap-prefs__opt">
-          <input type="radio" name="cadence" value="<?= htmlspecialchars($val) ?>"<?= $checked ?>>
-          <?= htmlspecialchars($label) ?>
-        </label>
-        <?php endforeach ?>
-        <button type="submit" class="mt-recap-prefs__save">Enregistrer</button>
+      <input type="hidden" name="action" value="update_recap_config">
+
+      <?php
+      $cadenceConfigs = [
+          'daily'   => ['label' => 'Quotidien',      'icon' => '☀', 'dow' => false],
+          'weekly'  => ['label' => 'Hebdomadaire',   'icon' => '📅', 'dow' => true],
+          'monthly' => ['label' => 'Mensuel',        'icon' => '📆', 'dow' => false],
+      ];
+      $dowLabels = [1=>'Lundi',2=>'Mardi',3=>'Mercredi',4=>'Jeudi',5=>'Vendredi',6=>'Samedi',7=>'Dimanche'];
+      foreach ($cadenceConfigs as $cad => $cfg):
+          $sub      = $recapSubsByC[$cad] ?? null;
+          $isActive = $sub !== null && (int)($sub['is_active'] ?? 0) === 1;
+          $curHour  = $sub ? (int)$sub['send_hour_local'] : 8;
+          $curDow   = ($sub && isset($sub['send_dow'])) ? (int)$sub['send_dow'] : 1;
+          $cadSels  = $recapSelsByC[$cad] ?? [];
+          $blockId  = 'mt-recap-block-' . $cad;
+          $enableId = 'mt-recap-enable-' . $cad;
+      ?>
+      <div class="mt-recap-block <?= $isActive ? 'mt-recap-block--active' : '' ?>" id="<?= $blockId ?>">
+        <div class="mt-recap-block__header">
+          <label class="mt-recap-block__toggle" for="<?= $enableId ?>">
+            <input type="checkbox"
+                   id="<?= $enableId ?>"
+                   name="recap_<?= $cad ?>_enabled"
+                   value="1"
+                   <?= $isActive ? 'checked' : '' ?>
+                   class="mt-recap-block__chk"
+                   data-block="<?= $blockId ?>">
+            <span class="mt-recap-block__title"><?= htmlspecialchars($cfg['label']) ?></span>
+          </label>
+          <?php if ($isActive && $sub && $sub['next_due_at']): ?>
+          <span class="mt-recap-block__next">
+            <?php
+            $nextDt = (new DateTimeImmutable($sub['next_due_at'], new DateTimeZone('UTC')))
+                          ->setTimezone(new DateTimeZone('Europe/Zurich'));
+            ?>
+            Prochain : <?= htmlspecialchars($nextDt->format('d/m H:i')) ?>
+          </span>
+          <?php endif ?>
+        </div>
+        <div class="mt-recap-block__body" <?= $isActive ? '' : 'hidden' ?>>
+          <div class="mt-recap-block__row">
+            <label for="mt-recap-hour-<?= $cad ?>" class="mt-recap-block__lbl">Heure d'envoi</label>
+            <select name="recap_<?= $cad ?>_hour" id="mt-recap-hour-<?= $cad ?>" class="mt-recap-prefs__hour-sel">
+              <?php for ($h = 0; $h <= 23; $h++): ?>
+              <option value="<?= $h ?>"<?= $curHour === $h ? ' selected' : '' ?>><?= sprintf('%02d:00', $h) ?></option>
+              <?php endfor ?>
+            </select>
+            <?php if ($cfg['dow']): ?>
+            <label for="mt-recap-dow-<?= $cad ?>" class="mt-recap-block__lbl">Jour d'envoi</label>
+            <select name="recap_<?= $cad ?>_dow" id="mt-recap-dow-<?= $cad ?>" class="mt-recap-prefs__hour-sel">
+              <?php foreach ($dowLabels as $iso => $dlbl): ?>
+              <option value="<?= $iso ?>"<?= $curDow === $iso ? ' selected' : '' ?>><?= htmlspecialchars($dlbl) ?></option>
+              <?php endforeach ?>
+            </select>
+            <?php endif ?>
+          </div>
+
+          <!-- Widget selector for this cadence -->
+          <div class="mt-recap-block__widgets">
+            <p class="mt-recap-block__widgets-lbl">Indicateurs inclus dans ce récap :</p>
+            <div class="mt-recap-widget-grid">
+              <?php foreach ($CATEGORY_ORDER as $cat):
+                $cadCatTrackers = [];
+                foreach ($allowedSet as $tid => $trow) {
+                    if ($trow['category'] !== $cat) continue;
+                    if (in_array($trow['source_domain'], kpi_stub_domains(), true)) continue;
+                    $cadCatTrackers[] = ['id' => $tid, 'row' => $trow];
+                }
+                if (empty($cadCatTrackers)) continue;
+              ?>
+              <div class="mt-recap-widget-group">
+                <div class="mt-recap-widget-group__cat"><?= htmlspecialchars($CATEGORY_LABELS[$cat] ?? ucfirst($cat)) ?></div>
+                <?php foreach ($cadCatTrackers as $item):
+                  $isChecked = in_array($item['id'], $cadSels, true);
+                ?>
+                <label class="mt-recap-widget-item <?= $isChecked ? 'mt-recap-widget-item--on' : '' ?>">
+                  <input type="checkbox"
+                         name="recap_<?= $cad ?>_trackers[]"
+                         value="<?= (int)$item['id'] ?>"
+                         <?= $isChecked ? 'checked' : '' ?>
+                         class="mt-recap-widget-item__chk">
+                  <span class="mt-recap-widget-item__check" aria-hidden="true"><?= $isChecked ? '✓' : '○' ?></span>
+                  <span class="mt-recap-widget-item__label"><?= htmlspecialchars($item['row']['label']) ?></span>
+                </label>
+                <?php endforeach ?>
+              </div>
+              <?php endforeach ?>
+            </div>
+          </div>
+          <?php if ($isActive && $sub && $sub['last_sent_at']): ?>
+          <p class="mt-recap-prefs__info">
+            Dernier envoi :
+            <?php
+            $lastDt = (new DateTimeImmutable($sub['last_sent_at'], new DateTimeZone('UTC')))
+                          ->setTimezone(new DateTimeZone('Europe/Zurich'));
+            ?>
+            <?= htmlspecialchars($lastDt->format('d/m/Y H:i')) ?>
+          </p>
+          <?php endif ?>
+        </div>
       </div>
-      <?php /* Heure d'envoi : visible seulement si cadence ≠ none */ ?>
-      <div class="mt-recap-prefs__row mt-recap-prefs__hour-row" id="mt-recap-hour-row">
-        <label for="mt-recap-send-hour" class="mt-recap-prefs__hour-lbl">Heure d'envoi</label>
-        <select name="send_hour" id="mt-recap-send-hour" class="mt-recap-prefs__hour-sel">
-          <?php for ($h = 0; $h <= 23; $h++): ?>
-          <option value="<?= $h ?>"<?= $currentSendHour === $h ? ' selected' : '' ?>><?= sprintf('%02d:00', $h) ?></option>
-          <?php endfor ?>
-        </select>
+      <?php endforeach ?>
+
+      <div class="mt-recap-prefs__save-bar">
+        <button type="submit" class="mt-recap-prefs__save">Enregistrer les récaps</button>
       </div>
-      <?php if ($recapSub && $currentCadence !== 'none'): ?>
-      <p class="mt-recap-prefs__info">
-        Prochain envoi :
-        <?php if ($recapSub['next_due_at']): ?>
-          <?php
-          $nextDt = new DateTimeImmutable($recapSub['next_due_at'], new DateTimeZone('UTC'));
-          $nextDt = $nextDt->setTimezone(new DateTimeZone('Europe/Zurich'));
-          ?>
-          <?= htmlspecialchars($nextDt->format('d/m/Y H:i')) ?>
-        <?php else: ?>
-          dès le prochain passage du cron
-        <?php endif ?>
-        <?php if ($recapSub['last_sent_at']): ?>
-          <?php
-          $lastDt = new DateTimeImmutable($recapSub['last_sent_at'], new DateTimeZone('UTC'));
-          $lastDt = $lastDt->setTimezone(new DateTimeZone('Europe/Zurich'));
-          ?>
-          · Dernier envoi : <?= htmlspecialchars($lastDt->format('d/m/Y H:i')) ?>
-        <?php endif ?>
-      </p>
-      <?php endif ?>
     </form>
   </div>
   <?php else: ?>
@@ -574,22 +700,34 @@ require __DIR__ . '/../../app/partials/topbar.php';
 
 <!-- Server-injected KPI payload — consumed by kpi-charts.js -->
 <script>
-/* ── Recap hour row: show when cadence ≠ none, hide otherwise ── */
+/* ── Recap blocks: show/hide body when enable checkbox toggles ── */
 (function () {
-  var hourRow   = document.getElementById('mt-recap-hour-row');
-  var radios    = document.querySelectorAll('input[name="cadence"]');
+  document.querySelectorAll('.mt-recap-block__chk').forEach(function (chk) {
+    var blockId = chk.getAttribute('data-block');
+    var block   = blockId ? document.getElementById(blockId) : null;
+    var body    = block ? block.querySelector('.mt-recap-block__body') : null;
+    if (!body) return;
 
-  function applyVisibility() {
-    var sel = document.querySelector('input[name="cadence"]:checked');
-    if (!hourRow) return;
-    hourRow.style.display = (sel && sel.value !== 'none') ? '' : 'none';
-  }
-
-  radios.forEach(function (r) {
-    r.addEventListener('change', applyVisibility);
+    chk.addEventListener('change', function () {
+      if (chk.checked) {
+        body.removeAttribute('hidden');
+        block.classList.add('mt-recap-block--active');
+      } else {
+        body.setAttribute('hidden', '');
+        block.classList.remove('mt-recap-block--active');
+      }
+    });
   });
 
-  applyVisibility(); /* initial state on page load */
+  /* Visual toggle for widget checkboxes */
+  document.querySelectorAll('.mt-recap-widget-item__chk').forEach(function (chk) {
+    chk.addEventListener('change', function () {
+      var label = chk.closest('.mt-recap-widget-item');
+      var check = label ? label.querySelector('.mt-recap-widget-item__check') : null;
+      if (label) label.classList.toggle('mt-recap-widget-item--on', chk.checked);
+      if (check) check.textContent = chk.checked ? '✓' : '○';
+    });
+  });
 })();
 
 window.MY_KPIS = <?= json_encode([

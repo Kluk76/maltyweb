@@ -8,9 +8,10 @@ declare(strict_types=1);
  *
  * @param int    $sendHour 0–23, local (Europe/Zurich) hour of day
  * @param string $cadence  'daily' | 'weekly' | 'monthly' (anything else => daily-style next slot)
+ * @param int|null $dow    ISO day-of-week 1=Mon…7=Sun (weekly only; null = legacy +6 days)
  * @param DateTimeImmutable|null $from  Anchor "now"; defaults to current time. Pass for testability.
  */
-function kpi_recap_next_due(int $sendHour, string $cadence, ?DateTimeImmutable $from = null): string
+function kpi_recap_next_due(int $sendHour, string $cadence, ?int $dow = null, ?DateTimeImmutable $from = null): string
 {
     $tz  = new DateTimeZone('Europe/Zurich');
     $utc = new DateTimeZone('UTC');
@@ -19,8 +20,20 @@ function kpi_recap_next_due(int $sendHour, string $cadence, ?DateTimeImmutable $
     if ($cand <= $now) {
         $cand = $cand->modify('+1 day');
     }
+    if ($cadence === 'weekly') {
+        if ($dow !== null && $dow >= 1 && $dow <= 7) {
+            /* Walk forward day-by-day until we hit the target ISO weekday */
+            $limit = 0;
+            while ((int) $cand->format('N') !== $dow && $limit++ < 7) {
+                $cand = $cand->modify('+1 day');
+            }
+        } else {
+            /* Legacy: +6 days from the next daily slot */
+            $cand = $cand->modify('+6 days');
+        }
+        return $cand->setTimezone($utc)->format('Y-m-d H:i:s');
+    }
     return match ($cadence) {
-        'weekly'  => $cand->modify('+6 days')->setTimezone($utc)->format('Y-m-d H:i:s'),
         'monthly' => $cand->modify('+1 month')->setTimezone($utc)->format('Y-m-d H:i:s'),
         default   => $cand->setTimezone($utc)->format('Y-m-d H:i:s'),
     };

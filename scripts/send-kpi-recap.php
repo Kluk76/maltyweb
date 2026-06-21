@@ -73,7 +73,7 @@ $params    = $scopeId !== null ? [$scopeId] : [];
 $dueFilter = $dryRun ? '' : ' AND (s.next_due_at IS NULL OR s.next_due_at <= NOW())';
 
 $stmt = $pdo->prepare(
-    "SELECT s.id, s.user_id_fk, s.cadence, s.send_hour_local, s.last_sent_at, s.next_due_at,
+    "SELECT s.id, s.user_id_fk, s.cadence, s.send_hour_local, s.send_dow, s.last_sent_at, s.next_due_at,
             u.email, u.display_name, u.username, u.role
        FROM user_kpi_recap_subs s
        JOIN users u ON u.id = s.user_id_fk
@@ -106,19 +106,20 @@ foreach ($subs as $sub) {
     fwrite(STDOUT, "[kpi-recap] Processing user {$userId} ({$displayName}) cadence={$cadence}" .
         ($dryRun ? " [DRY-RUN]" : "") . "\n");
 
-    // ── Load this user's selected trackers (same gate as mon-tableau) ──────────
+    // ── Load this cadence's tracker selections ──────────────────────────────
     $selStmt = $pdo->prepare(
-        "SELECT uks.tracker_id_fk, uks.position,
+        "SELECT urts.tracker_id_fk, urts.position,
                 t.slug, t.label, t.source_domain, t.compute_handler,
                 t.params_json, t.viz_type, t.category, t.min_role
-           FROM user_kpi_selections uks
-           JOIN ref_kpi_trackers t ON t.id = uks.tracker_id_fk
-          WHERE uks.user_id_fk = ?
+           FROM user_recap_tracker_selections urts
+           JOIN ref_kpi_trackers t ON t.id = urts.tracker_id_fk
+          WHERE urts.user_id_fk = ?
+            AND urts.cadence = ?
             AND t.data_ready = 1
             AND t.is_active = 1
-          ORDER BY uks.position"
+          ORDER BY urts.position"
     );
-    $selStmt->execute([$userId]);
+    $selStmt->execute([$userId, $cadence]);
     $selectedTrackers = $selStmt->fetchAll(PDO::FETCH_ASSOC);
 
     // Filter: role floor + finance gate (same logic as mt_build_allowed_set)
@@ -137,7 +138,15 @@ foreach ($subs as $sub) {
     $selectedTrackers = array_values($selectedTrackers);
 
     if (empty($selectedTrackers)) {
-        fwrite(STDOUT, "[kpi-recap]   → skipped (no tracker selections)\n");
+        fwrite(STDOUT, "[kpi-recap]   → skipped (no tracker selections for cadence={$cadence})\n");
+        if (!$dryRun) {
+            $sendHour = isset($sub['send_hour_local']) ? (int) $sub['send_hour_local'] : 8;
+            $dow      = isset($sub['send_dow']) ? (int) $sub['send_dow'] : null;
+            $nextDue  = kpi_recap_next_due($sendHour, $cadence, $dow ?: null);
+            $pdo->prepare("UPDATE user_kpi_recap_subs SET next_due_at = ? WHERE id = ?")
+                ->execute([$nextDue, (int) $sub['id']]);
+            fwrite(STDOUT, "[kpi-recap]   → next_due_at advanced to {$nextDue} (empty selection)\n");
+        }
         continue;
     }
 
@@ -228,7 +237,8 @@ foreach ($subs as $sub) {
 
     // ── Compute next_due_at via shared helper (app/kpi-recap-schedule.php) ──────
     $sendHour = isset($sub['send_hour_local']) ? (int) $sub['send_hour_local'] : 8;
-    $nextDue  = kpi_recap_next_due($sendHour, $cadence);
+    $dow      = isset($sub['send_dow']) ? (int) $sub['send_dow'] : null;
+    $nextDue  = kpi_recap_next_due($sendHour, $cadence, $dow ?: null);
 
     // ── Update subscription timestamps ─────────────────────────────────────────
     $upd = $pdo->prepare(
