@@ -6,9 +6,8 @@
  * (packaging, brewing). Driven by data-endpoint and data-type on the
  * root .lookup-panel element.
  *
- * After any render, re-applies the active sku-class filter so freshly
- * injected cards respect it. Also listens for skufilter:change to
- * recompute the summary strip from the in-memory data.
+ * After any render, displays all result cards regardless of the
+ * Nébuleuse/Contract filter (which only narrows the selection dropdown).
  *
  * No inline JS, no inline CSS, no ES modules (IIFE-scoped).
  * Uses var for shared-global aliases; never const at module scope.
@@ -69,20 +68,6 @@
     return '<span class="lp-pill ' + variant + '">' + esc(label) + '</span>';
   }
 
-  // Read active filter value from the nearest .skuf root on the page
-  function activeFilterValue() {
-    var skuf = document.querySelector('.lp-body .skuf, .skuf');
-    if (skuf) return skuf.getAttribute('data-skuf-value') || 'all';
-    return 'all';
-  }
-
-  // Re-apply the sku-class filter after a render
-  function reapplyFilter() {
-    if (window.SkuClassFilter && typeof window.SkuClassFilter.apply === 'function') {
-      window.SkuClassFilter.apply(activeFilterValue());
-    }
-  }
-
   // ── Panel toggle ──────────────────────────────────────────────────────────
 
   function initToggle(panel) {
@@ -138,20 +123,15 @@
   }
 
   // ── Summary strip builder ─────────────────────────────────────────────────
-  // Takes the raw events array, filters by a classification value ('all'|'Neb'|'Contract'),
-  // and renders the summary strip HTML. Returns the HTML string.
-  function buildSummaryHtml(events, co2o2, filterVal) {
-    var filtered = filterVal === 'all'
-      ? events
-      : events.filter(function (ev) { return (ev.classification || 'Neb') === filterVal; });
-
-    var n        = filtered.length;
+  // Takes the raw events array and renders the summary strip HTML. Returns the HTML string.
+  function buildSummaryHtml(events, co2o2) {
+    var n        = events.length;
     var totalUnits   = 0;
     var vendableHl   = 0;
     var lossHl       = 0;
 
-    for (var i = 0; i < filtered.length; i++) {
-      var ev = filtered[i];
+    for (var i = 0; i < events.length; i++) {
+      var ev = events[i];
       totalUnits += parseInt(ev.prod_total_units, 10) || 0;
       vendableHl += parseFloat(ev.vendable_hl)  || 0;
       lossHl     += parseFloat(ev.loss_kpi_hl)  || 0;
@@ -177,11 +157,9 @@
 
     var events  = data.events;
     var co2o2   = data.co2o2 || {};
-    var filterVal = activeFilterValue();
 
-    // Summary strip (filterable)
-    var summaryId = 'lp-pkg-summary-' + Date.now();
-    var summaryHtml = '<div id="' + summaryId + '">' + buildSummaryHtml(events, co2o2, filterVal) + '</div>';
+    // Summary strip (always all events)
+    var summaryHtml = buildSummaryHtml(events, co2o2);
 
     // Cards
     var cardsHtml = '';
@@ -203,7 +181,7 @@
                         ? ((lossKpiHl / lossTotal) * 100).toFixed(1) + '%'
                         : null;
 
-      cardsHtml += '<div class="lp-card" data-sku-class="' + esc(cls) + '">'
+      cardsHtml += '<div class="lp-card">'
         + '<div class="lp-card-head">'
         +   '<div class="lp-card-title-group">'
         +     '<span class="lp-card-title lp-mono">' + esc(ev.sku_code) + '</span>'
@@ -227,19 +205,6 @@
     }
 
     container.innerHTML = summaryHtml + '<div class="lp-cards">' + cardsHtml + '</div>';
-
-    // Listen for filter changes to recompute summary (once per render, attached to document)
-    // We store the events+co2o2 in closure and update the summary div
-    (function (evts, c2o2, sid) {
-      function onFilterChange(e) {
-        var sv = document.getElementById(sid);
-        if (!sv) { document.removeEventListener('skufilter:change', onFilterChange); return; }
-        sv.innerHTML = buildSummaryHtml(evts, c2o2, e.detail.value);
-      }
-      document.addEventListener('skufilter:change', onFilterChange);
-    })(events, co2o2, summaryId);
-
-    reapplyFilter();
   }
 
   // ── Brewing day card renderer ──────────────────────────────────────────────
@@ -258,7 +223,7 @@
       var dur   = diffMinutes(start, end);
       var cls   = br.classification || 'Neb';
 
-      cardsHtml += '<div class="lp-card" data-sku-class="' + esc(cls) + '">'
+      cardsHtml += '<div class="lp-card">'
         + '<div class="lp-card-head">'
         +   '<div class="lp-card-title-group">'
         +     '<span class="lp-card-title">' + esc(br.recipe_name || br.beer) + '</span>'
@@ -279,7 +244,6 @@
     }
 
     container.innerHTML = '<div class="lp-cards">' + cardsHtml + '</div>';
-    reapplyFilter();
   }
 
   // ── Brewing batch card renderer ────────────────────────────────────────────
@@ -300,7 +264,7 @@
       var dur   = diffMinutes(start, end);
       var cls   = br.classification || 'Neb';
 
-      html += '<div class="lp-card" data-sku-class="' + esc(cls) + '">'
+      html += '<div class="lp-card">'
         + '<div class="lp-card-head">'
         +   '<div class="lp-card-title-group">'
         +     '<span class="lp-card-title">' + esc(br.recipe_name || br.beer) + '</span>'
@@ -368,7 +332,6 @@
     }
 
     container.innerHTML = html;
-    reapplyFilter();
   }
 
   // ── Search submit ─────────────────────────────────────────────────────────

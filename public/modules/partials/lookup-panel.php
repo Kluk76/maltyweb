@@ -52,12 +52,6 @@ $lpToday          = date('Y-m-d');
 
   <div id="<?= $lpPanelId ?>-body" class="lp-body" hidden>
 
-    <?php if ($lpShowFilter): ?>
-      <div class="lp-filter-row">
-        <?php require __DIR__ . '/sku-class-filter.php'; ?>
-      </div>
-    <?php endif ?>
-
     <!-- Tab bar -->
     <div class="lp-tabs" role="tablist" aria-label="Mode de recherche">
       <button type="button"
@@ -96,6 +90,11 @@ $lpToday          = date('Y-m-d');
          role="tabpanel"
          aria-labelledby="<?= $lpPanelId ?>-tab-batch"
          hidden>
+      <?php if ($lpShowFilter): ?>
+        <div class="lp-filter-row">
+          <?php require __DIR__ . '/sku-class-filter.php'; ?>
+        </div>
+      <?php endif ?>
       <div class="lp-search-row">
         <?php foreach ($lpFields as $field): ?>
           <?php
