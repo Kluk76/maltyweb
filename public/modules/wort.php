@@ -197,8 +197,9 @@ $kpiBaseJoin = "
     WHERE cl.event_type = 'Cooling' AND cl.is_tombstoned = 0
 ";
 
-$kpiPayload = [];
-$dbError    = null;
+$kpiPayload   = [];
+$dbError      = null;
+$recipeOptions = [];
 
 try {
     $pdo = maltytask_pdo();
@@ -668,6 +669,10 @@ try {
         'yoy'            => $yoyPayload,
     ];
 
+    // ─── Tab 3: Consulter — recipe options for lookup panel ───────────────────
+    $recipeStmt    = $pdo->query("SELECT id, name FROM ref_recipes WHERE is_active = 1 ORDER BY name");
+    $recipeOptions = $recipeStmt->fetchAll(PDO::FETCH_ASSOC);
+
 } catch (Throwable $e) {
     $rows        = [];
     $stats       = null;
@@ -681,6 +686,17 @@ try {
     $kpiActiveYear = $currentYear;
 }
 
+$lookupConfig = [
+    'panel_id'         => 'brewing-lookup',
+    'api_endpoint'     => '/api/brewing-lookup.php',
+    'mode_batch_label' => 'Par recette + lot',
+    'type'             => 'brewing',
+    'batch_fields'     => [
+        ['name' => 'recipe_id', 'label' => 'Recette', 'type' => 'select', 'options' => $recipeOptions, 'value_col' => 'id', 'label_col' => 'name'],
+        ['name' => 'batch',     'label' => 'Lot',      'type' => 'text'],
+    ],
+];
+
 $_breweryId = brewery_identity();
 ?><!doctype html>
 <html lang="fr">
@@ -693,6 +709,7 @@ $_breweryId = brewery_identity();
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/app.css?v=<?= @filemtime(__DIR__ . '/../css/app.css') ?: time() ?>">
   <link rel="stylesheet" href="/css/wort-kpis.css?v=<?= @filemtime(__DIR__ . '/../css/wort-kpis.css') ?: time() ?>">
+  <link rel="stylesheet" href="/css/lookup-panel.css?v=<?= @filemtime(__DIR__ . '/../css/lookup-panel.css') ?: time() ?>">
 </head>
 <body class="home wort">
 
@@ -712,6 +729,7 @@ $_breweryId = brewery_identity();
   <nav class="wort-tabs" aria-label="Sections Wort Production" role="tablist">
     <button class="wort-tab-btn active" id="wort-tab-brassins" data-tab="brassins" role="tab" aria-selected="true"  aria-controls="wort-panel-brassins">Brassins</button>
     <button class="wort-tab-btn"        id="wort-tab-kpis"     data-tab="kpis"     role="tab" aria-selected="false" aria-controls="wort-panel-kpis">KPIs / Analyse</button>
+    <button class="wort-tab-btn"        id="wort-tab-lookup"   data-tab="lookup"   role="tab" aria-selected="false" aria-controls="wort-panel-lookup">Consulter</button>
   </nav>
 
   <!-- ══════════════════════════════════════════
@@ -1173,6 +1191,24 @@ $_breweryId = brewery_identity();
 
   </div><!-- /#wort-panel-kpis -->
 
+  <!-- ══════════════════════════════════════════
+       TAB 3 — Consulter un brassin
+       ══════════════════════════════════════════ -->
+  <div class="wort-tab-panel" id="wort-panel-lookup" role="tabpanel" aria-labelledby="wort-tab-lookup">
+
+    <div class="wk-wrap">
+      <header class="wk-header">
+        <div>
+          <div class="wk-header__title">Consulter un <em>brassin</em></div>
+          <div class="wk-header__sub">Recherche par date ou par recette et numéro de lot — lecture seule</div>
+        </div>
+      </header>
+
+      <?php require __DIR__ . '/partials/lookup-panel.php'; ?>
+    </div>
+
+  </div><!-- /#wort-panel-lookup -->
+
 </main>
 
 <!-- Tooltip (shared, fixed position — lives outside main so it always floats on top) -->
@@ -1183,6 +1219,7 @@ window.WORT_KPIS = <?= json_encode($kpiPayload, JSON_UNESCAPED_UNICODE | JSON_HE
 </script>
 <script defer src="/js/kpi-charts.js?v=<?= @filemtime(__DIR__ . '/../js/kpi-charts.js') ?: time() ?>"></script>
 <script defer src="/js/wort-kpis.js?v=<?= @filemtime(__DIR__ . '/../js/wort-kpis.js') ?: time() ?>"></script>
+<script defer src="/js/lookup-panel.js?v=<?= @filemtime(__DIR__ . '/../js/lookup-panel.js') ?: time() ?>"></script>
 
 </body>
 </html>
