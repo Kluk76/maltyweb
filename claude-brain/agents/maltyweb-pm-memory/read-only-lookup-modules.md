@@ -1,6 +1,6 @@
 # Read-only lookup modules (packaging + brewing) — SHIPPED + LIVE + COMMITTED + PUSHED 2026-06-21
 
-> Read when touching: the shared lookup-panel component (`public/modules/partials/lookup-panel.php` / `public/js/lookup-panel.js` / `public/css/lookup-panel.css`); the packaging lookup on `packaging.php` (`public/api/packaging-lookup.php`); the brewing lookup on `form-brewing.php` (`public/api/brewing-lookup.php`); or any "consulter/rechercher une saisie passée" read surface. Triggers: lookup panel / consulter saisie / lookup-panel / packaging-lookup / brewing-lookup / recherche par jour / SKU+lot lookup / recipe+lot lookup / read-only consultation.
+> Read when touching: the shared lookup-panel component (`public/modules/partials/lookup-panel.php` / `public/js/lookup-panel.js` / `public/css/lookup-panel.css`); the packaging lookup on `packaging.php` (`public/api/packaging-lookup.php`); the **standalone brewing-lookup page** `public/modules/brewing-lookup.php` (`public/api/brewing-lookup.php`); or any "consulter/rechercher une saisie passée" read surface. Triggers: lookup panel / consulter saisie / consulter un brassin / lookup-panel / packaging-lookup / brewing-lookup / recherche par jour / SKU+lot lookup / recipe+lot lookup / read-only consultation.
 
 Operator wanted an in-page way to LOOK UP past entries without leaving the production pages. Two read-only modules, one shared component. ALL read-only (no DB writes, no fiscal lane, no COGS/COP/WAC/BOM surface). Both endpoints PARAMETERIZED, prod-query-validated. Commit `e83c4d1` (Builds 1+2 together) on maltyweb main; surgical per-file rsync deploy (parallel email-orders session held a dirty tree; pathspec commit). NO migration. NO ref_pages row (panels on existing pages + API endpoints) → NO tour-steward dispatch.
 
@@ -12,11 +12,20 @@ Operator wanted an in-page way to LOOK UP past entries without leaving the produ
 - Reads `bd_packaging_v2 × v_bd_packaging_v2_vendable` + `bd_packaging_readings`.
 - Auth = `require_login` (matches packaging.php's inventory/cost carve-out — NOT role-gated).
 
-## Build 2 — brewing lookup (on `form-brewing.php`, GATED `require_page_access('saisies')`)
-- Endpoint `public/api/brewing-lookup.php`. Modes: **day** | **recipe+lot**.
+## Build 2 — brewing lookup — STANDALONE PAGE (`public/modules/brewing-lookup.php`, SHIPPED 2026-06-21)
+- **Now its own dedicated read page** — `public/modules/brewing-lookup.php`, gated `require_page_access('brewing-lookup')` (page min_role=viewer → reachable by anyone with the preset grant). The brewing-lookup PANEL was REMOVED from `form-brewing.php` (the form is pure input again; single canonical home for the lookup).
+- Endpoint `public/api/brewing-lookup.php` — gate changed `saisies`→`brewing-lookup`. Modes: **day** | **recipe+lot**.
 - Reads `bd_brewing_brewday_v2` + gravity / timings / parsed-ingredients.
 - **OG labelled correctly (never FG)** — honors the OG-not-FG discipline.
 - **Matches on `(recipe_id_fk, batch)`** — the canonical brewing key, never beer name (honors [[feedback_match_on_recipe_id_not_beer_name]]). **v2-only** (no v1 bd_* reads — honors [[feedback_v1_bd_tables_forbidden]]).
+- Reuses the shared `lookup-panel` partial + `lookup-panel.js` engine (unchanged — packaging.php still uses it); page-chrome copied from `journal-saisies.php`; page CSS `public/css/brewing-lookup.css`.
 
-## 🔴 ROADMAP FLAG — brewing-lookup access gate
-The brewing lookup sits behind the **`saisies` page-access gate** (`require_page_access('saisies')`). The operator asked for "anyone" to be able to look up brewing entries — flagged to operator. Relaxing it cleanly is NOT a quick gate-swap: it would mean a **standalone `require_login` brewing READ page** = a NEW `ref_pages` row + a Visite-guidée tour card (RULE 3) + a preset grant (the standing "new ref_pages row is invisible until added to the access preset" rule). Currently parked behind `saisies` as the pragmatic landing; revisit if/when the operator wants the standalone read page.
+### Standalone page as-built (mig 425, commits `6075fb0` + `8120817`, all live+verified)
+- Migration **425** `425_brewing_lookup_page.sql` — APPLIED to prod + recorded in `schema_migrations` MANUALLY (NOT migrate.php — parallel sessions pending). **Live mig head now 425.**
+- `ref_pages` id **739**: page_key `brewing-lookup`, label "Consulter un brassin", icon 🔍, href `/modules/brewing-lookup.php`, min_role **viewer**, domain general, category_key **pilotage**, category_sort 30, sort 17, is_active 1.
+- **Granted to ALL 7 non-admin presets** via `ref_access_preset_pages`: manager, production_operator, logistics_operator, marketing, sales_manager, finance_viewer, smoke_viewer. (Operator said "for everyone" → sales_manager INCLUDED here even though the journal-saisies mirror had only 6.)
+- **Tour card SHIPPED** (`8120817`) — `$PAGE_DESCRIPTIONS['brewing-lookup']` + `$PAGE_ICONS['brewing-lookup']` added to `visite-guidee.php`; tour-gap-check now critical=0 minor=0.
+- HTTP smoke: page / API / form-brewing all 302 (no fatals). ✅ ROADMAP FLAG (below) RESOLVED — the standalone page IS the relaxation it called for.
+
+## ✅ ROADMAP FLAG — brewing-lookup access gate — RESOLVED 2026-06-21
+~~Brewing lookup sat behind the `saisies` gate; operator wanted "anyone".~~ **DONE:** shipped as the standalone `require_page_access('brewing-lookup')` read page above (min_role viewer + granted to all 7 non-admin presets + tour card + mig 425). Brewing lookup is **no longer saisies-gated**. Nothing further open on this flag.
