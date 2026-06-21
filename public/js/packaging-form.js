@@ -304,7 +304,7 @@ document.addEventListener('DOMContentLoaded', function () {
   const BOTTLE_DISPOSITION_FIELDS = [
     { name: 'unsaleable_units',        label: 'Invendable',                    unit: 'unités' },
     { name: 'loss_uncapped_units',     label: 'Perte liquide sans capsule',    unit: 'unités' },
-    { name: 'loss_untaxed_full_units', label: 'Perte liquide autre',           unit: 'unités' },
+    { name: 'loss_untaxed_full_units', label: 'Unité perdue (pleine)',          unit: 'unités' },
     { name: 'loss_half_filled_units',  label: 'Perte liquide à moitié remplie', unit: 'unités (×0,5 vol)' },
     { name: 'qa_library_units',        label: 'Bibliothèque QA',               unit: 'unités' },
     { name: 'qa_analyses_units',       label: 'Mesures QA',                    unit: 'unités' },

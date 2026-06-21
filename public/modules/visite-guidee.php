@@ -456,7 +456,7 @@ if ($hasSaisies) {
             'href'    => '/modules/form-packaging.php',
             'body'    => 'Bouteilles et canettes se comptent en unités, fûts en litres. Chaque case a un sens précis :'
                        . '<br>· <strong>Invendable</strong> — bière perdue mais consommable : reste taxée.'
-                       . '<br>· <strong>Perte liquide autre</strong> — non consommable : non taxée.'
+                       . '<br>· <strong>Unité perdue (pleine)</strong> — unité pleine perdue, BOM complet, non taxée.'
                        . '<br>· <strong>Perte liquide sans capsule</strong> — remplie mais jamais capsulée : non taxée.'
                        . '<br>· <strong>Perte liquide à moitié remplie</strong> — compte pour une demi-unité.'
                        . '<br>· <strong>Bibliothèque QA</strong> et <strong>Mesures QA</strong> — pas des pertes : neutres pour le stock et la taxe.'

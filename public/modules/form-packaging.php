@@ -316,6 +316,158 @@ function compute_packaging_vendable_hl(
     ];
 }
 
+/**
+ * Recompute loss_liquid_other_units_alloc and loss_kpi_hl for all live
+ * non-reuse rows in the given packaging group (recipe × batch × event_date × format_family).
+ *
+ * Called inside the write transaction after every form submit (insert or edit),
+ * for each bot/can format-family group touched by the submitted rows.
+ *
+ * Idempotent: re-running produces identical output for unchanged data.
+ * Tolerates NULL/0 everywhere — never throws (recompute failure must not block the save).
+ *
+ * @param PDO    $pdo         Active PDO connection (inside the write transaction).
+ * @param string $eventDate   Packaging event date (YYYY-MM-DD).
+ * @param int|null $recipeIdFk  recipe_id_fk (NULL for contract runs).
+ * @param string $batch       COALESCE(NULLIF(neb_batch,''), NULLIF(contract_batch,''))
+ *                            — pass '' when both are absent.
+ * @param string $formatFamily 'bot' or 'can'.
+ */
+function recompute_group_liquid_alloc(
+    PDO    $pdo,
+    string $eventDate,
+    ?int   $recipeIdFk,
+    string $batch,
+    string $formatFamily
+): void {
+    try {
+        // 1. Fetch all live group rows with their SKU meta.
+        // NULL-safe equality (<=> ) handles nullable recipe_id_fk and batch.
+        $stmt = $pdo->prepare(
+            "SELECT p.id,
+                    p.run_type,
+                    p.prod_total_units,
+                    p.loss_liquid_other_units,
+                    p.unsaleable_units,
+                    p.loss_uncapped_units,
+                    p.loss_half_filled_units,
+                    p.loss_untaxed_full_units,
+                    p.qa_analyses_units,
+                    p.qa_library_units,
+                    p.loss_keg_liquid_l,
+                    p.taproom_keg_l,
+                    p.sku_id_fk,
+                    s.hl_per_unit,
+                    s.units_per_pack
+               FROM bd_packaging_v2 p
+               LEFT JOIN ref_skus s ON s.id = p.sku_id_fk
+              WHERE p.is_tombstoned = 0
+                AND p.reuses_packaging_id_fk IS NULL
+                AND p.recipe_id_fk <=> ?
+                AND COALESCE(NULLIF(p.neb_batch,''), NULLIF(p.contract_batch,'')) <=> ?
+                AND p.event_date = ?
+                AND CASE WHEN p.run_type = 'bot'            THEN 'bot'
+                         WHEN p.run_type IN ('can','can33') THEN 'can'
+                         ELSE NULL END = ?"
+        );
+        $batchParam = ($batch === '') ? null : $batch;
+        $stmt->execute([$recipeIdFk, $batchParam, $eventDate, $formatFamily]);
+        $groupRows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        if (empty($groupRows)) {
+            return;
+        }
+
+        // 2. Compute gross filled HL per row and accumulate group totals.
+        $totalLoss    = 0.0;
+        $totalGrossHL = 0.0;
+        $rowData      = [];
+
+        foreach ($groupRows as $r) {
+            $rawLoss = ($r['loss_liquid_other_units'] !== null)
+                ? (float) $r['loss_liquid_other_units']
+                : null;
+            $grossHL = 0.0;
+            if (
+                $r['prod_total_units'] !== null
+                && $r['hl_per_unit']   !== null
+                && $r['units_per_pack'] !== null
+                && (float) $r['units_per_pack'] > 0
+            ) {
+                $grossHL = ((float) $r['prod_total_units'] / (float) $r['units_per_pack'])
+                         * (float) $r['hl_per_unit'];
+            }
+            $totalLoss    += ($rawLoss ?? 0.0);
+            $totalGrossHL += $grossHL;
+            $rowData[] = ['row' => $r, 'grossHL' => $grossHL, 'rawLoss' => $rawLoss];
+        }
+
+        // 3. Compute _alloc per row; last row absorbs rounding remainder.
+        // _alloc is NULL only when totalLoss == 0 AND all rows have NULL raw loss
+        // (i.e. no loss exists anywhere in the group). When any row in the group
+        // carries a non-null loss, every row receives its proportional _alloc
+        // (which may be 0.000) so that Σ(_alloc) == Σ(raw) group-wide.
+        $n              = count($rowData);
+        $allocSum       = 0.0;
+        $groupHasLoss   = ($totalLoss > 0.0);
+
+        foreach ($rowData as $i => &$rd) {
+            if (!$groupHasLoss) {
+                // No loss at all in the group: _alloc mirrors raw (NULL stays NULL, 0 stays 0).
+                $rd['alloc'] = $rd['rawLoss'];
+                continue;
+            }
+            // Group has loss: every row gets a non-null alloc (possibly 0.000).
+            if ($i === $n - 1) {
+                // Last row: remainder to conserve total exactly.
+                $alloc = $totalLoss - $allocSum;
+            } elseif ($totalGrossHL > 0.0) {
+                $alloc = ($rd['grossHL'] / $totalGrossHL) * $totalLoss;
+            } else {
+                // Equal-split fallback.
+                $alloc = $totalLoss / $n;
+            }
+            $rd['alloc'] = round($alloc, 3);
+            $allocSum   += $rd['alloc'];
+        }
+        unset($rd);
+
+        // 4. For each row: recompute loss_kpi_hl with _alloc, then UPDATE.
+        $updateStmt = $pdo->prepare(
+            "UPDATE bd_packaging_v2
+                SET loss_liquid_other_units_alloc = ?,
+                    loss_kpi_hl                   = ?
+              WHERE id = ?"
+        );
+
+        foreach ($rowData as $rd) {
+            $r     = $rd['row'];
+            $alloc = $rd['alloc'];
+
+            // Build a modified row for compute_packaging_vendable_hl that substitutes
+            // _alloc for the raw loss_liquid_other_units value.
+            $computeRow = $r;
+            $computeRow['loss_liquid_other_units'] = ($alloc !== null) ? (string) $alloc : null;
+
+            $runType    = $r['run_type'] ?? '';
+            $isContract = ($r['sku_id_fk'] === null);
+            $skuMeta    = [
+                'hl_per_unit'   => $r['hl_per_unit'],
+                'units_per_pack'=> $r['units_per_pack'],
+            ];
+            $computed = compute_packaging_vendable_hl($computeRow, $skuMeta, $runType, $isContract);
+
+            $allocVal  = ($alloc !== null) ? (string) $alloc : null;
+            $newKpiHl  = $computed['loss_kpi_hl'];
+
+            $updateStmt->execute([$allocVal, $newKpiHl, (int) $r['id']]);
+        }
+    } catch (\Throwable $e) {
+        // Recompute failure must NOT block the save — log and continue.
+        error_log('[recompute_group_liquid_alloc] ' . $e->getMessage());
+    }
+}
+
 // ── POST ──────────────────────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
@@ -1650,6 +1802,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     // $rowBefore is non-null in edit mode → action='update'; null → action='insert'.
                     log_revision($pdo, $me, PACKAGING_LIVE_TABLE, $rowId, $rowBefore, $safeRow, $qcFlag, $revisionComment);
 
+                    // ── Loss alloc: keg/cuv identity passthrough (mig 415) ────────
+                    // For keg/cuv rows there is no group pooling — _alloc = raw loss.
+                    // Bot/can rows get their _alloc from recompute_group_liquid_alloc()
+                    // (Step C below), which runs after ALL format rows are upserted.
+                    $safeRunType = $safeRow['run_type'] ?? '';
+                    if (in_array($safeRunType, ['keg', 'cuv'], true)) {
+                        $rawLiquidVal = isset($safeRow['loss_liquid_other_units'])
+                            && $safeRow['loss_liquid_other_units'] !== ''
+                                ? $safeRow['loss_liquid_other_units']
+                                : null;
+                        $pdo->prepare(
+                            "UPDATE bd_packaging_v2
+                                SET loss_liquid_other_units_alloc = ?
+                              WHERE id = ?"
+                        )->execute([$rawLiquidVal, $rowId]);
+                    }
+
                     // ── Step B1a: Réassigner head-row vendable_hl zero-out ────────
                     // When the just-inserted row is a réassigner leaf: UPDATE the head row's
                     // vendable_hl to '0.000' (the leaf now carries the sellable HL for the
@@ -1813,12 +1982,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                 }
 
-                // ── Step C: CIP events ────────────────────────────────────────────
+                // ── Step C: Recompute loss_liquid_other_units_alloc for bot/can groups ──
+                // Idempotent: re-derives _alloc for all live rows in each format-family
+                // group touched by this session's upserted rows, then updates loss_kpi_hl.
+                // Runs inside the transaction so _alloc is updated atomically with the
+                // upserted rows. keg/cuv identity passthrough was handled per-row above.
+                // isReassignerMode rows always have run_type='cuv' — no bot/can groups.
+                if (!$isReassignerMode) {
+                    $submittedBatch = ($nebBatch !== '') ? $nebBatch : $contractBatch;
+                    $families = [];
+                    foreach ($formatsRaw as $fRaw) {
+                        $fRawRunType = $fRaw['run_type'] ?? '';
+                        if ($fRawRunType === 'bot') {
+                            $families['bot'] = true;
+                        } elseif (in_array($fRawRunType, ['can', 'can33'], true)) {
+                            $families['can'] = true;
+                        }
+                    }
+                    foreach (array_keys($families) as $ff) {
+                        recompute_group_liquid_alloc(
+                            $pdo,
+                            $eventDate,
+                            $recipeIdFk,
+                            $submittedBatch,
+                            $ff
+                        );
+                    }
+                }
+
+                // ── Step D: CIP events ────────────────────────────────────────────
                 if ($mainPackagingId !== null) {
                     cip_upsert($pdo, 'packaging', $mainPackagingId, $cipEvents, $cipMeta);
                 }
 
-                // ── Step D: in-filling reads → bd_packaging_readings ─────────────
+                // ── Step E: in-filling reads → bd_packaging_readings ─────────────
                 // Idempotent delete-then-insert keyed on packaging_v2_id.
                 // Note column mapping: co2o2Pairs['co2_gl'] → co2; co2o2Pairs['o2_ppb'] → o2.
                 // Note table column: reading_idx (not reading_index).

@@ -5884,10 +5884,12 @@ function kpi_pkg_cost_per_unit(array $params, string $label, PDO $pdo): array
  * Today's packaging activity from bd_packaging_v2 (base table) + the vendable
  * view, for base rows only (reuses_packaging_id_fk IS NULL, is_tombstoned=0).
  *
- * beer_loss_hl formula (CANONICAL per §PERTES-DASHBOARD):
- *   beer_loss_hl = v.loss_kpi_hl + (b.loss_liquid_other_units / 100)
+ * beer_loss_hl formula (post-mig-415/417):
+ *   beer_loss_hl = v.loss_kpi_hl
+ *   loss_kpi_hl already includes loss_liquid_other_units_alloc/100 (diluted across
+ *   parallel runs by gross-filled-HL share, mig 415/416/417). No separate liquid
+ *   term needed — adding it would double-count.
  *   beer_loss_pct = 100 * beer_loss_hl / v.vendable_hl
- * The loss_liquid_other_units/100 term is MANDATORY — omit and the % is ~10× low.
  *
  * Per-material loss rates (1:1 consumables only — honest denominator):
  *   consumed ≈ good units produced + wasted (valid for label/crown_cork/can_lid/container).
@@ -5995,24 +5997,39 @@ function kpi_pkg_daily_recap(string $label, PDO $pdo): array
     $prodUnitsBtl = 0; // prod units for bottle runs
     $prodUnitsCan = 0; // prod units for can/can33 runs
 
+    // Build parallel-run group totals BEFORE the main loop.
+    // Groups parallel runs of the same beer+batch+family (bot/can/other) so each
+    // row in a group can display the GROUP's loss% rather than its own individual %.
+    // This prevents STIB id=6802 showing all the breakage and STI4 id=6803 showing ~0%.
+    // fam: 'bot' for run_type='bot'; 'can' for run_type IN('can','can33'); else run_type.
+    // Keg/cuv always have a unique run_type → singleton group → no change.
+    $groupTotals = [];  // key => ['loss_kpi_hl' => float, 'vendable_hl' => float]
+    foreach ($runs as $r) {
+        $rt  = $r['run_type'] ?? 'bot';
+        $fam = ($rt === 'bot') ? 'bot' : (in_array($rt, ['can', 'can33'], true) ? 'can' : $rt);
+        $bk  = isset($r['batch']) && $r['batch'] !== '' ? (string) $r['batch'] : '__nobatch__';
+        $gk  = ((int) ($r['recipe_id_fk'] ?? 0)) . '|' . $bk . '|' . $fam;
+        if (!isset($groupTotals[$gk])) {
+            $groupTotals[$gk] = ['loss_kpi_hl' => 0.0, 'vendable_hl' => 0.0];
+        }
+        $groupTotals[$gk]['loss_kpi_hl'] += (float) ($r['loss_kpi_hl'] ?? 0.0);
+        $groupTotals[$gk]['vendable_hl']  += (float) ($r['vendable_hl'] ?? 0.0);
+    }
+
     // Per-run breakdown rows
     $perRunRows = [];
 
     foreach ($runs as $r) {
         $vendHl    = (float) ($r['vendable_hl'] ?? 0.0);
         $lossKpiHl = (float) ($r['loss_kpi_hl'] ?? 0.0);
-        $lossOther = (float) ($r['loss_liquid_other_units'] ?? 0.0);
         $runType   = $r['run_type'] ?? 'bot';
         $displayRunType = ($runType === 'bot' && ($r['stocktake_scope'] ?? '') === 'cage')
             ? 'cage'
             : $runType;
-        // BUG FIX (2026-06-10): keg/cuv — v_bd_packaging_v2_vendable already folds
-        // loss_liquid_other_units/100 into loss_kpi_hl on the keg/cuv arm.
-        // Adding it again here was a double-count. bot/can/can33 view arm does NOT
-        // include it, so the +$lossOther/100 term is correct for those only.
-        $beerLossHl = in_array($runType, ['keg', 'cuv'], true)
-            ? $lossKpiHl
-            : $lossKpiHl + ($lossOther / 100.0);
+        // Post-mig-415/417: v_bd_packaging_v2_vendable.loss_kpi_hl now includes
+        // loss_liquid_other_units_alloc/100 in BOTH keg/cuv and bot/can arms.
+        // No separate liquid term needed — use loss_kpi_hl directly for all run types.
+        $beerLossHl = $lossKpiHl;
 
         $totalVendableHl += $vendHl;
         $totalBeerLossHl += $beerLossHl;
@@ -6042,7 +6059,20 @@ function kpi_pkg_daily_recap(string $label, PDO $pdo): array
         $objHl   = isset($r['objective_hl']) && $r['objective_hl'] !== null
                      ? (float)$r['objective_hl'] : null;
         $batch   = isset($r['batch']) && $r['batch'] !== '' ? (string) $r['batch'] : null;
-        $runLossPct = ($vendHl > 0) ? round(100.0 * $beerLossHl / $vendHl, 2) : null;
+
+        // Use group loss% so parallel runs of the same beer+batch show the same honest rate.
+        $fam     = ($runType === 'bot') ? 'bot'
+                 : (in_array($runType, ['can', 'can33'], true) ? 'can' : $runType);
+        $bk      = $batch ?? '__nobatch__';
+        $gk      = ((int) ($r['recipe_id_fk'] ?? 0)) . '|' . $bk . '|' . $fam;
+        $grp     = $groupTotals[$gk] ?? ['loss_kpi_hl' => $beerLossHl, 'vendable_hl' => $vendHl];
+        $grpVend = $grp['vendable_hl'];
+        $grpLoss = $grp['loss_kpi_hl'];
+        // Group loss%: same value shown on every row in the group.
+        $runLossPct = ($grpVend > 0) ? round(100.0 * $grpLoss / $grpVend, 2) : null;
+        // Per-row loss HL: volume-share of group loss (sums to group total across parallel rows).
+        $rowLossHl  = ($grpVend > 0) ? round($grpLoss * ($vendHl / $grpVend), 3) : round($beerLossHl, 3);
+
         $reachPct   = ($objHl !== null && $objHl > 0.0)
                         ? round($vendHl / $objHl * 100.0, 1) : null;
         $perRunRows[] = [
@@ -6056,7 +6086,7 @@ function kpi_pkg_daily_recap(string $label, PDO $pdo): array
                 'sku'          => isset($r['sku_code']) && $r['sku_code'] !== null
                                     ? (string) $r['sku_code'] : null,
                 'loss_pct'     => $runLossPct,
-                'beer_loss_hl' => round($beerLossHl, 3),
+                'beer_loss_hl' => $rowLossHl,
                 'objective_hl' => $objHl,
                 'reach_pct'    => $reachPct,
             ],

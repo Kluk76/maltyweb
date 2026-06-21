@@ -408,8 +408,10 @@ function pkg_current_week_events(PDO $pdo): array
     // Loss expression — columns verified against live schema 2026-05-31.
     // loss_keg_liquid_l is in LITRES — excluded.
     // qa_analyses_units + qa_library_units are NOT losses — excluded.
+    // loss_liquid_other_units: use _alloc (diluted per-run share, mig 415/416)
+    // with fallback to raw when _alloc not yet computed (e.g. rows pre-deploy).
     $lossExpr = "
-        COALESCE(p.loss_liquid_other_units,0) +
+        COALESCE(p.loss_liquid_other_units_alloc, p.loss_liquid_other_units, 0) +
         COALESCE(p.loss_4pack_btl_units,0) +
         COALESCE(p.loss_4pack_can_units,0) +
         COALESCE(p.loss_wrap_btl_units,0) +
@@ -554,8 +556,10 @@ function pkg_qa_metrics(PDO $pdo, int $year): array
         return $cache[$year];
     }
 
+    // loss_liquid_other_units: use _alloc (diluted per-run share, mig 415/416)
+    // with fallback to raw when _alloc not yet computed (e.g. rows pre-deploy).
     $lossExpr = "
-        COALESCE(p.loss_liquid_other_units,0) +
+        COALESCE(p.loss_liquid_other_units_alloc, p.loss_liquid_other_units, 0) +
         COALESCE(p.loss_4pack_btl_units,0) +
         COALESCE(p.loss_4pack_can_units,0) +
         COALESCE(p.loss_wrap_btl_units,0) +
