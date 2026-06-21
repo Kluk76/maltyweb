@@ -187,12 +187,16 @@ def match_email_order_to_bc(
     conn: pymysql.connections.Connection,
     parsed_email: dict,
     customer_id_override: Optional[int] = None,
+    order_index: Optional[int] = None,
 ) -> MatchResult:
     """
     Match one parsed email order against BC orders.
 
     parsed_email keys: id, from_address, subject, raw_body, parsed_json
     parsed_json is already decoded as a dict.
+
+    For multi-order emails (_kind='parsed_order_hints_multi'), supply order_index
+    (0-based) to select the sub-order whose lines/requested_date are used.
 
     Returns a MatchResult. READ-ONLY — no DB writes.
     """
@@ -204,9 +208,30 @@ def match_email_order_to_bc(
 
     is_internal_rep = bool(pj.get("_internal_rep"))
     notes = pj.get("notes") or ""
-    requested_date = pj.get("requested_date")  # YYYY-MM-DD string or None
     customer_hint = pj.get("customer_hint") or ""
-    lines = pj.get("lines") or []
+
+    kind = pj.get("_kind", "parsed_order_hints")
+    if kind == "parsed_order_hints_multi":
+        if order_index is None:
+            raise ValueError(
+                "match_email_order_to_bc: order_index is required for _kind='parsed_order_hints_multi'"
+            )
+        orders = pj.get("orders") or []
+        if order_index < 0 or order_index >= len(orders):
+            raise ValueError(
+                f"match_email_order_to_bc: order_index={order_index} out of range "
+                f"(len={len(orders)}) for email id={parsed_email.get('id')}"
+            )
+        sub = orders[order_index]
+        requested_date = sub.get("requested_date")
+        lines = sub.get("lines") or []
+        # customer_hint and notes come from the sub-order if present, else top-level
+        customer_hint = sub.get("customer_hint") or customer_hint
+        notes = sub.get("notes") or notes
+    else:
+        # Single-order or legacy shape — order_index is ignored if passed
+        requested_date = pj.get("requested_date")
+        lines = pj.get("lines") or []
 
     # Early exit for internal reps
     if is_internal_rep:
@@ -513,8 +538,14 @@ def _run_report(conn: pymysql.connections.Connection) -> None:
             "raw_body": row["raw_body"],
             "parsed_json": pj,
         }
-        result = match_email_order_to_bc(conn, parsed_email)
-        results.append(result)
+        if pj.get("_kind") == "parsed_order_hints_multi":
+            # Multi-order: match each sub-order individually.
+            for idx in range(len(pj.get("orders") or [])):
+                result = match_email_order_to_bc(conn, parsed_email, order_index=idx)
+                results.append(result)
+        else:
+            result = match_email_order_to_bc(conn, parsed_email)
+            results.append(result)
 
     # --- Table header ---
     col_widths = [8, 30, 50, 12, 20, 9, 5, 22, 4, 40]
@@ -641,9 +672,11 @@ def _run_match_one(
     conn: pymysql.connections.Connection,
     email_id: int,
     customer_id: int,
+    order_index: Optional[int] = None,
 ) -> None:
     """
     Match a single email against BC orders using a caller-supplied customer_id.
+    For multi-order emails, supply order_index (0-based) to select the sub-order.
     Outputs a JSON object to stdout. Exits 0 on success, 1 on error.
     """
     try:
@@ -677,7 +710,7 @@ def _run_match_one(
             "parsed_json": pj,
         }
 
-        result = match_email_order_to_bc(conn, parsed_email, customer_id_override=customer_id)
+        result = match_email_order_to_bc(conn, parsed_email, customer_id_override=customer_id, order_index=order_index)
 
         bc_order_info = None
         if result.match_found and result.bc_order_id is not None:
@@ -755,6 +788,12 @@ def main() -> None:
         default=0,
         help="ref_customers.id to use for --match-one (caller has already resolved).",
     )
+    parser.add_argument(
+        "--order-index",
+        type=int,
+        default=None,
+        help="Sub-order index (0-based) for multi-order emails (_kind='parsed_order_hints_multi').",
+    )
     args = parser.parse_args()
 
     if args.report:
@@ -772,7 +811,7 @@ def main() -> None:
             sys.exit(1)
         conn = _build_conn()
         try:
-            _run_match_one(conn, args.email_id, args.customer_id)
+            _run_match_one(conn, args.email_id, args.customer_id, order_index=args.order_index)
         finally:
             conn.close()
     else:

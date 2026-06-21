@@ -92,6 +92,61 @@ foreach ($skuRows as $sr) {
     $activeSkuIds[(int) $sr['id']] = $sr;
 }
 
+// ── BC match subprocess helper ─────────────────────────────────────────────────
+/**
+ * Shell out to bc_order_match.py --match-one.
+ * Returns decoded JSON array on success (exit 0 + valid JSON), null on any failure.
+ * Hardened: non-blocking reads, 20-second deadline, fail-closed on timeout/error.
+ *
+ * @param int      $emailMsgId  doc_email_messages.id
+ * @param int      $custId      ref_customers.id (caller has already resolved)
+ * @param int|null $orderIndex  0-based sub-order index for multi-order emails; null for single
+ */
+function _eo_run_bc_match(int $emailMsgId, int $custId, ?int $orderIndex = null): ?array {
+    $pythonBin     = '/var/www/maltytask/.venv/bin/python';
+    $matcherScript = '/var/www/maltytask/scripts/python/bc_order_match.py';
+    $cmd = sprintf(
+        '%s %s --match-one --email-id %d --customer-id %d%s 2>/dev/null',
+        escapeshellcmd($pythonBin),
+        escapeshellarg($matcherScript),
+        $emailMsgId,
+        $custId,
+        $orderIndex !== null ? ' --order-index ' . (int)$orderIndex : ''
+    );
+    $descriptors = [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+    $proc = proc_open($cmd, $descriptors, $pipes);
+    if (!is_resource($proc)) {
+        return null;
+    }
+    fclose($pipes[0]);
+    stream_set_blocking($pipes[1], false);
+    stream_set_blocking($pipes[2], false);
+    $stdout   = '';
+    $deadline = microtime(true) + 20;
+    $timedOut = false;
+    while (true) {
+        if (microtime(true) >= $deadline) { $timedOut = true; break; }
+        $chunk = fread($pipes[1], 8192);
+        if ($chunk !== false && $chunk !== '') { $stdout .= $chunk; continue; }
+        $st = proc_get_status($proc);
+        if (!$st['running'] && feof($pipes[1])) break;
+        usleep(50000);
+    }
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+    if ($timedOut) {
+        proc_terminate($proc, 9);
+        proc_close($proc);
+        return null;
+    }
+    $exitCode = proc_close($proc);
+    if ($exitCode !== 0) {
+        return null;
+    }
+    $decoded = json_decode($stdout, true);
+    return is_array($decoded) ? $decoded : null;
+}
+
 // ── POST handler (validate and promote to ord_orders) ─────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $canWrite) {
 
@@ -224,6 +279,53 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $canWrite) {
             redirect_to('/modules/email-orders.php');
         }
 
+        // ── BC dedup gate (mirror of single-order validate path) ──────────────
+        // For each sub-order, shell out to bc_order_match --order-index N using
+        // the same hardened helper. Fail-closed: any subprocess error aborts the
+        // whole promote. If any sub-order matches BC, store a combined interstitial
+        // and re-render without promoting.
+        //
+        // Note: with this gate in place, multi is safe to include in the armed push
+        // at rollout — remove the "multi never pushes" exclusion in push_bc_sales_orders.py
+        // then, under supervision.
+        $skipBcGate = !empty($_POST['bc_interstitial_bypass']);
+        if (!$skipBcGate) {
+            $bcMultiMatches = [];
+            $bcMultiError   = false;
+            foreach ($subOrders as $si => $sub) {
+                $custId = (int) $sub['customer_id'];
+                $res = _eo_run_bc_match($emailMsgId, $custId, $si);
+                if ($res === null) {
+                    $bcMultiError = true;
+                    break;
+                }
+                if (($res['status'] ?? '') === 'matched') {
+                    $bcMultiMatches[] = [
+                        'sub_index'       => $si,
+                        'bc_id'           => (int) ($res['bc_id'] ?? 0),
+                        'external_doc_no' => (string) ($res['bc_order']['external_document_no'] ?? ''),
+                        'order_date'      => (string) ($res['bc_order']['order_date'] ?? ''),
+                    ];
+                }
+            }
+
+            if ($bcMultiError) {
+                flash_set('warn', 'Vérification BC indisponible — réessayez.');
+                redirect_to('/modules/email-orders.php');
+            }
+
+            if (!empty($bcMultiMatches)) {
+                maltytask_session_start();
+                $_SESSION['eo_bc_multi_interstitial_' . $emailMsgId] = [
+                    'matches'    => $bcMultiMatches,
+                    'sub_orders' => $subOrders,
+                ];
+                flash_set('warn', 'Correspondance(s) BC détectée(s) — confirme l\'action ci-dessous.');
+                redirect_to('/modules/email-orders.php');
+            }
+            // All sub-orders unmatched → fall through to promote
+        }
+
         try {
             $newOrderIds = email_order_promote_multi($pdo, $me, $subOrders, $emailMsgId, $allowTwin);
             $idList = '#' . implode(', #', $newOrderIds);
@@ -302,53 +404,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $canWrite) {
 
     // ── 4. BC dedup gate (action=validate only) + promote ────────────────────
     if ($action === 'validate') {
-        // Shell out to bc_order_match.py --match-one
-        $pythonBin     = '/var/www/maltytask/.venv/bin/python';
-        $matcherScript = '/var/www/maltytask/scripts/python/bc_order_match.py';
-        $cmd = sprintf(
-            '%s %s --match-one --email-id %d --customer-id %d 2>/dev/null',
-            escapeshellcmd($pythonBin),
-            escapeshellarg($matcherScript),
-            $emailMsgId,
-            $custIdRaw
-        );
-        $matchJson     = null;
-        $matchExitCode = -1;
-        $descriptors   = [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
-        $proc = proc_open($cmd, $descriptors, $pipes);
-        if (is_resource($proc)) {
-            fclose($pipes[0]);
-            // Non-blocking reads so a silent/hung subprocess can't block past the
-            // deadline (fail-closed: a hang must fall through to "indisponible").
-            stream_set_blocking($pipes[1], false);
-            stream_set_blocking($pipes[2], false);
-            $stdout   = '';
-            $deadline = microtime(true) + 20;
-            $timedOut = false;
-            while (true) {
-                if (microtime(true) >= $deadline) { $timedOut = true; break; }
-                $chunk = fread($pipes[1], 8192);
-                if ($chunk !== false && $chunk !== '') {
-                    $stdout .= $chunk;
-                    continue;
-                }
-                $st = proc_get_status($proc);
-                if (!$st['running'] && feof($pipes[1])) break;
-                usleep(50000); // 50ms
-            }
-            fclose($pipes[1]);
-            fclose($pipes[2]);
-            if ($timedOut) {
-                proc_terminate($proc, 9);
-                proc_close($proc);
-                $matchExitCode = -1; // forces the fail-closed branch below
-            } else {
-                $matchExitCode = proc_close($proc);
-                if ($matchExitCode === 0) {
-                    $matchJson = json_decode($stdout, true);
-                }
-            }
-        }
+        $matchJson = _eo_run_bc_match($emailMsgId, $custIdRaw);
 
         if ($matchJson !== null && ($matchJson['status'] ?? '') === 'matched') {
             maltytask_session_start();
@@ -364,7 +420,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $canWrite) {
             ];
             flash_set('warn', 'Correspondance BC détectée — confirme l\'action ci-dessous.');
             redirect_to('/modules/email-orders.php');
-        } elseif ($matchJson === null || $matchExitCode !== 0) {
+        } elseif ($matchJson === null) {
             maltytask_session_start();
             $_SESSION['eo_bc_check_failed_' . $emailMsgId] = [
                 'customer_id'    => $custIdRaw,
@@ -381,35 +437,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $canWrite) {
 
     // ── 4c. Final dedup gate for force_create (validate already ran step 4) ──
     if ($action === 'force_create') {
-        $pythonBin     = '/var/www/maltytask/.venv/bin/python';
-        $matcherScript = '/var/www/maltytask/scripts/python/bc_order_match.py';
-        $fcCmd = sprintf(
-            '%s %s --match-one --email-id %d --customer-id %d 2>/dev/null',
-            escapeshellcmd($pythonBin),
-            escapeshellarg($matcherScript),
-            $emailMsgId,
-            $custIdRaw
-        );
-        $fcMatchJson = null; $fcMatchExit = -1;
-        $fcDesc = [0 => ['pipe','r'], 1 => ['pipe','w'], 2 => ['pipe','w']];
-        $fcProc = proc_open($fcCmd, $fcDesc, $fcPipes);
-        if (is_resource($fcProc)) {
-            fclose($fcPipes[0]);
-            stream_set_blocking($fcPipes[1], false);
-            stream_set_blocking($fcPipes[2], false);
-            $fcOut = ''; $fcDeadline = microtime(true) + 20; $fcTimedOut = false;
-            while (true) {
-                if (microtime(true) >= $fcDeadline) { $fcTimedOut = true; break; }
-                $fcChunk = fread($fcPipes[1], 8192);
-                if ($fcChunk !== false && $fcChunk !== '') { $fcOut .= $fcChunk; continue; }
-                $fcSt = proc_get_status($fcProc);
-                if (!$fcSt['running'] && feof($fcPipes[1])) break;
-                usleep(50000);
-            }
-            fclose($fcPipes[1]); fclose($fcPipes[2]);
-            if ($fcTimedOut) { proc_terminate($fcProc, 9); proc_close($fcProc); $fcMatchExit = -1; }
-            else { $fcMatchExit = proc_close($fcProc); if ($fcMatchExit === 0) $fcMatchJson = json_decode($fcOut, true); }
-        }
+        $fcMatchJson = _eo_run_bc_match($emailMsgId, $custIdRaw);
         if ($fcMatchJson !== null && ($fcMatchJson['status'] ?? '') === 'matched') {
             $fcBcId = (int) ($fcMatchJson['bc_id'] ?? 0);
             maltytask_session_start();
@@ -425,7 +453,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $canWrite) {
             ];
             flash_set('warn', 'Correspondance BC détectée au moment de la création — confirme l\'action ci-dessous.');
             redirect_to('/modules/email-orders.php');
-        } elseif ($fcMatchJson === null || $fcMatchExit !== 0) {
+        } elseif ($fcMatchJson === null) {
             maltytask_session_start();
             $_SESSION['eo_bc_check_failed_' . $emailMsgId] = [
                 'customer_id'    => $custIdRaw,
@@ -557,10 +585,15 @@ $twinPendingEmailId = isset($_SESSION['eo_twin_pending_id'])
 unset($_SESSION['eo_twin_pending_id']);
 
 // Pop BC interstitial / check-failed states
-$bcInterstitialStates = [];
-$bcCheckFailedStates  = [];
+$bcInterstitialStates      = [];
+$bcCheckFailedStates       = [];
+$bcMultiInterstitialStates = [];
 foreach ($_SESSION as $key => $val) {
-    if (str_starts_with($key, 'eo_bc_interstitial_')) {
+    if (str_starts_with($key, 'eo_bc_multi_interstitial_')) {
+        $id = (int) substr($key, strlen('eo_bc_multi_interstitial_'));
+        $bcMultiInterstitialStates[$id] = $val;
+        unset($_SESSION[$key]);
+    } elseif (str_starts_with($key, 'eo_bc_interstitial_')) {
         $id = (int) substr($key, strlen('eo_bc_interstitial_'));
         $bcInterstitialStates[$id] = $val;
         unset($_SESSION[$key]);
@@ -767,6 +800,7 @@ $flashMsg  = $flash['msg'] ?? '';
           $isTwinPending  = ($twinPendingEmailId > 0 && (int)$em['id'] === $twinPendingEmailId);
           $bcInterstitial = $bcInterstitialStates[(int)$em['id']] ?? null;
           $bcCheckFailed  = $bcCheckFailedStates[(int)$em['id']] ?? null;
+          $bcMultiInterstitial = $bcMultiInterstitialStates[(int)$em['id']] ?? null;
         ?>
 
         <?php if ($kind === 'parsed_order_hints_multi'): ?>
@@ -798,6 +832,66 @@ $flashMsg  = $flash['msg'] ?? '';
                 <p style="font-family:'DM Sans',sans-serif;font-size:.85rem;color:var(--ink-mute);">
                   Lecture seule — vous n'avez pas les droits pour valider.
                 </p>
+              <?php elseif ($bcMultiInterstitial !== null): ?>
+                <?php
+                  $multiMatches   = $bcMultiInterstitial['matches'] ?? [];
+                  $multiSubOrders = $bcMultiInterstitial['sub_orders'] ?? [];
+                  $firstBcId      = (int) ($multiMatches[0]['bc_id'] ?? 0);
+                ?>
+                <div class="eo-bc-interstitial">
+                  <div class="eo-bc-interstitial__banner">
+                    <?php foreach ($multiMatches as $m): ?>
+                      Sous-commande <?= (int)$m['sub_index'] + 1 ?> ressemble à la commande BC
+                      #<?= (int)$m['bc_id'] ?>
+                      <?php if ($m['order_date']): ?>(<?= htmlspecialchars($m['order_date'], ENT_QUOTES | ENT_HTML5) ?>)<?php endif ?>
+                      <?php if ($m['external_doc_no']): ?>— <?= htmlspecialchars($m['external_doc_no'], ENT_QUOTES | ENT_HTML5) ?><?php endif ?><br>
+                    <?php endforeach ?>
+                    Déjà saisie(s) dans BC ?
+                  </div>
+                  <form method="POST" action="/modules/email-orders.php">
+                    <input type="hidden" name="csrf"         value="<?= htmlspecialchars(csrf_token(), ENT_QUOTES | ENT_HTML5) ?>">
+                    <input type="hidden" name="email_msg_id" value="<?= (int)$em['id'] ?>">
+                    <input type="hidden" name="action"       value="archive">
+                    <?php /* bc_id carries only the first matched BC order — schema limit
+                             (doc_email_messages.bc_matched_order_id is a singular FK).
+                             If multiple sub-orders matched BC, only sub-order 0's match
+                             is stored. Reconciliation reporting should enumerate $multiMatches. */ ?>
+                    <input type="hidden" name="bc_id"        value="<?= $firstBcId ?>">
+                    <?php foreach ($multiSubOrders as $si => $sub): ?>
+                      <input type="hidden" name="sub[<?= (int)$si ?>][customer_id]"    value="<?= (int)$sub['customer_id'] ?>">
+                      <input type="hidden" name="sub[<?= (int)$si ?>][requested_date]" value="<?= htmlspecialchars($sub['requested_date'] ?? '', ENT_QUOTES | ENT_HTML5) ?>">
+                      <?php foreach (($sub['lines'] ?? []) as $li => $line): ?>
+                        <input type="hidden" name="sub[<?= (int)$si ?>][line_sku_id][]" value="<?= (int)$line['sku_id'] ?>">
+                        <input type="hidden" name="sub[<?= (int)$si ?>][line_qty][]"    value="<?= htmlspecialchars((string)($line['qty'] ?? 0), ENT_QUOTES | ENT_HTML5) ?>">
+                      <?php endforeach ?>
+                    <?php endforeach ?>
+                    <div class="eo-bc-interstitial__actions">
+                      <button type="submit" class="eo-btn-archive">
+                        Archiver — déjà dans BC
+                      </button>
+                    </div>
+                  </form>
+                  <form method="POST" action="/modules/email-orders.php">
+                    <input type="hidden" name="csrf"              value="<?= htmlspecialchars(csrf_token(), ENT_QUOTES | ENT_HTML5) ?>">
+                    <input type="hidden" name="email_msg_id"      value="<?= (int)$em['id'] ?>">
+                    <input type="hidden" name="action"            value="validate_multi">
+                    <input type="hidden" name="confirm_twin"      value="0">
+                    <input type="hidden" name="bc_interstitial_bypass" value="1">
+                    <?php foreach ($multiSubOrders as $si => $sub): ?>
+                      <input type="hidden" name="sub[<?= (int)$si ?>][customer_id]"    value="<?= (int)$sub['customer_id'] ?>">
+                      <input type="hidden" name="sub[<?= (int)$si ?>][requested_date]" value="<?= htmlspecialchars($sub['requested_date'] ?? '', ENT_QUOTES | ENT_HTML5) ?>">
+                      <?php foreach (($sub['lines'] ?? []) as $li => $line): ?>
+                        <input type="hidden" name="sub[<?= (int)$si ?>][line_sku_id][]" value="<?= (int)$line['sku_id'] ?>">
+                        <input type="hidden" name="sub[<?= (int)$si ?>][line_qty][]"    value="<?= htmlspecialchars((string)($line['qty'] ?? 0), ENT_QUOTES | ENT_HTML5) ?>">
+                      <?php endforeach ?>
+                    <?php endforeach ?>
+                    <div class="eo-bc-interstitial__actions">
+                      <button type="submit" class="eo-btn-force-create">
+                        Tout créer quand même
+                      </button>
+                    </div>
+                  </form>
+                </div>
               <?php else: ?>
               <form method="POST" action="/modules/email-orders.php">
                 <input type="hidden" name="csrf"         value="<?= htmlspecialchars(csrf_token(), ENT_QUOTES | ENT_HTML5) ?>">
