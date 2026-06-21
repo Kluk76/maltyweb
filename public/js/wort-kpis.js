@@ -7,13 +7,19 @@
 
 'use strict';
 
-/* ── Pull shared primitives from kpi-charts.js ── */
-const escHtml        = window.KpcCharts.escHtml;
-const fmt            = window.KpcCharts.fmt;
-const svgEl          = window.KpcCharts.svgEl;
-const MONTHS_FR      = window.KpcCharts.KPC_MONTHS_FR;
-const buildBarChart  = window.KpcCharts.buildBarChart;
-const paceTintResult = window.KpcCharts.paceTintResult;
+/* ── Pull shared primitives from kpi-charts.js ──
+   NOTE: var (not const) required here. Both kpi-charts.js and wort-kpis.js are
+   classic <script> tags sharing the same global lexical environment. kpi-charts.js
+   declares `function escHtml`, `function fmt`, etc. at top-level, creating bindings
+   in the global object. A `const` in this file for the same name would create a
+   SECOND binding in the global lexical environment → SyntaxError: "already declared"
+   in Chromium. `var` reuses the global-object slot and avoids the clash. ── */
+var escHtml        = window.KpcCharts.escHtml;
+var fmt            = window.KpcCharts.fmt;
+var svgEl          = window.KpcCharts.svgEl;
+var MONTHS_FR      = window.KpcCharts.KPC_MONTHS_FR;
+var buildBarChart  = window.KpcCharts.buildBarChart;
+var paceTintResult = window.KpcCharts.paceTintResult;
 
 /* ── Palette — read from CSS tokens at runtime ── */
 const CS = getComputedStyle(document.documentElement);
