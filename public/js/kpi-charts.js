@@ -1251,6 +1251,11 @@ function renderKpiRecap(container, tracker, result, tCls) {
         var rowS   = sectionMap[sTitle][j2];
         var rMetaS = rowS.meta || {};
         var hlS    = (rowS.value != null) ? escHtml(fmt(rowS.value, 1, 'HL')) + ' HL' : '—';
+        // units: show only when non-zero (keg/cuv will be 0)
+        var unitsS = '';
+        if (rMetaS.units != null && rMetaS.units > 0) {
+          unitsS = ' <span class="kpc-recap__units">/ ' + escHtml(fmt(rMetaS.units, 0, '')) + '&thinsp;u</span>';
+        }
         // loss% at 2 dp — server returns rMetaS.loss_pct already rounded to 2dp.
         // Canonical label = "perte bière" (NOT "perte liquide" — that names form dispositions).
         var lossStrS = '';
@@ -1267,7 +1272,7 @@ function renderKpiRecap(container, tracker, result, tCls) {
         bkHtml +=
           '<li class="kpc-recap__row">'
           + '<span class="kpc-recap__row-lbl">' + recapRowLabel(rowS) + '</span>'
-          + '<span class="kpc-recap__row-val">' + hlS + lossStrS + reachStrS + '</span>'
+          + '<span class="kpc-recap__row-val">' + hlS + unitsS + lossStrS + reachStrS + '</span>'
           + '</li>';
       }
       bkHtml += '</ul>';
@@ -1280,6 +1285,10 @@ function renderKpiRecap(container, tracker, result, tCls) {
         var rowX   = sectionMap['Autre'][jx];
         var rMetaX = rowX.meta || {};
         var hlX    = (rowX.value != null) ? escHtml(fmt(rowX.value, 1, 'HL')) + ' HL' : '—';
+        var unitsX = '';
+        if (rMetaX.units != null && rMetaX.units > 0) {
+          unitsX = ' <span class="kpc-recap__units">/ ' + escHtml(fmt(rMetaX.units, 0, '')) + '&thinsp;u</span>';
+        }
         var lossStrX = '';
         if (rMetaX.loss_pct != null) {
           lossStrX = ' <span class="kpc-recap__loss" title="Perte bière (bière perdue / vendable)">'
@@ -1288,7 +1297,7 @@ function renderKpiRecap(container, tracker, result, tCls) {
         bkHtml +=
           '<li class="kpc-recap__row">'
           + '<span class="kpc-recap__row-lbl">' + recapRowLabel(rowX) + '</span>'
-          + '<span class="kpc-recap__row-val">' + hlX + lossStrX + '</span>'
+          + '<span class="kpc-recap__row-val">' + hlX + unitsX + lossStrX + '</span>'
           + '</li>';
       }
       bkHtml += '</ul>';

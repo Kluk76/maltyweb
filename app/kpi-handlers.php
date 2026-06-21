@@ -5996,6 +5996,7 @@ function kpi_pkg_daily_recap(string $label, PDO $pdo): array
     // For 1:1 rate denominators
     $prodUnitsBtl = 0; // prod units for bottle runs
     $prodUnitsCan = 0; // prod units for can/can33 runs
+    $grandTotalUnits = 0; // total units produced across all runs (bot + cage + can + can33; keg/cuv = 0)
 
     // Build parallel-run group totals BEFORE the main loop.
     // Groups parallel runs of the same beer+batch+family (bot/can/other) so each
@@ -6052,6 +6053,9 @@ function kpi_pkg_daily_recap(string $label, PDO $pdo): array
         } elseif (in_array($runType, ['can', 'can33'], true)) {
             $prodUnitsCan += (int) ($r['prod_total_units'] ?? 0);
         }
+        // Grand total units: sum across ALL run types that produce countable units.
+        // Keg/cuv prod_total_units is typically 0 (volume-based), so this is additive-safe.
+        $grandTotalUnits += (int) ($r['prod_total_units'] ?? 0);
 
         // Per-run row for breakdown.
         // objective_hl: planning annotation — read-only, never feeds vendable/COGS/tax.
@@ -6089,6 +6093,12 @@ function kpi_pkg_daily_recap(string $label, PDO $pdo): array
                 'beer_loss_hl' => $rowLossHl,
                 'objective_hl' => $objHl,
                 'reach_pct'    => $reachPct,
+                // prod_total_units: individual unit count for this row's run.
+                // special_qty_units is NOT selected by this query — the WHERE
+                // clause already excludes the "parent" rows that parallel runs
+                // reference, so each row here is an independent run with its own
+                // prod_total_units. No double-count risk.
+                'units'        => (int) ($r['prod_total_units'] ?? 0),
             ],
         ];
     }
@@ -6235,6 +6245,7 @@ function kpi_pkg_daily_recap(string $label, PDO $pdo): array
     $sections = [
         ['label' => 'Runs aujourd\'hui',  'value' => $runCount,         'unit' => 'runs', 'tint' => 'neutral'],
         ['label' => 'HL vendables',        'value' => $totalVendableHl,  'unit' => 'HL',   'tint' => 'neutral'],
+        ['label' => 'Unités produites',    'value' => $grandTotalUnits,  'unit' => 'u',    'tint' => 'neutral'],
         ['label' => 'Perte bière',         'value' => $beerLossPct,      'unit' => '%',    'tint' => ($beerLossPct !== null && $beerLossPct > 3.0) ? 'amber' : 'neutral'],
         ['label' => 'Perte bière (HL)',    'value' => $totalBeerLossHl,  'unit' => 'HL',   'tint' => 'neutral'],
     ];
@@ -6247,14 +6258,15 @@ function kpi_pkg_daily_recap(string $label, PDO $pdo): array
         'tint'      => 'neutral',
         'breakdown' => $breakdown ?: null,
         'meta'      => [
-            'sections'        => $sections,
-            'period_label'    => $today,
-            'run_count'       => $runCount,
-            'vendable_hl'     => $totalVendableHl,
-            'beer_loss_hl'    => $totalBeerLossHl,
-            'beer_loss_pct'   => $beerLossPct,
+            'sections'          => $sections,
+            'period_label'      => $today,
+            'run_count'         => $runCount,
+            'vendable_hl'       => $totalVendableHl,
+            'grand_total_units' => $grandTotalUnits,
+            'beer_loss_hl'      => $totalBeerLossHl,
+            'beer_loss_pct'     => $beerLossPct,
             'session_reach_pct' => $sessionReachPct,
-            'today'           => $today,
+            'today'             => $today,
         ],
     ]);
 

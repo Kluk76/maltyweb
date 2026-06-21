@@ -1028,6 +1028,13 @@ body.mon-tableau .kpc-recap__batch {
   letter-spacing: .01em;
 }
 
+/* ── Per-run unit count inline ("/ 1 200 u") ── */
+body.mon-tableau .kpc-recap__units {
+  color: var(--ink-mute);
+  font-size: .72rem;
+  margin-left: .3em;
+}
+
 /* ── Per-material loss rate inline + per-run objective reach ── */
 body.mon-tableau .kpc-recap__loss,
 body.mon-tableau .kpc-recap__rate,

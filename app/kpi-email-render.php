@@ -284,11 +284,16 @@ function _kpi_render_recap_sectioned(array $tracker, array $result): string
             // Context suffix line
             $contextHtml = '';
             if ($hasRunType) {
-                // PACKAGING context
+                // PACKAGING context — pure projection from $rowMeta, no DB/recompute
                 $batch    = isset($rowMeta['batch']) ? htmlspecialchars((string) $rowMeta['batch'], ENT_QUOTES, 'UTF-8') : '—';
                 $reachPct = $rowMeta['reach_pct'] ?? null;
                 $lossPct  = $rowMeta['loss_pct'] ?? null;
+                $units    = isset($rowMeta['units']) && (int) $rowMeta['units'] > 0
+                            ? (int) $rowMeta['units'] : null;
                 $ctx      = 'lot ' . $batch;
+                if ($units !== null) {
+                    $ctx .= ' · ' . htmlspecialchars(number_format($units, 0, ',', ' '), ENT_QUOTES, 'UTF-8') . ' u';
+                }
                 if ($reachPct !== null) {
                     $ctx .= ' · → ' . htmlspecialchars(number_format((float) $reachPct, 1, ',', ' '), ENT_QUOTES, 'UTF-8') . '% obj';
                 }
