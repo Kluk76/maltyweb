@@ -831,7 +831,7 @@ $flashMsg  = $flash['msg'] ?? '';
                       <button type="button" class="eo-cust-autre-btn">Autre…</button>
                       <div class="eo-cust-resolved" hidden>
                         <span class="eo-cust-resolved__label"></span>
-                        <button type="button" class="eo-cust-resolved__clear" aria-label="Changer">✎</button>
+                        <button type="button" class="eo-cust-resolved__clear" aria-label="Changer">✕ Changer</button>
                       </div>
                       <input type="hidden" name="sub[<?= (int)$si ?>][customer_id]" class="eo-customer-id" value="0">
                     </div>
@@ -876,7 +876,7 @@ $flashMsg  = $flash['msg'] ?? '';
                             <button type="button" class="eo-autre-btn">Autre…</button>
                             <div class="eo-sku-resolved" hidden>
                               <span class="eo-sku-resolved__label"></span>
-                              <button type="button" class="eo-sku-resolved__clear" aria-label="Changer">✎</button>
+                              <button type="button" class="eo-sku-resolved__clear" aria-label="Changer">✕ Changer</button>
                             </div>
                             <input type="hidden" name="sub[<?= (int)$si ?>][line_sku_id][]" class="eo-sku-id" value="0">
                             <input type="number"
@@ -1059,18 +1059,20 @@ $flashMsg  = $flash['msg'] ?? '';
                     Client
                   </label>
                   <?php if ($prefilledCustId > 0): ?>
-                    <!-- Pre-filled from internal rep: show resolved immediately -->
+                    <!-- Pre-filled from internal rep: show manual typeahead pre-populated,
+                         resolved div hidden, id starts at 0 — operator must confirm by
+                         selecting from typeahead. Guardrail: "id starts EMPTY (0) on load". -->
                     <div class="eo-cust-chips" data-cust-hint="" aria-label="Suggestions client" hidden></div>
-                    <div class="eo-cust-manual" hidden>
+                    <div class="eo-cust-manual">
                       <div class="eo-typeahead-wrap">
                         <input type="text" id="eo-cust-<?= (int)$em['id'] ?>" class="eo-input eo-cust-search"
                                placeholder="Rechercher un client…" autocomplete="off" value="<?= $prefilledCustName ?>">
                         <ul class="eo-typeahead-dropdown eo-cust-dropdown" role="listbox" aria-label="Clients" hidden></ul>
                       </div>
                     </div>
-                    <div class="eo-cust-resolved">
-                      <span class="eo-cust-resolved__label"><?= $prefilledCustName ?></span>
-                      <button type="button" class="eo-cust-resolved__clear" aria-label="Changer">✎</button>
+                    <div class="eo-cust-resolved" hidden>
+                      <span class="eo-cust-resolved__label"></span>
+                      <button type="button" class="eo-cust-resolved__clear" aria-label="Changer">✕ Changer</button>
                     </div>
                   <?php else: ?>
                     <div class="eo-cust-chips" data-cust-hint="<?= $custHint ?>" aria-label="Suggestions client"></div>
@@ -1084,10 +1086,10 @@ $flashMsg  = $flash['msg'] ?? '';
                     <button type="button" class="eo-cust-autre-btn">Autre…</button>
                     <div class="eo-cust-resolved" hidden>
                       <span class="eo-cust-resolved__label"></span>
-                      <button type="button" class="eo-cust-resolved__clear" aria-label="Changer">✎</button>
+                      <button type="button" class="eo-cust-resolved__clear" aria-label="Changer">✕ Changer</button>
                     </div>
                   <?php endif ?>
-                  <input type="hidden" name="customer_id" class="eo-customer-id" value="<?= $prefilledCustId ?>">
+                  <input type="hidden" name="customer_id" class="eo-customer-id" value="0">
                 </div>
 
                 <!-- Requested date -->
@@ -1134,7 +1136,7 @@ $flashMsg  = $flash['msg'] ?? '';
                         <button type="button" class="eo-autre-btn">Autre…</button>
                         <div class="eo-sku-resolved" hidden>
                           <span class="eo-sku-resolved__label"></span>
-                          <button type="button" class="eo-sku-resolved__clear" aria-label="Changer">✎</button>
+                          <button type="button" class="eo-sku-resolved__clear" aria-label="Changer">✕ Changer</button>
                         </div>
                         <input type="hidden" name="line_sku_id[]" class="eo-sku-id" value="0">
                         <input type="number"

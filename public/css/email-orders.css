@@ -735,6 +735,14 @@ body.email-orders-page .eo-cust-autre-btn:hover {
 
 body.email-orders-page .eo-sku-resolved,
 body.email-orders-page .eo-cust-resolved {
+  /* Default hidden — display:none ensures [hidden] attribute is honoured.
+     Without this, the UA [hidden]=display:none is beaten by any authored
+     display rule (rendering-bug catalog: stacked-panels trap). */
+  display: none;
+}
+
+body.email-orders-page .eo-sku-resolved:not([hidden]),
+body.email-orders-page .eo-cust-resolved:not([hidden]) {
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -756,18 +764,29 @@ body.email-orders-page .eo-cust-resolved__label {
 
 body.email-orders-page .eo-sku-resolved__clear,
 body.email-orders-page .eo-cust-resolved__clear {
-  background: none;
-  border: none;
-  color: var(--ink-mute);
+  /* Clearly-actionable "✕ Changer" button — visible border, tinted bg, real touch target */
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  background: var(--bg-elev, #ece0c6);
+  border: 1px solid var(--ink-faint, #c8b48a);
+  border-radius: 5px;
+  color: var(--ink-soft, #4a3820);
   cursor: pointer;
-  font-size: 0.9rem;
-  padding: 0.2rem 0.4rem;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.78rem;
+  font-weight: 500;
+  padding: 0.35rem 0.65rem;
   min-height: 44px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 body.email-orders-page .eo-sku-resolved__clear:hover,
 body.email-orders-page .eo-cust-resolved__clear:hover {
-  color: var(--ink);
+  background: var(--bg, #f1e8d4);
+  border-color: var(--ink-mute, #4a3820);
+  color: var(--ink, #241b10);
 }
 
 /* ── Resolved row state ──────────────────────────────────────────────── */

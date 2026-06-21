@@ -182,6 +182,29 @@
 
   // ── Chip builders ─────────────────────────────────────────────────────────
 
+  // ── clearSku — canonical clear: chips if available, else manual typeahead ──
+  function clearSku(row, card, ranked) {
+    var chipsDiv    = qs('.eo-sku-chips', row);
+    var manualDiv   = qs('.eo-sku-manual', row);
+    var autreBtn    = qs('.eo-autre-btn', row);
+    var resolvedDiv = qs('.eo-sku-resolved', row);
+    var hiddenId    = qs('.eo-sku-id', row);
+    if (hiddenId) hiddenId.value = '0';
+    if (resolvedDiv) resolvedDiv.hidden = true;
+    row.classList.remove('eo-line-row--resolved');
+    var hasChips = ranked && ranked.length > 0;
+    if (chipsDiv) chipsDiv.hidden = !hasChips;
+    if (autreBtn) autreBtn.hidden = !hasChips;
+    if (manualDiv) {
+      manualDiv.hidden = hasChips;
+      if (!hasChips) {
+        var skuSearch = qs('.eo-sku-search', manualDiv);
+        if (skuSearch) skuSearch.focus();
+      }
+    }
+    validateCard(card);
+  }
+
   function buildSkuChips(row, suborder, card) {
     var chipsDiv    = qs('.eo-sku-chips', row);
     var manualDiv   = qs('.eo-sku-manual', row);
@@ -191,6 +214,10 @@
     var hintAttr    = row.dataset.skuHint || '';
 
     if (!chipsDiv || !hiddenId) return;
+
+    // Guardrail: id must start at 0; resolved box must be hidden on init.
+    if (parseInt(hiddenId.value, 10) !== 0) hiddenId.value = '0';
+    if (resolvedDiv && !resolvedDiv.hidden) resolvedDiv.hidden = true;
 
     var ranked = rankSkus(hintAttr);
     chipsDiv.innerHTML = '';
@@ -230,18 +257,35 @@
       });
     }
 
-    // Clear/change button
+    // Clear button — single consolidated handler via clearSku()
     var clearBtn = resolvedDiv ? qs('.eo-sku-resolved__clear', resolvedDiv) : null;
     if (clearBtn) {
       clearBtn.addEventListener('click', function() {
-        hiddenId.value = '0';
-        resolvedDiv.hidden = true;
-        chipsDiv.hidden = ranked.length === 0;
-        if (autreBtn) autreBtn.hidden = ranked.length === 0;
-        row.classList.remove('eo-line-row--resolved');
-        validateCard(card);
+        clearSku(row, card, ranked);
       });
     }
+  }
+
+  // ── clearCustomer — canonical clear: chips if available, else manual typeahead ──
+  function clearCustomer(suborder, card, ranked) {
+    var chipsDiv    = qs('.eo-cust-chips', suborder);
+    var manualDiv   = qs('.eo-cust-manual', suborder);
+    var autreBtn    = qs('.eo-cust-autre-btn', suborder);
+    var resolvedDiv = qs('.eo-cust-resolved', suborder);
+    var hiddenId    = qs('.eo-customer-id', suborder);
+    if (hiddenId) hiddenId.value = '0';
+    if (resolvedDiv) resolvedDiv.hidden = true;
+    var hasChips = ranked && ranked.length > 0;
+    if (chipsDiv) chipsDiv.hidden = !hasChips;
+    if (autreBtn) autreBtn.hidden = !hasChips;
+    if (manualDiv) {
+      manualDiv.hidden = hasChips;
+      if (!hasChips) {
+        var custSearch = qs('.eo-cust-search', manualDiv);
+        if (custSearch) custSearch.focus();
+      }
+    }
+    validateCard(card);
   }
 
   function buildCustChips(suborder, card) {
@@ -253,25 +297,13 @@
 
     if (!chipsDiv || !hiddenId) return;
 
-    // If already pre-filled (internal rep), show resolved and wire clear to reveal manual
-    if (parseInt(hiddenId.value, 10) > 0) {
-      chipsDiv.hidden = true;
-      if (autreBtn) autreBtn.hidden = true;
-      if (resolvedDiv) resolvedDiv.hidden = false;
-      // Wire clear button so operator can override the prefill
-      var preClearBtn = resolvedDiv ? qs('.eo-cust-resolved__clear', resolvedDiv) : null;
-      if (preClearBtn && manualDiv) {
-        preClearBtn.addEventListener('click', function() {
-          hiddenId.value = '0';
-          resolvedDiv.hidden = true;
-          manualDiv.hidden = false;
-          var custSearch = qs('.eo-cust-search', manualDiv);
-          if (custSearch) custSearch.focus();
-          validateCard(card);
-        });
-      }
-      validateCard(card);
-      return;
+    // Guardrail: id MUST start at 0 on load; PHP no longer pre-sets it.
+    // Resolved box must be hidden whenever id is 0 — enforce on init.
+    if (parseInt(hiddenId.value, 10) !== 0) {
+      hiddenId.value = '0';
+    }
+    if (resolvedDiv && !resolvedDiv.hidden) {
+      resolvedDiv.hidden = true;
     }
 
     var hintAttr = chipsDiv.dataset.custHint || '';
@@ -314,17 +346,15 @@
       });
     }
 
-    // Clear button
+    // Clear button — single consolidated handler via clearCustomer()
     var clearBtn = resolvedDiv ? qs('.eo-cust-resolved__clear', resolvedDiv) : null;
     if (clearBtn) {
       clearBtn.addEventListener('click', function() {
-        hiddenId.value = '0';
-        resolvedDiv.hidden = true;
-        chipsDiv.hidden = ranked.length === 0;
-        if (autreBtn) autreBtn.hidden = ranked.length === 0;
-        validateCard(card);
+        clearCustomer(suborder, card, ranked);
       });
     }
+
+    validateCard(card);
   }
 
   // ── Customer typeahead (manual fallback) ──────────────────────────────────
@@ -558,13 +588,10 @@
     resolvedClear.type      = 'button';
     resolvedClear.className = 'eo-sku-resolved__clear';
     resolvedClear.setAttribute('aria-label', 'Changer');
-    resolvedClear.textContent = '✎';
+    resolvedClear.textContent = '✕ Changer';
     resolvedClear.addEventListener('click', function() {
-      skuHiddenId.value  = '0';
-      resolvedDiv.hidden = true;
-      manualDiv.hidden   = false;
-      row.classList.remove('eo-line-row--resolved');
-      validateCard(card);
+      // JS-added rows have no chips (no hint context) — always fall through to manual
+      clearSku(row, card, []);
     });
     resolvedDiv.appendChild(resolvedLabel);
     resolvedDiv.appendChild(resolvedClear);
