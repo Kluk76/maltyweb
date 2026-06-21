@@ -79,6 +79,7 @@ try {
                   b.batch,
                   b.recipe_id_fk,
                   r.name AS recipe_name,
+                  COALESCE(r.classification, 'Neb') AS classification,
                   b.cct,
                   b.event_date,
                   b.submitted_at,

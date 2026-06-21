@@ -2,11 +2,16 @@
 /**
  * lookup-panel.js — Shared interactivity for collapsible lookup panels.
  *
- * Handles: toggle, tab switching, fetch, and two renderers
+ * Handles: toggle, tab switching, fetch, and card-based renderers
  * (packaging, brewing). Driven by data-endpoint and data-type on the
  * root .lookup-panel element.
  *
+ * After any render, re-applies the active sku-class filter so freshly
+ * injected cards respect it. Also listens for skufilter:change to
+ * recompute the summary strip from the in-memory data.
+ *
  * No inline JS, no inline CSS, no ES modules (IIFE-scoped).
+ * Uses var for shared-global aliases; never const at module scope.
  */
 
 (function () {
@@ -54,6 +59,28 @@
     var mm = String(d.getMonth() + 1).padStart(2, '0');
     var dd = String(d.getDate()).padStart(2, '0');
     return d.getFullYear() + '-' + mm + '-' + dd;
+  }
+
+  // Classification pill HTML
+  function classificationPill(cls) {
+    if (!cls) return '';
+    var label = cls === 'Contract' ? 'Contract' : 'Nébuleuse';
+    var variant = cls === 'Contract' ? 'lp-pill-contract' : 'lp-pill-neb';
+    return '<span class="lp-pill ' + variant + '">' + esc(label) + '</span>';
+  }
+
+  // Read active filter value from the nearest .skuf root on the page
+  function activeFilterValue() {
+    var skuf = document.querySelector('.lp-body .skuf, .skuf');
+    if (skuf) return skuf.getAttribute('data-skuf-value') || 'all';
+    return 'all';
+  }
+
+  // Re-apply the sku-class filter after a render
+  function reapplyFilter() {
+    if (window.SkuClassFilter && typeof window.SkuClassFilter.apply === 'function') {
+      window.SkuClassFilter.apply(activeFilterValue());
+    }
   }
 
   // ── Panel toggle ──────────────────────────────────────────────────────────
@@ -110,125 +137,190 @@
     container.innerHTML = '<p class="lp-empty">Aucun résultat trouvé.</p>';
   }
 
-  // Packaging renderer
+  // ── Summary strip builder ─────────────────────────────────────────────────
+  // Takes the raw events array, filters by a classification value ('all'|'Neb'|'Contract'),
+  // and renders the summary strip HTML. Returns the HTML string.
+  function buildSummaryHtml(events, co2o2, filterVal) {
+    var filtered = filterVal === 'all'
+      ? events
+      : events.filter(function (ev) { return (ev.classification || 'Neb') === filterVal; });
+
+    var n        = filtered.length;
+    var totalUnits   = 0;
+    var vendableHl   = 0;
+    var lossHl       = 0;
+
+    for (var i = 0; i < filtered.length; i++) {
+      var ev = filtered[i];
+      totalUnits += parseInt(ev.prod_total_units, 10) || 0;
+      vendableHl += parseFloat(ev.vendable_hl)  || 0;
+      lossHl     += parseFloat(ev.loss_kpi_hl)  || 0;
+    }
+
+    var lossTotal = vendableHl + lossHl;
+    var lossPct   = lossTotal > 0 ? ((lossHl / lossTotal) * 100).toFixed(1) : '0.0';
+
+    return '<div class="lp-summary">'
+      + n + ' événement' + (n !== 1 ? 's' : '')
+      + ' &middot; ' + totalUnits + ' unités'
+      + ' &middot; ' + vendableHl.toFixed(4) + ' hl vendable'
+      + ' &middot; ' + lossPct + '% perte'
+      + '</div>';
+  }
+
+  // ── Packaging card renderer ───────────────────────────────────────────────
   function renderPackaging(container, data) {
     if (!data.events || data.events.length === 0) {
       renderEmpty(container);
       return;
     }
 
-    var co2o2 = data.co2o2 || {};
-    var s     = data.summary || {};
+    var events  = data.events;
+    var co2o2   = data.co2o2 || {};
+    var filterVal = activeFilterValue();
 
-    var rows = data.events.map(function (ev) {
+    // Summary strip (filterable)
+    var summaryId = 'lp-pkg-summary-' + Date.now();
+    var summaryHtml = '<div id="' + summaryId + '">' + buildSummaryHtml(events, co2o2, filterVal) + '</div>';
+
+    // Cards
+    var cardsHtml = '';
+    for (var i = 0; i < events.length; i++) {
+      var ev     = events[i];
       var gas    = co2o2[String(ev.id)] || null;
-      var remark = '';
+      var cls    = ev.classification || 'Neb';
+      var rtLabel = RUN_TYPE_LABELS[ev.run_type] || esc(ev.run_type);
+
+      var reuseBadge = '';
       if (ev.reuses_packaging_id_fk != null) {
-        remark += '<span class="lp-reuse-badge">réutilisation</span>';
+        reuseBadge = '<span class="lp-reuse-badge">réutilisation</span>';
       }
-      return '<tr>'
-        + '<td>' + esc(ev.event_date) + '</td>'
-        + '<td>' + esc(ev.sku_code) + '</td>'
-        + '<td>' + nullCell(ev.batch) + '</td>'
-        + '<td>' + esc(RUN_TYPE_LABELS[ev.run_type] || ev.run_type) + '</td>'
-        + '<td>' + nullCell(ev.prod_total_units) + '</td>'
-        + '<td>' + fmtNum(ev.vendable_hl, 4) + '</td>'
-        + '<td>' + fmtNum(ev.loss_kpi_hl, 4) + '</td>'
-        + '<td>' + (gas ? fmtNum(gas.avg_co2, 3) : '<span class="lp-null">—</span>') + '</td>'
-        + '<td>' + (gas ? fmtNum(gas.avg_o2, 2)  : '<span class="lp-null">—</span>') + '</td>'
-        + '<td>' + (remark || '<span class="lp-null">—</span>') + '</td>'
-        + '</tr>';
-    }).join('');
 
-    // Summary bar
-    var lossHl      = parseFloat(s.total_loss_kpi_hl) || 0;
-    var vendableHl  = parseFloat(s.total_vendable_hl) || 0;
-    var lossTotal   = vendableHl + lossHl;
-    var lossPct     = lossTotal > 0 ? ((lossHl / lossTotal) * 100).toFixed(1) : '0.0';
+      var lossKpiHl  = ev.loss_kpi_hl  != null ? parseFloat(ev.loss_kpi_hl)  : null;
+      var vendableHl = ev.vendable_hl   != null ? parseFloat(ev.vendable_hl)  : null;
+      var lossTotal  = (vendableHl != null && lossKpiHl != null) ? vendableHl + lossKpiHl : null;
+      var lossPct    = (lossTotal != null && lossTotal > 0)
+                        ? ((lossKpiHl / lossTotal) * 100).toFixed(1) + '%'
+                        : null;
 
-    var summary = '<div class="lp-summary">'
-      + s.n_events + ' événement' + (s.n_events !== 1 ? 's' : '')
-      + ' &middot; ' + s.total_units + ' unités'
-      + ' &middot; ' + vendableHl.toFixed(4) + ' hl vendable'
-      + ' &middot; ' + lossPct + '% perte'
-      + '</div>';
+      cardsHtml += '<div class="lp-card" data-sku-class="' + esc(cls) + '">'
+        + '<div class="lp-card-head">'
+        +   '<div class="lp-card-title-group">'
+        +     '<span class="lp-card-title lp-mono">' + esc(ev.sku_code) + '</span>'
+        +     '<span class="lp-card-run-type">' + esc(rtLabel) + '</span>'
+        +   '</div>'
+        +   '<div class="lp-card-head-right">'
+        +     classificationPill(cls)
+        +     reuseBadge
+        +     '<span class="lp-card-date">' + esc(ev.event_date) + '</span>'
+        +   '</div>'
+        + '</div>'
+        + '<div class="lp-stat-grid">'
+        +   '<div class="lp-stat"><span class="lp-stat-label">Unités produites</span><span class="lp-stat-value">' + nullCell(ev.prod_total_units) + '</span></div>'
+        +   '<div class="lp-stat"><span class="lp-stat-label">Vendable HL</span><span class="lp-stat-value lp-mono">' + fmtNum(ev.vendable_hl, 4) + '</span></div>'
+        +   '<div class="lp-stat"><span class="lp-stat-label">Perte HL</span><span class="lp-stat-value lp-mono">' + fmtNum(ev.loss_kpi_hl, 4) + (lossPct ? ' <span class="lp-stat-pct">(' + lossPct + ')</span>' : '') + '</span></div>'
+        +   '<div class="lp-stat"><span class="lp-stat-label">CO&#x2082; moy.</span><span class="lp-stat-value lp-mono">' + (gas ? fmtNum(gas.avg_co2, 3) : '<span class="lp-null">—</span>') + '</span></div>'
+        +   '<div class="lp-stat"><span class="lp-stat-label">O&#x2082; moy.</span><span class="lp-stat-value lp-mono">' + (gas ? fmtNum(gas.avg_o2, 2) : '<span class="lp-null">—</span>') + '</span></div>'
+        +   '<div class="lp-stat"><span class="lp-stat-label">Lot</span><span class="lp-stat-value">' + nullCell(ev.batch) + '</span></div>'
+        + '</div>'
+        + '</div>';
+    }
 
-    container.innerHTML = summary
-      + '<div class="lp-table-wrap"><table class="lp-table">'
-      + '<thead><tr>'
-      + '<th>Date</th><th>SKU</th><th>Lot</th><th>Type</th>'
-      + '<th>Unités prod.</th><th>Vendable HL</th><th>Perte HL</th>'
-      + '<th>CO&#x2082; moy.</th><th>O&#x2082; moy.</th><th>Remarque</th>'
-      + '</tr></thead>'
-      + '<tbody>' + rows + '</tbody>'
-      + '</table></div>';
+    container.innerHTML = summaryHtml + '<div class="lp-cards">' + cardsHtml + '</div>';
+
+    // Listen for filter changes to recompute summary (once per render, attached to document)
+    // We store the events+co2o2 in closure and update the summary div
+    (function (evts, c2o2, sid) {
+      function onFilterChange(e) {
+        var sv = document.getElementById(sid);
+        if (!sv) { document.removeEventListener('skufilter:change', onFilterChange); return; }
+        sv.innerHTML = buildSummaryHtml(evts, c2o2, e.detail.value);
+      }
+      document.addEventListener('skufilter:change', onFilterChange);
+    })(events, co2o2, summaryId);
+
+    reapplyFilter();
   }
 
-  // Brewing renderer — day mode
+  // ── Brewing day card renderer ──────────────────────────────────────────────
   function renderBrewingDay(container, data) {
     if (!data.brews || data.brews.length === 0) {
       renderEmpty(container);
       return;
     }
 
-    var rows = data.brews.map(function (br) {
-      var t1     = (br.timings && br.timings[0]) ? br.timings[0] : null;
-      var start  = t1 ? t1.brew_start : null;
-      var end    = t1 ? t1.brew_end   : null;
-      var dur    = diffMinutes(start, end);
-      return '<tr>'
-        + '<td>' + esc(br.event_date) + '</td>'
-        + '<td>' + nullCell(br.recipe_name) + '</td>'
-        + '<td>' + esc(br.batch) + '</td>'
-        + '<td>' + nullCell(br.cct) + '</td>'
-        + '<td>' + nullCell(start) + '</td>'
-        + '<td>' + nullCell(end) + '</td>'
-        + '<td>' + (dur != null ? dur + ' min' : '<span class="lp-null">—</span>') + '</td>'
-        + '</tr>';
-    }).join('');
+    var cardsHtml = '';
+    for (var i = 0; i < data.brews.length; i++) {
+      var br  = data.brews[i];
+      var t1  = (br.timings && br.timings[0]) ? br.timings[0] : null;
+      var start = t1 ? t1.brew_start : null;
+      var end   = t1 ? t1.brew_end   : null;
+      var dur   = diffMinutes(start, end);
+      var cls   = br.classification || 'Neb';
 
-    container.innerHTML = '<div class="lp-table-wrap"><table class="lp-table">'
-      + '<thead><tr>'
-      + '<th>Date</th><th>Recette</th><th>Lot</th><th>CCT</th>'
-      + '<th>Début</th><th>Fin</th><th>Durée</th>'
-      + '</tr></thead>'
-      + '<tbody>' + rows + '</tbody>'
-      + '</table></div>';
+      cardsHtml += '<div class="lp-card" data-sku-class="' + esc(cls) + '">'
+        + '<div class="lp-card-head">'
+        +   '<div class="lp-card-title-group">'
+        +     '<span class="lp-card-title">' + esc(br.recipe_name || br.beer) + '</span>'
+        +     '<span class="lp-card-run-type">Lot ' + esc(br.batch) + '</span>'
+        +   '</div>'
+        +   '<div class="lp-card-head-right">'
+        +     classificationPill(cls)
+        +     '<span class="lp-card-date">' + esc(br.event_date) + '</span>'
+        +   '</div>'
+        + '</div>'
+        + '<div class="lp-stat-grid">'
+        +   '<div class="lp-stat"><span class="lp-stat-label">CCT</span><span class="lp-stat-value lp-mono">' + nullCell(br.cct) + '</span></div>'
+        +   '<div class="lp-stat"><span class="lp-stat-label">Début</span><span class="lp-stat-value lp-mono">' + nullCell(start) + '</span></div>'
+        +   '<div class="lp-stat"><span class="lp-stat-label">Fin</span><span class="lp-stat-value lp-mono">' + nullCell(end) + '</span></div>'
+        +   '<div class="lp-stat"><span class="lp-stat-label">Durée</span><span class="lp-stat-value lp-mono">' + (dur != null ? dur + ' min' : '<span class="lp-null">—</span>') + '</span></div>'
+        + '</div>'
+        + '</div>';
+    }
+
+    container.innerHTML = '<div class="lp-cards">' + cardsHtml + '</div>';
+    reapplyFilter();
   }
 
-  // Brewing renderer — batch mode
+  // ── Brewing batch card renderer ────────────────────────────────────────────
   function renderBrewingBatch(container, data) {
     if (!data.brews || data.brews.length === 0) {
       renderEmpty(container);
       return;
     }
 
-    // Header table
-    var headerRows = data.brews.map(function (br) {
+    var html = '';
+
+    // One header card per brew session
+    for (var i = 0; i < data.brews.length; i++) {
+      var br    = data.brews[i];
       var t1    = (br.timings && br.timings[0]) ? br.timings[0] : null;
       var start = t1 ? t1.brew_start : null;
       var end   = t1 ? t1.brew_end   : null;
       var dur   = diffMinutes(start, end);
-      return '<tr>'
-        + '<td>' + esc(br.event_date) + '</td>'
-        + '<td>' + nullCell(br.recipe_name) + '</td>'
-        + '<td>' + esc(br.batch) + '</td>'
-        + '<td>' + nullCell(br.cct) + '</td>'
-        + '<td>' + nullCell(start) + '</td>'
-        + '<td>' + nullCell(end) + '</td>'
-        + '<td>' + (dur != null ? dur + ' min' : '<span class="lp-null">—</span>') + '</td>'
-        + '</tr>';
-    }).join('');
+      var cls   = br.classification || 'Neb';
 
-    var headerTable = '<div class="lp-table-wrap"><table class="lp-table">'
-      + '<thead><tr>'
-      + '<th>Date</th><th>Recette</th><th>Lot</th><th>CCT</th>'
-      + '<th>Début</th><th>Fin</th><th>Durée</th>'
-      + '</tr></thead>'
-      + '<tbody>' + headerRows + '</tbody>'
-      + '</table></div>';
+      html += '<div class="lp-card" data-sku-class="' + esc(cls) + '">'
+        + '<div class="lp-card-head">'
+        +   '<div class="lp-card-title-group">'
+        +     '<span class="lp-card-title">' + esc(br.recipe_name || br.beer) + '</span>'
+        +     '<span class="lp-card-run-type">Lot ' + esc(br.batch) + '</span>'
+        +   '</div>'
+        +   '<div class="lp-card-head-right">'
+        +     classificationPill(cls)
+        +     '<span class="lp-card-date">' + esc(br.event_date) + '</span>'
+        +   '</div>'
+        + '</div>'
+        + '<div class="lp-stat-grid">'
+        +   '<div class="lp-stat"><span class="lp-stat-label">CCT</span><span class="lp-stat-value lp-mono">' + nullCell(br.cct) + '</span></div>'
+        +   '<div class="lp-stat"><span class="lp-stat-label">Début</span><span class="lp-stat-value lp-mono">' + nullCell(start) + '</span></div>'
+        +   '<div class="lp-stat"><span class="lp-stat-label">Fin</span><span class="lp-stat-value lp-mono">' + nullCell(end) + '</span></div>'
+        +   '<div class="lp-stat"><span class="lp-stat-label">Durée</span><span class="lp-stat-value lp-mono">' + (dur != null ? dur + ' min' : '<span class="lp-null">—</span>') + '</span></div>'
+        + '</div>'
+        + '</div>';
+    }
 
-    // Gravity sub-table
+    // Gravity sub-table (kept tabular — dense sub-list)
     var gravRows = (data.gravity || []).map(function (g) {
       return '<tr>'
         + '<td>' + esc(g.brew) + '</td>'
@@ -240,9 +332,8 @@
         + '</tr>';
     }).join('');
 
-    var gravSection = '';
     if (gravRows) {
-      gravSection = '<h4 class="lp-sub-heading">Gravimétrie</h4>'
+      html += '<h4 class="lp-sub-heading">Gravimétrie</h4>'
         + '<div class="lp-table-wrap"><table class="lp-table">'
         + '<thead><tr>'
         + '<th>Brassage</th><th>Étape</th><th>Densité firstwort</th>'
@@ -252,22 +343,21 @@
         + '</table></div>';
     }
 
-    // Ingredients sub-table
-    var ingRows = (data.ingredients || []).map(function (i) {
-      var name = (i.mi_name != null && i.mi_name !== '') ? i.mi_name : i.raw_name;
+    // Ingredients sub-table (kept tabular — dense sub-list)
+    var ingRows = (data.ingredients || []).map(function (ig) {
+      var name = (ig.mi_name != null && ig.mi_name !== '') ? ig.mi_name : ig.raw_name;
       return '<tr>'
-        + '<td>' + esc(i.line_idx) + '</td>'
-        + '<td>' + esc(i.category) + '</td>'
+        + '<td>' + esc(ig.line_idx) + '</td>'
+        + '<td>' + esc(ig.category) + '</td>'
         + '<td>' + nullCell(name) + '</td>'
-        + '<td>' + fmtNum(i.qty, 3) + '</td>'
-        + '<td>' + nullCell(i.unit) + '</td>'
-        + '<td>' + nullCell(i.lot) + '</td>'
+        + '<td>' + fmtNum(ig.qty, 3) + '</td>'
+        + '<td>' + nullCell(ig.unit) + '</td>'
+        + '<td>' + nullCell(ig.lot) + '</td>'
         + '</tr>';
     }).join('');
 
-    var ingSection = '';
     if (ingRows) {
-      ingSection = '<h4 class="lp-sub-heading">Ingrédients</h4>'
+      html += '<h4 class="lp-sub-heading">Ingrédients</h4>'
         + '<div class="lp-table-wrap"><table class="lp-table">'
         + '<thead><tr>'
         + '<th>#</th><th>Catégorie</th><th>Ingrédient</th>'
@@ -277,7 +367,8 @@
         + '</table></div>';
     }
 
-    container.innerHTML = headerTable + gravSection + ingSection;
+    container.innerHTML = html;
+    reapplyFilter();
   }
 
   // ── Search submit ─────────────────────────────────────────────────────────
@@ -287,14 +378,12 @@
     params.set('mode', mode);
 
     if (mode === 'day') {
-      // Simpler: just look for the date input in the day pane
       var dayPane = panel.querySelector('[id$="-pane-day"]');
       if (dayPane) {
         var di = dayPane.querySelector('.lp-date-input');
         if (di) params.set('date', di.value);
       }
     } else {
-      // batch: collect all named inputs/selects in the batch pane
       var batchPane = panel.querySelector('[id$="-pane-batch"]');
       if (batchPane) {
         var inputs = batchPane.querySelectorAll('input[name], select[name]');
@@ -353,13 +442,10 @@
       doSearch(panel, mode);
     });
 
-    // Enter key in text inputs
     panel.addEventListener('keydown', function (e) {
       if (e.key !== 'Enter') return;
       var inp = e.target;
       if (!inp.matches('.lp-text-input, .lp-date-input')) return;
-
-      // Find the search button in the active pane
       var activePane = panel.querySelector('.lp-tab-pane:not([hidden])');
       if (!activePane) return;
       var btn = activePane.querySelector('.lp-search-btn');

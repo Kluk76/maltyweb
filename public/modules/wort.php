@@ -670,7 +670,7 @@ try {
     ];
 
     // ─── Tab 3: Consulter — recipe options for lookup panel ───────────────────
-    $recipeStmt    = $pdo->query("SELECT id, name FROM ref_recipes WHERE is_active = 1 ORDER BY name");
+    $recipeStmt    = $pdo->query("SELECT id, name, classification FROM ref_recipes WHERE is_active = 1 ORDER BY name");
     $recipeOptions = $recipeStmt->fetchAll(PDO::FETCH_ASSOC);
 
 } catch (Throwable $e) {
@@ -686,14 +686,26 @@ try {
     $kpiActiveYear = $currentYear;
 }
 
+require_once __DIR__ . '/../../app/user-prefs.php';
+$skuClassFilterValue = isset($pdo) ? user_pref_get($pdo, (int) $me['id'], 'sku_class_filter', 'Neb') : 'Neb';
 $lookupConfig = [
-    'panel_id'         => 'brewing-lookup',
-    'api_endpoint'     => '/api/brewing-lookup.php',
-    'mode_batch_label' => 'Par recette + lot',
-    'type'             => 'brewing',
-    'batch_fields'     => [
-        ['name' => 'recipe_id', 'label' => 'Recette', 'type' => 'select', 'options' => $recipeOptions, 'value_col' => 'id', 'label_col' => 'name'],
-        ['name' => 'batch',     'label' => 'Lot',      'type' => 'text'],
+    'panel_id'          => 'brewing-lookup',
+    'api_endpoint'      => '/api/brewing-lookup.php',
+    'mode_batch_label'  => 'Par recette + lot',
+    'type'              => 'brewing',
+    'show_class_filter' => true,
+    'batch_fields'      => [
+        [
+            'name'       => 'recipe_id',
+            'label'      => 'Recette',
+            'type'       => 'select',
+            'options'    => $recipeOptions,
+            'value_col'  => 'id',
+            'label_col'  => 'name',
+            'class_col'  => 'classification',
+            'filterable' => true,
+        ],
+        ['name' => 'batch', 'label' => 'Lot', 'type' => 'text'],
     ],
 ];
 
@@ -710,6 +722,7 @@ $_breweryId = brewery_identity();
   <link rel="stylesheet" href="/css/app.css?v=<?= @filemtime(__DIR__ . '/../css/app.css') ?: time() ?>">
   <link rel="stylesheet" href="/css/wort-kpis.css?v=<?= @filemtime(__DIR__ . '/../css/wort-kpis.css') ?: time() ?>">
   <link rel="stylesheet" href="/css/lookup-panel.css?v=<?= @filemtime(__DIR__ . '/../css/lookup-panel.css') ?: time() ?>">
+  <link rel="stylesheet" href="/css/sku-class-filter.css?v=<?= @filemtime(__DIR__ . '/../css/sku-class-filter.css') ?: time() ?>">
 </head>
 <body class="home wort">
 
@@ -1219,6 +1232,7 @@ window.WORT_KPIS = <?= json_encode($kpiPayload, JSON_UNESCAPED_UNICODE | JSON_HE
 </script>
 <script defer src="/js/kpi-charts.js?v=<?= @filemtime(__DIR__ . '/../js/kpi-charts.js') ?: time() ?>"></script>
 <script defer src="/js/wort-kpis.js?v=<?= @filemtime(__DIR__ . '/../js/wort-kpis.js') ?: time() ?>"></script>
+<script defer src="/js/sku-class-filter.js?v=<?= @filemtime(__DIR__ . '/../js/sku-class-filter.js') ?: time() ?>"></script>
 <script defer src="/js/lookup-panel.js?v=<?= @filemtime(__DIR__ . '/../js/lookup-panel.js') ?: time() ?>"></script>
 
 </body>

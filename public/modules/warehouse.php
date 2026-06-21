@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require __DIR__ . "/../../app/auth.php";
+require_once __DIR__ . '/../../app/user-prefs.php';
 require_page_access('warehouse');
 $me = current_user();
 $active_module = "warehouse";
@@ -492,6 +493,9 @@ try {
         }
         $fgPeriod = (in_array($period, $fgPeriods, true)) ? $period : $fgPeriods[0];
 
+        // Per-user SKU classification filter preference
+        $skuClassFilterValue = user_pref_get($pdo, (int) $me['id'], 'sku_class_filter', 'Neb');
+
         // ── Step 3a — fetch FG counts joined to ref_skus + ref_recipes ────────
         $fgSt = $pdo->prepare("
             SELECT fg.sku                    AS sku_code,
@@ -502,7 +506,8 @@ try {
                    ANY_VALUE(s.format)       AS format,
                    ANY_VALUE(s.unit_label)   AS unit_label,
                    ANY_VALUE(s.hl_per_unit)  AS hl_per_unit,
-                   ANY_VALUE(r.name)         AS canonical_beer
+                   ANY_VALUE(r.name)         AS canonical_beer,
+                   COALESCE(ANY_VALUE(r.classification), 'Neb') AS classification
               FROM inv_fg_stocktake fg
               LEFT JOIN ref_skus    s ON s.sku_code = fg.sku
               LEFT JOIN ref_recipes r ON r.id = s.recipe_id
@@ -711,6 +716,7 @@ try {
 
                 $fgRows[] = [
                     'sku_code'           => (string) $r['sku_code'],
+                    'classification'     => (string) ($r['classification'] ?? 'Neb'),
                     'beer'               => $beer,
                     'format'             => (string) ($r['format']     ?? '—'),
                     'unit_label'         => (string) ($r['unit_label'] ?? '—'),
@@ -1172,6 +1178,7 @@ try {
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/app.css?v=<?= @filemtime(__DIR__ . '/../css/app.css') ?: time() ?>">
+  <link rel="stylesheet" href="/css/sku-class-filter.css?v=<?= @filemtime(__DIR__ . '/../css/sku-class-filter.css') ?: time() ?>">
 </head>
 <body class="home">
 
@@ -1219,6 +1226,8 @@ try {
   <?php if ($view === 'fg'): ?>
 
     <!-- ── FG VIEW ──────────────────────────────────────────────────────── -->
+
+    <?php require __DIR__ . '/partials/sku-class-filter.php'; ?>
 
     <!-- Period selector -->
     <form class="wh-wip-date" method="get" action="">
@@ -1296,7 +1305,8 @@ try {
                     $fr['cost_source_month'] !== (new DateTime($fgPeriod . '-01'))->modify('-1 month')->format('Y-m')
                   );
                 ?>
-                <tr class="<?= $fr['no_cost_basis'] ? 'wh-fg-row--no-cost-basis' : '' ?>">
+                <tr class="<?= $fr['no_cost_basis'] ? 'wh-fg-row--no-cost-basis' : '' ?>"
+                    data-sku-class="<?= htmlspecialchars($fr['classification'] ?? 'Neb', ENT_QUOTES | ENT_HTML5) ?>">
                   <td class="wort-td"><span class="wort-mono"><?= htmlspecialchars($fr['sku_code']) ?></span></td>
                   <td class="wort-td"><?= htmlspecialchars($fr['beer']) ?></td>
                   <td class="wort-td"><?= htmlspecialchars($fr['format']) ?></td>
@@ -1368,6 +1378,8 @@ try {
           </table>
         </div>
       </section>
+
+    <script defer src="/js/sku-class-filter.js?v=<?= @filemtime(__DIR__ . '/../js/sku-class-filter.js') ?: time() ?>"></script>
 
     <?php endif ?>
 

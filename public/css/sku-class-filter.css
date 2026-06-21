@@ -1,0 +1,93 @@
+/**
+ * sku-class-filter.css — Segmented Neb/Contract SKU filter control.
+ * Dark aged-oak theme; scoped under body.home.
+ */
+
+body.home .skuf {
+  display:     flex;
+  align-items: center;
+  gap:         0.75rem;
+  margin-bottom: 1rem;
+}
+
+body.home .skuf-label {
+  font-family:    'DM Sans', sans-serif;
+  font-size:      0.78rem;
+  font-weight:    500;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color:          var(--ink-label);
+  white-space:    nowrap;
+}
+
+body.home .skuf-seg {
+  display:     inline-flex;
+  align-items: stretch;
+  border:      1px solid var(--hairline-2);
+  border-radius: 5px;
+  overflow:    hidden;
+}
+
+body.home .skuf-btn {
+  padding:      0 0.85rem;
+  min-height:   32px;
+  background:   var(--bg-elev);
+  color:        var(--ink-mute);
+  border:       none;
+  border-right: 1px solid var(--hairline-2);
+  font:         inherit;
+  font-family:  'DM Sans', sans-serif;
+  font-size:    0.82rem;
+  font-weight:  400;
+  cursor:       pointer;
+  touch-action: manipulation;
+  transition:   background 120ms ease, color 120ms ease;
+  white-space:  nowrap;
+}
+
+body.home .skuf-btn:last-child {
+  border-right: none;
+}
+
+body.home .skuf-btn:hover {
+  background: var(--surface-3);
+  color:      var(--ink);
+}
+
+body.home .skuf-btn:focus-visible {
+  outline:        2px solid var(--hop);
+  outline-offset: -2px;
+  position:       relative;
+  z-index:        1;
+}
+
+body.home .skuf-btn.skuf-btn-active {
+  background:  var(--oak);
+  color:       var(--bg);
+  font-weight: 600;
+}
+
+body.home .skuf-btn.skuf-btn-active:hover {
+  background: var(--oak-deep);
+  color:      var(--bg);
+}
+
+.skuf-hidden {
+  display: none !important;
+}
+
+@media (max-width: 640px) {
+  body.home .skuf {
+    flex-direction: column;
+    align-items:    flex-start;
+    gap:            0.4rem;
+  }
+  body.home .skuf-seg {
+    width: 100%;
+  }
+  body.home .skuf-btn {
+    flex:       1;
+    padding:    0 0.5rem;
+    text-align: center;
+  }
+}

@@ -15,6 +15,8 @@ require_once __DIR__ . "/../../app/svg-tanks.php";
 require_once __DIR__ . "/../../app/packaging-stats.php";
 require_once __DIR__ . "/../../app/cip-cadence.php";
 require_once __DIR__ . "/../../app/yeast-eligibility.php";
+require_once __DIR__ . "/../../app/sku_catalog.php";
+require_once __DIR__ . "/../../app/user-prefs.php";
 
 // --- Date helpers (FR locale) ---
 $monthsFR = [
@@ -333,6 +335,7 @@ $fmtLabels = ['Keg' => 'Fût', 'Bot' => 'Bouteille', 'Can' => 'Canette', 'Cuve d
   <link rel="stylesheet" href="/css/app.css?v=<?= @filemtime(__DIR__ . '/../css/app.css') ?: time() ?>">
   <link rel="stylesheet" href="/css/bbt-detail-modal.css?v=<?= @filemtime(__DIR__ . '/../css/bbt-detail-modal.css') ?: time() ?>">
   <link rel="stylesheet" href="/css/lookup-panel.css?v=<?= @filemtime(__DIR__ . '/../css/lookup-panel.css') ?: time() ?>">
+  <link rel="stylesheet" href="/css/sku-class-filter.css?v=<?= @filemtime(__DIR__ . '/../css/sku-class-filter.css') ?: time() ?>">
 </head>
 <body class="home">
 
@@ -343,16 +346,28 @@ $fmtLabels = ['Keg' => 'Fût', 'Bot' => 'Bouteille', 'Can' => 'Canette', 'Cuve d
 <main id="main-content" class="main tanks-main">
 
 <?php
-$skuStmt = maltytask_pdo()->query("SELECT id, sku_code, COALESCE(unit_label,'') AS unit_label FROM ref_skus WHERE is_active=1 ORDER BY sku_code");
-$skuOptions = $skuStmt->fetchAll(PDO::FETCH_ASSOC);
+// Lookup SKU options — built separately from $skuOptions used by the saisie dropdown.
+// Do NOT change the saisie dropdown; this catalog is for the lookup panel only.
+$lookupSkuOptions    = isset($pdo) ? sku_catalog($pdo, ['active_only' => true, 'order_by' => 'sku_code']) : [];
+$skuClassFilterValue = isset($pdo) ? user_pref_get($pdo, (int) $me['id'], 'sku_class_filter', 'Neb') : 'Neb';
 $lookupConfig = [
-    'panel_id'         => 'packaging-lookup',
-    'api_endpoint'     => '/api/packaging-lookup.php',
-    'mode_batch_label' => 'Par SKU + lot',
-    'type'             => 'packaging',
-    'batch_fields'     => [
-        ['name' => 'sku_id', 'label' => 'SKU',  'type' => 'select', 'options' => $skuOptions, 'value_col' => 'id', 'label_col' => 'sku_code'],
-        ['name' => 'batch',  'label' => 'Lot',   'type' => 'text'],
+    'panel_id'          => 'packaging-lookup',
+    'api_endpoint'      => '/api/packaging-lookup.php',
+    'mode_batch_label'  => 'Par SKU + lot',
+    'type'              => 'packaging',
+    'show_class_filter' => true,
+    'batch_fields'      => [
+        [
+            'name'       => 'sku_id',
+            'label'      => 'SKU',
+            'type'       => 'select',
+            'options'    => $lookupSkuOptions,
+            'value_col'  => 'id',
+            'label_col'  => 'sku_code',
+            'class_col'  => 'classification',
+            'filterable' => true,
+        ],
+        ['name' => 'batch', 'label' => 'Lot', 'type' => 'text'],
     ],
 ];
 ?>
@@ -735,6 +750,7 @@ window.PKG_STATS = <?= json_encode([
 </script>
 <script defer src="/js/packaging.js?v=<?= @filemtime(__DIR__ . '/../js/packaging.js') ?: time() ?>"></script>
 <script defer src="/js/bbt-detail-modal.js?v=<?= @filemtime(__DIR__ . '/../js/bbt-detail-modal.js') ?: time() ?>"></script>
+<script defer src="/js/sku-class-filter.js?v=<?= @filemtime(__DIR__ . '/../js/sku-class-filter.js') ?: time() ?>"></script>
 <script defer src="/js/lookup-panel.js?v=<?= @filemtime(__DIR__ . '/../js/lookup-panel.js') ?: time() ?>"></script>
 
 </body>

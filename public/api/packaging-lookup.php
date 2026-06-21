@@ -85,6 +85,7 @@ try {
               p.prod_total_units,
               p.reuses_packaging_id_fk,
               r.name AS recipe_name,
+              COALESCE(r.classification, 'Neb') AS classification,
               v.vendable_units,
               v.vendable_hl,
               v.beer_tax_base_hl,
