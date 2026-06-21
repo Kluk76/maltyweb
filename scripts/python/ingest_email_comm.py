@@ -4,8 +4,15 @@ ingest_email_comm.py — Gmail comm inbox → comm_threads / comm_messages / com
 
 Reads inbound and outbound emails from the comm Gmail inbox (e.g. info@lanebuleuse.ch),
 applies a privacy filter (drops internal-only and bulk/newsletter messages), resolves
-counterparty identity via comm_address_pins, threads by Gmail threadId, and persists
-raw messages (with any attachments) to the comm_* tables.
+counterparty identity via comm_address_pins + ref_entity_email_domains, threads by Gmail
+threadId, and persists raw messages (with any attachments) to the comm_* tables.
+
+GATE POLICY (since 2026-06-21):
+  Inbound messages are stored ONLY when the counterparty resolves to a registered entity
+  in comm_address_pins or ref_entity_email_domains.  Unresolved inbound messages are
+  DROPPED without storage; their domain is upserted into comm_unknown_domain_seen for
+  operator review.  Outbound (sent) messages are ALWAYS stored — operator replies belong
+  to threads we already own.
 
 DISARM CONVENTION:
   --dry-run is the DEFAULT.  Prints a plan, writes nothing.
@@ -23,6 +30,9 @@ Usage:
 
   # Override query:
   python3 scripts/python/ingest_email_comm.py --query "is:unread after:2026/01/01"
+
+  # Cap backfill rows per run (default 25):
+  python3 scripts/python/ingest_email_comm.py --max-backfill 5
 """
 
 from __future__ import annotations
@@ -49,10 +59,11 @@ import pymysql  # noqa: E402 — after sys.path fix
 from pymysql.cursors import DictCursor
 
 from lib_config import load as load_config  # noqa: E402
+from comm_domains import domain_of  # noqa: E402
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
-SCRIPT_VERSION = "1.0.0"
+SCRIPT_VERSION = "2.0.0"
 ACTOR = "email-comm-ingest"
 _COMM_ENV_PATH = Path("/var/www/maltytask/config/gmail-comm.env")
 INTERNAL_DOMAIN = "lanebuleuse.ch"
@@ -93,15 +104,11 @@ def _load_comm_env(path: Path) -> dict[str, str]:
     return cfg
 
 
-# ── Gmail API fetcher (lazy import) ───────────────────────────────────────────
+# ── Gmail API service builder + stub fetcher ──────────────────────────────────
 
-def _fetch_gmail_message_stubs(
-    gmail_cfg: dict[str, str],
-    limit: int,
-) -> tuple[Any, list[dict[str, Any]]]:
+def _build_gmail_service(gmail_cfg: dict[str, str]) -> Any:
     """
-    Fetch message stubs (id + threadId) from Gmail with pagination.
-    Returns (service, stubs_list).
+    Authenticate and return a Gmail API service object.
     google-api-python-client is imported lazily.
     """
     try:
@@ -115,14 +122,19 @@ def _fetch_gmail_message_stubs(
 
     delegated_user = gmail_cfg["GMAIL_COMM_DELEGATED_USER"]
     sa_keyfile = gmail_cfg["GMAIL_SA_KEYFILE"]
-    query = gmail_cfg.get("GMAIL_COMM_QUERY", "is:unread label:inbox")
 
     scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
     creds = service_account.Credentials.from_service_account_file(
         sa_keyfile, scopes=scopes, subject=delegated_user
     )
-    service = build("gmail", "v1", credentials=creds, cache_discovery=False)
+    return build("gmail", "v1", credentials=creds, cache_discovery=False)
 
+
+def _list_gmail_stubs(service: Any, query: str, limit: int) -> list[dict[str, Any]]:
+    """
+    Fetch message stubs (id + threadId) from an already-authenticated Gmail
+    service with pagination.  Returns stubs_list.
+    """
     stubs: list[dict[str, Any]] = []
     page_token: str | None = None
 
@@ -147,6 +159,22 @@ def _fetch_gmail_message_stubs(
         stubs = stubs[:limit]
         log.info("--limit %d applied: will fetch details for %d message(s).", limit, len(stubs))
 
+    return stubs
+
+
+def _fetch_gmail_message_stubs(
+    gmail_cfg: dict[str, str],
+    limit: int,
+    query_override: str | None = None,
+) -> tuple[Any, list[dict[str, Any]]]:
+    """
+    Build Gmail service and fetch message stubs.
+    Returns (service, stubs_list).
+    Kept for backward-compatible call sites.
+    """
+    service = _build_gmail_service(gmail_cfg)
+    query = query_override or gmail_cfg.get("GMAIL_COMM_QUERY", "is:unread label:inbox")
+    stubs = _list_gmail_stubs(service, query, limit)
     return service, stubs
 
 
@@ -332,57 +360,199 @@ def _clean_subject(subject: str) -> str:
     return cleaned
 
 
-# ── Entity resolution via comm_address_pins ───────────────────────────────────
+# ── Registry cache ─────────────────────────────────────────────────────────────
 
-def _resolve_entity(
+# Per-run in-memory cache for ref_entity_email_domains and comm_address_pins lookups.
+# Key: (match_type, match_value) → (supplier_id, customer_id, is_shared)
+# Populated lazily on first query; avoids repeated DB round-trips for the same
+# domain/address across many messages in one run.
+_registry_cache: dict[tuple[str, str], tuple[int | None, int | None, bool]] | None = None
+# Key: email → (supplier_id, customer_id)
+_pins_cache: dict[str, tuple[int | None, int | None]] | None = None
+
+
+def _load_registry_cache(cur: Any) -> None:
+    """Bulk-load ref_entity_email_domains into _registry_cache (once per run)."""
+    global _registry_cache
+    if _registry_cache is not None:
+        return
+    _registry_cache = {}
+    try:
+        cur.execute(
+            """
+            SELECT match_type, match_value, supplier_id_fk, customer_id_fk, is_shared
+              FROM ref_entity_email_domains
+             WHERE is_active = 1
+            """
+        )
+        rows = cur.fetchall()
+        for row in rows:
+            key = (row["match_type"], row["match_value"].lower())
+            sup_id = int(row["supplier_id_fk"]) if row["supplier_id_fk"] else None
+            cust_id = int(row["customer_id_fk"]) if row["customer_id_fk"] else None
+            shared = bool(row["is_shared"])
+            _registry_cache[key] = (sup_id, cust_id, shared)
+        log.info("Registry cache loaded: %d ref_entity_email_domains rows.", len(rows))
+    except Exception as exc:
+        log.warning("Could not load registry cache: %s — will fall back to per-query lookups", exc)
+        _registry_cache = {}  # empty but not None — don't retry
+
+
+def _load_pins_cache(cur: Any) -> None:
+    """Bulk-load comm_address_pins into _pins_cache (once per run)."""
+    global _pins_cache
+    if _pins_cache is not None:
+        return
+    _pins_cache = {}
+    try:
+        cur.execute(
+            "SELECT email, supplier_id_fk, customer_id_fk FROM comm_address_pins"
+        )
+        rows = cur.fetchall()
+        for row in rows:
+            email = row["email"].lower()
+            sup_id = int(row["supplier_id_fk"]) if row["supplier_id_fk"] else None
+            cust_id = int(row["customer_id_fk"]) if row["customer_id_fk"] else None
+            _pins_cache[email] = (sup_id, cust_id)
+        log.info("Pins cache loaded: %d comm_address_pins rows.", len(rows))
+    except Exception as exc:
+        log.warning("Could not load pins cache: %s", exc)
+        _pins_cache = {}
+
+
+# ── Counterparty resolution ────────────────────────────────────────────────────
+
+def resolve_counterparty(
     conn: pymysql.connections.Connection,
+    email: str,
+) -> tuple[int | None, int | None, str]:
+    """
+    Resolve an external email address against the entity registry.
+
+    Precedence (most-specific first, all comparisons lowercase):
+      (a) exact comm_address_pins.email  → AUTO-LINK, match_kind='pin'
+      (b) ref_entity_email_domains WHERE match_type='address' AND match_value=email
+                                    AND is_active=1             → match_kind='address'
+      (c) ref_entity_email_domains WHERE match_type='domain'  AND match_value=domain
+                                    AND is_active=1             → match_kind='domain'
+      (d) no match                                              → match_kind='none'
+          (returns supplier_id=None, customer_id=None)
+
+    is_shared=1 rows: still return the FK (the CHECK constraint guarantees exactly
+    one party is set), but match_kind is suffixed with '+shared' so callers can
+    flag these for review without blocking storage.
+
+    Returns (supplier_id, customer_id, match_kind).
+    """
+    email_lc = email.lower().strip()
+    dom = domain_of(email_lc)
+
+    with conn.cursor(DictCursor) as cur:
+        _load_registry_cache(cur)
+        _load_pins_cache(cur)
+
+    # (a) Address pin — most specific
+    if _pins_cache is not None and email_lc in _pins_cache:
+        sup_id, cust_id = _pins_cache[email_lc]
+        if sup_id or cust_id:
+            return sup_id, cust_id, "pin"
+
+    # (b) Registry: match_type='address', exact email
+    if _registry_cache is not None:
+        key_addr = ("address", email_lc)
+        if key_addr in _registry_cache:
+            sup_id, cust_id, shared = _registry_cache[key_addr]
+            kind = "address+shared" if shared else "address"
+            return sup_id, cust_id, kind
+
+        # (c) Registry: match_type='domain', bare domain
+        if dom:
+            key_dom = ("domain", dom)
+            if key_dom in _registry_cache:
+                sup_id, cust_id, shared = _registry_cache[key_dom]
+                kind = "domain+shared" if shared else "domain"
+                return sup_id, cust_id, kind
+
+    # (d) No match
+    return None, None, "none"
+
+
+# ── Unknown-domain drop logger ─────────────────────────────────────────────────
+
+def _log_unknown_domain(
+    conn: pymysql.connections.Connection,
+    email: str,
+    apply_mode: bool,
+    dry_run_domain_counts: dict[str, dict[str, Any]] | None = None,
+) -> None:
+    """
+    Upsert into comm_unknown_domain_seen for a dropped inbound message.
+    In dry-run mode, accumulates counts in dry_run_domain_counts instead of writing.
+    """
+    dom = domain_of(email)
+    if not dom:
+        dom = "_no_domain"
+
+    if not apply_mode:
+        # Accumulate for summary report
+        if dry_run_domain_counts is not None:
+            if dom not in dry_run_domain_counts:
+                dry_run_domain_counts[dom] = {"count": 0, "sample": email}
+            dry_run_domain_counts[dom]["count"] += 1
+        return
+
+    try:
+        with conn.cursor() as c:
+            c.execute(
+                """
+                INSERT INTO comm_unknown_domain_seen
+                    (domain, sample_address, first_seen_at, last_seen_at, hit_count)
+                VALUES (%s, %s, NOW(), NOW(), 1)
+                ON DUPLICATE KEY UPDATE
+                    hit_count = hit_count + 1,
+                    last_seen_at = NOW(),
+                    sample_address = COALESCE(sample_address, VALUES(sample_address))
+                """,
+                (dom, email),
+            )
+        conn.commit()
+    except Exception as exc:
+        log.warning("comm_unknown_domain_seen upsert failed for domain=%r: %s", dom, exc)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+
+# ── Entity resolution via comm_address_pins (legacy helper, kept for outbound) ─
+
+def _get_counterparty_address(
     headers: list[dict[str, str]],
     direction: str,
-) -> tuple[int | None, int | None, str | None]:
+) -> str | None:
     """
-    Resolve counterparty identity via comm_address_pins.
-    Returns (resolved_supplier_id, resolved_customer_id, primary_email).
-    No domain-based fallback, no fuzzy matching — only exact pin lookup.
+    Extract the primary external counterparty email from message headers.
+    Inbound  → external From address.
+    Outbound → first external To address.
+    Returns None if no external address found.
     """
-    all_addresses = _extract_all_addresses(headers)
-    external = [a for a in all_addresses if not _is_internal(a)]
-
-    if not external:
-        return None, None, None
-
-    # Primary counterparty: first external in From (if inbound), first in To (if outbound)
     if direction == "in":
         from_raw = _get_header(headers, "From")
         _, from_email = parseaddr(from_raw)
         from_email_lower = from_email.lower().strip()
-        primary = from_email_lower if (from_email_lower and not _is_internal(from_email_lower)) else (external[0] if external else None)
+        if from_email_lower and not _is_internal(from_email_lower):
+            return from_email_lower
+        # Fallback: first external in all addresses
+        all_ext = [a for a in _extract_all_addresses(headers) if not _is_internal(a)]
+        return all_ext[0] if all_ext else None
     else:
         to_raw = _get_header(headers, "To")
         to_addrs = [addr.lower().strip() for _, addr in getaddresses([to_raw]) if addr.strip()]
         to_external = [a for a in to_addrs if not _is_internal(a)]
-        primary = to_external[0] if to_external else (external[0] if external else None)
-
-    if not primary:
-        return None, None, None
-
-    try:
-        with conn.cursor(DictCursor) as c:
-            c.execute(
-                "SELECT supplier_id_fk, customer_id_fk FROM comm_address_pins WHERE email = %s LIMIT 1",
-                (primary,),
-            )
-            row = c.fetchone()
-        if row:
-            sup_id = row["supplier_id_fk"] if row["supplier_id_fk"] else None
-            cust_id = row["customer_id_fk"] if row["customer_id_fk"] else None
-            if sup_id:
-                return int(sup_id), None, primary
-            if cust_id:
-                return None, int(cust_id), primary
-    except Exception as exc:
-        log.warning("comm_address_pins lookup failed for %r: %s", primary, exc)
-
-    return None, None, primary
+        if to_external:
+            return to_external[0]
+        all_ext = [a for a in _extract_all_addresses(headers) if not _is_internal(a)]
+        return all_ext[0] if all_ext else None
 
 
 # ── Thread management ──────────────────────────────────────────────────────────
@@ -563,10 +733,16 @@ def _process_message(
     conn: pymysql.connections.Connection | None,
     apply_mode: bool,
     counts: dict[str, int],
+    dry_run_domain_counts: dict[str, dict[str, Any]] | None = None,
+    seen_message_ids: set[str] | None = None,
 ) -> None:
     """
     Process one Gmail message through the full pipeline.
     Mutates `counts` in place.
+
+    seen_message_ids: set of message_ids already processed this run (both
+    stored and dropped) — used to avoid double-counting drops when the same
+    message appears in multiple query result sets (e.g. backfill + incremental).
     """
     # Fetch full message
     try:
@@ -595,7 +771,8 @@ def _process_message(
 
     sent_at = _parse_sent_at(date_raw)
 
-    # Privacy filter
+    # ── GATE 1: Privacy filter (AHEAD of everything — bulk/internal dropped without
+    #            touching registry or unknown-domain log) ─────────────────────────
     decision, drop_reason = _privacy_check(headers)
     if decision == "drop":
         if drop_reason == "internal":
@@ -609,27 +786,54 @@ def _process_message(
     # Direction
     direction = _detect_direction(headers)
 
-    # Dedup check (DB read, allowed in dry-run)
+    # ── GATE 2: Dedup check against already-seen in this run + DB ───────────────
+    # Track in-run set to avoid double-processing across backfill + incremental.
+    if seen_message_ids is not None:
+        if message_id in seen_message_ids:
+            counts["already_seen"] += 1
+            log.debug("SKIP (already seen this run): %s", message_id)
+            return
+        seen_message_ids.add(message_id)
+
     if conn is not None:
         if _already_seen(conn, message_id):
             counts["already_seen"] += 1
-            log.debug("SKIP (already seen): %s", message_id)
+            log.debug("SKIP (already seen in DB): %s", message_id)
             return
 
-    # Entity resolution (DB read)
+    # ── GATE 3: Entity registry gate (inbound only) ───────────────────────────
+    # Outbound 'out' messages are ALWAYS stored — operator replies belong to
+    # threads we already own; do not gate them on the registry.
+    counterparty_email = _get_counterparty_address(headers, direction)
+
     resolved_supplier_id: int | None = None
     resolved_customer_id: int | None = None
-    primary_email: str | None = None
-    if conn is not None:
-        resolved_supplier_id, resolved_customer_id, primary_email = _resolve_entity(
-            conn, headers, direction
+    match_kind = "none"
+
+    if conn is not None and counterparty_email:
+        resolved_supplier_id, resolved_customer_id, match_kind = resolve_counterparty(
+            conn, counterparty_email
         )
 
+    if direction == "in" and match_kind == "none":
+        # DROP UNSTORED: inbound from unregistered domain
+        counts["dropped_unregistered"] += 1
+        log.debug(
+            "DROP (unregistered): %s / from=%s / domain=%s",
+            message_id, counterparty_email or "?", domain_of(counterparty_email or ""),
+        )
+        # Log domain (dry-run: accumulate counts; apply: upsert DB)
+        if counterparty_email and conn is not None:
+            _log_unknown_domain(conn, counterparty_email, apply_mode, dry_run_domain_counts)
+        return
+
+    # Determine resolved label for logging
     if resolved_supplier_id:
         resolved_label = "supplier"
     elif resolved_customer_id:
         resolved_label = "customer"
     else:
+        # Outbound with no counterparty match: keep but flag as review
         resolved_label = "review"
 
     # Parse body + attachments
@@ -651,8 +855,8 @@ def _process_message(
 
     if not apply_mode:
         log.info(
-            "[dry-run] Would INSERT comm_messages: message_id=%s direction=%s resolved=%s",
-            message_id, direction, resolved_label,
+            "[dry-run] Would INSERT comm_messages: message_id=%s direction=%s resolved=%s match_kind=%s",
+            message_id, direction, resolved_label, match_kind,
         )
         counts["new_to_insert"] += 1
         if resolved_supplier_id:
@@ -661,6 +865,9 @@ def _process_message(
             counts["resolved_customer"] += 1
         else:
             counts["review_bucket"] += 1
+        # Track by match_kind
+        mk_bucket = match_kind.split("+")[0]  # strip +shared suffix for bucketing
+        counts[f"match_{mk_bucket}"] = counts.get(f"match_{mk_bucket}", 0) + 1
         counts["attachments"] += len(attachments)
         return
 
@@ -738,11 +945,13 @@ def _process_message(
             counts["resolved_customer"] += 1
         else:
             counts["review_bucket"] += 1
+        mk_bucket = match_kind.split("+")[0]
+        counts[f"match_{mk_bucket}"] = counts.get(f"match_{mk_bucket}", 0) + 1
         counts["attachments"] += att_count
 
         log.info(
-            "INSERT comm_messages.id=%d message_id=%s direction=%s resolved=%s thread=%d att=%d",
-            comm_message_db_id, message_id, direction, resolved_label, thread_db_id, att_count,
+            "INSERT comm_messages.id=%d message_id=%s direction=%s resolved=%s match_kind=%s thread=%d att=%d",
+            comm_message_db_id, message_id, direction, resolved_label, match_kind, thread_db_id, att_count,
         )
 
     except Exception as exc:
@@ -754,38 +963,190 @@ def _process_message(
         counts["error"] += 1
 
 
+# ── Backfill pass ──────────────────────────────────────────────────────────────
+
+def _run_backfill_pass(
+    service: Any,
+    conn: pymysql.connections.Connection,
+    apply_mode: bool,
+    max_backfill: int,
+    counts: dict[str, int],
+    dry_run_domain_counts: dict[str, dict[str, Any]] | None,
+    seen_message_ids: set[str],
+) -> int:
+    """
+    Retroactive backfill: for each ref_entity_email_domains row with is_active=1
+    and backfilled_at IS NULL, run a wide Gmail query scoped to that entity and
+    feed results through the standard message-processing path (same dedup,
+    same resolve→store, same attachment handling).
+
+    On success for each row (apply mode), sets backfilled_at=NOW().
+    Returns count of registry rows that still need backfill after this pass.
+    """
+    try:
+        with conn.cursor(DictCursor) as c:
+            c.execute(
+                """
+                SELECT id, match_type, match_value, supplier_id_fk, customer_id_fk
+                  FROM ref_entity_email_domains
+                 WHERE is_active = 1 AND backfilled_at IS NULL
+                 ORDER BY id
+                """
+            )
+            pending_rows = c.fetchall()
+    except Exception as exc:
+        log.warning("Backfill: could not query ref_entity_email_domains: %s", exc)
+        return 0
+
+    total_pending = len(pending_rows)
+    log.info(
+        "Backfill: %d registry row(s) pending (backfilled_at IS NULL); will process up to %d this run.",
+        total_pending, max_backfill,
+    )
+
+    rows_to_process = pending_rows[:max_backfill]
+    remaining_after = total_pending - len(rows_to_process)
+
+    for reg_row in rows_to_process:
+        reg_id = reg_row["id"]
+        match_type = reg_row["match_type"]
+        match_value = reg_row["match_value"].lower()
+
+        # Build Gmail query
+        if match_type == "domain":
+            gmail_query = f"(from:{match_value} OR to:{match_value}) newer_than:2y"
+        else:
+            # match_type = 'address'
+            gmail_query = f"(from:{match_value} OR to:{match_value}) newer_than:2y"
+
+        log.info(
+            "Backfill [id=%d, %s=%r]: querying Gmail with %r",
+            reg_id, match_type, match_value, gmail_query,
+        )
+
+        try:
+            bf_stubs = _list_gmail_stubs(service, gmail_query, limit=0)
+        except Exception as exc:
+            log.warning(
+                "Backfill [id=%d]: Gmail query failed: %s — skipping row (will retry next run)",
+                reg_id, exc,
+            )
+            continue
+
+        log.info(
+            "Backfill [id=%d]: %d message stub(s) found — processing …",
+            reg_id, len(bf_stubs),
+        )
+
+        row_ok = True
+        for stub in bf_stubs:
+            gmail_msg_id = stub["id"]
+            gmail_thread_id = stub.get("threadId", gmail_msg_id)
+            try:
+                _process_message(
+                    service=service,
+                    gmail_msg_id=gmail_msg_id,
+                    gmail_thread_id=gmail_thread_id,
+                    conn=conn,
+                    apply_mode=apply_mode,
+                    counts=counts,
+                    dry_run_domain_counts=dry_run_domain_counts,
+                    seen_message_ids=seen_message_ids,
+                )
+            except Exception as exc:
+                log.warning(
+                    "Backfill [id=%d]: message %s failed: %s — row will retry next run",
+                    reg_id, gmail_msg_id, exc,
+                )
+                row_ok = False
+                break
+
+        if row_ok and apply_mode:
+            try:
+                with conn.cursor() as c:
+                    c.execute(
+                        "UPDATE ref_entity_email_domains SET backfilled_at = NOW() WHERE id = %s",
+                        (reg_id,),
+                    )
+                conn.commit()
+                log.info("Backfill [id=%d]: backfilled_at set.", reg_id)
+            except Exception as exc:
+                log.warning("Backfill [id=%d]: could not set backfilled_at: %s", reg_id, exc)
+
+        if row_ok and not apply_mode:
+            log.info("[dry-run] Backfill [id=%d]: would set backfilled_at (not writing).", reg_id)
+
+    return remaining_after
+
+
 # ── Dry-run summary ────────────────────────────────────────────────────────────
 
-def _print_dry_run_summary(fetched: int, counts: dict[str, int]) -> None:
+def _print_dry_run_summary(
+    fetched: int,
+    counts: dict[str, int],
+    dry_run_domain_counts: dict[str, dict[str, Any]],
+    backfill_remaining: int,
+) -> None:
     dropped_total = counts["dropped_internal"] + counts["dropped_bulk"]
     print()
-    print("--- DRY RUN SUMMARY (no writes) ---")
-    print(f"Fetched:           {fetched} messages")
-    print(f"Already seen:       {counts['already_seen']} (would skip)")
-    print(f"Dropped (privacy): {dropped_total} (internal/bulk)")
-    print(f"New to insert:     {counts['new_to_insert']}")
-    print(f"  → Resolved (supplier):  {counts['resolved_supplier']}")
-    print(f"  → Resolved (customer):   {counts['resolved_customer']}")
-    print(f"  → Review bucket:        {counts['review_bucket']}")
-    print(f"  Attachments:            {counts['attachments']}")
-    print("---")
+    print("─" * 60)
+    print("DRY RUN SUMMARY (no writes)")
+    print("─" * 60)
+    print(f"Fetched (incl. backfill):  {fetched}")
+    print(f"Already seen:              {counts['already_seen']} (would skip)")
+    print(f"Dropped (privacy):         {dropped_total}")
+    print(f"  → internal-only:           {counts['dropped_internal']}")
+    print(f"  → bulk/newsletter:         {counts['dropped_bulk']}")
+    print(f"Dropped (unregistered):    {counts['dropped_unregistered']}")
+    print(f"Would store:               {counts['new_to_insert']}")
+    print(f"  → match_kind=pin:          {counts.get('match_pin', 0)}")
+    print(f"  → match_kind=address:      {counts.get('match_address', 0)}")
+    print(f"  → match_kind=domain:       {counts.get('match_domain', 0)}")
+    print(f"  → outbound (review):       {counts['review_bucket']}")
+    print(f"  → resolved (supplier):     {counts['resolved_supplier']}")
+    print(f"  → resolved (customer):     {counts['resolved_customer']}")
+    print(f"  Attachments:               {counts['attachments']}")
+    print(f"Backfill rows remaining:   {backfill_remaining} (would set backfilled_at=NOW() on success)")
+    if dry_run_domain_counts:
+        print()
+        print("Unknown domains (would log to comm_unknown_domain_seen):")
+        sorted_domains = sorted(
+            dry_run_domain_counts.items(),
+            key=lambda kv: kv[1]["count"],
+            reverse=True,
+        )
+        for dom, info in sorted_domains[:20]:
+            print(f"  {dom:<40}  hits={info['count']}  sample={info['sample']}")
+        if len(sorted_domains) > 20:
+            print(f"  … and {len(sorted_domains) - 20} more domains")
+    else:
+        print("Unknown domains (would log): (none)")
+    print("─" * 60)
     print()
 
 
 def _print_apply_summary(fetched: int, counts: dict[str, int]) -> None:
     dropped_total = counts["dropped_internal"] + counts["dropped_bulk"]
     print()
-    print("--- APPLY SUMMARY ---")
-    print(f"Fetched:           {fetched} messages")
-    print(f"Already seen:       {counts['already_seen']} (skipped)")
-    print(f"Dropped (privacy): {dropped_total} (internal/bulk)")
-    print(f"Inserted:          {counts['inserted']}")
-    print(f"  → Resolved (supplier):  {counts['resolved_supplier']}")
-    print(f"  → Resolved (customer):   {counts['resolved_customer']}")
-    print(f"  → Review bucket:        {counts['review_bucket']}")
-    print(f"  Attachments:            {counts['attachments']}")
-    print(f"Errors:            {counts['error']}")
-    print("---")
+    print("─" * 60)
+    print("APPLY SUMMARY")
+    print("─" * 60)
+    print(f"Fetched (incl. backfill):  {fetched}")
+    print(f"Already seen:              {counts['already_seen']} (skipped)")
+    print(f"Dropped (privacy):         {dropped_total}")
+    print(f"  → internal-only:           {counts['dropped_internal']}")
+    print(f"  → bulk/newsletter:         {counts['dropped_bulk']}")
+    print(f"Dropped (unregistered):    {counts['dropped_unregistered']}")
+    print(f"Inserted:                  {counts['inserted']}")
+    print(f"  → match_kind=pin:          {counts.get('match_pin', 0)}")
+    print(f"  → match_kind=address:      {counts.get('match_address', 0)}")
+    print(f"  → match_kind=domain:       {counts.get('match_domain', 0)}")
+    print(f"  → outbound (review):       {counts['review_bucket']}")
+    print(f"  → resolved (supplier):     {counts['resolved_supplier']}")
+    print(f"  → resolved (customer):     {counts['resolved_customer']}")
+    print(f"  Attachments:              {counts['attachments']}")
+    print(f"Errors:                    {counts['error']}")
+    print("─" * 60)
     print()
 
 
@@ -796,6 +1157,10 @@ def main() -> None:
         description=(
             "Gmail comm inbox → comm_threads / comm_messages / comm_message_docs.\n"
             "Dry-run by default — use --apply to write to the database.\n"
+            "\n"
+            "Gate policy: inbound messages are stored ONLY when the counterparty\n"
+            "resolves to a registered entity (comm_address_pins or\n"
+            "ref_entity_email_domains).  Outbound messages are always stored.\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -805,11 +1170,15 @@ def main() -> None:
     )
     parser.add_argument(
         "--limit", type=int, default=0,
-        help="Process at most N messages (0 = unlimited, default 0).",
+        help="Process at most N messages per Gmail query (0 = unlimited, default 0).",
     )
     parser.add_argument(
         "--query", default=None, metavar="Q",
-        help="Override GMAIL_COMM_QUERY from env.",
+        help="Override GMAIL_COMM_QUERY from env (applies to incremental pull only).",
+    )
+    parser.add_argument(
+        "--max-backfill", type=int, default=25, metavar="N",
+        help="Max ref_entity_email_domains rows to backfill per run (default 25).",
     )
     parser.add_argument(
         "--debug", action="store_true",
@@ -822,6 +1191,7 @@ def main() -> None:
 
     apply_mode = args.apply
     limit = args.limit
+    max_backfill = args.max_backfill
     mode_label = "** APPLY **" if apply_mode else "DRY-RUN"
 
     print(f"\nEmail Comm Ingest — v{SCRIPT_VERSION}")
@@ -858,10 +1228,31 @@ def main() -> None:
         log.warning("DB connection failed (%s) — dedup and entity resolution unavailable.", exc)
         conn = None
 
-    # ── [3] Fetch Gmail message stubs ─────────────────────────────────────────
-    log.info("[3] Fetching Gmail message stubs (query=%r) …", comm_cfg.get("GMAIL_COMM_QUERY"))
+    # Shared across backfill + incremental to avoid double-processing
+    seen_message_ids: set[str] = set()
+
+    counts: dict[str, int] = {
+        "dropped_internal": 0,
+        "dropped_bulk": 0,
+        "dropped_unregistered": 0,
+        "already_seen": 0,
+        "new_to_insert": 0,       # dry-run
+        "inserted": 0,             # apply
+        "resolved_supplier": 0,
+        "resolved_customer": 0,
+        "review_bucket": 0,
+        "attachments": 0,
+        "error": 0,
+    }
+
+    # Per-run dry-run domain accumulator
+    dry_run_domain_counts: dict[str, dict[str, Any]] = {}
+
+    # ── [3] Authenticate Gmail service (needed by both backfill + incremental) ─
+    log.info("[3] Authenticating Gmail service …")
     try:
-        service, stubs = _fetch_gmail_message_stubs(comm_cfg, limit)
+        service = _build_gmail_service(comm_cfg)
+        log.info("[3] Gmail service authenticated.")
     except RuntimeError as exc:
         print(f"\nERROR: {exc}\n", file=sys.stderr)
         sys.exit(1)
@@ -882,52 +1273,72 @@ def main() -> None:
             sys.exit(2)
         raise
 
-    fetched_count = len(stubs)
-    log.info("[3] Will process %d message(s).", fetched_count)
+    # ── [4] Backfill pass ─────────────────────────────────────────────────────
+    backfill_remaining = 0
+    if conn is not None and max_backfill > 0:
+        log.info("[4] Running backfill pass (max_backfill=%d) …", max_backfill)
+        backfill_remaining = _run_backfill_pass(
+            service=service,
+            conn=conn,
+            apply_mode=apply_mode,
+            max_backfill=max_backfill,
+            counts=counts,
+            dry_run_domain_counts=dry_run_domain_counts if not apply_mode else None,
+            seen_message_ids=seen_message_ids,
+        )
+        log.info("[4] Backfill pass complete. Rows remaining after this tick: %d", backfill_remaining)
+    else:
+        log.info("[4] Backfill skipped (max_backfill=0 or no DB).")
 
-    if fetched_count == 0:
-        log.info("No messages to process — exiting.")
-        if conn is not None:
-            conn.close()
-        return
-
-    # ── [4] Process each message ───────────────────────────────────────────────
-    log.info("[4] Processing %d message(s) …", fetched_count)
-
-    counts: dict[str, int] = {
-        "dropped_internal": 0,
-        "dropped_bulk": 0,
-        "already_seen": 0,
-        "new_to_insert": 0,       # dry-run
-        "inserted": 0,             # apply
-        "resolved_supplier": 0,
-        "resolved_customer": 0,
-        "review_bucket": 0,
-        "attachments": 0,
-        "error": 0,
-    }
-
+    # ── [5] Incremental pull ───────────────────────────────────────────────────
+    incremental_query = args.query or comm_cfg.get("GMAIL_COMM_QUERY", "is:unread label:inbox")
+    log.info("[5] Fetching incremental Gmail message stubs (query=%r) …", incremental_query)
     try:
-        for stub in stubs:
-            gmail_msg_id = stub["id"]
-            gmail_thread_id = stub.get("threadId", gmail_msg_id)
-            _process_message(
-                service=service,
-                gmail_msg_id=gmail_msg_id,
-                gmail_thread_id=gmail_thread_id,
-                conn=conn,
-                apply_mode=apply_mode,
-                counts=counts,
-            )
-    finally:
+        stubs = _list_gmail_stubs(service, incremental_query, limit)
+    except RuntimeError as exc:
+        print(f"\nERROR: {exc}\n", file=sys.stderr)
+        if conn is not None:
+            conn.close()
+        sys.exit(1)
+
+    fetched_count = len(stubs)
+    log.info("[5] Will process %d incremental message(s).", fetched_count)
+
+    # ── [6] Process incremental messages ──────────────────────────────────────
+    if fetched_count > 0:
+        log.info("[6] Processing %d incremental message(s) …", fetched_count)
+        try:
+            for stub in stubs:
+                gmail_msg_id = stub["id"]
+                gmail_thread_id = stub.get("threadId", gmail_msg_id)
+                _process_message(
+                    service=service,
+                    gmail_msg_id=gmail_msg_id,
+                    gmail_thread_id=gmail_thread_id,
+                    conn=conn,
+                    apply_mode=apply_mode,
+                    counts=counts,
+                    dry_run_domain_counts=dry_run_domain_counts if not apply_mode else None,
+                    seen_message_ids=seen_message_ids,
+                )
+        finally:
+            if conn is not None:
+                conn.close()
+    else:
+        log.info("[6] No incremental messages to process.")
         if conn is not None:
             conn.close()
 
-    # ── [5] Summary ────────────────────────────────────────────────────────────
+    # ── [7] Summary ────────────────────────────────────────────────────────────
     if apply_mode:
         _print_apply_summary(fetched_count, counts)
     else:
-        _print_dry_run_summary(fetched_count, counts)
+        _print_dry_run_summary(
+            fetched_count,
+            counts,
+            dry_run_domain_counts,
+            backfill_remaining,
+        )
 
 
 if __name__ == "__main__":
