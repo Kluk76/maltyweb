@@ -60,6 +60,7 @@ if TYPE_CHECKING:
 
 from .attachment_pdf import BevanarPdfParser
 from .attachment_xlsx import MigrosFroidevilleXlsxParser
+from .cobra import CobraBodyParser
 from .generic_vocab import GenericVocabParser  # always last
 
 # ── Registry ──────────────────────────────────────────────────────────────────
@@ -67,6 +68,7 @@ from .generic_vocab import GenericVocabParser  # always last
 # generic_vocab is intentionally LAST — per-sender parsers go before it.
 # NEVER add ExampleTemplateSenderParser here — it is a template, not a real parser.
 REGISTRY: list[SenderParser] = [
+    CobraBodyParser(),              # Cobra Traders SA body-format orders
     BevanarPdfParser(),             # Bevanar/CDDS supplier order PDFs
     MigrosFroidevilleXlsxParser(),  # Migros / MP Froideville XLSX orders
     GenericVocabParser(),           # layer-2 universal fallback — always last
