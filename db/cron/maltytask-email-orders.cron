@@ -1,0 +1,46 @@
+# /etc/cron.d/maltytask-email-orders
+#
+# Email-order connector → doc_email_messages (Model B, hints only).
+# Polls the production@/commandes@lanebuleuse.ch mailbox (Gmail API, domain-wide
+# delegation), classifies each message through the per-sender parser registry
+# (scripts/python/email_parsers/), and writes parse_status + parsed_json. It does
+# NOT create ord_orders — promotion to an order is an operator action at the
+# "Commandes e-mail" review page. See docs/email-orders-rollout-runbook.md.
+#
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │  DISABLED — DO NOT ENABLE WITHOUT KOUROS.                                 │
+# │  The schedule line below is commented out ON PURPOSE.                     │
+# │  Enabling it turns ON the new auto-ingest methodology: inbound emails     │
+# │  start landing in the operator review queue automatically. While the      │
+# │  current methodology stands (logistics create orders in BC, maltytask     │
+# │  retrieves), this MUST stay off. Enable only as the final step of the     │
+# │  rollout, after the operator UI smoke + the arm decision.                 │
+# └─────────────────────────────────────────────────────────────────────────┘
+#
+# ENABLE AT ROLLOUT (see runbook step 5):
+#   1. Uncomment the schedule line below.
+#   2. Preflight log:
+#        sudo touch /var/log/maltytask/email-orders.log
+#        sudo chown maltytask:www-data /var/log/maltytask/email-orders.log
+#   3. Deploy this file to /etc/cron.d/ (sudo install -m 0644), or via bin/deploy.sh --apply.
+#
+# Gmail credentials: /var/www/maltytask/config/gmail.env (delegated user production@).
+# DB credentials:    /var/www/maltytask/config/db.env (mode 640, group www-data).
+# --apply writes ONLY to the maltytask DB (doc_email_messages); never to BSF.
+# NOTE: --apply (no --force) skips already-seen message_ids, so it processes only
+#       NEW mail going forward. The 5 pre-existing no_match orders are flipped once
+#       manually with --force at rollout (runbook step 1), not by this cron.
+#
+# Log: /var/log/maltytask/email-orders.log
+# Source of truth: db/cron/maltytask-email-orders.cron in the maltyweb repo.
+# Frequency (when enabled): every 5 minutes, flock single-flight guarded.
+# Rationale: email orders arrive far less often than the */1 BC-orders poll; 5 min
+#   is ample for a human picker. flock -n: a still-running tick blocks the next (no pileup).
+# Times UTC (VPS Etc/UTC). Python at /usr/bin/python3 (absolute — cron PATH is minimal).
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# m   h    dom mon dow  user        command
+# --- DISABLED: uncomment the next line at rollout to enable auto-ingest ---
+#*/5   *    *   *   *   maltytask   flock -n /tmp/maltytask-email-orders.lock -c 'cd /var/www/maltytask && /usr/bin/python3 scripts/python/ingest_email_orders.py --apply' >> /var/log/maltytask/email-orders.log 2>&1
