@@ -83,7 +83,32 @@ Context: capture/inbox/reply LIVE; 180-day backfill done = **2660 msgs / 1151 th
 - Discussion-module access = manager+/admin CAPABILITY FLAG (Ruling A — `can_use_comm_tracker($me)`, not a ref_pages row).
 - Customer side: `ref_customers` already has `email` + `bc_customer_no` → cheap exact-match identity (Ruling D).
 
-## §REGISTRY + CONNECTOR-RESCOPE + 2-PHASE-PURGE BUILD SPEC — PM-RULED 2026-06-21 (authoritative; NOT BUILT). Trigger "ref_entity_email_domains"/"registry table"/"connector rescope"/"comm_unknown_domain_seen"/"two-phase purge"/"seed comm registry"/"purge_status".
+## §AS-BUILT — SEED (Piece 5) + CONNECTOR RE-SCOPE/BACKFILL (Pieces 2+3) SHIPPED+COMMITTED 2026-06-21. Pieces 1/4 (mig 429 LIVE) + purge + access-flag + unknown-domain UI STILL OPEN. Trigger "seed comm registry"/"comm_domains"/"CONSUMER_DOMAINS"/"backfilled_at"/"2y retro-pull"/"unknown domain log".
+
+**✅ SEED (Piece 5) — SHIPPED, committed (seed SCRIPTS only; CSV deliberately NOT committed — operator email PII, lives on VPS).**
+- `scripts/python/seed_comm_registry.py` + `scripts/python/comm_domains.py` (shared `CONSUMER_DOMAINS` frozenset + `domain_of()`, imported by BOTH seed AND connector — the "call the canonical list, never inline-copy twice" rule HELD).
+- Applied to MySQL: **107 comm_address_pins + 151 validated ref_entity_email_domains rows** (107 address + 44 domain) + **35 bc-vendor rows** (19 address + 16 domain). Source = the 118 operator-validated addrs from the email-supplier-match sheet.
+- Resolution: id+name verify → exact-name fallback → FLAG (never guess). Operator confirmed 2 edge cases: Soufflet `souffletmalt.com`→161, Rieder `riedersystems.ch`→402.
+- **11 flagged = BC-only senders, DEFERRED per Ruling B (NOT minted into ref_suppliers):** La Poste FOURN-000095, Galliker 000862, Anton Paar 000461, Seroc 000881, MG Transports 000970, Eight Degree 001012, GFH Hopfenforschung 001157, + Gschaider/Gonser unmatched. Their mail drops to `comm_unknown_domain_seen`, recoverable via Piece-3 backfill once triaged with a gl_account.
+- 🔴 **1 data-hygiene FLAG (future merge candidate): `stretchfolienprofi.de` maps to supplier 168 (validated) vs 72 (BC) — likely DUPLICATE supplier record.** Seeder kept validated (168), skipped BC (72). Worth a supplier-merge.
+
+**✅ CONNECTOR RE-SCOPE + BACKFILL (Pieces 2+3) — SHIPPED, committed `2b10508` (+534/-123).** `ingest_email_comm.py` **v2.0.0**.
+- Inbound stored ONLY if counterparty resolves pin→address→domain (registry); unregistered inbound DROPPED UNSTORED + domain upserted to `comm_unknown_domain_seen` (counts only, no body/attachment). Privacy filter (internal/bulk) STAYS AHEAD of registry gate. Outbound 'sent' NEVER gated (review bucket if counterparty unknown).
+- Per-domain backfill (Piece 3): registry rows `backfilled_at IS NULL` → wide `(from:/to: domain) newer_than:2y` → idempotent store → set `backfilled_at`; bounded by `--max-backfill` (default 25).
+
+**🔴🔴 LIVE-CUTOVER STATE — TEMPORARY HISTORY-DEPTH INCONSISTENCY (reversible, operator decision pending):** the cron `maltytask-email-comm` (every 15min `--apply`, **IS ENABLED**) fired the new connector right after deploy and **auto-backfilled 25 registry rows to 2y (+~1055 messages of real pin-resolved supplier history)** before the session PAUSED the mass-backfill by setting `backfilled_at=NOW()` on the remaining **161 rows** — to keep cutover at the original 6-month scope. So **25 suppliers have 2y history, the rest 6mo.** The backfill FEATURE stays intact for FUTURE individual domain promotions (exactly what the operator asked for). **Reversible: NULL `backfilled_at` to extend any domain (or all) to 2y.** Awaiting operator decision: retro-pull 2y for ALL suppliers?
+
+**comm_* TABLE COUNTS post-backfill: comm_threads 1645 / comm_messages ~3716** (was 1152 / 2661).
+
+**Unknown-domain log working — 14 domains logged first run.** Mostly genuine noise (vd.ch/renens.ch/unil.ch gov+uni, maltytask.ch system). 🔴 **BUT 3 high-hit candidates NOT in ref_suppliers — possible unregistered suppliers for operator triage** (via the still-to-build unknown-domain admin surface): `dalumequipment.com` (23 hits), `henriot.fr` (13), `unitronics.io` (12).
+
+**STILL OPEN in this arc (post-seed/connector):**
+1. Two-phase purge (Piece 4) of the original ~1152 pre-rescope review-bucket threads — 3-way classify: keep supplier / migrate client / delete noise.
+2. Unknown-domain admin surface (+ui) — surfaces `comm_unknown_domain_seen` for one-click triage (the dalum/henriot/unitronics candidates land here).
+3. Manager+/admin capability gate `can_use_comm_tracker($me)` (Ruling A).
+4. Operator decisions PENDING: (a) 2y-retro-all? (b) promote the 3 high-hit domains? (c) merge stretchfolienprofi 72/168?
+
+## §REGISTRY + CONNECTOR-RESCOPE + 2-PHASE-PURGE BUILD SPEC — PM-RULED 2026-06-21 (authoritative; Pieces 1/2/3/5 NOW BUILT, see §AS-BUILT above; Piece 4 + access-flag + unknown-domain UI still open). Trigger "ref_entity_email_domains"/"registry table"/"connector rescope"/"comm_unknown_domain_seen"/"two-phase purge"/"seed comm registry"/"purge_status".
 **LIVE FACTS verified 2026-06-21 (the spec hinges on these):** MIG HEAD applied=**427**; `428_retire_brewing_lookup_page.sql` sits in repo UNAPPLIED (parallel session) → use **429** for this slice (re-`--status` at build-start regardless). Registry + unknown-log tables ABSENT (greenfield). Backfill = **1152 threads / 2661 msgs / 4974 docs / 0 pins**, all review-bucket. `ref_suppliers`: 136 rows, 130 bc_vendor_no, **only 21 emails** (BC email sparse → SHEET is primary registry source, NOT BC). `ref_customers`: 3064 rows, 1284 emails, 2692 bc_customer_no. `comm_threads_chk_one_party` PERMITS both-NULL (review bucket — DO NOT TOUCH); `comm_pins_chk_one_party` FORBIDS both-NULL; `comm_address_pins.email` = UNIQUE NK varchar(320) lowercase. `comm_messages.source` ENUM already `('gmail','manual','sent')`; messages table has NO status col. schema_meta col = `table_class` (not classification); ref_suppliers already two-writer policy=allowed.
 
 **PIECE 1 — Mig 429 `429_comm_entity_registry.sql`:**
