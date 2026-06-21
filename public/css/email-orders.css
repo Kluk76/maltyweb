@@ -501,3 +501,104 @@ body.email-orders-page .eo-original-sender {
   color: var(--ink-label);
   margin-top: 0.15rem;
 }
+
+/* ── BC dedup interstitial ────────────────────────────────────────────────── */
+
+body.email-orders-page .eo-bc-interstitial {
+  border: 1px solid var(--amber-border, #fbbf24);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 1rem;
+}
+
+body.email-orders-page .eo-bc-interstitial--warn {
+  border-color: var(--red-border, #fca5a5);
+}
+
+body.email-orders-page .eo-bc-interstitial__banner {
+  padding: 0.75rem 1rem;
+  background: var(--amber-tint, #fffbeb);
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.875rem;
+  color: var(--amber-ink, #92400e);
+  border-bottom: 1px solid var(--amber-border, #fbbf24);
+}
+
+body.email-orders-page .eo-bc-interstitial__banner--warn {
+  background: var(--red-tint, #fef2f2);
+  color: var(--red-ink, #991b1b);
+  border-bottom-color: var(--red-border, #fca5a5);
+}
+
+body.email-orders-page .eo-bc-interstitial__actions {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  background: var(--surface, #fff);
+  flex-wrap: wrap;
+}
+
+body.email-orders-page .eo-btn-archive {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.875rem;
+  font-weight: 600;
+  padding: 0.5rem 1.1rem;
+  border-radius: 6px;
+  border: 1px solid var(--green-border, #7dd3a8);
+  background: var(--green-tint, #edfaf3);
+  color: var(--green-ink, #155c34);
+  cursor: pointer;
+}
+
+body.email-orders-page .eo-btn-archive:hover {
+  background: var(--green-border, #7dd3a8);
+  color: var(--surface, #fff);
+}
+
+body.email-orders-page .eo-btn-force-create {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.875rem;
+  font-weight: 500;
+  padding: 0.5rem 1.1rem;
+  border-radius: 6px;
+  border: 1px solid var(--border, #d1d5db);
+  background: var(--surface, #fff);
+  color: var(--ink-mute);
+  cursor: pointer;
+}
+
+body.email-orders-page .eo-btn-force-create:hover {
+  background: var(--surface-2, #f9fafb);
+  color: var(--ink);
+}
+
+/* ── Reconciled badge in done bucket ─────────────────────────────────────── */
+
+body.email-orders-page .eo-done-item__status-badge {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.68rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+body.email-orders-page .eo-done-item__status-badge--reconciled {
+  background: var(--surface-2, #f3f4f6);
+  border: 1px solid var(--border, #e5e7eb);
+  color: var(--ink-label, #8a7250);
+}
+
+body.email-orders-page .eo-done-item__status-badge--created {
+  background: var(--green-tint, #edfaf3);
+  border: 1px solid var(--green-border, #7dd3a8);
+  color: var(--green-ink, #155c34);
+}
+
+/* ── Flash warn variant ───────────────────────────────────────────────────── */
+
+body.email-orders-page .eo-flash--warn {
+  background: var(--amber-tint, #fffbeb);
+  border: 1px solid var(--amber-border, #fbbf24);
+  color: var(--amber-ink, #92400e);
+}

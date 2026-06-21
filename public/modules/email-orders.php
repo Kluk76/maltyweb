@@ -80,8 +80,67 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $canWrite) {
         redirect_to('/modules/email-orders.php');
     }
 
+    $action     = trim((string) ($_POST['action'] ?? 'validate'));
+    if (!in_array($action, ['archive', 'validate', 'force_create'], true)) {
+        flash_set('err', 'Action non reconnue.');
+        redirect_to('/modules/email-orders.php');
+    }
+    $emailMsgId = (int) ($_POST['email_msg_id'] ?? 0);
+
+    // ── Archive handler (no line validation needed) ───────────────────────────
+    if ($action === 'archive') {
+        if ($emailMsgId <= 0) {
+            flash_set('err', 'Identifiant de message invalide.');
+            redirect_to('/modules/email-orders.php');
+        }
+        $bcId = (int) ($_POST['bc_id'] ?? 0);
+        $pdo->beginTransaction();
+        try {
+            $stmt = $pdo->prepare('SELECT id, parse_status, bc_matched_order_id FROM doc_email_messages WHERE id = ? FOR UPDATE');
+            $stmt->execute([$emailMsgId]);
+            $archRow = $stmt->fetch(PDO::FETCH_ASSOC);
+            if (!$archRow) {
+                $pdo->rollBack();
+                flash_set('err', 'Message introuvable.');
+                redirect_to('/modules/email-orders.php');
+            }
+            if (in_array($archRow['parse_status'], ['order_created', 'reconciled'], true)) {
+                $pdo->rollBack();
+                flash_set('ok', 'Message déjà traité.');
+                redirect_to('/modules/email-orders.php');
+            }
+            $beforeState = ['parse_status' => $archRow['parse_status'], 'bc_matched_order_id' => $archRow['bc_matched_order_id']];
+            $bcIdToStore = null;
+            if ($bcId > 0) {
+                $bcChk = $pdo->prepare("SELECT id FROM ord_orders WHERE id = ? AND source = 'bc' LIMIT 1");
+                $bcChk->execute([$bcId]);
+                if (!$bcChk->fetchColumn()) {
+                    $pdo->rollBack();
+                    flash_set('err', "Commande BC #{$bcId} introuvable — rapprochement annulé.");
+                    redirect_to('/modules/email-orders.php');
+                }
+                $bcIdToStore = $bcId;
+            }
+            $updStmt = $pdo->prepare("UPDATE doc_email_messages SET parse_status = 'reconciled', bc_matched_order_id = ? WHERE id = ?");
+            $updStmt->execute([$bcIdToStore, $emailMsgId]);
+            log_revision($pdo, $me, 'doc_email_messages', $emailMsgId,
+                $beforeState,
+                ['parse_status' => 'reconciled', 'bc_matched_order_id' => $bcIdToStore],
+                'normal'
+            );
+            $pdo->commit();
+            $label = $bcId > 0 ? "Commande rapprochée avec BC #{$bcId}." : "Commande archivée sans correspondance BC.";
+            flash_set('ok', $label);
+            redirect_to('/modules/email-orders.php');
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            error_log('[email-orders archive] ' . $e->getMessage());
+            flash_set('err', 'Erreur : ' . pdo_friendly_error($e));
+            redirect_to('/modules/email-orders.php');
+        }
+    }
+
     // ── 2. Coerce inputs ──────────────────────────────────────────────────────
-    $emailMsgId  = (int) ($_POST['email_msg_id'] ?? 0);
     $custIdRaw   = (int) ($_POST['customer_id']  ?? 0);
     $reqDate     = trim((string) ($_POST['requested_date'] ?? ''));
     $lineSkuIds  = $_POST['line_sku_id'] ?? [];
@@ -135,7 +194,86 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $canWrite) {
         redirect_to('/modules/email-orders.php');
     }
 
-    // ── 4. Delegate to the canonical helper ──────────────────────────────────
+    // ── 4. BC dedup gate (action=validate only) + promote ────────────────────
+    if ($action === 'validate') {
+        // Shell out to bc_order_match.py --match-one
+        $pythonBin     = '/var/www/maltytask/.venv/bin/python';
+        $matcherScript = '/var/www/maltytask/scripts/python/bc_order_match.py';
+        $cmd = sprintf(
+            '%s %s --match-one --email-id %d --customer-id %d 2>/dev/null',
+            escapeshellcmd($pythonBin),
+            escapeshellarg($matcherScript),
+            $emailMsgId,
+            $custIdRaw
+        );
+        $matchJson     = null;
+        $matchExitCode = -1;
+        $descriptors   = [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+        $proc = proc_open($cmd, $descriptors, $pipes);
+        if (is_resource($proc)) {
+            fclose($pipes[0]);
+            // Non-blocking reads so a silent/hung subprocess can't block past the
+            // deadline (fail-closed: a hang must fall through to "indisponible").
+            stream_set_blocking($pipes[1], false);
+            stream_set_blocking($pipes[2], false);
+            $stdout   = '';
+            $deadline = microtime(true) + 20;
+            $timedOut = false;
+            while (true) {
+                if (microtime(true) >= $deadline) { $timedOut = true; break; }
+                $chunk = fread($pipes[1], 8192);
+                if ($chunk !== false && $chunk !== '') {
+                    $stdout .= $chunk;
+                    continue;
+                }
+                $st = proc_get_status($proc);
+                if (!$st['running'] && feof($pipes[1])) break;
+                usleep(50000); // 50ms
+            }
+            fclose($pipes[1]);
+            fclose($pipes[2]);
+            if ($timedOut) {
+                proc_terminate($proc, 9);
+                proc_close($proc);
+                $matchExitCode = -1; // forces the fail-closed branch below
+            } else {
+                $matchExitCode = proc_close($proc);
+                if ($matchExitCode === 0) {
+                    $matchJson = json_decode($stdout, true);
+                }
+            }
+        }
+
+        if ($matchJson !== null && ($matchJson['status'] ?? '') === 'matched') {
+            maltytask_session_start();
+            $_SESSION['eo_bc_interstitial_' . $emailMsgId] = [
+                'bc_id'           => (int) ($matchJson['bc_id'] ?? 0),
+                'external_doc_no' => (string) ($matchJson['bc_order']['external_document_no'] ?? ''),
+                'order_date'      => (string) ($matchJson['bc_order']['order_date'] ?? ''),
+                'total'           => $matchJson['bc_order']['total'] ?? null,
+                'customer_id'     => $custIdRaw,
+                'requested_date'  => $reqDate,
+                'line_sku_ids'    => $lineSkuIds,
+                'line_qtys'       => $lineQtys,
+            ];
+            flash_set('warn', 'Correspondance BC détectée — confirme l\'action ci-dessous.');
+            redirect_to('/modules/email-orders.php');
+        } elseif ($matchJson === null || $matchExitCode !== 0) {
+            maltytask_session_start();
+            $_SESSION['eo_bc_check_failed_' . $emailMsgId] = [
+                'customer_id'    => $custIdRaw,
+                'requested_date' => $reqDate,
+                'line_sku_ids'   => $lineSkuIds,
+                'line_qtys'      => $lineQtys,
+            ];
+            flash_set('warn', 'Vérification BC indisponible — décision manuelle requise.');
+            redirect_to('/modules/email-orders.php');
+        }
+        // status=unmatched → fall through to email_order_promote below
+    }
+    // action=force_create also falls through here
+
+    // ── 5. Delegate to the canonical helper ──────────────────────────────────
     // email_order_promote() owns: FOR UPDATE row-locking, source_ref idempotency,
     // dup-key(1062/uniq_ord_source_ref) translation, the correct Shopify-pickup
     // twin-check (customer_email + SKU overlap + ±7d), and all ord_orders writes.
@@ -202,12 +340,27 @@ $twinPendingEmailId = isset($_SESSION['eo_twin_pending_id'])
 // the affordance disappears naturally. The session key is re-set on each twin hit.
 unset($_SESSION['eo_twin_pending_id']);
 
+// Pop BC interstitial / check-failed states
+$bcInterstitialStates = [];
+$bcCheckFailedStates  = [];
+foreach ($_SESSION as $key => $val) {
+    if (str_starts_with($key, 'eo_bc_interstitial_')) {
+        $id = (int) substr($key, strlen('eo_bc_interstitial_'));
+        $bcInterstitialStates[$id] = $val;
+        unset($_SESSION[$key]);
+    } elseif (str_starts_with($key, 'eo_bc_check_failed_')) {
+        $id = (int) substr($key, strlen('eo_bc_check_failed_'));
+        $bcCheckFailedStates[$id] = $val;
+        unset($_SESSION[$key]);
+    }
+}
+
 // ── Load data for GET render ───────────────────────────────────────────────────
 
 // Fetch all email messages grouped by parse_status, newest first
 $allEmailsStmt = $pdo->query(
     "SELECT id, message_id, from_address, original_sender, subject, received_at,
-            raw_body, parse_status, parse_error, parsed_json,
+            raw_body, parse_status, parse_error, bc_matched_order_id, parsed_json,
             created_at, updated_at
        FROM doc_email_messages
       ORDER BY created_at DESC"
@@ -230,7 +383,7 @@ foreach ($allEmails as $em) {
         $parsedEmails[] = $em;
     } elseif (in_array($status, ['no_match', 'error', 'unparsed'], true)) {
         $unparsedEmails[] = $em;
-    } elseif ($status === 'order_created') {
+    } elseif (in_array($status, ['order_created', 'reconciled'], true)) {
         $doneEmails[] = $em;
     }
 }
@@ -341,6 +494,10 @@ $flashMsg  = $flash['msg'] ?? '';
           }
         ?>
         <?php $isTwinPending = ($twinPendingEmailId > 0 && (int)$em['id'] === $twinPendingEmailId); ?>
+        <?php
+        $bcInterstitial = $bcInterstitialStates[(int)$em['id']] ?? null;
+        $bcCheckFailed  = $bcCheckFailedStates[(int)$em['id']] ?? null;
+        ?>
         <div class="eo-review-card<?= $isTwinPending ? ' eo-review-card--twin-pending' : '' ?>"
              id="eo-card-<?= (int)$em['id'] ?>"
              <?= $isTwinPending ? 'data-twin-pending="1"' : '' ?>>
@@ -376,6 +533,75 @@ $flashMsg  = $flash['msg'] ?? '';
                 <p style="font-family:'DM Sans',sans-serif;font-size:.85rem;color:var(--ink-mute);">
                   Lecture seule — vous n'avez pas les droits pour valider.
                 </p>
+              <?php elseif ($bcInterstitial !== null): ?>
+                <?php
+                  $bcDocNo    = htmlspecialchars($bcInterstitial['external_doc_no'] ?? '', ENT_QUOTES | ENT_HTML5);
+                  $bcDate     = htmlspecialchars($bcInterstitial['order_date'] ?? '', ENT_QUOTES | ENT_HTML5);
+                  $bcTotal    = $bcInterstitial['total'];
+                  $intBcId    = (int) ($bcInterstitial['bc_id'] ?? 0);
+                  $intCustId  = (int) ($bcInterstitial['customer_id'] ?? 0);
+                  $intReqDate = htmlspecialchars($bcInterstitial['requested_date'] ?? '', ENT_QUOTES | ENT_HTML5);
+                  $intSkuIds  = $bcInterstitial['line_sku_ids'] ?? [];
+                  $intQtys    = $bcInterstitial['line_qtys'] ?? [];
+                ?>
+                <div class="eo-bc-interstitial">
+                  <div class="eo-bc-interstitial__banner">
+                    Cette commande ressemble à la commande BC #<?= $intBcId ?>
+                    <?php if ($bcDate): ?> (<?= $bcDate ?>)<?php endif ?>
+                    <?php if ($bcTotal !== null): ?> — <?= htmlspecialchars((string)$bcTotal, ENT_QUOTES | ENT_HTML5) ?> CHF<?php endif ?>
+                    — déjà saisie&nbsp;?
+                  </div>
+                  <form method="POST" action="/modules/email-orders.php">
+                    <input type="hidden" name="csrf"         value="<?= htmlspecialchars(csrf_token(), ENT_QUOTES | ENT_HTML5) ?>">
+                    <input type="hidden" name="email_msg_id" value="<?= (int)$em['id'] ?>">
+                    <input type="hidden" name="customer_id"  value="<?= $intCustId ?>">
+                    <input type="hidden" name="bc_id"        value="<?= $intBcId ?>">
+                    <input type="hidden" name="requested_date" value="<?= $intReqDate ?>">
+                    <?php foreach ($intSkuIds as $idx => $skuId): ?>
+                      <input type="hidden" name="line_sku_id[]" value="<?= (int)$skuId ?>">
+                      <input type="hidden" name="line_qty[]"    value="<?= htmlspecialchars((string)($intQtys[$idx] ?? 0), ENT_QUOTES | ENT_HTML5) ?>">
+                    <?php endforeach ?>
+                    <div class="eo-bc-interstitial__actions">
+                      <button type="submit" name="action" value="archive" class="eo-btn-archive">
+                        Archiver — déjà dans BC&nbsp;#<?= $intBcId ?>
+                      </button>
+                      <button type="submit" name="action" value="force_create" class="eo-btn-force-create">
+                        Créer quand même
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              <?php elseif ($bcCheckFailed !== null): ?>
+                <?php
+                  $fcCustId  = (int) ($bcCheckFailed['customer_id'] ?? 0);
+                  $fcReqDate = htmlspecialchars($bcCheckFailed['requested_date'] ?? '', ENT_QUOTES | ENT_HTML5);
+                  $fcSkuIds  = $bcCheckFailed['line_sku_ids'] ?? [];
+                  $fcQtys    = $bcCheckFailed['line_qtys'] ?? [];
+                ?>
+                <div class="eo-bc-interstitial eo-bc-interstitial--warn">
+                  <div class="eo-bc-interstitial__banner eo-bc-interstitial__banner--warn">
+                    Vérification BC indisponible — décision manuelle requise
+                  </div>
+                  <form method="POST" action="/modules/email-orders.php">
+                    <input type="hidden" name="csrf"         value="<?= htmlspecialchars(csrf_token(), ENT_QUOTES | ENT_HTML5) ?>">
+                    <input type="hidden" name="email_msg_id" value="<?= (int)$em['id'] ?>">
+                    <input type="hidden" name="customer_id"  value="<?= $fcCustId ?>">
+                    <input type="hidden" name="bc_id"        value="0">
+                    <input type="hidden" name="requested_date" value="<?= $fcReqDate ?>">
+                    <?php foreach ($fcSkuIds as $idx => $skuId): ?>
+                      <input type="hidden" name="line_sku_id[]" value="<?= (int)$skuId ?>">
+                      <input type="hidden" name="line_qty[]"    value="<?= htmlspecialchars((string)($fcQtys[$idx] ?? 0), ENT_QUOTES | ENT_HTML5) ?>">
+                    <?php endforeach ?>
+                    <div class="eo-bc-interstitial__actions">
+                      <button type="submit" name="action" value="archive" class="eo-btn-archive">
+                        Archiver (sans correspondance BC)
+                      </button>
+                      <button type="submit" name="action" value="force_create" class="eo-btn-force-create">
+                        Créer quand même
+                      </button>
+                    </div>
+                  </form>
+                </div>
               <?php else: ?>
               <form method="POST" action="/modules/email-orders.php">
                 <input type="hidden" name="csrf"         value="<?= htmlspecialchars(csrf_token(), ENT_QUOTES | ENT_HTML5) ?>">
@@ -565,9 +791,22 @@ $flashMsg  = $flash['msg'] ?? '';
             $origSender = htmlspecialchars($em['original_sender'] ?? '', ENT_QUOTES | ENT_HTML5);
             $subject    = htmlspecialchars($em['subject'] ?? '(sans objet)', ENT_QUOTES | ENT_HTML5);
             $updAt      = htmlspecialchars($em['updated_at'] ?? '', ENT_QUOTES | ENT_HTML5);
+            $statusLabel = '';
+            $statusClass = '';
+            if (($em['parse_status'] ?? '') === 'reconciled') {
+                $bcRef = $em['bc_matched_order_id'] ? ' #' . (int)$em['bc_matched_order_id'] : '';
+                $statusLabel = 'Rapproché BC' . $bcRef;
+                $statusClass = 'eo-done-item__status-badge--reconciled';
+            } else {
+                $statusLabel = 'Commande créée';
+                $statusClass = 'eo-done-item__status-badge--created';
+            }
           ?>
           <div class="eo-done-item">
             <span class="eo-done-item__subject"><?= $subject ?></span>
+            <span class="eo-done-item__status-badge <?= $statusClass ?>">
+              <?= htmlspecialchars($statusLabel, ENT_QUOTES | ENT_HTML5) ?>
+            </span>
             <span><?= $fromAddr ?>
               <?php if ($origSender !== '' && stripos($em['from_address'] ?? '', $em['original_sender'] ?? '') === false): ?>
                 <span class="eo-original-sender">Expéditeur réel : <?= $origSender ?></span>

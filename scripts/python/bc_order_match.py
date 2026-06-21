@@ -186,6 +186,7 @@ def _resolve_customer(
 def match_email_order_to_bc(
     conn: pymysql.connections.Connection,
     parsed_email: dict,
+    customer_id_override: Optional[int] = None,
 ) -> MatchResult:
     """
     Match one parsed email order against BC orders.
@@ -228,11 +229,23 @@ def match_email_order_to_bc(
     # Step 1 — Extract order ref
     order_ref = _extract_order_ref(notes, subject, raw_body)
 
-    # Step 2 — Resolve customer (lazy-load cached in caller)
-    customers = _load_customers(conn)
-    cust_id, cust_name = _resolve_customer(
-        from_address, customer_hint, is_internal_rep, customers
-    )
+    # Step 2 — Resolve customer
+    if customer_id_override is not None:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, name FROM ref_customers WHERE id = %s LIMIT 1",
+                (customer_id_override,)
+            )
+            override_row = cur.fetchone()
+        if not override_row:
+            raise ValueError(f"Customer id={customer_id_override} not found in ref_customers")
+        cust_id = override_row["id"]
+        cust_name = override_row["name"]
+    else:
+        customers = _load_customers(conn)
+        cust_id, cust_name = _resolve_customer(
+            from_address, customer_hint, is_internal_rep, customers
+        )
 
     # Step 3 — PRIMARY match
     bc_id: Optional[int] = None
@@ -621,6 +634,87 @@ def _run_report(conn: pymysql.connections.Connection) -> None:
 
 
 # ---------------------------------------------------------------------------
+# CLI --match-one
+# ---------------------------------------------------------------------------
+
+def _run_match_one(
+    conn: pymysql.connections.Connection,
+    email_id: int,
+    customer_id: int,
+) -> None:
+    """
+    Match a single email against BC orders using a caller-supplied customer_id.
+    Outputs a JSON object to stdout. Exits 0 on success, 1 on error.
+    """
+    try:
+        # Load the email row
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, from_address, subject, raw_body, parsed_json, parse_status "
+                "FROM doc_email_messages WHERE id = %s LIMIT 1",
+                (email_id,),
+            )
+            row = cur.fetchone()
+
+        if not row:
+            print(f"Email id={email_id} not found", file=sys.stderr)
+            sys.exit(1)
+
+        if row["parse_status"] != "parsed":
+            print(
+                f"Email id={email_id} has parse_status={row['parse_status']!r}, expected 'parsed'",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        pj = json.loads(row["parsed_json"]) if row["parsed_json"] else {}
+
+        parsed_email = {
+            "id": row["id"],
+            "from_address": row["from_address"],
+            "subject": row["subject"],
+            "raw_body": row["raw_body"],
+            "parsed_json": pj,
+        }
+
+        result = match_email_order_to_bc(conn, parsed_email, customer_id_override=customer_id)
+
+        bc_order_info = None
+        if result.match_found and result.bc_order_id is not None:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT external_document_no, requested_date FROM ord_orders WHERE id = %s",
+                    (result.bc_order_id,),
+                )
+                ord_row = cur.fetchone()
+            if ord_row:
+                bc_order_info = {
+                    "external_document_no": ord_row["external_document_no"],
+                    "order_date": (
+                        ord_row["requested_date"].strftime("%Y-%m-%d")
+                        if ord_row["requested_date"] is not None
+                        else None
+                    ),
+                    "total": None,
+                }
+
+        output = {
+            "status": "matched" if result.match_found else "unmatched",
+            "bc_id": result.bc_order_id,
+            "method": result.match_method,
+            "confidence": result.confidence,
+            "reason": result.unmatched_reason,
+            "bc_order": bc_order_info,
+        }
+        print(json.dumps(output))
+        sys.exit(0)
+
+    except Exception as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------
 
@@ -644,17 +738,46 @@ def main() -> None:
         action="store_true",
         help="Print full reconciliation report for all parsed emails.",
     )
+    parser.add_argument(
+        "--match-one",
+        action="store_true",
+        help="Match a single email against BC using a supplied customer id.",
+    )
+    parser.add_argument(
+        "--email-id",
+        type=int,
+        default=0,
+        help="Email id (doc_email_messages.id) for --match-one.",
+    )
+    parser.add_argument(
+        "--customer-id",
+        type=int,
+        default=0,
+        help="ref_customers.id to use for --match-one (caller has already resolved).",
+    )
     args = parser.parse_args()
 
-    if not args.report:
+    if args.report:
+        conn = _build_conn()
+        try:
+            _run_report(conn)
+        finally:
+            conn.close()
+    elif args.match_one:
+        if args.email_id <= 0 or args.customer_id <= 0:
+            print(
+                "Usage: --match-one requires --email-id N and --customer-id N (both > 0)",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        conn = _build_conn()
+        try:
+            _run_match_one(conn, args.email_id, args.customer_id)
+        finally:
+            conn.close()
+    else:
         parser.print_help()
         sys.exit(0)
-
-    conn = _build_conn()
-    try:
-        _run_report(conn)
-    finally:
-        conn.close()
 
 
 if __name__ == "__main__":
