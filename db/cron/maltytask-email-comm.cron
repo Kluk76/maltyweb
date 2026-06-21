@@ -1,0 +1,52 @@
+# /etc/cron.d/maltytask-email-comm
+#
+# Periodic capture of supplier/client email correspondence into the Entity
+# Discussion Tracker. Runs scripts/python/ingest_email_comm.py, which reads
+# the linked mailbox (kouros@lanebuleuse.ch) via the Gmail domain-wide-
+# delegation service account, dedups on RFC Message-ID, groups by Gmail
+# threadId, writes comm_threads / comm_messages, and downloads attachment
+# bytes straight into doc_files + comm_message_docs.
+#
+# NON-FISCAL: nothing this writes feeds COGS/COP/WAC/BOM/beer-tax/inventory.
+#
+# Entity resolution is pin -> exact -> review (comm_address_pins is the sole
+# email->supplier map). Privacy filter drops internal-only + List-Unsubscribe
+# bulk mail; only external-counterparty correspondence is persisted.
+#
+# Idempotent: comm_messages.message_id UNIQUE skips already-seen mail, so each
+# tick re-lists the GMAIL_COMM_QUERY window (newer_than:180d in
+# config/gmail-comm.env) but only inserts new messages.
+#
+# Source of truth: db/cron/maltytask-email-comm.cron in the maltyweb repo.
+# Deployed via bin/deploy.sh --apply (sudo install -m 0644 -> /etc/cron.d/),
+# or manual: sudo cp db/cron/maltytask-email-comm.cron /etc/cron.d/maltytask-email-comm
+# Manual edits to /etc/cron.d/* are overwritten on next deploy — edit here.
+#
+# Preflight:
+#   sudo touch /var/log/maltytask/email-comm.log
+#   sudo chown maltytask:www-data /var/log/maltytask/email-comm.log
+#   Smoke: sudo -u maltytask /var/www/maltytask/.venv/bin/python \
+#            scripts/python/ingest_email_comm.py --limit 20
+#          (dry-run is the DEFAULT — omit --apply; there is no --dry-run flag)
+#   gmail.send not required here (capture only); gmail.readonly DWD grant
+#   already covers kouros@.
+#
+# Gmail credentials: config/gmail-sa.json + config/gmail-comm.env (mode 640,
+# group www-data). DB credentials: config/db.env.
+#
+# Python: the project venv at /var/www/maltytask/.venv/bin/python (the google
+# API client lives there, NOT in system python3). Absolute path — cron PATH
+# is minimal.
+#
+# Frequency: every 15 min. Correspondence visibility is not time-critical like
+# logistics; 15 min keeps Gmail API volume modest. flock -n single-flight: if a
+# prior tick (or the initial 6-month backfill) still holds the lock, the new
+# tick exits immediately — no pileup.
+#
+# Times UTC (VPS timezone Etc/UTC). maltytask user primary group www-data.
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# m    h   dom mon dow  user        command
+*/15   *   *   *   *   maltytask   flock -n /tmp/maltytask-email-comm.lock -c 'cd /var/www/maltytask && /var/www/maltytask/.venv/bin/python scripts/python/ingest_email_comm.py --apply' >> /var/log/maltytask/email-comm.log 2>&1
