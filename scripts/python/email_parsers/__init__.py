@@ -58,9 +58,13 @@ if TYPE_CHECKING:
 # from .example_template import ExampleTemplateSenderParser  # NOT registered (template)
 # from .customer_acme import AcmeSenderParser
 
+from .alloboissons import AlloboissonsParser
+from .amstein import AmsteinPdfParser
 from .attachment_pdf import BevanarPdfParser
 from .attachment_xlsx import MigrosFroidevilleXlsxParser
 from .cobra import CobraBodyParser
+from .nausikraft import NausikraftPdfParser
+from .petitecave import PetiteCavePdfParser
 from .generic_vocab import GenericVocabParser  # always last
 
 # ── Registry ──────────────────────────────────────────────────────────────────
@@ -71,6 +75,10 @@ REGISTRY: list[SenderParser] = [
     CobraBodyParser(),              # Cobra Traders SA body-format orders
     BevanarPdfParser(),             # Bevanar/CDDS supplier order PDFs
     MigrosFroidevilleXlsxParser(),  # Migros / MP Froideville XLSX orders
+    NausikraftPdfParser(),          # Nausikraft SA purchase-order PDFs
+    PetiteCavePdfParser(),          # Petite Cave born-digital PDF purchase orders
+    AmsteinPdfParser(),             # Amstein SA born-digital PDF purchase orders
+    AlloboissonsParser(),           # Alloboissons SA born-digital PDF purchase orders
     GenericVocabParser(),           # layer-2 universal fallback — always last
 ]
 
