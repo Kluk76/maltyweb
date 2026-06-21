@@ -183,3 +183,31 @@ Operator constraint: in PACKAGING the filler is **definitionally present** (you'
 - **Do NOT write flat CIP columns from the web** (DUAL-WRITE trap); REMOVE any flat-CIP field from the parent `bd_*_v2` hash basis (HASH-DRIFT trap).
 
 Sonnet, equip **ui + sql + coder**. RULE-2 before every commit (XSS on new dropdowns/labels; A2 server predicate can't be bypassed by the client; dropped flat-CIP fields fully removed from POST coerce + parent row + parent hash; A3 TIMEs enforced server-side; the writer stays atomic on the new branch; no helper scripts left in repo). RULE-1: scrapping #14 (retire flat CIP columns + rewire Sheets ingest to bd_cip_events) + the CIP-first global rollout already logged.
+
+---
+
+## SIBLING INSTANCE OF THE SAME META-PATTERN — LOOKUP PANEL (config-driven shared partial + per-page read-only GET endpoint) — BUILT 2026-06-21, awaiting operator deploy go-ahead
+
+> The CIP module is the FIRST instance of "one partial driven by per-form `$config`, zero DB queries of its own, caller supplies the data." The **Lookup Panel** is the SECOND, generalized to a read-only embeddable lookup. Same doctrine, now ALSO codified in the `ui` skill Layer-3 section ("the config-driven shared partial — the cross-page form of Layer 3" + "read-only GET JSON endpoints: gate, but no CSRF"). Build agents load it via that skill; this is the PM as-built record.
+
+**Purpose:** read-only interactive lookup panels embedded in existing pages. Operator picks a date OR an identity (SKU+lot / recipe+lot) → live results via fetch to a per-page JSON endpoint. NON-FISCAL — pure read surface, feeds nothing.
+
+**Files created (the reusable spine):**
+- `public/modules/partials/lookup-panel.php` — shared partial, driven by `$lookupConfig` set before `require`; renders collapsible panel + two tabs (Par date / Par <identity>); does NO DB queries (caller provides the options).
+- `public/js/lookup-panel.js` — IIFE; toggle + tabs + fetch + render for BOTH types; type from `data-type="packaging|brewing"` on the panel element; fetch target from `data-endpoint` on the panel element. One file serves every host.
+- `public/css/lookup-panel.css` — dark aged-oak themed panel/tabs/table.
+- `public/api/packaging-lookup.php` — GET, gate `require_page_access('packaging')`, params `mode=day&date=` OR `mode=batch&sku_id=&batch=`; reads `bd_packaging_v2` JOIN `v_bd_packaging_v2_vendable` + `ref_skus` + `ref_recipes` + `bd_packaging_readings` (CO2/O2).
+- `public/api/brewing-lookup.php` — GET, gate `require_page_access('saisies')`, params `mode=day&date=` OR `mode=batch&recipe_id=&batch=`; reads `bd_brewing_brewday_v2` + `_timings_v2` + `_gravity_v2` + `_ingredients_v2` + `_ingredients_parsed_v2`.
+
+**Files modified (the host wiring — the 4-line graft):** `public/modules/packaging.php` + `public/modules/form-brewing.php` — each: CSS `<link>` in `<head>`; options query + `$lookupConfig`; `require __DIR__.'/partials/lookup-panel.php'` immediately after `<main>` opens; `<script defer>` before `</body>`.
+
+**Recipe to add a Lookup Panel to a NEW page:** (1) set `$lookupConfig` before the require (options from a PDO query the host owns); (2) `require __DIR__ . '/partials/lookup-panel.php'`; (3) link `/css/lookup-panel.css` + `<script defer>` `/js/lookup-panel.js`; (4) create `/api/<page>-lookup.php` with the appropriate `require_page_access('<gate>')`.
+
+**Conventions CONFIRMED by this build (now durable in the `ui` skill):**
+- Read-only GET endpoints: `require_page_access()` MANDATORY (data-leak gate), CSRF NOT needed (no state change to forge).
+- Date validation: `checkdate()`, NOT `strtotime()` (strtotime accepts overflow dates → wrong-day lookup, no error).
+- brewing timings/gravity join brewday on the NATURAL KEY `(beer, batch)` — there is NO `brewday_id` FK to join on (it doesn't exist). (Consistent with the standing "match on recipe_id_fk/(recipe,batch), never reconstruct a missing FK" discipline.)
+- CO2/O2 source = `bd_packaging_readings` (cols `packaging_v2_id, reading_idx, o2, co2`).
+- NULL `vendable_hl` renders as `—` in JS, NEVER `0` (0 = a real measured zero; — = not-yet-known).
+
+**Status:** built, lint-clean, reviewer-approved; awaiting operator deploy go-ahead. 🔴 When deployed: this adds NO ref_pages row (panels embed in existing pages) → RULE 3 (tour) N/A. Deploy is per-file rsync of the 5 new + 2 modified files; `php8.1 -l` each PHP before fpm reload (standing rule). EQUIP ui+coder+sql(+webapp-testing smoke).
