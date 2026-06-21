@@ -1,0 +1,314 @@
+/**
+ * lookup-panel.css — Collapsible lookup panel component.
+ * Dark aged-oak theme, uses CSS variables from app.css.
+ */
+
+/* ── Panel container ──────────────────────────────────────────────────────── */
+.lookup-panel {
+  background:    var(--surface-2);
+  border:        1px solid var(--hairline);
+  border-radius: 6px;
+  margin-bottom: 1.25rem;
+  overflow:      hidden;
+}
+
+/* ── Toggle button ───────────────────────────────────────────────────────── */
+.lp-toggle {
+  display:         flex;
+  align-items:     center;
+  gap:             0.5rem;
+  width:           100%;
+  padding:         0.6rem 0.9rem;
+  background:      var(--surface-3);
+  color:           var(--ink);
+  border:          none;
+  border-bottom:   1px solid transparent;
+  border-radius:   0;
+  font:            inherit;
+  font-size:       0.85rem;
+  font-weight:     500;
+  cursor:          pointer;
+  text-align:      left;
+  transition:      background 160ms ease;
+  touch-action:    manipulation;
+}
+
+.lp-toggle:hover {
+  background: var(--bg-elev);
+}
+
+.lookup-panel.lp-open .lp-toggle {
+  border-bottom-color: var(--hairline);
+}
+
+.lp-toggle-label {
+  flex: 1;
+  font-family: 'DM Sans', sans-serif;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  font-size: 0.78rem;
+  color: var(--ink-label);
+}
+
+.lp-toggle-chevron {
+  font-size:  0.7rem;
+  color:      var(--ink-faint);
+  transition: transform 200ms ease;
+}
+
+.lookup-panel.lp-open .lp-toggle-chevron {
+  transform: rotate(90deg);
+}
+
+/* ── Body ────────────────────────────────────────────────────────────────── */
+.lp-body {
+  padding: 0.75rem 0.9rem 0.9rem;
+}
+
+/* ── Tab bar ─────────────────────────────────────────────────────────────── */
+.lp-tabs {
+  display:       flex;
+  gap:           0.25rem;
+  margin-bottom: 0.75rem;
+  border-bottom: 1px solid var(--hairline);
+  padding-bottom: 0;
+}
+
+.lp-tab {
+  padding:       0.35rem 0.75rem;
+  background:    transparent;
+  color:         var(--ink-mute);
+  border:        1px solid transparent;
+  border-bottom: none;
+  border-radius: 4px 4px 0 0;
+  font:          inherit;
+  font-size:     0.8rem;
+  cursor:        pointer;
+  transition:    background 140ms ease, color 140ms ease;
+  touch-action:  manipulation;
+  margin-bottom: -1px;
+}
+
+.lp-tab:hover {
+  background: var(--bg-elev);
+  color:      var(--ink);
+}
+
+.lp-tab.lp-tab-active {
+  background:   var(--surface-2);
+  color:        var(--ink);
+  border-color: var(--hairline);
+  border-bottom-color: var(--surface-2);
+  font-weight:  500;
+}
+
+/* ── Tab panes ───────────────────────────────────────────────────────────── */
+.lp-tab-pane {
+  display: block;
+}
+
+.lp-tab-pane[hidden] {
+  display: none;
+}
+
+/* ── Search row ──────────────────────────────────────────────────────────── */
+.lp-search-row {
+  display:     flex;
+  flex-wrap:   wrap;
+  align-items: center;
+  gap:         0.5rem;
+  padding:     0.5rem 0 0.75rem;
+}
+
+.lp-field-label {
+  font-size:  0.78rem;
+  color:      var(--ink-label);
+  white-space: nowrap;
+}
+
+.lp-date-input,
+.lp-text-input,
+.lp-select-input {
+  padding:      0.35rem 0.5rem;
+  background:   var(--bg-elev);
+  color:        var(--ink);
+  border:       1px solid var(--hairline-2);
+  border-radius: 4px;
+  font:         inherit;
+  font-size:    0.82rem;
+  min-width:    8rem;
+}
+
+.lp-date-input:focus,
+.lp-text-input:focus,
+.lp-select-input:focus {
+  outline:      2px solid var(--hop);
+  outline-offset: 1px;
+}
+
+.lp-search-btn {
+  padding:      0.35rem 0.75rem;
+  background:   var(--oak);
+  color:        var(--bg);
+  border:       none;
+  border-radius: 4px;
+  font:         inherit;
+  font-size:    0.82rem;
+  font-weight:  500;
+  cursor:       pointer;
+  white-space:  nowrap;
+  transition:   background 140ms ease;
+  touch-action: manipulation;
+}
+
+.lp-search-btn:hover {
+  background: var(--oak-deep);
+}
+
+.lp-search-btn:active {
+  transform:  scale(0.97);
+  transition: transform 100ms ease;
+}
+
+/* ── Results container ───────────────────────────────────────────────────── */
+.lp-results {
+  margin-top: 0.25rem;
+}
+
+/* ── Table ───────────────────────────────────────────────────────────────── */
+.lp-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.lp-table {
+  width:           100%;
+  border-collapse: collapse;
+  font-size:       0.78rem;
+  font-family:     'JetBrains Mono', ui-monospace, monospace;
+}
+
+.lp-table th {
+  background:    var(--surface-3);
+  color:         var(--ink-label);
+  padding:       0.3rem 0.55rem;
+  text-align:    left;
+  font-size:     0.72rem;
+  font-weight:   500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 2px solid var(--hairline-2);
+  white-space:   nowrap;
+}
+
+.lp-table td {
+  padding:     0.3rem 0.55rem;
+  border-bottom: 1px solid var(--hairline);
+  vertical-align: top;
+  white-space:  nowrap;
+}
+
+.lp-table tr:nth-child(even) td {
+  background: rgba(200, 180, 140, 0.08);
+}
+
+.lp-table tr:last-child td {
+  border-bottom: none;
+}
+
+/* ── Sub-headings (batch detail sections) ───────────────────────────────── */
+.lp-sub-heading {
+  margin:      0.9rem 0 0.35rem;
+  font-size:   0.8rem;
+  font-weight: 600;
+  color:       var(--ink-mute);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* ── Summary bar ─────────────────────────────────────────────────────────── */
+.lp-summary {
+  display:       inline-flex;
+  align-items:   center;
+  gap:           0.5rem;
+  padding:       0.3rem 0.65rem;
+  margin-bottom: 0.5rem;
+  background:    var(--surface-3);
+  border:        1px solid var(--hairline);
+  border-radius: 20px;
+  font-size:     0.76rem;
+  color:         var(--ink-mute);
+  font-family:   'JetBrains Mono', ui-monospace, monospace;
+}
+
+/* ── State indicators ────────────────────────────────────────────────────── */
+.lp-null {
+  color:       var(--ink-faint);
+  font-style:  italic;
+}
+
+.lp-reuse-badge {
+  display:       inline-block;
+  padding:       0.1rem 0.4rem;
+  background:    rgba(179, 68, 40, 0.12);
+  color:         var(--ember);
+  border:        1px solid rgba(179, 68, 40, 0.3);
+  border-radius: 3px;
+  font-size:     0.68rem;
+  font-weight:   500;
+  white-space:   nowrap;
+}
+
+.lp-empty {
+  color:      var(--ink-faint);
+  font-style: italic;
+  font-size:  0.82rem;
+  padding:    0.5rem 0;
+  margin:     0;
+}
+
+.lp-error {
+  color:        var(--bad);
+  background:   rgba(179, 68, 40, 0.08);
+  border:       1px solid rgba(179, 68, 40, 0.25);
+  border-radius: 4px;
+  padding:      0.45rem 0.7rem;
+  font-size:    0.82rem;
+}
+
+.lp-loading {
+  color:      var(--ink-mute);
+  font-size:  0.82rem;
+  font-style: italic;
+  padding:    0.4rem 0;
+  margin:     0;
+}
+
+/* ── Responsive ──────────────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  .lp-search-row {
+    flex-direction: column;
+    align-items:    flex-start;
+  }
+
+  .lp-date-input,
+  .lp-text-input,
+  .lp-select-input {
+    width: 100%;
+    min-width: unset;
+    box-sizing: border-box;
+  }
+
+  .lp-search-btn {
+    width: 100%;
+  }
+
+  .lp-table {
+    font-size: 0.72rem;
+  }
+
+  .lp-table th,
+  .lp-table td {
+    padding: 0.25rem 0.35rem;
+  }
+}

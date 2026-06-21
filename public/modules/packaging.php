@@ -332,6 +332,7 @@ $fmtLabels = ['Keg' => 'Fût', 'Bot' => 'Bouteille', 'Can' => 'Canette', 'Cuve d
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;1,9..144,300;1,9..144,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/app.css?v=<?= @filemtime(__DIR__ . '/../css/app.css') ?: time() ?>">
   <link rel="stylesheet" href="/css/bbt-detail-modal.css?v=<?= @filemtime(__DIR__ . '/../css/bbt-detail-modal.css') ?: time() ?>">
+  <link rel="stylesheet" href="/css/lookup-panel.css?v=<?= @filemtime(__DIR__ . '/../css/lookup-panel.css') ?: time() ?>">
 </head>
 <body class="home">
 
@@ -340,6 +341,22 @@ $fmtLabels = ['Keg' => 'Fût', 'Bot' => 'Bouteille', 'Can' => 'Canette', 'Cuve d
 <?php require __DIR__ . "/../../app/partials/topbar.php" ?>
 
 <main id="main-content" class="main tanks-main">
+
+<?php
+$skuStmt = maltytask_pdo()->query("SELECT id, sku_code, COALESCE(unit_label,'') AS unit_label FROM ref_skus WHERE is_active=1 ORDER BY sku_code");
+$skuOptions = $skuStmt->fetchAll(PDO::FETCH_ASSOC);
+$lookupConfig = [
+    'panel_id'         => 'packaging-lookup',
+    'api_endpoint'     => '/api/packaging-lookup.php',
+    'mode_batch_label' => 'Par SKU + lot',
+    'type'             => 'packaging',
+    'batch_fields'     => [
+        ['name' => 'sku_id', 'label' => 'SKU',  'type' => 'select', 'options' => $skuOptions, 'value_col' => 'id', 'label_col' => 'sku_code'],
+        ['name' => 'batch',  'label' => 'Lot',   'type' => 'text'],
+    ],
+];
+require __DIR__ . '/partials/lookup-panel.php';
+?>
 
   <?php if ($dbError): ?>
     <div class="wort-error">
@@ -713,6 +730,7 @@ window.PKG_STATS = <?= json_encode([
 </script>
 <script defer src="/js/packaging.js?v=<?= @filemtime(__DIR__ . '/../js/packaging.js') ?: time() ?>"></script>
 <script defer src="/js/bbt-detail-modal.js?v=<?= @filemtime(__DIR__ . '/../js/bbt-detail-modal.js') ?: time() ?>"></script>
+<script defer src="/js/lookup-panel.js?v=<?= @filemtime(__DIR__ . '/../js/lookup-panel.js') ?: time() ?>"></script>
 
 </body>
 </html>
