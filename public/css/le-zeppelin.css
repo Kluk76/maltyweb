@@ -125,6 +125,22 @@ body.zeppelin-hub .family-btn.fam-sdc .fam-dot {
   }
 }
 
+/* Fournisseurs chip — manager-only */
+body.zeppelin-hub .family-btn.fam-fournisseurs .fam-dot {
+  background: var(--oak-deep);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  body.zeppelin-hub .family-btn.fam-fournisseurs:hover {
+    color: var(--ink-soft);
+    background: color-mix(in srgb, var(--oak) 10%, transparent);
+  }
+
+  body.zeppelin-hub .family-btn.fam-fournisseurs:hover .fam-dot {
+    box-shadow: 0 0 7px var(--oak-deep);
+  }
+}
+
 /* Cockpit chip — disabled (à venir) */
 body.zeppelin-hub .family-btn.fam-cockpit {
   opacity: 0.4;
@@ -256,4 +272,50 @@ body.zeppelin-hub .sh-card--soon .sh-card__badge {
   border: 1px solid var(--hairline);
   border-radius: 4px;
   vertical-align: middle;
+}
+
+/* ── Sub-card modifier — subordinate entry (e.g. Fournisseurs under Machines) ── */
+body.zeppelin-hub .sh-card--sub {
+  border-style: dashed;
+  border-color: var(--hairline);
+}
+
+body.zeppelin-hub .sh-card--sub .sh-card__icon {
+  color: var(--ink-mute);
+}
+
+body.zeppelin-hub .sh-card--sub .sh-card__icon svg {
+  width: 22px;
+  height: 22px;
+}
+
+body.zeppelin-hub .sh-card--sub .sh-card__name {
+  font-size: 1rem;
+  color: var(--ink-soft);
+}
+
+body.zeppelin-hub .sh-card--sub .sh-card__arrow {
+  color: var(--ink-mute);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  body.zeppelin-hub .sh-card--sub:hover {
+    border-color: var(--oak);
+    border-style: solid;
+    background: color-mix(in srgb, var(--oak) 6%, var(--bg-elev));
+    box-shadow: 0 4px 16px color-mix(in srgb, var(--ink) 12%, transparent);
+    text-decoration: none;
+  }
+
+  body.zeppelin-hub .sh-card--sub:hover .sh-card__icon {
+    color: var(--oak);
+  }
+
+  body.zeppelin-hub .sh-card--sub:hover .sh-card__name {
+    color: var(--ink);
+  }
+
+  body.zeppelin-hub .sh-card--sub:hover .sh-card__arrow {
+    color: var(--oak-deep);
+  }
 }

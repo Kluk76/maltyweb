@@ -49,6 +49,11 @@ $active_module = 'zeppelin';
       <a class="family-btn fam-sdm" href="/modules/salle-des-machines.php" title="Salle des Machines">
         <span class="fam-dot"></span>Machines
       </a>
+      <?php if (is_admin($me) || is_manager($me)): ?>
+      <a class="family-btn fam-fournisseurs" href="/modules/salle-fournisseurs.php" title="Fournisseurs — gouvernance procurement (manager)">
+        <span class="fam-dot"></span>Fournisseurs
+      </a>
+      <?php endif ?>
       <a class="family-btn fam-sdc" href="/modules/salle-de-controle.php" title="Salle de contrôle">
         <span class="fam-dot"></span>Contrôle
       </a>
@@ -87,6 +92,26 @@ $active_module = 'zeppelin';
       </div>
       <div class="sh-card__arrow">Ouvrir →</div>
     </a>
+
+    <!-- 1b. Fournisseurs — manager+ governance, subordinate to Salle des Machines -->
+    <?php if (is_admin($me) || is_manager($me)): ?>
+    <a class="sh-card sh-card--sub" href="/modules/salle-fournisseurs.php">
+      <div class="sh-card__icon">
+        <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 9h13v8H3z"/>
+          <path d="M16 12h4l1 2v3h-5z"/>
+          <circle cx="7" cy="18" r="1.6"/>
+          <circle cx="17.5" cy="18" r="1.6"/>
+          <path d="M3 9V6a1 1 0 0 1 1-1h11a1 1 0 0 1 1 1v3"/>
+        </svg>
+      </div>
+      <div class="sh-card__name">Fournisseurs</div>
+      <div class="sh-card__desc">
+        Gouvernance procurement · Évaluation · Discussions
+      </div>
+      <div class="sh-card__arrow">Ouvrir →</div>
+    </a>
+    <?php endif ?>
 
     <!-- 2. Salle de contrôle -->
     <a class="sh-card" href="/modules/salle-de-controle.php">
