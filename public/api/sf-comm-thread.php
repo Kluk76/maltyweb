@@ -283,6 +283,58 @@ function build_supplier_threads(PDO $pdo, int $supplierId): array
     return $result;
 }
 
+/**
+ * Persist one outbound comm_messages row + docs + thread bump + audit.
+ * Returns the new comm_messages.id.
+ */
+function _persist_outbound(PDO $pdo, array $me, int $threadId, string $senderEmail,
+    string $toAddress, string $subject, string $body,
+    string $rfc2822MsgId, ?string $gmailMsgId, array $attachments, string $qcFlag): int
+{
+    $userId      = (int) $me['id'];
+    $bodySnippet = mb_substr($body, 0, 200);
+
+    $pdo->beginTransaction();
+
+    // a) INSERT comm_messages
+    $stInsert = $pdo->prepare(
+        "INSERT INTO comm_messages
+            (thread_id_fk, direction, from_address, to_address, subject,
+             body_format, body, body_snippet, sent_at, message_id, gmail_message_id,
+             source, send_status, sent_by_user_id, created_by_user_id,
+             created_at, updated_at)
+         VALUES (?, 'out', ?, ?, ?, 'text', ?, ?, NOW(), ?, ?, 'sent', 'sent', ?, ?, NOW(), NOW())"
+    );
+    $stInsert->execute([
+        $threadId, $senderEmail, $toAddress, $subject,
+        $body, $bodySnippet, $rfc2822MsgId, $gmailMsgId,
+        $userId, $userId,
+    ]);
+    $newCommMsgId = (int) $pdo->lastInsertId();
+
+    // b) comm_message_docs
+    foreach ($attachments as $att) {
+        $stAttach = $pdo->prepare(
+            "INSERT INTO comm_message_docs
+                (message_id_fk, doc_file_id_fk, attachment_filename, mime_type, direction)
+             VALUES (?, ?, ?, ?, 'out')"
+        );
+        $stAttach->execute([$newCommMsgId, $att['_id'], $att['filename'], $att['mime_type']]);
+    }
+
+    // c) bump thread
+    $pdo->prepare('UPDATE comm_threads SET last_message_at = NOW(), updated_at = NOW() WHERE id = ?')
+        ->execute([$threadId]);
+
+    // d) audit
+    $newRow = bd_fetch_before($pdo, 'comm_messages', $newCommMsgId);
+    log_revision($pdo, $me, 'comm_messages', $newCommMsgId, null, $newRow ?? [], $qcFlag, null);
+
+    $pdo->commit();
+
+    return $newCommMsgId;
+}
+
 // ── Routing ───────────────────────────────────────────────────────────────────
 try {
     if ($method === 'GET') {
@@ -415,7 +467,35 @@ try {
         $reviewThreads = load_review_threads($pdo);
         $threads       = build_supplier_threads($pdo, $supplierId);
 
-        echo json_encode(['ok' => true, 'timeline' => $timeline, 'review_threads' => $reviewThreads, 'threads' => $threads]);
+        // Known-address set for the New-mode dropdown
+        $stKnownAddr = $pdo->prepare(
+            "SELECT DISTINCT ea FROM (
+               SELECT from_address AS ea FROM comm_messages cm
+               JOIN comm_threads ct ON ct.id = cm.thread_id_fk
+               WHERE ct.supplier_id_fk = ? AND ct.purge_status = 'live' AND cm.direction = 'in'
+                 AND cm.from_address != ''
+               UNION
+               SELECT to_address AS ea FROM comm_messages cm
+               JOIN comm_threads ct ON ct.id = cm.thread_id_fk
+               WHERE ct.supplier_id_fk = ? AND ct.purge_status = 'live' AND cm.direction = 'out'
+                 AND cm.to_address != ''
+               UNION
+               SELECT email AS ea FROM comm_address_pins WHERE supplier_id_fk = ?
+             ) sub
+             WHERE ea IS NOT NULL AND ea != ''"
+        );
+        $stKnownAddr->execute([$supplierId, $supplierId, $supplierId]);
+        $knownAddrRaw = $stKnownAddr->fetchAll(PDO::FETCH_COLUMN);
+        $knownAddresses = [];
+        foreach ($knownAddrRaw as $raw) {
+            $e = extract_email_address((string) $raw);
+            if ($e !== null && !in_array($e, $knownAddresses, true)) {
+                $knownAddresses[] = $e;
+            }
+        }
+        sort($knownAddresses);
+
+        echo json_encode(['ok' => true, 'timeline' => $timeline, 'review_threads' => $reviewThreads, 'threads' => $threads, 'known_addresses' => $knownAddresses]);
         exit;
 
     } elseif ($method === 'POST') {
@@ -620,8 +700,13 @@ try {
                 exit;
             }
 
-            // Email gate: sender must have a @lanebuleuse.ch address
-            $senderEmail = $me['email'] ?? '';
+            // Optional: reply to a specific message (overrides thread's most-recent-inbound logic)
+            $replyToMsgId = isset($_POST['reply_to_message_id']) ? (int) $_POST['reply_to_message_id'] : 0;
+
+            // Email gate: fetch sender email from DB (session does not carry email)
+            $stSenderEmail = $pdo->prepare('SELECT email FROM users WHERE id = ? LIMIT 1');
+            $stSenderEmail->execute([(int) $me['id']]);
+            $senderEmail = (string) ($stSenderEmail->fetchColumn() ?? '');
             if ($senderEmail === '' || !str_ends_with($senderEmail, '@lanebuleuse.ch')) {
                 http_response_code(422);
                 echo json_encode([
@@ -643,26 +728,71 @@ try {
                 exit;
             }
 
-            // Most recent inbound message — determines recipient + In-Reply-To
-            $stInbound = $pdo->prepare(
-                "SELECT from_address, message_id, subject
-                   FROM comm_messages
-                  WHERE thread_id_fk = ? AND direction = 'in'
-                  ORDER BY sent_at DESC LIMIT 1"
-            );
-            $stInbound->execute([$threadId]);
-            $inbound = $stInbound->fetch(PDO::FETCH_ASSOC);
-            if (!$inbound) {
-                http_response_code(422);
-                echo json_encode(['ok' => false, 'error' => "Aucun destinataire : ce fil n'a pas de message entrant."]);
-                exit;
+            $parentMessageId = null;
+            $recipientEmail  = null;
+
+            if ($replyToMsgId > 0) {
+                $stMsg = $pdo->prepare(
+                    "SELECT cm.id, cm.direction, cm.from_address, cm.to_address, cm.subject,
+                            cm.message_id, cm.thread_id_fk,
+                            ct.supplier_id_fk
+                       FROM comm_messages cm
+                       JOIN comm_threads ct ON ct.id = cm.thread_id_fk
+                      WHERE cm.id = ? AND ct.is_active = 1 AND ct.purge_status = 'live' LIMIT 1"
+                );
+                $stMsg->execute([$replyToMsgId]);
+                $replyMsg = $stMsg->fetch(PDO::FETCH_ASSOC);
+                if (!$replyMsg) {
+                    http_response_code(422);
+                    echo json_encode(['ok' => false, 'error' => 'Message de référence introuvable.']);
+                    exit;
+                }
+                // Override threadId from the referenced message's thread
+                $threadId = (int) $replyMsg['thread_id_fk'];
+                $parentMessageId = $replyMsg['message_id'];
+                // If the referenced message is inbound, reply to its sender
+                if ($replyMsg['direction'] === 'in') {
+                    $recipientEmail = extract_email_address($replyMsg['from_address'] ?? '');
+                    if ($recipientEmail === null) {
+                        http_response_code(422);
+                        echo json_encode(['ok' => false, 'error' => "Impossible d'extraire l'adresse e-mail du destinataire."]);
+                        exit;
+                    }
+                }
+                // Reload thread with the (possibly new) $threadId
+                $stThread->execute([$threadId]);
+                $thread = $stThread->fetch(PDO::FETCH_ASSOC);
+                if (!$thread) {
+                    http_response_code(404);
+                    echo json_encode(['ok' => false, 'error' => 'Fil introuvable.']);
+                    exit;
+                }
             }
 
-            $recipientEmail = extract_email_address($inbound['from_address'] ?? '');
-            if ($recipientEmail === null) {
-                http_response_code(422);
-                echo json_encode(['ok' => false, 'error' => "Impossible d'extraire l'adresse e-mail du destinataire : " . ($inbound['from_address'] ?? '(vide)')]);
-                exit;
+            if ($replyToMsgId === 0) {
+                // Most recent inbound message — determines recipient + In-Reply-To
+                $stInbound = $pdo->prepare(
+                    "SELECT from_address, message_id, subject
+                       FROM comm_messages
+                      WHERE thread_id_fk = ? AND direction = 'in'
+                      ORDER BY sent_at DESC LIMIT 1"
+                );
+                $stInbound->execute([$threadId]);
+                $inbound = $stInbound->fetch(PDO::FETCH_ASSOC);
+                if (!$inbound) {
+                    http_response_code(422);
+                    echo json_encode(['ok' => false, 'error' => "Aucun destinataire : ce fil n'a pas de message entrant."]);
+                    exit;
+                }
+
+                $recipientEmail = extract_email_address($inbound['from_address'] ?? '');
+                if ($recipientEmail === null) {
+                    http_response_code(422);
+                    echo json_encode(['ok' => false, 'error' => "Impossible d'extraire l'adresse e-mail du destinataire : " . ($inbound['from_address'] ?? '(vide)')]);
+                    exit;
+                }
+
+                $parentMessageId = $inbound['message_id'] ?? null;
             }
 
             // Subject: prepend Re: if not already present
@@ -672,8 +802,6 @@ try {
             } else {
                 $replySubject = $threadSubject;
             }
-
-            $parentMessageId = $inbound['message_id'] ?? null;
 
             // Parse and validate doc_file_ids
             $docFileIdsRaw = $_POST['doc_file_ids'] ?? '[]';
@@ -755,69 +883,348 @@ try {
                 exit;
             }
 
-            // Sender succeeded — persist to DB in a transaction
-            $rfc2822MsgId  = $sendResult['message_id'];
-            $gmailMsgId    = $sendResult['gmail_message_id'] ?? null;
-            $bodySnippet   = mb_substr($body, 0, 200);
-            $userId        = (int) $me['id'];
+            $rfc2822MsgId = $sendResult['message_id'];
+            $gmailMsgId   = $sendResult['gmail_message_id'] ?? null;
 
-            $pdo->beginTransaction();
-
-            // a) INSERT comm_messages
-            $stInsert = $pdo->prepare(
-                "INSERT INTO comm_messages
-                    (thread_id_fk, direction, from_address, to_address, subject,
-                     body_format, body, body_snippet, sent_at, message_id, gmail_message_id,
-                     source, send_status, sent_by_user_id, created_by_user_id,
-                     created_at, updated_at)
-                 VALUES (?, 'out', ?, ?, ?, 'text', ?, ?, NOW(), ?, ?, 'sent', 'sent', ?, ?, NOW(), NOW())"
+            $newCommMsgId = _persist_outbound(
+                $pdo, $me, $threadId,
+                $senderEmail, $recipientEmail, $replySubject, $body,
+                $rfc2822MsgId, $gmailMsgId,
+                $attachments, 'normal'
             );
-            $stInsert->execute([
-                $threadId,
-                $senderEmail,
-                $recipientEmail,
-                $replySubject,
-                $body,
-                $bodySnippet,
-                $rfc2822MsgId,
-                $gmailMsgId,
-                $userId,
-                $userId,
-            ]);
-            $newCommMsgId = (int) $pdo->lastInsertId();
-
-            // b) INSERT comm_message_docs for each attachment
-            foreach ($attachments as $att) {
-                $stAttach = $pdo->prepare(
-                    "INSERT INTO comm_message_docs
-                        (message_id_fk, doc_file_id_fk, attachment_filename, mime_type, direction)
-                     VALUES (?, ?, ?, ?, 'out')"
-                );
-                $stAttach->execute([
-                    $newCommMsgId,
-                    $att['_id'],
-                    $att['filename'],
-                    $att['mime_type'],
-                ]);
-            }
-
-            // c) UPDATE comm_threads last_message_at
-            $stUpdateThread = $pdo->prepare(
-                'UPDATE comm_threads SET last_message_at = NOW(), updated_at = NOW() WHERE id = ?'
-            );
-            $stUpdateThread->execute([$threadId]);
-
-            // d) Audit log
-            $newRow = bd_fetch_before($pdo, 'comm_messages', $newCommMsgId);
-            log_revision($pdo, $me, 'comm_messages', $newCommMsgId, null, $newRow ?? [], 'normal', null);
-
-            $pdo->commit();
 
             echo json_encode([
-                'ok'             => true,
+                'ok'              => true,
                 'comm_message_id' => $newCommMsgId,
-                'message_id'     => $rfc2822MsgId,
-                'send_status'    => 'sent',
+                'message_id'      => $rfc2822MsgId,
+                'send_status'     => 'sent',
+            ]);
+            exit;
+        }
+
+        // ── POST action=send_new (admin or manager) ──────────────────────────
+        if ($action === 'send_new') {
+            if (!is_admin($me) && !is_manager($me)) {
+                http_response_code(403);
+                echo json_encode(['ok' => false, 'error' => 'Admin ou manager uniquement.']);
+                exit;
+            }
+
+            // Fetch sender email from DB (session does not carry email)
+            $stSenderEmail = $pdo->prepare('SELECT email FROM users WHERE id = ? LIMIT 1');
+            $stSenderEmail->execute([(int) $me['id']]);
+            $senderEmail = (string) ($stSenderEmail->fetchColumn() ?? '');
+            if ($senderEmail === '' || !str_ends_with($senderEmail, '@lanebuleuse.ch')) {
+                http_response_code(422);
+                echo json_encode([
+                    'ok'    => false,
+                    'error' => "Votre compte n'a pas d'adresse e-mail @lanebuleuse.ch configurée ; impossible d'envoyer.",
+                ]);
+                exit;
+            }
+
+            $supplierId = isset($_POST['supplier_id']) ? (int) $_POST['supplier_id'] : 0;
+            $to         = trim($_POST['to'] ?? '');
+            $subject    = trim($_POST['subject'] ?? '');
+            $body       = trim($_POST['body'] ?? '');
+
+            if ($supplierId <= 0) {
+                http_response_code(400);
+                echo json_encode(['ok' => false, 'error' => 'supplier_id invalide.']);
+                exit;
+            }
+            if ($subject === '') {
+                http_response_code(400);
+                echo json_encode(['ok' => false, 'error' => "L'objet du message est requis."]);
+                exit;
+            }
+            if ($body === '') {
+                http_response_code(400);
+                echo json_encode(['ok' => false, 'error' => 'Le corps du message est requis.']);
+                exit;
+            }
+
+            // Validate 'to' against the known-address set for this supplier
+            $stKnown = $pdo->prepare(
+                "SELECT DISTINCT ea FROM (
+                   SELECT from_address AS ea FROM comm_messages cm
+                   JOIN comm_threads ct ON ct.id = cm.thread_id_fk
+                   WHERE ct.supplier_id_fk = ? AND ct.purge_status = 'live' AND cm.direction = 'in'
+                     AND cm.from_address != ''
+                   UNION
+                   SELECT to_address AS ea FROM comm_messages cm
+                   JOIN comm_threads ct ON ct.id = cm.thread_id_fk
+                   WHERE ct.supplier_id_fk = ? AND ct.purge_status = 'live' AND cm.direction = 'out'
+                     AND cm.to_address != ''
+                   UNION
+                   SELECT email AS ea FROM comm_address_pins WHERE supplier_id_fk = ?
+                 ) sub
+                 WHERE ea IS NOT NULL AND ea != ''"
+            );
+            $stKnown->execute([$supplierId, $supplierId, $supplierId]);
+            $knownRaw = $stKnown->fetchAll(PDO::FETCH_COLUMN);
+            $knownEmails = [];
+            foreach ($knownRaw as $raw) {
+                $e = extract_email_address((string) $raw);
+                if ($e !== null) $knownEmails[] = strtolower($e);
+            }
+            $toEmail = extract_email_address($to);
+            if ($toEmail === null || !in_array(strtolower($toEmail), $knownEmails, true)) {
+                http_response_code(422);
+                echo json_encode(['ok' => false, 'error' => 'Destinataire non autorisé pour ce fournisseur.']);
+                exit;
+            }
+
+            // Parse doc_file_ids
+            $docFileIdsRaw = $_POST['doc_file_ids'] ?? '[]';
+            $docFileIds    = json_decode($docFileIdsRaw, true);
+            if (!is_array($docFileIds)) {
+                http_response_code(400);
+                echo json_encode(['ok' => false, 'error' => 'doc_file_ids: tableau JSON invalide.']);
+                exit;
+            }
+            $attachments = [];
+            foreach ($docFileIds as $dfId) {
+                $dfId = (int) $dfId;
+                $stDoc = $pdo->prepare(
+                    'SELECT id, local_path, file_name, mime_type FROM doc_files WHERE id = ? AND is_active = 1 LIMIT 1'
+                );
+                $stDoc->execute([$dfId]);
+                $docRow = $stDoc->fetch(PDO::FETCH_ASSOC);
+                if (!$docRow) {
+                    http_response_code(422);
+                    echo json_encode(['ok' => false, 'error' => "Pièce jointe introuvable (doc_file id={$dfId})."]);
+                    exit;
+                }
+                $attachments[] = [
+                    'local_path' => $docRow['local_path'],
+                    'filename'   => $docRow['file_name'],
+                    'mime_type'  => $docRow['mime_type'],
+                    '_id'        => (int) $docRow['id'],
+                ];
+            }
+
+            // Create new thread
+            $stNewThread = $pdo->prepare(
+                "INSERT INTO comm_threads
+                    (supplier_id_fk, subject, is_active, purge_status, last_message_at, created_at, updated_at)
+                 VALUES (?, ?, 1, 'live', NOW(), NOW(), NOW())"
+            );
+            $stNewThread->execute([$supplierId, $subject]);
+            $newThreadId = (int) $pdo->lastInsertId();
+
+            // Build Python payload
+            $pyPayload = [
+                'sender_email' => $senderEmail,
+                'to'           => $toEmail,
+                'subject'      => $subject,
+                'body'         => $body,
+                'body_format'  => 'text',
+                'in_reply_to'  => null,
+                'references'   => null,
+                'attachments'  => array_map(
+                    static fn ($a) => [
+                        'local_path' => $a['local_path'],
+                        'filename'   => $a['filename'],
+                        'mime_type'  => $a['mime_type'],
+                    ],
+                    $attachments
+                ),
+            ];
+            $payloadJson = json_encode($pyPayload);
+            $tmpPayload  = tempnam(sys_get_temp_dir(), 'comm_send_');
+            file_put_contents($tmpPayload, $payloadJson);
+            $pythonBin  = '/usr/bin/python3';
+            $senderPath = '/var/www/maltytask/scripts/python/send_email_comm.py';
+            $cmd        = escapeshellcmd($pythonBin) . ' ' . escapeshellarg($senderPath)
+                        . ' --payload ' . escapeshellarg($tmpPayload) . ' 2>&1';
+            $output = shell_exec($cmd);
+            @unlink($tmpPayload);
+
+            $sendResult = json_decode($output ?? '', true);
+            if (!$sendResult || !isset($sendResult['ok'])) {
+                // Roll back the newly-created thread
+                $pdo->exec("DELETE FROM comm_threads WHERE id = {$newThreadId}");
+                http_response_code(500);
+                echo json_encode([
+                    'ok'    => false,
+                    'error' => "Réponse invalide du service d'envoi.",
+                    'raw'   => $output,
+                ]);
+                exit;
+            }
+            if ($sendResult['ok'] === false) {
+                $pdo->exec("DELETE FROM comm_threads WHERE id = {$newThreadId}");
+                http_response_code(502);
+                echo json_encode([
+                    'ok'          => false,
+                    'error'       => $sendResult['error'] ?? 'Envoi échoué.',
+                    'send_status' => 'failed',
+                ]);
+                exit;
+            }
+
+            $rfc2822MsgId = $sendResult['message_id'];
+            $gmailMsgId   = $sendResult['gmail_message_id'] ?? null;
+
+            $newCommMsgId = _persist_outbound(
+                $pdo, $me, $newThreadId,
+                $senderEmail, $toEmail, $subject, $body,
+                $rfc2822MsgId, $gmailMsgId,
+                $attachments, 'normal'
+            );
+
+            echo json_encode([
+                'ok'              => true,
+                'comm_message_id' => $newCommMsgId,
+                'thread_id'       => $newThreadId,
+                'send_status'     => 'sent',
+            ]);
+            exit;
+        }
+
+        // ── POST action=send_forward (admin or manager) ──────────────────────
+        if ($action === 'send_forward') {
+            if (!is_admin($me) && !is_manager($me)) {
+                http_response_code(403);
+                echo json_encode(['ok' => false, 'error' => 'Admin ou manager uniquement.']);
+                exit;
+            }
+
+            // Fetch sender email from DB (session does not carry email)
+            $stSenderEmail = $pdo->prepare('SELECT email FROM users WHERE id = ? LIMIT 1');
+            $stSenderEmail->execute([(int) $me['id']]);
+            $senderEmail = (string) ($stSenderEmail->fetchColumn() ?? '');
+            if ($senderEmail === '' || !str_ends_with($senderEmail, '@lanebuleuse.ch')) {
+                http_response_code(422);
+                echo json_encode([
+                    'ok'    => false,
+                    'error' => "Votre compte n'a pas d'adresse e-mail @lanebuleuse.ch configurée ; impossible d'envoyer.",
+                ]);
+                exit;
+            }
+
+            $srcMsgId = isset($_POST['message_id']) ? (int) $_POST['message_id'] : 0;
+            $to       = trim($_POST['to'] ?? '');
+            $note     = trim($_POST['note'] ?? '');
+
+            if ($srcMsgId <= 0) {
+                http_response_code(400);
+                echo json_encode(['ok' => false, 'error' => 'message_id invalide.']);
+                exit;
+            }
+            if ($to === '' || !filter_var($to, FILTER_VALIDATE_EMAIL)) {
+                http_response_code(422);
+                echo json_encode(['ok' => false, 'error' => "Adresse destinataire invalide."]);
+                exit;
+            }
+
+            // Load source message + its thread
+            $stSrc = $pdo->prepare(
+                "SELECT cm.id, cm.direction, cm.from_address, cm.to_address, cm.subject,
+                        cm.body, cm.body_format, cm.body_snippet, cm.sent_at, cm.message_id,
+                        cm.thread_id_fk
+                   FROM comm_messages cm
+                   JOIN comm_threads ct ON ct.id = cm.thread_id_fk
+                  WHERE cm.id = ? AND ct.is_active = 1 AND ct.purge_status = 'live' LIMIT 1"
+            );
+            $stSrc->execute([$srcMsgId]);
+            $srcMsg = $stSrc->fetch(PDO::FETCH_ASSOC);
+            if (!$srcMsg) {
+                http_response_code(404);
+                echo json_encode(['ok' => false, 'error' => 'Message source introuvable.']);
+                exit;
+            }
+
+            // Build forward subject (avoid double Fwd:)
+            $fwdSubject = preg_match('/^fwd\s*:/i', $srcMsg['subject'] ?? '')
+                ? ($srcMsg['subject'] ?? '')
+                : 'Fwd: ' . ($srcMsg['subject'] ?? '');
+
+            // Build forward body
+            $originalBody = $srcMsg['body'] ?? ($srcMsg['body_snippet'] ?? '');
+            if (($srcMsg['body_format'] ?? '') === 'html') {
+                $originalBody = strip_tags(html_entity_decode($originalBody, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+            }
+            $fwdBody = ($note !== '' ? $note . "\n\n" : '')
+                     . "---------- Message transféré ----------\n"
+                     . "De : " . ($srcMsg['from_address'] ?? '') . "\n"
+                     . "Date : " . ($srcMsg['sent_at'] ?? '') . "\n"
+                     . "Objet : " . ($srcMsg['subject'] ?? '') . "\n\n"
+                     . $originalBody;
+
+            // Load source message's attachments
+            $stDocs = $pdo->prepare(
+                "SELECT df.id AS _id, df.local_path, df.file_name AS filename, df.mime_type
+                   FROM comm_message_docs cmd
+                   JOIN doc_files df ON df.id = cmd.doc_file_id_fk
+                  WHERE cmd.message_id_fk = ? AND df.is_active = 1"
+            );
+            $stDocs->execute([$srcMsgId]);
+            $fwdAttachments = $stDocs->fetchAll(PDO::FETCH_ASSOC);
+
+            // Build Python payload
+            $pyPayload = [
+                'sender_email' => $senderEmail,
+                'to'           => $to,
+                'subject'      => $fwdSubject,
+                'body'         => $fwdBody,
+                'body_format'  => 'text',
+                'in_reply_to'  => null,
+                'references'   => null,
+                'attachments'  => array_map(
+                    static fn ($a) => [
+                        'local_path' => $a['local_path'],
+                        'filename'   => $a['filename'],
+                        'mime_type'  => $a['mime_type'],
+                    ],
+                    $fwdAttachments
+                ),
+            ];
+            $payloadJson = json_encode($pyPayload);
+            $tmpPayload  = tempnam(sys_get_temp_dir(), 'comm_send_');
+            file_put_contents($tmpPayload, $payloadJson);
+            $pythonBin  = '/usr/bin/python3';
+            $senderPath = '/var/www/maltytask/scripts/python/send_email_comm.py';
+            $cmd        = escapeshellcmd($pythonBin) . ' ' . escapeshellarg($senderPath)
+                        . ' --payload ' . escapeshellarg($tmpPayload) . ' 2>&1';
+            $output = shell_exec($cmd);
+            @unlink($tmpPayload);
+
+            $sendResult = json_decode($output ?? '', true);
+            if (!$sendResult || !isset($sendResult['ok'])) {
+                http_response_code(500);
+                echo json_encode([
+                    'ok'    => false,
+                    'error' => "Réponse invalide du service d'envoi.",
+                    'raw'   => $output,
+                ]);
+                exit;
+            }
+            if ($sendResult['ok'] === false) {
+                http_response_code(502);
+                echo json_encode([
+                    'ok'          => false,
+                    'error'       => $sendResult['error'] ?? 'Envoi échoué.',
+                    'send_status' => 'failed',
+                ]);
+                exit;
+            }
+
+            $rfc2822MsgId = $sendResult['message_id'];
+            $gmailMsgId   = $sendResult['gmail_message_id'] ?? null;
+
+            $newCommMsgId = _persist_outbound(
+                $pdo, $me, (int) $srcMsg['thread_id_fk'],
+                $senderEmail, $to, $fwdSubject, $fwdBody,
+                $rfc2822MsgId, $gmailMsgId,
+                $fwdAttachments, 'elevated'
+            );
+
+            echo json_encode([
+                'ok'              => true,
+                'comm_message_id' => $newCommMsgId,
+                'send_status'     => 'sent',
             ]);
             exit;
         }
