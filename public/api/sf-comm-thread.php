@@ -177,6 +177,7 @@ function build_supplier_timeline(PDO $pdo, int $supplierId): array
               SELECT id FROM comm_threads WHERE supplier_id_fk = ? AND is_active = 1 AND purge_status = 'live'
               UNION
               SELECT thread_id_fk FROM comm_thread_suppliers WHERE supplier_id_fk = ?
+              -- no purge_status on the junction; outer comm_threads guard above filters live threads
             )
           ORDER BY last_message_at ASC"
     );
@@ -261,6 +262,7 @@ function build_supplier_threads(PDO $pdo, int $supplierId): array
               SELECT id FROM comm_threads WHERE supplier_id_fk = ? AND is_active = 1 AND purge_status = 'live'
               UNION
               SELECT thread_id_fk FROM comm_thread_suppliers WHERE supplier_id_fk = ?
+              -- no purge_status on the junction; outer comm_threads guard above filters live threads
             )
           ORDER BY t.last_message_at DESC"
     );
@@ -299,6 +301,25 @@ function build_supplier_threads(PDO $pdo, int $supplierId): array
     }
 
     return $result;
+}
+
+/**
+ * Load declared forwarder↔principal relationships for a supplier (bidirectional).
+ * Returns one row per relationship with both supplier names.
+ */
+function load_supplier_relationships(PDO $pdo, int $supplierId): array
+{
+    $st = $pdo->prepare(
+        "SELECT rsr.id, rsr.rel_type,
+                rsr.forwarder_supplier_fk, fs.name AS forwarder_name,
+                rsr.principal_supplier_fk, ps.name AS principal_name
+           FROM ref_supplier_relationships rsr
+           JOIN ref_suppliers fs ON fs.id = rsr.forwarder_supplier_fk
+           JOIN ref_suppliers ps ON ps.id = rsr.principal_supplier_fk
+          WHERE rsr.forwarder_supplier_fk = ? OR rsr.principal_supplier_fk = ?"
+    );
+    $st->execute([$supplierId, $supplierId]);
+    return $st->fetchAll(PDO::FETCH_ASSOC);
 }
 
 /**
@@ -438,17 +459,7 @@ try {
                 echo json_encode(['ok' => false, 'error' => 'supplier_id invalide.']);
                 exit;
             }
-            $stRels = $pdo->prepare(
-                "SELECT rsr.id, rsr.rel_type,
-                        rsr.forwarder_supplier_fk, fs.name AS forwarder_name,
-                        rsr.principal_supplier_fk, ps.name AS principal_name
-                   FROM ref_supplier_relationships rsr
-                   JOIN ref_suppliers fs ON fs.id = rsr.forwarder_supplier_fk
-                   JOIN ref_suppliers ps ON ps.id = rsr.principal_supplier_fk
-                  WHERE rsr.forwarder_supplier_fk = ? OR rsr.principal_supplier_fk = ?"
-            );
-            $stRels->execute([$supplierId, $supplierId]);
-            echo json_encode(['ok' => true, 'relationships' => $stRels->fetchAll(PDO::FETCH_ASSOC)]);
+            echo json_encode(['ok' => true, 'relationships' => load_supplier_relationships($pdo, $supplierId)]);
             exit;
         }
 
@@ -613,17 +624,7 @@ try {
         unset($t);
 
         // Declared relationships for this supplier
-        $stRels = $pdo->prepare(
-            "SELECT rsr.id, rsr.rel_type,
-                    rsr.forwarder_supplier_fk, fs.name AS forwarder_name,
-                    rsr.principal_supplier_fk, ps.name AS principal_name
-               FROM ref_supplier_relationships rsr
-               JOIN ref_suppliers fs ON fs.id = rsr.forwarder_supplier_fk
-               JOIN ref_suppliers ps ON ps.id = rsr.principal_supplier_fk
-              WHERE rsr.forwarder_supplier_fk = ? OR rsr.principal_supplier_fk = ?"
-        );
-        $stRels->execute([$supplierId, $supplierId]);
-        $relationships = $stRels->fetchAll(PDO::FETCH_ASSOC);
+        $relationships = load_supplier_relationships($pdo, $supplierId);
 
         echo json_encode(['ok' => true, 'timeline' => $timeline, 'review_threads' => $reviewThreads, 'threads' => $threads, 'known_addresses' => $knownAddresses, 'relationships' => $relationships]);
         exit;
@@ -1627,12 +1628,14 @@ try {
                 "INSERT INTO ref_supplier_relationships
                     (forwarder_supplier_fk, principal_supplier_fk, rel_type, created_by_user_fk, created_at)
                  VALUES (?, ?, 'forwarder', ?, NOW())
-                 ON DUPLICATE KEY UPDATE created_by_user_fk = VALUES(created_by_user_fk)"
+                 ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), created_by_user_fk = VALUES(created_by_user_fk)"
             );
             $stIns->execute([$fwdId, $prinId, (int)$me['id']]);
             $newRelId = (int)$pdo->lastInsertId();
-            $newRow = bd_fetch_before($pdo, 'ref_supplier_relationships', $newRelId);
-            log_revision($pdo, $me, 'ref_supplier_relationships', $newRelId, null, $newRow ?? [], 'normal', null);
+            if ($newRelId > 0) {
+                $newRow = bd_fetch_before($pdo, 'ref_supplier_relationships', $newRelId);
+                log_revision($pdo, $me, 'ref_supplier_relationships', $newRelId, null, $newRow ?? [], 'normal', null);
+            }
             echo json_encode(['ok' => true, 'id' => $newRelId, 'forwarder_supplier_id' => $fwdId, 'principal_supplier_id' => $prinId]);
             exit;
         }
