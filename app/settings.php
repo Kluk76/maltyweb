@@ -93,6 +93,69 @@ function date_parse_dayfirst(): bool
 }
 
 /**
+ * Returns the app's DISPLAY timezone (IANA name, e.g. 'Europe/Zurich').
+ * This is the SINGLE SOURCE for the local timezone used to render UTC-stored
+ * timestamps. Reads system_settings general/app_timezone; defaults to
+ * 'Europe/Zurich'. Cached per-request.
+ */
+function app_timezone(): string
+{
+    static $tz = null;
+    if ($tz === null) {
+        $tz = (string) system_setting('app_timezone', 'general', 'Europe/Zurich');
+        if ($tz === '') {
+            $tz = 'Europe/Zurich';
+        }
+    }
+    return $tz;
+}
+
+/**
+ * Renders a UTC-stored timestamp in the app's local timezone (app_timezone()).
+ *
+ * The DB is canonical UTC: a bare DATETIME string from the DB is interpreted
+ * AS UTC, then converted to the local display zone and formatted.
+ *
+ * @param string|DateTimeInterface|null $utc  UTC timestamp. A string is parsed
+ *        in UTC (explicit DateTimeZone('UTC')); a DateTimeInterface is read as-is
+ *        (its own zone is honored, then converted). NULL/empty/zero-date → ''.
+ * @param string|null $fmt  Raw PHP date() format string. NULL → composed from
+ *        the date_format + time_format settings (e.g. 'd/m/Y H:i').
+ * @return string  Formatted local time, or '' for empty/invalid input.
+ */
+function display_local(string|DateTimeInterface|null $utc, ?string $fmt = null): string
+{
+    if ($utc === null || $utc === '') {
+        return '';
+    }
+    if (is_string($utc)) {
+        $trimmed = trim($utc);
+        if ($trimmed === '' || str_starts_with($trimmed, '0000-00-00')) {
+            return '';
+        }
+        try {
+            $dt = new DateTimeImmutable($trimmed, new DateTimeZone('UTC'));
+        } catch (\Throwable $e) {
+            return '';
+        }
+    } else {
+        $dt = $utc instanceof DateTimeImmutable
+            ? $utc
+            : DateTimeImmutable::createFromInterface($utc);
+    }
+
+    if ($fmt === null) {
+        $fmt = date_display_format() . ' ' . (string) system_setting('time_format', 'general', 'H:i');
+    }
+
+    try {
+        return $dt->setTimezone(new DateTimeZone(app_timezone()))->format($fmt);
+    } catch (\Throwable $e) {
+        return '';
+    }
+}
+
+/**
  * Feature flag: whether repack-event depletion is live on FG stock.
  *
  * Returns FALSE (safe default) until the operator explicitly sets

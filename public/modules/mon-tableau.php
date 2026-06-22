@@ -18,6 +18,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/../../app/auth.php';
 require_once __DIR__ . '/../../app/csrf.php';
 require_once __DIR__ . '/../../app/settings-helpers.php';
+require_once __DIR__ . '/../../app/settings.php';
 require_once __DIR__ . '/../../app/db-write-helpers.php';
 require_once __DIR__ . '/../../app/kpi-handlers.php';
 require_once __DIR__ . '/../../app/kpi-recap-schedule.php';
@@ -611,11 +612,7 @@ require __DIR__ . '/../../app/partials/topbar.php';
           </label>
           <?php if ($isActive && $sub && $sub['next_due_at']): ?>
           <span class="mt-recap-block__next">
-            <?php
-            $nextDt = (new DateTimeImmutable($sub['next_due_at'], new DateTimeZone('UTC')))
-                          ->setTimezone(new DateTimeZone('Europe/Zurich'));
-            ?>
-            Prochain : <?= htmlspecialchars($nextDt->format('d/m H:i')) ?>
+            Prochain : <?= htmlspecialchars(display_local($sub['next_due_at'], 'd/m H:i')) ?>
           </span>
           <?php endif ?>
         </div>
@@ -672,11 +669,7 @@ require __DIR__ . '/../../app/partials/topbar.php';
           <?php if ($isActive && $sub && $sub['last_sent_at']): ?>
           <p class="mt-recap-prefs__info">
             Dernier envoi :
-            <?php
-            $lastDt = (new DateTimeImmutable($sub['last_sent_at'], new DateTimeZone('UTC')))
-                          ->setTimezone(new DateTimeZone('Europe/Zurich'));
-            ?>
-            <?= htmlspecialchars($lastDt->format('d/m/Y H:i')) ?>
+            <?= htmlspecialchars(display_local($sub['last_sent_at'], 'd/m/Y H:i')) ?>
           </p>
           <?php endif ?>
         </div>

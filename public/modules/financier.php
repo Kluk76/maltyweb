@@ -231,12 +231,7 @@ if ($salesLatestKey !== null) {
 $salesArtifactPath = '/var/www/maltytask/interfaces/sales-cogs-data.json';
 $salesFileMtime    = is_readable($salesArtifactPath) ? filemtime($salesArtifactPath) : null;
 $salesFreshnessTs  = $salesGeneratedAt
-    ? (function() use ($salesGeneratedAt): ?string {
-        try {
-            $dt = new DateTimeImmutable($salesGeneratedAt, new DateTimeZone('Europe/Zurich'));
-            return $dt->format('d.m.Y H:i');
-        } catch (Throwable $e) { return null; }
-    })()
+    ? (display_local($salesGeneratedAt, 'd.m.Y H:i') ?: null)
     : ($salesFileMtime ? date('d.m.Y H:i', $salesFileMtime) : null);
 $salesFreshnessLabel = $salesLatestKey ? fin_month_label($salesLatestKey) : null;
 

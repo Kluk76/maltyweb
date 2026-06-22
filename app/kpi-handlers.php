@@ -34,6 +34,7 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/settings.php';
 require_once __DIR__ . '/production-targets.php';
 require_once __DIR__ . '/returns-synthese.php';
 require_once __DIR__ . '/utilities-estimate.php';
@@ -1074,7 +1075,7 @@ function kpi_cogs_freshness_meta(?string $monthKey): array
     $isStale = $ageDays > 40;
 
     // DD.MM.YYYY — day-first system-wide convention
-    $computedLabel = $dt->setTimezone(new DateTimeZone('Europe/Zurich'))->format('d.m.Y');
+    $computedLabel = display_local($dt, 'd.m.Y');
 
     // MM/YYYY from monthKey (YYYY-MM)
     $dataPeriod = null;

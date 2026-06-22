@@ -2410,10 +2410,10 @@ try {
 
         // Réel du mois: actual Cuve-de-service HL consumed by each client in the current calendar month.
         // 1 ledger unit = 1 L → /100 = HL. qty_signed<0 = sales; returns positive excluded.
-        // Computed Europe/Zurich calendar month.
+        // Computed local calendar month (app_timezone()).
         $servingTankRealMonth = [];
         try {
-            $tzZ   = new DateTimeZone('Europe/Zurich');
+            $tzZ   = new DateTimeZone(app_timezone());
             $now   = new DateTime('now', $tzZ);
             $mstart = $now->format('Y-m-01');
             $mnext  = (new DateTime('first day of next month', $tzZ))->format('Y-m-d');

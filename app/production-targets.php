@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__ . '/settings.php';
 
 /**
  * Production-targets compute helper.
@@ -89,8 +90,8 @@ function production_targets_compute(PDO $pdo): array
         ],
     ];
 
-    // 3. Time windows (Europe/Zurich)
-    $tz = new DateTimeZone('Europe/Zurich');
+    // 3. Time windows (app display timezone)
+    $tz = new DateTimeZone(app_timezone());
     $now = new DateTime('now', $tz);
     $dow = (int) $now->format('N'); // 1=Mon … 7=Sun
 
