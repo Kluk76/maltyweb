@@ -1234,6 +1234,19 @@
 
   /* ── Discussion timeline section ────────────────────────────────── */
   let _discPollInterval = null;
+  let _composerMode  = 'new';   // 'new' | 'reply' | 'forward'
+  let _replyToMsgId  = null;    // integer message id when mode='reply'
+  let _forwardMsgId  = null;    // integer message id when mode='forward'
+  let _replyToInfo   = null;    // { from_address } for display
+  let _forwardInfo   = null;    // { from_address, sent_at, docs[], subject } for display
+
+  function _resetComposerMode() {
+    _composerMode  = 'new';
+    _replyToMsgId  = null;
+    _forwardMsgId  = null;
+    _replyToInfo   = null;
+    _forwardInfo   = null;
+  }
 
   async function renderDiscussionSection(supplierId) {
     if (_discPollInterval) { clearInterval(_discPollInterval); _discPollInterval = null; }
@@ -1327,13 +1340,26 @@
         ? `<span class="sf-disc-sent-by">par ${escHtml(item.sent_by_display)}</span>`
         : '';
 
-      return `<div class="sf-disc-item ${dirClass}">
+      const replyBtnHtml = (item.direction === 'in' && item.source !== 'manual')
+        ? `<button class="sf-disc-reply-btn" type="button" data-msg-id="${item.message_id}"
+             data-from="${escHtml(item.from_address||'')}"
+             title="Répondre à ce message">↩</button>`
+        : '';
+
+      const fwdHtml = (item.source !== 'manual')
+        ? `<button class="sf-disc-fwd-btn" type="button" data-msg-id="${item.message_id}"
+             data-from="${escHtml(item.from_address||'')}" data-sent-at="${escHtml(item.sent_at||'')}"
+             title="Transférer ce message">↪</button>`
+        : '';
+
+      return `<div class="sf-disc-item ${dirClass}" data-msg-id="${item.message_id}">
           <div class="sf-disc-item-head">
             <span class="sf-disc-dir-badge ${dirClass}">${dirLabel}</span>
             <span class="sf-disc-from">${escHtml(item.from_address || '—')}</span>
             <span class="sf-disc-date">${fmtDate(item.sent_at)}</span>
             <span class="sf-disc-source ${srcClass}">${sourceLabel}</span>
             ${sentByHtml}
+            <span class="sf-disc-item-actions">${replyBtnHtml}${fwdHtml}</span>
           </div>
           ${bodyHtml}
           ${docsHtml ? `<div class="sf-disc-docs">${docsHtml}</div>` : ''}
@@ -1341,6 +1367,111 @@
     } catch (e) {
       return `<div class="sf-disc-item sf-disc-item--unreadable"><em>(message illisible)</em></div>`;
     }
+  }
+
+  function _renderComposerHtml(data) {
+    const knownAddresses = data.known_addresses || [];
+
+    if (ROLE !== 'admin' && ROLE !== 'manager') return '';
+    if (!USER_EMAIL || !USER_EMAIL.endsWith('@lanebuleuse.ch')) {
+      return `<div class="sf-disc-reply-gate">
+        <div class="sf-disc-reply-gate-msg">Votre compte n'a pas d'adresse e-mail @lanebuleuse.ch — l'envoi est indisponible.</div>
+      </div>`;
+    }
+
+    const newModeHtml = () => {
+      if (knownAddresses.length === 0) {
+        return `<div class="sf-disc-composer-no-addr">Aucune adresse connue — rattachez d'abord un e-mail de ce fournisseur.</div>`;
+      }
+      const opts = knownAddresses.map(a => `<option value="${escHtml(a)}">${escHtml(a)}</option>`).join('');
+      return `<div class="sf-disc-composer-field-row">
+          <label class="sf-disc-composer-label">À</label>
+          <select class="sf-disc-composer-to-select" id="sf-disc-composer-to-select">
+            <option value="">— Choisir un destinataire —</option>
+            ${opts}
+          </select>
+        </div>
+        <div class="sf-disc-composer-field-row">
+          <label class="sf-disc-composer-label">Objet</label>
+          <input type="text" class="sf-disc-composer-subject" id="sf-disc-composer-subject" placeholder="Objet du message">
+        </div>`;
+    };
+
+    const replyIndicatorHtml = () => {
+      if (!_replyToInfo) return '';
+      const snip = _replyToInfo.from_address || '(inconnu)';
+      return `<div class="sf-disc-composer-reply-indicator">
+          <span>↩ En réponse à : <em>${escHtml(snip)}</em></span>
+          <button class="sf-disc-composer-mode-cancel" id="sf-disc-composer-mode-cancel" type="button" title="Annuler">×</button>
+        </div>
+        <div class="sf-disc-reply-to">À : <span id="sf-disc-reply-recipient" class="sf-disc-composer-to-display">${escHtml(_replyToInfo.from_address||'')}</span></div>`;
+    };
+
+    const forwardModeHtml = () => {
+      const subjectVal = (_forwardInfo && _forwardInfo.subject) ? _forwardInfo.subject : '';
+      const fwdDocsHtml = (_forwardInfo && _forwardInfo.docs && _forwardInfo.docs.length > 0)
+        ? _forwardInfo.docs.map(d => `<span class="sf-disc-attach-chip sf-disc-fwd-locked-chip">${escHtml(d.attachment_filename||d.filename||'—')}</span>`).join('')
+        : '';
+      return `<div class="sf-disc-composer-fwd-indicator">
+          <span>↪ Transfert de : <em>${escHtml(_forwardInfo ? (_forwardInfo.from_address||'(inconnu)') : '')}</em></span>
+          <button class="sf-disc-composer-mode-cancel" id="sf-disc-composer-mode-cancel" type="button" title="Annuler">×</button>
+        </div>
+        <div class="sf-disc-composer-field-row">
+          <label class="sf-disc-composer-label">À</label>
+          <input type="email" class="sf-disc-composer-fwd-to" id="sf-disc-composer-fwd-to" placeholder="adresse@example.com">
+        </div>
+        <div class="sf-disc-composer-field-row">
+          <label class="sf-disc-composer-label">Objet</label>
+          <input type="text" class="sf-disc-composer-subject" id="sf-disc-composer-subject" value="${escHtml(subjectVal)}" readonly>
+        </div>
+        ${fwdDocsHtml ? `<div class="sf-disc-composer-fwd-att"><span class="sf-disc-composer-fwd-att-label">Pièces jointes incluses :</span>${fwdDocsHtml}</div>` : ''}`;
+    };
+
+    const modeHeaderLabel = _composerMode === 'new' ? 'Nouvel e-mail'
+      : _composerMode === 'reply' ? 'Répondre par e-mail'
+      : 'Transférer le message';
+
+    const modeSpecificHtml = _composerMode === 'new' ? newModeHtml()
+      : _composerMode === 'reply' ? replyIndicatorHtml()
+      : forwardModeHtml();
+
+    const attachZoneHtml = _composerMode !== 'forward'
+      ? `<div class="sf-disc-attach-zone" id="sf-disc-attach-zone">
+          <div class="sf-disc-attach-drop" id="sf-disc-attach-drop" role="button" tabindex="0" aria-label="Glisser-déposer des fichiers ou cliquer pour parcourir">
+            <span class="sf-disc-attach-drop-icon">📎</span>
+            <span>Glisser-déposer ou <u>parcourir</u></span>
+            <input type="file" id="sf-disc-attach-input" multiple hidden>
+          </div>
+          <button class="sf-disc-attach-picker-btn" id="sf-disc-attach-picker-btn" type="button">
+            + Joindre un document du fournisseur
+          </button>
+          <div class="sf-disc-attach-chips" id="sf-disc-attach-chips"></div>
+          <div class="sf-disc-supplier-docs-picker" id="sf-disc-supplier-docs-picker" style="display:none">
+            <div class="sf-disc-sdp-loading" id="sf-disc-sdp-loading">Chargement…</div>
+            <div class="sf-disc-sdp-list" id="sf-disc-sdp-list"></div>
+          </div>
+          <div class="sf-disc-attach-errors" id="sf-disc-attach-errors"></div>
+        </div>`
+      : `<div id="sf-disc-attach-chips" class="sf-disc-attach-chips" style="display:none"></div>`;
+
+    return `<div class="sf-disc-reply-compose" id="sf-disc-reply-compose">
+        <div class="sf-disc-reply-head">
+          <span class="sf-disc-reply-label" id="sf-disc-composer-head-label">${escHtml(modeHeaderLabel)}</span>
+          <span class="sf-disc-reply-distinguish">Ceci envoie un email réel</span>
+        </div>
+        ${modeSpecificHtml}
+        <textarea id="sf-disc-reply-body" class="sf-disc-reply-textarea" rows="4" placeholder="Corps du message…"></textarea>
+        ${attachZoneHtml}
+        <div class="sf-disc-reply-actions" id="sf-disc-reply-actions">
+          <div class="sf-disc-reply-confirm" id="sf-disc-reply-confirm" style="display:none">
+            <span class="sf-disc-reply-confirm-text">Confirmer l'envoi à <strong id="sf-disc-reply-confirm-addr"></strong> ?</span>
+            <button class="sf-disc-reply-confirm-yes" id="sf-disc-reply-confirm-yes">Confirmer</button>
+            <button class="sf-disc-reply-confirm-no" id="sf-disc-reply-confirm-no">Annuler</button>
+          </div>
+          <button class="sf-disc-reply-send-btn" id="sf-disc-reply-send-btn" type="button"${(_composerMode === 'new' && knownAddresses.length === 0) ? ' disabled' : ''}>Envoyer</button>
+        </div>
+        <div class="sf-disc-reply-error" id="sf-disc-reply-error" style="display:none"></div>
+      </div>`;
   }
 
   function _renderDiscContent(supplierId, data) {
@@ -1405,65 +1536,7 @@
         </div>
       </div>`;
 
-    // ── Reply composer — target most-recent inbound across whole timeline ──
-    const _canReply = () => {
-      if (ROLE !== 'admin' && ROLE !== 'manager') return { can: false, reason: 'role' };
-      if (!USER_EMAIL || !USER_EMAIL.endsWith('@lanebuleuse.ch')) return { can: false, reason: 'email' };
-      const lastInbound = [...timeline].reverse().find(m => m.direction === 'in');
-      if (!lastInbound) return { can: false, reason: 'no_inbound' };
-      return { can: true, recipient: lastInbound.from_address || '', thread_id: lastInbound.thread_id };
-    };
-
-    const replyGate = _canReply();
-    let replyHtml = '';
-    if (!replyGate.can) {
-      if (replyGate.reason === 'email') {
-        replyHtml = `<div class="sf-disc-reply-gate">
-            <div class="sf-disc-reply-gate-msg">Votre compte n'a pas d'adresse e-mail @lanebuleuse.ch — l'envoi est indisponible.</div>
-          </div>`;
-      } else if (replyGate.reason === 'no_inbound') {
-        replyHtml = `<div class="sf-disc-reply-gate">
-            <div class="sf-disc-reply-gate-msg">Pas de destinataire pour répondre à ce fournisseur.</div>
-          </div>`;
-      }
-    } else {
-      const recipientEsc = escHtml(replyGate.recipient);
-      replyHtml = `<div class="sf-disc-reply-compose" id="sf-disc-reply-compose" data-reply-thread-id="${replyGate.thread_id}">
-          <div class="sf-disc-reply-head">
-            <span class="sf-disc-reply-label">Répondre par e-mail</span>
-            <span class="sf-disc-reply-distinguish">Ceci envoie un email réel au fournisseur</span>
-          </div>
-          <div class="sf-disc-reply-to">À : <span id="sf-disc-reply-recipient">${recipientEsc}</span></div>
-          <textarea id="sf-disc-reply-body" class="sf-disc-reply-textarea" rows="4" placeholder="Corps du message…"></textarea>
-
-          <div class="sf-disc-attach-zone" id="sf-disc-attach-zone">
-            <div class="sf-disc-attach-drop" id="sf-disc-attach-drop" role="button" tabindex="0" aria-label="Glisser-déposer des fichiers ou cliquer pour parcourir">
-              <span class="sf-disc-attach-drop-icon">📎</span>
-              <span>Glisser-déposer ou <u>parcourir</u></span>
-              <input type="file" id="sf-disc-attach-input" multiple hidden>
-            </div>
-            <button class="sf-disc-attach-picker-btn" id="sf-disc-attach-picker-btn" type="button">
-              + Joindre un document du fournisseur
-            </button>
-            <div class="sf-disc-attach-chips" id="sf-disc-attach-chips"></div>
-            <div class="sf-disc-supplier-docs-picker" id="sf-disc-supplier-docs-picker" style="display:none">
-              <div class="sf-disc-sdp-loading" id="sf-disc-sdp-loading">Chargement…</div>
-              <div class="sf-disc-sdp-list" id="sf-disc-sdp-list"></div>
-            </div>
-            <div class="sf-disc-attach-errors" id="sf-disc-attach-errors"></div>
-          </div>
-
-          <div class="sf-disc-reply-actions" id="sf-disc-reply-actions">
-            <div class="sf-disc-reply-confirm" id="sf-disc-reply-confirm" style="display:none">
-              <span class="sf-disc-reply-confirm-text">Confirmer l'envoi à <strong id="sf-disc-reply-confirm-addr"></strong> ?</span>
-              <button class="sf-disc-reply-confirm-yes" id="sf-disc-reply-confirm-yes">Confirmer</button>
-              <button class="sf-disc-reply-confirm-no" id="sf-disc-reply-confirm-no">Annuler</button>
-            </div>
-            <button class="sf-disc-reply-send-btn" id="sf-disc-reply-send-btn" type="button">Envoyer</button>
-          </div>
-          <div class="sf-disc-reply-error" id="sf-disc-reply-error" style="display:none"></div>
-        </div>`;
-    }
+    const replyHtml = _renderComposerHtml(data);
 
     return `<div class="sf-disc-feed-wrap">
         ${bannerHtml}
@@ -1481,7 +1554,7 @@
   }
 
   function _wireDiscEvents(container, supplierId) {
-    const data = container.__sfDiscData || { timeline: [], threads: [], review_threads: [] };
+    const data = container.__sfDiscData || { timeline: [], threads: [], review_threads: [], known_addresses: [] };
 
     // ── Scroll-position preservation ──
     const feedEl = container.querySelector('#sf-disc-feed');
@@ -1503,7 +1576,6 @@
       });
     }
 
-
     // ── Note-toggle expand/collapse ──
     const noteToggleBtn  = container.querySelector('#sf-disc-note-toggle');
     const noteCollapseEl = container.querySelector('#sf-disc-note-collapse');
@@ -1513,7 +1585,6 @@
         noteCollapseEl.classList.toggle('sf-disc-note-collapse--open', !isOpen);
         noteToggleBtn.setAttribute('aria-expanded', String(!isOpen));
         if (!isOpen) {
-          // Focus the textarea when expanding
           const ta = noteCollapseEl.querySelector('#sf-disc-note-text');
           if (ta) ta.focus();
         }
@@ -1553,7 +1624,6 @@
         };
 
         itemEl.addEventListener('click', async function(e) {
-          // Don't trigger if clicking inside triage bar buttons/selects
           if (e.target.closest('.sf-disc-triage-bar--inline')) return;
           await loadBody();
           itemEl.classList.toggle('sf-disc-review-banner-item--expanded');
@@ -1596,13 +1666,12 @@
               btn.textContent = 'Rattacher';
             }
           });
-          // Prevent clicks inside select from bubbling up to item expand
           pick.addEventListener('click', function(e) { e.stopPropagation(); });
         }
       });
     }
 
-    // ── Compose note (bottom, no thread_id required) ──
+    // ── Compose note ──
     const submitBtn = container.querySelector('#sf-disc-note-submit');
     const textEl    = container.querySelector('#sf-disc-note-text');
     const dateEl    = container.querySelector('#sf-disc-note-date');
@@ -1634,10 +1703,71 @@
       });
     }
 
-    // ── Reply composer (thread_id from data-reply-thread-id) ──
+    // ── Per-bubble Reply buttons ──
+    container.querySelectorAll('.sf-disc-reply-btn').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        const msgId = parseInt(btn.dataset.msgId, 10);
+        const fromAddr = btn.dataset.from || '';
+        _composerMode = 'reply';
+        _replyToMsgId = msgId;
+        _replyToInfo  = { from_address: fromAddr };
+        _forwardMsgId = null;
+        _forwardInfo  = null;
+        const sec = document.getElementById('sf-disc-section');
+        if (sec) _loadDiscussionSection(supplierId, sec);
+      });
+    });
+
+    // ── Per-bubble Forward buttons ──
+    container.querySelectorAll('.sf-disc-fwd-btn').forEach(btn => {
+      btn.addEventListener('click', async e => {
+        e.stopPropagation();
+        const msgId    = parseInt(btn.dataset.msgId, 10);
+        const fromAddr = btn.dataset.from || '';
+        const sentAt   = btn.dataset.sentAt || '';
+        const srcItem  = (data.timeline || []).find(m => m.message_id === msgId);
+        // Build client-side subject from thread data
+        const srcThread = (data.threads || []).find(t => srcItem && t.thread_id === srcItem.thread_id);
+        const rawSubj = srcThread ? (srcThread.subject || '') : '';
+        const fwdSubjClient = /^fwd\s*:/i.test(rawSubj) ? rawSubj : ('Fwd: ' + rawSubj || 'Fwd: (message)');
+        _composerMode = 'forward';
+        _forwardMsgId = msgId;
+        _forwardInfo  = {
+          from_address: fromAddr,
+          sent_at: sentAt,
+          docs: srcItem ? (srcItem.docs || []) : [],
+          subject: fwdSubjClient,
+        };
+        _replyToMsgId = null;
+        _replyToInfo  = null;
+        const sec = document.getElementById('sf-disc-section');
+        if (sec) await _loadDiscussionSection(supplierId, sec);
+        // Prefill forward body after re-render
+        if (_composerMode === 'forward' && srcItem) {
+          const bodyEl2 = document.getElementById('sf-disc-reply-body');
+          if (bodyEl2) {
+            const originalText = srcItem.body_plain || '';
+            bodyEl2.value = '---------- Message transféré ----------\n'
+              + 'De : ' + fromAddr + '\nDate : ' + sentAt + '\n\n' + originalText;
+          }
+        }
+      });
+    });
+
+    // ── Mode cancel buttons (reply/forward indicators) ──
+    const cancelBtn = container.querySelector('#sf-disc-composer-mode-cancel');
+    if (cancelBtn) {
+      cancelBtn.addEventListener('click', () => {
+        _resetComposerMode();
+        const sec = document.getElementById('sf-disc-section');
+        if (sec) _loadDiscussionSection(supplierId, sec);
+      });
+    }
+
+    // ── Reply / Email composer wiring ──
     const replyCompose = container.querySelector('#sf-disc-reply-compose');
     if (replyCompose) {
-      const threadIdForReply = parseInt(replyCompose.dataset.replyThreadId, 10) || null;
       const bodyEl      = container.querySelector('#sf-disc-reply-body');
       const dropEl      = container.querySelector('#sf-disc-attach-drop');
       const inputEl     = container.querySelector('#sf-disc-attach-input');
@@ -1652,11 +1782,10 @@
       const confirmYes  = container.querySelector('#sf-disc-reply-confirm-yes');
       const confirmNo   = container.querySelector('#sf-disc-reply-confirm-no');
       const replyErrEl  = container.querySelector('#sf-disc-reply-error');
-      const recipientEl = container.querySelector('#sf-disc-reply-recipient');
 
       var _sdpLoaded = false;
 
-      // Dropzone
+      // Dropzone (only in new/reply modes — attach zone exists)
       if (dropEl && inputEl) {
         dropEl.addEventListener('click', () => inputEl.click());
         dropEl.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); inputEl.click(); } });
@@ -1725,30 +1854,45 @@
         });
       }
 
-      // Send flow
+      // Send button click — show confirm dialog
       if (sendBtn) {
         sendBtn.addEventListener('click', () => {
           if (!bodyEl || !bodyEl.value.trim()) { sfToast('Le corps du message est requis.'); return; }
+
+          if (_composerMode === 'new') {
+            const toSel = container.querySelector('#sf-disc-composer-to-select');
+            if (!toSel || !toSel.value) { sfToast('Choisissez un destinataire.'); return; }
+            if (confirmAddr) confirmAddr.textContent = toSel.value;
+          } else if (_composerMode === 'reply') {
+            const recipEl = container.querySelector('#sf-disc-reply-recipient');
+            if (confirmAddr) confirmAddr.textContent = recipEl ? recipEl.textContent : '';
+          } else {
+            const toInput = container.querySelector('#sf-disc-composer-fwd-to');
+            if (!toInput || !toInput.value.trim()) { sfToast('Saisissez une adresse destinataire.'); return; }
+            if (confirmAddr) confirmAddr.textContent = toInput.value;
+          }
+
           const uploading = chipsEl ? chipsEl.querySelector('[data-uploading="1"]') : null;
           if (uploading) { sfToast('Attendez la fin des téléversements.'); return; }
-          const recipient = recipientEl ? recipientEl.textContent : '';
-          if (confirmAddr) confirmAddr.textContent = recipient;
+
           if (confirmEl) confirmEl.style.display = 'flex';
           sendBtn.disabled = true;
         });
       }
+
       if (confirmNo) {
         confirmNo.addEventListener('click', () => {
           if (confirmEl) confirmEl.style.display = 'none';
           if (sendBtn) sendBtn.disabled = false;
         });
       }
+
       if (confirmYes) {
         confirmYes.addEventListener('click', async () => {
           if (confirmYes) confirmYes.disabled = true;
           if (confirmNo)  confirmNo.disabled  = true;
           if (sendBtn)    sendBtn.disabled     = true;
-          await _doSendReply();
+          await _doSend();
         });
       }
 
@@ -1795,19 +1939,56 @@
         }
       }
 
-      async function _doSendReply() {
+      async function _doSend() {
         const body = bodyEl ? bodyEl.value.trim() : '';
-        const docFileIds = chipsEl
+        const docFileIds = (_composerMode !== 'forward' && chipsEl)
           ? Array.from(chipsEl.querySelectorAll('[data-doc-file-id]')).map(c => c.dataset.docFileId)
           : [];
-        try {
-          const params = new URLSearchParams({
+
+        let params;
+
+        if (_composerMode === 'reply') {
+          const lastInbound = [...(data.timeline || [])].reverse().find(m => m.direction === 'in');
+          const threadIdForReply = _replyToMsgId
+            ? (() => {
+                const item = (data.timeline || []).find(m => m.message_id === _replyToMsgId);
+                return item ? item.thread_id : (lastInbound ? lastInbound.thread_id : '');
+              })()
+            : (lastInbound ? lastInbound.thread_id : '');
+          params = new URLSearchParams({
             csrf:         CSRF,
             action:       'send_reply',
             thread_id:    String(threadIdForReply || ''),
             body:         body,
             doc_file_ids: JSON.stringify(docFileIds),
           });
+          if (_replyToMsgId) params.set('reply_to_message_id', String(_replyToMsgId));
+
+        } else if (_composerMode === 'new') {
+          const toSel     = container.querySelector('#sf-disc-composer-to-select');
+          const subjectEl = container.querySelector('#sf-disc-composer-subject');
+          params = new URLSearchParams({
+            csrf:         CSRF,
+            action:       'send_new',
+            supplier_id:  String(supplierId),
+            to:           toSel ? (toSel.value || '') : '',
+            subject:      subjectEl ? (subjectEl.value || '') : '',
+            body:         body,
+            doc_file_ids: JSON.stringify(docFileIds),
+          });
+
+        } else {
+          const toInput = container.querySelector('#sf-disc-composer-fwd-to');
+          params = new URLSearchParams({
+            csrf:       CSRF,
+            action:     'send_forward',
+            message_id: String(_forwardMsgId || ''),
+            to:         toInput ? (toInput.value || '') : '',
+            note:       body,
+          });
+        }
+
+        try {
           const resp = await fetch('/api/sf-comm-thread.php', {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -1815,11 +1996,12 @@
           });
           const json = await resp.json();
           if (json.ok) {
-            if (bodyEl)    bodyEl.value    = '';
-            if (chipsEl)   chipsEl.innerHTML = '';
-            if (confirmEl) confirmEl.style.display = 'none';
+            if (bodyEl)     bodyEl.value = '';
+            if (chipsEl)    chipsEl.innerHTML = '';
+            if (confirmEl)  confirmEl.style.display = 'none';
             if (replyErrEl) replyErrEl.style.display = 'none';
-            sfToast('Réponse envoyée.');
+            sfToast('Message envoyé.');
+            _resetComposerMode();
             const sec = document.getElementById('sf-disc-section');
             if (sec) await _loadDiscussionSection(supplierId, sec);
           } else {

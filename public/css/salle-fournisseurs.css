@@ -2571,3 +2571,179 @@ body.salle-fournisseurs .sf-disc-sent-by {
   color: var(--ink-label);
   font-family: "JetBrains Mono", monospace;
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   3-MODE COMPOSER ADDITIONS
+   ══════════════════════════════════════════════════════════════════════ */
+
+body.salle-fournisseurs .sf-disc-composer-reply-indicator,
+body.salle-fournisseurs .sf-disc-composer-fwd-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  margin-bottom: 8px;
+  font-size: 11px;
+}
+body.salle-fournisseurs .sf-disc-composer-reply-indicator {
+  background: color-mix(in srgb, var(--cold) 8%, var(--bg));
+  color: var(--ink-soft);
+  border: 1px solid color-mix(in srgb, var(--cold) 30%, transparent);
+}
+body.salle-fournisseurs .sf-disc-composer-fwd-indicator {
+  background: color-mix(in srgb, var(--oak) 8%, var(--bg));
+  color: var(--ink-soft);
+  border: 1px solid color-mix(in srgb, var(--oak) 30%, transparent);
+}
+body.salle-fournisseurs .sf-disc-composer-reply-indicator em,
+body.salle-fournisseurs .sf-disc-composer-fwd-indicator em {
+  font-style: normal;
+  color: var(--ink);
+  font-weight: 500;
+}
+
+body.salle-fournisseurs .sf-disc-composer-mode-cancel {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--ink-mute);
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 3px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+body.salle-fournisseurs .sf-disc-composer-mode-cancel:hover {
+  color: var(--ember);
+  background: color-mix(in srgb, var(--ember) 10%, transparent);
+}
+
+body.salle-fournisseurs .sf-disc-composer-field-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+body.salle-fournisseurs .sf-disc-composer-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--ink-label);
+  white-space: nowrap;
+  width: 44px;
+  flex-shrink: 0;
+}
+
+body.salle-fournisseurs .sf-disc-composer-to-select {
+  flex: 1;
+  font-size: 11px;
+  padding: 4px 8px;
+  border: 1px solid var(--ink-faint);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--ink);
+}
+body.salle-fournisseurs .sf-disc-composer-to-select:focus {
+  outline: none;
+  border-color: var(--bbt);
+}
+
+body.salle-fournisseurs .sf-disc-composer-subject {
+  flex: 1;
+  font-size: 11px;
+  padding: 4px 8px;
+  border: 1px solid var(--ink-faint);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--ink);
+}
+body.salle-fournisseurs .sf-disc-composer-subject:focus {
+  outline: none;
+  border-color: var(--bbt);
+}
+body.salle-fournisseurs .sf-disc-composer-subject[readonly] {
+  background: var(--bg-elev);
+  color: var(--ink-mute);
+  cursor: default;
+}
+
+body.salle-fournisseurs .sf-disc-composer-fwd-to {
+  flex: 1;
+  font-size: 11px;
+  padding: 4px 8px;
+  border: 1px solid var(--ink-faint);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--ink);
+}
+body.salle-fournisseurs .sf-disc-composer-fwd-to:focus {
+  outline: none;
+  border-color: var(--oak);
+}
+
+body.salle-fournisseurs .sf-disc-composer-no-addr {
+  font-size: 11px;
+  color: var(--ink-label);
+  font-style: italic;
+  padding: 4px 0 8px;
+}
+
+body.salle-fournisseurs .sf-disc-composer-fwd-att {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 6px;
+  font-size: 10px;
+}
+body.salle-fournisseurs .sf-disc-composer-fwd-att-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--ink-label);
+  width: 100%;
+}
+body.salle-fournisseurs .sf-disc-fwd-locked-chip {
+  cursor: default !important;
+  opacity: .75;
+}
+
+body.salle-fournisseurs .sf-disc-composer-to-display {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+body.salle-fournisseurs .sf-disc-item-actions {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+body.salle-fournisseurs .sf-disc-reply-btn,
+body.salle-fournisseurs .sf-disc-fwd-btn {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 1px 5px;
+  color: var(--ink-label);
+  line-height: 1.4;
+  transition: .12s;
+}
+body.salle-fournisseurs .sf-disc-reply-btn:hover {
+  color: var(--cold);
+  border-color: color-mix(in srgb, var(--cold) 40%, transparent);
+  background: color-mix(in srgb, var(--cold) 8%, transparent);
+}
+body.salle-fournisseurs .sf-disc-fwd-btn:hover {
+  color: var(--oak);
+  border-color: color-mix(in srgb, var(--oak) 40%, transparent);
+  background: color-mix(in srgb, var(--oak) 8%, transparent);
+}

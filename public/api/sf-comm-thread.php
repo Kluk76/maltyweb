@@ -686,12 +686,15 @@ try {
                 exit;
             }
 
-            $threadId = isset($_POST['thread_id']) ? (int) $_POST['thread_id'] : 0;
-            $body     = trim($_POST['body'] ?? '');
+            $threadId     = isset($_POST['thread_id']) ? (int) $_POST['thread_id'] : 0;
+            $body         = trim($_POST['body'] ?? '');
+            $replyToMsgId = isset($_POST['reply_to_message_id']) ? (int) $_POST['reply_to_message_id'] : 0;
 
-            if ($threadId <= 0) {
+            // thread_id is required unless reply_to_message_id is supplied (the message lookup
+            // will derive the correct thread from the referenced message)
+            if ($threadId <= 0 && $replyToMsgId <= 0) {
                 http_response_code(400);
-                echo json_encode(['ok' => false, 'error' => 'thread_id invalide.']);
+                echo json_encode(['ok' => false, 'error' => 'thread_id ou reply_to_message_id requis.']);
                 exit;
             }
             if ($body === '') {
@@ -699,9 +702,6 @@ try {
                 echo json_encode(['ok' => false, 'error' => 'Le corps du message est requis.']);
                 exit;
             }
-
-            // Optional: reply to a specific message (overrides thread's most-recent-inbound logic)
-            $replyToMsgId = isset($_POST['reply_to_message_id']) ? (int) $_POST['reply_to_message_id'] : 0;
 
             // Email gate: fetch sender email from DB (session does not carry email)
             $stSenderEmail = $pdo->prepare('SELECT email FROM users WHERE id = ? LIMIT 1');
@@ -758,6 +758,11 @@ try {
                         echo json_encode(['ok' => false, 'error' => "Impossible d'extraire l'adresse e-mail du destinataire."]);
                         exit;
                     }
+                } else {
+                    // Replying to an outbound message is not supported via reply_to_message_id
+                    http_response_code(422);
+                    echo json_encode(['ok' => false, 'error' => "Impossible de répondre à un message sortant. Utilisez le mode normal."]);
+                    exit;
                 }
                 // Reload thread with the (possibly new) $threadId
                 $stThread->execute([$threadId]);
@@ -864,11 +869,12 @@ try {
 
             $sendResult = json_decode($output ?? '', true);
             if (!$sendResult || !isset($sendResult['ok'])) {
+                error_log('[sf-comm send_reply] invalid sender output: ' . substr((string)$output, 0, 500));
                 http_response_code(500);
                 echo json_encode([
                     'ok'    => false,
                     'error' => "Réponse invalide du service d'envoi.",
-                    'raw'   => $output,
+                    'raw'   => is_admin($me) ? $output : null,
                 ]);
                 exit;
             }
@@ -1044,12 +1050,13 @@ try {
             $sendResult = json_decode($output ?? '', true);
             if (!$sendResult || !isset($sendResult['ok'])) {
                 // Roll back the newly-created thread
+                error_log('[sf-comm send_new] invalid sender output: ' . substr((string)$output, 0, 500));
                 $pdo->exec("DELETE FROM comm_threads WHERE id = {$newThreadId}");
                 http_response_code(500);
                 echo json_encode([
                     'ok'    => false,
                     'error' => "Réponse invalide du service d'envoi.",
-                    'raw'   => $output,
+                    'raw'   => is_admin($me) ? $output : null,
                 ]);
                 exit;
             }
@@ -1193,11 +1200,12 @@ try {
 
             $sendResult = json_decode($output ?? '', true);
             if (!$sendResult || !isset($sendResult['ok'])) {
+                error_log('[sf-comm send_forward] invalid sender output: ' . substr((string)$output, 0, 500));
                 http_response_code(500);
                 echo json_encode([
                     'ok'    => false,
                     'error' => "Réponse invalide du service d'envoi.",
-                    'raw'   => $output,
+                    'raw'   => is_admin($me) ? $output : null,
                 ]);
                 exit;
             }
