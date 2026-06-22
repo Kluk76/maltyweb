@@ -1,5 +1,19 @@
 # Fulfilment — State-machine automation, eshop review-mode classification, izyrent fulfilment-date, 502 fix
 
+## 🐞 NATHAN BUG « clic Confirmé → saute jusqu'à Livré » — CADRAGE 2026-06-22 (cause NON départagée; fix NON lancé)
+Symptôme rapporté : sur Expéditions, cliquer « Confirmé » avancerait jusqu'à « Livré » au lieu de s'arrêter. **CONSTAT (lecture exhaustive du déployé VPS): AUCUN chemin d'avance ne fait de cascade — tous strictement mono-cran, serveur ET client.** Vérifié sur les 4 surfaces :
+- `ord_orders` handler `public/api/expeditions-status.php`: `advance` = `$advanceMap[$currentStatus]` (UN cran, L141-152/267), refuse > shipped, **ignore le `data-status` des chips**. Zéro boucle (grep while/for/do = vide). Graft `entered→confirmed` L287 = mail uniquement, ne touche pas au statut.
+- Render `expeditions.php` `exp_render_chips()` L3516-3548: seule la puce `$isNext` est cliquable, les autres `disabled`. Bande de progression COMPLÈTE affichée (Confirmée·Préparée·BL·Livrée).
+- JS `expeditions.js`: `postStatus` (1 fetch/clic), `applyStatusToRow` L67-110 recalcule `isDone=newRank>=stRank` depuis le statut mono-cran renvoyé — pas de cascade. `STATUS_RANK` L22 mirror exact du PHP `EXP_STATUS_RANK`.
+- Eshop `eshop-fulfilment-status.php` advance L239 = `$advMap[$curStatus]` mono-cran aussi (labels Nouveau→…→Expédié/Remis, masculins ≠ ord_orders).
+- ENUM canonique ord_orders (cache; vérité = `ord_order_status_events` append-only): entered(Saisie)→confirmed(**Confirmée**)→picked(Préparée)→bl_printed(BL imprimé)→shipped(**Livrée**)+cancelled. Constantes `expeditions.php` L54-81.
+**→ Le code d'avance est SAIN, NE PAS le « corriger ».** Hypothèses de cause réelle, à départager AVANT tout fix (demander à Nathan: quelle VUE + n° commande, puis lire `ord_orders.status` + ses `ord_order_status_events` en RO):
+1. (PROBABLE) **Méprise visuelle** — la bande affiche toutes les étapes futures; contraste done/next/futur trop faible → lue comme « tout franchi ». Si status=confirmed SANS events au-delà = pur affichage → fix UI `expeditions.css`/`exp_render_chips` (EQUIP ui+webapp-testing; piège visuel invisible en revue statique).
+2. **Auto-avance BC** (#4 `e82689c`): cron `maltytask-bc-orders` (*/min, ACTIF) avance auto entered/confirmed/picked→**bl_printed** sur BC Completely_Shipped=True (s'arrête à bl_printed, PAS shipped); event `comment='auto:bc-shipped'`. Si présent → pas un bug, manque de lisibilité auto-vs-clic (reco existante: badge dérivé du comment).
+3. Drift déployé/surface eshop — exclure en confirmant vue+type d'ordre.
+DIVERGENCE-FLAG pour tout fix: ne jamais écrire un statut sans event `ord_order_status_events` (cache≠vérité), ne pas court-circuiter log_revision/txn unique, ne JAMAIS pousser à `shipped` par mégarde (arme la dépletion FG, `fg-stock.php` Step 4). SOT-chain: NO (status=cache opérationnel). Trigger "Nathan bug confirmé"/"saute jusqu'à livré"/"avancement cascade"/"clic Confirmé"/"step-by-step expédition" → cette section.
+
+
 ## ✅ EXPÉDITIONS 502 BAD GATEWAY (needs_review warning-flood → oversized FastCGI header) — FIXED 2026-06-19 (`c73a362` maltyweb main, NOT pushed — awaiting Kouros's push decision)
 The Expéditions page was returning **502 Bad Gateway**. RESOLVED.
 - **ROOT CAUSE:** the customers typeahead `SELECT` (`public/modules/expeditions.php` ~L1744) OMITTED `ref_customers.needs_review`, but the `array_map` that builds the typeahead list (~L2793–2804) READ that key TWICE per row → thousands of `Undefined array key "needs_review"` PHP-8 warnings per request → the warning text overran nginx's default 4 KB `fastcgi_buffer_size` → upstream sent a too-big response header → **502**. The same omission also silently broke the "needs_review rows sort last" typeahead ranking (the SOT fact was dropped).
