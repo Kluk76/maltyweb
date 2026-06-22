@@ -256,6 +256,23 @@ def advance_status(
         f" (events: {stages_label})"
     )
 
+def _setting_bool(conn: "pymysql.connections.Connection", section: str, key: str, default: bool = False) -> bool:
+    """Read a boolean-ish system_settings flag. Fail-safe: missing/unreadable => default."""
+    try:
+        with conn.cursor() as c:
+            c.execute(
+                "SELECT value_text FROM system_settings "
+                "WHERE section=%s AND key_name=%s AND is_active=1",
+                (section, key),
+            )
+            row = c.fetchone()
+    except Exception:
+        return default
+    if not row or row.get("value_text") is None:
+        return default
+    return str(row["value_text"]).strip().lower() in ("1", "true", "on", "yes")
+
+
 # Batch size for OR-chained $filter requests (BC rejects the `in` operator — HTTP 501)
 OR_CHAIN_BATCH = 50
 
@@ -1925,6 +1942,9 @@ def main() -> None:
         divergences_flagged:   list[str] = []
         divergences_cleared:   list[str] = []
         bc_snapshot_count = 0
+        bc_auto_advance_on = _setting_bool(conn, "fulfilment", "bc_auto_advance_shipping", default=False)
+        if not bc_auto_advance_on:
+            print("  [config] bc_auto_advance_shipping=0 — auto-avance de statut BC DÉSACTIVÉE (statuts pilotés manuellement).")
 
         for order in pull:
             bc_no      = order["bc_no"]
@@ -2030,7 +2050,7 @@ def main() -> None:
                 # advance fires on the next pull); mirrors the divergence block's
                 # `action != "insert"` gate below. advance_status also self-guards via
                 # `existing is None`, so this is belt-and-suspenders.
-                if action != "insert":
+                if action != "insert" and bc_auto_advance_on:
                     advance_summary = advance_status(conn, order, existing_bc, apply_mode)
                     if advance_summary is not None:
                         bl_advances.append(advance_summary)
