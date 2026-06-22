@@ -10,12 +10,18 @@ declare(strict_types=1);
  *                         + review_threads (unassigned threads)
  * GET ?review=1         — review-bucket threads only (admin/manager)
  * GET ?supplier_docs=X  — attachable document corpus for supplier X (admin/manager)
+ * GET ?thread_suggestions=X   — suggest suppliers to link to thread X (based on relationships)
+ * GET ?supplier_relationships=X — list declared relationships for supplier X
  *
  * POST action=add_note        — add a manual note (manager or admin)
  * POST action=assign_thread   — assign a review thread to a supplier (admin only)
  * POST action=send_reply      — send outbound email reply on a thread (admin/manager)
  * POST action=send_new        — start a new email thread to a known supplier address (admin/manager)
  * POST action=send_forward    — forward a message to any valid email address (admin/manager)
+ * POST action=link_thread_supplier    — link a secondary supplier to a thread (manager+)
+ * POST action=unlink_thread_supplier  — remove a secondary supplier link (manager+)
+ * POST action=add_supplier_relationship    — declare forwarder↔principal relationship (manager+)
+ * POST action=remove_supplier_relationship — remove a declared relationship (manager+)
  */
 
 require __DIR__ . '/../../app/auth.php';
@@ -158,18 +164,23 @@ function build_thread_timeline(PDO $pdo, array $threadIds): array
 
 /**
  * Build the flat timeline for a supplier: threads + messages + docs.
+ * Includes threads where this supplier is the primary owner OR a secondary linked supplier.
  * HTML bodies are stripped; raw HTML is never returned.
  */
 function build_supplier_timeline(PDO $pdo, int $supplierId): array
 {
-    // 1. Load all active threads for this supplier
     $stThreads = $pdo->prepare(
-        'SELECT id, subject, gmail_thread_id, last_message_at, is_active, created_at
+        "SELECT DISTINCT id, subject, gmail_thread_id, last_message_at, is_active, created_at
            FROM comm_threads
-          WHERE supplier_id_fk = ? AND is_active = 1 AND purge_status = \'live\'
-          ORDER BY last_message_at ASC'
+          WHERE is_active = 1 AND purge_status = 'live'
+            AND id IN (
+              SELECT id FROM comm_threads WHERE supplier_id_fk = ? AND is_active = 1 AND purge_status = 'live'
+              UNION
+              SELECT thread_id_fk FROM comm_thread_suppliers WHERE supplier_id_fk = ?
+            )
+          ORDER BY last_message_at ASC"
     );
-    $stThreads->execute([$supplierId]);
+    $stThreads->execute([$supplierId, $supplierId]);
     $threads = $stThreads->fetchAll(PDO::FETCH_ASSOC);
 
     if (empty($threads)) {
@@ -236,25 +247,30 @@ function load_review_threads(PDO $pdo, int $limit = 50): array
 
 /**
  * Build grouped thread metadata for a supplier's active threads.
- * Returns one entry per thread, keyed by thread id.
+ * Includes threads where this supplier is the primary owner OR a secondary linked supplier.
+ * Returns one entry per thread with linked_suppliers populated.
  */
 function build_supplier_threads(PDO $pdo, int $supplierId): array
 {
     $stThreads = $pdo->prepare(
-        'SELECT id, subject, last_message_at,
+        "SELECT DISTINCT t.id, t.subject, t.last_message_at,
                 (SELECT COUNT(*) FROM comm_messages WHERE thread_id_fk = t.id) AS message_count
            FROM comm_threads t
-          WHERE supplier_id_fk = ? AND is_active = 1 AND purge_status = \'live\'
-          ORDER BY last_message_at DESC'
+          WHERE t.is_active = 1 AND t.purge_status = 'live'
+            AND t.id IN (
+              SELECT id FROM comm_threads WHERE supplier_id_fk = ? AND is_active = 1 AND purge_status = 'live'
+              UNION
+              SELECT thread_id_fk FROM comm_thread_suppliers WHERE supplier_id_fk = ?
+            )
+          ORDER BY t.last_message_at DESC"
     );
-    $stThreads->execute([$supplierId]);
+    $stThreads->execute([$supplierId, $supplierId]);
     $threads = $stThreads->fetchAll(PDO::FETCH_ASSOC);
 
     if (empty($threads)) {
         return [];
     }
 
-    // Counterparty addresses per thread (in-direction from_addresses)
     $threadIds    = array_column($threads, 'id');
     $placeholders = implode(',', array_fill(0, count($threadIds), '?'));
     $stAddrs = $pdo->prepare(
@@ -364,6 +380,75 @@ try {
             }
             $timeline = build_thread_timeline($pdo, [$reviewThreadId]);
             echo json_encode(['ok' => true, 'timeline' => $timeline]);
+            exit;
+        }
+
+        // GET ?thread_suggestions=X — suggest suppliers to link (based on declared relationships)
+        if (isset($_GET['thread_suggestions'])) {
+            $threadId = (int)$_GET['thread_suggestions'];
+            if ($threadId <= 0) {
+                http_response_code(400);
+                echo json_encode(['ok' => false, 'error' => 'thread_id invalide.']);
+                exit;
+            }
+            $stChk = $pdo->prepare(
+                "SELECT supplier_id_fk FROM comm_threads WHERE id = ? AND is_active = 1 AND purge_status = 'live' LIMIT 1"
+            );
+            $stChk->execute([$threadId]);
+            $tRow = $stChk->fetch(PDO::FETCH_ASSOC);
+            if (!$tRow) {
+                http_response_code(404);
+                echo json_encode(['ok' => false, 'error' => 'Fil introuvable.']);
+                exit;
+            }
+            $primarySupplierId = $tRow['supplier_id_fk'] !== null ? (int)$tRow['supplier_id_fk'] : null;
+            if ($primarySupplierId === null) {
+                echo json_encode(['ok' => true, 'suggestions' => []]);
+                exit;
+            }
+            $stSugg = $pdo->prepare(
+                "SELECT rs.id AS supplier_id, rs.name,
+                        rsr.rel_type
+                   FROM ref_supplier_relationships rsr
+                   JOIN ref_suppliers rs ON rs.id = IF(rsr.forwarder_supplier_fk = ?, rsr.principal_supplier_fk, rsr.forwarder_supplier_fk)
+                  WHERE (rsr.forwarder_supplier_fk = ? OR rsr.principal_supplier_fk = ?)
+                    AND rs.id <> ?
+                    AND rs.id NOT IN (
+                      SELECT supplier_id_fk FROM comm_thread_suppliers WHERE thread_id_fk = ?
+                    )
+                    AND rs.id <> COALESCE(?, 0)"
+            );
+            $stSugg->execute([$primarySupplierId, $primarySupplierId, $primarySupplierId, $primarySupplierId, $threadId, $primarySupplierId]);
+            $suggestions = array_map(function($row) {
+                return [
+                    'supplier_id' => (int)$row['supplier_id'],
+                    'name'        => $row['name'],
+                    'reason'      => 'transitaire',
+                ];
+            }, $stSugg->fetchAll(PDO::FETCH_ASSOC));
+            echo json_encode(['ok' => true, 'suggestions' => $suggestions]);
+            exit;
+        }
+
+        // GET ?supplier_relationships=X — declared relationships for a supplier
+        if (isset($_GET['supplier_relationships'])) {
+            $supplierId = (int)$_GET['supplier_relationships'];
+            if ($supplierId <= 0) {
+                http_response_code(400);
+                echo json_encode(['ok' => false, 'error' => 'supplier_id invalide.']);
+                exit;
+            }
+            $stRels = $pdo->prepare(
+                "SELECT rsr.id, rsr.rel_type,
+                        rsr.forwarder_supplier_fk, fs.name AS forwarder_name,
+                        rsr.principal_supplier_fk, ps.name AS principal_name
+                   FROM ref_supplier_relationships rsr
+                   JOIN ref_suppliers fs ON fs.id = rsr.forwarder_supplier_fk
+                   JOIN ref_suppliers ps ON ps.id = rsr.principal_supplier_fk
+                  WHERE rsr.forwarder_supplier_fk = ? OR rsr.principal_supplier_fk = ?"
+            );
+            $stRels->execute([$supplierId, $supplierId]);
+            echo json_encode(['ok' => true, 'relationships' => $stRels->fetchAll(PDO::FETCH_ASSOC)]);
             exit;
         }
 
@@ -502,7 +587,45 @@ try {
         }
         sort($knownAddresses);
 
-        echo json_encode(['ok' => true, 'timeline' => $timeline, 'review_threads' => $reviewThreads, 'threads' => $threads, 'known_addresses' => $knownAddresses]);
+        // Linked suppliers per thread (for "lié à" chips)
+        $allThreadIds = array_unique(array_map(fn($t) => (int)$t['thread_id'], $threads));
+        $linkedByThread = [];
+        if (!empty($allThreadIds)) {
+            $phLinked = implode(',', array_fill(0, count($allThreadIds), '?'));
+            $stLinked = $pdo->prepare(
+                "SELECT cts.thread_id_fk, cts.supplier_id_fk, rs.name AS supplier_name
+                   FROM comm_thread_suppliers cts
+                   JOIN ref_suppliers rs ON rs.id = cts.supplier_id_fk
+                  WHERE cts.thread_id_fk IN ({$phLinked})"
+            );
+            $stLinked->execute($allThreadIds);
+            foreach ($stLinked->fetchAll(PDO::FETCH_ASSOC) as $row) {
+                $linkedByThread[(int)$row['thread_id_fk']][] = [
+                    'supplier_id' => (int)$row['supplier_id_fk'],
+                    'name'        => $row['supplier_name'],
+                ];
+            }
+        }
+        // Enrich threads with linked_suppliers
+        foreach ($threads as &$t) {
+            $t['linked_suppliers'] = $linkedByThread[$t['thread_id']] ?? [];
+        }
+        unset($t);
+
+        // Declared relationships for this supplier
+        $stRels = $pdo->prepare(
+            "SELECT rsr.id, rsr.rel_type,
+                    rsr.forwarder_supplier_fk, fs.name AS forwarder_name,
+                    rsr.principal_supplier_fk, ps.name AS principal_name
+               FROM ref_supplier_relationships rsr
+               JOIN ref_suppliers fs ON fs.id = rsr.forwarder_supplier_fk
+               JOIN ref_suppliers ps ON ps.id = rsr.principal_supplier_fk
+              WHERE rsr.forwarder_supplier_fk = ? OR rsr.principal_supplier_fk = ?"
+        );
+        $stRels->execute([$supplierId, $supplierId]);
+        $relationships = $stRels->fetchAll(PDO::FETCH_ASSOC);
+
+        echo json_encode(['ok' => true, 'timeline' => $timeline, 'review_threads' => $reviewThreads, 'threads' => $threads, 'known_addresses' => $knownAddresses, 'relationships' => $relationships]);
         exit;
 
     } elseif ($method === 'POST') {
@@ -1382,6 +1505,164 @@ try {
                 'file_name'    => $origName,
                 'file_id_uuid' => $fileId,
             ]);
+            exit;
+        }
+
+        // ── POST action=link_thread_supplier (manager+) ───────────────────────────
+        if ($action === 'link_thread_supplier') {
+            if (!is_admin($me) && !is_manager($me)) {
+                http_response_code(403);
+                echo json_encode(['ok' => false, 'error' => 'Admin ou manager uniquement.']);
+                exit;
+            }
+            $threadId   = isset($_POST['thread_id'])   ? (int)$_POST['thread_id']   : 0;
+            $supplierId = isset($_POST['supplier_id']) ? (int)$_POST['supplier_id'] : 0;
+            if ($threadId <= 0 || $supplierId <= 0) {
+                http_response_code(400);
+                echo json_encode(['ok' => false, 'error' => 'thread_id ou supplier_id invalide.']);
+                exit;
+            }
+            $stChk = $pdo->prepare("SELECT supplier_id_fk FROM comm_threads WHERE id = ? AND is_active = 1 AND purge_status = 'live' LIMIT 1");
+            $stChk->execute([$threadId]);
+            $tRow = $stChk->fetch(PDO::FETCH_ASSOC);
+            if (!$tRow) {
+                http_response_code(404);
+                echo json_encode(['ok' => false, 'error' => 'Fil introuvable.']);
+                exit;
+            }
+            if ((int)($tRow['supplier_id_fk'] ?? 0) === $supplierId) {
+                http_response_code(422);
+                echo json_encode(['ok' => false, 'error' => 'Ce fournisseur est déjà le titulaire principal du fil.']);
+                exit;
+            }
+            $stSup = $pdo->prepare("SELECT id FROM ref_suppliers WHERE id = ? LIMIT 1");
+            $stSup->execute([$supplierId]);
+            if (!$stSup->fetch()) {
+                http_response_code(404);
+                echo json_encode(['ok' => false, 'error' => 'Fournisseur introuvable.']);
+                exit;
+            }
+            $stIns = $pdo->prepare(
+                "INSERT INTO comm_thread_suppliers (thread_id_fk, supplier_id_fk, role, linked_by_user_id, created_at)
+                 VALUES (?, ?, 'linked', ?, NOW())
+                 ON DUPLICATE KEY UPDATE linked_by_user_id = VALUES(linked_by_user_id)"
+            );
+            $stIns->execute([$threadId, $supplierId, (int)$me['id']]);
+            $newId = (int)$pdo->lastInsertId();
+            log_revision($pdo, $me, 'comm_thread_suppliers', $newId ?: $threadId, null,
+                ['thread_id_fk' => $threadId, 'supplier_id_fk' => $supplierId, 'role' => 'linked'],
+                'normal', null);
+            echo json_encode(['ok' => true, 'thread_id' => $threadId, 'supplier_id' => $supplierId]);
+            exit;
+        }
+
+        // ── POST action=unlink_thread_supplier (manager+) ─────────────────────────
+        if ($action === 'unlink_thread_supplier') {
+            if (!is_admin($me) && !is_manager($me)) {
+                http_response_code(403);
+                echo json_encode(['ok' => false, 'error' => 'Admin ou manager uniquement.']);
+                exit;
+            }
+            $threadId   = isset($_POST['thread_id'])   ? (int)$_POST['thread_id']   : 0;
+            $supplierId = isset($_POST['supplier_id']) ? (int)$_POST['supplier_id'] : 0;
+            if ($threadId <= 0 || $supplierId <= 0) {
+                http_response_code(400);
+                echo json_encode(['ok' => false, 'error' => 'thread_id ou supplier_id invalide.']);
+                exit;
+            }
+            $stFetch = $pdo->prepare("SELECT id FROM comm_thread_suppliers WHERE thread_id_fk = ? AND supplier_id_fk = ? LIMIT 1");
+            $stFetch->execute([$threadId, $supplierId]);
+            $row = $stFetch->fetch(PDO::FETCH_ASSOC);
+            if (!$row) {
+                http_response_code(404);
+                echo json_encode(['ok' => false, 'error' => 'Lien introuvable.']);
+                exit;
+            }
+            $linkId = (int)$row['id'];
+            $before = bd_fetch_before($pdo, 'comm_thread_suppliers', $linkId);
+            $stDel = $pdo->prepare("DELETE FROM comm_thread_suppliers WHERE id = ?");
+            $stDel->execute([$linkId]);
+            log_revision($pdo, $me, 'comm_thread_suppliers', $linkId,
+                $before ?? ['thread_id_fk' => $threadId, 'supplier_id_fk' => $supplierId],
+                ['_tombstone' => 'unlink_thread_supplier'],
+                'normal', null);
+            echo json_encode(['ok' => true, 'thread_id' => $threadId, 'supplier_id' => $supplierId]);
+            exit;
+        }
+
+        // ── POST action=add_supplier_relationship (manager+) ──────────────────────
+        if ($action === 'add_supplier_relationship') {
+            if (!is_admin($me) && !is_manager($me)) {
+                http_response_code(403);
+                echo json_encode(['ok' => false, 'error' => 'Admin ou manager uniquement.']);
+                exit;
+            }
+            $fwdId  = isset($_POST['forwarder_supplier_id']) ? (int)$_POST['forwarder_supplier_id'] : 0;
+            $prinId = isset($_POST['principal_supplier_id']) ? (int)$_POST['principal_supplier_id'] : 0;
+            if ($fwdId <= 0 || $prinId <= 0) {
+                http_response_code(400);
+                echo json_encode(['ok' => false, 'error' => 'forwarder_supplier_id ou principal_supplier_id invalide.']);
+                exit;
+            }
+            if ($fwdId === $prinId) {
+                http_response_code(422);
+                echo json_encode(['ok' => false, 'error' => 'Un fournisseur ne peut pas être son propre transitaire.']);
+                exit;
+            }
+            $stChkF = $pdo->prepare("SELECT id FROM ref_suppliers WHERE id = ? LIMIT 1");
+            $stChkF->execute([$fwdId]);
+            if (!$stChkF->fetch()) {
+                http_response_code(404);
+                echo json_encode(['ok' => false, 'error' => 'Fournisseur transitaire introuvable.']);
+                exit;
+            }
+            $stChkP = $pdo->prepare("SELECT id FROM ref_suppliers WHERE id = ? LIMIT 1");
+            $stChkP->execute([$prinId]);
+            if (!$stChkP->fetch()) {
+                http_response_code(404);
+                echo json_encode(['ok' => false, 'error' => 'Fournisseur principal introuvable.']);
+                exit;
+            }
+            $stIns = $pdo->prepare(
+                "INSERT INTO ref_supplier_relationships
+                    (forwarder_supplier_fk, principal_supplier_fk, rel_type, created_by_user_fk, created_at)
+                 VALUES (?, ?, 'forwarder', ?, NOW())
+                 ON DUPLICATE KEY UPDATE created_by_user_fk = VALUES(created_by_user_fk)"
+            );
+            $stIns->execute([$fwdId, $prinId, (int)$me['id']]);
+            $newRelId = (int)$pdo->lastInsertId();
+            $newRow = bd_fetch_before($pdo, 'ref_supplier_relationships', $newRelId);
+            log_revision($pdo, $me, 'ref_supplier_relationships', $newRelId, null, $newRow ?? [], 'normal', null);
+            echo json_encode(['ok' => true, 'id' => $newRelId, 'forwarder_supplier_id' => $fwdId, 'principal_supplier_id' => $prinId]);
+            exit;
+        }
+
+        // ── POST action=remove_supplier_relationship (manager+) ───────────────────
+        if ($action === 'remove_supplier_relationship') {
+            if (!is_admin($me) && !is_manager($me)) {
+                http_response_code(403);
+                echo json_encode(['ok' => false, 'error' => 'Admin ou manager uniquement.']);
+                exit;
+            }
+            $relId = isset($_POST['id']) ? (int)$_POST['id'] : 0;
+            if ($relId <= 0) {
+                http_response_code(400);
+                echo json_encode(['ok' => false, 'error' => 'id invalide.']);
+                exit;
+            }
+            $before = bd_fetch_before($pdo, 'ref_supplier_relationships', $relId);
+            if (!$before) {
+                http_response_code(404);
+                echo json_encode(['ok' => false, 'error' => 'Relation introuvable.']);
+                exit;
+            }
+            $stDel = $pdo->prepare("DELETE FROM ref_supplier_relationships WHERE id = ?");
+            $stDel->execute([$relId]);
+            log_revision($pdo, $me, 'ref_supplier_relationships', $relId,
+                $before,
+                ['_tombstone' => 'remove_supplier_relationship'],
+                'normal', null);
+            echo json_encode(['ok' => true, 'id' => $relId]);
             exit;
         }
 

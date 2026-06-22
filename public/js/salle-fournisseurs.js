@@ -1309,9 +1309,74 @@
         discTab.dataset.discCount = total;
         discTab.innerHTML = `Discussions${total > 0 ? ` <span class="sf-tab-badge">${total}</span>` : ''}${hasReview ? ' <span class="sf-tab-warn">⚠</span>' : ''}`;
       }
+
+      // Fetch and render suggestions (non-blocking)
+      if (CAN_COMM && data.threads && data.threads.length > 0) {
+        const firstThreadId = data.threads[0].thread_id;
+        _loadSuggestHints(container, supplierId, firstThreadId, data);
+      }
     } catch (e) {
       container.innerHTML = `<div class="sf-disc-loading">Erreur réseau : ${escHtml(e.message)}</div>`;
     }
+  }
+
+  async function _loadSuggestHints(container, supplierId, threadId, data) {
+    try {
+      const resp = await fetch(`/api/sf-comm-thread.php?thread_suggestions=${encodeURIComponent(threadId)}`);
+      if (!resp.ok) return;
+      const json = await resp.json();
+      if (!json.ok || !json.suggestions || json.suggestions.length === 0) return;
+      const existingLinked = new Set();
+      (data.threads || []).forEach(t => (t.linked_suppliers || []).forEach(ls => existingLinked.add(ls.supplier_id)));
+      const freshSuggestions = json.suggestions.filter(s => !existingLinked.has(s.supplier_id));
+      if (freshSuggestions.length === 0) return;
+      const linkBar = container.querySelector('.sf-link-add-bar') || container.querySelector('.sf-linked-suppliers-bar');
+      if (!linkBar) return;
+      const suggestHtml = freshSuggestions.map(s =>
+        `<span class="sf-suggest-chip" data-supplier-id="${s.supplier_id}" data-thread-id="${threadId}">
+          ${escHtml(s.name)} — ${escHtml(s.reason)} · <button class="sf-suggest-link-btn" type="button" data-supplier-id="${s.supplier_id}" data-thread-id="${threadId}">Lier ?</button>
+          <button class="sf-suggest-dismiss-btn" type="button" title="Ignorer">×</button>
+        </span>`
+      ).join('');
+      const suggestBar = document.createElement('div');
+      suggestBar.className = 'sf-suggest-bar';
+      suggestBar.innerHTML = suggestHtml;
+      linkBar.before(suggestBar);
+      suggestBar.querySelectorAll('.sf-suggest-dismiss-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          btn.closest('.sf-suggest-chip').remove();
+          if (!suggestBar.querySelector('.sf-suggest-chip')) suggestBar.remove();
+        });
+      });
+      suggestBar.querySelectorAll('.sf-suggest-link-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          btn.disabled = true;
+          btn.textContent = '…';
+          const sid = parseInt(btn.dataset.supplierId, 10);
+          const tid = parseInt(btn.dataset.threadId, 10);
+          try {
+            const res = await sfPost('/api/sf-comm-thread.php', {
+              action: 'link_thread_supplier',
+              thread_id: String(tid),
+              supplier_id: String(sid),
+            });
+            if (res.ok) {
+              sfToast('Fournisseur lié.');
+              const sec = document.getElementById('sf-disc-section');
+              if (sec) await _loadDiscussionSection(supplierId, sec);
+            } else {
+              sfToast('Erreur : ' + (res.error || 'inconnue'));
+              btn.disabled = false;
+              btn.textContent = 'Lier ?';
+            }
+          } catch (e2) {
+            sfToast('Erreur réseau : ' + e2.message);
+            btn.disabled = false;
+            btn.textContent = 'Lier ?';
+          }
+        });
+      });
+    } catch (_) { /* silent — suggestions are non-critical */ }
   }
 
   function _renderOneMessage(item) {
@@ -1478,6 +1543,78 @@
     const timeline      = data.timeline || [];
     const reviewThreads = data.review_threads || [];
 
+    // ── "Lié à" chips — threads shared with other suppliers ──
+    let linkedChipsHtml = '';
+    const threads = data.threads || [];
+    const allLinkedSuppliers = new Map();
+    threads.forEach(t => {
+      (t.linked_suppliers || []).forEach(ls => {
+        allLinkedSuppliers.set(ls.supplier_id, ls.name);
+      });
+    });
+    if (allLinkedSuppliers.size > 0) {
+      const chips = [...allLinkedSuppliers.entries()].map(([sid, sname]) =>
+        `<span class="sf-link-chip" data-supplier-id="${sid}">
+          <span class="sf-link-chip-label">Lié à ${escHtml(sname)}</span>
+          ${CAN_COMM ? `<button class="sf-link-chip-unlink" type="button" data-supplier-id="${sid}" title="Délier ce fournisseur">×</button>` : ''}
+        </span>`
+      ).join('');
+      linkedChipsHtml = `<div class="sf-linked-suppliers-bar" aria-label="Fournisseurs liés">${chips}</div>`;
+    }
+
+    // ── "Lier aussi à…" picker (CAN_COMM only) ──
+    let linkPickerHtml = '';
+    if (CAN_COMM) {
+      const supplierOpts = (SUPPLIERS || [])
+        .filter(s => s.id !== supplierId && !allLinkedSuppliers.has(s.id))
+        .map(s => `<option value="${s.id}">${escHtml(s.name)}</option>`)
+        .join('');
+      linkPickerHtml = `<div class="sf-link-add-bar">
+          <select class="sf-link-add-select" id="sf-disc-link-add-select">
+            <option value="">— Lier aussi à… —</option>
+            ${supplierOpts}
+          </select>
+          <button class="sf-link-add-btn sf-disc-btn-submit" id="sf-disc-link-add-btn" type="button" disabled>Lier</button>
+        </div>`;
+    }
+
+    // ── Relations section (CAN_COMM only) ──
+    let relationsHtml = '';
+    if (CAN_COMM) {
+      const rels = data.relationships || [];
+      const relItems = rels.map(r => {
+        const isForwarder = (parseInt(r.forwarder_supplier_fk, 10) === supplierId);
+        const label = isForwarder
+          ? `Est transitaire pour <strong>${escHtml(r.principal_name)}</strong>`
+          : `A pour transitaire <strong>${escHtml(r.forwarder_name)}</strong>`;
+        return `<div class="sf-rel-item" data-rel-id="${r.id}">
+            <span class="sf-rel-label">${label}</span>
+            <button class="sf-rel-remove-btn" type="button" data-rel-id="${r.id}" title="Supprimer cette relation">×</button>
+          </div>`;
+      }).join('');
+      const allSupplierOpts = (SUPPLIERS || [])
+        .filter(s => s.id !== supplierId)
+        .map(s => `<option value="${s.id}">${escHtml(s.name)}</option>`)
+        .join('');
+      relationsHtml = `<div class="sf-relations-section">
+          <div class="sf-relations-title">Transitaire / Relations</div>
+          <div class="sf-rel-list" id="sf-rel-list">
+            ${relItems || '<em class="sf-rel-empty">Aucune relation déclarée.</em>'}
+          </div>
+          <div class="sf-rel-add-form">
+            <select class="sf-rel-add-direction" id="sf-rel-add-direction">
+              <option value="is_forwarder">est transitaire pour</option>
+              <option value="is_principal">a pour transitaire</option>
+            </select>
+            <select class="sf-rel-add-other" id="sf-rel-add-other">
+              <option value="">— Choisir fournisseur —</option>
+              ${allSupplierOpts}
+            </select>
+            <button class="sf-rel-add-btn sf-disc-btn-submit" id="sf-rel-add-btn" type="button">Ajouter</button>
+          </div>
+        </div>`;
+    }
+
     // ── Collapsed "À rattacher" banner (admin only, review threads present) ──
     let bannerHtml = '';
     if (ROLE === 'admin' && reviewThreads.length > 0) {
@@ -1526,7 +1663,7 @@
       feedHtml = timeline.map(item => _renderOneMessage(item)).join('');
     }
 
-    // ── Compose-note (once, at bottom) ──
+    // ── Compose-note ──
     const composeHtml = `<div class="sf-disc-convo-compose">
         <div class="sf-disc-compose-head">Ajouter une note</div>
         <textarea id="sf-disc-note-text" class="sf-disc-note-textarea" rows="3" placeholder="Note, appel téléphonique, décision…"></textarea>
@@ -1539,6 +1676,7 @@
     const replyHtml = _renderComposerHtml(data);
 
     return `<div class="sf-disc-feed-wrap">
+        ${linkedChipsHtml}
         ${bannerHtml}
         <div class="sf-disc-feed" id="sf-disc-feed">
           ${feedHtml}
@@ -1550,6 +1688,8 @@
         <div class="sf-disc-note-collapse" id="sf-disc-note-collapse">
           ${composeHtml}
         </div>
+        ${linkPickerHtml}
+        ${relationsHtml}
       </div>`;
   }
 
@@ -1590,6 +1730,133 @@
         }
       });
     }
+
+    // ── Link-add picker ──
+    const linkAddSelect = container.querySelector('#sf-disc-link-add-select');
+    const linkAddBtn    = container.querySelector('#sf-disc-link-add-btn');
+    if (linkAddSelect && linkAddBtn) {
+      linkAddSelect.addEventListener('change', () => {
+        linkAddBtn.disabled = !linkAddSelect.value;
+      });
+      linkAddBtn.addEventListener('click', async () => {
+        const selectedSupplierId = linkAddSelect.value;
+        if (!selectedSupplierId) return;
+        const threads = (container.__sfDiscData?.threads || []);
+        if (threads.length === 0) { sfToast('Aucun fil actif pour ce fournisseur.'); return; }
+        const threadId = threads[0].thread_id;
+        linkAddBtn.disabled = true;
+        linkAddBtn.textContent = '…';
+        try {
+          const res = await sfPost('/api/sf-comm-thread.php', {
+            action: 'link_thread_supplier',
+            thread_id: String(threadId),
+            supplier_id: selectedSupplierId,
+          });
+          if (res.ok) {
+            sfToast('Fournisseur lié.');
+            const sec = document.getElementById('sf-disc-section');
+            if (sec) await _loadDiscussionSection(supplierId, sec);
+          } else {
+            sfToast('Erreur : ' + (res.error || 'inconnue'));
+            linkAddBtn.disabled = false;
+            linkAddBtn.textContent = 'Lier';
+          }
+        } catch (e2) {
+          sfToast('Erreur réseau : ' + e2.message);
+          linkAddBtn.disabled = false;
+          linkAddBtn.textContent = 'Lier';
+        }
+      });
+    }
+
+    // ── Chip unlink buttons ──
+    container.querySelectorAll('.sf-link-chip-unlink').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const sid = parseInt(btn.dataset.supplierId, 10);
+        const threads = (container.__sfDiscData?.threads || []);
+        const thread = threads.find(t => (t.linked_suppliers || []).some(ls => ls.supplier_id === sid));
+        if (!thread) { sfToast('Lien introuvable.'); return; }
+        btn.disabled = true;
+        try {
+          const res = await sfPost('/api/sf-comm-thread.php', {
+            action: 'unlink_thread_supplier',
+            thread_id: String(thread.thread_id),
+            supplier_id: String(sid),
+          });
+          if (res.ok) {
+            sfToast('Lien supprimé.');
+            const sec = document.getElementById('sf-disc-section');
+            if (sec) await _loadDiscussionSection(supplierId, sec);
+          } else {
+            sfToast('Erreur : ' + (res.error || 'inconnue'));
+            btn.disabled = false;
+          }
+        } catch (e2) {
+          sfToast('Erreur réseau : ' + e2.message);
+          btn.disabled = false;
+        }
+      });
+    });
+
+    // ── Relations section ──
+    const relAddBtn   = container.querySelector('#sf-rel-add-btn');
+    const relAddDir   = container.querySelector('#sf-rel-add-direction');
+    const relAddOther = container.querySelector('#sf-rel-add-other');
+    if (relAddBtn && relAddDir && relAddOther) {
+      relAddBtn.addEventListener('click', async () => {
+        const otherSid = relAddOther.value;
+        if (!otherSid) { sfToast('Veuillez sélectionner un fournisseur.'); return; }
+        const direction = relAddDir.value;
+        const fwdId   = direction === 'is_forwarder' ? String(supplierId) : otherSid;
+        const prinId  = direction === 'is_forwarder' ? otherSid : String(supplierId);
+        relAddBtn.disabled = true;
+        relAddBtn.textContent = '…';
+        try {
+          const res = await sfPost('/api/sf-comm-thread.php', {
+            action: 'add_supplier_relationship',
+            forwarder_supplier_id: fwdId,
+            principal_supplier_id: prinId,
+          });
+          if (res.ok) {
+            sfToast('Relation ajoutée.');
+            const sec = document.getElementById('sf-disc-section');
+            if (sec) await _loadDiscussionSection(supplierId, sec);
+          } else {
+            sfToast('Erreur : ' + (res.error || 'inconnue'));
+            relAddBtn.disabled = false;
+            relAddBtn.textContent = 'Ajouter';
+          }
+        } catch (e2) {
+          sfToast('Erreur réseau : ' + e2.message);
+          relAddBtn.disabled = false;
+          relAddBtn.textContent = 'Ajouter';
+        }
+      });
+    }
+
+    container.querySelectorAll('.sf-rel-remove-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const relId = btn.dataset.relId;
+        btn.disabled = true;
+        try {
+          const res = await sfPost('/api/sf-comm-thread.php', {
+            action: 'remove_supplier_relationship',
+            id: relId,
+          });
+          if (res.ok) {
+            sfToast('Relation supprimée.');
+            const sec = document.getElementById('sf-disc-section');
+            if (sec) await _loadDiscussionSection(supplierId, sec);
+          } else {
+            sfToast('Erreur : ' + (res.error || 'inconnue'));
+            btn.disabled = false;
+          }
+        } catch (e2) {
+          sfToast('Erreur réseau : ' + e2.message);
+          btn.disabled = false;
+        }
+      });
+    });
 
     // Cache for on-demand fetched review thread timelines
     var _reviewTimelineCache = {};

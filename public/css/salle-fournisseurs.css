@@ -2747,3 +2747,206 @@ body.salle-fournisseurs .sf-disc-fwd-btn:hover {
   border-color: color-mix(in srgb, var(--oak) 40%, transparent);
   background: color-mix(in srgb, var(--oak) 8%, transparent);
 }
+
+/* ── Linked-supplier chips bar ─────────────────────────────────────────────── */
+body.salle-fournisseurs .sf-linked-suppliers-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--ink-faint);
+  background: var(--bg-elev);
+}
+
+body.salle-fournisseurs .sf-link-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.55rem;
+  background: var(--bg);
+  border: 1px solid var(--ink-faint);
+  border-radius: 99px;
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+}
+
+body.salle-fournisseurs .sf-link-chip-label {
+  color: var(--ink-soft);
+}
+
+body.salle-fournisseurs .sf-link-chip-unlink {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--ink-mute);
+  font-size: 0.9rem;
+  line-height: 1;
+  padding: 0 0.15rem;
+  transition: color 0.15s;
+}
+
+body.salle-fournisseurs .sf-link-chip-unlink:hover {
+  color: var(--ember);
+}
+
+/* ── Link-add picker bar ────────────────────────────────────────────────────── */
+body.salle-fournisseurs .sf-link-add-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-top: 1px solid var(--ink-faint);
+  background: var(--bg-elev);
+  flex-wrap: wrap;
+}
+
+body.salle-fournisseurs .sf-link-add-select {
+  flex: 1;
+  min-width: 160px;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--ink-faint);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 0.85rem;
+}
+
+/* ── Suggest chip bar ────────────────────────────────────────────────────────── */
+body.salle-fournisseurs .sf-suggest-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.4rem 0.75rem;
+  background: color-mix(in srgb, var(--hop) 8%, var(--bg-elev));
+  border-bottom: 1px solid color-mix(in srgb, var(--hop) 25%, var(--ink-faint));
+}
+
+body.salle-fournisseurs .sf-suggest-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.6rem;
+  background: var(--bg-elev);
+  border: 1px solid color-mix(in srgb, var(--hop) 35%, var(--ink-faint));
+  border-radius: 99px;
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+}
+
+body.salle-fournisseurs .sf-suggest-link-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--hop);
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0;
+  text-decoration: underline;
+}
+
+body.salle-fournisseurs .sf-suggest-link-btn:hover {
+  color: var(--oak);
+}
+
+body.salle-fournisseurs .sf-suggest-dismiss-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--ink-mute);
+  font-size: 0.9rem;
+  padding: 0 0.1rem;
+}
+
+body.salle-fournisseurs .sf-suggest-dismiss-btn:hover {
+  color: var(--ember);
+}
+
+/* ── Relations section ───────────────────────────────────────────────────────── */
+body.salle-fournisseurs .sf-relations-section {
+  margin-top: 1rem;
+  padding: 0.75rem;
+  background: var(--bg-elev);
+  border: 1px solid var(--ink-faint);
+  border-radius: 6px;
+}
+
+body.salle-fournisseurs .sf-relations-title {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-label);
+  margin-bottom: 0.5rem;
+}
+
+body.salle-fournisseurs .sf-rel-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 0.75rem;
+}
+
+body.salle-fournisseurs .sf-rel-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.3rem 0.5rem;
+  background: var(--bg);
+  border: 1px solid var(--ink-faint);
+  border-radius: 4px;
+}
+
+body.salle-fournisseurs .sf-rel-label {
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+}
+
+body.salle-fournisseurs .sf-rel-label strong {
+  color: var(--ink);
+}
+
+body.salle-fournisseurs .sf-rel-empty {
+  font-size: 0.8rem;
+  color: var(--ink-label);
+}
+
+body.salle-fournisseurs .sf-rel-remove-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--ink-mute);
+  font-size: 0.9rem;
+  padding: 0 0.2rem;
+  transition: color 0.15s;
+}
+
+body.salle-fournisseurs .sf-rel-remove-btn:hover {
+  color: var(--ember);
+}
+
+body.salle-fournisseurs .sf-rel-add-form {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+body.salle-fournisseurs .sf-rel-add-direction,
+body.salle-fournisseurs .sf-rel-add-other {
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--ink-faint);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 0.85rem;
+}
+
+body.salle-fournisseurs .sf-rel-add-direction {
+  flex: 0 0 auto;
+}
+
+body.salle-fournisseurs .sf-rel-add-other {
+  flex: 1;
+  min-width: 160px;
+}
