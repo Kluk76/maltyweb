@@ -555,6 +555,46 @@ def _get_counterparty_address(
         return all_ext[0] if all_ext else None
 
 
+# ── Thread ownership check (for outbound gate) ────────────────────────────────
+
+def _thread_is_owned(
+    conn: pymysql.connections.Connection | None,
+    gmail_thread_id: str,
+) -> bool:
+    """
+    Return True iff a comm_threads row for gmail_thread_id already exists
+    and is linked to at least one entity (supplier_id_fk IS NOT NULL OR
+    customer_id_fk IS NOT NULL).
+
+    Used by GATE 3 to decide whether an outbound message on an unmatched
+    thread should be stored or dropped.
+
+    Returns False conservatively when conn is None (dry-run without DB) or
+    when gmail_thread_id is falsy.
+    """
+    if not conn or not gmail_thread_id:
+        return False
+
+    try:
+        with conn.cursor(DictCursor) as c:
+            c.execute(
+                """
+                SELECT 1 FROM comm_threads
+                WHERE gmail_thread_id = %s
+                  AND (supplier_id_fk IS NOT NULL OR customer_id_fk IS NOT NULL)
+                LIMIT 1
+                """,
+                (gmail_thread_id,),
+            )
+            return c.fetchone() is not None
+    except Exception as exc:
+        log.warning(
+            "_thread_is_owned query failed for thread=%r: %s — treating as unowned",
+            gmail_thread_id, exc,
+        )
+        return False
+
+
 # ── Thread management ──────────────────────────────────────────────────────────
 
 def _get_or_create_thread(
@@ -801,9 +841,11 @@ def _process_message(
             log.debug("SKIP (already seen in DB): %s", message_id)
             return
 
-    # ── GATE 3: Entity registry gate (inbound only) ───────────────────────────
-    # Outbound 'out' messages are ALWAYS stored — operator replies belong to
-    # threads we already own; do not gate them on the registry.
+    # ── GATE 3: Entity registry gate (symmetric: inbound + outbound) ────────────
+    # Inbound:  drop unstored if sender domain is not registered.
+    # Outbound: drop unstored if recipient domain is not registered AND the
+    #           thread is not already owned (linked to a supplier/customer).
+    #           Outbound replies on an owned thread always fall through.
     counterparty_email = _get_counterparty_address(headers, direction)
 
     resolved_supplier_id: int | None = None
@@ -826,6 +868,22 @@ def _process_message(
         if counterparty_email and conn is not None:
             _log_unknown_domain(conn, counterparty_email, apply_mode, dry_run_domain_counts)
         return
+
+    if direction == "out" and match_kind == "none":
+        if not _thread_is_owned(conn, gmail_thread_id):
+            # DROP UNSTORED: outbound to unregistered recipient on an unowned thread
+            counts["dropped_outbound_unmatched"] += 1
+            log.debug(
+                "DROP (outbound unmatched, not on owned thread): %s / to=%s / domain=%s / thread=%s",
+                message_id,
+                counterparty_email or "?",
+                domain_of(counterparty_email or ""),
+                gmail_thread_id,
+            )
+            if counterparty_email and conn is not None:
+                _log_unknown_domain(conn, counterparty_email, apply_mode, dry_run_domain_counts)
+            return
+        # Owned thread — fall through and store normally
 
     # Determine resolved label for logging
     if resolved_supplier_id:
@@ -1098,6 +1156,7 @@ def _print_dry_run_summary(
     print(f"  → internal-only:           {counts['dropped_internal']}")
     print(f"  → bulk/newsletter:         {counts['dropped_bulk']}")
     print(f"Dropped (unregistered):    {counts['dropped_unregistered']}")
+    print(f"Dropped (outbound unmatched): {counts['dropped_outbound_unmatched']}")
     print(f"Would store:               {counts['new_to_insert']}")
     print(f"  → match_kind=pin:          {counts.get('match_pin', 0)}")
     print(f"  → match_kind=address:      {counts.get('match_address', 0)}")
@@ -1137,6 +1196,7 @@ def _print_apply_summary(fetched: int, counts: dict[str, int]) -> None:
     print(f"  → internal-only:           {counts['dropped_internal']}")
     print(f"  → bulk/newsletter:         {counts['dropped_bulk']}")
     print(f"Dropped (unregistered):    {counts['dropped_unregistered']}")
+    print(f"Dropped (outbound unmatched): {counts['dropped_outbound_unmatched']}")
     print(f"Inserted:                  {counts['inserted']}")
     print(f"  → match_kind=pin:          {counts.get('match_pin', 0)}")
     print(f"  → match_kind=address:      {counts.get('match_address', 0)}")
@@ -1158,9 +1218,12 @@ def main() -> None:
             "Gmail comm inbox → comm_threads / comm_messages / comm_message_docs.\n"
             "Dry-run by default — use --apply to write to the database.\n"
             "\n"
-            "Gate policy: inbound messages are stored ONLY when the counterparty\n"
-            "resolves to a registered entity (comm_address_pins or\n"
-            "ref_entity_email_domains).  Outbound messages are always stored.\n"
+            "Gate policy (symmetric): a message is stored ONLY when its\n"
+            "counterparty resolves to a registered entity (comm_address_pins or\n"
+            "ref_entity_email_domains).  The one exception is an outbound message\n"
+            "replying on a thread already linked to a supplier/customer, which is\n"
+            "always kept.  Unmatched outbound (and inbound) is dropped unstored;\n"
+            "its domain is logged to comm_unknown_domain_seen for later pinning.\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -1235,6 +1298,7 @@ def main() -> None:
         "dropped_internal": 0,
         "dropped_bulk": 0,
         "dropped_unregistered": 0,
+        "dropped_outbound_unmatched": 0,
         "already_seen": 0,
         "new_to_insert": 0,       # dry-run
         "inserted": 0,             # apply
