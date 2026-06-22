@@ -450,9 +450,13 @@ try {
             exit;
         }
 
-        // GET ?review=1 — review bucket only
+        // GET ?review=1 — review bucket only.
+        // ADMIN-ONLY: the unassigned (both-NULL) bucket can hold operator
+        // correspondence not yet linked to any entity. Never expose its bodies
+        // to managers — gate server-side, not just in the JS that renders the
+        // "À rattacher" banner. Managers get an empty bucket.
         if (isset($_GET['review']) && (string) $_GET['review'] === '1') {
-            $reviewThreads = load_review_threads($pdo);
+            $reviewThreads = is_admin($me) ? load_review_threads($pdo) : [];
             echo json_encode(['ok' => true, 'review_threads' => $reviewThreads]);
             exit;
         }
@@ -466,7 +470,8 @@ try {
         }
 
         $timeline      = build_supplier_timeline($pdo, $supplierId);
-        $reviewThreads = load_review_threads($pdo);
+        // ADMIN-ONLY review bucket (see ?review=1 above) — managers get [].
+        $reviewThreads = is_admin($me) ? load_review_threads($pdo) : [];
         $threads       = build_supplier_threads($pdo, $supplierId);
 
         // Known-address set for the New-mode dropdown
