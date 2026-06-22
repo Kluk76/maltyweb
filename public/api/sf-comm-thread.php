@@ -14,6 +14,8 @@ declare(strict_types=1);
  * POST action=add_note        — add a manual note (manager or admin)
  * POST action=assign_thread   — assign a review thread to a supplier (admin only)
  * POST action=send_reply      — send outbound email reply on a thread (admin/manager)
+ * POST action=send_new        — start a new email thread to a known supplier address (admin/manager)
+ * POST action=send_forward    — forward a message to any valid email address (admin/manager)
  */
 
 require __DIR__ . '/../../app/auth.php';
@@ -1074,12 +1076,21 @@ try {
             $rfc2822MsgId = $sendResult['message_id'];
             $gmailMsgId   = $sendResult['gmail_message_id'] ?? null;
 
-            $newCommMsgId = _persist_outbound(
-                $pdo, $me, $newThreadId,
-                $senderEmail, $toEmail, $subject, $body,
-                $rfc2822MsgId, $gmailMsgId,
-                $attachments, 'normal'
-            );
+            // Guard: if _persist_outbound throws after the email was already sent,
+            // the comm_threads row must be cleaned up to avoid a permanent orphan.
+            try {
+                $newCommMsgId = _persist_outbound(
+                    $pdo, $me, $newThreadId,
+                    $senderEmail, $toEmail, $subject, $body,
+                    $rfc2822MsgId, $gmailMsgId,
+                    $attachments, 'normal'
+                );
+            } catch (Throwable $persistEx) {
+                error_log('[sf-comm send_new] persist failed after send — deleting orphan thread ' . $newThreadId . ': ' . $persistEx->getMessage());
+                $stDel = $pdo->prepare('DELETE FROM comm_threads WHERE id = ?');
+                $stDel->execute([$newThreadId]);
+                throw $persistEx; // re-throw to outer catch → 500 response
+            }
 
             echo json_encode([
                 'ok'              => true,
