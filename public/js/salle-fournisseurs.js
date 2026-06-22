@@ -1272,14 +1272,27 @@
       if (!resp.ok) { container.innerHTML = `<div class="sf-disc-loading">Impossible de charger les discussions.</div>`; return; }
       const data = await resp.json();
       if (!data.ok) { container.innerHTML = `<div class="sf-disc-loading">Erreur : ${escHtml(data.error || 'inconnue')}</div>`; return; }
+      // Capture scroll position BEFORE destroying old DOM
+      const prevFeed = container.querySelector('#sf-disc-feed');
+      const prevFeedScroll = prevFeed ? (parseInt(prevFeed.dataset.scrollTop || '0', 10) || prevFeed.scrollTop || 0) : 0;
+
       container.innerHTML = _renderDiscContent(supplierId, data);
       container.__sfDiscData = data;
       _wireDiscEvents(container, supplierId);
+
+      // Restore feed scroll position across poll re-renders
+      if (prevFeedScroll > 0) {
+        const newFeed = container.querySelector('#sf-disc-feed');
+        if (newFeed) newFeed.scrollTop = prevFeedScroll;
+      }
+
       // Update Discussions tab badge
       const discTab = document.querySelector('.sf-tab-strip [data-tab="disc"]');
       if (discTab) {
-        const total = (data.threads || []).length + (data.review_threads || []).length;
-        const hasReview = (data.review_threads || []).length > 0 && ROLE === 'admin';
+        const msgCount = (data.timeline || []).length;
+        const reviewCount = (data.review_threads || []).length;
+        const total = msgCount;
+        const hasReview = reviewCount > 0 && ROLE === 'admin';
         discTab.dataset.discCount = total;
         discTab.innerHTML = `Discussions${total > 0 ? ` <span class="sf-tab-badge">${total}</span>` : ''}${hasReview ? ' <span class="sf-tab-warn">⚠</span>' : ''}`;
       }
@@ -1288,127 +1301,33 @@
     }
   }
 
-  function _renderDiscContent(supplierId, data) {
-    const timeline      = data.timeline || [];
-    const reviewThreads = data.review_threads || [];
-    const threads       = data.threads || [];
+  function _renderOneMessage(item) {
+    try {
+      const dirClass = item.direction === 'in' ? 'sf-disc-in' : 'sf-disc-out';
+      const dirLabel = item.direction === 'in' ? '← Reçu' : '→ Envoyé';
+      const sourceLabel = item.source === 'manual' ? 'Note manuelle' : 'Email';
+      const srcClass = item.source === 'manual' ? 'sf-disc-source-manual' : 'sf-disc-source-email';
 
-    // ── Left rail: thread list ──────────────────────────────────────────
-    let railHtml = '';
-
-    // Review-bucket group (admin only)
-    if (ROLE === 'admin' && reviewThreads.length > 0) {
-      const reviewItems = reviewThreads.map(t => {
-        const supplierOpts = (SUPPLIERS || []).map(s =>
-          `<option value="${s.id}">${escHtml(s.name)}</option>`
-        ).join('');
-        const dateShort = t.last_message_at
-          ? new Date(t.last_message_at).toLocaleDateString('fr-CH', { day: 'numeric', month: 'short' })
-          : '—';
-        return `<div class="sf-disc-rail-item sf-disc-rail-review" data-thread-id="${t.id}" data-is-review="1" role="button" tabindex="0">
-          <div class="sf-disc-rail-subject">⚠ ${escHtml(t.subject || '(sans objet)')}</div>
-          <div class="sf-disc-rail-meta">
-            <span class="sf-disc-rail-addr">${escHtml(t.counterparty_addresses || '—')}</span>
-            <span class="sf-disc-rail-date">${escHtml(dateShort)}</span>
-            <span class="sf-disc-rail-count">${t.message_count} msg</span>
-          </div>
-        </div>`;
-      }).join('');
-      railHtml += `<div class="sf-disc-rail-group-head">À rattacher</div>${reviewItems}`;
-    }
-
-    // Normal assigned threads
-    if (threads.length > 0) {
-      const threadItems = threads.map(t => {
-        const dateShort = t.last_message_at
-          ? new Date(t.last_message_at).toLocaleDateString('fr-CH', { day: 'numeric', month: 'short' })
-          : '—';
-        return `<div class="sf-disc-rail-item" data-thread-id="${t.thread_id}" data-is-review="0" role="button" tabindex="0">
-          <div class="sf-disc-rail-subject">${escHtml(t.subject || '(sans objet)')}</div>
-          <div class="sf-disc-rail-meta">
-            <span class="sf-disc-rail-addr">${escHtml(t.counterparty_addresses || '—')}</span>
-            <span class="sf-disc-rail-date">${escHtml(dateShort)}</span>
-            <span class="sf-disc-rail-count">${t.message_count} msg</span>
-          </div>
-        </div>`;
-      }).join('');
-      // Only show "Discussions" group header if there are also review threads (to disambiguate)
-      if (ROLE === 'admin' && reviewThreads.length > 0) {
-        railHtml += `<div class="sf-disc-rail-group-head">Discussions</div>`;
-      }
-      railHtml += threadItems;
-    }
-
-    if (!railHtml) {
-      railHtml = `<div class="sf-disc-rail-empty">Aucune discussion enregistrée.</div>`;
-    }
-
-    // ── Right pane: default placeholder ────────────────────────────────
-    const convoPanelHtml = `<div class="sf-disc-convo-placeholder">
-      <span>Sélectionnez une discussion</span>
-    </div>`;
-
-    return `<div class="sf-disc-inbox">
-      <div class="sf-disc-rail" role="navigation" aria-label="Fils de discussion">
-        ${railHtml}
-      </div>
-      <div class="sf-disc-convo" role="region" aria-label="Conversation" id="sf-disc-convo-pane">
-        ${convoPanelHtml}
-      </div>
-    </div>`;
-  }
-
-  function _renderConvoMessages(threadId, timeline, isReview, reviewThread) {
-    const msgs = threadId != null
-      ? timeline.filter(item => item.thread_id === threadId)
-      : [];
-
-    // Triage bar for review-bucket threads (admin only)
-    let triageHtml = '';
-    if (isReview && ROLE === 'admin' && reviewThread) {
-      const supplierOpts = (SUPPLIERS || []).map(s =>
-        `<option value="${s.id}">${escHtml(s.name)}</option>`
-      ).join('');
-      triageHtml = `<div class="sf-disc-triage-bar" data-thread-id="${reviewThread.id}">
-        <span class="sf-disc-triage-label">⚠ Rattacher ce fil :</span>
-        <select class="sf-disc-review-supplier-pick">
-          <option value="">— Choisir fournisseur —</option>
-          ${supplierOpts}
-        </select>
-        <button class="sf-disc-btn-assign">Rattacher</button>
-      </div>`;
-    }
-
-    let msgsHtml = '';
-    if (msgs.length === 0) {
-      msgsHtml = `<div class="sf-disc-empty">Aucun message dans ce fil.</div>`;
-    } else {
-      msgsHtml = msgs.map(item => {
-        const dirClass = item.direction === 'in' ? 'sf-disc-in' : 'sf-disc-out';
-        const dirLabel = item.direction === 'in' ? '← Reçu' : '→ Envoyé';
-        const sourceLabel = item.source === 'manual' ? 'Note manuelle' : 'Email';
-        const srcClass = item.source === 'manual' ? 'sf-disc-source-manual' : 'sf-disc-source-email';
-
-        const docsHtml = (item.docs || []).map(doc => {
-          const viewUrl = doc.doc_file_uuid
-            ? `/api/document.php?file_id=${encodeURIComponent(doc.doc_file_uuid)}`
-            : '#';
-          const target = doc.doc_file_uuid ? ' target="_blank" rel="noopener"' : '';
-          return `<a class="sf-disc-doc-chip" href="${escHtml(viewUrl)}"${target}>
+      const docsHtml = (item.docs || []).map(doc => {
+        const viewUrl = doc.doc_file_uuid
+          ? `/api/document.php?file_id=${encodeURIComponent(doc.doc_file_uuid)}`
+          : '#';
+        const target = doc.doc_file_uuid ? ' target="_blank" rel="noopener"' : '';
+        return `<a class="sf-disc-doc-chip" href="${escHtml(viewUrl)}"${target}>
             <span class="sf-disc-doc-icon">📎</span>
             <span class="sf-disc-doc-name">${escHtml(doc.attachment_filename)}</span>
           </a>`;
-        }).join('');
+      }).join('');
 
-        const bodyHtml = item.body_plain
-          ? `<div class="sf-disc-body">${escHtml(item.body_plain)}</div>`
-          : '';
+      const bodyHtml = item.body_plain
+        ? `<div class="sf-disc-body">${escHtml(item.body_plain)}</div>`
+        : '';
 
-        const sentByHtml = (item.direction === 'out' && item.sent_by_display)
-          ? `<span class="sf-disc-sent-by">par ${escHtml(item.sent_by_display)}</span>`
-          : '';
+      const sentByHtml = (item.direction === 'out' && item.sent_by_display)
+        ? `<span class="sf-disc-sent-by">par ${escHtml(item.sent_by_display)}</span>`
+        : '';
 
-        return `<div class="sf-disc-item ${dirClass}">
+      return `<div class="sf-disc-item ${dirClass}">
           <div class="sf-disc-item-head">
             <span class="sf-disc-dir-badge ${dirClass}">${dirLabel}</span>
             <span class="sf-disc-from">${escHtml(item.from_address || '—')}</span>
@@ -1419,27 +1338,80 @@
           ${bodyHtml}
           ${docsHtml ? `<div class="sf-disc-docs">${docsHtml}</div>` : ''}
         </div>`;
+    } catch (e) {
+      return `<div class="sf-disc-item sf-disc-item--unreadable"><em>(message illisible)</em></div>`;
+    }
+  }
+
+  function _renderDiscContent(supplierId, data) {
+    const timeline      = data.timeline || [];
+    const reviewThreads = data.review_threads || [];
+
+    // ── Collapsed "À rattacher" banner (admin only, review threads present) ──
+    let bannerHtml = '';
+    if (ROLE === 'admin' && reviewThreads.length > 0) {
+      const bannerItems = reviewThreads.map(t => {
+        const supplierOpts = (SUPPLIERS || []).map(s =>
+          `<option value="${s.id}">${escHtml(s.name)}</option>`
+        ).join('');
+        const dateShort = t.last_message_at
+          ? new Date(t.last_message_at).toLocaleDateString('fr-CH', { day: 'numeric', month: 'short' })
+          : '—';
+        return `<div class="sf-disc-review-banner-item" data-thread-id="${t.id}" role="button" tabindex="0">
+            <div class="sf-disc-review-banner-subject">⚠ ${escHtml(t.subject || '(sans objet)')}</div>
+            <div class="sf-disc-review-banner-meta">
+              <span>${escHtml(t.counterparty_addresses || '—')}</span>
+              <span>${escHtml(dateShort)}</span>
+              <span>${t.message_count} msg</span>
+            </div>
+            <div class="sf-disc-review-banner-body" id="sf-disc-review-body-${t.id}"></div>
+            <div class="sf-disc-triage-bar sf-disc-triage-bar--inline" data-thread-id="${t.id}">
+              <span class="sf-disc-triage-label">⚠ Rattacher ce fil :</span>
+              <select class="sf-disc-review-supplier-pick">
+                <option value="">— Choisir fournisseur —</option>
+                ${supplierOpts}
+              </select>
+              <button class="sf-disc-btn-assign">Rattacher</button>
+            </div>
+          </div>`;
       }).join('');
+
+      bannerHtml = `<div class="sf-disc-review-banner" id="sf-disc-review-banner">
+          <button class="sf-disc-review-banner-toggle" id="sf-disc-review-banner-toggle" type="button">
+            ⚠ ${reviewThreads.length} email${reviewThreads.length > 1 ? 's' : ''} à rattacher
+            <span class="sf-disc-review-banner-chevron">▾</span>
+          </button>
+          <div class="sf-disc-review-list" id="sf-disc-review-list">
+            ${bannerItems}
+          </div>
+        </div>`;
     }
 
-    const composeHtml = `<div class="sf-disc-convo-compose">
-      <div class="sf-disc-compose-head">Ajouter une note</div>
-      <textarea id="sf-disc-note-text" class="sf-disc-note-textarea" rows="3" placeholder="Note, appel téléphonique, décision…"></textarea>
-      <div class="sf-disc-compose-row">
-        <input type="date" id="sf-disc-note-date" class="sf-disc-note-date" title="Date (optionnelle — défaut : maintenant)">
-        <button id="sf-disc-note-submit" class="sf-disc-btn-submit">Ajouter une note</button>
-      </div>
-    </div>`;
+    // ── Full-width chronological feed ──
+    let feedHtml = '';
+    if (timeline.length === 0) {
+      feedHtml = `<div class="sf-disc-feed-empty">Aucun message pour ce fournisseur.</div>`;
+    } else {
+      feedHtml = timeline.map(item => _renderOneMessage(item)).join('');
+    }
 
-    // Reply composer (P3-send)
+    // ── Compose-note (once, at bottom) ──
+    const composeHtml = `<div class="sf-disc-convo-compose">
+        <div class="sf-disc-compose-head">Ajouter une note</div>
+        <textarea id="sf-disc-note-text" class="sf-disc-note-textarea" rows="3" placeholder="Note, appel téléphonique, décision…"></textarea>
+        <div class="sf-disc-compose-row">
+          <input type="date" id="sf-disc-note-date" class="sf-disc-note-date" title="Date (optionnelle — défaut : maintenant)">
+          <button id="sf-disc-note-submit" class="sf-disc-btn-submit">Ajouter une note</button>
+        </div>
+      </div>`;
+
+    // ── Reply composer — target most-recent inbound across whole timeline ──
     const _canReply = () => {
       if (ROLE !== 'admin' && ROLE !== 'manager') return { can: false, reason: 'role' };
       if (!USER_EMAIL || !USER_EMAIL.endsWith('@lanebuleuse.ch')) return { can: false, reason: 'email' };
-      const hasInbound = msgs.some(m => m.direction === 'in');
-      if (!hasInbound) return { can: false, reason: 'no_inbound' };
-      const lastInbound = [...msgs].reverse().find(m => m.direction === 'in');
-      const recipient = lastInbound ? (lastInbound.from_address || '') : '';
-      return { can: true, recipient };
+      const lastInbound = [...timeline].reverse().find(m => m.direction === 'in');
+      if (!lastInbound) return { can: false, reason: 'no_inbound' };
+      return { can: true, recipient: lastInbound.from_address || '', thread_id: lastInbound.thread_id };
     };
 
     const replyGate = _canReply();
@@ -1447,17 +1419,16 @@
     if (!replyGate.can) {
       if (replyGate.reason === 'email') {
         replyHtml = `<div class="sf-disc-reply-gate">
-          <div class="sf-disc-reply-gate-msg">Votre compte n'a pas d'adresse e-mail @lanebuleuse.ch — l'envoi est indisponible.</div>
-        </div>`;
+            <div class="sf-disc-reply-gate-msg">Votre compte n'a pas d'adresse e-mail @lanebuleuse.ch — l'envoi est indisponible.</div>
+          </div>`;
       } else if (replyGate.reason === 'no_inbound') {
         replyHtml = `<div class="sf-disc-reply-gate">
-          <div class="sf-disc-reply-gate-msg">Pas de destinataire pour répondre à ce fil.</div>
-        </div>`;
+            <div class="sf-disc-reply-gate-msg">Pas de destinataire pour répondre à ce fournisseur.</div>
+          </div>`;
       }
-      // role gate: no UI shown (no send affordance for viewers)
     } else {
       const recipientEsc = escHtml(replyGate.recipient);
-      replyHtml = `<div class="sf-disc-reply-compose" id="sf-disc-reply-compose">
+      replyHtml = `<div class="sf-disc-reply-compose" id="sf-disc-reply-compose" data-reply-thread-id="${replyGate.thread_id}">
           <div class="sf-disc-reply-head">
             <span class="sf-disc-reply-label">Répondre par e-mail</span>
             <span class="sf-disc-reply-distinguish">Ceci envoie un email réel au fournisseur</span>
@@ -1494,86 +1465,90 @@
         </div>`;
     }
 
-    return `${triageHtml}<div class="sf-disc-convo-messages">${msgsHtml}</div>${composeHtml}${replyHtml}`;
+    return `<div class="sf-disc-feed-wrap">
+        ${bannerHtml}
+        <div class="sf-disc-feed" id="sf-disc-feed">
+          ${feedHtml}
+        </div>
+        ${composeHtml}
+        ${replyHtml}
+      </div>`;
   }
 
   function _wireDiscEvents(container, supplierId) {
-    // Cache the last-loaded data so convo rendering can filter timeline client-side
-    // Data is embedded via closure — we re-read from container's data attribute
-    let _cachedData = null;
-
-    // Helper: fetch current data from the section's stored reference
-    function getCachedData() { return _cachedData; }
-
-    // Store data reference on container for retrieval in rail click handlers
-    // We pass data in via a closure from _loadDiscussionSection; wire it after render
-    // The actual data binding happens when _wireDiscEvents is called from _loadDiscussionSection
-    // which has the data in scope — we capture it by setting container.__sfDiscData
     const data = container.__sfDiscData || { timeline: [], threads: [], review_threads: [] };
-    _cachedData = data;
 
-    let _selectedThreadId = null;
+    // ── Scroll-position preservation ──
+    const feedEl = container.querySelector('#sf-disc-feed');
+    if (feedEl) {
+      feedEl.dataset.scrollTop = feedEl.scrollTop || '0';
+      feedEl.addEventListener('scroll', () => {
+        feedEl.dataset.scrollTop = String(feedEl.scrollTop);
+      }, { passive: true });
+    }
 
-    function _selectThread(threadId, isReview) {
-      _selectedThreadId = threadId;
+    // ── Banner expand/collapse ──
+    const bannerToggle = container.querySelector('#sf-disc-review-banner-toggle');
+    const reviewList   = container.querySelector('#sf-disc-review-list');
+    const banner       = container.querySelector('#sf-disc-review-banner');
+    if (bannerToggle && reviewList) {
+      bannerToggle.addEventListener('click', () => {
+        const isOpen = banner.classList.contains('sf-disc-review-banner--open');
+        banner.classList.toggle('sf-disc-review-banner--open', !isOpen);
+      });
+    }
 
-      // Update rail selection styling
-      container.querySelectorAll('.sf-disc-rail-item').forEach(item => {
-        const matches = parseInt(item.dataset.threadId, 10) === threadId;
-        item.classList.toggle('sf-disc-rail-selected', matches);
+    // Cache for on-demand fetched review thread timelines
+    var _reviewTimelineCache = {};
+
+    // ── Banner item clicks — lazy load review thread body ──
+    if (reviewList) {
+      reviewList.querySelectorAll('.sf-disc-review-banner-item').forEach(function(itemEl) {
+        const threadId = parseInt(itemEl.dataset.threadId, 10);
+        const bodyEl   = itemEl.querySelector('#sf-disc-review-body-' + threadId);
+        var _loaded = false;
+
+        const loadBody = async () => {
+          if (_loaded) return;
+          if (!bodyEl) return;
+          if (_reviewTimelineCache[threadId]) {
+            bodyEl.innerHTML = _reviewTimelineCache[threadId].map(i => _renderOneMessage(i)).join('') || '<em class="sf-disc-review-body-empty">Aucun message.</em>';
+            _loaded = true;
+            return;
+          }
+          bodyEl.innerHTML = '<em class="sf-disc-review-body-loading">Chargement…</em>';
+          try {
+            const resp = await fetch('/api/sf-comm-thread.php?review_thread_id=' + encodeURIComponent(threadId));
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            const json = await resp.json();
+            if (!json.ok) throw new Error(json.error || 'Erreur API');
+            _reviewTimelineCache[threadId] = json.timeline || [];
+            bodyEl.innerHTML = _reviewTimelineCache[threadId].map(i => _renderOneMessage(i)).join('') || '<em class="sf-disc-review-body-empty">Aucun message.</em>';
+            _loaded = true;
+          } catch (e) {
+            bodyEl.innerHTML = '<em class="sf-disc-review-body-error">Erreur : ' + escHtml(e.message) + '</em>';
+          }
+        };
+
+        itemEl.addEventListener('click', async function(e) {
+          // Don't trigger if clicking inside triage bar buttons/selects
+          if (e.target.closest('.sf-disc-triage-bar--inline')) return;
+          await loadBody();
+          itemEl.classList.toggle('sf-disc-review-banner-item--expanded');
+        });
+        itemEl.addEventListener('keydown', function(e) {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); itemEl.click(); }
+        });
       });
 
-      // Find review thread metadata if applicable
-      const reviewThread = isReview
-        ? (data.review_threads || []).find(t => t.id === threadId) || null
-        : null;
-
-      // Render conversation pane
-      const convoPane = container.querySelector('#sf-disc-convo-pane');
-      if (!convoPane) return;
-      convoPane.innerHTML = _renderConvoMessages(threadId, data.timeline || [], isReview, reviewThread);
-
-      // Wire compose submit in the convo pane
-      const submitBtn = convoPane.querySelector('#sf-disc-note-submit');
-      const textEl    = convoPane.querySelector('#sf-disc-note-text');
-      const dateEl    = convoPane.querySelector('#sf-disc-note-date');
-      if (submitBtn && textEl) {
-        submitBtn.addEventListener('click', async () => {
-          const text = (textEl.value || '').trim();
-          if (!text) { sfToast('Le texte de la note est requis.'); textEl.focus(); return; }
-          submitBtn.disabled = true;
-          submitBtn.textContent = '…';
-          try {
-            const body = { supplier_id: String(supplierId), text };
-            if (_selectedThreadId != null) body.thread_id = String(_selectedThreadId);
-            if (dateEl && dateEl.value) body.note_date = dateEl.value;
-            const res = await sfPost('/api/sf-comm-thread.php', { action: 'add_note', ...body });
-            if (res.ok) {
-              textEl.value = '';
-              if (dateEl) dateEl.value = '';
-              const sec = document.getElementById('sf-disc-section');
-              if (sec) await _loadDiscussionSection(supplierId, sec);
-            } else {
-              sfToast('Erreur : ' + (res.error || 'inconnue'));
-              submitBtn.disabled = false;
-              submitBtn.textContent = 'Ajouter une note';
-            }
-          } catch (e) {
-            sfToast('Erreur réseau : ' + e.message);
-            submitBtn.disabled = false;
-            submitBtn.textContent = 'Ajouter une note';
-          }
-        });
-      }
-
-      // Wire assign button for review threads (shown in triage bar)
-      const triageBar = convoPane.querySelector('.sf-disc-triage-bar');
-      if (triageBar) {
+      // ── Triage assign buttons inside banner ──
+      reviewList.querySelectorAll('.sf-disc-triage-bar--inline').forEach(function(triageBar) {
         const btn  = triageBar.querySelector('.sf-disc-btn-assign');
         const pick = triageBar.querySelector('.sf-disc-review-supplier-pick');
         const tid  = triageBar.dataset.threadId;
         if (btn && pick && tid) {
-          btn.addEventListener('click', async () => {
+          btn.addEventListener('click', async function(e) {
+            e.stopPropagation();
             const selectedSupplierId = pick.value;
             if (!selectedSupplierId) { sfToast('Veuillez sélectionner un fournisseur.'); return; }
             btn.disabled = true;
@@ -1593,254 +1568,252 @@
                 btn.disabled = false;
                 btn.textContent = 'Rattacher';
               }
-            } catch (e) {
-              sfToast('Erreur réseau : ' + e.message);
+            } catch (e2) {
+              sfToast('Erreur réseau : ' + e2.message);
               btn.disabled = false;
               btn.textContent = 'Rattacher';
             }
           });
+          // Prevent clicks inside select from bubbling up to item expand
+          pick.addEventListener('click', function(e) { e.stopPropagation(); });
         }
+      });
+    }
+
+    // ── Compose note (bottom, no thread_id required) ──
+    const submitBtn = container.querySelector('#sf-disc-note-submit');
+    const textEl    = container.querySelector('#sf-disc-note-text');
+    const dateEl    = container.querySelector('#sf-disc-note-date');
+    if (submitBtn && textEl) {
+      submitBtn.addEventListener('click', async () => {
+        const text = (textEl.value || '').trim();
+        if (!text) { sfToast('Le texte de la note est requis.'); textEl.focus(); return; }
+        submitBtn.disabled = true;
+        submitBtn.textContent = '…';
+        try {
+          const body = { supplier_id: String(supplierId), text };
+          if (dateEl && dateEl.value) body.note_date = dateEl.value;
+          const res = await sfPost('/api/sf-comm-thread.php', { action: 'add_note', ...body });
+          if (res.ok) {
+            textEl.value = '';
+            if (dateEl) dateEl.value = '';
+            const sec = document.getElementById('sf-disc-section');
+            if (sec) await _loadDiscussionSection(supplierId, sec);
+          } else {
+            sfToast('Erreur : ' + (res.error || 'inconnue'));
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Ajouter une note';
+          }
+        } catch (e) {
+          sfToast('Erreur réseau : ' + e.message);
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'Ajouter une note';
+        }
+      });
+    }
+
+    // ── Reply composer (thread_id from data-reply-thread-id) ──
+    const replyCompose = container.querySelector('#sf-disc-reply-compose');
+    if (replyCompose) {
+      const threadIdForReply = parseInt(replyCompose.dataset.replyThreadId, 10) || null;
+      const bodyEl      = container.querySelector('#sf-disc-reply-body');
+      const dropEl      = container.querySelector('#sf-disc-attach-drop');
+      const inputEl     = container.querySelector('#sf-disc-attach-input');
+      const pickerBtn   = container.querySelector('#sf-disc-attach-picker-btn');
+      const chipsEl     = container.querySelector('#sf-disc-attach-chips');
+      const sdpEl       = container.querySelector('#sf-disc-supplier-docs-picker');
+      const sdpList     = container.querySelector('#sf-disc-sdp-list');
+      const sdpLoading  = container.querySelector('#sf-disc-sdp-loading');
+      const sendBtn     = container.querySelector('#sf-disc-reply-send-btn');
+      const confirmEl   = container.querySelector('#sf-disc-reply-confirm');
+      const confirmAddr = container.querySelector('#sf-disc-reply-confirm-addr');
+      const confirmYes  = container.querySelector('#sf-disc-reply-confirm-yes');
+      const confirmNo   = container.querySelector('#sf-disc-reply-confirm-no');
+      const replyErrEl  = container.querySelector('#sf-disc-reply-error');
+      const recipientEl = container.querySelector('#sf-disc-reply-recipient');
+
+      var _sdpLoaded = false;
+
+      // Dropzone
+      if (dropEl && inputEl) {
+        dropEl.addEventListener('click', () => inputEl.click());
+        dropEl.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); inputEl.click(); } });
+        dropEl.addEventListener('dragover', e => { e.preventDefault(); dropEl.classList.add('sf-disc-attach-drop--over'); });
+        dropEl.addEventListener('dragleave', () => dropEl.classList.remove('sf-disc-attach-drop--over'));
+        dropEl.addEventListener('drop', e => {
+          e.preventDefault();
+          dropEl.classList.remove('sf-disc-attach-drop--over');
+          if (e.dataTransfer.files.length) _handleFileUploads(e.dataTransfer.files);
+        });
+        inputEl.addEventListener('change', () => {
+          if (inputEl.files.length) _handleFileUploads(inputEl.files);
+          inputEl.value = '';
+        });
       }
 
-      // ── Reply composer wiring (P3-send) ─────────────────────────────────
-      const replyCompose = convoPane.querySelector('#sf-disc-reply-compose');
-      if (replyCompose) {
-        const bodyEl      = convoPane.querySelector('#sf-disc-reply-body');
-        const dropEl      = convoPane.querySelector('#sf-disc-attach-drop');
-        const inputEl     = convoPane.querySelector('#sf-disc-attach-input');
-        const pickerBtn   = convoPane.querySelector('#sf-disc-attach-picker-btn');
-        const chipsEl     = convoPane.querySelector('#sf-disc-attach-chips');
-        const sdpEl       = convoPane.querySelector('#sf-disc-supplier-docs-picker');
-        const sdpList     = convoPane.querySelector('#sf-disc-sdp-list');
-        const sdpLoading  = convoPane.querySelector('#sf-disc-sdp-loading');
-        const errorsEl    = convoPane.querySelector('#sf-disc-attach-errors');
-        const sendBtn     = convoPane.querySelector('#sf-disc-reply-send-btn');
-        const confirmEl   = convoPane.querySelector('#sf-disc-reply-confirm');
-        const confirmAddr = convoPane.querySelector('#sf-disc-reply-confirm-addr');
-        const confirmYes  = convoPane.querySelector('#sf-disc-reply-confirm-yes');
-        const confirmNo   = convoPane.querySelector('#sf-disc-reply-confirm-no');
-        const replyErrEl  = convoPane.querySelector('#sf-disc-reply-error');
-        const recipientEl = convoPane.querySelector('#sf-disc-reply-recipient');
-
-        let _sdpLoaded = false;
-
-        // Dropzone
-        if (dropEl && inputEl) {
-          dropEl.addEventListener('click', () => inputEl.click());
-          dropEl.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); inputEl.click(); } });
-          dropEl.addEventListener('dragover', e => { e.preventDefault(); dropEl.classList.add('sf-disc-attach-drop--over'); });
-          dropEl.addEventListener('dragleave', () => dropEl.classList.remove('sf-disc-attach-drop--over'));
-          dropEl.addEventListener('drop', e => {
-            e.preventDefault();
-            dropEl.classList.remove('sf-disc-attach-drop--over');
-            if (e.dataTransfer.files.length) _handleFileUploads(e.dataTransfer.files);
-          });
-          inputEl.addEventListener('change', () => {
-            if (inputEl.files.length) _handleFileUploads(inputEl.files);
-            inputEl.value = '';
-          });
-        }
-
-        // Supplier docs picker
-        if (pickerBtn && sdpEl) {
-          pickerBtn.addEventListener('click', async () => {
-            const visible = sdpEl.style.display !== 'none';
-            sdpEl.style.display = visible ? 'none' : 'block';
-            if (!visible && !_sdpLoaded) {
-              _sdpLoaded = true;
-              try {
-                const resp = await fetch(`/api/sf-comm-thread.php?supplier_docs=${encodeURIComponent(supplierId)}`);
-                const json = await resp.json();
-                if (!json.ok) { sdpList.innerHTML = `<div class="sf-disc-sdp-empty">Erreur chargement.</div>`; return; }
-                if (sdpLoading) sdpLoading.style.display = 'none';
-                const docs = json.docs || [];
-                if (docs.length === 0) {
-                  sdpList.innerHTML = `<div class="sf-disc-sdp-empty">Aucun document disponible.</div>`;
-                } else {
-                  // Group by source_label
-                  const groups = {};
-                  docs.forEach(d => {
-                    const g = d.source_label || 'Autre';
-                    if (!groups[g]) groups[g] = [];
-                    groups[g].push(d);
+      // Supplier docs picker
+      if (pickerBtn && sdpEl) {
+        pickerBtn.addEventListener('click', async () => {
+          const visible = sdpEl.style.display !== 'none';
+          sdpEl.style.display = visible ? 'none' : 'block';
+          if (!visible && !_sdpLoaded) {
+            _sdpLoaded = true;
+            try {
+              const resp = await fetch('/api/sf-comm-thread.php?supplier_docs=' + encodeURIComponent(supplierId));
+              const json = await resp.json();
+              if (!json.ok) { if (sdpList) sdpList.innerHTML = '<div class="sf-disc-sdp-empty">Erreur chargement.</div>'; return; }
+              if (sdpLoading) sdpLoading.style.display = 'none';
+              const docs = json.docs || [];
+              if (docs.length === 0) {
+                if (sdpList) sdpList.innerHTML = '<div class="sf-disc-sdp-empty">Aucun document disponible.</div>';
+              } else {
+                const groups = {};
+                docs.forEach(d => {
+                  const g = d.source_label || 'Autre';
+                  if (!groups[g]) groups[g] = [];
+                  groups[g].push(d);
+                });
+                let listHtml = '';
+                Object.entries(groups).forEach(([grp, items]) => {
+                  listHtml += '<div class="sf-disc-sdp-group-head">' + escHtml(grp) + '</div>';
+                  items.forEach(d => {
+                    listHtml += '<div class="sf-disc-sdp-item" data-doc-file-id="' + escHtml(String(d.doc_file_id)) + '" data-file-name="' + escHtml(d.file_name || '') + '">' +
+                      '<span class="sf-disc-sdp-item-name">' + escHtml(d.file_name || '—') + '</span>' +
+                      '<span class="sf-disc-sdp-item-date">' + (d.dated ? escHtml(String(d.dated).slice(0, 10)) : '') + '</span>' +
+                      '</div>';
                   });
-                  let listHtml = '';
-                  Object.entries(groups).forEach(([grp, items]) => {
-                    listHtml += `<div class="sf-disc-sdp-group-head">${escHtml(grp)}</div>`;
-                    items.forEach(d => {
-                      listHtml += `<div class="sf-disc-sdp-item" data-doc-file-id="${escHtml(String(d.doc_file_id))}" data-file-name="${escHtml(d.file_name || '')}">
-                        <span class="sf-disc-sdp-item-name">${escHtml(d.file_name || '—')}</span>
-                        <span class="sf-disc-sdp-item-date">${d.dated ? escHtml(String(d.dated).slice(0, 10)) : ''}</span>
-                      </div>`;
-                    });
-                  });
+                });
+                if (sdpList) {
                   sdpList.innerHTML = listHtml;
-                  // Wire item clicks
                   sdpList.querySelectorAll('.sf-disc-sdp-item').forEach(itemEl => {
                     itemEl.addEventListener('click', () => {
                       const docFileId = itemEl.dataset.docFileId;
                       const fileName  = itemEl.dataset.fileName;
-                      // Dedupe: check if already in chips
-                      const existing = chipsEl.querySelector(`[data-doc-file-id="${CSS.escape(docFileId)}"]`);
-                      if (!existing) {
-                        _addDocChip(docFileId, fileName);
-                      }
+                      const existing  = chipsEl ? chipsEl.querySelector('[data-doc-file-id="' + CSS.escape(docFileId) + '"]') : null;
+                      if (!existing) _addDocChip(docFileId, fileName);
                       sdpEl.style.display = 'none';
                     });
                   });
                 }
-              } catch (e2) {
-                if (sdpList) sdpList.innerHTML = `<div class="sf-disc-sdp-empty">Erreur réseau.</div>`;
               }
-            }
-          });
-        }
-
-        // Send flow
-        if (sendBtn) {
-          sendBtn.addEventListener('click', () => {
-            if (!bodyEl || !bodyEl.value.trim()) {
-              sfToast('Le corps du message est requis.');
-              return;
-            }
-            const uploading = chipsEl ? chipsEl.querySelector('[data-uploading="1"]') : null;
-            if (uploading) {
-              sfToast('Attendez la fin des téléversements.');
-              return;
-            }
-            const recipient = recipientEl ? recipientEl.textContent : '';
-            if (confirmAddr) confirmAddr.textContent = recipient;
-            if (confirmEl) confirmEl.style.display = 'flex';
-            sendBtn.disabled = true;
-          });
-        }
-
-        if (confirmNo) {
-          confirmNo.addEventListener('click', () => {
-            if (confirmEl) confirmEl.style.display = 'none';
-            if (sendBtn) sendBtn.disabled = false;
-          });
-        }
-
-        if (confirmYes) {
-          confirmYes.addEventListener('click', async () => {
-            if (confirmYes) confirmYes.disabled = true;
-            if (confirmNo) confirmNo.disabled = true;
-            if (sendBtn) sendBtn.disabled = true;
-            await _doSendReply();
-          });
-        }
-
-        // _addDocChip: helper to add a resolved doc chip
-        function _addDocChip(docFileId, fileName) {
-          if (!chipsEl) return;
-          const chip = document.createElement('div');
-          chip.className = 'sf-disc-attach-chip';
-          chip.dataset.docFileId = String(docFileId);
-          chip.innerHTML = `<span class="sf-disc-chip-name">${escHtml(fileName)}</span>
-            <button class="sf-disc-chip-remove" type="button" title="Retirer">✕</button>`;
-          chip.querySelector('.sf-disc-chip-remove').addEventListener('click', () => chip.remove());
-          chipsEl.appendChild(chip);
-        }
-
-        async function _handleFileUploads(files) {
-          const fileArray = Array.from(files);
-          for (const file of fileArray) {
-            const chip = document.createElement('div');
-            chip.className = 'sf-disc-attach-chip sf-disc-attach-chip--uploading';
-            chip.dataset.uploading = '1';
-            chip.innerHTML = `<span class="sf-disc-chip-name">${escHtml(file.name)}</span> <span class="sf-disc-chip-spinner">…</span>`;
-            if (chipsEl) chipsEl.appendChild(chip);
-
-            try {
-              const fd = new FormData();
-              fd.append('csrf', CSRF);
-              fd.append('action', 'attach_upload');
-              fd.append('file', file);
-              const resp = await fetch('/api/sf-comm-thread.php', { method: 'POST', body: fd });
-              const json = await resp.json();
-              if (!json.ok) throw new Error(json.error || 'Upload échoué');
-
-              chip.className = 'sf-disc-attach-chip';
-              delete chip.dataset.uploading;
-              chip.dataset.docFileId = String(json.doc_file_id);
-              chip.innerHTML = `<span class="sf-disc-chip-name">${escHtml(file.name)}</span>
-                <button class="sf-disc-chip-remove" type="button" title="Retirer">✕</button>`;
-              chip.querySelector('.sf-disc-chip-remove').addEventListener('click', () => chip.remove());
-            } catch (err) {
-              chip.className = 'sf-disc-attach-chip sf-disc-attach-chip--error';
-              delete chip.dataset.uploading;
-              chip.innerHTML = `<span class="sf-disc-chip-name">${escHtml(file.name)} — ${escHtml(err.message)}</span>
-                <button class="sf-disc-chip-remove" type="button" title="Retirer">✕</button>`;
-              chip.querySelector('.sf-disc-chip-remove').addEventListener('click', () => chip.remove());
+            } catch (e2) {
+              if (sdpList) sdpList.innerHTML = '<div class="sf-disc-sdp-empty">Erreur réseau.</div>';
             }
           }
-        }
+        });
+      }
 
-        // _doSendReply: POST send_reply action
-        async function _doSendReply() {
-          const body = bodyEl ? bodyEl.value.trim() : '';
-          const docFileIds = chipsEl
-            ? Array.from(chipsEl.querySelectorAll('[data-doc-file-id]')).map(c => c.dataset.docFileId)
-            : [];
+      // Send flow
+      if (sendBtn) {
+        sendBtn.addEventListener('click', () => {
+          if (!bodyEl || !bodyEl.value.trim()) { sfToast('Le corps du message est requis.'); return; }
+          const uploading = chipsEl ? chipsEl.querySelector('[data-uploading="1"]') : null;
+          if (uploading) { sfToast('Attendez la fin des téléversements.'); return; }
+          const recipient = recipientEl ? recipientEl.textContent : '';
+          if (confirmAddr) confirmAddr.textContent = recipient;
+          if (confirmEl) confirmEl.style.display = 'flex';
+          sendBtn.disabled = true;
+        });
+      }
+      if (confirmNo) {
+        confirmNo.addEventListener('click', () => {
+          if (confirmEl) confirmEl.style.display = 'none';
+          if (sendBtn) sendBtn.disabled = false;
+        });
+      }
+      if (confirmYes) {
+        confirmYes.addEventListener('click', async () => {
+          if (confirmYes) confirmYes.disabled = true;
+          if (confirmNo)  confirmNo.disabled  = true;
+          if (sendBtn)    sendBtn.disabled     = true;
+          await _doSendReply();
+        });
+      }
 
+      function _addDocChip(docFileId, fileName) {
+        if (!chipsEl) return;
+        const chip = document.createElement('div');
+        chip.className = 'sf-disc-attach-chip';
+        chip.dataset.docFileId = String(docFileId);
+        chip.innerHTML = '<span class="sf-disc-chip-name">' + escHtml(fileName) + '</span>' +
+          '<button class="sf-disc-chip-remove" type="button" title="Retirer">✕</button>';
+        chip.querySelector('.sf-disc-chip-remove').addEventListener('click', () => chip.remove());
+        chipsEl.appendChild(chip);
+      }
+
+      async function _handleFileUploads(files) {
+        const fileArray = Array.from(files);
+        for (const file of fileArray) {
+          const chip = document.createElement('div');
+          chip.className = 'sf-disc-attach-chip sf-disc-attach-chip--uploading';
+          chip.dataset.uploading = '1';
+          chip.innerHTML = '<span class="sf-disc-chip-name">' + escHtml(file.name) + '</span> <span class="sf-disc-chip-spinner">…</span>';
+          if (chipsEl) chipsEl.appendChild(chip);
           try {
-            const params = new URLSearchParams({
-              csrf:         CSRF,
-              action:       'send_reply',
-              thread_id:    String(threadId),
-              body:         body,
-              doc_file_ids: JSON.stringify(docFileIds),
-            });
-            const resp = await fetch('/api/sf-comm-thread.php', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-              body: params.toString(),
-            });
+            const fd = new FormData();
+            fd.append('csrf', CSRF);
+            fd.append('action', 'attach_upload');
+            fd.append('file', file);
+            const resp = await fetch('/api/sf-comm-thread.php', { method: 'POST', body: fd });
             const json = await resp.json();
-            if (json.ok) {
-              // Clear composer
-              if (bodyEl) bodyEl.value = '';
-              if (chipsEl) chipsEl.innerHTML = '';
-              if (errorsEl) errorsEl.textContent = '';
-              if (confirmEl) confirmEl.style.display = 'none';
-              if (replyErrEl) replyErrEl.style.display = 'none';
-              sfToast('Réponse envoyée.');
-              // Reload discussion section
-              const sec = document.getElementById('sf-disc-section');
-              if (sec) await _loadDiscussionSection(supplierId, sec);
-            } else {
-              if (replyErrEl) {
-                replyErrEl.textContent = json.error || 'Erreur inconnue.';
-                replyErrEl.style.display = 'block';
-              }
-              // Re-enable buttons
-              if (confirmYes) confirmYes.disabled = false;
-              if (confirmNo) confirmNo.disabled = false;
-              if (sendBtn) sendBtn.disabled = false;
-            }
-          } catch (e) {
-            if (replyErrEl) {
-              replyErrEl.textContent = 'Erreur réseau : ' + e.message;
-              replyErrEl.style.display = 'block';
-            }
-            if (confirmYes) confirmYes.disabled = false;
-            if (confirmNo) confirmNo.disabled = false;
-            if (sendBtn) sendBtn.disabled = false;
+            if (!json.ok) throw new Error(json.error || 'Upload échoué');
+            chip.className = 'sf-disc-attach-chip';
+            delete chip.dataset.uploading;
+            chip.dataset.docFileId = String(json.doc_file_id);
+            chip.innerHTML = '<span class="sf-disc-chip-name">' + escHtml(file.name) + '</span>' +
+              '<button class="sf-disc-chip-remove" type="button" title="Retirer">✕</button>';
+            chip.querySelector('.sf-disc-chip-remove').addEventListener('click', () => chip.remove());
+          } catch (err) {
+            chip.className = 'sf-disc-attach-chip sf-disc-attach-chip--error';
+            delete chip.dataset.uploading;
+            chip.innerHTML = '<span class="sf-disc-chip-name">' + escHtml(file.name) + ' — ' + escHtml(err.message) + '</span>' +
+              '<button class="sf-disc-chip-remove" type="button" title="Retirer">✕</button>';
+            chip.querySelector('.sf-disc-chip-remove').addEventListener('click', () => chip.remove());
           }
         }
       }
-      // ── End reply composer wiring ────────────────────────────────────────
-    }
 
-    // Wire rail item clicks
-    container.querySelectorAll('.sf-disc-rail-item').forEach(item => {
-      const threadId = parseInt(item.dataset.threadId, 10);
-      const isReview = item.dataset.isReview === '1';
-      const activate = () => _selectThread(threadId, isReview);
-      item.addEventListener('click', activate);
-      item.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(); } });
-    });
+      async function _doSendReply() {
+        const body = bodyEl ? bodyEl.value.trim() : '';
+        const docFileIds = chipsEl
+          ? Array.from(chipsEl.querySelectorAll('[data-doc-file-id]')).map(c => c.dataset.docFileId)
+          : [];
+        try {
+          const params = new URLSearchParams({
+            csrf:         CSRF,
+            action:       'send_reply',
+            thread_id:    String(threadIdForReply || ''),
+            body:         body,
+            doc_file_ids: JSON.stringify(docFileIds),
+          });
+          const resp = await fetch('/api/sf-comm-thread.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: params.toString(),
+          });
+          const json = await resp.json();
+          if (json.ok) {
+            if (bodyEl)    bodyEl.value    = '';
+            if (chipsEl)   chipsEl.innerHTML = '';
+            if (confirmEl) confirmEl.style.display = 'none';
+            if (replyErrEl) replyErrEl.style.display = 'none';
+            sfToast('Réponse envoyée.');
+            const sec = document.getElementById('sf-disc-section');
+            if (sec) await _loadDiscussionSection(supplierId, sec);
+          } else {
+            if (replyErrEl) { replyErrEl.textContent = json.error || 'Erreur inconnue.'; replyErrEl.style.display = 'block'; }
+            if (confirmYes) confirmYes.disabled = false;
+            if (confirmNo)  confirmNo.disabled  = false;
+            if (sendBtn)    sendBtn.disabled     = false;
+          }
+        } catch (e) {
+          if (replyErrEl) { replyErrEl.textContent = 'Erreur réseau : ' + e.message; replyErrEl.style.display = 'block'; }
+          if (confirmYes) confirmYes.disabled = false;
+          if (confirmNo)  confirmNo.disabled  = false;
+          if (sendBtn)    sendBtn.disabled     = false;
+        }
+      }
+    }
   }
 
   function renderEvalContent(data) {

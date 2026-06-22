@@ -46,29 +46,16 @@ function extract_email_address(string $raw): ?string
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /**
- * Build the flat timeline for a supplier: threads + messages + docs.
- * HTML bodies are stripped; raw HTML is never returned.
+ * Build timeline items for the given thread IDs.
+ * Caller is responsible for ensuring threadIds are purge_status='live'.
+ * ONE HTML-strip path — raw HTML is never returned (XSS-safety invariant).
  */
-function build_supplier_timeline(PDO $pdo, int $supplierId): array
+function build_thread_timeline(PDO $pdo, array $threadIds): array
 {
-    // 1. Load all active threads for this supplier
-    $stThreads = $pdo->prepare(
-        'SELECT id, subject, gmail_thread_id, last_message_at, is_active, created_at
-           FROM comm_threads
-          WHERE supplier_id_fk = ? AND is_active = 1 AND purge_status = \'live\'
-          ORDER BY last_message_at ASC'
-    );
-    $stThreads->execute([$supplierId]);
-    $threads = $stThreads->fetchAll(PDO::FETCH_ASSOC);
-
-    if (empty($threads)) {
-        return [];
-    }
-
-    $threadIds    = array_column($threads, 'id');
+    if (empty($threadIds)) return [];
     $placeholders = implode(',', array_fill(0, count($threadIds), '?'));
 
-    // 2. Load all messages for those threads
+    // Load messages
     $stMsgs = $pdo->prepare(
         "SELECT id, thread_id_fk, direction, from_address, to_address, cc_address,
                 subject, body_format, body, body_snippet, sent_at, message_id,
@@ -80,14 +67,12 @@ function build_supplier_timeline(PDO $pdo, int $supplierId): array
     $stMsgs->execute($threadIds);
     $messages = $stMsgs->fetchAll(PDO::FETCH_ASSOC);
 
-    if (empty($messages)) {
-        return [];
-    }
+    if (empty($messages)) return [];
 
-    $messageIds       = array_column($messages, 'id');
-    $msgPlaceholders  = implode(',', array_fill(0, count($messageIds), '?'));
+    $messageIds      = array_column($messages, 'id');
+    $msgPlaceholders = implode(',', array_fill(0, count($messageIds), '?'));
 
-    // 3. Load all docs for those messages
+    // Load docs
     $stDocs = $pdo->prepare(
         "SELECT cmd.id, cmd.message_id_fk, cmd.doc_file_id_fk, cmd.attachment_filename,
                 cmd.mime_type, cmd.direction,
@@ -99,18 +84,16 @@ function build_supplier_timeline(PDO $pdo, int $supplierId): array
     $stDocs->execute($messageIds);
     $docs = $stDocs->fetchAll(PDO::FETCH_ASSOC);
 
-    // Index docs by message_id_fk
     $docsByMsg = [];
     foreach ($docs as $doc) {
         $docsByMsg[(int) $doc['message_id_fk']][] = $doc;
     }
 
-    // 4. Build timeline items
+    // Build items
     $timeline = [];
     foreach ($messages as $msg) {
         $msgId = (int) $msg['id'];
 
-        // Strip HTML bodies — never return raw HTML
         $body = $msg['body'] ?? '';
         if ($msg['body_format'] === 'html') {
             $decoded = html_entity_decode($body, ENT_QUOTES | ENT_HTML5, 'UTF-8');
@@ -129,14 +112,14 @@ function build_supplier_timeline(PDO $pdo, int $supplierId): array
             'source'          => $msg['source'],
             'sent_by_user_id' => isset($msg['sent_by_user_id']) ? (int)$msg['sent_by_user_id'] : null,
             'body_plain'      => $body,
-            'docs'         => array_map(
+            'docs'            => array_map(
                 static function (array $d): array {
                     return [
-                        'id'                => (int) $d['id'],
-                        'doc_file_id_fk'    => (int) $d['doc_file_id_fk'],
-                        'doc_file_uuid'     => $d['doc_file_uuid'] ?? null,
+                        'id'                  => (int) $d['id'],
+                        'doc_file_id_fk'      => (int) $d['doc_file_id_fk'],
+                        'doc_file_uuid'       => $d['doc_file_uuid'] ?? null,
                         'attachment_filename' => $d['attachment_filename'],
-                        'mime_type'         => $d['mime_type'],
+                        'mime_type'           => $d['mime_type'],
                     ];
                 },
                 $docsByMsg[$msgId] ?? []
@@ -144,12 +127,12 @@ function build_supplier_timeline(PDO $pdo, int $supplierId): array
         ];
     }
 
-    // Sort flat by sent_at
-    usort($timeline, static fn ($a, $b) => strcmp($a['sent_at'] ?? '', $b['sent_at'] ?? ''));
+    // Sort by sent_at
+    usort($timeline, static fn($a, $b) => strcmp($a['sent_at'] ?? '', $b['sent_at'] ?? ''));
 
-    // Resolve sent_by_user_id → display names for sent messages
+    // Resolve sent_by_user_id → display names
     $sentByIds = array_values(array_unique(array_filter(
-        array_map(fn ($item) => $item['sent_by_user_id'] ?? null, $timeline)
+        array_map(fn($item) => $item['sent_by_user_id'] ?? null, $timeline)
     )));
     $userNames = [];
     if (!empty($sentByIds)) {
@@ -169,6 +152,30 @@ function build_supplier_timeline(PDO $pdo, int $supplierId): array
     unset($tItem);
 
     return $timeline;
+}
+
+/**
+ * Build the flat timeline for a supplier: threads + messages + docs.
+ * HTML bodies are stripped; raw HTML is never returned.
+ */
+function build_supplier_timeline(PDO $pdo, int $supplierId): array
+{
+    // 1. Load all active threads for this supplier
+    $stThreads = $pdo->prepare(
+        'SELECT id, subject, gmail_thread_id, last_message_at, is_active, created_at
+           FROM comm_threads
+          WHERE supplier_id_fk = ? AND is_active = 1 AND purge_status = \'live\'
+          ORDER BY last_message_at ASC'
+    );
+    $stThreads->execute([$supplierId]);
+    $threads = $stThreads->fetchAll(PDO::FETCH_ASSOC);
+
+    if (empty($threads)) {
+        return [];
+    }
+
+    $threadIds = array_column($threads, 'id');
+    return build_thread_timeline($pdo, $threadIds);
 }
 
 /**
@@ -279,6 +286,32 @@ function build_supplier_threads(PDO $pdo, int $supplierId): array
 // ── Routing ───────────────────────────────────────────────────────────────────
 try {
     if ($method === 'GET') {
+
+        // GET ?review_thread_id=X — on-demand body for a single review-bucket thread
+        if (isset($_GET['review_thread_id'])) {
+            $reviewThreadId = (int) $_GET['review_thread_id'];
+            if ($reviewThreadId <= 0) {
+                http_response_code(400);
+                echo json_encode(['ok' => false, 'error' => 'review_thread_id invalide.']);
+                exit;
+            }
+            // Guard purge_status='live' — review bucket threads have no supplier/customer FK
+            $stChk = $pdo->prepare(
+                "SELECT id FROM comm_threads
+                  WHERE id = ? AND purge_status = 'live'
+                    AND supplier_id_fk IS NULL AND customer_id_fk IS NULL
+                  LIMIT 1"
+            );
+            $stChk->execute([$reviewThreadId]);
+            if (!$stChk->fetch(PDO::FETCH_ASSOC)) {
+                http_response_code(404);
+                echo json_encode(['ok' => false, 'error' => 'Fil introuvable ou déjà traité.']);
+                exit;
+            }
+            $timeline = build_thread_timeline($pdo, [$reviewThreadId]);
+            echo json_encode(['ok' => true, 'timeline' => $timeline]);
+            exit;
+        }
 
         // GET ?supplier_docs=X — attachable document corpus for a supplier (admin/manager)
         if (isset($_GET['supplier_docs'])) {
