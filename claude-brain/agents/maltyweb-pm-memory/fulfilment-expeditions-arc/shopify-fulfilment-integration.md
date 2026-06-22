@@ -1,5 +1,35 @@
 # Fulfilment — Shopify⇄maltyweb fulfilment integration (RE2 roadmap + full build)
 
+## ✅ SHOPIFY FULL-AUTO TRACKING-STATUS slice (R-0 LIVE + R-1 ARMED-IN-CODE/DISARMED-BY-FLAG) — AS-BUILT 2026-06-22
+> Trigger "shopify tracking"/"tracking_number"/"shopify_fulfilled_at"/"fulfillments"/"auto-advance shipping"/"shopify_auto_advance_shipping"/"reconcileShopifyFulfilment"/"force-auto-advance"/"R-0"/"R-1"/"lazy-create fulfilment"/"mig 434"/"mig 435" → this block.
+
+**Two slices shipped this window. R-0 = data capture (LIVE, schema migrated). R-1 = auto-advance (LIVE in code, DISARMED by an OFF-default flag — fail-safe). Cron unaffected (no-op until armed). NOTHING COMMITTED (maltytask TS + both migs uncommitted; another session holds maltyweb tree dirty on wort/brewing — NOT touched).**
+
+### R-0 — tracking capture (LIVE)
+- **mig 434** `434_shopify_fulfilment_tracking_cols.sql` (maltyweb, applied; head now 435): 4 nullable cols on `inv_sales_orders` → `shopify_fulfilled_at DATETIME`, `tracking_number VARCHAR(128)`, `tracking_url VARCHAR(512)`, `tracking_company VARCHAR(128)`, placed `AFTER fulfilment_mode_source`. 🔴 **PIE­GE recorded: `inv_sales_orders` has NO `updated_at` column** (don't reference one in ALTER/UPSERT).
+- `scripts/ingest-shopify-orders.ts` (maltytask): added `'fulfillments'` to the Shopify field-set; derives tracking from the most-recent `status==='success'` fulfillment (created_at desc); writes all 4 cols on BOTH the INSERT and UPDATE paths (+ drift-detect in `mutableChanged` + audit before/after). Tracking is CAPTURED but NOT yet RENDERED on the board chip (= R-2 below).
+
+### R-1 — auto-advance shipping (ARMED-IN-CODE, DISARMED-BY-FLAG, delivery-only)
+- **mig 435** `435_shopify_auto_advance_flag.sql` (applied): `system_settings` section=`fulfilment` key=`shopify_auto_advance_shipping` **value_text='0' (OFF default)** is_active=1 — EXACT mirror of Nathan's BC flag (mig 433 `bc_auto_advance_shipping`). Two independent auto-advance kill-switches now exist, one per source.
+- `reconcileShopifyFulfilment()` was **armed + hardened (NOT created)** — guardrails AS-BUILT:
+  - **Gated / fail-safe OFF:** skips entirely unless `settingBool('fulfilment','shopify_auto_advance_shipping')` OR CLI `--force-auto-advance`. The */15 `--apply` cron (no `--force`) stays a NO-OP until the flag flips. Prints "Shopify auto-advance DISABLED … skipped" when OFF.
+  - **Delivery-only (KEY garde-fou):** query filters `iso.fulfilment_mode='delivery'`. Pickup + review are NEVER touched (stay manual — Kouros decision).
+  - **Lazy-create:** `INNER JOIN inv_sales_fulfilment` → `inv_sales_orders LEFT JOIN inv_sales_fulfilment`; a delivery order fulfilled in Shopify with NO local line → INSERT `inv_sales_fulfilment` (status='fulfilled', shopify_sync_state='pushed', prepared_by_user_id/site NULL) + event (source='shopify_reconcile', occurred_at = shopify_fulfilled_at else NOW()). Fast-forward straight to 'fulfilled' (Shopify collapses all steps at packing-slip print).
+  - **Advance-only:** existing non-terminal lines advance; NEVER revert from a terminal state.
+  - `ReconcileResult` extended with a `created` counter.
+
+### Arming protocol (transmit when Kouros wants it ON)
+1. SAFE preview WITHOUT touching the prod flag or arming the cron: `npx tsx scripts/ingest-shopify-orders.ts --dry-run --force-auto-advance --since <date>` → lists would-create/would-advance. VERIFIED: `--since 2026-06-01` → **229 delivery creations, 0 pickup/review.**
+2. When ready: flip `shopify_auto_advance_shipping`→'1' → the */15 cron arms auto-advance. ⚠️ memory rule [[feedback_testing_a_flag_a_live_cron_reads]]: flipping the flag = the NEXT cron tick does REAL writes (creates fulfilled lines over the rolling 2-day window). No "test by flipping" — it IS production.
+
+### Verification (this window)
+- typecheck: 0 new errors (3 pre-existing unchanged).
+- dry-run flag OFF → "DISABLED … skipped", 0 writes.
+- dry-run `--force-auto-advance` → 229 created delivery-only, 0 pickup.
+
+### R-2 — NOT done (optional)
+- Render tracking number / fulfilled-at on the eshop board chip (R-0 data is captured, not yet rendered; the "Expédié" status TAG already shows via the Phase-2A cache). Cron still local-on-SSH-tunnel (migrate to VPS one day).
+
 ## ✅ ACCENT-FOLD NORMALIZER (shipping titles) — DONE/LIVE 2026-06-19
 > Trigger "accent"/"normaliseShippingTitle"/"NFD"/"refold"/"Expédition gratuite accent"/"mig 402"/"title_norm" → this block.
 
