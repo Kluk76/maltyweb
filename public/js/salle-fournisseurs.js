@@ -1470,8 +1470,13 @@
         <div class="sf-disc-feed" id="sf-disc-feed">
           ${feedHtml}
         </div>
-        ${composeHtml}
         ${replyHtml}
+        <div class="sf-disc-note-toggle-bar">
+          <button type="button" class="sf-disc-note-toggle-btn" id="sf-disc-note-toggle" aria-expanded="false" aria-controls="sf-disc-note-collapse">+ Ajouter une note interne</button>
+        </div>
+        <div class="sf-disc-note-collapse" id="sf-disc-note-collapse">
+          ${composeHtml}
+        </div>
       </div>`;
   }
 
@@ -1495,6 +1500,23 @@
       bannerToggle.addEventListener('click', () => {
         const isOpen = banner.classList.contains('sf-disc-review-banner--open');
         banner.classList.toggle('sf-disc-review-banner--open', !isOpen);
+      });
+    }
+
+
+    // ── Note-toggle expand/collapse ──
+    const noteToggleBtn  = container.querySelector('#sf-disc-note-toggle');
+    const noteCollapseEl = container.querySelector('#sf-disc-note-collapse');
+    if (noteToggleBtn && noteCollapseEl) {
+      noteToggleBtn.addEventListener('click', () => {
+        const isOpen = noteCollapseEl.classList.contains('sf-disc-note-collapse--open');
+        noteCollapseEl.classList.toggle('sf-disc-note-collapse--open', !isOpen);
+        noteToggleBtn.setAttribute('aria-expanded', String(!isOpen));
+        if (!isOpen) {
+          // Focus the textarea when expanding
+          const ta = noteCollapseEl.querySelector('#sf-disc-note-text');
+          if (ta) ta.focus();
+        }
       });
     }
 

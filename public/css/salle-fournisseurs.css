@@ -2276,7 +2276,7 @@ body.salle-fournisseurs .sf-disc-reply-gate-msg {
 }
 body.salle-fournisseurs .sf-disc-reply-compose {
   flex-shrink: 0;
-  padding: 12px 16px;
+  padding: 16px;
   border-top: 2px solid color-mix(in srgb, var(--bbt) 40%, transparent);
   background: color-mix(in srgb, var(--bbt) 4%, var(--bg));
 }
@@ -2533,6 +2533,39 @@ body.salle-fournisseurs .sf-disc-reply-error {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* ── Note toggle bar + collapsed note ── */
+body.salle-fournisseurs .sf-disc-note-toggle-bar {
+  flex-shrink: 0;
+  padding: 8px 16px;
+  border-top: 1px solid var(--ink-faint);
+  background: var(--bg);
+}
+
+body.salle-fournisseurs .sf-disc-note-toggle-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--ink-label);
+  font-family: "DM Sans", sans-serif;
+  letter-spacing: 0.02em;
+  transition: color .15s;
+}
+
+body.salle-fournisseurs .sf-disc-note-toggle-btn:hover {
+  color: var(--ink-mute);
+}
+
+body.salle-fournisseurs .sf-disc-note-collapse {
+  display: none;
+}
+
+body.salle-fournisseurs .sf-disc-note-collapse--open {
+  display: block;
+}
+
 body.salle-fournisseurs .sf-disc-sent-by {
   font-size: 9px;
   color: var(--ink-label);
