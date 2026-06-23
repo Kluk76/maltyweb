@@ -1482,6 +1482,313 @@ def _write_review_csv(path: Path, rows: list[dict], fieldnames: list[str]) -> No
 
 # ── Reconciliation report ─────────────────────────────────────────────────────
 
+def write_reconciliation_snapshot(
+    conn: pymysql.connections.Connection,
+    classified: dict,
+    collision_data: list[dict],
+    existing_bc: dict[str, dict],
+    collision_bc_nos: set[str],
+    action_map: dict[str, str],
+    apply_mode: bool,
+) -> None:
+    """
+    Write a point-in-time reconciliation snapshot to ord_bc_reconciliation.
+
+    One row per BC order in the full set (pull + all exclusion buckets).
+    DELETE+INSERT in its own separate transaction.  Runs on BOTH dry-run and --apply.
+
+    State mapping:
+      excluded_shopify     → state='excluded_shopify'
+      excluded_system      → state='excluded_system'
+      excluded_recency     → state='excluded_recency'
+      unresolved_customers → state='excluded_system'  (pre-filter, customer unresolved)
+      pull + action='skip_collision' → state='collision_sunk'
+      pull + action='skip_backlog'   → state='skip_backlog'
+      pull + action='insert'         → state='present'  (ord_order_id_fk=None at snapshot time)
+      pull + action='update'/'skip'  → state='present'  (ord_order_id_fk from existing_bc)
+      fallthrough                    → state='missing'  (invariant violation)
+    """
+    run_at = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+
+    # Build collision_by_bc_no for enriching collision_sunk rows
+    collision_by_bc_no: dict[str, dict] = {c["bc_no"]: c for c in collision_data}
+
+    snapshot_rows: list[dict] = []
+
+    # ── excluded_shopify ─────────────────────────────────────────────────────
+    for item in classified["excluded_shopify"]:
+        no = item.get("no") or item.get("bc_order_no", "")
+        snapshot_rows.append({
+            "run_at":          run_at,
+            "bc_order_no":     no,
+            "state":           "excluded_shopify",
+            "reason":          "ShpfyOrderNo set",
+            "kept_row_id":     None,
+            "ord_order_id_fk": None,
+            "customer_id_fk":  None,
+            "customer_name":   None,
+            "requested_date":  None,
+            "sku_ids":         None,
+        })
+
+    # ── excluded_system ──────────────────────────────────────────────────────
+    for item in classified["excluded_system"]:
+        no = item.get("no") or item.get("bc_order_no", "")
+        snapshot_rows.append({
+            "run_at":          run_at,
+            "bc_order_no":     no,
+            "state":           "excluded_system",
+            "reason":          "system customer (eshop/taproom)",
+            "kept_row_id":     None,
+            "ord_order_id_fk": None,
+            "customer_id_fk":  None,
+            "customer_name":   None,
+            "requested_date":  None,
+            "sku_ids":         None,
+        })
+
+    # ── excluded_recency ─────────────────────────────────────────────────────
+    for item in classified["excluded_recency"]:
+        no = item.get("no") or item.get("bc_order_no", "")
+        order_date = item.get("order_date", "")
+        snapshot_rows.append({
+            "run_at":          run_at,
+            "bc_order_no":     no,
+            "state":           "excluded_recency",
+            "reason":          f"Order_Date {order_date} < recency floor",
+            "kept_row_id":     None,
+            "ord_order_id_fk": None,
+            "customer_id_fk":  None,
+            "customer_name":   None,
+            "requested_date":  order_date or None,
+            "sku_ids":         None,
+        })
+
+    # ── unresolved_customers → excluded_system ───────────────────────────────
+    for item in classified["unresolved_customers"]:
+        no = item.get("bc_order_no", "")
+        snapshot_rows.append({
+            "run_at":          run_at,
+            "bc_order_no":     no,
+            "state":           "excluded_system",
+            "reason":          "customer unresolved — not in ref_customers",
+            "kept_row_id":     None,
+            "ord_order_id_fk": None,
+            "customer_id_fk":  None,
+            "customer_name":   item.get("bc_customer_name"),
+            "requested_date":  None,
+            "sku_ids":         None,
+        })
+
+    # ── pull orders ──────────────────────────────────────────────────────────
+    for order in classified["pull"]:
+        bc_no      = order["bc_no"]
+        source_ref = order["source_ref"]
+        action     = action_map.get(bc_no)
+
+        sku_ids_csv = ",".join(
+            str(ln["sku_id"]) for ln in order.get("resolved_lines", [])
+        ) or None
+        # raw customer_id (not canon-mapped)
+        customer_id_fk = order.get("customer_id")
+        customer_name  = order.get("bc_customer_name")
+        requested_date = order.get("posting_date") or order.get("shipment_date") or None
+
+        if action == "skip_collision":
+            col = collision_by_bc_no.get(bc_no, {})
+            kept_row_id = col.get("existing_id")
+            snapshot_rows.append({
+                "run_at":          run_at,
+                "bc_order_no":     bc_no,
+                "state":           "collision_sunk",
+                "reason":          None,
+                "kept_row_id":     kept_row_id,
+                "ord_order_id_fk": None,
+                "customer_id_fk":  customer_id_fk,
+                "customer_name":   customer_name,
+                "requested_date":  requested_date,
+                "sku_ids":         sku_ids_csv,
+            })
+
+        elif action == "skip_backlog":
+            snapshot_rows.append({
+                "run_at":          run_at,
+                "bc_order_no":     bc_no,
+                "state":           "skip_backlog",
+                "reason":          "pre-cutover + shipped",
+                "kept_row_id":     None,
+                "ord_order_id_fk": None,
+                "customer_id_fk":  customer_id_fk,
+                "customer_name":   customer_name,
+                "requested_date":  requested_date,
+                "sku_ids":         sku_ids_csv,
+            })
+
+        elif action == "insert":
+            snapshot_rows.append({
+                "run_at":          run_at,
+                "bc_order_no":     bc_no,
+                "state":           "present",
+                "reason":          None,
+                "kept_row_id":     None,
+                "ord_order_id_fk": None,  # not yet in DB at snapshot time; next run will have it
+                "customer_id_fk":  customer_id_fk,
+                "customer_name":   customer_name,
+                "requested_date":  requested_date,
+                "sku_ids":         sku_ids_csv,
+            })
+
+        elif action in ("update", "skip"):
+            existing = existing_bc.get(source_ref)
+            ord_order_id_fk = existing["id"] if existing else None
+            snapshot_rows.append({
+                "run_at":          run_at,
+                "bc_order_no":     bc_no,
+                "state":           "present",
+                "reason":          None,
+                "kept_row_id":     None,
+                "ord_order_id_fk": ord_order_id_fk,
+                "customer_id_fk":  customer_id_fk,
+                "customer_name":   customer_name,
+                "requested_date":  requested_date,
+                "sku_ids":         sku_ids_csv,
+            })
+
+        else:
+            # Invariant violation — action unknown or action_map missing entry
+            snapshot_rows.append({
+                "run_at":          run_at,
+                "bc_order_no":     bc_no,
+                "state":           "missing",
+                "reason":          f"action={action!r} — invariant violation",
+                "kept_row_id":     None,
+                "ord_order_id_fk": None,
+                "customer_id_fk":  customer_id_fk,
+                "customer_name":   customer_name,
+                "requested_date":  requested_date,
+                "sku_ids":         sku_ids_csv,
+            })
+
+    # ── Persist snapshot (DELETE+INSERT, own transaction) ────────────────────
+    try:
+        with conn.cursor() as c:
+            # Step 1: clear previous snapshot
+            # Full-table clear: single-snapshot design — the table always holds exactly
+            # one run's snapshot.  This is intentional (schema_meta corrections_policy='blocked').
+            c.execute("DELETE FROM ord_bc_reconciliation")
+            # Step 2: insert all rows
+            insert_sql = """
+                INSERT INTO ord_bc_reconciliation
+                  (run_at, bc_order_no, state, reason, kept_row_id,
+                   ord_order_id_fk, customer_id_fk, customer_name,
+                   requested_date, sku_ids)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """
+            for row in snapshot_rows:
+                rd = row["requested_date"]
+                # Normalise to ISO date string or None (MySQL DATE column)
+                if rd and len(str(rd)) >= 10:
+                    rd = str(rd)[:10]
+                else:
+                    rd = None
+                c.execute(insert_sql, (
+                    row["run_at"],
+                    row["bc_order_no"],
+                    row["state"],
+                    row["reason"],
+                    row["kept_row_id"],
+                    row["ord_order_id_fk"],
+                    row["customer_id_fk"],
+                    row["customer_name"],
+                    rd,
+                    row["sku_ids"],
+                ))
+        conn.commit()
+        print(f"  [recon] Snapshot written: {len(snapshot_rows)} rows (run_at={run_at})")
+        pull_total = len(classified["pull"]) + len(classified["excluded_shopify"]) \
+                     + len(classified["excluded_system"]) + len(classified["excluded_recency"]) \
+                     + len(classified["unresolved_customers"])
+        print(f"  [recon] Invariant: BC pull total={pull_total}, snapshot total={len(snapshot_rows)} "
+              f"({'OK' if pull_total == len(snapshot_rows) else 'MISMATCH — check missing rows'})")
+    except Exception as snap_exc:
+        print(f"  [recon] WARNING: snapshot write failed (non-fatal): {snap_exc}", file=sys.stderr)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+    # ── RQ writes for collision_sunk rows ────────────────────────────────────
+    collision_sunk_bc_nos: set[str] = set()
+    try:
+        with conn.cursor() as c:
+            for row in snapshot_rows:
+                if row["state"] != "collision_sunk":
+                    continue
+                bc_no       = row["bc_order_no"]
+                kept_row_id = row["kept_row_id"]
+                cust_name   = row["customer_name"] or ""
+                req_date    = row["requested_date"] or ""
+                sku_ids_val = row["sku_ids"] or ""
+
+                collision_sunk_bc_nos.add(bc_no)
+
+                queue_id  = f"bc-recon:{bc_no}"
+                dedup_key = f"bc-recon:{bc_no}"
+                rq_value  = f"BC {bc_no} non importé — collision avec commande id={kept_row_id}"
+                rq_context = json.dumps({
+                    "customer":     cust_name,
+                    "bc_no":        bc_no,
+                    "ship_date":    req_date,
+                    "skus":         sku_ids_val,
+                    "kept_row_id":  kept_row_id,
+                }, ensure_ascii=False)
+
+                c.execute(
+                    """
+                    INSERT INTO doc_review_queue
+                        (queue_id, type, value, context, dedup_key, status, decision, last_seen_at)
+                    VALUES (%s, 'bc-order-not-imported', %s, %s, %s, 'open', 'pending', CURDATE())
+                    ON DUPLICATE KEY UPDATE
+                        last_seen_at = CURDATE(),
+                        count_obs    = count_obs + 1,
+                        value        = VALUES(value),
+                        context      = VALUES(context),
+                        status       = 'open',
+                        decision     = 'pending',
+                        updated_at   = CURRENT_TIMESTAMP
+                    """,
+                    (queue_id, rq_value, rq_context, dedup_key),
+                )
+
+            # Auto-resolve RQ rows for pull-list orders that graduated to 'present'
+            for order in classified["pull"]:
+                bc_no  = order["bc_no"]
+                action = action_map.get(bc_no)
+                if bc_no in collision_sunk_bc_nos:
+                    continue  # still sunk — don't close
+                if action in ("insert", "update", "skip"):
+                    c.execute(
+                        """
+                        UPDATE doc_review_queue
+                           SET status     = 'resolved',
+                               decision   = 'auto-resolved',
+                               decided_at = NOW()
+                         WHERE dedup_key = %s
+                           AND type      = 'bc-order-not-imported'
+                           AND status    = 'open'
+                        """,
+                        (f"bc-recon:{bc_no}",),
+                    )
+
+        conn.commit()
+    except Exception as rq_exc:
+        print(f"  [recon] WARNING: RQ write failed (non-fatal): {rq_exc}", file=sys.stderr)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+
 def print_reconciliation_report(
     classified:           dict,
     existing_bc:          dict[str, dict],
@@ -1942,6 +2249,7 @@ def main() -> None:
         divergences_flagged:   list[str] = []
         divergences_cleared:   list[str] = []
         bc_snapshot_count = 0
+        action_map: dict[str, str] = {}  # bc_no → action ('insert','update','skip','skip_collision','skip_backlog')
         bc_auto_advance_on = _setting_bool(conn, "fulfilment", "bc_auto_advance_shipping", default=False)
         if not bc_auto_advance_on:
             print("  [config] bc_auto_advance_shipping=0 — auto-avance de statut BC DÉSACTIVÉE (statuts pilotés manuellement).")
@@ -2004,6 +2312,8 @@ def main() -> None:
                     would_skip_backlog += 1
                 else:
                     would_skip += 1
+            # Record action in map for reconciliation snapshot
+            action_map[bc_no] = action
 
             # Skip line upsert for echo-matched orders (operator already manages lines)
             if not echo_matched:
@@ -2160,6 +2470,17 @@ def main() -> None:
                 )
         except OSError as exc:
             print(f"  ⚠ review CSV write skipped (non-fatal): {exc}")
+
+        # ── Write reconciliation snapshot ─────────────────────────────────────
+        write_reconciliation_snapshot(
+            conn             = conn,
+            classified       = classified,
+            collision_data   = collisions,
+            existing_bc      = existing_bc,
+            collision_bc_nos = collision_bc_nos,
+            action_map       = action_map,
+            apply_mode       = apply_mode,
+        )
 
         # ── Print reconciliation report ───────────────────────────────────────
         print_reconciliation_report(

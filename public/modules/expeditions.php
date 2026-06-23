@@ -31,6 +31,61 @@ require_once __DIR__ . '/../../app/repack.php';
 require_page_access('expeditions');
 $me = current_user();
 
+// ── ?recon_counts=1 lightweight poll endpoint ─────────────────────────────────
+if (isset($_GET['recon_counts'])) {
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store');
+    $pdo_rc = maltytask_pdo();
+    try {
+        // Latest run_at in ord_bc_reconciliation
+        $rcLatestRun = $pdo_rc->query(
+            "SELECT MAX(run_at) FROM ord_bc_reconciliation"
+        )->fetchColumn();
+        if ($rcLatestRun) {
+            $rcCounts = $pdo_rc->prepare(
+                "SELECT
+                   SUM(state='present') AS n_present,
+                   SUM(state='collision_sunk') AS n_collision,
+                   SUM(state='skip_backlog') AS n_backlog,
+                   SUM(state='excluded_shopify') AS n_shopify,
+                   SUM(state='excluded_system') AS n_system,
+                   SUM(state='excluded_recency') AS n_recency
+                 FROM ord_bc_reconciliation WHERE run_at = ?"
+            );
+            $rcCounts->execute([$rcLatestRun]);
+            $rcRow = $rcCounts->fetch(PDO::FETCH_ASSOC);
+        } else {
+            $rcRow = ['n_present'=>0,'n_collision'=>0,'n_backlog'=>0,'n_shopify'=>0,'n_system'=>0,'n_recency'=>0];
+            $rcLatestRun = null;
+        }
+        // K = maltytask non-BC orders with no BC twin
+        $rcLegacy = $pdo_rc->prepare(
+            "SELECT COUNT(*) FROM ord_orders o
+             WHERE o.source NOT IN ('bc','shopify')
+               AND o.status NOT IN ('shipped','cancelled')
+               AND NOT EXISTS (
+                 SELECT 1 FROM ord_bc_reconciliation r
+                  WHERE r.run_at = ?
+                    AND r.ord_order_id_fk = o.id
+               )"
+        );
+        $rcLegacy->execute([$rcLatestRun]);
+        $rcLegacyCount = (int) $rcLegacy->fetchColumn();
+    } catch (Throwable $e) {
+        error_log('[expeditions recon_counts] ' . $e->getMessage());
+        $rcRow = ['n_present'=>0,'n_collision'=>0,'n_backlog'=>0,'n_shopify'=>0,'n_system'=>0,'n_recency'=>0];
+        $rcLegacyCount = 0;
+        $rcLatestRun = null;
+    }
+    echo json_encode([
+        'n_present'   => (int)($rcRow['n_present'] ?? 0),
+        'n_collision' => (int)($rcRow['n_collision'] ?? 0),
+        'n_legacy'    => $rcLegacyCount,
+        'run_at'      => $rcLatestRun,
+    ], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
 // ── Resolve preset_key for home-site derivation ───────────────────────────────
 // current_user() returns access_preset_id_fk (INT|null) but not the preset_key string.
 // One prepared SELECT here — used by exp_user_home_site_type() below.
@@ -2974,6 +3029,49 @@ if ($view === 'commandes') {
     }
 }
 
+// ── BC reconciliation banner data ──────────────────────────────────────────────
+$bcReconPresent   = 0;
+$bcReconCollision = 0;
+$bcReconLegacy    = 0;
+$bcReconRunAt     = null;
+$bcReconCollisionRows = []; // for drilldown
+if ($view === 'commandes') {
+    try {
+        $rcLatestRunStmt = $pdo->query("SELECT MAX(run_at) FROM ord_bc_reconciliation");
+        $bcReconRunAt = $rcLatestRunStmt->fetchColumn() ?: null;
+        if ($bcReconRunAt) {
+            $rcStmt = $pdo->prepare(
+                "SELECT state, bc_order_no, customer_name, requested_date, sku_ids, kept_row_id
+                 FROM ord_bc_reconciliation WHERE run_at = ? ORDER BY bc_order_no"
+            );
+            $rcStmt->execute([$bcReconRunAt]);
+            $rcRows = $rcStmt->fetchAll(PDO::FETCH_ASSOC);
+            foreach ($rcRows as $rcRow) {
+                if ($rcRow['state'] === 'present')        $bcReconPresent++;
+                elseif ($rcRow['state'] === 'collision_sunk') {
+                    $bcReconCollision++;
+                    $bcReconCollisionRows[] = $rcRow;
+                }
+            }
+            // K = non-BC active orders with no BC twin in latest snapshot
+            $legacyStmt = $pdo->prepare(
+                "SELECT COUNT(*) FROM ord_orders o
+                 WHERE o.source NOT IN ('bc','shopify')
+                   AND o.status NOT IN ('shipped','cancelled')
+                   AND NOT EXISTS (
+                     SELECT 1 FROM ord_bc_reconciliation r
+                      WHERE r.run_at = ?
+                        AND r.ord_order_id_fk = o.id
+                   )"
+            );
+            $legacyStmt->execute([$bcReconRunAt]);
+            $bcReconLegacy = (int) $legacyStmt->fetchColumn();
+        }
+    } catch (Throwable $e) {
+        error_log('[expeditions bc_recon_banner] ' . $e->getMessage());
+    }
+}
+
 // ── Live stock map for Mouvements form — per-line advisory hints ─────────────
 // Keyed by sku_id → {physique} (physical on-hand across all sites, for the hint).
 // Uses fg_stock_compute. On failure map stays '{}' — hints silently absent, form works.
@@ -3821,6 +3919,55 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
       <span class="exp-cmd-stock-strip__sub">dispo toutes cmdes<?= $cmdFgDiFut < 0 ? ' ⚠' : '' ?></span>
     </div>
   </div>
+  <?php endif ?>
+
+  <?php if ($bcReconRunAt): ?>
+  <!-- ── BC reconciliation banner ──────────────────────────────────────────── -->
+  <div class="exp-bc-recon-banner" id="exp-bc-recon-banner" role="region"
+       aria-label="Synchronisation Business Central" aria-live="polite" aria-atomic="true">
+    <span class="exp-bc-recon-chip exp-bc-recon-chip--ok" title="Commandes BC importées">
+      ✅ <strong id="exp-bc-recon-n-present"><?= (int) $bcReconPresent ?></strong> importées
+    </span>
+    <?php if ($bcReconCollision > 0): ?>
+    <button type="button" class="exp-bc-recon-chip exp-bc-recon-chip--collision"
+            aria-haspopup="dialog"
+            onclick="expBcReconOpenDrilldown(this)"
+            data-rows="<?= htmlspecialchars(json_encode($bcReconCollisionRows, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT), ENT_QUOTES) ?>"
+            title="Commandes BC non importées — cliquer pour détails">
+      🔴 <strong id="exp-bc-recon-n-collision"><?= (int) $bcReconCollision ?></strong> non importées (collision)
+    </button>
+    <?php else: ?>
+    <span class="exp-bc-recon-chip exp-bc-recon-chip--ok-zero" title="Aucune collision BC">
+      🔴 <strong id="exp-bc-recon-n-collision">0</strong> non importées
+    </span>
+    <?php endif ?>
+    <?php if ($bcReconLegacy > 0): ?>
+    <span class="exp-bc-recon-chip exp-bc-recon-chip--legacy"
+          title="Commandes maltytask sans équivalent BC (legacy — affichage seulement, jamais annulées automatiquement)">
+      ⚠ <strong id="exp-bc-recon-n-legacy"><?= (int) $bcReconLegacy ?></strong> maltytask sans équivalent BC
+    </span>
+    <?php else: ?>
+    <span class="exp-bc-recon-chip exp-bc-recon-chip--ok-zero"
+          title="Toutes les commandes actives ont un équivalent BC">
+      ⚠ <strong id="exp-bc-recon-n-legacy">0</strong> sans équivalent BC
+    </span>
+    <?php endif ?>
+    <span class="exp-bc-recon-run-at" title="Dernière synchronisation BC">
+      màj <?= htmlspecialchars(date('H:i', strtotime($bcReconRunAt))) ?>
+    </span>
+  </div>
+  <!-- Drilldown dialog for collision_sunk rows -->
+  <dialog id="exp-bc-recon-dialog" class="exp-bc-recon-dialog">
+    <div class="exp-bc-recon-dialog__header">
+      <h3>Commandes BC non importées</h3>
+      <button type="button" class="exp-bc-recon-dialog__close"
+              onclick="document.getElementById('exp-bc-recon-dialog').close()"
+              aria-label="Fermer">✕</button>
+    </div>
+    <div class="exp-bc-recon-dialog__body" id="exp-bc-recon-dialog-body">
+      <!-- filled by JS -->
+    </div>
+  </dialog>
   <?php endif ?>
 
   <!-- ── Period toolbar ────────────────────────────────────────────────────── -->
@@ -8215,6 +8362,59 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
   window.EXP_CMD_PULL     = <?= $cmdPullListJson ?>;
   window.EXP_CMD_PULL_HL  = <?= $cmdPullTotalHlJson ?>;
   window.EXP_FG_SITES     = <?= json_encode(array_values($fgStockSites), JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+
+// ── BC Recon banner — drilldown + live counts poll ──────────────────────
+function expBcReconOpenDrilldown(btn) {
+  var rows = JSON.parse(btn.getAttribute('data-rows') || '[]');
+  var body = document.getElementById('exp-bc-recon-dialog-body');
+  if (!body) return;
+  if (!rows.length) {
+    body.innerHTML = '<p class="exp-bc-recon-empty">Aucune collision détectée.</p>';
+  } else {
+    body.innerHTML = rows.map(function(r) {
+      var esc = function(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); };
+      return '<div class="exp-bc-recon-row">' +
+        '<span class="exp-bc-recon-row__bc-no">' + esc(r.bc_order_no) + '</span>' +
+        esc(r.customer_name || '—') +
+        (r.requested_date ? ' · ' + esc(r.requested_date) : '') +
+        (r.sku_ids ? ' · <span class="exp-bc-recon-row__skus">' + esc(r.sku_ids) + '</span>' : '') +
+        (r.kept_row_id ? '<br><span class="exp-bc-recon-row__kept">Commande conservée #' + esc(r.kept_row_id) + '</span>' : '') +
+        '</div>';
+    }).join('');
+  }
+  var dlg = document.getElementById('exp-bc-recon-dialog');
+  if (dlg) dlg.showModal();
+}
+(function expBcReconPoll() {
+  var banner = document.getElementById('exp-bc-recon-banner');
+  if (!banner) return;
+  var timer = null;
+  function poll() {
+    fetch('/modules/expeditions.php?recon_counts=1', {credentials:'same-origin'})
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(d){
+        if (!d) return;
+        var el;
+        el = document.getElementById('exp-bc-recon-n-present');
+        if (el) el.textContent = d.n_present;
+        el = document.getElementById('exp-bc-recon-n-collision');
+        if (el) el.textContent = d.n_collision;
+        el = document.getElementById('exp-bc-recon-n-legacy');
+        if (el) el.textContent = d.n_legacy;
+      })
+      .catch(function(){});
+    timer = setTimeout(poll, 35000);
+  }
+  document.addEventListener('visibilitychange', function() {
+    if (document.hidden) {
+      clearTimeout(timer);
+    } else {
+      clearTimeout(timer);
+      poll();
+    }
+  });
+  setTimeout(poll, 35000);
+})();
 </script>
 <script src="/js/expeditions.js?v=<?= @filemtime(__DIR__ . '/../js/expeditions.js') ?: time() ?>"></script>
 <script src="/js/expeditions-set-site.js?v=<?= @filemtime(__DIR__ . '/../js/expeditions-set-site.js') ?: time() ?>"></script>
