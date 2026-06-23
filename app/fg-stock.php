@@ -80,6 +80,48 @@ require_once __DIR__ . '/seasonal-burn.php';
  *   by_sku: array<int, array{prod_qty: int, prod_events: int}>
  * }
  */
+/**
+ * Normalise a timestamp string to 'YYYY-MM-DD HH:MM:SS' by truncating to
+ * 19 chars. Needed because bd_packaging_v2.submitted_at carries microseconds
+ * ('2026-06-22 11:47:14.000000') while inv_fg_stocktake.created_at does not
+ * ('2026-06-22 06:43:46'). A bare string comparison between them is unreliable.
+ */
+function fg_norm_ts(string $ts): string
+{
+    return substr($ts, 0, 19);
+}
+
+/**
+ * Single shared predicate: "is this event AFTER the census?"
+ *
+ * @param string      $eventDate    YYYY-MM-DD
+ * @param string|null $eventTs      YYYY-MM-DD HH:MM:SS[.ffffff] — truncated to sec before compare
+ * @param string|null $censusDate   YYYY-MM-DD of the census (null = no census exists)
+ * @param string|null $censusTs     YYYY-MM-DD HH:MM:SS of the census row's created_at
+ * @param string      $globalFloor  YYYY-MM-DD fallback floor when $censusDate is null
+ * @param bool        $inclusiveFallback  when true, fallback is >= $globalFloor; when false, strict >
+ * @return bool
+ */
+function fg_event_is_post_census(
+    string  $eventDate,
+    ?string $eventTs,
+    ?string $censusDate,
+    ?string $censusTs,
+    string  $globalFloor,
+    bool    $inclusiveFallback = false
+): bool {
+    if ($censusDate !== null) {
+        if ($eventDate > $censusDate) return true;
+        if ($eventDate < $censusDate) return false;
+        // same day: tiebreak by timestamp when both available
+        if ($eventTs !== null && $censusTs !== null && $censusTs !== '') {
+            return fg_norm_ts($eventTs) > fg_norm_ts($censusTs);
+        }
+        return false; // same-day ambiguous without ts → exclude (accepted residual)
+    }
+    return $inclusiveFallback ? ($eventDate >= $globalFloor) : ($eventDate > $globalFloor);
+}
+
 function fg_prod_since_anchor(PDO $pdo, string $globalAnchor): array
 {
     // Derive production site ids from DB — never hardcode
@@ -162,6 +204,23 @@ function fg_prod_since_anchor(PDO $pdo, string $globalAnchor): array
             $prodCensusFloor = (string) $pcRow['census_floor'];
         }
 
+        // Also fetch the census timestamp (MAX created_at) for the floor date at the
+        // production site — needed by fg_event_is_post_census() for same-day tiebreak
+        // when a SKU is absent from the census.
+        $prodCensusTs = null;
+        $pctStmt = $pdo->prepare(
+            "SELECT MAX(created_at) AS census_ts
+               FROM inv_fg_stocktake
+              WHERE is_active = 1
+                AND counted_at = ?
+                AND location_id_fk IN ({$inPlaceholders})"
+        );
+        $pctStmt->execute(array_merge([$prodCensusFloor], $prodSiteIds));
+        $pctRow = $pctStmt->fetch(PDO::FETCH_ASSOC);
+        if ($pctRow && $pctRow['census_ts'] !== null) {
+            $prodCensusTs = (string) $pctRow['census_ts'];
+        }
+
         // Step 2: fetch all candidate packaging events (no date cutoff — applied in PHP)
         // FLOOR applied PER EVENT (before aggregation) so partial boxes are excluded.
         $prodStmt = $pdo->prepare(
@@ -191,18 +250,15 @@ function fg_prod_since_anchor(PDO $pdo, string $globalAnchor): array
                 $anchorDate = $prodSkuAnchor[$skuId]['counted_at'];  // 'YYYY-MM-DD'
                 $anchorTs   = $prodSkuAnchor[$skuId]['anchor_ts'];   // 'YYYY-MM-DD HH:MM:SS'
 
-                $include = false;
-                if ($eventDate > $anchorDate) {
-                    $include = true;  // strictly after census date
-                } elseif ($eventDate === $anchorDate && $anchorTs !== '' && $submittedAt > $anchorTs) {
-                    $include = true;  // same-day, submitted after census timestamp
-                }
-                if (!$include) continue;
+                // Via shared resolver — censusDate=$anchorDate, censusTs=$anchorTs
+                if (!fg_event_is_post_census($eventDate, $submittedAt, $anchorDate, $anchorTs, $prodCensusFloor)) continue;
             } else {
                 // SKU absent from production-site census (zero on census day) — use the
-                // production-site's own census date, not $globalAnchor which may be from
-                // a non-production site (e.g. Taproom) with a later date.
-                if ($eventDate <= $prodCensusFloor) continue;
+                // production-site census date AND timestamp via shared resolver so that
+                // a packaging run submitted after the census on the same day is admitted.
+                // Previously used strict DATE comparison ($eventDate <= $prodCensusFloor)
+                // which rejected valid same-day events when the SKU was absent from the census.
+                if (!fg_event_is_post_census($eventDate, $submittedAt, $prodCensusFloor, $prodCensusTs, $prodCensusFloor)) continue;
             }
 
             if (!isset($bySkuRaw[$skuId])) {
@@ -541,7 +597,10 @@ function fg_stock_compute(PDO $pdo): array
             '_customer_default_site_id'=> $er['customer_default_site_id'],
         ]);
 
-        // Per-(site, sku) anchor with three-tier fallback:
+        // Three-tier fallback: B2B uses DATE-only (no timestamp tiebreak) with inclusive
+        // same-day for tiers (a)/(b) — intentionally NOT routed through fg_event_is_post_census
+        // which would change same-day semantics (that resolver excludes same-day without ts).
+        // Taproom and returns also left unrouted (month-grain / no-timestamp semantics differ).
         $siteAnchor = $siteSkuAnchorMapCompute[$siteId][$sid] ?? null;
         if ($siteAnchor !== null) {
             // (a) counted at ship-from site — inclusive >=
@@ -606,18 +665,14 @@ function fg_stock_compute(PDO $pdo): array
         $orderTs   = (string) $es['order_created_at'];
         $orderDate = substr($orderTs, 0, 10); // DATE portion of the DATETIME
 
-        // Per-(sku, warehouse-site) tiebreak — IDENTICAL predicate to snapshot Leg 2
-        $siteAnchor = $siteSkuAnchorMapCompute[$eshopWarehouseSiteId][$sid] ?? null;
-        if ($siteAnchor !== null) {
-            $siteAnchorDate = $siteAnchor['counted_at'];
-            $siteAnchorTs   = $siteAnchor['anchor_ts'];
-            $pass = ($orderDate > $siteAnchorDate)
-                || ($orderDate === $siteAnchorDate && $orderTs > $siteAnchorTs);
-            if (!$pass) continue;
-        } else {
-            // No count at warehouse site for this SKU — fall back to global anchor (strict >)
-            if ($orderDate <= $anchorDate) continue;
-        }
+        // Via shared resolver — routing only, behaviour unchanged
+        $pass = fg_event_is_post_census(
+            $orderDate, $orderTs,
+            $siteSkuAnchorMapCompute[$eshopWarehouseSiteId][$sid]['counted_at'] ?? null,
+            $siteSkuAnchorMapCompute[$eshopWarehouseSiteId][$sid]['anchor_ts'] ?? null,
+            $anchorDate, false
+        );
+        if (!$pass) continue;
 
         if (isset($byId[$sid])) {
             $byId[$sid]['eshop_qty']    += (int) round((float) $es['qty']);
@@ -658,15 +713,14 @@ function fg_stock_compute(PDO $pdo): array
             $movedOn = (string) $rk['moved_on'];
             $rkTs    = (string) $rk['created_at'];
 
-            // Per-(site, sku) anchor gate — BYTE-IDENTICAL predicate to snapshot repack leg
+            // Via shared resolver — routing only, behaviour unchanged
             $siteAnchor = $siteSkuAnchorMapCompute[$siteId][$sid] ?? null;
-            if ($siteAnchor !== null) {
-                $pass = ($movedOn > $siteAnchor['counted_at'])
-                    || ($movedOn === $siteAnchor['counted_at'] && $rkTs > $siteAnchor['anchor_ts']);
-                if (!$pass) continue;
-            } else {
-                if ($movedOn <= $anchorDate) continue;
-            }
+            $pass = fg_event_is_post_census(
+                $movedOn, $rkTs,
+                $siteAnchor['counted_at'] ?? null, $siteAnchor['anchor_ts'] ?? null,
+                $anchorDate, false
+            );
+            if (!$pass) continue;
 
             if (!isset($byId[$sid])) continue;
             $byId[$sid]['repack_open_qty'] += (int) $rk['from_qty'];
@@ -1403,7 +1457,8 @@ function fg_stock_location_snapshot(PDO $pdo): array
         $sid           = (int) $er['sku_id_fk'];
         $requestedDate = (string) $er['requested_date'];
 
-        // Three-tier fallback (mirrors fg_stock_compute() Step 4 exactly):
+        // Three-tier fallback: DATE-only, inclusive same-day — not routed through
+        // fg_event_is_post_census (different semantics; see compute Step 4 note).
         //   (a) counted at ship-from site → use site anchor, inclusive >=
         //   (b) counted elsewhere but not here → global anchor, inclusive >=
         //   (c) never counted anywhere → global anchor, strict > (no morning baseline)
@@ -1444,18 +1499,13 @@ function fg_stock_location_snapshot(PDO $pdo): array
         $orderTs  = (string) $es['order_created_at'];
         $orderDate = substr($orderTs, 0, 10); // DATE portion of the DATETIME
         $siteAnchor = $siteSkuAnchorMap[$eshopSiteId][$sid] ?? null;
-        // Per-site tiebreak predicate (mirrors production leg):
-        //   include if date > site_anchor, OR (same date AND created_at > anchor_ts).
-        if ($siteAnchor !== null) {
-            $siteAnchorDate = $siteAnchor['counted_at'];
-            $siteAnchorTs   = $siteAnchor['anchor_ts'];
-            $pass = ($orderDate > $siteAnchorDate)
-                || ($orderDate === $siteAnchorDate && $orderTs > $siteAnchorTs);
-            if (!$pass) continue;
-        } else {
-            // No count at eshop site for this SKU → fall back to global anchor date (strict >)
-            if ($orderDate <= $anchorDate) continue;
-        }
+        // Via shared resolver — routing only, behaviour unchanged
+        $pass = fg_event_is_post_census(
+            $orderDate, $orderTs,
+            $siteAnchor['counted_at'] ?? null, $siteAnchor['anchor_ts'] ?? null,
+            $anchorDate, false
+        );
+        if (!$pass) continue;
         $qty = (int) round((float) $es['qty']);
         if (!isset($salesBySiteSku[$eshopSiteId])) $salesBySiteSku[$eshopSiteId] = [];
         $salesBySiteSku[$eshopSiteId][$sid] = ($salesBySiteSku[$eshopSiteId][$sid] ?? 0) + $qty;
@@ -1536,18 +1586,19 @@ function fg_stock_location_snapshot(PDO $pdo): array
         $mvTs     = (string) $mv['mv_created_at'];
         if ($qty <= 0) continue; // skip non-positive movements (tombstoning guard)
 
-        // Per-site tiebreak: from-site anchor for this SKU
+        // Per-site tiebreak via shared resolver — routing only, behaviour unchanged
         $fromAnchor = $siteSkuAnchorMap[$fromSite][$sid] ?? null;
-        $fromPass = ($fromAnchor !== null)
-            ? ($movedOn > $fromAnchor['counted_at']
-               || ($movedOn === $fromAnchor['counted_at'] && $mvTs > $fromAnchor['anchor_ts']))
-            : ($movedOn > $anchorDate);
-        // Per-site tiebreak: to-site anchor for this SKU
+        $fromPass = fg_event_is_post_census(
+            $movedOn, $mvTs,
+            $fromAnchor['counted_at'] ?? null, $fromAnchor['anchor_ts'] ?? null,
+            $anchorDate, false
+        );
         $toAnchor = $siteSkuAnchorMap[$toSite][$sid] ?? null;
-        $toPass = ($toAnchor !== null)
-            ? ($movedOn > $toAnchor['counted_at']
-               || ($movedOn === $toAnchor['counted_at'] && $mvTs > $toAnchor['anchor_ts']))
-            : ($movedOn > $anchorDate);
+        $toPass = fg_event_is_post_census(
+            $movedOn, $mvTs,
+            $toAnchor['counted_at'] ?? null, $toAnchor['anchor_ts'] ?? null,
+            $anchorDate, false
+        );
 
         // Unit-gate: admit or reject the whole row together — never one side alone.
         // $fromPass and $toPass are preserved above for clarity; the gate is their OR.
@@ -1594,15 +1645,14 @@ function fg_stock_location_snapshot(PDO $pdo): array
             $movedOn = (string) $rk['moved_on'];
             $rkTs    = (string) $rk['created_at'];
 
-            // Per-(site, sku) anchor gate — BYTE-IDENTICAL predicate to compute Step 5.5
+            // Via shared resolver — routing only, behaviour unchanged
             $siteAnchor = $siteSkuAnchorMap[$siteId][$sid] ?? null;
-            if ($siteAnchor !== null) {
-                $pass = ($movedOn > $siteAnchor['counted_at'])
-                    || ($movedOn === $siteAnchor['counted_at'] && $rkTs > $siteAnchor['anchor_ts']);
-                if (!$pass) continue;
-            } else {
-                if ($movedOn <= $anchorDate) continue;
-            }
+            $pass = fg_event_is_post_census(
+                $movedOn, $rkTs,
+                $siteAnchor['counted_at'] ?? null, $siteAnchor['anchor_ts'] ?? null,
+                $anchorDate, false
+            );
+            if (!$pass) continue;
 
             if (!isset($repackOpens[$siteId])) $repackOpens[$siteId] = [];
             $repackOpens[$siteId][$sid] = ($repackOpens[$siteId][$sid] ?? 0) + (int) $rk['from_qty'];
