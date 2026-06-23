@@ -35,22 +35,23 @@ $lpBatchLabel     = htmlspecialchars((string) ($lookupConfig['mode_batch_label']
 $lpType           = htmlspecialchars((string) ($lookupConfig['type']              ?? ''),        ENT_QUOTES, 'UTF-8');
 $lpFields         = $lookupConfig['batch_fields'] ?? [];
 $lpShowFilter     = !empty($lookupConfig['show_class_filter']);
+$lpStartOpen      = !empty($lookupConfig['start_open']);
 $lpToday          = date('Y-m-d');
 ?>
 <div id="<?= $lpPanelId ?>"
-     class="lookup-panel"
+     class="lookup-panel<?= $lpStartOpen ? ' lp-open' : '' ?>"
      data-endpoint="<?= $lpEndpoint ?>"
      data-type="<?= $lpType ?>">
 
   <button type="button"
           class="lp-toggle"
-          aria-expanded="false"
+          aria-expanded="<?= $lpStartOpen ? 'true' : 'false' ?>"
           aria-controls="<?= $lpPanelId ?>-body">
     <span class="lp-toggle-label">Consultation</span>
     <span class="lp-toggle-chevron" aria-hidden="true">▸</span>
   </button>
 
-  <div id="<?= $lpPanelId ?>-body" class="lp-body" hidden>
+  <div id="<?= $lpPanelId ?>-body" class="lp-body"<?= $lpStartOpen ? '' : ' hidden' ?>>
 
     <!-- Tab bar -->
     <div class="lp-tabs" role="tablist" aria-label="Mode de recherche">
