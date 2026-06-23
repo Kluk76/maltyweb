@@ -18,3 +18,27 @@
 **OPEN/WATCH:** NOT committed/pushed. ⚠ Shared-clone entanglement — working tree also dirty with PARALLEL-SESSION edits (expeditions.php +54, expeditions.css +92, a pm-memory md) + the just-shipped per-order departure-site work. **Commit ONLY `db/migrations/389_ref_customer_identity.sql` + `scripts/python/ingest_bc_sales_orders.py`, name files explicitly, never `-A`** (pathspec rule + separate-worktree rec apply).
 
 ---
+
+## 🔴 §COLLISION-SINK CLASS — stale legacy rows silently swallow new BC orders (DIAGNOSED 2026-06-23; durable fix RULED, NOT YET BUILT)
+
+**INCIDENT:** Kouros reported 2 Cobra Traders - COOP orders on BC not appearing in the app. Read-only probe confirmed the CLASS (not a one-off).
+
+**MECHANISM (the bug, exact):** `ingest_bc_sales_orders.py detect_collisions()` — for ACTIVE existing candidates (status NOT IN shipped/cancelled) the collision rule is **`canon(customer_id_fk) + ANY-SKU-overlap, DATE-AGNOSTIC`** (`canon()` collapses geo ship-to → Cobra bill-to via `ref_customer_identity`). A legacy `web`/`import` row in a non-terminal status NEVER expires → it is a **PERMANENT SINK** that SKIP-COLLISIONs every future BC INSERT for that canonical customer sharing ≥1 SKU. It is **SILENT** — the dropped INSERT leaves NO operator-visible trace (the `correction_compta_requise` flag fires only on matched-and-UPDATED twins, not on skipped inserts). Collision-skip blocks only NEW inserts; a previously-inserted bc row coexists with the stale row (why exactly 2, not 3, COOP orders were missing — ORD210156 had already landed as id=231).
+
+**CONFIRMED DATA (read-only, 2026-06-23):**
+- Missing orders = **BC ORD210136 (ship 06-24) + ORD210173 (ship 06-26)**, both `SKIP-COLLISION → kept row id=68`.
+- **id=68** = import/entered/cust=755 Cobra Traders - COOP, SKUs {15,23,42,47,51} = the stale leftover sink.
+- **2nd sink: id=67** = import/entered/cust=689 Festival de la Cité, SKUs {45,60} → eats ORD210143 + ORD210188–197 cluster.
+- **32 ACTIVE legacy rows total** (`source IN(web,import) AND status NOT IN(shipped,cancelled)`), ALL created 2026-06-10, frozen at cutover 2026-06-15 = a CLOSED finite population (BC is sole feed; nothing new ever written as web/import post-cutover). Festival de la Cité (689) alone has ~10. Many carry core SKU 60 → eat unrelated future orders.
+- 🔴 **NOT all FG-neutral: 10 of the 32 are real WIP** — id=66/65/64/63/62/61/59/58 (`picked`, Festival) + id=12 (`bl_printed`, Ganesh Store). These are operator-worked, NOT junk → must NOT be bulk-cancelled.
+
+**SAFETY FRAME:** `ord_orders` = pure INTENT, NEVER feeds COGS/COP/WAC/BOM/beer-tax; depletion keys only on operator-set `status='shipped'`. So ALL fixes here are SOT-safe + double-deplete-safe. The ONLY thing the collision rule protects = operational double-entry on the Commandes board during legacy age-out (the genuine in-window twin, e.g. the cancelled #142/#143 ALIGRO twins).
+
+**DURABLE FIX — RULED (Opus-ratified A+B+C; build NOT started):**
+- **A — split, NOT blanket cancel.** A1 = retire (~22 `entered`/`confirmed` leftovers incl. 68/67/55/Privée cluster): `status='cancelled'` + `ord_order_status_events` + `log_revision`, FG-neutral. A2 = the 10 `picked`/`bl_printed` WIP rows are NOT cancelled — surface for per-row operator reconciliation (Ruling-3 never-auto-merge). Enumerate, don't blanket.
+- **B — liveness-gate the legacy collision candidate (NOT date-proximity).** Date-proximity weakens the live guard (genuine twin can have different sheet vs BC date). Instead require the legacy candidate to be live: `source IN(web,import) AND requested_date >= (CUTOVER − grace)` OR `created_at >= (today − grace)`; grace in `system_settings` (`fulfilment.legacy_collision_grace_days` ~30, NOT hardcoded). Population is closed → window drains to empty + never refills = self-extinguishing = "never again". Must key off source∈web/import only; never gate bc-vs-bc.
+- **C — KEYSTONE: loud reconciliation invariant.** Connector already classifies every BC open order (pull/excluded_*/skip_backlog/**skip_collision**/insert/update) — surface skip_collision + any unexplained drop as a self-sufficient `doc_review_queue` row (BC No + customer + SKUs + collided-against id) + Commandes-tab counter/badge + daily digest. Converts silent drop → same-day visible alarm. This is the actual guarantee; A+B drain the population, C catches any future violation.
+
+**SEQUENCING:** C first (alarm, read-only, eyes before mutation) → A1 (retire the ~22; re-run dry-run, ORD210136/210173 + Festival cluster should classify INSERT) → A2 (surface 10 WIP, operator decides) → B (liveness gate, after A1 proves mechanism). Re-run dry-run after each. **Opus independently verifies:** (i) A1 fired zero FG depletion, (ii) post-B a genuine in-window same-cust/same-SKU twin STILL collides (guard intact), (iii) ORD210136+210173 land as source='bc' on the board. **EQUIP coder+sql+ui+webapp-testing.** Trigger "collision sink"/"SKIP-COLLISION"/"missing BC order"/"order not appearing"/"black hole"/"legacy import row"/"detect_collisions"/"id=68"/"id=67"/"backlog clear"/"reconciliation invariant"/"legacy_collision_grace_days" → this section.
+
+---
