@@ -64,33 +64,33 @@
 
   /* ── SVG helpers ───────────────────────────────────────── */
 
-  function drawInstrumentTag(cx, anchorY, glyph, value, label, emphasis) {
-    var tagW = emphasis ? 66 : 58;
-    var tagH = 32;
+  function drawInstrumentTag(cx, anchorY, glyph, value, label, emphasis, overrideTagY) {
+    var tagW = emphasis ? 78 : 68;
+    var tagH = 38;
     var tagX = cx - tagW / 2;
-    var tagY = anchorY - tagH - 28;
-    var dividerY = tagY + 14;
+    var tagY = (overrideTagY !== undefined) ? overrideTagY : (anchorY - tagH - 34);
+    var dividerY = tagY + 16;
 
     var accentRing = emphasis ? `
       <rect x="${tagX-2}" y="${tagY-2}" width="${tagW+4}" height="${tagH+4}" rx="3"
-            fill="none" stroke="#8b5e2a" stroke-width="0.6" opacity="0.5"/>
+            fill="none" stroke="#8b5e2a" stroke-width="0.7" opacity="0.55"/>
     ` : '';
 
     return `
       <g aria-label="${esc(label)}: ${esc(String(value))}">
-        <circle cx="${cx}" cy="${anchorY}" r="2" fill="#8a7250"/>
+        <circle cx="${cx}" cy="${anchorY}" r="2.5" fill="#8a7250"/>
         <line x1="${cx}" y1="${anchorY}" x2="${cx}" y2="${tagY+tagH}"
-              stroke="#a08060" stroke-width="0.8"/>
+              stroke="#a08060" stroke-width="0.9"/>
         ${accentRing}
-        <rect x="${tagX}" y="${tagY}" width="${tagW}" height="${tagH}" rx="2"
-              fill="rgba(241,232,212,0.97)" stroke="#8a7250" stroke-width="0.8"/>
+        <rect x="${tagX}" y="${tagY}" width="${tagW}" height="${tagH}" rx="2.5"
+              fill="rgba(241,232,212,0.97)" stroke="#8a7250" stroke-width="0.9"/>
         <line x1="${tagX+1}" y1="${dividerY}" x2="${tagX+tagW-1}" y2="${dividerY}"
-              stroke="#a08060" stroke-width="0.7" opacity="0.8"/>
-        <text x="${cx}" y="${tagY+10}" text-anchor="middle" dominant-baseline="middle"
-              font-family="'JetBrains Mono',monospace" font-size="9" font-weight="400"
+              stroke="#a08060" stroke-width="0.75" opacity="0.8"/>
+        <text x="${cx}" y="${tagY+11}" text-anchor="middle" dominant-baseline="middle"
+              font-family="'JetBrains Mono',monospace" font-size="10" font-weight="400"
               fill="#5a3a12" letter-spacing="0.08em">${esc(glyph)}</text>
-        <text x="${cx}" y="${dividerY + (tagH-14)/2 + 4}" text-anchor="middle" dominant-baseline="middle"
-              font-family="'JetBrains Mono',monospace" font-size="${emphasis ? 12 : 10}" font-weight="${emphasis ? '600' : '500'}"
+        <text x="${cx}" y="${dividerY + (tagH-16)/2 + 5}" text-anchor="middle" dominant-baseline="middle"
+              font-family="'JetBrains Mono',monospace" font-size="${emphasis ? 14 : 12}" font-weight="${emphasis ? '600' : '500'}"
               fill="#241b10">${esc(String(value))}</text>
       </g>
     `;
@@ -495,7 +495,7 @@
     return p.join('\n');
   }
 
-  function drawMachine(st, idx, run, convY, viewH) {
+  function drawMachine(st, idx, run, convY, viewH, viewW) {
     var cx = st.x;
     var labelY = viewH - 18;
 
@@ -510,18 +510,31 @@
 
     if (st.tagType === 'fill') {
       var tags = buildFillTags(run);
-      var spacing = 54;
-      var totalTagW = (tags.length - 1) * spacing;
-      var startTX = cx - totalTagW / 2;
+      /* Fill-spine tags span the full SVG width (P&ID style), on a dedicated
+         upper row so they never collide with the downstream single-station tags
+         (CAPS/ÉTQ/CTN/PAL) that share the standard tag-row Y band.
+         All 5 tags share the same tagY; leader lines reach from each tag's
+         anchor dot at the conveyor (tagAnchorY) up to that shared row. */
+      var fillTagH = 38;
+      /* Pin the fill-tag row to a fixed Y that clears the tallest machine head
+         (filler carousel + supply pipe reaches to ~convY-130).
+         Use convY - 180 to guarantee a clean gap above all machine bodies. */
+      var fillTagY = convY - 180;
+      var totalTagPx = 0;
+      tags.forEach(function(t) { totalTagPx += (t.emphasis ? 78 : 68); });
+      var margin = 8;
+      var available = viewW - margin * 2;
+      var tagGap = (available - totalTagPx) / (tags.length + 1);
+      var curX = margin + tagGap;
       tags.forEach(function(t, ti) {
-        var rawTX = startTX + ti * spacing;
-        var tagW2 = t.emphasis ? 66 : 58;
-        var clampedTX = Math.max(4, Math.min(1060 - tagW2 - 4, rawTX));
-        tagParts += drawInstrumentTag(clampedTX + tagW2/2, tagAnchorY, t.glyph, t.value, t.label, t.emphasis);
+        var tagW2 = t.emphasis ? 78 : 68;
+        var tagCx = curX + tagW2 / 2;
+        tagParts += drawInstrumentTag(tagCx, tagAnchorY, t.glyph, t.value, t.label, t.emphasis, fillTagY);
+        curX += tagW2 + tagGap;
       });
     } else if (st.tagType === 'cap') {
       var caps = run.losses ? run.losses.loss_crown_cork_units : 0;
-      tagParts = drawInstrumentTag(cx + 8, tagAnchorY, 'CAPS', caps + ' u pertes', 'Capsules', false);
+      tagParts = drawInstrumentTag(cx + 14, tagAnchorY, 'CAPS', caps + ' u pertes', 'Capsules', false);
     } else if (st.tagType === 'label') {
       var lbls = run.losses ? run.losses.loss_label_btl_units : 0;
       tagParts = drawInstrumentTag(cx, tagAnchorY, 'ÉTQ', lbls + ' u pertes', 'Étiquettes', false);
@@ -637,13 +650,13 @@
     }
 
     if (run_type === 'bot' || run_type === 'cage') {
-      viewH = 480;
+      viewH = 500;
     } else if (run_type === 'can') {
-      viewH = 460;
+      viewH = 480;
     } else if (run_type === 'keg') {
-      viewH = 380;
+      viewH = 400;
     } else if (run_type === 'cuv') {
-      viewH = 320;
+      viewH = 340;
     }
 
     var CONV_Y = (run_type === 'bot' || run_type === 'can' || run_type === 'cage') ? 340
@@ -723,7 +736,7 @@
     // Station machines
     stationDefs.forEach(function(st, i) {
       parts.push(`<g class="station-${i}">`);
-      parts.push(drawMachine(st, i, run, CONV_Y, viewH));
+      parts.push(drawMachine(st, i, run, CONV_Y, viewH, viewW));
       parts.push(`</g>`);
     });
 
