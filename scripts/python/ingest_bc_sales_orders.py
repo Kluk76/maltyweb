@@ -85,7 +85,7 @@ import json
 import os
 import sys
 import tempfile
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -271,6 +271,26 @@ def _setting_bool(conn: "pymysql.connections.Connection", section: str, key: str
     if not row or row.get("value_text") is None:
         return default
     return str(row["value_text"]).strip().lower() in ("1", "true", "on", "yes")
+
+
+def _setting_int(conn: "pymysql.connections.Connection", section: str, key: str, default: int = 0) -> int:
+    """Read an integer system_settings value. Fail-safe: missing/unreadable/null => default."""
+    try:
+        with conn.cursor() as c:
+            c.execute(
+                "SELECT value_num FROM system_settings "
+                "WHERE section=%s AND key_name=%s AND is_active=1",
+                (section, key),
+            )
+            row = c.fetchone()
+    except Exception:
+        return default
+    if not row or row.get("value_num") is None:
+        return default
+    try:
+        return int(row["value_num"])
+    except (TypeError, ValueError):
+        return default
 
 
 # Batch size for OR-chained $filter requests (BC rejects the `in` operator — HTTP 501)
@@ -773,14 +793,17 @@ def detect_collisions(
     classified: dict,
     existing_non_bc: list[dict],
     identity_map: dict[int, int] | None = None,
+    grace_days: int = 14,
 ) -> list[dict]:
     """
     Find existing ord_orders (web/email/import) that likely represent the same real-world
     order as an incoming BC order.  Two-tier heuristic:
 
     - Active candidates (status NOT IN ('shipped','cancelled')):
-        collide on customer_id_fk + SKU overlap (date NOT required).
-        This preserves the existing WeeklyOrders collision-skip behaviour.
+        collide on customer_id_fk + SKU overlap, subject to a liveness gate:
+        if requested_date is not None and requested_date < (today - grace_days),
+        the candidate is stale and does NOT block the BC order.
+        NULL requested_date continues to guard (fail-safe).
 
     - Shipped candidates (status == 'shipped'):
         collide ONLY when customer_id_fk + SKU overlap + requested_date == BC posting_date.
@@ -800,6 +823,8 @@ def detect_collisions(
         return (identity_map or {}).get(cid, cid)
 
     collisions = []
+    # Layer B — liveness gate floor: computed once for this run.
+    liveness_floor = (date.today() - timedelta(days=grace_days)).isoformat()
 
     # Build map: customer_id → list of (bc_no, posting_date, sku_id_set)
     # existing_date (requested_date) = Posting_Date (new primary); compare against
@@ -829,6 +854,11 @@ def detect_collisions(
             # flagging a customer's unrelated past shipped orders.
             if eo_is_shipped and eo["requested_date"] != bc_entry["posting_date"]:
                 continue
+            # Layer B — liveness gate: stale active-candidates do not block BC orders.
+            # NULL requested_date is fail-safe (continues to guard).
+            if not eo_is_shipped and eo["requested_date"] is not None:
+                if eo["requested_date"] < liveness_floor:
+                    continue
             collisions.append({
                 "existing_id":     eo["id"],
                 "existing_source": eo["source"],
@@ -2211,8 +2241,9 @@ def main() -> None:
             print(f"  --limit {limit}: processing {len(pull)} orders only")
 
         # ── Collision detection ───────────────────────────────────────────────
+        grace_days = _setting_int(conn, "fulfilment", "bc_collision_legacy_grace_days", default=14)
         print("[5/6] Detecting collisions …")
-        collisions = detect_collisions(classified, existing_non_bc, identity_map=identity_map)
+        collisions = detect_collisions(classified, existing_non_bc, identity_map=identity_map, grace_days=grace_days)
 
         # Build collision_bc_nos set — the deterministic SKIP set for the import loop
         collision_bc_nos: set[str] = {c["bc_no"] for c in collisions}
