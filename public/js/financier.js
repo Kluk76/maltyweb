@@ -1708,7 +1708,9 @@
       var prevSealedAt = (window.FIN_FICHE_SEALED_AT || {})[mk];
       var prevDate = '';
       if (prevSealedAt) {
-        prevDate = new Date(prevSealedAt.replace(' ', 'T')).toLocaleDateString('fr-CH');
+        var _psat = prevSealedAt.replace(' ', 'T');
+        if (!/[Z+]/.test(_psat)) _psat += 'Z';
+        prevDate = new Date(_psat).toLocaleDateString('fr-CH', { timeZone: window.APP_TIMEZONE || 'Europe/Zurich' });
       }
       sealTitle.textContent = 'Restater la fiche — ' + mkLabel;
       sealSummary.textContent = 'Ce mois a déjà été scellé'
