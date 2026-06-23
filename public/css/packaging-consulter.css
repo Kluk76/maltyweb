@@ -1,0 +1,827 @@
+/* ============================================================
+   packaging-consulter.css
+   Scoped to body.packaging — packaging batch/day consultation view
+   Extracted from _design/packaging-consulter-bottling-line.html
+
+   NOT included here (handled by app.css):
+     - :root full palette token block
+     - body.packaging base reset (margin/padding/bg/color/font/min-height/position)
+     - body.packaging::before grain overlay
+     - body.packaging * { box-sizing: border-box; }
+
+   Packaging-specific shadow tokens declared below.
+   ============================================================ */
+
+:root {
+  --kf-shadow: rgba(60,40,20,.18);
+  --kf-shadow-deep: rgba(40,25,12,.35);
+}
+
+/* ============================================================
+   RESET & BASE — scoped to body.packaging
+   ============================================================ */
+body.packaging {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: 'DM Sans', system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+body.packaging * {
+  box-sizing: border-box;
+}
+
+/* ============================================================
+   PAGE SHELL
+   ============================================================ */
+body.packaging .pkg-shell {
+  position: relative;
+  z-index: 1;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 24px 20px 60px;
+}
+
+/* ============================================================
+   VIEW TOGGLE
+   ============================================================ */
+body.packaging .view-toggle {
+  display: flex;
+  gap: 0;
+  border: 1.5px solid var(--hairline-2);
+  border-radius: 6px;
+  overflow: hidden;
+  width: fit-content;
+  margin-bottom: 28px;
+  box-shadow: 0 1px 3px var(--kf-shadow);
+}
+
+body.packaging .view-toggle__btn {
+  padding: 7px 18px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  background: var(--bg-elev);
+  color: var(--ink-label);
+  border: none;
+  outline: none;
+  transition: background 0.15s, color 0.15s;
+  letter-spacing: 0.01em;
+  user-select: none;
+}
+
+body.packaging .view-toggle__btn:first-child {
+  border-right: 1px solid var(--hairline-2);
+}
+
+body.packaging .view-toggle__btn.view--active {
+  background: var(--ink);
+  color: var(--bg);
+}
+
+body.packaging .view-toggle__btn:focus-visible {
+  outline: 2px solid var(--oak);
+  outline-offset: -2px;
+}
+
+/* ============================================================
+   VIEW CONTAINERS
+   ============================================================ */
+body.packaging .view-batch { display: block; }
+body.packaging .view-day   { display: none; }
+body.packaging .view-batch.view--hidden { display: none; }
+body.packaging .view-day.view--visible  { display: block; }
+
+/* ============================================================
+   BATCH VIEW — ENGINEERING CARTOUCHE HEADER
+   ============================================================ */
+body.packaging .fiche-header {
+  border: 1px solid var(--hairline-2);
+  border-top: 3px solid var(--oak-deep);
+  background: var(--bg-elev);
+  padding: 0;
+  margin-bottom: 20px;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+body.packaging .fiche-header__inner {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  min-height: 80px;
+}
+
+body.packaging .fiche-header__left {
+  padding: 14px 18px 14px 18px;
+  border-right: 1px solid var(--hairline);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  justify-content: center;
+}
+
+body.packaging .fiche-header__overline {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-label);
+  font-weight: 400;
+  margin-bottom: 2px;
+}
+
+body.packaging .fiche-header__right {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+  min-width: 360px;
+}
+
+body.packaging .fiche-meta-cell {
+  padding: 7px 12px;
+  border-right: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+body.packaging .fiche-meta-cell:nth-child(3),
+body.packaging .fiche-meta-cell:nth-child(6) {
+  border-right: none;
+}
+
+body.packaging .fiche-meta-cell:nth-child(4),
+body.packaging .fiche-meta-cell:nth-child(5),
+body.packaging .fiche-meta-cell:nth-child(6) {
+  border-bottom: none;
+}
+
+body.packaging .fiche-meta-cell__label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-label);
+  font-weight: 400;
+}
+
+body.packaging .fiche-meta-cell__val {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  color: var(--ink);
+}
+
+body.packaging .fiche-recipe-name {
+  font-family: 'Fraunces', Georgia, serif;
+  font-size: 36px;
+  font-weight: 400;
+  font-style: italic;
+  color: var(--ink);
+  margin: 0;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+body.packaging .fiche-pills {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+body.packaging .pill {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 4px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+body.packaging .pill--neb      { background: var(--hop);  color: var(--bg); }
+body.packaging .pill--contract { background: var(--cold); color: var(--bg); }
+body.packaging .pill--format   { background: var(--bg-side); color: var(--ink-label); border: 1px solid var(--hairline); }
+
+/* ============================================================
+   SECTION LABEL (divider with hairline rules)
+   ============================================================ */
+body.packaging .pkg-section-label {
+  font-family: 'Fraunces', Georgia, serif;
+  font-size: 12px;
+  font-weight: 400;
+  font-style: italic;
+  color: var(--ink-label);
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+body.packaging .pkg-section-label::before,
+body.packaging .pkg-section-label::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--hairline);
+}
+
+/* ============================================================
+   SCHEMATIC WRAP
+   ============================================================ */
+body.packaging .pkg-schematic-wrap {
+  background: var(--bg);
+  border: 2px solid var(--hairline-2);
+  border-radius: 4px;
+  padding: 28px 20px 20px;
+  box-shadow: 0 4px 20px var(--kf-shadow);
+  margin-bottom: 10px;
+  overflow-x: auto;
+}
+
+body.packaging .pkg-schematic-wrap svg {
+  display: block;
+  min-width: 700px;
+  width: 100%;
+}
+
+/* Station fade-in animations (prototype names — keep for SVG compatibility) */
+body.packaging .station-0 { opacity: 0; animation: fadeInStation 0.7s ease-out 0.0s forwards; }
+body.packaging .station-1 { opacity: 0; animation: fadeInStation 0.7s ease-out 0.2s forwards; }
+body.packaging .station-2 { opacity: 0; animation: fadeInStation 0.7s ease-out 0.4s forwards; }
+body.packaging .station-3 { opacity: 0; animation: fadeInStation 0.7s ease-out 0.6s forwards; }
+body.packaging .station-4 { opacity: 0; animation: fadeInStation 0.7s ease-out 0.8s forwards; }
+
+@keyframes fadeInStation {
+  from { opacity: 0; transform: translateY(2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Conveyor belt / pipe flow animation */
+body.packaging .conveyor-flow {
+  stroke-dasharray: 8 5;
+  animation: conveyorDash 3s linear infinite;
+}
+
+@keyframes conveyorDash {
+  to { stroke-dashoffset: -52; }
+}
+
+/* Travelling bottle groups on conveyor */
+body.packaging .conveyor-bottles {
+  animation: conveyorMove 8s linear infinite;
+}
+
+@keyframes conveyorMove {
+  from { transform: translateX(0px); }
+  to   { transform: translateX(20px); }
+}
+
+/* Robot arm pivot */
+.robot-arm {
+  transform-box: fill-box;
+  transform-origin: center bottom;
+  animation: robotPivot 6s ease-in-out infinite;
+}
+@keyframes robotPivot {
+  0%   { transform: rotate(-8deg); }
+  50%  { transform: rotate(8deg); }
+  100% { transform: rotate(-8deg); }
+}
+
+/* Filler carousel spin */
+.filler-carousel {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: fillerSpin 18s linear infinite;
+}
+@keyframes fillerSpin {
+  to { transform: rotate(360deg); }
+}
+
+/* Label/pack reel spin */
+.reel-spin {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: reelSpin 12s linear infinite;
+}
+@keyframes reelSpin {
+  to { transform: rotate(360deg); }
+}
+
+/* pkg- prefixed animation aliases (new system) */
+body.packaging .pkg-station-0 { opacity: 0; animation: pkgFadeInStation 0.45s ease-out 0.0s forwards; }
+body.packaging .pkg-station-1 { opacity: 0; animation: pkgFadeInStation 0.45s ease-out 0.1s forwards; }
+body.packaging .pkg-station-2 { opacity: 0; animation: pkgFadeInStation 0.45s ease-out 0.2s forwards; }
+body.packaging .pkg-station-3 { opacity: 0; animation: pkgFadeInStation 0.45s ease-out 0.3s forwards; }
+body.packaging .pkg-station-4 { opacity: 0; animation: pkgFadeInStation 0.45s ease-out 0.45s forwards; }
+
+@keyframes pkgFadeInStation {
+  from { opacity: 0; transform: translateY(2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pkgFlowDash {
+  to { stroke-dashoffset: -52; }
+}
+
+.pkg-conveyor-flow {
+  stroke-dasharray: 8 5;
+  animation: pkgFlowDash 3s linear infinite;
+}
+
+@keyframes pkgReelSpin {
+  to { transform: rotate(360deg); }
+}
+
+.pkg-reel-spin {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: pkgReelSpin 12s linear infinite;
+}
+
+@keyframes pkgCarouselSpin {
+  to { transform: rotate(360deg); }
+}
+
+.pkg-filler-carousel {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: pkgCarouselSpin 18s linear infinite;
+}
+
+@keyframes pkgRobotPivot {
+  0%   { transform: rotate(-3deg); }
+  50%  { transform: rotate(3deg); }
+  100% { transform: rotate(-3deg); }
+}
+
+.pkg-robot-arm {
+  transform-box: fill-box;
+  transform-origin: center bottom;
+  animation: pkgRobotPivot 6s ease-in-out infinite;
+}
+
+/* Null placeholder */
+.pkg-csl-null { color: var(--ink-label); font-style: italic; }
+
+@media (prefers-reduced-motion: reduce) {
+  body.packaging .station-0,
+  body.packaging .station-1,
+  body.packaging .station-2,
+  body.packaging .station-3,
+  body.packaging .station-4,
+  body.packaging .pkg-station-0,
+  body.packaging .pkg-station-1,
+  body.packaging .pkg-station-2,
+  body.packaging .pkg-station-3,
+  body.packaging .pkg-station-4 {
+    animation: none;
+    opacity: 1;
+  }
+  body.packaging .conveyor-flow,
+  body.packaging .conveyor-bottles {
+    animation: none;
+  }
+  .robot-arm, .filler-carousel, .reel-spin,
+  .pkg-conveyor-flow, .pkg-reel-spin, .pkg-filler-carousel, .pkg-robot-arm {
+    animation: none;
+  }
+}
+
+/* ============================================================
+   METRICS STRIP
+   ============================================================ */
+body.packaging .metrics-strip {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  background: var(--bg-side);
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-top: 8px;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+
+body.packaging .metrics-cell {
+  flex: 1;
+  min-width: 110px;
+  padding: 9px 14px;
+  border-right: 1px solid var(--hairline);
+}
+
+body.packaging .metrics-cell:last-child {
+  border-right: none;
+}
+
+body.packaging .metrics-cell__label {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-label);
+  margin-bottom: 2px;
+}
+
+body.packaging .metrics-cell__val {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+body.packaging .metrics-cell__val--hero {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--oak);
+}
+
+/* ============================================================
+   THREE-COLUMN PANELS GRID
+   ============================================================ */
+body.packaging .panels-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 16px;
+  margin-top: 20px;
+}
+
+@media (max-width: 800px) {
+  body.packaging .panels-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+body.packaging .panel-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px var(--kf-shadow);
+}
+
+body.packaging .panel-card__header {
+  padding: 10px 14px 8px;
+  background: var(--bg-side);
+  border-bottom: 1.5px solid var(--hairline-2);
+}
+
+body.packaging .panel-card__title {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-label);
+}
+
+body.packaging .panel-card__body {
+  padding: 12px 14px;
+}
+
+/* ============================================================
+   BOM DOCKET
+   ============================================================ */
+body.packaging .bom-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+body.packaging .bom-row:last-child {
+  border-bottom: none;
+}
+
+body.packaging .bom-row__name {
+  flex: 1;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+body.packaging .bom-row__qty {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+body.packaging .bom-row--liquid {
+  border-left: 3px solid var(--cold);
+  padding-left: 8px;
+  margin-left: -14px;
+  padding-right: 0;
+}
+
+body.packaging .bom-empty {
+  font-family: 'Fraunces', Georgia, serif;
+  font-style: italic;
+  font-size: 14px;
+  color: var(--ink-label);
+  padding: 8px 0;
+}
+
+/* ============================================================
+   LOSSES PANEL
+   ============================================================ */
+body.packaging .loss-headline {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 28px;
+  font-weight: 500;
+  color: var(--oak);
+  margin-bottom: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+body.packaging .loss-headline__unit {
+  font-size: 14px;
+  color: var(--ink-label);
+  font-weight: 400;
+}
+
+body.packaging .loss-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--hairline);
+  gap: 8px;
+}
+
+body.packaging .loss-row:last-child {
+  border-bottom: none;
+}
+
+body.packaging .loss-row__label {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 12px;
+  color: var(--ink-soft);
+  flex: 1;
+}
+
+body.packaging .loss-row__val {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  color: var(--ok);
+  font-variant-numeric: tabular-nums;
+}
+
+body.packaging .loss-val--nonzero {
+  color: var(--ember);
+}
+
+/* ============================================================
+   QA PANEL
+   ============================================================ */
+body.packaging .qa-reading-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+body.packaging .qa-reading-row:last-child {
+  border-bottom: none;
+}
+
+body.packaging .qa-glyph {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--ink-label);
+  min-width: 32px;
+}
+
+body.packaging .qa-val {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+body.packaging .qa-unit {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 11px;
+  color: var(--ink-label);
+}
+
+body.packaging .qa-field {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+body.packaging .qa-field:last-child {
+  border-bottom: none;
+}
+
+body.packaging .qa-field__label {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+body.packaging .cip-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+body.packaging .cip-pill--ok      { background: var(--ok); color: var(--bg); }
+body.packaging .cip-pill--pending { background: var(--bg-side); color: var(--ink-label); border: 1px solid var(--hairline); }
+
+/* ============================================================
+   COMMENTS BLOCK
+   ============================================================ */
+body.packaging .comments-block {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline-2);
+  border-left: 3px solid var(--oak);
+  border-radius: 4px;
+  padding: 14px 16px;
+  margin: 20px 0 0;
+  box-shadow: 0 1px 3px var(--kf-shadow);
+}
+
+body.packaging .comments-block__label {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-label);
+  margin-bottom: 8px;
+}
+
+body.packaging .comments-block__text {
+  font-family: 'Fraunces', Georgia, serif;
+  font-style: italic;
+  font-size: 15px;
+  color: var(--ink-soft);
+  line-height: 1.6;
+  margin: 0;
+}
+
+/* ============================================================
+   FLAG BLOCK (hors process)
+   ============================================================ */
+body.packaging .flag-block {
+  background: var(--bg-elev);
+  border: 1px solid var(--ember);
+  border-left: 4px solid var(--ember);
+  border-radius: 4px;
+  padding: 12px 16px;
+  margin-top: 16px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+body.packaging .flag-block__icon {
+  font-size: 16px;
+  line-height: 1.4;
+  flex-shrink: 0;
+}
+
+body.packaging .flag-block__text {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 13px;
+  color: var(--ember);
+  line-height: 1.5;
+}
+
+body.packaging .flag-block__text strong {
+  font-weight: 600;
+}
+
+/* ============================================================
+   DAY VIEW
+   ============================================================ */
+body.packaging .day-header {
+  font-family: 'Fraunces', Georgia, serif;
+  font-size: 22px;
+  font-weight: 300;
+  color: var(--ink);
+  margin-bottom: 20px;
+  letter-spacing: -0.01em;
+}
+
+body.packaging .day-header span {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  color: var(--ink-label);
+  font-weight: 400;
+  margin-left: 12px;
+  vertical-align: middle;
+}
+
+body.packaging .day-cards {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+body.packaging .day-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  padding: 16px;
+  min-width: 180px;
+  flex: 1;
+  max-width: 280px;
+  box-shadow: 0 2px 8px var(--kf-shadow);
+  cursor: pointer;
+  transition: box-shadow 0.15s, transform 0.15s, border-color 0.15s;
+}
+
+body.packaging .day-card:hover {
+  box-shadow: 0 5px 16px var(--kf-shadow-deep);
+  transform: translateY(-1px);
+  border-color: var(--oak);
+}
+
+body.packaging .day-card__icon {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 10px;
+}
+
+body.packaging .day-card__recipe {
+  font-family: 'Fraunces', Georgia, serif;
+  font-size: 16px;
+  font-style: italic;
+  color: var(--ink);
+  margin-bottom: 2px;
+  text-align: center;
+}
+
+body.packaging .day-card__format {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 11px;
+  color: var(--ink-label);
+  text-align: center;
+  margin-bottom: 10px;
+}
+
+body.packaging .day-card__pill {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 10px;
+}
+
+body.packaging .day-card__readings {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 10px;
+  border-top: 1px solid var(--hairline);
+  padding-top: 10px;
+}
+
+body.packaging .day-reading {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+body.packaging .day-reading__label {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-label);
+}
+
+body.packaging .day-reading__val {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  color: var(--ink);
+}
+
+body.packaging .day-reading__val--hero {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--oak);
+}
+
+/* ============================================================
+   SECTION DIVIDER
+   ============================================================ */
+body.packaging .section-divider {
+  border: none;
+  border-top: 1px solid var(--hairline);
+  margin: 24px 0;
+}

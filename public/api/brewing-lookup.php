@@ -83,6 +83,12 @@ try {
                   b.cct,
                   b.event_date,
                   b.submitted_at,
+                  b.yeast,
+                  b.yeast_gen,
+                  b.new_yeast,
+                  b.pitched_from,
+                  b.yt_number,
+                  b.start_ferm,
                   b.comments
                 FROM bd_brewing_brewday_v2 b
                 LEFT JOIN ref_recipes r ON b.recipe_id_fk = r.id

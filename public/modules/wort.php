@@ -693,6 +693,7 @@ $lookupConfig = [
     'api_endpoint'      => '/api/brewing-lookup.php',
     'mode_batch_label'  => 'Par recette + lot',
     'type'              => 'brewing',
+    'start_open'        => true,
     'show_class_filter' => true,
     'batch_fields'      => [
         [
@@ -722,6 +723,7 @@ $_breweryId = brewery_identity();
   <link rel="stylesheet" href="/css/app.css?v=<?= @filemtime(__DIR__ . '/../css/app.css') ?: time() ?>">
   <link rel="stylesheet" href="/css/wort-kpis.css?v=<?= @filemtime(__DIR__ . '/../css/wort-kpis.css') ?: time() ?>">
   <link rel="stylesheet" href="/css/lookup-panel.css?v=<?= @filemtime(__DIR__ . '/../css/lookup-panel.css') ?: time() ?>">
+  <link rel="stylesheet" href="/css/brewing-consulter.css?v=<?= @filemtime(__DIR__ . '/../css/brewing-consulter.css') ?: time() ?>">
   <link rel="stylesheet" href="/css/sku-class-filter.css?v=<?= @filemtime(__DIR__ . '/../css/sku-class-filter.css') ?: time() ?>">
 </head>
 <body class="home wort">
@@ -1233,6 +1235,7 @@ window.WORT_KPIS = <?= json_encode($kpiPayload, JSON_UNESCAPED_UNICODE | JSON_HE
 <script defer src="/js/kpi-charts.js?v=<?= @filemtime(__DIR__ . '/../js/kpi-charts.js') ?: time() ?>"></script>
 <script defer src="/js/wort-kpis.js?v=<?= @filemtime(__DIR__ . '/../js/wort-kpis.js') ?: time() ?>"></script>
 <script defer src="/js/sku-class-filter.js?v=<?= @filemtime(__DIR__ . '/../js/sku-class-filter.js') ?: time() ?>"></script>
+<script defer src="/js/brewing-consulter.js?v=<?= @filemtime(__DIR__ . '/../js/brewing-consulter.js') ?: time() ?>"></script>
 <script defer src="/js/lookup-panel.js?v=<?= @filemtime(__DIR__ . '/../js/lookup-panel.js') ?: time() ?>"></script>
 
 </body>

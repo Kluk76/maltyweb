@@ -89,7 +89,46 @@ try {
               v.vendable_units,
               v.vendable_hl,
               v.beer_tax_base_hl,
-              v.loss_kpi_hl
+              v.loss_kpi_hl,
+              rs.stocktake_scope,
+              p.loss_liquid_other_units,
+              p.loss_4pack_btl_units,
+              p.loss_4pack_can_units,
+              p.loss_wrap_btl_units,
+              p.loss_wrap_can_units,
+              p.loss_label_btl_units,
+              p.loss_keg_collar_units,
+              p.loss_crown_cork_units,
+              p.loss_uncapped_units,
+              p.loss_half_filled_units,
+              p.loss_untaxed_full_units,
+              p.loss_can_lid_units,
+              p.loss_keg_save_units,
+              p.loss_keg_liquid_l,
+              p.loss_container_btl_units,
+              p.loss_container_can_units,
+              p.unsaleable_units,
+              p.taproom_keg_l,
+              p.qa_analyses_units,
+              p.qa_library_units,
+              p.cip_tank_done,
+              p.cip_tank_type,
+              p.cip_tank_date,
+              p.cip_machines_done,
+              p.cip_machines_type,
+              p.cip_machines_date,
+              p.is_white_label,
+              p.white_label_name,
+              p.audit_flags,
+              p.hors_process_flag,
+              p.hors_process_reason,
+              p.email,
+              p.comments,
+              p.source_tank_type,
+              p.bbt_source_fk,
+              p.cct_source_fk,
+              p.neb_beer,
+              p.contract_beer
             FROM bd_packaging_v2 p
             JOIN v_bd_packaging_v2_vendable v ON v.id = p.id
             LEFT JOIN ref_skus rs ON p.sku_id_fk = rs.id
@@ -124,6 +163,34 @@ try {
             ];
         }
     }
+
+    // ── BOM (inv_consumption lines for these packaging events) ───────────────
+    $eventIds = array_column($events, 'id');
+    $bomByEvent = [];
+    if (!empty($eventIds)) {
+        $placeholders = implode(',', array_fill(0, count($eventIds), '?'));
+        $bomStmt = $pdo->prepare(
+            "SELECT ic.source_row_id, rm.name AS mi_name, ic.qty, ic.unit
+               FROM inv_consumption ic
+               JOIN ref_mi rm ON rm.id = ic.mi_id_fk
+              WHERE ic.source_event = 'packaging'
+                AND ic.source_row_id IN ({$placeholders})
+              ORDER BY ic.source_row_id, rm.name"
+        );
+        $bomStmt->execute($eventIds);
+        foreach ($bomStmt->fetchAll(PDO::FETCH_ASSOC) as $bomRow) {
+            $bomByEvent[(int)$bomRow['source_row_id']][] = [
+                'mi_name' => $bomRow['mi_name'],
+                'qty'     => $bomRow['qty'],
+                'unit'    => $bomRow['unit'],
+            ];
+        }
+    }
+    // Attach bom array to each event
+    foreach ($events as &$ev) {
+        $ev['bom'] = $bomByEvent[(int)$ev['id']] ?? [];
+    }
+    unset($ev);
 
     // ── PHP-side summary ──────────────────────────────────────────────────────
     $totalUnits      = 0;

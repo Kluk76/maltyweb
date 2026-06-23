@@ -336,8 +336,9 @@ $fmtLabels = ['Keg' => 'Fût', 'Bot' => 'Bouteille', 'Can' => 'Canette', 'Cuve d
   <link rel="stylesheet" href="/css/bbt-detail-modal.css?v=<?= @filemtime(__DIR__ . '/../css/bbt-detail-modal.css') ?: time() ?>">
   <link rel="stylesheet" href="/css/lookup-panel.css?v=<?= @filemtime(__DIR__ . '/../css/lookup-panel.css') ?: time() ?>">
   <link rel="stylesheet" href="/css/sku-class-filter.css?v=<?= @filemtime(__DIR__ . '/../css/sku-class-filter.css') ?: time() ?>">
+  <link rel="stylesheet" href="/css/packaging-consulter.css?v=<?= @filemtime(__DIR__ . '/../css/packaging-consulter.css') ?: time() ?>">
 </head>
-<body class="home">
+<body class="home packaging">
 
 <?php require __DIR__ . "/../../app/partials/sidebar.php" ?>
 
@@ -356,6 +357,7 @@ $lookupConfig = [
     'mode_batch_label'  => 'Par SKU + lot',
     'type'              => 'packaging',
     'show_class_filter' => true,
+    'start_open'        => true,
     'batch_fields'      => [
         [
             'name'       => 'sku_id',
@@ -751,6 +753,7 @@ window.PKG_STATS = <?= json_encode([
 <script defer src="/js/packaging.js?v=<?= @filemtime(__DIR__ . '/../js/packaging.js') ?: time() ?>"></script>
 <script defer src="/js/bbt-detail-modal.js?v=<?= @filemtime(__DIR__ . '/../js/bbt-detail-modal.js') ?: time() ?>"></script>
 <script defer src="/js/sku-class-filter.js?v=<?= @filemtime(__DIR__ . '/../js/sku-class-filter.js') ?: time() ?>"></script>
+<script defer src="/js/packaging-consulter.js?v=<?= @filemtime(__DIR__ . '/../js/packaging-consulter.js') ?: time() ?>"></script>
 <script defer src="/js/lookup-panel.js?v=<?= @filemtime(__DIR__ . '/../js/lookup-panel.js') ?: time() ?>"></script>
 
 </body>

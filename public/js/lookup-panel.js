@@ -207,8 +207,31 @@
     container.innerHTML = summaryHtml + '<div class="lp-cards">' + cardsHtml + '</div>';
   }
 
+  // ── Packaging batch renderer (delegates to PackagingConsulter) ─────────────
+  function renderPackagingBatch(container, data) {
+    if (window.PackagingConsulter && typeof window.PackagingConsulter.renderBatch === 'function') {
+      window.PackagingConsulter.renderBatch(container, data);
+      return;
+    }
+    renderPackaging(container, data);
+  }
+
+  // ── Packaging day renderer (delegates to PackagingConsulter) ───────────────
+  function renderPackagingDay(container, data) {
+    if (window.PackagingConsulter && typeof window.PackagingConsulter.renderDay === 'function') {
+      window.PackagingConsulter.renderDay(container, data);
+      return;
+    }
+    renderPackaging(container, data);
+  }
+
   // ── Brewing day card renderer ──────────────────────────────────────────────
   function renderBrewingDay(container, data) {
+    // Feature-detect: use brewing schematic visual if available
+    if (window.BrewingConsulter && typeof window.BrewingConsulter.renderDay === 'function') {
+      window.BrewingConsulter.renderDay(container, data);
+      return;
+    }
     if (!data.brews || data.brews.length === 0) {
       renderEmpty(container);
       return;
@@ -248,6 +271,11 @@
 
   // ── Brewing batch card renderer ────────────────────────────────────────────
   function renderBrewingBatch(container, data) {
+    // Feature-detect: use brewing schematic visual if available
+    if (window.BrewingConsulter && typeof window.BrewingConsulter.renderBatch === 'function') {
+      window.BrewingConsulter.renderBatch(container, data);
+      return;
+    }
     if (!data.brews || data.brews.length === 0) {
       renderEmpty(container);
       return;
@@ -379,7 +407,11 @@
           return;
         }
         if (type === 'packaging') {
-          renderPackaging(container, data);
+          if (mode === 'batch') {
+            renderPackagingBatch(container, data);
+          } else {
+            renderPackagingDay(container, data);
+          }
         } else if (type === 'brewing') {
           if (mode === 'batch') {
             renderBrewingBatch(container, data);
@@ -395,17 +427,51 @@
       });
   }
 
+  // ── Day-card click handler ────────────────────────────────────────────────
+
+  function activateDayCard(panel, card) {
+    var batchPane = panel.querySelector('[id$="-pane-batch"]');
+    if (!batchPane) return;
+    var batch    = card.getAttribute('data-batch');
+    var skuId    = card.getAttribute('data-sku-id');
+    var recipeId = card.getAttribute('data-recipe-id');
+    if (!batch || (!skuId && !recipeId)) return;
+    var batchTab = panel.querySelector('.lp-tab[data-tab="batch"]');
+    if (batchTab) batchTab.click();           // reuses initTabs pane-switch
+    var recSel = batchPane.querySelector('select[name="recipe_id"]');
+    if (recSel && recipeId) recSel.value = recipeId;
+    var skuSel = batchPane.querySelector('select[name="sku_id"]');
+    if (skuSel && skuId) skuSel.value = skuId;
+    var batchInp = batchPane.querySelector('input[name="batch"]');
+    if (batchInp) batchInp.value = batch;
+    doSearch(panel, 'batch');
+  }
+
   // ── Search button + Enter key wiring ──────────────────────────────────────
 
   function initSearch(panel) {
     panel.addEventListener('click', function (e) {
       var btn = e.target.closest('.lp-search-btn');
-      if (!btn) return;
-      var mode = btn.getAttribute('data-mode') || 'day';
-      doSearch(panel, mode);
+      if (btn) {
+        var mode = btn.getAttribute('data-mode') || 'day';
+        doSearch(panel, mode);
+        return;
+      }
+      var card = e.target.closest('.day-card');
+      if (card) {
+        activateDayCard(panel, card);
+      }
     });
 
     panel.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') {
+        var card = e.target.closest('.day-card');
+        if (card) {
+          if (e.key === ' ') e.preventDefault();
+          activateDayCard(panel, card);
+          return;
+        }
+      }
       if (e.key !== 'Enter') return;
       var inp = e.target;
       if (!inp.matches('.lp-text-input, .lp-date-input')) return;
