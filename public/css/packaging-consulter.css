@@ -43,6 +43,12 @@ body.packaging .pkg-shell {
   padding: 24px 20px 60px;
 }
 
+/* Force the shared lookup-panel to fill the full available width on this page.
+   Without this, flex column + align-items:flex-start shrinks the panel to content width. */
+body.packaging .lookup-panel {
+  width: 100%;
+}
+
 /* ============================================================
    VIEW TOGGLE
    ============================================================ */
@@ -642,6 +648,60 @@ body.packaging .cip-pill {
 
 body.packaging .cip-pill--ok      { background: var(--ok); color: var(--bg); }
 body.packaging .cip-pill--pending { background: var(--bg-side); color: var(--ink-label); border: 1px solid var(--hairline); }
+
+/* ── QA provenance caption (sibling data attribution) ──── */
+body.packaging .qa-provenance {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 11px;
+  color: var(--ink-label);
+  font-style: italic;
+  border-left: 2px solid var(--hairline-2);
+  padding: 4px 8px;
+  margin-bottom: 10px;
+  background: var(--bg-side);
+  border-radius: 0 3px 3px 0;
+}
+
+/* ── CIP section inside QA panel ───────────────────────── */
+body.packaging .qa-cip-section {
+  padding-top: 6px;
+  margin-top: 2px;
+  border-top: 1px solid var(--hairline);
+}
+
+body.packaging .qa-cip-section__label {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 12px;
+  color: var(--ink-soft);
+  margin-bottom: 4px;
+}
+
+/* ── CIP list block ─────────────────────────────────────── */
+body.packaging .cip-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+body.packaging .cip-list__item {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--ink-soft);
+  padding: 3px 0;
+  border-bottom: 1px solid var(--hairline);
+  letter-spacing: 0.02em;
+}
+
+body.packaging .cip-list__item:last-child {
+  border-bottom: none;
+}
+
+body.packaging .cip-none {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 12px;
+  color: var(--ink-label);
+  font-style: italic;
+}
 
 /* ============================================================
    COMMENTS BLOCK

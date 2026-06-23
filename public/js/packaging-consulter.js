@@ -65,7 +65,7 @@
   /* ── SVG helpers ───────────────────────────────────────── */
 
   function drawInstrumentTag(cx, anchorY, glyph, value, label, emphasis, overrideTagY) {
-    var tagW = emphasis ? 78 : 68;
+    var tagW = emphasis ? 90 : 82;
     var tagH = 38;
     var tagX = cx - tagW / 2;
     var tagY = (overrideTagY !== undefined) ? overrideTagY : (anchorY - tagH - 34);
@@ -87,8 +87,8 @@
         <line x1="${tagX+1}" y1="${dividerY}" x2="${tagX+tagW-1}" y2="${dividerY}"
               stroke="#a08060" stroke-width="0.75" opacity="0.8"/>
         <text x="${cx}" y="${tagY+11}" text-anchor="middle" dominant-baseline="middle"
-              font-family="'JetBrains Mono',monospace" font-size="10" font-weight="400"
-              fill="#5a3a12" letter-spacing="0.08em">${esc(glyph)}</text>
+              font-family="'JetBrains Mono',monospace" font-size="9" font-weight="400"
+              fill="#5a3a12" letter-spacing="0.04em">${esc(glyph)}</text>
         <text x="${cx}" y="${dividerY + (tagH-16)/2 + 5}" text-anchor="middle" dominant-baseline="middle"
               font-family="'JetBrains Mono',monospace" font-size="${emphasis ? 14 : 12}" font-weight="${emphasis ? '600' : '500'}"
               fill="#241b10">${esc(String(value))}</text>
@@ -98,16 +98,14 @@
 
   function buildFillTags(run) {
     var vendHl = run.vendable_hl != null ? fmtNum(run.vendable_hl, 2) + ' hL' : '—';
-    var taxHl  = run.beer_tax_base_hl != null ? fmtNum(run.beer_tax_base_hl, 2) + ' hL' : '—';
     var co2    = (run.qa && run.qa.avg_co2 != null) ? fmtNum(parseFloat(run.qa.avg_co2), 1) + ' g/L' : '—';
     var o2     = (run.qa && run.qa.avg_o2  != null) ? parseFloat(run.qa.avg_o2).toFixed(1) + ' ppb' : '—';
     var units  = run.prod_total_units > 0
       ? run.prod_total_units.toLocaleString('fr-CH') + ' u' : '—';
 
     return [
-      { glyph: 'U',    value: units,   label: 'Unités produites', emphasis: true },
-      { glyph: 'VND',  value: vendHl,  label: 'Vol. vendable',    emphasis: true },
-      { glyph: 'TX',   value: taxHl,   label: 'Base taxe-bière',  emphasis: false },
+      { glyph: 'Unités',   value: units,   label: 'Unités produites', emphasis: true },
+      { glyph: 'Vendable', value: vendHl,  label: 'Vol. vendable',    emphasis: true },
       { glyph: 'CO₂',  value: co2,     label: 'CO₂ moyen',        emphasis: false },
       { glyph: 'O₂',   value: o2,      label: 'O₂ moyen',         emphasis: false },
     ];
@@ -521,13 +519,13 @@
          Use convY - 180 to guarantee a clean gap above all machine bodies. */
       var fillTagY = convY - 180;
       var totalTagPx = 0;
-      tags.forEach(function(t) { totalTagPx += (t.emphasis ? 78 : 68); });
+      tags.forEach(function(t) { totalTagPx += (t.emphasis ? 90 : 82); });
       var margin = 8;
       var available = viewW - margin * 2;
       var tagGap = (available - totalTagPx) / (tags.length + 1);
       var curX = margin + tagGap;
       tags.forEach(function(t, ti) {
-        var tagW2 = t.emphasis ? 78 : 68;
+        var tagW2 = t.emphasis ? 90 : 82;
         var tagCx = curX + tagW2 / 2;
         tagParts += drawInstrumentTag(tagCx, tagAnchorY, t.glyph, t.value, t.label, t.emphasis, fillTagY);
         curX += tagW2 + tagGap;
@@ -827,13 +825,87 @@
     return headHtml + (rowsHtml || '<span style="color:var(--ink-label);font-size:13px">—</span>');
   }
 
+  /* ── CIP target code → human label ────────────────────── */
+  function cipTargetLabel(target_code, target_number) {
+    var labels = {
+      'filler':      'Soutireuse',
+      'cct':         'CCT',
+      'bbt':         'BBT',
+      'centri':      'Centrifugeuse',
+      'kze':         'KZE',
+      'pump':        'Pompe',
+      'tank':        'Tank',
+      'yt':          'Cuve YT',
+      'unspecified': 'Machine'
+    };
+    var base = labels[target_code] || target_code;
+    return target_number ? base + ' ' + target_number : base;
+  }
+
+  /* ── Sibling run human label from sku_code ─────────────── */
+  function siblingHumanLabel(sku_code) {
+    if (!sku_code) return 'run sibling';
+    // Map known suffixes to format words; fall back to sku_code itself
+    var code = sku_code.toUpperCase();
+    // Simple heuristic: ends in 4 → 4-pack; B → bouteille; C → canette; K → keg; else use code
+    if (/B$/.test(code))   return 'run bouteille ' + sku_code;
+    if (/4$/.test(code))   return 'run 4-pack ' + sku_code;
+    if (/C$/.test(code))   return 'run canette ' + sku_code;
+    if (/K$/.test(code))   return 'run fût ' + sku_code;
+    return 'run ' + sku_code;
+  }
+
+  /* ── CIP block renderer ────────────────────────────────── */
+  function renderCipBlock(run) {
+    var cipEvents = run.cip || [];
+    var cipSibling = run.cip_sibling || null;
+
+    if (cipEvents.length === 0 && !cipSibling) {
+      return '<span class="cip-none">Aucun CIP enregistré</span>';
+    }
+
+    var html = '';
+    var provenanceHtml = '';
+
+    if (cipEvents.length > 0) {
+      // Own CIP — no provenance tag
+      html += '<ul class="cip-list">';
+      for (var i = 0; i < cipEvents.length; i++) {
+        var ce = cipEvents[i];
+        html += '<li class="cip-list__item">'
+          + esc(ce.type_name)
+          + ' · '
+          + esc(cipTargetLabel(ce.target_code, ce.target_number))
+          + (ce.cip_date ? ' · ' + esc(ce.cip_date) : '')
+          + '</li>';
+      }
+      html += '</ul>';
+    } else if (cipSibling && cipSibling.events && cipSibling.events.length > 0) {
+      // Sibling CIP — with provenance caption
+      provenanceHtml = '<div class="qa-provenance">'
+        + 'Lectures enregistrées sur le ' + esc(siblingHumanLabel(cipSibling.source_sku_code)) + ' ' + esc(run.lot || '')
+        + '</div>';
+      html += '<ul class="cip-list">';
+      for (var j = 0; j < cipSibling.events.length; j++) {
+        var ce2 = cipSibling.events[j];
+        html += '<li class="cip-list__item">'
+          + esc(ce2.type_name)
+          + ' · '
+          + esc(cipTargetLabel(ce2.target_code, ce2.target_number))
+          + (ce2.cip_date ? ' · ' + esc(ce2.cip_date) : '')
+          + '</li>';
+      }
+      html += '</ul>';
+      html = provenanceHtml + html;
+    }
+
+    return html;
+  }
+
   /* ── QA panel ──────────────────────────────────────────── */
   function renderQA(run) {
     var qa = run.qa || {};
-    var cipMachines = qa.cip_machines || '';
-    var cipTank     = qa.cip_tank     || '';
-    var cipMClass   = cipMachines === 'Fait' ? 'cip-pill--ok' : 'cip-pill--pending';
-    var cipTClass   = cipTank     === 'Fait' ? 'cip-pill--ok' : 'cip-pill--pending';
+    var hasSiblingGas = run.sibling_qa != null;
 
     var co2Str = qa.avg_co2 != null ? fmtNum(parseFloat(qa.avg_co2), 1) : '—';
     var o2Str  = qa.avg_o2  != null ? parseFloat(qa.avg_o2).toFixed(1) : '—';
@@ -841,32 +913,38 @@
     var qaAn   = qa.qa_analyses_units != null ? qa.qa_analyses_units : '—';
     var qaLib  = qa.qa_library_units  != null ? qa.qa_library_units  : '—';
 
-    return `<div class="qa-reading-row">
-        <span class="qa-glyph">CO₂</span>
-        <span class="qa-val">${esc(co2Str)}</span>
-        <span class="qa-unit">g/L moy. (${esc(String(nRead))} mesures)</span>
-      </div>
-      <div class="qa-reading-row">
-        <span class="qa-glyph">O₂</span>
-        <span class="qa-val">${esc(o2Str)}</span>
-        <span class="qa-unit">ppb moy.</span>
-      </div>
-      <div class="qa-field">
-        <span class="qa-field__label">Prélèvements (analyses)</span>
-        <span class="qa-val">${esc(String(qaAn))} u</span>
-      </div>
-      <div class="qa-field">
-        <span class="qa-field__label">Prélèvements (bibliothèque)</span>
-        <span class="qa-val">${esc(String(qaLib))} u</span>
-      </div>
-      <div class="qa-field">
-        <span class="qa-field__label">CIP machines</span>
-        <span class="cip-pill ${cipMClass}">${esc(cipMachines || 'Non renseigné')}</span>
-      </div>
-      <div class="qa-field">
-        <span class="qa-field__label">CIP cuve source</span>
-        <span class="cip-pill ${cipTClass}">${esc(cipTank || 'Non renseigné')}</span>
-      </div>`;
+    var provenanceHtml = '';
+    if (hasSiblingGas) {
+      provenanceHtml = '<div class="qa-provenance">'
+        + 'Lectures enregistrées sur le ' + esc(siblingHumanLabel(run.sibling_qa.source_sku_code)) + ' ' + esc(run.lot || '')
+        + '</div>';
+    }
+
+    var cipHtml = renderCipBlock(run);
+
+    return provenanceHtml
+      + '<div class="qa-reading-row">'
+      + '<span class="qa-glyph">CO₂</span>'
+      + '<span class="qa-val">' + esc(co2Str) + '</span>'
+      + '<span class="qa-unit">g/L moy. (' + esc(String(nRead)) + ' mesures)</span>'
+      + '</div>'
+      + '<div class="qa-reading-row">'
+      + '<span class="qa-glyph">O₂</span>'
+      + '<span class="qa-val">' + esc(o2Str) + '</span>'
+      + '<span class="qa-unit">ppb moy.</span>'
+      + '</div>'
+      + '<div class="qa-field">'
+      + '<span class="qa-field__label">Prélèvements (analyses)</span>'
+      + '<span class="qa-val">' + esc(String(qaAn)) + ' u</span>'
+      + '</div>'
+      + '<div class="qa-field">'
+      + '<span class="qa-field__label">Prélèvements (bibliothèque)</span>'
+      + '<span class="qa-val">' + esc(String(qaLib)) + ' u</span>'
+      + '</div>'
+      + '<div class="qa-cip-section">'
+      + '<div class="qa-cip-section__label">CIP</div>'
+      + cipHtml
+      + '</div>';
   }
 
   /* ── Mini format icon for day view ────────────────────── */
@@ -1071,6 +1149,9 @@
 
     var ev = data.events[0];
     var gas = data.co2o2 && data.co2o2[String(ev.id)] ? data.co2o2[String(ev.id)] : null;
+    var sib = ev.sibling_qa || null;
+    // sibling_qa carries avg_co2/avg_o2/n_readings directly from the server;
+    // data.co2o2 only contains the viewed event's own readings, so we use sib fields directly.
     var formatInfo = resolveFormat(ev);
 
     var run = {
@@ -1111,14 +1192,15 @@
         loss_liquid_other_units: parseInt(ev.loss_liquid_other_units)  || 0,
       },
       qa: {
-        qa_analyses_units: ev.qa_analyses_units,
-        qa_library_units:  ev.qa_library_units,
-        n_readings: gas ? gas.n_readings : null,
-        avg_co2:    gas ? gas.avg_co2    : null,
-        avg_o2:     gas ? gas.avg_o2     : null,
-        cip_machines: ev.cip_machines_done == 1 ? 'Fait' : (ev.cip_machines_done === null ? null : 'Non fait'),
-        cip_tank:     ev.cip_tank_done    == 1 ? 'Fait' : (ev.cip_tank_done    === null ? null : 'Non fait'),
+        qa_analyses_units: sib ? sib.qa_analyses_units : ev.qa_analyses_units,
+        qa_library_units:  sib ? sib.qa_library_units  : ev.qa_library_units,
+        n_readings: sib ? sib.n_readings : (gas ? gas.n_readings : null),
+        avg_co2:    sib ? sib.avg_co2    : (gas ? gas.avg_co2    : null),
+        avg_o2:     sib ? sib.avg_o2     : (gas ? gas.avg_o2     : null),
       },
+      sibling_qa: ev.sibling_qa || null,
+      cip: ev.cip || [],
+      cip_sibling: ev.cip_sibling || null,
     };
 
     container.innerHTML = renderBatchViewHtml(run);

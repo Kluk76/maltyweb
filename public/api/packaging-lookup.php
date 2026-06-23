@@ -83,6 +83,7 @@ try {
               COALESCE(NULLIF(p.neb_batch,''), NULLIF(p.contract_batch,'')) AS batch,
               p.run_type,
               p.prod_total_units,
+              p.recipe_id_fk,
               p.reuses_packaging_id_fk,
               r.name AS recipe_name,
               COALESCE(r.classification, 'Neb') AS classification,
@@ -111,12 +112,6 @@ try {
               p.taproom_keg_l,
               p.qa_analyses_units,
               p.qa_library_units,
-              p.cip_tank_done,
-              p.cip_tank_type,
-              p.cip_tank_date,
-              p.cip_machines_done,
-              p.cip_machines_type,
-              p.cip_machines_date,
               p.is_white_label,
               p.white_label_name,
               p.audit_flags,
@@ -189,6 +184,212 @@ try {
     // Attach bom array to each event
     foreach ($events as &$ev) {
         $ev['bom'] = $bomByEvent[(int)$ev['id']] ?? [];
+    }
+    unset($ev);
+
+    // ── Sibling resolution (beer-level QA/gas repatriation) ──────────────────
+    // For each event, find sibling runs: same recipe_id_fk + batch + event_date, different id.
+    // NOTE: In mode=batch the query filters by sku_id_fk, so sibling runs of OTHER formats
+    // (different SKU, same beer+batch+date) are NOT in $events — we must query them from the DB.
+    // Pick the richest sibling (most gas readings, tie-break lowest id).
+    // Only populate sibling_qa when the viewed run is "light" (no own gas/qa) AND a richer sibling exists.
+    if (!empty($events)) {
+        // Collect "light" events that might benefit from a sibling
+        // and their identity keys (recipe_id_fk:batch:event_date)
+        $lightEvents = [];
+        foreach ($events as $ev) {
+            $batch  = $ev['batch'] ?? null;
+            $recId  = $ev['recipe_id_fk'] ?? null;
+            $evDate = $ev['event_date'] ?? null;
+            if (!$recId || !$batch || !$evDate) continue;
+            $ownGas = $co2o2[(string)(int)$ev['id']] ?? null;
+            $ownQaZero   = ((int)($ev['qa_analyses_units'] ?? 0) === 0);
+            $ownGasAbsent = ($ownGas === null || (int)$ownGas['n_readings'] === 0);
+            if ($ownQaZero && $ownGasAbsent) {
+                $lightEvents[] = [
+                    'id'             => (int)$ev['id'],
+                    'recipe_id_fk'   => (int)$recId,
+                    'batch'          => $batch,
+                    'event_date'     => $evDate,
+                ];
+            }
+        }
+
+        if (!empty($lightEvents)) {
+            // Build one query to fetch all cross-SKU siblings for all light events.
+            // Use OR-groups: (recipe_id_fk=? AND batch=? AND event_date=? AND id<>?)
+            $sibWhereClauses = [];
+            $sibWhereArgs    = [];
+            $viewedIdSet     = [];
+            foreach ($lightEvents as $le) {
+                $viewedIdSet[$le['id']] = true;
+                $sibWhereClauses[] = '(p.recipe_id_fk = ? AND COALESCE(NULLIF(p.neb_batch,\'\'),NULLIF(p.contract_batch,\'\')) = ? AND p.event_date = ? AND p.id <> ?)';
+                $sibWhereArgs[]    = $le['recipe_id_fk'];
+                $sibWhereArgs[]    = $le['batch'];
+                $sibWhereArgs[]    = $le['event_date'];
+                $sibWhereArgs[]    = $le['id'];
+            }
+
+            $sibSql = "SELECT p.id, p.recipe_id_fk,
+                              COALESCE(NULLIF(p.neb_batch,''), NULLIF(p.contract_batch,'')) AS batch,
+                              p.event_date,
+                              p.qa_analyses_units, p.qa_library_units,
+                              rs.sku_code
+                         FROM bd_packaging_v2 p
+                         LEFT JOIN ref_skus rs ON rs.id = p.sku_id_fk
+                        WHERE p.is_tombstoned = 0
+                          AND (" . implode(' OR ', $sibWhereClauses) . ")";
+            $sibStmt = $pdo->prepare($sibSql);
+            $sibStmt->execute($sibWhereArgs);
+            $allSibRows = $sibStmt->fetchAll(PDO::FETCH_ASSOC);
+
+            // Build map: {recipe_id_fk}:{batch}:{event_date} => [sibling rows]
+            $sibByKey = [];
+            $allSiblingIds = [];
+            foreach ($allSibRows as $sibRow) {
+                $key = $sibRow['recipe_id_fk'] . ':' . $sibRow['batch'] . ':' . $sibRow['event_date'];
+                if (!isset($sibByKey[$key])) $sibByKey[$key] = [];
+                $sibByKey[$key][] = $sibRow;
+                $allSiblingIds[(int)$sibRow['id']] = true;
+            }
+            $allSiblingIds = array_keys($allSiblingIds);
+
+            // Fetch gas readings for sibling ids
+            $sibGasMap = [];
+            if (!empty($allSiblingIds)) {
+                $sibInMarks = implode(',', array_fill(0, count($allSiblingIds), '?'));
+                $sibGasStmt = $pdo->prepare(
+                    "SELECT packaging_v2_id,
+                            COUNT(*) AS n_readings,
+                            ROUND(AVG(co2), 3) AS avg_co2,
+                            ROUND(AVG(o2), 2)  AS avg_o2
+                       FROM bd_packaging_readings
+                      WHERE packaging_v2_id IN ({$sibInMarks})
+                      GROUP BY packaging_v2_id"
+                );
+                $sibGasStmt->execute($allSiblingIds);
+                foreach ($sibGasStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+                    $sibGasMap[(int)$row['packaging_v2_id']] = [
+                        'n_readings' => (int)$row['n_readings'],
+                        'avg_co2'    => $row['avg_co2'] !== null ? (float)$row['avg_co2'] : null,
+                        'avg_o2'     => $row['avg_o2']  !== null ? (float)$row['avg_o2']  : null,
+                    ];
+                }
+            }
+
+            // For each light event, find richest sibling
+            foreach ($events as &$ev) {
+                $evId  = (int)$ev['id'];
+                $recId = (int)($ev['recipe_id_fk'] ?? 0);
+                $batch = $ev['batch'] ?? '';
+                $evDate= $ev['event_date'] ?? '';
+                if (!$recId || !$batch || !$evDate) continue;
+
+                // Re-check lightness (already filtered above but guard here)
+                $ownGas      = $co2o2[(string)$evId] ?? null;
+                $ownQaZero   = ((int)($ev['qa_analyses_units'] ?? 0) === 0);
+                $ownGasAbsent = ($ownGas === null || (int)($ownGas['n_readings'] ?? 0) === 0);
+                if (!$ownQaZero || !$ownGasAbsent) continue;
+
+                $key      = $recId . ':' . $batch . ':' . $evDate;
+                $siblings = $sibByKey[$key] ?? [];
+                if (empty($siblings)) continue;
+
+                // Find richest sibling: most gas readings, tie-break lowest id
+                $bestSib    = null;
+                $bestReads  = -1;
+                foreach ($siblings as $sibRow) {
+                    $sid    = (int)$sibRow['id'];
+                    $gas    = $sibGasMap[$sid] ?? null;
+                    $nReads = $gas ? (int)$gas['n_readings'] : 0;
+                    $sibQa  = (int)($sibRow['qa_analyses_units'] ?? 0);
+                    $isRicher = ($nReads > 0 || $sibQa > 0);
+                    if (!$isRicher) continue;
+                    if ($nReads > $bestReads
+                        || ($nReads === $bestReads && $bestSib !== null && $sid < (int)$bestSib['id'])
+                    ) {
+                        $bestReads = $nReads;
+                        $bestSib   = $sibRow;
+                    }
+                }
+
+                if ($bestSib === null) continue;
+
+                $bestSibId = (int)$bestSib['id'];
+                $bestGas   = $sibGasMap[$bestSibId] ?? null;
+                $ev['sibling_qa'] = [
+                    'source_run_id'    => $bestSibId,
+                    'source_sku_code'  => $bestSib['sku_code'] ?? null,
+                    'qa_analyses_units'=> $bestSib['qa_analyses_units'] !== null ? (int)$bestSib['qa_analyses_units'] : null,
+                    'qa_library_units' => $bestSib['qa_library_units']  !== null ? (int)$bestSib['qa_library_units']  : null,
+                    'avg_co2'          => $bestGas ? $bestGas['avg_co2']    : null,
+                    'avg_o2'           => $bestGas ? $bestGas['avg_o2']     : null,
+                    'n_readings'       => $bestGas ? $bestGas['n_readings'] : 0,
+                ];
+            }
+            unset($ev);
+        }
+    }
+
+    // ── CIP from bd_cip_events ────────────────────────────────────────────────
+    // Collect all relevant packaging ids: viewed + siblings
+    $allPkgIds = array_map('intval', array_column($events, 'id'));
+    foreach ($events as $ev) {
+        if (!empty($ev['sibling_qa']['source_run_id'])) {
+            $allPkgIds[] = (int)$ev['sibling_qa']['source_run_id'];
+        }
+    }
+    $allPkgIds = array_values(array_unique($allPkgIds));
+
+    $cipByPkgId = [];
+    if (!empty($allPkgIds)) {
+        $cipMarks = implode(',', array_fill(0, count($allPkgIds), '?'));
+        $cipStmt  = $pdo->prepare(
+            "SELECT ce.packaging_id,
+                    ce.target_kind,
+                    ce.target_code,
+                    ce.target_number,
+                    ct.name AS type_name,
+                    ce.cip_date,
+                    ce.notes
+               FROM bd_cip_events ce
+               JOIN ref_cip_types ct ON ct.id = ce.cip_type_id_fk
+              WHERE ce.source_form = 'packaging'
+                AND ce.is_tombstoned = 0
+                AND ce.packaging_id IN ({$cipMarks})
+              ORDER BY ce.cip_date, ce.id"
+        );
+        $cipStmt->execute($allPkgIds);
+        foreach ($cipStmt->fetchAll(PDO::FETCH_ASSOC) as $cipRow) {
+            $cipByPkgId[(int)$cipRow['packaging_id']][] = [
+                'target_kind'   => $cipRow['target_kind'],
+                'target_code'   => $cipRow['target_code'],
+                'target_number' => $cipRow['target_number'] !== null ? (int)$cipRow['target_number'] : null,
+                'type_name'     => $cipRow['type_name'],
+                'cip_date'      => $cipRow['cip_date'],
+                'notes'         => $cipRow['notes'],
+            ];
+        }
+    }
+
+    // Attach cip and cip_sibling to each event
+    foreach ($events as &$ev) {
+        $evId = (int)$ev['id'];
+        $ownCip = $cipByPkgId[$evId] ?? [];
+        $ev['cip'] = $ownCip;
+
+        // If no own CIP but sibling has one
+        if (empty($ownCip) && !empty($ev['sibling_qa']['source_run_id'])) {
+            $sibId = (int)$ev['sibling_qa']['source_run_id'];
+            $sibCip = $cipByPkgId[$sibId] ?? [];
+            if (!empty($sibCip)) {
+                $ev['cip_sibling'] = [
+                    'source_run_id'   => $sibId,
+                    'source_sku_code' => $ev['sibling_qa']['source_sku_code'] ?? null,
+                    'events'          => $sibCip,
+                ];
+            }
+        }
     }
     unset($ev);
 
