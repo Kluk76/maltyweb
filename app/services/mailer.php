@@ -165,7 +165,9 @@ function send_mail(
  *
  * @param array      $order  Keys: order_no, customer_name, requested_date_fr (jj/mm/aaaa or empty)
  * @param array      $lines  List of ['ref', 'designation', 'qty']
- * @param array|null $address ['line1','line2','postal_code','city','canton'] or null
+ * @param array|null $address Accepted for backward compatibility but ignored — pickup address
+ *                            is always read from ref_sites (site_type='warehouse') and shown
+ *                            as a fixed "À retirer à l'entrepôt" block.
  * @return array ['subject', 'html', 'text']
  */
 function mail_order_confirmation_template(array $order, array $lines, ?array $address): array
@@ -180,29 +182,54 @@ function mail_order_confirmation_template(array $order, array $lines, ?array $ad
     $bi          = brewery_identity();
     $breweryName = htmlspecialchars($bi['name'], ENT_QUOTES, 'UTF-8');
 
-    // ── Production site address (best-effort) ─────────────────────────────────
-    $siteAddress = 'Ch. du Closel 1, 1020 Renens, Suisse';
+    // ── Warehouse pickup address (best-effort; fallback to Crissier literal) ──
+    $whName    = 'La Nébuleuse – Zeubi (Logistique)';
+    $whAddr    = 'Ch. des Lentillières 2';
+    $whPostal  = '1023';
+    $whCity    = 'Crissier';
+    $whCountry = 'CH';
     try {
         $pdo = maltytask_pdo();
         if ($pdo !== null) {
-            $siteStmt = $pdo->prepare(
-                'SELECT address_line1, postal_code, city, country FROM ref_sites
-                  WHERE site_type = \'production\' ORDER BY id ASC LIMIT 1'
+            $whStmt = $pdo->prepare(
+                "SELECT name, address_line, postal_code, city, country FROM ref_sites
+                  WHERE site_type = 'warehouse' ORDER BY id ASC LIMIT 1"
             );
-            $siteStmt->execute();
-            $site = $siteStmt->fetch(PDO::FETCH_ASSOC);
-            if ($site !== false) {
-                $parts = array_filter([
-                    trim((string)($site['address_line1'] ?? '')),
-                    trim(((string)($site['postal_code'] ?? '')) . ' ' . ((string)($site['city'] ?? ''))),
-                    trim((string)($site['country'] ?? '')),
-                ]);
-                if (!empty($parts)) {
-                    $siteAddress = implode(', ', $parts);
-                }
+            $whStmt->execute();
+            $wh = $whStmt->fetch(PDO::FETCH_ASSOC);
+            if ($wh !== false) {
+                if (trim((string)($wh['name']         ?? '')) !== '') $whName    = trim((string)$wh['name']);
+                if (trim((string)($wh['address_line'] ?? '')) !== '') $whAddr    = trim((string)$wh['address_line']);
+                if (trim((string)($wh['postal_code']  ?? '')) !== '') $whPostal  = trim((string)$wh['postal_code']);
+                if (trim((string)($wh['city']         ?? '')) !== '') $whCity    = trim((string)$wh['city']);
+                if (trim((string)($wh['country']      ?? '')) !== '') $whCountry = trim((string)$wh['country']);
             }
         }
     } catch (Throwable $ignored) {}
+
+    // NB: $whName (ref_sites.name) carries an INTERNAL-only label and must
+    // NEVER reach customer output — the public brewery name ($breweryName /
+    // $bi['name']) is used instead. Only the warehouse ADDRESS fields are emitted.
+    $whAddrEsc    = htmlspecialchars($whAddr,    ENT_QUOTES, 'UTF-8');
+    $whPostalEsc  = htmlspecialchars($whPostal,  ENT_QUOTES, 'UTF-8');
+    $whCityEsc    = htmlspecialchars($whCity,    ENT_QUOTES, 'UTF-8');
+    $whCountryEsc = htmlspecialchars($whCountry, ENT_QUOTES, 'UTF-8');
+
+    $whCityLine    = trim($whPostalEsc . ' ' . $whCityEsc) . ($whCountryEsc !== '' ? ', ' . $whCountryEsc : '');
+    $whCityLineTxt = trim($whPostal    . ' ' . $whCity)    . ($whCountry    !== '' ? ', ' . $whCountry    : '');
+
+    $warehousePickupHtml = '<p style="margin:0 0 24px;font-size:14px;line-height:1.6;color:#3d2e1a;">'
+        . '<strong>À retirer à l\'entrepôt :</strong><br>'
+        . $breweryName . '<br>'
+        . $whAddrEsc . '<br>'
+        . $whCityLine
+        . '</p>';
+    $warehousePickupText = "À retirer à l'entrepôt :\n"
+        . $bi['name'] . "\n"
+        . $whAddr . "\n"
+        . $whCityLineTxt . "\n\n";
+
+    $siteAddress = $whAddr . ', ' . trim($whPostal . ' ' . $whCity) . ($whCountry !== '' ? ', ' . $whCountry : '');
 
     // ── Contact email ─────────────────────────────────────────────────────────
     $contactEmail = (string) system_setting('confirmation_email_from', 'fulfilment', 'commandes@lanebuleuse.ch');
@@ -230,42 +257,12 @@ function mail_order_confirmation_template(array $order, array $lines, ?array $ad
         $textRows .= "  {$ref}  {$desig}  ×{$fmtQty}\n";
     }
 
-    // ── Optional delivery address ─────────────────────────────────────────────
-    $htmlAddress = '';
-    $textAddress = '';
-    if ($address !== null) {
-        $parts = [];
-        if (trim((string)($address['line1'] ?? '')) !== '') {
-            $parts[] = htmlspecialchars(trim($address['line1']), ENT_QUOTES, 'UTF-8');
-        }
-        if (trim((string)($address['line2'] ?? '')) !== '') {
-            $parts[] = htmlspecialchars(trim($address['line2']), ENT_QUOTES, 'UTF-8');
-        }
-        $cityCantonPart = '';
-        $city   = htmlspecialchars(trim((string)($address['city']   ?? '')), ENT_QUOTES, 'UTF-8');
-        $canton = htmlspecialchars(trim((string)($address['canton'] ?? '')), ENT_QUOTES, 'UTF-8');
-        $postal = htmlspecialchars(trim((string)($address['postal_code'] ?? '')), ENT_QUOTES, 'UTF-8');
-        if ($postal !== '' || $city !== '') {
-            $cityLine = trim("$postal $city");
-            if ($canton !== '') {
-                $cityLine .= " ({$canton})";
-            }
-            $parts[] = $cityLine;
-        }
-        if (!empty($parts)) {
-            $htmlAddress = '<p style="margin:0 0 24px;font-size:14px;line-height:1.6;color:#3d2e1a;">'
-                . '<strong>Adresse de livraison :</strong><br>'
-                . implode('<br>', $parts) . '</p>';
-            $textAddress = "Adresse de livraison :\n" . implode("\n", array_map('strip_tags', $parts)) . "\n\n";
-        }
-    }
-
     // ── Optional date line ────────────────────────────────────────────────────
     $htmlDateLine = '';
     $textDateLine = '';
     if ($dateFr !== '') {
-        $htmlDateLine = "<p style=\"margin:0 0 16px;font-size:14px;color:#3d2e1a;\">Date de livraison souhaitée : <strong>{$dateFr}</strong></p>";
-        $textDateLine = "Date de livraison souhaitée : {$dateFr}\n\n";
+        $htmlDateLine = "<p style=\"margin:0 0 16px;font-size:14px;color:#3d2e1a;\">Date de mise à disposition : <strong>{$dateFr}</strong></p>";
+        $textDateLine = "Date de mise à disposition : {$dateFr}\n\n";
     }
 
     // ── Intro text ────────────────────────────────────────────────────────────
@@ -312,7 +309,7 @@ function mail_order_confirmation_template(array $order, array $lines, ?array $ad
             {$htmlRows}
           </table>
 
-          {$htmlAddress}
+          {$warehousePickupHtml}
 
           <p style="margin:0 0 8px;font-size:14px;line-height:1.6;color:#3d2e1a;">Pour toute question concernant votre commande, contactez-nous à <a href="mailto:{$contactEmailEsc}" style="color:#c8a96e;">{$contactEmailEsc}</a>.</p>
 
@@ -347,7 +344,7 @@ HTML;
     $text .= str_repeat('-', 40) . "\n";
     $text .= $textRows;
     $text .= str_repeat('-', 40) . "\n\n";
-    $text .= $textAddress;
+    $text .= $warehousePickupText;
     $text .= "Pour toute question : {$contactEmail}\n\n";
     $text .= "Brassicalement,\nL'équipe " . $bi['name'] . "\n";
 

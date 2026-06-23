@@ -100,3 +100,25 @@ if (!function_exists('sku_classification_label')) {
         };
     }
 }
+
+if (!function_exists('run_type_container_label')) {
+    /**
+     * Canonical run_type → French container noun (PLURAL, bare — no volume).
+     * Source of truth for customer/UX-facing container words.
+     * Supersedes the inline maps in form-packaging.php (RUN_TYPE_LABELS),
+     * packaging-stats.php, kpi-email-render.php, mi_propose.php — future work
+     * should call this, not re-copy. unit_label already carries volume/pack, so
+     * this stays a bare noun to avoid double-stating size.
+     */
+    function run_type_container_label(?string $rt): string
+    {
+        switch ($rt) {
+            case 'bot':   return 'Bouteilles';
+            case 'can':   return 'Canettes';
+            case 'can33': return 'Canettes';
+            case 'keg':   return 'Fûts';
+            case 'cuv':   return 'Cuves de service';
+            default:      return ''; // NULL / composite / draft / vrac → no container word
+        }
+    }
+}

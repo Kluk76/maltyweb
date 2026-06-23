@@ -302,8 +302,7 @@ try {
                 // Load order + lines
                 $ordRow = $pdo->prepare(
                     'SELECT o.id, o.bc_no, o.source_ref, o.requested_date,
-                            c.name AS customer_name,
-                            c.address_line1, c.address_line2, c.postal_code, c.city, c.canton
+                            c.name AS customer_name
                        FROM ord_orders o
                   LEFT JOIN ref_customers c ON c.id = o.customer_id_fk
                       WHERE o.id = ? LIMIT 1'
@@ -311,14 +310,31 @@ try {
                 $ordRow->execute([$orderId]);
                 $ord = $ordRow->fetch(PDO::FETCH_ASSOC);
 
+                require_once __DIR__ . '/../../app/sku_catalog.php';
+
                 $linesStmt = $pdo->prepare(
-                    'SELECT s.sku_code AS ref, CONCAT(s.beer_raw, \' – \', s.unit_label) AS designation, l.qty AS qty
+                    'SELECT s.sku_code AS ref, s.beer_raw AS beer_raw, s.unit_label AS unit_label,
+                            p.run_type AS run_type, l.qty AS qty
                        FROM ord_order_lines l
                        JOIN ref_skus s ON s.id = l.sku_id_fk
+                  LEFT JOIN ref_packaging_formats p ON p.id = s.format_id
                       WHERE l.order_id_fk = ? ORDER BY l.id'
                 );
                 $linesStmt->execute([$orderId]);
-                $linesData = $linesStmt->fetchAll(PDO::FETCH_ASSOC);
+                $rawLines = $linesStmt->fetchAll(PDO::FETCH_ASSOC);
+
+                $linesData = [];
+                foreach ($rawLines as $row) {
+                    $container = run_type_container_label($row['run_type'] ?? null);
+                    $designation = trim((string)$row['beer_raw'])
+                        . ' – ' . ($container !== '' ? $container . ' – ' : '')
+                        . (string)$row['unit_label'];
+                    $linesData[] = [
+                        'ref'         => $row['ref'],
+                        'designation' => $designation,
+                        'qty'         => $row['qty'],
+                    ];
+                }
 
                 // Format order data for template
                 $bcNo    = trim((string)($ord['bc_no']      ?? ''));
@@ -339,15 +355,6 @@ try {
                 ];
 
                 $address = null;
-                if (!empty($ord['city']) || !empty($ord['address_line1'])) {
-                    $address = [
-                        'line1'       => (string)($ord['address_line1'] ?? ''),
-                        'line2'       => (string)($ord['address_line2'] ?? ''),
-                        'postal_code' => (string)($ord['postal_code']   ?? ''),
-                        'city'        => (string)($ord['city']          ?? ''),
-                        'canton'      => (string)($ord['canton']        ?? ''),
-                    ];
-                }
 
                 $tpl = mail_order_confirmation_template($orderData, $linesData, $address);
 
