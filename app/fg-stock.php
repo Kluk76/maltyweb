@@ -551,6 +551,27 @@ function fg_stock_compute(PDO $pdo): array
     // fg_site_sku_anchor_map() called once here; reused in Step 5.
     $siteSkuAnchorMapCompute = fg_site_sku_anchor_map($pdo);
 
+    // Per-site census (date, ts) — derived once from $siteSkuAnchorMapCompute.
+    // All rows in the map for a given site share the same counted_at (the census
+    // date), so iterating all sku entries gives the site census date and MAX ts.
+    // Used by the eshop (Step 5) and repack (Step 5.5) absent-SKU fallback paths.
+    $siteCensusMapCompute = [];
+    foreach ($siteSkuAnchorMapCompute as $_cSiteId => $_cSkuMap) {
+        $cd = null;
+        $ct = null;
+        foreach ($_cSkuMap as $e) {
+            if ($cd === null || $e['counted_at'] > $cd) $cd = $e['counted_at'];
+        }
+        if ($cd !== null) {
+            foreach ($_cSkuMap as $e) {
+                if ($e['counted_at'] === $cd && ($ct === null || $e['anchor_ts'] > $ct)) {
+                    $ct = $e['anchor_ts'];
+                }
+            }
+            $siteCensusMapCompute[$_cSiteId] = ['date' => $cd, 'ts' => $ct];
+        }
+    }
+
     $expStmt = $pdo->prepare(
         'SELECT o.id                                   AS order_id,
                 o.fulfilment_site_id_fk,
@@ -665,11 +686,13 @@ function fg_stock_compute(PDO $pdo): array
         $orderTs   = (string) $es['order_created_at'];
         $orderDate = substr($orderTs, 0, 10); // DATE portion of the DATETIME
 
-        // Via shared resolver — routing only, behaviour unchanged
+        // Via shared resolver — routing only, behaviour unchanged.
+        // Absent-SKU fallback: use eshop site's census date+ts so same-day orders
+        // submitted after the census are admitted (mirrors the prod leg fix).
         $pass = fg_event_is_post_census(
             $orderDate, $orderTs,
-            $siteSkuAnchorMapCompute[$eshopWarehouseSiteId][$sid]['counted_at'] ?? null,
-            $siteSkuAnchorMapCompute[$eshopWarehouseSiteId][$sid]['anchor_ts'] ?? null,
+            $siteSkuAnchorMapCompute[$eshopWarehouseSiteId][$sid]['counted_at'] ?? ($siteCensusMapCompute[$eshopWarehouseSiteId]['date'] ?? null),
+            $siteSkuAnchorMapCompute[$eshopWarehouseSiteId][$sid]['anchor_ts']  ?? ($siteCensusMapCompute[$eshopWarehouseSiteId]['ts']   ?? null),
             $anchorDate, false
         );
         if (!$pass) continue;
@@ -713,11 +736,13 @@ function fg_stock_compute(PDO $pdo): array
             $movedOn = (string) $rk['moved_on'];
             $rkTs    = (string) $rk['created_at'];
 
-            // Via shared resolver — routing only, behaviour unchanged
+            // Via shared resolver — routing only, behaviour unchanged.
+            // Absent-SKU fallback: use repack site's census date+ts (mirrors prod leg fix).
             $siteAnchor = $siteSkuAnchorMapCompute[$siteId][$sid] ?? null;
             $pass = fg_event_is_post_census(
                 $movedOn, $rkTs,
-                $siteAnchor['counted_at'] ?? null, $siteAnchor['anchor_ts'] ?? null,
+                $siteAnchor['counted_at'] ?? ($siteCensusMapCompute[$siteId]['date'] ?? null),
+                $siteAnchor['anchor_ts']  ?? ($siteCensusMapCompute[$siteId]['ts']   ?? null),
                 $anchorDate, false
             );
             if (!$pass) continue;
@@ -1389,6 +1414,27 @@ function fg_stock_location_snapshot(PDO $pdo): array
     // Used by Leg 1 (B2B expédié), Leg 2 (eshop), and the Transfer leg.
     $siteSkuAnchorMap = fg_site_sku_anchor_map($pdo);
 
+    // Per-site census (date, ts) — derived once from $siteSkuAnchorMap.
+    // All rows in the map for a given site share the same counted_at (the census
+    // date), so iterating all sku entries gives the site census date and MAX ts.
+    // Used by the eshop (Leg 2), repack, and transfer absent-SKU fallback paths.
+    $siteCensusMap = [];
+    foreach ($siteSkuAnchorMap as $_sSiteId => $_sSkuMap) {
+        $cd = null;
+        $ct = null;
+        foreach ($_sSkuMap as $e) {
+            if ($cd === null || $e['counted_at'] > $cd) $cd = $e['counted_at'];
+        }
+        if ($cd !== null) {
+            foreach ($_sSkuMap as $e) {
+                if ($e['counted_at'] === $cd && ($ct === null || $e['anchor_ts'] > $ct)) {
+                    $ct = $e['anchor_ts'];
+                }
+            }
+            $siteCensusMap[$_sSiteId] = ['date' => $cd, 'ts' => $ct];
+        }
+    }
+
     // Floored production per SKU — single-sourced, same helper as fg_stock_compute()
     $prodHelper    = fg_prod_since_anchor($pdo, $anchorDate);
     $prodSiteIds   = $prodHelper['prod_site_ids'];    // int[]
@@ -1499,10 +1545,13 @@ function fg_stock_location_snapshot(PDO $pdo): array
         $orderTs  = (string) $es['order_created_at'];
         $orderDate = substr($orderTs, 0, 10); // DATE portion of the DATETIME
         $siteAnchor = $siteSkuAnchorMap[$eshopSiteId][$sid] ?? null;
-        // Via shared resolver — routing only, behaviour unchanged
+        // Via shared resolver — routing only, behaviour unchanged.
+        // Absent-SKU fallback: use eshop site's census date+ts (mirrors prod leg fix).
+        // BYTE-SYMMETRIC with compute Step 5 — invariant coupling.
         $pass = fg_event_is_post_census(
             $orderDate, $orderTs,
-            $siteAnchor['counted_at'] ?? null, $siteAnchor['anchor_ts'] ?? null,
+            $siteAnchor['counted_at'] ?? ($siteCensusMap[$eshopSiteId]['date'] ?? null),
+            $siteAnchor['anchor_ts']  ?? ($siteCensusMap[$eshopSiteId]['ts']   ?? null),
             $anchorDate, false
         );
         if (!$pass) continue;
@@ -1586,17 +1635,20 @@ function fg_stock_location_snapshot(PDO $pdo): array
         $mvTs     = (string) $mv['mv_created_at'];
         if ($qty <= 0) continue; // skip non-positive movements (tombstoning guard)
 
-        // Per-site tiebreak via shared resolver — routing only, behaviour unchanged
+        // Per-site tiebreak via shared resolver — routing only, behaviour unchanged.
+        // Absent-SKU fallback: use each site's own census date+ts (mirrors prod leg fix).
         $fromAnchor = $siteSkuAnchorMap[$fromSite][$sid] ?? null;
         $fromPass = fg_event_is_post_census(
             $movedOn, $mvTs,
-            $fromAnchor['counted_at'] ?? null, $fromAnchor['anchor_ts'] ?? null,
+            $fromAnchor['counted_at'] ?? ($siteCensusMap[$fromSite]['date'] ?? null),
+            $fromAnchor['anchor_ts']  ?? ($siteCensusMap[$fromSite]['ts']   ?? null),
             $anchorDate, false
         );
         $toAnchor = $siteSkuAnchorMap[$toSite][$sid] ?? null;
         $toPass = fg_event_is_post_census(
             $movedOn, $mvTs,
-            $toAnchor['counted_at'] ?? null, $toAnchor['anchor_ts'] ?? null,
+            $toAnchor['counted_at'] ?? ($siteCensusMap[$toSite]['date'] ?? null),
+            $toAnchor['anchor_ts']  ?? ($siteCensusMap[$toSite]['ts']   ?? null),
             $anchorDate, false
         );
 
@@ -1645,11 +1697,14 @@ function fg_stock_location_snapshot(PDO $pdo): array
             $movedOn = (string) $rk['moved_on'];
             $rkTs    = (string) $rk['created_at'];
 
-            // Via shared resolver — routing only, behaviour unchanged
+            // Via shared resolver — routing only, behaviour unchanged.
+            // Absent-SKU fallback: use repack site's census date+ts (mirrors prod leg fix).
+            // BYTE-SYMMETRIC with compute Step 5.5 — invariant coupling.
             $siteAnchor = $siteSkuAnchorMap[$siteId][$sid] ?? null;
             $pass = fg_event_is_post_census(
                 $movedOn, $rkTs,
-                $siteAnchor['counted_at'] ?? null, $siteAnchor['anchor_ts'] ?? null,
+                $siteAnchor['counted_at'] ?? ($siteCensusMap[$siteId]['date'] ?? null),
+                $siteAnchor['anchor_ts']  ?? ($siteCensusMap[$siteId]['ts']   ?? null),
                 $anchorDate, false
             );
             if (!$pass) continue;
