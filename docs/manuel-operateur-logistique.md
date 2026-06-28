@@ -95,11 +95,11 @@ Lors d'un comptage, chaque case du formulaire peut être dans trois états :
 
 | État de la case | Interprétation par le système |
 |---|---|
-| **Case vide** | Non compté — le système conserve la valeur du comptage précédent |
-| **Case à 0** | Stock réellement à zéro — le système met le stock à zéro |
+| **Case vide** | ⚠️ Traité comme **0** — la référence est considérée absente de ce comptage |
+| **Case à 0** | Stock à zéro — **identique** à une case vide |
 | **Case avec un chiffre** | Quantité physique réelle à cet instant |
 
-> **Règle absolue :** si vous avez physiquement vérifié qu'un stock est épuisé, saisissez **0**. Ne laissez jamais la case vide en pensant que "ça reviendra à zéro automatiquement".
+> **Règle absolue — un comptage est un recensement COMPLET.** Toute référence que vous ne saisissez pas passe automatiquement à **0** pour ce site : il n'y a **aucun report** de l'ancien comptage. « Case vide » et « case à 0 » donnent donc le **même** résultat. Vous devez compter **chaque référence présente** à chaque comptage — sinon les références oubliées tombent à zéro sur le tableau. La valeur « précéd. » affichée à côté de la case n'est qu'un **repère visuel** : elle n'est ni conservée ni réutilisée par le système.
 
 #### Un comptage par site, pas un comptage global
 
@@ -806,15 +806,15 @@ Le comptage Stock PF est votre action hebdomadaire la plus importante. Sans comp
 
    Un message de confirmation s'affiche. Le système recalcule immédiatement le Stock PF pour ce site à partir de ce nouveau comptage.
 
-#### Règle fondamentale : vide ≠ zéro
+#### Règle fondamentale : un comptage est un recensement COMPLET
 
-Une case laissée **vide** = "je n'ai pas compté cette référence" = le système conserve la valeur du comptage précédent.
+Le comptage Stock PF remet le stock du site à **exactement ce que vous saisissez** — **rien n'est reporté** de l'ancien comptage.
 
-Une case à **0** = "j'ai compté et il n'y a rien" = le système met le stock à zéro.
+- Une case **vide** et une case à **0** produisent le **même résultat** : la référence est mise à **0** pour ce site.
+- Toute référence **non saisie** passe donc à **0**. C'est pourquoi vous devez compter **toutes** les références présentes à chaque comptage.
+- ⚠️ **Danger — un comptage partiel met à zéro tout ce que vous n'avez pas saisi.** Si vous ne comptez que les fûts et laissez les bouteilles vides, les bouteilles tombent à **0** sur le tableau. Ne soumettez un comptage que lorsqu'il est **complet** pour ce site.
 
-Si vous comptez une zone complète et qu'une référence n'y est pas, saisissez 0. Si vous n'avez compté qu'une partie du site et n'avez pas vérifié une zone spécifique, laissez vide.
-
-> **Exemple concret :** vous comptez l'entrepôt. Vous cherchez les ZEPF (Zepp Fût 20L) — il n'y en a pas. Saisissez **0**. Si vous laissez la case vide, le système pensera que vous n'avez pas regardé et gardera l'ancienne valeur.
+> **Exemple concret :** vous comptez l'entrepôt. Vous cherchez les ZEPF (Zepp Fût 20L) : il y en a **12 pleins et vendables**. Saisissez **12** — comptez **uniquement les fûts pleins et vendables**, jamais les fûts vides ni ceux déjà partis chez les clients (c'est la cause n°1 d'un stock gonflé et faux). Si une référence n'est réellement pas présente sur le site, laissez-la à 0 — à condition que votre comptage couvre bien **tout** le site.
 
 #### Cas particuliers
 
