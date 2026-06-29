@@ -5152,6 +5152,9 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
   $stNowForStock = new DateTimeImmutable(date('Y-m-d'));
   $stDowForStock = (int) $stNowForStock->format('N');
   $stMondayStock = $stNowForStock->modify('-' . ($stDowForStock - 1) . ' days')->format('Y-m-d');
+  // Census-staleness threshold (days) — read from system_settings; default 7 if key absent (non-breaking)
+  $stCensusStale   = max(1, (int) system_setting('fg_census_stale_days', 'fulfilment', 7));
+  $stTodayForFresh = $stNowForStock; // DateTimeImmutable('today') — reused for exact-age computation
   ?>
 
   <!-- Live region: announces current view to screen readers -->
@@ -5205,18 +5208,32 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
 
     <?php foreach ($locSnap['locations'] as $lc): ?>
     <?php
+      $lcId          = (int) $lc['id'];
       $lcLastCounted = $lc['last_counted'];
+      $isUncounted   = $lcLastCounted === null;
+
+      // Freshness chip — exact age vs configurable threshold ($stCensusStale days)
       if ($lcLastCounted === null) {
           $freshChip = '<span class="exp-st-fresh-chip exp-st-fresh-chip--missing">⚠ pas encore compté</span>';
-      } elseif ($lcLastCounted >= $stMondayStock) {
-          $d = new DateTimeImmutable($lcLastCounted);
-          $freshChip = '<span class="exp-st-fresh-chip exp-st-fresh-chip--ok">✓ compté ' . exp_dow_fr($d) . ' ' . $d->format('d/m') . '</span>';
       } else {
-          $d = new DateTimeImmutable($lcLastCounted);
-          $freshChip = '<span class="exp-st-fresh-chip exp-st-fresh-chip--warn">⚠ compté ' . $d->format('d/m') . '</span>';
+          $daysAgo = (int) $stTodayForFresh->diff(new DateTimeImmutable($lcLastCounted))->days;
+          if ($daysAgo <= $stCensusStale) {
+              $agoLabel  = $daysAgo === 0 ? "aujourd'hui" : ('il y a ' . $daysAgo . ' jour' . ($daysAgo > 1 ? 's' : ''));
+              $freshChip = '<span class="exp-st-fresh-chip exp-st-fresh-chip--ok">✓ compté ' . $agoLabel . '</span>';
+          } else {
+              // Stale — combined CTA if the site also has survendu/negatives
+              $lcSurvendu = (int) (($locHealthTally[$lcId] ?? [])['survendu'] ?? 0);
+              if ($lcSurvendu > 0) {
+                  $freshChip = '<a href="/modules/expeditions.php?view=stocktake&amp;loc=' . $lcId
+                      . '" class="exp-st-fresh-chip exp-st-fresh-chip--cta">'
+                      . '⚠ à recompter — ' . $lcSurvendu . ' SKU en négatif</a>';
+              } else {
+                  $freshChip = '<span class="exp-st-fresh-chip exp-st-fresh-chip--warn">'
+                      . 'à recompter il y a ' . $daysAgo . ' jour' . ($daysAgo > 1 ? 's' : '') . '</span>';
+              }
+          }
       }
-      $isUncounted  = $lcLastCounted === null;
-      $lcId         = (int) $lc['id'];
+
       $lcTally      = $locHealthTally[$lcId] ?? ['survendu' => 0, 'critique' => 0, 'bas' => 0, 'epuise' => 0];
       $lcTallyParts = [];
       if ($lcTally['survendu'] > 0) $lcTallyParts[] = '<span class="exp-loc-health-dot exp-loc-health-dot--survendu" title="' . $lcTally['survendu'] . ' survendu">⛔' . $lcTally['survendu'] . '</span>';
@@ -6305,23 +6322,26 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
   // $stIsEditingPastDate is set above in the date-selection block.
 
   // ── Monday freshness computation ──────────────────────────────────────────
-  // Current ISO week's Monday
+  // Current ISO week's Monday (kept — other views may reference $stThisMonday)
   $stNow       = new DateTimeImmutable(date('Y-m-d'));
   $stDow       = (int) $stNow->format('N'); // 1=Mon, 7=Sun
   $stThisMonday = $stNow->modify('-' . ($stDow - 1) . ' days')->format('Y-m-d');
+  // Census-staleness threshold (configurable; default 7 days — non-breaking if key absent)
+  $stCensusStaleCount = max(1, (int) system_setting('fg_census_stale_days', 'fulfilment', 7));
 
-  function exp_st_freshness_chip(int $locId, array $lastCounted, string $thisMonday): string
+  function exp_st_freshness_chip(int $locId, array $lastCounted, int $threshold = 7): string
   {
       $last = $lastCounted[$locId] ?? null;
       if ($last === null) {
           return '<span class="exp-st-fresh-chip exp-st-fresh-chip--missing" title="Jamais compté">⚠ jamais compté</span>';
       }
-      if ($last >= $thisMonday) {
-          $d = new DateTimeImmutable($last);
-          return '<span class="exp-st-fresh-chip exp-st-fresh-chip--ok" title="Compté ' . exp_dow_fr($d) . ' ' . $d->format('d/m') . '">✓ compté ' . exp_dow_fr($d) . ' ' . $d->format('d/m') . '</span>';
+      $today   = new DateTimeImmutable('today');
+      $daysAgo = (int) $today->diff(new DateTimeImmutable($last))->days;
+      if ($daysAgo <= $threshold) {
+          $ago = $daysAgo === 0 ? "aujourd'hui" : ('il y a ' . $daysAgo . ' jour' . ($daysAgo > 1 ? 's' : ''));
+          return '<span class="exp-st-fresh-chip exp-st-fresh-chip--ok" title="Compté ' . $ago . '">✓ compté ' . $ago . '</span>';
       }
-      $d = new DateTimeImmutable($last);
-      return '<span class="exp-st-fresh-chip exp-st-fresh-chip--warn" title="Pas compté cette semaine (dernier: ' . $d->format('d/m') . ')">⚠ pas compté cette semaine</span>';
+      return '<span class="exp-st-fresh-chip exp-st-fresh-chip--warn" title="Pas compté depuis ' . $daysAgo . ' jours">⚠ il y a ' . $daysAgo . ' jour' . ($daysAgo > 1 ? 's' : '') . '</span>';
   }
 
   // ── Group SKUs by family for the count grid ───────────────────────────────
@@ -6408,7 +6428,13 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
         <span class="exp-st-fresh-site"><?= htmlspecialchars($sr['name']) ?></span>
         <span class="exp-st-fresh-type"><?= htmlspecialchars(exp_site_type_label($sr['site_type'])) ?></span>
       </a>
-      <?= exp_st_freshness_chip($locId, $stLastCounted, $stThisMonday) ?>
+      <?= exp_st_freshness_chip($locId, $stLastCounted, $stCensusStaleCount) ?>
+      <?php
+      $_stcLast = $stLastCounted[$locId] ?? null;
+      $_stcAgo  = ($_stcLast !== null) ? (int) (new DateTimeImmutable('today'))->diff(new DateTimeImmutable($_stcLast))->days : null;
+      if ($_stcAgo !== null && $_stcAgo > $stCensusStaleCount): ?>
+      <span class="exp-st-fresh-overdue-badge" aria-label="Ce site est en retard de comptage">à recompter</span>
+      <?php endif; unset($_stcLast, $_stcAgo); ?>
     </div>
     <?php endforeach ?>
   </div>
