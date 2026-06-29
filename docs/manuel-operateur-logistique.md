@@ -15,7 +15,7 @@ Ce manuel est écrit pour les opérateurs logistique et entrepôt de La Nébuleu
 - avez effectué (ou allez effectuer) la **Visite guidée** au premier lancement
 - travaillez sur **tablette** en atelier ou en entrepôt
 
-Il couvre tout ce dont vous avez besoin au quotidien : suivre les étapes de production, compter le stock, préparer et expédier des commandes, gérer les retours.
+Il couvre tout ce dont vous avez besoin au quotidien : compter le stock produits finis, préparer et expédier des commandes, réceptionner les livraisons, gérer les retours.
 
 **Ce manuel ne demande aucune connaissance informatique.** Si quelque chose ne fonctionne pas comme décrit, prévenez votre responsable — ne tentez pas de contourner.
 
@@ -36,12 +36,10 @@ Ce manuel est le compagnon long-format de la Visite guidée. La Visite guidée v
    - 2.3 La Visite guidée
    - 2.4 Expéditions : le hub logistique
 3. [Le quotidien](#3-le-quotidien)
-   - 3.1 Saisir les étapes de production
-   - 3.2 Réceptionner une livraison
-   - 3.3 Préparer et expédier les commandes
+   - 3.1 Réceptionner une livraison
+   - 3.2 Préparer et expédier les commandes
 4. [L'hebdomadaire](#4-lhebdomadaire)
    - 4.1 Comptage Stock PF
-   - 4.2 Comptage Matières Premières
 5. [Au besoin](#5-au-besoin)
    - 5.1 Retours et avoirs
    - 5.2 Déballage / Assemblage
@@ -54,7 +52,10 @@ Ce manuel est le compagnon long-format de la Visite guidée. La Visite guidée v
 - [Annexe B — Accès rapide aux vues Expéditions](#annexe-b--accès-rapide-aux-vues-expéditions)
 - [Annexe C — Références SKU : suffixes de format](#annexe-c--références-sku--suffixes-de-format)
 - [Annexe D — Glossaire opérateur](#annexe-d--glossaire-opérateur)
-- [Annexe E — Dispositions de conditionnement](#annexe-e--dispositions-de-conditionnement)
+- [Annexe E — Listes de contrôle (checklists)](#annexe-e--listes-de-contrôle-checklists)
+- [Annexe F — Scénarios courants et conduite à tenir](#annexe-f--scénarios-courants-et-conduite-à-tenir)
+- [Annexe G — Utilisation de l'application sur tablette](#annexe-g--utilisation-de-lapplication-sur-tablette--conseils-pratiques)
+- [Annexe H — Contacts et responsabilités](#annexe-h--contacts-et-responsabilités)
 
 ---
 
@@ -162,12 +163,12 @@ En haut de chaque page se trouve la **barre de navigation**. Elle donne accès �
 | Section | Ce que vous y trouvez |
 |---|---|
 | **Expéditions** | Commandes, stock PF, comptage, transferts, retours — tout le logistique |
-| **Brassage** | Saisie des informations d'un brassin |
-| **Fermentation** | Suivi des fermentations en cuve |
-| **Transferts** | Saisie des transferts de cuve à cuve |
-| **Conditionnement** | Saisie des runs de mise en bouteille, canette, fût |
+| **Brassage** | Saisie de production — voir le *Manuel Production* |
+| **Fermentation** | Saisie de production — voir le *Manuel Production* |
+| **Transferts** | Saisie de production — voir le *Manuel Production* |
+| **Conditionnement** | Saisie de production — voir le *Manuel Production* |
 | **Approvisionnement** | Consultation des fournisseurs et livraisons de matières premières |
-| **Inventaire MP** | Comptage des stocks de matières premières |
+| **Inventaire MP** | Comptage MP — voir le *Manuel Production* |
 
 En haut à droite se trouvent votre prénom et un menu avec : vos préférences, la Visite guidée, et la déconnexion.
 
@@ -215,338 +216,7 @@ Elle regroupe plusieurs **vues** accessibles via un menu interne (onglets ou lie
 
 ## 3. Le quotidien
 
-### 3.1 Saisir les étapes de production
-
-Chaque étape de production doit être saisie dans l'application dès qu'elle est réalisée. Ces saisies alimentent :
-
-- Le calcul du **Stock PF** (les runs de conditionnement).
-- La **traçabilité des lots** (qui est dans quelle cuve, à quelle densité, à quelle date).
-- Les **alertes de suivi** (lot bloqué, dérive de densité).
-
-**Règle générale :** saisir au moment où ça se passe, pas en fin de journée de mémoire. Une heure ou deux de décalage sont acceptables. Une journée de retard commence à introduire des erreurs.
-
-Les formulaires sont conçus pour être remplis en atelier, sur tablette. Ne cherchez pas à tout mémoriser — ayez ce manuel sous la main.
-
----
-
-#### Brassage
-
-**Où :** Menu → **Brassage**
-
-Le formulaire de brassage enregistre toutes les informations d'un brassin. Il peut être soumis plusieurs fois pour le même lot sans créer de doublon : le système met à jour les informations existantes.
-
-##### Identité du lot
-
-Le couple **recette + N° de brassin** est l'identité unique et permanente du lot. Tout ce qui suit (fermentation, transfert, conditionnement) se rattachera à ce couple.
-
-- La recette se choisit dans une liste déroulante (les recettes actives sont listées).
-- Le N° de brassin est un numéro séquentiel que vous attribuez pour cette recette (ex. : Zepp n°12 = le douzième brassin de Zepp de la saison).
-- Si vous resoumettez le même couple recette + N° de brassin, le système **met à jour** sans créer de doublon.
-
-##### Étapes de saisie
-
-1. **Ouvrez** la page Brassage depuis le menu.
-2. **Choisissez la recette** dans la liste déroulante.
-3. **Saisissez le N° de brassin.**
-4. Remplissez les sections dans l'ordre ci-dessous.
-
-##### Section Ingrédients
-
-Saisissez une ligne par matière première utilisée : malts, houblons, adjuvants, minéraux, agents de process.
-
-| Champ | Ce qu'on saisit | Notes |
-|---|---|---|
-| **Ingrédient** | Choisir dans la liste ou recherche par type-ahead | |
-| **Quantité** | Poids ou volume utilisé | |
-| **Unité** | kg, g ou ml | Vérifier l'unité avant de saisir |
-| **N° de lot** | Numéro de lot du sac / conteneur | Illisible ou absent → laisser vide |
-
-> N° de lot illisible sur un sac ? Laissez la case vide plutôt que d'inventer un numéro. Un N° de lot inventé est pire qu'une case vide pour la traçabilité.
-
-##### Section Levure
-
-| Champ | Ce qu'on saisit |
-|---|---|
-| **Souche** | Référence de la souche de levure |
-| **Génération** | Numéro de génération (1 = levure fraîche) |
-| **Provenance** | Maison, achat extérieur, autre brasserie |
-
-##### Section Brassins (sub-brews)
-
-Si le brassin est réalisé en plusieurs sous-brassins (cuves multiples), saisissez une ligne par brassin.
-
-| Champ | Ce qu'on saisit |
-|---|---|
-| **Début** | Date et heure de début du brassin |
-| **Fin** | Date et heure de fin du brassin |
-
-##### Section Densités °Plato
-
-Les densités sont des mesures de concentration en sucre du moût à différentes étapes.
-
-| Mesure | Quand la prendre |
-|---|---|
-| **FirstWort** | Premier jus de filtration |
-| **Pfannevoll** | Remplissage de la chaudière |
-| **Kochwürze** | En fin d'ébullition |
-| **Cooling** | Au refroidissement (= densité initiale, OG) |
-
-> La densité **Cooling** est la plus importante : c'est la densité initiale de fermentation. Ne la laissez pas vide.
-
-##### Section Volume à froid
-
-Le volume à froid (cast-out) est le volume de moût transféré en cuve de fermentation après refroidissement. C'est le **chiffre le plus important du formulaire** : il conditionne tous les calculs en aval (rendements, coûts de production, stock potentiel).
-
-| Champ | Ce qu'on saisit |
-|---|---|
-| **Volume par brassin** | Volume en hectolitres (HL) pour chaque sous-brassin |
-| **Dilution** | Si dilution à l'eau froide, saisir le volume ajouté |
-
-> Ne laissez jamais cette case vide. Si vous n'avez pas mesuré exactement, donnez une estimation et précisez en note.
-
-##### Section CIP (nettoyages)
-
-Cochez les nettoyages effectués et saisissez la date/heure pour chacun.
-
-##### Soumission
-
-Appuyez sur **Soumettre** en bas du formulaire. Un message de confirmation s'affiche. Si le formulaire ne se soumet pas, vérifiez les champs obligatoires signalés en rouge.
-
-##### Garde-fous et avertissements
-
-L'application vérifie certaines valeurs à la soumission et peut afficher des **avertissements** (en jaune ou orange) si une valeur semble hors plage normale (ex. densité très basse, volume très élevé). Ces avertissements **ne bloquent pas** la soumission — c'est à vous de vérifier si la valeur est correcte ou s'il s'agit d'une erreur de saisie.
-
-Si vous voyez un avertissement et que vous êtes sûr de la valeur → soumettez quand même et notez-le à votre responsable.
-
-Si vous avez un doute → vérifiez la valeur avant de soumettre.
-
----
-
-#### Fermentation
-
-**Où :** Menu → **Fermentation**
-
-Le formulaire de fermentation enregistre l'évolution d'un lot pendant toute sa garde en cuve.
-
-##### Quatre types d'événements
-
-| Type | Quand le saisir |
-|---|---|
-| **Mesures** | À chaque relevé de densité, pH ou température |
-| **Houblonnage à froid** | Lors de chaque ajout de houblon en cuve froide |
-| **Purge** | Lors des purges de levure (fond de cuve) |
-| **Cold Crash** | Quand le refroidissement forcé commence |
-
-##### Trouver un lot
-
-1. **Ouvrez** la page Fermentation.
-2. La liste des lots en fermentation s'affiche.
-3. Si un lot n'apparaît pas dans la liste → vérifiez que le formulaire de brassage correspondant a bien été soumis.
-
-##### Saisir un relevé de mesures
-
-1. Appuyez sur le lot concerné.
-2. Choisissez **"Mesures"** comme type d'événement.
-3. Saisissez :
-
-| Champ | Ce qu'on saisit | Notes |
-|---|---|---|
-| **Date / Heure** | Moment exact du relevé | |
-| **Densité °Plato** | Lecture du réfractomètre ou densimètre | |
-| **pH** | Lecture du pH-mètre | Optionnel si non mesuré |
-| **Température** | Température de la cuve en °C | |
-
-4. **Soumettez.**
-
-> Saisissez chaque relevé même si les mesures sont rapprochées dans le temps. Le système agrège lui-même et construit la courbe de fermentation. Ne "moyennez" pas deux relevés pour n'en saisir qu'un.
-
-##### Saisir un houblonnage à froid
-
-1. Choisissez le lot.
-2. Choisissez **"Houblonnage à froid"** comme type.
-3. Saisissez le houblon (type, quantité), la date et l'heure.
-4. **Soumettez.**
-
-##### Saisir une purge de levure
-
-1. Choisissez le lot.
-2. Choisissez **"Purge"** comme type.
-3. Saisissez la date et l'heure, et si possible le volume purgé.
-4. **Soumettez.**
-
-##### Saisir le Cold Crash
-
-Le Cold Crash est l'étape de refroidissement forcé qui prépare le lot au transfert. C'est une étape critique pour la suite du process.
-
-1. Choisissez le lot.
-2. Choisissez **"Cold Crash"** comme type.
-3. Cochez la case de confirmation et saisissez la date/heure de début.
-4. **Soumettez.**
-
-> **Attention critique :** le Cold Crash clôt la fermentation et déclenche le compteur de garde. Un lot dont le Cold Crash n'est pas coché **n'apparaîtra pas** dans la liste de la page Transferts. Si un lot est prêt à être transféré mais n'apparaît pas → vérifiez en premier que le Cold Crash est bien enregistré.
-
-##### Garde-fous
-
-L'application affiche des avertissements pour les valeurs hors plage (ex. densité finale anormalement haute, température trop basse). Ces avertissements ne bloquent pas la soumission.
-
----
-
-#### Transferts
-
-**Où :** Menu → **Transferts**
-
-Cette page gère les transferts de bière entre cuves : centrifugation, filtration KZE, mise en service (BBT, CCT).
-
-> **Note de nomenclature :** le fichier technique s'appelle "racking" mais ne cherchez pas ce terme dans l'interface. Pour l'opérateur, c'est simplement la page **Transferts**.
-
-##### Lots éligibles
-
-La page affiche les **cartes de lots éligibles** : ceux qui ont atteint leur durée de garde ET sont en cuve. Seuls ces lots sont proposés.
-
-Si un lot attendu n'apparaît pas :
-
-1. Vérifiez que le **Cold Crash** est bien enregistré dans Fermentation.
-2. Vérifiez que la durée de garde minimale est atteinte. Si vous pensez qu'une exception est justifiée, demandez à un responsable d'activer le mode **Hors process** (voir ci-dessous).
-
-##### Étapes de saisie
-
-1. **Ouvrez** la page Transferts.
-2. **Sélectionnez** la carte du lot à transférer.
-3. Remplissez le formulaire :
-
-| Champ | Ce qu'on saisit | Notes |
-|---|---|---|
-| **Machines utilisées** | Cases à cocher : Centrifugeuse, KZE, Pompe, Centri+KZE | Cocher au moins une |
-| **Cuve de destination** | BBT, CCT, YT | Choisir dans la liste |
-| **N° de la cuve** | Numéro identifiant la cuve d'arrivée | |
-| **Volume résiduel en cuve d'arrivée** | Ce qui se trouvait déjà dans la cuve avant ce transfert | Saisir 0 si cuve vide |
-| **Pertes** | Volume de pertes exceptionnelles | Pertes standard = automatiques, ne pas les saisir ici |
-| **Transfert interrompu** | Case à cocher si le transfert a été arrêté en cours | Obligatoire d'expliquer si coché |
-| **Notes** | Commentaire libre | |
-
-4. **Soumettez.**
-
-##### Volume résiduel : attention
-
-Si la cuve de destination contenait déjà de la bière (blend, reste d'un lot précédent), saisissez le volume résiduel. S'il n'y avait rien, saisissez 0. Ne laissez pas ce champ vide.
-
-##### Pertes : ne saisir que les pertes exceptionnelles
-
-Les pertes standards liées au process (pertes de centrifugation, etc.) sont calculées automatiquement. La section Pertes du formulaire sert uniquement aux pertes **exceptionnelles** (casse, incident, spill). Ne doublez pas les pertes en saisissant les pertes standard ici.
-
-##### Mode Hors process
-
-> **Réservé aux managers et admins uniquement.**
->
-> Ce mode déverrouille les lots normalement inéligibles (garde non atteinte, Cold Crash absent, cuve non renseignée) et exige une raison écrite. Il est utilisé pour gérer les cas exceptionnels justifiés.
->
-> Si vous pensez avoir besoin de ce mode, **contactez votre responsable**. Ne tentez pas de le contourner.
-
----
-
-#### Conditionnement
-
-**Où :** Menu → **Conditionnement**
-
-Le formulaire de conditionnement enregistre chaque session de mise en emballage : bouteilles, canettes, fûts, cuves de service.
-
-C'est également le formulaire qui **alimente directement le stock de produits finis**. Chaque run de conditionnement saisi ici augmente le Stock PF du montant produit.
-
-##### Types de runs disponibles
-
-| Type de run | Formats possibles |
-|---|---|
-| **Run bouteille 33cl** | Carton 6×4, box 24, bouteille unitaire, cage / vrac |
-| **Run canette 50cl** | Canette unitaire, box 24 |
-| **Run canette 33cl** | Canette unitaire, box 24 |
-| **Fût 20L** | Fût |
-| **Cuve de service** | Cuve de service |
-
-##### Suffixes de format
-
-Dans les références SKU et dans le formulaire, les formats sont identifiés par des suffixes :
-
-| Suffixe | Format complet |
-|---|---|
-| **4** | Carton 6×4 (24 bouteilles) |
-| **B** | Box 24 (canettes ou bouteilles) |
-| **F** | Fût 20L |
-| **V** | Cuve de service |
-| **C** | Canette unitaire |
-| **BU** | Bouteille unitaire |
-| **CU** | Canette unitaire (format alternatif) |
-| **X** | Cage / vrac de bouteilles |
-
-##### Étapes de saisie
-
-1. **Ouvrez** la page Conditionnement.
-2. **Choisissez le lot source** dans la liste (lots en cuve BBT/CCT éligibles).
-3. **Choisissez le type de run** (bouteille, canette, fût, cuve de service).
-4. **Choisissez le format** dans la liste.
-5. **Saisissez les mesures CO₂ et O₂** avant remplissage.
-   - Ces mesures sont prises une seule fois par lot par jour.
-   - Si elles ont déjà été saisies aujourd'hui pour ce lot, le formulaire les reprend automatiquement. Vous n'avez pas à les ressaisir.
-6. **Saisissez la quantité** produite pour ce format.
-7. Si nécessaire, complétez les **dispositions** (voir tableau complet en Annexe E).
-8. **Soumettez.**
-
-##### Formats parallèles : comment faire
-
-Si la même session couvre plusieurs formats en parallèle (ex. vous embouteillez des cartons 6×4 ET des box 24 du même lot le même jour) :
-
-1. Remplissez la **première ligne** avec son format et sa quantité.
-2. Appuyez sur **"+ Ajouter un format parallèle"**.
-3. Remplissez la **deuxième ligne** avec son propre format et sa propre quantité.
-4. Répétez si nécessaire pour un troisième format.
-
-> **Ne saisissez jamais le total sur la ligne principale.** Chaque ligne porte uniquement sa propre quantité. Si vous saisissez le total sur la ligne principale ET les détails sur les lignes parallèles, vous doublez la production.
-
-> **Une autre bière = une autre session.** Ne mélangez jamais deux références (deux bières différentes) dans la même saisie. Si vous conditionnez Zepp et Embuscade le même jour, faites deux sessions séparées, une pour chaque.
-
-##### White label
-
-Pour une production sous label client (bière conditionnée pour un tiers sous son propre label) :
-
-1. Activez le switch ou la case **"White label"** sur la ligne de format.
-2. Choisissez le client dans la liste déroulante.
-
-##### Cage / coffret
-
-Pour les cages de bouteilles ou le vrac en caisse bois :
-
-- Choisissez le format **X (cage / vrac)** dans la liste des formats.
-- Saisissez le nombre de bouteilles (pas le nombre de cages).
-
-##### Mesures CO₂ et O₂
-
-Ces mesures de qualité sont importantes pour la traçabilité. Elles sont prises **avant** le début du remplissage pour le lot, une fois par journée de conditionnement.
-
-| Mesure | Unité | Quand |
-|---|---|---|
-| **CO₂** | g/L ou volumes | Avant premier remplissage |
-| **O₂** | ppb ou mg/L | Avant premier remplissage |
-
-Si vous avez oublié de prendre ces mesures avant de commencer, prenez-les en cours de run et indiquez-le en note.
-
-##### Dispositions : vue d'ensemble
-
-Les dispositions enregistrent les unités qui sortent du circuit vendable. Elles sont décrites en détail en **Annexe E**.
-
-En résumé : utilisez les dispositions pour toute unité produite mais non vendue (casse, pertes, QA, taproom). Le **volume vendable** est calculé automatiquement à partir des dispositions — ne le saisissez pas vous-même.
-
-##### Soumission et confirmation
-
-Après soumission, la page affiche un résumé de ce qui a été enregistré. Vérifiez :
-
-- La référence (bière + format) est-elle correcte ?
-- La quantité correspond-elle à ce que vous avez produit ?
-- Les dispositions sont-elles correctes ?
-
-En cas d'erreur sur un run déjà soumis, contactez un manager ou un administrateur.
-
----
-
-### 3.2 Réceptionner une livraison (Approvisionnement)
+### 3.1 Réceptionner une livraison (Approvisionnement)
 
 **Où :** Menu → **Approvisionnement**
 
@@ -575,9 +245,11 @@ Cette section affiche les informations sur les fournisseurs et les livraisons de
 3. Ouvrez la fiche du fournisseur.
 4. Consultez l'historique des livraisons et les commandes en cours.
 
+> **Lien avec la production :** les quantités réceptionnées alimentent l'inventaire Matières Premières que la production compte mensuellement — voir le *Manuel Production* pour la procédure de comptage MP.
+
 ---
 
-### 3.3 Préparer et expédier les commandes
+### 3.2 Préparer et expédier les commandes
 
 #### Vue Commandes (B2B)
 
@@ -843,58 +515,6 @@ Si lors d'un comptage vous trouvez un écart significatif entre ce que le systè
 5. Une fois l'enquête faite → soumettez le comptage réel.
 
 > Ne "corrigez" jamais un écart en saisissant la valeur que vous attendiez plutôt que ce que vous avez compté. Le comptage doit refléter la réalité physique.
-
----
-
-### 4.2 Comptage Matières Premières
-
-**Où :** Menu → **Inventaire MP**
-
-Le comptage des matières premières (malts, houblons, adjuvants, emballages, produits de nettoyage, etc.) alimente les calculs de coûts de production.
-
-**Fréquence recommandée :** au moins une fois par mois, idéalement en fin de mois. Certains ingrédients critiques peuvent justifier un comptage hebdomadaire.
-
-#### Comment fonctionne ce formulaire (différent du Stock PF)
-
-Contrairement au formulaire de comptage Stock PF, ce formulaire **sauvegarde chaque ligne immédiatement** quand vous appuyez sur "Ajouter". Il n'y a pas de bouton "Soumettre" global.
-
-- Vous pouvez quitter et revenir : ce que vous avez déjà saisi est conservé.
-- Vous pouvez compter dans n'importe quel ordre.
-- Vous pouvez prendre des pauses.
-
-#### Étapes
-
-1. **Ouvrez** Inventaire MP depuis le menu.
-
-2. **Vérifiez la période** en haut du formulaire.
-   - Par défaut, c'est le mois en cours.
-   - Pour compter un autre mois, modifiez la période (si vous êtes habilité à le faire).
-
-3. **Cherchez l'ingrédient** à compter dans le champ de recherche.
-   - Tapez les premières lettres du nom ou de la référence.
-   - La liste se filtre automatiquement (type-ahead).
-   - Choisissez le bon ingrédient dans la liste.
-
-4. **Saisissez la quantité** comptée (en kg, g, L, unités — selon l'ingrédient).
-
-5. Appuyez sur **"Ajouter"** — la ligne est sauvegardée immédiatement.
-   - Un message de confirmation bref s'affiche.
-
-6. Répétez pour chaque ingrédient.
-
-#### Vide ≠ zéro (même règle qu'en Stock PF)
-
-Si un ingrédient est épuisé, saisissez **0** et appuyez sur "Ajouter". Ne laissez pas un ingrédient de côté en pensant que "ça sera à zéro automatiquement".
-
-Un ingrédient non saisi lors d'un comptage conserve la valeur du comptage précédent dans les calculs.
-
-#### Comptez palette par palette
-
-Pour les gros stocks (malts, palettes de houblon), comptez sac par sac ou palette par palette. Les estimations "à la louche" (ex. "environ 500 kg") introduisent des erreurs dans les calculs de coûts qui peuvent se répercuter sur les marges.
-
-#### En cas de doute sur l'identité d'un ingrédient
-
-Si le libellé d'un sac ou d'un contenant ne correspond pas clairement à un ingrédient dans la liste → **demandez à votre responsable avant de saisir**. Ne cherchez pas à "deviner" l'ingrédient le plus proche. Une mauvaise attribution dans l'inventaire des matières premières peut fausser les coûts de production.
 
 ---
 
@@ -1174,7 +794,7 @@ Un stock négatif peut apparaître dans certaines situations. Les causes les plu
 
 ## 7. Bonnes pratiques et erreurs fréquentes
 
-### 7.1 Les dix bonnes pratiques de l'opérateur
+### 7.1 Les huit bonnes pratiques de l'opérateur
 
 #### 1. Saisir au moment, pas après
 
@@ -1184,35 +804,27 @@ Chaque formulaire doit être rempli au moment de l'opération ou dans les deux h
 
 C'est la règle la plus souvent mal comprise. Une case vide n'est pas interprétée comme "zéro" — elle est interprétée comme "non compté". Si le stock est à zéro, saisissez 0.
 
-#### 3. Ne jamais sauter le Cold Crash
-
-Le Cold Crash doit être enregistré pour qu'un lot apparaisse dans la liste de la page Transferts. C'est la première chose à vérifier si un lot "bloqué" n'apparaît pas.
-
-#### 4. Signaler avant de compenser
+#### 3. Signaler avant de compenser
 
 Si vous constatez un écart entre le stock affiché et la réalité physique, signalez-le à votre responsable avant d'agir. Ne cherchez pas à "corriger" en gonflant un comptage ou en omettant une ligne.
 
-#### 5. Compter régulièrement et complètement
+#### 4. Compter régulièrement et complètement
 
 Un comptage hebdomadaire par site actif est la meilleure protection contre la dérive. Comptez toujours complètement, zone par zone, palette par palette.
 
-#### 6. Un run = une bière
-
-Dans le conditionnement, ne mélangez jamais deux références dans la même session. Si vous conditionnez deux bières le même jour, faites deux sessions séparées.
-
-#### 7. Quantités entières pour les transferts inter-sites
+#### 5. Quantités entières pour les transferts inter-sites
 
 Les transferts n'acceptent pas de décimales. Comptez en unités entières.
 
-#### 8. Toujours vérifier le détail d'une commande avant de changer le statut
+#### 6. Toujours vérifier le détail d'une commande avant de changer le statut
 
 Avant de passer une commande de "Confirmée" à "Préparée", relisez les lignes. Une erreur de statut sur une commande non préparée peut créer des problèmes logistiques sérieux.
 
-#### 9. Ne pas créer de doublon e-mail
+#### 7. Ne pas créer de doublon e-mail
 
 Si le système avertit qu'une commande similaire existe déjà, ne créez pas de nouvelle commande. Signalez au manager pour vérification.
 
-#### 10. Documenter les cas inhabituels
+#### 8. Documenter les cas inhabituels
 
 Si vous avez fait quelque chose d'inhabituel (transfert d'urgence, retour partiel, disposition exceptionnelle en conditionnement) → ajoutez une note dans le formulaire et signalez à votre responsable. Une trace vaut mieux qu'aucune.
 
@@ -1223,14 +835,10 @@ Si vous avez fait quelque chose d'inhabituel (transfert d'urgence, retour partie
 | Erreur | Impact | Comment l'éviter |
 |---|---|---|
 | Laisser une case vide au lieu de 0 dans un comptage | Stock non remis à zéro — écart accumulé | Toujours saisir 0 pour un stock épuisé |
-| Oublier de cocher le Cold Crash | Lot bloqué dans Fermentation, invisible dans Transferts | Cocher dès la mise en froid |
-| Saisir le total sur la ligne principale en conditionnement parallèle | Doublage de la production dans le stock | Chaque ligne parallèle porte sa propre quantité |
 | Corriger un stock négatif par un comptage gonflé | Masque un problème réel | Chercher la cause avec un responsable |
 | Créer un retour sans numéro d'avoir | Bloqué par le système | Demander le numéro à la comptabilité avant de commencer |
 | Saisir des décimales dans un transfert | Erreur de soumission | Compter en unités entières |
-| Mélanger deux bières dans une session de conditionnement | Attribution incorrecte de la production | Une session par bière, sans exception |
 | Avancer une commande B2B sans avoir préparé le colis | Statut incorrect — problèmes logistiques | Vérifier physiquement avant de changer le statut |
-| Saisir un lot dans Conditionnement avec le mauvais format | Stock attribué à la mauvaise référence | Relire la ligne avant soumission |
 | Confondre "pas compté" et "zéro" | Valeur précédente conservée ou stock faussé | Comprendre la règle vide/zéro |
 
 ### 7.3 Cas particulier : limitation e-shop
@@ -1247,8 +855,6 @@ Comme mentionné en section 6.4, certaines ventes e-shop peuvent ne pas décrém
 |---|---|---|
 | Page blanche ou erreur d'affichage | Rafraîchissez la page (balayage vers le bas sur mobile) | Contactez votre responsable |
 | Formulaire qui ne se soumet pas | Vérifiez les champs rouges (obligatoires manquants) | Contactez votre responsable |
-| Lot absent de la liste dans Conditionnement | Vérifiez que le lot est en cuve BBT/CCT (transfert fait ?) | Contactez votre responsable |
-| Lot absent de la liste dans Transferts | Vérifiez que le Cold Crash est enregistré | Contactez votre responsable |
 | Stock négatif inexplicable | Ne corrigez pas — signalez avec détails | Responsable enquête |
 | Commande B2B absente de la liste | Vérifiez les filtres (statut, date) | Contactez votre responsable |
 | Impossible de se connecter | Vérifiez Wi-Fi, URL correcte (`app.maltytask.ch`) | Contactez un administrateur |
@@ -1327,34 +933,6 @@ La synchronisation Shopify → application se fait régulièrement mais peut avo
 **Q : Comment annuler une commande interne que j'ai créée par erreur ?**
 
 L'annulation est réservée aux managers. Contactez votre responsable avec le détail de la commande à annuler.
-
----
-
-### Sur la production
-
-**Q : Je voulais soumettre un brassage mais la recette n'est pas dans la liste. Que faire ?**
-
-La liste ne contient que les recettes actives. Si une recette est absente, soit elle n'a pas encore été enregistrée, soit elle est désactivée. Contactez votre responsable.
-
----
-
-**Q : J'ai oublié de saisir un run de conditionnement d'hier. Puis-je le saisir aujourd'hui ?**
-
-Oui. Les formulaires acceptent une date passée pour la session. Saisissez-le le plus tôt possible avec la date correcte. Signalez à votre responsable s'il y a un écart de stock visible entre-temps.
-
----
-
-**Q : Le formulaire de conditionnement m'avertit d'une valeur improbable. Que faire ?**
-
-Lisez l'avertissement attentivement :
-- Si la valeur est correcte (vous avez produit cette quantité) → soumettez et notez-le à votre responsable.
-- Si vous avez un doute → revérifiez la valeur avant de soumettre.
-
----
-
-**Q : Je vois un lot en Fermentation qui ne m'appartient pas. Puis-je le modifier ?**
-
-Non. Ne modifiez jamais un lot d'un autre opérateur ou d'une autre équipe. Si vous pensez qu'il y a une erreur sur un lot qui n'est pas le vôtre, signalez-le à votre responsable.
 
 ---
 
@@ -1483,9 +1061,6 @@ Ce glossaire définit les termes utilisés dans l'application et dans ce manuel.
 | **Fût 20L** | Fût de 20 litres de bière pression (appelé "keg" en anglais, jamais en opérateur). |
 | **Cuve de service** | Grand contenant de bière pression pour le taproom (appelé "cuv" en technique). |
 | **Lot** | Brassin identifié par la combinaison recette + N° de brassin. Tracé de A à Z. |
-| **BBT** | Bright Beer Tank : cuve de bière filtrée, prête à conditionner. |
-| **CCT** | Cuve de Conditionnement / de fermentation (selon contexte). |
-| **Cold Crash** | Refroidissement forcé d'un lot en fin de fermentation, avant transfert. |
 | **Disposition** | En conditionnement : catégorie d'unités hors circuit vendable (casse, QA, taproom…). |
 | **Avoir** | Document comptable émis quand un client retourne de la marchandise. |
 | **Blanc de livraison (BL)** | Bon de livraison accompagnant une expédition. |
@@ -1493,7 +1068,6 @@ Ce glossaire définit les termes utilisés dans l'application et dans ce manuel.
 | **Clôture mensuelle** | Comptage de fin de mois servant de base aux calculs comptables. |
 | **Giveaway** | Produit offert sans vente formelle (cadeau, dégustation, presse). |
 | **Quarantaine** | Zone de produits en attente d'analyse ou de décision (ni vendables, ni éliminés). |
-| **Hors process** | Mode réservé aux managers : déverrouille des opérations normalement bloquées. |
 | **B2B** | Vente entre professionnels (bars, restaurants, distributeurs). |
 | **E-shop / Boutique en ligne** | Site de vente en ligne de La Nébuleuse (via Shopify). |
 | **Taproom** | Espace de vente et dégustation directe de La Nébuleuse. |
@@ -1502,48 +1076,7 @@ Ce glossaire définit les termes utilisés dans l'application et dans ce manuel.
 
 ---
 
-## Annexe E — Dispositions de conditionnement
-
-Les dispositions permettent d'enregistrer avec précision ce qui sort du circuit vendable lors d'un run de conditionnement. Choisir la bonne disposition est important pour la traçabilité et pour le calcul de la taxe bière.
-
-### Tableau complet des dispositions
-
-| Disposition | Ce que ça signifie | Taxée ? | Comptée en stock ? |
-|---|---|---|---|
-| **Invendable** | Bière produite mais non vendable (goût, aspect, défaut). Consommable mais pas vendable. | Oui | Non (hors stock vendable) |
-| **Unité perdue (pleine)** | Unité pleine définitivement perdue (casse avant capsulage, vol constaté, etc.). BOM entier déduit. | Non | Non |
-| **Perte liquide sans capsule** | Bière remplie dans le contenant mais jamais capsulée / fermée. | Non | Non |
-| **Perte liquide à moitié remplie** | Contenant à moitié rempli — compte pour 0,5 unité dans le BOM. | Non | Non |
-| **Bibliothèque QA** | Échantillons conservés pour la bibliothèque qualité (archivage, analyses futures). | Neutre | Non |
-| **Mesures QA** | Unités utilisées pour les analyses qualité en cours (pH, oxygène, micro…). | Neutre | Non |
-| **Fût taproom** | Fût mis directement en service au taproom sans passer par le stock vendable. | Oui | Non (hors stock vendable) |
-| **Perte capuchon fût** | Perte de capuchon de fût uniquement — ne touche pas au volume. | N/A | N/A |
-| **Perte étiquettes** | Perte d'étiquettes uniquement — ne touche pas au volume. | N/A | N/A |
-| **Perte 4-packs** | Perte d'emballages 4-packs uniquement — ne touche pas au volume. | N/A | N/A |
-
-### Comment les utiliser
-
-- **Volume vendable** : calculé automatiquement par le système à partir des dispositions. Ne le saisissez pas.
-- Les dispositions **"Perte capuchon / étiquettes / 4-packs"** n'affectent que les matières premières d'emballage, pas la bière elle-même.
-- En cas de doute sur quelle disposition utiliser → utilisez **"Invendable"** et précisez en note. Un responsable peut corriger si nécessaire.
-- N'inventez pas de dispositions. Utilisez uniquement celles de cette liste.
-
-### Exemples concrets
-
-| Situation | Disposition à choisir |
-|---|---|
-| Caisse tombée, bouteilles cassées | Unité perdue (pleine) |
-| Bouteilles remplies mais avec mousse excessive, bouchées sans carbonatation correcte | Invendable |
-| Bouteilles remplies mais la capsuleuse tombe en panne avant capsulage | Perte liquide sans capsule |
-| Bouteilles remplies à mi-course d'un run interrompu | Perte liquide à moitié remplie |
-| 2 bouteilles mises de côté pour analyse au labo | Mesures QA |
-| 6 bouteilles archivées pour la bibliothèque du brasseur | Bibliothèque QA |
-| Fût branché directement au taproom depuis la salle de cuve | Fût taproom |
-| 10 capuchons de fûts perdus pendant la pose | Perte capuchon fût |
-
----
-
-## Annexe F — Listes de contrôle (checklists)
+## Annexe E — Listes de contrôle (checklists)
 
 Ces checklists sont des aide-mémoire rapides. Elles ne remplacent pas les procédures détaillées du manuel.
 
@@ -1562,11 +1095,9 @@ Ces checklists sont des aide-mémoire rapides. Elles ne remplacent pas les proc�
 
 - [ ] Avancer le statut des commandes au fur et à mesure (Confirmée → Préparée → BL imprimé → Livrée).
 - [ ] Saisir les transferts inter-sites dès qu'un déplacement de stock est effectué.
-- [ ] Saisir les runs de conditionnement dans les deux heures suivant la fin de la session.
 
 #### Soir
 
-- [ ] Vérifier que tous les runs de la journée ont bien été saisis en Conditionnement.
 - [ ] Vérifier que toutes les expéditions du jour ont leur statut à jour (Livrée ou BL imprimé).
 - [ ] Saisir les transferts inter-sites effectués en fin de journée si ce n'est pas encore fait.
 
@@ -1601,64 +1132,6 @@ Ces checklists sont des aide-mémoire rapides. Elles ne remplacent pas les proc�
 **Après soumission :**
 - [ ] Consulter le Stock PF par site pour vérifier que les chiffres sont cohérents avec le comptage.
 - [ ] Signaler tout écart inexpliqué > 5% à votre responsable.
-
----
-
-### Checklist mensuelle — Comptage Matières Premières
-
-À réaliser en fin de mois, idéalement sur 1-2 jours.
-
-**Avant de commencer :**
-- [ ] Vérifier que le comptage du mois précédent est archivé (votre responsable peut le confirmer).
-- [ ] Avoir accès à toutes les zones de stockage MP (magasin malts, chambre froide houblons, local emballages…).
-- [ ] Identifier les ingrédients récemment reçus qui ne seraient pas encore dans la liste (signaler au responsable).
-
-**Pendant le comptage :**
-- [ ] Malts : compter sac par sac, noter le poids (kg) et le N° de lot si visible.
-- [ ] Houblons : compter par contenant/variété, noter en kg ou g.
-- [ ] Adjuvants et minéraux : noter en kg, g ou L selon l'unité habituelle.
-- [ ] Emballages : noter en nombre d'unités (capsules, étiquettes, cartons) ou en poids si applicable.
-- [ ] Produits de nettoyage : noter en L ou kg.
-
-**Saisie dans l'application :**
-- [ ] Ouvrir Inventaire MP.
-- [ ] Vérifier que la période est bien le mois en cours.
-- [ ] Pour chaque ingrédient compté : chercher → saisir → Ajouter.
-- [ ] Pour les ingrédients épuisés : chercher → saisir 0 → Ajouter.
-- [ ] Fermer l'application une fois terminé (la sauvegarde est automatique ligne par ligne).
-
-**Après saisie :**
-- [ ] Signaler à votre responsable si un ingrédient attendu n'est pas dans la liste.
-- [ ] Signaler tout stock négatif ou suspect (ex. stock présent mais non consommé depuis des mois).
-
----
-
-### Checklist — Saisie d'un run de conditionnement
-
-À compléter pour chaque session de mise en emballage.
-
-**Avant de commencer la session physique :**
-- [ ] Confirmer le lot source (bière en BBT/CCT) avec le brasseur responsable.
-- [ ] Prendre les mesures CO₂ et O₂ avant le premier remplissage.
-- [ ] Identifier le(s) format(s) à conditionner ce jour.
-- [ ] Si white label : confirmer le nom du client avec le responsable.
-
-**Pendant la session :**
-- [ ] Compter les unités au fur et à mesure (ne pas se fier à la mémoire en fin de run).
-- [ ] Identifier et compter les dispositions (casse, QA, invendables…) au fil de la session.
-
-**Saisie dans l'application :**
-- [ ] Ouvrir Conditionnement.
-- [ ] Sélectionner le bon lot source.
-- [ ] Sélectionner le bon type de run.
-- [ ] Sélectionner le bon format.
-- [ ] Saisir CO₂ et O₂ (si pas déjà repris automatiquement).
-- [ ] Saisir la quantité principale.
-- [ ] Si formats parallèles : ajouter chaque ligne parallèle avec sa propre quantité.
-- [ ] Compléter les dispositions si nécessaire.
-- [ ] Relire le récapitulatif avant soumission.
-- [ ] Soumettre.
-- [ ] Vérifier que le Stock PF a bien augmenté de la quantité produite (vue Stock PF par site).
 
 ---
 
@@ -1709,56 +1182,13 @@ Ces checklists sont des aide-mémoire rapides. Elles ne remplacent pas les proc�
 
 ---
 
-## Annexe G — Scénarios courants et conduite à tenir
+## Annexe F — Scénarios courants et conduite à tenir
 
 Cette annexe décrit les situations inhabituelles les plus fréquentes et la marche à suivre recommandée. Elle complète les procédures standard.
 
 ---
 
-### Scénario 1 : Le lot n'apparaît pas dans la liste Transferts
-
-**Symptôme :** vous cherchez un lot pour un transfert mais il n'apparaît pas dans la liste des lots éligibles.
-
-**Causes possibles et vérifications :**
-
-1. **Le Cold Crash n'est pas enregistré.**
-   - Aller dans Fermentation → trouver le lot → vérifier si "Cold Crash" est coché.
-   - Si non coché : le cocher maintenant (avec la date réelle du Cold Crash) et soumettre.
-   - Revenir dans Transferts : le lot devrait maintenant apparaître.
-
-2. **La durée de garde minimale n'est pas atteinte.**
-   - Le brasseur responsable peut confirmer si le lot est prêt.
-   - Si une exception est justifiée → demander à un manager d'activer le mode Hors process.
-
-3. **Le brassage n'a pas été saisi.**
-   - Si le lot n'existe pas encore dans le système (aucune trace en Fermentation non plus) → le brassage doit être saisi en premier.
-
-4. **Le lot est dans une cuve mais la cuve n'est pas renseignée.**
-   - Un manager peut corriger l'affectation de cuve directement.
-
-**À ne pas faire :** ne pas forcer le transfert en créant une saisie manuelle hors procédure. Contacter votre responsable.
-
----
-
-### Scénario 2 : Un run de conditionnement a été oublié
-
-**Symptôme :** le Stock PF est plus bas qu'attendu et vous réalisez qu'un run n'a pas été saisi.
-
-**Conduite à tenir :**
-
-1. Retrouvez vos notes ou documents physiques du run (papier de comptage, etc.).
-2. Ouvrez le formulaire Conditionnement.
-3. Saisissez le run avec la **date réelle de la session** (pas la date du jour si c'est différent).
-4. Vérifiez que la quantité saisie correspond bien à ce qui a été produit ce jour-là.
-5. Soumettez.
-6. Consultez le Stock PF : vérifiez que la correction est visible.
-7. Signalez à votre responsable qu'un run avait été omis et qu'il a été rattrapé.
-
-> Si vous ne retrouvez pas les données du run (quantité exacte, format, dispositions), prévenez votre responsable plutôt que de saisir une estimation.
-
----
-
-### Scénario 3 : Une commande e-shop contient une référence non disponible en stock
+### Scénario 1 : Une commande e-shop contient une référence non disponible en stock
 
 **Symptôme :** vous préparez une commande e-shop mais la référence demandée est absente du stock ou en quantité insuffisante.
 
@@ -1774,7 +1204,7 @@ Cette annexe décrit les situations inhabituelles les plus fréquentes et la mar
 
 ---
 
-### Scénario 4 : Un transfert inter-sites a été saisi avec la mauvaise direction
+### Scénario 2 : Un transfert inter-sites a été saisi avec la mauvaise direction
 
 **Symptôme :** vous avez saisi un transfert de site A vers site B alors que c'était B vers A (ou vous avez échangé les sites).
 
@@ -1789,7 +1219,7 @@ Cette annexe décrit les situations inhabituelles les plus fréquentes et la mar
 
 ---
 
-### Scénario 5 : Un client conteste les quantités d'une livraison déjà marquée Livrée
+### Scénario 3 : Un client conteste les quantités d'une livraison déjà marquée Livrée
 
 **Symptôme :** une commande est en statut Livrée dans le système mais le client affirme avoir reçu moins (ou plus) que commandé.
 
@@ -1798,11 +1228,11 @@ Cette annexe décrit les situations inhabituelles les plus fréquentes et la mar
 1. Ne modifiez pas le statut ou les quantités dans l'application.
 2. Signalez à votre responsable avec les informations : numéro de commande, client, quantité système, quantité contestée par le client.
 3. Votre responsable coordonne avec la comptabilité pour la suite (avoir, retour, ajustement).
-4. Si un retour physique s'ensuit → appliquer la procédure Retours & avoirs (Annexe F checklist + section 5.1).
+4. Si un retour physique s'ensuit → appliquer la procédure Retours & avoirs (Annexe E checklist + section 5.1).
 
 ---
 
-### Scénario 6 : L'application est inaccessible (panne réseau ou serveur)
+### Scénario 4 : L'application est inaccessible (panne réseau ou serveur)
 
 **Symptôme :** `app.maltytask.ch` ne s'ouvre plus, ou affiche une erreur de connexion.
 
@@ -1819,7 +1249,7 @@ Cette annexe décrit les situations inhabituelles les plus fréquentes et la mar
 
 ---
 
-### Scénario 7 : Deux opérateurs ont compté le même site le même jour
+### Scénario 5 : Deux opérateurs ont compté le même site le même jour
 
 **Symptôme :** deux comptages ont été soumis pour le même site à la même date (peut arriver si deux opérateurs travaillent en parallèle sans coordination).
 
@@ -1833,21 +1263,7 @@ Cette annexe décrit les situations inhabituelles les plus fréquentes et la mar
 
 ---
 
-### Scénario 8 : Un ingrédient n'est pas trouvable dans la liste de l'Inventaire MP
-
-**Symptôme :** vous cherchez un ingrédient dans le formulaire Inventaire MP mais il n'apparaît pas, même en tapant plusieurs lettres.
-
-**Conduite à tenir :**
-
-1. Essayez différentes graphies (accent / sans accent, abréviation vs nom complet, langue allemande vs française pour certains ingrédients).
-2. Si vous ne trouvez toujours pas → **ne saisissez pas un ingrédient "proche"** comme substitut.
-3. Signalez à votre responsable : l'ingrédient peut ne pas être encore référencé dans le système.
-4. Un manager ou administrateur peut créer la référence manquante.
-5. Revenez saisir le comptage une fois la référence créée.
-
----
-
-### Scénario 9 : La vue Boutique en ligne n'affiche pas une commande attendue
+### Scénario 6 : La vue Boutique en ligne n'affiche pas une commande attendue
 
 **Symptôme :** un client signale avoir passé une commande en ligne mais elle n'apparaît pas dans la vue Boutique en ligne.
 
@@ -1862,7 +1278,7 @@ Cette annexe décrit les situations inhabituelles les plus fréquentes et la mar
 
 ---
 
-### Scénario 10 : Le stock affiché semble beaucoup trop élevé pour une référence e-shop
+### Scénario 7 : Le stock affiché semble beaucoup trop élevé pour une référence e-shop
 
 **Symptôme :** une référence très active en boutique en ligne affiche un stock qui ne descend pas malgré de nombreuses ventes.
 
@@ -1878,7 +1294,7 @@ Cette annexe décrit les situations inhabituelles les plus fréquentes et la mar
 
 ---
 
-## Annexe H — Utilisation de l'application sur tablette : conseils pratiques
+## Annexe G — Utilisation de l'application sur tablette : conseils pratiques
 
 ### Configuration recommandée
 
@@ -1926,7 +1342,7 @@ Si l'écran de la tablette se bloque pendant une saisie en cours et que les donn
 
 ---
 
-## Annexe I — Contacts et responsabilités
+## Annexe H — Contacts et responsabilités
 
 ### Qui contacter pour quoi
 
@@ -1936,7 +1352,6 @@ Si l'écran de la tablette se bloque pendant une saisie en cours et que les donn
 | Erreur de saisie déjà soumise (conditionnement, transfert, retour) | Manager ou administrateur |
 | Annulation d'un transfert inter-sites | Administrateur uniquement |
 | Écart de stock important constaté lors d'un comptage | Responsable logistique |
-| Lot bloqué ou absent dans les formulaires | Responsable brassage |
 | Numéro d'avoir pour un retour client | Service comptabilité |
 | Commande B2B absente ou erronée | Responsable logistique + comptabilité |
 | Commande e-shop non reçue dans l'application | Responsable logistique ou administrateur |
@@ -1947,10 +1362,8 @@ Si l'écran de la tablette se bloque pendant une saisie en cours et que les donn
 ### Ce que vous pouvez faire sans demander d'autorisation
 
 - Lire et consulter toutes les vues (stock, commandes, historique, etc.).
-- Soumettre des formulaires de production (brassage, fermentation, conditionnement, transferts de cuve).
 - Avancer les statuts des commandes dans l'ordre normal.
 - Saisir un comptage Stock PF (à la date du jour).
-- Saisir un comptage Matières Premières.
 - Saisir un transfert inter-sites.
 - Créer une commande interne.
 - Ajouter un élément au stock d'accompagnement.
