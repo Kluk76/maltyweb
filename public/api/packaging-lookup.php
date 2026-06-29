@@ -26,7 +26,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
 }
 
 // ── Whitelisted modes ─────────────────────────────────────────────────────────
-$allowedModes = ['day', 'batch'];
+$allowedModes = ['day', 'batch', 'recent'];
 $mode = $_GET['mode'] ?? '';
 if (!in_array($mode, $allowedModes, true)) {
     http_response_code(400);
@@ -36,6 +36,76 @@ if (!in_array($mode, $allowedModes, true)) {
 
 try {
     $pdo = maltytask_pdo();
+
+    // ── B2: mode=recent — early return ────────────────────────────────────────
+    if ($mode === 'recent') {
+        $skuIdRaw = $_GET['sku_id'] ?? '';
+        $skuId    = (int) $skuIdRaw;
+        if ($skuId <= 0) {
+            http_response_code(400);
+            echo json_encode(['ok' => false, 'error' => 'sku_id invalide (entier positif requis).']);
+            exit;
+        }
+
+        // Human format labels resolved server-side — no DB nomenclature in UI.
+        $runTypeLabels = [
+            'bot'   => 'Bouteille',
+            'can'   => 'Canette',
+            'can33' => 'Canette',
+            'keg'   => 'Fût / Keg',
+            'cuv'   => 'Cuve de service',
+        ];
+
+        $recentStmt = $pdo->prepare(
+            "SELECT p.id,
+                    p.event_date,
+                    COALESCE(NULLIF(p.neb_batch,''), NULLIF(p.contract_batch,'')) AS batch,
+                    p.run_type,
+                    rs.sku_code,
+                    COALESCE(r.name, '') AS recipe_name,
+                    p.prod_total_units,
+                    COALESCE(rg.n_readings, 0) AS n_readings,
+                    rg.avg_co2,
+                    rg.avg_o2
+               FROM bd_packaging_v2 p
+               LEFT JOIN ref_skus    rs ON rs.id = p.sku_id_fk
+               LEFT JOIN ref_recipes r  ON r.id  = p.recipe_id_fk
+               LEFT JOIN (
+                   SELECT packaging_v2_id,
+                          COUNT(*)         AS n_readings,
+                          ROUND(AVG(co2),3) AS avg_co2,
+                          ROUND(AVG(o2), 2) AS avg_o2
+                     FROM bd_packaging_readings
+                    GROUP BY packaging_v2_id
+               ) rg ON rg.packaging_v2_id = p.id
+              WHERE p.sku_id_fk   = ?
+                AND p.is_tombstoned = 0
+              ORDER BY p.event_date DESC, p.id DESC
+              LIMIT 10"
+        );
+        $recentStmt->execute([$skuId]);
+        $runs = $recentStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        foreach ($runs as &$run) {
+            $rt = (string)($run['run_type'] ?? '');
+            $run['format_human']     = $runTypeLabels[$rt] ?? strtoupper($rt);
+            $run['n_readings']       = (int) $run['n_readings'];
+            $run['prod_total_units'] = $run['prod_total_units'] !== null ? (int)$run['prod_total_units'] : null;
+            $run['avg_co2']          = $run['avg_co2'] !== null ? (float)$run['avg_co2'] : null;
+            $run['avg_o2']           = $run['avg_o2']  !== null ? (float)$run['avg_o2']  : null;
+        }
+        unset($run);
+
+        echo json_encode([
+            'ok'     => true,
+            'sku_id' => $skuId,
+            'runs'   => $runs,
+        ], JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
+        exit;
+    }
+
+    // ── $skuId initialised here so it is in scope for the batch response ─────
+    $skuId = 0;
 
     // ── Build WHERE clause depending on mode ──────────────────────────────────
     if ($mode === 'day') {
@@ -137,6 +207,7 @@ try {
 
     // ── CO2/O2 aggregates ─────────────────────────────────────────────────────
     $co2o2 = [];
+    $bbtCarbonation = null;
     if (!empty($events)) {
         $ids       = array_column($events, 'id');
         $inMarks   = implode(',', array_fill(0, count($ids), '?'));
@@ -156,6 +227,39 @@ try {
                 'avg_co2'    => $row['avg_co2'] !== null ? (float) $row['avg_co2'] : null,
                 'avg_o2'     => $row['avg_o2']  !== null ? (float) $row['avg_o2']  : null,
             ];
+        }
+    }
+
+    // ── B1a: BBT carbonation fallback (mode=batch only) ──────────────────────
+    // Fetch upstream soutirage carbonation when the run has zero in-package gas
+    // readings. Keyed on packaging.recipe_id_fk → racking.COALESCE(neb_recipe_id_fk,
+    // contract_recipe_id_fk) and the shared batch key. Returned as a SEPARATE field
+    // — never folded into $co2o2 — because BBT O₂ ≠ in-package O₂.
+    if ($mode === 'batch' && empty($co2o2) && !empty($events)) {
+        $firstEv   = $events[0];
+        $fRecipeId = (int)($firstEv['recipe_id_fk'] ?? 0);
+        $fBatch    = (string)($firstEv['batch'] ?? '');
+        if ($fRecipeId > 0 && $fBatch !== '') {
+            $bbtStmt = $pdo->prepare(
+                "SELECT bbt_co2, bbt_o2, event_date
+                   FROM bd_racking_v2
+                  WHERE COALESCE(neb_recipe_id_fk, contract_recipe_id_fk) = ?
+                    AND COALESCE(NULLIF(neb_batch,''), NULLIF(contract_batch,'')) = ?
+                    AND is_tombstoned = 0
+                    AND racking_destination_type = 'BBT'
+                    AND bbt_co2 IS NOT NULL
+                  ORDER BY event_date DESC
+                  LIMIT 1"
+            );
+            $bbtStmt->execute([$fRecipeId, $fBatch]);
+            $bbtRow = $bbtStmt->fetch(PDO::FETCH_ASSOC);
+            if ($bbtRow) {
+                $bbtCarbonation = [
+                    'co2'                => $bbtRow['bbt_co2'] !== null ? (float)$bbtRow['bbt_co2'] : null,
+                    'o2'                 => $bbtRow['bbt_o2']  !== null ? (float)$bbtRow['bbt_o2']  : null,
+                    'racking_event_date' => $bbtRow['event_date'],
+                ];
+            }
         }
     }
 
@@ -404,14 +508,16 @@ try {
     }
 
     echo json_encode([
-        'ok'      => true,
-        'events'  => $events,
-        'co2o2'   => $co2o2,
+        'ok'             => true,
+        'sku_id'         => $skuId ?: null,
+        'events'         => $events,
+        'co2o2'          => $co2o2,
+        'bbt_carbonation'=> $bbtCarbonation,
         'summary' => [
-            'n_events'         => count($events),
-            'total_units'      => $totalUnits,
-            'total_vendable_hl'  => round($totalVendableHl, 4),
-            'total_loss_kpi_hl'  => round($totalLossKpiHl,  4),
+            'n_events'          => count($events),
+            'total_units'       => $totalUnits,
+            'total_vendable_hl' => round($totalVendableHl, 4),
+            'total_loss_kpi_hl' => round($totalLossKpiHl,  4),
         ],
     ], JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 

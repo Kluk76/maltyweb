@@ -920,6 +920,31 @@
         + '</div>';
     }
 
+    // B1a: BBT carbonation fallback — shown only when 0 in-package gas readings.
+    // Structurally separate: BBT O₂ ≠ in-package O₂ — never conflate.
+    var bbtHtml = '';
+    var zeroInPackageReads = (qa.n_readings === null || qa.n_readings === 0);
+    if (zeroInPackageReads && run.bbt_carbonation) {
+      var bbt = run.bbt_carbonation;
+      var bbtCo2Str = bbt.co2 != null ? fmtNum(parseFloat(bbt.co2), 2) : '—';
+      var bbtO2Str  = bbt.o2  != null ? Math.round(parseFloat(bbt.o2)).toString() : '—';
+      var bbtDateStr = bbt.racking_event_date
+        ? formatFrenchDate(bbt.racking_event_date.substring(0, 10)) : '—';
+      bbtHtml = '<div class="qa-bbt-section">'
+        + '<div class="qa-bbt-section__label">Carbonatation en BBT (soutirage)</div>'
+        + '<div class="qa-reading-row">'
+        + '<span class="qa-glyph">CO₂</span>'
+        + '<span class="qa-val">' + esc(bbtCo2Str) + '</span>'
+        + '<span class="qa-unit">g/L · soutirage du ' + esc(bbtDateStr) + '</span>'
+        + '</div>'
+        + '<div class="qa-reading-row">'
+        + '<span class="qa-glyph">O₂</span>'
+        + '<span class="qa-val">' + esc(bbtO2Str) + '</span>'
+        + '<span class="qa-unit">ppb · BBT pré-soutireuse</span>'
+        + '</div>'
+        + '</div>';
+    }
+
     var cipHtml = renderCipBlock(run);
 
     return provenanceHtml
@@ -933,6 +958,7 @@
       + '<span class="qa-val">' + esc(o2Str) + '</span>'
       + '<span class="qa-unit">ppb moy.</span>'
       + '</div>'
+      + bbtHtml
       + '<div class="qa-field">'
       + '<span class="qa-field__label">Prélèvements (analyses)</span>'
       + '<span class="qa-val">' + esc(String(qaAn)) + ' u</span>'
@@ -1143,7 +1169,13 @@
   /* ── Public: renderBatch ───────────────────────────────── */
   function renderBatch(container, data) {
     if (!data.events || data.events.length === 0) {
-      container.innerHTML = '<p style="color:var(--ink-label);padding:20px 0">Aucun résultat.</p>';
+      // B2: auto-show recent runs list when sku_id is known and no batch matched
+      if (data.sku_id) {
+        var nearestPanel = container.closest('.lookup-panel');
+        renderRecentFromApi(container, data.sku_id, nearestPanel);
+      } else {
+        container.innerHTML = '<p style="color:var(--ink-label);padding:20px 0">Aucun résultat.</p>';
+      }
       return;
     }
 
@@ -1201,9 +1233,22 @@
       sibling_qa: ev.sibling_qa || null,
       cip: ev.cip || [],
       cip_sibling: ev.cip_sibling || null,
+      // B1a: upstream BBT carbonation — separate field, never merged into run.qa
+      bbt_carbonation: data.bbt_carbonation || null,
     };
 
     container.innerHTML = renderBatchViewHtml(run);
+
+    // B2: inject "Voir les derniers soutirages" trigger below the batch view
+    if (data.sku_id) {
+      var triggerWrap = document.createElement('div');
+      triggerWrap.className = 'pkg-recent-trigger-wrap';
+      triggerWrap.innerHTML = '<button type="button" class="pkg-recent-trigger"'
+        + ' data-sku-id="' + esc(String(data.sku_id)) + '">'
+        + 'Voir les derniers soutirages'
+        + '</button>';
+      container.appendChild(triggerWrap);
+    }
   }
 
   /* ── Public: renderDay ─────────────────────────────────── */
@@ -1258,10 +1303,84 @@
     container.innerHTML = html;
   }
 
+  /* ── B2: fetch mode=recent and render ─────────────────── */
+  function renderRecentFromApi(container, skuId, panel) {
+    var endpoint = (panel && panel.getAttribute('data-endpoint'))
+      || '/api/packaging-lookup.php';
+    container.innerHTML = '<p class="lp-loading">Chargement…</p>';
+    fetch(endpoint + '?mode=recent&sku_id=' + encodeURIComponent(skuId),
+          { credentials: 'same-origin' })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (!data.ok) {
+          container.innerHTML = '<p style="color:var(--ink-label);padding:20px 0">'
+            + esc(data.error || 'Erreur API') + '</p>';
+          return;
+        }
+        renderRecent(container, data);
+      })
+      .catch(function (err) {
+        container.innerHTML = '<p style="color:var(--ink-label);padding:20px 0">'
+          + 'Erreur réseau : ' + esc(err.message) + '</p>';
+      });
+  }
+
+  /* ── B2: render mode=recent list as .day-card rows ─────── */
+  function renderRecent(container, data) {
+    if (!data.runs || data.runs.length === 0) {
+      container.innerHTML = '<p style="color:var(--ink-label);padding:20px 0">'
+        + 'Aucun run récent enregistré pour ce SKU.</p>';
+      return;
+    }
+    var skuId = data.sku_id;
+    var html = '<div class="pkg-recent-list">';
+    for (var i = 0; i < data.runs.length; i++) {
+      var r = data.runs[i];
+      var co2Str  = r.avg_co2 != null ? fmtNum(parseFloat(r.avg_co2), 1) + ' g/L' : '—';
+      var o2Str   = r.avg_o2  != null ? Math.round(parseFloat(r.avg_o2)) + ' ppb' : '—';
+      var units   = r.prod_total_units != null
+        ? Number(r.prod_total_units).toLocaleString('fr-CH') + ' u' : '—';
+      var dateStr = r.event_date ? formatFrenchDate(r.event_date) : '—';
+      var batchStr = r.batch != null ? String(r.batch) : '—';
+      var fmtHuman = r.format_human || '—';
+      html += '<div class="day-card" tabindex="0" role="button"'
+        + ' data-sku-id="' + esc(String(skuId || '')) + '"'
+        + ' data-batch="' + esc(batchStr) + '"'
+        + ' aria-label="Voir le run lot ' + esc(batchStr) + ' — ' + esc(fmtHuman) + '">'
+        + '<div class="day-card__recipe">' + esc(dateStr) + ' · lot&nbsp;' + esc(batchStr) + '</div>'
+        + '<div class="day-card__format">' + esc(fmtHuman) + '</div>'
+        + '<div class="day-card__readings">'
+        + '<div class="day-reading"><div class="day-reading__label">Unités</div>'
+        + '<div class="day-reading__val day-reading__val--hero">' + esc(units) + '</div></div>'
+        + '<div class="day-reading"><div class="day-reading__label">CO₂</div>'
+        + '<div class="day-reading__val">' + esc(co2Str) + '</div></div>'
+        + '<div class="day-reading"><div class="day-reading__label">O₂</div>'
+        + '<div class="day-reading__val">' + esc(o2Str) + '</div></div>'
+        + '</div>'
+        + '</div>';
+    }
+    html += '</div>';
+    container.innerHTML = html;
+  }
+
+  /* ── B2: delegated click on .pkg-recent-trigger ─────────── */
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest('.pkg-recent-trigger');
+    if (!btn) return;
+    var skuId = btn.getAttribute('data-sku-id');
+    if (!skuId) return;
+    var panel = btn.closest('.lookup-panel');
+    if (!panel) return;
+    var resultEl = document.getElementById(panel.id + '-results');
+    if (!resultEl) return;
+    renderRecentFromApi(resultEl, skuId, panel);
+  });
+
   /* ── Export ────────────────────────────────────────────── */
   window.PackagingConsulter = {
-    renderBatch: renderBatch,
-    renderDay:   renderDay,
+    renderBatch:   renderBatch,
+    renderDay:     renderDay,
+    renderRecent:  renderRecent,
   };
 
 }());
