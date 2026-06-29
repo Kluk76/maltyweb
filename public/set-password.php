@@ -9,23 +9,17 @@ require_once __DIR__ . "/../app/services/rate_limit.php";
 
 maltytask_session_start();
 
-// Already logged in? Bounce to dashboard.
-if (current_user() !== null) {
-    header("Location: /modules/mon-tableau.php", true, 302);
-    exit;
-}
-
 $pdo = maltytask_pdo();
+
+// ── Two-step param read: default first, then validate ────────────────────────
+$rawToken = $_GET['token'] ?? '';
+$rawToken = is_string($rawToken) ? trim($rawToken) : '';
 
 // ── Brewery identity: read once, used in all footer renders ──────────────────
 $bi              = brewery_identity();
 $biName          = htmlspecialchars($bi['name'],         ENT_QUOTES, 'UTF-8');
 $biCity          = htmlspecialchars($bi['city'],         ENT_QUOTES, 'UTF-8');
 $biCountryCode   = htmlspecialchars($bi['country_code'], ENT_QUOTES, 'UTF-8');
-
-// ── Two-step param read: default first, then validate ────────────────────────
-$rawToken = $_GET['token'] ?? '';
-$rawToken = is_string($rawToken) ? trim($rawToken) : '';
 
 // ── Generic invalid-token message (no user-enumeration) ─────────────────────
 $invalidHtml = '<!doctype html><html lang="fr"><head>'
@@ -48,6 +42,24 @@ $invalidHtml = '<!doctype html><html lang="fr"><head>'
     . '</section>'
     . '<footer class="auth__foot"><span>' . $biName . ' · Est. 2014</span><span>' . $biCity . ' · ' . $biCountryCode . '</span></footer>'
     . '</main></body></html>';
+
+// ── Session-aware guard: honour a valid token even when already authenticated ──
+// Normally we bounce logged-in users; but an admin clicking their own reset link
+// must be allowed through. We pre-look up the token BEFORE deciding to bounce:
+// no valid token  → bounce to dashboard (same as before — stale/absent link).
+// valid token     → tear down the current session and this device's remember-me
+//                   cookie, then re-open a fresh session for CSRF/form rendering.
+// There is intentionally no distinct message for the "logged in as someone else"
+// case — the single generic $invalidHtml remains the only failure surface.
+if (current_user() !== null) {
+    $preInvite = ($rawToken !== '') ? invite_lookup($pdo, $rawToken) : null;
+    if ($preInvite === null) {
+        header("Location: /modules/mon-tableau.php", true, 302);
+        exit;
+    }
+    auth_logout();
+    maltytask_session_start();
+}
 
 // ── GET: validate token; render form or invalid message ──────────────────────
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
