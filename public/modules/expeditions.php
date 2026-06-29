@@ -27,6 +27,7 @@ require_once __DIR__ . '/../../app/db-write-helpers.php';
 require_once __DIR__ . '/../../app/csrf.php';
 require_once __DIR__ . '/../../app/fg-stock.php';
 require_once __DIR__ . '/../../app/repack.php';
+require_once __DIR__ . '/../../app/stocktake-helpers.php';
 
 require_page_access('expeditions');
 $me = current_user();
@@ -777,12 +778,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'stocktake') {
     $stCountedAt = isset($_POST['counted_at'])  ? trim((string) $_POST['counted_at']) : '';
     $stCountType = isset($_POST['month_end_census']) ? 'month_end' : 'operational';
 
-    // ── Back-date coercion: operators are always locked to today ─────────
-    // A forged POST from an operator that includes a past date must be
-    // silently coerced to today, not rejected — same as if they hadn't
-    // changed the locked picker at all.
+    // ── Back-date coercion: operators limited to 30-day window ───────────
+    // A forged POST from an operator with a date outside the 30-day window
+    // is silently coerced to today. Within the window, the date is accepted.
     if (!$canBackdate) {
-        $stCountedAt = date('Y-m-d');
+        $thirtyDaysAgo = date('Y-m-d', strtotime('-30 days'));
+        if ($stCountedAt < $thirtyDaysAgo) {
+            $stCountedAt = date('Y-m-d');
+        }
+    }
+
+    // ── Motif extraction (for past-date corrections) ──────────────────────
+    $stMotif     = trim((string) ($_POST['correction_motif'] ?? ''));
+    $stMotifNote = trim((string) ($_POST['correction_note']  ?? ''));
+    $stAuditNote = 'Saisie inventaire FG multi-site';
+    if ($stMotif !== '') {
+        $validMotifs = ['erreur-saisie', 'casse', 'perte', 'retrouve', 'autre'];
+        if (in_array($stMotif, $validMotifs, true)) {
+            $stAuditNote = 'Correction (' . $stMotif . ')'
+                . ($stMotifNote !== '' ? ': ' . mb_substr($stMotifNote, 0, 200) : '');
+        }
     }
 
     $stErrors = [];
@@ -833,7 +848,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'stocktake') {
             // units_per_pack=1 post-redenomination — store qty as-entered (bottles).
             // Negative already rejected above.
 
-            $stValidLines[] = ['sku_id' => $sid, 'qty' => $qty];
+            $stValidLines[] = ['sku_id' => $sid, 'qty' => $qty, 'sku_code' => $allowedSkuIds[$sid]['sku_code']];
         }
     }
 
@@ -851,34 +866,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'stocktake') {
     $stMonthClosed = substr($stCountedAt, 0, 7); // 'YYYY-MM'
     $stLocName     = $allowedLocationIds[$stLocId]['name'];
 
+    // ── Guardrail: operators cannot edit sealed months or month_end rows ──
+    if (!$canBackdate && $stCountedAt !== date('Y-m-d')) {
+        if (exp_st_month_is_sealed($pdo, $stMonthClosed)) {
+            flash_set('err', 'Mois clôturé — contactez la finance pour corriger cet inventaire.');
+            redirect_to('/modules/expeditions.php?view=stocktake&loc=' . $stLocId);
+        }
+        if (exp_st_has_month_end_row($pdo, $stLocId, $stCountedAt)) {
+            flash_set('err', 'Cet inventaire est un inventaire de clôture mensuelle — modification réservée à la gestion.');
+            redirect_to('/modules/expeditions.php?view=stocktake&loc=' . $stLocId);
+        }
+    }
+    // Operators cannot set count_type to month_end
+    if (!$canBackdate) {
+        $stCountType = 'operational';
+    }
+
     // ── Snapshot: dump current rows for this location to a JSON file ──────
     // Best-effort — log_revision gives the real audit trail; this is belt-and-suspenders.
-    try {
-        $snapDir = __DIR__ . '/../../data/fg-stocktake-snapshots';
-        if (!is_dir($snapDir)) {
-            @mkdir($snapDir, 0755, true);
-        }
-        $snapStmt = $pdo->prepare(
-            'SELECT * FROM inv_fg_stocktake WHERE location_id_fk = ? AND is_active = 1 ORDER BY id ASC'
-        );
-        $snapStmt->execute([$stLocId]);
-        $snapRows = $snapStmt->fetchAll(PDO::FETCH_ASSOC);
-        $snapFile = $snapDir . '/loc' . $stLocId . '-' . date('Ymd-His') . '.json';
-        file_put_contents($snapFile, json_encode($snapRows, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
-        // Keep last 3 snapshots per location
-        $pattern = $snapDir . '/loc' . $stLocId . '-*.json';
-        $existing = glob($pattern);
-        if ($existing !== false && count($existing) > 3) {
-            usort($existing, fn($a, $b) => strcmp($a, $b));
-            $toDelete = array_slice($existing, 0, count($existing) - 3);
-            foreach ($toDelete as $old) {
-                @unlink($old);
-            }
-        }
-    } catch (Throwable $snapEx) {
-        // Snapshot failure must never block the write
-        error_log('[expeditions stocktake snapshot] ' . $snapEx->getMessage());
-    }
+    exp_st_snapshot($pdo, $stLocId);
 
     // ── Write transaction ─────────────────────────────────────────────────
     try {
@@ -886,70 +892,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'stocktake') {
 
         $upsertCount = 0;
 
-        $insSt = $pdo->prepare(
-            'INSERT INTO inv_fg_stocktake
-                (sku, sku_id_fk, source, counted_at, month_closed, qty, submitted_by,
-                 source_form_response_id, location_id_fk, is_active, count_type)
-             VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, 1, ?)
-             ON DUPLICATE KEY UPDATE
-                qty          = VALUES(qty),
-                submitted_by = VALUES(submitted_by),
-                counted_at   = VALUES(counted_at),
-                count_type   = VALUES(count_type),
-                updated_at   = CURRENT_TIMESTAMP'
-        );
-
         foreach ($stValidLines as $line) {
-            $sid      = $line['sku_id'];
-            $qty      = $line['qty'];
-            $skuCode  = $allowedSkuIds[$sid]['sku_code'];
-
-            // row_hash = sha256("fgct|{sku_id_fk}|{location_id_fk}|{counted_at}")
-            $rowHash = hash('sha256', 'fgct|' . $sid . '|' . $stLocId . '|' . $stCountedAt);
-
-            // Read existing row for log_revision before-snapshot
-            $beforeStmt = $pdo->prepare(
-                'SELECT * FROM inv_fg_stocktake WHERE row_hash = ? LIMIT 1'
-            );
-            $beforeStmt->execute([$rowHash]);
-            $beforeRow = $beforeStmt->fetch(PDO::FETCH_ASSOC) ?: null;
-            $beforeRowInt = $beforeRow !== null ? (int) $beforeRow['id'] : 0;
-
-            $insSt->execute([
-                $skuCode,
-                $sid,
-                'maltyweb-form',
-                $stCountedAt,
-                $stMonthClosed,
-                $qty,
-                $me['username'],
-                $stLocId,
-                $stCountType,
-            ]);
-
-            // Fetch PK after upsert
-            $upsertedPk = (int) $pdo->lastInsertId();
-            if ($upsertedPk === 0 && $beforeRowInt > 0) {
-                $upsertedPk = $beforeRowInt;
+            $res = exp_st_do_upsert($pdo, $me, $stLocId, $stCountedAt, $stCountType, (int)$line['sku_id'], (float)$line['qty'], (string)$line['sku_code'], $stAuditNote);
+            if ($res['ok']) {
+                $upsertCount++;
             }
-
-            if ($upsertedPk > 0) {
-                log_revision($pdo, $me, 'inv_fg_stocktake', $upsertedPk, $beforeRow,
-                    [
-                        'sku'             => $skuCode,
-                        'sku_id_fk'       => $sid,
-                        'location_id_fk'  => $stLocId,
-                        'counted_at'      => $stCountedAt,
-                        'month_closed'    => $stMonthClosed,
-                        'qty'             => $qty,
-                        'source'          => 'maltyweb-form',
-                        'submitted_by'    => $me['username'],
-                        'count_type'      => $stCountType,
-                    ],
-                    'normal',
-                    'Saisie inventaire FG multi-site');
-            }
-            $upsertCount++;
         }
 
         $pdo->commit();
@@ -3118,26 +3065,7 @@ $csrf          = csrf_token();
 $active_module = 'expeditions';
 $todayDate     = date('Y-m-d'); // used for overdue + today emphasis in commandes view
 
-/**
- * Returns true if a SKU with the given stocktake_scope is visible at a site
- * with the given site_type.
- *
- * Visibility matrix:
- *   base   → always (all site types)
- *   cage   → production + warehouse only
- *   single → pos only
- *   none   → never
- */
-function exp_st_scope_allowed(string $scope, string $siteType): bool
-{
-    return match ($scope) {
-        'base'   => true,
-        'cage'   => in_array($siteType, ['production', 'warehouse'], true),
-        'single' => $siteType === 'pos',
-        'none'   => false,
-        default  => false,
-    };
-}
+// exp_st_scope_allowed() is defined in app/stocktake-helpers.php (included above).
 
 // ── Stock-health thresholds — tunable presentation constants ─────────────────
 // Kouros may adjust these without touching the state model logic.
@@ -6318,17 +6246,19 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
   // exp_site_type_label() is defined globally above (used by both stock + stocktake views).
 
   // ── Role-gated date selection ─────────────────────────────────────────────
-  // Managers/admins can pass ?date=YYYY-MM-DD to edit/backfill a past date.
-  // Operators always see today; $stRenderCanBackdate mirrors the POST-handler gate.
-  $stRenderCanBackdate = is_manager() || is_admin();
-  $stToday = date('Y-m-d');
+  // Managers/admins can pass ?date=YYYY-MM-DD for any date back to 2020-01-01.
+  // Operators can pass ?date= within a 30-day window; $stRenderCanBackdate mirrors POST gate.
+  $stRenderCanBackdate = is_manager() || is_admin(); // full date range
+  $stOperatorBackdate  = !$stRenderCanBackdate;       // operators: 30-day window only
+  $stToday    = date('Y-m-d');
+  $stMinDate  = $stOperatorBackdate ? date('Y-m-d', strtotime('-30 days')) : '2020-01-01';
 
-  if ($stRenderCanBackdate && isset($_GET['date'])) {
+  if (isset($_GET['date']) && ($stRenderCanBackdate || $stOperatorBackdate)) {
       $stDateRaw = trim((string) $_GET['date']);
-      // Validate: YYYY-MM-DD, not future, not absurdly old
+      // Validate: YYYY-MM-DD, not future, not before min date
       if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $stDateRaw)
           && $stDateRaw <= $stToday
-          && $stDateRaw >= '2020-01-01') {
+          && $stDateRaw >= $stMinDate) {
           $stSelDate = $stDateRaw;
       } else {
           $stSelDate = $stToday; // invalid ?date → silently fall back to today
@@ -6336,6 +6266,7 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
   } else {
       $stSelDate = $stToday;
   }
+  $stIsEditingPastDate = ($stSelDate !== $stToday);
 
   // ── Prefill map for the selected (location, date) ─────────────────────────
   // When a manager picks a past date that already has counts, we show those
@@ -6356,7 +6287,7 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
           $stPrefillMap[(int) $pf['sku_id_fk']] = (float) $pf['qty'];
       }
   }
-  $stIsEditingPastDate = ($stSelDate !== $stToday);
+  // $stIsEditingPastDate is set above in the date-selection block.
 
   // ── Monday freshness computation ──────────────────────────────────────────
   // Current ISO week's Monday
@@ -6429,14 +6360,24 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
     window.EXP_CSRF           = <?= json_encode($csrf, JSON_HEX_TAG | JSON_HEX_AMP) ?>;
     window.EXP_ST_IS_MANAGER  = <?= json_encode($stRenderCanBackdate, JSON_HEX_TAG | JSON_HEX_AMP) ?>;
     window.EXP_ST_SEL_LOC_ID  = <?= json_encode($stSelLocId, JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+    window.EXP_ST_SEL_DATE     = <?= json_encode($stSelDate, JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+    window.EXP_ST_SEL_LOC_NAME = <?= json_encode($stSelLoc ? $stSelLoc['name'] : '', JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+    window.EXP_ST_LATEST_DATE  = <?= json_encode($stLastCounted[$stSelLocId] ?? null, JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+    window.EXP_ST_MIN_DATE     = <?= json_encode($stMinDate, JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+    window.EXP_ST_DATE_NAVIGATE = <?= json_encode($stRenderCanBackdate || $stOperatorBackdate, JSON_HEX_TAG | JSON_HEX_AMP) ?>;
   </script>
+<?php if ($view === 'stocktake'): ?>
+<link rel="stylesheet"
+      href="/css/expeditions-guided.css?v=<?= filemtime(__DIR__ . '/../../public/css/expeditions-guided.css') ?>">
+<?php endif ?>
 
 
   <?php
   // Build date query-string suffix used in navigation links.
-  // Managers: preserve ?date= when it differs from today (so location-chip
-  // clicks stay in edit mode for the same date). Operators: never append date.
-  $stDateQs = ($stRenderCanBackdate && $stSelDate !== $stToday)
+  // Any role editing a past date: preserve ?date= so location-chip clicks
+  // stay on the same date. Operators are now allowed 30-day backdating, so
+  // this applies to them too (not just managers).
+  $stDateQs = ($stIsEditingPastDate)
       ? '&amp;date=' . htmlspecialchars($stSelDate)
       : '';
   ?>
@@ -6506,6 +6447,27 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
   </div>
   <?php endif ?>
 
+  <?php
+  $stLatestDate = $stLastCounted[$stSelLocId] ?? null;
+  $stShowLatestWarning = $stIsEditingPastDate
+      && !$stRenderCanBackdate
+      && $stLatestDate !== null
+      && $stSelDate !== $stLatestDate;
+  ?>
+  <?php if ($stShowLatestWarning): ?>
+  <div class="exp-st-past-warning" role="alert">
+    <span class="exp-st-past-warning__icon" aria-hidden="true">⚠</span>
+    <span class="exp-st-past-warning__text">
+      Vous corrigez un inventaire <strong>passé</strong>
+      (du <?= exp_fmt_date($stSelDate) ?>).
+      Le tableau s'appuie sur l'inventaire du
+      <strong><?= exp_fmt_date($stLatestDate) ?></strong> (plus récent)
+      et <strong>NE changera PAS</strong>.
+      Pour corriger le stock actuel, modifiez le dernier inventaire.
+    </span>
+  </div>
+  <?php endif ?>
+
   <!-- ── Count form ─────────────────────────────────────────────────────────── -->
   <form method="POST"
         action="/modules/expeditions.php?view=stocktake"
@@ -6527,15 +6489,14 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
                min="2020-01-01"
                data-base-url="/modules/expeditions.php?view=stocktake&amp;loc=<?= $stSelLocId ?>">
         <span class="exp-st-date-hint">Chaque lundi de préférence · date modifiable</span>
-        <?php else: ?>
+        <?php else: // Operator: editable within 30-day window ?>
         <input type="date" id="exp-st-counted-at" name="counted_at"
-               class="exp-st-date-input exp-st-date-input--readonly"
+               class="exp-st-date-input"
                value="<?= htmlspecialchars($stDefaultCountedAt) ?>"
                max="<?= $stToday ?>"
-               min="<?= $stToday ?>"
-               readonly
-               aria-readonly="true">
-        <span class="exp-st-date-hint">Chaque lundi de préférence</span>
+               min="<?= htmlspecialchars($stMinDate) ?>"
+               data-base-url="/modules/expeditions.php?view=stocktake&amp;loc=<?= $stSelLocId ?>">
+        <span class="exp-st-date-hint">Chaque lundi · correction possible jusqu'à 30 j</span>
         <?php endif ?>
       </div>
 
@@ -6698,6 +6659,36 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
       </label>
     </div>
 
+    <?php if ($stIsEditingPastDate): ?>
+    <div class="exp-st-correction-motif">
+      <label class="exp-st-label" for="exp-st-motif">Motif de la correction</label>
+      <select id="exp-st-motif" name="correction_motif" class="exp-st-motif-select" required>
+        <option value="">— Choisir un motif —</option>
+        <option value="erreur-saisie">Erreur de saisie</option>
+        <option value="casse">Casse / produit endommagé</option>
+        <option value="perte">Perte / vol</option>
+        <option value="retrouve">Produit retrouvé</option>
+        <option value="autre">Autre</option>
+      </select>
+      <input type="text" id="exp-st-motif-note" name="correction_note"
+             class="exp-st-motif-note" maxlength="200"
+             placeholder="Note optionnelle (200 car. max)"
+             autocomplete="off">
+    </div>
+    <?php endif ?>
+
+    <!-- ── Mode guidé ──────────────────────────────────────────────────────── -->
+    <div class="exp-st-guided-trigger">
+      <button type="button" class="exp-st-guided-btn" id="exp-st-guided-open"
+              aria-expanded="false" aria-controls="exp-st-guided-overlay">
+        <span class="exp-st-guided-btn__icon" aria-hidden="true">▶</span>
+        Comptage guidé (1 SKU à la fois)
+      </button>
+      <span class="exp-st-guided-hint">
+        Force un comptage complet — chaque SKU demandé individuellement
+      </span>
+    </div>
+
     <!-- ── Submit bar ─────────────────────────────────────────────────────── -->
     <?php if (can_write_expeditions($me)): ?>
     <div class="exp-st-submit-bar">
@@ -6710,6 +6701,49 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
     <?php endif ?>
 
   </form>
+
+  <!-- ── Guided census overlay ────────────────────────────────────────────── -->
+  <div class="exp-st-guided-overlay" id="exp-st-guided-overlay" hidden
+       aria-label="Comptage guidé">
+    <div class="exp-st-guided-card">
+      <div class="exp-st-guided-progress" id="exp-st-guided-progress">
+        <div class="exp-st-guided-progress-bar">
+          <div class="exp-st-guided-progress-fill" id="exp-st-guided-fill"></div>
+        </div>
+        <span class="exp-st-guided-progress-label" id="exp-st-guided-label">0 / 0 comptés</span>
+      </div>
+      <div class="exp-st-guided-sku" id="exp-st-guided-sku">
+        <span class="exp-st-guided-sku-family" id="exp-st-guided-family"></span>
+        <span class="exp-st-guided-sku-code" id="exp-st-guided-code"></span>
+        <span class="exp-st-guided-sku-unit" id="exp-st-guided-unit"></span>
+      </div>
+      <div class="exp-st-guided-input-wrap">
+        <input type="number" id="exp-st-guided-qty" class="exp-st-guided-qty"
+               min="0" step="1" inputmode="numeric" autocomplete="off"
+               aria-label="Quantité comptée" placeholder="0">
+      </div>
+      <p class="exp-st-guided-status" id="exp-st-guided-status" role="status" aria-live="polite"></p>
+      <div class="exp-st-guided-actions">
+        <button type="button" class="exp-st-guided-zero" id="exp-st-guided-zero">0 et suivant</button>
+        <button type="button" class="exp-st-guided-next" id="exp-st-guided-next">Valider et suivant</button>
+      </div>
+      <div class="exp-st-guided-footer">
+        <button type="button" class="exp-st-guided-pause" id="exp-st-guided-pause">Pause (reprendre plus tard)</button>
+        <button type="button" class="exp-st-guided-quit" id="exp-st-guided-quit">Quitter le mode guidé</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Final gate dialog ─────────────────────────────────────────────────── -->
+  <dialog class="exp-st-guided-dialog" id="exp-st-guided-dialog" aria-modal="true">
+    <div class="exp-st-guided-dialog__inner">
+      <p class="exp-st-guided-dialog__msg" id="exp-st-guided-dialog-msg"></p>
+      <div class="exp-st-guided-dialog__actions">
+        <button type="button" class="exp-st-guided-dialog__confirm" id="exp-st-guided-dialog-confirm">Passer à 0 et terminer</button>
+        <button type="button" class="exp-st-guided-dialog__cancel" id="exp-st-guided-dialog-cancel">Retour au comptage</button>
+      </div>
+    </div>
+  </dialog>
 
   <?php endif ?>
   <!-- /INVENTAIRE FG -->
@@ -8227,6 +8261,7 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
 
 <?php if ($view === 'stocktake'): ?>
 <script src="/js/expeditions-stocktake.js?v=<?= @filemtime(__DIR__ . '/../js/expeditions-stocktake.js') ?: time() ?>"></script>
+<script defer src="/js/expeditions-stocktake-guided.js?v=<?= @filemtime(__DIR__ . '/../js/expeditions-stocktake-guided.js') ?: time() ?>"></script>
 <?php endif ?>
 
 <?php if ($view === 'side-stock'): ?>
