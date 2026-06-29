@@ -16,8 +16,9 @@ declare(strict_types=1);
  * Pure SELECTs only. No writes, no side-effects.
  */
 
-require_once __DIR__ . '/settings.php';  // system_setting() — app/settings.php:46
-require_once __DIR__ . '/fg-stock.php';  // fg_stock_location_snapshot() — app/fg-stock.php:1462
+require_once __DIR__ . '/settings.php';         // system_setting() — app/settings.php:46
+require_once __DIR__ . '/fg-stock.php';         // fg_stock_location_snapshot() — app/fg-stock.php:1462
+require_once __DIR__ . '/fulfilment-site.php';  // exp_user_home_site_type() — THE single home-site resolver
 
 /**
  * Returns the operator-configured staleness threshold in whole days.
@@ -150,60 +151,21 @@ function census_site_status(PDO $pdo): array
 }
 
 /**
- * MIRROR of exp_user_home_site_type() at public/modules/expeditions.php:3227.
- *
- * Cannot be called directly: that function lives in a render-page that executes
- * top-level code on include (not an includable lib), so it cannot be require'd.
- * This helper replicates its precedence byte-faithfully (verified against
- * expeditions.php:3227-3246 on 2026-06-29).
- *
- * Precedence (manager_scope ALWAYS wins over preset_key):
- *   1. manager_scope (ENUM('production','logistics','all','finance'), NULL for operators)
- *        'production' → 'production'
- *        'logistics'  → 'warehouse'
- *        any other non-null ('all'/'finance'/…) → null (no single home)
- *   2. only when manager_scope IS NULL — preset_key (from ref_access_presets)
- *        'production_operator' → 'production'
- *        'logistics_operator'  → 'warehouse'
- *        'marketing'           → 'pos'
- *        anything else / NULL  → null (no home site)
- *
- * TODO(arch): extract exp_user_home_site_type() into a shared app/ lib so this
- * helper and expeditions.php both call ONE home (avoids drift). Surfaced to PM.
- */
-function _census_home_site_type(?string $managerScope, ?string $presetKey): ?string
-{
-    // Precedence 1: manager_scope
-    if ($managerScope !== null) {
-        if ($managerScope === 'production') return 'production';
-        if ($managerScope === 'logistics')  return 'warehouse';
-        return null; // 'all'/'finance'/other → no single home
-    }
-
-    // Precedence 2: preset_key (only reached when manager_scope IS NULL)
-    if ($presetKey === 'production_operator') return 'production';
-    if ($presetKey === 'logistics_operator')  return 'warehouse';
-    if ($presetKey === 'marketing')           return 'pos';
-
-    return null;
-}
-
-/**
  * Returns users responsible for counting stock at the given site.
  *
  * Return shape (keyed by user id):
  *   array<int, array{id: int, email: string, display_name: string}>
  *
  * Only active users with a non-empty email are returned. A user is responsible
- * for a site when their resolved home site_type (via _census_home_site_type(),
- * the mirror of expeditions.php:exp_user_home_site_type()) equals the site's
+ * for a site when their resolved home site_type — via exp_user_home_site_type()
+ * (THE single home-site resolver, app/fulfilment-site.php) — equals the site's
  * site_type. Admins, viewers, and 'all'/'finance'-scope managers resolve to no
  * home and are therefore never returned here.
  *
  * Consignment sites have no natural owner → empty array (explicit, per spec).
  *
  * No N+1: ONE query joins users → ref_access_presets; precedence is applied in
- * PHP via _census_home_site_type() so manager_scope reliably beats preset_key.
+ * PHP via exp_user_home_site_type() so manager_scope reliably beats preset_key.
  * (A naive OR-SQL predicate would wrongly admit an 'all'-scope manager who
  * happens to carry an operator preset.)
  */
@@ -242,10 +204,12 @@ function census_responsible_users_for_site(PDO $pdo, int $siteId): array
 
     $result = [];
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
-        $homeType = _census_home_site_type(
-            $row['manager_scope'] !== null ? (string) $row['manager_scope'] : null,
-            $row['preset_key']    !== null ? (string) $row['preset_key']    : null
-        );
+        // Route every user through THE single resolver (app/fulfilment-site.php)
+        // so manager_scope reliably beats preset_key — no copied precedence.
+        $homeType = exp_user_home_site_type([
+            'manager_scope' => $row['manager_scope'],  // string|null
+            'preset_key'    => $row['preset_key'],      // string|null
+        ]);
         if ($homeType !== $targetSiteType) {
             continue;
         }

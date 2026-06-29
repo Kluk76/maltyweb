@@ -175,3 +175,46 @@ function _fulfilment_customer_default_site(PDO $pdo, int $customerId): int
     $cache[$customerId] = $siteId;
     return $siteId;
 }
+
+/**
+ * Returns the ref_sites.site_type for the logged-in user's home site, or null
+ * when the user spans all sites (admin/manager-all) and has no single home.
+ *
+ * THE single home-site resolver. Callers: public/modules/expeditions.php
+ * (render-layer home-site highlight) and app/census-responsibility.php
+ * (per-site count responsibility). Never copy this logic — call this function.
+ *
+ * Precedence 1 — manager_scope (set for managers, null for operators):
+ *   'production' → 'production'
+ *   'logistics'  → 'warehouse'
+ *   'all'        → null (all-scope manager: no single home site)
+ *
+ * Precedence 2 — access_preset_id_fk resolved to preset_key:
+ *   'production_operator' → 'production'
+ *   'logistics_operator'  → 'warehouse'
+ *   'marketing'           → 'pos'
+ *   anything else         → null
+ *
+ * $user must carry 'manager_scope' and 'preset_key' keys.
+ * Top-level (compile-time hoisted) — NEVER nest inside a conditional or render block.
+ */
+function exp_user_home_site_type(array $user): ?string
+{
+    // Precedence 1: manager_scope
+    $scope = $user['manager_scope'] ?? null;
+    if ($scope !== null) {
+        if ($scope === 'production') return 'production';
+        if ($scope === 'logistics')  return 'warehouse';
+        // 'all' or any future value → no single home
+        return null;
+    }
+
+    // Precedence 2: preset_key
+    $preset = $user['preset_key'] ?? null;
+    if ($preset === 'production_operator') return 'production';
+    if ($preset === 'logistics_operator')  return 'warehouse';
+    if ($preset === 'marketing')           return 'pos';
+
+    // admin / viewer / manager (no manager_scope) / unmapped → no home site
+    return null;
+}
