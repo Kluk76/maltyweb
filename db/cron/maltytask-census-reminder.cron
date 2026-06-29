@@ -1,0 +1,53 @@
+# /etc/cron.d/maltytask-census-reminder
+#
+# FG census staleness reminder: runs hourly (safe — script self-gates on
+# census_reminder_dow + census_reminder_hour from system_settings).
+# Exits 0 silently on all off-schedule hours.
+#
+# DOUBLE GATE — as delivered this cron sends NOTHING. TWO independent locks
+# keep it inert; the operator must release BOTH (in order) to activate it:
+#   (1) The active cron line below is COMMENTED OUT — so cron never invokes the
+#       script at all. Uncomment it manually only after the pre-flight checklist.
+#   (2) Even once invoked, census_reminder_email_mode (system_settings, section
+#       'fulfilment') is 'off' by default (seeded by mig 444) and the script
+#       exits 0 immediately on mode='off'. Uncommenting the line above has no
+#       effect until you also flip that setting to 'test' (then 'on').
+#
+# Pre-flight checklist:
+#   1. Confirm migration 444 has been applied:
+#        php scripts/migrate.php --status | grep 444
+#   2. Validate dry-run output:
+#        sudo -u maltytask php8.1 /var/www/maltytask/scripts/send-census-reminder.php --now --dry-run
+#      Review stdout — check that flagged sites appear and HTML looks correct.
+#   3. Flip mode to 'test' in system_settings (section 'fulfilment'):
+#        UPDATE system_settings SET value_text='test'
+#          WHERE key_name='census_reminder_email_mode' AND section='fulfilment';
+#   4. Send a live test email:
+#        sudo -u maltytask php8.1 /var/www/maltytask/scripts/send-census-reminder.php --now --apply
+#      Confirm the email arrives at the address stored in census_reminder_test_to.
+#   5. Adjust census_reminder_hour and census_reminder_dow as desired
+#      (both stored in system_settings, section 'fulfilment').
+#      Note: cron times are UTC; the script converts to local time via
+#      app_timezone() (e.g. Europe/Zurich = UTC+1 in winter, UTC+2 in summer).
+#      Example: to fire at 07:00 Zurich time in winter, set census_reminder_hour=7
+#      and keep the cron running hourly — it self-gates.
+#   6. Uncomment the active cron line below (remove the leading "# ").
+#   7. When ready for real recipients, update system_settings:
+#        UPDATE system_settings SET value_text='on'
+#          WHERE key_name='census_reminder_email_mode' AND section='fulfilment';
+#      From this point, each matching hour/dow the script emails responsible
+#      operators per site (consignment sites with no owner are skipped + logged).
+#
+# Source of truth: db/cron/maltytask-census-reminder.cron in the maltyweb repo.
+# Manual edits to /etc/cron.d/maltytask-census-reminder will be overwritten on
+# next deploy (bin/deploy.sh --apply).
+#
+# Note: cron syntax for /etc/cron.d/* requires the user column.
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# m   h  dom mon dow  user        command
+
+# DISABLED — uncomment only after completing the pre-flight checklist above.
+# 0   *   *   *   *   maltytask  flock -n /tmp/maltytask-census-reminder.lock php8.1 /var/www/maltytask/scripts/send-census-reminder.php --apply >> /var/log/maltytask/census-reminder.log 2>&1
