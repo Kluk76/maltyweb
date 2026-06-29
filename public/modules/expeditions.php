@@ -3145,15 +3145,7 @@ function exp_stock_level(array $row): array
  */
 function exp_format_family(string $format): string
 {
-    return match ($format) {
-        'Keg'             => 'keg',
-        'Bot'             => 'bot',
-        'Can'             => 'can',
-        'Can33'           => 'can33',
-        'Cuve de service' => 'cuv',
-        'multipack'       => 'multipack',
-        default           => 'other',
-    };
+    return fg_format_family($format);
 }
 
 /**
@@ -3161,15 +3153,7 @@ function exp_format_family(string $format): string
  */
 function exp_family_label(string $family): string
 {
-    return match ($family) {
-        'keg'        => 'Fût',
-        'bot'        => 'Bouteille',
-        'can'        => 'Canette',
-        'can33'      => 'Can 33',
-        'cuv'        => 'Cuve',
-        'multipack'  => 'Multipacks',
-        default      => 'Autre',
-    };
+    return fg_family_label($family);
 }
 
 /**
@@ -5049,15 +5033,7 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
   // Hardcoding display ORDER is acceptable per spec; hardcoding SKU names is not.
   // BU/CU = single-unit convention (SKU naming: BU/CU suffix = individual bottle/can,
   // taproom-only, not full packs). Detected by sku_code suffix, NOT by name.
-  $stockFamilyOrder = [
-      'Keg'            => 0,
-      'Bot'            => 1,
-      'Can'            => 2,
-      'Can33'          => 3,
-      'multipack'      => 4,
-      'Cuve de service'=> 5,
-      "À l'unité"      => 98,  // synthetic: SKUs with sku_code ending in BU or CU
-  ];
+  $stockFamilyOrder = fg_stock_family_order(); // canonical: defined in app/fg-stock.php
 
   $stockRows   = $fgStock['rows'] ?? [];
   $anchorMonth = $fgStock['anchor_month'] ?? null;
@@ -5357,6 +5333,7 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
       <input type="checkbox" id="exp-stock-sort-alerts" aria-label="Tri alertes d'abord">
       Alertes d'abord
     </label>
+    <a class="exp-stock-csv-btn" href="/api/expeditions-stock-csv.php" download>⬇ Exporter CSV</a>
   </div>
 
   <!-- ── E: Legend — maps 6 states to icon + label ─────────────────────────── -->

@@ -1925,6 +1925,32 @@ body.expeditions .exp-stock-sort-toggle input {
   height: 14px;
 }
 
+/* ── Stock PF CSV export button ──────────────────────────────────────────── */
+body.expeditions .exp-stock-csv-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.73rem;
+  letter-spacing: 0.04em;
+  padding: 5px 12px;
+  border-radius: 20px;
+  border: 1px solid var(--hop);
+  background: transparent;
+  color: var(--hop);
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+  touch-action: manipulation;
+  min-height: 44px;
+  white-space: nowrap;
+  margin-left: auto; /* push to right edge of the toolbar */
+}
+
+body.expeditions .exp-stock-csv-btn:hover {
+  background: color-mix(in srgb, var(--hop) 12%, transparent);
+}
+
 /* ── Stock table ──────────────────────────────────────────────────────────── */
 body.expeditions .exp-stock-table-wrap {
   overflow-x: auto;
@@ -7018,3 +7044,169 @@ body.expeditions .exp-ct-st-reel--over {
   font-weight: 600;
 }
 
+/* ── BC reconciliation banner ────────────────────────────────────────────── */
+body.expeditions .exp-bc-recon-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-elev);
+  border: 1px solid var(--ink-faint);
+  border-radius: 6px;
+  margin-bottom: 0.75rem;
+  font-size: 0.875rem;
+}
+body.expeditions .exp-bc-recon-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-family: 'DM Sans', sans-serif;
+  border: none;
+  cursor: default;
+  background: transparent;
+}
+body.expeditions .exp-bc-recon-chip--ok {
+  color: var(--hop);
+}
+body.expeditions .exp-bc-recon-chip--collision {
+  background: color-mix(in srgb, var(--ember) 12%, transparent);
+  color: var(--ember);
+  cursor: pointer;
+  border: 1px solid color-mix(in srgb, var(--ember) 30%, transparent);
+  border-radius: 12px;
+}
+body.expeditions .exp-bc-recon-chip--collision:hover {
+  background: color-mix(in srgb, var(--ember) 22%, transparent);
+}
+body.expeditions .exp-bc-recon-chip--collision:focus-visible {
+  outline: 2px solid var(--ember);
+  outline-offset: 2px;
+}
+body.expeditions .exp-bc-recon-chip--legacy {
+  color: var(--ember);
+}
+body.expeditions .exp-bc-recon-chip--ok-zero {
+  color: var(--ink-mute);
+  opacity: 0.7;
+}
+body.expeditions .exp-bc-recon-run-at {
+  margin-left: auto;
+  color: var(--ink-label);
+  font-size: 0.75rem;
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 0.02em;
+}
+/* drilldown dialog */
+body.expeditions .exp-bc-recon-dialog {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  max-width: 700px;
+  width: 95vw;
+}
+body.expeditions .exp-bc-recon-dialog[open] {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+}
+body.expeditions .exp-bc-recon-dialog::backdrop {
+  background: rgba(30, 18, 5, 0.45);
+}
+body.expeditions .exp-bc-recon-dialog__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1.25rem 0.5rem;
+  background: var(--bg-elev);
+  border-radius: 8px 8px 0 0;
+  border: 1px solid var(--ink-faint);
+  border-bottom: none;
+}
+body.expeditions .exp-bc-recon-dialog__header h3 {
+  margin: 0;
+  font-family: 'Fraunces', serif;
+  font-size: 1rem;
+  color: var(--ink);
+}
+body.expeditions .exp-bc-recon-dialog__close {
+  background: none;
+  border: none;
+  font-size: 1rem;
+  cursor: pointer;
+  color: var(--ink-mute);
+  padding: 0.25rem;
+}
+body.expeditions .exp-bc-recon-dialog__body {
+  background: var(--bg-elev);
+  border: 1px solid var(--ink-faint);
+  border-top: none;
+  border-radius: 0 0 8px 8px;
+  padding: 0.75rem 1.25rem 1rem;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+body.expeditions .exp-bc-recon-row {
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--ink-faint);
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+}
+body.expeditions .exp-bc-recon-row:last-child {
+  border-bottom: none;
+}
+body.expeditions .exp-bc-recon-row__bc-no {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 600;
+  color: var(--ink);
+  margin-right: 0.5rem;
+}
+body.expeditions .exp-bc-recon-row__kept {
+  color: var(--ink-label);
+  font-size: 0.78rem;
+}
+body.expeditions .exp-bc-recon-empty {
+  color: var(--ink-mute);
+  font-size: 0.85rem;
+}
+body.expeditions .exp-bc-recon-row__skus {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+}
+
+/* Stale + survendu/negatives: linked CTA chip on the stock board location cards */
+body.expeditions .exp-st-fresh-chip--cta {
+  background: color-mix(in srgb, var(--ember) 15%, var(--bg));
+  color: color-mix(in srgb, var(--ember) 85%, var(--ink));
+  border: 1px solid color-mix(in srgb, var(--ember) 30%, transparent);
+  text-decoration: none;
+  font-weight: 600;
+  transition: background 0.12s;
+}
+
+body.expeditions .exp-st-fresh-chip--cta:hover {
+  background: color-mix(in srgb, var(--ember) 22%, var(--bg));
+  text-decoration: underline;
+}
+
+/* "À recompter" overdue badge in the stocktake freshness bar */
+body.expeditions .exp-st-fresh-overdue-badge {
+  display: inline-flex;
+  align-items: center;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: color-mix(in srgb, var(--ember) 80%, var(--ink));
+  background: color-mix(in srgb, var(--ember) 10%, var(--bg));
+  border-radius: 10px;
+  padding: 1px 8px;
+  margin-top: 3px;
+  width: fit-content;
+}
