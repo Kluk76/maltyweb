@@ -150,31 +150,62 @@ function census_site_status(PDO $pdo): array
 }
 
 /**
+ * MIRROR of exp_user_home_site_type() at public/modules/expeditions.php:3227.
+ *
+ * Cannot be called directly: that function lives in a render-page that executes
+ * top-level code on include (not an includable lib), so it cannot be require'd.
+ * This helper replicates its precedence byte-faithfully (verified against
+ * expeditions.php:3227-3246 on 2026-06-29).
+ *
+ * Precedence (manager_scope ALWAYS wins over preset_key):
+ *   1. manager_scope (ENUM('production','logistics','all','finance'), NULL for operators)
+ *        'production' → 'production'
+ *        'logistics'  → 'warehouse'
+ *        any other non-null ('all'/'finance'/…) → null (no single home)
+ *   2. only when manager_scope IS NULL — preset_key (from ref_access_presets)
+ *        'production_operator' → 'production'
+ *        'logistics_operator'  → 'warehouse'
+ *        'marketing'           → 'pos'
+ *        anything else / NULL  → null (no home site)
+ *
+ * TODO(arch): extract exp_user_home_site_type() into a shared app/ lib so this
+ * helper and expeditions.php both call ONE home (avoids drift). Surfaced to PM.
+ */
+function _census_home_site_type(?string $managerScope, ?string $presetKey): ?string
+{
+    // Precedence 1: manager_scope
+    if ($managerScope !== null) {
+        if ($managerScope === 'production') return 'production';
+        if ($managerScope === 'logistics')  return 'warehouse';
+        return null; // 'all'/'finance'/other → no single home
+    }
+
+    // Precedence 2: preset_key (only reached when manager_scope IS NULL)
+    if ($presetKey === 'production_operator') return 'production';
+    if ($presetKey === 'logistics_operator')  return 'warehouse';
+    if ($presetKey === 'marketing')           return 'pos';
+
+    return null;
+}
+
+/**
  * Returns users responsible for counting stock at the given site.
  *
  * Return shape (keyed by user id):
  *   array<int, array{id: int, email: string, display_name: string}>
  *
- * Only users with a non-empty email are returned.
+ * Only active users with a non-empty email are returned. A user is responsible
+ * for a site when their resolved home site_type (via _census_home_site_type(),
+ * the mirror of expeditions.php:exp_user_home_site_type()) equals the site's
+ * site_type. Admins, viewers, and 'all'/'finance'-scope managers resolve to no
+ * home and are therefore never returned here.
  *
- * ── RESPONSIBILITY MAPPING UNCERTAINTY ──────────────────────────────────────
- * The task brief referenced exp_user_home_site_type() and exp_resolve_home_site()
- * in app/expeditions.php, but that file does not exist in this codebase (confirmed
- * by exhaustive grep). The users table has no home_site_id_fk column (verified
- * in migrations 001 + 261). The only user→site affinity signal available is
- * manager_scope ENUM('production','logistics','all','finance') on the users table.
+ * Consignment sites have no natural owner → empty array (explicit, per spec).
  *
- * CURRENT IMPLEMENTATION: conservative fallback using manager_scope.
- *   - 'consignment'  → EMPTY (explicitly no natural owner)
- *   - 'production'   → admins + managers with scope IN ('production','all')
- *   - 'warehouse'    → admins + managers with scope IN ('logistics','production','all')
- *                      (production ⊇ logistics, mirroring auth.php:manager_can())
- *   - 'pos' / other  → admins + all managers (no scope mapping found)
- *
- * REVIEW REQUIRED: Once a home-site FK or explicit responsibility table exists
- * in the schema, replace the WHERE clause below with a proper join. Tie the
- * change to whatever migration adds that column.
- * ────────────────────────────────────────────────────────────────────────────
+ * No N+1: ONE query joins users → ref_access_presets; precedence is applied in
+ * PHP via _census_home_site_type() so manager_scope reliably beats preset_key.
+ * (A naive OR-SQL predicate would wrongly admit an 'all'-scope manager who
+ * happens to carry an operator preset.)
  */
 function census_responsible_users_for_site(PDO $pdo, int $siteId): array
 {
@@ -186,38 +217,38 @@ function census_responsible_users_for_site(PDO $pdo, int $siteId): array
         return [];
     }
 
-    $siteType = $siteRow['site_type'];
+    $targetSiteType = $siteRow['site_type'];
 
     // Consignment sites have no natural owner — return empty explicitly.
-    if ($siteType === 'consignment') {
+    if ($targetSiteType === 'consignment') {
         return [];
     }
 
-    // Build the role + scope predicate for this site type.
-    // Mirrors manager_can() logic (app/auth.php:312-323): production ⊇ logistics.
-    $whereRole = match ($siteType) {
-        'production' =>
-            "(u.role = 'admin' OR (u.role = 'manager' AND u.manager_scope IN ('production','all')))",
-        'warehouse'  =>
-            "(u.role = 'admin' OR (u.role = 'manager' AND u.manager_scope IN ('logistics','production','all')))",
-        default      =>  // 'pos' and any future type — all managers + admins
-            "u.role IN ('admin','manager')",
-    };
-
+    // One query: every active emailed user + their preset_key. Filter in PHP so
+    // the manager_scope-beats-preset_key precedence is preserved exactly.
     $stmt = $pdo->query(
         "SELECT u.id,
                 u.email,
-                COALESCE(u.display_name, u.username) AS display_name
+                COALESCE(NULLIF(u.display_name, ''), u.username) AS display_name,
+                u.manager_scope,
+                p.preset_key
            FROM users u
+           LEFT JOIN ref_access_presets p ON p.id = u.access_preset_id_fk
           WHERE u.is_active = 1
             AND u.email IS NOT NULL
             AND u.email <> ''
-            AND $whereRole
-          ORDER BY u.display_name ASC"
+          ORDER BY display_name ASC"
     );
 
     $result = [];
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $homeType = _census_home_site_type(
+            $row['manager_scope'] !== null ? (string) $row['manager_scope'] : null,
+            $row['preset_key']    !== null ? (string) $row['preset_key']    : null
+        );
+        if ($homeType !== $targetSiteType) {
+            continue;
+        }
         $result[(int) $row['id']] = [
             'id'           => (int) $row['id'],
             'email'        => $row['email'],
