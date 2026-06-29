@@ -7441,6 +7441,7 @@ function kpi_handler_fg_stock(
         'fg_by_location'      => kpi_fg_by_location($label, $pdo),
         'value_tied_per_beer' => kpi_fg_value_tied_per_beer($label, $pdo),
         'fg_stock_variation'  => kpi_fg_stock_variation($label, $pdo),
+        'census_freshness'    => kpi_fg_census_freshness($label, $pdo),
         // GAP trackers: no source data yet → stub with informative note
         'fg_stockouts'            => kpi_fg_stub_gap('fg_stockouts', $label, 'Aucun seuil de réapprovisionnement défini dans ref_skus'),
         'fg_aging_best_before'    => kpi_fg_stub_gap('fg_aging_best_before', $label, 'Données DDM par lot non encore enregistrées'),
@@ -7464,6 +7465,104 @@ function kpi_fg_stub_gap(string $handler, string $label, string $note): array
         'note'    => $note,
     ];
     return $r;
+}
+
+/**
+ * #287 — FG-census freshness ("Fraîcheur des inventaires — à recompter").
+ * One row per active FG site: name + "compté il y a N jours" (or "jamais"),
+ * an overdue flag, and the count of SKUs at negative physical stock.
+ * Calls census_site_status() — never reimplements the staleness/anomaly logic.
+ * Lists all sites read-only (the handler has no per-viewer context, so the
+ * helper's per-site responsibility emphasis is intentionally not applied here;
+ * the tracker is gated at min_role='manager').
+ */
+function kpi_fg_census_freshness(string $label, PDO $pdo): array
+{
+    $cacheKey = 'fg_census_freshness';
+    if (($cached = kpi_cache_get($cacheKey)) !== null) {
+        return $cached;
+    }
+
+    if (!function_exists('census_site_status')) {
+        require_once __DIR__ . '/census-responsibility.php';
+    }
+
+    $sites = census_site_status($pdo);   // keyed by site_id
+    $list  = array_values($sites);
+
+    // Most urgent first: overdue before fresh; within each, never-counted (null
+    // days) ranks worst, then by days-since descending.
+    usort($list, static function (array $a, array $b): int {
+        if ($a['is_overdue'] !== $b['is_overdue']) {
+            return $a['is_overdue'] ? -1 : 1;
+        }
+        $da = $a['days_since'] ?? PHP_INT_MAX;
+        $db = $b['days_since'] ?? PHP_INT_MAX;
+        return $db <=> $da;
+    });
+
+    $overdueCount = 0;
+    $series       = [];
+    foreach ($list as $s) {
+        if ($s['is_overdue']) {
+            $overdueCount++;
+        }
+
+        $never = $s['last_counted'] === null;
+        $days  = $s['days_since'];
+
+        $when = $never
+            ? 'jamais compté'
+            : 'compté il y a ' . (int) $days . ((int) $days <= 1 ? ' jour' : ' jours');
+
+        $flags = [];
+        if ($s['is_overdue']) {
+            $flags[] = 'à recompter';
+        }
+        if ($s['negatives'] > 0) {
+            $flags[] = (int) $s['negatives'] . ' SKU' . ($s['negatives'] > 1 ? 's' : '') . ' en stock négatif';
+        }
+
+        $rowLabel = $s['name'] . ' — ' . $when
+            . (empty($flags) ? '' : ' · ' . implode(' · ', $flags));
+
+        $series[] = [
+            'key'   => 'site-' . (int) $s['site_id'],
+            'label' => $rowLabel,
+            'value' => $never ? null : (int) $days,
+            'meta'  => [
+                'site_id'      => (int) $s['site_id'],
+                'site_type'    => $s['site_type'],
+                'last_counted' => $s['last_counted'],
+                'is_overdue'   => (bool) $s['is_overdue'],
+                'negatives'    => (int) $s['negatives'],
+            ],
+        ];
+    }
+
+    $tint = match (true) {
+        $overdueCount === 0 => 'green',
+        $overdueCount === 1 => 'amber',
+        default             => 'red',
+    };
+
+    // value stays null on purpose: the 'table' renderers hardcode a "Total" line
+    // when value is set, which would mislabel the overdue-site count as a day
+    // total. Urgency is carried by tint + per-row flags + ordering instead.
+    $result = array_merge(kpi_empty_result($label, 'jours'), [
+        'value'  => null,
+        'tint'   => $tint,
+        'series' => $series,
+        'meta'   => [
+            'overdue_count' => $overdueCount,
+            'site_count'    => count($series),
+            'stale_days'    => census_stale_days_threshold($pdo),
+            'period_label'  => 'maintenant',
+            'note'          => 'Tous les sites PF actifs (lecture seule).',
+        ],
+    ]);
+
+    return kpi_cache_set($cacheKey, $result);
 }
 
 /**
