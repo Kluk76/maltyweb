@@ -75,9 +75,9 @@ unset($_catRows);
 // Build ordered list of categories (from canonical accessor), drop empty ones
 $_tbCategories = []; // [['key'=>'production','meta'=>[...],'rows'=>[...]], …]
 foreach (page_categories() as $_catKey => $_catMeta) {
-    $rows = $_tbByCategory[$_catKey] ?? [];
-    if (count($rows) === 0) continue; // no permitted children → don't render
-    $_tbCategories[] = ['key' => $_catKey, 'meta' => $_catMeta, 'rows' => $rows];
+    $_tbRows = $_tbByCategory[$_catKey] ?? [];
+    if (count($_tbRows) === 0) continue; // no permitted children → don't render
+    $_tbCategories[] = ['key' => $_catKey, 'meta' => $_catMeta, 'rows' => $_tbRows];
 }
 // Sort by order field from canonical accessor
 usort($_tbCategories, fn($a, $b) => $a['meta']['order'] <=> $b['meta']['order']);
