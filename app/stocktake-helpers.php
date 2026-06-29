@@ -48,6 +48,10 @@ function exp_st_snapshot(PDO $pdo, int $locId): void {
     }
 }
 
+/**
+ * Returns true when $monthKey has a sealed COGS fiche.
+ * Fail-closed: a seal-check error blocks the edit (refuse-don't-corrupt).
+ */
 function exp_st_month_is_sealed(PDO $pdo, string $monthKey): bool {
     try {
         $stmt = $pdo->prepare(
@@ -57,7 +61,7 @@ function exp_st_month_is_sealed(PDO $pdo, string $monthKey): bool {
         return (int) $stmt->fetchColumn() > 0;
     } catch (Throwable $e) {
         error_log('[exp_st_month_is_sealed] ' . $e->getMessage());
-        return false; // fail-open
+        return true; // fail-CLOSED
     }
 }
 

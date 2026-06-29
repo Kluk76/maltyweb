@@ -169,6 +169,25 @@ if (!$canBackdate && $countedAt !== $today) {
     }
 }
 
+// ── COGS/seal acknowledge gate for managers on month_end ─────────────────
+// Managers may correct sealed months but must explicitly acknowledge the
+// COGS impact. Re-validates seal state on every request — ack_seal=1
+// suppresses the warning, it does not bypass the check.
+if ($canBackdate && $countType === 'month_end') {
+    $monthForSeal = substr($countedAt, 0, 7);
+    if (exp_st_month_is_sealed($pdo, $monthForSeal)) {
+        if (empty($body['ack_seal'])) {
+            echo json_encode([
+                'ok'      => false,
+                'reason'  => 'seal_ack_required',
+                'warning' => 'Ce mois est scellé. La correction NE modifiera PAS la fiche COGS scellée tant que le responsable financier ne la re-scelle pas.',
+            ]);
+            exit;
+        }
+        // ack_seal=1 received — seal state confirmed above, proceed to upsert
+    }
+}
+
 // ── Audit note ────────────────────────────────────────────────────────────
 $validMotifs  = ['erreur-saisie', 'casse', 'perte', 'retrouve', 'autre'];
 $auditNote    = 'Saisie guidée FG';

@@ -882,6 +882,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'stocktake') {
         $stCountType = 'operational';
     }
 
+    // ── COGS/seal acknowledge gate for managers on month_end ─────────────
+    // Managers may correct sealed months but must explicitly acknowledge the
+    // COGS impact. Re-validates seal state even when seal_ack=1 is present.
+    if ($canBackdate && $stCountType === 'month_end') {
+        if (exp_st_month_is_sealed($pdo, $stMonthClosed)) {
+            if (!isset($_POST['seal_ack'])) {
+                flash_set('err', 'Ce mois est scellé. La correction NE modifiera PAS la fiche COGS scellée tant que le responsable financier ne la re-scelle pas.');
+                $locQs  = $stLocId > 0 ? '&loc=' . $stLocId : '';
+                $dateQs = ($stCountedAt !== date('Y-m-d')) ? '&date=' . urlencode($stCountedAt) : '';
+                redirect_to('/modules/expeditions.php?view=stocktake' . $locQs . $dateQs . '&seal_ack_required=1');
+            }
+            // seal_ack=1 present — seal state confirmed above, proceed to upsert
+        }
+    }
+
     // ── Snapshot: dump current rows for this location to a JSON file ──────
     // Best-effort — log_revision gives the real audit trail; this is belt-and-suspenders.
     exp_st_snapshot($pdo, $stLocId);
@@ -6689,6 +6704,21 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
       </span>
     </div>
 
+    <?php if (!empty($_GET['seal_ack_required']) && $stRenderCanBackdate): ?>
+    <!-- ── Seal acknowledgement (manager, month_end, sealed month) ───────── -->
+    <div class="exp-st-seal-warn" role="alert" aria-live="polite">
+      <span class="exp-st-seal-warn__icon" aria-hidden="true">⚠</span>
+      <span class="exp-st-seal-warn__text">
+        Ce mois est scellé. La correction <strong>NE modifiera PAS</strong> la fiche COGS scellée tant que le responsable financier ne la re-scelle pas.
+      </span>
+      <label class="exp-st-seal-warn__ack">
+        <input type="checkbox" name="seal_ack" value="1" required
+               aria-required="true">
+        <span>Je confirme</span>
+      </label>
+    </div>
+    <?php endif ?>
+
     <!-- ── Submit bar ─────────────────────────────────────────────────────── -->
     <?php if (can_write_expeditions($me)): ?>
     <div class="exp-st-submit-bar">
@@ -6741,6 +6771,18 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
       <div class="exp-st-guided-dialog__actions">
         <button type="button" class="exp-st-guided-dialog__confirm" id="exp-st-guided-dialog-confirm">Passer à 0 et terminer</button>
         <button type="button" class="exp-st-guided-dialog__cancel" id="exp-st-guided-dialog-cancel">Retour au comptage</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- ── Seal-ack dialog (guided mode, manager, sealed month) ─────────────── -->
+  <dialog class="exp-st-seal-dialog" id="exp-st-seal-dialog" aria-modal="true">
+    <div class="exp-st-seal-dialog__inner">
+      <p class="exp-st-seal-dialog__msg">
+        Ce mois est scellé. La correction <strong>NE modifiera PAS</strong> la fiche COGS scellée tant que le responsable financier ne la re-scelle pas.
+      </p>
+      <div class="exp-st-seal-dialog__actions">
+        <button type="button" class="exp-st-seal-dialog__confirm" id="exp-st-seal-dialog-confirm">J'ai compris, continuer</button>
       </div>
     </div>
   </dialog>

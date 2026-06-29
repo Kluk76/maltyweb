@@ -108,6 +108,22 @@
   var pauseBtn = qs('#exp-st-guided-pause');
   var quitBtn  = qs('#exp-st-guided-quit');
 
+  /* ── Seal-ack state (per guided session, not persisted) ─────────────────── */
+  var sealAcked   = false;
+  var sealDialog  = qs('#exp-st-seal-dialog');
+  var sealConfirm = qs('#exp-st-seal-dialog-confirm');
+
+  function showSealModal(cb) {
+    if (!sealDialog) { cb(); return; }
+    sealDialog.showModal();
+    function onConfirm() {
+      sealDialog.close();
+      sealConfirm.removeEventListener('click', onConfirm);
+      cb();
+    }
+    sealConfirm.addEventListener('click', onConfirm);
+  }
+
   /* ── Update progress bar ─────────────────────────────────────────────── */
   function updateProgress() {
     var doneCount = state.done.length;
@@ -146,6 +162,7 @@
       sku_id:      skuId,
       qty:         qty,
       do_snapshot: doSnapshot ? 1 : 0,
+      ack_seal:    sealAcked ? 1 : 0,
     });
     fetch('/api/stocktake-line-upsert.php', {
       method:  'POST',
@@ -164,6 +181,7 @@
           sku_id:      skuId,
           qty:         qty,
           do_snapshot: 0,
+          ack_seal:    sealAcked ? 1 : 0,
         });
         return fetch('/api/stocktake-line-upsert.php', {
           method:  'POST',
@@ -189,14 +207,7 @@
 
     var doSnap = state.done.length === 0 && !state.snapshotDone;
 
-    upsertSku(sku.skuId, qty, doSnap, function (data) {
-      if (!data.ok) {
-        if (statusEl) statusEl.textContent = 'Erreur : ' + (data.error || 'inconnue');
-        if (nextBtn) nextBtn.disabled = false;
-        if (zeroBtn) zeroBtn.disabled = false;
-        return;
-      }
-
+    function handleUpsertOk() {
       if (doSnap) state.snapshotDone = true;
       doneIds[sku.skuId] = qty;
       state.done.push({ skuId: sku.skuId, qty: qty });
@@ -211,6 +222,32 @@
       } else {
         finishGuided();
       }
+    }
+
+    upsertSku(sku.skuId, qty, doSnap, function (data) {
+      if (!data.ok) {
+        if (data.reason === 'seal_ack_required') {
+          // Show once per guided session; replay with ack_seal=1 on confirm
+          showSealModal(function () {
+            sealAcked = true;
+            upsertSku(sku.skuId, qty, false, function (data2) {
+              if (!data2.ok) {
+                if (statusEl) statusEl.textContent = 'Erreur : ' + (data2.error || 'inconnue');
+                if (nextBtn) nextBtn.disabled = false;
+                if (zeroBtn) zeroBtn.disabled = false;
+                return;
+              }
+              handleUpsertOk();
+            });
+          });
+          return;
+        }
+        if (statusEl) statusEl.textContent = 'Erreur : ' + (data.error || 'inconnue');
+        if (nextBtn) nextBtn.disabled = false;
+        if (zeroBtn) zeroBtn.disabled = false;
+        return;
+      }
+      handleUpsertOk();
     });
   }
 
