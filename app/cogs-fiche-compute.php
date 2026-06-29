@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__ . '/sku_catalog.php';    // ZEP4C→ZEPC substitution (mig 448)
 
 /**
  * app/cogs-fiche-compute.php
@@ -278,10 +279,17 @@ function _cogs_fg_compute(PDO $pdo, string $month): array
     $skuIds = array_unique(array_column($fgRows, 'sku_id_fk'));
     $notes[] = sprintf('Unique SKU IDs: %d', count($skuIds));
 
+    // ZEP4C→ZEPC substitution (mig 448): resolve dormant/alias SKUs to their
+    // target for BOM lookup only. The stocktake qty is kept on the original sku_id
+    // (physical census is NOT substituted) — $skuBomCost is stored under the
+    // original $skuId so the accumulation loop below can find it by sku_id_fk.
+    $subMap = sku_substitution_map($pdo);
+
     // Build per-SKU BOM cost map
     $skuBomCost = [];
 
     foreach ($skuIds as $skuId) {
+        $bomSkuId = $subMap[(int)$skuId] ?? (int)$skuId; // ZEP4C→ZEPC substitution (mig 448)
         $stmt2 = $pdo->prepare("
             SELECT
                 b.bom_source,
@@ -298,7 +306,7 @@ function _cogs_fg_compute(PDO $pdo, string $month): array
             WHERE b.sku_id = ?
               AND b.mi_id IS NOT NULL
         ");
-        $stmt2->execute([(int)$skuId]);
+        $stmt2->execute([$bomSkuId]);
         $bomLines = $stmt2->fetchAll(PDO::FETCH_ASSOC);
 
         if (empty($bomLines)) {

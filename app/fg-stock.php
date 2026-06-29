@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__ . '/fulfilment-site.php';
 require_once __DIR__ . '/seasonal-burn.php';
+require_once __DIR__ . '/sku_catalog.php';    // ZEP4C→ZEPC substitution (mig 448)
 /**
  * app/fg-stock.php — FG live-stock computation helpers.
  *
@@ -612,9 +613,13 @@ function fg_stock_compute(PDO $pdo): array
         }
     }
 
+    // ZEP4C→ZEPC substitution (mig 448): load once, reuse across demand legs.
+    // Physical legs (anchor/prod/transfers/taproom/returns) are NEVER substituted.
+    $subMap = sku_substitution_map($pdo);
+
     $expOrdersSeen = []; // track DISTINCT order_ids per sku for expedie_orders count
     foreach ($expStmt->fetchAll(PDO::FETCH_ASSOC) as $er) {
-        $sid           = (int) $er['sku_id_fk'];
+        $sid           = $subMap[(int) $er['sku_id_fk']] ?? (int) $er['sku_id_fk']; // ZEP4C→ZEPC substitution (mig 448)
         $requestedDate = (string) $er['requested_date'];
 
         // Resolve the ship-from site for this order (same resolver as snapshot)
@@ -689,7 +694,7 @@ function fg_stock_compute(PDO $pdo): array
     );
     $eshopStmt->execute(['none', 'eshop', $anchorDate]);
     foreach ($eshopStmt->fetchAll(PDO::FETCH_ASSOC) as $es) {
-        $sid       = (int) $es['sku_id_fk'];
+        $sid       = $subMap[(int) $es['sku_id_fk']] ?? (int) $es['sku_id_fk']; // ZEP4C→ZEPC substitution (mig 448)
         $orderTs   = (string) $es['order_created_at'];
         $orderDate = substr($orderTs, 0, 10); // DATE portion of the DATETIME
 
@@ -1567,6 +1572,9 @@ function fg_stock_location_snapshot(PDO $pdo): array
     // $salesBySiteSku[site_id][sku_id] = int (depletion qty attributed to that site)
     // Three legs exactly mirror fg_stock_compute() steps 4/5/6 so that
     // Σ(per-site sales per sku) == fg_stock_compute sales per sku.
+    // ZEP4C→ZEPC substitution (mig 448): load once, reuse across demand legs.
+    // Physical legs (anchor/prod/transfers/taproom/returns) are NEVER substituted.
+    $subMap = sku_substitution_map($pdo);
     $salesBySiteSku = []; // site_id => sku_id => int
 
     // Leg 1: expédié B2B — per-(sku, ship-from-site) anchor + inclusive >=
@@ -1619,7 +1627,7 @@ function fg_stock_location_snapshot(PDO $pdo): array
             'channel'                  => $er['internal_channel'],
             '_customer_default_site_id'=> $er['customer_default_site_id'],
         ]);
-        $sid           = (int) $er['sku_id_fk'];
+        $sid           = $subMap[(int) $er['sku_id_fk']] ?? (int) $er['sku_id_fk']; // ZEP4C→ZEPC substitution (mig 448)
         $requestedDate = (string) $er['requested_date'];
 
         // Three-tier fallback: DATE-only, inclusive same-day — not routed through
@@ -1660,7 +1668,7 @@ function fg_stock_location_snapshot(PDO $pdo): array
     );
     $eshopStmt->execute(['none', 'eshop', $anchorDate]);
     foreach ($eshopStmt->fetchAll(PDO::FETCH_ASSOC) as $es) {
-        $sid      = (int) $es['sku_id_fk'];
+        $sid      = $subMap[(int) $es['sku_id_fk']] ?? (int) $es['sku_id_fk']; // ZEP4C→ZEPC substitution (mig 448)
         $orderTs  = (string) $es['order_created_at'];
         $orderDate = substr($orderTs, 0, 10); // DATE portion of the DATETIME
         $siteAnchor = $siteSkuAnchorMap[$eshopSiteId][$sid] ?? null;

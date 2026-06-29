@@ -101,6 +101,86 @@ if (!function_exists('sku_classification_label')) {
     }
 }
 
+if (!function_exists('sku_substitution_map')) {
+    /**
+     * Returns all currently-active SKU substitutions as a flat map.
+     *
+     * [ substitute_sku_id => target_sku_id ]
+     *
+     * Batch-loader: single query, no per-row DB calls. Safe to call once per
+     * request and reuse across all consumers (fg-stock.php demand legs,
+     * cogs-fiche-compute.php BOM valuation).
+     *
+     * Reversibility: deleting a row (or setting effective_until < today)
+     * removes it from this map, restoring the substitute SKU to standalone
+     * behaviour with no other changes needed. Identity is the substitute SKU —
+     * this is a fulfilment/valuation layer, NOT an identity fold (contrast
+     * ref_sku_aliases which folds on re-import).
+     *
+     * @param PDO         $pdo
+     * @param string|null $asof  Date string YYYY-MM-DD; defaults to today (CURDATE()).
+     * @return array<int, int>
+     */
+    function sku_substitution_map(PDO $pdo, ?string $asof = null): array
+    {
+        $date = $asof ?? date('Y-m-d');
+        $stmt = $pdo->prepare(
+            'SELECT substitute_sku_id_fk, target_sku_id_fk
+               FROM ref_sku_substitutions
+              WHERE effective_from <= ?
+                AND (effective_until IS NULL OR effective_until >= ?)'
+        );
+        $stmt->execute([$date, $date]);
+        $map = [];
+        while ($r = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            $map[(int) $r['substitute_sku_id_fk']] = (int) $r['target_sku_id_fk'];
+        }
+        return $map;
+    }
+}
+
+if (!function_exists('sku_effective_fulfilment_id')) {
+    /**
+     * Returns the effective fulfilment SKU id for $skuId on $asof.
+     *
+     * If an active substitution exists for $skuId, returns the target_sku_id.
+     * Otherwise returns $skuId unchanged.
+     *
+     * One hop only. If the resolved target itself has an active substitution,
+     * that is a configuration error (chains are unsupported) — a PHP warning
+     * is triggered and the first-hop target is returned as-is to avoid
+     * silent infinite loops.
+     *
+     * Use sku_substitution_map() for batch consumers; this function is for
+     * single-SKU lookups where the map has not been pre-loaded.
+     *
+     * @param PDO         $pdo
+     * @param int         $skuId
+     * @param string|null $asof  Date string YYYY-MM-DD; defaults to today.
+     * @return int
+     */
+    function sku_effective_fulfilment_id(PDO $pdo, int $skuId, ?string $asof = null): int
+    {
+        $map    = sku_substitution_map($pdo, $asof);
+        $target = $map[$skuId] ?? $skuId;
+
+        // Chain detection: target itself should not be in the map.
+        if ($target !== $skuId && isset($map[$target])) {
+            trigger_error(
+                sprintf(
+                    'sku_effective_fulfilment_id: substitution chain detected. ' .
+                    'SKU id=%d → id=%d → id=%d. Chains are unsupported (config error). ' .
+                    'Returning first-hop target id=%d.',
+                    $skuId, $target, $map[$target], $target
+                ),
+                E_USER_WARNING
+            );
+        }
+
+        return $target;
+    }
+}
+
 if (!function_exists('run_type_container_label')) {
     /**
      * Canonical run_type → French container noun (PLURAL, bare — no volume).

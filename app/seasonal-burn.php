@@ -32,6 +32,11 @@ if (!function_exists('system_setting')) {
     require_once __DIR__ . '/settings.php';
 }
 
+// ZEP4C→ZEPC substitution (mig 448): sku_substitution_map() for per-SKU demand folding.
+if (!function_exists('sku_substitution_map')) {
+    require_once __DIR__ . '/sku_catalog.php';
+}
+
 // ── 1. Parameter loader ───────────────────────────────────────────────────────
 
 /**
@@ -429,6 +434,12 @@ function sb_all_sku_levels(PDO $pdo, array $indexMap, array $params): array
     $windowWeeks = (int) $params['burn_level_window_weeks'];
     $lambda      = (float) $params['burn_ewma_lambda'];
 
+    // ZEP4C→ZEPC substitution (mig 448): fold demand for a dormant/alias SKU
+    // into its produced target so the target's burn level reflects TOTAL demand
+    // and the dormant SKU produces no standalone (phantom survendu) level entry.
+    // Loaded once; applied to the demand aggregation only (window rows + lifetime).
+    $subMap = sku_substitution_map($pdo);
+
     $windowStart = date('Y-m-d', strtotime("-{$windowWeeks} weeks"));
     $today       = date('Y-m-d');
 
@@ -484,23 +495,49 @@ function sb_all_sku_levels(PDO $pdo, array $indexMap, array $params): array
     $lifetimeStmt->execute();
     $lifetimeMap = [];
     foreach ($lifetimeStmt->fetchAll(PDO::FETCH_ASSOC) as $lr) {
-        $lifetimeMap[(int) $lr['sku_id_fk']] = $lr;
+        $sid = $subMap[(int) $lr['sku_id_fk']] ?? (int) $lr['sku_id_fk']; // ZEP4C→ZEPC substitution (mig 448)
+        if (!isset($lifetimeMap[$sid])) {
+            $lifetimeMap[$sid] = $lr;
+        } else {
+            // Merge folded SKU's lifetime stats into the target (mig 448):
+            // first_sale = earliest, last_sale = latest, lived_full_summer = OR.
+            $ex = $lifetimeMap[$sid];
+            $lifetimeMap[$sid] = [
+                'sku_id_fk'         => $sid,
+                'first_sale'        => (($ex['first_sale'] ?? null) === null) ? $lr['first_sale']
+                                       : ((($lr['first_sale'] ?? null) === null) ? $ex['first_sale']
+                                          : min($ex['first_sale'], $lr['first_sale'])),
+                'last_sale'         => (($ex['last_sale'] ?? null) === null) ? $lr['last_sale']
+                                       : ((($lr['last_sale'] ?? null) === null) ? $ex['last_sale']
+                                          : max($ex['last_sale'], $lr['last_sale'])),
+                'lived_full_summer' => ((int) ($ex['lived_full_summer'] ?? 0) === 1
+                                        || (int) ($lr['lived_full_summer'] ?? 0) === 1) ? 1 : 0,
+            ];
+        }
     }
 
     // Build per-SKU week arrays from query results
     $skuData = []; // sku_id => ['recipe_id'=>?, 'weeks'=>[yw=>{isoweek,qty}]]
     foreach ($windowRows as $row) {
-        $sid = (int) $row['sku_id_fk'];
+        $sid = $subMap[(int) $row['sku_id_fk']] ?? (int) $row['sku_id_fk']; // ZEP4C→ZEPC substitution (mig 448)
         if (!isset($skuData[$sid])) {
             $skuData[$sid] = [
                 'recipe_id' => ($row['recipe_id'] !== null) ? (int) $row['recipe_id'] : null,
                 'weeks'     => [],
             ];
         }
-        $skuData[$sid]['weeks'][(int) $row['yw']] = [
-            'isoweek' => (int) $row['isoweek'],
-            'qty'     => (float) $row['qty'],
-        ];
+        // Additive on (sid, yearweek): a substituted SKU folded into its target
+        // may collide with the target's own row for the same week — SUM, never
+        // overwrite (overwrite would silently undercount). ZEP4C→ZEPC (mig 448).
+        $yw = (int) $row['yw'];
+        if (isset($skuData[$sid]['weeks'][$yw])) {
+            $skuData[$sid]['weeks'][$yw]['qty'] += (float) $row['qty'];
+        } else {
+            $skuData[$sid]['weeks'][$yw] = [
+                'isoweek' => (int) $row['isoweek'],
+                'qty'     => (float) $row['qty'],
+            ];
+        }
     }
 
     // Build the full week axis for the window (same approach as sb_family_weekly_series)
