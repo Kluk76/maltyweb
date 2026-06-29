@@ -196,8 +196,16 @@ function _fulfilment_customer_default_site(PDO $pdo, int $customerId): int
  *   anything else         → null
  *
  * $user must carry 'manager_scope' and 'preset_key' keys.
- * Top-level (compile-time hoisted) — NEVER nest inside a conditional or render block.
+ * Guarded by function_exists ONLY to permit a zero-downtime two-step deploy of the
+ * move out of public/modules/expeditions.php: while the server still serves the old
+ * expeditions.php (which declares this unconditionally, hoisted at compile time),
+ * this conditional/runtime def yields to it (no redeclare). Once the new
+ * expeditions.php (inline def removed) is deployed, this becomes the sole def.
+ * Loaded via require_once (fg-stock.php → fulfilment-site.php) before any caller,
+ * so the runtime definition is always in time. Once both files are deployed the
+ * guard is a harmless no-op and may be removed.
  */
+if (!function_exists('exp_user_home_site_type')) {
 function exp_user_home_site_type(array $user): ?string
 {
     // Precedence 1: manager_scope
@@ -218,3 +226,4 @@ function exp_user_home_site_type(array $user): ?string
     // admin / viewer / manager (no manager_scope) / unmapped → no home site
     return null;
 }
+} // end function_exists('exp_user_home_site_type') guard
