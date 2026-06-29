@@ -403,8 +403,9 @@ function fg_stock_compute(PDO $pdo): array
 
     // Build per-SKU map: SUM anchor_qty across locations (fixes the overwrite bug).
     // anchor_date = MAX(counted_at) across all anchor rows.
-    $byId       = [];
-    $anchorDate = null;
+    $byId        = [];
+    $anchorDate  = null;
+    $anchorFloor = null; // MIN(counted_at) across all sites — used by Step 6.8 prefilter
     foreach ($anchorRows as $ar) {
         $sid = (int) $ar['sku_id_fk'];
         if (!isset($byId[$sid])) {
@@ -429,6 +430,7 @@ function fg_stock_compute(PDO $pdo): array
                 'repack_open_qty'       => 0,
                 'repack_assembled_qty'  => 0,
                 'returns_restock_qty'   => 0,
+                'transfer_qty'          => 0,
             ];
         }
         $byId[$sid]['anchor_qty'] += (float) $ar['anchor_qty'];
@@ -436,6 +438,9 @@ function fg_stock_compute(PDO $pdo): array
         if ($ar['counted_at'] !== null) {
             if ($anchorDate === null || $ar['counted_at'] > $anchorDate) {
                 $anchorDate = $ar['counted_at'];
+            }
+            if ($anchorFloor === null || $ar['counted_at'] < $anchorFloor) {
+                $anchorFloor = $ar['counted_at'];
             }
         }
     }
@@ -469,12 +474,13 @@ function fg_stock_compute(PDO $pdo): array
     //   taproom (Step 6)    — month-grained period > $anchorMonth; genuinely deferred
     //                         (inv_sales_bc has no finer timestamp). Symmetric in both.
     //
-    //   transfers           — compute has NO transfer term by construction; transfers are
-    //                         globally net-zero so they cancel in the total physique.
-    //                         The snapshot applies them per-site with a unit-gate
-    //                         (see fg_stock_location_snapshot transfer leg) that guarantees
-    //                         per-row net-zero regardless of per-site anchor divergence.
-    $anchorDate  = $anchorDate ?? date('Y-m-d');
+    //   transfers (Step 6.8) — per-SKU net from inv_stock_movements; each side gated
+    //                          independently by its OWN site census via fg_event_is_post_census
+    //                          (symmetric with snapshot — both sides independently).
+    //                          Net-zero for aligned censuses; non-zero for inter-census-gap
+    //                          transfers (that is the correction this term applies).
+    $anchorDate  = $anchorDate  ?? date('Y-m-d');
+    $anchorFloor = $anchorFloor ?? $anchorDate;
     $anchorMonth = substr($anchorDate, 0, 7);
 
     // ── Step 3: production since anchor (bd_packaging_v2) ───────────────────
@@ -529,6 +535,7 @@ function fg_stock_compute(PDO $pdo): array
                     'repack_open_qty'       => 0,
                     'repack_assembled_qty'  => 0,
                     'returns_restock_qty'   => 0,
+                    'transfer_qty'          => 0,
                 ];
             }
         }
@@ -802,6 +809,7 @@ function fg_stock_compute(PDO $pdo): array
                             'repack_open_qty'      => 0,
                             'repack_assembled_qty' => 0,
                             'returns_restock_qty'  => 0,
+                            'transfer_qty'         => 0,
                         ];
                     }
                 }
@@ -905,6 +913,113 @@ function fg_stock_compute(PDO $pdo): array
                     'repack_open_qty'       => 0,
                     'repack_assembled_qty'  => 0,
                     'returns_restock_qty'   => $qty,
+                    'transfer_qty'          => 0,
+                ];
+            }
+        }
+    }
+
+    // ── Step 6.8: net inter-census transfers (inv_stock_movements) ─────────────
+    // Each inv_stock_movements row involves TWO sites: +qty arrives at to_site,
+    // −qty leaves from_site. Each side is gated INDEPENDENTLY by its own site's
+    // per-SKU census via fg_event_is_post_census — SYMMETRIC with the snapshot
+    // transfer leg (which was decoupled from the old unit-gate to fix this bug).
+    //
+    // For aligned census dates (transfer postdates BOTH sites' anchors → both
+    // pass → net +qty − qty = 0; or predates both → neither passes → 0), this
+    // term contributes exactly zero — byte-identical to the old compute result.
+    //
+    // For inter-census-gap transfers (one site counted after the other):
+    //   forward-gap: from_site census is NEWER than moved_on, to_site is OLDER
+    //     → fromPass=false, toPass=true → net_transfer = +qty
+    //   reverse-gap: from_site census is OLDER
+    //     → fromPass=true, toPass=false → net_transfer = −qty
+    //
+    // Prefilter: moved_on >= $anchorFloor (MIN per-site census date, same as
+    // the snapshot leg) so we don't miss transfers gated by earlier per-site
+    // anchors when one site's census predates the global MAX.
+    //
+    // $siteSkuAnchorMapCompute and $siteCensusMapCompute already built in Step 4.
+    $transferNetMap = []; // sku_id => int (signed; positive = net in, negative = net out)
+    $mvComputeStmt = $pdo->prepare(
+        'SELECT sku_id_fk, from_site_id_fk, to_site_id_fk,
+                qty,
+                moved_on,
+                created_at AS mv_created_at
+           FROM inv_stock_movements
+          WHERE is_tombstoned = 0
+            AND moved_on >= ?'
+    );
+    $mvComputeStmt->execute([$anchorFloor]);
+    foreach ($mvComputeStmt->fetchAll(PDO::FETCH_ASSOC) as $mv) {
+        $sid      = (int) $mv['sku_id_fk'];
+        $fromSite = (int) $mv['from_site_id_fk'];
+        $toSite   = (int) $mv['to_site_id_fk'];
+        $qty      = (int) round((float) $mv['qty']);
+        $movedOn  = (string) $mv['moved_on'];
+        $mvTs     = (string) $mv['mv_created_at'];
+        if ($qty <= 0) continue;
+
+        $fromAnchor = $siteSkuAnchorMapCompute[$fromSite][$sid] ?? null;
+        $fromPass = fg_event_is_post_census(
+            $movedOn, $mvTs,
+            $fromAnchor['counted_at'] ?? ($siteCensusMapCompute[$fromSite]['date'] ?? null),
+            $fromAnchor['anchor_ts']  ?? ($siteCensusMapCompute[$fromSite]['ts']   ?? null),
+            $anchorDate, false
+        );
+        $toAnchor = $siteSkuAnchorMapCompute[$toSite][$sid] ?? null;
+        $toPass = fg_event_is_post_census(
+            $movedOn, $mvTs,
+            $toAnchor['counted_at'] ?? ($siteCensusMapCompute[$toSite]['date'] ?? null),
+            $toAnchor['anchor_ts']  ?? ($siteCensusMapCompute[$toSite]['ts']   ?? null),
+            $anchorDate, false
+        );
+
+        // Net per SKU: +qty if to-side passes, −qty if from-side passes.
+        // Both pass → 0 (aligned census); neither → 0 (pre-anchor).
+        $transferNetMap[$sid] = ($transferNetMap[$sid] ?? 0)
+            + ($toPass ? $qty : 0)
+            - ($fromPass ? $qty : 0);
+    }
+
+    // Assign transfer_qty; create a placeholder for any transfer-referenced
+    // SKU not yet in $byId (mirrors the prod/returns placeholder pattern).
+    foreach ($transferNetMap as $sid => $net) {
+        if ($net === 0) continue; // skip no-ops (aligned or pre-anchor)
+        if (isset($byId[$sid])) {
+            $byId[$sid]['transfer_qty'] = $net;
+        } else {
+            $skuMeta = $pdo->prepare(
+                'SELECT s.sku_code, s.format, s.hl_per_unit,
+                        COALESCE(pf.display_family, s.format) AS display_family
+                   FROM ref_skus s
+                   LEFT JOIN ref_packaging_formats pf ON pf.id = s.format_id
+                  WHERE s.id = ? AND s.is_active = 1 LIMIT 1'
+            );
+            $skuMeta->execute([$sid]);
+            $meta = $skuMeta->fetch(PDO::FETCH_ASSOC);
+            if ($meta !== false) {
+                $byId[$sid] = [
+                    'sku_id'                => $sid,
+                    'sku_code'              => $meta['sku_code'],
+                    'format'                => $meta['format'],
+                    'display_family'        => $meta['display_family'],
+                    'hl_per_unit'           => (float) $meta['hl_per_unit'],
+                    'recipe_id'             => null,
+                    'anchor_qty'            => 0,
+                    'stocktake_scope'       => '',
+                    'prod_qty'              => 0,
+                    'prod_events'           => 0,
+                    'expedie_qty'           => 0,
+                    'expedie_orders'        => 0,
+                    'eshop_qty'             => 0,
+                    'eshop_orders'          => 0,
+                    'taproom_qty'           => 0,
+                    'taproom_rows'          => 0,
+                    'repack_open_qty'       => 0,
+                    'repack_assembled_qty'  => 0,
+                    'returns_restock_qty'   => 0,
+                    'transfer_qty'          => $net,
                 ];
             }
         }
@@ -1070,7 +1185,10 @@ function fg_stock_compute(PDO $pdo): array
         $repackOpen      = $r['repack_open_qty'];
         $repackAssembled = $r['repack_assembled_qty'];
         $returnsRestock  = $r['returns_restock_qty'];
-        $physique        = $anchor + $prod + $returnsRestock + $repackAssembled - $expedie - $eshop - $taproom - $repackOpen;
+        $transferNet     = $r['transfer_qty'];
+        // physique = anchor + production + net_inter_census_transfers + returns_restock
+        //          + repack_assembled − expedie_b2b − eshop − taproom − repack_opens
+        $physique        = $anchor + $prod + $returnsRestock + $repackAssembled + $transferNet - $expedie - $eshop - $taproom - $repackOpen;
 
         $openWeek  = $openBySkuId[$sid]['week_qty']  ?? 0;
         $open2wk   = $openBySkuId[$sid]['twowk_qty'] ?? 0;
@@ -1166,6 +1284,7 @@ function fg_stock_compute(PDO $pdo): array
             'repack_open_qty'       => $repackOpen,
             'repack_assembled_qty'  => $repackAssembled,
             'returns_restock_qty'   => $returnsRestock,
+            'transfer_net_qty'      => $transferNet,
             // Computed
             'physique'          => $physique,
             'open_week_qty'     => $openWeek,
@@ -1592,23 +1711,27 @@ function fg_stock_location_snapshot(PDO $pdo): array
     // The per-site tiebreak below (siteSkuAnchorMap) is the sole admission arbiter;
     // the prefilter just bounds the scan to rows that could possibly pass it.
     //
-    // UNIT-GATE SEMANTICS (non-negotiable for Σcards==Σphysique invariant):
+    // INDEPENDENT PER-SIDE GATES (symmetric with fg_stock_compute() Step 6.8):
     //   Each transfer row affects TWO sites: +qty to to_site, −qty from from_site.
-    //   The tiebreak evaluates independently per-side ($fromPass, $toPass) using
-    //   each site's per-SKU anchor, but the ADMISSION decision is taken ATOMICALLY:
-    //     $rowPass = ($fromPass || $toPass)
-    //   When $rowPass is TRUE, BOTH the +qty (to_site) AND the −qty (from_site)
-    //   are applied together. When FALSE, NEITHER side is applied.
-    //   This guarantees per-row net-zero unconditionally.
+    //   Each side is gated INDEPENDENTLY by its own site's per-SKU census via
+    //   fg_event_is_post_census ($fromPass gates the −qty; $toPass gates the +qty).
     //
-    //   WHY not independent per-side gates?  When two sites have divergent anchor
-    //   dates for the same SKU (e.g. site A counted yesterday, site B counted
-    //   last month), an independent gate can admit the +qty (to_site B: passes
-    //   B's old anchor) while rejecting the −qty (from_site A: fails A's newer
-    //   anchor) — or vice versa — producing a phantom net ±qty in the global
-    //   Σ. The unit-gate eliminates this class of failure: a row is in or out as
-    //   a unit, so its net contribution is always exactly zero or exactly ±qty on
-    //   both sides simultaneously.
+    //   WHY independent (not atomic unit-gate)?
+    //   The old unit-gate ($rowPass = $fromPass || $toPass) admitted BOTH sides if
+    //   EITHER passed. When two sites have divergent anchor dates for the same SKU
+    //   (site A counted recently, site B counted last month), a transfer between
+    //   them can fall between their anchors:
+    //     • from_site A: census is NEWER than the transfer — A's fresh count already
+    //       excludes those units. fromPass=false → do NOT deduct (correct).
+    //     • to_site B: census is OLDER than the transfer — B's count predates it.
+    //       toPass=true → DO add (correct).
+    //   The old unit-gate fired BOTH sides when toPass was true → it wrongly deducted
+    //   from A even though A's census had already absorbed the departure → phantom
+    //   negative stock at A. Independent gates emit each side only when its own
+    //   census warrants it — correct per site AND correct in the global Σ.
+    //
+    //   Aligned censuses (both pass or neither): net zero per row, byte-identical to before.
+    //   Inter-census-gap (one passes, one doesn't): each side reflects its site's reality.
     //
     // Accepted residual: same as production/sales legs (submitted-after mis-settle).
     // $transfersIn[site_id][sku_id] = int  (positive: stock arriving)
@@ -1652,16 +1775,19 @@ function fg_stock_location_snapshot(PDO $pdo): array
             $anchorDate, false
         );
 
-        // Unit-gate: admit or reject the whole row together — never one side alone.
-        // $fromPass and $toPass are preserved above for clarity; the gate is their OR.
-        $rowPass = ($fromPass || $toPass);
-        if (!$rowPass) continue;
-
-        // Apply BOTH sides atomically (guaranteed net-zero per row)
-        if (!isset($transfersOut[$fromSite])) $transfersOut[$fromSite] = [];
-        $transfersOut[$fromSite][$sid] = ($transfersOut[$fromSite][$sid] ?? 0) + $qty;
-        if (!isset($transfersIn[$toSite])) $transfersIn[$toSite] = [];
-        $transfersIn[$toSite][$sid]  = ($transfersIn[$toSite][$sid]  ?? 0) + $qty;
+        // Independent per-side gates: each side applied only when its own site's
+        // census warrants it. fromPass gates the −qty; toPass gates the +qty.
+        // Both pass → net zero (aligned census). Neither → nothing. One side only
+        // → corrects the inter-census-gap over/under-count (the bug this fixes).
+        if ($fromPass) {
+            if (!isset($transfersOut[$fromSite])) $transfersOut[$fromSite] = [];
+            $transfersOut[$fromSite][$sid] = ($transfersOut[$fromSite][$sid] ?? 0) + $qty;
+        }
+        if ($toPass) {
+            if (!isset($transfersIn[$toSite])) $transfersIn[$toSite] = [];
+            $transfersIn[$toSite][$sid] = ($transfersIn[$toSite][$sid] ?? 0) + $qty;
+        }
+        if (!$fromPass && !$toPass) continue; // pre-anchor row; skip entirely
     }
 
     // ── Repack box-opens by site/SKU ────────────────────────────────────────
