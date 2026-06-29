@@ -178,3 +178,23 @@ All three surfaces PASS; per-user persistence via ui-pref.php works; fresh-load 
 
 ### TOUR
 No new `ref_pages` added (lookup folded into existing pages; warehouse pre-existing) → no Visite-guidée card needed.
+
+---
+
+## CO₂ READS LOOKUP + v1↔v2 READINGS JOIN-GAP (scoped 2026-06-29, NOT YET BUILT)
+
+**Surface:** packaging Consulter (`packaging.php` → Consulter tab → `public/api/packaging-lookup.php?mode=batch&sku_id=N&batch=X`). Keys on `sku_id_fk` + `COALESCE(NULLIF(neb_batch,''),NULLIF(contract_batch,''))` (FK+batch, NOT name — rule honored). CO₂/O₂ in-filling reads = `bd_packaging_readings` (o2,co2 per reading_idx, child of `bd_packaging_v2`), joined ONLY by `packaging_v2_id`. `salle-de-controle.php` only CONFIGURES `ref_recipes.co2_target/co2_tolerance`; `qa.php` = net-content/CIP/reception forms (not a CO₂-reads search).
+
+**The Jasper "lot 29" non-result (resolved):** Jasper = `ref_recipes.id=21` "Chien Bleu - Jasper", Contract (client_id=8) → lot in `contract_batch`. SKUs JASPF(keg,308)/JASPB(bot,312)/JASPL(vrac,314). Batch 29 was BREWED 2026-06-24 (brewday_v2 id 1589) but NOT racked/packaged — latest packaging+racking = **batch 28 (2026-05-04)**. So "last bottling run" = lot 28 (JASPB v2 event 2200), not 29.
+
+**JOIN-GAP (verified reproducer):** batch-28 bottle reading (CO₂ 4.45 / O₂ 102) is keyed to v1 `bd_packaging.id=2148` (`packaging_id`), v2 event 2200 has 0 rows by `packaging_v2_id` → Consulter shows "0 reads". Readings store: 4719 v2-keyed / 740 v1-keyed (144 distinct v1 parents).
+
+**v1↔v2 bridge is UNRELIABLE — verified two ways, both mis-pair (NEVER join on these):** (1) date D/M-swapped (v1 timestamp_2 2026-04-05 vs v2 event_date 2026-05-04); (2) sheet_row_index offset+wrong-row (v2 source_sheet_row_index 2201 → v1 sheet_row_index 2201 = a DIFFERENT batch-NULL 5.133 row, not the 4.45 row at v1 id 2148/idx 2149). v2 has NO legacy FK col; v1 `bd_packaging` has NO recipe_id_fk/sku_id_fk (only string beer/batch/format/recipe_code). Only reliable correlation = resolved (recipe_id_fk + batch + run_type), 1:1-gated. v1.beer heterogeneous (recipe name OR sku_code ALT4/EMB4/MOO4 OR client-name) → only 3/144 match ref_recipes.name → full backfill = a validation sub-project (= deferred migs 243/244), never force. schema_meta bd_packaging_readings: source/corrections_policy=allowed.
+
+**QUEUED BUILDS (plan given to coordinator, awaiting Sonnet dispatch):**
+- **B1a** BBT fallback (SHIP FIRST, clean FK): when no v2-keyed reads, surface `bd_racking_v2.bbt_co2/bbt_o2` via recipe_id_fk+batch, labelled "Carbonatation en BBT (soutirage)" (Jasper-28 = 4.01/252). Files: packaging-lookup.php + packaging-consulter.js/.css. BBT O₂≠in-package O₂ → never conflate/average. EQUIP coder+sql+ui+webapp-testing.
+- **B1b** conservative gated backfill of `bd_packaging_readings.packaging_v2_id` (durable; surfaces the 4.45). Gates ALL: v1.beer=exactly one ref_recipes.name → recipe_id_fk; resolved(recipe+batch+run_type)→exactly one v2 event; one v1 parent. Dry-run report→PM review matched list→idempotent guarded UPDATE…JOIN (WHERE packaging_v2_id IS NULL), snapshot+audit. Unresolved → review list (refuse-don't-NULL). ONE sanctioned v1 read; NO runtime v1 join in API. EQUIP coder+sql.
+- **B2** `mode=recent&sku_id=N` browse: last 10 runs (date,batch,format-human,prod units,#reads,avg co2/o2), click→drill to existing mode=batch (reuse activateDayCard delegation). NO sibling repatriation in list (per-SKU); repatriation stays in detail. Build AFTER B1b (honest #reads). EQUIP coder+sql+ui+webapp-testing.
+- **Precedence:** v2-keyed per-reading rows (native+backfilled) → BBT fallback. Drop v1-aggregate tier (only 2 rows). REJECTED: per-request v1 string-join in API (repeats unreliable bridge every load).
+
+Trigger "CO2 reads"/"carbonation lookup"/"co2 read search"/"packaging readings join gap"/"v1 v2 packaging bridge"/"packaging_v2_id backfill"/"243 244 backfill"/"bbt_co2 fallback"/"mode=recent"/"derniers runs"/"Jasper lot"/"bd_packaging_readings".
