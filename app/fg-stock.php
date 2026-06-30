@@ -630,21 +630,20 @@ function fg_stock_compute(PDO $pdo): array
             '_customer_default_site_id'=> $er['customer_default_site_id'],
         ]);
 
-        // Three-tier fallback: B2B uses DATE-only (no timestamp tiebreak) with inclusive
-        // same-day for tiers (a)/(b) — intentionally NOT routed through fg_event_is_post_census
-        // which would change same-day semantics (that resolver excludes same-day without ts).
-        // Taproom and returns also left unrouted (month-grain / no-timestamp semantics differ).
+        // Three-tier B2B inclusion predicate — routed through the shared resolver
+        // with eventTs=null so same-day at the counted ship-from site is EXCLUDED
+        // (same-day shipments from a counted site were already gone at count time;
+        // re-deducting them double-counts). Tiers (b)/(c) are byte-identical to old
+        // inclusive/strict fallbacks: censusDate=null + inclusiveFallback drives them.
         $siteAnchor = $siteSkuAnchorMapCompute[$siteId][$sid] ?? null;
-        if ($siteAnchor !== null) {
-            // (a) counted at ship-from site — inclusive >=
-            if ($requestedDate < $siteAnchor['counted_at']) continue;
-        } elseif (isset($skuCountedAnywhereCompute[$sid])) {
-            // (b) counted elsewhere but not here — global anchor, inclusive >=
-            if ($requestedDate < $anchorDate) continue;
-        } else {
-            // (c) never counted — global anchor, strict > (no morning baseline)
-            if ($requestedDate <= $anchorDate) continue;
-        }
+        $pass = fg_event_is_post_census(
+            $requestedDate, null,
+            $siteAnchor['counted_at'] ?? null,
+            $siteAnchor['anchor_ts']  ?? null,
+            $anchorDate,
+            isset($skuCountedAnywhereCompute[$sid])
+        );
+        if (!$pass) continue;
 
         if (!isset($byId[$sid])) continue;
         $qty = (int) round((float) $er['qty']);
@@ -1630,19 +1629,18 @@ function fg_stock_location_snapshot(PDO $pdo): array
         $sid           = $subMap[(int) $er['sku_id_fk']] ?? (int) $er['sku_id_fk']; // ZEP4C→ZEPC substitution (mig 448)
         $requestedDate = (string) $er['requested_date'];
 
-        // Three-tier fallback: DATE-only, inclusive same-day — not routed through
-        // fg_event_is_post_census (different semantics; see compute Step 4 note).
-        //   (a) counted at ship-from site → use site anchor, inclusive >=
-        //   (b) counted elsewhere but not here → global anchor, inclusive >=
-        //   (c) never counted anywhere → global anchor, strict > (no morning baseline)
+        // Three-tier B2B inclusion predicate — BYTE-SYMMETRIC with compute Step 4.
+        // eventTs=null: same-day shipments from the counted ship-from site excluded
+        // (count is post-shipment truth; re-deducting them double-counts).
         $siteAnchor = $siteSkuAnchorMap[$siteId][$sid] ?? null;
-        if ($siteAnchor !== null) {
-            if ($requestedDate < $siteAnchor['counted_at']) continue;
-        } elseif (isset($skuCountedAnywhere[$sid])) {
-            if ($requestedDate < $anchorDate) continue;
-        } else {
-            if ($requestedDate <= $anchorDate) continue;
-        }
+        $pass = fg_event_is_post_census(
+            $requestedDate, null,
+            $siteAnchor['counted_at'] ?? null,
+            $siteAnchor['anchor_ts']  ?? null,
+            $anchorDate,
+            isset($skuCountedAnywhere[$sid])
+        );
+        if (!$pass) continue;
 
         $qty = (int) round((float) $er['qty']);
         if (!isset($salesBySiteSku[$siteId])) $salesBySiteSku[$siteId] = [];
