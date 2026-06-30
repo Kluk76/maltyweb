@@ -7210,3 +7210,26 @@ body.expeditions .exp-st-fresh-overdue-badge {
   margin-top: 3px;
   width: fit-content;
 }
+
+/* ── Retours — date de remise en stock ───────────────────────────────────── */
+body.expeditions .exp-ret-restock-date {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.75rem;
+  margin: 0.75rem 0 0.5rem;
+}
+body.expeditions .exp-ret-restock-date__label {
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--color-text-muted, #6b7280);
+  white-space: nowrap;
+}
+body.expeditions .exp-ret-restock-date__input {
+  max-width: 160px;
+}
+body.expeditions .exp-ret-restock-date__hint {
+  font-size: 0.78rem;
+  color: var(--color-text-muted, #6b7280);
+  font-style: italic;
+}

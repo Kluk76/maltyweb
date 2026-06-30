@@ -547,14 +547,14 @@ function fg_stock_compute(PDO $pdo): array
     // manual) also decrement physical stock when their order is shipped.
     //
     // Three-tier predicate (symmetric with snapshot Leg 1 — MUST stay identical):
-    //   (a) counted at ship-from site → requested_date >= site_anchor_date (inclusive)
-    //   (b) counted elsewhere but not this site → requested_date >= global_anchorDate (inclusive)
-    //   (c) never counted at any site → requested_date > global_anchorDate (strict;
-    //       no morning baseline, same-day ambiguous, preserves pre-fix behaviour)
-    // Accepted residual: a same-day ship already in the count double-deducts (case a/b
-    // only; rare; only fixable with an explicit ship timestamp — deferred).
+    //   (a) counted at ship-from site → dispatch date/ts tiebreak vs site census
+    //   (b) counted elsewhere but not this site → dispatch date >= global_anchorDate (inclusive)
+    //   (c) never counted at any site → dispatch date > global_anchorDate (strict)
+    // Dispatch ts = ord_order_status_events.occurred_at WHERE status='shipped'; fallback to
+    // requested_date when absent. PHP predicate is the authoritative gate; SQL prefilter
+    // is bounded (30 days) on EITHER requested_date OR dispatch ts so in-scope orders with
+    // a future requested_date but recent dispatch are not dropped before PHP sees them.
     // Fetch per-order rows + site-resolution cols; LEFT JOIN ref_customers avoids N+1.
-    // Safe lower-bound in SQL: >= 30 days; PHP predicate is the authoritative gate.
     //
     // fg_site_sku_anchor_map() called once here; reused in Step 5.
     $siteSkuAnchorMapCompute = fg_site_sku_anchor_map($pdo);
@@ -588,19 +588,27 @@ function fg_stock_compute(PDO $pdo): array
                 c.default_delivery_site_id_fk          AS customer_default_site_id,
                 l.sku_id_fk,
                 o.requested_date,
+                (SELECT MAX(e.occurred_at)
+                   FROM ord_order_status_events e
+                  WHERE e.order_id_fk = o.id
+                    AND e.status = \'shipped\')          AS shipped_at,
                 SUM(l.qty)                             AS qty
            FROM ord_order_lines l
            JOIN ord_orders o ON o.id = l.order_id_fk
            JOIN ref_skus rs ON rs.id = l.sku_id_fk AND rs.stocktake_scope <> ?
            LEFT JOIN ref_customers c ON c.id = o.customer_id_fk
           WHERE o.status = ?
-            AND o.requested_date >= DATE_SUB(?, INTERVAL 30 DAY)
             AND l.sku_id_fk IS NOT NULL
             AND l.line_status = \'to_fulfil\'
+            AND (o.requested_date >= DATE_SUB(?, INTERVAL 30 DAY)
+                 OR EXISTS (SELECT 1 FROM ord_order_status_events e2
+                             WHERE e2.order_id_fk = o.id
+                               AND e2.status = \'shipped\'
+                               AND e2.occurred_at >= DATE_SUB(?, INTERVAL 30 DAY)))
           GROUP BY o.id, o.fulfilment_site_id_fk, o.customer_id_fk, o.internal_channel,
                    c.default_delivery_site_id_fk, l.sku_id_fk, o.requested_date'
     );
-    $expStmt->execute(['none', 'shipped', $anchorDate]);
+    $expStmt->execute(['none', 'shipped', $anchorDate, $anchorDate]);
     // Build per-SKU "counted anywhere" set so the fallback predicate can distinguish:
     //   (a) counted at ship-from site → use site anchor, inclusive >=
     //   (b) counted somewhere but NOT at this site → global anchor, inclusive >=
@@ -630,21 +638,21 @@ function fg_stock_compute(PDO $pdo): array
             '_customer_default_site_id'=> $er['customer_default_site_id'],
         ]);
 
-        // Three-tier fallback: B2B uses DATE-only (no timestamp tiebreak) with inclusive
-        // same-day for tiers (a)/(b) — intentionally NOT routed through fg_event_is_post_census
-        // which would change same-day semantics (that resolver excludes same-day without ts).
-        // Taproom and returns also left unrouted (month-grain / no-timestamp semantics differ).
+        // Three-tier B2B inclusion predicate — keyed on DISPATCH date/ts (shipped_at
+        // from ord_order_status_events), fallback requested_date when not yet recorded.
+        // The dispatch tiebreak lets fg_event_is_post_census() decide whether a
+        // same-day shipment left before or after the census snapshot.
+        $dispatchTs   = $er['shipped_at'] ?? null;                  // 'YYYY-MM-DD HH:MM:SS' or null
+        $dispatchDate = ($dispatchTs !== null) ? substr($dispatchTs, 0, 10) : $requestedDate;
         $siteAnchor = $siteSkuAnchorMapCompute[$siteId][$sid] ?? null;
-        if ($siteAnchor !== null) {
-            // (a) counted at ship-from site — inclusive >=
-            if ($requestedDate < $siteAnchor['counted_at']) continue;
-        } elseif (isset($skuCountedAnywhereCompute[$sid])) {
-            // (b) counted elsewhere but not here — global anchor, inclusive >=
-            if ($requestedDate < $anchorDate) continue;
-        } else {
-            // (c) never counted — global anchor, strict > (no morning baseline)
-            if ($requestedDate <= $anchorDate) continue;
-        }
+        $pass = fg_event_is_post_census(
+            $dispatchDate, $dispatchTs,
+            $siteAnchor['counted_at'] ?? null,
+            $siteAnchor['anchor_ts']  ?? null,
+            $anchorDate,
+            isset($skuCountedAnywhereCompute[$sid])
+        );
+        if (!$pass) continue;
 
         if (!isset($byId[$sid])) continue;
         $qty = (int) round((float) $er['qty']);
@@ -869,17 +877,18 @@ function fg_stock_compute(PDO $pdo): array
     // used in fg_stock_location_snapshot() Leg 4, assigned 100% to the warehouse
     // site. By construction Σ(returns added in compute) == Σ(returns added in
     // snapshot) — the Σcards==Σphysique invariant holds.
+    // Equivalent to fg_event_is_post_census(eventTs=null, inclusiveFallback=false): single site-level warehouse census floor; ord_returns has no per-row ts so same-day is excluded.
     $restockStmt = $pdo->prepare(
         'SELECT rl.sku_id_fk,
                 SUM(rl.qty) AS restock_qty
            FROM ord_return_lines rl
            JOIN ord_returns r ON r.id = rl.return_id_fk
           WHERE rl.disposition = ?
-            AND r.origin_posting_date > ?
+            AND COALESCE(r.stock_effective_date, r.origin_posting_date) > ?
             AND rl.sku_id_fk IS NOT NULL
           GROUP BY rl.sku_id_fk'
     );
-    $restockStmt->execute(['restock', $anchorDate]);
+    $restockStmt->execute(['restock', $siteCensusMapCompute[$eshopWarehouseSiteId]['date'] ?? $anchorDate]);
     foreach ($restockStmt->fetchAll(PDO::FETCH_ASSOC) as $rr) {
         $sid = (int) $rr['sku_id_fk'];
         $qty = (int) round((float) $rr['restock_qty']);
@@ -1581,13 +1590,12 @@ function fg_stock_location_snapshot(PDO $pdo): array
     // (symmetric with fg_stock_compute() Step 4 — MUST use identical three-tier predicate).
     //
     // Three-tier predicate (mirrors compute Step 4 exactly — invariant coupling):
-    //   (a) counted at ship-from site → requested_date >= site_anchor_date (inclusive)
-    //   (b) counted elsewhere but not this site → requested_date >= global_anchorDate (inclusive)
-    //   (c) never counted at any site → requested_date > global_anchorDate (strict;
-    //       no morning baseline, same-day ambiguous, keeps pre-fix behaviour for uncounted SKUs)
-    // Created_at is NOT used as a tiebreak — it is order-ENTRY time, not ship time, and
-    // can be back-dated. Accepted residual: a same-day ship already in the count
-    // double-deducts (rare; only fixable with an explicit ship timestamp — deferred).
+    //   (a) counted at ship-from site → dispatch date/ts tiebreak vs site census
+    //   (b) counted elsewhere but not this site → dispatch date >= global_anchorDate (inclusive)
+    //   (c) never counted at any site → dispatch date > global_anchorDate (strict)
+    // Dispatch ts = ord_order_status_events.occurred_at WHERE status='shipped'; fallback to
+    // requested_date when absent. SQL prefilter widened to match on EITHER requested_date OR
+    // dispatch ts — PHP predicate remains the authoritative gate.
     // LEFT JOIN ref_customers prefetches default_delivery_site_id_fk → avoids N+1.
     $expStmt = $pdo->prepare(
         'SELECT o.id          AS order_id,
@@ -1597,15 +1605,23 @@ function fg_stock_location_snapshot(PDO $pdo): array
                 c.default_delivery_site_id_fk AS customer_default_site_id,
                 l.sku_id_fk,
                 o.requested_date,
+                (SELECT MAX(e.occurred_at)
+                   FROM ord_order_status_events e
+                  WHERE e.order_id_fk = o.id
+                    AND e.status = \'shipped\')  AS shipped_at,
                 SUM(l.qty) AS qty
            FROM ord_order_lines l
            JOIN ord_orders o ON o.id = l.order_id_fk
            JOIN ref_skus rs ON rs.id = l.sku_id_fk AND rs.stocktake_scope <> ?
            LEFT JOIN ref_customers c ON c.id = o.customer_id_fk
           WHERE o.status = ?
-            AND o.requested_date >= DATE_SUB(?, INTERVAL 30 DAY)
             AND l.sku_id_fk IS NOT NULL
             AND l.line_status = \'to_fulfil\'
+            AND (o.requested_date >= DATE_SUB(?, INTERVAL 30 DAY)
+                 OR EXISTS (SELECT 1 FROM ord_order_status_events e2
+                             WHERE e2.order_id_fk = o.id
+                               AND e2.status = \'shipped\'
+                               AND e2.occurred_at >= DATE_SUB(?, INTERVAL 30 DAY)))
           GROUP BY o.id, o.fulfilment_site_id_fk, o.customer_id_fk, o.internal_channel,
                    c.default_delivery_site_id_fk, l.sku_id_fk, o.requested_date'
     );
@@ -1618,7 +1634,7 @@ function fg_stock_location_snapshot(PDO $pdo): array
         }
     }
 
-    $expStmt->execute(['none', 'shipped', $anchorDate]);
+    $expStmt->execute(['none', 'shipped', $anchorDate, $anchorDate]);
     $expedieOrdersResolved = 0;
     foreach ($expStmt->fetchAll(PDO::FETCH_ASSOC) as $er) {
         $siteId = resolve_fulfilment_site($pdo, [
@@ -1630,19 +1646,20 @@ function fg_stock_location_snapshot(PDO $pdo): array
         $sid           = $subMap[(int) $er['sku_id_fk']] ?? (int) $er['sku_id_fk']; // ZEP4C→ZEPC substitution (mig 448)
         $requestedDate = (string) $er['requested_date'];
 
-        // Three-tier fallback: DATE-only, inclusive same-day — not routed through
-        // fg_event_is_post_census (different semantics; see compute Step 4 note).
-        //   (a) counted at ship-from site → use site anchor, inclusive >=
-        //   (b) counted elsewhere but not here → global anchor, inclusive >=
-        //   (c) never counted anywhere → global anchor, strict > (no morning baseline)
+        // Three-tier B2B inclusion predicate — BYTE-SYMMETRIC with compute Step 4.
+        // Keyed on dispatch date/ts (shipped_at from ord_order_status_events),
+        // fallback to requested_date when absent.
+        $dispatchTs   = $er['shipped_at'] ?? null;                  // 'YYYY-MM-DD HH:MM:SS' or null
+        $dispatchDate = ($dispatchTs !== null) ? substr($dispatchTs, 0, 10) : $requestedDate;
         $siteAnchor = $siteSkuAnchorMap[$siteId][$sid] ?? null;
-        if ($siteAnchor !== null) {
-            if ($requestedDate < $siteAnchor['counted_at']) continue;
-        } elseif (isset($skuCountedAnywhere[$sid])) {
-            if ($requestedDate < $anchorDate) continue;
-        } else {
-            if ($requestedDate <= $anchorDate) continue;
-        }
+        $pass = fg_event_is_post_census(
+            $dispatchDate, $dispatchTs,
+            $siteAnchor['counted_at'] ?? null,
+            $siteAnchor['anchor_ts']  ?? null,
+            $anchorDate,
+            isset($skuCountedAnywhere[$sid])
+        );
+        if (!$pass) continue;
 
         $qty = (int) round((float) $er['qty']);
         if (!isset($salesBySiteSku[$siteId])) $salesBySiteSku[$siteId] = [];
@@ -1876,17 +1893,18 @@ function fg_stock_location_snapshot(PDO $pdo): array
     $restockWarehouseSiteId = resolve_fulfilment_site($pdo, ['channel' => 'eshop']);
     $returnsBySiteSku = []; // site_id => sku_id => int
 
+    // Equivalent to fg_event_is_post_census(eventTs=null, inclusiveFallback=false): single site-level warehouse census floor; ord_returns has no per-row ts so same-day is excluded.
     $restockSnapshotStmt = $pdo->prepare(
         'SELECT rl.sku_id_fk,
                 SUM(rl.qty) AS restock_qty
            FROM ord_return_lines rl
            JOIN ord_returns r ON r.id = rl.return_id_fk
           WHERE rl.disposition = ?
-            AND r.origin_posting_date > ?
+            AND COALESCE(r.stock_effective_date, r.origin_posting_date) > ?
             AND rl.sku_id_fk IS NOT NULL
           GROUP BY rl.sku_id_fk'
     );
-    $restockSnapshotStmt->execute(['restock', $anchorDate]);
+    $restockSnapshotStmt->execute(['restock', $siteCensusMap[$restockWarehouseSiteId]['date'] ?? $anchorDate]);
     foreach ($restockSnapshotStmt->fetchAll(PDO::FETCH_ASSOC) as $rr) {
         $sid = (int) $rr['sku_id_fk'];
         $qty = (int) round((float) $rr['restock_qty']);
