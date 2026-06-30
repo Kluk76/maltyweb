@@ -2021,6 +2021,7 @@ try {
                         iso.customer_first_name, iso.customer_last_name, iso.customer_email,
                         iso.fulfilment_mode, iso.financial_status, iso.fulfillment_status,
                         iso.channel, iso.created_at, iso.fulfilment_date, iso.fulfilment_date_end,
+                        iso.customer_note, iso.note_attributes,
                         f.status AS fulfil_status,
                         f.shopify_sync_state
                    FROM inv_sales_orders iso
@@ -3657,6 +3658,46 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
       echo '<span class="exp-eshop-source-tag" aria-label="Shopify">Shopify</span>';
       // Phase 2A: workflow chips
       exp_render_eshop_chips($eo);
+      // ── Customer note (Shopify order note / note_attributes) ──────────────
+      // Distinct from the internal operator comment (ord_orders.comment):
+      // customer-authored text pulled from Shopify, labeled and styled separately.
+      $custNote  = trim((string) ($eo['customer_note'] ?? ''));
+      $noteAttrs = [];
+      $rawAttrs  = $eo['note_attributes'] ?? null;
+      if ($rawAttrs !== null && $rawAttrs !== '') {
+          $decoded = json_decode((string) $rawAttrs, true);
+          if (is_array($decoded)) {
+              foreach ($decoded as $pair) {
+                  $pName  = isset($pair['name'])  ? trim((string) $pair['name'])  : '';
+                  $pValue = isset($pair['value']) ? trim((string) $pair['value']) : '';
+                  if ($pName !== '' && $pValue !== '') {
+                      $noteAttrs[] = ['name' => $pName, 'value' => $pValue];
+                  }
+              }
+          }
+      }
+      if ($custNote !== '' || !empty($noteAttrs)) {
+          echo '<div class="exp-eshop-customer-note" role="note" aria-label="Note client Shopify">';
+          echo '<span class="exp-eshop-customer-note__label">&#x1F4DD; Note client Shopify</span>';
+          if ($custNote !== '') {
+              echo '<p class="exp-eshop-customer-note__text">'
+                  . nl2br(htmlspecialchars($custNote, ENT_QUOTES, 'UTF-8'))
+                  . '</p>';
+          }
+          if (!empty($noteAttrs)) {
+              echo '<dl class="exp-eshop-customer-note__attrs">';
+              foreach ($noteAttrs as $ap) {
+                  echo '<div class="exp-eshop-customer-note__attr">'
+                      . '<dt class="exp-eshop-customer-note__attr-key">'
+                      . htmlspecialchars($ap['name'], ENT_QUOTES, 'UTF-8') . '</dt>'
+                      . '<dd class="exp-eshop-customer-note__attr-val">'
+                      . htmlspecialchars($ap['value'], ENT_QUOTES, 'UTF-8') . '</dd>'
+                      . '</div>';
+              }
+              echo '</dl>';
+          }
+          echo '</div>';
+      }
       echo '</div>';
   }
 

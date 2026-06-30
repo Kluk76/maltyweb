@@ -1607,6 +1607,82 @@ body.expeditions .exp-summary-kpi--eshop-warn .exp-summary-kpi__value {
   }
 }
 
+/* ── Customer note (Shopify buyer note) on eshop order cards ─────────────── */
+/* Structurally separate from the internal operator comment (exp-order-comment):
+   full-width (breaks to its own flex row), labeled "Note client Shopify",
+   cold-blue source identity. Read-only — customer-authored text from Shopify. */
+body.expeditions .exp-eshop-customer-note {
+  flex-basis: 100%;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 6px 10px;
+  background: color-mix(in srgb, var(--cold, #4a9cc7) 6%, var(--bg));
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--cold, #4a9cc7) 22%, transparent);
+}
+
+body.expeditions .exp-eshop-customer-note__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.67rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--cold, #4a9cc7);
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--cold, #4a9cc7) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--cold, #4a9cc7) 30%, transparent);
+  width: fit-content;
+  flex-shrink: 0;
+}
+
+body.expeditions .exp-eshop-customer-note__text {
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.875rem;
+  color: var(--ink);
+  line-height: 1.45;
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+body.expeditions .exp-eshop-customer-note__attrs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 2px 0 0;
+}
+
+body.expeditions .exp-eshop-customer-note__attr {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+body.expeditions .exp-eshop-customer-note__attr-key {
+  color: var(--ink-label);
+  font-weight: 500;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+body.expeditions .exp-eshop-customer-note__attr-key::after {
+  content: " :";
+}
+
+body.expeditions .exp-eshop-customer-note__attr-val {
+  color: var(--ink-mute);
+  margin: 0;
+}
+
 /* ── Cancelled order rows hidden by default ───────────────────────────────── */
 body.expeditions .exp-order-row--cancelled {
   /* toggled by JS — starts hidden via expeditions.js init */
