@@ -106,7 +106,9 @@ function run_overdue_pass(PDO $pdo, bool $dryRun, bool $bypassSchedule): void
     $statuses = census_site_status($pdo);
 
     // Sites that need attention: overdue OR have negative-stock SKUs
-    $flagged = array_filter($statuses, fn($s) => $s['is_overdue'] === true || $s['negatives'] > 0);
+    // Staleness only: flag a site solely when its census is overdue. Negatives are
+    // intentionally NOT a trigger here — they surface on the freshness chip + the tile.
+    $flagged = array_filter($statuses, fn($s) => $s['is_overdue'] === true);
 
     if (empty($flagged)) {
         fwrite(STDOUT, "[census-reminder] all sites fresh — nothing to send.\n");
@@ -380,13 +382,9 @@ function census_reminder_html(string $greetingName, array $flaggedSites, array $
             $lastLine = "Dernier inventaire il y a {$j} {$unit}";
         }
 
+        // Staleness-only email: negatives are intentionally NOT shown here
+        // (they surface on the freshness chip + the mon-tableau tile instead).
         $negativeLine = '';
-        if ($site['negatives'] > 0) {
-            $n            = (int) $site['negatives'];
-            $negativeLine = '<p style="margin:6px 0 0;font-size:12px;color:#b5532e;">'
-                . $n . ' SKU en négatif'
-                . '</p>';
-        }
 
         $ctaUrl = 'https://app.maltytask.ch/modules/expeditions.php?view=stocktake&amp;loc=' . $siteId;
 
