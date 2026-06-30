@@ -1564,7 +1564,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'retours') {
 
         // Step 4: Idempotency check — does an ord_returns row already exist for this bc_document_no?
         $existStmt = $pdo->prepare(
-            'SELECT id FROM ord_returns WHERE origin_bc_document_no = ? LIMIT 1'
+            'SELECT id, stock_effective_date FROM ord_returns WHERE origin_bc_document_no = ? LIMIT 1'
         );
         $existStmt->execute([$bcDocNo]);
         $existingReturn = $existStmt->fetch(PDO::FETCH_ASSOC);
@@ -1615,6 +1615,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'retours') {
             ];
         }
 
+        // Step 5b: Parse and validate stock_effective_date for restock lines
+        $retTodayIso = (new DateTimeImmutable('now', new DateTimeZone(app_timezone())))->format('Y-m-d');
+        $rawSED = trim($_POST['ret_stock_effective_date'] ?? '');
+        $parsedSED = (preg_match('/^\d{4}-\d{2}-\d{2}$/', $rawSED) && $rawSED >= '2020-01-01' && $rawSED <= $retTodayIso)
+            ? $rawSED
+            : $retTodayIso;
+        $hasRestockLine = in_array('restock', array_column($validLines, 'disposition'), true);
+        $stockEffectiveDate = $hasRestockLine ? $parsedSED : null;
+
         if (empty($validLines)) {
             flash_set('err', 'Aucune ligne valide soumise.');
             redirect_to('/modules/expeditions.php?view=retours');
@@ -1625,19 +1634,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $view === 'retours') {
         // Step 6a: Insert ord_returns header (or reuse existing)
         if ($existingReturn !== false) {
             $newReturnId = (int) $existingReturn['id'];
+            // A later restock disposition for remaining lines of an existing return
+            // must still record the effective date (the header was created NULL on
+            // the first disposition). Only set when a restock line is present.
+            if ($stockEffectiveDate !== null) {
+                $pdo->prepare('UPDATE ord_returns SET stock_effective_date = ? WHERE id = ?')
+                    ->execute([$stockEffectiveDate, $newReturnId]);
+                log_revision($pdo, $me, 'ord_returns', $newReturnId,
+                    ['stock_effective_date' => $existingReturn['stock_effective_date'] ?? null],
+                    ['stock_effective_date' => $stockEffectiveDate],
+                    'normal');
+            }
         } else {
             $insRetStmt = $pdo->prepare(
                 'INSERT INTO ord_returns
-                    (origin_bc_document_no, origin_posting_date, returned_on, comment, created_by_user_id)
-                 VALUES (?, ?, ?, NULL, ?)'
+                    (origin_bc_document_no, origin_posting_date, returned_on, comment, created_by_user_id, stock_effective_date)
+                 VALUES (?, ?, ?, NULL, ?, ?)'
             );
-            $insRetStmt->execute([$bcDocNo, $ledgerPostingDate, $ledgerPostingDate, (int) $me['id']]);
+            $insRetStmt->execute([$bcDocNo, $ledgerPostingDate, $ledgerPostingDate, (int) $me['id'], $stockEffectiveDate]);
             $newReturnId = (int) $pdo->lastInsertId();
             log_revision($pdo, $me, 'ord_returns', $newReturnId, null, [
                 'origin_bc_document_no' => $bcDocNo,
                 'origin_posting_date'   => $ledgerPostingDate,
                 'returned_on'           => $ledgerPostingDate,
                 'created_by_user_id'    => (int) $me['id'],
+                'stock_effective_date'  => $stockEffectiveDate,
             ], 'normal');
         }
 
@@ -2813,6 +2834,7 @@ try {
         // C. Synthèse (90 j) — shared compute, single source of truth
         require_once __DIR__ . '/../../app/returns-synthese.php';
         $retSynth = returns_synthese($pdo, 90);
+        $retTodayDate = (new DateTimeImmutable('now', new DateTimeZone(app_timezone())))->format('Y-m-d');
     }
 
 } catch (Throwable $e) {
@@ -8122,7 +8144,7 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
   <?php if (!empty($retPendingGroups)): ?>
     <h2 class="exp-ret-title">Retours à traiter</h2>
 
-    <?php foreach ($retPendingGroups as $bcGroup): ?>
+    <?php $retCardIdx = 0; foreach ($retPendingGroups as $bcGroup): $retCardIdx++; ?>
     <div class="exp-ret-card">
       <div class="exp-ret-card-header">
         <span class="exp-ret-card-date"><?= htmlspecialchars(exp_fmt_date($bcGroup['posting_date'])) ?></span>
@@ -8171,6 +8193,15 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
           <?php endforeach ?>
           </tbody>
         </table>
+        <div class="exp-ret-restock-date">
+          <label for="ret_ssd_<?= $retCardIdx ?>" class="exp-ret-restock-date__label">Date de remise en stock</label>
+          <input type="date"
+                 id="ret_ssd_<?= $retCardIdx ?>"
+                 name="ret_stock_effective_date"
+                 class="op-form__input exp-ret-restock-date__input"
+                 value="<?= htmlspecialchars($retTodayDate ?? date('Y-m-d')) ?>">
+          <span class="exp-ret-restock-date__hint">Par défaut aujourd'hui — reculez la date seulement si le retour est physiquement rentré plus tôt.</span>
+        </div>
         <div class="exp-ret-actions">
           <button type="submit" class="op-form__btn op-form__btn--primary">Enregistrer</button>
         </div>
