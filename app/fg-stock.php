@@ -2067,3 +2067,56 @@ function fg_stock_location_snapshot(PDO $pdo): array
         '_expedie_orders_resolved' => $expedieOrdersResolved, // diagnostic: resolver call count for expedie leg
     ];
 }
+
+// ── Family / format helpers (canonical; exp_* in expeditions.php are thin wrappers) ──
+
+/**
+ * Map ref_skus.format to a CSS family slug.
+ * Covers all 5 distinct format values on this DB (+ fallback).
+ */
+function fg_format_family(string $format): string
+{
+    return match ($format) {
+        'Keg'             => 'keg',
+        'Bot'             => 'bot',
+        'Can'             => 'can',
+        'Can33'           => 'can33',
+        'Cuve de service' => 'cuv',
+        'multipack'       => 'multipack',
+        default           => 'other',
+    };
+}
+
+/**
+ * Human label for format family (UI — no DB nomenclature in operator text).
+ */
+function fg_family_label(string $family): string
+{
+    return match ($family) {
+        'keg'        => 'Fût',
+        'bot'        => 'Bouteille',
+        'can'        => 'Canette',
+        'can33'      => 'Can 33',
+        'cuv'        => 'Cuve',
+        'multipack'  => 'Multipacks',
+        default      => 'Autre',
+    };
+}
+
+/**
+ * Display-order map keyed by display_family values.
+ * BU/CU-suffix synthetic bucket "À l'unité" is intentionally last (98).
+ * Hardcoding display ORDER is acceptable per spec; hardcoding SKU names is not.
+ */
+function fg_stock_family_order(): array
+{
+    return [
+        'Keg'             => 0,
+        'Bot'             => 1,
+        'Can'             => 2,
+        'Can33'           => 3,
+        'multipack'       => 4,
+        'Cuve de service' => 5,
+        "À l'unité"       => 98,
+    ];
+}
