@@ -3670,7 +3670,8 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
               foreach ($decoded as $pair) {
                   $pName  = isset($pair['name'])  ? trim((string) $pair['name'])  : '';
                   $pValue = isset($pair['value']) ? trim((string) $pair['value']) : '';
-                  if ($pName !== '' && $pValue !== '') {
+                  // Skip hidden/private app-internal attributes (underscore prefix = Shopify convention)
+                  if ($pName !== '' && $pValue !== '' && !str_starts_with($pName, '_')) {
                       $noteAttrs[] = ['name' => $pName, 'value' => $pValue];
                   }
               }
