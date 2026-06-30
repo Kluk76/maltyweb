@@ -111,8 +111,8 @@ function _sb_last_activity(PDO $pdo, int $mother_id): ?\DateTime
     // When GREATEST returns the step's timestamp, the string carries ".uuuuuu" suffix
     // and the basic 'Y-m-d H:i:s' format silently returns false → null → permanent red.
     // Try microsecond format first, fall back to second-precision (covers updated_at win).
-    $dt = \DateTime::createFromFormat('Y-m-d H:i:s.u', $raw)
-       ?: \DateTime::createFromFormat('Y-m-d H:i:s', $raw);
+    $dt = \DateTime::createFromFormat('Y-m-d H:i:s.u', $raw, new \DateTimeZone('UTC'))
+       ?: \DateTime::createFromFormat('Y-m-d H:i:s', $raw, new \DateTimeZone('UTC'));
     return $dt ?: null;
 }
 

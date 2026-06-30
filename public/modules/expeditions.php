@@ -2072,7 +2072,7 @@ try {
             $fiStmt->execute();
             $fiRow = $fiStmt->fetch(PDO::FETCH_ASSOC);
             if ($fiRow && $fiRow['last_import'] !== null) {
-                $eshopLastImport = new DateTime($fiRow['last_import']);
+                $eshopLastImport = $fiRow['last_import'];
             }
         } catch (Throwable $e) {
             error_log('[expeditions freshness] ' . $e->getMessage());
@@ -4585,9 +4585,9 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
       $isStale     = ($hb !== false && $hb !== null)
           && (($nowUtc->getTimestamp() - $hb->getTimestamp()) > $staleMin * 60);
       $chipCls     = 'exp-shopify-freshness-chip' . ($isStale ? ' exp-shopify-freshness-chip--stale' : '');
-      $timeStr     = $eshopLastImport->format('H:i');
-      $dateStr     = $eshopLastImport->format('d/m');
-      $todayStr    = (new DateTime())->format('d/m');
+      $timeStr     = display_local($eshopLastImport, 'H:i');
+      $dateStr     = display_local($eshopLastImport, 'd/m');
+      $todayStr    = (new DateTimeImmutable('now', new DateTimeZone(app_timezone())))->format('d/m');
       $importLabel = ($dateStr === $todayStr)
           ? 'Import Shopify ' . $timeStr
           : 'Import Shopify ' . $dateStr . ' ' . $timeStr;

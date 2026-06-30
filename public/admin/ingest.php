@@ -127,14 +127,12 @@ function ia_duration(int $sec): string
     return "{$m}m {$s}s";
 }
 
-function ia_age(string $startedAt): string
+function ia_age(int $ageSeconds): string
 {
-    $ts  = strtotime($startedAt);
-    $diff = time() - $ts;
-    if ($diff < 60)    return "il y a " . $diff . "s";
-    if ($diff < 3600)  return "il y a " . (int)($diff / 60) . "m";
-    if ($diff < 86400) return "il y a " . (int)($diff / 3600) . "h";
-    return "il y a " . (int)($diff / 86400) . "j";
+    if ($ageSeconds < 60)    return "il y a " . $ageSeconds . "s";
+    if ($ageSeconds < 3600)  return "il y a " . (int)($ageSeconds / 60) . "m";
+    if ($ageSeconds < 86400) return "il y a " . (int)($ageSeconds / 3600) . "h";
+    return "il y a " . (int)($ageSeconds / 86400) . "j";
 }
 
 function ia_summary_table(?string $jsonStr): string
@@ -237,8 +235,8 @@ function ia_qs(array $extra): string
       <div class="ia-empty">Aucune exécution enregistrée.</div>
     <?php else:
       $lr = $latestRun;
-      $finishedAt = $lr['finished_at'] ? date('d/m/Y H:i:s', strtotime($lr['finished_at'])) : '—';
-      $startedAt  = date('d/m/Y H:i:s', strtotime($lr['started_at']));
+      $finishedAt = $lr['finished_at'] ? display_local($lr['finished_at'], 'd/m/Y H:i:s') : '—';
+      $startedAt  = display_local($lr['started_at'], 'd/m/Y H:i:s');
       $dur        = ia_duration((int)$lr['duration_sec']);
     ?>
     <div class="ia-run-stripe">
@@ -338,7 +336,7 @@ function ia_qs(array $extra): string
             <td class="ia-td ia-msg" title="<?= htmlspecialchars($f['reason_text']) ?>">
               <?= htmlspecialchars($truncMsg) ?>
             </td>
-            <td class="ia-td ia-mono ia-nowrap"><?= htmlspecialchars(date('d/m H:i', strtotime($f['detected_at']))) ?></td>
+            <td class="ia-td ia-mono ia-nowrap"><?= htmlspecialchars(display_local($f['detected_at'], 'd/m H:i')) ?></td>
             <td class="ia-td">
               <?php if ($f['raw_row']): ?>
               <button class="ia-raw-btn"
@@ -406,7 +404,7 @@ function ia_qs(array $extra): string
             <td class="ia-td ia-mono">
               <a href="<?= ia_qs(['run_id' => $r['id'], 'fp' => 0]) ?>">#<?= (int)$r['id'] ?></a>
             </td>
-            <td class="ia-td ia-mono ia-nowrap"><?= htmlspecialchars(date('d/m/Y H:i', strtotime($r['started_at']))) ?></td>
+            <td class="ia-td ia-mono ia-nowrap"><?= htmlspecialchars(display_local($r['started_at'], 'd/m/Y H:i')) ?></td>
             <td class="ia-td ia-mono"><?= ia_duration((int)$r['duration_sec']) ?></td>
             <td class="ia-td ia-mono"><?= htmlspecialchars($r['trigger_source']) ?></td>
             <td class="ia-td"><?= ia_status_pill($r['status']) ?></td>

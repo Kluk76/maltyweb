@@ -186,7 +186,8 @@ try {
         // Rows
         $stkStmt = $pdo->prepare(
             "SELECT rq.id, rq.type, rq.value, rq.context, rq.priority,
-                    rq.created_at, rq.status, rq.decision
+                    rq.created_at, rq.status, rq.decision,
+                    FLOOR(TIMESTAMPDIFF(SECOND, rq.created_at, UTC_TIMESTAMP()) / 86400) AS age_days
                FROM doc_review_queue rq
                $stkWhereSql
               ORDER BY rq.priority DESC, rq.created_at ASC
@@ -216,7 +217,8 @@ try {
                    rq.invoice_ref,
                    rq.file_id_fk,
                    f.file_id    AS drive_file_id,
-                   f.file_name  AS file_name
+                   f.file_name  AS file_name,
+                   FLOOR(TIMESTAMPDIFF(SECOND, rq.created_at, UTC_TIMESTAMP()) / 86400) AS age_days
               FROM doc_review_queue rq
          LEFT JOIN doc_files f ON f.id = rq.file_id_fk
                $docWhere
@@ -245,7 +247,8 @@ try {
                        rq.invoice_ref,
                        rq.file_id_fk,
                        f.file_id    AS drive_file_id,
-                       f.file_name  AS file_name
+                       f.file_name  AS file_name,
+                       FLOOR(TIMESTAMPDIFF(SECOND, rq.created_at, UTC_TIMESTAMP()) / 86400) AS age_days
                   FROM doc_review_queue rq
              LEFT JOIN doc_files f ON f.id = rq.file_id_fk
                  WHERE rq.id = ? AND rq.type IN (" . implode(",", array_fill(0, count($docTypes), "?")) . ")
@@ -417,9 +420,9 @@ function triage_type_label(string $type): string
 /**
  * Days since a timestamp string.
  */
-function triage_age_days(string $ts): int
+function triage_age_days(int $ageDays): int
 {
-    return (int) floor((time() - strtotime($ts)) / 86400);
+    return $ageDays;
 }
 
 /**
@@ -740,7 +743,7 @@ function stock_qs(array $extra): string
 
             <?php foreach ($docRows as $row):
                 $ctx   = triage_parse_context((string)($row["context"] ?? ""));
-                $age   = triage_age_days((string)$row["created_at"]);
+                $age   = triage_age_days((int)$row["age_days"]);
                 $prio  = (int)$row["priority"];
                 $isActive = ((int)$row["id"] === $rqId);
 
@@ -805,7 +808,7 @@ function stock_qs(array $extra): string
               </div>
             <?php else:
                 $ctx      = triage_parse_context((string)($rqRow["context"] ?? ""));
-                $age      = triage_age_days((string)$rqRow["created_at"]);
+                $age      = triage_age_days((int)$rqRow["age_days"]);
                 $prio     = (int)$rqRow["priority"];
                 $type     = (string)$rqRow["type"];
                 $driveId  = (string)($rqRow["drive_file_id"] ?? "");
@@ -1564,7 +1567,7 @@ function stock_qs(array $extra): string
                   $sValue   = (string)$sr["value"];
                   $sCtx     = (string)($sr["context"] ?? "");
                   $sPrio    = (int)$sr["priority"];
-                  $sAge     = triage_age_days((string)$sr["created_at"]);
+                  $sAge     = triage_age_days((int)$sr["age_days"]);
                   $sStatus  = (string)$sr["status"];
                   $sIsOpen  = ($sStatus === "open");
                   $sPrioCls = $sPrio >= 100 ? "stock-prio--high"
