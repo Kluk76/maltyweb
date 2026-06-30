@@ -5091,6 +5091,55 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
   $stockDi2sem    = $stockTotalPhysique - $stockTotal2wkQty;
   $stockDiFutur   = $stockTotalPhysique - $stockTotalFutQty;
 
+  // ── Scope-mode resolution ─────────────────────────────────────────────────────
+  // Valid: 'all' | 'noconsign' | 'mine'. Invalid/absent → default from home site.
+  $_rawScope        = $_GET['scope'] ?? '';
+  $_validScopes     = ['all', 'noconsign', 'mine'];
+  $currentStockScope = in_array($_rawScope, $_validScopes, true)
+      ? $_rawScope
+      : ($_homeSiteType !== null ? 'mine' : 'all');
+
+  // Build per-SKU scoped physique map from snapshot (only when not 'all').
+  // Key: sku_id (int) → float qty for in-scope locations.
+  $scopedPhysiqueBySkuId  = [];   // non-'all' scoped totals
+  $consignPhysiqueBySkuId = [];   // qty at consignment locations (for annotation)
+  $consignLocName         = null; // name of consignment location (dynamic, from DB)
+  $warehouseLocName       = null; // warehouse site name (for "not picked by" note)
+
+  if ($fgLocationSnapshot !== null) {
+      foreach ($fgLocationSnapshot['locations'] as $_sloc) {
+          $_isConsign = $_sloc['site_type'] === 'consignment';
+          if ($_sloc['site_type'] === 'warehouse') {
+              $warehouseLocName = $_sloc['name'];
+          }
+          if ($_isConsign) {
+              $consignLocName = $_sloc['name'];
+              foreach ($_sloc['rows'] as $_srow) {
+                  $consignPhysiqueBySkuId[(int) $_srow['sku_id']] = (float) $_srow['qty'];
+              }
+          }
+          // For scoped map (only relevant when scope != 'all')
+          $_inScope = match ($currentStockScope) {
+              'noconsign' => !$_isConsign,
+              'mine'      => ($_sloc['site_type'] === $_homeSiteType),
+              default     => true, // 'all' — never actually used, fallback to $sr['physique']
+          };
+          if ($currentStockScope !== 'all' && $_inScope) {
+              foreach ($_sloc['rows'] as $_srow) {
+                  $_sid = (int) $_srow['sku_id'];
+                  $scopedPhysiqueBySkuId[$_sid] = ($scopedPhysiqueBySkuId[$_sid] ?? 0.0) + (float) $_srow['qty'];
+              }
+          }
+      }
+  }
+
+  // When scoped, compute the physique total from the scoped map.
+  // Coverage deductions ($stockTotalWeekQty etc.) stay global — open orders have no site dimension.
+  $scopedStockTotalPhysique = null; // null = 'all' mode, use $stockTotalPhysique
+  if ($currentStockScope !== 'all' && !empty($scopedPhysiqueBySkuId)) {
+      $scopedStockTotalPhysique = array_sum($scopedPhysiqueBySkuId);
+  }
+
   // ── Pre-compute stock-health levels for ALL rows ─────────────────────────
   // Used for: alert banner counts, row data-stock-rank, badge cells, gauge cells.
   $stockLevels = [];           // sku_id → exp_stock_level() result
@@ -5128,6 +5177,25 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
       }
   }
   ?>
+
+  <?php
+  // Build URLs preserving only view and scope
+  $_scopeUrl = fn(string $s) => '?view=stock&amp;scope=' . $s;
+  $_isScopeActive = fn(string $s) => $currentStockScope === $s;
+  ?>
+  <div class="exp-scope-bar" role="group" aria-label="Périmètre du stock">
+    <a href="<?= $_scopeUrl('all') ?>"
+       class="exp-scope-btn<?= $_isScopeActive('all') ? ' exp-scope-btn--active' : '' ?>"
+       aria-current="<?= $_isScopeActive('all') ? 'true' : 'false' ?>">Tous</a>
+    <a href="<?= $_scopeUrl('noconsign') ?>"
+       class="exp-scope-btn<?= $_isScopeActive('noconsign') ? ' exp-scope-btn--active' : '' ?>"
+       aria-current="<?= $_isScopeActive('noconsign') ? 'true' : 'false' ?>">Hors consignation</a>
+    <?php if ($_homeSiteType !== null): ?>
+    <a href="<?= $_scopeUrl('mine') ?>"
+       class="exp-scope-btn<?= $_isScopeActive('mine') ? ' exp-scope-btn--active' : '' ?>"
+       aria-current="<?= $_isScopeActive('mine') ? 'true' : 'false' ?>">Mon site</a>
+    <?php endif ?>
+  </div>
 
   <!-- ── Stock header ────────────────────────────────────────────────────── -->
   <?php if ($anchorMonth !== null): ?>
@@ -5255,7 +5323,15 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
       <div class="exp-loc-card__header">
         <span class="exp-loc-card__name"><?= htmlspecialchars($lc['name']) ?></span>
         <span class="exp-loc-card__type"><?= htmlspecialchars(exp_site_type_label($lc['site_type'])) ?></span>
+        <?php if ($lc['site_type'] === 'consignment'): ?>
+        <span class="exp-loc-card__consign-badge">Notre stock chez le distributeur</span>
+        <?php endif ?>
       </div>
+      <?php if ($lc['site_type'] === 'consignment'): ?>
+      <div class="exp-loc-card__consign-note">
+        Équipe mandatée · compté le lundi<?php if ($warehouseLocName !== null): ?> · NON prélevé par <?= htmlspecialchars($warehouseLocName) ?><?php endif ?>
+      </div>
+      <?php endif ?>
       <div class="exp-loc-card__fresh">
         <?= $freshChip ?>
         <?php if (!empty($lcTallyParts)): ?>
@@ -5283,8 +5359,8 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
   <!-- ── TOTAL strip ─────────────────────────────────────────────────────── -->
   <div class="exp-stock-total-strip" role="region" aria-label="Totaux stock PF">
     <div class="exp-stock-total-kpi">
-      <span class="exp-stock-total-kpi__label">Physique total</span>
-      <span class="exp-stock-total-kpi__val"><?= number_format($stockTotalPhysique) ?></span>
+      <span class="exp-stock-total-kpi__label"><?= $currentStockScope !== 'all' ? 'Physique ici' : 'Physique total' ?></span>
+      <span class="exp-stock-total-kpi__val"><?= number_format($scopedStockTotalPhysique ?? $stockTotalPhysique) ?></span>
     </div>
     <?php if ($fgHomeSiteStock !== null): ?>
     <div class="exp-stock-total-kpi exp-st-home-site"
@@ -5296,7 +5372,9 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
     <div class="exp-stock-total-sep" aria-hidden="true"></div>
     <div class="exp-stock-total-kpi<?= $stockDiSemaine < 0 ? ' exp-stock-total-kpi--neg' : '' ?>">
       <span class="exp-stock-total-kpi__label">
-        − commandes sem. courante
+        − commandes sem. courante<?php if ($currentStockScope !== 'all'): ?>
+        <abbr class="exp-st-global-marker" title="Valeur globale tous sites — commandes non segmentées par site">ⓖ</abbr>
+        <?php endif ?>
         <?php if ($stockDiSemaine < 0): ?>
           <span class="exp-stock-total-kpi__flag" aria-label="Survendu">⚠ survendu</span>
         <?php endif ?>
@@ -5306,7 +5384,9 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
     <div class="exp-stock-total-sep" aria-hidden="true"></div>
     <div class="exp-stock-total-kpi<?= $stockDi2sem < 0 ? ' exp-stock-total-kpi--neg' : '' ?>">
       <span class="exp-stock-total-kpi__label">
-        − commandes 2 semaines
+        − commandes 2 semaines<?php if ($currentStockScope !== 'all'): ?>
+        <abbr class="exp-st-global-marker" title="Valeur globale tous sites — commandes non segmentées par site">ⓖ</abbr>
+        <?php endif ?>
         <?php if ($stockDi2sem < 0): ?>
           <span class="exp-stock-total-kpi__flag" aria-label="Survendu">⚠ survendu</span>
         <?php endif ?>
@@ -5316,7 +5396,9 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
     <div class="exp-stock-total-sep" aria-hidden="true"></div>
     <div class="exp-stock-total-kpi<?= $stockDiFutur < 0 ? ' exp-stock-total-kpi--neg' : '' ?>">
       <span class="exp-stock-total-kpi__label">
-        − toutes commandes ouvertes
+        − toutes commandes ouvertes<?php if ($currentStockScope !== 'all'): ?>
+        <abbr class="exp-st-global-marker" title="Valeur globale tous sites — commandes non segmentées par site">ⓖ</abbr>
+        <?php endif ?>
         <?php if ($stockDiFutur < 0): ?>
           <span class="exp-stock-total-kpi__flag" aria-label="Survendu">⚠ survendu</span>
         <?php endif ?>
@@ -5325,6 +5407,12 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
     </div>
   </div>
 
+  <?php if ($currentStockScope !== 'all'): ?>
+  <p class="exp-st-scope-caption">
+    <abbr class="exp-st-global-marker" title="Couverture = globale (tous sites) — pas encore calculée par site">ⓖ</abbr>
+    Couverture = globale, tous sites — Physique = <?= $currentStockScope === 'mine' ? 'Mon site uniquement' : 'Hors consignation' ?>
+  </p>
+  <?php endif ?>
   <!-- ── Family filter chips + alerts toggle ─────────────────────────────── -->
   <div class="exp-stock-filters" role="toolbar" aria-label="Filtres famille">
     <button type="button"
@@ -5445,9 +5533,9 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
         <tr>
           <th class="exp-st-col-badge" rowspan="2" aria-label="Niveau de stock"></th>
           <th class="exp-st-col-sku"   rowspan="2">SKU</th>
-          <th class="exp-st-col-gauge" rowspan="2" title="Semaines de couverture — projetée sur la saisonnalité des 24 derniers mois (barre = niveau de stock)">Couverture</th>
+          <th class="exp-st-col-gauge" rowspan="2" title="Semaines de couverture — projetée sur la saisonnalité des 24 derniers mois (barre = niveau de stock)">Couverture<?= $currentStockScope !== 'all' ? ' <abbr class="exp-st-global-marker" title="Couverture = globale (tous sites) — pas encore calculée par site">ⓖ</abbr>' : '' ?></th>
           <th class="exp-st-th--sep"   rowspan="2" aria-hidden="true"></th>
-          <th class="exp-st-col-physique exp-st-th-actuel" rowspan="2" title="Stock physique actuel = ancre + production − ventes depuis l'ancre">Physique</th>
+          <th class="exp-st-col-physique exp-st-th-actuel<?= $currentStockScope !== 'all' ? ' exp-st-th-scoped' : '' ?>" rowspan="2" title="Stock physique actuel = ancre + production − ventes depuis l'ancre"><?= $currentStockScope !== 'all' ? 'Dispo ici' : 'Physique' ?></th>
           <th class="exp-st-th--sep"   rowspan="2" aria-hidden="true"></th>
           <th class="exp-st-th-group"  scope="colgroup" colspan="3">Dispo après commandes</th>
           <th class="exp-st-th--sep"   rowspan="2" aria-hidden="true"></th>
@@ -5456,11 +5544,11 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
         <!-- Bottom row: individual column labels under the prévisionnel band. -->
         <tr>
           <th class="exp-st-col-semcur" scope="col"
-              title="Stock restant après les commandes ouvertes dues cette semaine (physique − open_week_qty)">Sem. courante</th>
+              title="Stock restant après les commandes ouvertes dues cette semaine (physique − open_week_qty)">Sem. courante<?= $currentStockScope !== 'all' ? ' <abbr class="exp-st-global-marker" title="Couverture = globale (tous sites) — pas encore calculée par site">ⓖ</abbr>' : '' ?></th>
           <th class="exp-st-col-semcur" scope="col"
-              title="Stock restant après les commandes ouvertes dues d'ici la fin de la semaine prochaine (physique − open_2wk_qty)">+ sem. suivante</th>
+              title="Stock restant après les commandes ouvertes dues d'ici la fin de la semaine prochaine (physique − open_2wk_qty)">+ sem. suivante<?= $currentStockScope !== 'all' ? ' <abbr class="exp-st-global-marker" title="Couverture = globale (tous sites) — pas encore calculée par site">ⓖ</abbr>' : '' ?></th>
           <th class="exp-st-col-futur"  scope="col"
-              title="Stock restant après toutes les commandes ouvertes (physique − open_total_qty)">Toutes cmdes</th>
+              title="Stock restant après toutes les commandes ouvertes (physique − open_total_qty)">Toutes cmdes<?= $currentStockScope !== 'all' ? ' <abbr class="exp-st-global-marker" title="Couverture = globale (tous sites) — pas encore calculée par site">ⓖ</abbr>' : '' ?></th>
         </tr>
       </thead>
       <tbody id="exp-stock-tbody">
@@ -5485,6 +5573,12 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
           $isLowStock  = $sr['flag_low_stock'];
           $hasFlag     = $isSurvendu || $isLowStock;
           $physique    = $sr['physique'];
+          // Scoped physique: only for display in the Physique cell. Badge/gauge/HL use global $physique.
+          $_skuScopedPhysique = ($currentStockScope !== 'all' && $fgLocationSnapshot !== null)
+              ? ($scopedPhysiqueBySkuId[(int) $sr['sku_id']] ?? 0.0)
+              : $physique;
+          // Consignment qty for this SKU (annotation shown when scoped and consignment has qty)
+          $_skuConsignQty = $consignPhysiqueBySkuId[(int) $sr['sku_id']] ?? 0.0;
           $isCage      = (($sr['stocktake_scope'] ?? '') === 'cage');
           $hlPhysique  = round($physique * $sr['hl_per_unit'], 2);
           $rowFam      = $sr['display_family'] ?? $sr['format'];
@@ -5586,7 +5680,10 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
             </td>
             <td class="exp-st--sep" aria-hidden="true"></td>
             <td class="exp-st-col-physique">
-              <span class="exp-st-num"><?= exp_fmt_stock_qty($physique, $isCage) ?></span>
+              <span class="exp-st-num"><?= exp_fmt_stock_qty($_skuScopedPhysique, $isCage) ?></span>
+              <?php if ($currentStockScope !== 'all' && $_skuConsignQty > 0 && $consignLocName !== null): ?>
+              <span class="exp-st-consign-note">hors <?= number_format($_skuConsignQty) ?> en consignation (non inclus)</span>
+              <?php endif ?>
             </td>
             <td class="exp-st--sep" aria-hidden="true"></td>
             <td class="exp-st-col-semcur">

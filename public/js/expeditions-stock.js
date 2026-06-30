@@ -363,4 +363,21 @@
   // Apply initial visibility for dormant rows in Total mode
   if (tbody) applyVisibility();
 
+  // ── Scope-bar keyboard navigation (arrow keys between Tous/Hors consig./Mon site) ──
+  var scopeBar = document.querySelector('.exp-scope-bar');
+  if (scopeBar) {
+    scopeBar.addEventListener('keydown', function (e) {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      var btns = Array.prototype.slice.call(scopeBar.querySelectorAll('.exp-scope-btn'));
+      if (!btns.length) return;
+      var idx = btns.indexOf(document.activeElement);
+      if (idx === -1) return;
+      e.preventDefault();
+      var next = e.key === 'ArrowRight'
+        ? (idx + 1) % btns.length
+        : (idx - 1 + btns.length) % btns.length;
+      btns[next].focus();
+    });
+  }
+
 }());
