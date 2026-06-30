@@ -73,6 +73,10 @@ Full audit (orchestrator, live-probed prod): HARD invariant Σcards==physique HO
 - **All 11 Renens (site 1) phantom negatives GONE** (live re-scan). Aligned-census SKUs byte-unchanged. NOT COGS (operational board only). Verification = Opus/coordinator-independent on live, not agent word.
 
 ## 🟡 C3 — ZEUBI (site 2) PER-SITE NEGATIVES — GROUNDED 2026-06-29 (cause = sales-against-stale-census; NOT a transfer/code regression; PENDING a fresh Zeubi recount — ball is the OPERATOR)
+### 🔎 POST-RECOUNT UPDATE 2026-06-30 — the cheapest-discriminator played out: fresh Zeubi census CLEARED the stale-census ones, but THREE persist (genuine, not stale-census).
+- **CLEARED by the fresh Zeubi census (= stale-census drift, exactly as predicted):** ALT4, ALTB.
+- **PERSIST after a COMPLETE Zeubi census → NOT stale-census:** **DIVB −37, DIBB −10, ZEP4C −1.** Per the discriminator, a SKU still negative immediately after a complete count = genuine **oversell / same-day-ship-after-census / ship-from-site attribution edge** (the known-deferred per-site sales-leg settlement limitation). All global-positive, NOT COGS, not clamped. **NEXT = per-order shipment dig (pull each SKU's expédié/eshop ship-from-site legs vs the new Zeubi anchor) — PENDING operator go.** Do NOT pre-label code-vs-data; the dig decides.
+- Below = the pre-recount grounding (retained; ALT4/ALTB now resolved, mechanisms still illustrative).
 Investigated with live data → confirms PM discriminator. **Root = Zeubi's latest census is 2026-06-22 (oldest in fleet); sales shipped-from-Zeubi since then exceed (stale anchor + recovered inflows).** Distinct from C2 (transfer double-count — identical old/new, Renens side fixed). Per-SKU mechanisms (live-verified):
 - **ALTB −13:** anchor 6 (06-22), no movements, 19 shipped-from-Zeubi since → oversell vs count.
 - **DIVB −30:** anchor 272 (06-22), +108 transfer-in 06-23 (passed), 410 shipped-from-Zeubi since → sold 410 vs 380 available.
