@@ -1113,7 +1113,7 @@
         if (lastUploadId !== null) {
           statusBox.innerHTML =
             '<span class="upload-status__warn-icon" aria-hidden="true">⚠</span>'
-            + `<span class="upload-status__text">Timeout après 3 minutes. Le worker pipeline est peut-être bloqué.${uploadIdNote}</span>`
+            + `<span class="upload-status__text">Délai dépassé — le worker pipeline est peut-être bloqué.${uploadIdNote}</span>`
             + '<button class="upload-status__retry" type="button">↩ Réessayer</button>'
             + '<button class="upload-status__retry upload-status__retry--sec" type="button">Nouveau document</button>';
           const retryBtn = statusBox.querySelector('.upload-status__retry:not(.upload-status__retry--sec)');

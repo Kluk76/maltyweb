@@ -24,7 +24,7 @@ declare(strict_types=1);
  * State derivation (idempotent):
  *   - 'processed' when a doc_files row exists for drive_file_id AND
  *     at least one of doc_invoices / doc_delivery_notes / doc_ambiguous links to it.
- *   - 'timeout'   when pipeline_started_at > 600 s ago AND no doc_files row yet.
+ *   - 'timeout'   when pipeline_started_at > 600 s ago (elapsed computed in UTC via SQL) AND no doc_files row yet.
  *   - Otherwise returns current doc_uploads.pipeline_status unchanged.
  *
  * Idempotent: purely read + state-derived UPDATE. Safe to poll every 2 s.
@@ -66,7 +66,8 @@ if ($upload_id > 0) {
     $stmt = $pdo->prepare(
         "SELECT id, user_id, drive_file_id, pipeline_status,
                 pipeline_started_at, pipeline_finished_at, error_text,
-                uploaded_at
+                uploaded_at,
+                TIMESTAMPDIFF(SECOND, pipeline_started_at, UTC_TIMESTAMP()) AS elapsed_seconds
            FROM doc_uploads
           WHERE id = ? AND user_id = ?
           LIMIT 1"
@@ -80,7 +81,8 @@ if ($upload_id > 0) {
     $stmt = $pdo->prepare(
         "SELECT id, user_id, drive_file_id, pipeline_status,
                 pipeline_started_at, pipeline_finished_at, error_text,
-                uploaded_at
+                uploaded_at,
+                TIMESTAMPDIFF(SECOND, pipeline_started_at, UTC_TIMESTAMP()) AS elapsed_seconds
            FROM doc_uploads
           WHERE drive_file_id = ? AND user_id = ?
           LIMIT 1"
@@ -96,10 +98,7 @@ if (!$row) {
 $upload_id      = (int) $row['id'];
 $drive_file_id  = (string)($row['drive_file_id'] ?? '');
 $pipeline_status = (string) $row['pipeline_status'];
-$started_at     = $row['pipeline_started_at']
-                  ? strtotime((string)$row['pipeline_started_at'])
-                  : null;
-$elapsed        = $started_at !== null ? (time() - $started_at) : null;
+$elapsed        = $row['pipeline_started_at'] !== null ? (int)$row['elapsed_seconds'] : null;
 
 // ── Derive pipeline_status from downstream tables ─────────────────────────────
 $review_queue_rq_id = null;
@@ -158,8 +157,8 @@ if ($drive_file_id !== '' && $pipeline_status !== 'failed') {
             }
         }
     } elseif ($pipeline_status === 'triggered'
-              && $started_at !== null
-              && (time() - $started_at) > 600) {
+              && $elapsed !== null
+              && $elapsed > 600) {
         // No doc_files row and pipeline has been running > 10 min — timeout
         $new_status = 'timeout';
     }
