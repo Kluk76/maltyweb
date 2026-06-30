@@ -1052,6 +1052,14 @@ function fg_stock_compute(PDO $pdo): array
     // ISO week Monday: Sunday - 6 days.
     $isoWeekStart = (new DateTimeImmutable($isoWeekEnd))->modify('-6 days')->format('Y-m-d');
 
+    // Consignment site IDs — queried dynamically, never hardcoded.
+    // Used by the open-order attribution query below.
+    $consignStmt = $pdo->prepare(
+        'SELECT id FROM ref_sites WHERE site_type = ? AND is_active = 1'
+    );
+    $consignStmt->execute(['consignment']);
+    $consignmentSiteIds = array_map('intval', array_column($consignStmt->fetchAll(PDO::FETCH_ASSOC), 'id'));
+
     // Aggregate query (display: week/2wk/total) — unchanged from before
     // line_status filter: non_livre/rupture lines will not be fulfilled; exclude from demand sim.
     $openStmt = $pdo->prepare(
@@ -1124,6 +1132,74 @@ function fg_stock_compute(PDO $pdo): array
                 $sid,
                 $simSum,
                 (float) $agg['total_qty']
+            ));
+        }
+    }
+
+    // Attribution query: identical FROM/JOIN/WHERE to Step 7 aggregate, adding
+    // site-resolution columns and grouping at the order-resolution grain (mirrors
+    // Step-4 expedie grain). Buckets qty into consignOpenBySkuId when the resolved
+    // fulfilment site is a consignment site — used for noconsign operable demand.
+    $openConsignStmt = $pdo->prepare(
+        "SELECT l.sku_id_fk,
+                o.fulfilment_site_id_fk,
+                o.customer_id_fk,
+                o.internal_channel,
+                c.default_delivery_site_id_fk AS customer_default_site_id,
+                o.requested_date,
+                SUM(l.qty) AS qty
+           FROM ord_order_lines l
+           JOIN ord_orders o ON o.id = l.order_id_fk
+           LEFT JOIN ref_customers c ON c.id = o.customer_id_fk
+          WHERE o.status NOT IN ('shipped', 'cancelled')
+            AND l.line_status = 'to_fulfil'
+          GROUP BY l.sku_id_fk, o.id, o.fulfilment_site_id_fk, o.customer_id_fk,
+                   o.internal_channel, c.default_delivery_site_id_fk, o.requested_date"
+    );
+    $openConsignStmt->execute();
+
+    $consignOpenBySkuId = []; // [sku_id] => ['week'=>float,'twowk'=>float,'total'=>float]
+    if (!empty($consignmentSiteIds)) {
+        foreach ($openConsignStmt->fetchAll(PDO::FETCH_ASSOC) as $cr) {
+            $sid     = (int) ($cr['sku_id_fk'] ?? 0);
+            $qty     = (float) ($cr['qty'] ?? 0.0);
+            $reqDate = $cr['requested_date'] ?? null;
+
+            $resolvedSiteId = resolve_fulfilment_site($pdo, [
+                'fulfilment_site_id_fk'     => $cr['fulfilment_site_id_fk'] ?? null,
+                'customer_id_fk'            => $cr['customer_id_fk'] ?? null,
+                'channel'                   => $cr['internal_channel'] ?? null,
+                '_customer_default_site_id' => $cr['customer_default_site_id'] ?? null,
+            ]);
+
+            if (!in_array($resolvedSiteId, $consignmentSiteIds, true)) continue;
+
+            if (!isset($consignOpenBySkuId[$sid])) {
+                $consignOpenBySkuId[$sid] = ['week' => 0.0, 'twowk' => 0.0, 'total' => 0.0];
+            }
+            // requested_date IS NULL → contributes to total ONLY (mirrors Step 7 bucketing)
+            $consignOpenBySkuId[$sid]['total'] += $qty;
+            if ($reqDate !== null) {
+                if ($reqDate <= $isoWeekEnd) {
+                    $consignOpenBySkuId[$sid]['week'] += $qty;
+                }
+                if ($reqDate <= $iso2wkEnd) {
+                    $consignOpenBySkuId[$sid]['twowk'] += $qty;
+                }
+            }
+        }
+    }
+
+    // Build-time assertion: consignment-fulfilled subset must be ≤ global open book.
+    // Consignment is a strict sub-population — if it exceeds global, filter drifted.
+    foreach ($consignOpenBySkuId as $sid => $ca) {
+        $globalTotal = (float) ($openBySkuId[$sid]['total_qty'] ?? 0);
+        if ($ca['total'] > $globalTotal + 0.01) {
+            error_log(sprintf(
+                '[fg-stock] ASSERTION FAIL sku_id=%d: consignOpen.total=%.2f > open_total_qty=%.2f — consignment subset exceeds global book',
+                $sid,
+                $ca['total'],
+                $globalTotal
             ));
         }
     }
@@ -1301,10 +1377,13 @@ function fg_stock_compute(PDO $pdo): array
             'transfer_net_qty'      => $transferNet,
             // Computed
             'physique'          => $physique,
-            'open_week_qty'     => $openWeek,
-            'open_2wk_qty'      => $open2wk,
-            'open_total_qty'    => $openTotal,
-            'shipped_week_qty'  => $shippedWeekBySkuId[$sid] ?? 0,
+            'open_week_qty'          => $openWeek,
+            'open_2wk_qty'           => $open2wk,
+            'open_total_qty'         => $openTotal,
+            'open_week_consign_qty'  => (int) round($consignOpenBySkuId[$sid]['week']  ?? 0),
+            'open_2wk_consign_qty'   => (int) round($consignOpenBySkuId[$sid]['twowk'] ?? 0),
+            'open_total_consign_qty' => (int) round($consignOpenBySkuId[$sid]['total'] ?? 0),
+            'shipped_week_qty'       => $shippedWeekBySkuId[$sid] ?? 0,
             'live_semaine'      => $liveSemaine,
             'live_2sem'         => $live2sem,
             'live_futur'        => $liveFutur,

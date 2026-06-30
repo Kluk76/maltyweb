@@ -5077,15 +5077,21 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
   });
 
   // ── Totals for the TOTAL strip (computed from all rows) ───────────────────
-  $stockTotalPhysique = 0.0;
-  $stockTotalWeekQty  = 0;
-  $stockTotal2wkQty   = 0;
-  $stockTotalFutQty   = 0;
+  $stockTotalPhysique       = 0.0;
+  $stockTotalWeekQty        = 0;
+  $stockTotal2wkQty         = 0;
+  $stockTotalFutQty         = 0;
+  $stockTotalWeekConsignQty = 0;
+  $stockTotal2wkConsignQty  = 0;
+  $stockTotalFutConsignQty  = 0;
   foreach ($stockRows as $sr) {
-      $stockTotalPhysique += $sr['physique'];
-      $stockTotalWeekQty  += $sr['open_week_qty'];
-      $stockTotal2wkQty   += $sr['open_2wk_qty'];
-      $stockTotalFutQty   += $sr['open_total_qty'];
+      $stockTotalPhysique       += $sr['physique'];
+      $stockTotalWeekQty        += $sr['open_week_qty'];
+      $stockTotal2wkQty         += $sr['open_2wk_qty'];
+      $stockTotalFutQty         += $sr['open_total_qty'];
+      $stockTotalWeekConsignQty += ($sr['open_week_consign_qty']  ?? 0);
+      $stockTotal2wkConsignQty  += ($sr['open_2wk_consign_qty']   ?? 0);
+      $stockTotalFutConsignQty  += ($sr['open_total_consign_qty'] ?? 0);
   }
   $stockDiSemaine = $stockTotalPhysique - $stockTotalWeekQty;
   $stockDi2sem    = $stockTotalPhysique - $stockTotal2wkQty;
@@ -5139,6 +5145,14 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
   if ($currentStockScope !== 'all' && !empty($scopedPhysiqueBySkuId)) {
       $scopedStockTotalPhysique = array_sum($scopedPhysiqueBySkuId);
   }
+
+  // Under noconsign: operable TOTAL strip values (scoped physique − net open orders).
+  // "net" = global open orders minus orders fulfilled FROM consignment sites.
+  // Computed after $scopedStockTotalPhysique is available; safe to reference here.
+  $_ncPhysique   = $scopedStockTotalPhysique ?? $stockTotalPhysique;
+  $stockNcDiSemaine = $_ncPhysique - ($stockTotalWeekQty - $stockTotalWeekConsignQty);
+  $stockNcDi2sem    = $_ncPhysique - ($stockTotal2wkQty  - $stockTotal2wkConsignQty);
+  $stockNcDiFutur   = $_ncPhysique - ($stockTotalFutQty  - $stockTotalFutConsignQty);
 
   // ── Pre-compute stock-health levels for ALL rows ─────────────────────────
   // Used for: alert banner counts, row data-stock-rank, badge cells, gauge cells.
@@ -5370,47 +5384,56 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
     </div>
     <?php endif ?>
     <div class="exp-stock-total-sep" aria-hidden="true"></div>
-    <div class="exp-stock-total-kpi<?= $stockDiSemaine < 0 ? ' exp-stock-total-kpi--neg' : '' ?>">
+    <?php
+    $_stripSemaine = ($currentStockScope === 'noconsign') ? $stockNcDiSemaine : $stockDiSemaine;
+    $_strip2sem    = ($currentStockScope === 'noconsign') ? $stockNcDi2sem    : $stockDi2sem;
+    $_stripFutur   = ($currentStockScope === 'noconsign') ? $stockNcDiFutur   : $stockDiFutur;
+    ?>
+    <div class="exp-stock-total-kpi<?= $_stripSemaine < 0 ? ' exp-stock-total-kpi--neg' : '' ?>">
       <span class="exp-stock-total-kpi__label">
-        − commandes sem. courante<?php if ($currentStockScope !== 'all'): ?>
+        − commandes sem. courante<?php if ($currentStockScope === 'mine'): ?>
         <abbr class="exp-st-global-marker" title="Valeur globale tous sites — commandes non segmentées par site">ⓖ</abbr>
         <?php endif ?>
-        <?php if ($stockDiSemaine < 0): ?>
+        <?php if ($_stripSemaine < 0): ?>
           <span class="exp-stock-total-kpi__flag" aria-label="Survendu">⚠ survendu</span>
         <?php endif ?>
       </span>
-      <span class="exp-stock-total-kpi__val"><?= number_format($stockDiSemaine) ?></span>
+      <span class="exp-stock-total-kpi__val"><?= number_format($_stripSemaine) ?></span>
     </div>
     <div class="exp-stock-total-sep" aria-hidden="true"></div>
-    <div class="exp-stock-total-kpi<?= $stockDi2sem < 0 ? ' exp-stock-total-kpi--neg' : '' ?>">
+    <div class="exp-stock-total-kpi<?= $_strip2sem < 0 ? ' exp-stock-total-kpi--neg' : '' ?>">
       <span class="exp-stock-total-kpi__label">
-        − commandes 2 semaines<?php if ($currentStockScope !== 'all'): ?>
+        − commandes 2 semaines<?php if ($currentStockScope === 'mine'): ?>
         <abbr class="exp-st-global-marker" title="Valeur globale tous sites — commandes non segmentées par site">ⓖ</abbr>
         <?php endif ?>
-        <?php if ($stockDi2sem < 0): ?>
+        <?php if ($_strip2sem < 0): ?>
           <span class="exp-stock-total-kpi__flag" aria-label="Survendu">⚠ survendu</span>
         <?php endif ?>
       </span>
-      <span class="exp-stock-total-kpi__val"><?= number_format($stockDi2sem) ?></span>
+      <span class="exp-stock-total-kpi__val"><?= number_format($_strip2sem) ?></span>
     </div>
     <div class="exp-stock-total-sep" aria-hidden="true"></div>
-    <div class="exp-stock-total-kpi<?= $stockDiFutur < 0 ? ' exp-stock-total-kpi--neg' : '' ?>">
+    <div class="exp-stock-total-kpi<?= $_stripFutur < 0 ? ' exp-stock-total-kpi--neg' : '' ?>">
       <span class="exp-stock-total-kpi__label">
-        − toutes commandes ouvertes<?php if ($currentStockScope !== 'all'): ?>
+        − toutes commandes ouvertes<?php if ($currentStockScope === 'mine'): ?>
         <abbr class="exp-st-global-marker" title="Valeur globale tous sites — commandes non segmentées par site">ⓖ</abbr>
         <?php endif ?>
-        <?php if ($stockDiFutur < 0): ?>
+        <?php if ($_stripFutur < 0): ?>
           <span class="exp-stock-total-kpi__flag" aria-label="Survendu">⚠ survendu</span>
         <?php endif ?>
       </span>
-      <span class="exp-stock-total-kpi__val"><?= number_format($stockDiFutur) ?></span>
+      <span class="exp-stock-total-kpi__val"><?= number_format($_stripFutur) ?></span>
     </div>
   </div>
 
   <?php if ($currentStockScope !== 'all'): ?>
   <p class="exp-st-scope-caption">
     <abbr class="exp-st-global-marker" title="Couverture = globale (tous sites) — pas encore calculée par site">ⓖ</abbr>
-    Couverture = globale, tous sites — Physique = <?= $currentStockScope === 'mine' ? 'Mon site uniquement' : 'Hors consignation' ?>
+    <?php if ($currentStockScope === 'mine'): ?>
+    Couverture = globale, tous sites — Physique = Mon site uniquement
+    <?php else: ?>
+    Couverture (jauge) = globale — Physique ET disponibilités (− commandes) = hors consignation
+    <?php endif ?>
   </p>
   <?php endif ?>
   <!-- ── Family filter chips + alerts toggle ─────────────────────────────── -->
@@ -5544,11 +5567,11 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
         <!-- Bottom row: individual column labels under the prévisionnel band. -->
         <tr>
           <th class="exp-st-col-semcur" scope="col"
-              title="Stock restant après les commandes ouvertes dues cette semaine (physique − open_week_qty)">Sem. courante<?= $currentStockScope !== 'all' ? ' <abbr class="exp-st-global-marker" title="Couverture = globale (tous sites) — pas encore calculée par site">ⓖ</abbr>' : '' ?></th>
+              title="Stock restant après les commandes ouvertes dues cette semaine (physique − open_week_qty)">Sem. courante<?= $currentStockScope === 'mine' ? ' <abbr class="exp-st-global-marker" title="Couverture = globale (tous sites) — pas encore calculée par site">ⓖ</abbr>' : '' ?></th>
           <th class="exp-st-col-semcur" scope="col"
-              title="Stock restant après les commandes ouvertes dues d'ici la fin de la semaine prochaine (physique − open_2wk_qty)">+ sem. suivante<?= $currentStockScope !== 'all' ? ' <abbr class="exp-st-global-marker" title="Couverture = globale (tous sites) — pas encore calculée par site">ⓖ</abbr>' : '' ?></th>
+              title="Stock restant après les commandes ouvertes dues d'ici la fin de la semaine prochaine (physique − open_2wk_qty)">+ sem. suivante<?= $currentStockScope === 'mine' ? ' <abbr class="exp-st-global-marker" title="Couverture = globale (tous sites) — pas encore calculée par site">ⓖ</abbr>' : '' ?></th>
           <th class="exp-st-col-futur"  scope="col"
-              title="Stock restant après toutes les commandes ouvertes (physique − open_total_qty)">Toutes cmdes<?= $currentStockScope !== 'all' ? ' <abbr class="exp-st-global-marker" title="Couverture = globale (tous sites) — pas encore calculée par site">ⓖ</abbr>' : '' ?></th>
+              title="Stock restant après toutes les commandes ouvertes (physique − open_total_qty)">Toutes cmdes<?= $currentStockScope === 'mine' ? ' <abbr class="exp-st-global-marker" title="Couverture = globale (tous sites) — pas encore calculée par site">ⓖ</abbr>' : '' ?></th>
         </tr>
       </thead>
       <tbody id="exp-stock-tbody">
@@ -5611,10 +5634,21 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
               $gaugeWidthPct = 0; // no velocity — muted display
           }
           // Gauge text fallback for a11y: screenreader sees "X.X sem" via aria-label on cell
-          // Live semaine / 2sem / futur: color coding
-          $semClass    = $sr['live_semaine'] < 0  ? ' exp-st-neg' : '';
-          $twoSemClass = $sr['live_2sem']    < 0  ? ' exp-st-neg' : '';
-          $futClass    = $sr['live_futur']   < 0  ? ' exp-st-neg' : '';
+          // Under noconsign: recompute demand display values using operable formula
+          // (scoped physique − net open orders excluding consignment-fulfilled).
+          // Under 'all' and 'mine': use existing pre-computed live_* values unchanged.
+          if ($currentStockScope === 'noconsign') {
+              $_displaySemaine = $_skuScopedPhysique - ($sr['open_week_qty']  - ($sr['open_week_consign_qty']  ?? 0));
+              $_display2sem    = $_skuScopedPhysique - ($sr['open_2wk_qty']   - ($sr['open_2wk_consign_qty']   ?? 0));
+              $_displayFutur   = $_skuScopedPhysique - ($sr['open_total_qty'] - ($sr['open_total_consign_qty'] ?? 0));
+          } else {
+              $_displaySemaine = $sr['live_semaine'];
+              $_display2sem    = $sr['live_2sem'];
+              $_displayFutur   = $sr['live_futur'];
+          }
+          $semClass    = $_displaySemaine < 0 ? ' exp-st-neg' : '';
+          $twoSemClass = $_display2sem    < 0 ? ' exp-st-neg' : '';
+          $futClass    = $_displayFutur   < 0 ? ' exp-st-neg' : '';
 
           // Per-location mini-breakdown from snapshot (nice-to-have)
           $locBreakdown = '';
@@ -5687,13 +5721,13 @@ $fgHomeSiteCmds = ($_homeSiteType !== null && !empty($fgLocationSnapshotForCmds)
             </td>
             <td class="exp-st--sep" aria-hidden="true"></td>
             <td class="exp-st-col-semcur">
-              <span class="exp-st-num<?= $semClass ?>"><?= number_format($sr['live_semaine']) ?></span>
+              <span class="exp-st-num<?= $semClass ?>"><?= number_format($_displaySemaine) ?></span>
             </td>
             <td class="exp-st-col-semcur">
-              <span class="exp-st-num<?= $twoSemClass ?>"><?= number_format($sr['live_2sem']) ?></span>
+              <span class="exp-st-num<?= $twoSemClass ?>"><?= number_format($_display2sem) ?></span>
             </td>
             <td class="exp-st-col-futur">
-              <span class="exp-st-num<?= $futClass ?>"><?= number_format($sr['live_futur']) ?></span>
+              <span class="exp-st-num<?= $futClass ?>"><?= number_format($_displayFutur) ?></span>
             </td>
             <td class="exp-st--sep" aria-hidden="true"></td>
             <td class="exp-st-col-flag"></td>
