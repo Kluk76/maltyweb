@@ -9456,7 +9456,7 @@ function kpi_sales_load_ledger_prod(PDO $pdo): array
             'units'  => (int)   $row['units'],
         ];
     }
-    return kpi_cache_set($cacheKey, $out);
+    return kpi_cache_set($cacheKey, kpi_sales_clamp_future_periods($out));
 }
 
 // ─── Shared loader: inv_sales_ledger all-sales, per-period ────────────────────
@@ -9490,7 +9490,7 @@ function kpi_sales_load_ledger_all(PDO $pdo): array
             'units'  => (int)   $row['units'],
         ];
     }
-    return kpi_cache_set($cacheKey, $out);
+    return kpi_cache_set($cacheKey, kpi_sales_clamp_future_periods($out));
 }
 
 // ─── Helper: latest and prior period from a periods array ────────────────────
@@ -9506,6 +9506,30 @@ function kpi_sales_prior_period(string $period): string
     // Return the calendar month before $period ('YYYY-MM')
     $dt = new DateTimeImmutable($period . '-01');
     return $dt->modify('-1 month')->format('Y-m');
+}
+
+/** Current calendar month 'YYYY-MM' in the app's local timezone (Europe/Zurich). */
+function kpi_sales_current_local_month(): string
+{
+    return (new DateTimeImmutable('now', new DateTimeZone(app_timezone())))->format('Y-m');
+}
+
+/**
+ * Drop periods beyond the current app-local month. Future-dated BC postings
+ * (e.g. shipments posted to the 1st of next month) must not pre-roll the
+ * "ventes par mois" widgets. Keys are 'YYYY-MM' strings — lexicographic
+ * comparison is correct. Operator-chosen behavior (2026-06-30): clamp to
+ * the local current month even though it hides legitimately future BC rows.
+ */
+function kpi_sales_clamp_future_periods(array $periods): array
+{
+    $cur = kpi_sales_current_local_month();
+    foreach (array_keys($periods) as $p) {
+        if ((string) $p > $cur) {
+            unset($periods[$p]);
+        }
+    }
+    return $periods;
 }
 
 // ─── #86: revenue_month ───────────────────────────────────────────────────────
