@@ -297,6 +297,44 @@ try {
           <?php endif ?>
         </div>
 
+        <?php
+          // Reconciliation banner for parked-totals invoices
+          $_ivGd = $inv['plan']['gateDecision'] ?? null;
+          if (in_array($_ivGd, ['write_pending_all', 'write_pending_partial'], true)
+              && $inv['lineCount'] > 0
+          ) {
+              // Σ(line_total) — sum over already-loaded lines; null line_total = skip
+              $_ivLinesSum = 0.0;
+              foreach ($inv['lines'] as $_ivL) {
+                  if ($_ivL['lineTotal'] !== null) {
+                      $_ivLinesSum += (float)$_ivL['lineTotal'];
+                  }
+              }
+              $_ivHt    = $inv['totalHt'];   // canonical doc_invoices.total_ht
+              $_ivDelta = $_ivHt !== null ? ($_ivLinesSum - $_ivHt) : null;
+              $_ivErr   = $_ivDelta !== null && abs($_ivDelta) > 0.01;
+              ?>
+              <div class="iv-recon-banner<?= $_ivErr ? ' iv-recon-banner--mismatch' : '' ?>">
+                <span class="iv-recon__label">Totaux à vérifier</span>
+                <span class="iv-recon__item">
+                  <span class="iv-recon__key">Σ lignes</span>
+                  <span class="iv-recon__val"><?= htmlspecialchars(number_format($_ivLinesSum, 2, ',', "\u{202F}")) ?></span>
+                </span>
+                <span class="iv-recon__sep" aria-hidden="true">vs</span>
+                <span class="iv-recon__item">
+                  <span class="iv-recon__key">Total HT</span>
+                  <span class="iv-recon__val"><?= $_ivHt !== null ? htmlspecialchars(number_format($_ivHt, 2, ',', "\u{202F}")) : '—' ?></span>
+                </span>
+                <?php if ($_ivDelta !== null): ?>
+                  <span class="iv-recon__delta<?= $_ivErr ? ' iv-recon__delta--err' : ' iv-recon__delta--ok' ?>">
+                    <?= htmlspecialchars(($_ivDelta >= 0 ? '+' : '') . number_format($_ivDelta, 2, ',', "\u{202F}")) ?>
+                  </span>
+                <?php endif ?>
+              </div>
+              <?php
+          }
+        ?>
+
         <!-- Per-line recap table -->
         <div class="iv-lines-wrap">
           <table class="iv-lines" aria-label="Lignes de la facture">

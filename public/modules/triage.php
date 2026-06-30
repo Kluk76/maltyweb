@@ -75,6 +75,9 @@ $rqId    = isset($_GET["rq_id"]) ? (int) $_GET["rq_id"] : 0;
 $rqRow   = null;   // selected doc_review_queue row
 $rqFile  = null;   // associated doc_files row
 $rqInv   = null;   // associated doc_invoices row (if any)
+$rqInvGateDecision = null;
+$rqInvLineCount    = 0;
+$rqInvLines        = [];
 $docRows = [];     // inbox list
 $totalDocRows = 0;
 
@@ -254,9 +257,12 @@ try {
             // Load associated invoice data if available
             if ($rqRow !== null && !empty($rqRow["drive_file_id"])) {
                 $invStmt = $pdo->prepare("
-                    SELECT i.supplier_name, i.invoice_ref, i.invoice_date,
-                           i.total_ht, i.total_ttc, i.total_vat,
-                           i.currency, i.parser_name, i.ht_source
+                    SELECT i.id              AS invoice_id,
+                           i.supplier_name,  i.invoice_ref, i.invoice_date,
+                           i.total_ht,       i.total_ttc,   i.total_vat,
+                           i.currency,       i.parser_name, i.ht_source,
+                           i.delivery_write_plan,
+                           (SELECT COUNT(*) FROM doc_invoice_lines WHERE invoice_id = i.id) AS line_count
                       FROM doc_invoices i
                       JOIN doc_files f ON f.id = i.file_id
                      WHERE f.file_id = ?
@@ -264,6 +270,43 @@ try {
                 ");
                 $invStmt->execute([$rqRow["drive_file_id"]]);
                 $rqInv = $invStmt->fetch() ?: null;
+
+                if ($rqInv !== null) {
+                    $rqInvLineCount = (int)($rqInv['line_count'] ?? 0);
+                    $dwpRaw = $rqInv['delivery_write_plan'];
+                    if ($dwpRaw !== null) {
+                        $dwpDecoded = json_decode((string)$dwpRaw, true);
+                        if (is_array($dwpDecoded)) {
+                            $rqInvGateDecision = $dwpDecoded['header']['gateDecision'] ?? null;
+                        }
+                    }
+                    // Load parked lines for the pending-totals state
+                    if ($rqInvLineCount > 0
+                        && in_array($rqInvGateDecision, ['write_pending_all', 'write_pending_partial'], true)
+                        && isset($rqInv['invoice_id'])
+                    ) {
+                        try {
+                            $plStmt = $pdo->prepare(
+                                "SELECT il.ingredient_name,
+                                        il.description,
+                                        il.qty,
+                                        il.unit,
+                                        il.unit_price,
+                                        il.line_total,
+                                        rm.mi_id   AS mi_code,
+                                        rm.name    AS mi_name
+                                   FROM doc_invoice_lines il
+                              LEFT JOIN ref_mi rm ON rm.id = il.mi_id_fk
+                                  WHERE il.invoice_id = ?
+                               ORDER BY il.line_index"
+                            );
+                            $plStmt->execute([(int)$rqInv['invoice_id']]);
+                            $rqInvLines = $plStmt->fetchAll(PDO::FETCH_ASSOC);
+                        } catch (Throwable $_plEx) {
+                            // non-fatal: fall back to empty lines (empty state will show generic text)
+                        }
+                    }
+                }
             }
         }
     }
@@ -902,8 +945,102 @@ function stock_qs(array $extra): string
                     </dl>
                   <?php endif ?>
 
-                  <!-- Unresolved line items -->
-                  <?php if (empty($ctx["unresolved"])): ?>
+                  <!-- Unresolved line items / parked-totals state -->
+                  <?php
+                    $isPendingTotalsCase = $rqInvLineCount > 0
+                        && in_array($rqInvGateDecision, ['write_pending_all', 'write_pending_partial'], true);
+                  ?>
+                  <?php if (empty($ctx["unresolved"]) && $isPendingTotalsCase): ?>
+                    <!-- Parked-on-totals: lines exist but gate stopped on reconciliation mismatch -->
+                    <div class="detail-section__head detail-section__head--info">
+                      Facture en attente — totaux à vérifier
+                      <span class="detail-section__count detail-section__count--info"><?= $rqInvLineCount ?></span>
+                    </div>
+
+                    <?php
+                      // Reconciliation: Σ(line_total) vs canonical total_ht from doc_invoices
+                      $rqInvLinesSum = 0.0;
+                      foreach ($rqInvLines as $_pl) {
+                          if ($_pl['line_total'] !== null) {
+                              $rqInvLinesSum += (float)$_pl['line_total'];
+                          }
+                      }
+                      $rqInvHt     = $rqInv['total_ht'] !== null ? (float)$rqInv['total_ht'] : null;
+                      $rqInvDelta  = $rqInvHt !== null ? ($rqInvLinesSum - $rqInvHt) : null;
+                      $rqReconErr  = $rqInvDelta !== null && abs($rqInvDelta) > 0.01;
+                    ?>
+                    <div class="detail-recon-banner<?= $rqReconErr ? ' detail-recon-banner--mismatch' : '' ?>">
+                      <span class="detail-recon__item">
+                        <span class="detail-recon__label">Σ lignes</span>
+                        <span class="detail-recon__amount"><?= htmlspecialchars(number_format($rqInvLinesSum, 2, ',', "\u{202F}")) ?></span>
+                      </span>
+                      <span class="detail-recon__sep" aria-hidden="true">vs</span>
+                      <span class="detail-recon__item">
+                        <span class="detail-recon__label">Total HT</span>
+                        <span class="detail-recon__amount"><?= $rqInvHt !== null ? htmlspecialchars(number_format($rqInvHt, 2, ',', "\u{202F}")) : '—' ?></span>
+                      </span>
+                      <?php if ($rqInvDelta !== null): ?>
+                        <span class="detail-recon__delta<?= $rqReconErr ? ' detail-recon__delta--err' : ' detail-recon__delta--ok' ?>">
+                          <?= htmlspecialchars(($rqInvDelta >= 0 ? '+' : '') . number_format($rqInvDelta, 2, ',', "\u{202F}")) ?>
+                        </span>
+                      <?php endif ?>
+                    </div>
+
+                    <!-- Read-only parked lines table -->
+                    <?php if (!empty($rqInvLines)): ?>
+                    <table class="detail-parked-lines" aria-label="Lignes facture en attente (lecture seule)">
+                      <thead>
+                        <tr>
+                          <th scope="col">MI</th>
+                          <th scope="col">Désignation</th>
+                          <th scope="col" class="detail-col-num">Qté</th>
+                          <th scope="col" class="detail-col-num">PU</th>
+                          <th scope="col" class="detail-col-num">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <?php foreach ($rqInvLines as $_pl): ?>
+                          <tr>
+                            <td class="detail-parked-mi">
+                              <?php if (!empty($_pl['mi_code'])): ?>
+                                <code class="detail-mono"><?= htmlspecialchars($_pl['mi_code'] . ' — ' . (string)$_pl['mi_name']) ?></code>
+                              <?php else: ?>
+                                <span class="detail-parked-mi--none">—</span>
+                              <?php endif ?>
+                            </td>
+                            <td><?= htmlspecialchars((string)($_pl['ingredient_name'] ?? $_pl['description'] ?? '')) ?></td>
+                            <td class="detail-col-num">
+                              <?php if ($_pl['qty'] !== null): ?>
+                                <?= htmlspecialchars(rtrim(rtrim(number_format((float)$_pl['qty'], 4, ',', ''), '0'), ',')) ?>
+                                <?= !empty($_pl['unit']) ? ' ' . htmlspecialchars((string)$_pl['unit']) : '' ?>
+                              <?php else: ?>—<?php endif ?>
+                            </td>
+                            <td class="detail-col-num">
+                              <?= $_pl['unit_price'] !== null
+                                  ? htmlspecialchars(number_format((float)$_pl['unit_price'], 4, ',', "\u{202F}"))
+                                  : '—' ?>
+                            </td>
+                            <td class="detail-col-num">
+                              <?= $_pl['line_total'] !== null
+                                  ? htmlspecialchars(number_format((float)$_pl['line_total'], 2, ',', "\u{202F}"))
+                                  : '—' ?>
+                            </td>
+                          </tr>
+                        <?php endforeach ?>
+                      </tbody>
+                    </table>
+                    <?php endif ?>
+
+                    <!-- CTA: navigate to the À valider surface for this invoice -->
+                    <div class="detail-pending-cta">
+                      <a class="detail-btn detail-btn--valider"
+                         href="?tab=valider">
+                        Vérifier et valider →
+                      </a>
+                    </div>
+
+                  <?php elseif (empty($ctx["unresolved"])): ?>
+                    <!-- Genuine empty case: 0 lines extracted (SIE/SIL, degraded scan, write_no_lines) -->
                     <div class="detail-section__head detail-section__head--warn">
                       Aucune ligne extraite
                     </div>
