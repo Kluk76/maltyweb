@@ -52,10 +52,12 @@ $myEmail = $meEmailStmt->fetchColumn() ?: null;
    Returns: array of tracker rows keyed by id (int).
    Rules:
      1. data_ready=1 AND is_active=1
-     2. min_role ≤ user role (role rank)
-     3. category IN ('cogs_finance','sales') → manager+ only
+     2. min_role ≤ user role (role rank) — sales-cohort users bypass this for
+        sales-category trackers (they can access expeditions)
+     3. category='cogs_finance' → manager+ only (no exception)
+        category='sales'       → manager+ OR sales cohort (expeditions access)
    ─────────────────────────────────────────────────────────────────────────── */
-function mt_build_allowed_set(PDO $pdo, string $userRole): array
+function mt_build_allowed_set(PDO $pdo, string $userRole, array $u): array
 {
     $rank = _role_rank($userRole);
 
@@ -68,16 +70,18 @@ function mt_build_allowed_set(PDO $pdo, string $userRole): array
     );
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+    /* Sales cohort: any user who can reach expeditions may see sales trackers */
+    $isSalesCohort = user_can_access('expeditions', $u);
+
     $allowed = [];
     foreach ($rows as $row) {
-        /* Role floor */
-        if ($rank < _role_rank($row['min_role'])) continue;
-
-        /* Finance/sales gate: manager+ only */
-        if (in_array($row['category'], ['cogs_finance', 'sales'], true)
-            && $rank < _role_rank('manager')) {
-            continue;
+        /* Role floor — cohort users bypass the floor for sales-category trackers only */
+        if ($rank < _role_rank($row['min_role'])) {
+            if (!($row['category'] === 'sales' && $isSalesCohort)) continue;
         }
+
+        /* cogs_finance: manager+ only, no cohort exception */
+        if ($row['category'] === 'cogs_finance' && $rank < _role_rank('manager')) continue;
 
         $allowed[(int)$row['id']] = $row;
     }
@@ -111,7 +115,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($action === 'update_selection') {
         /* Rebuild the allowed set server-side — identical logic to GET path */
-        $allowedSet = mt_build_allowed_set($pdo, $myRole);
+        $allowedSet = mt_build_allowed_set($pdo, $myRole, $me);
 
         /* submitted tracker IDs (may be absent if none selected) */
         $rawIds  = $_POST['tracker_ids'] ?? [];
@@ -180,7 +184,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             redirect_to('/modules/mon-tableau.php');
         }
 
-        $allowedSet = mt_build_allowed_set($pdo, $myRole);
+        $allowedSet = mt_build_allowed_set($pdo, $myRole, $me);
         $cadences   = ['daily', 'weekly', 'monthly'];
 
         $pdo->beginTransaction();
@@ -293,7 +297,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 /* ─────────────────────────────────────────────────────────────────────────────
    GET — build payload
    ─────────────────────────────────────────────────────────────────────────── */
-$allowedSet    = mt_build_allowed_set($pdo, $myRole);
+$allowedSet    = mt_build_allowed_set($pdo, $myRole, $me);
 $stubMismatches = mt_stub_mismatches($allowedSet);
 
 /* User's current selections (ordered by position) */

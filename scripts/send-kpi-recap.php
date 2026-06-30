@@ -57,6 +57,7 @@ while ($args) {
 // ── Bootstrap ──────────────────────────────────────────────────────────────────
 $baseDir = dirname(__DIR__);
 require_once $baseDir . '/app/db.php';
+require_once $baseDir . '/app/auth.php';          // user_can_access() — DB-only when $u passed explicitly (no session)
 require_once $baseDir . '/app/settings-helpers.php';
 require_once $baseDir . '/app/kpi-handlers.php';
 require_once $baseDir . '/app/services/mailer.php';
@@ -74,7 +75,7 @@ $dueFilter = $dryRun ? '' : ' AND (s.next_due_at IS NULL OR s.next_due_at <= NOW
 
 $stmt = $pdo->prepare(
     "SELECT s.id, s.user_id_fk, s.cadence, s.send_hour_local, s.send_dow, s.last_sent_at, s.next_due_at,
-            u.email, u.display_name, u.username, u.role
+            u.email, u.display_name, u.username, u.role, u.access_preset_id_fk
        FROM user_kpi_recap_subs s
        JOIN users u ON u.id = s.user_id_fk
       WHERE s.is_active = 1
@@ -122,13 +123,23 @@ foreach ($subs as $sub) {
     $selStmt->execute([$userId, $cadence]);
     $selectedTrackers = $selStmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // Filter: role floor + finance gate (same logic as mt_build_allowed_set)
+    // Filter: role floor + finance/sales gate (SAME split logic as mt_build_allowed_set).
+    // cogs_finance = manager+ only; sales = manager+ OR sales cohort (expeditions access).
+    // Call the canonical user_can_access resolver — never copy its logic.
     $userRank = _role_rank_cli($userRole);
-    $selectedTrackers = array_filter($selectedTrackers, function ($t) use ($userRank) {
-        if ($userRank < _role_rank_cli($t['min_role'])) return false;
-        if (in_array($t['category'], ['cogs_finance', 'sales'], true) && $userRank < _role_rank_cli('manager')) {
-            return false;
+    $recipientUser = [
+        'id'                  => $userId,
+        'role'                => $userRole,
+        'access_preset_id_fk' => isset($sub['access_preset_id_fk']) ? (int) $sub['access_preset_id_fk'] : null,
+    ];
+    $isSalesCohort = user_can_access('expeditions', $recipientUser);
+    $selectedTrackers = array_filter($selectedTrackers, function ($t) use ($userRank, $isSalesCohort) {
+        // Role floor — cohort users bypass the floor for sales-category trackers only
+        if ($userRank < _role_rank_cli($t['min_role'])) {
+            if (!($t['category'] === 'sales' && $isSalesCohort)) return false;
         }
+        // cogs_finance: manager+ only, no cohort exception
+        if ($t['category'] === 'cogs_finance' && $userRank < _role_rank_cli('manager')) return false;
         // Skip stubbed domains — read the canonical list from kpi-handlers.php
         // (same source mon-tableau consumes), never a hardcoded copy. Returns []
         // today; tracks future stub regressions automatically.
